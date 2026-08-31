@@ -3637,7 +3637,19 @@ model, do not celebrate the sim.
     `store` and `gguf_gemv engine --expert-sim`. Decode identity stays unset.
     `gpu-profile capture` is still refused. Dual score still has no `$/M tokens`.
 
-345. [ ] Next numbered PLAN item after 344 is the next `gpu-sim` / Engine /
+345. [x] `cudaLimitMaxL2FetchGranularity`:
+    [`GpuStoreCfg::l2_fetch`](expertvm/src/gpu_store.rs) /
+    [`SimCfg::l2_fetch`](expertvm/src/sim_replay.rs)
+    [`set_limit`](gpu-sim/src/sim.rs) `MaxL2FetchGranularity` after `Sim::new`.
+    Implies `--l2-persist`. `32` / `64` / `128` only (default unset is 128).
+    Access-policy windows must align; 64-byte persist is Invalid until
+    `--l2-fetch 32`. Hits stay the same for 4096-byte experts. Legal with
+    `--pdl` and `--cooperative`. `--l2-fetch N` on `expertvm sim` /
+    `schedule` / `store` and `gguf_gemv engine --expert-sim`. Decode
+    identity stays 128. `gpu-profile capture` is still refused. Dual score
+    still has no `$/M tokens`.
+
+346. [ ] Next numbered PLAN item after 345 is the next `gpu-sim` / Engine /
     serve / expertvm mechanical API that is still missing, or the next official
     decode family (`gemma4`). Prefer remaining CUDA-shaped twins over more
     OpenAI HTTP veneer. Do not invent

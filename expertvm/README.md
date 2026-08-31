@@ -88,7 +88,9 @@ previous kernel's trigger when `--compute-slots` is `>=2` (illegal with
 `--cooperative`). `--l2-persist` is `cudaLaunchAttributeAccessPolicyWindow`
 over expert pages (persisting L2 after the first fill). `--l2-reset` is
 `cudaCtxResetPersistingL2Cache` after each GEMM (implies `--l2-persist`; live;
-cannot capture; a reused expert does not keep persisting L2). `--cluster N` is
+cannot capture; a reused expert does not keep persisting L2). `--l2-fetch N` is
+`cudaLimitMaxL2FetchGranularity` (`32`/`64`/`128`; implies `--l2-persist`;
+access-policy windows must align). `--cluster N` is
 `cudaLaunchAttributeClusterDimension` on grouped expert GEMMs: occupies
 `min(N, compute_slots)` Hyper-Q slots (Hopper portable max 8; legal with
 `--pdl` and `--cooperative`). `--preferred-cluster N` is
@@ -280,9 +282,9 @@ on the Engine store. `--mapped` / `--managed` / `--vmm` select `GpuFill`
 `--blocking-streams` / `--sync-alloc` / `--mempool` / `--mempool-trim` / `--mempool-no-reuse` / `--shareable` / `--vmm-page` /
 `--pageable` / `--host-register` / `--host-register-mapped` / `--sync-memops` / `--device-sync-memops` / `--memcpy-batch` / `--accessed-by` / `--legacy-null` / `--stream-priority` /
 `--seq-streams` / `--kv-sim` / `--kv-bytes` / `--decode-priority` /
-`--cooperative` / `--pdl` / `--l2-persist` / `--l2-reset` / `--cluster` / `--preferred-cluster` / `--cluster-spread` / `--func-cluster-spread` / `--cluster-must-set` / `--max-shared` / `--func-max-shared` / `--non-portable-cluster` / `--sync-policy` / `--event-blocking-sync` / `--mem-sync-domain` / `--shared-mem` / `--func-shared-mem` / `--device-shared-mem` / `--portable-cluster` / `--optin-shared` / `--dynamic-shared` / `--portable-shared` / `--nvlink-util` / `--device-launch` / `--device-updatable` / `--kernel-priority` / `--launch-completion` / `--programmatic-event` / `--wait-value` / `--compute-slots` / `--decode-sms` / `--multicast` / `--shareable` are `GpuStoreCfg` knobs on `gguf_gemv engine`.
+`--cooperative` / `--pdl` / `--l2-persist` / `--l2-reset` / `--l2-fetch` / `--cluster` / `--preferred-cluster` / `--cluster-spread` / `--func-cluster-spread` / `--cluster-must-set` / `--max-shared` / `--func-max-shared` / `--non-portable-cluster` / `--sync-policy` / `--event-blocking-sync` / `--mem-sync-domain` / `--shared-mem` / `--func-shared-mem` / `--device-shared-mem` / `--portable-cluster` / `--optin-shared` / `--dynamic-shared` / `--portable-shared` / `--nvlink-util` / `--device-launch` / `--device-updatable` / `--kernel-priority` / `--launch-completion` / `--programmatic-event` / `--wait-value` / `--compute-slots` / `--decode-sms` / `--multicast` / `--shareable` are `GpuStoreCfg` knobs on `gguf_gemv engine`.
 `expertvm sim` / `schedule` / `store` take `--compute-slots` / `--decode-sms`
-/ `--decode-priority` / `--cooperative` / `--pdl` / `--l2-persist` / `--l2-reset` / `--cluster` / `--preferred-cluster` / `--cluster-spread` / `--func-cluster-spread` / `--cluster-must-set` / `--max-shared` / `--func-max-shared` / `--non-portable-cluster` / `--sync-policy` / `--mem-sync-domain` / `--shared-mem` / `--func-shared-mem` / `--device-shared-mem` / `--portable-cluster` / `--optin-shared` / `--dynamic-shared` / `--portable-shared` / `--nvlink-util` / `--device-launch` / `--device-updatable` / `--kernel-priority` / `--launch-completion` / `--programmatic-event` / `--wait-value` / `--multicast` / `--shareable` (Hyper-Q occupancy, green-context SM fraction,
+/ `--decode-priority` / `--cooperative` / `--pdl` / `--l2-persist` / `--l2-reset` / `--l2-fetch` / `--cluster` / `--preferred-cluster` / `--cluster-spread` / `--func-cluster-spread` / `--cluster-must-set` / `--max-shared` / `--func-max-shared` / `--non-portable-cluster` / `--sync-policy` / `--mem-sync-domain` / `--shared-mem` / `--func-shared-mem` / `--device-shared-mem` / `--portable-cluster` / `--optin-shared` / `--dynamic-shared` / `--portable-shared` / `--nvlink-util` / `--device-launch` / `--device-updatable` / `--kernel-priority` / `--launch-completion` / `--programmatic-event` / `--wait-value` / `--multicast` / `--shareable` (Hyper-Q occupancy, green-context SM fraction,
 decode-stream ITL, exclusive cooperative GEMMs, same-stream PDL overlap, Hopper cluster occupancy / preferred dim / Spread scheduling / ClusterDimMustBeSet / non-portable size, NVLS replica fanout, and POSIX-FD mempool IPC on the trace walker). Walker `--decode-sms` does **not**
 imply `--decode-priority` (token 0 is prefill). Engine `--mem-sync-domain remote`
 implies `--decode-priority`. `--decode-priority` implies
@@ -298,7 +300,9 @@ same-stream expert GEMMs overlap after the previous kernel's programmatic
 trigger (needs `--compute-slots` >= 2; illegal with `--cooperative`).
 `--l2-persist` keeps reused expert pages in persisting L2. `--l2-reset` is
 `cudaCtxResetPersistingL2Cache` after each GEMM (implies `--l2-persist`; a
-reused expert is cold). `--cluster N`
+reused expert is cold). `--l2-fetch N` is
+`cudaLimitMaxL2FetchGranularity` (`32`/`64`/`128`; implies `--l2-persist`;
+windows must align). `--cluster N`
 is a Hopper thread-block cluster so leftover kernels cannot overlap a
 launch that fills Hyper-Q. `--preferred-cluster N` occupies the preferred
 size when it fits in `--compute-slots` (needs `--cluster`; must be a
@@ -470,6 +474,7 @@ expertvm sim      trace.jsonl --capacity 2 --seq-streams --compute-slots 2 --coo
 expertvm sim      trace.jsonl --capacity 2 --compute-slots 2 --pdl
 expertvm sim      trace.jsonl --capacity 2 --l2-persist
 expertvm sim      trace.jsonl --capacity 2 --l2-reset
+expertvm sim      trace.jsonl --capacity 2 --l2-fetch 32
 expertvm sim      trace.jsonl --capacity 2 --func-shared-mem eight
 expertvm sim      trace.jsonl --capacity 2 --device-shared-mem eight
 expertvm sim      trace.jsonl --capacity 2 --seq-streams --compute-slots 2 --cluster 2

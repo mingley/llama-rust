@@ -9,13 +9,13 @@ use crate::sim_replay::{
     advise_pool_access_if_pinned, alloc_launch_completion, alloc_programmatic_event,
     allow_non_portable_cluster_if, allow_optin_shared_if, apply_cluster_dim_must_be_set,
     apply_device_shared_mem, apply_device_sync_memops, apply_func_cluster_spread,
-    apply_func_max_shared, apply_func_shared_mem, apply_misses, apply_stream_mem_sync_domain,
-    apply_stream_sms, apply_stream_sync_policy, apply_touch, bind_shareable_mempools,
-    bump_null_for_attach, disable_pool_opportunistic_reuse, drop_remote, fetch_remote, fill_remote,
-    gemm_keys, host_callbacks, note_touch, occupancy_slots, pin_pageable_staging, reclaim_victim,
-    remote_hit, replay_from_sim, sim_profile, sync_work, trim_device_pools, trim_graph_pools,
-    validate_sim_cfg, GraphBank, LeafMem, PageHandle, RemoteFetch, RemotePage, ReplayCounters,
-    SimCfg, SimReplay, StreamPlan, TouchArgs,
+    apply_func_max_shared, apply_func_shared_mem, apply_l2_fetch, apply_misses,
+    apply_stream_mem_sync_domain, apply_stream_sms, apply_stream_sync_policy, apply_touch,
+    bind_shareable_mempools, bump_null_for_attach, disable_pool_opportunistic_reuse, drop_remote,
+    fetch_remote, fill_remote, gemm_keys, host_callbacks, note_touch, occupancy_slots,
+    pin_pageable_staging, reclaim_victim, remote_hit, replay_from_sim, sim_profile, sync_work,
+    trim_device_pools, trim_graph_pools, validate_sim_cfg, GraphBank, LeafMem, PageHandle,
+    RemoteFetch, RemotePage, ReplayCounters, SimCfg, SimReplay, StreamPlan, TouchArgs,
 };
 use gpu_sim::{DeviceId, HardwareProfile, Sim, StreamId};
 use std::collections::{BTreeMap, BTreeSet, VecDeque};
@@ -292,6 +292,7 @@ impl SchedRt {
         apply_func_max_shared(&mut sim, cfg.func_max_shared)?;
         apply_func_cluster_spread(&mut sim, cfg.func_cluster_spread)?;
         apply_cluster_dim_must_be_set(&mut sim, cfg.cluster_must_set)?;
+        apply_l2_fetch(&mut sim, cfg.l2_fetch)?;
         apply_func_shared_mem(&mut sim, cfg.func_shared_mem)?;
         apply_device_shared_mem(&mut sim, cfg.device_shared_mem)?;
         if cfg.shareable {
@@ -317,7 +318,7 @@ impl SchedRt {
         apply_stream_sms(&mut sim, plan, cfg.decode_sm_permille)?;
         apply_stream_sync_policy(&mut sim, plan, cfg.sync_policy)?;
         apply_stream_mem_sync_domain(&mut sim, plan, cfg.mem_sync_domain)?;
-        if cfg.l2_persist || cfg.l2_reset {
+        if cfg.l2_persist || cfg.l2_reset || cfg.l2_fetch != 0 {
             sim.enable_persisting_l2()?;
         }
         allow_non_portable_cluster_if(&mut sim, cfg.non_portable_cluster)?;
@@ -365,7 +366,7 @@ impl SchedRt {
             )
             .with_cooperative(cfg.cooperative)
             .with_pdl(cfg.pdl)
-            .with_l2_persist(cfg.l2_persist || cfg.l2_reset)
+            .with_l2_persist(cfg.l2_persist || cfg.l2_reset || cfg.l2_fetch != 0)
             .with_l2_reset(cfg.l2_reset)
             .with_cluster(cfg.cluster)
             .with_preferred_cluster(cfg.preferred_cluster)

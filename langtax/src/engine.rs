@@ -29,7 +29,7 @@
 //! `GpuStoreCfg` knobs (`host_func`, blocking streams, `sync_alloc`, mempool,
 //! `mempool_trim`, `mempool_no_reuse`, shareable POSIX-FD IPC, `vmm_page`, pageable H2D, `host_register`, `host_register_mapped`, `sync_memops`, `device_sync_memops`, `memcpy_batch`, `SetAccessedBy`, legacy NULL, stream priority,
 //! graph update/clone/set-params/enable, timing events, `event_blocking_sync`, `seq_streams`, `kv_sim`, `decode_priority`,
-//! `mem_sync_domain`, `compute_slots`, `decode_sm_permille`, `cooperative`, `pdl`, `l2_persist`, `l2_reset`, `cluster`, `shared_mem`, `func_shared_mem`, `device_shared_mem`, `portable_cluster`, `optin_shared`, `dynamic_shared`, `portable_shared`, `nvlink_util_centric`, `func_max_shared`, `func_cluster_spread`, `cluster_must_set`, `launch_completion`, `programmatic_event`, `stream_attach`, `managed_host`, `prefetch_host`) are the same mechanical
+//! `mem_sync_domain`, `compute_slots`, `decode_sm_permille`, `cooperative`, `pdl`, `l2_persist`, `l2_reset`, `l2_fetch`, `cluster`, `shared_mem`, `func_shared_mem`, `device_shared_mem`, `portable_cluster`, `optin_shared`, `dynamic_shared`, `portable_shared`, `nvlink_util_centric`, `func_max_shared`, `func_cluster_spread`, `cluster_must_set`, `launch_completion`, `programmatic_event`, `stream_attach`, `managed_host`, `prefetch_host`) are the same mechanical
 //! CUDA surface as `expertvm sim`. Default pinned async stays decode identity.
 //! `--seq-streams` maps each Engine sequence onto a copy stream
 //! (`sequence % copy_engines.max(2)`) so concurrent H2D can overlap; grouped
@@ -59,6 +59,8 @@
 //! `--l2-reset` is `cudaCtxResetPersistingL2Cache` after each GEMM (implies
 //! `--l2-persist`; live; cannot capture; a reused expert does not keep
 //! persisting L2).
+//! `--l2-fetch N` is `cudaDeviceSetLimit(cudaLimitMaxL2FetchGranularity)`
+//! (`32`/`64`/`128`; implies `--l2-persist`; access-policy windows must align).
 //! `--cluster N` is `cudaLaunchAttributeClusterDimension` on grouped expert
 //! GEMMs: the launch occupies `min(N, compute_slots)` Hyper-Q slots (Hopper
 //! portable max 8; legal with `--pdl` and `--cooperative`). `--preferred-cluster N`
@@ -4038,6 +4040,48 @@ mod tests {
             reset.1.wall_ns,
             persist.1.line(),
             reset.1.line()
+        );
+    }
+
+    #[test]
+    fn engine_gpu_l2_fetch_matches_persist_wall() {
+        let bytes = tiny_qwen3moe_2layer_gguf();
+        let profile = HardwareProfile::parse(
+            "gpus=1\nfp16_flops=1000000000000000\nlaunch_overhead_ns=1\nhbm_bps=1000000000\nl2_persist_hit_permille=1000\n",
+        )
+        .expect("memory-bound persist profile");
+        let persist = mixed_gpu_decode_itl_at(
+            bytes.clone(),
+            false,
+            None,
+            GpuStoreCfg {
+                l2_persist: true,
+                ..GpuStoreCfg::default()
+            },
+            profile.clone(),
+        );
+        let fetch = mixed_gpu_decode_itl_at(
+            bytes,
+            false,
+            None,
+            GpuStoreCfg {
+                l2_persist: true,
+                l2_fetch: 32,
+                ..GpuStoreCfg::default()
+            },
+            profile,
+        );
+        assert_eq!(persist.2, 4);
+        assert_eq!(fetch.2, 4);
+        assert_eq!(persist.4, fetch.4, "l2-fetch must keep greedy identity");
+        assert_eq!(
+            persist.1.wall_ns.saturating_add(1),
+            fetch.1.wall_ns,
+            "l2-fetch SetLimit is +1 ns; persist occupancy unchanged; persist={} fetch={} persist_line={} fetch_line={}",
+            persist.1.wall_ns,
+            fetch.1.wall_ns,
+            persist.1.line(),
+            fetch.1.line()
         );
     }
 

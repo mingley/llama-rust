@@ -140,7 +140,7 @@ warp scheduler, L1, …   ← do not model
 | `set_shared_mem_config` / `get_shared_mem_config`; Default kernels inherit function then device | `cudaDeviceSetSharedMemConfig` / `GetSharedMemConfig` |
 | `set_func_shared_mem_config` / `get_func_shared_mem_config`; per-device function config | `cudaFuncSetSharedMemConfig` / `GetSharedMemConfig` |
 | `set_device_flags` / `get_device_flags` schedule + MapHost / Lmem / SyncMemops; Auto streams inherit the tax | `cudaSetDeviceFlags` / `GetDeviceFlags` |
-| access-policy windows align to `cudaLimitMaxL2FetchGranularity` (default 128) | exact |
+| access-policy windows align to `cudaLimitMaxL2FetchGranularity` (default 128; `expertvm sim --l2-fetch N` sets 32/64/128) | exact |
 | `malloc_pitch` charges `pitch * height`; pitch is `align_up(width, 512)` | `cudaMallocPitch` |
 | `MemcpyOp` height/pitches bill `width * height` (not pitch padding) | `cudaMemcpy2DAsync` |
 | `MemsetOp` height/pitch bill `width * height` (not pitch padding) | `cudaMemset2DAsync` |
@@ -907,7 +907,8 @@ after `set_persisting_l2_cache_size` (CUDA default is 0).
 `kernel` inherits it. `expertvm sim --l2-persist`
 enables the persist limit and attaches a window to expert GEMMs.
 `--l2-reset` is `cudaCtxResetPersistingL2Cache` after each GEMM (implies
-`--l2-persist`; live; cannot capture).
+`--l2-persist`; live; cannot capture). `--l2-fetch N` is
+`cudaLimitMaxL2FetchGranularity` (`32`/`64`/`128`; implies `--l2-persist`).
 `kernel_with` also accepts `cudaLaunchAttributeMemSyncDomain` /
 `MemSyncDomainMap`: a completing kernel waits `same_domain_fence_permille` of
 leftover same-physical-domain traffic (default tax 0). Remote (and allreduce)

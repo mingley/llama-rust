@@ -475,7 +475,8 @@
 //! `GetLimit`. [`DeviceLimit::PersistingL2CacheSize`] wraps
 //! [`set_persisting_l2_cache_size`](Sim::set_persisting_l2_cache_size).
 //! [`DeviceLimit::MaxL2FetchGranularity`] aligns access-policy windows (CUDA
-//! default 128 on SM 8.0+). [`set_shared_mem_config`](Sim::set_shared_mem_config) /
+//! default 128 on SM 8.0+). `expertvm sim --l2-fetch N` sets 32 / 64 / 128
+//! (implies persist). [`set_shared_mem_config`](Sim::set_shared_mem_config) /
 //! [`get_shared_mem_config`](Sim::get_shared_mem_config) are
 //! `cudaDeviceSetSharedMemConfig` / `GetSharedMemConfig` (Default kernels
 //! inherit the function config, then this; unset is unscaled).

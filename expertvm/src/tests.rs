@@ -10544,6 +10544,164 @@ fn sim_replay_l2_reset_keeps_hits() {
 }
 
 #[test]
+fn sim_replay_l2_fetch_keeps_hits() {
+    let t = cycling_trace();
+    let profile = HardwareProfile::example_h100_sxm();
+    let off = SimCfg {
+        l2_persist: true,
+        ..SimCfg::lru(2, 4096, 0)
+    };
+    let on = SimCfg {
+        l2_persist: true,
+        l2_fetch: 32,
+        ..SimCfg::lru(2, 4096, 0)
+    };
+    let a = sim_replay_cfg(&t, profile.clone(), off).expect("persist");
+    let b = sim_replay_cfg(&t, profile, on).expect("l2-fetch");
+    assert_eq!(a.hits, b.hits);
+    assert_eq!(a.misses, b.misses);
+    assert_eq!(
+        a.sim_ns.saturating_add(1),
+        b.sim_ns,
+        "l2-fetch SetLimit is +1 ns; persist={} fetch={}",
+        a.sim_ns,
+        b.sim_ns
+    );
+}
+
+#[test]
+fn sim_replay_l2_fetch_allows_unaligned_persist() {
+    let t = Trace {
+        events: vec![ev(0, 0, &[0])],
+    };
+    let profile = HardwareProfile::example_h100_sxm();
+    let persist = SimCfg {
+        l2_persist: true,
+        ..SimCfg::lru(2, 64, 0)
+    };
+    match sim_replay_cfg(&t, profile.clone(), persist) {
+        Ok(_) => panic!("64-byte persist must fail default L2 fetch 128"),
+        Err(err) => assert!(err.to_string().contains("L2 fetch"), "{err}"),
+    }
+    let fetch = SimCfg {
+        l2_persist: true,
+        l2_fetch: 32,
+        ..SimCfg::lru(2, 64, 0)
+    };
+    let row = sim_replay_cfg(&t, profile, fetch).expect("aligned");
+    assert_eq!(row.misses, 1);
+}
+
+#[test]
+fn simulated_gpu_store_l2_fetch_sets_limit() {
+    let t = cycling_trace();
+    let p = HardwareProfile::example_h100_sxm();
+    let run = |l2_fetch: u64| {
+        let inner = DirectStore::from_trace(&t);
+        let mut gpu = SimulatedGpuStore::with_cfg(
+            inner,
+            2,
+            p.clone(),
+            4096,
+            GpuFill::Pinned,
+            GpuStoreCfg {
+                l2_persist: true,
+                l2_fetch,
+                ..GpuStoreCfg::default()
+            },
+        )
+        .expect("gpu");
+        assert_eq!(gpu.l2_fetch(), if l2_fetch == 0 { 128 } else { l2_fetch });
+        for key in t.keys() {
+            let _p = gpu.acquire(key).expect("acquire");
+            gpu.release(key);
+        }
+        let metrics = gpu.metrics();
+        let _s = gpu.score().expect("score");
+        (metrics.hits, metrics.misses)
+    };
+    let inner = DirectStore::from_trace(&t);
+    let mut identity = SimulatedGpuStore::new(inner, 2, p.clone(), 4096).expect("id");
+    let k0 = ExpertKey::new(0, 0);
+    let _a = identity.acquire(k0).expect("id acq");
+    assert_eq!(identity.l2_fetch(), 128);
+    let _s = identity.score().expect("id score");
+    let off = run(0);
+    let on = run(32);
+    assert_eq!(off.0, on.0);
+    assert_eq!(off.1, on.1);
+}
+
+#[test]
+fn simulated_gpu_store_l2_fetch_allows_unaligned_persist() {
+    let t = Trace {
+        events: vec![ev(0, 0, &[0])],
+    };
+    let p = HardwareProfile::example_h100_sxm();
+    let k = ExpertKey::new(0, 0);
+    let inner = DirectStore::from_trace(&t);
+    let mut gpu = SimulatedGpuStore::with_cfg(
+        inner,
+        1,
+        p.clone(),
+        64,
+        GpuFill::Pinned,
+        GpuStoreCfg {
+            l2_persist: true,
+            ..GpuStoreCfg::default()
+        },
+    )
+    .expect("gpu");
+    match gpu.acquire(k) {
+        Ok(_) => panic!("64-byte persist must fail default L2 fetch 128"),
+        Err(err) => assert!(err.to_string().contains("L2 fetch"), "{err}"),
+    }
+    let inner = DirectStore::from_trace(&t);
+    let mut gpu = SimulatedGpuStore::with_cfg(
+        inner,
+        1,
+        p,
+        64,
+        GpuFill::Pinned,
+        GpuStoreCfg {
+            l2_persist: true,
+            l2_fetch: 32,
+            ..GpuStoreCfg::default()
+        },
+    )
+    .expect("gpu");
+    assert_eq!(gpu.l2_fetch(), 32);
+    let _p = gpu.acquire(k).expect("aligned");
+    gpu.release(k);
+    let _s = gpu.score().expect("score");
+}
+
+#[test]
+fn simulated_gpu_store_l2_fetch_refuses_invalid() {
+    let t = Trace {
+        events: vec![ev(0, 0, &[0])],
+    };
+    let profile = HardwareProfile::example_h100_sxm();
+    match SimulatedGpuStore::with_cfg(
+        DirectStore::from_trace(&t),
+        1,
+        profile,
+        4096,
+        GpuFill::Pinned,
+        GpuStoreCfg {
+            l2_fetch: 96,
+            ..GpuStoreCfg::default()
+        },
+    ) {
+        Ok(_) => panic!("l2-fetch 96 must fail"),
+        Err(err) => assert!(
+            err.to_string().contains("l2-fetch must be 32, 64, or 128"),
+            "{err}"
+        ),
+    }
+}
+
+#[test]
 fn simulated_gpu_store_l2_reset_colds_reused_expert() {
     let t = Trace {
         events: vec![ev(0, 0, &[0]), ev(1, 0, &[0])],

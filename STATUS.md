@@ -5,6 +5,15 @@ Visible five-turn extract: [docs/chatgpt-share-6a920fe1.md](docs/chatgpt-share-6
 Complete share-API extract: [docs/chatgpt-share-6a920fe1/](docs/chatgpt-share-6a920fe1/).
 Work lands on `main`. No PRs.
 
+## Shipped 2026-08-31 — `cudaLimitMaxL2FetchGranularity`
+
+`GpuStoreCfg::l2_fetch` / `SimCfg::l2_fetch` call
+`cudaDeviceSetLimit(cudaLimitMaxL2FetchGranularity)` after `Sim::new`.
+Implies `--l2-persist`. `32` / `64` / `128` only. Access-policy windows must
+align (64-byte persist is Invalid until `--l2-fetch 32`). Hits/misses stay
+the same for 4096-byte experts. `--l2-fetch` is unset by default (decode
+identity: 128). `gpu-profile capture` is still refused.
+
 ## Shipped 2026-08-31 — `cudaFuncAttributeClusterDimMustBeSet`
 
 `GpuStoreCfg::cluster_must_set` / `SimCfg::cluster_must_set` call

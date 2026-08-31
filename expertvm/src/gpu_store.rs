@@ -12,9 +12,9 @@ use crate::sim_replay::{
     add_leaf_gemm, alloc_launch_completion, alloc_programmatic_event, alloc_resident_copy_mailbox,
     allow_non_portable_cluster_if, allow_optin_shared_if, apply_cluster_dim_must_be_set,
     apply_device_shared_mem, apply_device_sync_memops, apply_exec_mem_sync_domain,
-    apply_func_cluster_spread, apply_func_max_shared, apply_func_shared_mem,
+    apply_func_cluster_spread, apply_func_max_shared, apply_func_shared_mem, apply_l2_fetch,
     apply_stream_mem_sync_domain, apply_stream_sync_policy, bind_shareable_mempools,
-    check_cluster_must_set, check_cluster_preferred, check_device_graph_flags,
+    check_cluster_must_set, check_cluster_preferred, check_device_graph_flags, check_l2_fetch,
     ensure_single_attach, free_copy_mailbox, free_mapped_host, instantiate_exec, kernel_leaf,
     mark_sync_memops, replay_exec, replay_streams, reset_persisting_l2_if, retarget_parked_kernel,
     signal_copy_ready, stream_of, upload_after_set_params, wait_copy_ready, GemmFlags, LeafMem,
@@ -22,10 +22,10 @@ use crate::sim_replay::{
 };
 use crate::store::{CachedStore, DirectStore, ExpertParts, ExpertPhase, ExpertStore, StoreMetrics};
 use gpu_sim::{
-    AllocId, ClusterSchedulingPolicy, DeviceFlags, DeviceId, EventId, GraphId, GraphMemAttr,
-    HardwareProfile, KernelBuf, KernelKind, LaunchCompletionEvent, MemAdvise, MemAttach,
-    MemHandleId, MemcpyAttributes, MemcpyOp, Place, PointerAttr, PoolId, ProgrammaticEvent, Score,
-    SharedMemCarveout, SharedMemoryMode, Sim, StreamId,
+    AllocId, ClusterSchedulingPolicy, DeviceFlags, DeviceId, DeviceLimit, EventId, GraphId,
+    GraphMemAttr, HardwareProfile, KernelBuf, KernelKind, LaunchCompletionEvent, MemAdvise,
+    MemAttach, MemHandleId, MemcpyAttributes, MemcpyOp, Place, PointerAttr, PoolId,
+    ProgrammaticEvent, Score, SharedMemCarveout, SharedMemoryMode, Sim, StreamId,
 };
 use std::collections::{BTreeMap, BTreeSet};
 
@@ -261,6 +261,12 @@ pub struct GpuStoreCfg {
     /// a reused expert does not keep persisting L2 lines. Decode identity stays
     /// no reset.
     pub l2_reset: bool,
+    /// `cudaDeviceSetLimit(cudaLimitMaxL2FetchGranularity)`. `0` is unset (128).
+    ///
+    /// Access-policy windows must align to this size. Implies
+    /// [`Self::l2_persist`]. `32` / `64` / `128` only. Decode identity stays
+    /// 128.
+    pub l2_fetch: u64,
     /// Hopper cluster X size (`cudaLaunchAttributeClusterDimension`). `0` is off.
     ///
     /// Occupies `min(N, compute_slots)` Hyper-Q slots. Decode identity stays
@@ -728,6 +734,8 @@ impl SimulatedGpuStore {
     /// over expert pages (persisting L2 after the first fill).
     /// [`GpuStoreCfg::l2_reset`] is `cudaCtxResetPersistingL2Cache` after each
     /// resident GEMM (implies persist; live; cannot capture).
+    /// [`GpuStoreCfg::l2_fetch`] is `cudaLimitMaxL2FetchGranularity` (implies
+    /// persist; windows must align; `32`/`64`/`128`).
     /// [`GpuStoreCfg::cluster`] / [`GpuStoreCfg::preferred_cluster`] are Hopper
     /// thread-block cluster dims.
     /// [`GpuStoreCfg::cluster_spread`] is launch-attribute Spread.
@@ -855,6 +863,7 @@ impl SimulatedGpuStore {
         }
         check_cluster_preferred(cfg.cluster, cfg.preferred_cluster)?;
         check_cluster_must_set(cfg.cluster, cfg.cluster_must_set)?;
+        check_l2_fetch(cfg.l2_fetch)?;
         if cfg.shareable && (cfg.sync_alloc || fill != GpuFill::Pinned) {
             return Err(Error::Store("shareable needs cudaMallocAsync"));
         }
@@ -923,9 +932,10 @@ impl SimulatedGpuStore {
         apply_func_max_shared(&mut sim, cfg.func_max_shared)?;
         apply_func_cluster_spread(&mut sim, cfg.func_cluster_spread)?;
         apply_cluster_dim_must_be_set(&mut sim, cfg.cluster_must_set)?;
+        apply_l2_fetch(&mut sim, cfg.l2_fetch)?;
         apply_func_shared_mem(&mut sim, cfg.func_shared_mem)?;
         apply_device_shared_mem(&mut sim, cfg.device_shared_mem)?;
-        if cfg.l2_persist || cfg.l2_reset {
+        if cfg.l2_persist || cfg.l2_reset || cfg.l2_fetch != 0 {
             sim.enable_persisting_l2()?;
         }
         allow_non_portable_cluster_if(&mut sim, cfg.non_portable_cluster)?;
@@ -995,7 +1005,7 @@ impl SimulatedGpuStore {
             decode_priority: cfg.decode_priority,
             cooperative: cfg.cooperative,
             pdl: cfg.pdl,
-            l2_persist: cfg.l2_persist || cfg.l2_reset,
+            l2_persist: cfg.l2_persist || cfg.l2_reset || cfg.l2_fetch != 0,
             l2_reset: cfg.l2_reset,
             cluster: cfg.cluster,
             preferred_cluster: cfg.preferred_cluster,
@@ -1152,6 +1162,14 @@ impl SimulatedGpuStore {
             .get_func_cluster_policy(self.device)
             .map(|p| p == ClusterSchedulingPolicy::Spread)
             .unwrap_or(false)
+    }
+
+    /// Current `cudaLimitMaxL2FetchGranularity` (`128` when unset).
+    #[must_use]
+    pub fn l2_fetch(&self) -> u64 {
+        self.sim
+            .get_limit(self.device, DeviceLimit::MaxL2FetchGranularity)
+            .unwrap_or(128)
     }
 
     /// Whether this store set `cudaFuncAttributeClusterDimMustBeSet`.

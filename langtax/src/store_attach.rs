@@ -89,6 +89,10 @@ pub(crate) struct GpuCli {
     ///
     /// Implies [`Self::l2_persist`].
     pub l2_reset: bool,
+    /// `cudaLimitMaxL2FetchGranularity` (`GpuStoreCfg::l2_fetch`). `0` is unset.
+    ///
+    /// Implies [`Self::l2_persist`]. `32` / `64` / `128` only.
+    pub l2_fetch: u64,
     /// Hopper cluster X size (`GpuStoreCfg::cluster`). `0` is off.
     pub cluster: u8,
     /// True when `--cluster` appeared.
@@ -290,9 +294,9 @@ impl GpuCli {
         }
     }
 
-    /// `--l2-reset` implies [`Self::l2_persist`]. Call after sim-flag checks.
+    /// `--l2-reset` / `--l2-fetch` imply [`Self::l2_persist`]. Call after sim-flag checks.
     pub(crate) fn imply_l2_persist(&mut self) {
-        if self.l2_reset {
+        if self.l2_reset || self.l2_fetch != 0 {
             self.l2_persist = true;
         }
     }
@@ -351,6 +355,15 @@ impl GpuCli {
         }
         self.cluster = n;
         self.cluster_set = true;
+        Ok(())
+    }
+
+    /// `cudaLimitMaxL2FetchGranularity` (`--l2-fetch`). `32` / `64` / `128` only.
+    pub(crate) fn set_l2_fetch(&mut self, n: u64) -> Result<(), String> {
+        if n != 32 && n != 64 && n != 128 {
+            return Err("l2-fetch must be 32, 64, or 128".into());
+        }
+        self.l2_fetch = n;
         Ok(())
     }
 
@@ -499,6 +512,7 @@ impl GpuCli {
             (self.pdl, "--pdl"),
             (self.l2_persist, "--l2-persist"),
             (self.l2_reset, "--l2-reset"),
+            (self.l2_fetch != 0, "--l2-fetch"),
             (self.multicast, "--multicast"),
             (self.vmm_page_set, "--vmm-page"),
             (self.compute_slots_set, "--compute-slots"),
@@ -596,6 +610,7 @@ enum PlanSlot {
     PortableShared,
     KernelPriority,
     DecodeSms,
+    L2Fetch,
     Prefetch,
     PlanWindow,
     PlanThreshold,
@@ -619,6 +634,7 @@ impl PlanSlot {
             Self::PortableShared => "portable-shared",
             Self::KernelPriority => "kernel-priority",
             Self::DecodeSms => "decode-sms",
+            Self::L2Fetch => "l2-fetch",
             Self::Prefetch => "prefetch",
             Self::PlanWindow => "plan-window",
             Self::PlanThreshold => "plan-threshold",
@@ -636,6 +652,7 @@ impl PlannerCli {
             "--kv-bytes" => Dash::Need(PlanSlot::KvBytes),
             "--compute-slots" => Dash::Need(PlanSlot::ComputeSlots),
             "--cluster" => Dash::Need(PlanSlot::Cluster),
+            "--l2-fetch" => Dash::Need(PlanSlot::L2Fetch),
             "--preferred-cluster" => Dash::Need(PlanSlot::PreferredCluster),
             "--sync-policy" => Dash::Need(PlanSlot::SyncPolicy),
             "--mem-sync-domain" => Dash::Need(PlanSlot::MemSyncDomain),
@@ -679,6 +696,12 @@ impl PlannerCli {
                     .parse::<u8>()
                     .map_err(|_| format!("invalid cluster {raw:?}"))?;
                 self.gpu.set_cluster(n)?;
+            }
+            PlanSlot::L2Fetch => {
+                let n = raw
+                    .parse::<u64>()
+                    .map_err(|_| format!("invalid l2-fetch {raw:?}"))?;
+                self.gpu.set_l2_fetch(n)?;
             }
             PlanSlot::PreferredCluster => {
                 let n = raw
@@ -810,8 +833,9 @@ pub(crate) fn gpu_knobs(gpu: GpuCli) -> GpuStoreCfg {
         decode_priority: gpu.decode_priority,
         cooperative: gpu.cooperative,
         pdl: gpu.pdl,
-        l2_persist: gpu.l2_persist || gpu.l2_reset,
+        l2_persist: gpu.l2_persist || gpu.l2_reset || gpu.l2_fetch != 0,
         l2_reset: gpu.l2_reset,
+        l2_fetch: gpu.l2_fetch,
         cluster: gpu.cluster,
         preferred_cluster: gpu.preferred_cluster,
         cluster_spread: gpu.cluster_spread,

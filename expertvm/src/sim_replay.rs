@@ -172,6 +172,13 @@ pub(crate) fn check_cluster_must_set(cluster: u8, must: bool) -> Result<(), Erro
     Ok(())
 }
 
+pub(crate) fn check_l2_fetch(n: u64) -> Result<(), Error> {
+    if n == 0 || n == 32 || n == 64 || n == 128 {
+        return Ok(());
+    }
+    Err(Error::Store("l2-fetch must be 32, 64, or 128"))
+}
+
 /// Device-launch graphs refuse mem nodes and `cudaGraphExecUpdate`.
 /// Device-updatable nodes also cannot `cudaGraphExecUpdate`.
 pub(crate) fn check_device_graph_flags(
@@ -316,11 +323,12 @@ use crate::planner::{
 use crate::policy::Policy;
 use crate::replay::{Touch, Walker};
 use gpu_sim::{
-    AccessPolicyWindow, AllocId, ClusterSchedulingPolicy, DType, DeviceFlags, DeviceId, EventId,
-    GraphId, GraphInstantiateFlags, HardwareProfile, KernelAttrs, KernelBuf, KernelKind,
-    LaunchCompletionEvent, MemAttach, MemPoolAttr, MemcpyAttributes, MemcpyOp, Place, PointerAttr,
-    PoolId, PortableClusterMode, PortableSharedMode, ProgrammaticEvent, ProgrammaticLaunch, Score,
-    SharedMemCarveout, SharedMemoryMode, Sim, StreamId, SynchronizationPolicy, WaitValueCmp,
+    AccessPolicyWindow, AllocId, ClusterSchedulingPolicy, DType, DeviceFlags, DeviceId,
+    DeviceLimit, EventId, GraphId, GraphInstantiateFlags, HardwareProfile, KernelAttrs, KernelBuf,
+    KernelKind, LaunchCompletionEvent, MemAttach, MemPoolAttr, MemcpyAttributes, MemcpyOp, Place,
+    PointerAttr, PoolId, PortableClusterMode, PortableSharedMode, ProgrammaticEvent,
+    ProgrammaticLaunch, Score, SharedMemCarveout, SharedMemoryMode, Sim, StreamId,
+    SynchronizationPolicy, WaitValueCmp,
 };
 use std::collections::{BTreeMap, BTreeSet};
 use std::fmt::Write;
@@ -696,6 +704,12 @@ pub struct SimCfg {
     /// a reused expert does not keep persisting L2 lines. Decode identity stays
     /// no reset. [`crate::GpuStoreCfg::l2_reset`] is the store path.
     pub l2_reset: bool,
+    /// `cudaDeviceSetLimit(cudaLimitMaxL2FetchGranularity)`. `0` is unset (128).
+    ///
+    /// Access-policy windows must align to this size. Implies
+    /// [`Self::l2_persist`]. `32` / `64` / `128` only. Decode identity stays
+    /// 128. [`crate::GpuStoreCfg::l2_fetch`] is the store path.
+    pub l2_fetch: u64,
     /// Hopper cluster X size (`cudaLaunchAttributeClusterDimension`). `0` is off.
     ///
     /// Occupies `min(N, compute_slots)` Hyper-Q slots so leftover kernels
@@ -970,6 +984,7 @@ impl SimCfg {
             pdl: false,
             l2_persist: false,
             l2_reset: false,
+            l2_fetch: 0,
             cluster: 0,
             preferred_cluster: 0,
             cluster_spread: false,
@@ -1009,6 +1024,7 @@ impl SimCfg {
 pub(crate) fn validate_sim_cfg(cfg: &SimCfg, profile: &HardwareProfile) -> Result<(), Error> {
     check_cluster_preferred(cfg.cluster, cfg.preferred_cluster)?;
     check_cluster_must_set(cfg.cluster, cfg.cluster_must_set)?;
+    check_l2_fetch(cfg.l2_fetch)?;
     if cfg.graph_update && cfg.graph_set_params {
         return Err(Error::Store("choose one of graph-update, graph-set-params"));
     }
@@ -1140,6 +1156,7 @@ pub fn sim_replay_cfg(
     apply_func_max_shared(&mut sim, cfg.func_max_shared)?;
     apply_func_cluster_spread(&mut sim, cfg.func_cluster_spread)?;
     apply_cluster_dim_must_be_set(&mut sim, cfg.cluster_must_set)?;
+    apply_l2_fetch(&mut sim, cfg.l2_fetch)?;
     apply_func_shared_mem(&mut sim, cfg.func_shared_mem)?;
     apply_device_shared_mem(&mut sim, cfg.device_shared_mem)?;
     if cfg.shareable {
@@ -1172,7 +1189,7 @@ pub fn sim_replay_cfg(
     apply_stream_sms(&mut sim, plan, cfg.decode_sm_permille)?;
     apply_stream_sync_policy(&mut sim, plan, cfg.sync_policy)?;
     apply_stream_mem_sync_domain(&mut sim, plan, cfg.mem_sync_domain)?;
-    if cfg.l2_persist || cfg.l2_reset {
+    if cfg.l2_persist || cfg.l2_reset || cfg.l2_fetch != 0 {
         sim.enable_persisting_l2()?;
     }
     allow_non_portable_cluster_if(&mut sim, cfg.non_portable_cluster)?;
@@ -1212,7 +1229,7 @@ pub fn sim_replay_cfg(
     let mut graphs = GraphBank::new(cfg.graph_update, cfg.graph_clone, cfg.graph_build, leaf)
         .with_cooperative(cfg.cooperative)
         .with_pdl(cfg.pdl)
-        .with_l2_persist(cfg.l2_persist || cfg.l2_reset)
+        .with_l2_persist(cfg.l2_persist || cfg.l2_reset || cfg.l2_fetch != 0)
         .with_l2_reset(cfg.l2_reset)
         .with_cluster(cfg.cluster)
         .with_preferred_cluster(cfg.preferred_cluster)
@@ -1566,6 +1583,22 @@ pub(crate) fn apply_cluster_dim_must_be_set(sim: &mut Sim, on: bool) -> Result<(
     let n = u16::try_from(sim.profile().n_gpus()).unwrap_or(1);
     for g in 0..n {
         sim.set_cluster_dim_must_be_set(DeviceId(g), true)?;
+    }
+    Ok(())
+}
+
+/// `cudaDeviceSetLimit(cudaLimitMaxL2FetchGranularity)`.
+///
+/// Call after [`Sim::new`]. `0` is identity (CUDA default 128). Capture cannot
+/// include it; construction is live. Access-policy windows must align.
+pub(crate) fn apply_l2_fetch(sim: &mut Sim, n: u64) -> Result<(), Error> {
+    if n == 0 {
+        return Ok(());
+    }
+    check_l2_fetch(n)?;
+    let gpus = u16::try_from(sim.profile().n_gpus()).unwrap_or(1);
+    for g in 0..gpus {
+        sim.set_limit(DeviceId(g), DeviceLimit::MaxL2FetchGranularity, n)?;
     }
     Ok(())
 }
