@@ -10053,8 +10053,15 @@ fn sim_replay_func_cluster_spread_matches_launch_spread() {
     let c = sim_replay_cfg(&t, profile, both).expect("both");
     assert_eq!(a.hits, b.hits);
     assert_eq!(a.misses, b.misses);
-    assert_eq!(a.sim_ns, b.sim_ns);
-    assert_eq!(a.sim_ns, c.sim_ns);
+    assert_eq!(b.sim_ns, c.sim_ns);
+    assert_eq!(
+        a.sim_ns.saturating_add(1),
+        b.sim_ns,
+        "func SetAttribute is +1 ns; occupancy matches launch Spread; launch={} func={} both={}",
+        a.sim_ns,
+        b.sim_ns,
+        c.sim_ns
+    );
 }
 
 #[test]
