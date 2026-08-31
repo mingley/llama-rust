@@ -720,7 +720,7 @@ Agent loop: modify expertvm → `cargo test` (semantics) → simulator
   `SimulatedGpuStore::with_cfg` opts into `--sync-alloc`, `--mempool`,
   `--shareable`,
   `--host-func`, blocking compute, `--pageable`, `--accessed-by`,
-  `--legacy-null`, `--stream-priority`, `--graph-update`, `--graph-set-params`, `--graph-clone`, `--graph-build`, `--graph-build-deps`, `--graph-host`, `--graph-piecewise`, `--graph-capture-deps`, `--graph-mem`, `--graph-memset`, `--graph-auto-free`, `--timing-events`, `--event-blocking-sync`, `--cooperative`, `--pdl`, `--l2-persist`, `--cluster`, `--preferred-cluster`, `--cluster-spread`, `--max-shared`, `--non-portable-cluster`, `--sync-policy`, `--device-sync-policy`, `--shared-mem`, and `--multicast`. `--mempool` sets the default
+  `--legacy-null`, `--stream-priority`, `--graph-update`, `--graph-set-params`, `--graph-clone`, `--graph-build`, `--graph-build-deps`, `--graph-host`, `--graph-piecewise`, `--graph-capture-deps`, `--graph-mem`, `--graph-memset`, `--graph-memcpy`, `--graph-auto-free`, `--timing-events`, `--event-blocking-sync`, `--cooperative`, `--pdl`, `--l2-persist`, `--cluster`, `--preferred-cluster`, `--cluster-spread`, `--max-shared`, `--non-portable-cluster`, `--sync-policy`, `--device-sync-policy`, `--shared-mem`, and `--multicast`. `--mempool` sets the default
   pool release threshold to `u64::MAX` (vLLM-style hold); reuse of a
   cached page pays `pool_reuse_ns`. `--shareable` is POSIX-FD mempool IPC
   (implies `--mempool`; illegal with `--sync-alloc` / mapped / managed / vmm). `--mapped` is `cudaHostAllocMapped`
@@ -761,6 +761,9 @@ Agent loop: modify expertvm → `cargo test` (semantics) → simulator
   is in-graph scratch (`cudaGraphAddMemAllocNode` / capture `cudaMallocAsync`);
   `--graph-memset` is `cudaGraphAddMemsetNode` / capture `cudaMemsetAsync` of
   that scratch BETWEEN alloc and GEMM (needs `--graph-mem`; extra HBM-write tax).
+  `--graph-memcpy` is `cudaGraphAddMemcpyNode` / capture `cudaMemcpyAsync` H2D of
+  that scratch BETWEEN alloc and GEMM (needs `--graph-mem`; copy-engine PCIe tax;
+  legal with `--graph-memset`).
   `--graph-update` is skipped because CUDA cannot update mem nodes.
   `--graph-auto-free` is AutoFreeOnLaunch scratch without a matching free
   (illegal with `--graph-mem`).
@@ -1003,7 +1006,7 @@ model, do not celebrate the sim.
     Dual score still has no `$/M tokens`.
 48. [x] Engine SimulatedGpuStore CUDA graphs: default `--expert-sim` captures
     per-page GEMM graphs (`Engine::graph_launches`). `--graph-update` /
-    `--graph-clone` / `--graph-build` / `--graph-build-deps` / `--graph-host` / `--graph-piecewise` / `--graph-capture-deps` / `--graph-mem` / `--graph-memset` / `--graph-auto-free` / `--timing-events` / `--event-blocking-sync` / `--cuda-graphs` match
+    `--graph-clone` / `--graph-build` / `--graph-build-deps` / `--graph-host` / `--graph-piecewise` / `--graph-capture-deps` / `--graph-mem` / `--graph-memset` / `--graph-memcpy` / `--graph-auto-free` / `--timing-events` / `--event-blocking-sync` / `--cuda-graphs` match
     `GpuStoreCfg` / `expertvm sim`. Tight slots park+update. Identity stays.
     Dual score still has no `$/M tokens`.
 49. [x] Engine `itl_slo_ns`: count later-token gaps over a virtual-ns budget
@@ -1226,7 +1229,9 @@ model, do not celebrate the sim.
     `graph_add_host_func` BETWEEN those children (`host_func_ns`). `update_graph` treats
     edges as topology. Leaf `--graph-mem` / `--graph-auto-free` chains
     alloc→kernel→free. `--graph-memset` (PLAN 361) inserts memset BETWEEN
-    alloc and kernel (`alloc→memset→kernel→free`). Decode identity stays stream capture. Dual score still
+    alloc and kernel (`alloc→memset→kernel→free`). `--graph-memcpy` (PLAN 362)
+    inserts H2D memcpy BETWEEN alloc and kernel (`alloc→memcpy→kernel→free`;
+    copy-engine PCIe). Decode identity stays stream capture. Dual score still
     has no `$/M tokens`.
 
 80. [x] Hopper `cuMulticastCreate` NVLS replica fanout: `Sim::multicast_create` /
@@ -3882,7 +3887,24 @@ model, do not celebrate the sim.
     GEMMs memset too (not walker-only). `gpu-profile capture` is still
     refused. Dual score still has no `$/M tokens`.
 
-362. [ ] Next numbered PLAN item after 361 is the next `gpu-sim` / Engine /
+362. [x] `cudaGraphAddMemcpyNode` / `cudaMemcpyAsync` H2D of graph-mem scratch:
+    [`GpuStoreCfg::graph_memcpy`](expertvm/src/gpu_store.rs) /
+    [`SimCfg::graph_memcpy`](expertvm/src/sim_replay.rs) on `--graph-mem`
+    leaf GEMM graphs. A memcpy sits BETWEEN scratch alloc and the GEMM
+    (`alloc → memcpy → kernel → free`, or `alloc → memset → memcpy →
+    kernel → free` with `--graph-memset`) so launch bills copy-engine
+    PCIe. Needs `--graph-mem`. Does not imply graph-mem or `--graph-memset`.
+    Hits stay the same. Distinct from `--graph-mem` (scratch alloc+free vs
+    extra H2D of that scratch) and `--graph-memset` (compute HBM write vs
+    copy-engine). Does not work with `--graph-auto-free` alone. Legal with
+    `--pdl` and `--cooperative`. `--graph-memcpy` on `expertvm sim` /
+    `schedule` / `store` and `gguf_gemv engine --expert-sim`. infer-bench
+    has no `--graph-mem`, so it does not get `--graph-memcpy`. Decode
+    identity stays kernel-only graphs (no scratch, no memcpy). Store leaf
+    GEMMs memcpy too (not walker-only). `gpu-profile capture` is still
+    refused. Dual score still has no `$/M tokens`.
+
+363. [ ] Next numbered PLAN item after 362 is the next `gpu-sim` / Engine /
     serve / expertvm mechanical API that is still missing, or the next official
     decode family (`gemma4`). Prefer remaining CUDA-shaped twins over more
     OpenAI HTTP veneer. Do not invent
@@ -3919,7 +3941,10 @@ model, do not celebrate the sim.
     `--memcpy-peer` host-sync pin_hot (alias of D2D; wall matches after
     `score()`). Do not invent `graph_add_empty` as a decode-path flag
     (1 ns join/fork). Do not invent a second `cudaGraphAddMemsetNode` of
-    graph-mem scratch flag. Do not invent event record/wait BETWEEN combo
+    graph-mem scratch flag. Do not invent a second `cudaGraphAddMemcpyNode`
+    of graph-mem scratch flag. Do not invent D2D memcpy between two
+    different AllocIds (`MemcpyOp` names one alloc; PLAN 362 is H2D into
+    scratch). Do not invent event record/wait BETWEEN combo
     children (1 ns). Do not invent graph wait/write_value BETWEEN combo
     children (1 ns Solo). Do not invent `graph_add_while` / `graph_add_switch`
     default-1 wrap (same wall as graph-build). Do not

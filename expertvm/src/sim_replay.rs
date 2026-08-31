@@ -1,6 +1,6 @@
 //! Replay a trace through [`gpu_sim`] with pinned H2D fills on miss.
 
-/// In-graph scratch workspace for [`SimCfg::graph_mem`] / [`SimCfg::graph_memset`] / [`SimCfg::graph_auto_free`].
+/// In-graph scratch workspace for [`SimCfg::graph_mem`] / [`SimCfg::graph_memset`] / [`SimCfg::graph_memcpy`] / [`SimCfg::graph_auto_free`].
 pub(crate) const GRAPH_SCRATCH_BYTES: u64 = 4096;
 
 /// How a leaf GEMM graph owns its scratch workspace.
@@ -22,6 +22,30 @@ impl LeafMem {
             (true, false) => Ok(Self::Free),
             (false, true) => Ok(Self::AutoFree),
             (false, false) => Ok(Self::None),
+        }
+    }
+}
+
+/// Scratch fill between alloc and GEMM (`--graph-memset` / `--graph-memcpy`).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) struct LeafWork {
+    pub mem: LeafMem,
+    pub memset: bool,
+    pub memcpy: bool,
+}
+
+impl LeafWork {
+    pub(crate) const NONE: Self = Self {
+        mem: LeafMem::None,
+        memset: false,
+        memcpy: false,
+    };
+
+    pub(crate) fn new(mem: LeafMem, memset: bool, memcpy: bool) -> Self {
+        Self {
+            mem,
+            memset,
+            memcpy,
         }
     }
 }
@@ -859,6 +883,16 @@ pub struct SimCfg {
     /// [`crate::GpuStoreCfg::graph_memset`] is the store path (store leaf GEMMs
     /// memset too; this is not walker-only).
     pub graph_memset: bool,
+    /// `cudaGraphAddMemcpyNode` / `cudaMemcpyAsync` H2D of graph-mem scratch.
+    ///
+    /// Needs [`Self::graph_mem`]. Copies pinned host bytes INTO the scratch
+    /// BETWEEN alloc and GEMM so launch bills copy-engine PCIe. Does not imply
+    /// graph-mem or [`Self::graph_memset`]. Hits stay the same. Does not work
+    /// with [`Self::graph_auto_free`] alone. Distinct from memset (copy-engine
+    /// vs compute HBM write). Decode identity stays kernel-only.
+    /// [`crate::GpuStoreCfg::graph_memcpy`] is the store path (store leaf GEMMs
+    /// memcpy too; this is not walker-only).
+    pub graph_memcpy: bool,
     /// Leaf GEMM graphs alloc scratch without a matching free.
     ///
     /// Instantiates with [`gpu_sim::Sim::instantiate_graph_auto_free`] so
@@ -1242,6 +1276,7 @@ impl SimCfg {
             graph_enable: false,
             graph_mem: false,
             graph_memset: false,
+            graph_memcpy: false,
             graph_auto_free: false,
             graph_mem_trim: false,
             cooperative: false,
@@ -1336,6 +1371,9 @@ pub(crate) fn validate_sim_cfg(cfg: &SimCfg, profile: &HardwareProfile) -> Resul
     }
     if cfg.graph_memset && !cfg.graph_mem {
         return Err(Error::Store("graph-memset needs graph-mem"));
+    }
+    if cfg.graph_memcpy && !cfg.graph_mem {
+        return Err(Error::Store("graph-memcpy needs graph-mem"));
     }
     if cfg.graph_capture_deps && !cfg.graph_piecewise {
         return Err(Error::Store("graph-capture-deps needs graph-piecewise"));
@@ -1585,6 +1623,7 @@ pub fn sim_replay_cfg(
         .with_build_deps(cfg.graph_build_deps)
         .with_graph_host(cfg.graph_host)
         .with_memset(cfg.graph_memset)
+        .with_memcpy(cfg.graph_memcpy)
         .with_piecewise(cfg.graph_piecewise)
         .with_capture_deps(cfg.graph_capture_deps)
         .with_enable(cfg.graph_enable);
@@ -2096,7 +2135,10 @@ pub(crate) struct GraphBank {
     piecewise: bool,
     capture_deps: bool,
     mem: LeafMem,
+    /// [`SimCfg::graph_memset`]: memset graph-mem scratch BETWEEN alloc and GEMM.
     memset: bool,
+    /// [`SimCfg::graph_memcpy`]: H2D graph-mem scratch BETWEEN alloc and GEMM.
+    memcpy: bool,
     cooperative: bool,
     pdl: bool,
     l2_persist: bool,
@@ -2142,6 +2184,7 @@ impl GraphBank {
             capture_deps: false,
             mem,
             memset: false,
+            memcpy: false,
             cooperative: false,
             pdl: false,
             l2_persist: false,
@@ -2344,6 +2387,15 @@ impl GraphBank {
     pub(crate) fn with_memset(mut self, yes: bool) -> Self {
         self.memset = yes;
         self
+    }
+
+    pub(crate) fn with_memcpy(mut self, yes: bool) -> Self {
+        self.memcpy = yes;
+        self
+    }
+
+    fn leaf_work(&self) -> LeafWork {
+        LeafWork::new(self.mem, self.memset, self.memcpy)
     }
 
     pub(crate) fn with_capture_deps(mut self, yes: bool) -> Self {
@@ -3337,8 +3389,7 @@ fn gemm_ids(
             d,
             stream,
             id,
-            LeafMem::None,
-            false,
+            LeafWork::NONE,
             graphs.gemm_flags().for_stream(),
         )?;
     }
@@ -3374,15 +3425,7 @@ fn capture_expert_graph(
             continue;
         }
         sim.begin_capture(d, stream)?;
-        kernel_leaf(
-            sim,
-            d,
-            stream,
-            *id,
-            graphs.mem,
-            graphs.memset,
-            graphs.gemm_flags(),
-        )?;
+        kernel_leaf(sim, d, stream, *id, graphs.leaf_work(), graphs.gemm_flags())?;
         let src = sim.end_capture()?;
         leaves.push(graphs.bind(sim, origin, key, src)?);
     }
@@ -3450,14 +3493,7 @@ fn build_expert_graph(
             continue;
         }
         let src = sim.create_graph(d, stream)?;
-        add_leaf_gemm(
-            sim,
-            src,
-            *id,
-            graphs.mem,
-            graphs.memset,
-            graphs.gemm_flags(),
-        )?;
+        add_leaf_gemm(sim, src, d, *id, graphs.leaf_work(), graphs.gemm_flags())?;
         leaves.push(graphs.bind(sim, origin, key, src)?);
     }
     if ids.len() == 1 {
@@ -3892,7 +3928,7 @@ fn gemm_kind() -> KernelKind {
 
 fn kernel(sim: &mut Sim, d: DeviceId, s: StreamId, id: AllocId) -> Result<(), Error> {
     ensure_single_attach(sim, d, id, s)?;
-    kernel_leaf(sim, d, s, id, LeafMem::None, false, GemmFlags::default())
+    kernel_leaf(sim, d, s, id, LeafWork::NONE, GemmFlags::default())
 }
 
 pub(crate) fn kernel_leaf(
@@ -3900,20 +3936,22 @@ pub(crate) fn kernel_leaf(
     d: DeviceId,
     s: StreamId,
     id: AllocId,
-    mem: LeafMem,
-    memset: bool,
+    work: LeafWork,
     flags: GemmFlags,
 ) -> Result<(), Error> {
-    if mem == LeafMem::None {
+    if work.mem == LeafMem::None {
         launch_gemm_kernel(sim, d, s, id, &[], flags)?;
         return Ok(());
     }
     let scratch = sim.alloc(d, GRAPH_SCRATCH_BYTES, s)?;
-    if memset {
+    if work.memset {
         let _z = sim.memset(d, scratch, GRAPH_SCRATCH_BYTES, s)?;
     }
+    if work.memcpy {
+        let _c = sim.memcpy_pinned_to_device(d, scratch, GRAPH_SCRATCH_BYTES, s)?;
+    }
     launch_gemm_kernel(sim, d, s, id, &[scratch], flags)?;
-    if mem == LeafMem::Free {
+    if work.mem == LeafMem::Free {
         sim.free(d, scratch, s)?;
     }
     Ok(())
@@ -3934,26 +3972,40 @@ fn launch_gemm_kernel(
 pub(crate) fn add_leaf_gemm(
     sim: &mut Sim,
     graph: GraphId,
+    device: DeviceId,
     id: AllocId,
-    mem: LeafMem,
-    memset: bool,
+    work: LeafWork,
     flags: GemmFlags,
 ) -> Result<(), Error> {
-    if mem == LeafMem::None {
+    if work.mem == LeafMem::None {
         return add_gemm_kernel(sim, graph, id, &[], flags);
     }
     let scratch = sim.graph_add_alloc(graph, GRAPH_SCRATCH_BYTES)?;
     let mut prev = 0usize;
-    if memset {
+    if work.memset {
         sim.graph_add_memset(graph, KernelBuf::whole(scratch))?;
-        sim.graph_add_dependencies(graph, prev, 1)?;
-        prev = 1;
+        let z = sim.graph_len(graph)?.saturating_sub(1);
+        sim.graph_add_dependencies(graph, prev, z)?;
+        prev = z;
     }
+    if work.memcpy {
+        sim.graph_add_memcpy_1d(
+            graph,
+            Place::HostPinned,
+            Place::Device(device),
+            scratch,
+            GRAPH_SCRATCH_BYTES,
+        )?;
+        let c = sim.graph_len(graph)?.saturating_sub(1);
+        sim.graph_add_dependencies(graph, prev, c)?;
+        prev = c;
+    }
+    let kernel = sim.graph_len(graph)?;
     add_gemm_kernel(sim, graph, id, &[scratch], flags)?;
-    sim.graph_add_dependencies(graph, prev, prev.saturating_add(1))?;
-    if mem == LeafMem::Free {
+    sim.graph_add_dependencies(graph, prev, kernel)?;
+    if work.mem == LeafMem::Free {
         sim.graph_add_free(graph, scratch)?;
-        sim.graph_add_dependencies(graph, prev.saturating_add(1), prev.saturating_add(2))?;
+        sim.graph_add_dependencies(graph, kernel, kernel.saturating_add(1))?;
     }
     Ok(())
 }

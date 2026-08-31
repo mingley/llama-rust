@@ -5,6 +5,19 @@ Visible five-turn extract: [docs/chatgpt-share-6a920fe1.md](docs/chatgpt-share-6
 Complete share-API extract: [docs/chatgpt-share-6a920fe1/](docs/chatgpt-share-6a920fe1/).
 Work lands on `main`. No PRs.
 
+## Shipped 2026-08-31 — `cudaGraphAddMemcpyNode` H2D of graph-mem scratch
+
+`GpuStoreCfg::graph_memcpy` / `SimCfg::graph_memcpy` insert
+`cudaGraphAddMemcpyNode` / `cudaMemcpyAsync` H2D BETWEEN `--graph-mem` scratch
+alloc and the GEMM kernel so launch bills copy-engine PCIe. Needs
+`--graph-mem`. Does not imply graph-mem or `--graph-memset`. Hits/misses stay
+the same. Distinct from `--graph-mem` (scratch alloc+free vs extra H2D of that
+scratch) and `--graph-memset` (compute HBM write vs copy-engine). Does not
+work with `--graph-auto-free` alone. `--graph-memcpy` is off by default
+(decode identity: kernel-only graphs). Store leaf GEMMs memcpy too (not
+walker-only). infer-bench has no `--graph-mem`, so it does not get
+`--graph-memcpy`. `gpu-profile capture` is still refused.
+
 ## Shipped 2026-08-31 — `cudaGraphAddMemsetNode` of graph-mem scratch
 
 `GpuStoreCfg::graph_memset` / `SimCfg::graph_memset` insert

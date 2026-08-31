@@ -410,6 +410,7 @@ impl SchedRt {
             .with_build_deps(cfg.graph_build_deps)
             .with_graph_host(cfg.graph_host)
             .with_memset(cfg.graph_memset)
+            .with_memcpy(cfg.graph_memcpy)
             .with_piecewise(cfg.graph_piecewise)
             .with_capture_deps(cfg.graph_capture_deps)
             .with_enable(cfg.graph_enable),

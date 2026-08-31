@@ -22,7 +22,7 @@ use crate::sim_replay::{
     free_mapped_host, instantiate_exec, kernel_leaf, mark_sync_memops, memcpy_batch_attr,
     mempool_hold, persist_armed, replay_exec, replay_streams, reset_persisting_l2_if,
     retarget_parked_kernel, signal_copy_ready, stream_of, upload_after_set_params, wait_copy_ready,
-    wait_memcpy_during_allocs, GemmFlags, LeafMem, StreamPlan,
+    wait_memcpy_during_allocs, GemmFlags, LeafMem, LeafWork, StreamPlan,
 };
 use crate::store::{CachedStore, DirectStore, ExpertParts, ExpertPhase, ExpertStore, StoreMetrics};
 use gpu_sim::{
@@ -280,6 +280,14 @@ pub struct GpuStoreCfg {
     /// leaf GEMMs memset too (not walker-only). Decode identity stays
     /// kernel-only graphs.
     pub graph_memset: bool,
+    /// `cudaGraphAddMemcpyNode` / `cudaMemcpyAsync` H2D of graph-mem scratch.
+    ///
+    /// Needs [`Self::graph_mem`]. Copies pinned host bytes INTO the scratch
+    /// BETWEEN alloc and GEMM so launch bills copy-engine PCIe. Does not imply
+    /// graph-mem or [`Self::graph_memset`]. Hits stay the same. Does not work
+    /// with [`Self::graph_auto_free`] alone. Store leaf GEMMs memcpy too (not
+    /// walker-only). Decode identity stays kernel-only graphs.
+    pub graph_memcpy: bool,
     /// Scratch alloc without a matching free; AutoFreeOnLaunch instantiate.
     ///
     /// Illegal with [`Self::graph_mem`]. `--graph-update` is skipped;
@@ -691,6 +699,8 @@ pub struct SimulatedGpuStore {
     leaf: LeafMem,
     /// [`GpuStoreCfg::graph_memset`]: memset graph-mem scratch BETWEEN alloc and GEMM.
     graph_memset: bool,
+    /// [`GpuStoreCfg::graph_memcpy`]: H2D graph-mem scratch BETWEEN alloc and GEMM.
+    graph_memcpy: bool,
     graph_mem_trim: bool,
     mempool_trim: bool,
     /// [`GpuStoreCfg::mempool_max`] (`0` unset / unlimited).
@@ -852,6 +862,8 @@ impl SimulatedGpuStore {
     /// records in-graph scratch with a matching free;
     /// [`GpuStoreCfg::graph_memset`] memsets that scratch BETWEEN alloc and
     /// GEMM (needs graph-mem; store leaf GEMMs too);
+    /// [`GpuStoreCfg::graph_memcpy`] H2Ds that scratch BETWEEN alloc and
+    /// GEMM (needs graph-mem; copy-engine PCIe; store leaf GEMMs too);
     /// [`GpuStoreCfg::graph_auto_free`] is AutoFreeOnLaunch without a free;
     /// [`GpuStoreCfg::graph_set_params`] retargets a parked kernel node;
     /// [`GpuStoreCfg::graph_enable`] is walker combo `cudaGraphNodeSetEnabled`
@@ -1006,6 +1018,9 @@ impl SimulatedGpuStore {
         }
         if cfg.graph_memset && !cfg.graph_mem {
             return Err(Error::Store("graph-memset needs graph-mem"));
+        }
+        if cfg.graph_memcpy && !cfg.graph_mem {
+            return Err(Error::Store("graph-memcpy needs graph-mem"));
         }
         if cfg.graph_capture_deps && !cfg.graph_piecewise {
             return Err(Error::Store("graph-capture-deps needs graph-piecewise"));
@@ -1261,6 +1276,7 @@ impl SimulatedGpuStore {
             graph_capture_deps: cfg.graph_capture_deps,
             leaf,
             graph_memset: cfg.graph_memset,
+            graph_memcpy: cfg.graph_memcpy,
             graph_mem_trim: cfg.graph_mem_trim,
             mempool_trim: cfg.mempool_trim,
             mempool_max: cfg.mempool_max,
@@ -1480,6 +1496,16 @@ impl SimulatedGpuStore {
     #[must_use]
     pub fn graph_memset(&self) -> bool {
         self.graph_memset
+    }
+
+    /// Whether graph-mem scratch is H2D memcpy'd BETWEEN alloc and GEMM.
+    #[must_use]
+    pub fn graph_memcpy(&self) -> bool {
+        self.graph_memcpy
+    }
+
+    fn leaf_work(&self) -> LeafWork {
+        LeafWork::new(self.leaf, self.graph_memset, self.graph_memcpy)
     }
 
     /// Whether this store set `cudaFuncAttributeClusterDimMustBeSet`.
@@ -2683,6 +2709,7 @@ impl SimulatedGpuStore {
             self.programmatic_event_armed = true;
         }
         let flags = self.gemm_flags();
+        let work = self.leaf_work();
         if let Some(g) = self.graphs.get(&id).copied() {
             return self.launch_graph_exec(g, device);
         }
@@ -2712,15 +2739,7 @@ impl SimulatedGpuStore {
                 return self.launch_graph_exec(g, device);
             }
             self.sim.begin_capture(device, self.compute)?;
-            kernel_leaf(
-                &mut self.sim,
-                device,
-                self.compute,
-                id,
-                self.leaf,
-                self.graph_memset,
-                flags,
-            )?;
+            kernel_leaf(&mut self.sim, device, self.compute, id, work, flags)?;
             let src = self.sim.end_capture()?;
             let g = self.bind_graph(device, src)?;
             let _prev = self.graphs.insert(id, g);
@@ -2731,40 +2750,33 @@ impl SimulatedGpuStore {
             device,
             self.compute,
             id,
-            LeafMem::None,
-            false,
+            LeafWork::NONE,
             flags.for_stream(),
         )
     }
 
     fn build_gemm_graph(&mut self, device: DeviceId, id: AllocId) -> Result<GraphId, Error> {
         let flags = self.gemm_flags();
+        let work = self.leaf_work();
         let g = self.sim.create_graph(device, self.compute)?;
         // Store GEMM is per-leaf; combo `graph_add_dependencies` /
         // `graph_add_host_func` stay walker-only even when
         // [`GpuStoreCfg::graph_build_deps`] or [`GpuStoreCfg::graph_host`] is set.
-        // [`GpuStoreCfg::graph_memset`] does apply: it memsets this leaf's
-        // graph-mem scratch BETWEEN alloc and GEMM.
-        add_leaf_gemm(&mut self.sim, g, id, self.leaf, self.graph_memset, flags)?;
+        // [`GpuStoreCfg::graph_memset`] / [`GpuStoreCfg::graph_memcpy`] do apply:
+        // they fill this leaf's graph-mem scratch BETWEEN alloc and GEMM.
+        add_leaf_gemm(&mut self.sim, g, device, id, work, flags)?;
         Ok(g)
     }
 
     fn piecewise_gemm_graph(&mut self, device: DeviceId, id: AllocId) -> Result<GraphId, Error> {
         let flags = self.gemm_flags();
+        let work = self.leaf_work();
         let g = self.sim.create_graph(device, self.compute)?;
         // Store GEMM is per-leaf; capture-to-graph deps stay empty even when
         // [`GpuStoreCfg::graph_capture_deps`] is set (walker combo only).
         self.sim
             .begin_capture_to_graph(device, self.compute, g, &[])?;
-        kernel_leaf(
-            &mut self.sim,
-            device,
-            self.compute,
-            id,
-            self.leaf,
-            self.graph_memset,
-            flags,
-        )?;
+        kernel_leaf(&mut self.sim, device, self.compute, id, work, flags)?;
         let ended = self.sim.end_capture()?;
         if ended != g {
             return Err(Error::Store("capture-to-graph id"));
