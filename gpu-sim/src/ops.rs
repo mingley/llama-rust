@@ -1345,13 +1345,24 @@ impl KernelBuf {
 /// Topology is "this is a host node." [`Self::fn_id`] and [`Self::user_data`]
 /// are parameters (`cudaHostFn_t` / `userData`). Capture cannot include
 /// SetParams. [`Default`] is the unnamed callback (`fn_id = 0`, `user_data = 0`)
-/// used by [`crate::Sim::host_func`] / [`crate::Sim::graph_add_host_func`].
+/// used by [`crate::Sim::host_func`] / [`crate::Sim::graph_add_host_func`] /
+/// [`crate::Sim::stream_add_callback`].
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub struct HostNodeParams {
     /// Callback identity (`cudaHostFn_t` analog). `0` is the unnamed default.
     pub fn_id: u32,
     /// Opaque `userData` pointer analog.
     pub user_data: u64,
+}
+
+/// `cudaStreamAddCallback` flags for [`crate::Sim::stream_add_callback_with_flags`].
+///
+/// CUDA documents only `0` as valid. Nonzero is Invalid `"stream callback flags"`.
+pub struct StreamCallbackFlags;
+
+impl StreamCallbackFlags {
+    /// CUDA requires `0`.
+    pub const DEFAULT: u32 = 0;
 }
 
 /// `cudaKernelNodeParams` for [`crate::Sim::graph_exec_kernel_set_params`].

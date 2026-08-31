@@ -5,6 +5,16 @@ Visible five-turn extract: [docs/chatgpt-share-6a920fe1.md](docs/chatgpt-share-6
 Complete share-API extract: [docs/chatgpt-share-6a920fe1/](docs/chatgpt-share-6a920fe1/).
 Work lands on `main`. No PRs.
 
+## Shipped 2026-08-31 — CUDA `cudaStreamAddCallback`
+
+`gpu-sim` `stream_add_callback` / `stream_add_callback_params` /
+`stream_add_callback_with_flags` are `cudaStreamAddCallback`. Same
+stream-ordered host enqueue as `host_func` (`cudaLaunchHostFunc`):
+bills `host_func_ns`, does not occupy compute or copy. Cannot be
+captured. Flags must be 0. Distinct from capturable `host_func`. No
+Engine `--stream-callback`. `gpu-profile capture` is still refused. Dual
+score still has no `$/M tokens`.
+
 ## Shipped 2026-08-31 — CUDA `cudaDevAttrMaxTexture1DWidth`
 
 `gpu-sim` `DeviceAttr::MaxTexture1DWidth` is always 0. CUDA arrays /

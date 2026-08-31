@@ -30,8 +30,8 @@ use crate::ops::{
     Operation, PdlLaunch, PeerAccessFlags, Place, PointerAttr, PointerAttributes,
     PortableClusterMode, PortableSharedMode, PrefetchFlags, ProgrammaticEvent, ProgrammaticLaunch,
     SharedMemCarveout, SharedMemoryMode, SmResource, StreamAttr, StreamAttrValue,
-    StreamCaptureInfo, StreamCaptureMode, StreamCreateFlags, SynchronizationPolicy,
-    UserObjectFlags, WaitValueCmp, WriteValueFlags,
+    StreamCallbackFlags, StreamCaptureInfo, StreamCaptureMode, StreamCreateFlags,
+    SynchronizationPolicy, UserObjectFlags, WaitValueCmp, WriteValueFlags,
 };
 use crate::profile::{align_up, ns_for_bytes, scale_ns_permille, HardwareProfile, LinkKind};
 
@@ -15585,6 +15585,65 @@ impl Sim {
         stream: StreamId,
         params: HostNodeParams,
     ) -> Result<OpId, SimError> {
+        self.submit(
+            device,
+            stream,
+            Kind::HostFunc {
+                fn_id: params.fn_id,
+                user_data: params.user_data,
+            },
+        )
+    }
+
+    /// `cudaStreamAddCallback`. Same stream-ordered host work as
+    /// [`Self::host_func`] (`cudaLaunchHostFunc`): bills `host_func_ns` and
+    /// does not occupy compute or copy engines. Unlike `host_func`, capture
+    /// cannot include it (`cudaErrorStreamCaptureUnsupported`). CUDA flags
+    /// must be 0. Unnamed callback (`fn_id = 0`, `user_data = 0`).
+    pub fn stream_add_callback(
+        &mut self,
+        device: DeviceId,
+        stream: StreamId,
+    ) -> Result<OpId, SimError> {
+        self.stream_add_callback_params(
+            device,
+            stream,
+            HostNodeParams::default(),
+            StreamCallbackFlags::DEFAULT,
+        )
+    }
+
+    /// `cudaStreamAddCallback` with a [`StreamCallbackFlags`] word.
+    ///
+    /// Flags must be [`StreamCallbackFlags::DEFAULT`]. Unknown bits Invalid
+    /// `"stream callback flags"`. Typed [`Self::stream_add_callback`] stays.
+    pub fn stream_add_callback_with_flags(
+        &mut self,
+        device: DeviceId,
+        stream: StreamId,
+        flags: u32,
+    ) -> Result<OpId, SimError> {
+        self.stream_add_callback_params(device, stream, HostNodeParams::default(), flags)
+    }
+
+    /// `cudaStreamAddCallback` with [`HostNodeParams`] and a flags word.
+    ///
+    /// Same enqueue as [`Self::host_func_params`] except capture is Invalid
+    /// `"cannot capture stream callback"`. Flags must be
+    /// [`StreamCallbackFlags::DEFAULT`].
+    pub fn stream_add_callback_params(
+        &mut self,
+        device: DeviceId,
+        stream: StreamId,
+        params: HostNodeParams,
+        flags: u32,
+    ) -> Result<OpId, SimError> {
+        if flags != StreamCallbackFlags::DEFAULT {
+            return Err(SimError::Invalid {
+                why: "stream callback flags",
+            });
+        }
+        self.fail_if_capturing("cannot capture stream callback")?;
         self.submit(
             device,
             stream,

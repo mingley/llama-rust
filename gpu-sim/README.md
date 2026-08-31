@@ -60,6 +60,7 @@ warp scheduler, L1, …   ← do not model
 | `va_release` parks an unmapped VA; `va_acquire` remaps same size; `va_reserve_idle` reuses that VA with no physicals | map only on reuse (no second reserve) |
 | `va_acquire_paged` maps the VA in `page` physicals | `alloc_overhead_ns` per block |
 | `cudaLaunchHostFunc` (`host_func` / `host_func_params`) is stream-ordered host work; `fn_id` / `user_data` are `cudaHostNodeParams` | `host_func_ns` (no compute / copy occupancy) |
+| `cudaStreamAddCallback` (`stream_add_callback` / `stream_add_callback_params`) is the same host enqueue as `host_func` but cannot be captured; `stream_add_callback_with_flags` is the CUDA flags word (`StreamCallbackFlags`; must be 0) | `host_func_ns` (no compute / copy occupancy) |
 | `cuStreamWriteValue32/64` (`write_value32` / `write_value64`) writes a mailbox on complete; `write_value32_with_flags` / `write_value64_with_flags` is the CUDA flags word (`WriteValueFlags`; NO_MEMORY_BARRIER Invalid) | 1 ns Solo (no compute / copy occupancy) |
 | `cuStreamWaitValue32/64` (`wait_value32` / `wait_value64`) stays pending until the mailbox compare matches; unwritten locations read as 0; kernel/memset/memcpy stores are not modeled; `wait_value32_with_flags` / `wait_value64_with_flags` is the CUDA flags word (`WaitValueFlags`; FLUSH Invalid) | 1 ns Solo when ready; unsatisfied wait + `synchronize` is deadlock |
 | `cuStreamBatchMemOp` (`batch_mem_op`) is one stream op for a wait/write vector; a wait sees earlier writes in that vector; `batch_mem_op_with_flags` is the CUDA flags word (`BatchMemOpFlags`; must be 0) | 1 ns Solo when ready |
@@ -547,7 +548,11 @@ be 2D). `memset_3d` / `memset_3d_async` are `cudaMemset3D` /
 `cudaMemset3DAsync` (`MemsetOp` must be 3D). `host_func` is
 `cudaLaunchHostFunc`: stream-ordered host work that does not occupy compute
 or copy engines (other streams may GEMM). Unnamed callback by default;
-`host_func_params` records `HostNodeParams`. `write_value64` / `wait_value64`
+`host_func_params` records `HostNodeParams`. `stream_add_callback` is
+`cudaStreamAddCallback` (same enqueue; capture refused).
+`stream_add_callback_with_flags` is the CUDA flags word (`StreamCallbackFlags`;
+must be 0). `stream_add_callback_params` records `HostNodeParams`.
+`write_value64` / `wait_value64`
 are `cuStreamWriteValue64` / `WaitValue64` (mailbox; no occupancy).
 `batch_mem_op` is `cuStreamBatchMemOp`. Peer D2D requires a
 topology link **and** directed `enable_peer` (seeded on for every GPU↔GPU
@@ -988,7 +993,11 @@ size (or reserves); `va_reserve_idle` is the map-less twin (split create/map is
 include them.
 `host_func` is `cudaLaunchHostFunc` (stream-ordered; other streams can compute;
 unnamed callback). `host_func_params` / `graph_add_host_func_params` record
-`HostNodeParams`. `graph_host_set_params` is `cudaGraphHostNodeSetParams`
+`HostNodeParams`. `stream_add_callback` is `cudaStreamAddCallback` (same
+host enqueue; cannot be captured). `stream_add_callback_with_flags` is the
+CUDA flags word (`StreamCallbackFlags`; must be 0).
+`stream_add_callback_params` records `HostNodeParams`.
+`graph_host_set_params` is `cudaGraphHostNodeSetParams`
 (definition; does not retarget an exec). `graph_exec_host_set_params` is
 `cudaGraphExecHostNodeSetParams`.
 `write_value64` / `wait_value64` are `cuStreamWriteValue64` /

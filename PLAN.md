@@ -4767,7 +4767,20 @@ model, do not celebrate the sim.
     legal during capture. `gpu-profile capture` is still refused. Dual
     score still has no `$/M tokens`.
 
-435. [ ] Next numbered PLAN item after 434 is the next `gpu-sim` / Engine /
+435. [x] `gpu-sim` `stream_add_callback` / `stream_add_callback_params` /
+    `stream_add_callback_with_flags` are `cudaStreamAddCallback`. Same
+    stream-ordered host enqueue as `host_func` (`cudaLaunchHostFunc`):
+    bills `host_func_ns`, does not occupy compute or copy engines,
+    records `HostNodeParams`. **Cannot be captured**
+    (`cudaErrorStreamCaptureUnsupported`; Invalid
+    `"cannot capture stream callback"`). CUDA flags must be 0
+    (`StreamCallbackFlags::DEFAULT`; nonzero Invalid
+    `"stream callback flags"`). Distinct from capturable `host_func`.
+    No Engine `--stream-callback`. Decode identity stays LaunchHostFunc /
+    events. `gpu-profile capture` is still refused. Dual score still has
+    no `$/M tokens`.
+
+436. [ ] Next numbered PLAN item after 435 is the next `gpu-sim` / Engine /
     serve / expertvm mechanical API that is still missing, or the next official
     decode family. Prefer remaining CUDA-shaped twins over more
     OpenAI HTTP veneer. Do not invent F32 `output.scale`. Do not invent a
@@ -4806,6 +4819,9 @@ model, do not celebrate the sim.
     Do not invent a second `cudaDevAttrSurfaceAlignment`.
     Do not invent a second `cudaDevAttrTexturePitchAlignment`.
     Do not invent a second `cudaDevAttrMaxTexture1DWidth`.
+    Do not invent a second `cudaStreamAddCallback`.
+    Do not invent Engine `--stream-callback` (same wall as second live
+    `cudaLaunchHostFunc` after miss DMA).
     Do not invent `cuDeviceGetLuid`
     (Windows).
     Do not invent gemma4 `attn_q.scale` / `attn_output.scale` / `attn_k.scale` /

@@ -280,6 +280,13 @@
 //! [`Sim::host_func`] is `cudaLaunchHostFunc` (stream-ordered host work; no GPU occupancy;
 //! unnamed callback). [`host_func_params`](Sim::host_func_params) records
 //! [`HostNodeParams`] (`cudaHostFn_t` / `userData`).
+//! [`Sim::stream_add_callback`] is `cudaStreamAddCallback` (same host enqueue as
+//! [`host_func`](Sim::host_func); cannot be captured).
+//! [`stream_add_callback_with_flags`](Sim::stream_add_callback_with_flags) is the
+//! CUDA flags word ([`StreamCallbackFlags`]; must be
+//! [`StreamCallbackFlags::DEFAULT`]).
+//! [`stream_add_callback_params`](Sim::stream_add_callback_params) records
+//! [`HostNodeParams`].
 //! [`Sim::write_value64`] / [`write_value32`](Sim::write_value32) are
 //! `cuStreamWriteValue64` / `WriteValue32` (mailbox updates on complete; no
 //! compute/copy occupancy). [`write_value64_with_flags`](Sim::write_value64_with_flags) /
@@ -1069,9 +1076,9 @@ pub use ops::{
     MulticastCreateFlags, MulticastGranularity, MulticastObjectProp, Operation, PdlLaunch,
     PeerAccessFlags, Place, PointerAttr, PointerAttributes, PortableClusterMode,
     PortableSharedMode, PrefetchFlags, ProgrammaticEvent, ProgrammaticLaunch, SharedMemCarveout,
-    SharedMemoryMode, SmResource, StreamAttr, StreamAttrValue, StreamCaptureInfo,
-    StreamCaptureMode, StreamCreateFlags, SynchronizationPolicy, UserObjectFlags, WaitValueCmp,
-    WaitValueFlags, WriteValueFlags,
+    SharedMemoryMode, SmResource, StreamAttr, StreamAttrValue, StreamCallbackFlags,
+    StreamCaptureInfo, StreamCaptureMode, StreamCreateFlags, SynchronizationPolicy,
+    UserObjectFlags, WaitValueCmp, WaitValueFlags, WriteValueFlags,
 };
 pub use probe::{probe_topology, P2pProbe, TopologyProbe};
 pub use profile::{
@@ -18685,6 +18692,159 @@ mod tests {
             GpuOp::HostFunc { fn_id, user_data } => {
                 assert_eq!(fn_id, 7);
                 assert_eq!(user_data, 0xfeed_face);
+            }
+            other => panic!("{other:?}"),
+        }
+    }
+
+    #[test]
+    fn stream_add_callback_does_not_occupy_compute() {
+        let d = DeviceId(0);
+        let bytes = 8u64 << 20;
+        let k = KernelKind::GroupedMoeGemm {
+            experts: 8,
+            tokens_per_expert: 16,
+            hidden: 2048,
+            ff: 2048,
+            dtype: DType::Fp16,
+        };
+        let wall = |same: bool| {
+            let mut sim = Sim::new(h100());
+            let a = sim.alloc(d, bytes, StreamId(0)).unwrap();
+            enq(sim.memcpy_pinned_to_device(d, a, bytes, StreamId(0)));
+            sim.synchronize().unwrap();
+            let t0 = sim.clock_ns();
+            enq(sim.kernel(d, k.clone(), &[a], &[a], StreamId(0)));
+            let hs = if same { StreamId(0) } else { StreamId(1) };
+            enq(sim.stream_add_callback(d, hs));
+            sim.synchronize().unwrap();
+            sim.clock_ns().saturating_sub(t0)
+        };
+        let serial = wall(true);
+        let overlap = wall(false);
+        assert!(
+            serial > overlap,
+            "stream callback must not take the compute engine; serial={serial} overlap={overlap}"
+        );
+    }
+
+    #[test]
+    fn stream_add_callback_waits_for_prior_kernel_on_same_stream() {
+        let mut sim = Sim::new(h100());
+        let d = DeviceId(0);
+        let s = StreamId(0);
+        let a = sim.alloc(d, 4096, s).unwrap();
+        enq(sim.memcpy_pinned_to_device(d, a, 4096, s));
+        sim.synchronize().unwrap();
+        enq(sim.kernel(d, KernelKind::other(1 << 20, 4096), &[a], &[a], s));
+        enq(sim.stream_add_callback(d, s));
+        sim.synchronize().unwrap();
+        let ops: Vec<Operation> = sim.operations().collect();
+        let k = ops
+            .iter()
+            .find(|o| matches!(o.kind, GpuOp::Kernel { .. }) && o.start_ns.is_some())
+            .expect("kernel");
+        let h = ops
+            .iter()
+            .find(|o| matches!(o.kind, GpuOp::HostFunc { .. }))
+            .expect("callback");
+        assert!(k.done_ns.unwrap() <= h.start_ns.unwrap());
+    }
+
+    #[test]
+    fn stream_add_callback_bills_same_as_host_func() {
+        let wall = |callback: bool| {
+            let mut sim = Sim::new(h100());
+            let d = DeviceId(0);
+            let s = StreamId(0);
+            let t0 = sim.clock_ns();
+            if callback {
+                enq(sim.stream_add_callback(d, s));
+            } else {
+                enq(sim.host_func(d, s));
+            }
+            sim.synchronize().unwrap();
+            sim.clock_ns().saturating_sub(t0)
+        };
+        assert_eq!(wall(true), wall(false));
+    }
+
+    #[test]
+    fn graph_cannot_capture_stream_add_callback() {
+        let mut sim = Sim::new(h100());
+        let d = DeviceId(0);
+        let s = StreamId(0);
+        sim.begin_capture(d, s).unwrap();
+        match sim.stream_add_callback(d, s) {
+            Err(SimError::Invalid { why }) => {
+                assert!(why.contains("cannot capture stream callback"), "{why}");
+            }
+            other => panic!("{other:?}"),
+        }
+        enq(sim.host_func(d, s));
+        let g = sim.end_capture().unwrap();
+        assert_eq!(sim.graph_len(g).unwrap(), 1);
+        let n = sim.launch_graph(g, s).unwrap();
+        assert_eq!(n, 1);
+        sim.synchronize().unwrap();
+        assert!(sim
+            .operations()
+            .any(|o| matches!(o.kind, GpuOp::HostFunc { .. }) && o.done));
+    }
+
+    #[test]
+    fn stream_add_callback_flags_must_be_zero() {
+        let mut sim = Sim::new(h100());
+        let d = DeviceId(0);
+        let s = StreamId(0);
+        enq(sim.stream_add_callback_with_flags(d, s, StreamCallbackFlags::DEFAULT));
+        sim.synchronize().unwrap();
+        match sim.stream_add_callback_with_flags(d, s, 1) {
+            Err(SimError::Invalid { why }) => {
+                assert!(why.contains("stream callback flags"), "{why}");
+            }
+            other => panic!("{other:?}"),
+        }
+        sim.begin_capture(d, s).unwrap();
+        match sim.stream_add_callback_with_flags(d, s, StreamCallbackFlags::DEFAULT) {
+            Err(SimError::Invalid { why }) => {
+                assert!(why.contains("cannot capture stream callback"), "{why}");
+            }
+            other => panic!("{other:?}"),
+        }
+        let _g = sim.end_capture().unwrap();
+    }
+
+    #[test]
+    fn stream_add_callback_params_are_recorded_on_the_op() {
+        let mut sim = Sim::new(h100());
+        let d = DeviceId(0);
+        let s = StreamId(0);
+        let params = HostNodeParams {
+            fn_id: 9,
+            user_data: 0x0bad_f00d,
+        };
+        enq(sim.stream_add_callback_params(d, s, params, StreamCallbackFlags::DEFAULT));
+        sim.synchronize().unwrap();
+        let op = sim
+            .operations()
+            .find(|o| matches!(o.kind, GpuOp::HostFunc { .. }))
+            .expect("callback");
+        match op.kind {
+            GpuOp::HostFunc { fn_id, user_data } => {
+                assert_eq!(fn_id, 9);
+                assert_eq!(user_data, 0x0bad_f00d);
+            }
+            other => panic!("{other:?}"),
+        }
+    }
+
+    #[test]
+    fn stream_add_callback_unknown_device() {
+        let mut sim = Sim::new(h100());
+        match sim.stream_add_callback(DeviceId(99), StreamId(0)) {
+            Err(SimError::Invalid { why }) => {
+                assert!(why.contains("device not in profile"), "{why}");
             }
             other => panic!("{other:?}"),
         }
