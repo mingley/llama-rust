@@ -5,6 +5,18 @@ Visible five-turn extract: [docs/chatgpt-share-6a920fe1.md](docs/chatgpt-share-6
 Complete share-API extract: [docs/chatgpt-share-6a920fe1/](docs/chatgpt-share-6a920fe1/).
 Work lands on `main`. No PRs.
 
+## Shipped 2026-08-31 — official shared-expert `{1}` `ffn_up_shexp.scale`
+
+llama.cpp `build_ffn` applies `ggml_mul` after the shared-expert up GEMM
+(`TENSOR_NOT_REQUIRED`; missing is `1.0`) before the gated product. Decode
+loads `blk.{i}.ffn_up_shexp.scale` only when `ffn_up_shexp.weight` is present
+(qwen2moe / qwen3next / llama4). Writer-tiny
+`tiny-qwen2moe-ffn-up-shexp-s` is `tiny-qwen2moe` plus scale `2.75`.
+Llama / qwen3moe files that contain `ffn_up_shexp.scale` are ignored (not
+loaded). Dense `ffn_up.scale` and shared-expert `ffn_gate_shexp.scale` /
+`ffn_down_shexp.scale` stay those tensors. Do not invent
+`output.input_scale` this slice.
+
 ## Shipped 2026-08-31 — official shared-expert `{1}` `ffn_gate_shexp.scale`
 
 llama.cpp `build_ffn` applies `ggml_mul` after the shared-expert gate GEMM
