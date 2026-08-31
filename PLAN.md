@@ -3768,7 +3768,20 @@ model, do not celebrate the sim.
     pool (`0` unset). `gpu-profile capture` is still refused. Dual score still
     has no `$/M tokens`.
 
-355. [ ] Next numbered PLAN item after 354 is the next `gpu-sim` / Engine /
+355. [x] `cudaMemcpySrcAccessOrderDuringApiCall`:
+    [`GpuStoreCfg::memcpy_during`](expertvm/src/gpu_store.rs) /
+    [`SimCfg::memcpy_during`](expertvm/src/sim_replay.rs) on `--memcpy-batch`
+    H2D. The batch API waits those copies before return (not the whole
+    stream). Needs `--memcpy-batch`. Hits stay the same. Distinct from
+    `--memcpy-batch` (batch vs sequential H2D vs During wait). Legal with
+    `--pdl` and `--cooperative`. Illegal with the same combos as
+    `--memcpy-batch` once both are set. `--memcpy-during` on `expertvm sim`
+    / `schedule` / `store` and `gguf_gemv engine --expert-sim`. infer-bench
+    has no `--memcpy-batch`, so it does not get `--memcpy-during`. Decode
+    identity stays Stream order (or sequential H2D). `gpu-profile capture`
+    is still refused. Dual score still has no `$/M tokens`.
+
+356. [ ] Next numbered PLAN item after 355 is the next `gpu-sim` / Engine /
     serve / expertvm mechanical API that is still missing, or the next official
     decode family (`gemma4`). Prefer remaining CUDA-shaped twins over more
     OpenAI HTTP veneer. Do not invent
@@ -3790,8 +3803,9 @@ model, do not celebrate the sim.
     `set_stream_nvlink_util_centric`) — `kernel_with` / graph replay use
     launch/node, not stream. Do not invent
     `GraphInstantiateFlags::UPLOAD`, height/depth required cluster, or
-    function LoadBalancing / MaxL1 occupancy standalone. Do not spend the
-    next item on an OpenAI-compatible HTTP veneer.
+    function LoadBalancing / MaxL1 occupancy standalone. Do not invent
+    `MemcpySrcAccessOrder::Any` as the next item unless it is the chosen
+    twin. Do not spend the next item on an OpenAI-compatible HTTP veneer.
 
 Stop if Phase 1 traces say residency cannot work. Do not invent an
 architecture or a dtype. Do not list `mixtral` or `qwen3vlmoe` as

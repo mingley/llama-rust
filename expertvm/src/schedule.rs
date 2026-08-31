@@ -361,6 +361,7 @@ impl SchedRt {
                 host_register_mapped: cfg.host_register_mapped,
                 sync_memops: cfg.sync_memops,
                 memcpy_batch: cfg.memcpy_batch,
+                memcpy_during: cfg.memcpy_during,
                 accessed_by: cfg.accessed_by,
                 wait_value: cfg.wait_value,
                 stream_attach: cfg.stream_attach,

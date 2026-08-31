@@ -845,6 +845,7 @@ fn vmm_evict_reacquires_same_va() {
         host_register_mapped: false,
         sync_memops: false,
         memcpy_batch: false,
+        memcpy_during: false,
         accessed_by: false,
         wait_value: false,
         stream_attach: false,
@@ -5710,6 +5711,7 @@ fn sim_replay_accessed_by_maps_peer_without_migrating() {
         host_register_mapped: false,
         sync_memops: false,
         memcpy_batch: false,
+        memcpy_during: false,
         accessed_by: true,
         wait_value: false,
         stream_attach: false,
@@ -5777,6 +5779,7 @@ fn sim_replay_vmm_accessed_by_maps_peer_without_migrating() {
         host_register_mapped: false,
         sync_memops: false,
         memcpy_batch: false,
+        memcpy_during: false,
         accessed_by: true,
         wait_value: false,
         stream_attach: false,
@@ -5845,6 +5848,7 @@ fn sim_replay_pool_accessed_by_maps_peer_without_migrating() {
         host_register_mapped: false,
         sync_memops: false,
         memcpy_batch: false,
+        memcpy_during: false,
         accessed_by: true,
         wait_value: false,
         stream_attach: false,
@@ -6279,6 +6283,7 @@ fn memcpy_batch_apply_misses_siblings_share_stream_order_snapshot() {
         host_register_mapped: false,
         sync_memops: false,
         memcpy_batch: true,
+        memcpy_during: false,
         accessed_by: false,
         wait_value: false,
         stream_attach: false,
@@ -6398,6 +6403,113 @@ fn memcpy_batch_rejects_pageable_and_managed() {
 }
 
 #[test]
+fn simulated_gpu_store_memcpy_during_waits_prefetch() {
+    let t = Trace {
+        events: vec![ev(0, 0, &[0, 1])],
+    };
+    let inner = DirectStore::from_trace(&t);
+    let prefetch = |during: bool| {
+        let mut gpu = SimulatedGpuStore::with_cfg(
+            inner.clone(),
+            2,
+            HardwareProfile::example_h100_sxm(),
+            4 << 20,
+            GpuFill::Pinned,
+            GpuStoreCfg {
+                memcpy_batch: true,
+                memcpy_during: during,
+                ..GpuStoreCfg::default()
+            },
+        )
+        .expect("gpu");
+        let _n = gpu
+            .prefetch(&[ExpertKey::new(0, 0), ExpertKey::new(0, 1)])
+            .expect("prefetch");
+        assert_eq!(gpu.memcpy_during(), during);
+        gpu.memcpy_operations()
+    };
+    let stream = prefetch(false);
+    assert_eq!(stream.len(), 2, "{stream:?}");
+    assert!(
+        stream.iter().all(|c| !c.done),
+        "Stream copies stay in flight; {stream:?}"
+    );
+    let during = prefetch(true);
+    assert_eq!(during.len(), 2, "{during:?}");
+    assert!(
+        during.iter().all(|c| c.done),
+        "DuringApiCall must wait those copies; {during:?}"
+    );
+}
+
+#[test]
+fn simulated_gpu_store_memcpy_during_needs_memcpy_batch() {
+    let t = Trace {
+        events: vec![ev(0, 0, &[0])],
+    };
+    match SimulatedGpuStore::with_cfg(
+        DirectStore::from_trace(&t),
+        1,
+        HardwareProfile::example_h100_sxm(),
+        4096,
+        GpuFill::Pinned,
+        GpuStoreCfg {
+            memcpy_during: true,
+            ..GpuStoreCfg::default()
+        },
+    ) {
+        Ok(_) => panic!("memcpy-during without memcpy-batch must fail"),
+        Err(e) => {
+            let s = e.to_string();
+            assert!(s.contains("memcpy-during"), "{s}");
+        }
+    }
+}
+
+#[test]
+fn sim_replay_memcpy_during_keeps_hits() {
+    let t = cycling_trace();
+    let p = HardwareProfile::example_h100_sxm();
+    let batch = SimCfg {
+        prefetch: Prefetch::CopyForward,
+        memcpy_batch: true,
+        ..SimCfg::lru(2, 4096, 8)
+    };
+    let during = SimCfg {
+        memcpy_during: true,
+        ..batch
+    };
+    let a = sim_replay_cfg(&t, p.clone(), batch).expect("batch");
+    let b = sim_replay_cfg(&t, p.clone(), during).expect("during");
+    assert_eq!(a.hits, b.hits);
+    assert_eq!(a.misses, b.misses);
+    let sched_a = schedule_replay(&t, p.clone(), batch, SchedCfg::closed(0)).expect("sa");
+    let sched_b = schedule_replay(&t, p, during, SchedCfg::closed(0)).expect("sb");
+    assert_eq!(sched_a.replay.hits, sched_b.replay.hits);
+    assert_eq!(sched_a.replay.misses, sched_b.replay.misses);
+}
+
+#[test]
+fn sim_replay_memcpy_during_needs_memcpy_batch() {
+    match sim_replay_cfg(
+        &Trace {
+            events: vec![ev(0, 0, &[0])],
+        },
+        HardwareProfile::example_h100_sxm(),
+        SimCfg {
+            memcpy_during: true,
+            ..SimCfg::lru(1, 4096, 0)
+        },
+    ) {
+        Ok(_) => panic!("memcpy-during without memcpy-batch must fail"),
+        Err(e) => {
+            let s = e.to_string();
+            assert!(s.contains("memcpy-during"), "{s}");
+        }
+    }
+}
+
+#[test]
 fn seq_stream_priority_starts_higher_stream_first() {
     use crate::replay::Touch;
     use crate::sim_replay::{
@@ -6429,6 +6541,7 @@ fn seq_stream_priority_starts_higher_stream_first() {
             host_register_mapped: false,
             sync_memops: false,
             memcpy_batch: false,
+            memcpy_during: false,
             accessed_by: false,
             wait_value: false,
             stream_attach: false,
@@ -11208,6 +11321,7 @@ fn sim_replay_sync_memops_h2d_host_sync() {
             host_register_mapped: false,
             sync_memops,
             memcpy_batch: false,
+            memcpy_during: false,
             accessed_by: false,
             wait_value: false,
             stream_attach: false,
@@ -11418,6 +11532,7 @@ fn sim_replay_device_sync_memops_h2d_host_sync() {
             host_register_mapped: false,
             sync_memops: false,
             memcpy_batch: false,
+            memcpy_during: false,
             accessed_by: false,
             wait_value: false,
             stream_attach: false,

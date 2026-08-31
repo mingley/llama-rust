@@ -19,17 +19,17 @@ use crate::sim_replay::{
     check_cluster_preferred, check_device_graph_flags, check_l2_fetch, check_l2_ratio,
     check_max_l1, check_mem_sync_collapse, check_mem_sync_launch, check_mem_sync_launch_map,
     check_required_cluster, collapse_mem_sync_map, ensure_single_attach, free_copy_mailbox,
-    free_mapped_host, instantiate_exec, kernel_leaf, mark_sync_memops, mempool_hold, persist_armed,
-    replay_exec, replay_streams, reset_persisting_l2_if, retarget_parked_kernel, signal_copy_ready,
-    stream_of, upload_after_set_params, wait_copy_ready, GemmFlags, LeafMem, StreamPlan,
+    free_mapped_host, instantiate_exec, kernel_leaf, mark_sync_memops, memcpy_batch_attr,
+    mempool_hold, persist_armed, replay_exec, replay_streams, reset_persisting_l2_if,
+    retarget_parked_kernel, signal_copy_ready, stream_of, upload_after_set_params, wait_copy_ready,
+    GemmFlags, LeafMem, StreamPlan,
 };
 use crate::store::{CachedStore, DirectStore, ExpertParts, ExpertPhase, ExpertStore, StoreMetrics};
 use gpu_sim::{
     AllocId, ClusterSchedulingPolicy, DeviceFlags, DeviceId, DeviceLimit, EventId, GraphId,
     GraphMemAttr, HardwareProfile, KernelBuf, KernelKind, LaunchCompletionEvent, MemAdvise,
-    MemAttach, MemHandleId, MemSyncDomain, MemcpyAttributes, MemcpyOp, Place, PointerAttr, PoolId,
-    ProgrammaticEvent, Score, SharedMemCarveout, SharedMemoryMode, Sim, StreamId,
-    SynchronizationPolicy,
+    MemAttach, MemHandleId, MemSyncDomain, MemcpyOp, Place, PointerAttr, PoolId, ProgrammaticEvent,
+    Score, SharedMemCarveout, SharedMemoryMode, Sim, StreamId, SynchronizationPolicy,
 };
 use std::collections::{BTreeMap, BTreeSet};
 
@@ -167,6 +167,12 @@ pub struct GpuStoreCfg {
     /// managed, [`Self::sync_memops`], or [`Self::device_sync_memops`] fills.
     /// Decode identity stays sequential `memcpy_pinned_to_device`.
     pub memcpy_batch: bool,
+    /// `cudaMemcpySrcAccessOrderDuringApiCall` on [`Self::memcpy_batch`].
+    ///
+    /// The batch API waits those copies before return (not the whole stream).
+    /// Needs [`Self::memcpy_batch`]. Hits/misses stay the same. Decode identity
+    /// stays Stream order (or sequential H2D).
+    pub memcpy_during: bool,
     /// Peer map without dest HBM: managed [`gpu_sim::MemAdvise::SetAccessedBy`],
     /// VMM [`gpu_sim::Sim::va_set_access`], or pinned-async
     /// [`gpu_sim::Sim::pool_set_access`] on every GPU.
@@ -655,6 +661,8 @@ pub struct SimulatedGpuStore {
     sync_memops: bool,
     /// [`GpuStoreCfg::memcpy_batch`]: prefetch uses `cudaMemcpyBatchAsync`.
     memcpy_batch: bool,
+    /// [`GpuStoreCfg::memcpy_during`]: batch attrs use DuringApiCall.
+    memcpy_during: bool,
     /// [`GpuStoreCfg::wait_value`]: copy-ready is wait/write-value, not events.
     wait_value: bool,
     /// [`GpuStoreCfg::accessed_by`]: managed/VMM/mempool pages stay on the home GPU.
@@ -976,6 +984,9 @@ impl SimulatedGpuStore {
         if cfg.mempool_max > 0 && cfg.sync_alloc {
             return Err(Error::Store("mempool-max needs cudaMallocAsync"));
         }
+        if cfg.memcpy_during && !cfg.memcpy_batch {
+            return Err(Error::Store("memcpy-during needs memcpy-batch"));
+        }
         if cfg.memcpy_batch
             && (cfg.pageable
                 || cfg.sync_alloc
@@ -1173,6 +1184,7 @@ impl SimulatedGpuStore {
             host_register_mapped: cfg.host_register_mapped,
             sync_memops: cfg.sync_memops,
             memcpy_batch: cfg.memcpy_batch,
+            memcpy_during: cfg.memcpy_during,
             wait_value: cfg.wait_value,
             accessed_by: cfg.accessed_by,
             migrates: 0,
@@ -1210,6 +1222,12 @@ impl SimulatedGpuStore {
     #[must_use]
     pub fn uses_vmm(&self) -> bool {
         matches!(self.mode, GpuFill::Vmm)
+    }
+
+    /// Whether batched prefetch waits copies at the API (`DuringApiCall`).
+    #[must_use]
+    pub fn memcpy_during(&self) -> bool {
+        self.memcpy_during
     }
 
     /// Stream memcpy ops (H2D / D2D) currently in the attached Sim.
@@ -2309,7 +2327,7 @@ impl SimulatedGpuStore {
                 MemcpyOp::packed_1d(Place::HostPinned, Place::Device(d), *id, bytes)
             })
             .collect();
-        let attr = MemcpyAttributes::default();
+        let attr = memcpy_batch_attr(self.memcpy_during);
         let _ids =
             self.sim
                 .memcpy_batch_async(d, &ops, std::slice::from_ref(&attr), &[0], self.copy)?;

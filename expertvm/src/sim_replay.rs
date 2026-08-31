@@ -453,9 +453,10 @@ use gpu_sim::{
     AccessPolicyWindow, AllocId, ClusterSchedulingPolicy, DType, DeviceFlags, DeviceId,
     DeviceLimit, EventId, GraphId, GraphInstantiateFlags, HardwareProfile, KernelAttrs, KernelBuf,
     KernelKind, LaunchCompletionEvent, MemAttach, MemHandleType, MemPoolAttr, MemPoolProps,
-    MemSyncDomain, MemSyncDomainMap, MemcpyAttributes, MemcpyOp, Place, PointerAttr, PoolId,
-    PortableClusterMode, PortableSharedMode, ProgrammaticEvent, ProgrammaticLaunch, Score,
-    SharedMemCarveout, SharedMemoryMode, Sim, StreamId, SynchronizationPolicy, WaitValueCmp,
+    MemSyncDomain, MemSyncDomainMap, MemcpyAttributes, MemcpyOp, MemcpySrcAccessOrder, Place,
+    PointerAttr, PoolId, PortableClusterMode, PortableSharedMode, ProgrammaticEvent,
+    ProgrammaticLaunch, Score, SharedMemCarveout, SharedMemoryMode, Sim, StreamId,
+    SynchronizationPolicy, WaitValueCmp,
 };
 use std::collections::{BTreeMap, BTreeSet};
 use std::fmt::Write;
@@ -713,6 +714,13 @@ pub struct SimCfg {
     /// Decode identity stays sequential `memcpy_pinned_to_device`.
     /// [`crate::GpuStoreCfg::memcpy_batch`] is the store path.
     pub memcpy_batch: bool,
+    /// `cudaMemcpySrcAccessOrderDuringApiCall` on [`Self::memcpy_batch`].
+    ///
+    /// The batch API waits those copies before return (not the whole stream).
+    /// Needs [`Self::memcpy_batch`]. Hits stay the same. Decode identity stays
+    /// Stream order (or sequential H2D). [`crate::GpuStoreCfg::memcpy_during`]
+    /// is the store path.
+    pub memcpy_during: bool,
     /// Peer map without dest HBM at a managed or VMM fill.
     ///
     /// Dest GEMMs may read without migrating or charging dest HBM. `--place replicas`
@@ -1217,6 +1225,7 @@ impl SimCfg {
             decode_sm_permille: 0,
             decode_priority: false,
             memcpy_batch: false,
+            memcpy_during: false,
         }
     }
 }
@@ -1284,6 +1293,9 @@ pub(crate) fn validate_sim_cfg(cfg: &SimCfg, profile: &HardwareProfile) -> Resul
     }
     if cfg.mempool_max > 0 && cfg.sync_alloc {
         return Err(Error::Store("mempool-max needs cudaMallocAsync"));
+    }
+    if cfg.memcpy_during && !cfg.memcpy_batch {
+        return Err(Error::Store("memcpy-during needs memcpy-batch"));
     }
     if cfg.memcpy_batch
         && (cfg.pageable
@@ -1432,6 +1444,7 @@ pub fn sim_replay_cfg(
         host_register_mapped: cfg.host_register_mapped,
         sync_memops: cfg.sync_memops,
         memcpy_batch: cfg.memcpy_batch,
+        memcpy_during: cfg.memcpy_during,
         accessed_by: cfg.accessed_by,
         wait_value: cfg.wait_value,
         stream_attach: cfg.stream_attach,
@@ -1597,6 +1610,8 @@ pub(crate) struct TouchArgs {
     pub sync_memops: bool,
     /// [`SimCfg::memcpy_batch`]: multi-expert prefetch uses `cudaMemcpyBatchAsync`.
     pub memcpy_batch: bool,
+    /// [`SimCfg::memcpy_during`]: batch attrs use DuringApiCall.
+    pub memcpy_during: bool,
     /// [`SimCfg::accessed_by`]: SetAccessedBy / VMM SetAccess / mempool SetAccess
     /// on every GPU (fill or default pools).
     pub accessed_by: bool,
@@ -1654,6 +1669,18 @@ fn hbm_h2d_pinned(
     Ok(())
 }
 
+/// `cudaMemcpyAttributes` for a batched H2D. DuringApiCall waits those copies.
+pub(crate) fn memcpy_batch_attr(during: bool) -> MemcpyAttributes {
+    MemcpyAttributes {
+        src_access_order: if during {
+            MemcpySrcAccessOrder::DuringApiCall
+        } else {
+            MemcpySrcAccessOrder::Stream
+        },
+        flags: 0,
+    }
+}
+
 fn hbm_h2d_many(sim: &mut Sim, args: TouchArgs, allocs: &[AllocId]) -> Result<(), Error> {
     if allocs.is_empty() {
         return Ok(());
@@ -1671,7 +1698,7 @@ fn hbm_h2d_many(sim: &mut Sim, args: TouchArgs, allocs: &[AllocId]) -> Result<()
                 MemcpyOp::packed_1d(Place::HostPinned, Place::Device(args.d), *id, args.bytes)
             })
             .collect();
-        let attr = MemcpyAttributes::default();
+        let attr = memcpy_batch_attr(args.memcpy_during);
         let _ids =
             sim.memcpy_batch_async(args.d, &ops, std::slice::from_ref(&attr), &[0], args.s)?;
         return Ok(());

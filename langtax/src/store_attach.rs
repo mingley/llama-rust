@@ -74,6 +74,8 @@ pub(crate) struct GpuCli {
     pub device_sync_memops: bool,
     /// `cudaMemcpyBatchAsync` prefetch (`GpuStoreCfg::memcpy_batch`).
     pub memcpy_batch: bool,
+    /// `cudaMemcpySrcAccessOrderDuringApiCall` on [`Self::memcpy_batch`].
+    pub memcpy_during: bool,
     pub accessed_by: bool,
     pub legacy_null: bool,
     pub stream_priority: bool,
@@ -245,6 +247,7 @@ impl GpuCli {
             "--sync-memops" => &mut self.sync_memops,
             "--device-sync-memops" => &mut self.device_sync_memops,
             "--memcpy-batch" => &mut self.memcpy_batch,
+            "--memcpy-during" => &mut self.memcpy_during,
             "--accessed-by" => &mut self.accessed_by,
             "--legacy-null" => &mut self.legacy_null,
             "--stream-priority" => &mut self.stream_priority,
@@ -609,6 +612,14 @@ impl GpuCli {
         Ok(())
     }
 
+    /// `--memcpy-during` needs `--memcpy-batch`.
+    pub(crate) fn check_memcpy_during(self) -> Result<(), String> {
+        if self.memcpy_during && !self.memcpy_batch {
+            return Err("--memcpy-during needs --memcpy-batch".into());
+        }
+        Ok(())
+    }
+
     /// First CUDA knob that needs `--expert-sim`, if any.
     #[must_use]
     pub(crate) fn sim_flag(self) -> Option<&'static str> {
@@ -642,6 +653,7 @@ impl GpuCli {
             (self.sync_memops, "--sync-memops"),
             (self.device_sync_memops, "--device-sync-memops"),
             (self.memcpy_batch, "--memcpy-batch"),
+            (self.memcpy_during, "--memcpy-during"),
             (self.accessed_by, "--accessed-by"),
             (self.legacy_null, "--legacy-null"),
             (self.stream_priority, "--stream-priority"),
@@ -998,6 +1010,7 @@ pub(crate) fn gpu_knobs(gpu: GpuCli) -> GpuStoreCfg {
         sync_memops: gpu.sync_memops,
         device_sync_memops: gpu.device_sync_memops,
         memcpy_batch: gpu.memcpy_batch,
+        memcpy_during: gpu.memcpy_during,
         accessed_by: gpu.accessed_by,
         legacy_null: gpu.legacy_null,
         stream_priority: gpu.stream_priority,

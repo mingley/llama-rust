@@ -472,7 +472,8 @@
 //! DuringApiCall waits those copies; Any does not). [`MemcpyFlags::PREFER_OVERLAP_WITH_COMPUTE`]
 //! is ignored (discrete). Location hints are omitted
 //! ([`DeviceAttr::ConcurrentManagedAccess`] / [`PageableMemoryAccess`](DeviceAttr::PageableMemoryAccess)
-//! are 0).
+//! are 0). `expertvm sim --memcpy-during` / `gguf_gemv engine --expert-sim --memcpy-during`
+//! is DuringApiCall on batched prefetch (needs `--memcpy-batch`; identity stays Stream).
 //! [`memcpy_3d_batch_async`](Sim::memcpy_3d_batch_async) is `cudaMemcpy3DBatchAsync`
 //! (pointer-to-pointer [`MemcpyOp::is_3d`] only; CUDA arrays are not modeled;
 //! `flags` must be `0`; capture is `"cannot capture memcpy3d batch"`).
