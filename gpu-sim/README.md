@@ -724,6 +724,8 @@ distinct from `SparseCudaArraySupported`).
 from `TextureAlignment`).
 `TexturePitchAlignment` is always 0 (CUDA textures are not modeled;
 distinct from `TextureAlignment` and from `MemcpyOp` 2D pitches).
+`MaxTexture1DWidth` is always 0 (CUDA arrays / textures are not modeled;
+distinct from `TextureAlignment`).
 `StreamPrioritiesSupported` /
 `UnifiedAddressing` are always 1. `GpuOverlap` is `copy_engines > 0`.
 `device_get_properties` is `cudaGetDeviceProperties` of those same fields

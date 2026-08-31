@@ -828,6 +828,9 @@ pub enum DeviceAttr {
     /// modeled). Distinct from [`Self::TextureAlignment`] and from
     /// [`MemcpyOp`](crate::MemcpyOp) 2D pitches, which this VM does model.
     TexturePitchAlignment,
+    /// `cudaDevAttrMaxTexture1DWidth` (always 0; CUDA arrays / textures are
+    /// not modeled). Distinct from [`Self::TextureAlignment`].
+    MaxTexture1DWidth,
     /// `cudaDevAttrAsyncEngineCount` ([`crate::GpuProfile::copy_engines`]).
     AsyncEngineCount,
     /// `cudaDevAttrClusterLaunch` (`max_blocks_per_cluster > 0`).
@@ -1037,6 +1040,10 @@ pub struct DeviceProperties {
     /// [`Self::texture_alignment`] and from [`MemcpyOp`](crate::MemcpyOp) 2D
     /// pitches.
     pub texture_pitch_alignment: u32,
+    /// `cudaDevAttrMaxTexture1DWidth` ([`DeviceAttr::MaxTexture1DWidth`]).
+    /// Always 0; CUDA arrays / textures are not modeled. Distinct from
+    /// [`Self::texture_alignment`].
+    pub max_texture_1d_width: u32,
     /// [`crate::GpuProfile::max_shared_mem_per_block`].
     pub shared_mem_per_block: u32,
     /// [`crate::GpuProfile::max_shared_mem_per_block_optin`].
