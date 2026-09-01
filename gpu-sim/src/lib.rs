@@ -779,6 +779,10 @@
 //! `maxThreadsPerBlock`, `ptxVersion`, `binaryVersion`, and `cacheModeCA`
 //! are always 0 until a compiled kernel exists. Distinct from
 //! [`DeviceAttr::MaxThreadsPerBlock`]. `numRegs` is not modeled this slice.
+//! [`func_get_name`](Sim::func_get_name) is `cudaFuncGetName` / `cuFuncGetName`
+//! (empty until a compiled kernel exists). Distinct from
+//! [`device_get_name`](Sim::device_get_name). Query; legal during capture.
+//! No Engine `--func-name`.
 //! [`func_set_attribute`](Sim::func_set_attribute) /
 //! [`func_get_attribute`](Sim::func_get_attribute) are `cudaFuncSetAttribute` /
 //! `GetAttribute` ([`FuncAttr`]). Typed setters stay. Get is a query
@@ -17907,6 +17911,28 @@ mod tests {
             Err(SimError::Invalid { why }) => assert!(why.contains("device"), "{why}"),
             other => panic!("{other:?}"),
         }
+    }
+
+    #[test]
+    fn func_get_name_is_empty_until_compiled_kernel() {
+        let mut sim = Sim::new(h100());
+        let d = DeviceId(0);
+        assert_eq!(sim.func_get_name(d).unwrap(), "");
+        assert_ne!(
+            sim.func_get_name(d).unwrap(),
+            sim.device_get_name(d).unwrap()
+        );
+        sim.begin_capture(d, StreamId(0)).unwrap();
+        assert_eq!(sim.func_get_name(d).unwrap(), "");
+        let _g = sim.end_capture().unwrap();
+        match sim.func_get_name(DeviceId(99)) {
+            Err(SimError::Invalid { why }) => {
+                assert!(why.contains("device not in profile"), "{why}");
+            }
+            other => panic!("{other:?}"),
+        }
+        let eight = Sim::new(HardwareProfile::example_8xh100_nvlink());
+        assert_eq!(eight.func_get_name(DeviceId(1)).unwrap(), "");
     }
 
     #[test]

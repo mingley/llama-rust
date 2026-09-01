@@ -5,6 +5,14 @@ Visible five-turn extract: [docs/chatgpt-share-6a920fe1.md](docs/chatgpt-share-6
 Complete share-API extract: [docs/chatgpt-share-6a920fe1/](docs/chatgpt-share-6a920fe1/).
 Work lands on `main`. No PRs.
 
+## Shipped 2026-09-01 — CUDA `cudaFuncGetName`
+
+`gpu-sim` `Sim::func_get_name` is `cudaFuncGetName` / `cuFuncGetName`.
+Empty until a compiled kernel exists. Query; legal during capture.
+Distinct from `device_get_name` and from `func_get_attributes`. This VM
+does not invent `cuKernelGetName` or Engine `--func-name`.
+`gpu-profile capture` is still refused. Dual score still has no `$/M tokens`.
+
 ## Shipped 2026-09-01 — CUDA `cuDevicePrimaryCtxSetFlags`
 
 `gpu-sim` `Sim::device_primary_ctx_set_flags` is

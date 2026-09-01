@@ -23967,6 +23967,19 @@ impl Sim {
         })
     }
 
+    /// `cudaFuncGetName` / `cuFuncGetName` for the per-device function.
+    ///
+    /// Query; legal during capture. Empty until a compiled kernel exists
+    /// (same bar as compiler-emitted [`FuncAttributes`] fields staying 0).
+    /// Distinct from [`Self::device_get_name`] (profile name) and from
+    /// [`Self::func_get_attributes`]. Unknown devices are Invalid
+    /// `"device not in profile"`. This VM does not invent `cuKernelGetName`
+    /// this slice.
+    pub fn func_get_name(&self, device: DeviceId) -> Result<String, SimError> {
+        let _gpu = self.profile.gpu(device)?;
+        Ok(String::new())
+    }
+
     /// `cudaFuncSetAttribute`. Host-side; not a graph node.
     ///
     /// Dispatches [`FuncAttr`] onto the typed setters. Capture-legal like those
