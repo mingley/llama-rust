@@ -956,6 +956,10 @@
 //! primary context (same flags as [`get_device_flags`](Sim::get_device_flags)).
 //! Distinct from [`device_primary_ctx_get_state`](Sim::device_primary_ctx_get_state)
 //! (also reports active). Query; legal during capture. No Engine `--ctx-flags`.
+//! [`ctx_get_cache_config`](Sim::ctx_get_cache_config) is `cuCtxGetCacheConfig`
+//! for that same primary context (same as [`get_cache_config`](Sim::get_cache_config)).
+//! Distinct from [`get_func_cache_config`](Sim::get_func_cache_config). Query;
+//! legal during capture. No Engine `--ctx-cache-config`.
 //! `expertvm sim --device-sync-memops` sets [`DeviceFlags::SYNC_MEMOPS`].
 //! `expertvm sim --device-sync-policy blocking` sets
 //! [`DeviceFlags::SCHEDULE_BLOCKING_SYNC`].
@@ -20708,6 +20712,49 @@ mod tests {
         );
         sim.reset_device(d).unwrap();
         assert_eq!(sim.ctx_get_flags(d).unwrap(), DeviceFlags::SCHEDULE_AUTO);
+    }
+
+    #[test]
+    fn ctx_get_cache_config_matches_device_cache() {
+        let mut sim = Sim::new(h100());
+        let d = DeviceId(0);
+        assert_eq!(
+            sim.ctx_get_cache_config(d).unwrap(),
+            sim.get_cache_config(d).unwrap()
+        );
+        assert_eq!(sim.ctx_get_cache_config(d).unwrap(), FuncCache::PreferNone);
+        sim.set_cache_config(d, FuncCache::PreferL1).unwrap();
+        assert_eq!(sim.ctx_get_cache_config(d).unwrap(), FuncCache::PreferL1);
+        sim.set_func_cache_config(d, FuncCache::PreferShared)
+            .unwrap();
+        assert_eq!(sim.ctx_get_cache_config(d).unwrap(), FuncCache::PreferL1);
+        assert_eq!(
+            sim.get_func_cache_config(d).unwrap(),
+            FuncCache::PreferShared
+        );
+        sim.begin_capture(d, StreamId(0)).unwrap();
+        assert_eq!(sim.ctx_get_cache_config(d).unwrap(), FuncCache::PreferL1);
+        let _g = sim.end_capture().unwrap();
+        match sim.ctx_get_cache_config(DeviceId(99)) {
+            Err(SimError::Invalid { why }) => {
+                assert!(why.contains("device not in profile"), "{why}");
+            }
+            other => panic!("{other:?}"),
+        }
+        let mut eight = Sim::new(HardwareProfile::example_8xh100_nvlink());
+        eight
+            .set_cache_config(DeviceId(1), FuncCache::PreferEqual)
+            .unwrap();
+        assert_eq!(
+            eight.ctx_get_cache_config(DeviceId(0)).unwrap(),
+            FuncCache::PreferNone
+        );
+        assert_eq!(
+            eight.ctx_get_cache_config(DeviceId(1)).unwrap(),
+            FuncCache::PreferEqual
+        );
+        sim.reset_device(d).unwrap();
+        assert_eq!(sim.ctx_get_cache_config(d).unwrap(), FuncCache::PreferNone);
     }
 
     #[test]

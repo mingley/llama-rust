@@ -18530,6 +18530,20 @@ impl Sim {
         self.get_device_flags(device)
     }
 
+    /// `cuCtxGetCacheConfig` for the seeded primary context of `device`.
+    ///
+    /// Query; legal during capture. There is no TLS current device and no
+    /// `CUcontext` object. Matches [`Self::get_cache_config`]
+    /// (`cudaDeviceGetCacheConfig`). Distinct from
+    /// [`Self::get_func_cache_config`] (`cudaFuncSetCacheConfig` stored
+    /// value) and from [`Self::ctx_get_flags`]. Unknown devices are Invalid
+    /// `"device not in profile"`. This VM does not invent `cuCtxSetCacheConfig`
+    /// this slice (`set_cache_config` stays the runtime setter). Cache
+    /// config does not change kernel duration (L1 is not modeled).
+    pub fn ctx_get_cache_config(&self, device: DeviceId) -> Result<FuncCache, SimError> {
+        self.get_cache_config(device)
+    }
+
     /// `cudaInitDevice(device, 0, 0)`. Ensures the primary context (already
     /// seeded at construct). Does not make a thread-current device and does
     /// not change [`Self::get_device_flags`]. Host-synchronous 1 ns. Capture
