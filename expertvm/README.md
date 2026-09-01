@@ -526,6 +526,8 @@ TMA is not modeled; no Engine flag).
 modeled; no Engine flag).
 `gpu-sim` `import_external_memory` is `cuImportExternalMemory` (Invalid;
 no Engine flag).
+`gpu-sim` `surf_object_create` is `cuSurfObjectCreate` (Invalid; CUDA
+surfaces are not modeled; no Engine flag).
 `gpu-sim` texture 2D/3D dim caps are always 0 (`cudaDevAttrMaxTexture2DWidth`
 and Height, `MaxTexture3DWidth` / Height / Depth; no Engine flag).
 `gpu-sim` alternate texture 3D dim caps are always 0

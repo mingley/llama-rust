@@ -17630,6 +17630,19 @@ impl Sim {
         })
     }
 
+    /// `cuSurfObjectCreate`. CUDA surfaces are not modeled.
+    ///
+    /// Always Invalid `"cuda surface"` ([`DeviceAttr::MaxSurface1DWidth`] is
+    /// 0). Distinct from [`Self::array_create`]. Unknown devices are Invalid
+    /// `"device not in profile"`. This VM does not invent
+    /// `cuTexObjectCreate` this slice.
+    pub fn surf_object_create(&self, device: DeviceId) -> Result<(), SimError> {
+        let _gpu = self.profile.gpu(device)?;
+        Err(SimError::Invalid {
+            why: "cuda surface",
+        })
+    }
+
     /// `cudaMemcpy3DWithAttributesAsync`.
     ///
     /// [`MemcpySrcAccessOrder::Stream`] is [`Self::memcpy_3d_async`].
