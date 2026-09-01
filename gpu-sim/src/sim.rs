@@ -624,6 +624,14 @@ struct Graph {
     instantiate_flags: u32,
     /// Last op of an in-flight [`Sim::device_launch_graph`] (launcher or body tail).
     device_launch_tail: Option<OpId>,
+    /// Host stream that launched this device-graph instance (join target).
+    device_launch_stream: Option<StreamId>,
+    /// Host-issued device launch (not fire-and-forget).
+    device_launch_root: bool,
+    /// Fire-and-forget DeviceLaunch ops issued from this instance.
+    device_faf: Vec<OpId>,
+    /// At most one queued `cudaStreamGraphTailLaunch` child exec.
+    device_tail_child: Option<GraphId>,
     /// In-flight host [`Sim::launch_graph`] tails. Concurrent launches each pin
     /// a tail; destroy waits for all of them. Empty launches do not pin destroy
     /// to prior stream work.
@@ -710,6 +718,11 @@ impl Sim {
     }
 
     fn require_live_stream(&self, device: DeviceId, stream: StreamId) -> Result<(), SimError> {
+        if stream.is_device_graph_stream() {
+            return Err(SimError::Invalid {
+                why: "device launch stream",
+            });
+        }
         if self.gone_streams.contains(&(device, stream)) {
             Err(SimError::Invalid {
                 why: "unknown stream",
@@ -1004,6 +1017,8 @@ pub struct Sim {
     /// Independent graph nodes run on internal streams (Hyper-Q). The launch
     /// stream still waits for them (`cudaStreamSynchronize` / later submits).
     graph_joins: BTreeMap<(DeviceId, StreamId), Vec<OpId>>,
+    /// Internal streams for fire-and-forget device launches (`0x8000..0x9000`).
+    next_anon_stream: u16,
     running: Vec<Running>,
     gpus: BTreeMap<DeviceId, GpuRt>,
     bytes_moved: u64,
@@ -1188,6 +1203,7 @@ impl Sim {
             capture_buf: Vec::new(),
             graph_allocs: BTreeMap::new(),
             graph_joins: BTreeMap::new(),
+            next_anon_stream: 0x8000,
             running: Vec::new(),
             gpus,
             bytes_moved: 0,
@@ -2275,6 +2291,11 @@ impl Sim {
                 why: "null stream uses set_legacy_null_stream",
             });
         }
+        if stream.is_device_graph_stream() {
+            return Err(SimError::Invalid {
+                why: "device launch stream",
+            });
+        }
         if self.gone_streams.contains(&(device, stream)) {
             if !self.stream_idle(device, stream) {
                 return Err(SimError::Invalid {
@@ -2349,7 +2370,7 @@ impl Sim {
         if stream == StreamId::NULL {
             return Err(SimError::Invalid { why: "null stream" });
         }
-        if stream == StreamId::GREEN_CTX_SYNC {
+        if stream == StreamId::GREEN_CTX_SYNC || stream.is_device_graph_stream() {
             return Err(SimError::Invalid {
                 why: "unknown stream",
             });
@@ -3682,6 +3703,11 @@ impl Sim {
             }
             (g.origin, g.ready())
         };
+        if stream.is_device_graph_stream() {
+            return Err(SimError::Invalid {
+                why: "device launch stream",
+            });
+        }
         if self.in_capture(origin.0, stream) {
             return self.capture_child_graph(graph, origin.0, stream, ready);
         }
@@ -3772,6 +3798,23 @@ impl Sim {
     /// while that work is in flight are Invalid `"device launch in flight"`.
     /// Capture cannot include it. [`Self::update_graph`] of a device-launch
     /// exec is Invalid.
+    ///
+    /// [`StreamId::GRAPH_FIRE_AND_FORGET`] and [`StreamId::GRAPH_TAIL_LAUNCH`]
+    /// are CUDA `cudaStreamGraphFireAndForget` and `cudaStreamGraphTailLaunch`.
+    /// They require a host-issued device launch in flight on the exec origin
+    /// device (`"no current graph exec"`). Fire-and-forget submits on an
+    /// internal stream so concurrent FAF launches do not serialize with each
+    /// other or the parent body. The parent host stream waits for those FAF
+    /// bodies ([`Self::synchronize_stream`]). Tail launch is queued until the
+    /// parent instance plus those FAF children complete, then submitted on
+    /// the parent host stream. The returned [`OpId`] for a tail launch is the
+    /// parent's in-flight tail (already submitted), not a new op. A second
+    /// tail on that instance is Invalid `"device launch tail"`. Self
+    /// tail-relaunch of the in-flight exec is legal. Host
+    /// [`Self::launch_graph`] of those ids is Invalid `"device launch stream"`.
+    /// This VM does not invent `cudaStreamGraphFireAndForgetAsSibling`.
+    /// [`Self::current_graph_exec`] still returns the lowest in-flight
+    /// DeviceLaunch id (including FAF children).
     pub fn device_launch_graph(
         &mut self,
         graph: GraphId,
@@ -3800,19 +3843,210 @@ impl Sim {
                 why: "graph not uploaded",
             });
         }
-        if tail.is_some_and(|id| !self.op_done(id)) {
+        if stream == StreamId::GRAPH_FIRE_AND_FORGET {
+            return self.device_fire_and_forget(exec, device);
+        }
+        if stream == StreamId::GRAPH_TAIL_LAUNCH {
+            return self.device_tail_launch(exec, device);
+        }
+        self.require_live_stream(device, stream)?;
+        if tail.is_some_and(|id| !self.op_done(id)) || self.device_tail_queued(exec) {
             return Err(SimError::Invalid {
                 why: "device launch in flight",
             });
         }
         let id = self.submit(device, stream, Kind::DeviceLaunch { graph: exec })?;
-        self.graphs
-            .get_mut(&exec)
-            .ok_or(SimError::Invalid {
-                why: "unknown graph",
-            })?
-            .device_launch_tail = Some(id);
+        let g = self.graphs.get_mut(&exec).ok_or(SimError::Invalid {
+            why: "unknown graph",
+        })?;
+        g.device_launch_tail = Some(id);
+        g.device_launch_stream = Some(stream);
+        g.device_launch_root = true;
+        g.device_faf.clear();
+        g.device_tail_child = None;
         Ok(id)
+    }
+
+    fn device_tail_queued(&self, exec: GraphId) -> bool {
+        self.graphs
+            .values()
+            .any(|p| p.device_tail_child == Some(exec))
+    }
+
+    fn current_host_device_exec(&self, device: DeviceId) -> Option<GraphId> {
+        self.graphs.iter().find_map(|(&id, g)| {
+            (g.origin.0 == device
+                && g.device_launch_root
+                && g.device_launch_tail.is_some_and(|tail| !self.op_done(tail)))
+            .then_some(id)
+        })
+    }
+
+    fn device_fire_and_forget(
+        &mut self,
+        exec: GraphId,
+        device: DeviceId,
+    ) -> Result<OpId, SimError> {
+        let parent = self
+            .current_host_device_exec(device)
+            .ok_or(SimError::Invalid {
+                why: "no current graph exec",
+            })?;
+        if parent == exec
+            || self
+                .graphs
+                .get(&exec)
+                .is_some_and(|g| g.device_launch_tail.is_some_and(|id| !self.op_done(id)))
+            || self.device_tail_queued(exec)
+        {
+            return Err(SimError::Invalid {
+                why: "device launch in flight",
+            });
+        }
+        let join = self
+            .graphs
+            .get(&parent)
+            .and_then(|g| g.device_launch_stream)
+            .ok_or(SimError::Invalid {
+                why: "no current graph exec",
+            })?;
+        let stream = self.alloc_anon_stream();
+        let id = self.submit_live_with_deps(
+            device,
+            stream,
+            Kind::DeviceLaunch { graph: exec },
+            LaunchCost::Kernel,
+            Vec::new(),
+        )?;
+        self.graph_joins.entry((device, join)).or_default().push(id);
+        if let Some(p) = self.graphs.get_mut(&parent) {
+            p.device_faf.push(id);
+        }
+        let g = self.graphs.get_mut(&exec).ok_or(SimError::Invalid {
+            why: "unknown graph",
+        })?;
+        g.device_launch_tail = Some(id);
+        g.device_launch_stream = Some(join);
+        g.device_launch_root = false;
+        g.device_faf.clear();
+        g.device_tail_child = None;
+        Ok(id)
+    }
+
+    fn device_tail_launch(&mut self, exec: GraphId, device: DeviceId) -> Result<OpId, SimError> {
+        let parent = self
+            .current_host_device_exec(device)
+            .ok_or(SimError::Invalid {
+                why: "no current graph exec",
+            })?;
+        if self
+            .graphs
+            .get(&parent)
+            .is_some_and(|g| g.device_tail_child.is_some())
+        {
+            return Err(SimError::Invalid {
+                why: "device launch tail",
+            });
+        }
+        if parent != exec
+            && (self
+                .graphs
+                .get(&exec)
+                .is_some_and(|g| g.device_launch_tail.is_some_and(|id| !self.op_done(id)))
+                || self.device_tail_queued(exec))
+        {
+            return Err(SimError::Invalid {
+                why: "device launch in flight",
+            });
+        }
+        let token = self
+            .graphs
+            .get(&parent)
+            .and_then(|g| g.device_launch_tail)
+            .ok_or(SimError::Invalid {
+                why: "no current graph exec",
+            })?;
+        if let Some(p) = self.graphs.get_mut(&parent) {
+            p.device_tail_child = Some(exec);
+        }
+        Ok(token)
+    }
+
+    fn alloc_anon_stream(&mut self) -> StreamId {
+        loop {
+            let s = StreamId(self.next_anon_stream);
+            self.next_anon_stream = self.next_anon_stream.saturating_add(1);
+            if self.next_anon_stream < 0x8000 || self.next_anon_stream >= 0x9000 {
+                self.next_anon_stream = 0x8000;
+            }
+            if !s.is_device_graph_stream() && s != StreamId::GREEN_CTX_SYNC && s != StreamId::NULL {
+                return s;
+            }
+        }
+    }
+
+    fn device_instance_complete(&self, exec: GraphId) -> bool {
+        let Some(g) = self.graphs.get(&exec) else {
+            return false;
+        };
+        let Some(tail) = g.device_launch_tail else {
+            return false;
+        };
+        if !self.op_done(tail) {
+            return false;
+        }
+        g.device_faf.iter().all(|id| {
+            if !self.op_done(*id) {
+                return false;
+            }
+            let Some(op) = self.ops.get(id) else {
+                return true;
+            };
+            let Kind::DeviceLaunch { graph } = &op.kind else {
+                return true;
+            };
+            self.graphs
+                .get(graph)
+                .is_none_or(|c| c.device_launch_tail.is_none_or(|t| self.op_done(t)))
+        })
+    }
+
+    fn flush_device_tail_launches(&mut self) -> Result<(), SimError> {
+        let ready: Vec<(GraphId, GraphId, DeviceId, StreamId)> = self
+            .graphs
+            .iter()
+            .filter_map(|(&parent, g)| {
+                if !self.device_instance_complete(parent) {
+                    return None;
+                }
+                let child = g.device_tail_child?;
+                let stream = g.device_launch_stream?;
+                Some((parent, child, g.origin.0, stream))
+            })
+            .collect();
+        for (parent, child, device, stream) in ready {
+            if let Some(g) = self.graphs.get_mut(&parent) {
+                g.device_tail_child = None;
+                g.device_faf.clear();
+            }
+            let deps = self.stream_order_deps(device, stream);
+            let id = self.submit_live_with_deps(
+                device,
+                stream,
+                Kind::DeviceLaunch { graph: child },
+                LaunchCost::Kernel,
+                deps,
+            )?;
+            let g = self.graphs.get_mut(&child).ok_or(SimError::Invalid {
+                why: "unknown graph",
+            })?;
+            g.device_launch_tail = Some(id);
+            g.device_launch_stream = Some(stream);
+            g.device_launch_root = true;
+            g.device_faf.clear();
+            g.device_tail_child = None;
+        }
+        Ok(())
     }
 
     /// `cudaGetCurrentGraphExec` analog: the DeviceLaunch executable in
@@ -4671,6 +4905,10 @@ impl Sim {
                 auto_free_on_launch: auto_free,
                 instantiate_flags: flags,
                 device_launch_tail: None,
+                device_launch_stream: None,
+                device_launch_root: false,
+                device_faf: Vec::new(),
+                device_tail_child: None,
                 host_launch_tails: Vec::new(),
                 handle_gone: false,
                 primary_exec: None,
@@ -7714,6 +7952,10 @@ impl Sim {
                     auto_free_on_launch: false,
                     instantiate_flags: 0,
                     device_launch_tail: None,
+                    device_launch_stream: None,
+                    device_launch_root: false,
+                    device_faf: Vec::new(),
+                    device_tail_child: None,
                     host_launch_tails: Vec::new(),
                     handle_gone: false,
                     primary_exec: None,
@@ -7991,6 +8233,10 @@ impl Sim {
         g.device_launch_tail.is_some_and(|op| !self.op_done(op))
             || g.host_launch_tails.iter().any(|op| !self.op_done(*op))
             || self.pending_graph_upload(id).is_some()
+            || self
+                .graphs
+                .values()
+                .any(|p| p.device_tail_child == Some(id))
     }
 
     fn park_in_flight_exec(&mut self, graph: GraphId) -> Result<(), SimError> {
@@ -8128,6 +8374,11 @@ impl Sim {
         if flags != GraphCreateFlags::DEFAULT {
             return Err(SimError::Invalid {
                 why: "graph create flags",
+            });
+        }
+        if stream.is_device_graph_stream() {
+            return Err(SimError::Invalid {
+                why: "device launch stream",
             });
         }
         self.fail_if_capturing("cannot create graph during capture")?;
@@ -8412,6 +8663,10 @@ impl Sim {
                 auto_free_on_launch: false,
                 instantiate_flags: 0,
                 device_launch_tail: None,
+                device_launch_stream: None,
+                device_launch_root: false,
+                device_faf: Vec::new(),
+                device_tail_child: None,
                 host_launch_tails: Vec::new(),
                 handle_gone: false,
                 primary_exec: None,
@@ -23363,20 +23618,22 @@ impl Sim {
         }
         self.bump_graph_mem_from_op(id)?;
         self.finish_device_launch(id)?;
+        self.flush_device_tail_launches()?;
         self.reap_gone_exec()?;
         self.continue_while(id)?;
         Ok(())
     }
 
     fn finish_device_launch(&mut self, id: OpId) -> Result<(), SimError> {
-        let (graph, stream) = {
+        let (graph, stream, device, join_stream) = {
             let Some(op) = self.ops.get(&id) else {
                 return Ok(());
             };
             let Kind::DeviceLaunch { graph } = &op.kind else {
                 return Ok(());
             };
-            (*graph, op.stream)
+            let join = self.graphs.get(graph).and_then(|g| g.device_launch_stream);
+            (*graph, op.stream, op.device, join)
         };
         self.reset_graph_tree_conds(graph)?;
         let mut stack = BTreeSet::new();
@@ -23385,11 +23642,6 @@ impl Sim {
         let tail = if n == 0 {
             id
         } else {
-            let device = self
-                .ops
-                .get(&id)
-                .ok_or(SimError::Invalid { why: "unknown op" })?
-                .device;
             self.tail.get(&(device, stream)).copied().unwrap_or(id)
         };
         self.graphs
@@ -23398,6 +23650,16 @@ impl Sim {
                 why: "unknown graph",
             })?
             .device_launch_tail = Some(tail);
+        if n > 0 {
+            if let Some(join) = join_stream {
+                if join != stream {
+                    self.graph_joins
+                        .entry((device, join))
+                        .or_default()
+                        .push(tail);
+                }
+            }
+        }
         Ok(())
     }
 

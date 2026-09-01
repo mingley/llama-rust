@@ -5961,7 +5961,22 @@ model, do not celebrate the sim.
     This VM does not invent Engine `--stream-destroy`. `gpu-profile
     capture` is still refused. Dual score still has no `$/M tokens`.
 
-560. [ ] Next numbered PLAN item after 559 is the next `gpu-sim` / Engine /
+560. [x] `gpu-sim` named device-graph streams are CUDA
+    `cudaStreamGraphFireAndForget` / `cudaStreamGraphTailLaunch`
+    (`StreamId::GRAPH_FIRE_AND_FORGET` / `GRAPH_TAIL_LAUNCH`) on
+    `device_launch_graph`. They require a host-issued DeviceLaunch in
+    flight (`"no current graph exec"`). Fire-and-forget runs on an
+    internal stream; the parent host stream waits for the FAF body.
+    Tail launch waits for the parent instance plus those FAF children
+    (one tail per instance; `"device launch tail"`). Self tail-relaunch
+    of the in-flight exec is legal. Host `launch_graph` / `kernel` of
+    those ids is Invalid `"device launch stream"`. This VM does not
+    invent `cudaStreamGraphFireAndForgetAsSibling` or Engine
+    `--graph-tail-launch`. `current_graph_exec` still returns the
+    lowest in-flight DeviceLaunch id. `gpu-profile capture` is still
+    refused. Dual score still has no `$/M tokens`.
+
+561. [ ] Next numbered PLAN item after 560 is the next `gpu-sim` / Engine /
     serve / expertvm mechanical API that is still missing, or the next official
     decode family. Prefer remaining CUDA-shaped twins over more
     OpenAI HTTP veneer. Do not invent F32 `output.scale`. Do not invent a
@@ -6000,6 +6015,14 @@ model, do not celebrate the sim.
     abort in-flight work on stream destroy. Do not wait like `destroy_event`.
     Do not reverse implicit streams remaining legal until destroy. Do not
     reverse recreate-while-unfinished `"stream in flight"`. Do not invent
+    a second `cudaStreamGraphFireAndForget` / `cudaStreamGraphTailLaunch` /
+    named device-launch streams. Do not invent Engine `--graph-tail-launch` /
+    `--device-launch-stream`. Do not invent
+    `cudaStreamGraphFireAndForgetAsSibling` this slice. Do not treat host
+    `launch_graph` named streams as legal. Do not reverse 558
+    `current_graph_exec` lowest-id among all in-flight tails. Do not reverse
+    host user-stream `device_launch_graph`. Do not reverse self tail-relaunch.
+    Do not invent
     a second
     `cuDeviceGetUuid` / `cudaDeviceGetUuid`. Do not invent a second
     `cuDeviceGetByUuid`. Do not invent a second `cudaDeviceGetPciBusId` /
@@ -6239,8 +6262,14 @@ model, do not celebrate the sim.
     Do not invent a second `cudaStreamDestroy` / `destroy_stream`. Do not
     invent Engine `--stream-destroy`. Do not reverse NULL-stream destroy
     refuse. Do not abort in-flight work on stream destroy. Do not wait like
-    `destroy_event`. Do not reverse recreate-while-unfinished
+    `destroy_event`.     Do not reverse recreate-while-unfinished
     `"stream in flight"`.
+    Do not invent a second `cudaStreamGraphFireAndForget` /
+    `cudaStreamGraphTailLaunch`. Do not invent Engine `--graph-tail-launch`.
+    Do not invent `cudaStreamGraphFireAndForgetAsSibling`. Do not treat
+    host `launch_graph` of those ids as legal. Do not reverse lowest-id
+    `current_graph_exec` among all in-flight DeviceLaunch tails. Do not
+    reverse self tail-relaunch of the in-flight exec.
     Do not invent a second DeviceLaunch in-flight destroy-complete check or Engine
     `--device-launch-destroy`. Do not abort an in-flight DeviceLaunch when
     `destroy_graph` succeeds. Do not delay destroy of an idle exec. Do not invent
@@ -6691,6 +6720,11 @@ model, do not celebrate the sim.
     current. Do not invent public `Sim::advance`.
     Do not invent a second `cudaStreamDestroy`. Do not invent Engine
     `--stream-destroy`. Do not reverse NULL-stream destroy refuse.
+    Do not invent a second `cudaStreamGraphFireAndForget` /
+    `cudaStreamGraphTailLaunch` / `GRAPH_FIRE_AND_FORGET` /
+    `GRAPH_TAIL_LAUNCH`. Do not invent Engine `--device-launch-stream`.
+    Do not invent `cudaStreamGraphFireAndForgetAsSibling`. Do not reverse
+    host user-stream `device_launch_graph`.
     Do not
     spend the next item on an OpenAI-compatible HTTP veneer.
 

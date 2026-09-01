@@ -861,6 +861,12 @@
 //! `cudaGetCurrentGraphExec` (the DeviceLaunch exec in flight on that
 //! device; host [`launch_graph`](Sim::launch_graph) does not count).
 //! Query; legal during capture. Unknown devices are Invalid.
+//! [`StreamId::GRAPH_FIRE_AND_FORGET`] and [`StreamId::GRAPH_TAIL_LAUNCH`] are
+//! CUDA `cudaStreamGraphFireAndForget` and `cudaStreamGraphTailLaunch` for nested
+//! [`device_launch_graph`](Sim::device_launch_graph) while a host-issued
+//! DeviceLaunch is in flight. Host [`launch_graph`](Sim::launch_graph) cannot
+//! use those ids. This VM does not invent
+//! `cudaStreamGraphFireAndForgetAsSibling`.
 //! [`instantiate_graph_with_params`](Sim::instantiate_graph_with_params) is
 //! `cudaGraphInstantiateWithParams` ([`GraphInstantiateParams`] result, err
 //! node, and `hUploadStream`). [`graph_exec_get_flags`](Sim::graph_exec_get_flags) is
@@ -1456,6 +1462,17 @@ mod tests {
 
     fn enq(r: Result<OpId, SimError>) {
         assert!(r.expect("enqueue").0 >= 1);
+    }
+
+    fn device_launch_uploaded(sim: &mut Sim, d: DeviceId, s: StreamId, a: AllocId) -> GraphId {
+        let g = sim.create_graph(d, s).unwrap();
+        sim.graph_add_kernel(g, KernelKind::other(1 << 40, 4096), &[a], &[a])
+            .unwrap();
+        sim.instantiate_graph_with_flags(
+            g,
+            GraphInstantiateFlags::DEVICE_LAUNCH | GraphInstantiateFlags::UPLOAD,
+        )
+        .unwrap()
     }
 
     #[test]
@@ -33615,6 +33632,164 @@ mod tests {
         dual.synchronize().unwrap();
         assert_eq!(dual.current_graph_exec(d0).unwrap(), None);
         assert_eq!(dual.current_graph_exec(d1).unwrap(), None);
+    }
+
+    #[test]
+    fn device_graph_named_streams_are_cuda_stream_graph_tail_and_faf() {
+        let mut sim = Sim::new(h100());
+        let d = DeviceId(0);
+        let s = StreamId(0);
+        let a = sim.malloc(d, 4096).unwrap();
+        let parent = device_launch_uploaded(&mut sim, d, s, a);
+        let child = device_launch_uploaded(&mut sim, d, s, a);
+        assert!(parent < child);
+        match sim.device_launch_graph(child, StreamId::GRAPH_FIRE_AND_FORGET) {
+            Err(SimError::Invalid { why }) => assert!(why.contains("current graph"), "{why}"),
+            other => panic!("{other:?}"),
+        }
+        match sim.device_launch_graph(child, StreamId::GRAPH_TAIL_LAUNCH) {
+            Err(SimError::Invalid { why }) => assert!(why.contains("current graph"), "{why}"),
+            other => panic!("{other:?}"),
+        }
+        match sim.launch_graph(parent, StreamId::GRAPH_TAIL_LAUNCH) {
+            Err(SimError::Invalid { why }) => {
+                assert!(why.contains("device launch stream"), "{why}");
+            }
+            other => panic!("{other:?}"),
+        }
+        match sim.kernel(
+            d,
+            KernelKind::other(8, 8),
+            &[a],
+            &[a],
+            StreamId::GRAPH_FIRE_AND_FORGET,
+        ) {
+            Err(SimError::Invalid { why }) => {
+                assert!(why.contains("device launch stream"), "{why}");
+            }
+            other => panic!("{other:?}"),
+        }
+        match sim.create_graph(d, StreamId::GRAPH_TAIL_LAUNCH) {
+            Err(SimError::Invalid { why }) => {
+                assert!(why.contains("device launch stream"), "{why}");
+            }
+            other => panic!("{other:?}"),
+        }
+        match sim.stream_create_with_flags(
+            d,
+            StreamId::GRAPH_FIRE_AND_FORGET,
+            StreamCreateFlags::NON_BLOCKING,
+        ) {
+            Err(SimError::Invalid { why }) => {
+                assert!(why.contains("device launch stream"), "{why}");
+            }
+            other => panic!("{other:?}"),
+        }
+
+        enq(sim.device_launch_graph(parent, s));
+        match sim.device_launch_graph(parent, StreamId::GRAPH_FIRE_AND_FORGET) {
+            Err(SimError::Invalid { why }) => assert!(why.contains("in flight"), "{why}"),
+            other => panic!("{other:?}"),
+        }
+        enq(sim.device_launch_graph(child, StreamId::GRAPH_FIRE_AND_FORGET));
+        assert_eq!(sim.current_graph_exec(d).unwrap(), Some(parent));
+        sim.begin_capture(d, StreamId(1)).unwrap();
+        match sim.device_launch_graph(child, StreamId::GRAPH_FIRE_AND_FORGET) {
+            Err(SimError::Invalid { why }) => assert!(why.contains("capture"), "{why}"),
+            other => panic!("{other:?}"),
+        }
+        let _end = sim.end_capture().unwrap();
+        sim.synchronize_stream(d, s).unwrap();
+        let launches: Vec<_> = sim
+            .operations()
+            .filter(|o| matches!(o.kind, GpuOp::DeviceLaunch { .. }))
+            .collect();
+        assert_eq!(launches.len(), 2);
+        assert!(launches.iter().all(|o| o.done));
+        assert!(launches.iter().any(|o| o.stream != s));
+        let kernels: Vec<_> = sim
+            .operations()
+            .filter(|o| matches!(o.kind, GpuOp::Kernel { .. }))
+            .collect();
+        assert_eq!(kernels.len(), 2);
+        assert!(kernels.iter().all(|o| o.done));
+        sim.synchronize().unwrap();
+        assert_eq!(sim.current_graph_exec(d).unwrap(), None);
+
+        let mut tail_sim = Sim::new(h100());
+        let a = tail_sim.malloc(d, 4096).unwrap();
+        let parent = device_launch_uploaded(&mut tail_sim, d, s, a);
+        let child = device_launch_uploaded(&mut tail_sim, d, s, a);
+        let sibling = device_launch_uploaded(&mut tail_sim, d, s, a);
+        enq(tail_sim.device_launch_graph(parent, s));
+        enq(tail_sim.device_launch_graph(child, StreamId::GRAPH_TAIL_LAUNCH));
+        match tail_sim.device_launch_graph(sibling, StreamId::GRAPH_TAIL_LAUNCH) {
+            Err(SimError::Invalid { why }) => assert!(why.contains("tail"), "{why}"),
+            other => panic!("{other:?}"),
+        }
+        match tail_sim.device_launch_graph(parent, s) {
+            Err(SimError::Invalid { why }) => assert!(why.contains("in flight"), "{why}"),
+            other => panic!("{other:?}"),
+        }
+        tail_sim.synchronize().unwrap();
+        let parent_launch = tail_sim
+            .operations()
+            .find(|o| matches!(o.kind, GpuOp::DeviceLaunch { graph } if graph == parent))
+            .expect("parent launch");
+        let child_launch = tail_sim
+            .operations()
+            .find(|o| matches!(o.kind, GpuOp::DeviceLaunch { graph } if graph == child))
+            .expect("child launch");
+        let parent_body = tail_sim
+            .operations()
+            .find(|o| {
+                matches!(o.kind, GpuOp::Kernel { .. })
+                    && o.stream == s
+                    && o.id.0 > parent_launch.id.0
+                    && o.id.0 < child_launch.id.0
+            })
+            .expect("parent body");
+        assert!(child_launch.start_ns.unwrap() >= parent_body.done_ns.unwrap());
+
+        let mut self_sim = Sim::new(h100());
+        let a = self_sim.malloc(d, 4096).unwrap();
+        let exec = device_launch_uploaded(&mut self_sim, d, s, a);
+        enq(self_sim.device_launch_graph(exec, s));
+        enq(self_sim.device_launch_graph(exec, StreamId::GRAPH_TAIL_LAUNCH));
+        match self_sim.device_launch_graph(exec, s) {
+            Err(SimError::Invalid { why }) => assert!(why.contains("in flight"), "{why}"),
+            other => panic!("{other:?}"),
+        }
+        self_sim.synchronize().unwrap();
+        let self_launches: Vec<_> = self_sim
+            .operations()
+            .filter(|o| matches!(o.kind, GpuOp::DeviceLaunch { graph } if graph == exec))
+            .collect();
+        assert_eq!(self_launches.len(), 2);
+        let self_kernels: Vec<_> = self_sim
+            .operations()
+            .filter(|o| matches!(o.kind, GpuOp::Kernel { .. }))
+            .collect();
+        assert_eq!(self_kernels.len(), 2);
+        assert!(self_launches[1].start_ns.unwrap() >= self_kernels[0].done_ns.unwrap());
+
+        let mut overlap = Sim::new(h100().with_compute_slots(2));
+        let a = overlap.malloc(d, 4096).unwrap();
+        let parent = device_launch_uploaded(&mut overlap, d, s, a);
+        let child = device_launch_uploaded(&mut overlap, d, s, a);
+        enq(overlap.device_launch_graph(parent, s));
+        enq(overlap.device_launch_graph(child, StreamId::GRAPH_FIRE_AND_FORGET));
+        overlap.synchronize().unwrap();
+        let parent_k = overlap
+            .operations()
+            .find(|o| matches!(o.kind, GpuOp::Kernel { .. }) && o.stream == s)
+            .expect("parent kernel");
+        let faf_k = overlap
+            .operations()
+            .find(|o| matches!(o.kind, GpuOp::Kernel { .. }) && o.stream != s)
+            .expect("faf kernel");
+        assert!(faf_k.start_ns.unwrap() < parent_k.done_ns.unwrap());
+        assert!(parent_k.start_ns.unwrap() < faf_k.done_ns.unwrap());
     }
 
     #[test]

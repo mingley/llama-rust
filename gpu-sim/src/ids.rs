@@ -28,6 +28,19 @@ impl StreamId {
     /// [`crate::Sim::green_ctx_wait_event`]. Not a CUDA stream id; not bound
     /// to a green context. User work must not use this id.
     pub const GREEN_CTX_SYNC: Self = Self(u16::MAX);
+    /// `cudaStreamGraphTailLaunch`. Nested
+    /// [`crate::Sim::device_launch_graph`] only.
+    pub const GRAPH_TAIL_LAUNCH: Self = Self(u16::MAX - 1);
+    /// `cudaStreamGraphFireAndForget`. Nested
+    /// [`crate::Sim::device_launch_graph`] only.
+    pub const GRAPH_FIRE_AND_FORGET: Self = Self(u16::MAX - 2);
+
+    /// CUDA device-graph named streams (not a real `cudaStream_t`).
+    /// Host [`crate::Sim::launch_graph`] and `kernel` cannot use these ids.
+    #[must_use]
+    pub const fn is_device_graph_stream(self) -> bool {
+        matches!(self, Self::GRAPH_TAIL_LAUNCH | Self::GRAPH_FIRE_AND_FORGET)
+    }
 }
 
 /// Cross-stream ordering token. Record on one stream, wait on another.

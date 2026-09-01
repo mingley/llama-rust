@@ -190,6 +190,7 @@ warp scheduler, L1, …   ← do not model
 | stream[i+1].start ≥ stream[i].finish (`Operation` timestamps) | queue wait vs run |
 | numerically lower `set_stream_priority` starts first under contention (`cudaDeviceGetStreamPriorityRange`) | launch overhead |
 | `cudaGetCurrentGraphExec` (`current_graph_exec`) is the DeviceLaunch exec in flight; host `launch_graph` does not count | query |
+| `cudaStreamGraphFireAndForget` / `cudaStreamGraphTailLaunch` (`GRAPH_FIRE_AND_FORGET` / `GRAPH_TAIL_LAUNCH`) nest `device_launch_graph` while a host-issued DeviceLaunch is in flight; host `launch_graph` cannot use those ids | `graph_launch_ns` |
 | `cudaStreamDestroy` (`destroy_stream`) returns immediately; in-flight work still completes; NULL is Invalid; recreate while unfinished is `"stream in flight"` | 1 ns |
 | `compute_slots>=2` overlaps independent kernels at full issue rate | kernel duration (not SM-partition) |
 | `cudaLaunchCooperativeKernel` occupies every compute slot (`cooperative_kernel`) | leftover kernels cannot Hyper-Q overlap |
@@ -553,6 +554,11 @@ device-launch exec is Invalid; cannot combine with `AUTO_FREE_ON_LAUNCH`
 (`"device launch auto free"`). `current_graph_exec` is
 `cudaGetCurrentGraphExec` (the DeviceLaunch exec in flight on that
 device; host `launch_graph` does not count). Query; legal during capture.
+`GRAPH_FIRE_AND_FORGET` / `GRAPH_TAIL_LAUNCH` are
+`cudaStreamGraphFireAndForget` / `cudaStreamGraphTailLaunch` for nested
+`device_launch_graph` while a host-issued DeviceLaunch is in flight. Host
+`launch_graph` cannot use those ids. This VM does not invent
+`cudaStreamGraphFireAndForgetAsSibling`.
 Unused conditional handles are
 `ConditionalHandleUnused` (`"conditional handle unused"`).
 `instantiate_graph_with_params` is `cudaGraphInstantiateWithParams`
@@ -1355,6 +1361,9 @@ first when compute contends). `destroy_stream` is `cudaStreamDestroy`
 `cudaDeviceGetStreamPriorityRange` (example H100 least `0`, greatest `-5`).
 `current_graph_exec` is `cudaGetCurrentGraphExec` (DeviceLaunch in
 flight; host `launch_graph` does not count). Query; legal during capture.
+`GRAPH_FIRE_AND_FORGET` / `GRAPH_TAIL_LAUNCH` are
+`cudaStreamGraphFireAndForget` / `cudaStreamGraphTailLaunch` (nested
+`device_launch_graph`; host `launch_graph` cannot use those ids).
 `destroy_stream` is `cudaStreamDestroy` (returns immediately; in-flight
 work still completes; NULL is Invalid; recreate while unfinished is
 `"stream in flight"`). Capture cannot include it.
@@ -1516,7 +1525,9 @@ Hyper-Q slot when the profile has NVLink). `cudaLaunchAttributePriority` is
 a per-kernel override of stream create priority (capture snapshots it;
 default instantiate still uses the launch stream unless `USE_NODE_PRIORITY`).
 `--device-launch` is
-`cudaGraphInstantiateFlagDeviceLaunch` plus `device_launch_graph`.
+`cudaGraphInstantiateFlagDeviceLaunch` plus `device_launch_graph`
+(gpu-sim named device-graph streams `GRAPH_FIRE_AND_FORGET` /
+`GRAPH_TAIL_LAUNCH` have no Engine flag).
 `--device-updatable` is `cudaLaunchAttributeDeviceUpdatableKernelNode`.
 `--kernel-priority N` is `cudaLaunchAttributePriority`.
 Decode identity stays `kernel`. `USE_NODE_PRIORITY` at

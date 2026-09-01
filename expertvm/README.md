@@ -157,7 +157,7 @@ every Hyper-Q slot when the profile has NVLink (`8xh100`); without NVLink
 occupancy is unchanged.
 `--device-launch` is `cudaGraphInstantiateFlagDeviceLaunch` plus
 `device_launch_graph` (illegal with `--graph-mem` / `--graph-auto-free` /
-`--graph-update`). `--device-updatable` is
+`--graph-update`; gpu-sim named device-graph streams have no Engine flag). `--device-updatable` is
 `cudaLaunchAttributeDeviceUpdatableKernelNode` so `--graph-set-params` keeps
 the exec uploaded (illegal with `--graph-update`). `--kernel-priority N` is
 `cudaLaunchAttributePriority` on grouped expert GEMMs (`None` inherits stream

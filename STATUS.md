@@ -5,6 +5,21 @@ Visible five-turn extract: [docs/chatgpt-share-6a920fe1.md](docs/chatgpt-share-6
 Complete share-API extract: [docs/chatgpt-share-6a920fe1/](docs/chatgpt-share-6a920fe1/).
 Work lands on `main`. No PRs.
 
+## Shipped 2026-09-01 — CUDA `cudaStreamGraphFireAndForget` / `cudaStreamGraphTailLaunch`
+
+`gpu-sim` named device-graph streams are `cudaStreamGraphFireAndForget` /
+`cudaStreamGraphTailLaunch` (`StreamId::GRAPH_FIRE_AND_FORGET` /
+`GRAPH_TAIL_LAUNCH`) on `device_launch_graph`. They require a host-issued
+DeviceLaunch in flight (`"no current graph exec"`). Fire-and-forget runs on
+an internal stream; the parent host stream waits for the FAF body. Tail
+launch waits for the parent instance plus those FAF children (one tail per
+instance; `"device launch tail"`). Self tail-relaunch of the in-flight exec
+is legal. Host `launch_graph` / `kernel` of those ids is Invalid
+`"device launch stream"`. This VM does not invent
+`cudaStreamGraphFireAndForgetAsSibling` or Engine `--graph-tail-launch`.
+`current_graph_exec` still returns the lowest in-flight DeviceLaunch id.
+`gpu-profile capture` is still refused. Dual score still has no `$/M tokens`.
+
 ## Shipped 2026-09-01 — CUDA `cudaStreamDestroy`
 
 `gpu-sim` `destroy_stream` is `cudaStreamDestroy`. Returns immediately;
