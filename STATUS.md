@@ -5,6 +5,14 @@ Visible five-turn extract: [docs/chatgpt-share-6a920fe1.md](docs/chatgpt-share-6
 Complete share-API extract: [docs/chatgpt-share-6a920fe1/](docs/chatgpt-share-6a920fe1/).
 Work lands on `main`. No PRs.
 
+## Shipped 2026-09-01 — CUDA alternate texture 3D dimension DeviceAttr caps
+
+`gpu-sim` `DeviceAttr::MaxTexture3DWidthAlt` /
+`MaxTexture3DHeightAlt` / `MaxTexture3DDepthAlt` are always 0. CUDA
+alternate 3D texture dims are not modeled. Query; legal during capture.
+Distinct from `MaxTexture3DWidth`. This VM does not invent Engine `--texture-3d-alt`.
+`gpu-profile capture` is still refused. Dual score still has no `$/M tokens`.
+
 ## Shipped 2026-09-01 — CUDA `cuDeviceGetLuid`
 
 `gpu-sim` `Sim::device_get_luid` is `cuDeviceGetLuid`. Always zeros

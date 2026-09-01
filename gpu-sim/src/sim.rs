@@ -19144,6 +19144,9 @@ impl Sim {
             | DeviceAttr::MaxTexture3DWidth
             | DeviceAttr::MaxTexture3DHeight
             | DeviceAttr::MaxTexture3DDepth
+            | DeviceAttr::MaxTexture3DWidthAlt
+            | DeviceAttr::MaxTexture3DHeightAlt
+            | DeviceAttr::MaxTexture3DDepthAlt
             | DeviceAttr::MaxTexture1DLinearWidth
             | DeviceAttr::MaxTexture2DLinearWidth
             | DeviceAttr::MaxTexture2DLinearHeight
@@ -19237,6 +19240,7 @@ impl Sim {
     /// Cubemap layered texture dims are always 0.
     /// Layered surface 1D/2D dims are always 0.
     /// Cubemap surface dims are always 0.
+    /// Alternate texture 3D dims are always 0.
     /// `pciSubSystemID` is always 0.
     /// `luid` and `luidDeviceNodeMask` are always 0.
     /// Occupancy SM counts, clock rates, and warp size are not.
@@ -19276,6 +19280,9 @@ impl Sim {
             max_texture_3d_width: 0,
             max_texture_3d_height: 0,
             max_texture_3d_depth: 0,
+            max_texture_3d_width_alt: 0,
+            max_texture_3d_height_alt: 0,
+            max_texture_3d_depth_alt: 0,
             max_texture_1d_linear_width: 0,
             max_texture_2d_linear_width: 0,
             max_texture_2d_linear_height: 0,

@@ -483,6 +483,8 @@ and H100 block/grid dims (no Engine flag; not occupancy SM counts).
 flag; not a compiled kernel).
 `gpu-sim` texture 2D/3D dim caps are always 0 (`cudaDevAttrMaxTexture2DWidth`
 and Height, `MaxTexture3DWidth` / Height / Depth; no Engine flag).
+`gpu-sim` alternate texture 3D dim caps are always 0
+(`cudaDevAttrMaxTexture3DWidthAlt`, HeightAlt, and DepthAlt; no Engine flag).
 `gpu-sim` linear texture 1D/2D dim caps are always 0
 (`cudaDevAttrMaxTexture1DLinearWidth`, `MaxTexture2DLinearWidth`, Height,
 and Pitch; no Engine flag).

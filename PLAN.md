@@ -6188,7 +6188,15 @@ model, do not celebrate the sim.
     occupancy SM counts, or `cudaChooseDevice`. `gpu-profile capture` is
     still refused. Dual score still has no `$/M tokens`.
 
-584. [ ] Next numbered PLAN item after 583 is the next `gpu-sim` / Engine /
+584. [x] `gpu-sim` `DeviceAttr::MaxTexture3DWidthAlt` /
+    `MaxTexture3DHeightAlt` / `MaxTexture3DDepthAlt` are always 0. CUDA
+    alternate 3D texture dims are not modeled. Query; legal during
+    capture. Distinct from `MaxTexture3DWidth`. This VM does not invent
+    Engine `--texture-3d-alt`, occupancy SM counts, or `cudaChooseDevice`.
+    `gpu-profile capture` is still refused. Dual score still has no
+    `$/M tokens`.
+
+585. [ ] Next numbered PLAN item after 584 is the next `gpu-sim` / Engine /
     serve / expertvm mechanical API that is still missing, or the next official
     decode family. Prefer remaining CUDA-shaped twins over more
     OpenAI HTTP veneer. Do not invent F32 `output.scale`. Do not invent a
@@ -6364,6 +6372,10 @@ model, do not celebrate the sim.
     Do not invent a second `cuDeviceGetLuid` / `device_get_luid`.
     Do not invent Engine `--get-luid`. Do not invent
     `cuDeviceGetLuidByUuid`. Do not reverse device_get_luid zeros.
+    Do not invent a second `cudaDevAttrMaxTexture3DWidthAlt`,
+    `MaxTexture3DHeightAlt`, or `MaxTexture3DDepthAlt`. Do not invent
+    Engine `--texture-3d-alt`. Do not invent CUDA tex3D alt bind this
+    slice. Do not reverse alternate 3D texture dims staying 0.
     Do not invent a second `cudaStreamAddCallback`.
     Do not invent Engine `--stream-callback` (same wall as second live
     `cudaLaunchHostFunc` after miss DMA).
@@ -6661,6 +6673,9 @@ model, do not celebrate the sim.
     Do not invent a second `device_get_luid` API. Do not invent
     Engine `--cu-luid`. Do not invent a LUID inverse lookup this
     slice. Do not reverse device_get_luid zeros.
+    Do not invent a second texture-3d-alt DeviceAttr family. Do not
+    invent Engine `--tex3d-alt`. Do not invent CUDA maxTexture3DAlt
+    bind this slice. Do not reverse alternate 3D texture dims staying 0.
     Do not invent a second DeviceLaunch in-flight destroy-complete check or Engine
     `--device-launch-destroy`. Do not abort an in-flight DeviceLaunch when
     `destroy_graph` succeeds. Do not delay destroy of an idle exec. Do not invent
@@ -7179,6 +7194,9 @@ model, do not celebrate the sim.
     field. Do not invent Engine `--luid-mask`. Do not reverse luid 0.
     Do not invent a second `device_get_luid` method. Do not invent
     Engine `--query-luid`. Do not reverse LUID query zeros.
+    Do not invent a second maxTexture3DAlt DeviceProperties field. Do
+    not invent Engine `--texture-alt-3d`. Do not reverse those alternate
+    3D texture dims as 0.
     Do not
     spend the next item on an OpenAI-compatible HTTP veneer.
 

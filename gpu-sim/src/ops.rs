@@ -953,6 +953,17 @@ pub enum DeviceAttr {
     /// `cudaDevAttrMaxTexture3DDepth` (always 0; CUDA arrays / textures are
     /// not modeled). Distinct from [`Self::MaxTexture3DHeight`].
     MaxTexture3DDepth,
+    /// `cudaDevAttrMaxTexture3DWidthAlt` (always 0; CUDA alternate 3D
+    /// texture dims are not modeled). Distinct from [`Self::MaxTexture3DWidth`].
+    MaxTexture3DWidthAlt,
+    /// `cudaDevAttrMaxTexture3DHeightAlt` (always 0; CUDA alternate 3D
+    /// texture dims are not modeled). Distinct from
+    /// [`Self::MaxTexture3DWidthAlt`].
+    MaxTexture3DHeightAlt,
+    /// `cudaDevAttrMaxTexture3DDepthAlt` (always 0; CUDA alternate 3D
+    /// texture dims are not modeled). Distinct from
+    /// [`Self::MaxTexture3DHeightAlt`].
+    MaxTexture3DDepthAlt,
     /// `cudaDevAttrMaxTexture1DLinearWidth` (always 0; CUDA linear textures
     /// are not modeled). Distinct from [`Self::MaxTexture1DWidth`].
     MaxTexture1DLinearWidth,
@@ -1446,6 +1457,21 @@ pub struct DeviceProperties {
     /// Always 0; CUDA arrays / textures are not modeled. Distinct from
     /// [`Self::max_texture_3d_height`].
     pub max_texture_3d_depth: u32,
+    /// `cudaDeviceProp::maxTexture3DAlt[0]`
+    /// ([`DeviceAttr::MaxTexture3DWidthAlt`]). Always 0; CUDA alternate 3D
+    /// texture dims are not modeled. Distinct from
+    /// [`Self::max_texture_3d_width`].
+    pub max_texture_3d_width_alt: u32,
+    /// `cudaDeviceProp::maxTexture3DAlt[1]`
+    /// ([`DeviceAttr::MaxTexture3DHeightAlt`]). Always 0; CUDA alternate 3D
+    /// texture dims are not modeled. Distinct from
+    /// [`Self::max_texture_3d_width_alt`].
+    pub max_texture_3d_height_alt: u32,
+    /// `cudaDeviceProp::maxTexture3DAlt[2]`
+    /// ([`DeviceAttr::MaxTexture3DDepthAlt`]). Always 0; CUDA alternate 3D
+    /// texture dims are not modeled. Distinct from
+    /// [`Self::max_texture_3d_height_alt`].
+    pub max_texture_3d_depth_alt: u32,
     /// `cudaDeviceProp::maxTexture1DLinear`
     /// ([`DeviceAttr::MaxTexture1DLinearWidth`]). Always 0; CUDA linear
     /// textures are not modeled. Distinct from [`Self::max_texture_1d_width`].
