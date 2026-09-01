@@ -173,6 +173,7 @@ warp scheduler, L1, …   ← do not model
 | `tex_object_get_texture_desc` is Invalid (no texture-object handles) | `cuTexObjectGetTextureDesc` / `cudaGetTextureObjectTextureDesc` |
 | `tex_object_get_resource_view_desc` is Invalid (no texture-object handles) | `cuTexObjectGetResourceViewDesc` / `cudaGetTextureObjectResourceViewDesc` |
 | `graphics_map_resources` is Invalid (OpenGL, Direct3D, Vulkan, EGL are not modeled) | `cuGraphicsMapResources` |
+| `graphics_unmap_resources` is Invalid (no graphics-resource handles) | `cuGraphicsUnmapResources` |
 | `graphics_gl_register_buffer` is Invalid (OpenGL interop is not modeled) | `cuGraphicsGLRegisterBuffer` |
 | `graphics_gl_register_image` is Invalid (OpenGL interop is not modeled) | `cuGraphicsGLRegisterImage` |
 | `egl_stream_consumer_connect` is Invalid (EGL streams are not modeled) | `cuEGLStreamConsumerConnect` |
@@ -1076,6 +1077,9 @@ fabric handles are not modeled).
 `graphics_map_resources` is `cuGraphicsMapResources` (always Invalid
 `"graphics resource"`). Distinct from `import_external_memory`. Query;
 legal during capture. No Engine `--graphics-map`.
+`graphics_unmap_resources` is `cuGraphicsUnmapResources` (always Invalid
+`"graphics unmap"`). Distinct from `graphics_map_resources`. Query;
+legal during capture. No Engine `--graphics-unmap`.
 `graphics_gl_register_buffer` is `cuGraphicsGLRegisterBuffer` (always
 Invalid `"gl buffer"`). Distinct from `graphics_map_resources` and
 `gl_ctx_create`. Query; legal during capture. No Engine `--gl-register-buffer`.

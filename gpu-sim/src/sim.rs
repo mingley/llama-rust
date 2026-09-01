@@ -17793,8 +17793,9 @@ impl Sim {
     /// Always Invalid `"graphics resource"` ([`DeviceAttr::D3D12CigSupported`]
     /// and [`DeviceAttr::VulkanCigSupported`] are 0; OpenGL, Direct3D,
     /// Vulkan, and EGL graphics resources are not modeled). Distinct from
-    /// [`Self::import_external_memory`] and from
-    /// [`Self::graphics_gl_register_buffer`]. Unknown devices are Invalid
+    /// [`Self::import_external_memory`], from
+    /// [`Self::graphics_gl_register_buffer`], and from
+    /// [`Self::graphics_unmap_resources`]. Unknown devices are Invalid
     /// `"device not in profile"`. Query; legal during capture.
     pub fn graphics_map_resources(
         &self,
@@ -17805,6 +17806,25 @@ impl Sim {
         self.require_live_stream(device, stream)?;
         Err(SimError::Invalid {
             why: "graphics resource",
+        })
+    }
+
+    /// `cuGraphicsUnmapResources` plus `cudaGraphicsUnmapResources`.
+    /// Graphics interop is not modeled.
+    ///
+    /// Always Invalid `"graphics unmap"` (no graphics-resource handles).
+    /// Distinct from [`Self::graphics_map_resources`]. Unknown devices are
+    /// Invalid `"device not in profile"`. Query; legal during capture. This
+    /// VM does not invent `cuGraphicsResourceGetMappedPointer` this slice.
+    pub fn graphics_unmap_resources(
+        &self,
+        device: DeviceId,
+        stream: StreamId,
+    ) -> Result<(), SimError> {
+        let _gpu = self.profile.gpu(device)?;
+        self.require_live_stream(device, stream)?;
+        Err(SimError::Invalid {
+            why: "graphics unmap",
         })
     }
 

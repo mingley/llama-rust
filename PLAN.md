@@ -6703,7 +6703,14 @@ model, do not celebrate the sim.
     or `cudaChooseDevice`. `gpu-profile capture` is still refused. Dual
     score still has no `$/M tokens`.
 
-652. [ ] Next numbered PLAN item after 651 is the next `gpu-sim` / Engine /
+652. [x] `gpu-sim` `Sim::graphics_unmap_resources` is
+    `cuGraphicsUnmapResources`. Always Invalid `"graphics unmap"` because
+    graphics resources are not modeled. Query; legal during capture. Distinct
+    from `graphics_map_resources`. This VM does not invent `cuGraphicsResourceGetMappedPointer`, Engine `--graphics-unmap`,
+    or `cudaChooseDevice`. `gpu-profile capture` is still refused. Dual
+    score still has no `$/M tokens`.
+
+653. [ ] Next numbered PLAN item after 652 is the next `gpu-sim` / Engine /
     serve / expertvm mechanical API that is still missing, or the next official
     decode family. Prefer remaining CUDA-shaped twins over more
     OpenAI HTTP veneer. Do not invent F32 `output.scale`. Do not invent a
@@ -7108,6 +7115,10 @@ model, do not celebrate the sim.
     `graphics_gl_register_image`. Do not invent Engine `--gl-register-image`.
     Do not invent `cuGraphicsEGLRegisterImage` this slice. Do not reverse
     `"gl image"`.
+    Do not invent a second `cuGraphicsUnmapResources` /
+    `graphics_unmap_resources`. Do not invent Engine `--graphics-unmap`.
+    Do not invent `cuGraphicsResourceGetMappedPointer` this slice. Do not reverse
+    `"graphics unmap"`.
     Do not invent a second `cudaStreamAddCallback`.
     Do not invent Engine `--stream-callback` (same wall as second live
     `cudaLaunchHostFunc` after miss DMA).
@@ -7622,6 +7633,10 @@ model, do not celebrate the sim.
     Do not invent a second `graphics_gl_register_image` API. Do not invent
     Engine `--register-gl-image`. Do not invent a GL texture target this
     slice. Do not reverse GL image register remaining unsupported.
+    Do not invent a second `graphics_unmap_resources` API. Do not invent
+    Engine `--unmap-graphics`. Do not invent
+    `cuGraphicsUnregisterResource` this slice. Do not reverse
+    graphics unmap remaining unsupported.
     Do not invent a second DeviceLaunch in-flight destroy-complete check or Engine
     `--device-launch-destroy`. Do not abort an in-flight DeviceLaunch when
     `destroy_graph` succeeds. Do not delay destroy of an idle exec. Do not invent
@@ -8331,6 +8346,9 @@ model, do not celebrate the sim.
     Do not invent a second `graphics_gl_register_image` method. Do not
     invent Engine `--cu-graphics-gl-register-image`. Do not reverse wrapping
     cuGraphicsGLRegisterImage Invalid.
+    Do not invent a second `graphics_unmap_resources` method. Do not invent
+    Engine `--cu-graphics-unmap-resources`. Do not reverse wrapping
+    cuGraphicsUnmapResources Invalid.
     Do not
     spend the next item on an OpenAI-compatible HTTP veneer.
 
