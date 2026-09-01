@@ -18018,7 +18018,8 @@ impl Sim {
     ///
     /// Always Invalid `"gl buffer"` (no graphics-resource handles). Distinct
     /// from [`Self::graphics_map_resources`], from [`Self::gl_ctx_create`],
-    /// and from [`Self::graphics_gl_register_image`]. Unknown devices are
+    /// from [`Self::graphics_gl_register_image`], and from
+    /// [`Self::gl_register_buffer_object`]. Unknown devices are
     /// Invalid `"device not in profile"`. Query; legal during capture.
     pub fn graphics_gl_register_buffer(&self, device: DeviceId) -> Result<(), SimError> {
         let _gpu = self.profile.gpu(device)?;
@@ -18175,13 +18176,27 @@ impl Sim {
 
     /// `cuGLCtxCreate`. OpenGL interop is not modeled.
     ///
-    /// Always Invalid `"gl context"`. Distinct from [`Self::gl_get_devices`].
+    /// Always Invalid `"gl context"`. Distinct from [`Self::gl_get_devices`]
+    /// and from [`Self::gl_register_buffer_object`].
     /// Unknown devices are Invalid `"device not in profile"`. Query; legal
-    /// during capture. This VM does not invent `cuGLMapBufferObject` this
-    /// slice.
+    /// during capture.
     pub fn gl_ctx_create(&self, device: DeviceId) -> Result<(), SimError> {
         let _gpu = self.profile.gpu(device)?;
         Err(SimError::Invalid { why: "gl context" })
+    }
+
+    /// `cuGLRegisterBufferObject` plus `cudaGLRegisterBufferObject`. Legacy
+    /// OpenGL interop is not modeled.
+    ///
+    /// Always Invalid `"buffer object"` (no GL buffer-object handles). Distinct
+    /// from [`Self::graphics_gl_register_buffer`] (why is not a superstring of
+    /// `"gl buffer"`) and from [`Self::gl_ctx_create`]. Unknown devices are
+    /// Invalid `"device not in profile"`. Query; legal during capture.
+    pub fn gl_register_buffer_object(&self, device: DeviceId) -> Result<(), SimError> {
+        let _gpu = self.profile.gpu(device)?;
+        Err(SimError::Invalid {
+            why: "buffer object",
+        })
     }
 
     /// `cuD3D11GetDevices` / `cudaD3D11GetDevices`. Direct3D 11 interop is

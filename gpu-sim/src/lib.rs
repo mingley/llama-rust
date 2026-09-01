@@ -669,6 +669,9 @@
 //! Invalid `"opengl"`). Query; legal during capture. No Engine `--gl-devices`.
 //! [`gl_ctx_create`](Sim::gl_ctx_create) is `cuGLCtxCreate` (always
 //! Invalid `"gl context"`). Query; legal during capture. No Engine `--gl-ctx`.
+//! [`gl_register_buffer_object`](Sim::gl_register_buffer_object) is
+//! `cuGLRegisterBufferObject` (always Invalid `"buffer object"`). Query;
+//! legal during capture. No Engine `--gl-buffer-object`.
 //! [`d3d11_get_devices`](Sim::d3d11_get_devices) is `cuD3D11GetDevices`
 //! (always Invalid `"d3d11"`). Query; legal during capture. No Engine `--d3d11-devices`.
 //! [`d3d11_ctx_create`](Sim::d3d11_ctx_create) is `cuD3D11CtxCreate` (always
@@ -22837,6 +22840,53 @@ mod tests {
         match sim.gl_get_devices(d) {
             Err(SimError::Invalid { why }) => {
                 assert!(why.contains("opengl"), "{why}");
+            }
+            other => panic!("{other:?}"),
+        }
+        match sim.gl_register_buffer_object(d) {
+            Err(SimError::Invalid { why }) => {
+                assert!(why.contains("buffer object"), "{why}");
+                assert!(!why.contains("gl buffer"), "{why}");
+            }
+            other => panic!("{other:?}"),
+        }
+    }
+
+    #[test]
+    fn gl_register_buffer_object_is_unsupported() {
+        let mut sim = Sim::new(h100());
+        let d = DeviceId(0);
+        match sim.gl_register_buffer_object(d) {
+            Err(SimError::Invalid { why }) => {
+                assert!(why.contains("buffer object"), "{why}");
+                assert!(!why.contains("gl buffer"), "{why}");
+                assert!(!why.contains("gl context"), "{why}");
+            }
+            other => panic!("{other:?}"),
+        }
+        sim.begin_capture(d, StreamId(0)).unwrap();
+        match sim.gl_register_buffer_object(d) {
+            Err(SimError::Invalid { why }) => {
+                assert!(why.contains("buffer object"), "{why}");
+            }
+            other => panic!("{other:?}"),
+        }
+        let _g = sim.end_capture().unwrap();
+        match sim.gl_register_buffer_object(DeviceId(99)) {
+            Err(SimError::Invalid { why }) => {
+                assert!(why.contains("device not in profile"), "{why}");
+            }
+            other => panic!("{other:?}"),
+        }
+        match sim.graphics_gl_register_buffer(d) {
+            Err(SimError::Invalid { why }) => {
+                assert!(why.contains("gl buffer"), "{why}");
+            }
+            other => panic!("{other:?}"),
+        }
+        match sim.gl_ctx_create(d) {
+            Err(SimError::Invalid { why }) => {
+                assert!(why.contains("gl context"), "{why}");
             }
             other => panic!("{other:?}"),
         }
