@@ -15917,6 +15917,7 @@ mod tests {
             depth: 4,
             src_height: 4,
             dst_height: 4,
+            ..MemcpyOp::default()
         };
         enq(sim.memcpy_3d_async(d, op.clone(), s));
         sim.synchronize().unwrap();
