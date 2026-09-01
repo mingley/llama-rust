@@ -965,6 +965,12 @@ pub enum DeviceAttr {
     /// `cudaDevAttrMaxTexture2DLinearPitch` (always 0; CUDA linear textures
     /// are not modeled). Distinct from [`Self::TexturePitchAlignment`].
     MaxTexture2DLinearPitch,
+    /// `cudaDevAttrMaxTexture2DGatherWidth` (always 0; CUDA texture gather
+    /// is not modeled). Distinct from [`Self::MaxTexture2DWidth`].
+    MaxTexture2DGatherWidth,
+    /// `cudaDevAttrMaxTexture2DGatherHeight` (always 0; CUDA texture gather
+    /// is not modeled). Distinct from [`Self::MaxTexture2DGatherWidth`].
+    MaxTexture2DGatherHeight,
     /// `cudaDevAttrMaxSurface1DWidth` (always 0; CUDA surfaces are not
     /// modeled). Distinct from [`Self::SurfaceAlignment`].
     MaxSurface1DWidth,
@@ -1375,6 +1381,15 @@ pub struct DeviceProperties {
     /// textures are not modeled. Distinct from
     /// [`Self::texture_pitch_alignment`].
     pub max_texture_2d_linear_pitch: u32,
+    /// `cudaDeviceProp::maxTexture2DGather[0]`
+    /// ([`DeviceAttr::MaxTexture2DGatherWidth`]). Always 0; CUDA texture
+    /// gather is not modeled. Distinct from [`Self::max_texture_2d_width`].
+    pub max_texture_2d_gather_width: u32,
+    /// `cudaDeviceProp::maxTexture2DGather[1]`
+    /// ([`DeviceAttr::MaxTexture2DGatherHeight`]). Always 0; CUDA texture
+    /// gather is not modeled. Distinct from
+    /// [`Self::max_texture_2d_gather_width`].
+    pub max_texture_2d_gather_height: u32,
     /// `cudaDeviceProp::maxSurface1D` ([`DeviceAttr::MaxSurface1DWidth`]).
     /// Always 0; CUDA surfaces are not modeled. Distinct from
     /// [`Self::surface_alignment`].

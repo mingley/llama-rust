@@ -5,6 +5,15 @@ Visible five-turn extract: [docs/chatgpt-share-6a920fe1.md](docs/chatgpt-share-6
 Complete share-API extract: [docs/chatgpt-share-6a920fe1/](docs/chatgpt-share-6a920fe1/).
 Work lands on `main`. No PRs.
 
+## Shipped 2026-09-01 — CUDA texture 2D gather dimension DeviceAttr caps
+
+`gpu-sim` `DeviceAttr::MaxTexture2DGatherWidth` / `MaxTexture2DGatherHeight`
+are always 0. CUDA texture gather is not modeled. Query; legal during
+capture. Distinct from `MaxTexture2DWidth` and from linear texture dims.
+This VM does not invent Engine `--texture-gather` or layered/cubemap
+texture attrs. `gpu-profile capture` is still refused. Dual score still
+has no `$/M tokens`.
+
 ## Shipped 2026-09-01 — CUDA linear texture 1D/2D dimension DeviceAttr caps
 
 `gpu-sim` `DeviceAttr::MaxTexture1DLinearWidth` / `MaxTexture2DLinearWidth` /
