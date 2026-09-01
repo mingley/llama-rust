@@ -626,6 +626,10 @@
 //! [`DeviceAttr::PciDomainId`] / [`PciBusId`](DeviceAttr::PciBusId) /
 //! [`PciDeviceId`](DeviceAttr::PciDeviceId) are the synthetic PCI identity
 //! ([`device_get_pci_bus_id`](Sim::device_get_pci_bus_id)).
+//! [`DeviceAttr::GpuPciDeviceId`] is always 0 (this VM has no NVIDIA PCI
+//! vendor/device id). Distinct from [`PciDeviceId`](DeviceAttr::PciDeviceId).
+//! This VM does not invent `DeviceAttr::PciSubSystemId` or
+//! `cudaDevAttrGpuPciSubsystemId`.
 //! [`DeviceProperties::pci_subsystem_id`] is `cudaDeviceProp::pciSubSystemID`
 //! (always 0; synthetic PCI has no subsystem id). Distinct from
 //! [`PciDeviceId`](DeviceAttr::PciDeviceId). This VM does not invent
@@ -20376,6 +20380,38 @@ mod tests {
         assert_eq!(sim.device_get_properties(d).unwrap().pci_subsystem_id, 0);
         let _g = sim.end_capture().unwrap();
         match sim.device_get_properties(DeviceId(99)) {
+            Err(SimError::Invalid { why }) => {
+                assert!(why.contains("device not in profile"), "{why}");
+            }
+            other => panic!("{other:?}"),
+        }
+    }
+
+    #[test]
+    fn device_get_attribute_gpu_pci_device_id_is_zero() {
+        let mut sim = Sim::new(h100());
+        let d = DeviceId(0);
+        let hp = sim.device_get_properties(d).unwrap();
+        assert_eq!(hp.gpu_pci_device_id, 0);
+        assert_eq!(hp.pci_device_id, 0);
+        assert_eq!(
+            sim.device_get_attribute(d, DeviceAttr::GpuPciDeviceId)
+                .unwrap(),
+            0
+        );
+        assert_eq!(
+            sim.device_get_attribute(d, DeviceAttr::PciDeviceId)
+                .unwrap(),
+            0
+        );
+        sim.begin_capture(d, StreamId(0)).unwrap();
+        assert_eq!(
+            sim.device_get_attribute(d, DeviceAttr::GpuPciDeviceId)
+                .unwrap(),
+            0
+        );
+        let _g = sim.end_capture().unwrap();
+        match sim.device_get_attribute(DeviceId(99), DeviceAttr::GpuPciDeviceId) {
             Err(SimError::Invalid { why }) => {
                 assert!(why.contains("device not in profile"), "{why}");
             }

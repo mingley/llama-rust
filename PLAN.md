@@ -6232,7 +6232,14 @@ model, do not celebrate the sim.
     occupancy SM counts, or `cudaChooseDevice`. `gpu-profile capture` is
     still refused. Dual score still has no `$/M tokens`.
 
-590. [ ] Next numbered PLAN item after 589 is the next `gpu-sim` / Engine /
+590. [x] `gpu-sim` `DeviceAttr::GpuPciDeviceId` is always 0. This VM has
+    no NVIDIA PCI vendor/device id. Query; legal during capture.
+    Distinct from `PciDeviceId`. This VM does not invent
+    `DeviceAttr::PciSubSystemId`, `cudaDevAttrGpuPciSubsystemId`, Engine `--gpu-pci-device`,
+    occupancy SM counts, or `cudaChooseDevice`. `gpu-profile capture` is
+    still refused. Dual score still has no `$/M tokens`.
+
+591. [ ] Next numbered PLAN item after 590 is the next `gpu-sim` / Engine /
     serve / expertvm mechanical API that is still missing, or the next official
     decode family. Prefer remaining CUDA-shaped twins over more
     OpenAI HTTP veneer. Do not invent F32 `output.scale`. Do not invent a
@@ -6429,6 +6436,10 @@ model, do not celebrate the sim.
     Do not invent Engine `--shared-per-mp`. Do not invent
     `cudaDevAttrMaxRegistersPerMultiprocessor`. Do not reverse
     MaxSharedMemoryPerMultiprocessor matching optin.
+    Do not invent a second `cudaDevAttrGpuPciDeviceId`. Do not invent
+    Engine `--gpu-pci-device`. Do not invent `cudaDevAttrGpuPciSubsystemId`
+    or `DeviceAttr::PciSubSystemId`. Do not reverse GpuPciDeviceId
+    staying 0.
     Do not invent a second `cudaStreamAddCallback`.
     Do not invent Engine `--stream-callback` (same wall as second live
     `cudaLaunchHostFunc` after miss DMA).
@@ -6746,6 +6757,9 @@ model, do not celebrate the sim.
     Do not invent Engine `--smem-mp`. Do not invent registers per
     multiprocessor this slice. Do not reverse per-multiprocessor shared
     matching optin.
+    Do not invent a second GpuPciDeviceId DeviceAttr. Do not invent
+    Engine `--gpu-pci-id`. Do not invent a NVIDIA PCI vendor id this
+    slice. Do not reverse GpuPciDeviceId staying 0.
     Do not invent a second DeviceLaunch in-flight destroy-complete check or Engine
     `--device-launch-destroy`. Do not abort an in-flight DeviceLaunch when
     `destroy_graph` succeeds. Do not delay destroy of an idle exec. Do not invent
@@ -7281,6 +7295,8 @@ model, do not celebrate the sim.
     Do not invent a second `shared_mem_per_multiprocessor`
     DeviceProperties field. Do not invent Engine `--shared-mp`. Do not
     reverse MaxSharedMemoryPerMultiprocessor matching optin.
+    Do not invent a second `gpu_pci_device_id` DeviceProperties field.
+    Do not invent Engine `--nv-pci-id`. Do not reverse GpuPciDeviceId 0.
     Do not
     spend the next item on an OpenAI-compatible HTTP veneer.
 

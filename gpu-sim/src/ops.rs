@@ -1245,6 +1245,11 @@ pub enum DeviceAttr {
     PciBusId,
     /// `cudaDevAttrPciDeviceId` (synthetic PCI device number; always 0).
     PciDeviceId,
+    /// `cudaDevAttrGpuPciDeviceId` (always 0; this VM has no NVIDIA PCI
+    /// vendor/device id). Distinct from [`Self::PciDeviceId`] (BDF device
+    /// number). This VM does not invent `DeviceAttr::PciSubSystemId` or
+    /// `cudaDevAttrGpuPciSubsystemId`.
+    GpuPciDeviceId,
     /// `cudaDevAttrComputeCapabilityMajor`
     /// ([`crate::GpuProfile::compute_capability_major`]). Example H100 is 9
     /// (Hopper sm_90). Distinct from occupancy SM counts.
@@ -1394,6 +1399,11 @@ pub struct DeviceProperties {
     /// subsystem id). Distinct from [`Self::pci_device_id`]. This VM does
     /// not invent `DeviceAttr::PciSubSystemId`.
     pub pci_subsystem_id: u32,
+    /// `cudaDevAttrGpuPciDeviceId` ([`DeviceAttr::GpuPciDeviceId`]). Always
+    /// 0; this VM has no NVIDIA PCI vendor/device id. Distinct from
+    /// [`Self::pci_device_id`]. This VM does not invent
+    /// `cudaDevAttrGpuPciSubsystemId`.
+    pub gpu_pci_device_id: u32,
     /// `cudaDeviceProp::major` ([`DeviceAttr::ComputeCapabilityMajor`]).
     /// Example H100 is 9 (Hopper sm_90). Distinct from occupancy SM counts.
     pub compute_capability_major: u32,
