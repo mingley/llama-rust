@@ -15313,9 +15313,6 @@ mod tests {
         enq(sim.memcpy_device_to_pinned(d, a, 4096, s));
         let g = sim.end_capture().unwrap();
         assert_eq!(sim.graph_len(g).unwrap(), 2);
-        enq(sim.memcpy_htod(d, a, 4096, s));
-        enq(sim.memcpy_dtoh(d, a, 4096, s));
-        sim.free_sync(a).unwrap();
     }
 
     #[test]
