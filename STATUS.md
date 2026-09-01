@@ -5,6 +5,14 @@ Visible five-turn extract: [docs/chatgpt-share-6a920fe1.md](docs/chatgpt-share-6
 Complete share-API extract: [docs/chatgpt-share-6a920fe1/](docs/chatgpt-share-6a920fe1/).
 Work lands on `main`. No PRs.
 
+## Shipped 2026-09-01 — CUDA `cuMipmappedArrayDestroy`
+
+`gpu-sim` `Sim::mipmapped_array_destroy` is `cuMipmappedArrayDestroy`.
+Always Invalid `"mipmap destroy"` because CUDA mipmapped arrays are not
+modeled. Query; legal during capture. Distinct from `mipmapped_array_create`
+and `mipmapped_array_get_level`. This VM does not invent `cuArrayDestroy` or Engine `--mipmap-destroy`.
+`gpu-profile capture` is still refused. Dual score still has no `$/M tokens`.
+
 ## Shipped 2026-09-01 — CUDA `cuMipmappedArrayGetLevel`
 
 `gpu-sim` `Sim::mipmapped_array_get_level` is `cuMipmappedArrayGetLevel`.

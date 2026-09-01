@@ -581,6 +581,9 @@
 //! [`mipmapped_array_get_level`](Sim::mipmapped_array_get_level) is
 //! `cuMipmappedArrayGetLevel` (always Invalid `"mipmap level"`). Query;
 //! legal during capture. No Engine `--mipmap-level`.
+//! [`mipmapped_array_destroy`](Sim::mipmapped_array_destroy) is
+//! `cuMipmappedArrayDestroy` (always Invalid `"mipmap destroy"`). Query;
+//! legal during capture. No Engine `--mipmap-destroy`.
 //! [`DeviceAttr::MulticastSupported`] is a GPU↔GPU [`crate::LinkKind::Nvlink`]
 //! link on that device (PCIe P2P and RDMA are not NVLS).
 //! [`DeviceAttr::VirtualMemoryManagementSupported`] is always 1 (this VM has
@@ -21659,6 +21662,53 @@ mod tests {
         match sim.mipmapped_array_get_memory_requirements(d) {
             Err(SimError::Invalid { why }) => {
                 assert!(why.contains("mipmap memory"), "{why}");
+            }
+            other => panic!("{other:?}"),
+        }
+        match sim.mipmapped_array_destroy(d) {
+            Err(SimError::Invalid { why }) => {
+                assert!(why.contains("mipmap destroy"), "{why}");
+                assert!(!why.contains("mipmap level"), "{why}");
+            }
+            other => panic!("{other:?}"),
+        }
+    }
+
+    #[test]
+    fn mipmapped_array_destroy_is_unsupported() {
+        let mut sim = Sim::new(h100());
+        let d = DeviceId(0);
+        match sim.mipmapped_array_destroy(d) {
+            Err(SimError::Invalid { why }) => {
+                assert!(why.contains("mipmap destroy"), "{why}");
+                assert!(!why.contains("mipmapped array"), "{why}");
+                assert!(!why.contains("mipmap level"), "{why}");
+            }
+            other => panic!("{other:?}"),
+        }
+        sim.begin_capture(d, StreamId(0)).unwrap();
+        match sim.mipmapped_array_destroy(d) {
+            Err(SimError::Invalid { why }) => {
+                assert!(why.contains("mipmap destroy"), "{why}");
+            }
+            other => panic!("{other:?}"),
+        }
+        let _g = sim.end_capture().unwrap();
+        match sim.mipmapped_array_destroy(DeviceId(99)) {
+            Err(SimError::Invalid { why }) => {
+                assert!(why.contains("device not in profile"), "{why}");
+            }
+            other => panic!("{other:?}"),
+        }
+        match sim.mipmapped_array_create(d) {
+            Err(SimError::Invalid { why }) => {
+                assert!(why.contains("mipmapped array"), "{why}");
+            }
+            other => panic!("{other:?}"),
+        }
+        match sim.mipmapped_array_get_level(d) {
+            Err(SimError::Invalid { why }) => {
+                assert!(why.contains("mipmap level"), "{why}");
             }
             other => panic!("{other:?}"),
         }

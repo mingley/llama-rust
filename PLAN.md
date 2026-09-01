@@ -6836,7 +6836,15 @@ model, do not celebrate the sim.
     or `cudaChooseDevice`. `gpu-profile capture` is still refused. Dual
     score still has no `$/M tokens`.
 
-670. [ ] Next numbered PLAN item after 669 is the next `gpu-sim` / Engine /
+670. [x] `gpu-sim` `Sim::mipmapped_array_destroy` is
+    `cuMipmappedArrayDestroy`. Always Invalid `"mipmap destroy"`
+    because CUDA mipmapped arrays are not modeled. Query; legal during capture.
+    Distinct from `mipmapped_array_create` and `mipmapped_array_get_level`.
+    This VM does not invent `cuArrayDestroy`, Engine `--mipmap-destroy`,
+    or `cudaChooseDevice`. `gpu-profile capture` is still refused. Dual
+    score still has no `$/M tokens`.
+
+671. [ ] Next numbered PLAN item after 670 is the next `gpu-sim` / Engine /
     serve / expertvm mechanical API that is still missing, or the next official
     decode family. Prefer remaining CUDA-shaped twins over more
     OpenAI HTTP veneer. Do not invent F32 `output.scale`. Do not invent a
@@ -7309,6 +7317,9 @@ model, do not celebrate the sim.
     `mipmapped_array_get_level`. Do not invent Engine `--mipmap-level`.
     Do not invent a `CUarray` level handle this slice. Do not reverse
     `"mipmap level"`.
+    Do not invent a second `cuMipmappedArrayDestroy` /
+    `mipmapped_array_destroy`. Do not invent Engine `--mipmap-destroy`.
+    Do not invent `cuArrayDestroy` this slice. Do not reverse `"mipmap destroy"`.
     Do not invent a second `cudaStreamAddCallback`.
     Do not invent Engine `--stream-callback` (same wall as second live
     `cudaLaunchHostFunc` after miss DMA).
@@ -7889,6 +7900,9 @@ model, do not celebrate the sim.
     Do not invent a second `mipmapped_array_get_level` API. Do not invent
     Engine `--get-mipmap-level`. Do not invent a mipmap level index
     this slice. Do not reverse mipmap level remaining unsupported.
+    Do not invent a second `mipmapped_array_destroy` API. Do not invent
+    Engine `--destroy-mipmap`. Do not invent a mipmapped-array handle
+    free this slice. Do not reverse mipmap destroy remaining unsupported.
     Do not invent a second DeviceLaunch in-flight destroy-complete check or Engine
     `--device-launch-destroy`. Do not abort an in-flight DeviceLaunch when
     `destroy_graph` succeeds. Do not delay destroy of an idle exec. Do not invent
@@ -8652,6 +8666,9 @@ model, do not celebrate the sim.
     Do not invent a second `mipmapped_array_get_level` method. Do not
     invent Engine `--cu-mipmapped-array-get-level`. Do not reverse wrapping
     cuMipmappedArrayGetLevel Invalid.
+    Do not invent a second `mipmapped_array_destroy` method. Do not
+    invent Engine `--cu-mipmapped-array-destroy`. Do not reverse wrapping
+    cuMipmappedArrayDestroy Invalid.
     Do not
     spend the next item on an OpenAI-compatible HTTP veneer.
 

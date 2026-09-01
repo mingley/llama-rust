@@ -559,6 +559,8 @@ handles; no Engine flag).
 CUDA mipmapped arrays are not modeled; no Engine flag).
 `gpu-sim` `mipmapped_array_get_level` is `cuMipmappedArrayGetLevel`
 (Invalid; no mipmapped-array handles; no Engine flag).
+`gpu-sim` `mipmapped_array_destroy` is `cuMipmappedArrayDestroy`
+(Invalid; no mipmapped-array handles; no Engine flag).
 `gpu-sim` `import_external_memory` is `cuImportExternalMemory` (Invalid;
 no Engine flag).
 `gpu-sim` `surf_object_create` is `cuSurfObjectCreate` (Invalid; CUDA

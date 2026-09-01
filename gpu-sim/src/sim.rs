@@ -17706,8 +17706,9 @@ impl Sim {
     /// Always Invalid `"mipmapped array"`
     /// ([`DeviceAttr::MaxTexture1DMipmappedWidth`] is 0). Distinct from
     /// [`Self::array_create`], from
-    /// [`Self::mipmapped_array_get_memory_requirements`], and from
-    /// [`Self::mipmapped_array_get_level`]. Unknown devices are
+    /// [`Self::mipmapped_array_get_memory_requirements`], from
+    /// [`Self::mipmapped_array_get_level`], and from
+    /// [`Self::mipmapped_array_destroy`]. Unknown devices are
     /// Invalid `"device not in profile"`. Query; legal during capture.
     pub fn mipmapped_array_create(&self, device: DeviceId) -> Result<(), SimError> {
         let _gpu = self.profile.gpu(device)?;
@@ -17720,13 +17721,28 @@ impl Sim {
     /// mipmapped arrays are not modeled.
     ///
     /// Always Invalid `"mipmap level"` (no mipmapped-array handles). Distinct
-    /// from [`Self::mipmapped_array_create`] and from
-    /// [`Self::mipmapped_array_get_memory_requirements`]. Unknown devices are
+    /// from [`Self::mipmapped_array_create`], from
+    /// [`Self::mipmapped_array_get_memory_requirements`], and from
+    /// [`Self::mipmapped_array_destroy`]. Unknown devices are
     /// Invalid `"device not in profile"`. Query; legal during capture.
     pub fn mipmapped_array_get_level(&self, device: DeviceId) -> Result<(), SimError> {
         let _gpu = self.profile.gpu(device)?;
         Err(SimError::Invalid {
             why: "mipmap level",
+        })
+    }
+
+    /// `cuMipmappedArrayDestroy` plus `cudaFreeMipmappedArray`. CUDA
+    /// mipmapped arrays are not modeled.
+    ///
+    /// Always Invalid `"mipmap destroy"` (no mipmapped-array handles). Distinct
+    /// from [`Self::mipmapped_array_create`] and from
+    /// [`Self::mipmapped_array_get_level`]. Unknown devices are Invalid
+    /// `"device not in profile"`. Query; legal during capture.
+    pub fn mipmapped_array_destroy(&self, device: DeviceId) -> Result<(), SimError> {
+        let _gpu = self.profile.gpu(device)?;
+        Err(SimError::Invalid {
+            why: "mipmap destroy",
         })
     }
 
