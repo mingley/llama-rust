@@ -5,6 +5,17 @@ Visible five-turn extract: [docs/chatgpt-share-6a920fe1.md](docs/chatgpt-share-6
 Complete share-API extract: [docs/chatgpt-share-6a920fe1/](docs/chatgpt-share-6a920fe1/).
 Work lands on `main`. No PRs.
 
+## Shipped 2026-09-01 — CUDA `cudaGetCurrentGraphExec`
+
+`gpu-sim` `current_graph_exec` is `cudaGetCurrentGraphExec`. Query; legal
+during capture. Returns the DeviceLaunch executable in flight on that
+device, if any. Host `launch_graph` does not count. Concurrent in-flight
+DeviceLaunch execs return the lowest `GraphId`. A parked in-flight destroy
+still reports that exec until the launch tail completes. This VM does not
+invent Engine `--current-graph-exec`, `CUgraphDeviceNode`, or public
+`Sim::advance`. `gpu-profile capture` is still refused. Dual score still
+has no `$/M tokens`.
+
 ## Shipped 2026-09-01 — CUDA `cudaDeviceGetStreamPriorityRange`
 
 `gpu-sim` `device_get_stream_priority_range` is `cudaDeviceGetStreamPriorityRange`.

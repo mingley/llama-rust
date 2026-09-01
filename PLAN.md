@@ -5940,7 +5940,17 @@ model, do not celebrate the sim.
     `cudaStreamDestroy`. `gpu-profile capture` is still refused. Dual score
     still has no `$/M tokens`.
 
-558. [ ] Next numbered PLAN item after 557 is the next `gpu-sim` / Engine /
+558. [x] `gpu-sim` `current_graph_exec` is CUDA
+    `cudaGetCurrentGraphExec`. Query; legal during capture.
+    Returns the DeviceLaunch executable in flight on that device, if
+    any. Host `launch_graph` does not count. Concurrent in-flight
+    DeviceLaunch execs return the lowest `GraphId`. A parked in-flight
+    destroy still reports that exec until the launch tail completes.
+    This VM does not invent Engine `--current-graph-exec`,
+    `CUgraphDeviceNode`, or public `Sim::advance`. `gpu-profile capture`
+    is still refused. Dual score still has no `$/M tokens`.
+
+559. [ ] Next numbered PLAN item after 558 is the next `gpu-sim` / Engine /
     serve / expertvm mechanical API that is still missing, or the next official
     decode family. Prefer remaining CUDA-shaped twins over more
     OpenAI HTTP veneer. Do not invent F32 `output.scale`. Do not invent a
@@ -5969,6 +5979,12 @@ model, do not celebrate the sim.
     `cudaDriverGetVersion` / `cuDriverGetVersion` / `cudaRuntimeGetVersion`.
     Do not invent Engine `--driver-version`. Do not invent `cudaGetLastError` /
     `cudaPeekAtLastError` (no thread-local last error). Do not invent a second
+    `cudaGetCurrentGraphExec` / `current_graph_exec`. Do not invent Engine
+    `--current-graph-exec`. Do not treat host `launch_graph` as current. Do
+    not invent public `Sim::advance` as GetCurrentGraphExec. Do not reverse
+    host `launch_graph` of a DEVICE_LAUNCH exec remaining legal. Do not
+    reverse DeviceLaunch in-flight SetParams / upload refuse. Do not invent
+    a second
     `cuDeviceGetUuid` / `cudaDeviceGetUuid`. Do not invent a second
     `cuDeviceGetByUuid`. Do not invent a second `cudaDeviceGetPciBusId` /
     `cuDeviceGetPCIBusId`. Do not invent a second `cudaDeviceGetByPCIBusId`.
@@ -6198,6 +6214,12 @@ model, do not celebrate the sim.
     kernel-node priority comparison. Do not refuse
     `graph_exec_kernel_node_set_priority` out of the stream range. Do not
     clamp GraphStep.priority for ExecUpdate.
+    Do not invent a second `cudaGetCurrentGraphExec` /
+    `current_graph_exec`. Do not invent Engine `--current-graph-exec`.
+    Do not treat host `launch_graph` as current. Do not invent public
+    `Sim::advance` as GetCurrentGraphExec. Do not reverse host
+    `launch_graph` of a DEVICE_LAUNCH exec remaining legal. Do not
+    reverse DeviceLaunch in-flight SetParams / upload refuse.
     Do not invent a second DeviceLaunch in-flight destroy-complete check or Engine
     `--device-launch-destroy`. Do not abort an in-flight DeviceLaunch when
     `destroy_graph` succeeds. Do not delay destroy of an idle exec. Do not invent
@@ -6643,6 +6665,9 @@ model, do not celebrate the sim.
     Engine `--stream-priority-range`. Do not reverse numerically-lower-first
     stream scheduling. Do not skip clamping stream create to the profile
     range. Graph kernel-node SetPriority stays unclamped for ExecUpdate.
+    Do not invent a second `cudaGetCurrentGraphExec`. Do not invent
+    Engine `--current-graph-exec`. Do not treat host `launch_graph` as
+    current. Do not invent public `Sim::advance`.
     Do not
     spend the next item on an OpenAI-compatible HTTP veneer.
 

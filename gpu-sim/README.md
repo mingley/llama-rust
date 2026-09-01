@@ -189,6 +189,7 @@ warp scheduler, L1, …   ← do not model
 | graph-mem used is live graph allocs; reserved holds unused until trim | `cudaDeviceGetGraphMemAttribute` / `GraphMemTrim` |
 | stream[i+1].start ≥ stream[i].finish (`Operation` timestamps) | queue wait vs run |
 | numerically lower `set_stream_priority` starts first under contention (`cudaDeviceGetStreamPriorityRange`) | launch overhead |
+| `cudaGetCurrentGraphExec` (`current_graph_exec`) is the DeviceLaunch exec in flight; host `launch_graph` does not count | query |
 | `compute_slots>=2` overlaps independent kernels at full issue rate | kernel duration (not SM-partition) |
 | `cudaLaunchCooperativeKernel` occupies every compute slot (`cooperative_kernel`) | leftover kernels cannot Hyper-Q overlap |
 | `cudaLaunchAttributeCooperative` (`KernelNodeAttr::Cooperative`) | same occupancy; `graph_exec_kernel_set_params` still refuses a mismatch |
@@ -548,7 +549,10 @@ device-launch exec are Invalid (`"device launch in flight"`; getters stay;
 destroy does not abort the launch; `upload_graph` /
 `upload_graph_async` also refuse); `update_graph` of a
 device-launch exec is Invalid; cannot combine with `AUTO_FREE_ON_LAUNCH`
-(`"device launch auto free"`). Unused conditional handles are
+(`"device launch auto free"`). `current_graph_exec` is
+`cudaGetCurrentGraphExec` (the DeviceLaunch exec in flight on that
+device; host `launch_graph` does not count). Query; legal during capture.
+Unused conditional handles are
 `ConditionalHandleUnused` (`"conditional handle unused"`).
 `instantiate_graph_with_params` is `cudaGraphInstantiateWithParams`
 (`GraphInstantiateParams` result, err node, and `hUploadStream`).
@@ -1346,6 +1350,8 @@ overflow is `PinOom`. Example default is unlimited.
 priority; clamped to `device_get_stream_priority_range`; numerically lower
 first when compute contends). `device_get_stream_priority_range` is
 `cudaDeviceGetStreamPriorityRange` (example H100 least `0`, greatest `-5`).
+`current_graph_exec` is `cudaGetCurrentGraphExec` (DeviceLaunch in
+flight; host `launch_graph` does not count). Query; legal during capture.
 `KernelAttrs::priority` is `cudaLaunchAttributePriority`
 (`None` inherits the stream; `Some` overrides that kernel only).
 `stream_copy_attributes` is `cudaStreamCopyAttributes`

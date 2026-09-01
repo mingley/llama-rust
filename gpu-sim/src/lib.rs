@@ -854,6 +854,10 @@
 //! exec does not abort the launch; cannot combine
 //! with [`GraphInstantiateFlags::AUTO_FREE_ON_LAUNCH`] (Invalid
 //! `"device launch auto free"`).
+//! [`current_graph_exec`](Sim::current_graph_exec) is
+//! `cudaGetCurrentGraphExec` (the DeviceLaunch exec in flight on that
+//! device; host [`launch_graph`](Sim::launch_graph) does not count).
+//! Query; legal during capture. Unknown devices are Invalid.
 //! [`instantiate_graph_with_params`](Sim::instantiate_graph_with_params) is
 //! `cudaGraphInstantiateWithParams` ([`GraphInstantiateParams`] result, err
 //! node, and `hUploadStream`). [`graph_exec_get_flags`](Sim::graph_exec_get_flags) is
@@ -33427,6 +33431,104 @@ mod tests {
             other => panic!("{other:?}"),
         }
         let _end = sim.end_capture().unwrap();
+    }
+
+    #[test]
+    fn current_graph_exec_is_cuda_get_current_graph_exec() {
+        let mut sim = Sim::new(h100());
+        let d = DeviceId(0);
+        let s = StreamId(0);
+        assert_eq!(sim.current_graph_exec(d).unwrap(), None);
+        match sim.current_graph_exec(DeviceId(1)) {
+            Err(SimError::Invalid { why }) => assert!(why.contains("device"), "{why}"),
+            other => panic!("{other:?}"),
+        }
+        let a = sim.malloc(d, 4096).unwrap();
+        let g = sim.create_graph(d, s).unwrap();
+        sim.graph_add_kernel(g, KernelKind::other(1 << 40, 4096), &[a], &[a])
+            .unwrap();
+        let exec = sim
+            .instantiate_graph_with_flags(
+                g,
+                GraphInstantiateFlags::DEVICE_LAUNCH | GraphInstantiateFlags::UPLOAD,
+            )
+            .unwrap();
+        assert_ne!(g, exec);
+        assert_eq!(sim.current_graph_exec(d).unwrap(), None);
+        enq(sim.device_launch_graph(g, s));
+        assert_eq!(sim.current_graph_exec(d).unwrap(), Some(exec));
+        sim.begin_capture(d, StreamId(1)).unwrap();
+        assert_eq!(sim.current_graph_exec(d).unwrap(), Some(exec));
+        let _end = sim.end_capture().unwrap();
+        sim.synchronize().unwrap();
+        assert_eq!(sim.current_graph_exec(d).unwrap(), None);
+        let launched = sim.launch_graph(exec, s).unwrap();
+        assert!(launched > 0);
+        assert_eq!(sim.current_graph_exec(d).unwrap(), None);
+        sim.synchronize().unwrap();
+        enq(sim.device_launch_graph(exec, s));
+        sim.destroy_graph(exec).unwrap();
+        let err = sim.device_launch_graph(exec, s).unwrap_err();
+        match err {
+            SimError::Invalid { why } => assert!(why.contains("unknown"), "{why}"),
+            other => panic!("{other:?}"),
+        }
+        assert_eq!(sim.current_graph_exec(d).unwrap(), Some(exec));
+        sim.synchronize().unwrap();
+        assert_eq!(sim.current_graph_exec(d).unwrap(), None);
+        let g1 = sim.create_graph(d, s).unwrap();
+        sim.graph_add_kernel(g1, KernelKind::other(1 << 40, 4096), &[a], &[a])
+            .unwrap();
+        let exec1 = sim
+            .instantiate_graph_with_flags(
+                g1,
+                GraphInstantiateFlags::DEVICE_LAUNCH | GraphInstantiateFlags::UPLOAD,
+            )
+            .unwrap();
+        let g2 = sim.create_graph(d, s).unwrap();
+        sim.graph_add_kernel(g2, KernelKind::other(1 << 40, 4096), &[a], &[a])
+            .unwrap();
+        let exec2 = sim
+            .instantiate_graph_with_flags(
+                g2,
+                GraphInstantiateFlags::DEVICE_LAUNCH | GraphInstantiateFlags::UPLOAD,
+            )
+            .unwrap();
+        enq(sim.device_launch_graph(exec1, s));
+        enq(sim.device_launch_graph(exec2, StreamId(1)));
+        assert_eq!(sim.current_graph_exec(d).unwrap(), Some(exec1.min(exec2)));
+        sim.synchronize().unwrap();
+        assert_eq!(sim.current_graph_exec(d).unwrap(), None);
+        let mut dual = Sim::new(HardwareProfile::example_2xh100_pcie());
+        let d0 = DeviceId(0);
+        let d1 = DeviceId(1);
+        let a0 = dual.malloc(d0, 4096).unwrap();
+        let a1 = dual.malloc(d1, 4096).unwrap();
+        let g0 = dual.create_graph(d0, s).unwrap();
+        dual.graph_add_kernel(g0, KernelKind::other(1 << 40, 4096), &[a0], &[a0])
+            .unwrap();
+        let exec0 = dual
+            .instantiate_graph_with_flags(
+                g0,
+                GraphInstantiateFlags::DEVICE_LAUNCH | GraphInstantiateFlags::UPLOAD,
+            )
+            .unwrap();
+        let gd1 = dual.create_graph(d1, s).unwrap();
+        dual.graph_add_kernel(gd1, KernelKind::other(1 << 40, 4096), &[a1], &[a1])
+            .unwrap();
+        let execd1 = dual
+            .instantiate_graph_with_flags(
+                gd1,
+                GraphInstantiateFlags::DEVICE_LAUNCH | GraphInstantiateFlags::UPLOAD,
+            )
+            .unwrap();
+        enq(dual.device_launch_graph(exec0, s));
+        enq(dual.device_launch_graph(execd1, s));
+        assert_eq!(dual.current_graph_exec(d0).unwrap(), Some(exec0));
+        assert_eq!(dual.current_graph_exec(d1).unwrap(), Some(execd1));
+        dual.synchronize().unwrap();
+        assert_eq!(dual.current_graph_exec(d0).unwrap(), None);
+        assert_eq!(dual.current_graph_exec(d1).unwrap(), None);
     }
 
     #[test]

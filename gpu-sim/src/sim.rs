@@ -3725,6 +3725,22 @@ impl Sim {
         Ok(id)
     }
 
+    /// `cudaGetCurrentGraphExec` analog: the DeviceLaunch executable in
+    /// flight on `device`, if any.
+    ///
+    /// Host [`Self::launch_graph`] does not count. Query; legal during
+    /// capture. Unknown devices are Invalid. Concurrent in-flight
+    /// DeviceLaunch execs on one GPU return the lowest [`GraphId`]. A
+    /// parked in-flight destroy still reports that exec until the launch
+    /// tail completes.
+    pub fn current_graph_exec(&self, device: DeviceId) -> Result<Option<GraphId>, SimError> {
+        let _gpu = self.profile.gpu(device)?;
+        Ok(self.graphs.iter().find_map(|(&id, g)| {
+            (g.origin.0 == device && g.device_launch_tail.is_some_and(|tail| !self.op_done(tail)))
+                .then_some(id)
+        }))
+    }
+
     fn reset_graph_tree_conds(&mut self, root: GraphId) -> Result<(), SimError> {
         let mut stack = vec![root];
         let mut seen = BTreeSet::new();
