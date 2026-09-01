@@ -181,6 +181,7 @@ warp scheduler, L1, …   ← do not model
 | `graphics_subresource_get_mapped_array` is Invalid (no graphics-resource handles) | `cuGraphicsSubResourceGetMappedArray` |
 | `graphics_resource_get_mapped_mipmapped_array` is Invalid (no graphics-resource handles) | `cuGraphicsResourceGetMappedMipmappedArray` |
 | `graphics_unregister_resource` is Invalid (no graphics-resource handles) | `cuGraphicsUnregisterResource` |
+| `graphics_resource_set_map_flags` is Invalid (no graphics-resource handles) | `cuGraphicsResourceSetMapFlags` |
 | `graphics_gl_register_buffer` is Invalid (OpenGL interop is not modeled) | `cuGraphicsGLRegisterBuffer` |
 | `graphics_gl_register_image` is Invalid (OpenGL interop is not modeled) | `cuGraphicsGLRegisterImage` |
 | `egl_stream_consumer_connect` is Invalid (EGL streams are not modeled) | `cuEGLStreamConsumerConnect` |
@@ -1112,6 +1113,9 @@ Distinct from `graphics_subresource_get_mapped_array`. Query; legal during captu
 `graphics_unregister_resource` is `cuGraphicsUnregisterResource` (always
 Invalid `"graphics unregister"`). Distinct from `graphics_unmap_resources`. Query;
 legal during capture. No Engine `--graphics-unregister`.
+`graphics_resource_set_map_flags` is `cuGraphicsResourceSetMapFlags` (always
+Invalid `"map flags"`). Distinct from `graphics_unregister_resource` and
+from VMM `"mem map flags"`. Query; legal during capture. No Engine `--map-flags`.
 `graphics_gl_register_buffer` is `cuGraphicsGLRegisterBuffer` (always
 Invalid `"gl buffer"`). Distinct from `graphics_map_resources` and
 `gl_ctx_create`. Query; legal during capture. No Engine `--gl-register-buffer`.

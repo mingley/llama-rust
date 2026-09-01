@@ -618,6 +618,9 @@
 //! [`graphics_unregister_resource`](Sim::graphics_unregister_resource) is
 //! `cuGraphicsUnregisterResource` (always Invalid `"graphics unregister"`). Query;
 //! legal during capture. No Engine `--graphics-unregister`.
+//! [`graphics_resource_set_map_flags`](Sim::graphics_resource_set_map_flags) is
+//! `cuGraphicsResourceSetMapFlags` (always Invalid `"map flags"`). Query;
+//! legal during capture. No Engine `--map-flags`.
 //! [`graphics_gl_register_buffer`](Sim::graphics_gl_register_buffer) is
 //! `cuGraphicsGLRegisterBuffer` (always Invalid `"gl buffer"`). Query;
 //! legal during capture. No Engine `--gl-register-buffer`.
@@ -22105,6 +22108,53 @@ mod tests {
         match sim.graphics_unmap_resources(d, StreamId(0)) {
             Err(SimError::Invalid { why }) => {
                 assert!(why.contains("graphics unmap"), "{why}");
+            }
+            other => panic!("{other:?}"),
+        }
+        match sim.graphics_map_resources(d, StreamId(0)) {
+            Err(SimError::Invalid { why }) => {
+                assert!(why.contains("graphics resource"), "{why}");
+            }
+            other => panic!("{other:?}"),
+        }
+        match sim.graphics_resource_set_map_flags(d) {
+            Err(SimError::Invalid { why }) => {
+                assert!(why.contains("map flags"), "{why}");
+                assert!(!why.contains("mem map flags"), "{why}");
+            }
+            other => panic!("{other:?}"),
+        }
+    }
+
+    #[test]
+    fn graphics_resource_set_map_flags_is_unsupported() {
+        let mut sim = Sim::new(h100());
+        let d = DeviceId(0);
+        match sim.graphics_resource_set_map_flags(d) {
+            Err(SimError::Invalid { why }) => {
+                assert!(why.contains("map flags"), "{why}");
+                assert!(!why.contains("mem map flags"), "{why}");
+                assert!(!why.contains("graphics unregister"), "{why}");
+            }
+            other => panic!("{other:?}"),
+        }
+        sim.begin_capture(d, StreamId(0)).unwrap();
+        match sim.graphics_resource_set_map_flags(d) {
+            Err(SimError::Invalid { why }) => {
+                assert!(why.contains("map flags"), "{why}");
+            }
+            other => panic!("{other:?}"),
+        }
+        let _g = sim.end_capture().unwrap();
+        match sim.graphics_resource_set_map_flags(DeviceId(99)) {
+            Err(SimError::Invalid { why }) => {
+                assert!(why.contains("device not in profile"), "{why}");
+            }
+            other => panic!("{other:?}"),
+        }
+        match sim.graphics_unregister_resource(d) {
+            Err(SimError::Invalid { why }) => {
+                assert!(why.contains("graphics unregister"), "{why}");
             }
             other => panic!("{other:?}"),
         }

@@ -596,6 +596,8 @@ handles; no Engine flag).
 handles; no Engine flag).
 `gpu-sim` `graphics_unregister_resource` is `cuGraphicsUnregisterResource`
 (Invalid; no graphics-resource handles; no Engine flag).
+`gpu-sim` `graphics_resource_set_map_flags` is `cuGraphicsResourceSetMapFlags`
+(Invalid; no graphics-resource handles; no Engine flag).
 `gpu-sim` `graphics_gl_register_buffer` is `cuGraphicsGLRegisterBuffer`
 (Invalid; OpenGL interop is not modeled; no Engine flag).
 `gpu-sim` `graphics_gl_register_image` is `cuGraphicsGLRegisterImage`

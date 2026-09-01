@@ -5,6 +5,14 @@ Visible five-turn extract: [docs/chatgpt-share-6a920fe1.md](docs/chatgpt-share-6
 Complete share-API extract: [docs/chatgpt-share-6a920fe1/](docs/chatgpt-share-6a920fe1/).
 Work lands on `main`. No PRs.
 
+## Shipped 2026-09-01 — CUDA `cuGraphicsResourceSetMapFlags`
+
+`gpu-sim` `Sim::graphics_resource_set_map_flags` is
+`cuGraphicsResourceSetMapFlags`. Always Invalid `"map flags"` because
+graphics resources are not modeled. Query; legal during capture. Distinct
+from `graphics_unregister_resource` and VMM `"mem map flags"`. This VM does not invent a populated `CU_GRAPHICS_MAP_RESOURCE_FLAGS` enum or Engine `--map-flags`.
+`gpu-profile capture` is still refused. Dual score still has no `$/M tokens`.
+
 ## Shipped 2026-09-01 — CUDA `cuEGLStreamConsumerAcquireFrame`
 
 `gpu-sim` `Sim::egl_stream_consumer_acquire_frame` is

@@ -6798,7 +6798,15 @@ model, do not celebrate the sim.
     or `cudaChooseDevice`. `gpu-profile capture` is still refused. Dual
     score still has no `$/M tokens`.
 
-665. [ ] Next numbered PLAN item after 664 is the next `gpu-sim` / Engine /
+665. [x] `gpu-sim` `Sim::graphics_resource_set_map_flags` is
+    `cuGraphicsResourceSetMapFlags`. Always Invalid `"map flags"`
+    because graphics resources are not modeled. Query; legal during capture.
+    Distinct from `graphics_unregister_resource` and `graphics_map_resources`.
+    This VM does not invent a populated `CU_GRAPHICS_MAP_RESOURCE_FLAGS` enum, Engine `--map-flags`,
+    or `cudaChooseDevice`. `gpu-profile capture` is still refused. Dual
+    score still has no `$/M tokens`.
+
+666. [ ] Next numbered PLAN item after 665 is the next `gpu-sim` / Engine /
     serve / expertvm mechanical API that is still missing, or the next official
     decode family. Prefer remaining CUDA-shaped twins over more
     OpenAI HTTP veneer. Do not invent F32 `output.scale`. Do not invent a
@@ -7252,6 +7260,10 @@ model, do not celebrate the sim.
     `egl_stream_consumer_acquire_frame`. Do not invent Engine `--egl-consumer-acquire`.
     Do not invent `cuEGLStreamConsumerReleaseFrame` this slice. Do not reverse
     `"consumer acquire"`.
+    Do not invent a second `cuGraphicsResourceSetMapFlags` /
+    `graphics_resource_set_map_flags`. Do not invent Engine `--map-flags`.
+    Do not invent a populated `CU_GRAPHICS_MAP_RESOURCE_FLAGS` this slice. Do
+    not reverse `"map flags"`.
     Do not invent a second `cudaStreamAddCallback`.
     Do not invent Engine `--stream-callback` (same wall as second live
     `cudaLaunchHostFunc` after miss DMA).
@@ -7813,6 +7825,10 @@ model, do not celebrate the sim.
     Do not invent a second `egl_stream_consumer_acquire_frame` API. Do not invent
     Engine `--acquire-egl-consumer`. Do not invent an EGL consumer
     acquire timeout this slice. Do not reverse EGL consumer acquire remaining
+    unsupported.
+    Do not invent a second `graphics_resource_set_map_flags` API. Do not invent
+    Engine `--set-map-flags`. Do not invent a populated
+    `cudaGraphicsMapFlags` this slice. Do not reverse graphics map flags remaining
     unsupported.
     Do not invent a second DeviceLaunch in-flight destroy-complete check or Engine
     `--device-launch-destroy`. Do not abort an in-flight DeviceLaunch when
@@ -8562,6 +8578,9 @@ model, do not celebrate the sim.
     Do not invent a second `egl_stream_consumer_acquire_frame` method. Do not
     invent Engine `--cu-egl-consumer-acquire-frame`. Do not reverse wrapping
     cuEGLStreamConsumerAcquireFrame Invalid.
+    Do not invent a second `graphics_resource_set_map_flags` method. Do not
+    invent Engine `--cu-graphics-resource-set-map-flags`. Do not reverse wrapping
+    cuGraphicsResourceSetMapFlags Invalid.
     Do not
     spend the next item on an OpenAI-compatible HTTP veneer.
 
