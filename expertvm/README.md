@@ -542,6 +542,8 @@ TMA is not modeled; no Engine flag).
 `cudaLaunchCooperativeKernelMultiDevice` (Invalid; no Engine flag).
 `gpu-sim` `array_create` is `cuArrayCreate` (Invalid; CUDA arrays are not
 modeled; no Engine flag).
+`gpu-sim` `array_destroy` is `cuArrayDestroy` (Invalid; no array handles;
+no Engine flag).
 `gpu-sim` `array_get_descriptor` is `cuArrayGetDescriptor` (Invalid; no
 array handles; no Engine flag).
 `gpu-sim` `array_3d_get_descriptor` is `cuArray3DGetDescriptor` (Invalid;

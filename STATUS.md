@@ -5,6 +5,13 @@ Visible five-turn extract: [docs/chatgpt-share-6a920fe1.md](docs/chatgpt-share-6
 Complete share-API extract: [docs/chatgpt-share-6a920fe1/](docs/chatgpt-share-6a920fe1/).
 Work lands on `main`. No PRs.
 
+## Shipped 2026-09-01 — CUDA `cuArrayDestroy`
+
+`gpu-sim` `Sim::array_destroy` is `cuArrayDestroy`. Always Invalid
+`"array destroy"` because CUDA arrays are not modeled. Query; legal during
+capture. Distinct from `array_create` and `mipmapped_array_destroy`. This VM does not invent a pitched array alloc or Engine `--array-destroy`.
+`gpu-profile capture` is still refused. Dual score still has no `$/M tokens`.
+
 ## Shipped 2026-09-01 — CUDA `cuMipmappedArrayDestroy`
 
 `gpu-sim` `Sim::mipmapped_array_destroy` is `cuMipmappedArrayDestroy`.

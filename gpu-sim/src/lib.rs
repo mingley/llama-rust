@@ -559,6 +559,8 @@
 //! and dma-buf are not modeled).
 //! [`array_create`](Sim::array_create) is `cuArrayCreate` / `cuArray3DCreate`
 //! (always Invalid `"cuda array"`). Query; legal during capture. No Engine `--array-create`.
+//! [`array_destroy`](Sim::array_destroy) is `cuArrayDestroy` (always Invalid
+//! `"array destroy"`). Query; legal during capture. No Engine `--array-destroy`.
 //! [`array_get_descriptor`](Sim::array_get_descriptor) is `cuArrayGetDescriptor`
 //! (always Invalid `"array descriptor"`). Query; legal during capture. No Engine `--array-desc`.
 //! [`array_3d_get_descriptor`](Sim::array_3d_get_descriptor) is
@@ -21357,6 +21359,54 @@ mod tests {
                 .unwrap(),
             0
         );
+        match sim.array_destroy(d) {
+            Err(SimError::Invalid { why }) => {
+                assert!(why.contains("array destroy"), "{why}");
+                assert!(!why.contains("cuda array"), "{why}");
+                assert!(!why.contains("mipmap destroy"), "{why}");
+            }
+            other => panic!("{other:?}"),
+        }
+    }
+
+    #[test]
+    fn array_destroy_is_unsupported() {
+        let mut sim = Sim::new(h100());
+        let d = DeviceId(0);
+        match sim.array_destroy(d) {
+            Err(SimError::Invalid { why }) => {
+                assert!(why.contains("array destroy"), "{why}");
+                assert!(!why.contains("cuda array"), "{why}");
+                assert!(!why.contains("mipmap destroy"), "{why}");
+            }
+            other => panic!("{other:?}"),
+        }
+        sim.begin_capture(d, StreamId(0)).unwrap();
+        match sim.array_destroy(d) {
+            Err(SimError::Invalid { why }) => {
+                assert!(why.contains("array destroy"), "{why}");
+            }
+            other => panic!("{other:?}"),
+        }
+        let _g = sim.end_capture().unwrap();
+        match sim.array_destroy(DeviceId(99)) {
+            Err(SimError::Invalid { why }) => {
+                assert!(why.contains("device not in profile"), "{why}");
+            }
+            other => panic!("{other:?}"),
+        }
+        match sim.array_create(d) {
+            Err(SimError::Invalid { why }) => {
+                assert!(why.contains("cuda array"), "{why}");
+            }
+            other => panic!("{other:?}"),
+        }
+        match sim.mipmapped_array_destroy(d) {
+            Err(SimError::Invalid { why }) => {
+                assert!(why.contains("mipmap destroy"), "{why}");
+            }
+            other => panic!("{other:?}"),
+        }
     }
 
     #[test]

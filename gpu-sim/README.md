@@ -160,6 +160,7 @@ warp scheduler, L1, …   ← do not model
 | `device_get_luid` is always-zero LUID plus node mask (also `DeviceProperties.luid`) | `cuDeviceGetLuid` |
 | `device_get_texture_1d_linear_max_width` is always 0 (CUDA linear textures are not modeled) | `cuDeviceGetTexture1DLinearMaxWidth` |
 | `array_create` is Invalid (CUDA arrays are not modeled) | `cuArrayCreate` / `cuArray3DCreate` |
+| `array_destroy` is Invalid (no array handles) | `cuArrayDestroy` |
 | `array_get_descriptor` is Invalid (no array handles) | `cuArrayGetDescriptor` |
 | `array_3d_get_descriptor` is Invalid (no array handles) | `cuArray3DGetDescriptor` |
 | `array_get_sparse_properties` is Invalid (sparse CUDA arrays are not modeled) | `cuArrayGetSparseProperties` |
@@ -1031,6 +1032,9 @@ modeled; example SKUs are discrete). `SparseCudaArraySupported` /
 `DeferredMappingCudaArraySupported` / `DmaBufSupported` are always 0
 (CUDA arrays and dma-buf are not modeled). `array_create` is
 `cuArrayCreate` / `cuArray3DCreate` (always Invalid `"cuda array"`).
+`array_destroy` is `cuArrayDestroy` (always Invalid `"array destroy"`).
+Distinct from `array_create` and `mipmapped_array_destroy`. Query; legal
+during capture. No Engine `--array-destroy`.
 `array_get_descriptor` is `cuArrayGetDescriptor` (always Invalid
 `"array descriptor"`). Distinct from `array_create` and
 `surf_object_get_resource_desc`. Query; legal during capture. No Engine `--array-desc`.

@@ -17607,12 +17607,26 @@ impl Sim {
     /// `cuArrayCreate` / `cuArray3DCreate`. CUDA arrays are not modeled.
     ///
     /// Always Invalid `"cuda array"` ([`DeviceAttr::SparseCudaArraySupported`]
-    /// is 0). Distinct from [`Self::tensor_map_encode_tiled`]. Unknown devices
+    /// is 0). Distinct from [`Self::tensor_map_encode_tiled`] and from
+    /// [`Self::array_destroy`]. Unknown devices
     /// are Invalid `"device not in profile"`. This VM does not invent
     /// `CUarray_format` this slice.
     pub fn array_create(&self, device: DeviceId) -> Result<(), SimError> {
         let _gpu = self.profile.gpu(device)?;
         Err(SimError::Invalid { why: "cuda array" })
+    }
+
+    /// `cuArrayDestroy` plus `cudaFreeArray`. CUDA arrays are not modeled.
+    ///
+    /// Always Invalid `"array destroy"` (no array handles). Distinct from
+    /// [`Self::array_create`] and from [`Self::mipmapped_array_destroy`].
+    /// Unknown devices are Invalid `"device not in profile"`. Query; legal
+    /// during capture.
+    pub fn array_destroy(&self, device: DeviceId) -> Result<(), SimError> {
+        let _gpu = self.profile.gpu(device)?;
+        Err(SimError::Invalid {
+            why: "array destroy",
+        })
     }
 
     /// `cuArrayGetDescriptor`. CUDA arrays are not modeled.
@@ -17736,9 +17750,10 @@ impl Sim {
     /// mipmapped arrays are not modeled.
     ///
     /// Always Invalid `"mipmap destroy"` (no mipmapped-array handles). Distinct
-    /// from [`Self::mipmapped_array_create`] and from
-    /// [`Self::mipmapped_array_get_level`]. Unknown devices are Invalid
-    /// `"device not in profile"`. Query; legal during capture.
+    /// from [`Self::mipmapped_array_create`], from
+    /// [`Self::mipmapped_array_get_level`], and from [`Self::array_destroy`].
+    /// Unknown devices are Invalid `"device not in profile"`. Query; legal
+    /// during capture.
     pub fn mipmapped_array_destroy(&self, device: DeviceId) -> Result<(), SimError> {
         let _gpu = self.profile.gpu(device)?;
         Err(SimError::Invalid {
