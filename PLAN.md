@@ -5790,7 +5790,16 @@ model, do not celebrate the sim.
     `--graph-clone-gone`. `gpu-profile capture` is still refused. Dual
     score still has no `$/M tokens`.
 
-541. [ ] Next numbered PLAN item after 540 is the next `gpu-sim` / Engine /
+541. [x] `gpu-sim` CUDA definition mutators of an exec whose handle was
+    destroyed while a launch was in flight are Invalid `"unknown graph"`
+    before `"graph instantiated"` (add node, user-object retain/release,
+    destroy node, remove deps, conditional create). Capture is still
+    reported first. Live exec still `"graph instantiated"`. Definition
+    mutators stay. This VM does not invent Engine `--graph-def-gone`.
+    `gpu-profile capture` is still refused. Dual score still has no
+    `$/M tokens`.
+
+542. [ ] Next numbered PLAN item after 541 is the next `gpu-sim` / Engine /
     serve / expertvm mechanical API that is still missing, or the next official
     decode family. Prefer remaining CUDA-shaped twins over more
     OpenAI HTTP veneer. Do not invent F32 `output.scale`. Do not invent a
@@ -5942,7 +5951,10 @@ model, do not celebrate the sim.
     unknown check or Engine `--graph-clone-gone`. Do not reverse clone of a
     live exec. Do not reverse re-instantiate no-op of a live exec. Do not
     reverse instantiate of the definition after the primary exec is parked
-    (a new exec).
+    (a new exec). Do not invent a second parked-exec definition-mutator
+    unknown-before-instantiated check or Engine `--graph-def-gone`. Do not
+    reverse retain illegal on a live exec. Do not reverse add-node illegal
+    on a live exec.
     Do not invent a second DeviceLaunch in-flight destroy-complete check or Engine
     `--device-launch-destroy`. Do not abort an in-flight DeviceLaunch when
     `destroy_graph` succeeds. Do not delay destroy of an idle exec. Do not invent

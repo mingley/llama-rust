@@ -542,6 +542,8 @@ or host `launch_graph` (concurrent host launches all finish);
 queries of that exec handle are unknown immediately;
 clone and instantiate of that exec handle are unknown immediately;
 the definition may still be cloned or instantiated as a new exec;
+definition mutators of that exec handle are unknown before
+`"graph instantiated"`;
 destroying an exec with an in-flight
 `upload_graph_async` does not abort the upload).
 `user_object_create` is `cudaUserObjectCreate`

@@ -5297,6 +5297,63 @@ mod tests {
     }
 
     #[test]
+    fn parked_exec_definition_mutators_are_unknown() {
+        let mut sim = Sim::new(h100());
+        let d = DeviceId(0);
+        let s = StreamId(0);
+        let a = sim.malloc(d, 4096).unwrap();
+        let g = sim.create_graph(d, s).unwrap();
+        sim.graph_add_kernel(g, KernelKind::other(1 << 40, 4096), &[a], &[a])
+            .unwrap();
+        let exec = sim.instantiate_graph(g).unwrap();
+        let obj = sim
+            .user_object_create(12, 1, UserObjectFlags::NO_DESTRUCTOR_SYNC)
+            .unwrap();
+        match sim.graph_retain_user_object(exec, obj, 1, 0).unwrap_err() {
+            SimError::Invalid { why } => assert!(why.contains("instantiated"), "{why}"),
+            other => panic!("{other:?}"),
+        }
+        match sim.graph_add_kernel(exec, KernelKind::other(8, 8), &[a], &[a]) {
+            Err(SimError::Invalid { why }) => assert!(why.contains("instantiated"), "{why}"),
+            other => panic!("{other:?}"),
+        }
+        let launched = sim.launch_graph(exec, s).unwrap();
+        assert!(launched > 0);
+        sim.destroy_graph(exec).unwrap();
+        match sim.graph_add_kernel(exec, KernelKind::other(8, 8), &[a], &[a]) {
+            Err(SimError::Invalid { why }) => assert!(why.contains("unknown"), "{why}"),
+            other => panic!("{other:?}"),
+        }
+        match sim.graph_retain_user_object(exec, obj, 1, 0).unwrap_err() {
+            SimError::Invalid { why } => assert!(why.contains("unknown"), "{why}"),
+            other => panic!("{other:?}"),
+        }
+        match sim.graph_destroy_node(exec, 0).unwrap_err() {
+            SimError::Invalid { why } => assert!(why.contains("unknown"), "{why}"),
+            other => panic!("{other:?}"),
+        }
+        match sim.graph_remove_dependencies_n(exec, &[]).unwrap_err() {
+            SimError::Invalid { why } => assert!(why.contains("unknown"), "{why}"),
+            other => panic!("{other:?}"),
+        }
+        sim.begin_capture(d, StreamId(1)).unwrap();
+        match sim.graph_add_kernel(exec, KernelKind::other(8, 8), &[a], &[a]) {
+            Err(SimError::Invalid { why }) => assert!(why.contains("capture"), "{why}"),
+            other => panic!("{other:?}"),
+        }
+        match sim.graph_retain_user_object(exec, obj, 1, 0).unwrap_err() {
+            SimError::Invalid { why } => assert!(why.contains("capture"), "{why}"),
+            other => panic!("{other:?}"),
+        }
+        let _end = sim.end_capture().unwrap();
+        sim.graph_add_kernel(g, KernelKind::other(8, 8), &[a], &[a])
+            .unwrap();
+        sim.synchronize().unwrap();
+        sim.destroy_graph(g).unwrap();
+        sim.user_object_release(obj, 1).unwrap();
+    }
+
+    #[test]
     fn upload_async_destroy_in_flight_holds_user_object() {
         let mut p = h100();
         for g in &mut p.gpus {

@@ -701,6 +701,16 @@ impl Sim {
         Ok(g)
     }
 
+    fn require_live_definition(&self, graph: GraphId) -> Result<(), SimError> {
+        let g = self.live_graph(graph)?;
+        if g.instantiated {
+            return Err(SimError::Invalid {
+                why: "graph instantiated",
+            });
+        }
+        Ok(())
+    }
+
     /// [`Self::as_exec`] plus refuse host updates while a device launch is in
     /// flight (`"device launch in flight"`). Query APIs keep [`Self::as_exec`].
     fn as_exec_for_update(&self, id: GraphId) -> Result<GraphId, SimError> {
@@ -7733,7 +7743,8 @@ impl Sim {
 
     /// `cudaGraphRetainUserObject` on a definition. Host-synchronous.
     ///
-    /// Capture cannot include it. Illegal on an instantiated exec. Clone does
+    /// Capture cannot include it. Illegal on an instantiated exec. A parked
+    /// in-flight-destroyed exec is `"unknown graph"` first. Clone does
     /// not copy retains. [`Self::instantiate_graph`] copies current retains onto
     /// the new exec (CUDA exec retains a copy). Retains added after instantiate
     /// stay on the definition. [`GraphUserObjectFlags::MOVE`] transfers one caller
@@ -7846,15 +7857,7 @@ impl Sim {
     }
 
     fn require_user_object_graph(&self, graph: GraphId) -> Result<(), SimError> {
-        let g = self.graphs.get(&graph).ok_or(SimError::Invalid {
-            why: "unknown graph",
-        })?;
-        if g.instantiated {
-            return Err(SimError::Invalid {
-                why: "graph instantiated",
-            });
-        }
-        Ok(())
+        self.require_live_definition(graph)
     }
 
     fn copy_user_object_retains(&mut self, src: GraphId, exec: GraphId) -> Result<(), SimError> {
@@ -7964,6 +7967,7 @@ impl Sim {
     /// [`GraphNodeParams::SetConditional`] is
     /// [`Self::graph_add_set_conditional`]. Capture
     /// cannot include it. Illegal on an instantiated exec.
+    /// A parked in-flight-destroyed exec is `"unknown graph"` first.
     /// [`GraphNodeParams::Alloc`] fills [`GraphAddNode::alloc`]. Empty
     /// `access` is [`Self::graph_add_alloc`]; peer `accessDescs` match
     /// [`Self::graph_add_alloc_with_access`].
@@ -7974,8 +7978,8 @@ impl Sim {
         deps: &[usize],
         params: GraphNodeParams,
     ) -> Result<GraphAddNode, SimError> {
-        let n = self.graph_len(graph)?;
         let _origin = self.graph_origin_for_add(graph)?;
+        let n = self.graph_len(graph)?;
         for &from in deps {
             if from >= n {
                 return Err(SimError::Invalid {
@@ -8202,7 +8206,8 @@ impl Sim {
     /// Nodes start with no dependencies (CUDA). Use
     /// [`Self::graph_add_dependencies`] so a later node waits. Independent
     /// kernels may Hyper-Q overlap at [`Self::launch_graph`]. Capture cannot
-    /// include it. Illegal on an instantiated exec. Does not run the
+    /// include it. Illegal on an instantiated exec. A parked
+    /// in-flight-destroyed exec is `"unknown graph"` first. Does not run the
     /// kernel; [`Self::launch_graph`] does. [`KernelNodeParams::ctx`] is
     /// [`None`] (inherit the launch stream). [`KernelNodeParams::shared_mem_bytes`]
     /// stays `0`. Pin a green context or dynamic shared through
@@ -8481,17 +8486,15 @@ impl Sim {
             });
         }
         self.fail_if_capturing("cannot capture conditional create")?;
-        let origin = {
-            let g = self.graphs.get(&graph).ok_or(SimError::Invalid {
+        self.require_live_definition(graph)?;
+        let origin = self
+            .graphs
+            .get(&graph)
+            .ok_or(SimError::Invalid {
                 why: "unknown graph",
-            })?;
-            if g.instantiated {
-                return Err(SimError::Invalid {
-                    why: "graph instantiated",
-                });
-            }
-            g.origin.0
-        };
+            })?
+            .origin
+            .0;
         if let Some(c) = ctx {
             self.require_live_green_ctx(c, origin)?;
         }
@@ -9572,14 +9575,10 @@ impl Sim {
         edges: &[(usize, usize)],
     ) -> Result<(), SimError> {
         self.fail_if_capturing("cannot remove graph dependencies during capture")?;
+        self.require_live_definition(graph)?;
         let g = self.graphs.get_mut(&graph).ok_or(SimError::Invalid {
             why: "unknown graph",
         })?;
-        if g.instantiated {
-            return Err(SimError::Invalid {
-                why: "graph instantiated",
-            });
-        }
         if edges.is_empty() {
             return Ok(());
         }
@@ -9618,15 +9617,11 @@ impl Sim {
     /// destroyed.
     pub fn graph_destroy_node(&mut self, graph: GraphId, node: usize) -> Result<(), SimError> {
         self.fail_if_capturing("cannot destroy graph node during capture")?;
+        self.require_live_definition(graph)?;
         let alloc = {
             let g = self.graphs.get_mut(&graph).ok_or(SimError::Invalid {
                 why: "unknown graph",
             })?;
-            if g.instantiated {
-                return Err(SimError::Invalid {
-                    why: "graph instantiated",
-                });
-            }
             let alloc = {
                 let step = live_ok(g.steps.get(node).ok_or(SimError::Invalid {
                     why: "unknown graph node",
@@ -12301,9 +12296,7 @@ impl Sim {
     fn graph_origin_for_add(&self, graph: GraphId) -> Result<(DeviceId, StreamId), SimError> {
         self.fail_if_capturing("cannot add graph node during capture")?;
         self.require_not_moved(graph)?;
-        let g = self.graphs.get(&graph).ok_or(SimError::Invalid {
-            why: "unknown graph",
-        })?;
+        let g = self.live_graph(graph)?;
         if g.instantiated {
             return Err(SimError::Invalid {
                 why: "graph instantiated",
