@@ -9273,10 +9273,15 @@ fn vec_dot_q4_k_f32_row(row: &[u8], x: &[f32]) -> f32 {
             let b0 = dmin * f32::from(m0);
             let a1 = d * f32::from(sc1);
             let b1 = dmin * f32::from(m1);
-            for ((p, xl), xh) in packed.iter().zip(xlo.iter()).zip(xhi.iter()) {
+            // Keep row order: dequantization lays out all 32 low nibbles
+            // before the 32 high nibbles. Interleaving their products changes
+            // f32 accumulation enough to amplify through attention.
+            for (p, xl) in packed.iter().zip(xlo.iter()) {
                 let q0 = f32::from(p & 0x0f);
-                let q1 = f32::from(p >> 4);
                 sum += (a0 * q0 - b0) * *xl;
+            }
+            for (p, xh) in packed.iter().zip(xhi.iter()) {
+                let q1 = f32::from(p >> 4);
                 sum += (a1 * q1 - b1) * *xh;
             }
         }
@@ -10182,6 +10187,26 @@ mod tests {
             "{via_dequant} vs {}",
             y[0]
         );
+    }
+
+    #[test]
+    fn q4_k_scalar_dot_accumulates_in_element_order() {
+        let qs = std::array::from_fn(|i| u8::try_from((i * 7 + 3) % 16).unwrap_or(0));
+        let scales = [3, 11, 19, 27, 35, 43, 51, 59];
+        let mins = [2, 7, 13, 17, 23, 29, 31, 37];
+        let packed = pack_q4_k_block(0.125, 0.0625, &scales, &mins, &qs);
+        let magnitudes = [0.0001f32, 0.01, 1.0, 100.0, 10_000.0];
+        let x: [f32; QK_K] = std::array::from_fn(|i| {
+            let magnitude = magnitudes[(i + 3) % magnitudes.len()];
+            let sign = if (i * 11 + 1) % 3 == 0 { -1.0 } else { 1.0 };
+            let fraction = f32::from(u16::try_from((i * 37 + 17) % 101).unwrap_or(0)) / 101.0;
+            sign * magnitude * fraction
+        });
+        let mut dequantized = [0.0f32; QK_K];
+        dequant_q4_k_row(QK_K, &packed, &mut dequantized).unwrap();
+        let expected: f32 = dequantized.iter().zip(x.iter()).map(|(w, v)| w * v).sum();
+        let got = vec_dot_q4_k_f32_row(&packed, &x);
+        assert_eq!(got.to_bits(), expected.to_bits(), "{got} vs {expected}");
     }
 
     /// ggml `get_scale_min_k4` (oracle; not the GEMV loop).
