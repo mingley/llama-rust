@@ -172,6 +172,7 @@ warp scheduler, L1, …   ← do not model
 | `tex_object_get_texture_desc` is Invalid (no texture-object handles) | `cuTexObjectGetTextureDesc` / `cudaGetTextureObjectTextureDesc` |
 | `tex_object_get_resource_view_desc` is Invalid (no texture-object handles) | `cuTexObjectGetResourceViewDesc` / `cudaGetTextureObjectResourceViewDesc` |
 | `graphics_map_resources` is Invalid (OpenGL, Direct3D, Vulkan, EGL are not modeled) | `cuGraphicsMapResources` |
+| `graphics_gl_register_buffer` is Invalid (OpenGL interop is not modeled) | `cuGraphicsGLRegisterBuffer` |
 | `egl_stream_consumer_connect` is Invalid (EGL streams are not modeled) | `cuEGLStreamConsumerConnect` |
 | `egl_stream_producer_connect` is Invalid (EGL streams are not modeled) | `cuEGLStreamProducerConnect` |
 | `gl_get_devices` is Invalid (OpenGL interop is not modeled) | `cuGLGetDevices` / `cudaGLGetDevices` |
@@ -1070,6 +1071,9 @@ fabric handles are not modeled).
 `graphics_map_resources` is `cuGraphicsMapResources` (always Invalid
 `"graphics resource"`). Distinct from `import_external_memory`. Query;
 legal during capture. No Engine `--graphics-map`.
+`graphics_gl_register_buffer` is `cuGraphicsGLRegisterBuffer` (always
+Invalid `"gl buffer"`). Distinct from `graphics_map_resources` and
+`gl_ctx_create`. Query; legal during capture. No Engine `--gl-register-buffer`.
 `egl_stream_consumer_connect` is `cuEGLStreamConsumerConnect` (always
 Invalid `"egl stream"`). Distinct from `graphics_map_resources`. Query;
 legal during capture. No Engine `--egl-stream`.

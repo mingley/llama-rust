@@ -592,6 +592,9 @@
 //! [`graphics_map_resources`](Sim::graphics_map_resources) is
 //! `cuGraphicsMapResources` (always Invalid `"graphics resource"`). Query;
 //! legal during capture. No Engine `--graphics-map`.
+//! [`graphics_gl_register_buffer`](Sim::graphics_gl_register_buffer) is
+//! `cuGraphicsGLRegisterBuffer` (always Invalid `"gl buffer"`). Query;
+//! legal during capture. No Engine `--gl-register-buffer`.
 //! [`egl_stream_consumer_connect`](Sim::egl_stream_consumer_connect) is
 //! `cuEGLStreamConsumerConnect` (always Invalid `"egl stream"`). Query;
 //! legal during capture. No Engine `--egl-stream`.
@@ -21740,6 +21743,44 @@ mod tests {
         match sim.import_external_memory(d) {
             Err(SimError::Invalid { why }) => {
                 assert!(why.contains("external memory"), "{why}");
+            }
+            other => panic!("{other:?}"),
+        }
+    }
+
+    #[test]
+    fn graphics_gl_register_buffer_is_unsupported() {
+        let mut sim = Sim::new(h100());
+        let d = DeviceId(0);
+        match sim.graphics_gl_register_buffer(d) {
+            Err(SimError::Invalid { why }) => {
+                assert!(why.contains("gl buffer"), "{why}");
+            }
+            other => panic!("{other:?}"),
+        }
+        sim.begin_capture(d, StreamId(0)).unwrap();
+        match sim.graphics_gl_register_buffer(d) {
+            Err(SimError::Invalid { why }) => {
+                assert!(why.contains("gl buffer"), "{why}");
+            }
+            other => panic!("{other:?}"),
+        }
+        let _g = sim.end_capture().unwrap();
+        match sim.graphics_gl_register_buffer(DeviceId(99)) {
+            Err(SimError::Invalid { why }) => {
+                assert!(why.contains("device not in profile"), "{why}");
+            }
+            other => panic!("{other:?}"),
+        }
+        match sim.graphics_map_resources(d, StreamId(0)) {
+            Err(SimError::Invalid { why }) => {
+                assert!(why.contains("graphics resource"), "{why}");
+            }
+            other => panic!("{other:?}"),
+        }
+        match sim.gl_ctx_create(d) {
+            Err(SimError::Invalid { why }) => {
+                assert!(why.contains("gl context"), "{why}");
             }
             other => panic!("{other:?}"),
         }

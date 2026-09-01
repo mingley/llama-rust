@@ -17780,9 +17780,9 @@ impl Sim {
     /// Always Invalid `"graphics resource"` ([`DeviceAttr::D3D12CigSupported`]
     /// and [`DeviceAttr::VulkanCigSupported`] are 0; OpenGL, Direct3D,
     /// Vulkan, and EGL graphics resources are not modeled). Distinct from
-    /// [`Self::import_external_memory`]. Unknown devices are Invalid
-    /// `"device not in profile"`. Query; legal during capture. This VM does
-    /// not invent `cuGraphicsGLRegisterBuffer` this slice.
+    /// [`Self::import_external_memory`] and from
+    /// [`Self::graphics_gl_register_buffer`]. Unknown devices are Invalid
+    /// `"device not in profile"`. Query; legal during capture.
     pub fn graphics_map_resources(
         &self,
         device: DeviceId,
@@ -17793,6 +17793,19 @@ impl Sim {
         Err(SimError::Invalid {
             why: "graphics resource",
         })
+    }
+
+    /// `cuGraphicsGLRegisterBuffer` plus `cudaGraphicsGLRegisterBuffer`.
+    /// OpenGL interop is not modeled.
+    ///
+    /// Always Invalid `"gl buffer"` (no graphics-resource handles). Distinct
+    /// from [`Self::graphics_map_resources`] and from [`Self::gl_ctx_create`].
+    /// Unknown devices are Invalid `"device not in profile"`. Query; legal
+    /// during capture. This VM does not invent `cuGraphicsGLRegisterImage`
+    /// this slice.
+    pub fn graphics_gl_register_buffer(&self, device: DeviceId) -> Result<(), SimError> {
+        let _gpu = self.profile.gpu(device)?;
+        Err(SimError::Invalid { why: "gl buffer" })
     }
 
     /// `cuEGLStreamConsumerConnect` plus `cudaEGLStreamConsumerConnect`.

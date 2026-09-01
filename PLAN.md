@@ -6682,7 +6682,14 @@ model, do not celebrate the sim.
     or `cudaChooseDevice`. `gpu-profile capture` is still refused. Dual
     score still has no `$/M tokens`.
 
-649. [ ] Next numbered PLAN item after 648 is the next `gpu-sim` / Engine /
+649. [x] `gpu-sim` `Sim::graphics_gl_register_buffer` is
+    `cuGraphicsGLRegisterBuffer`. Always Invalid `"gl buffer"` because
+    OpenGL interop is not modeled. Query; legal during capture. Distinct from
+    `graphics_map_resources` and `gl_ctx_create`. This VM does not invent `cuGraphicsGLRegisterImage`, Engine `--gl-register-buffer`,
+    or `cudaChooseDevice`. `gpu-profile capture` is still refused. Dual
+    score still has no `$/M tokens`.
+
+650. [ ] Next numbered PLAN item after 649 is the next `gpu-sim` / Engine /
     serve / expertvm mechanical API that is still missing, or the next official
     decode family. Prefer remaining CUDA-shaped twins over more
     OpenAI HTTP veneer. Do not invent F32 `output.scale`. Do not invent a
@@ -7076,6 +7083,10 @@ model, do not celebrate the sim.
     Do not invent a second `cuArrayGetDescriptor` / `array_get_descriptor`.
     Do not invent Engine `--array-desc`. Do not invent `cuArray3DGetDescriptor`
     this slice. Do not reverse `"array descriptor"`.
+    Do not invent a second `cuGraphicsGLRegisterBuffer` /
+    `graphics_gl_register_buffer`. Do not invent Engine `--gl-register-buffer`.
+    Do not invent `cuGraphicsGLRegisterImage` this slice. Do not reverse
+    `"gl buffer"`.
     Do not invent a second `cudaStreamAddCallback`.
     Do not invent Engine `--stream-callback` (same wall as second live
     `cudaLaunchHostFunc` after miss DMA).
@@ -7579,6 +7590,10 @@ model, do not celebrate the sim.
     Engine `--get-array-desc`. Do not invent a populated
     `CUDA_ARRAY_DESCRIPTOR` this slice. Do not reverse
     array descriptor remaining unsupported.
+    Do not invent a second `graphics_gl_register_buffer` API. Do not invent
+    Engine `--register-gl-buffer`. Do not invent
+    `CU_GRAPHICS_REGISTER_FLAGS` this slice. Do not reverse
+    GL buffer register remaining unsupported.
     Do not invent a second DeviceLaunch in-flight destroy-complete check or Engine
     `--device-launch-destroy`. Do not abort an in-flight DeviceLaunch when
     `destroy_graph` succeeds. Do not delay destroy of an idle exec. Do not invent
@@ -8279,6 +8294,9 @@ model, do not celebrate the sim.
     Do not invent a second `array_get_descriptor` method. Do not invent
     Engine `--cu-array-get-descriptor`. Do not reverse wrapping
     cuArrayGetDescriptor Invalid.
+    Do not invent a second `graphics_gl_register_buffer` method. Do not
+    invent Engine `--cu-graphics-gl-register-buffer`. Do not reverse wrapping
+    cuGraphicsGLRegisterBuffer Invalid.
     Do not
     spend the next item on an OpenAI-compatible HTTP veneer.
 
