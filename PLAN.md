@@ -6484,7 +6484,14 @@ model, do not celebrate the sim.
     `cudaChooseDevice`. `gpu-profile capture` is still refused. Dual
     score still has no `$/M tokens`.
 
-622. [ ] Next numbered PLAN item after 621 is the next `gpu-sim` / Engine /
+622. [x] `gpu-sim` `Sim::link_create` is `cuLinkCreate`. Always Invalid
+    `"jit linker"` because this VM has no NVRTC and no cubin linker.
+    Query; legal during capture. Distinct from `library_load_data`. This
+    VM does not invent `cuLinkAddData`, Engine `--jit-link`, or
+    `cudaChooseDevice`. `gpu-profile capture` is still refused. Dual
+    score still has no `$/M tokens`.
+
+623. [ ] Next numbered PLAN item after 622 is the next `gpu-sim` / Engine /
     serve / expertvm mechanical API that is still missing, or the next official
     decode family. Prefer remaining CUDA-shaped twins over more
     OpenAI HTTP veneer. Do not invent F32 `output.scale`. Do not invent a
@@ -6795,6 +6802,9 @@ model, do not celebrate the sim.
     `mipmapped_array_create`. Do not invent Engine `--mipmap-array`.
     Do not invent `cuMipmappedArrayGetLevel` this slice. Do not reverse
     `"mipmapped array"`.
+    Do not invent a second `cuLinkCreate` / `link_create`. Do not invent
+    Engine `--jit-link`. Do not invent `cuLinkAddData` this slice. Do not
+    reverse `"jit linker"`.
     Do not invent a second `cudaStreamAddCallback`.
     Do not invent Engine `--stream-callback` (same wall as second live
     `cudaLaunchHostFunc` after miss DMA).
@@ -7209,6 +7219,9 @@ model, do not celebrate the sim.
     Do not invent a second `mipmapped_array_create` API. Do not invent
     Engine `--create-mipmap`. Do not invent `cuArrayGetSparseProperties`
     this slice. Do not reverse mipmapped texture dims staying 0.
+    Do not invent a second `link_create` API. Do not invent
+    Engine `--link-create`. Do not invent a `CUlinkState` this slice.
+    Do not reverse no JIT linker.
     Do not invent a second DeviceLaunch in-flight destroy-complete check or Engine
     `--device-launch-destroy`. Do not abort an in-flight DeviceLaunch when
     `destroy_graph` succeeds. Do not delay destroy of an idle exec. Do not invent
@@ -7828,6 +7841,9 @@ model, do not celebrate the sim.
     Do not invent a second `mipmapped_array_create` method. Do not invent
     Engine `--cu-mipmap-array`. Do not reverse wrapping
     cuMipmappedArrayCreate Invalid.
+    Do not invent a second `link_create` method. Do not invent
+    Engine `--cu-link-create`. Do not reverse wrapping cuLinkCreate
+    Invalid.
     Do not
     spend the next item on an OpenAI-compatible HTTP veneer.
 

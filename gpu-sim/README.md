@@ -179,6 +179,7 @@ warp scheduler, L1, …   ← do not model
 | `driver_init` is a 1 ns no-op; flags must be 0 | `cuInit` |
 | `module_get_loading_mode` is always Eager (CUDA 1) | `cuModuleGetLoadingMode` |
 | `library_load_data` is Invalid (no cubin / `CUlibrary`) | `cuLibraryLoadData` |
+| `link_create` is Invalid (no JIT linker or NVRTC) | `cuLinkCreate` |
 | `device_get` is the ordinal in `0 .. count` | `cuDeviceGet` |
 | `flush_gpu_direct_rdma_writes` is a 1 ns host-sync barrier on RDMA SKUs (no write-visibility) | 1 ns |
 | `BatchMemOp::FlushRemoteWrites` is stream-ordered `CU_STREAM_MEM_OP_FLUSH_REMOTE_WRITES` (capture legal; never a no-op) | 1 ns Solo |
@@ -1165,6 +1166,8 @@ CUDA 1; query; legal during capture; no modules; distinct from
 `library_load_data` is `cuLibraryLoadData` (always Invalid `"cuda library"`;
 no cubin / `CUlibrary`). Distinct from `module_get_loading_mode` and
 `func_get_module`. Query; legal during capture. No Engine `--library-load`.
+`link_create` is `cuLinkCreate` (always Invalid `"jit linker"`; no NVRTC).
+Distinct from `library_load_data`. Query; legal during capture. No Engine `--jit-link`.
 `runtime_get_version` is `cudaRuntimeGetVersion` (same toolkit). Query;
 legal during capture.
 `func_get_attributes` is `cudaFuncGetAttributes`

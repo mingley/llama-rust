@@ -5,6 +5,14 @@ Visible five-turn extract: [docs/chatgpt-share-6a920fe1.md](docs/chatgpt-share-6
 Complete share-API extract: [docs/chatgpt-share-6a920fe1/](docs/chatgpt-share-6a920fe1/).
 Work lands on `main`. No PRs.
 
+## Shipped 2026-09-01 — CUDA `cuLinkCreate`
+
+`gpu-sim` `Sim::link_create` is `cuLinkCreate`. Always Invalid
+`"jit linker"` because this VM has no NVRTC and no cubin linker. Query;
+legal during capture. Distinct from `library_load_data`. This VM does
+not invent `cuLinkAddData` or Engine `--jit-link`.
+`gpu-profile capture` is still refused. Dual score still has no `$/M tokens`.
+
 ## Shipped 2026-09-01 — CUDA `cuMipmappedArrayCreate`
 
 `gpu-sim` `Sim::mipmapped_array_create` is `cuMipmappedArrayCreate`.
