@@ -580,6 +580,9 @@ handles; no Engine flag).
 `gpu-sim` `signal_external_semaphores_async` is
 `cuSignalExternalSemaphoresAsync` (Invalid; no external-semaphore handles;
 no Engine flag).
+`gpu-sim` `wait_external_semaphores_async` is
+`cuWaitExternalSemaphoresAsync` (Invalid; no external-semaphore handles;
+no Engine flag).
 `gpu-sim` `surf_object_create` is `cuSurfObjectCreate` (Invalid; CUDA
 surfaces are not modeled; no Engine flag).
 `gpu-sim` `surf_object_destroy` is `cuSurfObjectDestroy` (Invalid; no

@@ -177,6 +177,7 @@ warp scheduler, L1, …   ← do not model
 | `import_external_semaphore` is Invalid (no external-semaphore handles) | `cuImportExternalSemaphore` |
 | `destroy_external_semaphore` is Invalid (no external-semaphore handles) | `cuDestroyExternalSemaphore` |
 | `signal_external_semaphores_async` is Invalid (no external-semaphore handles) | `cuSignalExternalSemaphoresAsync` |
+| `wait_external_semaphores_async` is Invalid (no external-semaphore handles) | `cuWaitExternalSemaphoresAsync` |
 | `surf_object_create` is Invalid (CUDA surfaces are not modeled) | `cuSurfObjectCreate` |
 | `surf_object_destroy` is Invalid (no surface-object handles) | `cuSurfObjectDestroy` / `cudaDestroySurfaceObject` |
 | `surf_object_get_resource_desc` is Invalid (no surface-object handles) | `cuSurfObjectGetResourceDesc` / `cudaGetSurfaceObjectResourceDesc` |
@@ -1104,6 +1105,9 @@ legal during capture. No Engine `--external-semaphore`.
 `signal_external_semaphores_async` is `cuSignalExternalSemaphoresAsync`
 (always Invalid `"semaphore signal"`). Distinct from `destroy_external_semaphore`.
 Query; legal during capture. No Engine `--semaphore-signal`.
+`wait_external_semaphores_async` is `cuWaitExternalSemaphoresAsync`
+(always Invalid `"semaphore wait"`). Distinct from `signal_external_semaphores_async`.
+Query; legal during capture. No Engine `--semaphore-wait`.
 `surf_object_create` is `cuSurfObjectCreate` (always Invalid `"cuda surface"`;
 CUDA surfaces are not modeled). Distinct from `array_create`. Query; legal
 during capture. No Engine `--surf-object`.

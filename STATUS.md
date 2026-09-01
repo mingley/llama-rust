@@ -5,6 +5,15 @@ Visible five-turn extract: [docs/chatgpt-share-6a920fe1.md](docs/chatgpt-share-6
 Complete share-API extract: [docs/chatgpt-share-6a920fe1/](docs/chatgpt-share-6a920fe1/).
 Work lands on `main`. No PRs.
 
+## Shipped 2026-09-01 — CUDA `cuWaitExternalSemaphoresAsync`
+
+`gpu-sim` `Sim::wait_external_semaphores_async` is
+`cuWaitExternalSemaphoresAsync`. Always Invalid `"semaphore wait"`
+because external semaphore import is not modeled. Query; legal during
+capture. Distinct from `signal_external_semaphores_async` (why is not a
+superstring of `"semaphore signal"`). This VM does not invent `cuGLUnmapBufferObjectAsync` or Engine `--semaphore-wait`.
+`gpu-profile capture` is still refused. Dual score still has no `$/M tokens`.
+
 ## Shipped 2026-09-01 — CUDA `cuSignalExternalSemaphoresAsync`
 
 `gpu-sim` `Sim::signal_external_semaphores_async` is

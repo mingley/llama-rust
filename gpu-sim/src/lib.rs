@@ -351,6 +351,9 @@
 //! [`signal_external_semaphores_async`](Sim::signal_external_semaphores_async)
 //! is `cuSignalExternalSemaphoresAsync` (always Invalid `"semaphore signal"`).
 //! Query; legal during capture. No Engine `--semaphore-signal`.
+//! [`wait_external_semaphores_async`](Sim::wait_external_semaphores_async)
+//! is `cuWaitExternalSemaphoresAsync` (always Invalid `"semaphore wait"`).
+//! Query; legal during capture. No Engine `--semaphore-wait`.
 //! [`va_export_to_shareable_handle`](Sim::va_export_to_shareable_handle) is
 //! `cuMemExportToShareableHandle`. Always Invalid `"not shareable"`
 //! ([`MemAllocationProp::handle_types`] is none; POSIX-FD VMM export is not
@@ -22126,6 +22129,57 @@ mod tests {
             Err(SimError::Invalid { why }) => {
                 assert!(why.contains("external semaphore"), "{why}");
                 assert!(!why.contains("semaphore signal"), "{why}");
+            }
+            other => panic!("{other:?}"),
+        }
+        match sim.wait_external_semaphores_async(d, s) {
+            Err(SimError::Invalid { why }) => {
+                assert!(why.contains("semaphore wait"), "{why}");
+                assert!(!why.contains("semaphore signal"), "{why}");
+                assert!(!why.contains("semaphore destroy"), "{why}");
+            }
+            other => panic!("{other:?}"),
+        }
+    }
+
+    #[test]
+    fn wait_external_semaphores_async_is_unsupported() {
+        let mut sim = Sim::new(h100());
+        let d = DeviceId(0);
+        let s = StreamId(0);
+        match sim.wait_external_semaphores_async(d, s) {
+            Err(SimError::Invalid { why }) => {
+                assert!(why.contains("semaphore wait"), "{why}");
+                assert!(!why.contains("semaphore signal"), "{why}");
+                assert!(!why.contains("semaphore destroy"), "{why}");
+            }
+            other => panic!("{other:?}"),
+        }
+        sim.begin_capture(d, s).unwrap();
+        match sim.wait_external_semaphores_async(d, s) {
+            Err(SimError::Invalid { why }) => {
+                assert!(why.contains("semaphore wait"), "{why}");
+            }
+            other => panic!("{other:?}"),
+        }
+        let _g = sim.end_capture().unwrap();
+        match sim.wait_external_semaphores_async(DeviceId(99), s) {
+            Err(SimError::Invalid { why }) => {
+                assert!(why.contains("device not in profile"), "{why}");
+            }
+            other => panic!("{other:?}"),
+        }
+        match sim.signal_external_semaphores_async(d, s) {
+            Err(SimError::Invalid { why }) => {
+                assert!(why.contains("semaphore signal"), "{why}");
+                assert!(!why.contains("semaphore wait"), "{why}");
+            }
+            other => panic!("{other:?}"),
+        }
+        match sim.destroy_external_semaphore(d) {
+            Err(SimError::Invalid { why }) => {
+                assert!(why.contains("semaphore destroy"), "{why}");
+                assert!(!why.contains("semaphore wait"), "{why}");
             }
             other => panic!("{other:?}"),
         }

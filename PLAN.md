@@ -6975,7 +6975,14 @@ model, do not celebrate the sim.
     or `cudaChooseDevice`. `gpu-profile capture` is still refused. Dual
     score still has no `$/M tokens`.
 
-689. [ ] Next numbered PLAN item after 688 is the next `gpu-sim` / Engine /
+689. [x] `gpu-sim` `Sim::wait_external_semaphores_async` is
+    `cuWaitExternalSemaphoresAsync`. Always Invalid `"semaphore wait"`
+    because external semaphore import is not modeled. Query; legal during capture.
+    Distinct from `signal_external_semaphores_async`. This VM does not invent `cuGLUnmapBufferObjectAsync`, Engine `--semaphore-wait`,
+    or `cudaChooseDevice`. `gpu-profile capture` is still refused. Dual
+    score still has no `$/M tokens`.
+
+690. [ ] Next numbered PLAN item after 689 is the next `gpu-sim` / Engine /
     serve / expertvm mechanical API that is still missing, or the next official
     decode family. Prefer remaining CUDA-shaped twins over more
     OpenAI HTTP veneer. Do not invent F32 `output.scale`. Do not invent a
@@ -7519,6 +7526,10 @@ model, do not celebrate the sim.
     `signal_external_semaphores_async`. Do not invent Engine `--semaphore-signal`.
     Do not invent `cuWaitExternalSemaphoresAsync` this slice. Do not reverse
     `"semaphore signal"`.
+    Do not invent a second `cuWaitExternalSemaphoresAsync` /
+    `wait_external_semaphores_async`. Do not invent Engine `--semaphore-wait`.
+    Do not invent `cuGLUnmapBufferObjectAsync` this slice. Do not reverse
+    `"semaphore wait"`.
     Do not invent a second `cudaStreamAddCallback`.
     Do not invent Engine `--stream-callback` (same wall as second live
     `cudaLaunchHostFunc` after miss DMA).
@@ -8156,6 +8167,9 @@ model, do not celebrate the sim.
     Do not invent a second `signal_external_semaphores_async` API. Do not invent
     Engine `--signal-external-semaphore`. Do not invent a graph semaphore node
     this slice. Do not reverse semaphore signal remaining unsupported.
+    Do not invent a second `wait_external_semaphores_async` API. Do not invent
+    Engine `--wait-external-semaphore`. Do not invent a graph wait node
+    this slice. Do not reverse semaphore wait remaining unsupported.
     Do not invent a second DeviceLaunch in-flight destroy-complete check or Engine
     `--device-launch-destroy`. Do not abort an in-flight DeviceLaunch when
     `destroy_graph` succeeds. Do not delay destroy of an idle exec. Do not invent
@@ -8976,6 +8990,9 @@ model, do not celebrate the sim.
     Do not invent a second `signal_external_semaphores_async` method. Do not
     invent Engine `--cu-signal-external-semaphores-async`. Do not reverse wrapping
     cuSignalExternalSemaphoresAsync Invalid.
+    Do not invent a second `wait_external_semaphores_async` method. Do not
+    invent Engine `--cu-wait-external-semaphores-async`. Do not reverse wrapping
+    cuWaitExternalSemaphoresAsync Invalid.
     Do not
     spend the next item on an OpenAI-compatible HTTP veneer.
 
