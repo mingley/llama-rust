@@ -167,6 +167,7 @@ warp scheduler, L1, …   ← do not model
 | `array_get_memory_requirements` is Invalid (no array handles) | `cuArrayGetMemoryRequirements` |
 | `mipmapped_array_get_memory_requirements` is Invalid (no mipmapped-array handles) | `cuMipmappedArrayGetMemoryRequirements` |
 | `mipmapped_array_create` is Invalid (CUDA mipmapped arrays are not modeled) | `cuMipmappedArrayCreate` |
+| `mipmapped_array_get_level` is Invalid (no mipmapped-array handles) | `cuMipmappedArrayGetLevel` |
 | `import_external_memory` is Invalid (dma-buf / Win32 / fabric are 0) | `cuImportExternalMemory` |
 | `surf_object_create` is Invalid (CUDA surfaces are not modeled) | `cuSurfObjectCreate` |
 | `surf_object_destroy` is Invalid (no surface-object handles) | `cuSurfObjectDestroy` / `cudaDestroySurfaceObject` |
@@ -1050,6 +1051,9 @@ Query; legal during capture. No Engine `--mipmap-memory`.
 `mipmapped_array_create` is `cuMipmappedArrayCreate` (always Invalid)
 `"mipmapped array"`). Distinct from `array_create`. Query; legal during
 capture. No Engine `--mipmap-array`.
+`mipmapped_array_get_level` is `cuMipmappedArrayGetLevel` (always Invalid
+`"mipmap level"`). Distinct from `mipmapped_array_create`. Query; legal
+during capture. No Engine `--mipmap-level`.
 `va_get_handle_for_address_range`
 is `cuMemGetHandleForAddressRange` (always Invalid `"dma-buf not modeled"`;
 `MemRangeHandleType::DMA_BUF_FD` only). Distinct from `ipc_get` and

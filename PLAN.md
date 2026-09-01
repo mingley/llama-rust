@@ -6828,7 +6828,15 @@ model, do not celebrate the sim.
     or `cudaChooseDevice`. `gpu-profile capture` is still refused. Dual
     score still has no `$/M tokens`.
 
-669. [ ] Next numbered PLAN item after 668 is the next `gpu-sim` / Engine /
+669. [x] `gpu-sim` `Sim::mipmapped_array_get_level` is
+    `cuMipmappedArrayGetLevel`. Always Invalid `"mipmap level"`
+    because CUDA mipmapped arrays are not modeled. Query; legal during capture.
+    Distinct from `mipmapped_array_create` and
+    `mipmapped_array_get_memory_requirements`. This VM does not invent a `CUarray` level handle, Engine `--mipmap-level`,
+    or `cudaChooseDevice`. `gpu-profile capture` is still refused. Dual
+    score still has no `$/M tokens`.
+
+670. [ ] Next numbered PLAN item after 669 is the next `gpu-sim` / Engine /
     serve / expertvm mechanical API that is still missing, or the next official
     decode family. Prefer remaining CUDA-shaped twins over more
     OpenAI HTTP veneer. Do not invent F32 `output.scale`. Do not invent a
@@ -7297,6 +7305,10 @@ model, do not celebrate the sim.
     Do not invent a second `cuGraphicsEGLRegisterImage` /
     `graphics_egl_register_image`. Do not invent Engine `--egl-register`.
     Do not invent an EGL `CUarray` this slice. Do not reverse `"egl register"`.
+    Do not invent a second `cuMipmappedArrayGetLevel` /
+    `mipmapped_array_get_level`. Do not invent Engine `--mipmap-level`.
+    Do not invent a `CUarray` level handle this slice. Do not reverse
+    `"mipmap level"`.
     Do not invent a second `cudaStreamAddCallback`.
     Do not invent Engine `--stream-callback` (same wall as second live
     `cudaLaunchHostFunc` after miss DMA).
@@ -7874,6 +7886,9 @@ model, do not celebrate the sim.
     Do not invent a second `graphics_egl_register_image` API. Do not invent
     Engine `--register-egl-image`. Do not invent an EGL image frame
     this slice. Do not reverse EGL image register remaining unsupported.
+    Do not invent a second `mipmapped_array_get_level` API. Do not invent
+    Engine `--get-mipmap-level`. Do not invent a mipmap level index
+    this slice. Do not reverse mipmap level remaining unsupported.
     Do not invent a second DeviceLaunch in-flight destroy-complete check or Engine
     `--device-launch-destroy`. Do not abort an in-flight DeviceLaunch when
     `destroy_graph` succeeds. Do not delay destroy of an idle exec. Do not invent
@@ -8634,6 +8649,9 @@ model, do not celebrate the sim.
     Do not invent a second `graphics_egl_register_image` method. Do not
     invent Engine `--cu-graphics-egl-register-image`. Do not reverse wrapping
     cuGraphicsEGLRegisterImage Invalid.
+    Do not invent a second `mipmapped_array_get_level` method. Do not
+    invent Engine `--cu-mipmapped-array-get-level`. Do not reverse wrapping
+    cuMipmappedArrayGetLevel Invalid.
     Do not
     spend the next item on an OpenAI-compatible HTTP veneer.
 
