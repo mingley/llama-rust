@@ -16164,6 +16164,7 @@ mod tests {
                 pitch,
                 depth: 4,
                 ysize: 4,
+                ..MemsetOp::default()
             },
             s,
         ));
@@ -16190,6 +16191,7 @@ mod tests {
                 pitch,
                 depth: 4,
                 ysize: 4,
+                ..MemsetOp::default()
             },
             s,
         ) {
@@ -16206,6 +16208,7 @@ mod tests {
                 pitch,
                 depth: 4,
                 ysize: 2,
+                ..MemsetOp::default()
             },
             s,
         ) {
@@ -16224,6 +16227,7 @@ mod tests {
                     pitch,
                     depth: 4,
                     ysize: 4,
+                    ..MemsetOp::default()
                 },
             )
             .unwrap();
