@@ -6768,7 +6768,15 @@ model, do not celebrate the sim.
     or `cudaChooseDevice`. `gpu-profile capture` is still refused. Dual
     score still has no `$/M tokens`.
 
-661. [ ] Next numbered PLAN item after 660 is the next `gpu-sim` / Engine /
+661. [x] `gpu-sim` `Sim::graphics_subresource_get_mapped_array` is
+    `cuGraphicsSubResourceGetMappedArray`. Always Invalid `"mapped array"`
+    because graphics resources are not modeled. Query; legal during capture.
+    Distinct from `graphics_resource_get_mapped_pointer` and `array_create`.
+    This VM does not invent `cuGraphicsResourceGetMappedMipmappedArray`, Engine `--mapped-array`,
+    or `cudaChooseDevice`. `gpu-profile capture` is still refused. Dual
+    score still has no `$/M tokens`.
+
+662. [ ] Next numbered PLAN item after 661 is the next `gpu-sim` / Engine /
     serve / expertvm mechanical API that is still missing, or the next official
     decode family. Prefer remaining CUDA-shaped twins over more
     OpenAI HTTP veneer. Do not invent F32 `output.scale`. Do not invent a
@@ -7207,6 +7215,10 @@ model, do not celebrate the sim.
     `egl_stream_producer_present_frame`. Do not invent Engine `--egl-producer-present`.
     Do not invent `cuEGLStreamProducerReturnFrame` this slice. Do not reverse
     `"producer present"`.
+    Do not invent a second `cuGraphicsSubResourceGetMappedArray` /
+    `graphics_subresource_get_mapped_array`. Do not invent Engine `--mapped-array`.
+    Do not invent `cuGraphicsResourceGetMappedMipmappedArray` this slice. Do not reverse
+    `"mapped array"`.
     Do not invent a second `cudaStreamAddCallback`.
     Do not invent Engine `--stream-callback` (same wall as second live
     `cudaLaunchHostFunc` after miss DMA).
@@ -7755,6 +7767,9 @@ model, do not celebrate the sim.
     Engine `--present-egl-producer`. Do not invent an EGL producer
     present timestamp this slice. Do not reverse EGL producer present remaining
     unsupported.
+    Do not invent a second `graphics_subresource_get_mapped_array` API. Do not invent
+    Engine `--get-mapped-array`. Do not invent a mapped `CUarray` this
+    slice. Do not reverse mapped array remaining unsupported.
     Do not invent a second DeviceLaunch in-flight destroy-complete check or Engine
     `--device-launch-destroy`. Do not abort an in-flight DeviceLaunch when
     `destroy_graph` succeeds. Do not delay destroy of an idle exec. Do not invent
@@ -8491,6 +8506,9 @@ model, do not celebrate the sim.
     Do not invent a second `egl_stream_producer_present_frame` method. Do not
     invent Engine `--cu-egl-producer-present-frame`. Do not reverse wrapping
     cuEGLStreamProducerPresentFrame Invalid.
+    Do not invent a second `graphics_subresource_get_mapped_array` method. Do not
+    invent Engine `--cu-graphics-subresource-get-mapped-array`. Do not reverse wrapping
+    cuGraphicsSubResourceGetMappedArray Invalid.
     Do not
     spend the next item on an OpenAI-compatible HTTP veneer.
 

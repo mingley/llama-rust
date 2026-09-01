@@ -178,6 +178,7 @@ warp scheduler, L1, …   ← do not model
 | `graphics_map_resources` is Invalid (OpenGL, Direct3D, Vulkan, EGL are not modeled) | `cuGraphicsMapResources` |
 | `graphics_unmap_resources` is Invalid (no graphics-resource handles) | `cuGraphicsUnmapResources` |
 | `graphics_resource_get_mapped_pointer` is Invalid (no graphics-resource handles) | `cuGraphicsResourceGetMappedPointer` |
+| `graphics_subresource_get_mapped_array` is Invalid (no graphics-resource handles) | `cuGraphicsSubResourceGetMappedArray` |
 | `graphics_unregister_resource` is Invalid (no graphics-resource handles) | `cuGraphicsUnregisterResource` |
 | `graphics_gl_register_buffer` is Invalid (OpenGL interop is not modeled) | `cuGraphicsGLRegisterBuffer` |
 | `graphics_gl_register_image` is Invalid (OpenGL interop is not modeled) | `cuGraphicsGLRegisterImage` |
@@ -1099,6 +1100,9 @@ legal during capture. No Engine `--graphics-unmap`.
 `graphics_resource_get_mapped_pointer` is
 `cuGraphicsResourceGetMappedPointer` (always Invalid `"mapped pointer"`).
 Distinct from `graphics_map_resources`. Query; legal during capture. No Engine `--mapped-pointer`.
+`graphics_subresource_get_mapped_array` is
+`cuGraphicsSubResourceGetMappedArray` (always Invalid `"mapped array"`).
+Distinct from `graphics_resource_get_mapped_pointer`. Query; legal during capture. No Engine `--mapped-array`.
 `graphics_unregister_resource` is `cuGraphicsUnregisterResource` (always
 Invalid `"graphics unregister"`). Distinct from `graphics_unmap_resources`. Query;
 legal during capture. No Engine `--graphics-unregister`.

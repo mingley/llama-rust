@@ -609,6 +609,9 @@
 //! [`graphics_resource_get_mapped_pointer`](Sim::graphics_resource_get_mapped_pointer)
 //! is `cuGraphicsResourceGetMappedPointer` (always Invalid `"mapped pointer"`).
 //! Query; legal during capture. No Engine `--mapped-pointer`.
+//! [`graphics_subresource_get_mapped_array`](Sim::graphics_subresource_get_mapped_array)
+//! is `cuGraphicsSubResourceGetMappedArray` (always Invalid `"mapped array"`).
+//! Query; legal during capture. No Engine `--mapped-array`.
 //! [`graphics_unregister_resource`](Sim::graphics_unregister_resource) is
 //! `cuGraphicsUnregisterResource` (always Invalid `"graphics unregister"`). Query;
 //! legal during capture. No Engine `--graphics-unregister`.
@@ -21985,6 +21988,44 @@ mod tests {
         match sim.graphics_unmap_resources(d, StreamId(0)) {
             Err(SimError::Invalid { why }) => {
                 assert!(why.contains("graphics unmap"), "{why}");
+            }
+            other => panic!("{other:?}"),
+        }
+    }
+
+    #[test]
+    fn graphics_subresource_get_mapped_array_is_unsupported() {
+        let mut sim = Sim::new(h100());
+        let d = DeviceId(0);
+        match sim.graphics_subresource_get_mapped_array(d) {
+            Err(SimError::Invalid { why }) => {
+                assert!(why.contains("mapped array"), "{why}");
+            }
+            other => panic!("{other:?}"),
+        }
+        sim.begin_capture(d, StreamId(0)).unwrap();
+        match sim.graphics_subresource_get_mapped_array(d) {
+            Err(SimError::Invalid { why }) => {
+                assert!(why.contains("mapped array"), "{why}");
+            }
+            other => panic!("{other:?}"),
+        }
+        let _g = sim.end_capture().unwrap();
+        match sim.graphics_subresource_get_mapped_array(DeviceId(99)) {
+            Err(SimError::Invalid { why }) => {
+                assert!(why.contains("device not in profile"), "{why}");
+            }
+            other => panic!("{other:?}"),
+        }
+        match sim.graphics_resource_get_mapped_pointer(d) {
+            Err(SimError::Invalid { why }) => {
+                assert!(why.contains("mapped pointer"), "{why}");
+            }
+            other => panic!("{other:?}"),
+        }
+        match sim.array_create(d) {
+            Err(SimError::Invalid { why }) => {
+                assert!(why.contains("cuda array"), "{why}");
             }
             other => panic!("{other:?}"),
         }
