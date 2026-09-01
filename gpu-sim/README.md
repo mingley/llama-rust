@@ -160,6 +160,7 @@ warp scheduler, L1, …   ← do not model
 | `device_get_luid` is always-zero LUID plus node mask (also `DeviceProperties.luid`) | `cuDeviceGetLuid` |
 | `device_get_texture_1d_linear_max_width` is always 0 (CUDA linear textures are not modeled) | `cuDeviceGetTexture1DLinearMaxWidth` |
 | `array_create` is Invalid (CUDA arrays are not modeled) | `cuArrayCreate` / `cuArray3DCreate` |
+| `array_get_descriptor` is Invalid (no array handles) | `cuArrayGetDescriptor` |
 | `mipmapped_array_create` is Invalid (CUDA mipmapped arrays are not modeled) | `cuMipmappedArrayCreate` |
 | `import_external_memory` is Invalid (dma-buf / Win32 / fabric are 0) | `cuImportExternalMemory` |
 | `surf_object_create` is Invalid (CUDA surfaces are not modeled) | `cuSurfObjectCreate` |
@@ -1008,6 +1009,9 @@ modeled; example SKUs are discrete). `SparseCudaArraySupported` /
 `DeferredMappingCudaArraySupported` / `DmaBufSupported` are always 0
 (CUDA arrays and dma-buf are not modeled). `array_create` is
 `cuArrayCreate` / `cuArray3DCreate` (always Invalid `"cuda array"`).
+`array_get_descriptor` is `cuArrayGetDescriptor` (always Invalid
+`"array descriptor"`). Distinct from `array_create` and
+`surf_object_get_resource_desc`. Query; legal during capture. No Engine `--array-desc`.
 `mipmapped_array_create` is `cuMipmappedArrayCreate` (always Invalid
 `"mipmapped array"`). Distinct from `array_create`. Query; legal during
 capture. No Engine `--mipmap-array`.

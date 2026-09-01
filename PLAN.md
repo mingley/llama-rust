@@ -6675,7 +6675,14 @@ model, do not celebrate the sim.
     or `cudaChooseDevice`. `gpu-profile capture` is still refused. Dual
     score still has no `$/M tokens`.
 
-648. [ ] Next numbered PLAN item after 647 is the next `gpu-sim` / Engine /
+648. [x] `gpu-sim` `Sim::array_get_descriptor` is `cuArrayGetDescriptor`.
+    Always Invalid `"array descriptor"` because CUDA arrays are not
+    modeled. Query; legal during capture. Distinct from `array_create` and
+    `surf_object_get_resource_desc`. This VM does not invent `cuArray3DGetDescriptor`, Engine `--array-desc`,
+    or `cudaChooseDevice`. `gpu-profile capture` is still refused. Dual
+    score still has no `$/M tokens`.
+
+649. [ ] Next numbered PLAN item after 648 is the next `gpu-sim` / Engine /
     serve / expertvm mechanical API that is still missing, or the next official
     decode family. Prefer remaining CUDA-shaped twins over more
     OpenAI HTTP veneer. Do not invent F32 `output.scale`. Do not invent a
@@ -7066,6 +7073,9 @@ model, do not celebrate the sim.
     `egl_stream_producer_connect`. Do not invent Engine `--egl-producer`.
     Do not invent `cuEGLStreamProducerDisconnect` this slice. Do not reverse
     `"egl producer"`.
+    Do not invent a second `cuArrayGetDescriptor` / `array_get_descriptor`.
+    Do not invent Engine `--array-desc`. Do not invent `cuArray3DGetDescriptor`
+    this slice. Do not reverse `"array descriptor"`.
     Do not invent a second `cudaStreamAddCallback`.
     Do not invent Engine `--stream-callback` (same wall as second live
     `cudaLaunchHostFunc` after miss DMA).
@@ -7565,6 +7575,10 @@ model, do not celebrate the sim.
     Engine `--create-egl-producer`. Do not invent
     `cuEGLStreamConsumerDisconnect` this slice. Do not reverse
     EGL producer remaining unsupported.
+    Do not invent a second `array_get_descriptor` API. Do not invent
+    Engine `--get-array-desc`. Do not invent a populated
+    `CUDA_ARRAY_DESCRIPTOR` this slice. Do not reverse
+    array descriptor remaining unsupported.
     Do not invent a second DeviceLaunch in-flight destroy-complete check or Engine
     `--device-launch-destroy`. Do not abort an in-flight DeviceLaunch when
     `destroy_graph` succeeds. Do not delay destroy of an idle exec. Do not invent
@@ -8262,6 +8276,9 @@ model, do not celebrate the sim.
     Do not invent a second `egl_stream_producer_connect` method. Do not
     invent Engine `--cu-egl-producer-connect`. Do not reverse wrapping
     cuEGLStreamProducerConnect Invalid.
+    Do not invent a second `array_get_descriptor` method. Do not invent
+    Engine `--cu-array-get-descriptor`. Do not reverse wrapping
+    cuArrayGetDescriptor Invalid.
     Do not
     spend the next item on an OpenAI-compatible HTTP veneer.
 

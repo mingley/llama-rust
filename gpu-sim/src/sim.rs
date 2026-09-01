@@ -17615,6 +17615,20 @@ impl Sim {
         Err(SimError::Invalid { why: "cuda array" })
     }
 
+    /// `cuArrayGetDescriptor`. CUDA arrays are not modeled.
+    ///
+    /// Always Invalid `"array descriptor"` (no array handles). Distinct from
+    /// [`Self::array_create`] and from [`Self::surf_object_get_resource_desc`].
+    /// Unknown devices are Invalid `"device not in profile"`. Query; legal
+    /// during capture. This VM does not invent `cuArray3DGetDescriptor` this
+    /// slice.
+    pub fn array_get_descriptor(&self, device: DeviceId) -> Result<(), SimError> {
+        let _gpu = self.profile.gpu(device)?;
+        Err(SimError::Invalid {
+            why: "array descriptor",
+        })
+    }
+
     /// `cuMipmappedArrayCreate`. CUDA mipmapped arrays are not modeled.
     ///
     /// Always Invalid `"mipmapped array"`
@@ -17677,9 +17691,9 @@ impl Sim {
     /// CUDA surfaces are not modeled.
     ///
     /// Always Invalid `"surf resource desc"` (no surface-object handles).
-    /// Distinct from [`Self::surf_object_destroy`]. Unknown devices are
-    /// Invalid `"device not in profile"`. Query; legal during capture. This
-    /// VM does not invent `cuArrayGetDescriptor` this slice.
+    /// Distinct from [`Self::surf_object_destroy`] and from
+    /// [`Self::array_get_descriptor`]. Unknown devices are Invalid
+    /// `"device not in profile"`. Query; legal during capture.
     pub fn surf_object_get_resource_desc(&self, device: DeviceId) -> Result<(), SimError> {
         let _gpu = self.profile.gpu(device)?;
         Err(SimError::Invalid {
