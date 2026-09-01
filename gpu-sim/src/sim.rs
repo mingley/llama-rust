@@ -4219,11 +4219,13 @@ impl Sim {
 
     /// `cudaGraphExecUpdate`: replace `exec` steps with `src` when topology matches.
     ///
-    /// Same device, stream, op kinds, cooperative flag, and dependency edges;
-    /// KernelBuf / memcpy sizes may change. IF / WHILE / SWITCH handles are
-    /// parameters (bodies stay topology). Pays `graph_update_ns`. Recapture
-    /// if topology differs. Capture cannot include it. `exec` must already be
-    /// instantiated. Graphs with mem alloc or mem free nodes cannot be updated
+    /// Same device, stream, op kinds, cooperative flag, dependency edges, and
+    /// [`GraphEdgeData`] ports (Default vs launch-completion is
+    /// [`GraphExecUpdateResult::DependenciesChanged`]); KernelBuf / memcpy
+    /// sizes may change. IF / WHILE / SWITCH handles are parameters (bodies
+    /// stay topology). Pays `graph_update_ns`. Recapture if topology differs.
+    /// Capture cannot include it. `exec` must already be instantiated. Graphs
+    /// with mem alloc or mem free nodes cannot be updated
     /// (`cudaGraphExecUpdate` of mem nodes).
     pub fn update_graph(&mut self, exec: GraphId, src: GraphId) -> Result<(), SimError> {
         let mut info = GraphExecUpdateResultInfo::default();
@@ -23370,6 +23372,13 @@ fn graph_topology_diff(exec: &[GraphStep], src: &[GraphStep]) -> Option<GraphTop
         if x.deps != y.deps {
             return Some(dep_mismatch(&x.deps, &y.deps, i));
         }
+        if let Some(from) = edge_port_mismatch(x, y) {
+            return Some(GraphTopologyDiff {
+                result: GraphExecUpdateResult::DependenciesChanged,
+                error_node: Some(i),
+                error_from_node: Some(from),
+            });
+        }
         if !op_eq(&x.kind, &y.kind) {
             return Some(op_mismatch(&x.kind, &y.kind, i));
         }
@@ -23453,7 +23462,17 @@ fn child_param_topology_eq(a: &[GraphStep], b: &[GraphStep]) -> bool {
             && x.stream == y.stream
             && child_param_op_eq(&x.kind, &y.kind)
             && x.deps == y.deps
+            && edge_port_mismatch(x, y).is_none()
     })
+}
+
+/// Same `(from, to)` with a different [`GraphEdgeData`] port is topology
+/// (`cudaGraphExecUpdateErrorDependenciesChanged`).
+fn edge_port_mismatch(x: &GraphStep, y: &GraphStep) -> Option<usize> {
+    x.deps
+        .iter()
+        .copied()
+        .find(|&from| x.edge_data_of(from) != y.edge_data_of(from))
 }
 
 fn child_param_op_eq(a: &Kind, b: &Kind) -> bool {

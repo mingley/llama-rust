@@ -100,7 +100,7 @@ warp scheduler, L1, …   ← do not model
 | graph upload is host-sync after instantiate; first launch pays it once | `graph_upload_ns` |
 | `cudaGraphKernelNodeSetParams` / `MemcpyNodeSetParams` / `MemcpyNodeSetParams1D` / `MemsetNodeSetParams` / `HostNodeSetParams` patch the graph, not an already-instantiated exec | 1 ns host-sync |
 | `cudaGraph*NodeGetParams` reads the definition; `graph_exec_*_get_params` reads the exec snapshot | query |
-| graph update replaces the exec snapshot when topology matches (device, stream, kind, deps); IF / WHILE / SWITCH handle may change (bodies stay topology); mem nodes are Invalid; `update_graph_with_info` fills `cudaGraphExecUpdateResultInfo` | `graph_update_ns` |
+| graph update replaces the exec snapshot when topology matches (device, stream, kind, deps, edge ports); IF / WHILE / SWITCH handle may change (bodies stay topology); mem nodes are Invalid; `update_graph_with_info` fills `cudaGraphExecUpdateResultInfo` | `graph_update_ns` |
 | `cudaGraphExecKernelNodeSetParams` patches one instantiated kernel node's pointers / kind (mem nodes legal; device-updatable nodes keep the exec uploaded) | `graph_set_params_ns` |
 | `cudaGraphExecMemcpyNodeSetParams` / `SetParams1D` patches one instantiated memcpy node's `MemcpyOp` (mem nodes legal; 1D may convert 2D/3D) | `graph_set_params_ns` |
 | `cudaGraphExecMemsetNodeSetParams` patches one instantiated memset node's dest span (mem nodes legal) | `graph_set_params_ns` |
@@ -526,12 +526,13 @@ then uploads if needed (`graph_upload_ns`). `upload_graph` is `cudaGraphUpload`
 (Solo `graph_upload_ns`; uploaded when the op completes;
 `GraphInstantiateParams::upload_stream` uses it).
 `update_graph` copies source steps into the exec snapshot when the
-device, stream, op kinds, and dependency edges match (`graph_update_ns`);
+device, stream, op kinds, dependency edges, and `GraphEdgeData` ports match
+(`graph_update_ns`);
 IF / WHILE / SWITCH handles are parameters (bodies stay topology). A
 topology mismatch is `Invalid`. Graphs with mem alloc/free nodes cannot be updated.
 `update_graph_with_info` is `cudaGraphExecUpdate` with
 `cudaGraphExecUpdateResultInfo` (filled even on `Err`: node type, deps,
-mem nodes, device-launch). `update_graph` uses that path and keeps the
+edge ports, mem nodes, device-launch). `update_graph` uses that path and keeps the
 same `why` strings.
 `graph_kernel_set_params` / `graph_memcpy_set_params` /
 `graph_memcpy_set_params_1d` / `graph_memcpy_set_params_2d` / `graph_memcpy_set_params_3d` / `graph_memset_set_params` / `graph_memset_set_params_2d` / `graph_memset_set_params_3d` /

@@ -989,11 +989,12 @@
 //! stream (Solo `graph_upload_ns`; uploaded when the op completes;
 //! [`GraphInstantiateParams::upload_stream`] uses it).
 //! [`Sim::update_graph`] is
-//! `cudaGraphExecUpdate` when device, stream, and op kinds match.
-//! IF, WHILE, plus SWITCH handles are parameters; bodies stay topology.
+//! `cudaGraphExecUpdate` when device, stream, op kinds, and
+//! [`GraphEdgeData`] ports match. IF, WHILE, plus SWITCH handles are
+//! parameters; bodies stay topology.
 //! [`update_graph_with_info`](Sim::update_graph_with_info) fills
-//! [`GraphExecUpdateResultInfo`] even on `Err` (node type, deps, mem nodes,
-//! device-launch).
+//! [`GraphExecUpdateResultInfo`] even on `Err` (node type, deps, edge ports,
+//! mem nodes, device-launch).
 //! [`user_object_create`](Sim::user_object_create) is `cudaUserObjectCreate`
 //! ([`UserObjectFlags::NO_DESTRUCTOR_SYNC`]). [`graph_retain_user_object`](Sim::graph_retain_user_object) /
 //! [`graph_release_user_object`](Sim::graph_release_user_object) are
@@ -1181,7 +1182,7 @@
 //! [`graph_destroy_node`](Sim::graph_destroy_node) is `cudaGraphDestroyNode`
 //! (drops incident edges; remaining indices stay valid; illegal on an exec and
 //! during capture; does not retarget an already-instantiated exec).
-//! `cudaGraphExecUpdate` treats those edges as topology.
+//! `cudaGraphExecUpdate` treats those edges and [`GraphEdgeData`] ports as topology.
 //! [`graph_nodes`](Sim::graph_nodes) / [`graph_root_nodes`](Sim::graph_root_nodes) /
 //! [`graph_edges`](Sim::graph_edges) /
 //! [`graph_node_dependents`](Sim::graph_node_dependents) /
@@ -4114,6 +4115,40 @@ mod tests {
         let err = sim.graph_unique_child(leaf_a).unwrap_err();
         match err {
             SimError::Invalid { why } => assert!(why.contains("not a child"), "{why}"),
+            other => panic!("{other:?}"),
+        }
+    }
+
+    #[test]
+    fn graph_exec_child_set_params_rejects_launch_completion_port() {
+        let mut sim = Sim::new(h100());
+        let d = DeviceId(0);
+        let s = StreamId(0);
+        let a = sim.malloc(d, 4096).unwrap();
+        let b = sim.malloc(d, 4096).unwrap();
+        let leaf_a = sim.create_graph(d, s).unwrap();
+        sim.graph_add_kernel(leaf_a, KernelKind::other(8, 8), &[a], &[a])
+            .unwrap();
+        sim.graph_add_kernel(leaf_a, KernelKind::other(8, 8), &[a], &[a])
+            .unwrap();
+        sim.graph_add_dependencies(leaf_a, 0, 1).unwrap();
+        let _ = sim.instantiate_graph(leaf_a).unwrap();
+        let leaf_b = sim.create_graph(d, s).unwrap();
+        sim.graph_add_kernel(leaf_b, KernelKind::other(8, 8), &[b], &[b])
+            .unwrap();
+        sim.graph_add_kernel(leaf_b, KernelKind::other(8, 8), &[b], &[b])
+            .unwrap();
+        sim.graph_add_dependencies_with_data(leaf_b, 0, 1, GraphEdgeData::launch_completion())
+            .unwrap();
+        let _ = sim.instantiate_graph(leaf_b).unwrap();
+        let exec = sim.create_graph(d, s).unwrap();
+        sim.graph_add_child(exec, leaf_a).unwrap();
+        let _ = sim.instantiate_graph(exec).unwrap();
+        let err = sim
+            .graph_exec_child_set_params(exec, 0, leaf_b)
+            .unwrap_err();
+        match err {
+            SimError::Invalid { why } => assert!(why.contains("topology"), "{why}"),
             other => panic!("{other:?}"),
         }
     }
@@ -28126,6 +28161,63 @@ mod tests {
             SimError::Invalid { why } => assert!(why.contains("topology"), "{why}"),
             other => panic!("{other:?}"),
         }
+    }
+
+    #[test]
+    fn update_graph_treats_launch_completion_port_as_topology() {
+        let mut sim = Sim::new(h100());
+        let d = DeviceId(0);
+        let s = StreamId(0);
+        let a = sim.alloc(d, 4096, s).unwrap();
+        let b = sim.alloc(d, 4096, s).unwrap();
+        enq(sim.memcpy_pinned_to_device(d, a, 4096, s));
+        enq(sim.memcpy_pinned_to_device(d, b, 4096, s));
+        sim.synchronize().unwrap();
+        let exec = sim.create_graph(d, s).unwrap();
+        sim.graph_add_kernel(exec, KernelKind::other(8, 8), &[a], &[a])
+            .unwrap();
+        sim.graph_add_kernel(exec, KernelKind::other(8, 8), &[b], &[b])
+            .unwrap();
+        sim.graph_add_dependencies(exec, 0, 1).unwrap();
+        let _ = sim.instantiate_graph(exec).unwrap();
+        let src = sim.create_graph(d, s).unwrap();
+        sim.graph_add_kernel(src, KernelKind::other(8, 8), &[a], &[a])
+            .unwrap();
+        sim.graph_add_kernel(src, KernelKind::other(8, 8), &[b], &[b])
+            .unwrap();
+        sim.graph_add_dependencies_with_data(src, 0, 1, GraphEdgeData::launch_completion())
+            .unwrap();
+        let mut info = GraphExecUpdateResultInfo::default();
+        let err = sim
+            .update_graph_with_info(exec, src, &mut info)
+            .unwrap_err();
+        match err {
+            SimError::Invalid { why } => assert!(why.contains("topology"), "{why}"),
+            other => panic!("{other:?}"),
+        }
+        assert_eq!(info.result, GraphExecUpdateResult::DependenciesChanged);
+        assert_eq!(info.error_node, Some(1));
+        assert_eq!(info.error_from_node, Some(0));
+        let same = sim.create_graph(d, s).unwrap();
+        sim.graph_add_kernel(same, KernelKind::other(8, 8), &[a], &[a])
+            .unwrap();
+        sim.graph_add_kernel(same, KernelKind::other(16, 16), &[b], &[b])
+            .unwrap();
+        sim.graph_add_dependencies_with_data(same, 0, 1, GraphEdgeData::launch_completion())
+            .unwrap();
+        let ported = sim.create_graph(d, s).unwrap();
+        sim.graph_add_kernel(ported, KernelKind::other(8, 8), &[a], &[a])
+            .unwrap();
+        sim.graph_add_kernel(ported, KernelKind::other(8, 8), &[b], &[b])
+            .unwrap();
+        sim.graph_add_dependencies_with_data(ported, 0, 1, GraphEdgeData::launch_completion())
+            .unwrap();
+        let exec_port = sim.instantiate_graph(ported).unwrap();
+        sim.update_graph_with_info(exec_port, same, &mut info)
+            .unwrap();
+        assert_eq!(info.result, GraphExecUpdateResult::Success);
+        assert_eq!(info.error_node, None);
+        assert_eq!(info.error_from_node, None);
     }
 
     fn map_whole(sim: &mut Sim, device: DeviceId, bytes: u64) -> AllocId {

@@ -5428,7 +5428,17 @@ model, do not celebrate the sim.
     conditional edges or Engine `--graph-debug-dot`. `gpu-profile
     capture` is still refused. Dual score still has no `$/M tokens`.
 
-505. [ ] Next numbered PLAN item after 504 is the next `gpu-sim` / Engine /
+505. [x] `gpu-sim` CUDA graph ExecUpdate treats launch-completion edge ports
+    as topology: `cudaGraphExecUpdate` of a Default completion edge vs
+    [`GraphKernelNodePort::LAUNCH_COMPLETION`] is
+    [`GraphExecUpdateResult::DependenciesChanged`]. Same `(from, to)` with
+    matching ports still updates. Child-graph SetParams nested topology
+    includes ports. Typed `graph_add_dependencies` stays Default ports 0.
+    This VM does not invent Engine `--graph-edge-port`, programmatic edges,
+    or `cudaGraphRemoveDependencies` edgeData. `gpu-profile capture` is
+    still refused. Dual score still has no `$/M tokens`.
+
+506. [ ] Next numbered PLAN item after 505 is the next `gpu-sim` / Engine /
     serve / expertvm mechanical API that is still missing, or the next official
     decode family. Prefer remaining CUDA-shaped twins over more
     OpenAI HTTP veneer. Do not invent F32 `output.scale`. Do not invent a
@@ -5768,7 +5778,8 @@ model, do not celebrate the sim.
     Do not invent a second `cudaGraphKernelNodePortLaunchCompletion` /
     [`GraphEdgeData::launch_completion`]. Do not invent Engine
     `--graph-edge-port`. Do not invent nonzero `to_port`. Do not invent
-    [`GraphKernelNodePort::PROGRAMMATIC`] edges.
+    [`GraphKernelNodePort::PROGRAMMATIC`] edges. Do not invent a second
+    ExecUpdate launch-completion port topology check.
     Do not
     spend the next item on an OpenAI-compatible HTTP veneer.
 
