@@ -18242,8 +18242,9 @@ impl Sim {
     /// modeled.
     ///
     /// Always Invalid `"d3d11 register"` (no graphics-resource handles).
-    /// Distinct from [`Self::d3d11_ctx_create`] and from
-    /// [`Self::graphics_map_resources`]. Unknown devices are Invalid
+    /// Distinct from [`Self::d3d11_ctx_create`], from
+    /// [`Self::graphics_map_resources`], and from
+    /// [`Self::graphics_d3d12_register_resource`]. Unknown devices are Invalid
     /// `"device not in profile"`. Query; legal during capture.
     pub fn graphics_d3d11_register_resource(&self, device: DeviceId) -> Result<(), SimError> {
         let _gpu = self.profile.gpu(device)?;
@@ -18267,14 +18268,30 @@ impl Sim {
     /// `cuD3D12CtxCreate`. Direct3D 12 interop is not modeled.
     ///
     /// Always Invalid `"d3d12 context"`. Distinct from
-    /// [`Self::d3d12_get_devices`], from [`Self::d3d11_ctx_create`], and from
-    /// [`DeviceAttr::D3D12CigSupported`]. Unknown devices are Invalid
-    /// `"device not in profile"`. Query; legal during capture. This VM does
-    /// not invent `cuGraphicsD3D12RegisterResource` this slice.
+    /// [`Self::d3d12_get_devices`], from [`Self::d3d11_ctx_create`], from
+    /// [`DeviceAttr::D3D12CigSupported`], and from
+    /// [`Self::graphics_d3d12_register_resource`]. Unknown devices are Invalid
+    /// `"device not in profile"`. Query; legal during capture.
     pub fn d3d12_ctx_create(&self, device: DeviceId) -> Result<(), SimError> {
         let _gpu = self.profile.gpu(device)?;
         Err(SimError::Invalid {
             why: "d3d12 context",
+        })
+    }
+
+    /// `cuGraphicsD3D12RegisterResource` plus
+    /// `cudaGraphicsD3D12RegisterResource`. Direct3D 12 interop is not
+    /// modeled.
+    ///
+    /// Always Invalid `"d3d12 register"` (no graphics-resource handles).
+    /// Distinct from [`Self::d3d12_ctx_create`], from
+    /// [`Self::graphics_d3d11_register_resource`], and from
+    /// [`DeviceAttr::D3D12CigSupported`]. Unknown devices are Invalid
+    /// `"device not in profile"`. Query; legal during capture.
+    pub fn graphics_d3d12_register_resource(&self, device: DeviceId) -> Result<(), SimError> {
+        let _gpu = self.profile.gpu(device)?;
+        Err(SimError::Invalid {
+            why: "d3d12 register",
         })
     }
 

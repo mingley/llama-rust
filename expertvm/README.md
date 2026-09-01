@@ -654,6 +654,9 @@ modeled; no Engine flag).
 interop is not modeled; distinct from `D3D12CigSupported`; no Engine flag).
 `gpu-sim` `d3d12_ctx_create` is `cuD3D12CtxCreate` (Invalid; Direct3D 12
 interop is not modeled; distinct from `D3D12CigSupported`; no Engine flag).
+`gpu-sim` `graphics_d3d12_register_resource` is
+`cuGraphicsD3D12RegisterResource` (Invalid; Direct3D 12 interop is not
+modeled; no Engine flag).
 `gpu-sim` `vdpau_get_device` is `cuVDPAUGetDevice` (Invalid; VDPAU interop
 is not modeled; no Engine flag).
 `gpu-sim` `vdpau_ctx_create` is `cuVDPAUCtxCreate` (Invalid; VDPAU interop
