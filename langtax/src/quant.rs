@@ -1,4 +1,82 @@
-//! GGUF on-disk F16 / BF16 / Q4_0 / Q4_1 / Q5_0 / Q5_1 / Q8_0 / Q8_1 / Q1_0 / Q2_0 / TQ1_0 / TQ2_0 / Q2_K / Q3_K / Q4_K / Q5_K / Q6_K / Q8_K / IQ1_M / IQ1_S / IQ2_XXS / IQ2_XS / IQ2_S / IQ3_XXS / IQ3_S / IQ4_NL / IQ4_XS / MXFP4 / NVFP4 blocks. GEMV reads those bytes; no f32-scale copy.
+//! Dequantization and matmul kernels for all thirty supported ggml dtypes.
+//!
+//! These are the compute primitives the decode graph is built from, exposed
+//! directly because quantization research is a first-class use of this crate.
+//! Everything here is safe Rust: packed blocks are read through
+//! [`slice::as_chunks`] and `u16::from_le_bytes`, never a pointer cast, so a
+//! truncated or mis-shaped row returns [`QuantError`] instead of reading past
+//! the end of the buffer.
+//!
+//! Kernels read the on-disk GGUF bytes in place. Scales are decoded per block
+//! as they are needed; there is no unpacked f32 shadow copy of the weights, so
+//! memory stays at roughly the size of the checkpoint.
+//!
+//! # Naming
+//!
+//! Every dtype `T` follows the same five-way pattern, so once you can read one
+//! you can read all thirty:
+//!
+//! | Shape | Meaning |
+//! |---|---|
+//! | `pack_<t>_block(..) -> [u8; <T>_BLOCK]` | Quantize one block into GGUF's packed layout |
+//! | `<t>_row_bytes(n_cols) -> Result<usize, QuantError>` | Packed byte length of one matrix row |
+//! | `dequant_<t>_row(n_cols, row, y)` | Expand one packed row into `y: &mut [f32]` |
+//! | `gemv_<t>_f32(n_cols, w, x, y)` | `y[m] = W[m, ..] · x`, activations in f32 |
+//! | `gemm_<t>_f32(n_cols, n_tokens, w, x, y)` | The same against `n_tokens` activation columns |
+//!
+//! `n_cols` always comes first, and outputs are always the last argument and
+//! always caller-allocated — no kernel here allocates. Coming from a loaded
+//! checkpoint, [`crate::gguf::Tensor::n_cols`] is the `n_cols` to pass and
+//! `tensor.data` is the `w`; the raw `shape` field is `&[u64]`, so prefer the
+//! accessors to avoid a conversion at every call site.
+//!
+//! Two families of constants come with each dtype: `QK_*` / `QK<n>_*` is the
+//! number of *elements* per block, and `<T>_BLOCK` is the number of *bytes* the
+//! packed block occupies. `n_cols` must be a multiple of the element count, or
+//! the kernel returns [`QuantError::UnalignedCols`].
+//!
+//! [`gemv_q8_0`], [`gemv_q4_0`], and [`gemv_q4_k`] are the exceptions: they take
+//! a *quantized* activation vector rather than f32, matching ggml's
+//! `vec_dot_q4_K_q8_K` style integer dot products. Everything else takes f32.
+//!
+//! # Example: check a kernel against its own dequantizer
+//!
+//! Dequantize-then-dot and the fused GEMV must agree. That equivalence is what
+//! the crate's own kernel tests assert, and it is the first thing to check when
+//! adding a dtype:
+//!
+//! ```
+//! use llama_rust::kernels::{
+//!     dequant_q4_k_row, gemv_q4_k_f32, pack_q4_k_block, q4_k_row_bytes, Q4_K_BLOCK, QK_K,
+//! };
+//!
+//! # fn main() -> Result<(), llama_rust::kernels::QuantError> {
+//! // One Q4_K super-block: 256 weights in 144 bytes.
+//! let mut nibbles = [0u8; QK_K];
+//! for (i, q) in nibbles.iter_mut().enumerate() {
+//!     *q = u8::try_from(i % 16).unwrap_or(0);
+//! }
+//! let row = pack_q4_k_block(0.05, 0.01, &[12; 8], &[3; 8], &nibbles);
+//! assert_eq!(row.len(), Q4_K_BLOCK);
+//! assert_eq!(q4_k_row_bytes(QK_K)?, Q4_K_BLOCK);
+//!
+//! let x: Vec<f32> = (0..QK_K)
+//!     .map(|i| f32::from(u8::try_from(i % 7).unwrap_or(0)) - 3.0)
+//!     .collect();
+//!
+//! // Fused: read packed bytes, accumulate straight into `y`.
+//! let mut y = [0.0f32; 1];
+//! gemv_q4_k_f32(QK_K, &row, &x, &mut y)?;
+//!
+//! // Unfused: expand the row, then dot it by hand.
+//! let mut weights = vec![0.0f32; QK_K];
+//! dequant_q4_k_row(QK_K, &row, &mut weights)?;
+//! let expected: f32 = weights.iter().zip(&x).map(|(w, v)| w * v).sum();
+//!
+//! assert!((y[0] - expected).abs() < 1e-3, "{} vs {expected}", y[0]);
+//! # Ok(())
+//! # }
+//! ```
 
 use std::fmt;
 
@@ -9195,10 +9273,15 @@ fn vec_dot_q4_k_f32_row(row: &[u8], x: &[f32]) -> f32 {
             let b0 = dmin * f32::from(m0);
             let a1 = d * f32::from(sc1);
             let b1 = dmin * f32::from(m1);
-            for ((p, xl), xh) in packed.iter().zip(xlo.iter()).zip(xhi.iter()) {
+            // Keep row order: dequantization lays out all 32 low nibbles
+            // before the 32 high nibbles. Interleaving their products changes
+            // f32 accumulation enough to amplify through attention.
+            for (p, xl) in packed.iter().zip(xlo.iter()) {
                 let q0 = f32::from(p & 0x0f);
-                let q1 = f32::from(p >> 4);
                 sum += (a0 * q0 - b0) * *xl;
+            }
+            for (p, xh) in packed.iter().zip(xhi.iter()) {
+                let q1 = f32::from(p >> 4);
                 sum += (a1 * q1 - b1) * *xh;
             }
         }
@@ -10104,6 +10187,26 @@ mod tests {
             "{via_dequant} vs {}",
             y[0]
         );
+    }
+
+    #[test]
+    fn q4_k_scalar_dot_accumulates_in_element_order() {
+        let qs = std::array::from_fn(|i| u8::try_from((i * 7 + 3) % 16).unwrap_or(0));
+        let scales = [3, 11, 19, 27, 35, 43, 51, 59];
+        let mins = [2, 7, 13, 17, 23, 29, 31, 37];
+        let packed = pack_q4_k_block(0.125, 0.0625, &scales, &mins, &qs);
+        let magnitudes = [0.0001f32, 0.01, 1.0, 100.0, 10_000.0];
+        let x: [f32; QK_K] = std::array::from_fn(|i| {
+            let magnitude = magnitudes[(i + 3) % magnitudes.len()];
+            let sign = if (i * 11 + 1) % 3 == 0 { -1.0 } else { 1.0 };
+            let fraction = f32::from(u16::try_from((i * 37 + 17) % 101).unwrap_or(0)) / 101.0;
+            sign * magnitude * fraction
+        });
+        let mut dequantized = [0.0f32; QK_K];
+        dequant_q4_k_row(QK_K, &packed, &mut dequantized).unwrap();
+        let expected: f32 = dequantized.iter().zip(x.iter()).map(|(w, v)| w * v).sum();
+        let got = vec_dot_q4_k_f32_row(&packed, &x);
+        assert_eq!(got.to_bits(), expected.to_bits(), "{got} vs {expected}");
     }
 
     /// ggml `get_scale_min_k4` (oracle; not the GEMV loop).

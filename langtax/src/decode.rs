@@ -409,6 +409,8 @@ pub enum LlamaError {
     EmptyPrompt,
     /// Sampling failed.
     Sample(SampleError),
+    /// Reading a GGUF file from disk failed.
+    Io(std::io::Error),
     /// Expert store (lease, unknown key, gpu-sim).
     Store(String),
 }
@@ -427,6 +429,7 @@ impl std::fmt::Display for LlamaError {
             Self::Tok(e) => write!(f, "{e}"),
             Self::EmptyPrompt => write!(f, "empty prompt"),
             Self::Sample(e) => write!(f, "{e}"),
+            Self::Io(e) => write!(f, "{e}"),
             Self::Store(e) => write!(f, "expert store: {e}"),
         }
     }
@@ -455,6 +458,12 @@ impl From<TokError> for LlamaError {
 impl From<SampleError> for LlamaError {
     fn from(v: SampleError) -> Self {
         Self::Sample(v)
+    }
+}
+
+impl From<std::io::Error> for LlamaError {
+    fn from(v: std::io::Error) -> Self {
+        Self::Io(v)
     }
 }
 
@@ -1010,6 +1019,10 @@ pub struct KvCache {
 }
 
 impl KvCache {
+    pub(crate) fn capacity(&self) -> usize {
+        self.max_seq
+    }
+
     /// Record MoE router decisions into an [`expertvm::Trace`].
     ///
     /// Off by default: the events vec stays empty and decode does not allocate
@@ -21238,7 +21251,8 @@ mod tests {
         let out2 = greedy_generate(&model, &tok, "ab", 2).expect("gen2");
         assert_eq!(out, out2);
         assert!(!out.is_empty());
-        let tokens = [1u32, 2, 3];
+        // Four positions avoid a writer-tiny output tie in the scalar kernel.
+        let tokens = [1u32, 2, 3, 4];
         let qwen3_pref = {
             let q3 = load_gguf(&qwen3_bytes).expect("qwen3 reload");
             let m3 = Llama::from_gguf(q3).expect("m3");
@@ -21535,7 +21549,8 @@ mod tests {
         let out2 = greedy_generate(&model, &tok, "ab", 2).expect("gen2");
         assert_eq!(out, out2);
         assert!(!out.is_empty());
-        let tokens = [1u32, 2, 3];
+        // Four positions avoid a writer-tiny output tie in the scalar kernel.
+        let tokens = [1u32, 2, 3, 4];
         let qwen3_pref = {
             let q3 = load_gguf(&tiny_qwen3_gguf()).expect("qwen3");
             let m3 = Llama::from_gguf(q3).expect("m3");
@@ -22138,7 +22153,8 @@ mod tests {
         let out2 = greedy_generate(&model, &tok, "ab", 2).expect("gen2");
         assert_eq!(out, out2);
         assert!(!out.is_empty());
-        let tokens = [1u32, 2, 3];
+        // Four positions avoid a writer-tiny output tie in the scalar kernel.
+        let tokens = [1u32, 2, 3, 4];
         let llama_pref = {
             let lg = load_gguf(&llama_bytes).expect("llama reload");
             let lm = Llama::from_gguf(lg).expect("lm");
