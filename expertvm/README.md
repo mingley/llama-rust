@@ -481,6 +481,8 @@ seeded primary context; no Engine flag).
 Engine flag).
 `gpu-sim` `ctx_synchronize` is `cuCtxSynchronize` (same wait as
 `synchronize_device`; no Engine flag).
+`gpu-sim` `ctx_get_shared_mem_config` is `cuCtxGetSharedMemConfig` (same
+as `get_shared_mem_config`; no Engine flag).
 `gpu-sim` launch-geometry caps are `cudaDevAttrMaxThreadsPerBlock` 1024
 and H100 block/grid dims (no Engine flag; not occupancy SM counts).
 `gpu-sim` `MaxRegistersPerBlock` is `cudaDevAttrMaxRegistersPerBlock` 65536

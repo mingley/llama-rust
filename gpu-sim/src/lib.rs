@@ -971,6 +971,11 @@
 //! same primary context (same wait as [`synchronize_device`](Sim::synchronize_device)).
 //! Capture cannot include it. Distinct from
 //! [`green_ctx_synchronize`](Sim::green_ctx_synchronize). No Engine `--ctx-synchronize`.
+//! [`ctx_get_shared_mem_config`](Sim::ctx_get_shared_mem_config) is
+//! `cuCtxGetSharedMemConfig` for that same primary context (same as
+//! [`get_shared_mem_config`](Sim::get_shared_mem_config)). Distinct from
+//! [`get_func_shared_mem_config`](Sim::get_func_shared_mem_config). Query;
+//! legal during capture. No Engine `--ctx-shared-mem`.
 //! `expertvm sim --device-sync-memops` sets [`DeviceFlags::SYNC_MEMOPS`].
 //! `expertvm sim --device-sync-policy blocking` sets
 //! [`DeviceFlags::SCHEDULE_BLOCKING_SYNC`].
@@ -20880,6 +20885,65 @@ mod tests {
         assert!(!eight.query_stream(d1, s0).unwrap());
         eight.ctx_synchronize(d1).unwrap();
         assert!(eight.query_stream(d1, s0).unwrap());
+    }
+
+    #[test]
+    fn ctx_get_shared_mem_config_matches_device() {
+        let mut sim = Sim::new(h100());
+        let d = DeviceId(0);
+        assert_eq!(
+            sim.ctx_get_shared_mem_config(d).unwrap(),
+            sim.get_shared_mem_config(d).unwrap()
+        );
+        assert_eq!(
+            sim.ctx_get_shared_mem_config(d).unwrap(),
+            SharedMemoryMode::Default
+        );
+        sim.set_shared_mem_config(d, SharedMemoryMode::EightByte)
+            .unwrap();
+        assert_eq!(
+            sim.ctx_get_shared_mem_config(d).unwrap(),
+            SharedMemoryMode::EightByte
+        );
+        sim.set_func_shared_mem_config(d, SharedMemoryMode::FourByte)
+            .unwrap();
+        assert_eq!(
+            sim.ctx_get_shared_mem_config(d).unwrap(),
+            SharedMemoryMode::EightByte
+        );
+        assert_eq!(
+            sim.get_func_shared_mem_config(d).unwrap(),
+            SharedMemoryMode::FourByte
+        );
+        sim.begin_capture(d, StreamId(0)).unwrap();
+        assert_eq!(
+            sim.ctx_get_shared_mem_config(d).unwrap(),
+            SharedMemoryMode::EightByte
+        );
+        let _g = sim.end_capture().unwrap();
+        match sim.ctx_get_shared_mem_config(DeviceId(99)) {
+            Err(SimError::Invalid { why }) => {
+                assert!(why.contains("device not in profile"), "{why}");
+            }
+            other => panic!("{other:?}"),
+        }
+        let mut eight = Sim::new(HardwareProfile::example_8xh100_nvlink());
+        eight
+            .set_shared_mem_config(DeviceId(1), SharedMemoryMode::FourByte)
+            .unwrap();
+        assert_eq!(
+            eight.ctx_get_shared_mem_config(DeviceId(0)).unwrap(),
+            SharedMemoryMode::Default
+        );
+        assert_eq!(
+            eight.ctx_get_shared_mem_config(DeviceId(1)).unwrap(),
+            SharedMemoryMode::FourByte
+        );
+        sim.reset_device(d).unwrap();
+        assert_eq!(
+            sim.ctx_get_shared_mem_config(d).unwrap(),
+            SharedMemoryMode::Default
+        );
     }
 
     #[test]

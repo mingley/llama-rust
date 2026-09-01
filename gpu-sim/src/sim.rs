@@ -18585,6 +18585,23 @@ impl Sim {
         self.synchronize_device(device)
     }
 
+    /// `cuCtxGetSharedMemConfig` for the seeded primary context of `device`.
+    ///
+    /// Query; legal during capture. There is no TLS current device and no
+    /// `CUcontext` object. Matches [`Self::get_shared_mem_config`]
+    /// (`cudaDeviceGetSharedMemConfig`). Distinct from
+    /// [`Self::get_func_shared_mem_config`] and from
+    /// [`Self::ctx_get_cache_config`]. Unknown devices are Invalid
+    /// `"device not in profile"`. This VM does not invent
+    /// `cuCtxSetSharedMemConfig` this slice (`set_shared_mem_config` stays
+    /// the runtime setter).
+    pub fn ctx_get_shared_mem_config(
+        &self,
+        device: DeviceId,
+    ) -> Result<SharedMemoryMode, SimError> {
+        self.get_shared_mem_config(device)
+    }
+
     /// `cudaInitDevice(device, 0, 0)`. Ensures the primary context (already
     /// seeded at construct). Does not make a thread-current device and does
     /// not change [`Self::get_device_flags`]. Host-synchronous 1 ns. Capture

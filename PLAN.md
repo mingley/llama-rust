@@ -6306,7 +6306,16 @@ model, do not celebrate the sim.
     `gpu-profile capture` is still refused. Dual score still has no
     `$/M tokens`.
 
-599. [ ] Next numbered PLAN item after 598 is the next `gpu-sim` / Engine /
+599. [x] `gpu-sim` `Sim::ctx_get_shared_mem_config` is
+    `cuCtxGetSharedMemConfig` for the seeded primary context of an
+    explicit device. Same as `get_shared_mem_config`. Query; legal
+    during capture. Distinct from `get_shared_mem_config` (runtime) and
+    from `get_func_shared_mem_config`. This VM does not invent
+    `cuCtxSetSharedMemConfig`, Engine `--ctx-shared-mem`, or
+    `cudaChooseDevice`. `gpu-profile capture` is still refused. Dual
+    score still has no `$/M tokens`.
+
+600. [ ] Next numbered PLAN item after 599 is the next `gpu-sim` / Engine /
     serve / expertvm mechanical API that is still missing, or the next official
     decode family. Prefer remaining CUDA-shaped twins over more
     OpenAI HTTP veneer. Do not invent F32 `output.scale`. Do not invent a
@@ -6535,6 +6544,10 @@ model, do not celebrate the sim.
     Do not invent a second `cuCtxSynchronize` / `ctx_synchronize`. Do
     not invent Engine `--ctx-synchronize`. Do not invent
     `cuCtxSynchronize_v2`. Do not reverse capture refuse.
+    Do not invent a second `cuCtxGetSharedMemConfig` /
+    `ctx_get_shared_mem_config`. Do not invent Engine `--ctx-shared-mem`.
+    Do not invent `cuCtxSetSharedMemConfig` this slice. Do not reverse
+    wrapping `get_shared_mem_config`.
     Do not invent a second `cudaStreamAddCallback`.
     Do not invent Engine `--stream-callback` (same wall as second live
     `cudaLaunchHostFunc` after miss DMA).
@@ -6879,6 +6892,9 @@ model, do not celebrate the sim.
     Do not invent a second `ctx_synchronize` API. Do not invent
     Engine `--context-sync`. Do not invent a second `synchronize_device`.
     Do not reverse other GPUs keeping running.
+    Do not invent a second `ctx_get_shared_mem_config` API. Do not
+    invent Engine `--context-shared-mem`. Do not invent a second
+    `get_shared_mem_config`. Do not reverse wrapping device shared mem.
     Do not invent a second DeviceLaunch in-flight destroy-complete check or Engine
     `--device-launch-destroy`. Do not abort an in-flight DeviceLaunch when
     `destroy_graph` succeeds. Do not delay destroy of an idle exec. Do not invent
@@ -7433,6 +7449,9 @@ model, do not celebrate the sim.
     Engine `--cu-ctx-limit`. Do not reverse wrapping GetLimit.
     Do not invent a second `ctx_synchronize` method. Do not invent
     Engine `--cu-ctx-sync`. Do not reverse wrapping DeviceSynchronize.
+    Do not invent a second `ctx_get_shared_mem_config` method. Do not
+    invent Engine `--cu-ctx-shared`. Do not reverse wrapping
+    GetSharedMemConfig.
     Do not
     spend the next item on an OpenAI-compatible HTTP veneer.
 
