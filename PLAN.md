@@ -5755,7 +5755,15 @@ model, do not celebrate the sim.
     not invent Engine `--device-launch-upload`. `gpu-profile capture`
     is still refused. Dual score still has no `$/M tokens`.
 
-537. [ ] Next numbered PLAN item after 536 is the next `gpu-sim` / Engine /
+537. [x] `gpu-sim` CUDA `cudaGraphExecUpdate` of an exec with an
+    in-flight host `launch_graph` or `upload_graph_async` is Invalid
+    `"exec in flight"`. Capture is still reported first. After
+    synchronize, update stays. Host SetParams of that exec stay.
+    DeviceLaunch update stays NotSupported. This VM does not invent
+    Engine `--graph-exec-update-inflight`. `gpu-profile capture` is
+    still refused. Dual score still has no `$/M tokens`.
+
+538. [ ] Next numbered PLAN item after 537 is the next `gpu-sim` / Engine /
     serve / expertvm mechanical API that is still missing, or the next official
     decode family. Prefer remaining CUDA-shaped twins over more
     OpenAI HTTP veneer. Do not invent F32 `output.scale`. Do not invent a
@@ -5893,6 +5901,10 @@ model, do not celebrate the sim.
     upload refuse or Engine `--device-launch-upload`. Do not refuse host
     `launch_graph` in-flight `upload_graph`. Do not refuse already-uploaded
     `upload_graph` after synchronize.
+    Do not invent a second in-flight ExecUpdate refuse or Engine
+    `--graph-exec-update-inflight`. Do not refuse host `launch_graph`
+    in-flight SetParams (ExecUpdate is the in-flight twin). DeviceLaunch
+    `update_graph` stays NotSupported.
     Do not invent a second DeviceLaunch in-flight destroy-complete check or Engine
     `--device-launch-destroy`. Do not abort an in-flight DeviceLaunch when
     `destroy_graph` succeeds. Do not delay destroy of an idle exec. Do not invent

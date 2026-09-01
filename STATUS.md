@@ -5,6 +5,16 @@ Visible five-turn extract: [docs/chatgpt-share-6a920fe1.md](docs/chatgpt-share-6
 Complete share-API extract: [docs/chatgpt-share-6a920fe1/](docs/chatgpt-share-6a920fe1/).
 Work lands on `main`. No PRs.
 
+## Shipped 2026-09-01 — ExecUpdate of an in-flight exec is Invalid
+
+`gpu-sim` CUDA `cudaGraphExecUpdate` of an exec with an in-flight host
+`launch_graph` or `upload_graph_async` is Invalid `"exec in flight"`.
+Capture is still reported first. After synchronize, update stays. Host
+SetParams of that exec stay. DeviceLaunch update stays NotSupported.
+This VM does not invent Engine `--graph-exec-update-inflight`.
+`gpu-profile capture` is still refused. Dual score still has no
+`$/M tokens`.
+
 ## Shipped 2026-09-01 — DeviceLaunch in-flight upload is Invalid
 
 `gpu-sim` CUDA host `upload_graph` / `upload_graph_async` of a

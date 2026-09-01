@@ -4417,7 +4417,10 @@ impl Sim {
     /// Capture cannot include it. `exec` must already be instantiated. Graphs
     /// with mem alloc or mem free nodes cannot be updated
     /// (`cudaGraphExecUpdate` of mem nodes). [`Self::graph_node_set_enabled`]
-    /// state is unchanged (CUDA enable is not a parameter).
+    /// state is unchanged (CUDA enable is not a parameter). An in-flight
+    /// [`Self::launch_graph`] plus [`Self::upload_graph_async`] of `exec` is
+    /// Invalid `"exec in flight"`. Host SetParams of that exec stay.
+    /// [`GraphInstantiateFlags::DEVICE_LAUNCH`] update stays NotSupported.
     pub fn update_graph(&mut self, exec: GraphId, src: GraphId) -> Result<(), SimError> {
         let mut info = GraphExecUpdateResultInfo::default();
         self.update_graph_with_info(exec, src, &mut info)
@@ -4482,6 +4485,19 @@ impl Sim {
                 None,
                 None,
                 "device launch graph update",
+            );
+        }
+        if self
+            .graphs
+            .get(&exec)
+            .is_some_and(|g| self.graph_exec_in_flight(exec, g))
+        {
+            return update_report(
+                info,
+                GraphExecUpdateResult::Error,
+                None,
+                None,
+                "exec in flight",
             );
         }
         if exec_steps.iter().any(step_is_device_updatable)

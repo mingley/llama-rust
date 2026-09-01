@@ -553,7 +553,8 @@ then uploads if needed (`graph_upload_ns`). `upload_graph` is `cudaGraphUpload`
 `GraphInstantiateParams::upload_stream` uses it).
 `update_graph` copies source steps into the exec snapshot when the
 device, stream, op kinds, dependency edges, and `GraphEdgeData` ports match
-(`graph_update_ns`);
+(`graph_update_ns`; in-flight host launch or stream upload of that exec
+is Invalid `"exec in flight"`; SetParams stay);
 IF / WHILE / SWITCH handles are parameters (bodies stay topology). A
 topology mismatch is `Invalid`. `cudaGraphInstantiateFlagUseNodePriority`
 forbids kernel-node priority changes (`AttributesChanged`); matching

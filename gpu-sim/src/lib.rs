@@ -26305,6 +26305,41 @@ mod tests {
     }
 
     #[test]
+    fn update_graph_rejects_in_flight_exec() {
+        let mut sim = Sim::new(h100());
+        let d = DeviceId(0);
+        let s = StreamId(0);
+        let a = sim.malloc(d, 4096).unwrap();
+        let b = sim.malloc(d, 4096).unwrap();
+        let g = sim.create_graph(d, s).unwrap();
+        sim.graph_add_kernel(g, KernelKind::other(1 << 40, 4096), &[a], &[a])
+            .unwrap();
+        let exec = sim.instantiate_graph(g).unwrap();
+        let src = sim.create_graph(d, s).unwrap();
+        sim.graph_add_kernel(src, KernelKind::other(8, 8), &[b], &[b])
+            .unwrap();
+        let launched = sim.launch_graph(exec, s).unwrap();
+        assert!(launched > 0);
+        let err = sim.update_graph(exec, src).unwrap_err();
+        match err {
+            SimError::Invalid { why } => assert!(why.contains("in flight"), "{why}"),
+            other => panic!("{other:?}"),
+        }
+        let (node, params) = sim.graph_unique_kernel(g).unwrap();
+        sim.graph_exec_kernel_set_params(exec, node, &params)
+            .unwrap();
+        sim.begin_capture(d, StreamId(1)).unwrap();
+        let err = sim.update_graph(exec, src).unwrap_err();
+        match err {
+            SimError::Invalid { why } => assert!(why.contains("capture"), "{why}"),
+            other => panic!("{other:?}"),
+        }
+        let _end = sim.end_capture().unwrap();
+        sim.synchronize().unwrap();
+        sim.update_graph(exec, src).unwrap();
+    }
+
+    #[test]
     fn graph_add_child_expands_at_parent_launch() {
         let mut sim = Sim::new(h100());
         let d = DeviceId(0);
