@@ -5889,7 +5889,14 @@ model, do not celebrate the sim.
     `--graph-containing`. `gpu-profile capture` is still refused. Dual score
     still has no `$/M tokens`.
 
-553. [ ] Next numbered PLAN item after 552 is the next `gpu-sim` / Engine /
+553. [x] `gpu-sim` `stream_get_device` is CUDA `cudaStreamGetDevice` /
+    `cuStreamGetDevice` (the device of the stream; green-ctx streams return
+    the ctx create device). Query; legal during capture. Distinct from
+    `stream_get_id` and `green_ctx_get_device`. This VM does not invent Engine
+    `--stream-device`. `gpu-profile capture` is still refused. Dual score
+    still has no `$/M tokens`.
+
+554. [ ] Next numbered PLAN item after 553 is the next `gpu-sim` / Engine /
     serve / expertvm mechanical API that is still missing, or the next official
     decode family. Prefer remaining CUDA-shaped twins over more
     OpenAI HTTP veneer. Do not invent F32 `output.scale`. Do not invent a
@@ -5909,6 +5916,9 @@ model, do not celebrate the sim.
     `cudaGraphExecGetId`.     Do not invent a second `cuGraphNodeGetLocalId`.
     Do not invent a second `cuGraphNodeGetToolsId`. Do not invent a second
     `cuGraphNodeGetContainingGraph`. Do not invent a second
+    `cudaStreamGetDevice` / `cuStreamGetDevice`. Do not invent Engine
+    `--stream-device`. Do not invent `cuStreamGetCtx` / `cudaStreamGetCtx`
+    (no `CUcontext` object). Do not invent a second
     `cuDeviceGetUuid` / `cudaDeviceGetUuid`. Do not invent a second
     `cuDeviceGetByUuid`. Do not invent a second `cudaDeviceGetPciBusId` /
     `cuDeviceGetPCIBusId`. Do not invent a second `cudaDeviceGetByPCIBusId`.
@@ -5940,7 +5950,9 @@ model, do not celebrate the sim.
     `cudaDeviceGetHostAtomicCapabilities`.
     Do not invent a second `cudaInitDevice`. Do not invent Engine
     `--init-device` (same wall as `set_device_flags`). Do not invent
-    `cudaSetDevice` (no thread-current device).
+    `cudaSetDevice` (no thread-current device). Do not invent a second
+    `cudaStreamGetDevice`. Do not invent `cuStreamGetCtx` /
+    `cudaStreamGetCtx` (no `CUcontext` object).
     Do not invent a second `cudaDevAttrMaxPitch`.
     Do not invent a second `cuMemGetHandleForAddressRange`. Do not invent
     a dma-buf file descriptor. Do not invent Engine `--dma-buf`.
@@ -6106,6 +6118,10 @@ model, do not celebrate the sim.
     bodies. Do not reverse `graph_child_get_graph`. Do not reverse live exec
     GetContainingGraph. Do not reverse definition GetContainingGraph while an
     exec is parked. Do not refuse GetContainingGraph of a live in-flight exec.
+    Do not invent a second `cudaStreamGetDevice` / `cuStreamGetDevice` /
+    `stream_get_device`. Do not invent Engine `--stream-device`. Do not invent
+    `cuStreamGetCtx` / `cudaStreamGetCtx` (no `CUcontext` object). Do not
+    reverse `stream_get_id`. Do not reverse `green_ctx_get_device`.
     Do not invent a second DeviceLaunch in-flight destroy-complete check or Engine
     `--device-launch-destroy`. Do not abort an in-flight DeviceLaunch when
     `destroy_graph` succeeds. Do not delay destroy of an idle exec. Do not invent
@@ -6525,6 +6541,10 @@ model, do not celebrate the sim.
     bodies. Do not reverse `graph_child_get_graph`. Do not reverse live exec
     GetContainingGraph. Do not reverse definition GetContainingGraph while an
     exec is parked. Do not refuse GetContainingGraph of a live in-flight exec.
+    Do not invent a second `cudaStreamGetDevice` / `cuStreamGetDevice` /
+    `stream_get_device`. Do not invent Engine `--stream-device`. Do not invent
+    `cuStreamGetCtx` / `cudaStreamGetCtx` (no `CUcontext` object). Do not
+    reverse `stream_get_id`. Do not reverse `green_ctx_get_device`.
     Do not
     spend the next item on an OpenAI-compatible HTTP veneer.
 

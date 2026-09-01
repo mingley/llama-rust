@@ -2277,6 +2277,27 @@ impl Sim {
             .saturating_add(1))
     }
 
+    /// `cudaStreamGetDevice` / `cuStreamGetDevice`. Query; legal during capture.
+    ///
+    /// Returns the device of `stream`. [`StreamId`] is per-device in this VM,
+    /// so this is the explicit `device` after a live-device check. A green-ctx
+    /// stream returns [`Self::green_ctx_get_device`] of the bound ctx (same
+    /// device). Distinct from [`Self::stream_get_id`] and
+    /// [`Self::green_ctx_get_device`]. Unknown devices are Invalid. NULL is
+    /// the legacy stream of `device`. This VM does not invent `cudaSetDevice`
+    /// or `cuStreamGetCtx`.
+    pub fn stream_get_device(
+        &self,
+        device: DeviceId,
+        stream: StreamId,
+    ) -> Result<DeviceId, SimError> {
+        let _gpu = self.profile.gpu(device)?;
+        if let Some(ctx) = self.stream_green_ctx.get(&(device, stream)).copied() {
+            return self.green_ctx_get_device(ctx);
+        }
+        Ok(device)
+    }
+
     /// `cudaStreamGetAttribute`. Query; legal during capture.
     ///
     /// Wraps existing stream state only. Green-context SM permille is not a

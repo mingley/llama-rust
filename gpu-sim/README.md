@@ -159,6 +159,7 @@ warp scheduler, L1, …   ← do not model
 | `stream_get_flags` is 0 blocking / 1 NonBlocking | `cudaStreamGetFlags` |
 | `stream_get_priority` is the create priority | `cudaStreamGetPriority` |
 | `stream_get_id` is unique per device/stream | `cudaStreamGetId` |
+| `stream_get_device` is the device of the stream (green-ctx streams return the ctx device) | `cudaStreamGetDevice` / `cuStreamGetDevice` |
 | `stream_get_attribute` / `stream_set_attribute` wrap existing stream state | `cudaStreamGetAttribute` / `SetAttribute` |
 | `device_count` is the profile GPU count | `cudaGetDeviceCount` |
 | `device_get` is the ordinal in `0 .. count` | `cuDeviceGet` |
@@ -992,7 +993,10 @@ Typed setters stay. `stream_get_flags` is `cudaStreamGetFlags`
 (`0` `cudaStreamDefault` / `1` `cudaStreamNonBlocking`; NULL follows
 `set_legacy_null_stream`). `stream_get_priority` is `cudaStreamGetPriority`.
 `stream_get_id` is `cudaStreamGetId` (unique per device/stream; not the
-caller-chosen `StreamId`). `ctx_get_id` is `cuCtxGetId` for the seeded
+caller-chosen `StreamId`). `stream_get_device` is `cudaStreamGetDevice` /
+`cuStreamGetDevice` (the device of the stream; green-ctx streams return
+the ctx create device). Query; legal during capture. Distinct from
+`stream_get_id` and `green_ctx_get_device`. `ctx_get_id` is `cuCtxGetId` for the seeded
 primary context (not `green_ctx_get_id`). `green_ctx_get_id` is
 `cuGreenCtxGetId` / `cudaExecutionCtxGetId` (unique per live green ctx;
 not `GreenCtxId`).

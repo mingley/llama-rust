@@ -652,6 +652,11 @@
 //! [`Sim::stream_get_priority`] is `cudaStreamGetPriority`.
 //! [`Sim::stream_get_id`] is `cudaStreamGetId` (unique per device/stream;
 //! not the caller-chosen [`StreamId`]).
+//! [`Sim::stream_get_device`] is `cudaStreamGetDevice` / `cuStreamGetDevice`
+//! (the device of the stream; green-ctx streams return the ctx create
+//! device). Query; legal during capture. Distinct from
+//! [`stream_get_id`](Sim::stream_get_id) and
+//! [`green_ctx_get_device`](Sim::green_ctx_get_device).
 //! [`stream_get_attribute`](Sim::stream_get_attribute) /
 //! [`stream_set_attribute`](Sim::stream_set_attribute) are
 //! `cudaStreamGetAttribute` / `SetAttribute` of existing stream state
@@ -15366,6 +15371,45 @@ mod tests {
             gpu1
         );
         let _g = eight.end_capture().unwrap();
+    }
+
+    #[test]
+    fn stream_get_device_is_cuda_stream_get_device() {
+        let mut sim = Sim::new(h100());
+        let d = DeviceId(0);
+        assert_eq!(sim.stream_get_device(d, StreamId::NULL).unwrap(), d);
+        assert_eq!(sim.stream_get_device(d, StreamId(1)).unwrap(), d);
+        match sim.stream_get_device(DeviceId(1), StreamId(0)) {
+            Err(SimError::Invalid { why }) => assert!(why.contains("device"), "{why}"),
+            other => panic!("{other:?}"),
+        }
+        sim.begin_capture(d, StreamId(0)).unwrap();
+        assert_eq!(sim.stream_get_device(d, StreamId(1)).unwrap(), d);
+        let _g = sim.end_capture().unwrap();
+        let desc = sim
+            .dev_resource_generate_desc(&[SmResource {
+                start: 0,
+                width: 500,
+            }])
+            .unwrap();
+        let ctx = sim
+            .green_ctx_create(desc, d, GreenCtxFlags::DEFAULT)
+            .unwrap();
+        sim.green_ctx_stream_create(ctx, StreamId(3), StreamCreateFlags::NON_BLOCKING, 0)
+            .unwrap();
+        assert_eq!(sim.stream_get_device(d, StreamId(3)).unwrap(), d);
+        assert_eq!(
+            sim.stream_get_device(d, StreamId(3)).unwrap(),
+            sim.green_ctx_get_device(ctx).unwrap()
+        );
+        let mut eight = Sim::new(HardwareProfile::example_8xh100_nvlink());
+        let d0 = DeviceId(0);
+        let d1 = DeviceId(1);
+        assert_eq!(eight.stream_get_device(d0, StreamId::NULL).unwrap(), d0);
+        assert_eq!(eight.stream_get_device(d1, StreamId::NULL).unwrap(), d1);
+        eight.begin_capture(d1, StreamId(0)).unwrap();
+        assert_eq!(eight.stream_get_device(d1, StreamId::NULL).unwrap(), d1);
+        let _end = eight.end_capture().unwrap();
     }
 
     #[test]
