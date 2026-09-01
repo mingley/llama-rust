@@ -31177,7 +31177,7 @@ mod tests {
         let s = StreamId(0);
         let a = sim.malloc(d, 64).unwrap();
         let unused = sim.create_graph(d, s).unwrap();
-        let h = sim.graph_conditional_create(unused, 0).unwrap();
+        let _h = sim.graph_conditional_create(unused, 0).unwrap();
         sim.graph_add_kernel(unused, KernelKind::other(8, 8), &[a], &[a])
             .unwrap();
         let err = sim.instantiate_graph(unused).unwrap_err();
