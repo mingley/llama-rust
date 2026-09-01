@@ -5,6 +5,15 @@ Visible five-turn extract: [docs/chatgpt-share-6a920fe1.md](docs/chatgpt-share-6
 Complete share-API extract: [docs/chatgpt-share-6a920fe1/](docs/chatgpt-share-6a920fe1/).
 Work lands on `main`. No PRs.
 
+## Shipped 2026-09-01 — Parked exec GetDependencies is unknown
+
+`gpu-sim` CUDA `cudaGraphNodeGetDependencies` /
+`cudaGraphNodeGetDependentNodes` of an exec whose handle was destroyed
+while a launch was in flight is Invalid `"unknown graph"` (v1 and v2).
+Query; capture is legal. Live exec GetDependencies stays. Definition
+GetDependencies stays. This VM does not invent Engine `--graph-deps-gone`.
+`gpu-profile capture` is still refused. Dual score still has no `$/M tokens`.
+
 ## Shipped 2026-09-01 — Parked exec GetParams is unknown
 
 `gpu-sim` CUDA definition `cudaGraph*NodeGetParams` / `cudaGraphNodeGetParams`

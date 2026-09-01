@@ -478,7 +478,9 @@ kernel to start). An existing `(from, to)` cannot change stored
 edge data; Default ports 0 when unset). `graph_node_deps_with_data` /
 `graph_node_dependents_with_data` are `cudaGraphNodeGetDependencies` /
 `GetDependentNodes` v2 (stored edge data). Query;
-legal during capture. CUDA v1 `graph_edges` / `graph_node_deps` /
+legal during capture. A parked in-flight-destroyed exec is
+`"unknown graph"` on GetDependencies plus GetDependentNodes; a live exec
+stays. CUDA v1 `graph_edges` / `graph_node_deps` /
 `graph_node_dependents` (`edgeData` NULL) are Invalid `"lossy query"`
 when any reported edge has non-default stored `GraphEdgeData`
 (`cudaErrorLossyQuery`). Default-only edges stay. Debug-dot ExtraTopoInfo

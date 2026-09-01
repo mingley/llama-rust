@@ -9698,7 +9698,8 @@ impl Sim {
     /// CUDA v1 (`edgeData == NULL`): non-default stored [`GraphEdgeData`] is
     /// Invalid `"lossy query"` (`cudaErrorLossyQuery`). Default-only predecessors
     /// stay. [`Self::graph_node_deps_with_data`] is lossless. Query; legal
-    /// during capture.
+    /// during capture. A parked in-flight-destroyed exec is `"unknown graph"`.
+    /// Live exec GetDependencies stays.
     pub fn graph_node_deps(&self, graph: GraphId, i: usize) -> Result<Vec<usize>, SimError> {
         let step = self.graph_node_dep_step(graph, i)?;
         if step
@@ -9715,7 +9716,8 @@ impl Sim {
     ///
     /// Existing edges report stored [`GraphEdgeData`] (Default ports 0 when
     /// unset). Not [`Self::graph_node_deps`] LossyQuery. Query; legal during
-    /// capture.
+    /// capture. A parked in-flight-destroyed exec is `"unknown graph"`.
+    /// Live exec GetDependencies stays.
     pub fn graph_node_deps_with_data(
         &self,
         graph: GraphId,
@@ -9730,9 +9732,7 @@ impl Sim {
     }
 
     fn graph_node_dep_step(&self, graph: GraphId, i: usize) -> Result<&GraphStep, SimError> {
-        let g = self.graphs.get(&graph).ok_or(SimError::Invalid {
-            why: "unknown graph",
-        })?;
+        let g = self.live_graph(graph)?;
         live_ok(g.steps.get(i).ok_or(SimError::Invalid {
             why: "graph dependency",
         })?)
@@ -9894,11 +9894,10 @@ impl Sim {
     /// CUDA v1 (`edgeData == NULL`): non-default stored [`GraphEdgeData`] on
     /// any successor edge is Invalid `"lossy query"` (`cudaErrorLossyQuery`).
     /// Default-only successors stay. [`Self::graph_node_dependents_with_data`]
-    /// is lossless. Query; legal during capture.
+    /// is lossless. Query; legal during capture. A parked in-flight-destroyed
+    /// exec is `"unknown graph"`. Live exec GetDependentNodes stays.
     pub fn graph_node_dependents(&self, graph: GraphId, i: usize) -> Result<Vec<usize>, SimError> {
-        let g = self.graphs.get(&graph).ok_or(SimError::Invalid {
-            why: "unknown graph",
-        })?;
+        let g = self.live_graph(graph)?;
         if i >= g.steps.len() {
             return Err(SimError::Invalid {
                 why: "graph dependency",
@@ -9926,15 +9925,14 @@ impl Sim {
     ///
     /// Existing edges report stored [`GraphEdgeData`] (Default ports 0 when
     /// unset). Not [`Self::graph_node_dependents`] LossyQuery. Query; legal
-    /// during capture.
+    /// during capture. A parked in-flight-destroyed exec is `"unknown graph"`.
+    /// Live exec GetDependentNodes stays.
     pub fn graph_node_dependents_with_data(
         &self,
         graph: GraphId,
         i: usize,
     ) -> Result<Vec<(usize, GraphEdgeData)>, SimError> {
-        let g = self.graphs.get(&graph).ok_or(SimError::Invalid {
-            why: "unknown graph",
-        })?;
+        let g = self.live_graph(graph)?;
         if i >= g.steps.len() {
             return Err(SimError::Invalid {
                 why: "graph dependency",

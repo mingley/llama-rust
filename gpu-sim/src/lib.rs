@@ -1240,7 +1240,9 @@
 //! legal during capture. [`graph_node_deps_with_data`](Sim::graph_node_deps_with_data) /
 //! [`graph_node_dependents_with_data`](Sim::graph_node_dependents_with_data)
 //! are `cudaGraphNodeGetDependencies` / `GetDependentNodes` v2 (stored edge
-//! data). Query; legal during capture. CUDA v1
+//! data). Query; legal during capture. A parked in-flight-destroyed exec is
+//! `"unknown graph"` on GetDependencies plus GetDependentNodes; a live exec stays.
+//! CUDA v1
 //! [`graph_edges`](Sim::graph_edges) / [`graph_node_deps`](Sim::graph_node_deps) /
 //! [`graph_node_dependents`](Sim::graph_node_dependents) (`edgeData` NULL) are
 //! Invalid `"lossy query"` when any reported edge has non-default stored
@@ -5790,6 +5792,56 @@ mod tests {
         let _end = sim.end_capture().unwrap();
         sim.synchronize().unwrap();
         match sim.graph_kernel_get_params(exec, 0).unwrap_err() {
+            SimError::Invalid { why } => assert!(why.contains("unknown"), "{why}"),
+            other => panic!("{other:?}"),
+        }
+        sim.destroy_graph(g).unwrap();
+        sim.destroy_graph(_end).unwrap();
+    }
+
+    #[test]
+    fn parked_exec_get_dependencies_is_unknown() {
+        let mut sim = Sim::new(h100());
+        let d = DeviceId(0);
+        let s = StreamId(0);
+        let a = sim.malloc(d, 4096).unwrap();
+        let g = sim.create_graph(d, s).unwrap();
+        sim.graph_add_kernel(g, KernelKind::other(1 << 40, 4096), &[a], &[a])
+            .unwrap();
+        let exec = sim.instantiate_graph(g).unwrap();
+        assert!(sim.graph_node_deps(exec, 0).unwrap().is_empty());
+        assert!(sim.graph_node_dependents(exec, 0).unwrap().is_empty());
+        let _v2 = sim.graph_node_deps_with_data(exec, 0).unwrap();
+        let _dep_v2 = sim.graph_node_dependents_with_data(exec, 0).unwrap();
+        let launched = sim.launch_graph(exec, s).unwrap();
+        assert!(launched > 0);
+        let _in_flight = sim.graph_node_deps(exec, 0).unwrap();
+        sim.destroy_graph(exec).unwrap();
+        match sim.graph_node_deps(exec, 0).unwrap_err() {
+            SimError::Invalid { why } => assert!(why.contains("unknown"), "{why}"),
+            other => panic!("{other:?}"),
+        }
+        match sim.graph_node_dependents(exec, 0).unwrap_err() {
+            SimError::Invalid { why } => assert!(why.contains("unknown"), "{why}"),
+            other => panic!("{other:?}"),
+        }
+        match sim.graph_node_deps_with_data(exec, 0).unwrap_err() {
+            SimError::Invalid { why } => assert!(why.contains("unknown"), "{why}"),
+            other => panic!("{other:?}"),
+        }
+        match sim.graph_node_dependents_with_data(exec, 0).unwrap_err() {
+            SimError::Invalid { why } => assert!(why.contains("unknown"), "{why}"),
+            other => panic!("{other:?}"),
+        }
+        assert!(sim.graph_node_deps(g, 0).unwrap().is_empty());
+        sim.begin_capture(d, StreamId(1)).unwrap();
+        match sim.graph_node_deps(exec, 0).unwrap_err() {
+            SimError::Invalid { why } => assert!(why.contains("unknown"), "{why}"),
+            other => panic!("{other:?}"),
+        }
+        let _end = sim.end_capture().unwrap();
+        sim.synchronize().unwrap();
+        match sim.graph_node_deps(exec, 0).unwrap_err() {
             SimError::Invalid { why } => assert!(why.contains("unknown"), "{why}"),
             other => panic!("{other:?}"),
         }
