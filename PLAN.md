@@ -6071,7 +6071,16 @@ model, do not celebrate the sim.
     SM counts, or `cudaChooseDevice`. `gpu-profile capture` is still
     refused. Dual score still has no `$/M tokens`.
 
-571. [ ] Next numbered PLAN item after 570 is the next `gpu-sim` / Engine /
+571. [x] `gpu-sim` `DeviceAttr::SingleToDoublePrecisionPerfRatio` is
+    `cudaDevAttrSingleToDoublePrecisionPerfRatio`
+    (`cudaDeviceProp` singleToDoublePrecisionPerfRatio). Example H100 is
+    1 (Hopper FP32 and FP64 peaks match). Query; legal during capture.
+    This VM does not invent Engine `--fp64-ratio`, clock rates, occupancy
+    SM counts, or `cudaChooseDevice`. This VM does not scale kernel
+    duration from this ratio. `gpu-profile capture` is still refused.
+    Dual score still has no `$/M tokens`.
+
+572. [ ] Next numbered PLAN item after 571 is the next `gpu-sim` / Engine /
     serve / expertvm mechanical API that is still missing, or the next official
     decode family. Prefer remaining CUDA-shaped twins over more
     OpenAI HTTP veneer. Do not invent F32 `output.scale`. Do not invent a
@@ -6192,6 +6201,9 @@ model, do not celebrate the sim.
     `MaxSurface3DHeight`, or `MaxSurface3DDepth`. Do not invent Engine
     `--max-surface`. Do not invent layered or cubemap surface attrs
     this slice. Do not reverse surface dims staying 0.
+    Do not invent a second `cudaDevAttrSingleToDoublePrecisionPerfRatio`.
+    Do not invent Engine `--fp64-ratio`. Do not scale kernel duration
+    from this ratio. Do not reverse example H100 ratio 1.
     Do not invent a second `cudaStreamAddCallback`.
     Do not invent Engine `--stream-callback` (same wall as second live
     `cudaLaunchHostFunc` after miss DMA).
@@ -6448,6 +6460,9 @@ model, do not celebrate the sim.
     invent Engine `--max-texture`. Do not invent CUDA arrays this slice.
     Do not invent a second surface 1D/2D/3D dim DeviceAttr family. Do
     not invent Engine `--max-surface`. Do not reverse SurfaceAlignment 0.
+    Do not invent a second single-to-double perf-ratio DeviceAttr. Do
+    not invent Engine `--dp-ratio`. Do not invent an FP64 dtype this
+    slice.
     Do not invent a second DeviceLaunch in-flight destroy-complete check or Engine
     `--device-launch-destroy`. Do not abort an in-flight DeviceLaunch when
     `destroy_graph` succeeds. Do not delay destroy of an idle exec. Do not invent
@@ -6931,6 +6946,9 @@ model, do not celebrate the sim.
     invent Engine `--texture-2d`. Do not reverse those dims as 0.
     Do not invent a second maxSurface1D DeviceProperties field. Do not
     invent Engine `--surface-1d`. Do not reverse those surface dims as 0.
+    Do not invent a second single_to_double_precision_perf_ratio
+    DeviceProperties field. Do not invent Engine `--stodp`. Do not
+    reverse Hopper ratio 1.
     Do not
     spend the next item on an OpenAI-compatible HTTP veneer.
 

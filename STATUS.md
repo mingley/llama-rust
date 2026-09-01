@@ -5,6 +5,16 @@ Visible five-turn extract: [docs/chatgpt-share-6a920fe1.md](docs/chatgpt-share-6
 Complete share-API extract: [docs/chatgpt-share-6a920fe1/](docs/chatgpt-share-6a920fe1/).
 Work lands on `main`. No PRs.
 
+## Shipped 2026-09-01 — CUDA `cudaDevAttrSingleToDoublePrecisionPerfRatio`
+
+`gpu-sim` `DeviceAttr::SingleToDoublePrecisionPerfRatio` is
+`cudaDevAttrSingleToDoublePrecisionPerfRatio`
+(`cudaDeviceProp` singleToDoublePrecisionPerfRatio). Example H100 is 1
+(Hopper FP32 and FP64 peaks match). Query; legal during capture. This
+VM does not invent Engine `--fp64-ratio`, clock rates, or kernel
+duration from this ratio. `gpu-profile capture` is still refused. Dual
+score still has no `$/M tokens`.
+
 ## Shipped 2026-09-01 — CUDA surface 1D/2D/3D dimension DeviceAttr caps
 
 `gpu-sim` `DeviceAttr::MaxSurface1DWidth` / `MaxSurface2DWidth` /

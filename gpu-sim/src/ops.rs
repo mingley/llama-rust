@@ -1165,6 +1165,12 @@ pub enum DeviceAttr {
     /// Distinct from [`crate::GpuProfile::hbm_bps`] and from memory clock
     /// rates.
     GlobalMemoryBusWidth,
+    /// `cudaDevAttrSingleToDoublePrecisionPerfRatio`. Example H100 is
+    /// [`Self::SINGLE_TO_DOUBLE_PRECISION_PERF_RATIO`] (Hopper FP32 and
+    /// FP64 peaks match). Distinct from occupancy SM counts and from
+    /// clock rates. This VM does not scale kernel duration from this
+    /// ratio.
+    SingleToDoublePrecisionPerfRatio,
 }
 
 impl DeviceAttr {
@@ -1192,6 +1198,10 @@ impl DeviceAttr {
     /// `cudaDevAttrMaxRegistersPerBlock` on example H100. Distinct from
     /// occupancy SM counts. This VM does not model a register file.
     pub const MAX_REGISTERS_PER_BLOCK: u64 = 65_536;
+    /// `cudaDevAttrSingleToDoublePrecisionPerfRatio` on example H100.
+    /// Hopper FP32 and FP64 peaks match. Distinct from occupancy SM
+    /// counts and from clock rates.
+    pub const SINGLE_TO_DOUBLE_PRECISION_PERF_RATIO: u64 = 1;
 }
 
 /// `cudaMemAllocationHandleType` bits for
@@ -1262,6 +1272,11 @@ pub struct DeviceProperties {
     /// `cudaDeviceProp::minor` ([`DeviceAttr::ComputeCapabilityMinor`]).
     /// Example H100 is 0.
     pub compute_capability_minor: u32,
+    /// `cudaDeviceProp::singleToDoublePrecisionPerfRatio`
+    /// ([`DeviceAttr::SingleToDoublePrecisionPerfRatio`]). Example H100 is
+    /// [`DeviceAttr::SINGLE_TO_DOUBLE_PRECISION_PERF_RATIO`]. Distinct
+    /// from occupancy SM counts and from clock rates.
+    pub single_to_double_precision_perf_ratio: u64,
     /// `cudaDeviceProp::maxThreadsPerBlock`
     /// ([`DeviceAttr::MaxThreadsPerBlock`]). Example H100 is
     /// [`DeviceAttr::MAX_THREADS_PER_BLOCK`]. Distinct from occupancy SM

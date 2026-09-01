@@ -19073,7 +19073,8 @@ impl Sim {
     /// capability major/minor are Hopper 9.0 on example H100. Launch-geometry
     /// caps are MaxThreadsPerBlock 1024 and the H100 block plus grid dims.
     /// MaxRegistersPerBlock is 65536 on example H100. GlobalMemoryBusWidth
-    /// is 5120 bits on example H100.
+    /// is 5120 bits on example H100. SingleToDoublePrecisionPerfRatio is
+    /// 1 on example H100.
     pub fn device_get_attribute(
         &self,
         device: DeviceId,
@@ -19190,6 +19191,9 @@ impl Sim {
             DeviceAttr::MaxGridDimZ => DeviceAttr::MAX_GRID_DIM_Z,
             DeviceAttr::MaxRegistersPerBlock => DeviceAttr::MAX_REGISTERS_PER_BLOCK,
             DeviceAttr::GlobalMemoryBusWidth => u64::from(gpu.global_memory_bus_width_bits),
+            DeviceAttr::SingleToDoublePrecisionPerfRatio => {
+                DeviceAttr::SINGLE_TO_DOUBLE_PRECISION_PERF_RATIO
+            }
         })
     }
 
@@ -19199,8 +19203,9 @@ impl Sim {
     /// capability major/minor are modeled (example H100 is Hopper 9.0).
     /// Launch-geometry caps are MaxThreadsPerBlock 1024 and the H100 block
     /// plus grid dims. MaxRegistersPerBlock is 65536. GlobalMemoryBusWidth
-    /// is 5120 bits on example H100. Occupancy SM counts,
-    /// clock rates, and warp size are not.
+    /// is 5120 bits on example H100. SingleToDoublePrecisionPerfRatio is
+    /// 1 on example H100. Occupancy SM counts, clock rates, and warp size
+    /// are not.
     /// Unknown devices are Invalid.
     pub fn device_get_properties(&self, device: DeviceId) -> Result<DeviceProperties, SimError> {
         let gpu = self.profile.gpu(device)?;
@@ -19212,6 +19217,8 @@ impl Sim {
             pci_device_id: synthetic_pci_ids(device).2,
             compute_capability_major: u32::from(gpu.compute_capability_major),
             compute_capability_minor: u32::from(gpu.compute_capability_minor),
+            single_to_double_precision_perf_ratio:
+                DeviceAttr::SINGLE_TO_DOUBLE_PRECISION_PERF_RATIO,
             max_threads_per_block: DeviceAttr::MAX_THREADS_PER_BLOCK,
             max_block_dim_x: DeviceAttr::MAX_BLOCK_DIM_X,
             max_block_dim_y: DeviceAttr::MAX_BLOCK_DIM_Y,
