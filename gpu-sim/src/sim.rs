@@ -18217,7 +18217,8 @@ impl Sim {
     ///
     /// Always Invalid `"opengl"`. Distinct from
     /// [`Self::graphics_map_resources`], from
-    /// [`Self::egl_stream_consumer_connect`], and from [`Self::gl_ctx_create`].
+    /// [`Self::egl_stream_consumer_connect`], from [`Self::gl_ctx_create`],
+    /// and from [`Self::gl_set_gl_device`].
     /// Unknown devices are Invalid `"device not in profile"`. Query; legal
     /// during capture.
     pub fn gl_get_devices(&self, device: DeviceId) -> Result<(), SimError> {
@@ -18227,8 +18228,9 @@ impl Sim {
 
     /// `cuGLCtxCreate`. OpenGL interop is not modeled.
     ///
-    /// Always Invalid `"gl context"`. Distinct from [`Self::gl_get_devices`]
-    /// and from [`Self::gl_register_buffer_object`].
+    /// Always Invalid `"gl context"`. Distinct from [`Self::gl_get_devices`],
+    /// from [`Self::gl_register_buffer_object`], and from
+    /// [`Self::gl_set_gl_device`].
     /// Unknown devices are Invalid `"device not in profile"`. Query; legal
     /// during capture.
     pub fn gl_ctx_create(&self, device: DeviceId) -> Result<(), SimError> {
@@ -18293,6 +18295,17 @@ impl Sim {
     pub fn gl_unmap_buffer_object(&self, device: DeviceId) -> Result<(), SimError> {
         let _gpu = self.profile.gpu(device)?;
         Err(SimError::Invalid { why: "gl unmap" })
+    }
+
+    /// `cudaGLSetGLDevice`. OpenGL interop is not modeled.
+    ///
+    /// Always Invalid `"gl device"`. Distinct from [`Self::gl_get_devices`]
+    /// (why is not `"opengl"`) and from [`Self::gl_ctx_create`]. Unknown
+    /// devices are Invalid `"device not in profile"`. Query; legal during
+    /// capture.
+    pub fn gl_set_gl_device(&self, device: DeviceId) -> Result<(), SimError> {
+        let _gpu = self.profile.gpu(device)?;
+        Err(SimError::Invalid { why: "gl device" })
     }
 
     /// `cuD3D11GetDevices` / `cudaD3D11GetDevices`. Direct3D 11 interop is

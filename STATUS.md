@@ -5,6 +5,15 @@ Visible five-turn extract: [docs/chatgpt-share-6a920fe1.md](docs/chatgpt-share-6
 Complete share-API extract: [docs/chatgpt-share-6a920fe1/](docs/chatgpt-share-6a920fe1/).
 Work lands on `main`. No PRs.
 
+## Shipped 2026-09-01 — CUDA `cudaGLSetGLDevice`
+
+`gpu-sim` `Sim::gl_set_gl_device` is `cudaGLSetGLDevice`.
+Always Invalid `"gl device"` because OpenGL interop is not
+modeled. Query; legal during capture. Distinct from
+`gl_get_devices` (why is not `"opengl"`) and from `gl_ctx_create`.
+This VM does not invent `cuImportExternalSemaphore` or Engine `--gl-set-device`.
+`gpu-profile capture` is still refused. Dual score still has no `$/M tokens`.
+
 ## Shipped 2026-09-01 — CUDA `cuGLUnmapBufferObject`
 
 `gpu-sim` `Sim::gl_unmap_buffer_object` is `cuGLUnmapBufferObject`.

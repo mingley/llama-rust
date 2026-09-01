@@ -6947,7 +6947,14 @@ model, do not celebrate the sim.
     or `cudaChooseDevice`. `gpu-profile capture` is still refused. Dual
     score still has no `$/M tokens`.
 
-685. [ ] Next numbered PLAN item after 684 is the next `gpu-sim` / Engine /
+685. [x] `gpu-sim` `Sim::gl_set_gl_device` is
+    `cudaGLSetGLDevice`. Always Invalid `"gl device"`
+    because OpenGL interop is not modeled. Query; legal during capture.
+    Distinct from `gl_get_devices` and `gl_ctx_create`. This VM does not invent `cuImportExternalSemaphore`, Engine `--gl-set-device`,
+    or `cudaChooseDevice`. `gpu-profile capture` is still refused. Dual
+    score still has no `$/M tokens`.
+
+686. [ ] Next numbered PLAN item after 685 is the next `gpu-sim` / Engine /
     serve / expertvm mechanical API that is still missing, or the next official
     decode family. Prefer remaining CUDA-shaped twins over more
     OpenAI HTTP veneer. Do not invent F32 `output.scale`. Do not invent a
@@ -7475,6 +7482,10 @@ model, do not celebrate the sim.
     `gl_unmap_buffer_object`. Do not invent Engine `--gl-unmap`.
     Do not invent `cuGLUnmapBufferObjectAsync` this slice. Do not reverse
     `"gl unmap"`.
+    Do not invent a second `cudaGLSetGLDevice` /
+    `gl_set_gl_device`. Do not invent Engine `--gl-set-device`.
+    Do not invent `cuImportExternalSemaphore` this slice. Do not reverse
+    `"gl device"`.
     Do not invent a second `cudaStreamAddCallback`.
     Do not invent Engine `--stream-callback` (same wall as second live
     `cudaLaunchHostFunc` after miss DMA).
@@ -8100,6 +8111,9 @@ model, do not celebrate the sim.
     Do not invent a second `gl_unmap_buffer_object` API. Do not invent
     Engine `--unmap-gl-buffer-object`. Do not invent a GLUT unmap
     this slice. Do not reverse legacy GL unmap remaining unsupported.
+    Do not invent a second `gl_set_gl_device` API. Do not invent
+    Engine `--set-gl-device`. Do not invent a GLUT current-device
+    this slice. Do not reverse SetGLDevice remaining unsupported.
     Do not invent a second DeviceLaunch in-flight destroy-complete check or Engine
     `--device-launch-destroy`. Do not abort an in-flight DeviceLaunch when
     `destroy_graph` succeeds. Do not delay destroy of an idle exec. Do not invent
@@ -8908,6 +8922,9 @@ model, do not celebrate the sim.
     Do not invent a second `gl_unmap_buffer_object` method. Do not
     invent Engine `--cu-gl-unmap-buffer-object`. Do not reverse wrapping
     cuGLUnmapBufferObject Invalid.
+    Do not invent a second `gl_set_gl_device` method. Do not
+    invent Engine `--cuda-gl-set-gl-device`. Do not reverse wrapping
+    cudaGLSetGLDevice Invalid.
     Do not
     spend the next item on an OpenAI-compatible HTTP veneer.
 
