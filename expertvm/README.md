@@ -710,6 +710,8 @@ interop is not modeled; no Engine flag).
 modeled; no Engine flag).
 `gpu-sim` `d3d10_get_devices` is `cuD3D10GetDevices` (Invalid; Direct3D 10
 interop is not modeled; no Engine flag).
+`gpu-sim` `d3d10_get_device` is `cuD3D10GetDevice` (Invalid; Direct3D 10
+interop is not modeled; no Engine flag).
 `gpu-sim` `d3d10_ctx_create` is `cuD3D10CtxCreate` (Invalid; Direct3D 10
 interop is not modeled; no Engine flag).
 `gpu-sim` `graphics_d3d10_register_resource` is

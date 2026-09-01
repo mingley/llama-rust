@@ -752,6 +752,8 @@
 //! Query; legal during capture. No Engine `--d3d9-register`.
 //! [`d3d10_get_devices`](Sim::d3d10_get_devices) is `cuD3D10GetDevices`
 //! (always Invalid `"d3d10"`). Query; legal during capture. No Engine `--d3d10-devices`.
+//! [`d3d10_get_device`](Sim::d3d10_get_device) is `cuD3D10GetDevice`
+//! (always Invalid `"d3d10 device"`). Query; legal during capture. No Engine `--d3d10-device`.
 //! [`d3d10_ctx_create`](Sim::d3d10_ctx_create) is `cuD3D10CtxCreate` (always
 //! Invalid `"d3d10 context"`). Query; legal during capture. No Engine `--d3d10-ctx`.
 //! [`graphics_d3d10_register_resource`](Sim::graphics_d3d10_register_resource)
@@ -24337,6 +24339,65 @@ mod tests {
         match sim.d3d11_get_devices(d) {
             Err(SimError::Invalid { why }) => {
                 assert!(why.contains("d3d11"), "{why}");
+            }
+            other => panic!("{other:?}"),
+        }
+        match sim.d3d10_get_device(d) {
+            Err(SimError::Invalid { why }) => {
+                assert!(why.contains("d3d10 device"), "{why}");
+                assert!(!why.contains("d3d10 context"), "{why}");
+                assert!(!why.contains("d3d9 device"), "{why}");
+            }
+            other => panic!("{other:?}"),
+        }
+    }
+
+    #[test]
+    fn d3d10_get_device_is_unsupported() {
+        let mut sim = Sim::new(h100());
+        let d = DeviceId(0);
+        match sim.d3d10_get_device(d) {
+            Err(SimError::Invalid { why }) => {
+                assert!(why.contains("d3d10 device"), "{why}");
+                assert!(!why.contains("d3d10 context"), "{why}");
+                assert!(!why.contains("d3d10 register"), "{why}");
+                assert!(!why.contains("d3d9 device"), "{why}");
+                assert!(!why.contains("d3d11 device"), "{why}");
+            }
+            other => panic!("{other:?}"),
+        }
+        sim.begin_capture(d, StreamId(0)).unwrap();
+        match sim.d3d10_get_device(d) {
+            Err(SimError::Invalid { why }) => {
+                assert!(why.contains("d3d10 device"), "{why}");
+            }
+            other => panic!("{other:?}"),
+        }
+        let _g = sim.end_capture().unwrap();
+        match sim.d3d10_get_device(DeviceId(99)) {
+            Err(SimError::Invalid { why }) => {
+                assert!(why.contains("device not in profile"), "{why}");
+            }
+            other => panic!("{other:?}"),
+        }
+        match sim.d3d10_get_devices(d) {
+            Err(SimError::Invalid { why }) => {
+                assert!(why.contains("d3d10"), "{why}");
+                assert!(!why.contains("d3d10 device"), "{why}");
+            }
+            other => panic!("{other:?}"),
+        }
+        match sim.d3d9_get_device(d) {
+            Err(SimError::Invalid { why }) => {
+                assert!(why.contains("d3d9 device"), "{why}");
+                assert!(!why.contains("d3d10 device"), "{why}");
+            }
+            other => panic!("{other:?}"),
+        }
+        match sim.d3d11_get_device(d) {
+            Err(SimError::Invalid { why }) => {
+                assert!(why.contains("d3d11 device"), "{why}");
+                assert!(!why.contains("d3d10 device"), "{why}");
             }
             other => panic!("{other:?}"),
         }
