@@ -5,6 +5,16 @@ Visible five-turn extract: [docs/chatgpt-share-6a920fe1.md](docs/chatgpt-share-6
 Complete share-API extract: [docs/chatgpt-share-6a920fe1/](docs/chatgpt-share-6a920fe1/).
 Work lands on `main`. No PRs.
 
+## Shipped 2026-09-01 — CUDA mipmapped texture 1D/2D dimension DeviceAttr caps
+
+`gpu-sim` `DeviceAttr::MaxTexture1DMipmappedWidth` /
+`MaxTexture2DMipmappedWidth` / `MaxTexture2DMipmappedHeight` are always
+0. CUDA mipmapped textures are not modeled. Query; legal during capture.
+Distinct from `MaxTexture1DWidth` and from linear and gather dims. This
+VM does not invent Engine `--texture-mipmap` or layered/cubemap texture
+attrs. `gpu-profile capture` is still refused. Dual score still has no
+`$/M tokens`.
+
 ## Shipped 2026-09-01 — CUDA texture 2D gather dimension DeviceAttr caps
 
 `gpu-sim` `DeviceAttr::MaxTexture2DGatherWidth` / `MaxTexture2DGatherHeight`

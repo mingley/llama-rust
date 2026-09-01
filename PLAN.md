@@ -6110,7 +6110,16 @@ model, do not celebrate the sim.
     `gpu-profile capture` is still refused. Dual score still has no
     `$/M tokens`.
 
-575. [ ] Next numbered PLAN item after 574 is the next `gpu-sim` / Engine /
+575. [x] `gpu-sim` `DeviceAttr::MaxTexture1DMipmappedWidth` /
+    `MaxTexture2DMipmappedWidth` / `MaxTexture2DMipmappedHeight` are CUDA
+    mipmapped-texture dimension caps. Always 0 (CUDA mipmapped textures
+    are not modeled). Query; legal during capture. Distinct from
+    `MaxTexture1DWidth` and from linear and gather dims. This VM does not
+    invent Engine `--texture-mipmap`, layered or cubemap texture attrs,
+    occupancy SM counts, or `cudaChooseDevice`. `gpu-profile capture` is
+    still refused. Dual score still has no `$/M tokens`.
+
+576. [ ] Next numbered PLAN item after 575 is the next `gpu-sim` / Engine /
     serve / expertvm mechanical API that is still missing, or the next official
     decode family. Prefer remaining CUDA-shaped twins over more
     OpenAI HTTP veneer. Do not invent F32 `output.scale`. Do not invent a
@@ -6250,6 +6259,11 @@ model, do not celebrate the sim.
     `MaxTexture2DGatherHeight`. Do not invent Engine `--texture-gather`.
     Do not invent layered or cubemap texture attrs this slice. Do not
     reverse gather texture dims staying 0.
+    Do not invent a second `cudaDevAttrMaxTexture1DMipmappedWidth`,
+    `MaxTexture2DMipmappedWidth`, or `MaxTexture2DMipmappedHeight`. Do
+    not invent Engine `--texture-mipmap`. Do not invent layered or
+    cubemap texture attrs this slice. Do not reverse mipmapped texture
+    dims staying 0.
     Do not invent a second `cudaStreamAddCallback`.
     Do not invent Engine `--stream-callback` (same wall as second live
     `cudaLaunchHostFunc` after miss DMA).
@@ -6519,6 +6533,9 @@ model, do not celebrate the sim.
     Do not invent a second texture-gather DeviceAttr family. Do not
     invent Engine `--gather-texture`. Do not invent CUDA tex2Dgather
     this slice. Do not reverse gather texture dims staying 0.
+    Do not invent a second mipmapped-texture DeviceAttr family. Do not
+    invent Engine `--mipmap-texture`. Do not invent CUDA tex1DLod this
+    slice. Do not reverse mipmapped texture dims staying 0.
     Do not invent a second DeviceLaunch in-flight destroy-complete check or Engine
     `--device-launch-destroy`. Do not abort an in-flight DeviceLaunch when
     `destroy_graph` succeeds. Do not delay destroy of an idle exec. Do not invent
@@ -7014,6 +7031,9 @@ model, do not celebrate the sim.
     Do not invent a second maxTexture2DGather DeviceProperties field. Do
     not invent Engine `--texture-2d-gather`. Do not reverse those gather
     dims as 0.
+    Do not invent a second maxTexture1DMipmap DeviceProperties field. Do
+    not invent Engine `--texture-1d-mipmap`. Do not reverse those
+    mipmapped dims as 0.
     Do not
     spend the next item on an OpenAI-compatible HTTP veneer.
 

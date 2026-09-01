@@ -971,6 +971,16 @@ pub enum DeviceAttr {
     /// `cudaDevAttrMaxTexture2DGatherHeight` (always 0; CUDA texture gather
     /// is not modeled). Distinct from [`Self::MaxTexture2DGatherWidth`].
     MaxTexture2DGatherHeight,
+    /// `cudaDevAttrMaxTexture1DMipmappedWidth` (always 0; CUDA mipmapped
+    /// textures are not modeled). Distinct from [`Self::MaxTexture1DWidth`].
+    MaxTexture1DMipmappedWidth,
+    /// `cudaDevAttrMaxTexture2DMipmappedWidth` (always 0; CUDA mipmapped
+    /// textures are not modeled). Distinct from [`Self::MaxTexture2DWidth`].
+    MaxTexture2DMipmappedWidth,
+    /// `cudaDevAttrMaxTexture2DMipmappedHeight` (always 0; CUDA mipmapped
+    /// textures are not modeled). Distinct from
+    /// [`Self::MaxTexture2DMipmappedWidth`].
+    MaxTexture2DMipmappedHeight,
     /// `cudaDevAttrMaxSurface1DWidth` (always 0; CUDA surfaces are not
     /// modeled). Distinct from [`Self::SurfaceAlignment`].
     MaxSurface1DWidth,
@@ -1390,6 +1400,21 @@ pub struct DeviceProperties {
     /// gather is not modeled. Distinct from
     /// [`Self::max_texture_2d_gather_width`].
     pub max_texture_2d_gather_height: u32,
+    /// `cudaDeviceProp::maxTexture1DMipmap`
+    /// ([`DeviceAttr::MaxTexture1DMipmappedWidth`]). Always 0; CUDA
+    /// mipmapped textures are not modeled. Distinct from
+    /// [`Self::max_texture_1d_width`].
+    pub max_texture_1d_mipmapped_width: u32,
+    /// `cudaDeviceProp::maxTexture2DMipmap[0]`
+    /// ([`DeviceAttr::MaxTexture2DMipmappedWidth`]). Always 0; CUDA
+    /// mipmapped textures are not modeled. Distinct from
+    /// [`Self::max_texture_2d_width`].
+    pub max_texture_2d_mipmapped_width: u32,
+    /// `cudaDeviceProp::maxTexture2DMipmap[1]`
+    /// ([`DeviceAttr::MaxTexture2DMipmappedHeight`]). Always 0; CUDA
+    /// mipmapped textures are not modeled. Distinct from
+    /// [`Self::max_texture_2d_mipmapped_width`].
+    pub max_texture_2d_mipmapped_height: u32,
     /// `cudaDeviceProp::maxSurface1D` ([`DeviceAttr::MaxSurface1DWidth`]).
     /// Always 0; CUDA surfaces are not modeled. Distinct from
     /// [`Self::surface_alignment`].
