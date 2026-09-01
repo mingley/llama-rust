@@ -585,6 +585,9 @@ D3D12 CUDA-in-graphics is not modeled; no Engine flag).
 graphics resources are not modeled; no Engine flag).
 `gpu-sim` `graphics_unmap_resources` is `cuGraphicsUnmapResources`
 (Invalid; no graphics-resource handles; no Engine flag).
+`gpu-sim` `graphics_resource_get_mapped_pointer` is
+`cuGraphicsResourceGetMappedPointer` (Invalid; no graphics-resource
+handles; no Engine flag).
 `gpu-sim` `graphics_unregister_resource` is `cuGraphicsUnregisterResource`
 (Invalid; no graphics-resource handles; no Engine flag).
 `gpu-sim` `graphics_gl_register_buffer` is `cuGraphicsGLRegisterBuffer`
