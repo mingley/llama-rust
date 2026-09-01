@@ -19153,6 +19153,7 @@ impl Sim {
             | DeviceAttr::MaxTexture1DMipmappedWidth
             | DeviceAttr::MaxTexture2DMipmappedWidth
             | DeviceAttr::MaxTexture2DMipmappedHeight
+            | DeviceAttr::MaxTextureCubemapWidth
             | DeviceAttr::MaxSurface1DWidth
             | DeviceAttr::MaxSurface2DWidth
             | DeviceAttr::MaxSurface2DHeight
@@ -19216,6 +19217,7 @@ impl Sim {
     /// 1 on example H100. Linear texture 1D/2D dims are always 0.
     /// Texture 2D gather dims are always 0.
     /// Mipmapped texture 1D/2D dims are always 0.
+    /// Cubemap texture width is always 0.
     /// Occupancy SM counts, clock rates, and warp size are not.
     /// Unknown devices are Invalid.
     pub fn device_get_properties(&self, device: DeviceId) -> Result<DeviceProperties, SimError> {
@@ -19259,6 +19261,7 @@ impl Sim {
             max_texture_1d_mipmapped_width: 0,
             max_texture_2d_mipmapped_width: 0,
             max_texture_2d_mipmapped_height: 0,
+            max_texture_cubemap_width: 0,
             max_surface_1d_width: 0,
             max_surface_2d_width: 0,
             max_surface_2d_height: 0,

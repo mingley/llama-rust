@@ -491,6 +491,8 @@ and Pitch; no Engine flag).
 `gpu-sim` mipmapped texture 1D/2D dim caps are always 0
 (`cudaDevAttrMaxTexture1DMipmappedWidth`, `MaxTexture2DMipmappedWidth`
 and Height; no Engine flag).
+`gpu-sim` cubemap texture width is always 0
+(`cudaDevAttrMaxTextureCubemapWidth`; no Engine flag).
 `gpu-sim` surface 1D/2D/3D dim caps are always 0 (`cudaDevAttrMaxSurface1DWidth`,
 `MaxSurface2DWidth` and Height, `MaxSurface3DWidth` / Height / Depth;
 no Engine flag).
