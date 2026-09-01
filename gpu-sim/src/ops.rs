@@ -3056,7 +3056,9 @@ impl GraphInstantiateFlags {
     /// is legal after upload. Host [`crate::Sim::launch_graph`] stays legal.
     /// The graph cannot be empty and must contain at least one kernel, memcpy,
     /// or memset node. Mem alloc/free, events, child graphs, conditionals,
-    /// host, empty, and batch-mem nodes are Invalid.
+    /// host, empty, and batch-mem nodes are Invalid. Memcpy
+    /// [`crate::Place::Device`] must match the graph origin device
+    /// ([`crate::Place::HostPinned`] stays).
     /// Cannot combine with [`GraphInstantiateFlags::AUTO_FREE_ON_LAUNCH`].
     pub const DEVICE_LAUNCH: u32 = 4;
     /// `cudaGraphInstantiateFlagUseNodePriority`: recorded kernels keep the

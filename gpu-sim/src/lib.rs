@@ -824,7 +824,9 @@
 //! [`launch_graph`](Sim::launch_graph) stays legal. The graph cannot be empty
 //! and must contain at least one kernel, memcpy, or memset node (Invalid
 //! `"device launch empty"`). Mem alloc/free, events, child graphs,
-//! conditionals, host, empty, and batch-mem nodes are Invalid; cannot combine
+//! conditionals, host, empty, and batch-mem nodes are Invalid. Memcpy
+//! [`Place::Device`] must match the graph origin device
+//! ([`Place::HostPinned`] stays); cannot combine
 //! with [`GraphInstantiateFlags::AUTO_FREE_ON_LAUNCH`] (Invalid
 //! `"device launch auto free"`).
 //! [`instantiate_graph_with_params`](Sim::instantiate_graph_with_params) is
@@ -30877,6 +30879,83 @@ mod tests {
             .unwrap();
         sim.begin_capture(d, s).unwrap();
         match sim.instantiate_graph_with_flags(empty, GraphInstantiateFlags::DEVICE_LAUNCH) {
+            Err(SimError::Invalid { why }) => assert!(why.contains("capture"), "{why}"),
+            other => panic!("{other:?}"),
+        }
+        let _end = sim.end_capture().unwrap();
+    }
+
+    #[test]
+    fn device_launch_rejects_off_device_memcpy() {
+        let p = HardwareProfile::parse(
+            "gpus=2\nfp16_flops=1000000\nhbm_bps=1000000000000\ncompute_slots=1\nlaunch_overhead_ns=1\n",
+        )
+        .expect("2gpu");
+        let mut sim = Sim::new(p);
+        let d0 = DeviceId(0);
+        let d1 = DeviceId(1);
+        let s = StreamId(0);
+        let a = sim.malloc(d0, 64).unwrap();
+        let peer = sim.create_graph(d0, s).unwrap();
+        sim.graph_add_memcpy_1d(peer, Place::Device(d1), Place::Device(d0), a, 64)
+            .unwrap();
+        let err = sim
+            .instantiate_graph_with_flags(peer, GraphInstantiateFlags::DEVICE_LAUNCH)
+            .unwrap_err();
+        match err {
+            SimError::Invalid { why } => {
+                assert!(why.contains("device launch instantiate flag"), "{why}")
+            }
+            other => panic!("{other:?}"),
+        }
+        let mut params = GraphInstantiateParams {
+            flags: GraphInstantiateFlags::DEVICE_LAUNCH,
+            ..GraphInstantiateParams::default()
+        };
+        let err = sim
+            .instantiate_graph_with_params(peer, &mut params)
+            .unwrap_err();
+        match err {
+            SimError::Invalid { why } => {
+                assert!(why.contains("device launch instantiate flag"), "{why}")
+            }
+            other => panic!("{other:?}"),
+        }
+        assert_eq!(
+            params.result,
+            GraphInstantiateResult::NodeOperationNotSupported
+        );
+        assert_eq!(params.err_node, Some(0));
+        let dst = sim.create_graph(d0, s).unwrap();
+        sim.graph_add_memcpy_1d(dst, Place::HostPinned, Place::Device(d1), a, 64)
+            .unwrap();
+        let err = sim
+            .instantiate_graph_with_flags(dst, GraphInstantiateFlags::DEVICE_LAUNCH)
+            .unwrap_err();
+        match err {
+            SimError::Invalid { why } => {
+                assert!(why.contains("device launch instantiate flag"), "{why}")
+            }
+            other => panic!("{other:?}"),
+        }
+        let local = sim.create_graph(d0, s).unwrap();
+        sim.graph_add_memcpy_1d(local, Place::HostPinned, Place::Device(d0), a, 64)
+            .unwrap();
+        let _ = sim
+            .instantiate_graph_with_flags(local, GraphInstantiateFlags::DEVICE_LAUNCH)
+            .unwrap();
+        let d2d = sim.create_graph(d0, s).unwrap();
+        sim.graph_add_memcpy_1d(d2d, Place::Device(d0), Place::Device(d0), a, 64)
+            .unwrap();
+        let _ = sim
+            .instantiate_graph_with_flags(d2d, GraphInstantiateFlags::DEVICE_LAUNCH)
+            .unwrap();
+        let host = sim.create_graph(d0, s).unwrap();
+        sim.graph_add_memcpy_1d(host, Place::Device(d1), Place::Device(d0), a, 64)
+            .unwrap();
+        let _ = sim.instantiate_graph(host).unwrap();
+        sim.begin_capture(d0, s).unwrap();
+        match sim.instantiate_graph_with_flags(peer, GraphInstantiateFlags::DEVICE_LAUNCH) {
             Err(SimError::Invalid { why }) => assert!(why.contains("capture"), "{why}"),
             other => panic!("{other:?}"),
         }

@@ -3845,7 +3845,9 @@ impl Sim {
     /// must contain at least one kernel, memcpy, or memset node (Invalid
     /// `"device launch empty"`). Mem alloc/free, events, child graphs,
     /// conditionals, host, empty, and batch-mem nodes are Invalid for
-    /// device-launch. [`GraphInstantiateFlags::DEVICE_LAUNCH`] cannot combine
+    /// device-launch. Memcpy [`crate::Place::Device`] must match the graph
+    /// origin device ([`crate::Place::HostPinned`] stays).
+    /// [`GraphInstantiateFlags::DEVICE_LAUNCH`] cannot combine
     /// with [`GraphInstantiateFlags::AUTO_FREE_ON_LAUNCH`] (Invalid
     /// `"device launch auto free"`). Instantiating an exec id is a no-op when
     /// `flags` adds no new bits.
@@ -4124,7 +4126,8 @@ impl Sim {
                 !s.destroyed
                     && (device_launch_refused(&s.kind)
                         || s.programmatic_event.is_some()
-                        || s.launch_completion.is_some())
+                        || s.launch_completion.is_some()
+                        || device_launch_memcpy_off_device(&s.kind, origin_dev))
             })
         } else {
             None
@@ -22796,6 +22799,21 @@ fn device_launch_has_work(kind: &Kind) -> bool {
         kind,
         Kind::Kernel { .. } | Kind::Memcpy(_) | Kind::Memset(_)
     )
+}
+
+fn device_launch_memcpy_off_device(kind: &Kind, origin: DeviceId) -> bool {
+    let Kind::Memcpy(op) = kind else {
+        return false;
+    };
+    memcpy_place_off_device(op.src, origin) || memcpy_place_off_device(op.dst, origin)
+}
+
+fn memcpy_place_off_device(place: Place, origin: DeviceId) -> bool {
+    match place {
+        Place::Device(d) => d != origin,
+        Place::Host => true,
+        Place::HostPinned => false,
+    }
 }
 
 fn kind_from_batch(op: BatchMemOp) -> Kind {

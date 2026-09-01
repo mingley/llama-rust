@@ -511,7 +511,8 @@ priority; `DEVICE_LAUNCH` enables `device_launch_graph` after upload —
 host `launch_graph` stays legal. The graph cannot be empty and must
 contain at least one kernel, memcpy, or memset node (`"device launch
 empty"`). Mem alloc/free, events, child graphs, conditionals, host,
-empty, and batch-mem nodes are Invalid; `update_graph` of a
+empty, and batch-mem nodes are Invalid. Memcpy `Place::Device` must match
+the graph origin device (`Place::HostPinned` stays); `update_graph` of a
 device-launch exec is Invalid; cannot combine with `AUTO_FREE_ON_LAUNCH`
 (`"device launch auto free"`).
 `instantiate_graph_with_params` is `cudaGraphInstantiateWithParams`

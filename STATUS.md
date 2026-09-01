@@ -5,6 +5,16 @@ Visible five-turn extract: [docs/chatgpt-share-6a920fe1.md](docs/chatgpt-share-6
 Complete share-API extract: [docs/chatgpt-share-6a920fe1/](docs/chatgpt-share-6a920fe1/).
 Work lands on `main`. No PRs.
 
+## Shipped 2026-09-01 — DeviceLaunch memcpy stays on the graph device
+
+`gpu-sim` CUDA DeviceLaunch memcpy `Place::Device` must match the graph
+origin device (`HostPinned` stays; off-device Device is `"device launch
+instantiate flag"`). Host instantiate of that memcpy stays. Capture is
+still reported first. Kernel, HostPinned memcpy, and same-device D2D
+DeviceLaunch stay legal. This VM does not invent Engine
+`--device-launch-memcpy` or CUDA-array memcpy. `gpu-profile capture` is
+still refused. Dual score still has no `$/M tokens`.
+
 ## Shipped 2026-09-01 — DeviceLaunch cannot instantiate an empty graph
 
 `gpu-sim` CUDA `cudaGraphInstantiateFlagDeviceLaunch` cannot instantiate
