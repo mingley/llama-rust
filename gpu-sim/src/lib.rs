@@ -713,6 +713,13 @@
 //! [`MaxSurface3DDepth`](DeviceAttr::MaxSurface3DDepth) are always 0 (CUDA
 //! surfaces are not modeled). Distinct from
 //! [`SurfaceAlignment`](DeviceAttr::SurfaceAlignment).
+//! [`DeviceAttr::MaxSurface1DLayeredWidth`],
+//! [`MaxSurface1DLayeredLayers`](DeviceAttr::MaxSurface1DLayeredLayers),
+//! [`MaxSurface2DLayeredWidth`](DeviceAttr::MaxSurface2DLayeredWidth),
+//! [`MaxSurface2DLayeredHeight`](DeviceAttr::MaxSurface2DLayeredHeight), and
+//! [`MaxSurface2DLayeredLayers`](DeviceAttr::MaxSurface2DLayeredLayers) are
+//! always 0 (CUDA layered surfaces are not modeled). Distinct from
+//! [`MaxSurface1DWidth`](DeviceAttr::MaxSurface1DWidth).
 //! [`DeviceAttr::MaxPitch`] is [`DeviceAttr::MAX_PITCH`] (this VM does not cap
 //! 2D memcpy / `cudaMallocPitch` pitch). Distinct from
 //! [`TexturePitchAlignment`](DeviceAttr::TexturePitchAlignment).
@@ -19135,6 +19142,53 @@ mod tests {
         );
         let _g = sim.end_capture().unwrap();
         match sim.device_get_attribute(DeviceId(99), DeviceAttr::MaxSurface1DWidth) {
+            Err(SimError::Invalid { why }) => {
+                assert!(why.contains("device not in profile"), "{why}");
+            }
+            other => panic!("{other:?}"),
+        }
+    }
+
+    #[test]
+    fn device_get_attribute_max_surface_layered_dims_are_zero() {
+        let mut sim = Sim::new(h100());
+        let d = DeviceId(0);
+        let hp = sim.device_get_properties(d).unwrap();
+        assert_eq!(hp.max_surface_1d_layered_width, 0);
+        assert_eq!(hp.max_surface_1d_layered_layers, 0);
+        assert_eq!(hp.max_surface_2d_layered_width, 0);
+        assert_eq!(hp.max_surface_2d_layered_height, 0);
+        assert_eq!(hp.max_surface_2d_layered_layers, 0);
+        assert_eq!(hp.max_surface_1d_width, 0);
+        assert_eq!(hp.max_surface_2d_width, 0);
+        assert_eq!(
+            sim.device_get_attribute(d, DeviceAttr::MaxSurface1DLayeredWidth)
+                .unwrap(),
+            0
+        );
+        assert_eq!(
+            sim.device_get_attribute(d, DeviceAttr::MaxSurface1DLayeredLayers)
+                .unwrap(),
+            0
+        );
+        assert_eq!(
+            sim.device_get_attribute(d, DeviceAttr::MaxSurface2DLayeredHeight)
+                .unwrap(),
+            0
+        );
+        assert_eq!(
+            sim.device_get_attribute(d, DeviceAttr::MaxSurface2DLayeredLayers)
+                .unwrap(),
+            0
+        );
+        sim.begin_capture(d, StreamId(0)).unwrap();
+        assert_eq!(
+            sim.device_get_attribute(d, DeviceAttr::MaxSurface2DLayeredWidth)
+                .unwrap(),
+            0
+        );
+        let _g = sim.end_capture().unwrap();
+        match sim.device_get_attribute(DeviceId(99), DeviceAttr::MaxSurface1DLayeredLayers) {
             Err(SimError::Invalid { why }) => {
                 assert!(why.contains("device not in profile"), "{why}");
             }

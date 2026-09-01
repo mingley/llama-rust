@@ -19167,6 +19167,11 @@ impl Sim {
             | DeviceAttr::MaxSurface3DWidth
             | DeviceAttr::MaxSurface3DHeight
             | DeviceAttr::MaxSurface3DDepth
+            | DeviceAttr::MaxSurface1DLayeredWidth
+            | DeviceAttr::MaxSurface1DLayeredLayers
+            | DeviceAttr::MaxSurface2DLayeredWidth
+            | DeviceAttr::MaxSurface2DLayeredHeight
+            | DeviceAttr::MaxSurface2DLayeredLayers
             | DeviceAttr::HandleTypeWin32HandleSupported
             | DeviceAttr::HandleTypeWin32KmtHandleSupported
             | DeviceAttr::HandleTypeFabricSupported
@@ -19227,6 +19232,7 @@ impl Sim {
     /// Cubemap texture width is always 0.
     /// Layered texture 1D/2D dims are always 0.
     /// Cubemap layered texture dims are always 0.
+    /// Layered surface 1D/2D dims are always 0.
     /// Occupancy SM counts, clock rates, and warp size are not.
     /// Unknown devices are Invalid.
     pub fn device_get_properties(&self, device: DeviceId) -> Result<DeviceProperties, SimError> {
@@ -19284,6 +19290,11 @@ impl Sim {
             max_surface_3d_width: 0,
             max_surface_3d_height: 0,
             max_surface_3d_depth: 0,
+            max_surface_1d_layered_width: 0,
+            max_surface_1d_layered_layers: 0,
+            max_surface_2d_layered_width: 0,
+            max_surface_2d_layered_height: 0,
+            max_surface_2d_layered_layers: 0,
             mem_pitch: DeviceAttr::MAX_PITCH,
             shared_mem_per_block: gpu.max_shared_mem_per_block,
             shared_mem_per_block_optin: gpu.max_shared_mem_per_block_optin,

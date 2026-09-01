@@ -1028,6 +1028,24 @@ pub enum DeviceAttr {
     /// `cudaDevAttrMaxSurface3DDepth` (always 0; CUDA surfaces are not
     /// modeled). Distinct from [`Self::MaxSurface3DHeight`].
     MaxSurface3DDepth,
+    /// `cudaDevAttrMaxSurface1DLayeredWidth` (always 0; CUDA layered
+    /// surfaces are not modeled). Distinct from [`Self::MaxSurface1DWidth`].
+    MaxSurface1DLayeredWidth,
+    /// `cudaDevAttrMaxSurface1DLayeredLayers` (always 0; CUDA layered
+    /// surfaces are not modeled). Distinct from
+    /// [`Self::MaxSurface1DLayeredWidth`].
+    MaxSurface1DLayeredLayers,
+    /// `cudaDevAttrMaxSurface2DLayeredWidth` (always 0; CUDA layered
+    /// surfaces are not modeled). Distinct from [`Self::MaxSurface2DWidth`].
+    MaxSurface2DLayeredWidth,
+    /// `cudaDevAttrMaxSurface2DLayeredHeight` (always 0; CUDA layered
+    /// surfaces are not modeled). Distinct from
+    /// [`Self::MaxSurface2DLayeredWidth`].
+    MaxSurface2DLayeredHeight,
+    /// `cudaDevAttrMaxSurface2DLayeredLayers` (always 0; CUDA layered
+    /// surfaces are not modeled). Distinct from
+    /// [`Self::MaxSurface2DLayeredHeight`].
+    MaxSurface2DLayeredLayers,
     /// `cudaDevAttrMaxPitch` ([`Self::MAX_PITCH`]; this VM does not cap 2D
     /// memcpy / `cudaMallocPitch` pitch). Distinct from
     /// [`Self::TexturePitchAlignment`] (always 0; textures are not modeled).
@@ -1505,6 +1523,29 @@ pub struct DeviceProperties {
     /// Always 0; CUDA surfaces are not modeled. Distinct from
     /// [`Self::max_surface_3d_height`].
     pub max_surface_3d_depth: u32,
+    /// `cudaDeviceProp::maxSurface1DLayered[0]`
+    /// ([`DeviceAttr::MaxSurface1DLayeredWidth`]). Always 0; CUDA layered
+    /// surfaces are not modeled. Distinct from [`Self::max_surface_1d_width`].
+    pub max_surface_1d_layered_width: u32,
+    /// `cudaDeviceProp::maxSurface1DLayered[1]`
+    /// ([`DeviceAttr::MaxSurface1DLayeredLayers`]). Always 0; CUDA layered
+    /// surfaces are not modeled. Distinct from
+    /// [`Self::max_surface_1d_layered_width`].
+    pub max_surface_1d_layered_layers: u32,
+    /// `cudaDeviceProp::maxSurface2DLayered[0]`
+    /// ([`DeviceAttr::MaxSurface2DLayeredWidth`]). Always 0; CUDA layered
+    /// surfaces are not modeled. Distinct from [`Self::max_surface_2d_width`].
+    pub max_surface_2d_layered_width: u32,
+    /// `cudaDeviceProp::maxSurface2DLayered[1]`
+    /// ([`DeviceAttr::MaxSurface2DLayeredHeight`]). Always 0; CUDA layered
+    /// surfaces are not modeled. Distinct from
+    /// [`Self::max_surface_2d_layered_width`].
+    pub max_surface_2d_layered_height: u32,
+    /// `cudaDeviceProp::maxSurface2DLayered[2]`
+    /// ([`DeviceAttr::MaxSurface2DLayeredLayers`]). Always 0; CUDA layered
+    /// surfaces are not modeled. Distinct from
+    /// [`Self::max_surface_2d_layered_height`].
+    pub max_surface_2d_layered_layers: u32,
     /// `cudaDevAttrMaxPitch` ([`DeviceAttr::MaxPitch`] / `memPitch`).
     /// [`DeviceAttr::MAX_PITCH`]: this VM does not cap 2D memcpy /
     /// `cudaMallocPitch` pitch. Distinct from [`Self::texture_pitch_alignment`].

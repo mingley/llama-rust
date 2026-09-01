@@ -501,6 +501,9 @@ Height, and Layers; no Engine flag).
 `gpu-sim` surface 1D/2D/3D dim caps are always 0 (`cudaDevAttrMaxSurface1DWidth`,
 `MaxSurface2DWidth` and Height, `MaxSurface3DWidth` / Height / Depth;
 no Engine flag).
+`gpu-sim` layered surface 1D/2D dim caps are always 0
+(`cudaDevAttrMaxSurface1DLayeredWidth` and Layers, `MaxSurface2DLayeredWidth`,
+Height, and Layers; no Engine flag).
 Default `--expert-sim` keeps
 one compute stream, exclusive compute (`compute_slots=1`), a full chip of
 SMs, and a full-device clock sample.
