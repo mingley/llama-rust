@@ -5,6 +5,15 @@ Visible five-turn extract: [docs/chatgpt-share-6a920fe1.md](docs/chatgpt-share-6
 Complete share-API extract: [docs/chatgpt-share-6a920fe1/](docs/chatgpt-share-6a920fe1/).
 Work lands on `main`. No PRs.
 
+## Shipped 2026-09-01 — Parked exec GetLocalId is unknown
+
+`gpu-sim` CUDA `cuGraphNodeGetLocalId` / `cuGraphNodeGetToolsId` of an
+exec whose handle was destroyed while a launch was in flight is Invalid
+`"unknown graph"`. Query; capture is legal. Live exec GetLocalId stays.
+Definition GetLocalId stays. GetToolsId of a parked dest already unknown
+via `graph_get_id`. This VM does not invent Engine `--graph-local-id-gone`.
+`gpu-profile capture` is still refused. Dual score still has no `$/M tokens`.
+
 ## Shipped 2026-09-01 — Parked exec GetDependencies is unknown
 
 `gpu-sim` CUDA `cudaGraphNodeGetDependencies` /

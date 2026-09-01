@@ -9956,10 +9956,13 @@ impl Sim {
     /// Matches the node id printed by [`Self::graph_debug_dot`] (`n0`, `n1`,
     /// …). Together with [`Self::graph_get_id`] the pair uniquely identifies a
     /// live node. Destroyed or unknown nodes are Invalid `"unknown graph node"`.
+    /// A parked in-flight-destroyed exec is Invalid `"unknown graph"` (CUDA
+    /// `cuGraphNodeGetLocalId` of a destroyed `CUgraphExec`). Distinct from
+    /// [`Self::graph_get_id`] (graph id, not node local id). Live exec
+    /// GetLocalId stays. Definition GetLocalId of the live graph while that
+    /// exec is parked stays. Live in-flight GetLocalId stays.
     pub fn graph_node_get_local_id(&self, graph: GraphId, node: usize) -> Result<u32, SimError> {
-        let g = self.graphs.get(&graph).ok_or(SimError::Invalid {
-            why: "unknown graph",
-        })?;
+        let g = self.live_graph(graph)?;
         let _live = live_ok(g.steps.get(node).ok_or(SimError::Invalid {
             why: "unknown graph node",
         })?)?;
@@ -9974,7 +9977,9 @@ impl Sim {
     /// [`Self::graph_node_get_local_id`] (debug-dot `n0`) and
     /// [`Self::graph_get_id`]. A definition, instantiate exec, and clone each
     /// assign different tools ids. Destroyed or unknown nodes are Invalid
-    /// `"unknown graph node"`.
+    /// `"unknown graph node"`. A parked in-flight-destroyed exec is Invalid
+    /// `"unknown graph"` (CUDA `cuGraphNodeGetToolsId`). Query; capture is
+    /// legal. Live exec GetToolsId stays. Definition GetToolsId stays.
     pub fn graph_node_get_tools_id(&self, graph: GraphId, node: usize) -> Result<u64, SimError> {
         let local = self.graph_node_get_local_id(graph, node)?;
         let gid = self.graph_get_id(graph)?;

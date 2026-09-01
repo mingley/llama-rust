@@ -1263,12 +1263,13 @@
 //! [`graph_node_get_local_id`](Sim::graph_node_get_local_id) /
 //! [`graph_node_get_tools_id`](Sim::graph_node_get_tools_id) are
 //! `cudaGraphGetNodes` / `GetRootNodes` / `GetEdges` / `NodeGetDependentNodes`
-//! / `cudaGraphDebugDotPrint` / `cudaGraphGetId` / `cuGraphNodeGetLocalId` /
-//! `cuGraphNodeGetToolsId` (live nodes; flags `0` is kinds and edges;
+//! plus `cudaGraphDebugDotPrint` / `cudaGraphGetId` / `cuGraphNodeGetLocalId`
+//! plus `cuGraphNodeGetToolsId` (live nodes; flags `0` is kinds and edges;
 //! [`GraphDebugDotFlags::RUNTIME_TYPES`] prints `cudaGraphNodeType*` names;
 //! [`GraphDebugDotFlags::EXTRA_TOPO_INFO`] numbers existing edges;
 //! [`GraphDebugDotFlags::VERBOSE`] prints modeled params and ExtraTopoInfo). Destroyed slots are
-//! omitted. [`begin_capture_to_graph`](Sim::begin_capture_to_graph) is
+//! omitted. A parked in-flight-destroyed exec is `"unknown graph"` on
+//! GetLocalId plus GetToolsId; a live exec stays. Query; capture is legal. [`begin_capture_to_graph`](Sim::begin_capture_to_graph) is
 //! `cudaStreamBeginCaptureToGraph`: append captured nodes onto an existing
 //! uninstantiated graph; capture roots additionally depend on the given node
 //! indices (empty means extra roots). A parked in-flight-destroyed exec is
@@ -5842,6 +5843,49 @@ mod tests {
         let _end = sim.end_capture().unwrap();
         sim.synchronize().unwrap();
         match sim.graph_node_deps(exec, 0).unwrap_err() {
+            SimError::Invalid { why } => assert!(why.contains("unknown"), "{why}"),
+            other => panic!("{other:?}"),
+        }
+        sim.destroy_graph(g).unwrap();
+        sim.destroy_graph(_end).unwrap();
+    }
+
+    #[test]
+    fn parked_exec_get_local_id_is_unknown() {
+        let mut sim = Sim::new(h100());
+        let d = DeviceId(0);
+        let s = StreamId(0);
+        let a = sim.malloc(d, 4096).unwrap();
+        let g = sim.create_graph(d, s).unwrap();
+        sim.graph_add_kernel(g, KernelKind::other(1 << 40, 4096), &[a], &[a])
+            .unwrap();
+        let exec = sim.instantiate_graph(g).unwrap();
+        let live_local = sim.graph_node_get_local_id(exec, 0).unwrap();
+        let live_tools = sim.graph_node_get_tools_id(exec, 0).unwrap();
+        assert_eq!(live_local, sim.graph_node_get_local_id(g, 0).unwrap());
+        assert_ne!(live_tools, sim.graph_node_get_tools_id(g, 0).unwrap());
+        let launched = sim.launch_graph(exec, s).unwrap();
+        assert!(launched > 0);
+        let _in_flight = sim.graph_node_get_local_id(exec, 0).unwrap();
+        let _in_flight_tools = sim.graph_node_get_tools_id(exec, 0).unwrap();
+        sim.destroy_graph(exec).unwrap();
+        match sim.graph_node_get_local_id(exec, 0).unwrap_err() {
+            SimError::Invalid { why } => assert!(why.contains("unknown"), "{why}"),
+            other => panic!("{other:?}"),
+        }
+        match sim.graph_node_get_tools_id(exec, 0).unwrap_err() {
+            SimError::Invalid { why } => assert!(why.contains("unknown"), "{why}"),
+            other => panic!("{other:?}"),
+        }
+        assert_eq!(sim.graph_node_get_local_id(g, 0).unwrap(), live_local);
+        sim.begin_capture(d, StreamId(1)).unwrap();
+        match sim.graph_node_get_local_id(exec, 0).unwrap_err() {
+            SimError::Invalid { why } => assert!(why.contains("unknown"), "{why}"),
+            other => panic!("{other:?}"),
+        }
+        let _end = sim.end_capture().unwrap();
+        sim.synchronize().unwrap();
+        match sim.graph_node_get_local_id(exec, 0).unwrap_err() {
             SimError::Invalid { why } => assert!(why.contains("unknown"), "{why}"),
             other => panic!("{other:?}"),
         }
