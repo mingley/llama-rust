@@ -5033,7 +5033,15 @@ model, do not celebrate the sim.
     `gpu-profile capture` is still refused. Dual score still has no
     `$/M tokens`.
 
-467. [ ] Next numbered PLAN item after 466 is the next `gpu-sim` / Engine /
+467. [x] `gpu-sim` `graph_exec_kernel_node_copy_attributes` is
+    exec-snapshot `cudaGraphKernelNodeCopyAttributes`. Uninstantiated
+    graphs are Invalid. After instantiate this copies the launched
+    attributes. Definition CopyAttributes does not retarget the exec.
+    `sharedMemBytes` stays params, not CopyAttributes. Capture cannot
+    include it. No Engine `--graph-exec-copy-attrs`. `gpu-profile
+    capture` is still refused. Dual score still has no `$/M tokens`.
+
+468. [ ] Next numbered PLAN item after 467 is the next `gpu-sim` / Engine /
     serve / expertvm mechanical API that is still missing, or the next official
     decode family. Prefer remaining CUDA-shaped twins over more
     OpenAI HTTP veneer. Do not invent F32 `output.scale`. Do not invent a
@@ -5155,6 +5163,8 @@ model, do not celebrate the sim.
     Do not invent a second `graph_exec_alloc_get_params` /
     `graph_exec_free_get_params`. Do not invent Engine
     `--graph-exec-mem`.
+    Do not invent a second `graph_exec_kernel_node_copy_attributes`. Do
+    not invent Engine `--graph-exec-copy-attrs`.
     Do not invent `cuDeviceGetLuid`
     (Windows).
     Do not invent gemma4 `attn_q.scale` / `attn_output.scale` / `attn_k.scale` /

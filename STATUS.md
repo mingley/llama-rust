@@ -5,6 +5,16 @@ Visible five-turn extract: [docs/chatgpt-share-6a920fe1.md](docs/chatgpt-share-6
 Complete share-API extract: [docs/chatgpt-share-6a920fe1/](docs/chatgpt-share-6a920fe1/).
 Work lands on `main`. No PRs.
 
+## Shipped 2026-09-01 — CUDA exec kernel CopyAttributes
+
+`gpu-sim` `graph_exec_kernel_node_copy_attributes` is exec-snapshot
+`cudaGraphKernelNodeCopyAttributes`. Uninstantiated graphs are Invalid.
+After instantiate this copies the launched attributes. Definition
+CopyAttributes does not retarget the exec. `sharedMemBytes` stays
+params, not CopyAttributes. Capture cannot include it. No Engine
+`--graph-exec-copy-attrs`. `gpu-profile capture` is still refused. Dual
+score still has no `$/M tokens`.
+
 ## Shipped 2026-09-01 — CUDA exec mem-node GetParams
 
 `gpu-sim` `graph_exec_alloc_get_params` /

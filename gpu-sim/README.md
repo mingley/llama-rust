@@ -1137,6 +1137,8 @@ CUDA 13 portable-shared mode (`cudaLaunchAttributeSharedMemoryMode` /
 are the generic `cudaGraphKernelNodeGetAttribute` / `SetAttribute`
 (`KernelNodeAttr`). Typed getters stay. Definition Set does not retarget
 exec. Attr/value mismatch is Invalid `"kernel node attr"`.
+`graph_exec_kernel_node_copy_attributes` is the exec-snapshot CopyAttributes
+twin (uninstantiated graphs are Invalid).
 `kernel_pdl` is `cudaLaunchKernelEx` PDL:
 a wait kernel may start after the previous same-stream kernel's trigger
 (`pdl_trigger_permille`) instead of its completion. Overlap needs

@@ -9993,6 +9993,9 @@ impl Sim {
     /// launch from `src` to `dst`.
     ///
     /// Both nodes must be kernels. Capture cannot include it.
+    /// [`KernelNodeAttr::DynamicShared`] is `sharedMemBytes` (params, not
+    /// CopyAttributes). [`Self::graph_exec_kernel_node_copy_attributes`] is
+    /// the exec-snapshot twin.
     pub fn graph_kernel_node_copy_attributes(
         &mut self,
         dst_graph: GraphId,
@@ -10000,41 +10003,57 @@ impl Sim {
         src_graph: GraphId,
         src: usize,
     ) -> Result<(), SimError> {
+        self.copy_kernel_node_attributes(dst_graph, dst, src_graph, src, false)
+    }
+
+    /// Exec-snapshot [`Self::graph_kernel_node_copy_attributes`].
+    ///
+    /// Uninstantiated graphs are Invalid. After instantiate this copies the
+    /// launched attributes. Definition CopyAttributes does not retarget the
+    /// exec. Capture cannot include it.
+    pub fn graph_exec_kernel_node_copy_attributes(
+        &mut self,
+        dst_exec: GraphId,
+        dst: usize,
+        src_exec: GraphId,
+        src: usize,
+    ) -> Result<(), SimError> {
+        self.copy_kernel_node_attributes(dst_exec, dst, src_exec, src, true)
+    }
+
+    fn copy_kernel_node_attributes(
+        &mut self,
+        dst_graph: GraphId,
+        dst: usize,
+        src_graph: GraphId,
+        src: usize,
+        exec: bool,
+    ) -> Result<(), SimError> {
         self.fail_if_capturing("cannot capture kernel node copy attributes")?;
-        let pri = self.graph_kernel_node_get_priority(src_graph, src)?;
-        let pdl = self.graph_kernel_node_get_pdl(src_graph, src)?;
-        let pde = self.graph_kernel_node_get_programmatic_event(src_graph, src)?;
-        let lce = self.graph_kernel_node_get_launch_completion(src_graph, src)?;
-        let apw = self.graph_kernel_node_get_access_policy(src_graph, src)?;
-        self.graph_kernel_node_set_priority(dst_graph, dst, pri)?;
-        self.graph_kernel_node_set_pdl(dst_graph, dst, pdl)?;
-        self.graph_kernel_node_set_programmatic_event(dst_graph, dst, pde)?;
-        self.graph_kernel_node_set_launch_completion(dst_graph, dst, lce)?;
-        self.graph_kernel_node_set_access_policy(dst_graph, dst, apw)?;
-        let domain = self.graph_kernel_node_get_mem_sync_domain(src_graph, src)?;
-        let map = self.graph_kernel_node_get_mem_sync_domain_map(src_graph, src)?;
-        self.graph_kernel_node_set_mem_sync_domain(dst_graph, dst, domain)?;
-        self.graph_kernel_node_set_mem_sync_domain_map(dst_graph, dst, map)?;
-        let pc = self.graph_kernel_node_get_portable_cluster(src_graph, src)?;
-        self.graph_kernel_node_set_portable_cluster(dst_graph, dst, pc)?;
-        let cluster = self.graph_kernel_node_get_cluster(src_graph, src)?;
-        self.graph_kernel_node_set_cluster(dst_graph, dst, cluster)?;
-        let policy = self.graph_kernel_node_get_cluster_policy(src_graph, src)?;
-        self.graph_kernel_node_set_cluster_policy(dst_graph, dst, policy)?;
-        let preferred = self.graph_kernel_node_get_preferred_cluster(src_graph, src)?;
-        self.graph_kernel_node_set_preferred_cluster(dst_graph, dst, preferred)?;
-        let carveout = self.graph_kernel_node_get_carveout(src_graph, src)?;
-        self.graph_kernel_node_set_carveout(dst_graph, dst, carveout)?;
-        let upd = self.graph_kernel_node_get_device_updatable(src_graph, src)?;
-        self.graph_kernel_node_set_device_updatable(dst_graph, dst, upd)?;
-        let sm = self.graph_kernel_node_get_shared_mem(src_graph, src)?;
-        self.graph_kernel_node_set_shared_mem(dst_graph, dst, sm)?;
-        let ps = self.graph_kernel_node_get_portable_shared(src_graph, src)?;
-        self.graph_kernel_node_set_portable_shared(dst_graph, dst, ps)?;
-        let nv = self.graph_kernel_node_get_nvlink_util_centric(src_graph, src)?;
-        self.graph_kernel_node_set_nvlink_util_centric(dst_graph, dst, nv)?;
-        let coop = self.graph_kernel_node_get_cooperative(src_graph, src)?;
-        self.graph_kernel_node_set_cooperative(dst_graph, dst, coop)
+        let attrs = [
+            KernelNodeAttr::Priority,
+            KernelNodeAttr::Pdl,
+            KernelNodeAttr::ProgrammaticEvent,
+            KernelNodeAttr::LaunchCompletion,
+            KernelNodeAttr::AccessPolicy,
+            KernelNodeAttr::MemSyncDomain,
+            KernelNodeAttr::MemSyncDomainMap,
+            KernelNodeAttr::PortableCluster,
+            KernelNodeAttr::Cluster,
+            KernelNodeAttr::ClusterPolicy,
+            KernelNodeAttr::PreferredCluster,
+            KernelNodeAttr::Carveout,
+            KernelNodeAttr::DeviceUpdatable,
+            KernelNodeAttr::SharedMem,
+            KernelNodeAttr::PortableShared,
+            KernelNodeAttr::NvlinkUtilCentric,
+            KernelNodeAttr::Cooperative,
+        ];
+        for attr in attrs {
+            let value = self.kernel_node_attribute(src_graph, src, attr, exec)?;
+            self.set_kernel_node_attribute(dst_graph, dst, attr, value, exec)?;
+        }
+        Ok(())
     }
 
     /// `cudaGraphKernelNodeGetAttribute` on the graph definition.
