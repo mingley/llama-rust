@@ -832,7 +832,8 @@
 //! pinned mapped host, or managed. Exec memcpy/memset SetParams
 //! re-apply those dest rules. Mixed node green ctx is
 //! [`GraphInstantiateResult::MultipleDevicesNotSupported`]
-//! (`"graph multiple ctx"`); cannot combine
+//! (`"graph multiple ctx"`); exec SetParams re-apply that mixed-ctx
+//! rule; cannot combine
 //! with [`GraphInstantiateFlags::AUTO_FREE_ON_LAUNCH`] (Invalid
 //! `"device launch auto free"`).
 //! [`instantiate_graph_with_params`](Sim::instantiate_graph_with_params) is
@@ -1040,7 +1041,7 @@
 //! Clears the upload flag unless the node is device-updatable
 //! (`cudaLaunchAttributeDeviceUpdatableKernelNode`). Works on graphs with mem
 //! alloc/free nodes (CUDA cannot `cudaGraphExecUpdate` those). Capture cannot
-//! include it.
+//! include it. Device-launch execs re-apply instantiate mixed-ctx rules.
 //! [`graph_exec_memcpy_set_params`](Sim::graph_exec_memcpy_set_params) /
 //! [`graph_exec_memcpy_set_params_1d`](Sim::graph_exec_memcpy_set_params_1d) /
 //! [`graph_exec_memcpy_set_params_2d`](Sim::graph_exec_memcpy_set_params_2d) /
@@ -31321,6 +31322,126 @@ mod tests {
         }
         sim.begin_capture(d, s).unwrap();
         match sim.instantiate_graph_with_flags(mixed, GraphInstantiateFlags::DEVICE_LAUNCH) {
+            Err(SimError::Invalid { why }) => assert!(why.contains("capture"), "{why}"),
+            other => panic!("{other:?}"),
+        }
+        let _end = sim.end_capture().unwrap();
+    }
+
+    #[test]
+    fn device_launch_exec_set_params_rejects_mixed_green_ctx() {
+        let mut sim = Sim::new(h100());
+        let d = DeviceId(0);
+        let s = StreamId(0);
+        let a = sim.malloc(d, 64).unwrap();
+        let kind = KernelKind::other(8, 8);
+        let desc0 = sim
+            .dev_resource_generate_desc(&[SmResource {
+                start: 0,
+                width: 500,
+            }])
+            .unwrap();
+        let desc1 = sim
+            .dev_resource_generate_desc(&[SmResource {
+                start: 500,
+                width: 500,
+            }])
+            .unwrap();
+        let ctx0 = sim.green_ctx_create(desc0, d, 0).unwrap();
+        let ctx1 = sim.green_ctx_create(desc1, d, 0).unwrap();
+        let kparams = |ctx: Option<GreenCtxId>| KernelNodeParams {
+            kind: kind.clone(),
+            reads: vec![KernelBuf::whole(a)],
+            writes: vec![KernelBuf::whole(a)],
+            cooperative: false,
+            ctx,
+            shared_mem_bytes: 0,
+        };
+        let same = sim.create_graph(d, s).unwrap();
+        let s0 = sim
+            .graph_add_node(same, &[], GraphNodeParams::Kernel(kparams(Some(ctx0))))
+            .unwrap();
+        assert_eq!(s0.node, 0);
+        let s1 = sim
+            .graph_add_node(same, &[], GraphNodeParams::Kernel(kparams(Some(ctx0))))
+            .unwrap();
+        assert_eq!(s1.node, 1);
+        let exec = sim
+            .instantiate_graph_with_flags(same, GraphInstantiateFlags::DEVICE_LAUNCH)
+            .unwrap();
+        let err = sim
+            .graph_exec_kernel_set_params(exec, 1, &kparams(Some(ctx1)))
+            .unwrap_err();
+        match err {
+            SimError::Invalid { why } => assert!(why.contains("graph multiple ctx"), "{why}"),
+            other => panic!("{other:?}"),
+        }
+        sim.graph_exec_kernel_set_params(exec, 1, &kparams(Some(ctx0)))
+            .unwrap();
+        let solo = sim.create_graph(d, s).unwrap();
+        let one = sim
+            .graph_add_node(solo, &[], GraphNodeParams::Kernel(kparams(None)))
+            .unwrap();
+        assert_eq!(one.node, 0);
+        let solo_exec = sim
+            .instantiate_graph_with_flags(solo, GraphInstantiateFlags::DEVICE_LAUNCH)
+            .unwrap();
+        sim.graph_exec_kernel_set_params(solo_exec, 0, &kparams(Some(ctx0)))
+            .unwrap();
+        let host = sim.create_graph(d, s).unwrap();
+        let h0 = sim
+            .graph_add_node(host, &[], GraphNodeParams::Kernel(kparams(Some(ctx0))))
+            .unwrap();
+        assert_eq!(h0.node, 0);
+        let h1 = sim
+            .graph_add_node(host, &[], GraphNodeParams::Kernel(kparams(Some(ctx0))))
+            .unwrap();
+        assert_eq!(h1.node, 1);
+        let host_exec = sim.instantiate_graph(host).unwrap();
+        sim.graph_exec_kernel_set_params(host_exec, 1, &kparams(Some(ctx1)))
+            .unwrap();
+        let def = sim.create_graph(d, s).unwrap();
+        let d0n = sim
+            .graph_add_node(def, &[], GraphNodeParams::Kernel(kparams(Some(ctx0))))
+            .unwrap();
+        assert_eq!(d0n.node, 0);
+        let d1n = sim
+            .graph_add_node(def, &[], GraphNodeParams::Kernel(kparams(Some(ctx0))))
+            .unwrap();
+        assert_eq!(d1n.node, 1);
+        sim.graph_kernel_set_params(def, 1, &kparams(Some(ctx1)))
+            .unwrap();
+        let err = sim
+            .instantiate_graph_with_flags(def, GraphInstantiateFlags::DEVICE_LAUNCH)
+            .unwrap_err();
+        match err {
+            SimError::Invalid { why } => assert!(why.contains("graph multiple ctx"), "{why}"),
+            other => panic!("{other:?}"),
+        }
+        let mc = sim.create_graph(d, s).unwrap();
+        let mop = MemcpyOp::packed_1d(Place::HostPinned, Place::Device(d), a, 64);
+        let mc_params = |ctx: Option<GreenCtxId>| {
+            GraphNodeParams::Memcpy(MemcpyNodeParams {
+                op: mop.clone(),
+                ctx,
+            })
+        };
+        let m0 = sim.graph_add_node(mc, &[], mc_params(Some(ctx0))).unwrap();
+        assert_eq!(m0.node, 0);
+        let m1 = sim.graph_add_node(mc, &[], mc_params(Some(ctx0))).unwrap();
+        assert_eq!(m1.node, 1);
+        let mc_exec = sim
+            .instantiate_graph_with_flags(mc, GraphInstantiateFlags::DEVICE_LAUNCH)
+            .unwrap();
+        let err = sim
+            .graph_exec_node_set_params(mc_exec, 1, mc_params(Some(ctx1)))
+            .unwrap_err();
+        match err {
+            SimError::Invalid { why } => assert!(why.contains("graph multiple ctx"), "{why}"),
+            other => panic!("{other:?}"),
+        }
+        sim.begin_capture(d, s).unwrap();
+        match sim.graph_exec_kernel_set_params(exec, 1, &kparams(Some(ctx1))) {
             Err(SimError::Invalid { why }) => assert!(why.contains("capture"), "{why}"),
             other => panic!("{other:?}"),
         }

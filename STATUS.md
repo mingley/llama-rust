@@ -5,6 +5,17 @@ Visible five-turn extract: [docs/chatgpt-share-6a920fe1.md](docs/chatgpt-share-6
 Complete share-API extract: [docs/chatgpt-share-6a920fe1/](docs/chatgpt-share-6a920fe1/).
 Work lands on `main`. No PRs.
 
+## Shipped 2026-09-01 — DeviceLaunch exec SetParams mixed ctx
+
+`gpu-sim` CUDA DeviceLaunch exec SetParams re-apply mixed green-ctx
+rules (`"graph multiple ctx"`). Same-ctx DeviceLaunch SetParams stays.
+Single-node ctx SetParams stays. Definition SetParams still defer to
+instantiate. Host-instantiated exec mixed-ctx SetParams stays. Capture
+is still reported first. This VM does not invent Engine
+`--device-launch-set-ctx` or a second MultipleCtxs result for SetParams.
+`gpu-profile capture` is still refused. Dual score still has no
+`$/M tokens`.
+
 ## Shipped 2026-09-01 — DeviceLaunch exec SetParams re-check dest
 
 `gpu-sim` CUDA DeviceLaunch exec memcpy/memset SetParams re-apply

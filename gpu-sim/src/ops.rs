@@ -3062,6 +3062,7 @@ impl GraphInstantiateFlags {
     /// device, pinned mapped host, or managed. Exec memcpy/memset
     /// SetParams re-apply those dest rules. Mixed node green ctx is
     /// [`crate::GraphInstantiateResult::MultipleDevicesNotSupported`].
+    /// Exec SetParams re-apply that mixed-ctx rule.
     /// Cannot combine with [`GraphInstantiateFlags::AUTO_FREE_ON_LAUNCH`].
     pub const DEVICE_LAUNCH: u32 = 4;
     /// `cudaGraphInstantiateFlagUseNodePriority`: recorded kernels keep the

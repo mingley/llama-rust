@@ -4470,8 +4470,9 @@ impl Sim {
     /// `graph_set_params_ns`. Clears the upload flag unless the node is
     /// device-updatable (`cudaLaunchAttributeDeviceUpdatableKernelNode`),
     /// so a later [`Self::device_launch_graph`] needs no host re-upload. Capture
-    /// cannot include it. Graphs with mem alloc/free nodes are legal (unlike
-    /// [`Self::update_graph`]).
+    /// cannot include it. Device-launch execs re-apply instantiate mixed-ctx
+    /// rules (Invalid `"graph multiple ctx"`). Graphs with mem alloc/free nodes
+    /// are legal (unlike [`Self::update_graph`]).
     pub fn graph_exec_kernel_set_params(
         &mut self,
         exec: GraphId,
@@ -4507,6 +4508,7 @@ impl Sim {
         if let Some(ctx) = params.ctx {
             self.require_live_green_ctx(ctx, device)?;
         }
+        self.refuse_device_launch_exec_ctx(exec, true, node, params.ctx)?;
         self.validate_dynamic_shared(device, params.shared_mem_bytes, portable_shared)?;
         let reads = self.resolve_bufs(&params.reads)?;
         let writes = self.resolve_bufs(&params.writes)?;
@@ -4528,6 +4530,30 @@ impl Sim {
         step.dynamic_shared = params.shared_mem_bytes;
         if !device_updatable {
             g.uploaded = false;
+        }
+        Ok(())
+    }
+
+    fn refuse_device_launch_exec_ctx(
+        &self,
+        target: GraphId,
+        exec: bool,
+        node: usize,
+        new_ctx: Option<GreenCtxId>,
+    ) -> Result<(), SimError> {
+        if !exec {
+            return Ok(());
+        }
+        let Some(g) = self.graphs.get(&target) else {
+            return Ok(());
+        };
+        if g.instantiate_flags & GraphInstantiateFlags::DEVICE_LAUNCH == 0 {
+            return Ok(());
+        }
+        if device_launch_patched_ctx_mismatch(g.view(), node, new_ctx) {
+            return Err(SimError::Invalid {
+                why: "graph multiple ctx",
+            });
         }
         Ok(())
     }
@@ -5372,6 +5398,9 @@ impl Sim {
                 why: "device launch instantiate flag",
             });
         }
+        if let GreenCtxPatch::Set(c) = ctx {
+            self.refuse_device_launch_exec_ctx(target, exec, node, c)?;
+        }
         if exec {
             let ns = self.profile.gpu(device)?.graph_set_params_ns.max(1);
             self.clock = self.clock.saturating_add(ns);
@@ -5553,6 +5582,9 @@ impl Sim {
             return Err(SimError::Invalid {
                 why: "device launch instantiate flag",
             });
+        }
+        if let GreenCtxPatch::Set(c) = ctx {
+            self.refuse_device_launch_exec_ctx(target, exec, node, c)?;
         }
         if exec {
             let ns = self.profile.gpu(device)?.graph_set_params_ns.max(1);
@@ -22913,6 +22945,26 @@ fn device_launch_ctx_mismatch(steps: &[GraphStep]) -> Option<usize> {
         }
     }
     None
+}
+
+fn device_launch_patched_ctx_mismatch(
+    steps: &[GraphStep],
+    node: usize,
+    new_ctx: Option<GreenCtxId>,
+) -> bool {
+    let mut first: Option<Option<GreenCtxId>> = None;
+    for (i, s) in steps.iter().enumerate() {
+        if s.destroyed {
+            continue;
+        }
+        let ctx = if i == node { new_ctx } else { s.green_ctx };
+        match first {
+            None => first = Some(ctx),
+            Some(prev) if prev != ctx => return true,
+            Some(_) => {}
+        }
+    }
+    false
 }
 
 fn cond_node_handle(kind: &Kind) -> Option<CondId> {

@@ -5668,7 +5668,17 @@ model, do not celebrate the sim.
     `--device-launch-set-params`. `gpu-profile capture` is still
     refused. Dual score still has no `$/M tokens`.
 
-528. [ ] Next numbered PLAN item after 527 is the next `gpu-sim` / Engine /
+528. [x] `gpu-sim` CUDA DeviceLaunch exec SetParams re-apply mixed
+    green-ctx rules ([`graph_exec_kernel_set_params`] / memcpy/memset
+    node SetParams ctx; Invalid `"graph multiple ctx"`). Same-ctx
+    DeviceLaunch SetParams stays. Single-node ctx SetParams stays.
+    Definition SetParams still defer to instantiate. Host-instantiated
+    exec mixed-ctx SetParams stays. Capture is still reported first.
+    This VM does not invent Engine `--device-launch-set-ctx` or a
+    second MultipleCtxs result for SetParams. `gpu-profile capture` is
+    still refused. Dual score still has no `$/M tokens`.
+
+529. [ ] Next numbered PLAN item after 528 is the next `gpu-sim` / Engine /
     serve / expertvm mechanical API that is still missing, or the next official
     decode family. Prefer remaining CUDA-shaped twins over more
     OpenAI HTTP veneer. Do not invent F32 `output.scale`. Do not invent a
@@ -5778,6 +5788,13 @@ model, do not celebrate the sim.
     `--device-launch-set-params`. Do not reverse definition memcpy/memset
     SetParams deferring dest rules to instantiate. Do not reverse
     host-instantiated exec SetParams of off-device dest.
+    Do not invent a second DeviceLaunch exec mixed-ctx SetParams check
+    or Engine `--device-launch-set-ctx`. Do not reverse same-ctx
+    DeviceLaunch exec SetParams. Do not reverse single-node DeviceLaunch
+    ctx SetParams. Do not reverse definition kernel SetParams deferring
+    mixed ctx to instantiate. Do not reverse host-instantiated exec
+    mixed-ctx SetParams. Do not invent a second MultipleCtxs result
+    for SetParams.
     Do not invent a second DeviceLaunch mixed-ctx check or Engine
     `--device-launch-ctx`. Do not invent a second
     [`GraphInstantiateResult`] variant for driver MultipleCtxs. Do not
@@ -6131,6 +6148,9 @@ model, do not celebrate the sim.
     Do not reverse DeviceLaunch exec memcpy/memset SetParams dest rules.
     Do not invent Engine `--device-launch-set-params`. Do not reverse
     definition SetParams deferring dest rules to instantiate.
+    Do not reverse DeviceLaunch exec mixed-ctx SetParams. Do not invent
+    Engine `--device-launch-set-ctx`. Do not reverse definition SetParams
+    deferring mixed ctx to instantiate.
     Do not reverse same-ctx DeviceLaunch. Do not reverse host instantiate
     of mixed green ctx. Do not invent Engine `--device-launch-ctx`. Do
     not invent a second MultipleCtxs instantiate result.
