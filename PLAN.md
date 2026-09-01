@@ -6724,7 +6724,14 @@ model, do not celebrate the sim.
     or `cudaChooseDevice`. `gpu-profile capture` is still refused. Dual
     score still has no `$/M tokens`.
 
-655. [ ] Next numbered PLAN item after 654 is the next `gpu-sim` / Engine /
+655. [x] `gpu-sim` `Sim::egl_stream_producer_disconnect` is
+    `cuEGLStreamProducerDisconnect`. Always Invalid `"producer disconnect"`
+    because EGL streams are not modeled. Query; legal during capture. Distinct
+    from `egl_stream_producer_connect`. This VM does not invent `cuEGLStreamProducerPresentFrame`, Engine `--egl-producer-disconnect`,
+    or `cudaChooseDevice`. `gpu-profile capture` is still refused. Dual
+    score still has no `$/M tokens`.
+
+656. [ ] Next numbered PLAN item after 655 is the next `gpu-sim` / Engine /
     serve / expertvm mechanical API that is still missing, or the next official
     decode family. Prefer remaining CUDA-shaped twins over more
     OpenAI HTTP veneer. Do not invent F32 `output.scale`. Do not invent a
@@ -7140,6 +7147,10 @@ model, do not celebrate the sim.
     `graphics_unregister_resource`. Do not invent Engine `--graphics-unregister`.
     Do not invent `cuGraphicsResourceSetMapFlags` this slice. Do not reverse
     `"graphics unregister"`.
+    Do not invent a second `cuEGLStreamProducerDisconnect` /
+    `egl_stream_producer_disconnect`. Do not invent Engine `--egl-producer-disconnect`.
+    Do not invent `cuEGLStreamProducerPresentFrame` this slice. Do not reverse
+    `"producer disconnect"`.
     Do not invent a second `cudaStreamAddCallback`.
     Do not invent Engine `--stream-callback` (same wall as second live
     `cudaLaunchHostFunc` after miss DMA).
@@ -7665,6 +7676,10 @@ model, do not celebrate the sim.
     Do not invent a second `graphics_unregister_resource` API. Do not invent
     Engine `--unregister-graphics`. Do not invent a `CUgraphicsResource`
     handle this slice. Do not reverse graphics unregister remaining
+    unsupported.
+    Do not invent a second `egl_stream_producer_disconnect` API. Do not invent
+    Engine `--disconnect-egl-producer`. Do not invent an EGL producer
+    frame this slice. Do not reverse EGL producer disconnect remaining
     unsupported.
     Do not invent a second DeviceLaunch in-flight destroy-complete check or Engine
     `--device-launch-destroy`. Do not abort an in-flight DeviceLaunch when
@@ -8384,6 +8399,9 @@ model, do not celebrate the sim.
     Do not invent a second `graphics_unregister_resource` method. Do not
     invent Engine `--cu-graphics-unregister-resource`. Do not reverse wrapping
     cuGraphicsUnregisterResource Invalid.
+    Do not invent a second `egl_stream_producer_disconnect` method. Do not
+    invent Engine `--cu-egl-producer-disconnect`. Do not reverse wrapping
+    cuEGLStreamProducerDisconnect Invalid.
     Do not
     spend the next item on an OpenAI-compatible HTTP veneer.
 
