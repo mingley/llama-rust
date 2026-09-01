@@ -5,6 +5,15 @@ Visible five-turn extract: [docs/chatgpt-share-6a920fe1.md](docs/chatgpt-share-6
 Complete share-API extract: [docs/chatgpt-share-6a920fe1/](docs/chatgpt-share-6a920fe1/).
 Work lands on `main`. No PRs.
 
+## Shipped 2026-09-01 — CUDA `cudaGraphCreate` flags
+
+`gpu-sim` `create_graph_with_flags` is `cudaGraphCreate` with the CUDA
+flags word. Flags 0 is identity with `create_graph`. Unknown bits
+Invalid `"graph create flags"`. Capture cannot include it. Distinct
+from `GraphInstantiateFlags`. No Engine `--graph-create-flags`.
+`gpu-profile capture` is still refused. Dual score still has no
+`$/M tokens`.
+
 ## Shipped 2026-09-01 — CUDA `cudaDeviceProp::persistingL2CacheMaxSize`
 
 `gpu-sim` `DeviceProperties::persisting_l2_cache_max_size` is

@@ -2684,6 +2684,16 @@ impl StreamCaptureMode {
     }
 }
 
+/// `cudaGraphCreate` flags for [`crate::Sim::create_graph_with_flags`].
+///
+/// CUDA requires 0. Unknown bits are Invalid `"graph create flags"`.
+pub struct GraphCreateFlags;
+
+impl GraphCreateFlags {
+    /// Unflagged [`crate::Sim::create_graph`].
+    pub const DEFAULT: u32 = 0;
+}
+
 /// `cudaGraphInstantiateFlags` bit names (`cudaGraphExecGetFlags`).
 pub struct GraphInstantiateFlags;
 

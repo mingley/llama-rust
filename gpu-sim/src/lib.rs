@@ -928,7 +928,8 @@
 //! child-graph nodes are cloned recursively).
 //! `expertvm --graph-clone` clones leaf captures; `--graph-clone-parent` clones
 //! combo parents (recursive children; store GEMM stays per-leaf).
-//! [`Sim::create_graph`] is `cudaGraphCreate` (empty, not instantiated).
+//! [`Sim::create_graph`] / [`create_graph_with_flags`](Sim::create_graph_with_flags)
+//! are `cudaGraphCreate` (empty, not instantiated; flags 0 only).
 //! [`Sim::graph_add_kernel`] / [`graph_add_memcpy`](Sim::graph_add_memcpy) /
 //! [`graph_add_memcpy_1d`](Sim::graph_add_memcpy_1d) /
 //! [`graph_add_memcpy_2d`](Sim::graph_add_memcpy_2d) /
@@ -1108,23 +1109,24 @@ pub use ops::{
     DeviceNumaConfig, DeviceP2pAttr, DeviceProperties, EventCreateFlags, EventRecordFlags,
     EventWaitFlags, FlushGpuDirectRdmaScope, FlushGpuDirectRdmaTarget,
     FlushGpuDirectRdmaWritesOptions, FuncAttr, FuncAttributes, FuncCache,
-    GpuDirectRdmaWritesOrdering, GpuOp, GraphAddNode, GraphDebugDotFlags, GraphDependencyType,
-    GraphEdgeData, GraphExecUpdateResult, GraphExecUpdateResultInfo, GraphInstantiateFlags,
-    GraphInstantiateParams, GraphInstantiateResult, GraphMemAttr, GraphNodeKind, GraphNodeParams,
-    GraphUserObjectFlags, GreenCtxFlags, HostAllocFlags, HostGetDevicePointerFlags, HostNodeParams,
-    InitDeviceFlags, IpcMemFlags, KernelAttrs, KernelBuf, KernelKind, KernelNodeAttr,
-    KernelNodeAttrValue, KernelNodeParams, LaunchCompletionEvent, MemAccessDesc, MemAccessFlags,
-    MemAdvise, MemAllocationGranularity, MemAllocationProp, MemAllocationType, MemAttach,
-    MemAttachFlags, MemCreateFlags, MemExportFlags, MemHandleType, MemLocationType, MemMapFlags,
-    MemPoolAttr, MemPoolExportFlags, MemPoolProps, MemRangeAttr, MemRangeAttrValue,
-    MemRangeHandleFlags, MemRangeHandleType, MemReserveFlags, MemSyncDomain, MemSyncDomainMap,
-    MemcpyAttributes, MemcpyFlags, MemcpyOp, MemcpySrcAccessOrder, MemoryType, MemsetOp,
-    MulticastBindFlags, MulticastCreateFlags, MulticastGranularity, MulticastObjectProp,
-    NvSciSyncAttrFlags, Operation, PdlLaunch, PeerAccessFlags, Place, PointerAttr,
-    PointerAttributes, PortableClusterMode, PortableSharedMode, PrefetchFlags, ProgrammaticEvent,
-    ProgrammaticLaunch, SharedMemCarveout, SharedMemoryMode, SmResource, StreamAttr,
-    StreamAttrValue, StreamCallbackFlags, StreamCaptureInfo, StreamCaptureMode, StreamCreateFlags,
-    SynchronizationPolicy, UserObjectFlags, WaitValueCmp, WaitValueFlags, WriteValueFlags,
+    GpuDirectRdmaWritesOrdering, GpuOp, GraphAddNode, GraphCreateFlags, GraphDebugDotFlags,
+    GraphDependencyType, GraphEdgeData, GraphExecUpdateResult, GraphExecUpdateResultInfo,
+    GraphInstantiateFlags, GraphInstantiateParams, GraphInstantiateResult, GraphMemAttr,
+    GraphNodeKind, GraphNodeParams, GraphUserObjectFlags, GreenCtxFlags, HostAllocFlags,
+    HostGetDevicePointerFlags, HostNodeParams, InitDeviceFlags, IpcMemFlags, KernelAttrs,
+    KernelBuf, KernelKind, KernelNodeAttr, KernelNodeAttrValue, KernelNodeParams,
+    LaunchCompletionEvent, MemAccessDesc, MemAccessFlags, MemAdvise, MemAllocationGranularity,
+    MemAllocationProp, MemAllocationType, MemAttach, MemAttachFlags, MemCreateFlags,
+    MemExportFlags, MemHandleType, MemLocationType, MemMapFlags, MemPoolAttr, MemPoolExportFlags,
+    MemPoolProps, MemRangeAttr, MemRangeAttrValue, MemRangeHandleFlags, MemRangeHandleType,
+    MemReserveFlags, MemSyncDomain, MemSyncDomainMap, MemcpyAttributes, MemcpyFlags, MemcpyOp,
+    MemcpySrcAccessOrder, MemoryType, MemsetOp, MulticastBindFlags, MulticastCreateFlags,
+    MulticastGranularity, MulticastObjectProp, NvSciSyncAttrFlags, Operation, PdlLaunch,
+    PeerAccessFlags, Place, PointerAttr, PointerAttributes, PortableClusterMode,
+    PortableSharedMode, PrefetchFlags, ProgrammaticEvent, ProgrammaticLaunch, SharedMemCarveout,
+    SharedMemoryMode, SmResource, StreamAttr, StreamAttrValue, StreamCallbackFlags,
+    StreamCaptureInfo, StreamCaptureMode, StreamCreateFlags, SynchronizationPolicy,
+    UserObjectFlags, WaitValueCmp, WaitValueFlags, WriteValueFlags,
 };
 pub use probe::{probe_topology, P2pProbe, TopologyProbe};
 pub use profile::{
@@ -20818,6 +20820,34 @@ mod tests {
         let err = sim.graph_add_host_func(g).unwrap_err();
         match err {
             SimError::Invalid { why } => assert!(why.contains("capture"), "{why}"),
+            other => panic!("{other:?}"),
+        }
+        let _cap = sim.end_capture().unwrap();
+    }
+
+    #[test]
+    fn create_graph_with_flags_is_default_identity() {
+        let mut sim = Sim::new(h100());
+        let d = DeviceId(0);
+        let s = StreamId(0);
+        let g = sim
+            .create_graph_with_flags(d, s, GraphCreateFlags::DEFAULT)
+            .unwrap();
+        assert_eq!(sim.graph_len(g).unwrap(), 0);
+        assert!(!sim.graph_instantiated(g).unwrap());
+        match sim.create_graph_with_flags(d, s, 1) {
+            Err(SimError::Invalid { why }) => assert!(why.contains("graph create flags"), "{why}"),
+            other => panic!("{other:?}"),
+        }
+        match sim.create_graph_with_flags(DeviceId(9), s, GraphCreateFlags::DEFAULT) {
+            Err(SimError::Invalid { why }) => {
+                assert!(why.contains("device not in profile"), "{why}")
+            }
+            other => panic!("{other:?}"),
+        }
+        sim.begin_capture(d, s).unwrap();
+        match sim.create_graph_with_flags(d, s, GraphCreateFlags::DEFAULT) {
+            Err(SimError::Invalid { why }) => assert!(why.contains("capture"), "{why}"),
             other => panic!("{other:?}"),
         }
         let _cap = sim.end_capture().unwrap();

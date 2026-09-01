@@ -16,7 +16,7 @@ use crate::ops::{
     DeviceAttr, DeviceFlags, DeviceLimit, DeviceNumaConfig, DeviceP2pAttr, DeviceProperties,
     EventCreateFlags, EventRecordFlags, EventWaitFlags, FlushGpuDirectRdmaScope,
     FlushGpuDirectRdmaTarget, FlushGpuDirectRdmaWritesOptions, FuncAttr, FuncAttributes, FuncCache,
-    GpuDirectRdmaWritesOrdering, GpuOp as Kind, GraphAddNode, GraphDebugDotFlags,
+    GpuDirectRdmaWritesOrdering, GpuOp as Kind, GraphAddNode, GraphCreateFlags, GraphDebugDotFlags,
     GraphDependencyType, GraphEdgeData, GraphExecUpdateResult, GraphExecUpdateResultInfo,
     GraphInstantiateFlags, GraphInstantiateParams, GraphInstantiateResult, GraphMemAttr,
     GraphNodeKind, GraphNodeParams, GraphUserObjectFlags, GreenCtxFlags, HostAllocFlags,
@@ -6357,11 +6357,31 @@ impl Sim {
     /// Capture cannot include it. The origin `(device, stream)` is the capture
     /// analog: [`Self::launch_graph`] remaps those nodes onto the launch stream.
     /// Add nodes with [`Self::graph_add_kernel`] and friends, then instantiate.
+    /// Flags-word form is [`Self::create_graph_with_flags`].
     pub fn create_graph(
         &mut self,
         device: DeviceId,
         stream: StreamId,
     ) -> Result<GraphId, SimError> {
+        self.create_graph_with_flags(device, stream, GraphCreateFlags::DEFAULT)
+    }
+
+    /// `cudaGraphCreate` with a flags word.
+    ///
+    /// CUDA requires `flags == 0` ([`GraphCreateFlags::DEFAULT`]). Other bits
+    /// are Invalid `"graph create flags"`. Typed [`Self::create_graph`] stays.
+    /// Capture cannot include it. Distinct from [`GraphInstantiateFlags`].
+    pub fn create_graph_with_flags(
+        &mut self,
+        device: DeviceId,
+        stream: StreamId,
+        flags: u32,
+    ) -> Result<GraphId, SimError> {
+        if flags != GraphCreateFlags::DEFAULT {
+            return Err(SimError::Invalid {
+                why: "graph create flags",
+            });
+        }
         self.fail_if_capturing("cannot create graph during capture")?;
         let _gpu = self.profile.gpu(device)?;
         let id = self.insert_graph(device, stream);

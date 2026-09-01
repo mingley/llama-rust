@@ -106,7 +106,7 @@ warp scheduler, L1, …   ← do not model
 | `cudaGraphExecEventRecordNodeSetEvent` / `WaitNodeSetEvent` retarget the event on an instantiated record/wait node (External flag is topology) | `graph_set_params_ns` |
 | graph mem alloc/free nodes (`cudaMallocAsync` / `cudaFreeAsync` during capture, or `graph_add_alloc` / `graph_add_free`) | `pool_reuse_ns` on relaunch without free |
 | graph clone is an independent uninstantiated copy; child graphs cloned recursively; mem alloc nodes get new ids | `graph_clone_ns` |
-| `cudaGraphCreate` (`create_graph`) is an empty uninstantiated graph | 1 ns host-sync |
+| `cudaGraphCreate` (`create_graph` / `create_graph_with_flags`) is an empty uninstantiated graph; flags 0 | 1 ns host-sync |
 | `cudaStreamBeginCaptureToGraph` (`begin_capture_to_graph`) appends captured nodes onto an existing uninstantiated graph; empty deps are extra roots | not timed (capture) |
 | `cudaStreamGetCaptureInfo_v3` (`StreamCaptureInfo::edge_data`) | Default `GraphEdgeData` per capture dep; query |
 | `cudaGraphGetNodes` / `GetRootNodes` / `GetEdges` / `NodeGetDependentNodes` | query |
@@ -530,6 +530,7 @@ copies the capture (`cudaGraphClone`) before instantiate. `--graph-clone-parent`
 clones combo parents (recursive children). `--graph-build` is
 `cudaGraphCreate` / `cudaGraphAdd*` (no idle stream; combo children may
 Hyper-Q overlap unless `graph_add_dependencies` chains them).
+`create_graph_with_flags` is the CUDA flags word (0 only).
 `expertvm --graph-build-deps` adds those edges. `--graph-host` inserts
 `graph_add_host_func` BETWEEN those children (`host_func_ns`; not a JOIN).
 `--graph-if` wraps those children in `graph_add_if` + `graph_add_set_conditional`
