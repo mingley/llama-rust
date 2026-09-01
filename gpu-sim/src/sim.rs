@@ -17989,8 +17989,9 @@ impl Sim {
     ///
     /// Always Invalid `"consumer disconnect"` (EGL streams are not modeled).
     /// Distinct from [`Self::egl_stream_consumer_connect`], from
-    /// [`Self::egl_stream_producer_disconnect`], and from
-    /// [`Self::egl_stream_consumer_acquire_frame`]. Unknown devices are Invalid
+    /// [`Self::egl_stream_producer_disconnect`], from
+    /// [`Self::egl_stream_consumer_acquire_frame`], and from
+    /// [`Self::egl_stream_consumer_release_frame`]. Unknown devices are Invalid
     /// `"device not in profile"`. Query; legal during capture.
     pub fn egl_stream_consumer_disconnect(&self, device: DeviceId) -> Result<(), SimError> {
         let _gpu = self.profile.gpu(device)?;
@@ -18003,13 +18004,27 @@ impl Sim {
     /// `cudaEGLStreamConsumerAcquireFrame`.
     ///
     /// Always Invalid `"consumer acquire"` (EGL streams are not modeled).
-    /// Distinct from [`Self::egl_stream_consumer_disconnect`]. Unknown devices
+    /// Distinct from [`Self::egl_stream_consumer_disconnect`] and from
+    /// [`Self::egl_stream_consumer_release_frame`]. Unknown devices
     /// are Invalid `"device not in profile"`. Query; legal during capture.
-    /// This VM does not invent `cuEGLStreamConsumerReleaseFrame` this slice.
     pub fn egl_stream_consumer_acquire_frame(&self, device: DeviceId) -> Result<(), SimError> {
         let _gpu = self.profile.gpu(device)?;
         Err(SimError::Invalid {
             why: "consumer acquire",
+        })
+    }
+
+    /// `cuEGLStreamConsumerReleaseFrame` plus
+    /// `cudaEGLStreamConsumerReleaseFrame`.
+    ///
+    /// Always Invalid `"consumer release"` (EGL streams are not modeled).
+    /// Distinct from [`Self::egl_stream_consumer_acquire_frame`] and from
+    /// [`Self::egl_stream_consumer_disconnect`]. Unknown devices are Invalid
+    /// `"device not in profile"`. Query; legal during capture.
+    pub fn egl_stream_consumer_release_frame(&self, device: DeviceId) -> Result<(), SimError> {
+        let _gpu = self.profile.gpu(device)?;
+        Err(SimError::Invalid {
+            why: "consumer release",
         })
     }
 

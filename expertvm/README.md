@@ -610,6 +610,9 @@ no Engine flag).
 `gpu-sim` `egl_stream_consumer_acquire_frame` is
 `cuEGLStreamConsumerAcquireFrame` (Invalid; EGL streams are not modeled;
 no Engine flag).
+`gpu-sim` `egl_stream_consumer_release_frame` is
+`cuEGLStreamConsumerReleaseFrame` (Invalid; EGL streams are not modeled;
+no Engine flag).
 `gpu-sim` `egl_stream_producer_connect` is `cuEGLStreamProducerConnect`
 (Invalid; EGL streams are not modeled; no Engine flag).
 `gpu-sim` `egl_stream_producer_disconnect` is

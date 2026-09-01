@@ -5,6 +5,14 @@ Visible five-turn extract: [docs/chatgpt-share-6a920fe1.md](docs/chatgpt-share-6
 Complete share-API extract: [docs/chatgpt-share-6a920fe1/](docs/chatgpt-share-6a920fe1/).
 Work lands on `main`. No PRs.
 
+## Shipped 2026-09-01 — CUDA `cuEGLStreamConsumerReleaseFrame`
+
+`gpu-sim` `Sim::egl_stream_consumer_release_frame` is
+`cuEGLStreamConsumerReleaseFrame`. Always Invalid `"consumer release"`
+because EGL streams are not modeled. Query; legal during capture. Distinct
+from `egl_stream_consumer_acquire_frame`. This VM does not invent an EGL consumer release timeout or Engine `--egl-consumer-release`.
+`gpu-profile capture` is still refused. Dual score still has no `$/M tokens`.
+
 ## Shipped 2026-09-01 — CUDA `cuGraphicsResourceSetMapFlags`
 
 `gpu-sim` `Sim::graphics_resource_set_map_flags` is

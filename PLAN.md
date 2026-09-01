@@ -6806,7 +6806,14 @@ model, do not celebrate the sim.
     or `cudaChooseDevice`. `gpu-profile capture` is still refused. Dual
     score still has no `$/M tokens`.
 
-666. [ ] Next numbered PLAN item after 665 is the next `gpu-sim` / Engine /
+666. [x] `gpu-sim` `Sim::egl_stream_consumer_release_frame` is
+    `cuEGLStreamConsumerReleaseFrame`. Always Invalid `"consumer release"`
+    because EGL streams are not modeled. Query; legal during capture. Distinct
+    from `egl_stream_consumer_acquire_frame`. This VM does not invent an EGL consumer release timeout, Engine `--egl-consumer-release`,
+    or `cudaChooseDevice`. `gpu-profile capture` is still refused. Dual
+    score still has no `$/M tokens`.
+
+667. [ ] Next numbered PLAN item after 666 is the next `gpu-sim` / Engine /
     serve / expertvm mechanical API that is still missing, or the next official
     decode family. Prefer remaining CUDA-shaped twins over more
     OpenAI HTTP veneer. Do not invent F32 `output.scale`. Do not invent a
@@ -7264,6 +7271,10 @@ model, do not celebrate the sim.
     `graphics_resource_set_map_flags`. Do not invent Engine `--map-flags`.
     Do not invent a populated `CU_GRAPHICS_MAP_RESOURCE_FLAGS` this slice. Do
     not reverse `"map flags"`.
+    Do not invent a second `cuEGLStreamConsumerReleaseFrame` /
+    `egl_stream_consumer_release_frame`. Do not invent Engine `--egl-consumer-release`.
+    Do not invent an EGL consumer release timeout this slice. Do not reverse
+    `"consumer release"`.
     Do not invent a second `cudaStreamAddCallback`.
     Do not invent Engine `--stream-callback` (same wall as second live
     `cudaLaunchHostFunc` after miss DMA).
@@ -7829,6 +7840,10 @@ model, do not celebrate the sim.
     Do not invent a second `graphics_resource_set_map_flags` API. Do not invent
     Engine `--set-map-flags`. Do not invent a populated
     `cudaGraphicsMapFlags` this slice. Do not reverse graphics map flags remaining
+    unsupported.
+    Do not invent a second `egl_stream_consumer_release_frame` API. Do not invent
+    Engine `--release-egl-consumer`. Do not invent an EGL consumer
+    release fence this slice. Do not reverse EGL consumer release remaining
     unsupported.
     Do not invent a second DeviceLaunch in-flight destroy-complete check or Engine
     `--device-launch-destroy`. Do not abort an in-flight DeviceLaunch when
@@ -8581,6 +8596,9 @@ model, do not celebrate the sim.
     Do not invent a second `graphics_resource_set_map_flags` method. Do not
     invent Engine `--cu-graphics-resource-set-map-flags`. Do not reverse wrapping
     cuGraphicsResourceSetMapFlags Invalid.
+    Do not invent a second `egl_stream_consumer_release_frame` method. Do not
+    invent Engine `--cu-egl-consumer-release-frame`. Do not reverse wrapping
+    cuEGLStreamConsumerReleaseFrame Invalid.
     Do not
     spend the next item on an OpenAI-compatible HTTP veneer.
 
