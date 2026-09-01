@@ -609,6 +609,8 @@
 //! Invalid `"d3d12 context"`). Query; legal during capture. No Engine `--d3d12-ctx`.
 //! [`vdpau_get_device`](Sim::vdpau_get_device) is `cuVDPAUGetDevice`
 //! (always Invalid `"vdpau"`). Query; legal during capture. No Engine `--vdpau-device`.
+//! [`vdpau_ctx_create`](Sim::vdpau_ctx_create) is `cuVDPAUCtxCreate` (always
+//! Invalid `"vdpau context"`). Query; legal during capture. No Engine `--vdpau-ctx`.
 //! [`d3d9_get_devices`](Sim::d3d9_get_devices) is `cuD3D9GetDevices`
 //! (always Invalid `"d3d9"`). Query; legal during capture. No Engine `--d3d9-devices`.
 //! [`d3d9_ctx_create`](Sim::d3d9_ctx_create) is `cuD3D9CtxCreate` (always
@@ -21985,6 +21987,44 @@ mod tests {
         match sim.d3d12_get_devices(d) {
             Err(SimError::Invalid { why }) => {
                 assert!(why.contains("d3d12"), "{why}");
+            }
+            other => panic!("{other:?}"),
+        }
+    }
+
+    #[test]
+    fn vdpau_ctx_create_is_unsupported() {
+        let mut sim = Sim::new(h100());
+        let d = DeviceId(0);
+        match sim.vdpau_ctx_create(d) {
+            Err(SimError::Invalid { why }) => {
+                assert!(why.contains("vdpau context"), "{why}");
+            }
+            other => panic!("{other:?}"),
+        }
+        sim.begin_capture(d, StreamId(0)).unwrap();
+        match sim.vdpau_ctx_create(d) {
+            Err(SimError::Invalid { why }) => {
+                assert!(why.contains("vdpau context"), "{why}");
+            }
+            other => panic!("{other:?}"),
+        }
+        let _g = sim.end_capture().unwrap();
+        match sim.vdpau_ctx_create(DeviceId(99)) {
+            Err(SimError::Invalid { why }) => {
+                assert!(why.contains("device not in profile"), "{why}");
+            }
+            other => panic!("{other:?}"),
+        }
+        match sim.vdpau_get_device(d) {
+            Err(SimError::Invalid { why }) => {
+                assert!(why.contains("vdpau"), "{why}");
+            }
+            other => panic!("{other:?}"),
+        }
+        match sim.gl_ctx_create(d) {
+            Err(SimError::Invalid { why }) => {
+                assert!(why.contains("gl context"), "{why}");
             }
             other => panic!("{other:?}"),
         }

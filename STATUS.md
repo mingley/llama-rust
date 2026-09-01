@@ -5,6 +5,14 @@ Visible five-turn extract: [docs/chatgpt-share-6a920fe1.md](docs/chatgpt-share-6
 Complete share-API extract: [docs/chatgpt-share-6a920fe1/](docs/chatgpt-share-6a920fe1/).
 Work lands on `main`. No PRs.
 
+## Shipped 2026-09-01 — CUDA `cuVDPAUCtxCreate`
+
+`gpu-sim` `Sim::vdpau_ctx_create` is `cuVDPAUCtxCreate`. Always Invalid
+`"vdpau context"` because VDPAU interop is not modeled. Query; legal
+during capture. Distinct from `vdpau_get_device` and `gl_ctx_create`.
+This VM does not invent `cuGraphicsVDPAURegisterOutputSurface` or Engine `--vdpau-ctx`.
+`gpu-profile capture` is still refused. Dual score still has no `$/M tokens`.
+
 ## Shipped 2026-09-01 — CUDA `cuD3D10CtxCreate`
 
 `gpu-sim` `Sim::d3d10_ctx_create` is `cuD3D10CtxCreate`. Always Invalid
