@@ -1137,7 +1137,8 @@
 //! [`graph_add_dependencies`](Sim::graph_add_dependencies) are
 //! `cudaGraphAdd*` on that id.
 //! [`graph_add_node`](Sim::graph_add_node) is `cudaGraphAddNode`
-//! ([`GraphNodeParams`] plus dependency indices in the same call). Typed
+//! ([`GraphNodeParams`] plus dependency indices in the same call; duplicate
+//! `deps` are Invalid `"graph dependency"`). Typed
 //! `graph_add_*` stay (empty deps). [`graph_add_node_with_data`](Sim::graph_add_node_with_data)
 //! is `cuGraphAddNode_v2` (`dependencyData`; Default type with ports 0 is
 //! identity; length mismatch Invalid `"graph add node data"`).
@@ -15260,6 +15261,50 @@ mod tests {
             other => panic!("{other:?}"),
         }
         let _end = sim.end_capture().unwrap();
+    }
+
+    #[test]
+    fn graph_add_node_rejects_duplicate_dependencies() {
+        let mut sim = Sim::new(h100());
+        let d = DeviceId(0);
+        let s = StreamId(0);
+        let g = sim.create_graph(d, s).unwrap();
+        let empty = sim.graph_add_node(g, &[], GraphNodeParams::Empty).unwrap();
+        assert_eq!(empty.node, 0);
+        match sim.graph_add_node(g, &[0, 0], GraphNodeParams::Empty) {
+            Err(SimError::Invalid { why }) => assert!(why.contains("graph dependency"), "{why}"),
+            other => panic!("{other:?}"),
+        }
+        assert_eq!(sim.graph_len(g).unwrap(), 1);
+        let n1 = sim.graph_add_node(g, &[0], GraphNodeParams::Empty).unwrap();
+        assert_eq!(n1.node, 1);
+        sim.graph_add_dependencies(g, 0, 1).unwrap();
+        assert_eq!(sim.graph_edges(g).unwrap(), vec![(0, 1)]);
+        match sim.graph_add_node_with_data(
+            g,
+            &[0, 0],
+            &[GraphEdgeData::default(), GraphEdgeData::default()],
+            GraphNodeParams::Empty,
+        ) {
+            Err(SimError::Invalid { why }) => assert!(why.contains("graph dependency"), "{why}"),
+            other => panic!("{other:?}"),
+        }
+        assert_eq!(sim.graph_len(g).unwrap(), 2);
+        let n2 = sim
+            .graph_add_node(g, &[0, 1], GraphNodeParams::Empty)
+            .unwrap();
+        assert_eq!(n2.node, 2);
+        assert_eq!(sim.graph_node_deps(g, 2).unwrap(), vec![0, 1]);
+        sim.begin_capture(d, s).unwrap();
+        match sim.graph_add_node(g, &[0, 0], GraphNodeParams::Empty) {
+            Err(SimError::Invalid { why }) => {
+                assert!(why.contains("capture"), "{why}");
+                assert!(!why.contains("graph dependency"), "{why}");
+            }
+            other => panic!("{other:?}"),
+        }
+        let _end = sim.end_capture().unwrap();
+        assert_eq!(sim.graph_len(g).unwrap(), 3);
     }
 
     #[test]

@@ -7538,7 +7538,8 @@ impl Sim {
     ///
     /// Typed [`Self::graph_add_kernel`] / `graph_add_memcpy` / … stay; they
     /// start with no dependencies. This call binds `deps` in the same step (all
-    /// indices must already exist). [`GraphNodeParams::If`] /
+    /// indices must already exist). Duplicate `deps` entries are Invalid
+    /// `"graph dependency"`. [`GraphNodeParams::If`] /
     /// [`GraphNodeParams::IfElse`] / [`GraphNodeParams::While`] fill
     /// [`GraphAddNode::body`] (and `else_body`). [`GraphNodeParams::Switch`]
     /// fills [`GraphAddNode::switch_bodies`]. Typed [`Self::graph_add_if`] /
@@ -7557,6 +7558,7 @@ impl Sim {
         params: GraphNodeParams,
     ) -> Result<GraphAddNode, SimError> {
         let n = self.graph_len(graph)?;
+        let _origin = self.graph_origin_for_add(graph)?;
         for &from in deps {
             if from >= n {
                 return Err(SimError::Invalid {
@@ -7564,6 +7566,7 @@ impl Sim {
                 });
             }
         }
+        Self::reject_duplicate_graph_deps(deps)?;
         let mut added = self.graph_add_node_kind(graph, params)?;
         added.node = self.graph_len(graph)?.saturating_sub(1);
         self.graph_bind_new_deps(graph, added.node, deps)?;
@@ -7575,7 +7578,8 @@ impl Sim {
     /// `deps` and `data` must be the same length (`"graph add node data"`).
     /// [`GraphDependencyType::DEFAULT`] with ports 0 is
     /// [`Self::graph_add_node`]. Programmatic type Invalid
-    /// `"graph dependency type"`. [`GraphKernelNodePort::LAUNCH_COMPLETION`]
+    /// `"graph dependency type"`. Duplicate `deps` entries are Invalid
+    /// `"graph dependency"`. [`GraphKernelNodePort::LAUNCH_COMPLETION`]
     /// waits for a source kernel to start. Other nonzero ports Invalid
     /// `"graph edge port"`. Edge
     /// checks run before the node is created (all-or-nothing). Capture cannot
@@ -7602,6 +7606,17 @@ impl Sim {
         let added = self.graph_add_node(graph, deps, params)?;
         self.store_graph_edge_data(graph, added.node, deps, data)?;
         Ok(added)
+    }
+
+    fn reject_duplicate_graph_deps(deps: &[usize]) -> Result<(), SimError> {
+        for (i, &dep) in deps.iter().enumerate() {
+            if deps.get(..i).is_some_and(|seen| seen.contains(&dep)) {
+                return Err(SimError::Invalid {
+                    why: "graph dependency",
+                });
+            }
+        }
+        Ok(())
     }
 
     fn graph_add_node_kind(

@@ -422,7 +422,8 @@ pool stays Invalid for `pool_set_access`. `graph_alloc_get_access` /
 `graph_node_get_params` returns them on Alloc. SetParams of Alloc
 stays Invalid. No Engine `--graph-alloc-access`.
 `graph_add_node` is `cudaGraphAddNode` (`GraphNodeParams` plus dependency
-indices in the same call). Typed `graph_add_*` stay (empty deps).
+indices in the same call; duplicate `deps` are Invalid `"graph dependency"`).
+Typed `graph_add_*` stay (empty deps).
 `graph_add_node_with_data` is `cuGraphAddNode_v2` (`dependencyData`; Default
 type with ports 0 is identity; length mismatch Invalid).
 `GraphKernelNodePort::LAUNCH_COMPLETION` waits for a source kernel to start.

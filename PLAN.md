@@ -5578,7 +5578,16 @@ model, do not celebrate the sim.
     bits. `gpu-profile capture` is still refused. Dual score still has no
     `$/M tokens`.
 
-519. [ ] Next numbered PLAN item after 518 is the next `gpu-sim` / Engine /
+519. [x] `gpu-sim` CUDA `cudaGraphAddNode` `pDependencies` may not
+    have duplicate entries ([`graph_add_node`] /
+    [`graph_add_node_with_data`]; Invalid `"graph dependency"`).
+    All-or-nothing: the node is not created. Capture is still reported
+    first. Distinct from PLAN 182 AddDependencies duplicate-add no-op.
+    This VM does not invent Engine `--graph-add-node-dup` or reverse
+    PLAN 182. `gpu-profile capture` is still refused. Dual score still
+    has no `$/M tokens`.
+
+520. [ ] Next numbered PLAN item after 519 is the next `gpu-sim` / Engine /
     serve / expertvm mechanical API that is still missing, or the next official
     decode family. Prefer remaining CUDA-shaped twins over more
     OpenAI HTTP veneer. Do not invent F32 `output.scale`. Do not invent a
@@ -5662,6 +5671,9 @@ model, do not celebrate the sim.
     Do not omit [`GraphInstantiateFlags::UPLOAD`] from instantiate (it still
     uploads). Do not GetFlags-omit `DEVICE_LAUNCH` / `AUTO_FREE` /
     `USE_NODE_PRIORITY`.
+    Do not invent a second AddNode duplicate-deps check or Engine
+    flag `--graph-add-node-dup`. Do not invent duplicate-deps error on
+    typed `graph_add_kernel` (empty deps).
     Do not invent a second `cudaStreamGetCaptureInfo_v3`. Do not invent
     `cudaStreamUpdateCaptureDependencies` v2 edgeData.
     Do not invent a second `cudaDeviceProp::persistingL2CacheMaxSize`.
@@ -6002,6 +6014,8 @@ model, do not celebrate the sim.
     Do not invent a second GetFlags UPLOAD omit. Do not reverse
     instantiate `AUTO_FREE` plus `UPLOAD` or `DEVICE_LAUNCH` plus
     `UPLOAD`.
+    Do not invent a second AddNode duplicate-deps check. Do not reverse
+    PLAN 182 v1 duplicate-add no-op for `graph_add_dependencies`.
     Do not
     spend the next item on an OpenAI-compatible HTTP veneer.
 
