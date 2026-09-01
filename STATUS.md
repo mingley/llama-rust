@@ -5,6 +5,20 @@ Visible five-turn extract: [docs/chatgpt-share-6a920fe1.md](docs/chatgpt-share-6
 Complete share-API extract: [docs/chatgpt-share-6a920fe1/](docs/chatgpt-share-6a920fe1/).
 Work lands on `main`. No PRs.
 
+## Shipped 2026-09-01 — CUDA_CONDITIONAL_NODE_PARAMS.ctx
+
+`gpu-sim` CUDA `CUDA_CONDITIONAL_NODE_PARAMS.ctx`:
+`GraphNodeParams::If` / `IfElse` / `While` / `Switch` `ctx` is
+`CUDA_CONDITIONAL_NODE_PARAMS.ctx`. `graph_conditional_create_with_ctx`
+is `cuGraphConditionalHandleCreate`'s ctx argument. Node ctx must match
+the handle (Invalid `"conditional ctx"`). Stored on the graph step, not
+`Kind::If`. Unknown or destroyed is Invalid `"unknown green ctx"`. Device
+mismatch is Invalid `"green ctx device"`. Parameter, not topology.
+Conditionals do not occupy SMs, so duration is unchanged. Typed
+`graph_add_if` copies the handle ctx. Typed create stays `None`. This VM
+does not invent an Engine flag for conditional ctx. `gpu-profile capture`
+is still refused. Dual score still has no `$/M tokens`.
+
 ## Shipped 2026-09-01 — CUDA_BATCH_MEM_OP_NODE_PARAMS.ctx
 
 `gpu-sim` CUDA `CUDA_BATCH_MEM_OP_NODE_PARAMS.ctx`:

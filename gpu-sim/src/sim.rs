@@ -562,9 +562,11 @@ struct GraphStep {
     portable_shared: PortableSharedMode,
     /// `cudaLaunchAttributeNvlinkUtilCentricScheduling`.
     nvlink_util_centric: bool,
-    /// CUDA `CUDA_KERNEL_NODE_PARAMS.ctx` / `CUDA_BATCH_MEM_OP_NODE_PARAMS.ctx`.
-    /// [`None`] inherits the launch stream. Not stored on [`Kind::Kernel`] or
-    /// [`Kind::BatchMem`] (parameter, not topology).
+    /// CUDA `CUDA_KERNEL_NODE_PARAMS.ctx` / `CUDA_BATCH_MEM_OP_NODE_PARAMS.ctx`
+    /// / `CUDA_CONDITIONAL_NODE_PARAMS.ctx`.
+    /// [`None`] inherits the launch stream. Not stored on [`Kind::Kernel`],
+    /// [`Kind::BatchMem`], [`Kind::If`], [`Kind::While`], or [`Kind::Switch`]
+    /// (parameter, not topology).
     green_ctx: Option<GreenCtxId>,
 }
 
@@ -748,6 +750,8 @@ struct Cond {
     value: u32,
     /// `cudaGraphCondAssignDefault`: reset `value` to `default` on each launch.
     assign_default: bool,
+    /// CUDA `cuGraphConditionalHandleCreate` ctx / `CUDA_CONDITIONAL_NODE_PARAMS.ctx`.
+    ctx: Option<GreenCtxId>,
 }
 
 /// `cudaUserObject_t` refcounts. Destroy callback fires at zero.
@@ -4892,7 +4896,7 @@ impl Sim {
         exec: bool,
     ) -> Result<(), SimError> {
         self.fail_if_capturing("cannot capture conditional node set params")?;
-        let (handle, set) = cond_set_from_params(&params)?;
+        let (handle, set, ctx) = cond_set_from_params(&params)?;
         let target = if exec { self.as_exec(graph)? } else { graph };
         let owner = if exec { self.def_id(target) } else { graph };
         let device = {
@@ -4912,6 +4916,7 @@ impl Sim {
             step.device
         };
         self.require_cond_on_graph(handle, owner)?;
+        self.require_cond_handle_ctx(handle, ctx, device)?;
         if exec {
             let ns = self.profile.gpu(device)?.graph_set_params_ns.max(1);
             self.clock = self.clock.saturating_add(ns);
@@ -4922,6 +4927,7 @@ impl Sim {
                 why: "unknown graph node",
             })?)?;
             set_kind_cond_handle(&mut step.kind, handle)?;
+            step.green_ctx = ctx;
             g.uploaded = false;
             Ok(())
         } else {
@@ -4934,6 +4940,7 @@ impl Sim {
                 why: "unknown graph node",
             })?)?;
             set_kind_cond_handle(&mut step.kind, handle)?;
+            step.green_ctx = ctx;
             Ok(())
         }
     }
@@ -4941,9 +4948,10 @@ impl Sim {
     /// `cudaGraphNodeGetParams` on the graph definition.
     ///
     /// Query; legal during capture. Typed GetParams stay.
-    /// [`GraphNodeParams::If`] / `IfElse` / `While` are handle-only (bodies stay
-    /// [`Self::graph_if_nodes`] / `graph_while_nodes`). [`GraphNodeParams::Switch`]
-    /// is handle plus branch count (bodies stay [`Self::graph_switch_nodes`]).
+    /// [`GraphNodeParams::If`] / `IfElse` / `While` are handle plus ctx
+    /// (bodies stay [`Self::graph_if_nodes`] / `graph_while_nodes`).
+    /// [`GraphNodeParams::Switch`] is handle, branch count, and ctx (bodies
+    /// stay [`Self::graph_switch_nodes`]).
     /// Set-conditional is
     /// [`Self::graph_set_conditional_nodes`] /
     /// [`GraphNodeParams::SetConditional`].
@@ -4986,6 +4994,12 @@ impl Sim {
             return Ok(GraphNodeParams::BatchMemOp(batch_mem_params_from_step(
                 step,
             )?));
+        }
+        if matches!(
+            step.kind,
+            Kind::If { .. } | Kind::While { .. } | Kind::Switch { .. }
+        ) {
+            return cond_params_from_step(step);
         }
         node_params_of(&step.kind)
     }
@@ -6600,6 +6614,7 @@ impl Sim {
                         default: c.default,
                         value: c.default,
                         assign_default: c.assign_default,
+                        ctx: c.ctx,
                     },
                 )
             })
@@ -7259,19 +7274,23 @@ impl Sim {
                 self.graph_add_set_conditional(graph, handle, value)?;
                 Ok(add_node_out(None, None, None))
             }
-            GraphNodeParams::If { handle } => {
+            GraphNodeParams::If { handle, ctx } => {
+                self.require_cond_node_ctx(graph, handle, ctx)?;
                 let body = self.graph_add_if(graph, handle)?;
                 Ok(add_node_out(None, Some(body), None))
             }
-            GraphNodeParams::IfElse { handle } => {
+            GraphNodeParams::IfElse { handle, ctx } => {
+                self.require_cond_node_ctx(graph, handle, ctx)?;
                 let (body, else_body) = self.graph_add_if_else(graph, handle)?;
                 Ok(add_node_out(None, Some(body), Some(else_body)))
             }
-            GraphNodeParams::While { handle } => {
+            GraphNodeParams::While { handle, ctx } => {
+                self.require_cond_node_ctx(graph, handle, ctx)?;
                 let body = self.graph_add_while(graph, handle)?;
                 Ok(add_node_out(None, Some(body), None))
             }
-            GraphNodeParams::Switch { handle, n } => {
+            GraphNodeParams::Switch { handle, n, ctx } => {
+                self.require_cond_node_ctx(graph, handle, ctx)?;
                 let bodies = self.graph_add_switch(graph, handle, n)?;
                 let first = bodies.first().copied();
                 let mut added = add_node_out(None, first, None);
@@ -7554,7 +7573,8 @@ impl Sim {
     /// `default` is applied at each [`Self::launch_graph`] of that graph tree
     /// (`cudaGraphCondAssignDefault`). Flags-word form is
     /// [`Self::graph_conditional_create_with_flags`]. Capture cannot include
-    /// it. Illegal on an instantiated exec.
+    /// it. Illegal on an instantiated exec. Node ctx stays [`None`] unless
+    /// [`Self::graph_conditional_create_with_ctx`] pins a green context.
     pub fn graph_conditional_create(
         &mut self,
         graph: GraphId,
@@ -7571,12 +7591,35 @@ impl Sim {
     /// from the previous launch (the create-time `default` is only the initial
     /// value). Unknown bits are Invalid `"graph cond flags"`. Capture cannot
     /// include it. Illegal on an instantiated exec. Typed
-    /// [`Self::graph_conditional_create`] stays.
+    /// [`Self::graph_conditional_create`] stays. Ctx is [`None`]; pin a green
+    /// context with [`Self::graph_conditional_create_with_ctx`].
     pub fn graph_conditional_create_with_flags(
         &mut self,
         graph: GraphId,
         default: u32,
         flags: u32,
+    ) -> Result<CondId, SimError> {
+        self.graph_conditional_create_with_ctx(graph, default, flags, None)
+    }
+
+    /// `cuGraphConditionalHandleCreate` with a ctx argument.
+    ///
+    /// `ctx` is CUDA `CUcontext` / `cudaExecutionContext_t` as this VM's
+    /// [`crate::GreenCtxId`] analog (no `CUcontext`). [`None`] is identity with
+    /// [`Self::graph_conditional_create_with_flags`]. [`Some`] must be a live
+    /// green context on the graph device. Unknown or destroyed is Invalid
+    /// `"unknown green ctx"`. Device mismatch is Invalid `"green ctx device"`.
+    /// A later IF / WHILE / SWITCH node's [`GraphNodeParams`] ctx must match.
+    /// Typed [`Self::graph_add_if`] copies this ctx onto the node. Conditionals
+    /// do not occupy SMs, so duration is unchanged. Capture cannot include it.
+    /// Illegal on an instantiated exec. This VM does not invent an Engine flag
+    /// for conditional ctx.
+    pub fn graph_conditional_create_with_ctx(
+        &mut self,
+        graph: GraphId,
+        default: u32,
+        flags: u32,
+        ctx: Option<GreenCtxId>,
     ) -> Result<CondId, SimError> {
         if flags & !GraphCondFlags::ASSIGN_DEFAULT != 0 {
             return Err(SimError::Invalid {
@@ -7595,6 +7638,9 @@ impl Sim {
             }
             g.origin.0
         };
+        if let Some(c) = ctx {
+            self.require_live_green_ctx(c, origin)?;
+        }
         let _gpu = self.profile.gpu(origin)?;
         let id = CondId(self.next_cond);
         self.next_cond = self.next_cond.saturating_add(1);
@@ -7605,6 +7651,7 @@ impl Sim {
                 default,
                 value: default,
                 assign_default: flags & GraphCondFlags::ASSIGN_DEFAULT != 0,
+                ctx,
             },
         );
         self.clock = self.clock.saturating_add(1);
@@ -7616,15 +7663,16 @@ impl Sim {
     /// Add nodes to the body, then instantiate the parent. Then-body ops skip at
     /// start when `handle` is `0`. Size 2 (if/else) is [`Self::graph_add_if_else`].
     /// `handle` must have been created on `graph`. Capture cannot include it.
-    /// Illegal on an instantiated exec.
+    /// Illegal on an instantiated exec. Copies the handle ctx onto the node.
     pub fn graph_add_if(&mut self, graph: GraphId, handle: CondId) -> Result<GraphId, SimError> {
         let (device, stream) = self.graph_origin_for_add(graph)?;
         self.require_cond_on_graph(handle, graph)?;
         let body = self.insert_graph(device, stream);
-        self.graph_push(
+        self.graph_push_conditional(
             graph,
             device,
             stream,
+            handle,
             Kind::If {
                 handle,
                 body,
@@ -7648,10 +7696,11 @@ impl Sim {
         self.require_cond_on_graph(handle, graph)?;
         let body = self.insert_graph(device, stream);
         let else_body = self.insert_graph(device, stream);
-        self.graph_push(
+        self.graph_push_conditional(
             graph,
             device,
             stream,
+            handle,
             Kind::If {
                 handle,
                 body,
@@ -7670,7 +7719,7 @@ impl Sim {
         let (device, stream) = self.graph_origin_for_add(graph)?;
         self.require_cond_on_graph(handle, graph)?;
         let body = self.insert_graph(device, stream);
-        self.graph_push(graph, device, stream, Kind::While { handle, body })?;
+        self.graph_push_conditional(graph, device, stream, handle, Kind::While { handle, body })?;
         Ok(body)
     }
 
@@ -7697,10 +7746,11 @@ impl Sim {
         for _ in 0..n {
             bodies.push(self.insert_graph(device, stream));
         }
-        self.graph_push(
+        self.graph_push_conditional(
             graph,
             device,
             stream,
+            handle,
             Kind::Switch {
                 handle,
                 bodies: bodies.clone(),
@@ -7723,6 +7773,72 @@ impl Sim {
             });
         }
         Ok(())
+    }
+
+    fn require_cond_node_ctx(
+        &self,
+        graph: GraphId,
+        handle: CondId,
+        ctx: Option<GreenCtxId>,
+    ) -> Result<(), SimError> {
+        let device = self
+            .graphs
+            .get(&graph)
+            .ok_or(SimError::Invalid {
+                why: "unknown graph",
+            })?
+            .origin
+            .0;
+        self.require_cond_handle_ctx(handle, ctx, device)
+    }
+
+    fn require_cond_handle_ctx(
+        &self,
+        handle: CondId,
+        ctx: Option<GreenCtxId>,
+        device: DeviceId,
+    ) -> Result<(), SimError> {
+        let have = self
+            .conds
+            .get(&handle)
+            .ok_or(SimError::Invalid {
+                why: "unknown conditional",
+            })?
+            .ctx;
+        if have != ctx {
+            return Err(SimError::Invalid {
+                why: "conditional ctx",
+            });
+        }
+        if let Some(c) = ctx {
+            self.require_live_green_ctx(c, device)?;
+        }
+        Ok(())
+    }
+
+    fn graph_push_conditional(
+        &mut self,
+        graph: GraphId,
+        device: DeviceId,
+        stream: StreamId,
+        handle: CondId,
+        kind: Kind,
+    ) -> Result<(), SimError> {
+        let ctx = self
+            .conds
+            .get(&handle)
+            .ok_or(SimError::Invalid {
+                why: "unknown conditional",
+            })?
+            .ctx;
+        if let Some(c) = ctx {
+            self.require_live_green_ctx(c, device)?;
+        }
+        let prev = self.enqueue_green_ctx;
+        self.enqueue_green_ctx = ctx;
+        let r = self.graph_push(graph, device, stream, kind);
+        self.enqueue_green_ctx = prev;
+        r
     }
 
     /// Device `cudaGraphSetConditional`: write `handle` when this op starts.
@@ -21831,6 +21947,9 @@ fn kind_has_green_ctx(kind: &Kind) -> bool {
             | Kind::BatchMem { .. }
             | Kind::WriteValue { .. }
             | Kind::WaitValue { .. }
+            | Kind::If { .. }
+            | Kind::While { .. }
+            | Kind::Switch { .. }
     )
 }
 
@@ -21873,12 +21992,28 @@ fn host_params_of(kind: &Kind) -> Result<HostNodeParams, SimError> {
     })
 }
 
-fn cond_set_from_params(params: &GraphNodeParams) -> Result<(CondId, CondSetKind), SimError> {
+fn cond_params_from_step(step: &GraphStep) -> Result<GraphNodeParams, SimError> {
+    let mut p = node_params_of(&step.kind)?;
+    match &mut p {
+        GraphNodeParams::If { ctx, .. }
+        | GraphNodeParams::IfElse { ctx, .. }
+        | GraphNodeParams::While { ctx, .. }
+        | GraphNodeParams::Switch { ctx, .. } => {
+            *ctx = step.green_ctx;
+        }
+        _ => {}
+    }
+    Ok(p)
+}
+
+fn cond_set_from_params(
+    params: &GraphNodeParams,
+) -> Result<(CondId, CondSetKind, Option<GreenCtxId>), SimError> {
     match params {
-        GraphNodeParams::If { handle } => Ok((*handle, CondSetKind::If)),
-        GraphNodeParams::IfElse { handle } => Ok((*handle, CondSetKind::IfElse)),
-        GraphNodeParams::While { handle } => Ok((*handle, CondSetKind::While)),
-        GraphNodeParams::Switch { handle, n } => Ok((*handle, CondSetKind::Switch(*n))),
+        GraphNodeParams::If { handle, ctx } => Ok((*handle, CondSetKind::If, *ctx)),
+        GraphNodeParams::IfElse { handle, ctx } => Ok((*handle, CondSetKind::IfElse, *ctx)),
+        GraphNodeParams::While { handle, ctx } => Ok((*handle, CondSetKind::While, *ctx)),
+        GraphNodeParams::Switch { handle, n, ctx } => Ok((*handle, CondSetKind::Switch(*n), *ctx)),
         _ => Err(SimError::Invalid {
             why: "conditional node params",
         }),
@@ -21975,16 +22110,26 @@ fn node_params_of(kind: &Kind) -> Result<GraphNodeParams, SimError> {
             handle,
             else_body: None,
             ..
-        } => GraphNodeParams::If { handle: *handle },
+        } => GraphNodeParams::If {
+            handle: *handle,
+            ctx: None,
+        },
         Kind::If {
             handle,
             else_body: Some(_),
             ..
-        } => GraphNodeParams::IfElse { handle: *handle },
-        Kind::While { handle, .. } => GraphNodeParams::While { handle: *handle },
+        } => GraphNodeParams::IfElse {
+            handle: *handle,
+            ctx: None,
+        },
+        Kind::While { handle, .. } => GraphNodeParams::While {
+            handle: *handle,
+            ctx: None,
+        },
         Kind::Switch { handle, bodies } => GraphNodeParams::Switch {
             handle: *handle,
             n: u32::try_from(bodies.len()).unwrap_or(0),
+            ctx: None,
         },
         Kind::WhileTick { .. }
         | Kind::Attach { .. }

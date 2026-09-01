@@ -112,7 +112,7 @@ warp scheduler, L1, …   ← do not model
 | graph mem alloc/free nodes (`cudaMallocAsync` / `cudaFreeAsync` during capture, or `graph_add_alloc` / `graph_add_free`) | `pool_reuse_ns` on relaunch without free |
 | graph clone is an independent uninstantiated copy; child graphs cloned recursively; mem alloc nodes get new ids | `graph_clone_ns` |
 | `cudaGraphCreate` (`create_graph` / `create_graph_with_flags`) is an empty uninstantiated graph; flags 0 | 1 ns host-sync |
-| `cudaGraphConditionalHandleCreate` (`graph_conditional_create` / `with_flags`) | 1 ns host-sync; `ASSIGN_DEFAULT` resets each launch; flags 0 persists |
+| `cudaGraphConditionalHandleCreate` (`graph_conditional_create` / `with_flags` / `with_ctx`) | 1 ns host-sync; `ASSIGN_DEFAULT` resets each launch; flags 0 persists; ctx must match the node |
 | `cudaStreamBeginCaptureToGraph` (`begin_capture_to_graph`) appends captured nodes onto an existing uninstantiated graph; empty deps are extra roots | not timed (capture) |
 | `cudaStreamGetCaptureInfo_v3` (`StreamCaptureInfo::edge_data`) | Default `GraphEdgeData` per capture dep; query |
 | `cudaGraphGetNodes` / `GetRootNodes` / `GetEdges` / `NodeGetDependentNodes` | query |
@@ -217,6 +217,7 @@ warp scheduler, L1, …   ← do not model
 | `CUDA_KERNEL_NODE_PARAMS.ctx` (`KernelNodeParams::ctx`) | pins graph kernel duration plus SM occupancy; `None` inherits the launch stream |
 | `CUDA_KERNEL_NODE_PARAMS.sharedMemBytes` (`KernelNodeParams::shared_mem_bytes`) | graph kernel dynamic shared; typed `graph_add_kernel` stays 0; CopyAttributes does not copy it |
 | `CUDA_BATCH_MEM_OP_NODE_PARAMS.ctx` (`BatchMemOpNodeParams::ctx`) | graph batch-mem-op green ctx; wait/write/flush duration unchanged; typed `graph_add_batch_mem_op` stays `None` |
+| `CUDA_CONDITIONAL_NODE_PARAMS.ctx` (`GraphNodeParams::If` ctx) | must match handle create ctx; conditionals do not occupy SMs; typed `graph_add_if` copies the handle |
 | `memset` / `memset_buf` needs the filled span resident (not mapped host); `memset_op` height/pitch is 2D | HBM write of payload + launch overhead |
 | `cudaMemset` / `2D` / `3D` (`memset_sync` / `memset_op_sync`) wait the stream | host-synchronous; capture refused |
 | peer D2D needs topology + `enable_peer` (`enable_peer_with_flags` must be 0) | link bandwidth |
@@ -268,6 +269,12 @@ byte count. No Engine `--kernel-shared`.
 graph batch-mem-op node to a live green context. Wait/write/flush do not
 occupy SMs, so duration is unchanged. Typed `graph_add_batch_mem_op` stays
 `None`. No Engine `--batch-ctx`.
+`CUDA_CONDITIONAL_NODE_PARAMS.ctx` (`GraphNodeParams::If` / `IfElse` /
+`While` / `Switch` ctx) must match the handle from
+`graph_conditional_create_with_ctx`. Typed `graph_add_if` copies the
+handle. Mismatch is Invalid `"conditional ctx"`. Conditionals do not
+occupy SMs, so duration is unchanged. This VM does not invent an Engine
+flag for conditional ctx.
 Copy engines still overlap compute. Profile knobs `gemm_util_permille` (achieved/peak) and `grouped_moe_permille`
 (grouped vs dense duration) scale kernel time. Defaults are 1000
 (identity roofline). They are parseable; they are not a capture. Host PCIe
@@ -570,11 +577,13 @@ submits). `thread_exchange_stream_capture_mode` is
 `cudaThreadExchangeStreamCaptureMode`. `graph_node_kind` is
 `cudaGraphNodeGetType`.
 `graph_conditional_create` / `graph_conditional_create_with_flags` /
+`graph_conditional_create_with_ctx` /
 `graph_add_if` / `graph_add_if_else` are `cudaGraphConditionalHandleCreate`
 and an IF node (`cudaGraphCondTypeIf` size 1 / size 2). Then-body ops skip
 at start when the handle is `0`; size 2 runs the else-body instead. `ASSIGN_DEFAULT` is
 identity with the unflagged create (each launch resets to the create-time
-default). Flags `0` keeps the handle across launches. `set_conditional`
+default). Flags `0` keeps the handle across launches. `with_ctx` pins
+`CUDA_CONDITIONAL_NODE_PARAMS.ctx`; typed create stays `None`. `set_conditional`
 is device `cudaGraphSetConditional` (`ASSIGN_DEFAULT` launches reset to
 the create-time default).
 `graph_add_set_conditional` is the graph-build analog (handle topology;

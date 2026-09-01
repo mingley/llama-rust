@@ -5306,7 +5306,21 @@ model, do not celebrate the sim.
     not clear ctx. No Engine `--batch-ctx`. `gpu-profile capture` is still
     refused. Dual score still has no `$/M tokens`.
 
-495. [ ] Next numbered PLAN item after 494 is the next `gpu-sim` / Engine /
+495. [x] `gpu-sim` CUDA `CUDA_CONDITIONAL_NODE_PARAMS.ctx`:
+    [`GraphNodeParams::If::ctx`] / `IfElse` / `While` / `Switch` is
+    `CUDA_CONDITIONAL_NODE_PARAMS.ctx` (`cudaConditionalNodeParams.ctx`).
+    [`graph_conditional_create_with_ctx`] stores the handle ctx
+    (`cuGraphConditionalHandleCreate`). Node ctx must match the handle
+    (Invalid `"conditional ctx"`). Stored on the graph step, not
+    `Kind::If`. Unknown or destroyed is Invalid `"unknown green ctx"`.
+    Device mismatch is Invalid `"green ctx device"`. Parameter, not
+    topology. Conditionals do not occupy SMs, so duration is unchanged.
+    Typed [`graph_add_if`] copies the handle ctx. Typed create stays
+    [`None`]. This VM does not invent an Engine flag for conditional ctx.
+    `gpu-profile capture` is still refused. Dual score still has no
+    `$/M tokens`.
+
+496. [ ] Next numbered PLAN item after 495 is the next `gpu-sim` / Engine /
     serve / expertvm mechanical API that is still missing, or the next official
     decode family. Prefer remaining CUDA-shaped twins over more
     OpenAI HTTP veneer. Do not invent F32 `output.scale`. Do not invent a
@@ -5602,6 +5616,13 @@ model, do not celebrate the sim.
     Do not put `sharedMemBytes` on `Kind::Kernel`. Do not invent a second
     CUDA_BATCH_MEM_OP_NODE_PARAMS.ctx / `BatchMemOpNodeParams::ctx`. Do not
     invent Engine `--batch-ctx`. Do not put `ctx` on `Kind::BatchMem`.
+    Do not invent a second CUDA_CONDITIONAL_NODE_PARAMS.ctx /
+    `GraphNodeParams::If` ctx. Do not invent an Engine flag for
+    conditional ctx. Do not put `ctx` on `Kind::If` / `While` / `Switch`.
+    Do not invent a second `graph_conditional_create_with_ctx`. Do not
+    invent body-kernel ctx matching or rewrite. Do not invent
+    `CUDA_CONDITIONAL_NODE_PARAMS` as a unified struct (If / IfElse /
+    While / Switch stay split).
     Do not
     spend the next item on an OpenAI-compatible HTTP veneer.
 

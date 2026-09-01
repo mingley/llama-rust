@@ -2865,6 +2865,7 @@ impl StreamCaptureMode {
 ///
 /// [`Self::ASSIGN_DEFAULT`] is `cudaGraphCondAssignDefault`. Flags `0` keeps
 /// the handle across launches. Unknown bits are Invalid `"graph cond flags"`.
+/// Ctx is [`crate::Sim::graph_conditional_create_with_ctx`], not this word.
 pub struct GraphCondFlags;
 
 impl GraphCondFlags {
@@ -3815,9 +3816,11 @@ pub enum GraphNodeKind {
 /// [`Self::If`] / [`Self::IfElse`] / [`Self::While`] fill
 /// [`GraphAddNode::body`] (and `else_body`). [`Self::Switch`] fills
 /// [`GraphAddNode::switch_bodies`] (`1..=64`). SetParams retargets the
-/// handle; type, size, and bodies stay topology. Typed
+/// handle; type, size, and bodies stay topology. [`Self::If::ctx`] /
+/// `IfElse` / `While` / `Switch` is CUDA `CUDA_CONDITIONAL_NODE_PARAMS.ctx`
+/// and must match the handle's create ctx. Typed
 /// [`crate::Sim::graph_add_if`] / `graph_add_if_else` / `graph_add_while` /
-/// `graph_add_switch` stay. Set-conditional is
+/// `graph_add_switch` copy the handle ctx. Set-conditional is
 /// [`crate::Sim::graph_add_set_conditional`] / [`Self::SetConditional`].
 /// External-semaphore nodes are not modeled.
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -3878,18 +3881,34 @@ pub enum GraphNodeParams {
     If {
         /// Handle created with [`crate::Sim::graph_conditional_create`].
         handle: CondId,
+        /// CUDA `CUDA_CONDITIONAL_NODE_PARAMS.ctx` / `cudaConditionalNodeParams.ctx`.
+        ///
+        /// This VM's [`crate::GreenCtxId`] analog; no `CUcontext`. Must match
+        /// the handle's create ctx ([`crate::Sim::graph_conditional_create_with_ctx`]).
+        /// [`None`] is identity with [`crate::Sim::graph_conditional_create`].
+        /// Unknown or destroyed is Invalid `"unknown green ctx"`. Device
+        /// mismatch is Invalid `"green ctx device"`. Handle mismatch is
+        /// Invalid `"conditional ctx"`. Parameter, not topology. Conditionals
+        /// do not occupy SMs, so duration is unchanged. Body kernel ctxs are
+        /// not rewritten. This VM does not invent an Engine flag for
+        /// conditional ctx.
+        ctx: Option<GreenCtxId>,
     },
     /// `cudaGraphCondTypeIf` size 2. [`GraphAddNode::body`] / `else_body`.
     /// SetParams retargets [`Self::IfElse::handle`]; bodies stay topology.
     IfElse {
         /// Handle created with [`crate::Sim::graph_conditional_create`].
         handle: CondId,
+        /// Same analog as [`Self::If::ctx`].
+        ctx: Option<GreenCtxId>,
     },
     /// `cudaGraphCondTypeWhile`. [`GraphAddNode::body`] is the loop body.
     /// SetParams retargets [`Self::While::handle`]; the body stays topology.
     While {
         /// Handle created with [`crate::Sim::graph_conditional_create`].
         handle: CondId,
+        /// CUDA `CUDA_CONDITIONAL_NODE_PARAMS.ctx`. Must match the handle.
+        ctx: Option<GreenCtxId>,
     },
     /// `cudaGraphCondTypeSwitch`. [`GraphAddNode::switch_bodies`] is
     /// `phGraph_out` (`n` must be `1..=64`). SetParams retargets
@@ -3899,6 +3918,8 @@ pub enum GraphNodeParams {
         handle: CondId,
         /// Number of branches (`cudaGraphConditionalNodeParams::size`).
         n: u32,
+        /// CUDA `CUDA_CONDITIONAL_NODE_PARAMS.ctx`. Must match the handle.
+        ctx: Option<GreenCtxId>,
     },
 }
 
