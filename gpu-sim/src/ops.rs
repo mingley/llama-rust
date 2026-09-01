@@ -1538,8 +1538,9 @@ impl StreamCallbackFlags {
 /// [`crate::Sim::graph_exec_kernel_set_params`].
 ///
 /// Topology (node index, cooperative flag, dependency edges) stays. Pointers,
-/// [`KernelKind`], and [`Self::ctx`] may change. Capture cannot include
-/// SetParams. [`Self::ctx`] is not stored on [`crate::GpuOp::Kernel`].
+/// [`KernelKind`], [`Self::ctx`], and [`Self::shared_mem_bytes`] may change.
+/// Capture cannot include SetParams. [`Self::ctx`] and
+/// [`Self::shared_mem_bytes`] are not stored on [`crate::GpuOp::Kernel`].
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct KernelNodeParams {
     /// Structural work (roofline inputs / kernel function analog).
@@ -1561,6 +1562,19 @@ pub struct KernelNodeParams {
     /// [`crate::Sim::graph_add_kernel`] stays [`None`]. This VM does not
     /// invent Engine `--kernel-ctx` or `cuCtxFromGreenCtx`.
     pub ctx: Option<GreenCtxId>,
+    /// CUDA `CUDA_KERNEL_NODE_PARAMS.sharedMemBytes` /
+    /// `cudaKernelNodeParams.sharedMemBytes`.
+    ///
+    /// Stored on the graph step, not [`crate::GpuOp::Kernel`]. Typed
+    /// [`crate::Sim::graph_add_kernel`] stays `0`.
+    /// [`crate::KernelNodeAttr::DynamicShared`] Get/SetAttribute stays.
+    /// CopyAttributes does not copy it. Oversize versus the SKU opt-in is
+    /// Invalid `"dynamic shared"`. Oversize versus portable / function
+    /// attribute without [`PortableSharedMode::AllowNonPortable`] is Invalid
+    /// `"non-portable shared"`. Parameter, not topology. Duration follows
+    /// bank width ([`SharedMemoryMode`]), not this byte count. This VM does
+    /// not invent Engine `--kernel-shared`.
+    pub shared_mem_bytes: u32,
 }
 
 /// `cudaLaunchAttributeProgrammaticStreamSerialization` / programmatic

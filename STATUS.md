@@ -5,6 +5,18 @@ Visible five-turn extract: [docs/chatgpt-share-6a920fe1.md](docs/chatgpt-share-6
 Complete share-API extract: [docs/chatgpt-share-6a920fe1/](docs/chatgpt-share-6a920fe1/).
 Work lands on `main`. No PRs.
 
+## Shipped 2026-09-01 — CUDA_KERNEL_NODE_PARAMS.sharedMemBytes
+
+`gpu-sim` CUDA `CUDA_KERNEL_NODE_PARAMS.sharedMemBytes`:
+`KernelNodeParams::shared_mem_bytes` is `sharedMemBytes`. Stored on the
+graph step, not `Kind::Kernel`. GetParams / SetParams / AddNode carry the
+field. Typed `graph_add_kernel` stays `0`. `KernelNodeAttr::DynamicShared`
+Get/SetAttribute stays. CopyAttributes does not copy it. Oversize without
+func attr / AllowNonPortable is Invalid `"dynamic shared"` /
+`"non-portable shared"`. Parameter, not topology. Duration is bank width,
+not byte count. No Engine `--kernel-shared`. `gpu-profile capture` is
+still refused. Dual score still has no `$/M tokens`.
+
 ## Shipped 2026-09-01 — CUDA_KERNEL_NODE_PARAMS.ctx
 
 `gpu-sim` CUDA 13 `CUDA_KERNEL_NODE_PARAMS.ctx`: `KernelNodeParams::ctx`

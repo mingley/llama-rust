@@ -215,6 +215,7 @@ warp scheduler, L1, …   ← do not model
 | `cuGreenCtxGetId` (`green_ctx_get_id`) | unique id for a live green ctx; not `GreenCtxId` / `stream_get_id`; query during capture |
 | `cudaExecutionCtxGetDevice` (`green_ctx_get_device`) | device passed to `green_ctx_create`; query during capture |
 | `CUDA_KERNEL_NODE_PARAMS.ctx` (`KernelNodeParams::ctx`) | pins graph kernel duration plus SM occupancy; `None` inherits the launch stream |
+| `CUDA_KERNEL_NODE_PARAMS.sharedMemBytes` (`KernelNodeParams::shared_mem_bytes`) | graph kernel dynamic shared; typed `graph_add_kernel` stays 0; CopyAttributes does not copy it |
 | `memset` / `memset_buf` needs the filled span resident (not mapped host); `memset_op` height/pitch is 2D | HBM write of payload + launch overhead |
 | `cudaMemset` / `2D` / `3D` (`memset_sync` / `memset_op_sync`) wait the stream | host-synchronous; capture refused |
 | peer D2D needs topology + `enable_peer` (`enable_peer_with_flags` must be 0) | link bandwidth |
@@ -257,6 +258,11 @@ device. Distinct from `green_ctx_get_id`. Query; legal during capture.
 to a live green context (duration plus SM occupancy). `None` inherits the
 launch stream. Typed `graph_add_kernel` stays `None`. No Engine `--kernel-ctx`
 and no `cuCtxFromGreenCtx`.
+`CUDA_KERNEL_NODE_PARAMS.sharedMemBytes` (`KernelNodeParams::shared_mem_bytes`)
+is dynamic shared on a graph kernel node. Typed `graph_add_kernel` stays `0`.
+Get/SetAttribute stays. CopyAttributes does not copy it. Oversize without
+func attr / AllowNonPortable is Invalid. Duration follows bank width, not
+byte count. No Engine `--kernel-shared`.
 Copy engines still overlap compute. Profile knobs `gemm_util_permille` (achieved/peak) and `grouped_moe_permille`
 (grouped vs dense duration) scale kernel time. Defaults are 1000
 (identity roofline). They are parseable; they are not a capture. Host PCIe

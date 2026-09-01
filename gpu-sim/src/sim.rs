@@ -4222,9 +4222,10 @@ impl Sim {
     ///
     /// Node `node` must already be a kernel. [`KernelNodeParams::cooperative`]
     /// must match the existing node (cooperative vs `cudaLaunchKernel` is
-    /// topology). Pointers, [`KernelKind`], and [`KernelNodeParams::ctx`] may
-    /// change. Pays `graph_set_params_ns`. Clears the upload flag unless the
-    /// node is device-updatable (`cudaLaunchAttributeDeviceUpdatableKernelNode`),
+    /// topology). Pointers, [`KernelKind`], [`KernelNodeParams::ctx`], and
+    /// [`KernelNodeParams::shared_mem_bytes`] may change. Pays
+    /// `graph_set_params_ns`. Clears the upload flag unless the node is
+    /// device-updatable (`cudaLaunchAttributeDeviceUpdatableKernelNode`),
     /// so a later [`Self::device_launch_graph`] needs no host re-upload. Capture
     /// cannot include it. Graphs with mem alloc/free nodes are legal (unlike
     /// [`Self::update_graph`]).
@@ -4236,7 +4237,7 @@ impl Sim {
     ) -> Result<(), SimError> {
         self.fail_if_capturing("cannot capture kernel set params")?;
         let exec = self.as_exec(exec)?;
-        let (device, cooperative, device_updatable) = {
+        let (device, cooperative, device_updatable, portable_shared) = {
             let g = self.graphs.get(&exec).ok_or(SimError::Invalid {
                 why: "unknown graph",
             })?;
@@ -4253,11 +4254,17 @@ impl Sim {
                     why: "cooperative is topology",
                 });
             }
-            (step.device, *cooperative, step.device_updatable)
+            (
+                step.device,
+                *cooperative,
+                step.device_updatable,
+                step.portable_shared,
+            )
         };
         if let Some(ctx) = params.ctx {
             self.require_live_green_ctx(ctx, device)?;
         }
+        self.validate_dynamic_shared(device, params.shared_mem_bytes, portable_shared)?;
         let reads = self.resolve_bufs(&params.reads)?;
         let writes = self.resolve_bufs(&params.writes)?;
         let ns = self.profile.gpu(device)?.graph_set_params_ns.max(1);
@@ -4275,6 +4282,7 @@ impl Sim {
             cooperative,
         };
         step.green_ctx = params.ctx;
+        step.dynamic_shared = params.shared_mem_bytes;
         if !device_updatable {
             g.uploaded = false;
         }
@@ -4285,8 +4293,9 @@ impl Sim {
     ///
     /// After [`Self::instantiate_graph`], this does not retarget the exec
     /// snapshot; use [`Self::graph_exec_kernel_set_params`]. Cooperative flag
-    /// must match (topology). [`KernelNodeParams::ctx`] is a parameter. Capture
-    /// cannot include it. Host-sync 1 ns.
+    /// must match (topology). [`KernelNodeParams::ctx`] and
+    /// [`KernelNodeParams::shared_mem_bytes`] are parameters. Capture cannot
+    /// include it. Host-sync 1 ns.
     pub fn graph_kernel_set_params(
         &mut self,
         graph: GraphId,
@@ -4294,7 +4303,7 @@ impl Sim {
         params: &KernelNodeParams,
     ) -> Result<(), SimError> {
         self.fail_if_capturing("cannot capture kernel node set params")?;
-        let (device, cooperative) = {
+        let (device, cooperative, portable_shared) = {
             let g = self.graphs.get(&graph).ok_or(SimError::Invalid {
                 why: "unknown graph",
             })?;
@@ -4311,11 +4320,12 @@ impl Sim {
                     why: "cooperative is topology",
                 });
             }
-            (step.device, *cooperative)
+            (step.device, *cooperative, step.portable_shared)
         };
         if let Some(ctx) = params.ctx {
             self.require_live_green_ctx(ctx, device)?;
         }
+        self.validate_dynamic_shared(device, params.shared_mem_bytes, portable_shared)?;
         let reads = self.resolve_bufs(&params.reads)?;
         let writes = self.resolve_bufs(&params.writes)?;
         let _gpu = self.profile.gpu(device)?;
@@ -4333,6 +4343,7 @@ impl Sim {
             cooperative,
         };
         step.green_ctx = params.ctx;
+        step.dynamic_shared = params.shared_mem_bytes;
         Ok(())
     }
 
@@ -7301,10 +7312,17 @@ impl Sim {
         if let Some(ctx) = params.ctx {
             self.require_live_green_ctx(ctx, device)?;
         }
+        self.validate_dynamic_shared(
+            device,
+            params.shared_mem_bytes,
+            self.enqueue_portable_shared,
+        )?;
         let reads = self.resolve_bufs(&params.reads)?;
         let writes = self.resolve_bufs(&params.writes)?;
         let prev = self.enqueue_green_ctx;
+        let prev_ds = self.enqueue_dynamic_shared;
         self.enqueue_green_ctx = params.ctx;
+        self.enqueue_dynamic_shared = params.shared_mem_bytes;
         let r = self.graph_push(
             graph,
             device,
@@ -7317,6 +7335,7 @@ impl Sim {
             },
         );
         self.enqueue_green_ctx = prev;
+        self.enqueue_dynamic_shared = prev_ds;
         r
     }
 
@@ -7327,7 +7346,8 @@ impl Sim {
     /// kernels may Hyper-Q overlap at [`Self::launch_graph`]. Capture cannot
     /// include it. Illegal on an instantiated exec. Does not run the
     /// kernel; [`Self::launch_graph`] does. [`KernelNodeParams::ctx`] is
-    /// [`None`] (inherit the launch stream). Pin a green context through
+    /// [`None`] (inherit the launch stream). [`KernelNodeParams::shared_mem_bytes`]
+    /// stays `0`. Pin a green context or dynamic shared through
     /// [`Self::graph_add_node`] with [`GraphNodeParams::Kernel`].
     pub fn graph_add_kernel(
         &mut self,
@@ -21751,12 +21771,14 @@ fn kernel_params_of(kind: &Kind) -> Result<KernelNodeParams, SimError> {
         writes: writes.clone(),
         cooperative: *cooperative,
         ctx: None,
+        shared_mem_bytes: 0,
     })
 }
 
 fn kernel_params_from_step(step: &GraphStep) -> Result<KernelNodeParams, SimError> {
     let mut p = kernel_params_of(&step.kind)?;
     p.ctx = step.green_ctx;
+    p.shared_mem_bytes = step.dynamic_shared;
     Ok(p)
 }
 

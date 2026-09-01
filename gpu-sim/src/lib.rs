@@ -58,6 +58,15 @@
 //! occupancy to that green context. Typed [`graph_add_kernel`](Sim::graph_add_kernel)
 //! stays [`None`]. No Engine `--kernel-ctx`. This VM does not invent
 //! `cuCtxFromGreenCtx`.
+//! [`KernelNodeParams::shared_mem_bytes`] is CUDA
+//! `CUDA_KERNEL_NODE_PARAMS.sharedMemBytes`. Stored on the graph step, not
+//! `Kind::Kernel`. Typed [`graph_add_kernel`](Sim::graph_add_kernel) stays `0`.
+//! [`KernelNodeAttr::DynamicShared`] Get/SetAttribute stays. CopyAttributes
+//! does not copy it. Oversize without
+//! [`set_max_dynamic_shared_memory`](Sim::set_max_dynamic_shared_memory) or
+//! [`PortableSharedMode::AllowNonPortable`] is Invalid `"dynamic shared"` /
+//! `"non-portable shared"`. Duration follows bank width, not byte count. No
+//! Engine `--kernel-shared`.
 //! [`Sim::synchronize_device`] is `cudaDeviceSynchronize` (one GPU).
 //! [`Sim::synchronize_event`] is `cudaEventSynchronize`.
 //! [`Sim::alloc`] / [`memcpy`](Sim::memcpy) / [`free`](Sim::free) are
@@ -2610,6 +2619,7 @@ mod tests {
             writes: vec![KernelBuf::whole(b)],
             cooperative: false,
             ctx: None,
+            shared_mem_bytes: 0,
         };
         sim.graph_exec_kernel_set_params(e2, 0, &params).unwrap();
         let n = sim.launch_graph(e2, s).unwrap();
@@ -3116,6 +3126,7 @@ mod tests {
             writes: vec![KernelBuf::whole(a)],
             cooperative: false,
             ctx: None,
+            shared_mem_bytes: 0,
         };
         let err = sim
             .graph_exec_kernel_set_params(exec, 0, &params)
@@ -8713,6 +8724,7 @@ mod tests {
             writes: vec![KernelBuf::whole(b)],
             cooperative: false,
             ctx: None,
+            shared_mem_bytes: 0,
         };
         sim.graph_kernel_set_params(g, 0, &params).unwrap();
         let (_, now) = sim.graph_unique_kernel(g).unwrap();
@@ -8761,6 +8773,7 @@ mod tests {
             writes: vec![KernelBuf::whole(b)],
             cooperative: false,
             ctx: None,
+            shared_mem_bytes: 0,
         };
         sim.graph_kernel_set_params(g, 0, &patched).unwrap();
         let def = sim.graph_kernel_get_params(g, 0).unwrap();
@@ -8886,6 +8899,7 @@ mod tests {
             writes: vec![KernelBuf::whole(b)],
             cooperative: false,
             ctx: None,
+            shared_mem_bytes: 0,
         };
         sim.graph_kernel_set_params(g, 0, &params).unwrap();
         let _ = sim.instantiate_graph(g).unwrap();
@@ -9708,6 +9722,7 @@ mod tests {
             writes: vec![KernelBuf::whole(a)],
             cooperative: false,
             ctx: None,
+            shared_mem_bytes: 0,
         };
         match sim.graph_exec_kernel_set_params(exec, 0, &params) {
             Err(SimError::Invalid { why }) => {
@@ -10132,6 +10147,7 @@ mod tests {
                 writes: vec![KernelBuf::whole(a)],
                 cooperative: false,
                 ctx: Some(ctx),
+                shared_mem_bytes: 0,
             },
         )
         .unwrap();
@@ -10183,6 +10199,7 @@ mod tests {
                 writes: vec![KernelBuf::whole(a)],
                 cooperative: false,
                 ctx: None,
+                shared_mem_bytes: 0,
             },
         )
         .unwrap();
@@ -10206,6 +10223,7 @@ mod tests {
                 writes: vec![KernelBuf::whole(a)],
                 cooperative: false,
                 ctx: Some(GreenCtxId(99)),
+                shared_mem_bytes: 0,
             }),
         ) {
             Err(SimError::Invalid { why }) => {
@@ -10232,6 +10250,7 @@ mod tests {
                 writes: vec![KernelBuf::whole(a1)],
                 cooperative: false,
                 ctx: Some(ctx1),
+                shared_mem_bytes: 0,
             }),
         ) {
             Err(SimError::Invalid { why }) => {
@@ -10257,6 +10276,7 @@ mod tests {
                     writes: vec![KernelBuf::whole(a)],
                     cooperative: false,
                     ctx: Some(ctx2),
+                    shared_mem_bytes: 0,
                 }),
             )
             .unwrap();
@@ -10275,6 +10295,134 @@ mod tests {
             },
             other => panic!("{other:?}"),
         }
+    }
+
+    #[test]
+    fn graph_kernel_node_params_shared_mem_bytes_is_cuda_kernel_node_params() {
+        let d = DeviceId(0);
+        let s = StreamId(0);
+        let kind = KernelKind::other(8, 8);
+        let mut sim = Sim::new(open_shared_profile());
+        let a = sim.malloc(d, 8).unwrap();
+        let params = |shared: u32| KernelNodeParams {
+            kind: kind.clone(),
+            reads: vec![KernelBuf::whole(a)],
+            writes: vec![KernelBuf::whole(a)],
+            cooperative: false,
+            ctx: None,
+            shared_mem_bytes: shared,
+        };
+        let g = sim.create_graph(d, s).unwrap();
+        sim.graph_add_kernel(g, kind.clone(), &[a], &[a]).unwrap();
+        assert_eq!(
+            sim.graph_kernel_get_params(g, 0).unwrap().shared_mem_bytes,
+            0
+        );
+        assert_eq!(sim.graph_kernel_node_get_dynamic_shared(g, 0).unwrap(), 0);
+        match sim.graph_kernel_set_params(g, 0, &params(65_536)) {
+            Err(SimError::Invalid { why }) => {
+                assert!(why.contains("non-portable shared"), "{why}");
+            }
+            other => panic!("{other:?}"),
+        }
+        let g_add = sim.create_graph(d, s).unwrap();
+        match sim.graph_add_node(g_add, &[], GraphNodeParams::Kernel(params(65_536))) {
+            Err(SimError::Invalid { why }) => {
+                assert!(why.contains("non-portable shared"), "{why}");
+            }
+            other => panic!("{other:?}"),
+        }
+        sim.set_max_dynamic_shared_memory(d, 65_536).unwrap();
+        sim.graph_kernel_node_set_dynamic_shared(g, 0, 65_536)
+            .unwrap();
+        assert_eq!(
+            sim.graph_kernel_get_params(g, 0).unwrap().shared_mem_bytes,
+            65_536
+        );
+        assert_eq!(
+            sim.graph_kernel_node_get_dynamic_shared(g, 0).unwrap(),
+            65_536
+        );
+        match sim.graph_node_get_params(g, 0).unwrap() {
+            GraphNodeParams::Kernel(p) => assert_eq!(p.shared_mem_bytes, 65_536),
+            other => panic!("{other:?}"),
+        }
+        sim.graph_kernel_set_params(g, 0, &params(0)).unwrap();
+        assert_eq!(
+            sim.graph_kernel_get_params(g, 0).unwrap().shared_mem_bytes,
+            0
+        );
+        sim.graph_kernel_set_params(g, 0, &params(65_536)).unwrap();
+        assert_eq!(
+            sim.graph_kernel_node_get_dynamic_shared(g, 0).unwrap(),
+            65_536
+        );
+        let cloned = sim.clone_graph(g).unwrap();
+        assert_eq!(
+            sim.graph_kernel_get_params(cloned, 0)
+                .unwrap()
+                .shared_mem_bytes,
+            65_536
+        );
+        let h = sim.create_graph(d, s).unwrap();
+        sim.graph_add_kernel(h, kind.clone(), &[a], &[a]).unwrap();
+        sim.graph_kernel_node_copy_attributes(h, 0, g, 0).unwrap();
+        assert_eq!(
+            sim.graph_kernel_get_params(h, 0).unwrap().shared_mem_bytes,
+            0,
+            "sharedMemBytes is KernelNodeParams, not CopyAttributes"
+        );
+        assert_eq!(sim.graph_kernel_node_get_dynamic_shared(h, 0).unwrap(), 0);
+        let added = sim
+            .graph_add_node(h, &[], GraphNodeParams::Kernel(params(65_536)))
+            .unwrap();
+        assert_eq!(added.node, 1);
+        assert_eq!(
+            sim.graph_kernel_get_params(h, 1).unwrap().shared_mem_bytes,
+            65_536
+        );
+        let exec = sim.instantiate_graph(g).unwrap();
+        assert_eq!(
+            sim.graph_exec_kernel_get_params(exec, 0)
+                .unwrap()
+                .shared_mem_bytes,
+            65_536
+        );
+        assert_eq!(
+            sim.graph_exec_kernel_node_get_dynamic_shared(exec, 0)
+                .unwrap(),
+            65_536
+        );
+        let n = sim.launch_graph(exec, s).unwrap();
+        assert_eq!(n, 1);
+        sim.synchronize().unwrap();
+        sim.graph_exec_kernel_set_params(exec, 0, &params(0))
+            .unwrap();
+        assert_eq!(
+            sim.graph_exec_kernel_get_params(exec, 0)
+                .unwrap()
+                .shared_mem_bytes,
+            0
+        );
+        sim.begin_capture(d, s).unwrap();
+        enq(sim.kernel_with(
+            d,
+            kind,
+            &[a],
+            &[a],
+            s,
+            KernelAttrs {
+                dynamic_shared: 65_536,
+                ..KernelAttrs::default()
+            },
+        ));
+        let captured = sim.end_capture().unwrap();
+        assert_eq!(
+            sim.graph_kernel_get_params(captured, 0)
+                .unwrap()
+                .shared_mem_bytes,
+            65_536
+        );
     }
 
     #[test]
@@ -12968,6 +13116,7 @@ mod tests {
                     writes: vec![KernelBuf::whole(a)],
                     cooperative: false,
                     ctx: None,
+                    shared_mem_bytes: 0,
                 }),
             )
             .unwrap();
@@ -13178,6 +13327,7 @@ mod tests {
             writes: vec![KernelBuf::whole(b)],
             cooperative: false,
             ctx: None,
+            shared_mem_bytes: 0,
         });
         sim.graph_node_set_params(g, 0, patched.clone()).unwrap();
         let def = sim.graph_kernel_get_params(g, 0).unwrap();
@@ -13216,6 +13366,7 @@ mod tests {
                 writes: vec![KernelBuf::whole(a)],
                 cooperative: false,
                 ctx: None,
+                shared_mem_bytes: 0,
             }),
         ) {
             Err(SimError::Invalid { why }) => assert!(why.contains("capture"), "{why}"),
@@ -13249,6 +13400,7 @@ mod tests {
                 writes: vec![KernelBuf::whole(b)],
                 cooperative: false,
                 ctx: None,
+                shared_mem_bytes: 0,
             }),
         )
         .unwrap();

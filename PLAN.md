@@ -5284,7 +5284,18 @@ model, do not celebrate the sim.
     `cuCtxFromGreenCtx`. `gpu-profile capture` is still refused. Dual
     score still has no `$/M tokens`.
 
-493. [ ] Next numbered PLAN item after 492 is the next `gpu-sim` / Engine /
+493. [x] `gpu-sim` CUDA `CUDA_KERNEL_NODE_PARAMS.sharedMemBytes`:
+    [`KernelNodeParams::shared_mem_bytes`] is
+    `CUDA_KERNEL_NODE_PARAMS.sharedMemBytes`. Stored on the graph step,
+    not `Kind::Kernel`. GetParams / SetParams / AddNode carry the field.
+    Typed [`graph_add_kernel`] stays `0`. [`KernelNodeAttr::DynamicShared`]
+    Get/SetAttribute stays. CopyAttributes does not copy it. Oversize
+    without func attr / AllowNonPortable is Invalid `"dynamic shared"` /
+    `"non-portable shared"`. Parameter, not topology. Duration is bank
+    width, not byte count. No Engine `--kernel-shared`. `gpu-profile
+    capture` is still refused. Dual score still has no `$/M tokens`.
+
+494. [ ] Next numbered PLAN item after 493 is the next `gpu-sim` / Engine /
     serve / expertvm mechanical API that is still missing, or the next official
     decode family. Prefer remaining CUDA-shaped twins over more
     OpenAI HTTP veneer. Do not invent F32 `output.scale`. Do not invent a
@@ -5575,6 +5586,9 @@ model, do not celebrate the sim.
     resources. Do not invent a second CUDA_KERNEL_NODE_PARAMS.ctx /
     `KernelNodeParams::ctx`. Do not invent Engine `--kernel-ctx`. Do
     not put `ctx` on `Kind::Kernel`. Do not invent `cuCtxFromGreenCtx`.
+    Do not invent a second CUDA_KERNEL_NODE_PARAMS.sharedMemBytes /
+    `KernelNodeParams::shared_mem_bytes`. Do not invent Engine `--kernel-shared`.
+    Do not put `sharedMemBytes` on `Kind::Kernel`.
     Do not
     spend the next item on an OpenAI-compatible HTTP veneer.
 
