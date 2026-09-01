@@ -19780,6 +19780,20 @@ impl Sim {
         13_000
     }
 
+    /// `cuGetProcAddress` / `cudaGetDriverEntryPoint`.
+    ///
+    /// Always Invalid `"proc address"` (this VM has no C ABI function
+    /// pointers). Distinct from [`Self::driver_get_version`] and from
+    /// [`Self::library_load_data`]. Unknown devices are Invalid
+    /// `"device not in profile"`. Query; legal during capture. This VM does
+    /// not invent `cudaGetDriverEntryPointByVersion` this slice.
+    pub fn get_proc_address(&self, device: DeviceId) -> Result<(), SimError> {
+        let _gpu = self.profile.gpu(device)?;
+        Err(SimError::Invalid {
+            why: "proc address",
+        })
+    }
+
     /// `cuInit`. Host-synchronous. Capture cannot include it.
     ///
     /// Flags must be 0 (CUDA requires 0). This VM is already initialized at

@@ -5,6 +5,15 @@ Visible five-turn extract: [docs/chatgpt-share-6a920fe1.md](docs/chatgpt-share-6
 Complete share-API extract: [docs/chatgpt-share-6a920fe1/](docs/chatgpt-share-6a920fe1/).
 Work lands on `main`. No PRs.
 
+## Shipped 2026-09-01 — CUDA `cuGetProcAddress`
+
+`gpu-sim` `Sim::get_proc_address` is `cuGetProcAddress` /
+`cudaGetDriverEntryPoint`. Always Invalid `"proc address"` because this
+VM has no C ABI function pointers. Query; legal during capture. Distinct
+from `driver_get_version` and `library_load_data`. This VM does not invent
+`cudaGetDriverEntryPointByVersion` or Engine `--proc-address`.
+`gpu-profile capture` is still refused. Dual score still has no `$/M tokens`.
+
 ## Shipped 2026-09-01 — CUDA `cuLibraryLoadData`
 
 `gpu-sim` `Sim::library_load_data` is `cuLibraryLoadData`. Always Invalid

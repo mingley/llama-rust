@@ -171,6 +171,7 @@ warp scheduler, L1, …   ← do not model
 | `stream_get_attribute` / `stream_set_attribute` wrap existing stream state | `cudaStreamGetAttribute` / `SetAttribute` |
 | `device_count` is the profile GPU count | `cudaGetDeviceCount` |
 | `driver_get_version` / `runtime_get_version` report CUDA 13.0 | `cudaDriverGetVersion` / `cudaRuntimeGetVersion` |
+| `get_proc_address` is Invalid (no C ABI function pointers) | `cuGetProcAddress` / `cudaGetDriverEntryPoint` |
 | `driver_init` is a 1 ns no-op; flags must be 0 | `cuInit` |
 | `module_get_loading_mode` is always Eager (CUDA 1) | `cuModuleGetLoadingMode` |
 | `library_load_data` is Invalid (no cubin / `CUlibrary`) | `cuLibraryLoadData` |
@@ -1137,7 +1138,10 @@ PCI ids; `pciSubSystemID` is always 0; `GpuPciDeviceId` is always 0;
 `GpuPciSubsystemId` is always 0; `luid` is always 0). `device_get_by_pci_bus_id` is `cudaDeviceGetByPCIBusId`
 (inverse). `device_total_mem` is `cuDeviceTotalMem` (HBM bytes).
 `driver_get_version` is `cudaDriverGetVersion` / `cuDriverGetVersion` (CUDA
-13.0). `driver_init` is `cuInit` (flags 0; already initialized at construct;
+13.0). `get_proc_address` is `cuGetProcAddress` / `cudaGetDriverEntryPoint`
+(always Invalid `"proc address"`; no C ABI function pointers). Distinct from
+`driver_get_version` and `library_load_data`. Query; legal during capture.
+No Engine `--proc-address`. `driver_init` is `cuInit` (flags 0; already initialized at construct;
 1 ns no-op; capture cannot include it; distinct from `init_device`).
 `module_get_loading_mode` is `cuModuleGetLoadingMode` (always Eager;
 CUDA 1; query; legal during capture; no modules; distinct from

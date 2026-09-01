@@ -6443,7 +6443,15 @@ model, do not celebrate the sim.
     `cudaChooseDevice`. `gpu-profile capture` is still refused. Dual
     score still has no `$/M tokens`.
 
-617. [ ] Next numbered PLAN item after 616 is the next `gpu-sim` / Engine /
+617. [x] `gpu-sim` `Sim::get_proc_address` is `cuGetProcAddress` /
+    `cudaGetDriverEntryPoint`. Always Invalid `"proc address"` because
+    this VM has no C ABI function pointers. Query; legal during capture.
+    Distinct from `driver_get_version` and `library_load_data`. This VM
+    does not invent `cudaGetDriverEntryPointByVersion`, Engine `--proc-address`,
+    or `cudaChooseDevice`. `gpu-profile capture` is still refused. Dual
+    score still has no `$/M tokens`.
+
+618. [ ] Next numbered PLAN item after 617 is the next `gpu-sim` / Engine /
     serve / expertvm mechanical API that is still missing, or the next official
     decode family. Prefer remaining CUDA-shaped twins over more
     OpenAI HTTP veneer. Do not invent F32 `output.scale`. Do not invent a
@@ -6734,6 +6742,10 @@ model, do not celebrate the sim.
     `library_load_data`. Do not invent Engine `--library-load`.
     Do not invent `cuLibraryLoadFromFile` this slice. Do not reverse
     `"cuda library"`.
+    Do not invent a second `cuGetProcAddress` /
+    `get_proc_address`. Do not invent Engine `--proc-address`.
+    Do not invent `cudaGetDriverEntryPointByVersion` this slice. Do not
+    reverse `"proc address"`.
     Do not invent a second `cudaStreamAddCallback`.
     Do not invent Engine `--stream-callback` (same wall as second live
     `cudaLaunchHostFunc` after miss DMA).
@@ -7133,6 +7145,9 @@ model, do not celebrate the sim.
     Do not invent a second `library_load_data` API. Do not invent
     Engine `--load-library`. Do not invent a `CUlibrary` handle this
     slice. Do not reverse no cubin.
+    Do not invent a second `get_proc_address` API. Do not invent
+    Engine `--get-proc`. Do not invent a C ABI function pointer this
+    slice. Do not reverse no driver entry.
     Do not invent a second DeviceLaunch in-flight destroy-complete check or Engine
     `--device-launch-destroy`. Do not abort an in-flight DeviceLaunch when
     `destroy_graph` succeeds. Do not delay destroy of an idle exec. Do not invent
@@ -7736,6 +7751,9 @@ model, do not celebrate the sim.
     Invalid.
     Do not invent a second `library_load_data` method. Do not invent
     Engine `--cu-library-load`. Do not reverse wrapping cuLibraryLoadData
+    Invalid.
+    Do not invent a second `get_proc_address` method. Do not invent
+    Engine `--cu-get-proc`. Do not reverse wrapping cuGetProcAddress
     Invalid.
     Do not
     spend the next item on an OpenAI-compatible HTTP veneer.
