@@ -558,6 +558,8 @@ graphics resources are not modeled; no Engine flag).
 (Invalid; EGL streams are not modeled; no Engine flag).
 `gpu-sim` `gl_get_devices` is `cuGLGetDevices` (Invalid; OpenGL interop
 is not modeled; no Engine flag).
+`gpu-sim` `d3d11_get_devices` is `cuD3D11GetDevices` (Invalid; Direct3D 11
+interop is not modeled; no Engine flag).
 `gpu-sim` `MaxSharedMemoryPerMultiprocessor` matches
 `MaxSharedMemoryPerBlockOptin` (`cudaDevAttrMaxSharedMemoryPerMultiprocessor`;
 reserved shared memory is 0; no Engine flag; not occupancy SM counts).

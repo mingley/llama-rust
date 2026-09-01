@@ -595,6 +595,8 @@
 //! legal during capture. No Engine `--egl-stream`.
 //! [`gl_get_devices`](Sim::gl_get_devices) is `cuGLGetDevices` (always
 //! Invalid `"opengl"`). Query; legal during capture. No Engine `--gl-devices`.
+//! [`d3d11_get_devices`](Sim::d3d11_get_devices) is `cuD3D11GetDevices`
+//! (always Invalid `"d3d11"`). Query; legal during capture. No Engine `--d3d11-devices`.
 //! [`DeviceAttr::HostMemoryPoolsSupported`] is always 0 (pools are
 //! device-only; host location is Invalid).
 //! [`DeviceAttr::IsMultiGpuBoard`] / [`MultiGpuBoardGroupID`](DeviceAttr::MultiGpuBoardGroupID)
@@ -21397,6 +21399,38 @@ mod tests {
         match sim.graphics_map_resources(d, StreamId(0)) {
             Err(SimError::Invalid { why }) => {
                 assert!(why.contains("graphics resource"), "{why}");
+            }
+            other => panic!("{other:?}"),
+        }
+    }
+
+    #[test]
+    fn d3d11_get_devices_is_unsupported() {
+        let mut sim = Sim::new(h100());
+        let d = DeviceId(0);
+        match sim.d3d11_get_devices(d) {
+            Err(SimError::Invalid { why }) => {
+                assert!(why.contains("d3d11"), "{why}");
+            }
+            other => panic!("{other:?}"),
+        }
+        sim.begin_capture(d, StreamId(0)).unwrap();
+        match sim.d3d11_get_devices(d) {
+            Err(SimError::Invalid { why }) => {
+                assert!(why.contains("d3d11"), "{why}");
+            }
+            other => panic!("{other:?}"),
+        }
+        let _g = sim.end_capture().unwrap();
+        match sim.d3d11_get_devices(DeviceId(99)) {
+            Err(SimError::Invalid { why }) => {
+                assert!(why.contains("device not in profile"), "{why}");
+            }
+            other => panic!("{other:?}"),
+        }
+        match sim.gl_get_devices(d) {
+            Err(SimError::Invalid { why }) => {
+                assert!(why.contains("opengl"), "{why}");
             }
             other => panic!("{other:?}"),
         }

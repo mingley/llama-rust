@@ -17700,6 +17700,18 @@ impl Sim {
         Err(SimError::Invalid { why: "opengl" })
     }
 
+    /// `cuD3D11GetDevices` / `cudaD3D11GetDevices`. Direct3D 11 interop is
+    /// not modeled.
+    ///
+    /// Always Invalid `"d3d11"`. Distinct from [`Self::gl_get_devices`].
+    /// Unknown devices are Invalid `"device not in profile"`. Query; legal
+    /// during capture. This VM does not invent `cuD3D11CtxCreate` this
+    /// slice.
+    pub fn d3d11_get_devices(&self, device: DeviceId) -> Result<(), SimError> {
+        let _gpu = self.profile.gpu(device)?;
+        Err(SimError::Invalid { why: "d3d11" })
+    }
+
     /// `cudaMemcpy3DWithAttributesAsync`.
     ///
     /// [`MemcpySrcAccessOrder::Stream`] is [`Self::memcpy_3d_async`].
