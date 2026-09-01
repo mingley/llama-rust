@@ -5,6 +5,14 @@ Visible five-turn extract: [docs/chatgpt-share-6a920fe1.md](docs/chatgpt-share-6
 Complete share-API extract: [docs/chatgpt-share-6a920fe1/](docs/chatgpt-share-6a920fe1/).
 Work lands on `main`. No PRs.
 
+## Shipped 2026-09-01 — ExecUpdate preserves node enable
+
+`gpu-sim` CUDA `cudaGraphExecUpdate` leaves `graph_node_set_enabled` state
+unchanged. Disabled nodes stay skipped after a successful update. Typed
+ExecSetParams also leave enable unchanged. This VM does not invent Engine
+`--graph-enable-update` or copy enable from the source definition.
+`gpu-profile capture` is still refused. Dual score still has no `$/M tokens`.
+
 ## Shipped 2026-09-01 — CUDA ExecMemset SetParams 2D/3D address-only
 
 `gpu-sim` CUDA `cudaGraphExecMemsetNodeSetParams` of a 2D/3D node may

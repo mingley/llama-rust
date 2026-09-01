@@ -4242,7 +4242,8 @@ impl Sim {
     /// `graph_update_ns`. Recapture if topology differs.
     /// Capture cannot include it. `exec` must already be instantiated. Graphs
     /// with mem alloc or mem free nodes cannot be updated
-    /// (`cudaGraphExecUpdate` of mem nodes).
+    /// (`cudaGraphExecUpdate` of mem nodes). [`Self::graph_node_set_enabled`]
+    /// state is unchanged (CUDA enable is not a parameter).
     pub fn update_graph(&mut self, exec: GraphId, src: GraphId) -> Result<(), SimError> {
         let mut info = GraphExecUpdateResultInfo::default();
         self.update_graph_with_info(exec, src, &mut info)
@@ -4354,10 +4355,14 @@ impl Sim {
         }
         let ns = self.profile.gpu(device)?.graph_update_ns.max(1);
         self.clock = self.clock.saturating_add(ns);
+        let mut new_steps = src_steps;
+        for (dst, prev) in new_steps.iter_mut().zip(exec_steps.iter()) {
+            dst.enabled = prev.enabled;
+        }
         let exec = self.graphs.get_mut(&exec).ok_or(SimError::Invalid {
             why: "unknown graph",
         })?;
-        exec.exec = Some(src_steps);
+        exec.exec = Some(new_steps);
         exec.uploaded = false;
         info.result = GraphExecUpdateResult::Success;
         Ok(())
@@ -6796,6 +6801,7 @@ impl Sim {
     /// complete (wait for the disabled node's predecessors). Memory alloc/free
     /// nodes cannot be disabled. Pays `graph_set_params_ns`. Capture cannot
     /// include it. Does not clear the upload flag (topology unchanged).
+    /// [`Self::update_graph`] and typed ExecSetParams leave enable unchanged.
     pub fn graph_node_set_enabled(
         &mut self,
         exec: GraphId,

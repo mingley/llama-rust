@@ -5528,7 +5528,15 @@ model, do not celebrate the sim.
     mapping failures. `gpu-profile capture` is still refused. Dual score
     still has no `$/M tokens`.
 
-514. [ ] Next numbered PLAN item after 513 is the next `gpu-sim` / Engine /
+514. [x] `gpu-sim` CUDA `cudaGraphExecUpdate` leaves
+    [`graph_node_set_enabled`] state unchanged (enable is not a
+    parameter). Disabled nodes stay skipped after a successful update.
+    Typed ExecSetParams also leave enable unchanged. This VM does not
+    invent Engine `--graph-enable-update` or copy enable from the source
+    definition (SetEnabled is exec-only). `gpu-profile capture` is still
+    refused. Dual score still has no `$/M tokens`.
+
+515. [ ] Next numbered PLAN item after 514 is the next `gpu-sim` / Engine /
     serve / expertvm mechanical API that is still missing, or the next official
     decode family. Prefer remaining CUDA-shaped twins over more
     OpenAI HTTP veneer. Do not invent F32 `output.scale`. Do not invent a
@@ -5917,6 +5925,10 @@ model, do not celebrate the sim.
     `graph_exec_memset_set_params_3d` helpers. Do not invent Engine
     `--graph-memset-dims`. Do not invent CUDA-named
     `cudaGraphExecMemsetNodeSetParams2D`.
+    Do not invent a second enable-state ExecUpdate copy. Do not invent
+    Engine `--graph-enable-update`. Do not copy enable from the source
+    definition (SetEnabled is exec-only). Do not invent enable as topology
+    for `update_graph`.
     Do not
     spend the next item on an OpenAI-compatible HTTP veneer.
 

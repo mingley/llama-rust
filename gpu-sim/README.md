@@ -576,7 +576,8 @@ memset 2D/3D helpers plus
 a `GpuOp::BatchMem` item list is a parameter; kernel SetParams keeps the
 exec uploaded when the node is device-updatable).
 `graph_node_set_enabled` is `cudaGraphNodeSetEnabled` (skip a node at launch;
-mem alloc/free cannot be disabled).
+mem alloc/free cannot be disabled). `update_graph` plus ExecSetParams leave
+enable unchanged.
 `graph_exec_child_set_params` is `cudaGraphExecChildGraphNodeSetParams`
 (swap the nested graph; nested topology must match; child ids are topology
 for `update_graph`; mem nodes legal). Definition-side

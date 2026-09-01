@@ -1103,7 +1103,8 @@
 //! parameter; External flag is topology).
 //! [`graph_node_set_enabled`](Sim::graph_node_set_enabled) /
 //! [`graph_node_get_enabled`](Sim::graph_node_get_enabled) are
-//! `cudaGraphNodeSetEnabled` / `GetEnabled` (skip launch; mem nodes illegal).
+//! `cudaGraphNodeSetEnabled` / `GetEnabled` (skip launch; mem nodes illegal;
+//! [`update_graph`](Sim::update_graph) plus ExecSetParams leave enable unchanged).
 //! [`Sim::clone_graph`] is `cudaGraphClone` (independent, not instantiated;
 //! child-graph nodes are cloned recursively).
 //! `expertvm --graph-clone` clones leaf captures; `--graph-clone-parent` clones
@@ -3926,6 +3927,41 @@ mod tests {
         );
         assert_eq!(run_set, 300);
         assert_eq!(run_update, 9_000);
+    }
+
+    #[test]
+    fn update_graph_preserves_node_enabled() {
+        let mut sim = Sim::new(h100());
+        let d = DeviceId(0);
+        let s = StreamId(0);
+        let a = sim.malloc(d, 4096).unwrap();
+        let b = sim.malloc(d, 4096).unwrap();
+        let exec = sim.create_graph(d, s).unwrap();
+        sim.graph_add_kernel(exec, KernelKind::other(8, 8), &[a], &[a])
+            .unwrap();
+        sim.graph_add_kernel(exec, KernelKind::other(8, 8), &[a], &[a])
+            .unwrap();
+        let _ = sim.instantiate_graph(exec).unwrap();
+        sim.graph_node_set_enabled(exec, 1, false).unwrap();
+        assert!(!sim.graph_node_get_enabled(exec, 1).unwrap());
+        let src = sim.create_graph(d, s).unwrap();
+        sim.graph_add_kernel(src, KernelKind::other(16, 16), &[b], &[b])
+            .unwrap();
+        sim.graph_add_kernel(src, KernelKind::other(16, 16), &[b], &[b])
+            .unwrap();
+        sim.update_graph(exec, src).unwrap();
+        assert!(!sim.graph_node_get_enabled(exec, 1).unwrap());
+        assert!(sim.graph_node_get_enabled(exec, 0).unwrap());
+        let n = sim.launch_graph(exec, s).unwrap();
+        assert_eq!(n, 1);
+        sim.synchronize().unwrap();
+        let params = sim.graph_exec_kernel_get_params(exec, 1).unwrap();
+        sim.graph_exec_kernel_set_params(exec, 1, &params).unwrap();
+        assert!(!sim.graph_node_get_enabled(exec, 1).unwrap());
+        sim.graph_node_set_enabled(exec, 1, true).unwrap();
+        let n = sim.launch_graph(exec, s).unwrap();
+        assert_eq!(n, 2);
+        sim.synchronize().unwrap();
     }
 
     #[test]
