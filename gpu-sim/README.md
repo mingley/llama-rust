@@ -185,6 +185,7 @@ warp scheduler, L1, …   ← do not model
 | `ctx_get_cache_config` wraps `get_cache_config` for that primary context | `cuCtxGetCacheConfig` |
 | `ctx_get_stream_priority_range` wraps `device_get_stream_priority_range` (H100 `(0, -5)`) | `cuCtxGetStreamPriorityRange` |
 | `ctx_get_limit` wraps `get_limit` for a `DeviceLimit` | `cuCtxGetLimit` |
+| `ctx_synchronize` waits every stream on one GPU (other GPUs keep running) | `cuCtxSynchronize` |
 | access-policy windows align to `cudaLimitMaxL2FetchGranularity` (default 128; `expertvm sim --l2-fetch N` sets 32/64/128) | exact |
 | `AccessPolicyWindow.hit_ratio_permille` is CUDA `hitRatio` (`expertvm sim --l2-ratio N`; unset 1000) | exact |
 | `AccessPolicyWindow.hit` Streaming skips persist fill (`expertvm sim --l2-streaming`; needs persist) | exact |
@@ -1139,6 +1140,9 @@ same primary context (same as `device_get_stream_priority_range`; example
 H100 is `(0, -5)`).
 `ctx_get_limit` is `cuCtxGetLimit` for that same primary context (same as
 `get_limit` for a `DeviceLimit`).
+`ctx_synchronize` is `cuCtxSynchronize` for that same primary context
+(same wait as `synchronize_device`; capture cannot include it; other GPUs
+keep running).
 `green_ctx_get_id` is
 `cuGreenCtxGetId` / `cudaExecutionCtxGetId` (unique per live green ctx;
 not `GreenCtxId`).

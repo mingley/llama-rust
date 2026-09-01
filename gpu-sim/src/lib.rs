@@ -967,6 +967,10 @@
 //! [`ctx_get_limit`](Sim::ctx_get_limit) is `cuCtxGetLimit` for that same
 //! primary context (same as [`get_limit`](Sim::get_limit) for a
 //! [`DeviceLimit`]). Query; legal during capture. No Engine `--ctx-get-limit`.
+//! [`ctx_synchronize`](Sim::ctx_synchronize) is `cuCtxSynchronize` for that
+//! same primary context (same wait as [`synchronize_device`](Sim::synchronize_device)).
+//! Capture cannot include it. Distinct from
+//! [`green_ctx_synchronize`](Sim::green_ctx_synchronize). No Engine `--ctx-synchronize`.
 //! `expertvm sim --device-sync-memops` sets [`DeviceFlags::SYNC_MEMOPS`].
 //! `expertvm sim --device-sync-policy blocking` sets
 //! [`DeviceFlags::SCHEDULE_BLOCKING_SYNC`].
@@ -20840,6 +20844,42 @@ mod tests {
         );
         sim.reset_device(d).unwrap();
         assert_eq!(sim.ctx_get_limit(d, DeviceLimit::StackSize).unwrap(), 1024);
+    }
+
+    #[test]
+    fn ctx_synchronize_waits_one_gpu_like_device_sync() {
+        let mut sim = Sim::new(h100());
+        let d = DeviceId(0);
+        let s0 = StreamId(0);
+        let s1 = StreamId(1);
+        let a = sim.malloc(d, 4096).unwrap();
+        let b = sim.malloc(d, 4096).unwrap();
+        enq(sim.kernel(d, KernelKind::other(1 << 20, 4096), &[a], &[a], s0));
+        enq(sim.kernel(d, KernelKind::other(1 << 20, 4096), &[b], &[b], s1));
+        sim.ctx_synchronize(d).unwrap();
+        assert!(sim.query_stream(d, s0).unwrap());
+        assert!(sim.query_stream(d, s1).unwrap());
+        sim.begin_capture(d, s0).unwrap();
+        match sim.ctx_synchronize(d) {
+            Err(SimError::Invalid { why }) => assert!(why.contains("capture"), "{why}"),
+            other => panic!("{other:?}"),
+        }
+        let _g = sim.end_capture().unwrap();
+        match sim.ctx_synchronize(DeviceId(99)) {
+            Err(SimError::Invalid { why }) => {
+                assert!(why.contains("device not in profile"), "{why}");
+            }
+            other => panic!("{other:?}"),
+        }
+        let mut eight = Sim::new(HardwareProfile::example_8xh100_nvlink());
+        let d0 = DeviceId(0);
+        let d1 = DeviceId(1);
+        let a1 = eight.malloc(d1, 4096).unwrap();
+        enq(eight.kernel(d1, KernelKind::other(1 << 30, 4096), &[a1], &[a1], s0));
+        eight.ctx_synchronize(d0).unwrap();
+        assert!(!eight.query_stream(d1, s0).unwrap());
+        eight.ctx_synchronize(d1).unwrap();
+        assert!(eight.query_stream(d1, s0).unwrap());
     }
 
     #[test]

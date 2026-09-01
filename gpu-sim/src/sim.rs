@@ -18572,6 +18572,19 @@ impl Sim {
         self.get_limit(device, limit)
     }
 
+    /// `cuCtxSynchronize` for the seeded primary context of `device`.
+    ///
+    /// Host-synchronous. Capture cannot include it. There is no TLS current
+    /// device and no `CUcontext` object. Waits every stream on `device`
+    /// (same as [`Self::synchronize_device`] / `cudaDeviceSynchronize`).
+    /// Other GPUs keep running. Distinct from [`Self::synchronize_device`]
+    /// (runtime) and from [`Self::green_ctx_synchronize`]. Unknown devices
+    /// are Invalid `"device not in profile"`. This VM does not invent
+    /// `cuCtxSynchronize_v2`.
+    pub fn ctx_synchronize(&mut self, device: DeviceId) -> Result<(), SimError> {
+        self.synchronize_device(device)
+    }
+
     /// `cudaInitDevice(device, 0, 0)`. Ensures the primary context (already
     /// seeded at construct). Does not make a thread-current device and does
     /// not change [`Self::get_device_flags`]. Host-synchronous 1 ns. Capture

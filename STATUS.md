@@ -5,6 +5,15 @@ Visible five-turn extract: [docs/chatgpt-share-6a920fe1.md](docs/chatgpt-share-6
 Complete share-API extract: [docs/chatgpt-share-6a920fe1/](docs/chatgpt-share-6a920fe1/).
 Work lands on `main`. No PRs.
 
+## Shipped 2026-09-01 — CUDA `cuCtxSynchronize`
+
+`gpu-sim` `Sim::ctx_synchronize` is `cuCtxSynchronize` for the seeded
+primary context of an explicit device. Same wait as `synchronize_device`.
+Capture cannot include it. Other GPUs keep running. Distinct from
+`synchronize_device` (runtime) and from `green_ctx_synchronize`. This VM
+does not invent `cuCtxSynchronize_v2` or Engine `--ctx-synchronize`.
+`gpu-profile capture` is still refused. Dual score still has no `$/M tokens`.
+
 ## Shipped 2026-09-01 — CUDA `cuCtxGetLimit`
 
 `gpu-sim` `Sim::ctx_get_limit` is `cuCtxGetLimit` for the seeded

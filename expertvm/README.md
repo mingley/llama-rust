@@ -479,6 +479,8 @@ seeded primary context; no Engine flag).
 (example H100 `(0, -5)`; no Engine flag).
 `gpu-sim` `ctx_get_limit` is `cuCtxGetLimit` (same as `get_limit`; no
 Engine flag).
+`gpu-sim` `ctx_synchronize` is `cuCtxSynchronize` (same wait as
+`synchronize_device`; no Engine flag).
 `gpu-sim` launch-geometry caps are `cudaDevAttrMaxThreadsPerBlock` 1024
 and H100 block/grid dims (no Engine flag; not occupancy SM counts).
 `gpu-sim` `MaxRegistersPerBlock` is `cudaDevAttrMaxRegistersPerBlock` 65536
