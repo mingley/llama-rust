@@ -699,6 +699,22 @@ impl Sim {
         }
     }
 
+    /// Exec snapshot for GetAttribute (`exec`), or a live definition handle.
+    /// Query; capture is legal. A parked exec is `"unknown graph"`. Live
+    /// in-flight GetAttribute stays (`as_exec`, not `as_exec_for_update`).
+    fn resolve_kernel_attr_graph_query(
+        &self,
+        graph: GraphId,
+        exec: bool,
+    ) -> Result<GraphId, SimError> {
+        if exec {
+            self.as_exec(graph)
+        } else {
+            self.require_live_graph(graph)?;
+            Ok(graph)
+        }
+    }
+
     fn live_graph(&self, id: GraphId) -> Result<&Graph, SimError> {
         let g = self.graphs.get(&id).ok_or(SimError::Invalid {
             why: "unknown graph",
@@ -2259,6 +2275,27 @@ impl Sim {
         Ok((u64::from(device.0) << 16)
             .saturating_add(u64::from(stream.0))
             .saturating_add(1))
+    }
+
+    /// `cudaStreamGetDevice` / `cuStreamGetDevice`. Query; legal during capture.
+    ///
+    /// Returns the device of `stream`. [`StreamId`] is per-device in this VM,
+    /// so this is the explicit `device` after a live-device check. A green-ctx
+    /// stream returns [`Self::green_ctx_get_device`] of the bound ctx (same
+    /// device). Distinct from [`Self::stream_get_id`] and
+    /// [`Self::green_ctx_get_device`]. Unknown devices are Invalid. NULL is
+    /// the legacy stream of `device`. This VM does not invent `cudaSetDevice`
+    /// or `cuStreamGetCtx`.
+    pub fn stream_get_device(
+        &self,
+        device: DeviceId,
+        stream: StreamId,
+    ) -> Result<DeviceId, SimError> {
+        let _gpu = self.profile.gpu(device)?;
+        if let Some(ctx) = self.stream_green_ctx.get(&(device, stream)).copied() {
+            return self.green_ctx_get_device(ctx);
+        }
+        Ok(device)
     }
 
     /// `cudaStreamGetAttribute`. Query; legal during capture.
@@ -9646,6 +9683,99 @@ impl Sim {
         Ok(())
     }
 
+    /// `cudaGraphRemoveDependencies` v2 with [`GraphEdgeData`].
+    ///
+    /// Removes `from` → `to` only when stored data matches `data` (Default
+    /// ports 0 when unset). A missing matching edge is Invalid
+    /// `"graph dependency"`. Distinct from [`Self::graph_remove_dependencies`]
+    /// (v1 missing is a no-op; PLAN 182). v1 still removes a launch-completion
+    /// edge (it ignores stored data). Capture cannot include it. Illegal on an
+    /// instantiated exec.
+    pub fn graph_remove_dependencies_with_data(
+        &mut self,
+        graph: GraphId,
+        from: usize,
+        to: usize,
+        data: GraphEdgeData,
+    ) -> Result<(), SimError> {
+        self.graph_remove_dependencies_n_with_data(graph, &[(from, to, data)])
+    }
+
+    /// `cudaGraphRemoveDependencies` v2 of `numDependencies` from/to/data
+    /// triples.
+    ///
+    /// All-or-nothing: type, ports, index, or a missing matching edge removes
+    /// nothing. Empty `edges` is success. [`GraphEdgeData::default`] matches a
+    /// stored Default edge. [`GraphKernelNodePort::LAUNCH_COMPLETION`] matches
+    /// a launch-completion edge. v1 [`Self::graph_remove_dependencies_n`]
+    /// missing stays a no-op. Capture cannot include it. Illegal on an
+    /// instantiated exec.
+    pub fn graph_remove_dependencies_n_with_data(
+        &mut self,
+        graph: GraphId,
+        edges: &[(usize, usize, GraphEdgeData)],
+    ) -> Result<(), SimError> {
+        self.fail_if_capturing("cannot remove graph dependencies during capture")?;
+        self.require_live_definition(graph)?;
+        for &(_, _, data) in edges {
+            Self::check_graph_edge_data(data)?;
+        }
+        if edges.is_empty() {
+            return Ok(());
+        }
+        let n = self
+            .graphs
+            .get(&graph)
+            .ok_or(SimError::Invalid {
+                why: "unknown graph",
+            })?
+            .steps
+            .len();
+        for &(from, to, data) in edges {
+            if from == to || from >= n || to >= n {
+                return Err(SimError::Invalid {
+                    why: "graph dependency",
+                });
+            }
+            let g = self.graphs.get(&graph).ok_or(SimError::Invalid {
+                why: "unknown graph",
+            })?;
+            let from_live = g.steps.get(from).is_some_and(|s| !s.destroyed);
+            let to_live = g.steps.get(to).is_some_and(|s| !s.destroyed);
+            if !from_live || !to_live {
+                return Err(SimError::Invalid {
+                    why: "graph dependency",
+                });
+            }
+            if data.from_port == GraphKernelNodePort::LAUNCH_COMPLETION {
+                self.require_graph_kernel_edge_src(graph, from)?;
+            }
+            let g = self.graphs.get(&graph).ok_or(SimError::Invalid {
+                why: "unknown graph",
+            })?;
+            let matched = g
+                .steps
+                .get(to)
+                .is_some_and(|s| s.deps.contains(&from) && s.edge_data_of(from) == data);
+            if !matched {
+                return Err(SimError::Invalid {
+                    why: "graph dependency",
+                });
+            }
+        }
+        let g = self.graphs.get_mut(&graph).ok_or(SimError::Invalid {
+            why: "unknown graph",
+        })?;
+        for &(from, to, _) in edges {
+            let step = g.steps.get_mut(to).ok_or(SimError::Invalid {
+                why: "graph dependency",
+            })?;
+            step.deps.retain(|d| *d != from);
+            let _gone = step.edge_data.remove(&from);
+        }
+        Ok(())
+    }
+
     /// `cudaGraphDestroyNode` on a graph definition.
     ///
     /// Drops the node and incident edges. Remaining indices stay valid (CUDA
@@ -9956,10 +10086,13 @@ impl Sim {
     /// Matches the node id printed by [`Self::graph_debug_dot`] (`n0`, `n1`,
     /// …). Together with [`Self::graph_get_id`] the pair uniquely identifies a
     /// live node. Destroyed or unknown nodes are Invalid `"unknown graph node"`.
+    /// A parked in-flight-destroyed exec is Invalid `"unknown graph"` (CUDA
+    /// `cuGraphNodeGetLocalId` of a destroyed `CUgraphExec`). Distinct from
+    /// [`Self::graph_get_id`] (graph id, not node local id). Live exec
+    /// GetLocalId stays. Definition GetLocalId of the live graph while that
+    /// exec is parked stays. Live in-flight GetLocalId stays.
     pub fn graph_node_get_local_id(&self, graph: GraphId, node: usize) -> Result<u32, SimError> {
-        let g = self.graphs.get(&graph).ok_or(SimError::Invalid {
-            why: "unknown graph",
-        })?;
+        let g = self.live_graph(graph)?;
         let _live = live_ok(g.steps.get(node).ok_or(SimError::Invalid {
             why: "unknown graph node",
         })?)?;
@@ -9974,11 +10107,34 @@ impl Sim {
     /// [`Self::graph_node_get_local_id`] (debug-dot `n0`) and
     /// [`Self::graph_get_id`]. A definition, instantiate exec, and clone each
     /// assign different tools ids. Destroyed or unknown nodes are Invalid
-    /// `"unknown graph node"`.
+    /// `"unknown graph node"`. A parked in-flight-destroyed exec is Invalid
+    /// `"unknown graph"` (CUDA `cuGraphNodeGetToolsId`). Query; capture is
+    /// legal. Live exec GetToolsId stays. Definition GetToolsId stays.
     pub fn graph_node_get_tools_id(&self, graph: GraphId, node: usize) -> Result<u64, SimError> {
         let local = self.graph_node_get_local_id(graph, node)?;
         let gid = self.graph_get_id(graph)?;
         Ok((u64::from(gid) << 32) | u64::from(local))
+    }
+
+    /// `cuGraphNodeGetContainingGraph`. Query; legal during capture.
+    ///
+    /// Returns the graph that owns `node`. A child-graph node still lives in
+    /// the parent; the nested graph is [`Self::graph_child_get_graph`]. A node
+    /// added to a child-graph body is owned by that body. Destroyed or unknown
+    /// nodes are Invalid `"unknown graph node"`. A parked in-flight-destroyed
+    /// exec is Invalid `"unknown graph"`. Live exec GetContainingGraph stays.
+    /// Definition GetContainingGraph of the live graph while that exec is
+    /// parked stays. Live in-flight GetContainingGraph stays.
+    pub fn graph_node_get_containing_graph(
+        &self,
+        graph: GraphId,
+        node: usize,
+    ) -> Result<GraphId, SimError> {
+        let g = self.live_graph(graph)?;
+        let _live = live_ok(g.steps.get(node).ok_or(SimError::Invalid {
+            why: "unknown graph node",
+        })?)?;
+        Ok(graph)
     }
 
     /// `cudaGraphNodeGetType` for node `i`.
@@ -9993,6 +10149,11 @@ impl Sim {
     }
 
     /// `cudaGraphKernelNodeGetAttribute` for priority on the graph definition.
+    ///
+    /// Query; legal during capture. A parked in-flight-destroyed exec is Invalid
+    /// `"unknown graph"`. Live exec GetAttribute stays. Definition GetAttribute
+    /// of the live graph while that exec is parked stays. Live in-flight
+    /// GetAttribute stays.
     pub fn graph_kernel_node_get_priority(
         &self,
         graph: GraphId,
@@ -10016,7 +10177,7 @@ impl Sim {
         node: usize,
         exec: bool,
     ) -> Result<i32, SimError> {
-        let graph = if exec { self.as_exec(graph)? } else { graph };
+        let graph = self.resolve_kernel_attr_graph_query(graph, exec)?;
         let g = self.graphs.get(&graph).ok_or(SimError::Invalid {
             why: "unknown graph",
         })?;
@@ -10115,7 +10276,7 @@ impl Sim {
         node: usize,
         exec: bool,
     ) -> Result<ProgrammaticLaunch, SimError> {
-        let graph = if exec { self.as_exec(graph)? } else { graph };
+        let graph = self.resolve_kernel_attr_graph_query(graph, exec)?;
         let g = self.graphs.get(&graph).ok_or(SimError::Invalid {
             why: "unknown graph",
         })?;
@@ -10257,7 +10418,7 @@ impl Sim {
         node: usize,
         exec: bool,
     ) -> Result<Option<ProgrammaticEvent>, SimError> {
-        let graph = if exec { self.as_exec(graph)? } else { graph };
+        let graph = self.resolve_kernel_attr_graph_query(graph, exec)?;
         let g = self.graphs.get(&graph).ok_or(SimError::Invalid {
             why: "unknown graph",
         })?;
@@ -10374,7 +10535,7 @@ impl Sim {
         node: usize,
         exec: bool,
     ) -> Result<Option<LaunchCompletionEvent>, SimError> {
-        let graph = if exec { self.as_exec(graph)? } else { graph };
+        let graph = self.resolve_kernel_attr_graph_query(graph, exec)?;
         let g = self.graphs.get(&graph).ok_or(SimError::Invalid {
             why: "unknown graph",
         })?;
@@ -10491,7 +10652,7 @@ impl Sim {
         node: usize,
         exec: bool,
     ) -> Result<Option<AccessPolicyWindow>, SimError> {
-        let graph = if exec { self.as_exec(graph)? } else { graph };
+        let graph = self.resolve_kernel_attr_graph_query(graph, exec)?;
         let g = self.graphs.get(&graph).ok_or(SimError::Invalid {
             why: "unknown graph",
         })?;
@@ -10633,7 +10794,7 @@ impl Sim {
         node: usize,
         exec: bool,
     ) -> Result<(MemSyncDomain, MemSyncDomainMap), SimError> {
-        let graph = if exec { self.as_exec(graph)? } else { graph };
+        let graph = self.resolve_kernel_attr_graph_query(graph, exec)?;
         let g = self.graphs.get(&graph).ok_or(SimError::Invalid {
             why: "unknown graph",
         })?;
@@ -10776,7 +10937,7 @@ impl Sim {
         node: usize,
         exec: bool,
     ) -> Result<Option<ClusterDim>, SimError> {
-        let graph = if exec { self.as_exec(graph)? } else { graph };
+        let graph = self.resolve_kernel_attr_graph_query(graph, exec)?;
         let g = self.graphs.get(&graph).ok_or(SimError::Invalid {
             why: "unknown graph",
         })?;
@@ -10875,7 +11036,7 @@ impl Sim {
         node: usize,
         exec: bool,
     ) -> Result<ClusterSchedulingPolicy, SimError> {
-        let graph = if exec { self.as_exec(graph)? } else { graph };
+        let graph = self.resolve_kernel_attr_graph_query(graph, exec)?;
         let g = self.graphs.get(&graph).ok_or(SimError::Invalid {
             why: "unknown graph",
         })?;
@@ -10961,7 +11122,7 @@ impl Sim {
         node: usize,
         exec: bool,
     ) -> Result<Option<ClusterDim>, SimError> {
-        let graph = if exec { self.as_exec(graph)? } else { graph };
+        let graph = self.resolve_kernel_attr_graph_query(graph, exec)?;
         let g = self.graphs.get(&graph).ok_or(SimError::Invalid {
             why: "unknown graph",
         })?;
@@ -11058,7 +11219,7 @@ impl Sim {
         node: usize,
         exec: bool,
     ) -> Result<SharedMemCarveout, SimError> {
-        let graph = if exec { self.as_exec(graph)? } else { graph };
+        let graph = self.resolve_kernel_attr_graph_query(graph, exec)?;
         let g = self.graphs.get(&graph).ok_or(SimError::Invalid {
             why: "unknown graph",
         })?;
@@ -11144,7 +11305,7 @@ impl Sim {
         node: usize,
         exec: bool,
     ) -> Result<bool, SimError> {
-        let graph = if exec { self.as_exec(graph)? } else { graph };
+        let graph = self.resolve_kernel_attr_graph_query(graph, exec)?;
         let g = self.graphs.get(&graph).ok_or(SimError::Invalid {
             why: "unknown graph",
         })?;
@@ -11239,7 +11400,7 @@ impl Sim {
         node: usize,
         exec: bool,
     ) -> Result<SharedMemoryMode, SimError> {
-        let graph = if exec { self.as_exec(graph)? } else { graph };
+        let graph = self.resolve_kernel_attr_graph_query(graph, exec)?;
         let g = self.graphs.get(&graph).ok_or(SimError::Invalid {
             why: "unknown graph",
         })?;
@@ -11325,7 +11486,7 @@ impl Sim {
         node: usize,
         exec: bool,
     ) -> Result<PortableClusterMode, SimError> {
-        let graph = if exec { self.as_exec(graph)? } else { graph };
+        let graph = self.resolve_kernel_attr_graph_query(graph, exec)?;
         let g = self.graphs.get(&graph).ok_or(SimError::Invalid {
             why: "unknown graph",
         })?;
@@ -11458,7 +11619,7 @@ impl Sim {
         node: usize,
         exec: bool,
     ) -> Result<(u32, PortableSharedMode), SimError> {
-        let graph = if exec { self.as_exec(graph)? } else { graph };
+        let graph = self.resolve_kernel_attr_graph_query(graph, exec)?;
         let g = self.graphs.get(&graph).ok_or(SimError::Invalid {
             why: "unknown graph",
         })?;
@@ -11612,7 +11773,7 @@ impl Sim {
         node: usize,
         exec: bool,
     ) -> Result<bool, SimError> {
-        let graph = if exec { self.as_exec(graph)? } else { graph };
+        let graph = self.resolve_kernel_attr_graph_query(graph, exec)?;
         let g = self.graphs.get(&graph).ok_or(SimError::Invalid {
             why: "unknown graph",
         })?;
@@ -11698,7 +11859,7 @@ impl Sim {
         node: usize,
         exec: bool,
     ) -> Result<SynchronizationPolicy, SimError> {
-        let graph = if exec { self.as_exec(graph)? } else { graph };
+        let graph = self.resolve_kernel_attr_graph_query(graph, exec)?;
         let g = self.graphs.get(&graph).ok_or(SimError::Invalid {
             why: "unknown graph",
         })?;
@@ -11784,7 +11945,7 @@ impl Sim {
         node: usize,
         exec: bool,
     ) -> Result<bool, SimError> {
-        let graph = if exec { self.as_exec(graph)? } else { graph };
+        let graph = self.resolve_kernel_attr_graph_query(graph, exec)?;
         let g = self.graphs.get(&graph).ok_or(SimError::Invalid {
             why: "unknown graph",
         })?;
@@ -11972,7 +12133,10 @@ impl Sim {
     /// `cudaGraphKernelNodeGetAttribute` on the graph definition.
     ///
     /// Query; legal during capture. Typed getters stay. Attr/value type
-    /// mismatch is Invalid `"kernel node attr"`.
+    /// mismatch is Invalid `"kernel node attr"`. A parked in-flight-destroyed
+    /// exec is Invalid `"unknown graph"`. Live exec GetAttribute stays.
+    /// Definition GetAttribute of the live graph while that exec is parked
+    /// stays. Live in-flight GetAttribute stays.
     pub fn graph_kernel_node_get_attribute(
         &self,
         graph: GraphId,
@@ -18246,6 +18410,25 @@ impl Sim {
     #[must_use]
     pub fn device_count(&self) -> u32 {
         u32::try_from(self.profile.gpus.len()).unwrap_or(u32::MAX)
+    }
+
+    /// `cudaDriverGetVersion` / `cuDriverGetVersion`. Query; legal during capture.
+    ///
+    /// Reports CUDA 13.0 (`1000 * major` plus `10 * minor`). Distinct from
+    /// [`Self::runtime_get_version`]. This VM does not invent `cudaGetLastError`.
+    #[must_use]
+    pub fn driver_get_version(&self) -> i32 {
+        13_000
+    }
+
+    /// `cudaRuntimeGetVersion`. Query; legal during capture.
+    ///
+    /// Same CUDA 13.0 value as [`Self::driver_get_version`] (this VM is one
+    /// toolkit). Distinct from [`Self::device_count`]. This VM does not invent
+    /// `cudaGetLastError`.
+    #[must_use]
+    pub fn runtime_get_version(&self) -> i32 {
+        13_000
     }
 
     /// `cuDeviceGet`. Query; legal during capture.

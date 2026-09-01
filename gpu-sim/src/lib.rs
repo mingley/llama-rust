@@ -652,6 +652,11 @@
 //! [`Sim::stream_get_priority`] is `cudaStreamGetPriority`.
 //! [`Sim::stream_get_id`] is `cudaStreamGetId` (unique per device/stream;
 //! not the caller-chosen [`StreamId`]).
+//! [`Sim::stream_get_device`] is `cudaStreamGetDevice` / `cuStreamGetDevice`
+//! (the device of the stream; green-ctx streams return the ctx create
+//! device). Query; legal during capture. Distinct from
+//! [`stream_get_id`](Sim::stream_get_id) and
+//! [`green_ctx_get_device`](Sim::green_ctx_get_device).
 //! [`stream_get_attribute`](Sim::stream_get_attribute) /
 //! [`stream_set_attribute`](Sim::stream_set_attribute) are
 //! `cudaStreamGetAttribute` / `SetAttribute` of existing stream state
@@ -664,7 +669,9 @@
 //! [`kernel_bufs`](Sim::kernel_bufs) inherit it; [`kernel_with`](Sim::kernel_with)
 //! and graph replay use the launch / node window. Set [`None`] clears.
 //! [`Sim::device_count`] is `cudaGetDeviceCount`.
-//! [`device_get`](Sim::device_get) is `cuDeviceGet` (ordinal in range).
+//! [`Sim::driver_get_version`] is `cudaDriverGetVersion` / `cuDriverGetVersion`
+//! (CUDA 13.0). [`Sim::runtime_get_version`] is `cudaRuntimeGetVersion` (same
+//! toolkit). Query; legal during capture. [`device_get`](Sim::device_get) is `cuDeviceGet` (ordinal in range).
 //! [`Sim::device_can_access_peer`] / [`device_get_p2p_attribute`](Sim::device_get_p2p_attribute)
 //! are `cudaDeviceCanAccessPeer` / `cudaDeviceGetP2PAttribute` (topology links;
 //! [`DeviceP2pAttr::AccessSupported`] and [`PerformanceRank`](DeviceP2pAttr::PerformanceRank)
@@ -896,7 +903,9 @@
 //! ([`KernelNodeAttr`]). Typed getters stay. Definition Set does not retarget
 //! exec. Attr/value mismatch is Invalid `"kernel node attr"`. Get is a query
 //! (capture-legal); Set cannot include capture. A parked in-flight-destroyed
-//! exec is `"unknown graph"` on SetAttribute; a live exec stays. Device-launch
+//! exec is `"unknown graph"` on SetAttribute; a live exec stays. A parked
+//! in-flight-destroyed exec is `"unknown graph"` on GetAttribute; a live exec
+//! stays. Query; capture is legal. Device-launch
 //! execs cannot attach programmatic or launch-completion events.
 //! [`kernel_pdl`](Sim::kernel_pdl) is `cudaLaunchKernelEx` PDL: a wait kernel
 //! may start after the previous same-stream kernel's trigger
@@ -1250,6 +1259,11 @@
 //! Debug-dot ExtraTopoInfo still dumps ports (not a GetEdges query).
 //! [`graph_remove_dependencies`](Sim::graph_remove_dependencies) is
 //! `cudaGraphRemoveDependencies` (illegal on an exec and during capture).
+//! [`graph_remove_dependencies_n_with_data`](Sim::graph_remove_dependencies_n_with_data)
+//! is `cudaGraphRemoveDependencies` v2 ([`GraphEdgeData`]; a matching
+//! `(from, to, data)` is removed; a missing matching edge is Invalid
+//! `"graph dependency"`). Distinct from v1 missing-remove no-op (PLAN 182).
+//! v1 still removes a launch-completion edge (it ignores stored data).
 //! [`graph_destroy_node`](Sim::graph_destroy_node) is `cudaGraphDestroyNode`
 //! (drops incident edges; remaining indices stay valid; illegal on an exec and
 //! during capture; does not retarget an already-instantiated exec).
@@ -1263,12 +1277,19 @@
 //! [`graph_node_get_local_id`](Sim::graph_node_get_local_id) /
 //! [`graph_node_get_tools_id`](Sim::graph_node_get_tools_id) are
 //! `cudaGraphGetNodes` / `GetRootNodes` / `GetEdges` / `NodeGetDependentNodes`
-//! / `cudaGraphDebugDotPrint` / `cudaGraphGetId` / `cuGraphNodeGetLocalId` /
-//! `cuGraphNodeGetToolsId` (live nodes; flags `0` is kinds and edges;
+//! plus `cudaGraphDebugDotPrint` / `cudaGraphGetId` / `cuGraphNodeGetLocalId`
+//! plus `cuGraphNodeGetToolsId` (live nodes; flags `0` is kinds and edges;
 //! [`GraphDebugDotFlags::RUNTIME_TYPES`] prints `cudaGraphNodeType*` names;
 //! [`GraphDebugDotFlags::EXTRA_TOPO_INFO`] numbers existing edges;
 //! [`GraphDebugDotFlags::VERBOSE`] prints modeled params and ExtraTopoInfo). Destroyed slots are
-//! omitted. [`begin_capture_to_graph`](Sim::begin_capture_to_graph) is
+//! omitted. A parked in-flight-destroyed exec is `"unknown graph"` on
+//! GetLocalId plus GetToolsId; a live exec stays. Query; capture is legal.
+//! [`graph_node_get_containing_graph`](Sim::graph_node_get_containing_graph) is
+//! `cuGraphNodeGetContainingGraph` (the graph that owns the node). A
+//! child-graph node still lives in the parent; the nested graph is
+//! [`graph_child_get_graph`](Sim::graph_child_get_graph). A parked
+//! in-flight-destroyed exec is `"unknown graph"`; a live exec stays. Query;
+//! capture is legal. [`begin_capture_to_graph`](Sim::begin_capture_to_graph) is
 //! `cudaStreamBeginCaptureToGraph`: append captured nodes onto an existing
 //! uninstantiated graph; capture roots additionally depend on the given node
 //! indices (empty means extra roots). A parked in-flight-destroyed exec is
@@ -5842,6 +5863,153 @@ mod tests {
         let _end = sim.end_capture().unwrap();
         sim.synchronize().unwrap();
         match sim.graph_node_deps(exec, 0).unwrap_err() {
+            SimError::Invalid { why } => assert!(why.contains("unknown"), "{why}"),
+            other => panic!("{other:?}"),
+        }
+        sim.destroy_graph(g).unwrap();
+        sim.destroy_graph(_end).unwrap();
+    }
+
+    #[test]
+    fn parked_exec_get_local_id_is_unknown() {
+        let mut sim = Sim::new(h100());
+        let d = DeviceId(0);
+        let s = StreamId(0);
+        let a = sim.malloc(d, 4096).unwrap();
+        let g = sim.create_graph(d, s).unwrap();
+        sim.graph_add_kernel(g, KernelKind::other(1 << 40, 4096), &[a], &[a])
+            .unwrap();
+        let exec = sim.instantiate_graph(g).unwrap();
+        let live_local = sim.graph_node_get_local_id(exec, 0).unwrap();
+        let live_tools = sim.graph_node_get_tools_id(exec, 0).unwrap();
+        assert_eq!(live_local, sim.graph_node_get_local_id(g, 0).unwrap());
+        assert_ne!(live_tools, sim.graph_node_get_tools_id(g, 0).unwrap());
+        let launched = sim.launch_graph(exec, s).unwrap();
+        assert!(launched > 0);
+        let _in_flight = sim.graph_node_get_local_id(exec, 0).unwrap();
+        let _in_flight_tools = sim.graph_node_get_tools_id(exec, 0).unwrap();
+        sim.destroy_graph(exec).unwrap();
+        match sim.graph_node_get_local_id(exec, 0).unwrap_err() {
+            SimError::Invalid { why } => assert!(why.contains("unknown"), "{why}"),
+            other => panic!("{other:?}"),
+        }
+        match sim.graph_node_get_tools_id(exec, 0).unwrap_err() {
+            SimError::Invalid { why } => assert!(why.contains("unknown"), "{why}"),
+            other => panic!("{other:?}"),
+        }
+        assert_eq!(sim.graph_node_get_local_id(g, 0).unwrap(), live_local);
+        sim.begin_capture(d, StreamId(1)).unwrap();
+        match sim.graph_node_get_local_id(exec, 0).unwrap_err() {
+            SimError::Invalid { why } => assert!(why.contains("unknown"), "{why}"),
+            other => panic!("{other:?}"),
+        }
+        let _end = sim.end_capture().unwrap();
+        sim.synchronize().unwrap();
+        match sim.graph_node_get_local_id(exec, 0).unwrap_err() {
+            SimError::Invalid { why } => assert!(why.contains("unknown"), "{why}"),
+            other => panic!("{other:?}"),
+        }
+        sim.destroy_graph(g).unwrap();
+        sim.destroy_graph(_end).unwrap();
+    }
+
+    #[test]
+    fn parked_exec_get_attribute_is_unknown() {
+        let mut sim = Sim::new(h100());
+        let d = DeviceId(0);
+        let s = StreamId(0);
+        let a = sim.malloc(d, 4096).unwrap();
+        let g = sim.create_graph(d, s).unwrap();
+        sim.graph_add_kernel(g, KernelKind::other(1 << 40, 4096), &[a], &[a])
+            .unwrap();
+        let exec = sim.instantiate_graph(g).unwrap();
+        let _pri = sim.graph_kernel_node_get_priority(exec, 0).unwrap();
+        let _exec_pri = sim.graph_exec_kernel_node_get_priority(exec, 0).unwrap();
+        let _coop = sim.graph_kernel_node_get_cooperative(exec, 0).unwrap();
+        let _attr = sim
+            .graph_kernel_node_get_attribute(exec, 0, KernelNodeAttr::Priority)
+            .unwrap();
+        let _exec_attr = sim
+            .graph_exec_kernel_node_get_attribute(exec, 0, KernelNodeAttr::Priority)
+            .unwrap();
+        let launched = sim.launch_graph(exec, s).unwrap();
+        assert!(launched > 0);
+        let _in_flight = sim.graph_kernel_node_get_priority(exec, 0).unwrap();
+        let _in_flight_exec = sim.graph_exec_kernel_node_get_priority(exec, 0).unwrap();
+        sim.destroy_graph(exec).unwrap();
+        match sim.graph_kernel_node_get_priority(exec, 0).unwrap_err() {
+            SimError::Invalid { why } => assert!(why.contains("unknown"), "{why}"),
+            other => panic!("{other:?}"),
+        }
+        match sim
+            .graph_exec_kernel_node_get_priority(exec, 0)
+            .unwrap_err()
+        {
+            SimError::Invalid { why } => assert!(why.contains("unknown"), "{why}"),
+            other => panic!("{other:?}"),
+        }
+        match sim.graph_kernel_node_get_cooperative(exec, 0).unwrap_err() {
+            SimError::Invalid { why } => assert!(why.contains("unknown"), "{why}"),
+            other => panic!("{other:?}"),
+        }
+        match sim
+            .graph_kernel_node_get_attribute(exec, 0, KernelNodeAttr::Priority)
+            .unwrap_err()
+        {
+            SimError::Invalid { why } => assert!(why.contains("unknown"), "{why}"),
+            other => panic!("{other:?}"),
+        }
+        match sim
+            .graph_exec_kernel_node_get_attribute(exec, 0, KernelNodeAttr::Priority)
+            .unwrap_err()
+        {
+            SimError::Invalid { why } => assert!(why.contains("unknown"), "{why}"),
+            other => panic!("{other:?}"),
+        }
+        let _def = sim.graph_kernel_node_get_priority(g, 0).unwrap();
+        sim.begin_capture(d, StreamId(1)).unwrap();
+        match sim.graph_kernel_node_get_priority(exec, 0).unwrap_err() {
+            SimError::Invalid { why } => assert!(why.contains("unknown"), "{why}"),
+            other => panic!("{other:?}"),
+        }
+        let _end = sim.end_capture().unwrap();
+        sim.synchronize().unwrap();
+        match sim.graph_kernel_node_get_priority(exec, 0).unwrap_err() {
+            SimError::Invalid { why } => assert!(why.contains("unknown"), "{why}"),
+            other => panic!("{other:?}"),
+        }
+        sim.destroy_graph(g).unwrap();
+        sim.destroy_graph(_end).unwrap();
+    }
+
+    #[test]
+    fn parked_exec_get_containing_graph_is_unknown() {
+        let mut sim = Sim::new(h100());
+        let d = DeviceId(0);
+        let s = StreamId(0);
+        let a = sim.malloc(d, 4096).unwrap();
+        let g = sim.create_graph(d, s).unwrap();
+        sim.graph_add_kernel(g, KernelKind::other(1 << 40, 4096), &[a], &[a])
+            .unwrap();
+        let exec = sim.instantiate_graph(g).unwrap();
+        assert_eq!(sim.graph_node_get_containing_graph(exec, 0).unwrap(), exec);
+        let launched = sim.launch_graph(exec, s).unwrap();
+        assert!(launched > 0);
+        let _in_flight = sim.graph_node_get_containing_graph(exec, 0).unwrap();
+        sim.destroy_graph(exec).unwrap();
+        match sim.graph_node_get_containing_graph(exec, 0).unwrap_err() {
+            SimError::Invalid { why } => assert!(why.contains("unknown"), "{why}"),
+            other => panic!("{other:?}"),
+        }
+        assert_eq!(sim.graph_node_get_containing_graph(g, 0).unwrap(), g);
+        sim.begin_capture(d, StreamId(1)).unwrap();
+        match sim.graph_node_get_containing_graph(exec, 0).unwrap_err() {
+            SimError::Invalid { why } => assert!(why.contains("unknown"), "{why}"),
+            other => panic!("{other:?}"),
+        }
+        let _end = sim.end_capture().unwrap();
+        sim.synchronize().unwrap();
+        match sim.graph_node_get_containing_graph(exec, 0).unwrap_err() {
             SimError::Invalid { why } => assert!(why.contains("unknown"), "{why}"),
             other => panic!("{other:?}"),
         }
@@ -15213,6 +15381,45 @@ mod tests {
     }
 
     #[test]
+    fn stream_get_device_is_cuda_stream_get_device() {
+        let mut sim = Sim::new(h100());
+        let d = DeviceId(0);
+        assert_eq!(sim.stream_get_device(d, StreamId::NULL).unwrap(), d);
+        assert_eq!(sim.stream_get_device(d, StreamId(1)).unwrap(), d);
+        match sim.stream_get_device(DeviceId(1), StreamId(0)) {
+            Err(SimError::Invalid { why }) => assert!(why.contains("device"), "{why}"),
+            other => panic!("{other:?}"),
+        }
+        sim.begin_capture(d, StreamId(0)).unwrap();
+        assert_eq!(sim.stream_get_device(d, StreamId(1)).unwrap(), d);
+        let _g = sim.end_capture().unwrap();
+        let desc = sim
+            .dev_resource_generate_desc(&[SmResource {
+                start: 0,
+                width: 500,
+            }])
+            .unwrap();
+        let ctx = sim
+            .green_ctx_create(desc, d, GreenCtxFlags::DEFAULT)
+            .unwrap();
+        sim.green_ctx_stream_create(ctx, StreamId(3), StreamCreateFlags::NON_BLOCKING, 0)
+            .unwrap();
+        assert_eq!(sim.stream_get_device(d, StreamId(3)).unwrap(), d);
+        assert_eq!(
+            sim.stream_get_device(d, StreamId(3)).unwrap(),
+            sim.green_ctx_get_device(ctx).unwrap()
+        );
+        let mut eight = Sim::new(HardwareProfile::example_8xh100_nvlink());
+        let d0 = DeviceId(0);
+        let d1 = DeviceId(1);
+        assert_eq!(eight.stream_get_device(d0, StreamId::NULL).unwrap(), d0);
+        assert_eq!(eight.stream_get_device(d1, StreamId::NULL).unwrap(), d1);
+        eight.begin_capture(d1, StreamId(0)).unwrap();
+        assert_eq!(eight.stream_get_device(d1, StreamId::NULL).unwrap(), d1);
+        let _end = eight.end_capture().unwrap();
+    }
+
+    #[test]
     fn stream_get_set_attribute_wraps_existing_state() {
         let mut sim = Sim::new(h100());
         let d = DeviceId(0);
@@ -15765,6 +15972,51 @@ mod tests {
             other => panic!("{other:?}"),
         }
         assert_eq!(sim.graph_node_get_tools_id(g, 1).unwrap(), t1);
+    }
+
+    #[test]
+    fn graph_node_get_containing_graph_returns_owner() {
+        let mut sim = Sim::new(h100());
+        let d = DeviceId(0);
+        let s = StreamId(0);
+        let a = sim.malloc(d, 4096).unwrap();
+        let g = sim.create_graph(d, s).unwrap();
+        sim.graph_add_kernel(g, KernelKind::other(8, 8), &[a], &[a])
+            .unwrap();
+        assert_eq!(sim.graph_node_get_containing_graph(g, 0).unwrap(), g);
+        let child = sim.create_graph(d, s).unwrap();
+        sim.graph_add_kernel(child, KernelKind::other(8, 8), &[a], &[a])
+            .unwrap();
+        let _child_exec = sim.instantiate_graph(child).unwrap();
+        sim.graph_add_child(g, child).unwrap();
+        assert_eq!(
+            sim.graph_node_get_containing_graph(child, 0).unwrap(),
+            child
+        );
+        assert_eq!(sim.graph_node_get_containing_graph(g, 1).unwrap(), g);
+        assert_eq!(sim.graph_child_get_graph(g, 1).unwrap(), child);
+        let exec = sim.instantiate_graph(g).unwrap();
+        assert_eq!(sim.graph_node_get_containing_graph(exec, 0).unwrap(), exec);
+        assert_ne!(sim.graph_node_get_containing_graph(exec, 0).unwrap(), g);
+        sim.begin_capture(d, s).unwrap();
+        assert_eq!(sim.graph_node_get_containing_graph(g, 0).unwrap(), g);
+        let _end = sim.end_capture().unwrap();
+        match sim.graph_node_get_containing_graph(GraphId(99), 0) {
+            Err(SimError::Invalid { why }) => assert!(why.contains("unknown graph"), "{why}"),
+            other => panic!("{other:?}"),
+        }
+        match sim.graph_node_get_containing_graph(g, 9) {
+            Err(SimError::Invalid { why }) => assert!(why.contains("unknown graph node"), "{why}"),
+            other => panic!("{other:?}"),
+        }
+        let h = sim.create_graph(d, s).unwrap();
+        sim.graph_add_kernel(h, KernelKind::other(8, 8), &[a], &[a])
+            .unwrap();
+        sim.graph_destroy_node(h, 0).unwrap();
+        match sim.graph_node_get_containing_graph(h, 0) {
+            Err(SimError::Invalid { why }) => assert!(why.contains("unknown graph node"), "{why}"),
+            other => panic!("{other:?}"),
+        }
     }
 
     #[test]
@@ -17177,6 +17429,21 @@ mod tests {
         sim.free(d, b, s).unwrap();
         sim.synchronize().unwrap();
         assert_eq!(sim.hbm_used(d).unwrap(), 0);
+    }
+
+    #[test]
+    fn driver_and_runtime_get_version_are_cuda_13() {
+        let mut sim = Sim::new(h100());
+        assert_eq!(sim.driver_get_version(), 13_000);
+        assert_eq!(sim.runtime_get_version(), 13_000);
+        assert_eq!(sim.driver_get_version(), sim.runtime_get_version());
+        sim.begin_capture(DeviceId(0), StreamId(0)).unwrap();
+        assert_eq!(sim.driver_get_version(), 13_000);
+        assert_eq!(sim.runtime_get_version(), 13_000);
+        let _g = sim.end_capture().unwrap();
+        let eight = Sim::new(HardwareProfile::example_8xh100_nvlink());
+        assert_eq!(eight.driver_get_version(), 13_000);
+        assert_eq!(eight.runtime_get_version(), 13_000);
     }
 
     #[test]
@@ -28060,6 +28327,103 @@ mod tests {
         let err = sim.graph_remove_dependencies(g, 0, 1).unwrap_err();
         match err {
             SimError::Invalid { why } => assert!(why.contains("capture"), "{why}"),
+            other => panic!("{other:?}"),
+        }
+        let _end = sim.end_capture().unwrap();
+    }
+
+    #[test]
+    fn graph_remove_dependencies_with_data_is_cuda_v2() {
+        let mut sim = Sim::new(h100());
+        let d = DeviceId(0);
+        let s = StreamId(0);
+        let a = sim.malloc(d, 4096).unwrap();
+        let g = sim.create_graph(d, s).unwrap();
+        sim.graph_add_kernel(g, KernelKind::other(8, 8), &[a], &[a])
+            .unwrap();
+        sim.graph_add_kernel(g, KernelKind::other(8, 8), &[a], &[a])
+            .unwrap();
+        sim.graph_add_kernel(g, KernelKind::other(8, 8), &[a], &[a])
+            .unwrap();
+        sim.graph_add_dependencies(g, 0, 1).unwrap();
+        sim.graph_add_dependencies_with_data(g, 1, 2, GraphEdgeData::launch_completion())
+            .unwrap();
+        sim.graph_remove_dependencies_n_with_data(g, &[]).unwrap();
+        sim.graph_remove_dependencies_with_data(g, 0, 1, GraphEdgeData::default())
+            .unwrap();
+        assert_eq!(
+            sim.graph_edges_with_data(g).unwrap(),
+            vec![(1, 2, GraphEdgeData::launch_completion())]
+        );
+        sim.graph_add_dependencies(g, 0, 1).unwrap();
+        match sim.graph_remove_dependencies_with_data(g, 0, 1, GraphEdgeData::launch_completion()) {
+            Err(SimError::Invalid { why }) => assert!(why.contains("graph dependency"), "{why}"),
+            other => panic!("{other:?}"),
+        }
+        assert_eq!(
+            sim.graph_edges_with_data(g).unwrap(),
+            vec![
+                (0, 1, GraphEdgeData::default()),
+                (1, 2, GraphEdgeData::launch_completion()),
+            ]
+        );
+        match sim.graph_remove_dependencies_with_data(g, 0, 2, GraphEdgeData::default()) {
+            Err(SimError::Invalid { why }) => assert!(why.contains("graph dependency"), "{why}"),
+            other => panic!("{other:?}"),
+        }
+        match sim.graph_remove_dependencies_n_with_data(
+            g,
+            &[
+                (0, 1, GraphEdgeData::default()),
+                (0, 2, GraphEdgeData::default()),
+            ],
+        ) {
+            Err(SimError::Invalid { why }) => assert!(why.contains("graph dependency"), "{why}"),
+            other => panic!("{other:?}"),
+        }
+        assert_eq!(
+            sim.graph_edges_with_data(g).unwrap(),
+            vec![
+                (0, 1, GraphEdgeData::default()),
+                (1, 2, GraphEdgeData::launch_completion()),
+            ]
+        );
+        sim.graph_remove_dependencies_with_data(g, 1, 2, GraphEdgeData::launch_completion())
+            .unwrap();
+        assert_eq!(
+            sim.graph_edges_with_data(g).unwrap(),
+            vec![(0, 1, GraphEdgeData::default())]
+        );
+        sim.graph_add_dependencies_with_data(g, 1, 2, GraphEdgeData::launch_completion())
+            .unwrap();
+        sim.graph_remove_dependencies(g, 1, 2).unwrap();
+        assert_eq!(
+            sim.graph_edges_with_data(g).unwrap(),
+            vec![(0, 1, GraphEdgeData::default())]
+        );
+        sim.graph_remove_dependencies(g, 1, 2).unwrap();
+        match sim.graph_remove_dependencies_with_data(
+            g,
+            0,
+            2,
+            GraphEdgeData {
+                kind: GraphDependencyType::PROGRAMMATIC,
+                ..GraphEdgeData::default()
+            },
+        ) {
+            Err(SimError::Invalid { why }) => {
+                assert!(why.contains("graph dependency type"), "{why}");
+            }
+            other => panic!("{other:?}"),
+        }
+        let exec = sim.instantiate_graph(g).unwrap();
+        match sim.graph_remove_dependencies_with_data(exec, 0, 1, GraphEdgeData::default()) {
+            Err(SimError::Invalid { why }) => assert!(why.contains("instantiated"), "{why}"),
+            other => panic!("{other:?}"),
+        }
+        sim.begin_capture(d, s).unwrap();
+        match sim.graph_remove_dependencies_with_data(g, 0, 1, GraphEdgeData::default()) {
+            Err(SimError::Invalid { why }) => assert!(why.contains("capture"), "{why}"),
             other => panic!("{other:?}"),
         }
         let _end = sim.end_capture().unwrap();

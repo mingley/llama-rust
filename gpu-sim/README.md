@@ -119,8 +119,10 @@ warp scheduler, L1, …   ← do not model
 | `cudaGraphGetNodes` / `GetRootNodes` / `GetEdges` / `NodeGetDependentNodes` | query |
 | `cudaGraphNodeGetDependencies` / `GetDependentNodes` v2 | Default `GraphEdgeData`; query |
 | `cudaGraphGetId` (`graph_get_id`) | unique id matching debug-dot HANDLES; exec/clone differ |
-| `cuGraphNodeGetLocalId` (`graph_node_get_local_id`) | live node id matching debug-dot `n0`; destroyed is Invalid |
-| `cuGraphNodeGetToolsId` (`graph_node_get_tools_id`) | unique tools id; distinct from local id and `graph_get_id` |
+| `cuGraphNodeGetLocalId` (`graph_node_get_local_id`) | live node id matching debug-dot `n0`; parked exec is unknown |
+| `cuGraphNodeGetToolsId` (`graph_node_get_tools_id`) | unique tools id; parked exec is unknown |
+| `cuGraphNodeGetContainingGraph` (`graph_node_get_containing_graph`) | owning graph; child-graph node stays parent; parked exec is unknown |
+| `cudaGraphRemoveDependencies` v2 (`graph_remove_dependencies_n_with_data`) matching `(from, to, data)`; missing matching edge is Invalid; v1 missing is a no-op | not timed (host-side topology) |
 | `cudaGraphDebugDotFlagsRuntimeTypes` | runtime `cudaGraphNodeType*` names; flags `0` stays Debug |
 | `cudaGraphDebugDotFlagsExtraTopoInfo` | numbers existing edges; launch-completion dumps `from_port=2` |
 | `cudaGraphChildGraphNodeGetGraph` / `EventRecordNodeGetEvent` / `WaitNodeGetEvent` / `MemAllocNodeGetParams` | query |
@@ -158,8 +160,10 @@ warp scheduler, L1, …   ← do not model
 | `stream_get_flags` is 0 blocking / 1 NonBlocking | `cudaStreamGetFlags` |
 | `stream_get_priority` is the create priority | `cudaStreamGetPriority` |
 | `stream_get_id` is unique per device/stream | `cudaStreamGetId` |
+| `stream_get_device` is the device of the stream (green-ctx streams return the ctx device) | `cudaStreamGetDevice` / `cuStreamGetDevice` |
 | `stream_get_attribute` / `stream_set_attribute` wrap existing stream state | `cudaStreamGetAttribute` / `SetAttribute` |
 | `device_count` is the profile GPU count | `cudaGetDeviceCount` |
+| `driver_get_version` / `runtime_get_version` report CUDA 13.0 | `cudaDriverGetVersion` / `cudaRuntimeGetVersion` |
 | `device_get` is the ordinal in `0 .. count` | `cuDeviceGet` |
 | `flush_gpu_direct_rdma_writes` is a 1 ns host-sync barrier on RDMA SKUs (no write-visibility) | 1 ns |
 | `BatchMemOp::FlushRemoteWrites` is stream-ordered `CU_STREAM_MEM_OP_FLUSH_REMOTE_WRITES` (capture legal; never a no-op) | 1 ns Solo |
@@ -486,7 +490,12 @@ when any reported edge has non-default stored `GraphEdgeData`
 (`cudaErrorLossyQuery`). Default-only edges stay. Debug-dot ExtraTopoInfo
 still dumps ports (not a GetEdges query).
 `graph_remove_dependencies` is `cudaGraphRemoveDependencies` (illegal on an
-exec and during capture). `graph_destroy_node` is `cudaGraphDestroyNode`
+exec and during capture). `graph_remove_dependencies_n_with_data` is
+`cudaGraphRemoveDependencies` v2 (`GraphEdgeData`; a matching
+`(from, to, data)` is removed; a missing matching edge is Invalid
+`"graph dependency"`). Distinct from v1 missing-remove no-op (PLAN 182).
+v1 still removes a launch-completion edge (it ignores stored data).
+`graph_destroy_node` is `cudaGraphDestroyNode`
 (incident edges dropped; remaining indices stay valid; illegal on an exec
 and during capture; definition destroy does not retarget exec).
 `begin_capture_to_graph` is
@@ -498,10 +507,10 @@ stays `"graph instantiated"`. Capture-to-graph of the definition stays.
 `graph_nodes` / `graph_root_nodes` / `graph_edges` / `graph_node_dependents` /
 `graph_debug_dot` / `graph_debug_dot_with_flags` / `graph_get_id` / `graph_node_get_local_id` / `graph_node_get_tools_id` are `cudaGraphGetNodes` /
 `GetRootNodes` / `GetEdges` /
-`NodeGetDependentNodes` / `cudaGraphDebugDotPrint` / `cudaGraphGetId` / `cuGraphNodeGetLocalId` / `cuGraphNodeGetToolsId` (live nodes; flags `0`
+`NodeGetDependentNodes` plus `cudaGraphDebugDotPrint` / `cudaGraphGetId` / `cuGraphNodeGetLocalId` plus `cuGraphNodeGetToolsId` (live nodes; flags `0`
 is kinds and edges; `GraphDebugDotFlags::RUNTIME_TYPES` prints
 `cudaGraphNodeType*` names; `GraphDebugDotFlags::EXTRA_TOPO_INFO` numbers
-existing edges; `GraphDebugDotFlags::VERBOSE` prints modeled params and ExtraTopoInfo). Host-sync
+existing edges; `GraphDebugDotFlags::VERBOSE` prints modeled params and ExtraTopoInfo). A parked in-flight-destroyed exec is `"unknown graph"` on GetLocalId plus GetToolsId; a live exec stays. `graph_node_get_containing_graph` is `cuGraphNodeGetContainingGraph` (the graph that owns the node). A child-graph node still lives in the parent; the nested graph is `graph_child_get_graph`. A parked in-flight-destroyed exec is `"unknown graph"`; a live exec stays. Host-sync
 `malloc` / `free_sync` / `memcpy_sync` / `synchronize_device` / VMM / mempool
 create cannot be captured. A graph that allocates without a matching free
 reuses the pointer on later launches (no second HBM charge) unless
@@ -981,6 +990,9 @@ id; also `DeviceProperties.uuid`). `device_get_by_uuid` is
 `cudaDeviceGetPciBusId` (synthetic PCI string; also `DeviceProperties`
 PCI ids). `device_get_by_pci_bus_id` is `cudaDeviceGetByPCIBusId`
 (inverse). `device_total_mem` is `cuDeviceTotalMem` (HBM bytes).
+`driver_get_version` is `cudaDriverGetVersion` / `cuDriverGetVersion` (CUDA
+13.0). `runtime_get_version` is `cudaRuntimeGetVersion` (same toolkit). Query;
+legal during capture.
 `func_get_attributes` is `cudaFuncGetAttributes`
 of modeled per-device function attrs (`maxDynamicSharedSizeBytes`,
 `nonPortableClusterSizeAllowed`, `preferredShmemCarveout`, cluster-dim
@@ -991,7 +1003,10 @@ Typed setters stay. `stream_get_flags` is `cudaStreamGetFlags`
 (`0` `cudaStreamDefault` / `1` `cudaStreamNonBlocking`; NULL follows
 `set_legacy_null_stream`). `stream_get_priority` is `cudaStreamGetPriority`.
 `stream_get_id` is `cudaStreamGetId` (unique per device/stream; not the
-caller-chosen `StreamId`). `ctx_get_id` is `cuCtxGetId` for the seeded
+caller-chosen `StreamId`). `stream_get_device` is `cudaStreamGetDevice` /
+`cuStreamGetDevice` (the device of the stream; green-ctx streams return
+the ctx create device). Query; legal during capture. Distinct from
+`stream_get_id` and `green_ctx_get_device`. `ctx_get_id` is `cuCtxGetId` for the seeded
 primary context (not `green_ctx_get_id`). `green_ctx_get_id` is
 `cuGreenCtxGetId` / `cudaExecutionCtxGetId` (unique per live green ctx;
 not `GreenCtxId`).
@@ -1349,7 +1364,8 @@ are the generic `cudaGraphKernelNodeGetAttribute` / `SetAttribute`
 (`KernelNodeAttr`). Typed getters stay. Definition Set does not retarget
 exec. Attr/value mismatch is Invalid `"kernel node attr"`. A parked
 in-flight-destroyed exec is `"unknown graph"` on SetAttribute; a live exec
-stays.
+stays. A parked in-flight-destroyed exec is `"unknown graph"` on
+GetAttribute; a live exec stays. Query; capture is legal.
 `graph_exec_kernel_node_copy_attributes` is the exec-snapshot CopyAttributes
 twin (uninstantiated graphs are Invalid). A parked in-flight-destroyed exec
 used as CopyAttributes src or dst is `"unknown graph"`; a live exec as either

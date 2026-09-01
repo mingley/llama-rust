@@ -3960,12 +3960,13 @@ impl GraphKernelNodePort {
     pub const LAUNCH_COMPLETION: u8 = 2;
 }
 
-/// `cudaGraphEdgeData` for [`crate::Sim::graph_add_dependencies_n_with_data`]
-/// / [`crate::Sim::graph_add_node_with_data`] /
-/// [`crate::Sim::graph_edges_with_data`] /
-/// [`crate::Sim::graph_node_deps_with_data`] /
-/// [`crate::Sim::graph_node_dependents_with_data`] /
-/// [`StreamCaptureInfo::edge_data`].
+/// `cudaGraphEdgeData` for [`crate::Sim::graph_add_dependencies_n_with_data`],
+/// [`crate::Sim::graph_remove_dependencies_n_with_data`],
+/// [`crate::Sim::graph_add_node_with_data`],
+/// [`crate::Sim::graph_edges_with_data`],
+/// [`crate::Sim::graph_node_deps_with_data`],
+/// [`crate::Sim::graph_node_dependents_with_data`],
+/// and [`StreamCaptureInfo::edge_data`].
 ///
 /// [`Self::kind`] [`GraphDependencyType::DEFAULT`] with ports 0 is identity
 /// with [`crate::Sim::graph_add_dependencies_n`]. Programmatic type is not
@@ -3973,9 +3974,11 @@ impl GraphKernelNodePort {
 /// waits for the source kernel to start (not finish). [`Default`] is Default
 /// type, ports 0. AddDependencies cannot change stored data of an existing
 /// `(from, to)` (Invalid `"graph edge data"`). Incoming [`Default`] is the
-/// v1 no-op. CUDA v1 GetEdges / GetDependencies / GetDependentNodes
-/// (`edgeData` NULL) are Invalid `"lossy query"` when a reported edge is
-/// not [`Default`].
+/// v1 no-op. RemoveDependencies v2 removes a matching `(from, to, data)`;
+/// a missing matching edge is Invalid `"graph dependency"`. v1 missing-remove
+/// stays a no-op (PLAN 182). CUDA v1 GetEdges / GetDependencies /
+/// GetDependentNodes (`edgeData` NULL) are Invalid `"lossy query"` when a
+/// reported edge is not [`Default`].
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub struct GraphEdgeData {
     /// `cudaGraphEdgeData::from_port`. [`GraphKernelNodePort::DEFAULT`] or

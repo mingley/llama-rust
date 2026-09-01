@@ -5864,7 +5864,56 @@ model, do not celebrate the sim.
     `gpu-profile capture` is still refused. Dual score still has no `$/M
     tokens`.
 
-550. [ ] Next numbered PLAN item after 549 is the next `gpu-sim` / Engine /
+550. [x] `gpu-sim` CUDA `cuGraphNodeGetLocalId` / `cuGraphNodeGetToolsId` of
+    an exec whose handle was destroyed while a launch was in flight is Invalid
+    `"unknown graph"`. Query; capture is legal. Live exec GetLocalId stays.
+    Definition GetLocalId stays. GetToolsId of a parked dest already unknown
+    via `graph_get_id`. This VM does not invent Engine `--graph-local-id-gone`.
+    `gpu-profile capture` is still refused. Dual score still has no `$/M
+    tokens`.
+
+551. [x] `gpu-sim` CUDA `cudaGraphKernelNodeGetAttribute` of an exec whose
+    handle was destroyed while a launch was in flight is Invalid
+    `"unknown graph"` (typed getters plus generic GetAttribute). Query;
+    capture is legal. Live exec GetAttribute stays. Definition GetAttribute
+    stays. Exec GetAttribute of a parked dest already unknown via `as_exec`.
+    This VM does not invent Engine `--graph-get-attr-gone`. `gpu-profile
+    capture` is still refused. Dual score still has no `$/M tokens`.
+
+552. [x] `gpu-sim` `graph_node_get_containing_graph` is CUDA
+    `cuGraphNodeGetContainingGraph` (the graph that owns the node). A
+    child-graph node still lives in the parent; the nested graph is
+    `graph_child_get_graph`. Query; capture is legal. A parked in-flight-destroyed
+    exec is Invalid `"unknown graph"`. Live exec GetContainingGraph stays.
+    Definition GetContainingGraph stays. This VM does not invent Engine
+    `--graph-containing`. `gpu-profile capture` is still refused. Dual score
+    still has no `$/M tokens`.
+
+553. [x] `gpu-sim` `stream_get_device` is CUDA `cudaStreamGetDevice` /
+    `cuStreamGetDevice` (the device of the stream; green-ctx streams return
+    the ctx create device). Query; legal during capture. Distinct from
+    `stream_get_id` and `green_ctx_get_device`. This VM does not invent Engine
+    `--stream-device`. `gpu-profile capture` is still refused. Dual score
+    still has no `$/M tokens`.
+
+554. [x] `gpu-sim` `graph_remove_dependencies_with_data` /
+    `graph_remove_dependencies_n_with_data` is CUDA
+    `cudaGraphRemoveDependencies` v2 (`GraphEdgeData`). A matching
+    `(from, to, data)` is removed; a missing matching edge is Invalid
+    `"graph dependency"`. Distinct from v1 missing-remove no-op (PLAN 182).
+    v1 still removes a launch-completion edge (it ignores stored data). Capture
+    cannot include it. Illegal on an instantiated exec. This VM does not
+    invent Engine `--graph-edge-data`. `gpu-profile capture` is still
+    refused. Dual score still has no `$/M tokens`.
+
+555. [x] `gpu-sim` `driver_get_version` / `runtime_get_version` are CUDA
+    `cudaDriverGetVersion` / `cuDriverGetVersion` / `cudaRuntimeGetVersion`
+    (CUDA 13.0; `1000 * major` plus `10 * minor`). Query; legal during capture.
+    Same toolkit value. Distinct from `device_count`. This VM does not invent
+    Engine `--driver-version` or `cudaGetLastError`. `gpu-profile capture` is
+    still refused. Dual score still has no `$/M tokens`.
+
+556. [ ] Next numbered PLAN item after 555 is the next `gpu-sim` / Engine /
     serve / expertvm mechanical API that is still missing, or the next official
     decode family. Prefer remaining CUDA-shaped twins over more
     OpenAI HTTP veneer. Do not invent F32 `output.scale`. Do not invent a
@@ -5881,8 +5930,18 @@ model, do not celebrate the sim.
     `--ctx-id`.
     Do not invent a second `cudaExecutionCtxGetDevice`. Do not invent a
     second `cudaEventGetFlags`. Do not invent a second `cudaGraphGetId` /
-    `cudaGraphExecGetId`. Do not invent a second `cuGraphNodeGetLocalId`.
+    `cudaGraphExecGetId`.     Do not invent a second `cuGraphNodeGetLocalId`.
     Do not invent a second `cuGraphNodeGetToolsId`. Do not invent a second
+    `cuGraphNodeGetContainingGraph`. Do not invent a second
+    `cudaStreamGetDevice` / `cuStreamGetDevice`. Do not invent Engine
+    `--stream-device`. Do not invent `cuStreamGetCtx` / `cudaStreamGetCtx`
+    (no `CUcontext` object). Do not invent a second
+    `cudaGraphRemoveDependencies` edgeData /
+    `graph_remove_dependencies_n_with_data`. Do not invent Engine
+    `--graph-edge-data`. Do not invent a second
+    `cudaDriverGetVersion` / `cuDriverGetVersion` / `cudaRuntimeGetVersion`.
+    Do not invent Engine `--driver-version`. Do not invent `cudaGetLastError` /
+    `cudaPeekAtLastError` (no thread-local last error). Do not invent a second
     `cuDeviceGetUuid` / `cudaDeviceGetUuid`. Do not invent a second
     `cuDeviceGetByUuid`. Do not invent a second `cudaDeviceGetPciBusId` /
     `cuDeviceGetPCIBusId`. Do not invent a second `cudaDeviceGetByPCIBusId`.
@@ -5914,7 +5973,9 @@ model, do not celebrate the sim.
     `cudaDeviceGetHostAtomicCapabilities`.
     Do not invent a second `cudaInitDevice`. Do not invent Engine
     `--init-device` (same wall as `set_device_flags`). Do not invent
-    `cudaSetDevice` (no thread-current device).
+    `cudaSetDevice` (no thread-current device). Do not invent a second
+    `cudaStreamGetDevice`. Do not invent `cuStreamGetCtx` /
+    `cudaStreamGetCtx` (no `CUcontext` object).
     Do not invent a second `cudaDevAttrMaxPitch`.
     Do not invent a second `cuMemGetHandleForAddressRange`. Do not invent
     a dma-buf file descriptor. Do not invent Engine `--dma-buf`.
@@ -5942,8 +6003,8 @@ model, do not celebrate the sim.
     Do not invent Engine `--device-launch-auto-free`. Do not reverse
     `AUTO_FREE` plus `UPLOAD` or `DEVICE_LAUNCH` plus `UPLOAD`.
     Do not invent a second existing-edge [`GraphEdgeData`] change check.
-    Do not invent a second Engine `--graph-edge-data` (already parked for
-    RemoveDependencies).
+    Do not invent a second Engine `--graph-edge-data` (RemoveDependencies v2
+    is `graph_remove_dependencies_n_with_data`).
     Do not invent a second GetFlags UPLOAD omit or Engine `--graph-exec-flags`.
     Do not omit [`GraphInstantiateFlags::UPLOAD`] from instantiate (it still
     uploads). Do not GetFlags-omit `DEVICE_LAUNCH` / `AUTO_FREE` /
@@ -6058,6 +6119,41 @@ model, do not celebrate the sim.
     Engine `--graph-deps-gone`. Do not reverse live exec GetDependencies.
     Do not reverse definition GetDependencies while an exec is parked.
     Do not reverse v1 LossyQuery on GetDependencies / GetDependentNodes.
+    Do not invent a second GetLocalId parked-handle unknown check or Engine
+    `--graph-local-id-gone`. Do not reverse live exec GetLocalId. Do not
+    reverse definition GetLocalId while an exec is parked. Do not refuse
+    GetLocalId of a live in-flight exec. Do not invent a second GetToolsId
+    parked-handle unknown check. Do not wire `graph_root_nodes` /
+    `graph_edges` / `graph_node_kind` / `graph_node_find_in_clone` through
+    `live_graph` (539).
+    Do not invent a second GetAttribute parked-handle unknown check or Engine
+    `--graph-get-attr-gone`. Do not reverse live exec GetAttribute. Do not
+    reverse definition GetAttribute while an exec is parked. Do not refuse
+    GetAttribute of a live in-flight exec. Do not use `require_live_definition`
+    on GetAttribute (live exec definition GetAttribute stays). Do not use
+    `as_exec_for_update` on GetAttribute (DeviceLaunch in-flight GetAttribute
+    stays).
+    Do not invent a second `cuGraphNodeGetContainingGraph` /
+    `graph_node_get_containing_graph`. Do not invent Engine
+    `--graph-containing`. Do not invent a global `CUgraphNode` handle. Do not
+    return the nested child id for a ChildGraph node (that is
+    `graph_child_get_graph`). Do not walk parent indices into child or IF
+    bodies. Do not reverse `graph_child_get_graph`. Do not reverse live exec
+    GetContainingGraph. Do not reverse definition GetContainingGraph while an
+    exec is parked. Do not refuse GetContainingGraph of a live in-flight exec.
+    Do not invent a second `cudaStreamGetDevice` / `cuStreamGetDevice` /
+    `stream_get_device`. Do not invent Engine `--stream-device`. Do not invent
+    `cuStreamGetCtx` / `cudaStreamGetCtx` (no `CUcontext` object). Do not
+    reverse `stream_get_id`. Do not reverse `green_ctx_get_device`.
+    Do not invent a second `cudaGraphRemoveDependencies` edgeData /
+    `graph_remove_dependencies_n_with_data`. Do not invent Engine
+    `--graph-edge-data`. Do not reverse PLAN 182 v1 missing-remove no-op.
+    Do not apply v2 missing-matching-edge error to v1. Do not reverse v1
+    remove of a launch-completion edge (v1 ignores stored data).
+    Do not invent a second `cudaDriverGetVersion` / `cuDriverGetVersion` /
+    `cudaRuntimeGetVersion`. Do not invent Engine `--driver-version`. Do not
+    invent `cudaGetLastError` / `cudaPeekAtLastError` (no thread-local last
+    error). Do not reverse `driver_get_version` matching `runtime_get_version`.
     Do not invent a second DeviceLaunch in-flight destroy-complete check or Engine
     `--device-launch-destroy`. Do not abort an in-flight DeviceLaunch when
     `destroy_graph` succeeds. Do not delay destroy of an idle exec. Do not invent
@@ -6219,7 +6315,7 @@ model, do not celebrate the sim.
     Do not invent graph-alloc SetParams that only retargets accessDescs
     (SetParams of Alloc stays Invalid). Do not invent `poolProps` / a caller
     pool on graph mem-alloc nodes (always the device graph-memory pool).
-    Do not invent `cudaGraphRemoveDependencies`
+    Do not invent a second `cudaGraphRemoveDependencies`
     edgeData. Do not invent Engine `--graph-edge-data`. Do not invent a second
     `cudaGraphAddHostNode` BETWEEN flag. Do not invent a second captured
     `cudaLaunchHostFunc` BETWEEN piecewise flag. Do not invent a second leaf
@@ -6455,6 +6551,41 @@ model, do not celebrate the sim.
     PLAN 182 v1 duplicate-add no-op for `graph_add_dependencies`.
     Do not invent a second user-object `INT_MAX` count check. Do not
     apply that bound to MOVE `count`.
+    Do not invent a second GetLocalId parked-handle unknown check or Engine
+    `--graph-local-id-gone`. Do not reverse live exec GetLocalId. Do not
+    reverse definition GetLocalId while an exec is parked. Do not refuse
+    GetLocalId of a live in-flight exec. Do not invent a second GetToolsId
+    parked-handle unknown check. Do not wire `graph_root_nodes` /
+    `graph_edges` / `graph_node_kind` / `graph_node_find_in_clone` through
+    `live_graph` (539).
+    Do not invent a second GetAttribute parked-handle unknown check or Engine
+    `--graph-get-attr-gone`. Do not reverse live exec GetAttribute. Do not
+    reverse definition GetAttribute while an exec is parked. Do not refuse
+    GetAttribute of a live in-flight exec. Do not use `require_live_definition`
+    on GetAttribute (live exec definition GetAttribute stays). Do not use
+    `as_exec_for_update` on GetAttribute (DeviceLaunch in-flight GetAttribute
+    stays).
+    Do not invent a second `cuGraphNodeGetContainingGraph` /
+    `graph_node_get_containing_graph`. Do not invent Engine
+    `--graph-containing`. Do not invent a global `CUgraphNode` handle. Do not
+    return the nested child id for a ChildGraph node (that is
+    `graph_child_get_graph`). Do not walk parent indices into child or IF
+    bodies. Do not reverse `graph_child_get_graph`. Do not reverse live exec
+    GetContainingGraph. Do not reverse definition GetContainingGraph while an
+    exec is parked. Do not refuse GetContainingGraph of a live in-flight exec.
+    Do not invent a second `cudaStreamGetDevice` / `cuStreamGetDevice` /
+    `stream_get_device`. Do not invent Engine `--stream-device`. Do not invent
+    `cuStreamGetCtx` / `cudaStreamGetCtx` (no `CUcontext` object). Do not
+    reverse `stream_get_id`. Do not reverse `green_ctx_get_device`.
+    Do not invent a second `cudaGraphRemoveDependencies` edgeData /
+    `graph_remove_dependencies_n_with_data`. Do not invent Engine
+    `--graph-edge-data`. Do not reverse PLAN 182 v1 missing-remove no-op.
+    Do not apply v2 missing-matching-edge error to v1. Do not reverse v1
+    remove of a launch-completion edge (v1 ignores stored data).
+    Do not invent a second `cudaDriverGetVersion` / `cuDriverGetVersion` /
+    `cudaRuntimeGetVersion`. Do not invent Engine `--driver-version`. Do not
+    invent `cudaGetLastError` / `cudaPeekAtLastError` (no thread-local last
+    error). Do not reverse `driver_get_version` matching `runtime_get_version`.
     Do not
     spend the next item on an OpenAI-compatible HTTP veneer.
 
