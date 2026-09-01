@@ -34,6 +34,7 @@ warp scheduler, L1, …   ← do not model
 | `cudaMallocAsync` from a pool reuses cached bytes; `cudaMemGetInfo` still counts them used until `pool_trim_to` | `pool_reuse_ns` |
 | `ReuseAllowOpportunistic=0` skips that cache reuse (OS alloc; cache stays reserved) | `alloc_overhead_ns` |
 | `cudaMemPoolProps::maxSize` (`create_pool_with_props`); reserved cannot grow past it | OOM |
+| `cudaMemPoolAttrMaxPoolSize` (`pool_set_attribute` / `set_pool_max_size`); Get reports the cap (`0` unlimited); shrinking does not free live allocs | OOM on later alloc |
 | `cudaMemPoolSetAccess` (`pool_set_access`) ReadWrite on a peer; dest HBM stays 0; writes allowed | interconnect, not local HBM |
 | `cudaMemPoolSetAccess` ProtRead (`pool_set_access_read`); dest HBM stays 0; writes `NotResident` | interconnect, not local HBM |
 | `cudaMalloc` (`malloc`) device-syncs that GPU, then the pointer is usable; it cannot consume another pool's cache | `alloc_overhead_ns` (charged at the call) |
@@ -1006,17 +1007,19 @@ is `cuMemcpy3DUnaligned` (identity with `memcpy_3d`). No Engine
 Default `cudaMallocAsync` uses the device mempool with release threshold
 `0` (unused bytes return to the OS when the stream-ordered free
 completes). `create_pool` / `create_pool_with_props` / `alloc_from_pool` /
-`set_pool_release_threshold` / `pool_trim_to` / `pool_get_attribute` /
-`pool_set_attribute` / `pool_get_id` are `cudaMemPoolCreate` / `Create`+`MemPoolProps` /
+`set_pool_release_threshold` / `set_pool_max_size` / `pool_trim_to` /
+`pool_get_attribute` / `pool_set_attribute` / `pool_get_id` are
+`cudaMemPoolCreate` / `Create`+`MemPoolProps` /
 `cudaMallocFromPoolAsync` / `cudaMemPoolAttrReleaseThreshold` /
-`cudaMemPoolTrimTo` / `cudaMemPoolGetAttribute` / `SetAttribute` /
-`cuMemPoolGetId`.
+`cudaMemPoolAttrMaxPoolSize` / `cudaMemPoolTrimTo` /
+`cudaMemPoolGetAttribute` / `SetAttribute` / `cuMemPoolGetId`.
 `MemPoolProps` is pinned alloc type, NONE or POSIX-FD handles, a device
 location, `max_size` (`0` unlimited; otherwise reserved cannot grow
 past it), and `usage` (`MemHandleUsage::NONE` only; HW decompress is not
 modeled). Typed `create_pool` / `create_shareable_pool` stay.
 `MemPoolAttr` is ReleaseThreshold / UsedMemCurrent / UsedMemHigh /
-ReservedMemCurrent / ReservedMemHigh plus reuse flags (default 1). Only
+ReservedMemCurrent / ReservedMemHigh / MaxPoolSize plus reuse flags
+(default 1). Only
 `ReuseAllowOpportunistic=0` skips cache reuse (OS alloc; unused cached
 bytes stay reserved). FollowEvent / Internal do not insert event waits
 or extra sync. High-water Set `0` resets to current; graph mem stays
@@ -1027,7 +1030,11 @@ after score (hold during the run, return cache at idle).
 `expertvm sim --mempool-no-reuse` is `ReuseAllowOpportunistic=0` (OS alloc;
 leftover cache stays reserved). `expertvm sim --mempool-max N` is
 `cudaMemPoolCreate` + `MemPoolProps::max_size` then `cudaDeviceSetMemPool`
-(reserved `live+cached` cannot grow past `N`; `0` unset is unlimited). Destroying a user pool (`destroy_pool` / `cudaMemPoolDestroy`)
+(reserved `live+cached` cannot grow past `N`; `0` unset is unlimited).
+`MemPoolAttr::MaxPoolSize` / `set_pool_max_size` is
+`cudaMemPoolAttrMaxPoolSize` (Set after create; Get reports the stored
+cap; this VM does not round up for alignment). CLI stays create plus
+SetMemPool. Destroying a user pool (`destroy_pool` / `cudaMemPoolDestroy`)
 returns unused cache to the OS; outstanding allocs stay valid; the default
 pool cannot be destroyed; destroying the current pool rebinds GetMemPool
 to GetDefaultMemPool. Capture cannot include pool create/trim/set-attribute

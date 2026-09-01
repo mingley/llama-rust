@@ -161,14 +161,16 @@
 //! [`Sim::create_pool`] / [`create_pool_with_props`](Sim::create_pool_with_props) /
 //! [`alloc_from_pool`](Sim::alloc_from_pool) /
 //! [`set_pool_release_threshold`](Sim::set_pool_release_threshold) /
+//! [`set_pool_max_size`](Sim::set_pool_max_size) /
 //! [`pool_trim_to`](Sim::pool_trim_to) / [`pool_get_attribute`](Sim::pool_get_attribute) /
 //! [`pool_set_attribute`](Sim::pool_set_attribute) / [`destroy_pool`](Sim::destroy_pool)
 //! are `cudaMemPoolCreate` / `cudaMemPoolCreate`+[`MemPoolProps`] /
 //! `cudaMallocFromPoolAsync` / `cudaMemPoolAttrReleaseThreshold` /
-//! `cudaMemPoolTrimTo` / `cudaMemPoolGetAttribute` / `SetAttribute` /
+//! `cudaMemPoolAttrMaxPoolSize` / `cudaMemPoolTrimTo` /
+//! `cudaMemPoolGetAttribute` / `SetAttribute` /
 //! `cudaMemPoolDestroy`.
 //! [`MemPoolAttr`] is ReleaseThreshold / UsedMemCurrent / UsedMemHigh /
-//! ReservedMemCurrent / ReservedMemHigh plus reuse flags (default 1; only
+//! ReservedMemCurrent / ReservedMemHigh / MaxPoolSize plus reuse flags (default 1; only
 //! [`MemPoolAttr::ReuseAllowOpportunistic`]
 //! `0` skips cache reuse — OS alloc, unused cached bytes stay reserved).
 //! FollowEvent / Internal do not insert event waits or extra sync. High-water
@@ -179,6 +181,8 @@
 //! `expertvm sim --mempool-no-reuse` is [`MemPoolAttr::ReuseAllowOpportunistic`]
 //! `0`. `expertvm sim --mempool-max N` is [`create_pool_with_props`](Sim::create_pool_with_props)
 //! with [`MemPoolProps::max_size`] then [`set_device_mempool`](Sim::set_device_mempool).
+//! [`MemPoolAttr::MaxPoolSize`] / [`set_pool_max_size`](Sim::set_pool_max_size)
+//! is `cudaMemPoolAttrMaxPoolSize` (Set after create; Get reports the cap).
 //! [`MemPoolProps::usage`] must be [`MemHandleUsage::NONE`] (HW decompress is
 //! not modeled). Destroying a user pool returns
 //! unused cache to the OS; outstanding allocs stay valid; the default pool
@@ -20420,6 +20424,146 @@ mod tests {
                 other => panic!("{other:?}"),
             }
             let _g = sim.end_capture().unwrap();
+        }
+    }
+
+    #[test]
+    fn pool_max_size_attr_is_cuda_mempool_attr_max_pool_size() {
+        let d = DeviceId(0);
+        let s = StreamId(0);
+        {
+            let mut sim = Sim::new(h100());
+            let p = sim.default_pool(d).unwrap();
+            assert_eq!(
+                sim.pool_get_attribute(p, MemPoolAttr::MaxPoolSize).unwrap(),
+                0
+            );
+            let q = sim
+                .create_pool_with_props(MemPoolProps {
+                    max_size: 4096,
+                    ..MemPoolProps::default()
+                })
+                .unwrap();
+            assert_eq!(
+                sim.pool_get_attribute(q, MemPoolAttr::MaxPoolSize).unwrap(),
+                4096
+            );
+            sim.set_pool_max_size(q, 2048).unwrap();
+            assert_eq!(
+                sim.pool_get_attribute(q, MemPoolAttr::MaxPoolSize).unwrap(),
+                2048
+            );
+            sim.pool_set_attribute(q, MemPoolAttr::MaxPoolSize, 4096)
+                .unwrap();
+            assert_eq!(
+                sim.pool_get_attribute(q, MemPoolAttr::MaxPoolSize).unwrap(),
+                4096
+            );
+        }
+        {
+            let mut sim = Sim::new(h100());
+            let q = sim.create_pool(d).unwrap();
+            assert_eq!(
+                sim.pool_get_attribute(q, MemPoolAttr::MaxPoolSize).unwrap(),
+                0
+            );
+            sim.pool_set_attribute(q, MemPoolAttr::MaxPoolSize, 4096)
+                .unwrap();
+            let a = sim.alloc_from_pool(d, q, 4096, s).unwrap();
+            sim.synchronize().unwrap();
+            assert!(sim.is_resident(a, d).unwrap());
+            let _over = sim.alloc_from_pool(d, q, 4096, s).unwrap();
+            match sim.synchronize() {
+                Err(SimError::Oom { need, free, .. }) => {
+                    assert_eq!(need, 4096);
+                    assert_eq!(free, 0);
+                }
+                other => panic!("{other:?}"),
+            }
+        }
+        {
+            let mut sim = Sim::new(h100());
+            let q = sim.create_pool(d).unwrap();
+            sim.set_pool_max_size(q, 4096).unwrap();
+            let a = sim.alloc_from_pool(d, q, 4096, s).unwrap();
+            sim.synchronize().unwrap();
+            sim.set_pool_max_size(q, 0).unwrap();
+            let b = sim.alloc_from_pool(d, q, 4096, s).unwrap();
+            sim.synchronize().unwrap();
+            assert!(sim.is_resident(a, d).unwrap());
+            assert!(sim.is_resident(b, d).unwrap());
+        }
+        {
+            let mut sim = Sim::new(h100());
+            let q = sim.create_pool(d).unwrap();
+            let a = sim.alloc_from_pool(d, q, 4096, s).unwrap();
+            sim.synchronize().unwrap();
+            sim.set_pool_max_size(q, 2048).unwrap();
+            assert_eq!(
+                sim.pool_get_attribute(q, MemPoolAttr::MaxPoolSize).unwrap(),
+                2048
+            );
+            assert!(sim.is_resident(a, d).unwrap());
+            let _over = sim.alloc_from_pool(d, q, 1, s).unwrap();
+            match sim.synchronize() {
+                Err(SimError::Oom { need, free, .. }) => {
+                    assert_eq!(need, 1);
+                    assert_eq!(free, 0);
+                }
+                other => panic!("{other:?}"),
+            }
+        }
+        {
+            let mut sim = Sim::new(h100());
+            let p = sim.default_pool(d).unwrap();
+            let gp = sim.graph_pool(d).unwrap();
+            match sim.pool_get_attribute(gp, MemPoolAttr::MaxPoolSize) {
+                Err(SimError::Invalid { why }) => assert!(why.contains("graph mem"), "{why}"),
+                other => panic!("{other:?}"),
+            }
+            match sim.pool_set_attribute(gp, MemPoolAttr::MaxPoolSize, 4096) {
+                Err(SimError::Invalid { why }) => assert!(why.contains("graph mem"), "{why}"),
+                other => panic!("{other:?}"),
+            }
+            match sim.set_pool_max_size(gp, 4096) {
+                Err(SimError::Invalid { why }) => assert!(why.contains("graph mem"), "{why}"),
+                other => panic!("{other:?}"),
+            }
+            sim.begin_capture(d, s).unwrap();
+            assert_eq!(
+                sim.pool_get_attribute(p, MemPoolAttr::MaxPoolSize).unwrap(),
+                0
+            );
+            match sim.pool_set_attribute(p, MemPoolAttr::MaxPoolSize, 4096) {
+                Err(SimError::Invalid { why }) => assert!(why.contains("capture"), "{why}"),
+                other => panic!("{other:?}"),
+            }
+            match sim.set_pool_max_size(p, 4096) {
+                Err(SimError::Invalid { why }) => assert!(why.contains("capture"), "{why}"),
+                other => panic!("{other:?}"),
+            }
+            let _g = sim.end_capture().unwrap();
+            let sp = sim.create_shareable_pool(d).unwrap();
+            let h = sim.pool_export(sp).unwrap();
+            let imp = sim.pool_import(d, h).unwrap();
+            sim.pool_set_attribute(imp, MemPoolAttr::MaxPoolSize, 4096)
+                .unwrap();
+            assert_eq!(
+                sim.pool_get_attribute(sp, MemPoolAttr::MaxPoolSize)
+                    .unwrap(),
+                4096
+            );
+            assert_eq!(
+                sim.pool_get_attribute(imp, MemPoolAttr::MaxPoolSize)
+                    .unwrap(),
+                4096
+            );
+            sim.set_pool_max_size(sp, 2048).unwrap();
+            assert_eq!(
+                sim.pool_get_attribute(imp, MemPoolAttr::MaxPoolSize)
+                    .unwrap(),
+                2048
+            );
         }
     }
 

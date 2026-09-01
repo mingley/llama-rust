@@ -3826,6 +3826,13 @@ pub enum MemPoolAttr {
     /// `cudaMemPoolReuseAllowInternalDependencies`. Default 1. This VM does not
     /// insert extra sync; 0 does not change opportunistic reuse.
     ReuseAllowInternalDependencies,
+    /// `cudaMemPoolAttrMaxPoolSize`. [`crate::MemPoolProps::max_size`].
+    ///
+    /// `0` is unlimited. Set updates the cap for later
+    /// [`crate::Sim::alloc_from_pool`] (reserved live plus cached). Typed
+    /// [`crate::Sim::set_pool_max_size`] stays. Graph-memory pools stay
+    /// [`crate::GraphMemAttr`]. This VM does not round up for alignment.
+    MaxPoolSize,
 }
 
 /// `cudaMemAccessFlags` for [`crate::Sim::pool_get_access`],

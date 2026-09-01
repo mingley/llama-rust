@@ -12041,12 +12041,27 @@ impl Sim {
         Ok(())
     }
 
+    /// `cudaMemPoolAttrMaxPoolSize`. Later [`Self::alloc_from_pool`] OOMs when
+    /// reserved would exceed `bytes`. `0` is unlimited. Does not free live
+    /// allocs if the new cap is below current reserved. Also
+    /// [`Self::pool_set_attribute`] [`MemPoolAttr::MaxPoolSize`]. Capture
+    /// cannot include it. The graph-memory pool is Invalid.
+    pub fn set_pool_max_size(&mut self, pool: PoolId, bytes: u64) -> Result<(), SimError> {
+        self.fail_if_capturing("cannot capture mempool")?;
+        let root = self.pool_root(pool)?;
+        self.refuse_graph_pool(root)?;
+        self.refuse_destroyed_pool(root)?;
+        self.pool_mut(root)?.max_size = bytes;
+        Ok(())
+    }
+
     /// `cudaMemPoolGetAttribute`. Query; legal during capture.
     ///
     /// [`MemPoolAttr::UsedMemCurrent`] is [`Self::pool_live`]. Reserved is live
     /// plus [`Self::pool_cached`]. [`MemPoolAttr::UsedMemHigh`] /
     /// [`MemPoolAttr::ReservedMemHigh`] are high-water of those. Reuse flags
-    /// default to 1. An imported pool reports the exporter. The graph-memory
+    /// default to 1. [`MemPoolAttr::MaxPoolSize`] is [`Self::set_pool_max_size`]
+    /// (`0` unlimited). An imported pool reports the exporter. The graph-memory
     /// pool is Invalid (use [`Self::graph_mem_get`]).
     pub fn pool_get_attribute(&self, pool: PoolId, attr: MemPoolAttr) -> Result<u64, SimError> {
         self.refuse_graph_pool(pool)?;
@@ -12063,12 +12078,14 @@ impl Sim {
             MemPoolAttr::ReuseFollowEventDependencies => Ok(u64::from(p.reuse_follow_event)),
             MemPoolAttr::ReuseAllowOpportunistic => Ok(u64::from(p.reuse_opportunistic)),
             MemPoolAttr::ReuseAllowInternalDependencies => Ok(u64::from(p.reuse_internal)),
+            MemPoolAttr::MaxPoolSize => Ok(p.max_size),
         }
     }
 
     /// `cudaMemPoolSetAttribute`. Host-synchronous. Capture cannot include it.
     ///
     /// [`MemPoolAttr::ReleaseThreshold`] is [`Self::set_pool_release_threshold`].
+    /// [`MemPoolAttr::MaxPoolSize`] is [`Self::set_pool_max_size`].
     /// Reuse flags are 0 or 1 (other values Invalid `"pool reuse attr"`). Only
     /// [`MemPoolAttr::ReuseAllowOpportunistic`] `0` changes acquire (skip cache
     /// reuse). Used/Reserved current are read-only. High-water Set `0` resets
@@ -12082,6 +12099,7 @@ impl Sim {
     ) -> Result<(), SimError> {
         match attr {
             MemPoolAttr::ReleaseThreshold => self.set_pool_release_threshold(pool, value),
+            MemPoolAttr::MaxPoolSize => self.set_pool_max_size(pool, value),
             MemPoolAttr::UsedMemCurrent | MemPoolAttr::ReservedMemCurrent => {
                 self.fail_if_capturing("cannot capture mempool")?;
                 self.refuse_graph_pool(pool)?;
@@ -12125,7 +12143,8 @@ impl Sim {
             | MemPoolAttr::ReservedMemCurrent
             | MemPoolAttr::ReuseFollowEventDependencies
             | MemPoolAttr::ReuseAllowOpportunistic
-            | MemPoolAttr::ReuseAllowInternalDependencies => {
+            | MemPoolAttr::ReuseAllowInternalDependencies
+            | MemPoolAttr::MaxPoolSize => {
                 return Err(SimError::Invalid {
                     why: "pool high attr",
                 });
@@ -12159,7 +12178,8 @@ impl Sim {
             | MemPoolAttr::UsedMemCurrent
             | MemPoolAttr::UsedMemHigh
             | MemPoolAttr::ReservedMemCurrent
-            | MemPoolAttr::ReservedMemHigh => {
+            | MemPoolAttr::ReservedMemHigh
+            | MemPoolAttr::MaxPoolSize => {
                 return Err(SimError::Invalid {
                     why: "pool reuse attr",
                 });

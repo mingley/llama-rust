@@ -5466,7 +5466,21 @@ model, do not celebrate the sim.
     CUDA-array memcpy. `gpu-profile capture` is still refused. Dual score
     still has no `$/M tokens`.
 
-509. [ ] Next numbered PLAN item after 508 is the next `gpu-sim` / Engine /
+509. [x] `gpu-sim` CUDA `cudaMemPoolAttrMaxPoolSize` is
+    [`MemPoolAttr::MaxPoolSize`] (`pool_get_attribute` /
+    `pool_set_attribute`). Typed [`set_pool_max_size`] stays. Get reports
+    stored [`MemPoolProps::max_size`] (`0` unlimited). Set updates the cap
+    for later `alloc_from_pool` (reserved live plus cached). Does not free
+    live allocs if the new cap is below current reserved. Graph-memory pool
+    stays Invalid. Capture: Get legal, Set Invalid. Imported pools Get/Set
+    the exporter. `expertvm sim --mempool-max` stays
+    `create_pool_with_props` plus `set_device_mempool`. This VM does not
+    invent a second MaxPoolSize, Engine `--mempool-max` as SetAttribute-only,
+    alignment rounding, `cudaMemPoolAttrHwDecompressEnabled`, or pool
+    LocationType / LocationId. `gpu-profile capture` is still refused. Dual
+    score still has no `$/M tokens`.
+
+510. [ ] Next numbered PLAN item after 509 is the next `gpu-sim` / Engine /
     serve / expertvm mechanical API that is still missing, or the next official
     decode family. Prefer remaining CUDA-shaped twins over more
     OpenAI HTTP veneer. Do not invent F32 `output.scale`. Do not invent a
@@ -5821,6 +5835,14 @@ model, do not celebrate the sim.
     Do not invent Engine `--memcpy-update`. Do not invent CUDA-array
     memcpy as a memory-type variant. `graph_exec_memcpy_set_params` stays
     legal.
+    Do not invent a second `cudaMemPoolAttrMaxPoolSize` /
+    [`MemPoolAttr::MaxPoolSize`] / `set_pool_max_size`. Do not invent Engine
+    `--mempool-max` as SetAttribute-only (CLI stays `create_pool_with_props`
+    plus `set_device_mempool`). Do not invent alignment rounding of
+    MaxPoolSize. Do not invent `cudaMemPoolAttrHwDecompressEnabled`. Do not
+    invent pool `LocationType` / `LocationId` as MemPoolAttr (HostNuma /
+    Invisible stay unmodeled). Do not invent shrinking MaxPoolSize freeing
+    live allocs.
     Do not
     spend the next item on an OpenAI-compatible HTTP veneer.
 

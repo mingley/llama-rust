@@ -5,6 +5,21 @@ Visible five-turn extract: [docs/chatgpt-share-6a920fe1.md](docs/chatgpt-share-6
 Complete share-API extract: [docs/chatgpt-share-6a920fe1/](docs/chatgpt-share-6a920fe1/).
 Work lands on `main`. No PRs.
 
+## Shipped 2026-09-01 — CUDA mempool MaxPoolSize attribute
+
+`gpu-sim` CUDA `cudaMemPoolAttrMaxPoolSize` is `MemPoolAttr::MaxPoolSize`
+(`pool_get_attribute` / `pool_set_attribute`). Typed `set_pool_max_size`
+stays. Get reports stored `MemPoolProps::max_size` (`0` unlimited). Set
+updates the cap for later `alloc_from_pool` (reserved live plus cached).
+Does not free live allocs if the new cap is below current reserved.
+Graph-memory pool stays Invalid. Capture: Get legal, Set Invalid.
+Imported pools Get/Set the exporter. `expertvm sim --mempool-max` stays
+`create_pool_with_props` plus `set_device_mempool`. This VM does not
+invent a second MaxPoolSize CLI, Engine `--mempool-max` as
+SetAttribute-only, alignment rounding, `cudaMemPoolAttrHwDecompressEnabled`,
+or pool LocationType / LocationId. `gpu-profile capture` is still refused.
+Dual score still has no `$/M tokens`.
+
 ## Shipped 2026-09-01 — ExecUpdate memcpy memory type
 
 `gpu-sim` CUDA `cudaGraphExecUpdate` memcpy source and destination
