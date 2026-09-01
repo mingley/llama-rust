@@ -19237,6 +19237,7 @@ impl Sim {
     /// Cubemap layered texture dims are always 0.
     /// Layered surface 1D/2D dims are always 0.
     /// Cubemap surface dims are always 0.
+    /// `pciSubSystemID` is always 0.
     /// Occupancy SM counts, clock rates, and warp size are not.
     /// Unknown devices are Invalid.
     pub fn device_get_properties(&self, device: DeviceId) -> Result<DeviceProperties, SimError> {
@@ -19247,6 +19248,7 @@ impl Sim {
             pci_domain_id: synthetic_pci_ids(device).0,
             pci_bus_id: synthetic_pci_ids(device).1,
             pci_device_id: synthetic_pci_ids(device).2,
+            pci_subsystem_id: 0,
             compute_capability_major: u32::from(gpu.compute_capability_major),
             compute_capability_minor: u32::from(gpu.compute_capability_minor),
             single_to_double_precision_perf_ratio:

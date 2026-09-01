@@ -1339,6 +1339,7 @@ impl MemExportFlags {
 /// (`cudaUuid_t`), not a real NVIDIA board UUID. [`Self::pci_domain_id`] /
 /// [`Self::pci_bus_id`] / [`Self::pci_device_id`] are the synthetic PCI
 /// identity from [`crate::Sim::device_get_pci_bus_id`].
+/// [`Self::pci_subsystem_id`] is always 0.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct DeviceProperties {
     /// Profile name (`example-h100-sxm`, a capture id, …).
@@ -1352,6 +1353,10 @@ pub struct DeviceProperties {
     pub pci_bus_id: u32,
     /// Synthetic `pciDeviceID` ([`DeviceAttr::PciDeviceId`]). Always 0.
     pub pci_device_id: u32,
+    /// `cudaDeviceProp::pciSubSystemID`. Always 0 (synthetic PCI has no
+    /// subsystem id). Distinct from [`Self::pci_device_id`]. This VM does
+    /// not invent `DeviceAttr::PciSubSystemId`.
+    pub pci_subsystem_id: u32,
     /// `cudaDeviceProp::major` ([`DeviceAttr::ComputeCapabilityMajor`]).
     /// Example H100 is 9 (Hopper sm_90). Distinct from occupancy SM counts.
     pub compute_capability_major: u32,

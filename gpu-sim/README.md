@@ -1074,12 +1074,12 @@ atomics are not modeled; distinct from `NativeAtomicSupported` and from
 `device_get_properties` is `cudaGetDeviceProperties` of those same fields
 (compute capability major/minor included; launch-geometry caps included;
 MaxRegistersPerBlock included; GlobalMemoryBusWidth included; SingleToDoublePrecisionPerfRatio included; texture 2D/3D
-dims included; linear texture 1D/2D dims included; texture 2D gather dims included; mipmapped texture 1D/2D dims included; cubemap texture width included; layered texture 1D/2D dims included; cubemap layered texture dims included; surface 1D/2D/3D dims included; layered surface 1D/2D dims included; cubemap surface dims included; no occupancy SM count or clock). `device_get_name` is `cudaDeviceGetName` (the
+dims included; linear texture 1D/2D dims included; texture 2D gather dims included; mipmapped texture 1D/2D dims included; cubemap texture width included; layered texture 1D/2D dims included; cubemap layered texture dims included; surface 1D/2D/3D dims included; layered surface 1D/2D dims included; cubemap surface dims included; pciSubSystemID included as 0; no occupancy SM count or clock). `device_get_name` is `cudaDeviceGetName` (the
 profile name). `device_get_uuid` is `cuDeviceGetUuid` (synthetic 16-octet
 id; also `DeviceProperties.uuid`). `device_get_by_uuid` is
 `cuDeviceGetByUuid` (inverse). `device_get_pci_bus_id` is
 `cudaDeviceGetPciBusId` (synthetic PCI string; also `DeviceProperties`
-PCI ids). `device_get_by_pci_bus_id` is `cudaDeviceGetByPCIBusId`
+PCI ids; `pciSubSystemID` is always 0). `device_get_by_pci_bus_id` is `cudaDeviceGetByPCIBusId`
 (inverse). `device_total_mem` is `cuDeviceTotalMem` (HBM bytes).
 `driver_get_version` is `cudaDriverGetVersion` / `cuDriverGetVersion` (CUDA
 13.0). `runtime_get_version` is `cudaRuntimeGetVersion` (same toolkit). Query;

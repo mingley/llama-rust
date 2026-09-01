@@ -611,6 +611,10 @@
 //! [`DeviceAttr::PciDomainId`] / [`PciBusId`](DeviceAttr::PciBusId) /
 //! [`PciDeviceId`](DeviceAttr::PciDeviceId) are the synthetic PCI identity
 //! ([`device_get_pci_bus_id`](Sim::device_get_pci_bus_id)).
+//! [`DeviceProperties::pci_subsystem_id`] is `cudaDeviceProp::pciSubSystemID`
+//! (always 0; synthetic PCI has no subsystem id). Distinct from
+//! [`PciDeviceId`](DeviceAttr::PciDeviceId). This VM does not invent
+//! `DeviceAttr::PciSubSystemId`.
 //! [`DeviceAttr::ComputeCapabilityMajor`] and
 //! [`ComputeCapabilityMinor`](DeviceAttr::ComputeCapabilityMinor) are
 //! `cudaDevAttrComputeCapabilityMajor` and `cudaDevAttrComputeCapabilityMinor`
@@ -20159,6 +20163,24 @@ mod tests {
         match a.device_get_pci_bus_id(DeviceId(99)) {
             Err(SimError::Invalid { why }) => {
                 assert!(why.contains("device not in profile"), "{why}")
+            }
+            other => panic!("{other:?}"),
+        }
+    }
+
+    #[test]
+    fn device_get_properties_pci_subsystem_id_is_zero() {
+        let mut sim = Sim::new(h100());
+        let d = DeviceId(0);
+        let hp = sim.device_get_properties(d).unwrap();
+        assert_eq!(hp.pci_subsystem_id, 0);
+        assert_eq!(hp.pci_device_id, 0);
+        sim.begin_capture(d, StreamId(0)).unwrap();
+        assert_eq!(sim.device_get_properties(d).unwrap().pci_subsystem_id, 0);
+        let _g = sim.end_capture().unwrap();
+        match sim.device_get_properties(DeviceId(99)) {
+            Err(SimError::Invalid { why }) => {
+                assert!(why.contains("device not in profile"), "{why}");
             }
             other => panic!("{other:?}"),
         }
