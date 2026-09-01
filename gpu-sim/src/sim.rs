@@ -17967,13 +17967,27 @@ impl Sim {
     /// `cuEGLStreamProducerDisconnect` plus `cudaEGLStreamProducerDisconnect`.
     ///
     /// Always Invalid `"producer disconnect"` (EGL streams are not modeled).
-    /// Distinct from [`Self::egl_stream_producer_connect`]. Unknown devices
-    /// are Invalid `"device not in profile"`. Query; legal during capture.
-    /// This VM does not invent `cuEGLStreamProducerPresentFrame` this slice.
+    /// Distinct from [`Self::egl_stream_producer_connect`] and from
+    /// [`Self::egl_stream_producer_present_frame`]. Unknown devices are Invalid
+    /// `"device not in profile"`. Query; legal during capture.
     pub fn egl_stream_producer_disconnect(&self, device: DeviceId) -> Result<(), SimError> {
         let _gpu = self.profile.gpu(device)?;
         Err(SimError::Invalid {
             why: "producer disconnect",
+        })
+    }
+
+    /// `cuEGLStreamProducerPresentFrame` plus
+    /// `cudaEGLStreamProducerPresentFrame`.
+    ///
+    /// Always Invalid `"producer present"` (EGL streams are not modeled).
+    /// Distinct from [`Self::egl_stream_producer_disconnect`]. Unknown devices
+    /// are Invalid `"device not in profile"`. Query; legal during capture.
+    /// This VM does not invent `cuEGLStreamProducerReturnFrame` this slice.
+    pub fn egl_stream_producer_present_frame(&self, device: DeviceId) -> Result<(), SimError> {
+        let _gpu = self.profile.gpu(device)?;
+        Err(SimError::Invalid {
+            why: "producer present",
         })
     }
 

@@ -604,6 +604,9 @@ no Engine flag).
 `gpu-sim` `egl_stream_producer_disconnect` is
 `cuEGLStreamProducerDisconnect` (Invalid; EGL streams are not modeled;
 no Engine flag).
+`gpu-sim` `egl_stream_producer_present_frame` is
+`cuEGLStreamProducerPresentFrame` (Invalid; EGL streams are not modeled;
+no Engine flag).
 `gpu-sim` `gl_get_devices` is `cuGLGetDevices` (Invalid; OpenGL interop
 is not modeled; no Engine flag).
 `gpu-sim` `gl_ctx_create` is `cuGLCtxCreate` (Invalid; OpenGL interop is

@@ -5,6 +5,14 @@ Visible five-turn extract: [docs/chatgpt-share-6a920fe1.md](docs/chatgpt-share-6
 Complete share-API extract: [docs/chatgpt-share-6a920fe1/](docs/chatgpt-share-6a920fe1/).
 Work lands on `main`. No PRs.
 
+## Shipped 2026-09-01 — CUDA `cuEGLStreamProducerPresentFrame`
+
+`gpu-sim` `Sim::egl_stream_producer_present_frame` is
+`cuEGLStreamProducerPresentFrame`. Always Invalid `"producer present"`
+because EGL streams are not modeled. Query; legal during capture. Distinct
+from `egl_stream_producer_disconnect`. This VM does not invent `cuEGLStreamProducerReturnFrame` or Engine `--egl-producer-present`.
+`gpu-profile capture` is still refused. Dual score still has no `$/M tokens`.
+
 ## Shipped 2026-09-01 — CUDA `cuGraphicsResourceGetMappedPointer`
 
 `gpu-sim` `Sim::graphics_resource_get_mapped_pointer` is
