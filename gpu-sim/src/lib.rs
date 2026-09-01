@@ -1094,6 +1094,9 @@
 //! [`library_get_managed`](Sim::library_get_managed) is
 //! `cuLibraryGetManaged` (always Invalid `"library managed"`). Query;
 //! legal during capture. No Engine `--library-managed`.
+//! [`library_get_unified_function`](Sim::library_get_unified_function) is
+//! `cuLibraryGetUnifiedFunction` (always Invalid `"library unified"`).
+//! Query; legal during capture. No Engine `--library-unified`.
 //! [`link_create`](Sim::link_create) is `cuLinkCreate` (always Invalid
 //! `"jit linker"`). Query; legal during capture. No Engine `--jit-link`.
 //! [`Sim::runtime_get_version`] is `cudaRuntimeGetVersion` (same
@@ -19128,6 +19131,54 @@ mod tests {
             sim.device_get_attribute(d, DeviceAttr::ManagedMemory)
                 .unwrap(),
             1
+        );
+        match sim.library_get_unified_function(d) {
+            Err(SimError::Invalid { why }) => {
+                assert!(why.contains("library unified"), "{why}");
+                assert!(!why.contains("library managed"), "{why}");
+            }
+            other => panic!("{other:?}"),
+        }
+        assert_eq!(sim.module_get_loading_mode(), ModuleLoadingMode::Eager);
+    }
+
+    #[test]
+    fn library_get_unified_function_is_unsupported() {
+        let mut sim = Sim::new(h100());
+        let d = DeviceId(0);
+        match sim.library_get_unified_function(d) {
+            Err(SimError::Invalid { why }) => {
+                assert!(why.contains("library unified"), "{why}");
+                assert!(!why.contains("library managed"), "{why}");
+                assert!(!why.contains("library global"), "{why}");
+            }
+            other => panic!("{other:?}"),
+        }
+        sim.begin_capture(d, StreamId(0)).unwrap();
+        match sim.library_get_unified_function(d) {
+            Err(SimError::Invalid { why }) => {
+                assert!(why.contains("library unified"), "{why}");
+            }
+            other => panic!("{other:?}"),
+        }
+        let _g = sim.end_capture().unwrap();
+        match sim.library_get_unified_function(DeviceId(99)) {
+            Err(SimError::Invalid { why }) => {
+                assert!(why.contains("device not in profile"), "{why}");
+            }
+            other => panic!("{other:?}"),
+        }
+        match sim.library_get_managed(d) {
+            Err(SimError::Invalid { why }) => {
+                assert!(why.contains("library managed"), "{why}");
+                assert!(!why.contains("library unified"), "{why}");
+            }
+            other => panic!("{other:?}"),
+        }
+        assert_eq!(
+            sim.device_get_attribute(d, DeviceAttr::UnifiedFunctionPointers)
+                .unwrap(),
+            0
         );
         assert_eq!(sim.module_get_loading_mode(), ModuleLoadingMode::Eager);
     }

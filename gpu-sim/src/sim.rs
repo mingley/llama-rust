@@ -21112,13 +21112,29 @@ impl Sim {
     ///
     /// Always Invalid `"library managed"` (this VM has no `CUlibrary`
     /// managed symbol). Distinct from [`Self::library_get_global`] (why is
-    /// not `"library global"`) and from [`Self::alloc_managed`].
+    /// not `"library global"`) and from [`Self::alloc_managed`] and from
+    /// [`Self::library_get_unified_function`].
     /// Unknown devices are Invalid `"device not in profile"`. Query; legal
     /// during capture.
     pub fn library_get_managed(&self, device: DeviceId) -> Result<(), SimError> {
         let _gpu = self.profile.gpu(device)?;
         Err(SimError::Invalid {
             why: "library managed",
+        })
+    }
+
+    /// `cuLibraryGetUnifiedFunction`. CUDA libraries are not modeled.
+    ///
+    /// Always Invalid `"library unified"` (this VM has no `CUlibrary`
+    /// device-side function pointer). Distinct from
+    /// [`Self::library_get_managed`] (why is not `"library managed"`) and
+    /// from [`DeviceAttr::UnifiedFunctionPointers`] (always 0).
+    /// Unknown devices are Invalid `"device not in profile"`. Query; legal
+    /// during capture.
+    pub fn library_get_unified_function(&self, device: DeviceId) -> Result<(), SimError> {
+        let _gpu = self.profile.gpu(device)?;
+        Err(SimError::Invalid {
+            why: "library unified",
         })
     }
 
@@ -21129,7 +21145,8 @@ impl Sim {
     /// [`Self::library_load_from_file`] and from [`Self::library_unload`]
     /// and from [`Self::library_get_kernel`] and from
     /// [`Self::library_get_module`] and from [`Self::library_get_global`]
-    /// and from [`Self::library_get_managed`].
+    /// and from [`Self::library_get_managed`] and from
+    /// [`Self::library_get_unified_function`].
     /// Unknown devices
     /// are Invalid `"device not in profile"`. Query; legal during capture.
     /// This VM does not invent `cuLinkAddData` this slice.

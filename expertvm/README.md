@@ -530,6 +530,8 @@ handle; no Engine flag).
 `CUlibrary` device symbol; no Engine flag).
 `gpu-sim` `library_get_managed` is `cuLibraryGetManaged` (Invalid; no
 `CUlibrary` managed symbol; no Engine flag).
+`gpu-sim` `library_get_unified_function` is `cuLibraryGetUnifiedFunction`
+(Invalid; no `CUlibrary` device function pointer; no Engine flag).
 `gpu-sim` `link_create` is `cuLinkCreate` (Invalid; no JIT linker; no
 Engine flag).
 `gpu-sim` `get_proc_address` is `cuGetProcAddress` (Invalid; no C ABI

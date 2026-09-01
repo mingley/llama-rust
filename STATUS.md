@@ -5,6 +5,15 @@ Visible five-turn extract: [docs/chatgpt-share-6a920fe1.md](docs/chatgpt-share-6
 Complete share-API extract: [docs/chatgpt-share-6a920fe1/](docs/chatgpt-share-6a920fe1/).
 Work lands on `main`. No PRs.
 
+## Shipped 2026-09-01 — CUDA `cuLibraryGetUnifiedFunction`
+
+`gpu-sim` `Sim::library_get_unified_function` is `cuLibraryGetUnifiedFunction`.
+Always Invalid `"library unified"` because CUDA libraries are not
+modeled. Query; legal during capture. Distinct from
+`library_get_managed` (why is not `"library managed"`) and from
+`UnifiedFunctionPointers`. This VM does not invent `cuKernelGetFunction` or Engine `--library-unified`.
+`gpu-profile capture` is still refused. Dual score still has no `$/M tokens`.
+
 ## Shipped 2026-09-01 — CUDA `cuLibraryGetManaged`
 
 `gpu-sim` `Sim::library_get_managed` is `cuLibraryGetManaged`.
