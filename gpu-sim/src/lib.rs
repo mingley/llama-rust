@@ -5781,7 +5781,7 @@ mod tests {
             SimError::Invalid { why } => assert!(why.contains("unknown"), "{why}"),
             other => panic!("{other:?}"),
         }
-        sim.graph_kernel_get_params(g, 0).unwrap();
+        let _def = sim.graph_kernel_get_params(g, 0).unwrap();
         sim.begin_capture(d, StreamId(1)).unwrap();
         match sim.graph_kernel_get_params(exec, 0).unwrap_err() {
             SimError::Invalid { why } => assert!(why.contains("unknown"), "{why}"),
