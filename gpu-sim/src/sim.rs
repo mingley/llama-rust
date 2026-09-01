@@ -3749,9 +3749,10 @@ impl Sim {
     /// Host-synchronous. Capture cannot include it. Graph mem allocs are
     /// `cudaFreeAsync`'d on the launch stream before a later launch's alloc
     /// nodes run, so relaunch recharges HBM instead of reusing the pointer.
-    /// Illegal when the graph has mem free nodes. A second instantiate of a
-    /// definition that has mem nodes is Invalid (execs would need independent
-    /// pointers).
+    /// MOVE child graphs and conditional bodies inherit this flag when the
+    /// parent is instantiated. Illegal when the graph has mem free nodes. A
+    /// second instantiate of a definition that has mem nodes is Invalid
+    /// (execs would need independent pointers).
     pub fn instantiate_graph_auto_free(&mut self, graph: GraphId) -> Result<GraphId, SimError> {
         self.instantiate_graph_with_flags(graph, GraphInstantiateFlags::AUTO_FREE_ON_LAUNCH)
     }
@@ -3943,13 +3944,16 @@ impl Sim {
             }
         };
         self.clock = self.clock.saturating_add(ns);
+        // MOVE children (and IF/WHILE/SWITCH bodies that hold them) inherit
+        // AutoFreeOnLaunch so inlined mem nodes free like the parent exec.
+        let inherit = flags & GraphInstantiateFlags::AUTO_FREE_ON_LAUNCH;
         for body in snapshot.bodies {
-            let _exec = self.instantiate_graph_inner(body, 0, None)?;
+            let _exec = self.instantiate_graph_inner(body, inherit, None)?;
         }
         for node in &snapshot.steps {
             if let Kind::ChildGraph { graph, ownership } = &node.kind {
                 if *ownership == GraphChildGraphOwnership::MOVE {
-                    let _exec = self.instantiate_graph_inner(*graph, 0, None)?;
+                    let _exec = self.instantiate_graph_inner(*graph, inherit, None)?;
                 }
             }
         }
@@ -6687,8 +6691,9 @@ impl Sim {
     /// The clone is an independent graph (`instantiated = false`). Child-graph
     /// nodes are cloned recursively so the copy names new ids; a diamond of
     /// shared children becomes one cloned child. Graph mem alloc nodes get new
-    /// `cudaMallocAsync` ids (independent HBM). Instantiating or updating one
-    /// id does not change the other. Cycles among child ids fail.
+    /// `cudaMallocAsync` ids (independent HBM), including when `graph` is an
+    /// instantiated exec (fork the definition's ids). Instantiating or
+    /// updating one id does not change the other. Cycles among child ids fail.
     pub fn clone_graph(&mut self, graph: GraphId) -> Result<GraphId, SimError> {
         self.require_not_moved(graph)?;
         self.fail_if_capturing("cannot capture graph clone")?;
@@ -6916,7 +6921,7 @@ impl Sim {
         dst: GraphId,
         steps: Vec<GraphStep>,
     ) -> Result<Vec<GraphStep>, SimError> {
-        let src_ids = self.graph_allocs.get(&src).cloned().unwrap_or_default();
+        let src_ids = self.graph_mem_ids(src);
         if src_ids.is_empty() {
             return Ok(steps);
         }

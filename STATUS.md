@@ -5,6 +5,17 @@ Visible five-turn extract: [docs/chatgpt-share-6a920fe1.md](docs/chatgpt-share-6
 Complete share-API extract: [docs/chatgpt-share-6a920fe1/](docs/chatgpt-share-6a920fe1/).
 Work lands on `main`. No PRs.
 
+## Shipped 2026-09-01 — expertvm combo graph-mem MOVE children
+
+Walker `--graph-build` combo parents with `--graph-mem` / `--graph-auto-free`
+MOVE an uninstantiated `cudaGraphClone` of each GraphBank leaf. CUDA clone
+ownership cannot name a child with mem alloc/free. `clone_graph` of an
+instantiated exec forks the definition's mem ids. Parent
+`AutoFreeOnLaunch` is inherited by MOVE children so auto-free combo
+scratch still frees. Kernel-only combos stay typed `graph_add_child`
+(clone). `gpu-profile capture` is still refused. Dual score still has no
+`$/M tokens`.
+
 ## Shipped 2026-09-01 — CUgraphChildGraphNodeOwnership
 
 `gpu-sim` CUDA `CUgraphChildGraphNodeOwnership`:

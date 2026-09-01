@@ -811,13 +811,14 @@ use crate::planner::{
 use crate::policy::Policy;
 use crate::replay::{Touch, Walker};
 use gpu_sim::{
-    AccessPolicyWindow, AccessProperty, AllocId, ClusterSchedulingPolicy, CondId, DType,
-    DeviceFlags, DeviceId, DeviceLimit, EventId, GraphId, GraphInstantiateFlags, HardwareProfile,
-    KernelAttrs, KernelBuf, KernelKind, LaunchCompletionEvent, MemAttach, MemHandleId,
-    MemHandleType, MemPoolAttr, MemPoolProps, MemSyncDomain, MemSyncDomainMap, MemcpyAttributes,
-    MemcpyOp, MemcpySrcAccessOrder, Place, PointerAttr, PoolId, PortableClusterMode,
-    PortableSharedMode, ProgrammaticEvent, ProgrammaticLaunch, Score, SharedMemCarveout,
-    SharedMemoryMode, Sim, StreamId, SynchronizationPolicy, WaitValueCmp,
+    AccessPolicyWindow, AccessProperty, AllocId, ChildGraphNodeParams, ClusterSchedulingPolicy,
+    CondId, DType, DeviceFlags, DeviceId, DeviceLimit, EventId, GraphChildGraphOwnership, GraphId,
+    GraphInstantiateFlags, GraphNodeParams, HardwareProfile, KernelAttrs, KernelBuf, KernelKind,
+    LaunchCompletionEvent, MemAttach, MemHandleId, MemHandleType, MemPoolAttr, MemPoolProps,
+    MemSyncDomain, MemSyncDomainMap, MemcpyAttributes, MemcpyOp, MemcpySrcAccessOrder, Place,
+    PointerAttr, PoolId, PortableClusterMode, PortableSharedMode, ProgrammaticEvent,
+    ProgrammaticLaunch, Score, SharedMemCarveout, SharedMemoryMode, Sim, StreamId,
+    SynchronizationPolicy, WaitValueCmp,
 };
 use std::collections::{BTreeMap, BTreeSet};
 use std::fmt::Write;
@@ -1244,8 +1245,11 @@ pub struct SimCfg {
     ///
     /// Leaves and parents are built with [`gpu_sim::Sim::create_graph`] and
     /// [`gpu_sim::Sim::graph_add_kernel`] / [`gpu_sim::Sim::graph_add_child`].
-    /// Combo children have no [`gpu_sim::Sim::graph_add_dependencies`] edge, so
-    /// independent expert GEMMs may Hyper-Q overlap (`compute_slots >= 2`).
+    /// Graph-mem plus auto-free combo children MOVE an uninstantiated
+    /// [`gpu_sim::Sim::clone_graph`] (CUDA clone-ownership cannot name a child
+    /// with mem nodes). Combo children have no
+    /// [`gpu_sim::Sim::graph_add_dependencies`] edge, so independent expert
+    /// GEMMs may Hyper-Q overlap (`compute_slots >= 2`).
     /// Does not require an idle stream. Implies [`Self::cuda_graphs`]. Decode
     /// identity stays stream capture. [`crate::GpuStoreCfg::graph_build`] is
     /// the store path. Illegal with [`Self::graph_piecewise`].
@@ -3194,6 +3198,21 @@ impl GraphBank {
         })
     }
 
+    /// Expert page named by a combo child graph (GraphBank leaf or MOVE clone).
+    fn child_alloc(&self, sim: &Sim, gid: GraphId) -> Result<AllocId, Error> {
+        if let Some(id) = self.alloc_of(gid) {
+            return Ok(id);
+        }
+        let (_, params) = sim.graph_unique_kernel(gid)?;
+        let owned = sim.graph_mem_allocs(gid)?;
+        params
+            .reads
+            .iter()
+            .find(|b| !owned.contains(&b.id))
+            .map(|b| b.id)
+            .ok_or(Error::Store("combo child alloc"))
+    }
+
     /// Smallest stored combo (`len >= 2`, same origin) that is a set superset of `want`.
     fn find_cover(&self, origin: (DeviceId, StreamId), want: &[AllocId]) -> Option<GraphId> {
         let want: BTreeSet<AllocId> = want.iter().copied().collect();
@@ -3238,9 +3257,7 @@ impl GraphBank {
         let want: BTreeSet<AllocId> = want.iter().copied().collect();
         let children = sim.graph_child_nodes(exec)?;
         for (node, child) in children {
-            let Some(alloc) = self.alloc_of(child) else {
-                return Err(Error::Store("combo child alloc"));
-            };
+            let alloc = self.child_alloc(sim, child)?;
             let on = want.contains(&alloc);
             if sim.graph_node_get_enabled(exec, node)? != on {
                 sim.graph_node_set_enabled(exec, node, on)?;
@@ -3290,9 +3307,7 @@ impl GraphBank {
             if children.get(1).is_some() {
                 return Err(Error::Store("combo if child"));
             }
-            let Some(alloc) = self.alloc_of(*child) else {
-                return Err(Error::Store("combo child alloc"));
-            };
+            let alloc = self.child_alloc(sim, *child)?;
             let on = u32::from(want.contains(&alloc));
             let Some((node, have)) = by_handle.get(&handle).copied() else {
                 return Err(Error::Store("combo if handle"));
@@ -4386,6 +4401,31 @@ fn piecewise_expert_graph(
     Ok(Some(graphs.bind(sim, (d, stream), ids.to_vec(), parent)?))
 }
 
+/// CUDA clone-ownership cannot name a child with mem alloc/free. Combo
+/// parents MOVE an uninstantiated clone so GraphBank can still reuse the
+/// instantiated leaf across later combos.
+fn add_combo_child(
+    sim: &mut Sim,
+    parent: GraphId,
+    leaf: GraphId,
+    mem: LeafMem,
+) -> Result<(), Error> {
+    if mem == LeafMem::None {
+        sim.graph_add_child(parent, leaf)?;
+        return Ok(());
+    }
+    let cloned = sim.clone_graph(leaf)?;
+    let _added = sim.graph_add_node(
+        parent,
+        &[],
+        GraphNodeParams::ChildGraph(ChildGraphNodeParams {
+            graph: cloned,
+            ownership: GraphChildGraphOwnership::MOVE,
+        }),
+    )?;
+    Ok(())
+}
+
 fn build_expert_graph(
     sim: &mut Sim,
     graphs: &mut GraphBank,
@@ -4425,13 +4465,13 @@ fn build_expert_graph(
             let if_i = idx;
             idx = idx.saturating_add(1);
             sim.graph_add_dependencies(parent, set_i, if_i)?;
-            sim.graph_add_child(body, *g)?;
+            add_combo_child(sim, body, *g, graphs.mem)?;
             if let Some(p) = prev {
                 sim.graph_add_dependencies(parent, p, set_i)?;
             }
             if_i
         } else {
-            sim.graph_add_child(parent, *g)?;
+            add_combo_child(sim, parent, *g, graphs.mem)?;
             let child = idx;
             idx = idx.saturating_add(1);
             if let Some(p) = prev {

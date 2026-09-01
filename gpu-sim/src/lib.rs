@@ -11182,6 +11182,57 @@ mod tests {
     }
 
     #[test]
+    fn clone_graph_of_exec_forks_mem_alloc_nodes() {
+        let mut sim = Sim::new(h100());
+        let d = DeviceId(0);
+        let s = StreamId(0);
+        let g = sim.create_graph(d, s).unwrap();
+        let a = sim.graph_add_alloc(g, 64).unwrap();
+        sim.graph_add_free(g, a).unwrap();
+        sim.graph_add_dependencies(g, 0, 1).unwrap();
+        let exec = sim.instantiate_graph(g).unwrap();
+        let cloned = sim.clone_graph(exec).unwrap();
+        assert!(!sim.graph_instantiated(cloned).unwrap());
+        let src_ids = sim.graph_mem_allocs(exec).unwrap();
+        let clone_ids = sim.graph_mem_allocs(cloned).unwrap();
+        assert_eq!(src_ids.len(), 1);
+        assert_eq!(clone_ids.len(), 1);
+        assert_ne!(src_ids[0], clone_ids[0]);
+    }
+
+    #[test]
+    fn graph_move_child_inherits_parent_auto_free() {
+        let mut sim = Sim::new(h100());
+        let d = DeviceId(0);
+        let s = StreamId(0);
+        let child = sim.create_graph(d, s).unwrap();
+        let a = sim.graph_add_alloc(child, 64).unwrap();
+        sim.graph_add_kernel(child, KernelKind::other(8, 8), &[a], &[a])
+            .unwrap();
+        sim.graph_add_dependencies(child, 0, 1).unwrap();
+        let parent = sim.create_graph(d, s).unwrap();
+        let added = sim
+            .graph_add_node(
+                parent,
+                &[],
+                GraphNodeParams::ChildGraph(ChildGraphNodeParams {
+                    graph: child,
+                    ownership: GraphChildGraphOwnership::MOVE,
+                }),
+            )
+            .unwrap();
+        assert_eq!(added.node, 0);
+        let exec = sim.instantiate_graph_auto_free(parent).unwrap();
+        let kids = sim.graph_child_nodes(exec).unwrap();
+        let (_, nested) = kids.first().copied().expect("child");
+        assert!(sim.graph_auto_free_on_launch(exec).unwrap());
+        assert!(sim.graph_auto_free_on_launch(nested).unwrap());
+        let n = sim.launch_graph(exec, s).unwrap();
+        assert_eq!(n, 2);
+        sim.synchronize().unwrap();
+    }
+
+    #[test]
     fn green_ctx_get_id_is_unique_and_stable() {
         let mut sim = Sim::new(h100());
         let d = DeviceId(0);

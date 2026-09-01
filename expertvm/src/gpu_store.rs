@@ -329,7 +329,8 @@ pub struct GpuStoreCfg {
     ///
     /// Does not require an idle compute stream (`cudaStreamBeginCapture` does).
     /// Combo parents add children without [`gpu_sim::Sim::graph_add_dependencies`]
-    /// so independent expert GEMMs may Hyper-Q overlap. Decode identity stays
+    /// so independent expert GEMMs may Hyper-Q overlap. Graph-mem plus
+    /// auto-free combo children MOVE an uninstantiated clone. Decode identity stays
     /// `begin_capture` / `end_capture`. Illegal with [`Self::graph_piecewise`].
     pub graph_build: bool,
     /// `cudaGraphAddDependencies` chaining on combo parents.

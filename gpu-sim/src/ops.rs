@@ -2954,7 +2954,9 @@ impl GraphChildGraphOwnership {
     /// `CU_GRAPH_CHILD_GRAPH_OWNERSHIP_MOVE`: parent owns the child definition.
     /// Alloc/free nodes are legal. Conditionals stay Invalid. After the move
     /// the child cannot be independently instantiated, launched, destroyed,
-    /// cloned, updated, or added as a child of another parent.
+    /// cloned, updated, or added as a child of another parent. Instantiating
+    /// the parent instantiates the moved child; `AutoFreeOnLaunch` on the
+    /// parent is inherited by that child exec.
     pub const MOVE: u32 = 1;
     /// `CU_GRAPH_CHILD_GRAPH_OWNERSHIP_INVALID` (CUDA `-1`). GetParams of a
     /// moved node returns this so the driver-owned graph is not reused.

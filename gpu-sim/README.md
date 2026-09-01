@@ -220,7 +220,7 @@ warp scheduler, L1, …   ← do not model
 | `CUDA_CONDITIONAL_NODE_PARAMS.ctx` (`GraphNodeParams::If` ctx) | must match handle create ctx; conditionals do not occupy SMs; typed `graph_add_if` copies the handle |
 | `cuGraphAddMemcpyNode` ctx (`MemcpyNodeParams::ctx`) | graph memcpy green ctx; copy-engine duration unchanged; typed `graph_add_memcpy` stays `None` |
 | `cuGraphAddMemsetNode` ctx (`MemsetNodeParams::ctx`) | graph memset green ctx; copy-engine duration unchanged; typed `graph_add_memset` stays `None` |
-| `CUgraphChildGraphNodeOwnership` (`ChildGraphNodeParams::ownership`) | clone is instantiated child without mem/conditionals; move owns an uninstantiated child that may have mem nodes |
+| `CUgraphChildGraphNodeOwnership` (`ChildGraphNodeParams::ownership`) | clone is instantiated child without mem/conditionals; move owns an uninstantiated child that may have mem nodes; parent AutoFreeOnLaunch is inherited by MOVE children |
 | `memset` / `memset_buf` needs the filled span resident (not mapped host); `memset_op` height/pitch is 2D | HBM write of payload + launch overhead |
 | `cudaMemset` / `2D` / `3D` (`memset_sync` / `memset_op_sync`) wait the stream | host-synchronous; capture refused |
 | peer D2D needs topology + `enable_peer` (`enable_peer_with_flags` must be 0) | link bandwidth |
@@ -292,8 +292,9 @@ Engine flag for memset ctx.
 versus move of a child graph. Typed `graph_add_child` stays clone of an
 instantiated child without mem or conditional nodes. Move lets a parent own
 an uninstantiated child that may contain mem alloc/free. GetParams of a
-moved node reports `INVALID`. This VM does not invent an Engine flag for
-child-graph ownership.
+moved node reports `INVALID`. Instantiating the parent instantiates the
+moved child and inherits `AutoFreeOnLaunch`. This VM does not invent an
+Engine flag for child-graph ownership.
 Copy engines still overlap compute. Profile knobs `gemm_util_permille` (achieved/peak) and `grouped_moe_permille`
 (grouped vs dense duration) scale kernel time. Defaults are 1000
 (identity roofline). They are parseable; they are not a capture. Host PCIe

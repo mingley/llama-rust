@@ -287,9 +287,11 @@ destroyed). `--graph-clone-parent` clones combo parents before instantiate
 (recursive children; `graph_clone_ns` per id; does not imply `--graph-clone`;
 store GEMM stays per-leaf). `--graph-build` is `cudaGraphCreate` / `cudaGraphAdd*` instead of
 stream capture (no idle-stream wait; implies `--cuda-graphs` on the walker;
-combo parents are `graph_add_child` of instantiated leaves with no
-`graph_add_dependencies` edge, so independent expert GEMMs may Hyper-Q
-overlap). `--graph-build-deps` chains those children
+combo parents clone instantiated kernel leaves; graph-mem / auto-free
+leaves MOVE an uninstantiated `cudaGraphClone` because CUDA clone-ownership
+cannot name a child with mem nodes; independent children have no
+`graph_add_dependencies` edge, so expert GEMMs may Hyper-Q overlap).
+`--graph-build-deps` chains those children
 (`graph_add_dependencies`; needs `--graph-build`; sibling GEMMs serialize;
 does not imply graph-build; store GEMM stays per-leaf). `--graph-host` inserts
 `cudaGraphAddHostNode` BETWEEN those children (`host_func_ns`; needs
