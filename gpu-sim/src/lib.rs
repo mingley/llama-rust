@@ -5617,7 +5617,7 @@ mod tests {
             .graph_memcpy_set_params(
                 exec,
                 0,
-                &MemcpyOp::packed_1d(Place::Device, Place::Device, a, 4096),
+                &MemcpyOp::packed_1d(Place::Device(d), Place::Device(d), a, 4096),
             )
             .unwrap_err()
         {
