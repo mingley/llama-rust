@@ -601,6 +601,8 @@
 //! (always Invalid `"d3d12"`). Distinct from
 //! [`d3d11_get_devices`](Sim::d3d11_get_devices) and from
 //! [`DeviceAttr::D3D12CigSupported`]. Query; legal during capture. No Engine `--d3d12-devices`.
+//! [`vdpau_get_device`](Sim::vdpau_get_device) is `cuVDPAUGetDevice`
+//! (always Invalid `"vdpau"`). Query; legal during capture. No Engine `--vdpau-device`.
 //! [`DeviceAttr::HostMemoryPoolsSupported`] is always 0 (pools are
 //! device-only; host location is Invalid).
 //! [`DeviceAttr::IsMultiGpuBoard`] / [`MultiGpuBoardGroupID`](DeviceAttr::MultiGpuBoardGroupID)
@@ -21475,6 +21477,44 @@ mod tests {
                 .unwrap(),
             0
         );
+    }
+
+    #[test]
+    fn vdpau_get_device_is_unsupported() {
+        let mut sim = Sim::new(h100());
+        let d = DeviceId(0);
+        match sim.vdpau_get_device(d) {
+            Err(SimError::Invalid { why }) => {
+                assert!(why.contains("vdpau"), "{why}");
+            }
+            other => panic!("{other:?}"),
+        }
+        sim.begin_capture(d, StreamId(0)).unwrap();
+        match sim.vdpau_get_device(d) {
+            Err(SimError::Invalid { why }) => {
+                assert!(why.contains("vdpau"), "{why}");
+            }
+            other => panic!("{other:?}"),
+        }
+        let _g = sim.end_capture().unwrap();
+        match sim.vdpau_get_device(DeviceId(99)) {
+            Err(SimError::Invalid { why }) => {
+                assert!(why.contains("device not in profile"), "{why}");
+            }
+            other => panic!("{other:?}"),
+        }
+        match sim.gl_get_devices(d) {
+            Err(SimError::Invalid { why }) => {
+                assert!(why.contains("opengl"), "{why}");
+            }
+            other => panic!("{other:?}"),
+        }
+        match sim.d3d12_get_devices(d) {
+            Err(SimError::Invalid { why }) => {
+                assert!(why.contains("d3d12"), "{why}");
+            }
+            other => panic!("{other:?}"),
+        }
     }
 
     #[test]

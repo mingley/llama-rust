@@ -17725,6 +17725,18 @@ impl Sim {
         Err(SimError::Invalid { why: "d3d12" })
     }
 
+    /// `cuVDPAUGetDevice` plus `cudaVDPAUGetDevice`. VDPAU interop is not
+    /// modeled.
+    ///
+    /// Always Invalid `"vdpau"`. Distinct from [`Self::gl_get_devices`] and
+    /// from [`Self::d3d12_get_devices`]. Unknown devices are Invalid
+    /// `"device not in profile"`. Query; legal during capture. This VM does
+    /// not invent `cuVDPAUCtxCreate` this slice.
+    pub fn vdpau_get_device(&self, device: DeviceId) -> Result<(), SimError> {
+        let _gpu = self.profile.gpu(device)?;
+        Err(SimError::Invalid { why: "vdpau" })
+    }
+
     /// `cudaMemcpy3DWithAttributesAsync`.
     ///
     /// [`MemcpySrcAccessOrder::Stream`] is [`Self::memcpy_3d_async`].

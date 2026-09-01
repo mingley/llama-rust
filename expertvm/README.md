@@ -562,6 +562,8 @@ is not modeled; no Engine flag).
 interop is not modeled; no Engine flag).
 `gpu-sim` `d3d12_get_devices` is `cuD3D12GetDevices` (Invalid; Direct3D 12
 interop is not modeled; distinct from `D3D12CigSupported`; no Engine flag).
+`gpu-sim` `vdpau_get_device` is `cuVDPAUGetDevice` (Invalid; VDPAU interop
+is not modeled; no Engine flag).
 `gpu-sim` `MaxSharedMemoryPerMultiprocessor` matches
 `MaxSharedMemoryPerBlockOptin` (`cudaDevAttrMaxSharedMemoryPerMultiprocessor`;
 reserved shared memory is 0; no Engine flag; not occupancy SM counts).
