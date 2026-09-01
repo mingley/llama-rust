@@ -122,6 +122,7 @@ warp scheduler, L1, …   ← do not model
 | `cuGraphNodeGetLocalId` (`graph_node_get_local_id`) | live node id matching debug-dot `n0`; parked exec is unknown |
 | `cuGraphNodeGetToolsId` (`graph_node_get_tools_id`) | unique tools id; parked exec is unknown |
 | `cuGraphNodeGetContainingGraph` (`graph_node_get_containing_graph`) | owning graph; child-graph node stays parent; parked exec is unknown |
+| `cudaGraphRemoveDependencies` v2 (`graph_remove_dependencies_n_with_data`) matching `(from, to, data)`; missing matching edge is Invalid; v1 missing is a no-op | not timed (host-side topology) |
 | `cudaGraphDebugDotFlagsRuntimeTypes` | runtime `cudaGraphNodeType*` names; flags `0` stays Debug |
 | `cudaGraphDebugDotFlagsExtraTopoInfo` | numbers existing edges; launch-completion dumps `from_port=2` |
 | `cudaGraphChildGraphNodeGetGraph` / `EventRecordNodeGetEvent` / `WaitNodeGetEvent` / `MemAllocNodeGetParams` | query |
@@ -488,7 +489,12 @@ when any reported edge has non-default stored `GraphEdgeData`
 (`cudaErrorLossyQuery`). Default-only edges stay. Debug-dot ExtraTopoInfo
 still dumps ports (not a GetEdges query).
 `graph_remove_dependencies` is `cudaGraphRemoveDependencies` (illegal on an
-exec and during capture). `graph_destroy_node` is `cudaGraphDestroyNode`
+exec and during capture). `graph_remove_dependencies_n_with_data` is
+`cudaGraphRemoveDependencies` v2 (`GraphEdgeData`; a matching
+`(from, to, data)` is removed; a missing matching edge is Invalid
+`"graph dependency"`). Distinct from v1 missing-remove no-op (PLAN 182).
+v1 still removes a launch-completion edge (it ignores stored data).
+`graph_destroy_node` is `cudaGraphDestroyNode`
 (incident edges dropped; remaining indices stay valid; illegal on an exec
 and during capture; definition destroy does not retarget exec).
 `begin_capture_to_graph` is

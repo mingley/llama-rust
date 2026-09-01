@@ -5,6 +5,17 @@ Visible five-turn extract: [docs/chatgpt-share-6a920fe1.md](docs/chatgpt-share-6
 Complete share-API extract: [docs/chatgpt-share-6a920fe1/](docs/chatgpt-share-6a920fe1/).
 Work lands on `main`. No PRs.
 
+## Shipped 2026-09-01 — CUDA `cudaGraphRemoveDependencies` v2
+
+`gpu-sim` `graph_remove_dependencies_with_data` /
+`graph_remove_dependencies_n_with_data` is `cudaGraphRemoveDependencies` v2
+(`GraphEdgeData`). A matching `(from, to, data)` is removed; a missing
+matching edge is Invalid `"graph dependency"`. Distinct from v1 missing-remove
+no-op (PLAN 182). v1 still removes a launch-completion edge (it ignores stored
+data). Capture cannot include it. Illegal on an instantiated exec. This VM
+does not invent Engine `--graph-edge-data`. `gpu-profile capture` is still
+refused. Dual score still has no `$/M tokens`.
+
 ## Shipped 2026-09-01 — CUDA `cudaStreamGetDevice`
 
 `gpu-sim` `stream_get_device` is `cudaStreamGetDevice` / `cuStreamGetDevice`

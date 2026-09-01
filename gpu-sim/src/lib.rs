@@ -1257,6 +1257,11 @@
 //! Debug-dot ExtraTopoInfo still dumps ports (not a GetEdges query).
 //! [`graph_remove_dependencies`](Sim::graph_remove_dependencies) is
 //! `cudaGraphRemoveDependencies` (illegal on an exec and during capture).
+//! [`graph_remove_dependencies_n_with_data`](Sim::graph_remove_dependencies_n_with_data)
+//! is `cudaGraphRemoveDependencies` v2 ([`GraphEdgeData`]; a matching
+//! `(from, to, data)` is removed; a missing matching edge is Invalid
+//! `"graph dependency"`). Distinct from v1 missing-remove no-op (PLAN 182).
+//! v1 still removes a launch-completion edge (it ignores stored data).
 //! [`graph_destroy_node`](Sim::graph_destroy_node) is `cudaGraphDestroyNode`
 //! (drops incident edges; remaining indices stay valid; illegal on an exec and
 //! during capture; does not retarget an already-instantiated exec).
@@ -28305,6 +28310,103 @@ mod tests {
         let err = sim.graph_remove_dependencies(g, 0, 1).unwrap_err();
         match err {
             SimError::Invalid { why } => assert!(why.contains("capture"), "{why}"),
+            other => panic!("{other:?}"),
+        }
+        let _end = sim.end_capture().unwrap();
+    }
+
+    #[test]
+    fn graph_remove_dependencies_with_data_is_cuda_v2() {
+        let mut sim = Sim::new(h100());
+        let d = DeviceId(0);
+        let s = StreamId(0);
+        let a = sim.malloc(d, 4096).unwrap();
+        let g = sim.create_graph(d, s).unwrap();
+        sim.graph_add_kernel(g, KernelKind::other(8, 8), &[a], &[a])
+            .unwrap();
+        sim.graph_add_kernel(g, KernelKind::other(8, 8), &[a], &[a])
+            .unwrap();
+        sim.graph_add_kernel(g, KernelKind::other(8, 8), &[a], &[a])
+            .unwrap();
+        sim.graph_add_dependencies(g, 0, 1).unwrap();
+        sim.graph_add_dependencies_with_data(g, 1, 2, GraphEdgeData::launch_completion())
+            .unwrap();
+        sim.graph_remove_dependencies_n_with_data(g, &[]).unwrap();
+        sim.graph_remove_dependencies_with_data(g, 0, 1, GraphEdgeData::default())
+            .unwrap();
+        assert_eq!(
+            sim.graph_edges_with_data(g).unwrap(),
+            vec![(1, 2, GraphEdgeData::launch_completion())]
+        );
+        sim.graph_add_dependencies(g, 0, 1).unwrap();
+        match sim.graph_remove_dependencies_with_data(g, 0, 1, GraphEdgeData::launch_completion()) {
+            Err(SimError::Invalid { why }) => assert!(why.contains("graph dependency"), "{why}"),
+            other => panic!("{other:?}"),
+        }
+        assert_eq!(
+            sim.graph_edges_with_data(g).unwrap(),
+            vec![
+                (0, 1, GraphEdgeData::default()),
+                (1, 2, GraphEdgeData::launch_completion()),
+            ]
+        );
+        match sim.graph_remove_dependencies_with_data(g, 0, 2, GraphEdgeData::default()) {
+            Err(SimError::Invalid { why }) => assert!(why.contains("graph dependency"), "{why}"),
+            other => panic!("{other:?}"),
+        }
+        match sim.graph_remove_dependencies_n_with_data(
+            g,
+            &[
+                (0, 1, GraphEdgeData::default()),
+                (0, 2, GraphEdgeData::default()),
+            ],
+        ) {
+            Err(SimError::Invalid { why }) => assert!(why.contains("graph dependency"), "{why}"),
+            other => panic!("{other:?}"),
+        }
+        assert_eq!(
+            sim.graph_edges_with_data(g).unwrap(),
+            vec![
+                (0, 1, GraphEdgeData::default()),
+                (1, 2, GraphEdgeData::launch_completion()),
+            ]
+        );
+        sim.graph_remove_dependencies_with_data(g, 1, 2, GraphEdgeData::launch_completion())
+            .unwrap();
+        assert_eq!(
+            sim.graph_edges_with_data(g).unwrap(),
+            vec![(0, 1, GraphEdgeData::default())]
+        );
+        sim.graph_add_dependencies_with_data(g, 1, 2, GraphEdgeData::launch_completion())
+            .unwrap();
+        sim.graph_remove_dependencies(g, 1, 2).unwrap();
+        assert_eq!(
+            sim.graph_edges_with_data(g).unwrap(),
+            vec![(0, 1, GraphEdgeData::default())]
+        );
+        sim.graph_remove_dependencies(g, 1, 2).unwrap();
+        match sim.graph_remove_dependencies_with_data(
+            g,
+            0,
+            2,
+            GraphEdgeData {
+                kind: GraphDependencyType::PROGRAMMATIC,
+                ..GraphEdgeData::default()
+            },
+        ) {
+            Err(SimError::Invalid { why }) => {
+                assert!(why.contains("graph dependency type"), "{why}");
+            }
+            other => panic!("{other:?}"),
+        }
+        let exec = sim.instantiate_graph(g).unwrap();
+        match sim.graph_remove_dependencies_with_data(exec, 0, 1, GraphEdgeData::default()) {
+            Err(SimError::Invalid { why }) => assert!(why.contains("instantiated"), "{why}"),
+            other => panic!("{other:?}"),
+        }
+        sim.begin_capture(d, s).unwrap();
+        match sim.graph_remove_dependencies_with_data(g, 0, 1, GraphEdgeData::default()) {
+            Err(SimError::Invalid { why }) => assert!(why.contains("capture"), "{why}"),
             other => panic!("{other:?}"),
         }
         let _end = sim.end_capture().unwrap();

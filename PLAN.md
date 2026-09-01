@@ -5896,7 +5896,17 @@ model, do not celebrate the sim.
     `--stream-device`. `gpu-profile capture` is still refused. Dual score
     still has no `$/M tokens`.
 
-554. [ ] Next numbered PLAN item after 553 is the next `gpu-sim` / Engine /
+554. [x] `gpu-sim` `graph_remove_dependencies_with_data` /
+    `graph_remove_dependencies_n_with_data` is CUDA
+    `cudaGraphRemoveDependencies` v2 (`GraphEdgeData`). A matching
+    `(from, to, data)` is removed; a missing matching edge is Invalid
+    `"graph dependency"`. Distinct from v1 missing-remove no-op (PLAN 182).
+    v1 still removes a launch-completion edge (it ignores stored data). Capture
+    cannot include it. Illegal on an instantiated exec. This VM does not
+    invent Engine `--graph-edge-data`. `gpu-profile capture` is still
+    refused. Dual score still has no `$/M tokens`.
+
+555. [ ] Next numbered PLAN item after 554 is the next `gpu-sim` / Engine /
     serve / expertvm mechanical API that is still missing, or the next official
     decode family. Prefer remaining CUDA-shaped twins over more
     OpenAI HTTP veneer. Do not invent F32 `output.scale`. Do not invent a
@@ -5919,6 +5929,9 @@ model, do not celebrate the sim.
     `cudaStreamGetDevice` / `cuStreamGetDevice`. Do not invent Engine
     `--stream-device`. Do not invent `cuStreamGetCtx` / `cudaStreamGetCtx`
     (no `CUcontext` object). Do not invent a second
+    `cudaGraphRemoveDependencies` edgeData /
+    `graph_remove_dependencies_n_with_data`. Do not invent Engine
+    `--graph-edge-data`. Do not invent a second
     `cuDeviceGetUuid` / `cudaDeviceGetUuid`. Do not invent a second
     `cuDeviceGetByUuid`. Do not invent a second `cudaDeviceGetPciBusId` /
     `cuDeviceGetPCIBusId`. Do not invent a second `cudaDeviceGetByPCIBusId`.
@@ -5980,8 +5993,8 @@ model, do not celebrate the sim.
     Do not invent Engine `--device-launch-auto-free`. Do not reverse
     `AUTO_FREE` plus `UPLOAD` or `DEVICE_LAUNCH` plus `UPLOAD`.
     Do not invent a second existing-edge [`GraphEdgeData`] change check.
-    Do not invent a second Engine `--graph-edge-data` (already parked for
-    RemoveDependencies).
+    Do not invent a second Engine `--graph-edge-data` (RemoveDependencies v2
+    is `graph_remove_dependencies_n_with_data`).
     Do not invent a second GetFlags UPLOAD omit or Engine `--graph-exec-flags`.
     Do not omit [`GraphInstantiateFlags::UPLOAD`] from instantiate (it still
     uploads). Do not GetFlags-omit `DEVICE_LAUNCH` / `AUTO_FREE` /
@@ -6122,6 +6135,11 @@ model, do not celebrate the sim.
     `stream_get_device`. Do not invent Engine `--stream-device`. Do not invent
     `cuStreamGetCtx` / `cudaStreamGetCtx` (no `CUcontext` object). Do not
     reverse `stream_get_id`. Do not reverse `green_ctx_get_device`.
+    Do not invent a second `cudaGraphRemoveDependencies` edgeData /
+    `graph_remove_dependencies_n_with_data`. Do not invent Engine
+    `--graph-edge-data`. Do not reverse PLAN 182 v1 missing-remove no-op.
+    Do not apply v2 missing-matching-edge error to v1. Do not reverse v1
+    remove of a launch-completion edge (v1 ignores stored data).
     Do not invent a second DeviceLaunch in-flight destroy-complete check or Engine
     `--device-launch-destroy`. Do not abort an in-flight DeviceLaunch when
     `destroy_graph` succeeds. Do not delay destroy of an idle exec. Do not invent
@@ -6283,7 +6301,7 @@ model, do not celebrate the sim.
     Do not invent graph-alloc SetParams that only retargets accessDescs
     (SetParams of Alloc stays Invalid). Do not invent `poolProps` / a caller
     pool on graph mem-alloc nodes (always the device graph-memory pool).
-    Do not invent `cudaGraphRemoveDependencies`
+    Do not invent a second `cudaGraphRemoveDependencies`
     edgeData. Do not invent Engine `--graph-edge-data`. Do not invent a second
     `cudaGraphAddHostNode` BETWEEN flag. Do not invent a second captured
     `cudaLaunchHostFunc` BETWEEN piecewise flag. Do not invent a second leaf
@@ -6545,6 +6563,11 @@ model, do not celebrate the sim.
     `stream_get_device`. Do not invent Engine `--stream-device`. Do not invent
     `cuStreamGetCtx` / `cudaStreamGetCtx` (no `CUcontext` object). Do not
     reverse `stream_get_id`. Do not reverse `green_ctx_get_device`.
+    Do not invent a second `cudaGraphRemoveDependencies` edgeData /
+    `graph_remove_dependencies_n_with_data`. Do not invent Engine
+    `--graph-edge-data`. Do not reverse PLAN 182 v1 missing-remove no-op.
+    Do not apply v2 missing-matching-edge error to v1. Do not reverse v1
+    remove of a launch-completion edge (v1 ignores stored data).
     Do not
     spend the next item on an OpenAI-compatible HTTP veneer.
 

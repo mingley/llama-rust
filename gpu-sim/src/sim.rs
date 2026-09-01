@@ -9683,6 +9683,99 @@ impl Sim {
         Ok(())
     }
 
+    /// `cudaGraphRemoveDependencies` v2 with [`GraphEdgeData`].
+    ///
+    /// Removes `from` → `to` only when stored data matches `data` (Default
+    /// ports 0 when unset). A missing matching edge is Invalid
+    /// `"graph dependency"`. Distinct from [`Self::graph_remove_dependencies`]
+    /// (v1 missing is a no-op; PLAN 182). v1 still removes a launch-completion
+    /// edge (it ignores stored data). Capture cannot include it. Illegal on an
+    /// instantiated exec.
+    pub fn graph_remove_dependencies_with_data(
+        &mut self,
+        graph: GraphId,
+        from: usize,
+        to: usize,
+        data: GraphEdgeData,
+    ) -> Result<(), SimError> {
+        self.graph_remove_dependencies_n_with_data(graph, &[(from, to, data)])
+    }
+
+    /// `cudaGraphRemoveDependencies` v2 of `numDependencies` from/to/data
+    /// triples.
+    ///
+    /// All-or-nothing: type, ports, index, or a missing matching edge removes
+    /// nothing. Empty `edges` is success. [`GraphEdgeData::default`] matches a
+    /// stored Default edge. [`GraphKernelNodePort::LAUNCH_COMPLETION`] matches
+    /// a launch-completion edge. v1 [`Self::graph_remove_dependencies_n`]
+    /// missing stays a no-op. Capture cannot include it. Illegal on an
+    /// instantiated exec.
+    pub fn graph_remove_dependencies_n_with_data(
+        &mut self,
+        graph: GraphId,
+        edges: &[(usize, usize, GraphEdgeData)],
+    ) -> Result<(), SimError> {
+        self.fail_if_capturing("cannot remove graph dependencies during capture")?;
+        self.require_live_definition(graph)?;
+        for &(_, _, data) in edges {
+            Self::check_graph_edge_data(data)?;
+        }
+        if edges.is_empty() {
+            return Ok(());
+        }
+        let n = self
+            .graphs
+            .get(&graph)
+            .ok_or(SimError::Invalid {
+                why: "unknown graph",
+            })?
+            .steps
+            .len();
+        for &(from, to, data) in edges {
+            if from == to || from >= n || to >= n {
+                return Err(SimError::Invalid {
+                    why: "graph dependency",
+                });
+            }
+            let g = self.graphs.get(&graph).ok_or(SimError::Invalid {
+                why: "unknown graph",
+            })?;
+            let from_live = g.steps.get(from).is_some_and(|s| !s.destroyed);
+            let to_live = g.steps.get(to).is_some_and(|s| !s.destroyed);
+            if !from_live || !to_live {
+                return Err(SimError::Invalid {
+                    why: "graph dependency",
+                });
+            }
+            if data.from_port == GraphKernelNodePort::LAUNCH_COMPLETION {
+                self.require_graph_kernel_edge_src(graph, from)?;
+            }
+            let g = self.graphs.get(&graph).ok_or(SimError::Invalid {
+                why: "unknown graph",
+            })?;
+            let matched = g
+                .steps
+                .get(to)
+                .is_some_and(|s| s.deps.contains(&from) && s.edge_data_of(from) == data);
+            if !matched {
+                return Err(SimError::Invalid {
+                    why: "graph dependency",
+                });
+            }
+        }
+        let g = self.graphs.get_mut(&graph).ok_or(SimError::Invalid {
+            why: "unknown graph",
+        })?;
+        for &(from, to, _) in edges {
+            let step = g.steps.get_mut(to).ok_or(SimError::Invalid {
+                why: "graph dependency",
+            })?;
+            step.deps.retain(|d| *d != from);
+            let _gone = step.edge_data.remove(&from);
+        }
+        Ok(())
+    }
+
     /// `cudaGraphDestroyNode` on a graph definition.
     ///
     /// Drops the node and incident edges. Remaining indices stay valid (CUDA
