@@ -751,8 +751,13 @@ pub enum DeviceLimit {
     /// Stored; this VM does not charge HBM (no device-side `malloc` yet).
     MallocHeapSize,
     /// `cudaLimitDevRuntimeSyncDepth`. CUDA default 2. Minimum 2.
+    ///
+    /// Stored; this VM has no device-side `cudaDeviceSynchronize`.
     DevRuntimeSyncDepth,
     /// `cudaLimitDevRuntimePendingLaunchCount`. CUDA default 2048.
+    ///
+    /// Caps in-flight [`crate::Sim::device_launch_graph`] (host, fire-and-forget,
+    /// sibling, and flushed tail). A queued tail does not occupy a slot.
     DevRuntimePendingLaunchCount,
     /// `cudaLimitMaxL2FetchGranularity`. Power of two in `[32, 128]`.
     ///

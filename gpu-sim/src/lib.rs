@@ -763,7 +763,10 @@
 //! `GetLimit`. [`DeviceLimit::PersistingL2CacheSize`] wraps
 //! [`set_persisting_l2_cache_size`](Sim::set_persisting_l2_cache_size).
 //! [`DeviceLimit::MaxL2FetchGranularity`] aligns access-policy windows (CUDA
-//! default 128 on SM 8.0+). `expertvm sim --l2-fetch N` sets 32 / 64 / 128
+//! default 128 on SM 8.0+). [`DeviceLimit::DevRuntimePendingLaunchCount`]
+//! caps in-flight [`device_launch_graph`](Sim::device_launch_graph) (default
+//! 2048; queued tail does not occupy a slot).
+//! `expertvm sim --l2-fetch N` sets 32 / 64 / 128
 //! (implies persist). [`set_shared_mem_config`](Sim::set_shared_mem_config) /
 //! [`get_shared_mem_config`](Sim::get_shared_mem_config) are
 //! `cudaDeviceSetSharedMemConfig` / `GetSharedMemConfig` (Default kernels
@@ -33859,6 +33862,61 @@ mod tests {
             Err(SimError::Invalid { why }) => {
                 assert!(why.contains("device launch stream"), "{why}");
             }
+            other => panic!("{other:?}"),
+        }
+    }
+
+    #[test]
+    fn device_launch_pending_count_is_cuda_limit_dev_runtime_pending_launch() {
+        let mut sim = Sim::new(h100());
+        let d = DeviceId(0);
+        let s = StreamId(0);
+        let a = sim.malloc(d, 4096).unwrap();
+        assert_eq!(
+            sim.get_limit(d, DeviceLimit::DevRuntimePendingLaunchCount)
+                .unwrap(),
+            2048
+        );
+        sim.set_limit(d, DeviceLimit::DevRuntimePendingLaunchCount, 1)
+            .unwrap();
+        let parent = device_launch_uploaded(&mut sim, d, s, a);
+        let child = device_launch_uploaded(&mut sim, d, s, a);
+        enq(sim.device_launch_graph(parent, s));
+        match sim.device_launch_graph(parent, s) {
+            Err(SimError::Invalid { why }) => assert!(why.contains("in flight"), "{why}"),
+            other => panic!("{other:?}"),
+        }
+        match sim.device_launch_graph(child, StreamId(1)) {
+            Err(SimError::Invalid { why }) => assert!(why.contains("pending"), "{why}"),
+            other => panic!("{other:?}"),
+        }
+        match sim.device_launch_graph(child, StreamId::GRAPH_FIRE_AND_FORGET) {
+            Err(SimError::Invalid { why }) => assert!(why.contains("pending"), "{why}"),
+            other => panic!("{other:?}"),
+        }
+        match sim.device_launch_graph(child, StreamId::GRAPH_FIRE_AND_FORGET_AS_SIBLING) {
+            Err(SimError::Invalid { why }) => assert!(why.contains("pending"), "{why}"),
+            other => panic!("{other:?}"),
+        }
+        enq(sim.device_launch_graph(child, StreamId::GRAPH_TAIL_LAUNCH));
+        sim.synchronize().unwrap();
+        enq(sim.device_launch_graph(parent, s));
+        sim.synchronize().unwrap();
+
+        sim.set_limit(d, DeviceLimit::DevRuntimePendingLaunchCount, 2)
+            .unwrap();
+        let third = device_launch_uploaded(&mut sim, d, s, a);
+        enq(sim.device_launch_graph(parent, s));
+        enq(sim.device_launch_graph(child, StreamId::GRAPH_FIRE_AND_FORGET));
+        match sim.device_launch_graph(third, StreamId::GRAPH_FIRE_AND_FORGET) {
+            Err(SimError::Invalid { why }) => assert!(why.contains("pending"), "{why}"),
+            other => panic!("{other:?}"),
+        }
+        let launched = sim.launch_graph(third, s).unwrap();
+        assert!(launched > 0);
+        sim.synchronize().unwrap();
+        match sim.set_limit(d, DeviceLimit::DevRuntimePendingLaunchCount, 0) {
+            Err(SimError::Invalid { why }) => assert!(why.contains("device limit"), "{why}"),
             other => panic!("{other:?}"),
         }
     }

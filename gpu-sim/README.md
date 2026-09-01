@@ -168,7 +168,7 @@ warp scheduler, L1, …   ← do not model
 | `device_get` is the ordinal in `0 .. count` | `cuDeviceGet` |
 | `flush_gpu_direct_rdma_writes` is a 1 ns host-sync barrier on RDMA SKUs (no write-visibility) | 1 ns |
 | `BatchMemOp::FlushRemoteWrites` is stream-ordered `CU_STREAM_MEM_OP_FLUSH_REMOTE_WRITES` (capture legal; never a no-op) | 1 ns Solo |
-| `set_limit` / `get_limit` wrap persisting L2 plus stack / printf / heap / CDP / L2 fetch | `cudaDeviceSetLimit` / `GetLimit` |
+| `set_limit` / `get_limit` wrap persisting L2 plus stack / printf / heap / CDP / L2 fetch; `DevRuntimePendingLaunchCount` caps in-flight `device_launch_graph` | `cudaDeviceSetLimit` / `GetLimit` |
 | `set_shared_mem_config` / `get_shared_mem_config`; Default kernels inherit function then device | `cudaDeviceSetSharedMemConfig` / `GetSharedMemConfig` |
 | `set_func_shared_mem_config` / `get_func_shared_mem_config`; per-device function config | `cudaFuncSetSharedMemConfig` / `GetSharedMemConfig` |
 | `set_device_flags` / `get_device_flags` schedule + MapHost / Lmem / SyncMemops; Auto streams inherit the tax | `cudaSetDeviceFlags` / `GetDeviceFlags` |
@@ -1044,6 +1044,8 @@ Invalid `"stream attr"`. Get is a query (capture-legal).
 launch / node window. Set `None` clears. This VM does not cap stream-priority
 range.
 `set_limit` / `get_limit` are `cudaDeviceSetLimit` / `GetLimit`.
+`DevRuntimePendingLaunchCount` caps in-flight `device_launch_graph` (default
+2048; queued tail does not occupy a slot). Host `launch_graph` does not count.
 `set_shared_mem_config` / `get_shared_mem_config` are
 `cudaDeviceSetSharedMemConfig` / `GetSharedMemConfig` (Default kernels
 inherit the function config, then this; unset is unscaled).

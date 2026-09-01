@@ -3818,6 +3818,8 @@ impl Sim {
     /// launch does not wait for the sibling).
     /// [`Self::current_graph_exec`] still returns the lowest in-flight
     /// DeviceLaunch id (including FAF children and siblings).
+    /// [`DeviceLimit::DevRuntimePendingLaunchCount`] caps how many of those
+    /// launches may be in flight (`"pending launch count"`).
     pub fn device_launch_graph(
         &mut self,
         graph: GraphId,
@@ -3861,6 +3863,7 @@ impl Sim {
                 why: "device launch in flight",
             });
         }
+        self.require_pending_launch_slot(device)?;
         let id = self.submit(device, stream, Kind::DeviceLaunch { graph: exec })?;
         let g = self.graphs.get_mut(&exec).ok_or(SimError::Invalid {
             why: "unknown graph",
@@ -3888,6 +3891,28 @@ impl Sim {
         })
     }
 
+    fn device_pending_launches(&self, device: DeviceId) -> u64 {
+        let n = self
+            .graphs
+            .values()
+            .filter(|g| {
+                g.origin.0 == device && g.device_launch_tail.is_some_and(|t| !self.op_done(t))
+            })
+            .count();
+        u64::try_from(n).unwrap_or(u64::MAX)
+    }
+
+    fn require_pending_launch_slot(&self, device: DeviceId) -> Result<(), SimError> {
+        let cap = self.gpu_rt(device)?.limits.pending_launch;
+        if self.device_pending_launches(device) >= cap {
+            Err(SimError::Invalid {
+                why: "pending launch count",
+            })
+        } else {
+            Ok(())
+        }
+    }
+
     fn device_fire_and_forget(
         &mut self,
         exec: GraphId,
@@ -3909,6 +3934,7 @@ impl Sim {
                 why: "device launch in flight",
             });
         }
+        self.require_pending_launch_slot(device)?;
         let join = self
             .graphs
             .get(&parent)
@@ -3960,6 +3986,7 @@ impl Sim {
                 why: "device launch in flight",
             });
         }
+        self.require_pending_launch_slot(device)?;
         let stream = self.alloc_anon_stream();
         let id = self.submit_live_with_deps(
             device,
@@ -4071,6 +4098,7 @@ impl Sim {
             })
             .collect();
         for (parent, child, device, stream) in ready {
+            self.require_pending_launch_slot(device)?;
             if let Some(g) = self.graphs.get_mut(&parent) {
                 g.device_tail_child = None;
                 g.device_faf.clear();
@@ -18096,7 +18124,11 @@ impl Sim {
     /// [`DeviceLimit::PersistingL2CacheSize`] is [`Self::set_persisting_l2_cache_size`].
     /// [`DeviceLimit::MaxL2FetchGranularity`] must be 32, 64, or 128 (CUDA SM 8.0+
     /// default 128). Access-policy windows must align to the current value.
-    /// Heap / stack / printf / CDP limits are stored; heap does not charge HBM.
+    /// Heap / stack / printf / [`DeviceLimit::DevRuntimeSyncDepth`] are stored;
+    /// heap does not charge HBM. [`DeviceLimit::DevRuntimePendingLaunchCount`]
+    /// caps in-flight [`Self::device_launch_graph`] (host, fire-and-forget,
+    /// sibling, and flushed tail). A queued tail does not occupy a slot.
+    /// Exceeding is Invalid `"pending launch count"`. Default 2048.
     pub fn set_limit(
         &mut self,
         device: DeviceId,

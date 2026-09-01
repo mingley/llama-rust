@@ -5,6 +5,17 @@ Visible five-turn extract: [docs/chatgpt-share-6a920fe1.md](docs/chatgpt-share-6
 Complete share-API extract: [docs/chatgpt-share-6a920fe1/](docs/chatgpt-share-6a920fe1/).
 Work lands on `main`. No PRs.
 
+## Shipped 2026-09-01 — CUDA `cudaLimitDevRuntimePendingLaunchCount`
+
+`gpu-sim` `DeviceLimit::DevRuntimePendingLaunchCount` caps in-flight
+`device_launch_graph` (host, fire-and-forget, sibling, and flushed tail).
+A queued tail does not occupy a slot. Default 2048. Exceeding is Invalid
+`"pending launch count"`. Host `launch_graph` does not count. This VM does
+not invent Engine `--pending-launch` or make `DevRuntimeSyncDepth`
+mechanical (no device-side `cudaDeviceSynchronize`). Heap still does not
+charge HBM. `gpu-profile capture` is still refused. Dual score still has no
+`$/M tokens`.
+
 ## Shipped 2026-09-01 — CUDA `cudaStreamGraphFireAndForgetAsSibling`
 
 `gpu-sim` `GRAPH_FIRE_AND_FORGET_AS_SIBLING` is `cudaStreamGraphFireAndForgetAsSibling`

@@ -5987,7 +5987,17 @@ model, do not celebrate the sim.
     lowest in-flight DeviceLaunch id. `gpu-profile capture` is still
     refused. Dual score still has no `$/M tokens`.
 
-562. [ ] Next numbered PLAN item after 561 is the next `gpu-sim` / Engine /
+562. [x] `gpu-sim` `DeviceLimit::DevRuntimePendingLaunchCount` caps in-flight
+    `device_launch_graph` (host, fire-and-forget, sibling, and flushed tail).
+    A queued tail does not occupy a slot. Default 2048. Exceeding is Invalid
+    `"pending launch count"`. Host `launch_graph` does not count. Same-exec
+    overlapping still `"device launch in flight"` first. This VM does not
+    invent Engine `--pending-launch` or make `DevRuntimeSyncDepth`
+    mechanical (no device-side `cudaDeviceSynchronize`). Heap still does
+    not charge HBM. `gpu-profile capture` is still refused. Dual score
+    still has no `$/M tokens`.
+
+563. [ ] Next numbered PLAN item after 562 is the next `gpu-sim` / Engine /
     serve / expertvm mechanical API that is still missing, or the next official
     decode family. Prefer remaining CUDA-shaped twins over more
     OpenAI HTTP veneer. Do not invent F32 `output.scale`. Do not invent a
@@ -6035,6 +6045,13 @@ model, do not celebrate the sim.
     `launch_graph` named streams as legal. Do not reverse 558
     `current_graph_exec` lowest-id among all in-flight tails. Do not reverse
     host user-stream `device_launch_graph`. Do not reverse self tail-relaunch.
+    Do not invent a second `cudaLimitDevRuntimePendingLaunchCount` cap. Do not
+    invent Engine `--pending-launch`. Do not make `DevRuntimeSyncDepth`
+    mechanical (no device-side `cudaDeviceSynchronize`). Do not charge HBM
+    for `MallocHeapSize`. Do not invent `cudaLaunchDevice` kernel CDP. Do
+    not count a queued tail against pending until flush. Do not reverse
+    default pending 2048. Do not reverse host concurrent `device_launch_graph`
+    at the default cap.
     Do not invent
     a second
     `cuDeviceGetUuid` / `cudaDeviceGetUuid`. Do not invent a second
@@ -6286,6 +6303,10 @@ model, do not celebrate the sim.
     host `launch_graph` of those ids as legal. Do not reverse lowest-id
     `current_graph_exec` among all in-flight DeviceLaunch tails. Do not
     reverse self tail-relaunch of the in-flight exec.
+    Do not invent a second `cudaLimitDevRuntimePendingLaunchCount` cap. Do
+    not invent Engine `--pending-launch`. Do not make `DevRuntimeSyncDepth`
+    mechanical. Do not count a queued tail against pending until flush.
+    Do not reverse default pending 2048.
     Do not invent a second DeviceLaunch in-flight destroy-complete check or Engine
     `--device-launch-destroy`. Do not abort an in-flight DeviceLaunch when
     `destroy_graph` succeeds. Do not delay destroy of an idle exec. Do not invent
@@ -6743,6 +6764,9 @@ model, do not celebrate the sim.
     `GRAPH_FIRE_AND_FORGET_AS_SIBLING`. Do not invent Engine
     `--graph-faf-sibling`. Do not reverse FAF parent-stream wait.
     Do not reverse host user-stream `device_launch_graph`.
+    Do not invent a second `cudaLimitDevRuntimePendingLaunchCount`. Do not
+    invent Engine `--pending-launch`. Do not make `DevRuntimeSyncDepth`
+    mechanical. Do not reverse default pending 2048.
     Do not
     spend the next item on an OpenAI-compatible HTTP veneer.
 
