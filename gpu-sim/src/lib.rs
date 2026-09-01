@@ -12267,7 +12267,14 @@ mod tests {
         let cond = sim.create_graph(d, s).unwrap();
         let h = sim.graph_conditional_create(cond, 0).unwrap();
         let _body = sim.graph_add_if(cond, h).unwrap();
-        match sim.graph_node_get_params(cond, 0) {
+        assert_eq!(
+            sim.graph_node_get_params(cond, 0).unwrap(),
+            GraphNodeParams::If { handle: h }
+        );
+        let sw = sim.create_graph(d, s).unwrap();
+        let hs = sim.graph_conditional_create(sw, 0).unwrap();
+        let _branches = sim.graph_add_switch(sw, hs, 2).unwrap();
+        match sim.graph_node_get_params(sw, 0) {
             Err(SimError::Invalid { why }) => assert!(why.contains("params kind"), "{why}"),
             other => panic!("{other:?}"),
         }
