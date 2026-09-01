@@ -520,6 +520,8 @@ Eager; no Engine flag).
 `CUlibrary`; no Engine flag).
 `gpu-sim` `library_load_from_file` is `cuLibraryLoadFromFile` (Invalid;
 no cubin path / `CUlibrary`; no Engine flag).
+`gpu-sim` `library_unload` is `cuLibraryUnload` (Invalid; no `CUlibrary`
+handle; no Engine flag).
 `gpu-sim` `link_create` is `cuLinkCreate` (Invalid; no JIT linker; no
 Engine flag).
 `gpu-sim` `get_proc_address` is `cuGetProcAddress` (Invalid; no C ABI

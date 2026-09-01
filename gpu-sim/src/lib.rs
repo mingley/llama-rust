@@ -1080,6 +1080,8 @@
 //! [`library_load_from_file`](Sim::library_load_from_file) is
 //! `cuLibraryLoadFromFile` (always Invalid `"library file"`). Query;
 //! legal during capture. No Engine `--library-from-file`.
+//! [`library_unload`](Sim::library_unload) is `cuLibraryUnload` (always
+//! Invalid `"library unload"`). Query; legal during capture. No Engine `--library-unload`.
 //! [`link_create`](Sim::link_create) is `cuLinkCreate` (always Invalid
 //! `"jit linker"`). Query; legal during capture. No Engine `--jit-link`.
 //! [`Sim::runtime_get_version`] is `cudaRuntimeGetVersion` (same
@@ -18858,6 +18860,57 @@ mod tests {
             Err(SimError::Invalid { why }) => {
                 assert!(why.contains("jit linker"), "{why}");
                 assert!(!why.contains("library file"), "{why}");
+            }
+            other => panic!("{other:?}"),
+        }
+        match sim.library_unload(d) {
+            Err(SimError::Invalid { why }) => {
+                assert!(why.contains("library unload"), "{why}");
+                assert!(!why.contains("library file"), "{why}");
+            }
+            other => panic!("{other:?}"),
+        }
+        assert_eq!(sim.module_get_loading_mode(), ModuleLoadingMode::Eager);
+    }
+
+    #[test]
+    fn library_unload_is_unsupported() {
+        let mut sim = Sim::new(h100());
+        let d = DeviceId(0);
+        match sim.library_unload(d) {
+            Err(SimError::Invalid { why }) => {
+                assert!(why.contains("library unload"), "{why}");
+                assert!(!why.contains("library file"), "{why}");
+                assert!(!why.contains("cuda library"), "{why}");
+                assert!(!why.contains("jit linker"), "{why}");
+            }
+            other => panic!("{other:?}"),
+        }
+        sim.begin_capture(d, StreamId(0)).unwrap();
+        match sim.library_unload(d) {
+            Err(SimError::Invalid { why }) => {
+                assert!(why.contains("library unload"), "{why}");
+            }
+            other => panic!("{other:?}"),
+        }
+        let _g = sim.end_capture().unwrap();
+        match sim.library_unload(DeviceId(99)) {
+            Err(SimError::Invalid { why }) => {
+                assert!(why.contains("device not in profile"), "{why}");
+            }
+            other => panic!("{other:?}"),
+        }
+        match sim.library_load_from_file(d) {
+            Err(SimError::Invalid { why }) => {
+                assert!(why.contains("library file"), "{why}");
+                assert!(!why.contains("library unload"), "{why}");
+            }
+            other => panic!("{other:?}"),
+        }
+        match sim.library_load_data(d) {
+            Err(SimError::Invalid { why }) => {
+                assert!(why.contains("cuda library"), "{why}");
+                assert!(!why.contains("library unload"), "{why}");
             }
             other => panic!("{other:?}"),
         }
