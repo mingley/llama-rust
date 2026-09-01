@@ -5212,7 +5212,20 @@ model, do not celebrate the sim.
     Typed [`va_create`](Sim::va_create) stays. No Engine `--vmm-usage`.
     `gpu-profile capture` is still refused. Dual score still has no `$/M tokens`.
 
-486. [ ] Next numbered PLAN item after 485 is the next `gpu-sim` / Engine /
+486. [x] `gpu-sim` `cuMemcpyHtoD` / `cuMemcpyDtoH`:
+    [`memcpy_htod`](Sim::memcpy_htod) is `cuMemcpyHtoD` (host-synchronous
+    pinned H2D). [`memcpy_dtoh`](Sim::memcpy_dtoh) is `cuMemcpyDtoH`
+    (host-synchronous Device→HostPinned). Capture cannot include them.
+    [`memcpy_pinned_to_device`](Sim::memcpy_pinned_to_device) /
+    [`memcpy_device_to_pinned`](Sim::memcpy_device_to_pinned) stay
+    `cuMemcpyHtoDAsync` / `cuMemcpyDtoHAsync`. Pageable
+    [`memcpy_host_to_device`](Sim::memcpy_host_to_device) /
+    [`memcpy_device_to_host`](Sim::memcpy_device_to_host) stay.
+    [`memcpy_sync`](Sim::memcpy_sync) stays generic `cudaMemcpy`. No Engine
+    `--memcpy-htod`. `gpu-profile capture` is still refused. Dual score
+    still has no `$/M tokens`.
+
+487. [ ] Next numbered PLAN item after 486 is the next `gpu-sim` / Engine /
     serve / expertvm mechanical API that is still missing, or the next official
     decode family. Prefer remaining CUDA-shaped twins over more
     OpenAI HTTP veneer. Do not invent F32 `output.scale`. Do not invent a
@@ -5480,7 +5493,11 @@ model, do not celebrate the sim.
     succeeding (`MemDecompressAlgorithmMask` stays 0). Do not invent a second
     `CUmemAllocationProp` `allocFlags.usage` / `compressionType` /
     `MemAllocationProp::usage` / `compression`. Do not invent Engine
-    `--vmm-usage`. Do not
+    `--vmm-usage`. Do not invent a second `cuMemcpyHtoD` / `memcpy_htod`.
+    Do not invent a second `cuMemcpyDtoH` / `memcpy_dtoh`. Do not invent
+    Engine `--memcpy-htod`. Do not invent `cuMemcpyDtoD` as a named alias
+    of [`memcpy_peer`](Sim::memcpy_peer) (`cuMemcpyDtoDAsync` stays
+    [`memcpy_device_to_device`](Sim::memcpy_device_to_device)). Do not
     spend the next item on an OpenAI-compatible HTTP veneer.
 
 Stop if Phase 1 traces say residency cannot work. Do not invent an

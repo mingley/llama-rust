@@ -5,6 +5,16 @@ Visible five-turn extract: [docs/chatgpt-share-6a920fe1.md](docs/chatgpt-share-6
 Complete share-API extract: [docs/chatgpt-share-6a920fe1/](docs/chatgpt-share-6a920fe1/).
 Work lands on `main`. No PRs.
 
+## Shipped 2026-09-01 — CUDA cuMemcpyHtoD / DtoH
+
+`gpu-sim` `cuMemcpyHtoD` / `cuMemcpyDtoH`: `memcpy_htod` is `cuMemcpyHtoD`
+(host-synchronous pinned H2D). `memcpy_dtoh` is `cuMemcpyDtoH`
+(host-synchronous Device→HostPinned). Capture cannot include them.
+`memcpy_pinned_to_device` / `memcpy_device_to_pinned` stay
+`cuMemcpyHtoDAsync` / `cuMemcpyDtoHAsync`. Pageable helpers stay.
+`memcpy_sync` stays generic `cudaMemcpy`. No Engine `--memcpy-htod`.
+`gpu-profile capture` is still refused. Dual score still has no `$/M tokens`.
+
 ## Shipped 2026-09-01 — CUDA VMM allocation prop usage
 
 `gpu-sim` `CUmemAllocationProp` usage / compression:

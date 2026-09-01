@@ -57,9 +57,13 @@
 //! stream-ordered (`cudaMallocAsync` / `cudaMemcpyAsync` / `cudaFreeAsync`)
 //! except pageable [`Place::Host`] copies, which wait the stream (CUDA bounce
 //! buffer). [`PointerAttr::SyncMemops`] on the copy alloc also waits the stream.
-//! [`Sim::memcpy_pinned_to_device`] is the overlapping DMA path.
+//! [`Sim::memcpy_pinned_to_device`] is the overlapping DMA path
+//! (`cuMemcpyHtoDAsync`). [`memcpy_htod`](Sim::memcpy_htod) is `cuMemcpyHtoD`
+//! (host-synchronous pinned H2D; capture refused).
 //! [`Sim::memcpy_device_to_host`] is pageable Device→Host (waits the stream).
-//! [`Sim::memcpy_device_to_pinned`] is overlapping Device→HostPinned.
+//! [`Sim::memcpy_device_to_pinned`] is overlapping Device→HostPinned
+//! (`cuMemcpyDtoHAsync`). [`memcpy_dtoh`](Sim::memcpy_dtoh) is `cuMemcpyDtoH`
+//! (host-synchronous pinned D2H; capture refused). No Engine `--memcpy-htod`.
 //! [`Sim::malloc`] / [`memcpy_sync`](Sim::memcpy_sync) / [`free_sync`](Sim::free_sync)
 //! / [`memset_sync`](Sim::memset_sync) are host-synchronous (`cudaMalloc` /
 //! `cudaMemcpy` / `cudaFree` / `cudaMemset`). [`memset_op_sync`](Sim::memset_op_sync)
@@ -632,6 +636,11 @@
 //! [`memcpy_2d_unaligned`](Sim::memcpy_2d_unaligned) is `cuMemcpy2DUnaligned`
 //! (identity with `memcpy_2d`; this VM does not require 2D alignment; host-sync;
 //! CUDA has no Async Unaligned). No Engine `--memcpy-unaligned`.
+//! [`memcpy_htod`](Sim::memcpy_htod) / [`memcpy_dtoh`](Sim::memcpy_dtoh) are
+//! `cuMemcpyHtoD` / `cuMemcpyDtoH` (host-synchronous pinned; capture refused).
+//! [`memcpy_pinned_to_device`](Sim::memcpy_pinned_to_device) /
+//! [`memcpy_device_to_pinned`](Sim::memcpy_device_to_pinned) stay Async.
+//! No Engine `--memcpy-htod`.
 //! [`memcpy_3d_async`](Sim::memcpy_3d_async) / [`memcpy_3d`](Sim::memcpy_3d)
 //! are `cudaMemcpy3DAsync` / `cudaMemcpy3D` ([`MemcpyOp::is_3d`]). Typed
 //! [`memcpy`](Sim::memcpy) stays.
@@ -15259,6 +15268,54 @@ mod tests {
         enq(sim.memcpy_2d(d, op, s));
         sim.synchronize().unwrap();
         assert_eq!(sim.bytes_moved(), 4096);
+    }
+
+    #[test]
+    fn memcpy_htod_dtoh_are_cu_memcpy_htod_dtoh() {
+        let mut sim = Sim::new(h100());
+        let d = DeviceId(0);
+        let s = StreamId(0);
+        let a = sim.malloc(d, 4096).unwrap();
+        enq(sim.memcpy_pinned_to_device(d, a, 4096, s));
+        assert!(!sim.stream_is_idle(d, s).unwrap());
+        sim.synchronize().unwrap();
+        let t0 = sim.clock_ns();
+        let moved0 = sim.bytes_moved();
+        enq(sim.memcpy_htod(d, a, 4096, s));
+        assert!(sim.stream_is_idle(d, s).unwrap());
+        assert!(sim.is_resident(a, d).unwrap());
+        assert!(sim.clock_ns() > t0);
+        assert_eq!(sim.bytes_moved(), moved0 + 4096);
+        match sim.memcpy_htod(d, a, 8192, s) {
+            Err(SimError::Invalid { why }) => assert!(why.contains("range past"), "{why}"),
+            other => panic!("{other:?}"),
+        }
+        let t1 = sim.clock_ns();
+        enq(sim.memcpy_dtoh(d, a, 4096, s));
+        assert!(sim.stream_is_idle(d, s).unwrap());
+        assert!(sim.is_resident(a, d).unwrap());
+        assert!(sim.clock_ns() > t1);
+        assert_eq!(sim.bytes_moved(), moved0 + 8192);
+        sim.begin_capture(d, s).unwrap();
+        enq(sim.memcpy_pinned_to_device(d, a, 4096, s));
+        match sim.memcpy_htod(d, a, 4096, s) {
+            Err(SimError::Invalid { why }) => {
+                assert!(why.contains("cannot capture host-sync memcpy"), "{why}");
+            }
+            other => panic!("{other:?}"),
+        }
+        match sim.memcpy_dtoh(d, a, 4096, s) {
+            Err(SimError::Invalid { why }) => {
+                assert!(why.contains("cannot capture host-sync memcpy"), "{why}");
+            }
+            other => panic!("{other:?}"),
+        }
+        enq(sim.memcpy_device_to_pinned(d, a, 4096, s));
+        let g = sim.end_capture().unwrap();
+        assert_eq!(sim.graph_len(g).unwrap(), 2);
+        enq(sim.memcpy_htod(d, a, 4096, s));
+        enq(sim.memcpy_dtoh(d, a, 4096, s));
+        sim.free_sync(a).unwrap();
     }
 
     #[test]

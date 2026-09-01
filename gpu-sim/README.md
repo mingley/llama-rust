@@ -75,6 +75,8 @@ warp scheduler, L1, …   ← do not model
 | `cudaMemcpy3DPeer` (`memcpy_peer_3d`) waits that stream; `memcpy_peer_3d_async` bills payload not padding | NVLink / PCIe P2P |
 | `cudaMemcpy2DPeer` (`memcpy_peer_2d`) waits that stream; `memcpy_peer_2d_async` bills payload not padding | NVLink / PCIe P2P |
 | `cudaMemcpy2D` (`memcpy_2d`) waits that stream; `memcpy_2d_async` bills payload not padding | PCIe / NVLink / HBM |
+| `cuMemcpyHtoD` (`memcpy_htod`) waits that stream; `memcpy_pinned_to_device` is `cuMemcpyHtoDAsync` | PCIe |
+| `cuMemcpyDtoH` (`memcpy_dtoh`) waits that stream; `memcpy_device_to_pinned` is `cuMemcpyDtoHAsync` | PCIe |
 | `cudaMemcpy3D` (`memcpy_3d`) waits that stream; `memcpy_3d_async` bills payload not padding | PCIe / NVLink / HBM |
 | `cudaMemcpyBatchAsync` (`memcpy_batch_async`) 1D only; intra-batch copies share one stream-order snapshot (or empty DuringApiCall/Any deps); same-stream `cudaMallocAsync` needs no host sync | copy-engine occupancy; DuringApiCall waits those copies |
 | `cudaMemcpyWithAttributesAsync` (`memcpy_with_attributes`) Stream is `memcpy`; DuringApiCall/Any are a one-copy batch | `PreferOverlapWithCompute` ignored (discrete) |
@@ -637,7 +639,10 @@ are `cudaMemcpy3DPeer` / `cudaMemcpy3DPeerAsync`
 `memcpy_2d_async` are `cudaMemcpy2D` / `cudaMemcpy2DAsync` (`MemcpyOp` must
 be 2D). `memcpy_2d_unaligned` is `cuMemcpy2DUnaligned` (identity with
 `memcpy_2d`; this VM does not require 2D alignment; host-sync; CUDA has no
-Async Unaligned). No Engine `--memcpy-unaligned`. `memcpy_3d` / `memcpy_3d_async` are `cudaMemcpy3D` /
+Async Unaligned). No Engine `--memcpy-unaligned`. `memcpy_htod` /
+`memcpy_dtoh` are `cuMemcpyHtoD` / `cuMemcpyDtoH` (host-synchronous pinned;
+capture refused). `memcpy_pinned_to_device` / `memcpy_device_to_pinned`
+stay Async. No Engine `--memcpy-htod`. `memcpy_3d` / `memcpy_3d_async` are `cudaMemcpy3D` /
 `cudaMemcpy3DAsync` (`MemcpyOp` must be 3D). `memcpy_batch_async` is
 `cudaMemcpyBatchAsync` (1D pointer-to-pointer; copies in one batch do not
 wait for each other; 2D/3D use `memcpy_3d_batch_async`; capture

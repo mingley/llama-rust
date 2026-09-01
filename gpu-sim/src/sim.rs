@@ -14544,6 +14544,9 @@ impl Sim {
     }
 
     /// Page-locked host → `device` (CUDA DMA / `cudaMallocHost` source).
+    ///
+    /// `cuMemcpyHtoDAsync`. Host-synchronous [`Self::memcpy_htod`] is
+    /// `cuMemcpyHtoD`.
     pub fn memcpy_pinned_to_device(
         &mut self,
         device: DeviceId,
@@ -14563,6 +14566,28 @@ impl Sim {
             },
             stream,
         )
+    }
+
+    /// `cuMemcpyHtoD`. Host-synchronous pinned H2D; capture cannot include it.
+    ///
+    /// [`Self::memcpy_pinned_to_device`] is `cuMemcpyHtoDAsync`.
+    /// [`Self::memcpy_host_to_device`] stays pageable.
+    /// [`Self::memcpy_sync`] stays generic `cudaMemcpy`.
+    pub fn memcpy_htod(
+        &mut self,
+        device: DeviceId,
+        alloc: AllocId,
+        bytes: u64,
+        stream: StreamId,
+    ) -> Result<OpId, SimError> {
+        if self.capturing.is_some() {
+            return Err(SimError::Invalid {
+                why: "cannot capture host-sync memcpy",
+            });
+        }
+        let id = self.memcpy_pinned_to_device(device, alloc, bytes, stream)?;
+        self.synchronize_stream(device, stream)?;
+        Ok(id)
     }
 
     /// `device` → pageable host. Host-synchronous; source HBM residency is kept.
@@ -14588,6 +14613,9 @@ impl Sim {
     }
 
     /// `device` → page-locked host. Source HBM residency is kept (copy).
+    ///
+    /// `cuMemcpyDtoHAsync`. Host-synchronous [`Self::memcpy_dtoh`] is
+    /// `cuMemcpyDtoH`.
     pub fn memcpy_device_to_pinned(
         &mut self,
         device: DeviceId,
@@ -14607,6 +14635,29 @@ impl Sim {
             },
             stream,
         )
+    }
+
+    /// `cuMemcpyDtoH`. Host-synchronous Device→HostPinned; capture cannot
+    /// include it.
+    ///
+    /// [`Self::memcpy_device_to_pinned`] is `cuMemcpyDtoHAsync`.
+    /// [`Self::memcpy_device_to_host`] stays pageable.
+    /// [`Self::memcpy_sync`] stays generic `cudaMemcpy`.
+    pub fn memcpy_dtoh(
+        &mut self,
+        device: DeviceId,
+        alloc: AllocId,
+        bytes: u64,
+        stream: StreamId,
+    ) -> Result<OpId, SimError> {
+        if self.capturing.is_some() {
+            return Err(SimError::Invalid {
+                why: "cannot capture host-sync memcpy",
+            });
+        }
+        let id = self.memcpy_device_to_pinned(device, alloc, bytes, stream)?;
+        self.synchronize_stream(device, stream)?;
+        Ok(id)
     }
 
     /// Peer copy `src` → `dst` of an existing allocation (hot replica).
