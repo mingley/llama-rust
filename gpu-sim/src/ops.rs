@@ -3045,6 +3045,7 @@ pub struct GraphInstantiateFlags;
 
 impl GraphInstantiateFlags {
     /// `cudaGraphInstantiateFlagAutoFreeOnLaunch`.
+    /// Cannot combine with [`GraphInstantiateFlags::DEVICE_LAUNCH`].
     pub const AUTO_FREE_ON_LAUNCH: u32 = 1;
     /// `cudaGraphInstantiateFlagUpload`: host-sync upload during instantiate
     /// unless [`GraphInstantiateParams::upload_stream`] is set.
@@ -3053,6 +3054,7 @@ impl GraphInstantiateFlags {
     /// is legal after upload. Host [`crate::Sim::launch_graph`] stays legal.
     /// Mem alloc/free, events, child graphs, conditionals, and host nodes are
     /// Invalid.
+    /// Cannot combine with [`GraphInstantiateFlags::AUTO_FREE_ON_LAUNCH`].
     pub const DEVICE_LAUNCH: u32 = 4;
     /// `cudaGraphInstantiateFlagUseNodePriority`: recorded kernels keep the
     /// priority snapshotted at add/capture instead of the launch stream.

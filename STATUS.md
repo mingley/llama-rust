@@ -5,6 +5,16 @@ Visible five-turn extract: [docs/chatgpt-share-6a920fe1.md](docs/chatgpt-share-6
 Complete share-API extract: [docs/chatgpt-share-6a920fe1/](docs/chatgpt-share-6a920fe1/).
 Work lands on `main`. No PRs.
 
+## Shipped 2026-09-01 — DeviceLaunch forbids AutoFreeOnLaunch
+
+`gpu-sim` CUDA `cudaGraphInstantiateFlagDeviceLaunch` cannot combine
+with `cudaGraphInstantiateFlagAutoFreeOnLaunch` (`"device launch auto
+free"`). `instantiate_graph_with_params` reports Error with `err_node =
+None`. Capture is still reported first. `AUTO_FREE` plus `UPLOAD` and
+`DEVICE_LAUNCH` plus `UPLOAD` stay. This VM does not invent Engine
+`--device-launch-auto-free`. `gpu-profile capture` is still refused.
+Dual score still has no `$/M tokens`.
+
 ## Shipped 2026-09-01 — CUDA GetEdges LossyQuery
 
 `gpu-sim` CUDA v1 `cudaGraphGetEdges` / `cudaGraphNodeGetDependencies` /

@@ -822,7 +822,9 @@
 //! [`GraphInstantiateFlags::DEVICE_LAUNCH`] enables
 //! [`device_launch_graph`](Sim::device_launch_graph) after upload — host
 //! [`launch_graph`](Sim::launch_graph) stays legal; mem alloc/free, events,
-//! child graphs, conditionals, and host nodes are Invalid).
+//! child graphs, conditionals, and host nodes are Invalid; cannot combine
+//! with [`GraphInstantiateFlags::AUTO_FREE_ON_LAUNCH`] (Invalid
+//! `"device launch auto free"`).
 //! [`instantiate_graph_with_params`](Sim::instantiate_graph_with_params) is
 //! `cudaGraphInstantiateWithParams` ([`GraphInstantiateParams`] result, err
 //! node, and `hUploadStream`). [`graph_exec_get_flags`](Sim::graph_exec_get_flags) is
@@ -30392,6 +30394,68 @@ mod tests {
         assert!(sim
             .operations()
             .any(|o| matches!(o.kind, GpuOp::DeviceLaunch { .. })));
+    }
+
+    #[test]
+    fn device_launch_rejects_auto_free_on_launch() {
+        let mut sim = Sim::new(h100());
+        let d = DeviceId(0);
+        let s = StreamId(0);
+        let a = sim.malloc(d, 4096).unwrap();
+        let g = sim.create_graph(d, s).unwrap();
+        sim.graph_add_kernel(g, KernelKind::other(8, 8), &[a], &[a])
+            .unwrap();
+        let combo =
+            GraphInstantiateFlags::DEVICE_LAUNCH | GraphInstantiateFlags::AUTO_FREE_ON_LAUNCH;
+        match sim.instantiate_graph_with_flags(g, combo) {
+            Err(SimError::Invalid { why }) => {
+                assert!(why.contains("device launch auto free"), "{why}");
+            }
+            other => panic!("{other:?}"),
+        }
+        assert!(!sim.graph_instantiated(g).unwrap());
+        let mut params = GraphInstantiateParams {
+            flags: combo | GraphInstantiateFlags::UPLOAD,
+            ..GraphInstantiateParams::default()
+        };
+        match sim.instantiate_graph_with_params(g, &mut params) {
+            Err(SimError::Invalid { why }) => {
+                assert!(why.contains("device launch auto free"), "{why}");
+            }
+            other => panic!("{other:?}"),
+        }
+        assert_eq!(params.result, GraphInstantiateResult::Error);
+        assert_eq!(params.err_node, None);
+        let _ = sim
+            .instantiate_graph_with_flags(g, GraphInstantiateFlags::DEVICE_LAUNCH)
+            .unwrap();
+        let af = sim.create_graph(d, s).unwrap();
+        sim.graph_add_kernel(af, KernelKind::other(8, 8), &[a], &[a])
+            .unwrap();
+        let _ = sim.instantiate_graph_auto_free(af).unwrap();
+        let both = GraphInstantiateFlags::AUTO_FREE_ON_LAUNCH | GraphInstantiateFlags::UPLOAD;
+        let k = sim.create_graph(d, s).unwrap();
+        sim.graph_add_kernel(k, KernelKind::other(8, 8), &[a], &[a])
+            .unwrap();
+        let _ = sim.instantiate_graph_with_flags(k, both).unwrap();
+        let dl_up = sim.create_graph(d, s).unwrap();
+        sim.graph_add_kernel(dl_up, KernelKind::other(8, 8), &[a], &[a])
+            .unwrap();
+        let _ = sim
+            .instantiate_graph_with_flags(
+                dl_up,
+                GraphInstantiateFlags::DEVICE_LAUNCH | GraphInstantiateFlags::UPLOAD,
+            )
+            .unwrap();
+        let cap = sim.create_graph(d, s).unwrap();
+        sim.graph_add_kernel(cap, KernelKind::other(8, 8), &[a], &[a])
+            .unwrap();
+        sim.begin_capture(d, s).unwrap();
+        match sim.instantiate_graph_with_flags(cap, combo) {
+            Err(SimError::Invalid { why }) => assert!(why.contains("capture"), "{why}"),
+            other => panic!("{other:?}"),
+        }
+        let _end = sim.end_capture().unwrap();
     }
 
     #[test]

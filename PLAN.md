@@ -5548,7 +5548,17 @@ model, do not celebrate the sim.
     `gpu-profile capture` is still refused. Dual score still has no
     `$/M tokens`.
 
-516. [ ] Next numbered PLAN item after 515 is the next `gpu-sim` / Engine /
+516. [x] `gpu-sim` CUDA `cudaGraphInstantiateFlagDeviceLaunch` cannot
+    combine with `cudaGraphInstantiateFlagAutoFreeOnLaunch`
+    ([`graph_exec_get_flags`] / [`instantiate_graph_with_flags`]; Invalid
+    `"device launch auto free"`). [`instantiate_graph_with_params`] reports
+    [`GraphInstantiateResult::Error`] with `err_node = None`. Capture is
+    still reported first. `AUTO_FREE` plus `UPLOAD` and `DEVICE_LAUNCH`
+    plus `UPLOAD` stay. This VM does not invent Engine
+    `--device-launch-auto-free`. `gpu-profile capture` is still refused.
+    Dual score still has no `$/M tokens`.
+
+517. [ ] Next numbered PLAN item after 516 is the next `gpu-sim` / Engine /
     serve / expertvm mechanical API that is still missing, or the next official
     decode family. Prefer remaining CUDA-shaped twins over more
     OpenAI HTTP veneer. Do not invent F32 `output.scale`. Do not invent a
@@ -5622,6 +5632,9 @@ model, do not celebrate the sim.
     invent LossyQuery on debug-dot or ExtraTopoInfo. Do not reverse v1
     queries of default-only edges. Do not invent LossyQuery on v2
     with_data queries.
+    Do not invent a second DeviceLaunch plus AutoFreeOnLaunch reject.
+    Do not invent Engine `--device-launch-auto-free`. Do not reverse
+    `AUTO_FREE` plus `UPLOAD` or `DEVICE_LAUNCH` plus `UPLOAD`.
     Do not invent a second `cudaStreamGetCaptureInfo_v3`. Do not invent
     `cudaStreamUpdateCaptureDependencies` v2 edgeData.
     Do not invent a second `cudaDeviceProp::persistingL2CacheMaxSize`.
@@ -5951,6 +5964,9 @@ model, do not celebrate the sim.
     invent LossyQuery on debug-dot or ExtraTopoInfo. Do not reverse v1
     queries of default-only edges. Do not invent LossyQuery on v2
     with_data queries.
+    Do not invent a second DeviceLaunch plus AutoFreeOnLaunch reject.
+    Do not invent Engine `--device-launch-auto-free`. Do not reverse
+    `AUTO_FREE` plus `UPLOAD` or `DEVICE_LAUNCH` plus `UPLOAD`.
     Do not
     spend the next item on an OpenAI-compatible HTTP veneer.
 

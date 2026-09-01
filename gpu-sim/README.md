@@ -507,7 +507,8 @@ Instantiate, update, and upload are host-synchronous and cannot run during captu
 priority; `DEVICE_LAUNCH` enables `device_launch_graph` after upload —
 host `launch_graph` stays legal; mem alloc/free, events, child graphs,
 conditionals, and host nodes are Invalid; `update_graph` of a
-device-launch exec is Invalid).
+device-launch exec is Invalid; cannot combine with `AUTO_FREE_ON_LAUNCH`
+(`"device launch auto free"`).
 `instantiate_graph_with_params` is `cudaGraphInstantiateWithParams`
 (`GraphInstantiateParams` result, err node, and `hUploadStream`).
 `graph_exec_get_flags` is `cudaGraphExecGetFlags`.

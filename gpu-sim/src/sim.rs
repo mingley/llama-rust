@@ -3842,7 +3842,10 @@ impl Sim {
     /// enables [`Self::device_launch_graph`] after upload (host
     /// [`Self::launch_graph`] stays legal). Mem alloc/free, events, child
     /// graphs, conditionals, and host nodes are Invalid for device-launch.
-    /// Instantiating an exec id is a no-op when `flags` adds no new bits.
+    /// [`GraphInstantiateFlags::DEVICE_LAUNCH`] cannot combine with
+    /// [`GraphInstantiateFlags::AUTO_FREE_ON_LAUNCH`] (Invalid
+    /// `"device launch auto free"`). Instantiating an exec id is a no-op when
+    /// `flags` adds no new bits.
     pub fn instantiate_graph_with_flags(
         &mut self,
         graph: GraphId,
@@ -3910,6 +3913,13 @@ impl Sim {
         if flags & !KNOWN != 0 {
             return Err(SimError::Invalid {
                 why: "instantiate flags",
+            });
+        }
+        if flags & GraphInstantiateFlags::DEVICE_LAUNCH != 0
+            && flags & GraphInstantiateFlags::AUTO_FREE_ON_LAUNCH != 0
+        {
+            return Err(SimError::Invalid {
+                why: "device launch auto free",
             });
         }
         Ok(())
