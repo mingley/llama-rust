@@ -17615,6 +17615,21 @@ impl Sim {
         Err(SimError::Invalid { why: "cuda array" })
     }
 
+    /// `cuImportExternalMemory`. External memory import is not modeled.
+    ///
+    /// Always Invalid `"external memory"` ([`DeviceAttr::DmaBufSupported`] is
+    /// 0; Win32 / fabric handles are 0). Distinct from
+    /// [`Self::va_get_handle_for_address_range`] and from
+    /// [`Self::device_get_nvscisync_attributes`]. Unknown devices are Invalid
+    /// `"device not in profile"`. This VM does not invent
+    /// `cuDestroyExternalMemory` this slice.
+    pub fn import_external_memory(&self, device: DeviceId) -> Result<(), SimError> {
+        let _gpu = self.profile.gpu(device)?;
+        Err(SimError::Invalid {
+            why: "external memory",
+        })
+    }
+
     /// `cudaMemcpy3DWithAttributesAsync`.
     ///
     /// [`MemcpySrcAccessOrder::Stream`] is [`Self::memcpy_3d_async`].

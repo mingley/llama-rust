@@ -330,6 +330,9 @@
 //! Distinct from [`ipc_get`](Sim::ipc_get) and
 //! [`create_shareable_pool`](Sim::create_shareable_pool). Query; legal during
 //! capture.
+//! [`import_external_memory`](Sim::import_external_memory) is
+//! `cuImportExternalMemory` (always Invalid `"external memory"`). Query; legal
+//! during capture. No Engine `--external-memory`.
 //! [`va_export_to_shareable_handle`](Sim::va_export_to_shareable_handle) is
 //! `cuMemExportToShareableHandle`. Always Invalid `"not shareable"`
 //! ([`MemAllocationProp::handle_types`] is none; POSIX-FD VMM export is not
@@ -20932,6 +20935,37 @@ mod tests {
         }
         assert_eq!(
             sim.device_get_attribute(d, DeviceAttr::SparseCudaArraySupported)
+                .unwrap(),
+            0
+        );
+    }
+
+    #[test]
+    fn import_external_memory_is_unsupported() {
+        let mut sim = Sim::new(h100());
+        let d = DeviceId(0);
+        match sim.import_external_memory(d) {
+            Err(SimError::Invalid { why }) => {
+                assert!(why.contains("external memory"), "{why}");
+            }
+            other => panic!("{other:?}"),
+        }
+        sim.begin_capture(d, StreamId(0)).unwrap();
+        match sim.import_external_memory(d) {
+            Err(SimError::Invalid { why }) => {
+                assert!(why.contains("external memory"), "{why}");
+            }
+            other => panic!("{other:?}"),
+        }
+        let _g = sim.end_capture().unwrap();
+        match sim.import_external_memory(DeviceId(99)) {
+            Err(SimError::Invalid { why }) => {
+                assert!(why.contains("device not in profile"), "{why}");
+            }
+            other => panic!("{other:?}"),
+        }
+        assert_eq!(
+            sim.device_get_attribute(d, DeviceAttr::DmaBufSupported)
                 .unwrap(),
             0
         );

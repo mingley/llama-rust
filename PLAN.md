@@ -6419,7 +6419,16 @@ model, do not celebrate the sim.
     Engine `--array-create`, or `cudaChooseDevice`. `gpu-profile capture` is
     still refused. Dual score still has no `$/M tokens`.
 
-614. [ ] Next numbered PLAN item after 613 is the next `gpu-sim` / Engine /
+614. [x] `gpu-sim` `Sim::import_external_memory` is
+    `cuImportExternalMemory`. Always Invalid `"external memory"` because
+    dma-buf / Win32 / fabric handles are 0. Query; legal during capture.
+    Distinct from `va_get_handle_for_address_range` and
+    `device_get_nvscisync_attributes`. This VM does not invent
+    `cuDestroyExternalMemory`, Engine `--external-memory`, or
+    `cudaChooseDevice`. `gpu-profile capture` is still refused. Dual
+    score still has no `$/M tokens`.
+
+615. [ ] Next numbered PLAN item after 614 is the next `gpu-sim` / Engine /
     serve / expertvm mechanical API that is still missing, or the next official
     decode family. Prefer remaining CUDA-shaped twins over more
     OpenAI HTTP veneer. Do not invent F32 `output.scale`. Do not invent a
@@ -6698,6 +6707,10 @@ model, do not celebrate the sim.
     Do not invent a second `cuArrayCreate` / `cuArray3DCreate` /
     `array_create`. Do not invent Engine `--array-create`. Do not invent
     `CUarray_format` this slice. Do not reverse `"cuda array"`.
+    Do not invent a second `cuImportExternalMemory` /
+    `import_external_memory`. Do not invent Engine `--external-memory`.
+    Do not invent `cuDestroyExternalMemory` this slice. Do not reverse
+    `"external memory"`.
     Do not invent a second `cudaStreamAddCallback`.
     Do not invent Engine `--stream-callback` (same wall as second live
     `cudaLaunchHostFunc` after miss DMA).
@@ -7087,6 +7100,10 @@ model, do not celebrate the sim.
     Do not invent a second `array_create` API. Do not invent
     Engine `--create-array`. Do not invent `cuTexObjectCreate` this
     slice. Do not reverse SparseCudaArraySupported staying 0.
+    Do not invent a second `import_external_memory` API. Do not invent
+    Engine `--import-ext-mem`. Do not invent
+    `cuExternalMemoryGetMappedBuffer` this slice. Do not reverse
+    DmaBufSupported staying 0.
     Do not invent a second DeviceLaunch in-flight destroy-complete check or Engine
     `--device-launch-destroy`. Do not abort an in-flight DeviceLaunch when
     `destroy_graph` succeeds. Do not delay destroy of an idle exec. Do not invent
@@ -7682,6 +7699,9 @@ model, do not celebrate the sim.
     Do not invent a second `array_create` method. Do not invent
     Engine `--cu-array-create`. Do not reverse wrapping cuArrayCreate
     Invalid.
+    Do not invent a second `import_external_memory` method. Do not invent
+    Engine `--cu-import-ext-mem`. Do not reverse wrapping
+    cuImportExternalMemory Invalid.
     Do not
     spend the next item on an OpenAI-compatible HTTP veneer.
 

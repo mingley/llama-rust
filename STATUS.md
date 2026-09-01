@@ -5,6 +5,15 @@ Visible five-turn extract: [docs/chatgpt-share-6a920fe1.md](docs/chatgpt-share-6
 Complete share-API extract: [docs/chatgpt-share-6a920fe1/](docs/chatgpt-share-6a920fe1/).
 Work lands on `main`. No PRs.
 
+## Shipped 2026-09-01 — CUDA `cuImportExternalMemory`
+
+`gpu-sim` `Sim::import_external_memory` is `cuImportExternalMemory`.
+Always Invalid `"external memory"` because dma-buf / Win32 / fabric
+handles are 0. Query; legal during capture. Distinct from
+`va_get_handle_for_address_range` and `device_get_nvscisync_attributes`.
+This VM does not invent `cuDestroyExternalMemory` or Engine `--external-memory`.
+`gpu-profile capture` is still refused. Dual score still has no `$/M tokens`.
+
 ## Shipped 2026-09-01 — CUDA `cuArrayCreate`
 
 `gpu-sim` `Sim::array_create` is `cuArrayCreate` / `cuArray3DCreate`.

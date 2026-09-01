@@ -160,6 +160,7 @@ warp scheduler, L1, …   ← do not model
 | `device_get_luid` is always-zero LUID plus node mask (also `DeviceProperties.luid`) | `cuDeviceGetLuid` |
 | `device_get_texture_1d_linear_max_width` is always 0 (CUDA linear textures are not modeled) | `cuDeviceGetTexture1DLinearMaxWidth` |
 | `array_create` is Invalid (CUDA arrays are not modeled) | `cuArrayCreate` / `cuArray3DCreate` |
+| `import_external_memory` is Invalid (dma-buf / Win32 / fabric are 0) | `cuImportExternalMemory` |
 | `device_get_pci_bus_id` is a synthetic `domain:bus:device.function` (also `DeviceProperties` PCI ids) | `cudaDeviceGetPciBusId` |
 | `device_get_by_pci_bus_id` is the inverse of `device_get_pci_bus_id` | `cudaDeviceGetByPCIBusId` |
 | `stream_get_flags` is 0 blocking / 1 NonBlocking | `cudaStreamGetFlags` |
@@ -978,6 +979,8 @@ modeled; example SKUs are discrete). `SparseCudaArraySupported` /
 is `cuMemGetHandleForAddressRange` (always Invalid `"dma-buf not modeled"`;
 `MemRangeHandleType::DMA_BUF_FD` only). Distinct from `ipc_get` and
 `create_shareable_pool`. Query; legal during capture. No Engine `--dma-buf`.
+`import_external_memory` is `cuImportExternalMemory` (always Invalid
+`"external memory"`; dma-buf / Win32 / fabric handles are 0).
 `va_export_to_shareable_handle` is `cuMemExportToShareableHandle` (always
 Invalid `"not shareable"`; VMM create-time handle types are none). POSIX-FD
 only; flags 0. Distinct from `ipc_get`, `pool_export`, and
