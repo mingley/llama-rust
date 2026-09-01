@@ -17661,14 +17661,28 @@ impl Sim {
     /// are not modeled.
     ///
     /// Always Invalid `"cuda texture"` ([`DeviceAttr::MaxTexture1DWidth`] is
-    /// 0). Distinct from [`Self::surf_object_create`] and from
-    /// [`Self::array_create`]. Unknown devices are Invalid
-    /// `"device not in profile"`. Query; legal during capture. This VM does
-    /// not invent `cuTexObjectDestroy` this slice.
+    /// 0). Distinct from [`Self::surf_object_create`], from
+    /// [`Self::array_create`], and from [`Self::tex_object_destroy`].
+    /// Unknown devices are Invalid `"device not in profile"`. Query; legal
+    /// during capture.
     pub fn tex_object_create(&self, device: DeviceId) -> Result<(), SimError> {
         let _gpu = self.profile.gpu(device)?;
         Err(SimError::Invalid {
             why: "cuda texture",
+        })
+    }
+
+    /// `cuTexObjectDestroy` plus `cudaDestroyTextureObject`. CUDA textures
+    /// are not modeled.
+    ///
+    /// Always Invalid `"unknown tex object"` (no texture-object handles).
+    /// Distinct from [`Self::tex_object_create`]. Unknown devices are Invalid
+    /// `"device not in profile"`. Query; legal during capture. This VM does
+    /// not invent `cuTexObjectGetTextureDesc` this slice.
+    pub fn tex_object_destroy(&self, device: DeviceId) -> Result<(), SimError> {
+        let _gpu = self.profile.gpu(device)?;
+        Err(SimError::Invalid {
+            why: "unknown tex object",
         })
     }
 

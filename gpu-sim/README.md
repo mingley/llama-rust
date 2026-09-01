@@ -164,6 +164,7 @@ warp scheduler, L1, …   ← do not model
 | `import_external_memory` is Invalid (dma-buf / Win32 / fabric are 0) | `cuImportExternalMemory` |
 | `surf_object_create` is Invalid (CUDA surfaces are not modeled) | `cuSurfObjectCreate` |
 | `tex_object_create` is Invalid (CUDA textures are not modeled) | `cuTexObjectCreate` / `cudaCreateTextureObject` |
+| `tex_object_destroy` is Invalid (no texture-object handles) | `cuTexObjectDestroy` / `cudaDestroyTextureObject` |
 | `graphics_map_resources` is Invalid (OpenGL, Direct3D, Vulkan, EGL are not modeled) | `cuGraphicsMapResources` |
 | `egl_stream_consumer_connect` is Invalid (EGL streams are not modeled) | `cuEGLStreamConsumerConnect` |
 | `gl_get_devices` is Invalid (OpenGL interop is not modeled) | `cuGLGetDevices` / `cudaGLGetDevices` |
@@ -1010,6 +1011,9 @@ during capture. No Engine `--surf-object`.
 `tex_object_create` is `cuTexObjectCreate` (always Invalid `"cuda texture"`;
 CUDA textures are not modeled). Distinct from `surf_object_create` and
 `array_create`. Query; legal during capture. No Engine `--tex-object`.
+`tex_object_destroy` is `cuTexObjectDestroy` (always Invalid
+`"unknown tex object"`). Distinct from `tex_object_create`. Query; legal
+during capture. No Engine `--tex-destroy`.
 `va_export_to_shareable_handle` is `cuMemExportToShareableHandle` (always
 Invalid `"not shareable"`; VMM create-time handle types are none). POSIX-FD
 only; flags 0. Distinct from `ipc_get`, `pool_export`, and
