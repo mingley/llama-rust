@@ -5807,7 +5807,14 @@ model, do not celebrate the sim.
     `--graph-capture-gone`. `gpu-profile capture` is still refused. Dual
     score still has no `$/M tokens`.
 
-543. [ ] Next numbered PLAN item after 542 is the next `gpu-sim` / Engine /
+543. [x] `gpu-sim` CUDA `cudaGraphExecUpdate` whose source graph handle was
+    destroyed while a launch was in flight is Invalid `"unknown graph"`.
+    Capture is still reported first. Live exec as source stays. Definition
+    as source stays. Dest in-flight update stays `"exec in flight"`. This
+    VM does not invent Engine `--graph-update-src-gone`. `gpu-profile
+    capture` is still refused. Dual score still has no `$/M tokens`.
+
+544. [ ] Next numbered PLAN item after 543 is the next `gpu-sim` / Engine /
     serve / expertvm mechanical API that is still missing, or the next official
     decode family. Prefer remaining CUDA-shaped twins over more
     OpenAI HTTP veneer. Do not invent F32 `output.scale`. Do not invent a
@@ -5966,6 +5973,10 @@ model, do not celebrate the sim.
     unknown check or Engine `--graph-capture-gone`. Do not reverse live
     exec capture-to-graph `"graph instantiated"`. Do not reverse
     capture-to-graph of the definition after the primary exec is parked.
+    Do not invent a second ExecUpdate parked-source unknown check or Engine
+    `--graph-update-src-gone`. Do not reverse live exec as ExecUpdate
+    source. Do not reverse definition as ExecUpdate source while an exec
+    is parked. Do not reverse dest in-flight `"exec in flight"`.
     Do not invent a second DeviceLaunch in-flight destroy-complete check or Engine
     `--device-launch-destroy`. Do not abort an in-flight DeviceLaunch when
     `destroy_graph` succeeds. Do not delay destroy of an idle exec. Do not invent

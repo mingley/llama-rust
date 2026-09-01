@@ -575,7 +575,7 @@ alloc and size may. `graph_exec_memcpy_set_params` stays legal. CUDA
 arrays stay uninvented. Graphs with mem alloc/free nodes cannot be updated.
 `update_graph_with_info` is `cudaGraphExecUpdate` with
 `cudaGraphExecUpdateResultInfo` (filled even on `Err`: node type, deps,
-edge ports, UseNodePriority priority, 2D memset geometry, memcpy memory type, mem nodes, device-launch). `update_graph` uses that path and keeps the
+edge ports, UseNodePriority priority, 2D memset geometry, memcpy memory type, mem nodes, device-launch). A parked in-flight-destroyed exec used as the update source is `"unknown graph"`; a live exec as source stays. `update_graph` uses that path and keeps the
 same `why` strings.
 `graph_kernel_set_params` / `graph_memcpy_set_params` /
 `graph_memcpy_set_params_1d` / `graph_memcpy_set_params_2d` / `graph_memcpy_set_params_3d` / `graph_memset_set_params` / `graph_memset_set_params_2d` / `graph_memset_set_params_3d` /

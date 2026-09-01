@@ -4455,6 +4455,8 @@ impl Sim {
     /// [`Self::launch_graph`] plus [`Self::upload_graph_async`] of `exec` is
     /// Invalid `"exec in flight"`. Host SetParams of that exec stay.
     /// [`GraphInstantiateFlags::DEVICE_LAUNCH`] update stays NotSupported.
+    /// A parked in-flight-destroyed exec used as `src` is `"unknown graph"`.
+    /// Live exec as `src` stays. Definition `src` stays.
     pub fn update_graph(&mut self, exec: GraphId, src: GraphId) -> Result<(), SimError> {
         let mut info = GraphExecUpdateResultInfo::default();
         self.update_graph_with_info(exec, src, &mut info)
@@ -4465,6 +4467,7 @@ impl Sim {
     /// Fills `info` even when this returns `Err`. Success is
     /// [`GraphExecUpdateResult::Success`] with both node fields `None`.
     /// [`Self::update_graph`] keeps the same `why` strings.
+    /// A parked in-flight-destroyed exec used as `src` is `"unknown graph"`.
     pub fn update_graph_with_info(
         &mut self,
         exec: GraphId,
@@ -4477,6 +4480,10 @@ impl Sim {
             return Err(e);
         }
         if let Err(e) = self.require_not_moved(src) {
+            info.result = GraphExecUpdateResult::Error;
+            return Err(e);
+        }
+        if let Err(e) = self.require_live_graph(src) {
             info.result = GraphExecUpdateResult::Error;
             return Err(e);
         }
@@ -4598,12 +4605,8 @@ impl Sim {
         exec: GraphId,
         src: GraphId,
     ) -> Result<(Vec<GraphStep>, Vec<GraphStep>, DeviceId, u32), SimError> {
-        let e = self.graphs.get(&exec).ok_or(SimError::Invalid {
-            why: "unknown graph",
-        })?;
-        let s = self.graphs.get(&src).ok_or(SimError::Invalid {
-            why: "unknown graph",
-        })?;
+        let e = self.live_graph(exec)?;
+        let s = self.live_graph(src)?;
         let device = e
             .steps
             .first()
