@@ -1127,6 +1127,11 @@ pub enum DeviceAttr {
     /// counts and from a thread-block launch config. This VM does not
     /// model a register file.
     MaxRegistersPerBlock,
+    /// `cudaDevAttrGlobalMemoryBusWidth`. Bits on the DRAM bus. Example
+    /// H100 is 5120 ([`crate::GpuProfile::global_memory_bus_width_bits`]).
+    /// Distinct from [`crate::GpuProfile::hbm_bps`] and from memory clock
+    /// rates.
+    GlobalMemoryBusWidth,
 }
 
 impl DeviceAttr {
@@ -1245,6 +1250,10 @@ pub struct DeviceProperties {
     /// Example H100 is [`DeviceAttr::MAX_REGISTERS_PER_BLOCK`]. Distinct
     /// from occupancy SM counts.
     pub regs_per_block: u64,
+    /// `cudaDeviceProp::memoryBusWidth` ([`DeviceAttr::GlobalMemoryBusWidth`]).
+    /// Example H100 is 5120 bits. Distinct from [`Self::total_global_mem`]
+    /// and from memory clock rates.
+    pub memory_bus_width: u64,
     /// [`crate::GpuProfile::hbm_bytes`] (`totalGlobalMem`).
     pub total_global_mem: u64,
     /// `cudaDevAttrTotalConstantMemory` ([`DeviceAttr::TotalConstantMemory`]).

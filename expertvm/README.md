@@ -472,6 +472,8 @@ ctxs keep running). `stream_get_dev_resource` is `cuStreamGetDevResource`.
 and H100 block/grid dims (no Engine flag; not occupancy SM counts).
 `gpu-sim` `MaxRegistersPerBlock` is `cudaDevAttrMaxRegistersPerBlock` 65536
 (no Engine flag; not a register-file model).
+`gpu-sim` `GlobalMemoryBusWidth` is `cudaDevAttrGlobalMemoryBusWidth`
+(example H100 5120 bits, H200 6144; no Engine flag; not a memory clock).
 Default `--expert-sim` keeps
 one compute stream, exclusive compute (`compute_slots=1`), a full chip of
 SMs, and a full-device clock sample.

@@ -503,7 +503,8 @@
 //! [`Sim::device_get_properties`] is `cudaGetDeviceProperties` ([`DeviceProperties`];
 //! modeled caps only — compute capability major/minor are Hopper 9.0 on
 //! example H100; launch-geometry caps are MaxThreadsPerBlock 1024;
-//! MaxRegistersPerBlock is 65536; no occupancy SM count or clock). [`Sim::device_get_name`] is
+//! MaxRegistersPerBlock is 65536; GlobalMemoryBusWidth is 5120 bits on
+//! example H100; no occupancy SM count or clock). [`Sim::device_get_name`] is
 //! `cudaDeviceGetName` (the profile name). [`device_get_uuid`](Sim::device_get_uuid)
 //! is `cuDeviceGetUuid` / `cudaDeviceGetUuid` (synthetic 16-octet id; also
 //! [`DeviceProperties::uuid`]). [`device_get_by_uuid`](Sim::device_get_by_uuid)
@@ -625,6 +626,11 @@
 //! Example H100 is 65536. This VM does not model a thread-block launch
 //! or a register file and does not invent occupancy SM counts. Query;
 //! legal during capture. No Engine flag for max threads or max registers.
+//! [`DeviceAttr::GlobalMemoryBusWidth`] is `cudaDevAttrGlobalMemoryBusWidth`
+//! (`cudaDeviceProp` memoryBusWidth). Example H100 is 5120 bits. Example
+//! H200 is 6144 bits. Profile key `global_memory_bus_width_bits`. Distinct
+//! from HBM bytes per second and from memory clock rates. Query; legal
+//! during capture. No Engine flag for bus width.
 //! [`DeviceAttr::MaxAccessPolicyWindowSize`] is [`crate::GpuProfile::l2_bytes`]
 //! (same as [`MaxPersistingL2CacheSize`](DeviceAttr::MaxPersistingL2CacheSize)).
 //! [`DeviceProperties::persisting_l2_cache_max_size`] is
@@ -18861,6 +18867,38 @@ mod tests {
         );
         let _g = sim.end_capture().unwrap();
         match sim.device_get_attribute(DeviceId(99), DeviceAttr::MaxRegistersPerBlock) {
+            Err(SimError::Invalid { why }) => {
+                assert!(why.contains("device not in profile"), "{why}");
+            }
+            other => panic!("{other:?}"),
+        }
+    }
+
+    #[test]
+    fn device_get_attribute_global_memory_bus_width_is_h100() {
+        let mut sim = Sim::new(h100());
+        let d = DeviceId(0);
+        let hp = sim.device_get_properties(d).unwrap();
+        assert_eq!(hp.memory_bus_width, 5120);
+        assert_eq!(
+            sim.device_get_attribute(d, DeviceAttr::GlobalMemoryBusWidth)
+                .unwrap(),
+            5120
+        );
+        let h200 = Sim::new(HardwareProfile::example_h200_sxm());
+        assert_eq!(
+            h200.device_get_attribute(d, DeviceAttr::GlobalMemoryBusWidth)
+                .unwrap(),
+            6144
+        );
+        sim.begin_capture(d, StreamId(0)).unwrap();
+        assert_eq!(
+            sim.device_get_attribute(d, DeviceAttr::GlobalMemoryBusWidth)
+                .unwrap(),
+            5120
+        );
+        let _g = sim.end_capture().unwrap();
+        match sim.device_get_attribute(DeviceId(99), DeviceAttr::GlobalMemoryBusWidth) {
             Err(SimError::Invalid { why }) => {
                 assert!(why.contains("device not in profile"), "{why}");
             }

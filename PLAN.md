@@ -6044,7 +6044,16 @@ model, do not celebrate the sim.
     `cudaChooseDevice`. `gpu-profile capture` is still refused. Dual
     score still has no `$/M tokens`.
 
-568. [ ] Next numbered PLAN item after 567 is the next `gpu-sim` / Engine /
+568. [x] `gpu-sim` `DeviceAttr::GlobalMemoryBusWidth` is
+    `cudaDevAttrGlobalMemoryBusWidth` (`cudaDeviceProp` memoryBusWidth).
+    Example H100 is 5120 bits. Example H200 is 6144 bits. Query; legal
+    during capture. Profile key `global_memory_bus_width_bits`. This VM
+    does not invent Engine `--bus-width`, memory clock rates,
+    occupancy SM counts, or `cudaChooseDevice`. This VM does not derive
+    HBM duration from bus width. `gpu-profile capture` is still refused.
+    Dual score still has no `$/M tokens`.
+
+569. [ ] Next numbered PLAN item after 568 is the next `gpu-sim` / Engine /
     serve / expertvm mechanical API that is still missing, or the next official
     decode family. Prefer remaining CUDA-shaped twins over more
     OpenAI HTTP veneer. Do not invent F32 `output.scale`. Do not invent a
@@ -6126,6 +6135,11 @@ model, do not celebrate the sim.
     Do not invent `cudaDevAttrMaxRegistersPerMultiprocessor`. Do not
     invent `FuncAttributes` numRegs this slice. Do not reverse H100
     65536 registers per block.
+    Do not invent a second `cudaDevAttrGlobalMemoryBusWidth` /
+    `GlobalMemoryBusWidth`. Do not invent Engine `--bus-width`.
+    Do not invent `cudaDevAttrMemoryClockRate`. Do not reverse example
+    H100 5120-bit bus. Do not reverse example H200 6144-bit bus. Do not
+    derive HBM duration from bus width (use `hbm_bps`).
     Do not invent
     a second
     `cuDeviceGetUuid` / `cudaDeviceGetUuid`. Do not invent a second
@@ -6400,6 +6414,8 @@ model, do not celebrate the sim.
     Do not invent a second MaxRegistersPerBlock query. Do not invent
     Engine `--max-registers`. Do not invent per-SM register occupancy
     this slice.
+    Do not invent a second global-memory-bus-width DeviceAttr. Do not
+    invent Engine `--memory-bus`. Do not invent memory clock this slice.
     Do not invent a second DeviceLaunch in-flight destroy-complete check or Engine
     `--device-launch-destroy`. Do not abort an in-flight DeviceLaunch when
     `destroy_graph` succeeds. Do not delay destroy of an idle exec. Do not invent
@@ -6877,6 +6893,8 @@ model, do not celebrate the sim.
     `--max-threads`. Do not invent warp size this slice.
     Do not invent a second `regsPerBlock` DeviceProperties field. Do not
     invent Engine `--regs-per-block`. Do not reverse 65536.
+    Do not invent a second `global_memory_bus_width_bits` profile key.
+    Do not invent Engine `--bus-width`. Do not reverse H100 5120.
     Do not
     spend the next item on an OpenAI-compatible HTTP veneer.
 
