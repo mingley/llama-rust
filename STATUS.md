@@ -5,6 +5,16 @@ Visible five-turn extract: [docs/chatgpt-share-6a920fe1.md](docs/chatgpt-share-6
 Complete share-API extract: [docs/chatgpt-share-6a920fe1/](docs/chatgpt-share-6a920fe1/).
 Work lands on `main`. No PRs.
 
+## Shipped 2026-08-31 — CUDA `cuMemExportToShareableHandle`
+
+`gpu-sim` `va_export_to_shareable_handle` is
+`cuMemExportToShareableHandle`. Always Invalid `"not shareable"`
+(VMM create-time handle types are none). POSIX-FD only. Distinct from
+`ipc_get`, `pool_export`, and dma-buf `va_get_handle_for_address_range`.
+Capture cannot include it. No Engine `--vmm-export`.
+`gpu-profile capture` is still refused. Dual score still has no
+`$/M tokens`.
+
 ## Shipped 2026-08-31 — CUDA `cuMemGetHandleForAddressRange`
 
 `gpu-sim` `va_get_handle_for_address_range` is

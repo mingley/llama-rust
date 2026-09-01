@@ -1031,6 +1031,17 @@ impl MemRangeHandleFlags {
     pub const DMA_BUF_MAPPING_TYPE_PCIE: u32 = 1;
 }
 
+/// `cuMemExportToShareableHandle` flags for
+/// [`crate::Sim::va_export_to_shareable_handle`].
+///
+/// CUDA requires 0. Unknown bits are Invalid `"mem export flags"`.
+pub struct MemExportFlags;
+
+impl MemExportFlags {
+    /// Unflagged `cuMemExportToShareableHandle`.
+    pub const DEFAULT: u32 = 0;
+}
+
 /// `cudaDeviceProp` fields this VM already models.
 ///
 /// No SM count, clock rate, warp size, or `maxThreadsPerBlock` — those are
@@ -3105,9 +3116,10 @@ impl MemAllocationType {
 /// `CUmemAllocationProp` for [`crate::Sim::va_get_allocation_properties`].
 ///
 /// Compression and usage flags are not modeled. [`crate::Sim::va_create_with_prop`]
-/// accepts [`MemHandleType::NONE`] only (POSIX-FD VMM export is not modeled).
-/// Get always reports none. [`Self::gpu_direct_rdma_capable`] on create is
-/// ignored (Get wraps the SKU).
+/// accepts [`MemHandleType::NONE`] only (POSIX-FD VMM export is not modeled;
+/// [`crate::Sim::va_export_to_shareable_handle`] is always Invalid
+/// `"not shareable"`). Get always reports none.
+/// [`Self::gpu_direct_rdma_capable`] on create is ignored (Get wraps the SKU).
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct MemAllocationProp {
     /// `CUmemAllocationType` ([`MemAllocationType::PINNED`]).

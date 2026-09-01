@@ -678,6 +678,11 @@ modeled; example SKUs are discrete). `SparseCudaArraySupported` /
 is `cuMemGetHandleForAddressRange` (always Invalid `"dma-buf not modeled"`;
 `MemRangeHandleType::DMA_BUF_FD` only). Distinct from `ipc_get` and
 `create_shareable_pool`. Query; legal during capture. No Engine `--dma-buf`.
+`va_export_to_shareable_handle` is `cuMemExportToShareableHandle` (always
+Invalid `"not shareable"`; VMM create-time handle types are none). POSIX-FD
+only; flags 0. Distinct from `ipc_get`, `pool_export`, and
+`va_get_handle_for_address_range`. Capture cannot include it. No Engine
+`--vmm-export`.
 `MulticastSupported` is a
 GPU↔GPU NVLink on that device (PCIe P2P and RDMA are not NVLS).
 `VirtualMemoryManagementSupported` is always 1 (this VM has

@@ -4813,7 +4813,15 @@ model, do not celebrate the sim.
     `--dma-buf`. `gpu-profile capture` is still refused. Dual score still
     has no `$/M tokens`.
 
-440. [ ] Next numbered PLAN item after 439 is the next `gpu-sim` / Engine /
+440. [x] `gpu-sim` `va_export_to_shareable_handle` is
+    `cuMemExportToShareableHandle`. Always Invalid `"not shareable"`
+    (`MemAllocationProp::handle_types` is none; POSIX-FD VMM export is not
+    modeled). `MemHandleType::POSIX_FILE_DESCRIPTOR` only; flags 0. Distinct
+    from `ipc_get`, `pool_export`, and `va_get_handle_for_address_range`.
+    Capture cannot include it. No Engine `--vmm-export`. `gpu-profile capture`
+    is still refused. Dual score still has no `$/M tokens`.
+
+441. [ ] Next numbered PLAN item after 440 is the next `gpu-sim` / Engine /
     serve / expertvm mechanical API that is still missing, or the next official
     decode family. Prefer remaining CUDA-shaped twins over more
     OpenAI HTTP veneer. Do not invent F32 `output.scale`. Do not invent a
@@ -4865,6 +4873,10 @@ model, do not celebrate the sim.
     Do not invent a second `cudaDevAttrMaxPitch`.
     Do not invent a second `cuMemGetHandleForAddressRange`. Do not invent
     a dma-buf file descriptor. Do not invent Engine `--dma-buf`.
+    Do not invent a second `cuMemExportToShareableHandle`. Do not invent a
+    VMM POSIX-FD file descriptor. Do not invent
+    `cuMemImportFromShareableHandle` for VMM. Do not invent Engine
+    `--vmm-export`.
     Do not invent `cuDeviceGetLuid`
     (Windows).
     Do not invent gemma4 `attn_q.scale` / `attn_output.scale` / `attn_k.scale` /

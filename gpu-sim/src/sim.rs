@@ -23,12 +23,12 @@ use crate::ops::{
     InitDeviceFlags, IpcMemFlags, KernelAttrs, KernelBuf, KernelKind, KernelNodeAttr,
     KernelNodeAttrValue, KernelNodeParams, LaunchCompletionEvent, MemAccessDesc, MemAccessFlags,
     MemAdvise, MemAllocationGranularity, MemAllocationProp, MemAllocationType, MemAttach,
-    MemAttachFlags, MemCreateFlags, MemHandleType, MemLocationType, MemMapFlags, MemPoolAttr,
-    MemPoolExportFlags, MemPoolProps, MemRangeAttr, MemRangeAttrValue, MemRangeHandleFlags,
-    MemRangeHandleType, MemReserveFlags, MemSyncDomain, MemSyncDomainMap, MemcpyAttributes,
-    MemcpyFlags, MemcpyOp, MemcpySrcAccessOrder, MemoryType, MemsetOp, MulticastBindFlags,
-    MulticastCreateFlags, MulticastGranularity, MulticastObjectProp, Operation, PdlLaunch,
-    PeerAccessFlags, Place, PointerAttr, PointerAttributes, PortableClusterMode,
+    MemAttachFlags, MemCreateFlags, MemExportFlags, MemHandleType, MemLocationType, MemMapFlags,
+    MemPoolAttr, MemPoolExportFlags, MemPoolProps, MemRangeAttr, MemRangeAttrValue,
+    MemRangeHandleFlags, MemRangeHandleType, MemReserveFlags, MemSyncDomain, MemSyncDomainMap,
+    MemcpyAttributes, MemcpyFlags, MemcpyOp, MemcpySrcAccessOrder, MemoryType, MemsetOp,
+    MulticastBindFlags, MulticastCreateFlags, MulticastGranularity, MulticastObjectProp, Operation,
+    PdlLaunch, PeerAccessFlags, Place, PointerAttr, PointerAttributes, PortableClusterMode,
     PortableSharedMode, PrefetchFlags, ProgrammaticEvent, ProgrammaticLaunch, SharedMemCarveout,
     SharedMemoryMode, SmResource, StreamAttr, StreamAttrValue, StreamCallbackFlags,
     StreamCaptureInfo, StreamCaptureMode, StreamCreateFlags, SynchronizationPolicy,
@@ -11304,7 +11304,8 @@ impl Sim {
     /// CUDA requires flags 0. Unknown bits Invalid `"mem create flags"`.
     /// [`MemAllocationProp::alloc_type`] must be pinned; location must be
     /// [`Place::Device`]. Handle types other than none are Invalid
-    /// `"vmm handle types"` (POSIX-FD export is not modeled for VMM).
+    /// `"vmm handle types"` (POSIX-FD export is not modeled for VMM;
+    /// [`Self::va_export_to_shareable_handle`] is always `"not shareable"`).
     /// [`MemAllocationProp::gpu_direct_rdma_capable`] is ignored (Get reports
     /// the SKU). Compression / usage flags are not modeled.
     pub fn va_create_with_prop(
@@ -11616,6 +11617,39 @@ impl Sim {
         }
         Err(SimError::Invalid {
             why: "dma-buf not modeled",
+        })
+    }
+
+    /// `cuMemExportToShareableHandle`. Always Invalid `"not shareable"`.
+    ///
+    /// [`MemAllocationProp::handle_types`] is always [`MemHandleType::NONE`]
+    /// (POSIX-FD VMM export is not modeled; mempools use
+    /// [`Self::pool_export`]). [`MemHandleType::POSIX_FILE_DESCRIPTOR`] only;
+    /// flags must be [`MemExportFlags::DEFAULT`]. Unknown type
+    /// `"vmm handle types"`; unknown flags `"mem export flags"`. Unknown
+    /// handles `"unknown handle"`. Capture cannot include it. Distinct from
+    /// [`Self::ipc_get`], [`Self::pool_export`], and
+    /// [`Self::va_get_handle_for_address_range`]. No Engine `--vmm-export`.
+    pub fn va_export_to_shareable_handle(
+        &self,
+        handle: MemHandleId,
+        handle_type: u64,
+        flags: u32,
+    ) -> Result<(), SimError> {
+        self.fail_if_capturing("cannot capture vmm export")?;
+        if flags != MemExportFlags::DEFAULT {
+            return Err(SimError::Invalid {
+                why: "mem export flags",
+            });
+        }
+        if handle_type != MemHandleType::POSIX_FILE_DESCRIPTOR {
+            return Err(SimError::Invalid {
+                why: "vmm handle types",
+            });
+        }
+        let _h = self.handle_ref(handle)?;
+        Err(SimError::Invalid {
+            why: "not shareable",
         })
     }
 

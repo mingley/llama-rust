@@ -233,6 +233,14 @@
 //! Distinct from [`ipc_get`](Sim::ipc_get) and
 //! [`create_shareable_pool`](Sim::create_shareable_pool). Query; legal during
 //! capture.
+//! [`va_export_to_shareable_handle`](Sim::va_export_to_shareable_handle) is
+//! `cuMemExportToShareableHandle`. Always Invalid `"not shareable"`
+//! ([`MemAllocationProp::handle_types`] is none; POSIX-FD VMM export is not
+//! modeled). [`MemHandleType::POSIX_FILE_DESCRIPTOR`] only; flags
+//! [`MemExportFlags::DEFAULT`]. Distinct from [`ipc_get`](Sim::ipc_get),
+//! [`pool_export`](Sim::pool_export), and
+//! [`va_get_handle_for_address_range`](Sim::va_get_handle_for_address_range).
+//! Capture cannot include it.
 //! [`Sim::va_get_allocation_granularity`] is
 //! `cuMemGetAllocationGranularity` ([`MemAllocationGranularity::MINIMUM`] /
 //! [`RECOMMENDED`](MemAllocationGranularity::RECOMMENDED) are the same
@@ -1087,16 +1095,16 @@ pub use ops::{
     IpcMemFlags, KernelAttrs, KernelBuf, KernelKind, KernelNodeAttr, KernelNodeAttrValue,
     KernelNodeParams, LaunchCompletionEvent, MemAccessDesc, MemAccessFlags, MemAdvise,
     MemAllocationGranularity, MemAllocationProp, MemAllocationType, MemAttach, MemAttachFlags,
-    MemCreateFlags, MemHandleType, MemLocationType, MemMapFlags, MemPoolAttr, MemPoolExportFlags,
-    MemPoolProps, MemRangeAttr, MemRangeAttrValue, MemRangeHandleFlags, MemRangeHandleType,
-    MemReserveFlags, MemSyncDomain,
-    MemSyncDomainMap, MemcpyAttributes, MemcpyFlags, MemcpyOp, MemcpySrcAccessOrder, MemoryType,
-    MemsetOp, MulticastBindFlags, MulticastCreateFlags, MulticastGranularity, MulticastObjectProp,
-    Operation, PdlLaunch, PeerAccessFlags, Place, PointerAttr, PointerAttributes,
-    PortableClusterMode, PortableSharedMode, PrefetchFlags, ProgrammaticEvent, ProgrammaticLaunch,
-    SharedMemCarveout, SharedMemoryMode, SmResource, StreamAttr, StreamAttrValue,
-    StreamCallbackFlags, StreamCaptureInfo, StreamCaptureMode, StreamCreateFlags,
-    SynchronizationPolicy, UserObjectFlags, WaitValueCmp, WaitValueFlags, WriteValueFlags,
+    MemCreateFlags, MemExportFlags, MemHandleType, MemLocationType, MemMapFlags, MemPoolAttr,
+    MemPoolExportFlags, MemPoolProps, MemRangeAttr, MemRangeAttrValue, MemRangeHandleFlags,
+    MemRangeHandleType, MemReserveFlags, MemSyncDomain, MemSyncDomainMap, MemcpyAttributes,
+    MemcpyFlags, MemcpyOp, MemcpySrcAccessOrder, MemoryType, MemsetOp, MulticastBindFlags,
+    MulticastCreateFlags, MulticastGranularity, MulticastObjectProp, Operation, PdlLaunch,
+    PeerAccessFlags, Place, PointerAttr, PointerAttributes, PortableClusterMode,
+    PortableSharedMode, PrefetchFlags, ProgrammaticEvent, ProgrammaticLaunch, SharedMemCarveout,
+    SharedMemoryMode, SmResource, StreamAttr, StreamAttrValue, StreamCallbackFlags,
+    StreamCaptureInfo, StreamCaptureMode, StreamCreateFlags, SynchronizationPolicy,
+    UserObjectFlags, WaitValueCmp, WaitValueFlags, WriteValueFlags,
 };
 pub use probe::{probe_topology, P2pProbe, TopologyProbe};
 pub use profile::{
@@ -18001,37 +18009,19 @@ mod tests {
             }
             other => panic!("{other:?}"),
         }
-        match sim.va_get_handle_for_address_range(
-            a,
-            0,
-            4096,
-            MemRangeHandleType::DMA_BUF_FD,
-            2,
-        ) {
+        match sim.va_get_handle_for_address_range(a, 0, 4096, MemRangeHandleType::DMA_BUF_FD, 2) {
             Err(SimError::Invalid { why }) => {
                 assert!(why.contains("mem range handle flags"), "{why}");
             }
             other => panic!("{other:?}"),
         }
-        match sim.va_get_handle_for_address_range(
-            a,
-            0,
-            0,
-            MemRangeHandleType::DMA_BUF_FD,
-            0,
-        ) {
+        match sim.va_get_handle_for_address_range(a, 0, 0, MemRangeHandleType::DMA_BUF_FD, 0) {
             Err(SimError::Invalid { why }) => {
                 assert!(why.contains("dma-buf range"), "{why}");
             }
             other => panic!("{other:?}"),
         }
-        match sim.va_get_handle_for_address_range(
-            a,
-            0,
-            8192,
-            MemRangeHandleType::DMA_BUF_FD,
-            0,
-        ) {
+        match sim.va_get_handle_for_address_range(a, 0, 8192, MemRangeHandleType::DMA_BUF_FD, 0) {
             Err(SimError::Invalid { why }) => {
                 assert!(why.contains("range past alloc"), "{why}");
             }
@@ -18048,15 +18038,70 @@ mod tests {
             other => panic!("{other:?}"),
         }
         sim.begin_capture(d, StreamId(0)).unwrap();
-        match sim.va_get_handle_for_address_range(
-            a,
-            0,
-            4096,
-            MemRangeHandleType::DMA_BUF_FD,
+        match sim.va_get_handle_for_address_range(a, 0, 4096, MemRangeHandleType::DMA_BUF_FD, 0) {
+            Err(SimError::Invalid { why }) => {
+                assert!(why.contains("dma-buf not modeled"), "{why}");
+            }
+            other => panic!("{other:?}"),
+        }
+        let _g = sim.end_capture().unwrap();
+    }
+
+    #[test]
+    fn va_export_to_shareable_handle_is_vmm_not_shareable() {
+        let mut sim = Sim::new(h100());
+        let d = DeviceId(0);
+        let h = sim.va_create(d, 4096).unwrap();
+        assert_eq!(
+            sim.va_get_allocation_properties(h).unwrap().handle_types,
+            MemHandleType::NONE
+        );
+        match sim.va_export_to_shareable_handle(
+            h,
+            MemHandleType::POSIX_FILE_DESCRIPTOR,
+            MemExportFlags::DEFAULT,
+        ) {
+            Err(SimError::Invalid { why }) => {
+                assert!(why.contains("not shareable"), "{why}");
+            }
+            other => panic!("{other:?}"),
+        }
+        match sim.va_export_to_shareable_handle(h, MemHandleType::NONE, 0) {
+            Err(SimError::Invalid { why }) => {
+                assert!(why.contains("vmm handle types"), "{why}");
+            }
+            other => panic!("{other:?}"),
+        }
+        match sim.va_export_to_shareable_handle(h, MemHandleType::POSIX_FILE_DESCRIPTOR, 1) {
+            Err(SimError::Invalid { why }) => {
+                assert!(why.contains("mem export flags"), "{why}");
+            }
+            other => panic!("{other:?}"),
+        }
+        match sim.va_export_to_shareable_handle(
+            MemHandleId(u64::MAX),
+            MemHandleType::POSIX_FILE_DESCRIPTOR,
             0,
         ) {
             Err(SimError::Invalid { why }) => {
+                assert!(why.contains("unknown handle"), "{why}");
+            }
+            other => panic!("{other:?}"),
+        }
+        let p = sim.create_shareable_pool(d).unwrap();
+        let _share = sim.pool_export(p).unwrap();
+        let a = sim.malloc(d, 4096).unwrap();
+        let _ipc = sim.ipc_get(a).unwrap();
+        match sim.va_get_handle_for_address_range(a, 0, 4096, MemRangeHandleType::DMA_BUF_FD, 0) {
+            Err(SimError::Invalid { why }) => {
                 assert!(why.contains("dma-buf not modeled"), "{why}");
+            }
+            other => panic!("{other:?}"),
+        }
+        sim.begin_capture(d, StreamId(0)).unwrap();
+        match sim.va_export_to_shareable_handle(h, MemHandleType::POSIX_FILE_DESCRIPTOR, 0) {
+            Err(SimError::Invalid { why }) => {
+                assert!(why.contains("cannot capture vmm export"), "{why}");
             }
             other => panic!("{other:?}"),
         }
