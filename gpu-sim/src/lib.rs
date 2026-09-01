@@ -688,6 +688,10 @@
 //! [`DeviceAttr::StreamPrioritiesSupported`] / [`UnifiedAddressing`](DeviceAttr::UnifiedAddressing)
 //! are always 1. [`DeviceAttr::GpuOverlap`] is `copy_engines > 0`. [`Sim::func_get_attributes`] is `cudaFuncGetAttributes` of modeled
 //! per-device function attrs ([`FuncAttributes`]; not per kernel).
+//! Compiler-emitted `sharedSizeBytes`, `constSizeBytes`, `localSizeBytes`,
+//! `maxThreadsPerBlock`, `ptxVersion`, `binaryVersion`, and `cacheModeCA`
+//! are always 0 until a compiled kernel exists. Distinct from
+//! [`DeviceAttr::MaxThreadsPerBlock`]. `numRegs` is not modeled this slice.
 //! [`func_set_attribute`](Sim::func_set_attribute) /
 //! [`func_get_attribute`](Sim::func_get_attribute) are `cudaFuncSetAttribute` /
 //! `GetAttribute` ([`FuncAttr`]). Typed setters stay. Get is a query
@@ -17740,6 +17744,44 @@ mod tests {
             49_152
         );
         let _g = sim.end_capture().unwrap();
+    }
+
+    #[test]
+    fn func_get_attributes_classic_compiler_fields_are_zero() {
+        let mut sim = Sim::new(h100());
+        let d = DeviceId(0);
+        let a0 = sim.func_get_attributes(d).unwrap();
+        assert_eq!(a0.shared_size_bytes, 0);
+        assert_eq!(a0.const_size_bytes, 0);
+        assert_eq!(a0.local_size_bytes, 0);
+        assert_eq!(a0.max_threads_per_block, 0);
+        assert_eq!(a0.ptx_version, 0);
+        assert_eq!(a0.binary_version, 0);
+        assert_eq!(a0.cache_mode_ca, 0);
+        assert_eq!(
+            sim.device_get_attribute(d, DeviceAttr::MaxThreadsPerBlock)
+                .unwrap(),
+            1024
+        );
+        assert_eq!(
+            sim.device_get_attribute(d, DeviceAttr::TotalConstantMemory)
+                .unwrap(),
+            0
+        );
+        sim.set_max_dynamic_shared_memory(d, 49_152).unwrap();
+        sim.set_func_cache_config(d, FuncCache::PreferL1).unwrap();
+        let a1 = sim.func_get_attributes(d).unwrap();
+        assert_eq!(a1.shared_size_bytes, 0);
+        assert_eq!(a1.max_threads_per_block, 0);
+        assert_eq!(a1.cache_mode_ca, 0);
+        assert_eq!(a1.max_dynamic_shared_size_bytes, 49_152);
+        sim.begin_capture(d, StreamId(0)).unwrap();
+        assert_eq!(sim.func_get_attributes(d).unwrap().ptx_version, 0);
+        let _g = sim.end_capture().unwrap();
+        match sim.func_get_attributes(DeviceId(1)) {
+            Err(SimError::Invalid { why }) => assert!(why.contains("device"), "{why}"),
+            other => panic!("{other:?}"),
+        }
     }
 
     #[test]

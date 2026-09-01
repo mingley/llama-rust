@@ -477,6 +477,10 @@ and H100 block/grid dims (no Engine flag; not occupancy SM counts).
 `gpu-sim` `SingleToDoublePrecisionPerfRatio` is
 `cudaDevAttrSingleToDoublePrecisionPerfRatio` 1 on example H100
 (no Engine flag; not an FP64 duration model).
+`gpu-sim` compiler-emitted `cudaFuncGetAttributes` fields
+(`sharedSizeBytes`, `constSizeBytes`, `localSizeBytes`, `maxThreadsPerBlock`,
+`ptxVersion`, `binaryVersion`, `cacheModeCA`) are always 0 (no Engine
+flag; not a compiled kernel).
 `gpu-sim` texture 2D/3D dim caps are always 0 (`cudaDevAttrMaxTexture2DWidth`
 and Height, `MaxTexture3DWidth` / Height / Depth; no Engine flag).
 `gpu-sim` surface 1D/2D/3D dim caps are always 0 (`cudaDevAttrMaxSurface1DWidth`,

@@ -1063,7 +1063,11 @@ legal during capture.
 of modeled per-device function attrs (`maxDynamicSharedSizeBytes`,
 `nonPortableClusterSizeAllowed`, `preferredShmemCarveout`, cluster-dim
 must-be-set, required cluster width/height/depth, and
-`clusterSchedulingPolicyPreference`; not per kernel). `func_set_attribute` /
+`clusterSchedulingPolicyPreference`; not per kernel). Compiler-emitted
+`sharedSizeBytes`, `constSizeBytes`, `localSizeBytes`, `maxThreadsPerBlock`,
+`ptxVersion`, `binaryVersion`, and `cacheModeCA` are always 0 until a
+compiled kernel exists. Distinct from device `MaxThreadsPerBlock`.
+`numRegs` is not modeled this slice. `func_set_attribute` /
 `func_get_attribute` are `cudaFuncSetAttribute` / `GetAttribute` (`FuncAttr`).
 Typed setters stay. `stream_get_flags` is `cudaStreamGetFlags`
 (`0` `cudaStreamDefault` / `1` `cudaStreamNonBlocking`; NULL follows

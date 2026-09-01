@@ -6080,7 +6080,18 @@ model, do not celebrate the sim.
     duration from this ratio. `gpu-profile capture` is still refused.
     Dual score still has no `$/M tokens`.
 
-572. [ ] Next numbered PLAN item after 571 is the next `gpu-sim` / Engine /
+572. [x] `gpu-sim` `FuncAttributes` compiler-emitted `cudaFuncGetAttributes`
+    fields `sharedSizeBytes`, `constSizeBytes`, `localSizeBytes`,
+    `maxThreadsPerBlock`, `ptxVersion`, `binaryVersion`, and `cacheModeCA`
+    are always 0 until a compiled kernel exists. Query; legal during
+    capture. Distinct from `DeviceAttr::MaxThreadsPerBlock`,
+    `TotalConstantMemory`, `MaxRegistersPerBlock`, and `FuncCache`.
+    `numRegs` stays unmodeled this slice. This VM does not invent Engine
+    `--func-attrs`, a PTX compiler, or `FuncAttr` setters for these
+    fields. `gpu-profile capture` is still refused. Dual score still has
+    no `$/M tokens`.
+
+573. [ ] Next numbered PLAN item after 572 is the next `gpu-sim` / Engine /
     serve / expertvm mechanical API that is still missing, or the next official
     decode family. Prefer remaining CUDA-shaped twins over more
     OpenAI HTTP veneer. Do not invent F32 `output.scale`. Do not invent a
@@ -6204,6 +6215,13 @@ model, do not celebrate the sim.
     Do not invent a second `cudaDevAttrSingleToDoublePrecisionPerfRatio`.
     Do not invent Engine `--fp64-ratio`. Do not scale kernel duration
     from this ratio. Do not reverse example H100 ratio 1.
+    Do not invent a second classic `cudaFuncGetAttributes` compiler-field
+    family (`sharedSizeBytes`, `constSizeBytes`, `localSizeBytes`,
+    `maxThreadsPerBlock`, `ptxVersion`, `binaryVersion`, `cacheModeCA`).
+    Do not invent Engine `--func-attrs`. Do not invent `FuncAttributes`
+    numRegs this slice. Do not invent a compiled kernel or PTX compiler.
+    Do not reverse those compiler fields staying 0. Do not copy
+    `MaxThreadsPerBlock` 1024 onto function `maxThreadsPerBlock`.
     Do not invent a second `cudaStreamAddCallback`.
     Do not invent Engine `--stream-callback` (same wall as second live
     `cudaLaunchHostFunc` after miss DMA).
@@ -6463,6 +6481,10 @@ model, do not celebrate the sim.
     Do not invent a second single-to-double perf-ratio DeviceAttr. Do
     not invent Engine `--dp-ratio`. Do not invent an FP64 dtype this
     slice.
+    Do not invent a second compiler-emitted FuncAttributes family. Do
+    not invent Engine `--ptx-version`. Do not invent `FuncAttr` setters
+    for sharedSizeBytes this slice. Do not reverse function
+    maxThreadsPerBlock staying 0.
     Do not invent a second DeviceLaunch in-flight destroy-complete check or Engine
     `--device-launch-destroy`. Do not abort an in-flight DeviceLaunch when
     `destroy_graph` succeeds. Do not delay destroy of an idle exec. Do not invent
@@ -6949,6 +6971,9 @@ model, do not celebrate the sim.
     Do not invent a second single_to_double_precision_perf_ratio
     DeviceProperties field. Do not invent Engine `--stodp`. Do not
     reverse Hopper ratio 1.
+    Do not invent a second FuncAttributes `shared_size_bytes` field. Do
+    not invent Engine `--cache-mode-ca`. Do not reverse compiler
+    ptxVersion 0.
     Do not
     spend the next item on an OpenAI-compatible HTTP veneer.
 

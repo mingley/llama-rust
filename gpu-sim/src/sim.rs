@@ -23688,10 +23688,22 @@ impl Sim {
     ///
     /// Query; legal during capture. Unknown devices are Invalid. This VM has
     /// one function-attr set per device, not per kernel function.
+    /// Compiler-emitted `sharedSizeBytes`, `constSizeBytes`,
+    /// `localSizeBytes`, `maxThreadsPerBlock`, `ptxVersion`,
+    /// `binaryVersion`, and `cacheModeCA` are always 0 until a compiled
+    /// kernel exists. Distinct from [`DeviceAttr::MaxThreadsPerBlock`].
+    /// `numRegs` is not modeled this slice.
     pub fn func_get_attributes(&self, device: DeviceId) -> Result<FuncAttributes, SimError> {
         let _gpu = self.profile.gpu(device)?;
         let rt = self.gpu_rt(device)?;
         Ok(FuncAttributes {
+            shared_size_bytes: 0,
+            const_size_bytes: 0,
+            local_size_bytes: 0,
+            max_threads_per_block: 0,
+            ptx_version: 0,
+            binary_version: 0,
+            cache_mode_ca: 0,
             max_dynamic_shared_size_bytes: self.max_dynamic_shared_memory(device),
             non_portable_cluster_size_allowed: self.non_portable_cluster_size_allowed(device),
             preferred_shmem_carveout: rt.func_carveout,

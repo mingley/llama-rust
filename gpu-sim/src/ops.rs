@@ -1593,10 +1593,35 @@ pub enum FuncAttr {
 /// Modeled `cudaFuncGetAttributes` / `cudaFuncGetAttribute` fields.
 ///
 /// This VM has one function-attr set **per device**, not per kernel
-/// function. No `maxThreadsPerBlock`, register count, or binary version —
-/// those are not modeled.
+/// function. Compiler-emitted `sharedSizeBytes`, `constSizeBytes`,
+/// `localSizeBytes`, `maxThreadsPerBlock`, `ptxVersion`, `binaryVersion`,
+/// and `cacheModeCA` are always 0 until a compiled kernel exists.
+/// `numRegs` is not modeled this slice. Distinct from
+/// [`DeviceAttr::MaxThreadsPerBlock`] (device cap) and from
+/// [`DeviceAttr::TotalConstantMemory`].
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct FuncAttributes {
+    /// `cudaFuncAttributes.sharedSizeBytes`. Always 0 (no compiled
+    /// `__shared__` static size). Distinct from
+    /// [`Self::max_dynamic_shared_size_bytes`].
+    pub shared_size_bytes: u32,
+    /// `cudaFuncAttributes.constSizeBytes`. Always 0 (no compiled
+    /// `__constant__` use). Distinct from
+    /// [`DeviceAttr::TotalConstantMemory`].
+    pub const_size_bytes: u32,
+    /// `cudaFuncAttributes.localSizeBytes`. Always 0 (no compiled
+    /// per-thread local memory).
+    pub local_size_bytes: u32,
+    /// `cudaFuncAttributes.maxThreadsPerBlock`. Always 0 until a compiled
+    /// kernel exists. Distinct from [`DeviceAttr::MaxThreadsPerBlock`].
+    pub max_threads_per_block: u32,
+    /// `cudaFuncAttributes.ptxVersion`. Always 0 (no PTX).
+    pub ptx_version: u32,
+    /// `cudaFuncAttributes.binaryVersion`. Always 0 (no cubin).
+    pub binary_version: u32,
+    /// `cudaFuncAttributes.cacheModeCA`. Always 0 (not compiled with
+    /// nvcc `dlcm=ca`). Distinct from [`FuncCache`]. CUDA's field is `int`.
+    pub cache_mode_ca: u32,
     /// `cudaFuncAttributeMaxDynamicSharedMemorySize`.
     pub max_dynamic_shared_size_bytes: u32,
     /// `cudaFuncAttributeNonPortableClusterSizeAllowed`.
