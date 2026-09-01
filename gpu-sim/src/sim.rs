@@ -2473,9 +2473,11 @@ impl Sim {
 
     /// Recorded event that has fired ([`Self::query_event`] / wait).
     ///
-    /// A [`ProgrammaticEvent`] with [`ProgrammaticLaunch::trigger`] fires at
-    /// the PDL trigger, before the kernel completes. A normal
-    /// [`Self::record_event`] fires when that record op completes.
+    /// A [`ProgrammaticEvent`] with [`ProgrammaticEvent::trigger_at_block_start`]
+    /// fires when the kernel starts. Otherwise
+    /// [`ProgrammaticLaunch::trigger`] fires at the PDL trigger, before the
+    /// kernel completes. A normal [`Self::record_event`] fires when that
+    /// record op completes.
     #[must_use]
     pub fn event_complete(&self, event: EventId) -> bool {
         self.event_is_recorded(event)
@@ -2516,13 +2518,8 @@ impl Sim {
         if op.done {
             return true;
         }
-        if op
-            .programmatic_event
-            .is_some_and(|p| self.event_root(p.event) == root)
-            && op.pdl.trigger
-            && op.pdl_trigger_ns.is_some_and(|t| self.clock >= t)
-        {
-            return true;
+        if let Some(ns) = programmatic_event_stamp(op, root, &self.events) {
+            return self.clock >= ns;
         }
         op.launch_completion
             .is_some_and(|p| self.event_root(p.event) == root)
@@ -15943,7 +15940,9 @@ impl Sim {
     ///
     /// Other streams may [`Self::wait_event`] the event after the PDL trigger
     /// when [`ProgrammaticLaunch::trigger`] is set. Without trigger the event
-    /// records at kernel completion. Decode identity stays [`Self::kernel`].
+    /// records at kernel completion unless
+    /// [`ProgrammaticEvent::trigger_at_block_start`] (kernel start). Decode
+    /// identity stays [`Self::kernel`].
     pub fn kernel_pdl_event(
         &mut self,
         device: DeviceId,
@@ -18656,14 +18655,19 @@ impl Sim {
         let op = self.ops.get(&id).ok_or(SimError::Invalid {
             why: "event elapsed: missing record op",
         })?;
-        if op
-            .programmatic_event
-            .is_some_and(|p| event_root_of(&self.events, p.event) == root)
-            && op.pdl.trigger
-        {
-            return op.pdl_trigger_ns.ok_or(SimError::Invalid {
-                why: "event elapsed: programmatic trigger missing",
-            });
+        if let Some(pe) = op.programmatic_event {
+            if event_root_of(&self.events, pe.event) == root {
+                if pe.trigger_at_block_start {
+                    return op.start_ns.ok_or(SimError::Invalid {
+                        why: "event elapsed: programmatic block start missing start",
+                    });
+                }
+                if op.pdl.trigger {
+                    return op.pdl_trigger_ns.ok_or(SimError::Invalid {
+                        why: "event elapsed: programmatic trigger missing",
+                    });
+                }
+            }
         }
         if op
             .launch_completion
@@ -20158,13 +20162,10 @@ impl Sim {
         }
         if let Kind::EventWait { event, .. } = &op.kind {
             let root = event_root_of(&self.events, *event);
-            if prev
-                .programmatic_event
-                .is_some_and(|p| event_root_of(&self.events, p.event) == root)
-                && prev.pdl.trigger
-                && prev.pdl_trigger_ns.is_some_and(|t| self.clock >= t)
-            {
-                return true;
+            if let Some(ns) = programmatic_event_stamp(prev, root, &self.events) {
+                if self.clock >= ns {
+                    return true;
+                }
             }
             if prev
                 .launch_completion
@@ -23271,6 +23272,12 @@ fn debug_dot_label(i: usize, step: &GraphStep, flags: u32) -> String {
                     label.push_str(" sync=");
                     label.push_str(step.sync_policy.token());
                 }
+                if step
+                    .programmatic_event
+                    .is_some_and(|p| p.trigger_at_block_start)
+                {
+                    label.push_str(" pde-block-start");
+                }
             }
         }
         Kind::Memcpy(op) => {
@@ -23463,6 +23470,22 @@ fn cond_body_graphs(kind: &Kind) -> Vec<GraphId> {
 
 fn event_root_of(events: &BTreeMap<EventId, Ev>, event: EventId) -> EventId {
     events.get(&event).and_then(|e| e.ipc_src).unwrap_or(event)
+}
+
+/// Stamp when a programmatic event fires: kernel start if
+/// [`ProgrammaticEvent::trigger_at_block_start`], else the PDL trigger.
+fn programmatic_event_stamp(op: &Op, root: EventId, events: &BTreeMap<EventId, Ev>) -> Option<u64> {
+    let pe = op.programmatic_event?;
+    if event_root_of(events, pe.event) != root {
+        return None;
+    }
+    if pe.trigger_at_block_start {
+        return op.start_ns;
+    }
+    if op.pdl.trigger {
+        return op.pdl_trigger_ns;
+    }
+    None
 }
 
 fn capture_step_deps(

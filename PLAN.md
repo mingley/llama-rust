@@ -5373,7 +5373,22 @@ model, do not celebrate the sim.
     sync policy. `gpu-profile capture` is still refused. Dual score still
     has no `$/M tokens`.
 
-500. [ ] Next numbered PLAN item after 499 is the next `gpu-sim` / Engine /
+500. [x] `gpu-sim` CUDA `cudaLaunchAttributeProgrammaticEvent.triggerAtBlockStart`:
+    [`ProgrammaticEvent::trigger_at_block_start`] is CUDA
+    `triggerAtBlockStart`. Default `false` records at the PDL trigger when
+    [`ProgrammaticLaunch::trigger`], else at kernel completion (existing
+    identity). Non-zero records when the kernel starts, same stamp as
+    launch-completion (this VM does not model per-block begins). Other
+    streams may [`wait_event`] earlier than the PDL trigger. Does not
+    require `pdl.trigger`. [`PdlLaunch::trigger_event`] and
+    `expertvm sim --programmatic-event` stay `false`. Get/Set/CopyAttributes
+    and capture carry the field. Debug-dot KERNEL_NODE_ATTRIBUTES dumps
+    `pde-block-start` when set. Kernel duration is unchanged. This VM does
+    not invent an Engine flag for programmatic-event block-start.
+    `gpu-profile capture` is still refused. Dual score still has no
+    `$/M tokens`.
+
+501. [ ] Next numbered PLAN item after 500 is the next `gpu-sim` / Engine /
     serve / expertvm mechanical API that is still missing, or the next official
     decode family. Prefer remaining CUDA-shaped twins over more
     OpenAI HTTP veneer. Do not invent F32 `output.scale`. Do not invent a
@@ -5691,6 +5706,13 @@ model, do not celebrate the sim.
     Do not invent a second graph kernel-node SynchronizationPolicy
     Get/Set/CopyAttributes. Do not invent KernelAttrs SynchronizationPolicy.
     Do not invent an Engine flag for kernel-node sync policy.
+    Do not invent a second
+    `cudaLaunchAttributeProgrammaticEvent.triggerAtBlockStart`.
+    Do not invent an Engine flag for programmatic-event block-start.
+    Do not invent `LaunchCompletionEvent::trigger_at_block_start`.
+    Do not invent per-block programmatic event records.
+    Do not invent a must-be-0 flags word on ProgrammaticEvent (external stays
+    `cudaEventRecordExternal`).
     Do not
     spend the next item on an OpenAI-compatible HTTP veneer.
 

@@ -11870,10 +11870,7 @@ fn gemm_flags_programmatic_event_is_launch_attr() {
     let none = GemmFlags::default().kernel_attrs(id);
     assert_eq!(none.programmatic_event, None);
     assert!(!none.pdl.trigger);
-    let ev = ProgrammaticEvent {
-        event: EventId(8),
-        external: false,
-    };
+    let ev = ProgrammaticEvent::new(EventId(8));
     let some = GemmFlags {
         programmatic_event: Some(ev),
         ..GemmFlags::default()

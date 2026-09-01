@@ -5,6 +5,19 @@ Visible five-turn extract: [docs/chatgpt-share-6a920fe1.md](docs/chatgpt-share-6
 Complete share-API extract: [docs/chatgpt-share-6a920fe1/](docs/chatgpt-share-6a920fe1/).
 Work lands on `main`. No PRs.
 
+## Shipped 2026-09-01 — programmatic event triggerAtBlockStart
+
+`gpu-sim` CUDA `cudaLaunchAttributeProgrammaticEvent.triggerAtBlockStart`:
+`ProgrammaticEvent::trigger_at_block_start` records the event when the
+kernel starts (this VM does not model per-block begins). Default `false`
+keeps the PDL-trigger / kernel-completion identity.
+`PdlLaunch::trigger_event` and `expertvm sim --programmatic-event` stay
+false. Other streams may `wait_event` earlier than the PDL trigger.
+Get/Set/CopyAttributes and capture carry the field. Debug-dot dumps
+`pde-block-start` when set. Kernel duration is unchanged. This VM does
+not invent an Engine flag for programmatic-event block-start.
+`gpu-profile capture` is still refused. Dual score still has no `$/M tokens`.
+
 ## Shipped 2026-09-01 — graph kernel-node SynchronizationPolicy
 
 `gpu-sim` CUDA `cudaLaunchAttributeSynchronizationPolicy` on graph kernel

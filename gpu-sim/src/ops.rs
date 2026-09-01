@@ -1598,7 +1598,9 @@ pub struct ProgrammaticLaunch {
 ///
 /// [`crate::Sim::kernel_pdl_event`] records `event` when the kernel fires
 /// [`ProgrammaticLaunch::trigger`] (or at kernel completion when trigger is
-/// false). Other streams may [`crate::Sim::wait_event`] it and start before
+/// false). [`Self::trigger_at_block_start`] is CUDA `triggerAtBlockStart`:
+/// the event records when the kernel starts instead of waiting for the PDL
+/// trigger. Other streams may [`crate::Sim::wait_event`] it and start before
 /// the primary finishes. Same-stream later work still waits for completion
 /// unless that work uses PDL wait. [`Self::external`] is
 /// `cudaEventRecordExternal` (captured without forked-capture join). Decode
@@ -1610,6 +1612,35 @@ pub struct ProgrammaticEvent {
     pub event: EventId,
     /// `cudaEventRecordExternal` on the launch attribute.
     pub external: bool,
+    /// CUDA `triggerAtBlockStart`. When true, the event records when the
+    /// kernel starts (this VM does not model per-block begins). When false
+    /// (CUDA 0, decode identity), the event records at the PDL trigger if
+    /// [`ProgrammaticLaunch::trigger`], else at kernel completion.
+    pub trigger_at_block_start: bool,
+}
+
+impl ProgrammaticEvent {
+    /// Record `event` at the PDL trigger (or kernel completion). Not External.
+    /// [`Self::trigger_at_block_start`] is false (`triggerAtBlockStart == 0`).
+    #[must_use]
+    pub const fn new(event: EventId) -> Self {
+        Self {
+            event,
+            external: false,
+            trigger_at_block_start: false,
+        }
+    }
+
+    /// Record `event` when the kernel starts (`triggerAtBlockStart != 0`).
+    /// Not External. Does not require [`ProgrammaticLaunch::trigger`].
+    #[must_use]
+    pub const fn at_block_start(event: EventId) -> Self {
+        Self {
+            event,
+            external: false,
+            trigger_at_block_start: true,
+        }
+    }
 }
 
 /// Live [`crate::Sim::kernel_pdl_event`] attributes: PDL plus an optional
@@ -1631,10 +1662,7 @@ impl PdlLaunch {
                 wait: false,
                 trigger: true,
             },
-            event: Some(ProgrammaticEvent {
-                event,
-                external: false,
-            }),
+            event: Some(ProgrammaticEvent::new(event)),
         }
     }
 }
@@ -2115,7 +2143,9 @@ pub struct KernelAttrs {
     ///
     /// Other streams may [`crate::Sim::wait_event`] at the PDL trigger when
     /// [`Self::pdl`] has [`ProgrammaticLaunch::trigger`], else at kernel
-    /// completion. Decode identity stays [`None`]. Capture records the attribute.
+    /// completion. [`ProgrammaticEvent::trigger_at_block_start`] records at
+    /// kernel start instead (CUDA `triggerAtBlockStart`). Decode identity
+    /// stays [`None`]. Capture records the attribute.
     pub programmatic_event: Option<ProgrammaticEvent>,
     /// `cudaLaunchAttributeLaunchCompletionEvent`. [`None`] records nothing.
     ///

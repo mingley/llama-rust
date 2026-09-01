@@ -705,10 +705,7 @@ pub(crate) fn alloc_programmatic_event(
     let ev = EventId(*next_event);
     *next_event = next_event.saturating_add(1);
     sim.create_event_disable_timing(ev)?;
-    Ok(Some(ProgrammaticEvent {
-        event: ev,
-        external: false,
-    }))
+    Ok(Some(ProgrammaticEvent::new(ev)))
 }
 
 /// 8-byte device mailbox for [`SimCfg::wait_value`] / store copy-ready.

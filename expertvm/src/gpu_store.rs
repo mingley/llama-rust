@@ -2089,10 +2089,7 @@ impl SimulatedGpuStore {
                     event,
                     external: false,
                 }),
-            programmatic_event: self.programmatic_event.map(|event| ProgrammaticEvent {
-                event,
-                external: false,
-            }),
+            programmatic_event: self.programmatic_event.map(ProgrammaticEvent::new),
         }
     }
 
