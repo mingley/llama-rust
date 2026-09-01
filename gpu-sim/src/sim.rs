@@ -18336,8 +18336,9 @@ impl Sim {
     /// Always Invalid `"gl map"` (no GL buffer-object handles). Distinct from
     /// [`Self::gl_register_buffer_object`], from
     /// [`Self::graphics_map_resources`], from
-    /// [`Self::gl_unmap_buffer_object`], and from
-    /// [`Self::gl_unregister_buffer_object`]. Unknown devices are Invalid
+    /// [`Self::gl_unmap_buffer_object`], from
+    /// [`Self::gl_unregister_buffer_object`], and from
+    /// [`Self::gl_map_buffer_object_async`]. Unknown devices are Invalid
     /// `"device not in profile"`. Query; legal during capture.
     pub fn gl_map_buffer_object(&self, device: DeviceId) -> Result<(), SimError> {
         let _gpu = self.profile.gpu(device)?;
@@ -18378,9 +18379,9 @@ impl Sim {
     ///
     /// Always Invalid `"unmap async"` (no GL buffer-object handles). Distinct
     /// from [`Self::gl_unmap_buffer_object`] (why is not a superstring of
-    /// `"gl unmap"`) and from [`Self::graphics_unmap_resources`]. Unknown
-    /// devices are Invalid `"device not in profile"`. Query; legal during
-    /// capture.
+    /// `"gl unmap"`), from [`Self::graphics_unmap_resources`], and from
+    /// [`Self::gl_map_buffer_object_async`]. Unknown devices are Invalid
+    /// `"device not in profile"`. Query; legal during capture.
     pub fn gl_unmap_buffer_object_async(
         &self,
         device: DeviceId,
@@ -18389,6 +18390,24 @@ impl Sim {
         let _gpu = self.profile.gpu(device)?;
         self.require_live_stream(device, stream)?;
         Err(SimError::Invalid { why: "unmap async" })
+    }
+
+    /// `cuGLMapBufferObjectAsync` plus `cudaGLMapBufferObjectAsync`. Legacy
+    /// OpenGL interop is not modeled.
+    ///
+    /// Always Invalid `"async map"` (no GL buffer-object handles). Distinct
+    /// from [`Self::gl_map_buffer_object`] (why is not a superstring of
+    /// `"gl map"`) and from [`Self::gl_unmap_buffer_object_async`]. Unknown
+    /// devices are Invalid `"device not in profile"`. Query; legal during
+    /// capture.
+    pub fn gl_map_buffer_object_async(
+        &self,
+        device: DeviceId,
+        stream: StreamId,
+    ) -> Result<(), SimError> {
+        let _gpu = self.profile.gpu(device)?;
+        self.require_live_stream(device, stream)?;
+        Err(SimError::Invalid { why: "async map" })
     }
 
     /// `cudaGLSetGLDevice`. OpenGL interop is not modeled.

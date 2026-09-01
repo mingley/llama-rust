@@ -5,6 +5,15 @@ Visible five-turn extract: [docs/chatgpt-share-6a920fe1.md](docs/chatgpt-share-6
 Complete share-API extract: [docs/chatgpt-share-6a920fe1/](docs/chatgpt-share-6a920fe1/).
 Work lands on `main`. No PRs.
 
+## Shipped 2026-09-01 — CUDA `cuGLMapBufferObjectAsync`
+
+`gpu-sim` `Sim::gl_map_buffer_object_async` is `cuGLMapBufferObjectAsync`.
+Always Invalid `"async map"` because legacy OpenGL interop is not
+modeled. Query; legal during capture. Distinct from
+`gl_map_buffer_object` (why is not a superstring of `"gl map"`) and from
+`gl_unmap_buffer_object_async`. This VM does not invent `cuD3D11GetDevice` or Engine `--gl-map-async`.
+`gpu-profile capture` is still refused. Dual score still has no `$/M tokens`.
+
 ## Shipped 2026-09-01 — CUDA `cuGLUnmapBufferObjectAsync`
 
 `gpu-sim` `Sim::gl_unmap_buffer_object_async` is `cuGLUnmapBufferObjectAsync`.
