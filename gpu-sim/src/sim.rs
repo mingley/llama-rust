@@ -12281,7 +12281,8 @@ impl Sim {
     /// `"vmm handle types"` (POSIX-FD export is not modeled for VMM;
     /// [`Self::va_export_to_shareable_handle`] is always `"not shareable"`).
     /// [`MemAllocationProp::gpu_direct_rdma_capable`] is ignored (Get reports
-    /// the SKU). Compression / usage flags are not modeled.
+    /// the SKU). [`MemAllocationProp::compression`] must be 0 (`"mem compression"`).
+    /// [`MemAllocationProp::usage`] must be [`MemHandleUsage::NONE`] (`"mem usage"`).
     pub fn va_create_with_prop(
         &mut self,
         bytes: u64,
@@ -12309,6 +12310,14 @@ impl Sim {
             return Err(SimError::Invalid {
                 why: "vmm handle types",
             });
+        }
+        if prop.compression != 0 {
+            return Err(SimError::Invalid {
+                why: "mem compression",
+            });
+        }
+        if prop.usage != MemHandleUsage::NONE {
+            return Err(SimError::Invalid { why: "mem usage" });
         }
         if bytes == 0 {
             return Err(SimError::Invalid {
@@ -12534,7 +12543,8 @@ impl Sim {
     /// Always [`MemAllocationType::PINNED`] at [`Place::Device`] of the
     /// handle's GPU. Handle types are [`MemHandleType::NONE`] (`cuMemCreate`
     /// does not store requested types). [`MemAllocationProp::gpu_direct_rdma_capable`]
-    /// is an RDMA link on that GPU. Compression / usage flags are not modeled.
+    /// is an RDMA link on that GPU. [`MemAllocationProp::compression`] /
+    /// [`MemAllocationProp::usage`] are always none.
     /// Unknown ids are Invalid `"unknown handle"`.
     pub fn va_get_allocation_properties(
         &self,
@@ -12546,6 +12556,8 @@ impl Sim {
             handle_types: MemHandleType::NONE,
             location: Place::Device(h.device),
             gpu_direct_rdma_capable: self.profile.gpu_direct_rdma_supported(h.device),
+            compression: 0,
+            usage: MemHandleUsage::NONE,
         })
     }
 

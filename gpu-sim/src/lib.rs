@@ -251,7 +251,8 @@
 //! map sparse physicals (vLLM KV-block analog); HBM is the mapped span.
 //! [`Sim::va_create`] is `cuMemCreate` (charges HBM). [`va_create_with_prop`](Sim::va_create_with_prop)
 //! is the prop + flags word (pinned device location; flags 0;
-//! [`MemHandleType::NONE`] only). [`Sim::va_map_handle`] is
+//! [`MemHandleType::NONE`] only; [`MemAllocationProp::compression`] 0;
+//! [`MemAllocationProp::usage`] [`MemHandleUsage::NONE`]). [`Sim::va_map_handle`] is
 //! `cuMemMap` of that handle (no second HBM charge; two VAs may share it).
 //! [`va_map_handle_with_flags`](Sim::va_map_handle_with_flags) is the flags
 //! word (0). [`va_map_handle_with_size`](Sim::va_map_handle_with_size) is the
@@ -20076,6 +20077,50 @@ mod tests {
             other => panic!("{other:?}"),
         }
         let _g = sim.end_capture().unwrap();
+    }
+
+    #[test]
+    fn va_create_with_prop_usage_is_cu_mem_allocation_prop_usage() {
+        let mut sim = Sim::new(h100());
+        let d = DeviceId(0);
+        let bytes = 4096u64;
+        let h = sim
+            .va_create_with_prop(
+                bytes,
+                MemAllocationProp {
+                    location: Place::Device(d),
+                    ..MemAllocationProp::default()
+                },
+                MemCreateFlags::DEFAULT,
+            )
+            .unwrap();
+        let p = sim.va_get_allocation_properties(h).unwrap();
+        assert_eq!(p.compression, 0);
+        assert_eq!(p.usage, MemHandleUsage::NONE);
+        match sim.va_create_with_prop(
+            bytes,
+            MemAllocationProp {
+                location: Place::Device(d),
+                compression: 1,
+                ..MemAllocationProp::default()
+            },
+            MemCreateFlags::DEFAULT,
+        ) {
+            Err(SimError::Invalid { why }) => assert!(why.contains("mem compression"), "{why}"),
+            other => panic!("{other:?}"),
+        }
+        match sim.va_create_with_prop(
+            bytes,
+            MemAllocationProp {
+                location: Place::Device(d),
+                usage: MemHandleUsage::HW_DECOMPRESS,
+                ..MemAllocationProp::default()
+            },
+            MemCreateFlags::DEFAULT,
+        ) {
+            Err(SimError::Invalid { why }) => assert!(why.contains("mem usage"), "{why}"),
+            other => panic!("{other:?}"),
+        }
     }
 
     #[test]

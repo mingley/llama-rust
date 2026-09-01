@@ -3216,11 +3216,13 @@ impl MemAllocationType {
 
 /// `CUmemAllocationProp` for [`crate::Sim::va_get_allocation_properties`].
 ///
-/// Compression and usage flags are not modeled. [`crate::Sim::va_create_with_prop`]
+/// Compression and usage flags must be none. [`crate::Sim::va_create_with_prop`]
 /// accepts [`MemHandleType::NONE`] only (POSIX-FD VMM export is not modeled;
 /// [`crate::Sim::va_export_to_shareable_handle`] is always Invalid
 /// `"not shareable"`). Get always reports none.
 /// [`Self::gpu_direct_rdma_capable`] on create is ignored (Get wraps the SKU).
+/// [`Self::compression`] must be 0; [`Self::usage`] must be
+/// [`MemHandleUsage::NONE`].
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct MemAllocationProp {
     /// `CUmemAllocationType` ([`MemAllocationType::PINNED`]).
@@ -3232,6 +3234,10 @@ pub struct MemAllocationProp {
     pub location: Place,
     /// `allocFlags.gpuDirectRDMACapable` (an RDMA link on that GPU).
     pub gpu_direct_rdma_capable: bool,
+    /// `allocFlags.compressionType`. Must be 0 (compression is not modeled).
+    pub compression: u8,
+    /// `allocFlags.usage`. Must be [`MemHandleUsage::NONE`].
+    pub usage: u16,
 }
 
 impl Default for MemAllocationProp {
@@ -3241,6 +3247,8 @@ impl Default for MemAllocationProp {
             handle_types: MemHandleType::NONE,
             location: Place::Device(DeviceId(0)),
             gpu_direct_rdma_capable: false,
+            compression: 0,
+            usage: MemHandleUsage::NONE,
         }
     }
 }
@@ -3376,7 +3384,8 @@ pub struct MemHandleUsage;
 impl MemHandleUsage {
     /// `CU_MEM_HANDLE_USAGE_NONE`.
     pub const NONE: u16 = 0;
-    /// `CU_MEM_HANDLE_USAGE_HW_DECOMPRESS`. Create is Invalid `"pool usage"`.
+    /// `CU_MEM_HANDLE_USAGE_HW_DECOMPRESS`. Pool create is Invalid
+    /// `"pool usage"`; VMM create is `"mem usage"`.
     pub const HW_DECOMPRESS: u16 = 2;
 }
 

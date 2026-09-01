@@ -5,6 +5,16 @@ Visible five-turn extract: [docs/chatgpt-share-6a920fe1.md](docs/chatgpt-share-6
 Complete share-API extract: [docs/chatgpt-share-6a920fe1/](docs/chatgpt-share-6a920fe1/).
 Work lands on `main`. No PRs.
 
+## Shipped 2026-09-01 — CUDA VMM allocation prop usage
+
+`gpu-sim` `CUmemAllocationProp` usage / compression:
+`MemAllocationProp::usage` must be `MemHandleUsage::NONE`;
+`MemAllocationProp::compression` must be 0. `va_create_with_prop` rejects
+HW decompress and nonzero compression. Get always reports none. Distinct
+from pool `MemPoolProps::usage`. Typed `va_create` stays. No Engine
+`--vmm-usage`. `gpu-profile capture` is still refused. Dual score still
+has no `$/M tokens`.
+
 ## Shipped 2026-09-01 — CUDA mempool props usage
 
 `gpu-sim` `CUmemPoolProps::usage`: `MemPoolProps::usage` is

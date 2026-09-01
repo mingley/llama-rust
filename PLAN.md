@@ -5203,7 +5203,16 @@ model, do not celebrate the sim.
     [`create_pool`](Sim::create_pool) stays. No Engine `--pool-usage`.
     `gpu-profile capture` is still refused. Dual score still has no `$/M tokens`.
 
-485. [ ] Next numbered PLAN item after 484 is the next `gpu-sim` / Engine /
+485. [x] `gpu-sim` `CUmemAllocationProp` usage / compression:
+    [`MemAllocationProp::usage`] must be [`MemHandleUsage::NONE`];
+    [`MemAllocationProp::compression`] must be 0.
+    [`va_create_with_prop`](Sim::va_create_with_prop) rejects HW decompress
+    `"mem usage"` and nonzero compression `"mem compression"`. Get always
+    reports none. Distinct from pool [`MemPoolProps::usage`] (`"pool usage"`).
+    Typed [`va_create`](Sim::va_create) stays. No Engine `--vmm-usage`.
+    `gpu-profile capture` is still refused. Dual score still has no `$/M tokens`.
+
+486. [ ] Next numbered PLAN item after 485 is the next `gpu-sim` / Engine /
     serve / expertvm mechanical API that is still missing, or the next official
     decode family. Prefer remaining CUDA-shaped twins over more
     OpenAI HTTP veneer. Do not invent F32 `output.scale`. Do not invent a
@@ -5467,8 +5476,11 @@ model, do not celebrate the sim.
     no Async Unaligned). Do not invent Engine `--memcpy-unaligned`. Do not
     add 2D alignment checks to `memcpy_2d`. Do not invent a second
     `CUmemPoolProps::usage` / `MemPoolProps::usage` / `MemHandleUsage`.
-    Do not invent Engine `--pool-usage`. Do not invent hardware decompress
-    succeeding (`MemDecompressAlgorithmMask` stays 0). Do not
+    Do not invent Engine `--pool-usage`.     Do not invent hardware decompress
+    succeeding (`MemDecompressAlgorithmMask` stays 0). Do not invent a second
+    `CUmemAllocationProp` `allocFlags.usage` / `compressionType` /
+    `MemAllocationProp::usage` / `compression`. Do not invent Engine
+    `--vmm-usage`. Do not
     spend the next item on an OpenAI-compatible HTTP veneer.
 
 Stop if Phase 1 traces say residency cannot work. Do not invent an

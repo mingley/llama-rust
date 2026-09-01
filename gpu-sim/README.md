@@ -1075,7 +1075,8 @@ that divides size).
 any size; a 2 MiB profile rejects unaligned reserve/map).
 `va_map_range` / `va_unmap_range` map sparse physicals (HBM is the mapped
 span). `va_create` is `cuMemCreate` (HBM, no VA). `va_create_with_prop` is
-the prop + flags word (pinned device; flags 0; `MemHandleType::NONE` only).
+the prop + flags word (pinned device; flags 0; `MemHandleType::NONE` only;
+`compression` 0; `usage` `MemHandleUsage::NONE`).
 `va_map_handle` is `cuMemMap`
 of that handle (no second HBM charge; two VAs may share it).
 `va_map_handle_with_flags` is the flags word (0).
