@@ -19663,6 +19663,21 @@ impl Sim {
         13_000
     }
 
+    /// `cuInit`. Host-synchronous. Capture cannot include it.
+    ///
+    /// Flags must be 0 (CUDA requires 0). This VM is already initialized at
+    /// [`Sim::new`]; further calls are 1 ns no-ops. Distinct from
+    /// [`Self::init_device`] (`cudaInitDevice`, per GPU) and from
+    /// [`Self::driver_get_version`]. Unknown flags Invalid `"init flags"`.
+    pub fn driver_init(&mut self, flags: u32) -> Result<(), SimError> {
+        self.fail_if_capturing("cannot capture driver init")?;
+        if flags != 0 {
+            return Err(SimError::Invalid { why: "init flags" });
+        }
+        self.clock = self.clock.saturating_add(1);
+        Ok(())
+    }
+
     /// `cudaRuntimeGetVersion`. Query; legal during capture.
     ///
     /// Same CUDA 13.0 value as [`Self::driver_get_version`] (this VM is one

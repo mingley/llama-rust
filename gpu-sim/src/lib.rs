@@ -819,7 +819,10 @@
 //! and graph replay use the launch / node window. Set [`None`] clears.
 //! [`Sim::device_count`] is `cudaGetDeviceCount`.
 //! [`Sim::driver_get_version`] is `cudaDriverGetVersion` / `cuDriverGetVersion`
-//! (CUDA 13.0). [`Sim::runtime_get_version`] is `cudaRuntimeGetVersion` (same
+//! (CUDA 13.0). [`Sim::driver_init`] is `cuInit` (flags 0; already initialized
+//! at [`Sim::new`]; 1 ns no-op). Distinct from [`init_device`](Sim::init_device).
+//! Capture cannot include it. No Engine `--cu-init`.
+//! [`Sim::runtime_get_version`] is `cudaRuntimeGetVersion` (same
 //! toolkit). Query; legal during capture. [`device_get`](Sim::device_get) is `cuDeviceGet` (ordinal in range).
 //! [`Sim::device_can_access_peer`] / [`device_get_p2p_attribute`](Sim::device_get_p2p_attribute)
 //! are `cudaDeviceCanAccessPeer` / `cudaDeviceGetP2PAttribute` (topology links;
@@ -18182,6 +18185,28 @@ mod tests {
         let eight = Sim::new(HardwareProfile::example_8xh100_nvlink());
         assert_eq!(eight.driver_get_version(), 13_000);
         assert_eq!(eight.runtime_get_version(), 13_000);
+    }
+
+    #[test]
+    fn driver_init_is_cu_init_zero_flags() {
+        let mut sim = Sim::new(h100());
+        let t0 = sim.clock_ns();
+        sim.driver_init(0).unwrap();
+        assert_eq!(sim.clock_ns(), t0.saturating_add(1));
+        sim.driver_init(0).unwrap();
+        assert_eq!(sim.clock_ns(), t0.saturating_add(2));
+        match sim.driver_init(1) {
+            Err(SimError::Invalid { why }) => assert!(why.contains("init flags"), "{why}"),
+            other => panic!("{other:?}"),
+        }
+        sim.begin_capture(DeviceId(0), StreamId(0)).unwrap();
+        match sim.driver_init(0) {
+            Err(SimError::Invalid { why }) => assert!(why.contains("capture"), "{why}"),
+            other => panic!("{other:?}"),
+        }
+        let _g = sim.end_capture().unwrap();
+        assert_eq!(sim.driver_get_version(), 13_000);
+        sim.init_device(DeviceId(0)).unwrap();
     }
 
     #[test]

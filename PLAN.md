@@ -6338,7 +6338,14 @@ model, do not celebrate the sim.
     `gpu-profile capture` is still refused. Dual score still has no
     `$/M tokens`.
 
-603. [ ] Next numbered PLAN item after 602 is the next `gpu-sim` / Engine /
+603. [x] `gpu-sim` `Sim::driver_init` is `cuInit`. Flags must be 0.
+    Already initialized at `Sim::new`; further calls are 1 ns no-ops.
+    Capture cannot include it. Distinct from `init_device`
+    (`cudaInitDevice`). This VM does not invent `cuInit` flag bits,
+    Engine `--cu-init`, or `cudaChooseDevice`. `gpu-profile capture` is
+    still refused. Dual score still has no `$/M tokens`.
+
+604. [ ] Next numbered PLAN item after 603 is the next `gpu-sim` / Engine /
     serve / expertvm mechanical API that is still missing, or the next official
     decode family. Prefer remaining CUDA-shaped twins over more
     OpenAI HTTP veneer. Do not invent F32 `output.scale`. Do not invent a
@@ -6581,6 +6588,9 @@ model, do not celebrate the sim.
     Do not invent a second `cuFuncGetParamInfo` / `func_get_param_info`.
     Do not invent Engine `--func-param-info`. Do not invent a compiled
     kernel this slice. Do not reverse `"unknown function"`.
+    Do not invent a second `cuInit` / `driver_init`. Do not invent
+    Engine `--cu-init`. Do not invent `cuInit` flag bits. Do not reverse
+    flags 0 as a 1 ns no-op.
     Do not invent a second `cudaStreamAddCallback`.
     Do not invent Engine `--stream-callback` (same wall as second live
     `cudaLaunchHostFunc` after miss DMA).
@@ -6937,6 +6947,9 @@ model, do not celebrate the sim.
     Do not invent a second `func_get_param_info` API. Do not invent
     Engine `--function-param`. Do not invent parameter-blob layout this
     slice. Do not reverse `"unknown function"`.
+    Do not invent a second `driver_init` API. Do not invent
+    Engine `--driver-init`. Do not invent a second `init_device`.
+    Do not reverse flags 0 remaining a no-op.
     Do not invent a second DeviceLaunch in-flight destroy-complete check or Engine
     `--device-launch-destroy`. Do not abort an in-flight DeviceLaunch when
     `destroy_graph` succeeds. Do not delay destroy of an idle exec. Do not invent
@@ -7501,6 +7514,8 @@ model, do not celebrate the sim.
     Engine `--cu-func-name`. Do not reverse wrapping GetName empty.
     Do not invent a second `func_get_param_info` method. Do not invent
     Engine `--cu-func-param`. Do not reverse unknown-function Invalid.
+    Do not invent a second `driver_init` method. Do not invent
+    Engine `--cu-driver-init`. Do not reverse wrapping cuInit flags 0.
     Do not
     spend the next item on an OpenAI-compatible HTTP veneer.
 
