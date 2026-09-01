@@ -538,7 +538,8 @@ parent keeps working. `destroy_graph` is `cudaGraphDestroy` / `cudaGraphExecDest
 later launch is unknown; remaining graph mem is refunded; user-object
 refs held by the graph are released; destroying an in-flight exec does
 not abort the launch, whether the work came from `device_launch_graph`
-or host `launch_graph`; destroying an exec with an in-flight
+or host `launch_graph` (concurrent host launches all finish);
+destroying an exec with an in-flight
 `upload_graph_async` does not abort the upload).
 `user_object_create` is `cudaUserObjectCreate`
 (`UserObjectFlags::NO_DESTRUCTOR_SYNC`; initial refs `1..=i32::MAX`; last

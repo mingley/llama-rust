@@ -5173,6 +5173,57 @@ mod tests {
     }
 
     #[test]
+    fn concurrent_host_launch_destroy_waits_for_all() {
+        let mut sim = Sim::new(h100().with_compute_slots(2));
+        let d = DeviceId(0);
+        let s0 = StreamId(0);
+        let s1 = StreamId(1);
+        let a = sim.malloc(d, 4096).unwrap();
+        let b = sim.malloc(d, 4096).unwrap();
+        let g = sim.create_graph(d, s0).unwrap();
+        sim.graph_add_kernel(g, KernelKind::other(1 << 40, 4096), &[a], &[a])
+            .unwrap();
+        let obj = sim
+            .user_object_create(11, 1, UserObjectFlags::NO_DESTRUCTOR_SYNC)
+            .unwrap();
+        sim.graph_retain_user_object(g, obj, 1, GraphUserObjectFlags::MOVE)
+            .unwrap();
+        let exec = sim.instantiate_graph(g).unwrap();
+        let launched = sim.launch_graph(exec, s0).unwrap();
+        assert!(launched > 0);
+        let (node, mut params) = sim.graph_unique_kernel(g).unwrap();
+        params.kind = KernelKind::other(8, 8);
+        params.reads = vec![KernelBuf::whole(b)];
+        params.writes = vec![KernelBuf::whole(b)];
+        sim.graph_exec_kernel_set_params(exec, node, &params)
+            .unwrap();
+        let launched = sim.launch_graph(exec, s1).unwrap();
+        assert!(launched > 0);
+        sim.destroy_graph(exec).unwrap();
+        sim.destroy_graph(g).unwrap();
+        assert!(sim.user_object_destructors().is_empty());
+        sim.synchronize_stream(d, s1).unwrap();
+        assert!(sim.user_object_destructors().is_empty());
+        let short = sim
+            .operations()
+            .find(|o| matches!(o.kind, GpuOp::Kernel { .. }) && o.stream == s1)
+            .expect("short");
+        assert!(short.done_ns.is_some());
+        let long = sim
+            .operations()
+            .find(|o| matches!(o.kind, GpuOp::Kernel { .. }) && o.stream == s0)
+            .expect("long");
+        assert!(long.done_ns.is_none());
+        sim.synchronize().unwrap();
+        assert_eq!(sim.user_object_destructors(), &[(obj, 11)]);
+        let long = sim
+            .operations()
+            .find(|o| matches!(o.kind, GpuOp::Kernel { .. }) && o.stream == s0)
+            .expect("long");
+        assert!(long.done_ns.is_some());
+    }
+
+    #[test]
     fn upload_async_destroy_in_flight_holds_user_object() {
         let mut p = h100();
         for g in &mut p.gpus {

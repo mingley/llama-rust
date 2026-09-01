@@ -5,6 +5,16 @@ Visible five-turn extract: [docs/chatgpt-share-6a920fe1.md](docs/chatgpt-share-6
 Complete share-API extract: [docs/chatgpt-share-6a920fe1/](docs/chatgpt-share-6a920fe1/).
 Work lands on `main`. No PRs.
 
+## Shipped 2026-09-01 — Concurrent host launches pin every destroy tail
+
+`gpu-sim` CUDA `cudaGraphExecDestroy` of an exec with concurrent in-flight
+host `launch_graph`s waits for every launch tail, not only the last.
+The handle is unknown immediately; user-object exec refs are held until
+all those tails complete. Capture is still reported first. Empty host
+launches do not pin destroy. Host SetParams stay. This VM does not invent
+Engine `--graph-exec-multi-launch`. `gpu-profile capture` is still
+refused. Dual score still has no `$/M tokens`.
+
 ## Shipped 2026-09-01 — ExecUpdate of an in-flight exec is Invalid
 
 `gpu-sim` CUDA `cudaGraphExecUpdate` of an exec with an in-flight host

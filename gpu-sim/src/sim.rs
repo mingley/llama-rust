@@ -618,9 +618,10 @@ struct Graph {
     instantiate_flags: u32,
     /// Last op of an in-flight [`Sim::device_launch_graph`] (launcher or body tail).
     device_launch_tail: Option<OpId>,
-    /// Last op of an in-flight host [`Sim::launch_graph`]. Empty launches do
-    /// not pin destroy to prior stream work.
-    host_launch_tail: Option<OpId>,
+    /// In-flight host [`Sim::launch_graph`] tails. Concurrent launches each pin
+    /// a tail; destroy waits for all of them. Empty launches do not pin destroy
+    /// to prior stream work.
+    host_launch_tails: Vec<OpId>,
     /// [`Sim::destroy_graph`] of an in-flight exec: the handle is unknown, but
     /// the launch still finishes (`cudaGraphExecDestroy`).
     handle_gone: bool,
@@ -3255,8 +3256,9 @@ impl Sim {
         Ok(n)
     }
 
-    /// Record the launch-stream tail after a live host launch. Empty launches
-    /// do not pin destroy to unrelated prior stream work.
+    /// Record launch-stream tails after a live host launch. Empty launches
+    /// do not pin destroy to unrelated prior stream work. Concurrent launches
+    /// keep every still-in-flight tail.
     fn pin_host_launch_tail(
         &mut self,
         exec: GraphId,
@@ -3277,12 +3279,22 @@ impl Sim {
         let Some(tail) = self.tail.get(&(device, stream)).copied() else {
             return Ok(());
         };
+        let mut tails = self
+            .graphs
+            .get(&exec)
+            .ok_or(SimError::Invalid {
+                why: "unknown graph",
+            })?
+            .host_launch_tails
+            .clone();
+        tails.retain(|op| !self.op_done(*op));
+        tails.push(tail);
         self.graphs
             .get_mut(&exec)
             .ok_or(SimError::Invalid {
                 why: "unknown graph",
             })?
-            .host_launch_tail = Some(tail);
+            .host_launch_tails = tails;
         Ok(())
     }
 
@@ -4195,7 +4207,7 @@ impl Sim {
                 auto_free_on_launch: auto_free,
                 instantiate_flags: flags,
                 device_launch_tail: None,
-                host_launch_tail: None,
+                host_launch_tails: Vec::new(),
                 handle_gone: false,
                 primary_exec: None,
                 src: Some(graph),
@@ -7211,7 +7223,7 @@ impl Sim {
                     auto_free_on_launch: false,
                     instantiate_flags: 0,
                     device_launch_tail: None,
-                    host_launch_tail: None,
+                    host_launch_tails: Vec::new(),
                     handle_gone: false,
                     primary_exec: None,
                     src: None,
@@ -7463,7 +7475,8 @@ impl Sim {
     /// the work came from [`Self::device_launch_graph`] or host
     /// [`Self::launch_graph`]. The handle is unknown immediately. Idle execs
     /// still drop immediately. An empty host launch does not pin destroy to
-    /// unrelated prior stream work. An in-flight [`Self::upload_graph_async`]
+    /// unrelated prior stream work. Concurrent host launches each pin a tail;
+    /// destroy waits for all of them. An in-flight [`Self::upload_graph_async`]
     /// is the same park (the upload still completes).
     pub fn destroy_graph(&mut self, graph: GraphId) -> Result<(), SimError> {
         self.fail_if_capturing("cannot capture graph destroy")?;
@@ -7486,7 +7499,7 @@ impl Sim {
 
     fn graph_exec_in_flight(&self, id: GraphId, g: &Graph) -> bool {
         g.device_launch_tail.is_some_and(|op| !self.op_done(op))
-            || g.host_launch_tail.is_some_and(|op| !self.op_done(op))
+            || g.host_launch_tails.iter().any(|op| !self.op_done(*op))
             || self.pending_graph_upload(id).is_some()
     }
 
@@ -7916,7 +7929,7 @@ impl Sim {
                 auto_free_on_launch: false,
                 instantiate_flags: 0,
                 device_launch_tail: None,
-                host_launch_tail: None,
+                host_launch_tails: Vec::new(),
                 handle_gone: false,
                 primary_exec: None,
                 src: None,
