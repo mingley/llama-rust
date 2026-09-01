@@ -564,6 +564,9 @@
 //! [`array_3d_get_descriptor`](Sim::array_3d_get_descriptor) is
 //! `cuArray3DGetDescriptor` (always Invalid `"array 3d descriptor"`). Query;
 //! legal during capture. No Engine `--array-3d-desc`.
+//! [`array_get_sparse_properties`](Sim::array_get_sparse_properties) is
+//! `cuArrayGetSparseProperties` (always Invalid `"array sparse"`). Query;
+//! legal during capture. No Engine `--array-sparse`.
 //! [`mipmapped_array_create`](Sim::mipmapped_array_create) is
 //! `cuMipmappedArrayCreate` (always Invalid `"mipmapped array"`). Query;
 //! legal during capture. No Engine `--mipmap-array`.
@@ -21380,6 +21383,43 @@ mod tests {
             }
             other => panic!("{other:?}"),
         }
+    }
+
+    #[test]
+    fn array_get_sparse_properties_is_unsupported() {
+        let mut sim = Sim::new(h100());
+        let d = DeviceId(0);
+        match sim.array_get_sparse_properties(d) {
+            Err(SimError::Invalid { why }) => {
+                assert!(why.contains("array sparse"), "{why}");
+            }
+            other => panic!("{other:?}"),
+        }
+        sim.begin_capture(d, StreamId(0)).unwrap();
+        match sim.array_get_sparse_properties(d) {
+            Err(SimError::Invalid { why }) => {
+                assert!(why.contains("array sparse"), "{why}");
+            }
+            other => panic!("{other:?}"),
+        }
+        let _g = sim.end_capture().unwrap();
+        match sim.array_get_sparse_properties(DeviceId(99)) {
+            Err(SimError::Invalid { why }) => {
+                assert!(why.contains("device not in profile"), "{why}");
+            }
+            other => panic!("{other:?}"),
+        }
+        match sim.array_3d_get_descriptor(d) {
+            Err(SimError::Invalid { why }) => {
+                assert!(why.contains("array 3d descriptor"), "{why}");
+            }
+            other => panic!("{other:?}"),
+        }
+        assert_eq!(
+            sim.device_get_attribute(d, DeviceAttr::SparseCudaArraySupported)
+                .unwrap(),
+            0
+        );
     }
 
     #[test]

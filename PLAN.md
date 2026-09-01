@@ -6710,7 +6710,14 @@ model, do not celebrate the sim.
     or `cudaChooseDevice`. `gpu-profile capture` is still refused. Dual
     score still has no `$/M tokens`.
 
-653. [ ] Next numbered PLAN item after 652 is the next `gpu-sim` / Engine /
+653. [x] `gpu-sim` `Sim::array_get_sparse_properties` is
+    `cuArrayGetSparseProperties`. Always Invalid `"array sparse"` because
+    sparse CUDA arrays are not modeled. Query; legal during capture. Distinct
+    from `array_3d_get_descriptor`. This VM does not invent `cuArrayGetPlane`, Engine `--array-sparse`,
+    or `cudaChooseDevice`. `gpu-profile capture` is still refused. Dual
+    score still has no `$/M tokens`.
+
+654. [ ] Next numbered PLAN item after 653 is the next `gpu-sim` / Engine /
     serve / expertvm mechanical API that is still missing, or the next official
     decode family. Prefer remaining CUDA-shaped twins over more
     OpenAI HTTP veneer. Do not invent F32 `output.scale`. Do not invent a
@@ -7119,6 +7126,9 @@ model, do not celebrate the sim.
     `graphics_unmap_resources`. Do not invent Engine `--graphics-unmap`.
     Do not invent `cuGraphicsResourceGetMappedPointer` this slice. Do not reverse
     `"graphics unmap"`.
+    Do not invent a second `cuArrayGetSparseProperties` /
+    `array_get_sparse_properties`. Do not invent Engine `--array-sparse`.
+    Do not invent `cuArrayGetPlane` this slice. Do not reverse `"array sparse"`.
     Do not invent a second `cudaStreamAddCallback`.
     Do not invent Engine `--stream-callback` (same wall as second live
     `cudaLaunchHostFunc` after miss DMA).
@@ -7637,6 +7647,10 @@ model, do not celebrate the sim.
     Engine `--unmap-graphics`. Do not invent
     `cuGraphicsUnregisterResource` this slice. Do not reverse
     graphics unmap remaining unsupported.
+    Do not invent a second `array_get_sparse_properties` API. Do not invent
+    Engine `--get-array-sparse`. Do not invent a populated
+    `CUDA_ARRAY_SPARSE_PROPERTIES` this slice. Do not reverse
+    array sparse remaining unsupported.
     Do not invent a second DeviceLaunch in-flight destroy-complete check or Engine
     `--device-launch-destroy`. Do not abort an in-flight DeviceLaunch when
     `destroy_graph` succeeds. Do not delay destroy of an idle exec. Do not invent
@@ -8349,6 +8363,9 @@ model, do not celebrate the sim.
     Do not invent a second `graphics_unmap_resources` method. Do not invent
     Engine `--cu-graphics-unmap-resources`. Do not reverse wrapping
     cuGraphicsUnmapResources Invalid.
+    Do not invent a second `array_get_sparse_properties` method. Do not
+    invent Engine `--cu-array-get-sparse-properties`. Do not reverse wrapping
+    cuArrayGetSparseProperties Invalid.
     Do not
     spend the next item on an OpenAI-compatible HTTP veneer.
 

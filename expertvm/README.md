@@ -546,6 +546,8 @@ modeled; no Engine flag).
 array handles; no Engine flag).
 `gpu-sim` `array_3d_get_descriptor` is `cuArray3DGetDescriptor` (Invalid;
 no array handles; no Engine flag).
+`gpu-sim` `array_get_sparse_properties` is `cuArrayGetSparseProperties`
+(Invalid; sparse CUDA arrays are not modeled; no Engine flag).
 `gpu-sim` `mipmapped_array_create` is `cuMipmappedArrayCreate` (Invalid;
 CUDA mipmapped arrays are not modeled; no Engine flag).
 `gpu-sim` `import_external_memory` is `cuImportExternalMemory` (Invalid;

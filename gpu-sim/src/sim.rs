@@ -17631,14 +17631,28 @@ impl Sim {
     /// `cuArray3DGetDescriptor`. CUDA arrays are not modeled.
     ///
     /// Always Invalid `"array 3d descriptor"` (no array handles). Distinct
-    /// from [`Self::array_get_descriptor`] and from [`Self::array_create`].
-    /// Unknown devices are Invalid `"device not in profile"`. Query; legal
-    /// during capture. This VM does not invent `cuArrayGetSparseProperties`
-    /// this slice.
+    /// from [`Self::array_get_descriptor`], from [`Self::array_create`], and
+    /// from [`Self::array_get_sparse_properties`]. Unknown devices are Invalid
+    /// `"device not in profile"`. Query; legal during capture.
     pub fn array_3d_get_descriptor(&self, device: DeviceId) -> Result<(), SimError> {
         let _gpu = self.profile.gpu(device)?;
         Err(SimError::Invalid {
             why: "array 3d descriptor",
+        })
+    }
+
+    /// `cuArrayGetSparseProperties` plus `cudaArrayGetSparseProperties`.
+    /// CUDA arrays are not modeled.
+    ///
+    /// Always Invalid `"array sparse"` ([`DeviceAttr::SparseCudaArraySupported`]
+    /// is 0; no array handles). Distinct from [`Self::array_3d_get_descriptor`]
+    /// and from [`Self::array_create`]. Unknown devices are Invalid
+    /// `"device not in profile"`. Query; legal during capture. This VM does
+    /// not invent `cuArrayGetPlane` this slice.
+    pub fn array_get_sparse_properties(&self, device: DeviceId) -> Result<(), SimError> {
+        let _gpu = self.profile.gpu(device)?;
+        Err(SimError::Invalid {
+            why: "array sparse",
         })
     }
 
