@@ -193,6 +193,7 @@ warp scheduler, L1, …   ← do not model
 | `ctx_get_shared_mem_config` wraps `get_shared_mem_config` for that primary context | `cuCtxGetSharedMemConfig` |
 | `func_get_name` is empty until a compiled kernel exists | `cudaFuncGetName` / `cuFuncGetName` |
 | `func_get_param_info` is Invalid until a compiled kernel exists | `cuFuncGetParamInfo` |
+| `func_is_loaded` is false until a compiled kernel exists | `cuFuncIsLoaded` |
 | access-policy windows align to `cudaLimitMaxL2FetchGranularity` (default 128; `expertvm sim --l2-fetch N` sets 32/64/128) | exact |
 | `AccessPolicyWindow.hit_ratio_permille` is CUDA `hitRatio` (`expertvm sim --l2-ratio N`; unset 1000) | exact |
 | `AccessPolicyWindow.hit` Streaming skips persist fill (`expertvm sim --l2-streaming`; needs persist) | exact |
@@ -1133,7 +1134,10 @@ compiled kernel exists. Distinct from device `MaxThreadsPerBlock`.
 `numRegs` is not modeled this slice. `func_get_name` is `cudaFuncGetName` /
 `cuFuncGetName` (empty until a compiled kernel exists; distinct from
 `device_get_name`). `func_get_param_info` is `cuFuncGetParamInfo` (Invalid
-`"unknown function"` until a compiled kernel exists). `func_set_attribute` /
+`"unknown function"` until a compiled kernel exists). `func_is_loaded` is
+`cuFuncIsLoaded` (`false` until a compiled kernel exists; distinct from
+empty `func_get_name` and unknown-function `func_get_param_info`).
+`func_set_attribute` /
 `func_get_attribute` are `cudaFuncSetAttribute` / `GetAttribute` (`FuncAttr`).
 Typed setters stay. `stream_get_flags` is `cudaStreamGetFlags`
 (`0` `cudaStreamDefault` / `1` `cudaStreamNonBlocking`; NULL follows

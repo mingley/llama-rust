@@ -502,6 +502,8 @@ flag; not a compiled kernel).
 kernel exists; no Engine flag).
 `gpu-sim` `func_get_param_info` is `cuFuncGetParamInfo` (Invalid until a
 compiled kernel exists; no Engine flag).
+`gpu-sim` `func_is_loaded` is `cuFuncIsLoaded` (`false` until a compiled
+kernel exists; no Engine flag).
 `gpu-sim` `driver_init` is `cuInit` (flags 0; already initialized; no
 Engine flag).
 `gpu-sim` `module_get_loading_mode` is `cuModuleGetLoadingMode` (always

@@ -6359,7 +6359,14 @@ model, do not celebrate the sim.
     Engine `--ctx-device`, or `cudaChooseDevice`. `gpu-profile capture` is
     still refused. Dual score still has no `$/M tokens`.
 
-606. [ ] Next numbered PLAN item after 605 is the next `gpu-sim` / Engine /
+606. [x] `gpu-sim` `Sim::func_is_loaded` is `cuFuncIsLoaded`. `false`
+    until a compiled kernel exists. Query; legal during capture.
+    Distinct from empty `func_get_name` and unknown-function
+    `func_get_param_info`. This VM does not invent `cuFuncLoad`,
+    Engine `--func-loaded`, or `cudaChooseDevice`. `gpu-profile capture` is
+    still refused. Dual score still has no `$/M tokens`.
+
+607. [ ] Next numbered PLAN item after 606 is the next `gpu-sim` / Engine /
     serve / expertvm mechanical API that is still missing, or the next official
     decode family. Prefer remaining CUDA-shaped twins over more
     OpenAI HTTP veneer. Do not invent F32 `output.scale`. Do not invent a
@@ -6612,6 +6619,9 @@ model, do not celebrate the sim.
     Do not invent a second `cuCtxGetDevice` / `ctx_get_device`. Do not
     invent Engine `--ctx-device`. Do not invent `cudaSetDevice`. Do not
     reverse wrapping the explicit device.
+    Do not invent a second `cuFuncIsLoaded` / `func_is_loaded`. Do not
+    invent Engine `--func-loaded`. Do not invent `cuFuncLoad`. Do not reverse
+    false until a compiled kernel exists.
     Do not invent a second `cudaStreamAddCallback`.
     Do not invent Engine `--stream-callback` (same wall as second live
     `cudaLaunchHostFunc` after miss DMA).
@@ -6977,6 +6987,9 @@ model, do not celebrate the sim.
     Do not invent a second `ctx_get_device` API. Do not invent
     Engine `--context-device`. Do not invent a second `green_ctx_get_device`.
     Do not reverse returning the explicit device.
+    Do not invent a second `func_is_loaded` API. Do not invent
+    Engine `--function-loaded`. Do not invent a compiled kernel this
+    slice. Do not reverse `Ok(false)`.
     Do not invent a second DeviceLaunch in-flight destroy-complete check or Engine
     `--device-launch-destroy`. Do not abort an in-flight DeviceLaunch when
     `destroy_graph` succeeds. Do not delay destroy of an idle exec. Do not invent
@@ -7548,6 +7561,9 @@ model, do not celebrate the sim.
     cuModuleGetLoadingMode Eager.
     Do not invent a second `ctx_get_device` method. Do not invent
     Engine `--cu-ctx-device`. Do not reverse wrapping cuCtxGetDevice.
+    Do not invent a second `func_is_loaded` method. Do not invent
+    Engine `--cu-func-loaded`. Do not reverse wrapping cuFuncIsLoaded
+    false.
     Do not
     spend the next item on an OpenAI-compatible HTTP veneer.
 
