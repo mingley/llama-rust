@@ -5,6 +5,16 @@ Visible five-turn extract: [docs/chatgpt-share-6a920fe1.md](docs/chatgpt-share-6
 Complete share-API extract: [docs/chatgpt-share-6a920fe1/](docs/chatgpt-share-6a920fe1/).
 Work lands on `main`. No PRs.
 
+## Shipped 2026-09-01 — DeviceLaunch mixed green ctx is MultipleDevices
+
+`gpu-sim` CUDA DeviceLaunch mixed node green ctx is
+`MultipleDevicesNotSupported` (driver MultipleCtxs; `"graph multiple
+ctx"`). Same-ctx DeviceLaunch stays. Host instantiate of mixed ctx stays.
+Type refuse still beats ctx. Capture is still reported first. This VM
+does not invent Engine `--device-launch-ctx` or a second instantiate
+result variant. `gpu-profile capture` is still refused. Dual score still
+has no `$/M tokens`.
+
 ## Shipped 2026-09-01 — DeviceLaunch memset stays on the graph device
 
 `gpu-sim` CUDA DeviceLaunch memset dest must be origin-device memory or

@@ -828,6 +828,7 @@ struct InstantiateSnap {
     mem_node: Option<usize>,
     free_node: Option<usize>,
     multi_dev: Option<usize>,
+    device_launch_multi_ctx: Option<usize>,
     primary: Option<GraphId>,
     origin: (DeviceId, StreamId),
     bodies: Vec<GraphId>,
@@ -3847,7 +3848,9 @@ impl Sim {
     /// conditionals, host, empty, and batch-mem nodes are Invalid for
     /// device-launch. Memcpy [`crate::Place::Device`] must match the graph
     /// origin device ([`crate::Place::HostPinned`] stays). Memset dest must
-    /// be that device or pinned mapped host.
+    /// be that device or pinned mapped host. Mixed node green ctx is
+    /// [`GraphInstantiateResult::MultipleDevicesNotSupported`]
+    /// (`"graph multiple ctx"`).
     /// [`GraphInstantiateFlags::DEVICE_LAUNCH`] cannot combine
     /// with [`GraphInstantiateFlags::AUTO_FREE_ON_LAUNCH`] (Invalid
     /// `"device launch auto free"`). Instantiating an exec id is a no-op when
@@ -4041,6 +4044,14 @@ impl Sim {
                 "graph multiple devices",
             );
         }
+        if let Some(node) = snapshot.device_launch_multi_ctx {
+            return Self::instantiate_report(
+                out,
+                GraphInstantiateResult::MultipleDevicesNotSupported,
+                Some(node),
+                "graph multiple ctx",
+            );
+        }
         let ns = match self.profile.gpu(snapshot.device) {
             Ok(g) => g.graph_instantiate_ns.max(1),
             Err(e) => {
@@ -4141,6 +4152,11 @@ impl Sim {
                 .iter()
                 .any(|s| !s.destroyed && device_launch_has_work(&s.kind));
         let multi_dev = g.steps.iter().position(|s| s.device != origin_dev);
+        let device_launch_multi_ctx = if device_launch {
+            device_launch_ctx_mismatch(&g.steps)
+        } else {
+            None
+        };
         Ok(InstantiateSnap {
             device,
             already: g.instantiated,
@@ -4152,6 +4168,7 @@ impl Sim {
             mem_node,
             free_node,
             multi_dev,
+            device_launch_multi_ctx,
             primary: g.primary_exec,
             origin: g.origin,
             bodies: g
@@ -22836,6 +22853,21 @@ fn device_launch_memset_off_device(
         return !vmm_covers(&a.vmm_maps, origin, op.offset, op.extent_bytes());
     }
     !a.devices.contains(&origin)
+}
+
+fn device_launch_ctx_mismatch(steps: &[GraphStep]) -> Option<usize> {
+    let mut first: Option<Option<GreenCtxId>> = None;
+    for (i, s) in steps.iter().enumerate() {
+        if s.destroyed {
+            continue;
+        }
+        match first {
+            None => first = Some(s.green_ctx),
+            Some(ctx) if ctx != s.green_ctx => return Some(i),
+            Some(_) => {}
+        }
+    }
+    None
 }
 
 fn kind_from_batch(op: BatchMemOp) -> Kind {

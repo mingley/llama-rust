@@ -5630,7 +5630,17 @@ model, do not celebrate the sim.
     `--device-launch-memset`. `gpu-profile capture` is still refused.
     Dual score still has no `$/M tokens`.
 
-524. [ ] Next numbered PLAN item after 523 is the next `gpu-sim` / Engine /
+524. [x] `gpu-sim` CUDA DeviceLaunch mixed node green ctx is
+    [`GraphInstantiateResult::MultipleDevicesNotSupported`] (driver
+    `CUDA_GRAPH_INSTANTIATE_MULTIPLE_CTXS_NOT_SUPPORTED`; `"graph
+    multiple ctx"`; `err_node` is the first differing node). Same-ctx
+    DeviceLaunch stays. Host instantiate of mixed ctx stays. Type refuse
+    still beats ctx. Capture is still reported first. This VM does not
+    invent Engine `--device-launch-ctx` or a second instantiate result
+    variant. `gpu-profile capture` is still refused. Dual score still has
+    no `$/M tokens`.
+
+525. [ ] Next numbered PLAN item after 524 is the next `gpu-sim` / Engine /
     serve / expertvm mechanical API that is still missing, or the next official
     decode family. Prefer remaining CUDA-shaped twins over more
     OpenAI HTTP veneer. Do not invent F32 `output.scale`. Do not invent a
@@ -5733,6 +5743,11 @@ model, do not celebrate the sim.
     `--device-launch-memset`. Do not reverse pinned or mapped DeviceLaunch
     memset. Do not reverse origin-device DeviceLaunch memset. Do not
     invent peer-access making off-device DeviceLaunch memset legal.
+    Do not invent a second DeviceLaunch mixed-ctx check or Engine
+    `--device-launch-ctx`. Do not invent a second
+    [`GraphInstantiateResult`] variant for driver MultipleCtxs. Do not
+    reverse same-ctx DeviceLaunch. Do not reverse host instantiate of mixed
+    green ctx. Do not invent CDP multi-ctx host instantiate.
     Do not invent a second `cudaStreamGetCaptureInfo_v3`. Do not invent
     `cudaStreamUpdateCaptureDependencies` v2 edgeData.
     Do not invent a second `cudaDeviceProp::persistingL2CacheMaxSize`.
@@ -6073,6 +6088,9 @@ model, do not celebrate the sim.
     Do not reverse pinned or mapped DeviceLaunch memset. Do not reverse
     origin-device DeviceLaunch memset dest. Do not invent Engine
     `--device-launch-memset`.
+    Do not reverse same-ctx DeviceLaunch. Do not reverse host instantiate
+    of mixed green ctx. Do not invent Engine `--device-launch-ctx`. Do
+    not invent a second MultipleCtxs instantiate result.
     Do not reverse PLAN 182 v1 duplicate-add no-op or missing-remove
     no-op. Do not reverse v2 Default identity with v1 (incoming Default
     on an existing launch-completion edge stays a no-op that keeps

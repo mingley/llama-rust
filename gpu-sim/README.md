@@ -513,7 +513,8 @@ contain at least one kernel, memcpy, or memset node (`"device launch
 empty"`). Mem alloc/free, events, child graphs, conditionals, host,
 empty, and batch-mem nodes are Invalid. Memcpy `Place::Device` must match
 the graph origin device (`Place::HostPinned` stays). Memset dest must be
-that device or pinned mapped host; `update_graph` of a
+that device or pinned mapped host. Mixed node green ctx is
+`MultipleDevicesNotSupported` (`"graph multiple ctx"`); `update_graph` of a
 device-launch exec is Invalid; cannot combine with `AUTO_FREE_ON_LAUNCH`
 (`"device launch auto free"`).
 `instantiate_graph_with_params` is `cudaGraphInstantiateWithParams`

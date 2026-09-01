@@ -827,7 +827,9 @@
 //! conditionals, host, empty, and batch-mem nodes are Invalid. Memcpy
 //! [`Place::Device`] must match the graph origin device
 //! ([`Place::HostPinned`] stays). Memset dest must be that device or
-//! pinned mapped host; cannot combine
+//! pinned mapped host. Mixed node green ctx is
+//! [`GraphInstantiateResult::MultipleDevicesNotSupported`]
+//! (`"graph multiple ctx"`); cannot combine
 //! with [`GraphInstantiateFlags::AUTO_FREE_ON_LAUNCH`] (Invalid
 //! `"device launch auto free"`).
 //! [`instantiate_graph_with_params`](Sim::instantiate_graph_with_params) is
@@ -31044,6 +31046,114 @@ mod tests {
         let _ = sim.instantiate_graph(host).unwrap();
         sim.begin_capture(d0, s).unwrap();
         match sim.instantiate_graph_with_flags(peer, GraphInstantiateFlags::DEVICE_LAUNCH) {
+            Err(SimError::Invalid { why }) => assert!(why.contains("capture"), "{why}"),
+            other => panic!("{other:?}"),
+        }
+        let _end = sim.end_capture().unwrap();
+    }
+
+    #[test]
+    fn device_launch_rejects_mixed_green_ctx() {
+        let mut sim = Sim::new(h100());
+        let d = DeviceId(0);
+        let s = StreamId(0);
+        let a = sim.malloc(d, 64).unwrap();
+        let kind = KernelKind::other(8, 8);
+        let desc0 = sim
+            .dev_resource_generate_desc(&[SmResource {
+                start: 0,
+                width: 500,
+            }])
+            .unwrap();
+        let desc1 = sim
+            .dev_resource_generate_desc(&[SmResource {
+                start: 500,
+                width: 500,
+            }])
+            .unwrap();
+        let ctx0 = sim.green_ctx_create(desc0, d, 0).unwrap();
+        let ctx1 = sim.green_ctx_create(desc1, d, 0).unwrap();
+        let params = |ctx: Option<GreenCtxId>| {
+            GraphNodeParams::Kernel(KernelNodeParams {
+                kind: kind.clone(),
+                reads: vec![KernelBuf::whole(a)],
+                writes: vec![KernelBuf::whole(a)],
+                cooperative: false,
+                ctx,
+                shared_mem_bytes: 0,
+            })
+        };
+        let mixed = sim.create_graph(d, s).unwrap();
+        let n0 = sim.graph_add_node(mixed, &[], params(Some(ctx0))).unwrap();
+        assert_eq!(n0.node, 0);
+        let n1 = sim.graph_add_node(mixed, &[], params(Some(ctx1))).unwrap();
+        assert_eq!(n1.node, 1);
+        let err = sim
+            .instantiate_graph_with_flags(mixed, GraphInstantiateFlags::DEVICE_LAUNCH)
+            .unwrap_err();
+        match err {
+            SimError::Invalid { why } => assert!(why.contains("graph multiple ctx"), "{why}"),
+            other => panic!("{other:?}"),
+        }
+        let mut inst = GraphInstantiateParams {
+            flags: GraphInstantiateFlags::DEVICE_LAUNCH,
+            ..GraphInstantiateParams::default()
+        };
+        let err = sim
+            .instantiate_graph_with_params(mixed, &mut inst)
+            .unwrap_err();
+        match err {
+            SimError::Invalid { why } => assert!(why.contains("graph multiple ctx"), "{why}"),
+            other => panic!("{other:?}"),
+        }
+        assert_eq!(
+            inst.result,
+            GraphInstantiateResult::MultipleDevicesNotSupported
+        );
+        assert_eq!(inst.err_node, Some(1));
+        let none_some = sim.create_graph(d, s).unwrap();
+        sim.graph_add_kernel(none_some, kind.clone(), &[a], &[a])
+            .unwrap();
+        let n = sim
+            .graph_add_node(none_some, &[], params(Some(ctx0)))
+            .unwrap();
+        assert_eq!(n.node, 1);
+        let err = sim
+            .instantiate_graph_with_flags(none_some, GraphInstantiateFlags::DEVICE_LAUNCH)
+            .unwrap_err();
+        match err {
+            SimError::Invalid { why } => assert!(why.contains("graph multiple ctx"), "{why}"),
+            other => panic!("{other:?}"),
+        }
+        let same = sim.create_graph(d, s).unwrap();
+        let s0 = sim.graph_add_node(same, &[], params(Some(ctx0))).unwrap();
+        assert_eq!(s0.node, 0);
+        let s1 = sim.graph_add_node(same, &[], params(Some(ctx0))).unwrap();
+        assert_eq!(s1.node, 1);
+        let _ = sim
+            .instantiate_graph_with_flags(same, GraphInstantiateFlags::DEVICE_LAUNCH)
+            .unwrap();
+        let host = sim.create_graph(d, s).unwrap();
+        let h0 = sim.graph_add_node(host, &[], params(Some(ctx0))).unwrap();
+        assert_eq!(h0.node, 0);
+        let h1 = sim.graph_add_node(host, &[], params(Some(ctx1))).unwrap();
+        assert_eq!(h1.node, 1);
+        let _ = sim.instantiate_graph(host).unwrap();
+        let typed = sim.create_graph(d, s).unwrap();
+        sim.graph_add_host_func(typed).unwrap();
+        let t1 = sim.graph_add_node(typed, &[], params(Some(ctx0))).unwrap();
+        assert_eq!(t1.node, 1);
+        let err = sim
+            .instantiate_graph_with_flags(typed, GraphInstantiateFlags::DEVICE_LAUNCH)
+            .unwrap_err();
+        match err {
+            SimError::Invalid { why } => {
+                assert!(why.contains("device launch instantiate flag"), "{why}")
+            }
+            other => panic!("{other:?}"),
+        }
+        sim.begin_capture(d, s).unwrap();
+        match sim.instantiate_graph_with_flags(mixed, GraphInstantiateFlags::DEVICE_LAUNCH) {
             Err(SimError::Invalid { why }) => assert!(why.contains("capture"), "{why}"),
             other => panic!("{other:?}"),
         }
