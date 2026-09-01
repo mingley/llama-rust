@@ -6880,7 +6880,15 @@ model, do not celebrate the sim.
     or `cudaChooseDevice`. `gpu-profile capture` is still refused. Dual
     score still has no `$/M tokens`.
 
-676. [ ] Next numbered PLAN item after 675 is the next `gpu-sim` / Engine /
+676. [x] `gpu-sim` `Sim::graphics_d3d9_register_resource` is
+    `cuGraphicsD3D9RegisterResource`. Always Invalid `"d3d9 register"`
+    because Direct3D 9 interop is not modeled. Query; legal during capture.
+    Distinct from `d3d9_ctx_create` and `graphics_d3d11_register_resource`.
+    This VM does not invent a D3D9 `IDirect3DResource9`, Engine `--d3d9-register`,
+    or `cudaChooseDevice`. `gpu-profile capture` is still refused. Dual
+    score still has no `$/M tokens`.
+
+677. [ ] Next numbered PLAN item after 676 is the next `gpu-sim` / Engine /
     serve / expertvm mechanical API that is still missing, or the next official
     decode family. Prefer remaining CUDA-shaped twins over more
     OpenAI HTTP veneer. Do not invent F32 `output.scale`. Do not invent a
@@ -7374,6 +7382,10 @@ model, do not celebrate the sim.
     `graphics_d3d12_register_resource`. Do not invent Engine `--d3d12-register`.
     Do not invent a D3D12 `ID3D12Resource` this slice. Do not reverse
     `"d3d12 register"`.
+    Do not invent a second `cuGraphicsD3D9RegisterResource` /
+    `graphics_d3d9_register_resource`. Do not invent Engine `--d3d9-register`.
+    Do not invent a D3D9 `IDirect3DResource9` this slice. Do not reverse
+    `"d3d9 register"`.
     Do not invent a second `cudaStreamAddCallback`.
     Do not invent Engine `--stream-callback` (same wall as second live
     `cudaLaunchHostFunc` after miss DMA).
@@ -7972,6 +7984,9 @@ model, do not celebrate the sim.
     Do not invent a second `graphics_d3d12_register_resource` API. Do not invent
     Engine `--register-d3d12`. Do not invent a D3D12 keyed mutex
     this slice. Do not reverse D3D12 register remaining unsupported.
+    Do not invent a second `graphics_d3d9_register_resource` API. Do not invent
+    Engine `--register-d3d9`. Do not invent a D3D9 keyed mutex
+    this slice. Do not reverse D3D9 register remaining unsupported.
     Do not invent a second DeviceLaunch in-flight destroy-complete check or Engine
     `--device-launch-destroy`. Do not abort an in-flight DeviceLaunch when
     `destroy_graph` succeeds. Do not delay destroy of an idle exec. Do not invent
@@ -8753,6 +8768,9 @@ model, do not celebrate the sim.
     Do not invent a second `graphics_d3d12_register_resource` method. Do not
     invent Engine `--cu-graphics-d3d12-register-resource`. Do not reverse wrapping
     cuGraphicsD3D12RegisterResource Invalid.
+    Do not invent a second `graphics_d3d9_register_resource` method. Do not
+    invent Engine `--cu-graphics-d3d9-register-resource`. Do not reverse wrapping
+    cuGraphicsD3D9RegisterResource Invalid.
     Do not
     spend the next item on an OpenAI-compatible HTTP veneer.
 
