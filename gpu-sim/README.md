@@ -109,6 +109,7 @@ warp scheduler, L1, …   ← do not model
 | `cudaGraphCreate` (`create_graph`) is an empty uninstantiated graph | 1 ns host-sync |
 | `cudaStreamBeginCaptureToGraph` (`begin_capture_to_graph`) appends captured nodes onto an existing uninstantiated graph; empty deps are extra roots | not timed (capture) |
 | `cudaGraphGetNodes` / `GetRootNodes` / `GetEdges` / `NodeGetDependentNodes` | query |
+| `cudaGraphNodeGetDependencies` / `GetDependentNodes` v2 | Default `GraphEdgeData`; query |
 | `cudaGraphGetId` (`graph_get_id`) | unique id matching debug-dot HANDLES; exec/clone differ |
 | `cuGraphNodeGetLocalId` (`graph_node_get_local_id`) | live node id matching debug-dot `n0`; destroyed is Invalid |
 | `cuGraphNodeGetToolsId` (`graph_node_get_tools_id`) | unique tools id; distinct from local id and `graph_get_id` |
@@ -386,7 +387,10 @@ APIs with `numDependencies` from/to pairs (all-or-nothing).
 `graph_add_dependencies_n_with_data` is `cudaGraphAddDependencies` v2
 (`GraphEdgeData`; Default type with ports 0 is identity; Programmatic type
 is Invalid). `graph_edges_with_data` is `cudaGraphGetEdges` v2 (existing
-edges are Default, ports 0). Query; legal during capture.
+edges are Default, ports 0). `graph_node_deps_with_data` /
+`graph_node_dependents_with_data` are `cudaGraphNodeGetDependencies` /
+`GetDependentNodes` v2 (existing edges are Default, ports 0). Query;
+legal during capture.
 `graph_remove_dependencies` is `cudaGraphRemoveDependencies` (illegal on an
 exec and during capture). `graph_destroy_node` is `cudaGraphDestroyNode`
 (incident edges dropped; remaining indices stay valid; illegal on an exec

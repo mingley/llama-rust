@@ -7700,6 +7700,22 @@ impl Sim {
             .map(|s| s.deps.clone())
     }
 
+    /// `cudaGraphNodeGetDependencies` v2: `(from, data)` predecessors.
+    ///
+    /// Existing edges are [`GraphDependencyType::DEFAULT`] with ports 0
+    /// (identity with [`Self::graph_node_deps`]). Query; legal during capture.
+    pub fn graph_node_deps_with_data(
+        &self,
+        graph: GraphId,
+        i: usize,
+    ) -> Result<Vec<(usize, GraphEdgeData)>, SimError> {
+        Ok(self
+            .graph_node_deps(graph, i)?
+            .into_iter()
+            .map(|from| (from, GraphEdgeData::default()))
+            .collect())
+    }
+
     /// Root node indices (`cudaGraphGetRootNodes`): nodes with no predecessors.
     pub fn graph_root_nodes(&self, graph: GraphId) -> Result<Vec<usize>, SimError> {
         let g = self.graphs.get(&graph).ok_or(SimError::Invalid {
@@ -7846,6 +7862,23 @@ impl Sim {
             .enumerate()
             .filter(|(_, s)| !s.destroyed && s.deps.contains(&i))
             .map(|(j, _)| j)
+            .collect())
+    }
+
+    /// `cudaGraphNodeGetDependentNodes` v2: `(to, data)` successors.
+    ///
+    /// Existing edges are [`GraphDependencyType::DEFAULT`] with ports 0
+    /// (identity with [`Self::graph_node_dependents`]). Query; legal during
+    /// capture.
+    pub fn graph_node_dependents_with_data(
+        &self,
+        graph: GraphId,
+        i: usize,
+    ) -> Result<Vec<(usize, GraphEdgeData)>, SimError> {
+        Ok(self
+            .graph_node_dependents(graph, i)?
+            .into_iter()
+            .map(|to| (to, GraphEdgeData::default()))
             .collect())
     }
 

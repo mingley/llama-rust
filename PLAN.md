@@ -4846,7 +4846,15 @@ model, do not celebrate the sim.
     `gpu-profile capture` is still refused. Dual score still has no
     `$/M tokens`.
 
-444. [ ] Next numbered PLAN item after 443 is the next `gpu-sim` / Engine /
+444. [x] `gpu-sim` `graph_node_deps_with_data` /
+    `graph_node_dependents_with_data` are `cudaGraphNodeGetDependencies` /
+    `GetDependentNodes` v2 (`GraphEdgeData`). Existing edges are Default,
+    ports 0 (identity with `graph_node_deps` / `graph_node_dependents`).
+    Query; legal during capture. Distinct from `graph_edges_with_data`.
+    No Engine `--graph-edge-data`. `gpu-profile capture` is still refused.
+    Dual score still has no `$/M tokens`.
+
+445. [ ] Next numbered PLAN item after 444 is the next `gpu-sim` / Engine /
     serve / expertvm mechanical API that is still missing, or the next official
     decode family. Prefer remaining CUDA-shaped twins over more
     OpenAI HTTP veneer. Do not invent F32 `output.scale`. Do not invent a
@@ -4910,100 +4918,10 @@ model, do not celebrate the sim.
     `cudaGraphDebugDotFlagsExtSemasSignalNodeParams` / `WaitNodeParams`
     dumps (bits 7-8 stay Invalid). Do not invent
     `cudaGraphDebugDotFlagsExtraTopoInfo` extra edges.
+    Do not invent a second `cudaGraphNodeGetDependencies` /
+    `GetDependentNodes` v2.
     Do not invent `cuDeviceGetLuid`
     (Windows).
-    Do not invent gemma4 `attn_q.scale` / `attn_output.scale` / `attn_k.scale` /
-    `attn_v.scale` as the writer-tiny. Do not invent a second dense
-    `ffn_down.scale` / second `ffn_gate.scale` / second `ffn_up.scale` /
-    second `attn_q.scale` / second `attn_output.scale` /
-    second `attn_k.scale` / second `attn_v.scale` as a new family. Do not invent a second `--decode-sms` flag.
-    Do not invent a second `--green-ctx`. Do not invent a second
-    `ffn_down_exps.scale` / second gate/up scale as a new family.
-    Do not invent `CU_GREEN_CTX_DEFAULT_STREAM` as a second NULL stream.
-    Do not invent split `IGNORE_SM_COSCHEDULING` / max-cluster bits.
-    Do not invent `cuCtxFromGreenCtx` (no `CUcontext` object).
-    Do not invent occupancy SM counts (`cudaDevAttrMultiProcessorCount`,
-    occupancy APIs). Do not invent
-    `cudaGraphMemAllocNodeSetParams` (it would resize HBM),
-    `cudaDeviceGetStreamPriorityRange`, CUDA version
-    numbers, example `$/M tokens` rents, or `cudaStreamDestroy`.
-    **`best_of` / `use_beam_search` stay out of `parse_gen_req` until a
-    real beam Engine exists.** Do not default `--engine`. Do not invent
-    `max_model_len` or `/v1/tokenize`. Do not invent a second `gemma4`.
-    Do not invent CUDA arrays on `memcpy_3d_batch_async`. Do not invent
-    `ConcurrentManagedAccess` / discard contents to make batch prefetch
-    succeed.
-    Do not invent `ReuseFollowEventDependencies` /
-    `ReuseAllowInternalDependencies` as Engine flags (stored-only; 0 does
-    not insert waits). Do not invent `SetPreferredLocationHost` as a
-    decode-path skip of kernel first-touch. Do not invent finite
-    `--mempool-release N` (weaker than max-size OOM). Do not invent
-    stream inherit (`set_stream_access_policy` /
-    `set_stream_nvlink_util_centric`) — `kernel_with` / graph replay use
-    launch/node, not stream. Do not invent
-    `GraphInstantiateFlags::UPLOAD`, height/depth required cluster, or
-    function LoadBalancing / MaxL1 occupancy standalone. Do not invent a
-    second `MemcpySrcAccessOrder::Any` flag. Do not invent a second
-    `AccessProperty::Streaming` flag. Do not invent `--l2-normal` (Normal
-    vs Streaming is not mechanically distinct in gpu-sim billing). Do not
-    invent a second `cudaStreamBeginCaptureToGraph` deps flag. Do not invent
-    a second `graph_add_dependencies` flag. Do not invent a second
-    `cudaGraphAddDependencies` v2 edgeData. Do not invent Programmatic
-    graph dependency edges. Do not invent `cudaGraphRemoveDependencies`
-    edgeData. Do not invent Engine `--graph-edge-data`. Do not invent a second
-    `cudaGraphAddHostNode` BETWEEN flag. Do not invent a second captured
-    `cudaLaunchHostFunc` BETWEEN piecewise flag. Do not invent a second leaf
-    `cudaGraphAddHostNode` / captured `cudaLaunchHostFunc` BEFORE GEMM flag.
-    Do not invent a second `cudaGraphClone` of combo parents flag.
-    Do not invent a second `cudaMemsetAsync` miss-fill flag.
-    Do not invent a second live `cudaLaunchHostFunc` after miss DMA flag.
-    Do not invent JOIN-style host
-    after overlapping combo children (same wall as live `--host-func`
-    after `launch_graph`). Do not invent `stream_update_capture_dependencies`
-    as an Engine flag (same topology as begin-capture deps). Do not invent a
-    second graph-build `cudaGraphSetConditional` flag. Live `set_conditional`
-    before `launch_graph` is still wiped (create-time default). Do not invent a
-    second `--graph-if` / IF wrap flag (SetParams upload tax is the wall vs
-    `--graph-enable`). Do not invent a second `--no-read-mostly` /
-    UnsetReadMostly flag (prefetch-move vs replicate is the wall vs default
-    SetReadMostly). Do not invent a second `--no-preferred` /
-    UnsetPreferredLocation flag (remote first-touch vs stay-on-home is the
-    wall vs default SetPreferredLocation). Do not invent a second
-    `--no-mem-prefetch` / skip fill prefetch (kernel first-touch vs
-    copy-engine overlap is the wall vs default fill prefetch). Do not invent
-    a second `--memcpy-attr` / demand `cudaMemcpyWithAttributesAsync`
-    (API wait vs in-flight `memcpy_pinned_to_device` is the wall vs default
-    demand H2D). Do not invent a second `--d2h-evict` / evict
-    `cudaMemcpyAsync` Device→HostPinned (extra PCIe vs free-only is the wall
-    vs default pinned/VMM evict). Do not invent a second `--d2h-pageable` /
-    evict `cudaMemcpyAsync` Device→Host (host-sync bounce-buffer PCIe vs
-    free-only is the wall vs default pageable pinned/VMM evict). Do not invent
-    a second `--host-unregister` / `cudaHostUnregister` after miss DMA
-    (re-register plus `synchronize` tax vs keep-registered is the wall vs
-    `--host-register`). Do not invent a second `--ipc` /
-    `cudaIpcGetMemHandle` (handshake tax vs no-handshake is the wall vs
-    default `cudaMalloc`). Do not invent a second `--share-ptr` /
-    `cudaMemPoolExportPointer` (per-page pointer handshake vs pool-level
-    `--shareable` is the wall). Do not invent a second `--vmm-retain` /
-    `cuMemRetainAllocationHandle`. Do not invent a second `--vmm-handle` /
-    `va_create` plus `va_map_handle`. Do not invent
-    `--memcpy-peer` host-sync pin_hot (alias of D2D; wall matches after
-    `score()`). Do not invent `graph_add_empty` as a decode-path flag
-    (1 ns join/fork). Do not invent a second `cudaGraphAddMemsetNode` of
-    graph-mem scratch flag. Do not invent a second `cudaGraphAddMemcpyNode`
-    of graph-mem scratch flag. Do not invent D2D memcpy between two
-    different AllocIds (`MemcpyOp` names one alloc; PLAN 362 is H2D into
-    scratch). Do not invent event record/wait BETWEEN combo
-    children (1 ns). Do not invent graph wait/write_value BETWEEN combo
-    children (1 ns Solo). Do not invent `graph_add_while` / `graph_add_switch`
-    default-1 wrap (same wall as graph-build). Do not invent KernelAttrs
-    SynchronizationPolicy as an Engine flag (stream-only today). Do not
-    invent PDL wait-only. Do not invent in-graph wait_value / event wait
-    BEFORE a leaf (same GPU timeline as live wait). Do not invent host AFTER
-    kernel on a leaf (exclusive-compute wall matches BEFORE). Do not invent
-    `cuStreamBatchMemOp` packing of wait/write (1 ns Solo, not
-    `launch_overhead_ns`). Do not
-    spend the next item on an OpenAI-compatible HTTP veneer.
     Do not invent gemma4 `attn_q.scale` / `attn_output.scale` / `attn_k.scale` /
     `attn_v.scale` as the writer-tiny. Do not invent a second dense
     `ffn_down.scale` / second `ffn_gate.scale` / second `ffn_up.scale` /

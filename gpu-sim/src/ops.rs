@@ -3405,7 +3405,9 @@ impl GraphDependencyType {
 }
 
 /// `cudaGraphEdgeData` for [`crate::Sim::graph_add_dependencies_n_with_data`]
-/// / [`crate::Sim::graph_edges_with_data`].
+/// / [`crate::Sim::graph_edges_with_data`] /
+/// [`crate::Sim::graph_node_deps_with_data`] /
+/// [`crate::Sim::graph_node_dependents_with_data`].
 ///
 /// [`Self::kind`] [`GraphDependencyType::DEFAULT`] with ports 0 is identity
 /// with [`crate::Sim::graph_add_dependencies_n`]. Programmatic type is not

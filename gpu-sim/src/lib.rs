@@ -989,7 +989,11 @@
 //! ports 0 is identity; Programmatic type is Invalid).
 //! [`graph_edges_with_data`](Sim::graph_edges_with_data) is
 //! `cudaGraphGetEdges` v2 (existing edges are Default, ports 0). Query;
-//! legal during capture. [`graph_remove_dependencies`](Sim::graph_remove_dependencies) is
+//! legal during capture. [`graph_node_deps_with_data`](Sim::graph_node_deps_with_data) /
+//! [`graph_node_dependents_with_data`](Sim::graph_node_dependents_with_data)
+//! are `cudaGraphNodeGetDependencies` / `GetDependentNodes` v2 (existing
+//! edges are Default, ports 0). Query; legal during capture.
+//! [`graph_remove_dependencies`](Sim::graph_remove_dependencies) is
 //! `cudaGraphRemoveDependencies` (illegal on an exec and during capture).
 //! [`graph_destroy_node`](Sim::graph_destroy_node) is `cudaGraphDestroyNode`
 //! (drops incident edges; remaining indices stay valid; illegal on an exec and
@@ -21285,6 +21289,96 @@ mod tests {
             ]
         );
         let _cap = sim.end_capture().unwrap();
+    }
+
+    #[test]
+    fn graph_node_deps_with_data_is_default_identity() {
+        let mut sim = Sim::new(h100());
+        let d = DeviceId(0);
+        let s = StreamId(0);
+        let g = sim.create_graph(d, s).unwrap();
+        sim.graph_add_empty(g).unwrap();
+        sim.graph_add_empty(g).unwrap();
+        sim.graph_add_empty(g).unwrap();
+        sim.graph_add_dependencies(g, 0, 1).unwrap();
+        sim.graph_add_dependencies(g, 1, 2).unwrap();
+        sim.graph_add_dependencies(g, 0, 2).unwrap();
+        assert_eq!(sim.graph_node_deps(g, 0).unwrap(), Vec::<usize>::new());
+        assert_eq!(sim.graph_node_deps(g, 1).unwrap(), vec![0]);
+        assert_eq!(sim.graph_node_deps(g, 2).unwrap(), vec![0, 1]);
+        assert_eq!(sim.graph_node_dependents(g, 0).unwrap(), vec![1, 2]);
+        assert_eq!(sim.graph_node_dependents(g, 1).unwrap(), vec![2]);
+        assert_eq!(
+            sim.graph_node_dependents(g, 2).unwrap(),
+            Vec::<usize>::new()
+        );
+        assert_eq!(
+            sim.graph_node_deps_with_data(g, 0).unwrap(),
+            Vec::<(usize, GraphEdgeData)>::new()
+        );
+        assert_eq!(
+            sim.graph_node_deps_with_data(g, 1).unwrap(),
+            vec![(0, GraphEdgeData::default())]
+        );
+        assert_eq!(
+            sim.graph_node_deps_with_data(g, 2).unwrap(),
+            vec![(0, GraphEdgeData::default()), (1, GraphEdgeData::default()),]
+        );
+        assert_eq!(
+            sim.graph_node_dependents_with_data(g, 0).unwrap(),
+            vec![(1, GraphEdgeData::default()), (2, GraphEdgeData::default()),]
+        );
+        assert_eq!(
+            sim.graph_node_dependents_with_data(g, 1).unwrap(),
+            vec![(2, GraphEdgeData::default())]
+        );
+        assert_eq!(
+            sim.graph_node_dependents_with_data(g, 2).unwrap(),
+            Vec::<(usize, GraphEdgeData)>::new()
+        );
+        assert_ne!(
+            sim.graph_node_deps_with_data(g, 2).unwrap(),
+            sim.graph_edges_with_data(g)
+                .unwrap()
+                .into_iter()
+                .map(|(from, _, data)| (from, data))
+                .collect::<Vec<_>>()
+        );
+        match sim.graph_node_deps_with_data(g, 9) {
+            Err(SimError::Invalid { why }) => assert!(why.contains("graph dependency"), "{why}"),
+            other => panic!("{other:?}"),
+        }
+        match sim.graph_node_dependents_with_data(g, 9) {
+            Err(SimError::Invalid { why }) => assert!(why.contains("graph dependency"), "{why}"),
+            other => panic!("{other:?}"),
+        }
+        sim.begin_capture(d, s).unwrap();
+        assert_eq!(
+            sim.graph_node_deps_with_data(g, 1).unwrap(),
+            vec![(0, GraphEdgeData::default())]
+        );
+        assert_eq!(
+            sim.graph_node_dependents_with_data(g, 1).unwrap(),
+            vec![(2, GraphEdgeData::default())]
+        );
+        let _cap = sim.end_capture().unwrap();
+        sim.graph_destroy_node(g, 1).unwrap();
+        match sim.graph_node_deps_with_data(g, 1) {
+            Err(SimError::Invalid { why }) => assert!(why.contains("unknown graph node"), "{why}"),
+            other => panic!("{other:?}"),
+        }
+        match sim.graph_node_dependents_with_data(g, 1) {
+            Err(SimError::Invalid { why }) => assert!(why.contains("unknown graph node"), "{why}"),
+            other => panic!("{other:?}"),
+        }
+        match sim.graph_node_deps_with_data(GraphId(99), 0) {
+            Err(SimError::Invalid { why }) => assert!(why.contains("unknown graph"), "{why}"),
+            other => panic!("{other:?}"),
+        }
+        match sim.graph_node_dependents_with_data(GraphId(99), 0) {
+            Err(SimError::Invalid { why }) => assert!(why.contains("unknown graph"), "{why}"),
+            other => panic!("{other:?}"),
+        }
     }
 
     #[test]
