@@ -19411,6 +19411,21 @@ impl Sim {
         })
     }
 
+    /// `cuDeviceComputeCapability`. Query; legal during capture.
+    ///
+    /// Example H100 is Hopper 9.0. Distinct from
+    /// [`Self::device_get_attribute`] of [`DeviceAttr::ComputeCapabilityMajor`]
+    /// and [`DeviceAttr::ComputeCapabilityMinor`] (same values) and from
+    /// [`Self::driver_get_version`]. Occupancy SM counts are not invented.
+    /// Unknown devices are Invalid.
+    pub fn device_compute_capability(&self, device: DeviceId) -> Result<(u32, u32), SimError> {
+        let gpu = self.profile.gpu(device)?;
+        Ok((
+            u32::from(gpu.compute_capability_major),
+            u32::from(gpu.compute_capability_minor),
+        ))
+    }
+
     /// `cudaDeviceGetName`. Query; legal during capture.
     ///
     /// The profile name ([`HardwareProfile::name`]; same as

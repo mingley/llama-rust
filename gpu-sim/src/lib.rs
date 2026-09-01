@@ -647,6 +647,8 @@
 //! (`cudaDeviceProp` major and minor). Example H100 is Hopper 9.0. Distinct
 //! from occupancy SM counts and from [`driver_get_version`](Sim::driver_get_version).
 //! Query; legal during capture. No Engine `--compute-capability`.
+//! [`device_compute_capability`](Sim::device_compute_capability) is
+//! `cuDeviceComputeCapability` of those same major and minor values.
 //! [`DeviceAttr::MaxThreadsPerBlock`], [`MaxBlockDimX`](DeviceAttr::MaxBlockDimX),
 //! [`MaxBlockDimY`](DeviceAttr::MaxBlockDimY), [`MaxBlockDimZ`](DeviceAttr::MaxBlockDimZ),
 //! [`MaxGridDimX`](DeviceAttr::MaxGridDimX), [`MaxGridDimY`](DeviceAttr::MaxGridDimY),
@@ -19441,6 +19443,33 @@ mod tests {
         );
         let _g = sim.end_capture().unwrap();
         match sim.device_get_attribute(DeviceId(99), DeviceAttr::ComputeCapabilityMajor) {
+            Err(SimError::Invalid { why }) => {
+                assert!(why.contains("device not in profile"), "{why}");
+            }
+            other => panic!("{other:?}"),
+        }
+    }
+
+    #[test]
+    fn device_compute_capability_is_hopper_90() {
+        let mut sim = Sim::new(h100());
+        let d = DeviceId(0);
+        assert_eq!(sim.device_compute_capability(d).unwrap(), (9, 0));
+        let hp = sim.device_get_properties(d).unwrap();
+        assert_eq!(
+            sim.device_compute_capability(d).unwrap(),
+            (hp.compute_capability_major, hp.compute_capability_minor)
+        );
+        assert_eq!(
+            sim.device_get_attribute(d, DeviceAttr::ComputeCapabilityMajor)
+                .unwrap(),
+            9
+        );
+        assert_ne!(sim.driver_get_version(), 9);
+        sim.begin_capture(d, StreamId(0)).unwrap();
+        assert_eq!(sim.device_compute_capability(d).unwrap(), (9, 0));
+        let _g = sim.end_capture().unwrap();
+        match sim.device_compute_capability(DeviceId(99)) {
             Err(SimError::Invalid { why }) => {
                 assert!(why.contains("device not in profile"), "{why}");
             }

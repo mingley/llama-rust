@@ -467,7 +467,8 @@ ctxs keep running). `stream_get_dev_resource` is `cuStreamGetDevResource`.
 `SimError::error_name` / `error_string` are `cudaGetErrorName` /
 `cudaGetErrorString` (no Engine flag; no thread-local last error).
 `gpu-sim` compute capability is `cudaDevAttrComputeCapabilityMajor` and
-`Minor` (example H100 Hopper 9.0; no Engine flag).
+`Minor` (example H100 Hopper 9.0; `cuDeviceComputeCapability` is the same
+pair; no Engine flag).
 `gpu-sim` launch-geometry caps are `cudaDevAttrMaxThreadsPerBlock` 1024
 and H100 block/grid dims (no Engine flag; not occupancy SM counts).
 `gpu-sim` `MaxRegistersPerBlock` is `cudaDevAttrMaxRegistersPerBlock` 65536

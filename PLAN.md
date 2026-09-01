@@ -6246,7 +6246,15 @@ model, do not celebrate the sim.
     occupancy SM counts, or `cudaChooseDevice`. `gpu-profile capture` is
     still refused. Dual score still has no `$/M tokens`.
 
-592. [ ] Next numbered PLAN item after 591 is the next `gpu-sim` / Engine /
+592. [x] `gpu-sim` `Sim::device_compute_capability` is
+    `cuDeviceComputeCapability`. Example H100 is Hopper 9.0. Query; legal
+    during capture. Distinct from `device_get_attribute` of
+    `ComputeCapabilityMajor` / `Minor` (same values). This VM does not invent
+    occupancy SM counts, Engine `--cu-compute-capability`, or `cudaChooseDevice`.
+    `gpu-profile capture` is still refused. Dual score still has no
+    `$/M tokens`.
+
+593. [ ] Next numbered PLAN item after 592 is the next `gpu-sim` / Engine /
     serve / expertvm mechanical API that is still missing, or the next official
     decode family. Prefer remaining CUDA-shaped twins over more
     OpenAI HTTP veneer. Do not invent F32 `output.scale`. Do not invent a
@@ -6450,6 +6458,10 @@ model, do not celebrate the sim.
     Do not invent a second `cudaDevAttrGpuPciSubsystemId`. Do not invent
     Engine `--gpu-pci-subsystem`. Do not invent `DeviceAttr::PciSubSystemId`.
     Do not reverse GpuPciSubsystemId staying 0.
+    Do not invent a second `cuDeviceComputeCapability` /
+    `device_compute_capability`. Do not invent Engine `--cu-compute-capability`.
+    Do not invent occupancy SM counts from compute capability. Do not
+    reverse Hopper 9.0.
     Do not invent a second `cudaStreamAddCallback`.
     Do not invent Engine `--stream-callback` (same wall as second live
     `cudaLaunchHostFunc` after miss DMA).
@@ -6773,6 +6785,9 @@ model, do not celebrate the sim.
     Do not invent a second GpuPciSubsystemId DeviceAttr. Do not invent
     Engine `--gpu-pci-subsys`. Do not invent a NVIDIA PCI subsystem
     vendor this slice. Do not reverse GpuPciSubsystemId staying 0.
+    Do not invent a second `device_compute_capability` API. Do not invent
+    Engine `--device-cc`. Do not invent a second ComputeCapabilityMajor
+    DeviceAttr. Do not reverse Hopper 9.0.
     Do not invent a second DeviceLaunch in-flight destroy-complete check or Engine
     `--device-launch-destroy`. Do not abort an in-flight DeviceLaunch when
     `destroy_graph` succeeds. Do not delay destroy of an idle exec. Do not invent
@@ -7313,6 +7328,8 @@ model, do not celebrate the sim.
     Do not invent a second `gpu_pci_subsystem_id` DeviceProperties
     field. Do not invent Engine `--nv-pci-subsys`. Do not reverse
     GpuPciSubsystemId 0.
+    Do not invent a second `device_compute_capability` method. Do not
+    invent Engine `--cc-pair`. Do not reverse Hopper major 9.
     Do not
     spend the next item on an OpenAI-compatible HTTP veneer.
 

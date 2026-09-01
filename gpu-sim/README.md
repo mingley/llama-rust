@@ -154,6 +154,7 @@ warp scheduler, L1, …   ← do not model
 | `device_get_attribute` exposes modeled SKU caps (incl. ComputeCapabilityMajor/Minor Hopper 9.0 on example H100; MaxThreadsPerBlock 1024 and H100 block/grid dims; MaxRegistersPerBlock 65536; MaxSharedMemoryPerMultiprocessor matches optin; GlobalMemoryBusWidth 5120 bits on example H100 / 6144 on example H200; SingleToDoublePrecisionPerfRatio 1 on example H100; linear texture 1D/2D dims always 0; texture 2D gather dims always 0; mipmapped texture 1D/2D dims always 0; cubemap texture width always 0; layered texture 1D/2D dims always 0; cubemap layered texture dims always 0; layered surface 1D/2D dims always 0; cubemap surface dims always 0; texture 3D alt dims always 0; GPUDirect RDMA / CanFlushRemoteWrites / FlushWritesOptions Host / WritesOrdering None / WithCudaVMM from `LinkKind::Rdma`; MulticastSupported from `LinkKind::Nvlink`; ConcurrentManaged / DirectManagedHost / PageableHostPageTables / HostNativeAtomic / OnlyPartialHostNativeAtomic / CooperativeMultiDevice / Integrated / GenericCompression / Win32 / Win32Kmt / Fabric handle types always 0; D3D12CigSupported always 0; VulkanCigSupported always 0; ComputeMode always Default; MpsEnabled always 0; NumaConfig always None; GpuPciDeviceId always 0; GpuPciSubsystemId always 0; TccDriver / KernelExecTimeout / TensorMapAccessSupported / UnifiedFunctionPointers / TimelineSemaphoreInteropSupported / MemDecompressAlgorithmMask / MemDecompressMaximumLength / HostNumaVirtualMemoryManagementSupported / HostNumaMemoryPoolsSupported / HostNumaMultinodeIpcSupported always 0; CanUse64BitStreamMemOps / CanUseStreamMemOps / CanUseStreamWaitValueNor always 1) | `cudaDeviceGetAttribute` |
 | `device_get_exec_affinity_support` `SM_COUNT` is 0 (permille green ctx, not occupancy SM counts) | `cuDeviceGetExecAffinitySupport` |
 | `device_get_properties` wraps the same SKU caps (incl. synthetic `uuid` and PCI ids) | `cudaGetDeviceProperties` |
+| `device_compute_capability` is Hopper 9.0 on example H100 | `cuDeviceComputeCapability` |
 | `device_get_uuid` is a synthetic 16-octet id (also `DeviceProperties.uuid`) | `cuDeviceGetUuid` |
 | `device_get_by_uuid` is the inverse of `device_get_uuid` | `cuDeviceGetByUuid` |
 | `device_get_luid` is always-zero LUID plus node mask (also `DeviceProperties.luid`) | `cuDeviceGetLuid` |
@@ -913,6 +914,8 @@ interior offsets are not modeled). Query; legal during capture.
 `ComputeCapabilityMajor` and `ComputeCapabilityMinor` are Hopper 9.0 on
 example H100 (`cudaDeviceProp` major and minor). Distinct from occupancy
 SM counts. No Engine flag for compute capability.
+`device_compute_capability` is `cuDeviceComputeCapability` of those same
+major and minor values.
 `MaxThreadsPerBlock` is 1024. `MaxBlockDimX` / `Y` / `Z` are 1024, 1024,
 64. `MaxGridDimX` / `Y` / `Z` are `i32::MAX`, 65535, 65535. Example H100
 launch-geometry caps. `MaxRegistersPerBlock` is 65536 (`cudaDeviceProp`
@@ -1062,6 +1065,8 @@ not modeled; distinct from `MaxSurface2DWidth`).
 example H100. Profile keys `compute_capability_major` /
 `compute_capability_minor`. This VM does not invent occupancy SM counts
 from compute capability.
+`device_compute_capability` is `cuDeviceComputeCapability` of those same
+major and minor values.
 `MaxThreadsPerBlock` is 1024. Block dims are 1024, 1024, 64. Grid dims
 are `i32::MAX`, 65535, 65535. Distinct from occupancy SM counts. This VM
 does not model a thread-block launch.
@@ -1083,7 +1088,9 @@ atomics are not modeled; distinct from `NativeAtomicSupported` and from
 (compute capability major/minor included; launch-geometry caps included;
 MaxRegistersPerBlock included; MaxSharedMemoryPerMultiprocessor matches optin; GlobalMemoryBusWidth included; SingleToDoublePrecisionPerfRatio included; texture 2D/3D
 dims included; linear texture 1D/2D dims included; texture 2D gather dims included; mipmapped texture 1D/2D dims included; cubemap texture width included; layered texture 1D/2D dims included; cubemap layered texture dims included; surface 1D/2D/3D dims included; layered surface 1D/2D dims included; cubemap surface dims included; texture 3D alt dims included as 0; MpsEnabled included as 0; D3D12CigSupported included as 0; VulkanCigSupported included as 0; pciSubSystemID included as 0; GpuPciDeviceId included as 0; GpuPciSubsystemId included as 0; luid included as 0; no occupancy SM count or clock). `device_get_name` is `cudaDeviceGetName` (the
-profile name). `device_get_uuid` is `cuDeviceGetUuid` (synthetic 16-octet
+profile name). `device_compute_capability` is `cuDeviceComputeCapability`
+(Hopper 9.0 on example H100; also `DeviceProperties` major and minor).
+`device_get_uuid` is `cuDeviceGetUuid` (synthetic 16-octet
 id; also `DeviceProperties.uuid`). `device_get_by_uuid` is
 `cuDeviceGetByUuid` (inverse). `device_get_luid` is `cuDeviceGetLuid`
 (always-zero Windows LUID plus node mask; also `DeviceProperties.luid`
