@@ -33828,8 +33828,7 @@ mod tests {
         enq(sim.device_launch_graph(sibling, StreamId::GRAPH_FIRE_AND_FORGET_AS_SIBLING));
         assert_eq!(sim.current_graph_exec(d).unwrap(), Some(parent));
         sim.synchronize_stream(d, s).unwrap();
-        let parent_ops: Vec<_> = sim.operations().filter(|o| o.stream == s).collect();
-        assert!(parent_ops.iter().all(|o| o.done));
+        assert!(sim.operations().filter(|o| o.stream == s).all(|o| o.done));
         let sibling_k = sim
             .operations()
             .find(|o| matches!(o.kind, GpuOp::Kernel { .. }) && o.stream != s)
