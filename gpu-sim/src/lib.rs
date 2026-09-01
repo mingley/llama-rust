@@ -5099,6 +5099,80 @@ mod tests {
     }
 
     #[test]
+    fn host_launch_destroy_in_flight_holds_user_object() {
+        let mut sim = Sim::new(h100());
+        let d = DeviceId(0);
+        let s = StreamId(0);
+        let a = sim.malloc(d, 4096).unwrap();
+        let g = sim.create_graph(d, s).unwrap();
+        sim.graph_add_kernel(g, KernelKind::other(1 << 40, 4096), &[a], &[a])
+            .unwrap();
+        let obj = sim
+            .user_object_create(6, 1, UserObjectFlags::NO_DESTRUCTOR_SYNC)
+            .unwrap();
+        sim.graph_retain_user_object(g, obj, 1, GraphUserObjectFlags::MOVE)
+            .unwrap();
+        let exec = sim.instantiate_graph(g).unwrap();
+        let (node, params) = sim.graph_unique_kernel(g).unwrap();
+        let launched = sim.launch_graph(exec, s).unwrap();
+        assert!(launched > 0);
+        sim.graph_exec_kernel_set_params(exec, node, &params)
+            .unwrap();
+        sim.destroy_graph(exec).unwrap();
+        sim.destroy_graph(g).unwrap();
+        assert!(sim.user_object_destructors().is_empty());
+        let err = sim.launch_graph(exec, s).unwrap_err();
+        match err {
+            SimError::Invalid { why } => assert!(why.contains("unknown"), "{why}"),
+            other => panic!("{other:?}"),
+        }
+
+        let empty = sim.create_graph(d, s).unwrap();
+        let obj_empty = sim
+            .user_object_create(7, 1, UserObjectFlags::NO_DESTRUCTOR_SYNC)
+            .unwrap();
+        sim.graph_retain_user_object(empty, obj_empty, 1, GraphUserObjectFlags::MOVE)
+            .unwrap();
+        let empty_exec = sim.instantiate_graph(empty).unwrap();
+        let n = sim.launch_graph(empty_exec, s).unwrap();
+        assert_eq!(n, 0);
+        sim.destroy_graph(empty_exec).unwrap();
+        sim.destroy_graph(empty).unwrap();
+        assert_eq!(sim.user_object_destructors(), &[(obj_empty, 7)]);
+
+        sim.begin_capture(d, StreamId(1)).unwrap();
+        let err = sim.destroy_graph(exec).unwrap_err();
+        match err {
+            SimError::Invalid { why } => assert!(why.contains("capture"), "{why}"),
+            other => panic!("{other:?}"),
+        }
+        let _end = sim.end_capture().unwrap();
+        sim.synchronize().unwrap();
+        assert_eq!(sim.user_object_destructors(), &[(obj_empty, 7), (obj, 6)]);
+        let body = sim
+            .operations()
+            .find(|o| matches!(o.kind, GpuOp::Kernel { .. }) && o.stream == s)
+            .expect("body");
+        assert!(body.done_ns.is_some());
+
+        let idle = sim.create_graph(d, s).unwrap();
+        sim.graph_add_kernel(idle, KernelKind::other(8, 8), &[a], &[a])
+            .unwrap();
+        let obj_idle = sim
+            .user_object_create(8, 1, UserObjectFlags::NO_DESTRUCTOR_SYNC)
+            .unwrap();
+        sim.graph_retain_user_object(idle, obj_idle, 1, GraphUserObjectFlags::MOVE)
+            .unwrap();
+        let idle_exec = sim.instantiate_graph(idle).unwrap();
+        sim.destroy_graph(idle_exec).unwrap();
+        sim.destroy_graph(idle).unwrap();
+        assert!(sim
+            .user_object_destructors()
+            .iter()
+            .any(|(id, fn_id)| *id == obj_idle && *fn_id == 8));
+    }
+
+    #[test]
     fn instantiate_and_update_cannot_run_during_capture() {
         let mut sim = Sim::new(h100());
         let d = DeviceId(0);
@@ -31973,6 +32047,46 @@ mod tests {
             other => panic!("{other:?}"),
         }
         let _end = sim.end_capture().unwrap();
+        sim.synchronize().unwrap();
+        let body = sim
+            .operations()
+            .find(|o| matches!(o.kind, GpuOp::Kernel { .. }) && o.stream == s)
+            .expect("body");
+        assert!(body.done_ns.is_some());
+        sim.destroy_graph(g).unwrap();
+    }
+
+    #[test]
+    fn device_launch_host_launch_destroy_in_flight_still_completes() {
+        let mut sim = Sim::new(h100());
+        let d = DeviceId(0);
+        let s = StreamId(0);
+        let a = sim.malloc(d, 4096).unwrap();
+        let g = sim.create_graph(d, s).unwrap();
+        sim.graph_add_kernel(g, KernelKind::other(1 << 40, 4096), &[a], &[a])
+            .unwrap();
+        let exec = sim
+            .instantiate_graph_with_flags(
+                g,
+                GraphInstantiateFlags::DEVICE_LAUNCH | GraphInstantiateFlags::UPLOAD,
+            )
+            .unwrap();
+        let (node, params) = sim.graph_unique_kernel(g).unwrap();
+        let launched = sim.launch_graph(exec, s).unwrap();
+        assert!(launched > 0);
+        sim.graph_exec_kernel_set_params(exec, node, &params)
+            .unwrap();
+        sim.destroy_graph(exec).unwrap();
+        let err = sim.launch_graph(exec, s).unwrap_err();
+        match err {
+            SimError::Invalid { why } => assert!(why.contains("unknown"), "{why}"),
+            other => panic!("{other:?}"),
+        }
+        let err = sim.device_launch_graph(exec, s).unwrap_err();
+        match err {
+            SimError::Invalid { why } => assert!(why.contains("unknown"), "{why}"),
+            other => panic!("{other:?}"),
+        }
         sim.synchronize().unwrap();
         let body = sim
             .operations()

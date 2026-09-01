@@ -5725,7 +5725,19 @@ model, do not celebrate the sim.
     `--user-object-instantiate`. `gpu-profile capture` is still refused.
     Dual score still has no `$/M tokens`.
 
-534. [ ] Next numbered PLAN item after 533 is the next `gpu-sim` / Engine /
+534. [x] `gpu-sim` CUDA `cudaGraphExecDestroy` of an in-flight host
+    `launch_graph` does not abort the launch (any instantiated exec,
+    not only DeviceLaunch). The handle is unknown immediately;
+    user-object exec refs are held until that launch's tail completes.
+    Capture is still reported first. Idle exec destroy still drops
+    immediately. An empty host launch does not pin destroy to unrelated
+    prior stream work. Host `launch_graph` in-flight SetParams stay.
+    DeviceLaunch `device_launch_graph` in-flight destroy still parks.
+    This VM does not invent Engine `--graph-exec-destroy-inflight`.
+    `gpu-profile capture` is still refused. Dual score still has no
+    `$/M tokens`.
+
+535. [ ] Next numbered PLAN item after 534 is the next `gpu-sim` / Engine /
     serve / expertvm mechanical API that is still missing, or the next official
     decode family. Prefer remaining CUDA-shaped twins over more
     OpenAI HTTP veneer. Do not invent F32 `output.scale`. Do not invent a
@@ -5863,13 +5875,17 @@ model, do not celebrate the sim.
     slice.
     Do not invent a second DeviceLaunch in-flight destroy-complete check or Engine
     `--device-launch-destroy`. Do not abort an in-flight DeviceLaunch when
-    `destroy_graph` succeeds. Do not delay destroy of an idle exec. Do not delay
-    host `launch_graph` in-flight destroy of a DeviceLaunch exec this slice.
+    `destroy_graph` succeeds. Do not delay destroy of an idle exec. Do not invent
+    a second host `launch_graph` in-flight destroy park or Engine
+    `--graph-exec-destroy-inflight`. Do not put host-launch tails in
+    `as_exec_for_update`. Do not pin an empty host launch to unrelated prior
+    stream work.
     Do not invent a second instantiate user-object retain copy or Engine
     `--user-object-instantiate`. Do not reverse retain illegal on an exec.
     Do not reverse clone not copying retains. Do not copy retains added after
     instantiate onto an existing exec. Do not apply `INT_MAX` to the copied
-    count (already held).
+    count (already held). Do not reverse in-flight host `launch_graph` exec
+    destroy holding user-object exec refs until the launch tail completes.
     Do not invent a second DeviceLaunch mixed-ctx check or Engine
     `--device-launch-ctx`. Do not invent a second
     [`GraphInstantiateResult`] variant for driver MultipleCtxs. Do not

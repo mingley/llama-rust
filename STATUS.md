@@ -5,6 +5,19 @@ Visible five-turn extract: [docs/chatgpt-share-6a920fe1.md](docs/chatgpt-share-6
 Complete share-API extract: [docs/chatgpt-share-6a920fe1/](docs/chatgpt-share-6a920fe1/).
 Work lands on `main`. No PRs.
 
+## Shipped 2026-09-01 — Host launch_graph in-flight exec destroy parks
+
+`gpu-sim` CUDA `cudaGraphExecDestroy` of an in-flight host
+`launch_graph` does not abort the launch (any instantiated exec, not
+only DeviceLaunch). The handle is unknown immediately; user-object exec
+refs are held until that launch's tail completes. Capture is still
+reported first. Idle exec destroy still drops immediately. An empty host
+launch does not pin destroy to unrelated prior stream work. Host
+`launch_graph` in-flight SetParams stay. DeviceLaunch
+`device_launch_graph` in-flight destroy still parks. This VM does not
+invent Engine `--graph-exec-destroy-inflight`. `gpu-profile capture` is
+still refused. Dual score still has no `$/M tokens`.
+
 ## Shipped 2026-09-01 — Instantiate copies user-object retains onto the exec
 
 `gpu-sim` CUDA instantiate copies user-object retains from the

@@ -535,8 +535,9 @@ of shared children becomes one cloned child). Destroying the original
 child still breaks a parent that names it; a recursive clone of that
 parent keeps working. `destroy_graph` is `cudaGraphDestroy` / `cudaGraphExecDestroy` (1 ns;
 later launch is unknown; remaining graph mem is refunded; user-object
-refs held by the graph are released; destroying an in-flight device-launch
-exec does not abort the launch).
+refs held by the graph are released; destroying an in-flight exec does
+not abort the launch, whether the work came from `device_launch_graph`
+or host `launch_graph`).
 `user_object_create` is `cudaUserObjectCreate`
 (`UserObjectFlags::NO_DESTRUCTOR_SYNC`; initial refs `1..=i32::MAX`; last
 ref records `destroy_fn`).

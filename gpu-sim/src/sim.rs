@@ -618,8 +618,11 @@ struct Graph {
     instantiate_flags: u32,
     /// Last op of an in-flight [`Sim::device_launch_graph`] (launcher or body tail).
     device_launch_tail: Option<OpId>,
-    /// [`Sim::destroy_graph`] of an in-flight device-launch exec: the handle is
-    /// unknown, but the launch still finishes (`cudaGraphExecDestroy`).
+    /// Last op of an in-flight host [`Sim::launch_graph`]. Empty launches do
+    /// not pin destroy to prior stream work.
+    host_launch_tail: Option<OpId>,
+    /// [`Sim::destroy_graph`] of an in-flight exec: the handle is unknown, but
+    /// the launch still finishes (`cudaGraphExecDestroy`).
     handle_gone: bool,
     /// First exec created from this definition. `None` on exec ids.
     primary_exec: Option<GraphId>,
@@ -3201,6 +3204,8 @@ impl Sim {
     /// child must already be instantiated). Independent streams still launch live.
     /// [`Self::upload_graph`] is skipped while any stream is capturing (host-sync
     /// upload cannot run during capture); the live launch still enqueues.
+    /// Destroying an in-flight exec does not abort this launch
+    /// (`cudaGraphExecDestroy`). Host SetParams during this launch stay.
     pub fn launch_graph(&mut self, graph: GraphId, stream: StreamId) -> Result<u32, SimError> {
         self.require_not_moved(graph)?;
         let (origin, ready) = {
@@ -3240,7 +3245,40 @@ impl Sim {
         };
         self.reset_graph_tree_conds(exec)?;
         let mut stack = BTreeSet::new();
-        self.enqueue_graph(exec, stream, true, &mut stack, extra)
+        let n = self.enqueue_graph(exec, stream, true, &mut stack, extra)?;
+        self.pin_host_launch_tail(exec, stream, n)?;
+        Ok(n)
+    }
+
+    /// Record the launch-stream tail after a live host launch. Empty launches
+    /// do not pin destroy to unrelated prior stream work.
+    fn pin_host_launch_tail(
+        &mut self,
+        exec: GraphId,
+        stream: StreamId,
+        n: u32,
+    ) -> Result<(), SimError> {
+        if n == 0 {
+            return Ok(());
+        }
+        let device = self
+            .graphs
+            .get(&exec)
+            .ok_or(SimError::Invalid {
+                why: "unknown graph",
+            })?
+            .origin
+            .0;
+        let Some(tail) = self.tail.get(&(device, stream)).copied() else {
+            return Ok(());
+        };
+        self.graphs
+            .get_mut(&exec)
+            .ok_or(SimError::Invalid {
+                why: "unknown graph",
+            })?
+            .host_launch_tail = Some(tail);
+        Ok(())
     }
 
     /// Device-side `cudaGraphLaunch` (`cudaGraphInstantiateFlagDeviceLaunch`).
@@ -3254,7 +3292,8 @@ impl Sim {
     /// CopyAttributes of this exec while that work is in flight are Invalid
     /// `"device launch in flight"`. Getters stay. Destroy is legal and does
     /// not abort the launch (`cudaGraphExecDestroy`: the handle is unknown;
-    /// the launch still finishes). Capture cannot
+    /// the launch still finishes). Host [`Self::launch_graph`] destroy of this
+    /// exec also parks until that host launch completes. Capture cannot
     /// include it. [`Self::update_graph`] of a device-launch
     /// exec is Invalid.
     pub fn device_launch_graph(
@@ -4149,6 +4188,7 @@ impl Sim {
                 auto_free_on_launch: auto_free,
                 instantiate_flags: flags,
                 device_launch_tail: None,
+                host_launch_tail: None,
                 handle_gone: false,
                 primary_exec: None,
                 src: Some(graph),
@@ -7141,6 +7181,7 @@ impl Sim {
                     auto_free_on_launch: false,
                     instantiate_flags: 0,
                     device_launch_tail: None,
+                    host_launch_tail: None,
                     handle_gone: false,
                     primary_exec: None,
                     src: None,
@@ -7387,9 +7428,12 @@ impl Sim {
     /// independent. Destroying a parent also destroys graphs that were moved
     /// into it (`CU_GRAPH_CHILD_GRAPH_OWNERSHIP_MOVE`), including when this id
     /// is an exec (child ids are mapped back to their definitions).
-    /// Destroying an in-flight device-launch exec does not abort the launch
-    /// (`cudaGraphExecDestroy`: freed asynchronously on completion). The handle
-    /// is unknown immediately. Idle execs still drop immediately.
+    /// Destroying an in-flight exec does not abort the launch
+    /// (`cudaGraphExecDestroy`: freed asynchronously on completion), whether
+    /// the work came from [`Self::device_launch_graph`] or host
+    /// [`Self::launch_graph`]. The handle is unknown immediately. Idle execs
+    /// still drop immediately. An empty host launch does not pin destroy to
+    /// unrelated prior stream work.
     pub fn destroy_graph(&mut self, graph: GraphId) -> Result<(), SimError> {
         self.fail_if_capturing("cannot capture graph destroy")?;
         self.require_not_moved(graph)?;
@@ -7398,16 +7442,23 @@ impl Sim {
                 why: "unknown graph",
             });
         }
-        if self.graphs.get(&graph).is_some_and(|g| {
-            g.instantiated && g.device_launch_tail.is_some_and(|op| !self.op_done(op))
-        }) {
-            self.park_in_flight_device_launch_exec(graph)?;
+        if self
+            .graphs
+            .get(&graph)
+            .is_some_and(|g| g.instantiated && self.graph_exec_launch_in_flight(g))
+        {
+            self.park_in_flight_exec(graph)?;
             return Ok(());
         }
         self.drop_graph(graph)
     }
 
-    fn park_in_flight_device_launch_exec(&mut self, graph: GraphId) -> Result<(), SimError> {
+    fn graph_exec_launch_in_flight(&self, g: &Graph) -> bool {
+        g.device_launch_tail.is_some_and(|op| !self.op_done(op))
+            || g.host_launch_tail.is_some_and(|op| !self.op_done(op))
+    }
+
+    fn park_in_flight_exec(&mut self, graph: GraphId) -> Result<(), SimError> {
         let src = {
             let g = self.graphs.get_mut(&graph).ok_or(SimError::Invalid {
                 why: "unknown graph",
@@ -7443,12 +7494,12 @@ impl Sim {
         }
     }
 
-    fn reap_gone_device_launch(&mut self, done: OpId) -> Result<(), SimError> {
+    fn reap_gone_exec(&mut self) -> Result<(), SimError> {
         let ids: Vec<GraphId> = self
             .graphs
             .iter()
             .filter_map(|(id, g)| {
-                (g.handle_gone && g.device_launch_tail == Some(done)).then_some(*id)
+                (g.handle_gone && !self.graph_exec_launch_in_flight(g)).then_some(*id)
             })
             .collect();
         for id in ids {
@@ -7833,6 +7884,7 @@ impl Sim {
                 auto_free_on_launch: false,
                 instantiate_flags: 0,
                 device_launch_tail: None,
+                host_launch_tail: None,
                 handle_gone: false,
                 primary_exec: None,
                 src: None,
@@ -22653,7 +22705,7 @@ impl Sim {
         }
         self.bump_graph_mem_from_op(id)?;
         self.finish_device_launch(id)?;
-        self.reap_gone_device_launch(id)?;
+        self.reap_gone_exec()?;
         self.continue_while(id)?;
         Ok(())
     }
