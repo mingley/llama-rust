@@ -4012,7 +4012,8 @@ impl Sim {
     /// `cudaGraphExecUpdate`: replace `exec` steps with `src` when topology matches.
     ///
     /// Same device, stream, op kinds, cooperative flag, and dependency edges;
-    /// KernelBuf / memcpy sizes may change. Pays `graph_update_ns`. Recapture
+    /// KernelBuf / memcpy sizes may change. IF / WHILE / SWITCH handles are
+    /// parameters (bodies stay topology). Pays `graph_update_ns`. Recapture
     /// if topology differs. Capture cannot include it. `exec` must already be
     /// instantiated. Graphs with mem alloc or mem free nodes cannot be updated
     /// (`cudaGraphExecUpdate` of mem nodes).
@@ -21956,37 +21957,19 @@ fn op_eq(a: &Kind, b: &Kind) -> bool {
         (Kind::ChildGraph { graph: x }, Kind::ChildGraph { graph: y }) => x == y,
         (
             Kind::If {
-                handle: hx,
                 body: bx,
                 else_body: ex,
+                ..
             },
             Kind::If {
-                handle: hy,
                 body: by,
                 else_body: ey,
+                ..
             },
-        ) => hx == hy && bx == by && ex == ey,
+        ) => bx == by && ex == ey,
         (Kind::SetConditional { handle: x, .. }, Kind::SetConditional { handle: y, .. }) => x == y,
-        (
-            Kind::While {
-                handle: hx,
-                body: bx,
-            },
-            Kind::While {
-                handle: hy,
-                body: by,
-            },
-        ) => hx == hy && bx == by,
-        (
-            Kind::Switch {
-                handle: hx,
-                bodies: bx,
-            },
-            Kind::Switch {
-                handle: hy,
-                bodies: by,
-            },
-        ) => hx == hy && bx == by,
+        (Kind::While { body: bx, .. }, Kind::While { body: by, .. }) => bx == by,
+        (Kind::Switch { bodies: bx, .. }, Kind::Switch { bodies: by, .. }) => bx == by,
         (Kind::WhileTick { handle: x, .. }, Kind::WhileTick { handle: y, .. }) => x == y,
         (Kind::EventRecord { external: x, .. }, Kind::EventRecord { external: y, .. }) => x == y,
         (Kind::EventWait { external: x, .. }, Kind::EventWait { external: y, .. }) => x == y,

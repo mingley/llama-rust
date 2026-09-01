@@ -5054,7 +5054,13 @@ model, do not celebrate the sim.
     include it. No Engine `--graph-cond-set`. `gpu-profile capture` is
     still refused. Dual score still has no `$/M tokens`.
 
-470. [ ] Next numbered PLAN item after 469 is the next `gpu-sim` / Engine /
+470. [x] `gpu-sim` `cudaGraphExecUpdate` copies IF / IfElse / WHILE /
+    SWITCH handles when bodies match. Handle is a parameter (same as
+    SetParams). Type, size, and bodies stay topology. No Engine
+    `--graph-cond-update`. `gpu-profile capture` is still refused. Dual
+    score still has no `$/M tokens`.
+
+471. [ ] Next numbered PLAN item after 470 is the next `gpu-sim` / Engine /
     serve / expertvm mechanical API that is still missing, or the next official
     decode family. Prefer remaining CUDA-shaped twins over more
     OpenAI HTTP veneer. Do not invent F32 `output.scale`. Do not invent a
@@ -5169,6 +5175,8 @@ model, do not celebrate the sim.
     `cudaGraphExecConditionalNodeSetParams`. Do not invent Engine
     `--graph-cond-set`. Do not invent IF / WHILE / SWITCH SetParams that
     changes type, size, or bodies.
+    Do not invent a second `cudaGraphExecUpdate` IF / WHILE / SWITCH
+    handle copy. Do not invent Engine `--graph-cond-update`.
     Do not invent a second `cudaGraphAddNode` If / IfElse / While /
     `GraphNodeParams::If`. Do not invent a second
     `GraphNodeParams::Switch` / `switch_bodies`.

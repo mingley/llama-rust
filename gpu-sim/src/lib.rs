@@ -874,6 +874,7 @@
 //! [`GraphInstantiateParams::upload_stream`] uses it).
 //! [`Sim::update_graph`] is
 //! `cudaGraphExecUpdate` when device, stream, and op kinds match.
+//! IF, WHILE, plus SWITCH handles are parameters; bodies stay topology.
 //! [`update_graph_with_info`](Sim::update_graph_with_info) fills
 //! [`GraphExecUpdateResultInfo`] even on `Err` (node type, deps, mem nodes,
 //! device-launch).
@@ -23496,6 +23497,88 @@ mod tests {
         let mexec = sim.instantiate_graph(mem).unwrap();
         sim.graph_exec_node_set_params(mexec, 1, GraphNodeParams::If { handle: mh })
             .unwrap();
+    }
+
+    #[test]
+    fn update_graph_copies_if_handle_as_params() {
+        let long = KernelKind::other(1 << 40, 4096);
+        let mut sim = Sim::new(h100());
+        let d = DeviceId(0);
+        let s = StreamId(0);
+        let a = sim.alloc(d, 4096, s).unwrap();
+        enq(sim.memcpy_pinned_to_device(d, a, 4096, s));
+        sim.synchronize().unwrap();
+        let g = sim.create_graph(d, s).unwrap();
+        let h_skip = sim.graph_conditional_create(g, 0).unwrap();
+        let h_run = sim.graph_conditional_create(g, 1).unwrap();
+        let body = sim.graph_add_if(g, h_skip).unwrap();
+        sim.graph_add_kernel(body, long, &[a], &[a]).unwrap();
+        let exec = sim.instantiate_graph(g).unwrap();
+        sim.upload_graph(exec).unwrap();
+        let t0 = sim.clock_ns();
+        let n0 = sim.launch_graph(exec, s).unwrap();
+        sim.synchronize().unwrap();
+        let skip = sim.clock_ns().saturating_sub(t0);
+        assert_eq!(n0, 1);
+        sim.graph_node_set_params(g, 0, GraphNodeParams::If { handle: h_run })
+            .unwrap();
+        assert_eq!(
+            sim.graph_exec_node_get_params(exec, 0).unwrap(),
+            GraphNodeParams::If { handle: h_skip }
+        );
+        sim.update_graph(exec, g).unwrap();
+        assert!(!sim.graph_uploaded(exec).unwrap());
+        assert_eq!(
+            sim.graph_exec_node_get_params(exec, 0).unwrap(),
+            GraphNodeParams::If { handle: h_run }
+        );
+        let t1 = sim.clock_ns();
+        let n1 = sim.launch_graph(exec, s).unwrap();
+        sim.synchronize().unwrap();
+        let ran = sim.clock_ns().saturating_sub(t1);
+        assert_eq!(n1, 1);
+        assert!(
+            ran > skip,
+            "ExecUpdate handle default 1 must run the IF body; ran={ran} skip={skip}"
+        );
+        let ge = sim.create_graph(d, s).unwrap();
+        let he = sim.graph_conditional_create(ge, 0).unwrap();
+        let _bodies = sim.graph_add_if_else(ge, he).unwrap();
+        match sim.update_graph(exec, ge) {
+            Err(SimError::Invalid { why }) => assert!(why.contains("topology"), "{why}"),
+            other => panic!("{other:?}"),
+        }
+        let gw = sim.create_graph(d, s).unwrap();
+        let hw0 = sim.graph_conditional_create(gw, 0).unwrap();
+        let hw1 = sim.graph_conditional_create(gw, 1).unwrap();
+        let _wbody = sim.graph_add_while(gw, hw0).unwrap();
+        let wexec = sim.instantiate_graph(gw).unwrap();
+        sim.graph_node_set_params(gw, 0, GraphNodeParams::While { handle: hw1 })
+            .unwrap();
+        sim.update_graph(wexec, gw).unwrap();
+        assert_eq!(
+            sim.graph_exec_node_get_params(wexec, 0).unwrap(),
+            GraphNodeParams::While { handle: hw1 }
+        );
+        let gs = sim.create_graph(d, s).unwrap();
+        let hs0 = sim.graph_conditional_create(gs, 0).unwrap();
+        let hs1 = sim.graph_conditional_create(gs, 1).unwrap();
+        let _branches = sim.graph_add_switch(gs, hs0, 2).unwrap();
+        let sexec = sim.instantiate_graph(gs).unwrap();
+        sim.graph_node_set_params(gs, 0, GraphNodeParams::Switch { handle: hs1, n: 2 })
+            .unwrap();
+        sim.update_graph(sexec, gs).unwrap();
+        assert_eq!(
+            sim.graph_exec_node_get_params(sexec, 0).unwrap(),
+            GraphNodeParams::Switch { handle: hs1, n: 2 }
+        );
+        let gs1 = sim.create_graph(d, s).unwrap();
+        let hs = sim.graph_conditional_create(gs1, 0).unwrap();
+        let _one = sim.graph_add_switch(gs1, hs, 1).unwrap();
+        match sim.update_graph(sexec, gs1) {
+            Err(SimError::Invalid { why }) => assert!(why.contains("topology"), "{why}"),
+            other => panic!("{other:?}"),
+        }
     }
 
     #[test]
