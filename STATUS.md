@@ -5,6 +5,15 @@ Visible five-turn extract: [docs/chatgpt-share-6a920fe1.md](docs/chatgpt-share-6
 Complete share-API extract: [docs/chatgpt-share-6a920fe1/](docs/chatgpt-share-6a920fe1/).
 Work lands on `main`. No PRs.
 
+## Shipped 2026-09-01 — CUDA `cuGraphicsResourceGetMappedMipmappedArray`
+
+`gpu-sim` `Sim::graphics_resource_get_mapped_mipmapped_array` is
+`cuGraphicsResourceGetMappedMipmappedArray`. Always Invalid `"mapped mipmap"`
+because graphics resources are not modeled. Query; legal during capture.
+Distinct from `graphics_subresource_get_mapped_array` and
+`mipmapped_array_create`. This VM does not invent a `CUmipmappedArray` handle or Engine `--mapped-mipmap`.
+`gpu-profile capture` is still refused. Dual score still has no `$/M tokens`.
+
 ## Shipped 2026-09-01 — CUDA `cuGraphicsSubResourceGetMappedArray`
 
 `gpu-sim` `Sim::graphics_subresource_get_mapped_array` is

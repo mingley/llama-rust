@@ -17890,14 +17890,33 @@ impl Sim {
     /// modeled.
     ///
     /// Always Invalid `"mapped array"` (no graphics-resource handles). Distinct
-    /// from [`Self::graphics_resource_get_mapped_pointer`] and from
-    /// [`Self::array_create`]. Unknown devices are Invalid
-    /// `"device not in profile"`. Query; legal during capture. This VM does
-    /// not invent `cuGraphicsResourceGetMappedMipmappedArray` this slice.
+    /// from [`Self::graphics_resource_get_mapped_pointer`], from
+    /// [`Self::array_create`], and from
+    /// [`Self::graphics_resource_get_mapped_mipmapped_array`]. Unknown devices
+    /// are Invalid `"device not in profile"`. Query; legal during capture.
     pub fn graphics_subresource_get_mapped_array(&self, device: DeviceId) -> Result<(), SimError> {
         let _gpu = self.profile.gpu(device)?;
         Err(SimError::Invalid {
             why: "mapped array",
+        })
+    }
+
+    /// `cuGraphicsResourceGetMappedMipmappedArray` plus
+    /// `cudaGraphicsResourceGetMappedMipmappedArray`. Graphics interop is
+    /// not modeled.
+    ///
+    /// Always Invalid `"mapped mipmap"` (no graphics-resource handles). Distinct
+    /// from [`Self::graphics_subresource_get_mapped_array`] and from
+    /// [`Self::mipmapped_array_create`]. Unknown devices are Invalid
+    /// `"device not in profile"`. Query; legal during capture. This VM does
+    /// not invent a `CUmipmappedArray` handle this slice.
+    pub fn graphics_resource_get_mapped_mipmapped_array(
+        &self,
+        device: DeviceId,
+    ) -> Result<(), SimError> {
+        let _gpu = self.profile.gpu(device)?;
+        Err(SimError::Invalid {
+            why: "mapped mipmap",
         })
     }
 

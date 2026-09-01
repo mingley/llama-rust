@@ -591,6 +591,9 @@ handles; no Engine flag).
 `gpu-sim` `graphics_subresource_get_mapped_array` is
 `cuGraphicsSubResourceGetMappedArray` (Invalid; no graphics-resource
 handles; no Engine flag).
+`gpu-sim` `graphics_resource_get_mapped_mipmapped_array` is
+`cuGraphicsResourceGetMappedMipmappedArray` (Invalid; no graphics-resource
+handles; no Engine flag).
 `gpu-sim` `graphics_unregister_resource` is `cuGraphicsUnregisterResource`
 (Invalid; no graphics-resource handles; no Engine flag).
 `gpu-sim` `graphics_gl_register_buffer` is `cuGraphicsGLRegisterBuffer`

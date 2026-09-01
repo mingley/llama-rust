@@ -612,6 +612,9 @@
 //! [`graphics_subresource_get_mapped_array`](Sim::graphics_subresource_get_mapped_array)
 //! is `cuGraphicsSubResourceGetMappedArray` (always Invalid `"mapped array"`).
 //! Query; legal during capture. No Engine `--mapped-array`.
+//! [`graphics_resource_get_mapped_mipmapped_array`](Sim::graphics_resource_get_mapped_mipmapped_array)
+//! is `cuGraphicsResourceGetMappedMipmappedArray` (always Invalid `"mapped mipmap"`).
+//! Query; legal during capture. No Engine `--mapped-mipmap`.
 //! [`graphics_unregister_resource`](Sim::graphics_unregister_resource) is
 //! `cuGraphicsUnregisterResource` (always Invalid `"graphics unregister"`). Query;
 //! legal during capture. No Engine `--graphics-unregister`.
@@ -22026,6 +22029,44 @@ mod tests {
         match sim.array_create(d) {
             Err(SimError::Invalid { why }) => {
                 assert!(why.contains("cuda array"), "{why}");
+            }
+            other => panic!("{other:?}"),
+        }
+    }
+
+    #[test]
+    fn graphics_resource_get_mapped_mipmapped_array_is_unsupported() {
+        let mut sim = Sim::new(h100());
+        let d = DeviceId(0);
+        match sim.graphics_resource_get_mapped_mipmapped_array(d) {
+            Err(SimError::Invalid { why }) => {
+                assert!(why.contains("mapped mipmap"), "{why}");
+            }
+            other => panic!("{other:?}"),
+        }
+        sim.begin_capture(d, StreamId(0)).unwrap();
+        match sim.graphics_resource_get_mapped_mipmapped_array(d) {
+            Err(SimError::Invalid { why }) => {
+                assert!(why.contains("mapped mipmap"), "{why}");
+            }
+            other => panic!("{other:?}"),
+        }
+        let _g = sim.end_capture().unwrap();
+        match sim.graphics_resource_get_mapped_mipmapped_array(DeviceId(99)) {
+            Err(SimError::Invalid { why }) => {
+                assert!(why.contains("device not in profile"), "{why}");
+            }
+            other => panic!("{other:?}"),
+        }
+        match sim.graphics_subresource_get_mapped_array(d) {
+            Err(SimError::Invalid { why }) => {
+                assert!(why.contains("mapped array"), "{why}");
+            }
+            other => panic!("{other:?}"),
+        }
+        match sim.mipmapped_array_create(d) {
+            Err(SimError::Invalid { why }) => {
+                assert!(why.contains("mipmapped array"), "{why}");
             }
             other => panic!("{other:?}"),
         }

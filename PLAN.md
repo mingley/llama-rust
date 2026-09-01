@@ -6776,7 +6776,15 @@ model, do not celebrate the sim.
     or `cudaChooseDevice`. `gpu-profile capture` is still refused. Dual
     score still has no `$/M tokens`.
 
-662. [ ] Next numbered PLAN item after 661 is the next `gpu-sim` / Engine /
+662. [x] `gpu-sim` `Sim::graphics_resource_get_mapped_mipmapped_array` is
+    `cuGraphicsResourceGetMappedMipmappedArray`. Always Invalid `"mapped mipmap"`
+    because graphics resources are not modeled. Query; legal during capture.
+    Distinct from `graphics_subresource_get_mapped_array` and
+    `mipmapped_array_create`. This VM does not invent a `CUmipmappedArray` handle, Engine `--mapped-mipmap`,
+    or `cudaChooseDevice`. `gpu-profile capture` is still refused. Dual
+    score still has no `$/M tokens`.
+
+663. [ ] Next numbered PLAN item after 662 is the next `gpu-sim` / Engine /
     serve / expertvm mechanical API that is still missing, or the next official
     decode family. Prefer remaining CUDA-shaped twins over more
     OpenAI HTTP veneer. Do not invent F32 `output.scale`. Do not invent a
@@ -7219,6 +7227,10 @@ model, do not celebrate the sim.
     `graphics_subresource_get_mapped_array`. Do not invent Engine `--mapped-array`.
     Do not invent `cuGraphicsResourceGetMappedMipmappedArray` this slice. Do not reverse
     `"mapped array"`.
+    Do not invent a second `cuGraphicsResourceGetMappedMipmappedArray` /
+    `graphics_resource_get_mapped_mipmapped_array`. Do not invent Engine `--mapped-mipmap`.
+    Do not invent a `CUmipmappedArray` handle this slice. Do not reverse
+    `"mapped mipmap"`.
     Do not invent a second `cudaStreamAddCallback`.
     Do not invent Engine `--stream-callback` (same wall as second live
     `cudaLaunchHostFunc` after miss DMA).
@@ -7770,6 +7782,9 @@ model, do not celebrate the sim.
     Do not invent a second `graphics_subresource_get_mapped_array` API. Do not invent
     Engine `--get-mapped-array`. Do not invent a mapped `CUarray` this
     slice. Do not reverse mapped array remaining unsupported.
+    Do not invent a second `graphics_resource_get_mapped_mipmapped_array` API. Do not invent
+    Engine `--get-mapped-mipmap`. Do not invent a mapped mipmapped array
+    object this slice. Do not reverse mapped mipmap remaining unsupported.
     Do not invent a second DeviceLaunch in-flight destroy-complete check or Engine
     `--device-launch-destroy`. Do not abort an in-flight DeviceLaunch when
     `destroy_graph` succeeds. Do not delay destroy of an idle exec. Do not invent
@@ -8509,6 +8524,9 @@ model, do not celebrate the sim.
     Do not invent a second `graphics_subresource_get_mapped_array` method. Do not
     invent Engine `--cu-graphics-subresource-get-mapped-array`. Do not reverse wrapping
     cuGraphicsSubResourceGetMappedArray Invalid.
+    Do not invent a second `graphics_resource_get_mapped_mipmapped_array` method. Do not
+    invent Engine `--cu-graphics-resource-get-mapped-mipmapped-array`. Do not reverse wrapping
+    cuGraphicsResourceGetMappedMipmappedArray Invalid.
     Do not
     spend the next item on an OpenAI-compatible HTTP veneer.
 
