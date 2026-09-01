@@ -163,6 +163,7 @@ warp scheduler, L1, …   ← do not model
 | `mipmapped_array_create` is Invalid (CUDA mipmapped arrays are not modeled) | `cuMipmappedArrayCreate` |
 | `import_external_memory` is Invalid (dma-buf / Win32 / fabric are 0) | `cuImportExternalMemory` |
 | `surf_object_create` is Invalid (CUDA surfaces are not modeled) | `cuSurfObjectCreate` |
+| `tex_object_create` is Invalid (CUDA textures are not modeled) | `cuTexObjectCreate` / `cudaCreateTextureObject` |
 | `graphics_map_resources` is Invalid (OpenGL, Direct3D, Vulkan, EGL are not modeled) | `cuGraphicsMapResources` |
 | `egl_stream_consumer_connect` is Invalid (EGL streams are not modeled) | `cuEGLStreamConsumerConnect` |
 | `gl_get_devices` is Invalid (OpenGL interop is not modeled) | `cuGLGetDevices` / `cudaGLGetDevices` |
@@ -1006,6 +1007,9 @@ is `cuMemGetHandleForAddressRange` (always Invalid `"dma-buf not modeled"`;
 `surf_object_create` is `cuSurfObjectCreate` (always Invalid `"cuda surface"`;
 CUDA surfaces are not modeled). Distinct from `array_create`. Query; legal
 during capture. No Engine `--surf-object`.
+`tex_object_create` is `cuTexObjectCreate` (always Invalid `"cuda texture"`;
+CUDA textures are not modeled). Distinct from `surf_object_create` and
+`array_create`. Query; legal during capture. No Engine `--tex-object`.
 `va_export_to_shareable_handle` is `cuMemExportToShareableHandle` (always
 Invalid `"not shareable"`; VMM create-time handle types are none). POSIX-FD
 only; flags 0. Distinct from `ipc_get`, `pool_export`, and

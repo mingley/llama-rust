@@ -5,6 +5,14 @@ Visible five-turn extract: [docs/chatgpt-share-6a920fe1.md](docs/chatgpt-share-6
 Complete share-API extract: [docs/chatgpt-share-6a920fe1/](docs/chatgpt-share-6a920fe1/).
 Work lands on `main`. No PRs.
 
+## Shipped 2026-09-01 — CUDA `cuTexObjectCreate`
+
+`gpu-sim` `Sim::tex_object_create` is `cuTexObjectCreate` /
+`cudaCreateTextureObject`. Always Invalid `"cuda texture"` because CUDA
+textures are not modeled. Query; legal during capture. Distinct from
+`surf_object_create` and `array_create`. This VM does not invent `cuTexObjectDestroy` or Engine `--tex-object`.
+`gpu-profile capture` is still refused. Dual score still has no `$/M tokens`.
+
 ## Shipped 2026-09-01 — CUDA `cudaProfilerInitialize`
 
 `gpu-sim` `Sim::profiler_initialize` is `cudaProfilerInitialize`.

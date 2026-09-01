@@ -6571,7 +6571,14 @@ model, do not celebrate the sim.
     or `cudaChooseDevice`. `gpu-profile capture` is still refused. Dual
     score still has no `$/M tokens`.
 
-634. [ ] Next numbered PLAN item after 633 is the next `gpu-sim` / Engine /
+634. [x] `gpu-sim` `Sim::tex_object_create` is `cuTexObjectCreate` /
+    `cudaCreateTextureObject`. Always Invalid `"cuda texture"` because
+    CUDA textures are not modeled. Query; legal during capture. Distinct
+    from `surf_object_create` and `array_create`. This VM does not invent `cuTexObjectDestroy`, Engine `--tex-object`,
+    or `cudaChooseDevice`. `gpu-profile capture` is still refused. Dual
+    score still has no `$/M tokens`.
+
+635. [ ] Next numbered PLAN item after 634 is the next `gpu-sim` / Engine /
     serve / expertvm mechanical API that is still missing, or the next official
     decode family. Prefer remaining CUDA-shaped twins over more
     OpenAI HTTP veneer. Do not invent F32 `output.scale`. Do not invent a
@@ -6919,6 +6926,9 @@ model, do not celebrate the sim.
     Do not invent a second `cudaProfilerInitialize` /
     `profiler_initialize`. Do not invent Engine `--profiler-init`. Do not
     invent a CUPTI config file this slice. Do not reverse `"profiler initialize"`.
+    Do not invent a second `cuTexObjectCreate` / `tex_object_create`. Do
+    not invent Engine `--tex-object`. Do not invent `cuTexObjectDestroy`
+    this slice. Do not reverse `"cuda texture"`.
     Do not invent a second `cudaStreamAddCallback`.
     Do not invent Engine `--stream-callback` (same wall as second live
     `cudaLaunchHostFunc` after miss DMA).
@@ -7369,6 +7379,9 @@ model, do not celebrate the sim.
     Do not invent a second `profiler_initialize` API. Do not invent
     Engine `--init-profiler`. Do not invent `cudaOutputMode` this slice.
     Do not reverse profiler config remaining unsupported.
+    Do not invent a second `tex_object_create` API. Do not invent
+    Engine `--create-tex`. Do not invent `cuTexObjectGetResourceDesc`
+    this slice. Do not reverse CUDA textures remaining unsupported.
     Do not invent a second DeviceLaunch in-flight destroy-complete check or Engine
     `--device-launch-destroy`. Do not abort an in-flight DeviceLaunch when
     `destroy_graph` succeeds. Do not delay destroy of an idle exec. Do not invent
@@ -8024,6 +8037,9 @@ model, do not celebrate the sim.
     Do not invent a second `profiler_initialize` method. Do not invent
     Engine `--cu-profiler-initialize`. Do not reverse wrapping
     cudaProfilerInitialize Invalid.
+    Do not invent a second `tex_object_create` method. Do not invent
+    Engine `--cu-tex-object`. Do not reverse wrapping cuTexObjectCreate
+    Invalid.
     Do not
     spend the next item on an OpenAI-compatible HTTP veneer.
 

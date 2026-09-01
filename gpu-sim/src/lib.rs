@@ -796,6 +796,8 @@
 //! [`SurfaceAlignment`](DeviceAttr::SurfaceAlignment).
 //! [`surf_object_create`](Sim::surf_object_create) is `cuSurfObjectCreate`
 //! (always Invalid `"cuda surface"`). Query; legal during capture. No Engine `--surf-object`.
+//! [`tex_object_create`](Sim::tex_object_create) is `cuTexObjectCreate`
+//! (always Invalid `"cuda texture"`). Query; legal during capture. No Engine `--tex-object`.
 //! [`DeviceAttr::MaxSurface1DLayeredWidth`],
 //! [`MaxSurface1DLayeredLayers`](DeviceAttr::MaxSurface1DLayeredLayers),
 //! [`MaxSurface2DLayeredWidth`](DeviceAttr::MaxSurface2DLayeredWidth),
@@ -21356,6 +21358,49 @@ mod tests {
                 .unwrap(),
             0
         );
+        match sim.array_create(d) {
+            Err(SimError::Invalid { why }) => {
+                assert!(why.contains("cuda array"), "{why}");
+            }
+            other => panic!("{other:?}"),
+        }
+    }
+
+    #[test]
+    fn tex_object_create_is_unsupported() {
+        let mut sim = Sim::new(h100());
+        let d = DeviceId(0);
+        match sim.tex_object_create(d) {
+            Err(SimError::Invalid { why }) => {
+                assert!(why.contains("cuda texture"), "{why}");
+            }
+            other => panic!("{other:?}"),
+        }
+        sim.begin_capture(d, StreamId(0)).unwrap();
+        match sim.tex_object_create(d) {
+            Err(SimError::Invalid { why }) => {
+                assert!(why.contains("cuda texture"), "{why}");
+            }
+            other => panic!("{other:?}"),
+        }
+        let _g = sim.end_capture().unwrap();
+        match sim.tex_object_create(DeviceId(99)) {
+            Err(SimError::Invalid { why }) => {
+                assert!(why.contains("device not in profile"), "{why}");
+            }
+            other => panic!("{other:?}"),
+        }
+        assert_eq!(
+            sim.device_get_attribute(d, DeviceAttr::MaxTexture1DWidth)
+                .unwrap(),
+            0
+        );
+        match sim.surf_object_create(d) {
+            Err(SimError::Invalid { why }) => {
+                assert!(why.contains("cuda surface"), "{why}");
+            }
+            other => panic!("{other:?}"),
+        }
         match sim.array_create(d) {
             Err(SimError::Invalid { why }) => {
                 assert!(why.contains("cuda array"), "{why}");

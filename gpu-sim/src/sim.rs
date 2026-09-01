@@ -17647,13 +17647,28 @@ impl Sim {
     /// `cuSurfObjectCreate`. CUDA surfaces are not modeled.
     ///
     /// Always Invalid `"cuda surface"` ([`DeviceAttr::MaxSurface1DWidth`] is
-    /// 0). Distinct from [`Self::array_create`]. Unknown devices are Invalid
-    /// `"device not in profile"`. This VM does not invent
-    /// `cuTexObjectCreate` this slice.
+    /// 0). Distinct from [`Self::array_create`] and from
+    /// [`Self::tex_object_create`]. Unknown devices are Invalid
+    /// `"device not in profile"`. Query; legal during capture.
     pub fn surf_object_create(&self, device: DeviceId) -> Result<(), SimError> {
         let _gpu = self.profile.gpu(device)?;
         Err(SimError::Invalid {
             why: "cuda surface",
+        })
+    }
+
+    /// `cuTexObjectCreate` plus `cudaCreateTextureObject`. CUDA textures
+    /// are not modeled.
+    ///
+    /// Always Invalid `"cuda texture"` ([`DeviceAttr::MaxTexture1DWidth`] is
+    /// 0). Distinct from [`Self::surf_object_create`] and from
+    /// [`Self::array_create`]. Unknown devices are Invalid
+    /// `"device not in profile"`. Query; legal during capture. This VM does
+    /// not invent `cuTexObjectDestroy` this slice.
+    pub fn tex_object_create(&self, device: DeviceId) -> Result<(), SimError> {
+        let _gpu = self.profile.gpu(device)?;
+        Err(SimError::Invalid {
+            why: "cuda texture",
         })
     }
 
