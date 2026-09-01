@@ -661,6 +661,12 @@
 //! and from [`MemcpyOp`] 2D pitches (which this VM does model).
 //! [`DeviceAttr::MaxTexture1DWidth`] is always 0 (CUDA arrays / textures are
 //! not modeled). Distinct from [`TextureAlignment`](DeviceAttr::TextureAlignment).
+//! [`DeviceAttr::MaxTexture2DWidth`], [`MaxTexture2DHeight`](DeviceAttr::MaxTexture2DHeight),
+//! [`MaxTexture3DWidth`](DeviceAttr::MaxTexture3DWidth),
+//! [`MaxTexture3DHeight`](DeviceAttr::MaxTexture3DHeight), and
+//! [`MaxTexture3DDepth`](DeviceAttr::MaxTexture3DDepth) are always 0 (CUDA
+//! arrays / textures are not modeled). Distinct from
+//! [`MaxTexture1DWidth`](DeviceAttr::MaxTexture1DWidth).
 //! [`DeviceAttr::MaxPitch`] is [`DeviceAttr::MAX_PITCH`] (this VM does not cap
 //! 2D memcpy / `cudaMallocPitch` pitch). Distinct from
 //! [`TexturePitchAlignment`](DeviceAttr::TexturePitchAlignment).
@@ -18719,6 +18725,51 @@ mod tests {
             0
         );
         let _g = sim.end_capture().unwrap();
+    }
+
+    #[test]
+    fn device_get_attribute_max_texture_2d_3d_dims_are_zero() {
+        let mut sim = Sim::new(h100());
+        let d = DeviceId(0);
+        let hp = sim.device_get_properties(d).unwrap();
+        assert_eq!(hp.max_texture_2d_width, 0);
+        assert_eq!(hp.max_texture_2d_height, 0);
+        assert_eq!(hp.max_texture_3d_width, 0);
+        assert_eq!(hp.max_texture_3d_height, 0);
+        assert_eq!(hp.max_texture_3d_depth, 0);
+        assert_eq!(
+            sim.device_get_attribute(d, DeviceAttr::MaxTexture2DWidth)
+                .unwrap(),
+            0
+        );
+        assert_eq!(
+            sim.device_get_attribute(d, DeviceAttr::MaxTexture2DHeight)
+                .unwrap(),
+            0
+        );
+        assert_eq!(
+            sim.device_get_attribute(d, DeviceAttr::MaxTexture3DHeight)
+                .unwrap(),
+            0
+        );
+        assert_eq!(
+            sim.device_get_attribute(d, DeviceAttr::MaxTexture3DDepth)
+                .unwrap(),
+            0
+        );
+        sim.begin_capture(d, StreamId(0)).unwrap();
+        assert_eq!(
+            sim.device_get_attribute(d, DeviceAttr::MaxTexture3DWidth)
+                .unwrap(),
+            0
+        );
+        let _g = sim.end_capture().unwrap();
+        match sim.device_get_attribute(DeviceId(99), DeviceAttr::MaxTexture2DHeight) {
+            Err(SimError::Invalid { why }) => {
+                assert!(why.contains("device not in profile"), "{why}");
+            }
+            other => panic!("{other:?}"),
+        }
     }
 
     #[test]

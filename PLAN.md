@@ -6053,7 +6053,16 @@ model, do not celebrate the sim.
     HBM duration from bus width. `gpu-profile capture` is still refused.
     Dual score still has no `$/M tokens`.
 
-569. [ ] Next numbered PLAN item after 568 is the next `gpu-sim` / Engine /
+569. [x] `gpu-sim` `DeviceAttr::MaxTexture2DWidth` / `MaxTexture2DHeight` /
+    `MaxTexture3DWidth` / `MaxTexture3DHeight` / `MaxTexture3DDepth` are
+    CUDA texture-dimension caps. Always 0 (CUDA arrays / textures are not
+    modeled). Query; legal during capture. Distinct from
+    `MaxTexture1DWidth`. This VM does not invent Engine `--max-texture`,
+    layered or cubemap texture attrs, occupancy SM counts, or
+    `cudaChooseDevice`. `gpu-profile capture` is still refused. Dual
+    score still has no `$/M tokens`.
+
+570. [ ] Next numbered PLAN item after 569 is the next `gpu-sim` / Engine /
     serve / expertvm mechanical API that is still missing, or the next official
     decode family. Prefer remaining CUDA-shaped twins over more
     OpenAI HTTP veneer. Do not invent F32 `output.scale`. Do not invent a
@@ -6164,6 +6173,11 @@ model, do not celebrate the sim.
     Do not invent a second `cudaDevAttrSurfaceAlignment`.
     Do not invent a second `cudaDevAttrTexturePitchAlignment`.
     Do not invent a second `cudaDevAttrMaxTexture1DWidth`.
+    Do not invent a second `cudaDevAttrMaxTexture2DWidth`,
+    `MaxTexture2DHeight`, `MaxTexture3DWidth`, `MaxTexture3DHeight`, or
+    `MaxTexture3DDepth`. Do not invent Engine `--max-texture`. Do not
+    invent layered or cubemap texture attrs this slice. Do not reverse
+    texture 2D/3D dims staying 0.
     Do not invent a second `cudaStreamAddCallback`.
     Do not invent Engine `--stream-callback` (same wall as second live
     `cudaLaunchHostFunc` after miss DMA).
@@ -6416,6 +6430,8 @@ model, do not celebrate the sim.
     this slice.
     Do not invent a second global-memory-bus-width DeviceAttr. Do not
     invent Engine `--memory-bus`. Do not invent memory clock this slice.
+    Do not invent a second texture 2D/3D dim DeviceAttr family. Do not
+    invent Engine `--max-texture`. Do not invent CUDA arrays this slice.
     Do not invent a second DeviceLaunch in-flight destroy-complete check or Engine
     `--device-launch-destroy`. Do not abort an in-flight DeviceLaunch when
     `destroy_graph` succeeds. Do not delay destroy of an idle exec. Do not invent
@@ -6895,6 +6911,8 @@ model, do not celebrate the sim.
     invent Engine `--regs-per-block`. Do not reverse 65536.
     Do not invent a second `global_memory_bus_width_bits` profile key.
     Do not invent Engine `--bus-width`. Do not reverse H100 5120.
+    Do not invent a second maxTexture2D DeviceProperties field. Do not
+    invent Engine `--texture-2d`. Do not reverse those dims as 0.
     Do not
     spend the next item on an OpenAI-compatible HTTP veneer.
 

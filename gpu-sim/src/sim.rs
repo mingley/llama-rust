@@ -19138,6 +19138,11 @@ impl Sim {
             | DeviceAttr::SurfaceAlignment
             | DeviceAttr::TexturePitchAlignment
             | DeviceAttr::MaxTexture1DWidth
+            | DeviceAttr::MaxTexture2DWidth
+            | DeviceAttr::MaxTexture2DHeight
+            | DeviceAttr::MaxTexture3DWidth
+            | DeviceAttr::MaxTexture3DHeight
+            | DeviceAttr::MaxTexture3DDepth
             | DeviceAttr::HandleTypeWin32HandleSupported
             | DeviceAttr::HandleTypeWin32KmtHandleSupported
             | DeviceAttr::HandleTypeFabricSupported
@@ -19216,6 +19221,11 @@ impl Sim {
             surface_alignment: 0,
             texture_pitch_alignment: 0,
             max_texture_1d_width: 0,
+            max_texture_2d_width: 0,
+            max_texture_2d_height: 0,
+            max_texture_3d_width: 0,
+            max_texture_3d_height: 0,
+            max_texture_3d_depth: 0,
             mem_pitch: DeviceAttr::MAX_PITCH,
             shared_mem_per_block: gpu.max_shared_mem_per_block,
             shared_mem_per_block_optin: gpu.max_shared_mem_per_block_optin,
