@@ -11304,15 +11304,34 @@ impl Sim {
     /// `cudaMemRangeGetAttribute`. Query; legal during capture.
     ///
     /// This VM tracks advice per live managed allocation, not per byte range.
-    /// Non-managed pointers are Invalid `"not managed"`.
+    /// Non-managed pointers are Invalid `"not managed"`. The CUDA `count` is
+    /// [`Self::mem_range_get_attribute_with_size`].
     pub fn mem_range_get_attribute(
         &self,
         alloc: AllocId,
         attr: MemRangeAttr,
     ) -> Result<MemRangeAttrValue, SimError> {
+        let size = self.alloc_ref(alloc)?.bytes;
+        self.mem_range_get_attribute_with_size(alloc, size, attr)
+    }
+
+    /// [`Self::mem_range_get_attribute`] with the CUDA `count` argument.
+    ///
+    /// `size` must equal the allocation bytes. Other sizes Invalid
+    /// `"range size"`. Partial range queries are not modeled. Typed
+    /// [`Self::mem_range_get_attribute`] stays. Query; legal during capture.
+    pub fn mem_range_get_attribute_with_size(
+        &self,
+        alloc: AllocId,
+        size: u64,
+        attr: MemRangeAttr,
+    ) -> Result<MemRangeAttrValue, SimError> {
         let a = self.alloc_ref(alloc)?;
         if !a.live || !a.managed {
             return Err(SimError::Invalid { why: "not managed" });
+        }
+        if size != a.bytes {
+            return Err(SimError::Invalid { why: "range size" });
         }
         Ok(match attr {
             MemRangeAttr::ReadMostly => MemRangeAttrValue::ReadMostly(a.read_mostly),
@@ -11344,16 +11363,41 @@ impl Sim {
     ///
     /// Same per-alloc rules as [`Self::mem_range_get_attribute`]. Empty
     /// `attrs` is an empty vec. All-or-nothing: a non-managed pointer fails
-    /// the whole call.
+    /// the whole call. The CUDA `count` is
+    /// [`Self::mem_range_get_attributes_with_size`].
     pub fn mem_range_get_attributes(
         &self,
         alloc: AllocId,
         attrs: &[MemRangeAttr],
     ) -> Result<Vec<MemRangeAttrValue>, SimError> {
+        let size = self.alloc_ref(alloc)?.bytes;
+        self.mem_range_get_attributes_with_size(alloc, size, attrs)
+    }
+
+    /// [`Self::mem_range_get_attributes`] with the CUDA `count` argument.
+    ///
+    /// `size` must equal the allocation bytes. Other sizes Invalid
+    /// `"range size"`. Partial range queries are not modeled. Empty `attrs`
+    /// is `Ok([])` after the pointer is a live managed alloc of that size.
+    /// Typed [`Self::mem_range_get_attributes`] stays. Query; legal during
+    /// capture.
+    pub fn mem_range_get_attributes_with_size(
+        &self,
+        alloc: AllocId,
+        size: u64,
+        attrs: &[MemRangeAttr],
+    ) -> Result<Vec<MemRangeAttrValue>, SimError> {
+        let a = self.alloc_ref(alloc)?;
+        if !a.live || !a.managed {
+            return Err(SimError::Invalid { why: "not managed" });
+        }
+        if size != a.bytes {
+            return Err(SimError::Invalid { why: "range size" });
+        }
         attrs
             .iter()
             .copied()
-            .map(|attr| self.mem_range_get_attribute(alloc, attr))
+            .map(|attr| self.mem_range_get_attribute_with_size(alloc, size, attr))
             .collect()
     }
 

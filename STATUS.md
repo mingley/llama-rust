@@ -5,6 +5,16 @@ Visible five-turn extract: [docs/chatgpt-share-6a920fe1.md](docs/chatgpt-share-6
 Complete share-API extract: [docs/chatgpt-share-6a920fe1/](docs/chatgpt-share-6a920fe1/).
 Work lands on `main`. No PRs.
 
+## Shipped 2026-09-01 — CUDA `cudaMemRangeGetAttribute` count
+
+`gpu-sim` `mem_range_get_attribute_with_size` /
+`mem_range_get_attributes_with_size` are `cudaMemRangeGetAttribute` /
+`GetAttributes` with the CUDA `count` argument. `size` must equal the
+allocation bytes. Other sizes Invalid `"range size"`. Partial range
+queries are not modeled. Typed helpers stay. Query; legal during
+capture. No Engine `--range-size`. `gpu-profile capture` is still
+refused. Dual score still has no `$/M tokens`.
+
 ## Shipped 2026-09-01 — CUDA `cudaStreamAttachMemAsync` length
 
 `gpu-sim` `stream_attach_with_size` is `cudaStreamAttachMemAsync` with

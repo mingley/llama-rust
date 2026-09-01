@@ -969,7 +969,10 @@ does not skip kernel first-touch). `expertvm --no-preferred` is
 kernel first-touches instead of copy-engine prefetch. `mem_range_get_attribute` /
 `mem_range_get_attributes` are `cudaMemRangeGetAttribute` /
 `GetAttributes` of modeled per-alloc advice (`MemRangeAttr`;
-not per byte range). Last-prefetch is the dest of `prefetch` /
+not per byte range). `mem_range_get_attribute_with_size` /
+`mem_range_get_attributes_with_size` are the CUDA `count` argument
+(`size` must equal the allocation; partial range queries are not
+modeled). Last-prefetch is the dest of `prefetch` /
 `prefetch_host`. Preferred/last-prefetch location type (`0` Invalid /
 `1` Device / `2` Host) and id (device ordinal, else `0`) wrap that
 `Place`. Host NUMA is not modeled. Query; legal during
