@@ -503,6 +503,8 @@ for `update_graph`; mem nodes legal). Definition-side
 are the exec-snapshot twins (uninstantiated graphs are Invalid).
 `graph_alloc_get_params` is `cudaGraphMemAllocNodeGetParams` (id and bytes).
 `graph_free_get_params` is `cudaGraphMemFreeNodeGetParams` (stored id).
+`graph_exec_alloc_get_params` / `graph_exec_free_get_params` are the
+exec-snapshot twins (uninstantiated graphs are Invalid).
 `graph_free_set_params` / `graph_exec_free_set_params` are
 `cudaGraphMemFreeNodeSetParams` / `cudaGraphExecMemFreeNodeSetParams`
 (definition SetParams does not retarget an exec; `graph_allocs` stays

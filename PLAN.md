@@ -5024,7 +5024,16 @@ model, do not celebrate the sim.
     No Engine `--graph-exec-event`. `gpu-profile capture` is still
     refused. Dual score still has no `$/M tokens`.
 
-466. [ ] Next numbered PLAN item after 465 is the next `gpu-sim` / Engine /
+466. [x] `gpu-sim` `graph_exec_alloc_get_params` /
+    `graph_exec_free_get_params` are exec-snapshot
+    `cudaGraphMemAllocNodeGetParams` / `MemFreeNodeGetParams`.
+    Uninstantiated graphs are Invalid. After instantiate this is the
+    launched node. View GetParams stays. Query; legal during capture.
+    No Engine `--graph-exec-mem`. Alloc SetParams stays parked.
+    `gpu-profile capture` is still refused. Dual score still has no
+    `$/M tokens`.
+
+467. [ ] Next numbered PLAN item after 466 is the next `gpu-sim` / Engine /
     serve / expertvm mechanical API that is still missing, or the next official
     decode family. Prefer remaining CUDA-shaped twins over more
     OpenAI HTTP veneer. Do not invent F32 `output.scale`. Do not invent a
@@ -5143,6 +5152,9 @@ model, do not celebrate the sim.
     Do not invent a second `graph_exec_event_record_get_event` /
     `graph_exec_event_wait_get_event`. Do not invent Engine
     `--graph-exec-event`.
+    Do not invent a second `graph_exec_alloc_get_params` /
+    `graph_exec_free_get_params`. Do not invent Engine
+    `--graph-exec-mem`.
     Do not invent `cuDeviceGetLuid`
     (Windows).
     Do not invent gemma4 `attn_q.scale` / `attn_output.scale` / `attn_k.scale` /

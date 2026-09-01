@@ -5955,6 +5955,8 @@ impl Sim {
     /// `cudaGraphMemAllocNodeGetParams` of stored id and bytes.
     ///
     /// Query; legal during capture. Pool identity stays the graph-memory pool.
+    /// Instantiated ids use the exec snapshot.
+    /// [`Self::graph_exec_alloc_get_params`] refuses uninstantiated graphs.
     pub fn graph_alloc_get_params(
         &self,
         graph: GraphId,
@@ -5968,13 +5970,50 @@ impl Sim {
         }
     }
 
+    /// Exec-snapshot [`Self::graph_alloc_get_params`].
+    ///
+    /// Uninstantiated graphs are Invalid. After instantiate this is the
+    /// launched alloc. [`Self::graph_alloc_get_params`] stays a view. Query;
+    /// legal during capture.
+    pub fn graph_exec_alloc_get_params(
+        &self,
+        exec: GraphId,
+        node: usize,
+    ) -> Result<(AllocId, u64), SimError> {
+        match &self.graph_exec_step(exec, node)?.kind {
+            Kind::Alloc { id, bytes } => Ok((*id, *bytes)),
+            _ => Err(SimError::Invalid {
+                why: "not a mem alloc node",
+            }),
+        }
+    }
+
     /// `cudaGraphMemFreeNodeGetParams` of the stored [`AllocId`].
     ///
     /// Query; legal during capture. Instantiated ids use the exec snapshot
     /// (same as [`Self::graph_alloc_get_params`]). [`Sim::graph_allocs`] is
     /// alloc-node ids for AutoFree / destroy refund, not this free target.
+    /// [`Self::graph_exec_free_get_params`] refuses uninstantiated graphs.
     pub fn graph_free_get_params(&self, graph: GraphId, node: usize) -> Result<AllocId, SimError> {
         match &self.graph_view_step(graph, node)?.kind {
+            Kind::Free { id } => Ok(*id),
+            _ => Err(SimError::Invalid {
+                why: "not a mem free node",
+            }),
+        }
+    }
+
+    /// Exec-snapshot [`Self::graph_free_get_params`].
+    ///
+    /// Uninstantiated graphs are Invalid. After instantiate this is the
+    /// launched free. [`Self::graph_free_get_params`] stays a view. Query;
+    /// legal during capture.
+    pub fn graph_exec_free_get_params(
+        &self,
+        exec: GraphId,
+        node: usize,
+    ) -> Result<AllocId, SimError> {
+        match &self.graph_exec_step(exec, node)?.kind {
             Kind::Free { id } => Ok(*id),
             _ => Err(SimError::Invalid {
                 why: "not a mem free node",

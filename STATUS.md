@@ -5,6 +5,16 @@ Visible five-turn extract: [docs/chatgpt-share-6a920fe1.md](docs/chatgpt-share-6
 Complete share-API extract: [docs/chatgpt-share-6a920fe1/](docs/chatgpt-share-6a920fe1/).
 Work lands on `main`. No PRs.
 
+## Shipped 2026-09-01 — CUDA exec mem-node GetParams
+
+`gpu-sim` `graph_exec_alloc_get_params` /
+`graph_exec_free_get_params` are exec-snapshot
+`cudaGraphMemAllocNodeGetParams` / `MemFreeNodeGetParams`. Uninstantiated
+graphs are Invalid. After instantiate this is the launched node. View
+GetParams stays. Query; legal during capture. No Engine
+`--graph-exec-mem`. Alloc SetParams stays parked. `gpu-profile capture`
+is still refused. Dual score still has no `$/M tokens`.
+
 ## Shipped 2026-09-01 — CUDA exec event GetEvent
 
 `gpu-sim` `graph_exec_event_record_get_event` /
