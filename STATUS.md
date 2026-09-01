@@ -5,6 +5,15 @@ Visible five-turn extract: [docs/chatgpt-share-6a920fe1.md](docs/chatgpt-share-6
 Complete share-API extract: [docs/chatgpt-share-6a920fe1/](docs/chatgpt-share-6a920fe1/).
 Work lands on `main`. No PRs.
 
+## Shipped 2026-09-01 — CUDA cuMemcpy2DUnaligned
+
+`gpu-sim` `cuMemcpy2DUnaligned`: `memcpy_2d_unaligned` is
+`cuMemcpy2DUnaligned`. Identity with `memcpy_2d`: this VM does not require
+CUDA 2D pitch/offset alignment. Host-synchronous; capture cannot include
+it. CUDA has no Async Unaligned; `memcpy_2d_async` stays. No Engine
+`--memcpy-unaligned`. `gpu-profile capture` is still refused. Dual score
+still has no `$/M tokens`.
+
 ## Shipped 2026-09-01 — CUDA cuMemsetD2D8
 
 `gpu-sim` `cuMemsetD2D8`: `memset_d2d8_async` / `memset_d2d8` are

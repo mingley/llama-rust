@@ -5186,7 +5186,16 @@ model, do not celebrate the sim.
     modeled. No Engine `--memset-d2d`. `gpu-profile capture` is still
     refused. Dual score still has no `$/M tokens`.
 
-483. [ ] Next numbered PLAN item after 482 is the next `gpu-sim` / Engine /
+483. [x] `gpu-sim` `cuMemcpy2DUnaligned`:
+    [`memcpy_2d_unaligned`](Sim::memcpy_2d_unaligned) is
+    `cuMemcpy2DUnaligned`. Identity with [`memcpy_2d`](Sim::memcpy_2d): this
+    VM does not require CUDA 2D pitch/offset alignment. Host-synchronous;
+    capture cannot include it. CUDA has no Async Unaligned;
+    [`memcpy_2d_async`](Sim::memcpy_2d_async) stays. No Engine
+    `--memcpy-unaligned`. `gpu-profile capture` is still refused. Dual score
+    still has no `$/M tokens`.
+
+484. [ ] Next numbered PLAN item after 483 is the next `gpu-sim` / Engine /
     serve / expertvm mechanical API that is still missing, or the next official
     decode family. Prefer remaining CUDA-shaped twins over more
     OpenAI HTTP veneer. Do not invent F32 `output.scale`. Do not invent a
@@ -5445,7 +5454,10 @@ model, do not celebrate the sim.
     BEFORE a leaf (same GPU timeline as live wait). Do not invent host AFTER
     kernel on a leaf (exclusive-compute wall matches BEFORE). Do not invent
     `cuStreamBatchMemOp` packing of wait/write (1 ns Solo, not
-    `launch_overhead_ns`). Do not
+    `launch_overhead_ns`). Do not invent a second `cuMemcpy2DUnaligned` /
+    `memcpy_2d_unaligned`. Do not invent `cuMemcpy2DUnalignedAsync` (CUDA has
+    no Async Unaligned). Do not invent Engine `--memcpy-unaligned`. Do not
+    add 2D alignment checks to `memcpy_2d`. Do not
     spend the next item on an OpenAI-compatible HTTP veneer.
 
 Stop if Phase 1 traces say residency cannot work. Do not invent an

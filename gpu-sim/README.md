@@ -635,7 +635,9 @@ are `cudaMemcpy3DPeer` / `cudaMemcpy3DPeerAsync`
 `memcpy_peer_2d_async` are `cudaMemcpy2DPeer` / `cudaMemcpy2DPeerAsync`
 (`MemcpyOp` must be 2D). `memcpy_2d` /
 `memcpy_2d_async` are `cudaMemcpy2D` / `cudaMemcpy2DAsync` (`MemcpyOp` must
-be 2D). `memcpy_3d` / `memcpy_3d_async` are `cudaMemcpy3D` /
+be 2D). `memcpy_2d_unaligned` is `cuMemcpy2DUnaligned` (identity with
+`memcpy_2d`; this VM does not require 2D alignment; host-sync; CUDA has no
+Async Unaligned). No Engine `--memcpy-unaligned`. `memcpy_3d` / `memcpy_3d_async` are `cudaMemcpy3D` /
 `cudaMemcpy3DAsync` (`MemcpyOp` must be 3D). `memcpy_batch_async` is
 `cudaMemcpyBatchAsync` (1D pointer-to-pointer; copies in one batch do not
 wait for each other; 2D/3D use `memcpy_3d_batch_async`; capture

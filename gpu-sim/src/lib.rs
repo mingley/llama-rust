@@ -626,6 +626,9 @@
 //! are `cudaMemcpy2DPeerAsync` / `cudaMemcpy2DPeer` ([`MemcpyOp::is_2d`]).
 //! [`memcpy_2d_async`](Sim::memcpy_2d_async) / [`memcpy_2d`](Sim::memcpy_2d)
 //! are `cudaMemcpy2DAsync` / `cudaMemcpy2D` ([`MemcpyOp::is_2d`]).
+//! [`memcpy_2d_unaligned`](Sim::memcpy_2d_unaligned) is `cuMemcpy2DUnaligned`
+//! (identity with `memcpy_2d`; this VM does not require 2D alignment; host-sync;
+//! CUDA has no Async Unaligned). No Engine `--memcpy-unaligned`.
 //! [`memcpy_3d_async`](Sim::memcpy_3d_async) / [`memcpy_3d`](Sim::memcpy_3d)
 //! are `cudaMemcpy3DAsync` / `cudaMemcpy3D` ([`MemcpyOp::is_3d`]). Typed
 //! [`memcpy`](Sim::memcpy) stays.
@@ -15209,6 +15212,50 @@ mod tests {
             other => panic!("{other:?}"),
         }
         let _g = sim.end_capture().unwrap();
+    }
+
+    #[test]
+    fn memcpy_2d_unaligned_is_cu_memcpy_2d_unaligned() {
+        let mut sim = Sim::new(h100());
+        let d = DeviceId(0);
+        let s = StreamId(0);
+        let (a, pitch) = sim.malloc_pitch(d, 256, 8).unwrap();
+        let op = MemcpyOp {
+            src: Place::HostPinned,
+            dst: Place::Device(d),
+            alloc: a,
+            bytes: 256,
+            offset: 0,
+            height: 8,
+            src_pitch: 257,
+            dst_pitch: pitch,
+            ..MemcpyOp::default()
+        };
+        enq(sim.memcpy_2d_unaligned(d, op.clone(), s));
+        sim.synchronize().unwrap();
+        assert_eq!(sim.bytes_moved(), 2048);
+        match sim.memcpy_2d_unaligned(
+            d,
+            MemcpyOp {
+                height: 1,
+                ..op.clone()
+            },
+            s,
+        ) {
+            Err(SimError::Invalid { why }) => assert!(why.contains("memcpy2d height"), "{why}"),
+            other => panic!("{other:?}"),
+        }
+        sim.begin_capture(d, s).unwrap();
+        match sim.memcpy_2d_unaligned(d, op.clone(), s) {
+            Err(SimError::Invalid { why }) => {
+                assert!(why.contains("cannot capture host-sync memcpy"), "{why}");
+            }
+            other => panic!("{other:?}"),
+        }
+        let _end = sim.end_capture().unwrap();
+        enq(sim.memcpy_2d(d, op, s));
+        sim.synchronize().unwrap();
+        assert_eq!(sim.bytes_moved(), 4096);
     }
 
     #[test]
