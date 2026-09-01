@@ -5,6 +5,16 @@ Visible five-turn extract: [docs/chatgpt-share-6a920fe1.md](docs/chatgpt-share-6
 Complete share-API extract: [docs/chatgpt-share-6a920fe1/](docs/chatgpt-share-6a920fe1/).
 Work lands on `main`. No PRs.
 
+## Shipped 2026-09-01 — User-object count is 1 through INT_MAX
+
+`gpu-sim` CUDA user-object `count` / `initialRefcount` is `1..=i32::MAX`
+(`INT_MAX`; `user_object_create` / `user_object_retain` /
+`user_object_release` / `graph_retain_user_object` /
+`graph_release_user_object`). `GraphUserObjectFlags::MOVE` still ignores
+`count`. Capture is still reported first. This VM does not invent Engine
+`--user-object-int-max`. `gpu-profile capture` is still refused. Dual
+score still has no `$/M tokens`.
+
 ## Shipped 2026-09-01 — AddNode rejects duplicate dependencies
 
 `gpu-sim` CUDA `cudaGraphAddNode` `pDependencies` may not have duplicate

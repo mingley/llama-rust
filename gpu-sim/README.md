@@ -526,7 +526,8 @@ parent keeps working. `destroy_graph` is `cudaGraphDestroy` (1 ns;
 later launch is unknown; remaining graph mem is refunded; user-object
 refs held by the graph are released).
 `user_object_create` is `cudaUserObjectCreate`
-(`UserObjectFlags::NO_DESTRUCTOR_SYNC`; last ref records `destroy_fn`).
+(`UserObjectFlags::NO_DESTRUCTOR_SYNC`; initial refs `1..=i32::MAX`; last
+ref records `destroy_fn`).
 `graph_retain_user_object` / `graph_release_user_object` are
 `cudaGraphRetainUserObject` / `ReleaseUserObject` on a definition
 (`GraphUserObjectFlags::MOVE` transfers one caller ref). Clone does not

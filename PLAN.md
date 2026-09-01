@@ -5587,7 +5587,16 @@ model, do not celebrate the sim.
     PLAN 182. `gpu-profile capture` is still refused. Dual score still
     has no `$/M tokens`.
 
-520. [ ] Next numbered PLAN item after 519 is the next `gpu-sim` / Engine /
+520. [x] `gpu-sim` CUDA user-object `count` / `initialRefcount` is
+    `1..=i32::MAX` (`INT_MAX`; [`user_object_create`] /
+    [`user_object_retain`] / [`user_object_release`] /
+    [`graph_retain_user_object`] / [`graph_release_user_object`]).
+    [`GraphUserObjectFlags::MOVE`] still ignores `count`. Capture is
+    still reported first. This VM does not invent Engine
+    `--user-object-int-max`. `gpu-profile capture` is still refused.
+    Dual score still has no `$/M tokens`.
+
+521. [ ] Next numbered PLAN item after 520 is the next `gpu-sim` / Engine /
     serve / expertvm mechanical API that is still missing, or the next official
     decode family. Prefer remaining CUDA-shaped twins over more
     OpenAI HTTP veneer. Do not invent F32 `output.scale`. Do not invent a
@@ -5674,6 +5683,9 @@ model, do not celebrate the sim.
     Do not invent a second AddNode duplicate-deps check or Engine
     flag `--graph-add-node-dup`. Do not invent duplicate-deps error on
     typed `graph_add_kernel` (empty deps).
+    Do not invent a second user-object `INT_MAX` count check or Engine
+    flag `--user-object-int-max`. Do not apply that bound to MOVE `count`
+    (still ignored).
     Do not invent a second `cudaStreamGetCaptureInfo_v3`. Do not invent
     `cudaStreamUpdateCaptureDependencies` v2 edgeData.
     Do not invent a second `cudaDeviceProp::persistingL2CacheMaxSize`.
@@ -6016,6 +6028,8 @@ model, do not celebrate the sim.
     `UPLOAD`.
     Do not invent a second AddNode duplicate-deps check. Do not reverse
     PLAN 182 v1 duplicate-add no-op for `graph_add_dependencies`.
+    Do not invent a second user-object `INT_MAX` count check. Do not
+    apply that bound to MOVE `count`.
     Do not
     spend the next item on an OpenAI-compatible HTTP veneer.
 

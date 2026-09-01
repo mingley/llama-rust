@@ -7266,8 +7266,9 @@ impl Sim {
 
     /// `cudaUserObjectCreate`. Host-synchronous. Capture cannot include it.
     ///
-    /// `flags` must be [`UserObjectFlags::NO_DESTRUCTOR_SYNC`]. `initial_refcount`
-    /// must be non-zero. `destroy_fn` is the host callback id recorded when the
+    /// `flags` must be [`UserObjectFlags::NO_DESTRUCTOR_SYNC`].
+    /// `initial_refcount` must be in `1..=i32::MAX` (CUDA `INT_MAX`).
+    /// `destroy_fn` is the host callback id recorded when the
     /// last reference is released (no Rust callback). Decode identity does not
     /// create user objects.
     pub fn user_object_create(
@@ -7282,11 +7283,7 @@ impl Sim {
                 why: "user object flags",
             });
         }
-        if initial_refcount == 0 {
-            return Err(SimError::Invalid {
-                why: "user object initial refs",
-            });
-        }
+        Self::reject_user_object_count(initial_refcount, "user object initial refs")?;
         let id = UserObjectId(self.next_user_object);
         self.next_user_object = self.next_user_object.saturating_add(1);
         let _prev = self.user_objects.insert(
@@ -7302,13 +7299,11 @@ impl Sim {
     }
 
     /// `cudaUserObjectRetain`. Host-synchronous. Capture cannot include it.
+    ///
+    /// `count` must be in `1..=i32::MAX` (CUDA `INT_MAX`).
     pub fn user_object_retain(&mut self, object: UserObjectId, count: u32) -> Result<(), SimError> {
         self.fail_if_capturing("cannot capture user object")?;
-        if count == 0 {
-            return Err(SimError::Invalid {
-                why: "user object count",
-            });
-        }
+        Self::reject_user_object_count(count, "user object count")?;
         let obj = self.user_object_mut(object)?;
         obj.caller = obj.caller.checked_add(count).ok_or(SimError::Invalid {
             why: "user object refs overflow",
@@ -7320,17 +7315,14 @@ impl Sim {
     /// `cudaUserObjectRelease`. Host-synchronous. Capture cannot include it.
     ///
     /// Releasing the last reference records [`Self::user_object_destructors`].
+    /// `count` must be in `1..=i32::MAX` (CUDA `INT_MAX`).
     pub fn user_object_release(
         &mut self,
         object: UserObjectId,
         count: u32,
     ) -> Result<(), SimError> {
         self.fail_if_capturing("cannot capture user object")?;
-        if count == 0 {
-            return Err(SimError::Invalid {
-                why: "user object count",
-            });
-        }
+        Self::reject_user_object_count(count, "user object count")?;
         {
             let obj = self.user_object_mut(object)?;
             if count > obj.caller {
@@ -7349,7 +7341,8 @@ impl Sim {
     ///
     /// Capture cannot include it. Illegal on an instantiated exec. Clone does
     /// not copy retains. [`GraphUserObjectFlags::MOVE`] transfers one caller
-    /// reference (`count` ignored); otherwise the graph takes `count` extra refs.
+    /// reference (`count` ignored, including above `INT_MAX`); otherwise the
+    /// graph takes `count` extra refs (`1..=i32::MAX`).
     pub fn graph_retain_user_object(
         &mut self,
         graph: GraphId,
@@ -7365,10 +7358,8 @@ impl Sim {
             });
         }
         let mv = flags & GraphUserObjectFlags::MOVE != 0;
-        if !mv && count == 0 {
-            return Err(SimError::Invalid {
-                why: "user object count",
-            });
+        if !mv {
+            Self::reject_user_object_count(count, "user object count")?;
         }
         let add = if mv { 1 } else { count };
         let obj = self.user_object_mut(object)?;
@@ -7392,6 +7383,7 @@ impl Sim {
     /// `cudaGraphReleaseUserObject` on a definition. Host-synchronous.
     ///
     /// Capture cannot include it. Illegal on an instantiated exec.
+    /// `count` must be in `1..=i32::MAX` (CUDA `INT_MAX`).
     pub fn graph_release_user_object(
         &mut self,
         graph: GraphId,
@@ -7400,11 +7392,7 @@ impl Sim {
     ) -> Result<(), SimError> {
         self.fail_if_capturing("cannot capture user object")?;
         self.require_user_object_graph(graph)?;
-        if count == 0 {
-            return Err(SimError::Invalid {
-                why: "user object count",
-            });
-        }
+        Self::reject_user_object_count(count, "user object count")?;
         self.graph_release_user_object_inner(graph, object, count)?;
         self.clock = self.clock.saturating_add(1);
         Ok(())
@@ -7439,6 +7427,14 @@ impl Sim {
     #[must_use]
     pub fn user_object_destructors(&self) -> &[(UserObjectId, u64)] {
         &self.user_object_dtors
+    }
+
+    /// CUDA: user-object `count` / `initialRefcount` is `1..=INT_MAX`.
+    fn reject_user_object_count(count: u32, why: &'static str) -> Result<(), SimError> {
+        if count == 0 || count > i32::MAX as u32 {
+            return Err(SimError::Invalid { why });
+        }
+        Ok(())
     }
 
     fn user_object(&self, object: UserObjectId) -> Result<&UserObject, SimError> {

@@ -1018,7 +1018,7 @@
 //! UseNodePriority priority, 2D memset geometry, memcpy memory type, kernel
 //! function variant, mem nodes, device-launch).
 //! [`user_object_create`](Sim::user_object_create) is `cudaUserObjectCreate`
-//! ([`UserObjectFlags::NO_DESTRUCTOR_SYNC`]). [`graph_retain_user_object`](Sim::graph_retain_user_object) /
+//! ([`UserObjectFlags::NO_DESTRUCTOR_SYNC`]; initial refs `1..=i32::MAX`). [`graph_retain_user_object`](Sim::graph_retain_user_object) /
 //! [`graph_release_user_object`](Sim::graph_release_user_object) are
 //! `cudaGraphRetainUserObject` / `ReleaseUserObject` on a definition.
 //! [`GraphUserObjectFlags::MOVE`] transfers one caller ref. Destroy of the
@@ -4912,6 +4912,54 @@ mod tests {
             other => panic!("{other:?}"),
         }
         let _g = sim.end_capture().unwrap();
+    }
+
+    #[test]
+    fn user_object_count_rejects_above_int_max() {
+        let mut sim = Sim::new(h100());
+        let too = (i32::MAX as u32).saturating_add(1);
+        match sim.user_object_create(1, too, UserObjectFlags::NO_DESTRUCTOR_SYNC) {
+            Err(SimError::Invalid { why }) => assert!(why.contains("initial"), "{why}"),
+            other => panic!("{other:?}"),
+        }
+        let obj = sim
+            .user_object_create(1, 1, UserObjectFlags::NO_DESTRUCTOR_SYNC)
+            .unwrap();
+        match sim.user_object_retain(obj, too) {
+            Err(SimError::Invalid { why }) => assert!(why.contains("user object count"), "{why}"),
+            other => panic!("{other:?}"),
+        }
+        match sim.user_object_release(obj, too) {
+            Err(SimError::Invalid { why }) => assert!(why.contains("user object count"), "{why}"),
+            other => panic!("{other:?}"),
+        }
+        let d = DeviceId(0);
+        let s = StreamId(0);
+        let g = sim.create_graph(d, s).unwrap();
+        match sim.graph_retain_user_object(g, obj, too, 0) {
+            Err(SimError::Invalid { why }) => assert!(why.contains("user object count"), "{why}"),
+            other => panic!("{other:?}"),
+        }
+        sim.graph_retain_user_object(g, obj, 1, 0).unwrap();
+        match sim.graph_release_user_object(g, obj, too) {
+            Err(SimError::Invalid { why }) => assert!(why.contains("user object count"), "{why}"),
+            other => panic!("{other:?}"),
+        }
+        let moved = sim
+            .user_object_create(1, 1, UserObjectFlags::NO_DESTRUCTOR_SYNC)
+            .unwrap();
+        sim.graph_retain_user_object(g, moved, too, GraphUserObjectFlags::MOVE)
+            .unwrap();
+        assert_eq!(sim.user_object_graph_refs(g, moved).unwrap(), 1);
+        sim.begin_capture(d, s).unwrap();
+        match sim.user_object_retain(obj, too) {
+            Err(SimError::Invalid { why }) => {
+                assert!(why.contains("capture"), "{why}");
+                assert!(!why.contains("user object count"), "{why}");
+            }
+            other => panic!("{other:?}"),
+        }
+        let _cap = sim.end_capture().unwrap();
     }
 
     #[test]
