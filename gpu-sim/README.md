@@ -164,6 +164,7 @@ warp scheduler, L1, …   ← do not model
 | `array_3d_get_descriptor` is Invalid (no array handles) | `cuArray3DGetDescriptor` |
 | `array_get_sparse_properties` is Invalid (sparse CUDA arrays are not modeled) | `cuArrayGetSparseProperties` |
 | `array_get_plane` is Invalid (no array handles) | `cuArrayGetPlane` |
+| `array_get_memory_requirements` is Invalid (no array handles) | `cuArrayGetMemoryRequirements` |
 | `mipmapped_array_create` is Invalid (CUDA mipmapped arrays are not modeled) | `cuMipmappedArrayCreate` |
 | `import_external_memory` is Invalid (dma-buf / Win32 / fabric are 0) | `cuImportExternalMemory` |
 | `surf_object_create` is Invalid (CUDA surfaces are not modeled) | `cuSurfObjectCreate` |
@@ -1028,7 +1029,10 @@ Invalid `"array sparse"`). Distinct from `array_3d_get_descriptor`. Query;
 legal during capture. No Engine `--array-sparse`.
 `array_get_plane` is `cuArrayGetPlane` (always Invalid `"array plane"`).
 Distinct from `array_get_sparse_properties`. Query; legal during capture. No Engine `--array-plane`.
-`mipmapped_array_create` is `cuMipmappedArrayCreate` (always Invalid
+`array_get_memory_requirements` is `cuArrayGetMemoryRequirements` (always
+Invalid `"array memory"`). Distinct from `array_get_plane`. Query; legal
+during capture. No Engine `--array-memory`.
+`mipmapped_array_create` is `cuMipmappedArrayCreate` (always Invalid)
 `"mipmapped array"`). Distinct from `array_create`. Query; legal during
 capture. No Engine `--mipmap-array`.
 `va_get_handle_for_address_range`

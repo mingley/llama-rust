@@ -550,6 +550,8 @@ no array handles; no Engine flag).
 (Invalid; sparse CUDA arrays are not modeled; no Engine flag).
 `gpu-sim` `array_get_plane` is `cuArrayGetPlane` (Invalid; no array
 handles; no Engine flag).
+`gpu-sim` `array_get_memory_requirements` is
+`cuArrayGetMemoryRequirements` (Invalid; no array handles; no Engine flag).
 `gpu-sim` `mipmapped_array_create` is `cuMipmappedArrayCreate` (Invalid;
 CUDA mipmapped arrays are not modeled; no Engine flag).
 `gpu-sim` `import_external_memory` is `cuImportExternalMemory` (Invalid;

@@ -17660,12 +17660,26 @@ impl Sim {
     /// modeled.
     ///
     /// Always Invalid `"array plane"` (no array handles). Distinct from
-    /// [`Self::array_get_sparse_properties`]. Unknown devices are Invalid
-    /// `"device not in profile"`. Query; legal during capture. This VM does
-    /// not invent `cuArrayGetMemoryRequirements` this slice.
+    /// [`Self::array_get_sparse_properties`] and from
+    /// [`Self::array_get_memory_requirements`]. Unknown devices are Invalid
+    /// `"device not in profile"`. Query; legal during capture.
     pub fn array_get_plane(&self, device: DeviceId) -> Result<(), SimError> {
         let _gpu = self.profile.gpu(device)?;
         Err(SimError::Invalid { why: "array plane" })
+    }
+
+    /// `cuArrayGetMemoryRequirements` plus `cudaArrayGetMemoryRequirements`.
+    /// CUDA arrays are not modeled.
+    ///
+    /// Always Invalid `"array memory"` (no array handles). Distinct from
+    /// [`Self::array_get_plane`]. Unknown devices are Invalid
+    /// `"device not in profile"`. Query; legal during capture. This VM does
+    /// not invent `cuMipmappedArrayGetMemoryRequirements` this slice.
+    pub fn array_get_memory_requirements(&self, device: DeviceId) -> Result<(), SimError> {
+        let _gpu = self.profile.gpu(device)?;
+        Err(SimError::Invalid {
+            why: "array memory",
+        })
     }
 
     /// `cuMipmappedArrayCreate`. CUDA mipmapped arrays are not modeled.
