@@ -264,6 +264,10 @@ struct Multicast {
 /// [`Sim::stream_get_id`] (`(device << 16) + stream + 1`).
 const GREEN_CTX_CUDA_ID_TAG: u64 = 1u64 << 63;
 
+/// Bit 40 so [`Sim::ctx_get_id`] never collides with
+/// [`Sim::green_ctx_get_id`] (bit 63) or [`Sim::stream_get_id`].
+const PRIMARY_CTX_CUDA_ID_TAG: u64 = 1u64 << 40;
+
 struct GreenCtx {
     device: DeviceId,
     sm: SmResource,
@@ -15621,6 +15625,19 @@ impl Sim {
     pub fn device_primary_ctx_get_state(&self, device: DeviceId) -> Result<(u32, bool), SimError> {
         let flags = self.get_device_flags(device)?;
         Ok((flags, true))
+    }
+
+    /// `cuCtxGetId` for the seeded primary context of `device`.
+    ///
+    /// Query; legal during capture. There is no TLS current device and no
+    /// `CUcontext` object. The id is unique per device and stable for the
+    /// life of the `Sim` (primary-ctx Reset is not modeled). Distinct from
+    /// [`Self::green_ctx_get_id`], [`Self::stream_get_id`], and
+    /// [`Self::event_get_id`]. Unknown devices are Invalid
+    /// `"device not in profile"`.
+    pub fn ctx_get_id(&self, device: DeviceId) -> Result<u64, SimError> {
+        let _gpu = self.profile.gpu(device)?;
+        Ok(PRIMARY_CTX_CUDA_ID_TAG | u64::from(device.0))
     }
 
     /// `cudaInitDevice(device, 0, 0)`. Ensures the primary context (already

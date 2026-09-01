@@ -5,6 +5,15 @@ Visible five-turn extract: [docs/chatgpt-share-6a920fe1.md](docs/chatgpt-share-6
 Complete share-API extract: [docs/chatgpt-share-6a920fe1/](docs/chatgpt-share-6a920fe1/).
 Work lands on `main`. No PRs.
 
+## Shipped 2026-09-01 — CUDA primary-context GetId
+
+`gpu-sim` `cuCtxGetId`: `ctx_get_id` is `cuCtxGetId` for the seeded
+primary context of an explicit `DeviceId` (no TLS current device / no
+`CUcontext` object). Distinct from `green_ctx_get_id` / `stream_get_id` /
+`event_get_id`. Unknown devices are Invalid. Query; legal during capture.
+No Engine `--ctx-id`. `gpu-profile capture` is still refused. Dual score
+still has no `$/M tokens`.
+
 ## Shipped 2026-09-01 — CUDA wait-value FLUSH on RDMA
 
 `gpu-sim` `CU_STREAM_WAIT_VALUE_FLUSH`: `WaitValueFlags::FLUSH` follows a

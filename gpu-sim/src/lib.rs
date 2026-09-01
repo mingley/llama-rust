@@ -688,6 +688,10 @@
 //! [`device_primary_ctx_get_state`](Sim::device_primary_ctx_get_state) is
 //! `cuDevicePrimaryCtxGetState` (flags match [`get_device_flags`](Sim::get_device_flags);
 //! active is always true). No `cuDevicePrimaryCtxRetain`.
+//! [`ctx_get_id`](Sim::ctx_get_id) is `cuCtxGetId` for the seeded primary
+//! context of an explicit [`DeviceId`] (no TLS current device). Distinct
+//! from [`green_ctx_get_id`](Sim::green_ctx_get_id). Query; legal during
+//! capture. No Engine `--ctx-id`.
 //! `expertvm sim --device-sync-memops` sets [`DeviceFlags::SYNC_MEMOPS`].
 //! `expertvm sim --device-sync-policy blocking` sets
 //! [`DeviceFlags::SCHEDULE_BLOCKING_SYNC`].
@@ -14847,6 +14851,42 @@ mod tests {
             }
             other => panic!("{other:?}"),
         }
+    }
+
+    #[test]
+    fn ctx_get_id_is_cu_ctx_get_id_for_primary() {
+        let mut sim = Sim::new(h100());
+        let d = DeviceId(0);
+        let id0 = sim.ctx_get_id(d).unwrap();
+        assert_eq!(id0, sim.ctx_get_id(d).unwrap());
+        assert_eq!(id0, (1u64 << 40) | u64::from(d.0));
+        assert_ne!(id0, sim.stream_get_id(d, StreamId(0)).unwrap());
+        sim.create_event(EventId(1)).unwrap();
+        assert_ne!(id0, sim.event_get_id(EventId(1)).unwrap());
+        let desc = sim
+            .dev_resource_generate_desc(&[SmResource {
+                start: 0,
+                width: 500,
+            }])
+            .unwrap();
+        let gc = sim
+            .green_ctx_create(desc, d, GreenCtxFlags::DEFAULT)
+            .unwrap();
+        assert_ne!(id0, sim.green_ctx_get_id(gc).unwrap());
+        sim.begin_capture(d, StreamId(0)).unwrap();
+        assert_eq!(sim.ctx_get_id(d).unwrap(), id0);
+        let _g = sim.end_capture().unwrap();
+        match sim.ctx_get_id(DeviceId(9)) {
+            Err(SimError::Invalid { why }) => {
+                assert!(why.contains("device not in profile"), "{why}")
+            }
+            other => panic!("{other:?}"),
+        }
+        let eight = Sim::new(HardwareProfile::example_8xh100_nvlink());
+        let d1 = DeviceId(1);
+        let id1 = eight.ctx_get_id(d1).unwrap();
+        assert_ne!(id1, eight.ctx_get_id(DeviceId(0)).unwrap());
+        assert_eq!(id1, (1u64 << 40) | u64::from(d1.0));
     }
 
     #[test]

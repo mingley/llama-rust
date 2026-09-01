@@ -164,6 +164,7 @@ warp scheduler, L1, …   ← do not model
 | `set_device_flags` / `get_device_flags` schedule + MapHost / Lmem / SyncMemops; Auto streams inherit the tax | `cudaSetDeviceFlags` / `GetDeviceFlags` |
 | `init_device` / `init_device_with_flags` seed is already done; `FLAGS_ARE_VALID` applies `deviceFlags` | `cudaInitDevice` |
 | `device_primary_ctx_get_state` is flags plus always-active (no lazy retain) | `cuDevicePrimaryCtxGetState` |
+| `ctx_get_id` is `cuCtxGetId` for the seeded primary context of an explicit device | query; legal during capture |
 | access-policy windows align to `cudaLimitMaxL2FetchGranularity` (default 128; `expertvm sim --l2-fetch N` sets 32/64/128) | exact |
 | `AccessPolicyWindow.hit_ratio_permille` is CUDA `hitRatio` (`expertvm sim --l2-ratio N`; unset 1000) | exact |
 | `AccessPolicyWindow.hit` Streaming skips persist fill (`expertvm sim --l2-streaming`; needs persist) | exact |
@@ -839,8 +840,10 @@ Typed setters stay. `stream_get_flags` is `cudaStreamGetFlags`
 (`0` `cudaStreamDefault` / `1` `cudaStreamNonBlocking`; NULL follows
 `set_legacy_null_stream`). `stream_get_priority` is `cudaStreamGetPriority`.
 `stream_get_id` is `cudaStreamGetId` (unique per device/stream; not the
-caller-chosen `StreamId`). `green_ctx_get_id` is `cuGreenCtxGetId` /
-`cudaExecutionCtxGetId` (unique per live green ctx; not `GreenCtxId`).
+caller-chosen `StreamId`). `ctx_get_id` is `cuCtxGetId` for the seeded
+primary context (not `green_ctx_get_id`). `green_ctx_get_id` is
+`cuGreenCtxGetId` / `cudaExecutionCtxGetId` (unique per live green ctx;
+not `GreenCtxId`).
 `green_ctx_get_device` is `cudaExecutionCtxGetDevice` (create device).
 `stream_get_attribute` / `stream_set_attribute` are `cudaStreamGetAttribute` /
 `SetAttribute` of existing stream state (`StreamAttr`: priority, synchronization
@@ -874,6 +877,9 @@ already seeded; does not make a thread-current device).
 `--init-device`.
 `device_primary_ctx_get_state` is `cuDevicePrimaryCtxGetState` (flags match
 `get_device_flags`; active is always true). No `cuDevicePrimaryCtxRetain`.
+`ctx_get_id` is `cuCtxGetId` for the seeded primary context of an explicit
+device (no TLS current device). Distinct from `green_ctx_get_id`. Query;
+legal during capture. No Engine `--ctx-id`.
 `expertvm sim --device-sync-memops` sets `DeviceFlags::SYNC_MEMOPS`.
 `expertvm sim --device-sync-policy blocking` sets `DeviceFlags::SCHEDULE_BLOCKING_SYNC`
 (Auto streams inherit host-wait tax; explicit `--sync-policy` wins).

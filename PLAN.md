@@ -5106,7 +5106,16 @@ model, do not celebrate the sim.
     Capture legal. No Engine `--wait-flush`. `gpu-profile capture` is
     still refused. Dual score still has no `$/M tokens`.
 
-476. [ ] Next numbered PLAN item after 475 is the next `gpu-sim` / Engine /
+476. [x] `gpu-sim` `cuCtxGetId`:
+    [`ctx_get_id`](Sim::ctx_get_id) is `cuCtxGetId` for the seeded primary
+    context of an explicit [`DeviceId`] (no TLS current device / no
+    `CUcontext` object). Distinct from [`green_ctx_get_id`](Sim::green_ctx_get_id)
+    / [`stream_get_id`](Sim::stream_get_id) / [`event_get_id`](Sim::event_get_id).
+    Unknown devices are Invalid `"device not in profile"`. Query; legal
+    during capture. No Engine `--ctx-id`. `gpu-profile capture` is still
+    refused. Dual score still has no `$/M tokens`.
+
+477. [ ] Next numbered PLAN item after 476 is the next `gpu-sim` / Engine /
     serve / expertvm mechanical API that is still missing, or the next official
     decode family. Prefer remaining CUDA-shaped twins over more
     OpenAI HTTP veneer. Do not invent F32 `output.scale`. Do not invent a
@@ -5119,6 +5128,8 @@ model, do not celebrate the sim.
     `cuGreenCtxRecordEvent` / `WaitEvent`. Do not invent a second
     `cudaExecutionCtxSynchronize`. Do not invent a second
     `cuStreamGetDevResource`. Do not invent a second `cuGreenCtxGetId`.
+    Do not invent a second `cuCtxGetId` / `ctx_get_id`. Do not invent Engine
+    `--ctx-id`.
     Do not invent a second `cudaExecutionCtxGetDevice`. Do not invent a
     second `cudaEventGetFlags`. Do not invent a second `cudaGraphGetId` /
     `cudaGraphExecGetId`. Do not invent a second `cuGraphNodeGetLocalId`.
