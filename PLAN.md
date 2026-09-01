@@ -5124,7 +5124,23 @@ model, do not celebrate the sim.
     include it. No Engine `--graph-add-node-data`. `gpu-profile capture`
     is still refused. Dual score still has no `$/M tokens`.
 
-478. [ ] Next numbered PLAN item after 477 is the next `gpu-sim` / Engine /
+478. [x] `gpu-sim` `cudaGraphAddMemAllocNode` accessDescs:
+    [`graph_add_alloc_with_access`](Sim::graph_add_alloc_with_access) is
+    `cudaMemAllocNodeParams::accessDescs`. Empty is
+    [`graph_add_alloc`](Sim::graph_add_alloc). Peer
+    [`MemAccessFlags::PROT_READ_WRITE`] / [`PROT_READ`](MemAccessFlags::PROT_READ)
+    lets a live kernel on that GPU use the graph alloc without dest HBM
+    (graph-memory pool stays Invalid for [`pool_set_access`](Sim::pool_set_access)).
+    Host location `"access location"`; unknown flags `"alloc access flags"`.
+    Applied when the alloc is live (launch), not at add. Last descriptor for a
+    device wins. All-or-nothing before the node is created. Capture cannot
+    include it. [`graph_alloc_get_access`](Sim::graph_alloc_get_access) /
+    [`graph_exec_alloc_get_access`](Sim::graph_exec_alloc_get_access) are the
+    GetParams accessDescs. SetParams of Alloc stays Invalid. No Engine
+    `--graph-alloc-access`. `gpu-profile capture` is still refused. Dual score
+    still has no `$/M tokens`.
+
+479. [ ] Next numbered PLAN item after 478 is the next `gpu-sim` / Engine /
     serve / expertvm mechanical API that is still missing, or the next official
     decode family. Prefer remaining CUDA-shaped twins over more
     OpenAI HTTP veneer. Do not invent F32 `output.scale`. Do not invent a
@@ -5290,6 +5306,7 @@ model, do not celebrate the sim.
     Do not invent occupancy SM counts (`cudaDevAttrMultiProcessorCount`,
     occupancy APIs). Do not invent
     `cudaGraphMemAllocNodeSetParams` (it would resize HBM),
+    a second graph-alloc accessDescs / Engine `--graph-alloc-access`,
     `cudaDeviceGetStreamPriorityRange`, CUDA version
     numbers, example `$/M tokens` rents, or `cudaStreamDestroy`.
     **`best_of` / `use_beam_search` stay out of `parse_gen_req` until a
@@ -5314,8 +5331,13 @@ model, do not celebrate the sim.
     invent a second `cudaStreamBeginCaptureToGraph` deps flag. Do not invent
     a second `graph_add_dependencies` flag. Do not invent a second
     `cudaGraphAddDependencies` v2 edgeData. Do not invent Programmatic
-    graph dependency edges. Do not invent a second `cuGraphAddNode_v2` /
+    graph dependency edges.     Do not invent a second `cuGraphAddNode_v2` /
     `graph_add_node_with_data`. Do not invent Engine `--graph-add-node-data`.
+    Do not invent a second `cudaGraphAddMemAllocNode` accessDescs /
+    `graph_add_alloc_with_access`. Do not invent Engine `--graph-alloc-access`.
+    Do not invent graph-alloc SetParams that only retargets accessDescs
+    (SetParams of Alloc stays Invalid). Do not invent `poolProps` / a caller
+    pool on graph mem-alloc nodes (always the device graph-memory pool).
     Do not invent `cudaGraphRemoveDependencies`
     edgeData. Do not invent Engine `--graph-edge-data`. Do not invent a second
     `cudaGraphAddHostNode` BETWEEN flag. Do not invent a second captured

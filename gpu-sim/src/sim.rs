@@ -107,6 +107,10 @@ struct Alloc {
     share_src: Option<AllocId>,
     /// Live [`Sim::pool_import_ptr`] mappings of this allocation.
     share_opens: u32,
+    /// `cudaGraphAddMemAllocNode` `accessDescs`. Grants apply when this alloc
+    /// is live (after the node runs), not at add. Last descriptor for a device
+    /// wins.
+    graph_access: Vec<MemAccessDesc>,
 }
 
 impl Alloc {
@@ -138,6 +142,21 @@ impl Alloc {
             Attach::Global => true,
             Attach::Host => false,
             Attach::Single(s) => s == stream,
+        }
+    }
+
+    /// Peer grant from [`Sim::graph_add_alloc_with_access`] (last desc wins).
+    fn graph_access_grants(&self, device: DeviceId, write: bool) -> bool {
+        let mut flags = None;
+        for desc in &self.graph_access {
+            if desc.location.device() == Some(device) {
+                flags = Some(desc.flags);
+            }
+        }
+        match flags {
+            Some(MemAccessFlags::PROT_READ_WRITE) => true,
+            Some(MemAccessFlags::PROT_READ) => !write,
+            _ => false,
         }
     }
 
@@ -6032,6 +6051,7 @@ impl Sim {
     /// Query; legal during capture. Pool identity stays the graph-memory pool.
     /// Instantiated ids use the exec snapshot.
     /// [`Self::graph_exec_alloc_get_params`] refuses uninstantiated graphs.
+    /// `accessDescs` are [`Self::graph_alloc_get_access`].
     pub fn graph_alloc_get_params(
         &self,
         graph: GraphId,
@@ -6039,6 +6059,24 @@ impl Sim {
     ) -> Result<(AllocId, u64), SimError> {
         match &self.graph_view_step(graph, node)?.kind {
             Kind::Alloc { id, bytes } => Ok((*id, *bytes)),
+            _ => Err(SimError::Invalid {
+                why: "not a mem alloc node",
+            }),
+        }
+    }
+
+    /// `cudaMemAllocNodeParams::accessDescs` on a mem-alloc node.
+    ///
+    /// Query; legal during capture. Empty when added with
+    /// [`Self::graph_add_alloc`]. Instantiated ids use the exec snapshot.
+    /// [`Self::graph_exec_alloc_get_access`] refuses uninstantiated graphs.
+    pub fn graph_alloc_get_access(
+        &self,
+        graph: GraphId,
+        node: usize,
+    ) -> Result<Vec<MemAccessDesc>, SimError> {
+        match &self.graph_view_step(graph, node)?.kind {
+            Kind::Alloc { id, .. } => Ok(self.alloc_ref(*id)?.graph_access.clone()),
             _ => Err(SimError::Invalid {
                 why: "not a mem alloc node",
             }),
@@ -6057,6 +6095,24 @@ impl Sim {
     ) -> Result<(AllocId, u64), SimError> {
         match &self.graph_exec_step(exec, node)?.kind {
             Kind::Alloc { id, bytes } => Ok((*id, *bytes)),
+            _ => Err(SimError::Invalid {
+                why: "not a mem alloc node",
+            }),
+        }
+    }
+
+    /// Exec-snapshot [`Self::graph_alloc_get_access`].
+    ///
+    /// Uninstantiated graphs are Invalid. After instantiate this is the
+    /// launched alloc. [`Self::graph_alloc_get_access`] stays a view. Query;
+    /// legal during capture.
+    pub fn graph_exec_alloc_get_access(
+        &self,
+        exec: GraphId,
+        node: usize,
+    ) -> Result<Vec<MemAccessDesc>, SimError> {
+        match &self.graph_exec_step(exec, node)?.kind {
+            Kind::Alloc { id, .. } => Ok(self.alloc_ref(*id)?.graph_access.clone()),
             _ => Err(SimError::Invalid {
                 why: "not a mem alloc node",
             }),
@@ -6548,9 +6604,9 @@ impl Sim {
     }
 
     fn fork_alloc(&mut self, src: AllocId) -> Result<AllocId, SimError> {
-        let (bytes, pool) = {
+        let (bytes, pool, graph_access) = {
             let a = self.alloc_ref(src)?;
-            (a.bytes, a.pool)
+            (a.bytes, a.pool, a.graph_access.clone())
         };
         let id = AllocId(self.next_alloc);
         self.next_alloc = self.next_alloc.saturating_add(1);
@@ -6581,6 +6637,7 @@ impl Sim {
                 ipc_opens: 0,
                 share_src: None,
                 share_opens: 0,
+                graph_access,
             },
         );
         Ok(id)
@@ -7967,18 +8024,77 @@ impl Sim {
     /// The pointer is not resident until [`Self::launch_graph`]. Capture cannot
     /// include it (use [`Self::alloc`] during stream capture). Illegal on an
     /// instantiated exec. [`Self::update_graph`] of mem nodes is Invalid.
+    /// Empty `accessDescs` is this helper; peer access is
+    /// [`Self::graph_add_alloc_with_access`].
     pub fn graph_add_alloc(&mut self, graph: GraphId, bytes: u64) -> Result<AllocId, SimError> {
+        self.graph_add_alloc_with_access(graph, bytes, &[])
+    }
+
+    /// `cudaGraphAddMemAllocNode` with `accessDescs`.
+    ///
+    /// Empty `access` is [`Self::graph_add_alloc`]. Peer
+    /// [`MemAccessFlags::PROT_READ_WRITE`] / [`PROT_READ`](MemAccessFlags::PROT_READ)
+    /// lets a kernel on that GPU use the pointer without dest HBM once the
+    /// node has run (graph-memory pool stays Invalid for
+    /// [`Self::pool_set_access`]). [`MemAccessFlags::PROT_NONE`] records and
+    /// grants nothing. Last descriptor for a device wins. Host location
+    /// Invalid `"access location"`; unknown flags `"alloc access flags"`.
+    /// All-or-nothing before the node is created. Capture cannot include it.
+    /// Illegal on an instantiated exec. SetParams of Alloc stays Invalid.
+    pub fn graph_add_alloc_with_access(
+        &mut self,
+        graph: GraphId,
+        bytes: u64,
+        access: &[MemAccessDesc],
+    ) -> Result<AllocId, SimError> {
         let (device, stream) = self.graph_origin_for_add(graph)?;
         if bytes == 0 {
             return Err(SimError::Invalid {
                 why: "zero-byte alloc",
             });
         }
+        self.check_graph_alloc_access(device, access)?;
         let pool = self.graph_pool(device)?;
         let id = self.insert_pool_alloc(pool, bytes)?;
+        self.alloc_mut(id)?.graph_access = access.to_vec();
         self.graph_push(graph, device, stream, Kind::Alloc { id, bytes })?;
         self.graph_allocs.entry(graph).or_default().push(id);
         Ok(id)
+    }
+
+    fn check_graph_alloc_access(
+        &self,
+        owner: DeviceId,
+        access: &[MemAccessDesc],
+    ) -> Result<(), SimError> {
+        for desc in access {
+            match desc.flags {
+                MemAccessFlags::PROT_READ_WRITE
+                | MemAccessFlags::PROT_READ
+                | MemAccessFlags::PROT_NONE => {}
+                _ => {
+                    return Err(SimError::Invalid {
+                        why: "alloc access flags",
+                    });
+                }
+            }
+            let device = desc.location.device().ok_or(SimError::Invalid {
+                why: "access location",
+            })?;
+            let _gpu = self.profile.gpu(device)?;
+            let grant = desc.flags == MemAccessFlags::PROT_READ_WRITE
+                || desc.flags == MemAccessFlags::PROT_READ;
+            if grant && owner != device {
+                let _link = self.profile.link(Some(owner), Some(device))?;
+                if !self.peer_access(owner, device) {
+                    return Err(SimError::PeerDisabled {
+                        src: owner,
+                        dst: device,
+                    });
+                }
+            }
+        }
+        Ok(())
     }
 
     /// `cudaGraphAddMemFreeNode` of a pending or live allocation.
@@ -10872,6 +10988,7 @@ impl Sim {
                 ipc_opens: 0,
                 share_src: None,
                 share_opens: 0,
+                graph_access: Vec::new(),
             },
         );
         Ok(id)
@@ -11485,6 +11602,7 @@ impl Sim {
                 ipc_opens: 0,
                 share_src: Some(src),
                 share_opens: 0,
+                graph_access: Vec::new(),
             },
         );
         Ok(id)
@@ -11598,6 +11716,7 @@ impl Sim {
                 ipc_opens: 0,
                 share_src: None,
                 share_opens: 0,
+                graph_access: Vec::new(),
             },
         );
         Ok(id)
@@ -11952,8 +12071,8 @@ impl Sim {
     }
 
     /// Whether `device` has [`MemAdvise::SetAccessedBy`], [`Self::va_set_access`],
-    /// [`Self::pool_set_access`], or [`Self::pool_set_access_read`] on this
-    /// alloc's mempool.
+    /// [`Self::pool_set_access`], [`Self::pool_set_access_read`] on this
+    /// alloc's mempool, or a live [`Self::graph_add_alloc_with_access`] grant.
     pub fn is_accessed_by(&self, alloc: AllocId, device: DeviceId) -> Result<bool, SimError> {
         let a = self.alloc_ref(alloc)?;
         if !a.live {
@@ -12093,6 +12212,7 @@ impl Sim {
                 ipc_opens: 0,
                 share_src: None,
                 share_opens: 0,
+                graph_access: Vec::new(),
             },
         );
         Ok(id)
@@ -14106,6 +14226,7 @@ impl Sim {
                 ipc_opens: 0,
                 share_src: None,
                 share_opens: 0,
+                graph_access: Vec::new(),
             },
         );
         Ok(id)
@@ -18053,6 +18174,7 @@ impl Sim {
                 ipc_opens: 0,
                 share_src: None,
                 share_opens: 0,
+                graph_access: Vec::new(),
             },
         );
         Ok(id)
@@ -18868,6 +18990,7 @@ impl Sim {
                 ipc_opens: 0,
                 share_src: None,
                 share_opens: 0,
+                graph_access: Vec::new(),
             },
         );
         Ok(id)
@@ -19341,8 +19464,9 @@ impl Sim {
         Ok(on_device || mapped || accessed || pool_ok || vmm_rw)
     }
 
-    /// Peer access via [`Self::pool_set_access`] (read and write) or
-    /// [`Self::pool_set_access_read`] (read). Physicals stay on the pool GPU.
+    /// Peer access via [`Self::pool_set_access`] (read and write),
+    /// [`Self::pool_set_access_read`] (read), or a live
+    /// [`Self::graph_add_alloc_with_access`] grant. Physicals stay on the pool GPU.
     fn pool_peer_ok(&self, a: &Alloc, device: DeviceId, write: bool) -> bool {
         if !a.live {
             return false;
@@ -19358,6 +19482,9 @@ impl Sim {
         };
         if root.device == device || !a.devices.contains(&root.device) {
             return false;
+        }
+        if a.graph_access_grants(device, write) {
+            return true;
         }
         let local_ok = self
             .pools

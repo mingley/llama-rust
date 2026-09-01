@@ -360,6 +360,11 @@ it. Independent streams still launch live. `cudaMallocAsync` / `cudaFreeAsync`
 (`alloc` / `free`) during capture are graph mem alloc/free nodes.
 `graph_add_alloc` / `graph_add_free` are `cudaGraphAddMemAllocNode` /
 `cudaGraphAddMemFreeNode` (same reuse / AutoFreeOnLaunch rules).
+`graph_add_alloc_with_access` is `accessDescs` (empty is `graph_add_alloc`;
+peer PROT_READ / PROT_READ_WRITE without dest HBM after launch). Graph-memory
+pool stays Invalid for `pool_set_access`. `graph_alloc_get_access` /
+`graph_exec_alloc_get_access` are GetParams accessDescs. SetParams of Alloc
+stays Invalid. No Engine `--graph-alloc-access`.
 `graph_add_node` is `cudaGraphAddNode` (`GraphNodeParams` plus dependency
 indices in the same call). Typed `graph_add_*` stay (empty deps).
 `graph_add_node_with_data` is `cuGraphAddNode_v2` (`dependencyData`; Default

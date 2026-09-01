@@ -5,6 +5,20 @@ Visible five-turn extract: [docs/chatgpt-share-6a920fe1.md](docs/chatgpt-share-6
 Complete share-API extract: [docs/chatgpt-share-6a920fe1/](docs/chatgpt-share-6a920fe1/).
 Work lands on `main`. No PRs.
 
+## Shipped 2026-09-01 — CUDA graph mem-alloc accessDescs
+
+`gpu-sim` `cudaGraphAddMemAllocNode` accessDescs:
+`graph_add_alloc_with_access` is `cudaMemAllocNodeParams::accessDescs`.
+Empty is `graph_add_alloc`. Peer PROT_READ / PROT_READ_WRITE lets a live
+kernel on that GPU use the graph alloc without dest HBM (graph-memory pool
+stays Invalid for `pool_set_access`). Host location and unknown flags are
+Invalid. Applied when the alloc is live, not at add. Last descriptor for a
+device wins. All-or-nothing before the node is created. Capture cannot
+include it. `graph_alloc_get_access` / `graph_exec_alloc_get_access` are
+GetParams accessDescs. SetParams of Alloc stays Invalid. No Engine
+`--graph-alloc-access`. `gpu-profile capture` is still refused. Dual score
+still has no `$/M tokens`.
+
 ## Shipped 2026-09-01 — CUDA graph AddNode v2 edge data
 
 `gpu-sim` `cuGraphAddNode_v2`: `graph_add_node_with_data` is

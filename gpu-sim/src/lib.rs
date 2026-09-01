@@ -1038,6 +1038,13 @@
 //! [`Sim::graph_add_alloc`] / [`graph_add_free`](Sim::graph_add_free) are
 //! `cudaGraphAddMemAllocNode` / `cudaGraphAddMemFreeNode` (same reuse /
 //! AutoFreeOnLaunch rules as captured `cudaMallocAsync`).
+//! [`graph_add_alloc_with_access`](Sim::graph_add_alloc_with_access) is
+//! `accessDescs` (empty is [`graph_add_alloc`](Sim::graph_add_alloc); peer
+//! PROT_READ / PROT_READ_WRITE without dest HBM after launch). Graph-memory
+//! pool stays Invalid for [`pool_set_access`](Sim::pool_set_access). GetParams
+//! accessDescs are [`graph_alloc_get_access`](Sim::graph_alloc_get_access) /
+//! [`graph_exec_alloc_get_access`](Sim::graph_exec_alloc_get_access). SetParams
+//! of Alloc stays Invalid. No Engine `--graph-alloc-access`.
 //! [`Sim::graph_add_dependencies`] is `cudaGraphAddDependencies` (node indices;
 //! independent nodes may Hyper-Q overlap at launch; capture records same-stream
 //! edges). `expertvm --graph-build-deps` chains `--graph-build` combo children.
@@ -22496,6 +22503,167 @@ mod tests {
         let err = sim.graph_add_alloc(exec, 4096).unwrap_err();
         match err {
             SimError::Invalid { why } => assert!(why.contains("instantiated"), "{why}"),
+            other => panic!("{other:?}"),
+        }
+    }
+
+    #[test]
+    fn graph_add_alloc_with_access_is_cuda_mem_alloc_node_access_descs() {
+        let mut sim = Sim::new(HardwareProfile::example_2xh100_pcie());
+        let d0 = DeviceId(0);
+        let d1 = DeviceId(1);
+        let s = StreamId(0);
+        sim.enable_peer(d0, d1).unwrap();
+        let desc = MemAccessDesc {
+            location: Place::Device(d1),
+            flags: MemAccessFlags::PROT_READ_WRITE,
+        };
+        let g = sim.create_graph(d0, s).unwrap();
+        let id = sim.graph_add_alloc_with_access(g, 4096, &[desc]).unwrap();
+        assert_eq!(sim.graph_alloc_get_params(g, 0).unwrap(), (id, 4096));
+        assert_eq!(sim.graph_alloc_get_access(g, 0).unwrap(), vec![desc]);
+        match sim.graph_exec_alloc_get_access(g, 0) {
+            Err(SimError::Invalid { why }) => assert!(why.contains("not instantiated"), "{why}"),
+            other => panic!("{other:?}"),
+        }
+        assert!(!sim.is_accessed_by(id, d1).unwrap());
+        let empty = sim.create_graph(d0, s).unwrap();
+        let id0 = sim.graph_add_alloc(empty, 4096).unwrap();
+        assert!(sim.graph_alloc_get_access(empty, 0).unwrap().is_empty());
+        let kern = sim.create_graph(d0, s).unwrap();
+        sim.graph_add_empty(kern).unwrap();
+        match sim.graph_alloc_get_access(kern, 0) {
+            Err(SimError::Invalid { why }) => assert!(why.contains("mem alloc"), "{why}"),
+            other => panic!("{other:?}"),
+        }
+        let bad = sim.create_graph(d0, s).unwrap();
+        match sim.graph_add_alloc_with_access(
+            bad,
+            4096,
+            &[MemAccessDesc {
+                location: Place::Host,
+                flags: MemAccessFlags::PROT_READ_WRITE,
+            }],
+        ) {
+            Err(SimError::Invalid { why }) => assert!(why.contains("access location"), "{why}"),
+            other => panic!("{other:?}"),
+        }
+        assert_eq!(sim.graph_len(bad).unwrap(), 0);
+        match sim.graph_add_alloc_with_access(
+            bad,
+            4096,
+            &[MemAccessDesc {
+                location: Place::Device(d1),
+                flags: 2,
+            }],
+        ) {
+            Err(SimError::Invalid { why }) => assert!(why.contains("alloc access flags"), "{why}"),
+            other => panic!("{other:?}"),
+        }
+        assert_eq!(sim.graph_len(bad).unwrap(), 0);
+        let exec = sim.instantiate_graph(g).unwrap();
+        assert_eq!(
+            sim.graph_exec_alloc_get_access(exec, 0).unwrap(),
+            vec![desc]
+        );
+        let n = sim.launch_graph(exec, s).unwrap();
+        assert_eq!(n, 1);
+        sim.synchronize().unwrap();
+        assert!(sim.is_resident(id, d0).unwrap());
+        assert!(!sim.is_resident(id, d1).unwrap());
+        assert!(sim.is_accessed_by(id, d1).unwrap());
+        enq(sim.kernel(d1, KernelKind::other(8, 8), &[id], &[id], s));
+        sim.synchronize().unwrap();
+        assert_eq!(sim.hbm_used(d1).unwrap(), 0);
+        let cloned = sim.clone_graph(g).unwrap();
+        assert_eq!(sim.graph_alloc_get_access(cloned, 0).unwrap(), vec![desc]);
+        sim.begin_capture(d0, s).unwrap();
+        assert_eq!(sim.graph_alloc_get_access(g, 0).unwrap(), vec![desc]);
+        match sim.graph_add_alloc_with_access(bad, 4096, &[desc]) {
+            Err(SimError::Invalid { why }) => assert!(why.contains("capture"), "{why}"),
+            other => panic!("{other:?}"),
+        }
+        let _end = sim.end_capture().unwrap();
+        match sim.graph_add_alloc_with_access(exec, 4096, &[]) {
+            Err(SimError::Invalid { why }) => assert!(why.contains("instantiated"), "{why}"),
+            other => panic!("{other:?}"),
+        }
+        let exec0 = sim.instantiate_graph(empty).unwrap();
+        sim.launch_graph(exec0, s).unwrap();
+        sim.synchronize().unwrap();
+        enq(sim.kernel(d1, KernelKind::other(8, 8), &[id0], &[], s));
+        match sim.synchronize() {
+            Err(SimError::NotResident { alloc, device }) => {
+                assert_eq!(alloc, id0);
+                assert_eq!(device, d1);
+            }
+            other => panic!("{other:?}"),
+        }
+
+        let mut off = Sim::new(HardwareProfile::example_2xh100_pcie());
+        off.disable_peer(d0, d1).unwrap();
+        let go = off.create_graph(d0, s).unwrap();
+        match off.graph_add_alloc_with_access(go, 4096, &[desc]) {
+            Err(SimError::PeerDisabled { src, dst }) => {
+                assert_eq!(src, d0);
+                assert_eq!(dst, d1);
+            }
+            other => panic!("{other:?}"),
+        }
+
+        let mut read = Sim::new(HardwareProfile::example_2xh100_pcie());
+        read.enable_peer(d0, d1).unwrap();
+        let gr = read.create_graph(d0, s).unwrap();
+        let rid = read
+            .graph_add_alloc_with_access(
+                gr,
+                4096,
+                &[MemAccessDesc {
+                    location: Place::Device(d1),
+                    flags: MemAccessFlags::PROT_READ,
+                }],
+            )
+            .unwrap();
+        let rexec = read.instantiate_graph(gr).unwrap();
+        read.launch_graph(rexec, s).unwrap();
+        read.synchronize().unwrap();
+        enq(read.kernel(d1, KernelKind::other(8, 8), &[rid], &[], s));
+        read.synchronize().unwrap();
+        assert_eq!(read.hbm_used(d1).unwrap(), 0);
+        enq(read.kernel(d1, KernelKind::other(8, 8), &[rid], &[rid], s));
+        match read.synchronize() {
+            Err(SimError::NotResident { alloc, device }) => {
+                assert_eq!(alloc, rid);
+                assert_eq!(device, d1);
+            }
+            other => panic!("{other:?}"),
+        }
+
+        let mut last = Sim::new(HardwareProfile::example_2xh100_pcie());
+        last.enable_peer(d0, d1).unwrap();
+        let gl = last.create_graph(d0, s).unwrap();
+        let lid = last
+            .graph_add_alloc_with_access(
+                gl,
+                4096,
+                &[
+                    desc,
+                    MemAccessDesc {
+                        location: Place::Device(d1),
+                        flags: MemAccessFlags::PROT_NONE,
+                    },
+                ],
+            )
+            .unwrap();
+        let lexec = last.instantiate_graph(gl).unwrap();
+        last.launch_graph(lexec, s).unwrap();
+        last.synchronize().unwrap();
+        enq(last.kernel(d1, KernelKind::other(8, 8), &[lid], &[], s));
+        match last.synchronize() {
+            Err(SimError::NotResident { alloc, device }) => {
+                assert_eq!(alloc, lid);
+                assert_eq!(device, d1);
+            }
             other => panic!("{other:?}"),
         }
     }
