@@ -974,7 +974,9 @@ kernel first-touches instead of copy-engine prefetch. `mem_range_get_attribute` 
 not per byte range). `mem_range_get_attribute_with_size` /
 `mem_range_get_attributes_with_size` are the CUDA `count` argument
 (`size` must equal the allocation; partial range queries are not
-modeled). Last-prefetch is the dest of `prefetch` /
+modeled). `mem_range_get_attribute_with_data_size` /
+`mem_range_get_attributes_with_data_sizes` are the CUDA `dataSize` /
+`dataSizes` arguments (4-byte ints; AccessedBy includes a terminator). Last-prefetch is the dest of `prefetch` /
 `prefetch_host`. Preferred/last-prefetch location type (`0` Invalid /
 `1` Device / `2` Host) and id (device ordinal, else `0`) wrap that
 `Place`. Host NUMA is not modeled. Query; legal during

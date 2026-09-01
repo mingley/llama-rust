@@ -4957,7 +4957,19 @@ model, do not celebrate the sim.
     it. No Engine `--register-size`. `gpu-profile capture` is still
     refused. Dual score still has no `$/M tokens`.
 
-458. [ ] Next numbered PLAN item after 457 is the next `gpu-sim` / Engine /
+458. [x] `gpu-sim` `mem_range_get_attribute_with_data_size` /
+    `mem_range_get_attributes_with_data_sizes` are
+    `cudaMemRangeGetAttribute` / `GetAttributes` `dataSize` /
+    `dataSizes`. Scalar attrs need 4 bytes (`sizeof(int)`). AccessedBy
+    needs 4 bytes per device plus a `cudaInvalidDeviceId` terminator.
+    Smaller is Invalid `"range data size"`. `attrs` / `data_sizes`
+    length mismatch is Invalid `"range data sizes"`. Typed helpers stay
+    (implicit sufficient `dataSize`). Count is still
+    `mem_range_get_attribute_with_size`. Query; legal during capture.
+    No Engine `--range-data-size`. `gpu-profile capture` is still
+    refused. Dual score still has no `$/M tokens`.
+
+459. [ ] Next numbered PLAN item after 458 is the next `gpu-sim` / Engine /
     serve / expertvm mechanical API that is still missing, or the next official
     decode family. Prefer remaining CUDA-shaped twins over more
     OpenAI HTTP veneer. Do not invent F32 `output.scale`. Do not invent a
@@ -5055,6 +5067,10 @@ model, do not celebrate the sim.
     Do not invent a second `cudaHostRegister` size /
     `host_register_with_size`. Do not invent Engine `--register-size`.
     Do not invent partial-range `cudaHostRegister`.
+    Do not invent a second `cudaMemRangeGetAttribute` `dataSize` /
+    `mem_range_get_attribute_with_data_size` /
+    `mem_range_get_attributes_with_data_sizes`. Do not invent Engine
+    `--range-data-size`.
     Do not invent `cuDeviceGetLuid`
     (Windows).
     Do not invent gemma4 `attn_q.scale` / `attn_output.scale` / `attn_k.scale` /

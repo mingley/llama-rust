@@ -11401,6 +11401,84 @@ impl Sim {
             .collect()
     }
 
+    /// CUDA `dataSize` for one [`MemRangeAttr`]: 4 bytes (`sizeof(int)`) for
+    /// scalar attrs. AccessedBy is that times the device list plus a
+    /// `cudaInvalidDeviceId` terminator.
+    fn range_attr_need_data_size(attr: MemRangeAttr, accessed_by_len: usize) -> u64 {
+        const INT: u64 = 4;
+        match attr {
+            MemRangeAttr::AccessedBy => {
+                INT.saturating_mul((accessed_by_len as u64).saturating_add(1))
+            }
+            MemRangeAttr::ReadMostly
+            | MemRangeAttr::PreferredLocation
+            | MemRangeAttr::LastPrefetchLocation
+            | MemRangeAttr::PreferredLocationType
+            | MemRangeAttr::PreferredLocationId
+            | MemRangeAttr::LastPrefetchLocationType
+            | MemRangeAttr::LastPrefetchLocationId => INT,
+        }
+    }
+
+    /// [`Self::mem_range_get_attribute`] with the CUDA `dataSize` argument.
+    ///
+    /// Scalar attrs need 4 bytes. AccessedBy needs 4 bytes per device plus a
+    /// terminator. Smaller `data_size` is Invalid `"range data size"`. Larger
+    /// is accepted. Typed [`Self::mem_range_get_attribute`] stays (implicit
+    /// sufficient `dataSize`). Count is the allocation
+    /// ([`Self::mem_range_get_attribute_with_size`]). Query; legal during
+    /// capture.
+    pub fn mem_range_get_attribute_with_data_size(
+        &self,
+        alloc: AllocId,
+        data_size: u64,
+        attr: MemRangeAttr,
+    ) -> Result<MemRangeAttrValue, SimError> {
+        let a = self.alloc_ref(alloc)?;
+        if !a.live || !a.managed {
+            return Err(SimError::Invalid { why: "not managed" });
+        }
+        if data_size < Self::range_attr_need_data_size(attr, a.accessed_by.len()) {
+            return Err(SimError::Invalid {
+                why: "range data size",
+            });
+        }
+        self.mem_range_get_attribute_with_size(alloc, a.bytes, attr)
+    }
+
+    /// [`Self::mem_range_get_attributes`] with the CUDA `dataSizes` array.
+    ///
+    /// `attrs` and `data_sizes` must be the same length (else Invalid
+    /// `"range data sizes"`). Each entry follows
+    /// [`Self::mem_range_get_attribute_with_data_size`]. Typed
+    /// [`Self::mem_range_get_attributes`] stays. Query; legal during capture.
+    pub fn mem_range_get_attributes_with_data_sizes(
+        &self,
+        alloc: AllocId,
+        attrs: &[MemRangeAttr],
+        data_sizes: &[u64],
+    ) -> Result<Vec<MemRangeAttrValue>, SimError> {
+        let a = self.alloc_ref(alloc)?;
+        if !a.live || !a.managed {
+            return Err(SimError::Invalid { why: "not managed" });
+        }
+        if attrs.len() != data_sizes.len() {
+            return Err(SimError::Invalid {
+                why: "range data sizes",
+            });
+        }
+        let accessed = a.accessed_by.len();
+        let bytes = a.bytes;
+        for (attr, data_size) in attrs.iter().copied().zip(data_sizes.iter().copied()) {
+            if data_size < Self::range_attr_need_data_size(attr, accessed) {
+                return Err(SimError::Invalid {
+                    why: "range data size",
+                });
+            }
+        }
+        self.mem_range_get_attributes_with_size(alloc, bytes, attrs)
+    }
+
     /// Whether [`MemAdvise::SetReadMostly`] is set.
     pub fn is_read_mostly(&self, alloc: AllocId) -> Result<bool, SimError> {
         let a = self.alloc_ref(alloc)?;

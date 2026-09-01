@@ -217,6 +217,10 @@
 //! [`mem_range_get_attributes_with_size`](Sim::mem_range_get_attributes_with_size)
 //! are the CUDA `count` argument (`size` must equal the allocation; partial
 //! range queries are not modeled).
+//! [`mem_range_get_attribute_with_data_size`](Sim::mem_range_get_attribute_with_data_size) /
+//! [`mem_range_get_attributes_with_data_sizes`](Sim::mem_range_get_attributes_with_data_sizes)
+//! are the CUDA `dataSize` / `dataSizes` arguments (4-byte ints; AccessedBy
+//! includes a terminator).
 //! [`mem_range_get_attributes`](Sim::mem_range_get_attributes) is
 //! `cudaMemRangeGetAttributes` (batch of those attrs; all-or-nothing).
 //! [`Sim::drop_managed_copy`] refunds one ReadMostly GPU copy (dest eviction).
@@ -18132,6 +18136,76 @@ mod tests {
         let _g = sim.end_capture().unwrap();
         let a = sim.malloc(d, 4096).unwrap();
         match sim.mem_range_get_attribute_with_size(a, 4096, MemRangeAttr::ReadMostly) {
+            Err(SimError::Invalid { why }) => assert!(why.contains("managed"), "{why}"),
+            other => panic!("{other:?}"),
+        }
+    }
+
+    #[test]
+    fn mem_range_get_attribute_with_data_size_is_cuda_data_size() {
+        let mut sim = Sim::new(h100());
+        let d = DeviceId(0);
+        let m = sim.alloc_managed(4096).unwrap();
+        match sim.mem_range_get_attribute_with_data_size(m, 0, MemRangeAttr::ReadMostly) {
+            Err(SimError::Invalid { why }) => assert!(why.contains("range data size"), "{why}"),
+            other => panic!("{other:?}"),
+        }
+        match sim.mem_range_get_attribute_with_data_size(m, 3, MemRangeAttr::ReadMostly) {
+            Err(SimError::Invalid { why }) => assert!(why.contains("range data size"), "{why}"),
+            other => panic!("{other:?}"),
+        }
+        assert_eq!(
+            sim.mem_range_get_attribute_with_data_size(m, 4, MemRangeAttr::ReadMostly)
+                .unwrap(),
+            MemRangeAttrValue::ReadMostly(false)
+        );
+        assert_eq!(
+            sim.mem_range_get_attribute_with_data_size(m, 8, MemRangeAttr::ReadMostly)
+                .unwrap(),
+            MemRangeAttrValue::ReadMostly(false)
+        );
+        assert_eq!(
+            sim.mem_range_get_attribute_with_data_size(m, 4, MemRangeAttr::AccessedBy)
+                .unwrap(),
+            MemRangeAttrValue::AccessedBy(vec![])
+        );
+        match sim.mem_range_get_attribute_with_data_size(m, 0, MemRangeAttr::AccessedBy) {
+            Err(SimError::Invalid { why }) => assert!(why.contains("range data size"), "{why}"),
+            other => panic!("{other:?}"),
+        }
+        sim.mem_advise(m, MemAdvise::SetAccessedBy, d).unwrap();
+        match sim.mem_range_get_attribute_with_data_size(m, 4, MemRangeAttr::AccessedBy) {
+            Err(SimError::Invalid { why }) => assert!(why.contains("range data size"), "{why}"),
+            other => panic!("{other:?}"),
+        }
+        assert_eq!(
+            sim.mem_range_get_attribute_with_data_size(m, 8, MemRangeAttr::AccessedBy)
+                .unwrap(),
+            MemRangeAttrValue::AccessedBy(vec![d])
+        );
+        match sim.mem_range_get_attributes_with_data_sizes(m, &[MemRangeAttr::ReadMostly], &[4, 4])
+        {
+            Err(SimError::Invalid { why }) => assert!(why.contains("range data sizes"), "{why}"),
+            other => panic!("{other:?}"),
+        }
+        assert_eq!(
+            sim.mem_range_get_attributes_with_data_sizes(m, &[MemRangeAttr::ReadMostly], &[4])
+                .unwrap(),
+            vec![MemRangeAttrValue::ReadMostly(false)]
+        );
+        assert!(sim
+            .mem_range_get_attributes_with_data_sizes(m, &[], &[])
+            .unwrap()
+            .is_empty());
+        sim.begin_capture(d, StreamId(0)).unwrap();
+        assert_eq!(
+            sim.mem_range_get_attribute_with_data_size(m, 4, MemRangeAttr::ReadMostly)
+                .unwrap(),
+            MemRangeAttrValue::ReadMostly(false)
+        );
+        let _g = sim.end_capture().unwrap();
+        let a = sim.malloc(d, 4096).unwrap();
+        match sim.mem_range_get_attribute_with_data_size(a, 4, MemRangeAttr::ReadMostly) {
             Err(SimError::Invalid { why }) => assert!(why.contains("managed"), "{why}"),
             other => panic!("{other:?}"),
         }
