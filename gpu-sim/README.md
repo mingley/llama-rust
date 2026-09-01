@@ -50,7 +50,7 @@ warp scheduler, L1, …   ← do not model
 | `drop_managed_copy`: dest eviction of one ReadMostly GPU | other copies stay |
 | `cudaMemAdviseSetAccessedBy`: kernel may read without migrating | interconnect, not local HBM |
 | `cudaMemAdviseSetPreferredLocation`: stay if already there | interconnect on remote read; writes migrate |
-| `cudaMemPrefetchAsync` (`prefetch` / `prefetch_host` / `prefetch_with_flags`) **moves** unless ReadMostly | PCIe / NVLink (1 ns if already local) |
+| `cudaMemPrefetchAsync` (`prefetch` / `prefetch_host` / `prefetch_with_flags` / `prefetch_with_size`) **moves** unless ReadMostly | PCIe / NVLink (1 ns if already local) |
 | `cudaMemPrefetchBatchAsync` / `DiscardBatchAsync` / `DiscardAndPrefetchBatchAsync` require CMA on every GPU | this VM reports `ConcurrentManagedAccess` 0 → Invalid |
 | `cuMemAddressReserve` (`va_reserve`) is a VA with no physical pages | `alloc_overhead_ns` (at the call) |
 | `cuMemMap` (`va_map`) charges HBM; `va_unmap` refunds; the VA is reusable | `alloc_overhead_ns` (map) |
@@ -970,10 +970,13 @@ not per byte range). Last-prefetch is the dest of `prefetch` /
 `prefetch_host`. Preferred/last-prefetch location type (`0` Invalid /
 `1` Device / `2` Host) and id (device ordinal, else `0`) wrap that
 `Place`. Host NUMA is not modeled. Query; legal during
-capture. `prefetch` / `prefetch_host` / `prefetch_with_flags` are
+capture. `prefetch` / `prefetch_host` / `prefetch_with_flags` /
+`prefetch_with_size` / `prefetch_host_with_size` are
 `cudaMemPrefetchAsync` and **move** unless ReadMostly.
 `prefetch_with_flags` requires `flags == 0` (`PrefetchFlags::DEFAULT`) and
-a `Place` dest. Typed helpers stay. `prefetch_batch_async` /
+a `Place` dest. `prefetch_with_size` / `prefetch_host_with_size` are the
+CUDA `count` argument (`size` must equal the allocation; partial prefetch
+is not modeled). Typed helpers stay. `prefetch_batch_async` /
 `discard_batch_async` / `discard_and_prefetch_batch_async` are
 `cudaMemPrefetchBatchAsync` / `cudaMemDiscardBatchAsync` /
 `cudaMemDiscardAndPrefetchBatchAsync`: they require

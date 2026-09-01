@@ -4925,7 +4925,15 @@ model, do not celebrate the sim.
     `--advise-size`. `gpu-profile capture` is still refused. Dual score
     still has no `$/M tokens`.
 
-454. [ ] Next numbered PLAN item after 453 is the next `gpu-sim` / Engine /
+454. [x] `gpu-sim` `prefetch_with_size` / `prefetch_host_with_size` are
+    `cudaMemPrefetchAsync` with the CUDA `count` argument. `size` must
+    equal the allocation bytes. Other sizes Invalid `"prefetch size"`.
+    Partial prefetch is not modeled. Typed `prefetch` / `prefetch_host`
+    stay. Capture may record the memcpy. No Engine `--prefetch-size`.
+    `gpu-profile capture` is still refused. Dual score still has no
+    `$/M tokens`.
+
+455. [ ] Next numbered PLAN item after 454 is the next `gpu-sim` / Engine /
     serve / expertvm mechanical API that is still missing, or the next official
     decode family. Prefer remaining CUDA-shaped twins over more
     OpenAI HTTP veneer. Do not invent F32 `output.scale`. Do not invent a
@@ -5009,6 +5017,10 @@ model, do not celebrate the sim.
     Do not invent a second `cudaMemAdvise` count /
     `mem_advise_with_size`. Do not invent Engine `--advise-size`. Do not
     invent partial-range `cudaMemAdvise`.
+    Do not invent a second `cudaMemPrefetchAsync` count /
+    `prefetch_with_size` / `prefetch_host_with_size`. Do not invent
+    Engine `--prefetch-size`. Do not invent partial-range
+    `cudaMemPrefetchAsync`.
     Do not invent `cuDeviceGetLuid`
     (Windows).
     Do not invent gemma4 `attn_q.scale` / `attn_output.scale` / `attn_k.scale` /

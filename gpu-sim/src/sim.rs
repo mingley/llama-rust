@@ -13078,7 +13078,28 @@ impl Sim {
         alloc: AllocId,
         stream: StreamId,
     ) -> Result<OpId, SimError> {
+        let size = self.alloc_ref(alloc)?.bytes;
+        self.prefetch_with_size(device, alloc, size, stream)
+    }
+
+    /// [`Self::prefetch`] with the CUDA `count` argument.
+    ///
+    /// `size` must equal the allocation bytes. Other sizes Invalid
+    /// `"prefetch size"`. Partial prefetch is not modeled. Typed
+    /// [`Self::prefetch`] stays. Capture may record it.
+    pub fn prefetch_with_size(
+        &mut self,
+        device: DeviceId,
+        alloc: AllocId,
+        size: u64,
+        stream: StreamId,
+    ) -> Result<OpId, SimError> {
         let (bytes, src) = self.managed_move_src(alloc, Some(device))?;
+        if size != bytes {
+            return Err(SimError::Invalid {
+                why: "prefetch size",
+            });
+        }
         self.alloc_mut(alloc)?.last_prefetch = Preferred::Gpu(device);
         self.memcpy(
             device,
@@ -13104,7 +13125,28 @@ impl Sim {
         alloc: AllocId,
         stream: StreamId,
     ) -> Result<OpId, SimError> {
+        let size = self.alloc_ref(alloc)?.bytes;
+        self.prefetch_host_with_size(device, alloc, size, stream)
+    }
+
+    /// [`Self::prefetch_host`] with the CUDA `count` argument.
+    ///
+    /// `size` must equal the allocation bytes. Other sizes Invalid
+    /// `"prefetch size"`. Partial prefetch is not modeled. Typed
+    /// [`Self::prefetch_host`] stays. Capture may record it.
+    pub fn prefetch_host_with_size(
+        &mut self,
+        device: DeviceId,
+        alloc: AllocId,
+        size: u64,
+        stream: StreamId,
+    ) -> Result<OpId, SimError> {
         let (bytes, src) = self.managed_move_src(alloc, None)?;
+        if size != bytes {
+            return Err(SimError::Invalid {
+                why: "prefetch size",
+            });
+        }
         self.alloc_mut(alloc)?.last_prefetch = Preferred::Host;
         let submit = match src {
             Place::Device(d) => d,
@@ -13129,7 +13171,9 @@ impl Sim {
     /// CUDA requires `flags == 0` ([`PrefetchFlags::DEFAULT`]). Other bits are
     /// Invalid `"prefetch flags"`. [`Place::Device`] is [`Self::prefetch`];
     /// [`Place::Host`] / [`HostPinned`](Place::HostPinned) is
-    /// [`Self::prefetch_host`] (submit on `device`). Typed helpers stay.
+    /// [`Self::prefetch_host`] (submit on `device`). The CUDA `count` is
+    /// [`Self::prefetch_with_size`] / [`Self::prefetch_host_with_size`].
+    /// Typed helpers stay.
     /// Capture may record the memcpy.
     pub fn prefetch_with_flags(
         &mut self,

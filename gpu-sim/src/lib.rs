@@ -186,7 +186,10 @@
 //! Typed [`mem_advise`](Sim::mem_advise) stays.
 //! [`prefetch_with_flags`](Sim::prefetch_with_flags) is
 //! `cudaMemPrefetchAsync` / `cuMemPrefetchAsync_v2` ([`PrefetchFlags::DEFAULT`]
-//! only; [`Place::Device`] / host dest). Typed helpers stay.
+//! only; [`Place::Device`] / host dest). [`prefetch_with_size`](Sim::prefetch_with_size) /
+//! [`prefetch_host_with_size`](Sim::prefetch_host_with_size) are the CUDA
+//! `count` argument (`size` must equal the allocation; partial prefetch is not
+//! modeled). Typed helpers stay.
 //! [`prefetch_batch_async`](Sim::prefetch_batch_async) /
 //! [`discard_batch_async`](Sim::discard_batch_async) /
 //! [`discard_and_prefetch_batch_async`](Sim::discard_and_prefetch_batch_async)
@@ -16827,6 +16830,38 @@ mod tests {
             other => panic!("{other:?}"),
         }
         sim.free_sync(m).unwrap();
+    }
+
+    #[test]
+    fn prefetch_with_size_is_cuda_mem_prefetch_async_count() {
+        let mut sim = Sim::new(h100());
+        let d = DeviceId(0);
+        let s = StreamId(0);
+        let bytes = 1u64 << 20;
+        let m = sim.alloc_managed(bytes).unwrap();
+        match sim.prefetch_with_size(d, m, bytes / 2, s) {
+            Err(SimError::Invalid { why }) => assert!(why.contains("prefetch size"), "{why}"),
+            other => panic!("{other:?}"),
+        }
+        assert_eq!(sim.hbm_used(d).unwrap(), 0);
+        enq(sim.prefetch_with_size(d, m, bytes, s));
+        sim.synchronize().unwrap();
+        assert_eq!(sim.hbm_used(d).unwrap(), bytes);
+        match sim.prefetch_host_with_size(d, m, bytes / 2, s) {
+            Err(SimError::Invalid { why }) => assert!(why.contains("prefetch size"), "{why}"),
+            other => panic!("{other:?}"),
+        }
+        assert!(sim.is_resident(m, d).unwrap());
+        enq(sim.prefetch_host_with_size(d, m, bytes, s));
+        sim.synchronize().unwrap();
+        assert!(!sim.is_resident(m, d).unwrap());
+        let a = sim.malloc(d, bytes).unwrap();
+        match sim.prefetch_with_size(d, a, bytes, s) {
+            Err(SimError::Invalid { why }) => assert!(why.contains("managed"), "{why}"),
+            other => panic!("{other:?}"),
+        }
+        sim.free_sync(m).unwrap();
+        sim.free_sync(a).unwrap();
     }
 
     #[test]

@@ -5,6 +5,16 @@ Visible five-turn extract: [docs/chatgpt-share-6a920fe1.md](docs/chatgpt-share-6
 Complete share-API extract: [docs/chatgpt-share-6a920fe1/](docs/chatgpt-share-6a920fe1/).
 Work lands on `main`. No PRs.
 
+## Shipped 2026-09-01 — CUDA `cudaMemPrefetchAsync` count
+
+`gpu-sim` `prefetch_with_size` / `prefetch_host_with_size` are
+`cudaMemPrefetchAsync` with the CUDA `count` argument. `size` must equal
+the allocation bytes. Other sizes Invalid `"prefetch size"`. Partial
+prefetch is not modeled. Typed `prefetch` / `prefetch_host` stay.
+Capture may record the memcpy. No Engine `--prefetch-size`.
+`gpu-profile capture` is still refused. Dual score still has no
+`$/M tokens`.
+
 ## Shipped 2026-09-01 — CUDA `cudaMemAdvise` count
 
 `gpu-sim` `mem_advise_with_size` is `cudaMemAdvise` with the CUDA `count`
