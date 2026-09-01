@@ -6791,7 +6791,14 @@ model, do not celebrate the sim.
     or `cudaChooseDevice`. `gpu-profile capture` is still refused. Dual
     score still has no `$/M tokens`.
 
-664. [ ] Next numbered PLAN item after 663 is the next `gpu-sim` / Engine /
+664. [x] `gpu-sim` `Sim::egl_stream_consumer_acquire_frame` is
+    `cuEGLStreamConsumerAcquireFrame`. Always Invalid `"consumer acquire"`
+    because EGL streams are not modeled. Query; legal during capture. Distinct
+    from `egl_stream_consumer_disconnect`. This VM does not invent `cuEGLStreamConsumerReleaseFrame`, Engine `--egl-consumer-acquire`,
+    or `cudaChooseDevice`. `gpu-profile capture` is still refused. Dual
+    score still has no `$/M tokens`.
+
+665. [ ] Next numbered PLAN item after 664 is the next `gpu-sim` / Engine /
     serve / expertvm mechanical API that is still missing, or the next official
     decode family. Prefer remaining CUDA-shaped twins over more
     OpenAI HTTP veneer. Do not invent F32 `output.scale`. Do not invent a
@@ -7241,6 +7248,10 @@ model, do not celebrate the sim.
     Do not invent a second `cuEGLStreamProducerReturnFrame` /
     `egl_stream_producer_return_frame`. Do not invent Engine `--egl-producer-return`.
     Do not invent a `CUeglFrame` this slice. Do not reverse `"producer return"`.
+    Do not invent a second `cuEGLStreamConsumerAcquireFrame` /
+    `egl_stream_consumer_acquire_frame`. Do not invent Engine `--egl-consumer-acquire`.
+    Do not invent `cuEGLStreamConsumerReleaseFrame` this slice. Do not reverse
+    `"consumer acquire"`.
     Do not invent a second `cudaStreamAddCallback`.
     Do not invent Engine `--stream-callback` (same wall as second live
     `cudaLaunchHostFunc` after miss DMA).
@@ -7798,6 +7809,10 @@ model, do not celebrate the sim.
     Do not invent a second `egl_stream_producer_return_frame` API. Do not invent
     Engine `--return-egl-producer`. Do not invent an EGL producer
     return timestamp this slice. Do not reverse EGL producer return remaining
+    unsupported.
+    Do not invent a second `egl_stream_consumer_acquire_frame` API. Do not invent
+    Engine `--acquire-egl-consumer`. Do not invent an EGL consumer
+    acquire timeout this slice. Do not reverse EGL consumer acquire remaining
     unsupported.
     Do not invent a second DeviceLaunch in-flight destroy-complete check or Engine
     `--device-launch-destroy`. Do not abort an in-flight DeviceLaunch when
@@ -8544,6 +8559,9 @@ model, do not celebrate the sim.
     Do not invent a second `egl_stream_producer_return_frame` method. Do not
     invent Engine `--cu-egl-producer-return-frame`. Do not reverse wrapping
     cuEGLStreamProducerReturnFrame Invalid.
+    Do not invent a second `egl_stream_consumer_acquire_frame` method. Do not
+    invent Engine `--cu-egl-consumer-acquire-frame`. Do not reverse wrapping
+    cuEGLStreamConsumerAcquireFrame Invalid.
     Do not
     spend the next item on an OpenAI-compatible HTTP veneer.
 

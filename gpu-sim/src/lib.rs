@@ -630,6 +630,9 @@
 //! [`egl_stream_consumer_disconnect`](Sim::egl_stream_consumer_disconnect) is
 //! `cuEGLStreamConsumerDisconnect` (always Invalid `"consumer disconnect"`).
 //! Query; legal during capture. No Engine `--egl-consumer-disconnect`.
+//! [`egl_stream_consumer_acquire_frame`](Sim::egl_stream_consumer_acquire_frame)
+//! is `cuEGLStreamConsumerAcquireFrame` (always Invalid `"consumer acquire"`).
+//! Query; legal during capture. No Engine `--egl-consumer-acquire`.
 //! [`egl_stream_producer_connect`](Sim::egl_stream_producer_connect) is
 //! `cuEGLStreamProducerConnect` (always Invalid `"egl producer"`). Query;
 //! legal during capture. No Engine `--egl-producer`.
@@ -22254,6 +22257,38 @@ mod tests {
         match sim.egl_stream_producer_disconnect(d) {
             Err(SimError::Invalid { why }) => {
                 assert!(why.contains("producer disconnect"), "{why}");
+            }
+            other => panic!("{other:?}"),
+        }
+    }
+
+    #[test]
+    fn egl_stream_consumer_acquire_frame_is_unsupported() {
+        let mut sim = Sim::new(h100());
+        let d = DeviceId(0);
+        match sim.egl_stream_consumer_acquire_frame(d) {
+            Err(SimError::Invalid { why }) => {
+                assert!(why.contains("consumer acquire"), "{why}");
+            }
+            other => panic!("{other:?}"),
+        }
+        sim.begin_capture(d, StreamId(0)).unwrap();
+        match sim.egl_stream_consumer_acquire_frame(d) {
+            Err(SimError::Invalid { why }) => {
+                assert!(why.contains("consumer acquire"), "{why}");
+            }
+            other => panic!("{other:?}"),
+        }
+        let _g = sim.end_capture().unwrap();
+        match sim.egl_stream_consumer_acquire_frame(DeviceId(99)) {
+            Err(SimError::Invalid { why }) => {
+                assert!(why.contains("device not in profile"), "{why}");
+            }
+            other => panic!("{other:?}"),
+        }
+        match sim.egl_stream_consumer_disconnect(d) {
+            Err(SimError::Invalid { why }) => {
+                assert!(why.contains("consumer disconnect"), "{why}");
             }
             other => panic!("{other:?}"),
         }

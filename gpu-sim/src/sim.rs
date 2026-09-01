@@ -17975,14 +17975,28 @@ impl Sim {
     /// `cuEGLStreamConsumerDisconnect` plus `cudaEGLStreamConsumerDisconnect`.
     ///
     /// Always Invalid `"consumer disconnect"` (EGL streams are not modeled).
-    /// Distinct from [`Self::egl_stream_consumer_connect`] and from
-    /// [`Self::egl_stream_producer_disconnect`]. Unknown devices are Invalid
-    /// `"device not in profile"`. Query; legal during capture. This VM does
-    /// not invent `cuEGLStreamConsumerAcquireFrame` this slice.
+    /// Distinct from [`Self::egl_stream_consumer_connect`], from
+    /// [`Self::egl_stream_producer_disconnect`], and from
+    /// [`Self::egl_stream_consumer_acquire_frame`]. Unknown devices are Invalid
+    /// `"device not in profile"`. Query; legal during capture.
     pub fn egl_stream_consumer_disconnect(&self, device: DeviceId) -> Result<(), SimError> {
         let _gpu = self.profile.gpu(device)?;
         Err(SimError::Invalid {
             why: "consumer disconnect",
+        })
+    }
+
+    /// `cuEGLStreamConsumerAcquireFrame` plus
+    /// `cudaEGLStreamConsumerAcquireFrame`.
+    ///
+    /// Always Invalid `"consumer acquire"` (EGL streams are not modeled).
+    /// Distinct from [`Self::egl_stream_consumer_disconnect`]. Unknown devices
+    /// are Invalid `"device not in profile"`. Query; legal during capture.
+    /// This VM does not invent `cuEGLStreamConsumerReleaseFrame` this slice.
+    pub fn egl_stream_consumer_acquire_frame(&self, device: DeviceId) -> Result<(), SimError> {
+        let _gpu = self.profile.gpu(device)?;
+        Err(SimError::Invalid {
+            why: "consumer acquire",
         })
     }
 
