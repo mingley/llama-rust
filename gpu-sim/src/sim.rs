@@ -19405,6 +19405,18 @@ impl Sim {
         Ok(synthetic_device_uuid(&self.profile.name, device))
     }
 
+    /// `cuDeviceGetLuid`. Query; legal during capture.
+    ///
+    /// Always-zero Windows LUID (eight bytes) and `deviceNodeMask` for this
+    /// [`DeviceId`]. Distinct from [`Self::device_get_uuid`]. Also
+    /// [`DeviceProperties::luid`] and
+    /// [`DeviceProperties::luid_device_node_mask`]. Unknown devices are
+    /// Invalid.
+    pub fn device_get_luid(&self, device: DeviceId) -> Result<([u8; 8], u32), SimError> {
+        let _gpu = self.profile.gpu(device)?;
+        Ok(([0; 8], 0))
+    }
+
     /// `cuDeviceGetByUuid`. Query; legal during capture.
     ///
     /// Inverse of [`Self::device_get_uuid`]. Unknown UUID is Invalid

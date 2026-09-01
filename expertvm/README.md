@@ -508,7 +508,8 @@ Height, and Layers; no Engine flag).
 (`cudaDevAttrMaxSurfaceCubemapWidth`, `MaxSurfaceCubemapLayeredWidth`
 and Layers; no Engine flag).
 `gpu-sim` `pciSubSystemID` is always 0 (synthetic PCI; no Engine flag).
-`gpu-sim` `luid` and `luidDeviceNodeMask` are always 0 (no Engine flag).
+`gpu-sim` `luid` and `luidDeviceNodeMask` are always 0 (`cuDeviceGetLuid`;
+no Engine flag).
 Default `--expert-sim` keeps
 one compute stream, exclusive compute (`compute_slots=1`), a full chip of
 SMs, and a full-device clock sample.

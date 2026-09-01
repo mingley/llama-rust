@@ -156,6 +156,7 @@ warp scheduler, L1, …   ← do not model
 | `device_get_properties` wraps the same SKU caps (incl. synthetic `uuid` and PCI ids) | `cudaGetDeviceProperties` |
 | `device_get_uuid` is a synthetic 16-octet id (also `DeviceProperties.uuid`) | `cuDeviceGetUuid` |
 | `device_get_by_uuid` is the inverse of `device_get_uuid` | `cuDeviceGetByUuid` |
+| `device_get_luid` is always-zero LUID plus node mask (also `DeviceProperties.luid`) | `cuDeviceGetLuid` |
 | `device_get_pci_bus_id` is a synthetic `domain:bus:device.function` (also `DeviceProperties` PCI ids) | `cudaDeviceGetPciBusId` |
 | `device_get_by_pci_bus_id` is the inverse of `device_get_pci_bus_id` | `cudaDeviceGetByPCIBusId` |
 | `stream_get_flags` is 0 blocking / 1 NonBlocking | `cudaStreamGetFlags` |
@@ -1077,7 +1078,9 @@ MaxRegistersPerBlock included; GlobalMemoryBusWidth included; SingleToDoublePrec
 dims included; linear texture 1D/2D dims included; texture 2D gather dims included; mipmapped texture 1D/2D dims included; cubemap texture width included; layered texture 1D/2D dims included; cubemap layered texture dims included; surface 1D/2D/3D dims included; layered surface 1D/2D dims included; cubemap surface dims included; pciSubSystemID included as 0; luid included as 0; no occupancy SM count or clock). `device_get_name` is `cudaDeviceGetName` (the
 profile name). `device_get_uuid` is `cuDeviceGetUuid` (synthetic 16-octet
 id; also `DeviceProperties.uuid`). `device_get_by_uuid` is
-`cuDeviceGetByUuid` (inverse). `device_get_pci_bus_id` is
+`cuDeviceGetByUuid` (inverse). `device_get_luid` is `cuDeviceGetLuid`
+(always-zero Windows LUID plus node mask; also `DeviceProperties.luid`
+and `luidDeviceNodeMask`). `device_get_pci_bus_id` is
 `cudaDeviceGetPciBusId` (synthetic PCI string; also `DeviceProperties`
 PCI ids; `pciSubSystemID` is always 0; `luid` is always 0). `device_get_by_pci_bus_id` is `cudaDeviceGetByPCIBusId`
 (inverse). `device_total_mem` is `cuDeviceTotalMem` (HBM bytes).

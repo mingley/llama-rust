@@ -509,7 +509,11 @@
 //! `cudaDeviceGetName` (the profile name). [`device_get_uuid`](Sim::device_get_uuid)
 //! is `cuDeviceGetUuid` / `cudaDeviceGetUuid` (synthetic 16-octet id; also
 //! [`DeviceProperties::uuid`]). [`device_get_by_uuid`](Sim::device_get_by_uuid)
-//! is `cuDeviceGetByUuid` (inverse). [`device_get_pci_bus_id`](Sim::device_get_pci_bus_id)
+//! is `cuDeviceGetByUuid` (inverse). [`device_get_luid`](Sim::device_get_luid)
+//! is `cuDeviceGetLuid` (always-zero Windows LUID plus node mask; also
+//! [`DeviceProperties::luid`] /
+//! [`luid_device_node_mask`](DeviceProperties::luid_device_node_mask)).
+//! [`device_get_pci_bus_id`](Sim::device_get_pci_bus_id)
 //! is `cudaDeviceGetPciBusId` / `cuDeviceGetPCIBusId` (synthetic
 //! `domain:bus:device.function`; also [`DeviceProperties::pci_domain_id`] /
 //! [`pci_bus_id`](DeviceProperties::pci_bus_id) /
@@ -618,6 +622,8 @@
 //! [`DeviceProperties::luid`] and [`luid_device_node_mask`](DeviceProperties::luid_device_node_mask)
 //! are `cudaDeviceProp::luid` and `luidDeviceNodeMask` (always 0; Windows
 //! LUID is not modeled). Distinct from [`DeviceProperties::uuid`].
+//! [`device_get_luid`](Sim::device_get_luid) is `cuDeviceGetLuid` of those
+//! same zeros.
 //! [`DeviceAttr::ComputeCapabilityMajor`] and
 //! [`ComputeCapabilityMinor`](DeviceAttr::ComputeCapabilityMinor) are
 //! `cudaDevAttrComputeCapabilityMajor` and `cudaDevAttrComputeCapabilityMinor`
@@ -20204,6 +20210,33 @@ mod tests {
         );
         let _g = sim.end_capture().unwrap();
         match sim.device_get_properties(DeviceId(99)) {
+            Err(SimError::Invalid { why }) => {
+                assert!(why.contains("device not in profile"), "{why}");
+            }
+            other => panic!("{other:?}"),
+        }
+    }
+
+    #[test]
+    fn device_get_luid_is_always_zero() {
+        let mut sim = Sim::new(h100());
+        let d = DeviceId(0);
+        let (luid, mask) = sim.device_get_luid(d).unwrap();
+        assert_eq!(luid, [0_u8; 8]);
+        assert_eq!(mask, 0);
+        let hp = sim.device_get_properties(d).unwrap();
+        assert_eq!(hp.luid, luid);
+        assert_eq!(hp.luid_device_node_mask, mask);
+        assert_ne!(sim.device_get_uuid(d).unwrap(), [0_u8; 16]);
+        let multi = Sim::new(HardwareProfile::example_8xh100_nvlink());
+        assert_eq!(
+            multi.device_get_luid(DeviceId(0)).unwrap(),
+            multi.device_get_luid(DeviceId(1)).unwrap()
+        );
+        sim.begin_capture(d, StreamId(0)).unwrap();
+        assert_eq!(sim.device_get_luid(d).unwrap(), ([0_u8; 8], 0));
+        let _g = sim.end_capture().unwrap();
+        match sim.device_get_luid(DeviceId(99)) {
             Err(SimError::Invalid { why }) => {
                 assert!(why.contains("device not in profile"), "{why}");
             }

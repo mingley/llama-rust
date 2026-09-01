@@ -6181,7 +6181,14 @@ model, do not celebrate the sim.
     `gpu-profile capture` is still refused. Dual score still has no
     `$/M tokens`.
 
-583. [ ] Next numbered PLAN item after 582 is the next `gpu-sim` / Engine /
+583. [x] `gpu-sim` `Sim::device_get_luid` is `cuDeviceGetLuid`. Always
+    zeros (Windows LUID is not modeled). Query; legal during capture.
+    Distinct from `device_get_uuid`. Also `DeviceProperties::luid` /
+    `luid_device_node_mask`. This VM does not invent Engine `--get-luid`,
+    occupancy SM counts, or `cudaChooseDevice`. `gpu-profile capture` is
+    still refused. Dual score still has no `$/M tokens`.
+
+584. [ ] Next numbered PLAN item after 583 is the next `gpu-sim` / Engine /
     serve / expertvm mechanical API that is still missing, or the next official
     decode family. Prefer remaining CUDA-shaped twins over more
     OpenAI HTTP veneer. Do not invent F32 `output.scale`. Do not invent a
@@ -6354,6 +6361,9 @@ model, do not celebrate the sim.
     staying 0.
     Do not invent a second `cudaDeviceProp::luid` / `luidDeviceNodeMask`.
     Do not invent Engine `--luid`. Do not reverse luid staying 0.
+    Do not invent a second `cuDeviceGetLuid` / `device_get_luid`.
+    Do not invent Engine `--get-luid`. Do not invent
+    `cuDeviceGetLuidByUuid`. Do not reverse device_get_luid zeros.
     Do not invent a second `cudaStreamAddCallback`.
     Do not invent Engine `--stream-callback` (same wall as second live
     `cudaLaunchHostFunc` after miss DMA).
@@ -6648,6 +6658,9 @@ model, do not celebrate the sim.
     Do not invent a second luid DeviceProperties field. Do not invent
     Engine `--device-luid`. Do not invent a Windows LUID export this
     slice. Do not reverse luid staying 0.
+    Do not invent a second `device_get_luid` API. Do not invent
+    Engine `--cu-luid`. Do not invent a LUID inverse lookup this
+    slice. Do not reverse device_get_luid zeros.
     Do not invent a second DeviceLaunch in-flight destroy-complete check or Engine
     `--device-launch-destroy`. Do not abort an in-flight DeviceLaunch when
     `destroy_graph` succeeds. Do not delay destroy of an idle exec. Do not invent
@@ -7164,6 +7177,8 @@ model, do not celebrate the sim.
     not invent Engine `--subsystem-id`. Do not reverse pciSubSystemID 0.
     Do not invent a second `luid_device_node_mask` DeviceProperties
     field. Do not invent Engine `--luid-mask`. Do not reverse luid 0.
+    Do not invent a second `device_get_luid` method. Do not invent
+    Engine `--query-luid`. Do not reverse LUID query zeros.
     Do not
     spend the next item on an OpenAI-compatible HTTP veneer.
 
