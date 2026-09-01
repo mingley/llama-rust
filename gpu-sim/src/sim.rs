@@ -662,6 +662,23 @@ impl Sim {
         })
     }
 
+    /// [`Self::as_exec`] plus refuse host updates while a device launch is in
+    /// flight (`"device launch in flight"`). Query APIs keep [`Self::as_exec`].
+    fn as_exec_for_update(&self, id: GraphId) -> Result<GraphId, SimError> {
+        let exec = self.as_exec(id)?;
+        if self
+            .graphs
+            .get(&exec)
+            .and_then(|g| g.device_launch_tail)
+            .is_some_and(|op| !self.op_done(op))
+        {
+            return Err(SimError::Invalid {
+                why: "device launch in flight",
+            });
+        }
+        Ok(exec)
+    }
+
     fn remap_kind_to_exec(&self, kind: Kind) -> Result<Kind, SimError> {
         Ok(match kind {
             Kind::ChildGraph { graph, ownership } => Kind::ChildGraph {
@@ -3214,8 +3231,10 @@ impl Sim {
     /// auto-uploads). Submits a launcher kernel that occupies one compute slot
     /// for `graph_launch_ns`. When it completes the body is enqueued on
     /// `stream`. A second device launch of the same exec before that work
-    /// finishes is Invalid. Capture cannot include it.
-    /// [`Self::update_graph`] of a device-launch exec is Invalid.
+    /// finishes is Invalid. Host SetParams, SetAttribute, SetEnabled, and
+    /// CopyAttributes of this exec while that work is in flight are Invalid
+    /// `"device launch in flight"`. Destroy and getters stay. Capture cannot
+    /// include it. [`Self::update_graph`] of a device-launch exec is Invalid.
     pub fn device_launch_graph(
         &mut self,
         graph: GraphId,
@@ -4471,10 +4490,12 @@ impl Sim {
     /// `graph_set_params_ns`. Clears the upload flag unless the node is
     /// device-updatable (`cudaLaunchAttributeDeviceUpdatableKernelNode`),
     /// so a later [`Self::device_launch_graph`] needs no host re-upload. Capture
-    /// cannot include it. Device-launch execs re-apply instantiate mixed-ctx
-    /// rules (Invalid `"graph multiple ctx"`) and kernel-buffer dest rules
-    /// (Invalid `"device launch instantiate flag"`). Graphs with mem alloc/free
-    /// nodes are legal (unlike [`Self::update_graph`]).
+    /// cannot include it. While a [`Self::device_launch_graph`] of this exec is
+    /// in flight this is Invalid `"device launch in flight"`. Device-launch
+    /// execs re-apply instantiate mixed-ctx rules (Invalid `"graph multiple
+    /// ctx"`) and kernel-buffer dest rules (Invalid `"device launch instantiate
+    /// flag"`). Graphs with mem alloc/free nodes are legal (unlike
+    /// [`Self::update_graph`]).
     pub fn graph_exec_kernel_set_params(
         &mut self,
         exec: GraphId,
@@ -4482,7 +4503,7 @@ impl Sim {
         params: &KernelNodeParams,
     ) -> Result<(), SimError> {
         self.fail_if_capturing("cannot capture kernel set params")?;
-        let exec = self.as_exec(exec)?;
+        let exec = self.as_exec_for_update(exec)?;
         let (device, cooperative, device_updatable, portable_shared) = {
             let g = self.graphs.get(&exec).ok_or(SimError::Invalid {
                 why: "unknown graph",
@@ -5184,7 +5205,11 @@ impl Sim {
     ) -> Result<(), SimError> {
         self.fail_if_capturing("cannot capture conditional node set params")?;
         let (handle, set, ctx) = cond_set_from_params(&params)?;
-        let target = if exec { self.as_exec(graph)? } else { graph };
+        let target = if exec {
+            self.as_exec_for_update(graph)?
+        } else {
+            graph
+        };
         let owner = if exec { self.def_id(target) } else { graph };
         let device = {
             let g = self.graphs.get(&target).ok_or(SimError::Invalid {
@@ -5396,7 +5421,11 @@ impl Sim {
                 why: "cannot add pageable memcpy",
             });
         }
-        let target = if exec { self.as_exec(graph)? } else { graph };
+        let target = if exec {
+            self.as_exec_for_update(graph)?
+        } else {
+            graph
+        };
         let (device, origin, flags) = {
             let g = self.graphs.get(&target).ok_or(SimError::Invalid {
                 why: "unknown graph",
@@ -5583,7 +5612,11 @@ impl Sim {
         } else {
             "cannot capture memset node set params"
         })?;
-        let target = if exec { self.as_exec(graph)? } else { graph };
+        let target = if exec {
+            self.as_exec_for_update(graph)?
+        } else {
+            graph
+        };
         let (device, cur, origin, flags) = {
             let g = self.graphs.get(&target).ok_or(SimError::Invalid {
                 why: "unknown graph",
@@ -5704,7 +5737,7 @@ impl Sim {
         params: HostNodeParams,
     ) -> Result<(), SimError> {
         self.fail_if_capturing("cannot capture host set params")?;
-        let exec = self.as_exec(exec)?;
+        let exec = self.as_exec_for_update(exec)?;
         let device = {
             let g = self.graphs.get(&exec).ok_or(SimError::Invalid {
                 why: "unknown graph",
@@ -5774,7 +5807,11 @@ impl Sim {
             "cannot capture batch mem op node set params"
         })?;
         self.check_batch_mem_ops(ops)?;
-        let graph = if exec { self.as_exec(graph)? } else { graph };
+        let graph = if exec {
+            self.as_exec_for_update(graph)?
+        } else {
+            graph
+        };
         let (device, next) = {
             let g = self.graphs.get(&graph).ok_or(SimError::Invalid {
                 why: "unknown graph",
@@ -5849,7 +5886,7 @@ impl Sim {
                 why: "graph child is self",
             });
         }
-        let exec = self.as_exec(exec)?;
+        let exec = self.as_exec_for_update(exec)?;
         if child == exec {
             return Err(SimError::Invalid {
                 why: "graph child is self",
@@ -5972,7 +6009,7 @@ impl Sim {
         if !self.events.contains_key(&event) {
             return Err(SimError::UnknownEvent { event: event.0 });
         }
-        let exec = self.as_exec(exec)?;
+        let exec = self.as_exec_for_update(exec)?;
         let (device, external) = {
             let g = self.graphs.get(&exec).ok_or(SimError::Invalid {
                 why: "unknown graph",
@@ -6026,7 +6063,7 @@ impl Sim {
     ) -> Result<(), SimError> {
         self.fail_if_capturing("cannot capture mem free node set params")?;
         let _a = self.alloc_ref(id)?;
-        let exec = self.as_exec(exec)?;
+        let exec = self.as_exec_for_update(exec)?;
         let device = {
             let g = self.graphs.get(&exec).ok_or(SimError::Invalid {
                 why: "unknown graph",
@@ -6091,7 +6128,7 @@ impl Sim {
         exec: bool,
     ) -> Result<CondId, SimError> {
         let step = if exec {
-            self.graph_exec_step(self.as_exec(graph)?, node)?
+            self.graph_exec_step(self.as_exec_for_update(graph)?, node)?
         } else {
             self.graph_def_step(graph, node)?
         };
@@ -6117,7 +6154,7 @@ impl Sim {
             "cannot capture set-conditional node set params"
         })?;
         if exec {
-            let exec = self.as_exec(graph)?;
+            let exec = self.as_exec_for_update(graph)?;
             let device = {
                 let g = self.graphs.get(&exec).ok_or(SimError::Invalid {
                     why: "unknown graph",
@@ -6966,6 +7003,8 @@ impl Sim {
     /// nodes cannot be disabled. Pays `graph_set_params_ns`. Capture cannot
     /// include it. Does not clear the upload flag (topology unchanged).
     /// [`Self::update_graph`] and typed ExecSetParams leave enable unchanged.
+    /// Device-launch execs refuse this while [`Self::device_launch_graph`] is
+    /// in flight (Invalid `"device launch in flight"`). Getters stay.
     pub fn graph_node_set_enabled(
         &mut self,
         exec: GraphId,
@@ -6973,7 +7012,7 @@ impl Sim {
         enabled: bool,
     ) -> Result<(), SimError> {
         self.fail_if_capturing("cannot capture node set enabled")?;
-        let exec = self.as_exec(exec)?;
+        let exec = self.as_exec_for_update(exec)?;
         let (device, mem) = {
             let g = self.graphs.get(&exec).ok_or(SimError::Invalid {
                 why: "unknown graph",
@@ -9770,7 +9809,7 @@ impl Sim {
         priority: i32,
     ) -> Result<(), SimError> {
         self.fail_if_capturing("cannot capture kernel node set attribute")?;
-        let exec = self.as_exec(exec)?;
+        let exec = self.as_exec_for_update(exec)?;
         let g = self.graphs.get_mut(&exec).ok_or(SimError::Invalid {
             why: "unknown graph",
         })?;
@@ -9859,7 +9898,7 @@ impl Sim {
         pdl: ProgrammaticLaunch,
     ) -> Result<(), SimError> {
         self.fail_if_capturing("cannot capture kernel node set attribute")?;
-        let exec = self.as_exec(exec)?;
+        let exec = self.as_exec_for_update(exec)?;
         let g = self.graphs.get_mut(&exec).ok_or(SimError::Invalid {
             why: "unknown graph",
         })?;
@@ -10022,7 +10061,7 @@ impl Sim {
         event: Option<ProgrammaticEvent>,
     ) -> Result<(), SimError> {
         self.fail_if_capturing("cannot capture kernel node set attribute")?;
-        let exec = self.as_exec(exec)?;
+        let exec = self.as_exec_for_update(exec)?;
         if let Some(pe) = event {
             self.require_programmatic_event_attr(pe)?;
             let _ev = self.events.entry(pe.event).or_insert(Ev::new(true));
@@ -10138,7 +10177,7 @@ impl Sim {
         event: Option<LaunchCompletionEvent>,
     ) -> Result<(), SimError> {
         self.fail_if_capturing("cannot capture kernel node set attribute")?;
-        let exec = self.as_exec(exec)?;
+        let exec = self.as_exec_for_update(exec)?;
         if let Some(lc) = event {
             self.require_launch_completion_event_attr(lc)?;
             let _ev = self.events.entry(lc.event).or_insert(Ev::new(true));
@@ -10249,7 +10288,7 @@ impl Sim {
         window: Option<AccessPolicyWindow>,
     ) -> Result<(), SimError> {
         self.fail_if_capturing("cannot capture kernel node set attribute")?;
-        let exec = self.as_exec(exec)?;
+        let exec = self.as_exec_for_update(exec)?;
         let device = {
             let g = self.graphs.get(&exec).ok_or(SimError::Invalid {
                 why: "unknown graph",
@@ -10369,7 +10408,11 @@ impl Sim {
         domain: MemSyncDomain,
     ) -> Result<(), SimError> {
         self.fail_if_capturing("cannot capture kernel node set attribute")?;
-        let graph = if exec { self.as_exec(graph)? } else { graph };
+        let graph = if exec {
+            self.as_exec_for_update(graph)?
+        } else {
+            graph
+        };
         let g = self.graphs.get_mut(&graph).ok_or(SimError::Invalid {
             why: "unknown graph",
         })?;
@@ -10415,7 +10458,11 @@ impl Sim {
         map: MemSyncDomainMap,
     ) -> Result<(), SimError> {
         self.fail_if_capturing("cannot capture kernel node set attribute")?;
-        let graph = if exec { self.as_exec(graph)? } else { graph };
+        let graph = if exec {
+            self.as_exec_for_update(graph)?
+        } else {
+            graph
+        };
         let device = {
             let g = self.graphs.get(&graph).ok_or(SimError::Invalid {
                 why: "unknown graph",
@@ -10512,7 +10559,11 @@ impl Sim {
         cluster: Option<ClusterDim>,
     ) -> Result<(), SimError> {
         self.fail_if_capturing("cannot capture kernel node set attribute")?;
-        let graph = if exec { self.as_exec(graph)? } else { graph };
+        let graph = if exec {
+            self.as_exec_for_update(graph)?
+        } else {
+            graph
+        };
         let (device, mode) = {
             let g = self.graphs.get(&graph).ok_or(SimError::Invalid {
                 why: "unknown graph",
@@ -10611,7 +10662,11 @@ impl Sim {
         policy: ClusterSchedulingPolicy,
     ) -> Result<(), SimError> {
         self.fail_if_capturing("cannot capture kernel node set attribute")?;
-        let graph = if exec { self.as_exec(graph)? } else { graph };
+        let graph = if exec {
+            self.as_exec_for_update(graph)?
+        } else {
+            graph
+        };
         let g = self.graphs.get_mut(&graph).ok_or(SimError::Invalid {
             why: "unknown graph",
         })?;
@@ -10697,7 +10752,11 @@ impl Sim {
         preferred: Option<ClusterDim>,
     ) -> Result<(), SimError> {
         self.fail_if_capturing("cannot capture kernel node set attribute")?;
-        let graph = if exec { self.as_exec(graph)? } else { graph };
+        let graph = if exec {
+            self.as_exec_for_update(graph)?
+        } else {
+            graph
+        };
         let (device, cluster, mode) = {
             let g = self.graphs.get(&graph).ok_or(SimError::Invalid {
                 why: "unknown graph",
@@ -10794,7 +10853,11 @@ impl Sim {
         carveout: SharedMemCarveout,
     ) -> Result<(), SimError> {
         self.fail_if_capturing("cannot capture kernel node set attribute")?;
-        let graph = if exec { self.as_exec(graph)? } else { graph };
+        let graph = if exec {
+            self.as_exec_for_update(graph)?
+        } else {
+            graph
+        };
         let g = self.graphs.get_mut(&graph).ok_or(SimError::Invalid {
             why: "unknown graph",
         })?;
@@ -10884,7 +10947,11 @@ impl Sim {
         device_updatable: bool,
     ) -> Result<(), SimError> {
         self.fail_if_capturing("cannot capture kernel node set attribute")?;
-        let graph = if exec { self.as_exec(graph)? } else { graph };
+        let graph = if exec {
+            self.as_exec_for_update(graph)?
+        } else {
+            graph
+        };
         let g = self.graphs.get_mut(&graph).ok_or(SimError::Invalid {
             why: "unknown graph",
         })?;
@@ -10975,7 +11042,11 @@ impl Sim {
         shared_mem: SharedMemoryMode,
     ) -> Result<(), SimError> {
         self.fail_if_capturing("cannot capture kernel node set attribute")?;
-        let graph = if exec { self.as_exec(graph)? } else { graph };
+        let graph = if exec {
+            self.as_exec_for_update(graph)?
+        } else {
+            graph
+        };
         let g = self.graphs.get_mut(&graph).ok_or(SimError::Invalid {
             why: "unknown graph",
         })?;
@@ -11061,7 +11132,11 @@ impl Sim {
         mode: PortableClusterMode,
     ) -> Result<(), SimError> {
         self.fail_if_capturing("cannot capture kernel node set attribute")?;
-        let graph = if exec { self.as_exec(graph)? } else { graph };
+        let graph = if exec {
+            self.as_exec_for_update(graph)?
+        } else {
+            graph
+        };
         let (device, cluster, preferred) = {
             let g = self.graphs.get(&graph).ok_or(SimError::Invalid {
                 why: "unknown graph",
@@ -11194,7 +11269,11 @@ impl Sim {
         mode: PortableSharedMode,
     ) -> Result<(), SimError> {
         self.fail_if_capturing("cannot capture kernel node set attribute")?;
-        let graph = if exec { self.as_exec(graph)? } else { graph };
+        let graph = if exec {
+            self.as_exec_for_update(graph)?
+        } else {
+            graph
+        };
         let (device, bytes) = {
             let g = self.graphs.get(&graph).ok_or(SimError::Invalid {
                 why: "unknown graph",
@@ -11251,7 +11330,11 @@ impl Sim {
         bytes: u32,
     ) -> Result<(), SimError> {
         self.fail_if_capturing("cannot capture kernel node set attribute")?;
-        let graph = if exec { self.as_exec(graph)? } else { graph };
+        let graph = if exec {
+            self.as_exec_for_update(graph)?
+        } else {
+            graph
+        };
         let (device, mode) = {
             let g = self.graphs.get(&graph).ok_or(SimError::Invalid {
                 why: "unknown graph",
@@ -11348,7 +11431,11 @@ impl Sim {
         enabled: bool,
     ) -> Result<(), SimError> {
         self.fail_if_capturing("cannot capture kernel node set attribute")?;
-        let graph = if exec { self.as_exec(graph)? } else { graph };
+        let graph = if exec {
+            self.as_exec_for_update(graph)?
+        } else {
+            graph
+        };
         let g = self.graphs.get_mut(&graph).ok_or(SimError::Invalid {
             why: "unknown graph",
         })?;
@@ -11434,7 +11521,11 @@ impl Sim {
         policy: SynchronizationPolicy,
     ) -> Result<(), SimError> {
         self.fail_if_capturing("cannot capture kernel node set attribute")?;
-        let graph = if exec { self.as_exec(graph)? } else { graph };
+        let graph = if exec {
+            self.as_exec_for_update(graph)?
+        } else {
+            graph
+        };
         let g = self.graphs.get_mut(&graph).ok_or(SimError::Invalid {
             why: "unknown graph",
         })?;
@@ -11525,7 +11616,11 @@ impl Sim {
         cooperative: bool,
     ) -> Result<(), SimError> {
         self.fail_if_capturing("cannot capture kernel node set attribute")?;
-        let graph = if exec { self.as_exec(graph)? } else { graph };
+        let graph = if exec {
+            self.as_exec_for_update(graph)?
+        } else {
+            graph
+        };
         let device = {
             let g = self.graphs.get(&graph).ok_or(SimError::Invalid {
                 why: "unknown graph",
@@ -11621,7 +11716,7 @@ impl Sim {
         let src_pe = self.kernel_node_programmatic_event(src_graph, src, exec)?;
         let src_lc = self.kernel_node_launch_completion(src_graph, src, exec)?;
         let dst_flags = if exec {
-            self.as_exec(dst_graph)?
+            self.as_exec_for_update(dst_graph)?
         } else {
             dst_graph
         };

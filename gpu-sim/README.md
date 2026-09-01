@@ -517,7 +517,9 @@ kernel buffers must be that device, pinned mapped host, or managed.
 Exec memcpy/memset/kernel SetParams re-apply those dest rules. Mixed node green ctx is
 `MultipleDevicesNotSupported` (`"graph multiple ctx"`); exec SetParams
 re-apply that mixed-ctx rule; exec SetAttribute cannot attach
-programmatic or launch-completion events; `update_graph` of a
+programmatic or launch-completion events; host updates of an in-flight
+device-launch exec are Invalid (`"device launch in flight"`; destroy and
+getters stay); `update_graph` of a
 device-launch exec is Invalid; cannot combine with `AUTO_FREE_ON_LAUNCH`
 (`"device launch auto free"`). Unused conditional handles are
 `ConditionalHandleUnused` (`"conditional handle unused"`).
@@ -593,6 +595,8 @@ memset 2D/3D helpers plus
 `cudaGraphExecBatchMemOpNodeSetParams`
 (`graph_set_params_ns`; mem nodes legal; pageable memcpy stays illegal;
 device-launch execs re-apply instantiate dest and mixed-ctx rules;
+host updates of an in-flight device-launch exec are Invalid
+(`"device launch in flight"`);
 a `GpuOp::BatchMem` item list is a parameter; kernel SetParams keeps the
 exec uploaded when the node is device-updatable).
 `graph_node_set_enabled` is `cudaGraphNodeSetEnabled` (skip a node at launch;

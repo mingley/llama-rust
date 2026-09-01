@@ -5,6 +5,17 @@ Visible five-turn extract: [docs/chatgpt-share-6a920fe1.md](docs/chatgpt-share-6
 Complete share-API extract: [docs/chatgpt-share-6a920fe1/](docs/chatgpt-share-6a920fe1/).
 Work lands on `main`. No PRs.
 
+## Shipped 2026-09-01 — DeviceLaunch in-flight host updates are Invalid
+
+`gpu-sim` CUDA host updates of a DeviceLaunch exec while
+`device_launch_graph` is in flight are Invalid `"device launch in
+flight"` (SetParams / SetAttribute / SetEnabled / CopyAttributes).
+Capture is still reported first. After synchronize, SetParams stay.
+Getters stay. Destroy stays. Host-instantiated exec SetParams during a
+regular `launch_graph` stay. This VM does not invent Engine
+`--device-launch-in-flight`. `gpu-profile capture` is still refused. Dual
+score still has no `$/M tokens`.
+
 ## Shipped 2026-09-01 — DeviceLaunch kernel buffers stay on-device
 
 `gpu-sim` CUDA DeviceLaunch kernel buffers must be origin-device memory

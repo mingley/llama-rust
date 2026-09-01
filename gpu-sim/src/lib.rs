@@ -834,7 +834,9 @@
 //! [`GraphInstantiateResult::MultipleDevicesNotSupported`]
 //! (`"graph multiple ctx"`); exec SetParams re-apply that mixed-ctx
 //! rule; exec SetAttribute cannot attach programmatic or
-//! launch-completion events; cannot combine
+//! launch-completion events; host updates while
+//! [`device_launch_graph`](Sim::device_launch_graph) is in flight are Invalid
+//! `"device launch in flight"`; cannot combine
 //! with [`GraphInstantiateFlags::AUTO_FREE_ON_LAUNCH`] (Invalid
 //! `"device launch auto free"`).
 //! [`instantiate_graph_with_params`](Sim::instantiate_graph_with_params) is
@@ -1044,7 +1046,9 @@
 //! (`cudaLaunchAttributeDeviceUpdatableKernelNode`). Works on graphs with mem
 //! alloc/free nodes (CUDA cannot `cudaGraphExecUpdate` those). Capture cannot
 //! include it. Device-launch execs re-apply instantiate mixed-ctx rules
-//! and kernel-buffer dest rules.
+//! and kernel-buffer dest rules. Host updates while
+//! [`device_launch_graph`](Sim::device_launch_graph) is in flight are Invalid
+//! `"device launch in flight"` (destroy and getters stay).
 //! [`graph_exec_memcpy_set_params`](Sim::graph_exec_memcpy_set_params) /
 //! [`graph_exec_memcpy_set_params_1d`](Sim::graph_exec_memcpy_set_params_1d) /
 //! [`graph_exec_memcpy_set_params_2d`](Sim::graph_exec_memcpy_set_params_2d) /
@@ -1123,7 +1127,8 @@
 //! [`graph_node_set_enabled`](Sim::graph_node_set_enabled) /
 //! [`graph_node_get_enabled`](Sim::graph_node_get_enabled) are
 //! `cudaGraphNodeSetEnabled` / `GetEnabled` (skip launch; mem nodes illegal;
-//! [`update_graph`](Sim::update_graph) plus ExecSetParams leave enable unchanged).
+//! [`update_graph`](Sim::update_graph) plus ExecSetParams leave enable unchanged;
+//! device-launch in-flight SetEnabled is Invalid `"device launch in flight"`).
 //! [`Sim::clone_graph`] is `cudaGraphClone` (independent, not instantiated;
 //! child-graph nodes are cloned recursively).
 //! `expertvm --graph-clone` clones leaf captures; `--graph-clone-parent` clones
@@ -31814,6 +31819,64 @@ mod tests {
             other => panic!("{other:?}"),
         }
         let _end = sim.end_capture().unwrap();
+    }
+
+    #[test]
+    fn device_launch_in_flight_rejects_exec_set_params() {
+        let mut sim = Sim::new(h100());
+        let d = DeviceId(0);
+        let s = StreamId(0);
+        let a = sim.malloc(d, 4096).unwrap();
+        let g = sim.create_graph(d, s).unwrap();
+        sim.graph_add_kernel(g, KernelKind::other(1 << 40, 4096), &[a], &[a])
+            .unwrap();
+        let _ = sim
+            .instantiate_graph_with_flags(
+                g,
+                GraphInstantiateFlags::DEVICE_LAUNCH | GraphInstantiateFlags::UPLOAD,
+            )
+            .unwrap();
+        let (node, params) = sim.graph_unique_kernel(g).unwrap();
+        enq(sim.device_launch_graph(g, s));
+        let err = sim
+            .graph_exec_kernel_set_params(g, node, &params)
+            .unwrap_err();
+        match err {
+            SimError::Invalid { why } => assert!(why.contains("in flight"), "{why}"),
+            other => panic!("{other:?}"),
+        }
+        let err = sim.graph_node_set_enabled(g, node, false).unwrap_err();
+        match err {
+            SimError::Invalid { why } => assert!(why.contains("in flight"), "{why}"),
+            other => panic!("{other:?}"),
+        }
+        assert!(sim.graph_node_get_enabled(g, node).unwrap());
+        let _got = sim.graph_exec_kernel_get_params(g, node).unwrap();
+        let _flags = sim.graph_exec_get_flags(g).unwrap();
+        assert!(sim.graph_uploaded(g).unwrap());
+        sim.begin_capture(d, s).unwrap();
+        let err = sim
+            .graph_exec_kernel_set_params(g, node, &params)
+            .unwrap_err();
+        match err {
+            SimError::Invalid { why } => assert!(why.contains("capture"), "{why}"),
+            other => panic!("{other:?}"),
+        }
+        let _end = sim.end_capture().unwrap();
+        sim.synchronize().unwrap();
+        sim.graph_exec_kernel_set_params(g, node, &params).unwrap();
+        sim.graph_node_set_enabled(g, node, true).unwrap();
+
+        let host = sim.create_graph(d, s).unwrap();
+        sim.graph_add_kernel(host, KernelKind::other(1 << 40, 4096), &[a], &[a])
+            .unwrap();
+        let _hexec = sim.instantiate_graph(host).unwrap();
+        let (hnode, hparams) = sim.graph_unique_kernel(host).unwrap();
+        let launched = sim.launch_graph(host, s).unwrap();
+        assert!(launched > 0);
+        sim.graph_exec_kernel_set_params(host, hnode, &hparams)
+            .unwrap();
+        sim.synchronize().unwrap();
     }
 
     #[test]

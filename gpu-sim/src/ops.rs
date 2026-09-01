@@ -3065,6 +3065,8 @@ impl GraphInstantiateFlags {
     /// [`crate::GraphInstantiateResult::MultipleDevicesNotSupported`].
     /// Exec SetParams re-apply that mixed-ctx rule. Exec SetAttribute
     /// cannot attach programmatic or launch-completion events.
+    /// Host updates of an in-flight device-launch exec are Invalid
+    /// (`"device launch in flight"`). Destroy and getters stay.
     /// Cannot combine with [`GraphInstantiateFlags::AUTO_FREE_ON_LAUNCH`].
     pub const DEVICE_LAUNCH: u32 = 4;
     /// `cudaGraphInstantiateFlagUseNodePriority`: recorded kernels keep the

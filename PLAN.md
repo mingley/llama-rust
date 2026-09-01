@@ -5698,7 +5698,16 @@ model, do not celebrate the sim.
     Engine `--device-launch-kernel`. `gpu-profile capture` is still
     refused. Dual score still has no `$/M tokens`.
 
-531. [ ] Next numbered PLAN item after 530 is the next `gpu-sim` / Engine /
+531. [x] `gpu-sim` CUDA host updates of a DeviceLaunch exec while
+    `device_launch_graph` is in flight are Invalid `"device launch in
+    flight"` (SetParams / SetAttribute / SetEnabled / CopyAttributes).
+    Capture is still reported first. After synchronize, SetParams stay.
+    Getters stay. Destroy stays. Host-instantiated exec SetParams during
+    a regular `launch_graph` stay. This VM does not invent Engine
+    `--device-launch-in-flight`. `gpu-profile capture` is still refused.
+    Dual score still has no `$/M tokens`.
+
+532. [ ] Next numbered PLAN item after 531 is the next `gpu-sim` / Engine /
     serve / expertvm mechanical API that is still missing, or the next official
     decode family. Prefer remaining CUDA-shaped twins over more
     OpenAI HTTP veneer. Do not invent F32 `output.scale`. Do not invent a
@@ -5827,6 +5836,13 @@ model, do not celebrate the sim.
     kernel buffers. Do not reverse definition kernel SetParams deferring
     dest rules to instantiate. Do not reverse host instantiate of
     off-device kernel buffers.
+    Do not invent a second DeviceLaunch in-flight host-update check or Engine
+    `--device-launch-in-flight`. Do not refuse `destroy_graph` of an in-flight
+    DeviceLaunch exec (CUDA allows it to complete). Do not refuse getters /
+    `graph_exec_get_flags` / `graph_uploaded` while DeviceLaunch is in flight.
+    Do not refuse host `launch_graph` in-flight SetParams. Do not put in-flight
+    refuse in `as_exec` itself. Do not refuse `upload_graph` in-flight this
+    slice.
     Do not invent a second DeviceLaunch mixed-ctx check or Engine
     `--device-launch-ctx`. Do not invent a second
     [`GraphInstantiateResult`] variant for driver MultipleCtxs. Do not
