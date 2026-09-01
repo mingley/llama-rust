@@ -5,6 +5,14 @@ Visible five-turn extract: [docs/chatgpt-share-6a920fe1.md](docs/chatgpt-share-6
 Complete share-API extract: [docs/chatgpt-share-6a920fe1/](docs/chatgpt-share-6a920fe1/).
 Work lands on `main`. No PRs.
 
+## Shipped 2026-09-01 — CUDA `cuGraphicsGLRegisterImage`
+
+`gpu-sim` `Sim::graphics_gl_register_image` is
+`cuGraphicsGLRegisterImage`. Always Invalid `"gl image"` because OpenGL
+interop is not modeled. Query; legal during capture. Distinct from
+`graphics_gl_register_buffer`. This VM does not invent `cuGraphicsEGLRegisterImage` or Engine `--gl-register-image`.
+`gpu-profile capture` is still refused. Dual score still has no `$/M tokens`.
+
 ## Shipped 2026-09-01 — CUDA `cuArray3DGetDescriptor`
 
 `gpu-sim` `Sim::array_3d_get_descriptor` is `cuArray3DGetDescriptor`.

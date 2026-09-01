@@ -579,6 +579,8 @@ D3D12 CUDA-in-graphics is not modeled; no Engine flag).
 graphics resources are not modeled; no Engine flag).
 `gpu-sim` `graphics_gl_register_buffer` is `cuGraphicsGLRegisterBuffer`
 (Invalid; OpenGL interop is not modeled; no Engine flag).
+`gpu-sim` `graphics_gl_register_image` is `cuGraphicsGLRegisterImage`
+(Invalid; OpenGL interop is not modeled; no Engine flag).
 `gpu-sim` `egl_stream_consumer_connect` is `cuEGLStreamConsumerConnect`
 (Invalid; EGL streams are not modeled; no Engine flag).
 `gpu-sim` `egl_stream_producer_connect` is `cuEGLStreamProducerConnect`
