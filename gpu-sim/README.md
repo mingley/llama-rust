@@ -180,6 +180,7 @@ warp scheduler, L1, …   ← do not model
 | `SimError::error_name` / `error_string` map a returned error (no thread-local last error) | `cudaGetErrorName` / `cudaGetErrorString` |
 | `device_primary_ctx_get_state` is flags plus always-active (no lazy retain) | `cuDevicePrimaryCtxGetState` |
 | `ctx_get_id` is `cuCtxGetId` for the seeded primary context of an explicit device | query; legal during capture |
+| `ctx_get_api_version` is CUDA 13.0 for that primary context | `cuCtxGetApiVersion` |
 | access-policy windows align to `cudaLimitMaxL2FetchGranularity` (default 128; `expertvm sim --l2-fetch N` sets 32/64/128) | exact |
 | `AccessPolicyWindow.hit_ratio_permille` is CUDA `hitRatio` (`expertvm sim --l2-ratio N`; unset 1000) | exact |
 | `AccessPolicyWindow.hit` Streaming skips persist fill (`expertvm sim --l2-streaming`; needs persist) | exact |
@@ -1122,7 +1123,10 @@ caller-chosen `StreamId`). `stream_get_device` is `cudaStreamGetDevice` /
 `cuStreamGetDevice` (the device of the stream; green-ctx streams return
 the ctx create device). Query; legal during capture. Distinct from
 `stream_get_id` and `green_ctx_get_device`. `ctx_get_id` is `cuCtxGetId` for the seeded
-primary context (not `green_ctx_get_id`). `green_ctx_get_id` is
+primary context (not `green_ctx_get_id`). `ctx_get_api_version` is
+`cuCtxGetApiVersion` for that same primary context (CUDA 13.0; same
+encoding as `driver_get_version`; distinct from Hopper SM version).
+`green_ctx_get_id` is
 `cuGreenCtxGetId` / `cudaExecutionCtxGetId` (unique per live green ctx;
 not `GreenCtxId`).
 `green_ctx_get_device` is `cudaExecutionCtxGetDevice` (create device).

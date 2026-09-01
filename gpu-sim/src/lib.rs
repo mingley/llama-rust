@@ -947,6 +947,11 @@
 //! context of an explicit [`DeviceId`] (no TLS current device). Distinct
 //! from [`green_ctx_get_id`](Sim::green_ctx_get_id). Query; legal during
 //! capture. No Engine `--ctx-id`.
+//! [`ctx_get_api_version`](Sim::ctx_get_api_version) is `cuCtxGetApiVersion`
+//! for that same primary context (CUDA 13.0; same encoding as
+//! [`driver_get_version`](Sim::driver_get_version)). Distinct from
+//! [`device_compute_capability`](Sim::device_compute_capability). Query;
+//! legal during capture. No Engine `--ctx-api-version`.
 //! `expertvm sim --device-sync-memops` sets [`DeviceFlags::SYNC_MEMOPS`].
 //! `expertvm sim --device-sync-policy blocking` sets
 //! [`DeviceFlags::SCHEDULE_BLOCKING_SYNC`].
@@ -20634,6 +20639,31 @@ mod tests {
         let id1 = eight.ctx_get_id(d1).unwrap();
         assert_ne!(id1, eight.ctx_get_id(DeviceId(0)).unwrap());
         assert_eq!(id1, (1u64 << 40) | u64::from(d1.0));
+    }
+
+    #[test]
+    fn ctx_get_api_version_is_cuda_13() {
+        let mut sim = Sim::new(h100());
+        let d = DeviceId(0);
+        assert_eq!(sim.ctx_get_api_version(d).unwrap(), 13_000);
+        assert_eq!(
+            sim.ctx_get_api_version(d).unwrap(),
+            u32::try_from(sim.driver_get_version()).unwrap()
+        );
+        assert_ne!(sim.ctx_get_api_version(d).unwrap(), 9);
+        sim.begin_capture(d, StreamId(0)).unwrap();
+        assert_eq!(sim.ctx_get_api_version(d).unwrap(), 13_000);
+        let _g = sim.end_capture().unwrap();
+        match sim.ctx_get_api_version(DeviceId(99)) {
+            Err(SimError::Invalid { why }) => {
+                assert!(why.contains("device not in profile"), "{why}");
+            }
+            other => panic!("{other:?}"),
+        }
+        let eight = Sim::new(HardwareProfile::example_8xh100_nvlink());
+        assert_eq!(eight.ctx_get_api_version(DeviceId(1)).unwrap(), 13_000);
+        sim.reset_device(d).unwrap();
+        assert_eq!(sim.ctx_get_api_version(d).unwrap(), 13_000);
     }
 
     #[test]

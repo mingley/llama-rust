@@ -18503,6 +18503,19 @@ impl Sim {
         Ok(PRIMARY_CTX_CUDA_ID_TAG | u64::from(device.0))
     }
 
+    /// `cuCtxGetApiVersion` for the seeded primary context of `device`.
+    ///
+    /// Query; legal during capture. There is no TLS current device and no
+    /// `CUcontext` object. Reports CUDA 13.0 (`1000 * major` plus `10 * minor`),
+    /// same toolkit encoding as [`Self::driver_get_version`]. Distinct from
+    /// [`Self::driver_get_version`] (no device) and
+    /// [`Self::device_compute_capability`] (Hopper SM version, not API
+    /// version). Unknown devices are Invalid `"device not in profile"`.
+    pub fn ctx_get_api_version(&self, device: DeviceId) -> Result<u32, SimError> {
+        let _gpu = self.profile.gpu(device)?;
+        Ok(13_000)
+    }
+
     /// `cudaInitDevice(device, 0, 0)`. Ensures the primary context (already
     /// seeded at construct). Does not make a thread-current device and does
     /// not change [`Self::get_device_flags`]. Host-synchronous 1 ns. Capture
