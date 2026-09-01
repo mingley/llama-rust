@@ -6647,7 +6647,14 @@ model, do not celebrate the sim.
     or `cudaChooseDevice`. `gpu-profile capture` is still refused. Dual
     score still has no `$/M tokens`.
 
-644. [ ] Next numbered PLAN item after 643 is the next `gpu-sim` / Engine /
+644. [x] `gpu-sim` `Sim::d3d9_ctx_create` is `cuD3D9CtxCreate`. Always
+    Invalid `"d3d9 context"` because Direct3D 9 interop is not modeled.
+    Query; legal during capture. Distinct from `d3d9_get_devices` and
+    `d3d11_ctx_create`. This VM does not invent `cuGraphicsD3D9RegisterResource`, Engine `--d3d9-ctx`,
+    or `cudaChooseDevice`. `gpu-profile capture` is still refused. Dual
+    score still has no `$/M tokens`.
+
+645. [ ] Next numbered PLAN item after 644 is the next `gpu-sim` / Engine /
     serve / expertvm mechanical API that is still missing, or the next official
     decode family. Prefer remaining CUDA-shaped twins over more
     OpenAI HTTP veneer. Do not invent F32 `output.scale`. Do not invent a
@@ -7025,6 +7032,9 @@ model, do not celebrate the sim.
     Do not invent a second `cuD3D12CtxCreate` / `d3d12_ctx_create`. Do
     not invent Engine `--d3d12-ctx`. Do not invent
     `cuGraphicsD3D12RegisterResource` this slice. Do not reverse `"d3d12 context"`.
+    Do not invent a second `cuD3D9CtxCreate` / `d3d9_ctx_create`. Do not
+    invent Engine `--d3d9-ctx`. Do not invent
+    `cuGraphicsD3D9RegisterResource` this slice. Do not reverse `"d3d9 context"`.
     Do not invent a second `cudaStreamAddCallback`.
     Do not invent Engine `--stream-callback` (same wall as second live
     `cudaLaunchHostFunc` after miss DMA).
@@ -7510,6 +7520,9 @@ model, do not celebrate the sim.
     Engine `--create-d3d12-ctx`. Do not invent
     `cuD3D12CtxCreateOnDevice` this slice. Do not reverse Direct3D 12
     context remaining unsupported.
+    Do not invent a second `d3d9_ctx_create` API. Do not invent
+    Engine `--create-d3d9-ctx`. Do not invent `cuD3D9CtxCreateOnDevice`
+    this slice. Do not reverse Direct3D 9 context remaining unsupported.
     Do not invent a second DeviceLaunch in-flight destroy-complete check or Engine
     `--device-launch-destroy`. Do not abort an in-flight DeviceLaunch when
     `destroy_graph` succeeds. Do not delay destroy of an idle exec. Do not invent
@@ -8195,6 +8208,9 @@ model, do not celebrate the sim.
     Do not invent a second `d3d12_ctx_create` method. Do not invent
     Engine `--cu-d3d12-ctx-create`. Do not reverse wrapping
     cuD3D12CtxCreate Invalid.
+    Do not invent a second `d3d9_ctx_create` method. Do not invent
+    Engine `--cu-d3d9-ctx-create`. Do not reverse wrapping cuD3D9CtxCreate
+    Invalid.
     Do not
     spend the next item on an OpenAI-compatible HTTP veneer.
 

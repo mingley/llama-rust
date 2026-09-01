@@ -17881,13 +17881,26 @@ impl Sim {
     /// `cuD3D9GetDevices` plus `cudaD3D9GetDevices`. Direct3D 9 interop is
     /// not modeled.
     ///
-    /// Always Invalid `"d3d9"`. Distinct from [`Self::d3d11_get_devices`]
-    /// and from [`Self::d3d12_get_devices`]. Unknown devices are Invalid
-    /// `"device not in profile"`. Query; legal during capture. This VM does
-    /// not invent `cuD3D9CtxCreate` this slice.
+    /// Always Invalid `"d3d9"`. Distinct from [`Self::d3d11_get_devices`],
+    /// from [`Self::d3d12_get_devices`], and from [`Self::d3d9_ctx_create`].
+    /// Unknown devices are Invalid `"device not in profile"`. Query; legal
+    /// during capture.
     pub fn d3d9_get_devices(&self, device: DeviceId) -> Result<(), SimError> {
         let _gpu = self.profile.gpu(device)?;
         Err(SimError::Invalid { why: "d3d9" })
+    }
+
+    /// `cuD3D9CtxCreate`. Direct3D 9 interop is not modeled.
+    ///
+    /// Always Invalid `"d3d9 context"`. Distinct from [`Self::d3d9_get_devices`]
+    /// and from [`Self::d3d11_ctx_create`]. Unknown devices are Invalid
+    /// `"device not in profile"`. Query; legal during capture. This VM does
+    /// not invent `cuGraphicsD3D9RegisterResource` this slice.
+    pub fn d3d9_ctx_create(&self, device: DeviceId) -> Result<(), SimError> {
+        let _gpu = self.profile.gpu(device)?;
+        Err(SimError::Invalid {
+            why: "d3d9 context",
+        })
     }
 
     /// `cuD3D10GetDevices` plus `cudaD3D10GetDevices`. Direct3D 10 interop
