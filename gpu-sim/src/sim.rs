@@ -18541,6 +18541,18 @@ impl Sim {
         Ok(13_000)
     }
 
+    /// `cuCtxGetDevice` for the seeded primary context of `device`.
+    ///
+    /// Query; legal during capture. There is no TLS current device and no
+    /// `CUcontext` object. Returns `device` after it is in the profile.
+    /// Distinct from [`Self::green_ctx_get_device`] and
+    /// [`Self::stream_get_device`]. Unknown devices are Invalid
+    /// `"device not in profile"`. This VM does not invent `cudaSetDevice`.
+    pub fn ctx_get_device(&self, device: DeviceId) -> Result<DeviceId, SimError> {
+        let _gpu = self.profile.gpu(device)?;
+        Ok(device)
+    }
+
     /// `cuCtxGetFlags` for the seeded primary context of `device`.
     ///
     /// Query; legal during capture. There is no TLS current device and no

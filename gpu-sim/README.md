@@ -184,6 +184,7 @@ warp scheduler, L1, …   ← do not model
 | `device_primary_ctx_set_flags` is always Invalid (primary ctx already seeded) | `cuDevicePrimaryCtxSetFlags` |
 | `ctx_get_id` is `cuCtxGetId` for the seeded primary context of an explicit device | query; legal during capture |
 | `ctx_get_api_version` is CUDA 13.0 for that primary context | `cuCtxGetApiVersion` |
+| `ctx_get_device` returns the explicit device of that primary context | `cuCtxGetDevice` |
 | `ctx_get_flags` wraps `get_device_flags` for that primary context | `cuCtxGetFlags` |
 | `ctx_get_cache_config` wraps `get_cache_config` for that primary context | `cuCtxGetCacheConfig` |
 | `ctx_get_stream_priority_range` wraps `device_get_stream_priority_range` (H100 `(0, -5)`) | `cuCtxGetStreamPriorityRange` |
@@ -1145,6 +1146,9 @@ the ctx create device). Query; legal during capture. Distinct from
 primary context (not `green_ctx_get_id`). `ctx_get_api_version` is
 `cuCtxGetApiVersion` for that same primary context (CUDA 13.0; same
 encoding as `driver_get_version`; distinct from Hopper SM version).
+`ctx_get_device` is `cuCtxGetDevice` for that same primary context
+(returns the explicit device; distinct from `green_ctx_get_device` and
+`stream_get_device`).
 `ctx_get_flags` is `cuCtxGetFlags` for that same primary context (same
 flags as `get_device_flags`; distinct from `device_primary_ctx_get_state`).
 `ctx_get_cache_config` is `cuCtxGetCacheConfig` for that same primary

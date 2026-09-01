@@ -506,6 +506,8 @@ compiled kernel exists; no Engine flag).
 Engine flag).
 `gpu-sim` `module_get_loading_mode` is `cuModuleGetLoadingMode` (always
 Eager; no Engine flag).
+`gpu-sim` `ctx_get_device` is `cuCtxGetDevice` (explicit device of the
+seeded primary context; no Engine flag).
 `gpu-sim` texture 2D/3D dim caps are always 0 (`cudaDevAttrMaxTexture2DWidth`
 and Height, `MaxTexture3DWidth` / Height / Depth; no Engine flag).
 `gpu-sim` alternate texture 3D dim caps are always 0
