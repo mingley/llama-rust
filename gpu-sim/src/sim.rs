@@ -19185,6 +19185,7 @@ impl Sim {
             | DeviceAttr::IsMultiGpuBoard
             | DeviceAttr::MultiGpuBoardGroupID
             | DeviceAttr::ComputeMode
+            | DeviceAttr::MpsEnabled
             | DeviceAttr::TccDriver
             | DeviceAttr::KernelExecTimeout
             | DeviceAttr::TensorMapAccessSupported
@@ -19241,6 +19242,7 @@ impl Sim {
     /// Layered surface 1D/2D dims are always 0.
     /// Cubemap surface dims are always 0.
     /// Alternate texture 3D dims are always 0.
+    /// `MpsEnabled` is always 0.
     /// `pciSubSystemID` is always 0.
     /// `luid` and `luidDeviceNodeMask` are always 0.
     /// Occupancy SM counts, clock rates, and warp size are not.
@@ -19374,6 +19376,7 @@ impl Sim {
             is_multi_gpu_board: false,
             multi_gpu_board_group_id: 0,
             compute_mode: ComputeMode::DEFAULT,
+            mps_enabled: false,
             tcc_driver: false,
             kernel_exec_timeout: false,
             can_use_64_bit_stream_mem_ops: true,

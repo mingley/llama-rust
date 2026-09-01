@@ -5,6 +5,13 @@ Visible five-turn extract: [docs/chatgpt-share-6a920fe1.md](docs/chatgpt-share-6
 Complete share-API extract: [docs/chatgpt-share-6a920fe1/](docs/chatgpt-share-6a920fe1/).
 Work lands on `main`. No PRs.
 
+## Shipped 2026-09-01 — CUDA `cudaDevAttrMpsEnabled`
+
+`gpu-sim` `DeviceAttr::MpsEnabled` is always 0. CUDA Multi-Process
+Service is not modeled. Query; legal during capture. Distinct from
+`ComputeMode`. This VM does not invent Engine `--mps-enabled`.
+`gpu-profile capture` is still refused. Dual score still has no `$/M tokens`.
+
 ## Shipped 2026-09-01 — CUDA alternate texture 3D dimension DeviceAttr caps
 
 `gpu-sim` `DeviceAttr::MaxTexture3DWidthAlt` /

@@ -1174,6 +1174,9 @@ pub enum DeviceAttr {
     /// `cudaDevAttrComputeMode` (always [`ComputeMode::DEFAULT`]; exclusive
     /// process / prohibited are not modeled).
     ComputeMode,
+    /// `cudaDevAttrMpsEnabled` (always 0; CUDA Multi-Process Service is not
+    /// modeled). Distinct from [`Self::ComputeMode`].
+    MpsEnabled,
     /// `cudaDevAttrTccDriver` (always 0; example SKUs are not Windows TCC).
     TccDriver,
     /// `cudaDevAttrKernelExecTimeout` (always 0; example SKUs have no display
@@ -1744,6 +1747,10 @@ pub struct DeviceProperties {
     pub multi_gpu_board_group_id: u32,
     /// `cudaDevAttrComputeMode` (always [`ComputeMode::DEFAULT`]).
     pub compute_mode: u32,
+    /// `cudaDevAttrMpsEnabled` ([`DeviceAttr::MpsEnabled`]). Always false;
+    /// CUDA Multi-Process Service is not modeled. Distinct from
+    /// [`Self::compute_mode`].
+    pub mps_enabled: bool,
     /// `cudaDevAttrTccDriver` (example SKUs are not Windows TCC).
     pub tcc_driver: bool,
     /// `cudaDevAttrKernelExecTimeout` (example SKUs have no display watchdog).

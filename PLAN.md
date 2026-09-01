@@ -6196,7 +6196,14 @@ model, do not celebrate the sim.
     `gpu-profile capture` is still refused. Dual score still has no
     `$/M tokens`.
 
-585. [ ] Next numbered PLAN item after 584 is the next `gpu-sim` / Engine /
+585. [x] `gpu-sim` `DeviceAttr::MpsEnabled` is always 0. CUDA
+    Multi-Process Service is not modeled. Query; legal during capture.
+    Distinct from `ComputeMode`. This VM does not invent Engine `--mps-enabled`,
+    occupancy SM counts, or `cudaChooseDevice`.
+    `gpu-profile capture` is still refused. Dual score still has no
+    `$/M tokens`.
+
+586. [ ] Next numbered PLAN item after 585 is the next `gpu-sim` / Engine /
     serve / expertvm mechanical API that is still missing, or the next official
     decode family. Prefer remaining CUDA-shaped twins over more
     OpenAI HTTP veneer. Do not invent F32 `output.scale`. Do not invent a
@@ -6376,6 +6383,9 @@ model, do not celebrate the sim.
     `MaxTexture3DHeightAlt`, or `MaxTexture3DDepthAlt`. Do not invent
     Engine `--texture-3d-alt`. Do not invent CUDA tex3D alt bind this
     slice. Do not reverse alternate 3D texture dims staying 0.
+    Do not invent a second `cudaDevAttrMpsEnabled`. Do not invent
+    Engine `--mps-enabled`. Do not invent a CUDA MPS server this
+    slice. Do not reverse MpsEnabled staying 0.
     Do not invent a second `cudaStreamAddCallback`.
     Do not invent Engine `--stream-callback` (same wall as second live
     `cudaLaunchHostFunc` after miss DMA).
@@ -6676,6 +6686,9 @@ model, do not celebrate the sim.
     Do not invent a second texture-3d-alt DeviceAttr family. Do not
     invent Engine `--tex3d-alt`. Do not invent CUDA maxTexture3DAlt
     bind this slice. Do not reverse alternate 3D texture dims staying 0.
+    Do not invent a second MpsEnabled DeviceAttr. Do not invent
+    Engine `--mps`. Do not invent a CUDA MPS client this slice.
+    Do not reverse MpsEnabled staying 0.
     Do not invent a second DeviceLaunch in-flight destroy-complete check or Engine
     `--device-launch-destroy`. Do not abort an in-flight DeviceLaunch when
     `destroy_graph` succeeds. Do not delay destroy of an idle exec. Do not invent
@@ -7197,6 +7210,8 @@ model, do not celebrate the sim.
     Do not invent a second maxTexture3DAlt DeviceProperties field. Do
     not invent Engine `--texture-alt-3d`. Do not reverse those alternate
     3D texture dims as 0.
+    Do not invent a second `mps_enabled` DeviceProperties field. Do
+    not invent Engine `--cuda-mps`. Do not reverse MpsEnabled 0.
     Do not
     spend the next item on an OpenAI-compatible HTTP veneer.
 

@@ -570,6 +570,8 @@
 //! are always 0 (example SKUs are discrete single-GPU packages).
 //! [`DeviceAttr::ComputeMode`] is always [`ComputeMode::DEFAULT`] (exclusive
 //! process / prohibited are not modeled).
+//! [`DeviceAttr::MpsEnabled`] is always 0 (CUDA Multi-Process Service is
+//! not modeled). Distinct from [`ComputeMode`](DeviceAttr::ComputeMode).
 //! [`DeviceAttr::TccDriver`] is always 0 (example SKUs are not Windows TCC).
 //! [`DeviceAttr::KernelExecTimeout`] is always 0 (example SKUs have no display
 //! watchdog).
@@ -19660,6 +19662,31 @@ mod tests {
             0
         );
         let _g = sim.end_capture().unwrap();
+    }
+
+    #[test]
+    fn device_get_attribute_mps_enabled_is_zero() {
+        let mut sim = Sim::new(h100());
+        let d = DeviceId(0);
+        let hp = sim.device_get_properties(d).unwrap();
+        assert!(!hp.mps_enabled);
+        assert_eq!(hp.compute_mode, ComputeMode::DEFAULT);
+        assert_eq!(
+            sim.device_get_attribute(d, DeviceAttr::MpsEnabled).unwrap(),
+            0
+        );
+        sim.begin_capture(d, StreamId(0)).unwrap();
+        assert_eq!(
+            sim.device_get_attribute(d, DeviceAttr::MpsEnabled).unwrap(),
+            0
+        );
+        let _g = sim.end_capture().unwrap();
+        match sim.device_get_attribute(DeviceId(99), DeviceAttr::MpsEnabled) {
+            Err(SimError::Invalid { why }) => {
+                assert!(why.contains("device not in profile"), "{why}");
+            }
+            other => panic!("{other:?}"),
+        }
     }
 
     #[test]
