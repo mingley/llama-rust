@@ -5,6 +5,15 @@ Visible five-turn extract: [docs/chatgpt-share-6a920fe1.md](docs/chatgpt-share-6
 Complete share-API extract: [docs/chatgpt-share-6a920fe1/](docs/chatgpt-share-6a920fe1/).
 Work lands on `main`. No PRs.
 
+## Shipped 2026-09-01 — ExecUpdate memcpy memory type
+
+`gpu-sim` CUDA `cudaGraphExecUpdate` memcpy source and destination
+memory types (`CU_MEMORYTYPE_*` / `Place`) cannot change
+(`GraphExecUpdateResult::ParametersChanged`). Alloc and size may.
+`graph_exec_memcpy_set_params` stays legal. CUDA arrays stay uninvented.
+This VM does not invent Engine `--memcpy-update`. `gpu-profile capture`
+is still refused. Dual score still has no `$/M tokens`.
+
 ## Shipped 2026-09-01 — ExecUpdate 2D memset geometry
 
 `gpu-sim` CUDA `cudaGraphExecUpdate` of 2D and 3D memset nodes may

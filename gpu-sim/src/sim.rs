@@ -4231,10 +4231,14 @@ impl Sim {
     /// memset nodes may change address only
     /// ([`GraphExecUpdateResult::ParametersChanged`] for width, height,
     /// pitch, depth, plus elementSize); 1D memset may change dimensions.
-    /// [`Self::graph_exec_memset_set_params_2d`] stays legal. Pays
-    /// `graph_update_ns`. Recapture if topology differs. Capture cannot
-    /// include it. `exec` must already be instantiated. Graphs with mem alloc
-    /// or mem free nodes cannot be updated (`cudaGraphExecUpdate` of mem nodes).
+    /// [`Self::graph_exec_memset_set_params_2d`] stays legal. Memcpy source
+    /// and destination [`Place`] (memory type) cannot change
+    /// ([`GraphExecUpdateResult::ParametersChanged`]); alloc and size may.
+    /// [`Self::graph_exec_memcpy_set_params`] stays legal. CUDA arrays stay
+    /// uninvented. Pays `graph_update_ns`. Recapture if topology differs.
+    /// Capture cannot include it. `exec` must already be instantiated. Graphs
+    /// with mem alloc or mem free nodes cannot be updated
+    /// (`cudaGraphExecUpdate` of mem nodes).
     pub fn update_graph(&mut self, exec: GraphId, src: GraphId) -> Result<(), SimError> {
         let mut info = GraphExecUpdateResultInfo::default();
         self.update_graph_with_info(exec, src, &mut info)
@@ -24028,6 +24032,7 @@ fn op_eq(a: &Kind, b: &Kind) -> bool {
         (Kind::EventRecord { external: x, .. }, Kind::EventRecord { external: y, .. }) => x == y,
         (Kind::EventWait { external: x, .. }, Kind::EventWait { external: y, .. }) => x == y,
         (Kind::Kernel { cooperative: x, .. }, Kind::Kernel { cooperative: y, .. }) => x == y,
+        (Kind::Memcpy(a), Kind::Memcpy(b)) => memcpy_exec_update_eq(a, b),
         (Kind::Memset(a), Kind::Memset(b)) => memset_exec_update_eq(a, b),
         (Kind::WriteValue { bits32: x, .. }, Kind::WriteValue { bits32: y, .. }) => x == y,
         (
@@ -24057,6 +24062,12 @@ fn memset_exec_update_eq(a: &MemsetOp, b: &MemsetOp) -> bool {
     } else {
         true
     }
+}
+
+/// `cudaGraphExecUpdate`: memcpy source and destination memory types
+/// (`CU_MEMORYTYPE_*` / [`Place`]) cannot change. CUDA arrays stay uninvented.
+fn memcpy_exec_update_eq(a: &MemcpyOp, b: &MemcpyOp) -> bool {
+    a.src == b.src && a.dst == b.dst
 }
 
 fn op_tag(k: &Kind) -> u8 {

@@ -997,10 +997,11 @@
 //! matching priorities still update. Default instantiate copies priority
 //! as a parameter. 2D and 3D memset nodes may change address only
 //! ([`GraphExecUpdateResult::ParametersChanged`] for geometry);
-//! 1D memset may change dimensions.
+//! 1D memset may change dimensions. Memcpy source and destination
+//! [`Place`] (memory type) cannot change; alloc and size may.
 //! [`update_graph_with_info`](Sim::update_graph_with_info) fills
 //! [`GraphExecUpdateResultInfo`] even on `Err` (node type, deps, edge ports,
-//! UseNodePriority priority, 2D memset geometry, mem nodes, device-launch).
+//! UseNodePriority priority, 2D memset geometry, memcpy memory type, mem nodes, device-launch).
 //! [`user_object_create`](Sim::user_object_create) is `cudaUserObjectCreate`
 //! ([`UserObjectFlags::NO_DESTRUCTOR_SYNC`]). [`graph_retain_user_object`](Sim::graph_retain_user_object) /
 //! [`graph_release_user_object`](Sim::graph_release_user_object) are
@@ -28335,6 +28336,64 @@ mod tests {
         sim.graph_exec_memset_set_params_2d(exec, 0, MemsetOp { height: 4, ..op })
             .unwrap();
         assert_eq!(sim.graph_exec_memset_get_params(exec, 0).unwrap().height, 4);
+    }
+
+    #[test]
+    fn update_graph_rejects_memcpy_memory_type_change() {
+        let mut sim = Sim::new(h100());
+        let d = DeviceId(0);
+        let s = StreamId(0);
+        let a = sim.malloc(d, 4096).unwrap();
+        let b = sim.malloc(d, 4096).unwrap();
+        let h2d = MemcpyOp {
+            src: Place::HostPinned,
+            dst: Place::Device(d),
+            alloc: a,
+            bytes: 4096,
+            offset: 0,
+            ..MemcpyOp::default()
+        };
+        let exec = sim.create_graph(d, s).unwrap();
+        sim.graph_add_memcpy(exec, h2d).unwrap();
+        let _ = sim.instantiate_graph(exec).unwrap();
+        let src = sim.create_graph(d, s).unwrap();
+        sim.graph_add_memcpy(
+            src,
+            MemcpyOp {
+                src: Place::Device(d),
+                dst: Place::HostPinned,
+                alloc: a,
+                bytes: 4096,
+                offset: 0,
+                ..MemcpyOp::default()
+            },
+        )
+        .unwrap();
+        let mut info = GraphExecUpdateResultInfo::default();
+        let err = sim
+            .update_graph_with_info(exec, src, &mut info)
+            .unwrap_err();
+        match err {
+            SimError::Invalid { why } => assert!(why.contains("topology"), "{why}"),
+            other => panic!("{other:?}"),
+        }
+        assert_eq!(info.result, GraphExecUpdateResult::ParametersChanged);
+        assert_eq!(info.error_node, Some(0));
+        assert_eq!(info.error_from_node, Some(0));
+        let same = sim.create_graph(d, s).unwrap();
+        sim.graph_add_memcpy(
+            same,
+            MemcpyOp {
+                alloc: b,
+                bytes: 2048,
+                ..h2d
+            },
+        )
+        .unwrap();
+        sim.update_graph_with_info(exec, same, &mut info).unwrap();
+        assert_eq!(info.result, GraphExecUpdateResult::Success);
+        sim.graph_exec_memcpy_set_params(exec, 0, &h2d).unwrap();
+        assert_eq!(sim.graph_exec_memcpy_get_params(exec, 0).unwrap().alloc, a);
     }
 
     fn map_whole(sim: &mut Sim, device: DeviceId, bytes: u64) -> AllocId {

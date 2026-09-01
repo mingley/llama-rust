@@ -100,7 +100,7 @@ warp scheduler, L1, …   ← do not model
 | graph upload is host-sync after instantiate; first launch pays it once | `graph_upload_ns` |
 | `cudaGraphKernelNodeSetParams` / `MemcpyNodeSetParams` / `MemcpyNodeSetParams1D` / `MemsetNodeSetParams` / `HostNodeSetParams` patch the graph, not an already-instantiated exec | 1 ns host-sync |
 | `cudaGraph*NodeGetParams` reads the definition; `graph_exec_*_get_params` reads the exec snapshot | query |
-| graph update replaces the exec snapshot when topology matches (device, stream, kind, deps, edge ports); UseNodePriority forbids kernel-node priority changes; 2D/3D memset may change address only; IF / WHILE / SWITCH handle may change (bodies stay topology); mem nodes are Invalid; `update_graph_with_info` fills `cudaGraphExecUpdateResultInfo` | `graph_update_ns` |
+| graph update replaces the exec snapshot when topology matches (device, stream, kind, deps, edge ports); UseNodePriority forbids kernel-node priority changes; 2D/3D memset may change address only; memcpy memory type cannot change; IF / WHILE / SWITCH handle may change (bodies stay topology); mem nodes are Invalid; `update_graph_with_info` fills `cudaGraphExecUpdateResultInfo` | `graph_update_ns` |
 | `cudaGraphExecKernelNodeSetParams` patches one instantiated kernel node's pointers / kind (mem nodes legal; device-updatable nodes keep the exec uploaded) | `graph_set_params_ns` |
 | `cudaGraphExecMemcpyNodeSetParams` / `SetParams1D` patches one instantiated memcpy node's `MemcpyOp` (mem nodes legal; 1D may convert 2D/3D) | `graph_set_params_ns` |
 | `cudaGraphExecMemsetNodeSetParams` patches one instantiated memset node's dest span (mem nodes legal) | `graph_set_params_ns` |
@@ -535,10 +535,12 @@ priorities still update. Default instantiate copies priority as a
 parameter. `graph_exec_kernel_node_set_priority` stays legal. 2D and 3D
 memset nodes may change address only (`ParametersChanged` for geometry);
 1D memset may change dimensions. `graph_exec_memset_set_params_2d` stays
-legal. Graphs with mem alloc/free nodes cannot be updated.
+legal. Memcpy source and destination `Place` (memory type) cannot change;
+alloc and size may. `graph_exec_memcpy_set_params` stays legal. CUDA
+arrays stay uninvented. Graphs with mem alloc/free nodes cannot be updated.
 `update_graph_with_info` is `cudaGraphExecUpdate` with
 `cudaGraphExecUpdateResultInfo` (filled even on `Err`: node type, deps,
-edge ports, UseNodePriority priority, 2D memset geometry, mem nodes, device-launch). `update_graph` uses that path and keeps the
+edge ports, UseNodePriority priority, 2D memset geometry, memcpy memory type, mem nodes, device-launch). `update_graph` uses that path and keeps the
 same `why` strings.
 `graph_kernel_set_params` / `graph_memcpy_set_params` /
 `graph_memcpy_set_params_1d` / `graph_memcpy_set_params_2d` / `graph_memcpy_set_params_3d` / `graph_memset_set_params` / `graph_memset_set_params_2d` / `graph_memset_set_params_3d` /

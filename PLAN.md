@@ -5458,7 +5458,15 @@ model, do not celebrate the sim.
     1D work-resource mapping failures. `gpu-profile capture` is still
     refused. Dual score still has no `$/M tokens`.
 
-508. [ ] Next numbered PLAN item after 507 is the next `gpu-sim` / Engine /
+508. [x] `gpu-sim` CUDA `cudaGraphExecUpdate` memcpy source and destination
+    memory types (`CU_MEMORYTYPE_*` / [`Place`]) cannot change
+    ([`GraphExecUpdateResult::ParametersChanged`]). Alloc and size may.
+    [`graph_exec_memcpy_set_params`] stays legal. CUDA arrays stay
+    uninvented. This VM does not invent Engine `--memcpy-update` or
+    CUDA-array memcpy. `gpu-profile capture` is still refused. Dual score
+    still has no `$/M tokens`.
+
+509. [ ] Next numbered PLAN item after 508 is the next `gpu-sim` / Engine /
     serve / expertvm mechanical API that is still missing, or the next official
     decode family. Prefer remaining CUDA-shaped twins over more
     OpenAI HTTP veneer. Do not invent F32 `output.scale`. Do not invent a
@@ -5809,6 +5817,10 @@ model, do not celebrate the sim.
     Do not invent Engine `--memset-update`. Do not invent a memset fill
     value. Do not invent 1D memset work-resource mapping failures.
     `graph_exec_memset_set_params_2d` stays legal.
+    Do not invent a second memcpy memory-type ExecUpdate check.
+    Do not invent Engine `--memcpy-update`. Do not invent CUDA-array
+    memcpy as a memory-type variant. `graph_exec_memcpy_set_params` stays
+    legal.
     Do not
     spend the next item on an OpenAI-compatible HTTP veneer.
 
