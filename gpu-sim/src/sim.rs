@@ -6823,81 +6823,80 @@ impl Sim {
                 });
             }
         }
-        let (alloc, body, else_body) = self.graph_add_node_kind(graph, params)?;
-        let node = self.graph_len(graph)?.saturating_sub(1);
-        self.graph_bind_new_deps(graph, node, deps)?;
-        Ok(GraphAddNode {
-            node,
-            alloc,
-            body,
-            else_body,
-        })
+        let mut added = self.graph_add_node_kind(graph, params)?;
+        added.node = self.graph_len(graph)?.saturating_sub(1);
+        self.graph_bind_new_deps(graph, added.node, deps)?;
+        Ok(added)
     }
 
     fn graph_add_node_kind(
         &mut self,
         graph: GraphId,
         params: GraphNodeParams,
-    ) -> Result<(Option<AllocId>, Option<GraphId>, Option<GraphId>), SimError> {
+    ) -> Result<GraphAddNode, SimError> {
         match params {
             GraphNodeParams::Kernel(p) => {
                 self.graph_add_kernel_params(graph, p)?;
-                Ok((None, None, None))
+                Ok(add_node_out(None, None, None))
             }
             GraphNodeParams::Memcpy(op) => {
                 self.graph_add_memcpy(graph, op)?;
-                Ok((None, None, None))
+                Ok(add_node_out(None, None, None))
             }
             GraphNodeParams::Memset(op) => {
                 self.graph_add_memset_op(graph, op)?;
-                Ok((None, None, None))
+                Ok(add_node_out(None, None, None))
             }
             GraphNodeParams::Host(p) => {
                 self.graph_add_host_func_params(graph, p)?;
-                Ok((None, None, None))
+                Ok(add_node_out(None, None, None))
             }
             GraphNodeParams::Empty => {
                 self.graph_add_empty(graph)?;
-                Ok((None, None, None))
+                Ok(add_node_out(None, None, None))
             }
             GraphNodeParams::EventRecord { event, external } => {
                 self.graph_add_event_record(graph, event, external)?;
-                Ok((None, None, None))
+                Ok(add_node_out(None, None, None))
             }
             GraphNodeParams::EventWait { event, external } => {
                 self.graph_add_event_wait(graph, event, external)?;
-                Ok((None, None, None))
+                Ok(add_node_out(None, None, None))
             }
             GraphNodeParams::ChildGraph(child) => {
                 self.graph_add_child(graph, child)?;
-                Ok((None, None, None))
+                Ok(add_node_out(None, None, None))
             }
             GraphNodeParams::Alloc { bytes } => {
-                Ok((Some(self.graph_add_alloc(graph, bytes)?), None, None))
+                Ok(add_node_out(
+                    Some(self.graph_add_alloc(graph, bytes)?),
+                    None,
+                    None,
+                ))
             }
             GraphNodeParams::Free(id) => {
                 self.graph_add_free(graph, id)?;
-                Ok((None, None, None))
+                Ok(add_node_out(None, None, None))
             }
             GraphNodeParams::BatchMemOp(ops) => {
                 self.graph_add_batch_mem_op(graph, &ops)?;
-                Ok((None, None, None))
+                Ok(add_node_out(None, None, None))
             }
             GraphNodeParams::SetConditional { handle, value } => {
                 self.graph_add_set_conditional(graph, handle, value)?;
-                Ok((None, None, None))
+                Ok(add_node_out(None, None, None))
             }
             GraphNodeParams::If { handle } => {
                 let body = self.graph_add_if(graph, handle)?;
-                Ok((None, Some(body), None))
+                Ok(add_node_out(None, Some(body), None))
             }
             GraphNodeParams::IfElse { handle } => {
                 let (body, else_body) = self.graph_add_if_else(graph, handle)?;
-                Ok((None, Some(body), Some(else_body)))
+                Ok(add_node_out(None, Some(body), Some(else_body)))
             }
             GraphNodeParams::While { handle } => {
                 let body = self.graph_add_while(graph, handle)?;
-                Ok((None, Some(body), None))
+                Ok(add_node_out(None, Some(body), None))
             }
         }
     }
@@ -21464,6 +21463,19 @@ fn node_kind(kind: &Kind) -> GraphNodeKind {
         }
         Kind::DeviceLaunch { .. } => GraphNodeKind::DeviceLaunch,
         Kind::GraphUpload { .. } => GraphNodeKind::GraphUpload,
+    }
+}
+
+fn add_node_out(
+    alloc: Option<AllocId>,
+    body: Option<GraphId>,
+    else_body: Option<GraphId>,
+) -> GraphAddNode {
+    GraphAddNode {
+        node: 0,
+        alloc,
+        body,
+        else_body,
     }
 }
 
