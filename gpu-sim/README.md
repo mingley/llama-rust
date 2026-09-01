@@ -296,8 +296,10 @@ versus move of a child graph. Typed `graph_add_child` stays clone of an
 instantiated child without mem or conditional nodes. Move lets a parent own
 an uninstantiated child that may contain mem alloc/free. GetParams of a
 moved node reports `INVALID`. Instantiating the parent instantiates the
-moved child and inherits `AutoFreeOnLaunch`. This VM does not invent an
-Engine flag for child-graph ownership.
+moved child and inherits `AutoFreeOnLaunch`. A parked in-flight-destroyed
+exec used as a child-graph handle is `"unknown graph"`; a live exec as
+child stays. This VM does not invent an Engine flag for child-graph
+ownership.
 Copy engines still overlap compute. Profile knobs `gemm_util_permille` (achieved/peak) and `grouped_moe_permille`
 (grouped vs dense duration) scale kernel time. Defaults are 1000
 (identity roofline). They are parseable; they are not a capture. Host PCIe
@@ -476,7 +478,9 @@ kernel to start). An existing `(from, to)` cannot change stored
 edge data; Default ports 0 when unset). `graph_node_deps_with_data` /
 `graph_node_dependents_with_data` are `cudaGraphNodeGetDependencies` /
 `GetDependentNodes` v2 (stored edge data). Query;
-legal during capture. CUDA v1 `graph_edges` / `graph_node_deps` /
+legal during capture. A parked in-flight-destroyed exec is
+`"unknown graph"` on GetDependencies plus GetDependentNodes; a live exec
+stays. CUDA v1 `graph_edges` / `graph_node_deps` /
 `graph_node_dependents` (`edgeData` NULL) are Invalid `"lossy query"`
 when any reported edge has non-default stored `GraphEdgeData`
 (`cudaErrorLossyQuery`). Default-only edges stay. Debug-dot ExtraTopoInfo
@@ -587,14 +591,17 @@ same `why` strings.
 `BatchMemOpNodeSetParams` /
 `EventRecordNodeSetEvent` / `EventWaitNodeSetEvent` /
 `ChildGraphNodeSetParams` on the graph
-definition (do not retarget an already-instantiated exec). Child-graph
+definition (do not retarget an already-instantiated exec). A parked
+in-flight-destroyed exec is `"unknown graph"` on SetParams; a live exec
+stays. Child-graph
 definition SetParams may change nested topology; exec SetParams still
 require matching topology. Event External flags stay topology.
 `graph_*_get_params` / `graph_exec_*_get_params` are
 `cudaGraph*NodeGetParams` / `cudaGraphExec*NodeGetParams`
 (query; no clock tick; capture is legal). Graph GetParams reads the
 definition; Exec GetParams reads the snapshot (`as_exec`; uninstantiated
-is Invalid). Unique-node helpers (`graph_unique_kernel`, …) still use
+is Invalid). A parked in-flight-destroyed exec is `"unknown graph"` on
+definition GetParams; a live exec stays. Unique-node helpers (`graph_unique_kernel`, …) still use
 the launched/primary snapshot.
 `graph_exec_kernel_set_params` / `graph_exec_memcpy_set_params` /
 `graph_exec_memcpy_set_params_1d` / `graph_exec_memcpy_set_params_2d` / `graph_exec_memcpy_set_params_3d` / `graph_exec_memset_set_params` / `graph_exec_memset_set_params_2d` / `graph_exec_memset_set_params_3d` /
@@ -619,7 +626,8 @@ enable unchanged.
 (swap the nested graph; nested topology must match; child ids are topology
 for `update_graph`; mem nodes legal). Definition-side
 `graph_child_set_params` stores the child id as passed (same as
-`graph_add_child`).
+`graph_add_child`). A parked in-flight-destroyed exec used as that child
+handle is `"unknown graph"`; a live exec as child stays.
 `graph_child_get_graph` is `cudaGraphChildGraphNodeGetGraph`.
 `graph_exec_child_get_graph` is the exec-snapshot GetParams twin
 (uninstantiated graphs are Invalid).
