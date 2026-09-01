@@ -5388,7 +5388,17 @@ model, do not celebrate the sim.
     `gpu-profile capture` is still refused. Dual score still has no
     `$/M tokens`.
 
-501. [ ] Next numbered PLAN item after 500 is the next `gpu-sim` / Engine /
+501. [x] `gpu-sim` CUDA device-updatable kernel-node restrictions:
+    Once [`KernelAttrs::device_updatable`] is true, SetAttribute to false
+    is Invalid `"device-updatable"`. The node cannot be destroyed.
+    CopyAttributes cannot involve it. A definition with such a node cannot
+    be instantiated twice. `cudaGraphExecUpdate` of an exec or source that
+    has one is Invalid. Opt-in stays; decode identity stays false. This VM
+    does not invent `CUgraphDeviceNode` / device-side kernel updates or an
+    Engine flag for opt-out. `gpu-profile capture` is still refused. Dual
+    score still has no `$/M tokens`.
+
+502. [ ] Next numbered PLAN item after 501 is the next `gpu-sim` / Engine /
     serve / expertvm mechanical API that is still missing, or the next official
     decode family. Prefer remaining CUDA-shaped twins over more
     OpenAI HTTP veneer. Do not invent F32 `output.scale`. Do not invent a
@@ -5713,6 +5723,10 @@ model, do not celebrate the sim.
     Do not invent per-block programmatic event records.
     Do not invent a must-be-0 flags word on ProgrammaticEvent (external stays
     `cudaEventRecordExternal`).
+    Do not invent a second device-updatable opt-out, destroy, CopyAttributes,
+    second instantiate, or ExecUpdate. Do not invent `CUgraphDeviceNode` or
+    device-side kernel-node updates. Do not invent an Engine flag for
+    device-updatable opt-out.
     Do not
     spend the next item on an OpenAI-compatible HTTP veneer.
 

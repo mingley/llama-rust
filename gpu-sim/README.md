@@ -1336,7 +1336,10 @@ Default uses `set_func_carveout` (`cudaFuncAttributePreferredSharedMemoryCarveou
 `cudaLaunchAttributeDeviceUpdatableKernelNode` lets
 `graph_exec_kernel_set_params` keep the exec uploaded so
 `device_launch_graph` needs no host re-upload (device-launch graphs allow it).
-A non-capturing `kernel_with` with that attr is Invalid (graphs-only).
+Once true, the node cannot opt out, be destroyed, or take part in
+CopyAttributes; the graph cannot be instantiated twice or passed to
+`cudaGraphExecUpdate`. A non-capturing `kernel_with` with that attr is Invalid
+(graphs-only).
 `expertvm sim --device-launch` / `--device-updatable` instantiate leaf GEMM
 graphs with `DEVICE_LAUNCH` and skip re-upload after set-params.
 `expertvm sim --kernel-priority N` is `cudaLaunchAttributePriority`.

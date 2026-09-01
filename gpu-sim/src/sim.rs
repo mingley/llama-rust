@@ -3767,9 +3767,10 @@ impl Sim {
     /// `cudaGraphInstantiate`. Host-synchronous. Capture cannot include it.
     ///
     /// Returns a new exec id (`cudaGraphExec_t`). The source graph stays a
-    /// definition and may be instantiated again (kernel/memcpy graphs). The
-    /// first [`Self::launch_graph`] of the definition creates a primary exec
-    /// if needed. Already-instantiated **exec** ids are a no-op.
+    /// definition and may be instantiated again (kernel/memcpy graphs) unless
+    /// it has a device-updatable kernel node. The first
+    /// [`Self::launch_graph`] of the definition creates a primary exec if
+    /// needed. Already-instantiated **exec** ids are a no-op.
     pub fn instantiate_graph(&mut self, graph: GraphId) -> Result<GraphId, SimError> {
         self.instantiate_graph_with_flags(graph, 0)
     }
@@ -3930,6 +3931,14 @@ impl Sim {
                 p.err_node = None;
             }
             return Ok(graph);
+        }
+        if snapshot.primary.is_some() && snapshot.steps.iter().any(step_is_device_updatable) {
+            return Self::instantiate_report(
+                out,
+                GraphInstantiateResult::Error,
+                None,
+                "device-updatable",
+            );
         }
         if auto_free && snapshot.has_free {
             return Self::instantiate_report(
@@ -4237,6 +4246,17 @@ impl Sim {
                 None,
                 None,
                 "device launch graph update",
+            );
+        }
+        if exec_steps.iter().any(step_is_device_updatable)
+            || src_steps.iter().any(step_is_device_updatable)
+        {
+            return update_report(
+                info,
+                GraphExecUpdateResult::NotSupported,
+                None,
+                None,
+                "device-updatable",
             );
         }
         let exec_norm = self.steps_def_ids(exec_steps);
@@ -8908,9 +8928,10 @@ impl Sim {
     ///
     /// Drops the node and incident edges. Remaining indices stay valid (CUDA
     /// handles). Capture cannot include it. Illegal on an instantiated exec.
-    /// Does not retarget an already-instantiated exec. Destroying a mem alloc
-    /// node unlinks it from [`Self::graph_mem_allocs`]. Nested child-graph
-    /// objects are not destroyed.
+    /// A device-updatable kernel node cannot be destroyed. Does not retarget
+    /// an already-instantiated exec. Destroying a mem alloc node unlinks it
+    /// from [`Self::graph_mem_allocs`]. Nested child-graph objects are not
+    /// destroyed.
     pub fn graph_destroy_node(&mut self, graph: GraphId, node: usize) -> Result<(), SimError> {
         self.fail_if_capturing("cannot destroy graph node during capture")?;
         let alloc = {
@@ -8926,6 +8947,11 @@ impl Sim {
                 let step = live_ok(g.steps.get(node).ok_or(SimError::Invalid {
                     why: "unknown graph node",
                 })?)?;
+                if step_is_device_updatable(step) {
+                    return Err(SimError::Invalid {
+                        why: "device-updatable",
+                    });
+                }
                 match &step.kind {
                     Kind::Alloc { id, .. } => Some(*id),
                     _ => None,
@@ -10266,6 +10292,8 @@ impl Sim {
     }
 
     /// `cudaGraphKernelNodeSetAttribute` for device-updatable kernel node.
+    ///
+    /// Once true, setting false is Invalid `"device-updatable"`.
     pub fn graph_kernel_node_set_device_updatable(
         &mut self,
         graph: GraphId,
@@ -10276,6 +10304,8 @@ impl Sim {
     }
 
     /// `cudaGraphExecKernelNodeSetAttribute` for device-updatable kernel node.
+    ///
+    /// Once true, setting false is Invalid `"device-updatable"`.
     pub fn graph_exec_kernel_node_set_device_updatable(
         &mut self,
         exec: GraphId,
@@ -10304,6 +10334,11 @@ impl Sim {
         if !matches!(step.kind, Kind::Kernel { .. }) {
             return Err(SimError::Invalid {
                 why: "not a kernel node",
+            });
+        }
+        if step.device_updatable && !device_updatable {
+            return Err(SimError::Invalid {
+                why: "device-updatable",
             });
         }
         step.device_updatable = device_updatable;
@@ -10977,6 +11012,7 @@ impl Sim {
     /// policy, and cooperative launch from `src` to `dst`.
     ///
     /// Both nodes must be kernels. Capture cannot include it.
+    /// CUDA: CopyAttributes cannot involve a device-updatable kernel node.
     /// [`KernelNodeAttr::DynamicShared`] is `sharedMemBytes` (params, not
     /// CopyAttributes). [`Self::graph_exec_kernel_node_copy_attributes`] is
     /// the exec-snapshot twin.
@@ -11014,6 +11050,13 @@ impl Sim {
         exec: bool,
     ) -> Result<(), SimError> {
         self.fail_if_capturing("cannot capture kernel node copy attributes")?;
+        if self.kernel_node_device_updatable(src_graph, src, exec)?
+            || self.kernel_node_device_updatable(dst_graph, dst, exec)?
+        {
+            return Err(SimError::Invalid {
+                why: "device-updatable",
+            });
+        }
         let attrs = [
             KernelNodeAttr::Priority,
             KernelNodeAttr::Pdl,
@@ -23470,6 +23513,10 @@ fn cond_body_graphs(kind: &Kind) -> Vec<GraphId> {
 
 fn event_root_of(events: &BTreeMap<EventId, Ev>, event: EventId) -> EventId {
     events.get(&event).and_then(|e| e.ipc_src).unwrap_or(event)
+}
+
+fn step_is_device_updatable(step: &GraphStep) -> bool {
+    !step.destroyed && step.device_updatable && matches!(step.kind, Kind::Kernel { .. })
 }
 
 /// Stamp when a programmatic event fires: kernel start if

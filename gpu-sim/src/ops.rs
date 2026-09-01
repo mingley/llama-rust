@@ -2099,7 +2099,10 @@ pub struct KernelAttrs {
     /// Graphs-only: a non-capturing launch is Invalid. When true,
     /// [`crate::Sim::graph_exec_kernel_set_params`] keeps the exec uploaded so a
     /// later [`crate::Sim::device_launch_graph`] needs no host re-upload.
-    /// Decode identity stays `false`.
+    /// CUDA: once true, SetAttribute to false is Invalid; the node cannot be
+    /// destroyed; CopyAttributes cannot involve it; the graph cannot be
+    /// instantiated twice or passed to `cudaGraphExecUpdate`. Decode identity
+    /// stays `false`.
     pub device_updatable: bool,
     /// `cudaLaunchAttributeSharedMemoryMode`.
     pub shared_mem: SharedMemoryMode,

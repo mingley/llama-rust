@@ -942,7 +942,9 @@
 //! (graphs-only; a non-capturing launch is Invalid). When true,
 //! [`graph_exec_kernel_set_params`](Sim::graph_exec_kernel_set_params) keeps the
 //! exec uploaded so [`device_launch_graph`](Sim::device_launch_graph) needs no host
-//! re-upload (device-launch graphs allow it).
+//! re-upload (device-launch graphs allow it). Once true, the node cannot opt
+//! out, be destroyed, or take part in CopyAttributes; the graph cannot be
+//! instantiated twice or passed to `cudaGraphExecUpdate`.
 //! [`SharedMemoryMode`] is `cudaLaunchAttributeSharedMemoryMode`: Default uses
 //! [`set_func_shared_mem_config`](Sim::set_func_shared_mem_config) then
 //! [`set_shared_mem_config`](Sim::set_shared_mem_config)
@@ -7929,24 +7931,33 @@ mod tests {
         sim.graph_add_kernel(g, KernelKind::other(8, 8), &[a], &[a])
             .unwrap();
         assert!(!sim.graph_kernel_node_get_device_updatable(g, 0).unwrap());
-        sim.graph_kernel_node_set_device_updatable(g, 0, true)
-            .unwrap();
         let h = sim.create_graph(d, s).unwrap();
         sim.graph_add_kernel(h, KernelKind::other(8, 8), &[a], &[a])
             .unwrap();
         sim.graph_kernel_node_copy_attributes(h, 0, g, 0).unwrap();
-        assert!(sim.graph_kernel_node_get_device_updatable(h, 0).unwrap());
+        assert!(!sim.graph_kernel_node_get_device_updatable(h, 0).unwrap());
+        sim.graph_kernel_node_set_device_updatable(g, 0, true)
+            .unwrap();
+        let err = sim
+            .graph_kernel_node_copy_attributes(h, 0, g, 0)
+            .unwrap_err();
+        match err {
+            SimError::Invalid { why } => assert!(why.contains("device-updatable"), "{why}"),
+            other => panic!("{other:?}"),
+        }
         let exec = sim
             .instantiate_graph_with_flags(g, GraphInstantiateFlags::DEVICE_LAUNCH)
             .expect("device-launch allows device-updatable");
         assert!(sim
             .graph_exec_kernel_node_get_device_updatable(exec, 0)
             .unwrap());
-        sim.graph_exec_kernel_node_set_device_updatable(exec, 0, false)
-            .unwrap();
-        assert!(!sim
-            .graph_exec_kernel_node_get_device_updatable(exec, 0)
-            .unwrap());
+        let err = sim
+            .graph_exec_kernel_node_set_device_updatable(exec, 0, false)
+            .unwrap_err();
+        match err {
+            SimError::Invalid { why } => assert!(why.contains("device-updatable"), "{why}"),
+            other => panic!("{other:?}"),
+        }
         let empty = sim.create_graph(d, s).unwrap();
         sim.graph_add_empty(empty).unwrap();
         let err = sim
@@ -7954,6 +7965,63 @@ mod tests {
             .unwrap_err();
         match err {
             SimError::Invalid { why } => assert!(why.contains("not a kernel node"), "{why}"),
+            other => panic!("{other:?}"),
+        }
+    }
+
+    #[test]
+    fn device_updatable_cannot_opt_out_destroy_copy_reinstantiate_or_update() {
+        let mut sim = Sim::new(h100());
+        let d = DeviceId(0);
+        let s = StreamId(0);
+        let a = sim.malloc(d, 8).unwrap();
+        let g = sim.create_graph(d, s).unwrap();
+        sim.graph_add_kernel(g, KernelKind::other(8, 8), &[a], &[a])
+            .unwrap();
+        sim.graph_kernel_node_set_device_updatable(g, 0, true)
+            .unwrap();
+        sim.graph_kernel_node_set_device_updatable(g, 0, true)
+            .unwrap();
+        let err = sim
+            .graph_kernel_node_set_device_updatable(g, 0, false)
+            .unwrap_err();
+        match err {
+            SimError::Invalid { why } => assert!(why.contains("device-updatable"), "{why}"),
+            other => panic!("{other:?}"),
+        }
+        let err = sim.graph_destroy_node(g, 0).unwrap_err();
+        match err {
+            SimError::Invalid { why } => assert!(why.contains("device-updatable"), "{why}"),
+            other => panic!("{other:?}"),
+        }
+        let dst = sim.create_graph(d, s).unwrap();
+        sim.graph_add_kernel(dst, KernelKind::other(8, 8), &[a], &[a])
+            .unwrap();
+        sim.graph_kernel_node_set_device_updatable(dst, 0, true)
+            .unwrap();
+        let src = sim.create_graph(d, s).unwrap();
+        sim.graph_add_kernel(src, KernelKind::other(8, 8), &[a], &[a])
+            .unwrap();
+        let err = sim
+            .graph_kernel_node_copy_attributes(dst, 0, src, 0)
+            .unwrap_err();
+        match err {
+            SimError::Invalid { why } => assert!(why.contains("device-updatable"), "{why}"),
+            other => panic!("{other:?}"),
+        }
+        let exec = sim.instantiate_graph(g).unwrap();
+        let err = sim.instantiate_graph(g).unwrap_err();
+        match err {
+            SimError::Invalid { why } => assert!(why.contains("device-updatable"), "{why}"),
+            other => panic!("{other:?}"),
+        }
+        let _ = sim.instantiate_graph(exec).unwrap();
+        let upd = sim.create_graph(d, s).unwrap();
+        sim.graph_add_kernel(upd, KernelKind::other(8, 8), &[a], &[a])
+            .unwrap();
+        let err = sim.update_graph(exec, upd).unwrap_err();
+        match err {
+            SimError::Invalid { why } => assert!(why.contains("device-updatable"), "{why}"),
             other => panic!("{other:?}"),
         }
     }

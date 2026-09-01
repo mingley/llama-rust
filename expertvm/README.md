@@ -433,7 +433,8 @@ default|portable|non-portable` is CUDA 13 portable-shared mode (Default uses the
 function attribute). `--nvlink-util` occupies every Hyper-Q slot when the
 profile has NVLink (no-op occupancy without NVLink). `--device-launch` /
 `--device-updatable` instantiate leaf GEMM graphs for `device_launch_graph`
-and keep the exec uploaded after set-params. `--kernel-priority N` is
+and keep the exec uploaded after set-params (CUDA: once opted in, the node
+cannot opt out, be destroyed, or take part in CopyAttributes). `--kernel-priority N` is
 `cudaLaunchAttributePriority` on those GEMMs (`None` inherits stream create
 priority). `--launch-completion` is `cudaLaunchAttributeLaunchCompletionEvent`
 on grouped GEMMs (store replica D2D waits kernel start; illegal with

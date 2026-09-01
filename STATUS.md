@@ -5,6 +5,16 @@ Visible five-turn extract: [docs/chatgpt-share-6a920fe1.md](docs/chatgpt-share-6
 Complete share-API extract: [docs/chatgpt-share-6a920fe1/](docs/chatgpt-share-6a920fe1/).
 Work lands on `main`. No PRs.
 
+## Shipped 2026-09-01 — device-updatable kernel-node restrictions
+
+`gpu-sim` CUDA `cudaLaunchAttributeDeviceUpdatableKernelNode` restrictions:
+once true, SetAttribute to false is Invalid. The node cannot be destroyed.
+CopyAttributes cannot involve it. A definition with such a node cannot be
+instantiated twice. `cudaGraphExecUpdate` of an exec or source that has
+one is Invalid. Opt-in and skip-reupload stay. This VM does not invent
+`CUgraphDeviceNode` / device-side kernel updates. `gpu-profile capture`
+is still refused. Dual score still has no `$/M tokens`.
+
 ## Shipped 2026-09-01 — programmatic event triggerAtBlockStart
 
 `gpu-sim` CUDA `cudaLaunchAttributeProgrammaticEvent.triggerAtBlockStart`:
