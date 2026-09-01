@@ -164,6 +164,7 @@ warp scheduler, L1, …   ← do not model
 | `import_external_memory` is Invalid (dma-buf / Win32 / fabric are 0) | `cuImportExternalMemory` |
 | `surf_object_create` is Invalid (CUDA surfaces are not modeled) | `cuSurfObjectCreate` |
 | `surf_object_destroy` is Invalid (no surface-object handles) | `cuSurfObjectDestroy` / `cudaDestroySurfaceObject` |
+| `surf_object_get_resource_desc` is Invalid (no surface-object handles) | `cuSurfObjectGetResourceDesc` / `cudaGetSurfaceObjectResourceDesc` |
 | `tex_object_create` is Invalid (CUDA textures are not modeled) | `cuTexObjectCreate` / `cudaCreateTextureObject` |
 | `tex_object_destroy` is Invalid (no texture-object handles) | `cuTexObjectDestroy` / `cudaDestroyTextureObject` |
 | `graphics_map_resources` is Invalid (OpenGL, Direct3D, Vulkan, EGL are not modeled) | `cuGraphicsMapResources` |
@@ -1012,6 +1013,9 @@ during capture. No Engine `--surf-object`.
 `surf_object_destroy` is `cuSurfObjectDestroy` (always Invalid
 `"unknown surf object"`). Distinct from `surf_object_create`. Query; legal
 during capture. No Engine `--surf-destroy`.
+`surf_object_get_resource_desc` is `cuSurfObjectGetResourceDesc` (always
+Invalid `"surf resource desc"`). Distinct from `surf_object_destroy`.
+Query; legal during capture. No Engine `--surf-resource-desc`.
 `tex_object_create` is `cuTexObjectCreate` (always Invalid `"cuda texture"`;
 CUDA textures are not modeled). Distinct from `surf_object_create` and
 `array_create`. Query; legal during capture. No Engine `--tex-object`.

@@ -550,6 +550,8 @@ no Engine flag).
 surfaces are not modeled; no Engine flag).
 `gpu-sim` `surf_object_destroy` is `cuSurfObjectDestroy` (Invalid; no
 surface-object handles; no Engine flag).
+`gpu-sim` `surf_object_get_resource_desc` is `cuSurfObjectGetResourceDesc`
+(Invalid; no surface-object handles; no Engine flag).
 `gpu-sim` `tex_object_create` is `cuTexObjectCreate` (Invalid; CUDA
 textures are not modeled; no Engine flag).
 `gpu-sim` `tex_object_destroy` is `cuTexObjectDestroy` (Invalid; no

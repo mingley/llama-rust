@@ -17662,14 +17662,28 @@ impl Sim {
     /// are not modeled.
     ///
     /// Always Invalid `"unknown surf object"` (no surface-object handles).
-    /// Distinct from [`Self::surf_object_create`] and from
-    /// [`Self::tex_object_destroy`]. Unknown devices are Invalid
-    /// `"device not in profile"`. Query; legal during capture. This VM does
-    /// not invent `cuSurfObjectGetResourceDesc` this slice.
+    /// Distinct from [`Self::surf_object_create`], from
+    /// [`Self::tex_object_destroy`], and from
+    /// [`Self::surf_object_get_resource_desc`]. Unknown devices are Invalid
+    /// `"device not in profile"`. Query; legal during capture.
     pub fn surf_object_destroy(&self, device: DeviceId) -> Result<(), SimError> {
         let _gpu = self.profile.gpu(device)?;
         Err(SimError::Invalid {
             why: "unknown surf object",
+        })
+    }
+
+    /// `cuSurfObjectGetResourceDesc` plus `cudaGetSurfaceObjectResourceDesc`.
+    /// CUDA surfaces are not modeled.
+    ///
+    /// Always Invalid `"surf resource desc"` (no surface-object handles).
+    /// Distinct from [`Self::surf_object_destroy`]. Unknown devices are
+    /// Invalid `"device not in profile"`. Query; legal during capture. This
+    /// VM does not invent `cuArrayGetDescriptor` this slice.
+    pub fn surf_object_get_resource_desc(&self, device: DeviceId) -> Result<(), SimError> {
+        let _gpu = self.profile.gpu(device)?;
+        Err(SimError::Invalid {
+            why: "surf resource desc",
         })
     }
 
