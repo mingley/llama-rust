@@ -5,6 +5,18 @@ Visible five-turn extract: [docs/chatgpt-share-6a920fe1.md](docs/chatgpt-share-6
 Complete share-API extract: [docs/chatgpt-share-6a920fe1/](docs/chatgpt-share-6a920fe1/).
 Work lands on `main`. No PRs.
 
+## Shipped 2026-09-01 — CUDA_BATCH_MEM_OP_NODE_PARAMS.ctx
+
+`gpu-sim` CUDA `CUDA_BATCH_MEM_OP_NODE_PARAMS.ctx`:
+`BatchMemOpNodeParams::ctx` is `CUDA_BATCH_MEM_OP_NODE_PARAMS.ctx`.
+Stored on the graph step, not `Kind::BatchMem`. `None` inherits the launch
+stream. Wait/write/flush do not occupy SMs, so duration is unchanged.
+Unknown or destroyed is Invalid `"unknown green ctx"`. Device mismatch is
+Invalid `"green ctx device"`. Parameter, not topology. Capture from a
+green-ctx stream snapshots that ctx. Typed `graph_add_batch_mem_op` stays
+`None`. Item-list SetParams does not clear ctx. No Engine `--batch-ctx`.
+`gpu-profile capture` is still refused. Dual score still has no `$/M tokens`.
+
 ## Shipped 2026-09-01 — CUDA_KERNEL_NODE_PARAMS.sharedMemBytes
 
 `gpu-sim` CUDA `CUDA_KERNEL_NODE_PARAMS.sharedMemBytes`:

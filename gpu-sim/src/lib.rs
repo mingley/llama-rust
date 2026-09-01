@@ -67,6 +67,11 @@
 //! [`PortableSharedMode::AllowNonPortable`] is Invalid `"dynamic shared"` /
 //! `"non-portable shared"`. Duration follows bank width, not byte count. No
 //! Engine `--kernel-shared`.
+//! [`BatchMemOpNodeParams::ctx`] is CUDA `CUDA_BATCH_MEM_OP_NODE_PARAMS.ctx`.
+//! Typed [`graph_add_batch_mem_op`](Sim::graph_add_batch_mem_op) stays
+//! [`None`]. Wait/write/flush do not occupy SMs, so ctx does not change
+//! duration. Unknown or destroyed is Invalid `"unknown green ctx"`. Device
+//! mismatch is Invalid `"green ctx device"`. No Engine `--batch-ctx`.
 //! [`Sim::synchronize_device`] is `cudaDeviceSynchronize` (one GPU).
 //! [`Sim::synchronize_event`] is `cudaEventSynchronize`.
 //! [`Sim::alloc`] / [`memcpy`](Sim::memcpy) / [`free`](Sim::free) are
@@ -1245,21 +1250,21 @@ pub use ids::{
 };
 pub use ops::{
     parse_nvlink_util_centric, AccessPolicyWindow, AccessProperty, BatchMemOp, BatchMemOpFlags,
-    CaptureDepOp, ClusterDim, ClusterSchedulingPolicy, ComputeMode, DType, DevResource,
-    DevResourceType, DevSmResourceGroupFlags, DevSmResourceGroupParams, DevSmResourceSplitFlags,
-    DeviceAttr, DeviceFlags, DeviceLimit, DeviceNumaConfig, DeviceP2pAttr, DeviceProperties,
-    EventCreateFlags, EventRecordFlags, EventWaitFlags, ExecAffinityType, FlushGpuDirectRdmaScope,
-    FlushGpuDirectRdmaTarget, FlushGpuDirectRdmaWritesOptions, FuncAttr, FuncAttributes, FuncCache,
-    GpuDirectRdmaWritesOrdering, GpuOp, GraphAddNode, GraphCondFlags, GraphCreateFlags,
-    GraphDebugDotFlags, GraphDependencyType, GraphEdgeData, GraphExecUpdateResult,
-    GraphExecUpdateResultInfo, GraphInstantiateFlags, GraphInstantiateParams,
-    GraphInstantiateResult, GraphMemAttr, GraphNodeKind, GraphNodeParams, GraphUserObjectFlags,
-    GreenCtxFlags, HostAllocFlags, HostGetDevicePointerFlags, HostNodeParams, InitDeviceFlags,
-    IpcMemFlags, KernelAttrs, KernelBuf, KernelKind, KernelNodeAttr, KernelNodeAttrValue,
-    KernelNodeParams, LaunchCompletionEvent, MemAccessDesc, MemAccessFlags, MemAdvise,
-    MemAllocationGranularity, MemAllocationProp, MemAllocationType, MemAttach, MemAttachFlags,
-    MemCreateFlags, MemExportFlags, MemHandleType, MemHandleUsage, MemLocationType, MemMapFlags,
-    MemPoolAttr, MemPoolExportFlags, MemPoolProps, MemRangeAttr, MemRangeAttrValue,
+    BatchMemOpNodeParams, CaptureDepOp, ClusterDim, ClusterSchedulingPolicy, ComputeMode, DType,
+    DevResource, DevResourceType, DevSmResourceGroupFlags, DevSmResourceGroupParams,
+    DevSmResourceSplitFlags, DeviceAttr, DeviceFlags, DeviceLimit, DeviceNumaConfig, DeviceP2pAttr,
+    DeviceProperties, EventCreateFlags, EventRecordFlags, EventWaitFlags, ExecAffinityType,
+    FlushGpuDirectRdmaScope, FlushGpuDirectRdmaTarget, FlushGpuDirectRdmaWritesOptions, FuncAttr,
+    FuncAttributes, FuncCache, GpuDirectRdmaWritesOrdering, GpuOp, GraphAddNode, GraphCondFlags,
+    GraphCreateFlags, GraphDebugDotFlags, GraphDependencyType, GraphEdgeData,
+    GraphExecUpdateResult, GraphExecUpdateResultInfo, GraphInstantiateFlags,
+    GraphInstantiateParams, GraphInstantiateResult, GraphMemAttr, GraphNodeKind, GraphNodeParams,
+    GraphUserObjectFlags, GreenCtxFlags, HostAllocFlags, HostGetDevicePointerFlags, HostNodeParams,
+    InitDeviceFlags, IpcMemFlags, KernelAttrs, KernelBuf, KernelKind, KernelNodeAttr,
+    KernelNodeAttrValue, KernelNodeParams, LaunchCompletionEvent, MemAccessDesc, MemAccessFlags,
+    MemAdvise, MemAllocationGranularity, MemAllocationProp, MemAllocationType, MemAttach,
+    MemAttachFlags, MemCreateFlags, MemExportFlags, MemHandleType, MemHandleUsage, MemLocationType,
+    MemMapFlags, MemPoolAttr, MemPoolExportFlags, MemPoolProps, MemRangeAttr, MemRangeAttrValue,
     MemRangeHandleFlags, MemRangeHandleType, MemReserveFlags, MemSyncDomain, MemSyncDomainMap,
     MemcpyAttributes, MemcpyFlags, MemcpyOp, MemcpySrcAccessOrder, MemoryType, MemsetOp,
     MulticastBindFlags, MulticastCreateFlags, MulticastGranularity, MulticastObjectProp,
@@ -10423,6 +10428,160 @@ mod tests {
                 .shared_mem_bytes,
             65_536
         );
+    }
+
+    #[test]
+    fn graph_batch_mem_op_node_ctx_is_cuda_batch_mem_op_node_params_ctx() {
+        let d = DeviceId(0);
+        let s = StreamId(0);
+        let mut sim = Sim::new(h100());
+        let a = sim.malloc(d, 64).unwrap();
+        let ops = vec![
+            BatchMemOp::Write {
+                id: a,
+                offset: 0,
+                value: 1,
+                bits32: false,
+            },
+            BatchMemOp::Wait {
+                id: a,
+                offset: 0,
+                value: 1,
+                bits32: false,
+                cmp: WaitValueCmp::Eq,
+                flush: false,
+            },
+        ];
+        let params = |ctx: Option<GreenCtxId>| BatchMemOpNodeParams {
+            ops: ops.clone(),
+            ctx,
+        };
+        let desc = sim
+            .dev_resource_generate_desc(&[SmResource {
+                start: 0,
+                width: 500,
+            }])
+            .unwrap();
+        let ctx = sim.green_ctx_create(desc, d, 0).unwrap();
+        let g = sim.create_graph(d, s).unwrap();
+        sim.graph_add_batch_mem_op(g, &ops).unwrap();
+        match sim.graph_node_get_params(g, 0).unwrap() {
+            GraphNodeParams::BatchMemOp(p) => assert_eq!(p.ctx, None),
+            other => panic!("{other:?}"),
+        }
+        sim.graph_node_set_params(g, 0, GraphNodeParams::BatchMemOp(params(Some(ctx))))
+            .unwrap();
+        match sim.graph_node_get_params(g, 0).unwrap() {
+            GraphNodeParams::BatchMemOp(p) => assert_eq!(p.ctx, Some(ctx)),
+            other => panic!("{other:?}"),
+        }
+        let cloned = sim.clone_graph(g).unwrap();
+        match sim.graph_node_get_params(cloned, 0).unwrap() {
+            GraphNodeParams::BatchMemOp(p) => assert_eq!(p.ctx, Some(ctx)),
+            other => panic!("{other:?}"),
+        }
+        sim.graph_batch_mem_ops_set_params(
+            g,
+            0,
+            &[BatchMemOp::Write {
+                id: a,
+                offset: 0,
+                value: 2,
+                bits32: false,
+            }],
+        )
+        .unwrap();
+        match sim.graph_node_get_params(g, 0).unwrap() {
+            GraphNodeParams::BatchMemOp(p) => {
+                assert_eq!(p.ctx, Some(ctx), "item-list SetParams must not clear ctx");
+                assert_eq!(p.ops.len(), 1);
+            }
+            other => panic!("{other:?}"),
+        }
+        sim.graph_node_set_params(g, 0, GraphNodeParams::BatchMemOp(params(Some(ctx))))
+            .unwrap();
+        let exec = sim.instantiate_graph(g).unwrap();
+        match sim.graph_exec_node_get_params(exec, 0).unwrap() {
+            GraphNodeParams::BatchMemOp(p) => assert_eq!(p.ctx, Some(ctx)),
+            other => panic!("{other:?}"),
+        }
+        let n = sim.launch_graph(exec, s).unwrap();
+        assert_eq!(n, 1);
+        sim.synchronize().unwrap();
+        sim.green_ctx_stream_create(ctx, StreamId(1), StreamCreateFlags::NON_BLOCKING, 0)
+            .unwrap();
+        sim.begin_capture(d, StreamId(1)).unwrap();
+        enq(sim.batch_mem_op(d, StreamId(1), &ops));
+        let captured = sim.end_capture().unwrap();
+        match sim.graph_node_get_params(captured, 0).unwrap() {
+            GraphNodeParams::BatchMemOp(p) => assert_eq!(p.ctx, Some(ctx)),
+            other => panic!("{other:?}"),
+        }
+        let g_bad = sim.create_graph(d, s).unwrap();
+        match sim.graph_add_node(
+            g_bad,
+            &[],
+            GraphNodeParams::BatchMemOp(params(Some(GreenCtxId(99)))),
+        ) {
+            Err(SimError::Invalid { why }) => {
+                assert!(why.contains("unknown green ctx"), "{why}");
+            }
+            other => panic!("{other:?}"),
+        }
+        let mut dual = Sim::new(HardwareProfile::example_2xh100_pcie());
+        let a1 = dual.malloc(DeviceId(0), 64).unwrap();
+        let desc1 = dual
+            .dev_resource_generate_desc(&[SmResource {
+                start: 0,
+                width: 500,
+            }])
+            .unwrap();
+        let ctx1 = dual.green_ctx_create(desc1, DeviceId(1), 0).unwrap();
+        let g1 = dual.create_graph(DeviceId(0), s).unwrap();
+        match dual.graph_add_node(
+            g1,
+            &[],
+            GraphNodeParams::BatchMemOp(BatchMemOpNodeParams {
+                ops: vec![BatchMemOp::Write {
+                    id: a1,
+                    offset: 0,
+                    value: 1,
+                    bits32: false,
+                }],
+                ctx: Some(ctx1),
+            }),
+        ) {
+            Err(SimError::Invalid { why }) => {
+                assert!(why.contains("green ctx device"), "{why}");
+            }
+            other => panic!("{other:?}"),
+        }
+        let g_dead = sim.create_graph(d, s).unwrap();
+        let desc2 = sim
+            .dev_resource_generate_desc(&[SmResource {
+                start: 500,
+                width: 500,
+            }])
+            .unwrap();
+        let ctx2 = sim.green_ctx_create(desc2, d, 0).unwrap();
+        let added = sim
+            .graph_add_node(g_dead, &[], GraphNodeParams::BatchMemOp(params(Some(ctx2))))
+            .unwrap();
+        assert_eq!(added.node, 0);
+        sim.green_ctx_destroy(ctx2).unwrap();
+        let exec_dead = sim.instantiate_graph(g_dead).unwrap();
+        match sim.launch_graph(exec_dead, s) {
+            Err(SimError::Invalid { why }) => {
+                assert!(why.contains("unknown green ctx"), "{why}");
+            }
+            Ok(_) => match sim.synchronize() {
+                Err(SimError::Invalid { why }) => {
+                    assert!(why.contains("unknown green ctx"), "{why}");
+                }
+                other => panic!("{other:?}"),
+            },
+            other => panic!("{other:?}"),
+        }
     }
 
     #[test]

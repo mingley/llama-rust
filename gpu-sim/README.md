@@ -216,6 +216,7 @@ warp scheduler, L1, …   ← do not model
 | `cudaExecutionCtxGetDevice` (`green_ctx_get_device`) | device passed to `green_ctx_create`; query during capture |
 | `CUDA_KERNEL_NODE_PARAMS.ctx` (`KernelNodeParams::ctx`) | pins graph kernel duration plus SM occupancy; `None` inherits the launch stream |
 | `CUDA_KERNEL_NODE_PARAMS.sharedMemBytes` (`KernelNodeParams::shared_mem_bytes`) | graph kernel dynamic shared; typed `graph_add_kernel` stays 0; CopyAttributes does not copy it |
+| `CUDA_BATCH_MEM_OP_NODE_PARAMS.ctx` (`BatchMemOpNodeParams::ctx`) | graph batch-mem-op green ctx; wait/write/flush duration unchanged; typed `graph_add_batch_mem_op` stays `None` |
 | `memset` / `memset_buf` needs the filled span resident (not mapped host); `memset_op` height/pitch is 2D | HBM write of payload + launch overhead |
 | `cudaMemset` / `2D` / `3D` (`memset_sync` / `memset_op_sync`) wait the stream | host-synchronous; capture refused |
 | peer D2D needs topology + `enable_peer` (`enable_peer_with_flags` must be 0) | link bandwidth |
@@ -263,6 +264,10 @@ is dynamic shared on a graph kernel node. Typed `graph_add_kernel` stays `0`.
 Get/SetAttribute stays. CopyAttributes does not copy it. Oversize without
 func attr / AllowNonPortable is Invalid. Duration follows bank width, not
 byte count. No Engine `--kernel-shared`.
+`CUDA_BATCH_MEM_OP_NODE_PARAMS.ctx` (`BatchMemOpNodeParams::ctx`) pins a
+graph batch-mem-op node to a live green context. Wait/write/flush do not
+occupy SMs, so duration is unchanged. Typed `graph_add_batch_mem_op` stays
+`None`. No Engine `--batch-ctx`.
 Copy engines still overlap compute. Profile knobs `gemm_util_permille` (achieved/peak) and `grouped_moe_permille`
 (grouped vs dense duration) scale kernel time. Defaults are 1000
 (identity roofline). They are parseable; they are not a capture. Host PCIe

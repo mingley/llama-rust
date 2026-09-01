@@ -11,21 +11,22 @@ use crate::ids::{
     UserObjectId,
 };
 use crate::ops::{
-    AccessPolicyWindow, AccessProperty, BatchMemOp, BatchMemOpFlags, CaptureDepOp, ClusterDim,
-    ClusterSchedulingPolicy, ComputeMode, DevResource, DevResourceType, DevSmResourceGroupParams,
-    DevSmResourceSplitFlags, DeviceAttr, DeviceFlags, DeviceLimit, DeviceNumaConfig, DeviceP2pAttr,
-    DeviceProperties, EventCreateFlags, EventRecordFlags, EventWaitFlags, ExecAffinityType,
-    FlushGpuDirectRdmaScope, FlushGpuDirectRdmaTarget, FlushGpuDirectRdmaWritesOptions, FuncAttr,
-    FuncAttributes, FuncCache, GpuDirectRdmaWritesOrdering, GpuOp as Kind, GraphAddNode,
-    GraphCondFlags, GraphCreateFlags, GraphDebugDotFlags, GraphDependencyType, GraphEdgeData,
-    GraphExecUpdateResult, GraphExecUpdateResultInfo, GraphInstantiateFlags,
-    GraphInstantiateParams, GraphInstantiateResult, GraphMemAttr, GraphNodeKind, GraphNodeParams,
-    GraphUserObjectFlags, GreenCtxFlags, HostAllocFlags, HostGetDevicePointerFlags, HostNodeParams,
-    InitDeviceFlags, IpcMemFlags, KernelAttrs, KernelBuf, KernelKind, KernelNodeAttr,
-    KernelNodeAttrValue, KernelNodeParams, LaunchCompletionEvent, MemAccessDesc, MemAccessFlags,
-    MemAdvise, MemAllocationGranularity, MemAllocationProp, MemAllocationType, MemAttach,
-    MemAttachFlags, MemCreateFlags, MemExportFlags, MemHandleType, MemHandleUsage, MemLocationType,
-    MemMapFlags, MemPoolAttr, MemPoolExportFlags, MemPoolProps, MemRangeAttr, MemRangeAttrValue,
+    AccessPolicyWindow, AccessProperty, BatchMemOp, BatchMemOpFlags, BatchMemOpNodeParams,
+    CaptureDepOp, ClusterDim, ClusterSchedulingPolicy, ComputeMode, DevResource, DevResourceType,
+    DevSmResourceGroupParams, DevSmResourceSplitFlags, DeviceAttr, DeviceFlags, DeviceLimit,
+    DeviceNumaConfig, DeviceP2pAttr, DeviceProperties, EventCreateFlags, EventRecordFlags,
+    EventWaitFlags, ExecAffinityType, FlushGpuDirectRdmaScope, FlushGpuDirectRdmaTarget,
+    FlushGpuDirectRdmaWritesOptions, FuncAttr, FuncAttributes, FuncCache,
+    GpuDirectRdmaWritesOrdering, GpuOp as Kind, GraphAddNode, GraphCondFlags, GraphCreateFlags,
+    GraphDebugDotFlags, GraphDependencyType, GraphEdgeData, GraphExecUpdateResult,
+    GraphExecUpdateResultInfo, GraphInstantiateFlags, GraphInstantiateParams,
+    GraphInstantiateResult, GraphMemAttr, GraphNodeKind, GraphNodeParams, GraphUserObjectFlags,
+    GreenCtxFlags, HostAllocFlags, HostGetDevicePointerFlags, HostNodeParams, InitDeviceFlags,
+    IpcMemFlags, KernelAttrs, KernelBuf, KernelKind, KernelNodeAttr, KernelNodeAttrValue,
+    KernelNodeParams, LaunchCompletionEvent, MemAccessDesc, MemAccessFlags, MemAdvise,
+    MemAllocationGranularity, MemAllocationProp, MemAllocationType, MemAttach, MemAttachFlags,
+    MemCreateFlags, MemExportFlags, MemHandleType, MemHandleUsage, MemLocationType, MemMapFlags,
+    MemPoolAttr, MemPoolExportFlags, MemPoolProps, MemRangeAttr, MemRangeAttrValue,
     MemRangeHandleFlags, MemRangeHandleType, MemReserveFlags, MemSyncDomain, MemSyncDomainMap,
     MemcpyAttributes, MemcpyFlags, MemcpyOp, MemcpySrcAccessOrder, MemoryType, MemsetOp,
     MulticastBindFlags, MulticastCreateFlags, MulticastGranularity, MulticastObjectProp,
@@ -365,6 +366,15 @@ enum LaunchCost {
     GraphBody,
 }
 
+/// Whether [`Sim::set_batch_mem_ops`] overwrites [`GraphStep::green_ctx`].
+#[derive(Clone, Copy)]
+enum GreenCtxPatch {
+    /// Item-list SetParams: leave the node's ctx.
+    Keep,
+    /// [`GraphNodeParams::BatchMemOp`] SetParams: store this ctx.
+    Set(Option<GreenCtxId>),
+}
+
 struct Running {
     op: OpId,
     remaining_ns: u64,
@@ -552,8 +562,9 @@ struct GraphStep {
     portable_shared: PortableSharedMode,
     /// `cudaLaunchAttributeNvlinkUtilCentricScheduling`.
     nvlink_util_centric: bool,
-    /// CUDA 13 `CUDA_KERNEL_NODE_PARAMS.ctx`. [`None`] inherits the launch
-    /// stream. Not stored on [`Kind::Kernel`] (parameter, not topology).
+    /// CUDA `CUDA_KERNEL_NODE_PARAMS.ctx` / `CUDA_BATCH_MEM_OP_NODE_PARAMS.ctx`.
+    /// [`None`] inherits the launch stream. Not stored on [`Kind::Kernel`] or
+    /// [`Kind::BatchMem`] (parameter, not topology).
     green_ctx: Option<GreenCtxId>,
 }
 
@@ -4852,12 +4863,8 @@ impl Sim {
                     self.graph_free_set_params(graph, node, id)
                 }
             }
-            GraphNodeParams::BatchMemOp(ops) => {
-                if exec {
-                    self.graph_exec_batch_mem_ops_set_params(graph, node, &ops)
-                } else {
-                    self.graph_batch_mem_ops_set_params(graph, node, &ops)
-                }
+            GraphNodeParams::BatchMemOp(p) => {
+                self.set_batch_mem_ops(graph, node, &p.ops, exec, GreenCtxPatch::Set(p.ctx))
             }
             GraphNodeParams::SetConditional { handle, value } => {
                 self.set_conditional_node_params(graph, node, handle, value, exec)
@@ -4972,6 +4979,14 @@ impl Sim {
         if matches!(step.kind, Kind::Kernel { .. }) {
             return Ok(GraphNodeParams::Kernel(kernel_params_from_step(step)?));
         }
+        if matches!(
+            step.kind,
+            Kind::BatchMem { .. } | Kind::WriteValue { .. } | Kind::WaitValue { .. }
+        ) {
+            return Ok(GraphNodeParams::BatchMemOp(batch_mem_params_from_step(
+                step,
+            )?));
+        }
         node_params_of(&step.kind)
     }
 
@@ -4988,7 +5003,7 @@ impl Sim {
         node: usize,
         op: BatchMemOp,
     ) -> Result<(), SimError> {
-        self.set_batch_mem_ops(graph, node, &[op], false)
+        self.set_batch_mem_ops(graph, node, &[op], false, GreenCtxPatch::Keep)
     }
 
     /// Replace the item list of a [`crate::GpuOp::BatchMem`] graph node.
@@ -5002,7 +5017,7 @@ impl Sim {
         node: usize,
         ops: &[BatchMemOp],
     ) -> Result<(), SimError> {
-        self.set_batch_mem_ops(graph, node, ops, false)
+        self.set_batch_mem_ops(graph, node, ops, false, GreenCtxPatch::Keep)
     }
 
     /// `cudaGraphExecMemcpyNodeSetParams` on an instantiated exec.
@@ -5241,7 +5256,7 @@ impl Sim {
         node: usize,
         op: BatchMemOp,
     ) -> Result<(), SimError> {
-        self.set_batch_mem_ops(exec, node, &[op], true)
+        self.set_batch_mem_ops(exec, node, &[op], true, GreenCtxPatch::Keep)
     }
 
     /// Exec-side item-list SetParams for a [`crate::GpuOp::BatchMem`] node.
@@ -5251,7 +5266,7 @@ impl Sim {
         node: usize,
         ops: &[BatchMemOp],
     ) -> Result<(), SimError> {
-        self.set_batch_mem_ops(exec, node, ops, true)
+        self.set_batch_mem_ops(exec, node, ops, true, GreenCtxPatch::Keep)
     }
 
     fn set_batch_mem_ops(
@@ -5260,6 +5275,7 @@ impl Sim {
         node: usize,
         ops: &[BatchMemOp],
         exec: bool,
+        ctx: GreenCtxPatch,
     ) -> Result<(), SimError> {
         self.fail_if_capturing(if exec {
             "cannot capture batch mem op set params"
@@ -5285,6 +5301,9 @@ impl Sim {
             let next = batch_ops_set_params_kind(&step.kind, ops)?;
             (step.device, next)
         };
+        if let GreenCtxPatch::Set(Some(id)) = ctx {
+            self.require_live_green_ctx(id, device)?;
+        }
         self.check_batch_flush(device, ops)?;
         if exec {
             let ns = self.profile.gpu(device)?.graph_set_params_ns.max(1);
@@ -5307,6 +5326,9 @@ impl Sim {
             })?,
         )?;
         step.kind = next;
+        if let GreenCtxPatch::Set(c) = ctx {
+            step.green_ctx = c;
+        }
         if exec {
             g.uploaded = false;
         }
@@ -7229,8 +7251,8 @@ impl Sim {
                 self.graph_add_free(graph, id)?;
                 Ok(add_node_out(None, None, None))
             }
-            GraphNodeParams::BatchMemOp(ops) => {
-                self.graph_add_batch_mem_op(graph, &ops)?;
+            GraphNodeParams::BatchMemOp(p) => {
+                self.graph_add_batch_mem_op_params(graph, p)?;
                 Ok(add_node_out(None, None, None))
             }
             GraphNodeParams::SetConditional { handle, value } => {
@@ -8058,7 +8080,9 @@ impl Sim {
     /// Empty is Invalid. Items run in order inside the node at launch (a wait
     /// sees earlier writes in this vector; it does not see later ones). Capture
     /// cannot include it (use [`Self::batch_mem_op`] during capture). Illegal
-    /// after instantiate.
+    /// after instantiate. [`BatchMemOpNodeParams::ctx`] stays [`None`]. Pin a
+    /// green context through [`Self::graph_add_node`] with
+    /// [`GraphNodeParams::BatchMemOp`].
     pub fn graph_add_batch_mem_op(
         &mut self,
         graph: GraphId,
@@ -8068,6 +8092,24 @@ impl Sim {
         let (device, stream) = self.graph_origin_for_add(graph)?;
         self.check_batch_flush(device, ops)?;
         self.graph_push(graph, device, stream, Kind::BatchMem { ops: ops.to_vec() })
+    }
+
+    fn graph_add_batch_mem_op_params(
+        &mut self,
+        graph: GraphId,
+        params: BatchMemOpNodeParams,
+    ) -> Result<(), SimError> {
+        self.check_batch_mem_ops(&params.ops)?;
+        let (device, stream) = self.graph_origin_for_add(graph)?;
+        if let Some(ctx) = params.ctx {
+            self.require_live_green_ctx(ctx, device)?;
+        }
+        self.check_batch_flush(device, &params.ops)?;
+        let prev = self.enqueue_green_ctx;
+        self.enqueue_green_ctx = params.ctx;
+        let r = self.graph_push(graph, device, stream, Kind::BatchMem { ops: params.ops });
+        self.enqueue_green_ctx = prev;
+        r
     }
 
     /// [`Self::graph_add_batch_mem_op`] with a [`BatchMemOpFlags`] word.
@@ -10756,7 +10798,7 @@ impl Sim {
     ) -> Result<(), SimError> {
         let priority = self.snap_priority(device, stream);
         let (mem_sync_domain, mem_sync_map) = self.snap_mem_sync(device, stream, &kind)?;
-        let green_ctx = if matches!(kind, Kind::Kernel { .. }) {
+        let green_ctx = if kind_has_green_ctx(&kind) {
             self.enqueue_green_ctx
         } else {
             None
@@ -18263,7 +18305,7 @@ impl Sim {
         self.merge_capture_pending(device, stream, &mut deps);
         let priority = self.snap_priority(device, stream);
         let (mem_sync_domain, mem_sync_map) = self.snap_mem_sync(device, stream, &kind)?;
-        let green_ctx = if matches!(kind, Kind::Kernel { .. }) {
+        let green_ctx = if kind_has_green_ctx(&kind) {
             self.enqueue_green_ctx
                 .or_else(|| self.stream_green_ctx.get(&(device, stream)).copied())
         } else {
@@ -21782,6 +21824,25 @@ fn kernel_params_from_step(step: &GraphStep) -> Result<KernelNodeParams, SimErro
     Ok(p)
 }
 
+fn kind_has_green_ctx(kind: &Kind) -> bool {
+    matches!(
+        kind,
+        Kind::Kernel { .. }
+            | Kind::BatchMem { .. }
+            | Kind::WriteValue { .. }
+            | Kind::WaitValue { .. }
+    )
+}
+
+fn batch_mem_params_from_step(step: &GraphStep) -> Result<BatchMemOpNodeParams, SimError> {
+    Ok(BatchMemOpNodeParams {
+        ops: batch_items(&step.kind).ok_or(SimError::Invalid {
+            why: "not a batch mem op node",
+        })?,
+        ctx: step.green_ctx,
+    })
+}
+
 fn memcpy_params_of(kind: &Kind) -> Result<MemcpyOp, SimError> {
     let Kind::Memcpy(op) = kind else {
         return Err(SimError::Invalid {
@@ -21899,9 +21960,12 @@ fn node_params_of(kind: &Kind) -> Result<GraphNodeParams, SimError> {
         },
         Kind::Free { id } => GraphNodeParams::Free(*id),
         Kind::BatchMem { .. } | Kind::WriteValue { .. } | Kind::WaitValue { .. } => {
-            GraphNodeParams::BatchMemOp(batch_items(kind).ok_or(SimError::Invalid {
-                why: "not a batch mem op node",
-            })?)
+            GraphNodeParams::BatchMemOp(BatchMemOpNodeParams {
+                ops: batch_items(kind).ok_or(SimError::Invalid {
+                    why: "not a batch mem op node",
+                })?,
+                ctx: None,
+            })
         }
         Kind::SetConditional { handle, value } => GraphNodeParams::SetConditional {
             handle: *handle,

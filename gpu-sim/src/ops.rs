@@ -2562,6 +2562,27 @@ pub enum BatchMemOp {
     FlushRemoteWrites,
 }
 
+/// `CUDA_BATCH_MEM_OP_NODE_PARAMS` for [`crate::Sim::graph_add_node`] /
+/// [`crate::Sim::graph_node_get_params`].
+///
+/// [`Self::ops`] is `paramArray` / `count`. [`Self::ctx`] is CUDA
+/// `CUDA_BATCH_MEM_OP_NODE_PARAMS.ctx` (this VM's [`crate::GreenCtxId`] analog;
+/// no `CUcontext`). Typed [`crate::Sim::graph_add_batch_mem_op`] stays
+/// [`None`]. Parameter, not topology. Wait/write/flush do not occupy SMs, so
+/// ctx does not change duration (unlike [`KernelNodeParams::ctx`]). Unknown
+/// or destroyed is Invalid `"unknown green ctx"`. Device mismatch is Invalid
+/// `"green ctx device"`. This VM does not invent Engine `--batch-ctx`.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct BatchMemOpNodeParams {
+    /// Wait, write, and flush-remote-writes items (`paramArray`). Empty is
+    /// Invalid.
+    pub ops: Vec<BatchMemOp>,
+    /// CUDA `CUDA_BATCH_MEM_OP_NODE_PARAMS.ctx`. [`None`] inherits the launch
+    /// stream. [`Some`] must be a live green context on the graph device.
+    /// Stored on the graph step, not [`crate::GpuOp::BatchMem`].
+    pub ctx: Option<GreenCtxId>,
+}
+
 /// One submitted GPU primitive. PLAN's Kernel / Memcpy / Collective / Event /
 /// Alloc / Free, plus `cudaMemsetAsync`, `cudaLaunchHostFunc`, stream attach,
 /// empty graph nodes, nested [`Self::ChildGraph`], conditional IF / WHILE /
@@ -3840,8 +3861,9 @@ pub enum GraphNodeParams {
     },
     /// `cudaGraphMemFreeNode`.
     Free(AllocId),
-    /// `cudaGraphBatchMemOpNode` (item list; empty is Invalid).
-    BatchMemOp(Vec<BatchMemOp>),
+    /// `cudaGraphBatchMemOpNode` (`CUDA_BATCH_MEM_OP_NODE_PARAMS`). Empty
+    /// [`BatchMemOpNodeParams::ops`] is Invalid.
+    BatchMemOp(BatchMemOpNodeParams),
     /// Captured / graph-build [`crate::Sim::set_conditional`]
     /// (`cudaGraphSetConditional`). [`Self::SetConditional::handle`] is
     /// topology; `value` is a parameter.

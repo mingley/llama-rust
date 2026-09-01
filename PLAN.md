@@ -5295,7 +5295,18 @@ model, do not celebrate the sim.
     width, not byte count. No Engine `--kernel-shared`. `gpu-profile
     capture` is still refused. Dual score still has no `$/M tokens`.
 
-494. [ ] Next numbered PLAN item after 493 is the next `gpu-sim` / Engine /
+494. [x] `gpu-sim` CUDA `CUDA_BATCH_MEM_OP_NODE_PARAMS.ctx`:
+    [`BatchMemOpNodeParams::ctx`] is `CUDA_BATCH_MEM_OP_NODE_PARAMS.ctx`.
+    Stored on the graph step, not `Kind::BatchMem`. [`None`] inherits the
+    launch stream. Wait/write/flush do not occupy SMs, so duration is
+    unchanged. Unknown or destroyed is Invalid `"unknown green ctx"`.
+    Device mismatch is Invalid `"green ctx device"`. Parameter, not
+    topology. Capture from a green-ctx stream snapshots that ctx. Typed
+    [`graph_add_batch_mem_op`] stays [`None`]. Item-list SetParams does
+    not clear ctx. No Engine `--batch-ctx`. `gpu-profile capture` is still
+    refused. Dual score still has no `$/M tokens`.
+
+495. [ ] Next numbered PLAN item after 494 is the next `gpu-sim` / Engine /
     serve / expertvm mechanical API that is still missing, or the next official
     decode family. Prefer remaining CUDA-shaped twins over more
     OpenAI HTTP veneer. Do not invent F32 `output.scale`. Do not invent a
@@ -5588,7 +5599,9 @@ model, do not celebrate the sim.
     not put `ctx` on `Kind::Kernel`. Do not invent `cuCtxFromGreenCtx`.
     Do not invent a second CUDA_KERNEL_NODE_PARAMS.sharedMemBytes /
     `KernelNodeParams::shared_mem_bytes`. Do not invent Engine `--kernel-shared`.
-    Do not put `sharedMemBytes` on `Kind::Kernel`.
+    Do not put `sharedMemBytes` on `Kind::Kernel`. Do not invent a second
+    CUDA_BATCH_MEM_OP_NODE_PARAMS.ctx / `BatchMemOpNodeParams::ctx`. Do not
+    invent Engine `--batch-ctx`. Do not put `ctx` on `Kind::BatchMem`.
     Do not
     spend the next item on an OpenAI-compatible HTTP veneer.
 
