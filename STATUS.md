@@ -5,6 +5,16 @@ Visible five-turn extract: [docs/chatgpt-share-6a920fe1.md](docs/chatgpt-share-6
 Complete share-API extract: [docs/chatgpt-share-6a920fe1/](docs/chatgpt-share-6a920fe1/).
 Work lands on `main`. No PRs.
 
+## Shipped 2026-09-01 — graph launch-completion edge ports
+
+`gpu-sim` CUDA `cudaGraphKernelNodePortLaunchCompletion` on
+`GraphEdgeData::from_port`: a Default-type graph edge with that port waits
+for the source kernel to start, not finish. Typed `graph_add_dependencies`
+stays Default ports 0. Programmatic type and port 1 stay Invalid. Source
+must be a kernel. GetEdges / GetDependencies v2 report stored ports. This
+VM does not invent an Engine flag for edge ports or nonzero `to_port`.
+`gpu-profile capture` is still refused. Dual score still has no `$/M tokens`.
+
 ## Shipped 2026-09-01 — launch-attribute event flags and interprocess
 
 `gpu-sim` CUDA `cudaLaunchAttributeProgrammaticEvent` /

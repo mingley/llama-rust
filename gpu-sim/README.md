@@ -422,8 +422,9 @@ stays Invalid. No Engine `--graph-alloc-access`.
 `graph_add_node` is `cudaGraphAddNode` (`GraphNodeParams` plus dependency
 indices in the same call). Typed `graph_add_*` stay (empty deps).
 `graph_add_node_with_data` is `cuGraphAddNode_v2` (`dependencyData`; Default
-type with ports 0 is identity; length mismatch Invalid). Programmatic type
-stays Invalid. No Engine `--graph-add-node-data`.
+type with ports 0 is identity; length mismatch Invalid).
+`GraphKernelNodePort::LAUNCH_COMPLETION` waits for a source kernel to start.
+Programmatic type stays Invalid. No Engine `--graph-add-node-data`.
 `GraphNodeParams::If` / `IfElse` / `While` / `Switch` fill `GraphAddNode` bodies.
 Typed helpers stay (`graph_add_if`, `graph_add_if_else`, `graph_add_while`,
 `graph_add_switch`).
@@ -465,10 +466,11 @@ scratch alloc and the GEMM kernel (H2D copy-engine PCIe tax; needs
 APIs with `numDependencies` from/to pairs (all-or-nothing).
 `graph_add_dependencies_n_with_data` is `cudaGraphAddDependencies` v2
 (`GraphEdgeData`; Default type with ports 0 is identity; Programmatic type
-is Invalid). `graph_edges_with_data` is `cudaGraphGetEdges` v2 (existing
-edges are Default, ports 0). `graph_node_deps_with_data` /
+is Invalid; `GraphKernelNodePort::LAUNCH_COMPLETION` waits for a source
+kernel to start). `graph_edges_with_data` is `cudaGraphGetEdges` v2 (stored
+edge data; Default ports 0 when unset). `graph_node_deps_with_data` /
 `graph_node_dependents_with_data` are `cudaGraphNodeGetDependencies` /
-`GetDependentNodes` v2 (existing edges are Default, ports 0). Query;
+`GetDependentNodes` v2 (stored edge data). Query;
 legal during capture.
 `graph_remove_dependencies` is `cudaGraphRemoveDependencies` (illegal on an
 exec and during capture). `graph_destroy_node` is `cudaGraphDestroyNode`

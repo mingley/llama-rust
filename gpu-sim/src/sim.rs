@@ -20,22 +20,22 @@ use crate::ops::{
     GpuDirectRdmaWritesOrdering, GpuOp as Kind, GraphAddNode, GraphChildGraphOwnership,
     GraphCondFlags, GraphCreateFlags, GraphDebugDotFlags, GraphDependencyType, GraphEdgeData,
     GraphExecUpdateResult, GraphExecUpdateResultInfo, GraphInstantiateFlags,
-    GraphInstantiateParams, GraphInstantiateResult, GraphMemAttr, GraphNodeKind, GraphNodeParams,
-    GraphUserObjectFlags, GreenCtxFlags, HostAllocFlags, HostGetDevicePointerFlags, HostNodeParams,
-    InitDeviceFlags, IpcMemFlags, KernelAttrs, KernelBuf, KernelKind, KernelNodeAttr,
-    KernelNodeAttrValue, KernelNodeParams, LaunchCompletionEvent, MemAccessDesc, MemAccessFlags,
-    MemAdvise, MemAllocationGranularity, MemAllocationProp, MemAllocationType, MemAttach,
-    MemAttachFlags, MemCreateFlags, MemExportFlags, MemHandleType, MemHandleUsage, MemLocationType,
-    MemMapFlags, MemPoolAttr, MemPoolExportFlags, MemPoolProps, MemRangeAttr, MemRangeAttrValue,
-    MemRangeHandleFlags, MemRangeHandleType, MemReserveFlags, MemSyncDomain, MemSyncDomainMap,
-    MemcpyAttributes, MemcpyFlags, MemcpyNodeParams, MemcpyOp, MemcpySrcAccessOrder, MemoryType,
-    MemsetNodeParams, MemsetOp, MulticastBindFlags, MulticastCreateFlags, MulticastGranularity,
-    MulticastObjectProp, NvSciSyncAttrFlags, Operation, PdlLaunch, PeerAccessFlags, Place,
-    PointerAttr, PointerAttributes, PortableClusterMode, PortableSharedMode, PrefetchFlags,
-    ProgrammaticEvent, ProgrammaticLaunch, SharedMemCarveout, SharedMemoryMode, SmResource,
-    StreamAttr, StreamAttrValue, StreamCallbackFlags, StreamCaptureInfo, StreamCaptureMode,
-    StreamCreateFlags, SynchronizationPolicy, UserObjectFlags, WaitValueCmp, WaitValueFlags,
-    WriteValueFlags,
+    GraphInstantiateParams, GraphInstantiateResult, GraphKernelNodePort, GraphMemAttr,
+    GraphNodeKind, GraphNodeParams, GraphUserObjectFlags, GreenCtxFlags, HostAllocFlags,
+    HostGetDevicePointerFlags, HostNodeParams, InitDeviceFlags, IpcMemFlags, KernelAttrs,
+    KernelBuf, KernelKind, KernelNodeAttr, KernelNodeAttrValue, KernelNodeParams,
+    LaunchCompletionEvent, MemAccessDesc, MemAccessFlags, MemAdvise, MemAllocationGranularity,
+    MemAllocationProp, MemAllocationType, MemAttach, MemAttachFlags, MemCreateFlags,
+    MemExportFlags, MemHandleType, MemHandleUsage, MemLocationType, MemMapFlags, MemPoolAttr,
+    MemPoolExportFlags, MemPoolProps, MemRangeAttr, MemRangeAttrValue, MemRangeHandleFlags,
+    MemRangeHandleType, MemReserveFlags, MemSyncDomain, MemSyncDomainMap, MemcpyAttributes,
+    MemcpyFlags, MemcpyNodeParams, MemcpyOp, MemcpySrcAccessOrder, MemoryType, MemsetNodeParams,
+    MemsetOp, MulticastBindFlags, MulticastCreateFlags, MulticastGranularity, MulticastObjectProp,
+    NvSciSyncAttrFlags, Operation, PdlLaunch, PeerAccessFlags, Place, PointerAttr,
+    PointerAttributes, PortableClusterMode, PortableSharedMode, PrefetchFlags, ProgrammaticEvent,
+    ProgrammaticLaunch, SharedMemCarveout, SharedMemoryMode, SmResource, StreamAttr,
+    StreamAttrValue, StreamCallbackFlags, StreamCaptureInfo, StreamCaptureMode, StreamCreateFlags,
+    SynchronizationPolicy, UserObjectFlags, WaitValueCmp, WaitValueFlags, WriteValueFlags,
 };
 use crate::profile::{align_up, ns_for_bytes, scale_ns_permille, HardwareProfile, LinkKind};
 
@@ -304,6 +304,9 @@ struct Op {
     stream: StreamId,
     kind: Kind,
     deps: Vec<OpId>,
+    /// Graph edges with [`GraphKernelNodePort::LAUNCH_COMPLETION`]: wait for
+    /// these predecessors to *start*, not finish.
+    start_deps: Vec<OpId>,
     done: bool,
     cancelled: bool,
     launch: LaunchCost,
@@ -528,6 +531,8 @@ struct GraphStep {
     kind: Kind,
     /// Predecessor node indices (`cudaGraphAddDependencies`). Empty is independent.
     deps: Vec<usize>,
+    /// `cudaGraphEdgeData` for a predecessor. Missing is Default ports 0.
+    edge_data: BTreeMap<usize, GraphEdgeData>,
     /// `cudaGraphNodeSetEnabled`. Disabled nodes skip launch and complete immediately.
     enabled: bool,
     /// `cudaGraphDestroyNode`. Remaining node indices stay valid (CUDA handles).
@@ -581,6 +586,19 @@ struct GraphStep {
     /// [`Kind::BatchMem`], [`Kind::If`], [`Kind::While`], [`Kind::Switch`],
     /// [`Kind::Memcpy`], or [`Kind::Memset`] (parameter, not topology).
     green_ctx: Option<GreenCtxId>,
+}
+
+impl GraphStep {
+    fn edge_from_port(&self, from: usize) -> u8 {
+        self.edge_data
+            .get(&from)
+            .map(|e| e.from_port)
+            .unwrap_or(GraphKernelNodePort::DEFAULT)
+    }
+
+    fn edge_data_of(&self, from: usize) -> GraphEdgeData {
+        self.edge_data.get(&from).copied().unwrap_or_default()
+    }
 }
 
 struct Graph {
@@ -3084,6 +3102,11 @@ impl Sim {
         for (i, mut step) in steps.into_iter().enumerate() {
             let was_root =
                 step.deps.is_empty() && extra_abs.get(&i).is_none_or(|abs| abs.is_empty());
+            let mut remapped = BTreeMap::new();
+            for (k, v) in step.edge_data {
+                let _prev = remapped.insert(k.saturating_add(offset), v);
+            }
+            step.edge_data = remapped;
             for d in &mut step.deps {
                 *d = d.saturating_add(offset);
             }
@@ -3371,6 +3394,9 @@ impl Sim {
             }
             self.enqueue_green_ctx = step.green_ctx;
             let wait = graph_node_waits(step, extra_wait, launch_tail, &node_ops)?;
+            let start_wait = graph_node_start_waits(step, &node_ops)?;
+            let mut nested_wait = wait.clone();
+            nested_wait.extend(start_wait.iter().copied());
             let s = self.graph_exec_stream(origin, stream, step, &node_stream, &mut worker);
             if let Some(slot) = node_stream.get_mut(idx) {
                 *slot = Some(s);
@@ -3380,13 +3406,13 @@ impl Sim {
             }
             if !step.enabled {
                 if let Some(ops) = node_ops.get_mut(idx) {
-                    ops.extend(wait);
+                    ops.extend(nested_wait);
                 }
                 continue;
             }
             if let Kind::ChildGraph { graph: child, .. } = &step.kind {
                 let child = self.resolved_graph(*child)?;
-                let add = self.enqueue_graph(child, s, head, stack, &wait)?;
+                let add = self.enqueue_graph(child, s, head, stack, &nested_wait)?;
                 head = false;
                 n = n.saturating_add(add);
                 self.note_nested_tail(
@@ -3414,7 +3440,7 @@ impl Sim {
                     s,
                     head,
                     stack,
-                    &wait,
+                    &nested_wait,
                 )?;
                 head = false;
                 n = n.saturating_add(add);
@@ -3425,7 +3451,7 @@ impl Sim {
                         s,
                         head,
                         stack,
-                        &wait,
+                        &nested_wait,
                     )?;
                     n = n.saturating_add(add);
                 }
@@ -3448,7 +3474,7 @@ impl Sim {
                     s,
                     head,
                     stack,
-                    &wait,
+                    &nested_wait,
                 )?;
                 head = false;
                 n = n.saturating_add(add);
@@ -3468,6 +3494,9 @@ impl Sim {
                 let tick = tick?;
                 for dep in &wait {
                     self.add_op_dep(tick, *dep);
+                }
+                for dep in &start_wait {
+                    self.add_op_start_dep(tick, *dep);
                 }
                 if let Some(t) = body_tail {
                     if t != tick {
@@ -3498,7 +3527,7 @@ impl Sim {
                         s,
                         head,
                         stack,
-                        &wait,
+                        &nested_wait,
                     )?;
                     head = false;
                     n = n.saturating_add(add);
@@ -3533,6 +3562,9 @@ impl Sim {
             let id = self.submit_launch(step.device, s, step.kind.clone(), launch)?;
             for dep in wait {
                 self.add_op_dep(id, dep);
+            }
+            for dep in start_wait {
+                self.add_op_start_dep(id, dep);
             }
             if let Some(event) = rec {
                 let _prev = rec_ops.insert(self.event_root(event), id);
@@ -3644,9 +3676,11 @@ impl Sim {
         }
         if step.deps.len() == 1 {
             if let Some(pred) = step.deps.first().copied() {
-                if let Some(s) = node_stream.get(pred).copied().flatten() {
-                    self.bind_graph_worker(step.device, launch, s);
-                    return s;
+                if step.edge_from_port(pred) != GraphKernelNodePort::LAUNCH_COMPLETION {
+                    if let Some(s) = node_stream.get(pred).copied().flatten() {
+                        self.bind_graph_worker(step.device, launch, s);
+                        return s;
+                    }
                 }
             }
         }
@@ -3679,6 +3713,15 @@ impl Sim {
         if let Some(op) = self.ops.get_mut(&id) {
             if !op.deps.contains(&dep) {
                 op.deps.push(dep);
+            }
+        }
+    }
+
+    fn add_op_start_dep(&mut self, id: OpId, dep: OpId) {
+        self.add_op_dep(id, dep);
+        if let Some(op) = self.ops.get_mut(&id) {
+            if !op.start_deps.contains(&dep) {
+                op.start_deps.push(dep);
             }
         }
     }
@@ -7439,7 +7482,9 @@ impl Sim {
     /// `deps` and `data` must be the same length (`"graph add node data"`).
     /// [`GraphDependencyType::DEFAULT`] with ports 0 is
     /// [`Self::graph_add_node`]. Programmatic type Invalid
-    /// `"graph dependency type"`; nonzero ports `"graph edge port"`. Edge
+    /// `"graph dependency type"`. [`GraphKernelNodePort::LAUNCH_COMPLETION`]
+    /// waits for a source kernel to start. Other nonzero ports Invalid
+    /// `"graph edge port"`. Edge
     /// checks run before the node is created (all-or-nothing). Capture cannot
     /// include it. Illegal on an instantiated exec. Typed
     /// [`Self::graph_add_node`] stays (NULL `dependencyData`).
@@ -7455,10 +7500,15 @@ impl Sim {
                 why: "graph add node data",
             });
         }
-        for &edge in data {
+        for (&from, &edge) in deps.iter().zip(data.iter()) {
             Self::check_graph_edge_data(edge)?;
+            if edge.from_port == GraphKernelNodePort::LAUNCH_COMPLETION {
+                self.require_graph_kernel_edge_src(graph, from)?;
+            }
         }
-        self.graph_add_node(graph, deps, params)
+        let added = self.graph_add_node(graph, deps, params)?;
+        self.store_graph_edge_data(graph, added.node, deps, data)?;
+        Ok(added)
     }
 
     fn graph_add_node_kind(
@@ -8820,7 +8870,9 @@ impl Sim {
     ///
     /// [`GraphDependencyType::DEFAULT`] with ports 0 is
     /// [`Self::graph_add_dependencies`]. Programmatic type Invalid
-    /// `"graph dependency type"`. Nonzero ports Invalid `"graph edge port"`.
+    /// `"graph dependency type"`. [`GraphKernelNodePort::LAUNCH_COMPLETION`]
+    /// waits for a source kernel to start. Other nonzero ports Invalid
+    /// `"graph edge port"`.
     /// Capture cannot include it. Illegal on an instantiated exec.
     pub fn graph_add_dependencies_with_data(
         &mut self,
@@ -8837,17 +8889,34 @@ impl Sim {
     /// All-or-nothing on type, ports, cycle, and index. Empty `edges` is
     /// success. [`GraphDependencyType::DEFAULT`] with ports 0 is
     /// [`Self::graph_add_dependencies_n`]. Programmatic type is not modeled.
-    /// Capture cannot include it. Illegal on an instantiated exec.
+    /// [`GraphKernelNodePort::LAUNCH_COMPLETION`] waits for a source kernel
+    /// to start. Capture cannot include it. Illegal on an instantiated exec.
     pub fn graph_add_dependencies_n_with_data(
         &mut self,
         graph: GraphId,
         edges: &[(usize, usize, GraphEdgeData)],
     ) -> Result<(), SimError> {
-        for &(_, _, data) in edges {
+        for &(from, _, data) in edges {
             Self::check_graph_edge_data(data)?;
+            if data.from_port == GraphKernelNodePort::LAUNCH_COMPLETION {
+                self.require_graph_kernel_edge_src(graph, from)?;
+            }
         }
         let pairs: Vec<(usize, usize)> = edges.iter().map(|&(from, to, _)| (from, to)).collect();
-        self.graph_add_dependencies_n(graph, &pairs)
+        self.graph_add_dependencies_n(graph, &pairs)?;
+        for &(from, to, data) in edges {
+            if data == GraphEdgeData::default() {
+                continue;
+            }
+            let g = self.graphs.get_mut(&graph).ok_or(SimError::Invalid {
+                why: "unknown graph",
+            })?;
+            let step = live_ok_mut(g.steps.get_mut(to).ok_or(SimError::Invalid {
+                why: "unknown graph node",
+            })?)?;
+            let _prev = step.edge_data.insert(from, data);
+        }
+        Ok(())
     }
 
     fn check_graph_edge_data(data: GraphEdgeData) -> Result<(), SimError> {
@@ -8856,10 +8925,52 @@ impl Sim {
                 why: "graph dependency type",
             });
         }
-        if data.from_port != 0 || data.to_port != 0 {
+        if data.to_port != 0 {
             return Err(SimError::Invalid {
                 why: "graph edge port",
             });
+        }
+        match data.from_port {
+            GraphKernelNodePort::DEFAULT | GraphKernelNodePort::LAUNCH_COMPLETION => Ok(()),
+            _ => Err(SimError::Invalid {
+                why: "graph edge port",
+            }),
+        }
+    }
+
+    fn require_graph_kernel_edge_src(&self, graph: GraphId, from: usize) -> Result<(), SimError> {
+        let g = self.graphs.get(&graph).ok_or(SimError::Invalid {
+            why: "unknown graph",
+        })?;
+        let step = live_ok(g.steps.get(from).ok_or(SimError::Invalid {
+            why: "unknown graph node",
+        })?)?;
+        if !matches!(step.kind, Kind::Kernel { .. }) {
+            return Err(SimError::Invalid {
+                why: "graph edge port",
+            });
+        }
+        Ok(())
+    }
+
+    fn store_graph_edge_data(
+        &mut self,
+        graph: GraphId,
+        node: usize,
+        deps: &[usize],
+        data: &[GraphEdgeData],
+    ) -> Result<(), SimError> {
+        let g = self.graphs.get_mut(&graph).ok_or(SimError::Invalid {
+            why: "unknown graph",
+        })?;
+        let step = live_ok_mut(g.steps.get_mut(node).ok_or(SimError::Invalid {
+            why: "unknown graph node",
+        })?)?;
+        for (&from, &edge) in deps.iter().zip(data.iter()) {
+            if edge == GraphEdgeData::default() {
+                continue;
+            }
+            let _prev = step.edge_data.insert(from, edge);
         }
         Ok(())
     }
@@ -8920,6 +9031,7 @@ impl Sim {
                 why: "graph dependency",
             })?;
             step.deps.retain(|d| *d != from);
+            let _gone = step.edge_data.remove(&from);
         }
         Ok(())
     }
@@ -8991,17 +9103,23 @@ impl Sim {
 
     /// `cudaGraphNodeGetDependencies` v2: `(from, data)` predecessors.
     ///
-    /// Existing edges are [`GraphDependencyType::DEFAULT`] with ports 0
-    /// (identity with [`Self::graph_node_deps`]). Query; legal during capture.
+    /// Existing edges report stored [`GraphEdgeData`] (Default ports 0 when
+    /// unset). Query; legal during capture.
     pub fn graph_node_deps_with_data(
         &self,
         graph: GraphId,
         i: usize,
     ) -> Result<Vec<(usize, GraphEdgeData)>, SimError> {
-        Ok(self
-            .graph_node_deps(graph, i)?
+        let froms = self.graph_node_deps(graph, i)?;
+        let g = self.graphs.get(&graph).ok_or(SimError::Invalid {
+            why: "unknown graph",
+        })?;
+        let step = live_ok(g.steps.get(i).ok_or(SimError::Invalid {
+            why: "unknown graph node",
+        })?)?;
+        Ok(froms
             .into_iter()
-            .map(|from| (from, GraphEdgeData::default()))
+            .map(|from| (from, step.edge_data_of(from)))
             .collect())
     }
 
@@ -9037,17 +9155,25 @@ impl Sim {
 
     /// `cudaGraphGetEdges` v2: `(from, to, data)` in node-add order.
     ///
-    /// Existing edges are [`GraphDependencyType::DEFAULT`] with ports 0
-    /// (Programmatic type is not stored). Query; legal during capture.
+    /// Existing edges report stored [`GraphEdgeData`] (Default ports 0 when
+    /// unset; Programmatic type is not stored). Query; legal during capture.
     pub fn graph_edges_with_data(
         &self,
         graph: GraphId,
     ) -> Result<Vec<(usize, usize, GraphEdgeData)>, SimError> {
-        Ok(self
-            .graph_edges(graph)?
-            .into_iter()
-            .map(|(from, to)| (from, to, GraphEdgeData::default()))
-            .collect())
+        let g = self.graphs.get(&graph).ok_or(SimError::Invalid {
+            why: "unknown graph",
+        })?;
+        let mut edges = Vec::new();
+        for (to, step) in g.steps.iter().enumerate() {
+            if step.destroyed {
+                continue;
+            }
+            for &from in &step.deps {
+                edges.push((from, to, step.edge_data_of(from)));
+            }
+        }
+        Ok(edges)
     }
 
     /// `cudaGraphDebugDotPrint` of stored node kinds and edges.
@@ -9156,18 +9282,31 @@ impl Sim {
 
     /// `cudaGraphNodeGetDependentNodes` v2: `(to, data)` successors.
     ///
-    /// Existing edges are [`GraphDependencyType::DEFAULT`] with ports 0
-    /// (identity with [`Self::graph_node_dependents`]). Query; legal during
-    /// capture.
+    /// Existing edges report stored [`GraphEdgeData`] (Default ports 0 when
+    /// unset). Query; legal during capture.
     pub fn graph_node_dependents_with_data(
         &self,
         graph: GraphId,
         i: usize,
     ) -> Result<Vec<(usize, GraphEdgeData)>, SimError> {
-        Ok(self
-            .graph_node_dependents(graph, i)?
-            .into_iter()
-            .map(|to| (to, GraphEdgeData::default()))
+        let g = self.graphs.get(&graph).ok_or(SimError::Invalid {
+            why: "unknown graph",
+        })?;
+        if i >= g.steps.len() {
+            return Err(SimError::Invalid {
+                why: "graph dependency",
+            });
+        }
+        if g.steps.get(i).is_some_and(|s| s.destroyed) {
+            return Err(SimError::Invalid {
+                why: "unknown graph node",
+            });
+        }
+        Ok(g.steps
+            .iter()
+            .enumerate()
+            .filter(|(_, s)| !s.destroyed && s.deps.contains(&i))
+            .map(|(to, s)| (to, s.edge_data_of(i)))
             .collect())
     }
 
@@ -11507,6 +11646,7 @@ impl Sim {
             stream,
             kind,
             deps: Vec::new(),
+            edge_data: BTreeMap::new(),
             enabled: true,
             destroyed: false,
             priority,
@@ -19033,6 +19173,7 @@ impl Sim {
             stream,
             kind,
             deps,
+            edge_data: BTreeMap::new(),
             enabled: true,
             destroyed: false,
             priority,
@@ -19182,6 +19323,7 @@ impl Sim {
                 stream,
                 kind,
                 deps,
+                start_deps: Vec::new(),
                 done: false,
                 cancelled: false,
                 launch,
@@ -19607,6 +19749,7 @@ impl Sim {
                     ..MemcpyOp::default()
                 }),
                 deps: deps.to_vec(),
+                start_deps: Vec::new(),
                 done: false,
                 cancelled: false,
                 launch: LaunchCost::Kernel,
@@ -20264,6 +20407,9 @@ impl Sim {
     }
 
     fn dep_satisfied(&self, op: &Op, dep: OpId) -> bool {
+        if op.start_deps.contains(&dep) {
+            return self.ops.get(&dep).is_some_and(|p| p.start_ns.is_some());
+        }
         if self.op_done(dep) {
             return true;
         }
@@ -23093,6 +23239,7 @@ fn remap_nested_graphs(
             stream: step.stream,
             kind,
             deps: step.deps.clone(),
+            edge_data: step.edge_data.clone(),
             enabled: step.enabled,
             destroyed: step.destroyed,
             priority: step.priority,
@@ -23702,6 +23849,23 @@ fn graph_node_waits(
         }
     }
     for d in &step.deps {
+        if step.edge_from_port(*d) == GraphKernelNodePort::LAUNCH_COMPLETION {
+            continue;
+        }
+        let ops = node_ops.get(*d).ok_or(SimError::Invalid {
+            why: "graph dependency",
+        })?;
+        wait.extend(ops.iter().copied());
+    }
+    Ok(wait)
+}
+
+fn graph_node_start_waits(step: &GraphStep, node_ops: &[Vec<OpId>]) -> Result<Vec<OpId>, SimError> {
+    let mut wait = Vec::new();
+    for d in &step.deps {
+        if step.edge_from_port(*d) != GraphKernelNodePort::LAUNCH_COMPLETION {
+            continue;
+        }
         let ops = node_ops.get(*d).ok_or(SimError::Invalid {
             why: "graph dependency",
         })?;

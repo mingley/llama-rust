@@ -5409,7 +5409,17 @@ model, do not celebrate the sim.
     External. `gpu-profile capture` is still refused. Dual score still has
     no `$/M tokens`.
 
-503. [ ] Next numbered PLAN item after 502 is the next `gpu-sim` / Engine /
+503. [x] `gpu-sim` CUDA graph launch-completion edge ports:
+    [`GraphKernelNodePort::LAUNCH_COMPLETION`] (`cudaGraphKernelNodePortLaunchCompletion`)
+    on [`GraphEdgeData::from_port`] waits for the source kernel to start,
+    not finish. Typed [`graph_add_dependencies`] stays Default ports 0
+    (completion wait). Programmatic type and port 1 stay Invalid. Source
+    must be a kernel. GetEdges / GetDependencies v2 report the stored
+    ports. This VM does not invent an Engine flag for edge ports or
+    nonzero `to_port`. `gpu-profile capture` is still refused. Dual score
+    still has no `$/M tokens`.
+
+504. [ ] Next numbered PLAN item after 503 is the next `gpu-sim` / Engine /
     serve / expertvm mechanical API that is still missing, or the next official
     decode family. Prefer remaining CUDA-shaped twins over more
     OpenAI HTTP veneer. Do not invent F32 `output.scale`. Do not invent a
@@ -5745,6 +5755,10 @@ model, do not celebrate the sim.
     second instantiate, or ExecUpdate. Do not invent `CUgraphDeviceNode` or
     device-side kernel-node updates. Do not invent an Engine flag for
     device-updatable opt-out.
+    Do not invent a second `cudaGraphKernelNodePortLaunchCompletion` /
+    [`GraphEdgeData::launch_completion`]. Do not invent Engine
+    `--graph-edge-port`. Do not invent nonzero `to_port`. Do not invent
+    [`GraphKernelNodePort::PROGRAMMATIC`] edges.
     Do not
     spend the next item on an OpenAI-compatible HTTP veneer.
 

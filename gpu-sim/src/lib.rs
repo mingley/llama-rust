@@ -1114,8 +1114,9 @@
 //! ([`GraphNodeParams`] plus dependency indices in the same call). Typed
 //! `graph_add_*` stay (empty deps). [`graph_add_node_with_data`](Sim::graph_add_node_with_data)
 //! is `cuGraphAddNode_v2` (`dependencyData`; Default type with ports 0 is
-//! identity; length mismatch Invalid `"graph add node data"`). Programmatic
-//! type stays Invalid. No Engine `--graph-add-node-data`.
+//! identity; length mismatch Invalid `"graph add node data"`).
+//! [`GraphKernelNodePort::LAUNCH_COMPLETION`] waits for a source kernel to
+//! start. Programmatic type stays Invalid. No Engine `--graph-add-node-data`.
 //! [`GraphNodeParams::If`] / `IfElse` /
 //! `While` / `Switch` fill [`GraphAddNode`] bodies. Typed helpers
 //! [`graph_add_if`](Sim::graph_add_if), `graph_add_if_else`, `graph_add_while`,
@@ -1166,13 +1167,15 @@
 //! same APIs with `numDependencies` from/to pairs (all-or-nothing).
 //! [`graph_add_dependencies_n_with_data`](Sim::graph_add_dependencies_n_with_data)
 //! is `cudaGraphAddDependencies` v2 ([`GraphEdgeData`]; Default type with
-//! ports 0 is identity; Programmatic type is Invalid).
+//! ports 0 is identity; Programmatic type is Invalid;
+//! [`GraphKernelNodePort::LAUNCH_COMPLETION`] waits for a source kernel to
+//! start).
 //! [`graph_edges_with_data`](Sim::graph_edges_with_data) is
-//! `cudaGraphGetEdges` v2 (existing edges are Default, ports 0). Query;
+//! `cudaGraphGetEdges` v2 (stored edge data; Default ports 0 when unset). Query;
 //! legal during capture. [`graph_node_deps_with_data`](Sim::graph_node_deps_with_data) /
 //! [`graph_node_dependents_with_data`](Sim::graph_node_dependents_with_data)
-//! are `cudaGraphNodeGetDependencies` / `GetDependentNodes` v2 (existing
-//! edges are Default, ports 0). Query; legal during capture.
+//! are `cudaGraphNodeGetDependencies` / `GetDependentNodes` v2 (stored edge
+//! data). Query; legal during capture.
 //! [`graph_remove_dependencies`](Sim::graph_remove_dependencies) is
 //! `cudaGraphRemoveDependencies` (illegal on an exec and during capture).
 //! [`graph_destroy_node`](Sim::graph_destroy_node) is `cudaGraphDestroyNode`
@@ -1295,22 +1298,22 @@ pub use ops::{
     GpuDirectRdmaWritesOrdering, GpuOp, GraphAddNode, GraphChildGraphOwnership, GraphCondFlags,
     GraphCreateFlags, GraphDebugDotFlags, GraphDependencyType, GraphEdgeData,
     GraphExecUpdateResult, GraphExecUpdateResultInfo, GraphInstantiateFlags,
-    GraphInstantiateParams, GraphInstantiateResult, GraphMemAttr, GraphNodeKind, GraphNodeParams,
-    GraphUserObjectFlags, GreenCtxFlags, HostAllocFlags, HostGetDevicePointerFlags, HostNodeParams,
-    InitDeviceFlags, IpcMemFlags, KernelAttrs, KernelBuf, KernelKind, KernelNodeAttr,
-    KernelNodeAttrValue, KernelNodeParams, LaunchCompletionEvent, MemAccessDesc, MemAccessFlags,
-    MemAdvise, MemAllocationGranularity, MemAllocationProp, MemAllocationType, MemAttach,
-    MemAttachFlags, MemCreateFlags, MemExportFlags, MemHandleType, MemHandleUsage, MemLocationType,
-    MemMapFlags, MemPoolAttr, MemPoolExportFlags, MemPoolProps, MemRangeAttr, MemRangeAttrValue,
-    MemRangeHandleFlags, MemRangeHandleType, MemReserveFlags, MemSyncDomain, MemSyncDomainMap,
-    MemcpyAttributes, MemcpyFlags, MemcpyNodeParams, MemcpyOp, MemcpySrcAccessOrder, MemoryType,
-    MemsetNodeParams, MemsetOp, MulticastBindFlags, MulticastCreateFlags, MulticastGranularity,
-    MulticastObjectProp, NvSciSyncAttrFlags, Operation, PdlLaunch, PeerAccessFlags, Place,
-    PointerAttr, PointerAttributes, PortableClusterMode, PortableSharedMode, PrefetchFlags,
-    ProgrammaticEvent, ProgrammaticLaunch, SharedMemCarveout, SharedMemoryMode, SmResource,
-    StreamAttr, StreamAttrValue, StreamCallbackFlags, StreamCaptureInfo, StreamCaptureMode,
-    StreamCreateFlags, SynchronizationPolicy, UserObjectFlags, WaitValueCmp, WaitValueFlags,
-    WriteValueFlags,
+    GraphInstantiateParams, GraphInstantiateResult, GraphKernelNodePort, GraphMemAttr,
+    GraphNodeKind, GraphNodeParams, GraphUserObjectFlags, GreenCtxFlags, HostAllocFlags,
+    HostGetDevicePointerFlags, HostNodeParams, InitDeviceFlags, IpcMemFlags, KernelAttrs,
+    KernelBuf, KernelKind, KernelNodeAttr, KernelNodeAttrValue, KernelNodeParams,
+    LaunchCompletionEvent, MemAccessDesc, MemAccessFlags, MemAdvise, MemAllocationGranularity,
+    MemAllocationProp, MemAllocationType, MemAttach, MemAttachFlags, MemCreateFlags,
+    MemExportFlags, MemHandleType, MemHandleUsage, MemLocationType, MemMapFlags, MemPoolAttr,
+    MemPoolExportFlags, MemPoolProps, MemRangeAttr, MemRangeAttrValue, MemRangeHandleFlags,
+    MemRangeHandleType, MemReserveFlags, MemSyncDomain, MemSyncDomainMap, MemcpyAttributes,
+    MemcpyFlags, MemcpyNodeParams, MemcpyOp, MemcpySrcAccessOrder, MemoryType, MemsetNodeParams,
+    MemsetOp, MulticastBindFlags, MulticastCreateFlags, MulticastGranularity, MulticastObjectProp,
+    NvSciSyncAttrFlags, Operation, PdlLaunch, PeerAccessFlags, Place, PointerAttr,
+    PointerAttributes, PortableClusterMode, PortableSharedMode, PrefetchFlags, ProgrammaticEvent,
+    ProgrammaticLaunch, SharedMemCarveout, SharedMemoryMode, SmResource, StreamAttr,
+    StreamAttrValue, StreamCallbackFlags, StreamCaptureInfo, StreamCaptureMode, StreamCreateFlags,
+    SynchronizationPolicy, UserObjectFlags, WaitValueCmp, WaitValueFlags, WriteValueFlags,
 };
 pub use probe::{probe_topology, P2pProbe, TopologyProbe};
 pub use profile::{
@@ -26072,6 +26075,63 @@ mod tests {
             ]
         );
         let _cap = sim.end_capture().unwrap();
+    }
+
+    #[test]
+    fn graph_launch_completion_port_unblocks_at_kernel_start() {
+        let mut sim = Sim::new(pdl_two_slot());
+        let d = DeviceId(0);
+        let s = StreamId(0);
+        let a = sim.malloc(d, 4096).unwrap();
+        let g = sim.create_graph(d, s).unwrap();
+        sim.graph_add_kernel(g, KernelKind::other(1 << 30, 4096), &[a], &[a])
+            .unwrap();
+        sim.graph_add_kernel(g, KernelKind::other(8, 8), &[a], &[a])
+            .unwrap();
+        sim.graph_add_dependencies_with_data(g, 0, 1, GraphEdgeData::launch_completion())
+            .unwrap();
+        assert_eq!(
+            sim.graph_edges_with_data(g).unwrap(),
+            vec![(0, 1, GraphEdgeData::launch_completion())]
+        );
+        assert_eq!(
+            sim.graph_node_deps_with_data(g, 1).unwrap(),
+            vec![(0, GraphEdgeData::launch_completion())]
+        );
+        assert_eq!(
+            sim.graph_node_dependents_with_data(g, 0).unwrap(),
+            vec![(1, GraphEdgeData::launch_completion())]
+        );
+        let empty = sim.create_graph(d, s).unwrap();
+        sim.graph_add_empty(empty).unwrap();
+        sim.graph_add_kernel(empty, KernelKind::other(8, 8), &[a], &[a])
+            .unwrap();
+        let err = sim
+            .graph_add_dependencies_with_data(empty, 0, 1, GraphEdgeData::launch_completion())
+            .unwrap_err();
+        match err {
+            SimError::Invalid { why } => assert!(why.contains("graph edge port"), "{why}"),
+            other => panic!("{other:?}"),
+        }
+        let n = sim.launch_graph(g, s).unwrap();
+        assert_eq!(n, 2);
+        sim.synchronize().unwrap();
+        let ks: Vec<_> = sim
+            .operations()
+            .filter(|o| matches!(o.kind, GpuOp::Kernel { .. }))
+            .collect();
+        assert_eq!(ks.len(), 2);
+        let start0 = ks[0].start_ns.expect("k0 start");
+        let done0 = ks[0].done_ns.expect("k0 done");
+        let start1 = ks[1].start_ns.expect("k1 start");
+        assert!(
+            start1 >= start0,
+            "launch-completion port must wait for source start; start1={start1} start0={start0}"
+        );
+        assert!(
+            start1 < done0,
+            "launch-completion port must not wait for source done; start1={start1} done0={done0}"
+        );
     }
 
     #[test]

@@ -3901,6 +3901,24 @@ impl GraphDependencyType {
     pub const PROGRAMMATIC: u8 = 1;
 }
 
+/// `cudaGraphKernelNodePort*` for [`GraphEdgeData::from_port`].
+///
+/// [`Self::DEFAULT`] waits for the source kernel to finish.
+/// [`Self::LAUNCH_COMPLETION`] waits until that kernel has started
+/// (`cudaGraphKernelNodePortLaunchCompletion`). [`Self::PROGRAMMATIC`] is
+/// not modeled (Invalid `"graph edge port"`; needs
+/// [`GraphDependencyType::PROGRAMMATIC`]).
+pub struct GraphKernelNodePort;
+
+impl GraphKernelNodePort {
+    /// `cudaGraphKernelNodePortDefault` (`0`).
+    pub const DEFAULT: u8 = 0;
+    /// `cudaGraphKernelNodePortProgrammatic` (`1`). Not modeled.
+    pub const PROGRAMMATIC: u8 = 1;
+    /// `cudaGraphKernelNodePortLaunchCompletion` (`2`).
+    pub const LAUNCH_COMPLETION: u8 = 2;
+}
+
 /// `cudaGraphEdgeData` for [`crate::Sim::graph_add_dependencies_n_with_data`]
 /// / [`crate::Sim::graph_add_node_with_data`] /
 /// [`crate::Sim::graph_edges_with_data`] /
@@ -3910,15 +3928,30 @@ impl GraphDependencyType {
 ///
 /// [`Self::kind`] [`GraphDependencyType::DEFAULT`] with ports 0 is identity
 /// with [`crate::Sim::graph_add_dependencies_n`]. Programmatic type is not
-/// modeled. [`Default`] is Default type, ports 0.
+/// modeled. [`Self::from_port`] [`GraphKernelNodePort::LAUNCH_COMPLETION`]
+/// waits for the source kernel to start (not finish). [`Default`] is Default
+/// type, ports 0.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub struct GraphEdgeData {
-    /// `cudaGraphEdgeData::from_port`. Must be 0 with Default type.
+    /// `cudaGraphEdgeData::from_port`. [`GraphKernelNodePort::DEFAULT`] or
+    /// [`GraphKernelNodePort::LAUNCH_COMPLETION`] with Default type.
     pub from_port: u8,
-    /// `cudaGraphEdgeData::to_port`. Must be 0 with Default type.
+    /// `cudaGraphEdgeData::to_port`. Must be 0.
     pub to_port: u8,
     /// [`GraphDependencyType`].
     pub kind: u8,
+}
+
+impl GraphEdgeData {
+    /// Default type, [`GraphKernelNodePort::LAUNCH_COMPLETION`] from-port.
+    #[must_use]
+    pub const fn launch_completion() -> Self {
+        Self {
+            from_port: GraphKernelNodePort::LAUNCH_COMPLETION,
+            to_port: 0,
+            kind: GraphDependencyType::DEFAULT,
+        }
+    }
 }
 
 /// `cudaGraphNodeGetType` tag for one graph node.
