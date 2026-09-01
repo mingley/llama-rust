@@ -577,6 +577,8 @@ graphics resources are not modeled; no Engine flag).
 (Invalid; EGL streams are not modeled; no Engine flag).
 `gpu-sim` `gl_get_devices` is `cuGLGetDevices` (Invalid; OpenGL interop
 is not modeled; no Engine flag).
+`gpu-sim` `gl_ctx_create` is `cuGLCtxCreate` (Invalid; OpenGL interop is
+not modeled; no Engine flag).
 `gpu-sim` `d3d11_get_devices` is `cuD3D11GetDevices` (Invalid; Direct3D 11
 interop is not modeled; no Engine flag).
 `gpu-sim` `d3d12_get_devices` is `cuD3D12GetDevices` (Invalid; Direct3D 12

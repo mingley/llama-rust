@@ -6627,7 +6627,13 @@ model, do not celebrate the sim.
     or `cudaChooseDevice`. `gpu-profile capture` is still refused. Dual
     score still has no `$/M tokens`.
 
-641. [ ] Next numbered PLAN item after 640 is the next `gpu-sim` / Engine /
+641. [x] `gpu-sim` `Sim::gl_ctx_create` is `cuGLCtxCreate`. Always
+    Invalid `"gl context"` because OpenGL interop is not modeled. Query;
+    legal during capture. Distinct from `gl_get_devices`. This VM does not invent `cuGLMapBufferObject`, Engine `--gl-ctx`,
+    or `cudaChooseDevice`. `gpu-profile capture` is still refused. Dual
+    score still has no `$/M tokens`.
+
+642. [ ] Next numbered PLAN item after 641 is the next `gpu-sim` / Engine /
     serve / expertvm mechanical API that is still missing, or the next official
     decode family. Prefer remaining CUDA-shaped twins over more
     OpenAI HTTP veneer. Do not invent F32 `output.scale`. Do not invent a
@@ -6996,6 +7002,9 @@ model, do not celebrate the sim.
     Do not invent a second `cuTexObjectGetResourceViewDesc` /
     `tex_object_get_resource_view_desc`. Do not invent Engine `--tex-view-desc`. Do not invent
     `CU_RES_VIEW_FORMAT` this slice. Do not reverse `"tex view desc"`.
+    Do not invent a second `cuGLCtxCreate` / `gl_ctx_create`. Do not
+    invent Engine `--gl-ctx`. Do not invent `cuGLMapBufferObject` this
+    slice. Do not reverse `"gl context"`.
     Do not invent a second `cudaStreamAddCallback`.
     Do not invent Engine `--stream-callback` (same wall as second live
     `cudaLaunchHostFunc` after miss DMA).
@@ -7470,6 +7479,9 @@ model, do not celebrate the sim.
     not invent Engine `--get-tex-view`. Do not invent a resource-view
     format enum this slice. Do not reverse tex view desc remaining
     unsupported.
+    Do not invent a second `gl_ctx_create` API. Do not invent
+    Engine `--create-gl-ctx`. Do not invent `cuGLRegisterBufferObject`
+    this slice. Do not reverse OpenGL context remaining unsupported.
     Do not invent a second DeviceLaunch in-flight destroy-complete check or Engine
     `--device-launch-destroy`. Do not abort an in-flight DeviceLaunch when
     `destroy_graph` succeeds. Do not delay destroy of an idle exec. Do not invent
@@ -8146,6 +8158,9 @@ model, do not celebrate the sim.
     Do not invent a second `tex_object_get_resource_view_desc` method.
     Do not invent Engine `--cu-tex-object-get-resource-view-desc`. Do not reverse wrapping
     cuTexObjectGetResourceViewDesc Invalid.
+    Do not invent a second `gl_ctx_create` method. Do not invent
+    Engine `--cu-gl-ctx-create`. Do not reverse wrapping cuGLCtxCreate
+    Invalid.
     Do not
     spend the next item on an OpenAI-compatible HTTP veneer.
 
