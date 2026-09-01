@@ -986,7 +986,8 @@
 //! [`graph_add_node`](Sim::graph_add_node) is `cudaGraphAddNode`
 //! ([`GraphNodeParams`] plus dependency indices in the same call). Typed
 //! `graph_add_*` stay (empty deps). IF/WHILE/SWITCH stay
-//! [`graph_add_if`](Sim::graph_add_if) / `graph_add_while` / `graph_add_switch`.
+//! [`graph_add_if`](Sim::graph_add_if) / [`graph_add_if_else`](Sim::graph_add_if_else) /
+//! `graph_add_while` / `graph_add_switch`.
 //! [`graph_add_set_conditional`](Sim::graph_add_set_conditional) is the
 //! graph-build analog of captured [`set_conditional`](Sim::set_conditional)
 //! ([`GraphNodeParams::SetConditional`]; handle is topology, `value` is a
@@ -1078,9 +1079,10 @@
 //! `cudaGraphNodeGetType`.
 //! [`graph_conditional_create`](Sim::graph_conditional_create) /
 //! [`graph_conditional_create_with_flags`](Sim::graph_conditional_create_with_flags) /
-//! [`graph_add_if`](Sim::graph_add_if) are `cudaGraphConditionalHandleCreate`
-//! and an IF node (`cudaGraphCondTypeIf`). Body ops skip at start when the
-//! handle is `0`. [`GraphCondFlags::ASSIGN_DEFAULT`] is identity with the
+//! [`graph_add_if`](Sim::graph_add_if) / [`graph_add_if_else`](Sim::graph_add_if_else)
+//! are `cudaGraphConditionalHandleCreate` and an IF node
+//! (`cudaGraphCondTypeIf` size 1 / size 2). Then-body ops skip at start when the
+//! handle is `0`; size 2 runs the else-body instead. [`GraphCondFlags::ASSIGN_DEFAULT`] is identity with the
 //! unflagged create (each launch resets to the create-time default). Flags `0`
 //! keeps the handle across launches. [`set_conditional`](Sim::set_conditional) is device
 //! `cudaGraphSetConditional` (capture allowed; `ASSIGN_DEFAULT` launches
@@ -22947,6 +22949,67 @@ mod tests {
         match err {
             SimError::Invalid { why } => assert!(why.contains("capture"), "{why}"),
             e => panic!("{e:?}"),
+        }
+        let _end = sim.end_capture().unwrap();
+    }
+
+    #[test]
+    fn graph_add_if_else_is_cuda_cond_if_size_two() {
+        let then_k = KernelKind::other(1 << 40, 4096);
+        let else_k = KernelKind::other(1 << 20, 4096);
+        let mut sim = Sim::new(h100());
+        let d = DeviceId(0);
+        let s = StreamId(0);
+        let a = sim.alloc(d, 4096, s).unwrap();
+        enq(sim.memcpy_pinned_to_device(d, a, 4096, s));
+        sim.synchronize().unwrap();
+        let g = sim.create_graph(d, s).unwrap();
+        let h = sim.graph_conditional_create(g, 0).unwrap();
+        sim.graph_add_set_conditional(g, h, 1).unwrap();
+        let (then_body, else_body) = sim.graph_add_if_else(g, h).unwrap();
+        sim.graph_add_kernel(then_body, then_k, &[a], &[a]).unwrap();
+        sim.graph_add_kernel(else_body, else_k, &[a], &[a]).unwrap();
+        sim.graph_add_dependencies(g, 0, 1).unwrap();
+        assert_ne!(then_body, else_body);
+        assert_eq!(sim.graph_if_nodes(g).unwrap().len(), 1);
+        let exec = sim.instantiate_graph(g).unwrap();
+        assert!(sim.graph_instantiated(then_body).unwrap());
+        assert!(sim.graph_instantiated(else_body).unwrap());
+        sim.upload_graph(exec).unwrap();
+        let t0 = sim.clock_ns();
+        let n0 = sim.launch_graph(exec, s).unwrap();
+        sim.synchronize().unwrap();
+        let then_ns = sim.clock_ns().saturating_sub(t0);
+        assert_eq!(n0, 3);
+        let (node, _, value) = sim.graph_unique_set_conditional(exec).unwrap();
+        assert_eq!(value, 1);
+        sim.graph_exec_set_conditional_params(exec, node, 0)
+            .unwrap();
+        let t1 = sim.clock_ns();
+        let n1 = sim.launch_graph(exec, s).unwrap();
+        sim.synchronize().unwrap();
+        let else_ns = sim.clock_ns().saturating_sub(t1);
+        assert_eq!(n1, 3);
+        assert!(
+            else_ns < then_ns,
+            "handle 0 must run the else-body; then={then_ns} else={else_ns}"
+        );
+        assert!(else_ns > 0, "else-body must not be a skip; else={else_ns}");
+        let other = sim.create_graph(d, s).unwrap();
+        let err = sim.graph_add_if_else(other, h).unwrap_err();
+        match err {
+            SimError::Invalid { why } => assert!(why.contains("mismatch"), "{why}"),
+            e => panic!("{e:?}"),
+        }
+        let err = sim.graph_add_if_else(exec, h).unwrap_err();
+        match err {
+            SimError::Invalid { why } => assert!(why.contains("instantiated"), "{why}"),
+            e => panic!("{e:?}"),
+        }
+        sim.begin_capture(d, s).unwrap();
+        match sim.graph_add_if_else(g, h) {
+            Err(SimError::Invalid { why }) => assert!(why.contains("capture"), "{why}"),
+            other => panic!("{other:?}"),
         }
         let _end = sim.end_capture().unwrap();
     }

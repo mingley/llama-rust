@@ -2512,20 +2512,25 @@ pub enum GpuOp {
         graph: GraphId,
     },
     /// Conditional IF node (`cudaGraphNodeTypeConditional` / `If`). Expanded at
-    /// parent launch. Body ops skip at start when the handle is `0`.
+    /// parent launch. Then-body ops skip at start when the handle is `0`. The
+    /// else-body runs when the handle is `0` (`cudaGraphCondTypeIf` size 2).
     If {
         /// Handle created with [`crate::Sim::graph_conditional_create`].
         handle: CondId,
-        /// Body graph returned by [`crate::Sim::graph_add_if`].
+        /// Then-body graph returned by [`crate::Sim::graph_add_if`] /
+        /// [`crate::Sim::graph_add_if_else`].
         body: GraphId,
+        /// Else-body from [`crate::Sim::graph_add_if_else`]. `None` is size 1.
+        else_body: Option<GraphId>,
     },
     /// Device `cudaGraphSetConditional` (captured or live). Writes the handle
     /// when the op starts. Does not occupy compute or copy engines.
     SetConditional {
         /// Handle to write.
         handle: CondId,
-        /// Non-zero runs a later IF/WHILE body; SWITCH uses the value as a
-        /// branch index (`0 .. n-1`).
+        /// Non-zero runs a later IF then-body / WHILE body; SWITCH uses the
+        /// value as a branch index (`0 .. n-1`). Zero runs an IF else-body
+        /// when [`crate::Sim::graph_add_if_else`] was used.
         value: u32,
     },
     /// Conditional WHILE node (`cudaGraphCondTypeWhile`). Expanded at parent
@@ -3525,7 +3530,8 @@ pub enum GraphNodeKind {
 /// `cudaGraphNodeParams` for [`crate::Sim::graph_add_node`] /
 /// [`crate::Sim::graph_node_get_params`].
 ///
-/// IF/WHILE/SWITCH stay [`crate::Sim::graph_add_if`] / `graph_add_while` /
+/// IF/WHILE/SWITCH stay [`crate::Sim::graph_add_if`] /
+/// [`crate::Sim::graph_add_if_else`] / `graph_add_while` /
 /// `graph_add_switch` (those return body graphs). Set-conditional is
 /// [`crate::Sim::graph_add_set_conditional`] / [`Self::SetConditional`].
 /// External-semaphore nodes are not modeled.

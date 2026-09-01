@@ -591,9 +591,17 @@ impl Sim {
             Kind::ChildGraph { graph } => Kind::ChildGraph {
                 graph: self.resolved_graph(graph)?,
             },
-            Kind::If { handle, body } => Kind::If {
+            Kind::If {
+                handle,
+                body,
+                else_body,
+            } => Kind::If {
                 handle,
                 body: self.resolved_graph(body)?,
+                else_body: match else_body {
+                    Some(e) => Some(self.resolved_graph(e)?),
+                    None => None,
+                },
             },
             Kind::While { handle, body } => Kind::While {
                 handle,
@@ -633,9 +641,14 @@ impl Sim {
             Kind::ChildGraph { graph } => Kind::ChildGraph {
                 graph: self.def_id(graph),
             },
-            Kind::If { handle, body } => Kind::If {
+            Kind::If {
+                handle,
+                body,
+                else_body,
+            } => Kind::If {
                 handle,
                 body: self.def_id(body),
+                else_body: else_body.map(|e| self.def_id(e)),
             },
             Kind::While { handle, body } => Kind::While {
                 handle,
@@ -701,6 +714,8 @@ struct UserObject {
 enum CondPred {
     /// Skip when the handle is `0`.
     Nonzero(CondId),
+    /// Skip when the handle is non-zero (IF else-body).
+    Zero(CondId),
     /// Skip when the handle is not `branch`.
     Equals(CondId, u32),
 }
@@ -3234,10 +3249,18 @@ impl Sim {
                 );
                 continue;
             }
-            if let Kind::If { handle, body } = &step.kind {
+            if let Kind::If {
+                handle,
+                body,
+                else_body,
+            } = &step.kind
+            {
+                let handle = *handle;
+                let body = *body;
+                let else_body = *else_body;
                 let add = self.enqueue_pred_graph(
-                    CondPred::Nonzero(*handle),
-                    self.resolved_graph(*body)?,
+                    CondPred::Nonzero(handle),
+                    self.resolved_graph(body)?,
                     s,
                     head,
                     stack,
@@ -3245,6 +3268,17 @@ impl Sim {
                 )?;
                 head = false;
                 n = n.saturating_add(add);
+                if let Some(els) = else_body {
+                    let add = self.enqueue_pred_graph(
+                        CondPred::Zero(handle),
+                        self.resolved_graph(els)?,
+                        s,
+                        head,
+                        stack,
+                        &wait,
+                    )?;
+                    n = n.saturating_add(add);
+                }
                 self.note_nested_tail(
                     step.device,
                     s,
@@ -6759,7 +6793,8 @@ impl Sim {
     /// Typed [`Self::graph_add_kernel`] / `graph_add_memcpy` / … stay; they
     /// start with no dependencies. This call binds `deps` in the same step (all
     /// indices must already exist). IF/WHILE/SWITCH stay
-    /// [`Self::graph_add_if`] / `graph_add_while` / `graph_add_switch`.
+    /// [`Self::graph_add_if`] / `graph_add_if_else` / `graph_add_while` /
+    /// `graph_add_switch`.
     /// [`GraphNodeParams::SetConditional`] is
     /// [`Self::graph_add_set_conditional`]. Capture
     /// cannot include it. Illegal on an instantiated exec.
@@ -7145,17 +7180,54 @@ impl Sim {
         Ok(id)
     }
 
-    /// `cudaGraphAddNode` IF (`cudaGraphCondTypeIf`). Returns the body graph.
+    /// `cudaGraphAddNode` IF (`cudaGraphCondTypeIf`, size 1). Returns the then-body.
     ///
-    /// Add nodes to the body, then instantiate the parent. Body ops skip at
-    /// start when `handle` is `0`. `handle` must have been created on `graph`.
-    /// Capture cannot include it. Illegal on an instantiated exec.
+    /// Add nodes to the body, then instantiate the parent. Then-body ops skip at
+    /// start when `handle` is `0`. Size 2 (if/else) is [`Self::graph_add_if_else`].
+    /// `handle` must have been created on `graph`. Capture cannot include it.
+    /// Illegal on an instantiated exec.
     pub fn graph_add_if(&mut self, graph: GraphId, handle: CondId) -> Result<GraphId, SimError> {
         let (device, stream) = self.graph_origin_for_add(graph)?;
         self.require_cond_on_graph(handle, graph)?;
         let body = self.insert_graph(device, stream);
-        self.graph_push(graph, device, stream, Kind::If { handle, body })?;
+        self.graph_push(
+            graph,
+            device,
+            stream,
+            Kind::If {
+                handle,
+                body,
+                else_body: None,
+            },
+        )?;
         Ok(body)
+    }
+
+    /// `cudaGraphAddNode` IF (`cudaGraphCondTypeIf`, size 2). Returns then, else.
+    ///
+    /// Then-body ops skip at start when `handle` is `0`; the else-body runs
+    /// instead. `handle` must have been created on `graph`. Capture cannot
+    /// include it. Illegal on an instantiated exec. No Engine `--graph-if-else`.
+    pub fn graph_add_if_else(
+        &mut self,
+        graph: GraphId,
+        handle: CondId,
+    ) -> Result<(GraphId, GraphId), SimError> {
+        let (device, stream) = self.graph_origin_for_add(graph)?;
+        self.require_cond_on_graph(handle, graph)?;
+        let body = self.insert_graph(device, stream);
+        let else_body = self.insert_graph(device, stream);
+        self.graph_push(
+            graph,
+            device,
+            stream,
+            Kind::If {
+                handle,
+                body,
+                else_body: Some(else_body),
+            },
+        )?;
+        Ok((body, else_body))
     }
 
     /// `cudaGraphAddNode` WHILE (`cudaGraphCondTypeWhile`). Returns the body.
@@ -7276,7 +7348,7 @@ impl Sim {
             if step.destroyed {
                 continue;
             }
-            if let Kind::If { handle, body } = step.kind {
+            if let Kind::If { handle, body, .. } = step.kind {
                 out.push((i, handle, body));
             }
         }
@@ -18745,6 +18817,7 @@ impl Sim {
     fn cond_skip(&self, preds: &[CondPred]) -> bool {
         preds.iter().any(|p| match p {
             CondPred::Nonzero(h) => self.conds.get(h).is_some_and(|c| c.value == 0),
+            CondPred::Zero(h) => self.conds.get(h).is_none_or(|c| c.value != 0),
             CondPred::Equals(h, branch) => self.conds.get(h).is_none_or(|c| c.value != *branch),
         })
     }
@@ -20879,13 +20952,24 @@ fn remap_nested_graphs(
                 })?;
                 Kind::ChildGraph { graph: cloned }
             }
-            Kind::If { handle, body } => {
+            Kind::If {
+                handle,
+                body,
+                else_body,
+            } => {
                 let cloned = remap.get(body).copied().ok_or(SimError::Invalid {
                     why: "unknown graph",
                 })?;
+                let else_cloned = match else_body {
+                    Some(e) => Some(remap.get(e).copied().ok_or(SimError::Invalid {
+                        why: "unknown graph",
+                    })?),
+                    None => None,
+                };
                 Kind::If {
                     handle: *handle,
                     body: cloned,
+                    else_body: else_cloned,
                 }
             }
             Kind::While { handle, body } => {
@@ -21269,7 +21353,23 @@ fn debug_dot_label(i: usize, step: &GraphStep, flags: u32) -> String {
                 label.push_str(&ops.len().to_string());
             }
         }
-        Kind::If { handle, body } | Kind::While { handle, body } => {
+        Kind::If {
+            handle,
+            body,
+            else_body,
+        } => {
+            if flags & GraphDebugDotFlags::CONDITIONAL_NODE_PARAMS != 0 {
+                label.push_str(" h=");
+                label.push_str(&handle.0.to_string());
+                label.push_str(" body=");
+                label.push_str(&body.0.to_string());
+                if let Some(e) = else_body {
+                    label.push_str(" else=");
+                    label.push_str(&e.0.to_string());
+                }
+            }
+        }
+        Kind::While { handle, body } => {
             if flags & GraphDebugDotFlags::CONDITIONAL_NODE_PARAMS != 0 {
                 label.push_str(" h=");
                 label.push_str(&handle.0.to_string());
@@ -21331,10 +21431,17 @@ fn node_kind(kind: &Kind) -> GraphNodeKind {
 
 fn nested_graphs(kind: &Kind) -> Vec<GraphId> {
     match kind {
-        Kind::ChildGraph { graph }
-        | Kind::If { body: graph, .. }
-        | Kind::While { body: graph, .. } => {
+        Kind::ChildGraph { graph } | Kind::While { body: graph, .. } => {
             vec![*graph]
+        }
+        Kind::If {
+            body, else_body, ..
+        } => {
+            let mut out = vec![*body];
+            if let Some(e) = else_body {
+                out.push(*e);
+            }
+            out
         }
         Kind::Switch { bodies, .. } => bodies.clone(),
         _ => Vec::new(),
@@ -21343,7 +21450,16 @@ fn nested_graphs(kind: &Kind) -> Vec<GraphId> {
 
 fn cond_body_graphs(kind: &Kind) -> Vec<GraphId> {
     match kind {
-        Kind::If { body, .. } | Kind::While { body, .. } => vec![*body],
+        Kind::While { body, .. } => vec![*body],
+        Kind::If {
+            body, else_body, ..
+        } => {
+            let mut out = vec![*body];
+            if let Some(e) = else_body {
+                out.push(*e);
+            }
+            out
+        }
         Kind::Switch { bodies, .. } => bodies.clone(),
         _ => Vec::new(),
     }
@@ -21489,12 +21605,14 @@ fn op_eq(a: &Kind, b: &Kind) -> bool {
             Kind::If {
                 handle: hx,
                 body: bx,
+                else_body: ex,
             },
             Kind::If {
                 handle: hy,
                 body: by,
+                else_body: ey,
             },
-        ) => hx == hy && bx == by,
+        ) => hx == hy && bx == by && ex == ey,
         (Kind::SetConditional { handle: x, .. }, Kind::SetConditional { handle: y, .. }) => x == y,
         (
             Kind::While {

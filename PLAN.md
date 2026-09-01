@@ -4986,7 +4986,14 @@ model, do not celebrate the sim.
     `--graph-upload-stream`. `gpu-profile capture` is still
     refused. Dual score still has no `$/M tokens`.
 
-461. [ ] Next numbered PLAN item after 460 is the next `gpu-sim` / Engine /
+461. [x] `gpu-sim` `graph_add_if_else` is `cudaGraphCondTypeIf` size 2.
+    Then-body skips when the handle is `0`; the else-body runs instead.
+    `graph_add_if` stays size 1 (`else_body = None`). Capture cannot
+    include it. Illegal on an instantiated exec. No Engine
+    `--graph-if-else`. `gpu-profile capture` is still refused. Dual score
+    still has no `$/M tokens`.
+
+462. [ ] Next numbered PLAN item after 461 is the next `gpu-sim` / Engine /
     serve / expertvm mechanical API that is still missing, or the next official
     decode family. Prefer remaining CUDA-shaped twins over more
     OpenAI HTTP veneer. Do not invent F32 `output.scale`. Do not invent a
@@ -5094,6 +5101,8 @@ model, do not celebrate the sim.
     `hUploadStream` / `GraphInstantiateParams::upload_stream`.
     Stream-ordered `cuGraphUpload` / `hUploadStream` as stored-only
     (ignore the stream and still host-sync) stays weak.
+    Do not invent a second `cudaGraphCondTypeIf` else /
+    `graph_add_if_else`. Do not invent Engine `--graph-if-else`.
     Do not invent `cuDeviceGetLuid`
     (Windows).
     Do not invent gemma4 `attn_q.scale` / `attn_output.scale` / `attn_k.scale` /

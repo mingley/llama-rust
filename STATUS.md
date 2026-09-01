@@ -5,6 +5,14 @@ Visible five-turn extract: [docs/chatgpt-share-6a920fe1.md](docs/chatgpt-share-6
 Complete share-API extract: [docs/chatgpt-share-6a920fe1/](docs/chatgpt-share-6a920fe1/).
 Work lands on `main`. No PRs.
 
+## Shipped 2026-09-01 — CUDA `cudaGraphCondTypeIf` size 2
+
+`gpu-sim` `graph_add_if_else` is `cudaGraphCondTypeIf` size 2. Then-body
+skips when the handle is `0`; the else-body runs instead. `graph_add_if`
+stays size 1. Capture cannot include it. Illegal on an instantiated exec.
+No Engine `--graph-if-else`. `gpu-profile capture` is still refused. Dual
+score still has no `$/M tokens`.
+
 ## Shipped 2026-09-01 — CUDA `cudaGraphInstantiateWithParams` `hUploadStream`
 
 `gpu-sim` `GraphInstantiateParams::upload_stream` is

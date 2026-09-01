@@ -356,7 +356,7 @@ it. Independent streams still launch live. `cudaMallocAsync` / `cudaFreeAsync`
 `cudaGraphAddMemFreeNode` (same reuse / AutoFreeOnLaunch rules).
 `graph_add_node` is `cudaGraphAddNode` (`GraphNodeParams` plus dependency
 indices in the same call). Typed `graph_add_*` stay (empty deps).
-IF/WHILE/SWITCH stay `graph_add_if` / `graph_add_while` / `graph_add_switch`.
+IF/WHILE/SWITCH stay `graph_add_if` / `graph_add_if_else` / `graph_add_while` / `graph_add_switch`.
 `graph_add_set_conditional` is the graph-build analog of captured
 `set_conditional` (`GraphNodeParams::SetConditional`; handle is topology,
 `value` is a parameter).
@@ -518,8 +518,9 @@ submits). `thread_exchange_stream_capture_mode` is
 `cudaThreadExchangeStreamCaptureMode`. `graph_node_kind` is
 `cudaGraphNodeGetType`.
 `graph_conditional_create` / `graph_conditional_create_with_flags` /
-`graph_add_if` are `cudaGraphConditionalHandleCreate` and an IF node.
-Body ops skip at start when the handle is `0`. `ASSIGN_DEFAULT` is
+`graph_add_if` / `graph_add_if_else` are `cudaGraphConditionalHandleCreate`
+and an IF node (`cudaGraphCondTypeIf` size 1 / size 2). Then-body ops skip
+at start when the handle is `0`; size 2 runs the else-body instead. `ASSIGN_DEFAULT` is
 identity with the unflagged create (each launch resets to the create-time
 default). Flags `0` keeps the handle across launches. `set_conditional`
 is device `cudaGraphSetConditional` (`ASSIGN_DEFAULT` launches reset to
