@@ -5,6 +5,17 @@ Visible five-turn extract: [docs/chatgpt-share-6a920fe1.md](docs/chatgpt-share-6
 Complete share-API extract: [docs/chatgpt-share-6a920fe1/](docs/chatgpt-share-6a920fe1/).
 Work lands on `main`. No PRs.
 
+## Shipped 2026-09-01 — CUDA `cudaDevAttrComputeCapabilityMajor` / `Minor`
+
+`gpu-sim` `DeviceAttr::ComputeCapabilityMajor` / `ComputeCapabilityMinor`
+are `cudaDevAttrComputeCapabilityMajor` and `cudaDevAttrComputeCapabilityMinor`
+(`cudaDeviceProp` major and minor). Example H100 is Hopper 9.0. Query;
+legal during capture. Profile keys `compute_capability_major` /
+`compute_capability_minor`. This VM does not invent Engine
+`--compute-capability`, occupancy SM counts, clock rates, or
+`cudaChooseDevice`. `gpu-profile capture` is still refused. Dual score
+still has no `$/M tokens`.
+
 ## Shipped 2026-09-01 — CUDA `cudaGetErrorName` / `cudaGetErrorString`
 
 `gpu-sim` `SimError::error_name` / `error_string` are `cudaGetErrorName` /

@@ -466,6 +466,8 @@ ctxs keep running). `stream_get_dev_resource` is `cuStreamGetDevResource`.
 `gpu-sim` `reset_device` is `cudaDeviceReset` (no Engine flag).
 `SimError::error_name` / `error_string` are `cudaGetErrorName` /
 `cudaGetErrorString` (no Engine flag; no thread-local last error).
+`gpu-sim` compute capability is `cudaDevAttrComputeCapabilityMajor` and
+`Minor` (example H100 Hopper 9.0; no Engine flag).
 Default `--expert-sim` keeps
 one compute stream, exclusive compute (`compute_slots=1`), a full chip of
 SMs, and a full-device clock sample.

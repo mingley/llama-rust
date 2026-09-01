@@ -151,7 +151,7 @@ warp scheduler, L1, …   ← do not model
 | `host_get_device_pointer` of mapped host returns the same id (`flags` must be 0) | `cudaHostGetDevicePointer` |
 | `host_get_flags` returns the stored `HostAllocFlags` word | `cudaHostGetFlags` |
 | `alloc_host_with_flags` / `host_register_with_flags` (MAPPED / PORTABLE / WRITE_COMBINED stored; IoMemory / ReadOnly Invalid) | `cudaHostAlloc` / `cudaHostRegister` |
-| `device_get_attribute` exposes modeled SKU caps (incl. GPUDirect RDMA / CanFlushRemoteWrites / FlushWritesOptions Host / WritesOrdering None / WithCudaVMM from `LinkKind::Rdma`; MulticastSupported from `LinkKind::Nvlink`; ConcurrentManaged / DirectManagedHost / PageableHostPageTables / HostNativeAtomic / OnlyPartialHostNativeAtomic / CooperativeMultiDevice / Integrated / GenericCompression / Win32 / Win32Kmt / Fabric handle types always 0; ComputeMode always Default; NumaConfig always None; TccDriver / KernelExecTimeout / TensorMapAccessSupported / UnifiedFunctionPointers / TimelineSemaphoreInteropSupported / MemDecompressAlgorithmMask / MemDecompressMaximumLength / HostNumaVirtualMemoryManagementSupported / HostNumaMemoryPoolsSupported / HostNumaMultinodeIpcSupported always 0; CanUse64BitStreamMemOps / CanUseStreamMemOps / CanUseStreamWaitValueNor always 1) | `cudaDeviceGetAttribute` |
+| `device_get_attribute` exposes modeled SKU caps (incl. ComputeCapabilityMajor/Minor Hopper 9.0 on example H100; GPUDirect RDMA / CanFlushRemoteWrites / FlushWritesOptions Host / WritesOrdering None / WithCudaVMM from `LinkKind::Rdma`; MulticastSupported from `LinkKind::Nvlink`; ConcurrentManaged / DirectManagedHost / PageableHostPageTables / HostNativeAtomic / OnlyPartialHostNativeAtomic / CooperativeMultiDevice / Integrated / GenericCompression / Win32 / Win32Kmt / Fabric handle types always 0; ComputeMode always Default; NumaConfig always None; TccDriver / KernelExecTimeout / TensorMapAccessSupported / UnifiedFunctionPointers / TimelineSemaphoreInteropSupported / MemDecompressAlgorithmMask / MemDecompressMaximumLength / HostNumaVirtualMemoryManagementSupported / HostNumaMemoryPoolsSupported / HostNumaMultinodeIpcSupported always 0; CanUse64BitStreamMemOps / CanUseStreamMemOps / CanUseStreamWaitValueNor always 1) | `cudaDeviceGetAttribute` |
 | `device_get_exec_affinity_support` `SM_COUNT` is 0 (permille green ctx, not occupancy SM counts) | `cuDeviceGetExecAffinitySupport` |
 | `device_get_properties` wraps the same SKU caps (incl. synthetic `uuid` and PCI ids) | `cudaGetDeviceProperties` |
 | `device_get_uuid` is a synthetic 16-octet id (also `DeviceProperties.uuid`) | `cuDeviceGetUuid` |
@@ -908,6 +908,9 @@ interior offsets are not modeled). Query; legal during capture.
 `device_get_attribute` is `cudaDeviceGetAttribute` (modeled caps only;
 `TotalGlobalMem` is HBM, `AsyncEngineCount` is copy engines,
 `CanMapHostMemory` / `ManagedMemory` are always 1).
+`ComputeCapabilityMajor` and `ComputeCapabilityMinor` are Hopper 9.0 on
+example H100 (`cudaDeviceProp` major and minor). Distinct from occupancy
+SM counts. No Engine flag for compute capability.
 `device_get_exec_affinity_support` is `cuDeviceGetExecAffinitySupport`
 (`SM_COUNT` is 0; this VM uses permille green-context spans, not
 occupancy SM counts). Other type ids are Invalid.
@@ -1001,6 +1004,10 @@ distinct from `TextureAlignment` and from `MemcpyOp` 2D pitches).
 distinct from `TextureAlignment`).
 `MaxPitch` is `DeviceAttr::MAX_PITCH` (`i32::MAX`; this VM does not cap
 2D memcpy / `cudaMallocPitch` pitch; distinct from `TexturePitchAlignment`).
+`ComputeCapabilityMajor` / `ComputeCapabilityMinor` are Hopper 9.0 on
+example H100. Profile keys `compute_capability_major` /
+`compute_capability_minor`. This VM does not invent occupancy SM counts
+from compute capability.
 `DeviceP2pAttr::OnlyPartialNativeAtomicSupported` is always 0 (P2P native
 atomics are not modeled; distinct from `NativeAtomicSupported` and from
 `OnlyPartialHostNativeAtomicSupported`). This VM does not invent
@@ -1008,7 +1015,7 @@ atomics are not modeled; distinct from `NativeAtomicSupported` and from
 `StreamPrioritiesSupported` /
 `UnifiedAddressing` are always 1. `GpuOverlap` is `copy_engines > 0`.
 `device_get_properties` is `cudaGetDeviceProperties` of those same fields
-(no SM count or clock). `device_get_name` is `cudaDeviceGetName` (the
+(compute capability major/minor included; no occupancy SM count or clock). `device_get_name` is `cudaDeviceGetName` (the
 profile name). `device_get_uuid` is `cuDeviceGetUuid` (synthetic 16-octet
 id; also `DeviceProperties.uuid`). `device_get_by_uuid` is
 `cuDeviceGetByUuid` (inverse). `device_get_pci_bus_id` is

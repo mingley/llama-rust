@@ -6016,7 +6016,16 @@ model, do not celebrate the sim.
     `cudaPeekAtLastError`. `gpu-profile capture` is still refused. Dual
     score still has no `$/M tokens`.
 
-565. [ ] Next numbered PLAN item after 564 is the next `gpu-sim` / Engine /
+565. [x] `gpu-sim` `DeviceAttr::ComputeCapabilityMajor` /
+    `ComputeCapabilityMinor` are `cudaDevAttrComputeCapabilityMajor` and
+    `cudaDevAttrComputeCapabilityMinor` (`cudaDeviceProp` major and minor).
+    Example H100 is Hopper 9.0. Query; legal during capture. Profile keys
+    `compute_capability_major` / `compute_capability_minor`. This VM does
+    not invent Engine `--compute-capability`, occupancy SM counts, clock
+    rates, or `cudaChooseDevice`. `gpu-profile capture` is still refused.
+    Dual score still has no `$/M tokens`.
+
+566. [ ] Next numbered PLAN item after 565 is the next `gpu-sim` / Engine /
     serve / expertvm mechanical API that is still missing, or the next official
     decode family. Prefer remaining CUDA-shaped twins over more
     OpenAI HTTP veneer. Do not invent F32 `output.scale`. Do not invent a
@@ -6081,6 +6090,12 @@ model, do not celebrate the sim.
     `error_name` / `error_string`. Do not invent Engine `--error-name`.
     Do not reverse `Display` of `SimError`. Do not put the modeled `why`
     into `error_string` for `Invalid`.
+    Do not invent a second `cudaDevAttrComputeCapabilityMajor` /
+    `cudaDevAttrComputeCapabilityMinor` / `ComputeCapabilityMajor` /
+    `ComputeCapabilityMinor`. Do not invent Engine `--compute-capability`.
+    Do not invent occupancy SM counts from compute capability. Do not invent
+    `cudaChooseDevice`. Do not invent `cudaDevAttrWarpSize` or clock rates.
+    Do not reverse example H100 Hopper 9.0.
     Do not invent
     a second
     `cuDeviceGetUuid` / `cudaDeviceGetUuid`. Do not invent a second
@@ -6346,6 +6361,9 @@ model, do not celebrate the sim.
     `error_name` / `error_string`. Do not invent Engine `--error-name`.
     Do not reverse `Display` of `SimError`. Do not put the modeled `why`
     into `error_string` for `Invalid`.
+    Do not invent a second compute-capability DeviceAttr pair. Do not invent
+    Engine `--compute-capability`. Do not reverse Hopper 9.0 on example H100
+    / H200. Do not rank devices by SM count (occupancy stays walled).
     Do not invent a second DeviceLaunch in-flight destroy-complete check or Engine
     `--device-launch-destroy`. Do not abort an in-flight DeviceLaunch when
     `destroy_graph` succeeds. Do not delay destroy of an idle exec. Do not invent
@@ -6816,6 +6834,9 @@ model, do not celebrate the sim.
     `error_name` / `error_string`. Do not invent Engine `--error-name`.
     Do not reverse `Display` of `SimError`. Do not put the modeled `why`
     into `error_string` for `Invalid`.
+    Do not invent a second `ComputeCapabilityMajor` query. Do not invent
+    Engine `--compute-capability`. Do not invent `cudaChooseDevice` this
+    slice. Do not invent occupancy SM counts.
     Do not
     spend the next item on an OpenAI-compatible HTTP veneer.
 

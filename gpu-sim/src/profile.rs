@@ -108,6 +108,11 @@ pub struct GpuProfile {
     /// Portable cluster size (`sm_90` is 8). A larger launch needs
     /// [`crate::Sim::set_non_portable_cluster_size_allowed`]. Not a capture.
     pub portable_cluster_size: u8,
+    /// `cudaDevAttrComputeCapabilityMajor`. Example H100 is 9 (Hopper sm_90).
+    /// Not a capture. Distinct from occupancy SM counts.
+    pub compute_capability_major: u8,
+    /// `cudaDevAttrComputeCapabilityMinor`. Example H100 is 0. Not a capture.
+    pub compute_capability_minor: u8,
     /// Host-side wait tax for [`crate::ops::SynchronizationPolicy::Spin`] on
     /// `cudaStreamSynchronize` / `cudaEventSynchronize`, nanoseconds.
     ///
@@ -599,7 +604,7 @@ impl HardwareProfile {
             return String::from("gpus=0\n");
         };
         format!(
-            "name={}\ngpus={}\nhbm_bytes={}\nhbm_bps={}\nfp16_flops={}\npcie_bps={}\ncopy_engines={}\ncompute_slots={}\ncooperative_launch={}\ntdp_mw={}\nlaunch_overhead_ns={}\ngraph_launch_ns={}\ngraph_instantiate_ns={}\ngraph_update_ns={}\ngraph_set_params_ns={}\ngraph_clone_ns={}\ngraph_upload_ns={}\ngemm_util_permille={}\ngrouped_moe_permille={}\npdl_trigger_permille={}\nl2_bytes={}\nl2_persist_hit_permille={}\nmem_sync_domain_count={}\nsame_domain_fence_permille={}\nmax_blocks_per_cluster={}\nportable_cluster_size={}\nhost_sync_spin_ns={}\nhost_sync_yield_ns={}\nhost_sync_blocking_ns={}\nshared_mem_four_byte_permille={}\nshared_mem_eight_byte_permille={}\nmax_shared_mem_per_block={}\nmax_shared_mem_per_block_optin={}\nstream_priority_least={}\nstream_priority_greatest={}\npageable_permille={}\nalign_bytes={}\npool_reuse_ns={}\nhost_func_ns={}\nhost_pin_bytes={}\nva_granularity_bytes={}\nmulticast_granularity_bytes={}\nrent_usd_micros_per_hour={}\n",
+            "name={}\ngpus={}\nhbm_bytes={}\nhbm_bps={}\nfp16_flops={}\npcie_bps={}\ncopy_engines={}\ncompute_slots={}\ncooperative_launch={}\ntdp_mw={}\nlaunch_overhead_ns={}\ngraph_launch_ns={}\ngraph_instantiate_ns={}\ngraph_update_ns={}\ngraph_set_params_ns={}\ngraph_clone_ns={}\ngraph_upload_ns={}\ngemm_util_permille={}\ngrouped_moe_permille={}\npdl_trigger_permille={}\nl2_bytes={}\nl2_persist_hit_permille={}\nmem_sync_domain_count={}\nsame_domain_fence_permille={}\nmax_blocks_per_cluster={}\nportable_cluster_size={}\ncompute_capability_major={}\ncompute_capability_minor={}\nhost_sync_spin_ns={}\nhost_sync_yield_ns={}\nhost_sync_blocking_ns={}\nshared_mem_four_byte_permille={}\nshared_mem_eight_byte_permille={}\nmax_shared_mem_per_block={}\nmax_shared_mem_per_block_optin={}\nstream_priority_least={}\nstream_priority_greatest={}\npageable_permille={}\nalign_bytes={}\npool_reuse_ns={}\nhost_func_ns={}\nhost_pin_bytes={}\nva_granularity_bytes={}\nmulticast_granularity_bytes={}\nrent_usd_micros_per_hour={}\n",
             self.name,
             self.gpus.len(),
             g0.hbm_bytes,
@@ -626,6 +631,8 @@ impl HardwareProfile {
             g0.same_domain_fence_permille,
             g0.max_blocks_per_cluster,
             g0.portable_cluster_size,
+            g0.compute_capability_major,
+            g0.compute_capability_minor,
             g0.host_sync_spin_ns,
             g0.host_sync_yield_ns,
             g0.host_sync_blocking_ns,
@@ -758,6 +765,8 @@ fn h100_gpu(id: DeviceId) -> GpuProfile {
         same_domain_fence_permille: 0,
         max_blocks_per_cluster: 8,
         portable_cluster_size: 8,
+        compute_capability_major: 9,
+        compute_capability_minor: 0,
         host_sync_spin_ns: 0,
         host_sync_yield_ns: 0,
         host_sync_blocking_ns: 0,
@@ -903,6 +912,8 @@ fn parse_profile(text: &str) -> Result<HardwareProfile, SimError> {
     let mut same_domain_fence_permille: Option<u16> = None;
     let mut max_blocks_per_cluster: Option<u8> = None;
     let mut portable_cluster_size: Option<u8> = None;
+    let mut compute_capability_major: Option<u8> = None;
+    let mut compute_capability_minor: Option<u8> = None;
     let mut host_sync_spin_ns: Option<u64> = None;
     let mut host_sync_yield_ns: Option<u64> = None;
     let mut host_sync_blocking_ns: Option<u64> = None;
@@ -1010,6 +1021,8 @@ fn parse_profile(text: &str) -> Result<HardwareProfile, SimError> {
                 }
                 portable_cluster_size = Some(n);
             }
+            "compute_capability_major" => compute_capability_major = Some(parse_u8(v)?),
+            "compute_capability_minor" => compute_capability_minor = Some(parse_u8(v)?),
             "host_sync_spin_ns" => host_sync_spin_ns = Some(parse_u64(v)?),
             "host_sync_yield_ns" => host_sync_yield_ns = Some(parse_u64(v)?),
             "host_sync_blocking_ns" => host_sync_blocking_ns = Some(parse_u64(v)?),
@@ -1127,6 +1140,12 @@ fn parse_profile(text: &str) -> Result<HardwareProfile, SimError> {
         }
         if let Some(n) = portable_cluster_size {
             g.portable_cluster_size = n;
+        }
+        if let Some(n) = compute_capability_major {
+            g.compute_capability_major = n;
+        }
+        if let Some(n) = compute_capability_minor {
+            g.compute_capability_minor = n;
         }
         if let Some(n) = host_sync_spin_ns {
             g.host_sync_spin_ns = n;
@@ -1515,6 +1534,30 @@ mod tests {
         assert!(
             format!("{err:?}").contains("portable_cluster_size must be <= max_blocks_per_cluster"),
             "{err:?}"
+        );
+    }
+
+    #[test]
+    fn parse_compute_capability() {
+        let p = HardwareProfile::parse(
+            "gpus=1\ncompute_capability_major=8\ncompute_capability_minor=9\n",
+        )
+        .unwrap();
+        let g = p.gpu(DeviceId(0)).unwrap();
+        assert_eq!(g.compute_capability_major, 8);
+        assert_eq!(g.compute_capability_minor, 9);
+        let text = p.to_profile_text();
+        assert!(text.contains("compute_capability_major=8"), "{text}");
+        assert!(text.contains("compute_capability_minor=9"), "{text}");
+        let open = HardwareProfile::parse("gpus=1\n").unwrap();
+        assert_eq!(open.gpu(DeviceId(0)).unwrap().compute_capability_major, 9);
+        assert_eq!(open.gpu(DeviceId(0)).unwrap().compute_capability_minor, 0);
+        assert_eq!(
+            HardwareProfile::example_h100_sxm()
+                .gpu(DeviceId(0))
+                .unwrap()
+                .compute_capability_major,
+            9
         );
     }
 

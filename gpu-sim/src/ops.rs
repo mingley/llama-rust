@@ -1099,6 +1099,13 @@ pub enum DeviceAttr {
     PciBusId,
     /// `cudaDevAttrPciDeviceId` (synthetic PCI device number; always 0).
     PciDeviceId,
+    /// `cudaDevAttrComputeCapabilityMajor`
+    /// ([`crate::GpuProfile::compute_capability_major`]). Example H100 is 9
+    /// (Hopper sm_90). Distinct from occupancy SM counts.
+    ComputeCapabilityMajor,
+    /// `cudaDevAttrComputeCapabilityMinor`
+    /// ([`crate::GpuProfile::compute_capability_minor`]). Example H100 is 0.
+    ComputeCapabilityMinor,
 }
 
 impl DeviceAttr {
@@ -1171,6 +1178,12 @@ pub struct DeviceProperties {
     pub pci_bus_id: u32,
     /// Synthetic `pciDeviceID` ([`DeviceAttr::PciDeviceId`]). Always 0.
     pub pci_device_id: u32,
+    /// `cudaDeviceProp::major` ([`DeviceAttr::ComputeCapabilityMajor`]).
+    /// Example H100 is 9 (Hopper sm_90). Distinct from occupancy SM counts.
+    pub compute_capability_major: u32,
+    /// `cudaDeviceProp::minor` ([`DeviceAttr::ComputeCapabilityMinor`]).
+    /// Example H100 is 0.
+    pub compute_capability_minor: u32,
     /// [`crate::GpuProfile::hbm_bytes`] (`totalGlobalMem`).
     pub total_global_mem: u64,
     /// `cudaDevAttrTotalConstantMemory` ([`DeviceAttr::TotalConstantMemory`]).

@@ -501,7 +501,8 @@
 //! is `cuDeviceGetExecAffinitySupport` (`SM_COUNT` is 0; this VM uses permille
 //! green-context spans, not occupancy SM counts).
 //! [`Sim::device_get_properties`] is `cudaGetDeviceProperties` ([`DeviceProperties`];
-//! modeled caps only — no SM count or clock). [`Sim::device_get_name`] is
+//! modeled caps only — compute capability major/minor are Hopper 9.0 on
+//! example H100; no occupancy SM count or clock). [`Sim::device_get_name`] is
 //! `cudaDeviceGetName` (the profile name). [`device_get_uuid`](Sim::device_get_uuid)
 //! is `cuDeviceGetUuid` / `cudaDeviceGetUuid` (synthetic 16-octet id; also
 //! [`DeviceProperties::uuid`]). [`device_get_by_uuid`](Sim::device_get_by_uuid)
@@ -607,6 +608,12 @@
 //! [`DeviceAttr::PciDomainId`] / [`PciBusId`](DeviceAttr::PciBusId) /
 //! [`PciDeviceId`](DeviceAttr::PciDeviceId) are the synthetic PCI identity
 //! ([`device_get_pci_bus_id`](Sim::device_get_pci_bus_id)).
+//! [`DeviceAttr::ComputeCapabilityMajor`] and
+//! [`ComputeCapabilityMinor`](DeviceAttr::ComputeCapabilityMinor) are
+//! `cudaDevAttrComputeCapabilityMajor` and `cudaDevAttrComputeCapabilityMinor`
+//! (`cudaDeviceProp` major and minor). Example H100 is Hopper 9.0. Distinct
+//! from occupancy SM counts and from [`driver_get_version`](Sim::driver_get_version).
+//! Query; legal during capture. No Engine `--compute-capability`.
 //! [`DeviceAttr::MaxAccessPolicyWindowSize`] is [`crate::GpuProfile::l2_bytes`]
 //! (same as [`MaxPersistingL2CacheSize`](DeviceAttr::MaxPersistingL2CacheSize)).
 //! [`DeviceProperties::persisting_l2_cache_max_size`] is
@@ -18723,6 +18730,52 @@ mod tests {
         );
         let _g = sim.end_capture().unwrap();
         match sim.device_get_attribute(DeviceId(99), DeviceAttr::MaxPitch) {
+            Err(SimError::Invalid { why }) => {
+                assert!(why.contains("device not in profile"), "{why}");
+            }
+            other => panic!("{other:?}"),
+        }
+    }
+
+    #[test]
+    fn device_get_attribute_compute_capability_is_hopper_90() {
+        let mut sim = Sim::new(h100());
+        let d = DeviceId(0);
+        let hp = sim.device_get_properties(d).unwrap();
+        assert_eq!(hp.compute_capability_major, 9);
+        assert_eq!(hp.compute_capability_minor, 0);
+        assert_eq!(
+            sim.device_get_attribute(d, DeviceAttr::ComputeCapabilityMajor)
+                .unwrap(),
+            9
+        );
+        assert_eq!(
+            sim.device_get_attribute(d, DeviceAttr::ComputeCapabilityMinor)
+                .unwrap(),
+            0
+        );
+        assert_ne!(sim.driver_get_version(), 9);
+        let h200 = Sim::new(HardwareProfile::example_h200_sxm());
+        assert_eq!(
+            h200.device_get_attribute(d, DeviceAttr::ComputeCapabilityMajor)
+                .unwrap(),
+            9
+        );
+        let eight = Sim::new(HardwareProfile::example_8xh100_nvlink());
+        assert_eq!(
+            eight
+                .device_get_attribute(DeviceId(7), DeviceAttr::ComputeCapabilityMinor)
+                .unwrap(),
+            0
+        );
+        sim.begin_capture(d, StreamId(0)).unwrap();
+        assert_eq!(
+            sim.device_get_attribute(d, DeviceAttr::ComputeCapabilityMajor)
+                .unwrap(),
+            9
+        );
+        let _g = sim.end_capture().unwrap();
+        match sim.device_get_attribute(DeviceId(99), DeviceAttr::ComputeCapabilityMajor) {
             Err(SimError::Invalid { why }) => {
                 assert!(why.contains("device not in profile"), "{why}");
             }

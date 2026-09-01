@@ -19069,7 +19069,8 @@ impl Sim {
 
     /// `cudaDeviceGetAttribute`. Query; legal during capture.
     ///
-    /// Only attributes this VM already models ([`DeviceAttr`]).
+    /// Only attributes this VM already models ([`DeviceAttr`]). Compute
+    /// capability major/minor are Hopper 9.0 on example H100.
     pub fn device_get_attribute(
         &self,
         device: DeviceId,
@@ -19164,13 +19165,17 @@ impl Sim {
             DeviceAttr::PciDomainId => u64::from(synthetic_pci_ids(device).0),
             DeviceAttr::PciBusId => u64::from(synthetic_pci_ids(device).1),
             DeviceAttr::PciDeviceId => u64::from(synthetic_pci_ids(device).2),
+            DeviceAttr::ComputeCapabilityMajor => u64::from(gpu.compute_capability_major),
+            DeviceAttr::ComputeCapabilityMinor => u64::from(gpu.compute_capability_minor),
         })
     }
 
     /// `cudaGetDeviceProperties`. Query; legal during capture.
     ///
-    /// Only fields this VM already models ([`DeviceProperties`]). Unknown
-    /// devices are Invalid.
+    /// Only fields this VM already models ([`DeviceProperties`]). Compute
+    /// capability major/minor are modeled (example H100 is Hopper 9.0).
+    /// Occupancy SM counts and clock rates are not. Unknown devices are
+    /// Invalid.
     pub fn device_get_properties(&self, device: DeviceId) -> Result<DeviceProperties, SimError> {
         let gpu = self.profile.gpu(device)?;
         Ok(DeviceProperties {
@@ -19179,6 +19184,8 @@ impl Sim {
             pci_domain_id: synthetic_pci_ids(device).0,
             pci_bus_id: synthetic_pci_ids(device).1,
             pci_device_id: synthetic_pci_ids(device).2,
+            compute_capability_major: u32::from(gpu.compute_capability_major),
+            compute_capability_minor: u32::from(gpu.compute_capability_minor),
             total_global_mem: gpu.hbm_bytes,
             total_constant_memory: 0,
             texture_alignment: 0,
