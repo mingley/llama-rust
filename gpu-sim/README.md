@@ -163,6 +163,7 @@ warp scheduler, L1, …   ← do not model
 | `stream_get_device` is the device of the stream (green-ctx streams return the ctx device) | `cudaStreamGetDevice` / `cuStreamGetDevice` |
 | `stream_get_attribute` / `stream_set_attribute` wrap existing stream state | `cudaStreamGetAttribute` / `SetAttribute` |
 | `device_count` is the profile GPU count | `cudaGetDeviceCount` |
+| `driver_get_version` / `runtime_get_version` report CUDA 13.0 | `cudaDriverGetVersion` / `cudaRuntimeGetVersion` |
 | `device_get` is the ordinal in `0 .. count` | `cuDeviceGet` |
 | `flush_gpu_direct_rdma_writes` is a 1 ns host-sync barrier on RDMA SKUs (no write-visibility) | 1 ns |
 | `BatchMemOp::FlushRemoteWrites` is stream-ordered `CU_STREAM_MEM_OP_FLUSH_REMOTE_WRITES` (capture legal; never a no-op) | 1 ns Solo |
@@ -989,6 +990,9 @@ id; also `DeviceProperties.uuid`). `device_get_by_uuid` is
 `cudaDeviceGetPciBusId` (synthetic PCI string; also `DeviceProperties`
 PCI ids). `device_get_by_pci_bus_id` is `cudaDeviceGetByPCIBusId`
 (inverse). `device_total_mem` is `cuDeviceTotalMem` (HBM bytes).
+`driver_get_version` is `cudaDriverGetVersion` / `cuDriverGetVersion` (CUDA
+13.0). `runtime_get_version` is `cudaRuntimeGetVersion` (same toolkit). Query;
+legal during capture.
 `func_get_attributes` is `cudaFuncGetAttributes`
 of modeled per-device function attrs (`maxDynamicSharedSizeBytes`,
 `nonPortableClusterSizeAllowed`, `preferredShmemCarveout`, cluster-dim

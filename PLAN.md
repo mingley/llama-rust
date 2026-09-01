@@ -5906,7 +5906,14 @@ model, do not celebrate the sim.
     invent Engine `--graph-edge-data`. `gpu-profile capture` is still
     refused. Dual score still has no `$/M tokens`.
 
-555. [ ] Next numbered PLAN item after 554 is the next `gpu-sim` / Engine /
+555. [x] `gpu-sim` `driver_get_version` / `runtime_get_version` are CUDA
+    `cudaDriverGetVersion` / `cuDriverGetVersion` / `cudaRuntimeGetVersion`
+    (CUDA 13.0; `1000 * major` plus `10 * minor`). Query; legal during capture.
+    Same toolkit value. Distinct from `device_count`. This VM does not invent
+    Engine `--driver-version` or `cudaGetLastError`. `gpu-profile capture` is
+    still refused. Dual score still has no `$/M tokens`.
+
+556. [ ] Next numbered PLAN item after 555 is the next `gpu-sim` / Engine /
     serve / expertvm mechanical API that is still missing, or the next official
     decode family. Prefer remaining CUDA-shaped twins over more
     OpenAI HTTP veneer. Do not invent F32 `output.scale`. Do not invent a
@@ -5932,6 +5939,9 @@ model, do not celebrate the sim.
     `cudaGraphRemoveDependencies` edgeData /
     `graph_remove_dependencies_n_with_data`. Do not invent Engine
     `--graph-edge-data`. Do not invent a second
+    `cudaDriverGetVersion` / `cuDriverGetVersion` / `cudaRuntimeGetVersion`.
+    Do not invent Engine `--driver-version`. Do not invent `cudaGetLastError` /
+    `cudaPeekAtLastError` (no thread-local last error). Do not invent a second
     `cuDeviceGetUuid` / `cudaDeviceGetUuid`. Do not invent a second
     `cuDeviceGetByUuid`. Do not invent a second `cudaDeviceGetPciBusId` /
     `cuDeviceGetPCIBusId`. Do not invent a second `cudaDeviceGetByPCIBusId`.
@@ -6140,6 +6150,10 @@ model, do not celebrate the sim.
     `--graph-edge-data`. Do not reverse PLAN 182 v1 missing-remove no-op.
     Do not apply v2 missing-matching-edge error to v1. Do not reverse v1
     remove of a launch-completion edge (v1 ignores stored data).
+    Do not invent a second `cudaDriverGetVersion` / `cuDriverGetVersion` /
+    `cudaRuntimeGetVersion`. Do not invent Engine `--driver-version`. Do not
+    invent `cudaGetLastError` / `cudaPeekAtLastError` (no thread-local last
+    error). Do not reverse `driver_get_version` matching `runtime_get_version`.
     Do not invent a second DeviceLaunch in-flight destroy-complete check or Engine
     `--device-launch-destroy`. Do not abort an in-flight DeviceLaunch when
     `destroy_graph` succeeds. Do not delay destroy of an idle exec. Do not invent
@@ -6568,6 +6582,10 @@ model, do not celebrate the sim.
     `--graph-edge-data`. Do not reverse PLAN 182 v1 missing-remove no-op.
     Do not apply v2 missing-matching-edge error to v1. Do not reverse v1
     remove of a launch-completion edge (v1 ignores stored data).
+    Do not invent a second `cudaDriverGetVersion` / `cuDriverGetVersion` /
+    `cudaRuntimeGetVersion`. Do not invent Engine `--driver-version`. Do not
+    invent `cudaGetLastError` / `cudaPeekAtLastError` (no thread-local last
+    error). Do not reverse `driver_get_version` matching `runtime_get_version`.
     Do not
     spend the next item on an OpenAI-compatible HTTP veneer.
 

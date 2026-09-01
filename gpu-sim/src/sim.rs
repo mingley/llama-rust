@@ -18412,6 +18412,33 @@ impl Sim {
         u32::try_from(self.profile.gpus.len()).unwrap_or(u32::MAX)
     }
 
+    /// `cudaDriverGetVersion` / `cuDriverGetVersion`. Query; legal during capture.
+    ///
+    /// Reports CUDA 13.0 (`1000 * major` plus `10 * minor`). Distinct from
+    /// [`Self::runtime_get_version`]. This VM does not invent `cudaGetLastError`.
+    #[must_use]
+    #[expect(
+        clippy::unused_self,
+        reason = "CUDA driver version is process-wide; Sim is the query handle"
+    )]
+    pub fn driver_get_version(&self) -> i32 {
+        13_000
+    }
+
+    /// `cudaRuntimeGetVersion`. Query; legal during capture.
+    ///
+    /// Same CUDA 13.0 value as [`Self::driver_get_version`] (this VM is one
+    /// toolkit). Distinct from [`Self::device_count`]. This VM does not invent
+    /// `cudaGetLastError`.
+    #[must_use]
+    #[expect(
+        clippy::unused_self,
+        reason = "CUDA runtime version is process-wide; Sim is the query handle"
+    )]
+    pub fn runtime_get_version(&self) -> i32 {
+        13_000
+    }
+
     /// `cuDeviceGet`. Query; legal during capture.
     ///
     /// Ordinal `0 .. device_count`. Other ordinals Invalid

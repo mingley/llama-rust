@@ -669,7 +669,9 @@
 //! [`kernel_bufs`](Sim::kernel_bufs) inherit it; [`kernel_with`](Sim::kernel_with)
 //! and graph replay use the launch / node window. Set [`None`] clears.
 //! [`Sim::device_count`] is `cudaGetDeviceCount`.
-//! [`device_get`](Sim::device_get) is `cuDeviceGet` (ordinal in range).
+//! [`Sim::driver_get_version`] is `cudaDriverGetVersion` / `cuDriverGetVersion`
+//! (CUDA 13.0). [`Sim::runtime_get_version`] is `cudaRuntimeGetVersion` (same
+//! toolkit). Query; legal during capture. [`device_get`](Sim::device_get) is `cuDeviceGet` (ordinal in range).
 //! [`Sim::device_can_access_peer`] / [`device_get_p2p_attribute`](Sim::device_get_p2p_attribute)
 //! are `cudaDeviceCanAccessPeer` / `cudaDeviceGetP2PAttribute` (topology links;
 //! [`DeviceP2pAttr::AccessSupported`] and [`PerformanceRank`](DeviceP2pAttr::PerformanceRank)
@@ -17427,6 +17429,21 @@ mod tests {
         sim.free(d, b, s).unwrap();
         sim.synchronize().unwrap();
         assert_eq!(sim.hbm_used(d).unwrap(), 0);
+    }
+
+    #[test]
+    fn driver_and_runtime_get_version_are_cuda_13() {
+        let mut sim = Sim::new(h100());
+        assert_eq!(sim.driver_get_version(), 13_000);
+        assert_eq!(sim.runtime_get_version(), 13_000);
+        assert_eq!(sim.driver_get_version(), sim.runtime_get_version());
+        sim.begin_capture(DeviceId(0), StreamId(0)).unwrap();
+        assert_eq!(sim.driver_get_version(), 13_000);
+        assert_eq!(sim.runtime_get_version(), 13_000);
+        let _g = sim.end_capture().unwrap();
+        let eight = Sim::new(HardwareProfile::example_8xh100_nvlink());
+        assert_eq!(eight.driver_get_version(), 13_000);
+        assert_eq!(eight.runtime_get_version(), 13_000);
     }
 
     #[test]
