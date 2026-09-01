@@ -5689,7 +5689,16 @@ model, do not celebrate the sim.
     `--device-launch-event-attr`. `gpu-profile capture` is still
     refused. Dual score still has no `$/M tokens`.
 
-530. [ ] Next numbered PLAN item after 529 is the next `gpu-sim` / Engine /
+530. [x] `gpu-sim` CUDA DeviceLaunch kernel buffers must be
+    origin-device memory or pinned/mapped/managed host (off-device
+    malloc is `NodeOperationNotSupported` `"device launch instantiate
+    flag"`). Exec kernel SetParams re-apply those dest rules.
+    Definition SetParams still defer to instantiate. Host instantiate
+    stays. Capture is still reported first. This VM does not invent
+    Engine `--device-launch-kernel`. `gpu-profile capture` is still
+    refused. Dual score still has no `$/M tokens`.
+
+531. [ ] Next numbered PLAN item after 530 is the next `gpu-sim` / Engine /
     serve / expertvm mechanical API that is still missing, or the next official
     decode family. Prefer remaining CUDA-shaped twins over more
     OpenAI HTTP veneer. Do not invent F32 `output.scale`. Do not invent a
@@ -5812,6 +5821,12 @@ model, do not celebrate the sim.
     Do not reverse External/interprocess Invalid first. Do not reverse
     definition SetAttribute deferring those events to instantiate.
     Do not reverse host-instantiated exec attach of those events.
+    Do not invent a second DeviceLaunch kernel-buffer dest check or Engine
+    `--device-launch-kernel`. Do not reverse pinned, mapped, or managed
+    DeviceLaunch kernel buffers. Do not reverse origin-device DeviceLaunch
+    kernel buffers. Do not reverse definition kernel SetParams deferring
+    dest rules to instantiate. Do not reverse host instantiate of
+    off-device kernel buffers.
     Do not invent a second DeviceLaunch mixed-ctx check or Engine
     `--device-launch-ctx`. Do not invent a second
     [`GraphInstantiateResult`] variant for driver MultipleCtxs. Do not
@@ -6172,6 +6187,9 @@ model, do not celebrate the sim.
     or launch-completion events. Do not invent Engine
     `--device-launch-event-attr`. Do not reverse clearing those attrs
     on a DeviceLaunch exec.
+    Do not reverse DeviceLaunch kernel-buffer dest rules. Do not invent
+    Engine `--device-launch-kernel`. Do not reverse pinned, mapped, or
+    managed DeviceLaunch kernel buffers.
     Do not reverse same-ctx DeviceLaunch. Do not reverse host instantiate
     of mixed green ctx. Do not invent Engine `--device-launch-ctx`. Do
     not invent a second MultipleCtxs instantiate result.

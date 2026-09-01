@@ -5,6 +5,16 @@ Visible five-turn extract: [docs/chatgpt-share-6a920fe1.md](docs/chatgpt-share-6
 Complete share-API extract: [docs/chatgpt-share-6a920fe1/](docs/chatgpt-share-6a920fe1/).
 Work lands on `main`. No PRs.
 
+## Shipped 2026-09-01 — DeviceLaunch kernel buffers stay on-device
+
+`gpu-sim` CUDA DeviceLaunch kernel buffers must be origin-device memory
+or pinned/mapped/managed host (off-device malloc is `"device launch
+instantiate flag"`). Exec kernel SetParams re-apply those dest rules.
+Definition SetParams still defer to instantiate. Host instantiate stays.
+Capture is still reported first. This VM does not invent Engine
+`--device-launch-kernel`. `gpu-profile capture` is still refused. Dual
+score still has no `$/M tokens`.
+
 ## Shipped 2026-09-01 — DeviceLaunch exec cannot attach event attrs
 
 `gpu-sim` CUDA DeviceLaunch exec SetAttribute cannot attach

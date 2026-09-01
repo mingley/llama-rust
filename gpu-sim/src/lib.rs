@@ -828,9 +828,9 @@
 //! `"device launch empty"`). Mem alloc/free, events, child graphs,
 //! conditionals, host, empty, and batch-mem nodes are Invalid. Memcpy
 //! [`Place::Device`] must match the graph origin device
-//! ([`Place::HostPinned`] stays). Memset dest must be that device,
-//! pinned mapped host, or managed. Exec memcpy/memset SetParams
-//! re-apply those dest rules. Mixed node green ctx is
+//! ([`Place::HostPinned`] stays). Memset dest and kernel buffers must be
+//! that device, pinned mapped host, or managed. Exec memcpy/memset/kernel
+//! SetParams re-apply those dest rules. Mixed node green ctx is
 //! [`GraphInstantiateResult::MultipleDevicesNotSupported`]
 //! (`"graph multiple ctx"`); exec SetParams re-apply that mixed-ctx
 //! rule; exec SetAttribute cannot attach programmatic or
@@ -1043,7 +1043,8 @@
 //! Clears the upload flag unless the node is device-updatable
 //! (`cudaLaunchAttributeDeviceUpdatableKernelNode`). Works on graphs with mem
 //! alloc/free nodes (CUDA cannot `cudaGraphExecUpdate` those). Capture cannot
-//! include it. Device-launch execs re-apply instantiate mixed-ctx rules.
+//! include it. Device-launch execs re-apply instantiate mixed-ctx rules
+//! and kernel-buffer dest rules.
 //! [`graph_exec_memcpy_set_params`](Sim::graph_exec_memcpy_set_params) /
 //! [`graph_exec_memcpy_set_params_1d`](Sim::graph_exec_memcpy_set_params_1d) /
 //! [`graph_exec_memcpy_set_params_2d`](Sim::graph_exec_memcpy_set_params_2d) /
@@ -31546,6 +31547,127 @@ mod tests {
         }
         sim.begin_capture(d, s).unwrap();
         match sim.graph_exec_kernel_node_set_programmatic_event(exec, 0, Some(pe)) {
+            Err(SimError::Invalid { why }) => assert!(why.contains("capture"), "{why}"),
+            other => panic!("{other:?}"),
+        }
+        let _end = sim.end_capture().unwrap();
+    }
+
+    #[test]
+    fn device_launch_rejects_off_device_kernel_buf() {
+        let p = HardwareProfile::parse(
+            "gpus=2\nfp16_flops=1000000\nhbm_bps=1000000000000\ncompute_slots=1\nlaunch_overhead_ns=1\n",
+        )
+        .expect("2gpu");
+        let mut sim = Sim::new(p);
+        let d0 = DeviceId(0);
+        let d1 = DeviceId(1);
+        let s = StreamId(0);
+        let local = sim.malloc(d0, 64).unwrap();
+        let remote = sim.malloc(d1, 64).unwrap();
+        let kind = KernelKind::other(8, 8);
+        let peer = sim.create_graph(d0, s).unwrap();
+        sim.graph_add_kernel(peer, kind.clone(), &[remote], &[remote])
+            .unwrap();
+        let err = sim
+            .instantiate_graph_with_flags(peer, GraphInstantiateFlags::DEVICE_LAUNCH)
+            .unwrap_err();
+        match err {
+            SimError::Invalid { why } => {
+                assert!(why.contains("device launch instantiate flag"), "{why}")
+            }
+            other => panic!("{other:?}"),
+        }
+        let mut params = GraphInstantiateParams {
+            flags: GraphInstantiateFlags::DEVICE_LAUNCH,
+            ..GraphInstantiateParams::default()
+        };
+        let err = sim
+            .instantiate_graph_with_params(peer, &mut params)
+            .unwrap_err();
+        match err {
+            SimError::Invalid { why } => {
+                assert!(why.contains("device launch instantiate flag"), "{why}")
+            }
+            other => panic!("{other:?}"),
+        }
+        assert_eq!(
+            params.result,
+            GraphInstantiateResult::NodeOperationNotSupported
+        );
+        assert_eq!(params.err_node, Some(0));
+        let pinned = sim.alloc_host_pinned(64).unwrap();
+        let pin_g = sim.create_graph(d0, s).unwrap();
+        sim.graph_add_kernel(pin_g, kind.clone(), &[pinned], &[pinned])
+            .unwrap();
+        let _ = sim
+            .instantiate_graph_with_flags(pin_g, GraphInstantiateFlags::DEVICE_LAUNCH)
+            .unwrap();
+        let mapped = sim.alloc_host_mapped(64).unwrap();
+        let map_g = sim.create_graph(d0, s).unwrap();
+        sim.graph_add_kernel(map_g, kind.clone(), &[mapped], &[mapped])
+            .unwrap();
+        let _ = sim
+            .instantiate_graph_with_flags(map_g, GraphInstantiateFlags::DEVICE_LAUNCH)
+            .unwrap();
+        let managed = sim.alloc_managed(64).unwrap();
+        let man_g = sim.create_graph(d0, s).unwrap();
+        sim.graph_add_kernel(man_g, kind.clone(), &[managed], &[managed])
+            .unwrap();
+        let _ = sim
+            .instantiate_graph_with_flags(man_g, GraphInstantiateFlags::DEVICE_LAUNCH)
+            .unwrap();
+        let on_dev = sim.create_graph(d0, s).unwrap();
+        sim.graph_add_kernel(on_dev, kind.clone(), &[local], &[local])
+            .unwrap();
+        let exec = sim
+            .instantiate_graph_with_flags(on_dev, GraphInstantiateFlags::DEVICE_LAUNCH)
+            .unwrap();
+        let mut kp = sim.graph_exec_kernel_get_params(exec, 0).unwrap();
+        kp.reads = vec![KernelBuf::whole(remote)];
+        kp.writes = vec![KernelBuf::whole(remote)];
+        let err = sim.graph_exec_kernel_set_params(exec, 0, &kp).unwrap_err();
+        match err {
+            SimError::Invalid { why } => {
+                assert!(why.contains("device launch instantiate flag"), "{why}")
+            }
+            other => panic!("{other:?}"),
+        }
+        let extra = sim.malloc(d0, 64).unwrap();
+        kp.reads = vec![KernelBuf::whole(extra)];
+        kp.writes = vec![KernelBuf::whole(extra)];
+        sim.graph_exec_kernel_set_params(exec, 0, &kp).unwrap();
+        let host = sim.create_graph(d0, s).unwrap();
+        sim.graph_add_kernel(host, kind.clone(), &[remote], &[remote])
+            .unwrap();
+        let _ = sim.instantiate_graph(host).unwrap();
+        let def = sim.create_graph(d0, s).unwrap();
+        sim.graph_add_kernel(def, kind.clone(), &[local], &[local])
+            .unwrap();
+        sim.graph_kernel_set_params(
+            def,
+            0,
+            &KernelNodeParams {
+                kind: kind.clone(),
+                reads: vec![KernelBuf::whole(remote)],
+                writes: vec![KernelBuf::whole(remote)],
+                cooperative: false,
+                ctx: None,
+                shared_mem_bytes: 0,
+            },
+        )
+        .unwrap();
+        let err = sim
+            .instantiate_graph_with_flags(def, GraphInstantiateFlags::DEVICE_LAUNCH)
+            .unwrap_err();
+        match err {
+            SimError::Invalid { why } => {
+                assert!(why.contains("device launch instantiate flag"), "{why}")
+            }
+            other => panic!("{other:?}"),
+        }
+        sim.begin_capture(d0, s).unwrap();
+        match sim.instantiate_graph_with_flags(peer, GraphInstantiateFlags::DEVICE_LAUNCH) {
             Err(SimError::Invalid { why }) => assert!(why.contains("capture"), "{why}"),
             other => panic!("{other:?}"),
         }

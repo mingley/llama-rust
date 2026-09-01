@@ -512,9 +512,9 @@ host `launch_graph` stays legal. The graph cannot be empty and must
 contain at least one kernel, memcpy, or memset node (`"device launch
 empty"`). Mem alloc/free, events, child graphs, conditionals, host,
 empty, and batch-mem nodes are Invalid. Memcpy `Place::Device` must match
-the graph origin device (`Place::HostPinned` stays). Memset dest must be
-that device, pinned mapped host, or managed. Exec memcpy/memset SetParams
-re-apply those dest rules. Mixed node green ctx is
+the graph origin device (`Place::HostPinned` stays). Memset dest and
+kernel buffers must be that device, pinned mapped host, or managed.
+Exec memcpy/memset/kernel SetParams re-apply those dest rules. Mixed node green ctx is
 `MultipleDevicesNotSupported` (`"graph multiple ctx"`); exec SetParams
 re-apply that mixed-ctx rule; exec SetAttribute cannot attach
 programmatic or launch-completion events; `update_graph` of a

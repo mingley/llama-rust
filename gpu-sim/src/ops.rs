@@ -3058,9 +3058,10 @@ impl GraphInstantiateFlags {
     /// or memset node. Mem alloc/free, events, child graphs, conditionals,
     /// host, empty, and batch-mem nodes are Invalid. Memcpy
     /// [`crate::Place::Device`] must match the graph origin device
-    /// ([`crate::Place::HostPinned`] stays). Memset dest must be that
-    /// device, pinned mapped host, or managed. Exec memcpy/memset
-    /// SetParams re-apply those dest rules. Mixed node green ctx is
+    /// ([`crate::Place::HostPinned`] stays). Memset dest and kernel
+    /// buffers must be that device, pinned mapped host, or managed.
+    /// Exec memcpy/memset/kernel SetParams re-apply those dest rules. Mixed node
+    /// green ctx is
     /// [`crate::GraphInstantiateResult::MultipleDevicesNotSupported`].
     /// Exec SetParams re-apply that mixed-ctx rule. Exec SetAttribute
     /// cannot attach programmatic or launch-completion events.

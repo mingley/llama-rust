@@ -4153,7 +4153,8 @@ impl Sim {
                         || s.programmatic_event.is_some()
                         || s.launch_completion.is_some()
                         || device_launch_memcpy_off_device(&s.kind, origin_dev)
-                        || device_launch_memset_off_device(&s.kind, origin_dev, &self.allocs))
+                        || device_launch_memset_off_device(&s.kind, origin_dev, &self.allocs)
+                        || device_launch_kernel_off_device(&s.kind, origin_dev, &self.allocs))
             })
         } else {
             None
@@ -4471,8 +4472,9 @@ impl Sim {
     /// device-updatable (`cudaLaunchAttributeDeviceUpdatableKernelNode`),
     /// so a later [`Self::device_launch_graph`] needs no host re-upload. Capture
     /// cannot include it. Device-launch execs re-apply instantiate mixed-ctx
-    /// rules (Invalid `"graph multiple ctx"`). Graphs with mem alloc/free nodes
-    /// are legal (unlike [`Self::update_graph`]).
+    /// rules (Invalid `"graph multiple ctx"`) and kernel-buffer dest rules
+    /// (Invalid `"device launch instantiate flag"`). Graphs with mem alloc/free
+    /// nodes are legal (unlike [`Self::update_graph`]).
     pub fn graph_exec_kernel_set_params(
         &mut self,
         exec: GraphId,
@@ -4512,6 +4514,23 @@ impl Sim {
         self.validate_dynamic_shared(device, params.shared_mem_bytes, portable_shared)?;
         let reads = self.resolve_bufs(&params.reads)?;
         let writes = self.resolve_bufs(&params.writes)?;
+        let (origin, flags) = {
+            let g = self.graphs.get(&exec).ok_or(SimError::Invalid {
+                why: "unknown graph",
+            })?;
+            (g.origin.0, g.instantiate_flags)
+        };
+        if device_launch_exec_place_refused(
+            true,
+            flags,
+            reads.iter().chain(writes.iter()).any(|b| {
+                device_launch_alloc_off_device(b.id, origin, b.offset, b.bytes, &self.allocs)
+            }),
+        ) {
+            return Err(SimError::Invalid {
+                why: "device launch instantiate flag",
+            });
+        }
         let ns = self.profile.gpu(device)?.graph_set_params_ns.max(1);
         self.clock = self.clock.saturating_add(ns);
         let g = self.graphs.get_mut(&exec).ok_or(SimError::Invalid {
@@ -22960,14 +22979,38 @@ fn device_launch_memset_off_device(
     let Kind::Memset(op) = kind else {
         return false;
     };
-    let Some(a) = allocs.get(&op.id) else {
+    device_launch_alloc_off_device(op.id, origin, op.offset, op.extent_bytes(), allocs)
+}
+
+fn device_launch_kernel_off_device(
+    kind: &Kind,
+    origin: DeviceId,
+    allocs: &BTreeMap<AllocId, Alloc>,
+) -> bool {
+    let Kind::Kernel { reads, writes, .. } = kind else {
+        return false;
+    };
+    reads
+        .iter()
+        .chain(writes.iter())
+        .any(|b| device_launch_alloc_off_device(b.id, origin, b.offset, b.bytes, allocs))
+}
+
+fn device_launch_alloc_off_device(
+    id: AllocId,
+    origin: DeviceId,
+    offset: u64,
+    bytes: u64,
+    allocs: &BTreeMap<AllocId, Alloc>,
+) -> bool {
+    let Some(a) = allocs.get(&id) else {
         return true;
     };
     if a.host_pinned || a.host_mapped || a.managed {
         return false;
     }
     if a.vmm {
-        return !vmm_covers(&a.vmm_maps, origin, op.offset, op.extent_bytes());
+        return !vmm_covers(&a.vmm_maps, origin, offset, bytes);
     }
     !a.devices.contains(&origin)
 }
