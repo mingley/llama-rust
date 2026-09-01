@@ -18494,7 +18494,7 @@ impl Sim {
     ///
     /// Query; legal during capture. There is no TLS current device and no
     /// `CUcontext` object. The id is unique per device and stable for the
-    /// life of the `Sim` (primary-ctx Reset is not modeled). Distinct from
+    /// life of the `Sim` ([`Self::reset_device`] does not change it). Distinct from
     /// [`Self::green_ctx_get_id`], [`Self::stream_get_id`], and
     /// [`Self::event_get_id`]. Unknown devices are Invalid
     /// `"device not in profile"`.
@@ -18537,6 +18537,192 @@ impl Sim {
         }
         self.clock = self.clock.saturating_add(1);
         Ok(())
+    }
+
+    /// `cudaDeviceReset`. Host-synchronous. Capture cannot include it.
+    ///
+    /// Waits outstanding work on `device` (unlike [`Self::destroy_stream`],
+    /// which returns immediately). Then frees `cudaMalloc` /
+    /// `cudaMallocPitch` / `cudaMalloc3D` on that GPU.
+    /// [`Self::alloc`] (`cudaMallocAsync`) stays, as in CUDA. User streams
+    /// except [`StreamId::NULL`] become `"unknown stream"` until
+    /// [`Self::stream_create_with_flags`]. Device flags and limits return to
+    /// CUDA defaults. Peer pairs involving this GPU return to the profile
+    /// seed. Host and managed allocs have no owning device in this VM and
+    /// stay. Events are process-global and stay. Graphs stay (host objects).
+    /// Green contexts on this device are destroyed. [`Self::ctx_get_id`]
+    /// stays (no `CUcontext` object; this is not `cuDevicePrimaryCtxReset`).
+    /// Unknown devices are Invalid `"device not in profile"`. Subsequent
+    /// [`Self::malloc`] on this GPU is legal. No Engine flag for device reset.
+    pub fn reset_device(&mut self, device: DeviceId) -> Result<(), SimError> {
+        self.fail_if_capturing("cannot capture device reset")?;
+        let _gpu = self.profile.gpu(device)?;
+        self.synchronize_device(device)?;
+        self.reset_device_mallocs(device)?;
+        self.reset_device_streams(device);
+        self.reset_device_green_ctxs(device);
+        self.reset_device_runtime(device)?;
+        self.reset_device_func_attrs(device);
+        self.reset_device_peers(device);
+        self.clock = self.clock.saturating_add(1);
+        Ok(())
+    }
+
+    fn reset_frees_alloc(a: &Alloc, device: DeviceId) -> bool {
+        a.live
+            && a.pool.is_none()
+            && !a.host_pinned
+            && !a.host_pageable
+            && !a.managed
+            && !a.vmm
+            && a.ipc_src.is_none()
+            && a.share_src.is_none()
+            && a.devices.contains(&device)
+    }
+
+    fn reset_device_mallocs(&mut self, device: DeviceId) -> Result<(), SimError> {
+        let ids: Vec<AllocId> = self
+            .allocs
+            .iter()
+            .filter(|(_, a)| Self::reset_frees_alloc(a, device))
+            .map(|(id, _)| *id)
+            .collect();
+        for id in ids {
+            let bytes = self.alloc_ref(id)?.bytes;
+            self.refund_device(device, id, bytes)?;
+            {
+                let a = self.alloc_mut(id)?;
+                a.devices.retain(|d| *d != device);
+                if a.devices.is_empty() {
+                    a.live = false;
+                }
+            }
+            self.clear_mailbox(id);
+        }
+        Ok(())
+    }
+
+    fn reset_device_streams(&mut self, device: DeviceId) {
+        let mut streams = BTreeSet::new();
+        for (d, s) in self.tail.keys() {
+            if *d == device {
+                let _ins = streams.insert(*s);
+            }
+        }
+        for (d, s) in self.blocking.iter() {
+            if *d == device {
+                let _ins = streams.insert(*s);
+            }
+        }
+        for (d, s) in self.priority.keys() {
+            if *d == device {
+                let _ins = streams.insert(*s);
+            }
+        }
+        for (d, s) in self.sm_permille.keys() {
+            if *d == device {
+                let _ins = streams.insert(*s);
+            }
+        }
+        for (d, s) in self.stream_green_ctx.keys() {
+            if *d == device {
+                let _ins = streams.insert(*s);
+            }
+        }
+        for (d, s) in self.stream_mem_sync_domain.keys() {
+            if *d == device {
+                let _ins = streams.insert(*s);
+            }
+        }
+        for (d, s) in self.stream_mem_sync_map.keys() {
+            if *d == device {
+                let _ins = streams.insert(*s);
+            }
+        }
+        for (d, s) in self.stream_sync_policy.keys() {
+            if *d == device {
+                let _ins = streams.insert(*s);
+            }
+        }
+        for (d, s) in &self.stream_nvlink_util_centric {
+            if *d == device {
+                let _ins = streams.insert(*s);
+            }
+        }
+        for (d, s) in self.stream_access_policy.keys() {
+            if *d == device {
+                let _ins = streams.insert(*s);
+            }
+        }
+        for (d, s) in self.graph_joins.keys() {
+            if *d == device {
+                let _ins = streams.insert(*s);
+            }
+        }
+        for op in self.ops.values() {
+            if op.device == device {
+                let _ins = streams.insert(op.stream);
+            }
+        }
+        for s in streams {
+            if s == StreamId::NULL || s == StreamId::GREEN_CTX_SYNC || s.is_device_graph_stream() {
+                continue;
+            }
+            self.drop_stream_state(device, s);
+            let _ins = self.gone_streams.insert((device, s));
+        }
+    }
+
+    fn reset_device_green_ctxs(&mut self, device: DeviceId) {
+        self.green_ctxs.retain(|_, g| g.device != device);
+    }
+
+    fn reset_device_runtime(&mut self, device: DeviceId) -> Result<(), SimError> {
+        let rt = self.gpu_rt_mut(device)?;
+        let used = rt.used;
+        let graph_used_high = rt.graph_used_high;
+        let graph_reserved_high = rt.graph_reserved_high;
+        *rt = GpuRt {
+            used,
+            compute: 0,
+            copies: 0,
+            graph_used_high,
+            graph_reserved_high,
+            persist_limit: 0,
+            persist_lines: Vec::new(),
+            limits: DeviceLimits::sm80(),
+            shared_mem_config: SharedMemoryMode::Default,
+            func_shared_mem_config: SharedMemoryMode::Default,
+            cache_config: FuncCache::PreferNone,
+            func_cache_config: FuncCache::PreferNone,
+            func_carveout: SharedMemCarveout::Default,
+            cluster_dim_must_be_set: false,
+            required_cluster_x: 0,
+            required_cluster_y: 0,
+            required_cluster_z: 0,
+            func_cluster_policy: ClusterSchedulingPolicy::Default,
+            device_flags: DeviceFlags::SCHEDULE_AUTO,
+        };
+        Ok(())
+    }
+
+    fn reset_device_func_attrs(&mut self, device: DeviceId) {
+        let _rm = self.non_portable_cluster.remove(&device);
+        let _prev = self.max_dynamic_shared.remove(&device);
+    }
+
+    fn reset_device_peers(&mut self, device: DeviceId) {
+        self.peer_enabled
+            .retain(|(a, b)| *a != device && *b != device);
+        for link in &self.profile.links {
+            let (Some(a), Some(b)) = (link.a, link.b) else {
+                continue;
+            };
+            if a == device || b == device {
+                let _ab = self.peer_enabled.insert((a, b));
+                let _ba = self.peer_enabled.insert((b, a));
+            }
+        }
     }
 
     /// `cudaPointerGetAttributes`. Query; legal during capture.

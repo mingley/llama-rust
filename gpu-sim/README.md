@@ -173,6 +173,7 @@ warp scheduler, L1, …   ← do not model
 | `set_func_shared_mem_config` / `get_func_shared_mem_config`; per-device function config | `cudaFuncSetSharedMemConfig` / `GetSharedMemConfig` |
 | `set_device_flags` / `get_device_flags` schedule + MapHost / Lmem / SyncMemops; Auto streams inherit the tax | `cudaSetDeviceFlags` / `GetDeviceFlags` |
 | `init_device` / `init_device_with_flags` seed is already done; `FLAGS_ARE_VALID` applies `deviceFlags` | `cudaInitDevice` |
+| `reset_device` waits that GPU then frees `cudaMalloc` (not `cudaMallocAsync`); user streams except NULL are unknown until create | `cudaDeviceReset` |
 | `device_primary_ctx_get_state` is flags plus always-active (no lazy retain) | `cuDevicePrimaryCtxGetState` |
 | `ctx_get_id` is `cuCtxGetId` for the seeded primary context of an explicit device | query; legal during capture |
 | access-policy windows align to `cudaLimitMaxL2FetchGranularity` (default 128; `expertvm sim --l2-fetch N` sets 32/64/128) | exact |
@@ -1066,6 +1067,13 @@ already seeded; does not make a thread-current device).
 `InitDeviceFlags::FLAGS_ARE_VALID` applies `deviceFlags` like
 `set_device_flags`; without that bit they are ignored. No Engine
 `--init-device`.
+`reset_device` is `cudaDeviceReset`. Waits that GPU, then frees
+`cudaMalloc` / `cudaMallocPitch` / `cudaMalloc3D`. `cudaMallocAsync` stays.
+User streams except NULL become unknown until create. Device flags and
+limits return to CUDA defaults. Peer pairs involving that GPU return to
+the profile seed. Host / managed allocs and events stay. Graphs stay.
+`ctx_get_id` stays. Capture cannot include it. No `cuDevicePrimaryCtxReset`.
+No Engine flag for device reset.
 `device_primary_ctx_get_state` is `cuDevicePrimaryCtxGetState` (flags match
 `get_device_flags`; active is always true). No `cuDevicePrimaryCtxRetain`.
 `ctx_get_id` is `cuCtxGetId` for the seeded primary context of an explicit

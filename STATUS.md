@@ -5,6 +5,18 @@ Visible five-turn extract: [docs/chatgpt-share-6a920fe1.md](docs/chatgpt-share-6
 Complete share-API extract: [docs/chatgpt-share-6a920fe1/](docs/chatgpt-share-6a920fe1/).
 Work lands on `main`. No PRs.
 
+## Shipped 2026-09-01 — CUDA `cudaDeviceReset`
+
+`gpu-sim` `reset_device` is `cudaDeviceReset`. Waits outstanding work on that
+GPU (unlike `destroy_stream`), then frees `cudaMalloc` / `cudaMallocPitch` /
+`cudaMalloc3D`. `cudaMallocAsync` stays. User streams except NULL become
+unknown until create. Device flags and limits return to CUDA defaults. Peer
+pairs involving that GPU return to the profile seed. Host / managed allocs,
+events, and graphs stay. `ctx_get_id` stays. Capture cannot include it. This
+VM does not invent Engine `--device-reset` or a public `cuDevicePrimaryCtxReset`
+(no `CUcontext` object). `gpu-profile capture` is still refused. Dual score
+still has no `$/M tokens`.
+
 ## Shipped 2026-09-01 — CUDA `cudaLimitDevRuntimePendingLaunchCount`
 
 `gpu-sim` `DeviceLimit::DevRuntimePendingLaunchCount` caps in-flight

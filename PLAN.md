@@ -5997,7 +5997,18 @@ model, do not celebrate the sim.
     not charge HBM. `gpu-profile capture` is still refused. Dual score
     still has no `$/M tokens`.
 
-563. [ ] Next numbered PLAN item after 562 is the next `gpu-sim` / Engine /
+563. [x] `gpu-sim` `reset_device` is `cudaDeviceReset`. Waits outstanding
+    work on that GPU (unlike `destroy_stream`), then frees `cudaMalloc` /
+    `cudaMallocPitch` / `cudaMalloc3D`. `cudaMallocAsync` stays. User
+    streams except NULL become unknown until create. Device flags and
+    limits return to CUDA defaults. Peer pairs involving that GPU return
+    to the profile seed. Host / managed allocs, events, and graphs stay.
+    `ctx_get_id` stays. Capture cannot include it. This VM does not invent
+    Engine `--device-reset` or a public `cuDevicePrimaryCtxReset` (no
+    `CUcontext` object). `gpu-profile capture` is still refused. Dual score
+    still has no `$/M tokens`.
+
+564. [ ] Next numbered PLAN item after 563 is the next `gpu-sim` / Engine /
     serve / expertvm mechanical API that is still missing, or the next official
     decode family. Prefer remaining CUDA-shaped twins over more
     OpenAI HTTP veneer. Do not invent F32 `output.scale`. Do not invent a
@@ -6052,6 +6063,12 @@ model, do not celebrate the sim.
     not count a queued tail against pending until flush. Do not reverse
     default pending 2048. Do not reverse host concurrent `device_launch_graph`
     at the default cap.
+    Do not invent a second `cudaDeviceReset` / `reset_device`. Do not invent
+    Engine `--device-reset`. Do not free `cudaMallocAsync` on device reset.
+    Do not destroy NULL stream on device reset. Do not reverse `ctx_get_id`
+    stability across reset. Do not reverse `destroy_stream` returning
+    immediately (reset waits). Do not free host or managed allocs on reset
+    (no owning device). Do not destroy events or graphs on reset.
     Do not invent
     a second
     `cuDeviceGetUuid` / `cudaDeviceGetUuid`. Do not invent a second
@@ -6307,6 +6324,12 @@ model, do not celebrate the sim.
     not invent Engine `--pending-launch`. Do not make `DevRuntimeSyncDepth`
     mechanical. Do not count a queued tail against pending until flush.
     Do not reverse default pending 2048.
+    Do not invent a second `cudaDeviceReset` / `reset_device`. Do not invent
+    Engine `--device-reset`. Do not free `cudaMallocAsync` on device reset.
+    Do not destroy NULL stream on device reset. Do not reverse `ctx_get_id`
+    stability across reset. Do not reverse `destroy_stream` returning
+    immediately (reset waits). Do not free host or managed allocs on reset
+    (no owning device). Do not destroy events or graphs on reset.
     Do not invent a second DeviceLaunch in-flight destroy-complete check or Engine
     `--device-launch-destroy`. Do not abort an in-flight DeviceLaunch when
     `destroy_graph` succeeds. Do not delay destroy of an idle exec. Do not invent
@@ -6767,6 +6790,12 @@ model, do not celebrate the sim.
     Do not invent a second `cudaLimitDevRuntimePendingLaunchCount`. Do not
     invent Engine `--pending-launch`. Do not make `DevRuntimeSyncDepth`
     mechanical. Do not reverse default pending 2048.
+    Do not invent a second `cudaDeviceReset` / `reset_device`. Do not invent
+    Engine `--device-reset`. Do not free `cudaMallocAsync` on device reset.
+    Do not destroy NULL stream on device reset. Do not reverse `ctx_get_id`
+    stability across reset. Do not reverse `destroy_stream` returning
+    immediately (reset waits). Do not free host or managed allocs on reset
+    (no owning device). Do not destroy events or graphs on reset.
     Do not
     spend the next item on an OpenAI-compatible HTTP veneer.
 

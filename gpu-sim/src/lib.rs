@@ -792,6 +792,14 @@
 //! thread-current device). [`InitDeviceFlags::FLAGS_ARE_VALID`] applies
 //! `deviceFlags` like [`set_device_flags`](Sim::set_device_flags); without
 //! that bit they are ignored. No Engine `--init-device`.
+//! [`reset_device`](Sim::reset_device) is `cudaDeviceReset`. Waits that GPU,
+//! then frees `cudaMalloc` / `cudaMallocPitch` / `cudaMalloc3D` on it.
+//! `cudaMallocAsync` stays. User streams except [`StreamId::NULL`] become
+//! unknown until create. Device flags and limits return to CUDA defaults.
+//! Peer pairs involving that GPU return to the profile seed. Host / managed
+//! allocs and events stay (no owning device). Graphs stay. [`ctx_get_id`](Sim::ctx_get_id)
+//! stays. Capture cannot include it. No `cuDevicePrimaryCtxReset`. No Engine
+//! flag for device reset.
 //! [`device_primary_ctx_get_state`](Sim::device_primary_ctx_get_state) is
 //! `cuDevicePrimaryCtxGetState` (flags match [`get_device_flags`](Sim::get_device_flags);
 //! active is always true). No `cuDevicePrimaryCtxRetain`.
@@ -33919,6 +33927,136 @@ mod tests {
             Err(SimError::Invalid { why }) => assert!(why.contains("device limit"), "{why}"),
             other => panic!("{other:?}"),
         }
+    }
+
+    #[test]
+    fn reset_device_is_cuda_device_reset() {
+        let mut sim = Sim::new(h100());
+        let d = DeviceId(0);
+        let s = StreamId(0);
+        let used = StreamId(1);
+        let a = sim.malloc(d, 4096).unwrap();
+        let (pitch_id, _pitch) = sim.malloc_pitch(d, 64, 4).unwrap();
+        let async_a = sim.alloc(d, 8192, s).unwrap();
+        sim.synchronize_stream(d, s).unwrap();
+        let host = sim.alloc_host_pinned(4096).unwrap();
+        let managed = sim.alloc_managed(4096).unwrap();
+        sim.create_event(EventId(1)).unwrap();
+        sim.stream_create_with_flags(d, used, StreamCreateFlags::NON_BLOCKING)
+            .unwrap();
+        enq(sim.kernel(d, KernelKind::other(1 << 40, 4096), &[a], &[a], used));
+        assert!(!sim.query_stream(d, used).unwrap());
+        sim.set_limit(d, DeviceLimit::DevRuntimePendingLaunchCount, 1)
+            .unwrap();
+        sim.set_device_flags(d, DeviceFlags::SCHEDULE_SPIN).unwrap();
+        sim.set_max_dynamic_shared_memory(d, 1024).unwrap();
+        let ctx_id = sim.ctx_get_id(d).unwrap();
+        let desc = sim
+            .dev_resource_generate_desc(&[SmResource {
+                start: 0,
+                width: 500,
+            }])
+            .unwrap();
+        let gc = sim
+            .green_ctx_create(desc, d, GreenCtxFlags::DEFAULT)
+            .unwrap();
+        let g = sim.create_graph(d, s).unwrap();
+        sim.graph_add_empty(g).unwrap();
+        sim.begin_capture(d, StreamId(2)).unwrap();
+        match sim.reset_device(d) {
+            Err(SimError::Invalid { why }) => assert!(why.contains("capture"), "{why}"),
+            other => panic!("{other:?}"),
+        }
+        let _cap = sim.end_capture().unwrap();
+        sim.reset_device(d).unwrap();
+        assert!(sim.operations().all(|o| o.done));
+        assert_eq!(
+            sim.pointer_get_attributes(a).unwrap().kind,
+            MemoryType::Unregistered
+        );
+        assert_eq!(
+            sim.pointer_get_attributes(pitch_id).unwrap().kind,
+            MemoryType::Unregistered
+        );
+        assert_eq!(
+            sim.pointer_get_attributes(async_a).unwrap().kind,
+            MemoryType::Device
+        );
+        assert_eq!(
+            sim.pointer_get_attributes(host).unwrap().kind,
+            MemoryType::Host
+        );
+        assert_eq!(
+            sim.pointer_get_attributes(managed).unwrap().kind,
+            MemoryType::Managed
+        );
+        sim.event_get_id(EventId(1)).unwrap();
+        assert_eq!(sim.graph_len(g).unwrap(), 1);
+        assert_eq!(sim.ctx_get_id(d).unwrap(), ctx_id);
+        match sim.green_ctx_get_id(gc) {
+            Err(SimError::Invalid { why }) => {
+                assert!(why.contains("unknown green ctx"), "{why}");
+            }
+            other => panic!("{other:?}"),
+        }
+        match sim.stream_get_flags(d, used) {
+            Err(SimError::Invalid { why }) => assert!(why.contains("unknown stream"), "{why}"),
+            other => panic!("{other:?}"),
+        }
+        sim.stream_get_flags(d, s).unwrap();
+        sim.stream_create_with_flags(d, used, StreamCreateFlags::NON_BLOCKING)
+            .unwrap();
+        assert_eq!(
+            sim.get_limit(d, DeviceLimit::DevRuntimePendingLaunchCount)
+                .unwrap(),
+            2048
+        );
+        assert_eq!(sim.get_device_flags(d).unwrap(), DeviceFlags::SCHEDULE_AUTO);
+        assert_eq!(sim.max_dynamic_shared_memory(d), 0);
+        let (flags, active) = sim.device_primary_ctx_get_state(d).unwrap();
+        assert_eq!(flags, DeviceFlags::SCHEDULE_AUTO);
+        assert!(active);
+        let again = sim.malloc(d, 4096).unwrap();
+        assert_eq!(
+            sim.pointer_get_attributes(again).unwrap().kind,
+            MemoryType::Device
+        );
+        match sim.reset_device(DeviceId(9)) {
+            Err(SimError::Invalid { why }) => {
+                assert!(why.contains("device not in profile"), "{why}");
+            }
+            other => panic!("{other:?}"),
+        }
+
+        let mut two = Sim::new(HardwareProfile::example_2xh100_pcie());
+        let d0 = DeviceId(0);
+        let d1 = DeviceId(1);
+        let keep = two.malloc(d1, 4096).unwrap();
+        let drop = two.malloc(d0, 4096).unwrap();
+        two.disable_peer(d0, d1).unwrap();
+        assert!(!two.peer_access(d0, d1));
+        two.reset_device(d0).unwrap();
+        assert_eq!(
+            two.pointer_get_attributes(drop).unwrap().kind,
+            MemoryType::Unregistered
+        );
+        assert_eq!(
+            two.pointer_get_attributes(keep).unwrap().kind,
+            MemoryType::Device
+        );
+        assert!(two.peer_access(d0, d1));
+        let b = two.malloc(d0, 4096).unwrap();
+        enq(two.kernel(d0, KernelKind::other(1 << 20, 4096), &[b], &[b], s));
+        two.synchronize().unwrap();
+
+        enq(sim.kernel(
+            d,
+            KernelKind::other(1 << 20, 4096),
+            &[async_a],
+            &[async_a],
+            s,
+        ));
+        sim.synchronize().unwrap();
     }
 
     #[test]
