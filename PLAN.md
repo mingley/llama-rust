@@ -6389,7 +6389,14 @@ model, do not celebrate the sim.
     Engine `--ctx-exec-affinity`, or `cudaChooseDevice`. `gpu-profile capture` is
     still refused. Dual score still has no `$/M tokens`.
 
-610. [ ] Next numbered PLAN item after 609 is the next `gpu-sim` / Engine /
+610. [x] `gpu-sim` `Sim::mem_batch_decompress_async` is
+    `cuMemBatchDecompressAsync`. Always Invalid `"hw decompress"` because
+    `MemDecompressAlgorithmMask` is 0. Distinct from `memcpy_batch_async`.
+    This VM does not invent decompress succeeding, Engine `--mem-decompress`,
+    or `cudaChooseDevice`. `gpu-profile capture` is still refused. Dual
+    score still has no `$/M tokens`.
+
+611. [ ] Next numbered PLAN item after 610 is the next `gpu-sim` / Engine /
     serve / expertvm mechanical API that is still missing, or the next official
     decode family. Prefer remaining CUDA-shaped twins over more
     OpenAI HTTP veneer. Do not invent F32 `output.scale`. Do not invent a
@@ -6654,6 +6661,9 @@ model, do not celebrate the sim.
     Do not invent a second `cuCtxGetExecAffinity` / `ctx_get_exec_affinity`.
     Do not invent Engine `--ctx-exec-affinity`. Do not invent occupancy SM
     counts. Do not invent `cuCtxSetExecAffinity`.
+    Do not invent a second `cuMemBatchDecompressAsync` /
+    `mem_batch_decompress_async`. Do not invent Engine `--mem-decompress`.
+    Do not invent decompress succeeding.
     Do not invent a second `cudaStreamAddCallback`.
     Do not invent Engine `--stream-callback` (same wall as second live
     `cudaLaunchHostFunc` after miss DMA).
@@ -7031,6 +7041,9 @@ model, do not celebrate the sim.
     Do not invent a second `ctx_get_exec_affinity` API. Do not invent
     Engine `--context-exec-affinity`. Do not invent a second
     `device_get_exec_affinity_support`. Do not reverse unsupported SM_COUNT.
+    Do not invent a second `mem_batch_decompress_async` API. Do not invent
+    Engine `--batch-decompress`. Do not invent a second
+    `MemDecompressAlgorithmMask`. Do not reverse `"hw decompress"`.
     Do not invent a second DeviceLaunch in-flight destroy-complete check or Engine
     `--device-launch-destroy`. Do not abort an in-flight DeviceLaunch when
     `destroy_graph` succeeds. Do not delay destroy of an idle exec. Do not invent
@@ -7614,6 +7627,9 @@ model, do not celebrate the sim.
     Do not invent a second `ctx_get_exec_affinity` method. Do not invent
     Engine `--cu-ctx-exec-affinity`. Do not reverse wrapping
     cuCtxGetExecAffinity unsupported.
+    Do not invent a second `mem_batch_decompress_async` method. Do not
+    invent Engine `--cu-mem-decompress`. Do not reverse wrapping
+    cuMemBatchDecompressAsync Invalid.
     Do not
     spend the next item on an OpenAI-compatible HTTP veneer.
 

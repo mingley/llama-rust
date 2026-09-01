@@ -193,6 +193,7 @@ warp scheduler, L1, …   ← do not model
 | `ctx_get_shared_mem_config` wraps `get_shared_mem_config` for that primary context | `cuCtxGetSharedMemConfig` |
 | `ctx_reset_persisting_l2_cache` wraps `reset_persisting_l2_cache` (limit stays) | `cuCtxResetPersistingL2Cache` |
 | `ctx_get_exec_affinity` is Invalid (SM_COUNT support is 0) | `cuCtxGetExecAffinity` |
+| `mem_batch_decompress_async` is Invalid (algorithm mask is 0) | `cuMemBatchDecompressAsync` |
 | `func_get_name` is empty until a compiled kernel exists | `cudaFuncGetName` / `cuFuncGetName` |
 | `func_get_param_info` is Invalid until a compiled kernel exists | `cuFuncGetParamInfo` |
 | `func_is_loaded` is false until a compiled kernel exists | `cuFuncIsLoaded` |
@@ -1010,7 +1011,8 @@ semaphore interop is not modeled). `device_get_nvscisync_attributes` is
 `NvSciSyncAttrFlags::SIGNAL` / `WAIT`). Query; legal during capture. No
 Engine `--nvscisync`. `MemDecompressAlgorithmMask` /
 `MemDecompressMaximumLength` are always 0 (hardware decompress is not
-modeled). `HostNumaVirtualMemoryManagementSupported` is always 0 (host
+modeled). `mem_batch_decompress_async` is `cuMemBatchDecompressAsync`
+(always Invalid `"hw decompress"`). `HostNumaVirtualMemoryManagementSupported` is always 0 (host
 NUMA VMM is not modeled; `va_create_with_prop` refuses host location).
 `HostNumaMemoryPoolsSupported` is always 0 (host NUMA pools are not
 modeled; `create_pool_with_props` refuses host location).

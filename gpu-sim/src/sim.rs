@@ -17572,6 +17572,27 @@ impl Sim {
         self.enqueue_memcpy_batch(device, stream, ops, &per, "cannot capture memcpy batch")
     }
 
+    /// `cuMemBatchDecompressAsync`. Hardware decompress is not modeled.
+    ///
+    /// Always Invalid `"hw decompress"` ([`DeviceAttr::MemDecompressAlgorithmMask`]
+    /// is 0). Distinct from [`Self::memcpy_batch_async`]. `count` and `flags`
+    /// are ignored. Unknown devices are Invalid `"device not in profile"`.
+    /// This VM does not invent decompress succeeding.
+    pub fn mem_batch_decompress_async(
+        &self,
+        device: DeviceId,
+        stream: StreamId,
+        count: u64,
+        flags: u32,
+    ) -> Result<(), SimError> {
+        let _gpu = self.profile.gpu(device)?;
+        self.require_live_stream(device, stream)?;
+        let _ = (count, flags);
+        Err(SimError::Invalid {
+            why: "hw decompress",
+        })
+    }
+
     /// `cudaMemcpy3DWithAttributesAsync`.
     ///
     /// [`MemcpySrcAccessOrder::Stream`] is [`Self::memcpy_3d_async`].

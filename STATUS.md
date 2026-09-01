@@ -5,6 +5,14 @@ Visible five-turn extract: [docs/chatgpt-share-6a920fe1.md](docs/chatgpt-share-6
 Complete share-API extract: [docs/chatgpt-share-6a920fe1/](docs/chatgpt-share-6a920fe1/).
 Work lands on `main`. No PRs.
 
+## Shipped 2026-09-01 — CUDA `cuMemBatchDecompressAsync`
+
+`gpu-sim` `Sim::mem_batch_decompress_async` is `cuMemBatchDecompressAsync`.
+Always Invalid `"hw decompress"` because `MemDecompressAlgorithmMask` is
+0. Distinct from `memcpy_batch_async`. This VM does not invent decompress
+succeeding or Engine `--mem-decompress`.
+`gpu-profile capture` is still refused. Dual score still has no `$/M tokens`.
+
 ## Shipped 2026-09-01 — CUDA `cuCtxGetExecAffinity`
 
 `gpu-sim` `Sim::ctx_get_exec_affinity` is `cuCtxGetExecAffinity`.

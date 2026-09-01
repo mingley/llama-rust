@@ -883,6 +883,9 @@
 //! or empty DuringApiCall/Any deps so they do not wait for each other; 2D/3D
 //! Invalid `"memcpy batch 1d"`; capture is `"cannot capture memcpy batch"`;
 //! a same-stream [`alloc`](Sim::alloc) pointer does not need a host sync).
+//! [`mem_batch_decompress_async`](Sim::mem_batch_decompress_async) is
+//! `cuMemBatchDecompressAsync` (always Invalid `"hw decompress"`;
+//! [`DeviceAttr::MemDecompressAlgorithmMask`] is 0). No Engine `--mem-decompress`.
 //! [`memcpy_with_attributes`](Sim::memcpy_with_attributes) is
 //! `cudaMemcpyWithAttributesAsync` (Stream is [`memcpy`](Sim::memcpy);
 //! DuringApiCall waits those copies; Any does not). [`MemcpyFlags::PREFER_OVERLAP_WITH_COMPUTE`]
@@ -20369,6 +20372,44 @@ mod tests {
             0
         );
         let _g = sim.end_capture().unwrap();
+    }
+
+    #[test]
+    fn mem_batch_decompress_async_is_unsupported() {
+        let mut sim = Sim::new(h100());
+        let d = DeviceId(0);
+        let s = StreamId(0);
+        match sim.mem_batch_decompress_async(d, s, 1, 0) {
+            Err(SimError::Invalid { why }) => {
+                assert!(why.contains("hw decompress"), "{why}");
+            }
+            other => panic!("{other:?}"),
+        }
+        match sim.mem_batch_decompress_async(d, s, 0, 0) {
+            Err(SimError::Invalid { why }) => {
+                assert!(why.contains("hw decompress"), "{why}");
+            }
+            other => panic!("{other:?}"),
+        }
+        sim.begin_capture(d, s).unwrap();
+        match sim.mem_batch_decompress_async(d, s, 1, 0) {
+            Err(SimError::Invalid { why }) => {
+                assert!(why.contains("hw decompress"), "{why}");
+            }
+            other => panic!("{other:?}"),
+        }
+        let _g = sim.end_capture().unwrap();
+        match sim.mem_batch_decompress_async(DeviceId(99), s, 1, 0) {
+            Err(SimError::Invalid { why }) => {
+                assert!(why.contains("device not in profile"), "{why}");
+            }
+            other => panic!("{other:?}"),
+        }
+        assert_eq!(
+            sim.device_get_attribute(d, DeviceAttr::MemDecompressAlgorithmMask)
+                .unwrap(),
+            0
+        );
     }
 
     #[test]
