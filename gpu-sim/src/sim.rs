@@ -709,6 +709,29 @@ impl Sim {
         }
     }
 
+    fn require_live_stream(&self, device: DeviceId, stream: StreamId) -> Result<(), SimError> {
+        if self.gone_streams.contains(&(device, stream)) {
+            Err(SimError::Invalid {
+                why: "unknown stream",
+            })
+        } else {
+            Ok(())
+        }
+    }
+
+    fn drop_stream_state(&mut self, device: DeviceId, stream: StreamId) {
+        let key = (device, stream);
+        let _p = self.priority.remove(&key);
+        let _b = self.blocking.remove(&key);
+        let _sm = self.sm_permille.remove(&key);
+        let _g = self.stream_green_ctx.remove(&key);
+        let _d = self.stream_mem_sync_domain.remove(&key);
+        let _m = self.stream_mem_sync_map.remove(&key);
+        let _s = self.stream_sync_policy.remove(&key);
+        let _n = self.stream_nvlink_util_centric.remove(&key);
+        let _a = self.stream_access_policy.remove(&key);
+    }
+
     /// Exec snapshot for SetAttribute / SetParams (`exec`), or a live definition handle.
     fn resolve_kernel_attr_graph(&self, graph: GraphId, exec: bool) -> Result<GraphId, SimError> {
         if exec {
@@ -993,6 +1016,9 @@ pub struct Sim {
     priority: BTreeMap<(DeviceId, StreamId), i32>,
     /// `cudaStreamCreate` (blocking) streams. They serialize with [`StreamId::NULL`].
     blocking: BTreeSet<(DeviceId, StreamId)>,
+    /// `cudaStreamDestroy` handles. In-flight ops still run; new work and
+    /// queries are unknown until [`Self::stream_create_with_flags`].
+    gone_streams: BTreeSet<(DeviceId, StreamId)>,
     /// Duration-only SM fraction per stream (‰). Missing is full chip (`1000`).
     sm_permille: BTreeMap<(DeviceId, StreamId), u16>,
     /// `cuGreenCtxStreamCreate` binding. Missing is the primary context.
@@ -1173,6 +1199,7 @@ impl Sim {
             legacy_null_stream: false,
             priority: BTreeMap::new(),
             blocking: BTreeSet::new(),
+            gone_streams: BTreeSet::new(),
             sm_permille: BTreeMap::new(),
             stream_green_ctx: BTreeMap::new(),
             next_green_ctx: 1,
@@ -1474,6 +1501,7 @@ impl Sim {
         priority: i32,
     ) -> Result<(), SimError> {
         let priority = self.clamp_stream_priority(device, priority)?;
+        self.require_live_stream(device, stream)?;
         let _prev = self.priority.insert((device, stream), priority);
         Ok(())
     }
@@ -1527,6 +1555,7 @@ impl Sim {
         permille: u16,
     ) -> Result<(), SimError> {
         let _gpu = self.profile.gpu(device)?;
+        self.require_live_stream(device, stream)?;
         if self.stream_green_ctx.contains_key(&(device, stream)) {
             return Err(SimError::Invalid {
                 why: "green ctx stream",
@@ -1774,6 +1803,7 @@ impl Sim {
         })?;
         let device = g.device;
         let width = g.sm.width.max(1);
+        self.require_live_stream(device, stream)?;
         if self.stream_green_ctx.contains_key(&(device, stream)) {
             return Err(SimError::Invalid {
                 why: "stream has green ctx",
@@ -1813,6 +1843,7 @@ impl Sim {
         stream: StreamId,
     ) -> Result<Option<GreenCtxId>, SimError> {
         let _gpu = self.profile.gpu(device)?;
+        self.require_live_stream(device, stream)?;
         Ok(self.stream_green_ctx.get(&(device, stream)).copied())
     }
 
@@ -1827,6 +1858,7 @@ impl Sim {
         kind: DevResourceType,
     ) -> Result<DevResource, SimError> {
         let _gpu = self.profile.gpu(device)?;
+        self.require_live_stream(device, stream)?;
         match self.stream_green_ctx.get(&(device, stream)) {
             Some(ctx) => self.green_ctx_get_dev_resource(*ctx, kind),
             None => match kind {
@@ -2031,6 +2063,7 @@ impl Sim {
         domain: MemSyncDomain,
     ) -> Result<(), SimError> {
         let _gpu = self.profile.gpu(device)?;
+        self.require_live_stream(device, stream)?;
         let _prev = self.stream_mem_sync_domain.insert((device, stream), domain);
         Ok(())
     }
@@ -2056,6 +2089,7 @@ impl Sim {
         map: MemSyncDomainMap,
     ) -> Result<(), SimError> {
         self.validate_mem_sync_map(device, map)?;
+        self.require_live_stream(device, stream)?;
         let _prev = self.stream_mem_sync_map.insert((device, stream), map);
         Ok(())
     }
@@ -2086,6 +2120,7 @@ impl Sim {
         policy: SynchronizationPolicy,
     ) -> Result<(), SimError> {
         let _gpu = self.profile.gpu(device)?;
+        self.require_live_stream(device, stream)?;
         let _prev = self.stream_sync_policy.insert((device, stream), policy);
         Ok(())
     }
@@ -2111,6 +2146,7 @@ impl Sim {
         enabled: bool,
     ) -> Result<(), SimError> {
         let _gpu = self.profile.gpu(device)?;
+        self.require_live_stream(device, stream)?;
         if enabled {
             let _ins = self.stream_nvlink_util_centric.insert((device, stream));
         } else {
@@ -2137,6 +2173,7 @@ impl Sim {
         window: Option<AccessPolicyWindow>,
     ) -> Result<(), SimError> {
         let _gpu = self.profile.gpu(device)?;
+        self.require_live_stream(device, stream)?;
         if let Some(w) = window {
             self.validate_access_policy_window(device, w)?;
             let _prev = self.stream_access_policy.insert((device, stream), w);
@@ -2174,6 +2211,8 @@ impl Sim {
             });
         }
         let _gpu = self.profile.gpu(src_device)?;
+        self.require_live_stream(src_device, src)?;
+        self.require_live_stream(dst_device, dst)?;
         let pri = self.stream_priority(src_device, src);
         let sm = self.sm_permille.get(&(src_device, src)).copied();
         let domain = self.stream_mem_sync_domain.get(&(src_device, src)).copied();
@@ -2236,6 +2275,15 @@ impl Sim {
                 why: "null stream uses set_legacy_null_stream",
             });
         }
+        if self.gone_streams.contains(&(device, stream)) {
+            if !self.stream_idle(device, stream) {
+                return Err(SimError::Invalid {
+                    why: "stream in flight",
+                });
+            }
+            self.drop_stream_state(device, stream);
+            let _was = self.gone_streams.remove(&(device, stream));
+        }
         if yes {
             let _was = self.blocking.insert((device, stream));
         } else {
@@ -2283,6 +2331,38 @@ impl Sim {
         self.set_stream_priority(device, stream, priority)
     }
 
+    /// `cudaStreamDestroy`. Returns immediately; in-flight work still
+    /// completes. Capture cannot include it.
+    ///
+    /// [`StreamId::NULL`] is Invalid `"null stream"`. A destroyed handle is
+    /// Invalid `"unknown stream"` for new work and queries until
+    /// [`Self::stream_create_with_flags`] (or [`Self::set_stream_blocking`]).
+    /// Recreate while that stream still has unfinished ops is Invalid
+    /// `"stream in flight"` (this VM reuses caller-chosen ids).
+    /// [`StreamId::GREEN_CTX_SYNC`] is unknown. Unknown devices are Invalid.
+    /// Use of the handle after destroy is unknown, not a wait
+    /// ([`Self::destroy_event`] waits). Device [`Self::synchronize`] still
+    /// drains parked work.
+    pub fn destroy_stream(&mut self, device: DeviceId, stream: StreamId) -> Result<(), SimError> {
+        self.fail_if_capturing("cannot capture stream destroy")?;
+        let _gpu = self.profile.gpu(device)?;
+        if stream == StreamId::NULL {
+            return Err(SimError::Invalid { why: "null stream" });
+        }
+        if stream == StreamId::GREEN_CTX_SYNC {
+            return Err(SimError::Invalid {
+                why: "unknown stream",
+            });
+        }
+        if !self.gone_streams.insert((device, stream)) {
+            return Err(SimError::Invalid {
+                why: "unknown stream",
+            });
+        }
+        self.clock = self.clock.saturating_add(1);
+        Ok(())
+    }
+
     /// Whether `stream` is a blocking `cudaStreamCreate` stream on `device`.
     #[must_use]
     pub fn stream_is_blocking(&self, device: DeviceId, stream: StreamId) -> bool {
@@ -2297,6 +2377,7 @@ impl Sim {
     /// streams default to NonBlocking).
     pub fn stream_get_flags(&self, device: DeviceId, stream: StreamId) -> Result<u32, SimError> {
         let _gpu = self.profile.gpu(device)?;
+        self.require_live_stream(device, stream)?;
         let blocking = if stream == StreamId::NULL {
             self.legacy_null_stream
         } else {
@@ -2312,6 +2393,7 @@ impl Sim {
     /// [`Self::device_get_stream_priority_range`].
     pub fn stream_get_priority(&self, device: DeviceId, stream: StreamId) -> Result<i32, SimError> {
         let _gpu = self.profile.gpu(device)?;
+        self.require_live_stream(device, stream)?;
         Ok(self.stream_priority(device, stream))
     }
 
@@ -2319,10 +2401,11 @@ impl Sim {
     ///
     /// Unique per `(device, stream)` for this VM. [`StreamId`] stays
     /// caller-chosen; this is not that handle and not a capture-sequence id.
-    /// Unknown devices are Invalid. This VM does not invent
-    /// `cudaStreamDestroy`.
+    /// Unknown devices are Invalid. A [`Self::destroy_stream`] handle is
+    /// Invalid `"unknown stream"` until create.
     pub fn stream_get_id(&self, device: DeviceId, stream: StreamId) -> Result<u64, SimError> {
         let _gpu = self.profile.gpu(device)?;
+        self.require_live_stream(device, stream)?;
         Ok((u64::from(device.0) << 16)
             .saturating_add(u64::from(stream.0))
             .saturating_add(1))
@@ -2343,6 +2426,7 @@ impl Sim {
         stream: StreamId,
     ) -> Result<DeviceId, SimError> {
         let _gpu = self.profile.gpu(device)?;
+        self.require_live_stream(device, stream)?;
         if let Some(ctx) = self.stream_green_ctx.get(&(device, stream)).copied() {
             return self.green_ctx_get_device(ctx);
         }
@@ -2360,6 +2444,7 @@ impl Sim {
         attr: StreamAttr,
     ) -> Result<StreamAttrValue, SimError> {
         let _gpu = self.profile.gpu(device)?;
+        self.require_live_stream(device, stream)?;
         Ok(match attr {
             StreamAttr::Priority => StreamAttrValue::Priority(self.stream_priority(device, stream)),
             StreamAttr::SynchronizationPolicy => {
@@ -2654,6 +2739,7 @@ impl Sim {
     /// A stream in an active graph capture is [`SimError::Invalid`].
     pub fn query_stream(&self, device: DeviceId, stream: StreamId) -> Result<bool, SimError> {
         let _gpu = self.profile.gpu(device)?;
+        self.require_live_stream(device, stream)?;
         if self.in_capture(device, stream) {
             return Err(SimError::Invalid {
                 why: "cannot query stream during capture",
@@ -2967,6 +3053,7 @@ impl Sim {
             });
         }
         let _gpu = self.profile.gpu(device)?;
+        self.require_live_stream(device, stream)?;
         if !self.stream_idle(device, stream) {
             return Err(SimError::Invalid {
                 why: "capture requires idle stream",
@@ -2991,6 +3078,7 @@ impl Sim {
             });
         }
         let _gpu = self.profile.gpu(device)?;
+        self.require_live_stream(device, stream)?;
         if !self.stream_idle(device, stream) {
             return Err(SimError::Invalid {
                 why: "capture requires idle stream",
@@ -3093,6 +3181,7 @@ impl Sim {
         callback: Option<GraphRecaptureCallback>,
     ) -> Result<(), SimError> {
         let _gpu = self.profile.gpu(device)?;
+        self.require_live_stream(device, stream)?;
         if self.capturing.is_some() {
             return Err(SimError::Invalid {
                 why: "nested graph capture",
@@ -3266,6 +3355,7 @@ impl Sim {
         mode: StreamCaptureMode,
     ) -> Result<(), SimError> {
         let _gpu = self.profile.gpu(device)?;
+        self.require_live_stream(device, stream)?;
         if self.capturing.is_some() {
             return Err(SimError::Invalid {
                 why: "nested graph capture",
@@ -20040,6 +20130,7 @@ impl Sim {
         stream: StreamId,
     ) -> Result<(), SimError> {
         let _gpu = self.profile.gpu(device)?;
+        self.require_live_stream(device, stream)?;
         if self.in_capture(device, stream) {
             return Err(SimError::Invalid {
                 why: "cannot synchronize stream during capture",
@@ -20292,6 +20383,7 @@ impl Sim {
         if self.unavailable.contains(&device) {
             return Err(SimError::Unavailable { device });
         }
+        self.require_live_stream(device, stream)?;
         if self.capturing.is_some() {
             return self.submit_captured(device, stream, kind);
         }

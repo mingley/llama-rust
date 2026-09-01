@@ -820,6 +820,9 @@
 //! [`stream_create_with_priority`](Sim::stream_create_with_priority) is
 //! `cudaStreamCreateWithPriority` (flags plus priority; clamped to
 //! [`device_get_stream_priority_range`](Sim::device_get_stream_priority_range)).
+//! [`destroy_stream`](Sim::destroy_stream) is `cudaStreamDestroy` (returns
+//! immediately; in-flight work still completes; NULL is Invalid; recreate
+//! while unfinished is `"stream in flight"`). Capture cannot include it.
 //! [`Sim::set_created_streams_priority`] assigns created streams `-id`.
 //! [`stream_copy_attributes`](Sim::stream_copy_attributes) is
 //! `cudaStreamCopyAttributes` (priority, SM permille, mem-sync domain/map,
@@ -15679,6 +15682,89 @@ mod tests {
             gpu1
         );
         let _g = eight.end_capture().unwrap();
+    }
+
+    #[test]
+    fn destroy_stream_is_cuda_stream_destroy() {
+        let mut sim = Sim::new(h100());
+        let d = DeviceId(0);
+        let s = StreamId(1);
+        match sim.destroy_stream(d, StreamId::NULL) {
+            Err(SimError::Invalid { why }) => assert!(why.contains("null"), "{why}"),
+            other => panic!("{other:?}"),
+        }
+        match sim.destroy_stream(DeviceId(1), s) {
+            Err(SimError::Invalid { why }) => assert!(why.contains("device"), "{why}"),
+            other => panic!("{other:?}"),
+        }
+        match sim.destroy_stream(d, StreamId::GREEN_CTX_SYNC) {
+            Err(SimError::Invalid { why }) => assert!(why.contains("unknown"), "{why}"),
+            other => panic!("{other:?}"),
+        }
+        sim.set_stream_priority(d, s, -5).unwrap();
+        assert_eq!(sim.stream_get_priority(d, s).unwrap(), -5);
+        sim.destroy_stream(d, s).unwrap();
+        match sim.destroy_stream(d, s) {
+            Err(SimError::Invalid { why }) => assert!(why.contains("unknown"), "{why}"),
+            other => panic!("{other:?}"),
+        }
+        match sim.stream_get_id(d, s) {
+            Err(SimError::Invalid { why }) => assert!(why.contains("unknown"), "{why}"),
+            other => panic!("{other:?}"),
+        }
+        match sim.stream_get_priority(d, s) {
+            Err(SimError::Invalid { why }) => assert!(why.contains("unknown"), "{why}"),
+            other => panic!("{other:?}"),
+        }
+        match sim.query_stream(d, s) {
+            Err(SimError::Invalid { why }) => assert!(why.contains("unknown"), "{why}"),
+            other => panic!("{other:?}"),
+        }
+        let a = sim.malloc(d, 4096).unwrap();
+        match sim.kernel(d, KernelKind::other(8, 8), &[a], &[a], s) {
+            Err(SimError::Invalid { why }) => assert!(why.contains("unknown"), "{why}"),
+            other => panic!("{other:?}"),
+        }
+        sim.stream_create_with_flags(d, s, StreamCreateFlags::NON_BLOCKING)
+            .unwrap();
+        assert_eq!(sim.stream_get_priority(d, s).unwrap(), 0);
+        enq(sim.kernel(d, KernelKind::other(8, 8), &[a], &[a], s));
+        sim.synchronize().unwrap();
+        let inflight = sim
+            .kernel(d, KernelKind::other(1 << 40, 4096), &[a], &[a], s)
+            .unwrap();
+        assert!(inflight.0 >= 1);
+        sim.destroy_stream(d, s).unwrap();
+        match sim.synchronize_stream(d, s) {
+            Err(SimError::Invalid { why }) => assert!(why.contains("unknown"), "{why}"),
+            other => panic!("{other:?}"),
+        }
+        match sim.stream_create_with_flags(d, s, StreamCreateFlags::NON_BLOCKING) {
+            Err(SimError::Invalid { why }) => assert!(why.contains("in flight"), "{why}"),
+            other => panic!("{other:?}"),
+        }
+        sim.synchronize().unwrap();
+        assert!(sim.operation(inflight).unwrap().done);
+        sim.stream_create_with_flags(d, s, StreamCreateFlags::NON_BLOCKING)
+            .unwrap();
+        enq(sim.kernel(d, KernelKind::other(8, 8), &[a], &[a], s));
+        sim.synchronize().unwrap();
+        sim.begin_capture(d, StreamId::NULL).unwrap();
+        match sim.destroy_stream(d, StreamId(2)) {
+            Err(SimError::Invalid { why }) => assert!(why.contains("capture"), "{why}"),
+            other => panic!("{other:?}"),
+        }
+        let _g = sim.end_capture().unwrap();
+        let mut dual = Sim::new(HardwareProfile::example_2xh100_pcie());
+        let a0 = dual.malloc(DeviceId(0), 4096).unwrap();
+        dual.destroy_stream(DeviceId(0), s).unwrap();
+        match dual.kernel(DeviceId(0), KernelKind::other(8, 8), &[a0], &[a0], s) {
+            Err(SimError::Invalid { why }) => assert!(why.contains("unknown"), "{why}"),
+            other => panic!("{other:?}"),
+        }
+        let a1 = dual.malloc(DeviceId(1), 4096).unwrap();
+        enq(dual.kernel(DeviceId(1), KernelKind::other(8, 8), &[a1], &[a1], s));
+        dual.synchronize().unwrap();
     }
 
     #[test]

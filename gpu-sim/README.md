@@ -190,6 +190,7 @@ warp scheduler, L1, …   ← do not model
 | stream[i+1].start ≥ stream[i].finish (`Operation` timestamps) | queue wait vs run |
 | numerically lower `set_stream_priority` starts first under contention (`cudaDeviceGetStreamPriorityRange`) | launch overhead |
 | `cudaGetCurrentGraphExec` (`current_graph_exec`) is the DeviceLaunch exec in flight; host `launch_graph` does not count | query |
+| `cudaStreamDestroy` (`destroy_stream`) returns immediately; in-flight work still completes; NULL is Invalid; recreate while unfinished is `"stream in flight"` | 1 ns |
 | `compute_slots>=2` overlaps independent kernels at full issue rate | kernel duration (not SM-partition) |
 | `cudaLaunchCooperativeKernel` occupies every compute slot (`cooperative_kernel`) | leftover kernels cannot Hyper-Q overlap |
 | `cudaLaunchAttributeCooperative` (`KernelNodeAttr::Cooperative`) | same occupancy; `graph_exec_kernel_set_params` still refuses a mismatch |
@@ -1348,10 +1349,15 @@ overflow is `PinOom`. Example default is unlimited.
 `set_stream_priority` is the priority-only helper.
 `stream_create_with_priority` is `cudaStreamCreateWithPriority` (flags plus
 priority; clamped to `device_get_stream_priority_range`; numerically lower
-first when compute contends). `device_get_stream_priority_range` is
+first when compute contends). `destroy_stream` is `cudaStreamDestroy`
+(returns immediately; in-flight work still completes; NULL is Invalid).
+`device_get_stream_priority_range` is
 `cudaDeviceGetStreamPriorityRange` (example H100 least `0`, greatest `-5`).
 `current_graph_exec` is `cudaGetCurrentGraphExec` (DeviceLaunch in
 flight; host `launch_graph` does not count). Query; legal during capture.
+`destroy_stream` is `cudaStreamDestroy` (returns immediately; in-flight
+work still completes; NULL is Invalid; recreate while unfinished is
+`"stream in flight"`). Capture cannot include it.
 `KernelAttrs::priority` is `cudaLaunchAttributePriority`
 (`None` inherits the stream; `Some` overrides that kernel only).
 `stream_copy_attributes` is `cudaStreamCopyAttributes`

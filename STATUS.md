@@ -5,6 +5,18 @@ Visible five-turn extract: [docs/chatgpt-share-6a920fe1.md](docs/chatgpt-share-6
 Complete share-API extract: [docs/chatgpt-share-6a920fe1/](docs/chatgpt-share-6a920fe1/).
 Work lands on `main`. No PRs.
 
+## Shipped 2026-09-01 — CUDA `cudaStreamDestroy`
+
+`gpu-sim` `destroy_stream` is `cudaStreamDestroy`. Returns immediately;
+in-flight work still completes. Capture cannot include it. NULL is Invalid
+`"null stream"`. A destroyed handle is Invalid `"unknown stream"` for new
+work and queries until `stream_create_with_flags` / `set_stream_blocking`.
+Recreate while that stream still has unfinished ops is Invalid
+`"stream in flight"` (this VM reuses caller-chosen ids). Distinct from
+`destroy_event` (which waits). Device `synchronize` still drains parked
+work. This VM does not invent Engine `--stream-destroy`. `gpu-profile
+capture` is still refused. Dual score still has no `$/M tokens`.
+
 ## Shipped 2026-09-01 — CUDA `cudaGetCurrentGraphExec`
 
 `gpu-sim` `current_graph_exec` is `cudaGetCurrentGraphExec`. Query; legal

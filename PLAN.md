@@ -5950,7 +5950,18 @@ model, do not celebrate the sim.
     `CUgraphDeviceNode`, or public `Sim::advance`. `gpu-profile capture`
     is still refused. Dual score still has no `$/M tokens`.
 
-559. [ ] Next numbered PLAN item after 558 is the next `gpu-sim` / Engine /
+559. [x] `gpu-sim` `destroy_stream` is CUDA `cudaStreamDestroy`.
+    Returns immediately; in-flight work still completes. Capture cannot
+    include it. NULL is Invalid `"null stream"`. A destroyed handle is
+    Invalid `"unknown stream"` for new work and queries until
+    `stream_create_with_flags` / `set_stream_blocking`. Recreate while
+    that stream still has unfinished ops is Invalid `"stream in flight"`
+    (this VM reuses caller-chosen ids). Distinct from `destroy_event`
+    (which waits). Device `synchronize` still drains parked work.
+    This VM does not invent Engine `--stream-destroy`. `gpu-profile
+    capture` is still refused. Dual score still has no `$/M tokens`.
+
+560. [ ] Next numbered PLAN item after 559 is the next `gpu-sim` / Engine /
     serve / expertvm mechanical API that is still missing, or the next official
     decode family. Prefer remaining CUDA-shaped twins over more
     OpenAI HTTP veneer. Do not invent F32 `output.scale`. Do not invent a
@@ -5984,6 +5995,11 @@ model, do not celebrate the sim.
     not invent public `Sim::advance` as GetCurrentGraphExec. Do not reverse
     host `launch_graph` of a DEVICE_LAUNCH exec remaining legal. Do not
     reverse DeviceLaunch in-flight SetParams / upload refuse. Do not invent
+    a second `cudaStreamDestroy` / `destroy_stream`. Do not invent Engine
+    `--stream-destroy`. Do not reverse NULL-stream destroy refuse. Do not
+    abort in-flight work on stream destroy. Do not wait like `destroy_event`.
+    Do not reverse implicit streams remaining legal until destroy. Do not
+    reverse recreate-while-unfinished `"stream in flight"`. Do not invent
     a second
     `cuDeviceGetUuid` / `cudaDeviceGetUuid`. Do not invent a second
     `cuDeviceGetByUuid`. Do not invent a second `cudaDeviceGetPciBusId` /
@@ -6220,6 +6236,11 @@ model, do not celebrate the sim.
     `Sim::advance` as GetCurrentGraphExec. Do not reverse host
     `launch_graph` of a DEVICE_LAUNCH exec remaining legal. Do not
     reverse DeviceLaunch in-flight SetParams / upload refuse.
+    Do not invent a second `cudaStreamDestroy` / `destroy_stream`. Do not
+    invent Engine `--stream-destroy`. Do not reverse NULL-stream destroy
+    refuse. Do not abort in-flight work on stream destroy. Do not wait like
+    `destroy_event`. Do not reverse recreate-while-unfinished
+    `"stream in flight"`.
     Do not invent a second DeviceLaunch in-flight destroy-complete check or Engine
     `--device-launch-destroy`. Do not abort an in-flight DeviceLaunch when
     `destroy_graph` succeeds. Do not delay destroy of an idle exec. Do not invent
@@ -6349,7 +6370,7 @@ model, do not celebrate the sim.
     `cudaGraphMemAllocNodeSetParams` (it would resize HBM),
     a second graph-alloc accessDescs / Engine `--graph-alloc-access`,
     a second `cudaDeviceGetStreamPriorityRange`, CUDA version
-    numbers, example `$/M tokens` rents, or `cudaStreamDestroy`.
+    numbers, example `$/M tokens` rents, or a second `cudaStreamDestroy`.
     **`best_of` / `use_beam_search` stay out of `parse_gen_req` until a
     real beam Engine exists.** Do not default `--engine`. Do not invent
     `max_model_len` or `/v1/tokenize`. Do not invent a second `gemma4`.
@@ -6668,6 +6689,8 @@ model, do not celebrate the sim.
     Do not invent a second `cudaGetCurrentGraphExec`. Do not invent
     Engine `--current-graph-exec`. Do not treat host `launch_graph` as
     current. Do not invent public `Sim::advance`.
+    Do not invent a second `cudaStreamDestroy`. Do not invent Engine
+    `--stream-destroy`. Do not reverse NULL-stream destroy refuse.
     Do not
     spend the next item on an OpenAI-compatible HTTP veneer.
 
