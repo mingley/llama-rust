@@ -5872,7 +5872,15 @@ model, do not celebrate the sim.
     `gpu-profile capture` is still refused. Dual score still has no `$/M
     tokens`.
 
-551. [ ] Next numbered PLAN item after 550 is the next `gpu-sim` / Engine /
+551. [x] `gpu-sim` CUDA `cudaGraphKernelNodeGetAttribute` of an exec whose
+    handle was destroyed while a launch was in flight is Invalid
+    `"unknown graph"` (typed getters plus generic GetAttribute). Query;
+    capture is legal. Live exec GetAttribute stays. Definition GetAttribute
+    stays. Exec GetAttribute of a parked dest already unknown via `as_exec`.
+    This VM does not invent Engine `--graph-get-attr-gone`. `gpu-profile
+    capture` is still refused. Dual score still has no `$/M tokens`.
+
+552. [ ] Next numbered PLAN item after 551 is the next `gpu-sim` / Engine /
     serve / expertvm mechanical API that is still missing, or the next official
     decode family. Prefer remaining CUDA-shaped twins over more
     OpenAI HTTP veneer. Do not invent F32 `output.scale`. Do not invent a
@@ -6073,6 +6081,13 @@ model, do not celebrate the sim.
     parked-handle unknown check. Do not wire `graph_root_nodes` /
     `graph_edges` / `graph_node_kind` / `graph_node_find_in_clone` through
     `live_graph` (539).
+    Do not invent a second GetAttribute parked-handle unknown check or Engine
+    `--graph-get-attr-gone`. Do not reverse live exec GetAttribute. Do not
+    reverse definition GetAttribute while an exec is parked. Do not refuse
+    GetAttribute of a live in-flight exec. Do not use `require_live_definition`
+    on GetAttribute (live exec definition GetAttribute stays). Do not use
+    `as_exec_for_update` on GetAttribute (DeviceLaunch in-flight GetAttribute
+    stays).
     Do not invent a second DeviceLaunch in-flight destroy-complete check or Engine
     `--device-launch-destroy`. Do not abort an in-flight DeviceLaunch when
     `destroy_graph` succeeds. Do not delay destroy of an idle exec. Do not invent
@@ -6477,6 +6492,13 @@ model, do not celebrate the sim.
     parked-handle unknown check. Do not wire `graph_root_nodes` /
     `graph_edges` / `graph_node_kind` / `graph_node_find_in_clone` through
     `live_graph` (539).
+    Do not invent a second GetAttribute parked-handle unknown check or Engine
+    `--graph-get-attr-gone`. Do not reverse live exec GetAttribute. Do not
+    reverse definition GetAttribute while an exec is parked. Do not refuse
+    GetAttribute of a live in-flight exec. Do not use `require_live_definition`
+    on GetAttribute (live exec definition GetAttribute stays). Do not use
+    `as_exec_for_update` on GetAttribute (DeviceLaunch in-flight GetAttribute
+    stays).
     Do not
     spend the next item on an OpenAI-compatible HTTP veneer.
 

@@ -699,6 +699,22 @@ impl Sim {
         }
     }
 
+    /// Exec snapshot for GetAttribute (`exec`), or a live definition handle.
+    /// Query; capture is legal. A parked exec is `"unknown graph"`. Live
+    /// in-flight GetAttribute stays (`as_exec`, not `as_exec_for_update`).
+    fn resolve_kernel_attr_graph_query(
+        &self,
+        graph: GraphId,
+        exec: bool,
+    ) -> Result<GraphId, SimError> {
+        if exec {
+            self.as_exec(graph)
+        } else {
+            self.require_live_graph(graph)?;
+            Ok(graph)
+        }
+    }
+
     fn live_graph(&self, id: GraphId) -> Result<&Graph, SimError> {
         let g = self.graphs.get(&id).ok_or(SimError::Invalid {
             why: "unknown graph",
@@ -9998,6 +10014,11 @@ impl Sim {
     }
 
     /// `cudaGraphKernelNodeGetAttribute` for priority on the graph definition.
+    ///
+    /// Query; legal during capture. A parked in-flight-destroyed exec is Invalid
+    /// `"unknown graph"`. Live exec GetAttribute stays. Definition GetAttribute
+    /// of the live graph while that exec is parked stays. Live in-flight
+    /// GetAttribute stays.
     pub fn graph_kernel_node_get_priority(
         &self,
         graph: GraphId,
@@ -10021,7 +10042,7 @@ impl Sim {
         node: usize,
         exec: bool,
     ) -> Result<i32, SimError> {
-        let graph = if exec { self.as_exec(graph)? } else { graph };
+        let graph = self.resolve_kernel_attr_graph_query(graph, exec)?;
         let g = self.graphs.get(&graph).ok_or(SimError::Invalid {
             why: "unknown graph",
         })?;
@@ -10120,7 +10141,7 @@ impl Sim {
         node: usize,
         exec: bool,
     ) -> Result<ProgrammaticLaunch, SimError> {
-        let graph = if exec { self.as_exec(graph)? } else { graph };
+        let graph = self.resolve_kernel_attr_graph_query(graph, exec)?;
         let g = self.graphs.get(&graph).ok_or(SimError::Invalid {
             why: "unknown graph",
         })?;
@@ -10262,7 +10283,7 @@ impl Sim {
         node: usize,
         exec: bool,
     ) -> Result<Option<ProgrammaticEvent>, SimError> {
-        let graph = if exec { self.as_exec(graph)? } else { graph };
+        let graph = self.resolve_kernel_attr_graph_query(graph, exec)?;
         let g = self.graphs.get(&graph).ok_or(SimError::Invalid {
             why: "unknown graph",
         })?;
@@ -10379,7 +10400,7 @@ impl Sim {
         node: usize,
         exec: bool,
     ) -> Result<Option<LaunchCompletionEvent>, SimError> {
-        let graph = if exec { self.as_exec(graph)? } else { graph };
+        let graph = self.resolve_kernel_attr_graph_query(graph, exec)?;
         let g = self.graphs.get(&graph).ok_or(SimError::Invalid {
             why: "unknown graph",
         })?;
@@ -10496,7 +10517,7 @@ impl Sim {
         node: usize,
         exec: bool,
     ) -> Result<Option<AccessPolicyWindow>, SimError> {
-        let graph = if exec { self.as_exec(graph)? } else { graph };
+        let graph = self.resolve_kernel_attr_graph_query(graph, exec)?;
         let g = self.graphs.get(&graph).ok_or(SimError::Invalid {
             why: "unknown graph",
         })?;
@@ -10638,7 +10659,7 @@ impl Sim {
         node: usize,
         exec: bool,
     ) -> Result<(MemSyncDomain, MemSyncDomainMap), SimError> {
-        let graph = if exec { self.as_exec(graph)? } else { graph };
+        let graph = self.resolve_kernel_attr_graph_query(graph, exec)?;
         let g = self.graphs.get(&graph).ok_or(SimError::Invalid {
             why: "unknown graph",
         })?;
@@ -10781,7 +10802,7 @@ impl Sim {
         node: usize,
         exec: bool,
     ) -> Result<Option<ClusterDim>, SimError> {
-        let graph = if exec { self.as_exec(graph)? } else { graph };
+        let graph = self.resolve_kernel_attr_graph_query(graph, exec)?;
         let g = self.graphs.get(&graph).ok_or(SimError::Invalid {
             why: "unknown graph",
         })?;
@@ -10880,7 +10901,7 @@ impl Sim {
         node: usize,
         exec: bool,
     ) -> Result<ClusterSchedulingPolicy, SimError> {
-        let graph = if exec { self.as_exec(graph)? } else { graph };
+        let graph = self.resolve_kernel_attr_graph_query(graph, exec)?;
         let g = self.graphs.get(&graph).ok_or(SimError::Invalid {
             why: "unknown graph",
         })?;
@@ -10966,7 +10987,7 @@ impl Sim {
         node: usize,
         exec: bool,
     ) -> Result<Option<ClusterDim>, SimError> {
-        let graph = if exec { self.as_exec(graph)? } else { graph };
+        let graph = self.resolve_kernel_attr_graph_query(graph, exec)?;
         let g = self.graphs.get(&graph).ok_or(SimError::Invalid {
             why: "unknown graph",
         })?;
@@ -11063,7 +11084,7 @@ impl Sim {
         node: usize,
         exec: bool,
     ) -> Result<SharedMemCarveout, SimError> {
-        let graph = if exec { self.as_exec(graph)? } else { graph };
+        let graph = self.resolve_kernel_attr_graph_query(graph, exec)?;
         let g = self.graphs.get(&graph).ok_or(SimError::Invalid {
             why: "unknown graph",
         })?;
@@ -11149,7 +11170,7 @@ impl Sim {
         node: usize,
         exec: bool,
     ) -> Result<bool, SimError> {
-        let graph = if exec { self.as_exec(graph)? } else { graph };
+        let graph = self.resolve_kernel_attr_graph_query(graph, exec)?;
         let g = self.graphs.get(&graph).ok_or(SimError::Invalid {
             why: "unknown graph",
         })?;
@@ -11244,7 +11265,7 @@ impl Sim {
         node: usize,
         exec: bool,
     ) -> Result<SharedMemoryMode, SimError> {
-        let graph = if exec { self.as_exec(graph)? } else { graph };
+        let graph = self.resolve_kernel_attr_graph_query(graph, exec)?;
         let g = self.graphs.get(&graph).ok_or(SimError::Invalid {
             why: "unknown graph",
         })?;
@@ -11330,7 +11351,7 @@ impl Sim {
         node: usize,
         exec: bool,
     ) -> Result<PortableClusterMode, SimError> {
-        let graph = if exec { self.as_exec(graph)? } else { graph };
+        let graph = self.resolve_kernel_attr_graph_query(graph, exec)?;
         let g = self.graphs.get(&graph).ok_or(SimError::Invalid {
             why: "unknown graph",
         })?;
@@ -11463,7 +11484,7 @@ impl Sim {
         node: usize,
         exec: bool,
     ) -> Result<(u32, PortableSharedMode), SimError> {
-        let graph = if exec { self.as_exec(graph)? } else { graph };
+        let graph = self.resolve_kernel_attr_graph_query(graph, exec)?;
         let g = self.graphs.get(&graph).ok_or(SimError::Invalid {
             why: "unknown graph",
         })?;
@@ -11617,7 +11638,7 @@ impl Sim {
         node: usize,
         exec: bool,
     ) -> Result<bool, SimError> {
-        let graph = if exec { self.as_exec(graph)? } else { graph };
+        let graph = self.resolve_kernel_attr_graph_query(graph, exec)?;
         let g = self.graphs.get(&graph).ok_or(SimError::Invalid {
             why: "unknown graph",
         })?;
@@ -11703,7 +11724,7 @@ impl Sim {
         node: usize,
         exec: bool,
     ) -> Result<SynchronizationPolicy, SimError> {
-        let graph = if exec { self.as_exec(graph)? } else { graph };
+        let graph = self.resolve_kernel_attr_graph_query(graph, exec)?;
         let g = self.graphs.get(&graph).ok_or(SimError::Invalid {
             why: "unknown graph",
         })?;
@@ -11789,7 +11810,7 @@ impl Sim {
         node: usize,
         exec: bool,
     ) -> Result<bool, SimError> {
-        let graph = if exec { self.as_exec(graph)? } else { graph };
+        let graph = self.resolve_kernel_attr_graph_query(graph, exec)?;
         let g = self.graphs.get(&graph).ok_or(SimError::Invalid {
             why: "unknown graph",
         })?;
@@ -11977,7 +11998,10 @@ impl Sim {
     /// `cudaGraphKernelNodeGetAttribute` on the graph definition.
     ///
     /// Query; legal during capture. Typed getters stay. Attr/value type
-    /// mismatch is Invalid `"kernel node attr"`.
+    /// mismatch is Invalid `"kernel node attr"`. A parked in-flight-destroyed
+    /// exec is Invalid `"unknown graph"`. Live exec GetAttribute stays.
+    /// Definition GetAttribute of the live graph while that exec is parked
+    /// stays. Live in-flight GetAttribute stays.
     pub fn graph_kernel_node_get_attribute(
         &self,
         graph: GraphId,

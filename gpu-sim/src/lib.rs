@@ -896,7 +896,9 @@
 //! ([`KernelNodeAttr`]). Typed getters stay. Definition Set does not retarget
 //! exec. Attr/value mismatch is Invalid `"kernel node attr"`. Get is a query
 //! (capture-legal); Set cannot include capture. A parked in-flight-destroyed
-//! exec is `"unknown graph"` on SetAttribute; a live exec stays. Device-launch
+//! exec is `"unknown graph"` on SetAttribute; a live exec stays. A parked
+//! in-flight-destroyed exec is `"unknown graph"` on GetAttribute; a live exec
+//! stays. Query; capture is legal. Device-launch
 //! execs cannot attach programmatic or launch-completion events.
 //! [`kernel_pdl`](Sim::kernel_pdl) is `cudaLaunchKernelEx` PDL: a wait kernel
 //! may start after the previous same-stream kernel's trigger
@@ -5886,6 +5888,75 @@ mod tests {
         let _end = sim.end_capture().unwrap();
         sim.synchronize().unwrap();
         match sim.graph_node_get_local_id(exec, 0).unwrap_err() {
+            SimError::Invalid { why } => assert!(why.contains("unknown"), "{why}"),
+            other => panic!("{other:?}"),
+        }
+        sim.destroy_graph(g).unwrap();
+        sim.destroy_graph(_end).unwrap();
+    }
+
+    #[test]
+    fn parked_exec_get_attribute_is_unknown() {
+        let mut sim = Sim::new(h100());
+        let d = DeviceId(0);
+        let s = StreamId(0);
+        let a = sim.malloc(d, 4096).unwrap();
+        let g = sim.create_graph(d, s).unwrap();
+        sim.graph_add_kernel(g, KernelKind::other(1 << 40, 4096), &[a], &[a])
+            .unwrap();
+        let exec = sim.instantiate_graph(g).unwrap();
+        let _pri = sim.graph_kernel_node_get_priority(exec, 0).unwrap();
+        let _exec_pri = sim.graph_exec_kernel_node_get_priority(exec, 0).unwrap();
+        let _coop = sim.graph_kernel_node_get_cooperative(exec, 0).unwrap();
+        let _attr = sim
+            .graph_kernel_node_get_attribute(exec, 0, KernelNodeAttr::Priority)
+            .unwrap();
+        let _exec_attr = sim
+            .graph_exec_kernel_node_get_attribute(exec, 0, KernelNodeAttr::Priority)
+            .unwrap();
+        let launched = sim.launch_graph(exec, s).unwrap();
+        assert!(launched > 0);
+        let _in_flight = sim.graph_kernel_node_get_priority(exec, 0).unwrap();
+        let _in_flight_exec = sim.graph_exec_kernel_node_get_priority(exec, 0).unwrap();
+        sim.destroy_graph(exec).unwrap();
+        match sim.graph_kernel_node_get_priority(exec, 0).unwrap_err() {
+            SimError::Invalid { why } => assert!(why.contains("unknown"), "{why}"),
+            other => panic!("{other:?}"),
+        }
+        match sim
+            .graph_exec_kernel_node_get_priority(exec, 0)
+            .unwrap_err()
+        {
+            SimError::Invalid { why } => assert!(why.contains("unknown"), "{why}"),
+            other => panic!("{other:?}"),
+        }
+        match sim.graph_kernel_node_get_cooperative(exec, 0).unwrap_err() {
+            SimError::Invalid { why } => assert!(why.contains("unknown"), "{why}"),
+            other => panic!("{other:?}"),
+        }
+        match sim
+            .graph_kernel_node_get_attribute(exec, 0, KernelNodeAttr::Priority)
+            .unwrap_err()
+        {
+            SimError::Invalid { why } => assert!(why.contains("unknown"), "{why}"),
+            other => panic!("{other:?}"),
+        }
+        match sim
+            .graph_exec_kernel_node_get_attribute(exec, 0, KernelNodeAttr::Priority)
+            .unwrap_err()
+        {
+            SimError::Invalid { why } => assert!(why.contains("unknown"), "{why}"),
+            other => panic!("{other:?}"),
+        }
+        let _def = sim.graph_kernel_node_get_priority(g, 0).unwrap();
+        sim.begin_capture(d, StreamId(1)).unwrap();
+        match sim.graph_kernel_node_get_priority(exec, 0).unwrap_err() {
+            SimError::Invalid { why } => assert!(why.contains("unknown"), "{why}"),
+            other => panic!("{other:?}"),
+        }
+        let _end = sim.end_capture().unwrap();
+        sim.synchronize().unwrap();
+        match sim.graph_kernel_node_get_priority(exec, 0).unwrap_err() {
             SimError::Invalid { why } => assert!(why.contains("unknown"), "{why}"),
             other => panic!("{other:?}"),
         }

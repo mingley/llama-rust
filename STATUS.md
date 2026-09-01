@@ -5,6 +5,16 @@ Visible five-turn extract: [docs/chatgpt-share-6a920fe1.md](docs/chatgpt-share-6
 Complete share-API extract: [docs/chatgpt-share-6a920fe1/](docs/chatgpt-share-6a920fe1/).
 Work lands on `main`. No PRs.
 
+## Shipped 2026-09-01 — Parked exec GetAttribute is unknown
+
+`gpu-sim` CUDA `cudaGraphKernelNodeGetAttribute` of an exec whose handle
+was destroyed while a launch was in flight is Invalid `"unknown graph"`
+(typed getters plus generic GetAttribute). Query; capture is legal. Live
+exec GetAttribute stays. Definition GetAttribute stays. Exec GetAttribute
+of a parked dest already unknown via `as_exec`. This VM does not invent
+Engine `--graph-get-attr-gone`. `gpu-profile capture` is still refused.
+Dual score still has no `$/M tokens`.
+
 ## Shipped 2026-09-01 — Parked exec GetLocalId is unknown
 
 `gpu-sim` CUDA `cuGraphNodeGetLocalId` / `cuGraphNodeGetToolsId` of an
