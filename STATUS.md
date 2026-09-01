@@ -5,6 +5,16 @@ Visible five-turn extract: [docs/chatgpt-share-6a920fe1.md](docs/chatgpt-share-6
 Complete share-API extract: [docs/chatgpt-share-6a920fe1/](docs/chatgpt-share-6a920fe1/).
 Work lands on `main`. No PRs.
 
+## Shipped 2026-09-01 — DeviceLaunch in-flight upload is Invalid
+
+`gpu-sim` CUDA host `upload_graph` / `upload_graph_async` of a
+DeviceLaunch exec while `device_launch_graph` is in flight is Invalid
+`"device launch in flight"`. Capture is still reported first. After
+synchronize, upload stays. Getters stay. Destroy stays. Host
+`launch_graph` in-flight upload stays. This VM does not invent Engine
+`--device-launch-upload`. `gpu-profile capture` is still refused. Dual
+score still has no `$/M tokens`.
+
 ## Shipped 2026-09-01 — In-flight GraphUpload exec destroy parks
 
 `gpu-sim` CUDA `cudaGraphExecDestroy` of an exec with an in-flight

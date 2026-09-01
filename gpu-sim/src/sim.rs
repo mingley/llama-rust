@@ -683,6 +683,11 @@ impl Sim {
     /// flight (`"device launch in flight"`). Query APIs keep [`Self::as_exec`].
     fn as_exec_for_update(&self, id: GraphId) -> Result<GraphId, SimError> {
         let exec = self.as_exec(id)?;
+        self.fail_if_device_launch_in_flight(exec)?;
+        Ok(exec)
+    }
+
+    fn fail_if_device_launch_in_flight(&self, exec: GraphId) -> Result<(), SimError> {
         if self
             .graphs
             .get(&exec)
@@ -693,7 +698,7 @@ impl Sim {
                 why: "device launch in flight",
             });
         }
-        Ok(exec)
+        Ok(())
     }
 
     fn remap_kind_to_exec(&self, kind: Kind) -> Result<Kind, SimError> {
@@ -3293,8 +3298,10 @@ impl Sim {
     /// `"device launch in flight"`. Getters stay. Destroy is legal and does
     /// not abort the launch (`cudaGraphExecDestroy`: the handle is unknown;
     /// the launch still finishes). Host [`Self::launch_graph`] destroy of this
-    /// exec also parks until that host launch completes. Capture cannot
-    /// include it. [`Self::update_graph`] of a device-launch
+    /// exec also parks until that host launch completes. Host
+    /// [`Self::upload_graph`] plus [`Self::upload_graph_async`] of this exec
+    /// while that work is in flight are Invalid `"device launch in flight"`.
+    /// Capture cannot include it. [`Self::update_graph`] of a device-launch
     /// exec is Invalid.
     pub fn device_launch_graph(
         &mut self,
@@ -4308,10 +4315,13 @@ impl Sim {
     /// The exec must already be instantiated. Already-uploaded ids are a no-op.
     /// The first [`Self::launch_graph`] calls this when needed. [`Self::update_graph`]
     /// clears the flag so the next launch uploads again. Stream-ordered upload
-    /// is [`Self::upload_graph_async`].
+    /// is [`Self::upload_graph_async`]. Host upload of a DeviceLaunch exec while
+    /// [`Self::device_launch_graph`] is in flight is Invalid
+    /// `"device launch in flight"`.
     pub fn upload_graph(&mut self, graph: GraphId) -> Result<(), SimError> {
         self.fail_if_capturing("cannot capture graph upload")?;
         let exec = self.as_exec(graph)?;
+        self.fail_if_device_launch_in_flight(exec)?;
         let (device, already) = {
             let g = self.graphs.get(&exec).ok_or(SimError::Invalid {
                 why: "unknown graph",
@@ -4341,7 +4351,9 @@ impl Sim {
     /// [`Self::upload_graph`] stays host-synchronous. [`Self::launch_graph`]
     /// waits an in-flight upload instead of a second host-sync upload. Destroy
     /// of an exec with this op still in flight does not abort the upload
-    /// (`cudaGraphExecDestroy`). No Engine `--graph-upload-stream`.
+    /// (`cudaGraphExecDestroy`). Host upload of a DeviceLaunch exec while
+    /// [`Self::device_launch_graph`] is in flight is Invalid
+    /// `"device launch in flight"`. No Engine `--graph-upload-stream`.
     pub fn upload_graph_async(
         &mut self,
         device: DeviceId,
@@ -4350,6 +4362,7 @@ impl Sim {
     ) -> Result<OpId, SimError> {
         self.fail_if_capturing("cannot capture graph upload")?;
         let exec = self.as_exec(graph)?;
+        self.fail_if_device_launch_in_flight(exec)?;
         let origin = self
             .graphs
             .get(&exec)

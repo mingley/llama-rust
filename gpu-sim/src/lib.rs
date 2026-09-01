@@ -32078,6 +32078,53 @@ mod tests {
     }
 
     #[test]
+    fn device_launch_in_flight_rejects_upload() {
+        let mut sim = Sim::new(h100());
+        let d = DeviceId(0);
+        let s = StreamId(0);
+        let a = sim.malloc(d, 4096).unwrap();
+        let g = sim.create_graph(d, s).unwrap();
+        sim.graph_add_kernel(g, KernelKind::other(1 << 40, 4096), &[a], &[a])
+            .unwrap();
+        let _ = sim
+            .instantiate_graph_with_flags(
+                g,
+                GraphInstantiateFlags::DEVICE_LAUNCH | GraphInstantiateFlags::UPLOAD,
+            )
+            .unwrap();
+        enq(sim.device_launch_graph(g, s));
+        let err = sim.upload_graph(g).unwrap_err();
+        match err {
+            SimError::Invalid { why } => assert!(why.contains("in flight"), "{why}"),
+            other => panic!("{other:?}"),
+        }
+        let err = sim.upload_graph_async(d, s, g).unwrap_err();
+        match err {
+            SimError::Invalid { why } => assert!(why.contains("in flight"), "{why}"),
+            other => panic!("{other:?}"),
+        }
+        assert!(sim.graph_uploaded(g).unwrap());
+        sim.begin_capture(d, StreamId(1)).unwrap();
+        let err = sim.upload_graph(g).unwrap_err();
+        match err {
+            SimError::Invalid { why } => assert!(why.contains("capture"), "{why}"),
+            other => panic!("{other:?}"),
+        }
+        let _end = sim.end_capture().unwrap();
+        sim.synchronize().unwrap();
+        sim.upload_graph(g).unwrap();
+
+        let host = sim.create_graph(d, s).unwrap();
+        sim.graph_add_kernel(host, KernelKind::other(1 << 40, 4096), &[a], &[a])
+            .unwrap();
+        let hexec = sim.instantiate_graph(host).unwrap();
+        let launched = sim.launch_graph(host, s).unwrap();
+        assert!(launched > 0);
+        sim.upload_graph(hexec).unwrap();
+        sim.synchronize().unwrap();
+    }
+
+    #[test]
     fn device_launch_destroy_in_flight_still_completes() {
         let mut sim = Sim::new(h100());
         let d = DeviceId(0);

@@ -519,7 +519,8 @@ Exec memcpy/memset/kernel SetParams re-apply those dest rules. Mixed node green 
 re-apply that mixed-ctx rule; exec SetAttribute cannot attach
 programmatic or launch-completion events; host updates of an in-flight
 device-launch exec are Invalid (`"device launch in flight"`; getters stay;
-destroy does not abort the launch); `update_graph` of a
+destroy does not abort the launch; `upload_graph` /
+`upload_graph_async` also refuse); `update_graph` of a
 device-launch exec is Invalid; cannot combine with `AUTO_FREE_ON_LAUNCH`
 (`"device launch auto free"`). Unused conditional handles are
 `ConditionalHandleUnused` (`"conditional handle unused"`).
