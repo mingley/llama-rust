@@ -17827,9 +17827,10 @@ impl Sim {
     /// Graphics interop is not modeled.
     ///
     /// Always Invalid `"graphics unmap"` (no graphics-resource handles).
-    /// Distinct from [`Self::graphics_map_resources`]. Unknown devices are
-    /// Invalid `"device not in profile"`. Query; legal during capture. This
-    /// VM does not invent `cuGraphicsResourceGetMappedPointer` this slice.
+    /// Distinct from [`Self::graphics_map_resources`] and from
+    /// [`Self::graphics_unregister_resource`]. Unknown devices are Invalid
+    /// `"device not in profile"`. Query; legal during capture. This VM does
+    /// not invent `cuGraphicsResourceGetMappedPointer` this slice.
     pub fn graphics_unmap_resources(
         &self,
         device: DeviceId,
@@ -17839,6 +17840,21 @@ impl Sim {
         self.require_live_stream(device, stream)?;
         Err(SimError::Invalid {
             why: "graphics unmap",
+        })
+    }
+
+    /// `cuGraphicsUnregisterResource` plus `cudaGraphicsUnregisterResource`.
+    /// Graphics interop is not modeled.
+    ///
+    /// Always Invalid `"graphics unregister"` (no graphics-resource handles).
+    /// Distinct from [`Self::graphics_unmap_resources`] and from
+    /// [`Self::graphics_map_resources`]. Unknown devices are Invalid
+    /// `"device not in profile"`. Query; legal during capture. This VM does
+    /// not invent `cuGraphicsResourceSetMapFlags` this slice.
+    pub fn graphics_unregister_resource(&self, device: DeviceId) -> Result<(), SimError> {
+        let _gpu = self.profile.gpu(device)?;
+        Err(SimError::Invalid {
+            why: "graphics unregister",
         })
     }
 

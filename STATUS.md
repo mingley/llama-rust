@@ -5,6 +5,14 @@ Visible five-turn extract: [docs/chatgpt-share-6a920fe1.md](docs/chatgpt-share-6
 Complete share-API extract: [docs/chatgpt-share-6a920fe1/](docs/chatgpt-share-6a920fe1/).
 Work lands on `main`. No PRs.
 
+## Shipped 2026-09-01 — CUDA `cuGraphicsUnregisterResource`
+
+`gpu-sim` `Sim::graphics_unregister_resource` is
+`cuGraphicsUnregisterResource`. Always Invalid `"graphics unregister"`
+because graphics resources are not modeled. Query; legal during capture.
+Distinct from `graphics_unmap_resources`. This VM does not invent `cuGraphicsResourceSetMapFlags` or Engine `--graphics-unregister`.
+`gpu-profile capture` is still refused. Dual score still has no `$/M tokens`.
+
 ## Shipped 2026-09-01 — CUDA `cuArrayGetSparseProperties`
 
 `gpu-sim` `Sim::array_get_sparse_properties` is

@@ -6717,7 +6717,14 @@ model, do not celebrate the sim.
     or `cudaChooseDevice`. `gpu-profile capture` is still refused. Dual
     score still has no `$/M tokens`.
 
-654. [ ] Next numbered PLAN item after 653 is the next `gpu-sim` / Engine /
+654. [x] `gpu-sim` `Sim::graphics_unregister_resource` is
+    `cuGraphicsUnregisterResource`. Always Invalid `"graphics unregister"`
+    because graphics resources are not modeled. Query; legal during capture.
+    Distinct from `graphics_unmap_resources`. This VM does not invent `cuGraphicsResourceSetMapFlags`, Engine `--graphics-unregister`,
+    or `cudaChooseDevice`. `gpu-profile capture` is still refused. Dual
+    score still has no `$/M tokens`.
+
+655. [ ] Next numbered PLAN item after 654 is the next `gpu-sim` / Engine /
     serve / expertvm mechanical API that is still missing, or the next official
     decode family. Prefer remaining CUDA-shaped twins over more
     OpenAI HTTP veneer. Do not invent F32 `output.scale`. Do not invent a
@@ -7129,6 +7136,10 @@ model, do not celebrate the sim.
     Do not invent a second `cuArrayGetSparseProperties` /
     `array_get_sparse_properties`. Do not invent Engine `--array-sparse`.
     Do not invent `cuArrayGetPlane` this slice. Do not reverse `"array sparse"`.
+    Do not invent a second `cuGraphicsUnregisterResource` /
+    `graphics_unregister_resource`. Do not invent Engine `--graphics-unregister`.
+    Do not invent `cuGraphicsResourceSetMapFlags` this slice. Do not reverse
+    `"graphics unregister"`.
     Do not invent a second `cudaStreamAddCallback`.
     Do not invent Engine `--stream-callback` (same wall as second live
     `cudaLaunchHostFunc` after miss DMA).
@@ -7651,6 +7662,10 @@ model, do not celebrate the sim.
     Engine `--get-array-sparse`. Do not invent a populated
     `CUDA_ARRAY_SPARSE_PROPERTIES` this slice. Do not reverse
     array sparse remaining unsupported.
+    Do not invent a second `graphics_unregister_resource` API. Do not invent
+    Engine `--unregister-graphics`. Do not invent a `CUgraphicsResource`
+    handle this slice. Do not reverse graphics unregister remaining
+    unsupported.
     Do not invent a second DeviceLaunch in-flight destroy-complete check or Engine
     `--device-launch-destroy`. Do not abort an in-flight DeviceLaunch when
     `destroy_graph` succeeds. Do not delay destroy of an idle exec. Do not invent
@@ -8366,6 +8381,9 @@ model, do not celebrate the sim.
     Do not invent a second `array_get_sparse_properties` method. Do not
     invent Engine `--cu-array-get-sparse-properties`. Do not reverse wrapping
     cuArrayGetSparseProperties Invalid.
+    Do not invent a second `graphics_unregister_resource` method. Do not
+    invent Engine `--cu-graphics-unregister-resource`. Do not reverse wrapping
+    cuGraphicsUnregisterResource Invalid.
     Do not
     spend the next item on an OpenAI-compatible HTTP veneer.
 
