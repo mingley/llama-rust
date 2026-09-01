@@ -19807,6 +19807,21 @@ impl Sim {
         ModuleLoadingMode::Eager
     }
 
+    /// `cuLibraryLoadData`. CUDA libraries are not modeled.
+    ///
+    /// Always Invalid `"cuda library"` (this VM has no cubin or PTX and no
+    /// `CUlibrary`). Distinct from [`Self::module_get_loading_mode`] (Eager
+    /// query) and from [`Self::func_get_module`] (`"unknown function"`).
+    /// Unknown devices are Invalid `"device not in profile"`. Query; legal
+    /// during capture. This VM does not invent `cuLibraryLoadFromFile` this
+    /// slice.
+    pub fn library_load_data(&self, device: DeviceId) -> Result<(), SimError> {
+        let _gpu = self.profile.gpu(device)?;
+        Err(SimError::Invalid {
+            why: "cuda library",
+        })
+    }
+
     /// `cudaRuntimeGetVersion`. Query; legal during capture.
     ///
     /// Same CUDA 13.0 value as [`Self::driver_get_version`] (this VM is one

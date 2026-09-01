@@ -6435,7 +6435,15 @@ model, do not celebrate the sim.
     or `cudaChooseDevice`. `gpu-profile capture` is still refused. Dual
     score still has no `$/M tokens`.
 
-616. [ ] Next numbered PLAN item after 615 is the next `gpu-sim` / Engine /
+616. [x] `gpu-sim` `Sim::library_load_data` is `cuLibraryLoadData`.
+    Always Invalid `"cuda library"` because this VM has no cubin or PTX
+    and no `CUlibrary`. Query; legal during capture. Distinct from
+    `module_get_loading_mode` and `func_get_module`. This VM does not
+    invent `cuLibraryLoadFromFile`, Engine `--library-load`, or
+    `cudaChooseDevice`. `gpu-profile capture` is still refused. Dual
+    score still has no `$/M tokens`.
+
+617. [ ] Next numbered PLAN item after 616 is the next `gpu-sim` / Engine /
     serve / expertvm mechanical API that is still missing, or the next official
     decode family. Prefer remaining CUDA-shaped twins over more
     OpenAI HTTP veneer. Do not invent F32 `output.scale`. Do not invent a
@@ -6722,6 +6730,10 @@ model, do not celebrate the sim.
     `surf_object_create`. Do not invent Engine `--surf-object`.
     Do not invent `cuSurfObjectDestroy` this slice. Do not reverse
     `"cuda surface"`.
+    Do not invent a second `cuLibraryLoadData` /
+    `library_load_data`. Do not invent Engine `--library-load`.
+    Do not invent `cuLibraryLoadFromFile` this slice. Do not reverse
+    `"cuda library"`.
     Do not invent a second `cudaStreamAddCallback`.
     Do not invent Engine `--stream-callback` (same wall as second live
     `cudaLaunchHostFunc` after miss DMA).
@@ -7118,6 +7130,9 @@ model, do not celebrate the sim.
     Do not invent a second `surf_object_create` API. Do not invent
     Engine `--create-surf`. Do not invent `cuSurfObjectGetResourceDesc`
     this slice. Do not reverse MaxSurface dims staying 0.
+    Do not invent a second `library_load_data` API. Do not invent
+    Engine `--load-library`. Do not invent a `CUlibrary` handle this
+    slice. Do not reverse no cubin.
     Do not invent a second DeviceLaunch in-flight destroy-complete check or Engine
     `--device-launch-destroy`. Do not abort an in-flight DeviceLaunch when
     `destroy_graph` succeeds. Do not delay destroy of an idle exec. Do not invent
@@ -7718,6 +7733,9 @@ model, do not celebrate the sim.
     cuImportExternalMemory Invalid.
     Do not invent a second `surf_object_create` method. Do not invent
     Engine `--cu-surf-object`. Do not reverse wrapping cuSurfObjectCreate
+    Invalid.
+    Do not invent a second `library_load_data` method. Do not invent
+    Engine `--cu-library-load`. Do not reverse wrapping cuLibraryLoadData
     Invalid.
     Do not
     spend the next item on an OpenAI-compatible HTTP veneer.

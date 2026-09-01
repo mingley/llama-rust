@@ -848,6 +848,8 @@
 //! Capture cannot include it. No Engine `--cu-init`.
 //! [`Sim::module_get_loading_mode`] is `cuModuleGetLoadingMode` (always
 //! [`ModuleLoadingMode::Eager`]). Query; legal during capture. No Engine `--module-loading`.
+//! [`library_load_data`](Sim::library_load_data) is `cuLibraryLoadData`
+//! (always Invalid `"cuda library"`). Query; legal during capture. No Engine `--library-load`.
 //! [`Sim::runtime_get_version`] is `cudaRuntimeGetVersion` (same
 //! toolkit). Query; legal during capture. [`device_get`](Sim::device_get) is `cuDeviceGet` (ordinal in range).
 //! [`Sim::device_can_access_peer`] / [`device_get_p2p_attribute`](Sim::device_get_p2p_attribute)
@@ -18338,6 +18340,39 @@ mod tests {
         let eight = Sim::new(HardwareProfile::example_8xh100_nvlink());
         assert_eq!(eight.module_get_loading_mode(), ModuleLoadingMode::Eager);
         sim.driver_init(0).unwrap();
+        assert_eq!(sim.module_get_loading_mode(), ModuleLoadingMode::Eager);
+    }
+
+    #[test]
+    fn library_load_data_is_unsupported() {
+        let mut sim = Sim::new(h100());
+        let d = DeviceId(0);
+        match sim.library_load_data(d) {
+            Err(SimError::Invalid { why }) => {
+                assert!(why.contains("cuda library"), "{why}");
+            }
+            other => panic!("{other:?}"),
+        }
+        sim.begin_capture(d, StreamId(0)).unwrap();
+        match sim.library_load_data(d) {
+            Err(SimError::Invalid { why }) => {
+                assert!(why.contains("cuda library"), "{why}");
+            }
+            other => panic!("{other:?}"),
+        }
+        let _g = sim.end_capture().unwrap();
+        match sim.library_load_data(DeviceId(99)) {
+            Err(SimError::Invalid { why }) => {
+                assert!(why.contains("device not in profile"), "{why}");
+            }
+            other => panic!("{other:?}"),
+        }
+        match sim.func_get_module(d) {
+            Err(SimError::Invalid { why }) => {
+                assert!(why.contains("unknown function"), "{why}");
+            }
+            other => panic!("{other:?}"),
+        }
         assert_eq!(sim.module_get_loading_mode(), ModuleLoadingMode::Eager);
     }
 

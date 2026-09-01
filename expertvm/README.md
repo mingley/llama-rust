@@ -510,6 +510,8 @@ kernel exists; no Engine flag).
 Engine flag).
 `gpu-sim` `module_get_loading_mode` is `cuModuleGetLoadingMode` (always
 Eager; no Engine flag).
+`gpu-sim` `library_load_data` is `cuLibraryLoadData` (Invalid; no cubin /
+`CUlibrary`; no Engine flag).
 `gpu-sim` `ctx_get_device` is `cuCtxGetDevice` (explicit device of the
 seeded primary context; no Engine flag).
 `gpu-sim` `ctx_reset_persisting_l2_cache` is `cuCtxResetPersistingL2Cache`
