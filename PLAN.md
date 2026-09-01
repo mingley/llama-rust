@@ -6784,7 +6784,14 @@ model, do not celebrate the sim.
     or `cudaChooseDevice`. `gpu-profile capture` is still refused. Dual
     score still has no `$/M tokens`.
 
-663. [ ] Next numbered PLAN item after 662 is the next `gpu-sim` / Engine /
+663. [x] `gpu-sim` `Sim::egl_stream_producer_return_frame` is
+    `cuEGLStreamProducerReturnFrame`. Always Invalid `"producer return"`
+    because EGL streams are not modeled. Query; legal during capture. Distinct
+    from `egl_stream_producer_present_frame`. This VM does not invent a `CUeglFrame`, Engine `--egl-producer-return`,
+    or `cudaChooseDevice`. `gpu-profile capture` is still refused. Dual
+    score still has no `$/M tokens`.
+
+664. [ ] Next numbered PLAN item after 663 is the next `gpu-sim` / Engine /
     serve / expertvm mechanical API that is still missing, or the next official
     decode family. Prefer remaining CUDA-shaped twins over more
     OpenAI HTTP veneer. Do not invent F32 `output.scale`. Do not invent a
@@ -7231,6 +7238,9 @@ model, do not celebrate the sim.
     `graphics_resource_get_mapped_mipmapped_array`. Do not invent Engine `--mapped-mipmap`.
     Do not invent a `CUmipmappedArray` handle this slice. Do not reverse
     `"mapped mipmap"`.
+    Do not invent a second `cuEGLStreamProducerReturnFrame` /
+    `egl_stream_producer_return_frame`. Do not invent Engine `--egl-producer-return`.
+    Do not invent a `CUeglFrame` this slice. Do not reverse `"producer return"`.
     Do not invent a second `cudaStreamAddCallback`.
     Do not invent Engine `--stream-callback` (same wall as second live
     `cudaLaunchHostFunc` after miss DMA).
@@ -7785,6 +7795,10 @@ model, do not celebrate the sim.
     Do not invent a second `graphics_resource_get_mapped_mipmapped_array` API. Do not invent
     Engine `--get-mapped-mipmap`. Do not invent a mapped mipmapped array
     object this slice. Do not reverse mapped mipmap remaining unsupported.
+    Do not invent a second `egl_stream_producer_return_frame` API. Do not invent
+    Engine `--return-egl-producer`. Do not invent an EGL producer
+    return timestamp this slice. Do not reverse EGL producer return remaining
+    unsupported.
     Do not invent a second DeviceLaunch in-flight destroy-complete check or Engine
     `--device-launch-destroy`. Do not abort an in-flight DeviceLaunch when
     `destroy_graph` succeeds. Do not delay destroy of an idle exec. Do not invent
@@ -8527,6 +8541,9 @@ model, do not celebrate the sim.
     Do not invent a second `graphics_resource_get_mapped_mipmapped_array` method. Do not
     invent Engine `--cu-graphics-resource-get-mapped-mipmapped-array`. Do not reverse wrapping
     cuGraphicsResourceGetMappedMipmappedArray Invalid.
+    Do not invent a second `egl_stream_producer_return_frame` method. Do not
+    invent Engine `--cu-egl-producer-return-frame`. Do not reverse wrapping
+    cuEGLStreamProducerReturnFrame Invalid.
     Do not
     spend the next item on an OpenAI-compatible HTTP veneer.
 

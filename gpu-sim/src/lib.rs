@@ -639,6 +639,9 @@
 //! [`egl_stream_producer_present_frame`](Sim::egl_stream_producer_present_frame)
 //! is `cuEGLStreamProducerPresentFrame` (always Invalid `"producer present"`).
 //! Query; legal during capture. No Engine `--egl-producer-present`.
+//! [`egl_stream_producer_return_frame`](Sim::egl_stream_producer_return_frame)
+//! is `cuEGLStreamProducerReturnFrame` (always Invalid `"producer return"`).
+//! Query; legal during capture. No Engine `--egl-producer-return`.
 //! [`gl_get_devices`](Sim::gl_get_devices) is `cuGLGetDevices` (always
 //! Invalid `"opengl"`). Query; legal during capture. No Engine `--gl-devices`.
 //! [`gl_ctx_create`](Sim::gl_ctx_create) is `cuGLCtxCreate` (always
@@ -22347,6 +22350,38 @@ mod tests {
         match sim.egl_stream_producer_disconnect(d) {
             Err(SimError::Invalid { why }) => {
                 assert!(why.contains("producer disconnect"), "{why}");
+            }
+            other => panic!("{other:?}"),
+        }
+    }
+
+    #[test]
+    fn egl_stream_producer_return_frame_is_unsupported() {
+        let mut sim = Sim::new(h100());
+        let d = DeviceId(0);
+        match sim.egl_stream_producer_return_frame(d) {
+            Err(SimError::Invalid { why }) => {
+                assert!(why.contains("producer return"), "{why}");
+            }
+            other => panic!("{other:?}"),
+        }
+        sim.begin_capture(d, StreamId(0)).unwrap();
+        match sim.egl_stream_producer_return_frame(d) {
+            Err(SimError::Invalid { why }) => {
+                assert!(why.contains("producer return"), "{why}");
+            }
+            other => panic!("{other:?}"),
+        }
+        let _g = sim.end_capture().unwrap();
+        match sim.egl_stream_producer_return_frame(DeviceId(99)) {
+            Err(SimError::Invalid { why }) => {
+                assert!(why.contains("device not in profile"), "{why}");
+            }
+            other => panic!("{other:?}"),
+        }
+        match sim.egl_stream_producer_present_frame(d) {
+            Err(SimError::Invalid { why }) => {
+                assert!(why.contains("producer present"), "{why}");
             }
             other => panic!("{other:?}"),
         }

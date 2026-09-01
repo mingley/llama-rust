@@ -188,6 +188,7 @@ warp scheduler, L1, …   ← do not model
 | `egl_stream_producer_connect` is Invalid (EGL streams are not modeled) | `cuEGLStreamProducerConnect` |
 | `egl_stream_producer_disconnect` is Invalid (EGL streams are not modeled) | `cuEGLStreamProducerDisconnect` |
 | `egl_stream_producer_present_frame` is Invalid (EGL streams are not modeled) | `cuEGLStreamProducerPresentFrame` |
+| `egl_stream_producer_return_frame` is Invalid (EGL streams are not modeled) | `cuEGLStreamProducerReturnFrame` |
 | `gl_get_devices` is Invalid (OpenGL interop is not modeled) | `cuGLGetDevices` / `cudaGLGetDevices` |
 | `gl_ctx_create` is Invalid (OpenGL interop is not modeled) | `cuGLCtxCreate` |
 | `d3d11_get_devices` is Invalid (Direct3D 11 interop is not modeled) | `cuD3D11GetDevices` / `cudaD3D11GetDevices` |
@@ -1131,6 +1132,9 @@ legal during capture. No Engine `--egl-producer-disconnect`.
 `egl_stream_producer_present_frame` is `cuEGLStreamProducerPresentFrame`
 (always Invalid `"producer present"`). Distinct from
 `egl_stream_producer_disconnect`. Query; legal during capture. No Engine `--egl-producer-present`.
+`egl_stream_producer_return_frame` is `cuEGLStreamProducerReturnFrame`
+(always Invalid `"producer return"`). Distinct from
+`egl_stream_producer_present_frame`. Query; legal during capture. No Engine `--egl-producer-return`.
 `gl_get_devices` is `cuGLGetDevices` (always Invalid `"opengl"`). Distinct
 from `graphics_map_resources` and `egl_stream_consumer_connect`. Query;
 legal during capture. No Engine `--gl-devices`.
