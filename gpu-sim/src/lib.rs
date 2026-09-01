@@ -561,6 +561,9 @@
 //! (always Invalid `"cuda array"`). Query; legal during capture. No Engine `--array-create`.
 //! [`array_get_descriptor`](Sim::array_get_descriptor) is `cuArrayGetDescriptor`
 //! (always Invalid `"array descriptor"`). Query; legal during capture. No Engine `--array-desc`.
+//! [`array_3d_get_descriptor`](Sim::array_3d_get_descriptor) is
+//! `cuArray3DGetDescriptor` (always Invalid `"array 3d descriptor"`). Query;
+//! legal during capture. No Engine `--array-3d-desc`.
 //! [`mipmapped_array_create`](Sim::mipmapped_array_create) is
 //! `cuMipmappedArrayCreate` (always Invalid `"mipmapped array"`). Query;
 //! legal during capture. No Engine `--mipmap-array`.
@@ -21330,6 +21333,44 @@ mod tests {
         match sim.surf_object_get_resource_desc(d) {
             Err(SimError::Invalid { why }) => {
                 assert!(why.contains("surf resource desc"), "{why}");
+            }
+            other => panic!("{other:?}"),
+        }
+    }
+
+    #[test]
+    fn array_3d_get_descriptor_is_unsupported() {
+        let mut sim = Sim::new(h100());
+        let d = DeviceId(0);
+        match sim.array_3d_get_descriptor(d) {
+            Err(SimError::Invalid { why }) => {
+                assert!(why.contains("array 3d descriptor"), "{why}");
+            }
+            other => panic!("{other:?}"),
+        }
+        sim.begin_capture(d, StreamId(0)).unwrap();
+        match sim.array_3d_get_descriptor(d) {
+            Err(SimError::Invalid { why }) => {
+                assert!(why.contains("array 3d descriptor"), "{why}");
+            }
+            other => panic!("{other:?}"),
+        }
+        let _g = sim.end_capture().unwrap();
+        match sim.array_3d_get_descriptor(DeviceId(99)) {
+            Err(SimError::Invalid { why }) => {
+                assert!(why.contains("device not in profile"), "{why}");
+            }
+            other => panic!("{other:?}"),
+        }
+        match sim.array_get_descriptor(d) {
+            Err(SimError::Invalid { why }) => {
+                assert!(why.contains("array descriptor"), "{why}");
+            }
+            other => panic!("{other:?}"),
+        }
+        match sim.array_create(d) {
+            Err(SimError::Invalid { why }) => {
+                assert!(why.contains("cuda array"), "{why}");
             }
             other => panic!("{other:?}"),
         }
