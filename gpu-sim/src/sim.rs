@@ -15834,6 +15834,46 @@ impl Sim {
         }
     }
 
+    /// `CU_POINTER_ATTRIBUTE_ACCESS_FLAGS` for `device`.
+    ///
+    /// CUDA's `cuPointerGetAttribute` uses the current context. This VM has
+    /// no TLS current device (`cudaSetDevice` stays parked), so `device` is
+    /// explicit. Not a [`PointerAttr`] on [`Self::pointer_get_attribute`]
+    /// (that API has no device argument).
+    ///
+    /// Flags are [`MemAccessFlags`] (same integers as
+    /// `CU_POINTER_ATTRIBUTE_ACCESS_FLAG_*`):
+    /// [`PROT_READ_WRITE`](MemAccessFlags::PROT_READ_WRITE) when a kernel
+    /// write of the allocation would be resident,
+    /// [`PROT_READ`](MemAccessFlags::PROT_READ) when only a kernel read
+    /// would be resident, else [`PROT_NONE`](MemAccessFlags::PROT_NONE).
+    /// Mapped host is ReadWrite. `cudaDeviceEnablePeerAccess` does not
+    /// grant kernel access to remote `cudaMalloc` (D2D memcpy only). Pool
+    /// ProtRead, VMM `va_set_access`, and managed SetAccessedBy are Read.
+    /// Unknown device is Invalid `"device not in profile"`. Freed ids are
+    /// Invalid `"pointer attr"`. Query; legal during capture.
+    pub fn pointer_get_access_flags(
+        &self,
+        device: DeviceId,
+        alloc: AllocId,
+    ) -> Result<u32, SimError> {
+        let _gpu = self.profile.gpu(device)?;
+        let a = self.alloc_ref(alloc)?;
+        if !a.live {
+            return Err(SimError::Invalid {
+                why: "pointer attr",
+            });
+        }
+        let buf = KernelBuf::whole(alloc);
+        if self.buf_on_device(&buf, device, true, false)? {
+            return Ok(MemAccessFlags::PROT_READ_WRITE);
+        }
+        if self.buf_on_device(&buf, device, true, true)? {
+            return Ok(MemAccessFlags::PROT_READ);
+        }
+        Ok(MemAccessFlags::PROT_NONE)
+    }
+
     /// `cudaHostGetDevicePointer`. Query; legal during capture.
     ///
     /// Mapped host (`cudaHostAllocMapped` / `cudaHostRegisterMapped`) returns

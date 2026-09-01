@@ -708,6 +708,9 @@ pub struct PointerAttributes {
 ///
 /// Only attributes this VM already models. Set is
 /// [`Self::SyncMemops`] only; the rest are query-only.
+/// `CU_POINTER_ATTRIBUTE_ACCESS_FLAGS` is
+/// [`crate::Sim::pointer_get_access_flags`] (explicit [`crate::DeviceId`];
+/// this VM has no TLS current device). CONTEXT / P2P tokens stay unmodeled.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum PointerAttr {
     /// `CU_POINTER_ATTRIBUTE_SYNC_MEMOPS`. `1` makes memcpy/memset of this
@@ -3394,8 +3397,13 @@ pub enum MemPoolAttr {
     ReuseAllowInternalDependencies,
 }
 
-/// `cudaMemAccessFlags` for [`crate::Sim::pool_get_access`] /
-/// [`crate::Sim::va_get_access`].
+/// `cudaMemAccessFlags` for [`crate::Sim::pool_get_access`],
+/// [`crate::Sim::va_get_access`], and
+/// [`crate::Sim::pointer_get_access_flags`].
+///
+/// `CU_POINTER_ATTRIBUTE_ACCESS_FLAG_NONE` / `READ` / `READWRITE` use the
+/// same integers as [`Self::PROT_NONE`] / [`PROT_READ`](Self::PROT_READ) /
+/// [`PROT_READ_WRITE`](Self::PROT_READ_WRITE).
 pub struct MemAccessFlags;
 
 impl MemAccessFlags {

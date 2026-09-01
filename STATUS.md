@@ -5,6 +5,17 @@ Visible five-turn extract: [docs/chatgpt-share-6a920fe1.md](docs/chatgpt-share-6
 Complete share-API extract: [docs/chatgpt-share-6a920fe1/](docs/chatgpt-share-6a920fe1/).
 Work lands on `main`. No PRs.
 
+## Shipped 2026-09-01 — CUDA pointer AccessFlags on an explicit device
+
+`gpu-sim` `CU_POINTER_ATTRIBUTE_ACCESS_FLAGS`:
+`pointer_get_access_flags` reports `MemAccessFlags` for an explicit
+`DeviceId` (no TLS current device). Flags are this VM's kernel residency,
+not `cudaDeviceEnablePeerAccess` (D2D memcpy only). Mapped host is
+ReadWrite; pool ProtRead / VMM `va_set_access` / managed SetAccessedBy
+are Read. Not a `PointerAttr`. Query; legal during capture. No Engine
+`--pointer-access`. CONTEXT / P2P tokens stay unmodeled. `gpu-profile
+capture` is still refused. Dual score still has no `$/M tokens`.
+
 ## Shipped 2026-09-01 — CUDA ExecUpdate copies conditional handles
 
 `gpu-sim` `cudaGraphExecUpdate` copies IF / IfElse / WHILE / SWITCH

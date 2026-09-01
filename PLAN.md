@@ -5060,7 +5060,18 @@ model, do not celebrate the sim.
     `--graph-cond-update`. `gpu-profile capture` is still refused. Dual
     score still has no `$/M tokens`.
 
-471. [ ] Next numbered PLAN item after 470 is the next `gpu-sim` / Engine /
+471. [x] `gpu-sim` `CU_POINTER_ATTRIBUTE_ACCESS_FLAGS`:
+    [`pointer_get_access_flags`](Sim::pointer_get_access_flags) reports
+    [`MemAccessFlags`] for an explicit [`DeviceId`] (no TLS current
+    device). Flags are this VM's kernel residency, not
+    `cudaDeviceEnablePeerAccess` (D2D memcpy only). Mapped host is
+    ReadWrite; pool ProtRead / VMM `va_set_access` / managed
+    SetAccessedBy are Read. Not a [`PointerAttr`]. Query; legal during
+    capture. No Engine `--pointer-access`. CONTEXT / P2P tokens stay
+    unmodeled. `gpu-profile capture` is still refused. Dual score still
+    has no `$/M tokens`.
+
+472. [ ] Next numbered PLAN item after 471 is the next `gpu-sim` / Engine /
     serve / expertvm mechanical API that is still missing, or the next official
     decode family. Prefer remaining CUDA-shaped twins over more
     OpenAI HTTP veneer. Do not invent F32 `output.scale`. Do not invent a
@@ -5177,6 +5188,11 @@ model, do not celebrate the sim.
     changes type, size, or bodies.
     Do not invent a second `cudaGraphExecUpdate` IF / WHILE / SWITCH
     handle copy. Do not invent Engine `--graph-cond-update`.
+    Do not invent a second `CU_POINTER_ATTRIBUTE_ACCESS_FLAGS` /
+    `pointer_get_access_flags`. Do not invent Engine `--pointer-access`.
+    Do not invent `PointerAttr::AccessFlags` (no TLS current device;
+    the typed helper takes an explicit `DeviceId`). Do not invent
+    `CU_POINTER_ATTRIBUTE_CONTEXT` / P2P tokens.
     Do not invent a second `cudaGraphAddNode` If / IfElse / While /
     `GraphNodeParams::If`. Do not invent a second
     `GraphNodeParams::Switch` / `switch_bodies`.

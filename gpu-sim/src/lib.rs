@@ -391,7 +391,11 @@
 //! IsHwDecompressCapable / MemoryBlockId are query-only
 //! wrappers of existing pointer state; VMM mapping size is the
 //! `cuMemMap` span at offset 0, not the reserved VA; hardware decompress
-//! is always 0; memory-block id is the [`MemHandleId`] covering offset 0). Set is
+//! is always 0; memory-block id is the [`MemHandleId`] covering offset 0).
+//! [`pointer_get_access_flags`](Sim::pointer_get_access_flags) is
+//! `CU_POINTER_ATTRIBUTE_ACCESS_FLAGS` for an explicit [`DeviceId`]
+//! (no TLS current device; not a [`PointerAttr`]). Flags are
+//! [`MemAccessFlags`] from this VM's kernel residency. Set is
 //! capture-refused; Get is a query. `expertvm sim --sync-memops` sets
 //! [`PointerAttr::SyncMemops`] on miss pages (host-sync H2D).
 //! `expertvm sim --device-sync-memops` is [`set_device_flags`](Sim::set_device_flags)
@@ -11028,6 +11032,120 @@ mod tests {
         sim.va_release_handle(h).unwrap();
         sim.va_release_handle(created).unwrap();
         sim.free_sync(a).unwrap();
+    }
+
+    #[test]
+    fn pointer_get_access_flags_is_kernel_residency() {
+        let mut sim = Sim::new(HardwareProfile::example_2xh100_pcie());
+        let d0 = DeviceId(0);
+        let d1 = DeviceId(1);
+        let s = StreamId(0);
+        let a = sim.malloc(d0, 4096).unwrap();
+        assert_eq!(
+            sim.pointer_get_access_flags(d0, a).unwrap(),
+            MemAccessFlags::PROT_READ_WRITE
+        );
+        assert_eq!(
+            sim.pointer_get_access_flags(d1, a).unwrap(),
+            MemAccessFlags::PROT_NONE
+        );
+        sim.enable_peer(d1, d0).unwrap();
+        assert_eq!(
+            sim.pointer_get_access_flags(d1, a).unwrap(),
+            MemAccessFlags::PROT_NONE
+        );
+        let pin = sim.alloc_host_pinned(64).unwrap();
+        assert_eq!(
+            sim.pointer_get_access_flags(d0, pin).unwrap(),
+            MemAccessFlags::PROT_NONE
+        );
+        let mapped = sim.alloc_host_mapped(64).unwrap();
+        assert_eq!(
+            sim.pointer_get_access_flags(d0, mapped).unwrap(),
+            MemAccessFlags::PROT_READ_WRITE
+        );
+        assert_eq!(
+            sim.pointer_get_access_flags(d1, mapped).unwrap(),
+            MemAccessFlags::PROT_READ_WRITE
+        );
+        let p0 = sim.default_pool(d0).unwrap();
+        let pooled = sim.alloc(d0, 4096, s).unwrap();
+        sim.synchronize().unwrap();
+        assert_eq!(
+            sim.pointer_get_access_flags(d1, pooled).unwrap(),
+            MemAccessFlags::PROT_NONE
+        );
+        sim.pool_set_access_read(p0, d1).unwrap();
+        assert_eq!(
+            sim.pointer_get_access_flags(d1, pooled).unwrap(),
+            MemAccessFlags::PROT_READ
+        );
+        sim.pool_set_access(p0, d1).unwrap();
+        assert_eq!(
+            sim.pointer_get_access_flags(d1, pooled).unwrap(),
+            MemAccessFlags::PROT_READ_WRITE
+        );
+        let va = sim.va_reserve(4096).unwrap();
+        assert_eq!(
+            sim.pointer_get_access_flags(d0, va).unwrap(),
+            MemAccessFlags::PROT_NONE
+        );
+        sim.va_map(va, d0).unwrap();
+        assert_eq!(
+            sim.pointer_get_access_flags(d0, va).unwrap(),
+            MemAccessFlags::PROT_READ_WRITE
+        );
+        assert_eq!(
+            sim.pointer_get_access_flags(d1, va).unwrap(),
+            MemAccessFlags::PROT_NONE
+        );
+        sim.va_set_access(va, d1).unwrap();
+        assert_eq!(
+            sim.pointer_get_access_flags(d1, va).unwrap(),
+            MemAccessFlags::PROT_READ
+        );
+        sim.va_set_access_write(va, d1).unwrap();
+        assert_eq!(
+            sim.pointer_get_access_flags(d1, va).unwrap(),
+            MemAccessFlags::PROT_READ_WRITE
+        );
+        let m = sim.alloc_managed(4096).unwrap();
+        enq(sim.prefetch(d0, m, s));
+        sim.synchronize().unwrap();
+        assert_eq!(
+            sim.pointer_get_access_flags(d0, m).unwrap(),
+            MemAccessFlags::PROT_READ_WRITE
+        );
+        assert_eq!(
+            sim.pointer_get_access_flags(d1, m).unwrap(),
+            MemAccessFlags::PROT_NONE
+        );
+        sim.mem_advise(m, MemAdvise::SetAccessedBy, d1).unwrap();
+        assert_eq!(
+            sim.pointer_get_access_flags(d1, m).unwrap(),
+            MemAccessFlags::PROT_READ
+        );
+        match sim.pointer_get_access_flags(DeviceId(9), a) {
+            Err(SimError::Invalid { why }) => {
+                assert!(why.contains("device not in profile"), "{why}");
+            }
+            other => panic!("{other:?}"),
+        }
+        sim.free_sync(a).unwrap();
+        match sim.pointer_get_access_flags(d0, a) {
+            Err(SimError::Invalid { why }) => assert!(why.contains("pointer attr"), "{why}"),
+            other => panic!("{other:?}"),
+        }
+        match sim.pointer_get_access_flags(d0, AllocId(u64::MAX)) {
+            Err(SimError::UnknownAlloc { alloc }) => assert_eq!(alloc, AllocId(u64::MAX)),
+            other => panic!("{other:?}"),
+        }
+        sim.begin_capture(d0, s).unwrap();
+        assert_eq!(
+            sim.pointer_get_access_flags(d0, pooled).unwrap(),
+            MemAccessFlags::PROT_READ_WRITE
+        );
+        let _g = sim.end_capture().unwrap();
     }
 
     #[test]

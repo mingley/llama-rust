@@ -138,6 +138,7 @@ warp scheduler, L1, …   ← do not model
 | `mem_info` is `(free, total)` HBM | `cudaMemGetInfo` |
 | `pointer_get_attributes` classifies Unregistered / Host / Device / Managed | `cudaPointerGetAttributes` |
 | `pointer_get_attribute` wraps type / mapped / pool / range / ordinal / start / buffer id / IPC / RDMA / handle types / VMM map / hw decompress 0 / VMM block id; SyncMemops is settable | `cuPointerGetAttribute` / `SetAttribute` |
+| `pointer_get_access_flags` is kernel residency on an explicit device (`MemAccessFlags`; enable_peer is D2D memcpy only) | `CU_POINTER_ATTRIBUTE_ACCESS_FLAGS` |
 | `host_get_device_pointer` of mapped host returns the same id (`flags` must be 0) | `cudaHostGetDevicePointer` |
 | `host_get_flags` returns the stored `HostAllocFlags` word | `cudaHostGetFlags` |
 | `alloc_host_with_flags` / `host_register_with_flags` (MAPPED / PORTABLE / WRITE_COMBINED stored; IoMemory / ReadOnly Invalid) | `cudaHostAlloc` / `cudaHostRegister` |
@@ -692,6 +693,13 @@ IsHwDecompressCapable / MemoryBlockId are query-only;
 VMM mapping size is the `cuMemMap` span at offset 0, not the reserved
 VA; hardware decompress is always 0; memory-block id is the
 `MemHandleId` covering offset 0). Set is capture-refused; Get is a query.
+`pointer_get_access_flags` is `CU_POINTER_ATTRIBUTE_ACCESS_FLAGS` for an
+explicit device (no TLS current device; not a `PointerAttr`). Flags are
+`MemAccessFlags` from this VM's kernel residency: local / mapped host /
+pool ReadWrite / VMM write access are ProtReadWrite; pool ProtRead /
+VMM `va_set_access` / managed SetAccessedBy are ProtRead; `enable_peer`
+does not grant kernel access to remote `cudaMalloc`. Query; legal
+during capture. No Engine `--pointer-access`.
 `expertvm sim --sync-memops` / `gguf_gemv engine --expert-sim --sync-memops`
 sets `PointerAttr::SyncMemops` on miss device pages so H2D / managed
 prefetch is host-synchronous (identity stays async pinned DMA).
