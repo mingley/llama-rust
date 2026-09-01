@@ -181,6 +181,8 @@
 //! [`mem_advise_with_location`](Sim::mem_advise_with_location) is
 //! `cudaMemAdvise_v2` ([`Place`] location; AccessedBy requires
 //! [`Place::Device`]; host preferred is [`MemAdvise::SetPreferredLocationHost`]).
+//! [`mem_advise_with_size`](Sim::mem_advise_with_size) is the CUDA `count`
+//! argument (`size` must equal the allocation; partial advise is not modeled).
 //! Typed [`mem_advise`](Sim::mem_advise) stays.
 //! [`prefetch_with_flags`](Sim::prefetch_with_flags) is
 //! `cudaMemPrefetchAsync` / `cuMemPrefetchAsync_v2` ([`PrefetchFlags::DEFAULT`]
@@ -17807,6 +17809,34 @@ mod tests {
             other => panic!("{other:?}"),
         }
         let _g = sim.end_capture().unwrap();
+    }
+
+    #[test]
+    fn mem_advise_with_size_is_cuda_mem_advise_count() {
+        let mut sim = Sim::new(h100());
+        let d = DeviceId(0);
+        let s = StreamId(0);
+        let m = sim.alloc_managed(4096).unwrap();
+        match sim.mem_advise_with_size(m, 2048, MemAdvise::SetReadMostly, d) {
+            Err(SimError::Invalid { why }) => assert!(why.contains("advise size"), "{why}"),
+            other => panic!("{other:?}"),
+        }
+        assert!(!sim.is_read_mostly(m).unwrap());
+        sim.mem_advise_with_size(m, 4096, MemAdvise::SetReadMostly, d)
+            .unwrap();
+        assert!(sim.is_read_mostly(m).unwrap());
+        sim.begin_capture(d, s).unwrap();
+        match sim.mem_advise_with_size(m, 4096, MemAdvise::UnsetReadMostly, d) {
+            Err(SimError::Invalid { why }) => assert!(why.contains("capture"), "{why}"),
+            other => panic!("{other:?}"),
+        }
+        let _g = sim.end_capture().unwrap();
+        assert!(sim.is_read_mostly(m).unwrap());
+        let a = sim.malloc(d, 4096).unwrap();
+        match sim.mem_advise_with_size(a, 4096, MemAdvise::SetReadMostly, d) {
+            Err(SimError::Invalid { why }) => assert!(why.contains("managed"), "{why}"),
+            other => panic!("{other:?}"),
+        }
     }
 
     #[test]

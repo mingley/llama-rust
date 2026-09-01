@@ -4918,7 +4918,14 @@ model, do not celebrate the sim.
     pools stay Invalid. No Engine `--pool-prot-read`. `gpu-profile
     capture` is still refused. Dual score still has no `$/M tokens`.
 
-453. [ ] Next numbered PLAN item after 452 is the next `gpu-sim` / Engine /
+453. [x] `gpu-sim` `mem_advise_with_size` is `cudaMemAdvise` with the CUDA
+    `count` argument. `size` must equal the allocation bytes. Other
+    sizes Invalid `"advise size"`. Partial advise is not modeled. Typed
+    `mem_advise` stays. Capture cannot include it. No Engine
+    `--advise-size`. `gpu-profile capture` is still refused. Dual score
+    still has no `$/M tokens`.
+
+454. [ ] Next numbered PLAN item after 453 is the next `gpu-sim` / Engine /
     serve / expertvm mechanical API that is still missing, or the next official
     decode family. Prefer remaining CUDA-shaped twins over more
     OpenAI HTTP veneer. Do not invent F32 `output.scale`. Do not invent a
@@ -4999,6 +5006,9 @@ model, do not celebrate the sim.
     `cuCtxSetExecAffinity` (occupancy SM counts).
     Do not invent a second pool `PROT_READ`. Do not invent Engine
     `--pool-prot-read`.
+    Do not invent a second `cudaMemAdvise` count /
+    `mem_advise_with_size`. Do not invent Engine `--advise-size`. Do not
+    invent partial-range `cudaMemAdvise`.
     Do not invent `cuDeviceGetLuid`
     (Windows).
     Do not invent gemma4 `attn_q.scale` / `attn_output.scale` / `attn_k.scale` /

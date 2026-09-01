@@ -951,6 +951,8 @@ prefetch (identity stays Global at alloc).
 evict managed pages with `cudaMemPrefetchAsync(..., cudaCpuDeviceId)` and
 restore by prefetching the same alloc back (identity stays `cudaFree`).
 `mem_advise` is `cudaMemAdvise` (host-sync).
+`mem_advise_with_size` is the CUDA `count` argument (`size` must equal
+the allocation; partial advise is not modeled).
 `mem_advise_with_location` is `cudaMemAdvise_v2` (`Place` location;
 AccessedBy requires a device place; host preferred is
 `SetPreferredLocationHost`). Typed `mem_advise` stays.

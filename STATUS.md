@@ -5,6 +5,14 @@ Visible five-turn extract: [docs/chatgpt-share-6a920fe1.md](docs/chatgpt-share-6
 Complete share-API extract: [docs/chatgpt-share-6a920fe1/](docs/chatgpt-share-6a920fe1/).
 Work lands on `main`. No PRs.
 
+## Shipped 2026-09-01 — CUDA `cudaMemAdvise` count
+
+`gpu-sim` `mem_advise_with_size` is `cudaMemAdvise` with the CUDA `count`
+argument. `size` must equal the allocation bytes. Other sizes Invalid
+`"advise size"`. Partial advise is not modeled. Typed `mem_advise` stays.
+Capture cannot include it. No Engine `--advise-size`. `gpu-profile
+capture` is still refused. Dual score still has no `$/M tokens`.
+
 ## Shipped 2026-09-01 — CUDA `cudaMemPoolSetAccess` ProtRead
 
 `gpu-sim` `pool_set_access_read` is `cudaMemPoolSetAccess`

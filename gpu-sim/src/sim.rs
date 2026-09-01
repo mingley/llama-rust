@@ -11207,10 +11207,29 @@ impl Sim {
         advice: MemAdvise,
         device: DeviceId,
     ) -> Result<(), SimError> {
+        let size = self.alloc_ref(alloc)?.bytes;
+        self.mem_advise_with_size(alloc, size, advice, device)
+    }
+
+    /// [`Self::mem_advise`] with the CUDA `count` argument.
+    ///
+    /// `size` must equal the allocation bytes. Other sizes Invalid
+    /// `"advise size"`. Partial advise is not modeled. Typed
+    /// [`Self::mem_advise`] stays. Capture cannot include it.
+    pub fn mem_advise_with_size(
+        &mut self,
+        alloc: AllocId,
+        size: u64,
+        advice: MemAdvise,
+        device: DeviceId,
+    ) -> Result<(), SimError> {
         self.fail_if_capturing("cannot capture mem advise")?;
         let a = self.alloc_ref(alloc)?;
         if !a.live || !a.managed {
             return Err(SimError::Invalid { why: "not managed" });
+        }
+        if size != a.bytes {
+            return Err(SimError::Invalid { why: "advise size" });
         }
         match advice {
             MemAdvise::SetReadMostly => {
