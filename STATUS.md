@@ -5,6 +5,14 @@ Visible five-turn extract: [docs/chatgpt-share-6a920fe1.md](docs/chatgpt-share-6
 Complete share-API extract: [docs/chatgpt-share-6a920fe1/](docs/chatgpt-share-6a920fe1/).
 Work lands on `main`. No PRs.
 
+## Shipped 2026-09-01 — CUDA `cuEGLStreamProducerConnect`
+
+`gpu-sim` `Sim::egl_stream_producer_connect` is
+`cuEGLStreamProducerConnect`. Always Invalid `"egl producer"` because
+EGL streams are not modeled. Query; legal during capture. Distinct from
+`egl_stream_consumer_connect`. This VM does not invent `cuEGLStreamProducerDisconnect` or Engine `--egl-producer`.
+`gpu-profile capture` is still refused. Dual score still has no `$/M tokens`.
+
 ## Shipped 2026-09-01 — CUDA `cuVDPAUCtxCreate`
 
 `gpu-sim` `Sim::vdpau_ctx_create` is `cuVDPAUCtxCreate`. Always Invalid

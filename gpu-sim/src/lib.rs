@@ -593,6 +593,9 @@
 //! [`egl_stream_consumer_connect`](Sim::egl_stream_consumer_connect) is
 //! `cuEGLStreamConsumerConnect` (always Invalid `"egl stream"`). Query;
 //! legal during capture. No Engine `--egl-stream`.
+//! [`egl_stream_producer_connect`](Sim::egl_stream_producer_connect) is
+//! `cuEGLStreamProducerConnect` (always Invalid `"egl producer"`). Query;
+//! legal during capture. No Engine `--egl-producer`.
 //! [`gl_get_devices`](Sim::gl_get_devices) is `cuGLGetDevices` (always
 //! Invalid `"opengl"`). Query; legal during capture. No Engine `--gl-devices`.
 //! [`gl_ctx_create`](Sim::gl_ctx_create) is `cuGLCtxCreate` (always
@@ -21729,6 +21732,38 @@ mod tests {
         match sim.graphics_map_resources(d, StreamId(0)) {
             Err(SimError::Invalid { why }) => {
                 assert!(why.contains("graphics resource"), "{why}");
+            }
+            other => panic!("{other:?}"),
+        }
+    }
+
+    #[test]
+    fn egl_stream_producer_connect_is_unsupported() {
+        let mut sim = Sim::new(h100());
+        let d = DeviceId(0);
+        match sim.egl_stream_producer_connect(d) {
+            Err(SimError::Invalid { why }) => {
+                assert!(why.contains("egl producer"), "{why}");
+            }
+            other => panic!("{other:?}"),
+        }
+        sim.begin_capture(d, StreamId(0)).unwrap();
+        match sim.egl_stream_producer_connect(d) {
+            Err(SimError::Invalid { why }) => {
+                assert!(why.contains("egl producer"), "{why}");
+            }
+            other => panic!("{other:?}"),
+        }
+        let _g = sim.end_capture().unwrap();
+        match sim.egl_stream_producer_connect(DeviceId(99)) {
+            Err(SimError::Invalid { why }) => {
+                assert!(why.contains("device not in profile"), "{why}");
+            }
+            other => panic!("{other:?}"),
+        }
+        match sim.egl_stream_consumer_connect(d) {
+            Err(SimError::Invalid { why }) => {
+                assert!(why.contains("egl stream"), "{why}");
             }
             other => panic!("{other:?}"),
         }

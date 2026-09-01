@@ -172,6 +172,7 @@ warp scheduler, L1, …   ← do not model
 | `tex_object_get_resource_view_desc` is Invalid (no texture-object handles) | `cuTexObjectGetResourceViewDesc` / `cudaGetTextureObjectResourceViewDesc` |
 | `graphics_map_resources` is Invalid (OpenGL, Direct3D, Vulkan, EGL are not modeled) | `cuGraphicsMapResources` |
 | `egl_stream_consumer_connect` is Invalid (EGL streams are not modeled) | `cuEGLStreamConsumerConnect` |
+| `egl_stream_producer_connect` is Invalid (EGL streams are not modeled) | `cuEGLStreamProducerConnect` |
 | `gl_get_devices` is Invalid (OpenGL interop is not modeled) | `cuGLGetDevices` / `cudaGLGetDevices` |
 | `gl_ctx_create` is Invalid (OpenGL interop is not modeled) | `cuGLCtxCreate` |
 | `d3d11_get_devices` is Invalid (Direct3D 11 interop is not modeled) | `cuD3D11GetDevices` / `cudaD3D11GetDevices` |
@@ -1068,6 +1069,9 @@ legal during capture. No Engine `--graphics-map`.
 `egl_stream_consumer_connect` is `cuEGLStreamConsumerConnect` (always
 Invalid `"egl stream"`). Distinct from `graphics_map_resources`. Query;
 legal during capture. No Engine `--egl-stream`.
+`egl_stream_producer_connect` is `cuEGLStreamProducerConnect` (always
+Invalid `"egl producer"`). Distinct from `egl_stream_consumer_connect`. Query;
+legal during capture. No Engine `--egl-producer`.
 `gl_get_devices` is `cuGLGetDevices` (always Invalid `"opengl"`). Distinct
 from `graphics_map_resources` and `egl_stream_consumer_connect`. Query;
 legal during capture. No Engine `--gl-devices`.
