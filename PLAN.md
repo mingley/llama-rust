@@ -5536,7 +5536,19 @@ model, do not celebrate the sim.
     definition (SetEnabled is exec-only). `gpu-profile capture` is still
     refused. Dual score still has no `$/M tokens`.
 
-515. [ ] Next numbered PLAN item after 514 is the next `gpu-sim` / Engine /
+515. [x] `gpu-sim` CUDA v1 `cudaGraphGetEdges` /
+    `cudaGraphNodeGetDependencies` / `cudaGraphNodeGetDependentNodes`
+    (`edgeData` NULL) are Invalid `"lossy query"` when any reported edge
+    has non-default stored [`GraphEdgeData`] (`cudaErrorLossyQuery`).
+    Default-only edges stay. v2 `graph_edges_with_data` /
+    `graph_node_deps_with_data` / `graph_node_dependents_with_data` stay
+    lossless. Per-node queries only inspect that node's edges. Debug-dot
+    ExtraTopoInfo still dumps ports. Query; legal during capture. This VM
+    does not invent Engine `--graph-lossy` or LossyQuery on debug-dot.
+    `gpu-profile capture` is still refused. Dual score still has no
+    `$/M tokens`.
+
+516. [ ] Next numbered PLAN item after 515 is the next `gpu-sim` / Engine /
     serve / expertvm mechanical API that is still missing, or the next official
     decode family. Prefer remaining CUDA-shaped twins over more
     OpenAI HTTP veneer. Do not invent F32 `output.scale`. Do not invent a
@@ -5605,6 +5617,11 @@ model, do not celebrate the sim.
     second `cudaGraphDebugDotFlagsExtraTopoInfo` edge numbering.
     Do not invent a second `cudaGraphNodeGetDependencies` /
     `GetDependentNodes` v2.
+    Do not invent a second LossyQuery on GetEdges / GetDependencies /
+    GetDependentNodes. Do not invent Engine `--graph-lossy`. Do not
+    invent LossyQuery on debug-dot or ExtraTopoInfo. Do not reverse v1
+    queries of default-only edges. Do not invent LossyQuery on v2
+    with_data queries.
     Do not invent a second `cudaStreamGetCaptureInfo_v3`. Do not invent
     `cudaStreamUpdateCaptureDependencies` v2 edgeData.
     Do not invent a second `cudaDeviceProp::persistingL2CacheMaxSize`.
@@ -5929,6 +5946,11 @@ model, do not celebrate the sim.
     Engine `--graph-enable-update`. Do not copy enable from the source
     definition (SetEnabled is exec-only). Do not invent enable as topology
     for `update_graph`.
+    Do not invent a second LossyQuery on GetEdges / GetDependencies /
+    GetDependentNodes. Do not invent Engine `--graph-lossy`. Do not
+    invent LossyQuery on debug-dot or ExtraTopoInfo. Do not reverse v1
+    queries of default-only edges. Do not invent LossyQuery on v2
+    with_data queries.
     Do not
     spend the next item on an OpenAI-compatible HTTP veneer.
 

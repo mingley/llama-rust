@@ -9169,39 +9169,48 @@ impl Sim {
     }
 
     /// Predecessor indices of node `i` (`cudaGraphNodeGetDependencies`).
+    ///
+    /// CUDA v1 (`edgeData == NULL`): non-default stored [`GraphEdgeData`] is
+    /// Invalid `"lossy query"` (`cudaErrorLossyQuery`). Default-only predecessors
+    /// stay. [`Self::graph_node_deps_with_data`] is lossless. Query; legal
+    /// during capture.
     pub fn graph_node_deps(&self, graph: GraphId, i: usize) -> Result<Vec<usize>, SimError> {
-        let g = self.graphs.get(&graph).ok_or(SimError::Invalid {
-            why: "unknown graph",
-        })?;
-        g.steps
-            .get(i)
-            .ok_or(SimError::Invalid {
-                why: "graph dependency",
-            })
-            .and_then(live_ok)
-            .map(|s| s.deps.clone())
+        let step = self.graph_node_dep_step(graph, i)?;
+        if step
+            .deps
+            .iter()
+            .any(|&from| graph_edge_is_lossy(step.edge_data_of(from)))
+        {
+            return Err(SimError::Invalid { why: "lossy query" });
+        }
+        Ok(step.deps.clone())
     }
 
     /// `cudaGraphNodeGetDependencies` v2: `(from, data)` predecessors.
     ///
     /// Existing edges report stored [`GraphEdgeData`] (Default ports 0 when
-    /// unset). Query; legal during capture.
+    /// unset). Not [`Self::graph_node_deps`] LossyQuery. Query; legal during
+    /// capture.
     pub fn graph_node_deps_with_data(
         &self,
         graph: GraphId,
         i: usize,
     ) -> Result<Vec<(usize, GraphEdgeData)>, SimError> {
-        let froms = self.graph_node_deps(graph, i)?;
+        let step = self.graph_node_dep_step(graph, i)?;
+        Ok(step
+            .deps
+            .iter()
+            .map(|&from| (from, step.edge_data_of(from)))
+            .collect())
+    }
+
+    fn graph_node_dep_step(&self, graph: GraphId, i: usize) -> Result<&GraphStep, SimError> {
         let g = self.graphs.get(&graph).ok_or(SimError::Invalid {
             why: "unknown graph",
         })?;
-        let step = live_ok(g.steps.get(i).ok_or(SimError::Invalid {
-            why: "unknown graph node",
-        })?)?;
-        Ok(froms
-            .into_iter()
-            .map(|from| (from, step.edge_data_of(from)))
-            .collect())
+        live_ok(g.steps.get(i).ok_or(SimError::Invalid {
+            why: "graph dependency",
+        })?)
     }
 
     /// Root node indices (`cudaGraphGetRootNodes`): nodes with no predecessors.
@@ -9218,6 +9227,11 @@ impl Sim {
     }
 
     /// Edges (`cudaGraphGetEdges`): `(from, to)` in node-add order.
+    ///
+    /// CUDA v1 (`edgeData == NULL`): any non-default stored [`GraphEdgeData`]
+    /// is Invalid `"lossy query"` (`cudaErrorLossyQuery`). Default-only graphs
+    /// stay. [`Self::graph_edges_with_data`] is lossless. Query; legal during
+    /// capture.
     pub fn graph_edges(&self, graph: GraphId) -> Result<Vec<(usize, usize)>, SimError> {
         let g = self.graphs.get(&graph).ok_or(SimError::Invalid {
             why: "unknown graph",
@@ -9228,6 +9242,9 @@ impl Sim {
                 continue;
             }
             for &from in &step.deps {
+                if graph_edge_is_lossy(step.edge_data_of(from)) {
+                    return Err(SimError::Invalid { why: "lossy query" });
+                }
                 edges.push((from, to));
             }
         }
@@ -9237,7 +9254,8 @@ impl Sim {
     /// `cudaGraphGetEdges` v2: `(from, to, data)` in node-add order.
     ///
     /// Existing edges report stored [`GraphEdgeData`] (Default ports 0 when
-    /// unset; Programmatic type is not stored). Query; legal during capture.
+    /// unset; Programmatic type is not stored). Not [`Self::graph_edges`]
+    /// LossyQuery. Query; legal during capture.
     pub fn graph_edges_with_data(
         &self,
         graph: GraphId,
@@ -9348,6 +9366,11 @@ impl Sim {
     }
 
     /// Successors of node `i` (`cudaGraphNodeGetDependentNodes`).
+    ///
+    /// CUDA v1 (`edgeData == NULL`): non-default stored [`GraphEdgeData`] on
+    /// any successor edge is Invalid `"lossy query"` (`cudaErrorLossyQuery`).
+    /// Default-only successors stay. [`Self::graph_node_dependents_with_data`]
+    /// is lossless. Query; legal during capture.
     pub fn graph_node_dependents(&self, graph: GraphId, i: usize) -> Result<Vec<usize>, SimError> {
         let g = self.graphs.get(&graph).ok_or(SimError::Invalid {
             why: "unknown graph",
@@ -9362,18 +9385,24 @@ impl Sim {
                 why: "unknown graph node",
             });
         }
-        Ok(g.steps
-            .iter()
-            .enumerate()
-            .filter(|(_, s)| !s.destroyed && s.deps.contains(&i))
-            .map(|(j, _)| j)
-            .collect())
+        let mut out = Vec::new();
+        for (j, s) in g.steps.iter().enumerate() {
+            if s.destroyed || !s.deps.contains(&i) {
+                continue;
+            }
+            if graph_edge_is_lossy(s.edge_data_of(i)) {
+                return Err(SimError::Invalid { why: "lossy query" });
+            }
+            out.push(j);
+        }
+        Ok(out)
     }
 
     /// `cudaGraphNodeGetDependentNodes` v2: `(to, data)` successors.
     ///
     /// Existing edges report stored [`GraphEdgeData`] (Default ports 0 when
-    /// unset). Query; legal during capture.
+    /// unset). Not [`Self::graph_node_dependents`] LossyQuery. Query; legal
+    /// during capture.
     pub fn graph_node_dependents_with_data(
         &self,
         graph: GraphId,
@@ -23591,6 +23620,11 @@ fn child_param_topology_eq(a: &[GraphStep], b: &[GraphStep]) -> bool {
             && x.deps == y.deps
             && edge_port_mismatch(x, y).is_none()
     })
+}
+
+/// CUDA v1 GetEdges / GetDependencies / GetDependentNodes (`edgeData == NULL`).
+fn graph_edge_is_lossy(data: GraphEdgeData) -> bool {
+    data != GraphEdgeData::default()
 }
 
 /// Same `(from, to)` with a different [`GraphEdgeData`] port is topology

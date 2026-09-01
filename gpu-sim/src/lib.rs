@@ -1199,7 +1199,12 @@
 //! legal during capture. [`graph_node_deps_with_data`](Sim::graph_node_deps_with_data) /
 //! [`graph_node_dependents_with_data`](Sim::graph_node_dependents_with_data)
 //! are `cudaGraphNodeGetDependencies` / `GetDependentNodes` v2 (stored edge
-//! data). Query; legal during capture.
+//! data). Query; legal during capture. CUDA v1
+//! [`graph_edges`](Sim::graph_edges) / [`graph_node_deps`](Sim::graph_node_deps) /
+//! [`graph_node_dependents`](Sim::graph_node_dependents) (`edgeData` NULL) are
+//! Invalid `"lossy query"` when any reported edge has non-default stored
+//! [`GraphEdgeData`] (`cudaErrorLossyQuery`). Default-only edges stay.
+//! Debug-dot ExtraTopoInfo still dumps ports (not a GetEdges query).
 //! [`graph_remove_dependencies`](Sim::graph_remove_dependencies) is
 //! `cudaGraphRemoveDependencies` (illegal on an exec and during capture).
 //! [`graph_destroy_node`](Sim::graph_destroy_node) is `cudaGraphDestroyNode`
@@ -26644,6 +26649,71 @@ mod tests {
             start1 < done0,
             "launch-completion port must not wait for source done; start1={start1} done0={done0}"
         );
+    }
+
+    #[test]
+    fn graph_edges_is_cuda_lossy_query_when_edge_data_nonzero() {
+        let mut sim = Sim::new(h100());
+        let d = DeviceId(0);
+        let s = StreamId(0);
+        let a = sim.malloc(d, 4096).unwrap();
+        let g = sim.create_graph(d, s).unwrap();
+        sim.graph_add_kernel(g, KernelKind::other(8, 8), &[a], &[a])
+            .unwrap();
+        sim.graph_add_kernel(g, KernelKind::other(8, 8), &[a], &[a])
+            .unwrap();
+        sim.graph_add_kernel(g, KernelKind::other(8, 8), &[a], &[a])
+            .unwrap();
+        sim.graph_add_dependencies(g, 0, 1).unwrap();
+        assert_eq!(sim.graph_edges(g).unwrap(), vec![(0, 1)]);
+        assert_eq!(sim.graph_node_deps(g, 1).unwrap(), vec![0]);
+        assert_eq!(sim.graph_node_dependents(g, 0).unwrap(), vec![1]);
+        sim.graph_add_dependencies_with_data(g, 1, 2, GraphEdgeData::launch_completion())
+            .unwrap();
+        match sim.graph_edges(g) {
+            Err(SimError::Invalid { why }) => assert!(why.contains("lossy query"), "{why}"),
+            other => panic!("{other:?}"),
+        }
+        assert_eq!(sim.graph_node_deps(g, 1).unwrap(), vec![0]);
+        assert_eq!(sim.graph_node_dependents(g, 0).unwrap(), vec![1]);
+        match sim.graph_node_deps(g, 2) {
+            Err(SimError::Invalid { why }) => assert!(why.contains("lossy query"), "{why}"),
+            other => panic!("{other:?}"),
+        }
+        match sim.graph_node_dependents(g, 1) {
+            Err(SimError::Invalid { why }) => assert!(why.contains("lossy query"), "{why}"),
+            other => panic!("{other:?}"),
+        }
+        assert_eq!(
+            sim.graph_edges_with_data(g).unwrap(),
+            vec![
+                (0, 1, GraphEdgeData::default()),
+                (1, 2, GraphEdgeData::launch_completion()),
+            ]
+        );
+        assert_eq!(
+            sim.graph_node_deps_with_data(g, 2).unwrap(),
+            vec![(1, GraphEdgeData::launch_completion())]
+        );
+        assert_eq!(
+            sim.graph_node_dependents_with_data(g, 1).unwrap(),
+            vec![(2, GraphEdgeData::launch_completion())]
+        );
+        sim.begin_capture(d, s).unwrap();
+        match sim.graph_edges(g) {
+            Err(SimError::Invalid { why }) => assert!(why.contains("lossy query"), "{why}"),
+            other => panic!("{other:?}"),
+        }
+        let _end = sim.end_capture().unwrap();
+        match sim.graph_edges(GraphId(99)) {
+            Err(SimError::Invalid { why }) => assert!(why.contains("unknown graph"), "{why}"),
+            other => panic!("{other:?}"),
+        }
+        let plain = sim.create_graph(d, s).unwrap();
+        sim.graph_add_empty(plain).unwrap();
+        sim.graph_add_empty(plain).unwrap();
+        sim.graph_add_dependencies(plain, 0, 1).unwrap();
+        assert_eq!(sim.graph_edges(plain).unwrap(), vec![(0, 1)]);
     }
 
     #[test]

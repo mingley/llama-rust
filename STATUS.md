@@ -5,6 +5,19 @@ Visible five-turn extract: [docs/chatgpt-share-6a920fe1.md](docs/chatgpt-share-6
 Complete share-API extract: [docs/chatgpt-share-6a920fe1/](docs/chatgpt-share-6a920fe1/).
 Work lands on `main`. No PRs.
 
+## Shipped 2026-09-01 — CUDA GetEdges LossyQuery
+
+`gpu-sim` CUDA v1 `cudaGraphGetEdges` / `cudaGraphNodeGetDependencies` /
+`cudaGraphNodeGetDependentNodes` (`edgeData` NULL) are Invalid
+`"lossy query"` when any reported edge has non-default stored
+`GraphEdgeData` (`cudaErrorLossyQuery`). Default-only edges stay. v2
+`graph_edges_with_data` / `graph_node_deps_with_data` /
+`graph_node_dependents_with_data` stay lossless. Per-node queries only
+inspect that node's edges. Debug-dot ExtraTopoInfo still dumps ports.
+This VM does not invent Engine `--graph-lossy` or LossyQuery on
+debug-dot. `gpu-profile capture` is still refused. Dual score still has
+no `$/M tokens`.
+
 ## Shipped 2026-09-01 — ExecUpdate preserves node enable
 
 `gpu-sim` CUDA `cudaGraphExecUpdate` leaves `graph_node_set_enabled` state

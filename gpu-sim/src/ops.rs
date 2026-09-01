@@ -3949,7 +3949,9 @@ impl GraphKernelNodePort {
 /// with [`crate::Sim::graph_add_dependencies_n`]. Programmatic type is not
 /// modeled. [`Self::from_port`] [`GraphKernelNodePort::LAUNCH_COMPLETION`]
 /// waits for the source kernel to start (not finish). [`Default`] is Default
-/// type, ports 0.
+/// type, ports 0. CUDA v1 GetEdges / GetDependencies / GetDependentNodes
+/// (`edgeData` NULL) are Invalid `"lossy query"` when a reported edge is
+/// not [`Default`].
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub struct GraphEdgeData {
     /// `cudaGraphEdgeData::from_port`. [`GraphKernelNodePort::DEFAULT`] or

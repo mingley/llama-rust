@@ -473,7 +473,11 @@ kernel to start). `graph_edges_with_data` is `cudaGraphGetEdges` v2 (stored
 edge data; Default ports 0 when unset). `graph_node_deps_with_data` /
 `graph_node_dependents_with_data` are `cudaGraphNodeGetDependencies` /
 `GetDependentNodes` v2 (stored edge data). Query;
-legal during capture.
+legal during capture. CUDA v1 `graph_edges` / `graph_node_deps` /
+`graph_node_dependents` (`edgeData` NULL) are Invalid `"lossy query"`
+when any reported edge has non-default stored `GraphEdgeData`
+(`cudaErrorLossyQuery`). Default-only edges stay. Debug-dot ExtraTopoInfo
+still dumps ports (not a GetEdges query).
 `graph_remove_dependencies` is `cudaGraphRemoveDependencies` (illegal on an
 exec and during capture). `graph_destroy_node` is `cudaGraphDestroyNode`
 (incident edges dropped; remaining indices stay valid; illegal on an exec
