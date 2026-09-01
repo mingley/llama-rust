@@ -7487,6 +7487,7 @@ impl Sim {
     /// IF nodes on `graph` as `(index, handle, body)` in add order.
     ///
     /// Instantiated ids use the exec snapshot (same as [`Self::graph_child_nodes`]).
+    /// Size-2 else-bodies stay [`Self::graph_if_else_nodes`].
     pub fn graph_if_nodes(
         &self,
         graph: GraphId,
@@ -7498,6 +7499,31 @@ impl Sim {
             }
             if let Kind::If { handle, body, .. } = step.kind {
                 out.push((i, handle, body));
+            }
+        }
+        Ok(out)
+    }
+
+    /// Size-2 IF nodes on `graph` as `(index, handle, then, else)` in add order.
+    ///
+    /// Size-1 IF stays [`Self::graph_if_nodes`]. Instantiated ids use the exec
+    /// snapshot. Query; legal during capture.
+    pub fn graph_if_else_nodes(
+        &self,
+        graph: GraphId,
+    ) -> Result<Vec<(usize, CondId, GraphId, GraphId)>, SimError> {
+        let mut out = Vec::new();
+        for (i, step) in self.graph_view_steps(graph)?.iter().enumerate() {
+            if step.destroyed {
+                continue;
+            }
+            if let Kind::If {
+                handle,
+                body,
+                else_body: Some(else_body),
+            } = step.kind
+            {
+                out.push((i, handle, body, else_body));
             }
         }
         Ok(out)

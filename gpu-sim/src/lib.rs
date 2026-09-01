@@ -1104,9 +1104,10 @@
 //! [`graph_add_while`](Sim::graph_add_while) /
 //! [`graph_add_switch`](Sim::graph_add_switch) are `cudaGraphCondTypeWhile`
 //! / `Switch` (WHILE caps at 64 iterations; SWITCH branch `i` runs when the
-//! handle equals `i`). [`graph_if_nodes`](Sim::graph_if_nodes) /
-//! [`graph_while_nodes`](Sim::graph_while_nodes) /
-//! [`graph_switch_nodes`](Sim::graph_switch_nodes) /
+//! handle equals `i`). [`graph_if_nodes`](Sim::graph_if_nodes) plus
+//! [`graph_if_else_nodes`](Sim::graph_if_else_nodes) (size-2 else-body) plus
+//! [`graph_while_nodes`](Sim::graph_while_nodes) plus
+//! [`graph_switch_nodes`](Sim::graph_switch_nodes) plus
 //! [`graph_set_conditional_nodes`](Sim::graph_set_conditional_nodes) list those nodes
 //! (exec snapshot after instantiate). `expertvm --graph-if` wraps `--graph-build`
 //! combo children in IF + set-conditional and retargets with exec SetParams
@@ -23328,6 +23329,43 @@ mod tests {
             other => panic!("{other:?}"),
         }
         let _end = sim.end_capture().unwrap();
+    }
+
+    #[test]
+    fn graph_if_else_nodes_lists_size_two_else_body() {
+        let mut sim = Sim::new(h100());
+        let d = DeviceId(0);
+        let s = StreamId(0);
+        let g1 = sim.create_graph(d, s).unwrap();
+        let h1 = sim.graph_conditional_create(g1, 0).unwrap();
+        let then1 = sim.graph_add_if(g1, h1).unwrap();
+        assert_eq!(sim.graph_if_nodes(g1).unwrap(), vec![(0, h1, then1)]);
+        assert!(sim.graph_if_else_nodes(g1).unwrap().is_empty());
+        let g2 = sim.create_graph(d, s).unwrap();
+        let h2 = sim.graph_conditional_create(g2, 0).unwrap();
+        let (then2, else2) = sim.graph_add_if_else(g2, h2).unwrap();
+        assert_ne!(then2, else2);
+        assert_eq!(sim.graph_if_nodes(g2).unwrap(), vec![(0, h2, then2)]);
+        assert_eq!(
+            sim.graph_if_else_nodes(g2).unwrap(),
+            vec![(0, h2, then2, else2)]
+        );
+        let exec = sim.instantiate_graph(g2).unwrap();
+        let listed = sim.graph_if_else_nodes(exec).unwrap();
+        assert_eq!(listed.len(), 1);
+        assert_eq!(listed[0].0, 0);
+        assert_eq!(listed[0].1, h2);
+        assert_ne!(listed[0].2, listed[0].3);
+        sim.begin_capture(d, s).unwrap();
+        assert_eq!(
+            sim.graph_if_else_nodes(g2).unwrap(),
+            vec![(0, h2, then2, else2)]
+        );
+        let _end = sim.end_capture().unwrap();
+        match sim.graph_if_else_nodes(GraphId(99)) {
+            Err(SimError::Invalid { why }) => assert!(why.contains("unknown graph"), "{why}"),
+            other => panic!("{other:?}"),
+        }
     }
 
     #[test]

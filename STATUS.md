@@ -5,6 +5,14 @@ Visible five-turn extract: [docs/chatgpt-share-6a920fe1.md](docs/chatgpt-share-6
 Complete share-API extract: [docs/chatgpt-share-6a920fe1/](docs/chatgpt-share-6a920fe1/).
 Work lands on `main`. No PRs.
 
+## Shipped 2026-09-01 — CUDA size-2 IF else-body list
+
+`gpu-sim` `graph_if_else_nodes` lists size-2 IF nodes as `(index,
+handle, then, else)`. `graph_if_nodes` stays then-body. Query; legal
+during capture. Instantiated ids use the exec snapshot. No Engine
+`--graph-if-else`. `gpu-profile capture` is still refused. Dual score
+still has no `$/M tokens`.
+
 ## Shipped 2026-09-01 — CUDA exec kernel CopyAttributes
 
 `gpu-sim` `graph_exec_kernel_node_copy_attributes` is exec-snapshot

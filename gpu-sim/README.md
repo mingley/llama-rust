@@ -542,6 +542,8 @@ SetParams (clears upload; distinct from `--graph-enable` SetEnabled).
 `graph_add_while` / `graph_while_nodes` / `graph_add_switch` /
 `graph_switch_nodes` are WHILE / SWITCH (WHILE caps at
 64 iterations; SWITCH runs body `i` when the handle equals `i`).
+`graph_if_else_nodes` lists size-2 IF else-bodies (`graph_if_nodes` stays
+then-body).
 `graph_node_find_in_clone` is `cudaGraphNodeFindInClone` (same index on a
 graph produced by `clone_graph` of that original).
 `expertvm --graph-set-params` parks a leaf and retargets the unique kernel

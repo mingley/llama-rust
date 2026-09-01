@@ -5041,7 +5041,13 @@ model, do not celebrate the sim.
     include it. No Engine `--graph-exec-copy-attrs`. `gpu-profile
     capture` is still refused. Dual score still has no `$/M tokens`.
 
-468. [ ] Next numbered PLAN item after 467 is the next `gpu-sim` / Engine /
+468. [x] `gpu-sim` `graph_if_else_nodes` lists size-2 IF nodes as
+    `(index, handle, then, else)`. `graph_if_nodes` stays then-body.
+    Query; legal during capture. Instantiated ids use the exec snapshot.
+    No Engine `--graph-if-else`. `gpu-profile capture` is still refused.
+    Dual score still has no `$/M tokens`.
+
+469. [ ] Next numbered PLAN item after 468 is the next `gpu-sim` / Engine /
     serve / expertvm mechanical API that is still missing, or the next official
     decode family. Prefer remaining CUDA-shaped twins over more
     OpenAI HTTP veneer. Do not invent F32 `output.scale`. Do not invent a
@@ -5151,6 +5157,7 @@ model, do not celebrate the sim.
     (ignore the stream and still host-sync) stays weak.
     Do not invent a second `cudaGraphCondTypeIf` else /
     `graph_add_if_else`. Do not invent Engine `--graph-if-else`.
+    Do not invent a second `graph_if_else_nodes`.
     Do not invent a second `cudaGraphAddNode` If / IfElse / While /
     `GraphNodeParams::If`. Do not invent a second
     `GraphNodeParams::Switch` / `switch_bodies`.
