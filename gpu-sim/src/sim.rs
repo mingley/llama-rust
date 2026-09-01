@@ -25800,7 +25800,8 @@ fn alloc_graph_worker(launch: StreamId, worker: &mut u16) -> StreamId {
     loop {
         let s = StreamId(u16::MAX.saturating_sub(*worker));
         *worker = worker.saturating_add(1);
-        if s != launch {
+        // Named device-graph streams are not Hyper-Q workers.
+        if s != launch && !s.is_device_graph_stream() {
             return s;
         }
     }
