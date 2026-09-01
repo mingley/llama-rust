@@ -943,6 +943,11 @@
 //! [`device_primary_ctx_get_state`](Sim::device_primary_ctx_get_state) is
 //! `cuDevicePrimaryCtxGetState` (flags match [`get_device_flags`](Sim::get_device_flags);
 //! active is always true). No `cuDevicePrimaryCtxRetain`.
+//! [`device_primary_ctx_set_flags`](Sim::device_primary_ctx_set_flags) is
+//! `cuDevicePrimaryCtxSetFlags` (always Invalid `"primary context active"`;
+//! this VM seeds a primary context at construct). Distinct from
+//! [`set_device_flags`](Sim::set_device_flags). Capture cannot include it.
+//! No Engine `--primary-ctx-flags`.
 //! [`ctx_get_id`](Sim::ctx_get_id) is `cuCtxGetId` for the seeded primary
 //! context of an explicit [`DeviceId`] (no TLS current device). Distinct
 //! from [`green_ctx_get_id`](Sim::green_ctx_get_id). Query; legal during
@@ -20624,6 +20629,42 @@ mod tests {
         match sim.device_primary_ctx_get_state(DeviceId(9)) {
             Err(SimError::Invalid { why }) => {
                 assert!(why.contains("device not in profile"), "{why}")
+            }
+            other => panic!("{other:?}"),
+        }
+    }
+
+    #[test]
+    fn device_primary_ctx_set_flags_is_always_active() {
+        let mut sim = Sim::new(h100());
+        let d = DeviceId(0);
+        let before = sim.get_device_flags(d).unwrap();
+        match sim.device_primary_ctx_set_flags(d, DeviceFlags::MAP_HOST) {
+            Err(SimError::Invalid { why }) => {
+                assert!(why.contains("primary context active"), "{why}");
+            }
+            other => panic!("{other:?}"),
+        }
+        assert_eq!(sim.get_device_flags(d).unwrap(), before);
+        assert!(sim.device_primary_ctx_get_state(d).unwrap().1);
+        sim.set_device_flags(d, DeviceFlags::MAP_HOST).unwrap();
+        assert_eq!(sim.get_device_flags(d).unwrap(), DeviceFlags::MAP_HOST);
+        match sim.device_primary_ctx_set_flags(d, DeviceFlags::SCHEDULE_AUTO) {
+            Err(SimError::Invalid { why }) => {
+                assert!(why.contains("primary context active"), "{why}");
+            }
+            other => panic!("{other:?}"),
+        }
+        assert_eq!(sim.get_device_flags(d).unwrap(), DeviceFlags::MAP_HOST);
+        sim.begin_capture(d, StreamId(0)).unwrap();
+        match sim.device_primary_ctx_set_flags(d, DeviceFlags::MAP_HOST) {
+            Err(SimError::Invalid { why }) => assert!(why.contains("capture"), "{why}"),
+            other => panic!("{other:?}"),
+        }
+        let _g = sim.end_capture().unwrap();
+        match sim.device_primary_ctx_set_flags(DeviceId(99), 0) {
+            Err(SimError::Invalid { why }) => {
+                assert!(why.contains("device not in profile"), "{why}");
             }
             other => panic!("{other:?}"),
         }

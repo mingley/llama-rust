@@ -179,6 +179,7 @@ warp scheduler, L1, …   ← do not model
 | `reset_device` waits that GPU then frees `cudaMalloc` (not `cudaMallocAsync`); user streams except NULL are unknown until create | `cudaDeviceReset` |
 | `SimError::error_name` / `error_string` map a returned error (no thread-local last error) | `cudaGetErrorName` / `cudaGetErrorString` |
 | `device_primary_ctx_get_state` is flags plus always-active (no lazy retain) | `cuDevicePrimaryCtxGetState` |
+| `device_primary_ctx_set_flags` is always Invalid (primary ctx already seeded) | `cuDevicePrimaryCtxSetFlags` |
 | `ctx_get_id` is `cuCtxGetId` for the seeded primary context of an explicit device | query; legal during capture |
 | `ctx_get_api_version` is CUDA 13.0 for that primary context | `cuCtxGetApiVersion` |
 | `ctx_get_flags` wraps `get_device_flags` for that primary context | `cuCtxGetFlags` |
@@ -1196,6 +1197,10 @@ last error). `Display` stays the detailed reason. No Engine flag for error
 name.
 `device_primary_ctx_get_state` is `cuDevicePrimaryCtxGetState` (flags match
 `get_device_flags`; active is always true). No `cuDevicePrimaryCtxRetain`.
+`device_primary_ctx_set_flags` is `cuDevicePrimaryCtxSetFlags` (always
+Invalid `"primary context active"`; this VM seeds a primary context at
+construct). Distinct from `set_device_flags`. Capture cannot include it.
+No Engine `--primary-ctx-flags`.
 `ctx_get_id` is `cuCtxGetId` for the seeded primary context of an explicit
 device (no TLS current device). Distinct from `green_ctx_get_id`. Query;
 legal during capture. No Engine `--ctx-id`.

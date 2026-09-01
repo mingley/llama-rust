@@ -18490,6 +18490,30 @@ impl Sim {
         Ok((flags, true))
     }
 
+    /// `cuDevicePrimaryCtxSetFlags`. Host-synchronous. Capture cannot include
+    /// it.
+    ///
+    /// This VM seeds a primary context at construct, so the call is always
+    /// Invalid `"primary context active"` (CUDA
+    /// `CUDA_ERROR_PRIMARY_CONTEXT_ACTIVE` when the primary context is already
+    /// created). Flags are not applied. Distinct from
+    /// [`Self::set_device_flags`] (`cudaSetDeviceFlags`, which still applies)
+    /// and from [`Self::device_primary_ctx_get_state`] (active is always
+    /// true). Unknown devices are Invalid `"device not in profile"`. No
+    /// `cuDevicePrimaryCtxRetain` (no `CUcontext` object).
+    pub fn device_primary_ctx_set_flags(
+        &mut self,
+        device: DeviceId,
+        flags: u32,
+    ) -> Result<(), SimError> {
+        self.fail_if_capturing("cannot capture primary ctx flags")?;
+        let _gpu = self.profile.gpu(device)?;
+        let _ = flags;
+        Err(SimError::Invalid {
+            why: "primary context active",
+        })
+    }
+
     /// `cuCtxGetId` for the seeded primary context of `device`.
     ///
     /// Query; legal during capture. There is no TLS current device and no

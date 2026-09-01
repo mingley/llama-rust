@@ -464,6 +464,8 @@ ctxs keep running). `stream_get_dev_resource` is `cuStreamGetDevResource`.
 `green_ctx_get_id` is `cuGreenCtxGetId` (not a second `--green-ctx`).
 `green_ctx_get_device` is `cudaExecutionCtxGetDevice`.
 `gpu-sim` `reset_device` is `cudaDeviceReset` (no Engine flag).
+`gpu-sim` `device_primary_ctx_set_flags` is `cuDevicePrimaryCtxSetFlags`
+(always Invalid; primary context already seeded; no Engine flag).
 `SimError::error_name` / `error_string` are `cudaGetErrorName` /
 `cudaGetErrorString` (no Engine flag; no thread-local last error).
 `gpu-sim` compute capability is `cudaDevAttrComputeCapabilityMajor` and

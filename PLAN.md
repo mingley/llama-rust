@@ -6315,7 +6315,15 @@ model, do not celebrate the sim.
     `cudaChooseDevice`. `gpu-profile capture` is still refused. Dual
     score still has no `$/M tokens`.
 
-600. [ ] Next numbered PLAN item after 599 is the next `gpu-sim` / Engine /
+600. [x] `gpu-sim` `Sim::device_primary_ctx_set_flags` is
+    `cuDevicePrimaryCtxSetFlags`. Always Invalid `"primary context active"`
+    because this VM seeds a primary context at construct. Flags are not
+    applied. Distinct from `set_device_flags`. Capture cannot include it.
+    This VM does not invent `cuDevicePrimaryCtxRetain`, Engine `--primary-ctx-flags`,
+    or `cudaChooseDevice`. `gpu-profile capture` is still refused. Dual
+    score still has no `$/M tokens`.
+
+601. [ ] Next numbered PLAN item after 600 is the next `gpu-sim` / Engine /
     serve / expertvm mechanical API that is still missing, or the next official
     decode family. Prefer remaining CUDA-shaped twins over more
     OpenAI HTTP veneer. Do not invent F32 `output.scale`. Do not invent a
@@ -6548,6 +6556,10 @@ model, do not celebrate the sim.
     `ctx_get_shared_mem_config`. Do not invent Engine `--ctx-shared-mem`.
     Do not invent `cuCtxSetSharedMemConfig` this slice. Do not reverse
     wrapping `get_shared_mem_config`.
+    Do not invent a second `cuDevicePrimaryCtxSetFlags` /
+    `device_primary_ctx_set_flags`. Do not invent Engine `--primary-ctx-flags`.
+    Do not invent `cuDevicePrimaryCtxRetain`. Do not reverse always-active
+    primary context. Do not reverse `set_device_flags` still applying.
     Do not invent a second `cudaStreamAddCallback`.
     Do not invent Engine `--stream-callback` (same wall as second live
     `cudaLaunchHostFunc` after miss DMA).
@@ -6895,6 +6907,9 @@ model, do not celebrate the sim.
     Do not invent a second `ctx_get_shared_mem_config` API. Do not
     invent Engine `--context-shared-mem`. Do not invent a second
     `get_shared_mem_config`. Do not reverse wrapping device shared mem.
+    Do not invent a second `device_primary_ctx_set_flags` API. Do not
+    invent Engine `--primary-set-flags`. Do not invent PrimaryCtxRelease.
+    Do not reverse flags staying unapplied.
     Do not invent a second DeviceLaunch in-flight destroy-complete check or Engine
     `--device-launch-destroy`. Do not abort an in-flight DeviceLaunch when
     `destroy_graph` succeeds. Do not delay destroy of an idle exec. Do not invent
@@ -7452,6 +7467,9 @@ model, do not celebrate the sim.
     Do not invent a second `ctx_get_shared_mem_config` method. Do not
     invent Engine `--cu-ctx-shared`. Do not reverse wrapping
     GetSharedMemConfig.
+    Do not invent a second `device_primary_ctx_set_flags` method. Do
+    not invent Engine `--cu-primary-flags`. Do not reverse
+    `"primary context active"`.
     Do not
     spend the next item on an OpenAI-compatible HTTP veneer.
 
