@@ -19825,6 +19825,17 @@ impl Sim {
         Err(SimError::Invalid { why: "coredump" })
     }
 
+    /// `cuCheckpointProcessLock`. CUDA process checkpoint is not modeled.
+    ///
+    /// Always Invalid `"checkpoint"`. Distinct from
+    /// [`Self::coredump_get_attribute`]. Unknown devices are Invalid
+    /// `"device not in profile"`. Query; legal during capture. This VM does
+    /// not invent `cuCheckpointProcessCheckpoint` this slice.
+    pub fn checkpoint_process_lock(&self, device: DeviceId) -> Result<(), SimError> {
+        let _gpu = self.profile.gpu(device)?;
+        Err(SimError::Invalid { why: "checkpoint" })
+    }
+
     /// `cuInit`. Host-synchronous. Capture cannot include it.
     ///
     /// Flags must be 0 (CUDA requires 0). This VM is already initialized at

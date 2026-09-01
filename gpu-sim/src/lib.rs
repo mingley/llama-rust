@@ -851,7 +851,10 @@
 //! legal during capture. No Engine `--proc-address`.
 //! [`coredump_get_attribute`](Sim::coredump_get_attribute) is
 //! `cuCoredumpGetAttribute` (always Invalid `"coredump"`). Query; legal
-//! during capture. No Engine `--coredump`. [`Sim::driver_init`] is `cuInit` (flags 0; already initialized
+//! during capture. No Engine `--coredump`.
+//! [`checkpoint_process_lock`](Sim::checkpoint_process_lock) is
+//! `cuCheckpointProcessLock` (always Invalid `"checkpoint"`). Query; legal
+//! during capture. No Engine `--checkpoint`. [`Sim::driver_init`] is `cuInit` (flags 0; already initialized
 //! at [`Sim::new`]; 1 ns no-op). Distinct from [`init_device`](Sim::init_device).
 //! Capture cannot include it. No Engine `--cu-init`.
 //! [`Sim::module_get_loading_mode`] is `cuModuleGetLoadingMode` (always
@@ -18374,6 +18377,38 @@ mod tests {
         match sim.get_proc_address(d) {
             Err(SimError::Invalid { why }) => {
                 assert!(why.contains("proc address"), "{why}");
+            }
+            other => panic!("{other:?}"),
+        }
+    }
+
+    #[test]
+    fn checkpoint_process_lock_is_unsupported() {
+        let mut sim = Sim::new(h100());
+        let d = DeviceId(0);
+        match sim.checkpoint_process_lock(d) {
+            Err(SimError::Invalid { why }) => {
+                assert!(why.contains("checkpoint"), "{why}");
+            }
+            other => panic!("{other:?}"),
+        }
+        sim.begin_capture(d, StreamId(0)).unwrap();
+        match sim.checkpoint_process_lock(d) {
+            Err(SimError::Invalid { why }) => {
+                assert!(why.contains("checkpoint"), "{why}");
+            }
+            other => panic!("{other:?}"),
+        }
+        let _g = sim.end_capture().unwrap();
+        match sim.checkpoint_process_lock(DeviceId(99)) {
+            Err(SimError::Invalid { why }) => {
+                assert!(why.contains("device not in profile"), "{why}");
+            }
+            other => panic!("{other:?}"),
+        }
+        match sim.coredump_get_attribute(d) {
+            Err(SimError::Invalid { why }) => {
+                assert!(why.contains("coredump"), "{why}");
             }
             other => panic!("{other:?}"),
         }

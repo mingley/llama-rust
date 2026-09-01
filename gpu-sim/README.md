@@ -174,6 +174,7 @@ warp scheduler, L1, …   ← do not model
 | `driver_get_version` / `runtime_get_version` report CUDA 13.0 | `cudaDriverGetVersion` / `cudaRuntimeGetVersion` |
 | `get_proc_address` is Invalid (no C ABI function pointers) | `cuGetProcAddress` / `cudaGetDriverEntryPoint` |
 | `coredump_get_attribute` is Invalid (GPU coredumps are not modeled) | `cuCoredumpGetAttribute` |
+| `checkpoint_process_lock` is Invalid (CUDA process checkpoint is not modeled) | `cuCheckpointProcessLock` |
 | `driver_init` is a 1 ns no-op; flags must be 0 | `cuInit` |
 | `module_get_loading_mode` is always Eager (CUDA 1) | `cuModuleGetLoadingMode` |
 | `library_load_data` is Invalid (no cubin / `CUlibrary`) | `cuLibraryLoadData` |
@@ -1149,7 +1150,10 @@ PCI ids; `pciSubSystemID` is always 0; `GpuPciDeviceId` is always 0;
 No Engine `--proc-address`. `coredump_get_attribute` is
 `cuCoredumpGetAttribute` (always Invalid `"coredump"`; GPU coredumps are
 not modeled). Distinct from `get_proc_address`. Query; legal during
-capture. No Engine `--coredump`. `driver_init` is `cuInit` (flags 0; already initialized at construct;
+capture. No Engine `--coredump`. `checkpoint_process_lock` is
+`cuCheckpointProcessLock` (always Invalid `"checkpoint"`; CUDA process
+checkpoint is not modeled). Distinct from `coredump_get_attribute`. Query;
+legal during capture. No Engine `--checkpoint`. `driver_init` is `cuInit` (flags 0; already initialized at construct;
 1 ns no-op; capture cannot include it; distinct from `init_device`).
 `module_get_loading_mode` is `cuModuleGetLoadingMode` (always Eager;
 CUDA 1; query; legal during capture; no modules; distinct from
