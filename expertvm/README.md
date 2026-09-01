@@ -468,6 +468,8 @@ ctxs keep running). `stream_get_dev_resource` is `cuStreamGetDevResource`.
 `cudaGetErrorString` (no Engine flag; no thread-local last error).
 `gpu-sim` compute capability is `cudaDevAttrComputeCapabilityMajor` and
 `Minor` (example H100 Hopper 9.0; no Engine flag).
+`gpu-sim` launch-geometry caps are `cudaDevAttrMaxThreadsPerBlock` 1024
+and H100 block/grid dims (no Engine flag; not occupancy SM counts).
 Default `--expert-sim` keeps
 one compute stream, exclusive compute (`compute_slots=1`), a full chip of
 SMs, and a full-device clock sample.

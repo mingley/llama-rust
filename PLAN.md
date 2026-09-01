@@ -6025,7 +6025,17 @@ model, do not celebrate the sim.
     rates, or `cudaChooseDevice`. `gpu-profile capture` is still refused.
     Dual score still has no `$/M tokens`.
 
-566. [ ] Next numbered PLAN item after 565 is the next `gpu-sim` / Engine /
+566. [x] `gpu-sim` `DeviceAttr::MaxThreadsPerBlock` / `MaxBlockDimX` /
+    `MaxBlockDimY` / `MaxBlockDimZ` / `MaxGridDimX` / `MaxGridDimY` /
+    `MaxGridDimZ` are CUDA launch-geometry caps. Example H100 is 1024
+    threads per block; block 1024, 1024, 64; grid `i32::MAX`, 65535, 65535.
+    Query; legal during capture. This VM does not model a thread-block
+    launch. This VM does not invent Engine `--max-threads`, occupancy SM
+    counts, `cudaDevAttrWarpSize`, clock rates, or `cudaChooseDevice`.
+    `gpu-profile capture` is still refused. Dual score still has no
+    `$/M tokens`.
+
+567. [ ] Next numbered PLAN item after 566 is the next `gpu-sim` / Engine /
     serve / expertvm mechanical API that is still missing, or the next official
     decode family. Prefer remaining CUDA-shaped twins over more
     OpenAI HTTP veneer. Do not invent F32 `output.scale`. Do not invent a
@@ -6096,6 +6106,12 @@ model, do not celebrate the sim.
     Do not invent occupancy SM counts from compute capability. Do not invent
     `cudaChooseDevice`. Do not invent `cudaDevAttrWarpSize` or clock rates.
     Do not reverse example H100 Hopper 9.0.
+    Do not invent a second `cudaDevAttrMaxThreadsPerBlock` /
+    `MaxBlockDimX` / `MaxBlockDimY` / `MaxBlockDimZ` / `MaxGridDimX` /
+    `MaxGridDimY` / `MaxGridDimZ`. Do not invent Engine `--max-threads`.
+    Do not model a thread-block launch config on `kernel`. Do not invent
+    `cudaDevAttrMaxThreadsPerMultiProcessor`. Do not reverse H100 1024
+    threads per block.
     Do not invent
     a second
     `cuDeviceGetUuid` / `cudaDeviceGetUuid`. Do not invent a second
@@ -6364,6 +6380,9 @@ model, do not celebrate the sim.
     Do not invent a second compute-capability DeviceAttr pair. Do not invent
     Engine `--compute-capability`. Do not reverse Hopper 9.0 on example H100
     / H200. Do not rank devices by SM count (occupancy stays walled).
+    Do not invent a second launch-geometry DeviceAttr family. Do not invent
+    Engine `--max-threads`. Do not reverse MaxThreadsPerBlock 1024. Do not
+    invent `cudaDevAttrWarpSize` this slice.
     Do not invent a second DeviceLaunch in-flight destroy-complete check or Engine
     `--device-launch-destroy`. Do not abort an in-flight DeviceLaunch when
     `destroy_graph` succeeds. Do not delay destroy of an idle exec. Do not invent
@@ -6837,6 +6856,8 @@ model, do not celebrate the sim.
     Do not invent a second `ComputeCapabilityMajor` query. Do not invent
     Engine `--compute-capability`. Do not invent `cudaChooseDevice` this
     slice. Do not invent occupancy SM counts.
+    Do not invent a second MaxThreadsPerBlock query. Do not invent Engine
+    `--max-threads`. Do not invent warp size this slice.
     Do not
     spend the next item on an OpenAI-compatible HTTP veneer.
 

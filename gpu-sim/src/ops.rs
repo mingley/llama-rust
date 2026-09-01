@@ -1106,6 +1106,22 @@ pub enum DeviceAttr {
     /// `cudaDevAttrComputeCapabilityMinor`
     /// ([`crate::GpuProfile::compute_capability_minor`]). Example H100 is 0.
     ComputeCapabilityMinor,
+    /// `cudaDevAttrMaxThreadsPerBlock`. Example H100 is
+    /// [`Self::MAX_THREADS_PER_BLOCK`]. This VM does not model a thread-block
+    /// launch config. Distinct from occupancy SM counts.
+    MaxThreadsPerBlock,
+    /// `cudaDevAttrMaxBlockDimX`. Example H100 is [`Self::MAX_BLOCK_DIM_X`].
+    MaxBlockDimX,
+    /// `cudaDevAttrMaxBlockDimY`. Example H100 is [`Self::MAX_BLOCK_DIM_Y`].
+    MaxBlockDimY,
+    /// `cudaDevAttrMaxBlockDimZ`. Example H100 is [`Self::MAX_BLOCK_DIM_Z`].
+    MaxBlockDimZ,
+    /// `cudaDevAttrMaxGridDimX`. Example H100 is [`Self::MAX_GRID_DIM_X`].
+    MaxGridDimX,
+    /// `cudaDevAttrMaxGridDimY`. Example H100 is [`Self::MAX_GRID_DIM_Y`].
+    MaxGridDimY,
+    /// `cudaDevAttrMaxGridDimZ`. Example H100 is [`Self::MAX_GRID_DIM_Z`].
+    MaxGridDimZ,
 }
 
 impl DeviceAttr {
@@ -1114,6 +1130,22 @@ impl DeviceAttr {
     /// CUDA device attributes are `int`; unlimited is `i32::MAX`. Distinct
     /// from [`DeviceAttr::TexturePitchAlignment`] (always 0).
     pub const MAX_PITCH: u64 = 2_147_483_647;
+    /// `cudaDevAttrMaxThreadsPerBlock` on example H100. Distinct from
+    /// occupancy SM counts. This VM does not model a thread-block launch.
+    pub const MAX_THREADS_PER_BLOCK: u64 = 1024;
+    /// `cudaDevAttrMaxBlockDimX` on example H100.
+    pub const MAX_BLOCK_DIM_X: u64 = 1024;
+    /// `cudaDevAttrMaxBlockDimY` on example H100.
+    pub const MAX_BLOCK_DIM_Y: u64 = 1024;
+    /// `cudaDevAttrMaxBlockDimZ` on example H100.
+    pub const MAX_BLOCK_DIM_Z: u64 = 64;
+    /// `cudaDevAttrMaxGridDimX` on example H100 (`i32::MAX`). Distinct from
+    /// [`Self::MAX_PITCH`] (same numeric value, different cap).
+    pub const MAX_GRID_DIM_X: u64 = 2_147_483_647;
+    /// `cudaDevAttrMaxGridDimY` on example H100.
+    pub const MAX_GRID_DIM_Y: u64 = 65_535;
+    /// `cudaDevAttrMaxGridDimZ` on example H100.
+    pub const MAX_GRID_DIM_Z: u64 = 65_535;
 }
 
 /// `cudaMemAllocationHandleType` bits for
@@ -1184,6 +1216,23 @@ pub struct DeviceProperties {
     /// `cudaDeviceProp::minor` ([`DeviceAttr::ComputeCapabilityMinor`]).
     /// Example H100 is 0.
     pub compute_capability_minor: u32,
+    /// `cudaDeviceProp::maxThreadsPerBlock`
+    /// ([`DeviceAttr::MaxThreadsPerBlock`]). Example H100 is
+    /// [`DeviceAttr::MAX_THREADS_PER_BLOCK`]. Distinct from occupancy SM
+    /// counts.
+    pub max_threads_per_block: u64,
+    /// `cudaDeviceProp::maxThreadsDim[0]` ([`DeviceAttr::MaxBlockDimX`]).
+    pub max_block_dim_x: u64,
+    /// `cudaDeviceProp::maxThreadsDim[1]` ([`DeviceAttr::MaxBlockDimY`]).
+    pub max_block_dim_y: u64,
+    /// `cudaDeviceProp::maxThreadsDim[2]` ([`DeviceAttr::MaxBlockDimZ`]).
+    pub max_block_dim_z: u64,
+    /// `cudaDeviceProp::maxGridSize[0]` ([`DeviceAttr::MaxGridDimX`]).
+    pub max_grid_dim_x: u64,
+    /// `cudaDeviceProp::maxGridSize[1]` ([`DeviceAttr::MaxGridDimY`]).
+    pub max_grid_dim_y: u64,
+    /// `cudaDeviceProp::maxGridSize[2]` ([`DeviceAttr::MaxGridDimZ`]).
+    pub max_grid_dim_z: u64,
     /// [`crate::GpuProfile::hbm_bytes`] (`totalGlobalMem`).
     pub total_global_mem: u64,
     /// `cudaDevAttrTotalConstantMemory` ([`DeviceAttr::TotalConstantMemory`]).

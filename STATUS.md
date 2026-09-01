@@ -5,6 +5,15 @@ Visible five-turn extract: [docs/chatgpt-share-6a920fe1.md](docs/chatgpt-share-6
 Complete share-API extract: [docs/chatgpt-share-6a920fe1/](docs/chatgpt-share-6a920fe1/).
 Work lands on `main`. No PRs.
 
+## Shipped 2026-09-01 — CUDA launch-geometry DeviceAttr caps
+
+`gpu-sim` `DeviceAttr::MaxThreadsPerBlock` / `MaxBlockDimX` / `Y` / `Z` /
+`MaxGridDimX` / `Y` / `Z` are CUDA launch-geometry caps. Example H100 is
+1024 threads per block; block 1024, 1024, 64; grid `i32::MAX`, 65535,
+65535. Query; legal during capture. This VM does not model a thread-block
+launch, invent occupancy SM counts, or invent Engine `--max-threads`.
+`gpu-profile capture` is still refused. Dual score still has no `$/M tokens`.
+
 ## Shipped 2026-09-01 — CUDA `cudaDevAttrComputeCapabilityMajor` / `Minor`
 
 `gpu-sim` `DeviceAttr::ComputeCapabilityMajor` / `ComputeCapabilityMinor`

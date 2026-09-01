@@ -151,7 +151,7 @@ warp scheduler, L1, …   ← do not model
 | `host_get_device_pointer` of mapped host returns the same id (`flags` must be 0) | `cudaHostGetDevicePointer` |
 | `host_get_flags` returns the stored `HostAllocFlags` word | `cudaHostGetFlags` |
 | `alloc_host_with_flags` / `host_register_with_flags` (MAPPED / PORTABLE / WRITE_COMBINED stored; IoMemory / ReadOnly Invalid) | `cudaHostAlloc` / `cudaHostRegister` |
-| `device_get_attribute` exposes modeled SKU caps (incl. ComputeCapabilityMajor/Minor Hopper 9.0 on example H100; GPUDirect RDMA / CanFlushRemoteWrites / FlushWritesOptions Host / WritesOrdering None / WithCudaVMM from `LinkKind::Rdma`; MulticastSupported from `LinkKind::Nvlink`; ConcurrentManaged / DirectManagedHost / PageableHostPageTables / HostNativeAtomic / OnlyPartialHostNativeAtomic / CooperativeMultiDevice / Integrated / GenericCompression / Win32 / Win32Kmt / Fabric handle types always 0; ComputeMode always Default; NumaConfig always None; TccDriver / KernelExecTimeout / TensorMapAccessSupported / UnifiedFunctionPointers / TimelineSemaphoreInteropSupported / MemDecompressAlgorithmMask / MemDecompressMaximumLength / HostNumaVirtualMemoryManagementSupported / HostNumaMemoryPoolsSupported / HostNumaMultinodeIpcSupported always 0; CanUse64BitStreamMemOps / CanUseStreamMemOps / CanUseStreamWaitValueNor always 1) | `cudaDeviceGetAttribute` |
+| `device_get_attribute` exposes modeled SKU caps (incl. ComputeCapabilityMajor/Minor Hopper 9.0 on example H100; MaxThreadsPerBlock 1024 and H100 block/grid dims; GPUDirect RDMA / CanFlushRemoteWrites / FlushWritesOptions Host / WritesOrdering None / WithCudaVMM from `LinkKind::Rdma`; MulticastSupported from `LinkKind::Nvlink`; ConcurrentManaged / DirectManagedHost / PageableHostPageTables / HostNativeAtomic / OnlyPartialHostNativeAtomic / CooperativeMultiDevice / Integrated / GenericCompression / Win32 / Win32Kmt / Fabric handle types always 0; ComputeMode always Default; NumaConfig always None; TccDriver / KernelExecTimeout / TensorMapAccessSupported / UnifiedFunctionPointers / TimelineSemaphoreInteropSupported / MemDecompressAlgorithmMask / MemDecompressMaximumLength / HostNumaVirtualMemoryManagementSupported / HostNumaMemoryPoolsSupported / HostNumaMultinodeIpcSupported always 0; CanUse64BitStreamMemOps / CanUseStreamMemOps / CanUseStreamWaitValueNor always 1) | `cudaDeviceGetAttribute` |
 | `device_get_exec_affinity_support` `SM_COUNT` is 0 (permille green ctx, not occupancy SM counts) | `cuDeviceGetExecAffinitySupport` |
 | `device_get_properties` wraps the same SKU caps (incl. synthetic `uuid` and PCI ids) | `cudaGetDeviceProperties` |
 | `device_get_uuid` is a synthetic 16-octet id (also `DeviceProperties.uuid`) | `cuDeviceGetUuid` |
@@ -911,6 +911,10 @@ interior offsets are not modeled). Query; legal during capture.
 `ComputeCapabilityMajor` and `ComputeCapabilityMinor` are Hopper 9.0 on
 example H100 (`cudaDeviceProp` major and minor). Distinct from occupancy
 SM counts. No Engine flag for compute capability.
+`MaxThreadsPerBlock` is 1024. `MaxBlockDimX` / `Y` / `Z` are 1024, 1024,
+64. `MaxGridDimX` / `Y` / `Z` are `i32::MAX`, 65535, 65535. Example H100
+launch-geometry caps. This VM does not model a thread-block launch and
+does not invent occupancy SM counts. No Engine flag for max threads.
 `device_get_exec_affinity_support` is `cuDeviceGetExecAffinitySupport`
 (`SM_COUNT` is 0; this VM uses permille green-context spans, not
 occupancy SM counts). Other type ids are Invalid.
@@ -1008,6 +1012,9 @@ distinct from `TextureAlignment`).
 example H100. Profile keys `compute_capability_major` /
 `compute_capability_minor`. This VM does not invent occupancy SM counts
 from compute capability.
+`MaxThreadsPerBlock` is 1024. Block dims are 1024, 1024, 64. Grid dims
+are `i32::MAX`, 65535, 65535. Distinct from occupancy SM counts. This VM
+does not model a thread-block launch.
 `DeviceP2pAttr::OnlyPartialNativeAtomicSupported` is always 0 (P2P native
 atomics are not modeled; distinct from `NativeAtomicSupported` and from
 `OnlyPartialHostNativeAtomicSupported`). This VM does not invent
@@ -1015,7 +1022,8 @@ atomics are not modeled; distinct from `NativeAtomicSupported` and from
 `StreamPrioritiesSupported` /
 `UnifiedAddressing` are always 1. `GpuOverlap` is `copy_engines > 0`.
 `device_get_properties` is `cudaGetDeviceProperties` of those same fields
-(compute capability major/minor included; no occupancy SM count or clock). `device_get_name` is `cudaDeviceGetName` (the
+(compute capability major/minor included; launch-geometry caps included;
+no occupancy SM count or clock). `device_get_name` is `cudaDeviceGetName` (the
 profile name). `device_get_uuid` is `cuDeviceGetUuid` (synthetic 16-octet
 id; also `DeviceProperties.uuid`). `device_get_by_uuid` is
 `cuDeviceGetByUuid` (inverse). `device_get_pci_bus_id` is

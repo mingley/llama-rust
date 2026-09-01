@@ -19070,7 +19070,8 @@ impl Sim {
     /// `cudaDeviceGetAttribute`. Query; legal during capture.
     ///
     /// Only attributes this VM already models ([`DeviceAttr`]). Compute
-    /// capability major/minor are Hopper 9.0 on example H100.
+    /// capability major/minor are Hopper 9.0 on example H100. Launch-geometry
+    /// caps are MaxThreadsPerBlock 1024 and the H100 block plus grid dims.
     pub fn device_get_attribute(
         &self,
         device: DeviceId,
@@ -19167,6 +19168,13 @@ impl Sim {
             DeviceAttr::PciDeviceId => u64::from(synthetic_pci_ids(device).2),
             DeviceAttr::ComputeCapabilityMajor => u64::from(gpu.compute_capability_major),
             DeviceAttr::ComputeCapabilityMinor => u64::from(gpu.compute_capability_minor),
+            DeviceAttr::MaxThreadsPerBlock => DeviceAttr::MAX_THREADS_PER_BLOCK,
+            DeviceAttr::MaxBlockDimX => DeviceAttr::MAX_BLOCK_DIM_X,
+            DeviceAttr::MaxBlockDimY => DeviceAttr::MAX_BLOCK_DIM_Y,
+            DeviceAttr::MaxBlockDimZ => DeviceAttr::MAX_BLOCK_DIM_Z,
+            DeviceAttr::MaxGridDimX => DeviceAttr::MAX_GRID_DIM_X,
+            DeviceAttr::MaxGridDimY => DeviceAttr::MAX_GRID_DIM_Y,
+            DeviceAttr::MaxGridDimZ => DeviceAttr::MAX_GRID_DIM_Z,
         })
     }
 
@@ -19174,8 +19182,9 @@ impl Sim {
     ///
     /// Only fields this VM already models ([`DeviceProperties`]). Compute
     /// capability major/minor are modeled (example H100 is Hopper 9.0).
-    /// Occupancy SM counts and clock rates are not. Unknown devices are
-    /// Invalid.
+    /// Launch-geometry caps are MaxThreadsPerBlock 1024 and the H100 block
+    /// plus grid dims. Occupancy SM counts, clock rates, and warp size are not.
+    /// Unknown devices are Invalid.
     pub fn device_get_properties(&self, device: DeviceId) -> Result<DeviceProperties, SimError> {
         let gpu = self.profile.gpu(device)?;
         Ok(DeviceProperties {
@@ -19186,6 +19195,13 @@ impl Sim {
             pci_device_id: synthetic_pci_ids(device).2,
             compute_capability_major: u32::from(gpu.compute_capability_major),
             compute_capability_minor: u32::from(gpu.compute_capability_minor),
+            max_threads_per_block: DeviceAttr::MAX_THREADS_PER_BLOCK,
+            max_block_dim_x: DeviceAttr::MAX_BLOCK_DIM_X,
+            max_block_dim_y: DeviceAttr::MAX_BLOCK_DIM_Y,
+            max_block_dim_z: DeviceAttr::MAX_BLOCK_DIM_Z,
+            max_grid_dim_x: DeviceAttr::MAX_GRID_DIM_X,
+            max_grid_dim_y: DeviceAttr::MAX_GRID_DIM_Y,
+            max_grid_dim_z: DeviceAttr::MAX_GRID_DIM_Z,
             total_global_mem: gpu.hbm_bytes,
             total_constant_memory: 0,
             texture_alignment: 0,
