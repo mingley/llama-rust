@@ -7327,6 +7327,7 @@ impl Sim {
             });
         }
         memcpy_2d_check(&op)?;
+        self.memcpy_range_ok(&op)?;
         self.graph_push(graph, device, stream, Kind::Memcpy(op))
     }
 
@@ -14491,6 +14492,7 @@ impl Sim {
             });
         }
         memcpy_2d_check(&op)?;
+        self.memcpy_range_ok(&op)?;
         let id = self.submit(device, stream, Kind::Memcpy(op))?;
         if pageable || sync_ops {
             self.synchronize_stream(device, stream)?;
@@ -20268,15 +20270,9 @@ impl Sim {
         if require_live && !a.live {
             return Err(SimError::UnknownAlloc { alloc: m.alloc });
         }
+        self.memcpy_range_ok(m)?;
         let origin = m.origin_bytes();
         let span = m.extent_bytes();
-        if (a.vmm || m.offset > 0 || origin > 0 || m.is_2d() || m.is_3d())
-            && m.offset.saturating_add(origin).saturating_add(span) > a.bytes
-        {
-            return Err(SimError::Invalid {
-                why: "memcpy range past alloc",
-            });
-        }
         if a.managed && a.leases > 0 {
             let staying = match m.dst {
                 Place::Device(d) => a.devices.contains(&d),
@@ -20317,6 +20313,22 @@ impl Sim {
                     device: d,
                 });
             }
+        }
+        Ok(())
+    }
+
+    /// Alloc-size check for a pitched rectangle/box, including srcPos / dstPos.
+    /// Origin 0 is identical to the previous extent-only bound.
+    fn memcpy_range_ok(&self, m: &MemcpyOp) -> Result<(), SimError> {
+        let a = self.alloc_ref(m.alloc)?;
+        let origin = m.origin_bytes();
+        let span = m.extent_bytes();
+        if (a.vmm || m.offset > 0 || origin > 0 || m.is_2d() || m.is_3d())
+            && m.offset.saturating_add(origin).saturating_add(span) > a.bytes
+        {
+            return Err(SimError::Invalid {
+                why: "memcpy range past alloc",
+            });
         }
         Ok(())
     }
