@@ -5,6 +5,15 @@ Visible five-turn extract: [docs/chatgpt-share-6a920fe1.md](docs/chatgpt-share-6
 Complete share-API extract: [docs/chatgpt-share-6a920fe1/](docs/chatgpt-share-6a920fe1/).
 Work lands on `main`. No PRs.
 
+## Shipped 2026-09-01 — CUDA `cuLibraryGetManaged`
+
+`gpu-sim` `Sim::library_get_managed` is `cuLibraryGetManaged`.
+Always Invalid `"library managed"` because CUDA libraries are not
+modeled. Query; legal during capture. Distinct from
+`library_get_global` (why is not `"library global"`) and from
+`alloc_managed`. This VM does not invent `cuLibraryGetUnifiedFunction` or Engine `--library-managed`.
+`gpu-profile capture` is still refused. Dual score still has no `$/M tokens`.
+
 ## Shipped 2026-09-01 — CUDA `cuLibraryGetGlobal`
 
 `gpu-sim` `Sim::library_get_global` is `cuLibraryGetGlobal`.
