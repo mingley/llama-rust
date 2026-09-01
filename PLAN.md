@@ -5976,7 +5976,18 @@ model, do not celebrate the sim.
     lowest in-flight DeviceLaunch id. `gpu-profile capture` is still
     refused. Dual score still has no `$/M tokens`.
 
-561. [ ] Next numbered PLAN item after 560 is the next `gpu-sim` / Engine /
+561. [x] `gpu-sim` `GRAPH_FIRE_AND_FORGET_AS_SIBLING` is CUDA
+    `cudaStreamGraphFireAndForgetAsSibling` on `device_launch_graph`.
+    Same nested DeviceLaunch as fire-and-forget, but the parent instance
+    does not wait: no join on the parent host stream, and tail launch
+    does not wait for the sibling. Requires a host-issued DeviceLaunch
+    in flight (`"no current graph exec"`). Host `launch_graph` of that
+    id is Invalid `"device launch stream"`. This VM does not invent
+    Engine `--graph-faf-sibling`. `current_graph_exec` still returns the
+    lowest in-flight DeviceLaunch id. `gpu-profile capture` is still
+    refused. Dual score still has no `$/M tokens`.
+
+562. [ ] Next numbered PLAN item after 561 is the next `gpu-sim` / Engine /
     serve / expertvm mechanical API that is still missing, or the next official
     decode family. Prefer remaining CUDA-shaped twins over more
     OpenAI HTTP veneer. Do not invent F32 `output.scale`. Do not invent a
@@ -6017,8 +6028,10 @@ model, do not celebrate the sim.
     reverse recreate-while-unfinished `"stream in flight"`. Do not invent
     a second `cudaStreamGraphFireAndForget` / `cudaStreamGraphTailLaunch` /
     named device-launch streams. Do not invent Engine `--graph-tail-launch` /
-    `--device-launch-stream`. Do not invent
-    `cudaStreamGraphFireAndForgetAsSibling` this slice. Do not treat host
+    `--device-launch-stream`. Do not invent a second
+    `cudaStreamGraphFireAndForgetAsSibling`. Do not invent Engine
+    `--graph-faf-sibling`. Do not reverse FAF parent-stream wait. Do not
+    reverse TailLaunch waiting for FAF children (not siblings). Do not treat host
     `launch_graph` named streams as legal. Do not reverse 558
     `current_graph_exec` lowest-id among all in-flight tails. Do not reverse
     host user-stream `device_launch_graph`. Do not reverse self tail-relaunch.
@@ -6266,7 +6279,10 @@ model, do not celebrate the sim.
     `"stream in flight"`.
     Do not invent a second `cudaStreamGraphFireAndForget` /
     `cudaStreamGraphTailLaunch`. Do not invent Engine `--graph-tail-launch`.
-    Do not invent `cudaStreamGraphFireAndForgetAsSibling`. Do not treat
+    Do not invent a second `cudaStreamGraphFireAndForgetAsSibling`. Do not
+    invent Engine `--graph-faf-sibling`. Do not reverse FAF parent-stream
+    wait. Do not reverse TailLaunch waiting for FAF children (not siblings).
+    Do not treat
     host `launch_graph` of those ids as legal. Do not reverse lowest-id
     `current_graph_exec` among all in-flight DeviceLaunch tails. Do not
     reverse self tail-relaunch of the in-flight exec.
@@ -6723,8 +6739,10 @@ model, do not celebrate the sim.
     Do not invent a second `cudaStreamGraphFireAndForget` /
     `cudaStreamGraphTailLaunch` / `GRAPH_FIRE_AND_FORGET` /
     `GRAPH_TAIL_LAUNCH`. Do not invent Engine `--device-launch-stream`.
-    Do not invent `cudaStreamGraphFireAndForgetAsSibling`. Do not reverse
-    host user-stream `device_launch_graph`.
+    Do not invent a second `cudaStreamGraphFireAndForgetAsSibling` /
+    `GRAPH_FIRE_AND_FORGET_AS_SIBLING`. Do not invent Engine
+    `--graph-faf-sibling`. Do not reverse FAF parent-stream wait.
+    Do not reverse host user-stream `device_launch_graph`.
     Do not
     spend the next item on an OpenAI-compatible HTTP veneer.
 

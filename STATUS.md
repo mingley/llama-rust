@@ -5,6 +5,17 @@ Visible five-turn extract: [docs/chatgpt-share-6a920fe1.md](docs/chatgpt-share-6
 Complete share-API extract: [docs/chatgpt-share-6a920fe1/](docs/chatgpt-share-6a920fe1/).
 Work lands on `main`. No PRs.
 
+## Shipped 2026-09-01 — CUDA `cudaStreamGraphFireAndForgetAsSibling`
+
+`gpu-sim` `GRAPH_FIRE_AND_FORGET_AS_SIBLING` is `cudaStreamGraphFireAndForgetAsSibling`
+on `device_launch_graph`. Same nested DeviceLaunch as fire-and-forget, but the
+parent instance does not wait: no join on the parent host stream, and tail
+launch does not wait for the sibling. Requires a host-issued DeviceLaunch in
+flight. Host `launch_graph` of that id is Invalid `"device launch stream"`.
+This VM does not invent Engine `--graph-faf-sibling`. `current_graph_exec`
+still returns the lowest in-flight DeviceLaunch id. `gpu-profile capture` is
+still refused. Dual score still has no `$/M tokens`.
+
 ## Shipped 2026-09-01 — CUDA `cudaStreamGraphFireAndForget` / `cudaStreamGraphTailLaunch`
 
 `gpu-sim` named device-graph streams are `cudaStreamGraphFireAndForget` /

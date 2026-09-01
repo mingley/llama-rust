@@ -3812,9 +3812,12 @@ impl Sim {
     /// tail on that instance is Invalid `"device launch tail"`. Self
     /// tail-relaunch of the in-flight exec is legal. Host
     /// [`Self::launch_graph`] of those ids is Invalid `"device launch stream"`.
-    /// This VM does not invent `cudaStreamGraphFireAndForgetAsSibling`.
+    /// [`StreamId::GRAPH_FIRE_AND_FORGET_AS_SIBLING`] is CUDA
+    /// `cudaStreamGraphFireAndForgetAsSibling`: same nested launch, but the
+    /// parent instance does not wait (no join on the parent host stream; tail
+    /// launch does not wait for the sibling).
     /// [`Self::current_graph_exec`] still returns the lowest in-flight
-    /// DeviceLaunch id (including FAF children).
+    /// DeviceLaunch id (including FAF children and siblings).
     pub fn device_launch_graph(
         &mut self,
         graph: GraphId,
@@ -3845,6 +3848,9 @@ impl Sim {
         }
         if stream == StreamId::GRAPH_FIRE_AND_FORGET {
             return self.device_fire_and_forget(exec, device);
+        }
+        if stream == StreamId::GRAPH_FIRE_AND_FORGET_AS_SIBLING {
+            return self.device_fire_and_forget_as_sibling(exec, device);
         }
         if stream == StreamId::GRAPH_TAIL_LAUNCH {
             return self.device_tail_launch(exec, device);
@@ -3927,6 +3933,46 @@ impl Sim {
         })?;
         g.device_launch_tail = Some(id);
         g.device_launch_stream = Some(join);
+        g.device_launch_root = false;
+        g.device_faf.clear();
+        g.device_tail_child = None;
+        Ok(id)
+    }
+
+    fn device_fire_and_forget_as_sibling(
+        &mut self,
+        exec: GraphId,
+        device: DeviceId,
+    ) -> Result<OpId, SimError> {
+        let parent = self
+            .current_host_device_exec(device)
+            .ok_or(SimError::Invalid {
+                why: "no current graph exec",
+            })?;
+        if parent == exec
+            || self
+                .graphs
+                .get(&exec)
+                .is_some_and(|g| g.device_launch_tail.is_some_and(|id| !self.op_done(id)))
+            || self.device_tail_queued(exec)
+        {
+            return Err(SimError::Invalid {
+                why: "device launch in flight",
+            });
+        }
+        let stream = self.alloc_anon_stream();
+        let id = self.submit_live_with_deps(
+            device,
+            stream,
+            Kind::DeviceLaunch { graph: exec },
+            LaunchCost::Kernel,
+            Vec::new(),
+        )?;
+        let g = self.graphs.get_mut(&exec).ok_or(SimError::Invalid {
+            why: "unknown graph",
+        })?;
+        g.device_launch_tail = Some(id);
+        g.device_launch_stream = Some(stream);
         g.device_launch_root = false;
         g.device_faf.clear();
         g.device_tail_child = None;

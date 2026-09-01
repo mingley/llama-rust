@@ -34,12 +34,21 @@ impl StreamId {
     /// `cudaStreamGraphFireAndForget`. Nested
     /// [`crate::Sim::device_launch_graph`] only.
     pub const GRAPH_FIRE_AND_FORGET: Self = Self(u16::MAX - 2);
+    /// `cudaStreamGraphFireAndForgetAsSibling`. Nested
+    /// [`crate::Sim::device_launch_graph`] only. Does not keep the parent
+    /// instance alive.
+    pub const GRAPH_FIRE_AND_FORGET_AS_SIBLING: Self = Self(u16::MAX - 3);
 
     /// CUDA device-graph named streams (not a real `cudaStream_t`).
     /// Host [`crate::Sim::launch_graph`] and `kernel` cannot use these ids.
     #[must_use]
     pub const fn is_device_graph_stream(self) -> bool {
-        matches!(self, Self::GRAPH_TAIL_LAUNCH | Self::GRAPH_FIRE_AND_FORGET)
+        matches!(
+            self,
+            Self::GRAPH_TAIL_LAUNCH
+                | Self::GRAPH_FIRE_AND_FORGET
+                | Self::GRAPH_FIRE_AND_FORGET_AS_SIBLING
+        )
     }
 }
 
