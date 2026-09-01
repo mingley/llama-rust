@@ -5,6 +5,17 @@ Visible five-turn extract: [docs/chatgpt-share-6a920fe1.md](docs/chatgpt-share-6
 Complete share-API extract: [docs/chatgpt-share-6a920fe1/](docs/chatgpt-share-6a920fe1/).
 Work lands on `main`. No PRs.
 
+## Shipped 2026-09-01 — CUDA cuMemsetD2D16 / D2D32
+
+`gpu-sim` `cuMemsetD2D16` / `cuMemsetD2D32`: `memset_d2d16_async` /
+`memset_d2d16` are `cuMemsetD2D16Async` / `cuMemsetD2D16`.
+`memset_d2d32_async` / `memset_d2d32` are `cuMemsetD2D32Async` /
+`cuMemsetD2D32`. `width` is CUDA `Width`; row payload is `width * 2` /
+`width * 4`. `pitch` is bytes. `memset_2d_async` stays byte-width. Capture
+of Async is legal; host-sync is refused. Fill value is not modeled. No
+Engine `--memset-d2d`. `gpu-profile capture` is still refused. Dual score
+still has no `$/M tokens`.
+
 ## Shipped 2026-09-01 — CUDA cuMemsetD16 / D32
 
 `gpu-sim` `cuMemsetD16` / `cuMemsetD32`: `memset_d16_async` / `memset_d16`

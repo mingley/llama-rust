@@ -5150,7 +5150,19 @@ model, do not celebrate the sim.
     refused. Fill value is not modeled. No Engine `--memset-d16`.
     `gpu-profile capture` is still refused. Dual score still has no `$/M tokens`.
 
-480. [ ] Next numbered PLAN item after 479 is the next `gpu-sim` / Engine /
+480. [x] `gpu-sim` `cuMemsetD2D16` / `cuMemsetD2D32`:
+    [`memset_d2d16_async`](Sim::memset_d2d16_async) / [`memset_d2d16`](Sim::memset_d2d16)
+    are `cuMemsetD2D16Async` / `cuMemsetD2D16`. [`memset_d2d32_async`](Sim::memset_d2d32_async)
+    / [`memset_d2d32`](Sim::memset_d2d32) are `cuMemsetD2D32Async` /
+    `cuMemsetD2D32`. `width` is CUDA `Width` (element count); row payload is
+    `width * 2` / `width * 4`. `pitch` is bytes. `height` `0` is Invalid
+    `"memset2d height"`. Overflow is `"memset count"`.
+    [`memset_2d_async`](Sim::memset_2d_async) stays byte-width. Capture of
+    Async is legal; host-sync is refused. Fill value is not modeled. No Engine
+    `--memset-d2d`. `gpu-profile capture` is still refused. Dual score still
+    has no `$/M tokens`.
+
+481. [ ] Next numbered PLAN item after 480 is the next `gpu-sim` / Engine /
     serve / expertvm mechanical API that is still missing, or the next official
     decode family. Prefer remaining CUDA-shaped twins over more
     OpenAI HTTP veneer. Do not invent F32 `output.scale`. Do not invent a
@@ -5278,8 +5290,9 @@ model, do not celebrate the sim.
     `MemsetOp::element_size`. Do not invent Engine `--memset-element`.
     Do not invent a second `cuMemsetD16Async` / `cuMemsetD32Async` /
     `memset_d16_async` / `memset_d32_async`. Do not invent Engine
-    `--memset-d16`. Do not invent `cuMemsetD2D16` / `D2D32` this slice
-    (2D width in elements). Do not invent a memset fill value (this VM does not model memset
+    `--memset-d16`. Do not invent a second `cuMemsetD2D16` / `D2D32` /
+    `memset_d2d16_async` / `memset_d2d32_async`. Do not invent Engine
+    `--memset-d2d`. Do not invent a memset fill value (this VM does not model memset
     stores into wait-value mailboxes).
     Do not invent a second `cuPointerGetAttributes` /
     `pointer_get_attribute_n`. Do not invent Engine `--pointer-attrs`.

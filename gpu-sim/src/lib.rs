@@ -75,6 +75,11 @@
 //! [`memset_d32_async`](Sim::memset_d32_async) / [`memset_d32`](Sim::memset_d32)
 //! are `cuMemsetD32Async` / `cuMemsetD32`. Typed [`memset`](Sim::memset) stays
 //! byte-counted. Fill value is not modeled. No Engine `--memset-d16`.
+//! [`memset_d2d16_async`](Sim::memset_d2d16_async) / [`memset_d2d16`](Sim::memset_d2d16)
+//! are `cuMemsetD2D16Async` / `cuMemsetD2D16` (`width` is CUDA `Width`).
+//! [`memset_d2d32_async`](Sim::memset_d2d32_async) / [`memset_d2d32`](Sim::memset_d2d32)
+//! are `cuMemsetD2D32Async` / `cuMemsetD2D32`. [`memset_2d_async`](Sim::memset_2d_async)
+//! stays byte-width. No Engine `--memset-d2d`.
 //! [`Sim::ipc_get`] / [`ipc_open`](Sim::ipc_open) / [`ipc_close`](Sim::ipc_close)
 //! are `cudaIpcGetMemHandle` / `cudaIpcOpenMemHandle` / `cudaIpcCloseMemHandle`:
 //! the import is an alias of the same physicals (no extra HBM). Free of the
@@ -16212,6 +16217,52 @@ mod tests {
         assert_eq!(p.element_size, 2);
         assert_eq!(p.bytes, 4096);
         enq(sim.memset_d32(d, a, 1024, s));
+        sim.synchronize().unwrap();
+        sim.free_sync(a).unwrap();
+    }
+
+    #[test]
+    fn memset_d2d16_d32_are_cu_memset_d2dn() {
+        let mut sim = Sim::new(h100());
+        let d = DeviceId(0);
+        let s = StreamId(0);
+        let (a, pitch) = sim.malloc_pitch(d, 256, 8).unwrap();
+        assert_eq!(pitch, 512);
+        enq(sim.memset_d2d16_async(d, a, pitch, 128, 8, s));
+        sim.synchronize().unwrap();
+        enq(sim.memset_d2d32_async(d, a, pitch, 64, 8, s));
+        sim.synchronize().unwrap();
+        match sim.memset_d2d16_async(d, a, pitch, 0, 8, s) {
+            Err(SimError::Invalid { why }) => assert!(why.contains("zero-byte"), "{why}"),
+            other => panic!("{other:?}"),
+        }
+        match sim.memset_d2d16_async(d, a, pitch, 128, 0, s) {
+            Err(SimError::Invalid { why }) => assert!(why.contains("memset2d height"), "{why}"),
+            other => panic!("{other:?}"),
+        }
+        match sim.memset_d2d16_async(d, a, pitch, u64::MAX, 8, s) {
+            Err(SimError::Invalid { why }) => assert!(why.contains("memset count"), "{why}"),
+            other => panic!("{other:?}"),
+        }
+        match sim.memset_d2d16_async(d, a, 128, 128, 8, s) {
+            Err(SimError::Invalid { why }) => assert!(why.contains("memset2d pitch"), "{why}"),
+            other => panic!("{other:?}"),
+        }
+        sim.begin_capture(d, s).unwrap();
+        enq(sim.memset_d2d16_async(d, a, pitch, 128, 8, s));
+        match sim.memset_d2d16(d, a, pitch, 128, 8, s) {
+            Err(SimError::Invalid { why }) => {
+                assert!(why.contains("host-sync memset"), "{why}");
+            }
+            other => panic!("{other:?}"),
+        }
+        let g = sim.end_capture().unwrap();
+        let p = sim.graph_memset_get_params(g, 0).unwrap();
+        assert_eq!(p.element_size, 2);
+        assert_eq!(p.bytes, 256);
+        assert_eq!(p.height, 8);
+        assert_eq!(p.pitch, pitch);
+        enq(sim.memset_d2d32(d, a, pitch, 64, 8, s));
         sim.synchronize().unwrap();
         sim.free_sync(a).unwrap();
     }
