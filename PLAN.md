@@ -5848,7 +5848,15 @@ model, do not celebrate the sim.
     This VM does not invent Engine `--graph-child-gone`. `gpu-profile
     capture` is still refused. Dual score still has no `$/M tokens`.
 
-548. [ ] Next numbered PLAN item after 547 is the next `gpu-sim` / Engine /
+548. [x] `gpu-sim` CUDA definition `cudaGraph*NodeGetParams` /
+    `cudaGraphNodeGetParams` of an exec whose handle was destroyed while a
+    launch was in flight is Invalid `"unknown graph"`. Query; capture is
+    legal. Live exec GetParams stays. Definition GetParams stays. Exec
+    GetParams of a parked dest stays unknown via `as_exec`. This VM does not
+    invent Engine `--graph-get-params-gone`. `gpu-profile capture` is still
+    refused. Dual score still has no `$/M tokens`.
+
+549. [ ] Next numbered PLAN item after 548 is the next `gpu-sim` / Engine /
     serve / expertvm mechanical API that is still missing, or the next official
     decode family. Prefer remaining CUDA-shaped twins over more
     OpenAI HTTP veneer. Do not invent F32 `output.scale`. Do not invent a
@@ -6032,6 +6040,12 @@ model, do not celebrate the sim.
     `--graph-child-gone`. Do not reverse live exec as a child graph.
     Do not reverse add-child of the definition after its primary exec is
     parked. Do not reverse DeviceLaunch child-graph refuse.
+    Do not invent a second GetParams parked-handle unknown check or Engine
+    `--graph-get-params-gone`. Do not reverse live exec definition
+    GetParams. Do not reverse definition GetParams while an exec is
+    parked. Do not refuse GetParams of a live in-flight exec. Do not
+    wire `graph_root_nodes` / `graph_edges` / `graph_node_kind` /
+    `graph_node_find_in_clone` through `live_graph` (539).
     Do not invent a second DeviceLaunch in-flight destroy-complete check or Engine
     `--device-launch-destroy`. Do not abort an in-flight DeviceLaunch when
     `destroy_graph` succeeds. Do not delay destroy of an idle exec. Do not invent

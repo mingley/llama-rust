@@ -598,7 +598,8 @@ require matching topology. Event External flags stay topology.
 `cudaGraph*NodeGetParams` / `cudaGraphExec*NodeGetParams`
 (query; no clock tick; capture is legal). Graph GetParams reads the
 definition; Exec GetParams reads the snapshot (`as_exec`; uninstantiated
-is Invalid). Unique-node helpers (`graph_unique_kernel`, …) still use
+is Invalid). A parked in-flight-destroyed exec is `"unknown graph"` on
+definition GetParams; a live exec stays. Unique-node helpers (`graph_unique_kernel`, …) still use
 the launched/primary snapshot.
 `graph_exec_kernel_set_params` / `graph_exec_memcpy_set_params` /
 `graph_exec_memcpy_set_params_1d` / `graph_exec_memcpy_set_params_2d` / `graph_exec_memcpy_set_params_3d` / `graph_exec_memset_set_params` / `graph_exec_memset_set_params_2d` / `graph_exec_memset_set_params_3d` /

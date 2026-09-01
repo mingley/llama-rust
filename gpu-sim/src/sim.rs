@@ -5433,6 +5433,8 @@ impl Sim {
     /// [`GraphNodeParams::SetConditional`].
     /// [`GraphNodeParams::Alloc`] is bytes plus accessDescs; the pointer is
     /// [`Self::graph_alloc_get_params`]. Empty returns [`GraphNodeParams::Empty`].
+    /// A parked in-flight-destroyed exec is `"unknown graph"`. Live exec
+    /// GetParams stays. Query; capture is legal.
     pub fn graph_node_get_params(
         &self,
         graph: GraphId,
@@ -6594,6 +6596,7 @@ impl Sim {
     }
 
     fn graph_def_step(&self, graph: GraphId, node: usize) -> Result<&GraphStep, SimError> {
+        self.require_live_graph(graph)?;
         let g = self.graphs.get(&graph).ok_or(SimError::Invalid {
             why: "unknown graph",
         })?;
@@ -6625,6 +6628,8 @@ impl Sim {
     /// `cudaGraphKernelNodeGetParams` on the graph definition.
     ///
     /// Includes [`KernelNodeParams::ctx`] (CUDA 13 `CUDA_KERNEL_NODE_PARAMS.ctx`).
+    /// A parked in-flight-destroyed exec is `"unknown graph"`. Live exec
+    /// GetParams stays. Query; capture is legal.
     pub fn graph_kernel_get_params(
         &self,
         graph: GraphId,

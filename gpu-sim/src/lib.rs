@@ -1090,6 +1090,8 @@
 //! [`graph_host_get_params`](Sim::graph_host_get_params) /
 //! [`graph_batch_mem_ops_get_params`](Sim::graph_batch_mem_ops_get_params) are
 //! `cudaGraph*NodeGetParams` on the definition.
+//! A parked in-flight-destroyed exec is `"unknown graph"` on definition
+//! GetParams; a live exec stays. Query; capture is legal.
 //! [`graph_exec_kernel_get_params`](Sim::graph_exec_kernel_get_params) /
 //! [`graph_exec_memcpy_get_params`](Sim::graph_exec_memcpy_get_params) /
 //! [`graph_exec_memset_get_params`](Sim::graph_exec_memset_get_params) /
@@ -5748,6 +5750,50 @@ mod tests {
         sim.destroy_graph(parent2).unwrap();
         sim.destroy_graph(live).unwrap();
         sim.destroy_graph(child).unwrap();
+        sim.destroy_graph(_end).unwrap();
+    }
+
+    #[test]
+    fn parked_exec_get_params_is_unknown() {
+        let mut sim = Sim::new(h100());
+        let d = DeviceId(0);
+        let s = StreamId(0);
+        let a = sim.malloc(d, 4096).unwrap();
+        let g = sim.create_graph(d, s).unwrap();
+        sim.graph_add_kernel(g, KernelKind::other(1 << 40, 4096), &[a], &[a])
+            .unwrap();
+        let exec = sim.instantiate_graph(g).unwrap();
+        let _live_def = sim.graph_kernel_get_params(exec, 0).unwrap();
+        let _live_exec = sim.graph_exec_kernel_get_params(exec, 0).unwrap();
+        let launched = sim.launch_graph(exec, s).unwrap();
+        assert!(launched > 0);
+        let _in_flight = sim.graph_kernel_get_params(exec, 0).unwrap();
+        sim.destroy_graph(exec).unwrap();
+        match sim.graph_kernel_get_params(exec, 0).unwrap_err() {
+            SimError::Invalid { why } => assert!(why.contains("unknown"), "{why}"),
+            other => panic!("{other:?}"),
+        }
+        match sim.graph_node_get_params(exec, 0).unwrap_err() {
+            SimError::Invalid { why } => assert!(why.contains("unknown"), "{why}"),
+            other => panic!("{other:?}"),
+        }
+        match sim.graph_exec_kernel_get_params(exec, 0).unwrap_err() {
+            SimError::Invalid { why } => assert!(why.contains("unknown"), "{why}"),
+            other => panic!("{other:?}"),
+        }
+        sim.graph_kernel_get_params(g, 0).unwrap();
+        sim.begin_capture(d, StreamId(1)).unwrap();
+        match sim.graph_kernel_get_params(exec, 0).unwrap_err() {
+            SimError::Invalid { why } => assert!(why.contains("unknown"), "{why}"),
+            other => panic!("{other:?}"),
+        }
+        let _end = sim.end_capture().unwrap();
+        sim.synchronize().unwrap();
+        match sim.graph_kernel_get_params(exec, 0).unwrap_err() {
+            SimError::Invalid { why } => assert!(why.contains("unknown"), "{why}"),
+            other => panic!("{other:?}"),
+        }
+        sim.destroy_graph(g).unwrap();
         sim.destroy_graph(_end).unwrap();
     }
 
