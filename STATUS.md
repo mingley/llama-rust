@@ -5,6 +5,16 @@ Visible five-turn extract: [docs/chatgpt-share-6a920fe1.md](docs/chatgpt-share-6
 Complete share-API extract: [docs/chatgpt-share-6a920fe1/](docs/chatgpt-share-6a920fe1/).
 Work lands on `main`. No PRs.
 
+## Shipped 2026-09-01 — CUDA `cudaStreamAttachMemAsync` length
+
+`gpu-sim` `stream_attach_with_size` is `cudaStreamAttachMemAsync` with
+the CUDA `length` argument. `size` `0` is the entire allocation. A
+nonzero `size` must equal the allocation bytes. Other sizes Invalid
+`"attach size"`. Partial attach is not modeled. Typed `stream_attach`
+stays (`length` 0). Capture cannot include it. No Engine `--attach-size`.
+`gpu-profile capture` is still refused. Dual score still has no
+`$/M tokens`.
+
 ## Shipped 2026-09-01 — CUDA `cudaMemPrefetchAsync` count
 
 `gpu-sim` `prefetch_with_size` / `prefetch_host_with_size` are

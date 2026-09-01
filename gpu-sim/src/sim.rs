@@ -16392,6 +16392,23 @@ impl Sim {
         stream: StreamId,
         flags: MemAttach,
     ) -> Result<OpId, SimError> {
+        self.stream_attach_with_size(device, id, 0, stream, flags)
+    }
+
+    /// [`Self::stream_attach`] with the CUDA `length` argument.
+    ///
+    /// `size` `0` is the entire allocation (CUDA default). A nonzero `size`
+    /// must equal the allocation bytes. Other sizes Invalid `"attach size"`.
+    /// Partial attach is not modeled. Typed [`Self::stream_attach`] stays
+    /// (`length` 0). Capture cannot include it.
+    pub fn stream_attach_with_size(
+        &mut self,
+        device: DeviceId,
+        id: AllocId,
+        size: u64,
+        stream: StreamId,
+        flags: MemAttach,
+    ) -> Result<OpId, SimError> {
         self.fail_if_capturing("cannot capture stream attach")?;
         let a = self.alloc_ref(id)?;
         if !a.live {
@@ -16399,6 +16416,9 @@ impl Sim {
         }
         if !a.managed {
             return Err(SimError::Invalid { why: "not managed" });
+        }
+        if size != 0 && size != a.bytes {
+            return Err(SimError::Invalid { why: "attach size" });
         }
         if flags == MemAttach::Single && stream == StreamId::NULL {
             return Err(SimError::Invalid {
@@ -16413,7 +16433,8 @@ impl Sim {
     /// [`MemAttachFlags::GLOBAL`] / [`HOST`](MemAttachFlags::HOST) /
     /// [`SINGLE`](MemAttachFlags::SINGLE) map to [`MemAttach`]. Other bits are
     /// Invalid `"stream attach flags"`. Typed [`Self::stream_attach`] stays.
-    /// Capture cannot include it.
+    /// The CUDA `length` is [`Self::stream_attach_with_size`]. Capture cannot
+    /// include it.
     pub fn stream_attach_with_flags(
         &mut self,
         device: DeviceId,

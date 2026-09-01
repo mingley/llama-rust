@@ -4933,7 +4933,15 @@ model, do not celebrate the sim.
     `gpu-profile capture` is still refused. Dual score still has no
     `$/M tokens`.
 
-455. [ ] Next numbered PLAN item after 454 is the next `gpu-sim` / Engine /
+455. [x] `gpu-sim` `stream_attach_with_size` is `cudaStreamAttachMemAsync`
+    with the CUDA `length` argument. `size` `0` is the entire
+    allocation. A nonzero `size` must equal the allocation bytes. Other
+    sizes Invalid `"attach size"`. Partial attach is not modeled. Typed
+    `stream_attach` stays (`length` 0). Capture cannot include it. No
+    Engine `--attach-size`. `gpu-profile capture` is still refused. Dual
+    score still has no `$/M tokens`.
+
+456. [ ] Next numbered PLAN item after 455 is the next `gpu-sim` / Engine /
     serve / expertvm mechanical API that is still missing, or the next official
     decode family. Prefer remaining CUDA-shaped twins over more
     OpenAI HTTP veneer. Do not invent F32 `output.scale`. Do not invent a
@@ -5021,6 +5029,9 @@ model, do not celebrate the sim.
     `prefetch_with_size` / `prefetch_host_with_size`. Do not invent
     Engine `--prefetch-size`. Do not invent partial-range
     `cudaMemPrefetchAsync`.
+    Do not invent a second `cudaStreamAttachMemAsync` length /
+    `stream_attach_with_size`. Do not invent Engine `--attach-size`. Do
+    not invent partial-range `cudaStreamAttachMemAsync`.
     Do not invent `cuDeviceGetLuid`
     (Windows).
     Do not invent gemma4 `attn_q.scale` / `attn_output.scale` / `attn_k.scale` /

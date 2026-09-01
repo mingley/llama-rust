@@ -45,7 +45,7 @@ warp scheduler, L1, …   ← do not model
 | `cudaHostRegister` pins pageable host for DMA (`host_register`) | `alloc_overhead_ns` (mlock, host-sync) |
 | `cudaHostAllocMapped` / `host_register_mapped`: kernel may read host with no H2D | host PCIe vs HBM |
 | `cudaMallocManaged` (`alloc_managed` / `alloc_managed_with_flags` Global/Host) does not charge HBM until migrate | `alloc_overhead_ns` (VA reserve at the call) |
-| `cudaStreamAttachMemAsync` (`stream_attach` / `stream_attach_with_flags`) Host/Single visibility | 1 ns stream-ordered |
+| `cudaStreamAttachMemAsync` (`stream_attach` / `stream_attach_with_flags` / `stream_attach_with_size`) Host/Single visibility | 1 ns stream-ordered |
 | `cudaMemAdviseSetReadMostly`: prefetch replicates | same DMA as a move |
 | `drop_managed_copy`: dest eviction of one ReadMostly GPU | other copies stay |
 | `cudaMemAdviseSetAccessedBy`: kernel may read without migrating | interconnect, not local HBM |
@@ -940,7 +940,10 @@ identity stays async pinned DMA; distinct from per-page `--sync-memops`).
 fail device kernels / memset / device prefetch; Single cannot use the NULL
 stream; capture is refused). `stream_attach_with_flags` maps
 `MemAttachFlags::{GLOBAL, HOST, SINGLE}` then typed `stream_attach`
-(other bits Invalid `"stream attach flags"`). Typed `stream_attach` stays.
+(other bits Invalid `"stream attach flags"`). `stream_attach_with_size`
+is the CUDA `length` argument (`0` is the entire allocation; a nonzero
+`size` must equal the allocation; partial attach is not modeled). Typed
+`stream_attach` stays.
 `expertvm sim --stream-attach` / `gguf_gemv engine --expert-sim --stream-attach`
 attach managed experts to the compute stream and prefetch there (identity
 stays Global + copy-stream prefetch).

@@ -163,7 +163,10 @@
 //! Host and other-stream Single fail device kernels / memset / device prefetch
 //! with `not attached`; Single cannot use [`StreamId::NULL`]; capture is
 //! refused). [`stream_attach_with_flags`](Sim::stream_attach_with_flags) is
-//! the flags word ([`MemAttachFlags`]). Typed helper stays. Prefetch migrates;
+//! the flags word ([`MemAttachFlags`]). [`stream_attach_with_size`](Sim::stream_attach_with_size)
+//! is the CUDA `length` argument (`0` is the entire allocation; a nonzero
+//! `size` must equal the allocation; partial attach is not modeled).
+//! Typed helper stays. Prefetch migrates;
 //! it does not replicate unless [`Sim::mem_advise`] [`MemAdvise::SetReadMostly`].
 //! `expertvm sim --stream-attach` attaches managed experts to the compute stream.
 //! `expertvm sim --managed-host` is `cudaMallocManaged(..., cudaMemAttachHost)`
@@ -16630,6 +16633,37 @@ mod tests {
             other => panic!("{other:?}"),
         }
         let _g = sim.end_capture().unwrap();
+    }
+
+    #[test]
+    fn stream_attach_with_size_is_cuda_stream_attach_mem_async_length() {
+        let mut sim = Sim::new(h100());
+        let d = DeviceId(0);
+        let s = StreamId(1);
+        let bytes = 4096u64;
+        let m = sim.alloc_managed(bytes).unwrap();
+        match sim.stream_attach_with_size(d, m, bytes / 2, s, MemAttach::Host) {
+            Err(SimError::Invalid { why }) => assert!(why.contains("attach size"), "{why}"),
+            other => panic!("{other:?}"),
+        }
+        assert_eq!(sim.mem_attach(m).unwrap(), MemAttach::Global);
+        enq(sim.stream_attach_with_size(d, m, 0, s, MemAttach::Host));
+        sim.synchronize().unwrap();
+        assert_eq!(sim.mem_attach(m).unwrap(), MemAttach::Host);
+        enq(sim.stream_attach_with_size(d, m, bytes, s, MemAttach::Single));
+        sim.synchronize().unwrap();
+        assert_eq!(sim.mem_attach(m).unwrap(), MemAttach::Single);
+        sim.begin_capture(d, StreamId(0)).unwrap();
+        match sim.stream_attach_with_size(d, m, 0, s, MemAttach::Global) {
+            Err(SimError::Invalid { why }) => assert!(why.contains("capture"), "{why}"),
+            other => panic!("{other:?}"),
+        }
+        let _g = sim.end_capture().unwrap();
+        let a = sim.malloc(d, bytes).unwrap();
+        match sim.stream_attach_with_size(d, a, 0, s, MemAttach::Global) {
+            Err(SimError::Invalid { why }) => assert!(why.contains("not managed"), "{why}"),
+            other => panic!("{other:?}"),
+        }
     }
 
     #[test]
