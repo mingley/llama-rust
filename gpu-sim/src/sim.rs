@@ -4558,6 +4558,26 @@ impl Sim {
         Ok(())
     }
 
+    fn refuse_device_launch_exec_attach(
+        &self,
+        target: GraphId,
+        exec: bool,
+        attach: bool,
+    ) -> Result<(), SimError> {
+        if !exec || !attach {
+            return Ok(());
+        }
+        let Some(g) = self.graphs.get(&target) else {
+            return Ok(());
+        };
+        if g.instantiate_flags & GraphInstantiateFlags::DEVICE_LAUNCH != 0 {
+            return Err(SimError::Invalid {
+                why: "device launch instantiate flag",
+            });
+        }
+        Ok(())
+    }
+
     /// `cudaGraphKernelNodeSetParams` on the graph definition.
     ///
     /// After [`Self::instantiate_graph`], this does not retarget the exec
@@ -9972,7 +9992,10 @@ impl Sim {
     /// `cudaGraphExecKernelNodeSetAttribute` for programmatic event on the exec.
     ///
     /// Same External / interprocess Invalid as
-    /// [`Self::graph_kernel_node_set_programmatic_event`].
+    /// [`Self::graph_kernel_node_set_programmatic_event`]. Device-launch execs
+    /// cannot attach a programmatic event (Invalid
+    /// `"device launch instantiate flag"`). Clearing stays. Definition
+    /// SetAttribute still defers to instantiate.
     pub fn graph_exec_kernel_node_set_programmatic_event(
         &mut self,
         exec: GraphId,
@@ -9985,6 +10008,7 @@ impl Sim {
             self.require_programmatic_event_attr(pe)?;
             let _ev = self.events.entry(pe.event).or_insert(Ev::new(true));
         }
+        self.refuse_device_launch_exec_attach(exec, true, event.is_some())?;
         let g = self.graphs.get_mut(&exec).ok_or(SimError::Invalid {
             why: "unknown graph",
         })?;
@@ -10084,7 +10108,10 @@ impl Sim {
     /// `cudaGraphExecKernelNodeSetAttribute` for launch-completion event on the exec.
     ///
     /// Same External / interprocess Invalid as
-    /// [`Self::graph_kernel_node_set_launch_completion`].
+    /// [`Self::graph_kernel_node_set_launch_completion`]. Device-launch execs
+    /// cannot attach a launch-completion event (Invalid
+    /// `"device launch instantiate flag"`). Clearing stays. Definition
+    /// SetAttribute still defers to instantiate.
     pub fn graph_exec_kernel_node_set_launch_completion(
         &mut self,
         exec: GraphId,
@@ -10097,6 +10124,7 @@ impl Sim {
             self.require_launch_completion_event_attr(lc)?;
             let _ev = self.events.entry(lc.event).or_insert(Ev::new(true));
         }
+        self.refuse_device_launch_exec_attach(exec, true, event.is_some())?;
         let g = self.graphs.get_mut(&exec).ok_or(SimError::Invalid {
             why: "unknown graph",
         })?;
@@ -11571,6 +11599,18 @@ impl Sim {
                 why: "device-updatable",
             });
         }
+        let src_pe = self.kernel_node_programmatic_event(src_graph, src, exec)?;
+        let src_lc = self.kernel_node_launch_completion(src_graph, src, exec)?;
+        let dst_flags = if exec {
+            self.as_exec(dst_graph)?
+        } else {
+            dst_graph
+        };
+        self.refuse_device_launch_exec_attach(
+            dst_flags,
+            exec,
+            src_pe.is_some() || src_lc.is_some(),
+        )?;
         let attrs = [
             KernelNodeAttr::Priority,
             KernelNodeAttr::Pdl,

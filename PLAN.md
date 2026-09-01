@@ -5678,7 +5678,18 @@ model, do not celebrate the sim.
     second MultipleCtxs result for SetParams. `gpu-profile capture` is
     still refused. Dual score still has no `$/M tokens`.
 
-529. [ ] Next numbered PLAN item after 528 is the next `gpu-sim` / Engine /
+529. [x] `gpu-sim` CUDA DeviceLaunch exec SetAttribute cannot attach
+    programmatic or launch-completion events
+    ([`graph_exec_kernel_node_set_programmatic_event`] /
+    [`graph_exec_kernel_node_set_launch_completion`] / CopyAttributes;
+    Invalid `"device launch instantiate flag"`). Clearing stays.
+    External/interprocess Invalid stays first. Definition SetAttribute
+    still defers to instantiate. Host-instantiated exec attach stays.
+    Capture is still reported first. This VM does not invent Engine
+    `--device-launch-event-attr`. `gpu-profile capture` is still
+    refused. Dual score still has no `$/M tokens`.
+
+530. [ ] Next numbered PLAN item after 529 is the next `gpu-sim` / Engine /
     serve / expertvm mechanical API that is still missing, or the next official
     decode family. Prefer remaining CUDA-shaped twins over more
     OpenAI HTTP veneer. Do not invent F32 `output.scale`. Do not invent a
@@ -5795,6 +5806,12 @@ model, do not celebrate the sim.
     mixed ctx to instantiate. Do not reverse host-instantiated exec
     mixed-ctx SetParams. Do not invent a second MultipleCtxs result
     for SetParams.
+    Do not invent a second DeviceLaunch exec event-attr attach check
+    or Engine `--device-launch-event-attr`. Do not reverse clearing
+    programmatic or launch-completion attrs on a DeviceLaunch exec.
+    Do not reverse External/interprocess Invalid first. Do not reverse
+    definition SetAttribute deferring those events to instantiate.
+    Do not reverse host-instantiated exec attach of those events.
     Do not invent a second DeviceLaunch mixed-ctx check or Engine
     `--device-launch-ctx`. Do not invent a second
     [`GraphInstantiateResult`] variant for driver MultipleCtxs. Do not
@@ -6151,6 +6168,10 @@ model, do not celebrate the sim.
     Do not reverse DeviceLaunch exec mixed-ctx SetParams. Do not invent
     Engine `--device-launch-set-ctx`. Do not reverse definition SetParams
     deferring mixed ctx to instantiate.
+    Do not reverse DeviceLaunch exec SetAttribute refuse of programmatic
+    or launch-completion events. Do not invent Engine
+    `--device-launch-event-attr`. Do not reverse clearing those attrs
+    on a DeviceLaunch exec.
     Do not reverse same-ctx DeviceLaunch. Do not reverse host instantiate
     of mixed green ctx. Do not invent Engine `--device-launch-ctx`. Do
     not invent a second MultipleCtxs instantiate result.

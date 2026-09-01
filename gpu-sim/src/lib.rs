@@ -833,7 +833,8 @@
 //! re-apply those dest rules. Mixed node green ctx is
 //! [`GraphInstantiateResult::MultipleDevicesNotSupported`]
 //! (`"graph multiple ctx"`); exec SetParams re-apply that mixed-ctx
-//! rule; cannot combine
+//! rule; exec SetAttribute cannot attach programmatic or
+//! launch-completion events; cannot combine
 //! with [`GraphInstantiateFlags::AUTO_FREE_ON_LAUNCH`] (Invalid
 //! `"device launch auto free"`).
 //! [`instantiate_graph_with_params`](Sim::instantiate_graph_with_params) is
@@ -888,7 +889,8 @@
 //! are the generic `cudaGraphKernelNodeGetAttribute` / `SetAttribute`
 //! ([`KernelNodeAttr`]). Typed getters stay. Definition Set does not retarget
 //! exec. Attr/value mismatch is Invalid `"kernel node attr"`. Get is a query
-//! (capture-legal); Set cannot include capture.
+//! (capture-legal); Set cannot include capture. Device-launch execs cannot
+//! attach programmatic or launch-completion events.
 //! [`kernel_pdl`](Sim::kernel_pdl) is `cudaLaunchKernelEx` PDL: a wait kernel
 //! may start after the previous same-stream kernel's trigger
 //! (`GpuProfile::pdl_trigger_permille`) instead of its completion. Overlap
@@ -31442,6 +31444,108 @@ mod tests {
         }
         sim.begin_capture(d, s).unwrap();
         match sim.graph_exec_kernel_set_params(exec, 1, &kparams(Some(ctx1))) {
+            Err(SimError::Invalid { why }) => assert!(why.contains("capture"), "{why}"),
+            other => panic!("{other:?}"),
+        }
+        let _end = sim.end_capture().unwrap();
+    }
+
+    #[test]
+    fn device_launch_exec_set_attribute_rejects_programmatic_event() {
+        let mut sim = Sim::new(h100());
+        let d = DeviceId(0);
+        let s = StreamId(0);
+        let a = sim.malloc(d, 64).unwrap();
+        let dl = sim.create_graph(d, s).unwrap();
+        sim.graph_add_kernel(dl, KernelKind::other(8, 8), &[a], &[a])
+            .unwrap();
+        let exec = sim
+            .instantiate_graph_with_flags(dl, GraphInstantiateFlags::DEVICE_LAUNCH)
+            .unwrap();
+        let pe = ProgrammaticEvent::new(EventId(8));
+        let err = sim
+            .graph_exec_kernel_node_set_programmatic_event(exec, 0, Some(pe))
+            .unwrap_err();
+        match err {
+            SimError::Invalid { why } => {
+                assert!(why.contains("device launch instantiate flag"), "{why}")
+            }
+            other => panic!("{other:?}"),
+        }
+        sim.graph_exec_kernel_node_set_programmatic_event(exec, 0, None)
+            .unwrap();
+        let ext = ProgrammaticEvent {
+            event: EventId(8),
+            external: true,
+            trigger_at_block_start: false,
+        };
+        let err = sim
+            .graph_exec_kernel_node_set_programmatic_event(exec, 0, Some(ext))
+            .unwrap_err();
+        match err {
+            SimError::Invalid { why } => {
+                assert!(why.contains("programmatic event flags"), "{why}")
+            }
+            other => panic!("{other:?}"),
+        }
+        let lc = LaunchCompletionEvent {
+            event: EventId(9),
+            external: false,
+        };
+        let err = sim
+            .graph_exec_kernel_node_set_launch_completion(exec, 0, Some(lc))
+            .unwrap_err();
+        match err {
+            SimError::Invalid { why } => {
+                assert!(why.contains("device launch instantiate flag"), "{why}")
+            }
+            other => panic!("{other:?}"),
+        }
+        sim.graph_exec_kernel_node_set_launch_completion(exec, 0, None)
+            .unwrap();
+        let host = sim.create_graph(d, s).unwrap();
+        sim.graph_add_kernel(host, KernelKind::other(8, 8), &[a], &[a])
+            .unwrap();
+        let host_exec = sim.instantiate_graph(host).unwrap();
+        sim.graph_exec_kernel_node_set_programmatic_event(host_exec, 0, Some(pe))
+            .unwrap();
+        sim.graph_exec_kernel_node_set_launch_completion(host_exec, 0, Some(lc))
+            .unwrap();
+        let def = sim.create_graph(d, s).unwrap();
+        sim.graph_add_kernel(def, KernelKind::other(8, 8), &[a], &[a])
+            .unwrap();
+        sim.graph_kernel_node_set_programmatic_event(def, 0, Some(pe))
+            .unwrap();
+        let err = sim
+            .instantiate_graph_with_flags(def, GraphInstantiateFlags::DEVICE_LAUNCH)
+            .unwrap_err();
+        match err {
+            SimError::Invalid { why } => assert!(why.contains("device launch"), "{why}"),
+            other => panic!("{other:?}"),
+        }
+        let src = sim.create_graph(d, s).unwrap();
+        sim.graph_add_kernel(src, KernelKind::other(8, 8), &[a], &[a])
+            .unwrap();
+        sim.graph_kernel_node_set_programmatic_event(src, 0, Some(pe))
+            .unwrap();
+        let src_exec = sim.instantiate_graph(src).unwrap();
+        let dst = sim.create_graph(d, s).unwrap();
+        sim.graph_add_kernel(dst, KernelKind::other(8, 8), &[a], &[a])
+            .unwrap();
+        let dst_exec = sim
+            .instantiate_graph_with_flags(dst, GraphInstantiateFlags::DEVICE_LAUNCH)
+            .unwrap();
+        let err = sim
+            .graph_exec_kernel_node_copy_attributes(dst_exec, 0, src_exec, 0)
+            .unwrap_err();
+        match err {
+            SimError::Invalid { why } => {
+                assert!(why.contains("device launch instantiate flag"), "{why}")
+            }
+            other => panic!("{other:?}"),
+        }
+        sim.begin_capture(d, s).unwrap();
+        match sim.graph_exec_kernel_node_set_programmatic_event(exec, 0, Some(pe)) {
             Err(SimError::Invalid { why }) => assert!(why.contains("capture"), "{why}"),
             other => panic!("{other:?}"),
         }

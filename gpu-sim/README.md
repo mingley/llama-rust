@@ -516,7 +516,8 @@ the graph origin device (`Place::HostPinned` stays). Memset dest must be
 that device, pinned mapped host, or managed. Exec memcpy/memset SetParams
 re-apply those dest rules. Mixed node green ctx is
 `MultipleDevicesNotSupported` (`"graph multiple ctx"`); exec SetParams
-re-apply that mixed-ctx rule; `update_graph` of a
+re-apply that mixed-ctx rule; exec SetAttribute cannot attach
+programmatic or launch-completion events; `update_graph` of a
 device-launch exec is Invalid; cannot combine with `AUTO_FREE_ON_LAUNCH`
 (`"device launch auto free"`). Unused conditional handles are
 `ConditionalHandleUnused` (`"conditional handle unused"`).
