@@ -19215,6 +19215,7 @@ impl Sim {
             DeviceAttr::PciBusId => u64::from(synthetic_pci_ids(device).1),
             DeviceAttr::PciDeviceId => u64::from(synthetic_pci_ids(device).2),
             DeviceAttr::GpuPciDeviceId => 0,
+            DeviceAttr::GpuPciSubsystemId => 0,
             DeviceAttr::ComputeCapabilityMajor => u64::from(gpu.compute_capability_major),
             DeviceAttr::ComputeCapabilityMinor => u64::from(gpu.compute_capability_minor),
             DeviceAttr::MaxThreadsPerBlock => DeviceAttr::MAX_THREADS_PER_BLOCK,
@@ -19253,6 +19254,7 @@ impl Sim {
     /// `VulkanCigSupported` is always 0.
     /// MaxSharedMemoryPerMultiprocessor matches optin.
     /// `GpuPciDeviceId` is always 0.
+    /// `GpuPciSubsystemId` is always 0.
     /// `pciSubSystemID` is always 0.
     /// `luid` and `luidDeviceNodeMask` are always 0.
     /// Occupancy SM counts, clock rates, and warp size are not.

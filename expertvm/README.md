@@ -519,6 +519,8 @@ and Layers; no Engine flag).
 `gpu-sim` `pciSubSystemID` is always 0 (synthetic PCI; no Engine flag).
 `gpu-sim` `GpuPciDeviceId` is always 0 (`cudaDevAttrGpuPciDeviceId`; no
 NVIDIA PCI vendor/device id; no Engine flag).
+`gpu-sim` `GpuPciSubsystemId` is always 0 (`cudaDevAttrGpuPciSubsystemId`;
+same 0 as `pciSubSystemID`; no Engine flag).
 `gpu-sim` `luid` and `luidDeviceNodeMask` are always 0 (`cuDeviceGetLuid`;
 no Engine flag).
 Default `--expert-sim` keeps
