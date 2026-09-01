@@ -3858,7 +3858,7 @@ impl Sim {
     /// definition, its instantiate exec, and a clone each have their own id.
     /// Unknown graphs are Invalid `"unknown graph"`.
     pub fn graph_get_id(&self, graph: GraphId) -> Result<u32, SimError> {
-        self.live_graph(graph)?;
+        drop(self.live_graph(graph)?);
         Ok(graph.0)
     }
 
