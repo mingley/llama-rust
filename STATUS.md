@@ -5,6 +5,15 @@ Visible five-turn extract: [docs/chatgpt-share-6a920fe1.md](docs/chatgpt-share-6
 Complete share-API extract: [docs/chatgpt-share-6a920fe1/](docs/chatgpt-share-6a920fe1/).
 Work lands on `main`. No PRs.
 
+## Shipped 2026-09-01 — CUDA `cudaVDPAUSetVDPAUDevice`
+
+`gpu-sim` `Sim::vdpau_set_vdpau_device` is `cudaVDPAUSetVDPAUDevice`.
+Always Invalid `"vdpau set"` because VDPAU interop is not
+modeled. Query; legal during capture. Distinct from
+`vdpau_get_device` (why is not the bare `"vdpau"` string) and from
+`gl_set_gl_device`. This VM does not invent `cuD3D11CtxCreateOnDevice` or Engine `--vdpau-set-device`.
+`gpu-profile capture` is still refused. Dual score still has no `$/M tokens`.
+
 ## Shipped 2026-09-01 — CUDA `cuD3D10GetDevice`
 
 `gpu-sim` `Sim::d3d10_get_device` is `cuD3D10GetDevice`.

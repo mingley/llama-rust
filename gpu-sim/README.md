@@ -222,6 +222,7 @@ warp scheduler, L1, …   ← do not model
 | `d3d12_ctx_create` is Invalid (Direct3D 12 interop is not modeled) | `cuD3D12CtxCreate` |
 | `graphics_d3d12_register_resource` is Invalid (Direct3D 12 interop is not modeled) | `cuGraphicsD3D12RegisterResource` |
 | `vdpau_get_device` is Invalid (VDPAU interop is not modeled) | `cuVDPAUGetDevice` / `cudaVDPAUGetDevice` |
+| `vdpau_set_vdpau_device` is Invalid (VDPAU interop is not modeled) | `cudaVDPAUSetVDPAUDevice` |
 | `vdpau_ctx_create` is Invalid (VDPAU interop is not modeled) | `cuVDPAUCtxCreate` |
 | `graphics_vdpau_register_output_surface` is Invalid (VDPAU interop is not modeled) | `cuGraphicsVDPAURegisterOutputSurface` |
 | `graphics_vdpau_register_video_surface` is Invalid (VDPAU interop is not modeled) | `cuGraphicsVDPAURegisterVideoSurface` |
@@ -1262,6 +1263,8 @@ Distinct from `d3d12_get_devices`, `d3d11_ctx_create`, and
 `vdpau_get_device` is `cuVDPAUGetDevice` (always Invalid `"vdpau"`).
 Distinct from `gl_get_devices` and `d3d12_get_devices`. Query; legal
 during capture. No Engine `--vdpau-device`.
+`vdpau_set_vdpau_device` is `cudaVDPAUSetVDPAUDevice` (always Invalid
+`"vdpau set"`). Distinct from `vdpau_get_device`. Query; legal during capture. No Engine `--vdpau-set-device`.
 `vdpau_ctx_create` is `cuVDPAUCtxCreate` (always Invalid `"vdpau context"`).
 Distinct from `vdpau_get_device` and `gl_ctx_create`. Query; legal
 during capture. No Engine `--vdpau-ctx`.

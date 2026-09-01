@@ -18540,13 +18540,25 @@ impl Sim {
     /// modeled.
     ///
     /// Always Invalid `"vdpau"`. Distinct from [`Self::gl_get_devices`], from
-    /// [`Self::d3d12_get_devices`], from [`Self::vdpau_ctx_create`], and from
-    /// [`Self::graphics_vdpau_register_output_surface`].
+    /// [`Self::d3d12_get_devices`], from [`Self::vdpau_ctx_create`], from
+    /// [`Self::graphics_vdpau_register_output_surface`], and from
+    /// [`Self::vdpau_set_vdpau_device`].
     /// Unknown devices are Invalid `"device not in profile"`. Query; legal
     /// during capture.
     pub fn vdpau_get_device(&self, device: DeviceId) -> Result<(), SimError> {
         let _gpu = self.profile.gpu(device)?;
         Err(SimError::Invalid { why: "vdpau" })
+    }
+
+    /// `cudaVDPAUSetVDPAUDevice`. VDPAU interop is not modeled.
+    ///
+    /// Always Invalid `"vdpau set"`. Distinct from [`Self::vdpau_get_device`]
+    /// (why is not the bare `"vdpau"` string), from [`Self::vdpau_ctx_create`],
+    /// and from [`Self::gl_set_gl_device`]. Unknown devices are Invalid
+    /// `"device not in profile"`. Query; legal during capture.
+    pub fn vdpau_set_vdpau_device(&self, device: DeviceId) -> Result<(), SimError> {
+        let _gpu = self.profile.gpu(device)?;
+        Err(SimError::Invalid { why: "vdpau set" })
     }
 
     /// `cuVDPAUCtxCreate`. VDPAU interop is not modeled.

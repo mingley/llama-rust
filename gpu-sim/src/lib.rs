@@ -733,6 +733,9 @@
 //! Query; legal during capture. No Engine `--d3d12-register`.
 //! [`vdpau_get_device`](Sim::vdpau_get_device) is `cuVDPAUGetDevice`
 //! (always Invalid `"vdpau"`). Query; legal during capture. No Engine `--vdpau-device`.
+//! [`vdpau_set_vdpau_device`](Sim::vdpau_set_vdpau_device) is
+//! `cudaVDPAUSetVDPAUDevice` (always Invalid `"vdpau set"`). Query;
+//! legal during capture. No Engine `--vdpau-set-device`.
 //! [`vdpau_ctx_create`](Sim::vdpau_ctx_create) is `cuVDPAUCtxCreate` (always
 //! Invalid `"vdpau context"`). Query; legal during capture. No Engine `--vdpau-ctx`.
 //! [`graphics_vdpau_register_output_surface`](Sim::graphics_vdpau_register_output_surface)
@@ -23986,6 +23989,57 @@ mod tests {
         match sim.d3d12_get_devices(d) {
             Err(SimError::Invalid { why }) => {
                 assert!(why.contains("d3d12"), "{why}");
+            }
+            other => panic!("{other:?}"),
+        }
+        match sim.vdpau_set_vdpau_device(d) {
+            Err(SimError::Invalid { why }) => {
+                assert!(why.contains("vdpau set"), "{why}");
+                assert!(!why.contains("vdpau context"), "{why}");
+                assert!(!why.contains("gl device"), "{why}");
+            }
+            other => panic!("{other:?}"),
+        }
+    }
+
+    #[test]
+    fn vdpau_set_vdpau_device_is_unsupported() {
+        let mut sim = Sim::new(h100());
+        let d = DeviceId(0);
+        match sim.vdpau_set_vdpau_device(d) {
+            Err(SimError::Invalid { why }) => {
+                assert!(why.contains("vdpau set"), "{why}");
+                assert!(!why.contains("vdpau context"), "{why}");
+                assert!(!why.contains("vdpau output"), "{why}");
+                assert!(!why.contains("gl device"), "{why}");
+            }
+            other => panic!("{other:?}"),
+        }
+        sim.begin_capture(d, StreamId(0)).unwrap();
+        match sim.vdpau_set_vdpau_device(d) {
+            Err(SimError::Invalid { why }) => {
+                assert!(why.contains("vdpau set"), "{why}");
+            }
+            other => panic!("{other:?}"),
+        }
+        let _g = sim.end_capture().unwrap();
+        match sim.vdpau_set_vdpau_device(DeviceId(99)) {
+            Err(SimError::Invalid { why }) => {
+                assert!(why.contains("device not in profile"), "{why}");
+            }
+            other => panic!("{other:?}"),
+        }
+        match sim.vdpau_get_device(d) {
+            Err(SimError::Invalid { why }) => {
+                assert!(why.contains("vdpau"), "{why}");
+                assert!(!why.contains("vdpau set"), "{why}");
+            }
+            other => panic!("{other:?}"),
+        }
+        match sim.gl_set_gl_device(d) {
+            Err(SimError::Invalid { why }) => {
+                assert!(why.contains("gl device"), "{why}");
+                assert!(!why.contains("vdpau set"), "{why}");
             }
             other => panic!("{other:?}"),
         }
