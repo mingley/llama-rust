@@ -4878,7 +4878,14 @@ model, do not celebrate the sim.
     `gpu-profile capture` is still refused. Dual score still has no
     `$/M tokens`.
 
-448. [ ] Next numbered PLAN item after 447 is the next `gpu-sim` / Engine /
+448. [x] `gpu-sim` `event_get_id` is `cuEventGetId` / `cudaEventGetId`.
+    Unique per `EventId` handle (`EventId + 1`). Distinct from the
+    caller-chosen handle, `stream_get_id`, and `event_get_flags`. Query;
+    legal during capture. Recreate after destroy returns the same id.
+    `gpu-profile capture` is still refused. Dual score still has no
+    `$/M tokens`.
+
+449. [ ] Next numbered PLAN item after 448 is the next `gpu-sim` / Engine /
     serve / expertvm mechanical API that is still missing, or the next official
     decode family. Prefer remaining CUDA-shaped twins over more
     OpenAI HTTP veneer. Do not invent F32 `output.scale`. Do not invent a
@@ -4950,6 +4957,7 @@ model, do not celebrate the sim.
     Do not invent a second `cudaGraphCreate` flags word. Do not invent
     non-zero `cudaGraphCreate` flags. Do not invent Engine
     `--graph-create-flags`.
+    Do not invent a second `cuEventGetId` / `cudaEventGetId`.
     Do not invent `cuDeviceGetLuid`
     (Windows).
     Do not invent gemma4 `attn_q.scale` / `attn_output.scale` / `attn_k.scale` /

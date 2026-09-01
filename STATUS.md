@@ -5,6 +5,14 @@ Visible five-turn extract: [docs/chatgpt-share-6a920fe1.md](docs/chatgpt-share-6
 Complete share-API extract: [docs/chatgpt-share-6a920fe1/](docs/chatgpt-share-6a920fe1/).
 Work lands on `main`. No PRs.
 
+## Shipped 2026-09-01 — CUDA `cuEventGetId`
+
+`gpu-sim` `event_get_id` is `cuEventGetId` / `cudaEventGetId`. Unique per
+`EventId` handle (`EventId + 1`). Distinct from the caller-chosen
+handle, `stream_get_id`, and `event_get_flags`. Query; legal during
+capture. Recreate after destroy returns the same id. `gpu-profile
+capture` is still refused. Dual score still has no `$/M tokens`.
+
 ## Shipped 2026-09-01 — CUDA `cudaGraphCreate` flags
 
 `gpu-sim` `create_graph_with_flags` is `cudaGraphCreate` with the CUDA

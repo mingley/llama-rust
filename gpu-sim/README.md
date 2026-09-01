@@ -129,6 +129,7 @@ warp scheduler, L1, …   ← do not model
 | `cudaEventDisableTiming` forbids elapsed | wait / query still work |
 | `query_event` is non-blocking | `cudaEventQuery` |
 | `event_get_flags` is the create flags word | `cudaEventGetFlags` |
+| `event_get_id` is unique per event handle (`EventId + 1`) | `cuEventGetId` |
 | `query_stream` is non-blocking | `cudaStreamQuery` |
 | `mem_info` is `(free, total)` HBM | `cudaMemGetInfo` |
 | `pointer_get_attributes` classifies Unregistered / Host / Device / Managed | `cudaPointerGetAttributes` |
@@ -640,6 +641,8 @@ must be complete and timing-enabled; `create_event_disable_timing` is
 invalid; end-before-start is invalid).
 `event_get_flags` is `cudaEventGetFlags` (the create flags word; query;
 legal during capture).
+`event_get_id` is `cuEventGetId` / `cudaEventGetId` (unique per event
+handle; not the caller-chosen `EventId`; query; legal during capture).
 `query_event` is `cudaEventQuery` (unknown id is semantic; incomplete is
 `Ok(false)`).
 `destroy_event` is `cudaEventDestroy` (waits a recorded incomplete event;

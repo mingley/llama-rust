@@ -339,6 +339,8 @@
 //! ([`EventCreateFlags::DISABLE_TIMING`] / [`EventCreateFlags::INTERPROCESS`] /
 //! [`EventCreateFlags::BLOCKING_SYNC`]; Interprocess requires DisableTiming).
 //! [`Sim::event_get_flags`] is `cudaEventGetFlags` (query; legal during capture).
+//! [`Sim::event_get_id`] is `cuEventGetId` / `cudaEventGetId` (query; legal
+//! during capture; distinct from the caller-chosen [`EventId`] handle).
 //! [`Sim::create_event_blocking_sync`] is the BlockingSync helper
 //! ([`synchronize_event`](Sim::synchronize_event) pays
 //! [`GpuProfile::host_sync_blocking_ns`]; `expertvm store --event-blocking-sync`
@@ -20247,6 +20249,42 @@ mod tests {
         assert_eq!(
             sim.event_get_flags(imp).unwrap(),
             EventCreateFlags::DISABLE_TIMING | EventCreateFlags::INTERPROCESS
+        );
+    }
+
+    #[test]
+    fn event_get_id_is_unique_per_handle() {
+        let mut sim = Sim::new(h100());
+        let d = DeviceId(0);
+        sim.create_event(EventId(1)).unwrap();
+        sim.create_event(EventId(2)).unwrap();
+        let id1 = sim.event_get_id(EventId(1)).unwrap();
+        let id2 = sim.event_get_id(EventId(2)).unwrap();
+        assert_eq!(id1, 2);
+        assert_eq!(id2, 3);
+        assert_ne!(id1, u64::from(EventId(1).0));
+        assert_ne!(id1, id2);
+        assert_ne!(id1, sim.stream_get_id(d, StreamId(0)).unwrap());
+        sim.begin_capture(d, StreamId(0)).unwrap();
+        assert_eq!(sim.event_get_id(EventId(1)).unwrap(), id1);
+        let _g = sim.end_capture().unwrap();
+        match sim.event_get_id(EventId(99)) {
+            Err(SimError::UnknownEvent { event }) => assert_eq!(event, 99),
+            other => panic!("{other:?}"),
+        }
+        sim.destroy_event(EventId(1)).unwrap();
+        match sim.event_get_id(EventId(1)) {
+            Err(SimError::UnknownEvent { event }) => assert_eq!(event, 1),
+            other => panic!("{other:?}"),
+        }
+        sim.create_event(EventId(1)).unwrap();
+        assert_eq!(sim.event_get_id(EventId(1)).unwrap(), id1);
+        sim.create_event_interprocess(EventId(4)).unwrap();
+        let h = sim.ipc_get_event(EventId(4)).unwrap();
+        let imp = sim.ipc_open_event(h).unwrap();
+        assert_ne!(
+            sim.event_get_id(imp).unwrap(),
+            sim.event_get_id(EventId(4)).unwrap()
         );
     }
 

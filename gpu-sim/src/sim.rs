@@ -2503,6 +2503,20 @@ impl Sim {
         Ok(flags)
     }
 
+    /// `cuEventGetId` / `cudaEventGetId`. Query; legal during capture.
+    ///
+    /// Unique per [`EventId`] for this VM. [`EventId`] stays caller-chosen;
+    /// this is not that handle and not [`Self::stream_get_id`]. Unknown
+    /// events are [`SimError::UnknownEvent`]. Recreating the same [`EventId`]
+    /// after [`Self::destroy_event`] returns the same id (no generation
+    /// counter). Distinct from [`Self::event_get_flags`].
+    pub fn event_get_id(&self, event: EventId) -> Result<u64, SimError> {
+        if !self.events.contains_key(&event) {
+            return Err(SimError::UnknownEvent { event: event.0 });
+        }
+        Ok(u64::from(event.0).saturating_add(1))
+    }
+
     fn insert_event(
         &mut self,
         event: EventId,
