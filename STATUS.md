@@ -5,6 +5,14 @@ Visible five-turn extract: [docs/chatgpt-share-6a920fe1.md](docs/chatgpt-share-6
 Complete share-API extract: [docs/chatgpt-share-6a920fe1/](docs/chatgpt-share-6a920fe1/).
 Work lands on `main`. No PRs.
 
+## Shipped 2026-09-01 — CUDA `cuTensorMapEncodeTiled`
+
+`gpu-sim` `Sim::tensor_map_encode_tiled` is `cuTensorMapEncodeTiled`.
+Always Invalid `"tensor map"` because `TensorMapAccessSupported` is 0.
+Query; legal during capture. Distinct from `mem_batch_decompress_async`.
+This VM does not invent `cuTensorMapEncodeIm2col` or Engine `--tensor-map`.
+`gpu-profile capture` is still refused. Dual score still has no `$/M tokens`.
+
 ## Shipped 2026-09-01 — CUDA `cuMemBatchDecompressAsync`
 
 `gpu-sim` `Sim::mem_batch_decompress_async` is `cuMemBatchDecompressAsync`.

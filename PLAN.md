@@ -6396,7 +6396,15 @@ model, do not celebrate the sim.
     or `cudaChooseDevice`. `gpu-profile capture` is still refused. Dual
     score still has no `$/M tokens`.
 
-611. [ ] Next numbered PLAN item after 610 is the next `gpu-sim` / Engine /
+611. [x] `gpu-sim` `Sim::tensor_map_encode_tiled` is
+    `cuTensorMapEncodeTiled`. Always Invalid `"tensor map"` because
+    `TensorMapAccessSupported` is 0. Query; legal during capture.
+    Distinct from `mem_batch_decompress_async`. This VM does not invent
+    `cuTensorMapEncodeIm2col`, Engine `--tensor-map`, or
+    `cudaChooseDevice`. `gpu-profile capture` is still refused. Dual
+    score still has no `$/M tokens`.
+
+612. [ ] Next numbered PLAN item after 611 is the next `gpu-sim` / Engine /
     serve / expertvm mechanical API that is still missing, or the next official
     decode family. Prefer remaining CUDA-shaped twins over more
     OpenAI HTTP veneer. Do not invent F32 `output.scale`. Do not invent a
@@ -6664,6 +6672,10 @@ model, do not celebrate the sim.
     Do not invent a second `cuMemBatchDecompressAsync` /
     `mem_batch_decompress_async`. Do not invent Engine `--mem-decompress`.
     Do not invent decompress succeeding.
+    Do not invent a second `cuTensorMapEncodeTiled` /
+    `tensor_map_encode_tiled`. Do not invent Engine `--tensor-map`.
+    Do not invent `cuTensorMapEncodeIm2col` this slice. Do not reverse
+    `"tensor map"`.
     Do not invent a second `cudaStreamAddCallback`.
     Do not invent Engine `--stream-callback` (same wall as second live
     `cudaLaunchHostFunc` after miss DMA).
@@ -7044,6 +7056,9 @@ model, do not celebrate the sim.
     Do not invent a second `mem_batch_decompress_async` API. Do not invent
     Engine `--batch-decompress`. Do not invent a second
     `MemDecompressAlgorithmMask`. Do not reverse `"hw decompress"`.
+    Do not invent a second `tensor_map_encode_tiled` API. Do not invent
+    Engine `--tma-encode`. Do not invent a `CUtensorMap` object this
+    slice. Do not reverse TensorMapAccessSupported staying 0.
     Do not invent a second DeviceLaunch in-flight destroy-complete check or Engine
     `--device-launch-destroy`. Do not abort an in-flight DeviceLaunch when
     `destroy_graph` succeeds. Do not delay destroy of an idle exec. Do not invent
@@ -7630,6 +7645,9 @@ model, do not celebrate the sim.
     Do not invent a second `mem_batch_decompress_async` method. Do not
     invent Engine `--cu-mem-decompress`. Do not reverse wrapping
     cuMemBatchDecompressAsync Invalid.
+    Do not invent a second `tensor_map_encode_tiled` method. Do not invent
+    Engine `--cu-tensor-map`. Do not reverse wrapping cuTensorMapEncodeTiled
+    Invalid.
     Do not
     spend the next item on an OpenAI-compatible HTTP veneer.
 

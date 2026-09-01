@@ -596,6 +596,9 @@
 //! [`WaitValueCmp::Nor`]).
 //! [`DeviceAttr::TensorMapAccessSupported`] is always 0 (`CUtensorMap` / TMA
 //! is not modeled).
+//! [`tensor_map_encode_tiled`](Sim::tensor_map_encode_tiled) is
+//! `cuTensorMapEncodeTiled` (always Invalid `"tensor map"`). Query; legal
+//! during capture. No Engine `--tensor-map`.
 //! [`DeviceAttr::UnifiedFunctionPointers`] is always 0 (device-side function
 //! pointers are not modeled).
 //! [`DeviceAttr::TimelineSemaphoreInteropSupported`] is always 0 (NVSci /
@@ -20166,6 +20169,37 @@ mod tests {
             0
         );
         let _g = sim.end_capture().unwrap();
+    }
+
+    #[test]
+    fn tensor_map_encode_tiled_is_unsupported() {
+        let mut sim = Sim::new(h100());
+        let d = DeviceId(0);
+        match sim.tensor_map_encode_tiled(d) {
+            Err(SimError::Invalid { why }) => {
+                assert!(why.contains("tensor map"), "{why}");
+            }
+            other => panic!("{other:?}"),
+        }
+        sim.begin_capture(d, StreamId(0)).unwrap();
+        match sim.tensor_map_encode_tiled(d) {
+            Err(SimError::Invalid { why }) => {
+                assert!(why.contains("tensor map"), "{why}");
+            }
+            other => panic!("{other:?}"),
+        }
+        let _g = sim.end_capture().unwrap();
+        match sim.tensor_map_encode_tiled(DeviceId(99)) {
+            Err(SimError::Invalid { why }) => {
+                assert!(why.contains("device not in profile"), "{why}");
+            }
+            other => panic!("{other:?}"),
+        }
+        assert_eq!(
+            sim.device_get_attribute(d, DeviceAttr::TensorMapAccessSupported)
+                .unwrap(),
+            0
+        );
     }
 
     #[test]

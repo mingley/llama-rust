@@ -518,6 +518,8 @@ seeded primary context; no Engine flag).
 unsupported; no Engine flag).
 `gpu-sim` `mem_batch_decompress_async` is `cuMemBatchDecompressAsync`
 (Invalid; hardware decompress is not modeled; no Engine flag).
+`gpu-sim` `tensor_map_encode_tiled` is `cuTensorMapEncodeTiled` (Invalid;
+TMA is not modeled; no Engine flag).
 `gpu-sim` texture 2D/3D dim caps are always 0 (`cudaDevAttrMaxTexture2DWidth`
 and Height, `MaxTexture3DWidth` / Height / Depth; no Engine flag).
 `gpu-sim` alternate texture 3D dim caps are always 0

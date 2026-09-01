@@ -194,6 +194,7 @@ warp scheduler, L1, …   ← do not model
 | `ctx_reset_persisting_l2_cache` wraps `reset_persisting_l2_cache` (limit stays) | `cuCtxResetPersistingL2Cache` |
 | `ctx_get_exec_affinity` is Invalid (SM_COUNT support is 0) | `cuCtxGetExecAffinity` |
 | `mem_batch_decompress_async` is Invalid (algorithm mask is 0) | `cuMemBatchDecompressAsync` |
+| `tensor_map_encode_tiled` is Invalid (TMA is not modeled) | `cuTensorMapEncodeTiled` |
 | `func_get_name` is empty until a compiled kernel exists | `cudaFuncGetName` / `cuFuncGetName` |
 | `func_get_param_info` is Invalid until a compiled kernel exists | `cuFuncGetParamInfo` |
 | `func_is_loaded` is false until a compiled kernel exists | `cuFuncIsLoaded` |
@@ -1003,7 +1004,8 @@ always 1 (`wait_value64` / `write_value64`). `CanUseStreamMemOps` is
 always 1 (`wait_value32` / `write_value32`; CUDA deprecated this in
 favor of `CanUse64BitStreamMemOps`). `CanUseStreamWaitValueNor`
 is always 1 (`WaitValueCmp::Nor`). `TensorMapAccessSupported` is always
-0 (`CUtensorMap` / TMA is not modeled). `UnifiedFunctionPointers` is
+0 (`CUtensorMap` / TMA is not modeled). `tensor_map_encode_tiled` is
+`cuTensorMapEncodeTiled` (always Invalid `"tensor map"`). `UnifiedFunctionPointers` is
 always 0 (device-side function pointers are not modeled).
 `TimelineSemaphoreInteropSupported` is always 0 (NVSci / timeline
 semaphore interop is not modeled). `device_get_nvscisync_attributes` is

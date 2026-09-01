@@ -17593,6 +17593,17 @@ impl Sim {
         })
     }
 
+    /// `cuTensorMapEncodeTiled`. TMA is not modeled.
+    ///
+    /// Always Invalid `"tensor map"` ([`DeviceAttr::TensorMapAccessSupported`]
+    /// is 0). Distinct from [`Self::mem_batch_decompress_async`]. Unknown
+    /// devices are Invalid `"device not in profile"`. This VM does not invent
+    /// `cuTensorMapEncodeIm2col` this slice.
+    pub fn tensor_map_encode_tiled(&self, device: DeviceId) -> Result<(), SimError> {
+        let _gpu = self.profile.gpu(device)?;
+        Err(SimError::Invalid { why: "tensor map" })
+    }
+
     /// `cudaMemcpy3DWithAttributesAsync`.
     ///
     /// [`MemcpySrcAccessOrder::Stream`] is [`Self::memcpy_3d_async`].
