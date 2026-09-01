@@ -952,6 +952,10 @@
 //! [`driver_get_version`](Sim::driver_get_version)). Distinct from
 //! [`device_compute_capability`](Sim::device_compute_capability). Query;
 //! legal during capture. No Engine `--ctx-api-version`.
+//! [`ctx_get_flags`](Sim::ctx_get_flags) is `cuCtxGetFlags` for that same
+//! primary context (same flags as [`get_device_flags`](Sim::get_device_flags)).
+//! Distinct from [`device_primary_ctx_get_state`](Sim::device_primary_ctx_get_state)
+//! (also reports active). Query; legal during capture. No Engine `--ctx-flags`.
 //! `expertvm sim --device-sync-memops` sets [`DeviceFlags::SYNC_MEMOPS`].
 //! `expertvm sim --device-sync-policy blocking` sets
 //! [`DeviceFlags::SCHEDULE_BLOCKING_SYNC`].
@@ -20664,6 +20668,46 @@ mod tests {
         assert_eq!(eight.ctx_get_api_version(DeviceId(1)).unwrap(), 13_000);
         sim.reset_device(d).unwrap();
         assert_eq!(sim.ctx_get_api_version(d).unwrap(), 13_000);
+    }
+
+    #[test]
+    fn ctx_get_flags_matches_device_flags() {
+        let mut sim = Sim::new(h100());
+        let d = DeviceId(0);
+        assert_eq!(
+            sim.ctx_get_flags(d).unwrap(),
+            sim.get_device_flags(d).unwrap()
+        );
+        assert_eq!(sim.ctx_get_flags(d).unwrap(), DeviceFlags::SCHEDULE_AUTO);
+        sim.set_device_flags(d, DeviceFlags::MAP_HOST).unwrap();
+        assert_eq!(sim.ctx_get_flags(d).unwrap(), DeviceFlags::MAP_HOST);
+        assert_eq!(
+            sim.ctx_get_flags(d).unwrap(),
+            sim.device_primary_ctx_get_state(d).unwrap().0
+        );
+        sim.begin_capture(d, StreamId(0)).unwrap();
+        assert_eq!(sim.ctx_get_flags(d).unwrap(), DeviceFlags::MAP_HOST);
+        let _g = sim.end_capture().unwrap();
+        match sim.ctx_get_flags(DeviceId(99)) {
+            Err(SimError::Invalid { why }) => {
+                assert!(why.contains("device not in profile"), "{why}");
+            }
+            other => panic!("{other:?}"),
+        }
+        let mut eight = Sim::new(HardwareProfile::example_8xh100_nvlink());
+        eight
+            .set_device_flags(DeviceId(1), DeviceFlags::SCHEDULE_SPIN)
+            .unwrap();
+        assert_eq!(
+            eight.ctx_get_flags(DeviceId(0)).unwrap(),
+            DeviceFlags::SCHEDULE_AUTO
+        );
+        assert_eq!(
+            eight.ctx_get_flags(DeviceId(1)).unwrap(),
+            DeviceFlags::SCHEDULE_SPIN
+        );
+        sim.reset_device(d).unwrap();
+        assert_eq!(sim.ctx_get_flags(d).unwrap(), DeviceFlags::SCHEDULE_AUTO);
     }
 
     #[test]

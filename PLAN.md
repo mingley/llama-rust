@@ -6263,7 +6263,16 @@ model, do not celebrate the sim.
     `gpu-profile capture` is still refused. Dual score still has no
     `$/M tokens`.
 
-594. [ ] Next numbered PLAN item after 593 is the next `gpu-sim` / Engine /
+594. [x] `gpu-sim` `Sim::ctx_get_flags` is `cuCtxGetFlags` for the
+    seeded primary context of an explicit device. Same flags as
+    `get_device_flags`. Query; legal during capture. Distinct from
+    `get_device_flags` (runtime) and from `device_primary_ctx_get_state`
+    (also reports active). This VM does not invent `cuCtxSetFlags`,
+    Engine `--ctx-flags`, or `cudaChooseDevice`.
+    `gpu-profile capture` is still refused. Dual score still has no
+    `$/M tokens`.
+
+595. [ ] Next numbered PLAN item after 594 is the next `gpu-sim` / Engine /
     serve / expertvm mechanical API that is still missing, or the next official
     decode family. Prefer remaining CUDA-shaped twins over more
     OpenAI HTTP veneer. Do not invent F32 `output.scale`. Do not invent a
@@ -6475,6 +6484,9 @@ model, do not celebrate the sim.
     `ctx_get_api_version`. Do not invent Engine `--ctx-api-version`.
     Do not invent occupancy SM counts from API version. Do not
     reverse CUDA 13.0.
+    Do not invent a second `cuCtxGetFlags` / `ctx_get_flags`. Do not
+    invent Engine `--ctx-flags`. Do not invent `cuCtxSetFlags` this
+    slice. Do not reverse wrapping `get_device_flags`.
     Do not invent a second `cudaStreamAddCallback`.
     Do not invent Engine `--stream-callback` (same wall as second live
     `cudaLaunchHostFunc` after miss DMA).
@@ -6804,6 +6816,9 @@ model, do not celebrate the sim.
     Do not invent a second `ctx_get_api_version` API. Do not invent
     Engine `--api-version`. Do not invent a second `driver_get_version`.
     Do not reverse CUDA 13.0.
+    Do not invent a second `ctx_get_flags` API. Do not invent
+    Engine `--context-flags`. Do not invent a second `get_device_flags`.
+    Do not reverse wrapping device flags.
     Do not invent a second DeviceLaunch in-flight destroy-complete check or Engine
     `--device-launch-destroy`. Do not abort an in-flight DeviceLaunch when
     `destroy_graph` succeeds. Do not delay destroy of an idle exec. Do not invent
@@ -7348,6 +7363,8 @@ model, do not celebrate the sim.
     invent Engine `--cc-pair`. Do not reverse Hopper major 9.
     Do not invent a second `ctx_get_api_version` method. Do not
     invent Engine `--ctx-version`. Do not reverse CUDA 13.0.
+    Do not invent a second `ctx_get_flags` method. Do not invent
+    Engine `--cu-ctx-flags`. Do not reverse wrapping GetDeviceFlags.
     Do not
     spend the next item on an OpenAI-compatible HTTP veneer.
 

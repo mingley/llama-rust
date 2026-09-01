@@ -18516,6 +18516,20 @@ impl Sim {
         Ok(13_000)
     }
 
+    /// `cuCtxGetFlags` for the seeded primary context of `device`.
+    ///
+    /// Query; legal during capture. There is no TLS current device and no
+    /// `CUcontext` object. Flags match [`Self::get_device_flags`]
+    /// (`cudaGetDeviceFlags`) and the flags half of
+    /// [`Self::device_primary_ctx_get_state`]. Distinct from
+    /// [`Self::get_device_flags`] (runtime) and from
+    /// [`Self::ctx_get_api_version`]. Unknown devices are Invalid
+    /// `"device not in profile"`. This VM does not invent `cuCtxSetFlags`
+    /// this slice (`set_device_flags` stays the runtime setter).
+    pub fn ctx_get_flags(&self, device: DeviceId) -> Result<u32, SimError> {
+        self.get_device_flags(device)
+    }
+
     /// `cudaInitDevice(device, 0, 0)`. Ensures the primary context (already
     /// seeded at construct). Does not make a thread-current device and does
     /// not change [`Self::get_device_flags`]. Host-synchronous 1 ns. Capture

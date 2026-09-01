@@ -471,6 +471,8 @@ ctxs keep running). `stream_get_dev_resource` is `cuStreamGetDevResource`.
 pair; no Engine flag).
 `gpu-sim` `ctx_get_api_version` is `cuCtxGetApiVersion` (CUDA 13.0 for the
 seeded primary context; no Engine flag).
+`gpu-sim` `ctx_get_flags` is `cuCtxGetFlags` (same flags as
+`get_device_flags`; no Engine flag).
 `gpu-sim` launch-geometry caps are `cudaDevAttrMaxThreadsPerBlock` 1024
 and H100 block/grid dims (no Engine flag; not occupancy SM counts).
 `gpu-sim` `MaxRegistersPerBlock` is `cudaDevAttrMaxRegistersPerBlock` 65536
