@@ -800,6 +800,10 @@
 //! allocs and events stay (no owning device). Graphs stay. [`ctx_get_id`](Sim::ctx_get_id)
 //! stays. Capture cannot include it. No `cuDevicePrimaryCtxReset`. No Engine
 //! flag for device reset.
+//! [`SimError::error_name`](SimError::error_name) / [`error_string`](SimError::error_string)
+//! are `cudaGetErrorName` / `cudaGetErrorString`. Query on the error value
+//! already returned (no thread-local last error). `Display` stays
+//! the detailed reason. No Engine flag for error name.
 //! [`device_primary_ctx_get_state`](Sim::device_primary_ctx_get_state) is
 //! `cuDevicePrimaryCtxGetState` (flags match [`get_device_flags`](Sim::get_device_flags);
 //! active is always true). No `cuDevicePrimaryCtxRetain`.
@@ -34057,6 +34061,61 @@ mod tests {
             s,
         ));
         sim.synchronize().unwrap();
+    }
+
+    #[test]
+    fn error_name_is_cuda_get_error_name() {
+        let oom = SimError::Oom {
+            device: DeviceId(0),
+            need: 1,
+            free: 0,
+        };
+        assert_eq!(oom.error_name(), "cudaErrorMemoryAllocation");
+        assert_eq!(oom.error_string(), "out of memory");
+        let pin = SimError::PinOom { need: 1, free: 0 };
+        assert_eq!(pin.error_name(), "cudaErrorMemoryAllocation");
+        assert_eq!(pin.error_string(), "out of memory");
+        let unk = SimError::UnknownAlloc { alloc: AllocId(1) };
+        assert_eq!(unk.error_name(), "cudaErrorInvalidDevicePointer");
+        assert_eq!(unk.error_string(), "invalid device pointer");
+        let leased = SimError::Leased { alloc: AllocId(1) };
+        assert_eq!(leased.error_name(), "cudaErrorInvalidValue");
+        assert_eq!(leased.error_string(), "invalid argument");
+        let inv = SimError::Invalid {
+            why: "device reset",
+        };
+        assert_eq!(inv.error_name(), "cudaErrorInvalidValue");
+        assert_eq!(inv.error_string(), "invalid argument");
+        assert!(inv.to_string().contains("device reset"));
+        let nr = SimError::NotResident {
+            alloc: AllocId(1),
+            device: DeviceId(0),
+        };
+        assert_eq!(nr.error_name(), "cudaErrorIllegalAddress");
+        let np = SimError::NoPeer {
+            src: DeviceId(0),
+            dst: DeviceId(1),
+        };
+        assert_eq!(np.error_name(), "cudaErrorPeerAccessUnsupported");
+        let pd = SimError::PeerDisabled {
+            src: DeviceId(0),
+            dst: DeviceId(1),
+        };
+        assert_eq!(pd.error_name(), "cudaErrorPeerAccessNotEnabled");
+        let ev = SimError::UnknownEvent { event: 3 };
+        assert_eq!(ev.error_name(), "cudaErrorInvalidResourceHandle");
+        let unav = SimError::Unavailable {
+            device: DeviceId(0),
+        };
+        assert_eq!(unav.error_name(), "cudaErrorDevicesUnavailable");
+        let can = SimError::Cancelled {
+            stream: StreamId(0),
+            n: 1,
+        };
+        assert_eq!(can.error_name(), "cudaErrorLaunchFailure");
+        assert_eq!(can.error_string(), "unspecified launch failure");
+        let xf = SimError::TransferFailed { alloc: AllocId(1) };
+        assert_eq!(xf.error_name(), "cudaErrorLaunchFailure");
     }
 
     #[test]

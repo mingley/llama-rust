@@ -6008,7 +6008,15 @@ model, do not celebrate the sim.
     `CUcontext` object). `gpu-profile capture` is still refused. Dual score
     still has no `$/M tokens`.
 
-564. [ ] Next numbered PLAN item after 563 is the next `gpu-sim` / Engine /
+564. [x] `gpu-sim` `SimError::error_name` / `error_string` are
+    `cudaGetErrorName` / `cudaGetErrorString`. Query on the error already
+    returned (no thread-local last error). `Invalid` names
+    `cudaErrorInvalidValue`; the modeled `why` stays on Display. This VM
+    does not invent Engine `--error-name` or `cudaGetLastError` /
+    `cudaPeekAtLastError`. `gpu-profile capture` is still refused. Dual
+    score still has no `$/M tokens`.
+
+565. [ ] Next numbered PLAN item after 564 is the next `gpu-sim` / Engine /
     serve / expertvm mechanical API that is still missing, or the next official
     decode family. Prefer remaining CUDA-shaped twins over more
     OpenAI HTTP veneer. Do not invent F32 `output.scale`. Do not invent a
@@ -6069,6 +6077,10 @@ model, do not celebrate the sim.
     stability across reset. Do not reverse `destroy_stream` returning
     immediately (reset waits). Do not free host or managed allocs on reset
     (no owning device). Do not destroy events or graphs on reset.
+    Do not invent a second `cudaGetErrorName` / `cudaGetErrorString` /
+    `error_name` / `error_string`. Do not invent Engine `--error-name`.
+    Do not reverse `Display` of `SimError`. Do not put the modeled `why`
+    into `error_string` for `Invalid`.
     Do not invent
     a second
     `cuDeviceGetUuid` / `cudaDeviceGetUuid`. Do not invent a second
@@ -6330,6 +6342,10 @@ model, do not celebrate the sim.
     stability across reset. Do not reverse `destroy_stream` returning
     immediately (reset waits). Do not free host or managed allocs on reset
     (no owning device). Do not destroy events or graphs on reset.
+    Do not invent a second `cudaGetErrorName` / `cudaGetErrorString` /
+    `error_name` / `error_string`. Do not invent Engine `--error-name`.
+    Do not reverse `Display` of `SimError`. Do not put the modeled `why`
+    into `error_string` for `Invalid`.
     Do not invent a second DeviceLaunch in-flight destroy-complete check or Engine
     `--device-launch-destroy`. Do not abort an in-flight DeviceLaunch when
     `destroy_graph` succeeds. Do not delay destroy of an idle exec. Do not invent
@@ -6796,6 +6812,10 @@ model, do not celebrate the sim.
     stability across reset. Do not reverse `destroy_stream` returning
     immediately (reset waits). Do not free host or managed allocs on reset
     (no owning device). Do not destroy events or graphs on reset.
+    Do not invent a second `cudaGetErrorName` / `cudaGetErrorString` /
+    `error_name` / `error_string`. Do not invent Engine `--error-name`.
+    Do not reverse `Display` of `SimError`. Do not put the modeled `why`
+    into `error_string` for `Invalid`.
     Do not
     spend the next item on an OpenAI-compatible HTTP veneer.
 

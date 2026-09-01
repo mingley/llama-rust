@@ -464,6 +464,8 @@ ctxs keep running). `stream_get_dev_resource` is `cuStreamGetDevResource`.
 `green_ctx_get_id` is `cuGreenCtxGetId` (not a second `--green-ctx`).
 `green_ctx_get_device` is `cudaExecutionCtxGetDevice`.
 `gpu-sim` `reset_device` is `cudaDeviceReset` (no Engine flag).
+`SimError::error_name` / `error_string` are `cudaGetErrorName` /
+`cudaGetErrorString` (no Engine flag; no thread-local last error).
 Default `--expert-sim` keeps
 one compute stream, exclusive compute (`compute_slots=1`), a full chip of
 SMs, and a full-device clock sample.

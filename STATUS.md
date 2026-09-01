@@ -5,6 +5,15 @@ Visible five-turn extract: [docs/chatgpt-share-6a920fe1.md](docs/chatgpt-share-6
 Complete share-API extract: [docs/chatgpt-share-6a920fe1/](docs/chatgpt-share-6a920fe1/).
 Work lands on `main`. No PRs.
 
+## Shipped 2026-09-01 — CUDA `cudaGetErrorName` / `cudaGetErrorString`
+
+`gpu-sim` `SimError::error_name` / `error_string` are `cudaGetErrorName` /
+`cudaGetErrorString`. Query on the error already returned (no thread-local
+last error). `Invalid` names `cudaErrorInvalidValue`; the modeled `why`
+stays on Display. This VM does not invent Engine `--error-name` or
+`cudaGetLastError` / `cudaPeekAtLastError`. `gpu-profile capture` is still
+refused. Dual score still has no `$/M tokens`.
+
 ## Shipped 2026-09-01 — CUDA `cudaDeviceReset`
 
 `gpu-sim` `reset_device` is `cudaDeviceReset`. Waits outstanding work on that
