@@ -167,6 +167,7 @@ warp scheduler, L1, …   ← do not model
 | `surf_object_get_resource_desc` is Invalid (no surface-object handles) | `cuSurfObjectGetResourceDesc` / `cudaGetSurfaceObjectResourceDesc` |
 | `tex_object_create` is Invalid (CUDA textures are not modeled) | `cuTexObjectCreate` / `cudaCreateTextureObject` |
 | `tex_object_destroy` is Invalid (no texture-object handles) | `cuTexObjectDestroy` / `cudaDestroyTextureObject` |
+| `tex_object_get_resource_desc` is Invalid (no texture-object handles) | `cuTexObjectGetResourceDesc` / `cudaGetTextureObjectResourceDesc` |
 | `graphics_map_resources` is Invalid (OpenGL, Direct3D, Vulkan, EGL are not modeled) | `cuGraphicsMapResources` |
 | `egl_stream_consumer_connect` is Invalid (EGL streams are not modeled) | `cuEGLStreamConsumerConnect` |
 | `gl_get_devices` is Invalid (OpenGL interop is not modeled) | `cuGLGetDevices` / `cudaGLGetDevices` |
@@ -1022,6 +1023,9 @@ CUDA textures are not modeled). Distinct from `surf_object_create` and
 `tex_object_destroy` is `cuTexObjectDestroy` (always Invalid
 `"unknown tex object"`). Distinct from `tex_object_create`. Query; legal
 during capture. No Engine `--tex-destroy`.
+`tex_object_get_resource_desc` is `cuTexObjectGetResourceDesc` (always
+Invalid `"tex resource desc"`). Distinct from `tex_object_destroy` and
+`surf_object_get_resource_desc`. Query; legal during capture. No Engine `--tex-resource-desc`.
 `va_export_to_shareable_handle` is `cuMemExportToShareableHandle` (always
 Invalid `"not shareable"`; VMM create-time handle types are none). POSIX-FD
 only; flags 0. Distinct from `ipc_get`, `pool_export`, and

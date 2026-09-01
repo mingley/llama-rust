@@ -5,6 +5,15 @@ Visible five-turn extract: [docs/chatgpt-share-6a920fe1.md](docs/chatgpt-share-6
 Complete share-API extract: [docs/chatgpt-share-6a920fe1/](docs/chatgpt-share-6a920fe1/).
 Work lands on `main`. No PRs.
 
+## Shipped 2026-09-01 — CUDA `cuTexObjectGetResourceDesc`
+
+`gpu-sim` `Sim::tex_object_get_resource_desc` is
+`cuTexObjectGetResourceDesc` / `cudaGetTextureObjectResourceDesc`.
+Always Invalid `"tex resource desc"` because CUDA textures are not
+modeled. Query; legal during capture. Distinct from `tex_object_destroy`
+and `surf_object_get_resource_desc`. This VM does not invent `cuTexObjectGetResourceViewDesc` or Engine `--tex-resource-desc`.
+`gpu-profile capture` is still refused. Dual score still has no `$/M tokens`.
+
 ## Shipped 2026-09-01 — CUDA `cuSurfObjectGetResourceDesc`
 
 `gpu-sim` `Sim::surf_object_get_resource_desc` is

@@ -17706,13 +17706,29 @@ impl Sim {
     /// are not modeled.
     ///
     /// Always Invalid `"unknown tex object"` (no texture-object handles).
-    /// Distinct from [`Self::tex_object_create`]. Unknown devices are Invalid
+    /// Distinct from [`Self::tex_object_create`] and from
+    /// [`Self::tex_object_get_resource_desc`]. Unknown devices are Invalid
     /// `"device not in profile"`. Query; legal during capture. This VM does
     /// not invent `cuTexObjectGetTextureDesc` this slice.
     pub fn tex_object_destroy(&self, device: DeviceId) -> Result<(), SimError> {
         let _gpu = self.profile.gpu(device)?;
         Err(SimError::Invalid {
             why: "unknown tex object",
+        })
+    }
+
+    /// `cuTexObjectGetResourceDesc` plus `cudaGetTextureObjectResourceDesc`.
+    /// CUDA textures are not modeled.
+    ///
+    /// Always Invalid `"tex resource desc"` (no texture-object handles).
+    /// Distinct from [`Self::tex_object_destroy`] and from
+    /// [`Self::surf_object_get_resource_desc`]. Unknown devices are Invalid
+    /// `"device not in profile"`. Query; legal during capture. This VM does
+    /// not invent `cuTexObjectGetResourceViewDesc` this slice.
+    pub fn tex_object_get_resource_desc(&self, device: DeviceId) -> Result<(), SimError> {
+        let _gpu = self.profile.gpu(device)?;
+        Err(SimError::Invalid {
+            why: "tex resource desc",
         })
     }
 
