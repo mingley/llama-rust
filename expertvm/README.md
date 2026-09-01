@@ -570,6 +570,9 @@ no external-memory handles; no Engine flag).
 `gpu-sim` `external_memory_get_mapped_buffer` is
 `cuExternalMemoryGetMappedBuffer` (Invalid; no external-memory handles;
 no Engine flag).
+`gpu-sim` `external_memory_get_mapped_mipmapped_array` is
+`cuExternalMemoryGetMappedMipmappedArray` (Invalid; no external-memory
+handles; no Engine flag).
 `gpu-sim` `surf_object_create` is `cuSurfObjectCreate` (Invalid; CUDA
 surfaces are not modeled; no Engine flag).
 `gpu-sim` `surf_object_destroy` is `cuSurfObjectDestroy` (Invalid; no

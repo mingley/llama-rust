@@ -17796,13 +17796,33 @@ impl Sim {
     ///
     /// Always Invalid `"mapped buffer"` (no external-memory handles). Distinct
     /// from [`Self::destroy_external_memory`], from
-    /// [`Self::import_external_memory`], and from
-    /// [`Self::graphics_resource_get_mapped_pointer`]. Unknown devices are
-    /// Invalid `"device not in profile"`. Query; legal during capture.
+    /// [`Self::import_external_memory`], from
+    /// [`Self::graphics_resource_get_mapped_pointer`], and from
+    /// [`Self::external_memory_get_mapped_mipmapped_array`]. Unknown devices
+    /// are Invalid `"device not in profile"`. Query; legal during capture.
     pub fn external_memory_get_mapped_buffer(&self, device: DeviceId) -> Result<(), SimError> {
         let _gpu = self.profile.gpu(device)?;
         Err(SimError::Invalid {
             why: "mapped buffer",
+        })
+    }
+
+    /// `cuExternalMemoryGetMappedMipmappedArray` plus
+    /// `cudaExternalMemoryGetMappedMipmappedArray`. External memory import
+    /// is not modeled.
+    ///
+    /// Always Invalid `"external mipmap"` (no external-memory handles). Distinct
+    /// from [`Self::external_memory_get_mapped_buffer`] and from
+    /// [`Self::graphics_resource_get_mapped_mipmapped_array`] (why is not
+    /// `"mapped mipmap"`). Unknown devices are Invalid
+    /// `"device not in profile"`. Query; legal during capture.
+    pub fn external_memory_get_mapped_mipmapped_array(
+        &self,
+        device: DeviceId,
+    ) -> Result<(), SimError> {
+        let _gpu = self.profile.gpu(device)?;
+        Err(SimError::Invalid {
+            why: "external mipmap",
         })
     }
 

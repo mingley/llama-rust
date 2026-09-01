@@ -5,6 +5,15 @@ Visible five-turn extract: [docs/chatgpt-share-6a920fe1.md](docs/chatgpt-share-6
 Complete share-API extract: [docs/chatgpt-share-6a920fe1/](docs/chatgpt-share-6a920fe1/).
 Work lands on `main`. No PRs.
 
+## Shipped 2026-09-01 — CUDA `cuExternalMemoryGetMappedMipmappedArray`
+
+`gpu-sim` `Sim::external_memory_get_mapped_mipmapped_array` is
+`cuExternalMemoryGetMappedMipmappedArray`. Always Invalid `"external mipmap"`
+because external memory import is not modeled. Query; legal during capture.
+Distinct from `external_memory_get_mapped_buffer` and
+`graphics_resource_get_mapped_mipmapped_array`. This VM does not invent `cuGLUnregisterBufferObject` or Engine `--external-mipmap`.
+`gpu-profile capture` is still refused. Dual score still has no `$/M tokens`.
+
 ## Shipped 2026-09-01 — CUDA `cuExternalMemoryGetMappedBuffer`
 
 `gpu-sim` `Sim::external_memory_get_mapped_buffer` is
