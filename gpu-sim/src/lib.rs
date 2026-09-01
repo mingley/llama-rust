@@ -894,8 +894,9 @@
 //! are the generic `cudaGraphKernelNodeGetAttribute` / `SetAttribute`
 //! ([`KernelNodeAttr`]). Typed getters stay. Definition Set does not retarget
 //! exec. Attr/value mismatch is Invalid `"kernel node attr"`. Get is a query
-//! (capture-legal); Set cannot include capture. Device-launch execs cannot
-//! attach programmatic or launch-completion events.
+//! (capture-legal); Set cannot include capture. A parked in-flight-destroyed
+//! exec is `"unknown graph"` on SetAttribute; a live exec stays. Device-launch
+//! execs cannot attach programmatic or launch-completion events.
 //! [`kernel_pdl`](Sim::kernel_pdl) is `cudaLaunchKernelEx` PDL: a wait kernel
 //! may start after the previous same-stream kernel's trigger
 //! (`GpuProfile::pdl_trigger_permille`) instead of its completion. Overlap
@@ -5510,6 +5511,68 @@ mod tests {
         }
         sim.destroy_graph(src_g).unwrap();
         sim.destroy_graph(dst_g).unwrap();
+        sim.destroy_graph(_end).unwrap();
+    }
+
+    #[test]
+    fn parked_exec_set_attribute_is_unknown() {
+        let mut sim = Sim::new(h100());
+        let d = DeviceId(0);
+        let s = StreamId(0);
+        let a = sim.malloc(d, 4096).unwrap();
+        let g = sim.create_graph(d, s).unwrap();
+        sim.graph_add_kernel(g, KernelKind::other(1 << 40, 4096), &[a], &[a])
+            .unwrap();
+        let exec = sim.instantiate_graph(g).unwrap();
+        sim.graph_kernel_node_set_priority(exec, 0, 1).unwrap();
+        sim.graph_kernel_node_set_cooperative(exec, 0, false)
+            .unwrap();
+        sim.graph_kernel_node_set_attribute(
+            exec,
+            0,
+            KernelNodeAttr::Priority,
+            KernelNodeAttrValue::Priority(0),
+        )
+        .unwrap();
+        let launched = sim.launch_graph(exec, s).unwrap();
+        assert!(launched > 0);
+        sim.destroy_graph(exec).unwrap();
+        match sim.graph_kernel_node_set_priority(exec, 0, 1).unwrap_err() {
+            SimError::Invalid { why } => assert!(why.contains("unknown"), "{why}"),
+            other => panic!("{other:?}"),
+        }
+        match sim
+            .graph_kernel_node_set_cooperative(exec, 0, false)
+            .unwrap_err()
+        {
+            SimError::Invalid { why } => assert!(why.contains("unknown"), "{why}"),
+            other => panic!("{other:?}"),
+        }
+        match sim
+            .graph_kernel_node_set_attribute(
+                exec,
+                0,
+                KernelNodeAttr::Priority,
+                KernelNodeAttrValue::Priority(1),
+            )
+            .unwrap_err()
+        {
+            SimError::Invalid { why } => assert!(why.contains("unknown"), "{why}"),
+            other => panic!("{other:?}"),
+        }
+        sim.graph_kernel_node_set_priority(g, 0, 2).unwrap();
+        sim.begin_capture(d, StreamId(1)).unwrap();
+        match sim.graph_kernel_node_set_priority(exec, 0, 1).unwrap_err() {
+            SimError::Invalid { why } => assert!(why.contains("capture"), "{why}"),
+            other => panic!("{other:?}"),
+        }
+        let _end = sim.end_capture().unwrap();
+        sim.synchronize().unwrap();
+        match sim.graph_kernel_node_set_priority(exec, 0, 1).unwrap_err() {
+            SimError::Invalid { why } => assert!(why.contains("unknown"), "{why}"),
+            other => panic!("{other:?}"),
+        }
+        sim.destroy_graph(g).unwrap();
         sim.destroy_graph(_end).unwrap();
     }
 

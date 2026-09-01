@@ -5822,7 +5822,15 @@ model, do not celebrate the sim.
     does not invent Engine `--graph-copy-attr-gone`. `gpu-profile capture`
     is still refused. Dual score still has no `$/M tokens`.
 
-545. [ ] Next numbered PLAN item after 544 is the next `gpu-sim` / Engine /
+545. [x] `gpu-sim` CUDA `cudaGraphKernelNodeSetAttribute` of an exec whose
+    handle was destroyed while a launch was in flight is Invalid
+    `"unknown graph"`. Capture is still reported first. Live exec
+    SetAttribute stays. Definition SetAttribute stays. Exec SetAttribute of
+    a parked dest stays unknown via `as_exec_for_update`. This VM does not
+    invent Engine `--graph-set-attr-gone`. `gpu-profile capture` is still
+    refused. Dual score still has no `$/M tokens`.
+
+546. [ ] Next numbered PLAN item after 545 is the next `gpu-sim` / Engine /
     serve / expertvm mechanical API that is still missing, or the next official
     decode family. Prefer remaining CUDA-shaped twins over more
     OpenAI HTTP veneer. Do not invent F32 `output.scale`. Do not invent a
@@ -5989,7 +5997,11 @@ model, do not celebrate the sim.
     Engine `--graph-copy-attr-gone`. Do not reverse live exec as
     CopyAttributes src or dst. Do not reverse definition CopyAttributes
     while an exec is parked. Do not reverse device-updatable CopyAttributes
-    refuse.
+    refuse. Do not invent a second SetAttribute parked-handle unknown check
+    or Engine `--graph-set-attr-gone`. Do not reverse live exec
+    SetAttribute. Do not reverse definition SetAttribute while an exec is
+    parked. Do not reverse External or interprocess Invalid first on
+    programmatic or launch-completion SetAttribute.
     Do not invent a second DeviceLaunch in-flight destroy-complete check or Engine
     `--device-launch-destroy`. Do not abort an in-flight DeviceLaunch when
     `destroy_graph` succeeds. Do not delay destroy of an idle exec. Do not invent

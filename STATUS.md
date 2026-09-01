@@ -5,6 +5,15 @@ Visible five-turn extract: [docs/chatgpt-share-6a920fe1.md](docs/chatgpt-share-6
 Complete share-API extract: [docs/chatgpt-share-6a920fe1/](docs/chatgpt-share-6a920fe1/).
 Work lands on `main`. No PRs.
 
+## Shipped 2026-09-01 — Parked exec SetAttribute is unknown
+
+`gpu-sim` CUDA `cudaGraphKernelNodeSetAttribute` of an exec whose handle
+was destroyed while a launch was in flight is Invalid `"unknown graph"`.
+Capture is still reported first. Live exec SetAttribute stays. Definition
+SetAttribute stays. This VM does not invent Engine
+`--graph-set-attr-gone`. `gpu-profile capture` is still refused. Dual
+score still has no `$/M tokens`.
+
 ## Shipped 2026-09-01 — Parked exec CopyAttributes is unknown
 
 `gpu-sim` CUDA `cudaGraphKernelNodeCopyAttributes` of an exec whose

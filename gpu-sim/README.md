@@ -1339,7 +1339,9 @@ not `KernelAttrs`).
 `graph_kernel_node_set_attribute` / `graph_exec_kernel_node_set_attribute`
 are the generic `cudaGraphKernelNodeGetAttribute` / `SetAttribute`
 (`KernelNodeAttr`). Typed getters stay. Definition Set does not retarget
-exec. Attr/value mismatch is Invalid `"kernel node attr"`.
+exec. Attr/value mismatch is Invalid `"kernel node attr"`. A parked
+in-flight-destroyed exec is `"unknown graph"` on SetAttribute; a live exec
+stays.
 `graph_exec_kernel_node_copy_attributes` is the exec-snapshot CopyAttributes
 twin (uninstantiated graphs are Invalid). A parked in-flight-destroyed exec
 used as CopyAttributes src or dst is `"unknown graph"`; a live exec as either
