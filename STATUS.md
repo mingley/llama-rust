@@ -5,6 +5,19 @@ Visible five-turn extract: [docs/chatgpt-share-6a920fe1.md](docs/chatgpt-share-6
 Complete share-API extract: [docs/chatgpt-share-6a920fe1/](docs/chatgpt-share-6a920fe1/).
 Work lands on `main`. No PRs.
 
+## Shipped 2026-09-01 — DeviceLaunch cannot instantiate an empty graph
+
+`gpu-sim` CUDA `cudaGraphInstantiateFlagDeviceLaunch` cannot instantiate
+an empty graph and requires at least one kernel, memcpy, or memset node
+(`"device launch empty"`; `NodeOperationNotSupported`, `err_node =
+None`). Empty, batch-mem, wait-value, and write-value nodes stay
+`"device launch instantiate flag"`. Child graphs stay refused. Kernel,
+memcpy, and memset-only graphs stay legal. `DEVICE_LAUNCH` plus `UPLOAD`
+stays. Capture is still reported first. This VM does not invent Engine
+`--device-launch-empty` or reverse DeviceLaunch child-graph refuse.
+`gpu-profile capture` is still refused. Dual score still has no
+`$/M tokens`.
+
 ## Shipped 2026-09-01 — User-object count is 1 through INT_MAX
 
 `gpu-sim` CUDA user-object `count` / `initialRefcount` is `1..=i32::MAX`

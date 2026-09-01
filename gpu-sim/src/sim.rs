@@ -823,6 +823,7 @@ struct InstantiateSnap {
     current_flags: u32,
     has_free: bool,
     device_launch_err: Option<usize>,
+    device_launch_empty: bool,
     has_mem: bool,
     mem_node: Option<usize>,
     free_node: Option<usize>,
@@ -3840,10 +3841,12 @@ impl Sim {
     /// schedules recorded kernels with the priority snapshotted at add/capture
     /// instead of the launch stream. [`GraphInstantiateFlags::DEVICE_LAUNCH`]
     /// enables [`Self::device_launch_graph`] after upload (host
-    /// [`Self::launch_graph`] stays legal). Mem alloc/free, events, child
-    /// graphs, conditionals, and host nodes are Invalid for device-launch.
-    /// [`GraphInstantiateFlags::DEVICE_LAUNCH`] cannot combine with
-    /// [`GraphInstantiateFlags::AUTO_FREE_ON_LAUNCH`] (Invalid
+    /// [`Self::launch_graph`] stays legal). The graph cannot be empty and
+    /// must contain at least one kernel, memcpy, or memset node (Invalid
+    /// `"device launch empty"`). Mem alloc/free, events, child graphs,
+    /// conditionals, host, empty, and batch-mem nodes are Invalid for
+    /// device-launch. [`GraphInstantiateFlags::DEVICE_LAUNCH`] cannot combine
+    /// with [`GraphInstantiateFlags::AUTO_FREE_ON_LAUNCH`] (Invalid
     /// `"device launch auto free"`). Instantiating an exec id is a no-op when
     /// `flags` adds no new bits.
     pub fn instantiate_graph_with_flags(
@@ -4011,6 +4014,14 @@ impl Sim {
                 "device launch instantiate flag",
             );
         }
+        if snapshot.device_launch_empty {
+            return Self::instantiate_report(
+                out,
+                GraphInstantiateResult::NodeOperationNotSupported,
+                None,
+                "device launch empty",
+            );
+        }
         if snapshot.primary.is_some() && snapshot.has_mem {
             return Self::instantiate_report(
                 out,
@@ -4110,13 +4121,20 @@ impl Sim {
             mem_node.is_some() || self.graph_allocs.get(&graph).is_some_and(|v| !v.is_empty());
         let device_launch_err = if device_launch {
             g.steps.iter().position(|s| {
-                device_launch_refused(&s.kind)
-                    || s.programmatic_event.is_some()
-                    || s.launch_completion.is_some()
+                !s.destroyed
+                    && (device_launch_refused(&s.kind)
+                        || s.programmatic_event.is_some()
+                        || s.launch_completion.is_some())
             })
         } else {
             None
         };
+        let device_launch_empty = device_launch
+            && device_launch_err.is_none()
+            && !g
+                .steps
+                .iter()
+                .any(|s| !s.destroyed && device_launch_has_work(&s.kind));
         let multi_dev = g.steps.iter().position(|s| s.device != origin_dev);
         Ok(InstantiateSnap {
             device,
@@ -4124,6 +4142,7 @@ impl Sim {
             current_flags: g.instantiate_flags,
             has_free,
             device_launch_err,
+            device_launch_empty,
             has_mem,
             mem_node,
             free_node,
@@ -22765,6 +22784,17 @@ fn device_launch_refused(kind: &Kind) -> bool {
             | Kind::AllReduce { .. }
             | Kind::HostFunc { .. }
             | Kind::DeviceLaunch { .. }
+            | Kind::Empty
+            | Kind::BatchMem { .. }
+            | Kind::WriteValue { .. }
+            | Kind::WaitValue { .. }
+    )
+}
+
+fn device_launch_has_work(kind: &Kind) -> bool {
+    matches!(
+        kind,
+        Kind::Kernel { .. } | Kind::Memcpy(_) | Kind::Memset(_)
     )
 }
 

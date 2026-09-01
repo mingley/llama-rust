@@ -821,8 +821,10 @@
 //! recorded kernels with the add/capture priority;
 //! [`GraphInstantiateFlags::DEVICE_LAUNCH`] enables
 //! [`device_launch_graph`](Sim::device_launch_graph) after upload — host
-//! [`launch_graph`](Sim::launch_graph) stays legal; mem alloc/free, events,
-//! child graphs, conditionals, and host nodes are Invalid; cannot combine
+//! [`launch_graph`](Sim::launch_graph) stays legal. The graph cannot be empty
+//! and must contain at least one kernel, memcpy, or memset node (Invalid
+//! `"device launch empty"`). Mem alloc/free, events, child graphs,
+//! conditionals, host, empty, and batch-mem nodes are Invalid; cannot combine
 //! with [`GraphInstantiateFlags::AUTO_FREE_ON_LAUNCH`] (Invalid
 //! `"device launch auto free"`).
 //! [`instantiate_graph_with_params`](Sim::instantiate_graph_with_params) is
@@ -30769,6 +30771,116 @@ mod tests {
             SimError::Invalid { why } => assert!(why.contains("device launch"), "{why}"),
             other => panic!("{other:?}"),
         }
+        let empty = sim.create_graph(d, s).unwrap();
+        sim.graph_add_empty(empty).unwrap();
+        let err = sim
+            .instantiate_graph_with_flags(empty, GraphInstantiateFlags::DEVICE_LAUNCH)
+            .unwrap_err();
+        match err {
+            SimError::Invalid { why } => {
+                assert!(why.contains("device launch instantiate flag"), "{why}")
+            }
+            other => panic!("{other:?}"),
+        }
+        let batch = sim.create_graph(d, s).unwrap();
+        sim.graph_add_write_value64(batch, a, 0, 1).unwrap();
+        let err = sim
+            .instantiate_graph_with_flags(batch, GraphInstantiateFlags::DEVICE_LAUNCH)
+            .unwrap_err();
+        match err {
+            SimError::Invalid { why } => {
+                assert!(why.contains("device launch instantiate flag"), "{why}")
+            }
+            other => panic!("{other:?}"),
+        }
+    }
+
+    #[test]
+    fn device_launch_rejects_empty_graph() {
+        let mut sim = Sim::new(h100());
+        let d = DeviceId(0);
+        let s = StreamId(0);
+        let a = sim.malloc(d, 64).unwrap();
+        let empty = sim.create_graph(d, s).unwrap();
+        let err = sim
+            .instantiate_graph_with_flags(empty, GraphInstantiateFlags::DEVICE_LAUNCH)
+            .unwrap_err();
+        match err {
+            SimError::Invalid { why } => assert!(why.contains("device launch empty"), "{why}"),
+            other => panic!("{other:?}"),
+        }
+        let mut params = GraphInstantiateParams {
+            flags: GraphInstantiateFlags::DEVICE_LAUNCH,
+            ..GraphInstantiateParams::default()
+        };
+        let err = sim
+            .instantiate_graph_with_params(empty, &mut params)
+            .unwrap_err();
+        match err {
+            SimError::Invalid { why } => assert!(why.contains("device launch empty"), "{why}"),
+            other => panic!("{other:?}"),
+        }
+        assert_eq!(
+            params.result,
+            GraphInstantiateResult::NodeOperationNotSupported
+        );
+        assert_eq!(params.err_node, None);
+        let killed = sim.create_graph(d, s).unwrap();
+        sim.graph_add_kernel(killed, KernelKind::other(8, 8), &[a], &[a])
+            .unwrap();
+        sim.graph_destroy_node(killed, 0).unwrap();
+        let err = sim
+            .instantiate_graph_with_flags(killed, GraphInstantiateFlags::DEVICE_LAUNCH)
+            .unwrap_err();
+        match err {
+            SimError::Invalid { why } => assert!(why.contains("device launch empty"), "{why}"),
+            other => panic!("{other:?}"),
+        }
+        let k = sim.create_graph(d, s).unwrap();
+        sim.graph_add_kernel(k, KernelKind::other(8, 8), &[a], &[a])
+            .unwrap();
+        let _ = sim
+            .instantiate_graph_with_flags(k, GraphInstantiateFlags::DEVICE_LAUNCH)
+            .unwrap();
+        let mc = sim.create_graph(d, s).unwrap();
+        sim.graph_add_memcpy_1d(mc, Place::HostPinned, Place::Device(d), a, 64)
+            .unwrap();
+        let _ = sim
+            .instantiate_graph_with_flags(mc, GraphInstantiateFlags::DEVICE_LAUNCH)
+            .unwrap();
+        let ms = sim.create_graph(d, s).unwrap();
+        sim.graph_add_memset(ms, KernelBuf::whole(a)).unwrap();
+        let _ = sim
+            .instantiate_graph_with_flags(ms, GraphInstantiateFlags::DEVICE_LAUNCH)
+            .unwrap();
+        let mixed = sim.create_graph(d, s).unwrap();
+        sim.graph_add_kernel(mixed, KernelKind::other(8, 8), &[a], &[a])
+            .unwrap();
+        sim.graph_add_empty(mixed).unwrap();
+        let err = sim
+            .instantiate_graph_with_flags(mixed, GraphInstantiateFlags::DEVICE_LAUNCH)
+            .unwrap_err();
+        match err {
+            SimError::Invalid { why } => {
+                assert!(why.contains("device launch instantiate flag"), "{why}")
+            }
+            other => panic!("{other:?}"),
+        }
+        let up = sim.create_graph(d, s).unwrap();
+        sim.graph_add_kernel(up, KernelKind::other(8, 8), &[a], &[a])
+            .unwrap();
+        let _ = sim
+            .instantiate_graph_with_flags(
+                up,
+                GraphInstantiateFlags::DEVICE_LAUNCH | GraphInstantiateFlags::UPLOAD,
+            )
+            .unwrap();
+        sim.begin_capture(d, s).unwrap();
+        match sim.instantiate_graph_with_flags(empty, GraphInstantiateFlags::DEVICE_LAUNCH) {
+            Err(SimError::Invalid { why }) => assert!(why.contains("capture"), "{why}"),
+            other => panic!("{other:?}"),
+        }
+        let _end = sim.end_capture().unwrap();
     }
 
     #[test]
