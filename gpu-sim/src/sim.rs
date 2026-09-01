@@ -829,6 +829,7 @@ struct InstantiateSnap {
     free_node: Option<usize>,
     multi_dev: Option<usize>,
     device_launch_multi_ctx: Option<usize>,
+    unused_cond: bool,
     primary: Option<GraphId>,
     origin: (DeviceId, StreamId),
     bodies: Vec<GraphId>,
@@ -3816,6 +3817,9 @@ impl Sim {
     /// it has a device-updatable kernel node. The first
     /// [`Self::launch_graph`] of the definition creates a primary exec if
     /// needed. Already-instantiated **exec** ids are a no-op.
+    /// Conditional handles created on the graph must be associated with a live
+    /// IF / WHILE / SWITCH node
+    /// ([`GraphInstantiateResult::ConditionalHandleUnused`]).
     pub fn instantiate_graph(&mut self, graph: GraphId) -> Result<GraphId, SimError> {
         self.instantiate_graph_with_flags(graph, 0)
     }
@@ -3850,7 +3854,8 @@ impl Sim {
     /// origin device ([`crate::Place::HostPinned`] stays). Memset dest must
     /// be that device or pinned mapped host. Mixed node green ctx is
     /// [`GraphInstantiateResult::MultipleDevicesNotSupported`]
-    /// (`"graph multiple ctx"`).
+    /// (`"graph multiple ctx"`). Unused conditional handles are
+    /// [`GraphInstantiateResult::ConditionalHandleUnused`].
     /// [`GraphInstantiateFlags::DEVICE_LAUNCH`] cannot combine
     /// with [`GraphInstantiateFlags::AUTO_FREE_ON_LAUNCH`] (Invalid
     /// `"device launch auto free"`). Instantiating an exec id is a no-op when
@@ -4052,6 +4057,14 @@ impl Sim {
                 "graph multiple ctx",
             );
         }
+        if snapshot.unused_cond {
+            return Self::instantiate_report(
+                out,
+                GraphInstantiateResult::ConditionalHandleUnused,
+                None,
+                "conditional handle unused",
+            );
+        }
         let ns = match self.profile.gpu(snapshot.device) {
             Ok(g) => g.graph_instantiate_ns.max(1),
             Err(e) => {
@@ -4157,6 +4170,7 @@ impl Sim {
         } else {
             None
         };
+        let unused_cond = unused_conditional_handles(&self.conds, graph, &g.steps);
         Ok(InstantiateSnap {
             device,
             already: g.instantiated,
@@ -4169,6 +4183,7 @@ impl Sim {
             free_node,
             multi_dev,
             device_launch_multi_ctx,
+            unused_cond,
             primary: g.primary_exec,
             origin: g.origin,
             bodies: g
@@ -8047,6 +8062,8 @@ impl Sim {
     /// [`Self::graph_conditional_create_with_flags`]. Capture cannot include
     /// it. Illegal on an instantiated exec. Node ctx stays [`None`] unless
     /// [`Self::graph_conditional_create_with_ctx`] pins a green context.
+    /// Instantiate requires the handle on a live IF / WHILE / SWITCH node
+    /// ([`GraphInstantiateResult::ConditionalHandleUnused`]).
     pub fn graph_conditional_create(
         &mut self,
         graph: GraphId,
@@ -22868,6 +22885,30 @@ fn device_launch_ctx_mismatch(steps: &[GraphStep]) -> Option<usize> {
         }
     }
     None
+}
+
+fn cond_node_handle(kind: &Kind) -> Option<CondId> {
+    match kind {
+        Kind::If { handle, .. } | Kind::While { handle, .. } | Kind::Switch { handle, .. } => {
+            Some(*handle)
+        }
+        _ => None,
+    }
+}
+
+fn unused_conditional_handles(
+    conds: &BTreeMap<CondId, Cond>,
+    graph: GraphId,
+    steps: &[GraphStep],
+) -> bool {
+    let used: BTreeSet<CondId> = steps
+        .iter()
+        .filter(|s| !s.destroyed)
+        .filter_map(|s| cond_node_handle(&s.kind))
+        .collect();
+    conds
+        .iter()
+        .any(|(id, c)| c.graph == graph && !used.contains(id))
 }
 
 fn kind_from_batch(op: BatchMemOp) -> Kind {

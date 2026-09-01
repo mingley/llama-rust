@@ -516,7 +516,8 @@ the graph origin device (`Place::HostPinned` stays). Memset dest must be
 that device or pinned mapped host. Mixed node green ctx is
 `MultipleDevicesNotSupported` (`"graph multiple ctx"`); `update_graph` of a
 device-launch exec is Invalid; cannot combine with `AUTO_FREE_ON_LAUNCH`
-(`"device launch auto free"`).
+(`"device launch auto free"`). Unused conditional handles are
+`ConditionalHandleUnused` (`"conditional handle unused"`).
 `instantiate_graph_with_params` is `cudaGraphInstantiateWithParams`
 (`GraphInstantiateParams` result, err node, and `hUploadStream`).
 `graph_exec_get_flags` is `cudaGraphExecGetFlags` (`GraphInstantiateFlags::UPLOAD`
@@ -634,7 +635,9 @@ submits). `thread_exchange_stream_capture_mode` is
 `graph_conditional_create_with_ctx` /
 `graph_add_if` / `graph_add_if_else` are `cudaGraphConditionalHandleCreate`
 and an IF node (`cudaGraphCondTypeIf` size 1 / size 2). Then-body ops skip
-at start when the handle is `0`; size 2 runs the else-body instead. `ASSIGN_DEFAULT` is
+at start when the handle is `0`; size 2 runs the else-body instead.
+Instantiate requires each handle on a live IF / WHILE / SWITCH
+(`ConditionalHandleUnused`). `ASSIGN_DEFAULT` is
 identity with the unflagged create (each launch resets to the create-time
 default). Flags `0` keeps the handle across launches. `with_ctx` pins
 `CUDA_CONDITIONAL_NODE_PARAMS.ctx`; typed create stays `None`. `set_conditional`

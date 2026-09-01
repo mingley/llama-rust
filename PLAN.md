@@ -5640,7 +5640,16 @@ model, do not celebrate the sim.
     variant. `gpu-profile capture` is still refused. Dual score still has
     no `$/M tokens`.
 
-525. [ ] Next numbered PLAN item after 524 is the next `gpu-sim` / Engine /
+525. [x] `gpu-sim` CUDA unused conditional handles fail instantiate
+    ([`GraphInstantiateResult::ConditionalHandleUnused`]; `"conditional
+    handle unused"`; `err_node = None`). Set-conditional does not
+    associate. Live IF / WHILE / SWITCH does. DeviceLaunch type refuse
+    still beats unused. Capture is still reported first. This VM does
+    not invent Engine `--graph-cond-unused` or a double-association
+    error. `gpu-profile capture` is still refused. Dual score still has
+    no `$/M tokens`.
+
+526. [ ] Next numbered PLAN item after 525 is the next `gpu-sim` / Engine /
     serve / expertvm mechanical API that is still missing, or the next official
     decode family. Prefer remaining CUDA-shaped twins over more
     OpenAI HTTP veneer. Do not invent F32 `output.scale`. Do not invent a
@@ -5748,6 +5757,9 @@ model, do not celebrate the sim.
     [`GraphInstantiateResult`] variant for driver MultipleCtxs. Do not
     reverse same-ctx DeviceLaunch. Do not reverse host instantiate of mixed
     green ctx. Do not invent CDP multi-ctx host instantiate.
+    Do not invent a second unused-conditional-handle instantiate check or
+    Engine `--graph-cond-unused`. Do not count SetConditional as
+    association. Do not invent a second double-association error.
     Do not invent a second `cudaStreamGetCaptureInfo_v3`. Do not invent
     `cudaStreamUpdateCaptureDependencies` v2 edgeData.
     Do not invent a second `cudaDeviceProp::persistingL2CacheMaxSize`.
@@ -6091,6 +6103,9 @@ model, do not celebrate the sim.
     Do not reverse same-ctx DeviceLaunch. Do not reverse host instantiate
     of mixed green ctx. Do not invent Engine `--device-launch-ctx`. Do
     not invent a second MultipleCtxs instantiate result.
+    Do not invent a second unused-conditional-handle check or Engine
+    `--graph-cond-unused`. Do not count SetConditional as association.
+    Do not invent a double-association instantiate error.
     Do not reverse PLAN 182 v1 duplicate-add no-op or missing-remove
     no-op. Do not reverse v2 Default identity with v1 (incoming Default
     on an existing launch-completion edge stays a no-op that keeps

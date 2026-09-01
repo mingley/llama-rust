@@ -3498,6 +3498,10 @@ pub enum GraphInstantiateResult {
     /// `CUDA_GRAPH_INSTANTIATE_MULTIPLE_CTXS_NOT_SUPPORTED`). DeviceLaunch
     /// mixed node green ctx uses this result (`"graph multiple ctx"`).
     MultipleDevicesNotSupported,
+    /// `cudaGraphInstantiateConditionalHandleUnused`. A handle created on
+    /// this graph is not associated with a live IF / WHILE / SWITCH node
+    /// (`"conditional handle unused"`).
+    ConditionalHandleUnused,
 }
 
 /// `cudaGraphInstantiateParams` for [`crate::Sim::instantiate_graph_with_params`].

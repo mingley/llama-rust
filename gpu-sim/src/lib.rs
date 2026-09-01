@@ -813,7 +813,9 @@
 //! [`Sim::set_created_streams_priority`] assigns created streams their id.
 //! [`Sim::instantiate_graph`] is `cudaGraphInstantiate` (host-sync; returns a
 //! new exec id; first [`launch_graph`](Sim::launch_graph) of a definition
-//! creates a primary exec). [`Sim::instantiate_graph_auto_free`]
+//! creates a primary exec). Unused conditional handles are
+//! [`GraphInstantiateResult::ConditionalHandleUnused`].
+//! [`Sim::instantiate_graph_auto_free`]
 //! is `cudaGraphInstantiateFlagAutoFreeOnLaunch`.
 //! [`instantiate_graph_with_flags`](Sim::instantiate_graph_with_flags) is
 //! `cudaGraphInstantiateWithFlags` ([`GraphInstantiateFlags::UPLOAD`] host-sync
@@ -1283,7 +1285,8 @@
 //! [`graph_add_while`](Sim::graph_add_while) /
 //! [`graph_add_switch`](Sim::graph_add_switch) are `cudaGraphCondTypeWhile`
 //! / `Switch` (WHILE caps at 64 iterations; SWITCH branch `i` runs when the
-//! handle equals `i`). [`graph_if_nodes`](Sim::graph_if_nodes) plus
+//! handle equals `i`). Instantiate requires each handle on a live IF / WHILE
+//! / SWITCH ([`GraphInstantiateResult::ConditionalHandleUnused`]). [`graph_if_nodes`](Sim::graph_if_nodes) plus
 //! [`graph_if_else_nodes`](Sim::graph_if_else_nodes) (size-2 else-body) plus
 //! [`graph_while_nodes`](Sim::graph_while_nodes) plus
 //! [`graph_switch_nodes`](Sim::graph_switch_nodes) plus
@@ -27806,6 +27809,7 @@ mod tests {
             e => panic!("{e:?}"),
         }
         sim.graph_add_set_conditional(g, h, 0).unwrap();
+        let _body = sim.graph_add_if(g, h).unwrap();
         let exec = sim.instantiate_graph(g).unwrap();
         let err = sim.graph_add_set_conditional(exec, h, 1).unwrap_err();
         match err {
@@ -28094,6 +28098,7 @@ mod tests {
         let h_run = sim.graph_conditional_create(g, 1).unwrap();
         let body = sim.graph_add_if(g, h_skip).unwrap();
         sim.graph_add_kernel(body, long, &[a], &[a]).unwrap();
+        let _assoc = sim.graph_add_if(g, h_run).unwrap();
         match sim.graph_node_set_params(
             g,
             0,
@@ -28106,6 +28111,7 @@ mod tests {
             other => panic!("{other:?}"),
         }
         let exec = sim.instantiate_graph(g).unwrap();
+        sim.graph_node_set_enabled(exec, 1, false).unwrap();
         sim.upload_graph(exec).unwrap();
         let t0 = sim.clock_ns();
         let n0 = sim.launch_graph(exec, s).unwrap();
@@ -28328,7 +28334,9 @@ mod tests {
         let h_run = sim.graph_conditional_create(g, 1).unwrap();
         let body = sim.graph_add_if(g, h_skip).unwrap();
         sim.graph_add_kernel(body, long, &[a], &[a]).unwrap();
+        let _assoc = sim.graph_add_if(g, h_run).unwrap();
         let exec = sim.instantiate_graph(g).unwrap();
+        sim.graph_node_set_enabled(exec, 1, false).unwrap();
         sim.upload_graph(exec).unwrap();
         let t0 = sim.clock_ns();
         let n0 = sim.launch_graph(exec, s).unwrap();
@@ -28380,6 +28388,7 @@ mod tests {
         let hw0 = sim.graph_conditional_create(gw, 0).unwrap();
         let hw1 = sim.graph_conditional_create(gw, 1).unwrap();
         let _wbody = sim.graph_add_while(gw, hw0).unwrap();
+        let _assoc_w = sim.graph_add_if(gw, hw1).unwrap();
         let wexec = sim.instantiate_graph(gw).unwrap();
         sim.graph_node_set_params(
             gw,
@@ -28402,6 +28411,7 @@ mod tests {
         let hs0 = sim.graph_conditional_create(gs, 0).unwrap();
         let hs1 = sim.graph_conditional_create(gs, 1).unwrap();
         let _branches = sim.graph_add_switch(gs, hs0, 2).unwrap();
+        let _assoc_s = sim.graph_add_if(gs, hs1).unwrap();
         let sexec = sim.instantiate_graph(gs).unwrap();
         sim.graph_node_set_params(
             gs,
@@ -31154,6 +31164,73 @@ mod tests {
         }
         sim.begin_capture(d, s).unwrap();
         match sim.instantiate_graph_with_flags(mixed, GraphInstantiateFlags::DEVICE_LAUNCH) {
+            Err(SimError::Invalid { why }) => assert!(why.contains("capture"), "{why}"),
+            other => panic!("{other:?}"),
+        }
+        let _end = sim.end_capture().unwrap();
+    }
+
+    #[test]
+    fn instantiate_rejects_unused_conditional_handle() {
+        let mut sim = Sim::new(h100());
+        let d = DeviceId(0);
+        let s = StreamId(0);
+        let a = sim.malloc(d, 64).unwrap();
+        let unused = sim.create_graph(d, s).unwrap();
+        let h = sim.graph_conditional_create(unused, 0).unwrap();
+        sim.graph_add_kernel(unused, KernelKind::other(8, 8), &[a], &[a])
+            .unwrap();
+        let err = sim.instantiate_graph(unused).unwrap_err();
+        match err {
+            SimError::Invalid { why } => {
+                assert!(why.contains("conditional handle unused"), "{why}")
+            }
+            other => panic!("{other:?}"),
+        }
+        let mut params = GraphInstantiateParams::default();
+        let err = sim
+            .instantiate_graph_with_params(unused, &mut params)
+            .unwrap_err();
+        match err {
+            SimError::Invalid { why } => {
+                assert!(why.contains("conditional handle unused"), "{why}")
+            }
+            other => panic!("{other:?}"),
+        }
+        assert_eq!(
+            params.result,
+            GraphInstantiateResult::ConditionalHandleUnused
+        );
+        assert_eq!(params.err_node, None);
+        let set_only = sim.create_graph(d, s).unwrap();
+        let hs = sim.graph_conditional_create(set_only, 0).unwrap();
+        sim.graph_add_set_conditional(set_only, hs, 1).unwrap();
+        let err = sim.instantiate_graph(set_only).unwrap_err();
+        match err {
+            SimError::Invalid { why } => {
+                assert!(why.contains("conditional handle unused"), "{why}")
+            }
+            other => panic!("{other:?}"),
+        }
+        let ok = sim.create_graph(d, s).unwrap();
+        let ho = sim.graph_conditional_create(ok, 0).unwrap();
+        let _body = sim.graph_add_if(ok, ho).unwrap();
+        let _ = sim.instantiate_graph(ok).unwrap();
+        let dl = sim.create_graph(d, s).unwrap();
+        let _hd = sim.graph_conditional_create(dl, 0).unwrap();
+        sim.graph_add_kernel(dl, KernelKind::other(8, 8), &[a], &[a])
+            .unwrap();
+        let err = sim
+            .instantiate_graph_with_flags(dl, GraphInstantiateFlags::DEVICE_LAUNCH)
+            .unwrap_err();
+        match err {
+            SimError::Invalid { why } => {
+                assert!(why.contains("conditional handle unused"), "{why}")
+            }
+            other => panic!("{other:?}"),
+        }
+        sim.begin_capture(d, s).unwrap();
+        match sim.instantiate_graph(unused) {
             Err(SimError::Invalid { why }) => assert!(why.contains("capture"), "{why}"),
             other => panic!("{other:?}"),
         }

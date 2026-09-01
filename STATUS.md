@@ -5,6 +5,16 @@ Visible five-turn extract: [docs/chatgpt-share-6a920fe1.md](docs/chatgpt-share-6
 Complete share-API extract: [docs/chatgpt-share-6a920fe1/](docs/chatgpt-share-6a920fe1/).
 Work lands on `main`. No PRs.
 
+## Shipped 2026-09-01 — Unused conditional handles fail instantiate
+
+`gpu-sim` CUDA unused conditional handles fail instantiate
+(`ConditionalHandleUnused`; `"conditional handle unused"`).
+Set-conditional does not associate. Live IF / WHILE / SWITCH does.
+DeviceLaunch type refuse still beats unused. Capture is still reported
+first. This VM does not invent Engine `--graph-cond-unused` or a
+double-association error. `gpu-profile capture` is still refused. Dual
+score still has no `$/M tokens`.
+
 ## Shipped 2026-09-01 — DeviceLaunch mixed green ctx is MultipleDevices
 
 `gpu-sim` CUDA DeviceLaunch mixed node green ctx is
