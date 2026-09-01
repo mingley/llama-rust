@@ -6564,7 +6564,14 @@ model, do not celebrate the sim.
     or `cudaChooseDevice`. `gpu-profile capture` is still refused. Dual
     score still has no `$/M tokens`.
 
-633. [ ] Next numbered PLAN item after 632 is the next `gpu-sim` / Engine /
+633. [x] `gpu-sim` `Sim::profiler_initialize` is
+    `cudaProfilerInitialize`. Always Invalid `"profiler initialize"`
+    because CUPTI config files are not modeled. Query; legal during
+    capture. Distinct from `profiler_start` and `profiler_stop`. This VM does not invent a CUPTI activity buffer, Engine `--profiler-init`,
+    or `cudaChooseDevice`. `gpu-profile capture` is still refused. Dual
+    score still has no `$/M tokens`.
+
+634. [ ] Next numbered PLAN item after 633 is the next `gpu-sim` / Engine /
     serve / expertvm mechanical API that is still missing, or the next official
     decode family. Prefer remaining CUDA-shaped twins over more
     OpenAI HTTP veneer. Do not invent F32 `output.scale`. Do not invent a
@@ -6909,6 +6916,9 @@ model, do not celebrate the sim.
     Do not invent a second `cuProfilerStop` / `profiler_stop`. Do
     not invent Engine `--profiler-stop`. Do not invent
     `cudaProfilerInitialize` this slice. Do not reverse the 1 ns no-op.
+    Do not invent a second `cudaProfilerInitialize` /
+    `profiler_initialize`. Do not invent Engine `--profiler-init`. Do not
+    invent a CUPTI config file this slice. Do not reverse `"profiler initialize"`.
     Do not invent a second `cudaStreamAddCallback`.
     Do not invent Engine `--stream-callback` (same wall as second live
     `cudaLaunchHostFunc` after miss DMA).
@@ -7356,6 +7366,9 @@ model, do not celebrate the sim.
     Do not invent a second `profiler_stop` API. Do not invent
     Engine `--stop-profiler`. Do not invent a CUPTI activity buffer this
     slice. Do not reverse capture refuse for stop.
+    Do not invent a second `profiler_initialize` API. Do not invent
+    Engine `--init-profiler`. Do not invent `cudaOutputMode` this slice.
+    Do not reverse profiler config remaining unsupported.
     Do not invent a second DeviceLaunch in-flight destroy-complete check or Engine
     `--device-launch-destroy`. Do not abort an in-flight DeviceLaunch when
     `destroy_graph` succeeds. Do not delay destroy of an idle exec. Do not invent
@@ -8008,6 +8021,9 @@ model, do not celebrate the sim.
     Do not invent a second `profiler_stop` method. Do not invent
     Engine `--cu-profiler-stop`. Do not reverse wrapping cuProfilerStop
     as a 1 ns no-op.
+    Do not invent a second `profiler_initialize` method. Do not invent
+    Engine `--cu-profiler-initialize`. Do not reverse wrapping
+    cudaProfilerInitialize Invalid.
     Do not
     spend the next item on an OpenAI-compatible HTTP veneer.
 

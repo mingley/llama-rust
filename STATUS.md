@@ -5,6 +5,14 @@ Visible five-turn extract: [docs/chatgpt-share-6a920fe1.md](docs/chatgpt-share-6
 Complete share-API extract: [docs/chatgpt-share-6a920fe1/](docs/chatgpt-share-6a920fe1/).
 Work lands on `main`. No PRs.
 
+## Shipped 2026-09-01 — CUDA `cudaProfilerInitialize`
+
+`gpu-sim` `Sim::profiler_initialize` is `cudaProfilerInitialize`.
+Always Invalid `"profiler initialize"` because CUPTI config files are
+not modeled. Query; legal during capture. Distinct from `profiler_start`
+and `profiler_stop`. This VM does not invent a CUPTI activity buffer or Engine `--profiler-init`.
+`gpu-profile capture` is still refused. Dual score still has no `$/M tokens`.
+
 ## Shipped 2026-09-01 — CUDA `cuProfilerStop`
 
 `gpu-sim` `Sim::profiler_stop` is `cuProfilerStop` /

@@ -512,6 +512,8 @@ Engine flag).
 refused; no Engine flag).
 `gpu-sim` `profiler_stop` is `cuProfilerStop` (1 ns no-op; capture
 refused; no Engine flag).
+`gpu-sim` `profiler_initialize` is `cudaProfilerInitialize` (Invalid;
+CUPTI config is not modeled; no Engine flag).
 `gpu-sim` `module_get_loading_mode` is `cuModuleGetLoadingMode` (always
 Eager; no Engine flag).
 `gpu-sim` `library_load_data` is `cuLibraryLoadData` (Invalid; no cubin /

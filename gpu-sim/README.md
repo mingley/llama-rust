@@ -187,6 +187,7 @@ warp scheduler, L1, …   ← do not model
 | `driver_init` is a 1 ns no-op; flags must be 0 | `cuInit` |
 | `profiler_start` is a 1 ns no-op; capture refused | `cuProfilerStart` / `cudaProfilerStart` |
 | `profiler_stop` is a 1 ns no-op; capture refused | `cuProfilerStop` / `cudaProfilerStop` |
+| `profiler_initialize` is Invalid (CUPTI config files are not modeled) | `cudaProfilerInitialize` |
 | `module_get_loading_mode` is always Eager (CUDA 1) | `cuModuleGetLoadingMode` |
 | `library_load_data` is Invalid (no cubin / `CUlibrary`) | `cuLibraryLoadData` |
 | `link_create` is Invalid (no JIT linker or NVRTC) | `cuLinkCreate` |
@@ -1198,6 +1199,9 @@ CUPTI is not modeled; capture cannot include it). Distinct from
 `profiler_stop` is `cuProfilerStop` plus `cudaProfilerStop` (1 ns no-op;
 CUPTI is not modeled; capture cannot include it). Distinct from
 `profiler_start`. No Engine `--profiler-stop`.
+`profiler_initialize` is `cudaProfilerInitialize` (always Invalid
+`"profiler initialize"`). Distinct from `profiler_start` and
+`profiler_stop`. Query; legal during capture. No Engine `--profiler-init`.
 `module_get_loading_mode` is `cuModuleGetLoadingMode` (always Eager;
 CUDA 1; query; legal during capture; no modules; distinct from
 `driver_init` and `init_device`).

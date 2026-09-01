@@ -885,6 +885,9 @@
 //! [`profiler_stop`](Sim::profiler_stop) is `cuProfilerStop` plus
 //! `cudaProfilerStop` (1 ns no-op; CUPTI is not modeled). Capture cannot
 //! include it. Distinct from [`profiler_start`](Sim::profiler_start). No Engine `--profiler-stop`.
+//! [`profiler_initialize`](Sim::profiler_initialize) is
+//! `cudaProfilerInitialize` (always Invalid `"profiler initialize"`).
+//! Query; legal during capture. No Engine `--profiler-init`.
 //! [`Sim::module_get_loading_mode`] is `cuModuleGetLoadingMode` (always
 //! [`ModuleLoadingMode::Eager`]). Query; legal during capture. No Engine `--module-loading`.
 //! [`library_load_data`](Sim::library_load_data) is `cuLibraryLoadData`
@@ -18540,6 +18543,39 @@ mod tests {
         let _g = sim.end_capture().unwrap();
         sim.profiler_stop().unwrap();
         assert_eq!(sim.clock_ns(), t0.saturating_add(4));
+    }
+
+    #[test]
+    fn profiler_initialize_is_unsupported() {
+        let mut sim = Sim::new(h100());
+        match sim.profiler_initialize() {
+            Err(SimError::Invalid { why }) => {
+                assert!(why.contains("profiler initialize"), "{why}");
+            }
+            other => panic!("{other:?}"),
+        }
+        sim.begin_capture(DeviceId(0), StreamId(0)).unwrap();
+        match sim.profiler_initialize() {
+            Err(SimError::Invalid { why }) => {
+                assert!(why.contains("profiler initialize"), "{why}");
+            }
+            other => panic!("{other:?}"),
+        }
+        match sim.profiler_start() {
+            Err(SimError::Invalid { why }) => assert!(why.contains("capture"), "{why}"),
+            other => panic!("{other:?}"),
+        }
+        match sim.profiler_stop() {
+            Err(SimError::Invalid { why }) => assert!(why.contains("capture"), "{why}"),
+            other => panic!("{other:?}"),
+        }
+        let _g = sim.end_capture().unwrap();
+        match sim.profiler_initialize() {
+            Err(SimError::Invalid { why }) => {
+                assert!(why.contains("profiler initialize"), "{why}");
+            }
+            other => panic!("{other:?}"),
+        }
     }
 
     #[test]

@@ -19976,12 +19976,24 @@ impl Sim {
     /// `cuProfilerStop` plus `cudaProfilerStop`. Host-synchronous. Capture
     /// cannot include it.
     ///
-    /// 1 ns no-op (CUPTI is not modeled). Distinct from [`Self::profiler_start`].
-    /// This VM does not invent `cudaProfilerInitialize` this slice.
+    /// 1 ns no-op (CUPTI is not modeled). Distinct from [`Self::profiler_start`]
+    /// and from [`Self::profiler_initialize`].
     pub fn profiler_stop(&mut self) -> Result<(), SimError> {
         self.fail_if_capturing("cannot capture profiler stop")?;
         self.clock = self.clock.saturating_add(1);
         Ok(())
+    }
+
+    /// `cudaProfilerInitialize`. CUPTI config files are not modeled.
+    ///
+    /// Always Invalid `"profiler initialize"`. Distinct from
+    /// [`Self::profiler_start`] and from [`Self::profiler_stop`]. Query;
+    /// legal during capture. This VM does not invent a CUPTI activity
+    /// buffer this slice.
+    pub fn profiler_initialize(&self) -> Result<(), SimError> {
+        Err(SimError::Invalid {
+            why: "profiler initialize",
+        })
     }
 
     /// `cuModuleGetLoadingMode`. Query; legal during capture.
