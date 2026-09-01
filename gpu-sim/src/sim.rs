@@ -18375,14 +18375,29 @@ impl Sim {
     /// `cuD3D10CtxCreate`. Direct3D 10 interop is not modeled.
     ///
     /// Always Invalid `"d3d10 context"`. Distinct from
-    /// [`Self::d3d10_get_devices`] and from [`Self::d3d9_ctx_create`]. Unknown
+    /// [`Self::d3d10_get_devices`], from [`Self::d3d9_ctx_create`], and from
+    /// [`Self::graphics_d3d10_register_resource`]. Unknown
     /// devices are Invalid `"device not in profile"`. Query; legal during
-    /// capture. This VM does not invent `cuGraphicsD3D10RegisterResource`
-    /// this slice.
+    /// capture.
     pub fn d3d10_ctx_create(&self, device: DeviceId) -> Result<(), SimError> {
         let _gpu = self.profile.gpu(device)?;
         Err(SimError::Invalid {
             why: "d3d10 context",
+        })
+    }
+
+    /// `cuGraphicsD3D10RegisterResource` plus
+    /// `cudaGraphicsD3D10RegisterResource`. Direct3D 10 interop is not
+    /// modeled.
+    ///
+    /// Always Invalid `"d3d10 register"` (no graphics-resource handles).
+    /// Distinct from [`Self::d3d10_ctx_create`] and from
+    /// [`Self::graphics_d3d9_register_resource`]. Unknown devices are Invalid
+    /// `"device not in profile"`. Query; legal during capture.
+    pub fn graphics_d3d10_register_resource(&self, device: DeviceId) -> Result<(), SimError> {
+        let _gpu = self.profile.gpu(device)?;
+        Err(SimError::Invalid {
+            why: "d3d10 register",
         })
     }
 
