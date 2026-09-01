@@ -5,6 +5,19 @@ Visible five-turn extract: [docs/chatgpt-share-6a920fe1.md](docs/chatgpt-share-6
 Complete share-API extract: [docs/chatgpt-share-6a920fe1/](docs/chatgpt-share-6a920fe1/).
 Work lands on `main`. No PRs.
 
+## Shipped 2026-09-01 — CUDA_KERNEL_NODE_PARAMS.ctx
+
+`gpu-sim` CUDA 13 `CUDA_KERNEL_NODE_PARAMS.ctx`: `KernelNodeParams::ctx`
+is `CUDA_KERNEL_NODE_PARAMS.ctx` / `cudaKernelNodeParamsV2.ctx`. Stored
+on the graph step, not `Kind::Kernel`. `None` inherits the launch stream.
+`Some` pins duration and SM occupancy to that live green context.
+Unknown or destroyed is Invalid `"unknown green ctx"`. Device mismatch
+is Invalid `"green ctx device"`. Parameter, not topology. Capture from a
+green-ctx stream snapshots that ctx. Typed `graph_add_kernel` stays
+`None`. No Engine `--kernel-ctx`. This VM does not invent
+`cuCtxFromGreenCtx`. `gpu-profile capture` is still refused. Dual score
+still has no `$/M tokens`.
+
 ## Shipped 2026-09-01 — CUDA cuDevSmResourceSplit
 
 `gpu-sim` `cuDevSmResourceSplit`: `dev_sm_resource_split` is

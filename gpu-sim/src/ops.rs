@@ -1,6 +1,6 @@
 //! Structural GPU operations. Timing is derived from a [`crate::HardwareProfile`].
 
-use crate::ids::{AllocId, CondId, DeviceId, EventId, GraphId, OpId, StreamId};
+use crate::ids::{AllocId, CondId, DeviceId, EventId, GraphId, GreenCtxId, OpId, StreamId};
 
 /// `cudaMemAdvise` hint on a [`crate::Sim::alloc_managed`] pointer.
 ///
@@ -1534,10 +1534,12 @@ impl StreamCallbackFlags {
     pub const DEFAULT: u32 = 0;
 }
 
-/// `cudaKernelNodeParams` for [`crate::Sim::graph_exec_kernel_set_params`].
+/// `cudaKernelNodeParams` / CUDA 13 `CUDA_KERNEL_NODE_PARAMS` for
+/// [`crate::Sim::graph_exec_kernel_set_params`].
 ///
-/// Topology (node index, cooperative flag, dependency edges) stays. Pointers
-/// and [`KernelKind`] may change. Capture cannot include SetParams.
+/// Topology (node index, cooperative flag, dependency edges) stays. Pointers,
+/// [`KernelKind`], and [`Self::ctx`] may change. Capture cannot include
+/// SetParams. [`Self::ctx`] is not stored on [`crate::GpuOp::Kernel`].
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct KernelNodeParams {
     /// Structural work (roofline inputs / kernel function analog).
@@ -1549,6 +1551,16 @@ pub struct KernelNodeParams {
     /// Must match the existing node (`cudaLaunchCooperativeKernel` vs
     /// `cudaLaunchKernel`). Changing it is topology, not params.
     pub cooperative: bool,
+    /// CUDA 13 `CUDA_KERNEL_NODE_PARAMS.ctx` / `cudaKernelNodeParamsV2.ctx`.
+    ///
+    /// [`None`] inherits the launch stream's green context (or a full chip).
+    /// [`Some`] pins duration and SM occupancy to that live
+    /// [`crate::GreenCtxId`]. Unknown or destroyed is Invalid
+    /// `"unknown green ctx"`. A ctx created on another device is Invalid
+    /// `"green ctx device"`. Parameter, not topology. Typed
+    /// [`crate::Sim::graph_add_kernel`] stays [`None`]. This VM does not
+    /// invent Engine `--kernel-ctx` or `cuCtxFromGreenCtx`.
+    pub ctx: Option<GreenCtxId>,
 }
 
 /// `cudaLaunchAttributeProgrammaticStreamSerialization` / programmatic

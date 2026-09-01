@@ -214,6 +214,7 @@ warp scheduler, L1, …   ← do not model
 | `cuStreamGetDevResource` (`stream_get_dev_resource`) | bound stream returns that ctx's SM span; unbound is a full chip; query during capture |
 | `cuGreenCtxGetId` (`green_ctx_get_id`) | unique id for a live green ctx; not `GreenCtxId` / `stream_get_id`; query during capture |
 | `cudaExecutionCtxGetDevice` (`green_ctx_get_device`) | device passed to `green_ctx_create`; query during capture |
+| `CUDA_KERNEL_NODE_PARAMS.ctx` (`KernelNodeParams::ctx`) | pins graph kernel duration plus SM occupancy; `None` inherits the launch stream |
 | `memset` / `memset_buf` needs the filled span resident (not mapped host); `memset_op` height/pitch is 2D | HBM write of payload + launch overhead |
 | `cudaMemset` / `2D` / `3D` (`memset_sync` / `memset_op_sync`) wait the stream | host-synchronous; capture refused |
 | peer D2D needs topology + `enable_peer` (`enable_peer_with_flags` must be 0) | link bandwidth |
@@ -252,6 +253,10 @@ other ctxs on the same GPU keep running. Distinct from `cudaDeviceSynchronize`.
 Query; legal during capture.
 `cudaExecutionCtxGetDevice` (`green_ctx_get_device`) returns the create
 device. Distinct from `green_ctx_get_id`. Query; legal during capture.
+`CUDA_KERNEL_NODE_PARAMS.ctx` (`KernelNodeParams::ctx`) pins a graph kernel
+to a live green context (duration plus SM occupancy). `None` inherits the
+launch stream. Typed `graph_add_kernel` stays `None`. No Engine `--kernel-ctx`
+and no `cuCtxFromGreenCtx`.
 Copy engines still overlap compute. Profile knobs `gemm_util_permille` (achieved/peak) and `grouped_moe_permille`
 (grouped vs dense duration) scale kernel time. Defaults are 1000
 (identity roofline). They are parseable; they are not a capture. Host PCIe

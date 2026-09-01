@@ -53,6 +53,11 @@
 //! `gguf_gemv engine --expert-sim --green-ctx` binds decode vs leftover
 //! prefill to complementary contexts (implies `--decode-priority`; identity
 //! stays full-chip exclusive).
+//! [`KernelNodeParams::ctx`] is CUDA 13 `CUDA_KERNEL_NODE_PARAMS.ctx`:
+//! [`None`] inherits the launch stream; [`Some`] pins duration and SM
+//! occupancy to that green context. Typed [`graph_add_kernel`](Sim::graph_add_kernel)
+//! stays [`None`]. No Engine `--kernel-ctx`. This VM does not invent
+//! `cuCtxFromGreenCtx`.
 //! [`Sim::synchronize_device`] is `cudaDeviceSynchronize` (one GPU).
 //! [`Sim::synchronize_event`] is `cudaEventSynchronize`.
 //! [`Sim::alloc`] / [`memcpy`](Sim::memcpy) / [`free`](Sim::free) are
@@ -2604,6 +2609,7 @@ mod tests {
             reads: vec![KernelBuf::whole(b)],
             writes: vec![KernelBuf::whole(b)],
             cooperative: false,
+            ctx: None,
         };
         sim.graph_exec_kernel_set_params(e2, 0, &params).unwrap();
         let n = sim.launch_graph(e2, s).unwrap();
@@ -3109,6 +3115,7 @@ mod tests {
             reads: vec![KernelBuf::whole(a)],
             writes: vec![KernelBuf::whole(a)],
             cooperative: false,
+            ctx: None,
         };
         let err = sim
             .graph_exec_kernel_set_params(exec, 0, &params)
@@ -8705,6 +8712,7 @@ mod tests {
             reads: vec![KernelBuf::whole(b)],
             writes: vec![KernelBuf::whole(b)],
             cooperative: false,
+            ctx: None,
         };
         sim.graph_kernel_set_params(g, 0, &params).unwrap();
         let (_, now) = sim.graph_unique_kernel(g).unwrap();
@@ -8752,6 +8760,7 @@ mod tests {
             reads: vec![KernelBuf::whole(b)],
             writes: vec![KernelBuf::whole(b)],
             cooperative: false,
+            ctx: None,
         };
         sim.graph_kernel_set_params(g, 0, &patched).unwrap();
         let def = sim.graph_kernel_get_params(g, 0).unwrap();
@@ -8876,6 +8885,7 @@ mod tests {
             reads: vec![KernelBuf::whole(b)],
             writes: vec![KernelBuf::whole(b)],
             cooperative: false,
+            ctx: None,
         };
         sim.graph_kernel_set_params(g, 0, &params).unwrap();
         let _ = sim.instantiate_graph(g).unwrap();
@@ -9697,6 +9707,7 @@ mod tests {
             reads: vec![KernelBuf::whole(a)],
             writes: vec![KernelBuf::whole(a)],
             cooperative: false,
+            ctx: None,
         };
         match sim.graph_exec_kernel_set_params(exec, 0, &params) {
             Err(SimError::Invalid { why }) => {
@@ -10091,6 +10102,179 @@ mod tests {
                 width: 150
             }
         );
+    }
+
+    #[test]
+    fn graph_kernel_node_ctx_is_cuda_kernel_node_params_ctx() {
+        let d = DeviceId(0);
+        let s = StreamId(0);
+        let kind = KernelKind::other(1 << 40, 8);
+        let mut sim = Sim::new(h100());
+        let a = sim.alloc(d, 4096, s).unwrap();
+        enq(sim.memcpy_pinned_to_device(d, a, 4096, s));
+        sim.synchronize().unwrap();
+        let desc = sim
+            .dev_resource_generate_desc(&[SmResource {
+                start: 0,
+                width: 500,
+            }])
+            .unwrap();
+        let ctx = sim.green_ctx_create(desc, d, 0).unwrap();
+        let g = sim.create_graph(d, s).unwrap();
+        sim.graph_add_kernel(g, kind.clone(), &[a], &[a]).unwrap();
+        assert_eq!(sim.graph_kernel_get_params(g, 0).unwrap().ctx, None);
+        sim.graph_kernel_set_params(
+            g,
+            0,
+            &KernelNodeParams {
+                kind: kind.clone(),
+                reads: vec![KernelBuf::whole(a)],
+                writes: vec![KernelBuf::whole(a)],
+                cooperative: false,
+                ctx: Some(ctx),
+            },
+        )
+        .unwrap();
+        assert_eq!(sim.graph_kernel_get_params(g, 0).unwrap().ctx, Some(ctx));
+        match sim.graph_node_get_params(g, 0).unwrap() {
+            GraphNodeParams::Kernel(p) => assert_eq!(p.ctx, Some(ctx)),
+            other => panic!("{other:?}"),
+        }
+        let cloned = sim.clone_graph(g).unwrap();
+        assert_eq!(
+            sim.graph_kernel_get_params(cloned, 0).unwrap().ctx,
+            Some(ctx)
+        );
+        let exec = sim.instantiate_graph(g).unwrap();
+        assert_eq!(
+            sim.graph_exec_kernel_get_params(exec, 0).unwrap().ctx,
+            Some(ctx)
+        );
+        let n = sim.launch_graph(exec, s).unwrap();
+        assert_eq!(n, 1);
+        sim.synchronize().unwrap();
+        let t0 = sim.clock_ns();
+        let n = sim.launch_graph(exec, s).unwrap();
+        assert_eq!(n, 1);
+        sim.synchronize().unwrap();
+        let half = sim.clock_ns().saturating_sub(t0);
+        let g_full = sim.create_graph(d, s).unwrap();
+        sim.graph_add_kernel(g_full, kind.clone(), &[a], &[a])
+            .unwrap();
+        let exec_full = sim.instantiate_graph(g_full).unwrap();
+        let n = sim.launch_graph(exec_full, s).unwrap();
+        assert_eq!(n, 1);
+        sim.synchronize().unwrap();
+        let t1 = sim.clock_ns();
+        let n = sim.launch_graph(exec_full, s).unwrap();
+        assert_eq!(n, 1);
+        sim.synchronize().unwrap();
+        let full = sim.clock_ns().saturating_sub(t1);
+        assert!(
+            half > full,
+            "500‰ kernel-node ctx must be slower than full-chip; half={half} full={full}"
+        );
+        sim.graph_exec_kernel_set_params(
+            exec,
+            0,
+            &KernelNodeParams {
+                kind: kind.clone(),
+                reads: vec![KernelBuf::whole(a)],
+                writes: vec![KernelBuf::whole(a)],
+                cooperative: false,
+                ctx: None,
+            },
+        )
+        .unwrap();
+        assert_eq!(sim.graph_exec_kernel_get_params(exec, 0).unwrap().ctx, None);
+        sim.green_ctx_stream_create(ctx, StreamId(1), StreamCreateFlags::NON_BLOCKING, 0)
+            .unwrap();
+        sim.begin_capture(d, StreamId(1)).unwrap();
+        enq(sim.kernel(d, kind.clone(), &[a], &[a], StreamId(1)));
+        let captured = sim.end_capture().unwrap();
+        assert_eq!(
+            sim.graph_kernel_get_params(captured, 0).unwrap().ctx,
+            Some(ctx)
+        );
+        let g_bad = sim.create_graph(d, s).unwrap();
+        match sim.graph_add_node(
+            g_bad,
+            &[],
+            GraphNodeParams::Kernel(KernelNodeParams {
+                kind: kind.clone(),
+                reads: vec![KernelBuf::whole(a)],
+                writes: vec![KernelBuf::whole(a)],
+                cooperative: false,
+                ctx: Some(GreenCtxId(99)),
+            }),
+        ) {
+            Err(SimError::Invalid { why }) => {
+                assert!(why.contains("unknown green ctx"), "{why}");
+            }
+            other => panic!("{other:?}"),
+        }
+        let mut dual = Sim::new(HardwareProfile::example_2xh100_pcie());
+        let a1 = dual.malloc(DeviceId(0), 4096).unwrap();
+        let desc1 = dual
+            .dev_resource_generate_desc(&[SmResource {
+                start: 0,
+                width: 500,
+            }])
+            .unwrap();
+        let ctx1 = dual.green_ctx_create(desc1, DeviceId(1), 0).unwrap();
+        let g1 = dual.create_graph(DeviceId(0), s).unwrap();
+        match dual.graph_add_node(
+            g1,
+            &[],
+            GraphNodeParams::Kernel(KernelNodeParams {
+                kind: kind.clone(),
+                reads: vec![KernelBuf::whole(a1)],
+                writes: vec![KernelBuf::whole(a1)],
+                cooperative: false,
+                ctx: Some(ctx1),
+            }),
+        ) {
+            Err(SimError::Invalid { why }) => {
+                assert!(why.contains("green ctx device"), "{why}");
+            }
+            other => panic!("{other:?}"),
+        }
+        let g_dead = sim.create_graph(d, s).unwrap();
+        let desc2 = sim
+            .dev_resource_generate_desc(&[SmResource {
+                start: 500,
+                width: 500,
+            }])
+            .unwrap();
+        let ctx2 = sim.green_ctx_create(desc2, d, 0).unwrap();
+        let added = sim
+            .graph_add_node(
+                g_dead,
+                &[],
+                GraphNodeParams::Kernel(KernelNodeParams {
+                    kind,
+                    reads: vec![KernelBuf::whole(a)],
+                    writes: vec![KernelBuf::whole(a)],
+                    cooperative: false,
+                    ctx: Some(ctx2),
+                }),
+            )
+            .unwrap();
+        assert_eq!(added.node, 0);
+        sim.green_ctx_destroy(ctx2).unwrap();
+        let exec_dead = sim.instantiate_graph(g_dead).unwrap();
+        match sim.launch_graph(exec_dead, s) {
+            Err(SimError::Invalid { why }) => {
+                assert!(why.contains("unknown green ctx"), "{why}");
+            }
+            Ok(_) => match sim.synchronize() {
+                Err(SimError::Invalid { why }) => {
+                    assert!(why.contains("unknown green ctx"), "{why}");
+                }
+                other => panic!("{other:?}"),
+            },
+            other => panic!("{other:?}"),
+        }
     }
 
     #[test]
@@ -12783,6 +12967,7 @@ mod tests {
                     reads: vec![KernelBuf::whole(a)],
                     writes: vec![KernelBuf::whole(a)],
                     cooperative: false,
+                    ctx: None,
                 }),
             )
             .unwrap();
@@ -12992,6 +13177,7 @@ mod tests {
             reads: vec![KernelBuf::whole(b)],
             writes: vec![KernelBuf::whole(b)],
             cooperative: false,
+            ctx: None,
         });
         sim.graph_node_set_params(g, 0, patched.clone()).unwrap();
         let def = sim.graph_kernel_get_params(g, 0).unwrap();
@@ -13029,6 +13215,7 @@ mod tests {
                 reads: vec![KernelBuf::whole(a)],
                 writes: vec![KernelBuf::whole(a)],
                 cooperative: false,
+                ctx: None,
             }),
         ) {
             Err(SimError::Invalid { why }) => assert!(why.contains("capture"), "{why}"),
@@ -13061,6 +13248,7 @@ mod tests {
                 reads: vec![KernelBuf::whole(b)],
                 writes: vec![KernelBuf::whole(b)],
                 cooperative: false,
+                ctx: None,
             }),
         )
         .unwrap();

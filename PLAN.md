@@ -5272,7 +5272,19 @@ model, do not celebrate the sim.
     `--sm-split`. `gpu-profile capture` is still refused. Dual score still
     has no `$/M tokens`.
 
-492. [ ] Next numbered PLAN item after 491 is the next `gpu-sim` / Engine /
+492. [x] `gpu-sim` CUDA 13 `CUDA_KERNEL_NODE_PARAMS.ctx`:
+    [`KernelNodeParams::ctx`] is `CUDA_KERNEL_NODE_PARAMS.ctx` /
+    `cudaKernelNodeParamsV2.ctx`. Stored on the graph step, not
+    `Kind::Kernel`. [`None`] inherits the launch stream. [`Some`] pins
+    duration and SM occupancy to that live green context. Unknown or
+    destroyed is Invalid `"unknown green ctx"`. Device mismatch is
+    Invalid `"green ctx device"`. Parameter, not topology. Capture from
+    a green-ctx stream snapshots that ctx. Typed [`graph_add_kernel`]
+    stays [`None`]. No Engine `--kernel-ctx`. This VM does not invent
+    `cuCtxFromGreenCtx`. `gpu-profile capture` is still refused. Dual
+    score still has no `$/M tokens`.
+
+493. [ ] Next numbered PLAN item after 492 is the next `gpu-sim` / Engine /
     serve / expertvm mechanical API that is still missing, or the next official
     decode family. Prefer remaining CUDA-shaped twins over more
     OpenAI HTTP veneer. Do not invent F32 `output.scale`. Do not invent a
@@ -5560,7 +5572,10 @@ model, do not celebrate the sim.
     `--sm-split`. Do not invent occupancy SM counts on Split (`smCount`
     stays ‰). Do not invent `CU_DEV_SM_RESOURCE_GROUP_BACKFILL`. Do not
     invent `coscheduledSmCount` / `preferredCoscheduledSmCount` / workqueue
-    resources. Do not
+    resources. Do not invent a second CUDA_KERNEL_NODE_PARAMS.ctx /
+    `KernelNodeParams::ctx`. Do not invent Engine `--kernel-ctx`. Do
+    not put `ctx` on `Kind::Kernel`. Do not invent `cuCtxFromGreenCtx`.
+    Do not
     spend the next item on an OpenAI-compatible HTTP veneer.
 
 Stop if Phase 1 traces say residency cannot work. Do not invent an

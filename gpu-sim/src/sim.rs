@@ -348,6 +348,10 @@ struct Op {
     /// Full chip when the stream is not bound. Distinct from
     /// [`Sim::set_stream_sm_permille`] (duration only).
     sm_span: SmResource,
+    /// Graph kernel-node ctx (`CUDA_KERNEL_NODE_PARAMS.ctx`) snapshotted at
+    /// submit. [`None`] uses the stream. Distinct from [`Self::sm_span`]
+    /// (occupancy) when duration-only [`Sim::set_stream_sm_permille`] is set.
+    green_ctx: Option<GreenCtxId>,
 }
 
 /// How a submitted op pays kernel/graph launch overhead.
@@ -548,6 +552,9 @@ struct GraphStep {
     portable_shared: PortableSharedMode,
     /// `cudaLaunchAttributeNvlinkUtilCentricScheduling`.
     nvlink_util_centric: bool,
+    /// CUDA 13 `CUDA_KERNEL_NODE_PARAMS.ctx`. [`None`] inherits the launch
+    /// stream. Not stored on [`Kind::Kernel`] (parameter, not topology).
+    green_ctx: Option<GreenCtxId>,
 }
 
 struct Graph {
@@ -895,6 +902,8 @@ pub struct Sim {
     enqueue_portable_shared: PortableSharedMode,
     /// NVLink-util-centric scheduling for the next submit / graph replay.
     enqueue_nvlink_util_centric: bool,
+    /// Graph kernel-node ctx for the next kernel submit / graph replay.
+    enqueue_green_ctx: Option<GreenCtxId>,
     /// Devices with `cudaFuncAttributeNonPortableClusterSizeAllowed`.
     non_portable_cluster: BTreeSet<DeviceId>,
     /// `cudaFuncAttributeMaxDynamicSharedMemorySize` per device (`0` = portable).
@@ -1039,6 +1048,7 @@ impl Sim {
             enqueue_dynamic_shared: 0,
             enqueue_portable_shared: PortableSharedMode::Default,
             enqueue_nvlink_util_centric: false,
+            enqueue_green_ctx: None,
             non_portable_cluster: BTreeSet::new(),
             max_dynamic_shared: BTreeMap::new(),
             stream_nvlink_util_centric: BTreeSet::new(),
@@ -1330,6 +1340,29 @@ impl Sim {
             .and_then(|id| self.green_ctxs.get(id))
             .map(|c| c.sm)
             .unwrap_or(SmResource::FULL)
+    }
+
+    fn kernel_sm_span(&self, device: DeviceId, stream: StreamId) -> SmResource {
+        match self.enqueue_green_ctx {
+            Some(ctx) => self
+                .green_ctxs
+                .get(&ctx)
+                .map(|c| c.sm)
+                .unwrap_or(SmResource::FULL),
+            None => self.stream_sm_span(device, stream),
+        }
+    }
+
+    fn require_live_green_ctx(&self, ctx: GreenCtxId, device: DeviceId) -> Result<(), SimError> {
+        let g = self.green_ctxs.get(&ctx).ok_or(SimError::Invalid {
+            why: "unknown green ctx",
+        })?;
+        if g.device != device {
+            return Err(SimError::Invalid {
+                why: "green ctx device",
+            });
+        }
+        Ok(())
     }
 
     /// `cuDeviceGetDevResource` / `cudaDeviceGetDevResource`.
@@ -3274,6 +3307,10 @@ impl Sim {
             self.enqueue_dynamic_shared = step.dynamic_shared;
             self.enqueue_portable_shared = step.portable_shared;
             self.enqueue_nvlink_util_centric = step.nvlink_util_centric;
+            if let Some(ctx) = step.green_ctx {
+                self.require_live_green_ctx(ctx, step.device)?;
+            }
+            self.enqueue_green_ctx = step.green_ctx;
             let wait = graph_node_waits(step, extra_wait, launch_tail, &node_ops)?;
             let s = self.graph_exec_stream(origin, stream, step, &node_stream, &mut worker);
             if let Some(slot) = node_stream.get_mut(idx) {
@@ -3483,6 +3520,7 @@ impl Sim {
         self.enqueue_dynamic_shared = 0;
         self.enqueue_portable_shared = PortableSharedMode::Default;
         self.enqueue_nvlink_util_centric = false;
+        self.enqueue_green_ctx = None;
         Ok(n)
     }
 
@@ -4184,10 +4222,10 @@ impl Sim {
     ///
     /// Node `node` must already be a kernel. [`KernelNodeParams::cooperative`]
     /// must match the existing node (cooperative vs `cudaLaunchKernel` is
-    /// topology). Pointers and [`KernelKind`] may change. Pays
-    /// `graph_set_params_ns`. Clears the upload flag unless the node is
-    /// device-updatable (`cudaLaunchAttributeDeviceUpdatableKernelNode`), so a
-    /// later [`Self::device_launch_graph`] needs no host re-upload. Capture
+    /// topology). Pointers, [`KernelKind`], and [`KernelNodeParams::ctx`] may
+    /// change. Pays `graph_set_params_ns`. Clears the upload flag unless the
+    /// node is device-updatable (`cudaLaunchAttributeDeviceUpdatableKernelNode`),
+    /// so a later [`Self::device_launch_graph`] needs no host re-upload. Capture
     /// cannot include it. Graphs with mem alloc/free nodes are legal (unlike
     /// [`Self::update_graph`]).
     pub fn graph_exec_kernel_set_params(
@@ -4217,6 +4255,9 @@ impl Sim {
             }
             (step.device, *cooperative, step.device_updatable)
         };
+        if let Some(ctx) = params.ctx {
+            self.require_live_green_ctx(ctx, device)?;
+        }
         let reads = self.resolve_bufs(&params.reads)?;
         let writes = self.resolve_bufs(&params.writes)?;
         let ns = self.profile.gpu(device)?.graph_set_params_ns.max(1);
@@ -4233,6 +4274,7 @@ impl Sim {
             writes,
             cooperative,
         };
+        step.green_ctx = params.ctx;
         if !device_updatable {
             g.uploaded = false;
         }
@@ -4243,7 +4285,8 @@ impl Sim {
     ///
     /// After [`Self::instantiate_graph`], this does not retarget the exec
     /// snapshot; use [`Self::graph_exec_kernel_set_params`]. Cooperative flag
-    /// must match (topology). Capture cannot include it. Host-sync 1 ns.
+    /// must match (topology). [`KernelNodeParams::ctx`] is a parameter. Capture
+    /// cannot include it. Host-sync 1 ns.
     pub fn graph_kernel_set_params(
         &mut self,
         graph: GraphId,
@@ -4270,6 +4313,9 @@ impl Sim {
             }
             (step.device, *cooperative)
         };
+        if let Some(ctx) = params.ctx {
+            self.require_live_green_ctx(ctx, device)?;
+        }
         let reads = self.resolve_bufs(&params.reads)?;
         let writes = self.resolve_bufs(&params.writes)?;
         let _gpu = self.profile.gpu(device)?;
@@ -4286,6 +4332,7 @@ impl Sim {
             writes,
             cooperative,
         };
+        step.green_ctx = params.ctx;
         Ok(())
     }
 
@@ -4889,7 +4936,7 @@ impl Sim {
         graph: GraphId,
         node: usize,
     ) -> Result<GraphNodeParams, SimError> {
-        self.graph_node_params_of(&self.graph_def_step(graph, node)?.kind)
+        self.graph_node_params_of(self.graph_def_step(graph, node)?)
     }
 
     /// Exec-snapshot [`Self::graph_node_get_params`].
@@ -4901,17 +4948,20 @@ impl Sim {
         exec: GraphId,
         node: usize,
     ) -> Result<GraphNodeParams, SimError> {
-        self.graph_node_params_of(&self.graph_exec_step(exec, node)?.kind)
+        self.graph_node_params_of(self.graph_exec_step(exec, node)?)
     }
 
-    fn graph_node_params_of(&self, kind: &Kind) -> Result<GraphNodeParams, SimError> {
-        if let Kind::Alloc { id, bytes } = kind {
+    fn graph_node_params_of(&self, step: &GraphStep) -> Result<GraphNodeParams, SimError> {
+        if let Kind::Alloc { id, bytes } = &step.kind {
             return Ok(GraphNodeParams::Alloc {
                 bytes: *bytes,
                 access: self.alloc_ref(*id)?.graph_access.clone(),
             });
         }
-        node_params_of(kind)
+        if matches!(step.kind, Kind::Kernel { .. }) {
+            return Ok(GraphNodeParams::Kernel(kernel_params_from_step(step)?));
+        }
+        node_params_of(&step.kind)
     }
 
     /// `cudaGraphBatchMemOpNodeSetParams` on the graph definition.
@@ -5616,29 +5666,15 @@ impl Sim {
             if step.destroyed {
                 continue;
             }
-            let Kind::Kernel {
-                kind,
-                reads,
-                writes,
-                cooperative,
-            } = &step.kind
-            else {
+            if !matches!(step.kind, Kind::Kernel { .. }) {
                 continue;
-            };
+            }
             if found.is_some() {
                 return Err(SimError::Invalid {
                     why: "not unique kernel node",
                 });
             }
-            found = Some((
-                i,
-                KernelNodeParams {
-                    kind: kind.clone(),
-                    reads: reads.clone(),
-                    writes: writes.clone(),
-                    cooperative: *cooperative,
-                },
-            ));
+            found = Some((i, kernel_params_from_step(step)?));
         }
         found.ok_or(SimError::Invalid {
             why: "not a kernel node",
@@ -5852,12 +5888,14 @@ impl Sim {
     }
 
     /// `cudaGraphKernelNodeGetParams` on the graph definition.
+    ///
+    /// Includes [`KernelNodeParams::ctx`] (CUDA 13 `CUDA_KERNEL_NODE_PARAMS.ctx`).
     pub fn graph_kernel_get_params(
         &self,
         graph: GraphId,
         node: usize,
     ) -> Result<KernelNodeParams, SimError> {
-        kernel_params_of(&self.graph_def_step(graph, node)?.kind)
+        kernel_params_from_step(self.graph_def_step(graph, node)?)
     }
 
     /// `cudaGraphKernelNodeGetParams` of the exec snapshot.
@@ -5870,7 +5908,7 @@ impl Sim {
         exec: GraphId,
         node: usize,
     ) -> Result<KernelNodeParams, SimError> {
-        kernel_params_of(&self.graph_exec_step(exec, node)?.kind)
+        kernel_params_from_step(self.graph_exec_step(exec, node)?)
     }
 
     /// `cudaGraphMemcpyNodeGetParams` on the graph definition.
@@ -7260,9 +7298,14 @@ impl Sim {
         if params.cooperative {
             self.require_cooperative(device)?;
         }
+        if let Some(ctx) = params.ctx {
+            self.require_live_green_ctx(ctx, device)?;
+        }
         let reads = self.resolve_bufs(&params.reads)?;
         let writes = self.resolve_bufs(&params.writes)?;
-        self.graph_push(
+        let prev = self.enqueue_green_ctx;
+        self.enqueue_green_ctx = params.ctx;
+        let r = self.graph_push(
             graph,
             device,
             stream,
@@ -7272,7 +7315,9 @@ impl Sim {
                 writes,
                 cooperative: params.cooperative,
             },
-        )
+        );
+        self.enqueue_green_ctx = prev;
+        r
     }
 
     /// `cudaGraphAddKernelNode` on a [`Self::create_graph`] definition.
@@ -7281,7 +7326,9 @@ impl Sim {
     /// [`Self::graph_add_dependencies`] so a later node waits. Independent
     /// kernels may Hyper-Q overlap at [`Self::launch_graph`]. Capture cannot
     /// include it. Illegal on an instantiated exec. Does not run the
-    /// kernel; [`Self::launch_graph`] does.
+    /// kernel; [`Self::launch_graph`] does. [`KernelNodeParams::ctx`] is
+    /// [`None`] (inherit the launch stream). Pin a green context through
+    /// [`Self::graph_add_node`] with [`GraphNodeParams::Kernel`].
     pub fn graph_add_kernel(
         &mut self,
         graph: GraphId,
@@ -10689,6 +10736,11 @@ impl Sim {
     ) -> Result<(), SimError> {
         let priority = self.snap_priority(device, stream);
         let (mem_sync_domain, mem_sync_map) = self.snap_mem_sync(device, stream, &kind)?;
+        let green_ctx = if matches!(kind, Kind::Kernel { .. }) {
+            self.enqueue_green_ctx
+        } else {
+            None
+        };
         let g = self.graphs.get_mut(&graph).ok_or(SimError::Invalid {
             why: "unknown graph",
         })?;
@@ -10716,6 +10768,7 @@ impl Sim {
             dynamic_shared: self.enqueue_dynamic_shared,
             portable_shared: self.enqueue_portable_shared,
             nvlink_util_centric: self.enqueue_nvlink_util_centric,
+            green_ctx,
         });
         Ok(())
     }
@@ -18190,6 +18243,12 @@ impl Sim {
         self.merge_capture_pending(device, stream, &mut deps);
         let priority = self.snap_priority(device, stream);
         let (mem_sync_domain, mem_sync_map) = self.snap_mem_sync(device, stream, &kind)?;
+        let green_ctx = if matches!(kind, Kind::Kernel { .. }) {
+            self.enqueue_green_ctx
+                .or_else(|| self.stream_green_ctx.get(&(device, stream)).copied())
+        } else {
+            None
+        };
         self.capture_buf.push(GraphStep {
             device,
             stream,
@@ -18214,6 +18273,7 @@ impl Sim {
             dynamic_shared: self.enqueue_dynamic_shared,
             portable_shared: self.enqueue_portable_shared,
             nvlink_util_centric: self.enqueue_nvlink_util_centric,
+            green_ctx,
         });
         let id = OpId(self.next_op);
         self.next_op = self.next_op.saturating_add(1);
@@ -18323,6 +18383,17 @@ impl Sim {
         let priority = self.snap_priority(device, stream);
         let (mem_sync_domain, mem_sync_map) = self.snap_mem_sync(device, stream, &kind)?;
         let mem_sync_physical = mem_sync_map.physical(mem_sync_domain);
+        let is_kernel = matches!(kind, Kind::Kernel { .. });
+        let green_ctx = if is_kernel {
+            self.enqueue_green_ctx
+        } else {
+            None
+        };
+        let sm_span = if is_kernel {
+            self.kernel_sm_span(device, stream)
+        } else {
+            self.stream_sm_span(device, stream)
+        };
         let _prev_op = self.ops.insert(
             id,
             Op {
@@ -18352,7 +18423,8 @@ impl Sim {
                 carveout: self.enqueue_carveout,
                 shared_mem: self.enqueue_shared_mem,
                 nvlink_util_centric: self.enqueue_nvlink_util_centric,
-                sm_span: self.stream_sm_span(device, stream),
+                sm_span,
+                green_ctx,
             },
         );
         if let Some(pe) = pde {
@@ -18776,6 +18848,7 @@ impl Sim {
                 shared_mem: SharedMemoryMode::Default,
                 nvlink_util_centric: false,
                 sm_span: self.stream_sm_span(device, stream),
+                green_ctx: None,
             },
         );
         self.add_op_dep(kernel, id);
@@ -18816,6 +18889,14 @@ impl Sim {
         {
             return Ok(true);
         }
+        let green_ctx = self
+            .ops
+            .get(&id)
+            .ok_or(SimError::Invalid { why: "unknown op" })?
+            .green_ctx;
+        if let Some(ctx) = green_ctx {
+            self.require_live_green_ctx(ctx, device)?;
+        }
         let slots = {
             let op = self
                 .ops
@@ -18848,7 +18929,19 @@ impl Sim {
                 return Err(e);
             }
         };
-        let ns = match self.kernel_ns(device, stream, &kind, launch, mem_bps, billed) {
+        let sm = match green_ctx {
+            Some(ctx) => {
+                self.green_ctxs
+                    .get(&ctx)
+                    .ok_or(SimError::Invalid {
+                        why: "unknown green ctx",
+                    })?
+                    .sm
+                    .width
+            }
+            None => self.stream_sm_permille(device, stream),
+        };
+        let ns = match self.kernel_ns(device, sm, &kind, launch, mem_bps, billed) {
             Ok(n) => n,
             Err(e) => {
                 self.drop_compute_n(device, slots)?;
@@ -20033,7 +20126,7 @@ impl Sim {
     fn kernel_ns(
         &self,
         device: DeviceId,
-        stream: StreamId,
+        sm_permille: u16,
         kind: &KernelKind,
         launch: LaunchCost,
         mem_bps: u64,
@@ -20041,7 +20134,7 @@ impl Sim {
     ) -> Result<u64, SimError> {
         let g = self.profile.gpu(device)?;
         let (flops, _) = kind.flops_and_bytes();
-        let sm = u64::from(self.stream_sm_permille(device, stream));
+        let sm = u64::from(sm_permille.max(1));
         let peak = g
             .flops(kind.dtype())
             .saturating_mul(sm)
@@ -21657,7 +21750,14 @@ fn kernel_params_of(kind: &Kind) -> Result<KernelNodeParams, SimError> {
         reads: reads.clone(),
         writes: writes.clone(),
         cooperative: *cooperative,
+        ctx: None,
     })
+}
+
+fn kernel_params_from_step(step: &GraphStep) -> Result<KernelNodeParams, SimError> {
+    let mut p = kernel_params_of(&step.kind)?;
+    p.ctx = step.green_ctx;
+    Ok(p)
 }
 
 fn memcpy_params_of(kind: &Kind) -> Result<MemcpyOp, SimError> {
@@ -22146,6 +22246,7 @@ fn remap_nested_graphs(
             dynamic_shared: step.dynamic_shared,
             portable_shared: step.portable_shared,
             nvlink_util_centric: step.nvlink_util_centric,
+            green_ctx: step.green_ctx,
         });
     }
     Ok(out)
