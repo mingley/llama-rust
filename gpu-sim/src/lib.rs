@@ -1007,9 +1007,13 @@
 //! ([`GraphExecUpdateResult::ParametersChanged`] for geometry);
 //! 1D memset may change dimensions. Memcpy source and destination
 //! [`Place`] (memory type) cannot change; alloc and size may.
-//! [`update_graph_with_info`](Sim::update_graph_with_info) fills
+//! [`KernelKind`] variant cannot change
+//! ([`GraphExecUpdateResult::FunctionChanged`]); work sizes may.
+//! [`graph_exec_kernel_set_params`](Sim::graph_exec_kernel_set_params) stays
+//! legal. [`update_graph_with_info`](Sim::update_graph_with_info) fills
 //! [`GraphExecUpdateResultInfo`] even on `Err` (node type, deps, edge ports,
-//! UseNodePriority priority, 2D memset geometry, memcpy memory type, mem nodes, device-launch).
+//! UseNodePriority priority, 2D memset geometry, memcpy memory type, kernel
+//! function variant, mem nodes, device-launch).
 //! [`user_object_create`](Sim::user_object_create) is `cudaUserObjectCreate`
 //! ([`UserObjectFlags::NO_DESTRUCTOR_SYNC`]). [`graph_retain_user_object`](Sim::graph_retain_user_object) /
 //! [`graph_release_user_object`](Sim::graph_release_user_object) are
@@ -28642,6 +28646,65 @@ mod tests {
         assert_eq!(info.result, GraphExecUpdateResult::Success);
         sim.graph_exec_memcpy_set_params(exec, 0, &h2d).unwrap();
         assert_eq!(sim.graph_exec_memcpy_get_params(exec, 0).unwrap().alloc, a);
+    }
+
+    #[test]
+    fn update_graph_rejects_kernel_function_change() {
+        let mut sim = Sim::new(h100());
+        let d = DeviceId(0);
+        let s = StreamId(0);
+        let a = sim.malloc(d, 4096).unwrap();
+        let exec = sim.create_graph(d, s).unwrap();
+        sim.graph_add_kernel(exec, KernelKind::other(8, 8), &[a], &[a])
+            .unwrap();
+        let _ = sim.instantiate_graph(exec).unwrap();
+        let src = sim.create_graph(d, s).unwrap();
+        sim.graph_add_kernel(
+            src,
+            KernelKind::Matmul {
+                m: 8,
+                n: 8,
+                k: 8,
+                dtype: DType::Fp16,
+            },
+            &[a],
+            &[a],
+        )
+        .unwrap();
+        let mut info = GraphExecUpdateResultInfo::default();
+        let err = sim
+            .update_graph_with_info(exec, src, &mut info)
+            .unwrap_err();
+        match err {
+            SimError::Invalid { why } => assert!(why.contains("topology"), "{why}"),
+            other => panic!("{other:?}"),
+        }
+        assert_eq!(info.result, GraphExecUpdateResult::FunctionChanged);
+        assert_eq!(info.error_node, Some(0));
+        assert_eq!(info.error_from_node, Some(0));
+        let same = sim.create_graph(d, s).unwrap();
+        sim.graph_add_kernel(same, KernelKind::other(16, 16), &[a], &[a])
+            .unwrap();
+        sim.update_graph_with_info(exec, same, &mut info).unwrap();
+        assert_eq!(info.result, GraphExecUpdateResult::Success);
+        let params = KernelNodeParams {
+            kind: KernelKind::Matmul {
+                m: 8,
+                n: 8,
+                k: 8,
+                dtype: DType::Fp16,
+            },
+            reads: vec![KernelBuf::whole(a)],
+            writes: vec![KernelBuf::whole(a)],
+            cooperative: false,
+            ctx: None,
+            shared_mem_bytes: 0,
+        };
+        sim.graph_exec_kernel_set_params(exec, 0, &params).unwrap();
+        assert_eq!(
+            sim.graph_exec_kernel_get_params(exec, 0).unwrap().kind,
+            params.kind
+        );
     }
 
     fn map_whole(sim: &mut Sim, device: DeviceId, bytes: u64) -> AllocId {

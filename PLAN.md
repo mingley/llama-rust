@@ -5493,7 +5493,17 @@ model, do not celebrate the sim.
     `gpu-profile capture` is still refused. Dual score still has no
     `$/M tokens`.
 
-511. [ ] Next numbered PLAN item after 510 is the next `gpu-sim` / Engine /
+511. [x] `gpu-sim` CUDA `cudaGraphExecUpdate` of a different kernel-node
+    function ([`KernelKind`] variant: Other, Matmul, or GroupedMoeGemm) is
+    [`GraphExecUpdateResult::FunctionChanged`]. Matching variants still
+    update (work sizes may change). [`graph_exec_kernel_set_params`] stays
+    legal. Child SetParams nested function stays a parameter. This VM does
+    not invent Engine `--graph-function-update` or
+    `UnsupportedFunctionChange` (no `CUfunction` signature or destroy).
+    `gpu-profile capture` is still refused. Dual score still has no
+    `$/M tokens`.
+
+512. [ ] Next numbered PLAN item after 511 is the next `gpu-sim` / Engine /
     serve / expertvm mechanical API that is still missing, or the next official
     decode family. Prefer remaining CUDA-shaped twins over more
     OpenAI HTTP veneer. Do not invent F32 `output.scale`. Do not invent a
@@ -5862,6 +5872,12 @@ model, do not celebrate the sim.
     Do not invent Engine `--pool-alloc-type` / `--pool-export-handles`. Do
     not invent Set of AllocationType / ExportHandleTypes. Do not invent NT
     or fabric mempool handle types.
+    Do not invent a second kernel-function ExecUpdate check.
+    Do not invent Engine `--graph-function-update`. Do not invent
+    `UnsupportedFunctionChange` (no `CUfunction` signature or destroy).
+    Do not invent child SetParams nested kernel function as a second check.
+    `graph_exec_kernel_set_params` stays legal. Do not treat Other FLOPs or
+    GEMM shape as function identity.
     Do not
     spend the next item on an OpenAI-compatible HTTP veneer.
 

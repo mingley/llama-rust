@@ -5,6 +5,17 @@ Visible five-turn extract: [docs/chatgpt-share-6a920fe1.md](docs/chatgpt-share-6
 Complete share-API extract: [docs/chatgpt-share-6a920fe1/](docs/chatgpt-share-6a920fe1/).
 Work lands on `main`. No PRs.
 
+## Shipped 2026-09-01 — ExecUpdate kernel function variant
+
+`gpu-sim` CUDA `cudaGraphExecUpdate` of a different kernel-node function
+(`KernelKind` variant: Other, Matmul, or GroupedMoeGemm) is
+`GraphExecUpdateResult::FunctionChanged`. Matching variants still update
+(work sizes may change). `graph_exec_kernel_set_params` stays legal. Child
+SetParams nested function stays a parameter. This VM does not invent Engine
+`--graph-function-update` or `UnsupportedFunctionChange` (no CUfunction
+signature or destroy). `gpu-profile capture` is still refused. Dual score
+still has no `$/M tokens`.
+
 ## Shipped 2026-09-01 — CUDA mempool AllocationType and ExportHandleTypes
 
 `gpu-sim` CUDA `cudaMemPoolAttrAllocationType` /

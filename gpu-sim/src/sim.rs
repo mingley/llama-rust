@@ -4235,7 +4235,11 @@ impl Sim {
     /// and destination [`Place`] (memory type) cannot change
     /// ([`GraphExecUpdateResult::ParametersChanged`]); alloc and size may.
     /// [`Self::graph_exec_memcpy_set_params`] stays legal. CUDA arrays stay
-    /// uninvented. Pays `graph_update_ns`. Recapture if topology differs.
+    /// uninvented. [`KernelKind`] variant (Other, Matmul, or GroupedMoeGemm) is
+    /// the kernel function analog
+    /// ([`GraphExecUpdateResult::FunctionChanged`]); work sizes may change.
+    /// [`Self::graph_exec_kernel_set_params`] stays legal. Pays
+    /// `graph_update_ns`. Recapture if topology differs.
     /// Capture cannot include it. `exec` must already be instantiated. Graphs
     /// with mem alloc or mem free nodes cannot be updated
     /// (`cudaGraphExecUpdate` of mem nodes).
@@ -23475,8 +23479,12 @@ fn dep_mismatch(exec_deps: &[usize], src_deps: &[usize], to: usize) -> GraphTopo
 
 fn op_mismatch(exec_kind: &Kind, src_kind: &Kind, i: usize) -> GraphTopologyDiff {
     let result = match (exec_kind, src_kind) {
-        (Kind::Kernel { cooperative: a, .. }, Kind::Kernel { cooperative: b, .. }) if a != b => {
-            GraphExecUpdateResult::ParametersChanged
+        (Kind::Kernel { cooperative: a, .. }, Kind::Kernel { cooperative: b, .. }) => {
+            if a != b {
+                GraphExecUpdateResult::ParametersChanged
+            } else {
+                GraphExecUpdateResult::FunctionChanged
+            }
         }
         (Kind::ChildGraph { .. }, Kind::ChildGraph { .. })
         | (Kind::If { .. }, Kind::If { .. })
@@ -23565,7 +23573,10 @@ fn child_param_op_eq(a: &Kind, b: &Kind) -> bool {
     if matches!((a, b), (Kind::ChildGraph { .. }, Kind::ChildGraph { .. })) {
         return true;
     }
-    op_eq(a, b)
+    match (a, b) {
+        (Kind::Kernel { cooperative: x, .. }, Kind::Kernel { cooperative: y, .. }) => x == y,
+        _ => op_eq(a, b),
+    }
 }
 
 fn debug_dot_place(p: Place) -> String {
@@ -24071,7 +24082,18 @@ fn op_eq(a: &Kind, b: &Kind) -> bool {
         (Kind::WhileTick { handle: x, .. }, Kind::WhileTick { handle: y, .. }) => x == y,
         (Kind::EventRecord { external: x, .. }, Kind::EventRecord { external: y, .. }) => x == y,
         (Kind::EventWait { external: x, .. }, Kind::EventWait { external: y, .. }) => x == y,
-        (Kind::Kernel { cooperative: x, .. }, Kind::Kernel { cooperative: y, .. }) => x == y,
+        (
+            Kind::Kernel {
+                cooperative: x,
+                kind: kx,
+                ..
+            },
+            Kind::Kernel {
+                cooperative: y,
+                kind: ky,
+                ..
+            },
+        ) => x == y && kernel_fn_eq(kx, ky),
         (Kind::Memcpy(a), Kind::Memcpy(b)) => memcpy_exec_update_eq(a, b),
         (Kind::Memset(a), Kind::Memset(b)) => memset_exec_update_eq(a, b),
         (Kind::WriteValue { bits32: x, .. }, Kind::WriteValue { bits32: y, .. }) => x == y,
@@ -24108,6 +24130,12 @@ fn memset_exec_update_eq(a: &MemsetOp, b: &MemsetOp) -> bool {
 /// (`CU_MEMORYTYPE_*` / [`Place`]) cannot change. CUDA arrays stay uninvented.
 fn memcpy_exec_update_eq(a: &MemcpyOp, b: &MemcpyOp) -> bool {
     a.src == b.src && a.dst == b.dst
+}
+
+/// `cudaGraphExecUpdate`: [`KernelKind`] variant is the `CUfunction` analog.
+/// GEMM shape / FLOPs / bytes may change.
+fn kernel_fn_eq(a: &KernelKind, b: &KernelKind) -> bool {
+    std::mem::discriminant(a) == std::mem::discriminant(b)
 }
 
 fn op_tag(k: &Kind) -> u8 {
