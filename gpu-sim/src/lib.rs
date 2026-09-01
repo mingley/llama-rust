@@ -1006,6 +1006,7 @@
 //! `cudaGraphGetNodes` / `GetRootNodes` / `GetEdges` / `NodeGetDependentNodes`
 //! / `cudaGraphDebugDotPrint` / `cudaGraphGetId` / `cuGraphNodeGetLocalId` /
 //! `cuGraphNodeGetToolsId` (live nodes; flags `0` is kinds and edges;
+//! [`GraphDebugDotFlags::RUNTIME_TYPES`] prints `cudaGraphNodeType*` names;
 //! [`GraphDebugDotFlags::VERBOSE`] prints modeled params). Destroyed slots are
 //! omitted. [`begin_capture_to_graph`](Sim::begin_capture_to_graph) is
 //! `cudaStreamBeginCaptureToGraph`: append captured nodes onto an existing
@@ -11641,6 +11642,157 @@ mod tests {
             .unwrap()
             .contains("coop=0"));
         let _end = sim.end_capture().unwrap();
+    }
+
+    #[test]
+    fn graph_debug_dot_runtime_types_prints_cuda_runtime_names() {
+        let mut sim = Sim::new(h100());
+        let d = DeviceId(0);
+        let s = StreamId(0);
+        let a = sim.malloc(d, 4096).unwrap();
+        let g = sim.create_graph(d, s).unwrap();
+        sim.graph_add_kernel(g, KernelKind::other(8, 8), &[a], &[a])
+            .unwrap();
+        sim.graph_add_empty(g).unwrap();
+        sim.graph_add_memcpy(
+            g,
+            MemcpyOp {
+                src: Place::HostPinned,
+                dst: Place::Device(d),
+                alloc: a,
+                bytes: 4096,
+                ..MemcpyOp::default()
+            },
+        )
+        .unwrap();
+        sim.graph_add_memset(g, KernelBuf::whole(a)).unwrap();
+        sim.graph_add_host_func(g).unwrap();
+        let plain = sim.graph_debug_dot(g).unwrap();
+        assert!(plain.contains("n0 [label=\"0 Kernel\"]"), "{plain}");
+        assert!(plain.contains("n1 [label=\"1 Empty\"]"), "{plain}");
+        assert!(plain.contains("n2 [label=\"2 Memcpy\"]"), "{plain}");
+        assert!(plain.contains("n3 [label=\"3 Memset\"]"), "{plain}");
+        assert!(plain.contains("n4 [label=\"4 Host\"]"), "{plain}");
+        let rt = sim
+            .graph_debug_dot_with_flags(g, GraphDebugDotFlags::RUNTIME_TYPES)
+            .unwrap();
+        assert!(
+            rt.contains("n0 [label=\"0 cudaGraphNodeTypeKernel\"]"),
+            "{rt}"
+        );
+        assert!(
+            rt.contains("n1 [label=\"1 cudaGraphNodeTypeEmpty\"]"),
+            "{rt}"
+        );
+        assert!(
+            rt.contains("n2 [label=\"2 cudaGraphNodeTypeMemcpy\"]"),
+            "{rt}"
+        );
+        assert!(
+            rt.contains("n3 [label=\"3 cudaGraphNodeTypeMemset\"]"),
+            "{rt}"
+        );
+        assert!(
+            rt.contains("n4 [label=\"4 cudaGraphNodeTypeHost\"]"),
+            "{rt}"
+        );
+        assert!(!rt.contains("n0 [label=\"0 Kernel\"]"), "{rt}");
+        let both = sim
+            .graph_debug_dot_with_flags(
+                g,
+                GraphDebugDotFlags::RUNTIME_TYPES | GraphDebugDotFlags::KERNEL_NODE_PARAMS,
+            )
+            .unwrap();
+        assert!(both.contains("cudaGraphNodeTypeKernel"), "{both}");
+        assert!(both.contains("coop=0"), "{both}");
+        let verbose = sim
+            .graph_debug_dot_with_flags(g, GraphDebugDotFlags::VERBOSE)
+            .unwrap();
+        assert!(verbose.contains("cudaGraphNodeTypeKernel"), "{verbose}");
+        assert!(verbose.contains("coop=0"), "{verbose}");
+        sim.create_event(EventId(1)).unwrap();
+        let ev = sim.create_graph(d, s).unwrap();
+        sim.graph_add_event_record(ev, EventId(1), false).unwrap();
+        sim.graph_add_event_wait(ev, EventId(1), false).unwrap();
+        let ev_rt = sim
+            .graph_debug_dot_with_flags(ev, GraphDebugDotFlags::RUNTIME_TYPES)
+            .unwrap();
+        assert!(
+            ev_rt.contains("n0 [label=\"0 cudaGraphNodeTypeEventRecord\"]"),
+            "{ev_rt}"
+        );
+        assert!(
+            ev_rt.contains("n1 [label=\"1 cudaGraphNodeTypeWaitEvent\"]"),
+            "{ev_rt}"
+        );
+        let mem = sim.create_graph(d, s).unwrap();
+        let id = sim.graph_add_alloc(mem, 4096).unwrap();
+        sim.graph_add_free(mem, id).unwrap();
+        sim.graph_add_write_value32(mem, a, 0, 1).unwrap();
+        let mem_rt = sim
+            .graph_debug_dot_with_flags(mem, GraphDebugDotFlags::RUNTIME_TYPES)
+            .unwrap();
+        assert!(
+            mem_rt.contains("n0 [label=\"0 cudaGraphNodeTypeMemAlloc\"]"),
+            "{mem_rt}"
+        );
+        assert!(
+            mem_rt.contains("n1 [label=\"1 cudaGraphNodeTypeMemFree\"]"),
+            "{mem_rt}"
+        );
+        assert!(
+            mem_rt.contains("n2 [label=\"2 cudaGraphNodeTypeBatchMemOp\"]"),
+            "{mem_rt}"
+        );
+        let cond = sim.create_graph(d, s).unwrap();
+        let h = sim.graph_conditional_create(cond, 0).unwrap();
+        let _body = sim.graph_add_if(cond, h).unwrap();
+        sim.graph_add_set_conditional(cond, h, 1).unwrap();
+        let cond_plain = sim.graph_debug_dot(cond).unwrap();
+        assert!(cond_plain.contains("n0 [label=\"0 If\"]"), "{cond_plain}");
+        assert!(
+            cond_plain.contains("n1 [label=\"1 SetConditional\"]"),
+            "{cond_plain}"
+        );
+        let cond_rt = sim
+            .graph_debug_dot_with_flags(cond, GraphDebugDotFlags::RUNTIME_TYPES)
+            .unwrap();
+        assert!(
+            cond_rt.contains("n0 [label=\"0 cudaGraphNodeTypeConditional\"]"),
+            "{cond_rt}"
+        );
+        assert!(
+            cond_rt.contains("n1 [label=\"1 SetConditional\"]"),
+            "{cond_rt}"
+        );
+        let leaf = sim.create_graph(d, s).unwrap();
+        sim.graph_add_empty(leaf).unwrap();
+        let leaf_exec = sim.instantiate_graph(leaf).unwrap();
+        let parent = sim.create_graph(d, s).unwrap();
+        sim.graph_add_child(parent, leaf_exec).unwrap();
+        let parent_rt = sim
+            .graph_debug_dot_with_flags(parent, GraphDebugDotFlags::RUNTIME_TYPES)
+            .unwrap();
+        assert!(
+            parent_rt.contains("n0 [label=\"0 cudaGraphNodeTypeGraph\"]"),
+            "{parent_rt}"
+        );
+        match sim.graph_debug_dot_with_flags(g, 1 << 7) {
+            Err(SimError::Invalid { why }) => {
+                assert!(why.contains("graph debug dot flags"), "{why}");
+            }
+            other => panic!("{other:?}"),
+        }
+        sim.begin_capture(d, s).unwrap();
+        assert!(sim
+            .graph_debug_dot_with_flags(g, GraphDebugDotFlags::RUNTIME_TYPES)
+            .unwrap()
+            .contains("cudaGraphNodeTypeKernel"));
+        let _end = sim.end_capture().unwrap();
+        match sim.graph_debug_dot_with_flags(GraphId(99), GraphDebugDotFlags::RUNTIME_TYPES) {
+            Err(SimError::Invalid { why }) => assert!(why.contains("unknown graph"), "{why}"),
+            other => panic!("{other:?}"),
+        }
     }
 
     #[test]

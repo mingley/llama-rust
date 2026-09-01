@@ -2981,12 +2981,14 @@ impl HostAllocFlags {
 /// `cudaGraphDebugDotFlags` for [`crate::Sim::graph_debug_dot_with_flags`].
 ///
 /// Bit values match CUDA. External-semaphore and extra-conditional-edge flags
-/// are not modeled (Invalid).
+/// are not modeled (Invalid). [`Self::RUNTIME_TYPES`] is bit 1.
 pub struct GraphDebugDotFlags;
 
 impl GraphDebugDotFlags {
     /// `cudaGraphDebugDotFlagsVerbose` (all modeled param dumps).
     pub const VERBOSE: u32 = 1;
+    /// `cudaGraphDebugDotFlagsRuntimeTypes` (CUDA runtime `cudaGraphNodeType*` names).
+    pub const RUNTIME_TYPES: u32 = 1 << 1;
     /// `cudaGraphDebugDotFlagsKernelNodeParams`.
     pub const KERNEL_NODE_PARAMS: u32 = 1 << 2;
     /// `cudaGraphDebugDotFlagsMemcpyNodeParams`.

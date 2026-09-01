@@ -7758,12 +7758,16 @@ impl Sim {
     /// Query; legal during capture. Unknown bits (including external-semaphore
     /// and extra-conditional-edge flags) are Invalid `"graph debug dot flags"`.
     /// [`GraphDebugDotFlags::VERBOSE`] dumps every modeled param class.
+    /// [`GraphDebugDotFlags::RUNTIME_TYPES`] prints CUDA runtime
+    /// `cudaGraphNodeType*` names. Flags `0` keeps [`GraphNodeKind`] Debug
+    /// names. VM-only kinds keep Debug names under RuntimeTypes.
     pub fn graph_debug_dot_with_flags(
         &self,
         graph: GraphId,
         flags: u32,
     ) -> Result<String, SimError> {
         const KNOWN: u32 = GraphDebugDotFlags::VERBOSE
+            | GraphDebugDotFlags::RUNTIME_TYPES
             | GraphDebugDotFlags::KERNEL_NODE_PARAMS
             | GraphDebugDotFlags::MEMCPY_NODE_PARAMS
             | GraphDebugDotFlags::MEMSET_NODE_PARAMS
@@ -20625,10 +20629,41 @@ fn debug_dot_bufs(bufs: &[KernelBuf]) -> String {
     s
 }
 
+fn debug_dot_kind_name(kind: GraphNodeKind, runtime_types: bool) -> String {
+    let cuda = match kind {
+        GraphNodeKind::Kernel => Some("cudaGraphNodeTypeKernel"),
+        GraphNodeKind::Memcpy => Some("cudaGraphNodeTypeMemcpy"),
+        GraphNodeKind::Memset => Some("cudaGraphNodeTypeMemset"),
+        GraphNodeKind::Host => Some("cudaGraphNodeTypeHost"),
+        GraphNodeKind::Empty => Some("cudaGraphNodeTypeEmpty"),
+        GraphNodeKind::EventRecord => Some("cudaGraphNodeTypeEventRecord"),
+        GraphNodeKind::EventWait => Some("cudaGraphNodeTypeWaitEvent"),
+        GraphNodeKind::ChildGraph => Some("cudaGraphNodeTypeGraph"),
+        GraphNodeKind::Alloc => Some("cudaGraphNodeTypeMemAlloc"),
+        GraphNodeKind::Free => Some("cudaGraphNodeTypeMemFree"),
+        GraphNodeKind::If | GraphNodeKind::While | GraphNodeKind::Switch => {
+            Some("cudaGraphNodeTypeConditional")
+        }
+        GraphNodeKind::BatchMemOp => Some("cudaGraphNodeTypeBatchMemOp"),
+        GraphNodeKind::AllReduce
+        | GraphNodeKind::Attach
+        | GraphNodeKind::SetConditional
+        | GraphNodeKind::WhileTick
+        | GraphNodeKind::DeviceLaunch => None,
+    };
+    match (runtime_types, cuda) {
+        (true, Some(name)) => String::from(name),
+        _ => format!("{kind:?}"),
+    }
+}
+
 fn debug_dot_label(i: usize, step: &GraphStep, flags: u32) -> String {
     let mut label = i.to_string();
     label.push(' ');
-    label.push_str(&format!("{:?}", node_kind(&step.kind)));
+    label.push_str(&debug_dot_kind_name(
+        node_kind(&step.kind),
+        flags & GraphDebugDotFlags::RUNTIME_TYPES != 0,
+    ));
     match &step.kind {
         Kind::Kernel {
             cooperative,

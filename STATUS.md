@@ -5,6 +5,16 @@ Visible five-turn extract: [docs/chatgpt-share-6a920fe1.md](docs/chatgpt-share-6
 Complete share-API extract: [docs/chatgpt-share-6a920fe1/](docs/chatgpt-share-6a920fe1/).
 Work lands on `main`. No PRs.
 
+## Shipped 2026-09-01 — CUDA `cudaGraphDebugDotFlagsRuntimeTypes`
+
+`gpu-sim` `GraphDebugDotFlags::RUNTIME_TYPES` is
+`cudaGraphDebugDotFlagsRuntimeTypes` (`1 << 1`). Debug-dot labels use
+CUDA runtime `cudaGraphNodeType*` names. Flags `0` stays `GraphNodeKind`
+Debug names. VM-only kinds keep Debug names. `VERBOSE` includes
+RuntimeTypes. Query; legal during capture. Distinct from param-class
+dumps and HANDLES. No Engine `--graph-debug-dot`. `gpu-profile capture`
+is still refused. Dual score still has no `$/M tokens`.
+
 ## Shipped 2026-08-31 — CUDA `cudaDeviceGetNvSciSyncAttributes`
 
 `gpu-sim` `device_get_nvscisync_attributes` is
