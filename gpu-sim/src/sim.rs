@@ -4643,7 +4643,7 @@ impl Sim {
     /// Dispatches to the typed SetParams. [`GraphNodeParams::Alloc`] is Invalid
     /// (would resize HBM). [`GraphNodeParams::Empty`] has no params. Event
     /// External flags are not rewritten (topology). [`GraphNodeParams::If`] /
-    /// `IfElse` / `While` are topology (`"conditional node params"`). After
+    /// `IfElse` / `While` / `Switch` are topology (`"conditional node params"`). After
     /// instantiate this does not retarget the exec; use
     /// [`Self::graph_exec_node_set_params`]. Capture cannot include it.
     pub fn graph_node_set_params(
@@ -4751,7 +4751,8 @@ impl Sim {
             }
             GraphNodeParams::If { .. }
             | GraphNodeParams::IfElse { .. }
-            | GraphNodeParams::While { .. } => Err(SimError::Invalid {
+            | GraphNodeParams::While { .. }
+            | GraphNodeParams::Switch { .. } => Err(SimError::Invalid {
                 why: "conditional node params",
             }),
         }
@@ -4761,8 +4762,9 @@ impl Sim {
     ///
     /// Query; legal during capture. Typed GetParams stay.
     /// [`GraphNodeParams::If`] / `IfElse` / `While` are handle-only (bodies stay
-    /// [`Self::graph_if_nodes`] / `graph_while_nodes`). SWITCH stays
-    /// [`Self::graph_switch_nodes`]. Set-conditional is
+    /// [`Self::graph_if_nodes`] / `graph_while_nodes`). [`GraphNodeParams::Switch`]
+    /// is handle plus branch count (bodies stay [`Self::graph_switch_nodes`]).
+    /// Set-conditional is
     /// [`Self::graph_set_conditional_nodes`] /
     /// [`GraphNodeParams::SetConditional`].
     /// [`GraphNodeParams::Alloc`] is bytes only; the pointer is
@@ -6802,9 +6804,9 @@ impl Sim {
     /// start with no dependencies. This call binds `deps` in the same step (all
     /// indices must already exist). [`GraphNodeParams::If`] /
     /// [`GraphNodeParams::IfElse`] / [`GraphNodeParams::While`] fill
-    /// [`GraphAddNode::body`] (and `else_body`). Typed [`Self::graph_add_if`] /
-    /// `graph_add_if_else` / `graph_add_while` stay. SWITCH stays
-    /// [`Self::graph_add_switch`].
+    /// [`GraphAddNode::body`] (and `else_body`). [`GraphNodeParams::Switch`]
+    /// fills [`GraphAddNode::switch_bodies`]. Typed [`Self::graph_add_if`] /
+    /// `graph_add_if_else` / `graph_add_while` / `graph_add_switch` stay.
     /// [`GraphNodeParams::SetConditional`] is
     /// [`Self::graph_add_set_conditional`]. Capture
     /// cannot include it. Illegal on an instantiated exec.
@@ -6867,13 +6869,11 @@ impl Sim {
                 self.graph_add_child(graph, child)?;
                 Ok(add_node_out(None, None, None))
             }
-            GraphNodeParams::Alloc { bytes } => {
-                Ok(add_node_out(
-                    Some(self.graph_add_alloc(graph, bytes)?),
-                    None,
-                    None,
-                ))
-            }
+            GraphNodeParams::Alloc { bytes } => Ok(add_node_out(
+                Some(self.graph_add_alloc(graph, bytes)?),
+                None,
+                None,
+            )),
             GraphNodeParams::Free(id) => {
                 self.graph_add_free(graph, id)?;
                 Ok(add_node_out(None, None, None))
@@ -6897,6 +6897,17 @@ impl Sim {
             GraphNodeParams::While { handle } => {
                 let body = self.graph_add_while(graph, handle)?;
                 Ok(add_node_out(None, Some(body), None))
+            }
+            GraphNodeParams::Switch { handle, n } => {
+                let bodies = self.graph_add_switch(graph, handle, n)?;
+                let first = bodies.first().copied();
+                let mut added = add_node_out(None, first, None);
+                for (i, b) in bodies.into_iter().enumerate() {
+                    if let Some(slot) = added.switch_bodies.get_mut(i) {
+                        *slot = Some(b);
+                    }
+                }
+                Ok(added)
             }
         }
     }
@@ -7274,8 +7285,9 @@ impl Sim {
     /// `cudaGraphAddNode` SWITCH (`cudaGraphCondTypeSwitch`). Returns `n` bodies.
     ///
     /// Branch `i` runs when the handle equals `i`. Out of range skips every
-    /// body. `n` must be `1..=64`. Capture cannot include it. Illegal on an
-    /// instantiated exec.
+    /// body. `n` must be `1..=64`. [`GraphNodeParams::Switch`] fills
+    /// [`GraphAddNode::switch_bodies`]. Capture cannot include it. Illegal on
+    /// an instantiated exec.
     pub fn graph_add_switch(
         &mut self,
         graph: GraphId,
@@ -20706,8 +20718,11 @@ fn node_params_of(kind: &Kind) -> Result<GraphNodeParams, SimError> {
             ..
         } => GraphNodeParams::IfElse { handle: *handle },
         Kind::While { handle, .. } => GraphNodeParams::While { handle: *handle },
-        Kind::Switch { .. }
-        | Kind::WhileTick { .. }
+        Kind::Switch { handle, bodies } => GraphNodeParams::Switch {
+            handle: *handle,
+            n: u32::try_from(bodies.len()).unwrap_or(0),
+        },
+        Kind::WhileTick { .. }
         | Kind::Attach { .. }
         | Kind::AllReduce { .. }
         | Kind::DeviceLaunch { .. }
@@ -21476,6 +21491,7 @@ fn add_node_out(
         alloc,
         body,
         else_body,
+        switch_bodies: [None; 64],
     }
 }
 

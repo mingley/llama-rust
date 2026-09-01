@@ -3531,10 +3531,10 @@ pub enum GraphNodeKind {
 /// [`crate::Sim::graph_node_get_params`].
 ///
 /// [`Self::If`] / [`Self::IfElse`] / [`Self::While`] fill
-/// [`GraphAddNode::body`] (and `else_body`). Typed
-/// [`crate::Sim::graph_add_if`] / `graph_add_if_else` / `graph_add_while`
-/// stay. SWITCH stays [`crate::Sim::graph_add_switch`] (those return body
-/// graphs). Set-conditional is
+/// [`GraphAddNode::body`] (and `else_body`). [`Self::Switch`] fills
+/// [`GraphAddNode::switch_bodies`] (`1..=64`). Typed
+/// [`crate::Sim::graph_add_if`] / `graph_add_if_else` / `graph_add_while` /
+/// `graph_add_switch` stay. Set-conditional is
 /// [`crate::Sim::graph_add_set_conditional`] / [`Self::SetConditional`].
 /// External-semaphore nodes are not modeled.
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -3598,6 +3598,14 @@ pub enum GraphNodeParams {
         /// Handle created with [`crate::Sim::graph_conditional_create`].
         handle: CondId,
     },
+    /// `cudaGraphCondTypeSwitch`. [`GraphAddNode::switch_bodies`] is
+    /// `phGraph_out` (`n` must be `1..=64`).
+    Switch {
+        /// Handle created with [`crate::Sim::graph_conditional_create`].
+        handle: CondId,
+        /// Number of branches (`cudaGraphConditionalNodeParams::size`).
+        n: u32,
+    },
 }
 
 /// Result of [`crate::Sim::graph_add_node`] (`cudaGraphAddNode`).
@@ -3611,4 +3619,6 @@ pub struct GraphAddNode {
     pub body: Option<GraphId>,
     /// IF size-2 else-body (`phGraph_out[1]`).
     pub else_body: Option<GraphId>,
+    /// SWITCH `phGraph_out` (length `n`; unused slots `None`).
+    pub switch_bodies: [Option<GraphId>; 64],
 }

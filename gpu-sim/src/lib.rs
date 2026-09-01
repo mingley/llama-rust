@@ -986,9 +986,9 @@
 //! [`graph_add_node`](Sim::graph_add_node) is `cudaGraphAddNode`
 //! ([`GraphNodeParams`] plus dependency indices in the same call). Typed
 //! `graph_add_*` stay (empty deps). [`GraphNodeParams::If`] / `IfElse` /
-//! `While` fill [`GraphAddNode`] bodies; typed [`graph_add_if`](Sim::graph_add_if) /
-//! `graph_add_if_else` / `graph_add_while` stay. SWITCH stays
-//! [`graph_add_switch`](Sim::graph_add_switch).
+//! `While` / `Switch` fill [`GraphAddNode`] bodies. Typed helpers
+//! [`graph_add_if`](Sim::graph_add_if), `graph_add_if_else`, `graph_add_while`,
+//! and `graph_add_switch` stay.
 //! [`graph_add_set_conditional`](Sim::graph_add_set_conditional) is the
 //! graph-build analog of captured [`set_conditional`](Sim::set_conditional)
 //! ([`GraphNodeParams::SetConditional`]; handle is topology, `value` is a
@@ -1001,7 +1001,7 @@
 //! [`graph_exec_node_get_params`](Sim::graph_exec_node_get_params) are
 //! `cudaGraphNodeGetParams` on the definition / exec snapshot (query; Empty
 //! returns [`GraphNodeParams::Empty`]; Alloc is bytes only; If / IfElse /
-//! While are handle-only).
+//! While are handle-only; Switch is handle plus branch count).
 //! [`Sim::graph_add_alloc`] / [`graph_add_free`](Sim::graph_add_free) are
 //! `cudaGraphAddMemAllocNode` / `cudaGraphAddMemFreeNode` (same reuse /
 //! AutoFreeOnLaunch rules as captured `cudaMallocAsync`).
@@ -12165,6 +12165,30 @@ mod tests {
             Err(SimError::Invalid { why }) => assert!(why.contains("conditional"), "{why}"),
             other => panic!("{other:?}"),
         }
+        let sw = sim
+            .graph_add_node(g, &[], GraphNodeParams::Switch { handle: h, n: 2 })
+            .unwrap();
+        assert_eq!(sw.node, 3);
+        let b0 = sw.switch_bodies.first().copied().flatten();
+        let b1 = sw.switch_bodies.get(1).copied().flatten();
+        let b2 = sw.switch_bodies.get(2).copied().flatten();
+        assert_eq!(sw.body, b0);
+        assert!(b0.is_some());
+        assert!(b1.is_some());
+        assert!(b2.is_none());
+        assert_ne!(b0, b1);
+        assert_eq!(
+            sim.graph_node_get_params(g, sw.node).unwrap(),
+            GraphNodeParams::Switch { handle: h, n: 2 }
+        );
+        match sim.graph_node_set_params(g, sw.node, GraphNodeParams::Switch { handle: h, n: 2 }) {
+            Err(SimError::Invalid { why }) => assert!(why.contains("conditional"), "{why}"),
+            other => panic!("{other:?}"),
+        }
+        match sim.graph_add_node(g, &[], GraphNodeParams::Switch { handle: h, n: 0 }) {
+            Err(SimError::Invalid { why }) => assert!(why.contains("switch branches"), "{why}"),
+            other => panic!("{other:?}"),
+        }
     }
 
     #[test]
@@ -12274,10 +12298,10 @@ mod tests {
         let sw = sim.create_graph(d, s).unwrap();
         let hs = sim.graph_conditional_create(sw, 0).unwrap();
         let _branches = sim.graph_add_switch(sw, hs, 2).unwrap();
-        match sim.graph_node_get_params(sw, 0) {
-            Err(SimError::Invalid { why }) => assert!(why.contains("params kind"), "{why}"),
-            other => panic!("{other:?}"),
-        }
+        assert_eq!(
+            sim.graph_node_get_params(sw, 0).unwrap(),
+            GraphNodeParams::Switch { handle: hs, n: 2 }
+        );
         let raw = sim.create_graph(d, s).unwrap();
         sim.graph_add_empty(raw).unwrap();
         match sim.graph_exec_node_get_params(raw, 0) {

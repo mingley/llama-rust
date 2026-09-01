@@ -356,9 +356,9 @@ it. Independent streams still launch live. `cudaMallocAsync` / `cudaFreeAsync`
 `cudaGraphAddMemFreeNode` (same reuse / AutoFreeOnLaunch rules).
 `graph_add_node` is `cudaGraphAddNode` (`GraphNodeParams` plus dependency
 indices in the same call). Typed `graph_add_*` stay (empty deps).
-`GraphNodeParams::If` / `IfElse` / `While` fill `GraphAddNode` bodies;
-typed `graph_add_if` / `graph_add_if_else` / `graph_add_while` stay.
-SWITCH stays `graph_add_switch`.
+`GraphNodeParams::If` / `IfElse` / `While` / `Switch` fill `GraphAddNode` bodies.
+Typed helpers stay (`graph_add_if`, `graph_add_if_else`, `graph_add_while`,
+`graph_add_switch`).
 `graph_add_set_conditional` is the graph-build analog of captured
 `set_conditional` (`GraphNodeParams::SetConditional`; handle is topology,
 `value` is a parameter).
@@ -367,7 +367,8 @@ SWITCH stays `graph_add_switch`.
 Alloc would resize HBM; Empty has no params).
 `graph_node_get_params` / `graph_exec_node_get_params` are
 `cudaGraphNodeGetParams` on the definition / exec snapshot (query; Empty
-returns `GraphNodeParams::Empty`; Alloc is bytes only).
+returns `GraphNodeParams::Empty`; Alloc is bytes only; If / IfElse /
+While are handle-only; Switch is handle plus branch count).
 `graph_add_empty` is `cudaGraphAddEmptyNode` (1 ns; no compute/copy occupancy).
 `graph_add_write_value64` / `graph_add_write_value64_with_flags` /
 `graph_add_write_value32_with_flags` / `graph_add_wait_value64` /

@@ -5,6 +5,14 @@ Visible five-turn extract: [docs/chatgpt-share-6a920fe1.md](docs/chatgpt-share-6
 Complete share-API extract: [docs/chatgpt-share-6a920fe1/](docs/chatgpt-share-6a920fe1/).
 Work lands on `main`. No PRs.
 
+## Shipped 2026-09-01 — CUDA `cudaGraphAddNode` SWITCH params
+
+`gpu-sim` `GraphNodeParams::Switch` is `cudaGraphAddNode` SWITCH.
+`GraphAddNode::switch_bodies` is Copy `phGraph_out` (`n` is `1..=64`).
+Typed `graph_add_switch` stays. GetParams is handle plus branch count.
+SetParams is Invalid `"conditional node params"`. `gpu-profile capture`
+is still refused. Dual score still has no `$/M tokens`.
+
 ## Shipped 2026-09-01 — CUDA `cudaGraphAddNode` IF/WHILE params
 
 `gpu-sim` `GraphNodeParams::If` / `IfElse` / `While` are
