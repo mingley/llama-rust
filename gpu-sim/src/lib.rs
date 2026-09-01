@@ -618,6 +618,9 @@
 //! [`egl_stream_consumer_connect`](Sim::egl_stream_consumer_connect) is
 //! `cuEGLStreamConsumerConnect` (always Invalid `"egl stream"`). Query;
 //! legal during capture. No Engine `--egl-stream`.
+//! [`egl_stream_consumer_disconnect`](Sim::egl_stream_consumer_disconnect) is
+//! `cuEGLStreamConsumerDisconnect` (always Invalid `"consumer disconnect"`).
+//! Query; legal during capture. No Engine `--egl-consumer-disconnect`.
 //! [`egl_stream_producer_connect`](Sim::egl_stream_producer_connect) is
 //! `cuEGLStreamProducerConnect` (always Invalid `"egl producer"`). Query;
 //! legal during capture. No Engine `--egl-producer`.
@@ -22084,6 +22087,44 @@ mod tests {
         match sim.graphics_map_resources(d, StreamId(0)) {
             Err(SimError::Invalid { why }) => {
                 assert!(why.contains("graphics resource"), "{why}");
+            }
+            other => panic!("{other:?}"),
+        }
+    }
+
+    #[test]
+    fn egl_stream_consumer_disconnect_is_unsupported() {
+        let mut sim = Sim::new(h100());
+        let d = DeviceId(0);
+        match sim.egl_stream_consumer_disconnect(d) {
+            Err(SimError::Invalid { why }) => {
+                assert!(why.contains("consumer disconnect"), "{why}");
+            }
+            other => panic!("{other:?}"),
+        }
+        sim.begin_capture(d, StreamId(0)).unwrap();
+        match sim.egl_stream_consumer_disconnect(d) {
+            Err(SimError::Invalid { why }) => {
+                assert!(why.contains("consumer disconnect"), "{why}");
+            }
+            other => panic!("{other:?}"),
+        }
+        let _g = sim.end_capture().unwrap();
+        match sim.egl_stream_consumer_disconnect(DeviceId(99)) {
+            Err(SimError::Invalid { why }) => {
+                assert!(why.contains("device not in profile"), "{why}");
+            }
+            other => panic!("{other:?}"),
+        }
+        match sim.egl_stream_consumer_connect(d) {
+            Err(SimError::Invalid { why }) => {
+                assert!(why.contains("egl stream"), "{why}");
+            }
+            other => panic!("{other:?}"),
+        }
+        match sim.egl_stream_producer_disconnect(d) {
+            Err(SimError::Invalid { why }) => {
+                assert!(why.contains("producer disconnect"), "{why}");
             }
             other => panic!("{other:?}"),
         }

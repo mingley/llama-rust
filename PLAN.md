@@ -6745,7 +6745,15 @@ model, do not celebrate the sim.
     or `cudaChooseDevice`. `gpu-profile capture` is still refused. Dual
     score still has no `$/M tokens`.
 
-658. [ ] Next numbered PLAN item after 657 is the next `gpu-sim` / Engine /
+658. [x] `gpu-sim` `Sim::egl_stream_consumer_disconnect` is
+    `cuEGLStreamConsumerDisconnect`. Always Invalid `"consumer disconnect"`
+    because EGL streams are not modeled. Query; legal during capture. Distinct
+    from `egl_stream_consumer_connect` and `egl_stream_producer_disconnect`.
+    This VM does not invent `cuEGLStreamConsumerAcquireFrame`, Engine `--egl-consumer-disconnect`,
+    or `cudaChooseDevice`. `gpu-profile capture` is still refused. Dual
+    score still has no `$/M tokens`.
+
+659. [ ] Next numbered PLAN item after 658 is the next `gpu-sim` / Engine /
     serve / expertvm mechanical API that is still missing, or the next official
     decode family. Prefer remaining CUDA-shaped twins over more
     OpenAI HTTP veneer. Do not invent F32 `output.scale`. Do not invent a
@@ -7172,6 +7180,10 @@ model, do not celebrate the sim.
     `array_get_memory_requirements`. Do not invent Engine `--array-memory`.
     Do not invent `cuMipmappedArrayGetMemoryRequirements` this slice. Do not
     reverse `"array memory"`.
+    Do not invent a second `cuEGLStreamConsumerDisconnect` /
+    `egl_stream_consumer_disconnect`. Do not invent Engine `--egl-consumer-disconnect`.
+    Do not invent `cuEGLStreamConsumerAcquireFrame` this slice. Do not reverse
+    `"consumer disconnect"`.
     Do not invent a second `cudaStreamAddCallback`.
     Do not invent Engine `--stream-callback` (same wall as second live
     `cudaLaunchHostFunc` after miss DMA).
@@ -7709,6 +7721,10 @@ model, do not celebrate the sim.
     Engine `--get-array-memory`. Do not invent a populated
     `cudaArrayMemoryRequirements` this slice. Do not reverse
     array memory remaining unsupported.
+    Do not invent a second `egl_stream_consumer_disconnect` API. Do not invent
+    Engine `--disconnect-egl-consumer`. Do not invent an EGL consumer
+    frame this slice. Do not reverse EGL consumer disconnect remaining
+    unsupported.
     Do not invent a second DeviceLaunch in-flight destroy-complete check or Engine
     `--device-launch-destroy`. Do not abort an in-flight DeviceLaunch when
     `destroy_graph` succeeds. Do not delay destroy of an idle exec. Do not invent
@@ -8436,6 +8452,9 @@ model, do not celebrate the sim.
     Do not invent a second `array_get_memory_requirements` method. Do not
     invent Engine `--cu-array-get-memory-requirements`. Do not reverse wrapping
     cuArrayGetMemoryRequirements Invalid.
+    Do not invent a second `egl_stream_consumer_disconnect` method. Do not
+    invent Engine `--cu-egl-consumer-disconnect`. Do not reverse wrapping
+    cuEGLStreamConsumerDisconnect Invalid.
     Do not
     spend the next item on an OpenAI-compatible HTTP veneer.
 

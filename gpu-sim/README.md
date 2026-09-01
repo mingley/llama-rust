@@ -181,6 +181,7 @@ warp scheduler, L1, …   ← do not model
 | `graphics_gl_register_buffer` is Invalid (OpenGL interop is not modeled) | `cuGraphicsGLRegisterBuffer` |
 | `graphics_gl_register_image` is Invalid (OpenGL interop is not modeled) | `cuGraphicsGLRegisterImage` |
 | `egl_stream_consumer_connect` is Invalid (EGL streams are not modeled) | `cuEGLStreamConsumerConnect` |
+| `egl_stream_consumer_disconnect` is Invalid (EGL streams are not modeled) | `cuEGLStreamConsumerDisconnect` |
 | `egl_stream_producer_connect` is Invalid (EGL streams are not modeled) | `cuEGLStreamProducerConnect` |
 | `egl_stream_producer_disconnect` is Invalid (EGL streams are not modeled) | `cuEGLStreamProducerDisconnect` |
 | `gl_get_devices` is Invalid (OpenGL interop is not modeled) | `cuGLGetDevices` / `cudaGLGetDevices` |
@@ -1105,6 +1106,9 @@ legal during capture. No Engine `--gl-register-image`.
 `egl_stream_consumer_connect` is `cuEGLStreamConsumerConnect` (always
 Invalid `"egl stream"`). Distinct from `graphics_map_resources`. Query;
 legal during capture. No Engine `--egl-stream`.
+`egl_stream_consumer_disconnect` is `cuEGLStreamConsumerDisconnect` (always
+Invalid `"consumer disconnect"`). Distinct from `egl_stream_consumer_connect`. Query;
+legal during capture. No Engine `--egl-consumer-disconnect`.
 `egl_stream_producer_connect` is `cuEGLStreamProducerConnect` (always
 Invalid `"egl producer"`). Distinct from `egl_stream_consumer_connect`. Query;
 legal during capture. No Engine `--egl-producer`.
