@@ -18451,14 +18451,28 @@ impl Sim {
     /// `cuD3D11CtxCreate`. Direct3D 11 interop is not modeled.
     ///
     /// Always Invalid `"d3d11 context"`. Distinct from
-    /// [`Self::d3d11_get_devices`], from [`Self::gl_ctx_create`], and from
-    /// [`Self::graphics_d3d11_register_resource`]. Unknown
+    /// [`Self::d3d11_get_devices`], from [`Self::gl_ctx_create`], from
+    /// [`Self::graphics_d3d11_register_resource`], and from
+    /// [`Self::d3d11_ctx_create_on_device`]. Unknown
     /// devices are Invalid `"device not in profile"`. Query; legal during
     /// capture.
     pub fn d3d11_ctx_create(&self, device: DeviceId) -> Result<(), SimError> {
         let _gpu = self.profile.gpu(device)?;
         Err(SimError::Invalid {
             why: "d3d11 context",
+        })
+    }
+
+    /// `cuD3D11CtxCreateOnDevice`. Direct3D 11 interop is not modeled.
+    ///
+    /// Always Invalid `"d3d11 ondevice"`. Distinct from
+    /// [`Self::d3d11_ctx_create`] (why is not `"d3d11 context"`) and from
+    /// [`Self::d3d11_get_device`]. Unknown devices are Invalid
+    /// `"device not in profile"`. Query; legal during capture.
+    pub fn d3d11_ctx_create_on_device(&self, device: DeviceId) -> Result<(), SimError> {
+        let _gpu = self.profile.gpu(device)?;
+        Err(SimError::Invalid {
+            why: "d3d11 ondevice",
         })
     }
 

@@ -216,6 +216,7 @@ warp scheduler, L1, …   ← do not model
 | `d3d11_get_devices` is Invalid (Direct3D 11 interop is not modeled) | `cuD3D11GetDevices` / `cudaD3D11GetDevices` |
 | `d3d11_get_device` is Invalid (Direct3D 11 interop is not modeled) | `cuD3D11GetDevice` / `cudaD3D11GetDevice` |
 | `d3d11_ctx_create` is Invalid (Direct3D 11 interop is not modeled) | `cuD3D11CtxCreate` |
+| `d3d11_ctx_create_on_device` is Invalid (Direct3D 11 interop is not modeled) | `cuD3D11CtxCreateOnDevice` |
 | `graphics_d3d11_register_resource` is Invalid (Direct3D 11 interop is not modeled) | `cuGraphicsD3D11RegisterResource` |
 | `d3d12_get_devices` is Invalid (Direct3D 12 interop is not modeled) | `cuD3D12GetDevices` / `cudaD3D12GetDevices` |
 | `d3d12_get_device` is Invalid (Direct3D 12 interop is not modeled) | `cuD3D12GetDevice` / `cudaD3D12GetDevice` |
@@ -1246,6 +1247,8 @@ Distinct from `d3d11_get_devices`. Query; legal during capture. No Engine `--d3d
 `d3d11_ctx_create` is `cuD3D11CtxCreate` (always Invalid `"d3d11 context"`).
 Distinct from `d3d11_get_devices` and `gl_ctx_create`. Query; legal
 during capture. No Engine `--d3d11-ctx`.
+`d3d11_ctx_create_on_device` is `cuD3D11CtxCreateOnDevice` (always Invalid
+`"d3d11 ondevice"`). Distinct from `d3d11_ctx_create`. Query; legal during capture. No Engine `--d3d11-on-device`.
 `graphics_d3d11_register_resource` is `cuGraphicsD3D11RegisterResource`
 (always Invalid `"d3d11 register"`). Distinct from `d3d11_ctx_create`. Query;
 legal during capture. No Engine `--d3d11-register`.
