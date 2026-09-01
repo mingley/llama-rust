@@ -584,6 +584,9 @@
 //! [`HandleTypeWin32HandleSupported`](DeviceAttr::HandleTypeWin32HandleSupported).
 //! [`DeviceAttr::VulkanCigSupported`] is always 0 (Vulkan CUDA-in-graphics is
 //! not modeled). Distinct from [`D3D12CigSupported`](DeviceAttr::D3D12CigSupported).
+//! [`graphics_map_resources`](Sim::graphics_map_resources) is
+//! `cuGraphicsMapResources` (always Invalid `"graphics resource"`). Query;
+//! legal during capture. No Engine `--graphics-map`.
 //! [`DeviceAttr::HostMemoryPoolsSupported`] is always 0 (pools are
 //! device-only; host location is Invalid).
 //! [`DeviceAttr::IsMultiGpuBoard`] / [`MultiGpuBoardGroupID`](DeviceAttr::MultiGpuBoardGroupID)
@@ -21075,6 +21078,49 @@ mod tests {
         match sim.array_create(d) {
             Err(SimError::Invalid { why }) => {
                 assert!(why.contains("cuda array"), "{why}");
+            }
+            other => panic!("{other:?}"),
+        }
+    }
+
+    #[test]
+    fn graphics_map_resources_is_unsupported() {
+        let mut sim = Sim::new(h100());
+        let d = DeviceId(0);
+        let s = StreamId(0);
+        match sim.graphics_map_resources(d, s) {
+            Err(SimError::Invalid { why }) => {
+                assert!(why.contains("graphics resource"), "{why}");
+            }
+            other => panic!("{other:?}"),
+        }
+        sim.begin_capture(d, s).unwrap();
+        match sim.graphics_map_resources(d, s) {
+            Err(SimError::Invalid { why }) => {
+                assert!(why.contains("graphics resource"), "{why}");
+            }
+            other => panic!("{other:?}"),
+        }
+        let _g = sim.end_capture().unwrap();
+        match sim.graphics_map_resources(DeviceId(99), s) {
+            Err(SimError::Invalid { why }) => {
+                assert!(why.contains("device not in profile"), "{why}");
+            }
+            other => panic!("{other:?}"),
+        }
+        assert_eq!(
+            sim.device_get_attribute(d, DeviceAttr::D3D12CigSupported)
+                .unwrap(),
+            0
+        );
+        assert_eq!(
+            sim.device_get_attribute(d, DeviceAttr::VulkanCigSupported)
+                .unwrap(),
+            0
+        );
+        match sim.import_external_memory(d) {
+            Err(SimError::Invalid { why }) => {
+                assert!(why.contains("external memory"), "{why}");
             }
             other => panic!("{other:?}"),
         }

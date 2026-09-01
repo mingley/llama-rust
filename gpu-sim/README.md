@@ -162,6 +162,7 @@ warp scheduler, L1, …   ← do not model
 | `array_create` is Invalid (CUDA arrays are not modeled) | `cuArrayCreate` / `cuArray3DCreate` |
 | `import_external_memory` is Invalid (dma-buf / Win32 / fabric are 0) | `cuImportExternalMemory` |
 | `surf_object_create` is Invalid (CUDA surfaces are not modeled) | `cuSurfObjectCreate` |
+| `graphics_map_resources` is Invalid (OpenGL, Direct3D, Vulkan, EGL are not modeled) | `cuGraphicsMapResources` |
 | `device_get_pci_bus_id` is a synthetic `domain:bus:device.function` (also `DeviceProperties` PCI ids) | `cudaDeviceGetPciBusId` |
 | `device_get_by_pci_bus_id` is the inverse of `device_get_pci_bus_id` | `cudaDeviceGetByPCIBusId` |
 | `stream_get_flags` is 0 blocking / 1 NonBlocking | `cudaStreamGetFlags` |
@@ -1008,6 +1009,9 @@ bit (VMM is always on). `GenericCompressionSupported` is always 0
 fabric handles are not modeled).
 `D3D12CigSupported` is always 0 (D3D12 CUDA-in-graphics is not modeled).
 `VulkanCigSupported` is always 0 (Vulkan CUDA-in-graphics is not modeled).
+`graphics_map_resources` is `cuGraphicsMapResources` (always Invalid
+`"graphics resource"`). Distinct from `import_external_memory`. Query;
+legal during capture. No Engine `--graphics-map`.
 `HostMemoryPoolsSupported` is always 0 (pools are device-only).
 `IsMultiGpuBoard` / `MultiGpuBoardGroupID` are always 0 (example SKUs
 are discrete single-GPU packages). `ComputeMode` is always Default

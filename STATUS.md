@@ -5,6 +5,15 @@ Visible five-turn extract: [docs/chatgpt-share-6a920fe1.md](docs/chatgpt-share-6
 Complete share-API extract: [docs/chatgpt-share-6a920fe1/](docs/chatgpt-share-6a920fe1/).
 Work lands on `main`. No PRs.
 
+## Shipped 2026-09-01 — CUDA `cuGraphicsMapResources`
+
+`gpu-sim` `Sim::graphics_map_resources` is `cuGraphicsMapResources` /
+`cudaGraphicsMapResources`. Always Invalid `"graphics resource"` because
+OpenGL, Direct3D, Vulkan, and EGL graphics resources are not modeled.
+Query; legal during capture. Distinct from `import_external_memory`.
+This VM does not invent `cuGraphicsGLRegisterBuffer` or Engine `--graphics-map`.
+`gpu-profile capture` is still refused. Dual score still has no `$/M tokens`.
+
 ## Shipped 2026-09-01 — CUDA `cuGetProcAddress`
 
 `gpu-sim` `Sim::get_proc_address` is `cuGetProcAddress` /

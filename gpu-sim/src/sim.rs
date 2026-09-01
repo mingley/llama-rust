@@ -17643,6 +17643,26 @@ impl Sim {
         })
     }
 
+    /// `cuGraphicsMapResources` / `cudaGraphicsMapResources`.
+    ///
+    /// Always Invalid `"graphics resource"` ([`DeviceAttr::D3D12CigSupported`]
+    /// and [`DeviceAttr::VulkanCigSupported`] are 0; OpenGL, Direct3D,
+    /// Vulkan, and EGL graphics resources are not modeled). Distinct from
+    /// [`Self::import_external_memory`]. Unknown devices are Invalid
+    /// `"device not in profile"`. Query; legal during capture. This VM does
+    /// not invent `cuGraphicsGLRegisterBuffer` this slice.
+    pub fn graphics_map_resources(
+        &self,
+        device: DeviceId,
+        stream: StreamId,
+    ) -> Result<(), SimError> {
+        let _gpu = self.profile.gpu(device)?;
+        self.require_live_stream(device, stream)?;
+        Err(SimError::Invalid {
+            why: "graphics resource",
+        })
+    }
+
     /// `cudaMemcpy3DWithAttributesAsync`.
     ///
     /// [`MemcpySrcAccessOrder::Stream`] is [`Self::memcpy_3d_async`].

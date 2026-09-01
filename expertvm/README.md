@@ -540,6 +540,8 @@ and Height, `MaxTexture3DWidth` / Height / Depth; no Engine flag).
 Multi-Process Service is not modeled; no Engine flag).
 `gpu-sim` `D3D12CigSupported` is always 0 (`cudaDevAttrD3D12CigSupported`;
 D3D12 CUDA-in-graphics is not modeled; no Engine flag).
+`gpu-sim` `graphics_map_resources` is `cuGraphicsMapResources` (Invalid;
+graphics resources are not modeled; no Engine flag).
 `gpu-sim` `MaxSharedMemoryPerMultiprocessor` matches
 `MaxSharedMemoryPerBlockOptin` (`cudaDevAttrMaxSharedMemoryPerMultiprocessor`;
 reserved shared memory is 0; no Engine flag; not occupancy SM counts).

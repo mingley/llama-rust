@@ -6451,7 +6451,16 @@ model, do not celebrate the sim.
     or `cudaChooseDevice`. `gpu-profile capture` is still refused. Dual
     score still has no `$/M tokens`.
 
-618. [ ] Next numbered PLAN item after 617 is the next `gpu-sim` / Engine /
+618. [x] `gpu-sim` `Sim::graphics_map_resources` is
+    `cuGraphicsMapResources` / `cudaGraphicsMapResources`. Always Invalid
+    `"graphics resource"` because OpenGL, Direct3D, Vulkan, and EGL
+    graphics resources are not modeled. Query; legal during capture.
+    Distinct from `import_external_memory`. This VM does not invent
+    `cuGraphicsGLRegisterBuffer`, Engine `--graphics-map`, or
+    `cudaChooseDevice`. `gpu-profile capture` is still refused. Dual
+    score still has no `$/M tokens`.
+
+619. [ ] Next numbered PLAN item after 618 is the next `gpu-sim` / Engine /
     serve / expertvm mechanical API that is still missing, or the next official
     decode family. Prefer remaining CUDA-shaped twins over more
     OpenAI HTTP veneer. Do not invent F32 `output.scale`. Do not invent a
@@ -6746,6 +6755,10 @@ model, do not celebrate the sim.
     `get_proc_address`. Do not invent Engine `--proc-address`.
     Do not invent `cudaGetDriverEntryPointByVersion` this slice. Do not
     reverse `"proc address"`.
+    Do not invent a second `cuGraphicsMapResources` /
+    `graphics_map_resources`. Do not invent Engine `--graphics-map`.
+    Do not invent `cuGraphicsGLRegisterBuffer` this slice. Do not reverse
+    `"graphics resource"`.
     Do not invent a second `cudaStreamAddCallback`.
     Do not invent Engine `--stream-callback` (same wall as second live
     `cudaLaunchHostFunc` after miss DMA).
@@ -7148,6 +7161,9 @@ model, do not celebrate the sim.
     Do not invent a second `get_proc_address` API. Do not invent
     Engine `--get-proc`. Do not invent a C ABI function pointer this
     slice. Do not reverse no driver entry.
+    Do not invent a second `graphics_map_resources` API. Do not invent
+    Engine `--map-graphics`. Do not invent `cuGraphicsUnmapResources`
+    this slice. Do not reverse D3D12CigSupported staying 0.
     Do not invent a second DeviceLaunch in-flight destroy-complete check or Engine
     `--device-launch-destroy`. Do not abort an in-flight DeviceLaunch when
     `destroy_graph` succeeds. Do not delay destroy of an idle exec. Do not invent
@@ -7755,6 +7771,9 @@ model, do not celebrate the sim.
     Do not invent a second `get_proc_address` method. Do not invent
     Engine `--cu-get-proc`. Do not reverse wrapping cuGetProcAddress
     Invalid.
+    Do not invent a second `graphics_map_resources` method. Do not invent
+    Engine `--cu-graphics-map`. Do not reverse wrapping
+    cuGraphicsMapResources Invalid.
     Do not
     spend the next item on an OpenAI-compatible HTTP veneer.
 
