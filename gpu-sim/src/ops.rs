@@ -2328,7 +2328,8 @@ impl WaitValueFlags {
     pub const AND: u32 = 2;
     /// `CU_STREAM_WAIT_VALUE_NOR` (`3`).
     pub const NOR: u32 = 3;
-    /// `CU_STREAM_WAIT_VALUE_FLUSH`. Not modeled; Invalid `"wait value flags"`.
+    /// `CU_STREAM_WAIT_VALUE_FLUSH`. Follows the wait with a stream-ordered
+    /// remote-write flush (same RDMA rule as [`BatchMemOp::FlushRemoteWrites`]).
     pub const FLUSH: u32 = 1 << 30;
 }
 
@@ -2369,12 +2370,13 @@ impl WaitValueCmp {
         }
     }
 
-    /// `CU_STREAM_WAIT_VALUE_*` flags word. [`WaitValueFlags::FLUSH`] and
-    /// unknown bits are Invalid `"wait value flags"`.
+    /// `CU_STREAM_WAIT_VALUE_*` flags word. Unknown bits are Invalid
+    /// `"wait value flags"`. [`WaitValueFlags::FLUSH`] is parsed here and
+    /// stored on the wait; non-RDMA enqueue is Invalid `"gpu direct rdma"`.
     pub fn from_flags(flags: u32) -> Result<Self, crate::error::SimError> {
         const CMP: u32 = WaitValueFlags::NOR;
         const KNOWN: u32 = CMP | WaitValueFlags::FLUSH;
-        if flags & !KNOWN != 0 || flags & WaitValueFlags::FLUSH != 0 {
+        if flags & !KNOWN != 0 {
             return Err(crate::error::SimError::Invalid {
                 why: "wait value flags",
             });
@@ -2435,6 +2437,8 @@ pub enum BatchMemOp {
         bits32: bool,
         /// Compare mode.
         cmp: WaitValueCmp,
+        /// `CU_STREAM_WAIT_VALUE_FLUSH`. Requires an RDMA SKU.
+        flush: bool,
     },
     /// `CU_STREAM_MEM_OP_FLUSH_REMOTE_WRITES`. Stream-ordered 1 ns Solo on a
     /// [`crate::LinkKind::Rdma`] GPU (same tax as
@@ -2623,6 +2627,9 @@ pub enum GpuOp {
         bits32: bool,
         /// `CU_STREAM_WAIT_VALUE_*` mode.
         cmp: WaitValueCmp,
+        /// `CU_STREAM_WAIT_VALUE_FLUSH`. Requires an RDMA SKU. Parameter, not
+        /// topology (ExecUpdate / SetParams may change it).
+        flush: bool,
     },
     /// Device-side `cudaGraphLaunch` (`cudaGraphInstantiateFlagDeviceLaunch`).
     ///

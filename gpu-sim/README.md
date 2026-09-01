@@ -63,7 +63,7 @@ warp scheduler, L1, …   ← do not model
 | `cudaLaunchHostFunc` (`host_func` / `host_func_params`) is stream-ordered host work; `fn_id` / `user_data` are `cudaHostNodeParams` | `host_func_ns` (no compute / copy occupancy) |
 | `cudaStreamAddCallback` (`stream_add_callback` / `stream_add_callback_params`) is the same host enqueue as `host_func` but cannot be captured; `stream_add_callback_with_flags` is the CUDA flags word (`StreamCallbackFlags`; must be 0) | `host_func_ns` (no compute / copy occupancy) |
 | `cuStreamWriteValue32/64` (`write_value32` / `write_value64`) writes a mailbox on complete; `write_value32_with_flags` / `write_value64_with_flags` is the CUDA flags word (`WriteValueFlags`; NO_MEMORY_BARRIER Invalid) | 1 ns Solo (no compute / copy occupancy) |
-| `cuStreamWaitValue32/64` (`wait_value32` / `wait_value64`) stays pending until the mailbox compare matches; unwritten locations read as 0; kernel/memset/memcpy stores are not modeled; `wait_value32_with_flags` / `wait_value64_with_flags` is the CUDA flags word (`WaitValueFlags`; FLUSH Invalid) | 1 ns Solo when ready; unsatisfied wait + `synchronize` is deadlock |
+| `cuStreamWaitValue32/64` (`wait_value32` / `wait_value64`) stays pending until the mailbox compare matches; unwritten locations read as 0; kernel/memset/memcpy stores are not modeled; `wait_value32_with_flags` / `wait_value64_with_flags` is the CUDA flags word (`WaitValueFlags`; `FLUSH` is stream-ordered RDMA flush) | 1 ns Solo when ready; unsatisfied wait + `synchronize` is deadlock |
 | `cuStreamBatchMemOp` (`batch_mem_op`) is one stream op for a wait/write/flush vector; a wait sees earlier writes in that vector; `FlushRemoteWrites` is stream-ordered 1 ns Solo on RDMA SKUs (not host-sync); `batch_mem_op_with_flags` is the CUDA flags word (`BatchMemOpFlags`; must be 0) | 1 ns Solo when ready |
 | `cudaStreamCreate` (`set_stream_blocking`) serializes with NULL | copy/compute overlap vs NULL |
 | host pin / `mlock` budget (`host_pin_bytes`) | `SimError::PinOom` |
@@ -380,8 +380,9 @@ While are handle-only; Switch is handle plus branch count).
 `graph_add_wait_value64_with_flags` / `graph_add_wait_value32_with_flags` /
 `graph_add_batch_mem_op` are `cudaGraphAddBatchMemOpNode` (`cuStreamWaitValue` /
 `WriteValue` / `CU_STREAM_MEM_OP_FLUSH_REMOTE_WRITES`; a multi-item batch is
-**one** node holding the vector; wait flags are `WaitValueFlags` (FLUSH
-Invalid); write flags are `WriteValueFlags` (NO_MEMORY_BARRIER Invalid).
+**one** node holding the vector; wait flags are `WaitValueFlags` (`FLUSH`
+is a stream-ordered RDMA flush); write flags are `WriteValueFlags`
+(NO_MEMORY_BARRIER Invalid).
 Typed helpers stay.
 `batch_mem_op` is live `cuStreamBatchMemOp`.
 `batch_mem_op_with_flags` / `graph_add_batch_mem_op_with_flags` are the
@@ -1121,7 +1122,8 @@ events; GEMM graphs stay kernel-only).
 `write_value64_with_flags` / `write_value32_with_flags` are the CUDA flags
 word (`WriteValueFlags`; NO_MEMORY_BARRIER Invalid). Typed helpers stay.
 `wait_value64_with_flags` / `wait_value32_with_flags` are the CUDA flags
-word (`WaitValueFlags`; FLUSH Invalid). Typed helpers stay.
+word (`WaitValueFlags`; `FLUSH` is a stream-ordered RDMA flush after the
+wait). Typed helpers stay.
 `batch_mem_op` is `cuStreamBatchMemOp` (one stream op; a wait sees earlier
 writes in that vector). `BatchMemOp::FlushRemoteWrites` is
 `CU_STREAM_MEM_OP_FLUSH_REMOTE_WRITES` (1 ns Solo on an RDMA GPU; not

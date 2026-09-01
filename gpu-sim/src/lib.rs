@@ -334,7 +334,8 @@
 //! ([`WaitValueCmp`]; unwritten locations read as 0; unsatisfied wait plus
 //! [`Sim::synchronize`] deadlocks). [`wait_value64_with_flags`](Sim::wait_value64_with_flags) /
 //! [`wait_value32_with_flags`](Sim::wait_value32_with_flags) are the CUDA flags
-//! word ([`WaitValueFlags`]; [`WaitValueFlags::FLUSH`] is Invalid). Typed
+//! word ([`WaitValueFlags`]; [`WaitValueFlags::FLUSH`] is a stream-ordered
+//! RDMA flush after the wait, same rule as [`BatchMemOp::FlushRemoteWrites`]). Typed
 //! helpers stay. [`batch_mem_op`](Sim::batch_mem_op) is
 //! `cuStreamBatchMemOp` (one stream op; a wait sees earlier writes in that
 //! vector). [`BatchMemOp::FlushRemoteWrites`] is
@@ -13572,6 +13573,7 @@ mod tests {
                     value: 1,
                     bits32: false,
                     cmp: WaitValueCmp::Eq,
+                    flush: false,
                 },
             ],
         ));
@@ -25112,7 +25114,7 @@ mod tests {
             other => panic!("{other:?}"),
         }
         match sim.wait_value32_with_flags(d, a32, 0, 1, WaitValueFlags::FLUSH, wait_s) {
-            Err(SimError::Invalid { why }) => assert!(why.contains("wait value flags"), "{why}"),
+            Err(SimError::Invalid { why }) => assert!(why.contains("gpu direct rdma"), "{why}"),
             other => panic!("{other:?}"),
         }
         let g = sim.create_graph(d, wait_s).unwrap();
@@ -25122,13 +25124,54 @@ mod tests {
             .unwrap();
         match sim.graph_add_wait_value64_with_flags(g, a, 0, 1, WaitValueFlags::FLUSH) {
             Err(SimError::Invalid { why }) => {
-                assert!(why.contains("wait value flags"), "{why}");
+                assert!(why.contains("gpu direct rdma"), "{why}");
             }
             other => panic!("{other:?}"),
         }
         sim.begin_capture(d, wait_s).unwrap();
         enq(sim.wait_value64_with_flags(d, a, 0, 1, WaitValueFlags::NOR, wait_s));
         let _cap = sim.end_capture().unwrap();
+    }
+
+    #[test]
+    fn wait_value_flags_flush_is_rdma_stream_ordered() {
+        let d = DeviceId(0);
+        let wait_s = StreamId(0);
+        let write_s = StreamId(1);
+        let mut sim = Sim::new(HardwareProfile::example_2node_rdma());
+        let a = sim.malloc(d, 64).unwrap();
+        let flags = WaitValueFlags::EQ | WaitValueFlags::FLUSH;
+        enq(sim.wait_value64_with_flags(d, a, 0, 1, flags, wait_s));
+        enq(sim.write_value64(d, a, 0, 1, write_s));
+        sim.synchronize().unwrap();
+        let wait = wait_op(&sim);
+        match wait.kind {
+            GpuOp::WaitValue { flush, cmp, .. } => {
+                assert!(flush);
+                assert_eq!(cmp, WaitValueCmp::Eq);
+            }
+            other => panic!("{other:?}"),
+        }
+        let g = sim.create_graph(d, wait_s).unwrap();
+        sim.graph_add_wait_value64_with_flags(g, a, 0, 1, flags)
+            .unwrap();
+        match sim.graph_batch_mem_ops(g, 0).unwrap().as_slice() {
+            [BatchMemOp::Wait {
+                flush: true, cmp, ..
+            }] => assert_eq!(*cmp, WaitValueCmp::Eq),
+            other => panic!("{other:?}"),
+        }
+        sim.begin_capture(d, wait_s).unwrap();
+        enq(sim.wait_value32_with_flags(d, a, 0, 1, flags, wait_s));
+        let cap = sim.end_capture().unwrap();
+        match sim.graph_batch_mem_ops(cap, 0).unwrap().as_slice() {
+            [BatchMemOp::Wait {
+                flush: true,
+                bits32: true,
+                ..
+            }] => {}
+            other => panic!("{other:?}"),
+        }
     }
 
     #[test]
@@ -25332,6 +25375,7 @@ mod tests {
                     value: 1,
                     bits32: false,
                     cmp: WaitValueCmp::Eq,
+                    flush: false,
                 },
             ],
         )
@@ -25372,6 +25416,7 @@ mod tests {
                 value: 1,
                 bits32: false,
                 cmp: WaitValueCmp::Eq,
+                flush: false,
             },
         ];
         enq(sim.batch_mem_op_with_flags(d, s, &ops, BatchMemOpFlags::DEFAULT));
@@ -25419,6 +25464,7 @@ mod tests {
                     value: 9,
                     bits32: false,
                     cmp: WaitValueCmp::Eq,
+                    flush: false,
                 },
             ],
         ));
@@ -25454,6 +25500,7 @@ mod tests {
                     value: 1,
                     bits32: false,
                     cmp: WaitValueCmp::Eq,
+                    flush: false,
                 },
                 BatchMemOp::Write {
                     id: a,
@@ -25523,6 +25570,7 @@ mod tests {
                     value: 4,
                     bits32: false,
                     cmp: WaitValueCmp::Eq,
+                    flush: false,
                 },
             ],
         )
@@ -25556,6 +25604,7 @@ mod tests {
                     value: 4,
                     bits32: false,
                     cmp: WaitValueCmp::Eq,
+                    flush: false,
                 },
             ],
         )
@@ -25611,6 +25660,7 @@ mod tests {
                     value: 2,
                     bits32: false,
                     cmp: WaitValueCmp::Eq,
+                    flush: false,
                 },
             ],
         )
@@ -25646,6 +25696,7 @@ mod tests {
                     value: 3,
                     bits32: false,
                     cmp: WaitValueCmp::Eq,
+                    flush: false,
                 },
             ],
         ));
@@ -25723,6 +25774,7 @@ mod tests {
                 value: 1,
                 bits32: false,
                 cmp: WaitValueCmp::Eq,
+                flush: false,
             },
         )
         .unwrap();

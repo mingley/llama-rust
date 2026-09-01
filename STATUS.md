@@ -5,6 +5,15 @@ Visible five-turn extract: [docs/chatgpt-share-6a920fe1.md](docs/chatgpt-share-6
 Complete share-API extract: [docs/chatgpt-share-6a920fe1/](docs/chatgpt-share-6a920fe1/).
 Work lands on `main`. No PRs.
 
+## Shipped 2026-09-01 — CUDA wait-value FLUSH on RDMA
+
+`gpu-sim` `CU_STREAM_WAIT_VALUE_FLUSH`: `WaitValueFlags::FLUSH` follows a
+wait with a stream-ordered remote write flush on an RDMA SKU (same rule
+as `BatchMemOp::FlushRemoteWrites`). Stored on the wait; parameter, not
+topology. Unknown bits stay Invalid. Non-RDMA is Invalid. Capture legal.
+No Engine `--wait-flush`. `gpu-profile capture` is still refused. Dual
+score still has no `$/M tokens`.
+
 ## Shipped 2026-09-01 — CUDA stream-ordered RDMA flush
 
 `gpu-sim` `CU_STREAM_MEM_OP_FLUSH_REMOTE_WRITES`:

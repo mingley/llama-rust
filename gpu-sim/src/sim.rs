@@ -33,7 +33,7 @@ use crate::ops::{
     PortableSharedMode, PrefetchFlags, ProgrammaticEvent, ProgrammaticLaunch, SharedMemCarveout,
     SharedMemoryMode, SmResource, StreamAttr, StreamAttrValue, StreamCallbackFlags,
     StreamCaptureInfo, StreamCaptureMode, StreamCreateFlags, SynchronizationPolicy,
-    UserObjectFlags, WaitValueCmp, WriteValueFlags,
+    UserObjectFlags, WaitValueCmp, WaitValueFlags, WriteValueFlags,
 };
 use crate::profile::{align_up, ns_for_bytes, scale_ns_permille, HardwareProfile, LinkKind};
 
@@ -7784,6 +7784,7 @@ impl Sim {
                 value,
                 bits32: false,
                 cmp,
+                flush: false,
             },
         )
     }
@@ -7805,13 +7806,15 @@ impl Sim {
                 value,
                 bits32: true,
                 cmp,
+                flush: false,
             },
         )
     }
 
     /// [`Self::graph_add_wait_value64`] with a [`crate::WaitValueFlags`] word.
     ///
-    /// [`crate::WaitValueFlags::FLUSH`] and unknown bits Invalid `"wait value flags"`.
+    /// [`crate::WaitValueFlags::FLUSH`] requires an RDMA SKU (same as
+    /// [`BatchMemOp::FlushRemoteWrites`]). Unknown bits Invalid `"wait value flags"`.
     /// Typed helper stays.
     pub fn graph_add_wait_value64_with_flags(
         &mut self,
@@ -7822,7 +7825,17 @@ impl Sim {
         flags: u32,
     ) -> Result<(), SimError> {
         let cmp = WaitValueCmp::from_flags(flags)?;
-        self.graph_add_wait_value64(graph, id, offset, value, cmp)
+        self.graph_add_batch_item(
+            graph,
+            BatchMemOp::Wait {
+                id,
+                offset,
+                value,
+                bits32: false,
+                cmp,
+                flush: flags & WaitValueFlags::FLUSH != 0,
+            },
+        )
     }
 
     /// [`Self::graph_add_wait_value32`] with a [`crate::WaitValueFlags`] word.
@@ -7835,7 +7848,17 @@ impl Sim {
         flags: u32,
     ) -> Result<(), SimError> {
         let cmp = WaitValueCmp::from_flags(flags)?;
-        self.graph_add_wait_value32(graph, id, offset, value, cmp)
+        self.graph_add_batch_item(
+            graph,
+            BatchMemOp::Wait {
+                id,
+                offset,
+                value,
+                bits32: true,
+                cmp,
+                flush: flags & WaitValueFlags::FLUSH != 0,
+            },
+        )
     }
 
     /// `cudaGraphAddBatchMemOpNode`: one node holding the wait/write/flush
@@ -16844,6 +16867,7 @@ impl Sim {
                 value,
                 bits32: false,
                 cmp,
+                flush: false,
             },
         )
     }
@@ -16867,13 +16891,15 @@ impl Sim {
                 value,
                 bits32: true,
                 cmp,
+                flush: false,
             },
         )
     }
 
     /// `cuStreamWaitValue64` with a [`crate::WaitValueFlags`] word.
     ///
-    /// [`crate::WaitValueFlags::FLUSH`] and unknown bits Invalid `"wait value flags"`.
+    /// [`crate::WaitValueFlags::FLUSH`] requires an RDMA SKU (same as
+    /// [`BatchMemOp::FlushRemoteWrites`]). Unknown bits Invalid `"wait value flags"`.
     /// Typed [`Self::wait_value64`] stays.
     pub fn wait_value64_with_flags(
         &mut self,
@@ -16885,12 +16911,22 @@ impl Sim {
         stream: StreamId,
     ) -> Result<OpId, SimError> {
         let cmp = WaitValueCmp::from_flags(flags)?;
-        self.wait_value64(device, id, offset, value, cmp, stream)
+        self.submit_batch_mem(
+            device,
+            stream,
+            BatchMemOp::Wait {
+                id,
+                offset,
+                value,
+                bits32: false,
+                cmp,
+                flush: flags & WaitValueFlags::FLUSH != 0,
+            },
+        )
     }
 
-    /// `cuStreamWaitValue32` with a [`crate::WaitValueFlags`] word.
-    ///
-    /// [`crate::WaitValueFlags::FLUSH`] and unknown bits Invalid `"wait value flags"`.
+    /// [`crate::WaitValueFlags::FLUSH`] requires an RDMA SKU (same as
+    /// [`BatchMemOp::FlushRemoteWrites`]). Unknown bits Invalid `"wait value flags"`.
     /// Typed [`Self::wait_value32`] stays.
     pub fn wait_value32_with_flags(
         &mut self,
@@ -16902,7 +16938,18 @@ impl Sim {
         stream: StreamId,
     ) -> Result<OpId, SimError> {
         let cmp = WaitValueCmp::from_flags(flags)?;
-        self.wait_value32(device, id, offset, value, cmp, stream)
+        self.submit_batch_mem(
+            device,
+            stream,
+            BatchMemOp::Wait {
+                id,
+                offset,
+                value,
+                bits32: true,
+                cmp,
+                flush: flags & WaitValueFlags::FLUSH != 0,
+            },
+        )
     }
 
     /// `cuStreamBatchMemOp`. One stream op for the wait/write/flush vector.
@@ -16975,11 +17022,12 @@ impl Sim {
     }
 
     fn check_batch_flush(&self, device: DeviceId, ops: &[BatchMemOp]) -> Result<(), SimError> {
-        if ops
-            .iter()
-            .any(|op| matches!(op, BatchMemOp::FlushRemoteWrites))
-            && !self.profile.gpu_direct_rdma_supported(device)
-        {
+        let needs = ops.iter().any(|op| match op {
+            BatchMemOp::FlushRemoteWrites => true,
+            BatchMemOp::Wait { flush, .. } => *flush,
+            BatchMemOp::Write { .. } => false,
+        });
+        if needs && !self.profile.gpu_direct_rdma_supported(device) {
             return Err(SimError::Invalid {
                 why: "gpu direct rdma",
             });
@@ -19107,6 +19155,7 @@ impl Sim {
                     value,
                     bits32,
                     cmp,
+                    ..
                 } => {
                     self.require_wait_value_resident(device, id, offset, bits32)?;
                     let mask = wait_value_mask(bits32);
@@ -20871,12 +20920,14 @@ fn kind_from_batch(op: BatchMemOp) -> Kind {
             value,
             bits32,
             cmp,
+            flush,
         } => Kind::WaitValue {
             id,
             offset,
             value,
             bits32,
             cmp,
+            flush,
         },
         BatchMemOp::FlushRemoteWrites => Kind::BatchMem {
             ops: vec![BatchMemOp::FlushRemoteWrites],
@@ -20903,12 +20954,14 @@ fn batch_from_kind(kind: &Kind) -> Option<BatchMemOp> {
             value,
             bits32,
             cmp,
+            flush,
         } => Some(BatchMemOp::Wait {
             id,
             offset,
             value,
             bits32,
             cmp,
+            flush,
         }),
         _ => None,
     }
@@ -21182,12 +21235,14 @@ fn remap_batch_op(op: BatchMemOp, map: &BTreeMap<AllocId, AllocId>) -> BatchMemO
             value,
             bits32,
             cmp,
+            flush,
         } => BatchMemOp::Wait {
             id: remap_alloc_id(id, map),
             offset,
             value,
             bits32,
             cmp,
+            flush,
         },
         BatchMemOp::FlushRemoteWrites => BatchMemOp::FlushRemoteWrites,
     }
@@ -21377,12 +21432,14 @@ fn remap_alloc_kind(kind: Kind, map: &BTreeMap<AllocId, AllocId>) -> Kind {
             value,
             bits32,
             cmp,
+            flush,
         } => Kind::WaitValue {
             id: remap_alloc_id(id, map),
             offset,
             value,
             bits32,
             cmp,
+            flush,
         },
         Kind::BatchMem { ops } => Kind::BatchMem {
             ops: ops.into_iter().map(|op| remap_batch_op(op, map)).collect(),
