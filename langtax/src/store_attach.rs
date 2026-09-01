@@ -1,0 +1,1514 @@
+//! Shared Engine ExpertStore attach for `engine` and `serve --engine`.
+
+use crate::decode::Llama;
+use crate::engine::Engine;
+use expertvm::{
+    CachedStore, GpuFill, GpuStoreCfg, HardwareProfile, LiveStore, MemSyncDomain,
+    PortableClusterMode, PortableSharedMode, Prefetch, SharedMemoryMode, SimulatedGpuStore,
+    SynchronizationPolicy,
+};
+
+/// CLI knobs that build a [`LiveStore`] for an [`Engine`].
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct StoreAttach {
+    /// `None` keeps blob FFN. `Some(0)` is DirectStore. `Some(n)` is CachedStore.
+    pub expert_slots: Option<usize>,
+    /// SimulatedGpuStore instead of Direct/Cached.
+    pub expert_sim: bool,
+    /// Example 8×H100 NVLink profile (`expert_sim`).
+    pub expert_8gpu: bool,
+    /// Simulated expert page bytes (`expert_sim`). `None` is 4096.
+    pub expert_bytes: Option<u64>,
+    /// CUDA-like knobs for [`SimulatedGpuStore::with_cfg`]. Identity stays default.
+    pub gpu_cfg: GpuStoreCfg,
+    /// Miss-page placement. Default is pinned H2D.
+    pub fill: GpuFill,
+    /// Simulated KV page bytes when [`GpuStoreCfg::kv_sim`]. `None` uses intern geometry.
+    pub kv_bytes: Option<u64>,
+}
+
+/// CLI switches for [`gpu_knobs`] / [`GpuFill`].
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub(crate) struct GpuCli {
+    pub cuda_graphs: bool,
+    pub graph_update: bool,
+    pub graph_set_params: bool,
+    pub graph_clone: bool,
+    /// `cudaGraphClone` combo parents (`GpuStoreCfg::graph_clone_parent`). Walker-only.
+    pub graph_clone_parent: bool,
+    pub graph_build: bool,
+    /// `cudaGraphAddDependencies` combo edges (`GpuStoreCfg::graph_build_deps`). Needs graph-build.
+    pub graph_build_deps: bool,
+    /// `cudaGraphAddHostNode` between combo children (`GpuStoreCfg::graph_host`). Needs graph-build.
+    pub graph_host: bool,
+    pub graph_piecewise: bool,
+    /// `cudaStreamBeginCaptureToGraph` deps (`GpuStoreCfg::graph_capture_deps`). Needs piecewise.
+    pub graph_capture_deps: bool,
+    /// Captured `cudaLaunchHostFunc` BETWEEN piecewise fragments (`GpuStoreCfg::graph_capture_host`). Needs piecewise.
+    pub graph_capture_host: bool,
+    /// `cudaGraphNodeSetEnabled` skip extra combo children (`GpuStoreCfg::graph_enable`).
+    pub graph_enable: bool,
+    /// `cudaGraphAddIf` wrap combo children (`GpuStoreCfg::graph_if`). Needs graph-build.
+    pub graph_if: bool,
+    pub graph_mem: bool,
+    /// `cudaGraphAddMemsetNode` / `cudaMemsetAsync` of graph-mem scratch (`GpuStoreCfg::graph_memset`). Needs graph-mem.
+    pub graph_memset: bool,
+    /// `cudaGraphAddMemcpyNode` / `cudaMemcpyAsync` H2D of graph-mem scratch (`GpuStoreCfg::graph_memcpy`). Needs graph-mem.
+    pub graph_memcpy: bool,
+    /// `cudaGraphAddHostNode` / captured `cudaLaunchHostFunc` BEFORE the leaf GEMM (`GpuStoreCfg::graph_leaf_host`). Illegal with device-launch.
+    pub graph_leaf_host: bool,
+    pub graph_auto_free: bool,
+    pub graph_mem_trim: bool,
+    pub timing_events: bool,
+    /// `cudaEventBlockingSync` copy events (`GpuStoreCfg::event_blocking_sync`).
+    ///
+    /// Implies [`Self::timing_events`]. Distinct from `--sync-policy blocking`.
+    pub event_blocking_sync: bool,
+    pub mapped: bool,
+    pub managed: bool,
+    pub vmm: bool,
+    pub host_func: bool,
+    /// `cudaLaunchHostFunc` after miss DMA (`GpuStoreCfg::copy_host`).
+    pub copy_host: bool,
+    pub blocking_streams: bool,
+    pub sync_alloc: bool,
+    pub mempool: bool,
+    /// `cudaMemPoolTrimTo(0)` after score (`GpuStoreCfg::mempool_trim`). Implies mempool.
+    pub mempool_trim: bool,
+    /// `cudaMemPoolReuseAllowOpportunistic=0` (`GpuStoreCfg::mempool_no_reuse`). Implies mempool.
+    pub mempool_no_reuse: bool,
+    /// `cudaMemPoolProps::maxSize` (`GpuStoreCfg::mempool_max`). `0` is unset.
+    ///
+    /// Implies [`Self::mempool`]. `N>0` only.
+    pub mempool_max: u64,
+    /// POSIX-FD shareable mempool IPC (`GpuStoreCfg::shareable`). Implies mempool.
+    pub shareable: bool,
+    /// `cudaIpcGetMemHandle` / `OpenMemHandle` (`GpuStoreCfg::ipc`). Implies sync-alloc.
+    pub ipc: bool,
+    /// `cudaMemPoolExportPointer` / `ImportPointer` (`GpuStoreCfg::share_ptr`). Implies shareable.
+    pub share_ptr: bool,
+    /// `cuMemRetainAllocationHandle` after VMM miss map (`GpuStoreCfg::vmm_retain`). Implies vmm.
+    pub vmm_retain: bool,
+    /// `cuMemCreate` plus `cuMemMap` of that handle (`GpuStoreCfg::vmm_handle`). Implies vmm.
+    pub vmm_handle: bool,
+    pub pageable: bool,
+    /// `cudaHostRegister` (`GpuStoreCfg::host_register`). Implies pageable.
+    pub host_register: bool,
+    /// `cudaHostUnregister` after miss DMA (`GpuStoreCfg::host_unregister`). Implies host-register.
+    pub host_unregister: bool,
+    /// `cudaHostRegisterMapped` expert pages (`GpuStoreCfg::host_register_mapped`). Implies mapped.
+    pub host_register_mapped: bool,
+    /// `cuPointerSetAttribute` SyncMemops (`GpuStoreCfg::sync_memops`). Host-sync H2D.
+    pub sync_memops: bool,
+    /// `cudaSetDeviceFlags` SyncMemops (`GpuStoreCfg::device_sync_memops`). Host-sync memcpy.
+    pub device_sync_memops: bool,
+    /// `cudaMemcpyBatchAsync` prefetch (`GpuStoreCfg::memcpy_batch`).
+    pub memcpy_batch: bool,
+    /// `cudaMemcpySrcAccessOrderDuringApiCall` on [`Self::memcpy_batch`].
+    pub memcpy_during: bool,
+    /// `cudaMemcpySrcAccessOrderAny` on [`Self::memcpy_batch`].
+    pub memcpy_any: bool,
+    /// `cudaMemcpyWithAttributesAsync` DuringApiCall on demand pinned/VMM H2D.
+    pub memcpy_attr: bool,
+    /// `cudaMemsetAsync` miss fill (`GpuStoreCfg::memset_fill`). Not mapped/managed/pageable/batch.
+    pub memset_fill: bool,
+    pub accessed_by: bool,
+    /// Skip SetReadMostly at managed fill (`GpuStoreCfg::no_read_mostly`). Implies managed.
+    pub no_read_mostly: bool,
+    /// Skip SetPreferredLocation at managed fill (`GpuStoreCfg::no_preferred`). Implies managed.
+    pub no_preferred: bool,
+    /// Skip fill `cudaMemPrefetchAsync` (`GpuStoreCfg::no_mem_prefetch`). Implies managed.
+    pub no_mem_prefetch: bool,
+    pub legacy_null: bool,
+    pub stream_priority: bool,
+    /// Per-sequence copy streams (`GpuStoreCfg::seq_streams`).
+    pub seq_streams: bool,
+    /// Engine interned KV on the SimulatedGpuStore clock (`GpuStoreCfg::kv_sim`).
+    pub kv_sim: bool,
+    /// Decode GEMMs on a higher-priority compute stream (`GpuStoreCfg::decode_priority`).
+    pub decode_priority: bool,
+    /// `cudaLaunchCooperativeKernel` (`GpuStoreCfg::cooperative`).
+    pub cooperative: bool,
+    /// Same-stream PDL wait+trigger (`GpuStoreCfg::pdl`).
+    pub pdl: bool,
+    /// Persisting L2 access-policy window (`GpuStoreCfg::l2_persist`).
+    pub l2_persist: bool,
+    /// `cudaCtxResetPersistingL2Cache` after each GEMM (`GpuStoreCfg::l2_reset`).
+    ///
+    /// Implies [`Self::l2_persist`].
+    pub l2_reset: bool,
+    /// `cudaLimitMaxL2FetchGranularity` (`GpuStoreCfg::l2_fetch`). `0` is unset.
+    ///
+    /// Implies [`Self::l2_persist`]. `32` / `64` / `128` only.
+    pub l2_fetch: u64,
+    /// CUDA `hitRatio` as ‰ (`GpuStoreCfg::l2_ratio`). `0` is unset (`1000`).
+    ///
+    /// Implies [`Self::l2_persist`]. `1..=1000` when set.
+    pub l2_ratio: u16,
+    /// `cudaAccessPropertyStreaming` (`GpuStoreCfg::l2_streaming`). Needs persist.
+    pub l2_streaming: bool,
+    /// Hopper cluster X size (`GpuStoreCfg::cluster`). `0` is off.
+    pub cluster: u8,
+    /// True when `--cluster` appeared.
+    pub cluster_set: bool,
+    /// Hopper preferred cluster X (`GpuStoreCfg::preferred_cluster`). `0` is off.
+    pub preferred_cluster: u8,
+    /// True when `--preferred-cluster` appeared.
+    pub preferred_cluster_set: bool,
+    /// Spread cluster scheduling (`GpuStoreCfg::cluster_spread`).
+    pub cluster_spread: bool,
+    /// Function Spread cluster scheduling (`GpuStoreCfg::func_cluster_spread`).
+    pub func_cluster_spread: bool,
+    /// Launch LoadBalancing cluster scheduling (`GpuStoreCfg::cluster_load_balance`).
+    pub cluster_load_balance: bool,
+    /// `cudaFuncAttributeClusterDimMustBeSet` (`GpuStoreCfg::cluster_must_set`).
+    pub cluster_must_set: bool,
+    /// `cudaFuncAttributeRequiredClusterWidth` (`GpuStoreCfg::required_cluster`). `0` is unset.
+    pub required_cluster: u8,
+    /// True when `--required-cluster` appeared.
+    pub required_cluster_set: bool,
+    /// Max-shared carveout (`GpuStoreCfg::max_shared`).
+    pub max_shared: bool,
+    /// Function MaxShared carveout (`GpuStoreCfg::func_max_shared`).
+    pub func_max_shared: bool,
+    /// Launch MaxL1 carveout (`GpuStoreCfg::max_l1`).
+    pub max_l1: bool,
+    /// Non-portable cluster size (`GpuStoreCfg::non_portable_cluster`).
+    pub non_portable_cluster: bool,
+    /// Stream host-wait policy (`GpuStoreCfg::sync_policy`).
+    pub sync_policy: SynchronizationPolicy,
+    /// True when `--sync-policy` appeared.
+    pub sync_policy_set: bool,
+    /// Device host-wait schedule (`GpuStoreCfg::device_sync_policy`).
+    pub device_sync_policy: SynchronizationPolicy,
+    /// True when `--device-sync-policy` appeared.
+    pub device_sync_policy_set: bool,
+    /// Decode-stream mem-sync domain (`GpuStoreCfg::mem_sync_domain`).
+    pub mem_sync_domain: MemSyncDomain,
+    /// True when `--mem-sync-domain` appeared.
+    pub mem_sync_domain_set: bool,
+    /// Decode-stream mem-sync map collapse (`GpuStoreCfg::mem_sync_collapse`).
+    pub mem_sync_collapse: bool,
+    /// True when `--mem-sync-map` appeared.
+    pub mem_sync_map_set: bool,
+    /// Launch-attribute Remote on grouped GEMMs (`GpuStoreCfg::mem_sync_launch`).
+    pub mem_sync_launch: bool,
+    /// Launch-attribute collapse map on grouped GEMMs (`GpuStoreCfg::mem_sync_launch_map`).
+    pub mem_sync_launch_map: bool,
+    /// Kernel-node bank width (`GpuStoreCfg::shared_mem`).
+    pub shared_mem: SharedMemoryMode,
+    /// True when `--shared-mem` appeared.
+    pub shared_mem_set: bool,
+    /// Function shared-mem bank width (`GpuStoreCfg::func_shared_mem`).
+    pub func_shared_mem: SharedMemoryMode,
+    /// True when `--func-shared-mem` appeared.
+    pub func_shared_mem_set: bool,
+    /// Device shared-mem bank width (`GpuStoreCfg::device_shared_mem`).
+    pub device_shared_mem: SharedMemoryMode,
+    /// True when `--device-shared-mem` appeared.
+    pub device_shared_mem_set: bool,
+    /// Portable-cluster size mode (`GpuStoreCfg::portable_cluster`).
+    pub portable_cluster: PortableClusterMode,
+    /// True when `--portable-cluster` appeared.
+    pub portable_cluster_set: bool,
+    /// `cudaFuncAttributeMaxDynamicSharedMemorySize` (`GpuStoreCfg::optin_shared`).
+    pub optin_shared: bool,
+    /// `cudaLaunchKernel` `sharedMemBytes` (`GpuStoreCfg::dynamic_shared`).
+    pub dynamic_shared: u32,
+    /// True when `--dynamic-shared` appeared.
+    pub dynamic_shared_set: bool,
+    /// CUDA 13 portable-shared mode (`GpuStoreCfg::portable_shared`).
+    pub portable_shared: PortableSharedMode,
+    /// True when `--portable-shared` appeared.
+    pub portable_shared_set: bool,
+    /// `cudaLaunchAttributeNvlinkUtilCentricScheduling` (`GpuStoreCfg::nvlink_util_centric`).
+    pub nvlink_util: bool,
+    /// `cudaLaunchAttributeDeviceUpdatableKernelNode` (`GpuStoreCfg::device_updatable`).
+    pub device_updatable: bool,
+    /// `cudaLaunchAttributePriority` (`GpuStoreCfg::kernel_priority`).
+    pub kernel_priority: Option<i32>,
+    /// `cudaGraphInstantiateFlagDeviceLaunch` (`GpuStoreCfg::device_launch`).
+    pub device_launch: bool,
+    /// `cudaLaunchAttributeLaunchCompletionEvent` (`GpuStoreCfg::launch_completion`).
+    pub launch_completion: bool,
+    /// `cudaLaunchAttributeProgrammaticEvent` (`GpuStoreCfg::programmatic_event`).
+    pub programmatic_event: bool,
+    /// `cudaStreamAttachMemAsync` Single (`GpuStoreCfg::stream_attach`). Implies managed.
+    pub stream_attach: bool,
+    /// `cudaMallocManaged` Host attach then Global (`GpuStoreCfg::managed_host`). Implies managed.
+    pub managed_host: bool,
+    /// `cudaMemPrefetchAsync` to host on managed evict (`GpuStoreCfg::prefetch_host`). Implies managed.
+    pub prefetch_host: bool,
+    /// `cudaMemcpyAsync` Device→HostPinned before pinned/VMM LRU free (`GpuStoreCfg::d2h_evict`).
+    pub d2h_evict: bool,
+    /// `cudaMemcpyAsync` Device→Host (pageable) before pinned/VMM LRU free (`GpuStoreCfg::d2h_pageable`).
+    pub d2h_pageable: bool,
+    /// `cuStreamWaitValue64` / `WriteValue64` copy-ready (`GpuStoreCfg::wait_value`).
+    pub wait_value: bool,
+    /// Hopper NVLS replica fanout (`GpuStoreCfg::multicast`). Implies vmm.
+    pub multicast: bool,
+    /// Hyper-Q occupancy (`GpuStoreCfg::compute_slots`). `0` keeps the profile.
+    pub compute_slots: u8,
+    /// True when `--compute-slots` appeared.
+    pub compute_slots_set: bool,
+    /// Decode-stream SM permille (`GpuStoreCfg::decode_sm_permille`).
+    pub decode_sm_permille: u16,
+    /// True when `--decode-sms` appeared.
+    pub decode_sm_set: bool,
+    /// Complementary CUDA green contexts (`GpuStoreCfg::green_ctx`).
+    ///
+    /// Occupancy partition of decode vs leftover prefill. Distinct from
+    /// [`Self::decode_sm_permille`] (duration scale). Implies decode-priority.
+    pub green_ctx: bool,
+    /// `--kv-bytes` override. `None` uses intern K+V geometry.
+    pub kv_bytes: Option<u64>,
+    /// Physical span for [`GpuFill::Vmm`]. `0` maps the whole expert.
+    pub vmm_page: u64,
+    /// True when `--vmm-page` appeared (even if the value is `0`).
+    pub vmm_page_set: bool,
+}
+
+impl GpuCli {
+    /// True when `key` is a GPU switch. Inline values are refused.
+    pub(crate) fn apply(&mut self, key: &str, inline: Option<&str>) -> Result<bool, String> {
+        let slot = match key {
+            "--cuda-graphs" => &mut self.cuda_graphs,
+            "--graph-update" => &mut self.graph_update,
+            "--graph-set-params" => &mut self.graph_set_params,
+            "--graph-clone" => &mut self.graph_clone,
+            "--graph-clone-parent" => &mut self.graph_clone_parent,
+            "--graph-build" => &mut self.graph_build,
+            "--graph-build-deps" => &mut self.graph_build_deps,
+            "--graph-host" => &mut self.graph_host,
+            "--graph-piecewise" => &mut self.graph_piecewise,
+            "--graph-capture-deps" => &mut self.graph_capture_deps,
+            "--graph-capture-host" => &mut self.graph_capture_host,
+            "--graph-enable" => &mut self.graph_enable,
+            "--graph-if" => &mut self.graph_if,
+            "--graph-mem" => &mut self.graph_mem,
+            "--graph-memset" => &mut self.graph_memset,
+            "--graph-memcpy" => &mut self.graph_memcpy,
+            "--graph-leaf-host" => &mut self.graph_leaf_host,
+            "--graph-auto-free" => &mut self.graph_auto_free,
+            "--graph-mem-trim" => &mut self.graph_mem_trim,
+            "--timing-events" => &mut self.timing_events,
+            "--event-blocking-sync" => &mut self.event_blocking_sync,
+            "--mapped" => &mut self.mapped,
+            "--managed" => &mut self.managed,
+            "--vmm" => &mut self.vmm,
+            "--host-func" => &mut self.host_func,
+            "--copy-host" => &mut self.copy_host,
+            "--blocking-streams" => &mut self.blocking_streams,
+            "--sync-alloc" => &mut self.sync_alloc,
+            "--mempool" => &mut self.mempool,
+            "--mempool-trim" => &mut self.mempool_trim,
+            "--mempool-no-reuse" => &mut self.mempool_no_reuse,
+            "--shareable" => &mut self.shareable,
+            "--ipc" => &mut self.ipc,
+            "--share-ptr" => &mut self.share_ptr,
+            "--vmm-retain" => &mut self.vmm_retain,
+            "--vmm-handle" => &mut self.vmm_handle,
+            "--pageable" => &mut self.pageable,
+            "--host-register" => &mut self.host_register,
+            "--host-unregister" => &mut self.host_unregister,
+            "--host-register-mapped" => &mut self.host_register_mapped,
+            "--sync-memops" => &mut self.sync_memops,
+            "--device-sync-memops" => &mut self.device_sync_memops,
+            "--memcpy-batch" => &mut self.memcpy_batch,
+            "--memcpy-during" => &mut self.memcpy_during,
+            "--memcpy-any" => &mut self.memcpy_any,
+            "--memcpy-attr" => &mut self.memcpy_attr,
+            "--memset-fill" => &mut self.memset_fill,
+            "--accessed-by" => &mut self.accessed_by,
+            "--no-read-mostly" => &mut self.no_read_mostly,
+            "--no-preferred" => &mut self.no_preferred,
+            "--no-mem-prefetch" => &mut self.no_mem_prefetch,
+            "--legacy-null" => &mut self.legacy_null,
+            "--stream-priority" => &mut self.stream_priority,
+            "--seq-streams" => &mut self.seq_streams,
+            "--kv-sim" => &mut self.kv_sim,
+            "--decode-priority" => &mut self.decode_priority,
+            "--green-ctx" => &mut self.green_ctx,
+            "--cooperative" => &mut self.cooperative,
+            "--pdl" => &mut self.pdl,
+            "--l2-persist" => &mut self.l2_persist,
+            "--l2-reset" => &mut self.l2_reset,
+            "--l2-streaming" => &mut self.l2_streaming,
+            "--cluster-spread" => &mut self.cluster_spread,
+            "--func-cluster-spread" => &mut self.func_cluster_spread,
+            "--cluster-load-balance" => &mut self.cluster_load_balance,
+            "--cluster-must-set" => &mut self.cluster_must_set,
+            "--max-shared" => &mut self.max_shared,
+            "--func-max-shared" => &mut self.func_max_shared,
+            "--max-l1" => &mut self.max_l1,
+            "--mem-sync-launch" => &mut self.mem_sync_launch,
+            "--mem-sync-launch-map" => &mut self.mem_sync_launch_map,
+            "--non-portable-cluster" => &mut self.non_portable_cluster,
+            "--optin-shared" => &mut self.optin_shared,
+            "--nvlink-util" => &mut self.nvlink_util,
+            "--device-updatable" => &mut self.device_updatable,
+            "--device-launch" => &mut self.device_launch,
+            "--launch-completion" => &mut self.launch_completion,
+            "--programmatic-event" => &mut self.programmatic_event,
+            "--stream-attach" => &mut self.stream_attach,
+            "--managed-host" => &mut self.managed_host,
+            "--prefetch-host" => &mut self.prefetch_host,
+            "--d2h-evict" => &mut self.d2h_evict,
+            "--d2h-pageable" => &mut self.d2h_pageable,
+            "--wait-value" => &mut self.wait_value,
+            "--multicast" => &mut self.multicast,
+            _ => return Ok(false),
+        };
+        if inline.is_some() {
+            return Err(format!("{key} does not take a value"));
+        }
+        *slot = true;
+        Ok(true)
+    }
+
+    /// `N>0` maps experts in `N`-byte physicals (`va_acquire_paged`).
+    pub(crate) fn set_vmm_page(&mut self, n: u64) {
+        self.vmm_page = n;
+        self.vmm_page_set = true;
+    }
+
+    /// `--vmm-page N` with `N>0`, `--multicast`, `--vmm-retain`, or `--vmm-handle` implies [`Self::vmm`]. Call after sim-flag checks.
+    pub(crate) fn imply_vmm(&mut self) {
+        if self.vmm_page > 0 || self.multicast || self.vmm_retain || self.vmm_handle {
+            self.vmm = true;
+        }
+    }
+
+    /// `--stream-attach` / `--managed-host` / `--prefetch-host` / `--no-read-mostly` / `--no-preferred` / `--no-mem-prefetch` imply [`Self::managed`]. Call after sim-flag checks.
+    pub(crate) fn imply_managed(&mut self) {
+        if self.stream_attach
+            || self.managed_host
+            || self.prefetch_host
+            || self.no_read_mostly
+            || self.no_preferred
+            || self.no_mem_prefetch
+        {
+            self.managed = true;
+        }
+    }
+
+    /// `--host-register-mapped` implies [`Self::mapped`]. Call after sim-flag checks.
+    pub(crate) fn imply_mapped(&mut self) {
+        if self.host_register_mapped {
+            self.mapped = true;
+        }
+    }
+
+    /// `--share-ptr` implies [`Self::shareable`]. `--shareable` / `--mempool-trim` /
+    /// `--mempool-no-reuse` / `--mempool-max` imply [`Self::mempool`]. Call after sim-flag checks.
+    pub(crate) fn imply_shareable(&mut self) {
+        if self.share_ptr {
+            self.shareable = true;
+        }
+        if self.shareable || self.mempool_trim || self.mempool_no_reuse || self.mempool_max != 0 {
+            self.mempool = true;
+        }
+    }
+
+    /// `--ipc` implies [`Self::sync_alloc`]. Call after sim-flag checks.
+    pub(crate) fn imply_sync_alloc(&mut self) {
+        if self.ipc {
+            self.sync_alloc = true;
+        }
+    }
+
+    /// `--host-register` / `--host-unregister` / `--d2h-pageable` imply [`Self::pageable`].
+    /// `--host-unregister` also implies [`Self::host_register`]. Call after sim-flag checks.
+    pub(crate) fn imply_pageable(&mut self) {
+        if self.host_unregister {
+            self.host_register = true;
+        }
+        if self.host_register || self.d2h_pageable {
+            self.pageable = true;
+        }
+    }
+
+    /// `--l2-reset` / `--l2-fetch` / `--l2-ratio` imply [`Self::l2_persist`]. Call after sim-flag checks.
+    pub(crate) fn imply_l2_persist(&mut self) {
+        if self.l2_reset || self.l2_fetch != 0 || self.l2_ratio != 0 {
+            self.l2_persist = true;
+        }
+    }
+
+    /// `--event-blocking-sync` implies [`Self::timing_events`]. Call after sim-flag checks.
+    pub(crate) fn imply_timing_events(&mut self) {
+        if self.event_blocking_sync {
+            self.timing_events = true;
+        }
+    }
+
+    /// `--decode-priority` implies [`Self::stream_priority`]. `--decode-sms`,
+    /// `--green-ctx`, and `--mem-sync-domain remote` imply both. Call after sim-flag checks.
+    pub(crate) fn imply_decode_priority(&mut self) {
+        if self.decode_sm_permille > 0
+            || self.green_ctx
+            || self.mem_sync_domain == MemSyncDomain::Remote
+        {
+            self.decode_priority = true;
+        }
+        if self.decode_priority {
+            self.stream_priority = true;
+        }
+    }
+
+    /// `--green-ctx` plus `--decode-sms 1000` is refused (no leftover SMs).
+    pub(crate) fn check_green_ctx(&self) -> Result<(), String> {
+        if self.green_ctx && self.decode_sm_permille == 1000 {
+            return Err("green-ctx decode-sms must leave leftover SMs".into());
+        }
+        Ok(())
+    }
+
+    /// Decode-stream SM permille (`--decode-sms`). `0` and `>1000` are refused.
+    pub(crate) fn set_decode_sms(&mut self, n: u16) -> Result<(), String> {
+        if n == 0 || n > 1000 {
+            return Err("decode-sms must be 1..=1000".into());
+        }
+        self.decode_sm_permille = n;
+        self.decode_sm_set = true;
+        Ok(())
+    }
+
+    /// KV page bytes (`--kv-bytes`). `0` is refused.
+    pub(crate) fn set_kv_bytes(&mut self, n: u64) -> Result<(), String> {
+        if n == 0 {
+            return Err("kv-bytes must be > 0".into());
+        }
+        self.kv_bytes = Some(n);
+        Ok(())
+    }
+
+    /// Hyper-Q occupancy (`--compute-slots`). `0` is refused.
+    pub(crate) fn set_compute_slots(&mut self, n: u8) -> Result<(), String> {
+        if n == 0 {
+            return Err("compute-slots must be > 0".into());
+        }
+        self.compute_slots = n;
+        self.compute_slots_set = true;
+        Ok(())
+    }
+
+    /// Hopper cluster X (`--cluster`). `0` is refused.
+    pub(crate) fn set_cluster(&mut self, n: u8) -> Result<(), String> {
+        if n == 0 {
+            return Err("cluster must be > 0".into());
+        }
+        self.cluster = n;
+        self.cluster_set = true;
+        Ok(())
+    }
+
+    /// Function RequiredClusterWidth (`--required-cluster`). `0` is refused.
+    pub(crate) fn set_required_cluster(&mut self, n: u8) -> Result<(), String> {
+        if n == 0 {
+            return Err("required-cluster must be > 0".into());
+        }
+        self.required_cluster = n;
+        self.required_cluster_set = true;
+        Ok(())
+    }
+
+    /// `cudaLimitMaxL2FetchGranularity` (`--l2-fetch`). `32` / `64` / `128` only.
+    pub(crate) fn set_l2_fetch(&mut self, n: u64) -> Result<(), String> {
+        if n != 32 && n != 64 && n != 128 {
+            return Err("l2-fetch must be 32, 64, or 128".into());
+        }
+        self.l2_fetch = n;
+        Ok(())
+    }
+
+    /// CUDA `hitRatio` as ‰ (`--l2-ratio`). `1..=1000`.
+    pub(crate) fn set_l2_ratio(&mut self, n: u16) -> Result<(), String> {
+        if n == 0 || n > 1000 {
+            return Err("l2-ratio must be 1..=1000".into());
+        }
+        self.l2_ratio = n;
+        Ok(())
+    }
+
+    /// `cudaMemPoolProps::maxSize` (`--mempool-max`). `N>0`.
+    pub(crate) fn set_mempool_max(&mut self, n: u64) -> Result<(), String> {
+        if n == 0 {
+            return Err("mempool-max must be > 0".into());
+        }
+        self.mempool_max = n;
+        Ok(())
+    }
+
+    /// Hopper preferred cluster X (`--preferred-cluster`). `0` is refused.
+    pub(crate) fn set_preferred_cluster(&mut self, n: u8) -> Result<(), String> {
+        if n == 0 {
+            return Err("preferred-cluster must be > 0".into());
+        }
+        self.preferred_cluster = n;
+        self.preferred_cluster_set = true;
+        Ok(())
+    }
+
+    /// Stream host-wait policy (`--sync-policy auto|spin|yield|blocking`).
+    pub(crate) fn set_sync_policy(&mut self, raw: &str) -> Result<(), String> {
+        self.sync_policy =
+            SynchronizationPolicy::parse(raw).map_err(|_| format!("unknown sync-policy {raw}"))?;
+        self.sync_policy_set = true;
+        Ok(())
+    }
+
+    /// Device host-wait schedule (`--device-sync-policy auto|spin|yield|blocking`).
+    pub(crate) fn set_device_sync_policy(&mut self, raw: &str) -> Result<(), String> {
+        self.device_sync_policy = SynchronizationPolicy::parse(raw)
+            .map_err(|_| format!("unknown device-sync-policy {raw}"))?;
+        self.device_sync_policy_set = true;
+        Ok(())
+    }
+
+    /// Decode-stream mem-sync domain (`--mem-sync-domain default|remote`).
+    pub(crate) fn set_mem_sync_domain(&mut self, raw: &str) -> Result<(), String> {
+        self.mem_sync_domain =
+            MemSyncDomain::parse(raw).map_err(|_| format!("unknown mem-sync-domain {raw}"))?;
+        self.mem_sync_domain_set = true;
+        Ok(())
+    }
+
+    /// Decode-stream mem-sync map (`--mem-sync-map identity|collapse`).
+    pub(crate) fn set_mem_sync_map(&mut self, raw: &str) -> Result<(), String> {
+        self.mem_sync_collapse = match raw {
+            "identity" => false,
+            "collapse" => true,
+            _ => return Err(format!("unknown mem-sync-map {raw}")),
+        };
+        self.mem_sync_map_set = true;
+        Ok(())
+    }
+
+    /// Kernel-node bank width (`--shared-mem default|four|eight`).
+    pub(crate) fn set_shared_mem(&mut self, raw: &str) -> Result<(), String> {
+        self.shared_mem =
+            SharedMemoryMode::parse(raw).map_err(|_| format!("unknown shared-mem {raw}"))?;
+        self.shared_mem_set = true;
+        Ok(())
+    }
+
+    /// Function shared-mem bank width (`--func-shared-mem default|four|eight`).
+    pub(crate) fn set_func_shared_mem(&mut self, raw: &str) -> Result<(), String> {
+        self.func_shared_mem =
+            SharedMemoryMode::parse(raw).map_err(|_| format!("unknown func-shared-mem {raw}"))?;
+        self.func_shared_mem_set = true;
+        Ok(())
+    }
+
+    /// Device shared-mem bank width (`--device-shared-mem default|four|eight`).
+    pub(crate) fn set_device_shared_mem(&mut self, raw: &str) -> Result<(), String> {
+        self.device_shared_mem =
+            SharedMemoryMode::parse(raw).map_err(|_| format!("unknown device-shared-mem {raw}"))?;
+        self.device_shared_mem_set = true;
+        Ok(())
+    }
+
+    /// Launch-time portable cluster (`--portable-cluster default|portable|non-portable`).
+    pub(crate) fn set_portable_cluster(&mut self, raw: &str) -> Result<(), String> {
+        self.portable_cluster = PortableClusterMode::parse(raw)
+            .map_err(|_| format!("unknown portable-cluster {raw}"))?;
+        self.portable_cluster_set = true;
+        Ok(())
+    }
+
+    /// `cudaLaunchKernel` `sharedMemBytes` (`--dynamic-shared`). `0` is refused.
+    pub(crate) fn set_dynamic_shared(&mut self, n: u32) -> Result<(), String> {
+        if n == 0 {
+            return Err("dynamic-shared must be > 0".into());
+        }
+        self.dynamic_shared = n;
+        self.dynamic_shared_set = true;
+        Ok(())
+    }
+
+    /// `cudaLaunchAttributePriority` (`--kernel-priority`). `0` is a valid override.
+    pub(crate) fn set_kernel_priority(&mut self, n: i32) {
+        self.kernel_priority = Some(n);
+    }
+
+    /// CUDA 13 portable-shared mode (`--portable-shared default|portable|non-portable`).
+    pub(crate) fn set_portable_shared(&mut self, raw: &str) -> Result<(), String> {
+        self.portable_shared =
+            PortableSharedMode::parse(raw).map_err(|_| format!("unknown portable-shared {raw}"))?;
+        self.portable_shared_set = true;
+        Ok(())
+    }
+
+    /// Preferred cluster needs a required `--cluster` that it is a multiple of.
+    pub(crate) fn check_preferred_cluster(self) -> Result<(), String> {
+        if !self.preferred_cluster_set {
+            return Ok(());
+        }
+        if !self.cluster_set {
+            return Err("--preferred-cluster needs --cluster".into());
+        }
+        if !self.preferred_cluster.is_multiple_of(self.cluster) {
+            return Err("preferred-cluster must be a multiple of cluster".into());
+        }
+        Ok(())
+    }
+
+    /// `--cluster-must-set` needs a required `--cluster`.
+    pub(crate) fn check_cluster_must_set(self) -> Result<(), String> {
+        if self.cluster_must_set && !self.cluster_set {
+            return Err("--cluster-must-set needs --cluster".into());
+        }
+        Ok(())
+    }
+
+    /// `--required-cluster N` needs `--cluster` and must equal it.
+    pub(crate) fn check_required_cluster(self) -> Result<(), String> {
+        if !self.required_cluster_set {
+            return Ok(());
+        }
+        if !self.cluster_set {
+            return Err("--required-cluster needs --cluster".into());
+        }
+        if self.required_cluster != self.cluster {
+            return Err("required-cluster must match --cluster".into());
+        }
+        Ok(())
+    }
+
+    /// `--cluster-load-balance` needs `--func-cluster-spread` and is exclusive with `--cluster-spread`.
+    pub(crate) fn check_cluster_load_balance(self) -> Result<(), String> {
+        if self.cluster_load_balance && self.cluster_spread {
+            return Err("choose one of --cluster-load-balance, --cluster-spread".into());
+        }
+        if self.cluster_load_balance && !self.func_cluster_spread {
+            return Err("--cluster-load-balance needs --func-cluster-spread".into());
+        }
+        Ok(())
+    }
+
+    /// `--max-l1` needs `--func-max-shared` and is exclusive with `--max-shared`.
+    pub(crate) fn check_max_l1(self) -> Result<(), String> {
+        if self.max_l1 && self.max_shared {
+            return Err("choose one of --max-l1, --max-shared".into());
+        }
+        if self.max_l1 && !self.func_max_shared {
+            return Err("--max-l1 needs --func-max-shared".into());
+        }
+        Ok(())
+    }
+
+    /// `--mem-sync-map collapse` needs `--mem-sync-domain remote`.
+    pub(crate) fn check_mem_sync_map(self) -> Result<(), String> {
+        if self.mem_sync_collapse && self.mem_sync_domain != MemSyncDomain::Remote {
+            return Err("--mem-sync-map collapse needs --mem-sync-domain remote".into());
+        }
+        Ok(())
+    }
+
+    /// `--mem-sync-launch` needs `--mem-sync-domain remote`.
+    pub(crate) fn check_mem_sync_launch(self) -> Result<(), String> {
+        if self.mem_sync_launch && self.mem_sync_domain != MemSyncDomain::Remote {
+            return Err("--mem-sync-launch needs --mem-sync-domain remote".into());
+        }
+        Ok(())
+    }
+
+    /// `--mem-sync-launch-map` needs `--mem-sync-domain remote`.
+    pub(crate) fn check_mem_sync_launch_map(self) -> Result<(), String> {
+        if self.mem_sync_launch_map && self.mem_sync_domain != MemSyncDomain::Remote {
+            return Err("--mem-sync-launch-map needs --mem-sync-domain remote".into());
+        }
+        Ok(())
+    }
+
+    /// `--l2-streaming` needs persist (`--l2-persist` / reset / fetch / ratio).
+    pub(crate) fn check_l2_streaming(self) -> Result<(), String> {
+        if self.l2_streaming
+            && !self.l2_persist
+            && !self.l2_reset
+            && self.l2_fetch == 0
+            && self.l2_ratio == 0
+        {
+            return Err("--l2-streaming needs --l2-persist".into());
+        }
+        Ok(())
+    }
+
+    /// `--memcpy-during` needs `--memcpy-batch`.
+    pub(crate) fn check_memcpy_during(self) -> Result<(), String> {
+        if self.memcpy_during && !self.memcpy_batch {
+            return Err("--memcpy-during needs --memcpy-batch".into());
+        }
+        Ok(())
+    }
+
+    /// `--memcpy-any` needs `--memcpy-batch` and is exclusive with `--memcpy-during`.
+    pub(crate) fn check_memcpy_any(self) -> Result<(), String> {
+        if self.memcpy_any && !self.memcpy_batch {
+            return Err("--memcpy-any needs --memcpy-batch".into());
+        }
+        if self.memcpy_any && self.memcpy_during {
+            return Err("choose one of --memcpy-any, --memcpy-during".into());
+        }
+        Ok(())
+    }
+
+    /// `--ipc` needs `cudaMalloc` (`cudaIpcGetMemHandle`). Distinct from `--shareable`.
+    pub(crate) fn check_ipc(self) -> Result<(), String> {
+        if !self.ipc {
+            return Ok(());
+        }
+        if self.shareable || self.share_ptr {
+            return Err("choose one of --ipc, --shareable".into());
+        }
+        if self.mapped
+            || self.host_register_mapped
+            || self.managed
+            || self.vmm
+            || self.vmm_retain
+            || self.vmm_handle
+            || self.stream_attach
+            || self.managed_host
+            || self.prefetch_host
+            || self.no_read_mostly
+            || self.no_preferred
+            || self.no_mem_prefetch
+        {
+            return Err("--ipc needs cudaMalloc".into());
+        }
+        Ok(())
+    }
+
+    /// `--vmm-handle` is exclusive with `--vmm-retain`.
+    pub(crate) fn check_vmm_handle(self) -> Result<(), String> {
+        if self.vmm_handle && self.vmm_retain {
+            return Err("choose one of --vmm-handle, --vmm-retain".into());
+        }
+        Ok(())
+    }
+
+    /// `--memcpy-attr` needs async pinned/VMM H2D.
+    pub(crate) fn check_memcpy_attr(self) -> Result<(), String> {
+        if !self.memcpy_attr {
+            return Ok(());
+        }
+        if self.mapped
+            || self.host_register_mapped
+            || self.managed
+            || self.stream_attach
+            || self.managed_host
+            || self.prefetch_host
+            || self.no_read_mostly
+            || self.no_preferred
+            || self.no_mem_prefetch
+            || self.pageable
+            || self.host_register
+            || self.host_unregister
+            || self.sync_alloc
+            || self.ipc
+            || self.sync_memops
+            || self.device_sync_memops
+        {
+            return Err("--memcpy-attr needs async pinned/vmm H2D".into());
+        }
+        Ok(())
+    }
+
+    /// `--d2h-evict` needs pinned/VMM device pages.
+    pub(crate) fn check_d2h_evict(self) -> Result<(), String> {
+        if !self.d2h_evict {
+            return Ok(());
+        }
+        if self.mapped
+            || self.host_register_mapped
+            || self.managed
+            || self.stream_attach
+            || self.managed_host
+            || self.prefetch_host
+            || self.no_read_mostly
+            || self.no_preferred
+            || self.no_mem_prefetch
+        {
+            return Err("--d2h-evict needs pinned/vmm".into());
+        }
+        Ok(())
+    }
+
+    /// `--d2h-pageable` needs pageable Device→Host.
+    pub(crate) fn check_d2h_pageable(self) -> Result<(), String> {
+        if !self.d2h_pageable {
+            return Ok(());
+        }
+        if self.d2h_evict {
+            return Err("choose one of --d2h-pageable, --d2h-evict".into());
+        }
+        if self.host_register || self.host_unregister {
+            return Err("--d2h-pageable cannot --host-register".into());
+        }
+        if self.mapped
+            || self.host_register_mapped
+            || self.managed
+            || self.stream_attach
+            || self.managed_host
+            || self.prefetch_host
+            || self.no_read_mostly
+            || self.no_preferred
+            || self.no_mem_prefetch
+        {
+            return Err("--d2h-pageable needs pageable".into());
+        }
+        Ok(())
+    }
+
+    /// `--memset-fill` cannot mapped/managed/pageable/memcpy-batch.
+    pub(crate) fn check_memset_fill(self) -> Result<(), String> {
+        if !self.memset_fill {
+            return Ok(());
+        }
+        if self.mapped || self.host_register_mapped {
+            return Err("--memset-fill cannot --mapped".into());
+        }
+        if self.managed
+            || self.stream_attach
+            || self.managed_host
+            || self.prefetch_host
+            || self.no_read_mostly
+            || self.no_preferred
+            || self.no_mem_prefetch
+        {
+            return Err("--memset-fill cannot --managed".into());
+        }
+        if self.pageable || self.host_register || self.host_unregister {
+            return Err("--memset-fill cannot --pageable".into());
+        }
+        if self.memcpy_batch {
+            return Err("--memset-fill cannot --memcpy-batch".into());
+        }
+        if self.memcpy_attr {
+            return Err("--memset-fill cannot --memcpy-attr".into());
+        }
+        Ok(())
+    }
+
+    /// `--graph-capture-deps` needs `--graph-piecewise`.
+    pub(crate) fn check_graph_capture_deps(self) -> Result<(), String> {
+        if self.graph_capture_deps && !self.graph_piecewise {
+            return Err("--graph-capture-deps needs --graph-piecewise".into());
+        }
+        Ok(())
+    }
+
+    /// `--graph-capture-host` needs `--graph-piecewise`.
+    pub(crate) fn check_graph_capture_host(self) -> Result<(), String> {
+        if self.graph_capture_host && !self.graph_piecewise {
+            return Err("--graph-capture-host needs --graph-piecewise".into());
+        }
+        Ok(())
+    }
+
+    /// `--graph-build-deps` needs `--graph-build`.
+    pub(crate) fn check_graph_build_deps(self) -> Result<(), String> {
+        if self.graph_build_deps && !self.graph_build {
+            return Err("--graph-build-deps needs --graph-build".into());
+        }
+        Ok(())
+    }
+
+    /// `--graph-host` needs `--graph-build`.
+    pub(crate) fn check_graph_host(self) -> Result<(), String> {
+        if self.graph_host && !self.graph_build {
+            return Err("--graph-host needs --graph-build".into());
+        }
+        Ok(())
+    }
+
+    /// `--graph-if` needs `--graph-build`. Illegal with `--graph-enable`.
+    pub(crate) fn check_graph_if(self) -> Result<(), String> {
+        if self.graph_if && !self.graph_build {
+            return Err("--graph-if needs --graph-build".into());
+        }
+        if self.graph_if && self.graph_enable {
+            return Err("choose one of --graph-if, --graph-enable".into());
+        }
+        Ok(())
+    }
+
+    /// `--graph-memset` needs `--graph-mem`.
+    pub(crate) fn check_graph_memset(self) -> Result<(), String> {
+        if self.graph_memset && !self.graph_mem {
+            return Err("--graph-memset needs --graph-mem".into());
+        }
+        Ok(())
+    }
+
+    /// `--graph-memcpy` needs `--graph-mem`.
+    pub(crate) fn check_graph_memcpy(self) -> Result<(), String> {
+        if self.graph_memcpy && !self.graph_mem {
+            return Err("--graph-memcpy needs --graph-mem".into());
+        }
+        Ok(())
+    }
+
+    /// `--graph-leaf-host` cannot `--device-launch`.
+    pub(crate) fn check_graph_leaf_host(self) -> Result<(), String> {
+        if self.graph_leaf_host && self.device_launch {
+            return Err("graph-leaf-host cannot device-launch".into());
+        }
+        Ok(())
+    }
+
+    /// First CUDA knob that needs `--expert-sim`, if any.
+    #[must_use]
+    pub(crate) fn sim_flag(self) -> Option<&'static str> {
+        [
+            (self.cuda_graphs, "--cuda-graphs"),
+            (self.graph_update, "--graph-update"),
+            (self.graph_set_params, "--graph-set-params"),
+            (self.graph_clone, "--graph-clone"),
+            (self.graph_clone_parent, "--graph-clone-parent"),
+            (self.graph_build, "--graph-build"),
+            (self.graph_build_deps, "--graph-build-deps"),
+            (self.graph_host, "--graph-host"),
+            (self.graph_piecewise, "--graph-piecewise"),
+            (self.graph_capture_deps, "--graph-capture-deps"),
+            (self.graph_capture_host, "--graph-capture-host"),
+            (self.graph_enable, "--graph-enable"),
+            (self.graph_if, "--graph-if"),
+            (self.graph_mem, "--graph-mem"),
+            (self.graph_memset, "--graph-memset"),
+            (self.graph_memcpy, "--graph-memcpy"),
+            (self.graph_leaf_host, "--graph-leaf-host"),
+            (self.graph_auto_free, "--graph-auto-free"),
+            (self.graph_mem_trim, "--graph-mem-trim"),
+            (self.timing_events, "--timing-events"),
+            (self.event_blocking_sync, "--event-blocking-sync"),
+            (self.mapped, "--mapped"),
+            (self.managed, "--managed"),
+            (self.vmm, "--vmm"),
+            (self.host_func, "--host-func"),
+            (self.copy_host, "--copy-host"),
+            (self.blocking_streams, "--blocking-streams"),
+            (self.sync_alloc, "--sync-alloc"),
+            (self.mempool, "--mempool"),
+            (self.mempool_trim, "--mempool-trim"),
+            (self.mempool_no_reuse, "--mempool-no-reuse"),
+            (self.mempool_max != 0, "--mempool-max"),
+            (self.shareable, "--shareable"),
+            (self.ipc, "--ipc"),
+            (self.share_ptr, "--share-ptr"),
+            (self.vmm_retain, "--vmm-retain"),
+            (self.vmm_handle, "--vmm-handle"),
+            (self.pageable, "--pageable"),
+            (self.host_register, "--host-register"),
+            (self.host_unregister, "--host-unregister"),
+            (self.host_register_mapped, "--host-register-mapped"),
+            (self.sync_memops, "--sync-memops"),
+            (self.device_sync_memops, "--device-sync-memops"),
+            (self.memcpy_batch, "--memcpy-batch"),
+            (self.memcpy_during, "--memcpy-during"),
+            (self.memcpy_any, "--memcpy-any"),
+            (self.memcpy_attr, "--memcpy-attr"),
+            (self.memset_fill, "--memset-fill"),
+            (self.accessed_by, "--accessed-by"),
+            (self.no_read_mostly, "--no-read-mostly"),
+            (self.no_preferred, "--no-preferred"),
+            (self.no_mem_prefetch, "--no-mem-prefetch"),
+            (self.legacy_null, "--legacy-null"),
+            (self.stream_priority, "--stream-priority"),
+            (self.seq_streams, "--seq-streams"),
+            (self.kv_sim, "--kv-sim"),
+            (self.decode_priority, "--decode-priority"),
+            (self.cooperative, "--cooperative"),
+            (self.pdl, "--pdl"),
+            (self.l2_persist, "--l2-persist"),
+            (self.l2_reset, "--l2-reset"),
+            (self.l2_fetch != 0, "--l2-fetch"),
+            (self.l2_ratio != 0, "--l2-ratio"),
+            (self.l2_streaming, "--l2-streaming"),
+            (self.multicast, "--multicast"),
+            (self.vmm_page_set, "--vmm-page"),
+            (self.compute_slots_set, "--compute-slots"),
+            (self.cluster_set, "--cluster"),
+            (self.preferred_cluster_set, "--preferred-cluster"),
+            (self.cluster_spread, "--cluster-spread"),
+            (self.func_cluster_spread, "--func-cluster-spread"),
+            (self.cluster_load_balance, "--cluster-load-balance"),
+            (self.cluster_must_set, "--cluster-must-set"),
+            (self.required_cluster_set, "--required-cluster"),
+            (self.max_shared, "--max-shared"),
+            (self.func_max_shared, "--func-max-shared"),
+            (self.max_l1, "--max-l1"),
+            (self.non_portable_cluster, "--non-portable-cluster"),
+            (self.sync_policy_set, "--sync-policy"),
+            (self.device_sync_policy_set, "--device-sync-policy"),
+            (self.mem_sync_domain_set, "--mem-sync-domain"),
+            (self.mem_sync_map_set, "--mem-sync-map"),
+            (self.mem_sync_launch, "--mem-sync-launch"),
+            (self.mem_sync_launch_map, "--mem-sync-launch-map"),
+            (self.shared_mem_set, "--shared-mem"),
+            (self.func_shared_mem_set, "--func-shared-mem"),
+            (self.device_shared_mem_set, "--device-shared-mem"),
+            (self.portable_cluster_set, "--portable-cluster"),
+            (self.optin_shared, "--optin-shared"),
+            (self.dynamic_shared_set, "--dynamic-shared"),
+            (self.portable_shared_set, "--portable-shared"),
+            (self.nvlink_util, "--nvlink-util"),
+            (self.device_updatable, "--device-updatable"),
+            (self.kernel_priority.is_some(), "--kernel-priority"),
+            (self.device_launch, "--device-launch"),
+            (self.launch_completion, "--launch-completion"),
+            (self.programmatic_event, "--programmatic-event"),
+            (self.stream_attach, "--stream-attach"),
+            (self.managed_host, "--managed-host"),
+            (self.prefetch_host, "--prefetch-host"),
+            (self.d2h_evict, "--d2h-evict"),
+            (self.d2h_pageable, "--d2h-pageable"),
+            (self.wait_value, "--wait-value"),
+            (self.decode_sm_set, "--decode-sms"),
+            (self.green_ctx, "--green-ctx"),
+        ]
+        .into_iter()
+        .find_map(|(on, name)| on.then_some(name))
+    }
+
+    /// Pinned when every fill flag is off; otherwise exactly one of mapped/managed/vmm.
+    pub(crate) fn fill(self) -> Result<GpuFill, String> {
+        GpuFill::from_flags(
+            self.mapped,
+            self.managed,
+            self.vmm || self.vmm_retain || self.vmm_handle,
+        )
+        .map_err(|e| e.to_string())
+    }
+}
+
+/// GPU knobs plus predictor planner (`--prefetch` / Stay vs Fetch).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) struct PlannerCli {
+    /// SimulatedGpuStore CUDA / fill flags.
+    pub gpu: GpuCli,
+    /// Predictor mode. Default [`Prefetch::Both`].
+    pub prefetch: Prefetch,
+    /// Unique predicted-key Stay vs Fetch window. `0` is ungated.
+    pub plan_window: usize,
+    /// Stay permille of that window already resident.
+    pub plan_threshold: u32,
+    prefetch_set: bool,
+    window_set: bool,
+    threshold_set: bool,
+}
+
+impl Default for PlannerCli {
+    fn default() -> Self {
+        Self {
+            gpu: GpuCli::default(),
+            prefetch: Prefetch::Both,
+            plan_window: 0,
+            plan_threshold: 500,
+            prefetch_set: false,
+            window_set: false,
+            threshold_set: false,
+        }
+    }
+}
+
+/// Result of [`PlannerCli::take`] classifying one dashed operand.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum Dash {
+    Taken,
+    Need(PlanSlot),
+    Unknown,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum PlanSlot {
+    VmmPage,
+    KvBytes,
+    ComputeSlots,
+    Cluster,
+    RequiredCluster,
+    PreferredCluster,
+    SyncPolicy,
+    DeviceSyncPolicy,
+    MemSyncDomain,
+    MemSyncMap,
+    SharedMem,
+    FuncSharedMem,
+    DeviceSharedMem,
+    PortableCluster,
+    DynamicShared,
+    PortableShared,
+    KernelPriority,
+    DecodeSms,
+    L2Fetch,
+    L2Ratio,
+    MempoolMax,
+    Prefetch,
+    PlanWindow,
+    PlanThreshold,
+}
+
+impl PlanSlot {
+    fn name(self) -> &'static str {
+        match self {
+            Self::VmmPage => "vmm-page",
+            Self::KvBytes => "kv-bytes",
+            Self::ComputeSlots => "compute-slots",
+            Self::Cluster => "cluster",
+            Self::RequiredCluster => "required-cluster",
+            Self::PreferredCluster => "preferred-cluster",
+            Self::SyncPolicy => "sync-policy",
+            Self::DeviceSyncPolicy => "device-sync-policy",
+            Self::MemSyncDomain => "mem-sync-domain",
+            Self::MemSyncMap => "mem-sync-map",
+            Self::SharedMem => "shared-mem",
+            Self::FuncSharedMem => "func-shared-mem",
+            Self::DeviceSharedMem => "device-shared-mem",
+            Self::PortableCluster => "portable-cluster",
+            Self::DynamicShared => "dynamic-shared",
+            Self::PortableShared => "portable-shared",
+            Self::KernelPriority => "kernel-priority",
+            Self::DecodeSms => "decode-sms",
+            Self::L2Fetch => "l2-fetch",
+            Self::L2Ratio => "l2-ratio",
+            Self::MempoolMax => "mempool-max",
+            Self::Prefetch => "prefetch",
+            Self::PlanWindow => "plan-window",
+            Self::PlanThreshold => "plan-threshold",
+        }
+    }
+}
+
+impl PlannerCli {
+    fn dash(&mut self, key: &str, inline: Option<&str>) -> Result<Dash, String> {
+        if self.gpu.apply(key, inline)? {
+            return Ok(Dash::Taken);
+        }
+        Ok(match key {
+            "--vmm-page" => Dash::Need(PlanSlot::VmmPage),
+            "--kv-bytes" => Dash::Need(PlanSlot::KvBytes),
+            "--compute-slots" => Dash::Need(PlanSlot::ComputeSlots),
+            "--cluster" => Dash::Need(PlanSlot::Cluster),
+            "--required-cluster" => Dash::Need(PlanSlot::RequiredCluster),
+            "--l2-fetch" => Dash::Need(PlanSlot::L2Fetch),
+            "--l2-ratio" => Dash::Need(PlanSlot::L2Ratio),
+            "--mempool-max" => Dash::Need(PlanSlot::MempoolMax),
+            "--preferred-cluster" => Dash::Need(PlanSlot::PreferredCluster),
+            "--sync-policy" => Dash::Need(PlanSlot::SyncPolicy),
+            "--device-sync-policy" => Dash::Need(PlanSlot::DeviceSyncPolicy),
+            "--mem-sync-domain" => Dash::Need(PlanSlot::MemSyncDomain),
+            "--mem-sync-map" => Dash::Need(PlanSlot::MemSyncMap),
+            "--shared-mem" => Dash::Need(PlanSlot::SharedMem),
+            "--func-shared-mem" => Dash::Need(PlanSlot::FuncSharedMem),
+            "--device-shared-mem" => Dash::Need(PlanSlot::DeviceSharedMem),
+            "--portable-cluster" => Dash::Need(PlanSlot::PortableCluster),
+            "--dynamic-shared" => Dash::Need(PlanSlot::DynamicShared),
+            "--portable-shared" => Dash::Need(PlanSlot::PortableShared),
+            "--kernel-priority" => Dash::Need(PlanSlot::KernelPriority),
+            "--decode-sms" => Dash::Need(PlanSlot::DecodeSms),
+            "--prefetch" => Dash::Need(PlanSlot::Prefetch),
+            "--plan-window" => Dash::Need(PlanSlot::PlanWindow),
+            "--plan-threshold" => Dash::Need(PlanSlot::PlanThreshold),
+            _ => Dash::Unknown,
+        })
+    }
+
+    fn set(&mut self, slot: PlanSlot, raw: &str) -> Result<(), String> {
+        match slot {
+            PlanSlot::VmmPage => {
+                let n = raw
+                    .parse::<u64>()
+                    .map_err(|_| format!("invalid vmm-page {raw:?}"))?;
+                self.gpu.set_vmm_page(n);
+            }
+            PlanSlot::KvBytes => {
+                let n = raw
+                    .parse::<u64>()
+                    .map_err(|_| format!("invalid kv-bytes {raw:?}"))?;
+                self.gpu.set_kv_bytes(n)?;
+            }
+            PlanSlot::ComputeSlots => {
+                let n = raw
+                    .parse::<u8>()
+                    .map_err(|_| format!("invalid compute-slots {raw:?}"))?;
+                self.gpu.set_compute_slots(n)?;
+            }
+            PlanSlot::Cluster => {
+                let n = raw
+                    .parse::<u8>()
+                    .map_err(|_| format!("invalid cluster {raw:?}"))?;
+                self.gpu.set_cluster(n)?;
+            }
+            PlanSlot::RequiredCluster => {
+                let n = raw
+                    .parse::<u8>()
+                    .map_err(|_| format!("invalid required-cluster {raw:?}"))?;
+                self.gpu.set_required_cluster(n)?;
+            }
+            PlanSlot::L2Fetch => {
+                let n = raw
+                    .parse::<u64>()
+                    .map_err(|_| format!("invalid l2-fetch {raw:?}"))?;
+                self.gpu.set_l2_fetch(n)?;
+            }
+            PlanSlot::L2Ratio => {
+                let n = raw
+                    .parse::<u16>()
+                    .map_err(|_| format!("invalid l2-ratio {raw:?}"))?;
+                self.gpu.set_l2_ratio(n)?;
+            }
+            PlanSlot::MempoolMax => {
+                let n = raw
+                    .parse::<u64>()
+                    .map_err(|_| format!("invalid mempool-max {raw:?}"))?;
+                self.gpu.set_mempool_max(n)?;
+            }
+            PlanSlot::PreferredCluster => {
+                let n = raw
+                    .parse::<u8>()
+                    .map_err(|_| format!("invalid preferred-cluster {raw:?}"))?;
+                self.gpu.set_preferred_cluster(n)?;
+            }
+            PlanSlot::SyncPolicy => self.gpu.set_sync_policy(raw)?,
+            PlanSlot::DeviceSyncPolicy => self.gpu.set_device_sync_policy(raw)?,
+            PlanSlot::MemSyncDomain => self.gpu.set_mem_sync_domain(raw)?,
+            PlanSlot::MemSyncMap => self.gpu.set_mem_sync_map(raw)?,
+            PlanSlot::SharedMem => self.gpu.set_shared_mem(raw)?,
+            PlanSlot::FuncSharedMem => self.gpu.set_func_shared_mem(raw)?,
+            PlanSlot::DeviceSharedMem => self.gpu.set_device_shared_mem(raw)?,
+            PlanSlot::PortableCluster => self.gpu.set_portable_cluster(raw)?,
+            PlanSlot::DynamicShared => {
+                let n = raw
+                    .parse::<u32>()
+                    .map_err(|_| format!("invalid dynamic-shared {raw:?}"))?;
+                self.gpu.set_dynamic_shared(n)?;
+            }
+            PlanSlot::PortableShared => self.gpu.set_portable_shared(raw)?,
+            PlanSlot::KernelPriority => {
+                let n = raw
+                    .parse::<i32>()
+                    .map_err(|_| format!("invalid kernel-priority {raw:?}"))?;
+                self.gpu.set_kernel_priority(n);
+            }
+            PlanSlot::DecodeSms => {
+                let n = raw
+                    .parse::<u16>()
+                    .map_err(|_| format!("invalid decode-sms {raw:?}"))?;
+                self.gpu.set_decode_sms(n)?;
+            }
+            PlanSlot::Prefetch => {
+                self.prefetch =
+                    Prefetch::parse(raw).map_err(|_| format!("unknown prefetch {raw}"))?;
+                self.prefetch_set = true;
+            }
+            PlanSlot::PlanWindow => {
+                self.plan_window = raw
+                    .parse::<usize>()
+                    .map_err(|_| format!("invalid plan-window {raw:?}"))?;
+                self.window_set = true;
+            }
+            PlanSlot::PlanThreshold => {
+                self.plan_threshold = raw
+                    .parse::<u32>()
+                    .map_err(|_| format!("invalid plan-threshold {raw:?}"))?;
+                self.threshold_set = true;
+            }
+        }
+        Ok(())
+    }
+
+    /// Consume a dashed Engine / serve flag. `false` means the key is unknown.
+    pub(crate) fn take<I, S>(
+        &mut self,
+        key: &str,
+        inline: Option<&str>,
+        it: &mut I,
+    ) -> Result<bool, String>
+    where
+        I: Iterator<Item = S>,
+        S: AsRef<str>,
+    {
+        match self.dash(key, inline)? {
+            Dash::Taken => Ok(true),
+            Dash::Need(slot) => {
+                let v = match inline {
+                    Some(v) => v.to_string(),
+                    None => match it.next() {
+                        Some(s) => s.as_ref().to_string(),
+                        None => return Err(format!("missing --{} value", slot.name())),
+                    },
+                };
+                self.set(slot, &v)?;
+                Ok(true)
+            }
+            Dash::Unknown => Ok(false),
+        }
+    }
+
+    /// First planner flag that needs `--engine` on `serve`.
+    #[must_use]
+    pub(crate) fn serve_engine_flag(self) -> Option<&'static str> {
+        [
+            (self.prefetch_set, "--prefetch"),
+            (self.window_set, "--plan-window"),
+            (self.threshold_set, "--plan-threshold"),
+        ]
+        .into_iter()
+        .find_map(|(on, name)| on.then_some(name))
+    }
+}
+
+/// Build [`GpuStoreCfg`] from parsed Engine / serve GPU flags.
+#[must_use]
+pub(crate) fn gpu_knobs(gpu: GpuCli) -> GpuStoreCfg {
+    GpuStoreCfg {
+        host_func: gpu.host_func,
+        copy_host: gpu.copy_host,
+        blocking_streams: gpu.blocking_streams,
+        sync_alloc: gpu.sync_alloc,
+        mempool: gpu.mempool,
+        mempool_trim: gpu.mempool_trim,
+        mempool_no_reuse: gpu.mempool_no_reuse,
+        mempool_max: gpu.mempool_max,
+        shareable: gpu.shareable,
+        ipc: gpu.ipc,
+        share_ptr: gpu.share_ptr,
+        vmm_retain: gpu.vmm_retain,
+        vmm_handle: gpu.vmm_handle,
+        vmm_page: gpu.vmm_page,
+        pageable: gpu.pageable,
+        host_register: gpu.host_register,
+        host_unregister: gpu.host_unregister,
+        host_register_mapped: gpu.host_register_mapped,
+        sync_memops: gpu.sync_memops,
+        device_sync_memops: gpu.device_sync_memops,
+        memcpy_batch: gpu.memcpy_batch,
+        memcpy_during: gpu.memcpy_during,
+        memcpy_any: gpu.memcpy_any,
+        memcpy_attr: gpu.memcpy_attr,
+        memset_fill: gpu.memset_fill,
+        accessed_by: gpu.accessed_by,
+        no_read_mostly: gpu.no_read_mostly,
+        no_preferred: gpu.no_preferred,
+        no_mem_prefetch: gpu.no_mem_prefetch,
+        legacy_null: gpu.legacy_null,
+        stream_priority: gpu.stream_priority,
+        graph_update: gpu.graph_update,
+        graph_set_params: gpu.graph_set_params,
+        graph_clone: gpu.graph_clone,
+        graph_clone_parent: gpu.graph_clone_parent,
+        graph_build: gpu.graph_build,
+        graph_build_deps: gpu.graph_build_deps,
+        graph_host: gpu.graph_host,
+        graph_piecewise: gpu.graph_piecewise,
+        graph_capture_deps: gpu.graph_capture_deps,
+        graph_capture_host: gpu.graph_capture_host,
+        graph_enable: gpu.graph_enable,
+        graph_if: gpu.graph_if,
+        graph_mem: gpu.graph_mem,
+        graph_memset: gpu.graph_memset,
+        graph_memcpy: gpu.graph_memcpy,
+        graph_leaf_host: gpu.graph_leaf_host,
+        graph_auto_free: gpu.graph_auto_free,
+        graph_mem_trim: gpu.graph_mem_trim,
+        timing_events: gpu.timing_events || gpu.event_blocking_sync,
+        event_blocking_sync: gpu.event_blocking_sync,
+        seq_streams: gpu.seq_streams,
+        kv_sim: gpu.kv_sim,
+        decode_priority: gpu.decode_priority,
+        cooperative: gpu.cooperative,
+        pdl: gpu.pdl,
+        l2_persist: gpu.l2_persist || gpu.l2_reset || gpu.l2_fetch != 0 || gpu.l2_ratio != 0,
+        l2_reset: gpu.l2_reset,
+        l2_fetch: gpu.l2_fetch,
+        l2_ratio: gpu.l2_ratio,
+        l2_streaming: gpu.l2_streaming,
+        cluster: gpu.cluster,
+        preferred_cluster: gpu.preferred_cluster,
+        cluster_spread: gpu.cluster_spread,
+        func_cluster_spread: gpu.func_cluster_spread,
+        cluster_load_balance: gpu.cluster_load_balance,
+        cluster_must_set: gpu.cluster_must_set,
+        required_cluster: gpu.required_cluster,
+        max_shared: gpu.max_shared,
+        func_max_shared: gpu.func_max_shared,
+        max_l1: gpu.max_l1,
+        non_portable_cluster: gpu.non_portable_cluster,
+        sync_policy: gpu.sync_policy,
+        device_sync_policy: gpu.device_sync_policy,
+        mem_sync_domain: gpu.mem_sync_domain,
+        mem_sync_collapse: gpu.mem_sync_collapse,
+        mem_sync_launch: gpu.mem_sync_launch,
+        mem_sync_launch_map: gpu.mem_sync_launch_map,
+        shared_mem: gpu.shared_mem,
+        func_shared_mem: gpu.func_shared_mem,
+        device_shared_mem: gpu.device_shared_mem,
+        portable_cluster: gpu.portable_cluster,
+        optin_shared: gpu.optin_shared,
+        dynamic_shared: gpu.dynamic_shared,
+        portable_shared: gpu.portable_shared,
+        nvlink_util_centric: gpu.nvlink_util,
+        device_updatable: gpu.device_updatable,
+        kernel_priority: gpu.kernel_priority,
+        device_launch: gpu.device_launch,
+        launch_completion: gpu.launch_completion,
+        programmatic_event: gpu.programmatic_event,
+        stream_attach: gpu.stream_attach,
+        managed_host: gpu.managed_host,
+        prefetch_host: gpu.prefetch_host,
+        d2h_evict: gpu.d2h_evict,
+        d2h_pageable: gpu.d2h_pageable,
+        wait_value: gpu.wait_value,
+        multicast: gpu.multicast,
+        compute_slots: gpu.compute_slots,
+        decode_sm_permille: gpu.decode_sm_permille,
+        green_ctx: gpu.green_ctx,
+    }
+}
+
+/// Park DirectStore / CachedStore / SimulatedGpuStore on `eng`.
+pub(crate) fn attach_store(
+    eng: &mut Engine<'_>,
+    llama: &Llama,
+    spec: &StoreAttach,
+) -> Result<(), String> {
+    if spec.expert_sim {
+        let slots = match spec.expert_slots {
+            Some(0) => return Err("--expert-sim needs --expert-slots > 0".into()),
+            Some(n) => n,
+            None => 8,
+        };
+        let profile = if spec.expert_8gpu {
+            HardwareProfile::example_8xh100_nvlink()
+        } else {
+            HardwareProfile::example_h100_sxm()
+        };
+        let gpu = SimulatedGpuStore::with_cfg(
+            llama.expert_direct_store().map_err(|e| e.to_string())?,
+            slots,
+            profile,
+            spec.expert_bytes.unwrap_or(4096),
+            spec.fill,
+            spec.gpu_cfg,
+        )
+        .map_err(|e| e.to_string())?;
+        eng.attach_expert_store(LiveStore::simulated(gpu));
+        if spec.gpu_cfg.kv_sim {
+            eng.enable_kv_sim(spec.kv_bytes)
+                .map_err(|e| e.to_string())?;
+        }
+        return Ok(());
+    }
+    let Some(slots) = spec.expert_slots else {
+        return Ok(());
+    };
+    let direct = llama.expert_direct_store().map_err(|e| e.to_string())?;
+    let store = if slots == 0 {
+        LiveStore::Direct(direct)
+    } else {
+        LiveStore::Cached(CachedStore::new(direct, slots).map_err(|e| e.to_string())?)
+    };
+    eng.attach_expert_store(store);
+    Ok(())
+}

@@ -1,0 +1,18 @@
+[package]
+name = "infer-bench"
+version = "0.1.0"
+edition = "2021"
+description = "Serving-shaped measurement over expertvm traces and gpu-sim scores. No invented $/M tokens."
+license = "MIT OR Apache-2.0"
+repository = "https://github.com/mingley/llama-rust"
+
+[dependencies]
+expertvm = { path = "../expertvm" }
+gpu-sim = { path = "../gpu-sim" }
+
+[lints]
+workspace = true
+
+[[bin]]
+name = "infer-bench"
+path = "src/bin/infer-bench.rs"

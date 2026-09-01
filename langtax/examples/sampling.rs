@@ -74,7 +74,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     // One session, reused: a pinned n_ctx means the KV cache is allocated once
     // instead of once per configuration.
-    let mut session = model.session();
+    let mut session = model.session(128)?;
 
     for (label, options) in configs {
         let done = session.generate_detailed(&prompt, &options)?;

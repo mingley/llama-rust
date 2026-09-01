@@ -6,20 +6,27 @@ use std::io::{Read, Write};
 use std::path::Path;
 use std::time::Instant;
 
-use llama_rust::cli::{parse_infer_args, InferArgs, InferCmd, BIN_USAGE, INFER_USAGE};
-use llama_rust::fixtures::{
-    tiny_gemma_gguf, tiny_llama4_gguf, tiny_llama_gguf, tiny_llama_moe_gguf, tiny_qwen2_gguf,
-    tiny_qwen2moe_gguf, tiny_qwen2vl_gguf, tiny_qwen35_gguf, tiny_qwen3_gguf, tiny_qwen3moe_gguf,
-    tiny_qwen3next_gguf, tiny_qwen3vl_gguf,
+use llama_rust::{
+    gemv_q4_k, gemv_q8_0, greedy_generate_ctx, greedy_generate_traced, load_gguf_owned,
+    pack_q4_k_block, pack_q8_0_block, pack_q8_k_block, parse_chat_args, parse_engine_args,
+    parse_infer_args, parse_serve_args, parse_trace_args, run_chat, run_engine, run_serve,
+    tiny_bloom_attn_qkv_s_gguf, tiny_bloom_gguf, tiny_gemma2_gguf, tiny_gemma3_gguf,
+    tiny_gemma3n_gguf, tiny_gemma4_gguf, tiny_gemma4_mixed_hd_gguf, tiny_gemma4_moe_down_s_gguf,
+    tiny_gemma4_moe_fused_gguf, tiny_gemma4_moe_fused_ple_gguf, tiny_gemma4_moe_gate_up_s_gguf,
+    tiny_gemma4_moe_gguf, tiny_gemma4_moe_ple_gguf, tiny_gemma4_no_wv_gguf,
+    tiny_gemma4_out_scale_gguf, tiny_gemma4_ple_gguf, tiny_gemma4_rope_freqs_gguf,
+    tiny_gemma4_shared_kv_gguf, tiny_gemma4_swa_base_gguf, tiny_gemma_gguf, tiny_llama4_gguf,
+    tiny_llama_attn_k_s_gguf, tiny_llama_attn_out_s_gguf, tiny_llama_attn_q_s_gguf,
+    tiny_llama_attn_v_s_gguf, tiny_llama_ffn_down_s_gguf, tiny_llama_ffn_gate_s_gguf,
+    tiny_llama_ffn_up_s_gguf, tiny_llama_gguf, tiny_llama_moe_gguf, tiny_nvfp4_output_s_gguf,
+    tiny_phi2_gguf, tiny_qwen2_gguf, tiny_qwen2moe_ffn_down_shexp_s_gguf,
+    tiny_qwen2moe_ffn_gate_shexp_s_gguf, tiny_qwen2moe_ffn_up_shexp_s_gguf, tiny_qwen2moe_gguf,
+    tiny_qwen2vl_gguf, tiny_qwen35_gguf, tiny_qwen3_gguf, tiny_qwen3moe_2layer_gguf,
+    tiny_qwen3moe_gguf, tiny_qwen3next_gguf, tiny_qwen3vl_gguf, write_gguf, write_gguf_with_kv,
+    ChatCmd, EngineCmd, GgmlType, InferArgs, InferCmd, Kv, Llama, ServeCmd, TensorWrite, Tokenizer,
+    TraceCmd, BIN_USAGE, CHAT_USAGE, ENGINE_USAGE, INFER_USAGE, QK8_0, QK_K, SERVE_USAGE,
+    TRACE_USAGE,
 };
-use llama_rust::gguf::{
-    load_gguf_owned, write_gguf, write_gguf_with_kv, GgmlType, Kv, TensorWrite,
-};
-use llama_rust::kernels::{
-    gemv_q4_k, gemv_q8_0, pack_q4_k_block, pack_q8_0_block, pack_q8_k_block, QK8_0, QK_K,
-};
-use llama_rust::serve::{parse_serve_args, run_serve, ServeCmd, SERVE_USAGE};
-use llama_rust::{GenerateOptions, Model};
 
 fn y_checksum(y: &[f32]) -> u64 {
     let mut h = 0xcbf2_9ce4_8422_2325u64;
@@ -219,15 +226,43 @@ fn gemv_q4k_file(path: &Path) -> Result<(), Box<dyn std::error::Error>> {
 }
 
 fn infer_file(args: &InferArgs) -> Result<(), Box<dyn std::error::Error>> {
-    let model = Model::from_path(Path::new(&args.path))?;
-    let mut options = GenerateOptions::new(args.n_predict);
-    if let Some(n_ctx) = args.n_ctx {
-        options = options.with_n_ctx(n_ctx);
-    }
-    let done = model.session().generate_detailed(&args.prompt, &options)?;
+    let bytes = read_path(Path::new(&args.path))?;
+    let g = load_gguf_owned(bytes)?;
+    let tok = Tokenizer::from_gguf(&g)?;
+    let model = Llama::from_gguf(g)?;
+    let text = greedy_generate_ctx(&model, &tok, &args.prompt, args.n_predict, args.n_ctx)?;
     println!("prompt={} n_predict={}", args.prompt, args.n_predict);
-    // Echo prompt plus continuation, which is what this CLI has always printed.
-    println!("generated={}", model.tokenizer().decode(&done.all_tokens()));
+    println!("generated={text}");
+    Ok(())
+}
+
+fn trace_file(args: &llama_rust::TraceArgs) -> Result<(), Box<dyn std::error::Error>> {
+    let bytes = read_path(Path::new(&args.infer.path))?;
+    let g = load_gguf_owned(bytes)?;
+    let tok = Tokenizer::from_gguf(&g)?;
+    let model = Llama::from_gguf(g)?;
+    let (text, trace) = greedy_generate_traced(
+        &model,
+        &tok,
+        &args.infer.prompt,
+        args.infer.n_predict,
+        args.infer.n_ctx,
+        0,
+    )?;
+    write_path(Path::new(&args.out), trace.to_jsonl().as_bytes())?;
+    println!(
+        "prompt={} n_predict={} events={} --out={}",
+        args.infer.prompt,
+        args.infer.n_predict,
+        trace.events.len(),
+        args.out
+    );
+    println!("generated={text}");
+    println!("{}", expertvm::analyze(&trace).report());
+    print!(
+        "{}",
+        expertvm::format_table(&expertvm::compare(&trace, args.capacity, 8))
+    );
     Ok(())
 }
 
@@ -291,6 +326,192 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
             println!("wrote {path} bytes={}", bytes.len());
             Ok(())
         }
+        "write-tiny-gemma2" => {
+            let path = args.next().ok_or("write-tiny-gemma2 <path>")?;
+            let bytes = tiny_gemma2_gguf();
+            write_path(Path::new(&path), &bytes)?;
+            println!("wrote {path} bytes={}", bytes.len());
+            Ok(())
+        }
+        "write-tiny-gemma3" => {
+            let path = args.next().ok_or("write-tiny-gemma3 <path>")?;
+            let bytes = tiny_gemma3_gguf();
+            write_path(Path::new(&path), &bytes)?;
+            println!("wrote {path} bytes={}", bytes.len());
+            Ok(())
+        }
+        "write-tiny-gemma3n" => {
+            let path = args.next().ok_or("write-tiny-gemma3n <path>")?;
+            let bytes = tiny_gemma3n_gguf();
+            write_path(Path::new(&path), &bytes)?;
+            println!("wrote {path} bytes={}", bytes.len());
+            Ok(())
+        }
+        "write-tiny-gemma4" => {
+            let path = args.next().ok_or("write-tiny-gemma4 <path>")?;
+            let bytes = tiny_gemma4_gguf();
+            write_path(Path::new(&path), &bytes)?;
+            println!("wrote {path} bytes={}", bytes.len());
+            Ok(())
+        }
+        "write-tiny-gemma4-moe" => {
+            let path = args.next().ok_or("write-tiny-gemma4-moe <path>")?;
+            let bytes = tiny_gemma4_moe_gguf();
+            write_path(Path::new(&path), &bytes)?;
+            println!("wrote {path} bytes={}", bytes.len());
+            Ok(())
+        }
+        "write-tiny-gemma4-ple" => {
+            let path = args.next().ok_or("write-tiny-gemma4-ple <path>")?;
+            let bytes = tiny_gemma4_ple_gguf();
+            write_path(Path::new(&path), &bytes)?;
+            println!("wrote {path} bytes={}", bytes.len());
+            Ok(())
+        }
+        "write-tiny-gemma4-moe-ple" => {
+            let path = args.next().ok_or("write-tiny-gemma4-moe-ple <path>")?;
+            let bytes = tiny_gemma4_moe_ple_gguf();
+            write_path(Path::new(&path), &bytes)?;
+            println!("wrote {path} bytes={}", bytes.len());
+            Ok(())
+        }
+        "write-tiny-gemma4-moe-fused" => {
+            let path = args.next().ok_or("write-tiny-gemma4-moe-fused <path>")?;
+            let bytes = tiny_gemma4_moe_fused_gguf();
+            write_path(Path::new(&path), &bytes)?;
+            println!("wrote {path} bytes={}", bytes.len());
+            Ok(())
+        }
+        "write-tiny-gemma4-moe-fused-ple" => {
+            let path = args
+                .next()
+                .ok_or("write-tiny-gemma4-moe-fused-ple <path>")?;
+            let bytes = tiny_gemma4_moe_fused_ple_gguf();
+            write_path(Path::new(&path), &bytes)?;
+            println!("wrote {path} bytes={}", bytes.len());
+            Ok(())
+        }
+        "write-tiny-gemma4-shared-kv" => {
+            let path = args.next().ok_or("write-tiny-gemma4-shared-kv <path>")?;
+            let bytes = tiny_gemma4_shared_kv_gguf();
+            write_path(Path::new(&path), &bytes)?;
+            println!("wrote {path} bytes={}", bytes.len());
+            Ok(())
+        }
+        "write-tiny-gemma4-mixed-hd" => {
+            let path = args.next().ok_or("write-tiny-gemma4-mixed-hd <path>")?;
+            let bytes = tiny_gemma4_mixed_hd_gguf();
+            write_path(Path::new(&path), &bytes)?;
+            println!("wrote {path} bytes={}", bytes.len());
+            Ok(())
+        }
+        "write-tiny-gemma4-swa-base" => {
+            let path = args.next().ok_or("write-tiny-gemma4-swa-base <path>")?;
+            let bytes = tiny_gemma4_swa_base_gguf();
+            write_path(Path::new(&path), &bytes)?;
+            println!("wrote {path} bytes={}", bytes.len());
+            Ok(())
+        }
+        "write-tiny-gemma4-no-wv" => {
+            let path = args.next().ok_or("write-tiny-gemma4-no-wv <path>")?;
+            let bytes = tiny_gemma4_no_wv_gguf();
+            write_path(Path::new(&path), &bytes)?;
+            println!("wrote {path} bytes={}", bytes.len());
+            Ok(())
+        }
+        "write-tiny-gemma4-out-scale" => {
+            let path = args.next().ok_or("write-tiny-gemma4-out-scale <path>")?;
+            let bytes = tiny_gemma4_out_scale_gguf();
+            write_path(Path::new(&path), &bytes)?;
+            println!("wrote {path} bytes={}", bytes.len());
+            Ok(())
+        }
+        "write-tiny-gemma4-rope-freqs" => {
+            let path = args.next().ok_or("write-tiny-gemma4-rope-freqs <path>")?;
+            let bytes = tiny_gemma4_rope_freqs_gguf();
+            write_path(Path::new(&path), &bytes)?;
+            println!("wrote {path} bytes={}", bytes.len());
+            Ok(())
+        }
+        "write-tiny-gemma4-moe-down-s" => {
+            let path = args.next().ok_or("write-tiny-gemma4-moe-down-s <path>")?;
+            let bytes = tiny_gemma4_moe_down_s_gguf();
+            write_path(Path::new(&path), &bytes)?;
+            println!("wrote {path} bytes={}", bytes.len());
+            Ok(())
+        }
+        "write-tiny-gemma4-moe-gate-up-s" => {
+            let path = args
+                .next()
+                .ok_or("write-tiny-gemma4-moe-gate-up-s <path>")?;
+            let bytes = tiny_gemma4_moe_gate_up_s_gguf();
+            write_path(Path::new(&path), &bytes)?;
+            println!("wrote {path} bytes={}", bytes.len());
+            Ok(())
+        }
+        "write-tiny-llama-ffn-down-s" => {
+            let path = args.next().ok_or("write-tiny-llama-ffn-down-s <path>")?;
+            let bytes = tiny_llama_ffn_down_s_gguf();
+            write_path(Path::new(&path), &bytes)?;
+            println!("wrote {path} bytes={}", bytes.len());
+            Ok(())
+        }
+        "write-tiny-llama-ffn-gate-s" => {
+            let path = args.next().ok_or("write-tiny-llama-ffn-gate-s <path>")?;
+            let bytes = tiny_llama_ffn_gate_s_gguf();
+            write_path(Path::new(&path), &bytes)?;
+            println!("wrote {path} bytes={}", bytes.len());
+            Ok(())
+        }
+        "write-tiny-llama-ffn-up-s" => {
+            let path = args.next().ok_or("write-tiny-llama-ffn-up-s <path>")?;
+            let bytes = tiny_llama_ffn_up_s_gguf();
+            write_path(Path::new(&path), &bytes)?;
+            println!("wrote {path} bytes={}", bytes.len());
+            Ok(())
+        }
+        "write-tiny-nvfp4-output-s" => {
+            let path = args.next().ok_or("write-tiny-nvfp4-output-s <path>")?;
+            let bytes = tiny_nvfp4_output_s_gguf();
+            write_path(Path::new(&path), &bytes)?;
+            println!("wrote {path} bytes={}", bytes.len());
+            Ok(())
+        }
+        "write-tiny-bloom-attn-qkv-s" => {
+            let path = args.next().ok_or("write-tiny-bloom-attn-qkv-s <path>")?;
+            let bytes = tiny_bloom_attn_qkv_s_gguf();
+            write_path(Path::new(&path), &bytes)?;
+            println!("wrote {path} bytes={}", bytes.len());
+            Ok(())
+        }
+        "write-tiny-llama-attn-q-s" => {
+            let path = args.next().ok_or("write-tiny-llama-attn-q-s <path>")?;
+            let bytes = tiny_llama_attn_q_s_gguf();
+            write_path(Path::new(&path), &bytes)?;
+            println!("wrote {path} bytes={}", bytes.len());
+            Ok(())
+        }
+        "write-tiny-llama-attn-out-s" => {
+            let path = args.next().ok_or("write-tiny-llama-attn-out-s <path>")?;
+            let bytes = tiny_llama_attn_out_s_gguf();
+            write_path(Path::new(&path), &bytes)?;
+            println!("wrote {path} bytes={}", bytes.len());
+            Ok(())
+        }
+        "write-tiny-llama-attn-k-s" => {
+            let path = args.next().ok_or("write-tiny-llama-attn-k-s <path>")?;
+            let bytes = tiny_llama_attn_k_s_gguf();
+            write_path(Path::new(&path), &bytes)?;
+            println!("wrote {path} bytes={}", bytes.len());
+            Ok(())
+        }
+        "write-tiny-llama-attn-v-s" => {
+            let path = args.next().ok_or("write-tiny-llama-attn-v-s <path>")?;
+            let bytes = tiny_llama_attn_v_s_gguf();
+            write_path(Path::new(&path), &bytes)?;
+            println!("wrote {path} bytes={}", bytes.len());
+            Ok(())
+        }
         "write-tiny-llama4" => {
             let path = args.next().ok_or("write-tiny-llama4 <path>")?;
             let bytes = tiny_llama4_gguf();
@@ -305,6 +526,33 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
             println!("wrote {path} bytes={}", bytes.len());
             Ok(())
         }
+        "write-tiny-qwen2moe-ffn-down-shexp-s" => {
+            let path = args
+                .next()
+                .ok_or("write-tiny-qwen2moe-ffn-down-shexp-s <path>")?;
+            let bytes = tiny_qwen2moe_ffn_down_shexp_s_gguf();
+            write_path(Path::new(&path), &bytes)?;
+            println!("wrote {path} bytes={}", bytes.len());
+            Ok(())
+        }
+        "write-tiny-qwen2moe-ffn-gate-shexp-s" => {
+            let path = args
+                .next()
+                .ok_or("write-tiny-qwen2moe-ffn-gate-shexp-s <path>")?;
+            let bytes = tiny_qwen2moe_ffn_gate_shexp_s_gguf();
+            write_path(Path::new(&path), &bytes)?;
+            println!("wrote {path} bytes={}", bytes.len());
+            Ok(())
+        }
+        "write-tiny-qwen2moe-ffn-up-shexp-s" => {
+            let path = args
+                .next()
+                .ok_or("write-tiny-qwen2moe-ffn-up-shexp-s <path>")?;
+            let bytes = tiny_qwen2moe_ffn_up_shexp_s_gguf();
+            write_path(Path::new(&path), &bytes)?;
+            println!("wrote {path} bytes={}", bytes.len());
+            Ok(())
+        }
         "write-tiny-qwen2moe" => {
             let path = args.next().ok_or("write-tiny-qwen2moe <path>")?;
             let bytes = tiny_qwen2moe_gguf();
@@ -315,6 +563,13 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
         "write-tiny-qwen3moe" => {
             let path = args.next().ok_or("write-tiny-qwen3moe <path>")?;
             let bytes = tiny_qwen3moe_gguf();
+            write_path(Path::new(&path), &bytes)?;
+            println!("wrote {path} bytes={}", bytes.len());
+            Ok(())
+        }
+        "write-tiny-qwen3moe-2layer" => {
+            let path = args.next().ok_or("write-tiny-qwen3moe-2layer <path>")?;
+            let bytes = tiny_qwen3moe_2layer_gguf();
             write_path(Path::new(&path), &bytes)?;
             println!("wrote {path} bytes={}", bytes.len());
             Ok(())
@@ -347,6 +602,20 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
             println!("wrote {path} bytes={}", bytes.len());
             Ok(())
         }
+        "write-tiny-phi2" => {
+            let path = args.next().ok_or("write-tiny-phi2 <path>")?;
+            let bytes = tiny_phi2_gguf();
+            write_path(Path::new(&path), &bytes)?;
+            println!("wrote {path} bytes={}", bytes.len());
+            Ok(())
+        }
+        "write-tiny-bloom" => {
+            let path = args.next().ok_or("write-tiny-bloom <path>")?;
+            let bytes = tiny_bloom_gguf();
+            write_path(Path::new(&path), &bytes)?;
+            println!("wrote {path} bytes={}", bytes.len());
+            Ok(())
+        }
         "infer" => match parse_infer_args(args)? {
             InferCmd::Help => {
                 print!("{INFER_USAGE}");
@@ -354,12 +623,33 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
             }
             InferCmd::Run(opts) => infer_file(&opts),
         },
+        "trace" => match parse_trace_args(args)? {
+            TraceCmd::Help => {
+                print!("{TRACE_USAGE}");
+                Ok(())
+            }
+            TraceCmd::Run(opts) => trace_file(&opts),
+        },
+        "chat" => match parse_chat_args(args)? {
+            ChatCmd::Help => {
+                print!("{CHAT_USAGE}");
+                Ok(())
+            }
+            ChatCmd::Run(opts) => run_chat(&opts),
+        },
         "serve" => match parse_serve_args(args)? {
             ServeCmd::Help => {
                 print!("{SERVE_USAGE}");
                 Ok(())
             }
             ServeCmd::Run(opts) => Ok(run_serve(&opts)?),
+        },
+        "engine" => match parse_engine_args(args)? {
+            EngineCmd::Help => {
+                print!("{ENGINE_USAGE}");
+                Ok(())
+            }
+            EngineCmd::Run(opts) => run_engine(&opts),
         },
         other => Err(format!("{BIN_USAGE}got {other}").into()),
     }

@@ -1,0 +1,20 @@
+[package]
+name = "expertvm"
+version = "0.1.0"
+edition = "2021"
+description = "Engine-agnostic virtual memory and dynamic residency for sparse MoE experts."
+license = "MIT OR Apache-2.0"
+readme = "README.md"
+repository = "https://github.com/mingley/llama-rust"
+keywords = ["moe", "inference", "cache", "gpu"]
+categories = ["simulation"]
+
+[dependencies]
+gpu-sim = { path = "../gpu-sim" }
+
+[lints]
+workspace = true
+
+[[bin]]
+name = "expertvm"
+path = "src/bin/expertvm.rs"

@@ -1,0 +1,24981 @@
+//! Discrete-event GPU-systems simulator.
+
+use std::cmp::Reverse;
+use std::collections::btree_map::Entry;
+use std::collections::{BTreeMap, BTreeSet};
+
+use crate::error::SimError;
+use crate::ids::{
+    AllocId, CondId, DevResourceDescId, DeviceId, EventId, GraphId, GreenCtxId, IpcEventHandleId,
+    IpcHandleId, MemHandleId, MulticastId, OpId, PoolId, PtrExportId, ShareableHandleId, StreamId,
+    UserObjectId,
+};
+use crate::ops::{
+    AccessPolicyWindow, AccessProperty, BatchMemOp, BatchMemOpFlags, BatchMemOpNodeParams,
+    CaptureDepOp, ChildGraphNodeParams, ClusterDim, ClusterSchedulingPolicy, ComputeMode,
+    DevResource, DevResourceType, DevSmResourceGroupParams, DevSmResourceSplitFlags, DeviceAttr,
+    DeviceFlags, DeviceLimit, DeviceNumaConfig, DeviceP2pAttr, DeviceProperties, EventCreateFlags,
+    EventRecordFlags, EventWaitFlags, ExecAffinityType, FlushGpuDirectRdmaScope,
+    FlushGpuDirectRdmaTarget, FlushGpuDirectRdmaWritesOptions, FuncAttr, FuncAttributes, FuncCache,
+    GpuDirectRdmaWritesOrdering, GpuOp as Kind, GraphAddNode, GraphChildGraphOwnership,
+    GraphCondFlags, GraphCreateFlags, GraphDebugDotFlags, GraphDependencyType, GraphEdgeData,
+    GraphExecUpdateResult, GraphExecUpdateResultInfo, GraphInstantiateFlags,
+    GraphInstantiateParams, GraphInstantiateResult, GraphKernelNodePort, GraphMemAttr,
+    GraphNodeKind, GraphNodeParams, GraphUserObjectFlags, GreenCtxFlags, HostAllocFlags,
+    HostGetDevicePointerFlags, HostNodeParams, InitDeviceFlags, IpcMemFlags, KernelAttrs,
+    KernelBuf, KernelKind, KernelNodeAttr, KernelNodeAttrValue, KernelNodeParams,
+    LaunchCompletionEvent, MemAccessDesc, MemAccessFlags, MemAdvise, MemAllocationGranularity,
+    MemAllocationProp, MemAllocationType, MemAttach, MemAttachFlags, MemCreateFlags,
+    MemExportFlags, MemHandleType, MemHandleUsage, MemLocationType, MemMapFlags, MemPoolAttr,
+    MemPoolExportFlags, MemPoolProps, MemRangeAttr, MemRangeAttrValue, MemRangeHandleFlags,
+    MemRangeHandleType, MemReserveFlags, MemSyncDomain, MemSyncDomainMap, MemcpyAttributes,
+    MemcpyFlags, MemcpyNodeParams, MemcpyOp, MemcpySrcAccessOrder, MemoryType, MemsetNodeParams,
+    MemsetOp, MulticastBindFlags, MulticastCreateFlags, MulticastGranularity, MulticastObjectProp,
+    NvSciSyncAttrFlags, Operation, PdlLaunch, PeerAccessFlags, Place, PointerAttr,
+    PointerAttributes, PortableClusterMode, PortableSharedMode, PrefetchFlags, ProgrammaticEvent,
+    ProgrammaticLaunch, SharedMemCarveout, SharedMemoryMode, SmResource, StreamAttr,
+    StreamAttrValue, StreamCallbackFlags, StreamCaptureInfo, StreamCaptureMode, StreamCreateFlags,
+    SynchronizationPolicy, UserObjectFlags, WaitValueCmp, WaitValueFlags, WriteValueFlags,
+};
+use crate::profile::{align_up, ns_for_bytes, scale_ns_permille, HardwareProfile, LinkKind};
+
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum Preferred {
+    None,
+    Host,
+    Gpu(DeviceId),
+}
+
+impl Preferred {
+    fn to_place(self) -> Option<Place> {
+        match self {
+            Self::None => None,
+            Self::Host => Some(Place::Host),
+            Self::Gpu(d) => Some(Place::Device(d)),
+        }
+    }
+}
+
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum Attach {
+    Global,
+    Host,
+    Single(StreamId),
+}
+
+struct Alloc {
+    bytes: u64,
+    devices: Vec<DeviceId>,
+    leases: u32,
+    live: bool,
+    host_pinned: bool,
+    /// `cudaHostAlloc` / `cudaHostRegister` of pageable host memory (not yet pinned).
+    host_pageable: bool,
+    /// Mapped into the device VA (`cudaHostAllocMapped` / `cudaHostRegisterMapped`).
+    host_mapped: bool,
+    /// Came from `cudaHostRegister`, not `cudaMallocHost`.
+    host_registered: bool,
+    /// `cudaHostAlloc` / `cudaHostRegister` flag word (Portable / Mapped /
+    /// WriteCombined). Stored; Portable / WriteCombined do not change DMA.
+    host_flags: u32,
+    /// `cudaMallocManaged`: one location; [`Sim::prefetch`] migrates it.
+    managed: bool,
+    /// Stream visibility for managed memory ([`Sim::stream_attach`]).
+    attach: Attach,
+    /// `cudaMemAdviseSetReadMostly`: prefetch replicates instead of moving.
+    read_mostly: bool,
+    /// GPUs that may read this alloc without a local copy (`SetAccessedBy` /
+    /// VMM `cuMemSetAccess` PROT_READ). Mempool peer access lives on [`Pool`].
+    accessed_by: BTreeSet<DeviceId>,
+    /// VMM `cuMemSetAccess` PROT_READWRITE peers (writes without a local map).
+    vmm_write_by: BTreeSet<DeviceId>,
+    /// `cudaMemAdviseSetPreferredLocation` (host or one GPU).
+    preferred: Preferred,
+    /// `cudaMemRangeAttributeLastPrefetchLocation` (`None` never prefetched).
+    last_prefetch: Preferred,
+    /// `CU_POINTER_ATTRIBUTE_SYNC_MEMOPS`: memcpy/memset wait the stream.
+    sync_memops: bool,
+    /// `cuMemAddressReserve` VA. HBM is charged only while mapped (possibly sparse).
+    vmm: bool,
+    /// Physical maps `(device, offset, bytes)` into a VMM VA.
+    vmm_maps: Vec<(DeviceId, u64, u64)>,
+    /// `None` is `cudaMalloc` / host-pinned. `Some` is `cudaMallocAsync` from that pool.
+    pool: Option<PoolId>,
+    /// Import from [`Sim::ipc_open`] (`cudaIpcOpenMemHandle`). Physicals stay on the source.
+    ipc_src: Option<AllocId>,
+    /// Live [`Sim::ipc_open`] mappings of this allocation.
+    ipc_opens: u32,
+    /// Import from [`Sim::pool_import_ptr`] (`cudaMemPoolImportPointer`).
+    share_src: Option<AllocId>,
+    /// Live [`Sim::pool_import_ptr`] mappings of this allocation.
+    share_opens: u32,
+    /// `cudaGraphAddMemAllocNode` `accessDescs`. Grants apply when this alloc
+    /// is live (after the node runs), not at add. Last descriptor for a device
+    /// wins.
+    graph_access: Vec<MemAccessDesc>,
+}
+
+impl Alloc {
+    fn remote_read_ok(&self, device: DeviceId) -> bool {
+        if !self.live {
+            return false;
+        }
+        if self.managed {
+            if self.accessed_by.contains(&device) {
+                return true;
+            }
+            return match self.preferred {
+                Preferred::Gpu(p) => self.devices.contains(&p) && p != device,
+                Preferred::None | Preferred::Host => false,
+            };
+        }
+        self.vmm && self.accessed_by.contains(&device) && !self.vmm_maps.is_empty()
+    }
+
+    fn vmm_home(&self) -> Option<DeviceId> {
+        self.vmm_maps.first().map(|(d, _, _)| *d)
+    }
+
+    fn device_attach_ok(&self, stream: StreamId) -> bool {
+        if !self.managed {
+            return true;
+        }
+        match self.attach {
+            Attach::Global => true,
+            Attach::Host => false,
+            Attach::Single(s) => s == stream,
+        }
+    }
+
+    /// Peer grant from [`Sim::graph_add_alloc_with_access`] (last desc wins).
+    fn graph_access_grants(&self, device: DeviceId, write: bool) -> bool {
+        let mut flags = None;
+        for desc in &self.graph_access {
+            if desc.location.device() == Some(device) {
+                flags = Some(desc.flags);
+            }
+        }
+        match flags {
+            Some(MemAccessFlags::PROT_READ_WRITE) => true,
+            Some(MemAccessFlags::PROT_READ) => !write,
+            _ => false,
+        }
+    }
+
+    /// Bytes of the mapping that covers VA offset 0.
+    ///
+    /// Non-VMM is the whole allocation. VMM is the `cuMemMap` span at offset 0
+    /// (not the reserved VA, and not coalesced adjacent maps).
+    fn mapping_size_at_zero(&self) -> Option<u64> {
+        if !self.vmm {
+            return Some(self.bytes);
+        }
+        self.vmm_maps
+            .iter()
+            .find(|(_, offset, _)| *offset == 0)
+            .map(|(_, _, bytes)| *bytes)
+    }
+
+    /// Device for `cudaIpcGetMemHandle`. None for host / managed / VMM / pool /
+    /// IPC or shareable imports.
+    fn legacy_ipc_device(&self) -> Option<DeviceId> {
+        if !self.live
+            || self.managed
+            || self.vmm
+            || self.host_pinned
+            || self.host_pageable
+            || self.ipc_src.is_some()
+            || self.share_src.is_some()
+            || self.pool.is_some()
+        {
+            return None;
+        }
+        self.devices.first().copied()
+    }
+}
+
+struct Pool {
+    device: DeviceId,
+    live: u64,
+    cached: u64,
+    release_threshold: u64,
+    /// GPUs granted [`Sim::pool_set_access`] (`cudaMemPoolSetAccess` ReadWrite).
+    accessed_by: BTreeSet<DeviceId>,
+    /// GPUs granted [`Sim::pool_set_access_read`] (`cudaMemAccessFlagsProtRead`).
+    accessed_by_read: BTreeSet<DeviceId>,
+    /// Created with `cudaMemAllocationHandleTypePosixFileDescriptor`.
+    shareable: bool,
+    /// Imported pools share live/cached/threshold with this root.
+    share_root: Option<PoolId>,
+    /// Device graph-memory pool (`cudaDeviceGetGraphMemAttribute` backing).
+    ///
+    /// Capture [`Sim::alloc`] and [`Sim::graph_add_alloc`] draw from this pool.
+    /// Release threshold is `u64::MAX` so unused bytes stay reserved until
+    /// [`Sim::graph_mem_trim`].
+    graph: bool,
+    /// `cudaMemPoolDestroy`: handle is invalid; outstanding allocs stay valid.
+    destroyed: bool,
+    /// `cudaMemPoolProps::maxSize`. `0` is unlimited.
+    max_size: u64,
+    /// `cudaMemPoolReuseFollowEventDependencies`. Default on.
+    reuse_follow_event: bool,
+    /// `cudaMemPoolReuseAllowOpportunistic`. Default on; off skips cache reuse.
+    reuse_opportunistic: bool,
+    /// `cudaMemPoolReuseAllowInternalDependencies`. Default on.
+    reuse_internal: bool,
+    /// `cudaMemPoolAttrUsedMemHigh`.
+    used_high: u64,
+    /// `cudaMemPoolAttrReservedMemHigh`.
+    reserved_high: u64,
+}
+
+impl Pool {
+    fn new(device: DeviceId) -> Self {
+        Self {
+            device,
+            live: 0,
+            cached: 0,
+            release_threshold: 0,
+            accessed_by: BTreeSet::new(),
+            accessed_by_read: BTreeSet::new(),
+            shareable: false,
+            share_root: None,
+            graph: false,
+            destroyed: false,
+            max_size: 0,
+            reuse_follow_event: true,
+            reuse_opportunistic: true,
+            reuse_internal: true,
+            used_high: 0,
+            reserved_high: 0,
+        }
+    }
+
+    fn bump_high(&mut self) {
+        self.used_high = self.used_high.max(self.live);
+        self.reserved_high = self
+            .reserved_high
+            .max(self.live.saturating_add(self.cached));
+    }
+
+    fn grants(&self, device: DeviceId, write: bool) -> bool {
+        self.accessed_by.contains(&device) || (!write && self.accessed_by_read.contains(&device))
+    }
+}
+
+struct MemHandle {
+    device: DeviceId,
+    bytes: u64,
+    /// `cuMemCreate` / retain refs. `0` is released (`cuMemRelease`).
+    refs: u32,
+    maps: u32,
+    /// HBM still charged for this physical.
+    charged: bool,
+}
+
+struct Multicast {
+    bytes: u64,
+    n_dev: u32,
+    devices: Vec<DeviceId>,
+    binds: BTreeMap<DeviceId, MemHandleId>,
+    maps: u32,
+}
+
+/// High bit so [`Sim::green_ctx_get_id`] never collides with
+/// [`Sim::stream_get_id`] (`(device << 16) + stream + 1`).
+const GREEN_CTX_CUDA_ID_TAG: u64 = 1u64 << 63;
+
+/// Bit 40 so [`Sim::ctx_get_id`] never collides with
+/// [`Sim::green_ctx_get_id`] (bit 63) or [`Sim::stream_get_id`].
+const PRIMARY_CTX_CUDA_ID_TAG: u64 = 1u64 << 40;
+
+struct GreenCtx {
+    device: DeviceId,
+    sm: SmResource,
+    /// [`Sim::green_ctx_wait_event`] ops. Future submits on bound streams wait
+    /// these (`cuGreenCtxWaitEvent`).
+    wait_ops: Vec<OpId>,
+    /// `cuGreenCtxGetId` identity. Distinct from [`GreenCtxId`] (the VM handle).
+    cuda_id: u64,
+}
+
+struct Op {
+    device: DeviceId,
+    stream: StreamId,
+    kind: Kind,
+    deps: Vec<OpId>,
+    /// Graph edges with [`GraphKernelNodePort::LAUNCH_COMPLETION`]: wait for
+    /// these predecessors to *start*, not finish.
+    start_deps: Vec<OpId>,
+    done: bool,
+    cancelled: bool,
+    launch: LaunchCost,
+    submit_ns: u64,
+    start_ns: Option<u64>,
+    done_ns: Option<u64>,
+    /// Conditional handles that skip this op at start when any predicate fails.
+    preds: Vec<CondPred>,
+    /// Predicates skipped this op; completion has no alloc/kernel/memcpy effects.
+    skipped: bool,
+    /// Scheduling priority (`cudaStreamCreateWithPriority`,
+    /// `cudaLaunchAttributePriority`, or a kernel-node attribute when the exec
+    /// used `cudaGraphInstantiateFlagUseNodePriority`).
+    priority: i32,
+    /// Programmatic dependent launch flags for this op.
+    pdl: ProgrammaticLaunch,
+    /// Clock when a [`ProgrammaticLaunch::trigger`] kernel signals completion.
+    pdl_trigger_ns: Option<u64>,
+    /// `cudaLaunchAttributeProgrammaticEvent` on this kernel, if any.
+    programmatic_event: Option<ProgrammaticEvent>,
+    /// `cudaLaunchAttributeLaunchCompletionEvent` on this kernel, if any.
+    launch_completion: Option<LaunchCompletionEvent>,
+    /// `cudaLaunchAttributeAccessPolicyWindow` on this kernel, if any.
+    access_policy: Option<AccessPolicyWindow>,
+    /// Resolved physical mem-sync domain (`cudaLaunchAttributeMemSyncDomain`).
+    mem_sync_physical: u8,
+    /// Completion fence already waited on same-domain leftover traffic.
+    domain_fence_paid: bool,
+    /// `cudaLaunchAttributeClusterDimension` on this kernel, if any.
+    cluster: Option<ClusterDim>,
+    /// `cudaLaunchAttributeClusterSchedulingPolicyPreference`.
+    cluster_policy: ClusterSchedulingPolicy,
+    /// `cudaLaunchAttributePreferredClusterDimension`.
+    preferred_cluster: Option<ClusterDim>,
+    /// `cudaLaunchAttributePreferredSharedMemoryCarveout`.
+    carveout: SharedMemCarveout,
+    /// `cudaLaunchAttributeSharedMemoryMode`.
+    shared_mem: SharedMemoryMode,
+    /// `cudaLaunchAttributeNvlinkUtilCentricScheduling`. Occupies every Hyper-Q
+    /// slot when the profile has NVLink.
+    nvlink_util_centric: bool,
+    /// `cudaLaunchAttributeSynchronizationPolicy` on a graph kernel node.
+    /// [`SynchronizationPolicy::Auto`] inherits the recording stream.
+    sync_policy: SynchronizationPolicy,
+    /// Green-context SM span for occupancy (`cuGreenCtxStreamCreate`).
+    ///
+    /// Full chip when the stream is not bound. Distinct from
+    /// [`Sim::set_stream_sm_permille`] (duration only).
+    sm_span: SmResource,
+    /// Graph kernel-node ctx (`CUDA_KERNEL_NODE_PARAMS.ctx`) snapshotted at
+    /// submit. [`None`] uses the stream. Distinct from [`Self::sm_span`]
+    /// (occupancy) when duration-only [`Sim::set_stream_sm_permille`] is set.
+    green_ctx: Option<GreenCtxId>,
+}
+
+/// How a submitted op pays kernel/graph launch overhead.
+#[derive(Clone, Copy)]
+enum LaunchCost {
+    /// Standalone kernel: profile `launch_overhead_ns`.
+    Kernel,
+    /// First recorded op of a graph launch: profile `graph_launch_ns`.
+    GraphHead,
+    /// Later recorded ops of a graph launch: no extra launch overhead.
+    GraphBody,
+}
+
+/// Whether [`Sim::set_batch_mem_ops`] overwrites [`GraphStep::green_ctx`].
+#[derive(Clone, Copy)]
+enum GreenCtxPatch {
+    /// Item-list SetParams: leave the node's ctx.
+    Keep,
+    /// [`GraphNodeParams::BatchMemOp`] / [`GraphNodeParams::Memcpy`] /
+    /// [`GraphNodeParams::Memset`] SetParams.
+    Set(Option<GreenCtxId>),
+}
+
+struct Running {
+    op: OpId,
+    remaining_ns: u64,
+    /// Occupancy group: copies on the same link index, else unique.
+    share: Share,
+}
+
+enum Share {
+    Solo,
+    Link(usize),
+}
+
+struct GpuRt {
+    used: u64,
+    /// In-flight kernels / memset / allreduce occupying Hyper-Q slots.
+    compute: u8,
+    copies: u8,
+    /// High-water of live graph-mem alloc bytes on this GPU.
+    graph_used_high: u64,
+    /// High-water of reserved graph-mem bytes (live + unused cached).
+    graph_reserved_high: u64,
+    /// `cudaLimitPersistingL2CacheSize`. CUDA default is 0.
+    persist_limit: u64,
+    /// Filled persisting-L2 ranges (insertion order is LRU).
+    persist_lines: Vec<PersistLine>,
+    /// `cudaDeviceGetLimit` values other than persisting L2.
+    limits: DeviceLimits,
+    /// `cudaDeviceSetSharedMemConfig`. [`SharedMemoryMode::Default`] kernels
+    /// inherit this when the function config is also Default (unset is
+    /// unscaled).
+    shared_mem_config: SharedMemoryMode,
+    /// `cudaFuncSetSharedMemConfig`. Launch Default inherits this before the
+    /// device config.
+    func_shared_mem_config: SharedMemoryMode,
+    /// `cudaDeviceSetCacheConfig`. Stored; L1 is not modeled, so this does not
+    /// change kernel duration.
+    cache_config: FuncCache,
+    /// `cudaFuncSetCacheConfig`. Stored; L1 is not modeled.
+    func_cache_config: FuncCache,
+    /// `cudaFuncAttributePreferredSharedMemoryCarveout`. Launch Default inherits
+    /// this occupancy.
+    func_carveout: SharedMemCarveout,
+    /// `cudaFuncAttributeClusterDimMustBeSet`.
+    cluster_dim_must_be_set: bool,
+    /// `cudaFuncAttributeRequiredClusterWidth` (`0` unset).
+    required_cluster_x: u32,
+    /// `cudaFuncAttributeRequiredClusterHeight` (`0` unset).
+    required_cluster_y: u32,
+    /// `cudaFuncAttributeRequiredClusterDepth` (`0` unset).
+    required_cluster_z: u32,
+    /// `cudaFuncAttributeClusterSchedulingPolicyPreference`. Launch Default
+    /// inherits this occupancy.
+    func_cluster_policy: ClusterSchedulingPolicy,
+    /// `cudaSetDeviceFlags`. Auto streams inherit the schedule tax.
+    device_flags: u32,
+}
+
+/// CUDA `cudaDeviceGetLimit` defaults (SM 8.0+ fetch granularity).
+struct DeviceLimits {
+    stack_size: u64,
+    printf_fifo: u64,
+    malloc_heap: u64,
+    sync_depth: u64,
+    pending_launch: u64,
+    l2_fetch: u64,
+}
+
+impl DeviceLimits {
+    fn sm80() -> Self {
+        Self {
+            stack_size: 1024,
+            printf_fifo: 1 << 20,
+            malloc_heap: 8 << 20,
+            sync_depth: 2,
+            pending_launch: 2048,
+            l2_fetch: 128,
+        }
+    }
+}
+
+struct PersistLine {
+    id: AllocId,
+    offset: u64,
+    bytes: u64,
+}
+
+struct Ev {
+    recorded_by: Option<OpId>,
+    /// `false` is `cudaEventDisableTiming`: [`Sim::event_elapsed_ns`] fails.
+    timing: bool,
+    /// `cudaEventInterprocess`. Required for [`Sim::ipc_get_event`].
+    interprocess: bool,
+    /// `cudaEventBlockingSync`: [`Sim::synchronize_event`] pays blocking tax.
+    blocking_sync: bool,
+    /// Import from [`Sim::ipc_open_event`]: record/wait follow this source.
+    ipc_src: Option<EventId>,
+    /// Outstanding [`Sim::ipc_open_event`] aliases. Destroy of the source is Invalid while > 0.
+    ipc_opens: u32,
+}
+
+impl Ev {
+    fn new(timing: bool) -> Self {
+        Self {
+            recorded_by: None,
+            timing,
+            interprocess: false,
+            blocking_sync: false,
+            ipc_src: None,
+            ipc_opens: 0,
+        }
+    }
+}
+
+struct Capture {
+    origin: (DeviceId, StreamId),
+    streams: BTreeSet<(DeviceId, StreamId)>,
+    events: BTreeSet<EventId>,
+    /// `cudaMallocAsync` ids recorded as graph mem alloc nodes.
+    mem_allocs: Vec<AllocId>,
+    /// Graph being captured into (created at [`Sim::begin_capture`] or passed
+    /// to [`Sim::begin_capture_to_graph`]).
+    into: CaptureInto,
+    /// Per-stream extra deps for the next captured node
+    /// (`cudaStreamUpdateCaptureDependencies`).
+    pending: BTreeMap<(DeviceId, StreamId), Vec<usize>>,
+    /// `capture_buf` index → extra deps in destination-graph index space.
+    extra_abs: BTreeMap<usize, Vec<usize>>,
+    /// Mode this session started with.
+    mode: StreamCaptureMode,
+    /// `cudaStreamGetCaptureInfo` `id_out` (unique per begin-capture sequence).
+    id: u64,
+}
+
+/// Existing graph plus extra root deps for [`Capture::into`].
+struct CaptureInto {
+    graph: GraphId,
+    /// Existing node indices that capture roots additionally depend on.
+    deps: Vec<usize>,
+}
+
+/// One `cudaGraphAdd*` / captured node plus [`Sim::graph_add_dependencies`] edges.
+#[derive(Clone, Debug)]
+struct GraphStep {
+    device: DeviceId,
+    stream: StreamId,
+    kind: Kind,
+    /// Predecessor node indices (`cudaGraphAddDependencies`). Empty is independent.
+    deps: Vec<usize>,
+    /// `cudaGraphEdgeData` for a predecessor. Missing is Default ports 0.
+    edge_data: BTreeMap<usize, GraphEdgeData>,
+    /// `cudaGraphNodeSetEnabled`. Disabled nodes skip launch and complete immediately.
+    enabled: bool,
+    /// `cudaGraphDestroyNode`. Remaining node indices stay valid (CUDA handles).
+    destroyed: bool,
+    /// Stream or launch-attribute priority snapshotted at add/capture
+    /// (`cudaKernelNodeAttributePriority` / `cudaLaunchAttributePriority`).
+    priority: i32,
+    /// Programmatic dependent launch (`cudaLaunchAttributeProgrammaticStreamSerialization`).
+    pdl: ProgrammaticLaunch,
+    /// `cudaLaunchAttributeProgrammaticEvent` on this kernel node, if any.
+    programmatic_event: Option<ProgrammaticEvent>,
+    /// `cudaLaunchAttributeLaunchCompletionEvent` on this kernel node, if any.
+    launch_completion: Option<LaunchCompletionEvent>,
+    /// `cudaLaunchAttributeAccessPolicyWindow` on this kernel node, if any.
+    access_policy: Option<AccessPolicyWindow>,
+    /// `cudaLaunchAttributeMemSyncDomain` on this kernel node.
+    mem_sync_domain: MemSyncDomain,
+    /// `cudaLaunchAttributeMemSyncDomainMap` on this kernel node.
+    mem_sync_map: MemSyncDomainMap,
+    /// `cudaLaunchAttributeClusterDimension` on this kernel node.
+    cluster: Option<ClusterDim>,
+    /// `cudaLaunchAttributeClusterSchedulingPolicyPreference`.
+    cluster_policy: ClusterSchedulingPolicy,
+    /// `cudaLaunchAttributePreferredClusterDimension`.
+    preferred_cluster: Option<ClusterDim>,
+    /// `cudaLaunchAttributePreferredSharedMemoryCarveout`.
+    carveout: SharedMemCarveout,
+    /// `cudaLaunchAttributeDeviceUpdatableKernelNode`.
+    device_updatable: bool,
+    /// `cudaLaunchAttributeSharedMemoryMode`.
+    shared_mem: SharedMemoryMode,
+    /// `cudaLaunchAttributePortableClusterSizeMode`.
+    portable_cluster: PortableClusterMode,
+    /// `cudaLaunchKernel` / `cudaKernelNodeParams::sharedMemBytes`.
+    dynamic_shared: u32,
+    /// CUDA 13 `cudaLaunchAttributeSharedMemoryMode` (`cudaSharedMemoryMode`).
+    portable_shared: PortableSharedMode,
+    /// `cudaLaunchAttributeNvlinkUtilCentricScheduling`.
+    nvlink_util_centric: bool,
+    /// `cudaLaunchAttributeSynchronizationPolicy` on this kernel node.
+    ///
+    /// [`SynchronizationPolicy::Auto`] inherits the recording stream at
+    /// `cudaEventSynchronize` of this node's launch-completion or programmatic
+    /// event. Capture and typed add snapshot the stream policy. Not a
+    /// [`KernelAttrs`] field (CUDA: not valid for launches from the host).
+    sync_policy: SynchronizationPolicy,
+    /// CUDA `CUDA_KERNEL_NODE_PARAMS.ctx` / `CUDA_BATCH_MEM_OP_NODE_PARAMS.ctx`
+    /// / `CUDA_CONDITIONAL_NODE_PARAMS.ctx` / `cuGraphAddMemcpyNode` ctx /
+    /// `cuGraphAddMemsetNode` ctx.
+    /// [`None`] inherits the launch stream. Not stored on [`Kind::Kernel`],
+    /// [`Kind::BatchMem`], [`Kind::If`], [`Kind::While`], [`Kind::Switch`],
+    /// [`Kind::Memcpy`], or [`Kind::Memset`] (parameter, not topology).
+    green_ctx: Option<GreenCtxId>,
+}
+
+impl GraphStep {
+    fn edge_from_port(&self, from: usize) -> u8 {
+        self.edge_data
+            .get(&from)
+            .map(|e| e.from_port)
+            .unwrap_or(GraphKernelNodePort::DEFAULT)
+    }
+
+    fn edge_data_of(&self, from: usize) -> GraphEdgeData {
+        self.edge_data.get(&from).copied().unwrap_or_default()
+    }
+}
+
+struct Graph {
+    /// `cudaGraph_t` definition. [`Sim::graph_add_*`] / graph-side SetParams.
+    steps: Vec<GraphStep>,
+    /// `cudaGraphExec_t` snapshot, cloned at instantiate. Launch and
+    /// `cudaGraphExec*SetParams` use this.
+    exec: Option<Vec<GraphStep>>,
+    origin: (DeviceId, StreamId),
+    /// This id is a `cudaGraphExec_t` (not the `cudaGraph_t` definition).
+    instantiated: bool,
+    /// `cudaGraphUpload` has run (explicit or first launch after instantiate).
+    uploaded: bool,
+    /// `cudaGraphInstantiateFlagAutoFreeOnLaunch`: free graph mem before relaunch.
+    auto_free_on_launch: bool,
+    /// Flags passed to [`Sim::instantiate_graph_with_flags`] (`cudaGraphExecGetFlags`).
+    instantiate_flags: u32,
+    /// Last op of an in-flight [`Sim::device_launch_graph`] (launcher or body tail).
+    device_launch_tail: Option<OpId>,
+    /// In-flight host [`Sim::launch_graph`] tails. Concurrent launches each pin
+    /// a tail; destroy waits for all of them. Empty launches do not pin destroy
+    /// to prior stream work.
+    host_launch_tails: Vec<OpId>,
+    /// [`Sim::destroy_graph`] of an in-flight exec: the handle is unknown, but
+    /// the launch still finishes (`cudaGraphExecDestroy`).
+    handle_gone: bool,
+    /// First exec created from this definition. `None` on exec ids.
+    primary_exec: Option<GraphId>,
+    /// Definition this exec was instantiated from. `None` on definitions.
+    src: Option<GraphId>,
+    /// Parent that moved this definition (`CU_GRAPH_CHILD_GRAPH_OWNERSHIP_MOVE`).
+    moved_to: Option<GraphId>,
+}
+
+impl Graph {
+    fn view(&self) -> &[GraphStep] {
+        self.exec.as_deref().unwrap_or(&self.steps)
+    }
+
+    fn exec_mut(&mut self) -> Result<&mut Vec<GraphStep>, SimError> {
+        if !self.instantiated {
+            return Err(SimError::Invalid {
+                why: "graph not instantiated",
+            });
+        }
+        self.exec.as_mut().ok_or(SimError::Invalid {
+            why: "graph not instantiated",
+        })
+    }
+
+    /// Exec id, or a definition that already has a primary exec.
+    fn ready(&self) -> bool {
+        self.instantiated || self.primary_exec.is_some()
+    }
+}
+
+impl Sim {
+    /// Exec id for `id`: itself when instantiated, else the primary exec.
+    fn as_exec(&self, id: GraphId) -> Result<GraphId, SimError> {
+        let g = self.graphs.get(&id).ok_or(SimError::Invalid {
+            why: "unknown graph",
+        })?;
+        if g.handle_gone {
+            return Err(SimError::Invalid {
+                why: "unknown graph",
+            });
+        }
+        if g.instantiated {
+            return Ok(id);
+        }
+        let exec = g.primary_exec.ok_or(SimError::Invalid {
+            why: "graph not instantiated",
+        })?;
+        if self.graphs.get(&exec).is_some_and(|e| e.handle_gone) {
+            return Err(SimError::Invalid {
+                why: "unknown graph",
+            });
+        }
+        Ok(exec)
+    }
+
+    fn require_live_graph(&self, id: GraphId) -> Result<(), SimError> {
+        match self.graphs.get(&id) {
+            Some(g) if !g.handle_gone => Ok(()),
+            _ => Err(SimError::Invalid {
+                why: "unknown graph",
+            }),
+        }
+    }
+
+    /// Exec snapshot for SetAttribute (`exec`), or a live definition handle.
+    fn resolve_kernel_attr_graph(&self, graph: GraphId, exec: bool) -> Result<GraphId, SimError> {
+        if exec {
+            self.as_exec_for_update(graph)
+        } else {
+            self.require_live_graph(graph)?;
+            Ok(graph)
+        }
+    }
+
+    fn live_graph(&self, id: GraphId) -> Result<&Graph, SimError> {
+        let g = self.graphs.get(&id).ok_or(SimError::Invalid {
+            why: "unknown graph",
+        })?;
+        if g.handle_gone {
+            return Err(SimError::Invalid {
+                why: "unknown graph",
+            });
+        }
+        Ok(g)
+    }
+
+    fn require_live_definition(&self, graph: GraphId) -> Result<(), SimError> {
+        let g = self.live_graph(graph)?;
+        if g.instantiated {
+            return Err(SimError::Invalid {
+                why: "graph instantiated",
+            });
+        }
+        Ok(())
+    }
+
+    /// [`Self::as_exec`] plus refuse host updates while a device launch is in
+    /// flight (`"device launch in flight"`). Query APIs keep [`Self::as_exec`].
+    fn as_exec_for_update(&self, id: GraphId) -> Result<GraphId, SimError> {
+        let exec = self.as_exec(id)?;
+        self.fail_if_device_launch_in_flight(exec)?;
+        Ok(exec)
+    }
+
+    fn fail_if_device_launch_in_flight(&self, exec: GraphId) -> Result<(), SimError> {
+        if self
+            .graphs
+            .get(&exec)
+            .and_then(|g| g.device_launch_tail)
+            .is_some_and(|op| !self.op_done(op))
+        {
+            return Err(SimError::Invalid {
+                why: "device launch in flight",
+            });
+        }
+        Ok(())
+    }
+
+    fn remap_kind_to_exec(&self, kind: Kind) -> Result<Kind, SimError> {
+        Ok(match kind {
+            Kind::ChildGraph { graph, ownership } => Kind::ChildGraph {
+                graph: self.resolved_graph(graph)?,
+                ownership,
+            },
+            Kind::If {
+                handle,
+                body,
+                else_body,
+            } => Kind::If {
+                handle,
+                body: self.resolved_graph(body)?,
+                else_body: match else_body {
+                    Some(e) => Some(self.resolved_graph(e)?),
+                    None => None,
+                },
+            },
+            Kind::While { handle, body } => Kind::While {
+                handle,
+                body: self.resolved_graph(body)?,
+            },
+            Kind::Switch { handle, bodies } => {
+                let mut out = Vec::with_capacity(bodies.len());
+                for b in bodies {
+                    out.push(self.resolved_graph(b)?);
+                }
+                Kind::Switch {
+                    handle,
+                    bodies: out,
+                }
+            }
+            other => other,
+        })
+    }
+
+    /// Exec snapshot for `id`, or `id` itself when it is still a definition.
+    fn resolved_graph(&self, graph: GraphId) -> Result<GraphId, SimError> {
+        match self.as_exec(graph) {
+            Ok(id) => Ok(id),
+            Err(SimError::Invalid {
+                why: "graph not instantiated",
+            }) => Ok(graph),
+            Err(e) => Err(e),
+        }
+    }
+
+    fn def_id(&self, id: GraphId) -> GraphId {
+        self.graphs.get(&id).and_then(|g| g.src).unwrap_or(id)
+    }
+
+    fn kind_def_ids(&self, kind: Kind) -> Kind {
+        match kind {
+            Kind::ChildGraph { graph, ownership } => Kind::ChildGraph {
+                graph: self.def_id(graph),
+                ownership,
+            },
+            Kind::If {
+                handle,
+                body,
+                else_body,
+            } => Kind::If {
+                handle,
+                body: self.def_id(body),
+                else_body: else_body.map(|e| self.def_id(e)),
+            },
+            Kind::While { handle, body } => Kind::While {
+                handle,
+                body: self.def_id(body),
+            },
+            Kind::Switch { handle, bodies } => Kind::Switch {
+                handle,
+                bodies: bodies.into_iter().map(|b| self.def_id(b)).collect(),
+            },
+            other => other,
+        }
+    }
+
+    fn steps_def_ids(&self, steps: Vec<GraphStep>) -> Vec<GraphStep> {
+        steps
+            .into_iter()
+            .map(|mut step| {
+                step.kind = self.kind_def_ids(step.kind);
+                step
+            })
+            .collect()
+    }
+
+    fn graph_mem_ids(&self, graph: GraphId) -> Vec<AllocId> {
+        if let Some(v) = self.graph_allocs.get(&graph) {
+            if !v.is_empty() {
+                return v.clone();
+            }
+        }
+        let src = self.graphs.get(&graph).and_then(|g| g.src);
+        src.and_then(|s| self.graph_allocs.get(&s).cloned())
+            .unwrap_or_default()
+    }
+}
+
+/// Record vs wait for event-node GetEvent / SetEvent (definition and exec).
+#[derive(Clone, Copy)]
+enum EventSetKind {
+    Record,
+    Wait,
+}
+
+/// IF / IfElse / WHILE / SWITCH SetParams (definition and exec).
+#[derive(Clone, Copy)]
+enum CondSetKind {
+    If,
+    IfElse,
+    While,
+    Switch(u32),
+}
+
+/// `cudaGraphConditionalHandle`.
+struct Cond {
+    graph: GraphId,
+    default: u32,
+    value: u32,
+    /// `cudaGraphCondAssignDefault`: reset `value` to `default` on each launch.
+    assign_default: bool,
+    /// CUDA `cuGraphConditionalHandleCreate` ctx / `CUDA_CONDITIONAL_NODE_PARAMS.ctx`.
+    ctx: Option<GreenCtxId>,
+}
+
+/// `cudaUserObject_t` refcounts. Destroy callback fires at zero.
+struct UserObject {
+    destroy_fn: u64,
+    /// References held by the creating thread (`cudaUserObjectRetain`).
+    caller: u32,
+    /// References held by graph definitions (`cudaGraphRetainUserObject`).
+    graphs: BTreeMap<GraphId, u32>,
+}
+
+/// Skip predicate for IF / WHILE / SWITCH body ops.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum CondPred {
+    /// Skip when the handle is `0`.
+    Nonzero(CondId),
+    /// Skip when the handle is non-zero (IF else-body).
+    Zero(CondId),
+    /// Skip when the handle is not `branch`.
+    Equals(CondId, u32),
+}
+
+/// DFS state for [`Sim::clone_graph`]: unique graphs in post-order, ancestor stack.
+struct CloneWalk {
+    order: Vec<GraphId>,
+    seen: BTreeSet<GraphId>,
+    stack: Vec<GraphId>,
+}
+
+/// Fields copied out of a definition before [`Sim::instantiate_graph_inner`] mutates.
+struct InstantiateSnap {
+    device: DeviceId,
+    already: bool,
+    current_flags: u32,
+    has_free: bool,
+    device_launch_err: Option<usize>,
+    device_launch_empty: bool,
+    has_mem: bool,
+    mem_node: Option<usize>,
+    free_node: Option<usize>,
+    multi_dev: Option<usize>,
+    device_launch_multi_ctx: Option<usize>,
+    unused_cond: bool,
+    primary: Option<GraphId>,
+    origin: (DeviceId, StreamId),
+    bodies: Vec<GraphId>,
+    steps: Vec<GraphStep>,
+}
+
+/// Deterministic GPU node.
+pub struct Sim {
+    profile: HardwareProfile,
+    clock: u64,
+    next_op: u64,
+    next_alloc: u64,
+    next_graph: u32,
+    /// Next `cudaStreamGetCaptureInfo` `id_out` (starts at 1).
+    next_capture_id: u64,
+    allocs: BTreeMap<AllocId, Alloc>,
+    ops: BTreeMap<OpId, Op>,
+    tail: BTreeMap<(DeviceId, StreamId), OpId>,
+    events: BTreeMap<EventId, Ev>,
+    graphs: BTreeMap<GraphId, Graph>,
+    capturing: Option<Capture>,
+    capture_buf: Vec<GraphStep>,
+    /// Graph-owned mem alloc node ids (`cudaMallocAsync` captured into a graph).
+    graph_allocs: BTreeMap<GraphId, Vec<AllocId>>,
+    /// Worker-stream ops that [`cudaGraphLaunch`] folded into the launch stream.
+    ///
+    /// Independent graph nodes run on internal streams (Hyper-Q). The launch
+    /// stream still waits for them (`cudaStreamSynchronize` / later submits).
+    graph_joins: BTreeMap<(DeviceId, StreamId), Vec<OpId>>,
+    running: Vec<Running>,
+    gpus: BTreeMap<DeviceId, GpuRt>,
+    bytes_moved: u64,
+    hbm_peak: u64,
+    unavailable: BTreeSet<DeviceId>,
+    fail_next_memcpy: bool,
+    extra_transfer_ns: u64,
+    peer_enabled: BTreeSet<(DeviceId, DeviceId)>,
+    legacy_null_stream: bool,
+    priority: BTreeMap<(DeviceId, StreamId), i32>,
+    /// `cudaStreamCreate` (blocking) streams. They serialize with [`StreamId::NULL`].
+    blocking: BTreeSet<(DeviceId, StreamId)>,
+    /// Duration-only SM fraction per stream (‰). Missing is full chip (`1000`).
+    sm_permille: BTreeMap<(DeviceId, StreamId), u16>,
+    /// `cuGreenCtxStreamCreate` binding. Missing is the primary context.
+    stream_green_ctx: BTreeMap<(DeviceId, StreamId), GreenCtxId>,
+    next_green_ctx: u32,
+    green_ctxs: BTreeMap<GreenCtxId, GreenCtx>,
+    next_dev_desc: u32,
+    dev_descs: BTreeMap<DevResourceDescId, SmResource>,
+    /// `cudaLaunchAttributeMemSyncDomain` per stream. Missing is Default.
+    stream_mem_sync_domain: BTreeMap<(DeviceId, StreamId), MemSyncDomain>,
+    /// `cudaLaunchAttributeMemSyncDomainMap` per stream. Missing is identity.
+    stream_mem_sync_map: BTreeMap<(DeviceId, StreamId), MemSyncDomainMap>,
+    /// `cudaLaunchAttributeSynchronizationPolicy` per stream. Missing is Auto.
+    stream_sync_policy: BTreeMap<(DeviceId, StreamId), SynchronizationPolicy>,
+    next_pool: u32,
+    pools: BTreeMap<PoolId, Pool>,
+    /// `cudaDeviceGetDefaultMemPool`. Seeded at construct; [`Self::set_device_mempool`]
+    /// does not replace it.
+    default_pools: BTreeMap<DeviceId, PoolId>,
+    /// `cudaDeviceGetMemPool`. [`Self::alloc`] draws from this.
+    current_pools: BTreeMap<DeviceId, PoolId>,
+    /// Per-device graph memory pool (`cudaDeviceGraphMemTrim` backing).
+    graph_pools: BTreeMap<DeviceId, PoolId>,
+    next_handle: u64,
+    mem_handles: BTreeMap<MemHandleId, MemHandle>,
+    next_ipc: u64,
+    ipc_handles: BTreeMap<IpcHandleId, AllocId>,
+    next_ipc_event: u64,
+    ipc_event_handles: BTreeMap<IpcEventHandleId, EventId>,
+    next_imported_event: u32,
+    next_share: u64,
+    share_handles: BTreeMap<ShareableHandleId, PoolId>,
+    next_ptr: u64,
+    ptr_exports: BTreeMap<PtrExportId, AllocId>,
+    /// Explicit [`Sim::va_map_handle`] maps. Missing is combined Create+Map.
+    vmm_handle_at: BTreeMap<(AllocId, DeviceId, u64, u64), MemHandleId>,
+    next_mc: u32,
+    multicasts: BTreeMap<MulticastId, Multicast>,
+    /// Reserved VAs mapped with [`Sim::va_map_multicast`].
+    mc_vas: BTreeMap<AllocId, MulticastId>,
+    pinned_used: u64,
+    /// Unmapped live VAs waiting for [`Self::va_acquire`].
+    vmm_idle: Vec<AllocId>,
+    next_cond: u32,
+    conds: BTreeMap<CondId, Cond>,
+    /// IF/WHILE/SWITCH body predicates applied to ops submitted by [`Self::enqueue_graph`].
+    enqueue_preds: Vec<CondPred>,
+    /// `cudaGraphClone` provenance: clone id → source id.
+    clone_of: BTreeMap<GraphId, GraphId>,
+    /// Override [`Op::priority`] for graph replay (`UseNodePriority`) or
+    /// [`Self::kernel_with`] (`cudaLaunchAttributePriority`).
+    enqueue_priority: Option<i32>,
+    /// PDL flags for the next submit ([`Self::kernel_pdl`] / graph replay).
+    enqueue_pdl: ProgrammaticLaunch,
+    /// Programmatic event for the next kernel submit / graph replay.
+    enqueue_programmatic_event: Option<ProgrammaticEvent>,
+    /// Launch-completion event for the next kernel submit / graph replay.
+    enqueue_launch_completion: Option<LaunchCompletionEvent>,
+    /// Access-policy window for the next kernel submit / graph replay.
+    enqueue_access_policy: Option<AccessPolicyWindow>,
+    /// Mem-sync domain for the next kernel submit / graph replay.
+    enqueue_mem_sync_domain: Option<MemSyncDomain>,
+    /// Mem-sync map for the next kernel submit / graph replay.
+    enqueue_mem_sync_map: Option<MemSyncDomainMap>,
+    /// Cluster dimension for the next kernel submit / graph replay.
+    enqueue_cluster: Option<ClusterDim>,
+    /// Cluster scheduling policy for the next kernel submit / graph replay.
+    enqueue_cluster_policy: ClusterSchedulingPolicy,
+    /// Preferred cluster dimension for the next kernel submit / graph replay.
+    enqueue_preferred_cluster: Option<ClusterDim>,
+    /// Shared-memory carveout for the next kernel submit / graph replay.
+    enqueue_carveout: SharedMemCarveout,
+    /// Device-updatable kernel node for the next submit / graph replay.
+    enqueue_device_updatable: bool,
+    /// Shared-memory bank mode for the next submit / graph replay.
+    enqueue_shared_mem: SharedMemoryMode,
+    /// Portable-cluster mode for the next submit / graph replay.
+    enqueue_portable_cluster: PortableClusterMode,
+    /// Dynamic shared bytes for the next submit / graph replay.
+    enqueue_dynamic_shared: u32,
+    /// Portable-shared mode for the next submit / graph replay.
+    enqueue_portable_shared: PortableSharedMode,
+    /// NVLink-util-centric scheduling for the next submit / graph replay.
+    enqueue_nvlink_util_centric: bool,
+    /// Graph kernel-node sync policy for the next submit / graph replay.
+    enqueue_sync_policy: SynchronizationPolicy,
+    /// Graph kernel-node ctx for the next kernel submit / graph replay.
+    enqueue_green_ctx: Option<GreenCtxId>,
+    /// Devices with `cudaFuncAttributeNonPortableClusterSizeAllowed`.
+    non_portable_cluster: BTreeSet<DeviceId>,
+    /// `cudaFuncAttributeMaxDynamicSharedMemorySize` per device (`0` = portable).
+    max_dynamic_shared: BTreeMap<DeviceId, u32>,
+    /// Streams with `cudaLaunchAttributeNvlinkUtilCentricScheduling` enabled.
+    stream_nvlink_util_centric: BTreeSet<(DeviceId, StreamId)>,
+    /// `cudaStreamAttributeAccessPolicyWindow` per stream. Missing is none.
+    stream_access_policy: BTreeMap<(DeviceId, StreamId), AccessPolicyWindow>,
+    /// Wait/write-value mailbox: `(alloc, offset) → word`. Missing is `0`.
+    mailbox: BTreeMap<(AllocId, u64), u64>,
+    /// `cudaThreadExchangeStreamCaptureMode` default for [`Self::begin_capture`].
+    capture_mode: StreamCaptureMode,
+    next_user_object: u32,
+    user_objects: BTreeMap<UserObjectId, UserObject>,
+    /// `(id, destroy_fn)` in fire order. Handle is unknown after the last ref.
+    user_object_dtors: Vec<(UserObjectId, u64)>,
+}
+
+impl Sim {
+    /// Idle node at t = 0.
+    #[must_use]
+    pub fn new(profile: HardwareProfile) -> Self {
+        let mut gpus = BTreeMap::new();
+        for g in &profile.gpus {
+            let replaced = gpus.insert(
+                g.id,
+                GpuRt {
+                    used: 0,
+                    compute: 0,
+                    copies: 0,
+                    graph_used_high: 0,
+                    graph_reserved_high: 0,
+                    persist_limit: 0,
+                    persist_lines: Vec::new(),
+                    limits: DeviceLimits::sm80(),
+                    shared_mem_config: SharedMemoryMode::Default,
+                    func_shared_mem_config: SharedMemoryMode::Default,
+                    cache_config: FuncCache::PreferNone,
+                    func_cache_config: FuncCache::PreferNone,
+                    func_carveout: SharedMemCarveout::Default,
+                    cluster_dim_must_be_set: false,
+                    required_cluster_x: 0,
+                    required_cluster_y: 0,
+                    required_cluster_z: 0,
+                    func_cluster_policy: ClusterSchedulingPolicy::Default,
+                    device_flags: DeviceFlags::SCHEDULE_AUTO,
+                },
+            );
+            let _dup = replaced.is_some();
+        }
+        let peer_enabled = seed_peers(&profile);
+        let (mut next_pool, mut pools, default_pools) = seed_pools(&profile);
+        let current_pools = default_pools.clone();
+        let mut graph_pools = BTreeMap::new();
+        for g in &profile.gpus {
+            let gid = PoolId(next_pool);
+            next_pool = next_pool.saturating_add(1);
+            let mut gp = Pool::new(g.id);
+            gp.release_threshold = u64::MAX;
+            gp.graph = true;
+            let replaced = pools.insert(gid, gp);
+            let _dup = replaced.is_some();
+            let replaced = graph_pools.insert(g.id, gid);
+            let _dup = replaced.is_some();
+        }
+        Self {
+            profile,
+            clock: 0,
+            next_op: 1,
+            next_alloc: 1,
+            next_graph: 1,
+            next_capture_id: 1,
+            allocs: BTreeMap::new(),
+            ops: BTreeMap::new(),
+            tail: BTreeMap::new(),
+            events: BTreeMap::new(),
+            graphs: BTreeMap::new(),
+            capturing: None,
+            capture_buf: Vec::new(),
+            graph_allocs: BTreeMap::new(),
+            graph_joins: BTreeMap::new(),
+            running: Vec::new(),
+            gpus,
+            bytes_moved: 0,
+            hbm_peak: 0,
+            unavailable: BTreeSet::new(),
+            fail_next_memcpy: false,
+            extra_transfer_ns: 0,
+            peer_enabled,
+            legacy_null_stream: false,
+            priority: BTreeMap::new(),
+            blocking: BTreeSet::new(),
+            sm_permille: BTreeMap::new(),
+            stream_green_ctx: BTreeMap::new(),
+            next_green_ctx: 1,
+            green_ctxs: BTreeMap::new(),
+            next_dev_desc: 1,
+            dev_descs: BTreeMap::new(),
+            stream_mem_sync_domain: BTreeMap::new(),
+            stream_mem_sync_map: BTreeMap::new(),
+            stream_sync_policy: BTreeMap::new(),
+            next_pool,
+            pools,
+            default_pools,
+            current_pools,
+            graph_pools,
+            next_handle: 1,
+            mem_handles: BTreeMap::new(),
+            next_ipc: 1,
+            ipc_handles: BTreeMap::new(),
+            next_ipc_event: 1,
+            ipc_event_handles: BTreeMap::new(),
+            next_imported_event: 1,
+            next_share: 1,
+            share_handles: BTreeMap::new(),
+            next_ptr: 1,
+            ptr_exports: BTreeMap::new(),
+            vmm_handle_at: BTreeMap::new(),
+            next_mc: 1,
+            multicasts: BTreeMap::new(),
+            mc_vas: BTreeMap::new(),
+            pinned_used: 0,
+            vmm_idle: Vec::new(),
+            next_cond: 1,
+            conds: BTreeMap::new(),
+            enqueue_preds: Vec::new(),
+            clone_of: BTreeMap::new(),
+            enqueue_priority: None,
+            enqueue_pdl: ProgrammaticLaunch::default(),
+            enqueue_programmatic_event: None,
+            enqueue_launch_completion: None,
+            enqueue_access_policy: None,
+            enqueue_mem_sync_domain: None,
+            enqueue_mem_sync_map: None,
+            enqueue_cluster: None,
+            enqueue_cluster_policy: ClusterSchedulingPolicy::Default,
+            enqueue_preferred_cluster: None,
+            enqueue_carveout: SharedMemCarveout::Default,
+            enqueue_device_updatable: false,
+            enqueue_shared_mem: SharedMemoryMode::Default,
+            enqueue_portable_cluster: PortableClusterMode::Default,
+            enqueue_dynamic_shared: 0,
+            enqueue_portable_shared: PortableSharedMode::Default,
+            enqueue_nvlink_util_centric: false,
+            enqueue_sync_policy: SynchronizationPolicy::Auto,
+            enqueue_green_ctx: None,
+            non_portable_cluster: BTreeSet::new(),
+            max_dynamic_shared: BTreeMap::new(),
+            stream_nvlink_util_centric: BTreeSet::new(),
+            stream_access_policy: BTreeMap::new(),
+            mailbox: BTreeMap::new(),
+            capture_mode: StreamCaptureMode::Relaxed,
+            next_user_object: 1,
+            user_objects: BTreeMap::new(),
+            user_object_dtors: Vec::new(),
+        }
+    }
+
+    /// Virtual clock, nanoseconds.
+    #[must_use]
+    pub fn clock_ns(&self) -> u64 {
+        self.clock
+    }
+
+    /// Payload bytes moved by completed memcpys.
+    #[must_use]
+    pub fn bytes_moved(&self) -> u64 {
+        self.bytes_moved
+    }
+
+    /// High-water HBM bytes on the greediest GPU.
+    #[must_use]
+    pub fn hbm_peak(&self) -> u64 {
+        self.hbm_peak
+    }
+
+    /// Page-locked host bytes currently charged against [`HardwareProfile::host_pin_bytes`].
+    #[must_use]
+    pub fn pin_used(&self) -> u64 {
+        self.pinned_used
+    }
+
+    /// Pin budget from the profile (`u64::MAX` is unlimited).
+    #[must_use]
+    pub fn pin_budget(&self) -> u64 {
+        self.profile.host_pin_bytes
+    }
+
+    /// Borrow the profile.
+    #[must_use]
+    pub fn profile(&self) -> &HardwareProfile {
+        &self.profile
+    }
+
+    /// Stream an op was submitted on.
+    #[must_use]
+    pub fn op_stream(&self, id: OpId) -> Option<StreamId> {
+        self.ops.get(&id).map(|o| o.stream)
+    }
+
+    /// Occupancy SM span baked at submit (`cuGreenCtxStreamCreate` / kernel-node ctx).
+    ///
+    /// Full chip when the stream was unbound and the node ctx is [`None`].
+    #[must_use]
+    pub fn op_sm_span(&self, id: OpId) -> Option<SmResource> {
+        self.ops.get(&id).map(|o| o.sm_span)
+    }
+
+    /// Green context baked at kernel submit. [`None`] inherits the launch stream.
+    #[must_use]
+    pub fn op_green_ctx(&self, id: OpId) -> Option<GreenCtxId> {
+        self.ops.get(&id).and_then(|o| o.green_ctx)
+    }
+
+    /// Compiled DAG node for a submitted op. Capture-only ids are absent until launch.
+    #[must_use]
+    pub fn operation(&self, id: OpId) -> Option<Operation> {
+        self.ops.get(&id).map(|o| snapshot_op(id, o))
+    }
+
+    /// Submitted ops in id order (the dependency DAG plus completion flags).
+    pub fn operations(&self) -> impl Iterator<Item = Operation> + '_ {
+        self.ops.iter().map(|(id, o)| snapshot_op(*id, o))
+    }
+
+    /// Bytes currently reserved on `device`.
+    pub fn hbm_used(&self, device: DeviceId) -> Result<u64, SimError> {
+        Ok(self.gpu_rt(device)?.used)
+    }
+
+    /// `cudaMemGetInfo`: `(free, total)` HBM bytes on `device`.
+    pub fn mem_info(&self, device: DeviceId) -> Result<(u64, u64), SimError> {
+        let total = self.profile.gpu(device)?.hbm_bytes;
+        let used = self.hbm_used(device)?;
+        Ok((total.saturating_sub(used), total))
+    }
+
+    /// `cudaDeviceGetGraphMemAttribute` for the device graph-memory pool.
+    ///
+    /// Counts [`Self::graph_add_alloc`] / captured `cudaMallocAsync` from that
+    /// pool, not ordinary [`Self::malloc`] / live [`Self::alloc`]. Used is live
+    /// graph allocs. Reserved is live plus unused cached bytes held until
+    /// [`Self::graph_mem_trim`]. Capture is allowed (query).
+    pub fn graph_mem_get(&self, device: DeviceId, attr: GraphMemAttr) -> Result<u64, SimError> {
+        let (used, reserved) = self.graph_mem_used_reserved(device)?;
+        let rt = self.gpu_rt(device)?;
+        Ok(match attr {
+            GraphMemAttr::UsedMemCurrent => used,
+            GraphMemAttr::ReservedMemCurrent => reserved,
+            GraphMemAttr::UsedMemHigh => rt.graph_used_high.max(used),
+            GraphMemAttr::ReservedMemHigh => rt.graph_reserved_high.max(reserved),
+        })
+    }
+
+    /// `cudaDeviceSetGraphMemAttribute`. Only the High attrs; `value` must be `0`
+    /// (reset that high-water to the current used/reserved). Host-synchronous.
+    /// Capture cannot include it.
+    pub fn graph_mem_set(
+        &mut self,
+        device: DeviceId,
+        attr: GraphMemAttr,
+        value: u64,
+    ) -> Result<(), SimError> {
+        self.fail_if_capturing("cannot capture graph mem set")?;
+        let _gpu = self.profile.gpu(device)?;
+        if value != 0 {
+            return Err(SimError::Invalid {
+                why: "graph mem attribute value",
+            });
+        }
+        let (used, reserved) = self.graph_mem_used_reserved(device)?;
+        let rt = self.gpu_rt_mut(device)?;
+        match attr {
+            GraphMemAttr::UsedMemHigh => rt.graph_used_high = used,
+            GraphMemAttr::ReservedMemHigh => rt.graph_reserved_high = reserved,
+            GraphMemAttr::UsedMemCurrent | GraphMemAttr::ReservedMemCurrent => {
+                return Err(SimError::Invalid {
+                    why: "graph mem attribute",
+                });
+            }
+        }
+        self.clock = self.clock.saturating_add(1);
+        Ok(())
+    }
+
+    /// `cudaDeviceGraphMemTrim`. Host-synchronous. Capture cannot include it.
+    ///
+    /// Returns unused reserved graph-mem bytes (cached after a graph free or
+    /// [`Self::destroy_graph`]) to the OS so [`Self::mem_info`] free grows.
+    /// Live graph allocs are not trimmed.
+    pub fn graph_mem_trim(&mut self, device: DeviceId) -> Result<(), SimError> {
+        self.fail_if_capturing("cannot capture graph mem trim")?;
+        let pool = self.graph_pool(device)?;
+        let _dropped = self.pool_trim_to(pool, 0)?;
+        self.clock = self.clock.saturating_add(1);
+        Ok(())
+    }
+
+    fn graph_mem_used_reserved(&self, device: DeviceId) -> Result<(u64, u64), SimError> {
+        let pool = self.graph_pool(device)?;
+        let p = self.pool_ref(pool)?;
+        let used = p.live;
+        Ok((used, used.saturating_add(p.cached)))
+    }
+
+    fn is_graph_alloc(&self, id: AllocId) -> bool {
+        self.graph_allocs.values().any(|v| v.contains(&id))
+    }
+
+    fn bump_graph_mem_high(&mut self, device: DeviceId) -> Result<(), SimError> {
+        let (used, reserved) = self.graph_mem_used_reserved(device)?;
+        let rt = self.gpu_rt_mut(device)?;
+        rt.graph_used_high = rt.graph_used_high.max(used);
+        rt.graph_reserved_high = rt.graph_reserved_high.max(reserved);
+        Ok(())
+    }
+
+    /// Whether `alloc` currently has a copy on `device`.
+    ///
+    /// A VMM VA is resident only when mapped physicals cover the whole reserved
+    /// size (a hole is not [`Self::kernel`]-readable). [`Self::kernel_bufs`]
+    /// of a mapped span uses [`Self::is_range_resident`].
+    pub fn is_resident(&self, alloc: AllocId, device: DeviceId) -> Result<bool, SimError> {
+        let a = self.alloc_ref(alloc)?;
+        if a.vmm {
+            Ok(a.live && vmm_covers(&a.vmm_maps, device, 0, a.bytes))
+        } else {
+            Ok(a.live && a.devices.contains(&device))
+        }
+    }
+
+    /// Whether `[offset, offset+bytes)` of `alloc` is mapped/resident on `device`.
+    ///
+    /// Non-VMM allocations ignore the span (the object is on the device or not).
+    /// A range past the reservation is [`SimError::Invalid`].
+    pub fn is_range_resident(
+        &self,
+        alloc: AllocId,
+        device: DeviceId,
+        offset: u64,
+        bytes: u64,
+    ) -> Result<bool, SimError> {
+        let a = self.alloc_ref(alloc)?;
+        if offset.saturating_add(bytes) > a.bytes {
+            return Err(SimError::Invalid {
+                why: "range past alloc",
+            });
+        }
+        if a.vmm {
+            Ok(a.live && vmm_covers(&a.vmm_maps, device, offset, bytes))
+        } else {
+            Ok(a.live && a.devices.contains(&device))
+        }
+    }
+
+    /// Refuse new work (and starting queued work) on `device`.
+    pub fn set_unavailable(&mut self, device: DeviceId, yes: bool) -> Result<(), SimError> {
+        let _gpu = self.profile.gpu(device)?;
+        if yes {
+            let _was = self.unavailable.insert(device);
+        } else {
+            let _was = self.unavailable.remove(&device);
+        }
+        Ok(())
+    }
+
+    /// Whether [`Self::set_unavailable`] is set for `device`.
+    #[must_use]
+    pub fn is_unavailable(&self, device: DeviceId) -> bool {
+        self.unavailable.contains(&device)
+    }
+
+    /// Next memcpy that *starts* fails with [`SimError::TransferFailed`] (expert load failure).
+    pub fn fail_next_memcpy(&mut self) {
+        self.fail_next_memcpy = true;
+    }
+
+    /// Extra nanoseconds added to every memcpy and allreduce (injected transfer delay).
+    pub fn set_extra_transfer_ns(&mut self, ns: u64) {
+        self.extra_transfer_ns = ns;
+    }
+
+    /// CUDA stream priority (`cudaStreamCreateWithPriority`). Higher runs first
+    /// when multiple ops are ready for the same resource. Default `0`.
+    pub fn set_stream_priority(
+        &mut self,
+        device: DeviceId,
+        stream: StreamId,
+        priority: i32,
+    ) -> Result<(), SimError> {
+        let _gpu = self.profile.gpu(device)?;
+        let _prev = self.priority.insert((device, stream), priority);
+        Ok(())
+    }
+
+    /// Current priority for `(device, stream)`, or `0` if unset.
+    #[must_use]
+    pub fn stream_priority(&self, device: DeviceId, stream: StreamId) -> i32 {
+        self.priority.get(&(device, stream)).copied().unwrap_or(0)
+    }
+
+    /// [`KernelAttrs::priority`] if set, else [`Self::stream_priority`].
+    fn snap_priority(&self, device: DeviceId, stream: StreamId) -> i32 {
+        self.enqueue_priority
+            .unwrap_or_else(|| self.stream_priority(device, stream))
+    }
+
+    /// Reserve a duration-only SM fraction for `(device, stream)` (‰ of peak FLOP/s).
+    ///
+    /// `1000` is a full chip. Compute-bound kernels scale as `1000 / permille`;
+    /// memory-bound kernels keep full HBM. Default (unset) is `1000`. `0` is
+    /// [`SimError::Invalid`]. Does not partition Hyper-Q occupancy; use
+    /// [`Self::green_ctx_set_stream`] for complementary green contexts.
+    /// A stream already bound to a green context is Invalid `"green ctx stream"`.
+    pub fn set_stream_sm_permille(
+        &mut self,
+        device: DeviceId,
+        stream: StreamId,
+        permille: u16,
+    ) -> Result<(), SimError> {
+        let _gpu = self.profile.gpu(device)?;
+        if self.stream_green_ctx.contains_key(&(device, stream)) {
+            return Err(SimError::Invalid {
+                why: "green ctx stream",
+            });
+        }
+        if permille == 0 || permille > 1000 {
+            return Err(SimError::Invalid {
+                why: "sm permille must be 1..=1000",
+            });
+        }
+        let _prev = self.sm_permille.insert((device, stream), permille);
+        Ok(())
+    }
+
+    /// SM fraction for `(device, stream)`, or `1000` if unset.
+    #[must_use]
+    pub fn stream_sm_permille(&self, device: DeviceId, stream: StreamId) -> u16 {
+        self.sm_permille
+            .get(&(device, stream))
+            .copied()
+            .unwrap_or(1000)
+            .max(1)
+    }
+
+    fn stream_sm_span(&self, device: DeviceId, stream: StreamId) -> SmResource {
+        self.stream_green_ctx
+            .get(&(device, stream))
+            .and_then(|id| self.green_ctxs.get(id))
+            .map(|c| c.sm)
+            .unwrap_or(SmResource::FULL)
+    }
+
+    fn kernel_sm_span(&self, device: DeviceId, stream: StreamId) -> SmResource {
+        match self.enqueue_green_ctx {
+            Some(ctx) => self
+                .green_ctxs
+                .get(&ctx)
+                .map(|c| c.sm)
+                .unwrap_or(SmResource::FULL),
+            None => self.stream_sm_span(device, stream),
+        }
+    }
+
+    fn require_live_green_ctx(&self, ctx: GreenCtxId, device: DeviceId) -> Result<(), SimError> {
+        let g = self.green_ctxs.get(&ctx).ok_or(SimError::Invalid {
+            why: "unknown green ctx",
+        })?;
+        if g.device != device {
+            return Err(SimError::Invalid {
+                why: "green ctx device",
+            });
+        }
+        Ok(())
+    }
+
+    /// `cuDeviceGetDevResource` / `cudaDeviceGetDevResource`.
+    ///
+    /// Query; legal during capture. Only [`DevResourceType::Sm`]. The span is
+    /// ‰ of the chip ([`SmResource::FULL`]), not an SM count.
+    pub fn device_get_dev_resource(
+        &self,
+        device: DeviceId,
+        kind: DevResourceType,
+    ) -> Result<DevResource, SimError> {
+        let _gpu = self.profile.gpu(device)?;
+        match kind {
+            DevResourceType::Sm => Ok(DevResource::Sm(SmResource::FULL)),
+        }
+    }
+
+    /// `cuDevSmResourceSplit`. Query; legal during capture.
+    ///
+    /// [`DevSmResourceGroupParams::sm_count`] is ‰ of the chip (same unit as
+    /// [`Self::dev_sm_resource_split_by_count`]). `0` is discovery (remaining
+    /// ‰). Coschedule counts must be `0`. Group flags must be
+    /// [`crate::DevSmResourceGroupFlags::DEFAULT`]. `flags` must be
+    /// [`DevSmResourceSplitFlags::DEFAULT`]. Returns `(groups, remaining)`.
+    /// Typed [`Self::dev_sm_resource_split_by_count`] stays.
+    pub fn dev_sm_resource_split(
+        &self,
+        input: SmResource,
+        group_params: &[DevSmResourceGroupParams],
+        flags: u32,
+    ) -> Result<(Vec<SmResource>, SmResource), SimError> {
+        if flags != DevSmResourceSplitFlags::DEFAULT {
+            return Err(SimError::Invalid {
+                why: "sm split flags",
+            });
+        }
+        input.split(group_params)
+    }
+
+    /// `cuDevSmResourceSplitByCount`. Query; legal during capture.
+    ///
+    /// `flags` must be [`DevSmResourceSplitFlags::DEFAULT`]. `min_count` is
+    /// minimum ‰ per group. Returns `(groups, remaining)`.
+    pub fn dev_sm_resource_split_by_count(
+        &self,
+        input: SmResource,
+        nb_groups: u32,
+        min_count: u32,
+        flags: u32,
+    ) -> Result<(Vec<SmResource>, SmResource), SimError> {
+        if flags != DevSmResourceSplitFlags::DEFAULT {
+            return Err(SimError::Invalid {
+                why: "sm split flags",
+            });
+        }
+        input.split_by_count(nb_groups, min_count)
+    }
+
+    /// `cuDevResourceGenerateDesc`. Capture cannot include it.
+    ///
+    /// Resources must be contiguous (no overlap, no gap). Empty is Invalid
+    /// `"sm resource desc"`.
+    pub fn dev_resource_generate_desc(
+        &mut self,
+        resources: &[SmResource],
+    ) -> Result<DevResourceDescId, SimError> {
+        self.fail_if_capturing("cannot capture dev resource desc")?;
+        let sm = merge_sm_resources(resources)?;
+        let id = DevResourceDescId(self.next_dev_desc);
+        self.next_dev_desc = self.next_dev_desc.saturating_add(1);
+        let _prev = self.dev_descs.insert(id, sm);
+        Ok(id)
+    }
+
+    /// `cuGreenCtxCreate` / `cudaGreenCtxCreate`. Capture cannot include it.
+    ///
+    /// `flags` must be [`GreenCtxFlags::DEFAULT`]. The desc may be reused
+    /// (same-span contexts share occupancy).
+    pub fn green_ctx_create(
+        &mut self,
+        desc: DevResourceDescId,
+        device: DeviceId,
+        flags: u32,
+    ) -> Result<GreenCtxId, SimError> {
+        self.fail_if_capturing("cannot capture green ctx create")?;
+        let _gpu = self.profile.gpu(device)?;
+        if flags != GreenCtxFlags::DEFAULT {
+            return Err(SimError::Invalid {
+                why: "green ctx flags",
+            });
+        }
+        let sm = self
+            .dev_descs
+            .get(&desc)
+            .copied()
+            .ok_or(SimError::Invalid {
+                why: "unknown resource desc",
+            })?;
+        let id = GreenCtxId(self.next_green_ctx);
+        let cuda_id = GREEN_CTX_CUDA_ID_TAG | u64::from(self.next_green_ctx);
+        self.next_green_ctx = self.next_green_ctx.saturating_add(1);
+        let _prev = self.green_ctxs.insert(
+            id,
+            GreenCtx {
+                device,
+                sm,
+                wait_ops: Vec::new(),
+                cuda_id,
+            },
+        );
+        Ok(id)
+    }
+
+    /// `cuGreenCtxDestroy`. Capture cannot include it.
+    ///
+    /// Streams still bound to `ctx` are Invalid `"green ctx has streams"`.
+    pub fn green_ctx_destroy(&mut self, ctx: GreenCtxId) -> Result<(), SimError> {
+        self.fail_if_capturing("cannot capture green ctx destroy")?;
+        if !self.green_ctxs.contains_key(&ctx) {
+            return Err(SimError::Invalid {
+                why: "unknown green ctx",
+            });
+        }
+        if self.stream_green_ctx.values().any(|c| *c == ctx) {
+            return Err(SimError::Invalid {
+                why: "green ctx has streams",
+            });
+        }
+        let _gone = self.green_ctxs.remove(&ctx);
+        Ok(())
+    }
+
+    /// `cuGreenCtxGetDevResource`. Query; legal during capture.
+    pub fn green_ctx_get_dev_resource(
+        &self,
+        ctx: GreenCtxId,
+        kind: DevResourceType,
+    ) -> Result<DevResource, SimError> {
+        let g = self.green_ctxs.get(&ctx).ok_or(SimError::Invalid {
+            why: "unknown green ctx",
+        })?;
+        match kind {
+            DevResourceType::Sm => Ok(DevResource::Sm(g.sm)),
+        }
+    }
+
+    /// `cuGreenCtxGetId` / `cudaExecutionCtxGetId`. Query; legal during capture.
+    ///
+    /// Unique per live green context for this VM, for the life of the `Sim`.
+    /// Distinct from [`GreenCtxId`] (the VM handle) and from
+    /// [`Self::stream_get_id`]. Unknown or destroyed contexts are Invalid
+    /// `"unknown green ctx"`. This VM does not invent an unset handle as the
+    /// current context, and does not invent `cuCtxFromGreenCtx`.
+    pub fn green_ctx_get_id(&self, ctx: GreenCtxId) -> Result<u64, SimError> {
+        let g = self.green_ctxs.get(&ctx).ok_or(SimError::Invalid {
+            why: "unknown green ctx",
+        })?;
+        Ok(g.cuda_id)
+    }
+
+    /// `cudaExecutionCtxGetDevice`. Query; legal during capture.
+    ///
+    /// Returns the device passed to [`Self::green_ctx_create`]. Unknown or
+    /// destroyed contexts are Invalid `"unknown green ctx"`. Distinct from
+    /// [`Self::stream_get_green_ctx`] (stream to ctx) and
+    /// [`Self::green_ctx_get_id`]. This VM does not invent `cuCtxFromGreenCtx`.
+    pub fn green_ctx_get_device(&self, ctx: GreenCtxId) -> Result<DeviceId, SimError> {
+        let g = self.green_ctxs.get(&ctx).ok_or(SimError::Invalid {
+            why: "unknown green ctx",
+        })?;
+        Ok(g.device)
+    }
+
+    /// Bind `stream` to `ctx` (`cuGreenCtxStreamCreate` without creating).
+    ///
+    /// Sets duration permille to the span width. [`StreamId::NULL`] is Invalid.
+    /// Already-bound streams are Invalid `"stream has green ctx"`. Capture
+    /// cannot include it.
+    pub fn green_ctx_set_stream(
+        &mut self,
+        ctx: GreenCtxId,
+        stream: StreamId,
+    ) -> Result<(), SimError> {
+        self.fail_if_capturing("cannot capture green ctx stream")?;
+        if stream == StreamId::NULL {
+            return Err(SimError::Invalid {
+                why: "green ctx stream",
+            });
+        }
+        let g = self.green_ctxs.get(&ctx).ok_or(SimError::Invalid {
+            why: "unknown green ctx",
+        })?;
+        let device = g.device;
+        let width = g.sm.width.max(1);
+        if self.stream_green_ctx.contains_key(&(device, stream)) {
+            return Err(SimError::Invalid {
+                why: "stream has green ctx",
+            });
+        }
+        let _prev = self.stream_green_ctx.insert((device, stream), ctx);
+        let _prev_sm = self.sm_permille.insert((device, stream), width);
+        Ok(())
+    }
+
+    /// `cuGreenCtxStreamCreate`: flags plus priority, then
+    /// [`Self::green_ctx_set_stream`].
+    pub fn green_ctx_stream_create(
+        &mut self,
+        ctx: GreenCtxId,
+        stream: StreamId,
+        flags: u32,
+        priority: i32,
+    ) -> Result<(), SimError> {
+        let device = self
+            .green_ctxs
+            .get(&ctx)
+            .ok_or(SimError::Invalid {
+                why: "unknown green ctx",
+            })?
+            .device;
+        self.stream_create_with_priority(device, stream, flags, priority)?;
+        self.green_ctx_set_stream(ctx, stream)
+    }
+
+    /// `cuStreamGetGreenCtx`. Query; legal during capture.
+    ///
+    /// Unbound streams return [`None`]. Unknown devices are Invalid.
+    pub fn stream_get_green_ctx(
+        &self,
+        device: DeviceId,
+        stream: StreamId,
+    ) -> Result<Option<GreenCtxId>, SimError> {
+        let _gpu = self.profile.gpu(device)?;
+        Ok(self.stream_green_ctx.get(&(device, stream)).copied())
+    }
+
+    /// `cuStreamGetDevResource`. Query; legal during capture.
+    ///
+    /// Only [`DevResourceType::Sm`]. A stream bound to a green context returns
+    /// that ctx's SM span; an unbound stream returns [`SmResource::FULL`].
+    pub fn stream_get_dev_resource(
+        &self,
+        device: DeviceId,
+        stream: StreamId,
+        kind: DevResourceType,
+    ) -> Result<DevResource, SimError> {
+        let _gpu = self.profile.gpu(device)?;
+        match self.stream_green_ctx.get(&(device, stream)) {
+            Some(ctx) => self.green_ctx_get_dev_resource(*ctx, kind),
+            None => match kind {
+                DevResourceType::Sm => Ok(DevResource::Sm(SmResource::FULL)),
+            },
+        }
+    }
+
+    /// `cuGreenCtxRecordEvent`. Capture is refused when any stream bound to
+    /// `ctx` is capturing (`CUDA_ERROR_STREAM_CAPTURE_UNSUPPORTED`).
+    ///
+    /// Records an event that completes after every activity already submitted
+    /// on streams bound to `ctx`. Later work on those streams does not join
+    /// `event`. Distinct from [`Self::record_event`] (one stream). The record
+    /// is not inserted into any bound stream's timeline. `event` and `ctx`
+    /// must share a device (CUDA same primary context).
+    pub fn green_ctx_record_event(
+        &mut self,
+        ctx: GreenCtxId,
+        event: EventId,
+    ) -> Result<OpId, SimError> {
+        let device = self
+            .green_ctxs
+            .get(&ctx)
+            .ok_or(SimError::Invalid {
+                why: "unknown green ctx",
+            })?
+            .device;
+        if self.green_ctx_has_capturing_stream(ctx) {
+            return Err(SimError::Invalid {
+                why: "cannot capture green ctx record",
+            });
+        }
+        if let Some(prev) = self.event_recorded_by(event) {
+            if self.ops.get(&prev).is_some_and(|o| o.device != device) {
+                return Err(SimError::Invalid {
+                    why: "green ctx event",
+                });
+            }
+        }
+        let mut deps = self.stream_order_deps(device, StreamId::GREEN_CTX_SYNC);
+        for (d, s) in self.green_ctx_bound_streams(ctx) {
+            self.collect_stream_work(d, s, &mut deps);
+        }
+        let _ev = self.events.entry(event).or_insert(Ev::new(true));
+        self.submit_live_with_deps(
+            device,
+            StreamId::GREEN_CTX_SYNC,
+            Kind::EventRecord {
+                event,
+                external: false,
+            },
+            LaunchCost::Kernel,
+            deps,
+        )
+    }
+
+    /// `cuGreenCtxWaitEvent`. Capture is refused when any stream bound to
+    /// `ctx` is capturing, or when `event` is in an ongoing capture.
+    ///
+    /// All later work submitted on streams bound to `ctx` (including streams
+    /// bound after this call) waits for work captured in `event`. Distinct
+    /// from [`Self::wait_event`] (one stream). `event` may be from another
+    /// device. Does not block the CPU.
+    pub fn green_ctx_wait_event(
+        &mut self,
+        ctx: GreenCtxId,
+        event: EventId,
+    ) -> Result<OpId, SimError> {
+        let device = self
+            .green_ctxs
+            .get(&ctx)
+            .ok_or(SimError::Invalid {
+                why: "unknown green ctx",
+            })?
+            .device;
+        if self.green_ctx_has_capturing_stream(ctx) {
+            return Err(SimError::Invalid {
+                why: "cannot capture green ctx wait",
+            });
+        }
+        let root = self.event_root(event);
+        if self
+            .capturing
+            .as_ref()
+            .is_some_and(|c| c.events.contains(&root))
+        {
+            return Err(SimError::Invalid {
+                why: "cannot capture green ctx wait",
+            });
+        }
+        if let Entry::Vacant(slot) = self.events.entry(event) {
+            let _ev = slot.insert(Ev::new(true));
+        }
+        let id = self.submit_live(
+            device,
+            StreamId::GREEN_CTX_SYNC,
+            Kind::EventWait {
+                event,
+                external: false,
+            },
+            LaunchCost::Kernel,
+        )?;
+        if let Some(g) = self.green_ctxs.get_mut(&ctx) {
+            g.wait_ops.push(id);
+        }
+        Ok(id)
+    }
+
+    /// `cudaExecutionCtxSynchronize` for a green context.
+    ///
+    /// Blocks the CPU until every stream bound to `ctx` is idle (and this
+    /// ctx's [`Self::green_ctx_wait_event`] ops have completed). Other green
+    /// contexts on the same device keep running. Distinct from
+    /// [`Self::synchronize_stream`] (one stream) and
+    /// [`Self::synchronize_device`] (whole GPU). Capture is refused when any
+    /// bound stream is capturing. An already-idle ctx returns without starting
+    /// leftover kernels on other streams.
+    pub fn green_ctx_synchronize(&mut self, ctx: GreenCtxId) -> Result<(), SimError> {
+        let device = self
+            .green_ctxs
+            .get(&ctx)
+            .ok_or(SimError::Invalid {
+                why: "unknown green ctx",
+            })?
+            .device;
+        let _gpu = self.profile.gpu(device)?;
+        if self.green_ctx_has_capturing_stream(ctx) {
+            return Err(SimError::Invalid {
+                why: "cannot capture green ctx sync",
+            });
+        }
+        self.drive_until(|sim| sim.green_ctx_idle(ctx))?;
+        if !self.green_ctx_idle(ctx) {
+            return Err(SimError::Invalid {
+                why: "deadlock: green ctx busy but nothing running",
+            });
+        }
+        Ok(())
+    }
+
+    fn green_ctx_idle(&self, ctx: GreenCtxId) -> bool {
+        for (d, s) in self.green_ctx_bound_streams(ctx) {
+            if !self.stream_idle(d, s) {
+                return false;
+            }
+        }
+        let Some(g) = self.green_ctxs.get(&ctx) else {
+            return false;
+        };
+        g.wait_ops.iter().all(|id| self.op_done(*id))
+    }
+
+    fn green_ctx_bound_streams(&self, ctx: GreenCtxId) -> Vec<(DeviceId, StreamId)> {
+        self.stream_green_ctx
+            .iter()
+            .filter_map(|(k, c)| (*c == ctx).then_some(*k))
+            .collect()
+    }
+
+    fn green_ctx_has_capturing_stream(&self, ctx: GreenCtxId) -> bool {
+        self.green_ctx_bound_streams(ctx)
+            .iter()
+            .any(|&(d, s)| self.in_capture(d, s))
+    }
+
+    fn collect_stream_work(&self, device: DeviceId, stream: StreamId, deps: &mut Vec<OpId>) {
+        if let Some(prev) = self.tail.get(&(device, stream)) {
+            if !deps.contains(prev) {
+                deps.push(*prev);
+            }
+        }
+        for (id, o) in &self.ops {
+            if o.device == device
+                && o.stream == stream
+                && !o.done
+                && !o.cancelled
+                && !deps.contains(id)
+            {
+                deps.push(*id);
+            }
+        }
+        if let Some(joins) = self.graph_joins.get(&(device, stream)) {
+            for id in joins {
+                if !deps.contains(id) {
+                    deps.push(*id);
+                }
+            }
+        }
+    }
+
+    /// `cudaDevAttrMemSyncDomainCount`.
+    pub fn mem_sync_domain_count(&self, device: DeviceId) -> Result<u8, SimError> {
+        Ok(self.profile.gpu(device)?.mem_sync_domain_count.max(1))
+    }
+
+    /// `cudaStreamSetAttribute` for `cudaLaunchAttributeMemSyncDomain`.
+    pub fn set_stream_mem_sync_domain(
+        &mut self,
+        device: DeviceId,
+        stream: StreamId,
+        domain: MemSyncDomain,
+    ) -> Result<(), SimError> {
+        let _gpu = self.profile.gpu(device)?;
+        let _prev = self.stream_mem_sync_domain.insert((device, stream), domain);
+        Ok(())
+    }
+
+    /// Stream mem-sync domain, or [`MemSyncDomain::Default`] if unset.
+    #[must_use]
+    pub fn stream_mem_sync_domain(&self, device: DeviceId, stream: StreamId) -> MemSyncDomain {
+        self.stream_mem_sync_domain
+            .get(&(device, stream))
+            .copied()
+            .unwrap_or(MemSyncDomain::Default)
+    }
+
+    /// `cudaStreamSetAttribute` for `cudaLaunchAttributeMemSyncDomainMap`.
+    ///
+    /// Does not tick the clock. Hopper identity is default→0, remote→1.
+    /// `expertvm sim --mem-sync-map collapse` sets `{default: 0, remote: 0}`
+    /// on the decode stream (needs `--mem-sync-domain remote`).
+    pub fn set_stream_mem_sync_domain_map(
+        &mut self,
+        device: DeviceId,
+        stream: StreamId,
+        map: MemSyncDomainMap,
+    ) -> Result<(), SimError> {
+        self.validate_mem_sync_map(device, map)?;
+        let _prev = self.stream_mem_sync_map.insert((device, stream), map);
+        Ok(())
+    }
+
+    /// Stream mem-sync map, or CUDA identity for this device's domain count.
+    pub fn stream_mem_sync_domain_map(
+        &self,
+        device: DeviceId,
+        stream: StreamId,
+    ) -> Result<MemSyncDomainMap, SimError> {
+        if let Some(map) = self.stream_mem_sync_map.get(&(device, stream)).copied() {
+            return Ok(map);
+        }
+        Ok(MemSyncDomainMap::identity(
+            self.mem_sync_domain_count(device)?,
+        ))
+    }
+
+    /// `cudaStreamSetAttribute` for `cudaLaunchAttributeSynchronizationPolicy`.
+    ///
+    /// Host-wait tax for [`Self::synchronize_stream`] / [`Self::synchronize_event`].
+    /// Missing is [`SynchronizationPolicy::Auto`], which inherits
+    /// [`Self::set_device_flags`] (unset Auto tax 0).
+    pub fn set_stream_sync_policy(
+        &mut self,
+        device: DeviceId,
+        stream: StreamId,
+        policy: SynchronizationPolicy,
+    ) -> Result<(), SimError> {
+        let _gpu = self.profile.gpu(device)?;
+        let _prev = self.stream_sync_policy.insert((device, stream), policy);
+        Ok(())
+    }
+
+    /// Stream synchronization policy, or [`SynchronizationPolicy::Auto`] if unset.
+    #[must_use]
+    pub fn stream_sync_policy(&self, device: DeviceId, stream: StreamId) -> SynchronizationPolicy {
+        self.stream_sync_policy
+            .get(&(device, stream))
+            .copied()
+            .unwrap_or(SynchronizationPolicy::Auto)
+    }
+
+    /// `cudaStreamSetAttribute` for `cudaLaunchAttributeNvlinkUtilCentricScheduling`.
+    ///
+    /// Inherited by [`Self::kernel`] / [`Self::kernel_bufs`] on this stream.
+    /// [`Self::kernel_with`] and graph replay use the launch / node value.
+    /// Decode identity stays disabled.
+    pub fn set_stream_nvlink_util_centric(
+        &mut self,
+        device: DeviceId,
+        stream: StreamId,
+        enabled: bool,
+    ) -> Result<(), SimError> {
+        let _gpu = self.profile.gpu(device)?;
+        if enabled {
+            let _ins = self.stream_nvlink_util_centric.insert((device, stream));
+        } else {
+            let _rm = self.stream_nvlink_util_centric.remove(&(device, stream));
+        }
+        Ok(())
+    }
+
+    /// Stream NVLink-util-centric flag, or `false` if unset.
+    #[must_use]
+    pub fn stream_nvlink_util_centric(&self, device: DeviceId, stream: StreamId) -> bool {
+        self.stream_nvlink_util_centric.contains(&(device, stream))
+    }
+
+    /// `cudaStreamSetAttribute` for `cudaStreamAttributeAccessPolicyWindow`.
+    ///
+    /// Inherited by [`Self::kernel`] / [`Self::kernel_bufs`] on this stream.
+    /// [`Self::kernel_with`] and graph replay use the launch / node window.
+    /// [`None`] clears. Decode identity stays no window.
+    pub fn set_stream_access_policy(
+        &mut self,
+        device: DeviceId,
+        stream: StreamId,
+        window: Option<AccessPolicyWindow>,
+    ) -> Result<(), SimError> {
+        let _gpu = self.profile.gpu(device)?;
+        if let Some(w) = window {
+            self.validate_access_policy_window(device, w)?;
+            let _prev = self.stream_access_policy.insert((device, stream), w);
+        } else {
+            let _rm = self.stream_access_policy.remove(&(device, stream));
+        }
+        Ok(())
+    }
+
+    /// Stream access-policy window, or [`None`] if unset.
+    #[must_use]
+    pub fn stream_access_policy(
+        &self,
+        device: DeviceId,
+        stream: StreamId,
+    ) -> Option<AccessPolicyWindow> {
+        self.stream_access_policy.get(&(device, stream)).copied()
+    }
+
+    /// `cudaStreamCopyAttributes`: copy priority, SM permille, mem-sync
+    /// domain/map, synchronization policy, NVLink-util-centric scheduling,
+    /// and access-policy window from `src` to `dst`.
+    ///
+    /// Same device required. Capture is allowed (host-side, not a graph node).
+    pub fn stream_copy_attributes(
+        &mut self,
+        dst_device: DeviceId,
+        dst: StreamId,
+        src_device: DeviceId,
+        src: StreamId,
+    ) -> Result<(), SimError> {
+        if dst_device != src_device {
+            return Err(SimError::Invalid {
+                why: "stream attribute device mismatch",
+            });
+        }
+        let _gpu = self.profile.gpu(src_device)?;
+        let pri = self.stream_priority(src_device, src);
+        let sm = self.sm_permille.get(&(src_device, src)).copied();
+        let domain = self.stream_mem_sync_domain.get(&(src_device, src)).copied();
+        let map = self.stream_mem_sync_map.get(&(src_device, src)).copied();
+        let sync = self.stream_sync_policy.get(&(src_device, src)).copied();
+        let nvlink = self.stream_nvlink_util_centric.contains(&(src_device, src));
+        let access = self.stream_access_policy.get(&(src_device, src)).copied();
+        self.set_stream_priority(dst_device, dst, pri)?;
+        if let Some(sm) = sm {
+            self.set_stream_sm_permille(dst_device, dst, sm)?;
+        } else {
+            let _gone = self.sm_permille.remove(&(dst_device, dst));
+        }
+        if let Some(domain) = domain {
+            self.set_stream_mem_sync_domain(dst_device, dst, domain)?;
+        } else {
+            let _gone = self.stream_mem_sync_domain.remove(&(dst_device, dst));
+        }
+        if let Some(map) = map {
+            self.set_stream_mem_sync_domain_map(dst_device, dst, map)?;
+        } else {
+            let _gone = self.stream_mem_sync_map.remove(&(dst_device, dst));
+        }
+        if let Some(sync) = sync {
+            self.set_stream_sync_policy(dst_device, dst, sync)?;
+        } else {
+            let _gone = self.stream_sync_policy.remove(&(dst_device, dst));
+        }
+        self.set_stream_nvlink_util_centric(dst_device, dst, nvlink)?;
+        self.set_stream_access_policy(dst_device, dst, access)?;
+        Ok(())
+    }
+
+    /// CUDA legacy null stream: [`StreamId::NULL`] serializes with every other stream
+    /// on that device. Off by default (`cudaStreamNonBlocking` created streams).
+    pub fn set_legacy_null_stream(&mut self, yes: bool) {
+        self.legacy_null_stream = yes;
+    }
+
+    /// Whether [`Self::set_legacy_null_stream`] is on.
+    #[must_use]
+    pub fn legacy_null_stream(&self) -> bool {
+        self.legacy_null_stream
+    }
+
+    /// `cudaStreamCreate` (`yes`) vs `cudaStreamCreateWithFlags(..., cudaStreamNonBlocking)`.
+    ///
+    /// Blocking streams serialize with [`StreamId::NULL`] even when legacy null
+    /// is off. Created streams default to non-blocking (vLLM-style). The null
+    /// stream's flags are [`Self::set_legacy_null_stream`], not this call.
+    pub fn set_stream_blocking(
+        &mut self,
+        device: DeviceId,
+        stream: StreamId,
+        yes: bool,
+    ) -> Result<(), SimError> {
+        let _gpu = self.profile.gpu(device)?;
+        if stream == StreamId::NULL {
+            return Err(SimError::Invalid {
+                why: "null stream uses set_legacy_null_stream",
+            });
+        }
+        if yes {
+            let _was = self.blocking.insert((device, stream));
+        } else {
+            let _was = self.blocking.remove(&(device, stream));
+        }
+        Ok(())
+    }
+
+    /// `cudaStreamCreateWithFlags`. Capture cannot include it.
+    ///
+    /// Known bit: [`StreamCreateFlags::NON_BLOCKING`]. Other bits are Invalid
+    /// `"stream create flags"`. [`StreamId::NULL`] is Invalid (use
+    /// [`Self::set_legacy_null_stream`]). Typed [`Self::set_stream_blocking`]
+    /// stays. Created streams still default to non-blocking until this is
+    /// called with [`StreamCreateFlags::DEFAULT`].
+    pub fn stream_create_with_flags(
+        &mut self,
+        device: DeviceId,
+        stream: StreamId,
+        flags: u32,
+    ) -> Result<(), SimError> {
+        self.fail_if_capturing("cannot capture stream create")?;
+        const KNOWN: u32 = StreamCreateFlags::NON_BLOCKING;
+        if flags & !KNOWN != 0 {
+            return Err(SimError::Invalid {
+                why: "stream create flags",
+            });
+        }
+        self.set_stream_blocking(device, stream, flags & StreamCreateFlags::NON_BLOCKING == 0)
+    }
+
+    /// `cudaStreamCreateWithPriority`. Capture cannot include it.
+    ///
+    /// Flags are [`Self::stream_create_with_flags`]. Priority is
+    /// [`Self::set_stream_priority`]. This VM does not cap the range
+    /// (`cudaDeviceGetStreamPriorityRange` is not modeled).
+    pub fn stream_create_with_priority(
+        &mut self,
+        device: DeviceId,
+        stream: StreamId,
+        flags: u32,
+        priority: i32,
+    ) -> Result<(), SimError> {
+        self.stream_create_with_flags(device, stream, flags)?;
+        self.set_stream_priority(device, stream, priority)
+    }
+
+    /// Whether `stream` is a blocking `cudaStreamCreate` stream on `device`.
+    #[must_use]
+    pub fn stream_is_blocking(&self, device: DeviceId, stream: StreamId) -> bool {
+        self.blocking.contains(&(device, stream))
+    }
+
+    /// `cudaStreamGetFlags`. Query; legal during capture.
+    ///
+    /// `0` is `cudaStreamDefault` (blocking). `1` is `cudaStreamNonBlocking`.
+    /// [`StreamId::NULL`] uses [`Self::legacy_null_stream`] (off → NonBlocking).
+    /// Unknown devices are Invalid. Any other stream id is legal (created
+    /// streams default to NonBlocking).
+    pub fn stream_get_flags(&self, device: DeviceId, stream: StreamId) -> Result<u32, SimError> {
+        let _gpu = self.profile.gpu(device)?;
+        let blocking = if stream == StreamId::NULL {
+            self.legacy_null_stream
+        } else {
+            self.stream_is_blocking(device, stream)
+        };
+        Ok(u32::from(!blocking))
+    }
+
+    /// `cudaStreamGetPriority`. Query; legal during capture.
+    ///
+    /// Unset streams are `0`. Unknown devices are Invalid. This VM does not
+    /// cap the range (`cudaDeviceGetStreamPriorityRange` is not modeled).
+    pub fn stream_get_priority(&self, device: DeviceId, stream: StreamId) -> Result<i32, SimError> {
+        let _gpu = self.profile.gpu(device)?;
+        Ok(self.stream_priority(device, stream))
+    }
+
+    /// `cudaStreamGetId`. Query; legal during capture.
+    ///
+    /// Unique per `(device, stream)` for this VM. [`StreamId`] stays
+    /// caller-chosen; this is not that handle and not a capture-sequence id.
+    /// Unknown devices are Invalid. This VM does not invent
+    /// `cudaStreamDestroy`.
+    pub fn stream_get_id(&self, device: DeviceId, stream: StreamId) -> Result<u64, SimError> {
+        let _gpu = self.profile.gpu(device)?;
+        Ok((u64::from(device.0) << 16)
+            .saturating_add(u64::from(stream.0))
+            .saturating_add(1))
+    }
+
+    /// `cudaStreamGetAttribute`. Query; legal during capture.
+    ///
+    /// Wraps existing stream state only. Green-context SM permille is not a
+    /// CUDA stream attribute.
+    pub fn stream_get_attribute(
+        &self,
+        device: DeviceId,
+        stream: StreamId,
+        attr: StreamAttr,
+    ) -> Result<StreamAttrValue, SimError> {
+        let _gpu = self.profile.gpu(device)?;
+        Ok(match attr {
+            StreamAttr::Priority => StreamAttrValue::Priority(self.stream_priority(device, stream)),
+            StreamAttr::SynchronizationPolicy => {
+                StreamAttrValue::SynchronizationPolicy(self.stream_sync_policy(device, stream))
+            }
+            StreamAttr::MemSyncDomain => {
+                StreamAttrValue::MemSyncDomain(self.stream_mem_sync_domain(device, stream))
+            }
+            StreamAttr::MemSyncDomainMap => {
+                StreamAttrValue::MemSyncDomainMap(self.stream_mem_sync_domain_map(device, stream)?)
+            }
+            StreamAttr::NvlinkUtilCentric => {
+                StreamAttrValue::NvlinkUtilCentric(self.stream_nvlink_util_centric(device, stream))
+            }
+            StreamAttr::AccessPolicy => {
+                StreamAttrValue::AccessPolicy(self.stream_access_policy(device, stream))
+            }
+        })
+    }
+
+    /// `cudaStreamSetAttribute`. Host-side; not a graph node.
+    ///
+    /// Same capture rule as the dedicated setters (legal during capture).
+    /// Attr/value type mismatch is Invalid `"stream attr"`.
+    pub fn stream_set_attribute(
+        &mut self,
+        device: DeviceId,
+        stream: StreamId,
+        attr: StreamAttr,
+        value: StreamAttrValue,
+    ) -> Result<(), SimError> {
+        match (attr, value) {
+            (StreamAttr::Priority, StreamAttrValue::Priority(p)) => {
+                self.set_stream_priority(device, stream, p)
+            }
+            (StreamAttr::SynchronizationPolicy, StreamAttrValue::SynchronizationPolicy(policy)) => {
+                self.set_stream_sync_policy(device, stream, policy)
+            }
+            (StreamAttr::MemSyncDomain, StreamAttrValue::MemSyncDomain(domain)) => {
+                self.set_stream_mem_sync_domain(device, stream, domain)
+            }
+            (StreamAttr::MemSyncDomainMap, StreamAttrValue::MemSyncDomainMap(map)) => {
+                self.set_stream_mem_sync_domain_map(device, stream, map)
+            }
+            (StreamAttr::NvlinkUtilCentric, StreamAttrValue::NvlinkUtilCentric(yes)) => {
+                self.set_stream_nvlink_util_centric(device, stream, yes)
+            }
+            (StreamAttr::AccessPolicy, StreamAttrValue::AccessPolicy(w)) => {
+                self.set_stream_access_policy(device, stream, w)
+            }
+            _ => Err(SimError::Invalid { why: "stream attr" }),
+        }
+    }
+
+    /// Mark streams `1 .. n_streams` blocking on every GPU (`cudaStreamCreate`).
+    ///
+    /// [`StreamId::NULL`] stays the default stream. `n_streams <= 1` is a no-op.
+    pub fn set_created_streams_blocking(&mut self, n_streams: u8) -> Result<(), SimError> {
+        let devices: Vec<DeviceId> = self.profile.gpus.iter().map(|g| g.id).collect();
+        for d in devices {
+            for s in 1..n_streams {
+                self.set_stream_blocking(d, StreamId(u16::from(s)), true)?;
+            }
+        }
+        Ok(())
+    }
+
+    /// `cudaStreamCreateWithPriority` for streams `1 .. n_streams` on every GPU.
+    ///
+    /// Priority equals the stream id (higher id runs first when compute
+    /// contends). [`StreamId::NULL`] stays `0`. `n_streams <= 1` is a no-op.
+    pub fn set_created_streams_priority(&mut self, n_streams: u8) -> Result<(), SimError> {
+        let devices: Vec<DeviceId> = self.profile.gpus.iter().map(|g| g.id).collect();
+        for d in devices {
+            for s in 1..n_streams {
+                self.set_stream_priority(d, StreamId(u16::from(s)), i32::from(s))?;
+            }
+        }
+        Ok(())
+    }
+
+    /// `cudaStreamSetAttribute` SynchronizationPolicy on streams `1 .. n_streams`.
+    ///
+    /// [`StreamId::NULL`] stays [`SynchronizationPolicy::Auto`]. `n_streams <= 1`
+    /// is a no-op.
+    pub fn set_created_streams_sync_policy(
+        &mut self,
+        n_streams: u8,
+        policy: SynchronizationPolicy,
+    ) -> Result<(), SimError> {
+        let devices: Vec<DeviceId> = self.profile.gpus.iter().map(|g| g.id).collect();
+        for d in devices {
+            for s in 1..n_streams {
+                self.set_stream_sync_policy(d, StreamId(u16::from(s)), policy)?;
+            }
+        }
+        Ok(())
+    }
+
+    /// Take one Hyper-Q compute slot, or `false` if [`GpuProfile::compute_slots`] are full.
+    fn take_compute(&mut self, device: DeviceId, span: SmResource) -> Result<bool, SimError> {
+        self.take_compute_n(device, 1, span)
+    }
+
+    /// Take `n` Hyper-Q slots (`cudaLaunchCooperativeKernel` takes every slot).
+    ///
+    /// Occupancy is among running kernels whose green-context SM spans overlap
+    /// `span`. Disjoint green contexts do not share exclusive compute.
+    fn take_compute_n(
+        &mut self,
+        device: DeviceId,
+        n: u8,
+        span: SmResource,
+    ) -> Result<bool, SimError> {
+        let cap = self.profile.gpu(device)?.compute_slots.max(1);
+        let need = n.max(1);
+        let used = self.overlapping_compute_slots(device, span)?;
+        if used.saturating_add(need) > cap {
+            return Ok(false);
+        }
+        let rt = self.gpu_rt_mut(device)?;
+        rt.compute = rt.compute.saturating_add(need);
+        Ok(true)
+    }
+
+    fn overlapping_compute_slots(
+        &self,
+        device: DeviceId,
+        span: SmResource,
+    ) -> Result<u8, SimError> {
+        let mut used = 0u8;
+        for r in &self.running {
+            let Some(op) = self.ops.get(&r.op) else {
+                continue;
+            };
+            if op.device != device {
+                continue;
+            }
+            if !matches!(
+                op.kind,
+                Kind::Kernel { .. }
+                    | Kind::Memset(_)
+                    | Kind::DeviceLaunch { .. }
+                    | Kind::AllReduce { .. }
+            ) {
+                continue;
+            }
+            if !op.sm_span.overlaps(span) {
+                continue;
+            }
+            used = used.saturating_add(self.op_kernel_slots(op)?);
+        }
+        Ok(used)
+    }
+
+    /// Release one Hyper-Q compute slot.
+    fn drop_compute(&mut self, device: DeviceId) -> Result<(), SimError> {
+        self.drop_compute_n(device, 1)
+    }
+
+    /// Release `n` Hyper-Q slots.
+    fn drop_compute_n(&mut self, device: DeviceId, n: u8) -> Result<(), SimError> {
+        let rt = self.gpu_rt_mut(device)?;
+        rt.compute = rt.compute.saturating_sub(n.max(1));
+        Ok(())
+    }
+
+    /// Slots a kernel occupies: cooperative grids and MaxShared carveout need
+    /// the whole GPU. A Default/LoadBalancing cluster occupies
+    /// `min(blocks, compute_slots)`. Spread occupies every slot. Preferred
+    /// cluster size is used when it fits in `compute_slots`. Launch Default
+    /// cluster policy uses [`Self::set_func_cluster_policy`].
+    fn kernel_slots(
+        &self,
+        device: DeviceId,
+        cooperative: bool,
+        cluster: Option<ClusterDim>,
+        preferred: Option<ClusterDim>,
+        policy: ClusterSchedulingPolicy,
+        carveout: SharedMemCarveout,
+    ) -> Result<u8, SimError> {
+        let cap = self.profile.gpu(device)?.compute_slots.max(1);
+        let carveout = match carveout {
+            SharedMemCarveout::Default => self.gpu_rt(device)?.func_carveout,
+            other => other,
+        };
+        if cooperative || carveout.occupies_all_slots() {
+            return Ok(cap);
+        }
+        let blocks = self.effective_cluster_blocks(device, cluster, preferred)?;
+        if blocks <= 1 {
+            return Ok(1);
+        }
+        let policy = match policy {
+            ClusterSchedulingPolicy::Default => self.gpu_rt(device)?.func_cluster_policy,
+            other => other,
+        };
+        if policy == ClusterSchedulingPolicy::Spread {
+            return Ok(cap);
+        }
+        let n = blocks.min(u32::from(cap));
+        Ok(u8::try_from(n).unwrap_or(cap).max(1))
+    }
+
+    fn op_kernel_slots(&self, op: &Op) -> Result<u8, SimError> {
+        let cooperative = match &op.kind {
+            Kind::Kernel { cooperative, .. } => *cooperative,
+            _ => return Ok(1),
+        };
+        let slots = self.kernel_slots(
+            op.device,
+            cooperative,
+            op.cluster,
+            op.preferred_cluster,
+            op.cluster_policy,
+            op.carveout,
+        )?;
+        if op.nvlink_util_centric && self.profile.has_nvlink() {
+            return Ok(self.profile.gpu(op.device)?.compute_slots.max(1));
+        }
+        Ok(slots)
+    }
+
+    /// `cudaDevAttrCooperativeLaunch` must be set on `device`.
+    fn require_cooperative(&self, device: DeviceId) -> Result<(), SimError> {
+        if self.profile.gpu(device)?.cooperative_launch {
+            Ok(())
+        } else {
+            Err(SimError::Invalid {
+                why: "cooperative launch not supported",
+            })
+        }
+    }
+
+    /// `cudaDeviceEnablePeerAccess(dst)` from `src`. No-op if `src == dst`.
+    pub fn enable_peer(&mut self, src: DeviceId, dst: DeviceId) -> Result<(), SimError> {
+        if src == dst {
+            return Ok(());
+        }
+        let _link = self.profile.link(Some(src), Some(dst))?;
+        let _was = self.peer_enabled.insert((src, dst));
+        Ok(())
+    }
+
+    /// `cudaDeviceEnablePeerAccess` with a flags word.
+    ///
+    /// CUDA requires `flags == 0` ([`PeerAccessFlags::DEFAULT`]). Other bits
+    /// are Invalid `"peer access flags"`. Typed [`Self::enable_peer`] stays.
+    /// Capture is legal (same as the typed helper).
+    pub fn enable_peer_with_flags(
+        &mut self,
+        src: DeviceId,
+        dst: DeviceId,
+        flags: u32,
+    ) -> Result<(), SimError> {
+        if flags != PeerAccessFlags::DEFAULT {
+            return Err(SimError::Invalid {
+                why: "peer access flags",
+            });
+        }
+        self.enable_peer(src, dst)
+    }
+
+    /// `cudaDeviceDisablePeerAccess(dst)` from `src`. Later D2D is [`SimError::PeerDisabled`].
+    pub fn disable_peer(&mut self, src: DeviceId, dst: DeviceId) -> Result<(), SimError> {
+        if src == dst {
+            return Ok(());
+        }
+        let _gpu_s = self.profile.gpu(src)?;
+        let _gpu_d = self.profile.gpu(dst)?;
+        let _was = self.peer_enabled.remove(&(src, dst));
+        Ok(())
+    }
+
+    /// Whether `src` may D2D-read `dst` (directed, like CUDA peer access).
+    #[must_use]
+    pub fn peer_access(&self, src: DeviceId, dst: DeviceId) -> bool {
+        src == dst || self.peer_enabled.contains(&(src, dst))
+    }
+
+    /// No unfinished ops on `(device, stream)`, including in-flight.
+    ///
+    /// Same as [`Self::query_stream`]: a capturing stream is [`SimError::Invalid`].
+    pub fn stream_is_idle(&self, device: DeviceId, stream: StreamId) -> Result<bool, SimError> {
+        self.query_stream(device, stream)
+    }
+
+    /// `cudaStreamQuery`: whether `(device, stream)` has no unfinished ops. Does not wait.
+    ///
+    /// Unknown devices are [`SimError::Invalid`]. A busy stream is `Ok(false)`.
+    /// A stream in an active graph capture is [`SimError::Invalid`].
+    pub fn query_stream(&self, device: DeviceId, stream: StreamId) -> Result<bool, SimError> {
+        let _gpu = self.profile.gpu(device)?;
+        if self.in_capture(device, stream) {
+            return Err(SimError::Invalid {
+                why: "cannot query stream during capture",
+            });
+        }
+        Ok(self.stream_idle(device, stream))
+    }
+
+    /// Recorded event that has fired ([`Self::query_event`] / wait).
+    ///
+    /// A [`ProgrammaticEvent`] with [`ProgrammaticEvent::trigger_at_block_start`]
+    /// fires when the kernel starts. Otherwise
+    /// [`ProgrammaticLaunch::trigger`] fires at the PDL trigger, before the
+    /// kernel completes. A normal [`Self::record_event`] fires when that
+    /// record op completes.
+    #[must_use]
+    pub fn event_complete(&self, event: EventId) -> bool {
+        self.event_is_recorded(event)
+    }
+
+    /// `cudaEventQuery`: whether `event` is recorded and complete. Does not wait.
+    ///
+    /// Unknown ids are [`SimError::UnknownEvent`]. Incomplete records are `Ok(false)`.
+    /// An [`Self::ipc_open_event`] alias follows the source record.
+    pub fn query_event(&self, event: EventId) -> Result<bool, SimError> {
+        if !self.events.contains_key(&event) {
+            return Err(SimError::UnknownEvent { event: event.0 });
+        }
+        Ok(self.event_complete(event))
+    }
+
+    fn event_root(&self, event: EventId) -> EventId {
+        event_root_of(&self.events, event)
+    }
+
+    fn event_recorded_by(&self, event: EventId) -> Option<OpId> {
+        self.events
+            .get(&self.event_root(event))
+            .and_then(|e| e.recorded_by)
+    }
+
+    fn event_is_recorded(&self, event: EventId) -> bool {
+        let root = self.event_root(event);
+        let Some(id) = self.event_recorded_by(root) else {
+            return false;
+        };
+        let Some(op) = self.ops.get(&id) else {
+            return false;
+        };
+        if op.cancelled {
+            return false;
+        }
+        if op.done {
+            return true;
+        }
+        if let Some(ns) = programmatic_event_stamp(op, root, &self.events) {
+            return self.clock >= ns;
+        }
+        op.launch_completion
+            .is_some_and(|p| self.event_root(p.event) == root)
+            && op.start_ns.is_some()
+    }
+
+    /// `cudaEventCreate` (timing enabled). Implicit on first [`Self::record_event`]
+    /// if the id was never created.
+    pub fn create_event(&mut self, event: EventId) -> Result<(), SimError> {
+        self.create_event_with_flags(event, EventCreateFlags::DEFAULT)
+    }
+
+    /// `cudaEventCreateWithFlags(..., cudaEventDisableTiming)`.
+    ///
+    /// Record / wait / query still work. [`Self::event_elapsed_ns`] is
+    /// [`SimError::Invalid`].
+    pub fn create_event_disable_timing(&mut self, event: EventId) -> Result<(), SimError> {
+        self.create_event_with_flags(event, EventCreateFlags::DISABLE_TIMING)
+    }
+
+    /// `cudaEventCreateWithFlags(..., cudaEventInterprocess | cudaEventDisableTiming)`.
+    ///
+    /// Required for [`Self::ipc_get_event`]. Timing is disabled (CUDA: Interprocess
+    /// requires DisableTiming).
+    pub fn create_event_interprocess(&mut self, event: EventId) -> Result<(), SimError> {
+        self.create_event_with_flags(
+            event,
+            EventCreateFlags::DISABLE_TIMING | EventCreateFlags::INTERPROCESS,
+        )
+    }
+
+    /// `cudaEventCreateWithFlags(..., cudaEventBlockingSync)`.
+    ///
+    /// [`Self::synchronize_event`] pays [`crate::GpuProfile::host_sync_blocking_ns`].
+    /// Timing stays enabled.
+    pub fn create_event_blocking_sync(&mut self, event: EventId) -> Result<(), SimError> {
+        self.create_event_with_flags(event, EventCreateFlags::BLOCKING_SYNC)
+    }
+
+    /// `cudaEventCreateWithFlags`. Capture cannot include it.
+    ///
+    /// Known bits: [`EventCreateFlags::DISABLE_TIMING`] /
+    /// [`EventCreateFlags::INTERPROCESS`] /
+    /// [`EventCreateFlags::BLOCKING_SYNC`]. [`INTERPROCESS`](EventCreateFlags::INTERPROCESS)
+    /// requires disable-timing (Invalid `"interprocess timing"` otherwise).
+    /// Other bits are Invalid `"event create flags"`.
+    pub fn create_event_with_flags(&mut self, event: EventId, flags: u32) -> Result<(), SimError> {
+        const KNOWN: u32 = EventCreateFlags::DISABLE_TIMING
+            | EventCreateFlags::INTERPROCESS
+            | EventCreateFlags::BLOCKING_SYNC;
+        if flags & !KNOWN != 0 {
+            return Err(SimError::Invalid {
+                why: "event create flags",
+            });
+        }
+        let disable = flags & EventCreateFlags::DISABLE_TIMING != 0;
+        let interprocess = flags & EventCreateFlags::INTERPROCESS != 0;
+        let blocking = flags & EventCreateFlags::BLOCKING_SYNC != 0;
+        if interprocess && !disable {
+            return Err(SimError::Invalid {
+                why: "interprocess timing",
+            });
+        }
+        self.insert_event(event, !disable, interprocess, blocking)
+    }
+
+    /// `cudaEventDestroy`. Host-synchronous. Capture cannot include it.
+    ///
+    /// An event that was recorded and is not yet complete waits like
+    /// [`Self::synchronize_event`]. A never-recorded event returns immediately.
+    /// Unknown ids are [`SimError::UnknownEvent`]. The id may be created again.
+    /// Destroy of an [`Self::ipc_open_event`] alias does not destroy the source.
+    /// Destroy of a source with live imports is Invalid `"ipc mapped"`.
+    pub fn destroy_event(&mut self, event: EventId) -> Result<(), SimError> {
+        self.fail_if_capturing("cannot capture event destroy")?;
+        let (ipc_src, ipc_opens) = {
+            let ev = self
+                .events
+                .get(&event)
+                .ok_or(SimError::UnknownEvent { event: event.0 })?;
+            (ev.ipc_src, ev.ipc_opens)
+        };
+        if ipc_opens > 0 {
+            return Err(SimError::Invalid { why: "ipc mapped" });
+        }
+        if self.event_recorded_by(event).is_some() {
+            self.synchronize_event(event)?;
+        }
+        if let Some(src) = ipc_src {
+            let _gone = self.events.remove(&event);
+            if let Some(s) = self.events.get_mut(&src) {
+                s.ipc_opens = s.ipc_opens.saturating_sub(1);
+            }
+            return Ok(());
+        }
+        self.ipc_event_handles.retain(|_, e| *e != event);
+        let _gone = self.events.remove(&event);
+        Ok(())
+    }
+
+    /// Whether `event` was created with timing enabled (`cudaEventDefault`).
+    pub fn event_timing(&self, event: EventId) -> Result<bool, SimError> {
+        self.events
+            .get(&event)
+            .map(|e| e.timing)
+            .ok_or(SimError::UnknownEvent { event: event.0 })
+    }
+
+    /// Whether `event` was created with [`EventCreateFlags::BLOCKING_SYNC`].
+    pub fn event_blocking_sync(&self, event: EventId) -> Result<bool, SimError> {
+        self.events
+            .get(&event)
+            .map(|e| e.blocking_sync)
+            .ok_or(SimError::UnknownEvent { event: event.0 })
+    }
+
+    /// `cudaEventGetFlags`. Query; legal during capture.
+    ///
+    /// Reconstructs the [`EventCreateFlags`] word stored at create. Unknown
+    /// events are [`SimError::UnknownEvent`]. Distinct from
+    /// [`Self::event_timing`] / [`Self::event_blocking_sync`]. An
+    /// [`Self::ipc_open_event`] alias reports Interprocess plus DisableTiming.
+    pub fn event_get_flags(&self, event: EventId) -> Result<u32, SimError> {
+        let e = self
+            .events
+            .get(&event)
+            .ok_or(SimError::UnknownEvent { event: event.0 })?;
+        let mut flags = EventCreateFlags::DEFAULT;
+        if !e.timing {
+            flags |= EventCreateFlags::DISABLE_TIMING;
+        }
+        if e.interprocess {
+            flags |= EventCreateFlags::INTERPROCESS;
+        }
+        if e.blocking_sync {
+            flags |= EventCreateFlags::BLOCKING_SYNC;
+        }
+        Ok(flags)
+    }
+
+    /// `cuEventGetId` / `cudaEventGetId`. Query; legal during capture.
+    ///
+    /// Unique per [`EventId`] for this VM. [`EventId`] stays caller-chosen;
+    /// this is not that handle and not [`Self::stream_get_id`]. Unknown
+    /// events are [`SimError::UnknownEvent`]. Recreating the same [`EventId`]
+    /// after [`Self::destroy_event`] returns the same id (no generation
+    /// counter). Distinct from [`Self::event_get_flags`].
+    pub fn event_get_id(&self, event: EventId) -> Result<u64, SimError> {
+        if !self.events.contains_key(&event) {
+            return Err(SimError::UnknownEvent { event: event.0 });
+        }
+        Ok(u64::from(event.0).saturating_add(1))
+    }
+
+    fn insert_event(
+        &mut self,
+        event: EventId,
+        timing: bool,
+        interprocess: bool,
+        blocking_sync: bool,
+    ) -> Result<(), SimError> {
+        self.fail_if_capturing("cannot capture event create")?;
+        if self.events.contains_key(&event) {
+            return Err(SimError::Invalid {
+                why: "event already created",
+            });
+        }
+        let mut ev = Ev::new(timing);
+        ev.interprocess = interprocess;
+        ev.blocking_sync = blocking_sync;
+        let _prev = self.events.insert(event, ev);
+        Ok(())
+    }
+
+    /// Drop not-yet-started ops on `(device, stream)`. In-flight ops still complete.
+    pub fn cancel_stream(&mut self, device: DeviceId, stream: StreamId) -> Result<u32, SimError> {
+        let _gpu = self.profile.gpu(device)?;
+        let running: BTreeSet<OpId> = self.running.iter().map(|r| r.op).collect();
+        let mut n = 0u32;
+        let ids: Vec<OpId> = self
+            .ops
+            .iter()
+            .filter(|(id, o)| {
+                o.device == device && o.stream == stream && !o.done && !running.contains(id)
+            })
+            .map(|(id, _)| *id)
+            .collect();
+        for id in ids {
+            if let Some(op) = self.ops.get_mut(&id) {
+                op.cancelled = true;
+                op.done = true;
+                op.done_ns = Some(self.clock);
+                n = n.saturating_add(1);
+            }
+        }
+        Ok(n)
+    }
+
+    /// How many submitted ops were skipped by cancel or a failed transfer.
+    #[must_use]
+    pub fn cancelled_count(&self) -> u32 {
+        let n = self.ops.values().filter(|o| o.cancelled).count();
+        u32::try_from(n).unwrap_or(u32::MAX)
+    }
+
+    /// Start every currently ready op without advancing the virtual clock.
+    pub fn start_ready(&mut self) -> Result<(), SimError> {
+        self.schedule()
+    }
+
+    /// Ring allreduce among `parts`. Each alloc must already be resident on its device.
+    pub fn allreduce(
+        &mut self,
+        parts: &[(DeviceId, AllocId)],
+        bytes: u64,
+        stream: StreamId,
+    ) -> Result<OpId, SimError> {
+        if parts.len() < 2 {
+            return Err(SimError::Invalid {
+                why: "allreduce needs >= 2 ranks",
+            });
+        }
+        let device = parts
+            .first()
+            .ok_or(SimError::Invalid {
+                why: "allreduce needs >= 2 ranks",
+            })?
+            .0;
+        self.submit(
+            device,
+            stream,
+            Kind::AllReduce {
+                parts: parts.to_vec(),
+                bytes,
+            },
+        )
+    }
+
+    /// Start recording later submits on `(device, stream)`. Recorded ops do not run.
+    ///
+    /// Default mode is [`StreamCaptureMode::Relaxed`] (or the last
+    /// [`Self::thread_exchange_stream_capture_mode`]). Independent streams keep
+    /// running. A stream that [`Self::wait_event`]s an event recorded in this
+    /// capture **joins** (CUDA forked capture) so copy and compute can overlap
+    /// inside one [`Self::launch_graph`]. [`Self::record_event_external`] /
+    /// [`Self::wait_event_external`] do not join. Creates an empty graph (no
+    /// clock tick); [`Self::end_capture`] appends recorded nodes and returns
+    /// that id. For an existing graph see [`Self::begin_capture_to_graph`].
+    /// [`Self::begin_capture_with_mode`] picks the mode for this capture only.
+    pub fn begin_capture(&mut self, device: DeviceId, stream: StreamId) -> Result<(), SimError> {
+        if self.capturing.is_some() {
+            return Err(SimError::Invalid {
+                why: "nested graph capture",
+            });
+        }
+        let _gpu = self.profile.gpu(device)?;
+        if !self.stream_idle(device, stream) {
+            return Err(SimError::Invalid {
+                why: "capture requires idle stream",
+            });
+        }
+        let graph = self.insert_graph(device, stream);
+        self.begin_capture_inner(device, stream, graph, &[], self.capture_mode)
+    }
+
+    /// `cudaStreamBeginCapture` with an explicit [`StreamCaptureMode`].
+    ///
+    /// Does not change the thread default ([`Self::thread_exchange_stream_capture_mode`]).
+    pub fn begin_capture_with_mode(
+        &mut self,
+        device: DeviceId,
+        stream: StreamId,
+        mode: StreamCaptureMode,
+    ) -> Result<(), SimError> {
+        if self.capturing.is_some() {
+            return Err(SimError::Invalid {
+                why: "nested graph capture",
+            });
+        }
+        let _gpu = self.profile.gpu(device)?;
+        if !self.stream_idle(device, stream) {
+            return Err(SimError::Invalid {
+                why: "capture requires idle stream",
+            });
+        }
+        let graph = self.insert_graph(device, stream);
+        self.begin_capture_inner(device, stream, graph, &[], mode)
+    }
+
+    /// `cudaStreamBeginCaptureToGraph`: record later submits into `graph`.
+    ///
+    /// `graph` must already exist and must not be instantiated. Capture roots
+    /// (nodes with no predecessors in this fragment) additionally depend on
+    /// `deps` (existing node indices). Empty `deps` makes those nodes extra
+    /// roots, so they may Hyper-Q overlap prior nodes at launch. Same device
+    /// as `graph`'s origin. Nested capture is Invalid. Capture does not run
+    /// recorded ops. [`Self::end_capture`] returns `graph`.
+    /// A parked in-flight-destroyed exec is `"unknown graph"` first. Live
+    /// exec still `"graph instantiated"`. Capture-to-graph of the definition
+    /// stays.
+    pub fn begin_capture_to_graph(
+        &mut self,
+        device: DeviceId,
+        stream: StreamId,
+        graph: GraphId,
+        deps: &[usize],
+    ) -> Result<(), SimError> {
+        self.begin_capture_inner(device, stream, graph, deps, self.capture_mode)
+    }
+
+    /// `cudaStreamBeginCaptureToGraph` with an explicit [`StreamCaptureMode`].
+    pub fn begin_capture_to_graph_with_mode(
+        &mut self,
+        device: DeviceId,
+        stream: StreamId,
+        graph: GraphId,
+        deps: &[usize],
+        mode: StreamCaptureMode,
+    ) -> Result<(), SimError> {
+        self.begin_capture_inner(device, stream, graph, deps, mode)
+    }
+
+    fn begin_capture_inner(
+        &mut self,
+        device: DeviceId,
+        stream: StreamId,
+        graph: GraphId,
+        deps: &[usize],
+        mode: StreamCaptureMode,
+    ) -> Result<(), SimError> {
+        let _gpu = self.profile.gpu(device)?;
+        if self.capturing.is_some() {
+            return Err(SimError::Invalid {
+                why: "nested graph capture",
+            });
+        }
+        self.require_live_graph(graph)?;
+        if !self.stream_idle(device, stream) {
+            return Err(SimError::Invalid {
+                why: "capture requires idle stream",
+            });
+        }
+        let into = self.capture_into(device, graph, deps)?;
+        let mut streams = BTreeSet::new();
+        let _ins = streams.insert((device, stream));
+        let id = self.next_capture_id;
+        self.next_capture_id = self.next_capture_id.saturating_add(1);
+        self.capturing = Some(Capture {
+            origin: (device, stream),
+            streams,
+            events: BTreeSet::new(),
+            mem_allocs: Vec::new(),
+            into,
+            pending: BTreeMap::new(),
+            extra_abs: BTreeMap::new(),
+            mode,
+            id,
+        });
+        self.capture_buf.clear();
+        Ok(())
+    }
+
+    fn capture_into(
+        &self,
+        device: DeviceId,
+        graph: GraphId,
+        deps: &[usize],
+    ) -> Result<CaptureInto, SimError> {
+        let g = self.live_graph(graph)?;
+        if g.instantiated {
+            return Err(SimError::Invalid {
+                why: "graph instantiated",
+            });
+        }
+        if g.origin.0 != device {
+            return Err(SimError::Invalid {
+                why: "capture gpu mismatch",
+            });
+        }
+        let n = g.steps.len();
+        let mut extra = Vec::new();
+        for &d in deps {
+            if d >= n {
+                return Err(SimError::Invalid {
+                    why: "graph dependency",
+                });
+            }
+            if !extra.contains(&d) {
+                extra.push(d);
+            }
+        }
+        extra.sort_unstable();
+        Ok(CaptureInto { graph, deps: extra })
+    }
+
+    /// Finish capture. The graph is empty of side effects until [`Self::launch_graph`].
+    ///
+    /// Appends recorded nodes onto the graph from [`Self::begin_capture`] /
+    /// [`Self::begin_capture_to_graph`] and returns that id.
+    pub fn end_capture(&mut self) -> Result<GraphId, SimError> {
+        let Some(cap) = self.capturing.take() else {
+            return Err(SimError::Invalid {
+                why: "end_capture without begin_capture",
+            });
+        };
+        let steps = core::mem::take(&mut self.capture_buf);
+        self.append_captured(cap.into, steps, cap.mem_allocs, cap.extra_abs)
+    }
+
+    /// `cudaStreamUpdateCaptureDependencies`: extra deps for the next captured
+    /// node on this stream, **in addition to** stream-order (not instead of).
+    ///
+    /// `deps` are destination-graph indices: existing nodes `0..graph_len-1`,
+    /// then this-session nodes at `graph_len + i`. [`Self::graph_len`] during
+    /// capture does not include the session buffer. [`CaptureDepOp::Set`]
+    /// replaces the pending set; [`CaptureDepOp::Add`] unions. The pending set
+    /// is consumed by the next captured submit on this stream. The stream must
+    /// be in the capture set. Same-stream independent children still need
+    /// separate [`Self::begin_capture_to_graph`] sessions.
+    pub fn stream_update_capture_dependencies(
+        &mut self,
+        device: DeviceId,
+        stream: StreamId,
+        deps: &[usize],
+        mode: CaptureDepOp,
+    ) -> Result<(), SimError> {
+        let Some(cap) = self.capturing.as_ref() else {
+            return Err(SimError::Invalid {
+                why: "not capturing",
+            });
+        };
+        if !cap.streams.contains(&(device, stream)) {
+            return Err(SimError::Invalid {
+                why: "stream not capturing",
+            });
+        }
+        let existing = self
+            .graphs
+            .get(&cap.into.graph)
+            .map_or(0, |g| g.steps.len());
+        let hi = existing.saturating_add(self.capture_buf.len());
+        for &p in deps {
+            if p >= hi {
+                return Err(SimError::Invalid {
+                    why: "graph dependency",
+                });
+            }
+        }
+        let mut named = deps.to_vec();
+        named.sort_unstable();
+        named.dedup();
+        let Some(cap) = self.capturing.as_mut() else {
+            return Err(SimError::Invalid {
+                why: "not capturing",
+            });
+        };
+        match mode {
+            CaptureDepOp::Set => {
+                let _old = cap.pending.insert((device, stream), named);
+            }
+            CaptureDepOp::Add => {
+                let slot = cap.pending.entry((device, stream)).or_default();
+                slot.extend(named);
+                slot.sort_unstable();
+                slot.dedup();
+            }
+        }
+        Ok(())
+    }
+
+    /// `cudaStreamIsCapturing`.
+    #[must_use]
+    pub fn stream_is_capturing(&self, device: DeviceId, stream: StreamId) -> bool {
+        self.in_capture(device, stream)
+    }
+
+    /// `cudaStreamGetCaptureInfo`. `None` if this stream is not capturing.
+    ///
+    /// `pending_deps` are extra [`Self::stream_update_capture_dependencies`]
+    /// indices not yet consumed (not stream-order predecessors).
+    /// `dependencies` is the v2 array: last same-stream captured node union
+    /// those extras (destination-graph indices). `edge_data` is the v3 array
+    /// (Default type, ports 0; same length as `dependencies`). `id` is `id_out`
+    /// (unique per sequence; forked streams share it). [`Self::graph_len`] of
+    /// `info.graph` during capture excludes this session's buffer until
+    /// [`Self::end_capture`].
+    #[must_use]
+    pub fn stream_capture_info(
+        &self,
+        device: DeviceId,
+        stream: StreamId,
+    ) -> Option<StreamCaptureInfo> {
+        let cap = self.capturing.as_ref()?;
+        if !cap.streams.contains(&(device, stream)) {
+            return None;
+        }
+        let pending_deps = cap
+            .pending
+            .get(&(device, stream))
+            .cloned()
+            .unwrap_or_default();
+        let existing = self
+            .graphs
+            .get(&cap.into.graph)
+            .map_or(0, |g| g.steps.len());
+        let mut dependencies = pending_deps.clone();
+        if let Some(i) = self
+            .capture_buf
+            .iter()
+            .rposition(|s| s.device == device && s.stream == stream)
+        {
+            dependencies.push(existing.saturating_add(i));
+        }
+        dependencies.sort_unstable();
+        dependencies.dedup();
+        let edge_data = vec![GraphEdgeData::default(); dependencies.len()];
+        Some(StreamCaptureInfo {
+            graph: cap.into.graph,
+            origin: cap.origin,
+            pending_deps,
+            dependencies,
+            edge_data,
+            id: cap.id,
+            mode: cap.mode,
+        })
+    }
+
+    /// `cudaThreadExchangeStreamCaptureMode`. Returns the previous default.
+    ///
+    /// The next [`Self::begin_capture`] / [`Self::begin_capture_to_graph`] uses
+    /// `mode`. An in-flight capture keeps the mode it started with.
+    pub fn thread_exchange_stream_capture_mode(
+        &mut self,
+        mode: StreamCaptureMode,
+    ) -> StreamCaptureMode {
+        let prev = self.capture_mode;
+        self.capture_mode = mode;
+        prev
+    }
+
+    /// Thread default [`StreamCaptureMode`] for [`Self::begin_capture`].
+    #[must_use]
+    pub fn stream_capture_mode(&self) -> StreamCaptureMode {
+        self.capture_mode
+    }
+
+    fn append_captured(
+        &mut self,
+        into: CaptureInto,
+        steps: Vec<GraphStep>,
+        mem_allocs: Vec<AllocId>,
+        extra_abs: BTreeMap<usize, Vec<usize>>,
+    ) -> Result<GraphId, SimError> {
+        self.fail_capture_child_cycles(into.graph, &steps)?;
+        let g = self.graphs.get_mut(&into.graph).ok_or(SimError::Invalid {
+            why: "unknown graph",
+        })?;
+        if g.instantiated {
+            return Err(SimError::Invalid {
+                why: "graph instantiated",
+            });
+        }
+        let offset = g.steps.len();
+        for (i, mut step) in steps.into_iter().enumerate() {
+            let was_root =
+                step.deps.is_empty() && extra_abs.get(&i).is_none_or(|abs| abs.is_empty());
+            let mut remapped = BTreeMap::new();
+            for (k, v) in step.edge_data {
+                let _prev = remapped.insert(k.saturating_add(offset), v);
+            }
+            step.edge_data = remapped;
+            for d in &mut step.deps {
+                *d = d.saturating_add(offset);
+            }
+            if let Some(abs) = extra_abs.get(&i) {
+                for extra in abs {
+                    if !step.deps.contains(extra) {
+                        step.deps.push(*extra);
+                    }
+                }
+            }
+            if was_root {
+                for extra in &into.deps {
+                    if !step.deps.contains(extra) {
+                        step.deps.push(*extra);
+                    }
+                }
+            }
+            step.deps.sort_unstable();
+            g.steps.push(step);
+        }
+        match self.graph_allocs.entry(into.graph) {
+            Entry::Occupied(mut e) => e.get_mut().extend(mem_allocs),
+            Entry::Vacant(e) => {
+                let _prev = e.insert(mem_allocs);
+            }
+        }
+        Ok(into.graph)
+    }
+
+    fn fail_capture_child_cycles(
+        &self,
+        parent: GraphId,
+        steps: &[GraphStep],
+    ) -> Result<(), SimError> {
+        for step in steps {
+            for child in nested_graphs(&step.kind) {
+                if child == parent || self.graph_tree_contains(child, parent)? {
+                    return Err(SimError::Invalid {
+                        why: "cyclic child graph",
+                    });
+                }
+            }
+        }
+        Ok(())
+    }
+
+    /// Enqueue every recorded op. Origin-stream nodes use `stream`; forked
+    /// streams keep the ids they joined with, so copy and compute can overlap.
+    /// Independent nodes (empty [`GraphStep::deps`]) use internal streams so
+    /// Hyper-Q can overlap them; the launch stream still waits for the whole
+    /// graph (`cudaGraphLaunch`).
+    ///
+    /// First launch [`Self::instantiate_graph`]s if needed (`cudaGraphInstantiate`
+    /// then [`Self::upload_graph`] then `cudaGraphLaunch`). Later launches skip
+    /// both. [`Self::instantiate_graph_auto_free`] frees graph mem on the launch
+    /// stream before a later launch's alloc nodes (`AutoFreeOnLaunch`).
+    /// During capture on a captured stream this records a child-graph node (the
+    /// child must already be instantiated). Independent streams still launch live.
+    /// [`Self::upload_graph`] is skipped while any stream is capturing (host-sync
+    /// upload cannot run during capture); the live launch still enqueues.
+    /// Destroying an in-flight exec does not abort this launch
+    /// (`cudaGraphExecDestroy`). Host SetParams during this launch stay.
+    pub fn launch_graph(&mut self, graph: GraphId, stream: StreamId) -> Result<u32, SimError> {
+        self.require_not_moved(graph)?;
+        let (origin, ready) = {
+            let g = self.graphs.get(&graph).ok_or(SimError::Invalid {
+                why: "unknown graph",
+            })?;
+            if g.handle_gone {
+                return Err(SimError::Invalid {
+                    why: "unknown graph",
+                });
+            }
+            (g.origin, g.ready())
+        };
+        if self.in_capture(origin.0, stream) {
+            return self.capture_child_graph(graph, origin.0, stream, ready);
+        }
+        let exec = self.ensure_exec(graph)?;
+        let uploaded = self
+            .graphs
+            .get(&exec)
+            .ok_or(SimError::Invalid {
+                why: "unknown graph",
+            })?
+            .uploaded;
+        let pending = if uploaded || self.capturing.is_some() {
+            None
+        } else {
+            self.pending_graph_upload(exec)
+        };
+        if pending.is_none() && !uploaded && self.capturing.is_none() {
+            self.upload_graph(exec)?;
+        }
+        let wait = pending.map(|id| [id]);
+        let extra: &[OpId] = match &wait {
+            Some(w) => w.as_slice(),
+            None => &[],
+        };
+        self.reset_graph_tree_conds(exec)?;
+        let mut stack = BTreeSet::new();
+        let n = self.enqueue_graph(exec, stream, true, &mut stack, extra)?;
+        self.pin_host_launch_tail(exec, stream, n)?;
+        Ok(n)
+    }
+
+    /// Record launch-stream tails after a live host launch. Empty launches
+    /// do not pin destroy to unrelated prior stream work. Concurrent launches
+    /// keep every still-in-flight tail.
+    fn pin_host_launch_tail(
+        &mut self,
+        exec: GraphId,
+        stream: StreamId,
+        n: u32,
+    ) -> Result<(), SimError> {
+        if n == 0 {
+            return Ok(());
+        }
+        let device = self
+            .graphs
+            .get(&exec)
+            .ok_or(SimError::Invalid {
+                why: "unknown graph",
+            })?
+            .origin
+            .0;
+        let Some(tail) = self.tail.get(&(device, stream)).copied() else {
+            return Ok(());
+        };
+        let mut tails = self
+            .graphs
+            .get(&exec)
+            .ok_or(SimError::Invalid {
+                why: "unknown graph",
+            })?
+            .host_launch_tails
+            .clone();
+        tails.retain(|op| !self.op_done(*op));
+        tails.push(tail);
+        self.graphs
+            .get_mut(&exec)
+            .ok_or(SimError::Invalid {
+                why: "unknown graph",
+            })?
+            .host_launch_tails = tails;
+        Ok(())
+    }
+
+    /// Device-side `cudaGraphLaunch` (`cudaGraphInstantiateFlagDeviceLaunch`).
+    ///
+    /// The exec must already be instantiated with [`GraphInstantiateFlags::DEVICE_LAUNCH`]
+    /// and uploaded ([`Self::upload_graph`]; host [`Self::launch_graph`] still
+    /// auto-uploads). Submits a launcher kernel that occupies one compute slot
+    /// for `graph_launch_ns`. When it completes the body is enqueued on
+    /// `stream`. A second device launch of the same exec before that work
+    /// finishes is Invalid. Host SetParams, SetAttribute, SetEnabled, and
+    /// CopyAttributes of this exec while that work is in flight are Invalid
+    /// `"device launch in flight"`. Getters stay. Destroy is legal and does
+    /// not abort the launch (`cudaGraphExecDestroy`: the handle is unknown;
+    /// the launch still finishes). Host [`Self::launch_graph`] destroy of this
+    /// exec also parks until that host launch completes. Host
+    /// [`Self::upload_graph`] plus [`Self::upload_graph_async`] of this exec
+    /// while that work is in flight are Invalid `"device launch in flight"`.
+    /// Capture cannot include it. [`Self::update_graph`] of a device-launch
+    /// exec is Invalid.
+    pub fn device_launch_graph(
+        &mut self,
+        graph: GraphId,
+        stream: StreamId,
+    ) -> Result<OpId, SimError> {
+        self.fail_if_capturing("cannot capture device launch")?;
+        let exec = self.as_exec(graph)?;
+        let (device, flags, uploaded, tail) = {
+            let g = self.graphs.get(&exec).ok_or(SimError::Invalid {
+                why: "unknown graph",
+            })?;
+            (
+                g.origin.0,
+                g.instantiate_flags,
+                g.uploaded,
+                g.device_launch_tail,
+            )
+        };
+        if flags & GraphInstantiateFlags::DEVICE_LAUNCH == 0 {
+            return Err(SimError::Invalid {
+                why: "graph not device launch",
+            });
+        }
+        if !uploaded {
+            return Err(SimError::Invalid {
+                why: "graph not uploaded",
+            });
+        }
+        if tail.is_some_and(|id| !self.op_done(id)) {
+            return Err(SimError::Invalid {
+                why: "device launch in flight",
+            });
+        }
+        let id = self.submit(device, stream, Kind::DeviceLaunch { graph: exec })?;
+        self.graphs
+            .get_mut(&exec)
+            .ok_or(SimError::Invalid {
+                why: "unknown graph",
+            })?
+            .device_launch_tail = Some(id);
+        Ok(id)
+    }
+
+    fn reset_graph_tree_conds(&mut self, root: GraphId) -> Result<(), SimError> {
+        let mut stack = vec![root];
+        let mut seen = BTreeSet::new();
+        while let Some(g) = stack.pop() {
+            if !seen.insert(g) {
+                continue;
+            }
+            let src = self.graphs.get(&g).and_then(|gr| gr.src);
+            for c in self.conds.values_mut() {
+                if c.assign_default && (c.graph == g || src == Some(c.graph)) {
+                    c.value = c.default;
+                }
+            }
+            let steps = self
+                .graphs
+                .get(&g)
+                .map(|x| x.view().to_vec())
+                .unwrap_or_default();
+            for step in steps {
+                stack.extend(nested_graphs(&step.kind));
+            }
+        }
+        Ok(())
+    }
+
+    fn capture_child_graph(
+        &mut self,
+        graph: GraphId,
+        device: DeviceId,
+        stream: StreamId,
+        instantiated: bool,
+    ) -> Result<u32, SimError> {
+        if !instantiated {
+            return Err(SimError::Invalid {
+                why: "child graph not instantiated",
+            });
+        }
+        let _id = self.submit_captured(
+            device,
+            stream,
+            Kind::ChildGraph {
+                graph,
+                ownership: GraphChildGraphOwnership::CLONE,
+            },
+        )?;
+        Ok(1)
+    }
+
+    /// Stream-ordered `cudaFreeAsync` of live graph mem before recorded steps
+    /// (`cudaGraphInstantiateFlagAutoFreeOnLaunch`). Not counted in launch size.
+    fn enqueue_auto_frees(&mut self, graph: GraphId, stream: StreamId) -> Result<(), SimError> {
+        let (device, ids) = {
+            let g = self.graphs.get(&graph).ok_or(SimError::Invalid {
+                why: "unknown graph",
+            })?;
+            if !g.auto_free_on_launch {
+                return Ok(());
+            }
+            let ids = self.graph_mem_ids(graph);
+            (g.origin.0, ids)
+        };
+        for id in ids {
+            let live = self
+                .alloc_ref(id)
+                .is_ok_and(|a| a.live && a.devices.contains(&device));
+            if !live {
+                continue;
+            }
+            let _op =
+                self.submit_launch(device, stream, Kind::Free { id }, LaunchCost::GraphBody)?;
+        }
+        Ok(())
+    }
+
+    fn enqueue_graph(
+        &mut self,
+        graph: GraphId,
+        stream: StreamId,
+        head: bool,
+        stack: &mut BTreeSet<GraphId>,
+        extra_wait: &[OpId],
+    ) -> Result<u32, SimError> {
+        if !stack.insert(graph) {
+            return Err(SimError::Invalid {
+                why: "cyclic child graph",
+            });
+        }
+        self.enqueue_auto_frees(graph, stream)?;
+        let (origin, steps) = {
+            let g = self.graphs.get(&graph).ok_or(SimError::Invalid {
+                why: "unknown graph",
+            })?;
+            (g.origin, g.view().to_vec())
+        };
+        let order = graph_topo_order(&steps)?;
+        let launch_tail = self.tail.get(&(origin.0, stream)).copied();
+        let mut n = 0u32;
+        let mut head = head;
+        let mut rec_ops: BTreeMap<EventId, OpId> = BTreeMap::new();
+        let mut node_ops: Vec<Vec<OpId>> = vec![Vec::new(); steps.len()];
+        let mut node_stream: Vec<Option<StreamId>> = vec![None; steps.len()];
+        let mut worker = 0u16;
+        let mut pending_joins = Vec::new();
+        for idx in order {
+            let step = steps.get(idx).ok_or(SimError::Invalid {
+                why: "graph dependency",
+            })?;
+            if self.graph_uses_node_priority(graph) {
+                self.enqueue_priority = Some(step.priority);
+            } else {
+                self.enqueue_priority = None;
+            }
+            self.enqueue_pdl = step.pdl;
+            self.enqueue_programmatic_event = step.programmatic_event;
+            self.enqueue_launch_completion = step.launch_completion;
+            self.enqueue_access_policy = step.access_policy;
+            self.enqueue_mem_sync_domain = Some(step.mem_sync_domain);
+            self.enqueue_mem_sync_map = Some(step.mem_sync_map);
+            self.enqueue_cluster = step.cluster;
+            self.enqueue_cluster_policy = step.cluster_policy;
+            self.enqueue_preferred_cluster = step.preferred_cluster;
+            self.enqueue_carveout = step.carveout;
+            self.enqueue_device_updatable = step.device_updatable;
+            self.enqueue_shared_mem = step.shared_mem;
+            self.enqueue_portable_cluster = step.portable_cluster;
+            self.enqueue_dynamic_shared = step.dynamic_shared;
+            self.enqueue_portable_shared = step.portable_shared;
+            self.enqueue_nvlink_util_centric = step.nvlink_util_centric;
+            self.enqueue_sync_policy = if matches!(step.kind, Kind::Kernel { .. }) {
+                step.sync_policy
+            } else {
+                SynchronizationPolicy::Auto
+            };
+            if let Some(ctx) = step.green_ctx {
+                self.require_live_green_ctx(ctx, step.device)?;
+            }
+            self.enqueue_green_ctx = step.green_ctx;
+            let wait = graph_node_waits(step, extra_wait, launch_tail, &node_ops)?;
+            let start_wait = graph_node_start_waits(step, &node_ops)?;
+            let mut nested_wait = wait.clone();
+            nested_wait.extend(start_wait.iter().copied());
+            let s = self.graph_exec_stream(origin, stream, step, &node_stream, &mut worker);
+            if let Some(slot) = node_stream.get_mut(idx) {
+                *slot = Some(s);
+            }
+            if step.destroyed {
+                continue;
+            }
+            if !step.enabled {
+                if let Some(ops) = node_ops.get_mut(idx) {
+                    ops.extend(nested_wait);
+                }
+                continue;
+            }
+            if let Kind::ChildGraph { graph: child, .. } = &step.kind {
+                let child = self.resolved_graph(*child)?;
+                let add = self.enqueue_graph(child, s, head, stack, &nested_wait)?;
+                head = false;
+                n = n.saturating_add(add);
+                self.note_nested_tail(
+                    step.device,
+                    s,
+                    stream,
+                    idx,
+                    &mut node_ops,
+                    &mut pending_joins,
+                );
+                continue;
+            }
+            if let Kind::If {
+                handle,
+                body,
+                else_body,
+            } = &step.kind
+            {
+                let handle = *handle;
+                let body = *body;
+                let else_body = *else_body;
+                let add = self.enqueue_pred_graph(
+                    CondPred::Nonzero(handle),
+                    self.resolved_graph(body)?,
+                    s,
+                    head,
+                    stack,
+                    &nested_wait,
+                )?;
+                head = false;
+                n = n.saturating_add(add);
+                if let Some(els) = else_body {
+                    let add = self.enqueue_pred_graph(
+                        CondPred::Zero(handle),
+                        self.resolved_graph(els)?,
+                        s,
+                        head,
+                        stack,
+                        &nested_wait,
+                    )?;
+                    n = n.saturating_add(add);
+                }
+                self.note_nested_tail(
+                    step.device,
+                    s,
+                    stream,
+                    idx,
+                    &mut node_ops,
+                    &mut pending_joins,
+                );
+                continue;
+            }
+            if let Kind::While { handle, body } = &step.kind {
+                let handle = *handle;
+                let body = self.resolved_graph(*body)?;
+                let add = self.enqueue_pred_graph(
+                    CondPred::Nonzero(handle),
+                    body,
+                    s,
+                    head,
+                    stack,
+                    &nested_wait,
+                )?;
+                head = false;
+                n = n.saturating_add(add);
+                let body_tail = self.tail.get(&(step.device, s)).copied();
+                self.enqueue_preds.push(CondPred::Nonzero(handle));
+                let tick = self.submit_launch(
+                    step.device,
+                    s,
+                    Kind::WhileTick {
+                        handle,
+                        body,
+                        iter: 1,
+                    },
+                    LaunchCost::GraphBody,
+                );
+                let _pop = self.enqueue_preds.pop();
+                let tick = tick?;
+                for dep in &wait {
+                    self.add_op_dep(tick, *dep);
+                }
+                for dep in &start_wait {
+                    self.add_op_start_dep(tick, *dep);
+                }
+                if let Some(t) = body_tail {
+                    if t != tick {
+                        self.add_op_dep(tick, t);
+                    }
+                }
+                n = n.saturating_add(1);
+                self.note_nested_tail(
+                    step.device,
+                    s,
+                    stream,
+                    idx,
+                    &mut node_ops,
+                    &mut pending_joins,
+                );
+                continue;
+            }
+            if let Kind::Switch { handle, bodies } = &step.kind {
+                let handle = *handle;
+                let bodies = bodies.clone();
+                for (i, body) in bodies.into_iter().enumerate() {
+                    let idx_u = u32::try_from(i).map_err(|_| SimError::Invalid {
+                        why: "switch branches",
+                    })?;
+                    let add = self.enqueue_pred_graph(
+                        CondPred::Equals(handle, idx_u),
+                        self.resolved_graph(body)?,
+                        s,
+                        head,
+                        stack,
+                        &nested_wait,
+                    )?;
+                    head = false;
+                    n = n.saturating_add(add);
+                }
+                self.note_nested_tail(
+                    step.device,
+                    s,
+                    stream,
+                    idx,
+                    &mut node_ops,
+                    &mut pending_joins,
+                );
+                continue;
+            }
+            let rec = match &step.kind {
+                Kind::EventRecord { event, .. } => Some(*event),
+                _ => step
+                    .programmatic_event
+                    .map(|p| p.event)
+                    .or_else(|| step.launch_completion.map(|p| p.event)),
+            };
+            let wait_ev = match &step.kind {
+                Kind::EventWait { event, external } => Some((*event, *external)),
+                _ => None,
+            };
+            let launch = if head {
+                LaunchCost::GraphHead
+            } else {
+                LaunchCost::GraphBody
+            };
+            head = false;
+            let id = self.submit_launch(step.device, s, step.kind.clone(), launch)?;
+            for dep in wait {
+                self.add_op_dep(id, dep);
+            }
+            for dep in start_wait {
+                self.add_op_start_dep(id, dep);
+            }
+            if let Some(event) = rec {
+                let _prev = rec_ops.insert(self.event_root(event), id);
+            }
+            if let Some((event, external)) = wait_ev {
+                let root = self.event_root(event);
+                if external {
+                    if let Some(rec_id) = self.event_recorded_by(root) {
+                        self.add_op_dep(id, rec_id);
+                    }
+                } else if let Some(rec_id) = rec_ops.get(&root).copied() {
+                    self.add_op_dep(id, rec_id);
+                }
+            }
+            if let Some(ops) = node_ops.get_mut(idx) {
+                ops.push(id);
+            }
+            if s != stream {
+                pending_joins.push(id);
+            }
+            n = n.saturating_add(1);
+        }
+        if !pending_joins.is_empty() {
+            self.graph_joins
+                .entry((origin.0, stream))
+                .or_default()
+                .extend(pending_joins);
+        }
+        let _gone = stack.remove(&graph);
+        self.enqueue_priority = None;
+        self.enqueue_pdl = ProgrammaticLaunch::default();
+        self.enqueue_programmatic_event = None;
+        self.enqueue_launch_completion = None;
+        self.enqueue_access_policy = None;
+        self.enqueue_mem_sync_domain = None;
+        self.enqueue_mem_sync_map = None;
+        self.enqueue_cluster = None;
+        self.enqueue_cluster_policy = ClusterSchedulingPolicy::Default;
+        self.enqueue_preferred_cluster = None;
+        self.enqueue_carveout = SharedMemCarveout::Default;
+        self.enqueue_device_updatable = false;
+        self.enqueue_shared_mem = SharedMemoryMode::Default;
+        self.enqueue_portable_cluster = PortableClusterMode::Default;
+        self.enqueue_dynamic_shared = 0;
+        self.enqueue_portable_shared = PortableSharedMode::Default;
+        self.enqueue_nvlink_util_centric = false;
+        self.enqueue_sync_policy = SynchronizationPolicy::Auto;
+        self.enqueue_green_ctx = None;
+        Ok(n)
+    }
+
+    fn graph_uses_node_priority(&self, graph: GraphId) -> bool {
+        self.graphs
+            .get(&graph)
+            .is_some_and(|g| g.instantiate_flags & GraphInstantiateFlags::USE_NODE_PRIORITY != 0)
+    }
+
+    fn enqueue_pred_graph(
+        &mut self,
+        pred: CondPred,
+        body: GraphId,
+        stream: StreamId,
+        head: bool,
+        stack: &mut BTreeSet<GraphId>,
+        wait: &[OpId],
+    ) -> Result<u32, SimError> {
+        self.enqueue_preds.push(pred);
+        let nested = self.enqueue_graph(body, stream, head, stack, wait);
+        let _pop = self.enqueue_preds.pop();
+        nested
+    }
+
+    fn note_nested_tail(
+        &mut self,
+        device: DeviceId,
+        s: StreamId,
+        stream: StreamId,
+        idx: usize,
+        node_ops: &mut [Vec<OpId>],
+        pending_joins: &mut Vec<OpId>,
+    ) {
+        if let Some(id) = self.tail.get(&(device, s)).copied() {
+            if let Some(ops) = node_ops.get_mut(idx) {
+                ops.push(id);
+            }
+            if s != stream {
+                pending_joins.push(id);
+            }
+        }
+        if s != stream {
+            if let Some(ids) = self.graph_joins.get(&(device, s)).cloned() {
+                pending_joins.extend(ids);
+            }
+        }
+    }
+
+    /// Internal stream for an origin-stream graph node. Chains stay on the
+    /// predecessor stream; independent nodes get a Hyper-Q worker.
+    fn graph_exec_stream(
+        &mut self,
+        origin: (DeviceId, StreamId),
+        launch: StreamId,
+        step: &GraphStep,
+        node_stream: &[Option<StreamId>],
+        worker: &mut u16,
+    ) -> StreamId {
+        if (step.device, step.stream) != origin {
+            return step.stream;
+        }
+        if step.deps.len() == 1 {
+            if let Some(pred) = step.deps.first().copied() {
+                if step.edge_from_port(pred) != GraphKernelNodePort::LAUNCH_COMPLETION {
+                    if let Some(s) = node_stream.get(pred).copied().flatten() {
+                        self.bind_graph_worker(step.device, launch, s);
+                        return s;
+                    }
+                }
+            }
+        }
+        let taken = node_stream.iter().any(Option::is_some);
+        let s = if !taken && step.deps.is_empty() {
+            launch
+        } else {
+            alloc_graph_worker(launch, worker)
+        };
+        self.bind_graph_worker(step.device, launch, s);
+        s
+    }
+
+    fn bind_graph_worker(&mut self, device: DeviceId, launch: StreamId, worker: StreamId) {
+        if worker == launch {
+            return;
+        }
+        if let Some(p) = self.priority.get(&(device, launch)).copied() {
+            let _prev = self.priority.insert((device, worker), p);
+        }
+        if let Some(sm) = self.sm_permille.get(&(device, launch)).copied() {
+            let _prev = self.sm_permille.insert((device, worker), sm);
+        }
+        if let Some(ctx) = self.stream_green_ctx.get(&(device, launch)).copied() {
+            let _prev = self.stream_green_ctx.insert((device, worker), ctx);
+        }
+    }
+
+    fn add_op_dep(&mut self, id: OpId, dep: OpId) {
+        if let Some(op) = self.ops.get_mut(&id) {
+            if !op.deps.contains(&dep) {
+                op.deps.push(dep);
+            }
+        }
+    }
+
+    fn add_op_start_dep(&mut self, id: OpId, dep: OpId) {
+        self.add_op_dep(id, dep);
+        if let Some(op) = self.ops.get_mut(&id) {
+            if !op.start_deps.contains(&dep) {
+                op.start_deps.push(dep);
+            }
+        }
+    }
+
+    /// Add-order slot count (including [`Self::graph_destroy_node`] tombstones).
+    ///
+    /// During capture this is the destination graph only; this session's
+    /// buffer is not included until [`Self::end_capture`]. Live nodes are
+    /// [`Self::graph_nodes`]. A parked in-flight-destroyed exec is
+    /// `"unknown graph"` (`cudaGraphExecDestroy` invalidates the handle
+    /// immediately).
+    pub fn graph_len(&self, graph: GraphId) -> Result<usize, SimError> {
+        Ok(self.live_graph(graph)?.steps.len())
+    }
+
+    /// `cudaGraphGetId` / `cudaGraphExecGetId`. Query; legal during capture.
+    ///
+    /// Matches the id printed by [`Self::graph_debug_dot_with_flags`] with
+    /// [`GraphDebugDotFlags::HANDLES`]. Distinct from node indices. A
+    /// definition, its instantiate exec, and a clone each have their own id.
+    /// Unknown graphs are Invalid `"unknown graph"`.
+    pub fn graph_get_id(&self, graph: GraphId) -> Result<u32, SimError> {
+        self.require_live_graph(graph)?;
+        Ok(graph.0)
+    }
+
+    /// `cudaGraphGetNodes` — live node indices in creation order.
+    ///
+    /// Query; legal during capture. During capture this is the destination
+    /// graph only. [`Self::graph_destroy_node`] tombstones a slot, so this may
+    /// skip indices; [`Self::graph_len`] stays the add-order bound.
+    pub fn graph_nodes(&self, graph: GraphId) -> Result<Vec<usize>, SimError> {
+        let g = self.live_graph(graph)?;
+        Ok(g.steps
+            .iter()
+            .enumerate()
+            .filter(|(_, s)| !s.destroyed)
+            .map(|(i, _)| i)
+            .collect())
+    }
+
+    /// Whether [`Self::instantiate_graph`] (or a first launch) has created an exec.
+    ///
+    /// True for an exec id, or a definition that has a primary exec.
+    pub fn graph_instantiated(&self, graph: GraphId) -> Result<bool, SimError> {
+        let g = self.live_graph(graph)?;
+        Ok(g.instantiated || g.primary_exec.is_some())
+    }
+
+    /// Whether [`Self::upload_graph`] or a completed
+    /// [`Self::upload_graph_async`] (or a first launch after instantiate) has
+    /// run.
+    pub fn graph_uploaded(&self, graph: GraphId) -> Result<bool, SimError> {
+        let exec = self.as_exec(graph)?;
+        self.graphs
+            .get(&exec)
+            .map(|g| g.uploaded)
+            .ok_or(SimError::Invalid {
+                why: "unknown graph",
+            })
+    }
+
+    /// Whether [`Self::instantiate_graph_auto_free`] was used
+    /// (`cudaGraphInstantiateFlagAutoFreeOnLaunch`).
+    pub fn graph_auto_free_on_launch(&self, graph: GraphId) -> Result<bool, SimError> {
+        let exec = self.as_exec(graph)?;
+        self.graphs
+            .get(&exec)
+            .map(|g| g.auto_free_on_launch)
+            .ok_or(SimError::Invalid {
+                why: "unknown graph",
+            })
+    }
+
+    /// `cudaGraphInstantiate`. Host-synchronous. Capture cannot include it.
+    ///
+    /// Returns a new exec id (`cudaGraphExec_t`). The source graph stays a
+    /// definition and may be instantiated again (kernel/memcpy graphs) unless
+    /// it has a device-updatable kernel node. The first
+    /// [`Self::launch_graph`] of the definition creates a primary exec if
+    /// needed. Already-instantiated **exec** ids are a no-op.
+    /// User-object retains on the definition are copied onto the exec.
+    /// Conditional handles created on the graph must be associated with a live
+    /// IF / WHILE / SWITCH node
+    /// ([`GraphInstantiateResult::ConditionalHandleUnused`]).
+    /// A parked in-flight-destroyed exec is `"unknown graph"`. Instantiating
+    /// the definition after that exec is parked creates a new exec.
+    pub fn instantiate_graph(&mut self, graph: GraphId) -> Result<GraphId, SimError> {
+        self.instantiate_graph_with_flags(graph, 0)
+    }
+
+    /// `cudaGraphInstantiate` with `cudaGraphInstantiateFlagAutoFreeOnLaunch`.
+    ///
+    /// Host-synchronous. Capture cannot include it. Graph mem allocs are
+    /// `cudaFreeAsync`'d on the launch stream before a later launch's alloc
+    /// nodes run, so relaunch recharges HBM instead of reusing the pointer.
+    /// MOVE child graphs and conditional bodies inherit this flag when the
+    /// parent is instantiated. Illegal when the graph has mem free nodes. A
+    /// second instantiate of a definition that has mem nodes is Invalid
+    /// (execs would need independent pointers).
+    pub fn instantiate_graph_auto_free(&mut self, graph: GraphId) -> Result<GraphId, SimError> {
+        self.instantiate_graph_with_flags(graph, GraphInstantiateFlags::AUTO_FREE_ON_LAUNCH)
+    }
+
+    /// `cudaGraphInstantiateWithFlags`. Host-synchronous. Capture cannot include it.
+    ///
+    /// Returns a new exec id. [`GraphInstantiateFlags::AUTO_FREE_ON_LAUNCH`]
+    /// matches [`Self::instantiate_graph_auto_free`]. [`GraphInstantiateFlags::UPLOAD`]
+    /// host-sync uploads during instantiate so the first launch skips
+    /// [`Self::upload_graph`]. [`GraphInstantiateFlags::USE_NODE_PRIORITY`]
+    /// schedules recorded kernels with the priority snapshotted at add/capture
+    /// instead of the launch stream. [`GraphInstantiateFlags::DEVICE_LAUNCH`]
+    /// enables [`Self::device_launch_graph`] after upload (host
+    /// [`Self::launch_graph`] stays legal). The graph cannot be empty and
+    /// must contain at least one kernel, memcpy, or memset node (Invalid
+    /// `"device launch empty"`). Mem alloc/free, events, child graphs,
+    /// conditionals, host, empty, and batch-mem nodes are Invalid for
+    /// device-launch. Memcpy [`crate::Place::Device`] must match the graph
+    /// origin device ([`crate::Place::HostPinned`] stays). Memset dest must
+    /// be that device, pinned mapped host, or managed. Mixed node green ctx is
+    /// [`GraphInstantiateResult::MultipleDevicesNotSupported`]
+    /// (`"graph multiple ctx"`). Unused conditional handles are
+    /// [`GraphInstantiateResult::ConditionalHandleUnused`].
+    /// [`GraphInstantiateFlags::DEVICE_LAUNCH`] cannot combine
+    /// with [`GraphInstantiateFlags::AUTO_FREE_ON_LAUNCH`] (Invalid
+    /// `"device launch auto free"`). Instantiating an exec id is a no-op when
+    /// `flags` adds no new bits.
+    pub fn instantiate_graph_with_flags(
+        &mut self,
+        graph: GraphId,
+        flags: u32,
+    ) -> Result<GraphId, SimError> {
+        let mut params = GraphInstantiateParams {
+            flags,
+            ..GraphInstantiateParams::default()
+        };
+        self.instantiate_graph_with_params(graph, &mut params)
+    }
+
+    /// `cudaGraphInstantiateWithParams`. Instantiate is host-synchronous.
+    /// Capture cannot include it.
+    ///
+    /// Fills [`GraphInstantiateParams::result`] and
+    /// [`GraphInstantiateParams::err_node`] even when this returns `Err`.
+    /// Success is [`GraphInstantiateResult::Success`] with `err_node = None`.
+    /// [`GraphInstantiateParams::flags`] are the instantiate flags (same as
+    /// [`Self::instantiate_graph_with_flags`]).
+    /// [`GraphInstantiateParams::upload_stream`] is `hUploadStream`: with
+    /// [`GraphInstantiateFlags::UPLOAD`], `Some` enqueues
+    /// [`Self::upload_graph_async`] (uploaded when that op completes); `None`
+    /// stays host-sync [`Self::upload_graph`]. Ignored when UPLOAD is unset.
+    pub fn instantiate_graph_with_params(
+        &mut self,
+        graph: GraphId,
+        params: &mut GraphInstantiateParams,
+    ) -> Result<GraphId, SimError> {
+        let flags = params.flags;
+        let upload_stream = params.upload_stream;
+        self.require_not_moved(graph)?;
+        let exec = self.instantiate_graph_inner(graph, flags, Some(params))?;
+        if flags & GraphInstantiateFlags::UPLOAD != 0 {
+            let upload = if let Some((device, stream)) = upload_stream {
+                self.upload_graph_async(device, stream, exec).map(|_| ())
+            } else {
+                self.upload_graph(exec)
+            };
+            if let Err(e) = upload {
+                params.result = GraphInstantiateResult::Error;
+                params.err_node = None;
+                return Err(e);
+            }
+        }
+        Ok(exec)
+    }
+
+    /// `cudaGraphExecGetFlags` on an instantiated exec (or a definition's primary).
+    ///
+    /// Capture is allowed. Uninstantiated graphs are Invalid.
+    /// [`GraphInstantiateFlags::UPLOAD`] is omitted: it does not affect the
+    /// resulting executable graph.
+    pub fn graph_exec_get_flags(&self, exec: GraphId) -> Result<u32, SimError> {
+        let exec = self.as_exec(exec)?;
+        let g = self.graphs.get(&exec).ok_or(SimError::Invalid {
+            why: "unknown graph",
+        })?;
+        Ok(g.instantiate_flags & !GraphInstantiateFlags::UPLOAD)
+    }
+
+    fn check_instantiate_flags(flags: u32) -> Result<(), SimError> {
+        const KNOWN: u32 = GraphInstantiateFlags::AUTO_FREE_ON_LAUNCH
+            | GraphInstantiateFlags::UPLOAD
+            | GraphInstantiateFlags::DEVICE_LAUNCH
+            | GraphInstantiateFlags::USE_NODE_PRIORITY;
+        if flags & !KNOWN != 0 {
+            return Err(SimError::Invalid {
+                why: "instantiate flags",
+            });
+        }
+        if flags & GraphInstantiateFlags::DEVICE_LAUNCH != 0
+            && flags & GraphInstantiateFlags::AUTO_FREE_ON_LAUNCH != 0
+        {
+            return Err(SimError::Invalid {
+                why: "device launch auto free",
+            });
+        }
+        Ok(())
+    }
+
+    fn instantiate_report(
+        out: Option<&mut GraphInstantiateParams>,
+        result: GraphInstantiateResult,
+        err_node: Option<usize>,
+        why: &'static str,
+    ) -> Result<GraphId, SimError> {
+        if let Some(p) = out {
+            p.result = result;
+            p.err_node = err_node;
+        }
+        Err(SimError::Invalid { why })
+    }
+
+    fn instantiate_graph_inner(
+        &mut self,
+        graph: GraphId,
+        flags: u32,
+        mut out: Option<&mut GraphInstantiateParams>,
+    ) -> Result<GraphId, SimError> {
+        if let Err(e) = self.fail_if_capturing("cannot capture graph instantiate") {
+            if let Some(p) = out.as_mut() {
+                p.result = GraphInstantiateResult::Error;
+                p.err_node = None;
+            }
+            return Err(e);
+        }
+        if let Err(e) = Self::check_instantiate_flags(flags) {
+            if let Some(p) = out.as_mut() {
+                p.result = GraphInstantiateResult::Error;
+                p.err_node = None;
+            }
+            return Err(e);
+        }
+        let auto_free = flags & GraphInstantiateFlags::AUTO_FREE_ON_LAUNCH != 0;
+        let device_launch = flags & GraphInstantiateFlags::DEVICE_LAUNCH != 0;
+        let snapshot = match self.instantiate_snapshot(graph, device_launch) {
+            Ok(s) => s,
+            Err(e) => {
+                if let Some(p) = out.as_mut() {
+                    p.result = GraphInstantiateResult::Error;
+                    p.err_node = None;
+                }
+                return Err(e);
+            }
+        };
+        if snapshot.already {
+            if flags & !snapshot.current_flags != 0 {
+                return Self::instantiate_report(
+                    out,
+                    GraphInstantiateResult::Error,
+                    None,
+                    "graph instantiate flags",
+                );
+            }
+            if let Some(p) = out.as_mut() {
+                p.result = GraphInstantiateResult::Success;
+                p.err_node = None;
+            }
+            return Ok(graph);
+        }
+        if snapshot.primary.is_some() && snapshot.steps.iter().any(step_is_device_updatable) {
+            return Self::instantiate_report(
+                out,
+                GraphInstantiateResult::Error,
+                None,
+                "device-updatable",
+            );
+        }
+        if auto_free && snapshot.has_free {
+            return Self::instantiate_report(
+                out,
+                GraphInstantiateResult::InvalidStructure,
+                snapshot.free_node,
+                "auto free with mem free nodes",
+            );
+        }
+        if let Some(node) = snapshot.device_launch_err {
+            return Self::instantiate_report(
+                out,
+                GraphInstantiateResult::NodeOperationNotSupported,
+                Some(node),
+                "device launch instantiate flag",
+            );
+        }
+        if snapshot.device_launch_empty {
+            return Self::instantiate_report(
+                out,
+                GraphInstantiateResult::NodeOperationNotSupported,
+                None,
+                "device launch empty",
+            );
+        }
+        if snapshot.primary.is_some() && snapshot.has_mem {
+            return Self::instantiate_report(
+                out,
+                GraphInstantiateResult::InvalidStructure,
+                snapshot.mem_node,
+                "graph mem exec",
+            );
+        }
+        if let Some(node) = snapshot.multi_dev {
+            return Self::instantiate_report(
+                out,
+                GraphInstantiateResult::MultipleDevicesNotSupported,
+                Some(node),
+                "graph multiple devices",
+            );
+        }
+        if let Some(node) = snapshot.device_launch_multi_ctx {
+            return Self::instantiate_report(
+                out,
+                GraphInstantiateResult::MultipleDevicesNotSupported,
+                Some(node),
+                "graph multiple ctx",
+            );
+        }
+        if snapshot.unused_cond {
+            return Self::instantiate_report(
+                out,
+                GraphInstantiateResult::ConditionalHandleUnused,
+                None,
+                "conditional handle unused",
+            );
+        }
+        let ns = match self.profile.gpu(snapshot.device) {
+            Ok(g) => g.graph_instantiate_ns.max(1),
+            Err(e) => {
+                if let Some(p) = out.as_mut() {
+                    p.result = GraphInstantiateResult::Error;
+                    p.err_node = None;
+                }
+                return Err(e);
+            }
+        };
+        self.clock = self.clock.saturating_add(ns);
+        // MOVE children (and IF/WHILE/SWITCH bodies that hold them) inherit
+        // AutoFreeOnLaunch so inlined mem nodes free like the parent exec.
+        let inherit = flags & GraphInstantiateFlags::AUTO_FREE_ON_LAUNCH;
+        for body in snapshot.bodies {
+            let _exec = self.instantiate_graph_inner(body, inherit, None)?;
+        }
+        for node in &snapshot.steps {
+            if let Kind::ChildGraph { graph, ownership } = &node.kind {
+                if *ownership == GraphChildGraphOwnership::MOVE {
+                    let _exec = self.instantiate_graph_inner(*graph, inherit, None)?;
+                }
+            }
+        }
+        let exec_id = GraphId(self.next_graph);
+        self.next_graph = self.next_graph.saturating_add(1);
+        let mut snap = Vec::with_capacity(snapshot.steps.len());
+        for mut node in snapshot.steps {
+            node.kind = self.remap_kind_to_exec(node.kind)?;
+            snap.push(node);
+        }
+        let _prev = self.graphs.insert(
+            exec_id,
+            Graph {
+                steps: snap.clone(),
+                exec: Some(snap),
+                origin: snapshot.origin,
+                instantiated: true,
+                uploaded: false,
+                auto_free_on_launch: auto_free,
+                instantiate_flags: flags,
+                device_launch_tail: None,
+                host_launch_tails: Vec::new(),
+                handle_gone: false,
+                primary_exec: None,
+                src: Some(graph),
+                moved_to: None,
+            },
+        );
+        let def = self.graphs.get_mut(&graph).ok_or(SimError::Invalid {
+            why: "unknown graph",
+        })?;
+        if def.primary_exec.is_none() {
+            def.primary_exec = Some(exec_id);
+        }
+        self.copy_user_object_retains(graph, exec_id)?;
+        if let Some(p) = out.as_mut() {
+            p.result = GraphInstantiateResult::Success;
+            p.err_node = None;
+        }
+        Ok(exec_id)
+    }
+
+    fn instantiate_snapshot(
+        &self,
+        graph: GraphId,
+        device_launch: bool,
+    ) -> Result<InstantiateSnap, SimError> {
+        let g = self.live_graph(graph)?;
+        let origin_dev = g.origin.0;
+        let device = g.steps.first().map(|s| s.device).unwrap_or(origin_dev);
+        let free_node = g
+            .steps
+            .iter()
+            .position(|s| matches!(&s.kind, Kind::Free { .. }));
+        let mem_node = g
+            .steps
+            .iter()
+            .position(|s| matches!(&s.kind, Kind::Alloc { .. } | Kind::Free { .. }));
+        let has_free = free_node.is_some();
+        let has_mem =
+            mem_node.is_some() || self.graph_allocs.get(&graph).is_some_and(|v| !v.is_empty());
+        let device_launch_err = if device_launch {
+            g.steps.iter().position(|s| {
+                !s.destroyed
+                    && (device_launch_refused(&s.kind)
+                        || s.programmatic_event.is_some()
+                        || s.launch_completion.is_some()
+                        || device_launch_memcpy_off_device(&s.kind, origin_dev)
+                        || device_launch_memset_off_device(&s.kind, origin_dev, &self.allocs)
+                        || device_launch_kernel_off_device(&s.kind, origin_dev, &self.allocs))
+            })
+        } else {
+            None
+        };
+        let device_launch_empty = device_launch
+            && device_launch_err.is_none()
+            && !g
+                .steps
+                .iter()
+                .any(|s| !s.destroyed && device_launch_has_work(&s.kind));
+        let multi_dev = g.steps.iter().position(|s| s.device != origin_dev);
+        let device_launch_multi_ctx = if device_launch {
+            device_launch_ctx_mismatch(&g.steps)
+        } else {
+            None
+        };
+        let unused_cond = unused_conditional_handles(&self.conds, graph, &g.steps);
+        Ok(InstantiateSnap {
+            device,
+            already: g.instantiated,
+            current_flags: g.instantiate_flags,
+            has_free,
+            device_launch_err,
+            device_launch_empty,
+            has_mem,
+            mem_node,
+            free_node,
+            multi_dev,
+            device_launch_multi_ctx,
+            unused_cond,
+            primary: g.primary_exec,
+            origin: g.origin,
+            bodies: g
+                .steps
+                .iter()
+                .flat_map(|s| cond_body_graphs(&s.kind))
+                .collect(),
+            steps: g.steps.clone(),
+        })
+    }
+
+    fn ensure_exec(&mut self, graph: GraphId) -> Result<GraphId, SimError> {
+        let (instantiated, primary, gone) = {
+            let g = self.graphs.get(&graph).ok_or(SimError::Invalid {
+                why: "unknown graph",
+            })?;
+            (g.instantiated, g.primary_exec, g.handle_gone)
+        };
+        if gone {
+            return Err(SimError::Invalid {
+                why: "unknown graph",
+            });
+        }
+        if instantiated {
+            return Ok(graph);
+        }
+        if let Some(p) = primary {
+            if !self.graphs.get(&p).is_some_and(|e| e.handle_gone) {
+                return Ok(p);
+            }
+        }
+        self.instantiate_graph(graph)
+    }
+
+    /// `cudaGraphUpload`. Host-synchronous. Capture cannot include it.
+    ///
+    /// The exec must already be instantiated. Already-uploaded ids are a no-op.
+    /// The first [`Self::launch_graph`] calls this when needed. [`Self::update_graph`]
+    /// clears the flag so the next launch uploads again. Stream-ordered upload
+    /// is [`Self::upload_graph_async`]. Host upload of a DeviceLaunch exec while
+    /// [`Self::device_launch_graph`] is in flight is Invalid
+    /// `"device launch in flight"`.
+    pub fn upload_graph(&mut self, graph: GraphId) -> Result<(), SimError> {
+        self.fail_if_capturing("cannot capture graph upload")?;
+        let exec = self.as_exec(graph)?;
+        self.fail_if_device_launch_in_flight(exec)?;
+        let (device, already) = {
+            let g = self.graphs.get(&exec).ok_or(SimError::Invalid {
+                why: "unknown graph",
+            })?;
+            let device = g.steps.first().map(|s| s.device).unwrap_or(DeviceId(0));
+            (device, g.uploaded)
+        };
+        if already {
+            return Ok(());
+        }
+        let ns = self.profile.gpu(device)?.graph_upload_ns.max(1);
+        self.clock = self.clock.saturating_add(ns);
+        self.graphs
+            .get_mut(&exec)
+            .ok_or(SimError::Invalid {
+                why: "unknown graph",
+            })?
+            .uploaded = true;
+        Ok(())
+    }
+
+    /// `cudaGraphUpload` on `stream`. Stream-ordered; capture cannot include it.
+    ///
+    /// Completes after `graph_upload_ns` (Solo; does not occupy compute or copy
+    /// engines). Sets the exec uploaded when the op **completes**. Already
+    /// uploaded at start is 1 ns so later ops on `stream` still wait. Typed
+    /// [`Self::upload_graph`] stays host-synchronous. [`Self::launch_graph`]
+    /// waits an in-flight upload instead of a second host-sync upload. Destroy
+    /// of an exec with this op still in flight does not abort the upload
+    /// (`cudaGraphExecDestroy`). Host upload of a DeviceLaunch exec while
+    /// [`Self::device_launch_graph`] is in flight is Invalid
+    /// `"device launch in flight"`. No Engine `--graph-upload-stream`.
+    pub fn upload_graph_async(
+        &mut self,
+        device: DeviceId,
+        stream: StreamId,
+        graph: GraphId,
+    ) -> Result<OpId, SimError> {
+        self.fail_if_capturing("cannot capture graph upload")?;
+        let exec = self.as_exec(graph)?;
+        self.fail_if_device_launch_in_flight(exec)?;
+        let origin = self
+            .graphs
+            .get(&exec)
+            .ok_or(SimError::Invalid {
+                why: "unknown graph",
+            })?
+            .origin
+            .0;
+        if origin != device {
+            return Err(SimError::Invalid {
+                why: "graph device",
+            });
+        }
+        self.submit(device, stream, Kind::GraphUpload { exec })
+    }
+
+    fn pending_graph_upload(&self, exec: GraphId) -> Option<OpId> {
+        self.ops.iter().find_map(|(id, op)| {
+            if op.done {
+                return None;
+            }
+            match &op.kind {
+                Kind::GraphUpload { exec: e } if *e == exec => Some(*id),
+                _ => None,
+            }
+        })
+    }
+
+    /// `cudaGraphExecUpdate`: replace `exec` steps with `src` when topology matches.
+    ///
+    /// Same device, stream, op kinds, cooperative flag, dependency edges, and
+    /// [`GraphEdgeData`] ports (Default vs launch-completion is
+    /// [`GraphExecUpdateResult::DependenciesChanged`]); KernelBuf / memcpy
+    /// sizes may change. IF / WHILE / SWITCH handles are parameters (bodies
+    /// stay topology). [`GraphInstantiateFlags::USE_NODE_PRIORITY`] forbids
+    /// kernel-node priority changes
+    /// ([`GraphExecUpdateResult::AttributesChanged`]); matching priorities
+    /// still update. Default instantiate copies priority as a parameter.
+    /// [`Self::graph_exec_kernel_node_set_priority`] stays legal. 2D and 3D
+    /// memset nodes may change address only
+    /// ([`GraphExecUpdateResult::ParametersChanged`] for width, height,
+    /// pitch, depth, plus elementSize); 1D memset may change dimensions.
+    /// [`Self::graph_exec_memset_set_params_2d`] stays legal. Memcpy source
+    /// and destination [`Place`] (memory type) cannot change
+    /// ([`GraphExecUpdateResult::ParametersChanged`]); alloc and size may.
+    /// [`Self::graph_exec_memcpy_set_params`] stays legal. CUDA arrays stay
+    /// uninvented. [`KernelKind`] variant (Other, Matmul, or GroupedMoeGemm) is
+    /// the kernel function analog
+    /// ([`GraphExecUpdateResult::FunctionChanged`]); work sizes may change.
+    /// [`Self::graph_exec_kernel_set_params`] stays legal. Pays
+    /// `graph_update_ns`. Recapture if topology differs.
+    /// Capture cannot include it. `exec` must already be instantiated. Graphs
+    /// with mem alloc or mem free nodes cannot be updated
+    /// (`cudaGraphExecUpdate` of mem nodes). [`Self::graph_node_set_enabled`]
+    /// state is unchanged (CUDA enable is not a parameter). An in-flight
+    /// [`Self::launch_graph`] plus [`Self::upload_graph_async`] of `exec` is
+    /// Invalid `"exec in flight"`. Host SetParams of that exec stay.
+    /// [`GraphInstantiateFlags::DEVICE_LAUNCH`] update stays NotSupported.
+    /// A parked in-flight-destroyed exec used as `src` is `"unknown graph"`.
+    /// Live exec as `src` stays. Definition `src` stays.
+    pub fn update_graph(&mut self, exec: GraphId, src: GraphId) -> Result<(), SimError> {
+        let mut info = GraphExecUpdateResultInfo::default();
+        self.update_graph_with_info(exec, src, &mut info)
+    }
+
+    /// `cudaGraphExecUpdate` with [`GraphExecUpdateResultInfo`].
+    ///
+    /// Fills `info` even when this returns `Err`. Success is
+    /// [`GraphExecUpdateResult::Success`] with both node fields `None`.
+    /// [`Self::update_graph`] keeps the same `why` strings.
+    /// A parked in-flight-destroyed exec used as `src` is `"unknown graph"`.
+    pub fn update_graph_with_info(
+        &mut self,
+        exec: GraphId,
+        src: GraphId,
+        info: &mut GraphExecUpdateResultInfo,
+    ) -> Result<(), SimError> {
+        *info = GraphExecUpdateResultInfo::default();
+        if let Err(e) = self.fail_if_capturing("cannot capture graph update") {
+            info.result = GraphExecUpdateResult::Error;
+            return Err(e);
+        }
+        if let Err(e) = self.require_not_moved(src) {
+            info.result = GraphExecUpdateResult::Error;
+            return Err(e);
+        }
+        if let Err(e) = self.require_live_graph(src) {
+            info.result = GraphExecUpdateResult::Error;
+            return Err(e);
+        }
+        if exec == src {
+            return update_report(
+                info,
+                GraphExecUpdateResult::Error,
+                None,
+                None,
+                "graph update same id",
+            );
+        }
+        let exec = match self.as_exec(exec) {
+            Ok(id) => id,
+            Err(e) => {
+                info.result = GraphExecUpdateResult::Error;
+                return Err(e);
+            }
+        };
+        if exec == src {
+            return update_report(
+                info,
+                GraphExecUpdateResult::Error,
+                None,
+                None,
+                "graph update same id",
+            );
+        }
+        let (exec_steps, src_steps, device, exec_flags) = match self.update_graph_pair(exec, src) {
+            Ok(pair) => pair,
+            Err(e) => {
+                info.result = GraphExecUpdateResult::Error;
+                return Err(e);
+            }
+        };
+        if exec_flags & GraphInstantiateFlags::DEVICE_LAUNCH != 0 {
+            return update_report(
+                info,
+                GraphExecUpdateResult::NotSupported,
+                None,
+                None,
+                "device launch graph update",
+            );
+        }
+        if self
+            .graphs
+            .get(&exec)
+            .is_some_and(|g| self.graph_exec_in_flight(exec, g))
+        {
+            return update_report(
+                info,
+                GraphExecUpdateResult::Error,
+                None,
+                None,
+                "exec in flight",
+            );
+        }
+        if exec_steps.iter().any(step_is_device_updatable)
+            || src_steps.iter().any(step_is_device_updatable)
+        {
+            return update_report(
+                info,
+                GraphExecUpdateResult::NotSupported,
+                None,
+                None,
+                "device-updatable",
+            );
+        }
+        let enabled: Vec<bool> = exec_steps.iter().map(|s| s.enabled).collect();
+        let exec_norm = self.steps_def_ids(exec_steps);
+        let src_norm = self.steps_def_ids(src_steps.clone());
+        if let Some(diff) = graph_topology_diff(&exec_norm, &src_norm) {
+            return update_report(
+                info,
+                diff.result,
+                diff.error_node,
+                diff.error_from_node,
+                "graph update topology",
+            );
+        }
+        if exec_flags & GraphInstantiateFlags::USE_NODE_PRIORITY != 0 {
+            if let Some(i) = kernel_priority_mismatch(&exec_norm, &src_norm) {
+                return update_report(
+                    info,
+                    GraphExecUpdateResult::AttributesChanged,
+                    Some(i),
+                    Some(i),
+                    "graph update topology",
+                );
+            }
+        }
+        if self.graph_has_mem_nodes(exec) || self.graph_has_mem_nodes(src) {
+            let node = first_mem_node(&src_norm).or_else(|| first_mem_node(&exec_norm));
+            return update_report(
+                info,
+                GraphExecUpdateResult::NotSupported,
+                node,
+                None,
+                "cannot update graph mem nodes",
+            );
+        }
+        let ns = self.profile.gpu(device)?.graph_update_ns.max(1);
+        self.clock = self.clock.saturating_add(ns);
+        let mut new_steps = src_steps;
+        for (dst, on) in new_steps.iter_mut().zip(enabled.iter()) {
+            dst.enabled = *on;
+        }
+        let exec = self.graphs.get_mut(&exec).ok_or(SimError::Invalid {
+            why: "unknown graph",
+        })?;
+        exec.exec = Some(new_steps);
+        exec.uploaded = false;
+        info.result = GraphExecUpdateResult::Success;
+        Ok(())
+    }
+
+    fn update_graph_pair(
+        &self,
+        exec: GraphId,
+        src: GraphId,
+    ) -> Result<(Vec<GraphStep>, Vec<GraphStep>, DeviceId, u32), SimError> {
+        let e = self.live_graph(exec)?;
+        let s = self.live_graph(src)?;
+        let device = e
+            .steps
+            .first()
+            .map(|step| step.device)
+            .unwrap_or(DeviceId(0));
+        Ok((
+            e.view().to_vec(),
+            s.steps.clone(),
+            device,
+            e.instantiate_flags,
+        ))
+    }
+
+    /// `cudaGraphExecKernelNodeSetParams` on an instantiated exec.
+    ///
+    /// Node `node` must already be a kernel. [`KernelNodeParams::cooperative`]
+    /// must match the existing node (cooperative vs `cudaLaunchKernel` is
+    /// topology). Pointers, [`KernelKind`], [`KernelNodeParams::ctx`], and
+    /// [`KernelNodeParams::shared_mem_bytes`] may change. Pays
+    /// `graph_set_params_ns`. Clears the upload flag unless the node is
+    /// device-updatable (`cudaLaunchAttributeDeviceUpdatableKernelNode`),
+    /// so a later [`Self::device_launch_graph`] needs no host re-upload. Capture
+    /// cannot include it. While a [`Self::device_launch_graph`] of this exec is
+    /// in flight this is Invalid `"device launch in flight"`. Device-launch
+    /// execs re-apply instantiate mixed-ctx rules (Invalid `"graph multiple
+    /// ctx"`) and kernel-buffer dest rules (Invalid `"device launch instantiate
+    /// flag"`). Graphs with mem alloc/free nodes are legal (unlike
+    /// [`Self::update_graph`]).
+    pub fn graph_exec_kernel_set_params(
+        &mut self,
+        exec: GraphId,
+        node: usize,
+        params: &KernelNodeParams,
+    ) -> Result<(), SimError> {
+        self.fail_if_capturing("cannot capture kernel set params")?;
+        let exec = self.as_exec_for_update(exec)?;
+        let (device, cooperative, device_updatable, portable_shared) = {
+            let g = self.graphs.get(&exec).ok_or(SimError::Invalid {
+                why: "unknown graph",
+            })?;
+            let step = live_ok(g.view().get(node).ok_or(SimError::Invalid {
+                why: "unknown graph node",
+            })?)?;
+            let Kind::Kernel { cooperative, .. } = &step.kind else {
+                return Err(SimError::Invalid {
+                    why: "not a kernel node",
+                });
+            };
+            if *cooperative != params.cooperative {
+                return Err(SimError::Invalid {
+                    why: "cooperative is topology",
+                });
+            }
+            (
+                step.device,
+                *cooperative,
+                step.device_updatable,
+                step.portable_shared,
+            )
+        };
+        if let Some(ctx) = params.ctx {
+            self.require_live_green_ctx(ctx, device)?;
+        }
+        self.refuse_device_launch_exec_ctx(exec, true, node, params.ctx)?;
+        self.validate_dynamic_shared(device, params.shared_mem_bytes, portable_shared)?;
+        let reads = self.resolve_bufs(&params.reads)?;
+        let writes = self.resolve_bufs(&params.writes)?;
+        let (origin, flags) = {
+            let g = self.graphs.get(&exec).ok_or(SimError::Invalid {
+                why: "unknown graph",
+            })?;
+            (g.origin.0, g.instantiate_flags)
+        };
+        if device_launch_exec_place_refused(
+            true,
+            flags,
+            reads.iter().chain(writes.iter()).any(|b| {
+                device_launch_alloc_off_device(b.id, origin, b.offset, b.bytes, &self.allocs)
+            }),
+        ) {
+            return Err(SimError::Invalid {
+                why: "device launch instantiate flag",
+            });
+        }
+        let ns = self.profile.gpu(device)?.graph_set_params_ns.max(1);
+        self.clock = self.clock.saturating_add(ns);
+        let g = self.graphs.get_mut(&exec).ok_or(SimError::Invalid {
+            why: "unknown graph",
+        })?;
+        let step = live_ok_mut(g.exec_mut()?.get_mut(node).ok_or(SimError::Invalid {
+            why: "unknown graph node",
+        })?)?;
+        step.kind = Kind::Kernel {
+            kind: params.kind.clone(),
+            reads,
+            writes,
+            cooperative,
+        };
+        step.green_ctx = params.ctx;
+        step.dynamic_shared = params.shared_mem_bytes;
+        if !device_updatable {
+            g.uploaded = false;
+        }
+        Ok(())
+    }
+
+    fn refuse_device_launch_exec_ctx(
+        &self,
+        target: GraphId,
+        exec: bool,
+        node: usize,
+        new_ctx: Option<GreenCtxId>,
+    ) -> Result<(), SimError> {
+        if !exec {
+            return Ok(());
+        }
+        let Some(g) = self.graphs.get(&target) else {
+            return Ok(());
+        };
+        if g.instantiate_flags & GraphInstantiateFlags::DEVICE_LAUNCH == 0 {
+            return Ok(());
+        }
+        if device_launch_patched_ctx_mismatch(g.view(), node, new_ctx) {
+            return Err(SimError::Invalid {
+                why: "graph multiple ctx",
+            });
+        }
+        Ok(())
+    }
+
+    fn refuse_device_launch_exec_attach(
+        &self,
+        target: GraphId,
+        exec: bool,
+        attach: bool,
+    ) -> Result<(), SimError> {
+        if !exec || !attach {
+            return Ok(());
+        }
+        let Some(g) = self.graphs.get(&target) else {
+            return Ok(());
+        };
+        if g.instantiate_flags & GraphInstantiateFlags::DEVICE_LAUNCH != 0 {
+            return Err(SimError::Invalid {
+                why: "device launch instantiate flag",
+            });
+        }
+        Ok(())
+    }
+
+    /// `cudaGraphKernelNodeSetParams` on the graph definition.
+    ///
+    /// After [`Self::instantiate_graph`], this does not retarget the exec
+    /// snapshot; use [`Self::graph_exec_kernel_set_params`]. Cooperative flag
+    /// must match (topology). [`KernelNodeParams::ctx`] and
+    /// [`KernelNodeParams::shared_mem_bytes`] are parameters. Capture cannot
+    /// include it. Host-sync 1 ns.
+    pub fn graph_kernel_set_params(
+        &mut self,
+        graph: GraphId,
+        node: usize,
+        params: &KernelNodeParams,
+    ) -> Result<(), SimError> {
+        self.fail_if_capturing("cannot capture kernel node set params")?;
+        let (device, cooperative, portable_shared) = {
+            let g = self.graphs.get(&graph).ok_or(SimError::Invalid {
+                why: "unknown graph",
+            })?;
+            let step = live_ok(g.steps.get(node).ok_or(SimError::Invalid {
+                why: "unknown graph node",
+            })?)?;
+            let Kind::Kernel { cooperative, .. } = &step.kind else {
+                return Err(SimError::Invalid {
+                    why: "not a kernel node",
+                });
+            };
+            if *cooperative != params.cooperative {
+                return Err(SimError::Invalid {
+                    why: "cooperative is topology",
+                });
+            }
+            (step.device, *cooperative, step.portable_shared)
+        };
+        if let Some(ctx) = params.ctx {
+            self.require_live_green_ctx(ctx, device)?;
+        }
+        self.validate_dynamic_shared(device, params.shared_mem_bytes, portable_shared)?;
+        let reads = self.resolve_bufs(&params.reads)?;
+        let writes = self.resolve_bufs(&params.writes)?;
+        let _gpu = self.profile.gpu(device)?;
+        self.clock = self.clock.saturating_add(1);
+        let g = self.graphs.get_mut(&graph).ok_or(SimError::Invalid {
+            why: "unknown graph",
+        })?;
+        let step = live_ok_mut(g.steps.get_mut(node).ok_or(SimError::Invalid {
+            why: "unknown graph node",
+        })?)?;
+        step.kind = Kind::Kernel {
+            kind: params.kind.clone(),
+            reads,
+            writes,
+            cooperative,
+        };
+        step.green_ctx = params.ctx;
+        step.dynamic_shared = params.shared_mem_bytes;
+        Ok(())
+    }
+
+    /// `cudaGraphMemcpyNodeSetParams` on the graph definition.
+    ///
+    /// After instantiate this does not retarget the exec; use
+    /// [`Self::graph_exec_memcpy_set_params`]. Pageable copies stay illegal.
+    /// Capture cannot include it. Host-sync 1 ns. [`Self::graph_memcpy_set_params_1d`]
+    /// is `cudaGraphMemcpyNodeSetParams1D` (packed 1D, including converting a
+    /// 2D/3D node). [`Self::graph_memcpy_set_params_2d`] requires
+    /// [`MemcpyOp::is_2d`]. [`Self::graph_memcpy_set_params_3d`] requires
+    /// [`MemcpyOp::is_3d`].
+    pub fn graph_memcpy_set_params(
+        &mut self,
+        graph: GraphId,
+        node: usize,
+        op: &MemcpyOp,
+    ) -> Result<(), SimError> {
+        self.set_memcpy_op(graph, node, op, false, GreenCtxPatch::Keep, false)
+    }
+
+    fn graph_memcpy_set_params_with_ctx(
+        &mut self,
+        graph: GraphId,
+        node: usize,
+        params: &MemcpyNodeParams,
+    ) -> Result<(), SimError> {
+        self.set_memcpy_op(
+            graph,
+            node,
+            &params.op,
+            false,
+            GreenCtxPatch::Set(params.ctx),
+            false,
+        )
+    }
+
+    /// `cudaGraphMemcpyNodeSetParams1D` on the graph definition.
+    ///
+    /// Packs a 1D [`MemcpyOp`] ([`MemcpyOp::packed_1d`]). A 2D/3D node may
+    /// become 1D. After instantiate this does not retarget the exec; use
+    /// [`Self::graph_exec_memcpy_set_params_1d`]. Pageable copies stay illegal.
+    /// Capture cannot include it. Host-sync 1 ns.
+    pub fn graph_memcpy_set_params_1d(
+        &mut self,
+        graph: GraphId,
+        node: usize,
+        src: Place,
+        dst: Place,
+        alloc: AllocId,
+        bytes: u64,
+    ) -> Result<(), SimError> {
+        self.graph_memcpy_set_params(graph, node, &MemcpyOp::packed_1d(src, dst, alloc, bytes))
+    }
+
+    /// `cudaGraphMemcpyNodeSetParams` whose [`MemcpyOp`] is [`MemcpyOp::is_2d`]
+    /// (`height > 1`, not 3D). Other extents Invalid `"memcpy2d height"`.
+    /// Typed [`Self::graph_memcpy_set_params`] stays.
+    pub fn graph_memcpy_set_params_2d(
+        &mut self,
+        graph: GraphId,
+        node: usize,
+        op: &MemcpyOp,
+    ) -> Result<(), SimError> {
+        if !op.is_2d() {
+            return Err(SimError::Invalid {
+                why: "memcpy2d height",
+            });
+        }
+        self.graph_memcpy_set_params(graph, node, op)
+    }
+
+    /// `cudaGraphMemcpyNodeSetParams` whose [`MemcpyOp`] is [`MemcpyOp::is_3d`]
+    /// (`depth > 1`). Other extents Invalid `"memcpy3d depth"`. Typed
+    /// [`Self::graph_memcpy_set_params`] stays.
+    pub fn graph_memcpy_set_params_3d(
+        &mut self,
+        graph: GraphId,
+        node: usize,
+        op: &MemcpyOp,
+    ) -> Result<(), SimError> {
+        if !op.is_3d() {
+            return Err(SimError::Invalid {
+                why: "memcpy3d depth",
+            });
+        }
+        self.graph_memcpy_set_params(graph, node, op)
+    }
+
+    /// `cudaGraphMemsetNodeSetParams` on the graph definition.
+    ///
+    /// After instantiate this does not retarget the exec; use
+    /// [`Self::graph_exec_memset_set_params`]. Zero-byte fills stay illegal.
+    /// Capture cannot include it. Host-sync 1 ns. [`KernelBuf`] converts to a
+    /// packed 1D [`MemsetOp`]. [`Self::graph_memset_set_params_2d`] requires
+    /// [`MemsetOp::is_2d`]. [`Self::graph_memset_set_params_3d`] requires
+    /// [`MemsetOp::is_3d`].
+    pub fn graph_memset_set_params(
+        &mut self,
+        graph: GraphId,
+        node: usize,
+        op: impl Into<MemsetOp>,
+    ) -> Result<(), SimError> {
+        self.set_memset_op(graph, node, op.into(), false, GreenCtxPatch::Keep, false)
+    }
+
+    fn graph_memset_set_params_with_ctx(
+        &mut self,
+        graph: GraphId,
+        node: usize,
+        params: &MemsetNodeParams,
+    ) -> Result<(), SimError> {
+        self.set_memset_op(
+            graph,
+            node,
+            params.op,
+            false,
+            GreenCtxPatch::Set(params.ctx),
+            false,
+        )
+    }
+
+    /// `cudaGraphMemsetNodeSetParams` whose [`MemsetOp`] is [`MemsetOp::is_2d`]
+    /// (`height > 1`, not 3D). Other extents Invalid `"memset2d height"`.
+    /// Typed [`Self::graph_memset_set_params`] stays.
+    pub fn graph_memset_set_params_2d(
+        &mut self,
+        graph: GraphId,
+        node: usize,
+        op: MemsetOp,
+    ) -> Result<(), SimError> {
+        if !op.is_2d() {
+            return Err(SimError::Invalid {
+                why: "memset2d height",
+            });
+        }
+        self.graph_memset_set_params(graph, node, op)
+    }
+
+    /// `cudaGraphMemsetNodeSetParams` whose [`MemsetOp`] is [`MemsetOp::is_3d`]
+    /// (`depth > 1`). Other extents Invalid `"memset3d depth"`. Typed
+    /// [`Self::graph_memset_set_params`] stays.
+    pub fn graph_memset_set_params_3d(
+        &mut self,
+        graph: GraphId,
+        node: usize,
+        op: MemsetOp,
+    ) -> Result<(), SimError> {
+        if !op.is_3d() {
+            return Err(SimError::Invalid {
+                why: "memset3d depth",
+            });
+        }
+        self.graph_memset_set_params(graph, node, op)
+    }
+
+    /// `cudaGraphHostNodeSetParams` on the graph definition.
+    ///
+    /// After instantiate this does not retarget the exec; use
+    /// [`Self::graph_exec_host_set_params`]. [`HostNodeParams::fn_id`] /
+    /// [`HostNodeParams::user_data`] are parameters. Capture cannot include it.
+    /// Host-sync 1 ns.
+    pub fn graph_host_set_params(
+        &mut self,
+        graph: GraphId,
+        node: usize,
+        params: HostNodeParams,
+    ) -> Result<(), SimError> {
+        self.fail_if_capturing("cannot capture host node set params")?;
+        let device = {
+            let g = self.graphs.get(&graph).ok_or(SimError::Invalid {
+                why: "unknown graph",
+            })?;
+            let step = live_ok(g.steps.get(node).ok_or(SimError::Invalid {
+                why: "unknown graph node",
+            })?)?;
+            if !matches!(step.kind, Kind::HostFunc { .. }) {
+                return Err(SimError::Invalid {
+                    why: "not a host node",
+                });
+            }
+            step.device
+        };
+        let _gpu = self.profile.gpu(device)?;
+        self.clock = self.clock.saturating_add(1);
+        let g = self.graphs.get_mut(&graph).ok_or(SimError::Invalid {
+            why: "unknown graph",
+        })?;
+        let step = live_ok_mut(g.steps.get_mut(node).ok_or(SimError::Invalid {
+            why: "unknown graph node",
+        })?)?;
+        step.kind = Kind::HostFunc {
+            fn_id: params.fn_id,
+            user_data: params.user_data,
+        };
+        Ok(())
+    }
+
+    /// `cudaGraphMemFreeNodeSetParams` on the graph definition.
+    ///
+    /// After [`Self::instantiate_graph`], this does not retarget the exec
+    /// snapshot; use [`Self::graph_exec_free_set_params`]. Capture cannot
+    /// include it. Host-sync 1 ns. The node must already be a mem free node.
+    /// [`Sim::graph_allocs`] stays the alloc-node ids.
+    pub fn graph_free_set_params(
+        &mut self,
+        graph: GraphId,
+        node: usize,
+        id: AllocId,
+    ) -> Result<(), SimError> {
+        self.fail_if_capturing("cannot capture mem free node set params")?;
+        let _a = self.alloc_ref(id)?;
+        let device = {
+            let g = self.graphs.get(&graph).ok_or(SimError::Invalid {
+                why: "unknown graph",
+            })?;
+            let step = live_ok(g.steps.get(node).ok_or(SimError::Invalid {
+                why: "unknown graph node",
+            })?)?;
+            if !matches!(step.kind, Kind::Free { .. }) {
+                return Err(SimError::Invalid {
+                    why: "not a mem free node",
+                });
+            }
+            step.device
+        };
+        let _gpu = self.profile.gpu(device)?;
+        self.clock = self.clock.saturating_add(1);
+        let g = self.graphs.get_mut(&graph).ok_or(SimError::Invalid {
+            why: "unknown graph",
+        })?;
+        let step = live_ok_mut(g.steps.get_mut(node).ok_or(SimError::Invalid {
+            why: "unknown graph node",
+        })?)?;
+        step.kind = Kind::Free { id };
+        Ok(())
+    }
+
+    /// `cudaGraphEventRecordNodeSetEvent` on the graph definition.
+    ///
+    /// After [`Self::instantiate_graph`], this does not retarget the exec
+    /// snapshot; use [`Self::graph_exec_event_record_set_event`]. The External
+    /// flag stays (topology). Capture cannot include it. Host-sync 1 ns.
+    pub fn graph_event_record_set_event(
+        &mut self,
+        graph: GraphId,
+        node: usize,
+        event: EventId,
+    ) -> Result<(), SimError> {
+        self.graph_def_event_set(graph, node, event, EventSetKind::Record)
+    }
+
+    /// `cudaGraphEventWaitNodeSetEvent` on the graph definition.
+    ///
+    /// After instantiate this does not retarget the exec; use
+    /// [`Self::graph_exec_event_wait_set_event`]. The External flag stays
+    /// (topology). Capture cannot include it. Host-sync 1 ns.
+    pub fn graph_event_wait_set_event(
+        &mut self,
+        graph: GraphId,
+        node: usize,
+        event: EventId,
+    ) -> Result<(), SimError> {
+        self.graph_def_event_set(graph, node, event, EventSetKind::Wait)
+    }
+
+    fn graph_def_event_set(
+        &mut self,
+        graph: GraphId,
+        node: usize,
+        event: EventId,
+        kind: EventSetKind,
+    ) -> Result<(), SimError> {
+        let capture = match kind {
+            EventSetKind::Record => "cannot capture event record set event",
+            EventSetKind::Wait => "cannot capture event wait set event",
+        };
+        self.fail_if_capturing(capture)?;
+        if !self.events.contains_key(&event) {
+            return Err(SimError::UnknownEvent { event: event.0 });
+        }
+        let (device, external) = {
+            let g = self.graphs.get(&graph).ok_or(SimError::Invalid {
+                why: "unknown graph",
+            })?;
+            let step = live_ok(g.steps.get(node).ok_or(SimError::Invalid {
+                why: "unknown graph node",
+            })?)?;
+            let external = match (kind, &step.kind) {
+                (EventSetKind::Record, Kind::EventRecord { external, .. }) => *external,
+                (EventSetKind::Wait, Kind::EventWait { external, .. }) => *external,
+                (EventSetKind::Record, _) => {
+                    return Err(SimError::Invalid {
+                        why: "not an event record node",
+                    });
+                }
+                (EventSetKind::Wait, _) => {
+                    return Err(SimError::Invalid {
+                        why: "not an event wait node",
+                    });
+                }
+            };
+            (step.device, external)
+        };
+        let _gpu = self.profile.gpu(device)?;
+        self.clock = self.clock.saturating_add(1);
+        let g = self.graphs.get_mut(&graph).ok_or(SimError::Invalid {
+            why: "unknown graph",
+        })?;
+        let step = live_ok_mut(g.steps.get_mut(node).ok_or(SimError::Invalid {
+            why: "unknown graph node",
+        })?)?;
+        step.kind = match kind {
+            EventSetKind::Record => Kind::EventRecord { event, external },
+            EventSetKind::Wait => Kind::EventWait { event, external },
+        };
+        Ok(())
+    }
+
+    /// `cudaGraphChildGraphNodeSetParams` on the graph definition.
+    ///
+    /// After instantiate this does not retarget the exec; use
+    /// [`Self::graph_exec_child_set_params`]. `child` must already be
+    /// instantiated, on the same GPU. Nested topology may change (unlike
+    /// ExecSetParams). Capture cannot include it. Host-sync 1 ns.
+    pub fn graph_child_set_params(
+        &mut self,
+        graph: GraphId,
+        node: usize,
+        child: GraphId,
+    ) -> Result<(), SimError> {
+        self.fail_if_capturing("cannot capture child graph node set params")?;
+        if child == graph {
+            return Err(SimError::Invalid {
+                why: "graph child is self",
+            });
+        }
+        let (device, ownership) = {
+            let g = self.graphs.get(&graph).ok_or(SimError::Invalid {
+                why: "unknown graph",
+            })?;
+            let step = live_ok(g.steps.get(node).ok_or(SimError::Invalid {
+                why: "unknown graph node",
+            })?)?;
+            let Kind::ChildGraph { ownership, .. } = &step.kind else {
+                return Err(SimError::Invalid {
+                    why: "not a child graph node",
+                });
+            };
+            if *ownership == GraphChildGraphOwnership::MOVE {
+                return Err(SimError::Invalid {
+                    why: "child graph ownership",
+                });
+            }
+            (step.device, *ownership)
+        };
+        let (ready, origin) = {
+            let c = self.graphs.get(&child).ok_or(SimError::Invalid {
+                why: "unknown graph",
+            })?;
+            (c.ready(), c.origin.0)
+        };
+        if !ready {
+            return Err(SimError::Invalid {
+                why: "child graph not instantiated",
+            });
+        }
+        if origin != device {
+            return Err(SimError::Invalid {
+                why: "graph child gpu mismatch",
+            });
+        }
+        if self.graph_tree_contains(child, graph)? {
+            return Err(SimError::Invalid {
+                why: "cyclic child graph",
+            });
+        }
+        let _gpu = self.profile.gpu(device)?;
+        self.clock = self.clock.saturating_add(1);
+        let g = self.graphs.get_mut(&graph).ok_or(SimError::Invalid {
+            why: "unknown graph",
+        })?;
+        let step = live_ok_mut(g.steps.get_mut(node).ok_or(SimError::Invalid {
+            why: "unknown graph node",
+        })?)?;
+        step.kind = Kind::ChildGraph {
+            graph: child,
+            ownership,
+        };
+        Ok(())
+    }
+
+    /// `cudaGraphNodeSetParams` on the graph definition.
+    ///
+    /// Dispatches to the typed SetParams. [`GraphNodeParams::Alloc`] is Invalid
+    /// (would resize HBM). [`GraphNodeParams::Empty`] has no params. Event
+    /// External flags are not rewritten (topology). [`GraphNodeParams::If`] /
+    /// `IfElse` / `While` / `Switch` retarget the handle; type, size, and bodies
+    /// stay topology. After instantiate this does not retarget the exec; use
+    /// [`Self::graph_exec_node_set_params`]. Capture cannot include it.
+    pub fn graph_node_set_params(
+        &mut self,
+        graph: GraphId,
+        node: usize,
+        params: GraphNodeParams,
+    ) -> Result<(), SimError> {
+        self.set_node_params(graph, node, params, false)
+    }
+
+    /// `cudaGraphExecNodeSetParams` on an instantiated exec.
+    ///
+    /// Dispatches to the typed ExecSetParams. [`GraphNodeParams::Alloc`] is
+    /// Invalid. [`GraphNodeParams::Empty`] has no params. If / IfElse / While
+    /// plus Switch retarget the handle. Capture cannot include it.
+    /// [`GraphNodeParams::Memcpy`] is 1-dimensional only (same as
+    /// [`Self::graph_exec_memcpy_set_params`]). [`GraphNodeParams::Memset`] of
+    /// a 2D/3D node may change address only (same as
+    /// [`Self::graph_exec_memset_set_params`]).
+    pub fn graph_exec_node_set_params(
+        &mut self,
+        exec: GraphId,
+        node: usize,
+        params: GraphNodeParams,
+    ) -> Result<(), SimError> {
+        self.set_node_params(exec, node, params, true)
+    }
+
+    fn set_node_params(
+        &mut self,
+        graph: GraphId,
+        node: usize,
+        params: GraphNodeParams,
+        exec: bool,
+    ) -> Result<(), SimError> {
+        match params {
+            GraphNodeParams::Kernel(p) => {
+                if exec {
+                    self.graph_exec_kernel_set_params(graph, node, &p)
+                } else {
+                    self.graph_kernel_set_params(graph, node, &p)
+                }
+            }
+            GraphNodeParams::Memcpy(p) => {
+                if exec {
+                    self.graph_exec_memcpy_set_params_with_ctx(graph, node, &p)
+                } else {
+                    self.graph_memcpy_set_params_with_ctx(graph, node, &p)
+                }
+            }
+            GraphNodeParams::Memset(p) => {
+                if exec {
+                    self.graph_exec_memset_set_params_with_ctx(graph, node, &p)
+                } else {
+                    self.graph_memset_set_params_with_ctx(graph, node, &p)
+                }
+            }
+            GraphNodeParams::Host(p) => {
+                if exec {
+                    self.graph_exec_host_set_params(graph, node, p)
+                } else {
+                    self.graph_host_set_params(graph, node, p)
+                }
+            }
+            GraphNodeParams::Empty => Err(SimError::Invalid {
+                why: "empty node has no params",
+            }),
+            GraphNodeParams::EventRecord { event, .. } => {
+                if exec {
+                    self.graph_exec_event_record_set_event(graph, node, event)
+                } else {
+                    self.graph_event_record_set_event(graph, node, event)
+                }
+            }
+            GraphNodeParams::EventWait { event, .. } => {
+                if exec {
+                    self.graph_exec_event_wait_set_event(graph, node, event)
+                } else {
+                    self.graph_event_wait_set_event(graph, node, event)
+                }
+            }
+            GraphNodeParams::ChildGraph(p) => {
+                if p.ownership != GraphChildGraphOwnership::CLONE {
+                    return Err(SimError::Invalid {
+                        why: "child graph ownership",
+                    });
+                }
+                if exec {
+                    self.graph_exec_child_set_params(graph, node, p.graph)
+                } else {
+                    self.graph_child_set_params(graph, node, p.graph)
+                }
+            }
+            GraphNodeParams::Alloc { .. } => Err(SimError::Invalid {
+                why: "cannot set mem alloc node params",
+            }),
+            GraphNodeParams::Free(id) => {
+                if exec {
+                    self.graph_exec_free_set_params(graph, node, id)
+                } else {
+                    self.graph_free_set_params(graph, node, id)
+                }
+            }
+            GraphNodeParams::BatchMemOp(p) => {
+                self.set_batch_mem_ops(graph, node, &p.ops, exec, GreenCtxPatch::Set(p.ctx))
+            }
+            GraphNodeParams::SetConditional { handle, value } => {
+                self.set_conditional_node_params(graph, node, handle, value, exec)
+            }
+            GraphNodeParams::If { .. }
+            | GraphNodeParams::IfElse { .. }
+            | GraphNodeParams::While { .. }
+            | GraphNodeParams::Switch { .. } => {
+                self.set_cond_node_handle(graph, node, params, exec)
+            }
+        }
+    }
+
+    /// `cudaGraphConditionalNodeSetParams` / `cudaGraphExecConditionalNodeSetParams`.
+    ///
+    /// Retargets the IF / IfElse / WHILE / SWITCH handle. Type, size, and
+    /// bodies stay topology. After instantiate, definition SetParams does not
+    /// retarget the exec. Exec pays `graph_set_params_ns` and clears upload.
+    /// Capture cannot include it. Graphs with mem alloc/free nodes are legal.
+    fn set_cond_node_handle(
+        &mut self,
+        graph: GraphId,
+        node: usize,
+        params: GraphNodeParams,
+        exec: bool,
+    ) -> Result<(), SimError> {
+        self.fail_if_capturing("cannot capture conditional node set params")?;
+        let (handle, set, ctx) = cond_set_from_params(&params)?;
+        let target = if exec {
+            self.as_exec_for_update(graph)?
+        } else {
+            graph
+        };
+        let owner = if exec { self.def_id(target) } else { graph };
+        let device = {
+            let g = self.graphs.get(&target).ok_or(SimError::Invalid {
+                why: "unknown graph",
+            })?;
+            let step = if exec {
+                live_ok(g.view().get(node).ok_or(SimError::Invalid {
+                    why: "unknown graph node",
+                })?)?
+            } else {
+                live_ok(g.steps.get(node).ok_or(SimError::Invalid {
+                    why: "unknown graph node",
+                })?)?
+            };
+            cond_kind_ok(&step.kind, set)?;
+            step.device
+        };
+        self.require_cond_on_graph(handle, owner)?;
+        self.require_cond_handle_ctx(handle, ctx, device)?;
+        if exec {
+            let ns = self.profile.gpu(device)?.graph_set_params_ns.max(1);
+            self.clock = self.clock.saturating_add(ns);
+            let g = self.graphs.get_mut(&target).ok_or(SimError::Invalid {
+                why: "unknown graph",
+            })?;
+            let step = live_ok_mut(g.exec_mut()?.get_mut(node).ok_or(SimError::Invalid {
+                why: "unknown graph node",
+            })?)?;
+            set_kind_cond_handle(&mut step.kind, handle)?;
+            step.green_ctx = ctx;
+            g.uploaded = false;
+            Ok(())
+        } else {
+            let _gpu = self.profile.gpu(device)?;
+            self.clock = self.clock.saturating_add(1);
+            let g = self.graphs.get_mut(&target).ok_or(SimError::Invalid {
+                why: "unknown graph",
+            })?;
+            let step = live_ok_mut(g.steps.get_mut(node).ok_or(SimError::Invalid {
+                why: "unknown graph node",
+            })?)?;
+            set_kind_cond_handle(&mut step.kind, handle)?;
+            step.green_ctx = ctx;
+            Ok(())
+        }
+    }
+
+    /// `cudaGraphNodeGetParams` on the graph definition.
+    ///
+    /// Query; legal during capture. Typed GetParams stay.
+    /// [`GraphNodeParams::If`] / `IfElse` / `While` are handle plus ctx
+    /// (bodies stay [`Self::graph_if_nodes`] / `graph_while_nodes`).
+    /// [`GraphNodeParams::Switch`] is handle, branch count, and ctx (bodies
+    /// stay [`Self::graph_switch_nodes`]).
+    /// Set-conditional is
+    /// [`Self::graph_set_conditional_nodes`] /
+    /// [`GraphNodeParams::SetConditional`].
+    /// [`GraphNodeParams::Alloc`] is bytes plus accessDescs; the pointer is
+    /// [`Self::graph_alloc_get_params`]. Empty returns [`GraphNodeParams::Empty`].
+    pub fn graph_node_get_params(
+        &self,
+        graph: GraphId,
+        node: usize,
+    ) -> Result<GraphNodeParams, SimError> {
+        self.graph_node_params_of(self.graph_def_step(graph, node)?)
+    }
+
+    /// Exec-snapshot [`Self::graph_node_get_params`].
+    ///
+    /// Uninstantiated graphs are Invalid. After instantiate this is the
+    /// launched node; [`Self::graph_node_get_params`] stays on the definition.
+    pub fn graph_exec_node_get_params(
+        &self,
+        exec: GraphId,
+        node: usize,
+    ) -> Result<GraphNodeParams, SimError> {
+        self.graph_node_params_of(self.graph_exec_step(exec, node)?)
+    }
+
+    fn graph_node_params_of(&self, step: &GraphStep) -> Result<GraphNodeParams, SimError> {
+        if let Kind::Alloc { id, bytes } = &step.kind {
+            return Ok(GraphNodeParams::Alloc {
+                bytes: *bytes,
+                access: self.alloc_ref(*id)?.graph_access.clone(),
+            });
+        }
+        if matches!(step.kind, Kind::Kernel { .. }) {
+            return Ok(GraphNodeParams::Kernel(kernel_params_from_step(step)?));
+        }
+        if matches!(step.kind, Kind::Memcpy(_)) {
+            return Ok(GraphNodeParams::Memcpy(memcpy_node_params_from_step(step)?));
+        }
+        if matches!(step.kind, Kind::Memset(_)) {
+            return Ok(GraphNodeParams::Memset(memset_node_params_from_step(step)?));
+        }
+        if let Kind::ChildGraph { graph, ownership } = &step.kind {
+            let ownership = if *ownership == GraphChildGraphOwnership::MOVE {
+                GraphChildGraphOwnership::INVALID
+            } else {
+                *ownership
+            };
+            return Ok(GraphNodeParams::ChildGraph(ChildGraphNodeParams {
+                graph: *graph,
+                ownership,
+            }));
+        }
+        if matches!(
+            step.kind,
+            Kind::BatchMem { .. } | Kind::WriteValue { .. } | Kind::WaitValue { .. }
+        ) {
+            return Ok(GraphNodeParams::BatchMemOp(batch_mem_params_from_step(
+                step,
+            )?));
+        }
+        if matches!(
+            step.kind,
+            Kind::If { .. } | Kind::While { .. } | Kind::Switch { .. }
+        ) {
+            return cond_params_from_step(step);
+        }
+        node_params_of(&step.kind)
+    }
+
+    /// `cudaGraphBatchMemOpNodeSetParams` on the graph definition.
+    ///
+    /// After instantiate this does not retarget the exec; use
+    /// [`Self::graph_exec_batch_mem_op_set_params`]. A wait-value / write-value
+    /// node keeps wait vs write, `bits32`, and compare (topology). A
+    /// [`crate::GpuOp::BatchMem`] node treats the item list as parameters
+    /// (length may change). Capture cannot include it. Host-sync 1 ns.
+    pub fn graph_batch_mem_op_set_params(
+        &mut self,
+        graph: GraphId,
+        node: usize,
+        op: BatchMemOp,
+    ) -> Result<(), SimError> {
+        self.set_batch_mem_ops(graph, node, &[op], false, GreenCtxPatch::Keep)
+    }
+
+    /// Replace the item list of a [`crate::GpuOp::BatchMem`] graph node.
+    ///
+    /// Empty is Invalid. Wait vs write mix and length are parameters. After
+    /// instantiate this does not retarget the exec. Capture cannot include it.
+    /// Host-sync 1 ns.
+    pub fn graph_batch_mem_ops_set_params(
+        &mut self,
+        graph: GraphId,
+        node: usize,
+        ops: &[BatchMemOp],
+    ) -> Result<(), SimError> {
+        self.set_batch_mem_ops(graph, node, ops, false, GreenCtxPatch::Keep)
+    }
+
+    /// `cudaGraphExecMemcpyNodeSetParams` on an instantiated exec.
+    ///
+    /// CUDA-named API is 1-dimensional only: both the instantiated node and
+    /// `op` must be [`MemcpyOp::is_1d`] (Invalid `"memcpy 1d"`). Pageable
+    /// copies stay illegal. Device-launch execs re-apply instantiate memcpy
+    /// dest rules (Invalid `"device launch instantiate flag"` for off-device
+    /// [`Place::Device`]). Definition SetParams still defer to instantiate.
+    /// Pays `graph_set_params_ns` and clears the upload
+    /// flag. Capture cannot include it. Graphs with mem alloc/free nodes are
+    /// legal (unlike [`Self::update_graph`]).
+    /// [`Self::graph_exec_memcpy_set_params_1d`] is
+    /// `cudaGraphExecMemcpyNodeSetParams1D` and may convert a 2D/3D node.
+    /// Extra [`Self::graph_exec_memcpy_set_params_2d`] plus
+    /// [`Self::graph_exec_memcpy_set_params_3d`] stay (not CUDA names).
+    pub fn graph_exec_memcpy_set_params(
+        &mut self,
+        exec: GraphId,
+        node: usize,
+        op: &MemcpyOp,
+    ) -> Result<(), SimError> {
+        self.set_memcpy_op(exec, node, op, true, GreenCtxPatch::Keep, true)
+    }
+
+    fn graph_exec_memcpy_set_params_with_ctx(
+        &mut self,
+        exec: GraphId,
+        node: usize,
+        params: &MemcpyNodeParams,
+    ) -> Result<(), SimError> {
+        self.set_memcpy_op(
+            exec,
+            node,
+            &params.op,
+            true,
+            GreenCtxPatch::Set(params.ctx),
+            true,
+        )
+    }
+
+    fn set_memcpy_op(
+        &mut self,
+        graph: GraphId,
+        node: usize,
+        op: &MemcpyOp,
+        exec: bool,
+        ctx: GreenCtxPatch,
+        cuda_named_1d: bool,
+    ) -> Result<(), SimError> {
+        self.fail_if_capturing(if exec {
+            "cannot capture memcpy set params"
+        } else {
+            "cannot capture memcpy node set params"
+        })?;
+        if op.src.is_pageable() || op.dst.is_pageable() {
+            return Err(SimError::Invalid {
+                why: "cannot add pageable memcpy",
+            });
+        }
+        let target = if exec {
+            self.as_exec_for_update(graph)?
+        } else {
+            graph
+        };
+        let (device, origin, flags) = {
+            let g = self.graphs.get(&target).ok_or(SimError::Invalid {
+                why: "unknown graph",
+            })?;
+            let step = if exec {
+                live_ok(g.view().get(node).ok_or(SimError::Invalid {
+                    why: "unknown graph node",
+                })?)?
+            } else {
+                live_ok(g.steps.get(node).ok_or(SimError::Invalid {
+                    why: "unknown graph node",
+                })?)?
+            };
+            match &step.kind {
+                Kind::Memcpy(cur) => {
+                    if exec && cuda_named_1d && (!op.is_1d() || !cur.is_1d()) {
+                        return Err(SimError::Invalid { why: "memcpy 1d" });
+                    }
+                }
+                _ => {
+                    return Err(SimError::Invalid {
+                        why: "not a memcpy node",
+                    });
+                }
+            }
+            (step.device, g.origin.0, g.instantiate_flags)
+        };
+        self.memcpy_precheck(op)?;
+        if let GreenCtxPatch::Set(Some(c)) = ctx {
+            self.require_live_green_ctx(c, device)?;
+        }
+        if device_launch_exec_place_refused(
+            exec,
+            flags,
+            memcpy_place_off_device(op.src, origin) || memcpy_place_off_device(op.dst, origin),
+        ) {
+            return Err(SimError::Invalid {
+                why: "device launch instantiate flag",
+            });
+        }
+        if let GreenCtxPatch::Set(c) = ctx {
+            self.refuse_device_launch_exec_ctx(target, exec, node, c)?;
+        }
+        if exec {
+            let ns = self.profile.gpu(device)?.graph_set_params_ns.max(1);
+            self.clock = self.clock.saturating_add(ns);
+            let g = self.graphs.get_mut(&target).ok_or(SimError::Invalid {
+                why: "unknown graph",
+            })?;
+            let step = live_ok_mut(g.exec_mut()?.get_mut(node).ok_or(SimError::Invalid {
+                why: "unknown graph node",
+            })?)?;
+            step.kind = Kind::Memcpy(op.clone());
+            if let GreenCtxPatch::Set(c) = ctx {
+                step.green_ctx = c;
+            }
+            g.uploaded = false;
+            Ok(())
+        } else {
+            let _gpu = self.profile.gpu(device)?;
+            self.clock = self.clock.saturating_add(1);
+            let g = self.graphs.get_mut(&target).ok_or(SimError::Invalid {
+                why: "unknown graph",
+            })?;
+            let step = live_ok_mut(g.steps.get_mut(node).ok_or(SimError::Invalid {
+                why: "unknown graph node",
+            })?)?;
+            step.kind = Kind::Memcpy(op.clone());
+            if let GreenCtxPatch::Set(c) = ctx {
+                step.green_ctx = c;
+            }
+            Ok(())
+        }
+    }
+
+    /// `cudaGraphExecMemcpyNodeSetParams1D` on an instantiated exec.
+    ///
+    /// Packs a 1D [`MemcpyOp`]. A 2D/3D node may become 1D (PLAN 190). Pageable
+    /// copies stay illegal. Pays `graph_set_params_ns`. Capture cannot include
+    /// it. Bypasses CUDA-named [`Self::graph_exec_memcpy_set_params`] 1D-only
+    /// original-node check.
+    pub fn graph_exec_memcpy_set_params_1d(
+        &mut self,
+        exec: GraphId,
+        node: usize,
+        src: Place,
+        dst: Place,
+        alloc: AllocId,
+        bytes: u64,
+    ) -> Result<(), SimError> {
+        self.set_memcpy_op(
+            exec,
+            node,
+            &MemcpyOp::packed_1d(src, dst, alloc, bytes),
+            true,
+            GreenCtxPatch::Keep,
+            false,
+        )
+    }
+
+    /// Extra helper whose [`MemcpyOp`] is [`MemcpyOp::is_2d`] (`height > 1`,
+    /// not 3D). Other extents Invalid `"memcpy2d height"`. CUDA-named
+    /// [`Self::graph_exec_memcpy_set_params`] is 1D-only.
+    pub fn graph_exec_memcpy_set_params_2d(
+        &mut self,
+        exec: GraphId,
+        node: usize,
+        op: &MemcpyOp,
+    ) -> Result<(), SimError> {
+        if !op.is_2d() {
+            return Err(SimError::Invalid {
+                why: "memcpy2d height",
+            });
+        }
+        self.set_memcpy_op(exec, node, op, true, GreenCtxPatch::Keep, false)
+    }
+
+    /// Extra helper whose [`MemcpyOp`] is [`MemcpyOp::is_3d`] (`depth > 1`).
+    /// Other extents Invalid `"memcpy3d depth"`. CUDA-named
+    /// [`Self::graph_exec_memcpy_set_params`] is 1D-only.
+    pub fn graph_exec_memcpy_set_params_3d(
+        &mut self,
+        exec: GraphId,
+        node: usize,
+        op: &MemcpyOp,
+    ) -> Result<(), SimError> {
+        if !op.is_3d() {
+            return Err(SimError::Invalid {
+                why: "memcpy3d depth",
+            });
+        }
+        self.set_memcpy_op(exec, node, op, true, GreenCtxPatch::Keep, false)
+    }
+
+    /// `cudaGraphExecMemsetNodeSetParams` on an instantiated exec.
+    ///
+    /// Node `node` must already be a memset. 2D and 3D nodes may change
+    /// address only (Invalid `"memset dims"` for width, height, pitch, depth,
+    /// ysize, plus elementSize). 1D nodes may change dimensions. Zero-byte
+    /// fills stay illegal. Device-launch execs re-apply instantiate memset
+    /// dest rules (Invalid `"device launch instantiate flag"` for off-device
+    /// dest). Definition SetParams still defer to instantiate. Pays
+    /// `graph_set_params_ns` and clears the upload
+    /// flag. Capture cannot include it. Graphs with mem alloc/free nodes are
+    /// legal (unlike [`Self::update_graph`]). [`KernelBuf`] converts to a
+    /// packed 1D [`MemsetOp`]. Extra [`Self::graph_exec_memset_set_params_2d`]
+    /// plus [`Self::graph_exec_memset_set_params_3d`] stay legal.
+    pub fn graph_exec_memset_set_params(
+        &mut self,
+        exec: GraphId,
+        node: usize,
+        op: impl Into<MemsetOp>,
+    ) -> Result<(), SimError> {
+        self.set_memset_op(exec, node, op.into(), true, GreenCtxPatch::Keep, true)
+    }
+
+    fn graph_exec_memset_set_params_with_ctx(
+        &mut self,
+        exec: GraphId,
+        node: usize,
+        params: &MemsetNodeParams,
+    ) -> Result<(), SimError> {
+        self.set_memset_op(
+            exec,
+            node,
+            params.op,
+            true,
+            GreenCtxPatch::Set(params.ctx),
+            true,
+        )
+    }
+
+    fn set_memset_op(
+        &mut self,
+        graph: GraphId,
+        node: usize,
+        op: MemsetOp,
+        exec: bool,
+        ctx: GreenCtxPatch,
+        cuda_named: bool,
+    ) -> Result<(), SimError> {
+        self.fail_if_capturing(if exec {
+            "cannot capture memset set params"
+        } else {
+            "cannot capture memset node set params"
+        })?;
+        let target = if exec {
+            self.as_exec_for_update(graph)?
+        } else {
+            graph
+        };
+        let (device, cur, origin, flags) = {
+            let g = self.graphs.get(&target).ok_or(SimError::Invalid {
+                why: "unknown graph",
+            })?;
+            let step = if exec {
+                live_ok(g.view().get(node).ok_or(SimError::Invalid {
+                    why: "unknown graph node",
+                })?)?
+            } else {
+                live_ok(g.steps.get(node).ok_or(SimError::Invalid {
+                    why: "unknown graph node",
+                })?)?
+            };
+            match &step.kind {
+                Kind::Memset(cur) => (step.device, *cur, g.origin.0, g.instantiate_flags),
+                _ => {
+                    return Err(SimError::Invalid {
+                        why: "not a memset node",
+                    });
+                }
+            }
+        };
+        let op = self.resolve_memset_op(op)?;
+        if exec && cuda_named && !memset_exec_update_eq(&cur, &op) {
+            return Err(SimError::Invalid { why: "memset dims" });
+        }
+        if let GreenCtxPatch::Set(Some(c)) = ctx {
+            self.require_live_green_ctx(c, device)?;
+        }
+        if device_launch_exec_place_refused(
+            exec,
+            flags,
+            device_launch_memset_off_device(&Kind::Memset(op), origin, &self.allocs),
+        ) {
+            return Err(SimError::Invalid {
+                why: "device launch instantiate flag",
+            });
+        }
+        if let GreenCtxPatch::Set(c) = ctx {
+            self.refuse_device_launch_exec_ctx(target, exec, node, c)?;
+        }
+        if exec {
+            let ns = self.profile.gpu(device)?.graph_set_params_ns.max(1);
+            self.clock = self.clock.saturating_add(ns);
+            let g = self.graphs.get_mut(&target).ok_or(SimError::Invalid {
+                why: "unknown graph",
+            })?;
+            let step = live_ok_mut(g.exec_mut()?.get_mut(node).ok_or(SimError::Invalid {
+                why: "unknown graph node",
+            })?)?;
+            step.kind = Kind::Memset(op);
+            if let GreenCtxPatch::Set(c) = ctx {
+                step.green_ctx = c;
+            }
+            g.uploaded = false;
+            Ok(())
+        } else {
+            let _gpu = self.profile.gpu(device)?;
+            self.clock = self.clock.saturating_add(1);
+            let g = self.graphs.get_mut(&target).ok_or(SimError::Invalid {
+                why: "unknown graph",
+            })?;
+            let step = live_ok_mut(g.steps.get_mut(node).ok_or(SimError::Invalid {
+                why: "unknown graph node",
+            })?)?;
+            step.kind = Kind::Memset(op);
+            if let GreenCtxPatch::Set(c) = ctx {
+                step.green_ctx = c;
+            }
+            Ok(())
+        }
+    }
+
+    /// Extra helper whose [`MemsetOp`] is [`MemsetOp::is_2d`] (`height > 1`,
+    /// not 3D). Other extents Invalid `"memset2d height"`. CUDA-named
+    /// [`Self::graph_exec_memset_set_params`] freezes 2D geometry.
+    pub fn graph_exec_memset_set_params_2d(
+        &mut self,
+        exec: GraphId,
+        node: usize,
+        op: MemsetOp,
+    ) -> Result<(), SimError> {
+        if !op.is_2d() {
+            return Err(SimError::Invalid {
+                why: "memset2d height",
+            });
+        }
+        self.set_memset_op(exec, node, op, true, GreenCtxPatch::Keep, false)
+    }
+
+    /// Extra helper whose [`MemsetOp`] is [`MemsetOp::is_3d`] (`depth > 1`).
+    /// Other extents Invalid `"memset3d depth"`. CUDA-named
+    /// [`Self::graph_exec_memset_set_params`] freezes 3D geometry.
+    pub fn graph_exec_memset_set_params_3d(
+        &mut self,
+        exec: GraphId,
+        node: usize,
+        op: MemsetOp,
+    ) -> Result<(), SimError> {
+        if !op.is_3d() {
+            return Err(SimError::Invalid {
+                why: "memset3d depth",
+            });
+        }
+        self.set_memset_op(exec, node, op, true, GreenCtxPatch::Keep, false)
+    }
+
+    /// `cudaGraphExecHostNodeSetParams` on an instantiated exec.
+    ///
+    /// Node `node` must already be a host node. [`HostNodeParams::fn_id`] /
+    /// [`HostNodeParams::user_data`] may change. Pays `graph_set_params_ns` and
+    /// clears the upload flag. Capture cannot include it. Graphs with mem
+    /// alloc/free nodes are legal (unlike [`Self::update_graph`]).
+    pub fn graph_exec_host_set_params(
+        &mut self,
+        exec: GraphId,
+        node: usize,
+        params: HostNodeParams,
+    ) -> Result<(), SimError> {
+        self.fail_if_capturing("cannot capture host set params")?;
+        let exec = self.as_exec_for_update(exec)?;
+        let device = {
+            let g = self.graphs.get(&exec).ok_or(SimError::Invalid {
+                why: "unknown graph",
+            })?;
+            let step = live_ok(g.view().get(node).ok_or(SimError::Invalid {
+                why: "unknown graph node",
+            })?)?;
+            if !matches!(step.kind, Kind::HostFunc { .. }) {
+                return Err(SimError::Invalid {
+                    why: "not a host node",
+                });
+            }
+            step.device
+        };
+        let ns = self.profile.gpu(device)?.graph_set_params_ns.max(1);
+        self.clock = self.clock.saturating_add(ns);
+        let g = self.graphs.get_mut(&exec).ok_or(SimError::Invalid {
+            why: "unknown graph",
+        })?;
+        let step = live_ok_mut(g.exec_mut()?.get_mut(node).ok_or(SimError::Invalid {
+            why: "unknown graph node",
+        })?)?;
+        step.kind = Kind::HostFunc {
+            fn_id: params.fn_id,
+            user_data: params.user_data,
+        };
+        g.uploaded = false;
+        Ok(())
+    }
+
+    /// `cudaGraphExecBatchMemOpNodeSetParams` on an instantiated exec.
+    ///
+    /// A wait-value / write-value node may change id / offset / value; wait vs
+    /// write, `bits32`, and compare stay. A [`crate::GpuOp::BatchMem`] node
+    /// replaces the item list (length may change). Pays `graph_set_params_ns`
+    /// and clears the upload flag. Capture cannot include it.
+    pub fn graph_exec_batch_mem_op_set_params(
+        &mut self,
+        exec: GraphId,
+        node: usize,
+        op: BatchMemOp,
+    ) -> Result<(), SimError> {
+        self.set_batch_mem_ops(exec, node, &[op], true, GreenCtxPatch::Keep)
+    }
+
+    /// Exec-side item-list SetParams for a [`crate::GpuOp::BatchMem`] node.
+    pub fn graph_exec_batch_mem_ops_set_params(
+        &mut self,
+        exec: GraphId,
+        node: usize,
+        ops: &[BatchMemOp],
+    ) -> Result<(), SimError> {
+        self.set_batch_mem_ops(exec, node, ops, true, GreenCtxPatch::Keep)
+    }
+
+    fn set_batch_mem_ops(
+        &mut self,
+        graph: GraphId,
+        node: usize,
+        ops: &[BatchMemOp],
+        exec: bool,
+        ctx: GreenCtxPatch,
+    ) -> Result<(), SimError> {
+        self.fail_if_capturing(if exec {
+            "cannot capture batch mem op set params"
+        } else {
+            "cannot capture batch mem op node set params"
+        })?;
+        self.check_batch_mem_ops(ops)?;
+        let graph = if exec {
+            self.as_exec_for_update(graph)?
+        } else {
+            graph
+        };
+        let (device, next) = {
+            let g = self.graphs.get(&graph).ok_or(SimError::Invalid {
+                why: "unknown graph",
+            })?;
+            let step = live_ok(
+                if exec {
+                    g.view().get(node)
+                } else {
+                    g.steps.get(node)
+                }
+                .ok_or(SimError::Invalid {
+                    why: "unknown graph node",
+                })?,
+            )?;
+            let next = batch_ops_set_params_kind(&step.kind, ops)?;
+            (step.device, next)
+        };
+        if let GreenCtxPatch::Set(Some(id)) = ctx {
+            self.require_live_green_ctx(id, device)?;
+        }
+        self.check_batch_flush(device, ops)?;
+        if exec {
+            let ns = self.profile.gpu(device)?.graph_set_params_ns.max(1);
+            self.clock = self.clock.saturating_add(ns);
+        } else {
+            let _gpu = self.profile.gpu(device)?;
+            self.clock = self.clock.saturating_add(1);
+        }
+        let g = self.graphs.get_mut(&graph).ok_or(SimError::Invalid {
+            why: "unknown graph",
+        })?;
+        let step = live_ok_mut(
+            if exec {
+                g.exec_mut()?.get_mut(node)
+            } else {
+                g.steps.get_mut(node)
+            }
+            .ok_or(SimError::Invalid {
+                why: "unknown graph node",
+            })?,
+        )?;
+        step.kind = next;
+        if let GreenCtxPatch::Set(c) = ctx {
+            step.green_ctx = c;
+        }
+        if exec {
+            g.uploaded = false;
+        }
+        Ok(())
+    }
+
+    /// `cudaGraphExecChildGraphNodeSetParams` on an instantiated exec.
+    ///
+    /// Node `node` must already be a child-graph node. `child` must already be
+    /// instantiated, on the same GPU, and have matching topology with the
+    /// current nested graph (device, stream, op kinds, cooperative flag, deps).
+    /// Nested child-graph ids may differ (the nested graph is the
+    /// parameter). Pays `graph_set_params_ns` and clears the upload flag.
+    /// Capture cannot include it. Graphs with mem alloc/free nodes are legal
+    /// (unlike [`Self::update_graph`], which treats child ids as topology).
+    /// Nesting `exec` under itself, or a child whose tree already names `exec`,
+    /// is Invalid.
+    pub fn graph_exec_child_set_params(
+        &mut self,
+        exec: GraphId,
+        node: usize,
+        child: GraphId,
+    ) -> Result<(), SimError> {
+        self.fail_if_capturing("cannot capture child set params")?;
+        if child == exec {
+            return Err(SimError::Invalid {
+                why: "graph child is self",
+            });
+        }
+        let exec = self.as_exec_for_update(exec)?;
+        if child == exec {
+            return Err(SimError::Invalid {
+                why: "graph child is self",
+            });
+        }
+        let (device, old_child, ownership) = {
+            let g = self.graphs.get(&exec).ok_or(SimError::Invalid {
+                why: "unknown graph",
+            })?;
+            let step = live_ok(g.view().get(node).ok_or(SimError::Invalid {
+                why: "unknown graph node",
+            })?)?;
+            let Kind::ChildGraph { graph, ownership } = &step.kind else {
+                return Err(SimError::Invalid {
+                    why: "not a child graph node",
+                });
+            };
+            if *ownership == GraphChildGraphOwnership::MOVE {
+                return Err(SimError::Invalid {
+                    why: "child graph ownership",
+                });
+            }
+            (step.device, *graph, *ownership)
+        };
+        let (child_ok, child_gpu, child_steps) = {
+            let c = self.graphs.get(&child).ok_or(SimError::Invalid {
+                why: "unknown graph",
+            })?;
+            (c.ready(), c.origin.0, c.steps.clone())
+        };
+        if !child_ok {
+            return Err(SimError::Invalid {
+                why: "child graph not instantiated",
+            });
+        }
+        if child_gpu != device {
+            return Err(SimError::Invalid {
+                why: "graph child gpu mismatch",
+            });
+        }
+        let old_steps = {
+            let old = self.graphs.get(&old_child).ok_or(SimError::Invalid {
+                why: "unknown graph",
+            })?;
+            old.steps.clone()
+        };
+        if !child_param_topology_eq(&old_steps, &child_steps) {
+            return Err(SimError::Invalid {
+                why: "child graph topology",
+            });
+        }
+        if self.graph_tree_contains(child, exec)? {
+            return Err(SimError::Invalid {
+                why: "cyclic child graph",
+            });
+        }
+        let child_exec = self.as_exec(child)?;
+        if child_exec == exec {
+            return Err(SimError::Invalid {
+                why: "graph child is self",
+            });
+        }
+        let ns = self.profile.gpu(device)?.graph_set_params_ns.max(1);
+        self.clock = self.clock.saturating_add(ns);
+        let g = self.graphs.get_mut(&exec).ok_or(SimError::Invalid {
+            why: "unknown graph",
+        })?;
+        let step = live_ok_mut(g.exec_mut()?.get_mut(node).ok_or(SimError::Invalid {
+            why: "unknown graph node",
+        })?)?;
+        step.kind = Kind::ChildGraph {
+            graph: child_exec,
+            ownership,
+        };
+        g.uploaded = false;
+        Ok(())
+    }
+
+    /// `cudaGraphExecEventRecordNodeSetEvent` on an instantiated exec.
+    ///
+    /// Node `node` must already be an event-record node. The event id may
+    /// change; the External flag stays (topology). Pays `graph_set_params_ns`
+    /// and clears the upload flag. Capture cannot include it. Graphs with mem
+    /// alloc/free nodes are legal.
+    pub fn graph_exec_event_record_set_event(
+        &mut self,
+        exec: GraphId,
+        node: usize,
+        event: EventId,
+    ) -> Result<(), SimError> {
+        self.graph_exec_event_set(exec, node, event, EventSetKind::Record)
+    }
+
+    /// `cudaGraphExecEventWaitNodeSetEvent` on an instantiated exec.
+    ///
+    /// Node `node` must already be an event-wait node. The event id may change;
+    /// the External flag stays (topology). Pays `graph_set_params_ns` and
+    /// clears the upload flag. Capture cannot include it.
+    pub fn graph_exec_event_wait_set_event(
+        &mut self,
+        exec: GraphId,
+        node: usize,
+        event: EventId,
+    ) -> Result<(), SimError> {
+        self.graph_exec_event_set(exec, node, event, EventSetKind::Wait)
+    }
+
+    fn graph_exec_event_set(
+        &mut self,
+        exec: GraphId,
+        node: usize,
+        event: EventId,
+        kind: EventSetKind,
+    ) -> Result<(), SimError> {
+        let capture = match kind {
+            EventSetKind::Record => "cannot capture event record set event",
+            EventSetKind::Wait => "cannot capture event wait set event",
+        };
+        self.fail_if_capturing(capture)?;
+        if !self.events.contains_key(&event) {
+            return Err(SimError::UnknownEvent { event: event.0 });
+        }
+        let exec = self.as_exec_for_update(exec)?;
+        let (device, external) = {
+            let g = self.graphs.get(&exec).ok_or(SimError::Invalid {
+                why: "unknown graph",
+            })?;
+            let step = live_ok(g.view().get(node).ok_or(SimError::Invalid {
+                why: "unknown graph node",
+            })?)?;
+            let external = match (kind, &step.kind) {
+                (EventSetKind::Record, Kind::EventRecord { external, .. }) => *external,
+                (EventSetKind::Wait, Kind::EventWait { external, .. }) => *external,
+                (EventSetKind::Record, _) => {
+                    return Err(SimError::Invalid {
+                        why: "not an event record node",
+                    });
+                }
+                (EventSetKind::Wait, _) => {
+                    return Err(SimError::Invalid {
+                        why: "not an event wait node",
+                    });
+                }
+            };
+            (step.device, external)
+        };
+        let ns = self.profile.gpu(device)?.graph_set_params_ns.max(1);
+        self.clock = self.clock.saturating_add(ns);
+        let g = self.graphs.get_mut(&exec).ok_or(SimError::Invalid {
+            why: "unknown graph",
+        })?;
+        let step = live_ok_mut(g.exec_mut()?.get_mut(node).ok_or(SimError::Invalid {
+            why: "unknown graph node",
+        })?)?;
+        step.kind = match kind {
+            EventSetKind::Record => Kind::EventRecord { event, external },
+            EventSetKind::Wait => Kind::EventWait { event, external },
+        };
+        g.uploaded = false;
+        Ok(())
+    }
+
+    /// `cudaGraphExecMemFreeNodeSetParams` on an instantiated exec.
+    ///
+    /// Node `node` must already be a mem free node. The freed id may change.
+    /// Pays `graph_set_params_ns` and clears the upload flag. Capture cannot
+    /// include it. Graphs with mem alloc/free nodes are legal (unlike
+    /// [`Self::update_graph`]). [`Sim::graph_allocs`] stays the alloc-node ids.
+    pub fn graph_exec_free_set_params(
+        &mut self,
+        exec: GraphId,
+        node: usize,
+        id: AllocId,
+    ) -> Result<(), SimError> {
+        self.fail_if_capturing("cannot capture mem free node set params")?;
+        let _a = self.alloc_ref(id)?;
+        let exec = self.as_exec_for_update(exec)?;
+        let device = {
+            let g = self.graphs.get(&exec).ok_or(SimError::Invalid {
+                why: "unknown graph",
+            })?;
+            let step = live_ok(g.view().get(node).ok_or(SimError::Invalid {
+                why: "unknown graph node",
+            })?)?;
+            if !matches!(step.kind, Kind::Free { .. }) {
+                return Err(SimError::Invalid {
+                    why: "not a mem free node",
+                });
+            }
+            step.device
+        };
+        let ns = self.profile.gpu(device)?.graph_set_params_ns.max(1);
+        self.clock = self.clock.saturating_add(ns);
+        let g = self.graphs.get_mut(&exec).ok_or(SimError::Invalid {
+            why: "unknown graph",
+        })?;
+        let step = live_ok_mut(g.exec_mut()?.get_mut(node).ok_or(SimError::Invalid {
+            why: "unknown graph node",
+        })?)?;
+        step.kind = Kind::Free { id };
+        g.uploaded = false;
+        Ok(())
+    }
+
+    /// `cudaGraphNodeSetParams` for a set-conditional node on the definition.
+    ///
+    /// After instantiate this does not retarget the exec; use
+    /// [`Self::graph_exec_set_conditional_params`]. [`CondId`] must match
+    /// (topology). Capture cannot include it. Host-sync 1 ns.
+    pub fn graph_set_conditional_params(
+        &mut self,
+        graph: GraphId,
+        node: usize,
+        value: u32,
+    ) -> Result<(), SimError> {
+        let handle = self.set_conditional_handle(graph, node, false)?;
+        self.set_conditional_node_params(graph, node, handle, value, false)
+    }
+
+    /// `cudaGraphExecNodeSetParams` for a set-conditional node on an exec.
+    ///
+    /// [`CondId`] must match (topology). `value` may change. Pays
+    /// `graph_set_params_ns` and clears the upload flag. Capture cannot
+    /// include it. Graphs with mem alloc/free nodes are legal.
+    pub fn graph_exec_set_conditional_params(
+        &mut self,
+        exec: GraphId,
+        node: usize,
+        value: u32,
+    ) -> Result<(), SimError> {
+        let handle = self.set_conditional_handle(exec, node, true)?;
+        self.set_conditional_node_params(exec, node, handle, value, true)
+    }
+
+    fn set_conditional_handle(
+        &self,
+        graph: GraphId,
+        node: usize,
+        exec: bool,
+    ) -> Result<CondId, SimError> {
+        let step = if exec {
+            self.graph_exec_step(self.as_exec_for_update(graph)?, node)?
+        } else {
+            self.graph_def_step(graph, node)?
+        };
+        match step.kind {
+            Kind::SetConditional { handle, .. } => Ok(handle),
+            _ => Err(SimError::Invalid {
+                why: "not a set-conditional node",
+            }),
+        }
+    }
+
+    fn set_conditional_node_params(
+        &mut self,
+        graph: GraphId,
+        node: usize,
+        handle: CondId,
+        value: u32,
+        exec: bool,
+    ) -> Result<(), SimError> {
+        self.fail_if_capturing(if exec {
+            "cannot capture set-conditional set params"
+        } else {
+            "cannot capture set-conditional node set params"
+        })?;
+        if exec {
+            let exec = self.as_exec_for_update(graph)?;
+            let device = {
+                let g = self.graphs.get(&exec).ok_or(SimError::Invalid {
+                    why: "unknown graph",
+                })?;
+                let step = live_ok(g.view().get(node).ok_or(SimError::Invalid {
+                    why: "unknown graph node",
+                })?)?;
+                let Kind::SetConditional { handle: have, .. } = step.kind else {
+                    return Err(SimError::Invalid {
+                        why: "not a set-conditional node",
+                    });
+                };
+                if have != handle {
+                    return Err(SimError::Invalid {
+                        why: "conditional handle is topology",
+                    });
+                }
+                step.device
+            };
+            let ns = self.profile.gpu(device)?.graph_set_params_ns.max(1);
+            self.clock = self.clock.saturating_add(ns);
+            let g = self.graphs.get_mut(&exec).ok_or(SimError::Invalid {
+                why: "unknown graph",
+            })?;
+            let step = live_ok_mut(g.exec_mut()?.get_mut(node).ok_or(SimError::Invalid {
+                why: "unknown graph node",
+            })?)?;
+            step.kind = Kind::SetConditional { handle, value };
+            g.uploaded = false;
+            Ok(())
+        } else {
+            let device = {
+                let g = self.graphs.get(&graph).ok_or(SimError::Invalid {
+                    why: "unknown graph",
+                })?;
+                let step = live_ok(g.steps.get(node).ok_or(SimError::Invalid {
+                    why: "unknown graph node",
+                })?)?;
+                let Kind::SetConditional { handle: have, .. } = step.kind else {
+                    return Err(SimError::Invalid {
+                        why: "not a set-conditional node",
+                    });
+                };
+                if have != handle {
+                    return Err(SimError::Invalid {
+                        why: "conditional handle is topology",
+                    });
+                }
+                step.device
+            };
+            let _gpu = self.profile.gpu(device)?;
+            self.clock = self.clock.saturating_add(1);
+            let g = self.graphs.get_mut(&graph).ok_or(SimError::Invalid {
+                why: "unknown graph",
+            })?;
+            let step = live_ok_mut(g.steps.get_mut(node).ok_or(SimError::Invalid {
+                why: "unknown graph node",
+            })?)?;
+            step.kind = Kind::SetConditional { handle, value };
+            Ok(())
+        }
+    }
+
+    /// Unique kernel node on `graph` plus its current [`KernelNodeParams`].
+    ///
+    /// Zero or more than one kernel node is Invalid. Used by
+    /// `cudaGraphExecKernelNodeSetParams` callers that parked a leaf GEMM.
+    pub fn graph_unique_kernel(
+        &self,
+        graph: GraphId,
+    ) -> Result<(usize, KernelNodeParams), SimError> {
+        let graph = self.resolved_graph(graph)?;
+        let g = self.graphs.get(&graph).ok_or(SimError::Invalid {
+            why: "unknown graph",
+        })?;
+        let mut found = None;
+        for (i, step) in g.view().iter().enumerate() {
+            if step.destroyed {
+                continue;
+            }
+            if !matches!(step.kind, Kind::Kernel { .. }) {
+                continue;
+            }
+            if found.is_some() {
+                return Err(SimError::Invalid {
+                    why: "not unique kernel node",
+                });
+            }
+            found = Some((i, kernel_params_from_step(step)?));
+        }
+        found.ok_or(SimError::Invalid {
+            why: "not a kernel node",
+        })
+    }
+
+    /// Unique memcpy node on `graph` plus its current [`MemcpyOp`].
+    ///
+    /// Zero memcpy nodes is Invalid (`not a memcpy node`). More than one is
+    /// `not unique memcpy node`.
+    pub fn graph_unique_memcpy(&self, graph: GraphId) -> Result<(usize, MemcpyOp), SimError> {
+        match self.graph_try_unique_memcpy(graph)? {
+            Some(v) => Ok(v),
+            None => Err(SimError::Invalid {
+                why: "not a memcpy node",
+            }),
+        }
+    }
+
+    /// Unique memcpy node, or `None` when the graph has no memcpy.
+    ///
+    /// More than one memcpy node is Invalid.
+    pub fn graph_try_unique_memcpy(
+        &self,
+        graph: GraphId,
+    ) -> Result<Option<(usize, MemcpyOp)>, SimError> {
+        let graph = self.resolved_graph(graph)?;
+        let g = self.graphs.get(&graph).ok_or(SimError::Invalid {
+            why: "unknown graph",
+        })?;
+        let mut found = None;
+        for (i, step) in g.view().iter().enumerate() {
+            if step.destroyed {
+                continue;
+            }
+            let Kind::Memcpy(op) = &step.kind else {
+                continue;
+            };
+            if found.is_some() {
+                return Err(SimError::Invalid {
+                    why: "not unique memcpy node",
+                });
+            }
+            found = Some((i, op.clone()));
+        }
+        Ok(found)
+    }
+
+    /// Unique memset node on `graph` plus its current [`MemsetOp`].
+    ///
+    /// Zero memset nodes is Invalid (`not a memset node`). More than one is
+    /// `not unique memset node`.
+    pub fn graph_unique_memset(&self, graph: GraphId) -> Result<(usize, MemsetOp), SimError> {
+        match self.graph_try_unique_memset(graph)? {
+            Some(v) => Ok(v),
+            None => Err(SimError::Invalid {
+                why: "not a memset node",
+            }),
+        }
+    }
+
+    /// Unique memset node, or `None` when the graph has no memset.
+    ///
+    /// More than one memset node is Invalid.
+    pub fn graph_try_unique_memset(
+        &self,
+        graph: GraphId,
+    ) -> Result<Option<(usize, MemsetOp)>, SimError> {
+        let graph = self.resolved_graph(graph)?;
+        let g = self.graphs.get(&graph).ok_or(SimError::Invalid {
+            why: "unknown graph",
+        })?;
+        let mut found = None;
+        for (i, step) in g.view().iter().enumerate() {
+            if step.destroyed {
+                continue;
+            }
+            let Kind::Memset(op) = &step.kind else {
+                continue;
+            };
+            if found.is_some() {
+                return Err(SimError::Invalid {
+                    why: "not unique memset node",
+                });
+            }
+            found = Some((i, *op));
+        }
+        Ok(found)
+    }
+
+    /// Unique host node on `graph` plus its current [`HostNodeParams`].
+    ///
+    /// Zero host nodes is Invalid (`not a host node`). More than one is
+    /// `not unique host node`.
+    pub fn graph_unique_host(&self, graph: GraphId) -> Result<(usize, HostNodeParams), SimError> {
+        match self.graph_try_unique_host(graph)? {
+            Some(v) => Ok(v),
+            None => Err(SimError::Invalid {
+                why: "not a host node",
+            }),
+        }
+    }
+
+    /// Unique host node, or `None` when the graph has no host callback.
+    ///
+    /// More than one host node is Invalid.
+    pub fn graph_try_unique_host(
+        &self,
+        graph: GraphId,
+    ) -> Result<Option<(usize, HostNodeParams)>, SimError> {
+        let graph = self.resolved_graph(graph)?;
+        let g = self.graphs.get(&graph).ok_or(SimError::Invalid {
+            why: "unknown graph",
+        })?;
+        let mut found = None;
+        for (i, step) in g.view().iter().enumerate() {
+            if step.destroyed {
+                continue;
+            }
+            let Kind::HostFunc { fn_id, user_data } = &step.kind else {
+                continue;
+            };
+            if found.is_some() {
+                return Err(SimError::Invalid {
+                    why: "not unique host node",
+                });
+            }
+            found = Some((
+                i,
+                HostNodeParams {
+                    fn_id: *fn_id,
+                    user_data: *user_data,
+                },
+            ));
+        }
+        Ok(found)
+    }
+
+    /// Unique set-conditional node on `graph` plus `(handle, value)`.
+    ///
+    /// Zero nodes is Invalid (`not a set-conditional node`). More than one is
+    /// `not unique set-conditional node`.
+    pub fn graph_unique_set_conditional(
+        &self,
+        graph: GraphId,
+    ) -> Result<(usize, CondId, u32), SimError> {
+        match self.graph_try_unique_set_conditional(graph)? {
+            Some(v) => Ok(v),
+            None => Err(SimError::Invalid {
+                why: "not a set-conditional node",
+            }),
+        }
+    }
+
+    /// Unique set-conditional node, or `None` when the graph has none.
+    ///
+    /// More than one is Invalid.
+    pub fn graph_try_unique_set_conditional(
+        &self,
+        graph: GraphId,
+    ) -> Result<Option<(usize, CondId, u32)>, SimError> {
+        let graph = self.resolved_graph(graph)?;
+        let g = self.graphs.get(&graph).ok_or(SimError::Invalid {
+            why: "unknown graph",
+        })?;
+        let mut found = None;
+        for (i, step) in g.view().iter().enumerate() {
+            if step.destroyed {
+                continue;
+            }
+            let Kind::SetConditional { handle, value } = step.kind else {
+                continue;
+            };
+            if found.is_some() {
+                return Err(SimError::Invalid {
+                    why: "not unique set-conditional node",
+                });
+            }
+            found = Some((i, handle, value));
+        }
+        Ok(found)
+    }
+
+    fn graph_def_step(&self, graph: GraphId, node: usize) -> Result<&GraphStep, SimError> {
+        let g = self.graphs.get(&graph).ok_or(SimError::Invalid {
+            why: "unknown graph",
+        })?;
+        live_ok(g.steps.get(node).ok_or(SimError::Invalid {
+            why: "unknown graph node",
+        })?)
+    }
+
+    fn graph_view_step(&self, graph: GraphId, node: usize) -> Result<&GraphStep, SimError> {
+        let graph = self.resolved_graph(graph)?;
+        let g = self.graphs.get(&graph).ok_or(SimError::Invalid {
+            why: "unknown graph",
+        })?;
+        live_ok(g.view().get(node).ok_or(SimError::Invalid {
+            why: "unknown graph node",
+        })?)
+    }
+
+    fn graph_exec_step(&self, exec: GraphId, node: usize) -> Result<&GraphStep, SimError> {
+        let exec = self.as_exec(exec)?;
+        let g = self.graphs.get(&exec).ok_or(SimError::Invalid {
+            why: "unknown graph",
+        })?;
+        live_ok(g.view().get(node).ok_or(SimError::Invalid {
+            why: "unknown graph node",
+        })?)
+    }
+
+    /// `cudaGraphKernelNodeGetParams` on the graph definition.
+    ///
+    /// Includes [`KernelNodeParams::ctx`] (CUDA 13 `CUDA_KERNEL_NODE_PARAMS.ctx`).
+    pub fn graph_kernel_get_params(
+        &self,
+        graph: GraphId,
+        node: usize,
+    ) -> Result<KernelNodeParams, SimError> {
+        kernel_params_from_step(self.graph_def_step(graph, node)?)
+    }
+
+    /// `cudaGraphKernelNodeGetParams` of the exec snapshot.
+    ///
+    /// Uninstantiated graphs are Invalid. After instantiate this is the
+    /// launched kernel; [`Self::graph_kernel_get_params`] stays on the
+    /// definition.
+    pub fn graph_exec_kernel_get_params(
+        &self,
+        exec: GraphId,
+        node: usize,
+    ) -> Result<KernelNodeParams, SimError> {
+        kernel_params_from_step(self.graph_exec_step(exec, node)?)
+    }
+
+    /// `cudaGraphMemcpyNodeGetParams` on the graph definition.
+    ///
+    /// `CUDA_MEMCPY3D` copyParams only. Ctx is [`Self::graph_node_get_params`].
+    pub fn graph_memcpy_get_params(
+        &self,
+        graph: GraphId,
+        node: usize,
+    ) -> Result<MemcpyOp, SimError> {
+        memcpy_params_of(&self.graph_def_step(graph, node)?.kind)
+    }
+
+    /// Exec-snapshot memcpy params. Uninstantiated graphs are Invalid.
+    pub fn graph_exec_memcpy_get_params(
+        &self,
+        exec: GraphId,
+        node: usize,
+    ) -> Result<MemcpyOp, SimError> {
+        memcpy_params_of(&self.graph_exec_step(exec, node)?.kind)
+    }
+
+    /// `cudaGraphMemsetNodeGetParams` on the graph definition.
+    pub fn graph_memset_get_params(
+        &self,
+        graph: GraphId,
+        node: usize,
+    ) -> Result<MemsetOp, SimError> {
+        memset_params_of(&self.graph_def_step(graph, node)?.kind)
+    }
+
+    /// Exec-snapshot memset params. Uninstantiated graphs are Invalid.
+    pub fn graph_exec_memset_get_params(
+        &self,
+        exec: GraphId,
+        node: usize,
+    ) -> Result<MemsetOp, SimError> {
+        memset_params_of(&self.graph_exec_step(exec, node)?.kind)
+    }
+
+    /// `cudaGraphHostNodeGetParams` on the graph definition.
+    pub fn graph_host_get_params(
+        &self,
+        graph: GraphId,
+        node: usize,
+    ) -> Result<HostNodeParams, SimError> {
+        host_params_of(&self.graph_def_step(graph, node)?.kind)
+    }
+
+    /// Exec-snapshot host params. Uninstantiated graphs are Invalid.
+    pub fn graph_exec_host_get_params(
+        &self,
+        exec: GraphId,
+        node: usize,
+    ) -> Result<HostNodeParams, SimError> {
+        host_params_of(&self.graph_exec_step(exec, node)?.kind)
+    }
+
+    /// `cudaGraphBatchMemOpNodeGetParams` on the graph definition.
+    ///
+    /// Wait-value / write-value nodes are a one-item list.
+    pub fn graph_batch_mem_ops_get_params(
+        &self,
+        graph: GraphId,
+        node: usize,
+    ) -> Result<Vec<BatchMemOp>, SimError> {
+        batch_items(&self.graph_def_step(graph, node)?.kind).ok_or(SimError::Invalid {
+            why: "not a batch mem op node",
+        })
+    }
+
+    /// Exec-snapshot batch-mem-op items. Uninstantiated graphs are Invalid.
+    pub fn graph_exec_batch_mem_ops_get_params(
+        &self,
+        exec: GraphId,
+        node: usize,
+    ) -> Result<Vec<BatchMemOp>, SimError> {
+        batch_items(&self.graph_exec_step(exec, node)?.kind).ok_or(SimError::Invalid {
+            why: "not a batch mem op node",
+        })
+    }
+
+    /// Child-graph nodes on `graph` as `(index, nested GraphId)` in add order.
+    pub fn graph_child_nodes(&self, graph: GraphId) -> Result<Vec<(usize, GraphId)>, SimError> {
+        let graph = self.resolved_graph(graph)?;
+        let g = self.graphs.get(&graph).ok_or(SimError::Invalid {
+            why: "unknown graph",
+        })?;
+        let mut out = Vec::new();
+        for (i, step) in g.view().iter().enumerate() {
+            if step.destroyed {
+                continue;
+            }
+            if let Kind::ChildGraph { graph: child, .. } = &step.kind {
+                out.push((i, *child));
+            }
+        }
+        Ok(out)
+    }
+
+    /// `cudaGraphChildGraphNodeGetGraph`. Query; legal during capture.
+    ///
+    /// Instantiated ids use the exec snapshot (same as [`Self::graph_child_nodes`]).
+    /// [`Self::graph_exec_child_get_graph`] refuses uninstantiated graphs.
+    pub fn graph_child_get_graph(&self, graph: GraphId, node: usize) -> Result<GraphId, SimError> {
+        match &self.graph_view_step(graph, node)?.kind {
+            Kind::ChildGraph { graph: child, .. } => Ok(*child),
+            _ => Err(SimError::Invalid {
+                why: "not a child graph node",
+            }),
+        }
+    }
+
+    /// Exec-snapshot [`Self::graph_child_get_graph`].
+    ///
+    /// Uninstantiated graphs are Invalid. After instantiate this is the
+    /// launched child. [`Self::graph_child_get_graph`] stays a view. Query;
+    /// legal during capture.
+    pub fn graph_exec_child_get_graph(
+        &self,
+        exec: GraphId,
+        node: usize,
+    ) -> Result<GraphId, SimError> {
+        match &self.graph_exec_step(exec, node)?.kind {
+            Kind::ChildGraph { graph: child, .. } => Ok(*child),
+            _ => Err(SimError::Invalid {
+                why: "not a child graph node",
+            }),
+        }
+    }
+
+    /// `cudaGraphEventRecordNodeGetEvent`. Query; legal during capture.
+    ///
+    /// Instantiated ids use the exec snapshot.
+    /// [`Self::graph_exec_event_record_get_event`] refuses uninstantiated graphs.
+    pub fn graph_event_record_get_event(
+        &self,
+        graph: GraphId,
+        node: usize,
+    ) -> Result<EventId, SimError> {
+        match &self.graph_view_step(graph, node)?.kind {
+            Kind::EventRecord { event, .. } => Ok(*event),
+            _ => Err(SimError::Invalid {
+                why: "not an event record node",
+            }),
+        }
+    }
+
+    /// Exec-snapshot [`Self::graph_event_record_get_event`].
+    ///
+    /// Uninstantiated graphs are Invalid. After instantiate this is the
+    /// launched event. [`Self::graph_event_record_get_event`] stays a view.
+    /// Query; legal during capture.
+    pub fn graph_exec_event_record_get_event(
+        &self,
+        exec: GraphId,
+        node: usize,
+    ) -> Result<EventId, SimError> {
+        self.graph_exec_event_get(exec, node, EventSetKind::Record)
+    }
+
+    /// `cudaGraphEventWaitNodeGetEvent`. Query; legal during capture.
+    ///
+    /// Instantiated ids use the exec snapshot.
+    /// [`Self::graph_exec_event_wait_get_event`] refuses uninstantiated graphs.
+    pub fn graph_event_wait_get_event(
+        &self,
+        graph: GraphId,
+        node: usize,
+    ) -> Result<EventId, SimError> {
+        match &self.graph_view_step(graph, node)?.kind {
+            Kind::EventWait { event, .. } => Ok(*event),
+            _ => Err(SimError::Invalid {
+                why: "not an event wait node",
+            }),
+        }
+    }
+
+    /// Exec-snapshot [`Self::graph_event_wait_get_event`].
+    ///
+    /// Uninstantiated graphs are Invalid. After instantiate this is the
+    /// launched event. [`Self::graph_event_wait_get_event`] stays a view.
+    /// Query; legal during capture.
+    pub fn graph_exec_event_wait_get_event(
+        &self,
+        exec: GraphId,
+        node: usize,
+    ) -> Result<EventId, SimError> {
+        self.graph_exec_event_get(exec, node, EventSetKind::Wait)
+    }
+
+    fn graph_exec_event_get(
+        &self,
+        exec: GraphId,
+        node: usize,
+        kind: EventSetKind,
+    ) -> Result<EventId, SimError> {
+        match (kind, &self.graph_exec_step(exec, node)?.kind) {
+            (EventSetKind::Record, Kind::EventRecord { event, .. })
+            | (EventSetKind::Wait, Kind::EventWait { event, .. }) => Ok(*event),
+            (EventSetKind::Record, _) => Err(SimError::Invalid {
+                why: "not an event record node",
+            }),
+            (EventSetKind::Wait, _) => Err(SimError::Invalid {
+                why: "not an event wait node",
+            }),
+        }
+    }
+
+    /// `cudaGraphMemAllocNodeGetParams` of stored id and bytes.
+    ///
+    /// Query; legal during capture. Pool identity stays the graph-memory pool.
+    /// Instantiated ids use the exec snapshot.
+    /// [`Self::graph_exec_alloc_get_params`] refuses uninstantiated graphs.
+    /// `accessDescs` are [`Self::graph_alloc_get_access`].
+    pub fn graph_alloc_get_params(
+        &self,
+        graph: GraphId,
+        node: usize,
+    ) -> Result<(AllocId, u64), SimError> {
+        match &self.graph_view_step(graph, node)?.kind {
+            Kind::Alloc { id, bytes } => Ok((*id, *bytes)),
+            _ => Err(SimError::Invalid {
+                why: "not a mem alloc node",
+            }),
+        }
+    }
+
+    /// `cudaMemAllocNodeParams::accessDescs` on a mem-alloc node.
+    ///
+    /// Query; legal during capture. Empty when added with
+    /// [`Self::graph_add_alloc`]. Instantiated ids use the exec snapshot.
+    /// [`Self::graph_exec_alloc_get_access`] refuses uninstantiated graphs.
+    pub fn graph_alloc_get_access(
+        &self,
+        graph: GraphId,
+        node: usize,
+    ) -> Result<Vec<MemAccessDesc>, SimError> {
+        match &self.graph_view_step(graph, node)?.kind {
+            Kind::Alloc { id, .. } => Ok(self.alloc_ref(*id)?.graph_access.clone()),
+            _ => Err(SimError::Invalid {
+                why: "not a mem alloc node",
+            }),
+        }
+    }
+
+    /// Exec-snapshot [`Self::graph_alloc_get_params`].
+    ///
+    /// Uninstantiated graphs are Invalid. After instantiate this is the
+    /// launched alloc. [`Self::graph_alloc_get_params`] stays a view. Query;
+    /// legal during capture.
+    pub fn graph_exec_alloc_get_params(
+        &self,
+        exec: GraphId,
+        node: usize,
+    ) -> Result<(AllocId, u64), SimError> {
+        match &self.graph_exec_step(exec, node)?.kind {
+            Kind::Alloc { id, bytes } => Ok((*id, *bytes)),
+            _ => Err(SimError::Invalid {
+                why: "not a mem alloc node",
+            }),
+        }
+    }
+
+    /// Exec-snapshot [`Self::graph_alloc_get_access`].
+    ///
+    /// Uninstantiated graphs are Invalid. After instantiate this is the
+    /// launched alloc. [`Self::graph_alloc_get_access`] stays a view. Query;
+    /// legal during capture.
+    pub fn graph_exec_alloc_get_access(
+        &self,
+        exec: GraphId,
+        node: usize,
+    ) -> Result<Vec<MemAccessDesc>, SimError> {
+        match &self.graph_exec_step(exec, node)?.kind {
+            Kind::Alloc { id, .. } => Ok(self.alloc_ref(*id)?.graph_access.clone()),
+            _ => Err(SimError::Invalid {
+                why: "not a mem alloc node",
+            }),
+        }
+    }
+
+    /// `cudaGraphMemFreeNodeGetParams` of the stored [`AllocId`].
+    ///
+    /// Query; legal during capture. Instantiated ids use the exec snapshot
+    /// (same as [`Self::graph_alloc_get_params`]). [`Sim::graph_allocs`] is
+    /// alloc-node ids for AutoFree / destroy refund, not this free target.
+    /// [`Self::graph_exec_free_get_params`] refuses uninstantiated graphs.
+    pub fn graph_free_get_params(&self, graph: GraphId, node: usize) -> Result<AllocId, SimError> {
+        match &self.graph_view_step(graph, node)?.kind {
+            Kind::Free { id } => Ok(*id),
+            _ => Err(SimError::Invalid {
+                why: "not a mem free node",
+            }),
+        }
+    }
+
+    /// Exec-snapshot [`Self::graph_free_get_params`].
+    ///
+    /// Uninstantiated graphs are Invalid. After instantiate this is the
+    /// launched free. [`Self::graph_free_get_params`] stays a view. Query;
+    /// legal during capture.
+    pub fn graph_exec_free_get_params(
+        &self,
+        exec: GraphId,
+        node: usize,
+    ) -> Result<AllocId, SimError> {
+        match &self.graph_exec_step(exec, node)?.kind {
+            Kind::Free { id } => Ok(*id),
+            _ => Err(SimError::Invalid {
+                why: "not a mem free node",
+            }),
+        }
+    }
+
+    /// Unique child-graph node on `graph`.
+    ///
+    /// Zero child nodes is Invalid (`not a child graph node`). More than one is
+    /// `not unique child graph node`.
+    pub fn graph_unique_child(&self, graph: GraphId) -> Result<(usize, GraphId), SimError> {
+        match self.graph_try_unique_child(graph)? {
+            Some(v) => Ok(v),
+            None => Err(SimError::Invalid {
+                why: "not a child graph node",
+            }),
+        }
+    }
+
+    /// Unique child-graph node, or `None` when the graph has no child.
+    ///
+    /// More than one child-graph node is Invalid.
+    pub fn graph_try_unique_child(
+        &self,
+        graph: GraphId,
+    ) -> Result<Option<(usize, GraphId)>, SimError> {
+        let nodes = self.graph_child_nodes(graph)?;
+        match nodes.len() {
+            0 => Ok(None),
+            1 => Ok(nodes.into_iter().next()),
+            _ => Err(SimError::Invalid {
+                why: "not unique child graph node",
+            }),
+        }
+    }
+
+    /// Unique event-record node on `graph` plus its current [`EventId`].
+    pub fn graph_unique_event_record(&self, graph: GraphId) -> Result<(usize, EventId), SimError> {
+        match self.graph_try_unique_event_record(graph)? {
+            Some(v) => Ok(v),
+            None => Err(SimError::Invalid {
+                why: "not an event record node",
+            }),
+        }
+    }
+
+    /// Unique event-record node, or `None` when the graph has no record node.
+    pub fn graph_try_unique_event_record(
+        &self,
+        graph: GraphId,
+    ) -> Result<Option<(usize, EventId)>, SimError> {
+        self.graph_try_unique_event(graph, true)
+    }
+
+    /// Unique event-wait node on `graph` plus its current [`EventId`].
+    pub fn graph_unique_event_wait(&self, graph: GraphId) -> Result<(usize, EventId), SimError> {
+        match self.graph_try_unique_event_wait(graph)? {
+            Some(v) => Ok(v),
+            None => Err(SimError::Invalid {
+                why: "not an event wait node",
+            }),
+        }
+    }
+
+    /// Unique event-wait node, or `None` when the graph has no wait node.
+    pub fn graph_try_unique_event_wait(
+        &self,
+        graph: GraphId,
+    ) -> Result<Option<(usize, EventId)>, SimError> {
+        self.graph_try_unique_event(graph, false)
+    }
+
+    fn graph_try_unique_event(
+        &self,
+        graph: GraphId,
+        record: bool,
+    ) -> Result<Option<(usize, EventId)>, SimError> {
+        let graph = self.resolved_graph(graph)?;
+        let g = self.graphs.get(&graph).ok_or(SimError::Invalid {
+            why: "unknown graph",
+        })?;
+        let mut found = None;
+        for (i, step) in g.view().iter().enumerate() {
+            if step.destroyed {
+                continue;
+            }
+            let ev = if record {
+                match &step.kind {
+                    Kind::EventRecord { event, .. } => Some(*event),
+                    _ => None,
+                }
+            } else {
+                match &step.kind {
+                    Kind::EventWait { event, .. } => Some(*event),
+                    _ => None,
+                }
+            };
+            let Some(event) = ev else {
+                continue;
+            };
+            if found.is_some() {
+                return Err(SimError::Invalid {
+                    why: if record {
+                        "not unique event record node"
+                    } else {
+                        "not unique event wait node"
+                    },
+                });
+            }
+            found = Some((i, event));
+        }
+        Ok(found)
+    }
+
+    /// Unique write-value node on `graph` plus its current [`BatchMemOp`].
+    pub fn graph_unique_write_value(
+        &self,
+        graph: GraphId,
+    ) -> Result<(usize, BatchMemOp), SimError> {
+        match self.graph_try_unique_write_value(graph)? {
+            Some(v) => Ok(v),
+            None => Err(SimError::Invalid {
+                why: "not a write-value node",
+            }),
+        }
+    }
+
+    /// Unique write-value node, or `None` when the graph has no write-value.
+    pub fn graph_try_unique_write_value(
+        &self,
+        graph: GraphId,
+    ) -> Result<Option<(usize, BatchMemOp)>, SimError> {
+        self.graph_try_unique_batch_mem(graph, true)
+    }
+
+    /// Unique wait-value node on `graph` plus its current [`BatchMemOp`].
+    pub fn graph_unique_wait_value(&self, graph: GraphId) -> Result<(usize, BatchMemOp), SimError> {
+        match self.graph_try_unique_wait_value(graph)? {
+            Some(v) => Ok(v),
+            None => Err(SimError::Invalid {
+                why: "not a wait-value node",
+            }),
+        }
+    }
+
+    /// Unique wait-value node, or `None` when the graph has no wait-value.
+    pub fn graph_try_unique_wait_value(
+        &self,
+        graph: GraphId,
+    ) -> Result<Option<(usize, BatchMemOp)>, SimError> {
+        self.graph_try_unique_batch_mem(graph, false)
+    }
+
+    /// Wait/write items of a batch-mem-op node on `graph` (exec snapshot when
+    /// instantiated). Wait-value / write-value nodes are a one-item list.
+    pub fn graph_batch_mem_ops(
+        &self,
+        graph: GraphId,
+        node: usize,
+    ) -> Result<Vec<BatchMemOp>, SimError> {
+        let graph = self.resolved_graph(graph)?;
+        let g = self.graphs.get(&graph).ok_or(SimError::Invalid {
+            why: "unknown graph",
+        })?;
+        let step = live_ok(g.view().get(node).ok_or(SimError::Invalid {
+            why: "unknown graph node",
+        })?)?;
+        batch_items(&step.kind).ok_or(SimError::Invalid {
+            why: "not a batch mem op node",
+        })
+    }
+
+    fn graph_try_unique_batch_mem(
+        &self,
+        graph: GraphId,
+        write: bool,
+    ) -> Result<Option<(usize, BatchMemOp)>, SimError> {
+        let graph = self.resolved_graph(graph)?;
+        let g = self.graphs.get(&graph).ok_or(SimError::Invalid {
+            why: "unknown graph",
+        })?;
+        let mut found = None;
+        for (i, step) in g.view().iter().enumerate() {
+            if step.destroyed {
+                continue;
+            }
+            let hit = match (&step.kind, write) {
+                (Kind::WriteValue { .. }, true) | (Kind::WaitValue { .. }, false) => {
+                    batch_from_kind(&step.kind)
+                }
+                _ => None,
+            };
+            let Some(op) = hit else {
+                continue;
+            };
+            if found.is_some() {
+                return Err(SimError::Invalid {
+                    why: if write {
+                        "not unique write-value node"
+                    } else {
+                        "not unique wait-value node"
+                    },
+                });
+            }
+            found = Some((i, op));
+        }
+        Ok(found)
+    }
+
+    /// `cudaGraphNodeSetEnabled` on an instantiated exec.
+    ///
+    /// Disabled nodes are not launched; dependents treat them as already
+    /// complete (wait for the disabled node's predecessors). Memory alloc/free
+    /// nodes cannot be disabled. Pays `graph_set_params_ns`. Capture cannot
+    /// include it. Does not clear the upload flag (topology unchanged).
+    /// [`Self::update_graph`] and typed ExecSetParams leave enable unchanged.
+    /// Device-launch execs refuse this while [`Self::device_launch_graph`] is
+    /// in flight (Invalid `"device launch in flight"`). Getters stay.
+    pub fn graph_node_set_enabled(
+        &mut self,
+        exec: GraphId,
+        node: usize,
+        enabled: bool,
+    ) -> Result<(), SimError> {
+        self.fail_if_capturing("cannot capture node set enabled")?;
+        let exec = self.as_exec_for_update(exec)?;
+        let (device, mem) = {
+            let g = self.graphs.get(&exec).ok_or(SimError::Invalid {
+                why: "unknown graph",
+            })?;
+            let step = live_ok(g.view().get(node).ok_or(SimError::Invalid {
+                why: "unknown graph node",
+            })?)?;
+            let mem = matches!(step.kind, Kind::Alloc { .. } | Kind::Free { .. });
+            (step.device, mem)
+        };
+        if mem {
+            return Err(SimError::Invalid {
+                why: "cannot disable mem node",
+            });
+        }
+        let ns = self.profile.gpu(device)?.graph_set_params_ns.max(1);
+        self.clock = self.clock.saturating_add(ns);
+        let g = self.graphs.get_mut(&exec).ok_or(SimError::Invalid {
+            why: "unknown graph",
+        })?;
+        let step = live_ok_mut(g.exec_mut()?.get_mut(node).ok_or(SimError::Invalid {
+            why: "unknown graph node",
+        })?)?;
+        step.enabled = enabled;
+        Ok(())
+    }
+
+    /// `cudaGraphNodeGetEnabled` on an instantiated exec.
+    pub fn graph_node_get_enabled(&self, exec: GraphId, node: usize) -> Result<bool, SimError> {
+        let exec = self.as_exec(exec)?;
+        let g = self.graphs.get(&exec).ok_or(SimError::Invalid {
+            why: "unknown graph",
+        })?;
+        let step = live_ok(g.view().get(node).ok_or(SimError::Invalid {
+            why: "unknown graph node",
+        })?)?;
+        Ok(step.enabled)
+    }
+
+    /// Graph mem alloc node ids (`cudaMallocAsync` / `cudaGraphAddMemAllocNode`).
+    pub fn graph_mem_allocs(&self, graph: GraphId) -> Result<Vec<AllocId>, SimError> {
+        if !self.graphs.contains_key(&graph) {
+            return Err(SimError::Invalid {
+                why: "unknown graph",
+            });
+        }
+        Ok(self.graph_mem_ids(graph))
+    }
+
+    /// `cudaGraphClone`. Host-synchronous. Capture cannot include it.
+    ///
+    /// The clone is an independent graph (`instantiated = false`). Child-graph
+    /// nodes are cloned recursively so the copy names new ids; a diamond of
+    /// shared children becomes one cloned child. Graph mem alloc nodes get new
+    /// `cudaMallocAsync` ids (independent HBM), including when `graph` is an
+    /// instantiated exec (fork the definition's ids). Instantiating or
+    /// updating one id does not change the other. Cycles among child ids fail.
+    /// A parked in-flight-destroyed exec is `"unknown graph"`. Clone of the
+    /// definition stays.
+    pub fn clone_graph(&mut self, graph: GraphId) -> Result<GraphId, SimError> {
+        self.require_not_moved(graph)?;
+        self.fail_if_capturing("cannot capture graph clone")?;
+        self.require_live_graph(graph)?;
+        let mut walk = CloneWalk {
+            order: Vec::new(),
+            seen: BTreeSet::new(),
+            stack: Vec::new(),
+        };
+        self.collect_clone_tree(graph, &mut walk)?;
+        let mut remap = BTreeMap::new();
+        for &src in &walk.order {
+            let id = GraphId(self.next_graph);
+            self.next_graph = self.next_graph.saturating_add(1);
+            let _prev = remap.insert(src, id);
+        }
+        let mut built = Vec::new();
+        for &src in &walk.order {
+            let (origin, raw) = {
+                let g = self.graphs.get(&src).ok_or(SimError::Invalid {
+                    why: "unknown graph",
+                })?;
+                (g.origin, g.steps.clone())
+            };
+            let steps = remap_nested_graphs(&raw, &remap)?;
+            let cloned = remap.get(&src).copied().ok_or(SimError::Invalid {
+                why: "unknown graph",
+            })?;
+            let steps = self.clone_mem_alloc_nodes(src, cloned, steps)?;
+            built.push((
+                cloned,
+                Graph {
+                    steps,
+                    exec: None,
+                    origin,
+                    instantiated: false,
+                    uploaded: false,
+                    auto_free_on_launch: false,
+                    instantiate_flags: 0,
+                    device_launch_tail: None,
+                    host_launch_tails: Vec::new(),
+                    handle_gone: false,
+                    primary_exec: None,
+                    src: None,
+                    moved_to: None,
+                },
+                origin.0,
+            ));
+        }
+        for (id, cloned, device) in built {
+            let ns = self.profile.gpu(device)?.graph_clone_ns.max(1);
+            self.clock = self.clock.saturating_add(ns);
+            let _prev = self.graphs.insert(id, cloned);
+        }
+        for (src, cloned) in &remap {
+            let _prev = self.clone_of.insert(*cloned, *src);
+        }
+        self.clone_conditionals(&remap)?;
+        remap.get(&graph).copied().ok_or(SimError::Invalid {
+            why: "unknown graph",
+        })
+    }
+
+    fn clone_conditionals(&mut self, remap: &BTreeMap<GraphId, GraphId>) -> Result<(), SimError> {
+        let mut cond_remap = BTreeMap::new();
+        let src: Vec<(CondId, Cond)> = self
+            .conds
+            .iter()
+            .filter(|(_, c)| remap.contains_key(&c.graph))
+            .map(|(id, c)| {
+                (
+                    *id,
+                    Cond {
+                        graph: c.graph,
+                        default: c.default,
+                        value: c.default,
+                        assign_default: c.assign_default,
+                        ctx: c.ctx,
+                    },
+                )
+            })
+            .collect();
+        for (old, mut cond) in src {
+            let new_g = remap.get(&cond.graph).copied().ok_or(SimError::Invalid {
+                why: "unknown graph",
+            })?;
+            cond.graph = new_g;
+            let id = CondId(self.next_cond);
+            self.next_cond = self.next_cond.saturating_add(1);
+            let _prev = cond_remap.insert(old, id);
+            let _ins = self.conds.insert(id, cond);
+        }
+        if cond_remap.is_empty() {
+            return Ok(());
+        }
+        for dst in remap.values() {
+            let g = self.graphs.get_mut(dst).ok_or(SimError::Invalid {
+                why: "unknown graph",
+            })?;
+            for step in &mut g.steps {
+                match &mut step.kind {
+                    Kind::If { handle, .. }
+                    | Kind::While { handle, .. }
+                    | Kind::Switch { handle, .. }
+                    | Kind::SetConditional { handle, .. }
+                    | Kind::WhileTick { handle, .. } => {
+                        if let Some(h) = cond_remap.get(handle) {
+                            *handle = *h;
+                        }
+                    }
+                    _ => {}
+                }
+            }
+        }
+        Ok(())
+    }
+
+    /// Post-order unique graphs in `graph`'s child-graph tree. Diamonds reuse
+    /// `seen`; an ancestor appearing again is a cycle.
+    fn collect_clone_tree(&self, graph: GraphId, walk: &mut CloneWalk) -> Result<(), SimError> {
+        if walk.seen.contains(&graph) {
+            return Ok(());
+        }
+        if walk.stack.contains(&graph) {
+            return Err(SimError::Invalid {
+                why: "cyclic child graph",
+            });
+        }
+        let steps = {
+            let g = self.live_graph(graph)?;
+            g.steps.clone()
+        };
+        walk.stack.push(graph);
+        for step in &steps {
+            for child in nested_graphs(&step.kind) {
+                self.collect_clone_tree(child, walk)?;
+            }
+        }
+        let _popped = walk.stack.pop();
+        let _fresh = walk.seen.insert(graph);
+        walk.order.push(graph);
+        Ok(())
+    }
+
+    fn graph_has_mem_nodes(&self, graph: GraphId) -> bool {
+        if self.graph_allocs.get(&graph).is_some_and(|v| !v.is_empty()) {
+            return true;
+        }
+        self.graphs.get(&graph).is_some_and(|g| {
+            g.view()
+                .iter()
+                .any(|s| matches!(&s.kind, Kind::Alloc { .. } | Kind::Free { .. }))
+        })
+    }
+
+    /// True when `target` is `root` or nested under it via child-graph nodes.
+    fn graph_tree_contains(&self, root: GraphId, target: GraphId) -> Result<bool, SimError> {
+        let target_def = self.def_id(target);
+        let mut seen = BTreeSet::new();
+        let mut stack = vec![root];
+        while let Some(g) = stack.pop() {
+            if g == target || self.def_id(g) == target_def {
+                return Ok(true);
+            }
+            if !seen.insert(g) {
+                continue;
+            }
+            let steps = {
+                let gr = self.graphs.get(&g).ok_or(SimError::Invalid {
+                    why: "unknown graph",
+                })?;
+                gr.view().to_vec()
+            };
+            for step in steps {
+                for child in nested_graphs(&step.kind) {
+                    stack.push(child);
+                }
+            }
+        }
+        Ok(false)
+    }
+
+    fn fork_alloc(&mut self, src: AllocId) -> Result<AllocId, SimError> {
+        let (bytes, pool, graph_access) = {
+            let a = self.alloc_ref(src)?;
+            (a.bytes, a.pool, a.graph_access.clone())
+        };
+        let id = AllocId(self.next_alloc);
+        self.next_alloc = self.next_alloc.saturating_add(1);
+        let _prev = self.allocs.insert(
+            id,
+            Alloc {
+                bytes,
+                devices: Vec::new(),
+                leases: 0,
+                live: false,
+                host_pinned: false,
+                host_pageable: false,
+                host_mapped: false,
+                host_registered: false,
+                host_flags: 0,
+                managed: false,
+                attach: Attach::Global,
+                read_mostly: false,
+                accessed_by: BTreeSet::new(),
+                vmm_write_by: BTreeSet::new(),
+                preferred: Preferred::None,
+                last_prefetch: Preferred::None,
+                sync_memops: false,
+                vmm: false,
+                vmm_maps: Vec::new(),
+                pool,
+                ipc_src: None,
+                ipc_opens: 0,
+                share_src: None,
+                share_opens: 0,
+                graph_access,
+            },
+        );
+        Ok(id)
+    }
+
+    fn clone_mem_alloc_nodes(
+        &mut self,
+        src: GraphId,
+        dst: GraphId,
+        steps: Vec<GraphStep>,
+    ) -> Result<Vec<GraphStep>, SimError> {
+        let src_ids = self.graph_mem_ids(src);
+        if src_ids.is_empty() {
+            return Ok(steps);
+        }
+        let mut map = BTreeMap::new();
+        let mut dst_ids = Vec::new();
+        for old in src_ids {
+            let new = self.fork_alloc(old)?;
+            let _prev = map.insert(old, new);
+            dst_ids.push(new);
+        }
+        let _old = self.graph_allocs.insert(dst, dst_ids);
+        Ok(steps
+            .into_iter()
+            .map(|mut step| {
+                step.kind = remap_alloc_kind(step.kind, &map);
+                step
+            })
+            .collect())
+    }
+
+    fn release_graph_allocs(&mut self, graph: GraphId) -> Result<(), SimError> {
+        let ids = self.graph_allocs.remove(&graph).unwrap_or_default();
+        for id in ids {
+            let (live, bytes, devices) = {
+                let Ok(a) = self.alloc_ref(id) else {
+                    continue;
+                };
+                (a.live, a.bytes, a.devices.clone())
+            };
+            if !live {
+                continue;
+            }
+            for d in devices {
+                self.refund_device(d, id, bytes)?;
+            }
+            {
+                let a = self.alloc_mut(id)?;
+                a.devices.clear();
+                a.live = false;
+            }
+            self.clear_mailbox(id);
+        }
+        Ok(())
+    }
+
+    /// `cudaGraphDestroy` / `cudaGraphExecDestroy`. Host-synchronous.
+    ///
+    /// Capture cannot include it. Later [`Self::launch_graph`] of this id is
+    /// `unknown graph`. Destroying a definition returns remaining graph mem to
+    /// the device graph-memory pool (`cudaGraphDestroy` of a graph with mem
+    /// nodes). Unused reserved bytes stay charged until [`Self::graph_mem_trim`].
+    /// Destroying an exec does not; a later [`Self::launch_graph`] of that exec
+    /// is unknown, but the definition (and other execs) stay. Clones are
+    /// independent. Destroying a parent also destroys graphs that were moved
+    /// into it (`CU_GRAPH_CHILD_GRAPH_OWNERSHIP_MOVE`), including when this id
+    /// is an exec (child ids are mapped back to their definitions).
+    /// Destroying an in-flight exec does not abort the launch
+    /// (`cudaGraphExecDestroy`: freed asynchronously on completion), whether
+    /// the work came from [`Self::device_launch_graph`] or host
+    /// [`Self::launch_graph`]. The handle is unknown immediately. Idle execs
+    /// still drop immediately. An empty host launch does not pin destroy to
+    /// unrelated prior stream work. Concurrent host launches each pin a tail;
+    /// destroy waits for all of them. An in-flight [`Self::upload_graph_async`]
+    /// is the same park (the upload still completes).
+    pub fn destroy_graph(&mut self, graph: GraphId) -> Result<(), SimError> {
+        self.fail_if_capturing("cannot capture graph destroy")?;
+        self.require_not_moved(graph)?;
+        if self.graphs.get(&graph).is_some_and(|g| g.handle_gone) {
+            return Err(SimError::Invalid {
+                why: "unknown graph",
+            });
+        }
+        if self
+            .graphs
+            .get(&graph)
+            .is_some_and(|g| g.instantiated && self.graph_exec_in_flight(graph, g))
+        {
+            self.park_in_flight_exec(graph)?;
+            return Ok(());
+        }
+        self.drop_graph(graph)
+    }
+
+    fn graph_exec_in_flight(&self, id: GraphId, g: &Graph) -> bool {
+        g.device_launch_tail.is_some_and(|op| !self.op_done(op))
+            || g.host_launch_tails.iter().any(|op| !self.op_done(*op))
+            || self.pending_graph_upload(id).is_some()
+    }
+
+    fn park_in_flight_exec(&mut self, graph: GraphId) -> Result<(), SimError> {
+        let src = {
+            let g = self.graphs.get_mut(&graph).ok_or(SimError::Invalid {
+                why: "unknown graph",
+            })?;
+            g.handle_gone = true;
+            g.src
+        };
+        self.unhook_primary_exec(graph, src);
+        let device = self
+            .graphs
+            .get(&graph)
+            .ok_or(SimError::Invalid {
+                why: "unknown graph",
+            })?
+            .origin
+            .0;
+        let _gpu = self.profile.gpu(device)?;
+        self.clock = self.clock.saturating_add(1);
+        Ok(())
+    }
+
+    fn unhook_primary_exec(&mut self, exec: GraphId, src: Option<GraphId>) {
+        let Some(src) = src else {
+            return;
+        };
+        let next = self.graphs.iter().find_map(|(id, x)| {
+            (*id != exec && x.src == Some(src) && !x.handle_gone).then_some(*id)
+        });
+        if let Some(def) = self.graphs.get_mut(&src) {
+            if def.primary_exec == Some(exec) {
+                def.primary_exec = next;
+            }
+        }
+    }
+
+    fn reap_gone_exec(&mut self) -> Result<(), SimError> {
+        let ids: Vec<GraphId> = self
+            .graphs
+            .iter()
+            .filter_map(|(id, g)| {
+                (g.handle_gone && !self.graph_exec_in_flight(*id, g)).then_some(*id)
+            })
+            .collect();
+        for id in ids {
+            self.drop_graph_inner(id, false)?;
+        }
+        Ok(())
+    }
+
+    fn drop_graph(&mut self, graph: GraphId) -> Result<(), SimError> {
+        self.drop_graph_inner(graph, true)
+    }
+
+    fn drop_graph_inner(&mut self, graph: GraphId, tick: bool) -> Result<(), SimError> {
+        let g = self.graphs.remove(&graph).ok_or(SimError::Invalid {
+            why: "unknown graph",
+        })?;
+        let mut moved_kids = Vec::new();
+        let mut seen = BTreeSet::new();
+        for s in &g.steps {
+            if let Kind::ChildGraph {
+                graph: child,
+                ownership,
+            } = &s.kind
+            {
+                if *ownership != GraphChildGraphOwnership::MOVE {
+                    continue;
+                }
+                let def = self.def_id(*child);
+                if seen.insert(def) {
+                    moved_kids.push(def);
+                }
+                if *child != def && seen.insert(*child) {
+                    moved_kids.push(*child);
+                }
+            }
+        }
+        let device = g.origin.0;
+        let _gpu = self.profile.gpu(device)?;
+        if g.instantiated {
+            self.unhook_primary_exec(graph, g.src);
+        } else {
+            self.release_graph_allocs(graph)?;
+        }
+        self.release_user_objects_for_graph(graph);
+        let _src = self.clone_of.remove(&graph);
+        if tick {
+            self.clock = self.clock.saturating_add(1);
+        }
+        for kid in moved_kids {
+            let src = self.graphs.get(&kid).and_then(|c| c.src);
+            if let Some(c) = self.graphs.get_mut(&kid) {
+                c.moved_to = None;
+            } else {
+                continue;
+            }
+            if let Some(src) = src {
+                if let Some(d) = self.graphs.get_mut(&src) {
+                    d.moved_to = None;
+                }
+            }
+            self.destroy_graph(kid)?;
+        }
+        Ok(())
+    }
+
+    /// `cudaGraphCreate`. Host-synchronous empty graph (`instantiated = false`).
+    ///
+    /// Capture cannot include it. The origin `(device, stream)` is the capture
+    /// analog: [`Self::launch_graph`] remaps those nodes onto the launch stream.
+    /// Add nodes with [`Self::graph_add_kernel`] and friends, then instantiate.
+    /// Flags-word form is [`Self::create_graph_with_flags`].
+    pub fn create_graph(
+        &mut self,
+        device: DeviceId,
+        stream: StreamId,
+    ) -> Result<GraphId, SimError> {
+        self.create_graph_with_flags(device, stream, GraphCreateFlags::DEFAULT)
+    }
+
+    /// `cudaGraphCreate` with a flags word.
+    ///
+    /// CUDA requires `flags == 0` ([`GraphCreateFlags::DEFAULT`]). Other bits
+    /// are Invalid `"graph create flags"`. Typed [`Self::create_graph`] stays.
+    /// Capture cannot include it. Distinct from [`GraphInstantiateFlags`].
+    pub fn create_graph_with_flags(
+        &mut self,
+        device: DeviceId,
+        stream: StreamId,
+        flags: u32,
+    ) -> Result<GraphId, SimError> {
+        if flags != GraphCreateFlags::DEFAULT {
+            return Err(SimError::Invalid {
+                why: "graph create flags",
+            });
+        }
+        self.fail_if_capturing("cannot create graph during capture")?;
+        let _gpu = self.profile.gpu(device)?;
+        let id = self.insert_graph(device, stream);
+        self.clock = self.clock.saturating_add(1);
+        Ok(id)
+    }
+
+    /// `cudaUserObjectCreate`. Host-synchronous. Capture cannot include it.
+    ///
+    /// `flags` must be [`UserObjectFlags::NO_DESTRUCTOR_SYNC`].
+    /// `initial_refcount` must be in `1..=i32::MAX` (CUDA `INT_MAX`).
+    /// `destroy_fn` is the host callback id recorded when the
+    /// last reference is released (no Rust callback). Decode identity does not
+    /// create user objects.
+    pub fn user_object_create(
+        &mut self,
+        destroy_fn: u64,
+        initial_refcount: u32,
+        flags: u32,
+    ) -> Result<UserObjectId, SimError> {
+        self.fail_if_capturing("cannot capture user object")?;
+        if flags != UserObjectFlags::NO_DESTRUCTOR_SYNC {
+            return Err(SimError::Invalid {
+                why: "user object flags",
+            });
+        }
+        Self::reject_user_object_count(initial_refcount, "user object initial refs")?;
+        let id = UserObjectId(self.next_user_object);
+        self.next_user_object = self.next_user_object.saturating_add(1);
+        let _prev = self.user_objects.insert(
+            id,
+            UserObject {
+                destroy_fn,
+                caller: initial_refcount,
+                graphs: BTreeMap::new(),
+            },
+        );
+        self.clock = self.clock.saturating_add(1);
+        Ok(id)
+    }
+
+    /// `cudaUserObjectRetain`. Host-synchronous. Capture cannot include it.
+    ///
+    /// `count` must be in `1..=i32::MAX` (CUDA `INT_MAX`).
+    pub fn user_object_retain(&mut self, object: UserObjectId, count: u32) -> Result<(), SimError> {
+        self.fail_if_capturing("cannot capture user object")?;
+        Self::reject_user_object_count(count, "user object count")?;
+        let obj = self.user_object_mut(object)?;
+        obj.caller = obj.caller.checked_add(count).ok_or(SimError::Invalid {
+            why: "user object refs overflow",
+        })?;
+        self.clock = self.clock.saturating_add(1);
+        Ok(())
+    }
+
+    /// `cudaUserObjectRelease`. Host-synchronous. Capture cannot include it.
+    ///
+    /// Releasing the last reference records [`Self::user_object_destructors`].
+    /// `count` must be in `1..=i32::MAX` (CUDA `INT_MAX`).
+    pub fn user_object_release(
+        &mut self,
+        object: UserObjectId,
+        count: u32,
+    ) -> Result<(), SimError> {
+        self.fail_if_capturing("cannot capture user object")?;
+        Self::reject_user_object_count(count, "user object count")?;
+        {
+            let obj = self.user_object_mut(object)?;
+            if count > obj.caller {
+                return Err(SimError::Invalid {
+                    why: "user object refs",
+                });
+            }
+            obj.caller = obj.caller.saturating_sub(count);
+        }
+        self.maybe_destroy_user_object(object);
+        self.clock = self.clock.saturating_add(1);
+        Ok(())
+    }
+
+    /// `cudaGraphRetainUserObject` on a definition. Host-synchronous.
+    ///
+    /// Capture cannot include it. Illegal on an instantiated exec. A parked
+    /// in-flight-destroyed exec is `"unknown graph"` first. Clone does
+    /// not copy retains. [`Self::instantiate_graph`] copies current retains onto
+    /// the new exec (CUDA exec retains a copy). Retains added after instantiate
+    /// stay on the definition. [`GraphUserObjectFlags::MOVE`] transfers one caller
+    /// reference (`count` ignored, including above `INT_MAX`); otherwise the
+    /// graph takes `count` extra refs (`1..=i32::MAX`).
+    pub fn graph_retain_user_object(
+        &mut self,
+        graph: GraphId,
+        object: UserObjectId,
+        count: u32,
+        flags: u32,
+    ) -> Result<(), SimError> {
+        self.fail_if_capturing("cannot capture user object")?;
+        self.require_user_object_graph(graph)?;
+        if flags & !GraphUserObjectFlags::MOVE != 0 {
+            return Err(SimError::Invalid {
+                why: "user object graph flags",
+            });
+        }
+        let mv = flags & GraphUserObjectFlags::MOVE != 0;
+        if !mv {
+            Self::reject_user_object_count(count, "user object count")?;
+        }
+        let add = if mv { 1 } else { count };
+        let obj = self.user_object_mut(object)?;
+        if mv {
+            if obj.caller == 0 {
+                return Err(SimError::Invalid {
+                    why: "user object refs",
+                });
+            }
+            obj.caller = obj.caller.saturating_sub(1);
+        }
+        let held = obj.graphs.get(&graph).copied().unwrap_or(0);
+        let next = held.checked_add(add).ok_or(SimError::Invalid {
+            why: "user object refs overflow",
+        })?;
+        let _prev = obj.graphs.insert(graph, next);
+        self.clock = self.clock.saturating_add(1);
+        Ok(())
+    }
+
+    /// `cudaGraphReleaseUserObject` on a definition. Host-synchronous.
+    ///
+    /// Capture cannot include it. Illegal on an instantiated exec.
+    /// `count` must be in `1..=i32::MAX` (CUDA `INT_MAX`).
+    pub fn graph_release_user_object(
+        &mut self,
+        graph: GraphId,
+        object: UserObjectId,
+        count: u32,
+    ) -> Result<(), SimError> {
+        self.fail_if_capturing("cannot capture user object")?;
+        self.require_user_object_graph(graph)?;
+        Self::reject_user_object_count(count, "user object count")?;
+        self.graph_release_user_object_inner(graph, object, count)?;
+        self.clock = self.clock.saturating_add(1);
+        Ok(())
+    }
+
+    /// Total remaining references (caller plus graphs).
+    pub fn user_object_refs(&self, object: UserObjectId) -> Result<u32, SimError> {
+        let obj = self.user_object(object)?;
+        Ok(obj
+            .caller
+            .saturating_add(obj.graphs.values().copied().fold(0, u32::saturating_add)))
+    }
+
+    /// References held by `graph` (`0` if the graph holds none).
+    pub fn user_object_graph_refs(
+        &self,
+        graph: GraphId,
+        object: UserObjectId,
+    ) -> Result<u32, SimError> {
+        let _g = self.graphs.get(&graph).ok_or(SimError::Invalid {
+            why: "unknown graph",
+        })?;
+        Ok(self
+            .user_object(object)?
+            .graphs
+            .get(&graph)
+            .copied()
+            .unwrap_or(0))
+    }
+
+    /// Destroy callbacks that have run, in order (`id`, `destroy_fn`).
+    #[must_use]
+    pub fn user_object_destructors(&self) -> &[(UserObjectId, u64)] {
+        &self.user_object_dtors
+    }
+
+    /// CUDA: user-object `count` / `initialRefcount` is `1..=INT_MAX`.
+    fn reject_user_object_count(count: u32, why: &'static str) -> Result<(), SimError> {
+        if count == 0 || count > i32::MAX as u32 {
+            return Err(SimError::Invalid { why });
+        }
+        Ok(())
+    }
+
+    fn user_object(&self, object: UserObjectId) -> Result<&UserObject, SimError> {
+        self.user_objects.get(&object).ok_or(SimError::Invalid {
+            why: "unknown user object",
+        })
+    }
+
+    fn user_object_mut(&mut self, object: UserObjectId) -> Result<&mut UserObject, SimError> {
+        self.user_objects.get_mut(&object).ok_or(SimError::Invalid {
+            why: "unknown user object",
+        })
+    }
+
+    fn require_user_object_graph(&self, graph: GraphId) -> Result<(), SimError> {
+        self.require_live_definition(graph)
+    }
+
+    fn copy_user_object_retains(&mut self, src: GraphId, exec: GraphId) -> Result<(), SimError> {
+        let copies: Vec<(UserObjectId, u32)> = self
+            .user_objects
+            .iter()
+            .filter_map(|(id, obj)| {
+                obj.graphs
+                    .get(&src)
+                    .copied()
+                    .filter(|n| *n > 0)
+                    .map(|n| (*id, n))
+            })
+            .collect();
+        for (id, n) in copies {
+            let obj = self.user_object_mut(id)?;
+            let held = obj.graphs.get(&exec).copied().unwrap_or(0);
+            let next = held.checked_add(n).ok_or(SimError::Invalid {
+                why: "user object refs overflow",
+            })?;
+            let _prev = obj.graphs.insert(exec, next);
+        }
+        Ok(())
+    }
+
+    fn graph_release_user_object_inner(
+        &mut self,
+        graph: GraphId,
+        object: UserObjectId,
+        count: u32,
+    ) -> Result<(), SimError> {
+        let obj = self.user_object_mut(object)?;
+        let held = obj.graphs.get(&graph).copied().unwrap_or(0);
+        if count > held {
+            return Err(SimError::Invalid {
+                why: "user object graph refs",
+            });
+        }
+        let next = held.saturating_sub(count);
+        if next == 0 {
+            let _gone = obj.graphs.remove(&graph);
+        } else {
+            let _prev = obj.graphs.insert(graph, next);
+        }
+        self.maybe_destroy_user_object(object);
+        Ok(())
+    }
+
+    fn release_user_objects_for_graph(&mut self, graph: GraphId) {
+        let ids: Vec<(UserObjectId, u32)> = self
+            .user_objects
+            .iter()
+            .filter_map(|(id, obj)| obj.graphs.get(&graph).copied().map(|n| (*id, n)))
+            .collect();
+        for (id, count) in ids {
+            drop(self.graph_release_user_object_inner(graph, id, count));
+        }
+    }
+
+    fn maybe_destroy_user_object(&mut self, object: UserObjectId) {
+        let Some(obj) = self.user_objects.get(&object) else {
+            return;
+        };
+        if obj.caller != 0 || !obj.graphs.is_empty() {
+            return;
+        }
+        if let Some(obj) = self.user_objects.remove(&object) {
+            self.user_object_dtors.push((object, obj.destroy_fn));
+        }
+    }
+
+    fn insert_graph(&mut self, device: DeviceId, stream: StreamId) -> GraphId {
+        let id = GraphId(self.next_graph);
+        self.next_graph = self.next_graph.saturating_add(1);
+        let _prev = self.graphs.insert(
+            id,
+            Graph {
+                steps: Vec::new(),
+                exec: None,
+                origin: (device, stream),
+                instantiated: false,
+                uploaded: false,
+                auto_free_on_launch: false,
+                instantiate_flags: 0,
+                device_launch_tail: None,
+                host_launch_tails: Vec::new(),
+                handle_gone: false,
+                primary_exec: None,
+                src: None,
+                moved_to: None,
+            },
+        );
+        let _old = self.graph_allocs.insert(id, Vec::new());
+        id
+    }
+
+    /// `cudaGraphAddNode` (`cudaGraphNodeParams` plus dependency indices).
+    ///
+    /// Typed [`Self::graph_add_kernel`] / `graph_add_memcpy` / … stay; they
+    /// start with no dependencies. This call binds `deps` in the same step (all
+    /// indices must already exist). Duplicate `deps` entries are Invalid
+    /// `"graph dependency"`. [`GraphNodeParams::If`] /
+    /// [`GraphNodeParams::IfElse`] / [`GraphNodeParams::While`] fill
+    /// [`GraphAddNode::body`] (and `else_body`). [`GraphNodeParams::Switch`]
+    /// fills [`GraphAddNode::switch_bodies`]. Typed [`Self::graph_add_if`] /
+    /// `graph_add_if_else` / `graph_add_while` / `graph_add_switch` stay.
+    /// [`GraphNodeParams::SetConditional`] is
+    /// [`Self::graph_add_set_conditional`]. Capture
+    /// cannot include it. Illegal on an instantiated exec.
+    /// A parked in-flight-destroyed exec is `"unknown graph"` first.
+    /// [`GraphNodeParams::Alloc`] fills [`GraphAddNode::alloc`]. Empty
+    /// `access` is [`Self::graph_add_alloc`]; peer `accessDescs` match
+    /// [`Self::graph_add_alloc_with_access`].
+    /// Flags-word `dependencyData` is [`Self::graph_add_node_with_data`].
+    pub fn graph_add_node(
+        &mut self,
+        graph: GraphId,
+        deps: &[usize],
+        params: GraphNodeParams,
+    ) -> Result<GraphAddNode, SimError> {
+        let _origin = self.graph_origin_for_add(graph)?;
+        let n = self.graph_len(graph)?;
+        for &from in deps {
+            if from >= n {
+                return Err(SimError::Invalid {
+                    why: "graph dependency",
+                });
+            }
+        }
+        Self::reject_duplicate_graph_deps(deps)?;
+        let mut added = self.graph_add_node_kind(graph, params)?;
+        added.node = self.graph_len(graph)?.saturating_sub(1);
+        self.graph_bind_new_deps(graph, added.node, deps)?;
+        Ok(added)
+    }
+
+    /// `cuGraphAddNode_v2` (`cudaGraphAddNode` with `dependencyData`).
+    ///
+    /// `deps` and `data` must be the same length (`"graph add node data"`).
+    /// [`GraphDependencyType::DEFAULT`] with ports 0 is
+    /// [`Self::graph_add_node`]. Programmatic type Invalid
+    /// `"graph dependency type"`. Duplicate `deps` entries are Invalid
+    /// `"graph dependency"`. [`GraphKernelNodePort::LAUNCH_COMPLETION`]
+    /// waits for a source kernel to start. Other nonzero ports Invalid
+    /// `"graph edge port"`. Edge
+    /// checks run before the node is created (all-or-nothing). Capture cannot
+    /// include it. Illegal on an instantiated exec. Typed
+    /// [`Self::graph_add_node`] stays (NULL `dependencyData`).
+    pub fn graph_add_node_with_data(
+        &mut self,
+        graph: GraphId,
+        deps: &[usize],
+        data: &[GraphEdgeData],
+        params: GraphNodeParams,
+    ) -> Result<GraphAddNode, SimError> {
+        if deps.len() != data.len() {
+            return Err(SimError::Invalid {
+                why: "graph add node data",
+            });
+        }
+        for (&from, &edge) in deps.iter().zip(data.iter()) {
+            Self::check_graph_edge_data(edge)?;
+            if edge.from_port == GraphKernelNodePort::LAUNCH_COMPLETION {
+                self.require_graph_kernel_edge_src(graph, from)?;
+            }
+        }
+        let added = self.graph_add_node(graph, deps, params)?;
+        self.store_graph_edge_data(graph, added.node, deps, data)?;
+        Ok(added)
+    }
+
+    fn reject_duplicate_graph_deps(deps: &[usize]) -> Result<(), SimError> {
+        for (i, &dep) in deps.iter().enumerate() {
+            if deps.get(..i).is_some_and(|seen| seen.contains(&dep)) {
+                return Err(SimError::Invalid {
+                    why: "graph dependency",
+                });
+            }
+        }
+        Ok(())
+    }
+
+    fn graph_add_node_kind(
+        &mut self,
+        graph: GraphId,
+        params: GraphNodeParams,
+    ) -> Result<GraphAddNode, SimError> {
+        match params {
+            GraphNodeParams::Kernel(p) => {
+                self.graph_add_kernel_params(graph, p)?;
+                Ok(add_node_out(None, None, None))
+            }
+            GraphNodeParams::Memcpy(p) => {
+                self.graph_add_memcpy_params(graph, p)?;
+                Ok(add_node_out(None, None, None))
+            }
+            GraphNodeParams::Memset(p) => {
+                self.graph_add_memset_params(graph, p)?;
+                Ok(add_node_out(None, None, None))
+            }
+            GraphNodeParams::Host(p) => {
+                self.graph_add_host_func_params(graph, p)?;
+                Ok(add_node_out(None, None, None))
+            }
+            GraphNodeParams::Empty => {
+                self.graph_add_empty(graph)?;
+                Ok(add_node_out(None, None, None))
+            }
+            GraphNodeParams::EventRecord { event, external } => {
+                self.graph_add_event_record(graph, event, external)?;
+                Ok(add_node_out(None, None, None))
+            }
+            GraphNodeParams::EventWait { event, external } => {
+                self.graph_add_event_wait(graph, event, external)?;
+                Ok(add_node_out(None, None, None))
+            }
+            GraphNodeParams::ChildGraph(p) => {
+                self.graph_add_child_params(graph, p)?;
+                Ok(add_node_out(None, None, None))
+            }
+            GraphNodeParams::Alloc { bytes, access } => Ok(add_node_out(
+                Some(self.graph_add_alloc_with_access(graph, bytes, &access)?),
+                None,
+                None,
+            )),
+            GraphNodeParams::Free(id) => {
+                self.graph_add_free(graph, id)?;
+                Ok(add_node_out(None, None, None))
+            }
+            GraphNodeParams::BatchMemOp(p) => {
+                self.graph_add_batch_mem_op_params(graph, p)?;
+                Ok(add_node_out(None, None, None))
+            }
+            GraphNodeParams::SetConditional { handle, value } => {
+                self.graph_add_set_conditional(graph, handle, value)?;
+                Ok(add_node_out(None, None, None))
+            }
+            GraphNodeParams::If { handle, ctx } => {
+                self.require_cond_node_ctx(graph, handle, ctx)?;
+                let body = self.graph_add_if(graph, handle)?;
+                Ok(add_node_out(None, Some(body), None))
+            }
+            GraphNodeParams::IfElse { handle, ctx } => {
+                self.require_cond_node_ctx(graph, handle, ctx)?;
+                let (body, else_body) = self.graph_add_if_else(graph, handle)?;
+                Ok(add_node_out(None, Some(body), Some(else_body)))
+            }
+            GraphNodeParams::While { handle, ctx } => {
+                self.require_cond_node_ctx(graph, handle, ctx)?;
+                let body = self.graph_add_while(graph, handle)?;
+                Ok(add_node_out(None, Some(body), None))
+            }
+            GraphNodeParams::Switch { handle, n, ctx } => {
+                self.require_cond_node_ctx(graph, handle, ctx)?;
+                let bodies = self.graph_add_switch(graph, handle, n)?;
+                let first = bodies.first().copied();
+                let mut added = add_node_out(None, first, None);
+                for (i, b) in bodies.into_iter().enumerate() {
+                    if let Some(slot) = added.switch_bodies.get_mut(i) {
+                        *slot = Some(b);
+                    }
+                }
+                Ok(added)
+            }
+        }
+    }
+
+    fn graph_bind_new_deps(
+        &mut self,
+        graph: GraphId,
+        node: usize,
+        deps: &[usize],
+    ) -> Result<(), SimError> {
+        if deps.is_empty() {
+            return Ok(());
+        }
+        let g = self.graphs.get_mut(&graph).ok_or(SimError::Invalid {
+            why: "unknown graph",
+        })?;
+        let n = g.steps.len();
+        for &from in deps {
+            if from == node || from >= n {
+                return Err(SimError::Invalid {
+                    why: "graph dependency",
+                });
+            }
+            if g.steps.get(from).is_some_and(|s| s.destroyed) {
+                return Err(SimError::Invalid {
+                    why: "graph dependency",
+                });
+            }
+        }
+        let step = live_ok_mut(g.steps.get_mut(node).ok_or(SimError::Invalid {
+            why: "unknown graph node",
+        })?)?;
+        for &from in deps {
+            if !step.deps.contains(&from) {
+                step.deps.push(from);
+            }
+        }
+        step.deps.sort_unstable();
+        Ok(())
+    }
+
+    fn graph_add_kernel_params(
+        &mut self,
+        graph: GraphId,
+        params: KernelNodeParams,
+    ) -> Result<(), SimError> {
+        let (device, stream) = self.graph_origin_for_add(graph)?;
+        if params.cooperative {
+            self.require_cooperative(device)?;
+        }
+        if let Some(ctx) = params.ctx {
+            self.require_live_green_ctx(ctx, device)?;
+        }
+        self.validate_dynamic_shared(
+            device,
+            params.shared_mem_bytes,
+            self.enqueue_portable_shared,
+        )?;
+        let reads = self.resolve_bufs(&params.reads)?;
+        let writes = self.resolve_bufs(&params.writes)?;
+        let prev = self.enqueue_green_ctx;
+        let prev_ds = self.enqueue_dynamic_shared;
+        self.enqueue_green_ctx = params.ctx;
+        self.enqueue_dynamic_shared = params.shared_mem_bytes;
+        let r = self.graph_push(
+            graph,
+            device,
+            stream,
+            Kind::Kernel {
+                kind: params.kind,
+                reads,
+                writes,
+                cooperative: params.cooperative,
+            },
+        );
+        self.enqueue_green_ctx = prev;
+        self.enqueue_dynamic_shared = prev_ds;
+        r
+    }
+
+    /// `cudaGraphAddKernelNode` on a [`Self::create_graph`] definition.
+    ///
+    /// Nodes start with no dependencies (CUDA). Use
+    /// [`Self::graph_add_dependencies`] so a later node waits. Independent
+    /// kernels may Hyper-Q overlap at [`Self::launch_graph`]. Capture cannot
+    /// include it. Illegal on an instantiated exec. A parked
+    /// in-flight-destroyed exec is `"unknown graph"` first. Does not run the
+    /// kernel; [`Self::launch_graph`] does. [`KernelNodeParams::ctx`] is
+    /// [`None`] (inherit the launch stream). [`KernelNodeParams::shared_mem_bytes`]
+    /// stays `0`. Pin a green context or dynamic shared through
+    /// [`Self::graph_add_node`] with [`GraphNodeParams::Kernel`].
+    pub fn graph_add_kernel(
+        &mut self,
+        graph: GraphId,
+        kind: KernelKind,
+        reads: &[AllocId],
+        writes: &[AllocId],
+    ) -> Result<(), SimError> {
+        self.graph_add_kernel_node(graph, kind, reads, writes, false)
+    }
+
+    /// `cudaGraphAddKernelNode` for a [`Self::cooperative_kernel`] launch.
+    ///
+    /// Occupies every Hyper-Q slot at launch. Capture cannot include it.
+    /// Illegal on an instantiated exec. Device must advertise
+    /// [`crate::GpuProfile::cooperative_launch`].
+    pub fn graph_add_cooperative_kernel(
+        &mut self,
+        graph: GraphId,
+        kind: KernelKind,
+        reads: &[AllocId],
+        writes: &[AllocId],
+    ) -> Result<(), SimError> {
+        self.graph_add_kernel_node(graph, kind, reads, writes, true)
+    }
+
+    fn graph_add_kernel_node(
+        &mut self,
+        graph: GraphId,
+        kind: KernelKind,
+        reads: &[AllocId],
+        writes: &[AllocId],
+        cooperative: bool,
+    ) -> Result<(), SimError> {
+        let (device, stream) = self.graph_origin_for_add(graph)?;
+        if cooperative {
+            self.require_cooperative(device)?;
+        }
+        let reads: Vec<KernelBuf> = reads.iter().copied().map(KernelBuf::whole).collect();
+        let writes: Vec<KernelBuf> = writes.iter().copied().map(KernelBuf::whole).collect();
+        let reads = self.resolve_bufs(&reads)?;
+        let writes = self.resolve_bufs(&writes)?;
+        self.graph_push(
+            graph,
+            device,
+            stream,
+            Kind::Kernel {
+                kind,
+                reads,
+                writes,
+                cooperative,
+            },
+        )
+    }
+
+    /// `cudaGraphAddMemcpyNode`. Pageable copies cannot be graph nodes.
+    /// [`Self::graph_add_memcpy_1d`] is `cudaGraphAddMemcpyNode1D`.
+    /// [`Self::graph_add_memcpy_2d`] requires [`MemcpyOp::is_2d`].
+    /// [`Self::graph_add_memcpy_3d`] requires [`MemcpyOp::is_3d`].
+    /// [`MemcpyNodeParams::ctx`] stays [`None`]. Pin a green context through
+    /// [`Self::graph_add_node`] with [`GraphNodeParams::Memcpy`].
+    pub fn graph_add_memcpy(&mut self, graph: GraphId, op: MemcpyOp) -> Result<(), SimError> {
+        self.graph_add_memcpy_params(graph, MemcpyNodeParams { op, ctx: None })
+    }
+
+    fn graph_add_memcpy_params(
+        &mut self,
+        graph: GraphId,
+        params: MemcpyNodeParams,
+    ) -> Result<(), SimError> {
+        let (device, stream) = self.graph_origin_for_add(graph)?;
+        let _a = self.alloc_ref(params.op.alloc)?;
+        if params.op.src.is_pageable() || params.op.dst.is_pageable() {
+            return Err(SimError::Invalid {
+                why: "cannot add pageable memcpy",
+            });
+        }
+        memcpy_2d_check(&params.op)?;
+        self.memcpy_range_ok(&params.op)?;
+        if let Some(ctx) = params.ctx {
+            self.require_live_green_ctx(ctx, device)?;
+        }
+        let prev = self.enqueue_green_ctx;
+        self.enqueue_green_ctx = params.ctx;
+        let r = self.graph_push(graph, device, stream, Kind::Memcpy(params.op));
+        self.enqueue_green_ctx = prev;
+        r
+    }
+
+    /// `cudaGraphAddMemcpyNode1D`. Pageable copies cannot be graph nodes.
+    pub fn graph_add_memcpy_1d(
+        &mut self,
+        graph: GraphId,
+        src: Place,
+        dst: Place,
+        alloc: AllocId,
+        bytes: u64,
+    ) -> Result<(), SimError> {
+        self.graph_add_memcpy(graph, MemcpyOp::packed_1d(src, dst, alloc, bytes))
+    }
+
+    /// `cudaGraphAddMemcpyNode` whose [`MemcpyOp`] is [`MemcpyOp::is_2d`]
+    /// (`height > 1`, not 3D). Other extents Invalid `"memcpy2d height"`.
+    /// Typed [`Self::graph_add_memcpy`] stays.
+    pub fn graph_add_memcpy_2d(&mut self, graph: GraphId, op: MemcpyOp) -> Result<(), SimError> {
+        if !op.is_2d() {
+            return Err(SimError::Invalid {
+                why: "memcpy2d height",
+            });
+        }
+        self.graph_add_memcpy(graph, op)
+    }
+
+    /// `cudaGraphAddMemcpyNode` whose [`MemcpyOp`] is [`MemcpyOp::is_3d`]
+    /// (`depth > 1`). Other extents Invalid `"memcpy3d depth"`. Typed
+    /// [`Self::graph_add_memcpy`] stays.
+    pub fn graph_add_memcpy_3d(&mut self, graph: GraphId, op: MemcpyOp) -> Result<(), SimError> {
+        if !op.is_3d() {
+            return Err(SimError::Invalid {
+                why: "memcpy3d depth",
+            });
+        }
+        self.graph_add_memcpy(graph, op)
+    }
+
+    /// `cudaGraphAddMemsetNode` of a [`KernelBuf`] span (packed 1D).
+    /// [`MemsetNodeParams::ctx`] stays [`None`].
+    pub fn graph_add_memset(&mut self, graph: GraphId, buf: KernelBuf) -> Result<(), SimError> {
+        self.graph_add_memset_op(graph, MemsetOp::from(buf))
+    }
+
+    /// `cudaGraphAddMemsetNode` / `cudaMemset2D` params ([`MemsetOp`]).
+    /// [`Self::graph_add_memset_2d`] requires [`MemsetOp::is_2d`].
+    /// [`Self::graph_add_memset_3d`] requires [`MemsetOp::is_3d`].
+    /// [`MemsetNodeParams::ctx`] stays [`None`]. Pin a green context through
+    /// [`Self::graph_add_node`] with [`GraphNodeParams::Memset`].
+    pub fn graph_add_memset_op(&mut self, graph: GraphId, op: MemsetOp) -> Result<(), SimError> {
+        self.graph_add_memset_params(graph, MemsetNodeParams { op, ctx: None })
+    }
+
+    fn graph_add_memset_params(
+        &mut self,
+        graph: GraphId,
+        params: MemsetNodeParams,
+    ) -> Result<(), SimError> {
+        let (device, stream) = self.graph_origin_for_add(graph)?;
+        let op = self.resolve_memset_op(params.op)?;
+        if let Some(ctx) = params.ctx {
+            self.require_live_green_ctx(ctx, device)?;
+        }
+        let prev = self.enqueue_green_ctx;
+        self.enqueue_green_ctx = params.ctx;
+        let r = self.graph_push(graph, device, stream, Kind::Memset(op));
+        self.enqueue_green_ctx = prev;
+        r
+    }
+
+    /// `cudaGraphAddMemsetNode` whose [`MemsetOp`] is [`MemsetOp::is_2d`]
+    /// (`height > 1`, not 3D). Other extents Invalid `"memset2d height"`.
+    /// Typed [`Self::graph_add_memset_op`] stays.
+    pub fn graph_add_memset_2d(&mut self, graph: GraphId, op: MemsetOp) -> Result<(), SimError> {
+        if !op.is_2d() {
+            return Err(SimError::Invalid {
+                why: "memset2d height",
+            });
+        }
+        self.graph_add_memset_op(graph, op)
+    }
+
+    /// `cudaGraphAddMemsetNode` whose [`MemsetOp`] is [`MemsetOp::is_3d`]
+    /// (`depth > 1`). Other extents Invalid `"memset3d depth"`. Typed
+    /// [`Self::graph_add_memset_op`] stays.
+    pub fn graph_add_memset_3d(&mut self, graph: GraphId, op: MemsetOp) -> Result<(), SimError> {
+        if !op.is_3d() {
+            return Err(SimError::Invalid {
+                why: "memset3d depth",
+            });
+        }
+        self.graph_add_memset_op(graph, op)
+    }
+
+    /// `cudaGraphAddHostNode` (`cudaLaunchHostFunc`) with the unnamed callback.
+    pub fn graph_add_host_func(&mut self, graph: GraphId) -> Result<(), SimError> {
+        self.graph_add_host_func_params(graph, HostNodeParams::default())
+    }
+
+    /// `cudaGraphAddHostNode` with [`HostNodeParams`] (`cudaHostFn_t` / `userData`).
+    pub fn graph_add_host_func_params(
+        &mut self,
+        graph: GraphId,
+        params: HostNodeParams,
+    ) -> Result<(), SimError> {
+        let (device, stream) = self.graph_origin_for_add(graph)?;
+        self.graph_push(
+            graph,
+            device,
+            stream,
+            Kind::HostFunc {
+                fn_id: params.fn_id,
+                user_data: params.user_data,
+            },
+        )
+    }
+
+    /// `cudaGraphAddEmptyNode`: join/fork with no work.
+    ///
+    /// Completes in 1 ns and does not occupy compute or copy engines, so
+    /// leftover kernels may Hyper-Q overlap it. Capture cannot include it.
+    /// Illegal on an instantiated exec.
+    pub fn graph_add_empty(&mut self, graph: GraphId) -> Result<(), SimError> {
+        let (device, stream) = self.graph_origin_for_add(graph)?;
+        self.graph_push(graph, device, stream, Kind::Empty)
+    }
+
+    /// `cudaGraphConditionalHandleCreate` on an uninstantiated graph.
+    ///
+    /// `default` is applied at each [`Self::launch_graph`] of that graph tree
+    /// (`cudaGraphCondAssignDefault`). Flags-word form is
+    /// [`Self::graph_conditional_create_with_flags`]. Capture cannot include
+    /// it. Illegal on an instantiated exec. Node ctx stays [`None`] unless
+    /// [`Self::graph_conditional_create_with_ctx`] pins a green context.
+    /// Instantiate requires the handle on a live IF / WHILE / SWITCH node
+    /// ([`GraphInstantiateResult::ConditionalHandleUnused`]).
+    pub fn graph_conditional_create(
+        &mut self,
+        graph: GraphId,
+        default: u32,
+    ) -> Result<CondId, SimError> {
+        self.graph_conditional_create_with_flags(graph, default, GraphCondFlags::ASSIGN_DEFAULT)
+    }
+
+    /// `cudaGraphConditionalHandleCreate` with a flags word.
+    ///
+    /// [`GraphCondFlags::ASSIGN_DEFAULT`] is identity with
+    /// [`Self::graph_conditional_create`]: each [`Self::launch_graph`] of that
+    /// graph tree resets the handle to `default`. Flags `0` leaves the handle
+    /// from the previous launch (the create-time `default` is only the initial
+    /// value). Unknown bits are Invalid `"graph cond flags"`. Capture cannot
+    /// include it. Illegal on an instantiated exec. Typed
+    /// [`Self::graph_conditional_create`] stays. Ctx is [`None`]; pin a green
+    /// context with [`Self::graph_conditional_create_with_ctx`].
+    pub fn graph_conditional_create_with_flags(
+        &mut self,
+        graph: GraphId,
+        default: u32,
+        flags: u32,
+    ) -> Result<CondId, SimError> {
+        self.graph_conditional_create_with_ctx(graph, default, flags, None)
+    }
+
+    /// `cuGraphConditionalHandleCreate` with a ctx argument.
+    ///
+    /// `ctx` is CUDA `CUcontext` / `cudaExecutionContext_t` as this VM's
+    /// [`crate::GreenCtxId`] analog (no `CUcontext`). [`None`] is identity with
+    /// [`Self::graph_conditional_create_with_flags`]. [`Some`] must be a live
+    /// green context on the graph device. Unknown or destroyed is Invalid
+    /// `"unknown green ctx"`. Device mismatch is Invalid `"green ctx device"`.
+    /// A later IF / WHILE / SWITCH node's [`GraphNodeParams`] ctx must match.
+    /// Typed [`Self::graph_add_if`] copies this ctx onto the node. Conditionals
+    /// do not occupy SMs, so duration is unchanged. Capture cannot include it.
+    /// Illegal on an instantiated exec. This VM does not invent an Engine flag
+    /// for conditional ctx.
+    pub fn graph_conditional_create_with_ctx(
+        &mut self,
+        graph: GraphId,
+        default: u32,
+        flags: u32,
+        ctx: Option<GreenCtxId>,
+    ) -> Result<CondId, SimError> {
+        if flags & !GraphCondFlags::ASSIGN_DEFAULT != 0 {
+            return Err(SimError::Invalid {
+                why: "graph cond flags",
+            });
+        }
+        self.fail_if_capturing("cannot capture conditional create")?;
+        self.require_live_definition(graph)?;
+        let origin = self
+            .graphs
+            .get(&graph)
+            .ok_or(SimError::Invalid {
+                why: "unknown graph",
+            })?
+            .origin
+            .0;
+        if let Some(c) = ctx {
+            self.require_live_green_ctx(c, origin)?;
+        }
+        let _gpu = self.profile.gpu(origin)?;
+        let id = CondId(self.next_cond);
+        self.next_cond = self.next_cond.saturating_add(1);
+        let _prev = self.conds.insert(
+            id,
+            Cond {
+                graph,
+                default,
+                value: default,
+                assign_default: flags & GraphCondFlags::ASSIGN_DEFAULT != 0,
+                ctx,
+            },
+        );
+        self.clock = self.clock.saturating_add(1);
+        Ok(id)
+    }
+
+    /// `cudaGraphAddNode` IF (`cudaGraphCondTypeIf`, size 1). Returns the then-body.
+    ///
+    /// Add nodes to the body, then instantiate the parent. Then-body ops skip at
+    /// start when `handle` is `0`. Size 2 (if/else) is [`Self::graph_add_if_else`].
+    /// `handle` must have been created on `graph`. Capture cannot include it.
+    /// Illegal on an instantiated exec. Copies the handle ctx onto the node.
+    pub fn graph_add_if(&mut self, graph: GraphId, handle: CondId) -> Result<GraphId, SimError> {
+        let (device, stream) = self.graph_origin_for_add(graph)?;
+        self.require_cond_on_graph(handle, graph)?;
+        let body = self.insert_graph(device, stream);
+        self.graph_push_conditional(
+            graph,
+            device,
+            stream,
+            handle,
+            Kind::If {
+                handle,
+                body,
+                else_body: None,
+            },
+        )?;
+        Ok(body)
+    }
+
+    /// `cudaGraphAddNode` IF (`cudaGraphCondTypeIf`, size 2). Returns then, else.
+    ///
+    /// Then-body ops skip at start when `handle` is `0`; the else-body runs
+    /// instead. `handle` must have been created on `graph`. Capture cannot
+    /// include it. Illegal on an instantiated exec. No Engine `--graph-if-else`.
+    pub fn graph_add_if_else(
+        &mut self,
+        graph: GraphId,
+        handle: CondId,
+    ) -> Result<(GraphId, GraphId), SimError> {
+        let (device, stream) = self.graph_origin_for_add(graph)?;
+        self.require_cond_on_graph(handle, graph)?;
+        let body = self.insert_graph(device, stream);
+        let else_body = self.insert_graph(device, stream);
+        self.graph_push_conditional(
+            graph,
+            device,
+            stream,
+            handle,
+            Kind::If {
+                handle,
+                body,
+                else_body: Some(else_body),
+            },
+        )?;
+        Ok((body, else_body))
+    }
+
+    /// `cudaGraphAddNode` WHILE (`cudaGraphCondTypeWhile`). Returns the body.
+    ///
+    /// Each iteration skips at start when `handle` is `0`. A body that leaves
+    /// the handle non-zero is Invalid after 64 iterations. Capture cannot
+    /// include it. Illegal on an instantiated exec.
+    pub fn graph_add_while(&mut self, graph: GraphId, handle: CondId) -> Result<GraphId, SimError> {
+        let (device, stream) = self.graph_origin_for_add(graph)?;
+        self.require_cond_on_graph(handle, graph)?;
+        let body = self.insert_graph(device, stream);
+        self.graph_push_conditional(graph, device, stream, handle, Kind::While { handle, body })?;
+        Ok(body)
+    }
+
+    /// `cudaGraphAddNode` SWITCH (`cudaGraphCondTypeSwitch`). Returns `n` bodies.
+    ///
+    /// Branch `i` runs when the handle equals `i`. Out of range skips every
+    /// body. `n` must be `1..=64`. [`GraphNodeParams::Switch`] fills
+    /// [`GraphAddNode::switch_bodies`]. Capture cannot include it. Illegal on
+    /// an instantiated exec.
+    pub fn graph_add_switch(
+        &mut self,
+        graph: GraphId,
+        handle: CondId,
+        n: u32,
+    ) -> Result<Vec<GraphId>, SimError> {
+        if n == 0 || n > 64 {
+            return Err(SimError::Invalid {
+                why: "switch branches",
+            });
+        }
+        let (device, stream) = self.graph_origin_for_add(graph)?;
+        self.require_cond_on_graph(handle, graph)?;
+        let mut bodies = Vec::new();
+        for _ in 0..n {
+            bodies.push(self.insert_graph(device, stream));
+        }
+        self.graph_push_conditional(
+            graph,
+            device,
+            stream,
+            handle,
+            Kind::Switch {
+                handle,
+                bodies: bodies.clone(),
+            },
+        )?;
+        Ok(bodies)
+    }
+
+    fn require_cond_on_graph(&self, handle: CondId, graph: GraphId) -> Result<(), SimError> {
+        let cond_graph = self
+            .conds
+            .get(&handle)
+            .ok_or(SimError::Invalid {
+                why: "unknown conditional",
+            })?
+            .graph;
+        if cond_graph != graph {
+            return Err(SimError::Invalid {
+                why: "conditional graph mismatch",
+            });
+        }
+        Ok(())
+    }
+
+    fn require_cond_node_ctx(
+        &self,
+        graph: GraphId,
+        handle: CondId,
+        ctx: Option<GreenCtxId>,
+    ) -> Result<(), SimError> {
+        let device = self
+            .graphs
+            .get(&graph)
+            .ok_or(SimError::Invalid {
+                why: "unknown graph",
+            })?
+            .origin
+            .0;
+        self.require_cond_handle_ctx(handle, ctx, device)
+    }
+
+    fn require_cond_handle_ctx(
+        &self,
+        handle: CondId,
+        ctx: Option<GreenCtxId>,
+        device: DeviceId,
+    ) -> Result<(), SimError> {
+        let have = self
+            .conds
+            .get(&handle)
+            .ok_or(SimError::Invalid {
+                why: "unknown conditional",
+            })?
+            .ctx;
+        if have != ctx {
+            return Err(SimError::Invalid {
+                why: "conditional ctx",
+            });
+        }
+        if let Some(c) = ctx {
+            self.require_live_green_ctx(c, device)?;
+        }
+        Ok(())
+    }
+
+    fn graph_push_conditional(
+        &mut self,
+        graph: GraphId,
+        device: DeviceId,
+        stream: StreamId,
+        handle: CondId,
+        kind: Kind,
+    ) -> Result<(), SimError> {
+        let ctx = self
+            .conds
+            .get(&handle)
+            .ok_or(SimError::Invalid {
+                why: "unknown conditional",
+            })?
+            .ctx;
+        if let Some(c) = ctx {
+            self.require_live_green_ctx(c, device)?;
+        }
+        let prev = self.enqueue_green_ctx;
+        self.enqueue_green_ctx = ctx;
+        let r = self.graph_push(graph, device, stream, kind);
+        self.enqueue_green_ctx = prev;
+        r
+    }
+
+    /// Device `cudaGraphSetConditional`: write `handle` when this op starts.
+    ///
+    /// Capture is allowed. Does not occupy compute or copy engines. A later IF
+    /// / WHILE / SWITCH node waits for this op if it depends on it. Each
+    /// [`Self::launch_graph`] resets handles created with
+    /// [`GraphCondFlags::ASSIGN_DEFAULT`] to their create-time default first,
+    /// so a live set before launch is wiped. Flags `0` keeps a prior set.
+    pub fn set_conditional(
+        &mut self,
+        device: DeviceId,
+        handle: CondId,
+        value: u32,
+        stream: StreamId,
+    ) -> Result<OpId, SimError> {
+        if !self.conds.contains_key(&handle) {
+            return Err(SimError::Invalid {
+                why: "unknown conditional",
+            });
+        }
+        self.submit(device, stream, Kind::SetConditional { handle, value })
+    }
+
+    /// Graph-build analog of captured [`Self::set_conditional`].
+    ///
+    /// `handle` must have been created on `graph`. Capture cannot include it.
+    /// Illegal on an instantiated exec. Device-launch instantiate refuses this
+    /// node (conditionals). Decode identity does not add set-conditional nodes.
+    pub fn graph_add_set_conditional(
+        &mut self,
+        graph: GraphId,
+        handle: CondId,
+        value: u32,
+    ) -> Result<(), SimError> {
+        let (device, stream) = self.graph_origin_for_add(graph)?;
+        self.require_cond_on_graph(handle, graph)?;
+        self.graph_push(
+            graph,
+            device,
+            stream,
+            Kind::SetConditional { handle, value },
+        )
+    }
+
+    /// IF nodes on `graph` as `(index, handle, body)` in add order.
+    ///
+    /// Instantiated ids use the exec snapshot (same as [`Self::graph_child_nodes`]).
+    /// Size-2 else-bodies stay [`Self::graph_if_else_nodes`].
+    pub fn graph_if_nodes(
+        &self,
+        graph: GraphId,
+    ) -> Result<Vec<(usize, CondId, GraphId)>, SimError> {
+        let mut out = Vec::new();
+        for (i, step) in self.graph_view_steps(graph)?.iter().enumerate() {
+            if step.destroyed {
+                continue;
+            }
+            if let Kind::If { handle, body, .. } = step.kind {
+                out.push((i, handle, body));
+            }
+        }
+        Ok(out)
+    }
+
+    /// Size-2 IF nodes on `graph` as `(index, handle, then, else)` in add order.
+    ///
+    /// Size-1 IF stays [`Self::graph_if_nodes`]. Instantiated ids use the exec
+    /// snapshot. Query; legal during capture.
+    pub fn graph_if_else_nodes(
+        &self,
+        graph: GraphId,
+    ) -> Result<Vec<(usize, CondId, GraphId, GraphId)>, SimError> {
+        let mut out = Vec::new();
+        for (i, step) in self.graph_view_steps(graph)?.iter().enumerate() {
+            if step.destroyed {
+                continue;
+            }
+            if let Kind::If {
+                handle,
+                body,
+                else_body: Some(else_body),
+            } = step.kind
+            {
+                out.push((i, handle, body, else_body));
+            }
+        }
+        Ok(out)
+    }
+
+    /// WHILE nodes on `graph` as `(index, handle, body)` in add order.
+    ///
+    /// Instantiated ids use the exec snapshot.
+    pub fn graph_while_nodes(
+        &self,
+        graph: GraphId,
+    ) -> Result<Vec<(usize, CondId, GraphId)>, SimError> {
+        let mut out = Vec::new();
+        for (i, step) in self.graph_view_steps(graph)?.iter().enumerate() {
+            if step.destroyed {
+                continue;
+            }
+            if let Kind::While { handle, body } = step.kind {
+                out.push((i, handle, body));
+            }
+        }
+        Ok(out)
+    }
+
+    /// SWITCH nodes on `graph` as `(index, handle, bodies)` in add order.
+    ///
+    /// Instantiated ids use the exec snapshot.
+    pub fn graph_switch_nodes(
+        &self,
+        graph: GraphId,
+    ) -> Result<Vec<(usize, CondId, Vec<GraphId>)>, SimError> {
+        let mut out = Vec::new();
+        for (i, step) in self.graph_view_steps(graph)?.iter().enumerate() {
+            if step.destroyed {
+                continue;
+            }
+            if let Kind::Switch { handle, bodies } = &step.kind {
+                out.push((i, *handle, bodies.clone()));
+            }
+        }
+        Ok(out)
+    }
+
+    /// Set-conditional nodes on `graph` as `(index, handle, value)` in add order.
+    ///
+    /// Instantiated ids use the exec snapshot, so exec SetParams is visible.
+    pub fn graph_set_conditional_nodes(
+        &self,
+        graph: GraphId,
+    ) -> Result<Vec<(usize, CondId, u32)>, SimError> {
+        let mut out = Vec::new();
+        for (i, step) in self.graph_view_steps(graph)?.iter().enumerate() {
+            if step.destroyed {
+                continue;
+            }
+            if let Kind::SetConditional { handle, value } = step.kind {
+                out.push((i, handle, value));
+            }
+        }
+        Ok(out)
+    }
+
+    fn graph_view_steps(&self, graph: GraphId) -> Result<&[GraphStep], SimError> {
+        let graph = self.resolved_graph(graph)?;
+        Ok(self
+            .graphs
+            .get(&graph)
+            .ok_or(SimError::Invalid {
+                why: "unknown graph",
+            })?
+            .view())
+    }
+
+    /// `cudaGraphAddEventRecordNode`. `external` is `cudaEventRecordExternal`.
+    pub fn graph_add_event_record(
+        &mut self,
+        graph: GraphId,
+        event: EventId,
+        external: bool,
+    ) -> Result<(), SimError> {
+        let (device, stream) = self.graph_origin_for_add(graph)?;
+        if !self.events.contains_key(&event) {
+            return Err(SimError::UnknownEvent { event: event.0 });
+        }
+        self.graph_push(graph, device, stream, Kind::EventRecord { event, external })
+    }
+
+    /// `cudaGraphAddEventWaitNode`. `external` is `cudaEventWaitExternal`.
+    pub fn graph_add_event_wait(
+        &mut self,
+        graph: GraphId,
+        event: EventId,
+        external: bool,
+    ) -> Result<(), SimError> {
+        let (device, stream) = self.graph_origin_for_add(graph)?;
+        if !self.events.contains_key(&event) {
+            return Err(SimError::UnknownEvent { event: event.0 });
+        }
+        self.graph_push(graph, device, stream, Kind::EventWait { event, external })
+    }
+
+    /// `cuStreamWriteValue64` as a `cudaGraphAddBatchMemOpNode`.
+    ///
+    /// Capture cannot include it (use [`Self::write_value64`] during capture).
+    /// Illegal on an instantiated exec.
+    pub fn graph_add_write_value64(
+        &mut self,
+        graph: GraphId,
+        id: AllocId,
+        offset: u64,
+        value: u64,
+    ) -> Result<(), SimError> {
+        self.graph_add_batch_item(
+            graph,
+            BatchMemOp::Write {
+                id,
+                offset,
+                value,
+                bits32: false,
+            },
+        )
+    }
+
+    /// `cuStreamWriteValue32` as a `cudaGraphAddBatchMemOpNode`.
+    pub fn graph_add_write_value32(
+        &mut self,
+        graph: GraphId,
+        id: AllocId,
+        offset: u64,
+        value: u64,
+    ) -> Result<(), SimError> {
+        self.graph_add_batch_item(
+            graph,
+            BatchMemOp::Write {
+                id,
+                offset,
+                value,
+                bits32: true,
+            },
+        )
+    }
+
+    /// [`Self::graph_add_write_value64`] with a [`WriteValueFlags`] word.
+    ///
+    /// Flags must be [`WriteValueFlags::DEFAULT`].
+    /// [`WriteValueFlags::NO_MEMORY_BARRIER`] is Invalid `"write value flags"`.
+    /// Typed helper stays.
+    pub fn graph_add_write_value64_with_flags(
+        &mut self,
+        graph: GraphId,
+        id: AllocId,
+        offset: u64,
+        value: u64,
+        flags: u32,
+    ) -> Result<(), SimError> {
+        Self::check_write_value_flags(flags)?;
+        self.graph_add_write_value64(graph, id, offset, value)
+    }
+
+    /// [`Self::graph_add_write_value32`] with a [`WriteValueFlags`] word.
+    pub fn graph_add_write_value32_with_flags(
+        &mut self,
+        graph: GraphId,
+        id: AllocId,
+        offset: u64,
+        value: u64,
+        flags: u32,
+    ) -> Result<(), SimError> {
+        Self::check_write_value_flags(flags)?;
+        self.graph_add_write_value32(graph, id, offset, value)
+    }
+
+    /// `cuStreamWaitValue64` as a `cudaGraphAddBatchMemOpNode`.
+    pub fn graph_add_wait_value64(
+        &mut self,
+        graph: GraphId,
+        id: AllocId,
+        offset: u64,
+        value: u64,
+        cmp: WaitValueCmp,
+    ) -> Result<(), SimError> {
+        self.graph_add_batch_item(
+            graph,
+            BatchMemOp::Wait {
+                id,
+                offset,
+                value,
+                bits32: false,
+                cmp,
+                flush: false,
+            },
+        )
+    }
+
+    /// `cuStreamWaitValue32` as a `cudaGraphAddBatchMemOpNode`.
+    pub fn graph_add_wait_value32(
+        &mut self,
+        graph: GraphId,
+        id: AllocId,
+        offset: u64,
+        value: u64,
+        cmp: WaitValueCmp,
+    ) -> Result<(), SimError> {
+        self.graph_add_batch_item(
+            graph,
+            BatchMemOp::Wait {
+                id,
+                offset,
+                value,
+                bits32: true,
+                cmp,
+                flush: false,
+            },
+        )
+    }
+
+    /// [`Self::graph_add_wait_value64`] with a [`crate::WaitValueFlags`] word.
+    ///
+    /// [`crate::WaitValueFlags::FLUSH`] requires an RDMA SKU (same as
+    /// [`BatchMemOp::FlushRemoteWrites`]). Unknown bits Invalid `"wait value flags"`.
+    /// Typed helper stays.
+    pub fn graph_add_wait_value64_with_flags(
+        &mut self,
+        graph: GraphId,
+        id: AllocId,
+        offset: u64,
+        value: u64,
+        flags: u32,
+    ) -> Result<(), SimError> {
+        let cmp = WaitValueCmp::from_flags(flags)?;
+        self.graph_add_batch_item(
+            graph,
+            BatchMemOp::Wait {
+                id,
+                offset,
+                value,
+                bits32: false,
+                cmp,
+                flush: flags & WaitValueFlags::FLUSH != 0,
+            },
+        )
+    }
+
+    /// [`Self::graph_add_wait_value32`] with a [`crate::WaitValueFlags`] word.
+    pub fn graph_add_wait_value32_with_flags(
+        &mut self,
+        graph: GraphId,
+        id: AllocId,
+        offset: u64,
+        value: u64,
+        flags: u32,
+    ) -> Result<(), SimError> {
+        let cmp = WaitValueCmp::from_flags(flags)?;
+        self.graph_add_batch_item(
+            graph,
+            BatchMemOp::Wait {
+                id,
+                offset,
+                value,
+                bits32: true,
+                cmp,
+                flush: flags & WaitValueFlags::FLUSH != 0,
+            },
+        )
+    }
+
+    /// `cudaGraphAddBatchMemOpNode`: one node holding the wait/write/flush
+    /// vector.
+    ///
+    /// Empty is Invalid. Items run in order inside the node at launch (a wait
+    /// sees earlier writes in this vector; it does not see later ones). Capture
+    /// cannot include it (use [`Self::batch_mem_op`] during capture). Illegal
+    /// after instantiate. [`BatchMemOpNodeParams::ctx`] stays [`None`]. Pin a
+    /// green context through [`Self::graph_add_node`] with
+    /// [`GraphNodeParams::BatchMemOp`].
+    pub fn graph_add_batch_mem_op(
+        &mut self,
+        graph: GraphId,
+        ops: &[BatchMemOp],
+    ) -> Result<(), SimError> {
+        self.check_batch_mem_ops(ops)?;
+        let (device, stream) = self.graph_origin_for_add(graph)?;
+        self.check_batch_flush(device, ops)?;
+        self.graph_push(graph, device, stream, Kind::BatchMem { ops: ops.to_vec() })
+    }
+
+    fn graph_add_batch_mem_op_params(
+        &mut self,
+        graph: GraphId,
+        params: BatchMemOpNodeParams,
+    ) -> Result<(), SimError> {
+        self.check_batch_mem_ops(&params.ops)?;
+        let (device, stream) = self.graph_origin_for_add(graph)?;
+        if let Some(ctx) = params.ctx {
+            self.require_live_green_ctx(ctx, device)?;
+        }
+        self.check_batch_flush(device, &params.ops)?;
+        let prev = self.enqueue_green_ctx;
+        self.enqueue_green_ctx = params.ctx;
+        let r = self.graph_push(graph, device, stream, Kind::BatchMem { ops: params.ops });
+        self.enqueue_green_ctx = prev;
+        r
+    }
+
+    /// [`Self::graph_add_batch_mem_op`] with a [`BatchMemOpFlags`] word.
+    ///
+    /// Flags must be [`BatchMemOpFlags::DEFAULT`]. Unknown bits Invalid
+    /// `"batch mem op flags"`. Typed helper stays.
+    pub fn graph_add_batch_mem_op_with_flags(
+        &mut self,
+        graph: GraphId,
+        ops: &[BatchMemOp],
+        flags: u32,
+    ) -> Result<(), SimError> {
+        Self::check_batch_mem_op_flags(flags)?;
+        self.graph_add_batch_mem_op(graph, ops)
+    }
+
+    fn graph_add_batch_item(&mut self, graph: GraphId, op: BatchMemOp) -> Result<(), SimError> {
+        let (device, stream) = self.graph_origin_for_add(graph)?;
+        self.check_batch_mem(op)?;
+        self.check_batch_flush(device, &[op])?;
+        self.graph_push(graph, device, stream, kind_from_batch(op))
+    }
+
+    /// `cudaGraphAddChildGraphNode`. Typed add is
+    /// [`GraphChildGraphOwnership::CLONE`]: `child` must already be
+    /// instantiated and must not contain mem alloc/free or conditional nodes.
+    /// Sibling children have no dependency until [`Self::graph_add_dependencies`].
+    /// Independent children may Hyper-Q overlap at parent launch.
+    /// Pin move ownership through [`Self::graph_add_node`] with
+    /// [`GraphNodeParams::ChildGraph`].
+    pub fn graph_add_child(&mut self, graph: GraphId, child: GraphId) -> Result<(), SimError> {
+        self.graph_add_child_params(
+            graph,
+            ChildGraphNodeParams {
+                graph: child,
+                ownership: GraphChildGraphOwnership::CLONE,
+            },
+        )
+    }
+
+    fn graph_add_child_params(
+        &mut self,
+        graph: GraphId,
+        params: ChildGraphNodeParams,
+    ) -> Result<(), SimError> {
+        let (device, stream) = self.graph_origin_for_add(graph)?;
+        let child = params.graph;
+        if child == graph {
+            return Err(SimError::Invalid {
+                why: "graph child is self",
+            });
+        }
+        self.require_not_moved(child)?;
+        let ownership = params.ownership;
+        if ownership != GraphChildGraphOwnership::CLONE
+            && ownership != GraphChildGraphOwnership::MOVE
+        {
+            return Err(SimError::Invalid {
+                why: "child graph ownership",
+            });
+        }
+        let (ready, origin) = {
+            let c = self.graphs.get(&child).ok_or(SimError::Invalid {
+                why: "unknown graph",
+            })?;
+            (c.ready(), c.origin.0)
+        };
+        if origin != device {
+            return Err(SimError::Invalid {
+                why: "graph child gpu mismatch",
+            });
+        }
+        let (has_mem, has_cond) = self.child_graph_contents(child)?;
+        if has_cond {
+            return Err(SimError::Invalid {
+                why: "child graph conditional",
+            });
+        }
+        if ownership == GraphChildGraphOwnership::CLONE {
+            if !ready {
+                return Err(SimError::Invalid {
+                    why: "child graph not instantiated",
+                });
+            }
+            if has_mem {
+                return Err(SimError::Invalid {
+                    why: "child graph mem",
+                });
+            }
+        } else if ready {
+            return Err(SimError::Invalid {
+                why: "child graph instantiated",
+            });
+        }
+        self.graph_push(
+            graph,
+            device,
+            stream,
+            Kind::ChildGraph {
+                graph: child,
+                ownership,
+            },
+        )?;
+        if ownership == GraphChildGraphOwnership::MOVE {
+            let c = self.graphs.get_mut(&child).ok_or(SimError::Invalid {
+                why: "unknown graph",
+            })?;
+            c.moved_to = Some(graph);
+        }
+        Ok(())
+    }
+
+    fn child_graph_contents(&self, child: GraphId) -> Result<(bool, bool), SimError> {
+        let mut stack = vec![child];
+        let mut seen = BTreeSet::new();
+        let mut has_mem = false;
+        let mut has_cond = false;
+        while let Some(id) = stack.pop() {
+            if !seen.insert(id) {
+                continue;
+            }
+            let g = self.graphs.get(&id).ok_or(SimError::Invalid {
+                why: "unknown graph",
+            })?;
+            for step in &g.steps {
+                match &step.kind {
+                    Kind::Alloc { .. } | Kind::Free { .. } => has_mem = true,
+                    Kind::If { .. }
+                    | Kind::While { .. }
+                    | Kind::Switch { .. }
+                    | Kind::SetConditional { .. } => {
+                        has_cond = true;
+                    }
+                    Kind::ChildGraph { graph, .. } => stack.push(*graph),
+                    _ => {}
+                }
+                stack.extend(cond_body_graphs(&step.kind));
+            }
+        }
+        Ok((has_mem, has_cond))
+    }
+
+    fn require_not_moved(&self, id: GraphId) -> Result<(), SimError> {
+        let g = self.graphs.get(&id).ok_or(SimError::Invalid {
+            why: "unknown graph",
+        })?;
+        if g.moved_to.is_some() {
+            return Err(SimError::Invalid {
+                why: "child graph moved",
+            });
+        }
+        if let Some(src) = g.src {
+            if self.graphs.get(&src).is_some_and(|d| d.moved_to.is_some()) {
+                return Err(SimError::Invalid {
+                    why: "child graph moved",
+                });
+            }
+        }
+        Ok(())
+    }
+
+    /// `cudaGraphAddMemAllocNode`. Returns a pending `cudaMallocAsync` id.
+    ///
+    /// The pointer is not resident until [`Self::launch_graph`]. Capture cannot
+    /// include it (use [`Self::alloc`] during stream capture). Illegal on an
+    /// instantiated exec. [`Self::update_graph`] of mem nodes is Invalid.
+    /// Empty `accessDescs` is this helper; peer access is
+    /// [`Self::graph_add_alloc_with_access`]. [`GraphNodeParams::Alloc`]
+    /// is the `cudaGraphAddNode` entry (empty `access` is this helper).
+    pub fn graph_add_alloc(&mut self, graph: GraphId, bytes: u64) -> Result<AllocId, SimError> {
+        self.graph_add_alloc_with_access(graph, bytes, &[])
+    }
+
+    /// `cudaGraphAddMemAllocNode` with `accessDescs`.
+    ///
+    /// Empty `access` is [`Self::graph_add_alloc`]. Peer
+    /// [`MemAccessFlags::PROT_READ_WRITE`] / [`PROT_READ`](MemAccessFlags::PROT_READ)
+    /// lets a kernel on that GPU use the pointer without dest HBM once the
+    /// node has run (graph-memory pool stays Invalid for
+    /// [`Self::pool_set_access`]). [`MemAccessFlags::PROT_NONE`] records and
+    /// grants nothing. Last descriptor for a device wins. Host location
+    /// Invalid `"access location"`; unknown flags `"alloc access flags"`.
+    /// All-or-nothing before the node is created. Capture cannot include it.
+    /// Illegal on an instantiated exec. SetParams of Alloc stays Invalid.
+    /// [`GraphNodeParams::Alloc`] is the unified `cudaGraphAddNode` entry.
+    pub fn graph_add_alloc_with_access(
+        &mut self,
+        graph: GraphId,
+        bytes: u64,
+        access: &[MemAccessDesc],
+    ) -> Result<AllocId, SimError> {
+        let (device, stream) = self.graph_origin_for_add(graph)?;
+        if bytes == 0 {
+            return Err(SimError::Invalid {
+                why: "zero-byte alloc",
+            });
+        }
+        self.check_graph_alloc_access(device, access)?;
+        let pool = self.graph_pool(device)?;
+        let id = self.insert_pool_alloc(pool, bytes)?;
+        self.alloc_mut(id)?.graph_access = access.to_vec();
+        self.graph_push(graph, device, stream, Kind::Alloc { id, bytes })?;
+        self.graph_allocs.entry(graph).or_default().push(id);
+        Ok(id)
+    }
+
+    fn check_graph_alloc_access(
+        &self,
+        owner: DeviceId,
+        access: &[MemAccessDesc],
+    ) -> Result<(), SimError> {
+        for desc in access {
+            match desc.flags {
+                MemAccessFlags::PROT_READ_WRITE
+                | MemAccessFlags::PROT_READ
+                | MemAccessFlags::PROT_NONE => {}
+                _ => {
+                    return Err(SimError::Invalid {
+                        why: "alloc access flags",
+                    });
+                }
+            }
+            let device = desc.location.device().ok_or(SimError::Invalid {
+                why: "access location",
+            })?;
+            let _gpu = self.profile.gpu(device)?;
+            let grant = desc.flags == MemAccessFlags::PROT_READ_WRITE
+                || desc.flags == MemAccessFlags::PROT_READ;
+            if grant && owner != device {
+                let _link = self.profile.link(Some(owner), Some(device))?;
+                if !self.peer_access(owner, device) {
+                    return Err(SimError::PeerDisabled {
+                        src: owner,
+                        dst: device,
+                    });
+                }
+            }
+        }
+        Ok(())
+    }
+
+    /// `cudaGraphAddMemFreeNode` of a pending or live allocation.
+    pub fn graph_add_free(&mut self, graph: GraphId, id: AllocId) -> Result<(), SimError> {
+        let (device, stream) = self.graph_origin_for_add(graph)?;
+        let _a = self.alloc_ref(id)?;
+        self.graph_push(graph, device, stream, Kind::Free { id })
+    }
+
+    /// `cudaGraphAddDependencies`: `from` must complete before `to` starts.
+    ///
+    /// Capture cannot include it. Illegal on an instantiated exec. Indices are
+    /// 0-based in add order. A cycle is Invalid. Independent nodes (no edge)
+    /// may Hyper-Q overlap at [`Self::launch_graph`].
+    pub fn graph_add_dependencies(
+        &mut self,
+        graph: GraphId,
+        from: usize,
+        to: usize,
+    ) -> Result<(), SimError> {
+        self.graph_add_dependencies_n(graph, &[(from, to)])
+    }
+
+    /// `cudaGraphAddDependencies` of `numDependencies` from/to pairs.
+    ///
+    /// All-or-nothing: a cycle or out-of-range index adds nothing. Duplicate
+    /// edges are a no-op. Empty `edges` is success. Capture cannot include it.
+    /// Illegal on an instantiated exec.
+    pub fn graph_add_dependencies_n(
+        &mut self,
+        graph: GraphId,
+        edges: &[(usize, usize)],
+    ) -> Result<(), SimError> {
+        let _origin = self.graph_origin_for_add(graph)?;
+        if edges.is_empty() {
+            return Ok(());
+        }
+        let g = self.graphs.get_mut(&graph).ok_or(SimError::Invalid {
+            why: "unknown graph",
+        })?;
+        let n = g.steps.len();
+        let mut steps = g.steps.clone();
+        for &(from, to) in edges {
+            if from == to || from >= n || to >= n {
+                return Err(SimError::Invalid {
+                    why: "graph dependency",
+                });
+            }
+            let from_live = steps.get(from).is_some_and(|s| !s.destroyed);
+            let to_live = steps.get(to).is_some_and(|s| !s.destroyed);
+            if !from_live || !to_live {
+                return Err(SimError::Invalid {
+                    why: "graph dependency",
+                });
+            }
+            if graph_reaches(&steps, to, from) {
+                return Err(SimError::Invalid {
+                    why: "cyclic graph dependencies",
+                });
+            }
+            let step = steps.get_mut(to).ok_or(SimError::Invalid {
+                why: "graph dependency",
+            })?;
+            if !step.deps.contains(&from) {
+                step.deps.push(from);
+                step.deps.sort_unstable();
+            }
+        }
+        for (dst, src) in g.steps.iter_mut().zip(steps) {
+            dst.deps = src.deps;
+        }
+        Ok(())
+    }
+
+    /// `cudaGraphAddDependencies` with [`GraphEdgeData`] (`from`, `to`, data).
+    ///
+    /// [`GraphDependencyType::DEFAULT`] with ports 0 is
+    /// [`Self::graph_add_dependencies`]. Programmatic type Invalid
+    /// `"graph dependency type"`. [`GraphKernelNodePort::LAUNCH_COMPLETION`]
+    /// waits for a source kernel to start. Other nonzero ports Invalid
+    /// `"graph edge port"`. An existing `(from, to)` cannot change stored
+    /// [`GraphEdgeData`] (Invalid `"graph edge data"`). Default incoming on an
+    /// existing edge stays a no-op (PLAN 182). Capture cannot include it.
+    /// Illegal on an instantiated exec.
+    pub fn graph_add_dependencies_with_data(
+        &mut self,
+        graph: GraphId,
+        from: usize,
+        to: usize,
+        data: GraphEdgeData,
+    ) -> Result<(), SimError> {
+        self.graph_add_dependencies_n_with_data(graph, &[(from, to, data)])
+    }
+
+    /// `cudaGraphAddDependencies` v2 of `numDependencies` from/to/data triples.
+    ///
+    /// All-or-nothing on type, ports, cycle, index, and existing-edge data.
+    /// Empty `edges` is success. [`GraphDependencyType::DEFAULT`] with ports 0
+    /// is [`Self::graph_add_dependencies_n`]. Programmatic type is not modeled.
+    /// [`GraphKernelNodePort::LAUNCH_COMPLETION`] waits for a source kernel
+    /// to start. An existing `(from, to)` cannot change stored
+    /// [`GraphEdgeData`] (Invalid `"graph edge data"`). Default incoming on an
+    /// existing edge stays a no-op. Capture cannot include it. Illegal on an
+    /// instantiated exec.
+    pub fn graph_add_dependencies_n_with_data(
+        &mut self,
+        graph: GraphId,
+        edges: &[(usize, usize, GraphEdgeData)],
+    ) -> Result<(), SimError> {
+        for &(from, _, data) in edges {
+            Self::check_graph_edge_data(data)?;
+            if data.from_port == GraphKernelNodePort::LAUNCH_COMPLETION {
+                self.require_graph_kernel_edge_src(graph, from)?;
+            }
+        }
+        let _origin = self.graph_origin_for_add(graph)?;
+        self.reject_graph_edge_data_change(graph, edges)?;
+        let pairs: Vec<(usize, usize)> = edges.iter().map(|&(from, to, _)| (from, to)).collect();
+        self.graph_add_dependencies_n(graph, &pairs)?;
+        for &(from, to, data) in edges {
+            if data == GraphEdgeData::default() {
+                continue;
+            }
+            let g = self.graphs.get_mut(&graph).ok_or(SimError::Invalid {
+                why: "unknown graph",
+            })?;
+            let step = live_ok_mut(g.steps.get_mut(to).ok_or(SimError::Invalid {
+                why: "unknown graph node",
+            })?)?;
+            let _prev = step.edge_data.insert(from, data);
+        }
+        Ok(())
+    }
+
+    /// CUDA: AddDependencies cannot change [`GraphEdgeData`] of an existing
+    /// `(from, to)`. Default incoming stays a v1 no-op.
+    fn reject_graph_edge_data_change(
+        &self,
+        graph: GraphId,
+        edges: &[(usize, usize, GraphEdgeData)],
+    ) -> Result<(), SimError> {
+        for (i, &(from, to, data)) in edges.iter().enumerate() {
+            for &(from2, to2, data2) in edges.iter().take(i) {
+                if from == from2 && to == to2 && data != data2 {
+                    return Err(SimError::Invalid {
+                        why: "graph edge data",
+                    });
+                }
+            }
+        }
+        let g = self.graphs.get(&graph).ok_or(SimError::Invalid {
+            why: "unknown graph",
+        })?;
+        for &(from, to, data) in edges {
+            if data == GraphEdgeData::default() {
+                continue;
+            }
+            let Some(step) = g.steps.get(to) else {
+                continue;
+            };
+            if step.destroyed {
+                continue;
+            }
+            if step.deps.contains(&from) && step.edge_data_of(from) != data {
+                return Err(SimError::Invalid {
+                    why: "graph edge data",
+                });
+            }
+        }
+        Ok(())
+    }
+
+    fn check_graph_edge_data(data: GraphEdgeData) -> Result<(), SimError> {
+        if data.kind != GraphDependencyType::DEFAULT {
+            return Err(SimError::Invalid {
+                why: "graph dependency type",
+            });
+        }
+        if data.to_port != 0 {
+            return Err(SimError::Invalid {
+                why: "graph edge port",
+            });
+        }
+        match data.from_port {
+            GraphKernelNodePort::DEFAULT | GraphKernelNodePort::LAUNCH_COMPLETION => Ok(()),
+            _ => Err(SimError::Invalid {
+                why: "graph edge port",
+            }),
+        }
+    }
+
+    fn require_graph_kernel_edge_src(&self, graph: GraphId, from: usize) -> Result<(), SimError> {
+        let g = self.graphs.get(&graph).ok_or(SimError::Invalid {
+            why: "unknown graph",
+        })?;
+        let step = live_ok(g.steps.get(from).ok_or(SimError::Invalid {
+            why: "unknown graph node",
+        })?)?;
+        if !matches!(step.kind, Kind::Kernel { .. }) {
+            return Err(SimError::Invalid {
+                why: "graph edge port",
+            });
+        }
+        Ok(())
+    }
+
+    fn store_graph_edge_data(
+        &mut self,
+        graph: GraphId,
+        node: usize,
+        deps: &[usize],
+        data: &[GraphEdgeData],
+    ) -> Result<(), SimError> {
+        let g = self.graphs.get_mut(&graph).ok_or(SimError::Invalid {
+            why: "unknown graph",
+        })?;
+        let step = live_ok_mut(g.steps.get_mut(node).ok_or(SimError::Invalid {
+            why: "unknown graph node",
+        })?)?;
+        for (&from, &edge) in deps.iter().zip(data.iter()) {
+            if edge == GraphEdgeData::default() {
+                continue;
+            }
+            let _prev = step.edge_data.insert(from, edge);
+        }
+        Ok(())
+    }
+
+    /// `cudaGraphRemoveDependencies`: drop the `from` → `to` edge.
+    ///
+    /// Capture cannot include it. Illegal on an instantiated exec. Missing edges are
+    /// a no-op. Independent nodes (no remaining edge) may Hyper-Q overlap at
+    /// [`Self::launch_graph`].
+    pub fn graph_remove_dependencies(
+        &mut self,
+        graph: GraphId,
+        from: usize,
+        to: usize,
+    ) -> Result<(), SimError> {
+        self.graph_remove_dependencies_n(graph, &[(from, to)])
+    }
+
+    /// `cudaGraphRemoveDependencies` of `numDependencies` from/to pairs.
+    ///
+    /// All-or-nothing on out-of-range indices (nothing is removed). Missing
+    /// edges are a no-op. Empty `edges` is success. Capture cannot include it.
+    /// Illegal on an instantiated exec.
+    pub fn graph_remove_dependencies_n(
+        &mut self,
+        graph: GraphId,
+        edges: &[(usize, usize)],
+    ) -> Result<(), SimError> {
+        self.fail_if_capturing("cannot remove graph dependencies during capture")?;
+        self.require_live_definition(graph)?;
+        let g = self.graphs.get_mut(&graph).ok_or(SimError::Invalid {
+            why: "unknown graph",
+        })?;
+        if edges.is_empty() {
+            return Ok(());
+        }
+        let n = g.steps.len();
+        for &(from, to) in edges {
+            if from == to || from >= n || to >= n {
+                return Err(SimError::Invalid {
+                    why: "graph dependency",
+                });
+            }
+            let from_live = g.steps.get(from).is_some_and(|s| !s.destroyed);
+            let to_live = g.steps.get(to).is_some_and(|s| !s.destroyed);
+            if !from_live || !to_live {
+                return Err(SimError::Invalid {
+                    why: "graph dependency",
+                });
+            }
+        }
+        for &(from, to) in edges {
+            let step = g.steps.get_mut(to).ok_or(SimError::Invalid {
+                why: "graph dependency",
+            })?;
+            step.deps.retain(|d| *d != from);
+            let _gone = step.edge_data.remove(&from);
+        }
+        Ok(())
+    }
+
+    /// `cudaGraphDestroyNode` on a graph definition.
+    ///
+    /// Drops the node and incident edges. Remaining indices stay valid (CUDA
+    /// handles). Capture cannot include it. Illegal on an instantiated exec.
+    /// A device-updatable kernel node cannot be destroyed. Does not retarget
+    /// an already-instantiated exec. Destroying a mem alloc node unlinks it
+    /// from [`Self::graph_mem_allocs`]. Nested child-graph objects are not
+    /// destroyed.
+    pub fn graph_destroy_node(&mut self, graph: GraphId, node: usize) -> Result<(), SimError> {
+        self.fail_if_capturing("cannot destroy graph node during capture")?;
+        self.require_live_definition(graph)?;
+        let alloc = {
+            let g = self.graphs.get_mut(&graph).ok_or(SimError::Invalid {
+                why: "unknown graph",
+            })?;
+            let alloc = {
+                let step = live_ok(g.steps.get(node).ok_or(SimError::Invalid {
+                    why: "unknown graph node",
+                })?)?;
+                if step_is_device_updatable(step) {
+                    return Err(SimError::Invalid {
+                        why: "device-updatable",
+                    });
+                }
+                match &step.kind {
+                    Kind::Alloc { id, .. } => Some(*id),
+                    _ => None,
+                }
+            };
+            for s in &mut g.steps {
+                s.deps.retain(|d| *d != node);
+            }
+            let step = g.steps.get_mut(node).ok_or(SimError::Invalid {
+                why: "unknown graph node",
+            })?;
+            step.destroyed = true;
+            step.deps.clear();
+            alloc
+        };
+        if let Some(id) = alloc {
+            if let Some(v) = self.graph_allocs.get_mut(&graph) {
+                v.retain(|x| *x != id);
+            }
+        }
+        Ok(())
+    }
+
+    /// Predecessor indices of node `i` (`cudaGraphNodeGetDependencies`).
+    ///
+    /// CUDA v1 (`edgeData == NULL`): non-default stored [`GraphEdgeData`] is
+    /// Invalid `"lossy query"` (`cudaErrorLossyQuery`). Default-only predecessors
+    /// stay. [`Self::graph_node_deps_with_data`] is lossless. Query; legal
+    /// during capture.
+    pub fn graph_node_deps(&self, graph: GraphId, i: usize) -> Result<Vec<usize>, SimError> {
+        let step = self.graph_node_dep_step(graph, i)?;
+        if step
+            .deps
+            .iter()
+            .any(|&from| graph_edge_is_lossy(step.edge_data_of(from)))
+        {
+            return Err(SimError::Invalid { why: "lossy query" });
+        }
+        Ok(step.deps.clone())
+    }
+
+    /// `cudaGraphNodeGetDependencies` v2: `(from, data)` predecessors.
+    ///
+    /// Existing edges report stored [`GraphEdgeData`] (Default ports 0 when
+    /// unset). Not [`Self::graph_node_deps`] LossyQuery. Query; legal during
+    /// capture.
+    pub fn graph_node_deps_with_data(
+        &self,
+        graph: GraphId,
+        i: usize,
+    ) -> Result<Vec<(usize, GraphEdgeData)>, SimError> {
+        let step = self.graph_node_dep_step(graph, i)?;
+        Ok(step
+            .deps
+            .iter()
+            .map(|&from| (from, step.edge_data_of(from)))
+            .collect())
+    }
+
+    fn graph_node_dep_step(&self, graph: GraphId, i: usize) -> Result<&GraphStep, SimError> {
+        let g = self.graphs.get(&graph).ok_or(SimError::Invalid {
+            why: "unknown graph",
+        })?;
+        live_ok(g.steps.get(i).ok_or(SimError::Invalid {
+            why: "graph dependency",
+        })?)
+    }
+
+    /// Root node indices (`cudaGraphGetRootNodes`): nodes with no predecessors.
+    pub fn graph_root_nodes(&self, graph: GraphId) -> Result<Vec<usize>, SimError> {
+        let g = self.graphs.get(&graph).ok_or(SimError::Invalid {
+            why: "unknown graph",
+        })?;
+        Ok(g.steps
+            .iter()
+            .enumerate()
+            .filter(|(_, s)| !s.destroyed && s.deps.is_empty())
+            .map(|(i, _)| i)
+            .collect())
+    }
+
+    /// Edges (`cudaGraphGetEdges`): `(from, to)` in node-add order.
+    ///
+    /// CUDA v1 (`edgeData == NULL`): any non-default stored [`GraphEdgeData`]
+    /// is Invalid `"lossy query"` (`cudaErrorLossyQuery`). Default-only graphs
+    /// stay. [`Self::graph_edges_with_data`] is lossless. Query; legal during
+    /// capture.
+    pub fn graph_edges(&self, graph: GraphId) -> Result<Vec<(usize, usize)>, SimError> {
+        let g = self.graphs.get(&graph).ok_or(SimError::Invalid {
+            why: "unknown graph",
+        })?;
+        let mut edges = Vec::new();
+        for (to, step) in g.steps.iter().enumerate() {
+            if step.destroyed {
+                continue;
+            }
+            for &from in &step.deps {
+                if graph_edge_is_lossy(step.edge_data_of(from)) {
+                    return Err(SimError::Invalid { why: "lossy query" });
+                }
+                edges.push((from, to));
+            }
+        }
+        Ok(edges)
+    }
+
+    /// `cudaGraphGetEdges` v2: `(from, to, data)` in node-add order.
+    ///
+    /// Existing edges report stored [`GraphEdgeData`] (Default ports 0 when
+    /// unset; Programmatic type is not stored). Not [`Self::graph_edges`]
+    /// LossyQuery. Query; legal during capture.
+    pub fn graph_edges_with_data(
+        &self,
+        graph: GraphId,
+    ) -> Result<Vec<(usize, usize, GraphEdgeData)>, SimError> {
+        let g = self.graphs.get(&graph).ok_or(SimError::Invalid {
+            why: "unknown graph",
+        })?;
+        let mut edges = Vec::new();
+        for (to, step) in g.steps.iter().enumerate() {
+            if step.destroyed {
+                continue;
+            }
+            for &from in &step.deps {
+                edges.push((from, to, step.edge_data_of(from)));
+            }
+        }
+        Ok(edges)
+    }
+
+    /// `cudaGraphDebugDotPrint` of stored node kinds and edges.
+    ///
+    /// Query; legal during capture. Destination graph only during capture
+    /// (same as [`Self::graph_len`]). Flags `0` prints kinds and edges only.
+    pub fn graph_debug_dot(&self, graph: GraphId) -> Result<String, SimError> {
+        self.graph_debug_dot_with_flags(graph, 0)
+    }
+
+    /// `cudaGraphDebugDotPrint` with [`GraphDebugDotFlags`].
+    ///
+    /// Query; legal during capture. Unknown bits (including external-semaphore
+    /// flags) are Invalid `"graph debug dot flags"`. A parked
+    /// in-flight-destroyed exec is `"unknown graph"`.
+    /// [`GraphDebugDotFlags::VERBOSE`] dumps every modeled param class and
+    /// ExtraTopoInfo. [`GraphDebugDotFlags::RUNTIME_TYPES`] prints CUDA runtime
+    /// `cudaGraphNodeType*` names. [`GraphDebugDotFlags::EXTRA_TOPO_INFO`]
+    /// numbers existing edges (`label="0"`); launch-completion edges also dump
+    /// `from_port=2`. Extra conditional edges are not invented. Flags `0` keeps
+    /// [`GraphNodeKind`] Debug names and unlabeled edges. VM-only kinds keep
+    /// Debug names under RuntimeTypes.
+    pub fn graph_debug_dot_with_flags(
+        &self,
+        graph: GraphId,
+        flags: u32,
+    ) -> Result<String, SimError> {
+        const KNOWN: u32 = GraphDebugDotFlags::VERBOSE
+            | GraphDebugDotFlags::RUNTIME_TYPES
+            | GraphDebugDotFlags::KERNEL_NODE_PARAMS
+            | GraphDebugDotFlags::MEMCPY_NODE_PARAMS
+            | GraphDebugDotFlags::MEMSET_NODE_PARAMS
+            | GraphDebugDotFlags::HOST_NODE_PARAMS
+            | GraphDebugDotFlags::EVENT_NODE_PARAMS
+            | GraphDebugDotFlags::KERNEL_NODE_ATTRIBUTES
+            | GraphDebugDotFlags::HANDLES
+            | GraphDebugDotFlags::MEM_ALLOC_NODE_PARAMS
+            | GraphDebugDotFlags::MEM_FREE_NODE_PARAMS
+            | GraphDebugDotFlags::BATCH_MEM_OP_NODE_PARAMS
+            | GraphDebugDotFlags::EXTRA_TOPO_INFO
+            | GraphDebugDotFlags::CONDITIONAL_NODE_PARAMS;
+        if flags & !KNOWN != 0 {
+            return Err(SimError::Invalid {
+                why: "graph debug dot flags",
+            });
+        }
+        let g = self.live_graph(graph)?;
+        let dump = if flags & GraphDebugDotFlags::VERBOSE != 0 {
+            KNOWN
+        } else {
+            flags
+        };
+        let mut out = if dump & GraphDebugDotFlags::HANDLES != 0 {
+            let mut s = String::from("digraph g");
+            s.push_str(&graph.0.to_string());
+            s.push_str(" {\n");
+            s
+        } else {
+            String::from("digraph {\n")
+        };
+        for (i, step) in g.steps.iter().enumerate() {
+            if step.destroyed {
+                continue;
+            }
+            out.push_str("  n");
+            out.push_str(&i.to_string());
+            out.push_str(" [label=\"");
+            out.push_str(&debug_dot_label(i, step, dump));
+            out.push_str("\"];\n");
+        }
+        let extra_topo = dump & GraphDebugDotFlags::EXTRA_TOPO_INFO != 0;
+        let mut edge_n = 0_u32;
+        for (to, step) in g.steps.iter().enumerate() {
+            if step.destroyed {
+                continue;
+            }
+            for from in &step.deps {
+                debug_dot_push_edge(
+                    &mut out,
+                    *from,
+                    to,
+                    step.edge_from_port(*from),
+                    extra_topo,
+                    &mut edge_n,
+                );
+            }
+        }
+        out.push_str("}\n");
+        Ok(out)
+    }
+
+    /// Successors of node `i` (`cudaGraphNodeGetDependentNodes`).
+    ///
+    /// CUDA v1 (`edgeData == NULL`): non-default stored [`GraphEdgeData`] on
+    /// any successor edge is Invalid `"lossy query"` (`cudaErrorLossyQuery`).
+    /// Default-only successors stay. [`Self::graph_node_dependents_with_data`]
+    /// is lossless. Query; legal during capture.
+    pub fn graph_node_dependents(&self, graph: GraphId, i: usize) -> Result<Vec<usize>, SimError> {
+        let g = self.graphs.get(&graph).ok_or(SimError::Invalid {
+            why: "unknown graph",
+        })?;
+        if i >= g.steps.len() {
+            return Err(SimError::Invalid {
+                why: "graph dependency",
+            });
+        }
+        if g.steps.get(i).is_some_and(|s| s.destroyed) {
+            return Err(SimError::Invalid {
+                why: "unknown graph node",
+            });
+        }
+        let mut out = Vec::new();
+        for (j, s) in g.steps.iter().enumerate() {
+            if s.destroyed || !s.deps.contains(&i) {
+                continue;
+            }
+            if graph_edge_is_lossy(s.edge_data_of(i)) {
+                return Err(SimError::Invalid { why: "lossy query" });
+            }
+            out.push(j);
+        }
+        Ok(out)
+    }
+
+    /// `cudaGraphNodeGetDependentNodes` v2: `(to, data)` successors.
+    ///
+    /// Existing edges report stored [`GraphEdgeData`] (Default ports 0 when
+    /// unset). Not [`Self::graph_node_dependents`] LossyQuery. Query; legal
+    /// during capture.
+    pub fn graph_node_dependents_with_data(
+        &self,
+        graph: GraphId,
+        i: usize,
+    ) -> Result<Vec<(usize, GraphEdgeData)>, SimError> {
+        let g = self.graphs.get(&graph).ok_or(SimError::Invalid {
+            why: "unknown graph",
+        })?;
+        if i >= g.steps.len() {
+            return Err(SimError::Invalid {
+                why: "graph dependency",
+            });
+        }
+        if g.steps.get(i).is_some_and(|s| s.destroyed) {
+            return Err(SimError::Invalid {
+                why: "unknown graph node",
+            });
+        }
+        Ok(g.steps
+            .iter()
+            .enumerate()
+            .filter(|(_, s)| !s.destroyed && s.deps.contains(&i))
+            .map(|(to, s)| (to, s.edge_data_of(i)))
+            .collect())
+    }
+
+    /// `cuGraphNodeGetLocalId`. Query; legal during capture.
+    ///
+    /// Matches the node id printed by [`Self::graph_debug_dot`] (`n0`, `n1`,
+    /// …). Together with [`Self::graph_get_id`] the pair uniquely identifies a
+    /// live node. Destroyed or unknown nodes are Invalid `"unknown graph node"`.
+    pub fn graph_node_get_local_id(&self, graph: GraphId, node: usize) -> Result<u32, SimError> {
+        let g = self.graphs.get(&graph).ok_or(SimError::Invalid {
+            why: "unknown graph",
+        })?;
+        let _live = live_ok(g.steps.get(node).ok_or(SimError::Invalid {
+            why: "unknown graph node",
+        })?)?;
+        u32::try_from(node).map_err(|_| SimError::Invalid {
+            why: "unknown graph node",
+        })
+    }
+
+    /// `cuGraphNodeGetToolsId`. Query; legal during capture.
+    ///
+    /// Unique `u64` for tools (CUPTI-style). Distinct from
+    /// [`Self::graph_node_get_local_id`] (debug-dot `n0`) and
+    /// [`Self::graph_get_id`]. A definition, instantiate exec, and clone each
+    /// assign different tools ids. Destroyed or unknown nodes are Invalid
+    /// `"unknown graph node"`.
+    pub fn graph_node_get_tools_id(&self, graph: GraphId, node: usize) -> Result<u64, SimError> {
+        let local = self.graph_node_get_local_id(graph, node)?;
+        let gid = self.graph_get_id(graph)?;
+        Ok((u64::from(gid) << 32) | u64::from(local))
+    }
+
+    /// `cudaGraphNodeGetType` for node `i`.
+    pub fn graph_node_kind(&self, graph: GraphId, i: usize) -> Result<GraphNodeKind, SimError> {
+        let g = self.graphs.get(&graph).ok_or(SimError::Invalid {
+            why: "unknown graph",
+        })?;
+        let st = live_ok(g.steps.get(i).ok_or(SimError::Invalid {
+            why: "graph dependency",
+        })?)?;
+        Ok(node_kind(&st.kind))
+    }
+
+    /// `cudaGraphKernelNodeGetAttribute` for priority on the graph definition.
+    pub fn graph_kernel_node_get_priority(
+        &self,
+        graph: GraphId,
+        node: usize,
+    ) -> Result<i32, SimError> {
+        self.kernel_node_priority(graph, node, false)
+    }
+
+    /// `cudaGraphExecKernelNodeGetAttribute` for priority on the exec snapshot.
+    pub fn graph_exec_kernel_node_get_priority(
+        &self,
+        exec: GraphId,
+        node: usize,
+    ) -> Result<i32, SimError> {
+        self.kernel_node_priority(exec, node, true)
+    }
+
+    fn kernel_node_priority(
+        &self,
+        graph: GraphId,
+        node: usize,
+        exec: bool,
+    ) -> Result<i32, SimError> {
+        let graph = if exec { self.as_exec(graph)? } else { graph };
+        let g = self.graphs.get(&graph).ok_or(SimError::Invalid {
+            why: "unknown graph",
+        })?;
+        let steps = if exec { g.view() } else { &g.steps };
+        let step = live_ok(steps.get(node).ok_or(SimError::Invalid {
+            why: "unknown graph node",
+        })?)?;
+        if !matches!(step.kind, Kind::Kernel { .. }) {
+            return Err(SimError::Invalid {
+                why: "not a kernel node",
+            });
+        }
+        Ok(step.priority)
+    }
+
+    /// `cudaGraphKernelNodeSetAttribute` for priority on the graph definition.
+    ///
+    /// After instantiate this does not retarget the exec; use
+    /// [`Self::graph_exec_kernel_node_set_priority`]. Capture cannot include it.
+    /// A parked in-flight-destroyed exec is `"unknown graph"`. Live exec
+    /// SetAttribute stays.
+    pub fn graph_kernel_node_set_priority(
+        &mut self,
+        graph: GraphId,
+        node: usize,
+        priority: i32,
+    ) -> Result<(), SimError> {
+        self.fail_if_capturing("cannot capture kernel node set attribute")?;
+        self.require_live_graph(graph)?;
+        let g = self.graphs.get_mut(&graph).ok_or(SimError::Invalid {
+            why: "unknown graph",
+        })?;
+        let step = live_ok_mut(g.steps.get_mut(node).ok_or(SimError::Invalid {
+            why: "unknown graph node",
+        })?)?;
+        if !matches!(step.kind, Kind::Kernel { .. }) {
+            return Err(SimError::Invalid {
+                why: "not a kernel node",
+            });
+        }
+        step.priority = priority;
+        self.clock = self.clock.saturating_add(1);
+        Ok(())
+    }
+
+    /// `cudaGraphExecKernelNodeSetAttribute` for priority on the exec snapshot.
+    ///
+    /// Legal after [`GraphInstantiateFlags::USE_NODE_PRIORITY`].
+    /// [`Self::update_graph`] of a different kernel-node priority is
+    /// [`GraphExecUpdateResult::AttributesChanged`] when that flag was set.
+    pub fn graph_exec_kernel_node_set_priority(
+        &mut self,
+        exec: GraphId,
+        node: usize,
+        priority: i32,
+    ) -> Result<(), SimError> {
+        self.fail_if_capturing("cannot capture kernel node set attribute")?;
+        let exec = self.as_exec_for_update(exec)?;
+        let g = self.graphs.get_mut(&exec).ok_or(SimError::Invalid {
+            why: "unknown graph",
+        })?;
+        let step = live_ok_mut(g.exec_mut()?.get_mut(node).ok_or(SimError::Invalid {
+            why: "unknown graph node",
+        })?)?;
+        if !matches!(step.kind, Kind::Kernel { .. }) {
+            return Err(SimError::Invalid {
+                why: "not a kernel node",
+            });
+        }
+        step.priority = priority;
+        self.clock = self.clock.saturating_add(1);
+        Ok(())
+    }
+
+    /// `cudaGraphKernelNodeGetAttribute` for programmatic stream serialization.
+    pub fn graph_kernel_node_get_pdl(
+        &self,
+        graph: GraphId,
+        node: usize,
+    ) -> Result<ProgrammaticLaunch, SimError> {
+        self.kernel_node_pdl(graph, node, false)
+    }
+
+    /// `cudaGraphExecKernelNodeGetAttribute` for PDL on the exec snapshot.
+    pub fn graph_exec_kernel_node_get_pdl(
+        &self,
+        exec: GraphId,
+        node: usize,
+    ) -> Result<ProgrammaticLaunch, SimError> {
+        self.kernel_node_pdl(exec, node, true)
+    }
+
+    fn kernel_node_pdl(
+        &self,
+        graph: GraphId,
+        node: usize,
+        exec: bool,
+    ) -> Result<ProgrammaticLaunch, SimError> {
+        let graph = if exec { self.as_exec(graph)? } else { graph };
+        let g = self.graphs.get(&graph).ok_or(SimError::Invalid {
+            why: "unknown graph",
+        })?;
+        let steps = if exec { g.view() } else { &g.steps };
+        let step = live_ok(steps.get(node).ok_or(SimError::Invalid {
+            why: "unknown graph node",
+        })?)?;
+        if !matches!(step.kind, Kind::Kernel { .. }) {
+            return Err(SimError::Invalid {
+                why: "not a kernel node",
+            });
+        }
+        Ok(step.pdl)
+    }
+
+    /// `cudaGraphKernelNodeSetAttribute` for PDL on the graph definition.
+    pub fn graph_kernel_node_set_pdl(
+        &mut self,
+        graph: GraphId,
+        node: usize,
+        pdl: ProgrammaticLaunch,
+    ) -> Result<(), SimError> {
+        self.fail_if_capturing("cannot capture kernel node set attribute")?;
+        self.require_live_graph(graph)?;
+        let g = self.graphs.get_mut(&graph).ok_or(SimError::Invalid {
+            why: "unknown graph",
+        })?;
+        let step = live_ok_mut(g.steps.get_mut(node).ok_or(SimError::Invalid {
+            why: "unknown graph node",
+        })?)?;
+        if !matches!(step.kind, Kind::Kernel { .. }) {
+            return Err(SimError::Invalid {
+                why: "not a kernel node",
+            });
+        }
+        step.pdl = pdl;
+        self.clock = self.clock.saturating_add(1);
+        Ok(())
+    }
+
+    /// `cudaGraphExecKernelNodeSetAttribute` for PDL on the exec snapshot.
+    pub fn graph_exec_kernel_node_set_pdl(
+        &mut self,
+        exec: GraphId,
+        node: usize,
+        pdl: ProgrammaticLaunch,
+    ) -> Result<(), SimError> {
+        self.fail_if_capturing("cannot capture kernel node set attribute")?;
+        let exec = self.as_exec_for_update(exec)?;
+        let g = self.graphs.get_mut(&exec).ok_or(SimError::Invalid {
+            why: "unknown graph",
+        })?;
+        let step = live_ok_mut(g.exec_mut()?.get_mut(node).ok_or(SimError::Invalid {
+            why: "unknown graph node",
+        })?)?;
+        if !matches!(step.kind, Kind::Kernel { .. }) {
+            return Err(SimError::Invalid {
+                why: "not a kernel node",
+            });
+        }
+        step.pdl = pdl;
+        self.clock = self.clock.saturating_add(1);
+        Ok(())
+    }
+
+    /// CUDA: `programmaticEvent.flags` / `launchCompletionEvent.flags` do not
+    /// accept `cudaEventRecordExternal`. The event must not be interprocess
+    /// or an IPC import (`cudaIpcOpenEventHandle`).
+    fn require_launch_attr_event(
+        &self,
+        event: EventId,
+        external: bool,
+        flags_why: &'static str,
+        ipc_why: &'static str,
+    ) -> Result<(), SimError> {
+        if external {
+            return Err(SimError::Invalid { why: flags_why });
+        }
+        if let Some(ev) = self.events.get(&event) {
+            if ev.interprocess || ev.ipc_src.is_some() {
+                return Err(SimError::Invalid { why: ipc_why });
+            }
+        }
+        Ok(())
+    }
+
+    fn require_programmatic_event_attr(&self, pe: ProgrammaticEvent) -> Result<(), SimError> {
+        self.require_launch_attr_event(
+            pe.event,
+            pe.external,
+            "programmatic event flags",
+            "programmatic event interprocess",
+        )
+    }
+
+    fn require_launch_completion_event_attr(
+        &self,
+        lc: LaunchCompletionEvent,
+    ) -> Result<(), SimError> {
+        self.require_launch_attr_event(
+            lc.event,
+            lc.external,
+            "launch completion flags",
+            "launch completion interprocess",
+        )
+    }
+
+    fn require_enqueued_launch_attr_events(&self) -> Result<(), SimError> {
+        if let Some(pe) = self.enqueue_programmatic_event {
+            self.require_programmatic_event_attr(pe)?;
+        }
+        if let Some(lc) = self.enqueue_launch_completion {
+            self.require_launch_completion_event_attr(lc)?;
+        }
+        Ok(())
+    }
+
+    /// `cudaGraphKernelNodeGetAttribute` for programmatic event on the definition.
+    pub fn graph_kernel_node_get_programmatic_event(
+        &self,
+        graph: GraphId,
+        node: usize,
+    ) -> Result<Option<ProgrammaticEvent>, SimError> {
+        self.kernel_node_programmatic_event(graph, node, false)
+    }
+
+    /// `cudaGraphExecKernelNodeGetAttribute` for programmatic event on the exec.
+    pub fn graph_exec_kernel_node_get_programmatic_event(
+        &self,
+        exec: GraphId,
+        node: usize,
+    ) -> Result<Option<ProgrammaticEvent>, SimError> {
+        self.kernel_node_programmatic_event(exec, node, true)
+    }
+
+    fn kernel_node_programmatic_event(
+        &self,
+        graph: GraphId,
+        node: usize,
+        exec: bool,
+    ) -> Result<Option<ProgrammaticEvent>, SimError> {
+        let graph = if exec { self.as_exec(graph)? } else { graph };
+        let g = self.graphs.get(&graph).ok_or(SimError::Invalid {
+            why: "unknown graph",
+        })?;
+        let steps = if exec { g.view() } else { &g.steps };
+        let step = live_ok(steps.get(node).ok_or(SimError::Invalid {
+            why: "unknown graph node",
+        })?)?;
+        if !matches!(step.kind, Kind::Kernel { .. }) {
+            return Err(SimError::Invalid {
+                why: "not a kernel node",
+            });
+        }
+        Ok(step.programmatic_event)
+    }
+
+    /// `cudaGraphKernelNodeSetAttribute` for programmatic event on the definition.
+    ///
+    /// [`ProgrammaticEvent::external`] is Invalid `"programmatic event flags"`.
+    /// An interprocess or IPC-imported event is Invalid
+    /// `"programmatic event interprocess"`.
+    pub fn graph_kernel_node_set_programmatic_event(
+        &mut self,
+        graph: GraphId,
+        node: usize,
+        event: Option<ProgrammaticEvent>,
+    ) -> Result<(), SimError> {
+        self.fail_if_capturing("cannot capture kernel node set attribute")?;
+        self.require_live_graph(graph)?;
+        {
+            let g = self.graphs.get(&graph).ok_or(SimError::Invalid {
+                why: "unknown graph",
+            })?;
+            let step = live_ok(g.steps.get(node).ok_or(SimError::Invalid {
+                why: "unknown graph node",
+            })?)?;
+            if !matches!(step.kind, Kind::Kernel { .. }) {
+                return Err(SimError::Invalid {
+                    why: "not a kernel node",
+                });
+            }
+        }
+        if let Some(pe) = event {
+            self.require_programmatic_event_attr(pe)?;
+            let _ev = self.events.entry(pe.event).or_insert(Ev::new(true));
+        }
+        let g = self.graphs.get_mut(&graph).ok_or(SimError::Invalid {
+            why: "unknown graph",
+        })?;
+        let step = live_ok_mut(g.steps.get_mut(node).ok_or(SimError::Invalid {
+            why: "unknown graph node",
+        })?)?;
+        step.programmatic_event = event;
+        self.clock = self.clock.saturating_add(1);
+        Ok(())
+    }
+
+    /// `cudaGraphExecKernelNodeSetAttribute` for programmatic event on the exec.
+    ///
+    /// Same External / interprocess Invalid as
+    /// [`Self::graph_kernel_node_set_programmatic_event`]. Device-launch execs
+    /// cannot attach a programmatic event (Invalid
+    /// `"device launch instantiate flag"`). Clearing stays. Definition
+    /// SetAttribute still defers to instantiate.
+    pub fn graph_exec_kernel_node_set_programmatic_event(
+        &mut self,
+        exec: GraphId,
+        node: usize,
+        event: Option<ProgrammaticEvent>,
+    ) -> Result<(), SimError> {
+        self.fail_if_capturing("cannot capture kernel node set attribute")?;
+        let exec = self.as_exec_for_update(exec)?;
+        if let Some(pe) = event {
+            self.require_programmatic_event_attr(pe)?;
+            let _ev = self.events.entry(pe.event).or_insert(Ev::new(true));
+        }
+        self.refuse_device_launch_exec_attach(exec, true, event.is_some())?;
+        let g = self.graphs.get_mut(&exec).ok_or(SimError::Invalid {
+            why: "unknown graph",
+        })?;
+        let step = live_ok_mut(g.exec_mut()?.get_mut(node).ok_or(SimError::Invalid {
+            why: "unknown graph node",
+        })?)?;
+        if !matches!(step.kind, Kind::Kernel { .. }) {
+            return Err(SimError::Invalid {
+                why: "not a kernel node",
+            });
+        }
+        step.programmatic_event = event;
+        self.clock = self.clock.saturating_add(1);
+        Ok(())
+    }
+
+    /// `cudaGraphKernelNodeGetAttribute` for launch-completion event on the definition.
+    pub fn graph_kernel_node_get_launch_completion(
+        &self,
+        graph: GraphId,
+        node: usize,
+    ) -> Result<Option<LaunchCompletionEvent>, SimError> {
+        self.kernel_node_launch_completion(graph, node, false)
+    }
+
+    /// `cudaGraphExecKernelNodeGetAttribute` for launch-completion event on the exec.
+    pub fn graph_exec_kernel_node_get_launch_completion(
+        &self,
+        exec: GraphId,
+        node: usize,
+    ) -> Result<Option<LaunchCompletionEvent>, SimError> {
+        self.kernel_node_launch_completion(exec, node, true)
+    }
+
+    fn kernel_node_launch_completion(
+        &self,
+        graph: GraphId,
+        node: usize,
+        exec: bool,
+    ) -> Result<Option<LaunchCompletionEvent>, SimError> {
+        let graph = if exec { self.as_exec(graph)? } else { graph };
+        let g = self.graphs.get(&graph).ok_or(SimError::Invalid {
+            why: "unknown graph",
+        })?;
+        let steps = if exec { g.view() } else { &g.steps };
+        let step = live_ok(steps.get(node).ok_or(SimError::Invalid {
+            why: "unknown graph node",
+        })?)?;
+        if !matches!(step.kind, Kind::Kernel { .. }) {
+            return Err(SimError::Invalid {
+                why: "not a kernel node",
+            });
+        }
+        Ok(step.launch_completion)
+    }
+
+    /// `cudaGraphKernelNodeSetAttribute` for launch-completion event on the definition.
+    ///
+    /// [`LaunchCompletionEvent::external`] is Invalid `"launch completion flags"`.
+    /// An interprocess or IPC-imported event is Invalid
+    /// `"launch completion interprocess"`.
+    pub fn graph_kernel_node_set_launch_completion(
+        &mut self,
+        graph: GraphId,
+        node: usize,
+        event: Option<LaunchCompletionEvent>,
+    ) -> Result<(), SimError> {
+        self.fail_if_capturing("cannot capture kernel node set attribute")?;
+        self.require_live_graph(graph)?;
+        {
+            let g = self.graphs.get(&graph).ok_or(SimError::Invalid {
+                why: "unknown graph",
+            })?;
+            let step = live_ok(g.steps.get(node).ok_or(SimError::Invalid {
+                why: "unknown graph node",
+            })?)?;
+            if !matches!(step.kind, Kind::Kernel { .. }) {
+                return Err(SimError::Invalid {
+                    why: "not a kernel node",
+                });
+            }
+        }
+        if let Some(lc) = event {
+            self.require_launch_completion_event_attr(lc)?;
+            let _ev = self.events.entry(lc.event).or_insert(Ev::new(true));
+        }
+        let g = self.graphs.get_mut(&graph).ok_or(SimError::Invalid {
+            why: "unknown graph",
+        })?;
+        let step = live_ok_mut(g.steps.get_mut(node).ok_or(SimError::Invalid {
+            why: "unknown graph node",
+        })?)?;
+        step.launch_completion = event;
+        self.clock = self.clock.saturating_add(1);
+        Ok(())
+    }
+
+    /// `cudaGraphExecKernelNodeSetAttribute` for launch-completion event on the exec.
+    ///
+    /// Same External / interprocess Invalid as
+    /// [`Self::graph_kernel_node_set_launch_completion`]. Device-launch execs
+    /// cannot attach a launch-completion event (Invalid
+    /// `"device launch instantiate flag"`). Clearing stays. Definition
+    /// SetAttribute still defers to instantiate.
+    pub fn graph_exec_kernel_node_set_launch_completion(
+        &mut self,
+        exec: GraphId,
+        node: usize,
+        event: Option<LaunchCompletionEvent>,
+    ) -> Result<(), SimError> {
+        self.fail_if_capturing("cannot capture kernel node set attribute")?;
+        let exec = self.as_exec_for_update(exec)?;
+        if let Some(lc) = event {
+            self.require_launch_completion_event_attr(lc)?;
+            let _ev = self.events.entry(lc.event).or_insert(Ev::new(true));
+        }
+        self.refuse_device_launch_exec_attach(exec, true, event.is_some())?;
+        let g = self.graphs.get_mut(&exec).ok_or(SimError::Invalid {
+            why: "unknown graph",
+        })?;
+        let step = live_ok_mut(g.exec_mut()?.get_mut(node).ok_or(SimError::Invalid {
+            why: "unknown graph node",
+        })?)?;
+        if !matches!(step.kind, Kind::Kernel { .. }) {
+            return Err(SimError::Invalid {
+                why: "not a kernel node",
+            });
+        }
+        step.launch_completion = event;
+        self.clock = self.clock.saturating_add(1);
+        Ok(())
+    }
+
+    /// `cudaGraphKernelNodeGetAttribute` for access-policy window on the definition.
+    pub fn graph_kernel_node_get_access_policy(
+        &self,
+        graph: GraphId,
+        node: usize,
+    ) -> Result<Option<AccessPolicyWindow>, SimError> {
+        self.kernel_node_access_policy(graph, node, false)
+    }
+
+    /// `cudaGraphExecKernelNodeGetAttribute` for access-policy window on the exec.
+    pub fn graph_exec_kernel_node_get_access_policy(
+        &self,
+        exec: GraphId,
+        node: usize,
+    ) -> Result<Option<AccessPolicyWindow>, SimError> {
+        self.kernel_node_access_policy(exec, node, true)
+    }
+
+    fn kernel_node_access_policy(
+        &self,
+        graph: GraphId,
+        node: usize,
+        exec: bool,
+    ) -> Result<Option<AccessPolicyWindow>, SimError> {
+        let graph = if exec { self.as_exec(graph)? } else { graph };
+        let g = self.graphs.get(&graph).ok_or(SimError::Invalid {
+            why: "unknown graph",
+        })?;
+        let steps = if exec { g.view() } else { &g.steps };
+        let step = live_ok(steps.get(node).ok_or(SimError::Invalid {
+            why: "unknown graph node",
+        })?)?;
+        if !matches!(step.kind, Kind::Kernel { .. }) {
+            return Err(SimError::Invalid {
+                why: "not a kernel node",
+            });
+        }
+        Ok(step.access_policy)
+    }
+
+    /// `cudaGraphKernelNodeSetAttribute` for access-policy window on the definition.
+    pub fn graph_kernel_node_set_access_policy(
+        &mut self,
+        graph: GraphId,
+        node: usize,
+        window: Option<AccessPolicyWindow>,
+    ) -> Result<(), SimError> {
+        self.fail_if_capturing("cannot capture kernel node set attribute")?;
+        self.require_live_graph(graph)?;
+        let device = {
+            let g = self.graphs.get(&graph).ok_or(SimError::Invalid {
+                why: "unknown graph",
+            })?;
+            let step = live_ok(g.steps.get(node).ok_or(SimError::Invalid {
+                why: "unknown graph node",
+            })?)?;
+            if !matches!(step.kind, Kind::Kernel { .. }) {
+                return Err(SimError::Invalid {
+                    why: "not a kernel node",
+                });
+            }
+            step.device
+        };
+        if let Some(w) = window {
+            self.validate_access_policy_window(device, w)?;
+        }
+        let g = self.graphs.get_mut(&graph).ok_or(SimError::Invalid {
+            why: "unknown graph",
+        })?;
+        let step = live_ok_mut(g.steps.get_mut(node).ok_or(SimError::Invalid {
+            why: "unknown graph node",
+        })?)?;
+        if !matches!(step.kind, Kind::Kernel { .. }) {
+            return Err(SimError::Invalid {
+                why: "not a kernel node",
+            });
+        }
+        step.access_policy = window;
+        self.clock = self.clock.saturating_add(1);
+        Ok(())
+    }
+
+    /// `cudaGraphExecKernelNodeSetAttribute` for access-policy window on the exec.
+    pub fn graph_exec_kernel_node_set_access_policy(
+        &mut self,
+        exec: GraphId,
+        node: usize,
+        window: Option<AccessPolicyWindow>,
+    ) -> Result<(), SimError> {
+        self.fail_if_capturing("cannot capture kernel node set attribute")?;
+        let exec = self.as_exec_for_update(exec)?;
+        let device = {
+            let g = self.graphs.get(&exec).ok_or(SimError::Invalid {
+                why: "unknown graph",
+            })?;
+            let step = live_ok(g.view().get(node).ok_or(SimError::Invalid {
+                why: "unknown graph node",
+            })?)?;
+            if !matches!(step.kind, Kind::Kernel { .. }) {
+                return Err(SimError::Invalid {
+                    why: "not a kernel node",
+                });
+            }
+            step.device
+        };
+        if let Some(w) = window {
+            self.validate_access_policy_window(device, w)?;
+        }
+        let g = self.graphs.get_mut(&exec).ok_or(SimError::Invalid {
+            why: "unknown graph",
+        })?;
+        let step = live_ok_mut(g.exec_mut()?.get_mut(node).ok_or(SimError::Invalid {
+            why: "unknown graph node",
+        })?)?;
+        if !matches!(step.kind, Kind::Kernel { .. }) {
+            return Err(SimError::Invalid {
+                why: "not a kernel node",
+            });
+        }
+        step.access_policy = window;
+        self.clock = self.clock.saturating_add(1);
+        Ok(())
+    }
+
+    /// `cudaGraphKernelNodeGetAttribute` for mem-sync domain on the definition.
+    pub fn graph_kernel_node_get_mem_sync_domain(
+        &self,
+        graph: GraphId,
+        node: usize,
+    ) -> Result<MemSyncDomain, SimError> {
+        Ok(self.kernel_node_mem_sync(graph, node, false)?.0)
+    }
+
+    /// `cudaGraphExecKernelNodeGetAttribute` for mem-sync domain on the exec.
+    pub fn graph_exec_kernel_node_get_mem_sync_domain(
+        &self,
+        exec: GraphId,
+        node: usize,
+    ) -> Result<MemSyncDomain, SimError> {
+        Ok(self.kernel_node_mem_sync(exec, node, true)?.0)
+    }
+
+    /// `cudaGraphKernelNodeGetAttribute` for mem-sync map on the definition.
+    pub fn graph_kernel_node_get_mem_sync_domain_map(
+        &self,
+        graph: GraphId,
+        node: usize,
+    ) -> Result<MemSyncDomainMap, SimError> {
+        Ok(self.kernel_node_mem_sync(graph, node, false)?.1)
+    }
+
+    /// `cudaGraphExecKernelNodeGetAttribute` for mem-sync map on the exec.
+    pub fn graph_exec_kernel_node_get_mem_sync_domain_map(
+        &self,
+        exec: GraphId,
+        node: usize,
+    ) -> Result<MemSyncDomainMap, SimError> {
+        Ok(self.kernel_node_mem_sync(exec, node, true)?.1)
+    }
+
+    fn kernel_node_mem_sync(
+        &self,
+        graph: GraphId,
+        node: usize,
+        exec: bool,
+    ) -> Result<(MemSyncDomain, MemSyncDomainMap), SimError> {
+        let graph = if exec { self.as_exec(graph)? } else { graph };
+        let g = self.graphs.get(&graph).ok_or(SimError::Invalid {
+            why: "unknown graph",
+        })?;
+        let steps = if exec { g.view() } else { &g.steps };
+        let step = live_ok(steps.get(node).ok_or(SimError::Invalid {
+            why: "unknown graph node",
+        })?)?;
+        if !matches!(step.kind, Kind::Kernel { .. }) {
+            return Err(SimError::Invalid {
+                why: "not a kernel node",
+            });
+        }
+        Ok((step.mem_sync_domain, step.mem_sync_map))
+    }
+
+    /// `cudaGraphKernelNodeSetAttribute` for mem-sync domain on the definition.
+    pub fn graph_kernel_node_set_mem_sync_domain(
+        &mut self,
+        graph: GraphId,
+        node: usize,
+        domain: MemSyncDomain,
+    ) -> Result<(), SimError> {
+        self.set_kernel_node_mem_sync_domain(graph, node, false, domain)
+    }
+
+    /// `cudaGraphExecKernelNodeSetAttribute` for mem-sync domain on the exec.
+    pub fn graph_exec_kernel_node_set_mem_sync_domain(
+        &mut self,
+        exec: GraphId,
+        node: usize,
+        domain: MemSyncDomain,
+    ) -> Result<(), SimError> {
+        self.set_kernel_node_mem_sync_domain(exec, node, true, domain)
+    }
+
+    fn set_kernel_node_mem_sync_domain(
+        &mut self,
+        graph: GraphId,
+        node: usize,
+        exec: bool,
+        domain: MemSyncDomain,
+    ) -> Result<(), SimError> {
+        self.fail_if_capturing("cannot capture kernel node set attribute")?;
+        let graph = self.resolve_kernel_attr_graph(graph, exec)?;
+        let g = self.graphs.get_mut(&graph).ok_or(SimError::Invalid {
+            why: "unknown graph",
+        })?;
+        let steps = if exec { g.exec_mut()? } else { &mut g.steps };
+        let step = live_ok_mut(steps.get_mut(node).ok_or(SimError::Invalid {
+            why: "unknown graph node",
+        })?)?;
+        if !matches!(step.kind, Kind::Kernel { .. }) {
+            return Err(SimError::Invalid {
+                why: "not a kernel node",
+            });
+        }
+        step.mem_sync_domain = domain;
+        self.clock = self.clock.saturating_add(1);
+        Ok(())
+    }
+
+    /// `cudaGraphKernelNodeSetAttribute` for mem-sync map on the definition.
+    pub fn graph_kernel_node_set_mem_sync_domain_map(
+        &mut self,
+        graph: GraphId,
+        node: usize,
+        map: MemSyncDomainMap,
+    ) -> Result<(), SimError> {
+        self.set_kernel_node_mem_sync_map(graph, node, false, map)
+    }
+
+    /// `cudaGraphExecKernelNodeSetAttribute` for mem-sync map on the exec.
+    pub fn graph_exec_kernel_node_set_mem_sync_domain_map(
+        &mut self,
+        exec: GraphId,
+        node: usize,
+        map: MemSyncDomainMap,
+    ) -> Result<(), SimError> {
+        self.set_kernel_node_mem_sync_map(exec, node, true, map)
+    }
+
+    fn set_kernel_node_mem_sync_map(
+        &mut self,
+        graph: GraphId,
+        node: usize,
+        exec: bool,
+        map: MemSyncDomainMap,
+    ) -> Result<(), SimError> {
+        self.fail_if_capturing("cannot capture kernel node set attribute")?;
+        let graph = self.resolve_kernel_attr_graph(graph, exec)?;
+        let device = {
+            let g = self.graphs.get(&graph).ok_or(SimError::Invalid {
+                why: "unknown graph",
+            })?;
+            let steps = if exec { g.view() } else { &g.steps };
+            let step = live_ok(steps.get(node).ok_or(SimError::Invalid {
+                why: "unknown graph node",
+            })?)?;
+            if !matches!(step.kind, Kind::Kernel { .. }) {
+                return Err(SimError::Invalid {
+                    why: "not a kernel node",
+                });
+            }
+            step.device
+        };
+        self.validate_mem_sync_map(device, map)?;
+        let g = self.graphs.get_mut(&graph).ok_or(SimError::Invalid {
+            why: "unknown graph",
+        })?;
+        let steps = if exec { g.exec_mut()? } else { &mut g.steps };
+        let step = live_ok_mut(steps.get_mut(node).ok_or(SimError::Invalid {
+            why: "unknown graph node",
+        })?)?;
+        step.mem_sync_map = map;
+        self.clock = self.clock.saturating_add(1);
+        Ok(())
+    }
+
+    /// `cudaGraphKernelNodeGetAttribute` for cluster dimension on the definition.
+    pub fn graph_kernel_node_get_cluster(
+        &self,
+        graph: GraphId,
+        node: usize,
+    ) -> Result<Option<ClusterDim>, SimError> {
+        self.kernel_node_cluster(graph, node, false)
+    }
+
+    /// `cudaGraphExecKernelNodeGetAttribute` for cluster dimension on the exec.
+    pub fn graph_exec_kernel_node_get_cluster(
+        &self,
+        exec: GraphId,
+        node: usize,
+    ) -> Result<Option<ClusterDim>, SimError> {
+        self.kernel_node_cluster(exec, node, true)
+    }
+
+    fn kernel_node_cluster(
+        &self,
+        graph: GraphId,
+        node: usize,
+        exec: bool,
+    ) -> Result<Option<ClusterDim>, SimError> {
+        let graph = if exec { self.as_exec(graph)? } else { graph };
+        let g = self.graphs.get(&graph).ok_or(SimError::Invalid {
+            why: "unknown graph",
+        })?;
+        let steps = if exec { g.view() } else { &g.steps };
+        let step = live_ok(steps.get(node).ok_or(SimError::Invalid {
+            why: "unknown graph node",
+        })?)?;
+        if !matches!(step.kind, Kind::Kernel { .. }) {
+            return Err(SimError::Invalid {
+                why: "not a kernel node",
+            });
+        }
+        Ok(step.cluster)
+    }
+
+    /// `cudaGraphKernelNodeSetAttribute` for cluster dimension on the definition.
+    pub fn graph_kernel_node_set_cluster(
+        &mut self,
+        graph: GraphId,
+        node: usize,
+        cluster: Option<ClusterDim>,
+    ) -> Result<(), SimError> {
+        self.set_kernel_node_cluster(graph, node, false, cluster)
+    }
+
+    /// `cudaGraphExecKernelNodeSetAttribute` for cluster dimension on the exec.
+    pub fn graph_exec_kernel_node_set_cluster(
+        &mut self,
+        exec: GraphId,
+        node: usize,
+        cluster: Option<ClusterDim>,
+    ) -> Result<(), SimError> {
+        self.set_kernel_node_cluster(exec, node, true, cluster)
+    }
+
+    fn set_kernel_node_cluster(
+        &mut self,
+        graph: GraphId,
+        node: usize,
+        exec: bool,
+        cluster: Option<ClusterDim>,
+    ) -> Result<(), SimError> {
+        self.fail_if_capturing("cannot capture kernel node set attribute")?;
+        let graph = self.resolve_kernel_attr_graph(graph, exec)?;
+        let (device, mode) = {
+            let g = self.graphs.get(&graph).ok_or(SimError::Invalid {
+                why: "unknown graph",
+            })?;
+            let steps = if exec { g.view() } else { &g.steps };
+            let step = live_ok(steps.get(node).ok_or(SimError::Invalid {
+                why: "unknown graph node",
+            })?)?;
+            if !matches!(step.kind, Kind::Kernel { .. }) {
+                return Err(SimError::Invalid {
+                    why: "not a kernel node",
+                });
+            }
+            (step.device, step.portable_cluster)
+        };
+        if let Some(c) = cluster {
+            let _n = self.validate_cluster(device, c, mode)?;
+        }
+        let g = self.graphs.get_mut(&graph).ok_or(SimError::Invalid {
+            why: "unknown graph",
+        })?;
+        let steps = if exec { g.exec_mut()? } else { &mut g.steps };
+        let step = live_ok_mut(steps.get_mut(node).ok_or(SimError::Invalid {
+            why: "unknown graph node",
+        })?)?;
+        step.cluster = cluster;
+        self.clock = self.clock.saturating_add(1);
+        Ok(())
+    }
+
+    /// `cudaGraphKernelNodeGetAttribute` for cluster scheduling policy.
+    pub fn graph_kernel_node_get_cluster_policy(
+        &self,
+        graph: GraphId,
+        node: usize,
+    ) -> Result<ClusterSchedulingPolicy, SimError> {
+        self.kernel_node_cluster_policy(graph, node, false)
+    }
+
+    /// `cudaGraphExecKernelNodeGetAttribute` for cluster scheduling policy.
+    pub fn graph_exec_kernel_node_get_cluster_policy(
+        &self,
+        exec: GraphId,
+        node: usize,
+    ) -> Result<ClusterSchedulingPolicy, SimError> {
+        self.kernel_node_cluster_policy(exec, node, true)
+    }
+
+    fn kernel_node_cluster_policy(
+        &self,
+        graph: GraphId,
+        node: usize,
+        exec: bool,
+    ) -> Result<ClusterSchedulingPolicy, SimError> {
+        let graph = if exec { self.as_exec(graph)? } else { graph };
+        let g = self.graphs.get(&graph).ok_or(SimError::Invalid {
+            why: "unknown graph",
+        })?;
+        let steps = if exec { g.view() } else { &g.steps };
+        let step = live_ok(steps.get(node).ok_or(SimError::Invalid {
+            why: "unknown graph node",
+        })?)?;
+        if !matches!(step.kind, Kind::Kernel { .. }) {
+            return Err(SimError::Invalid {
+                why: "not a kernel node",
+            });
+        }
+        Ok(step.cluster_policy)
+    }
+
+    /// `cudaGraphKernelNodeSetAttribute` for cluster scheduling policy.
+    pub fn graph_kernel_node_set_cluster_policy(
+        &mut self,
+        graph: GraphId,
+        node: usize,
+        policy: ClusterSchedulingPolicy,
+    ) -> Result<(), SimError> {
+        self.set_kernel_node_cluster_policy(graph, node, false, policy)
+    }
+
+    /// `cudaGraphExecKernelNodeSetAttribute` for cluster scheduling policy.
+    pub fn graph_exec_kernel_node_set_cluster_policy(
+        &mut self,
+        exec: GraphId,
+        node: usize,
+        policy: ClusterSchedulingPolicy,
+    ) -> Result<(), SimError> {
+        self.set_kernel_node_cluster_policy(exec, node, true, policy)
+    }
+
+    fn set_kernel_node_cluster_policy(
+        &mut self,
+        graph: GraphId,
+        node: usize,
+        exec: bool,
+        policy: ClusterSchedulingPolicy,
+    ) -> Result<(), SimError> {
+        self.fail_if_capturing("cannot capture kernel node set attribute")?;
+        let graph = self.resolve_kernel_attr_graph(graph, exec)?;
+        let g = self.graphs.get_mut(&graph).ok_or(SimError::Invalid {
+            why: "unknown graph",
+        })?;
+        let steps = if exec { g.exec_mut()? } else { &mut g.steps };
+        let step = live_ok_mut(steps.get_mut(node).ok_or(SimError::Invalid {
+            why: "unknown graph node",
+        })?)?;
+        if !matches!(step.kind, Kind::Kernel { .. }) {
+            return Err(SimError::Invalid {
+                why: "not a kernel node",
+            });
+        }
+        step.cluster_policy = policy;
+        self.clock = self.clock.saturating_add(1);
+        Ok(())
+    }
+
+    /// `cudaGraphKernelNodeGetAttribute` for preferred cluster dimension.
+    pub fn graph_kernel_node_get_preferred_cluster(
+        &self,
+        graph: GraphId,
+        node: usize,
+    ) -> Result<Option<ClusterDim>, SimError> {
+        self.kernel_node_preferred_cluster(graph, node, false)
+    }
+
+    /// `cudaGraphExecKernelNodeGetAttribute` for preferred cluster dimension.
+    pub fn graph_exec_kernel_node_get_preferred_cluster(
+        &self,
+        exec: GraphId,
+        node: usize,
+    ) -> Result<Option<ClusterDim>, SimError> {
+        self.kernel_node_preferred_cluster(exec, node, true)
+    }
+
+    fn kernel_node_preferred_cluster(
+        &self,
+        graph: GraphId,
+        node: usize,
+        exec: bool,
+    ) -> Result<Option<ClusterDim>, SimError> {
+        let graph = if exec { self.as_exec(graph)? } else { graph };
+        let g = self.graphs.get(&graph).ok_or(SimError::Invalid {
+            why: "unknown graph",
+        })?;
+        let steps = if exec { g.view() } else { &g.steps };
+        let step = live_ok(steps.get(node).ok_or(SimError::Invalid {
+            why: "unknown graph node",
+        })?)?;
+        if !matches!(step.kind, Kind::Kernel { .. }) {
+            return Err(SimError::Invalid {
+                why: "not a kernel node",
+            });
+        }
+        Ok(step.preferred_cluster)
+    }
+
+    /// `cudaGraphKernelNodeSetAttribute` for preferred cluster dimension.
+    pub fn graph_kernel_node_set_preferred_cluster(
+        &mut self,
+        graph: GraphId,
+        node: usize,
+        preferred: Option<ClusterDim>,
+    ) -> Result<(), SimError> {
+        self.set_kernel_node_preferred_cluster(graph, node, false, preferred)
+    }
+
+    /// `cudaGraphExecKernelNodeSetAttribute` for preferred cluster dimension.
+    pub fn graph_exec_kernel_node_set_preferred_cluster(
+        &mut self,
+        exec: GraphId,
+        node: usize,
+        preferred: Option<ClusterDim>,
+    ) -> Result<(), SimError> {
+        self.set_kernel_node_preferred_cluster(exec, node, true, preferred)
+    }
+
+    fn set_kernel_node_preferred_cluster(
+        &mut self,
+        graph: GraphId,
+        node: usize,
+        exec: bool,
+        preferred: Option<ClusterDim>,
+    ) -> Result<(), SimError> {
+        self.fail_if_capturing("cannot capture kernel node set attribute")?;
+        let graph = self.resolve_kernel_attr_graph(graph, exec)?;
+        let (device, cluster, mode) = {
+            let g = self.graphs.get(&graph).ok_or(SimError::Invalid {
+                why: "unknown graph",
+            })?;
+            let steps = if exec { g.view() } else { &g.steps };
+            let step = live_ok(steps.get(node).ok_or(SimError::Invalid {
+                why: "unknown graph node",
+            })?)?;
+            if !matches!(step.kind, Kind::Kernel { .. }) {
+                return Err(SimError::Invalid {
+                    why: "not a kernel node",
+                });
+            }
+            (step.device, step.cluster, step.portable_cluster)
+        };
+        self.validate_cluster_attrs(device, cluster, preferred, mode)?;
+        let g = self.graphs.get_mut(&graph).ok_or(SimError::Invalid {
+            why: "unknown graph",
+        })?;
+        let steps = if exec { g.exec_mut()? } else { &mut g.steps };
+        let step = live_ok_mut(steps.get_mut(node).ok_or(SimError::Invalid {
+            why: "unknown graph node",
+        })?)?;
+        step.preferred_cluster = preferred;
+        self.clock = self.clock.saturating_add(1);
+        Ok(())
+    }
+
+    /// `cudaGraphKernelNodeGetAttribute` for shared-memory carveout.
+    pub fn graph_kernel_node_get_carveout(
+        &self,
+        graph: GraphId,
+        node: usize,
+    ) -> Result<SharedMemCarveout, SimError> {
+        self.kernel_node_carveout(graph, node, false)
+    }
+
+    /// `cudaGraphExecKernelNodeGetAttribute` for shared-memory carveout.
+    pub fn graph_exec_kernel_node_get_carveout(
+        &self,
+        exec: GraphId,
+        node: usize,
+    ) -> Result<SharedMemCarveout, SimError> {
+        self.kernel_node_carveout(exec, node, true)
+    }
+
+    fn kernel_node_carveout(
+        &self,
+        graph: GraphId,
+        node: usize,
+        exec: bool,
+    ) -> Result<SharedMemCarveout, SimError> {
+        let graph = if exec { self.as_exec(graph)? } else { graph };
+        let g = self.graphs.get(&graph).ok_or(SimError::Invalid {
+            why: "unknown graph",
+        })?;
+        let steps = if exec { g.view() } else { &g.steps };
+        let step = live_ok(steps.get(node).ok_or(SimError::Invalid {
+            why: "unknown graph node",
+        })?)?;
+        if !matches!(step.kind, Kind::Kernel { .. }) {
+            return Err(SimError::Invalid {
+                why: "not a kernel node",
+            });
+        }
+        Ok(step.carveout)
+    }
+
+    /// `cudaGraphKernelNodeSetAttribute` for shared-memory carveout.
+    pub fn graph_kernel_node_set_carveout(
+        &mut self,
+        graph: GraphId,
+        node: usize,
+        carveout: SharedMemCarveout,
+    ) -> Result<(), SimError> {
+        self.set_kernel_node_carveout(graph, node, false, carveout)
+    }
+
+    /// `cudaGraphExecKernelNodeSetAttribute` for shared-memory carveout.
+    pub fn graph_exec_kernel_node_set_carveout(
+        &mut self,
+        exec: GraphId,
+        node: usize,
+        carveout: SharedMemCarveout,
+    ) -> Result<(), SimError> {
+        self.set_kernel_node_carveout(exec, node, true, carveout)
+    }
+
+    fn set_kernel_node_carveout(
+        &mut self,
+        graph: GraphId,
+        node: usize,
+        exec: bool,
+        carveout: SharedMemCarveout,
+    ) -> Result<(), SimError> {
+        self.fail_if_capturing("cannot capture kernel node set attribute")?;
+        let graph = self.resolve_kernel_attr_graph(graph, exec)?;
+        let g = self.graphs.get_mut(&graph).ok_or(SimError::Invalid {
+            why: "unknown graph",
+        })?;
+        let steps = if exec { g.exec_mut()? } else { &mut g.steps };
+        let step = live_ok_mut(steps.get_mut(node).ok_or(SimError::Invalid {
+            why: "unknown graph node",
+        })?)?;
+        if !matches!(step.kind, Kind::Kernel { .. }) {
+            return Err(SimError::Invalid {
+                why: "not a kernel node",
+            });
+        }
+        step.carveout = carveout;
+        self.clock = self.clock.saturating_add(1);
+        Ok(())
+    }
+
+    /// `cudaGraphKernelNodeGetAttribute` for device-updatable kernel node.
+    pub fn graph_kernel_node_get_device_updatable(
+        &self,
+        graph: GraphId,
+        node: usize,
+    ) -> Result<bool, SimError> {
+        self.kernel_node_device_updatable(graph, node, false)
+    }
+
+    /// `cudaGraphExecKernelNodeGetAttribute` for device-updatable kernel node.
+    pub fn graph_exec_kernel_node_get_device_updatable(
+        &self,
+        exec: GraphId,
+        node: usize,
+    ) -> Result<bool, SimError> {
+        self.kernel_node_device_updatable(exec, node, true)
+    }
+
+    fn kernel_node_device_updatable(
+        &self,
+        graph: GraphId,
+        node: usize,
+        exec: bool,
+    ) -> Result<bool, SimError> {
+        let graph = if exec { self.as_exec(graph)? } else { graph };
+        let g = self.graphs.get(&graph).ok_or(SimError::Invalid {
+            why: "unknown graph",
+        })?;
+        let steps = if exec { g.view() } else { &g.steps };
+        let step = live_ok(steps.get(node).ok_or(SimError::Invalid {
+            why: "unknown graph node",
+        })?)?;
+        if !matches!(step.kind, Kind::Kernel { .. }) {
+            return Err(SimError::Invalid {
+                why: "not a kernel node",
+            });
+        }
+        Ok(step.device_updatable)
+    }
+
+    /// `cudaGraphKernelNodeSetAttribute` for device-updatable kernel node.
+    ///
+    /// Once true, setting false is Invalid `"device-updatable"`.
+    pub fn graph_kernel_node_set_device_updatable(
+        &mut self,
+        graph: GraphId,
+        node: usize,
+        device_updatable: bool,
+    ) -> Result<(), SimError> {
+        self.set_kernel_node_device_updatable(graph, node, false, device_updatable)
+    }
+
+    /// `cudaGraphExecKernelNodeSetAttribute` for device-updatable kernel node.
+    ///
+    /// Once true, setting false is Invalid `"device-updatable"`.
+    pub fn graph_exec_kernel_node_set_device_updatable(
+        &mut self,
+        exec: GraphId,
+        node: usize,
+        device_updatable: bool,
+    ) -> Result<(), SimError> {
+        self.set_kernel_node_device_updatable(exec, node, true, device_updatable)
+    }
+
+    fn set_kernel_node_device_updatable(
+        &mut self,
+        graph: GraphId,
+        node: usize,
+        exec: bool,
+        device_updatable: bool,
+    ) -> Result<(), SimError> {
+        self.fail_if_capturing("cannot capture kernel node set attribute")?;
+        let graph = self.resolve_kernel_attr_graph(graph, exec)?;
+        let g = self.graphs.get_mut(&graph).ok_or(SimError::Invalid {
+            why: "unknown graph",
+        })?;
+        let steps = if exec { g.exec_mut()? } else { &mut g.steps };
+        let step = live_ok_mut(steps.get_mut(node).ok_or(SimError::Invalid {
+            why: "unknown graph node",
+        })?)?;
+        if !matches!(step.kind, Kind::Kernel { .. }) {
+            return Err(SimError::Invalid {
+                why: "not a kernel node",
+            });
+        }
+        if step.device_updatable && !device_updatable {
+            return Err(SimError::Invalid {
+                why: "device-updatable",
+            });
+        }
+        step.device_updatable = device_updatable;
+        self.clock = self.clock.saturating_add(1);
+        Ok(())
+    }
+
+    /// `cudaGraphKernelNodeGetAttribute` for shared-memory bank mode.
+    pub fn graph_kernel_node_get_shared_mem(
+        &self,
+        graph: GraphId,
+        node: usize,
+    ) -> Result<SharedMemoryMode, SimError> {
+        self.kernel_node_shared_mem(graph, node, false)
+    }
+
+    /// `cudaGraphExecKernelNodeGetAttribute` for shared-memory bank mode.
+    pub fn graph_exec_kernel_node_get_shared_mem(
+        &self,
+        exec: GraphId,
+        node: usize,
+    ) -> Result<SharedMemoryMode, SimError> {
+        self.kernel_node_shared_mem(exec, node, true)
+    }
+
+    fn kernel_node_shared_mem(
+        &self,
+        graph: GraphId,
+        node: usize,
+        exec: bool,
+    ) -> Result<SharedMemoryMode, SimError> {
+        let graph = if exec { self.as_exec(graph)? } else { graph };
+        let g = self.graphs.get(&graph).ok_or(SimError::Invalid {
+            why: "unknown graph",
+        })?;
+        let steps = if exec { g.view() } else { &g.steps };
+        let step = live_ok(steps.get(node).ok_or(SimError::Invalid {
+            why: "unknown graph node",
+        })?)?;
+        if !matches!(step.kind, Kind::Kernel { .. }) {
+            return Err(SimError::Invalid {
+                why: "not a kernel node",
+            });
+        }
+        Ok(step.shared_mem)
+    }
+
+    /// `cudaGraphKernelNodeSetAttribute` for shared-memory bank mode.
+    pub fn graph_kernel_node_set_shared_mem(
+        &mut self,
+        graph: GraphId,
+        node: usize,
+        shared_mem: SharedMemoryMode,
+    ) -> Result<(), SimError> {
+        self.set_kernel_node_shared_mem(graph, node, false, shared_mem)
+    }
+
+    /// `cudaGraphExecKernelNodeSetAttribute` for shared-memory bank mode.
+    pub fn graph_exec_kernel_node_set_shared_mem(
+        &mut self,
+        exec: GraphId,
+        node: usize,
+        shared_mem: SharedMemoryMode,
+    ) -> Result<(), SimError> {
+        self.set_kernel_node_shared_mem(exec, node, true, shared_mem)
+    }
+
+    fn set_kernel_node_shared_mem(
+        &mut self,
+        graph: GraphId,
+        node: usize,
+        exec: bool,
+        shared_mem: SharedMemoryMode,
+    ) -> Result<(), SimError> {
+        self.fail_if_capturing("cannot capture kernel node set attribute")?;
+        let graph = self.resolve_kernel_attr_graph(graph, exec)?;
+        let g = self.graphs.get_mut(&graph).ok_or(SimError::Invalid {
+            why: "unknown graph",
+        })?;
+        let steps = if exec { g.exec_mut()? } else { &mut g.steps };
+        let step = live_ok_mut(steps.get_mut(node).ok_or(SimError::Invalid {
+            why: "unknown graph node",
+        })?)?;
+        if !matches!(step.kind, Kind::Kernel { .. }) {
+            return Err(SimError::Invalid {
+                why: "not a kernel node",
+            });
+        }
+        step.shared_mem = shared_mem;
+        self.clock = self.clock.saturating_add(1);
+        Ok(())
+    }
+
+    /// `cudaGraphKernelNodeGetAttribute` for portable-cluster size mode.
+    pub fn graph_kernel_node_get_portable_cluster(
+        &self,
+        graph: GraphId,
+        node: usize,
+    ) -> Result<PortableClusterMode, SimError> {
+        self.kernel_node_portable_cluster(graph, node, false)
+    }
+
+    /// `cudaGraphExecKernelNodeGetAttribute` for portable-cluster size mode.
+    pub fn graph_exec_kernel_node_get_portable_cluster(
+        &self,
+        exec: GraphId,
+        node: usize,
+    ) -> Result<PortableClusterMode, SimError> {
+        self.kernel_node_portable_cluster(exec, node, true)
+    }
+
+    fn kernel_node_portable_cluster(
+        &self,
+        graph: GraphId,
+        node: usize,
+        exec: bool,
+    ) -> Result<PortableClusterMode, SimError> {
+        let graph = if exec { self.as_exec(graph)? } else { graph };
+        let g = self.graphs.get(&graph).ok_or(SimError::Invalid {
+            why: "unknown graph",
+        })?;
+        let steps = if exec { g.view() } else { &g.steps };
+        let step = live_ok(steps.get(node).ok_or(SimError::Invalid {
+            why: "unknown graph node",
+        })?)?;
+        if !matches!(step.kind, Kind::Kernel { .. }) {
+            return Err(SimError::Invalid {
+                why: "not a kernel node",
+            });
+        }
+        Ok(step.portable_cluster)
+    }
+
+    /// `cudaGraphKernelNodeSetAttribute` for portable-cluster size mode.
+    pub fn graph_kernel_node_set_portable_cluster(
+        &mut self,
+        graph: GraphId,
+        node: usize,
+        mode: PortableClusterMode,
+    ) -> Result<(), SimError> {
+        self.set_kernel_node_portable_cluster(graph, node, false, mode)
+    }
+
+    /// `cudaGraphExecKernelNodeSetAttribute` for portable-cluster size mode.
+    pub fn graph_exec_kernel_node_set_portable_cluster(
+        &mut self,
+        exec: GraphId,
+        node: usize,
+        mode: PortableClusterMode,
+    ) -> Result<(), SimError> {
+        self.set_kernel_node_portable_cluster(exec, node, true, mode)
+    }
+
+    fn set_kernel_node_portable_cluster(
+        &mut self,
+        graph: GraphId,
+        node: usize,
+        exec: bool,
+        mode: PortableClusterMode,
+    ) -> Result<(), SimError> {
+        self.fail_if_capturing("cannot capture kernel node set attribute")?;
+        let graph = self.resolve_kernel_attr_graph(graph, exec)?;
+        let (device, cluster, preferred) = {
+            let g = self.graphs.get(&graph).ok_or(SimError::Invalid {
+                why: "unknown graph",
+            })?;
+            let steps = if exec { g.view() } else { &g.steps };
+            let step = live_ok(steps.get(node).ok_or(SimError::Invalid {
+                why: "unknown graph node",
+            })?)?;
+            if !matches!(step.kind, Kind::Kernel { .. }) {
+                return Err(SimError::Invalid {
+                    why: "not a kernel node",
+                });
+            }
+            (step.device, step.cluster, step.preferred_cluster)
+        };
+        self.validate_cluster_attrs(device, cluster, preferred, mode)?;
+        let g = self.graphs.get_mut(&graph).ok_or(SimError::Invalid {
+            why: "unknown graph",
+        })?;
+        let steps = if exec { g.exec_mut()? } else { &mut g.steps };
+        let step = live_ok_mut(steps.get_mut(node).ok_or(SimError::Invalid {
+            why: "unknown graph node",
+        })?)?;
+        step.portable_cluster = mode;
+        self.clock = self.clock.saturating_add(1);
+        Ok(())
+    }
+
+    /// `cudaGraphKernelNodeGetAttribute` for CUDA 13 portable-shared mode.
+    pub fn graph_kernel_node_get_portable_shared(
+        &self,
+        graph: GraphId,
+        node: usize,
+    ) -> Result<PortableSharedMode, SimError> {
+        self.kernel_node_portable_shared(graph, node, false)
+    }
+
+    /// `cudaGraphExecKernelNodeGetAttribute` for CUDA 13 portable-shared mode.
+    pub fn graph_exec_kernel_node_get_portable_shared(
+        &self,
+        exec: GraphId,
+        node: usize,
+    ) -> Result<PortableSharedMode, SimError> {
+        self.kernel_node_portable_shared(exec, node, true)
+    }
+
+    fn kernel_node_portable_shared(
+        &self,
+        graph: GraphId,
+        node: usize,
+        exec: bool,
+    ) -> Result<PortableSharedMode, SimError> {
+        Ok(self.kernel_node_shared_launch(graph, node, exec)?.1)
+    }
+
+    /// `cudaKernelNodeParams::sharedMemBytes` on the graph definition.
+    pub fn graph_kernel_node_get_dynamic_shared(
+        &self,
+        graph: GraphId,
+        node: usize,
+    ) -> Result<u32, SimError> {
+        self.kernel_node_dynamic_shared(graph, node, false)
+    }
+
+    /// `cudaKernelNodeParams::sharedMemBytes` on the exec snapshot.
+    pub fn graph_exec_kernel_node_get_dynamic_shared(
+        &self,
+        exec: GraphId,
+        node: usize,
+    ) -> Result<u32, SimError> {
+        self.kernel_node_dynamic_shared(exec, node, true)
+    }
+
+    fn kernel_node_dynamic_shared(
+        &self,
+        graph: GraphId,
+        node: usize,
+        exec: bool,
+    ) -> Result<u32, SimError> {
+        Ok(self.kernel_node_shared_launch(graph, node, exec)?.0)
+    }
+
+    fn kernel_node_shared_launch(
+        &self,
+        graph: GraphId,
+        node: usize,
+        exec: bool,
+    ) -> Result<(u32, PortableSharedMode), SimError> {
+        let graph = if exec { self.as_exec(graph)? } else { graph };
+        let g = self.graphs.get(&graph).ok_or(SimError::Invalid {
+            why: "unknown graph",
+        })?;
+        let steps = if exec { g.view() } else { &g.steps };
+        let step = live_ok(steps.get(node).ok_or(SimError::Invalid {
+            why: "unknown graph node",
+        })?)?;
+        if !matches!(step.kind, Kind::Kernel { .. }) {
+            return Err(SimError::Invalid {
+                why: "not a kernel node",
+            });
+        }
+        Ok((step.dynamic_shared, step.portable_shared))
+    }
+
+    /// `cudaGraphKernelNodeSetAttribute` for CUDA 13 portable-shared mode.
+    pub fn graph_kernel_node_set_portable_shared(
+        &mut self,
+        graph: GraphId,
+        node: usize,
+        mode: PortableSharedMode,
+    ) -> Result<(), SimError> {
+        self.set_kernel_node_portable_shared(graph, node, false, mode)
+    }
+
+    /// `cudaGraphExecKernelNodeSetAttribute` for CUDA 13 portable-shared mode.
+    pub fn graph_exec_kernel_node_set_portable_shared(
+        &mut self,
+        exec: GraphId,
+        node: usize,
+        mode: PortableSharedMode,
+    ) -> Result<(), SimError> {
+        self.set_kernel_node_portable_shared(exec, node, true, mode)
+    }
+
+    fn set_kernel_node_portable_shared(
+        &mut self,
+        graph: GraphId,
+        node: usize,
+        exec: bool,
+        mode: PortableSharedMode,
+    ) -> Result<(), SimError> {
+        self.fail_if_capturing("cannot capture kernel node set attribute")?;
+        let graph = self.resolve_kernel_attr_graph(graph, exec)?;
+        let (device, bytes) = {
+            let g = self.graphs.get(&graph).ok_or(SimError::Invalid {
+                why: "unknown graph",
+            })?;
+            let steps = if exec { g.view() } else { &g.steps };
+            let step = live_ok(steps.get(node).ok_or(SimError::Invalid {
+                why: "unknown graph node",
+            })?)?;
+            if !matches!(step.kind, Kind::Kernel { .. }) {
+                return Err(SimError::Invalid {
+                    why: "not a kernel node",
+                });
+            }
+            (step.device, step.dynamic_shared)
+        };
+        self.validate_dynamic_shared(device, bytes, mode)?;
+        let g = self.graphs.get_mut(&graph).ok_or(SimError::Invalid {
+            why: "unknown graph",
+        })?;
+        let steps = if exec { g.exec_mut()? } else { &mut g.steps };
+        let step = live_ok_mut(steps.get_mut(node).ok_or(SimError::Invalid {
+            why: "unknown graph node",
+        })?)?;
+        step.portable_shared = mode;
+        self.clock = self.clock.saturating_add(1);
+        Ok(())
+    }
+
+    /// `cudaKernelNodeParams::sharedMemBytes` on the graph definition.
+    pub fn graph_kernel_node_set_dynamic_shared(
+        &mut self,
+        graph: GraphId,
+        node: usize,
+        bytes: u32,
+    ) -> Result<(), SimError> {
+        self.set_kernel_node_dynamic_shared(graph, node, false, bytes)
+    }
+
+    /// `cudaKernelNodeParams::sharedMemBytes` on the exec snapshot.
+    pub fn graph_exec_kernel_node_set_dynamic_shared(
+        &mut self,
+        exec: GraphId,
+        node: usize,
+        bytes: u32,
+    ) -> Result<(), SimError> {
+        self.set_kernel_node_dynamic_shared(exec, node, true, bytes)
+    }
+
+    fn set_kernel_node_dynamic_shared(
+        &mut self,
+        graph: GraphId,
+        node: usize,
+        exec: bool,
+        bytes: u32,
+    ) -> Result<(), SimError> {
+        self.fail_if_capturing("cannot capture kernel node set attribute")?;
+        let graph = self.resolve_kernel_attr_graph(graph, exec)?;
+        let (device, mode) = {
+            let g = self.graphs.get(&graph).ok_or(SimError::Invalid {
+                why: "unknown graph",
+            })?;
+            let steps = if exec { g.view() } else { &g.steps };
+            let step = live_ok(steps.get(node).ok_or(SimError::Invalid {
+                why: "unknown graph node",
+            })?)?;
+            if !matches!(step.kind, Kind::Kernel { .. }) {
+                return Err(SimError::Invalid {
+                    why: "not a kernel node",
+                });
+            }
+            (step.device, step.portable_shared)
+        };
+        self.validate_dynamic_shared(device, bytes, mode)?;
+        let g = self.graphs.get_mut(&graph).ok_or(SimError::Invalid {
+            why: "unknown graph",
+        })?;
+        let steps = if exec { g.exec_mut()? } else { &mut g.steps };
+        let step = live_ok_mut(steps.get_mut(node).ok_or(SimError::Invalid {
+            why: "unknown graph node",
+        })?)?;
+        step.dynamic_shared = bytes;
+        self.clock = self.clock.saturating_add(1);
+        Ok(())
+    }
+
+    /// `cudaGraphKernelNodeGetAttribute` for NVLink-util-centric scheduling.
+    pub fn graph_kernel_node_get_nvlink_util_centric(
+        &self,
+        graph: GraphId,
+        node: usize,
+    ) -> Result<bool, SimError> {
+        self.kernel_node_nvlink_util_centric(graph, node, false)
+    }
+
+    /// `cudaGraphExecKernelNodeGetAttribute` for NVLink-util-centric scheduling.
+    pub fn graph_exec_kernel_node_get_nvlink_util_centric(
+        &self,
+        exec: GraphId,
+        node: usize,
+    ) -> Result<bool, SimError> {
+        self.kernel_node_nvlink_util_centric(exec, node, true)
+    }
+
+    fn kernel_node_nvlink_util_centric(
+        &self,
+        graph: GraphId,
+        node: usize,
+        exec: bool,
+    ) -> Result<bool, SimError> {
+        let graph = if exec { self.as_exec(graph)? } else { graph };
+        let g = self.graphs.get(&graph).ok_or(SimError::Invalid {
+            why: "unknown graph",
+        })?;
+        let steps = if exec { g.view() } else { &g.steps };
+        let step = live_ok(steps.get(node).ok_or(SimError::Invalid {
+            why: "unknown graph node",
+        })?)?;
+        if !matches!(step.kind, Kind::Kernel { .. }) {
+            return Err(SimError::Invalid {
+                why: "not a kernel node",
+            });
+        }
+        Ok(step.nvlink_util_centric)
+    }
+
+    /// `cudaGraphKernelNodeSetAttribute` for NVLink-util-centric scheduling.
+    pub fn graph_kernel_node_set_nvlink_util_centric(
+        &mut self,
+        graph: GraphId,
+        node: usize,
+        enabled: bool,
+    ) -> Result<(), SimError> {
+        self.set_kernel_node_nvlink_util_centric(graph, node, false, enabled)
+    }
+
+    /// `cudaGraphExecKernelNodeSetAttribute` for NVLink-util-centric scheduling.
+    pub fn graph_exec_kernel_node_set_nvlink_util_centric(
+        &mut self,
+        exec: GraphId,
+        node: usize,
+        enabled: bool,
+    ) -> Result<(), SimError> {
+        self.set_kernel_node_nvlink_util_centric(exec, node, true, enabled)
+    }
+
+    fn set_kernel_node_nvlink_util_centric(
+        &mut self,
+        graph: GraphId,
+        node: usize,
+        exec: bool,
+        enabled: bool,
+    ) -> Result<(), SimError> {
+        self.fail_if_capturing("cannot capture kernel node set attribute")?;
+        let graph = self.resolve_kernel_attr_graph(graph, exec)?;
+        let g = self.graphs.get_mut(&graph).ok_or(SimError::Invalid {
+            why: "unknown graph",
+        })?;
+        let steps = if exec { g.exec_mut()? } else { &mut g.steps };
+        let step = live_ok_mut(steps.get_mut(node).ok_or(SimError::Invalid {
+            why: "unknown graph node",
+        })?)?;
+        if !matches!(step.kind, Kind::Kernel { .. }) {
+            return Err(SimError::Invalid {
+                why: "not a kernel node",
+            });
+        }
+        step.nvlink_util_centric = enabled;
+        self.clock = self.clock.saturating_add(1);
+        Ok(())
+    }
+
+    /// `cudaGraphKernelNodeGetAttribute` for `cudaLaunchAttributeSynchronizationPolicy`.
+    pub fn graph_kernel_node_get_sync_policy(
+        &self,
+        graph: GraphId,
+        node: usize,
+    ) -> Result<SynchronizationPolicy, SimError> {
+        self.kernel_node_sync_policy(graph, node, false)
+    }
+
+    /// `cudaGraphExecKernelNodeGetAttribute` for `cudaLaunchAttributeSynchronizationPolicy`.
+    pub fn graph_exec_kernel_node_get_sync_policy(
+        &self,
+        exec: GraphId,
+        node: usize,
+    ) -> Result<SynchronizationPolicy, SimError> {
+        self.kernel_node_sync_policy(exec, node, true)
+    }
+
+    fn kernel_node_sync_policy(
+        &self,
+        graph: GraphId,
+        node: usize,
+        exec: bool,
+    ) -> Result<SynchronizationPolicy, SimError> {
+        let graph = if exec { self.as_exec(graph)? } else { graph };
+        let g = self.graphs.get(&graph).ok_or(SimError::Invalid {
+            why: "unknown graph",
+        })?;
+        let steps = if exec { g.view() } else { &g.steps };
+        let step = live_ok(steps.get(node).ok_or(SimError::Invalid {
+            why: "unknown graph node",
+        })?)?;
+        if !matches!(step.kind, Kind::Kernel { .. }) {
+            return Err(SimError::Invalid {
+                why: "not a kernel node",
+            });
+        }
+        Ok(step.sync_policy)
+    }
+
+    /// `cudaGraphKernelNodeSetAttribute` for `cudaLaunchAttributeSynchronizationPolicy`.
+    pub fn graph_kernel_node_set_sync_policy(
+        &mut self,
+        graph: GraphId,
+        node: usize,
+        policy: SynchronizationPolicy,
+    ) -> Result<(), SimError> {
+        self.set_kernel_node_sync_policy(graph, node, false, policy)
+    }
+
+    /// `cudaGraphExecKernelNodeSetAttribute` for `cudaLaunchAttributeSynchronizationPolicy`.
+    pub fn graph_exec_kernel_node_set_sync_policy(
+        &mut self,
+        exec: GraphId,
+        node: usize,
+        policy: SynchronizationPolicy,
+    ) -> Result<(), SimError> {
+        self.set_kernel_node_sync_policy(exec, node, true, policy)
+    }
+
+    fn set_kernel_node_sync_policy(
+        &mut self,
+        graph: GraphId,
+        node: usize,
+        exec: bool,
+        policy: SynchronizationPolicy,
+    ) -> Result<(), SimError> {
+        self.fail_if_capturing("cannot capture kernel node set attribute")?;
+        let graph = self.resolve_kernel_attr_graph(graph, exec)?;
+        let g = self.graphs.get_mut(&graph).ok_or(SimError::Invalid {
+            why: "unknown graph",
+        })?;
+        let steps = if exec { g.exec_mut()? } else { &mut g.steps };
+        let step = live_ok_mut(steps.get_mut(node).ok_or(SimError::Invalid {
+            why: "unknown graph node",
+        })?)?;
+        if !matches!(step.kind, Kind::Kernel { .. }) {
+            return Err(SimError::Invalid {
+                why: "not a kernel node",
+            });
+        }
+        step.sync_policy = policy;
+        self.clock = self.clock.saturating_add(1);
+        Ok(())
+    }
+
+    /// `cudaGraphKernelNodeGetAttribute` for `cudaLaunchAttributeCooperative`.
+    pub fn graph_kernel_node_get_cooperative(
+        &self,
+        graph: GraphId,
+        node: usize,
+    ) -> Result<bool, SimError> {
+        self.kernel_node_cooperative(graph, node, false)
+    }
+
+    /// `cudaGraphExecKernelNodeGetAttribute` for `cudaLaunchAttributeCooperative`.
+    pub fn graph_exec_kernel_node_get_cooperative(
+        &self,
+        exec: GraphId,
+        node: usize,
+    ) -> Result<bool, SimError> {
+        self.kernel_node_cooperative(exec, node, true)
+    }
+
+    fn kernel_node_cooperative(
+        &self,
+        graph: GraphId,
+        node: usize,
+        exec: bool,
+    ) -> Result<bool, SimError> {
+        let graph = if exec { self.as_exec(graph)? } else { graph };
+        let g = self.graphs.get(&graph).ok_or(SimError::Invalid {
+            why: "unknown graph",
+        })?;
+        let steps = if exec { g.view() } else { &g.steps };
+        let step = live_ok(steps.get(node).ok_or(SimError::Invalid {
+            why: "unknown graph node",
+        })?)?;
+        let Kind::Kernel { cooperative, .. } = &step.kind else {
+            return Err(SimError::Invalid {
+                why: "not a kernel node",
+            });
+        };
+        Ok(*cooperative)
+    }
+
+    /// `cudaGraphKernelNodeSetAttribute` for `cudaLaunchAttributeCooperative`.
+    ///
+    /// `true` requires [`crate::GpuProfile::cooperative_launch`] and occupies
+    /// every Hyper-Q slot at launch like [`Self::cooperative_kernel`].
+    /// [`Self::graph_exec_kernel_set_params`] still refuses a mismatch
+    /// (`"cooperative is topology"`). Capture cannot include it.
+    pub fn graph_kernel_node_set_cooperative(
+        &mut self,
+        graph: GraphId,
+        node: usize,
+        cooperative: bool,
+    ) -> Result<(), SimError> {
+        self.set_kernel_node_cooperative(graph, node, false, cooperative)
+    }
+
+    /// `cudaGraphExecKernelNodeSetAttribute` for `cudaLaunchAttributeCooperative`.
+    pub fn graph_exec_kernel_node_set_cooperative(
+        &mut self,
+        exec: GraphId,
+        node: usize,
+        cooperative: bool,
+    ) -> Result<(), SimError> {
+        self.set_kernel_node_cooperative(exec, node, true, cooperative)
+    }
+
+    fn set_kernel_node_cooperative(
+        &mut self,
+        graph: GraphId,
+        node: usize,
+        exec: bool,
+        cooperative: bool,
+    ) -> Result<(), SimError> {
+        self.fail_if_capturing("cannot capture kernel node set attribute")?;
+        let graph = self.resolve_kernel_attr_graph(graph, exec)?;
+        let device = {
+            let g = self.graphs.get(&graph).ok_or(SimError::Invalid {
+                why: "unknown graph",
+            })?;
+            let steps = if exec { g.view() } else { &g.steps };
+            let step = live_ok(steps.get(node).ok_or(SimError::Invalid {
+                why: "unknown graph node",
+            })?)?;
+            if !matches!(step.kind, Kind::Kernel { .. }) {
+                return Err(SimError::Invalid {
+                    why: "not a kernel node",
+                });
+            }
+            step.device
+        };
+        if cooperative {
+            self.require_cooperative(device)?;
+        }
+        let g = self.graphs.get_mut(&graph).ok_or(SimError::Invalid {
+            why: "unknown graph",
+        })?;
+        let steps = if exec { g.exec_mut()? } else { &mut g.steps };
+        let step = live_ok_mut(steps.get_mut(node).ok_or(SimError::Invalid {
+            why: "unknown graph node",
+        })?)?;
+        let Kind::Kernel {
+            cooperative: flag, ..
+        } = &mut step.kind
+        else {
+            return Err(SimError::Invalid {
+                why: "not a kernel node",
+            });
+        };
+        *flag = cooperative;
+        self.clock = self.clock.saturating_add(1);
+        Ok(())
+    }
+
+    /// `cudaGraphKernelNodeCopyAttributes`: copy priority, PDL, programmatic
+    /// event, launch-completion event, access-policy window, mem-sync
+    /// domain/map, cluster dimension, cluster scheduling policy, preferred
+    /// cluster dimension, portable-cluster mode, shared-memory carveout,
+    /// device-updatable kernel node, shared-memory bank mode, CUDA 13
+    /// portable-shared mode, NVLink-util-centric scheduling, synchronization
+    /// policy, and cooperative launch from `src` to `dst`.
+    ///
+    /// Both nodes must be kernels. Capture cannot include it.
+    /// CUDA: CopyAttributes cannot involve a device-updatable kernel node.
+    /// [`KernelNodeAttr::DynamicShared`] is `sharedMemBytes` (params, not
+    /// CopyAttributes). [`Self::graph_exec_kernel_node_copy_attributes`] is
+    /// the exec-snapshot twin.
+    /// A parked in-flight-destroyed exec used as `src` or `dst` is
+    /// `"unknown graph"`. Live exec as either end stays.
+    pub fn graph_kernel_node_copy_attributes(
+        &mut self,
+        dst_graph: GraphId,
+        dst: usize,
+        src_graph: GraphId,
+        src: usize,
+    ) -> Result<(), SimError> {
+        self.copy_kernel_node_attributes(dst_graph, dst, src_graph, src, false)
+    }
+
+    /// Exec-snapshot [`Self::graph_kernel_node_copy_attributes`].
+    ///
+    /// Uninstantiated graphs are Invalid. After instantiate this copies the
+    /// launched attributes. Definition CopyAttributes does not retarget the
+    /// exec. Capture cannot include it.
+    pub fn graph_exec_kernel_node_copy_attributes(
+        &mut self,
+        dst_exec: GraphId,
+        dst: usize,
+        src_exec: GraphId,
+        src: usize,
+    ) -> Result<(), SimError> {
+        self.copy_kernel_node_attributes(dst_exec, dst, src_exec, src, true)
+    }
+
+    fn copy_kernel_node_attributes(
+        &mut self,
+        dst_graph: GraphId,
+        dst: usize,
+        src_graph: GraphId,
+        src: usize,
+        exec: bool,
+    ) -> Result<(), SimError> {
+        self.fail_if_capturing("cannot capture kernel node copy attributes")?;
+        self.require_live_graph(src_graph)?;
+        self.require_live_graph(dst_graph)?;
+        if self.kernel_node_device_updatable(src_graph, src, exec)?
+            || self.kernel_node_device_updatable(dst_graph, dst, exec)?
+        {
+            return Err(SimError::Invalid {
+                why: "device-updatable",
+            });
+        }
+        let src_pe = self.kernel_node_programmatic_event(src_graph, src, exec)?;
+        let src_lc = self.kernel_node_launch_completion(src_graph, src, exec)?;
+        let dst_flags = if exec {
+            self.as_exec_for_update(dst_graph)?
+        } else {
+            dst_graph
+        };
+        self.refuse_device_launch_exec_attach(
+            dst_flags,
+            exec,
+            src_pe.is_some() || src_lc.is_some(),
+        )?;
+        let attrs = [
+            KernelNodeAttr::Priority,
+            KernelNodeAttr::Pdl,
+            KernelNodeAttr::ProgrammaticEvent,
+            KernelNodeAttr::LaunchCompletion,
+            KernelNodeAttr::AccessPolicy,
+            KernelNodeAttr::MemSyncDomain,
+            KernelNodeAttr::MemSyncDomainMap,
+            KernelNodeAttr::PortableCluster,
+            KernelNodeAttr::Cluster,
+            KernelNodeAttr::ClusterPolicy,
+            KernelNodeAttr::PreferredCluster,
+            KernelNodeAttr::Carveout,
+            KernelNodeAttr::DeviceUpdatable,
+            KernelNodeAttr::SharedMem,
+            KernelNodeAttr::PortableShared,
+            KernelNodeAttr::NvlinkUtilCentric,
+            KernelNodeAttr::SynchronizationPolicy,
+            KernelNodeAttr::Cooperative,
+        ];
+        for attr in attrs {
+            let value = self.kernel_node_attribute(src_graph, src, attr, exec)?;
+            self.set_kernel_node_attribute(dst_graph, dst, attr, value, exec)?;
+        }
+        Ok(())
+    }
+
+    /// `cudaGraphKernelNodeGetAttribute` on the graph definition.
+    ///
+    /// Query; legal during capture. Typed getters stay. Attr/value type
+    /// mismatch is Invalid `"kernel node attr"`.
+    pub fn graph_kernel_node_get_attribute(
+        &self,
+        graph: GraphId,
+        node: usize,
+        attr: KernelNodeAttr,
+    ) -> Result<KernelNodeAttrValue, SimError> {
+        self.kernel_node_attribute(graph, node, attr, false)
+    }
+
+    /// `cudaGraphExecKernelNodeGetAttribute` on the exec snapshot.
+    ///
+    /// Query; legal during capture. Uninstantiated exec is Invalid.
+    pub fn graph_exec_kernel_node_get_attribute(
+        &self,
+        exec: GraphId,
+        node: usize,
+        attr: KernelNodeAttr,
+    ) -> Result<KernelNodeAttrValue, SimError> {
+        self.kernel_node_attribute(exec, node, attr, true)
+    }
+
+    fn kernel_node_attribute(
+        &self,
+        graph: GraphId,
+        node: usize,
+        attr: KernelNodeAttr,
+        exec: bool,
+    ) -> Result<KernelNodeAttrValue, SimError> {
+        Ok(match attr {
+            KernelNodeAttr::Priority => {
+                KernelNodeAttrValue::Priority(self.kernel_node_priority(graph, node, exec)?)
+            }
+            KernelNodeAttr::Cooperative => {
+                KernelNodeAttrValue::Cooperative(self.kernel_node_cooperative(graph, node, exec)?)
+            }
+            KernelNodeAttr::Pdl => {
+                KernelNodeAttrValue::Pdl(self.kernel_node_pdl(graph, node, exec)?)
+            }
+            KernelNodeAttr::ProgrammaticEvent => KernelNodeAttrValue::ProgrammaticEvent(
+                self.kernel_node_programmatic_event(graph, node, exec)?,
+            ),
+            KernelNodeAttr::LaunchCompletion => KernelNodeAttrValue::LaunchCompletion(
+                self.kernel_node_launch_completion(graph, node, exec)?,
+            ),
+            KernelNodeAttr::AccessPolicy => KernelNodeAttrValue::AccessPolicy(
+                self.kernel_node_access_policy(graph, node, exec)?,
+            ),
+            KernelNodeAttr::MemSyncDomain => {
+                KernelNodeAttrValue::MemSyncDomain(self.kernel_node_mem_sync(graph, node, exec)?.0)
+            }
+            KernelNodeAttr::MemSyncDomainMap => KernelNodeAttrValue::MemSyncDomainMap(
+                self.kernel_node_mem_sync(graph, node, exec)?.1,
+            ),
+            KernelNodeAttr::Cluster => {
+                KernelNodeAttrValue::Cluster(self.kernel_node_cluster(graph, node, exec)?)
+            }
+            KernelNodeAttr::ClusterPolicy => KernelNodeAttrValue::ClusterPolicy(
+                self.kernel_node_cluster_policy(graph, node, exec)?,
+            ),
+            KernelNodeAttr::PreferredCluster => KernelNodeAttrValue::PreferredCluster(
+                self.kernel_node_preferred_cluster(graph, node, exec)?,
+            ),
+            KernelNodeAttr::Carveout => {
+                KernelNodeAttrValue::Carveout(self.kernel_node_carveout(graph, node, exec)?)
+            }
+            KernelNodeAttr::DeviceUpdatable => KernelNodeAttrValue::DeviceUpdatable(
+                self.kernel_node_device_updatable(graph, node, exec)?,
+            ),
+            KernelNodeAttr::SharedMem => {
+                KernelNodeAttrValue::SharedMem(self.kernel_node_shared_mem(graph, node, exec)?)
+            }
+            KernelNodeAttr::PortableCluster => KernelNodeAttrValue::PortableCluster(
+                self.kernel_node_portable_cluster(graph, node, exec)?,
+            ),
+            KernelNodeAttr::PortableShared => KernelNodeAttrValue::PortableShared(
+                self.kernel_node_portable_shared(graph, node, exec)?,
+            ),
+            KernelNodeAttr::DynamicShared => KernelNodeAttrValue::DynamicShared(
+                self.kernel_node_dynamic_shared(graph, node, exec)?,
+            ),
+            KernelNodeAttr::NvlinkUtilCentric => KernelNodeAttrValue::NvlinkUtilCentric(
+                self.kernel_node_nvlink_util_centric(graph, node, exec)?,
+            ),
+            KernelNodeAttr::SynchronizationPolicy => KernelNodeAttrValue::SynchronizationPolicy(
+                self.kernel_node_sync_policy(graph, node, exec)?,
+            ),
+        })
+    }
+
+    /// `cudaGraphKernelNodeSetAttribute` on the graph definition.
+    ///
+    /// Dispatches to the typed setters. After instantiate this does not
+    /// retarget the exec; use [`Self::graph_exec_kernel_node_set_attribute`].
+    /// Capture cannot include it. Attr/value type mismatch is Invalid
+    /// `"kernel node attr"`. A parked in-flight-destroyed exec is
+    /// `"unknown graph"`. Live exec SetAttribute stays.
+    pub fn graph_kernel_node_set_attribute(
+        &mut self,
+        graph: GraphId,
+        node: usize,
+        attr: KernelNodeAttr,
+        value: KernelNodeAttrValue,
+    ) -> Result<(), SimError> {
+        self.set_kernel_node_attribute(graph, node, attr, value, false)
+    }
+
+    /// `cudaGraphExecKernelNodeSetAttribute` on the exec snapshot.
+    pub fn graph_exec_kernel_node_set_attribute(
+        &mut self,
+        exec: GraphId,
+        node: usize,
+        attr: KernelNodeAttr,
+        value: KernelNodeAttrValue,
+    ) -> Result<(), SimError> {
+        self.set_kernel_node_attribute(exec, node, attr, value, true)
+    }
+
+    fn set_kernel_node_attribute(
+        &mut self,
+        graph: GraphId,
+        node: usize,
+        attr: KernelNodeAttr,
+        value: KernelNodeAttrValue,
+        exec: bool,
+    ) -> Result<(), SimError> {
+        match (attr, value) {
+            (KernelNodeAttr::Priority, KernelNodeAttrValue::Priority(p)) => {
+                if exec {
+                    self.graph_exec_kernel_node_set_priority(graph, node, p)
+                } else {
+                    self.graph_kernel_node_set_priority(graph, node, p)
+                }
+            }
+            (KernelNodeAttr::Cooperative, KernelNodeAttrValue::Cooperative(yes)) => {
+                if exec {
+                    self.graph_exec_kernel_node_set_cooperative(graph, node, yes)
+                } else {
+                    self.graph_kernel_node_set_cooperative(graph, node, yes)
+                }
+            }
+            (KernelNodeAttr::Pdl, KernelNodeAttrValue::Pdl(pdl)) => {
+                if exec {
+                    self.graph_exec_kernel_node_set_pdl(graph, node, pdl)
+                } else {
+                    self.graph_kernel_node_set_pdl(graph, node, pdl)
+                }
+            }
+            (KernelNodeAttr::ProgrammaticEvent, KernelNodeAttrValue::ProgrammaticEvent(ev)) => {
+                if exec {
+                    self.graph_exec_kernel_node_set_programmatic_event(graph, node, ev)
+                } else {
+                    self.graph_kernel_node_set_programmatic_event(graph, node, ev)
+                }
+            }
+            (KernelNodeAttr::LaunchCompletion, KernelNodeAttrValue::LaunchCompletion(ev)) => {
+                if exec {
+                    self.graph_exec_kernel_node_set_launch_completion(graph, node, ev)
+                } else {
+                    self.graph_kernel_node_set_launch_completion(graph, node, ev)
+                }
+            }
+            (KernelNodeAttr::AccessPolicy, KernelNodeAttrValue::AccessPolicy(w)) => {
+                if exec {
+                    self.graph_exec_kernel_node_set_access_policy(graph, node, w)
+                } else {
+                    self.graph_kernel_node_set_access_policy(graph, node, w)
+                }
+            }
+            (KernelNodeAttr::MemSyncDomain, KernelNodeAttrValue::MemSyncDomain(d)) => {
+                if exec {
+                    self.graph_exec_kernel_node_set_mem_sync_domain(graph, node, d)
+                } else {
+                    self.graph_kernel_node_set_mem_sync_domain(graph, node, d)
+                }
+            }
+            (KernelNodeAttr::MemSyncDomainMap, KernelNodeAttrValue::MemSyncDomainMap(m)) => {
+                if exec {
+                    self.graph_exec_kernel_node_set_mem_sync_domain_map(graph, node, m)
+                } else {
+                    self.graph_kernel_node_set_mem_sync_domain_map(graph, node, m)
+                }
+            }
+            (KernelNodeAttr::Cluster, KernelNodeAttrValue::Cluster(c)) => {
+                if exec {
+                    self.graph_exec_kernel_node_set_cluster(graph, node, c)
+                } else {
+                    self.graph_kernel_node_set_cluster(graph, node, c)
+                }
+            }
+            (KernelNodeAttr::ClusterPolicy, KernelNodeAttrValue::ClusterPolicy(p)) => {
+                if exec {
+                    self.graph_exec_kernel_node_set_cluster_policy(graph, node, p)
+                } else {
+                    self.graph_kernel_node_set_cluster_policy(graph, node, p)
+                }
+            }
+            (KernelNodeAttr::PreferredCluster, KernelNodeAttrValue::PreferredCluster(c)) => {
+                if exec {
+                    self.graph_exec_kernel_node_set_preferred_cluster(graph, node, c)
+                } else {
+                    self.graph_kernel_node_set_preferred_cluster(graph, node, c)
+                }
+            }
+            (KernelNodeAttr::Carveout, KernelNodeAttrValue::Carveout(c)) => {
+                if exec {
+                    self.graph_exec_kernel_node_set_carveout(graph, node, c)
+                } else {
+                    self.graph_kernel_node_set_carveout(graph, node, c)
+                }
+            }
+            (KernelNodeAttr::DeviceUpdatable, KernelNodeAttrValue::DeviceUpdatable(yes)) => {
+                if exec {
+                    self.graph_exec_kernel_node_set_device_updatable(graph, node, yes)
+                } else {
+                    self.graph_kernel_node_set_device_updatable(graph, node, yes)
+                }
+            }
+            (KernelNodeAttr::SharedMem, KernelNodeAttrValue::SharedMem(m)) => {
+                if exec {
+                    self.graph_exec_kernel_node_set_shared_mem(graph, node, m)
+                } else {
+                    self.graph_kernel_node_set_shared_mem(graph, node, m)
+                }
+            }
+            (KernelNodeAttr::PortableCluster, KernelNodeAttrValue::PortableCluster(m)) => {
+                if exec {
+                    self.graph_exec_kernel_node_set_portable_cluster(graph, node, m)
+                } else {
+                    self.graph_kernel_node_set_portable_cluster(graph, node, m)
+                }
+            }
+            (KernelNodeAttr::PortableShared, KernelNodeAttrValue::PortableShared(m)) => {
+                if exec {
+                    self.graph_exec_kernel_node_set_portable_shared(graph, node, m)
+                } else {
+                    self.graph_kernel_node_set_portable_shared(graph, node, m)
+                }
+            }
+            (KernelNodeAttr::DynamicShared, KernelNodeAttrValue::DynamicShared(n)) => {
+                if exec {
+                    self.graph_exec_kernel_node_set_dynamic_shared(graph, node, n)
+                } else {
+                    self.graph_kernel_node_set_dynamic_shared(graph, node, n)
+                }
+            }
+            (KernelNodeAttr::NvlinkUtilCentric, KernelNodeAttrValue::NvlinkUtilCentric(yes)) => {
+                if exec {
+                    self.graph_exec_kernel_node_set_nvlink_util_centric(graph, node, yes)
+                } else {
+                    self.graph_kernel_node_set_nvlink_util_centric(graph, node, yes)
+                }
+            }
+            (
+                KernelNodeAttr::SynchronizationPolicy,
+                KernelNodeAttrValue::SynchronizationPolicy(p),
+            ) => {
+                if exec {
+                    self.graph_exec_kernel_node_set_sync_policy(graph, node, p)
+                } else {
+                    self.graph_kernel_node_set_sync_policy(graph, node, p)
+                }
+            }
+            _ => Err(SimError::Invalid {
+                why: "kernel node attr",
+            }),
+        }
+    }
+
+    /// `cudaGraphNodeFindInClone`: index in `cloned` of the node that was `node`
+    /// on `original`.
+    ///
+    /// `cloned` must have been produced by [`Self::clone_graph`] of `original`
+    /// (a nested graph cloned in that same call counts). Capture is allowed.
+    /// Add order is preserved, so the index is unchanged. A second clone of the
+    /// clone does not map nodes from the first original.
+    pub fn graph_node_find_in_clone(
+        &self,
+        original: GraphId,
+        node: usize,
+        cloned: GraphId,
+    ) -> Result<usize, SimError> {
+        if !self.graphs.contains_key(&original) || !self.graphs.contains_key(&cloned) {
+            return Err(SimError::Invalid {
+                why: "unknown graph",
+            });
+        }
+        if original == cloned {
+            return Err(SimError::Invalid { why: "not a clone" });
+        }
+        let src = self
+            .clone_of
+            .get(&cloned)
+            .copied()
+            .ok_or(SimError::Invalid { why: "not a clone" })?;
+        if src != original {
+            return Err(SimError::Invalid { why: "not a clone" });
+        }
+        let orig = self.graphs.get(&original).ok_or(SimError::Invalid {
+            why: "unknown graph",
+        })?;
+        let clone = self.graphs.get(&cloned).ok_or(SimError::Invalid {
+            why: "unknown graph",
+        })?;
+        if orig.steps.get(node).is_none_or(|s| s.destroyed)
+            || clone.steps.get(node).is_none_or(|s| s.destroyed)
+        {
+            return Err(SimError::Invalid {
+                why: "unknown graph node",
+            });
+        }
+        Ok(node)
+    }
+
+    fn graph_origin_for_add(&self, graph: GraphId) -> Result<(DeviceId, StreamId), SimError> {
+        self.fail_if_capturing("cannot add graph node during capture")?;
+        self.require_not_moved(graph)?;
+        let g = self.live_graph(graph)?;
+        if g.instantiated {
+            return Err(SimError::Invalid {
+                why: "graph instantiated",
+            });
+        }
+        Ok(g.origin)
+    }
+
+    fn graph_push(
+        &mut self,
+        graph: GraphId,
+        device: DeviceId,
+        stream: StreamId,
+        kind: Kind,
+    ) -> Result<(), SimError> {
+        let priority = self.snap_priority(device, stream);
+        let (mem_sync_domain, mem_sync_map) = self.snap_mem_sync(device, stream, &kind)?;
+        let sync_policy = self.stream_sync_policy(device, stream);
+        let green_ctx = if kind_has_green_ctx(&kind) {
+            self.enqueue_green_ctx
+        } else {
+            None
+        };
+        let g = self.graphs.get_mut(&graph).ok_or(SimError::Invalid {
+            why: "unknown graph",
+        })?;
+        g.steps.push(GraphStep {
+            device,
+            stream,
+            kind,
+            deps: Vec::new(),
+            edge_data: BTreeMap::new(),
+            enabled: true,
+            destroyed: false,
+            priority,
+            pdl: self.enqueue_pdl,
+            programmatic_event: self.enqueue_programmatic_event,
+            launch_completion: self.enqueue_launch_completion,
+            access_policy: self.enqueue_access_policy,
+            mem_sync_domain,
+            mem_sync_map,
+            cluster: self.enqueue_cluster,
+            cluster_policy: self.enqueue_cluster_policy,
+            preferred_cluster: self.enqueue_preferred_cluster,
+            carveout: self.enqueue_carveout,
+            device_updatable: self.enqueue_device_updatable,
+            shared_mem: self.enqueue_shared_mem,
+            portable_cluster: self.enqueue_portable_cluster,
+            dynamic_shared: self.enqueue_dynamic_shared,
+            portable_shared: self.enqueue_portable_shared,
+            nvlink_util_centric: self.enqueue_nvlink_util_centric,
+            sync_policy,
+            green_ctx,
+        });
+        Ok(())
+    }
+
+    /// Stream-ordered allocation (`cudaMallocAsync`) from the device default pool.
+    ///
+    /// Capacity is reserved when the op starts. The pointer is not usable until
+    /// this stream catches up. Capture records a graph mem alloc node
+    /// (`cudaMallocAsync` during stream capture) and draws from the device
+    /// graph-memory pool, not the current default mempool. [`Self::malloc`] is
+    /// host-synchronous `cudaMalloc` and cannot be captured.
+    pub fn alloc(
+        &mut self,
+        device: DeviceId,
+        bytes: u64,
+        stream: StreamId,
+    ) -> Result<AllocId, SimError> {
+        let pool = if self.in_capture(device, stream) {
+            self.graph_pool(device)?
+        } else {
+            self.device_mempool(device)?
+        };
+        self.alloc_from_pool_inner(device, pool, bytes, stream)
+    }
+
+    /// `cudaDeviceGetDefaultMemPool`. Query; legal during capture.
+    ///
+    /// Seeded at construct. [`Self::set_device_mempool`] does not replace it.
+    pub fn default_pool(&self, device: DeviceId) -> Result<PoolId, SimError> {
+        let _gpu = self.profile.gpu(device)?;
+        self.default_pools
+            .get(&device)
+            .copied()
+            .ok_or(SimError::Invalid {
+                why: "default pool missing",
+            })
+    }
+
+    /// `cudaDeviceGetMemPool`. Query; legal during capture.
+    ///
+    /// [`Self::alloc`] (`cudaMallocAsync`) draws from this. Starts as
+    /// [`Self::default_pool`]; [`Self::set_device_mempool`] rebinds it.
+    pub fn device_mempool(&self, device: DeviceId) -> Result<PoolId, SimError> {
+        let _gpu = self.profile.gpu(device)?;
+        self.current_pools
+            .get(&device)
+            .copied()
+            .ok_or(SimError::Invalid {
+                why: "device mempool missing",
+            })
+    }
+
+    /// `cuMemPoolGetId`. Query; legal during capture.
+    ///
+    /// Unique per [`PoolId`] for this VM. Distinct from the [`PoolId`] handle,
+    /// [`Self::event_get_id`], and [`Self::stream_get_id`]. Unknown pools are
+    /// Invalid `"unknown pool"`. Destroyed handles are Invalid
+    /// `"destroyed pool"`. Graph-memory pools are legal (distinct from
+    /// [`Self::pool_get_attribute`]). Recreating after [`Self::destroy_pool`]
+    /// returns a new id. An imported shareable pool has a different id from
+    /// the exporter.
+    pub fn pool_get_id(&self, pool: PoolId) -> Result<u64, SimError> {
+        self.refuse_destroyed_pool(pool)?;
+        Ok(u64::from(pool.0).saturating_add(1))
+    }
+
+    /// Device graph-memory pool (`cudaDeviceGetGraphMemAttribute` backing).
+    ///
+    /// Not the default mempool. [`Self::alloc_from_pool`] / [`Self::set_device_mempool`]
+    /// / [`Self::set_pool_release_threshold`] / [`Self::pool_set_access`] /
+    /// [`Self::pool_set_access_read`] / [`Self::pool_get_attribute`] /
+    /// [`Self::pool_set_attribute`] / [`Self::pool_get_access`] /
+    /// [`Self::destroy_pool`] refuse it.
+    /// [`Self::pool_get_id`] is legal.
+    pub fn graph_pool(&self, device: DeviceId) -> Result<PoolId, SimError> {
+        let _gpu = self.profile.gpu(device)?;
+        self.graph_pools
+            .get(&device)
+            .copied()
+            .ok_or(SimError::Invalid {
+                why: "graph mem pool missing",
+            })
+    }
+
+    fn refuse_graph_pool(&self, pool: PoolId) -> Result<(), SimError> {
+        if self.pool_ref(self.pool_root(pool)?)?.graph {
+            return Err(SimError::Invalid {
+                why: "graph mem pool",
+            });
+        }
+        Ok(())
+    }
+
+    fn refuse_destroyed_pool(&self, pool: PoolId) -> Result<(), SimError> {
+        if self.pool_ref(pool)?.destroyed || self.pool_ref(self.pool_root(pool)?)?.destroyed {
+            return Err(SimError::Invalid {
+                why: "destroyed pool",
+            });
+        }
+        Ok(())
+    }
+
+    fn rebind_current_pools(&mut self, pool: PoolId) {
+        let rebound: Vec<DeviceId> = self
+            .current_pools
+            .iter()
+            .filter(|(_, p)| **p == pool)
+            .map(|(d, _)| *d)
+            .collect();
+        for d in rebound {
+            if let Some(&def) = self.default_pools.get(&d) {
+                let _prev = self.current_pools.insert(d, def);
+            }
+        }
+    }
+
+    /// `cudaDeviceSetMemPool`. Later [`Self::alloc`] draws from `pool`.
+    ///
+    /// Capture cannot include it. `pool` must belong to `device` (an imported
+    /// sibling is legal). Does not change live/cached bytes. The graph-memory
+    /// pool is not a valid device mempool. [`Self::default_pool`] stays the
+    /// seeded default.
+    pub fn set_device_mempool(&mut self, device: DeviceId, pool: PoolId) -> Result<(), SimError> {
+        self.fail_if_capturing("cannot capture mempool")?;
+        self.refuse_graph_pool(pool)?;
+        self.refuse_destroyed_pool(pool)?;
+        let _gpu = self.profile.gpu(device)?;
+        if self.pool_ref(pool)?.device != device {
+            return Err(SimError::Invalid {
+                why: "pool device mismatch",
+            });
+        }
+        let _prev = self.current_pools.insert(device, pool);
+        self.clock = self.clock.saturating_add(self.first_alloc_ns().max(1));
+        Ok(())
+    }
+
+    /// `cudaMemPoolCreate` for `device`. Release threshold starts at 0.
+    ///
+    /// Not shareable (`cudaMemHandleTypeNone`). Use
+    /// [`Self::create_shareable_pool`] for POSIX-FD export.
+    pub fn create_pool(&mut self, device: DeviceId) -> Result<PoolId, SimError> {
+        self.insert_pool(device, false)
+    }
+
+    /// `cudaMemPoolCreate` with `cudaMemAllocationHandleTypePosixFileDescriptor`.
+    pub fn create_shareable_pool(&mut self, device: DeviceId) -> Result<PoolId, SimError> {
+        self.insert_pool(device, true)
+    }
+
+    /// `cudaMemPoolCreate` with [`MemPoolProps`].
+    ///
+    /// [`MemAllocationType::PINNED`] only. [`MemHandleType::NONE`] is
+    /// [`Self::create_pool`]; [`MemHandleType::POSIX_FILE_DESCRIPTOR`] is
+    /// [`Self::create_shareable_pool`]. Other handle bits are Invalid
+    /// `"pool handle types"`. [`Place::Device`] only (`"pool location"`).
+    /// [`MemPoolProps::max_size`] `0` is unlimited; otherwise
+    /// [`Self::alloc_from_pool`] OOMs when reserved would exceed it.
+    /// [`MemPoolProps::usage`] must be [`MemHandleUsage::NONE`] (`"pool usage"`;
+    /// hardware decompress is not modeled). Typed
+    /// helpers stay. Capture cannot include it.
+    pub fn create_pool_with_props(&mut self, props: MemPoolProps) -> Result<PoolId, SimError> {
+        if props.alloc_type != MemAllocationType::PINNED {
+            return Err(SimError::Invalid {
+                why: "pool alloc type",
+            });
+        }
+        let device = match props.location {
+            Place::Device(d) => d,
+            Place::Host | Place::HostPinned => {
+                return Err(SimError::Invalid {
+                    why: "pool location",
+                });
+            }
+        };
+        let shareable = match props.handle_types {
+            MemHandleType::NONE => false,
+            MemHandleType::POSIX_FILE_DESCRIPTOR => true,
+            _ => {
+                return Err(SimError::Invalid {
+                    why: "pool handle types",
+                });
+            }
+        };
+        if props.usage != MemHandleUsage::NONE {
+            return Err(SimError::Invalid { why: "pool usage" });
+        }
+        let id = self.insert_pool(device, shareable)?;
+        self.pool_mut(id)?.max_size = props.max_size;
+        Ok(id)
+    }
+
+    fn insert_pool(&mut self, device: DeviceId, shareable: bool) -> Result<PoolId, SimError> {
+        self.fail_if_capturing("cannot capture mempool")?;
+        let _gpu = self.profile.gpu(device)?;
+        let id = PoolId(self.next_pool);
+        self.next_pool = self.next_pool.saturating_add(1);
+        let mut p = Pool::new(device);
+        p.shareable = shareable;
+        let _prev = self.pools.insert(id, p);
+        Ok(id)
+    }
+
+    /// `cudaMemPoolDestroy`. Host-synchronous. Capture cannot include it.
+    ///
+    /// Returns immediately. Unused cached bytes return to the OS. Outstanding
+    /// allocations stay valid until freed (later frees do not re-cache).
+    /// Destroying the current device mempool rebinds [`Self::device_mempool`]
+    /// to [`Self::default_pool`]. The default and graph-memory pools cannot be
+    /// destroyed. A destroyed handle is Invalid for alloc/export/get/set and
+    /// [`Self::pool_get_id`].
+    pub fn destroy_pool(&mut self, pool: PoolId) -> Result<(), SimError> {
+        self.fail_if_capturing("cannot capture mempool")?;
+        self.refuse_graph_pool(pool)?;
+        if self.pool_ref(pool)?.destroyed {
+            return Err(SimError::Invalid {
+                why: "destroyed pool",
+            });
+        }
+        if self.default_pools.values().any(|&p| p == pool) {
+            return Err(SimError::Invalid {
+                why: "default pool",
+            });
+        }
+        self.rebind_current_pools(pool);
+        if self.pool_ref(pool)?.share_root.is_some() {
+            self.pool_mut(pool)?.destroyed = true;
+            self.clock = self.clock.saturating_add(self.first_alloc_ns().max(1));
+            return Ok(());
+        }
+        let _dropped = self.pool_trim_to(pool, 0)?;
+        {
+            let p = self.pool_mut(pool)?;
+            p.release_threshold = 0;
+            p.destroyed = true;
+        }
+        self.share_handles.retain(|_, src| *src != pool);
+        self.clock = self.clock.saturating_add(self.first_alloc_ns().max(1));
+        Ok(())
+    }
+
+    /// `cudaMallocFromPoolAsync`. `pool` must belong to `device`.
+    ///
+    /// The graph-memory pool is not a user mempool; use [`Self::alloc`] during
+    /// capture or [`Self::graph_add_alloc`].
+    pub fn alloc_from_pool(
+        &mut self,
+        device: DeviceId,
+        pool: PoolId,
+        bytes: u64,
+        stream: StreamId,
+    ) -> Result<AllocId, SimError> {
+        self.refuse_graph_pool(pool)?;
+        self.refuse_destroyed_pool(pool)?;
+        self.alloc_from_pool_inner(device, pool, bytes, stream)
+    }
+
+    fn alloc_from_pool_inner(
+        &mut self,
+        device: DeviceId,
+        pool: PoolId,
+        bytes: u64,
+        stream: StreamId,
+    ) -> Result<AllocId, SimError> {
+        if bytes == 0 {
+            return Err(SimError::Invalid {
+                why: "zero-byte alloc",
+            });
+        }
+        if self.pool_ref(pool)?.device != device {
+            return Err(SimError::Invalid {
+                why: "pool device mismatch",
+            });
+        }
+        let id = self.insert_pool_alloc(pool, bytes)?;
+        let _op = self.submit(device, stream, Kind::Alloc { id, bytes })?;
+        if self.in_capture(device, stream) {
+            if let Some(cap) = self.capturing.as_mut() {
+                cap.mem_allocs.push(id);
+            }
+        }
+        Ok(id)
+    }
+
+    fn insert_pool_alloc(&mut self, pool: PoolId, bytes: u64) -> Result<AllocId, SimError> {
+        let id = AllocId(self.next_alloc);
+        self.next_alloc = self.next_alloc.saturating_add(1);
+        let _prev = self.allocs.insert(
+            id,
+            Alloc {
+                bytes,
+                devices: Vec::new(),
+                leases: 0,
+                live: false,
+                host_pinned: false,
+                host_pageable: false,
+                host_mapped: false,
+                host_registered: false,
+                host_flags: 0,
+                managed: false,
+                attach: Attach::Global,
+                read_mostly: false,
+                accessed_by: BTreeSet::new(),
+                vmm_write_by: BTreeSet::new(),
+                preferred: Preferred::None,
+                last_prefetch: Preferred::None,
+                sync_memops: false,
+                vmm: false,
+                vmm_maps: Vec::new(),
+                pool: Some(pool),
+                ipc_src: None,
+                ipc_opens: 0,
+                share_src: None,
+                share_opens: 0,
+                graph_access: Vec::new(),
+            },
+        );
+        Ok(id)
+    }
+
+    /// `cudaMemPoolAttrReleaseThreshold`. Does not trim; later frees apply it.
+    ///
+    /// `0` (CUDA default) returns unused bytes to the OS when the stream-ordered
+    /// free completes. `u64::MAX` holds them so [`Self::mem_info`] still counts
+    /// them used until [`Self::pool_trim_to`]. Also
+    /// [`Self::pool_set_attribute`] [`MemPoolAttr::ReleaseThreshold`].
+    pub fn set_pool_release_threshold(&mut self, pool: PoolId, bytes: u64) -> Result<(), SimError> {
+        self.fail_if_capturing("cannot capture mempool")?;
+        let root = self.pool_root(pool)?;
+        self.refuse_graph_pool(root)?;
+        self.refuse_destroyed_pool(root)?;
+        self.pool_mut(root)?.release_threshold = bytes;
+        Ok(())
+    }
+
+    /// `cudaMemPoolAttrMaxPoolSize`. Later [`Self::alloc_from_pool`] OOMs when
+    /// reserved would exceed `bytes`. `0` is unlimited. Does not free live
+    /// allocs if the new cap is below current reserved. Also
+    /// [`Self::pool_set_attribute`] [`MemPoolAttr::MaxPoolSize`]. Capture
+    /// cannot include it. The graph-memory pool is Invalid.
+    pub fn set_pool_max_size(&mut self, pool: PoolId, bytes: u64) -> Result<(), SimError> {
+        self.fail_if_capturing("cannot capture mempool")?;
+        let root = self.pool_root(pool)?;
+        self.refuse_graph_pool(root)?;
+        self.refuse_destroyed_pool(root)?;
+        self.pool_mut(root)?.max_size = bytes;
+        Ok(())
+    }
+
+    /// `cudaMemPoolGetAttribute`. Query; legal during capture.
+    ///
+    /// [`MemPoolAttr::UsedMemCurrent`] is [`Self::pool_live`]. Reserved is live
+    /// plus [`Self::pool_cached`]. [`MemPoolAttr::UsedMemHigh`] /
+    /// [`MemPoolAttr::ReservedMemHigh`] are high-water of those. Reuse flags
+    /// default to 1. [`MemPoolAttr::MaxPoolSize`] is [`Self::set_pool_max_size`]
+    /// (`0` unlimited). [`MemPoolAttr::AllocationType`] is always
+    /// [`MemAllocationType::PINNED`]. [`MemPoolAttr::ExportHandleTypes`] is
+    /// [`MemHandleType::POSIX_FILE_DESCRIPTOR`] on shareable exporters and
+    /// [`MemHandleType::NONE`] on default, `create_pool`, and imported handles.
+    /// An imported pool reports the exporter except ExportHandleTypes (imported
+    /// cannot be re-exported). The graph-memory pool is Invalid (use
+    /// [`Self::graph_mem_get`]).
+    pub fn pool_get_attribute(&self, pool: PoolId, attr: MemPoolAttr) -> Result<u64, SimError> {
+        self.refuse_graph_pool(pool)?;
+        self.refuse_destroyed_pool(pool)?;
+        let shareable = self.pool_ref(pool)?.shareable;
+        let p = self.pool_ref(self.pool_root(pool)?)?;
+        match attr {
+            MemPoolAttr::ReleaseThreshold => Ok(p.release_threshold),
+            MemPoolAttr::UsedMemCurrent => Ok(p.live),
+            MemPoolAttr::UsedMemHigh => Ok(p.used_high.max(p.live)),
+            MemPoolAttr::ReservedMemCurrent => Ok(p.live.saturating_add(p.cached)),
+            MemPoolAttr::ReservedMemHigh => {
+                Ok(p.reserved_high.max(p.live.saturating_add(p.cached)))
+            }
+            MemPoolAttr::ReuseFollowEventDependencies => Ok(u64::from(p.reuse_follow_event)),
+            MemPoolAttr::ReuseAllowOpportunistic => Ok(u64::from(p.reuse_opportunistic)),
+            MemPoolAttr::ReuseAllowInternalDependencies => Ok(u64::from(p.reuse_internal)),
+            MemPoolAttr::MaxPoolSize => Ok(p.max_size),
+            MemPoolAttr::AllocationType => Ok(u64::from(MemAllocationType::PINNED)),
+            MemPoolAttr::ExportHandleTypes => Ok(if shareable {
+                MemHandleType::POSIX_FILE_DESCRIPTOR
+            } else {
+                MemHandleType::NONE
+            }),
+        }
+    }
+
+    /// `cudaMemPoolSetAttribute`. Host-synchronous. Capture cannot include it.
+    ///
+    /// [`MemPoolAttr::ReleaseThreshold`] is [`Self::set_pool_release_threshold`].
+    /// [`MemPoolAttr::MaxPoolSize`] is [`Self::set_pool_max_size`].
+    /// Reuse flags are 0 or 1 (other values Invalid `"pool reuse attr"`). Only
+    /// [`MemPoolAttr::ReuseAllowOpportunistic`] `0` changes acquire (skip cache
+    /// reuse). Used/Reserved current, [`MemPoolAttr::AllocationType`], and
+    /// [`MemPoolAttr::ExportHandleTypes`] are read-only. High-water Set `0`
+    /// resets to current (other values Invalid `"pool high attr"`). The
+    /// graph-memory pool is Invalid (use [`Self::graph_mem_set`]).
+    pub fn pool_set_attribute(
+        &mut self,
+        pool: PoolId,
+        attr: MemPoolAttr,
+        value: u64,
+    ) -> Result<(), SimError> {
+        match attr {
+            MemPoolAttr::ReleaseThreshold => self.set_pool_release_threshold(pool, value),
+            MemPoolAttr::MaxPoolSize => self.set_pool_max_size(pool, value),
+            MemPoolAttr::UsedMemCurrent
+            | MemPoolAttr::ReservedMemCurrent
+            | MemPoolAttr::AllocationType
+            | MemPoolAttr::ExportHandleTypes => {
+                self.fail_if_capturing("cannot capture mempool")?;
+                self.refuse_graph_pool(pool)?;
+                self.refuse_destroyed_pool(pool)?;
+                Err(SimError::Invalid {
+                    why: "read-only pool attr",
+                })
+            }
+            MemPoolAttr::UsedMemHigh | MemPoolAttr::ReservedMemHigh => {
+                self.set_pool_high_attr(pool, attr, value)
+            }
+            MemPoolAttr::ReuseFollowEventDependencies
+            | MemPoolAttr::ReuseAllowOpportunistic
+            | MemPoolAttr::ReuseAllowInternalDependencies => {
+                self.set_pool_reuse_attr(pool, attr, value)
+            }
+        }
+    }
+
+    fn set_pool_high_attr(
+        &mut self,
+        pool: PoolId,
+        attr: MemPoolAttr,
+        value: u64,
+    ) -> Result<(), SimError> {
+        self.fail_if_capturing("cannot capture mempool")?;
+        let root = self.pool_root(pool)?;
+        self.refuse_graph_pool(root)?;
+        self.refuse_destroyed_pool(root)?;
+        if value != 0 {
+            return Err(SimError::Invalid {
+                why: "pool high attr",
+            });
+        }
+        let p = self.pool_mut(root)?;
+        match attr {
+            MemPoolAttr::UsedMemHigh => p.used_high = p.live,
+            MemPoolAttr::ReservedMemHigh => p.reserved_high = p.live.saturating_add(p.cached),
+            MemPoolAttr::ReleaseThreshold
+            | MemPoolAttr::UsedMemCurrent
+            | MemPoolAttr::ReservedMemCurrent
+            | MemPoolAttr::ReuseFollowEventDependencies
+            | MemPoolAttr::ReuseAllowOpportunistic
+            | MemPoolAttr::ReuseAllowInternalDependencies
+            | MemPoolAttr::MaxPoolSize
+            | MemPoolAttr::AllocationType
+            | MemPoolAttr::ExportHandleTypes => {
+                return Err(SimError::Invalid {
+                    why: "pool high attr",
+                });
+            }
+        }
+        Ok(())
+    }
+
+    fn set_pool_reuse_attr(
+        &mut self,
+        pool: PoolId,
+        attr: MemPoolAttr,
+        value: u64,
+    ) -> Result<(), SimError> {
+        self.fail_if_capturing("cannot capture mempool")?;
+        let root = self.pool_root(pool)?;
+        self.refuse_graph_pool(root)?;
+        self.refuse_destroyed_pool(root)?;
+        if value > 1 {
+            return Err(SimError::Invalid {
+                why: "pool reuse attr",
+            });
+        }
+        let on = value == 1;
+        let p = self.pool_mut(root)?;
+        match attr {
+            MemPoolAttr::ReuseFollowEventDependencies => p.reuse_follow_event = on,
+            MemPoolAttr::ReuseAllowOpportunistic => p.reuse_opportunistic = on,
+            MemPoolAttr::ReuseAllowInternalDependencies => p.reuse_internal = on,
+            MemPoolAttr::ReleaseThreshold
+            | MemPoolAttr::UsedMemCurrent
+            | MemPoolAttr::UsedMemHigh
+            | MemPoolAttr::ReservedMemCurrent
+            | MemPoolAttr::ReservedMemHigh
+            | MemPoolAttr::MaxPoolSize
+            | MemPoolAttr::AllocationType
+            | MemPoolAttr::ExportHandleTypes => {
+                return Err(SimError::Invalid {
+                    why: "pool reuse attr",
+                });
+            }
+        }
+        Ok(())
+    }
+
+    /// Set every device's current mempool release threshold (`cudaDeviceGetMemPool`).
+    pub fn set_default_pool_release_threshold(&mut self, bytes: u64) -> Result<(), SimError> {
+        let ids: Vec<PoolId> = self.current_pools.values().copied().collect();
+        for id in ids {
+            self.set_pool_release_threshold(id, bytes)?;
+        }
+        Ok(())
+    }
+
+    /// `cudaMemPoolTrimTo`: return cached bytes above `min_bytes` to the OS.
+    ///
+    /// Only completed frees are cached; in-flight [`Self::free`] has not entered
+    /// the pool yet. Applied immediately to `mem_info` (no extra device sync).
+    /// `expertvm sim --mempool-trim` / `GpuStoreCfg::mempool_trim` is
+    /// [`Self::pool_trim_to`] `(device_mempool, 0)` after score (idle), not
+    /// token ITL.
+    pub fn pool_trim_to(&mut self, pool: PoolId, min_bytes: u64) -> Result<u64, SimError> {
+        self.fail_if_capturing("cannot capture mempool")?;
+        let root = self.pool_root(pool)?;
+        self.refuse_destroyed_pool(root)?;
+        let (device, cached) = {
+            let p = self.pool_ref(root)?;
+            (p.device, p.cached)
+        };
+        let drop = cached.saturating_sub(min_bytes);
+        if drop == 0 {
+            return Ok(0);
+        }
+        {
+            let p = self.pool_mut(root)?;
+            p.cached = cached.saturating_sub(drop);
+            p.bump_high();
+        }
+        let used = self.gpu_rt(device)?.used;
+        self.gpu_rt_mut(device)?.used = used.saturating_sub(drop);
+        Ok(drop)
+    }
+
+    /// Unused bytes held by `pool` (`cudaMemGetInfo` still counts them used).
+    ///
+    /// An imported pool reports the exporter's cache.
+    pub fn pool_cached(&self, pool: PoolId) -> Result<u64, SimError> {
+        Ok(self.pool_ref(self.pool_root(pool)?)?.cached)
+    }
+
+    /// Live bytes allocated from `pool` and not yet freed.
+    ///
+    /// An imported pool reports the exporter's live bytes.
+    pub fn pool_live(&self, pool: PoolId) -> Result<u64, SimError> {
+        Ok(self.pool_ref(self.pool_root(pool)?)?.live)
+    }
+
+    /// `cudaMemPoolSetAccess` ReadWrite on `device` for allocations from `pool`.
+    ///
+    /// Host-synchronous. Does not charge dest HBM. A kernel on `device` may
+    /// read **and write** pointers whose physicals live on the pool's GPU
+    /// (interconnect). Capture cannot include it. Needs a topology link and
+    /// directed peer access from the pool GPU, same as D2D. Same-device is a
+    /// no-op that still records access. Applies to existing and later allocs.
+    /// Downgrades a prior [`Self::pool_set_access_read`] on `device`.
+    pub fn pool_set_access(&mut self, pool: PoolId, device: DeviceId) -> Result<(), SimError> {
+        self.pool_prepare_set_access(pool, device)?;
+        {
+            let p = self.pool_mut(pool)?;
+            let _ins = p.accessed_by.insert(device);
+            let _was = p.accessed_by_read.remove(&device);
+        }
+        self.clock = self.clock.saturating_add(self.first_alloc_ns().max(1));
+        Ok(())
+    }
+
+    /// `cudaMemPoolSetAccess` ProtRead on `device` for allocations from `pool`.
+    ///
+    /// Host-synchronous. Does not charge dest HBM. A kernel on `device` may
+    /// **read** pointers whose physicals live on the pool's GPU (interconnect).
+    /// Writes and memset stay [`SimError::NotResident`] until
+    /// [`Self::pool_set_access`]. Capture cannot include it. Needs a topology
+    /// link and directed peer access from the pool GPU, same as D2D.
+    /// Same-device still records; [`Self::pool_get_access`] on the owner stays
+    /// ReadWrite. Applies to existing and later allocs. Downgrades a prior
+    /// [`Self::pool_set_access`] on `device`.
+    pub fn pool_set_access_read(&mut self, pool: PoolId, device: DeviceId) -> Result<(), SimError> {
+        self.pool_prepare_set_access(pool, device)?;
+        {
+            let p = self.pool_mut(pool)?;
+            let _ins = p.accessed_by_read.insert(device);
+            let _was = p.accessed_by.remove(&device);
+        }
+        self.clock = self.clock.saturating_add(self.first_alloc_ns().max(1));
+        Ok(())
+    }
+
+    fn pool_prepare_set_access(&self, pool: PoolId, device: DeviceId) -> Result<(), SimError> {
+        self.fail_if_capturing("cannot capture mempool")?;
+        self.refuse_graph_pool(pool)?;
+        self.refuse_destroyed_pool(pool)?;
+        let _gpu = self.profile.gpu(device)?;
+        let owner = self.pool_ref(pool)?.device;
+        if owner != device {
+            let _link = self.profile.link(Some(owner), Some(device))?;
+            if !self.peer_access(owner, device) {
+                return Err(SimError::PeerDisabled {
+                    src: owner,
+                    dst: device,
+                });
+            }
+        }
+        Ok(())
+    }
+
+    /// `cudaMemPoolSetAccess` with a flags word.
+    ///
+    /// [`MemAccessFlags::PROT_READ_WRITE`] is [`Self::pool_set_access`].
+    /// [`MemAccessFlags::PROT_NONE`] is [`Self::pool_unset_access`].
+    /// [`MemAccessFlags::PROT_READ`] is [`Self::pool_set_access_read`].
+    /// Other bits are Invalid `"pool access flags"`. Typed helpers stay.
+    /// Capture is refused by those helpers.
+    pub fn pool_set_access_with_flags(
+        &mut self,
+        pool: PoolId,
+        device: DeviceId,
+        flags: u32,
+    ) -> Result<(), SimError> {
+        match flags {
+            MemAccessFlags::PROT_READ_WRITE => self.pool_set_access(pool, device),
+            MemAccessFlags::PROT_NONE => self.pool_unset_access(pool, device),
+            MemAccessFlags::PROT_READ => self.pool_set_access_read(pool, device),
+            _ => Err(SimError::Invalid {
+                why: "pool access flags",
+            }),
+        }
+    }
+
+    /// `cudaMemPoolSetAccess` with a descriptor array (`descList`, `count`).
+    ///
+    /// Host location Invalid `"access location"`. Flags match
+    /// [`Self::pool_set_access_with_flags`]. All-or-nothing: a later Invalid
+    /// leaves earlier descriptors unapplied. Empty `descs` is a no-op after
+    /// pool checks. Host-synchronous; capture refused. Typed helpers stay.
+    pub fn pool_set_access_n(
+        &mut self,
+        pool: PoolId,
+        descs: &[MemAccessDesc],
+    ) -> Result<(), SimError> {
+        self.fail_if_capturing("cannot capture mempool")?;
+        self.refuse_graph_pool(pool)?;
+        self.refuse_destroyed_pool(pool)?;
+        let owner = self.pool_ref(pool)?.device;
+        let mut ops = Vec::with_capacity(descs.len());
+        for desc in descs {
+            match desc.flags {
+                MemAccessFlags::PROT_READ_WRITE
+                | MemAccessFlags::PROT_READ
+                | MemAccessFlags::PROT_NONE => {}
+                _ => {
+                    return Err(SimError::Invalid {
+                        why: "pool access flags",
+                    });
+                }
+            }
+            let device = desc.location.device().ok_or(SimError::Invalid {
+                why: "access location",
+            })?;
+            let _gpu = self.profile.gpu(device)?;
+            let grant = desc.flags == MemAccessFlags::PROT_READ_WRITE
+                || desc.flags == MemAccessFlags::PROT_READ;
+            if grant && owner != device {
+                let _link = self.profile.link(Some(owner), Some(device))?;
+                if !self.peer_access(owner, device) {
+                    return Err(SimError::PeerDisabled {
+                        src: owner,
+                        dst: device,
+                    });
+                }
+            }
+            ops.push((device, desc.flags));
+        }
+        for (device, flags) in ops {
+            self.pool_set_access_with_flags(pool, device, flags)?;
+        }
+        Ok(())
+    }
+
+    /// Drop [`Self::pool_set_access`] / [`Self::pool_set_access_read`] for
+    /// `device` (`cudaMemAccessFlagsProtNone`).
+    pub fn pool_unset_access(&mut self, pool: PoolId, device: DeviceId) -> Result<(), SimError> {
+        self.fail_if_capturing("cannot capture mempool")?;
+        self.refuse_destroyed_pool(pool)?;
+        let _gpu = self.profile.gpu(device)?;
+        let _p = self.pool_ref(pool)?;
+        {
+            let p = self.pool_mut(pool)?;
+            let _was_rw = p.accessed_by.remove(&device);
+            let _was_r = p.accessed_by_read.remove(&device);
+        }
+        self.clock = self.clock.saturating_add(self.first_alloc_ns().max(1));
+        Ok(())
+    }
+
+    /// Whether `device` has [`Self::pool_set_access`] or
+    /// [`Self::pool_set_access_read`] on `pool`.
+    pub fn is_pool_accessed_by(&self, pool: PoolId, device: DeviceId) -> Result<bool, SimError> {
+        let p = self.pool_ref(pool)?;
+        Ok(p.accessed_by.contains(&device) || p.accessed_by_read.contains(&device))
+    }
+
+    /// `cudaMemPoolGetAccess`. Query; legal during capture.
+    ///
+    /// [`MemAccessFlags::PROT_READ_WRITE`] (`3`) on the owning device (default
+    /// accessibility) and on peers after [`Self::pool_set_access`].
+    /// [`MemAccessFlags::PROT_READ`] (`1`) after [`Self::pool_set_access_read`].
+    /// Otherwise [`MemAccessFlags::PROT_NONE`] (`0`). The graph-memory pool is
+    /// Invalid.
+    pub fn pool_get_access(&self, pool: PoolId, device: DeviceId) -> Result<u32, SimError> {
+        let _gpu = self.profile.gpu(device)?;
+        self.refuse_graph_pool(pool)?;
+        self.refuse_destroyed_pool(pool)?;
+        let p = self.pool_ref(pool)?;
+        if p.device == device || p.accessed_by.contains(&device) {
+            Ok(MemAccessFlags::PROT_READ_WRITE)
+        } else if p.accessed_by_read.contains(&device) {
+            Ok(MemAccessFlags::PROT_READ)
+        } else {
+            Ok(MemAccessFlags::PROT_NONE)
+        }
+    }
+
+    /// Whether `pool` was created with a POSIX-FD shareable handle type.
+    pub fn is_pool_shareable(&self, pool: PoolId) -> Result<bool, SimError> {
+        Ok(self.pool_ref(pool)?.shareable)
+    }
+
+    /// Whether `pool` came from [`Self::pool_import`].
+    pub fn is_pool_imported(&self, pool: PoolId) -> Result<bool, SimError> {
+        Ok(self.pool_ref(pool)?.share_root.is_some())
+    }
+
+    /// `cudaMemPoolExportToShareableHandle`. Host-synchronous.
+    ///
+    /// Only [`Self::create_shareable_pool`] pools export. Default and
+    /// [`Self::create_pool`] pools are `not shareable`. The same pool returns
+    /// the same handle. Capture cannot include it.
+    pub fn pool_export(&mut self, pool: PoolId) -> Result<ShareableHandleId, SimError> {
+        self.fail_if_capturing("cannot capture mempool")?;
+        self.refuse_destroyed_pool(pool)?;
+        let (device, shareable) = {
+            let p = self.pool_ref(pool)?;
+            (p.device, p.shareable)
+        };
+        if !shareable {
+            return Err(SimError::Invalid {
+                why: "not shareable",
+            });
+        }
+        if let Some(h) = self
+            .share_handles
+            .iter()
+            .find_map(|(&h, src)| (*src == pool).then_some(h))
+        {
+            return Ok(h);
+        }
+        let ns = self.profile.gpu(device)?.alloc_overhead_ns.max(1);
+        self.clock = self.clock.saturating_add(ns);
+        let h = ShareableHandleId(self.next_share);
+        self.next_share = self.next_share.saturating_add(1);
+        let _prev = self.share_handles.insert(h, pool);
+        Ok(h)
+    }
+
+    /// `cudaMemPoolImportFromShareableHandle` on `device`.
+    ///
+    /// Returns a new [`PoolId`] that shares live/cached/threshold with the
+    /// exporter (no extra HBM). `device` must match the exporter. Capture
+    /// cannot include it.
+    pub fn pool_import(
+        &mut self,
+        device: DeviceId,
+        handle: ShareableHandleId,
+    ) -> Result<PoolId, SimError> {
+        self.fail_if_capturing("cannot capture mempool")?;
+        let src = *self.share_handles.get(&handle).ok_or(SimError::Invalid {
+            why: "unknown shareable",
+        })?;
+        let root = self.pool_root(src)?;
+        self.refuse_destroyed_pool(root)?;
+        if self.pool_ref(root)?.device != device {
+            return Err(SimError::Invalid {
+                why: "pool device mismatch",
+            });
+        }
+        let ns = self.profile.gpu(device)?.alloc_overhead_ns.max(1);
+        self.clock = self.clock.saturating_add(ns);
+        let id = PoolId(self.next_pool);
+        self.next_pool = self.next_pool.saturating_add(1);
+        let mut p = Pool::new(device);
+        p.share_root = Some(root);
+        let _prev = self.pools.insert(id, p);
+        Ok(id)
+    }
+
+    fn check_pool_export_type(
+        handle_type: u64,
+        flags: u32,
+        flags_why: &'static str,
+    ) -> Result<(), SimError> {
+        if flags != MemPoolExportFlags::DEFAULT {
+            return Err(SimError::Invalid { why: flags_why });
+        }
+        if handle_type != MemHandleType::POSIX_FILE_DESCRIPTOR {
+            return Err(SimError::Invalid {
+                why: "pool handle types",
+            });
+        }
+        Ok(())
+    }
+
+    /// `cudaMemPoolExportToShareableHandle` with handle type and flags.
+    ///
+    /// [`MemHandleType::POSIX_FILE_DESCRIPTOR`] only. Flags must be
+    /// [`MemPoolExportFlags::DEFAULT`]. Typed [`Self::pool_export`] stays.
+    /// Host-synchronous; capture refused.
+    pub fn pool_export_with_type(
+        &mut self,
+        pool: PoolId,
+        handle_type: u64,
+        flags: u32,
+    ) -> Result<ShareableHandleId, SimError> {
+        self.fail_if_capturing("cannot capture mempool")?;
+        Self::check_pool_export_type(handle_type, flags, "pool export flags")?;
+        self.pool_export(pool)
+    }
+
+    /// `cudaMemPoolImportFromShareableHandle` with handle type and flags.
+    ///
+    /// [`MemHandleType::POSIX_FILE_DESCRIPTOR`] only. Flags must be
+    /// [`MemPoolExportFlags::DEFAULT`]. Typed [`Self::pool_import`] stays.
+    /// Host-synchronous; capture refused.
+    pub fn pool_import_with_type(
+        &mut self,
+        device: DeviceId,
+        handle: ShareableHandleId,
+        handle_type: u64,
+        flags: u32,
+    ) -> Result<PoolId, SimError> {
+        self.fail_if_capturing("cannot capture mempool")?;
+        Self::check_pool_export_type(handle_type, flags, "pool import flags")?;
+        self.pool_import(device, handle)
+    }
+
+    /// `cudaMemPoolExportPointer` of a live allocation from a shareable pool.
+    ///
+    /// The same alloc returns the same handle. [`Self::ipc_get`] of a pool
+    /// alloc is Invalid. Capture cannot include it.
+    pub fn pool_export_ptr(&mut self, id: AllocId) -> Result<PtrExportId, SimError> {
+        self.fail_if_capturing("cannot capture mempool")?;
+        let (pool, device) = {
+            let a = self.alloc_ref(id)?;
+            if !a.live
+                || a.managed
+                || a.vmm
+                || a.host_pinned
+                || a.host_pageable
+                || a.ipc_src.is_some()
+                || a.share_src.is_some()
+                || a.devices.is_empty()
+            {
+                return Err(SimError::Invalid {
+                    why: "not shareable ptr",
+                });
+            }
+            let pool = a.pool.ok_or(SimError::Invalid {
+                why: "not shareable ptr",
+            })?;
+            let d = a.devices.first().copied().ok_or(SimError::Invalid {
+                why: "not shareable ptr",
+            })?;
+            (pool, d)
+        };
+        if !self.pool_ref(self.pool_root(pool)?)?.shareable {
+            return Err(SimError::Invalid {
+                why: "not shareable ptr",
+            });
+        }
+        if let Some(h) = self
+            .ptr_exports
+            .iter()
+            .find_map(|(&h, src)| (*src == id).then_some(h))
+        {
+            return Ok(h);
+        }
+        let ns = self.profile.gpu(device)?.alloc_overhead_ns.max(1);
+        self.clock = self.clock.saturating_add(ns);
+        let h = PtrExportId(self.next_ptr);
+        self.next_ptr = self.next_ptr.saturating_add(1);
+        let _prev = self.ptr_exports.insert(h, id);
+        Ok(h)
+    }
+
+    /// `cudaMemPoolImportPointer` into an imported pool. Alias shares the
+    /// source physicals (no extra HBM). Capture cannot include it.
+    pub fn pool_import_ptr(
+        &mut self,
+        pool: PoolId,
+        export: PtrExportId,
+    ) -> Result<AllocId, SimError> {
+        self.fail_if_capturing("cannot capture mempool")?;
+        let src = *self.ptr_exports.get(&export).ok_or(SimError::Invalid {
+            why: "unknown ptr export",
+        })?;
+        let root = self.pool_root(pool)?;
+        if self.pool_ref(pool)?.share_root.is_none() {
+            return Err(SimError::Invalid {
+                why: "not imported pool",
+            });
+        }
+        let (bytes, devices, opens, src_root, device) = {
+            let a = self.alloc_ref(src)?;
+            if !a.live {
+                return Err(SimError::Invalid { why: "freed" });
+            }
+            let src_pool = a.pool.ok_or(SimError::Invalid {
+                why: "not shareable ptr",
+            })?;
+            let src_root = self.pool_root(src_pool)?;
+            let d = a.devices.first().copied().ok_or(SimError::Invalid {
+                why: "not shareable ptr",
+            })?;
+            (a.bytes, a.devices.clone(), a.share_opens, src_root, d)
+        };
+        if src_root != root {
+            return Err(SimError::Invalid {
+                why: "pool mismatch",
+            });
+        }
+        let ns = self.profile.gpu(device)?.alloc_overhead_ns.max(1);
+        self.clock = self.clock.saturating_add(ns);
+        self.alloc_mut(src)?.share_opens = opens.saturating_add(1);
+        let id = AllocId(self.next_alloc);
+        self.next_alloc = self.next_alloc.saturating_add(1);
+        let _prev = self.allocs.insert(
+            id,
+            Alloc {
+                bytes,
+                devices,
+                leases: 0,
+                live: true,
+                host_pinned: false,
+                host_pageable: false,
+                host_mapped: false,
+                host_registered: false,
+                host_flags: 0,
+                managed: false,
+                attach: Attach::Global,
+                read_mostly: false,
+                accessed_by: BTreeSet::new(),
+                vmm_write_by: BTreeSet::new(),
+                preferred: Preferred::None,
+                last_prefetch: Preferred::None,
+                sync_memops: false,
+                vmm: false,
+                vmm_maps: Vec::new(),
+                pool: Some(pool),
+                ipc_src: None,
+                ipc_opens: 0,
+                share_src: Some(src),
+                share_opens: 0,
+                graph_access: Vec::new(),
+            },
+        );
+        Ok(id)
+    }
+
+    /// Whether `id` is a live [`Self::pool_import_ptr`] alias.
+    pub fn is_share_import(&self, id: AllocId) -> Result<bool, SimError> {
+        let a = self.alloc_ref(id)?;
+        Ok(a.live && a.share_src.is_some())
+    }
+
+    /// `cudaMalloc`: [`Self::synchronize_device`] then the pointer is usable.
+    ///
+    /// OOM is returned at this call, not later at [`Self::synchronize`]. Capture
+    /// cannot include it. [`Self::alloc`] is `cudaMallocAsync`.
+    pub fn malloc(&mut self, device: DeviceId, bytes: u64) -> Result<AllocId, SimError> {
+        if bytes == 0 {
+            return Err(SimError::Invalid {
+                why: "zero-byte alloc",
+            });
+        }
+        if self.capturing.is_some() {
+            return Err(SimError::Invalid {
+                why: "cannot capture alloc/free",
+            });
+        }
+        let _gpu = self.profile.gpu(device)?;
+        self.synchronize_device(device)?;
+        self.reserve_now(device, bytes)
+    }
+
+    /// Immediate page-locked host allocation. Does not charge HBM.
+    ///
+    /// A kernel may not read this object until a copy has placed it on a
+    /// device (or [`Self::alloc_host_mapped`] / [`Self::host_register_mapped`]).
+    /// Capture cannot include host alloc.
+    pub fn alloc_host_pinned(&mut self, bytes: u64) -> Result<AllocId, SimError> {
+        self.alloc_host_with_flags(bytes, HostAllocFlags::DEFAULT)
+    }
+
+    /// Pageable host allocation (`malloc`). Pin it with [`Self::host_register`].
+    pub fn alloc_host(&mut self, bytes: u64) -> Result<AllocId, SimError> {
+        self.insert_host(bytes, true, false, false, false, HostAllocFlags::DEFAULT)
+    }
+
+    /// `cudaHostAllocMapped`: pinned, mapped, no HBM. A kernel may read it
+    /// immediately; the memory term is host PCIe, not HBM.
+    pub fn alloc_host_mapped(&mut self, bytes: u64) -> Result<AllocId, SimError> {
+        self.alloc_host_with_flags(bytes, HostAllocFlags::MAPPED)
+    }
+
+    /// `cudaHostAlloc` with [`HostAllocFlags`].
+    ///
+    /// Known bits: [`HostAllocFlags::MAPPED`] / [`HostAllocFlags::PORTABLE`] /
+    /// [`HostAllocFlags::WRITE_COMBINED`]. Portable and
+    /// WriteCombined are stored (no DMA/pin change). Other bits Invalid
+    /// `"host alloc flags"`. Typed helpers stay. Capture cannot include
+    /// host alloc.
+    pub fn alloc_host_with_flags(&mut self, bytes: u64, flags: u32) -> Result<AllocId, SimError> {
+        const KNOWN: u32 =
+            HostAllocFlags::MAPPED | HostAllocFlags::PORTABLE | HostAllocFlags::WRITE_COMBINED;
+        if flags & !KNOWN != 0 {
+            return Err(SimError::Invalid {
+                why: "host alloc flags",
+            });
+        }
+        let mapped = flags & HostAllocFlags::MAPPED != 0;
+        self.insert_host(bytes, false, true, mapped, false, flags)
+    }
+
+    /// `cudaMallocManaged`: pointer is live immediately, no HBM until a
+    /// device first-touch or [`Self::prefetch`]. Default attach is
+    /// [`MemAttach::Global`]. [`Self::alloc_managed_host`] is Host.
+    ///
+    /// Does not [`Self::synchronize_device`] (`cudaMalloc` does). Capture
+    /// cannot include it. [`Self::free_sync`] is `cudaFree`.
+    pub fn alloc_managed(&mut self, bytes: u64) -> Result<AllocId, SimError> {
+        if bytes == 0 {
+            return Err(SimError::Invalid {
+                why: "zero-byte alloc",
+            });
+        }
+        self.fail_if_capturing("cannot capture alloc/free")?;
+        self.clock = self.clock.saturating_add(self.first_alloc_ns());
+        let id = AllocId(self.next_alloc);
+        self.next_alloc = self.next_alloc.saturating_add(1);
+        let _prev = self.allocs.insert(
+            id,
+            Alloc {
+                bytes,
+                devices: Vec::new(),
+                leases: 0,
+                live: true,
+                host_pinned: false,
+                host_pageable: false,
+                host_mapped: false,
+                host_registered: false,
+                host_flags: 0,
+                managed: true,
+                attach: Attach::Global,
+                read_mostly: false,
+                accessed_by: BTreeSet::new(),
+                vmm_write_by: BTreeSet::new(),
+                preferred: Preferred::None,
+                last_prefetch: Preferred::None,
+                sync_memops: false,
+                vmm: false,
+                vmm_maps: Vec::new(),
+                pool: None,
+                ipc_src: None,
+                ipc_opens: 0,
+                share_src: None,
+                share_opens: 0,
+                graph_access: Vec::new(),
+            },
+        );
+        Ok(id)
+    }
+
+    /// `cudaMallocManaged(..., cudaMemAttachHost)`: CPU-exclusive until a later
+    /// [`Self::stream_attach`].
+    pub fn alloc_managed_host(&mut self, bytes: u64) -> Result<AllocId, SimError> {
+        let id = self.alloc_managed(bytes)?;
+        self.alloc_mut(id)?.attach = Attach::Host;
+        Ok(id)
+    }
+
+    /// `cudaMallocManaged` with a flags word.
+    ///
+    /// [`MemAttachFlags::GLOBAL`] is [`Self::alloc_managed`].
+    /// [`MemAttachFlags::HOST`] is [`Self::alloc_managed_host`].
+    /// [`MemAttachFlags::SINGLE`] and other bits are Invalid `"managed flags"`.
+    /// Capture cannot include it. Typed helpers stay.
+    pub fn alloc_managed_with_flags(
+        &mut self,
+        bytes: u64,
+        flags: u32,
+    ) -> Result<AllocId, SimError> {
+        match flags {
+            MemAttachFlags::GLOBAL => self.alloc_managed(bytes),
+            MemAttachFlags::HOST => self.alloc_managed_host(bytes),
+            _ => Err(SimError::Invalid {
+                why: "managed flags",
+            }),
+        }
+    }
+
+    /// Current `cudaMemAttach*` visibility of a live managed allocation.
+    pub fn mem_attach(&self, id: AllocId) -> Result<MemAttach, SimError> {
+        let a = self.alloc_ref(id)?;
+        if !a.live {
+            return Err(SimError::Invalid { why: "freed" });
+        }
+        if !a.managed {
+            return Err(SimError::Invalid { why: "not managed" });
+        }
+        Ok(match a.attach {
+            Attach::Global => MemAttach::Global,
+            Attach::Host => MemAttach::Host,
+            Attach::Single(_) => MemAttach::Single,
+        })
+    }
+
+    /// Whether a kernel on `stream` may touch `id` under the current attach.
+    pub fn is_attached_to(&self, id: AllocId, stream: StreamId) -> Result<bool, SimError> {
+        Ok(self.alloc_ref(id)?.device_attach_ok(stream))
+    }
+
+    /// Whether `alloc` is live unified memory (`cudaMallocManaged`).
+    pub fn is_managed(&self, alloc: AllocId) -> Result<bool, SimError> {
+        let a = self.alloc_ref(alloc)?;
+        Ok(a.live && a.managed)
+    }
+
+    /// `cudaMemAdvise`. Host-synchronous. Capture cannot include it.
+    ///
+    /// [`MemAdvise::SetReadMostly`]: later [`Self::prefetch`] onto a second GPU
+    /// keeps the first copy. A kernel write invalidates the extra copies.
+    /// [`MemAdvise::SetAccessedBy`]: a kernel on `device` may read without
+    /// migrating (interconnect, not local HBM). Writes still migrate.
+    /// [`MemAdvise::SetPreferredLocation`]: a page already at that GPU stays
+    /// there on a remote read (same interconnect billing; writes still migrate).
+    /// [`MemAdvise::SetPreferredLocationHost`] does not skip kernel first-touch.
+    pub fn mem_advise(
+        &mut self,
+        alloc: AllocId,
+        advice: MemAdvise,
+        device: DeviceId,
+    ) -> Result<(), SimError> {
+        let size = self.alloc_ref(alloc)?.bytes;
+        self.mem_advise_with_size(alloc, size, advice, device)
+    }
+
+    /// [`Self::mem_advise`] with the CUDA `count` argument.
+    ///
+    /// `size` must equal the allocation bytes. Other sizes Invalid
+    /// `"advise size"`. Partial advise is not modeled. Typed
+    /// [`Self::mem_advise`] stays. Capture cannot include it.
+    pub fn mem_advise_with_size(
+        &mut self,
+        alloc: AllocId,
+        size: u64,
+        advice: MemAdvise,
+        device: DeviceId,
+    ) -> Result<(), SimError> {
+        self.fail_if_capturing("cannot capture mem advise")?;
+        let a = self.alloc_ref(alloc)?;
+        if !a.live || !a.managed {
+            return Err(SimError::Invalid { why: "not managed" });
+        }
+        if size != a.bytes {
+            return Err(SimError::Invalid { why: "advise size" });
+        }
+        match advice {
+            MemAdvise::SetReadMostly => {
+                self.alloc_mut(alloc)?.read_mostly = true;
+            }
+            MemAdvise::UnsetReadMostly => {
+                self.alloc_mut(alloc)?.read_mostly = false;
+            }
+            MemAdvise::SetAccessedBy => {
+                let _gpu = self.profile.gpu(device)?;
+                let _ins = self.alloc_mut(alloc)?.accessed_by.insert(device);
+            }
+            MemAdvise::UnsetAccessedBy => {
+                let _gpu = self.profile.gpu(device)?;
+                let _was = self.alloc_mut(alloc)?.accessed_by.remove(&device);
+            }
+            MemAdvise::SetPreferredLocation => {
+                let _gpu = self.profile.gpu(device)?;
+                self.alloc_mut(alloc)?.preferred = Preferred::Gpu(device);
+            }
+            MemAdvise::SetPreferredLocationHost => {
+                self.alloc_mut(alloc)?.preferred = Preferred::Host;
+            }
+            MemAdvise::UnsetPreferredLocation => {
+                self.alloc_mut(alloc)?.preferred = Preferred::None;
+            }
+        }
+        self.clock = self.clock.saturating_add(self.first_alloc_ns().max(1));
+        Ok(())
+    }
+
+    /// `cudaMemAdvise` / `cudaMemAdvise_v2` with a [`Place`] location.
+    ///
+    /// [`MemAdvise::SetReadMostly`] / [`UnsetReadMostly`](MemAdvise::UnsetReadMostly) /
+    /// [`UnsetPreferredLocation`](MemAdvise::UnsetPreferredLocation) ignore
+    /// location. [`MemAdvise::SetPreferredLocation`] with a host place is
+    /// [`MemAdvise::SetPreferredLocationHost`]. AccessedBy requires
+    /// [`Place::Device`] (host is Invalid `"advise location"`). Typed
+    /// [`Self::mem_advise`] stays. Capture refused by that helper.
+    pub fn mem_advise_with_location(
+        &mut self,
+        alloc: AllocId,
+        advice: MemAdvise,
+        location: Place,
+    ) -> Result<(), SimError> {
+        match advice {
+            MemAdvise::SetReadMostly
+            | MemAdvise::UnsetReadMostly
+            | MemAdvise::UnsetPreferredLocation
+            | MemAdvise::SetPreferredLocationHost => {
+                let device = match location {
+                    Place::Device(d) => d,
+                    Place::Host | Place::HostPinned => DeviceId(0),
+                };
+                self.mem_advise(alloc, advice, device)
+            }
+            MemAdvise::SetPreferredLocation => match location {
+                Place::Device(d) => self.mem_advise(alloc, advice, d),
+                Place::Host | Place::HostPinned => {
+                    self.mem_advise(alloc, MemAdvise::SetPreferredLocationHost, DeviceId(0))
+                }
+            },
+            MemAdvise::SetAccessedBy | MemAdvise::UnsetAccessedBy => match location {
+                Place::Device(d) => self.mem_advise(alloc, advice, d),
+                Place::Host | Place::HostPinned => Err(SimError::Invalid {
+                    why: "advise location",
+                }),
+            },
+        }
+    }
+
+    /// `cudaMemRangeGetAttribute`. Query; legal during capture.
+    ///
+    /// This VM tracks advice per live managed allocation, not per byte range.
+    /// Non-managed pointers are Invalid `"not managed"`. The CUDA `count` is
+    /// [`Self::mem_range_get_attribute_with_size`].
+    pub fn mem_range_get_attribute(
+        &self,
+        alloc: AllocId,
+        attr: MemRangeAttr,
+    ) -> Result<MemRangeAttrValue, SimError> {
+        let size = self.alloc_ref(alloc)?.bytes;
+        self.mem_range_get_attribute_with_size(alloc, size, attr)
+    }
+
+    /// [`Self::mem_range_get_attribute`] with the CUDA `count` argument.
+    ///
+    /// `size` must equal the allocation bytes. Other sizes Invalid
+    /// `"range size"`. Partial range queries are not modeled. Typed
+    /// [`Self::mem_range_get_attribute`] stays. Query; legal during capture.
+    pub fn mem_range_get_attribute_with_size(
+        &self,
+        alloc: AllocId,
+        size: u64,
+        attr: MemRangeAttr,
+    ) -> Result<MemRangeAttrValue, SimError> {
+        let a = self.alloc_ref(alloc)?;
+        if !a.live || !a.managed {
+            return Err(SimError::Invalid { why: "not managed" });
+        }
+        if size != a.bytes {
+            return Err(SimError::Invalid { why: "range size" });
+        }
+        Ok(match attr {
+            MemRangeAttr::ReadMostly => MemRangeAttrValue::ReadMostly(a.read_mostly),
+            MemRangeAttr::PreferredLocation => {
+                MemRangeAttrValue::PreferredLocation(a.preferred.to_place())
+            }
+            MemRangeAttr::AccessedBy => {
+                MemRangeAttrValue::AccessedBy(a.accessed_by.iter().copied().collect())
+            }
+            MemRangeAttr::LastPrefetchLocation => {
+                MemRangeAttrValue::LastPrefetchLocation(a.last_prefetch.to_place())
+            }
+            MemRangeAttr::PreferredLocationType => MemRangeAttrValue::PreferredLocationType(
+                MemLocationType::from_place(a.preferred.to_place()),
+            ),
+            MemRangeAttr::PreferredLocationId => MemRangeAttrValue::PreferredLocationId(
+                MemLocationType::id_from_place(a.preferred.to_place()),
+            ),
+            MemRangeAttr::LastPrefetchLocationType => MemRangeAttrValue::LastPrefetchLocationType(
+                MemLocationType::from_place(a.last_prefetch.to_place()),
+            ),
+            MemRangeAttr::LastPrefetchLocationId => MemRangeAttrValue::LastPrefetchLocationId(
+                MemLocationType::id_from_place(a.last_prefetch.to_place()),
+            ),
+        })
+    }
+
+    /// `cudaMemRangeGetAttributes`. Query; legal during capture.
+    ///
+    /// Same per-alloc rules as [`Self::mem_range_get_attribute`]. Empty
+    /// `attrs` is an empty vec. All-or-nothing: a non-managed pointer fails
+    /// the whole call. The CUDA `count` is
+    /// [`Self::mem_range_get_attributes_with_size`].
+    pub fn mem_range_get_attributes(
+        &self,
+        alloc: AllocId,
+        attrs: &[MemRangeAttr],
+    ) -> Result<Vec<MemRangeAttrValue>, SimError> {
+        let size = self.alloc_ref(alloc)?.bytes;
+        self.mem_range_get_attributes_with_size(alloc, size, attrs)
+    }
+
+    /// [`Self::mem_range_get_attributes`] with the CUDA `count` argument.
+    ///
+    /// `size` must equal the allocation bytes. Other sizes Invalid
+    /// `"range size"`. Partial range queries are not modeled. Empty `attrs`
+    /// is `Ok([])` after the pointer is a live managed alloc of that size.
+    /// Typed [`Self::mem_range_get_attributes`] stays. Query; legal during
+    /// capture.
+    pub fn mem_range_get_attributes_with_size(
+        &self,
+        alloc: AllocId,
+        size: u64,
+        attrs: &[MemRangeAttr],
+    ) -> Result<Vec<MemRangeAttrValue>, SimError> {
+        let a = self.alloc_ref(alloc)?;
+        if !a.live || !a.managed {
+            return Err(SimError::Invalid { why: "not managed" });
+        }
+        if size != a.bytes {
+            return Err(SimError::Invalid { why: "range size" });
+        }
+        attrs
+            .iter()
+            .copied()
+            .map(|attr| self.mem_range_get_attribute_with_size(alloc, size, attr))
+            .collect()
+    }
+
+    /// CUDA `dataSize` for one [`MemRangeAttr`]: 4 bytes (`sizeof(int)`) for
+    /// scalar attrs. AccessedBy is that times the device list plus a
+    /// `cudaInvalidDeviceId` terminator.
+    fn range_attr_need_data_size(attr: MemRangeAttr, accessed_by_len: usize) -> u64 {
+        const INT: u64 = 4;
+        match attr {
+            MemRangeAttr::AccessedBy => {
+                INT.saturating_mul((accessed_by_len as u64).saturating_add(1))
+            }
+            MemRangeAttr::ReadMostly
+            | MemRangeAttr::PreferredLocation
+            | MemRangeAttr::LastPrefetchLocation
+            | MemRangeAttr::PreferredLocationType
+            | MemRangeAttr::PreferredLocationId
+            | MemRangeAttr::LastPrefetchLocationType
+            | MemRangeAttr::LastPrefetchLocationId => INT,
+        }
+    }
+
+    /// [`Self::mem_range_get_attribute`] with the CUDA `dataSize` argument.
+    ///
+    /// Scalar attrs need 4 bytes. AccessedBy needs 4 bytes per device plus a
+    /// terminator. Smaller `data_size` is Invalid `"range data size"`. Larger
+    /// is accepted. Typed [`Self::mem_range_get_attribute`] stays (implicit
+    /// sufficient `dataSize`). Count is the allocation
+    /// ([`Self::mem_range_get_attribute_with_size`]). Query; legal during
+    /// capture.
+    pub fn mem_range_get_attribute_with_data_size(
+        &self,
+        alloc: AllocId,
+        data_size: u64,
+        attr: MemRangeAttr,
+    ) -> Result<MemRangeAttrValue, SimError> {
+        let a = self.alloc_ref(alloc)?;
+        if !a.live || !a.managed {
+            return Err(SimError::Invalid { why: "not managed" });
+        }
+        if data_size < Self::range_attr_need_data_size(attr, a.accessed_by.len()) {
+            return Err(SimError::Invalid {
+                why: "range data size",
+            });
+        }
+        self.mem_range_get_attribute_with_size(alloc, a.bytes, attr)
+    }
+
+    /// [`Self::mem_range_get_attributes`] with the CUDA `dataSizes` array.
+    ///
+    /// `attrs` and `data_sizes` must be the same length (else Invalid
+    /// `"range data sizes"`). Each entry follows
+    /// [`Self::mem_range_get_attribute_with_data_size`]. Typed
+    /// [`Self::mem_range_get_attributes`] stays. Query; legal during capture.
+    pub fn mem_range_get_attributes_with_data_sizes(
+        &self,
+        alloc: AllocId,
+        attrs: &[MemRangeAttr],
+        data_sizes: &[u64],
+    ) -> Result<Vec<MemRangeAttrValue>, SimError> {
+        let a = self.alloc_ref(alloc)?;
+        if !a.live || !a.managed {
+            return Err(SimError::Invalid { why: "not managed" });
+        }
+        if attrs.len() != data_sizes.len() {
+            return Err(SimError::Invalid {
+                why: "range data sizes",
+            });
+        }
+        let accessed = a.accessed_by.len();
+        let bytes = a.bytes;
+        for (attr, data_size) in attrs.iter().copied().zip(data_sizes.iter().copied()) {
+            if data_size < Self::range_attr_need_data_size(attr, accessed) {
+                return Err(SimError::Invalid {
+                    why: "range data size",
+                });
+            }
+        }
+        self.mem_range_get_attributes_with_size(alloc, bytes, attrs)
+    }
+
+    /// Whether [`MemAdvise::SetReadMostly`] is set.
+    pub fn is_read_mostly(&self, alloc: AllocId) -> Result<bool, SimError> {
+        let a = self.alloc_ref(alloc)?;
+        Ok(a.live && a.managed && a.read_mostly)
+    }
+
+    /// Whether `device` has [`MemAdvise::SetAccessedBy`], [`Self::va_set_access`],
+    /// [`Self::pool_set_access`], [`Self::pool_set_access_read`] on this
+    /// alloc's mempool, or a live [`Self::graph_add_alloc_with_access`] grant.
+    pub fn is_accessed_by(&self, alloc: AllocId, device: DeviceId) -> Result<bool, SimError> {
+        let a = self.alloc_ref(alloc)?;
+        if !a.live {
+            return Ok(false);
+        }
+        if a.accessed_by.contains(&device) && (a.managed || a.vmm) {
+            return Ok(true);
+        }
+        Ok(self.pool_peer_ok(a, device, false))
+    }
+
+    /// Whether [`MemAdvise::SetPreferredLocation`] names `device`.
+    pub fn is_preferred_location(
+        &self,
+        alloc: AllocId,
+        device: DeviceId,
+    ) -> Result<bool, SimError> {
+        let a = self.alloc_ref(alloc)?;
+        Ok(a.live && a.managed && matches!(a.preferred, Preferred::Gpu(p) if p == device))
+    }
+
+    /// Whether [`MemAdvise::SetPreferredLocationHost`] is set.
+    pub fn is_preferred_host(&self, alloc: AllocId) -> Result<bool, SimError> {
+        let a = self.alloc_ref(alloc)?;
+        Ok(a.live && a.managed && matches!(a.preferred, Preferred::Host))
+    }
+
+    /// Drop one GPU's copy of a [`MemAdvise::SetReadMostly`] managed alloc.
+    ///
+    /// Host-synchronous. Capture cannot include it. The allocation stays live
+    /// on every other device that still holds a copy. The last copy cannot be
+    /// dropped this way ([`Self::free_sync`] / [`Self::prefetch_host`]).
+    pub fn drop_managed_copy(&mut self, alloc: AllocId, device: DeviceId) -> Result<(), SimError> {
+        self.fail_if_capturing("cannot capture alloc/free")?;
+        let _gpu = self.profile.gpu(device)?;
+        let a = self.alloc_ref(alloc)?;
+        if !a.live || !a.managed {
+            return Err(SimError::Invalid { why: "not managed" });
+        }
+        if !a.read_mostly {
+            return Err(SimError::Invalid {
+                why: "not read-mostly",
+            });
+        }
+        if a.leases > 0 {
+            return Err(SimError::Leased { alloc });
+        }
+        if !a.devices.contains(&device) {
+            return Err(SimError::NotResident { alloc, device });
+        }
+        if a.devices.len() < 2 {
+            return Err(SimError::Invalid {
+                why: "last managed copy",
+            });
+        }
+        let bytes = a.bytes;
+        self.refund_device(device, alloc, bytes)?;
+        self.alloc_mut(alloc)?.devices.retain(|x| *x != device);
+        self.clock = self.clock.saturating_add(1);
+        Ok(())
+    }
+
+    /// `cuMemAddressReserve`: a VA with no physical pages. Does not charge HBM.
+    ///
+    /// [`Self::va_map`] maps the whole VA; [`Self::va_map_range`] maps a span.
+    /// Size and map offsets must be multiples of
+    /// [`HardwareProfile::va_granularity_bytes`] (`0`/`1` = any size).
+    /// Capture cannot include it. Typed helper;
+    /// [`Self::va_reserve_with_flags`] takes alignment, addr, and flags.
+    pub fn va_reserve(&mut self, bytes: u64) -> Result<AllocId, SimError> {
+        self.va_reserve_with_flags(bytes, 0, 0, MemReserveFlags::DEFAULT)
+    }
+
+    /// [`Self::va_reserve`] with CUDA alignment, addr, and flags.
+    ///
+    /// CUDA requires flags 0. Unknown bits Invalid `"mem reserve flags"`.
+    /// Nonzero `addr` is Invalid `"reserve addr"` (this VM assigns ids; a
+    /// fixed VA is not modeled). Nonzero `alignment` must be a power of two
+    /// that divides `bytes` (Invalid `"reserve alignment"`). Alignment `0` is
+    /// the driver default (profile granularity only).
+    pub fn va_reserve_with_flags(
+        &mut self,
+        bytes: u64,
+        alignment: u64,
+        addr: u64,
+        flags: u32,
+    ) -> Result<AllocId, SimError> {
+        self.fail_if_capturing("cannot capture alloc/free")?;
+        if flags != MemReserveFlags::DEFAULT {
+            return Err(SimError::Invalid {
+                why: "mem reserve flags",
+            });
+        }
+        if addr != 0 {
+            return Err(SimError::Invalid {
+                why: "reserve addr",
+            });
+        }
+        if alignment != 0 && (!alignment.is_power_of_two() || !bytes.is_multiple_of(alignment)) {
+            return Err(SimError::Invalid {
+                why: "reserve alignment",
+            });
+        }
+        if bytes == 0 {
+            return Err(SimError::Invalid {
+                why: "zero-byte alloc",
+            });
+        }
+        self.check_va_align(bytes)?;
+        self.clock = self.clock.saturating_add(self.first_alloc_ns());
+        let id = AllocId(self.next_alloc);
+        self.next_alloc = self.next_alloc.saturating_add(1);
+        let _prev = self.allocs.insert(
+            id,
+            Alloc {
+                bytes,
+                devices: Vec::new(),
+                leases: 0,
+                live: true,
+                host_pinned: false,
+                host_pageable: false,
+                host_mapped: false,
+                host_registered: false,
+                host_flags: 0,
+                managed: false,
+                attach: Attach::Global,
+                read_mostly: false,
+                accessed_by: BTreeSet::new(),
+                vmm_write_by: BTreeSet::new(),
+                preferred: Preferred::None,
+                last_prefetch: Preferred::None,
+                sync_memops: false,
+                vmm: true,
+                vmm_maps: Vec::new(),
+                pool: None,
+                ipc_src: None,
+                ipc_opens: 0,
+                share_src: None,
+                share_opens: 0,
+                graph_access: Vec::new(),
+            },
+        );
+        Ok(id)
+    }
+
+    /// Whether `alloc` is a live reserved VA (`cuMemAddressReserve`).
+    pub fn is_vmm(&self, alloc: AllocId) -> Result<bool, SimError> {
+        let a = self.alloc_ref(alloc)?;
+        Ok(a.live && a.vmm)
+    }
+
+    /// `cuMemCreate` + `cuMemMap` for the whole VA (local ReadWrite).
+    ///
+    /// Peer [`Self::va_set_access`] / [`Self::va_set_access_write`] is
+    /// `cuMemSetAccess` PROT_READ / PROT_READWRITE.
+    /// Equivalent to [`Self::va_map_range`] of `[0, bytes)`. Capture cannot include it.
+    /// Split create/map is [`Self::va_create`] then [`Self::va_map_handle`].
+    pub fn va_map(&mut self, id: AllocId, device: DeviceId) -> Result<(), SimError> {
+        let bytes = self.alloc_ref(id)?.bytes;
+        self.va_map_range(id, device, 0, bytes)
+    }
+
+    /// `cuMemCreate`: a device physical. Charges HBM. Does not map a VA.
+    ///
+    /// Host-synchronous. Capture cannot include it. Size must be granularity-aligned.
+    /// Starts with one handle ref. [`Self::va_map_handle`] maps this handle into a
+    /// reserved VA without a second HBM charge. [`Self::va_release_handle`] is
+    /// `cuMemRelease` (allowed while mapped). HBM refunds when refs and maps are
+    /// both 0. Typed helper; [`Self::va_create_with_prop`] takes the CUDA prop
+    /// and flags word.
+    pub fn va_create(&mut self, device: DeviceId, bytes: u64) -> Result<MemHandleId, SimError> {
+        self.va_create_with_prop(
+            bytes,
+            MemAllocationProp {
+                location: Place::Device(device),
+                ..MemAllocationProp::default()
+            },
+            MemCreateFlags::DEFAULT,
+        )
+    }
+
+    /// [`Self::va_create`] with `CUmemAllocationProp` and flags.
+    ///
+    /// CUDA requires flags 0. Unknown bits Invalid `"mem create flags"`.
+    /// [`MemAllocationProp::alloc_type`] must be pinned; location must be
+    /// [`Place::Device`]. Handle types other than none are Invalid
+    /// `"vmm handle types"` (POSIX-FD export is not modeled for VMM;
+    /// [`Self::va_export_to_shareable_handle`] is always `"not shareable"`).
+    /// [`MemAllocationProp::gpu_direct_rdma_capable`] is ignored (Get reports
+    /// the SKU). [`MemAllocationProp::compression`] must be 0 (`"mem compression"`).
+    /// [`MemAllocationProp::usage`] must be [`MemHandleUsage::NONE`] (`"mem usage"`).
+    pub fn va_create_with_prop(
+        &mut self,
+        bytes: u64,
+        prop: MemAllocationProp,
+        flags: u32,
+    ) -> Result<MemHandleId, SimError> {
+        self.fail_if_capturing("cannot capture alloc/free")?;
+        if flags != MemCreateFlags::DEFAULT {
+            return Err(SimError::Invalid {
+                why: "mem create flags",
+            });
+        }
+        if prop.alloc_type != MemAllocationType::PINNED {
+            return Err(SimError::Invalid { why: "alloc type" });
+        }
+        let device = match prop.location {
+            Place::Device(d) => d,
+            Place::Host | Place::HostPinned => {
+                return Err(SimError::Invalid {
+                    why: "create location",
+                });
+            }
+        };
+        if prop.handle_types != MemHandleType::NONE {
+            return Err(SimError::Invalid {
+                why: "vmm handle types",
+            });
+        }
+        if prop.compression != 0 {
+            return Err(SimError::Invalid {
+                why: "mem compression",
+            });
+        }
+        if prop.usage != MemHandleUsage::NONE {
+            return Err(SimError::Invalid { why: "mem usage" });
+        }
+        if bytes == 0 {
+            return Err(SimError::Invalid {
+                why: "zero-byte alloc",
+            });
+        }
+        self.check_va_align(bytes)?;
+        let _gpu = self.profile.gpu(device)?;
+        self.reserve_hbm(device, bytes)?;
+        let ns = self.profile.gpu(device)?.alloc_overhead_ns.max(1);
+        self.clock = self.clock.saturating_add(ns);
+        let id = MemHandleId(self.next_handle);
+        self.next_handle = self.next_handle.saturating_add(1);
+        let _prev = self.mem_handles.insert(
+            id,
+            MemHandle {
+                device,
+                bytes,
+                refs: 1,
+                maps: 0,
+                charged: true,
+            },
+        );
+        Ok(id)
+    }
+
+    /// `cuMemMap` of an existing [`Self::va_create`] handle into a reserved VA.
+    ///
+    /// Host-synchronous. Does not charge HBM (the handle already holds the
+    /// physicals). `device` must be the handle's device. The handle must still
+    /// have a ref ([`Self::va_release_handle`] while mapped forbids further
+    /// maps). Capture cannot include it. Typed helper;
+    /// [`Self::va_map_handle_with_flags`] takes the CUDA flags word.
+    pub fn va_map_handle(
+        &mut self,
+        id: AllocId,
+        device: DeviceId,
+        offset: u64,
+        handle: MemHandleId,
+    ) -> Result<(), SimError> {
+        self.va_map_handle_with_flags(id, device, offset, handle, MemMapFlags::DEFAULT)
+    }
+
+    /// [`Self::va_map_handle`] with a flags word.
+    ///
+    /// CUDA requires 0. Unknown bits Invalid `"mem map flags"`.
+    pub fn va_map_handle_with_flags(
+        &mut self,
+        id: AllocId,
+        device: DeviceId,
+        offset: u64,
+        handle: MemHandleId,
+        flags: u32,
+    ) -> Result<(), SimError> {
+        self.fail_if_capturing("cannot capture alloc/free")?;
+        if flags != MemMapFlags::DEFAULT {
+            return Err(SimError::Invalid {
+                why: "mem map flags",
+            });
+        }
+        let bytes = self.handle_ref(handle)?.bytes;
+        self.va_map_handle_with_size(id, device, offset, handle, bytes, flags)
+    }
+
+    /// [`Self::va_map_handle`] with the CUDA size and flags.
+    ///
+    /// `size` must equal the handle bytes. Other sizes Invalid `"mem map size"`.
+    /// Flags must be [`MemMapFlags::DEFAULT`].
+    pub fn va_map_handle_with_size(
+        &mut self,
+        id: AllocId,
+        device: DeviceId,
+        offset: u64,
+        handle: MemHandleId,
+        size: u64,
+        flags: u32,
+    ) -> Result<(), SimError> {
+        self.fail_if_capturing("cannot capture alloc/free")?;
+        if flags != MemMapFlags::DEFAULT {
+            return Err(SimError::Invalid {
+                why: "mem map flags",
+            });
+        }
+        let h = self.handle_ref(handle)?;
+        if h.refs == 0 {
+            return Err(SimError::Invalid {
+                why: "handle released",
+            });
+        }
+        if h.device != device {
+            return Err(SimError::Invalid {
+                why: "handle device mismatch",
+            });
+        }
+        let bytes = h.bytes;
+        if size != bytes {
+            return Err(SimError::Invalid {
+                why: "mem map size",
+            });
+        }
+        let a = self.alloc_ref(id)?;
+        if a.leases > 0 {
+            return Err(SimError::Leased { alloc: id });
+        }
+        if !a.live || !a.vmm {
+            return Err(SimError::Invalid { why: "not a VA" });
+        }
+        let end = offset.saturating_add(bytes);
+        if end > a.bytes {
+            return Err(SimError::Invalid {
+                why: "range past VA",
+            });
+        }
+        self.check_va_align(offset)?;
+        if vmm_overlap(&a.vmm_maps, device, offset, bytes) {
+            return Err(SimError::Invalid {
+                why: "already mapped",
+            });
+        }
+        let ns = self.profile.gpu(device)?.alloc_overhead_ns.max(1);
+        self.clock = self.clock.saturating_add(ns);
+        let a = self.alloc_mut(id)?;
+        a.vmm_maps.push((device, offset, bytes));
+        if !a.devices.contains(&device) {
+            a.devices.push(device);
+        }
+        self.vmm_idle.retain(|&x| x != id);
+        {
+            let h = self.handle_mut(handle)?;
+            h.maps = h.maps.saturating_add(1);
+        }
+        let _prev = self
+            .vmm_handle_at
+            .insert((id, device, offset, bytes), handle);
+        Ok(())
+    }
+
+    /// `cuMemRelease`. Allowed while the physical is still mapped.
+    ///
+    /// Drops one handle ref. HBM refunds when refs and maps are both 0.
+    /// Capture cannot include it. A released handle cannot be mapped again;
+    /// [`Self::va_retain_handle`] on a still-mapped VA restores a ref.
+    pub fn va_release_handle(&mut self, handle: MemHandleId) -> Result<(), SimError> {
+        self.fail_if_capturing("cannot capture alloc/free")?;
+        let refs = self.handle_ref(handle)?.refs;
+        if refs == 0 {
+            return Err(SimError::Invalid {
+                why: "handle released",
+            });
+        }
+        self.handle_mut(handle)?.refs = refs.saturating_sub(1);
+        self.clock = self.clock.saturating_add(1);
+        self.maybe_refund_handle(handle)
+    }
+
+    /// `cuMemRetainAllocationHandle` at a mapped `(device, offset)` span.
+    ///
+    /// Host-synchronous. Capture cannot include it. An explicit handle's ref
+    /// count increments (a released-but-mapped handle is restored to one ref).
+    /// A combined [`Self::va_map`] / [`Self::va_map_range`] span is promoted
+    /// so later unmaps do not refund until [`Self::va_release_handle`].
+    pub fn va_retain_handle(
+        &mut self,
+        id: AllocId,
+        device: DeviceId,
+        offset: u64,
+    ) -> Result<MemHandleId, SimError> {
+        self.fail_if_capturing("cannot capture alloc/free")?;
+        let _gpu = self.profile.gpu(device)?;
+        let a = self.alloc_ref(id)?;
+        if !a.live || !a.vmm {
+            return Err(SimError::Invalid { why: "not a VA" });
+        }
+        let bytes = a
+            .vmm_maps
+            .iter()
+            .find(|&&(d, o, _)| d == device && o == offset)
+            .map(|&(_, _, n)| n)
+            .ok_or(SimError::Invalid { why: "no such map" })?;
+        let key = (id, device, offset, bytes);
+        if let Some(&h) = self.vmm_handle_at.get(&key) {
+            let refs = self.handle_ref(h)?.refs;
+            self.handle_mut(h)?.refs = refs.saturating_add(1);
+            let ns = self.profile.gpu(device)?.alloc_overhead_ns.max(1);
+            self.clock = self.clock.saturating_add(ns);
+            return Ok(h);
+        }
+        let ns = self.profile.gpu(device)?.alloc_overhead_ns.max(1);
+        self.clock = self.clock.saturating_add(ns);
+        let h = MemHandleId(self.next_handle);
+        self.next_handle = self.next_handle.saturating_add(1);
+        let _prev = self.mem_handles.insert(
+            h,
+            MemHandle {
+                device,
+                bytes,
+                refs: 1,
+                maps: 1,
+                charged: true,
+            },
+        );
+        let _old = self.vmm_handle_at.insert(key, h);
+        Ok(h)
+    }
+
+    /// Whether `handle` still has a `cuMemCreate` / retain ref.
+    pub fn is_handle_live(&self, handle: MemHandleId) -> Result<bool, SimError> {
+        Ok(self.handle_ref(handle)?.refs > 0)
+    }
+
+    /// How many VA maps currently hold `handle`.
+    pub fn handle_maps(&self, handle: MemHandleId) -> Result<u32, SimError> {
+        Ok(self.handle_ref(handle)?.maps)
+    }
+
+    /// Outstanding `cuMemCreate` / [`Self::va_retain_handle`] refs.
+    pub fn handle_refs(&self, handle: MemHandleId) -> Result<u32, SimError> {
+        Ok(self.handle_ref(handle)?.refs)
+    }
+
+    /// `cuMemGetAllocationPropertiesFromHandle`. Query; legal during capture.
+    ///
+    /// Always [`MemAllocationType::PINNED`] at [`Place::Device`] of the
+    /// handle's GPU. Handle types are [`MemHandleType::NONE`] (`cuMemCreate`
+    /// does not store requested types). [`MemAllocationProp::gpu_direct_rdma_capable`]
+    /// is an RDMA link on that GPU. [`MemAllocationProp::compression`] /
+    /// [`MemAllocationProp::usage`] are always none.
+    /// Unknown ids are Invalid `"unknown handle"`.
+    pub fn va_get_allocation_properties(
+        &self,
+        handle: MemHandleId,
+    ) -> Result<MemAllocationProp, SimError> {
+        let h = self.handle_ref(handle)?;
+        Ok(MemAllocationProp {
+            alloc_type: MemAllocationType::PINNED,
+            handle_types: MemHandleType::NONE,
+            location: Place::Device(h.device),
+            gpu_direct_rdma_capable: self.profile.gpu_direct_rdma_supported(h.device),
+            compression: 0,
+            usage: MemHandleUsage::NONE,
+        })
+    }
+
+    /// `cuMemGetHandleForAddressRange`. Query; legal during capture.
+    ///
+    /// Always Invalid `"dma-buf not modeled"` ([`DeviceAttr::DmaBufSupported`]
+    /// is 0). [`MemRangeHandleType`] must be
+    /// [`MemRangeHandleType::DMA_BUF_FD`]. Flags must be
+    /// [`MemRangeHandleFlags::DEFAULT`] or
+    /// [`MemRangeHandleFlags::DMA_BUF_MAPPING_TYPE_PCIE`]. Unknown type
+    /// `"mem range handle type"`; unknown flags `"mem range handle flags"`.
+    /// Empty `bytes` Invalid `"dma-buf range"`. A range past the allocation
+    /// is `"range past alloc"`. Distinct from [`Self::ipc_get`] and
+    /// [`Self::create_shareable_pool`]. No Engine `--dma-buf`.
+    pub fn va_get_handle_for_address_range(
+        &self,
+        id: AllocId,
+        offset: u64,
+        bytes: u64,
+        handle_type: u32,
+        flags: u32,
+    ) -> Result<(), SimError> {
+        if handle_type != MemRangeHandleType::DMA_BUF_FD {
+            return Err(SimError::Invalid {
+                why: "mem range handle type",
+            });
+        }
+        if flags & !MemRangeHandleFlags::DMA_BUF_MAPPING_TYPE_PCIE != 0 {
+            return Err(SimError::Invalid {
+                why: "mem range handle flags",
+            });
+        }
+        if bytes == 0 {
+            return Err(SimError::Invalid {
+                why: "dma-buf range",
+            });
+        }
+        let a = self.alloc_ref(id)?;
+        if offset.saturating_add(bytes) > a.bytes {
+            return Err(SimError::Invalid {
+                why: "range past alloc",
+            });
+        }
+        Err(SimError::Invalid {
+            why: "dma-buf not modeled",
+        })
+    }
+
+    /// `cuMemExportToShareableHandle`. Always Invalid `"not shareable"`.
+    ///
+    /// [`MemAllocationProp::handle_types`] is always [`MemHandleType::NONE`]
+    /// (POSIX-FD VMM export is not modeled; mempools use
+    /// [`Self::pool_export`]). [`MemHandleType::POSIX_FILE_DESCRIPTOR`] only;
+    /// flags must be [`MemExportFlags::DEFAULT`]. Unknown type
+    /// `"vmm handle types"`; unknown flags `"mem export flags"`. Unknown
+    /// handles `"unknown handle"`. Capture cannot include it. Distinct from
+    /// [`Self::ipc_get`], [`Self::pool_export`], and
+    /// [`Self::va_get_handle_for_address_range`]. No Engine `--vmm-export`.
+    pub fn va_export_to_shareable_handle(
+        &self,
+        handle: MemHandleId,
+        handle_type: u64,
+        flags: u32,
+    ) -> Result<(), SimError> {
+        self.fail_if_capturing("cannot capture vmm export")?;
+        if flags != MemExportFlags::DEFAULT {
+            return Err(SimError::Invalid {
+                why: "mem export flags",
+            });
+        }
+        if handle_type != MemHandleType::POSIX_FILE_DESCRIPTOR {
+            return Err(SimError::Invalid {
+                why: "vmm handle types",
+            });
+        }
+        let _h = self.handle_ref(handle)?;
+        Err(SimError::Invalid {
+            why: "not shareable",
+        })
+    }
+
+    /// `cuMemGetAllocationGranularity`. Query; legal during capture.
+    ///
+    /// [`MemAllocationGranularity::MINIMUM`] and [`RECOMMENDED`](MemAllocationGranularity::RECOMMENDED)
+    /// return [`HardwareProfile::va_granularity_bytes`] (`0`/`1` → `1`; this VM
+    /// has one granularity). Other flags Invalid `"granularity flags"`.
+    /// [`MemAllocationProp::alloc_type`] must be pinned;
+    /// [`MemAllocationProp::location`] must be a device in the profile.
+    /// Handle types / RDMA on `prop` are ignored.
+    pub fn va_get_allocation_granularity(
+        &self,
+        prop: MemAllocationProp,
+        flags: u32,
+    ) -> Result<u64, SimError> {
+        if flags != MemAllocationGranularity::MINIMUM
+            && flags != MemAllocationGranularity::RECOMMENDED
+        {
+            return Err(SimError::Invalid {
+                why: "granularity flags",
+            });
+        }
+        if prop.alloc_type != MemAllocationType::PINNED {
+            return Err(SimError::Invalid { why: "alloc type" });
+        }
+        let device = match prop.location {
+            Place::Device(d) => d,
+            Place::Host | Place::HostPinned => {
+                return Err(SimError::Invalid {
+                    why: "granularity location",
+                });
+            }
+        };
+        let _gpu = self.profile.gpu(device)?;
+        let g = self.profile.va_granularity_bytes;
+        Ok(if g <= 1 { 1 } else { g })
+    }
+
+    /// `cuMulticastGetGranularity`. Query; legal during capture.
+    ///
+    /// [`MulticastGranularity::MINIMUM`] and [`RECOMMENDED`](MulticastGranularity::RECOMMENDED)
+    /// return [`HardwareProfile::multicast_granularity_bytes`] (`0`/`1` → `1`;
+    /// this VM has one granularity). Other flags Invalid
+    /// `"multicast granularity flags"`. Typed helper;
+    /// [`Self::multicast_get_granularity_with_prop`] takes
+    /// [`MulticastObjectProp`].
+    pub fn multicast_get_granularity(&self, flags: u32) -> Result<u64, SimError> {
+        self.multicast_get_granularity_with_prop(MulticastObjectProp::default(), flags)
+    }
+
+    /// [`Self::multicast_get_granularity`] with `CUmulticastObjectProp`.
+    ///
+    /// Handle types other than none Invalid `"multicast handle types"`.
+    /// Flags must be 0 ([`MulticastCreateFlags::DEFAULT`]; unknown bits Invalid
+    /// `"multicast create flags"`). Size and team size are not validated
+    /// (CUDA queries granularity before create). Granularity flags match
+    /// [`Self::multicast_get_granularity`].
+    pub fn multicast_get_granularity_with_prop(
+        &self,
+        prop: MulticastObjectProp,
+        flags: u32,
+    ) -> Result<u64, SimError> {
+        if prop.handle_types != MemHandleType::NONE {
+            return Err(SimError::Invalid {
+                why: "multicast handle types",
+            });
+        }
+        if prop.flags != MulticastCreateFlags::DEFAULT {
+            return Err(SimError::Invalid {
+                why: "multicast create flags",
+            });
+        }
+        if flags != MulticastGranularity::MINIMUM && flags != MulticastGranularity::RECOMMENDED {
+            return Err(SimError::Invalid {
+                why: "multicast granularity flags",
+            });
+        }
+        let g = self.profile.multicast_granularity_bytes;
+        Ok(if g <= 1 { 1 } else { g })
+    }
+
+    /// `cuMulticastCreate`: an NVLS multicast object. Does not charge HBM.
+    ///
+    /// Host-synchronous. Capture cannot include it. `bytes` must be
+    /// [`HardwareProfile::multicast_aligned`]. `num_devices` is the team size
+    /// (`cuMulticastAddDevice` must fill it before bind/map). PCIe-only and
+    /// 1-GPU profiles still create; bind/map fail without an NVLink clique.
+    /// Typed helper; [`Self::multicast_create_with_prop`] takes
+    /// [`MulticastObjectProp`].
+    pub fn multicast_create(
+        &mut self,
+        bytes: u64,
+        num_devices: u32,
+    ) -> Result<MulticastId, SimError> {
+        self.multicast_create_with_prop(MulticastObjectProp {
+            num_devices,
+            size: bytes,
+            ..MulticastObjectProp::default()
+        })
+    }
+
+    /// [`Self::multicast_create`] with `CUmulticastObjectProp`.
+    ///
+    /// Handle types other than none Invalid `"multicast handle types"`.
+    /// Flags must be 0 ([`MulticastCreateFlags::DEFAULT`]; unknown bits Invalid
+    /// `"multicast create flags"`). Size and team rules match
+    /// [`Self::multicast_create`].
+    pub fn multicast_create_with_prop(
+        &mut self,
+        prop: MulticastObjectProp,
+    ) -> Result<MulticastId, SimError> {
+        if prop.handle_types != MemHandleType::NONE {
+            return Err(SimError::Invalid {
+                why: "multicast handle types",
+            });
+        }
+        if prop.flags != MulticastCreateFlags::DEFAULT {
+            return Err(SimError::Invalid {
+                why: "multicast create flags",
+            });
+        }
+        let bytes = prop.size;
+        let num_devices = prop.num_devices;
+        if bytes == 0 {
+            return Err(SimError::Invalid {
+                why: "zero-byte alloc",
+            });
+        }
+        if num_devices < 2 {
+            return Err(SimError::Invalid {
+                why: "multicast needs NVLink",
+            });
+        }
+        self.check_mc_align(bytes)?;
+        self.fail_if_capturing("cannot capture alloc/free")?;
+        self.clock = self.clock.saturating_add(self.first_alloc_ns());
+        let id = MulticastId(self.next_mc);
+        self.next_mc = self.next_mc.saturating_add(1);
+        let _prev = self.multicasts.insert(
+            id,
+            Multicast {
+                bytes,
+                n_dev: num_devices,
+                devices: Vec::new(),
+                binds: BTreeMap::new(),
+                maps: 0,
+            },
+        );
+        Ok(id)
+    }
+
+    /// `cuMulticastAddDevice`. Host-synchronous. Capture cannot include it.
+    ///
+    /// Must run before bind/map. Duplicate add is Invalid. The completed team
+    /// must be an NVLink clique.
+    pub fn multicast_add_device(
+        &mut self,
+        mc: MulticastId,
+        device: DeviceId,
+    ) -> Result<(), SimError> {
+        self.fail_if_capturing("cannot capture alloc/free")?;
+        let _gpu = self.profile.gpu(device)?;
+        let done = {
+            let obj = self.mc_mut(mc)?;
+            if !obj.binds.is_empty() || obj.maps > 0 {
+                return Err(SimError::Invalid {
+                    why: "add all devices first",
+                });
+            }
+            if obj.devices.contains(&device) {
+                return Err(SimError::Invalid {
+                    why: "already added",
+                });
+            }
+            if u32::try_from(obj.devices.len()).unwrap_or(u32::MAX) >= obj.n_dev {
+                return Err(SimError::Invalid { why: "team full" });
+            }
+            obj.devices.push(device);
+            u32::try_from(obj.devices.len()).unwrap_or(0) == obj.n_dev
+        };
+        self.clock = self.clock.saturating_add(1);
+        if done {
+            let team = self.mc_ref(mc)?.devices.clone();
+            nvlink_clique(&self.profile, &team)?;
+        }
+        Ok(())
+    }
+
+    /// `cuMulticastBindMem` of a [`Self::va_create`] handle on `device`.
+    ///
+    /// Host-synchronous. Capture cannot include it. The handle's device and
+    /// size must match. All devices must already be added. Dest HBM is the
+    /// handle (already charged); bind does not charge again. Typed helper;
+    /// flags must be [`MulticastBindFlags::DEFAULT`].
+    pub fn multicast_bind_mem(
+        &mut self,
+        mc: MulticastId,
+        device: DeviceId,
+        handle: MemHandleId,
+    ) -> Result<(), SimError> {
+        self.multicast_bind_mem_with_flags(mc, device, handle, MulticastBindFlags::DEFAULT)
+    }
+
+    /// [`Self::multicast_bind_mem`] with a flags word.
+    ///
+    /// CUDA requires 0. Unknown bits are Invalid `"multicast bind flags"`.
+    pub fn multicast_bind_mem_with_flags(
+        &mut self,
+        mc: MulticastId,
+        device: DeviceId,
+        handle: MemHandleId,
+        flags: u32,
+    ) -> Result<(), SimError> {
+        self.fail_if_capturing("cannot capture alloc/free")?;
+        if flags != MulticastBindFlags::DEFAULT {
+            return Err(SimError::Invalid {
+                why: "multicast bind flags",
+            });
+        }
+        let bytes = self.handle_ref(handle)?.bytes;
+        self.multicast_bind_mem_with_size(mc, device, handle, bytes, flags)
+    }
+
+    /// [`Self::multicast_bind_mem`] with the CUDA size and flags.
+    ///
+    /// `size` must equal the handle bytes. Other sizes Invalid `"bind size"`.
+    /// CUDA `mcOffset` / `memOffset` are 0 (partial bind is not modeled).
+    /// Flags must be [`MulticastBindFlags::DEFAULT`]. Handle vs multicast
+    /// object size mismatch stays `"handle size mismatch"`.
+    pub fn multicast_bind_mem_with_size(
+        &mut self,
+        mc: MulticastId,
+        device: DeviceId,
+        handle: MemHandleId,
+        size: u64,
+        flags: u32,
+    ) -> Result<(), SimError> {
+        self.fail_if_capturing("cannot capture alloc/free")?;
+        if flags != MulticastBindFlags::DEFAULT {
+            return Err(SimError::Invalid {
+                why: "multicast bind flags",
+            });
+        }
+        let h = self.handle_ref(handle)?;
+        if h.refs == 0 {
+            return Err(SimError::Invalid {
+                why: "handle released",
+            });
+        }
+        if h.device != device {
+            return Err(SimError::Invalid {
+                why: "handle device mismatch",
+            });
+        }
+        let h_bytes = h.bytes;
+        if size != h_bytes {
+            return Err(SimError::Invalid { why: "bind size" });
+        }
+        let (n_dev, n_added, in_team, already, obj_bytes, team) = {
+            let obj = self.mc_ref(mc)?;
+            (
+                obj.n_dev,
+                u32::try_from(obj.devices.len()).unwrap_or(0),
+                obj.devices.contains(&device),
+                obj.binds.contains_key(&device),
+                obj.bytes,
+                obj.devices.clone(),
+            )
+        };
+        if n_added != n_dev {
+            return Err(SimError::Invalid {
+                why: "add all devices first",
+            });
+        }
+        if !in_team {
+            return Err(SimError::Invalid {
+                why: "device not in team",
+            });
+        }
+        if already {
+            return Err(SimError::Invalid {
+                why: "already bound",
+            });
+        }
+        if h_bytes != obj_bytes {
+            return Err(SimError::Invalid {
+                why: "handle size mismatch",
+            });
+        }
+        nvlink_clique(&self.profile, &team)?;
+        let _prev = self.mc_mut(mc)?.binds.insert(device, handle);
+        self.clock = self.clock.saturating_add(1);
+        Ok(())
+    }
+
+    /// `cuMulticastBindAddr` of a mapped VMM VA on `device`.
+    ///
+    /// Retains a [`MemHandleId`] for the map at offset 0, then
+    /// [`Self::multicast_bind_mem`]. Partial offset/size bind is not modeled.
+    /// Typed helper; flags must be [`MulticastBindFlags::DEFAULT`].
+    pub fn multicast_bind_addr(
+        &mut self,
+        mc: MulticastId,
+        device: DeviceId,
+        id: AllocId,
+    ) -> Result<(), SimError> {
+        self.multicast_bind_addr_with_flags(mc, device, id, MulticastBindFlags::DEFAULT)
+    }
+
+    /// [`Self::multicast_bind_addr`] with a flags word.
+    ///
+    /// CUDA requires 0. Unknown bits are Invalid `"multicast bind flags"`.
+    pub fn multicast_bind_addr_with_flags(
+        &mut self,
+        mc: MulticastId,
+        device: DeviceId,
+        id: AllocId,
+        flags: u32,
+    ) -> Result<(), SimError> {
+        self.fail_if_capturing("cannot capture alloc/free")?;
+        let bytes = self.alloc_ref(id)?.bytes;
+        self.multicast_bind_addr_with_size(mc, device, id, bytes, flags)
+    }
+
+    /// [`Self::multicast_bind_addr`] with the CUDA size and flags.
+    ///
+    /// `size` must equal the reserved VA. Other sizes Invalid `"bind size"`.
+    /// CUDA `mcOffset` is 0 (partial bind is not modeled). Flags must be
+    /// [`MulticastBindFlags::DEFAULT`].
+    pub fn multicast_bind_addr_with_size(
+        &mut self,
+        mc: MulticastId,
+        device: DeviceId,
+        id: AllocId,
+        size: u64,
+        flags: u32,
+    ) -> Result<(), SimError> {
+        self.fail_if_capturing("cannot capture alloc/free")?;
+        if flags != MulticastBindFlags::DEFAULT {
+            return Err(SimError::Invalid {
+                why: "multicast bind flags",
+            });
+        }
+        let a = self.alloc_ref(id)?;
+        if size != a.bytes {
+            return Err(SimError::Invalid { why: "bind size" });
+        }
+        let h = self.handle_for_bind(id, device)?;
+        self.multicast_bind_mem(mc, device, h)
+    }
+
+    /// `cuMulticastUnbind` of a whole-handle bind on `device`.
+    ///
+    /// Host-synchronous. Capture cannot include it. Partial offset/size unbind
+    /// is not modeled. Live [`Self::va_map_multicast`] maps are Invalid
+    /// `"still mapped"`. A device that is not currently bound is Invalid
+    /// `"not bound"`. Typed helper; [`Self::multicast_unbind_with_size`] is the
+    /// CUDA size argument (must match the multicast object).
+    pub fn multicast_unbind(&mut self, mc: MulticastId, device: DeviceId) -> Result<(), SimError> {
+        self.fail_if_capturing("cannot capture alloc/free")?;
+        let bytes = self.mc_ref(mc)?.bytes;
+        self.multicast_unbind_with_size(mc, device, bytes)
+    }
+
+    /// [`Self::multicast_unbind`] with the CUDA multicast size.
+    ///
+    /// `size` must equal the object bytes. Other sizes Invalid `"unbind size"`.
+    /// CUDA `mcOffset` is 0 (partial unbind is not modeled). Host-synchronous;
+    /// capture refused.
+    pub fn multicast_unbind_with_size(
+        &mut self,
+        mc: MulticastId,
+        device: DeviceId,
+        size: u64,
+    ) -> Result<(), SimError> {
+        self.fail_if_capturing("cannot capture alloc/free")?;
+        let _gpu = self.profile.gpu(device)?;
+        let (maps, bound, bytes) = {
+            let obj = self.mc_ref(mc)?;
+            (obj.maps, obj.binds.contains_key(&device), obj.bytes)
+        };
+        if maps > 0 {
+            return Err(SimError::Invalid {
+                why: "still mapped",
+            });
+        }
+        if !bound {
+            return Err(SimError::Invalid { why: "not bound" });
+        }
+        if size != bytes {
+            return Err(SimError::Invalid { why: "unbind size" });
+        }
+        let _gone = self.mc_mut(mc)?.binds.remove(&device);
+        self.clock = self.clock.saturating_add(1);
+        Ok(())
+    }
+
+    /// `cuMemRelease` of a [`MulticastId`] (`cuMulticastCreate` handle).
+    ///
+    /// Host-synchronous. Capture cannot include it. Live
+    /// [`Self::va_map_multicast`] maps are Invalid `"still mapped"`. Remaining
+    /// binds are dropped (handles stay live). Unknown ids are Invalid
+    /// `"unknown multicast"`.
+    pub fn multicast_destroy(&mut self, mc: MulticastId) -> Result<(), SimError> {
+        self.fail_if_capturing("cannot capture alloc/free")?;
+        if self.mc_ref(mc)?.maps > 0 {
+            return Err(SimError::Invalid {
+                why: "still mapped",
+            });
+        }
+        let _gone = self.multicasts.remove(&mc);
+        self.clock = self.clock.saturating_add(1);
+        Ok(())
+    }
+
+    /// `cuMemMap` of a multicast object into a reserved VA (no extra HBM).
+    ///
+    /// Host-synchronous. Capture cannot include it. Every team device must
+    /// already be bound. Kernel writes to this VA are billed as one NVLS hop
+    /// and occupy compute (not a copy engine). Typed helper; flags must be
+    /// [`MemMapFlags::DEFAULT`].
+    pub fn va_map_multicast(
+        &mut self,
+        id: AllocId,
+        device: DeviceId,
+        offset: u64,
+        mc: MulticastId,
+    ) -> Result<(), SimError> {
+        self.va_map_multicast_with_flags(id, device, offset, mc, MemMapFlags::DEFAULT)
+    }
+
+    /// [`Self::va_map_multicast`] with a flags word.
+    ///
+    /// CUDA requires 0. Unknown bits Invalid `"mem map flags"`.
+    pub fn va_map_multicast_with_flags(
+        &mut self,
+        id: AllocId,
+        device: DeviceId,
+        offset: u64,
+        mc: MulticastId,
+        flags: u32,
+    ) -> Result<(), SimError> {
+        self.fail_if_capturing("cannot capture alloc/free")?;
+        if flags != MemMapFlags::DEFAULT {
+            return Err(SimError::Invalid {
+                why: "mem map flags",
+            });
+        }
+        let bytes = self.mc_ref(mc)?.bytes;
+        self.va_map_multicast_with_size(id, device, offset, mc, bytes, flags)
+    }
+
+    /// [`Self::va_map_multicast`] with the CUDA size and flags.
+    ///
+    /// `size` must equal the multicast object bytes. Other sizes Invalid
+    /// `"mem map size"`. Flags must be [`MemMapFlags::DEFAULT`].
+    pub fn va_map_multicast_with_size(
+        &mut self,
+        id: AllocId,
+        device: DeviceId,
+        offset: u64,
+        mc: MulticastId,
+        size: u64,
+        flags: u32,
+    ) -> Result<(), SimError> {
+        self.fail_if_capturing("cannot capture alloc/free")?;
+        if flags != MemMapFlags::DEFAULT {
+            return Err(SimError::Invalid {
+                why: "mem map flags",
+            });
+        }
+        let (bytes, n_dev, n_binds, in_team, team) = {
+            let obj = self.mc_ref(mc)?;
+            (
+                obj.bytes,
+                obj.n_dev,
+                u32::try_from(obj.binds.len()).unwrap_or(0),
+                obj.devices.contains(&device),
+                obj.devices.clone(),
+            )
+        };
+        if size != bytes {
+            return Err(SimError::Invalid {
+                why: "mem map size",
+            });
+        }
+        if n_binds != n_dev {
+            return Err(SimError::Invalid {
+                why: "bind all devices first",
+            });
+        }
+        if !in_team {
+            return Err(SimError::Invalid {
+                why: "device not in team",
+            });
+        }
+        nvlink_clique(&self.profile, &team)?;
+        let a = self.alloc_ref(id)?;
+        if a.leases > 0 {
+            return Err(SimError::Leased { alloc: id });
+        }
+        if !a.live || !a.vmm {
+            return Err(SimError::Invalid { why: "not a VA" });
+        }
+        let end = offset.saturating_add(bytes);
+        if end > a.bytes {
+            return Err(SimError::Invalid {
+                why: "range past VA",
+            });
+        }
+        self.check_va_align(offset)?;
+        if vmm_overlap(&a.vmm_maps, device, offset, bytes) {
+            return Err(SimError::Invalid {
+                why: "already mapped",
+            });
+        }
+        if self.mc_vas.contains_key(&id) {
+            return Err(SimError::Invalid {
+                why: "already mapped",
+            });
+        }
+        let ns = self.profile.gpu(device)?.alloc_overhead_ns.max(1);
+        self.clock = self.clock.saturating_add(ns);
+        let a = self.alloc_mut(id)?;
+        a.vmm_maps.push((device, offset, bytes));
+        if !a.devices.contains(&device) {
+            a.devices.push(device);
+        }
+        self.vmm_idle.retain(|&x| x != id);
+        let maps = self.mc_ref(mc)?.maps;
+        self.mc_mut(mc)?.maps = maps.saturating_add(1);
+        let _prev = self.mc_vas.insert(id, mc);
+        Ok(())
+    }
+
+    /// Whether `id` is a reserved VA mapped with [`Self::va_map_multicast`].
+    #[must_use]
+    pub fn is_multicast_va(&self, id: AllocId) -> bool {
+        self.mc_vas.contains_key(&id)
+    }
+
+    /// How many devices currently have [`Self::multicast_bind_mem`] on `mc`.
+    pub fn multicast_binds(&self, mc: MulticastId) -> Result<u32, SimError> {
+        let n = self.mc_ref(mc)?.binds.len();
+        Ok(u32::try_from(n).unwrap_or(u32::MAX))
+    }
+
+    /// NVLS kernel store: bind `id`'s VMM maps on `src` and `dests`, then write.
+    ///
+    /// Each device must already have a whole-VA [`Self::va_map`] / handle map
+    /// (dest HBM is that physical). Enqueues a compute kernel whose duration is
+    /// one NVLink hop of `id`'s bytes, not `dests.len()` sequential D2Ds.
+    /// Capture cannot include the create/bind/map; the kernel may be captured
+    /// later. `dests` must be nonempty and not include `src`.
+    pub fn multicast_store(
+        &mut self,
+        src: DeviceId,
+        id: AllocId,
+        dests: &[DeviceId],
+        stream: StreamId,
+    ) -> Result<OpId, SimError> {
+        self.fail_if_capturing("cannot capture alloc/free")?;
+        let bytes = self.alloc_ref(id)?.bytes;
+        let team = multicast_team(src, dests)?;
+        nvlink_clique(&self.profile, &team)?;
+        self.require_whole_maps(id, &team)?;
+        let n = u32::try_from(team.len()).unwrap_or(0);
+        let mc = self.multicast_create(bytes, n)?;
+        for d in &team {
+            self.multicast_add_device(mc, *d)?;
+        }
+        for d in team {
+            self.multicast_bind_addr(mc, d, id)?;
+        }
+        let va = self.va_reserve(bytes)?;
+        self.va_map_multicast(va, src, 0, mc)?;
+        self.kernel(src, KernelKind::other(0, bytes), &[id], &[va], stream)
+    }
+
+    fn require_whole_maps(&self, id: AllocId, team: &[DeviceId]) -> Result<(), SimError> {
+        let a = self.alloc_ref(id)?;
+        if !a.live || !a.vmm {
+            return Err(SimError::Invalid { why: "not a VA" });
+        }
+        let bytes = a.bytes;
+        for &d in team {
+            if !vmm_covers(&a.vmm_maps, d, 0, bytes) {
+                return Err(SimError::NotResident {
+                    alloc: id,
+                    device: d,
+                });
+            }
+            let page = a
+                .vmm_maps
+                .iter()
+                .find(|&&(dev, off, _)| dev == d && off == 0)
+                .map(|&(_, _, n)| n);
+            if page != Some(bytes) {
+                return Err(SimError::Invalid {
+                    why: "multicast needs whole-VA maps",
+                });
+            }
+        }
+        Ok(())
+    }
+
+    fn handle_for_bind(&mut self, id: AllocId, device: DeviceId) -> Result<MemHandleId, SimError> {
+        let bytes = self.alloc_ref(id)?.bytes;
+        let key = (id, device, 0, bytes);
+        if let Some(&h) = self.vmm_handle_at.get(&key) {
+            return Ok(h);
+        }
+        self.va_retain_handle(id, device, 0)
+    }
+
+    /// Map `[offset, offset+bytes)` of a reserved VA onto `device`.
+    ///
+    /// Host-synchronous. Charges `bytes` of HBM. Overlapping maps on the same
+    /// device fail. Offset and `bytes` must be granularity-aligned.
+    /// [`Self::kernel`] needs the full VA covered; [`Self::kernel_bufs`]
+    /// may run on this span. A hole is [`SimError::NotResident`] for that API.
+    /// Capture cannot include it.
+    pub fn va_map_range(
+        &mut self,
+        id: AllocId,
+        device: DeviceId,
+        offset: u64,
+        bytes: u64,
+    ) -> Result<(), SimError> {
+        self.fail_if_capturing("cannot capture alloc/free")?;
+        let _gpu = self.profile.gpu(device)?;
+        let a = self.alloc_ref(id)?;
+        if a.leases > 0 {
+            return Err(SimError::Leased { alloc: id });
+        }
+        if !a.live || !a.vmm {
+            return Err(SimError::Invalid { why: "not a VA" });
+        }
+        if bytes == 0 {
+            return Err(SimError::Invalid {
+                why: "zero-byte alloc",
+            });
+        }
+        let end = offset.saturating_add(bytes);
+        if end > a.bytes {
+            return Err(SimError::Invalid {
+                why: "range past VA",
+            });
+        }
+        self.check_va_align(offset)?;
+        self.check_va_align(bytes)?;
+        if vmm_overlap(&a.vmm_maps, device, offset, bytes) {
+            return Err(SimError::Invalid {
+                why: "already mapped",
+            });
+        }
+        self.reserve_hbm(device, bytes)?;
+        let ns = self.profile.gpu(device)?.alloc_overhead_ns.max(1);
+        self.clock = self.clock.saturating_add(ns);
+        let a = self.alloc_mut(id)?;
+        a.vmm_maps.push((device, offset, bytes));
+        if !a.devices.contains(&device) {
+            a.devices.push(device);
+        }
+        self.vmm_idle.retain(|&x| x != id);
+        Ok(())
+    }
+
+    /// `cuMemUnmap` + `cuMemRelease` for every physical on this VA.
+    ///
+    /// Host-synchronous: in-flight kernels using this pointer complete first.
+    /// Typed helper; [`Self::va_unmap_with_size`] is the CUDA size argument
+    /// (must match the reservation).
+    pub fn va_unmap(&mut self, id: AllocId) -> Result<(), SimError> {
+        self.fail_if_capturing("cannot capture alloc/free")?;
+        let bytes = self.alloc_ref(id)?.bytes;
+        self.va_unmap_with_size(id, bytes)
+    }
+
+    /// [`Self::va_unmap`] with the CUDA reservation size.
+    ///
+    /// `size` must equal the reserved bytes. Other sizes Invalid `"unmap size"`.
+    /// Partial unmap is [`Self::va_unmap_range`]. Host-synchronous; capture
+    /// refused.
+    pub fn va_unmap_with_size(&mut self, id: AllocId, size: u64) -> Result<(), SimError> {
+        self.fail_if_capturing("cannot capture alloc/free")?;
+        self.synchronize()?;
+        let a = self.alloc_ref(id)?;
+        if a.leases > 0 {
+            return Err(SimError::Leased { alloc: id });
+        }
+        if !a.live || !a.vmm {
+            return Err(SimError::Invalid { why: "not a VA" });
+        }
+        let maps = a.vmm_maps.clone();
+        if maps.is_empty() {
+            return Err(SimError::Invalid { why: "not mapped" });
+        }
+        if size != a.bytes {
+            return Err(SimError::Invalid { why: "unmap size" });
+        }
+        for (d, o, n) in maps {
+            self.drop_vmm_physical(id, d, o, n)?;
+        }
+        let a = self.alloc_mut(id)?;
+        a.vmm_maps.clear();
+        a.devices.clear();
+        a.accessed_by.clear();
+        a.vmm_write_by.clear();
+        self.drop_multicast_va(id);
+        Ok(())
+    }
+
+    /// Unmap one exact `(device, offset, bytes)` physical. The VA stays reserved.
+    pub fn va_unmap_range(
+        &mut self,
+        id: AllocId,
+        device: DeviceId,
+        offset: u64,
+        bytes: u64,
+    ) -> Result<(), SimError> {
+        self.fail_if_capturing("cannot capture alloc/free")?;
+        self.synchronize()?;
+        let a = self.alloc_ref(id)?;
+        if a.leases > 0 {
+            return Err(SimError::Leased { alloc: id });
+        }
+        if !a.live || !a.vmm {
+            return Err(SimError::Invalid { why: "not a VA" });
+        }
+        let pos = a
+            .vmm_maps
+            .iter()
+            .position(|&(d, o, n)| d == device && o == offset && n == bytes);
+        let Some(i) = pos else {
+            return Err(SimError::Invalid { why: "no such map" });
+        };
+        self.drop_vmm_physical(id, device, offset, bytes)?;
+        let a = self.alloc_mut(id)?;
+        let _gone = a.vmm_maps.remove(i);
+        if !a.vmm_maps.iter().any(|&(d, _, _)| d == device) {
+            a.devices.retain(|d| *d != device);
+        }
+        if a.vmm_maps.is_empty() {
+            a.accessed_by.clear();
+            a.vmm_write_by.clear();
+            self.drop_multicast_va(id);
+        }
+        Ok(())
+    }
+
+    /// `cuMemSetAccess` PROT_READ on `device` for a mapped VMM VA.
+    ///
+    /// Host-synchronous. Does not charge dest HBM. A kernel on `device` may
+    /// read physicals that live on another GPU (interconnect). Writes still
+    /// need a local map unless [`Self::va_set_access_write`]. Capture cannot
+    /// include it. Needs a topology link and directed peer access from the
+    /// home GPU, same as D2D. Downgrades a prior PROT_READWRITE on `device`.
+    pub fn va_set_access(&mut self, id: AllocId, device: DeviceId) -> Result<(), SimError> {
+        self.va_set_access_inner(id, device, false)
+    }
+
+    /// `cuMemSetAccess` PROT_READWRITE on `device` for a mapped VMM VA.
+    ///
+    /// Host-synchronous. Does not charge dest HBM. A kernel on `device` may
+    /// read **and write** home physicals (interconnect), same class as
+    /// [`Self::pool_set_access`]. Capture cannot include it.
+    pub fn va_set_access_write(&mut self, id: AllocId, device: DeviceId) -> Result<(), SimError> {
+        self.va_set_access_inner(id, device, true)
+    }
+
+    /// `cuMemSetAccess` with a flags word.
+    ///
+    /// [`MemAccessFlags::PROT_READ`] is [`Self::va_set_access`].
+    /// [`MemAccessFlags::PROT_READ_WRITE`] is [`Self::va_set_access_write`].
+    /// [`MemAccessFlags::PROT_NONE`] is [`Self::va_unset_access`]. Other bits
+    /// are Invalid `"va access flags"`. Typed helpers stay. Capture is refused
+    /// by those helpers.
+    pub fn va_set_access_with_flags(
+        &mut self,
+        id: AllocId,
+        device: DeviceId,
+        flags: u32,
+    ) -> Result<(), SimError> {
+        self.fail_if_capturing("cannot capture alloc/free")?;
+        let bytes = self.alloc_ref(id)?.bytes;
+        self.va_set_access_with_size(id, device, bytes, flags)
+    }
+
+    /// [`Self::va_set_access_with_flags`] with the CUDA size argument.
+    ///
+    /// `size` must equal the reserved bytes. Other sizes Invalid `"access size"`.
+    /// Partial SetAccess is not modeled. Flags are [`MemAccessFlags`].
+    pub fn va_set_access_with_size(
+        &mut self,
+        id: AllocId,
+        device: DeviceId,
+        size: u64,
+        flags: u32,
+    ) -> Result<(), SimError> {
+        self.fail_if_capturing("cannot capture alloc/free")?;
+        if flags != MemAccessFlags::PROT_READ
+            && flags != MemAccessFlags::PROT_READ_WRITE
+            && flags != MemAccessFlags::PROT_NONE
+        {
+            return Err(SimError::Invalid {
+                why: "va access flags",
+            });
+        }
+        let a = self.alloc_ref(id)?;
+        if size != a.bytes {
+            return Err(SimError::Invalid { why: "access size" });
+        }
+        if flags == MemAccessFlags::PROT_READ {
+            return self.va_set_access(id, device);
+        }
+        if flags == MemAccessFlags::PROT_READ_WRITE {
+            return self.va_set_access_write(id, device);
+        }
+        self.va_unset_access(id, device)
+    }
+
+    /// `cuMemSetAccess` with a descriptor array (`desc`, `count`).
+    ///
+    /// `size` must equal the reserved bytes. Host location Invalid
+    /// `"access location"`. Flags are [`MemAccessFlags`]. All-or-nothing: a
+    /// later Invalid leaves earlier descriptors unapplied. Empty `descs` is a
+    /// no-op after the size check. Host-synchronous; capture refused. Typed
+    /// helpers stay.
+    pub fn va_set_access_n(
+        &mut self,
+        id: AllocId,
+        size: u64,
+        descs: &[MemAccessDesc],
+    ) -> Result<(), SimError> {
+        self.fail_if_capturing("cannot capture alloc/free")?;
+        let a = self.alloc_ref(id)?;
+        if !a.live || !a.vmm {
+            return Err(SimError::Invalid { why: "not a VA" });
+        }
+        if size != a.bytes {
+            return Err(SimError::Invalid { why: "access size" });
+        }
+        let owner = a.vmm_home();
+        let mut ops = Vec::with_capacity(descs.len());
+        for desc in descs {
+            if desc.flags != MemAccessFlags::PROT_READ
+                && desc.flags != MemAccessFlags::PROT_READ_WRITE
+                && desc.flags != MemAccessFlags::PROT_NONE
+            {
+                return Err(SimError::Invalid {
+                    why: "va access flags",
+                });
+            }
+            let device = desc.location.device().ok_or(SimError::Invalid {
+                why: "access location",
+            })?;
+            let Some(owner) = owner else {
+                return Err(SimError::Invalid { why: "not mapped" });
+            };
+            let _gpu = self.profile.gpu(device)?;
+            if owner != device {
+                let _link = self.profile.link(Some(owner), Some(device))?;
+                if !self.peer_access(owner, device) {
+                    return Err(SimError::PeerDisabled {
+                        src: owner,
+                        dst: device,
+                    });
+                }
+            }
+            ops.push((device, desc.flags));
+        }
+        for (device, flags) in ops {
+            self.va_set_access_with_size(id, device, size, flags)?;
+        }
+        Ok(())
+    }
+
+    fn va_set_access_inner(
+        &mut self,
+        id: AllocId,
+        device: DeviceId,
+        write: bool,
+    ) -> Result<(), SimError> {
+        self.fail_if_capturing("cannot capture alloc/free")?;
+        let _gpu = self.profile.gpu(device)?;
+        let a = self.alloc_ref(id)?;
+        if !a.live || !a.vmm {
+            return Err(SimError::Invalid { why: "not a VA" });
+        }
+        let Some(owner) = a.vmm_home() else {
+            return Err(SimError::Invalid { why: "not mapped" });
+        };
+        if owner != device {
+            let _link = self.profile.link(Some(owner), Some(device))?;
+            if !self.peer_access(owner, device) {
+                return Err(SimError::PeerDisabled {
+                    src: owner,
+                    dst: device,
+                });
+            }
+        }
+        {
+            let a = self.alloc_mut(id)?;
+            let _ins = a.accessed_by.insert(device);
+            if write {
+                let _w = a.vmm_write_by.insert(device);
+            } else {
+                let _gone = a.vmm_write_by.remove(&device);
+            }
+        }
+        self.clock = self.clock.saturating_add(self.first_alloc_ns().max(1));
+        Ok(())
+    }
+
+    /// Drop [`Self::va_set_access`] / [`Self::va_set_access_write`] for `device`.
+    /// Host-synchronous.
+    pub fn va_unset_access(&mut self, id: AllocId, device: DeviceId) -> Result<(), SimError> {
+        self.fail_if_capturing("cannot capture alloc/free")?;
+        let _gpu = self.profile.gpu(device)?;
+        let a = self.alloc_ref(id)?;
+        if !a.live || !a.vmm {
+            return Err(SimError::Invalid { why: "not a VA" });
+        }
+        {
+            let a = self.alloc_mut(id)?;
+            let _was = a.accessed_by.remove(&device);
+            let _w = a.vmm_write_by.remove(&device);
+        }
+        self.clock = self.clock.saturating_add(self.first_alloc_ns().max(1));
+        Ok(())
+    }
+
+    /// Whether `device` has [`Self::va_set_access_write`] on this VMM VA.
+    pub fn is_va_write_accessed_by(
+        &self,
+        alloc: AllocId,
+        device: DeviceId,
+    ) -> Result<bool, SimError> {
+        let a = self.alloc_ref(alloc)?;
+        Ok(a.live && a.vmm && a.vmm_write_by.contains(&device))
+    }
+
+    /// `cuMemGetAccess`. Query; legal during capture.
+    ///
+    /// [`MemAccessFlags::PROT_READ_WRITE`] on a GPU that holds a local map,
+    /// and on peers after [`Self::va_set_access_write`].
+    /// [`MemAccessFlags::PROT_READ`] after [`Self::va_set_access`]. Else
+    /// [`MemAccessFlags::PROT_NONE`]. Unmapped `va_reserve` is Invalid
+    /// `"not mapped"`. Non-VMM is Invalid `"not a VA"`.
+    pub fn va_get_access(&self, id: AllocId, device: DeviceId) -> Result<u32, SimError> {
+        let _gpu = self.profile.gpu(device)?;
+        let a = self.alloc_ref(id)?;
+        if !a.live || !a.vmm {
+            return Err(SimError::Invalid { why: "not a VA" });
+        }
+        if a.vmm_home().is_none() {
+            return Err(SimError::Invalid { why: "not mapped" });
+        }
+        if a.vmm_maps.iter().any(|(d, _, _)| *d == device) || a.vmm_write_by.contains(&device) {
+            return Ok(MemAccessFlags::PROT_READ_WRITE);
+        }
+        if a.accessed_by.contains(&device) {
+            return Ok(MemAccessFlags::PROT_READ);
+        }
+        Ok(MemAccessFlags::PROT_NONE)
+    }
+
+    /// Mapped bytes of `alloc` currently charged on `device`.
+    pub fn vmm_mapped_bytes(&self, alloc: AllocId, device: DeviceId) -> Result<u64, SimError> {
+        let a = self.alloc_ref(alloc)?;
+        if !a.live || !a.vmm {
+            return Err(SimError::Invalid { why: "not a VA" });
+        }
+        Ok(a.vmm_maps
+            .iter()
+            .filter(|(d, _, _)| *d == device)
+            .fold(0u64, |acc, (_, _, n)| acc.saturating_add(*n)))
+    }
+
+    /// `cuMemAddressFree`. Must already be unmapped and not leased.
+    ///
+    /// Typed helper; [`Self::va_free_with_size`] is the CUDA size argument
+    /// (must match the reservation).
+    pub fn va_free(&mut self, id: AllocId) -> Result<(), SimError> {
+        self.fail_if_capturing("cannot capture alloc/free")?;
+        let bytes = self.alloc_ref(id)?.bytes;
+        self.va_free_with_size(id, bytes)
+    }
+
+    /// [`Self::va_free`] with the CUDA reservation size.
+    ///
+    /// `size` must equal the reserved bytes. Other sizes Invalid `"free size"`.
+    /// Partial free is not modeled. Still mapped is Invalid `"VA still mapped"`.
+    /// Non-VMM / freed is [`SimError::UnknownAlloc`]. Host-synchronous;
+    /// capture refused.
+    pub fn va_free_with_size(&mut self, id: AllocId, size: u64) -> Result<(), SimError> {
+        self.fail_if_capturing("cannot capture alloc/free")?;
+        let a = self.alloc_ref(id)?;
+        if a.leases > 0 {
+            return Err(SimError::Leased { alloc: id });
+        }
+        if !a.live || !a.vmm {
+            return Err(SimError::UnknownAlloc { alloc: id });
+        }
+        if !a.devices.is_empty() {
+            return Err(SimError::Invalid {
+                why: "VA still mapped",
+            });
+        }
+        if size != a.bytes {
+            return Err(SimError::Invalid { why: "free size" });
+        }
+        self.vmm_idle.retain(|&x| x != id);
+        self.alloc_mut(id)?.live = false;
+        Ok(())
+    }
+
+    fn take_idle_va(&mut self, bytes: u64) -> Option<AllocId> {
+        self.vmm_idle.retain(|&id| {
+            self.allocs
+                .get(&id)
+                .is_some_and(|a| a.live && a.vmm && a.devices.is_empty())
+        });
+        let pos = self
+            .vmm_idle
+            .iter()
+            .position(|&id| self.allocs.get(&id).is_some_and(|a| a.bytes == bytes))?;
+        Some(self.vmm_idle.remove(pos))
+    }
+
+    fn park_idle_va(&mut self, id: AllocId) {
+        if !self.vmm_idle.contains(&id) {
+            self.vmm_idle.push(id);
+        }
+    }
+
+    /// Reuse a [`Self::va_release`]d VA of `bytes`, or [`Self::va_reserve`].
+    ///
+    /// No physicals. Split create/map is [`Self::va_create`] then
+    /// [`Self::va_map_handle`]. Idle reuse skips a second `cuMemAddressReserve`.
+    /// Capture cannot include it.
+    pub fn va_reserve_idle(&mut self, bytes: u64) -> Result<AllocId, SimError> {
+        self.fail_if_capturing("cannot capture alloc/free")?;
+        if let Some(id) = self.take_idle_va(bytes) {
+            return Ok(id);
+        }
+        self.va_reserve(bytes)
+    }
+
+    /// Map a previously [`Self::va_release`]d VA of `bytes`, or [`Self::va_reserve`].
+    ///
+    /// Unmap keeps the pointer (vLLM-style). The next miss remaps without another
+    /// `cuMemAddressReserve`. Capture cannot include it.
+    pub fn va_acquire(&mut self, device: DeviceId, bytes: u64) -> Result<AllocId, SimError> {
+        if let Some(id) = self.take_idle_va(bytes) {
+            if let Err(e) = self.va_map(id, device) {
+                self.park_idle_va(id);
+                return Err(e);
+            }
+            return Ok(id);
+        }
+        let id = self.va_reserve(bytes)?;
+        if let Err(e) = self.va_map(id, device) {
+            self.park_idle_va(id);
+            return Err(e);
+        }
+        Ok(id)
+    }
+
+    /// [`Self::va_acquire`] mapping `page` physicals that cover the VA (vLLM KV analog).
+    ///
+    /// `page >= bytes` is [`Self::va_acquire`]. [`Self::kernel`] still needs the
+    /// whole VA covered; this splits `cuMemMap` so each block pays
+    /// `alloc_overhead_ns`. A paged working set that leaves holes uses
+    /// [`Self::va_map_range`] plus [`Self::kernel_bufs`].
+    pub fn va_acquire_paged(
+        &mut self,
+        device: DeviceId,
+        bytes: u64,
+        page: u64,
+    ) -> Result<AllocId, SimError> {
+        let page = page.max(1);
+        if page >= bytes {
+            return self.va_acquire(device, bytes);
+        }
+        let id = match self.take_idle_va(bytes) {
+            Some(id) => id,
+            None => self.va_reserve(bytes)?,
+        };
+        if let Err(e) = self.map_va_pages(id, device, page) {
+            self.park_idle_va(id);
+            return Err(e);
+        }
+        Ok(id)
+    }
+
+    fn map_va_pages(&mut self, id: AllocId, device: DeviceId, page: u64) -> Result<(), SimError> {
+        let total = self.alloc_ref(id)?.bytes;
+        let mut off = 0u64;
+        while off < total {
+            let n = page.min(total.saturating_sub(off));
+            if let Err(e) = self.va_map_range(id, device, off, n) {
+                if off > 0 {
+                    match self.va_unmap(id) {
+                        Ok(()) => {}
+                        Err(_u) => {}
+                    }
+                }
+                return Err(e);
+            }
+            off = off.saturating_add(n);
+        }
+        Ok(())
+    }
+
+    /// [`Self::va_unmap`] then keep the VA for [`Self::va_acquire`]. Does not
+    /// [`Self::va_free`]. Already-idle ids are a no-op. Capture cannot include it.
+    pub fn va_release(&mut self, id: AllocId) -> Result<(), SimError> {
+        if self.vmm_idle.contains(&id) {
+            return Ok(());
+        }
+        let a = self.alloc_ref(id)?;
+        if !a.live || !a.vmm {
+            return Err(SimError::Invalid { why: "not a VA" });
+        }
+        if !a.devices.is_empty() {
+            self.va_unmap(id)?;
+        }
+        self.park_idle_va(id);
+        Ok(())
+    }
+
+    /// Unmapped live VAs waiting for [`Self::va_acquire`].
+    #[must_use]
+    pub fn vmm_idle_len(&self) -> usize {
+        self.vmm_idle.len()
+    }
+
+    fn first_alloc_ns(&self) -> u64 {
+        self.profile
+            .gpus
+            .first()
+            .map(|g| g.alloc_overhead_ns)
+            .unwrap_or(1)
+            .max(1)
+    }
+
+    fn check_va_align(&self, n: u64) -> Result<(), SimError> {
+        if self.profile.va_aligned(n) {
+            Ok(())
+        } else {
+            Err(SimError::Invalid {
+                why: "unaligned VA",
+            })
+        }
+    }
+
+    fn check_mc_align(&self, n: u64) -> Result<(), SimError> {
+        if self.profile.multicast_aligned(n) {
+            Ok(())
+        } else {
+            Err(SimError::Invalid {
+                why: "unaligned multicast",
+            })
+        }
+    }
+
+    /// `cudaMemPrefetchAsync` onto `device`. Stream-ordered; migrates, does not
+    /// replicate unless [`MemAdvise::SetReadMostly`]. Already-local pages pay
+    /// 1 ns and skip the copy engine.
+    ///
+    /// Capture may record it (it is a memcpy). A kernel that first-touches
+    /// managed memory calls this on the same stream before the GEMM.
+    pub fn prefetch(
+        &mut self,
+        device: DeviceId,
+        alloc: AllocId,
+        stream: StreamId,
+    ) -> Result<OpId, SimError> {
+        let size = self.alloc_ref(alloc)?.bytes;
+        self.prefetch_with_size(device, alloc, size, stream)
+    }
+
+    /// [`Self::prefetch`] with the CUDA `count` argument.
+    ///
+    /// `size` must equal the allocation bytes. Other sizes Invalid
+    /// `"prefetch size"`. Partial prefetch is not modeled. Typed
+    /// [`Self::prefetch`] stays. Capture may record it.
+    pub fn prefetch_with_size(
+        &mut self,
+        device: DeviceId,
+        alloc: AllocId,
+        size: u64,
+        stream: StreamId,
+    ) -> Result<OpId, SimError> {
+        let (bytes, src) = self.managed_move_src(alloc, Some(device))?;
+        if size != bytes {
+            return Err(SimError::Invalid {
+                why: "prefetch size",
+            });
+        }
+        self.alloc_mut(alloc)?.last_prefetch = Preferred::Gpu(device);
+        self.memcpy(
+            device,
+            MemcpyOp {
+                src,
+                dst: Place::Device(device),
+                alloc,
+                bytes,
+                offset: 0,
+                ..MemcpyOp::default()
+            },
+            stream,
+        )
+    }
+
+    /// `cudaMemPrefetchAsync(..., cudaCpuDeviceId)`. Pages leave HBM.
+    ///
+    /// Submit on `device`'s `stream` (the stream that owns the work). Already
+    /// on the host is a 1 ns no-op on that stream.
+    pub fn prefetch_host(
+        &mut self,
+        device: DeviceId,
+        alloc: AllocId,
+        stream: StreamId,
+    ) -> Result<OpId, SimError> {
+        let size = self.alloc_ref(alloc)?.bytes;
+        self.prefetch_host_with_size(device, alloc, size, stream)
+    }
+
+    /// [`Self::prefetch_host`] with the CUDA `count` argument.
+    ///
+    /// `size` must equal the allocation bytes. Other sizes Invalid
+    /// `"prefetch size"`. Partial prefetch is not modeled. Typed
+    /// [`Self::prefetch_host`] stays. Capture may record it.
+    pub fn prefetch_host_with_size(
+        &mut self,
+        device: DeviceId,
+        alloc: AllocId,
+        size: u64,
+        stream: StreamId,
+    ) -> Result<OpId, SimError> {
+        let (bytes, src) = self.managed_move_src(alloc, None)?;
+        if size != bytes {
+            return Err(SimError::Invalid {
+                why: "prefetch size",
+            });
+        }
+        self.alloc_mut(alloc)?.last_prefetch = Preferred::Host;
+        let submit = match src {
+            Place::Device(d) => d,
+            Place::Host | Place::HostPinned => device,
+        };
+        self.memcpy(
+            submit,
+            MemcpyOp {
+                src,
+                dst: Place::HostPinned,
+                alloc,
+                bytes,
+                offset: 0,
+                ..MemcpyOp::default()
+            },
+            stream,
+        )
+    }
+
+    /// `cudaMemPrefetchAsync` / `cuMemPrefetchAsync_v2` with a flags word.
+    ///
+    /// CUDA requires `flags == 0` ([`PrefetchFlags::DEFAULT`]). Other bits are
+    /// Invalid `"prefetch flags"`. [`Place::Device`] is [`Self::prefetch`];
+    /// [`Place::Host`] / [`HostPinned`](Place::HostPinned) is
+    /// [`Self::prefetch_host`] (submit on `device`). The CUDA `count` is
+    /// [`Self::prefetch_with_size`] / [`Self::prefetch_host_with_size`].
+    /// Typed helpers stay.
+    /// Capture may record the memcpy.
+    pub fn prefetch_with_flags(
+        &mut self,
+        device: DeviceId,
+        alloc: AllocId,
+        dest: Place,
+        flags: u32,
+        stream: StreamId,
+    ) -> Result<OpId, SimError> {
+        if flags != PrefetchFlags::DEFAULT {
+            return Err(SimError::Invalid {
+                why: "prefetch flags",
+            });
+        }
+        match dest {
+            Place::Device(d) => self.prefetch(d, alloc, stream),
+            Place::Host | Place::HostPinned => self.prefetch_host(device, alloc, stream),
+        }
+    }
+
+    /// `cudaMemPrefetchBatchAsync`.
+    ///
+    /// Requires [`DeviceAttr::ConcurrentManagedAccess`] on every GPU. This VM
+    /// reports `0`, so the call is always Invalid `"concurrent managed
+    /// access"`. Single [`Self::prefetch`] / [`prefetch_with_flags`](Self::prefetch_with_flags)
+    /// stay (they do not have that CMA gate). Location hints / Host NUMA are
+    /// not reached.
+    #[expect(
+        clippy::too_many_arguments,
+        reason = "cudaMemPrefetchBatchAsync argument list"
+    )]
+    pub fn prefetch_batch_async(
+        &mut self,
+        device: DeviceId,
+        _allocs: &[AllocId],
+        _sizes: &[u64],
+        _dests: &[Place],
+        _dest_idxs: &[usize],
+        _flags: u64,
+        _stream: StreamId,
+    ) -> Result<Vec<OpId>, SimError> {
+        let _gpu = self.profile.gpu(device)?;
+        self.require_concurrent_managed_access()
+    }
+
+    /// `cudaMemDiscardBatchAsync`.
+    ///
+    /// Requires [`DeviceAttr::ConcurrentManagedAccess`] on every GPU. This VM
+    /// reports `0`, so the call is always Invalid `"concurrent managed
+    /// access"`. Discard contents are not modeled.
+    pub fn discard_batch_async(
+        &mut self,
+        device: DeviceId,
+        _allocs: &[AllocId],
+        _sizes: &[u64],
+        _flags: u64,
+        _stream: StreamId,
+    ) -> Result<Vec<OpId>, SimError> {
+        let _gpu = self.profile.gpu(device)?;
+        self.require_concurrent_managed_access()
+    }
+
+    /// `cudaMemDiscardAndPrefetchBatchAsync`.
+    ///
+    /// Requires [`DeviceAttr::ConcurrentManagedAccess`] on every GPU. This VM
+    /// reports `0`, so the call is always Invalid `"concurrent managed
+    /// access"`. Equivalent to discard-then-prefetch on hardware with CMA.
+    #[expect(
+        clippy::too_many_arguments,
+        reason = "cudaMemDiscardAndPrefetchBatchAsync argument list"
+    )]
+    pub fn discard_and_prefetch_batch_async(
+        &mut self,
+        device: DeviceId,
+        _allocs: &[AllocId],
+        _sizes: &[u64],
+        _dests: &[Place],
+        _dest_idxs: &[usize],
+        _flags: u64,
+        _stream: StreamId,
+    ) -> Result<Vec<OpId>, SimError> {
+        let _gpu = self.profile.gpu(device)?;
+        self.require_concurrent_managed_access()
+    }
+
+    fn require_concurrent_managed_access(&self) -> Result<Vec<OpId>, SimError> {
+        for g in &self.profile.gpus {
+            if self.device_get_attribute(g.id, DeviceAttr::ConcurrentManagedAccess)? == 0 {
+                return Err(SimError::Invalid {
+                    why: "concurrent managed access",
+                });
+            }
+        }
+        Err(SimError::Invalid {
+            why: "concurrent managed access",
+        })
+    }
+
+    /// Whether `alloc` is live in page-locked host memory.
+    pub fn is_host_pinned(&self, alloc: AllocId) -> Result<bool, SimError> {
+        let a = self.alloc_ref(alloc)?;
+        Ok(a.live && a.host_pinned)
+    }
+
+    /// Whether `alloc` is live pageable host memory (not yet [`Self::host_register`]).
+    pub fn is_host_pageable(&self, alloc: AllocId) -> Result<bool, SimError> {
+        let a = self.alloc_ref(alloc)?;
+        Ok(a.live && a.host_pageable)
+    }
+
+    /// Whether `alloc` is mapped into the device VA (zero-copy host).
+    pub fn is_host_mapped(&self, alloc: AllocId) -> Result<bool, SimError> {
+        let a = self.alloc_ref(alloc)?;
+        Ok(a.live && a.host_mapped)
+    }
+
+    /// Whether `alloc` came from [`Self::host_register`] (not `cudaMallocHost`).
+    pub fn is_host_registered(&self, alloc: AllocId) -> Result<bool, SimError> {
+        let a = self.alloc_ref(alloc)?;
+        Ok(a.live && a.host_registered)
+    }
+
+    /// `cudaHostRegister`: pin pageable host for DMA. Host-synchronous (mlock).
+    ///
+    /// Capture cannot include it. Already-pinned ids fail. [`Self::host_register_mapped`]
+    /// also maps the pointer so a kernel can read it without H2D. The CUDA `size`
+    /// argument is [`Self::host_register_with_size`].
+    pub fn host_register(&mut self, id: AllocId) -> Result<(), SimError> {
+        self.host_register_with_flags(id, HostAllocFlags::DEFAULT)
+    }
+
+    /// [`Self::host_register`] with the CUDA `size` argument.
+    ///
+    /// `size` must equal the allocation bytes. Other sizes Invalid
+    /// `"register size"`. Partial register is not modeled. Typed
+    /// [`Self::host_register`] stays. Capture cannot include it.
+    pub fn host_register_with_size(&mut self, id: AllocId, size: u64) -> Result<(), SimError> {
+        self.host_register_flags(id, Some(size), HostAllocFlags::DEFAULT)
+    }
+
+    /// `cudaHostRegisterMapped`: pin and map pageable host. Kernels may read it
+    /// over PCIe without a device copy.
+    pub fn host_register_mapped(&mut self, id: AllocId) -> Result<(), SimError> {
+        self.host_register_with_flags(id, HostAllocFlags::MAPPED)
+    }
+
+    /// `cudaHostRegister` with [`HostAllocFlags`].
+    ///
+    /// Known bits: [`HostAllocFlags::MAPPED`] / [`HostAllocFlags::PORTABLE`].
+    /// Portable is stored (no DMA/pin change). IoMemory / ReadOnly are Invalid
+    /// `"host register flags"`. Typed helpers stay. Uses the allocation's
+    /// byte count ([`Self::host_register_with_size`] is the CUDA `size`
+    /// argument).
+    pub fn host_register_with_flags(&mut self, id: AllocId, flags: u32) -> Result<(), SimError> {
+        const KNOWN: u32 = HostAllocFlags::MAPPED | HostAllocFlags::PORTABLE;
+        if flags & !KNOWN != 0 {
+            return Err(SimError::Invalid {
+                why: "host register flags",
+            });
+        }
+        self.host_register_flags(id, None, flags)
+    }
+
+    /// `cudaHostUnregister`. Only ids from [`Self::host_register`]. Must not be leased
+    /// or resident on a device.
+    pub fn host_unregister(&mut self, id: AllocId) -> Result<(), SimError> {
+        self.fail_if_capturing("cannot capture host register")?;
+        self.synchronize()?;
+        let a = self.alloc_ref(id)?;
+        if a.leases > 0 {
+            return Err(SimError::Leased { alloc: id });
+        }
+        if !a.live || !a.host_registered {
+            return Err(SimError::Invalid {
+                why: "not registered",
+            });
+        }
+        if !a.devices.is_empty() {
+            return Err(SimError::Invalid {
+                why: "host-registered still resident on a device",
+            });
+        }
+        let bytes = a.bytes;
+        self.refund_pin(bytes);
+        let a = self.alloc_mut(id)?;
+        a.host_pinned = false;
+        a.host_mapped = false;
+        a.host_registered = false;
+        a.host_pageable = true;
+        a.host_flags = HostAllocFlags::DEFAULT;
+        Ok(())
+    }
+
+    /// Drop pageable host memory from [`Self::alloc_host`]. Unregister first if pinned.
+    pub fn free_host(&mut self, id: AllocId) -> Result<(), SimError> {
+        self.fail_if_capturing("cannot capture alloc/free")?;
+        self.synchronize()?;
+        let a = self.alloc_ref(id)?;
+        if a.leases > 0 {
+            return Err(SimError::Leased { alloc: id });
+        }
+        if !a.live || !a.host_pageable || a.host_pinned {
+            return Err(SimError::UnknownAlloc { alloc: id });
+        }
+        if !a.devices.is_empty() {
+            return Err(SimError::Invalid {
+                why: "host still resident on a device",
+            });
+        }
+        {
+            let a = self.alloc_mut(id)?;
+            a.live = false;
+            a.host_pageable = false;
+        }
+        self.clear_mailbox(id);
+        Ok(())
+    }
+
+    /// Drop a host-pinned allocation that is not resident on any GPU.
+    ///
+    /// Host-synchronous (`cudaFreeHost`): in-flight kernels using this pointer
+    /// complete first. Registered ids need [`Self::host_unregister`].
+    pub fn free_host_pinned(&mut self, id: AllocId) -> Result<(), SimError> {
+        if self.capturing.is_some() {
+            return Err(SimError::Invalid {
+                why: "cannot capture alloc/free",
+            });
+        }
+        self.synchronize()?;
+        let a = self.alloc_ref(id)?;
+        if a.leases > 0 {
+            return Err(SimError::Leased { alloc: id });
+        }
+        if !a.live || !a.host_pinned || a.host_registered {
+            return Err(SimError::UnknownAlloc { alloc: id });
+        }
+        if !a.devices.is_empty() {
+            return Err(SimError::Invalid {
+                why: "host-pinned still resident on a device",
+            });
+        }
+        let bytes = a.bytes;
+        self.refund_pin(bytes);
+        {
+            let a = self.alloc_mut(id)?;
+            a.live = false;
+            a.host_pinned = false;
+            a.host_mapped = false;
+            a.host_pageable = false;
+        }
+        self.clear_mailbox(id);
+        Ok(())
+    }
+
+    /// Stream-ordered free (`cudaFreeAsync`). Illegal while a kernel lease is held.
+    ///
+    /// Capture records a graph mem free node.
+    pub fn free(
+        &mut self,
+        device: DeviceId,
+        id: AllocId,
+        stream: StreamId,
+    ) -> Result<(), SimError> {
+        let _op = self.submit(device, stream, Kind::Free { id })?;
+        Ok(())
+    }
+
+    /// `cudaIpcGetMemHandle` of a live device allocation. Host-synchronous.
+    /// Capture cannot include it. The same alloc returns the same handle.
+    pub fn ipc_get(&mut self, id: AllocId) -> Result<IpcHandleId, SimError> {
+        self.fail_if_capturing("cannot capture ipc")?;
+        let d = {
+            let a = self.alloc_ref(id)?;
+            a.legacy_ipc_device().ok_or(SimError::Invalid {
+                why: "not device ipc",
+            })?
+        };
+        if let Some(h) = self
+            .ipc_handles
+            .iter()
+            .find_map(|(&h, src)| (*src == id).then_some(h))
+        {
+            return Ok(h);
+        }
+        let ns = self.profile.gpu(d)?.alloc_overhead_ns.max(1);
+        self.clock = self.clock.saturating_add(ns);
+        let h = IpcHandleId(self.next_ipc);
+        self.next_ipc = self.next_ipc.saturating_add(1);
+        let _prev = self.ipc_handles.insert(h, id);
+        Ok(h)
+    }
+
+    /// `cudaIpcOpenMemHandle` on `device`. Alias shares the source physicals
+    /// (no extra HBM). `device` must already hold the source.
+    pub fn ipc_open(&mut self, device: DeviceId, handle: IpcHandleId) -> Result<AllocId, SimError> {
+        self.fail_if_capturing("cannot capture ipc")?;
+        let src = *self
+            .ipc_handles
+            .get(&handle)
+            .ok_or(SimError::Invalid { why: "unknown ipc" })?;
+        let (bytes, devices, opens) = {
+            let a = self.alloc_ref(src)?;
+            if !a.live {
+                return Err(SimError::Invalid { why: "freed" });
+            }
+            if !a.devices.contains(&device) {
+                return Err(SimError::Invalid {
+                    why: "ipc device mismatch",
+                });
+            }
+            (a.bytes, a.devices.clone(), a.ipc_opens)
+        };
+        let ns = self.profile.gpu(device)?.alloc_overhead_ns.max(1);
+        self.clock = self.clock.saturating_add(ns);
+        self.alloc_mut(src)?.ipc_opens = opens.saturating_add(1);
+        let id = AllocId(self.next_alloc);
+        self.next_alloc = self.next_alloc.saturating_add(1);
+        let _prev = self.allocs.insert(
+            id,
+            Alloc {
+                bytes,
+                devices,
+                leases: 0,
+                live: true,
+                host_pinned: false,
+                host_pageable: false,
+                host_mapped: false,
+                host_registered: false,
+                host_flags: 0,
+                managed: false,
+                attach: Attach::Global,
+                read_mostly: false,
+                accessed_by: BTreeSet::new(),
+                vmm_write_by: BTreeSet::new(),
+                preferred: Preferred::None,
+                last_prefetch: Preferred::None,
+                sync_memops: false,
+                vmm: false,
+                vmm_maps: Vec::new(),
+                pool: None,
+                ipc_src: Some(src),
+                ipc_opens: 0,
+                share_src: None,
+                share_opens: 0,
+                graph_access: Vec::new(),
+            },
+        );
+        Ok(id)
+    }
+
+    /// `cudaIpcOpenMemHandle` with a flags word.
+    ///
+    /// Known bit: [`IpcMemFlags::LAZY_ENABLE_PEER_ACCESS`]. It is a no-op:
+    /// `device` must already hold the source (cross-GPU lazy peer is not
+    /// modeled). Other bits are Invalid `"ipc open flags"`. Typed
+    /// [`Self::ipc_open`] stays. Capture cannot include it.
+    pub fn ipc_open_with_flags(
+        &mut self,
+        device: DeviceId,
+        handle: IpcHandleId,
+        flags: u32,
+    ) -> Result<AllocId, SimError> {
+        const KNOWN: u32 = IpcMemFlags::LAZY_ENABLE_PEER_ACCESS;
+        if flags & !KNOWN != 0 {
+            return Err(SimError::Invalid {
+                why: "ipc open flags",
+            });
+        }
+        self.ipc_open(device, handle)
+    }
+
+    /// `cudaIpcCloseMemHandle`. Does not refund source HBM.
+    pub fn ipc_close(&mut self, id: AllocId) -> Result<(), SimError> {
+        self.fail_if_capturing("cannot capture ipc")?;
+        self.drop_ipc_import(id)
+    }
+
+    /// Whether `id` is a live [`Self::ipc_open`] alias.
+    pub fn is_ipc_import(&self, id: AllocId) -> Result<bool, SimError> {
+        let a = self.alloc_ref(id)?;
+        Ok(a.live && a.ipc_src.is_some())
+    }
+
+    /// `cudaIpcGetEventHandle`. Host-synchronous. Capture cannot include it.
+    ///
+    /// The event must be [`EventCreateFlags::INTERPROCESS`] (and therefore
+    /// disable-timing). The same event returns the same handle. An
+    /// [`Self::ipc_open_event`] alias cannot export.
+    pub fn ipc_get_event(&mut self, event: EventId) -> Result<IpcEventHandleId, SimError> {
+        self.fail_if_capturing("cannot capture ipc")?;
+        let ev = self
+            .events
+            .get(&event)
+            .ok_or(SimError::UnknownEvent { event: event.0 })?;
+        if ev.ipc_src.is_some() {
+            return Err(SimError::Invalid {
+                why: "ipc event import",
+            });
+        }
+        if !ev.interprocess {
+            return Err(SimError::Invalid {
+                why: "not interprocess",
+            });
+        }
+        if let Some(h) = self
+            .ipc_event_handles
+            .iter()
+            .find_map(|(&h, &src)| (src == event).then_some(h))
+        {
+            return Ok(h);
+        }
+        self.clock = self.clock.saturating_add(1);
+        let h = IpcEventHandleId(self.next_ipc_event);
+        self.next_ipc_event = self.next_ipc_event.saturating_add(1);
+        let _prev = self.ipc_event_handles.insert(h, event);
+        Ok(h)
+    }
+
+    /// `cudaIpcOpenEventHandle`. Alias shares the source record (no extra event).
+    /// Capture cannot include it. The returned id is simulator-chosen.
+    pub fn ipc_open_event(&mut self, handle: IpcEventHandleId) -> Result<EventId, SimError> {
+        self.fail_if_capturing("cannot capture ipc")?;
+        let src = *self
+            .ipc_event_handles
+            .get(&handle)
+            .ok_or(SimError::Invalid {
+                why: "unknown ipc event",
+            })?;
+        {
+            let ev = self
+                .events
+                .get(&src)
+                .ok_or(SimError::UnknownEvent { event: src.0 })?;
+            if ev.ipc_src.is_some() {
+                return Err(SimError::Invalid {
+                    why: "ipc event import",
+                });
+            }
+            if !ev.interprocess {
+                return Err(SimError::Invalid {
+                    why: "not interprocess",
+                });
+            }
+        }
+        self.clock = self.clock.saturating_add(1);
+        let id = self.alloc_imported_event()?;
+        if let Some(ev) = self.events.get_mut(&src) {
+            ev.ipc_opens = ev.ipc_opens.saturating_add(1);
+        }
+        let mut ev = Ev::new(false);
+        ev.interprocess = true;
+        ev.ipc_src = Some(src);
+        let _prev = self.events.insert(id, ev);
+        Ok(id)
+    }
+
+    /// Whether `event` is a live [`Self::ipc_open_event`] alias.
+    pub fn is_ipc_event_import(&self, event: EventId) -> Result<bool, SimError> {
+        let ev = self
+            .events
+            .get(&event)
+            .ok_or(SimError::UnknownEvent { event: event.0 })?;
+        Ok(ev.ipc_src.is_some())
+    }
+
+    fn alloc_imported_event(&mut self) -> Result<EventId, SimError> {
+        let start = if self.next_imported_event == 0 {
+            1
+        } else {
+            self.next_imported_event
+        };
+        let mut n = start;
+        loop {
+            let id = EventId(n);
+            if !self.events.contains_key(&id) {
+                self.next_imported_event = n.checked_add(1).unwrap_or(1);
+                return Ok(id);
+            }
+            n = n.checked_add(1).unwrap_or(1);
+            if n == start {
+                return Err(SimError::Invalid {
+                    why: "event id space",
+                });
+            }
+        }
+    }
+
+    /// `cudaFree`: wait every GPU that holds the pointer, then it is gone on
+    /// all of them. [`Self::free`] is `cudaFreeAsync`. Host-pinned ids are
+    /// [`SimError::UnknownAlloc`] (`cudaFreeHost` is [`Self::free_host_pinned`]).
+    pub fn free_sync(&mut self, id: AllocId) -> Result<(), SimError> {
+        if self.capturing.is_some() {
+            return Err(SimError::Invalid {
+                why: "cannot capture alloc/free",
+            });
+        }
+        let a = self.alloc_ref(id)?;
+        if a.host_pinned || a.host_pageable || a.vmm {
+            return Err(SimError::UnknownAlloc { alloc: id });
+        }
+        let holders = a.devices.clone();
+        if holders.is_empty() {
+            // Stream-ordered `alloc` may not have started; drain so OOM/residency
+            // is resolved before the host returns.
+            self.synchronize()?;
+        } else {
+            for d in holders {
+                self.synchronize_device(d)?;
+            }
+        }
+        let a = self.alloc_ref(id)?;
+        if a.leases > 0 {
+            return Err(SimError::Leased { alloc: id });
+        }
+        if a.ipc_src.is_some() {
+            return self.drop_ipc_import(id);
+        }
+        if a.share_src.is_some() {
+            return self.drop_share_import(id);
+        }
+        if a.ipc_opens > 0 {
+            return Err(SimError::Invalid { why: "ipc mapped" });
+        }
+        if a.share_opens > 0 {
+            return Err(SimError::Invalid {
+                why: "share mapped",
+            });
+        }
+        if !a.live || a.host_pinned {
+            return Err(SimError::UnknownAlloc { alloc: id });
+        }
+        let devices = a.devices.clone();
+        let bytes = a.bytes;
+        for d in &devices {
+            self.refund_device(*d, id, bytes)?;
+        }
+        {
+            let a = self.alloc_mut(id)?;
+            a.devices.clear();
+            a.live = false;
+        }
+        self.clear_mailbox(id);
+        Ok(())
+    }
+
+    /// Asynchronous copy (`cudaMemcpyAsync`) when both ends are device or pinned.
+    ///
+    /// Pageable host (`Place::Host`) is host-synchronous: the driver bounces
+    /// through pinned staging, so this call waits [`Self::synchronize_stream`]
+    /// before returning. Capture cannot include a pageable copy.
+    /// [`PointerAttr::SyncMemops`] on [`MemcpyOp::alloc`] or
+    /// [`DeviceFlags::SYNC_MEMOPS`] waits the stream the same way; capture of
+    /// that copy is `"cannot capture sync memops memcpy"` (pageable still wins
+    /// if both). Pinned DMA ([`Self::memcpy_pinned_to_device`]) stays
+    /// stream-ordered unless those flags are set. Explicit
+    /// [`Self::graph_add_memcpy`] / graph launch is not refused.
+    /// [`MemcpyOp::height`] `> 1` is `cudaMemcpy2DAsync`: billed bytes are
+    /// `width * height`, not pitch padding. [`MemcpyOp::depth`] `> 1` is
+    /// `cudaMemcpy3DAsync`: billed bytes are `width * height * depth`, not
+    /// row or slice padding.
+    pub fn memcpy(
+        &mut self,
+        device: DeviceId,
+        op: MemcpyOp,
+        stream: StreamId,
+    ) -> Result<OpId, SimError> {
+        let pageable = op.src.is_pageable() || op.dst.is_pageable();
+        let sync_ops = self.is_sync_memops(op.alloc)? || self.device_has_sync_memops(device);
+        if (pageable || sync_ops) && self.in_capture(device, stream) {
+            return Err(SimError::Invalid {
+                why: if sync_ops && !pageable {
+                    "cannot capture sync memops memcpy"
+                } else {
+                    "cannot capture pageable memcpy"
+                },
+            });
+        }
+        memcpy_2d_check(&op)?;
+        self.memcpy_range_ok(&op)?;
+        let id = self.submit(device, stream, Kind::Memcpy(op))?;
+        if pageable || sync_ops {
+            self.synchronize_stream(device, stream)?;
+        }
+        Ok(id)
+    }
+
+    /// `cudaMemcpy`: enqueue then wait for that stream (host-synchronous).
+    ///
+    /// Capture cannot include it. [`Self::memcpy`] is `cudaMemcpyAsync`.
+    pub fn memcpy_sync(
+        &mut self,
+        device: DeviceId,
+        op: MemcpyOp,
+        stream: StreamId,
+    ) -> Result<OpId, SimError> {
+        if self.capturing.is_some() {
+            return Err(SimError::Invalid {
+                why: "cannot capture host-sync memcpy",
+            });
+        }
+        let id = self.memcpy(device, op, stream)?;
+        self.synchronize_stream(device, stream)?;
+        Ok(id)
+    }
+
+    /// Pageable host → `device`. Host-synchronous and slower than pinned DMA.
+    ///
+    /// Real `cudaMemcpyAsync` of pageable memory bounces through a driver
+    /// staging buffer; the host does not return until this stream has finished
+    /// the copy. [`Self::memcpy_pinned_to_device`] is the overlapping path.
+    pub fn memcpy_host_to_device(
+        &mut self,
+        device: DeviceId,
+        alloc: AllocId,
+        bytes: u64,
+        stream: StreamId,
+    ) -> Result<OpId, SimError> {
+        self.memcpy(
+            device,
+            MemcpyOp {
+                src: Place::Host,
+                dst: Place::Device(device),
+                alloc,
+                bytes,
+                offset: 0,
+                ..MemcpyOp::default()
+            },
+            stream,
+        )
+    }
+
+    /// Page-locked host → `device` (CUDA DMA / `cudaMallocHost` source).
+    ///
+    /// `cuMemcpyHtoDAsync`. Host-synchronous [`Self::memcpy_htod`] is
+    /// `cuMemcpyHtoD`.
+    pub fn memcpy_pinned_to_device(
+        &mut self,
+        device: DeviceId,
+        alloc: AllocId,
+        bytes: u64,
+        stream: StreamId,
+    ) -> Result<OpId, SimError> {
+        self.memcpy(
+            device,
+            MemcpyOp {
+                src: Place::HostPinned,
+                dst: Place::Device(device),
+                alloc,
+                bytes,
+                offset: 0,
+                ..MemcpyOp::default()
+            },
+            stream,
+        )
+    }
+
+    /// `cuMemcpyHtoD`. Host-synchronous pinned H2D; capture cannot include it.
+    ///
+    /// [`Self::memcpy_pinned_to_device`] is `cuMemcpyHtoDAsync`.
+    /// [`Self::memcpy_host_to_device`] stays pageable.
+    /// [`Self::memcpy_sync`] stays generic `cudaMemcpy`.
+    pub fn memcpy_htod(
+        &mut self,
+        device: DeviceId,
+        alloc: AllocId,
+        bytes: u64,
+        stream: StreamId,
+    ) -> Result<OpId, SimError> {
+        if self.capturing.is_some() {
+            return Err(SimError::Invalid {
+                why: "cannot capture host-sync memcpy",
+            });
+        }
+        let id = self.memcpy_pinned_to_device(device, alloc, bytes, stream)?;
+        self.synchronize_stream(device, stream)?;
+        Ok(id)
+    }
+
+    /// `device` → pageable host. Host-synchronous; source HBM residency is kept.
+    pub fn memcpy_device_to_host(
+        &mut self,
+        device: DeviceId,
+        alloc: AllocId,
+        bytes: u64,
+        stream: StreamId,
+    ) -> Result<OpId, SimError> {
+        self.memcpy(
+            device,
+            MemcpyOp {
+                src: Place::Device(device),
+                dst: Place::Host,
+                alloc,
+                bytes,
+                offset: 0,
+                ..MemcpyOp::default()
+            },
+            stream,
+        )
+    }
+
+    /// `device` → page-locked host. Source HBM residency is kept (copy).
+    ///
+    /// `cuMemcpyDtoHAsync`. Host-synchronous [`Self::memcpy_dtoh`] is
+    /// `cuMemcpyDtoH`.
+    pub fn memcpy_device_to_pinned(
+        &mut self,
+        device: DeviceId,
+        alloc: AllocId,
+        bytes: u64,
+        stream: StreamId,
+    ) -> Result<OpId, SimError> {
+        self.memcpy(
+            device,
+            MemcpyOp {
+                src: Place::Device(device),
+                dst: Place::HostPinned,
+                alloc,
+                bytes,
+                offset: 0,
+                ..MemcpyOp::default()
+            },
+            stream,
+        )
+    }
+
+    /// `cuMemcpyDtoH`. Host-synchronous Device→HostPinned; capture cannot
+    /// include it.
+    ///
+    /// [`Self::memcpy_device_to_pinned`] is `cuMemcpyDtoHAsync`.
+    /// [`Self::memcpy_device_to_host`] stays pageable.
+    /// [`Self::memcpy_sync`] stays generic `cudaMemcpy`.
+    pub fn memcpy_dtoh(
+        &mut self,
+        device: DeviceId,
+        alloc: AllocId,
+        bytes: u64,
+        stream: StreamId,
+    ) -> Result<OpId, SimError> {
+        if self.capturing.is_some() {
+            return Err(SimError::Invalid {
+                why: "cannot capture host-sync memcpy",
+            });
+        }
+        let id = self.memcpy_device_to_pinned(device, alloc, bytes, stream)?;
+        self.synchronize_stream(device, stream)?;
+        Ok(id)
+    }
+
+    /// Peer copy `src` → `dst` of an existing allocation (hot replica).
+    ///
+    /// Submitted on `src`'s copy engine so it is stream-ordered with the
+    /// producing alloc/H2D. Completion adds `dst` to the object's residency
+    /// set and charges `dst` HBM; it does not drop `src`.
+    pub fn memcpy_device_to_device(
+        &mut self,
+        src: DeviceId,
+        dst: DeviceId,
+        alloc: AllocId,
+        bytes: u64,
+        stream: StreamId,
+    ) -> Result<OpId, SimError> {
+        self.memcpy(
+            src,
+            MemcpyOp {
+                src: Place::Device(src),
+                dst: Place::Device(dst),
+                alloc,
+                bytes,
+                offset: 0,
+                ..MemcpyOp::default()
+            },
+            stream,
+        )
+    }
+
+    /// `cudaMemcpyPeerAsync`. Same replica copy as [`Self::memcpy_device_to_device`].
+    ///
+    /// Capture records a memcpy node. [`Self::memcpy_peer`] is the
+    /// host-synchronous `cudaMemcpyPeer`.
+    pub fn memcpy_peer_async(
+        &mut self,
+        src: DeviceId,
+        dst: DeviceId,
+        alloc: AllocId,
+        bytes: u64,
+        stream: StreamId,
+    ) -> Result<OpId, SimError> {
+        self.memcpy_device_to_device(src, dst, alloc, bytes, stream)
+    }
+
+    /// `cudaMemcpyPeer`. Host-synchronous; capture cannot include it.
+    pub fn memcpy_peer(
+        &mut self,
+        src: DeviceId,
+        dst: DeviceId,
+        alloc: AllocId,
+        bytes: u64,
+        stream: StreamId,
+    ) -> Result<OpId, SimError> {
+        if self.capturing.is_some() {
+            return Err(SimError::Invalid {
+                why: "cannot capture host-sync memcpy",
+            });
+        }
+        let id = self.memcpy_peer_async(src, dst, alloc, bytes, stream)?;
+        self.synchronize_stream(src, stream)?;
+        Ok(id)
+    }
+
+    fn memcpy_peer_extent_async(
+        &mut self,
+        src: DeviceId,
+        dst: DeviceId,
+        mut op: MemcpyOp,
+        stream: StreamId,
+    ) -> Result<OpId, SimError> {
+        op.src = Place::Device(src);
+        op.dst = Place::Device(dst);
+        self.memcpy(src, op, stream)
+    }
+
+    /// `cudaMemcpy3DPeerAsync`. Replica copy; [`MemcpyOp`] must be
+    /// [`MemcpyOp::is_3d`] (`depth > 1`). `op.src` / `op.dst` are forced to
+    /// `src` / `dst`. Capture records a memcpy node. Typed [`Self::memcpy`]
+    /// stays.
+    pub fn memcpy_peer_3d_async(
+        &mut self,
+        src: DeviceId,
+        dst: DeviceId,
+        op: MemcpyOp,
+        stream: StreamId,
+    ) -> Result<OpId, SimError> {
+        if !op.is_3d() {
+            return Err(SimError::Invalid {
+                why: "memcpy3d depth",
+            });
+        }
+        self.memcpy_peer_extent_async(src, dst, op, stream)
+    }
+
+    /// `cudaMemcpy3DPeer`. Host-synchronous; capture cannot include it.
+    pub fn memcpy_peer_3d(
+        &mut self,
+        src: DeviceId,
+        dst: DeviceId,
+        op: MemcpyOp,
+        stream: StreamId,
+    ) -> Result<OpId, SimError> {
+        if self.capturing.is_some() {
+            return Err(SimError::Invalid {
+                why: "cannot capture host-sync memcpy",
+            });
+        }
+        let id = self.memcpy_peer_3d_async(src, dst, op, stream)?;
+        self.synchronize_stream(src, stream)?;
+        Ok(id)
+    }
+
+    /// `cudaMemcpy2DPeerAsync`. Replica copy; [`MemcpyOp`] must be
+    /// [`MemcpyOp::is_2d`] (`height > 1`, not 3D). `op.src` / `op.dst` are
+    /// forced to `src` / `dst`. Capture records a memcpy node. Typed
+    /// [`Self::memcpy`] stays.
+    pub fn memcpy_peer_2d_async(
+        &mut self,
+        src: DeviceId,
+        dst: DeviceId,
+        op: MemcpyOp,
+        stream: StreamId,
+    ) -> Result<OpId, SimError> {
+        if !op.is_2d() {
+            return Err(SimError::Invalid {
+                why: "memcpy2d height",
+            });
+        }
+        self.memcpy_peer_extent_async(src, dst, op, stream)
+    }
+
+    /// `cudaMemcpy2DPeer`. Host-synchronous; capture cannot include it.
+    pub fn memcpy_peer_2d(
+        &mut self,
+        src: DeviceId,
+        dst: DeviceId,
+        op: MemcpyOp,
+        stream: StreamId,
+    ) -> Result<OpId, SimError> {
+        if self.capturing.is_some() {
+            return Err(SimError::Invalid {
+                why: "cannot capture host-sync memcpy",
+            });
+        }
+        let id = self.memcpy_peer_2d_async(src, dst, op, stream)?;
+        self.synchronize_stream(src, stream)?;
+        Ok(id)
+    }
+
+    /// `cudaMemcpy2DAsync`. [`MemcpyOp`] must be [`MemcpyOp::is_2d`] (`height > 1`,
+    /// not 3D). Typed [`Self::memcpy`] stays.
+    pub fn memcpy_2d_async(
+        &mut self,
+        device: DeviceId,
+        op: MemcpyOp,
+        stream: StreamId,
+    ) -> Result<OpId, SimError> {
+        if !op.is_2d() {
+            return Err(SimError::Invalid {
+                why: "memcpy2d height",
+            });
+        }
+        self.memcpy(device, op, stream)
+    }
+
+    /// `cudaMemcpy2D`. Host-synchronous; capture cannot include it.
+    /// Unaligned pitches are [`Self::memcpy_2d_unaligned`] (identity here).
+    pub fn memcpy_2d(
+        &mut self,
+        device: DeviceId,
+        op: MemcpyOp,
+        stream: StreamId,
+    ) -> Result<OpId, SimError> {
+        if self.capturing.is_some() {
+            return Err(SimError::Invalid {
+                why: "cannot capture host-sync memcpy",
+            });
+        }
+        let id = self.memcpy_2d_async(device, op, stream)?;
+        self.synchronize_stream(device, stream)?;
+        Ok(id)
+    }
+
+    /// `cuMemcpy2DUnaligned`. Identity with [`Self::memcpy_2d`]: this VM does
+    /// not require CUDA 2D pitch/offset alignment. Host-synchronous; capture
+    /// cannot include it. CUDA has no Async Unaligned; [`Self::memcpy_2d_async`]
+    /// stays.
+    pub fn memcpy_2d_unaligned(
+        &mut self,
+        device: DeviceId,
+        op: MemcpyOp,
+        stream: StreamId,
+    ) -> Result<OpId, SimError> {
+        self.memcpy_2d(device, op, stream)
+    }
+
+    /// `cudaMemcpy3DAsync`. [`MemcpyOp`] must be [`MemcpyOp::is_3d`] (`depth > 1`).
+    /// Typed [`Self::memcpy`] stays.
+    pub fn memcpy_3d_async(
+        &mut self,
+        device: DeviceId,
+        op: MemcpyOp,
+        stream: StreamId,
+    ) -> Result<OpId, SimError> {
+        if !op.is_3d() {
+            return Err(SimError::Invalid {
+                why: "memcpy3d depth",
+            });
+        }
+        self.memcpy(device, op, stream)
+    }
+
+    /// `cudaMemcpy3D`. Host-synchronous; capture cannot include it.
+    /// Unaligned pitches are [`Self::memcpy_3d_unaligned`] (identity here).
+    pub fn memcpy_3d(
+        &mut self,
+        device: DeviceId,
+        op: MemcpyOp,
+        stream: StreamId,
+    ) -> Result<OpId, SimError> {
+        if self.capturing.is_some() {
+            return Err(SimError::Invalid {
+                why: "cannot capture host-sync memcpy",
+            });
+        }
+        let id = self.memcpy_3d_async(device, op, stream)?;
+        self.synchronize_stream(device, stream)?;
+        Ok(id)
+    }
+
+    /// `cuMemcpy3DUnaligned`. Identity with [`Self::memcpy_3d`]: this VM does
+    /// not require CUDA 3D pitch/offset alignment. Host-synchronous; capture
+    /// cannot include it. CUDA has no Async Unaligned; [`Self::memcpy_3d_async`]
+    /// stays.
+    pub fn memcpy_3d_unaligned(
+        &mut self,
+        device: DeviceId,
+        op: MemcpyOp,
+        stream: StreamId,
+    ) -> Result<OpId, SimError> {
+        self.memcpy_3d(device, op, stream)
+    }
+
+    /// `cudaMemcpyWithAttributesAsync`.
+    ///
+    /// [`MemcpySrcAccessOrder::Stream`] is [`Self::memcpy`] (`cudaMemcpyAsync`),
+    /// including pageable host-sync and stream capture of pinned copies.
+    /// [`MemcpySrcAccessOrder::DuringApiCall`] / [`MemcpySrcAccessOrder::Any`]
+    /// are a one-copy [`Self::memcpy_batch_async`]. Location hints are not
+    /// modeled ([`DeviceAttr::ConcurrentManagedAccess`] /
+    /// [`DeviceAttr::PageableMemoryAccess`] are 0).
+    /// [`MemcpyFlags::PREFER_OVERLAP_WITH_COMPUTE`] is accepted and ignored
+    /// (discrete GPU). Unknown flags Invalid `"memcpy flags"`.
+    pub fn memcpy_with_attributes(
+        &mut self,
+        device: DeviceId,
+        op: MemcpyOp,
+        attr: MemcpyAttributes,
+        stream: StreamId,
+    ) -> Result<OpId, SimError> {
+        memcpy_flags_ok(attr.flags)?;
+        match attr.src_access_order {
+            MemcpySrcAccessOrder::Stream => self.memcpy(device, op, stream),
+            MemcpySrcAccessOrder::DuringApiCall | MemcpySrcAccessOrder::Any => self
+                .memcpy_batch_async(device, std::slice::from_ref(&op), &[attr], &[0], stream)?
+                .into_iter()
+                .next()
+                .ok_or(SimError::Invalid {
+                    why: "memcpy attributes empty",
+                }),
+        }
+    }
+
+    /// `cudaMemcpyBatchAsync`. Pointer-to-pointer 1D copies only.
+    ///
+    /// The batch as a whole is stream-ordered: later submits wait for every
+    /// copy. Copies inside the batch share one snapshotted predecessor list
+    /// ([`MemcpySrcAccessOrder::Stream`]) or empty deps (DuringApiCall / Any)
+    /// so they do not wait for each other. 2D/3D Invalid `"memcpy batch 1d"`
+    /// (`cudaMemcpy3DBatchAsync` is not this API). Capture cannot include it
+    /// (`"cannot capture memcpy batch"`).
+    ///
+    /// `attrs_idxs[0]` must be `0`; indexes strictly increase; the last is
+    /// `< ops.len()`; `attrs.len() == attrs_idxs.len() <= ops.len()`. An empty
+    /// batch requires empty attrs. [`MemcpySrcAccessOrder::DuringApiCall`]
+    /// waits those copies before return (not the whole stream). Any does not
+    /// wait. Stream-order pageable / SyncMemops copies still
+    /// [`Self::synchronize_stream`].
+    ///
+    /// A [`Self::alloc`] (`cudaMallocAsync`) pointer may be enqueued in the
+    /// same stream without a host sync (the copy waits the alloc via stream
+    /// order when it starts). A missing alloc id is still all-or-nothing
+    /// [`SimError::UnknownAlloc`].
+    pub fn memcpy_batch_async(
+        &mut self,
+        device: DeviceId,
+        ops: &[MemcpyOp],
+        attrs: &[MemcpyAttributes],
+        attrs_idxs: &[usize],
+        stream: StreamId,
+    ) -> Result<Vec<OpId>, SimError> {
+        let _gpu = self.profile.gpu(device)?;
+        if self.unavailable.contains(&device) {
+            return Err(SimError::Unavailable { device });
+        }
+        let per = memcpy_batch_attrs(ops.len(), attrs, attrs_idxs)?;
+        for (op, attr) in ops.iter().zip(per.iter()) {
+            memcpy_flags_ok(attr.flags)?;
+            if !op.is_1d() {
+                return Err(SimError::Invalid {
+                    why: "memcpy batch 1d",
+                });
+            }
+            self.memcpy_precheck_enqueue(op)?;
+        }
+        self.enqueue_memcpy_batch(device, stream, ops, &per, "cannot capture memcpy batch")
+    }
+
+    /// `cudaMemcpy3DWithAttributesAsync`.
+    ///
+    /// [`MemcpySrcAccessOrder::Stream`] is [`Self::memcpy_3d_async`].
+    /// [`MemcpySrcAccessOrder::DuringApiCall`] / [`MemcpySrcAccessOrder::Any`]
+    /// are a one-copy [`Self::memcpy_3d_batch_async`]. `flags` must be `0`.
+    pub fn memcpy_3d_with_attributes(
+        &mut self,
+        device: DeviceId,
+        op: MemcpyOp,
+        attr: MemcpyAttributes,
+        flags: u64,
+        stream: StreamId,
+    ) -> Result<OpId, SimError> {
+        if flags != 0 {
+            return Err(SimError::Invalid {
+                why: "memcpy3d batch flags",
+            });
+        }
+        memcpy_flags_ok(attr.flags)?;
+        match attr.src_access_order {
+            MemcpySrcAccessOrder::Stream => self.memcpy_3d_async(device, op, stream),
+            MemcpySrcAccessOrder::DuringApiCall | MemcpySrcAccessOrder::Any => self
+                .memcpy_3d_batch_async(device, std::slice::from_ref(&op), &[attr], flags, stream)?
+                .into_iter()
+                .next()
+                .ok_or(SimError::Invalid {
+                    why: "memcpy3d attributes empty",
+                }),
+        }
+    }
+
+    /// `cudaMemcpy3DBatchAsync`. Pointer-to-pointer 3D copies only.
+    ///
+    /// Each op must be [`MemcpyOp::is_3d`]. CUDA arrays are not modeled.
+    /// `ops.len() == attrs.len()`. `flags` must be `0` (reserved). Capture
+    /// cannot include it (`"cannot capture memcpy3d batch"`). Intra-batch
+    /// copies share one stream-order snapshot or empty DuringApiCall/Any deps
+    /// like [`Self::memcpy_batch_async`].
+    pub fn memcpy_3d_batch_async(
+        &mut self,
+        device: DeviceId,
+        ops: &[MemcpyOp],
+        attrs: &[MemcpyAttributes],
+        flags: u64,
+        stream: StreamId,
+    ) -> Result<Vec<OpId>, SimError> {
+        let _gpu = self.profile.gpu(device)?;
+        if self.unavailable.contains(&device) {
+            return Err(SimError::Unavailable { device });
+        }
+        if flags != 0 {
+            return Err(SimError::Invalid {
+                why: "memcpy3d batch flags",
+            });
+        }
+        if ops.len() != attrs.len() {
+            return Err(SimError::Invalid {
+                why: "memcpy3d batch attrs",
+            });
+        }
+        for (op, attr) in ops.iter().zip(attrs.iter()) {
+            memcpy_flags_ok(attr.flags)?;
+            if !op.is_3d() {
+                return Err(SimError::Invalid {
+                    why: "memcpy3d batch depth",
+                });
+            }
+            self.memcpy_precheck_enqueue(op)?;
+        }
+        self.enqueue_memcpy_batch(device, stream, ops, attrs, "cannot capture memcpy3d batch")
+    }
+
+    fn enqueue_memcpy_batch(
+        &mut self,
+        device: DeviceId,
+        stream: StreamId,
+        ops: &[MemcpyOp],
+        attrs: &[MemcpyAttributes],
+        capture_why: &'static str,
+    ) -> Result<Vec<OpId>, SimError> {
+        if self.capturing.is_some() {
+            if self.in_capture(device, stream) {
+                return Err(SimError::Invalid { why: capture_why });
+            }
+            let live = self
+                .capturing
+                .as_ref()
+                .is_some_and(|c| c.mode.live_uncaptured());
+            if !live {
+                return Err(SimError::Invalid {
+                    why: "stream not capturing",
+                });
+            }
+        }
+        if ops.is_empty() {
+            return Ok(Vec::new());
+        }
+        let stream_deps = self.stream_order_deps(device, stream);
+        let mut ids = Vec::with_capacity(ops.len());
+        let mut during = Vec::new();
+        let mut wait_stream = false;
+        for (op, attr) in ops.iter().zip(attrs.iter()) {
+            let deps = match attr.src_access_order {
+                MemcpySrcAccessOrder::Stream => stream_deps.clone(),
+                MemcpySrcAccessOrder::DuringApiCall | MemcpySrcAccessOrder::Any => Vec::new(),
+            };
+            let id = self.submit_live_with_deps(
+                device,
+                stream,
+                Kind::Memcpy(op.clone()),
+                LaunchCost::Kernel,
+                deps,
+            )?;
+            if attr.src_access_order == MemcpySrcAccessOrder::DuringApiCall {
+                during.push(id);
+            }
+            let pageable = op.src.is_pageable() || op.dst.is_pageable();
+            let sync_ops = self.is_sync_memops(op.alloc)? || self.device_has_sync_memops(device);
+            if attr.src_access_order == MemcpySrcAccessOrder::Stream && (pageable || sync_ops) {
+                wait_stream = true;
+            }
+            ids.push(id);
+        }
+        if !during.is_empty() {
+            self.drive_until(|sim| during.iter().all(|id| sim.op_done(*id)))?;
+        }
+        if wait_stream {
+            self.synchronize_stream(device, stream)?;
+        }
+        Ok(ids)
+    }
+
+    /// Enqueue a kernel on whole allocations. Reads/writes are leased until it completes.
+    ///
+    /// A VMM VA must be fully mapped ([`Self::is_resident`]) or peer-readable
+    /// via [`Self::va_set_access`] (reads) / [`Self::va_set_access_write`]
+    /// (read and write). A mempool alloc may be read on a peer after
+    /// [`Self::pool_set_access`] / [`Self::pool_set_access_read`], and written
+    /// after [`Self::pool_set_access`]. For a mapped page of a larger
+    /// VA, use [`Self::kernel_bufs`].
+    ///
+    /// A managed allocation not yet on `device` is [`Self::prefetch`]'d when
+    /// the kernel starts (page fault after stream deps). Capture does not
+    /// record that migrate; graph replay fails [`SimError::NotResident`] if
+    /// the graph omitted it. Prefetch before [`Self::begin_capture`], or
+    /// record [`Self::prefetch`] in the graph. Host attach and Single attach
+    /// on another stream fail [`SimError::Invalid`] (`not attached`) instead
+    /// of paging. Inherits [`Self::set_stream_nvlink_util_centric`] and
+    /// [`Self::set_stream_access_policy`] on `stream` via [`Self::kernel_bufs`].
+    pub fn kernel(
+        &mut self,
+        device: DeviceId,
+        kind: KernelKind,
+        reads: &[AllocId],
+        writes: &[AllocId],
+        stream: StreamId,
+    ) -> Result<OpId, SimError> {
+        let reads: Vec<KernelBuf> = reads.iter().copied().map(KernelBuf::whole).collect();
+        let writes: Vec<KernelBuf> = writes.iter().copied().map(KernelBuf::whole).collect();
+        self.kernel_bufs(device, kind, &reads, &writes, stream)
+    }
+
+    /// Enqueue a kernel on explicit buffer spans (vLLM paged-KV analog).
+    ///
+    /// Each [`KernelBuf`] must be mapped-host, device-resident, a VMM span
+    /// covered by [`Self::va_map_range`], a VMM peer [`Self::va_set_access`]
+    /// read, a VMM peer [`Self::va_set_access_write`] (read and write), a
+    /// mempool peer [`Self::pool_set_access_read`] (read), or a mempool peer
+    /// [`Self::pool_set_access`] (read and write).
+    /// `bytes == 0` means from `offset` to
+    /// the end of the allocation. A range past the reservation is `Invalid`.
+    /// A live kernel (not a graph replay) page-faults managed memory when it
+    /// *starts*, after stream deps, so a waited prefetch is visible.
+    /// Host attach and Single attach on another stream fail `not attached`.
+    /// Inherits [`Self::set_stream_nvlink_util_centric`] and
+    /// [`Self::set_stream_access_policy`] on `stream`.
+    pub fn kernel_bufs(
+        &mut self,
+        device: DeviceId,
+        kind: KernelKind,
+        reads: &[KernelBuf],
+        writes: &[KernelBuf],
+        stream: StreamId,
+    ) -> Result<OpId, SimError> {
+        let window = self.stream_access_policy(device, stream);
+        if let Some(w) = window {
+            self.validate_access_policy_window(device, w)?;
+        }
+        let prev_nv = self.enqueue_nvlink_util_centric;
+        let prev_win = self.enqueue_access_policy;
+        self.enqueue_nvlink_util_centric = self.stream_nvlink_util_centric(device, stream);
+        self.enqueue_access_policy = window;
+        let out = self.submit_kernel(device, kind, reads, writes, stream, false);
+        self.enqueue_nvlink_util_centric = prev_nv;
+        self.enqueue_access_policy = prev_win;
+        out
+    }
+
+    /// Same as [`Self::kernel`] with [`ProgrammaticLaunch`] (CUDA PDL).
+    ///
+    /// [`ProgrammaticLaunch::wait`] lets this kernel start after the previous
+    /// same-stream kernel's programmatic trigger instead of its completion.
+    /// [`ProgrammaticLaunch::trigger`] fires that trigger at
+    /// [`crate::GpuProfile::pdl_trigger_permille`]. Overlap needs
+    /// [`crate::GpuProfile::compute_slots`] `>= 2`. Capture records the flags.
+    /// Decode identity stays [`Self::kernel`] (both flags false).
+    pub fn kernel_pdl(
+        &mut self,
+        device: DeviceId,
+        kind: KernelKind,
+        reads: &[AllocId],
+        writes: &[AllocId],
+        stream: StreamId,
+        pdl: ProgrammaticLaunch,
+    ) -> Result<OpId, SimError> {
+        let reads: Vec<KernelBuf> = reads.iter().copied().map(KernelBuf::whole).collect();
+        let writes: Vec<KernelBuf> = writes.iter().copied().map(KernelBuf::whole).collect();
+        self.kernel_pdl_bufs(device, kind, &reads, &writes, stream, pdl)
+    }
+
+    /// [`Self::kernel_bufs`] with [`ProgrammaticLaunch`].
+    pub fn kernel_pdl_bufs(
+        &mut self,
+        device: DeviceId,
+        kind: KernelKind,
+        reads: &[KernelBuf],
+        writes: &[KernelBuf],
+        stream: StreamId,
+        pdl: ProgrammaticLaunch,
+    ) -> Result<OpId, SimError> {
+        let prev = self.enqueue_pdl;
+        self.enqueue_pdl = pdl;
+        let out = self.submit_kernel(device, kind, reads, writes, stream, false);
+        self.enqueue_pdl = prev;
+        out
+    }
+
+    /// [`Self::kernel_pdl`] plus [`ProgrammaticEvent`] (`cudaLaunchAttributeProgrammaticEvent`).
+    ///
+    /// Other streams may [`Self::wait_event`] the event after the PDL trigger
+    /// when [`ProgrammaticLaunch::trigger`] is set. Without trigger the event
+    /// records at kernel completion unless
+    /// [`ProgrammaticEvent::trigger_at_block_start`] (kernel start).
+    /// [`ProgrammaticEvent::external`] and interprocess / IPC events are
+    /// Invalid. Decode identity stays [`Self::kernel`].
+    pub fn kernel_pdl_event(
+        &mut self,
+        device: DeviceId,
+        kind: KernelKind,
+        reads: &[AllocId],
+        writes: &[AllocId],
+        stream: StreamId,
+        launch: PdlLaunch,
+    ) -> Result<OpId, SimError> {
+        let reads: Vec<KernelBuf> = reads.iter().copied().map(KernelBuf::whole).collect();
+        let writes: Vec<KernelBuf> = writes.iter().copied().map(KernelBuf::whole).collect();
+        self.kernel_pdl_event_bufs(device, kind, &reads, &writes, stream, launch)
+    }
+
+    /// [`Self::kernel_pdl_bufs`] plus [`ProgrammaticEvent`].
+    pub fn kernel_pdl_event_bufs(
+        &mut self,
+        device: DeviceId,
+        kind: KernelKind,
+        reads: &[KernelBuf],
+        writes: &[KernelBuf],
+        stream: StreamId,
+        launch: PdlLaunch,
+    ) -> Result<OpId, SimError> {
+        let prev_pdl = self.enqueue_pdl;
+        let prev_ev = self.enqueue_programmatic_event;
+        self.enqueue_pdl = launch.pdl;
+        self.enqueue_programmatic_event = launch.event;
+        let out = self.submit_kernel(device, kind, reads, writes, stream, false);
+        self.enqueue_pdl = prev_pdl;
+        self.enqueue_programmatic_event = prev_ev;
+        out
+    }
+
+    /// [`Self::kernel`] plus [`LaunchCompletionEvent`] (`cudaLaunchAttributeLaunchCompletionEvent`).
+    ///
+    /// Other streams may [`Self::wait_event`] the event when this kernel
+    /// *starts*, not when it finishes. [`LaunchCompletionEvent::external`]
+    /// and interprocess / IPC events are Invalid. Decode identity stays
+    /// [`Self::kernel`].
+    pub fn kernel_launch_completion(
+        &mut self,
+        device: DeviceId,
+        kind: KernelKind,
+        reads: &[AllocId],
+        writes: &[AllocId],
+        stream: StreamId,
+        event: LaunchCompletionEvent,
+    ) -> Result<OpId, SimError> {
+        let reads: Vec<KernelBuf> = reads.iter().copied().map(KernelBuf::whole).collect();
+        let writes: Vec<KernelBuf> = writes.iter().copied().map(KernelBuf::whole).collect();
+        self.kernel_launch_completion_bufs(device, kind, &reads, &writes, stream, event)
+    }
+
+    /// [`Self::kernel_bufs`] plus [`LaunchCompletionEvent`].
+    pub fn kernel_launch_completion_bufs(
+        &mut self,
+        device: DeviceId,
+        kind: KernelKind,
+        reads: &[KernelBuf],
+        writes: &[KernelBuf],
+        stream: StreamId,
+        event: LaunchCompletionEvent,
+    ) -> Result<OpId, SimError> {
+        let prev = self.enqueue_launch_completion;
+        self.enqueue_launch_completion = Some(event);
+        let out = self.submit_kernel(device, kind, reads, writes, stream, false);
+        self.enqueue_launch_completion = prev;
+        out
+    }
+
+    /// [`Self::kernel`] plus packed [`KernelAttrs`] (`cudaLaunchKernelEx`).
+    ///
+    /// Combines cooperative, PDL, an access-policy window, mem-sync
+    /// domain/map, cluster, shared-memory carveout, device-updatable kernel
+    /// node, shared-memory bank mode, launch-attribute priority, a
+    /// programmatic event, and a launch-completion event on one submit. Does
+    /// not inherit [`Self::set_stream_access_policy`]. Decode identity stays
+    /// [`Self::kernel`] ([`KernelAttrs::default`]).
+    pub fn kernel_with(
+        &mut self,
+        device: DeviceId,
+        kind: KernelKind,
+        reads: &[AllocId],
+        writes: &[AllocId],
+        stream: StreamId,
+        attrs: KernelAttrs,
+    ) -> Result<OpId, SimError> {
+        let reads: Vec<KernelBuf> = reads.iter().copied().map(KernelBuf::whole).collect();
+        let writes: Vec<KernelBuf> = writes.iter().copied().map(KernelBuf::whole).collect();
+        self.kernel_bufs_with(device, kind, &reads, &writes, stream, attrs)
+    }
+
+    /// [`Self::kernel_bufs`] plus packed [`KernelAttrs`].
+    pub fn kernel_bufs_with(
+        &mut self,
+        device: DeviceId,
+        kind: KernelKind,
+        reads: &[KernelBuf],
+        writes: &[KernelBuf],
+        stream: StreamId,
+        attrs: KernelAttrs,
+    ) -> Result<OpId, SimError> {
+        if let Some(w) = attrs.access_policy {
+            self.validate_access_policy_window(device, w)?;
+        }
+        if let Some(map) = attrs.mem_sync_map {
+            self.validate_mem_sync_map(device, map)?;
+        }
+        self.validate_cluster_attrs(
+            device,
+            attrs.cluster,
+            attrs.preferred_cluster,
+            attrs.portable_cluster,
+        )?;
+        self.validate_dynamic_shared(device, attrs.dynamic_shared, attrs.portable_shared)?;
+        if attrs.cooperative {
+            self.require_cooperative(device)?;
+        }
+        if attrs.device_updatable && self.capturing.is_none() {
+            return Err(SimError::Invalid {
+                why: "device-updatable is graphs-only",
+            });
+        }
+        let prev_pdl = self.enqueue_pdl;
+        let prev_win = self.enqueue_access_policy;
+        let prev_dom = self.enqueue_mem_sync_domain;
+        let prev_map = self.enqueue_mem_sync_map;
+        let prev_cl = self.enqueue_cluster;
+        let prev_pol = self.enqueue_cluster_policy;
+        let prev_pref = self.enqueue_preferred_cluster;
+        let prev_carve = self.enqueue_carveout;
+        let prev_upd = self.enqueue_device_updatable;
+        let prev_sm = self.enqueue_shared_mem;
+        let prev_pc = self.enqueue_portable_cluster;
+        let prev_ds = self.enqueue_dynamic_shared;
+        let prev_ps = self.enqueue_portable_shared;
+        let prev_nv = self.enqueue_nvlink_util_centric;
+        let prev_pri = self.enqueue_priority;
+        let prev_pde = self.enqueue_programmatic_event;
+        let prev_lce = self.enqueue_launch_completion;
+        self.enqueue_pdl = attrs.pdl;
+        self.enqueue_access_policy = attrs.access_policy;
+        self.enqueue_mem_sync_domain = attrs.mem_sync_domain;
+        self.enqueue_mem_sync_map = attrs.mem_sync_map;
+        self.enqueue_cluster = attrs.cluster;
+        self.enqueue_cluster_policy = attrs.cluster_policy;
+        self.enqueue_preferred_cluster = attrs.preferred_cluster;
+        self.enqueue_carveout = attrs.carveout;
+        self.enqueue_device_updatable = attrs.device_updatable;
+        self.enqueue_shared_mem = attrs.shared_mem;
+        self.enqueue_portable_cluster = attrs.portable_cluster;
+        self.enqueue_dynamic_shared = attrs.dynamic_shared;
+        self.enqueue_portable_shared = attrs.portable_shared;
+        self.enqueue_nvlink_util_centric = attrs.nvlink_util_centric;
+        self.enqueue_priority = attrs.priority;
+        self.enqueue_programmatic_event = attrs.programmatic_event;
+        self.enqueue_launch_completion = attrs.launch_completion;
+        let out = self.submit_kernel(device, kind, reads, writes, stream, attrs.cooperative);
+        self.enqueue_pdl = prev_pdl;
+        self.enqueue_access_policy = prev_win;
+        self.enqueue_mem_sync_domain = prev_dom;
+        self.enqueue_mem_sync_map = prev_map;
+        self.enqueue_cluster = prev_cl;
+        self.enqueue_cluster_policy = prev_pol;
+        self.enqueue_preferred_cluster = prev_pref;
+        self.enqueue_carveout = prev_carve;
+        self.enqueue_device_updatable = prev_upd;
+        self.enqueue_shared_mem = prev_sm;
+        self.enqueue_portable_cluster = prev_pc;
+        self.enqueue_dynamic_shared = prev_ds;
+        self.enqueue_portable_shared = prev_ps;
+        self.enqueue_nvlink_util_centric = prev_nv;
+        self.enqueue_priority = prev_pri;
+        self.enqueue_programmatic_event = prev_pde;
+        self.enqueue_launch_completion = prev_lce;
+        out
+    }
+
+    /// [`Self::kernel`] plus [`AccessPolicyWindow`] (`cudaLaunchAttributeAccessPolicyWindow`).
+    ///
+    /// Persisting hits reduce billed HBM after
+    /// [`Self::set_persisting_l2_cache_size`]. Decode identity stays [`Self::kernel`].
+    pub fn kernel_access_policy(
+        &mut self,
+        device: DeviceId,
+        kind: KernelKind,
+        reads: &[AllocId],
+        writes: &[AllocId],
+        stream: StreamId,
+        window: AccessPolicyWindow,
+    ) -> Result<OpId, SimError> {
+        self.kernel_with(
+            device,
+            kind,
+            reads,
+            writes,
+            stream,
+            KernelAttrs {
+                access_policy: Some(window),
+                ..KernelAttrs::default()
+            },
+        )
+    }
+
+    /// [`Self::kernel_bufs`] plus [`AccessPolicyWindow`].
+    pub fn kernel_access_policy_bufs(
+        &mut self,
+        device: DeviceId,
+        kind: KernelKind,
+        reads: &[KernelBuf],
+        writes: &[KernelBuf],
+        stream: StreamId,
+        window: AccessPolicyWindow,
+    ) -> Result<OpId, SimError> {
+        self.kernel_bufs_with(
+            device,
+            kind,
+            reads,
+            writes,
+            stream,
+            KernelAttrs {
+                access_policy: Some(window),
+                ..KernelAttrs::default()
+            },
+        )
+    }
+
+    /// `cudaDeviceSetLimit(cudaLimitPersistingL2CacheSize)`.
+    ///
+    /// Host-synchronous. Capture cannot include it. `bytes` must be `<=`
+    /// [`crate::GpuProfile::l2_bytes`]. CUDA default is 0 (windows are a no-op
+    /// until this is set). Shrinking evicts oldest persisting lines.
+    pub fn set_persisting_l2_cache_size(
+        &mut self,
+        device: DeviceId,
+        bytes: u64,
+    ) -> Result<(), SimError> {
+        self.fail_if_capturing("cannot capture persisting L2")?;
+        let cap = self.profile.gpu(device)?.l2_bytes;
+        if bytes > cap {
+            return Err(SimError::Invalid {
+                why: "persisting L2 cache size",
+            });
+        }
+        let rt = self.gpus.get_mut(&device).ok_or(SimError::Invalid {
+            why: "unknown device",
+        })?;
+        rt.persist_limit = bytes;
+        persist_trim(rt);
+        self.clock = self.clock.saturating_add(1);
+        Ok(())
+    }
+
+    /// `cudaDeviceGetLimit(cudaLimitPersistingL2CacheSize)`.
+    pub fn persisting_l2_cache_size(&self, device: DeviceId) -> Result<u64, SimError> {
+        let _gpu = self.profile.gpu(device)?;
+        Ok(self
+            .gpus
+            .get(&device)
+            .ok_or(SimError::Invalid {
+                why: "unknown device",
+            })?
+            .persist_limit)
+    }
+
+    /// `cudaCtxResetPersistingL2Cache`.
+    ///
+    /// Host-synchronous. Drops filled persisting lines; the limit stays.
+    /// Capture cannot include it. The next persisting kernel refills (cold).
+    pub fn reset_persisting_l2_cache(&mut self, device: DeviceId) -> Result<(), SimError> {
+        self.fail_if_capturing("cannot capture persisting L2")?;
+        let _gpu = self.profile.gpu(device)?;
+        let rt = self.gpus.get_mut(&device).ok_or(SimError::Invalid {
+            why: "unknown device",
+        })?;
+        rt.persist_lines.clear();
+        self.clock = self.clock.saturating_add(1);
+        Ok(())
+    }
+
+    /// Set each GPU's persisting L2 limit to [`crate::GpuProfile::l2_bytes`].
+    ///
+    /// Fails `l2 persist needs l2_bytes` when a GPU reports 0. Decode identity
+    /// does not call this (limit stays 0).
+    pub fn enable_persisting_l2(&mut self) -> Result<(), SimError> {
+        let ids: Vec<(DeviceId, u64)> = self
+            .profile
+            .gpus
+            .iter()
+            .map(|g| (g.id, g.l2_bytes))
+            .collect();
+        for (id, bytes) in ids {
+            if bytes == 0 {
+                return Err(SimError::Invalid {
+                    why: "l2 persist needs l2_bytes",
+                });
+            }
+            self.set_persisting_l2_cache_size(id, bytes)?;
+        }
+        Ok(())
+    }
+
+    /// `cudaDeviceSetLimit`. Host-synchronous. Capture cannot include it.
+    ///
+    /// [`DeviceLimit::PersistingL2CacheSize`] is [`Self::set_persisting_l2_cache_size`].
+    /// [`DeviceLimit::MaxL2FetchGranularity`] must be 32, 64, or 128 (CUDA SM 8.0+
+    /// default 128). Access-policy windows must align to the current value.
+    /// Heap / stack / printf / CDP limits are stored; heap does not charge HBM.
+    pub fn set_limit(
+        &mut self,
+        device: DeviceId,
+        limit: DeviceLimit,
+        value: u64,
+    ) -> Result<(), SimError> {
+        if let DeviceLimit::PersistingL2CacheSize = limit {
+            return self.set_persisting_l2_cache_size(device, value);
+        }
+        self.fail_if_capturing("cannot capture set limit")?;
+        let _gpu = self.profile.gpu(device)?;
+        let rt = self.gpu_rt_mut(device)?;
+        match limit {
+            DeviceLimit::StackSize if value > 0 => rt.limits.stack_size = value,
+            DeviceLimit::PrintfFifoSize if value > 0 => rt.limits.printf_fifo = value,
+            DeviceLimit::MallocHeapSize => rt.limits.malloc_heap = value,
+            DeviceLimit::DevRuntimeSyncDepth if value >= 2 => rt.limits.sync_depth = value,
+            DeviceLimit::DevRuntimePendingLaunchCount if value > 0 => {
+                rt.limits.pending_launch = value;
+            }
+            DeviceLimit::MaxL2FetchGranularity if value == 32 || value == 64 || value == 128 => {
+                rt.limits.l2_fetch = value;
+            }
+            DeviceLimit::MaxL2FetchGranularity => {
+                return Err(SimError::Invalid {
+                    why: "l2 fetch granularity",
+                });
+            }
+            DeviceLimit::PersistingL2CacheSize => {}
+            DeviceLimit::StackSize
+            | DeviceLimit::PrintfFifoSize
+            | DeviceLimit::DevRuntimeSyncDepth
+            | DeviceLimit::DevRuntimePendingLaunchCount => {
+                return Err(SimError::Invalid {
+                    why: "device limit",
+                });
+            }
+        }
+        self.clock = self.clock.saturating_add(1);
+        Ok(())
+    }
+
+    /// `cudaDeviceGetLimit`. Query; legal during capture.
+    pub fn get_limit(&self, device: DeviceId, limit: DeviceLimit) -> Result<u64, SimError> {
+        if limit == DeviceLimit::PersistingL2CacheSize {
+            return self.persisting_l2_cache_size(device);
+        }
+        let rt = self.gpu_rt(device)?;
+        Ok(match limit {
+            DeviceLimit::StackSize => rt.limits.stack_size,
+            DeviceLimit::PrintfFifoSize => rt.limits.printf_fifo,
+            DeviceLimit::MallocHeapSize => rt.limits.malloc_heap,
+            DeviceLimit::DevRuntimeSyncDepth => rt.limits.sync_depth,
+            DeviceLimit::DevRuntimePendingLaunchCount => rt.limits.pending_launch,
+            DeviceLimit::MaxL2FetchGranularity => rt.limits.l2_fetch,
+            DeviceLimit::PersistingL2CacheSize => rt.persist_limit,
+        })
+    }
+
+    /// `cudaDeviceSetSharedMemConfig`. Host-synchronous. Capture cannot include it.
+    ///
+    /// [`SharedMemoryMode::Default`] kernels inherit this config at duration
+    /// time when the function config is also Default. Unset is
+    /// [`SharedMemoryMode::Default`] (unscaled). Launch FourByte / EightByte
+    /// still override. Decode identity stays unset.
+    /// `expertvm sim --device-shared-mem eight` sets [`SharedMemoryMode::EightByte`].
+    pub fn set_shared_mem_config(
+        &mut self,
+        device: DeviceId,
+        mode: SharedMemoryMode,
+    ) -> Result<(), SimError> {
+        self.fail_if_capturing("cannot capture shared mem config")?;
+        let _gpu = self.profile.gpu(device)?;
+        self.gpu_rt_mut(device)?.shared_mem_config = mode;
+        self.clock = self.clock.saturating_add(1);
+        Ok(())
+    }
+
+    /// `cudaDeviceGetSharedMemConfig`. Query; legal during capture.
+    pub fn get_shared_mem_config(&self, device: DeviceId) -> Result<SharedMemoryMode, SimError> {
+        let _gpu = self.profile.gpu(device)?;
+        Ok(self.gpu_rt(device)?.shared_mem_config)
+    }
+
+    /// `cudaFuncSetSharedMemConfig`. Host-synchronous. Capture cannot include it.
+    ///
+    /// Per device (this VM is not per kernel-function object). Launch Default
+    /// inherits this before the device config. Launch FourByte / EightByte
+    /// still override. Decode identity stays unset.
+    pub fn set_func_shared_mem_config(
+        &mut self,
+        device: DeviceId,
+        mode: SharedMemoryMode,
+    ) -> Result<(), SimError> {
+        self.fail_if_capturing("cannot capture func shared mem config")?;
+        let _gpu = self.profile.gpu(device)?;
+        self.gpu_rt_mut(device)?.func_shared_mem_config = mode;
+        self.clock = self.clock.saturating_add(1);
+        Ok(())
+    }
+
+    /// `cudaFuncGetSharedMemConfig`. Query; legal during capture.
+    pub fn get_func_shared_mem_config(
+        &self,
+        device: DeviceId,
+    ) -> Result<SharedMemoryMode, SimError> {
+        let _gpu = self.profile.gpu(device)?;
+        Ok(self.gpu_rt(device)?.func_shared_mem_config)
+    }
+
+    /// `cudaDeviceSetCacheConfig`. Host-synchronous. Capture cannot include it.
+    ///
+    /// [`FuncCache::PreferNone`] is the CUDA default. PreferShared / PreferL1 /
+    /// PreferEqual are stored. This VM does not model L1 caches, so cache
+    /// config does not change kernel duration. Distinct from
+    /// [`Self::set_shared_mem_config`] and [`Self::set_func_carveout`].
+    /// Decode identity stays PreferNone.
+    pub fn set_cache_config(&mut self, device: DeviceId, cache: FuncCache) -> Result<(), SimError> {
+        self.fail_if_capturing("cannot capture cache config")?;
+        let _gpu = self.profile.gpu(device)?;
+        self.gpu_rt_mut(device)?.cache_config = cache;
+        self.clock = self.clock.saturating_add(1);
+        Ok(())
+    }
+
+    /// `cudaDeviceGetCacheConfig`. Query; legal during capture.
+    pub fn get_cache_config(&self, device: DeviceId) -> Result<FuncCache, SimError> {
+        let _gpu = self.profile.gpu(device)?;
+        Ok(self.gpu_rt(device)?.cache_config)
+    }
+
+    /// `cudaFuncSetCacheConfig`. Host-synchronous. Capture cannot include it.
+    ///
+    /// Per device (this VM is not per kernel-function object). Stored; L1 is
+    /// not modeled. Decode identity stays PreferNone.
+    pub fn set_func_cache_config(
+        &mut self,
+        device: DeviceId,
+        cache: FuncCache,
+    ) -> Result<(), SimError> {
+        self.fail_if_capturing("cannot capture func cache config")?;
+        let _gpu = self.profile.gpu(device)?;
+        self.gpu_rt_mut(device)?.func_cache_config = cache;
+        self.clock = self.clock.saturating_add(1);
+        Ok(())
+    }
+
+    /// Current [`Self::set_func_cache_config`]. Query; legal during capture.
+    ///
+    /// CUDA has no `cudaFuncGetCacheConfig`; this is the twin of
+    /// [`Self::get_func_shared_mem_config`].
+    pub fn get_func_cache_config(&self, device: DeviceId) -> Result<FuncCache, SimError> {
+        let _gpu = self.profile.gpu(device)?;
+        Ok(self.gpu_rt(device)?.func_cache_config)
+    }
+
+    /// `cudaFuncSetAttribute(..., cudaFuncAttributePreferredSharedMemoryCarveout)`.
+    ///
+    /// Per device. Launch [`SharedMemCarveout::Default`] inherits this
+    /// occupancy. Launch MaxL1 / MaxShared still override. Capture-legal like
+    /// other function attributes. Decode identity stays Default.
+    /// `expertvm sim --func-max-shared` sets [`SharedMemCarveout::MaxShared`].
+    pub fn set_func_carveout(
+        &mut self,
+        device: DeviceId,
+        carveout: SharedMemCarveout,
+    ) -> Result<(), SimError> {
+        let _gpu = self.profile.gpu(device)?;
+        self.gpu_rt_mut(device)?.func_carveout = carveout;
+        self.clock = self.clock.saturating_add(1);
+        Ok(())
+    }
+
+    /// Current [`Self::set_func_carveout`]. Query; legal during capture.
+    pub fn get_func_carveout(&self, device: DeviceId) -> Result<SharedMemCarveout, SimError> {
+        let _gpu = self.profile.gpu(device)?;
+        Ok(self.gpu_rt(device)?.func_carveout)
+    }
+
+    /// `cudaFuncSetAttribute(..., cudaFuncAttributeClusterSchedulingPolicyPreference)`.
+    ///
+    /// Per device. Launch [`ClusterSchedulingPolicy::Default`] inherits this
+    /// occupancy. Launch Spread / LoadBalancing still override. Capture-legal
+    /// like other function attributes. Decode identity stays Default.
+    /// `expertvm sim --func-cluster-spread` sets [`ClusterSchedulingPolicy::Spread`].
+    pub fn set_func_cluster_policy(
+        &mut self,
+        device: DeviceId,
+        policy: ClusterSchedulingPolicy,
+    ) -> Result<(), SimError> {
+        let _gpu = self.profile.gpu(device)?;
+        self.gpu_rt_mut(device)?.func_cluster_policy = policy;
+        self.clock = self.clock.saturating_add(1);
+        Ok(())
+    }
+
+    /// Current [`Self::set_func_cluster_policy`]. Query; legal during capture.
+    pub fn get_func_cluster_policy(
+        &self,
+        device: DeviceId,
+    ) -> Result<ClusterSchedulingPolicy, SimError> {
+        let _gpu = self.profile.gpu(device)?;
+        Ok(self.gpu_rt(device)?.func_cluster_policy)
+    }
+
+    /// `cudaFuncSetAttribute(..., cudaFuncAttributeClusterDimMustBeSet)`.
+    ///
+    /// Per device. When true, a kernel without
+    /// [`KernelAttrs::cluster`] is Invalid `"cluster dim must be set"`.
+    /// Capture-legal. Decode identity stays false.
+    pub fn set_cluster_dim_must_be_set(
+        &mut self,
+        device: DeviceId,
+        required: bool,
+    ) -> Result<(), SimError> {
+        let _gpu = self.profile.gpu(device)?;
+        self.gpu_rt_mut(device)?.cluster_dim_must_be_set = required;
+        self.clock = self.clock.saturating_add(1);
+        Ok(())
+    }
+
+    /// Current [`Self::set_cluster_dim_must_be_set`]. Query; legal during capture.
+    pub fn cluster_dim_must_be_set(&self, device: DeviceId) -> Result<bool, SimError> {
+        let _gpu = self.profile.gpu(device)?;
+        Ok(self.gpu_rt(device)?.cluster_dim_must_be_set)
+    }
+
+    /// `cudaFuncSetAttribute(..., cudaFuncAttributeRequiredClusterWidth)`.
+    ///
+    /// `0` clears the requirement. A launch cluster must match a nonzero
+    /// width. Capture-legal. Decode identity stays `0`.
+    /// `expertvm sim --required-cluster N` sets this (needs `--cluster`;
+    /// occupancy matches `--cluster`).
+    pub fn set_required_cluster_width(
+        &mut self,
+        device: DeviceId,
+        width: u32,
+    ) -> Result<(), SimError> {
+        self.set_required_cluster_axis(device, 0, width)
+    }
+
+    /// Current [`Self::set_required_cluster_width`]. Query; legal during capture.
+    pub fn required_cluster_width(&self, device: DeviceId) -> Result<u32, SimError> {
+        let _gpu = self.profile.gpu(device)?;
+        Ok(self.gpu_rt(device)?.required_cluster_x)
+    }
+
+    /// `cudaFuncSetAttribute(..., cudaFuncAttributeRequiredClusterHeight)`.
+    pub fn set_required_cluster_height(
+        &mut self,
+        device: DeviceId,
+        height: u32,
+    ) -> Result<(), SimError> {
+        self.set_required_cluster_axis(device, 1, height)
+    }
+
+    /// Current [`Self::set_required_cluster_height`]. Query; legal during capture.
+    pub fn required_cluster_height(&self, device: DeviceId) -> Result<u32, SimError> {
+        let _gpu = self.profile.gpu(device)?;
+        Ok(self.gpu_rt(device)?.required_cluster_y)
+    }
+
+    /// `cudaFuncSetAttribute(..., cudaFuncAttributeRequiredClusterDepth)`.
+    pub fn set_required_cluster_depth(
+        &mut self,
+        device: DeviceId,
+        depth: u32,
+    ) -> Result<(), SimError> {
+        self.set_required_cluster_axis(device, 2, depth)
+    }
+
+    /// Current [`Self::set_required_cluster_depth`]. Query; legal during capture.
+    pub fn required_cluster_depth(&self, device: DeviceId) -> Result<u32, SimError> {
+        let _gpu = self.profile.gpu(device)?;
+        Ok(self.gpu_rt(device)?.required_cluster_z)
+    }
+
+    fn set_required_cluster_axis(
+        &mut self,
+        device: DeviceId,
+        axis: u8,
+        n: u32,
+    ) -> Result<(), SimError> {
+        if n != 0 {
+            let dim = match axis {
+                0 => ClusterDim::x(n),
+                1 => ClusterDim { x: 1, y: n, z: 1 },
+                _ => ClusterDim { x: 1, y: 1, z: n },
+            };
+            let _c = self.cluster_block_count(device, dim)?;
+        } else {
+            let _gpu = self.profile.gpu(device)?;
+        }
+        let rt = self.gpu_rt_mut(device)?;
+        match axis {
+            0 => rt.required_cluster_x = n,
+            1 => rt.required_cluster_y = n,
+            _ => rt.required_cluster_z = n,
+        }
+        self.clock = self.clock.saturating_add(1);
+        Ok(())
+    }
+
+    /// `cudaSetDeviceFlags`. Host-synchronous. Capture cannot include it.
+    ///
+    /// Schedule bits [`DeviceFlags::SCHEDULE_AUTO`] / [`DeviceFlags::SCHEDULE_SPIN`] /
+    /// [`DeviceFlags::SCHEDULE_YIELD`] /
+    /// [`DeviceFlags::SCHEDULE_BLOCKING_SYNC`] are exclusive (combined
+    /// Invalid `"device schedule"`). [`DeviceFlags::MAP_HOST`] /
+    /// [`DeviceFlags::LMEM_RESIZE_TO_MAX`] are stored.
+    /// [`DeviceFlags::SYNC_MEMOPS`] makes runtime memcpy/memset wait the
+    /// stream like pointer [`crate::PointerAttr::SyncMemops`]. Unknown bits
+    /// Invalid `"device flags"`. This VM does not model
+    /// `cudaErrorSetOnActiveProcess`. Auto streams inherit the schedule as
+    /// host-wait tax; explicit stream policy wins. Default `0` is identity.
+    /// `expertvm sim --device-sync-policy blocking` sets
+    /// [`DeviceFlags::SCHEDULE_BLOCKING_SYNC`].
+    pub fn set_device_flags(&mut self, device: DeviceId, flags: u32) -> Result<(), SimError> {
+        self.fail_if_capturing("cannot capture device flags")?;
+        let _gpu = self.profile.gpu(device)?;
+        const KNOWN: u32 = DeviceFlags::SCHEDULE_MASK
+            | DeviceFlags::MAP_HOST
+            | DeviceFlags::LMEM_RESIZE_TO_MAX
+            | DeviceFlags::SYNC_MEMOPS;
+        if flags & !KNOWN != 0 {
+            return Err(SimError::Invalid {
+                why: "device flags",
+            });
+        }
+        match flags & DeviceFlags::SCHEDULE_MASK {
+            DeviceFlags::SCHEDULE_AUTO
+            | DeviceFlags::SCHEDULE_SPIN
+            | DeviceFlags::SCHEDULE_YIELD
+            | DeviceFlags::SCHEDULE_BLOCKING_SYNC => {}
+            _ => {
+                return Err(SimError::Invalid {
+                    why: "device schedule",
+                });
+            }
+        }
+        self.gpu_rt_mut(device)?.device_flags = flags;
+        self.clock = self.clock.saturating_add(1);
+        Ok(())
+    }
+
+    /// `cudaGetDeviceFlags`. Query; legal during capture.
+    pub fn get_device_flags(&self, device: DeviceId) -> Result<u32, SimError> {
+        let _gpu = self.profile.gpu(device)?;
+        Ok(self.gpu_rt(device)?.device_flags)
+    }
+
+    /// `cuDevicePrimaryCtxGetState`. Query; legal during capture.
+    ///
+    /// Flags match [`Self::get_device_flags`]. Active is always true (this VM
+    /// seeds a primary context at construct; no lazy retain). Unknown devices
+    /// are Invalid. No `cuDevicePrimaryCtxRetain` (no `CUcontext` object).
+    pub fn device_primary_ctx_get_state(&self, device: DeviceId) -> Result<(u32, bool), SimError> {
+        let flags = self.get_device_flags(device)?;
+        Ok((flags, true))
+    }
+
+    /// `cuCtxGetId` for the seeded primary context of `device`.
+    ///
+    /// Query; legal during capture. There is no TLS current device and no
+    /// `CUcontext` object. The id is unique per device and stable for the
+    /// life of the `Sim` (primary-ctx Reset is not modeled). Distinct from
+    /// [`Self::green_ctx_get_id`], [`Self::stream_get_id`], and
+    /// [`Self::event_get_id`]. Unknown devices are Invalid
+    /// `"device not in profile"`.
+    pub fn ctx_get_id(&self, device: DeviceId) -> Result<u64, SimError> {
+        let _gpu = self.profile.gpu(device)?;
+        Ok(PRIMARY_CTX_CUDA_ID_TAG | u64::from(device.0))
+    }
+
+    /// `cudaInitDevice(device, 0, 0)`. Ensures the primary context (already
+    /// seeded at construct). Does not make a thread-current device and does
+    /// not change [`Self::get_device_flags`]. Host-synchronous 1 ns. Capture
+    /// cannot include it.
+    pub fn init_device(&mut self, device: DeviceId) -> Result<(), SimError> {
+        self.init_device_with_flags(device, DeviceFlags::SCHEDULE_AUTO, InitDeviceFlags::DEFAULT)
+    }
+
+    /// `cudaInitDevice` with `deviceFlags` and an [`InitDeviceFlags`] word.
+    ///
+    /// [`InitDeviceFlags::FLAGS_ARE_VALID`] applies `deviceFlags` like
+    /// [`Self::set_device_flags`]. Without that bit, `deviceFlags` are
+    /// ignored. Unknown bits Invalid `"init device flags"`. Host-synchronous.
+    /// Capture cannot include it (`"cannot capture init device"`). Distinct
+    /// from [`Self::set_device_flags`] (always applies) and from parked
+    /// `cudaSetDevice` (no thread-current device). No Engine `--init-device`.
+    pub fn init_device_with_flags(
+        &mut self,
+        device: DeviceId,
+        device_flags: u32,
+        flags: u32,
+    ) -> Result<(), SimError> {
+        self.fail_if_capturing("cannot capture init device")?;
+        if flags & !InitDeviceFlags::FLAGS_ARE_VALID != 0 {
+            return Err(SimError::Invalid {
+                why: "init device flags",
+            });
+        }
+        let _gpu = self.profile.gpu(device)?;
+        if flags & InitDeviceFlags::FLAGS_ARE_VALID != 0 {
+            return self.set_device_flags(device, device_flags);
+        }
+        self.clock = self.clock.saturating_add(1);
+        Ok(())
+    }
+
+    /// `cudaPointerGetAttributes`. Query; legal during capture.
+    ///
+    /// A never-created id is [`SimError::UnknownAlloc`]. A freed id is
+    /// [`MemoryType::Unregistered`] (CUDA 11+).
+    pub fn pointer_get_attributes(&self, id: AllocId) -> Result<PointerAttributes, SimError> {
+        let a = self.alloc_ref(id)?;
+        if !a.live {
+            return Ok(PointerAttributes {
+                kind: MemoryType::Unregistered,
+                device: None,
+                device_pointer: false,
+                host_pointer: false,
+            });
+        }
+        if a.managed {
+            return Ok(PointerAttributes {
+                kind: MemoryType::Managed,
+                device: a.devices.first().copied(),
+                device_pointer: true,
+                host_pointer: true,
+            });
+        }
+        if a.host_pageable || a.host_pinned {
+            let mapped = a.host_mapped;
+            return Ok(PointerAttributes {
+                kind: MemoryType::Host,
+                device: if mapped {
+                    self.profile.gpus.first().map(|g| g.id)
+                } else {
+                    None
+                },
+                device_pointer: mapped,
+                host_pointer: true,
+            });
+        }
+        Ok(PointerAttributes {
+            kind: MemoryType::Device,
+            device: a
+                .devices
+                .first()
+                .copied()
+                .or_else(|| a.vmm_maps.first().map(|m| m.0)),
+            device_pointer: true,
+            host_pointer: false,
+        })
+    }
+
+    /// `cudaMemGetAddressRange`. Query; legal during capture.
+    ///
+    /// Interior offsets are not modeled: the base is `alloc` itself. A never-
+    /// created id is [`SimError::UnknownAlloc`]. A freed id is Invalid
+    /// `"address range"`.
+    pub fn mem_get_address_range(&self, alloc: AllocId) -> Result<(AllocId, u64), SimError> {
+        let a = self.alloc_ref(alloc)?;
+        if !a.live {
+            return Err(SimError::Invalid {
+                why: "address range",
+            });
+        }
+        Ok((alloc, a.bytes))
+    }
+
+    /// `cuPointerSetAttribute` / GetAttribute for modeled [`PointerAttr`].
+    /// [`PointerAttr::SyncMemops`] is settable (`value` 0 or 1). Other attrs
+    /// are query-only (Invalid `"pointer attr"`). Capture refused
+    /// (`"cannot capture pointer attr"`). Unknown ids are
+    /// [`SimError::UnknownAlloc`]; freed ids are Invalid `"pointer attr"`.
+    pub fn pointer_set_attribute(
+        &mut self,
+        alloc: AllocId,
+        attr: PointerAttr,
+        value: u64,
+    ) -> Result<(), SimError> {
+        self.fail_if_capturing("cannot capture pointer attr")?;
+        let a = self.alloc_mut(alloc)?;
+        if !a.live {
+            return Err(SimError::Invalid {
+                why: "pointer attr",
+            });
+        }
+        match attr {
+            PointerAttr::SyncMemops => {
+                if value > 1 {
+                    return Err(SimError::Invalid {
+                        why: "pointer attr",
+                    });
+                }
+                a.sync_memops = value == 1;
+                Ok(())
+            }
+            PointerAttr::MemoryType
+            | PointerAttr::DevicePointer
+            | PointerAttr::HostPointer
+            | PointerAttr::IsManaged
+            | PointerAttr::RangeSize
+            | PointerAttr::Mapped
+            | PointerAttr::MemPoolHandle
+            | PointerAttr::DeviceOrdinal
+            | PointerAttr::RangeStartAddr
+            | PointerAttr::BufferId
+            | PointerAttr::IsLegacyCudaIpcCapable
+            | PointerAttr::IsGpuDirectRdmaCapable
+            | PointerAttr::AllowedHandleTypes
+            | PointerAttr::MappingBaseAddr
+            | PointerAttr::MappingSize
+            | PointerAttr::IsHwDecompressCapable
+            | PointerAttr::MemoryBlockId => Err(SimError::Invalid {
+                why: "pointer attr",
+            }),
+        }
+    }
+
+    /// `cuPointerGetAttribute` twin of [`Self::pointer_set_attribute`]. Query;
+    /// capture-legal. Reports 0/1 for [`PointerAttr::SyncMemops`]. Other
+    /// attrs wrap [`Self::pointer_get_attributes`], range size, mapped host,
+    /// the backing pool, device ordinal, range start, buffer id, legacy IPC /
+    /// GPUDirect RDMA capability, allowed handle types, VMM mapping
+    /// base/size at offset 0, hardware decompress (always 0), and the VMM
+    /// memory-block id (the [`MemHandleId`] covering offset 0).
+    pub fn pointer_get_attribute(
+        &self,
+        alloc: AllocId,
+        attr: PointerAttr,
+    ) -> Result<u64, SimError> {
+        let a = self.alloc_ref(alloc)?;
+        if !a.live {
+            return Err(SimError::Invalid {
+                why: "pointer attr",
+            });
+        }
+        match attr {
+            PointerAttr::SyncMemops => Ok(u64::from(a.sync_memops)),
+            PointerAttr::MemoryType => Ok(self.pointer_get_attributes(alloc)?.kind.to_cuda()),
+            PointerAttr::DevicePointer => Ok(u64::from(
+                self.pointer_get_attributes(alloc)?.device_pointer,
+            )),
+            PointerAttr::HostPointer => {
+                Ok(u64::from(self.pointer_get_attributes(alloc)?.host_pointer))
+            }
+            PointerAttr::IsManaged => Ok(u64::from(a.managed)),
+            PointerAttr::RangeSize => Ok(a.bytes),
+            PointerAttr::Mapped => Ok(u64::from(a.host_mapped)),
+            PointerAttr::MemPoolHandle => Ok(a.pool.map(|p| u64::from(p.0)).unwrap_or(0)),
+            PointerAttr::DeviceOrdinal => match self.pointer_get_attributes(alloc)?.device {
+                Some(d) => Ok(u64::from(d.0)),
+                None => Err(SimError::Invalid {
+                    why: "pointer attr",
+                }),
+            },
+            PointerAttr::RangeStartAddr => {
+                let (base, _) = self.mem_get_address_range(alloc)?;
+                Ok(base.0)
+            }
+            PointerAttr::BufferId => Ok(alloc.0),
+            PointerAttr::IsLegacyCudaIpcCapable => Ok(u64::from(a.legacy_ipc_device().is_some())),
+            PointerAttr::IsGpuDirectRdmaCapable => match a.legacy_ipc_device() {
+                Some(d) => Ok(u64::from(self.profile.gpu_direct_rdma_supported(d))),
+                None => Ok(0),
+            },
+            PointerAttr::AllowedHandleTypes => match a.pool {
+                Some(p) => Ok(if self.is_pool_shareable(p)? {
+                    MemHandleType::POSIX_FILE_DESCRIPTOR
+                } else {
+                    MemHandleType::NONE
+                }),
+                None => Ok(MemHandleType::NONE),
+            },
+            PointerAttr::MappingBaseAddr => {
+                a.mapping_size_at_zero()
+                    .map(|_| alloc.0)
+                    .ok_or(SimError::Invalid {
+                        why: "pointer attr",
+                    })
+            }
+            PointerAttr::MappingSize => a.mapping_size_at_zero().ok_or(SimError::Invalid {
+                why: "pointer attr",
+            }),
+            PointerAttr::IsHwDecompressCapable => Ok(0),
+            PointerAttr::MemoryBlockId => {
+                if !a.vmm {
+                    return Err(SimError::Invalid {
+                        why: "pointer attr",
+                    });
+                }
+                let (device, bytes) = a
+                    .vmm_maps
+                    .iter()
+                    .find(|(_, offset, _)| *offset == 0)
+                    .map(|&(d, _, n)| (d, n))
+                    .ok_or(SimError::Invalid {
+                        why: "pointer attr",
+                    })?;
+                self.vmm_handle_at
+                    .get(&(alloc, device, 0, bytes))
+                    .map(|h| h.0)
+                    .ok_or(SimError::Invalid {
+                        why: "pointer attr",
+                    })
+            }
+        }
+    }
+
+    /// `cuPointerGetAttributes`: batch [`Self::pointer_get_attribute`].
+    ///
+    /// Distinct from [`Self::pointer_get_attributes`] (`cudaPointerGetAttributes`
+    /// struct). Empty `attrs` is `Ok([])` after the pointer is a live alloc.
+    /// All-or-nothing: the first Invalid / UnknownAlloc fails with no partial
+    /// vector. `CU_POINTER_ATTRIBUTE_ACCESS_FLAGS` stays
+    /// [`Self::pointer_get_access_flags`] (explicit device; not a
+    /// [`PointerAttr`]). Query; legal during capture.
+    pub fn pointer_get_attribute_n(
+        &self,
+        alloc: AllocId,
+        attrs: &[PointerAttr],
+    ) -> Result<Vec<u64>, SimError> {
+        let a = self.alloc_ref(alloc)?;
+        if !a.live {
+            return Err(SimError::Invalid {
+                why: "pointer attr",
+            });
+        }
+        attrs
+            .iter()
+            .copied()
+            .map(|attr| self.pointer_get_attribute(alloc, attr))
+            .collect()
+    }
+
+    /// `CU_POINTER_ATTRIBUTE_ACCESS_FLAGS` for `device`.
+    ///
+    /// CUDA's `cuPointerGetAttribute` uses the current context. This VM has
+    /// no TLS current device (`cudaSetDevice` stays parked), so `device` is
+    /// explicit. Not a [`PointerAttr`] on [`Self::pointer_get_attribute`]
+    /// (that API has no device argument).
+    ///
+    /// Flags are [`MemAccessFlags`] (same integers as
+    /// `CU_POINTER_ATTRIBUTE_ACCESS_FLAG_*`):
+    /// [`PROT_READ_WRITE`](MemAccessFlags::PROT_READ_WRITE) when a kernel
+    /// write of the allocation would be resident,
+    /// [`PROT_READ`](MemAccessFlags::PROT_READ) when only a kernel read
+    /// would be resident, else [`PROT_NONE`](MemAccessFlags::PROT_NONE).
+    /// Mapped host is ReadWrite. `cudaDeviceEnablePeerAccess` does not
+    /// grant kernel access to remote `cudaMalloc` (D2D memcpy only). Pool
+    /// ProtRead, VMM `va_set_access`, and managed SetAccessedBy are Read.
+    /// Unknown device is Invalid `"device not in profile"`. Freed ids are
+    /// Invalid `"pointer attr"`. Query; legal during capture.
+    pub fn pointer_get_access_flags(
+        &self,
+        device: DeviceId,
+        alloc: AllocId,
+    ) -> Result<u32, SimError> {
+        let _gpu = self.profile.gpu(device)?;
+        let a = self.alloc_ref(alloc)?;
+        if !a.live {
+            return Err(SimError::Invalid {
+                why: "pointer attr",
+            });
+        }
+        let buf = KernelBuf::whole(alloc);
+        if self.buf_on_device(&buf, device, true, false)? {
+            return Ok(MemAccessFlags::PROT_READ_WRITE);
+        }
+        if self.buf_on_device(&buf, device, true, true)? {
+            return Ok(MemAccessFlags::PROT_READ);
+        }
+        Ok(MemAccessFlags::PROT_NONE)
+    }
+
+    /// `cudaHostGetDevicePointer`. Query; legal during capture.
+    ///
+    /// Mapped host (`cudaHostAllocMapped` / `cudaHostRegisterMapped`) returns
+    /// the same id (this VM has one pointer space). Unmapped host and device
+    /// allocs are Invalid `not mapped`.
+    pub fn host_get_device_pointer(&self, id: AllocId) -> Result<AllocId, SimError> {
+        let a = self.alloc_ref(id)?;
+        if !a.live {
+            return Err(SimError::UnknownAlloc { alloc: id });
+        }
+        if a.host_mapped {
+            return Ok(id);
+        }
+        Err(SimError::Invalid { why: "not mapped" })
+    }
+
+    /// `cudaHostGetDevicePointer` with a flags word.
+    ///
+    /// CUDA requires `flags == 0` ([`HostGetDevicePointerFlags::DEFAULT`]).
+    /// Other bits are Invalid `"host get device pointer flags"`. Typed
+    /// [`Self::host_get_device_pointer`] stays. Query; legal during capture.
+    pub fn host_get_device_pointer_with_flags(
+        &self,
+        id: AllocId,
+        flags: u32,
+    ) -> Result<AllocId, SimError> {
+        if flags != HostGetDevicePointerFlags::DEFAULT {
+            return Err(SimError::Invalid {
+                why: "host get device pointer flags",
+            });
+        }
+        self.host_get_device_pointer(id)
+    }
+
+    /// `cudaHostGetFlags`. Query; legal during capture.
+    ///
+    /// Returns the flag word passed to [`Self::alloc_host_with_flags`] /
+    /// [`Self::host_register_with_flags`]. Device, managed, VMM, and
+    /// unregistered pageable pointers are Invalid `"not host alloc"`.
+    pub fn host_get_flags(&self, id: AllocId) -> Result<u32, SimError> {
+        let a = self.alloc_ref(id)?;
+        if !a.live {
+            return Err(SimError::UnknownAlloc { alloc: id });
+        }
+        if a.managed || a.vmm || !(a.host_pinned || a.host_registered) {
+            return Err(SimError::Invalid {
+                why: "not host alloc",
+            });
+        }
+        Ok(a.host_flags)
+    }
+
+    /// `cuDeviceGetExecAffinitySupport`. Query; legal during capture.
+    ///
+    /// [`ExecAffinityType::SM_COUNT`] is 0: this VM's green contexts are
+    /// permille of the chip, not occupancy SM counts. Other type ids are
+    /// Invalid `"exec affinity type"`. Unknown devices are Invalid
+    /// `"device not in profile"`. Distinct from [`Self::green_ctx_create`] /
+    /// [`Self::device_get_dev_resource`]. This VM does not invent
+    /// `cuCtxSetExecAffinity`.
+    pub fn device_get_exec_affinity_support(
+        &self,
+        device: DeviceId,
+        kind: u32,
+    ) -> Result<i32, SimError> {
+        let _gpu = self.profile.gpu(device)?;
+        if kind != ExecAffinityType::SM_COUNT {
+            return Err(SimError::Invalid {
+                why: "exec affinity type",
+            });
+        }
+        Ok(0)
+    }
+
+    /// `cudaDeviceGetAttribute`. Query; legal during capture.
+    ///
+    /// Only attributes this VM already models ([`DeviceAttr`]).
+    pub fn device_get_attribute(
+        &self,
+        device: DeviceId,
+        attr: DeviceAttr,
+    ) -> Result<u64, SimError> {
+        let gpu = self.profile.gpu(device)?;
+        Ok(match attr {
+            DeviceAttr::CooperativeLaunch => u64::from(gpu.cooperative_launch),
+            DeviceAttr::ConcurrentKernels => u64::from(gpu.compute_slots > 1),
+            DeviceAttr::MaxSharedMemoryPerBlock => u64::from(gpu.max_shared_mem_per_block),
+            DeviceAttr::MaxSharedMemoryPerBlockOptin => {
+                u64::from(gpu.max_shared_mem_per_block_optin)
+            }
+            DeviceAttr::L2CacheSize
+            | DeviceAttr::MaxPersistingL2CacheSize
+            | DeviceAttr::MaxAccessPolicyWindowSize => gpu.l2_bytes,
+            DeviceAttr::MaxBlocksPerCluster => u64::from(gpu.max_blocks_per_cluster),
+            DeviceAttr::MemSyncDomainCount => u64::from(gpu.mem_sync_domain_count),
+            DeviceAttr::MemoryPoolsSupported
+            | DeviceAttr::VirtualMemoryManagementSupported
+            | DeviceAttr::HandleTypePosixFileDescriptorSupported => 1,
+            DeviceAttr::CanMapHostMemory | DeviceAttr::ManagedMemory => 1,
+            DeviceAttr::TotalGlobalMem => gpu.hbm_bytes,
+            DeviceAttr::AsyncEngineCount => u64::from(gpu.copy_engines),
+            DeviceAttr::ClusterLaunch => u64::from(gpu.max_blocks_per_cluster > 0),
+            DeviceAttr::HostRegisterSupported
+            | DeviceAttr::IpcEventSupport
+            | DeviceAttr::CanUseHostPointerForRegisteredMem => 1,
+            DeviceAttr::MemoryPoolSupportedHandleTypes => MemHandleType::POSIX_FILE_DESCRIPTOR,
+            DeviceAttr::GpuDirectRdmaSupported
+            | DeviceAttr::CanFlushRemoteWrites
+            | DeviceAttr::GpuDirectRdmaWithCudaVMMSupported => {
+                u64::from(self.profile.gpu_direct_rdma_supported(device))
+            }
+            DeviceAttr::GpuDirectRdmaFlushWritesOptions => {
+                if self.profile.gpu_direct_rdma_supported(device) {
+                    FlushGpuDirectRdmaWritesOptions::HOST
+                } else {
+                    0
+                }
+            }
+            DeviceAttr::GpuDirectRdmaWritesOrdering => GpuDirectRdmaWritesOrdering::NONE,
+            DeviceAttr::HostRegisterReadOnlySupported
+            | DeviceAttr::PageableMemoryAccess
+            | DeviceAttr::ConcurrentManagedAccess
+            | DeviceAttr::DirectManagedMemAccessFromHost
+            | DeviceAttr::PageableMemoryAccessUsesHostPageTables
+            | DeviceAttr::HostNativeAtomicSupported
+            | DeviceAttr::CooperativeMultiDeviceLaunch
+            | DeviceAttr::Integrated
+            | DeviceAttr::SparseCudaArraySupported
+            | DeviceAttr::DeferredMappingCudaArraySupported
+            | DeviceAttr::DmaBufSupported
+            | DeviceAttr::GenericCompressionSupported
+            | DeviceAttr::GlobalL1CacheSupported
+            | DeviceAttr::LocalL1CacheSupported
+            | DeviceAttr::ComputePreemptionSupported
+            | DeviceAttr::EccEnabled
+            | DeviceAttr::ReservedSharedMemoryPerBlock
+            | DeviceAttr::TotalConstantMemory
+            | DeviceAttr::TextureAlignment
+            | DeviceAttr::SurfaceAlignment
+            | DeviceAttr::TexturePitchAlignment
+            | DeviceAttr::MaxTexture1DWidth
+            | DeviceAttr::HandleTypeWin32HandleSupported
+            | DeviceAttr::HandleTypeWin32KmtHandleSupported
+            | DeviceAttr::HandleTypeFabricSupported
+            | DeviceAttr::HostMemoryPoolsSupported
+            | DeviceAttr::IsMultiGpuBoard
+            | DeviceAttr::MultiGpuBoardGroupID
+            | DeviceAttr::ComputeMode
+            | DeviceAttr::TccDriver
+            | DeviceAttr::KernelExecTimeout
+            | DeviceAttr::TensorMapAccessSupported
+            | DeviceAttr::UnifiedFunctionPointers
+            | DeviceAttr::TimelineSemaphoreInteropSupported
+            | DeviceAttr::MemDecompressAlgorithmMask
+            | DeviceAttr::MemDecompressMaximumLength
+            | DeviceAttr::HostNumaVirtualMemoryManagementSupported
+            | DeviceAttr::HostNumaMemoryPoolsSupported
+            | DeviceAttr::HostNumaMultinodeIpcSupported
+            | DeviceAttr::NumaConfig
+            | DeviceAttr::OnlyPartialHostNativeAtomicSupported => 0,
+            DeviceAttr::MaxPitch => DeviceAttr::MAX_PITCH,
+            DeviceAttr::StreamPrioritiesSupported
+            | DeviceAttr::UnifiedAddressing
+            | DeviceAttr::CanUse64BitStreamMemOps
+            | DeviceAttr::CanUseStreamMemOps
+            | DeviceAttr::CanUseStreamWaitValueNor => 1,
+            DeviceAttr::GpuOverlap => u64::from(gpu.copy_engines > 0),
+            DeviceAttr::MulticastSupported => u64::from(self.profile.multicast_supported(device)),
+            DeviceAttr::PciDomainId => u64::from(synthetic_pci_ids(device).0),
+            DeviceAttr::PciBusId => u64::from(synthetic_pci_ids(device).1),
+            DeviceAttr::PciDeviceId => u64::from(synthetic_pci_ids(device).2),
+        })
+    }
+
+    /// `cudaGetDeviceProperties`. Query; legal during capture.
+    ///
+    /// Only fields this VM already models ([`DeviceProperties`]). Unknown
+    /// devices are Invalid.
+    pub fn device_get_properties(&self, device: DeviceId) -> Result<DeviceProperties, SimError> {
+        let gpu = self.profile.gpu(device)?;
+        Ok(DeviceProperties {
+            name: self.profile.name.clone(),
+            uuid: synthetic_device_uuid(&self.profile.name, device),
+            pci_domain_id: synthetic_pci_ids(device).0,
+            pci_bus_id: synthetic_pci_ids(device).1,
+            pci_device_id: synthetic_pci_ids(device).2,
+            total_global_mem: gpu.hbm_bytes,
+            total_constant_memory: 0,
+            texture_alignment: 0,
+            surface_alignment: 0,
+            texture_pitch_alignment: 0,
+            max_texture_1d_width: 0,
+            mem_pitch: DeviceAttr::MAX_PITCH,
+            shared_mem_per_block: gpu.max_shared_mem_per_block,
+            shared_mem_per_block_optin: gpu.max_shared_mem_per_block_optin,
+            reserved_shared_mem_per_block: 0,
+            l2_cache_size: gpu.l2_bytes,
+            persisting_l2_cache_max_size: gpu.l2_bytes,
+            access_policy_max_window_size: gpu.l2_bytes,
+            global_l1_cache_supported: false,
+            local_l1_cache_supported: false,
+            compute_preemption_supported: false,
+            ecc_enabled: false,
+            async_engine_count: u32::from(gpu.copy_engines),
+            concurrent_kernels: gpu.compute_slots > 1,
+            cooperative_launch: gpu.cooperative_launch,
+            max_blocks_per_cluster: u32::from(gpu.max_blocks_per_cluster),
+            portable_cluster_size: u32::from(gpu.portable_cluster_size),
+            mem_sync_domain_count: u32::from(gpu.mem_sync_domain_count),
+            memory_pools_supported: true,
+            can_map_host_memory: true,
+            managed_memory: true,
+            cluster_launch: gpu.max_blocks_per_cluster > 0,
+            host_register_supported: true,
+            ipc_event_support: true,
+            can_use_host_pointer_for_registered_mem: true,
+            memory_pool_supported_handle_types: MemHandleType::POSIX_FILE_DESCRIPTOR,
+            gpu_direct_rdma_supported: self.profile.gpu_direct_rdma_supported(device),
+            host_register_read_only_supported: false,
+            pageable_memory_access: false,
+            stream_priorities_supported: true,
+            gpu_overlap: gpu.copy_engines > 0,
+            unified_addressing: true,
+            concurrent_managed_access: false,
+            direct_managed_mem_access_from_host: false,
+            pageable_memory_access_uses_host_page_tables: false,
+            can_flush_remote_writes: self.profile.gpu_direct_rdma_supported(device),
+            host_native_atomic_supported: false,
+            cooperative_multi_device_launch: false,
+            integrated: false,
+            sparse_cuda_array_supported: false,
+            deferred_mapping_cuda_array_supported: false,
+            dma_buf_supported: false,
+            multicast_supported: self.profile.multicast_supported(device),
+            virtual_memory_management_supported: true,
+            handle_type_posix_file_descriptor_supported: true,
+            gpu_direct_rdma_flush_writes_options: if self.profile.gpu_direct_rdma_supported(device)
+            {
+                FlushGpuDirectRdmaWritesOptions::HOST
+            } else {
+                0
+            },
+            gpu_direct_rdma_writes_ordering: GpuDirectRdmaWritesOrdering::NONE,
+            gpu_direct_rdma_with_cuda_vmm_supported: self.profile.gpu_direct_rdma_supported(device),
+            generic_compression_supported: false,
+            handle_type_win32_handle_supported: false,
+            handle_type_win32_kmt_handle_supported: false,
+            handle_type_fabric_supported: false,
+            host_memory_pools_supported: false,
+            is_multi_gpu_board: false,
+            multi_gpu_board_group_id: 0,
+            compute_mode: ComputeMode::DEFAULT,
+            tcc_driver: false,
+            kernel_exec_timeout: false,
+            can_use_64_bit_stream_mem_ops: true,
+            can_use_stream_mem_ops: true,
+            can_use_stream_wait_value_nor: true,
+            tensor_map_access_supported: false,
+            unified_function_pointers: false,
+            timeline_semaphore_interop_supported: false,
+            mem_decompress_algorithm_mask: 0,
+            mem_decompress_maximum_length: 0,
+            host_numa_virtual_memory_management_supported: false,
+            host_numa_memory_pools_supported: false,
+            host_numa_multinode_ipc_supported: false,
+            numa_config: DeviceNumaConfig::NONE,
+            only_partial_host_native_atomic_supported: false,
+        })
+    }
+
+    /// `cudaDeviceGetName`. Query; legal during capture.
+    ///
+    /// The profile name ([`HardwareProfile::name`]; same as
+    /// [`DeviceProperties::name`]). Unknown devices are Invalid.
+    pub fn device_get_name(&self, device: DeviceId) -> Result<String, SimError> {
+        let _gpu = self.profile.gpu(device)?;
+        Ok(self.profile.name.clone())
+    }
+
+    /// `cuDeviceGetUuid` / `cudaDeviceGetUuid`. Query; legal during capture.
+    ///
+    /// Sixteen-octet synthetic UUID for this `(profile.name, device)`. Distinct
+    /// from [`Self::device_get_name`] and [`DeviceId`]. Two [`Sim`]s with the
+    /// same profile agree. Also [`DeviceProperties::uuid`]. Unknown devices
+    /// are Invalid. Inverse is [`Self::device_get_by_uuid`].
+    pub fn device_get_uuid(&self, device: DeviceId) -> Result<[u8; 16], SimError> {
+        let _gpu = self.profile.gpu(device)?;
+        Ok(synthetic_device_uuid(&self.profile.name, device))
+    }
+
+    /// `cuDeviceGetByUuid`. Query; legal during capture.
+    ///
+    /// Inverse of [`Self::device_get_uuid`]. Unknown UUID is Invalid
+    /// `"unknown device uuid"`. Distinct from [`Self::device_get`] (ordinal).
+    pub fn device_get_by_uuid(&self, uuid: [u8; 16]) -> Result<DeviceId, SimError> {
+        self.profile
+            .gpus
+            .iter()
+            .find(|g| synthetic_device_uuid(&self.profile.name, g.id) == uuid)
+            .map(|g| g.id)
+            .ok_or(SimError::Invalid {
+                why: "unknown device uuid",
+            })
+    }
+
+    /// `cudaDeviceGetPciBusId` / `cuDeviceGetPCIBusId`. Query; legal during
+    /// capture.
+    ///
+    /// Synthetic `domain:bus:device.function` string for this [`DeviceId`].
+    /// Distinct from [`Self::device_get_uuid`] and [`Self::device_get_name`].
+    /// Same ordinal on two profiles share a bus id. Also
+    /// [`DeviceProperties::pci_domain_id`] / [`pci_bus_id`](DeviceProperties::pci_bus_id) /
+    /// [`pci_device_id`](DeviceProperties::pci_device_id). Unknown devices are
+    /// Invalid. Inverse is [`Self::device_get_by_pci_bus_id`].
+    pub fn device_get_pci_bus_id(&self, device: DeviceId) -> Result<String, SimError> {
+        let _gpu = self.profile.gpu(device)?;
+        Ok(synthetic_pci_bus_id(device))
+    }
+
+    /// `cudaDeviceGetByPCIBusId`. Query; legal during capture.
+    ///
+    /// Inverse of [`Self::device_get_pci_bus_id`]. Unknown or malformed bus id
+    /// is Invalid `"unknown pci bus id"`. Distinct from
+    /// [`Self::device_get_by_uuid`].
+    pub fn device_get_by_pci_bus_id(&self, pci_bus_id: &str) -> Result<DeviceId, SimError> {
+        self.profile
+            .gpus
+            .iter()
+            .find(|g| synthetic_pci_bus_id(g.id) == pci_bus_id)
+            .map(|g| g.id)
+            .ok_or(SimError::Invalid {
+                why: "unknown pci bus id",
+            })
+    }
+
+    /// `cuDeviceTotalMem`. Query; legal during capture.
+    ///
+    /// [`crate::GpuProfile::hbm_bytes`] (same as [`DeviceAttr::TotalGlobalMem`] /
+    /// [`DeviceProperties::total_global_mem`]). Unknown devices are Invalid.
+    pub fn device_total_mem(&self, device: DeviceId) -> Result<u64, SimError> {
+        Ok(self.profile.gpu(device)?.hbm_bytes)
+    }
+
+    /// `cudaGetDeviceCount`. Query; legal during capture.
+    #[must_use]
+    pub fn device_count(&self) -> u32 {
+        u32::try_from(self.profile.gpus.len()).unwrap_or(u32::MAX)
+    }
+
+    /// `cuDeviceGet`. Query; legal during capture.
+    ///
+    /// Ordinal `0 .. device_count`. Other ordinals Invalid
+    /// `"device not in profile"` (same as [`HardwareProfile::gpu`]).
+    pub fn device_get(&self, ordinal: u32) -> Result<DeviceId, SimError> {
+        let id = u16::try_from(ordinal).map_err(|_| SimError::Invalid {
+            why: "device not in profile",
+        })?;
+        let device = DeviceId(id);
+        let _gpu = self.profile.gpu(device)?;
+        Ok(device)
+    }
+
+    /// `cudaDeviceCanAccessPeer`. Query; legal during capture.
+    ///
+    /// Hardware topology only (a profile link). Same device is false.
+    /// [`Self::enable_peer`] is still required before D2D.
+    pub fn device_can_access_peer(
+        &self,
+        device: DeviceId,
+        peer: DeviceId,
+    ) -> Result<bool, SimError> {
+        Ok(self.device_get_p2p_attribute(device, peer, DeviceP2pAttr::AccessSupported)? != 0)
+    }
+
+    /// `cudaDeviceGetP2PAttribute`. Query; legal during capture.
+    ///
+    /// [`DeviceP2pAttr::AccessSupported`] is a profile device–device link.
+    /// [`DeviceP2pAttr::PerformanceRank`] is unique GPU↔GPU link `bps`
+    /// descending (lower is better). Same device is 0. Missing links are 0,
+    /// not [`SimError::NoPeer`]. Unknown devices are Invalid.
+    /// [`DeviceP2pAttr::NativeAtomicSupported`] /
+    /// [`CudaArrayAccessFromDevice`](DeviceP2pAttr::CudaArrayAccessFromDevice) /
+    /// [`OnlyPartialNativeAtomicSupported`](DeviceP2pAttr::OnlyPartialNativeAtomicSupported)
+    /// are always 0.
+    pub fn device_get_p2p_attribute(
+        &self,
+        src: DeviceId,
+        dst: DeviceId,
+        attr: DeviceP2pAttr,
+    ) -> Result<u64, SimError> {
+        let _src = self.profile.gpu(src)?;
+        let _dst = self.profile.gpu(dst)?;
+        Ok(match attr {
+            DeviceP2pAttr::AccessSupported => {
+                if src == dst || self.profile.link(Some(src), Some(dst)).is_err() {
+                    0
+                } else {
+                    1
+                }
+            }
+            DeviceP2pAttr::PerformanceRank => self.profile.p2p_performance_rank(src, dst),
+            DeviceP2pAttr::NativeAtomicSupported
+            | DeviceP2pAttr::CudaArrayAccessFromDevice
+            | DeviceP2pAttr::OnlyPartialNativeAtomicSupported => 0,
+        })
+    }
+
+    /// `cudaDeviceGetNvSciSyncAttributes`. Query; legal during capture.
+    ///
+    /// Always Invalid `"nvscisync not modeled"`
+    /// ([`DeviceAttr::TimelineSemaphoreInteropSupported`] is 0). Flags must
+    /// be [`NvSciSyncAttrFlags::SIGNAL`], [`WAIT`](NvSciSyncAttrFlags::WAIT),
+    /// or both. Unknown bits or 0 Invalid `"nvscisync flags"`. Unknown devices
+    /// are Invalid. Distinct from [`Self::ipc_get_event`] and
+    /// [`Self::wait_value32`]. No Engine `--nvscisync`.
+    pub fn device_get_nvscisync_attributes(
+        &self,
+        device: DeviceId,
+        flags: u32,
+    ) -> Result<(), SimError> {
+        const KNOWN: u32 = NvSciSyncAttrFlags::SIGNAL | NvSciSyncAttrFlags::WAIT;
+        if flags == 0 || flags & !KNOWN != 0 {
+            return Err(SimError::Invalid {
+                why: "nvscisync flags",
+            });
+        }
+        let _gpu = self.profile.gpu(device)?;
+        Err(SimError::Invalid {
+            why: "nvscisync not modeled",
+        })
+    }
+
+    /// `cudaDeviceFlushGPUDirectRDMAWrites`. Host-synchronous 1 ns barrier.
+    ///
+    /// Capture cannot include it. Devices without a GPU↔GPU
+    /// [`crate::LinkKind::Rdma`] link are Invalid `"gpu direct rdma"`. Target
+    /// must be [`FlushGpuDirectRdmaTarget::CURRENT_DEVICE`]; scope
+    /// [`FlushGpuDirectRdmaScope::TO_OWNER`] or
+    /// [`FlushGpuDirectRdmaScope::TO_ALL_DEVICES`]. No
+    /// write-visibility model; write-ordering options are not modeled.
+    pub fn flush_gpu_direct_rdma_writes(
+        &mut self,
+        device: DeviceId,
+        target: u32,
+        scope: u32,
+    ) -> Result<(), SimError> {
+        self.fail_if_capturing("cannot capture flush rdma")?;
+        let _gpu = self.profile.gpu(device)?;
+        if !self.profile.gpu_direct_rdma_supported(device) {
+            return Err(SimError::Invalid {
+                why: "gpu direct rdma",
+            });
+        }
+        if target != FlushGpuDirectRdmaTarget::CURRENT_DEVICE {
+            return Err(SimError::Invalid {
+                why: "flush rdma target",
+            });
+        }
+        if scope != FlushGpuDirectRdmaScope::TO_OWNER
+            && scope != FlushGpuDirectRdmaScope::TO_ALL_DEVICES
+        {
+            return Err(SimError::Invalid {
+                why: "flush rdma scope",
+            });
+        }
+        self.clock = self.clock.saturating_add(1);
+        Ok(())
+    }
+
+    /// `cudaMallocPitch`: aligned 2D allocation. Returns `(ptr, pitch)`.
+    ///
+    /// Pitch is `align_up(width, 512)`. Size charged is `pitch * height`.
+    /// Host-synchronous like [`Self::malloc`]. Capture cannot include it.
+    pub fn malloc_pitch(
+        &mut self,
+        device: DeviceId,
+        width: u64,
+        height: u64,
+    ) -> Result<(AllocId, u64), SimError> {
+        if width == 0 || height == 0 {
+            return Err(SimError::Invalid {
+                why: "malloc pitch",
+            });
+        }
+        let pitch = align_up(width, 512);
+        let bytes = pitch.saturating_mul(height);
+        let id = self.malloc(device, bytes)?;
+        Ok((id, pitch))
+    }
+
+    /// `cuMemAllocPitch`. [`Self::malloc_pitch`] is `cudaMallocPitch`.
+    ///
+    /// `element_size` is CUDA `ElementSizeBytes` and must be 4, 8, or 16.
+    /// Other sizes Invalid `"malloc pitch element"`. Pitch is still
+    /// `align_up(width, 512)` (this VM does not vary pitch by element size).
+    /// Host-synchronous; capture cannot include it.
+    pub fn malloc_pitch_with_element_size(
+        &mut self,
+        device: DeviceId,
+        width: u64,
+        height: u64,
+        element_size: u32,
+    ) -> Result<(AllocId, u64), SimError> {
+        if element_size != 4 && element_size != 8 && element_size != 16 {
+            return Err(SimError::Invalid {
+                why: "malloc pitch element",
+            });
+        }
+        self.malloc_pitch(device, width, height)
+    }
+
+    /// `cudaMalloc3D`: aligned 3D allocation. Returns `(ptr, pitch)`.
+    ///
+    /// Pitch is `align_up(width, 512)`. Size charged is `pitch * height * depth`.
+    /// Host-synchronous like [`Self::malloc`]. Capture cannot include it.
+    pub fn malloc_3d(
+        &mut self,
+        device: DeviceId,
+        width: u64,
+        height: u64,
+        depth: u64,
+    ) -> Result<(AllocId, u64), SimError> {
+        if width == 0 || height == 0 || depth == 0 {
+            return Err(SimError::Invalid { why: "malloc 3d" });
+        }
+        let pitch = align_up(width, 512);
+        let bytes = pitch.saturating_mul(height).saturating_mul(depth);
+        let id = self.malloc(device, bytes)?;
+        Ok((id, pitch))
+    }
+
+    /// `cudaLaunchCooperativeKernel` on whole allocations.
+    ///
+    /// Same lease / residency rules as [`Self::kernel`]. The grid occupies
+    /// every [`crate::GpuProfile::compute_slots`] so leftover kernels on other
+    /// streams cannot Hyper-Q overlap it. Fails `cooperative launch not
+    /// supported` unless [`crate::GpuProfile::cooperative_launch`]. Capture is
+    /// allowed (CUDA 11+).
+    pub fn cooperative_kernel(
+        &mut self,
+        device: DeviceId,
+        kind: KernelKind,
+        reads: &[AllocId],
+        writes: &[AllocId],
+        stream: StreamId,
+    ) -> Result<OpId, SimError> {
+        let reads: Vec<KernelBuf> = reads.iter().copied().map(KernelBuf::whole).collect();
+        let writes: Vec<KernelBuf> = writes.iter().copied().map(KernelBuf::whole).collect();
+        self.cooperative_kernel_bufs(device, kind, &reads, &writes, stream)
+    }
+
+    /// `cudaLaunchCooperativeKernel` on explicit buffer spans.
+    pub fn cooperative_kernel_bufs(
+        &mut self,
+        device: DeviceId,
+        kind: KernelKind,
+        reads: &[KernelBuf],
+        writes: &[KernelBuf],
+        stream: StreamId,
+    ) -> Result<OpId, SimError> {
+        self.require_cooperative(device)?;
+        self.submit_kernel(device, kind, reads, writes, stream, true)
+    }
+
+    fn submit_kernel(
+        &mut self,
+        device: DeviceId,
+        kind: KernelKind,
+        reads: &[KernelBuf],
+        writes: &[KernelBuf],
+        stream: StreamId,
+        cooperative: bool,
+    ) -> Result<OpId, SimError> {
+        let reads = self.resolve_bufs(reads)?;
+        let writes = self.resolve_bufs(writes)?;
+        self.submit(
+            device,
+            stream,
+            Kind::Kernel {
+                kind,
+                reads,
+                writes,
+                cooperative,
+            },
+        )
+    }
+
+    /// Device-side fill (`cudaMemsetAsync`) of `[0, bytes)`.
+    ///
+    /// A VMM destination must have that span mapped ([`Self::is_range_resident`]).
+    /// [`Self::kernel`] still needs the whole VA. [`Self::memset_buf`] names an
+    /// interior page. Capture is allowed. Host-sync `cudaMalloc` / VMM / mempool
+    /// create still cannot be captured; [`Self::alloc`] may be a mem alloc node.
+    /// [`Self::memset_op`] is `cudaMemset2DAsync` when [`MemsetOp::height`] `> 1`.
+    pub fn memset(
+        &mut self,
+        device: DeviceId,
+        alloc: AllocId,
+        bytes: u64,
+        stream: StreamId,
+    ) -> Result<OpId, SimError> {
+        if bytes == 0 {
+            return Err(SimError::Invalid {
+                why: "zero-byte memset",
+            });
+        }
+        self.memset_buf(device, KernelBuf::span(alloc, 0, bytes), stream)
+    }
+
+    /// `cudaMemsetAsync` of a [`KernelBuf`] span (vLLM new-KV-block analog).
+    ///
+    /// `bytes == 0` means from `offset` to the end of the allocation. A range
+    /// past the reservation is `Invalid`. Mapped host is not a memset dest.
+    pub fn memset_buf(
+        &mut self,
+        device: DeviceId,
+        buf: KernelBuf,
+        stream: StreamId,
+    ) -> Result<OpId, SimError> {
+        self.memset_op(device, MemsetOp::from(buf), stream)
+    }
+
+    /// `cudaMemsetAsync` / `cudaMemset2DAsync`.
+    ///
+    /// [`MemsetOp::height`] `> 1` bills `width * height` as an HBM write (pitch
+    /// padding is not written). [`MemsetOp::depth`] `> 1` is `cudaMemset3DAsync`
+    /// (`width * height * depth`). [`MemsetOp::element_size`] is
+    /// `cudaMemsetNodeParams::elementSize` (`1` / `2` / `4`; typed
+    /// [`Self::memset`] stays `1`). Offset, width, and nonzero pitch must
+    /// divide that size. The mapped span is the 2D/3D extent. Capture
+    /// is allowed unless [`PointerAttr::SyncMemops`] or
+    /// [`DeviceFlags::SYNC_MEMOPS`] is set (`"cannot capture
+    /// sync memops memset"`); those flags also wait the stream after submit.
+    /// Explicit [`Self::graph_add_memset`] / graph launch is not refused.
+    /// Mapped host is not a memset dest.
+    pub fn memset_op(
+        &mut self,
+        device: DeviceId,
+        op: MemsetOp,
+        stream: StreamId,
+    ) -> Result<OpId, SimError> {
+        let op = self.resolve_memset_op(op)?;
+        let sync_ops = self.is_sync_memops(op.id)? || self.device_has_sync_memops(device);
+        if sync_ops && self.in_capture(device, stream) {
+            return Err(SimError::Invalid {
+                why: "cannot capture sync memops memset",
+            });
+        }
+        let id = self.submit(device, stream, Kind::Memset(op))?;
+        if sync_ops {
+            self.synchronize_stream(device, stream)?;
+        }
+        Ok(id)
+    }
+
+    /// `cudaMemset`: enqueue then wait for that stream (host-synchronous).
+    ///
+    /// Capture cannot include it. [`Self::memset`] is `cudaMemsetAsync`.
+    pub fn memset_sync(
+        &mut self,
+        device: DeviceId,
+        alloc: AllocId,
+        bytes: u64,
+        stream: StreamId,
+    ) -> Result<OpId, SimError> {
+        if self.capturing.is_some() {
+            return Err(SimError::Invalid {
+                why: "cannot capture host-sync memset",
+            });
+        }
+        let id = self.memset(device, alloc, bytes, stream)?;
+        self.synchronize_stream(device, stream)?;
+        Ok(id)
+    }
+
+    /// `cuMemsetD16Async`. `count` is CUDA `N` (number of 16-bit values).
+    ///
+    /// Payload is `count * 2` bytes at offset 0. [`Self::memset`] stays
+    /// byte-counted `element_size` 1. Overflow of `count * 2` is Invalid
+    /// `"memset count"`. Capture is allowed unless sync-memops. Fill value
+    /// is not modeled.
+    pub fn memset_d16_async(
+        &mut self,
+        device: DeviceId,
+        alloc: AllocId,
+        count: u64,
+        stream: StreamId,
+    ) -> Result<OpId, SimError> {
+        self.memset_elements_async(device, alloc, count, 2, stream)
+    }
+
+    /// `cuMemsetD16`. Host-synchronous; capture cannot include it.
+    pub fn memset_d16(
+        &mut self,
+        device: DeviceId,
+        alloc: AllocId,
+        count: u64,
+        stream: StreamId,
+    ) -> Result<OpId, SimError> {
+        self.memset_elements_sync(device, alloc, count, 2, stream)
+    }
+
+    /// `cuMemsetD32Async`. `count` is CUDA `N` (number of 32-bit values).
+    ///
+    /// Payload is `count * 4` bytes at offset 0. [`Self::memset`] stays
+    /// byte-counted `element_size` 1. Overflow of `count * 4` is Invalid
+    /// `"memset count"`. Capture is allowed unless sync-memops. Fill value
+    /// is not modeled.
+    pub fn memset_d32_async(
+        &mut self,
+        device: DeviceId,
+        alloc: AllocId,
+        count: u64,
+        stream: StreamId,
+    ) -> Result<OpId, SimError> {
+        self.memset_elements_async(device, alloc, count, 4, stream)
+    }
+
+    /// `cuMemsetD32`. Host-synchronous; capture cannot include it.
+    pub fn memset_d32(
+        &mut self,
+        device: DeviceId,
+        alloc: AllocId,
+        count: u64,
+        stream: StreamId,
+    ) -> Result<OpId, SimError> {
+        self.memset_elements_sync(device, alloc, count, 4, stream)
+    }
+
+    fn memset_elements_async(
+        &mut self,
+        device: DeviceId,
+        alloc: AllocId,
+        count: u64,
+        element_size: u32,
+        stream: StreamId,
+    ) -> Result<OpId, SimError> {
+        let bytes = count
+            .checked_mul(u64::from(element_size))
+            .ok_or(SimError::Invalid {
+                why: "memset count",
+            })?;
+        if bytes == 0 {
+            return Err(SimError::Invalid {
+                why: "zero-byte memset",
+            });
+        }
+        self.memset_op(
+            device,
+            MemsetOp {
+                id: alloc,
+                bytes,
+                element_size,
+                ..MemsetOp::default()
+            },
+            stream,
+        )
+    }
+
+    fn memset_elements_sync(
+        &mut self,
+        device: DeviceId,
+        alloc: AllocId,
+        count: u64,
+        element_size: u32,
+        stream: StreamId,
+    ) -> Result<OpId, SimError> {
+        if self.capturing.is_some() {
+            return Err(SimError::Invalid {
+                why: "cannot capture host-sync memset",
+            });
+        }
+        let id = self.memset_elements_async(device, alloc, count, element_size, stream)?;
+        self.synchronize_stream(device, stream)?;
+        Ok(id)
+    }
+
+    /// `cuMemsetD2D16Async`. `width` is CUDA `Width` (16-bit elements).
+    ///
+    /// Row payload is `width * 2` bytes. `pitch` is destination pitch in bytes.
+    /// `height` must be `>= 1`. Overflow of `width * 2` is Invalid
+    /// `"memset count"`. Capture is allowed unless sync-memops. Fill value
+    /// is not modeled. [`Self::memset_2d_async`] stays byte-width.
+    pub fn memset_d2d16_async(
+        &mut self,
+        device: DeviceId,
+        alloc: AllocId,
+        pitch: u64,
+        width: u64,
+        height: u64,
+        stream: StreamId,
+    ) -> Result<OpId, SimError> {
+        self.memset_op(
+            device,
+            memset_d2d_op(alloc, pitch, width, height, 2)?,
+            stream,
+        )
+    }
+
+    /// `cuMemsetD2D16`. Host-synchronous; capture cannot include it.
+    pub fn memset_d2d16(
+        &mut self,
+        device: DeviceId,
+        alloc: AllocId,
+        pitch: u64,
+        width: u64,
+        height: u64,
+        stream: StreamId,
+    ) -> Result<OpId, SimError> {
+        if self.capturing.is_some() {
+            return Err(SimError::Invalid {
+                why: "cannot capture host-sync memset",
+            });
+        }
+        let id = self.memset_d2d16_async(device, alloc, pitch, width, height, stream)?;
+        self.synchronize_stream(device, stream)?;
+        Ok(id)
+    }
+
+    /// `cuMemsetD2D32Async`. `width` is CUDA `Width` (32-bit elements).
+    ///
+    /// Row payload is `width * 4` bytes. `pitch` is destination pitch in bytes.
+    /// `height` must be `>= 1`. Overflow of `width * 4` is Invalid
+    /// `"memset count"`. Capture is allowed unless sync-memops. Fill value
+    /// is not modeled. [`Self::memset_2d_async`] stays byte-width.
+    pub fn memset_d2d32_async(
+        &mut self,
+        device: DeviceId,
+        alloc: AllocId,
+        pitch: u64,
+        width: u64,
+        height: u64,
+        stream: StreamId,
+    ) -> Result<OpId, SimError> {
+        self.memset_op(
+            device,
+            memset_d2d_op(alloc, pitch, width, height, 4)?,
+            stream,
+        )
+    }
+
+    /// `cuMemsetD2D32`. Host-synchronous; capture cannot include it.
+    pub fn memset_d2d32(
+        &mut self,
+        device: DeviceId,
+        alloc: AllocId,
+        pitch: u64,
+        width: u64,
+        height: u64,
+        stream: StreamId,
+    ) -> Result<OpId, SimError> {
+        if self.capturing.is_some() {
+            return Err(SimError::Invalid {
+                why: "cannot capture host-sync memset",
+            });
+        }
+        let id = self.memset_d2d32_async(device, alloc, pitch, width, height, stream)?;
+        self.synchronize_stream(device, stream)?;
+        Ok(id)
+    }
+
+    /// `cuMemsetD2D8Async`. `width` is CUDA `Width` (8-bit elements).
+    ///
+    /// Row payload is `width` bytes. `pitch` is destination pitch in bytes.
+    /// `height` must be `>= 1`. Capture is allowed unless sync-memops. Fill
+    /// value is not modeled. [`Self::memset_2d_async`] stays byte-width
+    /// [`MemsetOp`].
+    pub fn memset_d2d8_async(
+        &mut self,
+        device: DeviceId,
+        alloc: AllocId,
+        pitch: u64,
+        width: u64,
+        height: u64,
+        stream: StreamId,
+    ) -> Result<OpId, SimError> {
+        self.memset_op(
+            device,
+            memset_d2d_op(alloc, pitch, width, height, 1)?,
+            stream,
+        )
+    }
+
+    /// `cuMemsetD2D8`. Host-synchronous; capture cannot include it.
+    pub fn memset_d2d8(
+        &mut self,
+        device: DeviceId,
+        alloc: AllocId,
+        pitch: u64,
+        width: u64,
+        height: u64,
+        stream: StreamId,
+    ) -> Result<OpId, SimError> {
+        if self.capturing.is_some() {
+            return Err(SimError::Invalid {
+                why: "cannot capture host-sync memset",
+            });
+        }
+        let id = self.memset_d2d8_async(device, alloc, pitch, width, height, stream)?;
+        self.synchronize_stream(device, stream)?;
+        Ok(id)
+    }
+
+    /// `cudaMemset` / `cudaMemset2D` / `cudaMemset3D` (host-synchronous).
+    ///
+    /// Capture cannot include it. [`Self::memset_op`] is the Async twin.
+    pub fn memset_op_sync(
+        &mut self,
+        device: DeviceId,
+        op: MemsetOp,
+        stream: StreamId,
+    ) -> Result<OpId, SimError> {
+        if self.capturing.is_some() {
+            return Err(SimError::Invalid {
+                why: "cannot capture host-sync memset",
+            });
+        }
+        let id = self.memset_op(device, op, stream)?;
+        self.synchronize_stream(device, stream)?;
+        Ok(id)
+    }
+
+    /// `cudaMemset2DAsync`. [`MemsetOp`] must be [`MemsetOp::is_2d`] (`height > 1`,
+    /// not 3D). Typed [`Self::memset_op`] stays.
+    pub fn memset_2d_async(
+        &mut self,
+        device: DeviceId,
+        op: MemsetOp,
+        stream: StreamId,
+    ) -> Result<OpId, SimError> {
+        if !op.is_2d() {
+            return Err(SimError::Invalid {
+                why: "memset2d height",
+            });
+        }
+        self.memset_op(device, op, stream)
+    }
+
+    /// `cudaMemset2D`. Host-synchronous; capture cannot include it.
+    pub fn memset_2d(
+        &mut self,
+        device: DeviceId,
+        op: MemsetOp,
+        stream: StreamId,
+    ) -> Result<OpId, SimError> {
+        if self.capturing.is_some() {
+            return Err(SimError::Invalid {
+                why: "cannot capture host-sync memset",
+            });
+        }
+        let id = self.memset_2d_async(device, op, stream)?;
+        self.synchronize_stream(device, stream)?;
+        Ok(id)
+    }
+
+    /// `cudaMemset3DAsync`. [`MemsetOp`] must be [`MemsetOp::is_3d`] (`depth > 1`).
+    /// Typed [`Self::memset_op`] stays.
+    pub fn memset_3d_async(
+        &mut self,
+        device: DeviceId,
+        op: MemsetOp,
+        stream: StreamId,
+    ) -> Result<OpId, SimError> {
+        if !op.is_3d() {
+            return Err(SimError::Invalid {
+                why: "memset3d depth",
+            });
+        }
+        self.memset_op(device, op, stream)
+    }
+
+    /// `cudaMemset3D`. Host-synchronous; capture cannot include it.
+    pub fn memset_3d(
+        &mut self,
+        device: DeviceId,
+        op: MemsetOp,
+        stream: StreamId,
+    ) -> Result<OpId, SimError> {
+        if self.capturing.is_some() {
+            return Err(SimError::Invalid {
+                why: "cannot capture host-sync memset",
+            });
+        }
+        let id = self.memset_3d_async(device, op, stream)?;
+        self.synchronize_stream(device, stream)?;
+        Ok(id)
+    }
+
+    /// `cudaLaunchHostFunc`. Stream-ordered host work; does not occupy compute
+    /// or copy engines. Other streams can run GPU kernels at the same virtual
+    /// time. Capture records a graph host node. Unnamed callback (`fn_id = 0`,
+    /// `user_data = 0`).
+    pub fn host_func(&mut self, device: DeviceId, stream: StreamId) -> Result<OpId, SimError> {
+        self.host_func_params(device, stream, HostNodeParams::default())
+    }
+
+    /// `cudaLaunchHostFunc` with [`HostNodeParams`].
+    ///
+    /// Capture records those params on the host node. Does not occupy compute
+    /// or copy engines.
+    pub fn host_func_params(
+        &mut self,
+        device: DeviceId,
+        stream: StreamId,
+        params: HostNodeParams,
+    ) -> Result<OpId, SimError> {
+        self.submit(
+            device,
+            stream,
+            Kind::HostFunc {
+                fn_id: params.fn_id,
+                user_data: params.user_data,
+            },
+        )
+    }
+
+    /// `cudaStreamAddCallback`. Same stream-ordered host work as
+    /// [`Self::host_func`] (`cudaLaunchHostFunc`): bills `host_func_ns` and
+    /// does not occupy compute or copy engines. Unlike `host_func`, capture
+    /// cannot include it (`cudaErrorStreamCaptureUnsupported`). CUDA flags
+    /// must be 0. Unnamed callback (`fn_id = 0`, `user_data = 0`).
+    pub fn stream_add_callback(
+        &mut self,
+        device: DeviceId,
+        stream: StreamId,
+    ) -> Result<OpId, SimError> {
+        self.stream_add_callback_params(
+            device,
+            stream,
+            HostNodeParams::default(),
+            StreamCallbackFlags::DEFAULT,
+        )
+    }
+
+    /// `cudaStreamAddCallback` with a [`StreamCallbackFlags`] word.
+    ///
+    /// Flags must be [`StreamCallbackFlags::DEFAULT`]. Unknown bits Invalid
+    /// `"stream callback flags"`. Typed [`Self::stream_add_callback`] stays.
+    pub fn stream_add_callback_with_flags(
+        &mut self,
+        device: DeviceId,
+        stream: StreamId,
+        flags: u32,
+    ) -> Result<OpId, SimError> {
+        self.stream_add_callback_params(device, stream, HostNodeParams::default(), flags)
+    }
+
+    /// `cudaStreamAddCallback` with [`HostNodeParams`] and a flags word.
+    ///
+    /// Same enqueue as [`Self::host_func_params`] except capture is Invalid
+    /// `"cannot capture stream callback"`. Flags must be
+    /// [`StreamCallbackFlags::DEFAULT`].
+    pub fn stream_add_callback_params(
+        &mut self,
+        device: DeviceId,
+        stream: StreamId,
+        params: HostNodeParams,
+        flags: u32,
+    ) -> Result<OpId, SimError> {
+        if flags != StreamCallbackFlags::DEFAULT {
+            return Err(SimError::Invalid {
+                why: "stream callback flags",
+            });
+        }
+        self.fail_if_capturing("cannot capture stream callback")?;
+        self.submit(
+            device,
+            stream,
+            Kind::HostFunc {
+                fn_id: params.fn_id,
+                user_data: params.user_data,
+            },
+        )
+    }
+
+    /// `cuStreamWriteValue64`. The mailbox updates when this op completes.
+    ///
+    /// Does not occupy compute or copy engines. Capture records a batch-mem-op
+    /// node. Alignment is 8 bytes; the span must fit the allocation.
+    pub fn write_value64(
+        &mut self,
+        device: DeviceId,
+        id: AllocId,
+        offset: u64,
+        value: u64,
+        stream: StreamId,
+    ) -> Result<OpId, SimError> {
+        self.submit_batch_mem(
+            device,
+            stream,
+            BatchMemOp::Write {
+                id,
+                offset,
+                value,
+                bits32: false,
+            },
+        )
+    }
+
+    /// `cuStreamWriteValue32`. Stores the low 32 bits; high bits of a prior
+    /// 64-bit write at the same offset stay.
+    pub fn write_value32(
+        &mut self,
+        device: DeviceId,
+        id: AllocId,
+        offset: u64,
+        value: u64,
+        stream: StreamId,
+    ) -> Result<OpId, SimError> {
+        self.submit_batch_mem(
+            device,
+            stream,
+            BatchMemOp::Write {
+                id,
+                offset,
+                value,
+                bits32: true,
+            },
+        )
+    }
+
+    fn check_write_value_flags(flags: u32) -> Result<(), SimError> {
+        if flags != WriteValueFlags::DEFAULT {
+            return Err(SimError::Invalid {
+                why: "write value flags",
+            });
+        }
+        Ok(())
+    }
+
+    /// `cuStreamWriteValue64` with a [`WriteValueFlags`] word.
+    ///
+    /// Flags must be [`WriteValueFlags::DEFAULT`].
+    /// [`WriteValueFlags::NO_MEMORY_BARRIER`] is Invalid `"write value flags"`.
+    /// Typed [`Self::write_value64`] stays.
+    pub fn write_value64_with_flags(
+        &mut self,
+        device: DeviceId,
+        id: AllocId,
+        offset: u64,
+        value: u64,
+        flags: u32,
+        stream: StreamId,
+    ) -> Result<OpId, SimError> {
+        Self::check_write_value_flags(flags)?;
+        self.write_value64(device, id, offset, value, stream)
+    }
+
+    /// `cuStreamWriteValue32` with a [`WriteValueFlags`] word.
+    ///
+    /// Flags must be [`WriteValueFlags::DEFAULT`].
+    /// [`WriteValueFlags::NO_MEMORY_BARRIER`] is Invalid `"write value flags"`.
+    /// Typed [`Self::write_value32`] stays.
+    pub fn write_value32_with_flags(
+        &mut self,
+        device: DeviceId,
+        id: AllocId,
+        offset: u64,
+        value: u64,
+        flags: u32,
+        stream: StreamId,
+    ) -> Result<OpId, SimError> {
+        Self::check_write_value_flags(flags)?;
+        self.write_value32(device, id, offset, value, stream)
+    }
+
+    /// `cuStreamWaitValue64`. Stays pending until the mailbox compare matches.
+    ///
+    /// Unwritten locations read as 0. Does not occupy compute or copy engines.
+    /// Capture records a batch-mem-op node. An unsatisfied wait plus
+    /// [`Self::synchronize`] is deadlock if nothing else is running.
+    pub fn wait_value64(
+        &mut self,
+        device: DeviceId,
+        id: AllocId,
+        offset: u64,
+        value: u64,
+        cmp: WaitValueCmp,
+        stream: StreamId,
+    ) -> Result<OpId, SimError> {
+        self.submit_batch_mem(
+            device,
+            stream,
+            BatchMemOp::Wait {
+                id,
+                offset,
+                value,
+                bits32: false,
+                cmp,
+                flush: false,
+            },
+        )
+    }
+
+    /// `cuStreamWaitValue32`. Compares the low 32 bits of the mailbox word.
+    pub fn wait_value32(
+        &mut self,
+        device: DeviceId,
+        id: AllocId,
+        offset: u64,
+        value: u64,
+        cmp: WaitValueCmp,
+        stream: StreamId,
+    ) -> Result<OpId, SimError> {
+        self.submit_batch_mem(
+            device,
+            stream,
+            BatchMemOp::Wait {
+                id,
+                offset,
+                value,
+                bits32: true,
+                cmp,
+                flush: false,
+            },
+        )
+    }
+
+    /// `cuStreamWaitValue64` with a [`crate::WaitValueFlags`] word.
+    ///
+    /// [`crate::WaitValueFlags::FLUSH`] requires an RDMA SKU (same as
+    /// [`BatchMemOp::FlushRemoteWrites`]). Unknown bits Invalid `"wait value flags"`.
+    /// Typed [`Self::wait_value64`] stays.
+    pub fn wait_value64_with_flags(
+        &mut self,
+        device: DeviceId,
+        id: AllocId,
+        offset: u64,
+        value: u64,
+        flags: u32,
+        stream: StreamId,
+    ) -> Result<OpId, SimError> {
+        let cmp = WaitValueCmp::from_flags(flags)?;
+        self.submit_batch_mem(
+            device,
+            stream,
+            BatchMemOp::Wait {
+                id,
+                offset,
+                value,
+                bits32: false,
+                cmp,
+                flush: flags & WaitValueFlags::FLUSH != 0,
+            },
+        )
+    }
+
+    /// [`crate::WaitValueFlags::FLUSH`] requires an RDMA SKU (same as
+    /// [`BatchMemOp::FlushRemoteWrites`]). Unknown bits Invalid `"wait value flags"`.
+    /// Typed [`Self::wait_value32`] stays.
+    pub fn wait_value32_with_flags(
+        &mut self,
+        device: DeviceId,
+        id: AllocId,
+        offset: u64,
+        value: u64,
+        flags: u32,
+        stream: StreamId,
+    ) -> Result<OpId, SimError> {
+        let cmp = WaitValueCmp::from_flags(flags)?;
+        self.submit_batch_mem(
+            device,
+            stream,
+            BatchMemOp::Wait {
+                id,
+                offset,
+                value,
+                bits32: true,
+                cmp,
+                flush: flags & WaitValueFlags::FLUSH != 0,
+            },
+        )
+    }
+
+    /// `cuStreamBatchMemOp`. One stream op for the wait/write/flush vector.
+    ///
+    /// Empty is Invalid. A single wait or write is [`Self::write_value64`] /
+    /// [`Self::wait_value64`] (same [`crate::GpuOp`] as those APIs). A single
+    /// [`BatchMemOp::FlushRemoteWrites`] is [`crate::GpuOp::BatchMem`]. Two or
+    /// more items are [`crate::GpuOp::BatchMem`]. Capture records one graph
+    /// node. Writes commit on complete. A wait sees earlier writes in this
+    /// vector. Flush is 1 ns Solo on an RDMA GPU (not host-sync).
+    pub fn batch_mem_op(
+        &mut self,
+        device: DeviceId,
+        stream: StreamId,
+        ops: &[BatchMemOp],
+    ) -> Result<OpId, SimError> {
+        self.check_batch_mem_ops(ops)?;
+        self.check_batch_flush(device, ops)?;
+        if let [op] = ops {
+            return self.submit(device, stream, kind_from_batch(*op));
+        }
+        self.submit(device, stream, Kind::BatchMem { ops: ops.to_vec() })
+    }
+
+    fn check_batch_mem_op_flags(flags: u32) -> Result<(), SimError> {
+        if flags != BatchMemOpFlags::DEFAULT {
+            return Err(SimError::Invalid {
+                why: "batch mem op flags",
+            });
+        }
+        Ok(())
+    }
+
+    /// `cuStreamBatchMemOp` with a [`BatchMemOpFlags`] word.
+    ///
+    /// Flags must be [`BatchMemOpFlags::DEFAULT`]. Unknown bits Invalid
+    /// `"batch mem op flags"`. Typed [`Self::batch_mem_op`] stays.
+    pub fn batch_mem_op_with_flags(
+        &mut self,
+        device: DeviceId,
+        stream: StreamId,
+        ops: &[BatchMemOp],
+        flags: u32,
+    ) -> Result<OpId, SimError> {
+        Self::check_batch_mem_op_flags(flags)?;
+        self.batch_mem_op(device, stream, ops)
+    }
+
+    fn submit_batch_mem(
+        &mut self,
+        device: DeviceId,
+        stream: StreamId,
+        op: BatchMemOp,
+    ) -> Result<OpId, SimError> {
+        self.check_batch_mem(op)?;
+        self.check_batch_flush(device, &[op])?;
+        self.submit(device, stream, kind_from_batch(op))
+    }
+
+    fn check_batch_mem_ops(&self, ops: &[BatchMemOp]) -> Result<(), SimError> {
+        if ops.is_empty() {
+            return Err(SimError::Invalid {
+                why: "empty batch mem op",
+            });
+        }
+        for op in ops {
+            self.check_batch_mem(*op)?;
+        }
+        Ok(())
+    }
+
+    fn check_batch_flush(&self, device: DeviceId, ops: &[BatchMemOp]) -> Result<(), SimError> {
+        let needs = ops.iter().any(|op| match op {
+            BatchMemOp::FlushRemoteWrites => true,
+            BatchMemOp::Wait { flush, .. } => *flush,
+            BatchMemOp::Write { .. } => false,
+        });
+        if needs && !self.profile.gpu_direct_rdma_supported(device) {
+            return Err(SimError::Invalid {
+                why: "gpu direct rdma",
+            });
+        }
+        Ok(())
+    }
+
+    fn check_batch_mem(&self, op: BatchMemOp) -> Result<(), SimError> {
+        let (id, offset, bits32) = match op {
+            BatchMemOp::FlushRemoteWrites => return Ok(()),
+            BatchMemOp::Write {
+                id, offset, bits32, ..
+            }
+            | BatchMemOp::Wait {
+                id, offset, bits32, ..
+            } => (id, offset, bits32),
+        };
+        let total = self.alloc_ref(id)?.bytes;
+        let _width = wait_value_span(total, offset, bits32)?;
+        Ok(())
+    }
+
+    fn apply_mailbox_write(&mut self, id: AllocId, offset: u64, value: u64, bits32: bool) {
+        let mask = wait_value_mask(bits32);
+        let prev = self.mailbox.get(&(id, offset)).copied().unwrap_or(0);
+        let stored = (prev & !mask) | (value & mask);
+        let _old = self.mailbox.insert((id, offset), stored);
+    }
+
+    fn clear_mailbox(&mut self, id: AllocId) {
+        self.mailbox.retain(|(a, _), _| *a != id);
+    }
+
+    /// `cudaStreamAttachMemAsync`. Stream-ordered visibility change; later ops
+    /// on `stream` see the new attach. Illegal under stream capture (CUDA
+    /// `cudaErrorStreamCaptureUnsupported`). `MemAttach::Single` cannot use the
+    /// NULL stream.
+    pub fn stream_attach(
+        &mut self,
+        device: DeviceId,
+        id: AllocId,
+        stream: StreamId,
+        flags: MemAttach,
+    ) -> Result<OpId, SimError> {
+        self.stream_attach_with_size(device, id, 0, stream, flags)
+    }
+
+    /// [`Self::stream_attach`] with the CUDA `length` argument.
+    ///
+    /// `size` `0` is the entire allocation (CUDA default). A nonzero `size`
+    /// must equal the allocation bytes. Other sizes Invalid `"attach size"`.
+    /// Partial attach is not modeled. Typed [`Self::stream_attach`] stays
+    /// (`length` 0). Capture cannot include it.
+    pub fn stream_attach_with_size(
+        &mut self,
+        device: DeviceId,
+        id: AllocId,
+        size: u64,
+        stream: StreamId,
+        flags: MemAttach,
+    ) -> Result<OpId, SimError> {
+        self.fail_if_capturing("cannot capture stream attach")?;
+        let a = self.alloc_ref(id)?;
+        if !a.live {
+            return Err(SimError::Invalid { why: "freed" });
+        }
+        if !a.managed {
+            return Err(SimError::Invalid { why: "not managed" });
+        }
+        if size != 0 && size != a.bytes {
+            return Err(SimError::Invalid { why: "attach size" });
+        }
+        if flags == MemAttach::Single && stream == StreamId::NULL {
+            return Err(SimError::Invalid {
+                why: "cannot attach single to null stream",
+            });
+        }
+        self.submit(device, stream, Kind::Attach { id, flags })
+    }
+
+    /// `cudaStreamAttachMemAsync` with a flags word.
+    ///
+    /// [`MemAttachFlags::GLOBAL`] / [`HOST`](MemAttachFlags::HOST) /
+    /// [`SINGLE`](MemAttachFlags::SINGLE) map to [`MemAttach`]. Other bits are
+    /// Invalid `"stream attach flags"`. Typed [`Self::stream_attach`] stays.
+    /// The CUDA `length` is [`Self::stream_attach_with_size`]. Capture cannot
+    /// include it.
+    pub fn stream_attach_with_flags(
+        &mut self,
+        device: DeviceId,
+        id: AllocId,
+        stream: StreamId,
+        flags: u32,
+    ) -> Result<OpId, SimError> {
+        let attach = match flags {
+            MemAttachFlags::GLOBAL => MemAttach::Global,
+            MemAttachFlags::HOST => MemAttach::Host,
+            MemAttachFlags::SINGLE => MemAttach::Single,
+            _ => {
+                return Err(SimError::Invalid {
+                    why: "stream attach flags",
+                });
+            }
+        };
+        self.stream_attach(device, id, stream, attach)
+    }
+
+    /// Record `event` after prior ops on `stream` (`cudaEventRecord`).
+    pub fn record_event(
+        &mut self,
+        device: DeviceId,
+        event: EventId,
+        stream: StreamId,
+    ) -> Result<OpId, SimError> {
+        self.record_event_with_flags(device, event, stream, EventRecordFlags::DEFAULT)
+    }
+
+    /// `cudaEventRecordWithFlags(..., cudaEventRecordExternal)`.
+    ///
+    /// During capture this is a record node that does **not** put `event` in the
+    /// forked-capture join set. A later [`Self::wait_event`] on another stream
+    /// stays live. Live (non-capturing) this matches [`Self::record_event`].
+    pub fn record_event_external(
+        &mut self,
+        device: DeviceId,
+        event: EventId,
+        stream: StreamId,
+    ) -> Result<OpId, SimError> {
+        self.record_event_with_flags(device, event, stream, EventRecordFlags::EXTERNAL)
+    }
+
+    /// `cudaEventRecordWithFlags`. Unknown bits are Invalid `"event record flags"`.
+    pub fn record_event_with_flags(
+        &mut self,
+        device: DeviceId,
+        event: EventId,
+        stream: StreamId,
+        flags: u32,
+    ) -> Result<OpId, SimError> {
+        const KNOWN: u32 = EventRecordFlags::EXTERNAL;
+        if flags & !KNOWN != 0 {
+            return Err(SimError::Invalid {
+                why: "event record flags",
+            });
+        }
+        self.record_event_flags(
+            device,
+            event,
+            stream,
+            flags & EventRecordFlags::EXTERNAL != 0,
+        )
+    }
+
+    fn record_event_flags(
+        &mut self,
+        device: DeviceId,
+        event: EventId,
+        stream: StreamId,
+        external: bool,
+    ) -> Result<OpId, SimError> {
+        let _ev = self.events.entry(event).or_insert(Ev::new(true));
+        self.submit(device, stream, Kind::EventRecord { event, external })
+    }
+
+    /// Make later ops on `stream` wait until `event` is recorded and complete.
+    pub fn wait_event(
+        &mut self,
+        device: DeviceId,
+        event: EventId,
+        stream: StreamId,
+    ) -> Result<OpId, SimError> {
+        self.wait_event_with_flags(device, event, stream, EventWaitFlags::DEFAULT)
+    }
+
+    /// `cudaStreamWaitEvent(..., cudaEventWaitExternal)`.
+    ///
+    /// During capture this is a wait node that does **not** join the waiter into
+    /// the graph. Graph replay waits for a live record of `event`, not a
+    /// [`Self::record_event_external`] node in the same graph. Live this matches
+    /// [`Self::wait_event`].
+    pub fn wait_event_external(
+        &mut self,
+        device: DeviceId,
+        event: EventId,
+        stream: StreamId,
+    ) -> Result<OpId, SimError> {
+        self.wait_event_with_flags(device, event, stream, EventWaitFlags::EXTERNAL)
+    }
+
+    /// `cudaStreamWaitEvent` with flags. Unknown bits are Invalid
+    /// `"event wait flags"`.
+    pub fn wait_event_with_flags(
+        &mut self,
+        device: DeviceId,
+        event: EventId,
+        stream: StreamId,
+        flags: u32,
+    ) -> Result<OpId, SimError> {
+        const KNOWN: u32 = EventWaitFlags::EXTERNAL;
+        if flags & !KNOWN != 0 {
+            return Err(SimError::Invalid {
+                why: "event wait flags",
+            });
+        }
+        self.wait_event_flags(device, event, stream, flags & EventWaitFlags::EXTERNAL != 0)
+    }
+
+    fn wait_event_flags(
+        &mut self,
+        device: DeviceId,
+        event: EventId,
+        stream: StreamId,
+        external: bool,
+    ) -> Result<OpId, SimError> {
+        if let Entry::Vacant(slot) = self.events.entry(event) {
+            let _ev = slot.insert(Ev::new(true));
+        }
+        self.submit(device, stream, Kind::EventWait { event, external })
+    }
+
+    /// Run until every submitted op is complete (`cudaDeviceSynchronize` on every GPU).
+    ///
+    /// Capture cannot include it. [`Self::synchronize_device`] waits one GPU.
+    /// [`Self::synchronize_stream`] can still wait a stream that is not in the
+    /// capture.
+    pub fn synchronize(&mut self) -> Result<(), SimError> {
+        self.fail_if_capturing("cannot synchronize during capture")?;
+        self.drive_until(|sim| sim.running.is_empty() && sim.ops.values().all(|o| o.done))?;
+        if self.running.is_empty() && !self.ops.values().all(|o| o.done) {
+            return Err(SimError::Invalid {
+                why: "deadlock: waiting ops but nothing running",
+            });
+        }
+        self.sync_outcome()
+    }
+
+    /// `cudaDeviceSynchronize`: wait until every stream on `device` is idle.
+    ///
+    /// Other GPUs keep running. Capture cannot include it.
+    /// [`Self::synchronize`] waits the whole node; [`Self::synchronize_stream`]
+    /// waits one stream.
+    pub fn synchronize_device(&mut self, device: DeviceId) -> Result<(), SimError> {
+        if self.capturing.is_some() {
+            return Err(SimError::Invalid {
+                why: "cannot synchronize device during capture",
+            });
+        }
+        let _gpu = self.profile.gpu(device)?;
+        self.drive_until(|sim| sim.device_idle(device))?;
+        if !self.device_idle(device) {
+            return Err(SimError::Invalid {
+                why: "deadlock: device busy but nothing running",
+            });
+        }
+        self.device_sync_outcome(device)
+    }
+
+    /// Drain in-flight work, then jump the virtual clock to `ns` if that is still in the future.
+    ///
+    /// Models a GPU sitting idle until the next request arrives. Jumping the clock
+    /// while work is queued would skip in-flight ops, so this always
+    /// [`synchronize`](Self::synchronize)s first. Returns how many nanoseconds the
+    /// clock jumped (0 if `ns` is already behind).
+    pub fn idle_until(&mut self, ns: u64) -> Result<u64, SimError> {
+        self.synchronize()?;
+        if ns > self.clock {
+            let jumped = ns.saturating_sub(self.clock);
+            self.clock = ns;
+            return Ok(jumped);
+        }
+        Ok(0)
+    }
+
+    /// `cudaStreamSynchronize`: advance the virtual clock until `stream` is idle.
+    ///
+    /// Other streams keep running. An already-idle stream returns without
+    /// starting leftover kernels on other streams. A stream in an active graph
+    /// capture is [`SimError::Invalid`]. Cancelled ops on *this* stream fail;
+    /// cancelled work on other streams is left for a later [`Self::synchronize`].
+    /// After the GPU drain, the host-wait tax from
+    /// [`Self::stream_sync_policy`] is added (`Auto` / profile `0` is identity).
+    pub fn synchronize_stream(
+        &mut self,
+        device: DeviceId,
+        stream: StreamId,
+    ) -> Result<(), SimError> {
+        let _gpu = self.profile.gpu(device)?;
+        if self.in_capture(device, stream) {
+            return Err(SimError::Invalid {
+                why: "cannot synchronize stream during capture",
+            });
+        }
+        self.drive_until(|sim| sim.stream_idle(device, stream))?;
+        if !self.stream_idle(device, stream) {
+            return Err(SimError::Invalid {
+                why: "deadlock: stream busy but nothing running",
+            });
+        }
+        self.stream_sync_outcome(device, stream)?;
+        self.apply_stream_sync_policy_tax(device, stream);
+        Ok(())
+    }
+
+    /// `cudaEventSynchronize`: wait until `event` is recorded and complete.
+    ///
+    /// Work after the record on the same stream, and work on other streams,
+    /// keeps running. An event with no record and no running ops is a deadlock.
+    /// After the GPU drain, the host-wait tax from the recording stream's
+    /// [`Self::stream_sync_policy`] is added, unless the recorder is a graph
+    /// kernel node with a non-[`SynchronizationPolicy::Auto`]
+    /// [`KernelNodeAttr::SynchronizationPolicy`].
+    pub fn synchronize_event(&mut self, event: EventId) -> Result<(), SimError> {
+        if !self.events.contains_key(&event) {
+            return Err(SimError::UnknownEvent { event: event.0 });
+        }
+        self.drive_until(|sim| sim.event_complete(event))?;
+        if !self.event_complete(event) {
+            return Err(SimError::Invalid {
+                why: "deadlock: event not complete but nothing running",
+            });
+        }
+        let rec = self.event_recorded_by(event);
+        if let Some(id) = rec {
+            if self.ops.get(&id).is_some_and(|o| o.cancelled) {
+                let stream = self.ops.get(&id).map(|o| o.stream).unwrap_or(StreamId(0));
+                return Err(SimError::Cancelled { stream, n: 1 });
+            }
+        }
+        self.apply_event_sync_policy_tax(event);
+        Ok(())
+    }
+
+    /// `cudaEventElapsedTime` in nanoseconds (this crate is ns, not milliseconds).
+    ///
+    /// Both events must be recorded, complete, and created with timing enabled.
+    /// [`Self::create_event_disable_timing`] events are [`SimError::Invalid`].
+    /// Returns `end.done_ns - start.done_ns`. An unknown event is
+    /// [`SimError::UnknownEvent`]. If `end` finished first, [`SimError::Invalid`].
+    pub fn event_elapsed_ns(&self, start: EventId, end: EventId) -> Result<u64, SimError> {
+        self.require_event_timing(start)?;
+        self.require_event_timing(end)?;
+        let start_ns = self.event_done_ns(start)?;
+        let end_ns = self.event_done_ns(end)?;
+        end_ns.checked_sub(start_ns).ok_or(SimError::Invalid {
+            why: "event elapsed: end before start",
+        })
+    }
+
+    fn require_event_timing(&self, event: EventId) -> Result<(), SimError> {
+        match self.events.get(&event) {
+            None => Err(SimError::UnknownEvent { event: event.0 }),
+            Some(ev) if ev.timing => Ok(()),
+            Some(_) => Err(SimError::Invalid {
+                why: "event elapsed: disable timing",
+            }),
+        }
+    }
+
+    fn event_done_ns(&self, event: EventId) -> Result<u64, SimError> {
+        if !self.events.contains_key(&event) {
+            return Err(SimError::UnknownEvent { event: event.0 });
+        }
+        if !self.event_complete(event) {
+            return Err(SimError::Invalid {
+                why: "event elapsed: not complete",
+            });
+        }
+        let rec = self.event_recorded_by(event);
+        let Some(id) = rec else {
+            return Err(SimError::Invalid {
+                why: "event elapsed: not recorded",
+            });
+        };
+        let root = self.event_root(event);
+        let op = self.ops.get(&id).ok_or(SimError::Invalid {
+            why: "event elapsed: missing record op",
+        })?;
+        if let Some(pe) = op.programmatic_event {
+            if event_root_of(&self.events, pe.event) == root {
+                if pe.trigger_at_block_start {
+                    return op.start_ns.ok_or(SimError::Invalid {
+                        why: "event elapsed: programmatic block start missing start",
+                    });
+                }
+                if op.pdl.trigger {
+                    return op.pdl_trigger_ns.ok_or(SimError::Invalid {
+                        why: "event elapsed: programmatic trigger missing",
+                    });
+                }
+            }
+        }
+        if op
+            .launch_completion
+            .is_some_and(|p| event_root_of(&self.events, p.event) == root)
+        {
+            return op.start_ns.ok_or(SimError::Invalid {
+                why: "event elapsed: launch completion missing start",
+            });
+        }
+        op.done_ns.ok_or(SimError::Invalid {
+            why: "event elapsed: record has no done_ns",
+        })
+    }
+
+    fn drive_until(&mut self, idle: impl Fn(&Self) -> bool) -> Result<(), SimError> {
+        let mut steps = 0u32;
+        loop {
+            // An already-idle waited stream must not start leftover work on
+            // other streams (`cudaStreamSynchronize` returns immediately).
+            if idle(self) {
+                return Ok(());
+            }
+            self.schedule()?;
+            if idle(self) {
+                return Ok(());
+            }
+            if self.running.is_empty() {
+                return Ok(());
+            }
+            self.advance_to_next_completion()?;
+            steps = steps.saturating_add(1);
+            if steps > 10_000_000 {
+                return Err(SimError::Invalid {
+                    why: "simulator step limit",
+                });
+            }
+        }
+    }
+
+    fn sync_outcome(&self) -> Result<(), SimError> {
+        let mut n = 0u32;
+        let mut stream = StreamId(0);
+        for o in self.ops.values() {
+            if o.cancelled {
+                n = n.saturating_add(1);
+                stream = o.stream;
+            }
+        }
+        if n > 0 {
+            return Err(SimError::Cancelled { stream, n });
+        }
+        Ok(())
+    }
+
+    fn stream_sync_outcome(&self, device: DeviceId, stream: StreamId) -> Result<(), SimError> {
+        let mut n = 0u32;
+        for o in self.ops.values() {
+            if o.cancelled && o.device == device && o.stream == stream {
+                n = n.saturating_add(1);
+            }
+        }
+        if n > 0 {
+            return Err(SimError::Cancelled { stream, n });
+        }
+        Ok(())
+    }
+
+    fn host_sync_policy_tax_ns(&self, device: DeviceId, policy: SynchronizationPolicy) -> u64 {
+        let Ok(g) = self.profile.gpu(device) else {
+            return 0;
+        };
+        match policy {
+            SynchronizationPolicy::Auto => 0,
+            SynchronizationPolicy::Spin => g.host_sync_spin_ns,
+            SynchronizationPolicy::Yield => g.host_sync_yield_ns,
+            SynchronizationPolicy::BlockingSync => g.host_sync_blocking_ns,
+        }
+    }
+
+    fn apply_stream_sync_policy_tax(&mut self, device: DeviceId, stream: StreamId) {
+        let policy = self.effective_stream_sync_policy(device, stream);
+        let tax = self.host_sync_policy_tax_ns(device, policy);
+        self.clock = self.clock.saturating_add(tax);
+    }
+
+    fn effective_stream_sync_policy(
+        &self,
+        device: DeviceId,
+        stream: StreamId,
+    ) -> SynchronizationPolicy {
+        match self.stream_sync_policy(device, stream) {
+            SynchronizationPolicy::Auto => self.device_schedule_policy(device),
+            other => other,
+        }
+    }
+
+    fn device_schedule_policy(&self, device: DeviceId) -> SynchronizationPolicy {
+        let flags = self
+            .gpus
+            .get(&device)
+            .map(|g| g.device_flags)
+            .unwrap_or(DeviceFlags::SCHEDULE_AUTO);
+        match flags & DeviceFlags::SCHEDULE_MASK {
+            DeviceFlags::SCHEDULE_SPIN => SynchronizationPolicy::Spin,
+            DeviceFlags::SCHEDULE_YIELD => SynchronizationPolicy::Yield,
+            DeviceFlags::SCHEDULE_BLOCKING_SYNC => SynchronizationPolicy::BlockingSync,
+            _ => SynchronizationPolicy::Auto,
+        }
+    }
+
+    fn apply_event_sync_policy_tax(&mut self, event: EventId) {
+        let root = self.event_root(event);
+        let blocking = self.events.get(&root).is_some_and(|e| e.blocking_sync);
+        let Some(op) = self.event_recorded_by(event) else {
+            return;
+        };
+        let Some(row) = self.ops.get(&op) else {
+            return;
+        };
+        let device = row.device;
+        let stream = row.stream;
+        let node_policy = row.sync_policy;
+        if blocking {
+            let tax = self.host_sync_policy_tax_ns(device, SynchronizationPolicy::BlockingSync);
+            self.clock = self.clock.saturating_add(tax);
+            return;
+        }
+        if node_policy != SynchronizationPolicy::Auto {
+            let tax = self.host_sync_policy_tax_ns(device, node_policy);
+            self.clock = self.clock.saturating_add(tax);
+            return;
+        }
+        self.apply_stream_sync_policy_tax(device, stream);
+    }
+
+    fn submit(&mut self, device: DeviceId, stream: StreamId, kind: Kind) -> Result<OpId, SimError> {
+        self.submit_launch(device, stream, kind, LaunchCost::Kernel)
+    }
+
+    fn submit_launch(
+        &mut self,
+        device: DeviceId,
+        stream: StreamId,
+        kind: Kind,
+        launch: LaunchCost,
+    ) -> Result<OpId, SimError> {
+        if self.unavailable.contains(&device) {
+            return Err(SimError::Unavailable { device });
+        }
+        if self.capturing.is_some() {
+            return self.submit_captured(device, stream, kind);
+        }
+        self.submit_live(device, stream, kind, launch)
+    }
+
+    fn in_capture(&self, device: DeviceId, stream: StreamId) -> bool {
+        self.capturing
+            .as_ref()
+            .is_some_and(|c| c.streams.contains(&(device, stream)))
+    }
+
+    fn submit_captured(
+        &mut self,
+        device: DeviceId,
+        stream: StreamId,
+        kind: Kind,
+    ) -> Result<OpId, SimError> {
+        if let Kind::EventWait { event, external } = &kind {
+            let root = self.event_root(*event);
+            let join = !*external
+                && self
+                    .capturing
+                    .as_ref()
+                    .is_some_and(|c| c.events.contains(&root));
+            if join && !self.in_capture(device, stream) {
+                let same = self
+                    .capturing
+                    .as_ref()
+                    .is_some_and(|c| c.origin.0 == device);
+                if !same {
+                    return Err(SimError::Invalid {
+                        why: "capture fork requires same device",
+                    });
+                }
+                if !self.stream_idle(device, stream) {
+                    return Err(SimError::Invalid {
+                        why: "capture fork requires idle stream",
+                    });
+                }
+                if let Some(cap) = self.capturing.as_mut() {
+                    let _ins = cap.streams.insert((device, stream));
+                }
+            }
+        }
+        if !self.in_capture(device, stream) {
+            let live = self
+                .capturing
+                .as_ref()
+                .is_some_and(|c| c.mode.live_uncaptured());
+            if live {
+                return self.submit_live(device, stream, kind, LaunchCost::Kernel);
+            }
+            return Err(SimError::Invalid {
+                why: "stream not capturing",
+            });
+        }
+        self.require_enqueued_launch_attr_events()?;
+        if let Kind::EventRecord { event, external } = &kind {
+            if !*external {
+                let root = self.event_root(*event);
+                if let Some(cap) = self.capturing.as_mut() {
+                    let _ins = cap.events.insert(root);
+                }
+            }
+        }
+        if let Some(pe) = self.enqueue_programmatic_event {
+            let _ev = self.events.entry(pe.event).or_insert(Ev::new(true));
+            if !pe.external {
+                let root = self.event_root(pe.event);
+                if let Some(cap) = self.capturing.as_mut() {
+                    let _ins = cap.events.insert(root);
+                }
+            }
+        }
+        if let Some(lc) = self.enqueue_launch_completion {
+            let _ev = self.events.entry(lc.event).or_insert(Ev::new(true));
+            if !lc.external {
+                let root = self.event_root(lc.event);
+                if let Some(cap) = self.capturing.as_mut() {
+                    let _ins = cap.events.insert(root);
+                }
+            }
+        }
+        let mut deps = capture_step_deps(&self.capture_buf, device, stream, &kind, &self.events);
+        self.merge_capture_pending(device, stream, &mut deps);
+        let priority = self.snap_priority(device, stream);
+        let (mem_sync_domain, mem_sync_map) = self.snap_mem_sync(device, stream, &kind)?;
+        let sync_policy = self.stream_sync_policy(device, stream);
+        let green_ctx = if kind_has_green_ctx(&kind) {
+            self.enqueue_green_ctx
+                .or_else(|| self.stream_green_ctx.get(&(device, stream)).copied())
+        } else {
+            None
+        };
+        self.capture_buf.push(GraphStep {
+            device,
+            stream,
+            kind,
+            deps,
+            edge_data: BTreeMap::new(),
+            enabled: true,
+            destroyed: false,
+            priority,
+            pdl: self.enqueue_pdl,
+            programmatic_event: self.enqueue_programmatic_event,
+            launch_completion: self.enqueue_launch_completion,
+            access_policy: self.enqueue_access_policy,
+            mem_sync_domain,
+            mem_sync_map,
+            cluster: self.enqueue_cluster,
+            cluster_policy: self.enqueue_cluster_policy,
+            preferred_cluster: self.enqueue_preferred_cluster,
+            carveout: self.enqueue_carveout,
+            device_updatable: self.enqueue_device_updatable,
+            shared_mem: self.enqueue_shared_mem,
+            portable_cluster: self.enqueue_portable_cluster,
+            dynamic_shared: self.enqueue_dynamic_shared,
+            portable_shared: self.enqueue_portable_shared,
+            nvlink_util_centric: self.enqueue_nvlink_util_centric,
+            sync_policy,
+            green_ctx,
+        });
+        let id = OpId(self.next_op);
+        self.next_op = self.next_op.saturating_add(1);
+        Ok(id)
+    }
+
+    fn merge_capture_pending(&mut self, device: DeviceId, stream: StreamId, deps: &mut Vec<usize>) {
+        let extra = self
+            .capturing
+            .as_mut()
+            .map(|c| c.pending.remove(&(device, stream)).unwrap_or_default())
+            .unwrap_or_default();
+        if extra.is_empty() {
+            return;
+        }
+        let graph = self.capturing.as_ref().map(|c| c.into.graph);
+        let existing = graph
+            .and_then(|g| self.graphs.get(&g))
+            .map_or(0, |g| g.steps.len());
+        let buf_i = self.capture_buf.len();
+        let mut extra_abs = Vec::new();
+        for p in extra {
+            if p < existing {
+                extra_abs.push(p);
+            } else {
+                let rel = p.saturating_sub(existing);
+                if rel < buf_i && !deps.contains(&rel) {
+                    deps.push(rel);
+                }
+            }
+        }
+        deps.sort_unstable();
+        extra_abs.sort_unstable();
+        extra_abs.dedup();
+        if extra_abs.is_empty() {
+            return;
+        }
+        if let Some(cap) = self.capturing.as_mut() {
+            let _prev = cap.extra_abs.insert(buf_i, extra_abs);
+        }
+    }
+
+    fn submit_live(
+        &mut self,
+        device: DeviceId,
+        stream: StreamId,
+        kind: Kind,
+        launch: LaunchCost,
+    ) -> Result<OpId, SimError> {
+        let mut deps = self.stream_order_deps(device, stream);
+        if let Kind::EventWait { event, .. } = &kind {
+            if let Some(rec) = self.event_recorded_by(*event) {
+                deps.push(rec);
+            }
+        }
+        if stream != StreamId::GREEN_CTX_SYNC {
+            if let Some(ctx) = self.stream_green_ctx.get(&(device, stream)).copied() {
+                if let Some(g) = self.green_ctxs.get(&ctx) {
+                    for id in &g.wait_ops {
+                        if !deps.contains(id) {
+                            deps.push(*id);
+                        }
+                    }
+                }
+            }
+        }
+        self.submit_live_with_deps(device, stream, kind, launch, deps)
+    }
+
+    /// Live submit with an explicit predecessor list.
+    ///
+    /// [`Self::memcpy_batch_async`] snapshots [`Self::stream_order_deps`] once
+    /// so copies in one batch do not wait for each other (`cudaMemcpyBatchAsync`
+    /// intra-batch order is undefined).
+    fn submit_live_with_deps(
+        &mut self,
+        device: DeviceId,
+        stream: StreamId,
+        kind: Kind,
+        launch: LaunchCost,
+        deps: Vec<OpId>,
+    ) -> Result<OpId, SimError> {
+        let _gpu = self.profile.gpu(device)?;
+        if matches!(kind, Kind::Kernel { .. }) {
+            self.validate_cluster_attrs(
+                device,
+                self.enqueue_cluster,
+                self.enqueue_preferred_cluster,
+                self.enqueue_portable_cluster,
+            )?;
+            self.validate_dynamic_shared(
+                device,
+                self.enqueue_dynamic_shared,
+                self.enqueue_portable_shared,
+            )?;
+        }
+        self.require_enqueued_launch_attr_events()?;
+        let id = OpId(self.next_op);
+        self.next_op = self.next_op.saturating_add(1);
+        let pde = self.enqueue_programmatic_event;
+        let lce = self.enqueue_launch_completion;
+        if let Some(pe) = pde {
+            let _ev = self.events.entry(pe.event).or_insert(Ev::new(true));
+        }
+        if let Some(lc) = lce {
+            let _ev = self.events.entry(lc.event).or_insert(Ev::new(true));
+        }
+        let priority = self.snap_priority(device, stream);
+        let (mem_sync_domain, mem_sync_map) = self.snap_mem_sync(device, stream, &kind)?;
+        let mem_sync_physical = mem_sync_map.physical(mem_sync_domain);
+        let is_kernel = matches!(kind, Kind::Kernel { .. });
+        let green_ctx = if is_kernel {
+            self.enqueue_green_ctx
+        } else {
+            None
+        };
+        let sm_span = if is_kernel {
+            self.kernel_sm_span(device, stream)
+        } else {
+            self.stream_sm_span(device, stream)
+        };
+        let _prev_op = self.ops.insert(
+            id,
+            Op {
+                device,
+                stream,
+                kind,
+                deps,
+                start_deps: Vec::new(),
+                done: false,
+                cancelled: false,
+                launch,
+                submit_ns: self.clock,
+                start_ns: None,
+                done_ns: None,
+                preds: self.enqueue_preds.clone(),
+                skipped: false,
+                priority,
+                pdl: self.enqueue_pdl,
+                pdl_trigger_ns: None,
+                programmatic_event: pde,
+                launch_completion: lce,
+                access_policy: self.enqueue_access_policy,
+                mem_sync_physical,
+                domain_fence_paid: false,
+                cluster: self.enqueue_cluster,
+                cluster_policy: self.enqueue_cluster_policy,
+                preferred_cluster: self.enqueue_preferred_cluster,
+                carveout: self.enqueue_carveout,
+                shared_mem: self.enqueue_shared_mem,
+                nvlink_util_centric: self.enqueue_nvlink_util_centric,
+                sync_policy: self.enqueue_sync_policy,
+                sm_span,
+                green_ctx,
+            },
+        );
+        if let Some(pe) = pde {
+            let root = self.event_root(pe.event);
+            if let Some(ev) = self.events.get_mut(&root) {
+                ev.recorded_by = Some(id);
+            }
+        }
+        if let Some(lc) = lce {
+            let root = self.event_root(lc.event);
+            if let Some(ev) = self.events.get_mut(&root) {
+                ev.recorded_by = Some(id);
+            }
+        }
+        let _prev_tail = self.tail.insert((device, stream), id);
+        Ok(id)
+    }
+
+    fn stream_order_deps(&self, device: DeviceId, stream: StreamId) -> Vec<OpId> {
+        let mut deps = Vec::new();
+        if let Some(prev) = self.tail.get(&(device, stream)) {
+            deps.push(*prev);
+        }
+        // PDL can finish a later wait kernel while an earlier trigger kernel
+        // is still running. `cudaFreeAsync` and other non-wait submits still
+        // wait for every preceding op on the stream (CUDA: all preceding work).
+        for (id, o) in &self.ops {
+            if o.device == device
+                && o.stream == stream
+                && !o.done
+                && !o.cancelled
+                && !deps.contains(id)
+            {
+                deps.push(*id);
+            }
+        }
+        if let Some(joins) = self.graph_joins.get(&(device, stream)) {
+            for id in joins {
+                if !deps.contains(id) {
+                    deps.push(*id);
+                }
+            }
+        }
+        self.add_null_stream_deps(device, stream, &mut deps);
+        deps
+    }
+
+    fn add_null_stream_deps(&self, device: DeviceId, stream: StreamId, deps: &mut Vec<OpId>) {
+        if self.legacy_null_stream {
+            if stream == StreamId::NULL {
+                for ((d, s), tail) in &self.tail {
+                    if *d == device && *s != stream && *s != StreamId::GREEN_CTX_SYNC {
+                        deps.push(*tail);
+                    }
+                }
+            } else if let Some(tail) = self.tail.get(&(device, StreamId::NULL)) {
+                deps.push(*tail);
+            }
+            return;
+        }
+        if stream == StreamId::NULL {
+            for ((d, s), tail) in &self.tail {
+                if *d == device && self.blocking.contains(&(*d, *s)) {
+                    deps.push(*tail);
+                }
+            }
+        } else if self.blocking.contains(&(device, stream)) {
+            if let Some(tail) = self.tail.get(&(device, StreamId::NULL)) {
+                deps.push(*tail);
+            }
+        }
+    }
+
+    fn device_idle(&self, device: DeviceId) -> bool {
+        !self.ops.values().any(|o| o.device == device && !o.done)
+            && !self
+                .running
+                .iter()
+                .any(|r| self.ops.get(&r.op).is_some_and(|o| o.device == device))
+    }
+
+    fn device_sync_outcome(&self, device: DeviceId) -> Result<(), SimError> {
+        let mut n = 0u32;
+        let mut stream = StreamId(0);
+        for o in self.ops.values() {
+            if o.cancelled && o.device == device {
+                n = n.saturating_add(1);
+                stream = o.stream;
+            }
+        }
+        if n > 0 {
+            return Err(SimError::Cancelled { stream, n });
+        }
+        Ok(())
+    }
+
+    fn stream_idle(&self, device: DeviceId, stream: StreamId) -> bool {
+        let local = !self
+            .ops
+            .values()
+            .any(|o| o.device == device && o.stream == stream && !o.done)
+            && !self.running.iter().any(|r| {
+                self.ops
+                    .get(&r.op)
+                    .is_some_and(|o| o.device == device && o.stream == stream)
+            });
+        if !local {
+            return false;
+        }
+        self.graph_joins
+            .get(&(device, stream))
+            .is_none_or(|ids| ids.iter().all(|id| self.op_done(*id)))
+    }
+
+    fn gpu_rt(&self, device: DeviceId) -> Result<&GpuRt, SimError> {
+        self.gpus.get(&device).ok_or(SimError::Invalid {
+            why: "device runtime missing",
+        })
+    }
+
+    fn gpu_rt_mut(&mut self, device: DeviceId) -> Result<&mut GpuRt, SimError> {
+        self.gpus.get_mut(&device).ok_or(SimError::Invalid {
+            why: "device runtime missing",
+        })
+    }
+
+    fn alloc_ref(&self, id: AllocId) -> Result<&Alloc, SimError> {
+        self.allocs
+            .get(&id)
+            .ok_or(SimError::UnknownAlloc { alloc: id })
+    }
+
+    fn alloc_mut(&mut self, id: AllocId) -> Result<&mut Alloc, SimError> {
+        self.allocs
+            .get_mut(&id)
+            .ok_or(SimError::UnknownAlloc { alloc: id })
+    }
+
+    fn is_sync_memops(&self, id: AllocId) -> Result<bool, SimError> {
+        let a = self.alloc_ref(id)?;
+        Ok(a.live && a.sync_memops)
+    }
+
+    fn device_has_sync_memops(&self, device: DeviceId) -> bool {
+        self.gpus
+            .get(&device)
+            .is_some_and(|g| g.device_flags & DeviceFlags::SYNC_MEMOPS != 0)
+    }
+
+    fn fail_if_capturing(&self, why: &'static str) -> Result<(), SimError> {
+        if self.capturing.is_some() {
+            Err(SimError::Invalid { why })
+        } else {
+            Ok(())
+        }
+    }
+
+    fn insert_host(
+        &mut self,
+        bytes: u64,
+        pageable: bool,
+        pinned: bool,
+        mapped: bool,
+        registered: bool,
+        flags: u32,
+    ) -> Result<AllocId, SimError> {
+        if bytes == 0 {
+            return Err(SimError::Invalid {
+                why: "zero-byte alloc",
+            });
+        }
+        self.fail_if_capturing("cannot capture alloc/free")?;
+        if pinned {
+            self.charge_pin(bytes)?;
+        }
+        let id = AllocId(self.next_alloc);
+        self.next_alloc = self.next_alloc.saturating_add(1);
+        let _prev = self.allocs.insert(
+            id,
+            Alloc {
+                bytes,
+                devices: Vec::new(),
+                leases: 0,
+                live: true,
+                host_pinned: pinned,
+                host_pageable: pageable,
+                host_mapped: mapped,
+                host_registered: registered,
+                host_flags: flags,
+                managed: false,
+                attach: Attach::Global,
+                read_mostly: false,
+                accessed_by: BTreeSet::new(),
+                vmm_write_by: BTreeSet::new(),
+                preferred: Preferred::None,
+                last_prefetch: Preferred::None,
+                sync_memops: false,
+                vmm: false,
+                vmm_maps: Vec::new(),
+                pool: None,
+                ipc_src: None,
+                ipc_opens: 0,
+                share_src: None,
+                share_opens: 0,
+                graph_access: Vec::new(),
+            },
+        );
+        Ok(id)
+    }
+
+    fn charge_pin(&mut self, bytes: u64) -> Result<(), SimError> {
+        let cap = self.profile.host_pin_bytes;
+        let used = self.pinned_used;
+        let free = cap.saturating_sub(used);
+        if bytes > free {
+            return Err(SimError::PinOom { need: bytes, free });
+        }
+        self.pinned_used = used.saturating_add(bytes);
+        Ok(())
+    }
+
+    fn refund_pin(&mut self, bytes: u64) {
+        self.pinned_used = self.pinned_used.saturating_sub(bytes);
+    }
+
+    fn host_register_flags(
+        &mut self,
+        id: AllocId,
+        size: Option<u64>,
+        flags: u32,
+    ) -> Result<(), SimError> {
+        self.fail_if_capturing("cannot capture host register")?;
+        let a = self.alloc_ref(id)?;
+        if a.leases > 0 {
+            return Err(SimError::Leased { alloc: id });
+        }
+        if !a.live || !a.host_pageable || a.host_pinned {
+            return Err(SimError::Invalid {
+                why: "not pageable host",
+            });
+        }
+        if let Some(size) = size {
+            if size != a.bytes {
+                return Err(SimError::Invalid {
+                    why: "register size",
+                });
+            }
+        }
+        let bytes = a.bytes;
+        self.charge_pin(bytes)?;
+        self.clock = self.clock.saturating_add(self.first_alloc_ns());
+        let mapped = flags & HostAllocFlags::MAPPED != 0;
+        let a = self.alloc_mut(id)?;
+        a.host_pageable = false;
+        a.host_pinned = true;
+        a.host_mapped = mapped;
+        a.host_registered = true;
+        a.host_flags = flags;
+        Ok(())
+    }
+
+    fn managed_move_src(
+        &self,
+        alloc: AllocId,
+        dest: Option<DeviceId>,
+    ) -> Result<(u64, Place), SimError> {
+        let a = self.alloc_ref(alloc)?;
+        if !a.live || !a.managed {
+            return Err(SimError::Invalid { why: "not managed" });
+        }
+        let src = match dest {
+            Some(d) if a.devices.contains(&d) => Place::HostPinned,
+            Some(_) => a
+                .devices
+                .first()
+                .copied()
+                .map(Place::Device)
+                .unwrap_or(Place::HostPinned),
+            None if a.devices.is_empty() => Place::HostPinned,
+            None => a
+                .devices
+                .first()
+                .copied()
+                .map(Place::Device)
+                .unwrap_or(Place::HostPinned),
+        };
+        Ok((a.bytes, src))
+    }
+
+    fn require_device_attach(&self, id: AllocId, stream: StreamId) -> Result<(), SimError> {
+        if self.alloc_ref(id)?.device_attach_ok(stream) {
+            Ok(())
+        } else {
+            Err(SimError::Invalid {
+                why: "not attached",
+            })
+        }
+    }
+
+    fn require_bufs_attached(
+        &self,
+        stream: StreamId,
+        reads: &[KernelBuf],
+        writes: &[KernelBuf],
+    ) -> Result<(), SimError> {
+        for b in reads.iter().chain(writes.iter()) {
+            self.require_device_attach(b.id, stream)?;
+        }
+        Ok(())
+    }
+
+    fn require_memcpy_attach(&self, stream: StreamId, m: &MemcpyOp) -> Result<(), SimError> {
+        match m.dst {
+            Place::Device(_) => self.require_device_attach(m.alloc, stream),
+            Place::Host | Place::HostPinned => Ok(()),
+        }
+    }
+
+    /// Live kernels page-fault at start. Returns true if a prefetch was
+    /// inserted ahead of `kernel` (caller must reschedule; the kernel is not
+    /// running yet).
+    fn inject_managed_faults(
+        &mut self,
+        kernel: OpId,
+        device: DeviceId,
+        reads: &[KernelBuf],
+        writes: &[KernelBuf],
+    ) -> Result<bool, SimError> {
+        let wait = self.managed_fault_ids(device, reads, writes)?;
+        if wait.is_empty() {
+            return Ok(false);
+        }
+        let kdeps = self
+            .ops
+            .get(&kernel)
+            .ok_or(SimError::Invalid { why: "unknown op" })?
+            .deps
+            .clone();
+        for alloc in wait {
+            self.inject_fault_memcpy(kernel, device, alloc, &kdeps)?;
+        }
+        Ok(true)
+    }
+
+    fn managed_fault_ids(
+        &self,
+        device: DeviceId,
+        reads: &[KernelBuf],
+        writes: &[KernelBuf],
+    ) -> Result<BTreeSet<AllocId>, SimError> {
+        let mut wait = BTreeSet::new();
+        for b in reads {
+            let a = self.alloc_ref(b.id)?;
+            if a.live && a.managed && !a.devices.contains(&device) && !a.remote_read_ok(device) {
+                let _ins = wait.insert(b.id);
+            }
+        }
+        for b in writes {
+            let a = self.alloc_ref(b.id)?;
+            if a.live && a.managed && !a.devices.contains(&device) {
+                let _ins = wait.insert(b.id);
+            }
+        }
+        Ok(wait)
+    }
+
+    fn inject_fault_memcpy(
+        &mut self,
+        kernel: OpId,
+        device: DeviceId,
+        alloc: AllocId,
+        deps: &[OpId],
+    ) -> Result<(), SimError> {
+        let stream = self
+            .ops
+            .get(&kernel)
+            .ok_or(SimError::Invalid { why: "unknown op" })?
+            .stream;
+        let priority = self
+            .ops
+            .get(&kernel)
+            .ok_or(SimError::Invalid { why: "unknown op" })?
+            .priority;
+        let (bytes, src) = self.managed_move_src(alloc, Some(device))?;
+        let id = OpId(self.next_op);
+        self.next_op = self.next_op.saturating_add(1);
+        let _prev = self.ops.insert(
+            id,
+            Op {
+                device,
+                stream,
+                kind: Kind::Memcpy(MemcpyOp {
+                    src,
+                    dst: Place::Device(device),
+                    alloc,
+                    bytes,
+                    offset: 0,
+                    ..MemcpyOp::default()
+                }),
+                deps: deps.to_vec(),
+                start_deps: Vec::new(),
+                done: false,
+                cancelled: false,
+                launch: LaunchCost::Kernel,
+                submit_ns: self.clock,
+                start_ns: None,
+                done_ns: None,
+                preds: Vec::new(),
+                skipped: false,
+                priority,
+                pdl: ProgrammaticLaunch::default(),
+                pdl_trigger_ns: None,
+                programmatic_event: None,
+                launch_completion: None,
+                access_policy: None,
+                mem_sync_physical: 0,
+                domain_fence_paid: false,
+                cluster: None,
+                cluster_policy: ClusterSchedulingPolicy::Default,
+                preferred_cluster: None,
+                carveout: SharedMemCarveout::Default,
+                shared_mem: SharedMemoryMode::Default,
+                nvlink_util_centric: false,
+                sync_policy: SynchronizationPolicy::Auto,
+                sm_span: self.stream_sm_span(device, stream),
+                green_ctx: None,
+            },
+        );
+        self.add_op_dep(kernel, id);
+        Ok(())
+    }
+
+    fn start_kernel(&mut self, id: OpId) -> Result<bool, SimError> {
+        let (device, stream, launch, reads, writes, kind, shared_mem) = {
+            let op = self
+                .ops
+                .get(&id)
+                .ok_or(SimError::Invalid { why: "unknown op" })?;
+            match &op.kind {
+                Kind::Kernel {
+                    reads,
+                    writes,
+                    kind,
+                    ..
+                } => (
+                    op.device,
+                    op.stream,
+                    op.launch,
+                    reads.clone(),
+                    writes.clone(),
+                    kind.clone(),
+                    op.shared_mem,
+                ),
+                _ => {
+                    return Err(SimError::Invalid {
+                        why: "not a kernel",
+                    });
+                }
+            }
+        };
+        self.require_bufs_attached(stream, &reads, &writes)?;
+        if matches!(launch, LaunchCost::Kernel)
+            && self.inject_managed_faults(id, device, &reads, &writes)?
+        {
+            return Ok(true);
+        }
+        let green_ctx = self
+            .ops
+            .get(&id)
+            .ok_or(SimError::Invalid { why: "unknown op" })?
+            .green_ctx;
+        if let Some(ctx) = green_ctx {
+            self.require_live_green_ctx(ctx, device)?;
+        }
+        let slots = {
+            let op = self
+                .ops
+                .get(&id)
+                .ok_or(SimError::Invalid { why: "unknown op" })?;
+            self.op_kernel_slots(op)?
+        };
+        let span = self
+            .ops
+            .get(&id)
+            .ok_or(SimError::Invalid { why: "unknown op" })?
+            .sm_span;
+        if !self.take_compute_n(device, slots, span)? {
+            return Ok(false);
+        }
+        let mem_bps = self.kernel_mem_bps(device, &reads, &writes)?;
+        if let Err(e) = self.lease_kernel(device, &reads, &writes, true) {
+            self.drop_compute_n(device, slots)?;
+            return Err(e);
+        }
+        if let Err(e) = self.invalidate_read_mostly_writes(device, &writes) {
+            self.drop_compute_n(device, slots)?;
+            return Err(e);
+        }
+        let window = self.ops.get(&id).and_then(|o| o.access_policy);
+        let billed = match self.persist_kernel_bytes(device, window, &kind, &reads, &writes) {
+            Ok(n) => n,
+            Err(e) => {
+                self.drop_compute_n(device, slots)?;
+                return Err(e);
+            }
+        };
+        let sm = match green_ctx {
+            Some(ctx) => {
+                self.green_ctxs
+                    .get(&ctx)
+                    .ok_or(SimError::Invalid {
+                        why: "unknown green ctx",
+                    })?
+                    .sm
+                    .width
+            }
+            None => self.stream_sm_permille(device, stream),
+        };
+        let ns = match self.kernel_ns(device, sm, &kind, launch, mem_bps, billed) {
+            Ok(n) => n,
+            Err(e) => {
+                self.drop_compute_n(device, slots)?;
+                return Err(e);
+            }
+        };
+        let ns = match self.shared_mem_ns(device, shared_mem, ns) {
+            Ok(n) => n,
+            Err(e) => {
+                self.drop_compute_n(device, slots)?;
+                return Err(e);
+            }
+        };
+        self.running.push(Running {
+            op: id,
+            remaining_ns: ns.max(1),
+            share: Share::Solo,
+        });
+        if let Some(op) = self.ops.get_mut(&id) {
+            if op.pdl.trigger {
+                let permille = u64::from(
+                    self.profile
+                        .gpu(device)
+                        .map(|g| g.pdl_trigger_permille.min(1000))
+                        .unwrap_or(1000),
+                );
+                let delay = ns.saturating_mul(permille) / 1000;
+                op.pdl_trigger_ns = Some(self.clock.saturating_add(delay));
+            }
+        }
+        Ok(true)
+    }
+
+    fn start_memset(&mut self, id: OpId) -> Result<bool, SimError> {
+        let (device, stream, launch, op) = {
+            let row = self
+                .ops
+                .get(&id)
+                .ok_or(SimError::Invalid { why: "unknown op" })?;
+            match &row.kind {
+                Kind::Memset(op) => (row.device, row.stream, row.launch, *op),
+                _ => {
+                    return Err(SimError::Invalid {
+                        why: "not a memset",
+                    });
+                }
+            }
+        };
+        self.require_device_attach(op.id, stream)?;
+        let span = self
+            .ops
+            .get(&id)
+            .ok_or(SimError::Invalid { why: "unknown op" })?
+            .sm_span;
+        if !self.take_compute(device, span)? {
+            return Ok(false);
+        }
+        let writes = [KernelBuf::span(op.id, op.offset, op.extent_bytes())];
+        if let Err(e) = self.lease_kernel(device, &[], &writes, false) {
+            self.drop_compute(device)?;
+            return Err(e);
+        }
+        if let Err(e) = self.invalidate_read_mostly_writes(device, &writes) {
+            self.drop_compute(device)?;
+            return Err(e);
+        }
+        let mem_bps = match self.kernel_mem_bps(device, &[], &writes) {
+            Ok(b) => b,
+            Err(e) => {
+                self.drop_compute(device)?;
+                return Err(e);
+            }
+        };
+        let ns = match self.memset_ns(device, op.payload_bytes(), launch, mem_bps) {
+            Ok(n) => n,
+            Err(e) => {
+                self.drop_compute(device)?;
+                return Err(e);
+            }
+        };
+        self.running.push(Running {
+            op: id,
+            remaining_ns: ns.max(1),
+            share: Share::Solo,
+        });
+        Ok(true)
+    }
+
+    fn resolve_bufs(&self, bufs: &[KernelBuf]) -> Result<Vec<KernelBuf>, SimError> {
+        let mut out = Vec::new();
+        for b in bufs {
+            let total = self.alloc_ref(b.id)?.bytes;
+            let (offset, bytes) = kernel_span(total, b)?;
+            out.push(KernelBuf {
+                id: b.id,
+                offset,
+                bytes,
+            });
+        }
+        Ok(out)
+    }
+
+    fn managed_local_copy(&self, m: &MemcpyOp) -> Result<bool, SimError> {
+        let a = self.alloc_ref(m.alloc)?;
+        if !a.managed {
+            return Ok(false);
+        }
+        match m.dst {
+            Place::Device(d) => Ok(a.devices.contains(&d)),
+            Place::Host | Place::HostPinned => Ok(a.devices.is_empty()),
+        }
+    }
+
+    fn migrate_off_except(&mut self, alloc: AllocId, keep: DeviceId) -> Result<(), SimError> {
+        let a = self.alloc_ref(alloc)?;
+        let bytes = a.bytes;
+        let others: Vec<DeviceId> = a.devices.iter().copied().filter(|d| *d != keep).collect();
+        for d in others {
+            self.refund_device(d, alloc, bytes)?;
+            self.alloc_mut(alloc)?.devices.retain(|x| *x != d);
+        }
+        Ok(())
+    }
+
+    fn migrate_off_all(&mut self, alloc: AllocId) -> Result<(), SimError> {
+        let a = self.alloc_ref(alloc)?;
+        let bytes = a.bytes;
+        let holders = a.devices.clone();
+        for d in holders {
+            self.refund_device(d, alloc, bytes)?;
+        }
+        self.alloc_mut(alloc)?.devices.clear();
+        Ok(())
+    }
+
+    fn finish_memcpy(&mut self, device: DeviceId, m: MemcpyOp, dma: bool) -> Result<(), SimError> {
+        if dma {
+            self.gpu_rt_mut(device)?.copies = self.gpu_rt(device)?.copies.saturating_sub(1);
+            self.bytes_moved = self.bytes_moved.saturating_add(m.payload_bytes());
+        }
+        let managed = self.alloc_ref(m.alloc)?.managed;
+        let read_mostly = self.alloc_ref(m.alloc)?.read_mostly;
+        if let Place::Device(dst) = m.dst {
+            let a = self.alloc_mut(m.alloc)?;
+            if !a.devices.contains(&dst) {
+                a.devices.push(dst);
+            }
+            if managed && !read_mostly {
+                self.migrate_off_except(m.alloc, dst)?;
+            }
+        } else if managed {
+            self.migrate_off_all(m.alloc)?;
+        } else if matches!(m.dst, Place::HostPinned) {
+            self.alloc_mut(m.alloc)?.host_pinned = true;
+        }
+        Ok(())
+    }
+
+    fn pool_ref(&self, id: PoolId) -> Result<&Pool, SimError> {
+        self.pools.get(&id).ok_or(SimError::Invalid {
+            why: "unknown pool",
+        })
+    }
+
+    fn pool_mut(&mut self, id: PoolId) -> Result<&mut Pool, SimError> {
+        self.pools.get_mut(&id).ok_or(SimError::Invalid {
+            why: "unknown pool",
+        })
+    }
+
+    fn pool_root(&self, pool: PoolId) -> Result<PoolId, SimError> {
+        Ok(self.pool_ref(pool)?.share_root.unwrap_or(pool))
+    }
+
+    fn handle_ref(&self, id: MemHandleId) -> Result<&MemHandle, SimError> {
+        self.mem_handles.get(&id).ok_or(SimError::Invalid {
+            why: "unknown handle",
+        })
+    }
+
+    fn handle_mut(&mut self, id: MemHandleId) -> Result<&mut MemHandle, SimError> {
+        self.mem_handles.get_mut(&id).ok_or(SimError::Invalid {
+            why: "unknown handle",
+        })
+    }
+
+    fn mc_ref(&self, id: MulticastId) -> Result<&Multicast, SimError> {
+        self.multicasts.get(&id).ok_or(SimError::Invalid {
+            why: "unknown multicast",
+        })
+    }
+
+    fn mc_mut(&mut self, id: MulticastId) -> Result<&mut Multicast, SimError> {
+        self.multicasts.get_mut(&id).ok_or(SimError::Invalid {
+            why: "unknown multicast",
+        })
+    }
+
+    fn drop_multicast_va(&mut self, id: AllocId) {
+        let Some(mc) = self.mc_vas.remove(&id) else {
+            return;
+        };
+        if let Ok(obj) = self.mc_mut(mc) {
+            obj.maps = obj.maps.saturating_sub(1);
+        }
+    }
+
+    /// Unmap one VMM span: refund HBM unless it is an explicit [`Self::va_map_handle`].
+    fn drop_vmm_physical(
+        &mut self,
+        id: AllocId,
+        device: DeviceId,
+        offset: u64,
+        bytes: u64,
+    ) -> Result<(), SimError> {
+        if let Some(h) = self.vmm_handle_at.remove(&(id, device, offset, bytes)) {
+            let maps = self.handle_ref(h)?.maps;
+            self.handle_mut(h)?.maps = maps.saturating_sub(1);
+            return self.maybe_refund_handle(h);
+        }
+        self.refund_device(device, id, bytes)
+    }
+
+    /// Free HBM when a handle has no refs and no maps.
+    fn maybe_refund_handle(&mut self, handle: MemHandleId) -> Result<(), SimError> {
+        let (device, bytes, refund) = {
+            let h = self.handle_ref(handle)?;
+            (h.device, h.bytes, h.refs == 0 && h.maps == 0 && h.charged)
+        };
+        if refund {
+            let used = self.gpu_rt(device)?.used;
+            self.gpu_rt_mut(device)?.used = used.saturating_sub(bytes);
+            self.handle_mut(handle)?.charged = false;
+        }
+        Ok(())
+    }
+
+    fn bump_hbm_peak(&mut self, device: DeviceId) -> Result<(), SimError> {
+        let peak = self.gpu_rt(device)?.used;
+        if peak > self.hbm_peak {
+            self.hbm_peak = peak;
+        }
+        Ok(())
+    }
+
+    fn reserve_hbm(&mut self, device: DeviceId, bytes: u64) -> Result<(), SimError> {
+        let cap = self.profile.gpu(device)?.hbm_bytes;
+        let used = self.gpu_rt(device)?.used;
+        let free = cap.saturating_sub(used);
+        if bytes > free {
+            return Err(SimError::Oom {
+                device,
+                need: bytes,
+                free,
+            });
+        }
+        self.gpu_rt_mut(device)?.used = used.saturating_add(bytes);
+        self.bump_hbm_peak(device)
+    }
+
+    fn pool_acquire(&mut self, pool: PoolId, bytes: u64) -> Result<u64, SimError> {
+        let pool = self.pool_root(pool)?;
+        let (device, cached, live, max_size, opportunistic) = {
+            let p = self.pool_ref(pool)?;
+            (
+                p.device,
+                p.cached,
+                p.live,
+                p.max_size,
+                p.reuse_opportunistic,
+            )
+        };
+        let first = self.profile.gpu(device)?.alloc_overhead_ns;
+        let reuse = self.profile.gpu(device)?.pool_reuse_ns;
+        if opportunistic && cached >= bytes {
+            let p = self.pool_mut(pool)?;
+            p.cached = cached.saturating_sub(bytes);
+            p.live = p.live.saturating_add(bytes);
+            p.bump_high();
+            return Ok(reuse.max(1));
+        }
+        let extra = if opportunistic {
+            bytes.saturating_sub(cached)
+        } else {
+            bytes
+        };
+        if max_size > 0 {
+            let reserved = live.saturating_add(cached);
+            let new_reserved = reserved.saturating_add(extra);
+            if new_reserved > max_size {
+                return Err(SimError::Oom {
+                    device,
+                    need: extra,
+                    free: max_size.saturating_sub(reserved),
+                });
+            }
+        }
+        self.reserve_hbm(device, extra)?;
+        let p = self.pool_mut(pool)?;
+        if opportunistic {
+            p.cached = 0;
+        }
+        p.live = p.live.saturating_add(bytes);
+        p.bump_high();
+        Ok(first.max(1))
+    }
+
+    fn pool_release(&mut self, pool: PoolId, bytes: u64) -> Result<(), SimError> {
+        let pool = self.pool_root(pool)?;
+        let (device, threshold, cached, live) = {
+            let p = self.pool_ref(pool)?;
+            (p.device, p.release_threshold, p.cached, p.live)
+        };
+        let live = live.saturating_sub(bytes);
+        let cached = cached.saturating_add(bytes);
+        let (cached, drop) = if cached > threshold {
+            (threshold, cached.saturating_sub(threshold))
+        } else {
+            (cached, 0)
+        };
+        {
+            let p = self.pool_mut(pool)?;
+            p.live = live;
+            p.cached = cached;
+            p.bump_high();
+        }
+        if drop > 0 {
+            let used = self.gpu_rt(device)?.used;
+            self.gpu_rt_mut(device)?.used = used.saturating_sub(drop);
+        }
+        Ok(())
+    }
+
+    fn refund_device(
+        &mut self,
+        device: DeviceId,
+        alloc: AllocId,
+        bytes: u64,
+    ) -> Result<(), SimError> {
+        let pool = self.alloc_ref(alloc)?.pool;
+        if let Some(p) = pool {
+            if self.pool_ref(p)?.device == device {
+                return self.pool_release(p, bytes);
+            }
+        }
+        let used = self.gpu_rt(device)?.used;
+        self.gpu_rt_mut(device)?.used = used.saturating_sub(bytes);
+        Ok(())
+    }
+
+    fn start_alloc(
+        &mut self,
+        op: OpId,
+        device: DeviceId,
+        alloc: AllocId,
+        bytes: u64,
+    ) -> Result<bool, SimError> {
+        let pool = self.alloc_ref(alloc)?.pool;
+        let already = {
+            let a = self.alloc_ref(alloc)?;
+            a.live && a.devices.contains(&device)
+        };
+        let ns = if already {
+            match pool {
+                Some(_) => self.profile.gpu(device)?.pool_reuse_ns.max(1),
+                None => 1,
+            }
+        } else if let Some(p) = pool {
+            if self.pool_ref(p)?.device != device {
+                return Err(SimError::Invalid {
+                    why: "pool device mismatch",
+                });
+            }
+            self.pool_acquire(p, bytes)?
+        } else {
+            self.reserve_hbm(device, bytes)?;
+            self.profile.gpu(device)?.alloc_overhead_ns.max(1)
+        };
+        self.running.push(Running {
+            op,
+            remaining_ns: ns.max(1),
+            share: Share::Solo,
+        });
+        Ok(true)
+    }
+
+    fn start_free(&mut self, op: OpId, device: DeviceId, alloc: AllocId) -> Result<bool, SimError> {
+        let a = self.alloc_ref(alloc)?;
+        if a.leases > 0 {
+            return Err(SimError::Leased { alloc });
+        }
+        if a.ipc_src.is_some() {
+            self.drop_ipc_import(alloc)?;
+            self.running.push(Running {
+                op,
+                remaining_ns: 1,
+                share: Share::Solo,
+            });
+            return Ok(true);
+        }
+        if a.share_src.is_some() {
+            self.drop_share_import(alloc)?;
+            self.running.push(Running {
+                op,
+                remaining_ns: 1,
+                share: Share::Solo,
+            });
+            return Ok(true);
+        }
+        if a.ipc_opens > 0 {
+            return Err(SimError::Invalid { why: "ipc mapped" });
+        }
+        if a.share_opens > 0 {
+            return Err(SimError::Invalid {
+                why: "share mapped",
+            });
+        }
+        if !a.live || !a.devices.contains(&device) {
+            return Err(SimError::UnknownAlloc { alloc });
+        }
+        let bytes = a.bytes;
+        self.refund_device(device, alloc, bytes)?;
+        let gone = {
+            let a = self.alloc_mut(alloc)?;
+            a.devices.retain(|d| *d != device);
+            if a.devices.is_empty() && !a.host_pinned {
+                a.live = false;
+                true
+            } else {
+                false
+            }
+        };
+        if gone {
+            self.clear_mailbox(alloc);
+        }
+        self.running.push(Running {
+            op,
+            remaining_ns: 1,
+            share: Share::Solo,
+        });
+        Ok(true)
+    }
+
+    fn drop_ipc_import(&mut self, id: AllocId) -> Result<(), SimError> {
+        let (src, leases) = {
+            let a = self.alloc_ref(id)?;
+            (
+                a.ipc_src.ok_or(SimError::Invalid {
+                    why: "not ipc import",
+                })?,
+                a.leases,
+            )
+        };
+        if leases > 0 {
+            return Err(SimError::Leased { alloc: id });
+        }
+        let opens = self.alloc_ref(src)?.ipc_opens;
+        self.alloc_mut(src)?.ipc_opens = opens.saturating_sub(1);
+        {
+            let a = self.alloc_mut(id)?;
+            a.live = false;
+            a.devices.clear();
+        }
+        self.clear_mailbox(id);
+        Ok(())
+    }
+
+    fn drop_share_import(&mut self, id: AllocId) -> Result<(), SimError> {
+        let (src, leases) = {
+            let a = self.alloc_ref(id)?;
+            (
+                a.share_src.ok_or(SimError::Invalid {
+                    why: "not share import",
+                })?,
+                a.leases,
+            )
+        };
+        if leases > 0 {
+            return Err(SimError::Leased { alloc: id });
+        }
+        let opens = self.alloc_ref(src)?.share_opens;
+        self.alloc_mut(src)?.share_opens = opens.saturating_sub(1);
+        {
+            let a = self.alloc_mut(id)?;
+            a.live = false;
+            a.devices.clear();
+        }
+        self.clear_mailbox(id);
+        Ok(())
+    }
+
+    fn reserve_now(&mut self, device: DeviceId, bytes: u64) -> Result<AllocId, SimError> {
+        self.reserve_hbm(device, bytes)?;
+        let overhead = self.profile.gpu(device)?.alloc_overhead_ns.max(1);
+        self.clock = self.clock.saturating_add(overhead);
+        let id = AllocId(self.next_alloc);
+        self.next_alloc = self.next_alloc.saturating_add(1);
+        let _prev = self.allocs.insert(
+            id,
+            Alloc {
+                bytes,
+                devices: vec![device],
+                leases: 0,
+                live: true,
+                host_pinned: false,
+                host_pageable: false,
+                host_mapped: false,
+                host_registered: false,
+                host_flags: 0,
+                managed: false,
+                attach: Attach::Global,
+                read_mostly: false,
+                accessed_by: BTreeSet::new(),
+                vmm_write_by: BTreeSet::new(),
+                preferred: Preferred::None,
+                last_prefetch: Preferred::None,
+                sync_memops: false,
+                vmm: false,
+                vmm_maps: Vec::new(),
+                pool: None,
+                ipc_src: None,
+                ipc_opens: 0,
+                share_src: None,
+                share_opens: 0,
+                graph_access: Vec::new(),
+            },
+        );
+        Ok(id)
+    }
+
+    fn op_done(&self, id: OpId) -> bool {
+        self.ops.get(&id).is_some_and(|o| o.done)
+    }
+
+    fn deps_ready(&self, op: &Op) -> bool {
+        op.deps.iter().all(|d| self.dep_satisfied(op, *d))
+    }
+
+    fn dep_satisfied(&self, op: &Op, dep: OpId) -> bool {
+        if op.start_deps.contains(&dep) {
+            return self.ops.get(&dep).is_some_and(|p| p.start_ns.is_some());
+        }
+        if self.op_done(dep) {
+            return true;
+        }
+        let Some(prev) = self.ops.get(&dep) else {
+            return false;
+        };
+        if op.pdl.wait
+            && prev.pdl.trigger
+            && prev.device == op.device
+            && prev.stream == op.stream
+            && prev.pdl_trigger_ns.is_some_and(|t| self.clock >= t)
+        {
+            return true;
+        }
+        if let Kind::EventWait { event, .. } = &op.kind {
+            let root = event_root_of(&self.events, *event);
+            if let Some(ns) = programmatic_event_stamp(prev, root, &self.events) {
+                if self.clock >= ns {
+                    return true;
+                }
+            }
+            if prev
+                .launch_completion
+                .is_some_and(|p| event_root_of(&self.events, p.event) == root)
+                && prev.start_ns.is_some()
+            {
+                return true;
+            }
+        }
+        false
+    }
+
+    fn next_pdl_wake(&self) -> Option<u64> {
+        let mut soonest = None;
+        for o in self.ops.values() {
+            if o.done || o.cancelled {
+                continue;
+            }
+            let Some(t) = o.pdl_trigger_ns else {
+                continue;
+            };
+            if t <= self.clock {
+                continue;
+            }
+            soonest = Some(soonest.map_or(t, |s: u64| s.min(t)));
+        }
+        soonest
+    }
+
+    fn is_running(&self, id: OpId) -> bool {
+        self.running.iter().any(|r| r.op == id)
+    }
+
+    fn schedule(&mut self) -> Result<(), SimError> {
+        loop {
+            let mut started = false;
+            let mut candidates: Vec<(i32, u64, OpId)> = Vec::new();
+            for (id, o) in &self.ops {
+                if o.done || self.is_running(*id) || !self.deps_ready(o) {
+                    continue;
+                }
+                let pri = o.priority;
+                candidates.push((pri, id.0, *id));
+            }
+            candidates.sort_by_key(|&(pri, oid, _)| (Reverse(pri), oid));
+            for (_, _, id) in candidates {
+                if self.try_start(id)? {
+                    if self.is_running(id) {
+                        if let Some(op) = self.ops.get_mut(&id) {
+                            if op.start_ns.is_none() && !op.cancelled {
+                                op.start_ns = Some(self.clock);
+                            }
+                        }
+                    }
+                    started = true;
+                }
+            }
+            if !started {
+                return Ok(());
+            }
+        }
+    }
+
+    fn try_start(&mut self, id: OpId) -> Result<bool, SimError> {
+        let (device, launch, stream, preds) = {
+            let Some(op) = self.ops.get(&id) else {
+                return Err(SimError::Invalid { why: "unknown op" });
+            };
+            (op.device, op.launch, op.stream, op.preds.clone())
+        };
+        if self.unavailable.contains(&device) {
+            return Err(SimError::Unavailable { device });
+        }
+        if self.cond_skip(&preds) {
+            if let Some(op) = self.ops.get_mut(&id) {
+                op.skipped = true;
+            }
+            self.running.push(Running {
+                op: id,
+                remaining_ns: 1,
+                share: Share::Solo,
+            });
+            return Ok(true);
+        }
+        let Some(op) = self.ops.get(&id) else {
+            return Err(SimError::Invalid { why: "unknown op" });
+        };
+        match &op.kind {
+            Kind::Alloc { id: alloc, bytes } => self.start_alloc(id, device, *alloc, *bytes),
+            Kind::Free { id: alloc } => self.start_free(id, device, *alloc),
+            Kind::Kernel { .. } => self.start_kernel(id),
+            Kind::Memset(_) => self.start_memset(id),
+            Kind::HostFunc { .. } => {
+                let ns = self.host_func_ns(device, launch)?;
+                self.running.push(Running {
+                    op: id,
+                    remaining_ns: ns.max(1),
+                    share: Share::Solo,
+                });
+                Ok(true)
+            }
+            Kind::GraphUpload { exec } => {
+                let exec = *exec;
+                let already = self
+                    .graphs
+                    .get(&exec)
+                    .ok_or(SimError::Invalid {
+                        why: "unknown graph",
+                    })?
+                    .uploaded;
+                let ns = if already {
+                    1
+                } else {
+                    self.profile.gpu(device)?.graph_upload_ns.max(1)
+                };
+                self.running.push(Running {
+                    op: id,
+                    remaining_ns: ns,
+                    share: Share::Solo,
+                });
+                Ok(true)
+            }
+            Kind::Empty => {
+                self.running.push(Running {
+                    op: id,
+                    remaining_ns: 1,
+                    share: Share::Solo,
+                });
+                Ok(true)
+            }
+            Kind::Attach { .. } => {
+                self.running.push(Running {
+                    op: id,
+                    remaining_ns: 1,
+                    share: Share::Solo,
+                });
+                Ok(true)
+            }
+            Kind::Memcpy(m) => {
+                let m = m.clone();
+                if self.fail_next_memcpy {
+                    self.fail_next_memcpy = false;
+                    if let Some(op) = self.ops.get_mut(&id) {
+                        op.cancelled = true;
+                        op.done = true;
+                        op.done_ns = Some(self.clock);
+                    }
+                    return Err(SimError::TransferFailed { alloc: m.alloc });
+                }
+                self.require_memcpy_attach(stream, &m)?;
+                self.memcpy_precheck(&m)?;
+                if self.managed_local_copy(&m)? {
+                    self.running.push(Running {
+                        op: id,
+                        remaining_ns: 1,
+                        share: Share::Solo,
+                    });
+                    return Ok(true);
+                }
+                let gp = self.profile.gpu(device)?;
+                if self.gpu_rt(device)?.copies >= gp.copy_engines {
+                    return Ok(false);
+                }
+                self.charge_replica_hbm(&m)?;
+                let (ns, link_idx) = self.memcpy_ns(&m)?;
+                let ns = ns.saturating_add(self.graph_head_ns(device, launch)?);
+                self.gpu_rt_mut(device)?.copies = self.gpu_rt(device)?.copies.saturating_add(1);
+                self.running.push(Running {
+                    op: id,
+                    remaining_ns: ns.max(1),
+                    share: Share::Link(link_idx),
+                });
+                Ok(true)
+            }
+            Kind::EventRecord { event, .. } => {
+                let root = self.event_root(*event);
+                if let Some(ev) = self.events.get_mut(&root) {
+                    ev.recorded_by = Some(id);
+                }
+                self.running.push(Running {
+                    op: id,
+                    remaining_ns: 1,
+                    share: Share::Solo,
+                });
+                Ok(true)
+            }
+            Kind::EventWait { event, external } => {
+                let skip_graph =
+                    *external && matches!(launch, LaunchCost::GraphHead | LaunchCost::GraphBody);
+                if self.event_wait_gate(*event, skip_graph)?.is_none() {
+                    return Ok(false);
+                }
+                self.running.push(Running {
+                    op: id,
+                    remaining_ns: 1,
+                    share: Share::Solo,
+                });
+                Ok(true)
+            }
+            Kind::AllReduce { parts, bytes } => {
+                let parts = parts.clone();
+                let bytes = *bytes;
+                self.start_allreduce(id, device, &parts, bytes)
+            }
+            Kind::ChildGraph { .. } => Err(SimError::Invalid {
+                why: "child graph must be expanded",
+            }),
+            Kind::If { .. } => Err(SimError::Invalid {
+                why: "conditional if must be expanded",
+            }),
+            Kind::While { .. } => Err(SimError::Invalid {
+                why: "conditional while must be expanded",
+            }),
+            Kind::Switch { .. } => Err(SimError::Invalid {
+                why: "conditional switch must be expanded",
+            }),
+            Kind::WhileTick { .. } => {
+                self.running.push(Running {
+                    op: id,
+                    remaining_ns: 1,
+                    share: Share::Solo,
+                });
+                Ok(true)
+            }
+            Kind::SetConditional { handle, value } => {
+                let handle = *handle;
+                let value = *value;
+                let c = self.conds.get_mut(&handle).ok_or(SimError::Invalid {
+                    why: "unknown conditional",
+                })?;
+                c.value = value;
+                self.running.push(Running {
+                    op: id,
+                    remaining_ns: 1,
+                    share: Share::Solo,
+                });
+                Ok(true)
+            }
+            Kind::WriteValue { .. } | Kind::WaitValue { .. } => {
+                let batch = batch_from_kind(&op.kind).ok_or(SimError::Invalid {
+                    why: "batch mem op",
+                })?;
+                self.start_batch_mem_ops(id, device, &[batch])
+            }
+            Kind::BatchMem { ops } => {
+                let ops = ops.clone();
+                self.start_batch_mem_ops(id, device, &ops)
+            }
+            Kind::DeviceLaunch { .. } => self.start_device_launch(id, device),
+        }
+    }
+
+    fn start_batch_mem_ops(
+        &mut self,
+        op: OpId,
+        device: DeviceId,
+        ops: &[BatchMemOp],
+    ) -> Result<bool, SimError> {
+        if !self.batch_mem_ready(device, ops)? {
+            return Ok(false);
+        }
+        self.running.push(Running {
+            op,
+            remaining_ns: 1,
+            share: Share::Solo,
+        });
+        Ok(true)
+    }
+
+    fn batch_mem_ready(&self, device: DeviceId, ops: &[BatchMemOp]) -> Result<bool, SimError> {
+        let mut overlay: BTreeMap<(AllocId, u64), u64> = BTreeMap::new();
+        for item in ops {
+            match *item {
+                BatchMemOp::FlushRemoteWrites => {}
+                BatchMemOp::Write {
+                    id,
+                    offset,
+                    value,
+                    bits32,
+                } => {
+                    self.require_wait_value_resident(device, id, offset, bits32)?;
+                    let mask = wait_value_mask(bits32);
+                    let prev = overlay
+                        .get(&(id, offset))
+                        .copied()
+                        .or_else(|| self.mailbox.get(&(id, offset)).copied())
+                        .unwrap_or(0);
+                    let _old = overlay.insert((id, offset), (prev & !mask) | (value & mask));
+                }
+                BatchMemOp::Wait {
+                    id,
+                    offset,
+                    value,
+                    bits32,
+                    cmp,
+                    ..
+                } => {
+                    self.require_wait_value_resident(device, id, offset, bits32)?;
+                    let mask = wait_value_mask(bits32);
+                    let loc = overlay
+                        .get(&(id, offset))
+                        .copied()
+                        .or_else(|| self.mailbox.get(&(id, offset)).copied())
+                        .unwrap_or(0)
+                        & mask;
+                    if !cmp.matches(loc, value & mask) {
+                        return Ok(false);
+                    }
+                }
+            }
+        }
+        Ok(true)
+    }
+
+    fn require_wait_value_resident(
+        &self,
+        device: DeviceId,
+        alloc: AllocId,
+        offset: u64,
+        bits32: bool,
+    ) -> Result<(), SimError> {
+        let width = wait_value_span(self.alloc_ref(alloc)?.bytes, offset, bits32)?;
+        let buf = KernelBuf {
+            id: alloc,
+            offset,
+            bytes: width,
+        };
+        if !self.buf_on_device(&buf, device, true, false)? {
+            return Err(SimError::NotResident { alloc, device });
+        }
+        Ok(())
+    }
+
+    fn start_device_launch(&mut self, op: OpId, device: DeviceId) -> Result<bool, SimError> {
+        let span = self
+            .ops
+            .get(&op)
+            .ok_or(SimError::Invalid { why: "unknown op" })?
+            .sm_span;
+        if !self.take_compute(device, span)? {
+            return Ok(false);
+        }
+        let ns = self.profile.gpu(device)?.graph_launch_ns.max(1);
+        self.running.push(Running {
+            op,
+            remaining_ns: ns,
+            share: Share::Solo,
+        });
+        Ok(true)
+    }
+
+    fn cond_skip(&self, preds: &[CondPred]) -> bool {
+        preds.iter().any(|p| match p {
+            CondPred::Nonzero(h) => self.conds.get(h).is_some_and(|c| c.value == 0),
+            CondPred::Zero(h) => self.conds.get(h).is_none_or(|c| c.value != 0),
+            CondPred::Equals(h, branch) => self.conds.get(h).is_none_or(|c| c.value != *branch),
+        })
+    }
+
+    fn invalidate_read_mostly_writes(
+        &mut self,
+        device: DeviceId,
+        writes: &[KernelBuf],
+    ) -> Result<(), SimError> {
+        let mut ids = BTreeSet::new();
+        for b in writes {
+            let a = self.alloc_ref(b.id)?;
+            if a.live && a.managed && a.read_mostly {
+                let _ins = ids.insert(b.id);
+            }
+        }
+        for id in ids {
+            self.migrate_off_except(id, device)?;
+        }
+        Ok(())
+    }
+
+    fn lease_kernel(
+        &mut self,
+        device: DeviceId,
+        reads: &[KernelBuf],
+        writes: &[KernelBuf],
+        mapped_ok: bool,
+    ) -> Result<(), SimError> {
+        for b in reads {
+            if !self.buf_on_device(b, device, mapped_ok, true)? {
+                return Err(SimError::NotResident {
+                    alloc: b.id,
+                    device,
+                });
+            }
+        }
+        for b in writes {
+            if !self.buf_on_device(b, device, mapped_ok, false)? {
+                return Err(SimError::NotResident {
+                    alloc: b.id,
+                    device,
+                });
+            }
+        }
+        for b in reads.iter().chain(writes.iter()) {
+            let a = self.alloc_mut(b.id)?;
+            a.leases = a.leases.saturating_add(1);
+        }
+        Ok(())
+    }
+
+    fn buf_on_device(
+        &self,
+        buf: &KernelBuf,
+        device: DeviceId,
+        mapped_ok: bool,
+        allow_remote: bool,
+    ) -> Result<bool, SimError> {
+        let root = {
+            let a = self.alloc_ref(buf.id)?;
+            a.share_src.or(a.ipc_src).unwrap_or(buf.id)
+        };
+        let a = self.alloc_ref(root)?;
+        let (off, n) = kernel_span(a.bytes, buf)?;
+        let on_device = if a.vmm {
+            a.live && vmm_covers(&a.vmm_maps, device, off, n)
+        } else {
+            a.live && a.devices.contains(&device)
+        };
+        let mapped = mapped_ok && a.live && a.host_mapped;
+        let home_span = a
+            .vmm_home()
+            .is_some_and(|h| vmm_covers(&a.vmm_maps, h, off, n));
+        let accessed =
+            mapped_ok && allow_remote && a.remote_read_ok(device) && (!a.vmm || home_span);
+        let pool_ok = self.pool_peer_ok(a, device, !allow_remote);
+        let vmm_rw = a.vmm && a.vmm_write_by.contains(&device) && home_span;
+        Ok(on_device || mapped || accessed || pool_ok || vmm_rw)
+    }
+
+    /// Peer access via [`Self::pool_set_access`] (read and write),
+    /// [`Self::pool_set_access_read`] (read), or a live
+    /// [`Self::graph_add_alloc_with_access`] grant. Physicals stay on the pool GPU.
+    fn pool_peer_ok(&self, a: &Alloc, device: DeviceId, write: bool) -> bool {
+        if !a.live {
+            return false;
+        }
+        let Some(pid) = a.pool else {
+            return false;
+        };
+        let Ok(root_id) = self.pool_root(pid) else {
+            return false;
+        };
+        let Some(root) = self.pools.get(&root_id) else {
+            return false;
+        };
+        if root.device == device || !a.devices.contains(&root.device) {
+            return false;
+        }
+        if a.graph_access_grants(device, write) {
+            return true;
+        }
+        let local_ok = self
+            .pools
+            .get(&pid)
+            .is_some_and(|p| p.grants(device, write));
+        local_ok || root.grants(device, write)
+    }
+
+    fn peer_or_host_bps(&self, src: DeviceId, dst: DeviceId) -> Result<u64, SimError> {
+        if let Ok(link) = self.profile.link(Some(src), Some(dst)) {
+            return Ok(link.bps);
+        }
+        Ok(self.profile.link(None, Some(dst))?.bps)
+    }
+
+    fn kernel_mem_bps(
+        &self,
+        device: DeviceId,
+        reads: &[KernelBuf],
+        writes: &[KernelBuf],
+    ) -> Result<u64, SimError> {
+        let hbm = self.profile.gpu(device)?.hbm_bps;
+        let mut bps = hbm;
+        let mut remote = false;
+        for b in reads.iter().chain(writes.iter()) {
+            if let Some(&mc) = self.mc_vas.get(&b.id) {
+                bps = bps.min(self.nvls_bps(device, mc)?);
+                remote = true;
+                continue;
+            }
+            let a = self.alloc_ref(b.id)?;
+            if a.devices.contains(&device) {
+                continue;
+            }
+            if a.host_mapped {
+                let pcie = self.profile.link(None, Some(device))?.bps;
+                bps = bps.min(pcie);
+                remote = true;
+                continue;
+            }
+            if a.remote_read_ok(device)
+                || self.pool_peer_ok(a, device, false)
+                || (a.vmm && a.vmm_write_by.contains(&device))
+            {
+                let src = if a.vmm {
+                    a.vmm_home()
+                } else if self.pool_peer_ok(a, device, false) {
+                    a.pool
+                        .and_then(|p| self.pools.get(&p).map(|pool| pool.device))
+                } else {
+                    match a.preferred {
+                        Preferred::Gpu(p) if a.devices.contains(&p) => Some(p),
+                        _ => a.devices.first().copied(),
+                    }
+                };
+                let link = if let Some(src) = src {
+                    self.peer_or_host_bps(src, device)?
+                } else {
+                    self.profile.link(None, Some(device))?.bps
+                };
+                bps = bps.min(link);
+                remote = true;
+            }
+        }
+        Ok(if remote { bps } else { hbm })
+    }
+
+    fn nvls_bps(&self, src: DeviceId, mc: MulticastId) -> Result<u64, SimError> {
+        let team = self.mc_ref(mc)?;
+        let mut bps = u64::MAX;
+        let mut any = false;
+        for &d in &team.devices {
+            if d == src {
+                continue;
+            }
+            any = true;
+            bps = bps.min(self.peer_or_host_bps(src, d)?);
+        }
+        if !any {
+            return Ok(self.profile.gpu(src)?.hbm_bps);
+        }
+        Ok(bps)
+    }
+
+    fn multicast_write_bytes(&self, writes: &[KernelBuf]) -> u64 {
+        let mut n = 0u64;
+        for w in writes {
+            if !self.mc_vas.contains_key(&w.id) {
+                continue;
+            }
+            let Ok(a) = self.alloc_ref(w.id) else {
+                continue;
+            };
+            let Ok((_, m)) = kernel_span(a.bytes, w) else {
+                continue;
+            };
+            n = n.saturating_add(m);
+        }
+        n
+    }
+
+    fn persist_kernel_bytes(
+        &mut self,
+        device: DeviceId,
+        window: Option<AccessPolicyWindow>,
+        kind: &KernelKind,
+        reads: &[KernelBuf],
+        writes: &[KernelBuf],
+    ) -> Result<u64, SimError> {
+        let (_, kind_bytes) = kind.flops_and_bytes();
+        let Some(window) = window else {
+            return Ok(kind_bytes);
+        };
+        self.validate_access_policy_window(device, window)?;
+        if window.hit != AccessProperty::Persisting {
+            return Ok(kind_bytes);
+        }
+        let persist_hit = u64::from(self.profile.gpu(device)?.l2_persist_hit_permille.min(1000));
+        let total = self.alloc_ref(window.buf.id)?.bytes;
+        let (off, n) = kernel_span(total, &window.buf)?;
+        let touch = self.kernel_touch_spans(reads, writes)?;
+        let overlap = span_overlap_with(window.buf.id, off, n, &touch);
+        if overlap == 0 {
+            return Ok(kind_bytes);
+        }
+        let rt = self.gpus.get_mut(&device).ok_or(SimError::Invalid {
+            why: "unknown device",
+        })?;
+        if rt.persist_limit == 0 {
+            return Ok(kind_bytes);
+        }
+        let want = overlap.saturating_mul(u64::from(window.hit_ratio_permille.min(1000))) / 1000;
+        let cap = want.min(rt.persist_limit);
+        let cached = persist_cached(rt, window.buf.id, off, n).min(overlap);
+        let hit = cached.min(cap);
+        let touch_bytes = touch
+            .iter()
+            .fold(0u64, |acc, s| acc.saturating_add(s.bytes));
+        let billed = persist_discount(kind_bytes, hit, touch_bytes, persist_hit);
+        persist_fill(rt, window.buf.id, off, cap);
+        Ok(billed)
+    }
+
+    fn kernel_touch_spans(
+        &self,
+        reads: &[KernelBuf],
+        writes: &[KernelBuf],
+    ) -> Result<Vec<PersistLine>, SimError> {
+        let mut spans = Vec::new();
+        for b in reads.iter().chain(writes.iter()) {
+            let total = self.alloc_ref(b.id)?.bytes;
+            let (offset, bytes) = kernel_span(total, b)?;
+            spans.push(PersistLine {
+                id: b.id,
+                offset,
+                bytes,
+            });
+        }
+        merge_persist_spans(&mut spans);
+        Ok(spans)
+    }
+
+    fn kernel_ns(
+        &self,
+        device: DeviceId,
+        sm_permille: u16,
+        kind: &KernelKind,
+        launch: LaunchCost,
+        mem_bps: u64,
+        billed_bytes: u64,
+    ) -> Result<u64, SimError> {
+        let g = self.profile.gpu(device)?;
+        let (flops, _) = kind.flops_and_bytes();
+        let sm = u64::from(sm_permille.max(1));
+        let peak = g
+            .flops(kind.dtype())
+            .saturating_mul(sm)
+            .checked_div(1000)
+            .unwrap_or(1)
+            .max(1);
+        let compute = ns_for_bytes(flops, peak);
+        let memory = ns_for_bytes(billed_bytes, mem_bps.max(1));
+        let overhead = match launch {
+            LaunchCost::Kernel => g.launch_overhead_ns,
+            LaunchCost::GraphHead => g.graph_launch_ns,
+            LaunchCost::GraphBody => 0,
+        };
+        let mut ns = overhead.saturating_add(compute.max(memory));
+        let util = u64::from(g.gemm_util_permille.max(1));
+        ns = ns
+            .saturating_mul(1000)
+            .checked_div(util)
+            .unwrap_or(u64::MAX);
+        if matches!(kind, KernelKind::GroupedMoeGemm { .. }) {
+            let pen = u64::from(g.grouped_moe_permille.max(1));
+            ns = ns.saturating_mul(pen).checked_div(1000).unwrap_or(u64::MAX);
+        }
+        Ok(ns)
+    }
+
+    fn shared_mem_ns(
+        &self,
+        device: DeviceId,
+        mode: SharedMemoryMode,
+        ns: u64,
+    ) -> Result<u64, SimError> {
+        let g = self.profile.gpu(device)?;
+        let mode = match mode {
+            SharedMemoryMode::Default => {
+                let rt = self.gpu_rt(device)?;
+                match rt.func_shared_mem_config {
+                    SharedMemoryMode::Default => rt.shared_mem_config,
+                    other => other,
+                }
+            }
+            other => other,
+        };
+        let permille = match mode {
+            SharedMemoryMode::Default => return Ok(ns),
+            SharedMemoryMode::FourByte => g.shared_mem_four_byte_permille,
+            SharedMemoryMode::EightByte => g.shared_mem_eight_byte_permille,
+        };
+        Ok(scale_ns_permille(ns, permille))
+    }
+
+    fn memset_ns(
+        &self,
+        device: DeviceId,
+        bytes: u64,
+        launch: LaunchCost,
+        mem_bps: u64,
+    ) -> Result<u64, SimError> {
+        let g = self.profile.gpu(device)?;
+        let overhead = match launch {
+            LaunchCost::Kernel => g.launch_overhead_ns,
+            LaunchCost::GraphHead => g.graph_launch_ns,
+            LaunchCost::GraphBody => 0,
+        };
+        Ok(overhead.saturating_add(ns_for_bytes(bytes, mem_bps.max(1))))
+    }
+
+    fn host_func_ns(&self, device: DeviceId, launch: LaunchCost) -> Result<u64, SimError> {
+        let g = self.profile.gpu(device)?;
+        let head = match launch {
+            LaunchCost::GraphHead => g.graph_launch_ns,
+            LaunchCost::Kernel | LaunchCost::GraphBody => 0,
+        };
+        Ok(head.saturating_add(g.host_func_ns.max(1)))
+    }
+
+    fn graph_head_ns(&self, device: DeviceId, launch: LaunchCost) -> Result<u64, SimError> {
+        match launch {
+            LaunchCost::GraphHead => Ok(self.profile.gpu(device)?.graph_launch_ns),
+            LaunchCost::Kernel | LaunchCost::GraphBody => Ok(0),
+        }
+    }
+
+    fn event_wait_gate(&self, event: EventId, skip_graph: bool) -> Result<Option<OpId>, SimError> {
+        let root = self.event_root(event);
+        if let Some(rec) = self.event_recorded_by(root) {
+            let graph_rec = self.ops.get(&rec).is_some_and(|o| {
+                skip_graph && matches!(o.launch, LaunchCost::GraphHead | LaunchCost::GraphBody)
+            });
+            if !graph_rec {
+                if self.ops.get(&rec).is_some_and(|o| o.cancelled) {
+                    let stream = self.ops.get(&rec).map(|o| o.stream).unwrap_or(StreamId(0));
+                    return Err(SimError::Cancelled { stream, n: 1 });
+                }
+                if self.event_is_recorded(root) {
+                    return Ok(Some(rec));
+                }
+                return Ok(None);
+            }
+        }
+        let mut pending = false;
+        let mut cancelled_n = 0u32;
+        let mut stream = StreamId(0);
+        for op in self.ops.values() {
+            if let Kind::EventRecord { event: ev, .. } = &op.kind {
+                if event_root_of(&self.events, *ev) == root {
+                    if skip_graph
+                        && matches!(op.launch, LaunchCost::GraphHead | LaunchCost::GraphBody)
+                    {
+                        continue;
+                    }
+                    if op.cancelled {
+                        cancelled_n = cancelled_n.saturating_add(1);
+                        stream = op.stream;
+                    } else if !op.done {
+                        pending = true;
+                    }
+                }
+            }
+        }
+        if pending {
+            return Ok(None);
+        }
+        if cancelled_n > 0 {
+            return Err(SimError::Cancelled {
+                stream,
+                n: cancelled_n,
+            });
+        }
+        Ok(None)
+    }
+
+    fn start_allreduce(
+        &mut self,
+        id: OpId,
+        device: DeviceId,
+        parts: &[(DeviceId, AllocId)],
+        bytes: u64,
+    ) -> Result<bool, SimError> {
+        for (d, a) in parts {
+            let alloc = self.alloc_ref(*a)?;
+            if !alloc.live || !alloc.devices.contains(d) {
+                return Err(SimError::NotResident {
+                    alloc: *a,
+                    device: *d,
+                });
+            }
+        }
+        let ns = self.allreduce_ns(parts, bytes)?;
+        let span = self
+            .ops
+            .get(&id)
+            .ok_or(SimError::Invalid { why: "unknown op" })?
+            .sm_span;
+        if !self.take_compute(device, span)? {
+            return Ok(false);
+        }
+        for (_, a) in parts {
+            let alloc = self.alloc_mut(*a)?;
+            alloc.leases = alloc.leases.saturating_add(1);
+        }
+        self.running.push(Running {
+            op: id,
+            remaining_ns: ns.max(1),
+            share: Share::Solo,
+        });
+        Ok(true)
+    }
+
+    fn allreduce_ns(&self, parts: &[(DeviceId, AllocId)], bytes: u64) -> Result<u64, SimError> {
+        let n = parts.len();
+        if n < 2 {
+            return Err(SimError::Invalid {
+                why: "allreduce needs >= 2 ranks",
+            });
+        }
+        let mut worst = 0u64;
+        for i in 0..n {
+            let src = parts
+                .get(i)
+                .ok_or(SimError::Invalid {
+                    why: "allreduce rank",
+                })?
+                .0;
+            let j = if i.saturating_add(1) >= n {
+                0
+            } else {
+                i.saturating_add(1)
+            };
+            let dst = parts
+                .get(j)
+                .ok_or(SimError::Invalid {
+                    why: "allreduce rank",
+                })?
+                .0;
+            let hop = self.profile.link(Some(src), Some(dst))?.copy_ns(bytes);
+            if hop > worst {
+                worst = hop;
+            }
+        }
+        let hops = u64::try_from(n.saturating_sub(1)).unwrap_or(u64::MAX);
+        Ok(worst
+            .saturating_mul(hops)
+            .saturating_add(self.extra_transfer_ns))
+    }
+
+    fn resolve_memset_op(&self, op: MemsetOp) -> Result<MemsetOp, SimError> {
+        memset_2d_check(&op)?;
+        let total = self.alloc_ref(op.id)?.bytes;
+        let resolved = if op.is_2d() || op.is_3d() {
+            let span = op.extent_bytes();
+            if span == 0 {
+                return Err(SimError::Invalid {
+                    why: "zero-byte memset",
+                });
+            }
+            if op.offset.saturating_add(span) > total {
+                return Err(SimError::Invalid {
+                    why: "memset range past alloc",
+                });
+            }
+            op
+        } else {
+            let buf = KernelBuf {
+                id: op.id,
+                offset: op.offset,
+                bytes: op.bytes,
+            };
+            let (offset, bytes) = kernel_span(total, &buf)?;
+            if bytes == 0 {
+                return Err(SimError::Invalid {
+                    why: "zero-byte memset",
+                });
+            }
+            MemsetOp {
+                id: op.id,
+                offset,
+                bytes,
+                element_size: op.element_size,
+                ..MemsetOp::default()
+            }
+        };
+        memset_element_check(&resolved)?;
+        Ok(resolved)
+    }
+
+    fn memcpy_precheck(&self, m: &MemcpyOp) -> Result<(), SimError> {
+        self.memcpy_check(m, true)
+    }
+
+    /// Submit-time check for [`Self::memcpy_batch_async`]: the alloc id must
+    /// exist. `cudaMallocAsync` may still be pending (`live == false`); the
+    /// copy waits that alloc via stream order and [`Self::memcpy_precheck`]s
+    /// when it starts.
+    fn memcpy_precheck_enqueue(&self, m: &MemcpyOp) -> Result<(), SimError> {
+        self.memcpy_check(m, false)
+    }
+
+    fn memcpy_check(&self, m: &MemcpyOp, require_live: bool) -> Result<(), SimError> {
+        memcpy_2d_check(m)?;
+        let a = self.alloc_ref(m.alloc)?;
+        if require_live && !a.live {
+            return Err(SimError::UnknownAlloc { alloc: m.alloc });
+        }
+        self.memcpy_range_ok(m)?;
+        let origin = m.origin_bytes();
+        let span = m.extent_bytes();
+        if a.managed && a.leases > 0 {
+            let staying = match m.dst {
+                Place::Device(d) => a.devices.contains(&d),
+                Place::Host | Place::HostPinned => a.devices.is_empty(),
+            };
+            if !staying {
+                return Err(SimError::Leased { alloc: m.alloc });
+            }
+        }
+        if let (Place::Device(src), Place::Device(dst)) = (m.src, m.dst) {
+            if src != dst
+                && !self.peer_enabled.contains(&(src, dst))
+                && self.profile.link(Some(src), Some(dst)).is_ok()
+            {
+                return Err(SimError::PeerDisabled { src, dst });
+            }
+        }
+        match m.src {
+            Place::Host | Place::HostPinned => {}
+            Place::Device(d) => {
+                let src_ok = if a.vmm {
+                    vmm_covers(&a.vmm_maps, d, m.offset.saturating_add(origin), span)
+                } else {
+                    a.devices.contains(&d)
+                };
+                if !src_ok {
+                    return Err(SimError::NotResident {
+                        alloc: m.alloc,
+                        device: d,
+                    });
+                }
+            }
+        }
+        if let Place::Device(d) = m.dst {
+            if a.vmm && !vmm_covers(&a.vmm_maps, d, m.offset.saturating_add(origin), span) {
+                return Err(SimError::NotResident {
+                    alloc: m.alloc,
+                    device: d,
+                });
+            }
+        }
+        Ok(())
+    }
+
+    /// Alloc-size check for a pitched rectangle/box, including srcPos / dstPos.
+    /// Origin 0 is identical to the previous extent-only bound.
+    fn memcpy_range_ok(&self, m: &MemcpyOp) -> Result<(), SimError> {
+        let a = self.alloc_ref(m.alloc)?;
+        let origin = m.origin_bytes();
+        let span = m.extent_bytes();
+        if (a.vmm || m.offset > 0 || origin > 0 || m.is_2d() || m.is_3d())
+            && m.offset.saturating_add(origin).saturating_add(span) > a.bytes
+        {
+            return Err(SimError::Invalid {
+                why: "memcpy range past alloc",
+            });
+        }
+        Ok(())
+    }
+
+    /// Replication onto a GPU that does not yet hold `m.alloc` charges that GPU's HBM.
+    fn charge_replica_hbm(&mut self, m: &MemcpyOp) -> Result<(), SimError> {
+        let Place::Device(dst) = m.dst else {
+            return Ok(());
+        };
+        let a = self.alloc_ref(m.alloc)?;
+        if a.devices.contains(&dst) {
+            return Ok(());
+        }
+        let bytes = a.bytes;
+        let cap = self.profile.gpu(dst)?.hbm_bytes;
+        let used = self.gpu_rt(dst)?.used;
+        let free = cap.saturating_sub(used);
+        if bytes > free {
+            return Err(SimError::Oom {
+                device: dst,
+                need: bytes,
+                free,
+            });
+        }
+        self.gpu_rt_mut(dst)?.used = used.saturating_add(bytes);
+        let peak = self.gpu_rt(dst)?.used;
+        if peak > self.hbm_peak {
+            self.hbm_peak = peak;
+        }
+        Ok(())
+    }
+
+    fn memcpy_ns(&self, m: &MemcpyOp) -> Result<(u64, usize), SimError> {
+        let src = m.src.device();
+        let dst = m.dst.device();
+        let idx = self
+            .profile
+            .links
+            .iter()
+            .position(|l| l.connects(src, dst))
+            .ok_or(SimError::NoPeer {
+                src: src.unwrap_or(DeviceId(u16::MAX)),
+                dst: dst.unwrap_or(DeviceId(u16::MAX)),
+            })?;
+        let link = self
+            .profile
+            .links
+            .get(idx)
+            .ok_or(SimError::Invalid { why: "link index" })?;
+        let copy = if m.src.is_pageable() || m.dst.is_pageable() {
+            link.pageable_copy_ns(m.payload_bytes())
+        } else {
+            link.copy_ns(m.payload_bytes())
+        };
+        Ok((copy.saturating_add(self.extra_transfer_ns), idx))
+    }
+
+    fn share_n(&self, share: &Share) -> u64 {
+        match *share {
+            Share::Solo => 1,
+            Share::Link(idx) => {
+                let n = self
+                    .running
+                    .iter()
+                    .filter(|r| matches!(r.share, Share::Link(i) if i == idx))
+                    .count();
+                u64::try_from(n.max(1)).unwrap_or(1)
+            }
+        }
+    }
+
+    fn validate_access_policy_window(
+        &self,
+        device: DeviceId,
+        window: AccessPolicyWindow,
+    ) -> Result<(), SimError> {
+        validate_access_policy(window)?;
+        let gran = self.gpu_rt(device)?.limits.l2_fetch;
+        if gran <= 1 {
+            return Ok(());
+        }
+        let total = self.alloc_ref(window.buf.id)?.bytes;
+        let (off, n) = kernel_span(total, &window.buf)?;
+        if !off.is_multiple_of(gran) || !n.is_multiple_of(gran) {
+            return Err(SimError::Invalid {
+                why: "access policy L2 fetch",
+            });
+        }
+        Ok(())
+    }
+
+    fn validate_mem_sync_map(
+        &self,
+        device: DeviceId,
+        map: MemSyncDomainMap,
+    ) -> Result<(), SimError> {
+        let count = self.mem_sync_domain_count(device)?;
+        if map.default >= count || map.remote >= count {
+            Err(SimError::Invalid {
+                why: "mem sync domain",
+            })
+        } else {
+            Ok(())
+        }
+    }
+
+    fn snap_mem_sync(
+        &self,
+        device: DeviceId,
+        stream: StreamId,
+        kind: &Kind,
+    ) -> Result<(MemSyncDomain, MemSyncDomainMap), SimError> {
+        let map = match self.enqueue_mem_sync_map {
+            Some(m) => m,
+            None => self.stream_mem_sync_domain_map(device, stream)?,
+        };
+        self.validate_mem_sync_map(device, map)?;
+        let domain =
+            if matches!(kind, Kind::AllReduce { .. }) && self.enqueue_mem_sync_domain.is_none() {
+                MemSyncDomain::Remote
+            } else {
+                self.enqueue_mem_sync_domain
+                    .unwrap_or_else(|| self.stream_mem_sync_domain(device, stream))
+            };
+        Ok((domain, map))
+    }
+
+    fn apply_domain_fences(&mut self) {
+        let finishing: Vec<OpId> = self
+            .running
+            .iter()
+            .filter(|r| r.remaining_ns == 0)
+            .map(|r| r.op)
+            .collect();
+        for id in finishing {
+            let extra = self.same_domain_fence_extra(id);
+            if extra == 0 {
+                continue;
+            }
+            if let Some(r) = self.running.iter_mut().find(|r| r.op == id) {
+                r.remaining_ns = extra;
+            }
+            if let Some(op) = self.ops.get_mut(&id) {
+                op.domain_fence_paid = true;
+            }
+        }
+    }
+
+    fn same_domain_fence_extra(&self, id: OpId) -> u64 {
+        let Some(op) = self.ops.get(&id) else {
+            return 0;
+        };
+        if op.domain_fence_paid || !mem_sync_kind(&op.kind) {
+            return 0;
+        }
+        let Ok(g) = self.profile.gpu(op.device) else {
+            return 0;
+        };
+        let tax = u64::from(g.same_domain_fence_permille);
+        if tax == 0 {
+            return 0;
+        }
+        let phys = op.mem_sync_physical;
+        let device = op.device;
+        let mut leftover = 0u64;
+        for r in &self.running {
+            if r.op == id || r.remaining_ns == 0 {
+                continue;
+            }
+            let Some(other) = self.ops.get(&r.op) else {
+                continue;
+            };
+            if other.device != device || !mem_sync_kind(&other.kind) {
+                continue;
+            }
+            if other.mem_sync_physical != phys {
+                continue;
+            }
+            leftover = leftover.max(r.remaining_ns);
+        }
+        leftover.saturating_mul(tax) / 1000
+    }
+
+    fn cluster_block_count(&self, device: DeviceId, dim: ClusterDim) -> Result<u32, SimError> {
+        let n = dim.blocks().ok_or(SimError::Invalid {
+            why: "cluster dimension",
+        })?;
+        let gpu = self.profile.gpu(device)?;
+        let max = u32::from(gpu.max_blocks_per_cluster.max(1));
+        if n > max {
+            return Err(SimError::Invalid {
+                why: "cluster size",
+            });
+        }
+        Ok(n)
+    }
+
+    fn validate_cluster(
+        &self,
+        device: DeviceId,
+        dim: ClusterDim,
+        mode: PortableClusterMode,
+    ) -> Result<u32, SimError> {
+        let n = self.cluster_block_count(device, dim)?;
+        let portable = u32::from(self.profile.gpu(device)?.portable_cluster_size.max(1));
+        let func = self.non_portable_cluster.contains(&device);
+        if n > portable && !mode.allows_non_portable(func) {
+            return Err(SimError::Invalid {
+                why: "non-portable cluster",
+            });
+        }
+        Ok(n)
+    }
+
+    fn validate_cluster_attrs(
+        &self,
+        device: DeviceId,
+        cluster: Option<ClusterDim>,
+        preferred: Option<ClusterDim>,
+        mode: PortableClusterMode,
+    ) -> Result<(), SimError> {
+        let (must, req_x, req_y, req_z) = {
+            let rt = self.gpu_rt(device)?;
+            (
+                rt.cluster_dim_must_be_set,
+                rt.required_cluster_x,
+                rt.required_cluster_y,
+                rt.required_cluster_z,
+            )
+        };
+        if must && cluster.is_none() {
+            return Err(SimError::Invalid {
+                why: "cluster dim must be set",
+            });
+        }
+        if (req_x != 0 || req_y != 0 || req_z != 0) && cluster.is_none() {
+            return Err(SimError::Invalid {
+                why: "required cluster",
+            });
+        }
+        if let Some(c) = cluster {
+            if (req_x != 0 && c.x != req_x)
+                || (req_y != 0 && c.y != req_y)
+                || (req_z != 0 && c.z != req_z)
+            {
+                return Err(SimError::Invalid {
+                    why: "required cluster",
+                });
+            }
+            let _n = self.validate_cluster(device, c, mode)?;
+        }
+        if let Some(p) = preferred {
+            let Some(c) = cluster else {
+                return Err(SimError::Invalid {
+                    why: "preferred cluster",
+                });
+            };
+            if !p.multiple_of(c) {
+                return Err(SimError::Invalid {
+                    why: "preferred cluster",
+                });
+            }
+            let _n = self.validate_cluster(device, p, mode)?;
+        }
+        Ok(())
+    }
+
+    fn effective_cluster_blocks(
+        &self,
+        device: DeviceId,
+        cluster: Option<ClusterDim>,
+        preferred: Option<ClusterDim>,
+    ) -> Result<u32, SimError> {
+        if let Some(p) = preferred {
+            let Some(c) = cluster else {
+                return Err(SimError::Invalid {
+                    why: "preferred cluster",
+                });
+            };
+            if !p.multiple_of(c) {
+                return Err(SimError::Invalid {
+                    why: "preferred cluster",
+                });
+            }
+        }
+        let Some(c) = cluster else {
+            return Ok(0);
+        };
+        let required = self.cluster_block_count(device, c)?;
+        let Some(p) = preferred else {
+            return Ok(required);
+        };
+        let preferred_n = self.cluster_block_count(device, p)?;
+        let cap = u32::from(self.profile.gpu(device)?.compute_slots.max(1));
+        if preferred_n <= cap {
+            Ok(preferred_n)
+        } else {
+            Ok(required)
+        }
+    }
+
+    /// `cudaFuncSetAttribute(..., cudaFuncAttributeNonPortableClusterSizeAllowed)`.
+    ///
+    /// Default is disallowed. A cluster larger than
+    /// [`crate::GpuProfile::portable_cluster_size`] is Invalid until this is
+    /// true, unless the launch uses [`PortableClusterMode::AllowNonPortable`].
+    /// Decode identity stays disallowed.
+    pub fn set_non_portable_cluster_size_allowed(
+        &mut self,
+        device: DeviceId,
+        allowed: bool,
+    ) -> Result<(), SimError> {
+        let _gpu = self.profile.gpu(device)?;
+        if allowed {
+            let _ins = self.non_portable_cluster.insert(device);
+        } else {
+            let _rm = self.non_portable_cluster.remove(&device);
+        }
+        self.clock = self.clock.saturating_add(1);
+        Ok(())
+    }
+
+    /// Current [`Self::set_non_portable_cluster_size_allowed`] for `device`.
+    #[must_use]
+    pub fn non_portable_cluster_size_allowed(&self, device: DeviceId) -> bool {
+        self.non_portable_cluster.contains(&device)
+    }
+
+    fn validate_dynamic_shared(
+        &self,
+        device: DeviceId,
+        bytes: u32,
+        mode: PortableSharedMode,
+    ) -> Result<(), SimError> {
+        if bytes == 0 {
+            return Ok(());
+        }
+        let gpu = self.profile.gpu(device)?;
+        let portable = gpu.max_shared_mem_per_block.max(1);
+        let optin = gpu.max_shared_mem_per_block_optin.max(portable);
+        if bytes > optin {
+            return Err(SimError::Invalid {
+                why: "dynamic shared",
+            });
+        }
+        let func = self.max_dynamic_shared.get(&device).copied().unwrap_or(0);
+        if !mode.allows_oversize(func, bytes, portable) {
+            return Err(SimError::Invalid {
+                why: "non-portable shared",
+            });
+        }
+        Ok(())
+    }
+
+    /// `cudaFuncSetAttribute(..., cudaFuncAttributeMaxDynamicSharedMemorySize)`.
+    ///
+    /// Default `0` allows only [`crate::GpuProfile::max_shared_mem_per_block`].
+    /// `bytes` above [`crate::GpuProfile::max_shared_mem_per_block_optin`] is
+    /// Invalid. Decode identity stays `0`.
+    pub fn set_max_dynamic_shared_memory(
+        &mut self,
+        device: DeviceId,
+        bytes: u32,
+    ) -> Result<(), SimError> {
+        let optin = self
+            .profile
+            .gpu(device)?
+            .max_shared_mem_per_block_optin
+            .max(1);
+        if bytes > optin {
+            return Err(SimError::Invalid {
+                why: "max dynamic shared",
+            });
+        }
+        if bytes == 0 {
+            let _rm = self.max_dynamic_shared.remove(&device);
+        } else {
+            let _prev = self.max_dynamic_shared.insert(device, bytes);
+        }
+        self.clock = self.clock.saturating_add(1);
+        Ok(())
+    }
+
+    /// Current [`Self::set_max_dynamic_shared_memory`] for `device`.
+    #[must_use]
+    pub fn max_dynamic_shared_memory(&self, device: DeviceId) -> u32 {
+        self.max_dynamic_shared.get(&device).copied().unwrap_or(0)
+    }
+
+    /// `cudaFuncGetAttributes` of modeled per-device function attrs.
+    ///
+    /// Query; legal during capture. Unknown devices are Invalid. This VM has
+    /// one function-attr set per device, not per kernel function.
+    pub fn func_get_attributes(&self, device: DeviceId) -> Result<FuncAttributes, SimError> {
+        let _gpu = self.profile.gpu(device)?;
+        let rt = self.gpu_rt(device)?;
+        Ok(FuncAttributes {
+            max_dynamic_shared_size_bytes: self.max_dynamic_shared_memory(device),
+            non_portable_cluster_size_allowed: self.non_portable_cluster_size_allowed(device),
+            preferred_shmem_carveout: rt.func_carveout,
+            cluster_dim_must_be_set: rt.cluster_dim_must_be_set,
+            required_cluster_width: rt.required_cluster_x,
+            required_cluster_height: rt.required_cluster_y,
+            required_cluster_depth: rt.required_cluster_z,
+            cluster_scheduling_policy_preference: rt.func_cluster_policy,
+        })
+    }
+
+    /// `cudaFuncSetAttribute`. Host-side; not a graph node.
+    ///
+    /// Dispatches [`FuncAttr`] onto the typed setters. Capture-legal like those
+    /// setters. Negative [`FuncAttr::MaxDynamicSharedMemorySize`], a non-0/1
+    /// [`FuncAttr::NonPortableClusterSizeAllowed`], a carveout other than
+    /// `-1`/`0`/`100`, or a cluster policy other than `0`/`1`/`2` is Invalid
+    /// `"func attr"`. Cluster-dim-must-be-set is `0`/`1`. Required cluster
+    /// axes are nonnegative (`0` unset). Typed helpers stay. Decode identity
+    /// stays `0` / disallowed / Default / unset.
+    pub fn func_set_attribute(
+        &mut self,
+        device: DeviceId,
+        attr: FuncAttr,
+        value: i32,
+    ) -> Result<(), SimError> {
+        match attr {
+            FuncAttr::MaxDynamicSharedMemorySize => {
+                let bytes =
+                    u32::try_from(value).map_err(|_| SimError::Invalid { why: "func attr" })?;
+                self.set_max_dynamic_shared_memory(device, bytes)
+            }
+            FuncAttr::NonPortableClusterSizeAllowed => {
+                if value != 0 && value != 1 {
+                    return Err(SimError::Invalid { why: "func attr" });
+                }
+                self.set_non_portable_cluster_size_allowed(device, value != 0)
+            }
+            FuncAttr::PreferredSharedMemoryCarveout => {
+                let carveout = SharedMemCarveout::from_cuda(value)?;
+                self.set_func_carveout(device, carveout)
+            }
+            FuncAttr::ClusterDimMustBeSet => {
+                if value != 0 && value != 1 {
+                    return Err(SimError::Invalid { why: "func attr" });
+                }
+                self.set_cluster_dim_must_be_set(device, value != 0)
+            }
+            FuncAttr::RequiredClusterWidth => {
+                let n = u32::try_from(value).map_err(|_| SimError::Invalid { why: "func attr" })?;
+                self.set_required_cluster_width(device, n)
+            }
+            FuncAttr::RequiredClusterHeight => {
+                let n = u32::try_from(value).map_err(|_| SimError::Invalid { why: "func attr" })?;
+                self.set_required_cluster_height(device, n)
+            }
+            FuncAttr::RequiredClusterDepth => {
+                let n = u32::try_from(value).map_err(|_| SimError::Invalid { why: "func attr" })?;
+                self.set_required_cluster_depth(device, n)
+            }
+            FuncAttr::ClusterSchedulingPolicyPreference => {
+                let policy = ClusterSchedulingPolicy::from_cuda(value)?;
+                self.set_func_cluster_policy(device, policy)
+            }
+        }
+    }
+
+    /// `cudaFuncGetAttribute`. Query; legal during capture.
+    ///
+    /// Unknown devices are Invalid. This VM has one function-attr set per
+    /// device, not per kernel function.
+    pub fn func_get_attribute(&self, device: DeviceId, attr: FuncAttr) -> Result<i32, SimError> {
+        let _gpu = self.profile.gpu(device)?;
+        match attr {
+            FuncAttr::MaxDynamicSharedMemorySize => {
+                i32::try_from(self.max_dynamic_shared_memory(device))
+                    .map_err(|_| SimError::Invalid { why: "func attr" })
+            }
+            FuncAttr::NonPortableClusterSizeAllowed => {
+                Ok(i32::from(self.non_portable_cluster_size_allowed(device)))
+            }
+            FuncAttr::PreferredSharedMemoryCarveout => {
+                Ok(self.get_func_carveout(device)?.to_cuda())
+            }
+            FuncAttr::ClusterDimMustBeSet => Ok(i32::from(self.cluster_dim_must_be_set(device)?)),
+            FuncAttr::RequiredClusterWidth => i32::try_from(self.required_cluster_width(device)?)
+                .map_err(|_| SimError::Invalid { why: "func attr" }),
+            FuncAttr::RequiredClusterHeight => i32::try_from(self.required_cluster_height(device)?)
+                .map_err(|_| SimError::Invalid { why: "func attr" }),
+            FuncAttr::RequiredClusterDepth => i32::try_from(self.required_cluster_depth(device)?)
+                .map_err(|_| SimError::Invalid { why: "func attr" }),
+            FuncAttr::ClusterSchedulingPolicyPreference => {
+                Ok(self.get_func_cluster_policy(device)?.to_cuda())
+            }
+        }
+    }
+
+    fn advance_to_next_completion(&mut self) -> Result<(), SimError> {
+        if self.running.is_empty() {
+            return Ok(());
+        }
+        let mut min_dt = u64::MAX;
+        for r in &self.running {
+            let n = self.share_n(&r.share).max(1);
+            let dt = r.remaining_ns.saturating_mul(n);
+            if dt < min_dt {
+                min_dt = dt;
+            }
+        }
+        if let Some(wake) = self.next_pdl_wake() {
+            let dt = wake.saturating_sub(self.clock);
+            if dt < min_dt {
+                min_dt = dt;
+            }
+        }
+        if min_dt == 0 || min_dt == u64::MAX {
+            min_dt = 1;
+        }
+        self.clock = self.clock.saturating_add(min_dt);
+        let shares: Vec<u64> = self
+            .running
+            .iter()
+            .map(|r| self.share_n(&r.share).max(1))
+            .collect();
+        let mut finished = Vec::new();
+        for (r, n) in self.running.iter_mut().zip(shares.iter()) {
+            let drained = min_dt / (*n).max(1);
+            r.remaining_ns = r.remaining_ns.saturating_sub(drained);
+        }
+        self.apply_domain_fences();
+        for r in &self.running {
+            if r.remaining_ns == 0 {
+                finished.push(r.op);
+            }
+        }
+        for id in finished {
+            self.complete(id)?;
+        }
+        Ok(())
+    }
+
+    fn complete(&mut self, id: OpId) -> Result<(), SimError> {
+        let dma = self
+            .running
+            .iter()
+            .any(|r| r.op == id && matches!(r.share, Share::Link(_)));
+        self.running.retain(|r| r.op != id);
+        let device = self
+            .ops
+            .get(&id)
+            .ok_or(SimError::Invalid {
+                why: "complete unknown op",
+            })?
+            .device;
+        if self.ops.get(&id).is_some_and(|o| o.skipped) {
+            if let Some(op) = self.ops.get_mut(&id) {
+                op.done = true;
+                op.done_ns = Some(self.clock);
+            }
+            return Ok(());
+        }
+        let alloc_done = self.ops.get(&id).and_then(|op| match &op.kind {
+            Kind::Alloc { id: alloc, .. } => Some((*alloc, device)),
+            _ => None,
+        });
+        if let Some((alloc, device)) = alloc_done {
+            let a = self.alloc_mut(alloc)?;
+            a.live = true;
+            if !a.devices.contains(&device) {
+                a.devices.push(device);
+            }
+        }
+        let kernel_work: Option<(Vec<AllocId>, bool)> = self.ops.get(&id).and_then(|op| match &op
+            .kind
+        {
+            Kind::Kernel {
+                reads,
+                writes,
+                cooperative,
+                ..
+            } => Some((
+                reads.iter().chain(writes.iter()).map(|b| b.id).collect(),
+                *cooperative,
+            )),
+            Kind::Memset(op) => Some((vec![op.id], false)),
+            Kind::AllReduce { parts, .. } => Some((parts.iter().map(|(_, a)| *a).collect(), false)),
+            Kind::DeviceLaunch { .. } => Some((Vec::new(), false)),
+            _ => None,
+        });
+        let memcpy = self.ops.get(&id).and_then(|op| match &op.kind {
+            Kind::Memcpy(m) => Some(m.clone()),
+            _ => None,
+        });
+        let attach = self.ops.get(&id).and_then(|op| match &op.kind {
+            Kind::Attach { id: alloc, flags } => Some((*alloc, *flags, op.stream)),
+            _ => None,
+        });
+        let upload = self.ops.get(&id).and_then(|op| match &op.kind {
+            Kind::GraphUpload { exec } => Some(*exec),
+            _ => None,
+        });
+        let mc_bytes = self.ops.get(&id).and_then(|op| match &op.kind {
+            Kind::Kernel { writes, .. } => Some(self.multicast_write_bytes(writes)),
+            _ => None,
+        });
+        if let Some((alloc, flags, stream)) = attach {
+            self.alloc_mut(alloc)?.attach = attach_state(flags, stream);
+        }
+        if let Some(exec) = upload {
+            self.graphs
+                .get_mut(&exec)
+                .ok_or(SimError::Invalid {
+                    why: "unknown graph",
+                })?
+                .uploaded = true;
+        }
+        if let Some((ids, _)) = kernel_work {
+            let n = {
+                let op = self
+                    .ops
+                    .get(&id)
+                    .ok_or(SimError::Invalid { why: "unknown op" })?;
+                self.op_kernel_slots(op)?
+            };
+            self.drop_compute_n(device, n)?;
+            for a in ids {
+                let cur = self.alloc_mut(a)?;
+                cur.leases = cur.leases.saturating_sub(1);
+            }
+        }
+        if let Some(n) = mc_bytes {
+            self.bytes_moved = self.bytes_moved.saturating_add(n);
+        }
+        if let Some(m) = memcpy {
+            self.finish_memcpy(device, m, dma)?;
+        }
+        let writes: Vec<(AllocId, u64, u64, bool)> = self
+            .ops
+            .get(&id)
+            .map(|op| mailbox_writes(&op.kind))
+            .unwrap_or_default();
+        for (alloc, offset, value, bits32) in writes {
+            self.apply_mailbox_write(alloc, offset, value, bits32);
+        }
+        if let Some(op) = self.ops.get_mut(&id) {
+            op.done = true;
+            op.done_ns = Some(self.clock);
+        }
+        self.bump_graph_mem_from_op(id)?;
+        self.finish_device_launch(id)?;
+        self.reap_gone_exec()?;
+        self.continue_while(id)?;
+        Ok(())
+    }
+
+    fn finish_device_launch(&mut self, id: OpId) -> Result<(), SimError> {
+        let (graph, stream) = {
+            let Some(op) = self.ops.get(&id) else {
+                return Ok(());
+            };
+            let Kind::DeviceLaunch { graph } = &op.kind else {
+                return Ok(());
+            };
+            (*graph, op.stream)
+        };
+        self.reset_graph_tree_conds(graph)?;
+        let mut stack = BTreeSet::new();
+        let wait = [id];
+        let n = self.enqueue_graph(graph, stream, false, &mut stack, &wait)?;
+        let tail = if n == 0 {
+            id
+        } else {
+            let device = self
+                .ops
+                .get(&id)
+                .ok_or(SimError::Invalid { why: "unknown op" })?
+                .device;
+            self.tail.get(&(device, stream)).copied().unwrap_or(id)
+        };
+        self.graphs
+            .get_mut(&graph)
+            .ok_or(SimError::Invalid {
+                why: "unknown graph",
+            })?
+            .device_launch_tail = Some(tail);
+        Ok(())
+    }
+
+    fn bump_graph_mem_from_op(&mut self, id: OpId) -> Result<(), SimError> {
+        let Some(op) = self.ops.get(&id) else {
+            return Ok(());
+        };
+        let alloc = match &op.kind {
+            Kind::Alloc { id, .. } | Kind::Free { id } => *id,
+            _ => return Ok(()),
+        };
+        if !self.is_graph_alloc(alloc) {
+            return Ok(());
+        }
+        self.bump_graph_mem_high(op.device)
+    }
+
+    fn continue_while(&mut self, id: OpId) -> Result<(), SimError> {
+        let (handle, body, iter, device, stream) = {
+            let Some(op) = self.ops.get(&id) else {
+                return Ok(());
+            };
+            let Kind::WhileTick { handle, body, iter } = &op.kind else {
+                return Ok(());
+            };
+            (*handle, *body, *iter, op.device, op.stream)
+        };
+        let value = self
+            .conds
+            .get(&handle)
+            .ok_or(SimError::Invalid {
+                why: "unknown conditional",
+            })?
+            .value;
+        if value == 0 {
+            return Ok(());
+        }
+        if iter >= 64 {
+            return Err(SimError::Invalid {
+                why: "while iteration cap",
+            });
+        }
+        let wait = [id];
+        let add = self.enqueue_pred_graph(
+            CondPred::Nonzero(handle),
+            body,
+            stream,
+            false,
+            &mut BTreeSet::new(),
+            &wait,
+        )?;
+        let body_tail = self.tail.get(&(device, stream)).copied();
+        self.enqueue_preds.push(CondPred::Nonzero(handle));
+        let tick = self.submit_launch(
+            device,
+            stream,
+            Kind::WhileTick {
+                handle,
+                body,
+                iter: iter.saturating_add(1),
+            },
+            LaunchCost::GraphBody,
+        );
+        let _pop = self.enqueue_preds.pop();
+        let tick = tick?;
+        self.add_op_dep(tick, id);
+        if let Some(t) = body_tail {
+            if t != tick {
+                self.add_op_dep(tick, t);
+            }
+        }
+        let _n = add;
+        Ok(())
+    }
+}
+
+fn kernel_span(total: u64, buf: &KernelBuf) -> Result<(u64, u64), SimError> {
+    if buf.offset > total {
+        return Err(SimError::Invalid {
+            why: "kernel range past alloc",
+        });
+    }
+    let n = if buf.bytes == 0 {
+        total.saturating_sub(buf.offset)
+    } else {
+        buf.bytes
+    };
+    if n == 0 || buf.offset.saturating_add(n) > total {
+        return Err(SimError::Invalid {
+            why: "kernel range past alloc",
+        });
+    }
+    Ok((buf.offset, n))
+}
+
+fn memcpy_flags_ok(flags: u32) -> Result<(), SimError> {
+    if flags & !MemcpyFlags::PREFER_OVERLAP_WITH_COMPUTE != 0 {
+        Err(SimError::Invalid {
+            why: "memcpy flags",
+        })
+    } else {
+        Ok(())
+    }
+}
+
+fn memcpy_batch_attrs(
+    count: usize,
+    attrs: &[MemcpyAttributes],
+    attrs_idxs: &[usize],
+) -> Result<Vec<MemcpyAttributes>, SimError> {
+    if attrs.len() != attrs_idxs.len() {
+        return Err(SimError::Invalid {
+            why: "memcpy batch attrs",
+        });
+    }
+    let num_attrs = attrs.len();
+    if count == 0 {
+        return if num_attrs == 0 {
+            Ok(Vec::new())
+        } else {
+            Err(SimError::Invalid {
+                why: "memcpy batch attrs",
+            })
+        };
+    }
+    if num_attrs == 0 || num_attrs > count {
+        return Err(SimError::Invalid {
+            why: "memcpy batch attrs",
+        });
+    }
+    let Some(&first) = attrs_idxs.first() else {
+        return Err(SimError::Invalid {
+            why: "memcpy batch attrs",
+        });
+    };
+    if first != 0 {
+        return Err(SimError::Invalid {
+            why: "memcpy batch attrs",
+        });
+    }
+    let mut prev_idx: Option<usize> = None;
+    for &idx in attrs_idxs {
+        if let Some(p) = prev_idx {
+            if idx <= p {
+                return Err(SimError::Invalid {
+                    why: "memcpy batch attrs",
+                });
+            }
+        }
+        prev_idx = Some(idx);
+    }
+    let Some(&last) = attrs_idxs.last() else {
+        return Err(SimError::Invalid {
+            why: "memcpy batch attrs",
+        });
+    };
+    if last >= count {
+        return Err(SimError::Invalid {
+            why: "memcpy batch attrs",
+        });
+    }
+    let mut out = Vec::with_capacity(count);
+    for i in 0..count {
+        let k = attrs_idxs
+            .iter()
+            .rposition(|&idx| idx <= i)
+            .ok_or(SimError::Invalid {
+                why: "memcpy batch attrs",
+            })?;
+        let attr = attrs.get(k).copied().ok_or(SimError::Invalid {
+            why: "memcpy batch attrs",
+        })?;
+        out.push(attr);
+    }
+    Ok(out)
+}
+
+fn memcpy_2d_check(m: &MemcpyOp) -> Result<(), SimError> {
+    if m.src_lod != 0 || m.dst_lod != 0 {
+        return Err(SimError::Invalid { why: "memcpy lod" });
+    }
+    if m.is_1d() {
+        if m.has_origin() {
+            return Err(SimError::Invalid {
+                why: "memcpy origin",
+            });
+        }
+        return Ok(());
+    }
+    if m.is_3d() {
+        if m.bytes == 0 {
+            return Err(SimError::Invalid {
+                why: "memcpy3d width",
+            });
+        }
+        if m.height == 0 {
+            return Err(SimError::Invalid {
+                why: "memcpy3d height",
+            });
+        }
+        if m.src_x.saturating_add(m.bytes) > m.src_pitch_or_width()
+            || m.dst_x.saturating_add(m.bytes) > m.dst_pitch_or_width()
+        {
+            return Err(SimError::Invalid {
+                why: "memcpy3d pitch",
+            });
+        }
+        if m.src_y.saturating_add(m.height) > m.src_height_or_extent()
+            || m.dst_y.saturating_add(m.height) > m.dst_height_or_extent()
+        {
+            return Err(SimError::Invalid {
+                why: "memcpy3d height",
+            });
+        }
+        return Ok(());
+    }
+    if m.src_z != 0 || m.dst_z != 0 {
+        return Err(SimError::Invalid {
+            why: "memcpy origin",
+        });
+    }
+    if m.bytes == 0 {
+        return Err(SimError::Invalid {
+            why: "memcpy2d width",
+        });
+    }
+    if m.src_x.saturating_add(m.bytes) > m.src_pitch_or_width()
+        || m.dst_x.saturating_add(m.bytes) > m.dst_pitch_or_width()
+    {
+        return Err(SimError::Invalid {
+            why: "memcpy2d pitch",
+        });
+    }
+    Ok(())
+}
+
+fn memset_2d_check(op: &MemsetOp) -> Result<(), SimError> {
+    if op.is_3d() {
+        if op.bytes == 0 {
+            return Err(SimError::Invalid {
+                why: "memset3d width",
+            });
+        }
+        if op.height == 0 {
+            return Err(SimError::Invalid {
+                why: "memset3d height",
+            });
+        }
+        if op.bytes > op.pitch_or_width() {
+            return Err(SimError::Invalid {
+                why: "memset3d pitch",
+            });
+        }
+        if op.height > op.ysize_or_extent() {
+            return Err(SimError::Invalid {
+                why: "memset3d height",
+            });
+        }
+        return Ok(());
+    }
+    if !op.is_2d() {
+        return Ok(());
+    }
+    if op.bytes == 0 {
+        return Err(SimError::Invalid {
+            why: "memset2d width",
+        });
+    }
+    if op.bytes > op.pitch_or_width() {
+        return Err(SimError::Invalid {
+            why: "memset2d pitch",
+        });
+    }
+    Ok(())
+}
+
+fn memset_d2d_op(
+    alloc: AllocId,
+    pitch: u64,
+    width: u64,
+    height: u64,
+    element_size: u32,
+) -> Result<MemsetOp, SimError> {
+    let bytes = width
+        .checked_mul(u64::from(element_size))
+        .ok_or(SimError::Invalid {
+            why: "memset count",
+        })?;
+    if bytes == 0 {
+        return Err(SimError::Invalid {
+            why: "zero-byte memset",
+        });
+    }
+    if height == 0 {
+        return Err(SimError::Invalid {
+            why: "memset2d height",
+        });
+    }
+    Ok(MemsetOp {
+        id: alloc,
+        bytes,
+        height,
+        pitch,
+        element_size,
+        ..MemsetOp::default()
+    })
+}
+
+fn memset_element_check(op: &MemsetOp) -> Result<(), SimError> {
+    let n = u64::from(op.element_size);
+    if op.element_size != 1 && op.element_size != 2 && op.element_size != 4 {
+        return Err(SimError::Invalid {
+            why: "memset element size",
+        });
+    }
+    if !op.offset.is_multiple_of(n) {
+        return Err(SimError::Invalid {
+            why: "memset element align",
+        });
+    }
+    if !op.bytes.is_multiple_of(n) {
+        return Err(SimError::Invalid {
+            why: "memset element width",
+        });
+    }
+    if op.pitch != 0 && !op.pitch.is_multiple_of(n) {
+        return Err(SimError::Invalid {
+            why: "memset element pitch",
+        });
+    }
+    Ok(())
+}
+
+fn validate_access_policy(window: AccessPolicyWindow) -> Result<(), SimError> {
+    if window.hit_ratio_permille > 1000 {
+        return Err(SimError::Invalid {
+            why: "access policy hit ratio",
+        });
+    }
+    if window.miss == AccessProperty::Persisting {
+        return Err(SimError::Invalid {
+            why: "access policy miss persisting",
+        });
+    }
+    Ok(())
+}
+
+fn range_overlap(a0: u64, an: u64, b0: u64, bn: u64) -> u64 {
+    let a1 = a0.saturating_add(an);
+    let b1 = b0.saturating_add(bn);
+    let lo = a0.max(b0);
+    let hi = a1.min(b1);
+    hi.saturating_sub(lo)
+}
+
+fn span_overlap_with(id: AllocId, off: u64, n: u64, spans: &[PersistLine]) -> u64 {
+    spans.iter().filter(|s| s.id == id).fold(0u64, |acc, s| {
+        acc.saturating_add(range_overlap(off, n, s.offset, s.bytes))
+    })
+}
+
+fn persist_cached(rt: &GpuRt, id: AllocId, off: u64, n: u64) -> u64 {
+    span_overlap_with(id, off, n, &rt.persist_lines)
+}
+
+fn persist_used(rt: &GpuRt) -> u64 {
+    rt.persist_lines
+        .iter()
+        .fold(0u64, |acc, l| acc.saturating_add(l.bytes))
+}
+
+fn persist_trim(rt: &mut GpuRt) {
+    while persist_used(rt) > rt.persist_limit && !rt.persist_lines.is_empty() {
+        let _gone = rt.persist_lines.remove(0);
+    }
+}
+
+fn persist_fill(rt: &mut GpuRt, id: AllocId, off: u64, n: u64) {
+    if n == 0 || rt.persist_limit == 0 {
+        return;
+    }
+    let n = n.min(rt.persist_limit);
+    rt.persist_lines
+        .retain(|l| l.id != id || range_overlap(off, n, l.offset, l.bytes) == 0);
+    persist_trim(rt);
+    while persist_used(rt).saturating_add(n) > rt.persist_limit && !rt.persist_lines.is_empty() {
+        let _gone = rt.persist_lines.remove(0);
+    }
+    if persist_used(rt).saturating_add(n) <= rt.persist_limit {
+        rt.persist_lines.push(PersistLine {
+            id,
+            offset: off,
+            bytes: n,
+        });
+    }
+}
+
+fn persist_discount(kind_bytes: u64, hit: u64, touch: u64, persist_permille: u64) -> u64 {
+    if hit == 0 || touch == 0 {
+        return kind_bytes;
+    }
+    let frac = hit.saturating_mul(1000) / touch;
+    let discount = frac.saturating_mul(persist_permille) / 1000;
+    kind_bytes.saturating_mul(1000u64.saturating_sub(discount.min(1000))) / 1000
+}
+
+fn merge_persist_spans(spans: &mut Vec<PersistLine>) {
+    spans.sort_by_key(|s| (s.id.0, s.offset));
+    let mut out: Vec<PersistLine> = Vec::new();
+    for s in spans.drain(..) {
+        if let Some(last) = out.last_mut() {
+            if last.id == s.id && last.offset.saturating_add(last.bytes) >= s.offset {
+                let end = last
+                    .offset
+                    .saturating_add(last.bytes)
+                    .max(s.offset.saturating_add(s.bytes));
+                last.bytes = end.saturating_sub(last.offset);
+                continue;
+            }
+        }
+        out.push(s);
+    }
+    *spans = out;
+}
+
+fn wait_value_mask(bits32: bool) -> u64 {
+    if bits32 {
+        0xFFFF_FFFF
+    } else {
+        u64::MAX
+    }
+}
+
+fn wait_value_span(total: u64, offset: u64, bits32: bool) -> Result<u64, SimError> {
+    let width = if bits32 { 4 } else { 8 };
+    if !offset.is_multiple_of(width) {
+        return Err(SimError::Invalid {
+            why: "wait-value alignment",
+        });
+    }
+    if offset.saturating_add(width) > total {
+        return Err(SimError::Invalid {
+            why: "wait-value span",
+        });
+    }
+    Ok(width)
+}
+
+fn mem_sync_kind(kind: &Kind) -> bool {
+    matches!(kind, Kind::Kernel { .. } | Kind::AllReduce { .. })
+}
+
+fn device_launch_refused(kind: &Kind) -> bool {
+    matches!(
+        kind,
+        Kind::Alloc { .. }
+            | Kind::Free { .. }
+            | Kind::EventRecord { .. }
+            | Kind::EventWait { .. }
+            | Kind::ChildGraph { .. }
+            | Kind::If { .. }
+            | Kind::While { .. }
+            | Kind::Switch { .. }
+            | Kind::WhileTick { .. }
+            | Kind::SetConditional { .. }
+            | Kind::Attach { .. }
+            | Kind::AllReduce { .. }
+            | Kind::HostFunc { .. }
+            | Kind::DeviceLaunch { .. }
+            | Kind::Empty
+            | Kind::BatchMem { .. }
+            | Kind::WriteValue { .. }
+            | Kind::WaitValue { .. }
+    )
+}
+
+fn device_launch_has_work(kind: &Kind) -> bool {
+    matches!(
+        kind,
+        Kind::Kernel { .. } | Kind::Memcpy(_) | Kind::Memset(_)
+    )
+}
+
+fn device_launch_memcpy_off_device(kind: &Kind, origin: DeviceId) -> bool {
+    let Kind::Memcpy(op) = kind else {
+        return false;
+    };
+    memcpy_place_off_device(op.src, origin) || memcpy_place_off_device(op.dst, origin)
+}
+
+fn memcpy_place_off_device(place: Place, origin: DeviceId) -> bool {
+    match place {
+        Place::Device(d) => d != origin,
+        Place::Host => true,
+        Place::HostPinned => false,
+    }
+}
+
+fn device_launch_exec_place_refused(exec: bool, flags: u32, off_device: bool) -> bool {
+    exec && off_device && flags & GraphInstantiateFlags::DEVICE_LAUNCH != 0
+}
+
+fn device_launch_memset_off_device(
+    kind: &Kind,
+    origin: DeviceId,
+    allocs: &BTreeMap<AllocId, Alloc>,
+) -> bool {
+    let Kind::Memset(op) = kind else {
+        return false;
+    };
+    device_launch_alloc_off_device(op.id, origin, op.offset, op.extent_bytes(), allocs)
+}
+
+fn device_launch_kernel_off_device(
+    kind: &Kind,
+    origin: DeviceId,
+    allocs: &BTreeMap<AllocId, Alloc>,
+) -> bool {
+    let Kind::Kernel { reads, writes, .. } = kind else {
+        return false;
+    };
+    reads
+        .iter()
+        .chain(writes.iter())
+        .any(|b| device_launch_alloc_off_device(b.id, origin, b.offset, b.bytes, allocs))
+}
+
+fn device_launch_alloc_off_device(
+    id: AllocId,
+    origin: DeviceId,
+    offset: u64,
+    bytes: u64,
+    allocs: &BTreeMap<AllocId, Alloc>,
+) -> bool {
+    let Some(a) = allocs.get(&id) else {
+        return true;
+    };
+    if a.host_pinned || a.host_mapped || a.managed {
+        return false;
+    }
+    if a.vmm {
+        return !vmm_covers(&a.vmm_maps, origin, offset, bytes);
+    }
+    !a.devices.contains(&origin)
+}
+
+fn device_launch_ctx_mismatch(steps: &[GraphStep]) -> Option<usize> {
+    let mut first: Option<Option<GreenCtxId>> = None;
+    for (i, s) in steps.iter().enumerate() {
+        if s.destroyed {
+            continue;
+        }
+        match first {
+            None => first = Some(s.green_ctx),
+            Some(ctx) if ctx != s.green_ctx => return Some(i),
+            Some(_) => {}
+        }
+    }
+    None
+}
+
+fn device_launch_patched_ctx_mismatch(
+    steps: &[GraphStep],
+    node: usize,
+    new_ctx: Option<GreenCtxId>,
+) -> bool {
+    let mut first: Option<Option<GreenCtxId>> = None;
+    for (i, s) in steps.iter().enumerate() {
+        if s.destroyed {
+            continue;
+        }
+        let ctx = if i == node { new_ctx } else { s.green_ctx };
+        match first {
+            None => first = Some(ctx),
+            Some(prev) if prev != ctx => return true,
+            Some(_) => {}
+        }
+    }
+    false
+}
+
+fn cond_node_handle(kind: &Kind) -> Option<CondId> {
+    match kind {
+        Kind::If { handle, .. } | Kind::While { handle, .. } | Kind::Switch { handle, .. } => {
+            Some(*handle)
+        }
+        _ => None,
+    }
+}
+
+fn unused_conditional_handles(
+    conds: &BTreeMap<CondId, Cond>,
+    graph: GraphId,
+    steps: &[GraphStep],
+) -> bool {
+    let used: BTreeSet<CondId> = steps
+        .iter()
+        .filter(|s| !s.destroyed)
+        .filter_map(|s| cond_node_handle(&s.kind))
+        .collect();
+    conds
+        .iter()
+        .any(|(id, c)| c.graph == graph && !used.contains(id))
+}
+
+fn kind_from_batch(op: BatchMemOp) -> Kind {
+    match op {
+        BatchMemOp::Write {
+            id,
+            offset,
+            value,
+            bits32,
+        } => Kind::WriteValue {
+            id,
+            offset,
+            value,
+            bits32,
+        },
+        BatchMemOp::Wait {
+            id,
+            offset,
+            value,
+            bits32,
+            cmp,
+            flush,
+        } => Kind::WaitValue {
+            id,
+            offset,
+            value,
+            bits32,
+            cmp,
+            flush,
+        },
+        BatchMemOp::FlushRemoteWrites => Kind::BatchMem {
+            ops: vec![BatchMemOp::FlushRemoteWrites],
+        },
+    }
+}
+
+fn batch_from_kind(kind: &Kind) -> Option<BatchMemOp> {
+    match *kind {
+        Kind::WriteValue {
+            id,
+            offset,
+            value,
+            bits32,
+        } => Some(BatchMemOp::Write {
+            id,
+            offset,
+            value,
+            bits32,
+        }),
+        Kind::WaitValue {
+            id,
+            offset,
+            value,
+            bits32,
+            cmp,
+            flush,
+        } => Some(BatchMemOp::Wait {
+            id,
+            offset,
+            value,
+            bits32,
+            cmp,
+            flush,
+        }),
+        _ => None,
+    }
+}
+
+fn batch_set_params_ok(step: &Kind, op: BatchMemOp) -> Result<(), SimError> {
+    match (step, op) {
+        (Kind::WriteValue { bits32: a, .. }, BatchMemOp::Write { bits32: b, .. }) if *a == b => {
+            Ok(())
+        }
+        (
+            Kind::WaitValue {
+                bits32: a, cmp: c, ..
+            },
+            BatchMemOp::Wait {
+                bits32: b, cmp: d, ..
+            },
+        ) if *a == b && *c == d => Ok(()),
+        (Kind::WriteValue { .. }, _) => Err(SimError::Invalid {
+            why: "not a write-value node",
+        }),
+        (Kind::WaitValue { .. }, _) => Err(SimError::Invalid {
+            why: "not a wait-value node",
+        }),
+        _ => Err(SimError::Invalid {
+            why: "not a batch mem op node",
+        }),
+    }
+}
+
+fn batch_ops_set_params_kind(step: &Kind, ops: &[BatchMemOp]) -> Result<Kind, SimError> {
+    match step {
+        Kind::BatchMem { .. } => Ok(Kind::BatchMem { ops: ops.to_vec() }),
+        Kind::WriteValue { .. } | Kind::WaitValue { .. } => {
+            if ops.len() != 1 {
+                return Err(SimError::Invalid {
+                    why: "batch mem op length",
+                });
+            }
+            let op = ops.first().copied().ok_or(SimError::Invalid {
+                why: "empty batch mem op",
+            })?;
+            batch_set_params_ok(step, op)?;
+            Ok(kind_from_batch(op))
+        }
+        _ => Err(SimError::Invalid {
+            why: "not a batch mem op node",
+        }),
+    }
+}
+
+fn batch_items(kind: &Kind) -> Option<Vec<BatchMemOp>> {
+    match kind {
+        Kind::BatchMem { ops } => Some(ops.clone()),
+        Kind::WriteValue { .. } | Kind::WaitValue { .. } => {
+            batch_from_kind(kind).map(|op| vec![op])
+        }
+        _ => None,
+    }
+}
+
+fn kernel_params_of(kind: &Kind) -> Result<KernelNodeParams, SimError> {
+    let Kind::Kernel {
+        kind,
+        reads,
+        writes,
+        cooperative,
+    } = kind
+    else {
+        return Err(SimError::Invalid {
+            why: "not a kernel node",
+        });
+    };
+    Ok(KernelNodeParams {
+        kind: kind.clone(),
+        reads: reads.clone(),
+        writes: writes.clone(),
+        cooperative: *cooperative,
+        ctx: None,
+        shared_mem_bytes: 0,
+    })
+}
+
+fn kernel_params_from_step(step: &GraphStep) -> Result<KernelNodeParams, SimError> {
+    let mut p = kernel_params_of(&step.kind)?;
+    p.ctx = step.green_ctx;
+    p.shared_mem_bytes = step.dynamic_shared;
+    Ok(p)
+}
+
+fn kind_has_green_ctx(kind: &Kind) -> bool {
+    matches!(
+        kind,
+        Kind::Kernel { .. }
+            | Kind::BatchMem { .. }
+            | Kind::WriteValue { .. }
+            | Kind::WaitValue { .. }
+            | Kind::If { .. }
+            | Kind::While { .. }
+            | Kind::Switch { .. }
+            | Kind::Memcpy(_)
+            | Kind::Memset(_)
+    )
+}
+
+fn batch_mem_params_from_step(step: &GraphStep) -> Result<BatchMemOpNodeParams, SimError> {
+    Ok(BatchMemOpNodeParams {
+        ops: batch_items(&step.kind).ok_or(SimError::Invalid {
+            why: "not a batch mem op node",
+        })?,
+        ctx: step.green_ctx,
+    })
+}
+
+fn memcpy_node_params_from_step(step: &GraphStep) -> Result<MemcpyNodeParams, SimError> {
+    Ok(MemcpyNodeParams {
+        op: memcpy_params_of(&step.kind)?,
+        ctx: step.green_ctx,
+    })
+}
+
+fn memset_node_params_from_step(step: &GraphStep) -> Result<MemsetNodeParams, SimError> {
+    Ok(MemsetNodeParams {
+        op: memset_params_of(&step.kind)?,
+        ctx: step.green_ctx,
+    })
+}
+
+fn memcpy_params_of(kind: &Kind) -> Result<MemcpyOp, SimError> {
+    let Kind::Memcpy(op) = kind else {
+        return Err(SimError::Invalid {
+            why: "not a memcpy node",
+        });
+    };
+    Ok(op.clone())
+}
+
+fn memset_params_of(kind: &Kind) -> Result<MemsetOp, SimError> {
+    let Kind::Memset(op) = kind else {
+        return Err(SimError::Invalid {
+            why: "not a memset node",
+        });
+    };
+    Ok(*op)
+}
+
+fn host_params_of(kind: &Kind) -> Result<HostNodeParams, SimError> {
+    let Kind::HostFunc { fn_id, user_data } = kind else {
+        return Err(SimError::Invalid {
+            why: "not a host node",
+        });
+    };
+    Ok(HostNodeParams {
+        fn_id: *fn_id,
+        user_data: *user_data,
+    })
+}
+
+fn cond_params_from_step(step: &GraphStep) -> Result<GraphNodeParams, SimError> {
+    let mut p = node_params_of(&step.kind)?;
+    match &mut p {
+        GraphNodeParams::If { ctx, .. }
+        | GraphNodeParams::IfElse { ctx, .. }
+        | GraphNodeParams::While { ctx, .. }
+        | GraphNodeParams::Switch { ctx, .. } => {
+            *ctx = step.green_ctx;
+        }
+        _ => {}
+    }
+    Ok(p)
+}
+
+fn cond_set_from_params(
+    params: &GraphNodeParams,
+) -> Result<(CondId, CondSetKind, Option<GreenCtxId>), SimError> {
+    match params {
+        GraphNodeParams::If { handle, ctx } => Ok((*handle, CondSetKind::If, *ctx)),
+        GraphNodeParams::IfElse { handle, ctx } => Ok((*handle, CondSetKind::IfElse, *ctx)),
+        GraphNodeParams::While { handle, ctx } => Ok((*handle, CondSetKind::While, *ctx)),
+        GraphNodeParams::Switch { handle, n, ctx } => Ok((*handle, CondSetKind::Switch(*n), *ctx)),
+        _ => Err(SimError::Invalid {
+            why: "conditional node params",
+        }),
+    }
+}
+
+fn cond_kind_ok(kind: &Kind, set: CondSetKind) -> Result<(), SimError> {
+    match (set, kind) {
+        (
+            CondSetKind::If,
+            Kind::If {
+                else_body: None, ..
+            },
+        ) => Ok(()),
+        (
+            CondSetKind::IfElse,
+            Kind::If {
+                else_body: Some(_), ..
+            },
+        ) => Ok(()),
+        (CondSetKind::While, Kind::While { .. }) => Ok(()),
+        (CondSetKind::Switch(n), Kind::Switch { bodies, .. }) => {
+            let have = u32::try_from(bodies.len()).unwrap_or(0);
+            if have != n {
+                return Err(SimError::Invalid {
+                    why: "switch branches",
+                });
+            }
+            Ok(())
+        }
+        (CondSetKind::If, _) => Err(SimError::Invalid {
+            why: "not an if node",
+        }),
+        (CondSetKind::IfElse, _) => Err(SimError::Invalid {
+            why: "not an if else node",
+        }),
+        (CondSetKind::While, _) => Err(SimError::Invalid {
+            why: "not a while node",
+        }),
+        (CondSetKind::Switch(_), _) => Err(SimError::Invalid {
+            why: "not a switch node",
+        }),
+    }
+}
+
+fn set_kind_cond_handle(kind: &mut Kind, handle: CondId) -> Result<(), SimError> {
+    match kind {
+        Kind::If { handle: have, .. }
+        | Kind::While { handle: have, .. }
+        | Kind::Switch { handle: have, .. } => {
+            *have = handle;
+            Ok(())
+        }
+        _ => Err(SimError::Invalid {
+            why: "conditional node params",
+        }),
+    }
+}
+
+fn node_params_of(kind: &Kind) -> Result<GraphNodeParams, SimError> {
+    Ok(match kind {
+        Kind::Kernel { .. } => GraphNodeParams::Kernel(kernel_params_of(kind)?),
+        Kind::Memcpy(_) => GraphNodeParams::Memcpy(MemcpyNodeParams {
+            op: memcpy_params_of(kind)?,
+            ctx: None,
+        }),
+        Kind::Memset(_) => GraphNodeParams::Memset(MemsetNodeParams {
+            op: memset_params_of(kind)?,
+            ctx: None,
+        }),
+        Kind::HostFunc { .. } => GraphNodeParams::Host(host_params_of(kind)?),
+        Kind::Empty => GraphNodeParams::Empty,
+        Kind::EventRecord { event, external } => GraphNodeParams::EventRecord {
+            event: *event,
+            external: *external,
+        },
+        Kind::EventWait { event, external } => GraphNodeParams::EventWait {
+            event: *event,
+            external: *external,
+        },
+        Kind::ChildGraph { graph, ownership } => {
+            GraphNodeParams::ChildGraph(ChildGraphNodeParams {
+                graph: *graph,
+                ownership: *ownership,
+            })
+        }
+        Kind::Alloc { bytes, .. } => GraphNodeParams::Alloc {
+            bytes: *bytes,
+            access: Vec::new(),
+        },
+        Kind::Free { id } => GraphNodeParams::Free(*id),
+        Kind::BatchMem { .. } | Kind::WriteValue { .. } | Kind::WaitValue { .. } => {
+            GraphNodeParams::BatchMemOp(BatchMemOpNodeParams {
+                ops: batch_items(kind).ok_or(SimError::Invalid {
+                    why: "not a batch mem op node",
+                })?,
+                ctx: None,
+            })
+        }
+        Kind::SetConditional { handle, value } => GraphNodeParams::SetConditional {
+            handle: *handle,
+            value: *value,
+        },
+        Kind::If {
+            handle,
+            else_body: None,
+            ..
+        } => GraphNodeParams::If {
+            handle: *handle,
+            ctx: None,
+        },
+        Kind::If {
+            handle,
+            else_body: Some(_),
+            ..
+        } => GraphNodeParams::IfElse {
+            handle: *handle,
+            ctx: None,
+        },
+        Kind::While { handle, .. } => GraphNodeParams::While {
+            handle: *handle,
+            ctx: None,
+        },
+        Kind::Switch { handle, bodies } => GraphNodeParams::Switch {
+            handle: *handle,
+            n: u32::try_from(bodies.len()).unwrap_or(0),
+            ctx: None,
+        },
+        Kind::WhileTick { .. }
+        | Kind::Attach { .. }
+        | Kind::AllReduce { .. }
+        | Kind::DeviceLaunch { .. }
+        | Kind::GraphUpload { .. } => {
+            return Err(SimError::Invalid {
+                why: "not a graph node params kind",
+            });
+        }
+    })
+}
+
+fn mailbox_writes(kind: &Kind) -> Vec<(AllocId, u64, u64, bool)> {
+    match kind {
+        Kind::WriteValue {
+            id,
+            offset,
+            value,
+            bits32,
+        } => vec![(*id, *offset, *value, *bits32)],
+        Kind::BatchMem { ops } => ops
+            .iter()
+            .filter_map(|item| match *item {
+                BatchMemOp::Write {
+                    id,
+                    offset,
+                    value,
+                    bits32,
+                } => Some((id, offset, value, bits32)),
+                BatchMemOp::Wait { .. } | BatchMemOp::FlushRemoteWrites => None,
+            })
+            .collect(),
+        _ => Vec::new(),
+    }
+}
+
+fn remap_batch_op(op: BatchMemOp, map: &BTreeMap<AllocId, AllocId>) -> BatchMemOp {
+    match op {
+        BatchMemOp::Write {
+            id,
+            offset,
+            value,
+            bits32,
+        } => BatchMemOp::Write {
+            id: remap_alloc_id(id, map),
+            offset,
+            value,
+            bits32,
+        },
+        BatchMemOp::Wait {
+            id,
+            offset,
+            value,
+            bits32,
+            cmp,
+            flush,
+        } => BatchMemOp::Wait {
+            id: remap_alloc_id(id, map),
+            offset,
+            value,
+            bits32,
+            cmp,
+            flush,
+        },
+        BatchMemOp::FlushRemoteWrites => BatchMemOp::FlushRemoteWrites,
+    }
+}
+
+fn nvlink_clique(profile: &HardwareProfile, devices: &[DeviceId]) -> Result<(), SimError> {
+    if devices.len() < 2 {
+        return Err(SimError::Invalid {
+            why: "multicast needs NVLink",
+        });
+    }
+    for (i, a) in devices.iter().enumerate() {
+        for b in devices.iter().skip(i.saturating_add(1)) {
+            match profile.link(Some(*a), Some(*b)) {
+                Ok(l) if l.kind == LinkKind::Nvlink => {}
+                _ => {
+                    return Err(SimError::Invalid {
+                        why: "multicast needs NVLink",
+                    });
+                }
+            }
+        }
+    }
+    Ok(())
+}
+
+fn multicast_team(src: DeviceId, dests: &[DeviceId]) -> Result<Vec<DeviceId>, SimError> {
+    if dests.is_empty() {
+        return Err(SimError::Invalid {
+            why: "multicast needs NVLink",
+        });
+    }
+    let mut team = vec![src];
+    for &d in dests {
+        if d == src {
+            return Err(SimError::Invalid {
+                why: "multicast src is dest",
+            });
+        }
+        if team.contains(&d) {
+            continue;
+        }
+        team.push(d);
+    }
+    if team.len() < 2 {
+        return Err(SimError::Invalid {
+            why: "multicast needs NVLink",
+        });
+    }
+    Ok(team)
+}
+
+fn snapshot_op(id: OpId, o: &Op) -> Operation {
+    Operation {
+        id,
+        device: o.device,
+        stream: o.stream,
+        kind: o.kind.clone(),
+        deps: o.deps.clone(),
+        done: o.done,
+        cancelled: o.cancelled,
+        submit_ns: o.submit_ns,
+        start_ns: o.start_ns,
+        done_ns: o.done_ns,
+    }
+}
+
+fn vmm_overlap(maps: &[(DeviceId, u64, u64)], device: DeviceId, offset: u64, bytes: u64) -> bool {
+    let end = offset.saturating_add(bytes);
+    maps.iter()
+        .any(|&(d, o, n)| d == device && offset < o.saturating_add(n) && o < end)
+}
+
+fn vmm_covers(maps: &[(DeviceId, u64, u64)], device: DeviceId, offset: u64, bytes: u64) -> bool {
+    if bytes == 0 {
+        return true;
+    }
+    let end = offset.saturating_add(bytes);
+    let mut segs: Vec<(u64, u64)> = maps
+        .iter()
+        .filter(|(d, _, _)| *d == device)
+        .map(|(_, o, n)| (*o, o.saturating_add(*n)))
+        .collect();
+    segs.sort_by_key(|s| s.0);
+    let mut cur = offset;
+    for (s, e) in segs {
+        if s > cur {
+            return false;
+        }
+        if e > cur {
+            cur = e;
+        }
+        if cur >= end {
+            return true;
+        }
+    }
+    cur >= end
+}
+
+fn seed_peers(profile: &HardwareProfile) -> BTreeSet<(DeviceId, DeviceId)> {
+    let mut out = BTreeSet::new();
+    for link in &profile.links {
+        let (Some(a), Some(b)) = (link.a, link.b) else {
+            continue;
+        };
+        let _ab = out.insert((a, b));
+        let _ba = out.insert((b, a));
+    }
+    out
+}
+
+fn remap_alloc_id(id: AllocId, map: &BTreeMap<AllocId, AllocId>) -> AllocId {
+    map.get(&id).copied().unwrap_or(id)
+}
+
+fn remap_buf(buf: KernelBuf, map: &BTreeMap<AllocId, AllocId>) -> KernelBuf {
+    KernelBuf {
+        id: remap_alloc_id(buf.id, map),
+        offset: buf.offset,
+        bytes: buf.bytes,
+    }
+}
+
+/// Rewrite alloc ids in captured ops after [`Sim::clone_graph`].
+/// Unmapped ids stay (external pointers, not mem-alloc nodes).
+fn remap_alloc_kind(kind: Kind, map: &BTreeMap<AllocId, AllocId>) -> Kind {
+    match kind {
+        Kind::Alloc { id, bytes } => Kind::Alloc {
+            id: remap_alloc_id(id, map),
+            bytes,
+        },
+        Kind::Free { id } => Kind::Free {
+            id: remap_alloc_id(id, map),
+        },
+        Kind::Memcpy(op) => Kind::Memcpy(MemcpyOp {
+            alloc: remap_alloc_id(op.alloc, map),
+            ..op
+        }),
+        Kind::Kernel {
+            kind,
+            reads,
+            writes,
+            cooperative,
+        } => Kind::Kernel {
+            kind,
+            reads: reads.into_iter().map(|b| remap_buf(b, map)).collect(),
+            writes: writes.into_iter().map(|b| remap_buf(b, map)).collect(),
+            cooperative,
+        },
+        Kind::Memset(op) => Kind::Memset(MemsetOp {
+            id: remap_alloc_id(op.id, map),
+            offset: op.offset,
+            bytes: op.bytes,
+            height: op.height,
+            pitch: op.pitch,
+            depth: op.depth,
+            ysize: op.ysize,
+            element_size: op.element_size,
+        }),
+        Kind::Attach { id, flags } => Kind::Attach {
+            id: remap_alloc_id(id, map),
+            flags,
+        },
+        Kind::WriteValue {
+            id,
+            offset,
+            value,
+            bits32,
+        } => Kind::WriteValue {
+            id: remap_alloc_id(id, map),
+            offset,
+            value,
+            bits32,
+        },
+        Kind::WaitValue {
+            id,
+            offset,
+            value,
+            bits32,
+            cmp,
+            flush,
+        } => Kind::WaitValue {
+            id: remap_alloc_id(id, map),
+            offset,
+            value,
+            bits32,
+            cmp,
+            flush,
+        },
+        Kind::BatchMem { ops } => Kind::BatchMem {
+            ops: ops.into_iter().map(|op| remap_batch_op(op, map)).collect(),
+        },
+        Kind::AllReduce { bytes, parts } => Kind::AllReduce {
+            bytes,
+            parts: parts
+                .into_iter()
+                .map(|(d, a)| (d, remap_alloc_id(a, map)))
+                .collect(),
+        },
+        other => other,
+    }
+}
+
+fn remap_nested_graphs(
+    steps: &[GraphStep],
+    remap: &BTreeMap<GraphId, GraphId>,
+) -> Result<Vec<GraphStep>, SimError> {
+    let mut out = Vec::with_capacity(steps.len());
+    for step in steps {
+        let kind = match &step.kind {
+            Kind::ChildGraph {
+                graph: child,
+                ownership,
+            } => {
+                let cloned = remap.get(child).copied().ok_or(SimError::Invalid {
+                    why: "unknown graph",
+                })?;
+                Kind::ChildGraph {
+                    graph: cloned,
+                    ownership: *ownership,
+                }
+            }
+            Kind::If {
+                handle,
+                body,
+                else_body,
+            } => {
+                let cloned = remap.get(body).copied().ok_or(SimError::Invalid {
+                    why: "unknown graph",
+                })?;
+                let else_cloned = match else_body {
+                    Some(e) => Some(remap.get(e).copied().ok_or(SimError::Invalid {
+                        why: "unknown graph",
+                    })?),
+                    None => None,
+                };
+                Kind::If {
+                    handle: *handle,
+                    body: cloned,
+                    else_body: else_cloned,
+                }
+            }
+            Kind::While { handle, body } => {
+                let cloned = remap.get(body).copied().ok_or(SimError::Invalid {
+                    why: "unknown graph",
+                })?;
+                Kind::While {
+                    handle: *handle,
+                    body: cloned,
+                }
+            }
+            Kind::Switch { handle, bodies } => {
+                let mut cloned = Vec::with_capacity(bodies.len());
+                for b in bodies {
+                    cloned.push(remap.get(b).copied().ok_or(SimError::Invalid {
+                        why: "unknown graph",
+                    })?);
+                }
+                Kind::Switch {
+                    handle: *handle,
+                    bodies: cloned,
+                }
+            }
+            other => other.clone(),
+        };
+        out.push(GraphStep {
+            device: step.device,
+            stream: step.stream,
+            kind,
+            deps: step.deps.clone(),
+            edge_data: step.edge_data.clone(),
+            enabled: step.enabled,
+            destroyed: step.destroyed,
+            priority: step.priority,
+            pdl: step.pdl,
+            programmatic_event: step.programmatic_event,
+            launch_completion: step.launch_completion,
+            access_policy: step.access_policy,
+            mem_sync_domain: step.mem_sync_domain,
+            mem_sync_map: step.mem_sync_map,
+            cluster: step.cluster,
+            cluster_policy: step.cluster_policy,
+            preferred_cluster: step.preferred_cluster,
+            carveout: step.carveout,
+            device_updatable: step.device_updatable,
+            shared_mem: step.shared_mem,
+            portable_cluster: step.portable_cluster,
+            dynamic_shared: step.dynamic_shared,
+            portable_shared: step.portable_shared,
+            nvlink_util_centric: step.nvlink_util_centric,
+            sync_policy: step.sync_policy,
+            green_ctx: step.green_ctx,
+        });
+    }
+    Ok(out)
+}
+
+/// Synthetic `cudaUuid_t` for [`Sim::device_get_uuid`].
+///
+/// Tag `GSIM`, FNV-1a of the profile name, and the device ordinal. Not a real
+/// NVIDIA UUID.
+fn synthetic_device_uuid(profile_name: &str, device: DeviceId) -> [u8; 16] {
+    const FNV_OFFSET: u32 = 2_166_136_261;
+    const FNV_PRIME: u32 = 16_777_619;
+    let mut h = FNV_OFFSET;
+    for b in profile_name.as_bytes() {
+        h ^= u32::from(*b);
+        h = h.wrapping_mul(FNV_PRIME);
+    }
+    let [t0, t1, t2, t3] = *b"GSIM";
+    let [h0, h1, h2, h3] = h.to_be_bytes();
+    let [d0, d1] = device.0.to_be_bytes();
+    [t0, t1, t2, t3, h0, h1, h2, h3, 0, 0, 0, 0, 0, 0, d0, d1]
+}
+
+/// Synthetic PCI domain / bus / device for [`Sim::device_get_pci_bus_id`].
+///
+/// Domain is the high 8 bits of [`DeviceId`], bus the low 8 bits, device 0.
+/// Not a real PCI topology and not parsed from a capture file.
+fn synthetic_pci_ids(device: DeviceId) -> (u32, u32, u32) {
+    let id = u32::from(device.0);
+    (id >> 8, id & 0xff, 0)
+}
+
+fn synthetic_pci_bus_id(device: DeviceId) -> String {
+    let (domain, bus, pci_dev) = synthetic_pci_ids(device);
+    format!("{domain:04x}:{bus:02x}:{pci_dev:02x}.0")
+}
+
+fn live_ok(step: &GraphStep) -> Result<&GraphStep, SimError> {
+    if step.destroyed {
+        Err(SimError::Invalid {
+            why: "unknown graph node",
+        })
+    } else {
+        Ok(step)
+    }
+}
+
+fn live_ok_mut(step: &mut GraphStep) -> Result<&mut GraphStep, SimError> {
+    if step.destroyed {
+        Err(SimError::Invalid {
+            why: "unknown graph node",
+        })
+    } else {
+        Ok(step)
+    }
+}
+
+struct GraphTopologyDiff {
+    result: GraphExecUpdateResult,
+    error_node: Option<usize>,
+    error_from_node: Option<usize>,
+}
+
+fn graph_topology_diff(exec: &[GraphStep], src: &[GraphStep]) -> Option<GraphTopologyDiff> {
+    if exec.len() != src.len() {
+        let extra = exec.len().min(src.len());
+        return Some(GraphTopologyDiff {
+            result: GraphExecUpdateResult::TopologyChanged,
+            error_node: (src.len() > exec.len()).then_some(extra),
+            error_from_node: (exec.len() > src.len()).then_some(extra),
+        });
+    }
+    for (i, (x, y)) in exec.iter().zip(src.iter()).enumerate() {
+        if x.destroyed != y.destroyed {
+            return Some(GraphTopologyDiff {
+                result: GraphExecUpdateResult::TopologyChanged,
+                error_node: Some(i),
+                error_from_node: Some(i),
+            });
+        }
+        if x.destroyed {
+            continue;
+        }
+        if node_kind(&x.kind) != node_kind(&y.kind) {
+            return Some(GraphTopologyDiff {
+                result: GraphExecUpdateResult::NodeTypeChanged,
+                error_node: Some(i),
+                error_from_node: Some(i),
+            });
+        }
+        if x.device != y.device || x.stream != y.stream {
+            return Some(GraphTopologyDiff {
+                result: GraphExecUpdateResult::TopologyChanged,
+                error_node: Some(i),
+                error_from_node: Some(i),
+            });
+        }
+        if x.deps != y.deps {
+            return Some(dep_mismatch(&x.deps, &y.deps, i));
+        }
+        if let Some(from) = edge_port_mismatch(x, y) {
+            return Some(GraphTopologyDiff {
+                result: GraphExecUpdateResult::DependenciesChanged,
+                error_node: Some(i),
+                error_from_node: Some(from),
+            });
+        }
+        if !op_eq(&x.kind, &y.kind) {
+            return Some(op_mismatch(&x.kind, &y.kind, i));
+        }
+    }
+    None
+}
+
+fn dep_mismatch(exec_deps: &[usize], src_deps: &[usize], to: usize) -> GraphTopologyDiff {
+    let n = exec_deps.len().max(src_deps.len());
+    for k in 0..n {
+        let e = exec_deps.get(k);
+        let s = src_deps.get(k);
+        if e != s {
+            return GraphTopologyDiff {
+                result: GraphExecUpdateResult::DependenciesChanged,
+                error_node: Some(to),
+                error_from_node: s.or(e).copied(),
+            };
+        }
+    }
+    GraphTopologyDiff {
+        result: GraphExecUpdateResult::DependenciesChanged,
+        error_node: Some(to),
+        error_from_node: None,
+    }
+}
+
+fn op_mismatch(exec_kind: &Kind, src_kind: &Kind, i: usize) -> GraphTopologyDiff {
+    let result = match (exec_kind, src_kind) {
+        (Kind::Kernel { cooperative: a, .. }, Kind::Kernel { cooperative: b, .. }) => {
+            if a != b {
+                GraphExecUpdateResult::ParametersChanged
+            } else {
+                GraphExecUpdateResult::FunctionChanged
+            }
+        }
+        (Kind::ChildGraph { .. }, Kind::ChildGraph { .. })
+        | (Kind::If { .. }, Kind::If { .. })
+        | (Kind::While { .. }, Kind::While { .. })
+        | (Kind::Switch { .. }, Kind::Switch { .. })
+        | (Kind::SetConditional { .. }, Kind::SetConditional { .. })
+        | (Kind::WhileTick { .. }, Kind::WhileTick { .. }) => {
+            GraphExecUpdateResult::TopologyChanged
+        }
+        (Kind::EventRecord { .. }, Kind::EventRecord { .. })
+        | (Kind::EventWait { .. }, Kind::EventWait { .. }) => {
+            GraphExecUpdateResult::AttributesChanged
+        }
+        _ => GraphExecUpdateResult::ParametersChanged,
+    };
+    GraphTopologyDiff {
+        result,
+        error_node: Some(i),
+        error_from_node: Some(i),
+    }
+}
+
+fn first_mem_node(steps: &[GraphStep]) -> Option<usize> {
+    steps
+        .iter()
+        .position(|s| matches!(s.kind, Kind::Alloc { .. } | Kind::Free { .. }))
+}
+
+fn update_report(
+    info: &mut GraphExecUpdateResultInfo,
+    result: GraphExecUpdateResult,
+    error_node: Option<usize>,
+    error_from_node: Option<usize>,
+    why: &'static str,
+) -> Result<(), SimError> {
+    info.result = result;
+    info.error_node = error_node;
+    info.error_from_node = error_from_node;
+    Err(SimError::Invalid { why })
+}
+
+/// Topology for [`Sim::graph_exec_child_set_params`]: nested child-graph ids are
+/// parameters, not topology (unlike [`graph_topology_diff`] / `cudaGraphExecUpdate`).
+fn child_param_topology_eq(a: &[GraphStep], b: &[GraphStep]) -> bool {
+    if a.len() != b.len() {
+        return false;
+    }
+    a.iter().zip(b.iter()).all(|(x, y)| {
+        x.device == y.device
+            && x.stream == y.stream
+            && child_param_op_eq(&x.kind, &y.kind)
+            && x.deps == y.deps
+            && edge_port_mismatch(x, y).is_none()
+    })
+}
+
+/// CUDA v1 GetEdges / GetDependencies / GetDependentNodes (`edgeData == NULL`).
+fn graph_edge_is_lossy(data: GraphEdgeData) -> bool {
+    data != GraphEdgeData::default()
+}
+
+/// Same `(from, to)` with a different [`GraphEdgeData`] port is topology
+/// (`cudaGraphExecUpdateErrorDependenciesChanged`).
+fn edge_port_mismatch(x: &GraphStep, y: &GraphStep) -> Option<usize> {
+    x.deps
+        .iter()
+        .copied()
+        .find(|&from| x.edge_data_of(from) != y.edge_data_of(from))
+}
+
+/// `cudaGraphInstantiateFlagUseNodePriority`: kernel-node priority is
+/// topology (`cudaGraphExecUpdateErrorAttributesChanged`). Compares stored
+/// (unclamped) kernel-node priority values.
+fn kernel_priority_mismatch(exec: &[GraphStep], src: &[GraphStep]) -> Option<usize> {
+    exec.iter()
+        .zip(src.iter())
+        .enumerate()
+        .find_map(|(i, (x, y))| {
+            if x.destroyed {
+                return None;
+            }
+            if matches!(x.kind, Kind::Kernel { .. }) && x.priority != y.priority {
+                Some(i)
+            } else {
+                None
+            }
+        })
+}
+
+fn child_param_op_eq(a: &Kind, b: &Kind) -> bool {
+    if matches!((a, b), (Kind::ChildGraph { .. }, Kind::ChildGraph { .. })) {
+        return true;
+    }
+    match (a, b) {
+        (Kind::Kernel { cooperative: x, .. }, Kind::Kernel { cooperative: y, .. }) => x == y,
+        _ => op_eq(a, b),
+    }
+}
+
+fn debug_dot_place(p: Place) -> String {
+    match p {
+        Place::Host => String::from("Host"),
+        Place::HostPinned => String::from("HostPinned"),
+        Place::Device(d) => {
+            let mut s = String::from("D");
+            s.push_str(&d.0.to_string());
+            s
+        }
+    }
+}
+
+fn debug_dot_bufs(bufs: &[KernelBuf]) -> String {
+    let mut s = String::new();
+    for (i, b) in bufs.iter().enumerate() {
+        if i > 0 {
+            s.push(',');
+        }
+        s.push_str(&b.id.0.to_string());
+    }
+    s
+}
+
+fn debug_dot_kind_name(kind: GraphNodeKind, runtime_types: bool) -> String {
+    let cuda = match kind {
+        GraphNodeKind::Kernel => Some("cudaGraphNodeTypeKernel"),
+        GraphNodeKind::Memcpy => Some("cudaGraphNodeTypeMemcpy"),
+        GraphNodeKind::Memset => Some("cudaGraphNodeTypeMemset"),
+        GraphNodeKind::Host => Some("cudaGraphNodeTypeHost"),
+        GraphNodeKind::Empty => Some("cudaGraphNodeTypeEmpty"),
+        GraphNodeKind::EventRecord => Some("cudaGraphNodeTypeEventRecord"),
+        GraphNodeKind::EventWait => Some("cudaGraphNodeTypeWaitEvent"),
+        GraphNodeKind::ChildGraph => Some("cudaGraphNodeTypeGraph"),
+        GraphNodeKind::Alloc => Some("cudaGraphNodeTypeMemAlloc"),
+        GraphNodeKind::Free => Some("cudaGraphNodeTypeMemFree"),
+        GraphNodeKind::If | GraphNodeKind::While | GraphNodeKind::Switch => {
+            Some("cudaGraphNodeTypeConditional")
+        }
+        GraphNodeKind::BatchMemOp => Some("cudaGraphNodeTypeBatchMemOp"),
+        GraphNodeKind::AllReduce
+        | GraphNodeKind::Attach
+        | GraphNodeKind::SetConditional
+        | GraphNodeKind::WhileTick
+        | GraphNodeKind::DeviceLaunch
+        | GraphNodeKind::GraphUpload => None,
+    };
+    match (runtime_types, cuda) {
+        (true, Some(name)) => String::from(name),
+        _ => format!("{kind:?}"),
+    }
+}
+
+fn debug_dot_push_edge(
+    out: &mut String,
+    from: usize,
+    to: usize,
+    from_port: u8,
+    extra_topo: bool,
+    edge_n: &mut u32,
+) {
+    out.push_str("  n");
+    out.push_str(&from.to_string());
+    out.push_str(" -> n");
+    out.push_str(&to.to_string());
+    if extra_topo {
+        out.push_str(" [label=\"");
+        out.push_str(&edge_n.to_string());
+        if from_port == GraphKernelNodePort::LAUNCH_COMPLETION {
+            out.push_str(" from_port=2");
+        }
+        out.push_str("\"]");
+        *edge_n = edge_n.saturating_add(1);
+    }
+    out.push_str(";\n");
+}
+
+fn debug_dot_label(i: usize, step: &GraphStep, flags: u32) -> String {
+    let mut label = i.to_string();
+    label.push(' ');
+    label.push_str(&debug_dot_kind_name(
+        node_kind(&step.kind),
+        flags & GraphDebugDotFlags::RUNTIME_TYPES != 0,
+    ));
+    match &step.kind {
+        Kind::Kernel {
+            cooperative,
+            reads,
+            writes,
+            ..
+        } => {
+            if flags & GraphDebugDotFlags::KERNEL_NODE_PARAMS != 0 {
+                label.push_str(" coop=");
+                label.push_str(&u8::from(*cooperative).to_string());
+                label.push_str(" r=");
+                label.push_str(&debug_dot_bufs(reads));
+                label.push_str(" w=");
+                label.push_str(&debug_dot_bufs(writes));
+            }
+            if flags & GraphDebugDotFlags::KERNEL_NODE_ATTRIBUTES != 0 {
+                if step.priority != 0 {
+                    label.push_str(" pri=");
+                    label.push_str(&step.priority.to_string());
+                }
+                if step.sync_policy != SynchronizationPolicy::Auto {
+                    label.push_str(" sync=");
+                    label.push_str(step.sync_policy.token());
+                }
+                if step
+                    .programmatic_event
+                    .is_some_and(|p| p.trigger_at_block_start)
+                {
+                    label.push_str(" pde-block-start");
+                }
+            }
+        }
+        Kind::Memcpy(op) => {
+            if flags & GraphDebugDotFlags::MEMCPY_NODE_PARAMS != 0 {
+                label.push_str(" bytes=");
+                label.push_str(&op.bytes.to_string());
+                label.push_str(" src=");
+                label.push_str(&debug_dot_place(op.src));
+                label.push_str(" dst=");
+                label.push_str(&debug_dot_place(op.dst));
+            }
+        }
+        Kind::Memset(op) => {
+            if flags & GraphDebugDotFlags::MEMSET_NODE_PARAMS != 0 {
+                label.push_str(" bytes=");
+                label.push_str(&op.bytes.to_string());
+                label.push_str(" id=");
+                label.push_str(&op.id.0.to_string());
+            }
+        }
+        Kind::HostFunc { fn_id, user_data } => {
+            if flags & GraphDebugDotFlags::HOST_NODE_PARAMS != 0 {
+                label.push_str(" fn=");
+                label.push_str(&fn_id.to_string());
+                label.push_str(" data=");
+                label.push_str(&user_data.to_string());
+            }
+        }
+        Kind::EventRecord { event, external } | Kind::EventWait { event, external } => {
+            if flags & GraphDebugDotFlags::EVENT_NODE_PARAMS != 0 {
+                label.push_str(" ev=");
+                label.push_str(&event.0.to_string());
+                if *external {
+                    label.push_str(" ext");
+                }
+            }
+        }
+        Kind::Alloc { id, bytes } => {
+            if flags & GraphDebugDotFlags::MEM_ALLOC_NODE_PARAMS != 0 {
+                label.push_str(" id=");
+                label.push_str(&id.0.to_string());
+                label.push_str(" bytes=");
+                label.push_str(&bytes.to_string());
+            }
+        }
+        Kind::Free { id } => {
+            if flags & GraphDebugDotFlags::MEM_FREE_NODE_PARAMS != 0 {
+                label.push_str(" id=");
+                label.push_str(&id.0.to_string());
+            }
+        }
+        Kind::WriteValue { id, .. } | Kind::WaitValue { id, .. } => {
+            if flags & GraphDebugDotFlags::BATCH_MEM_OP_NODE_PARAMS != 0 {
+                label.push_str(" id=");
+                label.push_str(&id.0.to_string());
+                label.push_str(" n=1");
+            }
+        }
+        Kind::BatchMem { ops } => {
+            if flags & GraphDebugDotFlags::BATCH_MEM_OP_NODE_PARAMS != 0 {
+                label.push_str(" n=");
+                label.push_str(&ops.len().to_string());
+            }
+        }
+        Kind::If {
+            handle,
+            body,
+            else_body,
+        } => {
+            if flags & GraphDebugDotFlags::CONDITIONAL_NODE_PARAMS != 0 {
+                label.push_str(" h=");
+                label.push_str(&handle.0.to_string());
+                label.push_str(" body=");
+                label.push_str(&body.0.to_string());
+                if let Some(e) = else_body {
+                    label.push_str(" else=");
+                    label.push_str(&e.0.to_string());
+                }
+            }
+        }
+        Kind::While { handle, body } => {
+            if flags & GraphDebugDotFlags::CONDITIONAL_NODE_PARAMS != 0 {
+                label.push_str(" h=");
+                label.push_str(&handle.0.to_string());
+                label.push_str(" body=");
+                label.push_str(&body.0.to_string());
+            }
+        }
+        Kind::Switch { handle, bodies } => {
+            if flags & GraphDebugDotFlags::CONDITIONAL_NODE_PARAMS != 0 {
+                label.push_str(" h=");
+                label.push_str(&handle.0.to_string());
+                label.push_str(" n=");
+                label.push_str(&bodies.len().to_string());
+            }
+        }
+        Kind::SetConditional { handle, value } => {
+            if flags & GraphDebugDotFlags::CONDITIONAL_NODE_PARAMS != 0 {
+                label.push_str(" h=");
+                label.push_str(&handle.0.to_string());
+                label.push_str(" v=");
+                label.push_str(&value.to_string());
+            }
+        }
+        Kind::ChildGraph { graph, .. } if flags & GraphDebugDotFlags::HANDLES != 0 => {
+            label.push_str(" g=");
+            label.push_str(&graph.0.to_string());
+        }
+        _ => {}
+    }
+    label
+}
+
+fn node_kind(kind: &Kind) -> GraphNodeKind {
+    match kind {
+        Kind::Kernel { .. } => GraphNodeKind::Kernel,
+        Kind::Memcpy(_) => GraphNodeKind::Memcpy,
+        Kind::Memset(_) => GraphNodeKind::Memset,
+        Kind::HostFunc { .. } => GraphNodeKind::Host,
+        Kind::Empty => GraphNodeKind::Empty,
+        Kind::EventRecord { .. } => GraphNodeKind::EventRecord,
+        Kind::EventWait { .. } => GraphNodeKind::EventWait,
+        Kind::ChildGraph { .. } => GraphNodeKind::ChildGraph,
+        Kind::Alloc { .. } => GraphNodeKind::Alloc,
+        Kind::Free { .. } => GraphNodeKind::Free,
+        Kind::AllReduce { .. } => GraphNodeKind::AllReduce,
+        Kind::Attach { .. } => GraphNodeKind::Attach,
+        Kind::If { .. } => GraphNodeKind::If,
+        Kind::SetConditional { .. } => GraphNodeKind::SetConditional,
+        Kind::While { .. } => GraphNodeKind::While,
+        Kind::WhileTick { .. } => GraphNodeKind::WhileTick,
+        Kind::Switch { .. } => GraphNodeKind::Switch,
+        Kind::WriteValue { .. } | Kind::WaitValue { .. } | Kind::BatchMem { .. } => {
+            GraphNodeKind::BatchMemOp
+        }
+        Kind::DeviceLaunch { .. } => GraphNodeKind::DeviceLaunch,
+        Kind::GraphUpload { .. } => GraphNodeKind::GraphUpload,
+    }
+}
+
+fn add_node_out(
+    alloc: Option<AllocId>,
+    body: Option<GraphId>,
+    else_body: Option<GraphId>,
+) -> GraphAddNode {
+    GraphAddNode {
+        node: 0,
+        alloc,
+        body,
+        else_body,
+        switch_bodies: [None; 64],
+    }
+}
+
+fn nested_graphs(kind: &Kind) -> Vec<GraphId> {
+    match kind {
+        Kind::ChildGraph { graph, .. } | Kind::While { body: graph, .. } => {
+            vec![*graph]
+        }
+        Kind::If {
+            body, else_body, ..
+        } => {
+            let mut out = vec![*body];
+            if let Some(e) = else_body {
+                out.push(*e);
+            }
+            out
+        }
+        Kind::Switch { bodies, .. } => bodies.clone(),
+        _ => Vec::new(),
+    }
+}
+
+fn cond_body_graphs(kind: &Kind) -> Vec<GraphId> {
+    match kind {
+        Kind::While { body, .. } => vec![*body],
+        Kind::If {
+            body, else_body, ..
+        } => {
+            let mut out = vec![*body];
+            if let Some(e) = else_body {
+                out.push(*e);
+            }
+            out
+        }
+        Kind::Switch { bodies, .. } => bodies.clone(),
+        _ => Vec::new(),
+    }
+}
+
+fn event_root_of(events: &BTreeMap<EventId, Ev>, event: EventId) -> EventId {
+    events.get(&event).and_then(|e| e.ipc_src).unwrap_or(event)
+}
+
+fn step_is_device_updatable(step: &GraphStep) -> bool {
+    !step.destroyed && step.device_updatable && matches!(step.kind, Kind::Kernel { .. })
+}
+
+/// Stamp when a programmatic event fires: kernel start if
+/// [`ProgrammaticEvent::trigger_at_block_start`], else the PDL trigger.
+fn programmatic_event_stamp(op: &Op, root: EventId, events: &BTreeMap<EventId, Ev>) -> Option<u64> {
+    let pe = op.programmatic_event?;
+    if event_root_of(events, pe.event) != root {
+        return None;
+    }
+    if pe.trigger_at_block_start {
+        return op.start_ns;
+    }
+    if op.pdl.trigger {
+        return op.pdl_trigger_ns;
+    }
+    None
+}
+
+fn capture_step_deps(
+    buf: &[GraphStep],
+    device: DeviceId,
+    stream: StreamId,
+    kind: &Kind,
+    events: &BTreeMap<EventId, Ev>,
+) -> Vec<usize> {
+    let mut deps = Vec::new();
+    if let Some(i) = buf
+        .iter()
+        .rposition(|s| s.device == device && s.stream == stream)
+    {
+        deps.push(i);
+    }
+    if let Kind::EventWait { event, external } = kind {
+        if !*external {
+            let wait = event_root_of(events, *event);
+            if let Some(i) = buf.iter().rposition(|s| {
+                matches!(
+                    &s.kind,
+                    Kind::EventRecord {
+                        event: e,
+                        external: false
+                    } if event_root_of(events, *e) == wait
+                )
+            }) {
+                if !deps.contains(&i) {
+                    deps.push(i);
+                }
+            }
+        }
+    }
+    deps
+}
+
+fn graph_topo_order(steps: &[GraphStep]) -> Result<Vec<usize>, SimError> {
+    let n = steps.len();
+    let mut indeg = vec![0u32; n];
+    for (i, step) in steps.iter().enumerate() {
+        let mut seen = BTreeSet::new();
+        for d in &step.deps {
+            if *d >= n || *d == i || !seen.insert(*d) {
+                return Err(SimError::Invalid {
+                    why: "graph dependency",
+                });
+            }
+            let slot = indeg.get_mut(i).ok_or(SimError::Invalid {
+                why: "graph dependency",
+            })?;
+            *slot = slot.saturating_add(1);
+        }
+    }
+    let mut ready: BTreeSet<usize> = (0..n)
+        .filter(|i| indeg.get(*i).copied() == Some(0))
+        .collect();
+    let mut order = Vec::with_capacity(n);
+    while let Some(i) = ready.pop_first() {
+        order.push(i);
+        for (j, step) in steps.iter().enumerate() {
+            if step.deps.contains(&i) {
+                let slot = indeg.get_mut(j).ok_or(SimError::Invalid {
+                    why: "graph dependency",
+                })?;
+                *slot = slot.saturating_sub(1);
+                if *slot == 0 {
+                    let _ins = ready.insert(j);
+                }
+            }
+        }
+    }
+    if order.len() != n {
+        return Err(SimError::Invalid {
+            why: "cyclic graph dependencies",
+        });
+    }
+    Ok(order)
+}
+
+fn graph_node_waits(
+    step: &GraphStep,
+    extra_wait: &[OpId],
+    launch_tail: Option<OpId>,
+    node_ops: &[Vec<OpId>],
+) -> Result<Vec<OpId>, SimError> {
+    let mut wait = Vec::new();
+    if step.deps.is_empty() {
+        wait.extend(extra_wait.iter().copied());
+        if let Some(t) = launch_tail {
+            wait.push(t);
+        }
+    }
+    for d in &step.deps {
+        if step.edge_from_port(*d) == GraphKernelNodePort::LAUNCH_COMPLETION {
+            continue;
+        }
+        let ops = node_ops.get(*d).ok_or(SimError::Invalid {
+            why: "graph dependency",
+        })?;
+        wait.extend(ops.iter().copied());
+    }
+    Ok(wait)
+}
+
+fn graph_node_start_waits(step: &GraphStep, node_ops: &[Vec<OpId>]) -> Result<Vec<OpId>, SimError> {
+    let mut wait = Vec::new();
+    for d in &step.deps {
+        if step.edge_from_port(*d) != GraphKernelNodePort::LAUNCH_COMPLETION {
+            continue;
+        }
+        let ops = node_ops.get(*d).ok_or(SimError::Invalid {
+            why: "graph dependency",
+        })?;
+        wait.extend(ops.iter().copied());
+    }
+    Ok(wait)
+}
+
+fn graph_reaches(steps: &[GraphStep], start: usize, goal: usize) -> bool {
+    let mut seen = BTreeSet::new();
+    let mut stack = vec![start];
+    while let Some(i) = stack.pop() {
+        if i == goal {
+            return true;
+        }
+        if !seen.insert(i) {
+            continue;
+        }
+        for (j, step) in steps.iter().enumerate() {
+            if step.deps.contains(&i) {
+                stack.push(j);
+            }
+        }
+    }
+    false
+}
+
+fn alloc_graph_worker(launch: StreamId, worker: &mut u16) -> StreamId {
+    loop {
+        let s = StreamId(u16::MAX.saturating_sub(*worker));
+        *worker = worker.saturating_add(1);
+        if s != launch {
+            return s;
+        }
+    }
+}
+
+fn op_eq(a: &Kind, b: &Kind) -> bool {
+    match (a, b) {
+        (
+            Kind::ChildGraph {
+                graph: x,
+                ownership: ox,
+            },
+            Kind::ChildGraph {
+                graph: y,
+                ownership: oy,
+            },
+        ) => x == y && ox == oy,
+        (
+            Kind::If {
+                body: bx,
+                else_body: ex,
+                ..
+            },
+            Kind::If {
+                body: by,
+                else_body: ey,
+                ..
+            },
+        ) => bx == by && ex == ey,
+        (Kind::SetConditional { handle: x, .. }, Kind::SetConditional { handle: y, .. }) => x == y,
+        (Kind::While { body: bx, .. }, Kind::While { body: by, .. }) => bx == by,
+        (Kind::Switch { bodies: bx, .. }, Kind::Switch { bodies: by, .. }) => bx == by,
+        (Kind::WhileTick { handle: x, .. }, Kind::WhileTick { handle: y, .. }) => x == y,
+        (Kind::EventRecord { external: x, .. }, Kind::EventRecord { external: y, .. }) => x == y,
+        (Kind::EventWait { external: x, .. }, Kind::EventWait { external: y, .. }) => x == y,
+        (
+            Kind::Kernel {
+                cooperative: x,
+                kind: kx,
+                ..
+            },
+            Kind::Kernel {
+                cooperative: y,
+                kind: ky,
+                ..
+            },
+        ) => x == y && kernel_fn_eq(kx, ky),
+        (Kind::Memcpy(a), Kind::Memcpy(b)) => memcpy_exec_update_eq(a, b),
+        (Kind::Memset(a), Kind::Memset(b)) => memset_exec_update_eq(a, b),
+        (Kind::WriteValue { bits32: x, .. }, Kind::WriteValue { bits32: y, .. }) => x == y,
+        (
+            Kind::WaitValue {
+                bits32: x, cmp: cx, ..
+            },
+            Kind::WaitValue {
+                bits32: y, cmp: cy, ..
+            },
+        ) => x == y && cx == cy,
+        (Kind::BatchMem { .. }, Kind::BatchMem { .. }) => true,
+        (Kind::HostFunc { .. }, Kind::HostFunc { .. }) => true,
+        _ => op_tag(a) == op_tag(b),
+    }
+}
+
+/// `cudaGraphExecUpdate` plus CUDA-named `cudaGraphExecMemsetNodeSetParams`:
+/// 2D and 3D memset nodes may change address only (fill value is not
+/// modeled). 1D nodes may change dimensions.
+fn memset_exec_update_eq(a: &MemsetOp, b: &MemsetOp) -> bool {
+    if a.is_2d() || b.is_2d() || a.is_3d() || b.is_3d() {
+        a.bytes == b.bytes
+            && a.height == b.height
+            && a.pitch == b.pitch
+            && a.depth == b.depth
+            && a.ysize == b.ysize
+            && a.element_size == b.element_size
+    } else {
+        true
+    }
+}
+
+/// `cudaGraphExecUpdate`: memcpy source and destination memory types
+/// (`CU_MEMORYTYPE_*` / [`Place`]) cannot change. CUDA arrays stay uninvented.
+fn memcpy_exec_update_eq(a: &MemcpyOp, b: &MemcpyOp) -> bool {
+    a.src == b.src && a.dst == b.dst
+}
+
+/// `cudaGraphExecUpdate`: [`KernelKind`] variant is the `CUfunction` analog.
+/// GEMM shape / FLOPs / bytes may change.
+fn kernel_fn_eq(a: &KernelKind, b: &KernelKind) -> bool {
+    std::mem::discriminant(a) == std::mem::discriminant(b)
+}
+
+fn op_tag(k: &Kind) -> u8 {
+    match k {
+        Kind::Alloc { .. } => 0,
+        Kind::Free { .. } => 1,
+        Kind::Memcpy(_) => 2,
+        Kind::Kernel { .. } => 3,
+        Kind::Memset(_) => 4,
+        Kind::HostFunc { .. } => 5,
+        Kind::Empty => 11,
+        Kind::EventRecord { .. } => 6,
+        Kind::EventWait { .. } => 7,
+        Kind::AllReduce { .. } => 8,
+        Kind::ChildGraph { .. } => 9,
+        Kind::Attach { .. } => 10,
+        Kind::If { .. } => 12,
+        Kind::SetConditional { .. } => 13,
+        Kind::While { .. } => 14,
+        Kind::WhileTick { .. } => 15,
+        Kind::Switch { .. } => 16,
+        Kind::WriteValue { .. } => 17,
+        Kind::WaitValue { .. } => 18,
+        Kind::DeviceLaunch { .. } => 19,
+        Kind::BatchMem { .. } => 20,
+        Kind::GraphUpload { .. } => 21,
+    }
+}
+
+fn attach_state(flags: MemAttach, stream: StreamId) -> Attach {
+    match flags {
+        MemAttach::Global => Attach::Global,
+        MemAttach::Host => Attach::Host,
+        MemAttach::Single => Attach::Single(stream),
+    }
+}
+
+fn merge_sm_resources(resources: &[SmResource]) -> Result<SmResource, SimError> {
+    let Some(first) = resources.first().copied() else {
+        return Err(SimError::Invalid {
+            why: "sm resource desc",
+        });
+    };
+    if first.width == 0 || first.start.saturating_add(first.width) > 1000 {
+        return Err(SimError::Invalid { why: "sm resource" });
+    }
+    let mut ordered: Vec<SmResource> = resources.to_vec();
+    ordered.sort_by_key(|r| r.start);
+    let Some(head) = ordered.first().copied() else {
+        return Err(SimError::Invalid {
+            why: "sm resource desc",
+        });
+    };
+    let mut end = head.start.saturating_add(head.width);
+    for r in ordered.iter().skip(1) {
+        if r.width == 0 || r.start.saturating_add(r.width) > 1000 {
+            return Err(SimError::Invalid { why: "sm resource" });
+        }
+        if r.start < end {
+            return Err(SimError::Invalid {
+                why: "sm resource overlap",
+            });
+        }
+        if r.start > end {
+            return Err(SimError::Invalid {
+                why: "sm resource gap",
+            });
+        }
+        end = r.start.saturating_add(r.width);
+    }
+    Ok(SmResource {
+        start: head.start,
+        width: end.saturating_sub(head.start),
+    })
+}
+
+fn seed_pools(
+    profile: &HardwareProfile,
+) -> (u32, BTreeMap<PoolId, Pool>, BTreeMap<DeviceId, PoolId>) {
+    let mut pools = BTreeMap::new();
+    let mut default_pools = BTreeMap::new();
+    let mut next_pool = 1u32;
+    for g in &profile.gpus {
+        let id = PoolId(next_pool);
+        next_pool = next_pool.saturating_add(1);
+        let replaced = pools.insert(id, Pool::new(g.id));
+        let _dup = replaced.is_some();
+        let replaced = default_pools.insert(g.id, id);
+        let _dup = replaced.is_some();
+    }
+    (next_pool, pools, default_pools)
+}

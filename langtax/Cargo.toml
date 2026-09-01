@@ -2,23 +2,26 @@
 name = "llama-rust"
 version = "0.2.0"
 edition = "2021"
-# Empirically bisected: 1.86 lacks `usize::is_multiple_of`, 1.87 lacks
-# `slice::as_chunks`, 1.88 builds every target and passes the whole suite.
-rust-version = "1.88"
-description = "Zero-dependency, 100% safe-Rust inference for GGUF Llama-family models: 13 architectures, 30 quantized dtypes, no llama.cpp"
+# The default SIMD path uses AArch64 FP16 intrinsics stabilized in Rust 1.94.
+rust-version = "1.94"
+description = "Verifiable GGUF v3 Llama-family reference engine with oracle decode, MoE traces, and an ExpertStore seam"
 documentation = "https://docs.rs/llama-rust"
 homepage = "https://github.com/mingley/llama-rust"
 repository = "https://github.com/mingley/llama-rust"
 license = "MIT"
-# Symlinks to the workspace root; `cargo package` follows them and stores the
-# file contents, so the tarball is self-contained without duplicating the text.
 readme = "README.md"
 keywords = ["llama", "gguf", "llm", "inference", "quantization"]
 categories = ["science", "text-processing", "command-line-utilities"]
-# Sidecar Metal/C sources kept alongside the crate for throughput comparisons.
-# Nothing builds them -- there is no build script and no `cc` dependency -- so
-# they stay out of the published tarball.
 exclude = ["*.c", "*.m", "*.metal"]
+
+[features]
+default = ["simd"]
+# Vendor SIMD fast path for the hot dtypes. Off means the crate compiles under a
+# crate-level `forbid(unsafe_code)`; see `src/lib.rs`.
+simd = []
+
+[dependencies]
+expertvm = { path = "../expertvm", version = "0.1.0" }
 
 [lib]
 name = "llama_rust"
@@ -27,10 +30,6 @@ path = "src/lib.rs"
 [[bin]]
 name = "gguf_gemv"
 path = "src/main.rs"
-
-[[bin]]
-name = "extra"
-path = "src/extra.rs"
 
 [lints]
 workspace = true

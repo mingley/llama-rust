@@ -1,0 +1,280 @@
+//! Adversarial MoE access traces. Timing stays in the hardware profile.
+
+use crate::access::{prefix_hash, ExpertAccess, ExpertKey, Trace};
+use std::collections::BTreeSet;
+
+/// Named synthetic traces for anti-Goodhart experiments.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Workload {
+    /// Uniform expert ids, no locality.
+    Uniform,
+    /// 80% of acquires hit a small hot set.
+    Hotset,
+    /// Hot set slides every `shift` tokens.
+    ShiftingHotset,
+    /// Cyclic thrash (Belady's anomaly case).
+    Thrash,
+    /// Copilot-shaped: tiny hot set, ~95% reuse.
+    Coding,
+    /// Chat-shaped: medium hot set, ~70% reuse.
+    Chat,
+    /// Long context: expert id walks slowly with token.
+    LongContext,
+    /// Prefill: each token touches four layers.
+    PrefillHeavy,
+    /// Decode: one layer, one expert, cycling.
+    DecodeHeavy,
+    /// One sequence (batch = 1). Contrast with [`Self::Batch128`].
+    Batch1,
+    /// Eight interleaved sequences (batch > 1).
+    Batch,
+    /// 128 interleaved sequences (vLLM-shaped batch width).
+    Batch128,
+    /// Four sequences: token 0 is 4-layer prefill, later tokens are 1-layer decode.
+    PrefillBatch,
+    /// Four sequences share a content-addressed token-id prefix on token 0;
+    /// later tokens diverge so decode is not cached.
+    SharedPrefix,
+}
+
+impl Workload {
+    /// Every named workload, in CLI order.
+    pub const ALL: [Self; 14] = [
+        Self::Uniform,
+        Self::Hotset,
+        Self::ShiftingHotset,
+        Self::Thrash,
+        Self::Coding,
+        Self::Chat,
+        Self::LongContext,
+        Self::PrefillHeavy,
+        Self::DecodeHeavy,
+        Self::Batch1,
+        Self::Batch,
+        Self::Batch128,
+        Self::PrefillBatch,
+        Self::SharedPrefix,
+    ];
+
+    /// Name used in benches and CLI.
+    #[must_use]
+    pub fn name(self) -> &'static str {
+        match self {
+            Self::Uniform => "uniform",
+            Self::Hotset => "hotset",
+            Self::ShiftingHotset => "shifting-hotset",
+            Self::Thrash => "thrash",
+            Self::Coding => "coding",
+            Self::Chat => "chat",
+            Self::LongContext => "long-context",
+            Self::PrefillHeavy => "prefill-heavy",
+            Self::DecodeHeavy => "decode-heavy",
+            Self::Batch1 => "batch-1",
+            Self::Batch => "batch",
+            Self::Batch128 => "batch-128",
+            Self::PrefillBatch => "prefill-batch",
+            Self::SharedPrefix => "shared-prefix",
+        }
+    }
+
+    /// Concurrent sequences this shape emits per token (batch width).
+    #[must_use]
+    pub fn concurrent_seqs(self) -> u32 {
+        match self {
+            Self::Batch1 => 1,
+            Self::Batch => 8,
+            Self::Batch128 => 128,
+            Self::PrefillBatch | Self::SharedPrefix => 4,
+            Self::Uniform
+            | Self::Hotset
+            | Self::ShiftingHotset
+            | Self::Thrash
+            | Self::Coding
+            | Self::Chat
+            | Self::LongContext
+            | Self::PrefillHeavy
+            | Self::DecodeHeavy => 1,
+        }
+    }
+
+    /// Parse a CLI workload name.
+    pub fn from_name(name: &str) -> Option<Self> {
+        Self::ALL.iter().copied().find(|w| w.name() == name)
+    }
+}
+
+/// Build `n_tokens` (per sequence) events from `n_experts`.
+#[must_use]
+pub fn generate(kind: Workload, n_tokens: u32, n_experts: u32, top_k: u32, seed: u64) -> Trace {
+    let mut rng = seed | 1;
+    let mut events = Vec::new();
+    let k = top_k.max(1);
+    let n_ex = n_experts.max(k);
+    for tok in 0..n_tokens {
+        match kind {
+            Workload::PrefillHeavy => {
+                for layer in 0..4u32 {
+                    events.push(ev(0, tok, layer, pick_uniform(&mut rng, n_ex, k)));
+                }
+            }
+            Workload::Batch | Workload::Batch1 | Workload::Batch128 => {
+                push_uniform_seqs(&mut events, kind.concurrent_seqs(), tok, &mut rng, n_ex, k);
+            }
+            Workload::PrefillBatch => {
+                for seq in 0..4u64 {
+                    if tok == 0 {
+                        for layer in 0..4u32 {
+                            events.push(ev(seq, tok, layer, pick_uniform(&mut rng, n_ex, k)));
+                        }
+                    } else {
+                        events.push(ev(seq, tok, 0, pick_uniform(&mut rng, n_ex, k)));
+                    }
+                }
+            }
+            Workload::SharedPrefix => {
+                if tok == 0 {
+                    let p = Some(prefix_hash(&[1]));
+                    let mut layers = Vec::new();
+                    for layer in 0..4u32 {
+                        layers.push((layer, pick_uniform(&mut rng, n_ex, k)));
+                    }
+                    for seq in 0..4u64 {
+                        for (layer, experts) in &layers {
+                            events.push(ev_prefix(seq, tok, *layer, experts.clone(), p));
+                        }
+                    }
+                } else {
+                    for seq in 0..4u64 {
+                        let sid = u32::try_from(seq).unwrap_or(0);
+                        let p = Some(prefix_hash(&[1, tok, sid]));
+                        events.push(ev_prefix(seq, tok, 0, pick_uniform(&mut rng, n_ex, k), p));
+                    }
+                }
+            }
+            Workload::Uniform
+            | Workload::Hotset
+            | Workload::ShiftingHotset
+            | Workload::Thrash
+            | Workload::Coding
+            | Workload::Chat
+            | Workload::LongContext
+            | Workload::DecodeHeavy => {
+                let experts = match kind {
+                    Workload::Uniform => pick_uniform(&mut rng, n_ex, k),
+                    Workload::Hotset => pick_hotset(&mut rng, n_ex, k, 80, n_ex / 5),
+                    Workload::ShiftingHotset => {
+                        let shift = (tok / 16) % n_ex;
+                        pick_shifted(&mut rng, n_ex, k, shift)
+                    }
+                    Workload::Thrash | Workload::DecodeHeavy => vec![tok % n_ex.max(1)],
+                    Workload::Coding => pick_hotset(&mut rng, n_ex, k, 95, 2),
+                    Workload::Chat => pick_hotset(&mut rng, n_ex, k, 70, (n_ex / 4).max(1)),
+                    Workload::LongContext => vec![(tok / 4) % n_ex.max(1)],
+                    Workload::PrefillHeavy
+                    | Workload::Batch
+                    | Workload::Batch1
+                    | Workload::Batch128
+                    | Workload::PrefillBatch
+                    | Workload::SharedPrefix => vec![0],
+                };
+                events.push(ev(0, tok, 0, experts));
+            }
+        }
+    }
+    Trace { events }
+}
+
+fn push_uniform_seqs(
+    events: &mut Vec<ExpertAccess>,
+    n_seq: u32,
+    tok: u32,
+    rng: &mut u64,
+    n_ex: u32,
+    k: u32,
+) {
+    for seq in 0..n_seq {
+        events.push(ev(u64::from(seq), tok, 0, pick_uniform(rng, n_ex, k)));
+    }
+}
+
+fn ev(sequence: u64, token: u32, layer: u32, experts: Vec<u32>) -> ExpertAccess {
+    ev_prefix(sequence, token, layer, experts, None)
+}
+
+fn ev_prefix(
+    sequence: u64,
+    token: u32,
+    layer: u32,
+    experts: Vec<u32>,
+    prefix: Option<u64>,
+) -> ExpertAccess {
+    ExpertAccess {
+        sequence,
+        token,
+        layer,
+        experts,
+        weight_pt: Vec::new(),
+        prefix,
+    }
+}
+
+fn next_u32(rng: &mut u64) -> u32 {
+    *rng = rng.wrapping_mul(6364136223846793005).wrapping_add(1);
+    u32::try_from(*rng >> 33).unwrap_or(0)
+}
+
+fn pick_uniform(rng: &mut u64, n_ex: u32, k: u32) -> Vec<u32> {
+    let mut out = Vec::new();
+    for _ in 0..k {
+        let e = next_u32(rng) % n_ex.max(1);
+        if !out.contains(&e) {
+            out.push(e);
+        }
+    }
+    if out.is_empty() {
+        out.push(0);
+    }
+    out
+}
+
+fn pick_hotset(rng: &mut u64, n_ex: u32, k: u32, hot_pt: u32, hot_n: u32) -> Vec<u32> {
+    let hot_n = hot_n.max(1).min(n_ex.max(1));
+    let mut out = Vec::new();
+    for _ in 0..k {
+        let roll = next_u32(rng) % 100;
+        let e = if roll < hot_pt {
+            next_u32(rng) % hot_n
+        } else {
+            hot_n + (next_u32(rng) % (n_ex.saturating_sub(hot_n).max(1)))
+        };
+        let e = e.min(n_ex.saturating_sub(1));
+        if !out.contains(&e) {
+            out.push(e);
+        }
+    }
+    if out.is_empty() {
+        out.push(0);
+    }
+    out
+}
+
+fn pick_shifted(rng: &mut u64, n_ex: u32, k: u32, shift: u32) -> Vec<u32> {
+    let mut out = pick_hotset(rng, n_ex, k, 80, n_ex / 5);
+    for e in &mut out {
+        *e = (*e).saturating_add(shift) % n_ex.max(1);
+    }
+    out
+}
+
+/// Distinct keys in `trace`, decode order of first appearance.
+#[must_use]
+pub fn unique_keys(trace: &Trace) -> Vec<ExpertKey> {
+    let mut seen = BTreeSet::new();
+    let mut out = Vec::new();
+    for k in trace.keys() {
+        if seen.insert(k) {
+            out.push(k);
+        }
+    }
+    out
+}

@@ -3,16 +3,24 @@
 Captured from llama.cpp so the crate can be checked against real quantized
 weights instead of only against writer-built tiny GGUFs and the in-tree oracle.
 
-This matters because the in-tree oracle is not fully independent. Every
-per-dtype oracle calls `crate::fp16::f16_to_f32`, so a bug in that primitive is
-invisible to the whole suite — that is exactly how a subnormal binary16 bug
-that halved real Q4_K/Q6_K weights survived 221 passing tests. The writer-built
-fixtures also use hand-picked scales that never land in the affected ranges.
+This matters because a production `f16_to_f32` bug used to be invisible:
+every per-dtype oracle called that same primitive, which is how a
+subnormal binary16 bug that halved real Q4_K/Q6_K weights survived 221
+passing tests. Oracles now use `oracle_f16_to_f32` (IEEE arithmetic, not
+bit-surgery). The writer-built fixtures still use hand-picked scales that
+never land in the affected ranges, so this llama.cpp capture remains the
+greedy-identity check on a real checkpoint.
 
 ## Files
 
 `qwen2.5-0.5b-instruct-q4_k_m.json` — tokenization, prefill logit summary, the
-top-20 logits, and the greedy continuation for one fixed prompt.
+top-20 logits, and the greedy continuation for one fixed prompt (NEOX RoPE).
+
+`llama-3.2-1b-instruct-q4_k_m.json` — the same capture for
+`Llama-3.2-1B-Instruct-Q4_K_M.gguf` (NORM RoPE Llama control). Greedy window
+is 24 tokens: token ids, argmax, and continuation match llama.cpp. A 32-step
+window can drift by one id from K-quant activation rounding; that is not a
+RoPE pairing miss.
 
 ## Model identity
 
@@ -23,21 +31,49 @@ top-20 logits, and the greedy continuation for one fixed prompt.
 | architecture | `qwen2` (NEOX rope) |
 | tensor dtypes | Q5_0 x133, F32 x121, Q8_0 x13, Q6_K x12, Q4_K x12 |
 
-This file is a useful regression target because it mixes five dtypes, uses the
-NEOX rope convention, and has `add_bos_token=false`.
+The Rust tests read this JSON (not hardcoded logits) so a second fixture is
+drop-in. `real_qwen_sidecar_json_parses` / `real_llama_sidecar_json_parses`
+always load the sidecars; the GGUF differential still skips unless
+`LLAMA_RUST_REAL_MODEL_DIR` is set.
 
 ## Running the test
 
 The model is not committed (it is ~470 MB). Point the test at a directory
 containing it; the test skips cleanly when the variable is unset.
 
+**Use an absolute path.** `cargo test` runs with the crate directory as the
+working directory, so a relative `models` resolves against `langtax/`, not the
+repo root. That is not a cosmetic detail: it originally made the CI job report
+green in 0.00 s having loaded no weights. The test now distinguishes the two
+cases — unset means "not requested" and skips, while set-but-unopenable fails
+loudly — so a repeat of that mistake shows up as a red job rather than a false
+green.
+
 ```
 mkdir -p models
 curl -L -o models/qwen2.5-0.5b-instruct-q4_k_m.gguf \
   "https://huggingface.co/Qwen/Qwen2.5-0.5B-Instruct-GGUF/resolve/main/qwen2.5-0.5b-instruct-q4_k_m.gguf?download=true"
+curl -L -o models/Llama-3.2-1B-Instruct-Q4_K_M.gguf \
+  "https://huggingface.co/bartowski/Llama-3.2-1B-Instruct-GGUF/resolve/main/Llama-3.2-1B-Instruct-Q4_K_M.gguf?download=true"
 
-LLAMA_RUST_REAL_MODEL_DIR=models cargo test --release --lib real_model
+LLAMA_RUST_REAL_MODEL_DIR="$PWD/models" cargo test --release --lib matches_llama_cpp_reference -- --nocapture
 ```
+
+When it really runs it prints the resolved model path and takes seconds, not
+milliseconds. A 0.00 s pass means it skipped. A set env var must contain
+**both** GGUFs named in the sidecar JSON files (fail-loud).
+
+## Second fixture (Llama NORM control)
+
+The Qwen2.5-0.5B capture is **NEOX** RoPE. The Llama 3.2 1B Instruct capture is
+the **NORM** control so the two official pairing conventions cannot silently
+swap. Sidecar: `llama-3.2-1b-instruct-q4_k_m.json`. GGUF:
+`Llama-3.2-1B-Instruct-Q4_K_M.gguf` from `bartowski/Llama-3.2-1B-Instruct-GGUF`
+(architecture `llama`, `llama.rope.freq_base=500000`, no YaRN). Capture with
+the same `ref.cpp` command (`n_predict` 24). `llama.cpp` `tokenize` with
+`add_special=true` prepends BOS `128000`; the Rust check uses `prompt_ids`
+(default `add_bos_token=true` when the GGUF omits the key). Do not download
+Hugging Face checkpoints in CI. Do not invent the capture.
 
 ## Regenerating the reference
 

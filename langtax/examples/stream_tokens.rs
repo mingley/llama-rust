@@ -49,8 +49,13 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     flush()?;
 
     let options = GenerateOptions::new(64);
+    let n_ctx = model
+        .encode(&prompt)?
+        .len()
+        .saturating_add(options.n_predict)
+        .saturating_add(1);
     let done = model
-        .session()
+        .session(n_ctx)?
         .generate_streaming(&prompt, &options, |step| {
             print!("{}", step.piece);
             // Flushing per token is what makes the output appear live. The

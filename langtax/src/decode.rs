@@ -29,42 +29,133 @@
 //! gated full attention (joint Q+gate, QK-Norm before RoPE, IMROPE, sigmoid
 //! after attn), official `post_attention_norm`, dense SwiGLU. Linear-attn /
 //! gated-delta layers are refused. Not `qwen3vlmoe`. Not Mixtral.
+//! Official Phi2 (`architecture=phi2`) follows `src/models/phi2.cpp`:
+//! `LLM_NORM` (LayerNorm + bias), `LLAMA_ROPE_TYPE_NEOX`, Q scaled by
+//! `1/sqrt(n_embd_head)` then `build_attn` scale `1.0`, parallel residual
+//! (`attn` and `LLM_FFN_GELU`/`LLM_FFN_SEQ` both from `attn_norm`), output
+//! bias. Not Mixtral, not `qwen3vlmoe`, not linear-attn. Not a phi3 redo.
+//! Official Bloom (`architecture=bloom`) follows `src/models/bloom.cpp`:
+//! `token_embd_norm` LayerNorm, fused `attn_qkv` (convert restacks HF
+//! interleaved QKV to concatenated Q/K/V), `LLM_NORM` on attn/ffn/output,
+//! sequential residual, `LLM_FFN_GELU`/`LLM_FFN_SEQ` with biases, ALiBi
+//! (`f_max_alibi_bias = 8`, no RoPE). Not Mixtral, not `qwen3vlmoe`.
+//! Writer-tiny fused QKV scale ([`tiny_bloom_attn_qkv_s_gguf`]) is bloom plus
+//! `{1}` `attn_qkv.scale`.
+//! Official Gemma2 (`architecture=gemma2`) follows `src/models/gemma2.cpp`:
+//! Gemma embed-scale + GeGLU, `post_attention_norm` / `post_ffw_norm`,
+//! sliding-window attention (`set_swa_pattern(2)`, `LLAMA_SWA_TYPE_STANDARD`),
+//! attn/final tanh logit softcap.
+//! Official Gemma3 (`architecture=gemma3`) follows `src/models/gemma3.cpp`:
+//! Gemma2 post-norms + GeGLU, QK-Norm before RoPE, no attn softcap, optional
+//! final tanh softcap, SWA default period 6.
+//! Official Gemma3n (`architecture=gemma3n`) follows `src/models/gemma3n.cpp`:
+//! Gemma3 QK-Norm + post-norms + GeGLU, attention scale `1.0`, unweighted
+//! RMSNorm on V, SWA period 5, required sliding window, final tanh softcap
+//! (default 30), AltUp (4 streams) + Laurel + per-layer inputs, gaussian_topk
+//! on the first 10 layers.
+//! Official Gemma4 (`architecture=gemma4`) follows `src/models/gemma4.cpp`:
+//! Gemma embed-scale + GeGLU, QK-Norm before RoPE, unweighted RMSNorm on V,
+//! attention scale `1.0`, RMSNorm `post_attention_norm` / `ffn_norm` /
+//! `post_ffw_norm`, required SWA plus convert `attention.sliding_window_pattern`
+//! as a per-layer bool array, required `attention.key_length_swa` /
+//! `value_length_swa` and `embedding_length_per_layer_input`. Dense layers stay
+//! GeGLU. MoE layers (`ffn_gate_inp`) add a shared dense MLP plus routed GELU
+//! experts (`build_moe_ffn` softmax then top-k with `norm_w` clamp `2^-14`,
+//! custom router on `attn_out`). Writer-tiny dense has no `ffn_gate_inp`.
+//! Writer-tiny MoE keeps the same arch. Writer-tiny dense and MoE keep
+//! `embedding_length_per_layer_input = 0`. Writer-tiny PLE
+//! ([`tiny_gemma4_ple_gguf`]) sets that key `> 0` and loads
+//! `per_layer_token_embd` / `per_layer_model_proj` / `per_layer_proj_norm`
+//! plus per-layer `inp_gate` / `proj` / `post_norm` (no AltUp / Laurel).
+//! Writer-tiny MoE+PLE ([`tiny_gemma4_moe_ple_gguf`]) is the production
+//! E2B/E4B shape: both `ffn_gate_inp` and `n_embd_per_layer > 0`.
+//! Writer-tiny fused experts ([`tiny_gemma4_moe_fused_gguf`]) pack
+//! `ffn_gate_up_exps` instead of separate gate/up. Writer-tiny fused plus
+//! PLE ([`tiny_gemma4_moe_fused_ple_gguf`]) is the production E2B/E4B packing:
+//! fused experts and `n_embd_per_layer > 0`. Writer-tiny dense/MoE/PLE keep
+//! `attention.shared_kv_layers` unset (every layer has KV). Writer-tiny
+//! shared KV ([`tiny_gemma4_shared_kv_gguf`]) is three layers, all SWA,
+//! `shared_kv_layers=1`, so layer 2 reuses layer 0's KV
+//! (`n_layer_kv_from_start` minus 2). Optional final tanh logit softcap.
+//! Writer-tiny mixed SWA/global head dims ([`tiny_gemma4_mixed_hd_gguf`])
+//! is two layers, SWA then global, `key_length_swa` half of `key_length`.
+//! Writer-tiny SWA RoPE base ([`tiny_gemma4_swa_base_gguf`]) is that mixed-hd
+//! fixture with `rope.freq_base` vs `rope.freq_base_swa` as in E2B/E4B.
+//! Writer-tiny omitted `wv` ([`tiny_gemma4_no_wv_gguf`]) is dense gemma4
+//! without `attn_v`; decode uses K as V before the unweighted V RMSNorm.
+//! Writer-tiny layer output scale ([`tiny_gemma4_out_scale_gguf`]) is dense
+//! gemma4 with `blk.0.layer_output_scale` (broadcast `ggml_mul` after the
+//! FFN residual). Writer-tiny proportional RoPE ([`tiny_gemma4_rope_freqs_gguf`])
+//! is mixed-hd plus `rope_freqs.weight` (`theta/ff` on global layers).
+//! Writer-tiny per-expert down scale ([`tiny_gemma4_moe_down_s_gguf`]) is MoE
+//! plus `ffn_down_exps.scale`. Writer-tiny per-expert gate/up scale
+//! ([`tiny_gemma4_moe_gate_up_s_gguf`]) is MoE plus `ffn_gate_exps.scale` and
+//! `ffn_up_exps.scale`. Writer-tiny dense down scale
+//! ([`tiny_llama_ffn_down_s_gguf`]) is llama plus `{1}` `ffn_down.scale`.
+//! Writer-tiny dense Q scale ([`tiny_llama_attn_q_s_gguf`]) is llama plus
+//! `{1}` `attn_q.scale`. Writer-tiny dense attn-out scale
+//! ([`tiny_llama_attn_out_s_gguf`]) is llama plus `{1}` `attn_output.scale`.
+//! Writer-tiny dense K scale ([`tiny_llama_attn_k_s_gguf`]) is llama plus
+//! `{1}` `attn_k.scale`. Writer-tiny dense V scale
+//! ([`tiny_llama_attn_v_s_gguf`]) is llama plus `{1}` `attn_v.scale`.
+//! Writer-tiny dense gate scale ([`tiny_llama_ffn_gate_s_gguf`]) is llama plus
+//! `{1}` `ffn_gate.scale`. Writer-tiny dense up scale
+//! ([`tiny_llama_ffn_up_s_gguf`]) is llama plus `{1}` `ffn_up.scale`.
+//! Writer-tiny NVFP4 LM-head scale ([`tiny_nvfp4_output_s_gguf`]) is NVFP4
+//! plus `{1}` `output.scale`. Writer-tiny fused QKV scale
+//! ([`tiny_bloom_attn_qkv_s_gguf`]) is bloom plus `{1}` `attn_qkv.scale`.
+//! Writer-tiny shared-expert down scale
+//! ([`tiny_qwen2moe_ffn_down_shexp_s_gguf`]) is qwen2moe plus `{1}`
+//! `ffn_down_shexp.scale`. Writer-tiny shared-expert gate scale
+//! ([`tiny_qwen2moe_ffn_gate_shexp_s_gguf`]) is qwen2moe plus `{1}`
+//! `ffn_gate_shexp.scale`. Writer-tiny shared-expert up scale
+//! ([`tiny_qwen2moe_ffn_up_shexp_s_gguf`]) is qwen2moe plus `{1}`
+//! `ffn_up_shexp.scale`.
 
-use crate::gguf::{
-    write_gguf_with_kv, GgmlType, Gguf, GgufError, Kv, Tensor, TensorWrite, GGUF_DEFAULT_ALIGNMENT,
-};
+use crate::gguf::{load_gguf_owned, GgmlType, Gguf, GgufError, Kv, Tensor, TensorWrite};
+pub use crate::kv_page::PagedKvPool;
+use crate::kv_page::{KvGeom, KvPages};
+use crate::pool::{Pool, RowKernel};
 use crate::quant::{
     bf16_row_bytes, dequant_bf16_row, dequant_f16_row, dequant_f32_row, dequant_iq1_m_row,
     dequant_iq1_s_row, dequant_iq2_s_row, dequant_iq2_xs_row, dequant_iq2_xxs_row,
     dequant_iq3_s_row, dequant_iq3_xxs_row, dequant_iq4_nl_row, dequant_iq4_xs_row,
     dequant_mxfp4_row, dequant_nvfp4_row, dequant_q1_0_row, dequant_q2_0_row, dequant_q2_k_row,
-    dequant_q3_k_row, dequant_q4_1_row, dequant_q4_k_row, dequant_q5_0_row, dequant_q5_1_row,
-    dequant_q5_k_row, dequant_q6_k_row, dequant_q8_0_row, dequant_q8_1_row, dequant_tq1_0_row,
-    dequant_tq2_0_row, f16_row_bytes, f32_row_bytes, gemm_bf16, gemm_f16, gemm_f32, gemm_iq1_m_f32,
-    gemm_iq1_s_f32, gemm_iq2_s_f32, gemm_iq2_xs_f32, gemm_iq2_xxs_f32, gemm_iq3_s_f32,
-    gemm_iq3_xxs_f32, gemm_iq4_nl_f32, gemm_iq4_xs_f32, gemm_mxfp4_f32, gemm_nvfp4_f32,
-    gemm_q1_0_f32, gemm_q2_0_f32, gemm_q2_k_f32, gemm_q3_k_f32, gemm_q4_1_f32, gemm_q4_k_f32,
-    gemm_q5_0_f32, gemm_q5_1_f32, gemm_q5_k_f32, gemm_q6_k_f32, gemm_q8_0_f32, gemm_q8_1_f32,
-    gemm_tq1_0_f32, gemm_tq2_0_f32, gemv_bf16, gemv_f16, gemv_f32, gemv_iq1_m_f32, gemv_iq1_s_f32,
-    gemv_iq2_s_f32, gemv_iq2_xs_f32, gemv_iq2_xxs_f32, gemv_iq3_s_f32, gemv_iq3_xxs_f32,
-    gemv_iq4_nl_f32, gemv_iq4_xs_f32, gemv_mxfp4_f32, gemv_nvfp4_f32, gemv_q1_0_f32, gemv_q2_0_f32,
-    gemv_q2_k_f32, gemv_q3_k_f32, gemv_q4_1_f32, gemv_q4_k_f32, gemv_q5_0_f32, gemv_q5_1_f32,
-    gemv_q5_k_f32, gemv_q6_k_f32, gemv_q8_0_f32, gemv_q8_1_f32, gemv_tq1_0_f32, gemv_tq2_0_f32,
-    iq1_m_row_bytes, iq1_s_row_bytes, iq2_s_row_bytes, iq2_xs_row_bytes, iq2_xxs_row_bytes,
-    iq3_s_row_bytes, iq3_xxs_row_bytes, iq4_nl_row_bytes, iq4_xs_row_bytes, mxfp4_row_bytes,
-    nvfp4_row_bytes, pack_bf16, pack_f16, pack_f32, pack_iq1_m_block, pack_iq1_s_block,
-    pack_iq2_s_block, pack_iq2_xs_block, pack_iq2_xxs_block, pack_iq3_s_block, pack_iq3_xxs_block,
-    pack_iq4_nl_block, pack_iq4_xs_block, pack_mxfp4_block, pack_nvfp4_block, pack_q1_0_block,
-    pack_q2_0_block, pack_q2_k_block, pack_q3_k_block, pack_q4_1_block, pack_q4_k_block,
-    pack_q5_0_block, pack_q5_1_block, pack_q5_k_block, pack_q6_k_block, pack_q8_0_block,
-    pack_q8_1_block, pack_tq1_0_block, pack_tq2_0_block, q1_0_row_bytes, q2_0_row_bytes,
-    q2_k_row_bytes, q3_k_row_bytes, q4_1_row_bytes, q4_k_row_bytes, q5_0_row_bytes, q5_1_row_bytes,
+    dequant_q3_k_row, dequant_q4_0_row, dequant_q4_1_row, dequant_q4_k_row, dequant_q5_0_row,
+    dequant_q5_1_row, dequant_q5_k_row, dequant_q6_k_row, dequant_q8_0_row, dequant_q8_1_row,
+    dequant_tq1_0_row, dequant_tq2_0_row, f16_row_bytes, f32_row_bytes, gemm_bf16, gemm_f16,
+    gemm_f32, gemm_iq1_m_f32, gemm_iq1_s_f32, gemm_iq2_s_f32, gemm_iq2_xs_f32, gemm_iq2_xxs_f32,
+    gemm_iq3_s_f32, gemm_iq3_xxs_f32, gemm_iq4_nl_f32, gemm_iq4_xs_f32, gemm_mxfp4_f32,
+    gemm_nvfp4_f32, gemm_q1_0_f32, gemm_q2_0_f32, gemm_q2_k_f32, gemm_q3_k_f32, gemm_q4_0_f32,
+    gemm_q4_1_f32, gemm_q4_k_f32, gemm_q5_0_f32, gemm_q5_1_f32, gemm_q5_k_f32, gemm_q6_k_f32,
+    gemm_q8_0_f32, gemm_q8_1_f32, gemm_tq1_0_f32, gemm_tq2_0_f32, gemv_bf16, gemv_f16, gemv_f32,
+    gemv_iq1_m_f32, gemv_iq1_s_f32, gemv_iq2_s_f32, gemv_iq2_xs_f32, gemv_iq2_xxs_f32,
+    gemv_iq3_s_f32, gemv_iq3_xxs_f32, gemv_iq4_nl_f32, gemv_iq4_xs_f32, gemv_mxfp4_f32,
+    gemv_nvfp4_f32, gemv_q1_0_f32, gemv_q2_0_f32, gemv_q2_k_f32, gemv_q3_k_f32, gemv_q4_0_f32,
+    gemv_q4_1_f32, gemv_q4_k_f32, gemv_q5_0_f32, gemv_q5_1_f32, gemv_q5_k_f32, gemv_q6_k_f32,
+    gemv_q8_0_f32, gemv_q8_1_f32, gemv_tq1_0_f32, gemv_tq2_0_f32, iq1_m_row_bytes, iq1_s_row_bytes,
+    iq2_s_row_bytes, iq2_xs_row_bytes, iq2_xxs_row_bytes, iq3_s_row_bytes, iq3_xxs_row_bytes,
+    iq4_nl_row_bytes, iq4_xs_row_bytes, mxfp4_row_bytes, nvfp4_row_bytes, pack_bf16, pack_f16,
+    pack_f32, pack_iq1_m_block, pack_iq1_s_block, pack_iq2_s_block, pack_iq2_xs_block,
+    pack_iq2_xxs_block, pack_iq3_s_block, pack_iq3_xxs_block, pack_iq4_nl_block, pack_iq4_xs_block,
+    pack_mxfp4_block, pack_nvfp4_block, pack_q1_0_block, pack_q2_0_block, pack_q2_k_block,
+    pack_q3_k_block, pack_q4_0_block, pack_q4_1_block, pack_q4_k_block, pack_q5_0_block,
+    pack_q5_1_block, pack_q5_k_block, pack_q6_k_block, pack_q8_0_block, pack_q8_1_block,
+    pack_tq1_0_block, pack_tq2_0_block, q1_0_row_bytes, q2_0_row_bytes, q2_k_row_bytes,
+    q3_k_row_bytes, q4_0_row_bytes, q4_1_row_bytes, q4_k_row_bytes, q5_0_row_bytes, q5_1_row_bytes,
     q5_k_row_bytes, q6_k_row_bytes, q8_0_row_bytes, q8_1_row_bytes, tq1_0_row_bytes,
-    tq2_0_row_bytes, QuantError, QK1_0, QK2_0, QK4_1, QK4_NL, QK5_0, QK5_1, QK8_0, QK8_1, QK_K,
-    QK_MXFP4, QK_NVFP4,
+    tq2_0_row_bytes, QuantError, QK1_0, QK2_0, QK4_0, QK4_1, QK4_NL, QK5_0, QK5_1, QK8_0, QK8_1,
+    QK_K, QK_MXFP4, QK_NVFP4,
 };
 use crate::sample::{SampleError, SampleParams, Sampler};
 use crate::tok::{TokError, Tokenizer};
+use crate::{write_gguf_with_kv, GGUF_DEFAULT_ALIGNMENT};
+use expertvm::{
+    plan_keys, predicted_keys, prefix_hash, weight_permille, ChainState, DirectStore, ExpertAccess,
+    ExpertKey, ExpertParts, ExpertStore, LiveStore, Markov, Plan, Prefetch, Trace,
+};
+use std::collections::{BTreeMap, BTreeSet};
+use std::sync::Arc;
 
 const TINY_N_EMBD: usize = 256;
 const TINY_N_HEAD: usize = 4;
@@ -89,6 +180,116 @@ const TINY_QWEN2MOE_N_EXPERT_USED: usize = 2;
 const TINY_QWEN3MOE_N_EXPERT: usize = 4;
 /// Writer-built tiny `qwen3moe.expert_used_count` (Qwen3-30B-A3B convert uses 8; tiny uses 2).
 const TINY_QWEN3MOE_N_EXPERT_USED: usize = 2;
+/// Writer-built tiny official Gemma4 MoE (`gemma4.expert_count`).
+const TINY_GEMMA4_N_EXPERT: usize = 4;
+/// Writer-built tiny `gemma4.expert_used_count`.
+const TINY_GEMMA4_N_EXPERT_USED: usize = 2;
+/// Writer-built tiny Gemma4 PLE `embedding_length_per_layer_input`. Distinct
+/// from [`TINY_N_EMBD`] so a layout mix-up cannot silently match dense gemma4.
+const TINY_GEMMA4_N_EMBD_PER_LAYER: usize = 64;
+/// Writer-built tiny Gemma4 shared KV (`attention.shared_kv_layers=1`).
+/// llama.cpp `create_memory` asserts `n_layer_kv_from_start >= 2`, and the SWA
+/// donor is `n_from_start` minus 2, so the smallest valid fixture is 3 layers.
+const TINY_GEMMA4_SHARED_N_LAYER: usize = 3;
+/// Official `n_layer_kv_from_start` is `n_layer` minus `shared_kv_layers`.
+const TINY_GEMMA4_SHARED_KV_LAYERS: u32 = 1;
+/// Writer-built tiny Gemma4 mixed SWA/global head dim (`key_length_swa` vs
+/// `key_length`). Two layers: SWA then global. Official E2B/E4B GGUFs use
+/// this split (example: 256 vs 512).
+const TINY_GEMMA4_MIXED_N_LAYER: usize = 2;
+/// SWA head dim for [`tiny_gemma4_mixed_hd_gguf`]. Half of [`TINY_N_ROT`].
+const TINY_GEMMA4_HD_SWA: usize = 32;
+/// Official E2B/E4B convert `rope.freq_base` (global layers).
+const TINY_GEMMA4_FREQ_BASE: f32 = 1_000_000.0;
+/// Official E2B/E4B convert `rope.freq_base_swa`. llama.cpp default when the
+/// key is omitted is the same value.
+const TINY_GEMMA4_FREQ_BASE_SWA: f32 = 10_000.0;
+/// Mixed-hd global-layer QK-Norm scale. Gemma4 `f_attention_scale` is `1.0`;
+/// ones-valued QK-Norm makes Q dot K O(hd) so softmax saturates onto the
+/// unrotated self key and a different global `rope.freq_base` cannot move
+/// logits. `0.1` keeps scores O(1) so RoPE wavelengths are observable.
+const TINY_GEMMA4_GLOBAL_QK_NORM: f32 = 0.1;
+/// Writer-tiny Gemma4 `layer_output_scale` (broadcast scalar). Official
+/// `ggml_mul` after the FFN residual (and PLE inject). Not 1, so the walk
+/// is observable vs dense `tiny-gemma4`.
+const TINY_GEMMA4_OUT_SCALE: f32 = 0.5;
+/// Official convert `partial_rotary_factor` of `0.25` on Gemma4
+/// full-attention proportional RoPE. `n_rot_pairs = head_dim / 8`.
+const TINY_GEMMA4_ROPE_PAIRS_DEN: usize = 8;
+/// Exact IEEE-754 bits of torch/CPython `float32(1e30)` written by convert
+/// `generate_extra_tensors` for unrotated NeoX pairs (`theta/ff ≈ 0`).
+const TINY_GEMMA4_ROPE_FREQ_UNROT: f32 = f32::from_bits(0x7149_F2CA);
+/// Writer-tiny per-expert `ffn_down_exps.scale` (`{n_expert}`). Not all 1, so
+/// the walk is observable vs `tiny-gemma4-moe`. Matches
+/// [`TINY_GEMMA4_N_EXPERT`].
+const TINY_GEMMA4_DOWN_S: [f32; TINY_GEMMA4_N_EXPERT] = [0.5, 2.0, 0.25, 4.0];
+/// Writer-tiny per-expert `ffn_gate_exps.scale` (`{n_expert}`). Distinct from
+/// [`TINY_GEMMA4_DOWN_S`] / [`TINY_GEMMA4_UP_S`] so a mix-up cannot silently
+/// match. Not all 1, so the walk is observable vs `tiny-gemma4-moe`.
+const TINY_GEMMA4_GATE_S: [f32; TINY_GEMMA4_N_EXPERT] = [1.5, 0.5, 3.0, 0.75];
+/// Writer-tiny per-expert `ffn_up_exps.scale` (`{n_expert}`). Distinct from
+/// [`TINY_GEMMA4_GATE_S`]. On fused `ffn_gate_up_exps`, official
+/// `build_lora_mm_id` applies this scale to both halves.
+const TINY_GEMMA4_UP_S: [f32; TINY_GEMMA4_N_EXPERT] = [0.75, 3.0, 0.5, 1.5];
+/// Writer-tiny dense `ffn_down.scale` (`{1}`). Not 1, so the walk is
+/// observable vs [`tiny_llama_gguf`]. Gemma2/3/4 `post_ffw_norm` RMSNorm
+/// would cancel a positive scalar, so the fixture is llama, not gemma4.
+const TINY_LLAMA_FFN_DOWN_S: f32 = 0.5;
+/// Writer-tiny dense `ffn_gate.scale` (`{1}`). Not 1, and distinct from
+/// [`TINY_LLAMA_FFN_DOWN_S`] so a mix-up with down scale cannot silently
+/// match. Applied after the gate GEMM, before SiLU. The fixture is llama.
+const TINY_LLAMA_FFN_GATE_S: f32 = 1.25;
+/// Writer-tiny dense `ffn_up.scale` (`{1}`). Not 1, and distinct from
+/// [`TINY_LLAMA_FFN_DOWN_S`] / [`TINY_LLAMA_FFN_GATE_S`]. Applied after the
+/// up GEMM, before the gated product. The fixture is llama.
+const TINY_LLAMA_FFN_UP_S: f32 = 3.5;
+/// Writer-tiny NVFP4 `output.scale` (`{1}`). Official llama.cpp creates this
+/// tensor only when `output.weight` is `GGML_TYPE_NVFP4`. Not 1. F32
+/// `output.scale` is ignored (not loaded).
+const TINY_NVFP4_OUTPUT_S: f32 = 4.0;
+/// Writer-tiny fused `attn_qkv.scale` (`{1}`). Official llama.cpp
+/// `build_qkv` applies this after the fused QKV GEMM, before bias. Not 1,
+/// and distinct from split `attn_q.scale` / `attn_k.scale` / `attn_v.scale`
+/// and from NVFP4 `output.scale`. Loaded only when fused
+/// `attn_qkv.weight` is present (bloom).
+const TINY_BLOOM_ATTN_QKV_S: f32 = 3.0;
+/// Writer-tiny shared-expert `{1}` `ffn_down_shexp.scale`. Official llama.cpp
+/// generic post-load applies this after the shared-expert down GEMM when
+/// `ffn_down_shexp.weight` is present. Not 1, and distinct from dense
+/// `ffn_down.scale` and per-expert `ffn_down_exps.scale`.
+const TINY_QWEN2MOE_FFN_DOWN_SHEXP_S: f32 = 1.75;
+/// Writer-tiny shared-expert `{1}` `ffn_gate_shexp.scale`. Official llama.cpp
+/// `build_ffn` applies this after the shared-expert gate GEMM, before SiLU,
+/// when `ffn_gate_shexp.weight` is present. Not 1, and distinct from dense
+/// `ffn_gate.scale` and shared-expert `ffn_down_shexp.scale`.
+const TINY_QWEN2MOE_FFN_GATE_SHEXP_S: f32 = 2.25;
+/// Writer-tiny shared-expert `{1}` `ffn_up_shexp.scale`. Official llama.cpp
+/// `build_ffn` applies this after the shared-expert up GEMM, before the
+/// gated product, when `ffn_up_shexp.weight` is present. Not 1, and distinct
+/// from dense `ffn_up.scale` and shared-expert `ffn_gate_shexp.scale` /
+/// `ffn_down_shexp.scale`.
+const TINY_QWEN2MOE_FFN_UP_SHEXP_S: f32 = 2.75;
+/// Writer-tiny dense `attn_q.scale` (`{1}`). Not 1, and distinct from
+/// [`TINY_LLAMA_FFN_DOWN_S`], so the walk is observable vs [`tiny_llama_gguf`]
+/// and a mix-up with down scale cannot silently match. Gemma3/4 QK-Norm
+/// would cancel a positive scalar, so the fixture is llama, not gemma4.
+const TINY_LLAMA_ATTN_Q_S: f32 = 2.0;
+/// Writer-tiny dense `attn_output.scale` (`{1}`). Not 1, and distinct from
+/// [`TINY_LLAMA_FFN_DOWN_S`] / [`TINY_LLAMA_ATTN_Q_S`]. Gemma2/3/4
+/// `post_attention_norm` RMSNorm would cancel a positive scalar, so the
+/// fixture is llama, not gemma4.
+const TINY_LLAMA_ATTN_OUT_S: f32 = 1.5;
+/// Writer-tiny dense `attn_k.scale` (`{1}`). Not 1, and distinct from
+/// [`TINY_LLAMA_FFN_DOWN_S`] / [`TINY_LLAMA_ATTN_Q_S`] /
+/// [`TINY_LLAMA_ATTN_OUT_S`]. Gemma3/4 K-norm would cancel a positive
+/// scalar, so the fixture is llama, not gemma4.
+const TINY_LLAMA_ATTN_K_S: f32 = 0.75;
+/// Writer-tiny dense `attn_v.scale` (`{1}`). Not 1, and distinct from
+/// [`TINY_LLAMA_FFN_DOWN_S`] / [`TINY_LLAMA_ATTN_Q_S`] /
+/// [`TINY_LLAMA_ATTN_OUT_S`] / [`TINY_LLAMA_ATTN_K_S`]. Gemma3/4 unweighted
+/// V RMSNorm would cancel a positive scalar, so the fixture is llama, not
+/// gemma4.
+const TINY_LLAMA_ATTN_V_S: f32 = 2.5;
 /// Writer-built tiny Qwen3Next `qwen3next.expert_count` (official load rejects 0).
 const TINY_QWEN3NEXT_N_EXPERT: usize = 4;
 /// Writer-built tiny `qwen3next.expert_used_count`.
@@ -136,6 +337,51 @@ const TINY_QWEN2VL_ROPE_SECTIONS: [i32; 4] = [8, 12, 12, 0];
 /// `n_rot=64` uses the same ratio. Official `src/llama-model.cpp` maps
 /// `LLM_ARCH_QWEN3VL` to `LLAMA_ROPE_TYPE_IMROPE`.
 const TINY_QWEN3VL_ROPE_SECTIONS: [i32; 4] = [12, 10, 10, 0];
+/// Official convert `add_feed_forward_length(4 * n_embd)`.
+const TINY_PHI2_N_FF: usize = 1024;
+/// Official convert `add_head_count_kv(n_head)` (no GQA).
+const TINY_PHI2_N_HEAD_KV: usize = TINY_N_HEAD;
+/// Official convert `int(partial_rotary_factor * n_embd) // n_head`.
+/// microsoft/phi-2 uses `0.4` → `32` of `80`. Writer-tiny uses `32` of `64`
+/// (`int(0.5 * 256) // 4`): even `n_rot`, same official formula.
+const TINY_PHI2_N_ROT: usize = 32;
+/// Official convert `add_feed_forward_length(4 * n_embed)`.
+const TINY_BLOOM_N_FF: usize = 1024;
+/// Official convert `add_head_count_kv(n_head)` (no GQA).
+const TINY_BLOOM_N_HEAD_KV: usize = TINY_N_HEAD;
+/// Official `src/models/bloom.cpp` `load_arch_hparams`: hardcoded
+/// `hparams.f_max_alibi_bias = 8.0f` (not a GGUF KV).
+const BLOOM_MAX_ALIBI_BIAS: f32 = 8.0;
+/// Official Google Gemma2 `attn_logit_softcapping` (convert + llama.cpp default).
+const GEMMA2_ATTN_LOGIT_SOFTCAPPING: f32 = 50.0;
+/// Official Google Gemma2 `final_logit_softcapping` (convert + llama.cpp default).
+const GEMMA2_FINAL_LOGIT_SOFTCAPPING: f32 = 30.0;
+/// Writer-tiny `{arch}.attention.sliding_window` so short-seq tests clip
+/// (`is_masked_swa`: `p1 - p0 >= n_swa`). Official default is 4096.
+const GEMMA2_TINY_N_SWA: u32 = 2;
+/// Official `set_swa_pattern` default period (`dense_first=false`).
+const GEMMA2_SWA_PERIOD_DEFAULT: u32 = 2;
+/// Official gemma3.cpp `set_swa_pattern` default period.
+const GEMMA3_SWA_PERIOD_DEFAULT: u32 = 6;
+/// Official gemma3n.cpp `get_key_or_arr` default `swa_period`.
+const GEMMA3N_SWA_PERIOD_DEFAULT: u32 = 5;
+/// Official `llama_hparams::n_altup` / convert `altup_num_inputs`.
+const GEMMA3N_N_ALTUP: usize = 4;
+/// Official `llama_hparams::i_altup_act` / convert `altup_active_idx`.
+const GEMMA3N_I_ALTUP_ACT: usize = 0;
+/// Official `llama_hparams::laurel_rank`.
+const GEMMA3N_LAUREL_RANK: usize = 64;
+/// Official `llama_hparams::n_embd_altup` (equals [`TINY_N_EMBD`] on the writer-tiny).
+const GEMMA3N_N_EMBD_ALTUP: usize = 256;
+/// Official `models.h` `n_layer_sparsity` (not a GGUF KV).
+const GEMMA3N_N_LAYER_SPARSITY: usize = 10;
+/// Official `models.h` `f_sparsity_std_mul` = `Normal(0,1).icdf(0.95)`.
+/// Stored as the exact `f32` of the official double `1.6448533535003662`.
+const GEMMA3N_SPARSITY_STD_MUL: f32 = 1.644_853_4;
+/// Official gemma3n.cpp `n_layer_kv_from_start` (convert `attention.shared_kv_layers`).
+const GEMMA3N_N_LAYER_KV_FROM_START: u32 = 20;
+/// Official GGUF `GGUF_TYPE_BOOL` (array elem for `attention.sliding_window_pattern`).
+const GGUF_TYPE_BOOL: i32 = 7;
 
 /// Decode / load failure.
 #[derive(Debug)]
@@ -165,6 +411,8 @@ pub enum LlamaError {
     Sample(SampleError),
     /// Reading a GGUF file from disk failed.
     Io(std::io::Error),
+    /// Expert store (lease, unknown key, gpu-sim).
+    Store(String),
 }
 
 impl std::fmt::Display for LlamaError {
@@ -182,6 +430,7 @@ impl std::fmt::Display for LlamaError {
             Self::EmptyPrompt => write!(f, "empty prompt"),
             Self::Sample(e) => write!(f, "{e}"),
             Self::Io(e) => write!(f, "{e}"),
+            Self::Store(e) => write!(f, "expert store: {e}"),
         }
     }
 }
@@ -218,6 +467,12 @@ impl From<std::io::Error> for LlamaError {
     }
 }
 
+impl From<expertvm::Error> for LlamaError {
+    fn from(v: expertvm::Error) -> Self {
+        Self::Store(v.to_string())
+    }
+}
+
 struct QuantMat {
     name: String,
     ty: GgmlType,
@@ -227,6 +482,73 @@ struct QuantMat {
     n_parts: usize,
     start: usize,
     end: usize,
+}
+
+/// One expert part plus optional store bytes for a grouped GEMM.
+struct PartBytes<'a> {
+    m: &'a QuantMat,
+    part: usize,
+    n_tokens: usize,
+    bytes: Option<&'a [u8]>,
+}
+
+/// Softmax-then-top-k routed experts (llama / Qwen2MoE / Qwen3MoE / Qwen3Next).
+struct SoftmaxMoE<'a> {
+    gate_inp: &'a QuantMat,
+    gate: &'a QuantMat,
+    up: &'a QuantMat,
+    down: &'a QuantMat,
+    n_expert: usize,
+    n_used: usize,
+    n_embd: usize,
+    norm_w: bool,
+    /// Llama4 applies the router weight to `x` before SwiGLU (`weight_before_ffn`).
+    scale_x: bool,
+    /// Official gemma4.cpp experts are `LLM_FFN_GELU`; every other softmax MoE is SILU.
+    gelu: bool,
+    /// Official gemma4.cpp fused `ffn_gate_up_exps` (twice `n_ff` rows, gate then up).
+    fused: bool,
+    /// Official `ffn_gate_exps.scale` (`{n_expert}`). ggml `build_lora_mm_id`
+    /// multiplies the gate expert output. Missing is `1.0`. Fused
+    /// `ffn_gate_up_exps` ignores this tensor (official passes `up_exps_s`
+    /// for the fused GEMM).
+    gate_s: Option<&'a [f32]>,
+    /// Official `ffn_up_exps.scale` (`{n_expert}`). ggml `build_lora_mm_id`
+    /// multiplies the up expert output. Missing is `1.0`. On fused
+    /// `ffn_gate_up_exps`, official applies this scale to both halves.
+    up_s: Option<&'a [f32]>,
+    /// Official `ffn_down_exps.scale` (`{n_expert}`). ggml `build_lora_mm_id`
+    /// multiplies the down expert output. Missing is `1.0`.
+    down_s: Option<&'a [f32]>,
+    err: &'static str,
+}
+
+struct MoeExec<'a> {
+    pool: &'a mut GemvPool,
+    moe_trace: &'a mut MoeTraceBuf,
+    store: &'a mut Option<LiveStore>,
+}
+
+struct GroupedRun<'a> {
+    pool: &'a mut GemvPool,
+    store: &'a mut Option<LiveStore>,
+    layer: u32,
+    row_seq: &'a [u64],
+    sequence: u64,
+}
+
+struct ExpertJob<'a> {
+    expert: usize,
+    toks: &'a [usize],
+    layer: u32,
+    row_seq: &'a [u64],
+    sequence: u64,
+}
+
+struct ExpertGemm<'a> {
+    expert: usize,
+    n: usize,
+    parts: Option<&'a ExpertParts>,
 }
 
 /// Reuse `token_embd.weight` as the lm_head when `output.weight` is absent.
@@ -262,6 +584,18 @@ struct Llama4Moe {
     gate_shexp: QuantMat,
     up_shexp: QuantMat,
     down_shexp: QuantMat,
+    /// Official llama.cpp generic `{1}` `ffn_gate_shexp.scale`
+    /// (`TENSOR_NOT_REQUIRED`). `build_ffn` `ggml_mul` after the shared-expert
+    /// gate GEMM, before SiLU. Missing is `1.0`.
+    gate_shexp_s: Option<f32>,
+    /// Official llama.cpp generic `{1}` `ffn_up_shexp.scale`
+    /// (`TENSOR_NOT_REQUIRED`). `build_ffn` `ggml_mul` after the shared-expert
+    /// up GEMM, before the gated product. Missing is `1.0`.
+    up_shexp_s: Option<f32>,
+    /// Official llama.cpp generic `{1}` `ffn_down_shexp.scale`
+    /// (`TENSOR_NOT_REQUIRED`). `build_ffn` `ggml_mul` after the shared-expert
+    /// down GEMM. Missing is `1.0`.
+    down_shexp_s: Option<f32>,
     n_expert: usize,
     n_expert_used: usize,
 }
@@ -276,6 +610,29 @@ struct Qwen3Moe {
     n_expert_used: usize,
 }
 
+/// Official Gemma4 MoE (`build_moe_ffn` SOFTMAX + `norm_w` + GELU, plus dense shared MLP).
+struct Gemma4Moe {
+    shared: DenseFfn,
+    post_norm_1: Vec<f32>,
+    pre_norm_2: Vec<f32>,
+    post_norm_2: Vec<f32>,
+    gate_inp: QuantMat,
+    gate_inp_s: Vec<f32>,
+    gate_exps: Option<QuantMat>,
+    up_exps: Option<QuantMat>,
+    /// Official fused `ffn_gate_up_exps` (`n_embd` by twice `n_ff` by `n_expert`).
+    gate_up: Option<QuantMat>,
+    down_exps: QuantMat,
+    /// Official `blk.{i}.ffn_gate_exps.scale` (`TENSOR_NOT_REQUIRED`, `{n_expert}`).
+    gate_s: Option<Vec<f32>>,
+    /// Official `blk.{i}.ffn_up_exps.scale` (`TENSOR_NOT_REQUIRED`, `{n_expert}`).
+    up_s: Option<Vec<f32>>,
+    /// Official `blk.{i}.ffn_down_exps.scale` (`TENSOR_NOT_REQUIRED`, `{n_expert}`).
+    down_s: Option<Vec<f32>>,
+    n_expert: usize,
+    n_expert_used: usize,
+}
+
 /// Official Qwen2MoE (`build_moe_ffn` SOFTMAX, `norm_w=false`, gated shared expert).
 struct Qwen2Moe {
     gate_inp: QuantMat,
@@ -286,6 +643,18 @@ struct Qwen2Moe {
     gate_shexp: QuantMat,
     up_shexp: QuantMat,
     down_shexp: QuantMat,
+    /// Official llama.cpp generic `{1}` `ffn_gate_shexp.scale`
+    /// (`TENSOR_NOT_REQUIRED`). `build_ffn` `ggml_mul` after the shared-expert
+    /// gate GEMM, before SiLU. Missing is `1.0`.
+    gate_shexp_s: Option<f32>,
+    /// Official llama.cpp generic `{1}` `ffn_up_shexp.scale`
+    /// (`TENSOR_NOT_REQUIRED`). `build_ffn` `ggml_mul` after the shared-expert
+    /// up GEMM, before the gated product. Missing is `1.0`.
+    up_shexp_s: Option<f32>,
+    /// Official llama.cpp generic `{1}` `ffn_down_shexp.scale`
+    /// (`TENSOR_NOT_REQUIRED`). `build_ffn` `ggml_mul` after the shared-expert
+    /// down GEMM, before `ffn_gate_inp_shexp` sigmoid. Missing is `1.0`.
+    down_shexp_s: Option<f32>,
     n_expert: usize,
     n_expert_used: usize,
 }
@@ -293,8 +662,26 @@ struct Qwen2Moe {
 /// Dense SwiGLU / GeGLU weights (`ffn_gate` / `ffn_up` / `ffn_down`).
 struct DenseFfn {
     gate: QuantMat,
+    /// Official llama.cpp generic `{1}` `ffn_gate.scale` (`TENSOR_NOT_REQUIRED`).
+    /// `build_ffn` `ggml_mul` after the gate GEMM, before SiLU / GELU. Missing is `1.0`.
+    gate_s: Option<f32>,
     up: QuantMat,
+    /// Official llama.cpp generic `{1}` `ffn_up.scale` (`TENSOR_NOT_REQUIRED`).
+    /// `build_ffn` `ggml_mul` after the up GEMM, before the gated product. Missing is `1.0`.
+    up_s: Option<f32>,
     down: QuantMat,
+    /// Official llama.cpp generic `{1}` `ffn_down.scale` (`TENSOR_NOT_REQUIRED`).
+    /// `build_ffn` `ggml_mul` after the down GEMM. Missing is `1.0`.
+    down_s: Option<f32>,
+}
+
+/// Official phi2 sequential GELU (`LLM_FFN_GELU` + `LLM_FFN_SEQ`): no gate.
+/// Official bloom uses the same FFN op (`bloom.cpp` `build_ffn` GELU/SEQ).
+struct Phi2Ffn {
+    up: QuantMat,
+    up_b: Vec<f32>,
+    down: QuantMat,
+    down_b: Vec<f32>,
 }
 
 /// Dense SwiGLU / Gemma GeGLU, official llama MoE, Llama4, Qwen2MoE, or Qwen3MoE.
@@ -307,25 +694,67 @@ enum LayerFfn {
     Llama4Moe(Box<Llama4Moe>),
     /// Official `qwen2moe`: routed `*_exps` + gated shared `*_shexp`.
     Qwen2Moe(Box<Qwen2Moe>),
+    /// Official `gemma4` MoE: dense shared GeGLU plus routed GELU `*_exps`.
+    Gemma4Moe(Box<Gemma4Moe>),
     /// Official `qwen3moe`: routed `*_exps`, softmax then top-k with `norm_w`.
     Qwen3Moe(Box<Qwen3Moe>),
     /// Official `qwen3next`: routed `*_exps` (`norm_w`) + gated shared `*_shexp`.
     Qwen3Next(Box<Qwen2Moe>),
+    /// Official `phi2` / `bloom`: `ffn_up` / `ffn_down` GELU sequential (no `ffn_gate`).
+    Phi2(Box<Phi2Ffn>),
 }
 
 /// Per-layer weights.
 struct Layer {
     attn_norm: Vec<f32>,
+    /// Official phi2 / bloom `blk.{i}.attn_norm.bias` (`LLM_NORM`).
+    attn_norm_b: Option<Vec<f32>>,
     wq: QuantMat,
     bq: Option<Vec<f32>>,
-    wk: QuantMat,
+    /// Official llama.cpp generic `{1}` `attn_q.scale` (`TENSOR_NOT_REQUIRED`).
+    /// `build_lora_mm` `ggml_mul` after the Q GEMM, before QK-Norm. Missing is `1.0`.
+    q_s: Option<f32>,
+    /// Official llama.cpp generic `{1}` `attn_qkv.scale` (`TENSOR_NOT_REQUIRED`).
+    /// `build_qkv` fused path: `build_lora_mm` `ggml_mul` after the QKV GEMM,
+    /// before QKV bias. Missing is `1.0`. Loaded only when fused `attn_qkv`
+    /// is present (bloom).
+    qkv_s: Option<f32>,
+    /// `None` on official gemma4 shared-KV layers (`!has_kv(il)`).
+    wk: Option<QuantMat>,
     bk: Option<Vec<f32>>,
-    wv: QuantMat,
+    /// Official llama.cpp generic `{1}` `attn_k.scale` (`TENSOR_NOT_REQUIRED`).
+    /// `build_lora_mm` `ggml_mul` after the K GEMM, before K-norm. Missing is `1.0`.
+    k_s: Option<f32>,
+    /// `None` on official gemma4 shared-KV layers (`!has_kv(il)`), or when
+    /// `attn_v` is omitted (`TENSOR_NOT_REQUIRED`): decode uses K as V
+    /// before the unweighted V RMSNorm.
+    wv: Option<QuantMat>,
     bv: Option<Vec<f32>>,
+    /// Official llama.cpp generic `{1}` `attn_v.scale` (`TENSOR_NOT_REQUIRED`).
+    /// `build_lora_mm` `ggml_mul` after the V GEMM, before V RMSNorm. Missing is `1.0`.
+    v_s: Option<f32>,
+    /// KV cache layer index: `il` when `has_kv`, else the official reuse donor
+    /// (`n_layer_kv_from_start` minus 2 on SWA, minus 1 on global).
+    kv_slot: usize,
+    /// Per-layer head dim. Official gemma4: SWA uses `key_length_swa`, global
+    /// uses `key_length` (default `n_embd / n_head`).
+    hd: usize,
+    /// Per-layer RoPE dim. Official `n_rot(il)`: SWA uses
+    /// `rope.dimension_count_swa` (default the full `n_rot`).
+    n_rot: usize,
+    /// Per-layer RoPE base. Official gemma4 `get_rope_freq_base(il)`: SWA uses
+    /// `rope.freq_base_swa` (default `10000`), global uses `rope.freq_base`.
+    rope_base: f32,
     wo: QuantMat,
-    /// Official Qwen3 / Qwen3MoE / Qwen3VL / Qwen3Next / Qwen35 `blk.{i}.attn_q_norm` (RMSNorm on Q after projection, before RoPE).
+    /// Official phi2 / bloom `blk.{i}.attn_output.bias` (required, flag 0).
+    wo_b: Option<Vec<f32>>,
+    /// Official llama.cpp generic `{1}` `attn_output.scale` (`TENSOR_NOT_REQUIRED`).
+    /// `build_lora_mm` `ggml_mul` after the output GEMM, before post-attn RMSNorm.
+    /// Missing is `1.0`.
+    wo_s: Option<f32>,
+    /// Official Qwen3 / Qwen3MoE / Qwen3VL / Qwen3Next / Qwen35 / Gemma3 / Gemma3n / Gemma4 `blk.{i}.attn_q_norm` (RMSNorm on Q after projection, before RoPE).
     attn_q_norm: Option<Vec<f32>>,
-    /// Official Qwen3 / Qwen3MoE / Qwen3VL / Qwen3Next / Qwen35 `blk.{i}.attn_k_norm` (RMSNorm on K after projection, before RoPE).
+    /// Official Qwen3 / Qwen3MoE / Qwen3VL / Qwen3Next / Qwen35 / Gemma3 / Gemma3n / Gemma4 `blk.{i}.attn_k_norm` (RMSNorm on K after projection, before RoPE).
     attn_k_norm: Option<Vec<f32>>,
     /// Official Qwen3Next / Qwen35: `attn_q` is query+gate (`n_embd_head * n_head * 2`).
     attn_q_gate: bool,
@@ -334,7 +763,68 @@ struct Layer {
     /// Official Llama4 `Llama4TextL2Norm`: unweighted RMS after RoPE on RoPE layers.
     qk_l2: bool,
     ffn_norm: Vec<f32>,
+    /// Official bloom `blk.{i}.ffn_norm.bias` (`LLM_NORM`). Phi2 has no `ffn_norm`.
+    ffn_norm_b: Option<Vec<f32>>,
+    /// Official gemma2 / gemma3 / gemma3n / gemma4 `blk.{i}.post_attention_norm` (RMSNorm on attn out before residual).
+    attn_post_norm: Option<Vec<f32>>,
+    /// Official gemma2 / gemma3 / gemma3n / gemma4 `blk.{i}.post_ffw_norm` (RMSNorm on FFN out before residual).
+    ffn_post_norm: Option<Vec<f32>>,
     ffn: LayerFfn,
+    /// Official gemma3n AltUp / Laurel / per-layer input tensors.
+    gemma3n: Option<Gemma3nLayer>,
+    /// Official gemma4.cpp per-layer embedding inject (`n_embd_per_layer > 0`).
+    gemma4_ple: Option<Gemma4PleLayer>,
+    /// Official gemma4 `blk.{i}.layer_output_scale` (`TENSOR_NOT_REQUIRED`).
+    /// Broadcast scalar `ggml_mul` after the FFN residual (and PLE inject).
+    out_scale: Option<f32>,
+    /// Official gemma4 `rope_freqs.weight` on non-SWA layers. GGUF name has no
+    /// block index (`LLM_TENSOR_NAMES` `"rope_freqs"`); later global layers
+    /// share the first tensor (`TENSOR_DUPLICATED`). ggml `ggml_rope_cache_init`
+    /// uses `theta/ff`. SWA keeps `freq_factors` null.
+    rope_freqs: Option<Vec<f32>>,
+}
+
+/// Official gemma4.cpp per-layer input inject weights (`inp_gate` / `proj` / `post_norm`).
+struct Gemma4PleLayer {
+    inp_gate: QuantMat,
+    proj: QuantMat,
+    post_norm: Vec<f32>,
+}
+
+/// Official gemma4.cpp model-level per-layer embedding tensors.
+struct Gemma4PleWeights {
+    per_layer_token_embd: QuantMat,
+    per_layer_model_proj: QuantMat,
+    per_layer_proj_norm: Vec<f32>,
+    n_embd_per_layer: usize,
+}
+
+/// Official gemma3n.cpp per-layer AltUp, Laurel, and per-layer input weights.
+struct Gemma3nLayer {
+    inp_gate: QuantMat,
+    proj: QuantMat,
+    post_norm: Vec<f32>,
+    altup_correct_coef: QuantMat,
+    altup_correct_scale: Vec<f32>,
+    altup_predict_coef: QuantMat,
+    altup_router: QuantMat,
+    altup_router_norm: Vec<f32>,
+    laurel_l: QuantMat,
+    laurel_r: QuantMat,
+    laurel_post_norm: Vec<f32>,
+}
+
+/// Official gemma3n.cpp model-level AltUp / per-layer embedding tensors.
+struct Gemma3nWeights {
+    altup_proj: QuantMat,
+    altup_unembd_proj: QuantMat,
+    per_layer_token_embd: QuantMat,
+    per_layer_model_proj: QuantMat,
+    per_layer_proj_norm: Vec<f32>,
+    n_altup: usize,
+    i_altup_act: usize,
+    n_embd_altup: usize,
+    n_layer_sparsity: usize,
 }
 
 /// Loaded Llama-family weights. Quantized matrices are ranges of one file blob.
@@ -360,11 +850,151 @@ pub struct Llama {
     /// Official Gemma FFN is `LLM_FFN_GELU` (GeGLU). Other loaded arches stay SwiGLU
     /// (`LLM_FFN_SILU`), including official Qwen3, Llama4, and Qwen3MoE.
     ffn_gelu: bool,
-    blob: Vec<u8>,
+    /// The GGUF file blob. `Arc` because the GEMV pool's workers read weight
+    /// rows out of it and must not borrow from a decode frame.
+    blob: Arc<Vec<u8>>,
     token_embd: QuantMat,
     output_norm: Vec<f32>,
+    /// Official phi2 / bloom `output_norm.bias` (`LLM_NORM`).
+    output_norm_b: Option<Vec<f32>>,
     output: QuantMat,
+    /// Official llama.cpp `{1}` `output.scale` when `output.weight` is NVFP4
+    /// (`TENSOR_NOT_REQUIRED`). `build_lora_mm` `ggml_mul` after the LM-head
+    /// GEMM. Missing is `1.0`. F32 `output.scale` is not loaded.
+    output_s: Option<f32>,
+    /// Official phi2 `output.bias` (required, flag 0). Bloom has none.
+    output_b: Option<Vec<f32>>,
+    /// Official `architecture=phi2` language walk (`src/models/phi2.cpp`).
+    phi2: bool,
+    /// Official `architecture=bloom` language walk (`src/models/bloom.cpp`).
+    bloom: bool,
+    /// Official bloom `token_embd_norm.weight` (`LLM_TENSOR_TOKEN_EMBD_NORM`).
+    token_embd_norm: Option<Vec<f32>>,
+    /// Official bloom `token_embd_norm.bias`.
+    token_embd_norm_b: Option<Vec<f32>>,
+    /// Official gemma2 `attn_logit_softcapping` (`0` disables).
+    attn_logit_softcapping: f32,
+    /// Official gemma2 `final_logit_softcapping` (`0` disables).
+    final_logit_softcapping: f32,
+    /// Official gemma2 `{arch}.attention.sliding_window` (`0` is full causal).
+    n_swa: usize,
+    /// Official gemma2 `set_swa_pattern` period (default 2; `0` means every layer).
+    swa_period: u32,
+    /// Official gemma4 convert `attention.sliding_window_pattern` bool array.
+    /// Empty means [`gemma2_is_swa`] with [`Self::swa_period`].
+    is_swa: Vec<bool>,
+    /// Official `architecture=gemma4` language walk (`src/models/gemma4.cpp`):
+    /// attention scale `1.0` and unweighted RMSNorm on V.
+    gemma4: bool,
+    /// Official `architecture=gemma3n` AltUp / Laurel / per-layer embeddings.
+    gemma3n: Option<Gemma3nWeights>,
+    /// Official gemma4.cpp per-layer embeddings when
+    /// `embedding_length_per_layer_input > 0`.
+    gemma4_ple: Option<Gemma4PleWeights>,
     layers: Vec<Layer>,
+}
+
+/// One weight matrix as the GEMV pool sees it: plain numbers, no borrows.
+///
+/// `gemv_*` derives its row count from `y.len()` and requires exactly
+/// `row_bytes * y.len()` weight bytes, so rows `first .. last` of a matrix are
+/// just the byte range `[base + first * row_bytes, base + last * row_bytes)`
+/// against `y[first..last]`. No kernel signature has to change for this.
+#[derive(Clone, Copy)]
+struct GemvJob {
+    ty: GgmlType,
+    n_cols: usize,
+    /// Byte offset of row 0 in the model blob.
+    base: usize,
+    row_bytes: usize,
+}
+
+/// GEMV rows out of the model blob, run on the pool's worker threads.
+struct GemvRows {
+    blob: Arc<Vec<u8>>,
+}
+
+/// The pool slot threaded through the forward pass. `&mut` so a decode step can
+/// spawn the workers on first use and reuse them afterwards.
+type GemvPool = Option<Pool<GemvRows>>;
+
+impl RowKernel for GemvRows {
+    type Job = GemvJob;
+
+    fn rows(&self, job: GemvJob, first: usize, x: &[f32], y: &mut [f32]) -> bool {
+        let Some(start) = first
+            .checked_mul(job.row_bytes)
+            .and_then(|off| off.checked_add(job.base))
+        else {
+            return false;
+        };
+        let Some(end) = y
+            .len()
+            .checked_mul(job.row_bytes)
+            .and_then(|len| start.checked_add(len))
+        else {
+            return false;
+        };
+        let Some(w) = self.blob.get(start..end) else {
+            return false;
+        };
+        matches!(gemv_rows(job.ty, job.n_cols, w, x, y), Ok(true))
+    }
+}
+
+/// Work below which a pooled GEMV loses to a sequential one. Chosen from
+/// `bench_dispatch_overhead`: the pool costs a few microseconds per call, and
+/// the sequential kernels run on the order of a MAC per nanosecond per core.
+const PAR_MIN_WORK: usize = 1 << 16;
+
+#[cfg(test)]
+thread_local! {
+    /// Test hook overriding the size threshold: `Some(true)` sends every GEMV
+    /// to the pool (the tiny fixtures are all below it), `Some(false)` sends
+    /// none, which is the pre-pool behaviour and what the benchmark compares
+    /// against inside one process.
+    static POOL_OVERRIDE: std::cell::Cell<Option<bool>> =
+        const { std::cell::Cell::new(None) };
+}
+
+#[cfg(test)]
+fn with_pool_override<R>(to: Option<bool>, f: impl FnOnce() -> R) -> R {
+    POOL_OVERRIDE.with(|flag| {
+        let prev = flag.replace(to);
+        let out = f();
+        flag.set(prev);
+        out
+    })
+}
+
+/// Run `f` with every GEMV routed through the pool regardless of size.
+#[cfg(test)]
+pub(crate) fn with_forced_pool<R>(f: impl FnOnce() -> R) -> R {
+    with_pool_override(Some(true), f)
+}
+
+/// Run `f` with the pool disabled, i.e. every GEMV in the calling thread.
+#[cfg(test)]
+pub(crate) fn without_pool<R>(f: impl FnOnce() -> R) -> R {
+    with_pool_override(Some(false), f)
+}
+
+#[cfg(test)]
+fn pool_override() -> Option<bool> {
+    POOL_OVERRIDE.with(std::cell::Cell::get)
+}
+
+#[cfg(not(test))]
+fn pool_override() -> Option<bool> {
+    None
+}
+
+/// Whether an `n_rows x n_cols` GEMV is big enough to hand to the pool.
+fn pooled_gemv(n_rows: usize, n_cols: usize) -> bool {
+    match pool_override() {
+        Some(forced) => forced && n_rows > 1,
+        None => n_rows > 1 && n_rows.saturating_mul(n_cols) >= PAR_MIN_WORK,
+    }
 }
 
 /// KV cache for GQA decode.
@@ -374,30 +1004,897 @@ pub struct KvCache {
     /// Tokens already in the cache.
     pub n_past: usize,
     max_seq: usize,
+    scratch: Scratch,
+    /// GEMV workers, spawned on the first decode step that can use them and
+    /// joined when the cache drops. `None` for models too small to benefit and
+    /// under `pool::with_sequential`.
+    pool: Option<Pool<GemvRows>>,
+    moe_trace: MoeTraceBuf,
+    /// Opt-in expert residency. `None` keeps the default blob GEMV path.
+    expert_store: Option<LiveStore>,
+    /// Longest common prefix of the last [`Llama::prompt_logits`] vs cached ids.
+    last_prefix_hit: usize,
+    /// Opt-in paged KV. `None` keeps the dense `max_seq` layout.
+    pages: Option<KvPages>,
 }
 
 impl KvCache {
-    /// Tokens this cache was allocated for, as passed to [`Llama::new_cache`].
-    ///
-    /// A cache cannot grow: [`Llama::prefill`] fails once `n_past + tokens`
-    /// would exceed this. Positions at or past [`Self::n_past`] hold stale
-    /// bytes that attention never reads, so setting `n_past = 0` reuses the
-    /// allocation for an unrelated sequence.
-    pub fn capacity(&self) -> usize {
+    pub(crate) fn capacity(&self) -> usize {
         self.max_seq
     }
+
+    /// Record MoE router decisions into an [`expertvm::Trace`].
+    ///
+    /// Off by default: the events vec stays empty and decode does not allocate
+    /// for tracing. Cached token ids are kept so [`KvCache::reuse_prefix`] still
+    /// sees the sequence. Enable before the first prefill of a traced run.
+    pub fn enable_moe_trace(&mut self, sequence: u64) {
+        self.moe_trace.enabled = true;
+        self.moe_trace.sequence = sequence;
+        self.moe_trace.events.clear();
+        self.moe_trace.batch.clear();
+    }
+
+    /// Sequence id for batched MoE rows (Engine seq-streams). Does not enable tracing.
+    pub(crate) fn set_moe_sequence(&mut self, sequence: u64) {
+        self.moe_trace.sequence = sequence;
+    }
+
+    /// Take recorded router events. Empty if tracing was never enabled.
+    pub fn take_moe_trace(&mut self) -> Trace {
+        Trace {
+            events: core::mem::take(&mut self.moe_trace.events),
+        }
+    }
+
+    /// Decode expert FFN from store copies instead of the GGUF blob.
+    ///
+    /// Off by default so allocation-free blob decode stays unchanged.
+    pub fn attach_expert_store(&mut self, store: LiveStore) {
+        self.expert_store = Some(store);
+    }
+
+    /// Remove the attached store.
+    pub fn take_expert_store(&mut self) -> Option<LiveStore> {
+        self.expert_store.take()
+    }
+
+    /// Mutable borrow of the attached store, if any.
+    pub(crate) fn expert_store_mut(&mut self) -> Option<&mut LiveStore> {
+        self.expert_store.as_mut()
+    }
+
+    /// Borrow the attached store, if any.
+    #[must_use]
+    pub fn attached_store(&self) -> Option<&LiveStore> {
+        self.expert_store.as_ref()
+    }
+
+    /// Counters from the attached store, if any.
+    #[must_use]
+    pub fn expert_store_metrics(&self) -> Option<expertvm::StoreMetrics> {
+        self.expert_store.as_ref().map(ExpertStore::metrics)
+    }
+
+    /// Token ids occupying KV slots `0 .. n_past`.
+    #[must_use]
+    pub fn cached_ids(&self) -> &[u32] {
+        &self.moe_trace.ids
+    }
+
+    /// KV capacity in tokens (the `max_seq` stride).
+    #[must_use]
+    pub fn max_seq(&self) -> usize {
+        self.max_seq
+    }
+
+    /// Longest common prefix reused by the last [`Llama::prompt_logits`].
+    ///
+    /// Zero until a prompt call. A full-prefix hit still recomputes the last
+    /// prompt token so the returned logits belong to that token.
+    #[must_use]
+    pub fn last_prefix_hit(&self) -> usize {
+        self.last_prefix_hit
+    }
+
+    /// Rewind `n_past` to the longest common prefix of `tokens` and the cached
+    /// ids. Positions `0..lcp` stay valid (head-major KV). Markov lookback is
+    /// cleared; the tables stay. Does **not** run inside [`Llama::prefill_logits`]
+    /// (`forward` is that path and would otherwise LCP to 0).
+    pub fn reuse_prefix(&mut self, tokens: &[u32]) -> usize {
+        if self.moe_trace.ids.len() != self.n_past {
+            self.rewind(0);
+            return 0;
+        }
+        let lcp = self
+            .moe_trace
+            .ids
+            .iter()
+            .zip(tokens.iter())
+            .take_while(|(a, b)| a == b)
+            .count();
+        self.rewind(lcp);
+        lcp
+    }
+
+    fn rewind(&mut self, n: usize) {
+        let n = n.min(self.n_past).min(self.moe_trace.ids.len());
+        self.n_past = n;
+        self.moe_trace.ids.truncate(n);
+        self.moe_trace.batch.clear();
+        self.moe_trace.row_seq.clear();
+        self.moe_trace.row_tok.clear();
+        self.moe_trace.row_prefix.clear();
+        let tok_u = u32::try_from(n).unwrap_or(u32::MAX);
+        self.moe_trace.events.retain(|e| e.token < tok_u);
+        self.moe_trace.chain.clear();
+        if let Some(p) = self.pages.as_mut() {
+            p.rewind_tokens(n);
+        }
+    }
+
+    /// Drop this sequence's KV blocks so another sequence can allocate.
+    ///
+    /// Interned prefixes stay in the pool (`refs` may remain 1). The engine
+    /// re-prefills and replays already sampled tokens (greedy recompute).
+    pub fn preempt(&mut self) {
+        self.rewind(0);
+    }
+
+    /// Bind interned prefixes / LCP, then return the suffix still to forward.
+    ///
+    /// A full-prefix hit rewinds one token so the caller recomputes the last
+    /// prompt token. `max_suffix` caps newly forwarded tokens (`0` = the rest).
+    /// Used by [`Llama::prompt_chunk`] and Engine batched prefill.
+    pub(crate) fn prompt_suffix<'a>(
+        &mut self,
+        tokens: &'a [u32],
+        max_suffix: usize,
+    ) -> Result<&'a [u32], LlamaError> {
+        if tokens.is_empty() {
+            return Err(LlamaError::Shape("prefill tokens".into()));
+        }
+        let lcp = self.reuse_prefix(tokens);
+        let mut hit = lcp;
+        let bound = if let Some(p) = self.pages.as_mut() {
+            p.bind_full_prefix(tokens, self.n_past)
+        } else {
+            lcp
+        };
+        if bound > self.n_past {
+            if let Some(extra) = tokens.get(self.n_past..bound) {
+                self.moe_trace.ids.extend_from_slice(extra);
+            }
+            self.n_past = bound;
+            hit = bound;
+        }
+        self.last_prefix_hit = hit;
+        if hit == tokens.len() {
+            let keep = tokens.len().saturating_sub(1);
+            self.rewind(keep);
+            return tokens
+                .get(keep..)
+                .ok_or_else(|| LlamaError::Shape("prefill tokens".into()));
+        }
+        let suffix = tokens
+            .get(hit..)
+            .ok_or_else(|| LlamaError::Shape("prefill tokens".into()))?;
+        let cap = if max_suffix == 0 {
+            suffix.len()
+        } else {
+            suffix.len().min(max_suffix)
+        };
+        suffix
+            .get(..cap)
+            .ok_or_else(|| LlamaError::Shape("prefill tokens".into()))
+    }
+
+    /// Ensure `n_past + extra` KV positions exist so a later write cannot fail
+    /// the page cap. Paged block allocation is idempotent: a second call with
+    /// the same `extra` before advancing `n_past` does not take another block.
+    /// Dense caches only check `n_past + extra <= max_seq`.
+    pub fn prepare_append(&mut self, extra: usize) -> Result<(), LlamaError> {
+        let end = self
+            .n_past
+            .checked_add(extra)
+            .ok_or_else(|| LlamaError::Shape("kv cache full".into()))?;
+        if extra == 0 {
+            return Ok(());
+        }
+        if end > self.max_seq {
+            return Err(LlamaError::Shape("kv cache full".into()));
+        }
+        if let Some(p) = self.pages.as_mut() {
+            for pos in self.n_past..end {
+                p.ensure_write(pos)
+                    .map_err(|e| LlamaError::Shape(e.into()))?;
+            }
+        }
+        Ok(())
+    }
+
+    /// Physical blocks on this sequence's page table (`0` when dense).
+    #[must_use]
+    pub fn page_table_len(&self) -> usize {
+        self.pages
+            .as_ref()
+            .map(|p| p.table_ids().len())
+            .unwrap_or(0)
+    }
+
+    /// Paged block size when this cache uses [`KvPages`].
+    #[must_use]
+    pub fn page_size(&self) -> Option<usize> {
+        self.pages.as_ref().map(KvPages::block_size)
+    }
+
+    /// Interned-block hits on this cache's pool (`0` when dense).
+    #[must_use]
+    pub fn page_hits(&self) -> u64 {
+        self.pages.as_ref().map_or(0, KvPages::hits)
+    }
+
+    /// Physical blocks with a positive refcount (`0` when dense).
+    #[must_use]
+    pub fn page_occupied(&self) -> usize {
+        self.pages.as_ref().map_or(0, KvPages::occupied)
+    }
+}
+
+/// Opt-in MoE access log. Events allocate only when enabled. Predictor prefetch
+/// (`Prefetch::Both` by default) runs when a store is attached.
+#[derive(Default)]
+struct MoeTraceBuf {
+    enabled: bool,
+    sequence: u64,
+    layer: u32,
+    token0: u32,
+    events: Vec<ExpertAccess>,
+    /// Token ids from completed forwards (the prefix so far).
+    ids: Vec<u32>,
+    /// Token ids of the in-flight forward.
+    batch: Vec<u32>,
+    /// Per-row sequence id for a batched GEMM (`empty` = [`Self::sequence`]).
+    row_seq: Vec<u64>,
+    /// Per-row token index for a batched GEMM (`empty` = `token0 + off`).
+    row_tok: Vec<u32>,
+    /// Per-row prefix hash for a batched GEMM (`empty` = [`Self::prefix_at`]).
+    row_prefix: Vec<u64>,
+    markov: Markov,
+    chain: ChainState,
+    policy: PlanPolicy,
+}
+
+/// Engine/decode predictor knobs. Default is copy-forward ∪ lookback-2, ungated.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+struct PlanPolicy {
+    prefetch: Prefetch,
+    plan_window: usize,
+    plan_threshold: u32,
+}
+
+impl Default for PlanPolicy {
+    fn default() -> Self {
+        Self {
+            prefetch: Prefetch::Both,
+            plan_window: 0,
+            plan_threshold: 500,
+        }
+    }
+}
+
+/// Unique predicted keys, at most `n` (order preserved).
+fn unique_prefix(keys: &[ExpertKey], n: usize) -> Vec<ExpertKey> {
+    let mut seen = BTreeSet::new();
+    let mut out = Vec::new();
+    for k in keys {
+        if !seen.insert(*k) {
+            continue;
+        }
+        out.push(*k);
+        if out.len() >= n {
+            break;
+        }
+    }
+    out
+}
+
+/// Online Markov + last two router events, parked on Engine across GEMMs.
+#[derive(Default)]
+pub(crate) struct PrefetchChain {
+    markov: Markov,
+    chain: ChainState,
+    policy: PlanPolicy,
+}
+
+impl PrefetchChain {
+    /// Engine serving policy. Default decode is [`Prefetch::Both`], ungated.
+    pub(crate) fn with_policy(prefetch: Prefetch, plan_window: usize, plan_threshold: u32) -> Self {
+        Self {
+            policy: PlanPolicy {
+                prefetch,
+                plan_window,
+                plan_threshold,
+            },
+            ..Self::default()
+        }
+    }
+
+    /// Last selected experts union the configured predictor (no JSONL future leak).
+    pub(crate) fn keep_hot_keys(&self) -> Vec<ExpertKey> {
+        let Some(prev) = self.chain.last_event() else {
+            return Vec::new();
+        };
+        let mut out = prev.keys();
+        let extra = predicted_keys(
+            self.policy.prefetch,
+            &self.markov,
+            self.chain.last_pred(),
+            &out,
+        );
+        for k in extra {
+            if !out.contains(&k) {
+                out.push(k);
+            }
+        }
+        out
+    }
+
+    /// Selected-expert count of the last parked router event (`1` if none).
+    pub(crate) fn last_fan_in(&self) -> u64 {
+        let n = self.chain.last_event().map_or(0, |e| e.experts.len());
+        u64::try_from(n).unwrap_or(1).max(1)
+    }
+}
+
+impl KvCache {
+    /// Install Engine-level Markov prefetch state onto this cache.
+    pub(crate) fn set_prefetch_chain(&mut self, chain: PrefetchChain) {
+        self.moe_trace.markov = chain.markov;
+        self.moe_trace.chain = chain.chain;
+        self.moe_trace.policy = chain.policy;
+    }
+
+    /// Take Markov prefetch state so Engine can park it across GEMMs.
+    pub(crate) fn take_prefetch_chain(&mut self) -> PrefetchChain {
+        PrefetchChain {
+            markov: core::mem::take(&mut self.moe_trace.markov),
+            chain: core::mem::take(&mut self.moe_trace.chain),
+            policy: self.moe_trace.policy,
+        }
+    }
+}
+
+impl MoeTraceBuf {
+    fn seq_of(&self, token_off: usize) -> u64 {
+        self.row_seq
+            .get(token_off)
+            .copied()
+            .unwrap_or(self.sequence)
+    }
+
+    fn event(&self, token_off: usize, experts: &[usize], weights: &[f32]) -> ExpertAccess {
+        let token = self.row_tok.get(token_off).copied().unwrap_or_else(|| {
+            self.token0
+                .saturating_add(u32::try_from(token_off).unwrap_or(u32::MAX))
+        });
+        let sequence = self.seq_of(token_off);
+        let prefix = self
+            .row_prefix
+            .get(token_off)
+            .copied()
+            .unwrap_or_else(|| self.prefix_at(token_off));
+        let mut ids = Vec::new();
+        let mut weight_pt = Vec::new();
+        for (i, e) in experts.iter().enumerate() {
+            ids.push(u32::try_from(*e).unwrap_or(u32::MAX));
+            if !weights.is_empty() {
+                let r = weights.get(i).copied().unwrap_or(0.0);
+                weight_pt.push(weight_permille(r));
+            }
+        }
+        ExpertAccess {
+            sequence,
+            token,
+            layer: self.layer,
+            experts: ids,
+            weight_pt,
+            prefix: Some(prefix),
+        }
+    }
+
+    fn prefix_at(&self, token_off: usize) -> u64 {
+        let take = token_off.saturating_add(1);
+        let mut buf = Vec::with_capacity(self.ids.len().saturating_add(take));
+        buf.extend_from_slice(&self.ids);
+        buf.extend(self.batch.iter().copied().take(take));
+        prefix_hash(&buf)
+    }
+
+    fn record(&mut self, token_off: usize, experts: &[usize], weights: &[f32]) {
+        if !self.enabled {
+            return;
+        }
+        self.events.push(self.event(token_off, experts, weights));
+    }
+
+    fn prefetch_experts(
+        &mut self,
+        store: &mut Option<LiveStore>,
+        token_off: usize,
+        selected: &[usize],
+    ) {
+        let Some(store) = store.as_mut() else {
+            return;
+        };
+        let mut keys = Vec::new();
+        for e in selected {
+            if let Ok(ex) = u32::try_from(*e) {
+                keys.push(ExpertKey::new(self.layer, ex));
+            }
+        }
+        let ev = self.event(token_off, selected, &[]);
+        let planned = predicted_keys(
+            self.policy.prefetch,
+            &self.markov,
+            self.chain.predecessor(&ev),
+            &keys,
+        );
+        if self.want_prefetch(store, &planned) {
+            match store.prefetch(&planned) {
+                Ok(_n) => {}
+                Err(_e) => {}
+            }
+        }
+        self.chain.observe(&mut self.markov, &ev);
+    }
+
+    fn want_prefetch(&self, store: &LiveStore, predicted: &[ExpertKey]) -> bool {
+        if self.policy.plan_window == 0 {
+            return true;
+        }
+        let upcoming = unique_prefix(predicted, self.policy.plan_window);
+        let resident: BTreeSet<ExpertKey> = upcoming
+            .iter()
+            .copied()
+            .filter(|k| store.is_resident(*k))
+            .collect();
+        !matches!(
+            plan_keys(&resident, &upcoming, self.policy.plan_threshold),
+            Plan::Stay
+        )
+    }
+}
+
+/// Working buffers for one forward pass, reused across decode steps.
+///
+/// Every buffer starts empty and is grown by [`fit`] on first use, so the first
+/// `prefill` / `forward` on a fresh cache allocates and every later step of the
+/// same or smaller token count allocates nothing. Buffers do not shrink: a
+/// 512-token prefill leaves 512-token capacity behind, which is what the
+/// following single-token steps then reuse.
+///
+/// The dense and official MoE expert FFNs run entirely out of these buffers.
+/// A one-token decode after warmup allocates nothing on that path.
+#[derive(Default)]
+struct Scratch {
+    /// Layer activations, `n_tokens * n_embd`. Normed in place per sublayer.
+    x: Vec<f32>,
+    /// `x` as it was before the current sublayer, `n_tokens * n_embd`.
+    residual: Vec<f32>,
+    /// Q / K / V projections, `n_tokens * w{q,k,v}.n_rows`.
+    q: Vec<f32>,
+    k: Vec<f32>,
+    v: Vec<f32>,
+    /// Official Qwen3Next attention gate split out of the joint Q projection,
+    /// `n_tokens * n_head * n_embd_head`. Empty for every other architecture.
+    q_gate: Vec<f32>,
+    /// Concatenated per-head attention output, `n_tokens * n_embd`.
+    attn: Vec<f32>,
+    /// `attn_output` projection of `attn`, `n_tokens * n_embd`.
+    attn_proj: Vec<f32>,
+    /// FFN gate (holds the SwiGLU/GeGLU product after activation) and up,
+    /// `n_tokens * n_ff`.
+    gate: Vec<f32>,
+    up: Vec<f32>,
+    /// `ffn_down` output, or the MoE sum, `n_tokens * n_embd`.
+    ffn_out: Vec<f32>,
+    /// Softmaxed attention scores for one head, `n_past + 1`.
+    scores: Vec<f32>,
+    /// `output_norm` of the last token, `n_embd`.
+    xn: Vec<f32>,
+    /// Returned logits, `n_vocab`.
+    logits: Vec<f32>,
+    moe: MoeScratch,
+    /// Official gemma3n AltUp / Laurel / per-layer working buffers.
+    g3n: Gemma3nScratch,
+}
+
+/// Working buffers for official gemma3n.cpp AltUp, Laurel, and per-layer inputs.
+#[derive(Default)]
+struct Gemma3nScratch {
+    /// Stacked residual streams, `n_altup * n_tokens * n_embd`.
+    streams: Vec<f32>,
+    /// AltUp predictions, same layout as `streams`.
+    pred: Vec<f32>,
+    /// Per-layer inputs, token-major `[token][layer][n_embd_altup]`.
+    per_layer: Vec<f32>,
+    /// Laurel residual, `n_tokens * n_embd`.
+    laurel: Vec<f32>,
+    /// Router modalities, `n_tokens * n_altup`.
+    router: Vec<f32>,
+    /// Predict mix coefficients, `n_tokens * n_altup * n_altup`.
+    coefs: Vec<f32>,
+    /// Attn+Laurel / extra-stream / first-prediction workspace, `n_tokens * n_embd`.
+    tmp: Vec<f32>,
+    /// One per-layer token embedding row, `n_embd_altup * n_layer`.
+    per_tok: Vec<f32>,
+}
+
+/// Working buffers for MoE expert FFNs (Llama4 and the other official walks).
+#[derive(Default)]
+struct MoeScratch {
+    /// Router logits, `n_tokens * n_expert` after a batched router GEMM.
+    logits: Vec<f32>,
+    /// Router top-k expert indices, `n_expert_used`.
+    order: Vec<usize>,
+    /// Selected router weights after optional `norm_w`, `n_expert_used`.
+    weights: Vec<f32>,
+    /// Shared-expert gate per token (`ffn_gate_inp_shexp`), `n_tokens`.
+    shexp_gate: Vec<f32>,
+    /// One routed expert's gate / up / down, `n_ff_exp` and `n_embd`.
+    g: Vec<f32>,
+    u: Vec<f32>,
+    y: Vec<f32>,
+    /// Flattened top-k expert ids, `n_tokens * n_used`.
+    sel_e: Vec<usize>,
+    /// Flattened top-k weights, `n_tokens * n_used`.
+    sel_w: Vec<f32>,
+    /// Token indices that selected each expert this layer.
+    buckets: Vec<Vec<usize>>,
+    /// Packed token rows for a grouped expert GEMM, `n_group * n_embd`.
+    pack_x: Vec<f32>,
+}
+
+impl Scratch {
+    /// Heap address and capacity of every buffer.
+    ///
+    /// A reallocation moves the address, changes the capacity, or both, so
+    /// comparing this across decode steps proves the steady state reuses its
+    /// buffers. `#![forbid(unsafe_code)]` rules out a `GlobalAlloc` counter
+    /// (`GlobalAlloc` is an unsafe trait), so this is the check that stands in
+    /// for one.
+    #[cfg(test)]
+    fn buffer_ids(&self) -> Vec<(usize, usize)> {
+        let f32s = [
+            &self.x,
+            &self.residual,
+            &self.q,
+            &self.k,
+            &self.v,
+            &self.attn,
+            &self.attn_proj,
+            &self.gate,
+            &self.up,
+            &self.ffn_out,
+            &self.scores,
+            &self.xn,
+            &self.logits,
+            &self.g3n.streams,
+            &self.g3n.pred,
+            &self.g3n.per_layer,
+            &self.g3n.laurel,
+            &self.g3n.router,
+            &self.g3n.coefs,
+            &self.g3n.tmp,
+            &self.g3n.per_tok,
+            &self.moe.logits,
+            &self.moe.weights,
+            &self.moe.shexp_gate,
+            &self.moe.g,
+            &self.moe.u,
+            &self.moe.y,
+            &self.moe.sel_w,
+            &self.moe.pack_x,
+        ];
+        let mut out: Vec<(usize, usize)> = f32s
+            .iter()
+            .map(|b| (b.as_ptr() as usize, b.capacity()))
+            .collect();
+        out.push((self.moe.order.as_ptr() as usize, self.moe.order.capacity()));
+        out.push((self.moe.sel_e.as_ptr() as usize, self.moe.sel_e.capacity()));
+        out
+    }
+}
+
+/// Paged block table or dense `max_seq` stride for one sequence in a transformer walk.
+struct KvAddr {
+    table: Vec<u32>,
+    block_size: usize,
+    n_layers: usize,
+    dense_max: usize,
+}
+
+impl KvAddr {
+    fn geom(&self, n_head_kv: usize, hd: usize) -> KvGeom<'_> {
+        if self.dense_max > 0 {
+            KvGeom::dense(n_head_kv, hd, self.dense_max)
+        } else {
+            KvGeom {
+                n_head_kv,
+                hd,
+                n_layers: self.n_layers,
+                time_stride: self.block_size,
+                table: Some(self.table.as_slice()),
+            }
+        }
+    }
+}
+
+fn kv_addr(addrs: &[KvAddr], t: usize) -> Result<&KvAddr, LlamaError> {
+    if addrs.len() == 1 {
+        addrs
+            .first()
+            .ok_or_else(|| LlamaError::Shape("kv addr".into()))
+    } else {
+        addrs
+            .get(t)
+            .ok_or_else(|| LlamaError::Shape("kv addr".into()))
+    }
+}
+
+fn token_pos(pos: &[usize], t: usize) -> Result<usize, LlamaError> {
+    pos.get(t)
+        .copied()
+        .ok_or_else(|| LlamaError::Shape("kv pos".into()))
+}
+
+fn batch_kv_layout(
+    caches: &[&mut KvCache],
+    groups: &[&[u32]],
+) -> Result<(Vec<KvAddr>, Vec<usize>, usize), LlamaError> {
+    let mut addrs = Vec::new();
+    let mut positions = Vec::new();
+    let mut max_seq = 0usize;
+    for (cache, group) in caches.iter().zip(groups.iter()) {
+        max_seq = max_seq.max(cache.max_seq);
+        let Some(p) = cache.pages.as_ref() else {
+            return Err(LlamaError::Shape("kv page".into()));
+        };
+        let table = p.table_ids().to_vec();
+        let block_size = p.block_size();
+        let n_layers = p.n_layers();
+        let n0 = cache.n_past;
+        for t in 0..group.len() {
+            positions.push(n0.saturating_add(t));
+            addrs.push(KvAddr {
+                table: table.clone(),
+                block_size,
+                n_layers,
+                dense_max: 0,
+            });
+        }
+    }
+    Ok((addrs, positions, max_seq))
+}
+
+fn last_group_logits(
+    logits: &[f32],
+    n_vocab: usize,
+    groups: &[&[u32]],
+) -> Result<Vec<Vec<f32>>, LlamaError> {
+    let mut out = Vec::new();
+    let mut start = 0usize;
+    for group in groups {
+        if group.is_empty() {
+            return Err(LlamaError::Shape("prefill tokens".into()));
+        }
+        let last = start.saturating_add(group.len().saturating_sub(1));
+        let off = last.saturating_mul(n_vocab);
+        let row = logits
+            .get(off..off.saturating_add(n_vocab))
+            .ok_or_else(|| LlamaError::Shape("forward batch logits".into()))?;
+        out.push(row.to_vec());
+        start = start.saturating_add(group.len());
+    }
+    Ok(out)
+}
+
+fn restore_batch_store(caches: &mut [&mut KvCache], idx: Option<usize>, store: Option<LiveStore>) {
+    if let Some(i) = idx {
+        if let Some(c) = caches.get_mut(i) {
+            c.expert_store = store;
+        }
+    }
+}
+
+fn collect_batch_trace_rows(
+    caches: &[&mut KvCache],
+    groups: &[&[u32]],
+) -> (Vec<u64>, Vec<u32>, Vec<u64>) {
+    let mut row_seq = Vec::new();
+    let mut row_tok = Vec::new();
+    let mut row_prefix = Vec::new();
+    for (cache, group) in caches.iter().zip(groups.iter()) {
+        let sequence = cache.moe_trace.sequence;
+        let t0 = u32::try_from(cache.n_past).unwrap_or(u32::MAX);
+        for t in 0..group.len() {
+            row_seq.push(sequence);
+            row_tok.push(t0.saturating_add(u32::try_from(t).unwrap_or(u32::MAX)));
+            let take = t.saturating_add(1);
+            let mut buf = Vec::with_capacity(cache.moe_trace.ids.len().saturating_add(take));
+            buf.extend_from_slice(&cache.moe_trace.ids);
+            if let Some(part) = group.get(..take) {
+                buf.extend_from_slice(part);
+            }
+            row_prefix.push(prefix_hash(&buf));
+        }
+    }
+    (row_seq, row_tok, row_prefix)
+}
+
+fn apply_batch_trace_rows(
+    caches: &mut [&mut KvCache],
+    rows: (Vec<u64>, Vec<u32>, Vec<u64>),
+    flat: &[u32],
+    any_trace: bool,
+) -> Result<(), LlamaError> {
+    let first = caches
+        .first_mut()
+        .ok_or_else(|| LlamaError::Shape("empty batch".into()))?;
+    first.moe_trace.token0 = u32::try_from(first.n_past).unwrap_or(u32::MAX);
+    first.moe_trace.batch.clear();
+    first.moe_trace.batch.extend(flat.iter().copied());
+    first.moe_trace.row_seq = rows.0;
+    first.moe_trace.row_tok = rows.1;
+    first.moe_trace.row_prefix = rows.2;
+    if any_trace {
+        first.moe_trace.enabled = true;
+    }
+    Ok(())
+}
+
+fn finish_batch_trace(caches: &mut [&mut KvCache], enabled: &[bool], first_was: bool) {
+    scatter_trace_events(caches, enabled);
+    if let Some(first) = caches.first_mut() {
+        first.moe_trace.enabled = first_was;
+        first.moe_trace.batch.clear();
+        first.moe_trace.row_seq.clear();
+        first.moe_trace.row_tok.clear();
+        first.moe_trace.row_prefix.clear();
+    }
+}
+
+fn scatter_trace_events(caches: &mut [&mut KvCache], enabled: &[bool]) {
+    let events = {
+        let Some(first) = caches.first_mut() else {
+            return;
+        };
+        core::mem::take(&mut first.moe_trace.events)
+    };
+    for e in events {
+        let Some(i) = caches
+            .iter()
+            .position(|c| c.moe_trace.sequence == e.sequence)
+        else {
+            continue;
+        };
+        if !enabled.get(i).copied().unwrap_or(false) {
+            continue;
+        }
+        if let Some(c) = caches.get_mut(i) {
+            c.moe_trace.events.push(e);
+        }
+    }
+}
+
+enum LogitsKind {
+    Last,
+    All,
+}
+
+struct TransformerRun<'a> {
+    s: &'a mut Scratch,
+    pool: &'a mut GemvPool,
+    moe_trace: &'a mut MoeTraceBuf,
+    expert_store: &'a mut Option<LiveStore>,
+    cache_k: &'a mut [f32],
+    cache_v: &'a mut [f32],
+    n: usize,
+    width: usize,
+    hd: usize,
+}
+
+/// Resize `buf` to `len` zeros. Does not allocate once capacity is reached,
+/// which is what makes a steady-state decode step allocation-free.
+fn fit(buf: &mut Vec<f32>, len: usize) {
+    buf.clear();
+    buf.resize(len, 0.0);
+}
+
+/// `fit` plus a copy, for the residual and the last-token norm input.
+fn copy_buf(dst: &mut Vec<f32>, src: &[f32]) {
+    dst.clear();
+    dst.extend_from_slice(src);
+}
+
+/// Size official gemma4.cpp per-layer scratch for `n` tokens.
+fn gemma4_ple_fit(s: &mut Scratch, n_pl: usize, n: usize, n_layer: usize, n_embd: usize) {
+    let pl = n.saturating_mul(n_pl.saturating_mul(n_layer));
+    let tmp_w = n_embd.max(n_pl.saturating_mul(n_layer));
+    fit(&mut s.g3n.per_layer, pl);
+    fit(&mut s.g3n.tmp, n.saturating_mul(tmp_w));
+    fit(&mut s.g3n.per_tok, n_pl.saturating_mul(n_layer));
+}
+
+/// Size official gemma3n AltUp / Laurel / per-layer scratch for `n` tokens.
+fn gemma3n_fit(s: &mut Scratch, w: &Gemma3nWeights, n: usize, n_embd: usize, n_layer: usize) {
+    let width = n.saturating_mul(n_embd);
+    let n_altup = w.n_altup;
+    let n_ea = w.n_embd_altup;
+    let stacked = n_altup.saturating_mul(width);
+    let pl = n.saturating_mul(n_ea.saturating_mul(n_layer));
+    let tmp_w = n_embd.max(n_ea.saturating_mul(n_layer));
+    fit(&mut s.g3n.streams, stacked);
+    fit(&mut s.g3n.pred, stacked);
+    fit(&mut s.g3n.per_layer, pl);
+    fit(&mut s.g3n.laurel, width);
+    fit(&mut s.g3n.router, n.saturating_mul(n_altup));
+    fit(
+        &mut s.g3n.coefs,
+        n.saturating_mul(n_altup.saturating_mul(n_altup)),
+    );
+    fit(&mut s.g3n.tmp, n.saturating_mul(tmp_w));
+    fit(&mut s.g3n.per_tok, n_ea.saturating_mul(n_layer));
 }
 
 impl Llama {
     /// Build from a loaded GGUF using `{arch}.*` KV (`llama`, `qwen2`, `mistral`,
-    /// `phi3`, `gemma`, `qwen3`, `llama4`, `qwen2moe`, `qwen3moe`, `qwen2vl`,
-    /// `qwen3vl`, `qwen3next`, or `qwen35`) and `blk.{i}.*` tensor names. Official llama
+    /// `phi3`, `gemma`, `gemma2`, `gemma3`, `gemma3n`, `gemma4`, `qwen3`, `llama4`, `qwen2moe`, `qwen3moe`, `qwen2vl`,
+    /// `qwen3vl`, `qwen3next`, `qwen35`, `phi2`, or `bloom`) and `blk.{i}.*` tensor names. Official llama
     /// MoE is still `architecture=llama` with `n_expert>0`. Official Qwen2VL is
     /// Qwen2 plus m-RoPE (`LLAMA_ROPE_TYPE_MROPE`). Official Qwen3VL is Qwen3
     /// QK-Norm plus interleaved m-RoPE (`LLAMA_ROPE_TYPE_IMROPE`). Official
     /// Qwen3Next is gated full attention plus MoE (`norm_w`) and a sigmoid-gated
     /// shared expert. Official Qwen35 is gated full attention plus IMROPE and
-    /// dense SwiGLU; linear-attn / gated-delta layers are refused.
+    /// dense SwiGLU; linear-attn / gated-delta layers are refused. Official
+    /// Phi2 is LayerNorm + NEOX RoPE + parallel GELU FFN. Official Bloom is
+    /// `token_embd_norm` + fused QKV + ALiBi + sequential GELU FFN. Official
+    /// Gemma2 is Gemma embed-scale + GeGLU plus post-norms, SWA, and tanh
+    /// softcap. Official Gemma3 is Gemma2 post-norms + GeGLU plus QK-Norm,
+    /// no attn softcap, optional final softcap. Official Gemma3n is Gemma3
+    /// plus attention scale `1.0`, unweighted V RMSNorm, AltUp, Laurel,
+    /// per-layer inputs, gaussian_topk, SWA period 5, and final softcap 30.
+    /// Official Gemma4 is Gemma3 QK-Norm plus post-norms plus GeGLU, attention
+    /// scale `1.0`, unweighted V RMSNorm, convert bool-array SWA pattern, and
+    /// no AltUp / Laurel / gaussian_topk. Dense layers stay GeGLU. MoE layers
+    /// (`ffn_gate_inp`) add a shared dense MLP plus routed GELU experts.
+    /// Writer-tiny dense has no `ffn_gate_inp`. Writer-tiny MoE is the same
+    /// arch. Writer-tiny PLE is the same arch with
+    /// `embedding_length_per_layer_input > 0`. Writer-tiny MoE+PLE is the
+    /// production E2B/E4B shape on the same arch. Writer-tiny fused experts
+    /// pack `ffn_gate_up_exps`. Writer-tiny fused plus PLE packs both.
+    /// Shared KV is [`tiny_gemma4_shared_kv_gguf`]. Mixed SWA/global head
+    /// dims are [`tiny_gemma4_mixed_hd_gguf`]. SWA RoPE base is
+    /// [`tiny_gemma4_swa_base_gguf`]. Omitted `wv` (K as V) is
+    /// [`tiny_gemma4_no_wv_gguf`]. Layer output scale is
+    /// [`tiny_gemma4_out_scale_gguf`]. Proportional RoPE is
+    /// [`tiny_gemma4_rope_freqs_gguf`]. Per-expert down scale is
+    /// [`tiny_gemma4_moe_down_s_gguf`]. Per-expert gate/up scale is
+    /// [`tiny_gemma4_moe_gate_up_s_gguf`]. Dense `{1}` `ffn_down.scale` is
+    /// [`tiny_llama_ffn_down_s_gguf`]. Dense `{1}` `attn_q.scale` is
+    /// [`tiny_llama_attn_q_s_gguf`]. Dense `{1}` `attn_output.scale` is
+    /// [`tiny_llama_attn_out_s_gguf`]. Dense `{1}` `attn_k.scale` is
+    /// [`tiny_llama_attn_k_s_gguf`]. Dense `{1}` `attn_v.scale` is
+    /// [`tiny_llama_attn_v_s_gguf`]. Dense `{1}` `ffn_gate.scale` is
+    /// [`tiny_llama_ffn_gate_s_gguf`]. Dense `{1}` `ffn_up.scale` is
+    /// [`tiny_llama_ffn_up_s_gguf`]. NVFP4 `{1}` `output.scale` is
+    /// [`tiny_nvfp4_output_s_gguf`]. Fused `{1}` `attn_qkv.scale` is
+    /// [`tiny_bloom_attn_qkv_s_gguf`]. Shared-expert `{1}`
+    /// `ffn_down_shexp.scale` is [`tiny_qwen2moe_ffn_down_shexp_s_gguf`].
+    /// Shared-expert `{1}` `ffn_gate_shexp.scale` is
+    /// [`tiny_qwen2moe_ffn_gate_shexp_s_gguf`]. Shared-expert `{1}`
+    /// `ffn_up_shexp.scale` is [`tiny_qwen2moe_ffn_up_shexp_s_gguf`].
     ///
     /// Takes the GGUF's file blob once. Weight matrices keep offsets into that
     /// blob; they do not clone tensor bytes. When `output.weight` is absent,
@@ -437,7 +1934,105 @@ impl Llama {
         } else {
             None
         };
+        // Official phi2.cpp / bloom.cpp `load_arch_hparams` reads
+        // `LLM_KV_ATTENTION_LAYERNORM_EPS` (`{arch}.attention.layer_norm_epsilon`)
+        // with the other hparams, before tensor materialization.
+        let phi2 = arch == "phi2";
+        let bloom = arch == "bloom";
+        let gemma2 = arch == "gemma2";
+        let gemma3 = arch == "gemma3";
+        let gemma3n = arch == "gemma3n";
+        let gemma4 = arch == "gemma4";
+        let rms_eps = if phi2 || bloom {
+            require_f32(&g, arch, "attention.layer_norm_epsilon")?
+        } else if gemma2 || gemma3 || gemma3n || gemma4 {
+            // Official gemma2.cpp / gemma3.cpp / gemma3n.cpp / gemma4.cpp `get_key` without `false`.
+            require_f32(&g, arch, "attention.layer_norm_rms_epsilon")?
+        } else {
+            arch_f32(&g, arch, "attention.layer_norm_rms_epsilon").unwrap_or(1e-5)
+        };
+        // Official gemma2.cpp: convert always writes softcap / SWA; require so a
+        // writer-tiny cannot silently drop them. Official gemma3.cpp: attn
+        // softcap is gone; SWA is optional (`n_swa==0` is `LLAMA_SWA_TYPE_NONE`);
+        // final softcap defaults to 0. Official gemma3n.cpp: SWA is required;
+        // final softcap defaults to 30; attn scale is 1.0 (not a KV).
+        let (attn_logit_softcapping, final_logit_softcapping, n_swa, swa_period) = if gemma2 {
+            (
+                require_f32(&g, arch, "attn_logit_softcapping")?,
+                require_f32(&g, arch, "final_logit_softcapping")?,
+                require_usize(&g, arch, "attention.sliding_window")?,
+                g.kv_u32(&arch_key(arch, "attention.sliding_window_pattern"))
+                    .unwrap_or(GEMMA2_SWA_PERIOD_DEFAULT),
+            )
+        } else if gemma3 {
+            (
+                0.0,
+                arch_f32(&g, arch, "final_logit_softcapping").unwrap_or(0.0),
+                g.kv_u32(&arch_key(arch, "attention.sliding_window"))
+                    .map_or(0, |v| usize::try_from(v).unwrap_or(0)),
+                g.kv_u32(&arch_key(arch, "attention.sliding_window_pattern"))
+                    .unwrap_or(GEMMA3_SWA_PERIOD_DEFAULT),
+            )
+        } else if gemma3n {
+            (
+                0.0,
+                arch_f32(&g, arch, "final_logit_softcapping")
+                    .unwrap_or(GEMMA2_FINAL_LOGIT_SOFTCAPPING),
+                require_usize(&g, arch, "attention.sliding_window")?,
+                g.kv_u32(&arch_key(arch, "attention.sliding_window_pattern"))
+                    .unwrap_or(GEMMA3N_SWA_PERIOD_DEFAULT),
+            )
+        } else if gemma4 {
+            // Official gemma4.cpp: SWA required; pattern is convert bool[] via
+            // `get_key_or_arr`; final softcap optional (default 0); attn scale
+            // 1.0 is not a KV. `swa_period` stays 0; [`Llama::is_swa`] holds
+            // the per-layer flags.
+            (
+                0.0,
+                arch_f32(&g, arch, "final_logit_softcapping").unwrap_or(0.0),
+                require_usize(&g, arch, "attention.sliding_window")?,
+                0,
+            )
+        } else {
+            (0.0, 0.0, 0, 0)
+        };
+        let is_swa = if gemma4 {
+            load_gemma4_is_swa(&g, arch, n_layer)?
+        } else {
+            Vec::new()
+        };
+        let hd_default = n_embd / n_head;
+        let (gemma4_n_pl, n_layer_kv_from_start, hd_full, hd_swa) = if gemma4 {
+            let h = load_gemma4_hparams(&g, arch, n_embd, n_head, n_layer)?;
+            (h.n_pl, h.n_from_start, h.hd_full, h.hd_swa)
+        } else {
+            (
+                0,
+                i32::try_from(n_layer).unwrap_or(i32::MAX),
+                hd_default,
+                hd_default,
+            )
+        };
         let n_rot = rope_dimension(&g, arch, n_embd, n_head)?;
+        let n_rot_swa = if gemma4 {
+            match g.kv_u32(&arch_key(arch, "rope.dimension_count_swa")) {
+                Some(v) => {
+                    let n = usize::try_from(v).map_err(|_| {
+                        LlamaError::Shape(arch_key(arch, "rope.dimension_count_swa"))
+                    })?;
+                    if n == 0 {
+                        return Err(LlamaError::Shape(arch_key(
+                            arch,
+                            "rope.dimension_count_swa",
+                        )));
+                    }
+                    n
+                }
+                None => n_rot,
+            }
+        } else {
+            n_rot
+        };
         let rope_sections = if arch == "qwen2vl" || arch == "qwen3vl" || arch == "qwen35" {
             Some(load_rope_dimension_sections(&g, arch)?)
         } else {
@@ -449,22 +2044,54 @@ impl Llama {
             .tensor("token_embd.weight")
             .map(|t| t.n_rows())
             .ok_or_else(|| LlamaError::Tensor("token_embd.weight".into()))?;
-        let rms_eps = arch_f32(&g, arch, "attention.layer_norm_rms_epsilon").unwrap_or(1e-5);
         let rope_base = arch_f32(&g, arch, "rope.freq_base").unwrap_or(10_000.0);
-        let gemma = arch == "gemma";
+        let rope_base_swa = if gemma4 {
+            arch_f32(&g, arch, "rope.freq_base_swa").unwrap_or(10_000.0)
+        } else {
+            rope_base
+        };
+        let gemma = arch == "gemma" || gemma2 || gemma3 || gemma3n || gemma4;
         let n_embd_f = f32::from(u16::try_from(n_embd).unwrap_or(1));
         let embed_scale = if gemma { n_embd_f.sqrt() } else { 1.0 };
         let token_embd = quant_mat(need(&g, "token_embd.weight")?)?;
         let output_norm = f32s(need(&g, "output_norm.weight")?)?;
+        let output_norm_b = if phi2 || bloom {
+            Some(f32s(need(&g, "output_norm.bias")?)?)
+        } else {
+            None
+        };
         let output = match g.tensor("output.weight") {
             Some(t) => quant_mat(t)?,
             None => reuse_token_embd_as_output(&token_embd),
+        };
+        let output_s = if g.tensor("output.weight").map(|t| t.ty) == Some(GgmlType::NVFP4) {
+            load_unit_scale(&g, "output.scale")?
+        } else {
+            None
+        };
+        let output_b = if phi2 {
+            Some(f32s(need(&g, "output.bias")?)?)
+        } else {
+            None
+        };
+        let token_embd_norm = if bloom {
+            Some(f32s(need(&g, "token_embd_norm.weight")?)?)
+        } else {
+            None
+        };
+        let token_embd_norm_b = if bloom {
+            Some(f32s(need(&g, "token_embd_norm.bias")?)?)
+        } else {
+            None
         };
         let qk_norm = arch == "qwen3"
             || arch == "qwen3moe"
             || arch == "qwen3vl"
             || arch == "qwen3next"
-            || arch == "qwen35";
+            || arch == "qwen35"
+            || gemma3
+            || gemma3n
+            || gemma4;
         let llama4 = arch == "llama4";
         let llama4_hparams = if llama4 {
             Some(load_llama4_hparams(&g, arch, n_layer)?)
@@ -486,19 +2113,59 @@ impl Llama {
         } else {
             None
         };
-        let layer_h = LayerHparams {
-            qk_norm,
-            llama4: llama4_hparams.as_ref(),
-            llama_moe: llama_moe_hparams.as_ref(),
-            qwen2moe: qwen2moe_hparams.as_ref(),
-            qwen3moe: qwen3moe_hparams.as_ref(),
-            qwen3next: qwen3next_hparams.as_ref(),
-            qwen35: qwen35_hparams.as_ref(),
+        let gemma4_moe_hparams = if gemma4 {
+            load_gemma4_moe_hparams(&g, arch)?
+        } else {
+            None
         };
-        let mut layers = Vec::new();
-        for i in 0..n_layer {
-            layers.push(load_layer(&g, i, &layer_h)?);
-        }
+        let gemma4_ple = if gemma4_n_pl > 0 {
+            Some(load_gemma4_ple_weights(
+                &g,
+                n_embd,
+                n_layer,
+                n_vocab,
+                gemma4_n_pl,
+            )?)
+        } else {
+            None
+        };
+        let layers = {
+            let layer_h = LayerHparams {
+                qk_norm,
+                phi2,
+                bloom,
+                gemma2,
+                gemma3,
+                gemma3n,
+                gemma4,
+                gemma4_n_pl,
+                n_layer_kv_from_start,
+                is_swa: &is_swa,
+                hd_full,
+                hd_swa,
+                n_rot_full: n_rot,
+                n_rot_swa,
+                rope_base_full: rope_base,
+                rope_base_swa,
+                gemma4_moe: gemma4_moe_hparams.as_ref(),
+                llama4: llama4_hparams.as_ref(),
+                llama_moe: llama_moe_hparams.as_ref(),
+                qwen2moe: qwen2moe_hparams.as_ref(),
+                qwen3moe: qwen3moe_hparams.as_ref(),
+                qwen3next: qwen3next_hparams.as_ref(),
+                qwen35: qwen35_hparams.as_ref(),
+            };
+            let mut layers = Vec::new();
+            for i in 0..n_layer {
+                layers.push(load_layer(&g, i, &layer_h)?);
+            }
+            layers
+        };
+        let gemma3n = if gemma3n {
+            Some(load_gemma3n_weights(&g, n_embd, n_layer, n_vocab)?)
+        } else {
+            None
+        };
         Ok(Self {
             n_vocab,
             n_embd,
@@ -512,10 +2179,25 @@ impl Llama {
             rope_neox,
             embed_scale,
             ffn_gelu: gemma,
-            blob: g.into_blob(),
+            blob: Arc::new(g.into_blob()),
             token_embd,
             output_norm,
+            output_norm_b,
             output,
+            output_s,
+            output_b,
+            phi2,
+            bloom,
+            token_embd_norm,
+            token_embd_norm_b,
+            attn_logit_softcapping,
+            final_logit_softcapping,
+            n_swa,
+            swa_period,
+            is_swa,
+            gemma4,
+            gemma3n,
+            gemma4_ple,
             layers,
         })
     }
@@ -533,7 +2215,7 @@ impl Llama {
 
     /// Allocate a KV cache for `max_seq` generated+prompt tokens.
     pub fn new_cache(&self, max_seq: usize) -> Result<KvCache, LlamaError> {
-        let hd = self.head_dim()?;
+        let hd = self.cache_hd()?;
         let n_k = self
             .layers
             .len()
@@ -546,7 +2228,273 @@ impl Llama {
             v: vec![0.0; n_k],
             n_past: 0,
             max_seq,
+            scratch: Scratch::default(),
+            pool: None,
+            moe_trace: MoeTraceBuf::default(),
+            expert_store: None,
+            last_prefix_hit: 0,
+            pages: None,
         })
+    }
+
+    /// KV cache whose K/V live in paged blocks of `block_size` tokens.
+    ///
+    /// Dense [`Llama::new_cache`] stays the default. Prefill/decode logits must
+    /// bit-match that path. Completed blocks are interned so a later prompt on
+    /// this cache can hit them after a rewind to 0.
+    pub fn new_paged_cache(
+        &self,
+        max_seq: usize,
+        block_size: usize,
+    ) -> Result<KvCache, LlamaError> {
+        let hd = self.cache_hd()?;
+        let n_layers = self.layers.len();
+        let bs = block_size.min(max_seq.max(1));
+        if bs == 0 || max_seq == 0 {
+            return Err(LlamaError::Shape("kv page".into()));
+        }
+        let cap = max_seq.div_ceil(bs).saturating_add(1);
+        let pages = KvPages::new(n_layers, self.n_head_kv, hd, bs, cap.max(2))
+            .map_err(|e| LlamaError::Shape(e.into()))?;
+        Ok(KvCache {
+            k: Vec::new(),
+            v: Vec::new(),
+            n_past: 0,
+            max_seq,
+            scratch: Scratch::default(),
+            pool: None,
+            moe_trace: MoeTraceBuf::default(),
+            expert_store: None,
+            last_prefix_hit: 0,
+            pages: Some(pages),
+        })
+    }
+
+    /// Shared interned-block arena (`cap` physical blocks).
+    ///
+    /// Clone the handle into [`Llama::new_paged_cache_on`] so two sequences
+    /// intern-hit the same prefixes. Distinct from `expertvm kv`.
+    pub fn new_paged_pool(&self, block_size: usize, cap: usize) -> Result<PagedKvPool, LlamaError> {
+        let hd = self.cache_hd()?;
+        let n_layers = self.layers.len();
+        let bs = block_size.max(1);
+        PagedKvPool::create(n_layers, self.n_head_kv, hd, bs, cap.max(2))
+            .map_err(|e| LlamaError::Shape(e.into()))
+    }
+
+    /// Paged KV cache on an existing [`PagedKvPool`].
+    pub fn new_paged_cache_on(
+        &self,
+        pool: &PagedKvPool,
+        max_seq: usize,
+    ) -> Result<KvCache, LlamaError> {
+        if max_seq == 0 || pool.block_size() == 0 {
+            return Err(LlamaError::Shape("kv page".into()));
+        }
+        Ok(KvCache {
+            k: Vec::new(),
+            v: Vec::new(),
+            n_past: 0,
+            max_seq,
+            scratch: Scratch::default(),
+            pool: None,
+            moe_trace: MoeTraceBuf::default(),
+            expert_store: None,
+            last_prefix_hit: 0,
+            pages: Some(KvPages::on(pool.clone())),
+        })
+    }
+
+    /// Size or reuse `slot` so `needed` tokens fit.
+    ///
+    /// `Some(n_ctx)` allocates once at that capacity (error if `needed > n`).
+    /// `None` keeps a cache whose `max_seq >= needed`, else allocates
+    /// `needed + 1` (drops the previous KV layout; the stride is `max_seq`).
+    pub fn ensure_cache<'a>(
+        &self,
+        slot: &'a mut Option<KvCache>,
+        needed: usize,
+        n_ctx: Option<usize>,
+    ) -> Result<&'a mut KvCache, LlamaError> {
+        let max_seq = match n_ctx {
+            Some(n) if n < needed => return Err(LlamaError::Shape("n_ctx".into())),
+            Some(n) => n,
+            None => needed.saturating_add(1),
+        };
+        let keep = match (slot.as_ref(), n_ctx) {
+            (Some(c), Some(n)) => c.max_seq == n && c.page_size().is_none(),
+            (Some(c), None) => c.max_seq >= needed && c.page_size().is_none(),
+            (None, _) => false,
+        };
+        if !keep {
+            *slot = Some(self.new_cache(max_seq)?);
+        }
+        slot.as_mut()
+            .ok_or_else(|| LlamaError::Shape("kv cache".into()))
+    }
+
+    /// [`Llama::ensure_cache`] with optional paged KV (`block_size`).
+    pub fn ensure_cache_page<'a>(
+        &self,
+        slot: &'a mut Option<KvCache>,
+        needed: usize,
+        n_ctx: Option<usize>,
+        page: Option<usize>,
+    ) -> Result<&'a mut KvCache, LlamaError> {
+        if page.is_none() {
+            return self.ensure_cache(slot, needed, n_ctx);
+        }
+        let max_seq = match n_ctx {
+            Some(n) if n < needed => return Err(LlamaError::Shape("n_ctx".into())),
+            Some(n) => n,
+            None => needed.saturating_add(1),
+        };
+        let keep = match (slot.as_ref(), n_ctx) {
+            (Some(c), Some(n)) => c.max_seq == n && c.page_size() == page,
+            (Some(c), None) => c.max_seq >= needed && c.page_size() == page,
+            (None, _) => false,
+        };
+        if !keep {
+            let bs = page.ok_or_else(|| LlamaError::Shape("kv page".into()))?;
+            *slot = Some(self.new_paged_cache(max_seq, bs)?);
+        }
+        slot.as_mut()
+            .ok_or_else(|| LlamaError::Shape("kv cache".into()))
+    }
+
+    /// Catalog every routed expert's gate/up/down part bytes. Identity oracle
+    /// for the ExpertStore seam: GEMV on these copies matches the blob path.
+    pub fn expert_direct_store(&self) -> Result<DirectStore, LlamaError> {
+        let mut blobs = BTreeMap::new();
+        for (li, layer) in self.layers.iter().enumerate() {
+            let layer_u = u32::try_from(li).unwrap_or(u32::MAX);
+            match &layer.ffn {
+                LayerFfn::LlamaMoe(m) => self.catalog_exps(
+                    layer_u,
+                    m.n_expert,
+                    &m.gate_exps,
+                    &m.up_exps,
+                    &m.down_exps,
+                    &mut blobs,
+                )?,
+                LayerFfn::Llama4Moe(m) => self.catalog_exps(
+                    layer_u,
+                    m.n_expert,
+                    &m.gate_exps,
+                    &m.up_exps,
+                    &m.down_exps,
+                    &mut blobs,
+                )?,
+                LayerFfn::Qwen2Moe(m) | LayerFfn::Qwen3Next(m) => self.catalog_exps(
+                    layer_u,
+                    m.n_expert,
+                    &m.gate_exps,
+                    &m.up_exps,
+                    &m.down_exps,
+                    &mut blobs,
+                )?,
+                LayerFfn::Qwen3Moe(m) => self.catalog_exps(
+                    layer_u,
+                    m.n_expert,
+                    &m.gate_exps,
+                    &m.up_exps,
+                    &m.down_exps,
+                    &mut blobs,
+                )?,
+                LayerFfn::Gemma4Moe(m) => {
+                    if let Some(gu) = m.gate_up.as_ref() {
+                        self.catalog_fused_exps(layer_u, m.n_expert, gu, &m.down_exps, &mut blobs)?;
+                    } else {
+                        let gate = m
+                            .gate_exps
+                            .as_ref()
+                            .ok_or_else(|| LlamaError::Shape("gemma4 moe".into()))?;
+                        let up = m
+                            .up_exps
+                            .as_ref()
+                            .ok_or_else(|| LlamaError::Shape("gemma4 moe".into()))?;
+                        self.catalog_exps(layer_u, m.n_expert, gate, up, &m.down_exps, &mut blobs)?;
+                    }
+                }
+                LayerFfn::Dense(_) | LayerFfn::Phi2(_) => {}
+            }
+        }
+        Ok(DirectStore::new(blobs))
+    }
+
+    fn catalog_exps(
+        &self,
+        layer: u32,
+        n_expert: usize,
+        gate: &QuantMat,
+        up: &QuantMat,
+        down: &QuantMat,
+        into: &mut BTreeMap<ExpertKey, ExpertParts>,
+    ) -> Result<(), LlamaError> {
+        for e in 0..n_expert {
+            let expert = u32::try_from(e).map_err(|_| LlamaError::Shape("expert id".into()))?;
+            let parts = ExpertParts {
+                gate: self.part_bytes(gate, e)?,
+                up: self.part_bytes(up, e)?,
+                down: self.part_bytes(down, e)?,
+            };
+            let _prev = into.insert(ExpertKey::new(layer, expert), parts);
+        }
+        Ok(())
+    }
+
+    fn catalog_fused_exps(
+        &self,
+        layer: u32,
+        n_expert: usize,
+        gate_up: &QuantMat,
+        down: &QuantMat,
+        into: &mut BTreeMap<ExpertKey, ExpertParts>,
+    ) -> Result<(), LlamaError> {
+        for e in 0..n_expert {
+            let expert = u32::try_from(e).map_err(|_| LlamaError::Shape("expert id".into()))?;
+            let parts = ExpertParts {
+                gate: self.part_bytes(gate_up, e)?,
+                up: Vec::new(),
+                down: self.part_bytes(down, e)?,
+            };
+            let _prev = into.insert(ExpertKey::new(layer, expert), parts);
+        }
+        Ok(())
+    }
+
+    fn part_bytes(&self, m: &QuantMat, part: usize) -> Result<Vec<u8>, LlamaError> {
+        let (base, len) = self.mat_part_range(m, part)?;
+        let end = base.saturating_add(len);
+        match self.blob.get(base..end) {
+            Some(s) => Ok(s.to_vec()),
+            None => Err(LlamaError::Shape(m.name.clone())),
+        }
+    }
+
+    #[cfg(test)]
+    fn cache_buffer_ids(cache: &KvCache) -> Vec<(usize, usize)> {
+        let mut out = vec![
+            (cache.k.as_ptr() as usize, cache.k.capacity()),
+            (cache.v.as_ptr() as usize, cache.v.capacity()),
+        ];
+        out.extend(cache.scratch.buffer_ids());
+        if let Some(pool) = cache.pool.as_ref() {
+            out.extend(pool.buffer_ids());
+        }
+        out
+    }
+
+    #[cfg(test)]
+    fn cache_pool_workers(cache: &KvCache) -> usize {
+        cache.pool.as_ref().map_or(0, Pool::workers)
+    }
+
+    /// Whether any weight matrix is big enough for the GEMV pool to pay off.
+    /// `attn_q` / `attn_output` are `n_embd x n_embd` and the lm_head is the
+    /// widest matrix, so those two bound the rest.
+    fn wants_pool(&self) -> bool {
+        pooled_gemv(self.output.n_rows, self.output.n_cols) || pooled_gemv(self.n_embd, self.n_embd)
     }
 
     fn head_dim(&self) -> Result<usize, LlamaError> {
@@ -557,20 +2505,1293 @@ impl Llama {
         }
     }
 
+    /// KV-cache stride: max per-layer head dim so mixed SWA/global gemma4
+    /// layers share one dense/paged layout. Equal-hd models match [`Self::head_dim`].
+    fn cache_hd(&self) -> Result<usize, LlamaError> {
+        let mut m = 0usize;
+        for layer in &self.layers {
+            m = m.max(layer.hd);
+        }
+        if m == 0 {
+            self.head_dim()
+        } else {
+            Ok(m)
+        }
+    }
+
+    /// Official gemma4 convert bool-array SWA, else [`gemma2_is_swa`].
+    fn layer_is_swa(&self, li: usize) -> bool {
+        self.is_swa
+            .get(li)
+            .copied()
+            .unwrap_or_else(|| gemma2_is_swa(li, self.swa_period))
+    }
+
+    /// One decode token per cache. Shared-pool paged caches GEMM together.
+    ///
+    /// Q/K/V, FFN, and lm_head are one GEMM of `caches.len()` rows. Attention
+    /// stays per sequence (its own `n_past` and block table). Logits of each
+    /// row bit-match a sequential [`Llama::forward`]. Mixed dense/paged,
+    /// two attached stores, or MoE traces fall back to one-at-a-time
+    /// forwards. A single [`KvCache::attach_expert_store`] is used for the
+    /// whole GEMM (Engine parks one store on the first cache). Markov
+    /// prefetch state lives on that first cache across GEMMs. Enabled MoE
+    /// traces record per-row sequence and token (not a sequential fallback).
+    pub fn forward_batch(
+        &self,
+        caches: &mut [&mut KvCache],
+        tokens: &[u32],
+    ) -> Result<Vec<Vec<f32>>, LlamaError> {
+        if caches.len() != tokens.len() {
+            return Err(LlamaError::Shape("forward batch".into()));
+        }
+        if caches.is_empty() {
+            return Ok(Vec::new());
+        }
+        if caches.len() == 1 || !self.can_batch_paged(caches) {
+            let mut out = Vec::new();
+            for (cache, tok) in caches.iter_mut().zip(tokens.iter()) {
+                out.push(self.forward(cache, *tok)?);
+            }
+            return Ok(out);
+        }
+        let mut groups: Vec<&[u32]> = Vec::new();
+        for tok in tokens {
+            groups.push(std::slice::from_ref(tok));
+        }
+        self.run_paged_batch(caches, &groups)
+    }
+
+    /// Prefill each cache with its token group. Shared-pool paged caches GEMM
+    /// together even when the groups have different lengths.
+    ///
+    /// Attention stays per sequence. Returns last-token logits of each group,
+    /// bit-matching sequential [`Llama::prefill`]. Prefix reuse / intern bind
+    /// is the caller's job ([`Llama::prompt_chunk`], Engine). Mixed
+    /// dense/two-store falls back to one-at-a-time prefills. One attached
+    /// store is used for the whole GEMM. Enabled MoE traces stay on this path.
+    pub fn prefill_batch(
+        &self,
+        caches: &mut [&mut KvCache],
+        groups: &[&[u32]],
+    ) -> Result<Vec<Vec<f32>>, LlamaError> {
+        if caches.len() != groups.len() {
+            return Err(LlamaError::Shape("prefill batch".into()));
+        }
+        if caches.is_empty() {
+            return Ok(Vec::new());
+        }
+        if groups.iter().any(|g| g.is_empty()) {
+            return Err(LlamaError::Shape("prefill tokens".into()));
+        }
+        if caches.len() == 1 || !self.can_batch_paged(caches) {
+            let mut out = Vec::new();
+            for (cache, group) in caches.iter_mut().zip(groups.iter()) {
+                out.push(self.prefill(cache, group)?);
+            }
+            return Ok(out);
+        }
+        self.run_paged_batch(caches, groups)
+    }
+
+    fn can_batch_paged(&self, caches: &[&mut KvCache]) -> bool {
+        let Some(first) = caches.first() else {
+            return false;
+        };
+        let Some(home) = first.pages.as_ref().map(KvPages::pool) else {
+            return false;
+        };
+        let stores = caches.iter().filter(|c| c.expert_store.is_some()).count();
+        stores <= 1
+            && caches
+                .iter()
+                .all(|c| c.pages.as_ref().is_some_and(|p| p.pool().same_as(home)))
+    }
+
+    fn run_paged_batch(
+        &self,
+        caches: &mut [&mut KvCache],
+        groups: &[&[u32]],
+    ) -> Result<Vec<Vec<f32>>, LlamaError> {
+        let hd = self.cache_hd()?;
+        for (cache, group) in caches.iter_mut().zip(groups.iter()) {
+            cache.prepare_append(group.len())?;
+        }
+        let mut flat = Vec::new();
+        for group in groups {
+            flat.extend_from_slice(group);
+        }
+        let n = flat.len();
+        if n == 0 {
+            return Ok(Vec::new());
+        }
+        let width = n
+            .checked_mul(self.n_embd)
+            .ok_or_else(|| LlamaError::Shape("prefill embed".into()))?;
+        let (addrs, positions, max_seq) = batch_kv_layout(caches, groups)?;
+        let store_idx = caches.iter().position(|c| c.expert_store.is_some());
+        let mut parked_store =
+            store_idx.and_then(|i| caches.get_mut(i).and_then(|c| c.expert_store.take()));
+        let any_trace = caches.iter().any(|c| c.moe_trace.enabled);
+        let enabled: Vec<bool> = caches.iter().map(|c| c.moe_trace.enabled).collect();
+        let first_was = enabled.first().copied().unwrap_or(false);
+        let rows = collect_batch_trace_rows(caches, groups);
+        let result = (|| {
+            apply_batch_trace_rows(caches, rows, &flat, any_trace)?;
+            let Some(first) = caches.first_mut() else {
+                return Ok(Vec::new());
+            };
+            let pages = first
+                .pages
+                .as_ref()
+                .ok_or_else(|| LlamaError::Shape("kv page".into()))?;
+            let mut pool_guard = pages
+                .try_pool_mut()
+                .map_err(|e| LlamaError::Shape(e.into()))?;
+            let (cache_k, cache_v) = pool_guard.kv_mut();
+            let s = &mut first.scratch;
+            let pool = &mut first.pool;
+            let moe_trace = &mut first.moe_trace;
+            if s.scores.capacity() < max_seq {
+                fit(&mut s.scores, max_seq);
+            }
+            fit(&mut s.x, width);
+            for (t, tok) in flat.iter().enumerate() {
+                let row = token_row_mut(&mut s.x, t, self.n_embd, "prefill embed")?;
+                self.embed_into(*tok, row)?;
+                for v in row.iter_mut() {
+                    *v *= self.embed_scale;
+                }
+            }
+            self.apply_token_embd_norm(&mut s.x)?;
+            self.transformer(
+                &mut TransformerRun {
+                    s,
+                    pool,
+                    moe_trace,
+                    expert_store: &mut parked_store,
+                    cache_k,
+                    cache_v,
+                    n,
+                    width,
+                    hd,
+                },
+                &addrs,
+                &positions,
+                LogitsKind::All,
+            )?;
+            drop(pool_guard);
+            let out = {
+                let Some(first) = caches.first_mut() else {
+                    return Ok(Vec::new());
+                };
+                last_group_logits(&first.scratch.logits, self.n_vocab, groups)?
+            };
+            for (cache, group) in caches.iter_mut().zip(groups.iter()) {
+                cache.n_past = cache.n_past.saturating_add(group.len());
+                cache.moe_trace.ids.extend_from_slice(group);
+                if let Some(p) = cache.pages.as_mut() {
+                    p.intern_full(&cache.moe_trace.ids);
+                }
+            }
+            Ok(out)
+        })();
+        finish_batch_trace(caches, &enabled, first_was);
+        restore_batch_store(caches, store_idx, parked_store);
+        result
+    }
+
+    fn transformer(
+        &self,
+        run: &mut TransformerRun<'_>,
+        addrs: &[KvAddr],
+        pos: &[usize],
+        logits: LogitsKind,
+    ) -> Result<(), LlamaError> {
+        if self.gemma3n.is_some() {
+            return self.transformer_gemma3n(run, addrs, pos, logits);
+        }
+        let TransformerRun {
+            s,
+            pool,
+            moe_trace,
+            expert_store,
+            cache_k,
+            cache_v,
+            n,
+            width: _,
+            hd,
+        } = run;
+        let n = *n;
+        let cache_hd = *hd;
+        if let Some(w) = self.gemma4_ple.as_ref() {
+            gemma4_ple_fit(s, w.n_embd_per_layer, n, self.layers.len(), self.n_embd);
+            self.gemma4_project_per_layer(w, n, s, pool, &moe_trace.batch)?;
+        }
+        for (li, layer) in self.layers.iter().enumerate() {
+            moe_trace.layer = u32::try_from(li).unwrap_or(u32::MAX);
+            let kv_slot = layer.kv_slot;
+            let hd = layer.hd;
+            let n_rot = layer.n_rot;
+            let rope_base = layer.rope_base;
+            copy_buf(&mut s.residual, &s.x);
+            if self.phi2 || self.bloom {
+                layernorm_rows_inplace(
+                    &mut s.x,
+                    self.n_embd,
+                    &layer.attn_norm,
+                    layer.attn_norm_b.as_deref(),
+                    self.rms_eps,
+                )?;
+            } else {
+                rmsnorm_rows_inplace(&mut s.x, self.n_embd, &layer.attn_norm, self.rms_eps)?;
+            }
+            self.gemm_into(&layer.wq, n, &s.x, &mut s.q, pool)?;
+            if let Some(scale) = layer.qkv_s {
+                scale_expert_rows(&mut s.q, n, layer.wq.n_rows, scale, "attn_qkv.scale")?;
+            }
+            add_bias_rows(&mut s.q, layer.wq.n_rows, layer.bq.as_deref())?;
+            if let Some(scale) = layer.q_s {
+                scale_expert_rows(&mut s.q, n, layer.wq.n_rows, scale, "attn_q.scale")?;
+            }
+            let kv_rows = self.n_head_kv.saturating_mul(hd);
+            match (&layer.wk, &layer.wv) {
+                (Some(wk), Some(wv)) => {
+                    if wk.n_rows != kv_rows || wv.n_rows != kv_rows {
+                        return Err(LlamaError::Shape("qkv head split".into()));
+                    }
+                    self.gemm_into(wk, n, &s.x, &mut s.k, pool)?;
+                    if let Some(scale) = layer.qkv_s {
+                        scale_expert_rows(&mut s.k, n, wk.n_rows, scale, "attn_qkv.scale")?;
+                    }
+                    add_bias_rows(&mut s.k, wk.n_rows, layer.bk.as_deref())?;
+                    if let Some(scale) = layer.k_s {
+                        scale_expert_rows(&mut s.k, n, wk.n_rows, scale, "attn_k.scale")?;
+                    }
+                    self.gemm_into(wv, n, &s.x, &mut s.v, pool)?;
+                    if let Some(scale) = layer.qkv_s {
+                        scale_expert_rows(&mut s.v, n, wv.n_rows, scale, "attn_qkv.scale")?;
+                    }
+                    add_bias_rows(&mut s.v, wv.n_rows, layer.bv.as_deref())?;
+                    if let Some(scale) = layer.v_s {
+                        scale_expert_rows(&mut s.v, n, wv.n_rows, scale, "attn_v.scale")?;
+                    }
+                }
+                (Some(wk), None) if self.gemma4 => {
+                    if wk.n_rows != kv_rows {
+                        return Err(LlamaError::Shape("qkv head split".into()));
+                    }
+                    self.gemm_into(wk, n, &s.x, &mut s.k, pool)?;
+                    add_bias_rows(&mut s.k, wk.n_rows, layer.bk.as_deref())?;
+                    if let Some(scale) = layer.k_s {
+                        scale_expert_rows(&mut s.k, n, wk.n_rows, scale, "attn_k.scale")?;
+                    }
+                    copy_buf(&mut s.v, &s.k);
+                }
+                (None, None) => {}
+                _ => return Err(LlamaError::Shape("qkv head split".into())),
+            }
+            let q_width = self.n_head.saturating_mul(hd);
+            if layer.attn_q_gate {
+                split_qwen3next_q_gate_into(&mut s.q, &mut s.q_gate, n, self.n_head, hd)?;
+            } else if layer.wq.n_rows != q_width {
+                return Err(LlamaError::Shape("qkv head split".into()));
+            }
+            if let Some(w) = layer.attn_q_norm.as_deref() {
+                rmsnorm_rows_inplace(&mut s.q, hd, w, self.rms_eps)?;
+            }
+            if let Some(w) = layer.attn_k_norm.as_deref() {
+                rmsnorm_rows_inplace(&mut s.k, hd, w, self.rms_eps)?;
+            }
+            if self.gemma4 && layer.wk.is_some() {
+                rmsnorm_unweighted_rows_inplace(&mut s.v, hd, self.rms_eps)?;
+            }
+            if let Some(wk) = layer.wk.as_ref() {
+                let v_rows = layer.wv.as_ref().map_or(wk.n_rows, |wv| wv.n_rows);
+                for t in 0..n {
+                    let p = token_pos(pos, t)?;
+                    let geom = kv_addr(addrs, t)?.geom(self.n_head_kv, cache_hd);
+                    let k_t = token_row_mut(&mut s.k, t, wk.n_rows, "prefill k")?;
+                    if layer.use_rope {
+                        let rope = RopeParams {
+                            pos: p,
+                            n_rot,
+                            base: rope_base,
+                            sections: self.rope_sections,
+                            is_imrope: self.rope_imrope,
+                            neox: self.rope_neox,
+                            freq_factors: layer.rope_freqs.as_deref(),
+                        };
+                        for h in k_t.chunks_mut(hd) {
+                            apply_rope(h, &rope)?;
+                        }
+                        if layer.qk_l2 {
+                            for h in k_t.chunks_mut(hd) {
+                                rmsnorm_unweighted_inplace(h, self.rms_eps);
+                            }
+                        }
+                    }
+                    store_kv(cache_k, kv_slot, &geom, p, k_t)?;
+                    let v_t = token_row(&s.v, t, v_rows, "prefill v")?;
+                    store_kv(cache_v, kv_slot, &geom, p, v_t)?;
+                }
+            }
+            fit(&mut s.attn, n.saturating_mul(q_width));
+            for t in 0..n {
+                let p = token_pos(pos, t)?;
+                let geom = kv_addr(addrs, t)?.geom(self.n_head_kv, cache_hd);
+                let q_t = token_row_mut(&mut s.q, t, q_width, "prefill q")?;
+                if layer.use_rope {
+                    let rope = RopeParams {
+                        pos: p,
+                        n_rot,
+                        base: rope_base,
+                        sections: self.rope_sections,
+                        is_imrope: self.rope_imrope,
+                        neox: self.rope_neox,
+                        freq_factors: layer.rope_freqs.as_deref(),
+                    };
+                    for h in q_t.chunks_mut(hd) {
+                        apply_rope(h, &rope)?;
+                    }
+                    if layer.qk_l2 {
+                        for h in q_t.chunks_mut(hd) {
+                            rmsnorm_unweighted_inplace(h, self.rms_eps);
+                        }
+                    }
+                    if self.phi2 {
+                        let hd_f = f32::from(u16::try_from(hd).unwrap_or(1));
+                        let q_scale = if hd_f > 0.0 { 1.0 / hd_f.sqrt() } else { 0.0 };
+                        for v in q_t.iter_mut() {
+                            *v *= q_scale;
+                        }
+                    }
+                } else if !self.bloom {
+                    let scale = llama4_attn_temp_scale(p);
+                    for v in q_t.iter_mut() {
+                        *v *= scale;
+                    }
+                }
+                let score_scale = if self.phi2 || self.gemma4 {
+                    1.0
+                } else {
+                    let scale = f32::from(u16::try_from(hd).unwrap_or(1)).sqrt();
+                    if scale > 0.0 {
+                        1.0 / scale
+                    } else {
+                        0.0
+                    }
+                };
+                let dst_off = t.saturating_mul(q_width);
+                let dst = s
+                    .attn
+                    .get_mut(dst_off..dst_off.saturating_add(q_width))
+                    .ok_or_else(|| LlamaError::Shape("prefill attn".into()))?;
+                let layer_swa = if self.layer_is_swa(li) { self.n_swa } else { 0 };
+                attend_query(
+                    cache_k,
+                    cache_v,
+                    kv_slot,
+                    q_t,
+                    &geom,
+                    hd,
+                    p.saturating_add(1),
+                    score_scale,
+                    if self.bloom {
+                        BLOOM_MAX_ALIBI_BIAS
+                    } else {
+                        0.0
+                    },
+                    self.attn_logit_softcapping,
+                    layer_swa,
+                    &mut s.scores,
+                    dst,
+                )?;
+            }
+            if layer.attn_q_gate {
+                if s.q_gate.len() != s.attn.len() {
+                    return Err(LlamaError::Shape("attn gate".into()));
+                }
+                for (a, g) in s.attn.iter_mut().zip(s.q_gate.iter()) {
+                    *a *= sigmoid_f32(*g);
+                }
+            }
+            self.gemm_into(&layer.wo, n, &s.attn, &mut s.attn_proj, pool)?;
+            add_bias_rows(&mut s.attn_proj, layer.wo.n_rows, layer.wo_b.as_deref())?;
+            if let Some(scale) = layer.wo_s {
+                scale_expert_rows(
+                    &mut s.attn_proj,
+                    n,
+                    layer.wo.n_rows,
+                    scale,
+                    "attn_output.scale",
+                )?;
+            }
+            if let Some(w) = layer.attn_post_norm.as_deref() {
+                rmsnorm_rows_inplace(&mut s.attn_proj, self.n_embd, w, self.rms_eps)?;
+            }
+            if self.phi2 {
+                match &layer.ffn {
+                    LayerFfn::Phi2(ffn) => {
+                        self.gemm_into(&ffn.up, n, &s.x, &mut s.up, pool)?;
+                        add_bias_rows(&mut s.up, ffn.up.n_rows, Some(ffn.up_b.as_slice()))?;
+                        gelu_inplace(&mut s.up);
+                        self.gemm_into(&ffn.down, n, &s.up, &mut s.ffn_out, pool)?;
+                        add_bias_rows(
+                            &mut s.ffn_out,
+                            ffn.down.n_rows,
+                            Some(ffn.down_b.as_slice()),
+                        )?;
+                    }
+                    _ => return Err(LlamaError::Shape("phi2 ffn".into())),
+                }
+                add_into(&mut s.x, &s.attn_proj, &s.ffn_out)?;
+                add_assign(&mut s.x, &s.residual)?;
+            } else {
+                add_into(&mut s.x, &s.attn_proj, &s.residual)?;
+                copy_buf(&mut s.residual, &s.x);
+                if self.bloom {
+                    layernorm_rows_inplace(
+                        &mut s.x,
+                        self.n_embd,
+                        &layer.ffn_norm,
+                        layer.ffn_norm_b.as_deref(),
+                        self.rms_eps,
+                    )?;
+                } else {
+                    rmsnorm_rows_inplace(&mut s.x, self.n_embd, &layer.ffn_norm, self.rms_eps)?;
+                }
+                match &layer.ffn {
+                    LayerFfn::Dense(dense) => {
+                        self.gemm_into(&dense.gate, n, &s.x, &mut s.gate, pool)?;
+                        if let Some(scale) = dense.gate_s {
+                            scale_expert_rows(
+                                &mut s.gate,
+                                n,
+                                dense.gate.n_rows,
+                                scale,
+                                "ffn_gate.scale",
+                            )?;
+                        }
+                        self.gemm_into(&dense.up, n, &s.x, &mut s.up, pool)?;
+                        if let Some(scale) = dense.up_s {
+                            scale_expert_rows(
+                                &mut s.up,
+                                n,
+                                dense.up.n_rows,
+                                scale,
+                                "ffn_up.scale",
+                            )?;
+                        }
+                        ffn_gate_act_inplace(&mut s.gate, self.ffn_gelu);
+                        for (hv, uv) in s.gate.iter_mut().zip(s.up.iter()) {
+                            *hv *= *uv;
+                        }
+                        self.gemm_into(&dense.down, n, &s.gate, &mut s.ffn_out, pool)?;
+                        if let Some(scale) = dense.down_s {
+                            scale_expert_rows(
+                                &mut s.ffn_out,
+                                n,
+                                self.n_embd,
+                                scale,
+                                "ffn_down.scale",
+                            )?;
+                        }
+                    }
+                    LayerFfn::Llama4Moe(moe) => {
+                        self.llama4_moe_into(moe.as_ref(), n, s, pool, moe_trace, expert_store)?
+                    }
+                    LayerFfn::LlamaMoe(moe) => {
+                        self.llama_moe_into(moe.as_ref(), n, s, pool, moe_trace, expert_store)?
+                    }
+                    LayerFfn::Qwen2Moe(moe) => {
+                        self.qwen2moe_into(moe.as_ref(), n, s, pool, moe_trace, expert_store)?
+                    }
+                    LayerFfn::Qwen3Moe(moe) => {
+                        self.qwen3moe_into(moe.as_ref(), n, s, pool, moe_trace, expert_store)?
+                    }
+                    LayerFfn::Gemma4Moe(moe) => {
+                        self.gemma4_moe_into(moe.as_ref(), n, s, pool, moe_trace, expert_store)?
+                    }
+                    LayerFfn::Qwen3Next(moe) => {
+                        self.qwen3next_into(moe.as_ref(), n, s, pool, moe_trace, expert_store)?
+                    }
+                    LayerFfn::Phi2(ffn) => {
+                        if !self.bloom {
+                            return Err(LlamaError::Shape("phi2 ffn".into()));
+                        }
+                        self.gemm_into(&ffn.up, n, &s.x, &mut s.up, pool)?;
+                        add_bias_rows(&mut s.up, ffn.up.n_rows, Some(ffn.up_b.as_slice()))?;
+                        gelu_inplace(&mut s.up);
+                        self.gemm_into(&ffn.down, n, &s.up, &mut s.ffn_out, pool)?;
+                        add_bias_rows(
+                            &mut s.ffn_out,
+                            ffn.down.n_rows,
+                            Some(ffn.down_b.as_slice()),
+                        )?;
+                    }
+                }
+                if let Some(w) = layer.ffn_post_norm.as_deref() {
+                    rmsnorm_rows_inplace(&mut s.ffn_out, self.n_embd, w, self.rms_eps)?;
+                }
+                add_into(&mut s.x, &s.ffn_out, &s.residual)?;
+                if let Some(w) = self.gemma4_ple.as_ref() {
+                    let gl = layer
+                        .gemma4_ple
+                        .as_ref()
+                        .ok_or_else(|| LlamaError::Shape("gemma4 per_layer".into()))?;
+                    self.gemma4_per_layer_inject(w, gl, li, n, s, pool)?;
+                }
+            }
+            if let Some(scale) = layer.out_scale {
+                for v in s.x.iter_mut() {
+                    *v *= scale;
+                }
+            }
+        }
+        match logits {
+            LogitsKind::Last => {
+                let last_off = n.saturating_sub(1).saturating_mul(self.n_embd);
+                let last =
+                    s.x.get(last_off..last_off.saturating_add(self.n_embd))
+                        .ok_or_else(|| LlamaError::Shape("prefill last".into()))?;
+                copy_buf(&mut s.xn, last);
+                if self.phi2 || self.bloom {
+                    layernorm_inplace(
+                        &mut s.xn,
+                        &self.output_norm,
+                        self.output_norm_b.as_deref(),
+                        self.rms_eps,
+                    )?;
+                } else {
+                    rmsnorm_inplace(&mut s.xn, &self.output_norm, self.rms_eps)?;
+                }
+                self.gemv_into(&self.output, &s.xn, &mut s.logits, pool)?;
+                self.mul_output_s(&mut s.logits, 1)?;
+                add_bias_rows(&mut s.logits, self.n_vocab, self.output_b.as_deref())?;
+                tanh_softcap_inplace(&mut s.logits, self.final_logit_softcapping);
+            }
+            LogitsKind::All => {
+                if self.phi2 || self.bloom {
+                    layernorm_rows_inplace(
+                        &mut s.x,
+                        self.n_embd,
+                        &self.output_norm,
+                        self.output_norm_b.as_deref(),
+                        self.rms_eps,
+                    )?;
+                } else {
+                    rmsnorm_rows_inplace(&mut s.x, self.n_embd, &self.output_norm, self.rms_eps)?;
+                }
+                self.gemm_into(&self.output, n, &s.x, &mut s.logits, pool)?;
+                self.mul_output_s(&mut s.logits, n)?;
+                add_bias_rows(&mut s.logits, self.n_vocab, self.output_b.as_deref())?;
+                tanh_softcap_inplace(&mut s.logits, self.final_logit_softcapping);
+            }
+        }
+        Ok(())
+    }
+
+    /// Official gemma3n.cpp language walk: AltUp + Laurel + per-layer inputs.
+    fn transformer_gemma3n(
+        &self,
+        run: &mut TransformerRun<'_>,
+        addrs: &[KvAddr],
+        pos: &[usize],
+        logits: LogitsKind,
+    ) -> Result<(), LlamaError> {
+        let Some(w) = self.gemma3n.as_ref() else {
+            return Err(LlamaError::Shape("gemma3n".into()));
+        };
+        let n = run.n;
+        gemma3n_fit(run.s, w, n, self.n_embd, self.layers.len());
+        self.gemma3n_init_streams(w, n, run.s, run.pool)?;
+        self.gemma3n_project_per_layer(w, n, run)?;
+        for (li, layer) in self.layers.iter().enumerate() {
+            run.moe_trace.layer = u32::try_from(li).unwrap_or(u32::MAX);
+            let Some(gl) = layer.gemma3n.as_ref() else {
+                return Err(LlamaError::Shape("gemma3n layer".into()));
+            };
+            self.gemma3n_altup_predict(w, gl, n, run.s, run.pool)?;
+            let active = altup_stream(&run.s.g3n.pred, w.i_altup_act, n, self.n_embd)?;
+            copy_buf(&mut run.s.x, active);
+            copy_buf(&mut run.s.residual, &run.s.x);
+            rmsnorm_rows_inplace(&mut run.s.x, self.n_embd, &layer.attn_norm, self.rms_eps)?;
+            self.gemma3n_laurel(gl, n, run.s, run.pool)?;
+            self.gemma3n_layer_attn(layer, li, run, addrs, pos)?;
+            if let Some(pn) = layer.attn_post_norm.as_deref() {
+                rmsnorm_rows_inplace(&mut run.s.attn_proj, self.n_embd, pn, self.rms_eps)?;
+            }
+            add_into(&mut run.s.g3n.tmp, &run.s.attn_proj, &run.s.residual)?;
+            add_into(&mut run.s.x, &run.s.g3n.tmp, &run.s.g3n.laurel)?;
+            let inv_sqrt2 = 1.0 / 2.0f32.sqrt();
+            for v in run.s.x.iter_mut() {
+                *v *= inv_sqrt2;
+            }
+            copy_buf(&mut run.s.g3n.tmp, &run.s.x);
+            rmsnorm_rows_inplace(&mut run.s.x, self.n_embd, &layer.ffn_norm, self.rms_eps)?;
+            match &layer.ffn {
+                LayerFfn::Dense(dense) => {
+                    self.gemm_into(&dense.gate, n, &run.s.x, &mut run.s.gate, run.pool)?;
+                    if let Some(scale) = dense.gate_s {
+                        scale_expert_rows(
+                            &mut run.s.gate,
+                            n,
+                            dense.gate.n_rows,
+                            scale,
+                            "ffn_gate.scale",
+                        )?;
+                    }
+                    self.gemm_into(&dense.up, n, &run.s.x, &mut run.s.up, run.pool)?;
+                    if let Some(scale) = dense.up_s {
+                        scale_expert_rows(
+                            &mut run.s.up,
+                            n,
+                            dense.up.n_rows,
+                            scale,
+                            "ffn_up.scale",
+                        )?;
+                    }
+                    if li < w.n_layer_sparsity {
+                        gaussian_topk_inplace(&mut run.s.gate, dense.gate.n_rows)?;
+                    }
+                    ffn_gate_act_inplace(&mut run.s.gate, self.ffn_gelu);
+                    for (hv, uv) in run.s.gate.iter_mut().zip(run.s.up.iter()) {
+                        *hv *= *uv;
+                    }
+                    self.gemm_into(&dense.down, n, &run.s.gate, &mut run.s.ffn_out, run.pool)?;
+                    if let Some(scale) = dense.down_s {
+                        scale_expert_rows(
+                            &mut run.s.ffn_out,
+                            n,
+                            self.n_embd,
+                            scale,
+                            "ffn_down.scale",
+                        )?;
+                    }
+                }
+                _ => return Err(LlamaError::Shape("gemma3n ffn".into())),
+            }
+            if let Some(pn) = layer.ffn_post_norm.as_deref() {
+                rmsnorm_rows_inplace(&mut run.s.ffn_out, self.n_embd, pn, self.rms_eps)?;
+            }
+            add_into(&mut run.s.x, &run.s.ffn_out, &run.s.g3n.tmp)?;
+            self.gemma3n_altup_correct(w, gl, n, run.s, run.pool)?;
+            self.gemma3n_per_layer_inject(w, gl, li, n, run.s, run.pool)?;
+            copy_buf(&mut run.s.g3n.streams, &run.s.g3n.pred);
+        }
+        self.gemma3n_unembed(w, n, run.s, run.pool)?;
+        self.gemma3n_logits(n, run.s, run.pool, logits)
+    }
+
+    fn gemma3n_init_streams(
+        &self,
+        w: &Gemma3nWeights,
+        n: usize,
+        s: &mut Scratch,
+        pool: &mut GemvPool,
+    ) -> Result<(), LlamaError> {
+        let width = n.saturating_mul(self.n_embd);
+        let Some(first) = s.g3n.streams.get_mut(..width) else {
+            return Err(LlamaError::Shape("gemma3n streams".into()));
+        };
+        first.copy_from_slice(&s.x);
+        for p in 0..w.n_altup.saturating_sub(1) {
+            self.gemm_part_tokens_into(&w.altup_proj, p, n, &s.x, &mut s.g3n.tmp, pool)?;
+            scale_rows_to_match(&s.x, &mut s.g3n.tmp, self.n_embd)?;
+            let dst = altup_stream_mut(&mut s.g3n.streams, p.saturating_add(1), n, self.n_embd)?;
+            dst.copy_from_slice(&s.g3n.tmp);
+        }
+        Ok(())
+    }
+
+    fn gemma3n_project_per_layer(
+        &self,
+        w: &Gemma3nWeights,
+        n: usize,
+        run: &mut TransformerRun<'_>,
+    ) -> Result<(), LlamaError> {
+        let n_ea = w.n_embd_altup;
+        let n_layer = self.layers.len();
+        let pl_cols = n_ea
+            .checked_mul(n_layer)
+            .ok_or_else(|| LlamaError::Shape("gemma3n per_layer".into()))?;
+        if run.moe_trace.batch.len() != n {
+            return Err(LlamaError::Shape("gemma3n tokens".into()));
+        }
+        let tok_scale = f32::from(u16::try_from(n_ea).unwrap_or(1)).sqrt();
+        let n_embd_f = f32::from(u16::try_from(self.n_embd).unwrap_or(1));
+        let proj_scale = if n_embd_f > 0.0 {
+            1.0 / n_embd_f.sqrt()
+        } else {
+            0.0
+        };
+        let mix_scale = 1.0 / 2.0f32.sqrt();
+        for t in 0..n {
+            let tok = *run
+                .moe_trace
+                .batch
+                .get(t)
+                .ok_or_else(|| LlamaError::Shape("gemma3n tokens".into()))?;
+            self.embed_mat_into(&w.per_layer_token_embd, tok, &mut run.s.g3n.per_tok)?;
+            for v in run.s.g3n.per_tok.iter_mut() {
+                *v *= tok_scale;
+            }
+            let off = t.saturating_mul(pl_cols);
+            let dst = run
+                .s
+                .g3n
+                .per_layer
+                .get_mut(off..off.saturating_add(pl_cols))
+                .ok_or_else(|| LlamaError::Shape("gemma3n per_layer".into()))?;
+            dst.copy_from_slice(&run.s.g3n.per_tok);
+        }
+        self.gemm_into(
+            &w.per_layer_model_proj,
+            n,
+            &run.s.x,
+            &mut run.s.g3n.tmp,
+            run.pool,
+        )?;
+        for v in run.s.g3n.tmp.iter_mut() {
+            *v *= proj_scale;
+        }
+        rmsnorm_rows_inplace(
+            &mut run.s.g3n.tmp,
+            n_ea,
+            &w.per_layer_proj_norm,
+            self.rms_eps,
+        )?;
+        if run.s.g3n.tmp.len() != run.s.g3n.per_layer.len() {
+            return Err(LlamaError::Shape("gemma3n per_layer".into()));
+        }
+        for (pl, pv) in run.s.g3n.per_layer.iter_mut().zip(run.s.g3n.tmp.iter()) {
+            *pl = (*pl + *pv) * mix_scale;
+        }
+        Ok(())
+    }
+
+    fn gemma3n_altup_predict(
+        &self,
+        w: &Gemma3nWeights,
+        gl: &Gemma3nLayer,
+        n: usize,
+        s: &mut Scratch,
+        pool: &mut GemvPool,
+    ) -> Result<(), LlamaError> {
+        let active = altup_stream(&s.g3n.streams, w.i_altup_act, n, self.n_embd)?;
+        copy_buf(&mut s.g3n.tmp, active);
+        self.gemma3n_router(gl, n, s, pool)?;
+        self.gemm_into(
+            &gl.altup_predict_coef,
+            n,
+            &s.g3n.router,
+            &mut s.g3n.coefs,
+            pool,
+        )?;
+        let n_altup = w.n_altup;
+        let n_embd = self.n_embd;
+        let nsq = n_altup.saturating_mul(n_altup);
+        for t in 0..n {
+            let coef_off = t.saturating_mul(nsq);
+            for i in 0..n_altup {
+                {
+                    let residual = altup_token(&s.g3n.streams, i, t, n, n_embd)?;
+                    let pred = altup_token_mut(&mut s.g3n.pred, i, t, n, n_embd)?;
+                    pred.copy_from_slice(residual);
+                }
+                for j in 0..n_altup {
+                    let c = *s
+                        .g3n
+                        .coefs
+                        .get(coef_off.saturating_add(j.saturating_add(i.saturating_mul(n_altup))))
+                        .ok_or_else(|| LlamaError::Shape("gemma3n predict coef".into()))?;
+                    let src = altup_token(&s.g3n.streams, j, t, n, n_embd)?;
+                    let pred = altup_token_mut(&mut s.g3n.pred, i, t, n, n_embd)?;
+                    for (d, sv) in pred.iter_mut().zip(src.iter()) {
+                        *d += c * *sv;
+                    }
+                }
+            }
+        }
+        Ok(())
+    }
+
+    fn gemma3n_altup_correct(
+        &self,
+        w: &Gemma3nWeights,
+        gl: &Gemma3nLayer,
+        n: usize,
+        s: &mut Scratch,
+        pool: &mut GemvPool,
+    ) -> Result<(), LlamaError> {
+        copy_buf(&mut s.g3n.tmp, &s.x);
+        self.gemma3n_router(gl, n, s, pool)?;
+        self.gemm_into(
+            &gl.altup_correct_coef,
+            n,
+            &s.g3n.router,
+            &mut s.g3n.coefs,
+            pool,
+        )?;
+        for c in s.g3n.coefs.iter_mut() {
+            *c += 1.0;
+        }
+        let n_altup = w.n_altup;
+        let n_embd = self.n_embd;
+        fit(&mut s.attn, n.saturating_mul(n_embd));
+        for t in 0..n {
+            let activated = token_row(&s.g3n.tmp, t, n_embd, "gemma3n correct")?;
+            let active_pred = altup_token(&s.g3n.pred, w.i_altup_act, t, n, n_embd)?;
+            let inn = token_row_mut(&mut s.attn, t, n_embd, "gemma3n innov")?;
+            for (d, (av, pv)) in inn.iter_mut().zip(activated.iter().zip(active_pred.iter())) {
+                *d = *av - *pv;
+            }
+        }
+        for t in 0..n {
+            let coef_off = t.saturating_mul(n_altup);
+            for i in 0..n_altup {
+                let c = *s
+                    .g3n
+                    .coefs
+                    .get(coef_off.saturating_add(i))
+                    .ok_or_else(|| LlamaError::Shape("gemma3n correct coef".into()))?;
+                let inn = token_row(&s.attn, t, n_embd, "gemma3n innov")?;
+                let pred = altup_token_mut(&mut s.g3n.pred, i, t, n, n_embd)?;
+                for (d, iv) in pred.iter_mut().zip(inn.iter()) {
+                    *d += c * *iv;
+                }
+            }
+        }
+        Ok(())
+    }
+
+    fn gemma3n_router(
+        &self,
+        gl: &Gemma3nLayer,
+        n: usize,
+        s: &mut Scratch,
+        pool: &mut GemvPool,
+    ) -> Result<(), LlamaError> {
+        copy_buf(&mut s.x, &s.g3n.tmp);
+        rmsnorm_rows_inplace(&mut s.x, self.n_embd, &gl.altup_router_norm, self.rms_eps)?;
+        let n_embd_f = f32::from(u16::try_from(self.n_embd).unwrap_or(1));
+        let inv = if n_embd_f > 0.0 { 1.0 / n_embd_f } else { 0.0 };
+        for v in s.x.iter_mut() {
+            *v *= inv;
+        }
+        self.gemm_into(&gl.altup_router, n, &s.x, &mut s.g3n.router, pool)?;
+        for v in s.g3n.router.iter_mut() {
+            *v = v.tanh();
+        }
+        Ok(())
+    }
+
+    fn gemma3n_laurel(
+        &self,
+        gl: &Gemma3nLayer,
+        n: usize,
+        s: &mut Scratch,
+        pool: &mut GemvPool,
+    ) -> Result<(), LlamaError> {
+        self.gemm_into(&gl.laurel_l, n, &s.x, &mut s.gate, pool)?;
+        self.gemm_into(&gl.laurel_r, n, &s.gate, &mut s.g3n.laurel, pool)?;
+        rmsnorm_rows_inplace(
+            &mut s.g3n.laurel,
+            self.n_embd,
+            &gl.laurel_post_norm,
+            self.rms_eps,
+        )?;
+        add_assign(&mut s.g3n.laurel, &s.x)?;
+        Ok(())
+    }
+
+    fn gemma3n_layer_attn(
+        &self,
+        layer: &Layer,
+        li: usize,
+        run: &mut TransformerRun<'_>,
+        addrs: &[KvAddr],
+        pos: &[usize],
+    ) -> Result<(), LlamaError> {
+        let n = run.n;
+        let hd = run.hd;
+        let width = run.width;
+        let s = &mut *run.s;
+        let pool = &mut *run.pool;
+        let cache_k = &mut *run.cache_k;
+        let cache_v = &mut *run.cache_v;
+        let wk = layer
+            .wk
+            .as_ref()
+            .ok_or_else(|| LlamaError::Shape("qkv head split".into()))?;
+        let wv = layer
+            .wv
+            .as_ref()
+            .ok_or_else(|| LlamaError::Shape("qkv head split".into()))?;
+        if wk.n_rows != self.n_head_kv.saturating_mul(hd)
+            || wv.n_rows != self.n_head_kv.saturating_mul(hd)
+        {
+            return Err(LlamaError::Shape("qkv head split".into()));
+        }
+        self.gemm_into(&layer.wq, n, &s.x, &mut s.q, pool)?;
+        if let Some(scale) = layer.q_s {
+            scale_expert_rows(&mut s.q, n, layer.wq.n_rows, scale, "attn_q.scale")?;
+        }
+        self.gemm_into(wk, n, &s.x, &mut s.k, pool)?;
+        if let Some(scale) = layer.k_s {
+            scale_expert_rows(&mut s.k, n, wk.n_rows, scale, "attn_k.scale")?;
+        }
+        self.gemm_into(wv, n, &s.x, &mut s.v, pool)?;
+        if let Some(scale) = layer.v_s {
+            scale_expert_rows(&mut s.v, n, wv.n_rows, scale, "attn_v.scale")?;
+        }
+        let q_width = self.n_head.saturating_mul(hd);
+        if layer.wq.n_rows != q_width {
+            return Err(LlamaError::Shape("qkv head split".into()));
+        }
+        if let Some(w) = layer.attn_q_norm.as_deref() {
+            rmsnorm_rows_inplace(&mut s.q, hd, w, self.rms_eps)?;
+        }
+        if let Some(w) = layer.attn_k_norm.as_deref() {
+            rmsnorm_rows_inplace(&mut s.k, hd, w, self.rms_eps)?;
+        }
+        rmsnorm_unweighted_rows_inplace(&mut s.v, hd, self.rms_eps)?;
+        for t in 0..n {
+            let p = token_pos(pos, t)?;
+            let geom = kv_addr(addrs, t)?.geom(self.n_head_kv, hd);
+            let k_t = token_row_mut(&mut s.k, t, wk.n_rows, "gemma3n k")?;
+            let rope = RopeParams {
+                pos: p,
+                n_rot: self.n_rot,
+                base: self.rope_base,
+                sections: self.rope_sections,
+                is_imrope: self.rope_imrope,
+                neox: self.rope_neox,
+                freq_factors: None,
+            };
+            for h in k_t.chunks_mut(hd) {
+                apply_rope(h, &rope)?;
+            }
+            store_kv(cache_k, li, &geom, p, k_t)?;
+            let v_t = token_row(&s.v, t, wv.n_rows, "gemma3n v")?;
+            store_kv(cache_v, li, &geom, p, v_t)?;
+        }
+        fit(&mut s.attn, width);
+        for t in 0..n {
+            let p = token_pos(pos, t)?;
+            let geom = kv_addr(addrs, t)?.geom(self.n_head_kv, hd);
+            let q_t = token_row_mut(&mut s.q, t, q_width, "gemma3n q")?;
+            let rope = RopeParams {
+                pos: p,
+                n_rot: self.n_rot,
+                base: self.rope_base,
+                sections: self.rope_sections,
+                is_imrope: self.rope_imrope,
+                neox: self.rope_neox,
+                freq_factors: None,
+            };
+            for h in q_t.chunks_mut(hd) {
+                apply_rope(h, &rope)?;
+            }
+            let dst_off = t.saturating_mul(self.n_embd);
+            let dst = s
+                .attn
+                .get_mut(dst_off..dst_off.saturating_add(self.n_embd))
+                .ok_or_else(|| LlamaError::Shape("gemma3n attn".into()))?;
+            let layer_swa = if gemma2_is_swa(li, self.swa_period) {
+                self.n_swa
+            } else {
+                0
+            };
+            attend_query(
+                cache_k,
+                cache_v,
+                li,
+                q_t,
+                &geom,
+                hd,
+                p.saturating_add(1),
+                1.0,
+                0.0,
+                0.0,
+                layer_swa,
+                &mut s.scores,
+                dst,
+            )?;
+        }
+        self.gemm_into(&layer.wo, n, &s.attn, &mut s.attn_proj, pool)?;
+        if let Some(scale) = layer.wo_s {
+            scale_expert_rows(
+                &mut s.attn_proj,
+                n,
+                layer.wo.n_rows,
+                scale,
+                "attn_output.scale",
+            )?;
+        }
+        Ok(())
+    }
+
+    fn gemma3n_per_layer_inject(
+        &self,
+        w: &Gemma3nWeights,
+        gl: &Gemma3nLayer,
+        li: usize,
+        n: usize,
+        s: &mut Scratch,
+        pool: &mut GemvPool,
+    ) -> Result<(), LlamaError> {
+        let active = altup_stream(&s.g3n.pred, w.i_altup_act, n, self.n_embd)?;
+        copy_buf(&mut s.x, active);
+        if s.x.len() != gl.altup_correct_scale.len().saturating_mul(n)
+            && gl.altup_correct_scale.len() != self.n_embd
+        {
+            return Err(LlamaError::Shape("altup_correct_scale".into()));
+        }
+        for t in 0..n {
+            let row = token_row_mut(&mut s.x, t, self.n_embd, "gemma3n scale")?;
+            for (v, sc) in row.iter_mut().zip(gl.altup_correct_scale.iter()) {
+                *v *= *sc;
+            }
+        }
+        self.gemm_into(&gl.inp_gate, n, &s.x, &mut s.gate, pool)?;
+        gelu_inplace(&mut s.gate);
+        let n_ea = w.n_embd_altup;
+        let n_layer = self.layers.len();
+        for t in 0..n {
+            let gate = token_row_mut(&mut s.gate, t, n_ea, "gemma3n inp_gate")?;
+            let pl = per_layer_at(&s.g3n.per_layer, li, t, n_ea, n_layer)?;
+            for (g, p) in gate.iter_mut().zip(pl.iter()) {
+                *g *= *p;
+            }
+        }
+        self.gemm_into(&gl.proj, n, &s.gate, &mut s.ffn_out, pool)?;
+        rmsnorm_rows_inplace(&mut s.ffn_out, self.n_embd, &gl.post_norm, self.rms_eps)?;
+        for i in 1..w.n_altup {
+            for t in 0..n {
+                let dst = altup_token_mut(&mut s.g3n.pred, i, t, n, self.n_embd)?;
+                let src = token_row(&s.ffn_out, t, self.n_embd, "gemma3n inject")?;
+                add_assign(dst, src)?;
+            }
+        }
+        Ok(())
+    }
+
+    /// Official gemma4.cpp `build_inp_per_layer` plus `project_per_layer_inputs`.
+    /// Token-major layout `[token][layer][n_embd_per_layer]` matches ggml before
+    /// the inject permute (`n_layer=1` is identical after permute).
+    fn gemma4_project_per_layer(
+        &self,
+        w: &Gemma4PleWeights,
+        n: usize,
+        s: &mut Scratch,
+        pool: &mut GemvPool,
+        tokens: &[u32],
+    ) -> Result<(), LlamaError> {
+        let n_pl = w.n_embd_per_layer;
+        let n_layer = self.layers.len();
+        let pl_cols = n_pl
+            .checked_mul(n_layer)
+            .ok_or_else(|| LlamaError::Shape("gemma4 per_layer".into()))?;
+        if tokens.len() != n {
+            return Err(LlamaError::Shape("gemma4 tokens".into()));
+        }
+        let tok_scale = f32::from(u16::try_from(n_pl).unwrap_or(1)).sqrt();
+        let n_embd_f = f32::from(u16::try_from(self.n_embd).unwrap_or(1));
+        let proj_scale = if n_embd_f > 0.0 {
+            1.0 / n_embd_f.sqrt()
+        } else {
+            0.0
+        };
+        let mix_scale = 1.0 / 2.0f32.sqrt();
+        for t in 0..n {
+            let tok = *tokens
+                .get(t)
+                .ok_or_else(|| LlamaError::Shape("gemma4 tokens".into()))?;
+            self.embed_mat_into(&w.per_layer_token_embd, tok, &mut s.g3n.per_tok)?;
+            for v in s.g3n.per_tok.iter_mut() {
+                *v *= tok_scale;
+            }
+            let off = t.saturating_mul(pl_cols);
+            let dst = s
+                .g3n
+                .per_layer
+                .get_mut(off..off.saturating_add(pl_cols))
+                .ok_or_else(|| LlamaError::Shape("gemma4 per_layer".into()))?;
+            dst.copy_from_slice(&s.g3n.per_tok);
+        }
+        self.gemm_into(&w.per_layer_model_proj, n, &s.x, &mut s.g3n.tmp, pool)?;
+        for v in s.g3n.tmp.iter_mut() {
+            *v *= proj_scale;
+        }
+        rmsnorm_rows_inplace(&mut s.g3n.tmp, n_pl, &w.per_layer_proj_norm, self.rms_eps)?;
+        if s.g3n.tmp.len() != s.g3n.per_layer.len() {
+            return Err(LlamaError::Shape("gemma4 per_layer".into()));
+        }
+        for (pl, pv) in s.g3n.per_layer.iter_mut().zip(s.g3n.tmp.iter()) {
+            *pl = (*pl + *pv) * mix_scale;
+        }
+        Ok(())
+    }
+
+    /// Official gemma4.cpp per-layer inject after the FFN residual (`pe_in`).
+    fn gemma4_per_layer_inject(
+        &self,
+        w: &Gemma4PleWeights,
+        gl: &Gemma4PleLayer,
+        li: usize,
+        n: usize,
+        s: &mut Scratch,
+        pool: &mut GemvPool,
+    ) -> Result<(), LlamaError> {
+        self.gemm_into(&gl.inp_gate, n, &s.x, &mut s.gate, pool)?;
+        gelu_inplace(&mut s.gate);
+        let n_pl = w.n_embd_per_layer;
+        let n_layer = self.layers.len();
+        for t in 0..n {
+            let gate = token_row_mut(&mut s.gate, t, n_pl, "gemma4 inp_gate")?;
+            let pl = per_layer_at(&s.g3n.per_layer, li, t, n_pl, n_layer)?;
+            for (g, p) in gate.iter_mut().zip(pl.iter()) {
+                *g *= *p;
+            }
+        }
+        self.gemm_into(&gl.proj, n, &s.gate, &mut s.ffn_out, pool)?;
+        rmsnorm_rows_inplace(&mut s.ffn_out, self.n_embd, &gl.post_norm, self.rms_eps)?;
+        add_assign(&mut s.x, &s.ffn_out)?;
+        Ok(())
+    }
+
+    fn gemma3n_unembed(
+        &self,
+        w: &Gemma3nWeights,
+        n: usize,
+        s: &mut Scratch,
+        pool: &mut GemvPool,
+    ) -> Result<(), LlamaError> {
+        let active = altup_stream(&s.g3n.streams, w.i_altup_act, n, self.n_embd)?;
+        copy_buf(&mut s.x, active);
+        copy_buf(&mut s.residual, &s.x);
+        let inv = 1.0 / f32::from(u16::try_from(w.n_altup).unwrap_or(1));
+        for p in 0..w.n_altup.saturating_sub(1) {
+            let src = altup_stream(&s.g3n.streams, p.saturating_add(1), n, self.n_embd)?;
+            copy_buf(&mut s.g3n.tmp, src);
+            self.gemm_part_tokens_into(
+                &w.altup_unembd_proj,
+                p,
+                n,
+                &s.g3n.tmp,
+                &mut s.ffn_out,
+                pool,
+            )?;
+            scale_rows_to_match(&s.x, &mut s.ffn_out, self.n_embd)?;
+            add_assign(&mut s.residual, &s.ffn_out)?;
+        }
+        for v in s.residual.iter_mut() {
+            *v *= inv;
+        }
+        copy_buf(&mut s.x, &s.residual);
+        Ok(())
+    }
+
+    fn gemma3n_logits(
+        &self,
+        n: usize,
+        s: &mut Scratch,
+        pool: &mut GemvPool,
+        logits: LogitsKind,
+    ) -> Result<(), LlamaError> {
+        match logits {
+            LogitsKind::Last => {
+                let last_off = n.saturating_sub(1).saturating_mul(self.n_embd);
+                let last =
+                    s.x.get(last_off..last_off.saturating_add(self.n_embd))
+                        .ok_or_else(|| LlamaError::Shape("gemma3n last".into()))?;
+                copy_buf(&mut s.xn, last);
+                rmsnorm_inplace(&mut s.xn, &self.output_norm, self.rms_eps)?;
+                self.gemv_into(&self.output, &s.xn, &mut s.logits, pool)?;
+                self.mul_output_s(&mut s.logits, 1)?;
+            }
+            LogitsKind::All => {
+                rmsnorm_rows_inplace(&mut s.x, self.n_embd, &self.output_norm, self.rms_eps)?;
+                self.gemm_into(&self.output, n, &s.x, &mut s.logits, pool)?;
+                self.mul_output_s(&mut s.logits, n)?;
+            }
+        }
+        tanh_softcap_inplace(&mut s.logits, self.final_logit_softcapping);
+        Ok(())
+    }
+
+    /// Official llama.cpp `build_lora_mm`: `{1}` `output.scale` `ggml_mul`
+    /// after the LM-head GEMM when `output.weight` is NVFP4. Missing is `1.0`.
+    fn mul_output_s(&self, y: &mut [f32], n: usize) -> Result<(), LlamaError> {
+        if let Some(scale) = self.output_s {
+            scale_expert_rows(y, n, self.output.n_rows, scale, "output.scale")?;
+        }
+        Ok(())
+    }
+
+    fn gemm_part_tokens_into(
+        &self,
+        m: &QuantMat,
+        part: usize,
+        n_tokens: usize,
+        x: &[f32],
+        y: &mut Vec<f32>,
+        pool: &mut GemvPool,
+    ) -> Result<(), LlamaError> {
+        self.gemm_part_bytes_into(
+            PartBytes {
+                m,
+                part,
+                n_tokens,
+                bytes: None,
+            },
+            x,
+            y,
+            pool,
+        )
+    }
+
     /// One decode step. Writes K/V at `cache.n_past` and increments it. Returns logits.
+    ///
+    /// Copies the logits out of the cache. [`Llama::forward_logits`] borrows
+    /// them instead and is the allocation-free entry point.
     pub fn forward(&self, cache: &mut KvCache, token: u32) -> Result<Vec<f32>, LlamaError> {
-        self.prefill(cache, &[token])
+        self.forward_logits(cache, token).map(<[f32]>::to_vec)
+    }
+
+    /// [`Llama::forward`] returning the cache's own logits buffer instead of a
+    /// fresh `Vec`. `cache` stays borrowed for as long as the slice is held.
+    ///
+    /// Allocates nothing once the cache's buffers have been sized by a first
+    /// call of the same or larger token count.
+    pub fn forward_logits<'c>(
+        &self,
+        cache: &'c mut KvCache,
+        token: u32,
+    ) -> Result<&'c [f32], LlamaError> {
+        self.prefill_logits(cache, &[token])
     }
 
     /// Decode `tokens` in one causal pass. Prompt tokens share each weight
     /// row (GEMM; a single token stays GEMV). Writes K/V at
     /// `cache.n_past .. n_past+len` and returns logits of the last token.
     pub fn prefill(&self, cache: &mut KvCache, tokens: &[u32]) -> Result<Vec<f32>, LlamaError> {
+        self.prefill_logits(cache, tokens).map(<[f32]>::to_vec)
+    }
+
+    /// [`Llama::prefill`] returning the cache's own logits buffer.
+    pub fn prefill_logits<'c>(
+        &self,
+        cache: &'c mut KvCache,
+        tokens: &[u32],
+    ) -> Result<&'c [f32], LlamaError> {
         let n = tokens.len();
         if n == 0 {
             return Err(LlamaError::Shape("prefill tokens".into()));
         }
-        let hd = self.head_dim()?;
+        let hd = self.cache_hd()?;
         let n0 = cache.n_past;
         let end = n0
             .checked_add(n)
@@ -578,164 +3799,167 @@ impl Llama {
         if end > cache.max_seq {
             return Err(LlamaError::Shape("kv cache full".into()));
         }
-        let mut x = Vec::new();
-        for tok in tokens {
-            x.extend(self.embed(*tok)?);
+        let width = n
+            .checked_mul(self.n_embd)
+            .ok_or_else(|| LlamaError::Shape("prefill embed".into()))?;
+        let KvCache {
+            k: dense_k,
+            v: dense_v,
+            n_past,
+            max_seq,
+            scratch: s,
+            pool,
+            moe_trace,
+            expert_store,
+            last_prefix_hit: _,
+            pages,
+        } = cache;
+        let max_seq = *max_seq;
+        moe_trace.token0 = u32::try_from(n0).unwrap_or(u32::MAX);
+        moe_trace.batch.clear();
+        moe_trace.batch.extend(tokens.iter().copied());
+        moe_trace.row_seq.clear();
+        moe_trace.row_tok.clear();
+        moe_trace.row_prefix.clear();
+        // Single-token steps are the only ones the pool serves: GEMM lays `y`
+        // out token-major, so a row range there is not a contiguous slice.
+        if n == 1 && pool.is_none() && self.wants_pool() {
+            *pool = Pool::new(
+                Arc::new(GemvRows {
+                    blob: Arc::clone(&self.blob),
+                }),
+                self.output.n_rows.max(self.n_embd),
+            );
         }
-        if x.len() != n.saturating_mul(self.n_embd) {
-            return Err(LlamaError::Shape("prefill embed".into()));
+        // Attention scores are `n_past + 1` long, so they would otherwise grow
+        // on every decode step. Take the full-context capacity up front.
+        if s.scores.capacity() < max_seq {
+            fit(&mut s.scores, max_seq);
         }
-        for v in &mut x {
-            *v *= self.embed_scale;
-        }
-        for (li, layer) in self.layers.iter().enumerate() {
-            let residual = x.clone();
-            x = rmsnorm_rows(&x, self.n_embd, &layer.attn_norm, self.rms_eps)?;
-            let q_full = add_bias_rows(
-                self.gemm_mat(&layer.wq, n, &x)?,
-                layer.wq.n_rows,
-                layer.bq.as_deref(),
-            )?;
-            let k = add_bias_rows(
-                self.gemm_mat(&layer.wk, n, &x)?,
-                layer.wk.n_rows,
-                layer.bk.as_deref(),
-            )?;
-            let v = add_bias_rows(
-                self.gemm_mat(&layer.wv, n, &x)?,
-                layer.wv.n_rows,
-                layer.bv.as_deref(),
-            )?;
-            // Official Qwen3Next: joint Q projection is query+gate
-            // (`n_embd_head * n_head * 2`), split per head, gate applied after attn.
-            let (q, attn_gate) = if layer.attn_q_gate {
-                split_qwen3next_q_gate(&q_full, n, self.n_head, hd)?
-            } else {
-                (q_full, None)
-            };
-            // Official Qwen3 / Qwen3MoE / Qwen3VL / Qwen3Next: RMSNorm on Q and K
-            // after projection, before RoPE (`attn_q_norm` / `attn_k_norm`,
-            // per-head, `LLM_NORM_RMS`).
-            let q = qk_norm_rows(q, hd, layer.attn_q_norm.as_deref(), self.rms_eps)?;
-            let k = qk_norm_rows(k, hd, layer.attn_k_norm.as_deref(), self.rms_eps)?;
-            for t in 0..n {
-                let pos = n0.saturating_add(t);
-                let k_t = token_row(&k, t, layer.wk.n_rows, "prefill k")?;
-                let v_t = token_row(&v, t, layer.wv.n_rows, "prefill v")?;
-                let mut kh = split_heads(k_t, self.n_head_kv, hd)?;
-                let vh = split_heads(v_t, self.n_head_kv, hd)?;
-                if layer.use_rope {
-                    for h in &mut kh {
-                        apply_rope(
-                            h,
-                            pos,
-                            self.n_rot,
-                            self.rope_base,
-                            self.rope_sections,
-                            self.rope_imrope,
-                            self.rope_neox,
-                        )?;
-                    }
-                    if layer.qk_l2 {
-                        // Official Llama4: unweighted RMS after RoPE (`Llama4TextL2Norm`).
-                        for h in &mut kh {
-                            *h = rmsnorm_unweighted(h, self.rms_eps)?;
-                        }
-                    }
-                }
-                store_kv(&mut cache.k, li, self.n_head_kv, cache.max_seq, pos, &kh)?;
-                store_kv(&mut cache.v, li, self.n_head_kv, cache.max_seq, pos, &vh)?;
+        fit(&mut s.x, width);
+        for (t, tok) in tokens.iter().enumerate() {
+            let row = token_row_mut(&mut s.x, t, self.n_embd, "prefill embed")?;
+            self.embed_into(*tok, row)?;
+            for v in row.iter_mut() {
+                *v *= self.embed_scale;
             }
-            let mut attn = vec![0.0f32; n.saturating_mul(self.n_embd)];
-            for t in 0..n {
-                let pos = n0.saturating_add(t);
-                let q_width = if layer.attn_q_gate {
-                    self.n_embd
-                } else {
-                    layer.wq.n_rows
-                };
-                let q_t = token_row(&q, t, q_width, "prefill q")?;
-                let mut qh = split_heads(q_t, self.n_head, hd)?;
-                if layer.use_rope {
-                    for h in &mut qh {
-                        apply_rope(
-                            h,
-                            pos,
-                            self.n_rot,
-                            self.rope_base,
-                            self.rope_sections,
-                            self.rope_imrope,
-                            self.rope_neox,
-                        )?;
-                    }
-                    if layer.qk_l2 {
-                        for h in &mut qh {
-                            *h = rmsnorm_unweighted(h, self.rms_eps)?;
-                        }
-                    }
-                } else {
-                    // Official Llama4 NoPE: Q *= attn temperature scale.
-                    let scale = llama4_attn_temp_scale(pos);
-                    for h in &mut qh {
-                        for v in h.iter_mut() {
-                            *v *= scale;
-                        }
-                    }
-                }
-                let one = attend_query(cache, li, &qh, self.n_head_kv, hd, pos.saturating_add(1))?;
-                let dst_off = t.saturating_mul(self.n_embd);
-                let dst = attn
-                    .get_mut(dst_off..dst_off.saturating_add(self.n_embd))
-                    .ok_or_else(|| LlamaError::Shape("prefill attn".into()))?;
-                for (d, s) in dst.iter_mut().zip(one.iter()) {
-                    *d = *s;
-                }
-            }
-            if let Some(gate) = attn_gate.as_ref() {
-                if gate.len() != attn.len() {
-                    return Err(LlamaError::Shape("attn gate".into()));
-                }
-                for (a, g) in attn.iter_mut().zip(gate.iter()) {
-                    *a *= sigmoid_f32(*g);
-                }
-            }
-            let proj = self.gemm_mat(&layer.wo, n, &attn)?;
-            x = add(&proj, &residual)?;
-            let residual = x.clone();
-            x = rmsnorm_rows(&x, self.n_embd, &layer.ffn_norm, self.rms_eps)?;
-            let down = match &layer.ffn {
-                LayerFfn::Dense(dense) => {
-                    let gate = self.gemm_mat(&dense.gate, n, &x)?;
-                    let up = self.gemm_mat(&dense.up, n, &x)?;
-                    let mut h = ffn_gate_act(&gate, self.ffn_gelu)?;
-                    for (hv, uv) in h.iter_mut().zip(up.iter()) {
-                        *hv *= *uv;
-                    }
-                    self.gemm_mat(&dense.down, n, &h)?
-                }
-                LayerFfn::LlamaMoe(moe) => self.llama_moe_rows(moe.as_ref(), n, &x)?,
-                LayerFfn::Llama4Moe(moe) => self.llama4_moe_rows(moe.as_ref(), n, &x)?,
-                LayerFfn::Qwen2Moe(moe) => self.qwen2moe_rows(moe.as_ref(), n, &x)?,
-                LayerFfn::Qwen3Moe(moe) => self.qwen3moe_rows(moe.as_ref(), n, &x)?,
-                LayerFfn::Qwen3Next(moe) => self.qwen3next_rows(moe.as_ref(), n, &x)?,
-            };
-            x = add(&down, &residual)?;
         }
-        let last_off = n.saturating_sub(1).saturating_mul(self.n_embd);
-        let last = x
-            .get(last_off..last_off.saturating_add(self.n_embd))
-            .ok_or_else(|| LlamaError::Shape("prefill last".into()))?;
-        let xn = rmsnorm(last, &self.output_norm, self.rms_eps)?;
-        let logits = self.gemv_mat(&self.output, &xn)?;
-        cache.n_past = end;
-        Ok(logits)
+        self.apply_token_embd_norm(&mut s.x)?;
+        let mut table_copy = Vec::new();
+        let mut page_bs = max_seq;
+        let mut page_nl = 0usize;
+        if let Some(p) = pages.as_mut() {
+            for pos in n0..end {
+                p.ensure_write(pos)
+                    .map_err(|e| LlamaError::Shape(e.into()))?;
+            }
+            table_copy.extend_from_slice(p.table_ids());
+            page_bs = p.block_size();
+            page_nl = p.n_layers();
+        }
+        let addr = if pages.is_some() {
+            KvAddr {
+                table: table_copy,
+                block_size: page_bs,
+                n_layers: page_nl,
+                dense_max: 0,
+            }
+        } else {
+            KvAddr {
+                table: Vec::new(),
+                block_size: max_seq,
+                n_layers: 0,
+                dense_max: max_seq,
+            }
+        };
+        let mut positions = Vec::new();
+        for t in 0..n {
+            positions.push(n0.saturating_add(t));
+        }
+        let mut pool_guard = match pages.as_ref() {
+            Some(p) => Some(p.try_pool_mut().map_err(|e| LlamaError::Shape(e.into()))?),
+            None => None,
+        };
+        let (cache_k, cache_v): (&mut [f32], &mut [f32]) = match pool_guard.as_mut() {
+            Some(g) => g.kv_mut(),
+            None => (dense_k.as_mut_slice(), dense_v.as_mut_slice()),
+        };
+        self.transformer(
+            &mut TransformerRun {
+                s,
+                pool,
+                moe_trace,
+                expert_store,
+                cache_k,
+                cache_v,
+                n,
+                width,
+                hd,
+            },
+            &[addr],
+            &positions,
+            LogitsKind::Last,
+        )?;
+        drop(pool_guard);
+        *n_past = end;
+        moe_trace.ids.extend_from_slice(&moe_trace.batch);
+        if let Some(p) = pages.as_mut() {
+            p.intern_full(&moe_trace.ids);
+        }
+        Ok(&s.logits)
+    }
+
+    /// [`Llama::prompt_logits`] copying logits out of the cache.
+    pub fn prompt(&self, cache: &mut KvCache, tokens: &[u32]) -> Result<Vec<f32>, LlamaError> {
+        self.prompt_logits(cache, tokens).map(<[f32]>::to_vec)
+    }
+
+    /// Prefill `tokens` as a full prompt, reusing cached KV for the longest
+    /// matching prefix (vLLM Automatic Prefix Caching on this engine).
+    ///
+    /// Not used by [`Llama::forward`] / append [`Llama::prefill_logits`]. A
+    /// full-prefix hit rewinds one token and recomputes it so the logits are
+    /// of the last prompt token (scratch otherwise still holds the last
+    /// generated token). `max_suffix` caps newly forwarded tokens (`0` = the
+    /// whole remaining suffix) for chunked prefill.
+    fn prompt_with_suffix_cap<'c>(
+        &self,
+        cache: &'c mut KvCache,
+        tokens: &[u32],
+        max_suffix: usize,
+    ) -> Result<&'c [f32], LlamaError> {
+        let part = cache.prompt_suffix(tokens, max_suffix)?;
+        self.prefill_logits(cache, part)
+    }
+
+    /// [`Llama::prompt_logits`]: reuse + intern bind, then at most `max_suffix`
+    /// new tokens (`0` = the whole remaining suffix).
+    ///
+    /// A full-prefix intern/LCP hit still recomputes the last prompt token.
+    /// Used by the continuous-batching engine for chunked prefill.
+    pub fn prompt_chunk<'c>(
+        &self,
+        cache: &'c mut KvCache,
+        tokens: &[u32],
+        max_suffix: usize,
+    ) -> Result<&'c [f32], LlamaError> {
+        self.prompt_with_suffix_cap(cache, tokens, max_suffix)
+    }
+
+    /// [`Llama::prompt_chunk`] with `max_suffix = 0` (whole remaining suffix).
+    pub fn prompt_logits<'c>(
+        &self,
+        cache: &'c mut KvCache,
+        tokens: &[u32],
+    ) -> Result<&'c [f32], LlamaError> {
+        self.prompt_with_suffix_cap(cache, tokens, 0)
     }
 }
 
 /// Greedy generate: encode prompt, decode `n_predict` tokens, return decoded string.
 ///
 /// KV is sized to `prompt + n_predict + 1`. See [`greedy_generate_ctx`] to set `--n-ctx`.
-pub(crate) fn greedy_generate(
+pub fn greedy_generate(
     model: &Llama,
     tok: &Tokenizer,
     prompt: &str,
@@ -747,13 +3971,78 @@ pub(crate) fn greedy_generate(
 /// Seedless greedy generate with optional KV capacity (`--n-ctx`).
 ///
 /// `n_ctx` must be at least prompt tokens + `n_predict`. `None` uses prompt + `n_predict` + 1.
-pub(crate) fn greedy_generate_ctx(
+pub fn greedy_generate_ctx(
     model: &Llama,
     tok: &Tokenizer,
     prompt: &str,
     n_predict: usize,
     n_ctx: Option<usize>,
 ) -> Result<String, LlamaError> {
+    let mut slot = None;
+    greedy_generate_slot(model, tok, &mut slot, prompt, n_predict, n_ctx, None)
+}
+
+/// [`greedy_generate_ctx`] on a persistent KV slot (Automatic Prefix Caching).
+pub fn greedy_generate_slot(
+    model: &Llama,
+    tok: &Tokenizer,
+    slot: &mut Option<KvCache>,
+    prompt: &str,
+    n_predict: usize,
+    n_ctx: Option<usize>,
+    kv_page: Option<usize>,
+) -> Result<String, LlamaError> {
+    if prompt.is_empty() {
+        return Err(LlamaError::EmptyPrompt);
+    }
+    let mut ids = prompt_ids(tok, prompt)?;
+    if ids.is_empty() {
+        return Err(LlamaError::EmptyPrompt);
+    }
+    let needed = ids.len().saturating_add(n_predict);
+    let cache = model.ensure_cache_page(slot, needed, n_ctx, kv_page)?;
+    greedy_generate_cache(model, tok, cache, &mut ids, n_predict)
+}
+
+/// Seedless greedy on an existing KV cache. Prefills with [`Llama::prompt_logits`]
+/// so a shared prefix is not recomputed. `cache.max_seq` must fit prompt +
+/// `n_predict`. `ids` is the encoded prompt (mutated to include generated tokens).
+pub fn greedy_generate_cache(
+    model: &Llama,
+    tok: &Tokenizer,
+    cache: &mut KvCache,
+    ids: &mut Vec<u32>,
+    n_predict: usize,
+) -> Result<String, LlamaError> {
+    if ids.is_empty() {
+        return Err(LlamaError::EmptyPrompt);
+    }
+    let needed = ids.len().saturating_add(n_predict);
+    if cache.max_seq < needed {
+        return Err(LlamaError::Shape("n_ctx".into()));
+    }
+    let mut next = argmax(model.prompt_logits(cache, ids)?);
+    for _ in 0..n_predict {
+        if tok.eos == Some(next) {
+            break;
+        }
+        ids.push(next);
+        next = argmax(model.forward_logits(cache, next)?);
+    }
+    Ok(tok.decode(ids))
+}
+
+/// [`greedy_generate_ctx`] plus an [`expertvm::Trace`] of every MoE router decision.
+///
+/// Tracing is opt-in. Logits and greedy tokens must match an untraced run.
+pub fn greedy_generate_traced(
+    model: &Llama,
+    tok: &Tokenizer,
+    prompt: &str,
+    n_predict: usize,
+    n_ctx: Option<usize>,
+    sequence: u64,
+) -> Result<(String, Trace), LlamaError> {
     if prompt.is_empty() {
         return Err(LlamaError::EmptyPrompt);
     }
@@ -768,20 +4057,14 @@ pub(crate) fn greedy_generate_ctx(
         None => needed.saturating_add(1),
     };
     let mut cache = model.new_cache(max_seq)?;
-    let mut last = model.prefill(&mut cache, &ids)?;
-    for _ in 0..n_predict {
-        let next = argmax(&last);
-        if tok.eos == Some(next) {
-            break;
-        }
-        ids.push(next);
-        last = model.forward(&mut cache, next)?;
-    }
-    Ok(tok.decode(&ids))
+    cache.enable_moe_trace(sequence);
+    let text = greedy_generate_cache(model, tok, &mut cache, &mut ids, n_predict)?;
+    let trace = cache.take_moe_trace();
+    Ok((text, trace))
 }
 
 /// Generate with [`SampleParams`]. [`SampleParams::greedy`] is the seedless path.
-pub(crate) fn generate(
+pub fn generate(
     model: &Llama,
     tok: &Tokenizer,
     prompt: &str,
@@ -792,7 +4075,7 @@ pub(crate) fn generate(
 }
 
 /// [`generate`] with optional KV capacity (`n_ctx`).
-pub(crate) fn generate_ctx(
+pub fn generate_ctx(
     model: &Llama,
     tok: &Tokenizer,
     prompt: &str,
@@ -814,7 +4097,10 @@ pub(crate) fn generate_ctx(
         None => needed.saturating_add(1),
     };
     let mut cache = model.new_cache(max_seq)?;
-    let mut last = model.prefill(&mut cache, &ids)?;
+    // The sampler needs `ids` while it reads the logits, so keep one reusable
+    // copy here rather than borrowing the cache across the call.
+    let mut last = Vec::new();
+    copy_buf(&mut last, model.prompt_logits(&mut cache, &ids)?);
     let mut sampler = Sampler::new(*params)?;
     for _ in 0..n_predict {
         let next = sampler.sample(&last, &ids)?;
@@ -822,14 +4108,11 @@ pub(crate) fn generate_ctx(
             break;
         }
         ids.push(next);
-        last = model.forward(&mut cache, next)?;
+        copy_buf(&mut last, model.forward_logits(&mut cache, next)?);
     }
     Ok(tok.decode(&ids))
 }
 
-/// Encode a prompt for decode: BPE ids, with BOS prepended when the GGUF's
-/// `tokenizer.ggml.add_bos_token` asks for one and the encode did not already
-/// produce it. Shared with [`crate::Session`] so both entry points agree.
 pub(crate) fn prompt_ids(tok: &Tokenizer, prompt: &str) -> Result<Vec<u32>, LlamaError> {
     let mut ids = tok.encode(prompt)?;
     if tok.add_bos {
@@ -852,12 +4135,167 @@ fn tiny_llama_spec() -> TinySpec {
         qkv_bias: false,
         add_bos_token: None,
         llama_moe: false,
+        gemma4_moe: false,
+        gemma4_ple: false,
+        gemma4_fused: false,
     }
 }
 
 /// Writer-built Llama-shaped GGUF: mixed F32/Q4_K/Q6_K weights + tokenizer KV.
+///
+/// Optional dense `ffn_down.scale` is [`tiny_llama_ffn_down_s_gguf`].
+/// Optional dense `ffn_gate.scale` is [`tiny_llama_ffn_gate_s_gguf`].
+/// Optional dense `ffn_up.scale` is [`tiny_llama_ffn_up_s_gguf`].
+/// Optional dense `attn_q.scale` is [`tiny_llama_attn_q_s_gguf`].
+/// Optional dense `attn_output.scale` is [`tiny_llama_attn_out_s_gguf`].
+/// Optional dense `attn_k.scale` is [`tiny_llama_attn_k_s_gguf`].
+/// Optional dense `attn_v.scale` is [`tiny_llama_attn_v_s_gguf`].
 pub fn tiny_llama_gguf() -> Vec<u8> {
     tiny_arch_gguf(tiny_llama_spec())
+}
+
+/// Writer-built Llama GGUF with official `{1}` `ffn_down.scale`.
+///
+/// Same tensors as [`tiny_llama_gguf`] plus `blk.0.ffn_down.scale`. Decode
+/// follows llama.cpp `build_ffn`: after the down GEMM, `ggml_mul` broadcasts
+/// the scalar (`TENSOR_NOT_REQUIRED`; missing is `1.0`). Not a second
+/// architecture. Gemma2/3/4 `post_ffw_norm` RMSNorm would cancel a positive
+/// scalar, so the observable fixture is llama.
+pub fn tiny_llama_ffn_down_s_gguf() -> Vec<u8> {
+    rewrite_tiny_llama_ffn_down_s(tiny_llama_gguf(), Some(TINY_LLAMA_FFN_DOWN_S))
+        .unwrap_or_else(|_| Vec::new())
+}
+
+/// Append or omit `blk.0.ffn_down.scale`.
+fn rewrite_tiny_llama_ffn_down_s(bytes: Vec<u8>, scale: Option<f32>) -> Result<Vec<u8>, GgufError> {
+    rewrite_tiny_llama_unit_scale(bytes, "blk.0.ffn_down.scale", scale)
+}
+
+/// Writer-built Llama GGUF with official `{1}` `ffn_gate.scale`.
+///
+/// Same tensors as [`tiny_llama_gguf`] plus `blk.0.ffn_gate.scale`. Decode
+/// follows llama.cpp `build_ffn`: after the gate GEMM, `ggml_mul` broadcasts
+/// the scalar (`TENSOR_NOT_REQUIRED`; missing is `1.0`) before SiLU. Not a
+/// second architecture.
+pub fn tiny_llama_ffn_gate_s_gguf() -> Vec<u8> {
+    rewrite_tiny_llama_ffn_gate_s(tiny_llama_gguf(), Some(TINY_LLAMA_FFN_GATE_S))
+        .unwrap_or_else(|_| Vec::new())
+}
+
+/// Append or omit `blk.0.ffn_gate.scale`.
+fn rewrite_tiny_llama_ffn_gate_s(bytes: Vec<u8>, scale: Option<f32>) -> Result<Vec<u8>, GgufError> {
+    rewrite_tiny_llama_unit_scale(bytes, "blk.0.ffn_gate.scale", scale)
+}
+
+/// Writer-built Llama GGUF with official `{1}` `ffn_up.scale`.
+///
+/// Same tensors as [`tiny_llama_gguf`] plus `blk.0.ffn_up.scale`. Decode
+/// follows llama.cpp `build_ffn`: after the up GEMM, `ggml_mul` broadcasts
+/// the scalar (`TENSOR_NOT_REQUIRED`; missing is `1.0`) before the gated
+/// product. Not a second architecture.
+pub fn tiny_llama_ffn_up_s_gguf() -> Vec<u8> {
+    rewrite_tiny_llama_ffn_up_s(tiny_llama_gguf(), Some(TINY_LLAMA_FFN_UP_S))
+        .unwrap_or_else(|_| Vec::new())
+}
+
+/// Append or omit `blk.0.ffn_up.scale`.
+fn rewrite_tiny_llama_ffn_up_s(bytes: Vec<u8>, scale: Option<f32>) -> Result<Vec<u8>, GgufError> {
+    rewrite_tiny_llama_unit_scale(bytes, "blk.0.ffn_up.scale", scale)
+}
+
+/// Writer-built Llama GGUF with official `{1}` `attn_q.scale`.
+///
+/// Same tensors as [`tiny_llama_gguf`] plus `blk.0.attn_q.scale`. Decode
+/// follows llama.cpp `build_lora_mm`: after the Q GEMM, `ggml_mul` broadcasts
+/// the scalar (`TENSOR_NOT_REQUIRED`; missing is `1.0`). Not a second
+/// architecture. Gemma3/4 QK-Norm would cancel a positive scalar, so the
+/// observable fixture is llama.
+pub fn tiny_llama_attn_q_s_gguf() -> Vec<u8> {
+    rewrite_tiny_llama_attn_q_s(tiny_llama_gguf(), Some(TINY_LLAMA_ATTN_Q_S))
+        .unwrap_or_else(|_| Vec::new())
+}
+
+/// Append or omit `blk.0.attn_q.scale`.
+fn rewrite_tiny_llama_attn_q_s(bytes: Vec<u8>, scale: Option<f32>) -> Result<Vec<u8>, GgufError> {
+    rewrite_tiny_llama_unit_scale(bytes, "blk.0.attn_q.scale", scale)
+}
+
+/// Writer-built Llama GGUF with official `{1}` `attn_output.scale`.
+///
+/// Same tensors as [`tiny_llama_gguf`] plus `blk.0.attn_output.scale`. Decode
+/// follows llama.cpp `build_lora_mm`: after the output GEMM, `ggml_mul`
+/// broadcasts the scalar (`TENSOR_NOT_REQUIRED`; missing is `1.0`). Not a
+/// second architecture. Gemma2/3/4 `post_attention_norm` RMSNorm would cancel
+/// a positive scalar, so the observable fixture is llama.
+pub fn tiny_llama_attn_out_s_gguf() -> Vec<u8> {
+    rewrite_tiny_llama_attn_out_s(tiny_llama_gguf(), Some(TINY_LLAMA_ATTN_OUT_S))
+        .unwrap_or_else(|_| Vec::new())
+}
+
+/// Append or omit `blk.0.attn_output.scale`.
+fn rewrite_tiny_llama_attn_out_s(bytes: Vec<u8>, scale: Option<f32>) -> Result<Vec<u8>, GgufError> {
+    rewrite_tiny_llama_unit_scale(bytes, "blk.0.attn_output.scale", scale)
+}
+
+/// Writer-built Llama GGUF with official `{1}` `attn_k.scale`.
+///
+/// Same tensors as [`tiny_llama_gguf`] plus `blk.0.attn_k.scale`. Decode
+/// follows llama.cpp `build_lora_mm`: after the K GEMM, `ggml_mul` broadcasts
+/// the scalar (`TENSOR_NOT_REQUIRED`; missing is `1.0`). Not a second
+/// architecture. Gemma3/4 K-norm would cancel a positive scalar, so the
+/// observable fixture is llama.
+pub fn tiny_llama_attn_k_s_gguf() -> Vec<u8> {
+    rewrite_tiny_llama_attn_k_s(tiny_llama_gguf(), Some(TINY_LLAMA_ATTN_K_S))
+        .unwrap_or_else(|_| Vec::new())
+}
+
+/// Append or omit `blk.0.attn_k.scale`.
+fn rewrite_tiny_llama_attn_k_s(bytes: Vec<u8>, scale: Option<f32>) -> Result<Vec<u8>, GgufError> {
+    rewrite_tiny_llama_unit_scale(bytes, "blk.0.attn_k.scale", scale)
+}
+
+/// Writer-built Llama GGUF with official `{1}` `attn_v.scale`.
+///
+/// Same tensors as [`tiny_llama_gguf`] plus `blk.0.attn_v.scale`. Decode
+/// follows llama.cpp `build_lora_mm`: after the V GEMM, `ggml_mul` broadcasts
+/// the scalar (`TENSOR_NOT_REQUIRED`; missing is `1.0`). Not a second
+/// architecture. Gemma3/4 unweighted V RMSNorm would cancel a positive
+/// scalar, so the observable fixture is llama.
+pub fn tiny_llama_attn_v_s_gguf() -> Vec<u8> {
+    rewrite_tiny_llama_attn_v_s(tiny_llama_gguf(), Some(TINY_LLAMA_ATTN_V_S))
+        .unwrap_or_else(|_| Vec::new())
+}
+
+/// Append or omit `blk.0.attn_v.scale`.
+fn rewrite_tiny_llama_attn_v_s(bytes: Vec<u8>, scale: Option<f32>) -> Result<Vec<u8>, GgufError> {
+    rewrite_tiny_llama_unit_scale(bytes, "blk.0.attn_v.scale", scale)
+}
+
+fn rewrite_tiny_llama_unit_scale(
+    bytes: Vec<u8>,
+    name: &str,
+    scale: Option<f32>,
+) -> Result<Vec<u8>, GgufError> {
+    let g = load_gguf_owned(bytes)?;
+    let kv: Vec<(String, Kv)> = g.kv.iter().map(|(k, v)| (k.clone(), v.clone())).collect();
+    let mut tensors = Vec::new();
+    for t in g.tensors() {
+        tensors.push(TensorWrite {
+            name: t.name.to_string(),
+            ty: t.ty,
+            shape: t.shape.to_vec(),
+            data: t.data.to_vec(),
+        });
+    }
+    if let Some(s) = scale {
+        tensors.push(tw(
+            name,
+            GgmlType::F32,
+            vec![1],
+            pack_vec1d(GgmlType::F32, &[s]),
+        ));
+    }
+    Ok(write_gguf_with_kv(&kv, &tensors))
 }
 
 /// Writer-built Llama GGUF that omits `output.weight` (tied embeddings).
@@ -887,6 +4325,9 @@ pub fn tiny_qwen2_gguf() -> Vec<u8> {
         qkv_bias: true,
         add_bos_token: Some(false),
         llama_moe: false,
+        gemma4_moe: false,
+        gemma4_ple: false,
+        gemma4_fused: false,
     })
 }
 
@@ -901,6 +4342,9 @@ pub fn tiny_mistral_gguf() -> Vec<u8> {
         qkv_bias: false,
         add_bos_token: None,
         llama_moe: false,
+        gemma4_moe: false,
+        gemma4_ple: false,
+        gemma4_fused: false,
     })
 }
 
@@ -915,6 +4359,9 @@ pub fn tiny_phi3_gguf() -> Vec<u8> {
         qkv_bias: false,
         add_bos_token: None,
         llama_moe: false,
+        gemma4_moe: false,
+        gemma4_ple: false,
+        gemma4_fused: false,
     })
 }
 
@@ -934,10 +4381,839 @@ pub fn tiny_gemma_gguf() -> Vec<u8> {
         qkv_bias: false,
         add_bos_token: None,
         llama_moe: false,
+        gemma4_moe: false,
+        gemma4_ple: false,
+        gemma4_fused: false,
     })
 }
 
-/// Writer-built Qwen3-shaped GGUF: `qwen3.*` KV plus official QK-Norm tensors.
+/// Writer-built official Gemma2 GGUF: `architecture=gemma2` with `gemma2.*` KV.
+///
+/// Official `general.architecture=gemma2` (`MODEL_ARCH_NAMES[GEMMA2] = "gemma2"`,
+/// `Gemma2ForCausalLM` → `MODEL_ARCH.GEMMA2`). Decode follows llama.cpp
+/// `src/models/gemma2.cpp`: Gemma embed-scale + GeGLU, RMSNorm
+/// `post_attention_norm` on attn out before residual, `ffn_norm` before FFN,
+/// RMSNorm `post_ffw_norm` on FFN out before residual, sliding-window attention
+/// (`set_swa_pattern(2)`, `LLAMA_SWA_TYPE_STANDARD`), attn/final tanh logit
+/// softcap. Convert skips `lm_head.weight` (tied), omits `rope.dimension_count`
+/// / `sliding_window_pattern`, writes `attn_logit_softcapping` /
+/// `final_logit_softcapping` / `attention.sliding_window` / `attention.key_length`
+/// / `attention.value_length` / `context_length`. Writer-tiny uses
+/// `attention.sliding_window = 2` so short-seq tests clip. Convert-hf bakes
+/// `norm.weight + 1`; runtime does not add 1 again.
+pub fn tiny_gemma2_gguf() -> Vec<u8> {
+    tiny_arch_gguf_lm_head(
+        TinySpec {
+            arch: "gemma2",
+            token_embd: GgmlType::F32,
+            output: GgmlType::F32,
+            layer: None,
+            rope_dimension_count: false,
+            qkv_bias: false,
+            add_bos_token: None,
+            llama_moe: false,
+            gemma4_moe: false,
+            gemma4_ple: false,
+            gemma4_fused: false,
+        },
+        TinyLmHead::Tied,
+    )
+}
+
+/// Writer-built official Gemma3 GGUF: `architecture=gemma3` with `gemma3.*` KV.
+///
+/// Official `general.architecture=gemma3` (`MODEL_ARCH_NAMES[GEMMA3] = "gemma3"`,
+/// `Gemma3ForCausalLM` → `MODEL_ARCH.GEMMA3`). Decode follows llama.cpp
+/// `src/models/gemma3.cpp`: Gemma embed-scale + GeGLU, QK-Norm before RoPE
+/// (`attn_q_norm` / `attn_k_norm`), RMSNorm `post_attention_norm` /
+/// `post_ffw_norm`, SWA default period 6 (`set_swa_pattern`,
+/// `LLAMA_SWA_TYPE_STANDARD` when `n_swa > 0`), no attn logit softcap,
+/// optional final tanh softcap. Convert skips `lm_head.weight` when tied,
+/// omits `attn_logit_softcapping`, writes `attention.sliding_window` when
+/// `sliding_window_pattern != 1`. Writer-tiny uses `attention.sliding_window = 2`
+/// so short-seq tests clip. Convert-hf bakes `norm.weight + 1`; runtime does
+/// not add 1 again. `gemma3n` is a separate official family.
+pub fn tiny_gemma3_gguf() -> Vec<u8> {
+    tiny_arch_gguf_lm_head(
+        TinySpec {
+            arch: "gemma3",
+            token_embd: GgmlType::F32,
+            output: GgmlType::F32,
+            layer: None,
+            rope_dimension_count: false,
+            qkv_bias: false,
+            add_bos_token: None,
+            llama_moe: false,
+            gemma4_moe: false,
+            gemma4_ple: false,
+            gemma4_fused: false,
+        },
+        TinyLmHead::Tied,
+    )
+}
+
+/// Writer-built official Gemma3n GGUF: `architecture=gemma3n` with `gemma3n.*` KV.
+///
+/// Official `general.architecture=gemma3n` (`MODEL_ARCH_NAMES[GEMMA3N] = "gemma3n"`,
+/// `Gemma3nForCausalLM` → `MODEL_ARCH.GEMMA3N`). Decode follows llama.cpp
+/// `src/models/gemma3n.cpp`: Gemma embed-scale + GeGLU, QK-Norm before RoPE,
+/// unweighted RMSNorm on V, attention scale `1.0`, RMSNorm `post_attention_norm`
+/// / `ffn_norm` / `post_ffw_norm`, SWA default period 5 (`set_swa_pattern`,
+/// required `attention.sliding_window`), final tanh softcap (default 30),
+/// AltUp (4 residual streams, convert asserts `altup_num_inputs == 4`), Laurel,
+/// per-layer inputs, gaussian_topk on the first 10 layers (`n_layer_sparsity`
+/// is hardcoded, not GGUF). Convert skips `lm_head.weight` when tied, omits
+/// `attn_logit_softcapping` / `rope.dimension_count`. Writer-tiny uses
+/// `attention.sliding_window = 2` so short-seq tests clip, omits
+/// `sliding_window_pattern` (period 5), and writes convert-shaped
+/// `gemma3n.altup.*` / `embedding_length_per_layer_input`. Convert
+/// `norm_shift` is 0 (runtime does not add 1). `gemma4` is a separate official
+/// family (`architecture=gemma4`).
+pub fn tiny_gemma3n_gguf() -> Vec<u8> {
+    tiny_arch_gguf_lm_head(
+        TinySpec {
+            arch: "gemma3n",
+            token_embd: GgmlType::F32,
+            output: GgmlType::F32,
+            layer: None,
+            rope_dimension_count: false,
+            qkv_bias: false,
+            add_bos_token: None,
+            llama_moe: false,
+            gemma4_moe: false,
+            gemma4_ple: false,
+            gemma4_fused: false,
+        },
+        TinyLmHead::Tied,
+    )
+}
+
+/// Writer-built official Gemma4 GGUF: `architecture=gemma4` with `gemma4.*` KV.
+///
+/// Official `general.architecture=gemma4` (`MODEL_ARCH_NAMES[GEMMA4] = "gemma4"`,
+/// `Gemma4ForCausalLM` → `MODEL_ARCH.GEMMA4`). Decode follows llama.cpp
+/// `src/models/gemma4.cpp`: Gemma embed-scale + GeGLU, QK-Norm before RoPE,
+/// unweighted RMSNorm on V, attention scale `1.0`, RMSNorm `post_attention_norm`
+/// / `ffn_norm` / `post_ffw_norm`, required `attention.sliding_window`, convert
+/// `attention.sliding_window_pattern` as a per-layer bool array, required
+/// `attention.key_length_swa` / `value_length_swa` and
+/// `embedding_length_per_layer_input`. Optional final tanh logit softcap
+/// (default 0). Writer-tiny is dense (no `ffn_gate_inp`), writes
+/// `embedding_length_per_layer_input = 0` (no per-layer embeddings), omits
+/// `attention.shared_kv_layers` (every layer has KV), uses equal SWA/global
+/// head dims, and `attention.sliding_window = 2` so short-seq tests clip.
+/// Convert skips `lm_head.weight` when tied, omits `attn_logit_softcapping` /
+/// `rope.dimension_count`. Convert `norm_shift` is 0 (runtime does not add 1).
+/// Official Gemma4 MoE is the same `architecture=gemma4` ([`tiny_gemma4_moe_gguf`]).
+/// Official Gemma4 PLE is the same arch ([`tiny_gemma4_ple_gguf`]).
+/// Official Gemma4 MoE+PLE is the same arch ([`tiny_gemma4_moe_ple_gguf`]).
+/// Official Gemma4 fused experts are the same arch ([`tiny_gemma4_moe_fused_gguf`]).
+/// Official Gemma4 fused plus PLE is the same arch ([`tiny_gemma4_moe_fused_ple_gguf`]).
+/// Official Gemma4 shared KV is the same arch ([`tiny_gemma4_shared_kv_gguf`]).
+/// Official Gemma4 mixed SWA/global head dims are the same arch
+/// ([`tiny_gemma4_mixed_hd_gguf`]).
+/// Official Gemma4 SWA RoPE base is the same arch ([`tiny_gemma4_swa_base_gguf`]).
+/// Official Gemma4 omitted `wv` (K as V) is the same arch ([`tiny_gemma4_no_wv_gguf`]).
+/// Official Gemma4 layer output scale is the same arch ([`tiny_gemma4_out_scale_gguf`]).
+/// Official Gemma4 proportional RoPE is the same arch ([`tiny_gemma4_rope_freqs_gguf`]).
+/// Official Gemma4 per-expert down scale is the same arch ([`tiny_gemma4_moe_down_s_gguf`]).
+/// Official Gemma4 per-expert gate/up scale is the same arch ([`tiny_gemma4_moe_gate_up_s_gguf`]).
+pub fn tiny_gemma4_gguf() -> Vec<u8> {
+    tiny_arch_gguf_lm_head(
+        TinySpec {
+            arch: "gemma4",
+            token_embd: GgmlType::F32,
+            output: GgmlType::F32,
+            layer: None,
+            rope_dimension_count: false,
+            qkv_bias: false,
+            add_bos_token: None,
+            llama_moe: false,
+            gemma4_moe: false,
+            gemma4_ple: false,
+            gemma4_fused: false,
+        },
+        TinyLmHead::Tied,
+    )
+}
+
+/// Writer-built official Gemma4 MoE GGUF: `architecture=gemma4` with `n_expert>0`.
+///
+/// Same `gemma4.*` KV as [`tiny_gemma4_gguf`], plus `expert_count` /
+/// `expert_used_count` / `expert_feed_forward_length`. Decode follows llama.cpp
+/// `src/models/gemma4.cpp` when `ffn_gate_inp` is present: shared dense GeGLU
+/// (`ffn_gate` / `ffn_up` / `ffn_down`) with `ffn_post_norm_1`; expert input
+/// `ffn_pre_norm_2`; custom router on `attn_out` (unweighted RMSNorm, scale
+/// `1/sqrt(n_embd)`, `ffn_gate_inp.scale`, then `ffn_gate_inp`); `build_moe_ffn`
+/// softmax then top-k with `norm_w` clamp `2^-14` and **GELU** experts; then
+/// `ffn_post_norm_2` and add into the shared MLP. Not a second architecture.
+/// This tiny writes separate `ffn_gate_exps` / `ffn_up_exps`; fused packing is
+/// [`tiny_gemma4_moe_fused_gguf`]. Mixed SWA/global head dims are
+/// [`tiny_gemma4_mixed_hd_gguf`].
+/// Shared KV is [`tiny_gemma4_shared_kv_gguf`].
+/// Writer-tiny uses `n_expert=4`, `n_expert_used=2`, `n_ff_exp=n_ff`.
+/// Per-expert `ffn_down_exps.scale` is [`tiny_gemma4_moe_down_s_gguf`].
+/// Per-expert `ffn_gate_exps.scale` / `ffn_up_exps.scale` is
+/// [`tiny_gemma4_moe_gate_up_s_gguf`].
+/// PLE is the same arch ([`tiny_gemma4_ple_gguf`]). MoE plus PLE is the same arch
+/// ([`tiny_gemma4_moe_ple_gguf`]).
+pub fn tiny_gemma4_moe_gguf() -> Vec<u8> {
+    tiny_arch_gguf_lm_head(
+        TinySpec {
+            arch: "gemma4",
+            token_embd: GgmlType::F32,
+            output: GgmlType::F32,
+            layer: None,
+            rope_dimension_count: false,
+            qkv_bias: false,
+            add_bos_token: None,
+            llama_moe: false,
+            gemma4_moe: true,
+            gemma4_ple: false,
+            gemma4_fused: false,
+        },
+        TinyLmHead::Tied,
+    )
+}
+
+/// Writer-built official Gemma4 PLE GGUF: `architecture=gemma4` with
+/// `embedding_length_per_layer_input > 0`.
+///
+/// Same `gemma4.*` KV as [`tiny_gemma4_gguf`] except per-layer width is
+/// [`TINY_GEMMA4_N_EMBD_PER_LAYER`]. Decode follows llama.cpp
+/// `src/models/gemma4.cpp` when `n_embd_per_layer > 0`: `build_inp_per_layer`
+/// (token table scaled by `sqrt(n_embd_per_layer)`), `project_per_layer_inputs`
+/// (`mm(per_layer_model_proj, inpL)` scaled by `1/sqrt(n_embd)`, RMSNorm,
+/// add, scale `1/sqrt(2)`), then after the FFN residual
+/// `gelu(mm(inp_gate, cur)) * slice(il)`, `mm(proj)`, RMSNorm `post_norm`,
+/// residual add. No AltUp / Laurel. Not a second architecture. Mixed
+/// SWA/global head dims are [`tiny_gemma4_mixed_hd_gguf`]. Shared KV is
+/// [`tiny_gemma4_shared_kv_gguf`]. Writer-tiny is dense (no `ffn_gate_inp`).
+/// MoE+PLE is the same arch ([`tiny_gemma4_moe_ple_gguf`]).
+pub fn tiny_gemma4_ple_gguf() -> Vec<u8> {
+    tiny_arch_gguf_lm_head(
+        TinySpec {
+            arch: "gemma4",
+            token_embd: GgmlType::F32,
+            output: GgmlType::F32,
+            layer: None,
+            rope_dimension_count: false,
+            qkv_bias: false,
+            add_bos_token: None,
+            llama_moe: false,
+            gemma4_moe: false,
+            gemma4_ple: true,
+            gemma4_fused: false,
+        },
+        TinyLmHead::Tied,
+    )
+}
+
+/// Writer-built official Gemma4 MoE+PLE GGUF: `architecture=gemma4` with
+/// `ffn_gate_inp` and `embedding_length_per_layer_input > 0`.
+///
+/// Production E2B/E4B shape on the same arch as [`tiny_gemma4_gguf`],
+/// [`tiny_gemma4_moe_gguf`], and [`tiny_gemma4_ple_gguf`]. Not a second
+/// family. Decode follows llama.cpp `src/models/gemma4.cpp`: shared GeGLU plus
+/// custom-router GELU experts, then after the FFN residual the PLE inject
+/// (`gelu(mm(inp_gate)) * slice(il)`, `mm(proj)`, RMSNorm `post_norm`). No
+/// AltUp / Laurel. This tiny writes separate gate/up experts. Mixed
+/// SWA/global head dims are [`tiny_gemma4_mixed_hd_gguf`]. Shared KV is
+/// [`tiny_gemma4_shared_kv_gguf`]. Writer-tiny uses `n_expert=4`,
+/// `n_expert_used=2`, `n_embd_per_layer=64`.
+pub fn tiny_gemma4_moe_ple_gguf() -> Vec<u8> {
+    tiny_arch_gguf_lm_head(
+        TinySpec {
+            arch: "gemma4",
+            token_embd: GgmlType::F32,
+            output: GgmlType::F32,
+            layer: None,
+            rope_dimension_count: false,
+            qkv_bias: false,
+            add_bos_token: None,
+            llama_moe: false,
+            gemma4_moe: true,
+            gemma4_ple: true,
+            gemma4_fused: false,
+        },
+        TinyLmHead::Tied,
+    )
+}
+
+/// Writer-built official Gemma4 fused-expert GGUF: `architecture=gemma4` with
+/// `ffn_gate_up_exps` instead of separate `ffn_gate_exps` / `ffn_up_exps`.
+///
+/// Same MoE walk as [`tiny_gemma4_moe_gguf`]. Official `src/models/gemma4.cpp`
+/// prefers fused `ffn_gate_up_exps` (twice `n_ff` rows, gate then up) when
+/// present. Not a second architecture. Mixed SWA/global head dims are
+/// [`tiny_gemma4_mixed_hd_gguf`]. Shared KV is [`tiny_gemma4_shared_kv_gguf`].
+/// Fused plus PLE is the same arch ([`tiny_gemma4_moe_fused_ple_gguf`]).
+/// Per-expert `ffn_down_exps.scale` is [`tiny_gemma4_moe_down_s_gguf`].
+/// Per-expert gate/up scale is [`tiny_gemma4_moe_gate_up_s_gguf`] (fused GEMM
+/// uses `up_exps_s` on both halves; `gate_exps_s` is ignored).
+pub fn tiny_gemma4_moe_fused_gguf() -> Vec<u8> {
+    tiny_arch_gguf_lm_head(
+        TinySpec {
+            arch: "gemma4",
+            token_embd: GgmlType::F32,
+            output: GgmlType::F32,
+            layer: None,
+            rope_dimension_count: false,
+            qkv_bias: false,
+            add_bos_token: None,
+            llama_moe: false,
+            gemma4_moe: true,
+            gemma4_ple: false,
+            gemma4_fused: true,
+        },
+        TinyLmHead::Tied,
+    )
+}
+
+/// Writer-built official Gemma4 fused-expert plus PLE GGUF: `architecture=gemma4`
+/// with `ffn_gate_up_exps` and `embedding_length_per_layer_input > 0`.
+///
+/// Production E2B/E4B packing on the same arch as [`tiny_gemma4_moe_fused_gguf`]
+/// and [`tiny_gemma4_moe_ple_gguf`]. Decode is fused GELU experts then PLE
+/// inject after the FFN residual. Not a second architecture.
+/// Mixed SWA/global head dims are [`tiny_gemma4_mixed_hd_gguf`]. Writer-tiny
+/// uses `n_expert=4`,
+/// `n_expert_used=2`, `n_embd_per_layer=64`.
+pub fn tiny_gemma4_moe_fused_ple_gguf() -> Vec<u8> {
+    tiny_arch_gguf_lm_head(
+        TinySpec {
+            arch: "gemma4",
+            token_embd: GgmlType::F32,
+            output: GgmlType::F32,
+            layer: None,
+            rope_dimension_count: false,
+            qkv_bias: false,
+            add_bos_token: None,
+            llama_moe: false,
+            gemma4_moe: true,
+            gemma4_ple: true,
+            gemma4_fused: true,
+        },
+        TinyLmHead::Tied,
+    )
+}
+
+/// Writer-built official Gemma4 shared-KV GGUF: `architecture=gemma4` with
+/// `attention.shared_kv_layers=1`.
+///
+/// Same dense `gemma4.*` KV as [`tiny_gemma4_gguf`] except three layers, all
+/// SWA, `n_layer_kv_from_start = 2`. Decode follows llama.cpp
+/// `src/models/gemma4.cpp` plus `llama_model::create_memory` reuse:
+/// `has_kv(il) = il < n_layer_kv_from_start`; shared layers skip K/V project
+/// and store, then `build_attn` against the donor
+/// `n_layer_kv_from_start` minus 2 (SWA) or minus 1 (global). Layer 2 is SWA
+/// so it reuses layer 0. `wk` / `wv` / `attn_k_norm` are omitted on the
+/// shared layer (`TENSOR_NOT_REQUIRED`). Not a second architecture. Mixed
+/// SWA/global head dims are [`tiny_gemma4_mixed_hd_gguf`]. 1-layer tinies stay
+/// full-KV.
+pub fn tiny_gemma4_shared_kv_gguf() -> Vec<u8> {
+    expand_tiny_gemma4_layers(
+        tiny_gemma4_gguf(),
+        TINY_GEMMA4_SHARED_N_LAYER,
+        TINY_GEMMA4_SHARED_KV_LAYERS,
+    )
+    .unwrap_or_else(|_| Vec::new())
+}
+
+/// Clone `blk.0.*` onto `blk.1..n_layer-1`, set `block_count`, expand the SWA
+/// pattern, and omit K/V tensors on shared layers when `shared_kv > 0`.
+fn expand_tiny_gemma4_layers(
+    bytes: Vec<u8>,
+    n_layer: usize,
+    shared_kv: u32,
+) -> Result<Vec<u8>, GgufError> {
+    let g = load_gguf_owned(bytes)?;
+    let n_layer_u32 = u32::try_from(n_layer).unwrap_or(0);
+    let n_from_start = n_layer.saturating_sub(usize::try_from(shared_kv).unwrap_or(0));
+    let mut kv: Vec<(String, Kv)> = g.kv.iter().map(|(k, v)| (k.clone(), v.clone())).collect();
+    for (k, v) in &mut kv {
+        if k.ends_with(".block_count") {
+            *v = Kv::U32(n_layer_u32);
+        }
+        if k.ends_with(".attention.sliding_window_pattern") {
+            *v = Kv::Array {
+                elem: GGUF_TYPE_BOOL,
+                items: vec![Kv::Bool(true); n_layer],
+            };
+        }
+    }
+    if shared_kv != 0 {
+        kv.push((
+            "gemma4.attention.shared_kv_layers".into(),
+            Kv::U32(shared_kv),
+        ));
+    }
+    let mut tensors = Vec::new();
+    let mut extra = Vec::new();
+    for t in g.tensors() {
+        let shape = t.shape.to_vec();
+        let data = t.data.to_vec();
+        if let Some(rest) = t.name.strip_prefix("blk.0.") {
+            for li in 1..n_layer {
+                if li >= n_from_start && gemma4_shared_kv_omitted(rest) {
+                    continue;
+                }
+                extra.push(TensorWrite {
+                    name: format!("blk.{li}.{rest}"),
+                    ty: t.ty,
+                    shape: shape.clone(),
+                    data: data.clone(),
+                });
+            }
+        }
+        tensors.push(TensorWrite {
+            name: t.name.to_string(),
+            ty: t.ty,
+            shape,
+            data,
+        });
+    }
+    tensors.extend(extra);
+    Ok(write_gguf_with_kv(&kv, &tensors))
+}
+
+/// Writer-built official Gemma4 mixed SWA/global head-dim GGUF:
+/// `architecture=gemma4` with `key_length_swa != key_length`.
+///
+/// Same dense `gemma4.*` KV as [`tiny_gemma4_gguf`] except two layers, SWA
+/// then global. Decode follows llama.cpp `hparams.n_embd_head_k(il)`:
+/// SWA uses `attention.key_length_swa` / `rope.dimension_count_swa`, global
+/// uses `attention.key_length` (default `n_embd / n_head`). KV cache stride
+/// is the max head dim. Not a second architecture. Shared KV stays
+/// [`tiny_gemma4_shared_kv_gguf`]. SWA vs global RoPE base is
+/// [`tiny_gemma4_swa_base_gguf`]. Optional `wv` (K as V) is
+/// [`tiny_gemma4_no_wv_gguf`]. Optional `out_scale` stays omitted. Proportional
+/// RoPE is [`tiny_gemma4_rope_freqs_gguf`].
+pub fn tiny_gemma4_mixed_hd_gguf() -> Vec<u8> {
+    rewrite_tiny_gemma4_mixed_hd(
+        expand_tiny_gemma4_layers(tiny_gemma4_gguf(), TINY_GEMMA4_MIXED_N_LAYER, 0)
+            .unwrap_or_else(|_| Vec::new()),
+    )
+    .unwrap_or_else(|_| Vec::new())
+}
+
+/// Shrink layer-0 Q/K/V/wo/QK-norm to the SWA head dim and mark layer 1 global.
+/// SWA `attn_output` is F32: Q4_K needs `n_cols` a multiple of 256, and official
+/// `wo` is `{n_embd_head * n_head, n_embd}` so SWA `n_cols` is 128.
+/// Global QK-Norm is [`TINY_GEMMA4_GLOBAL_QK_NORM`] so Gemma4 attn-scale `1.0`
+/// does not saturate softmax and hide `rope.freq_base`.
+fn rewrite_tiny_gemma4_mixed_hd(bytes: Vec<u8>) -> Result<Vec<u8>, GgufError> {
+    let g = load_gguf_owned(bytes)?;
+    let hd_swa = TINY_GEMMA4_HD_SWA;
+    let hd_full = TINY_N_ROT;
+    let n_embd = TINY_N_EMBD;
+    let q_rows = hd_swa.saturating_mul(TINY_N_HEAD);
+    let kv_rows = hd_swa.saturating_mul(TINY_N_HEAD_KV);
+    let hd_swa_u = u32::try_from(hd_swa).unwrap_or(0);
+    let hd_full_u = u32::try_from(hd_full).unwrap_or(0);
+    let mut kv: Vec<(String, Kv)> = g.kv.iter().map(|(k, v)| (k.clone(), v.clone())).collect();
+    for (k, v) in &mut kv {
+        if k.ends_with(".attention.sliding_window_pattern") {
+            *v = Kv::Array {
+                elem: GGUF_TYPE_BOOL,
+                items: vec![Kv::Bool(true), Kv::Bool(false)],
+            };
+        }
+        if k.ends_with(".attention.key_length_swa") || k.ends_with(".attention.value_length_swa") {
+            *v = Kv::U32(hd_swa_u);
+        }
+        if k.ends_with(".attention.key_length") && !k.ends_with("key_length_swa") {
+            *v = Kv::U32(hd_full_u);
+        }
+        if k.ends_with(".attention.value_length") && !k.ends_with("value_length_swa") {
+            *v = Kv::U32(hd_full_u);
+        }
+    }
+    kv.push(("gemma4.rope.dimension_count_swa".into(), Kv::U32(hd_swa_u)));
+    let qk_ones = vec![1.0f32; hd_swa];
+    let qk_global = vec![TINY_GEMMA4_GLOBAL_QK_NORM; hd_full];
+    let mut tensors = Vec::new();
+    for t in g.tensors() {
+        let replaced = match t.name {
+            "blk.0.attn_q.weight" => Some(tw(
+                "blk.0.attn_q.weight",
+                GgmlType::Q4_K,
+                vec![n_embd, q_rows],
+                pack_mat(GgmlType::Q4_K, n_embd, q_rows, 31),
+            )),
+            "blk.0.attn_k.weight" => Some(tw(
+                "blk.0.attn_k.weight",
+                GgmlType::F32,
+                vec![n_embd, kv_rows],
+                pack_mat(GgmlType::F32, n_embd, kv_rows, 32),
+            )),
+            "blk.0.attn_v.weight" => Some(tw(
+                "blk.0.attn_v.weight",
+                GgmlType::F32,
+                vec![n_embd, kv_rows],
+                pack_mat(GgmlType::F32, n_embd, kv_rows, 33),
+            )),
+            "blk.0.attn_output.weight" => Some(tw(
+                "blk.0.attn_output.weight",
+                GgmlType::F32,
+                vec![q_rows, n_embd],
+                pack_mat(GgmlType::F32, q_rows, n_embd, 34),
+            )),
+            "blk.0.attn_q_norm.weight" => Some(tw(
+                "blk.0.attn_q_norm.weight",
+                GgmlType::F32,
+                vec![hd_swa],
+                pack_vec1d(GgmlType::F32, &qk_ones),
+            )),
+            "blk.0.attn_k_norm.weight" => Some(tw(
+                "blk.0.attn_k_norm.weight",
+                GgmlType::F32,
+                vec![hd_swa],
+                pack_vec1d(GgmlType::F32, &qk_ones),
+            )),
+            "blk.1.attn_q_norm.weight" => Some(tw(
+                "blk.1.attn_q_norm.weight",
+                GgmlType::F32,
+                vec![hd_full],
+                pack_vec1d(GgmlType::F32, &qk_global),
+            )),
+            "blk.1.attn_k_norm.weight" => Some(tw(
+                "blk.1.attn_k_norm.weight",
+                GgmlType::F32,
+                vec![hd_full],
+                pack_vec1d(GgmlType::F32, &qk_global),
+            )),
+            _ => None,
+        };
+        if let Some(t) = replaced {
+            tensors.push(t);
+        } else {
+            tensors.push(TensorWrite {
+                name: t.name.to_string(),
+                ty: t.ty,
+                shape: t.shape.to_vec(),
+                data: t.data.to_vec(),
+            });
+        }
+    }
+    Ok(write_gguf_with_kv(&kv, &tensors))
+}
+
+/// Writer-built official Gemma4 SWA RoPE-base GGUF: `architecture=gemma4` with
+/// `rope.freq_base_swa != rope.freq_base`.
+///
+/// Same mixed-hd tensors as [`tiny_gemma4_mixed_hd_gguf`]. Decode follows
+/// llama.cpp `get_rope_freq_base(il)`: SWA uses `rope.freq_base_swa` (default
+/// `10000` when omitted), global uses `rope.freq_base`. Writer-tiny matches
+/// E2B/E4B convert (`1000000` vs `10000`). Not a second architecture. Optional
+/// `wv` (K as V) is [`tiny_gemma4_no_wv_gguf`]. Optional `out_scale` stays
+/// omitted. Proportional RoPE is [`tiny_gemma4_rope_freqs_gguf`].
+pub fn tiny_gemma4_swa_base_gguf() -> Vec<u8> {
+    rewrite_tiny_gemma4_swa_base(tiny_gemma4_mixed_hd_gguf()).unwrap_or_else(|_| Vec::new())
+}
+
+/// Set global `rope.freq_base` and SWA `rope.freq_base_swa` on a mixed-hd tiny.
+fn rewrite_tiny_gemma4_swa_base(bytes: Vec<u8>) -> Result<Vec<u8>, GgufError> {
+    let g = load_gguf_owned(bytes)?;
+    let mut kv: Vec<(String, Kv)> = g.kv.iter().map(|(k, v)| (k.clone(), v.clone())).collect();
+    let mut has_swa = false;
+    for (k, v) in &mut kv {
+        if k.ends_with(".rope.freq_base") && !k.ends_with("freq_base_swa") {
+            *v = Kv::F32(TINY_GEMMA4_FREQ_BASE);
+        }
+        if k.ends_with(".rope.freq_base_swa") {
+            *v = Kv::F32(TINY_GEMMA4_FREQ_BASE_SWA);
+            has_swa = true;
+        }
+    }
+    if !has_swa {
+        kv.push((
+            "gemma4.rope.freq_base_swa".into(),
+            Kv::F32(TINY_GEMMA4_FREQ_BASE_SWA),
+        ));
+    }
+    let mut tensors = Vec::new();
+    for t in g.tensors() {
+        tensors.push(TensorWrite {
+            name: t.name.to_string(),
+            ty: t.ty,
+            shape: t.shape.to_vec(),
+            data: t.data.to_vec(),
+        });
+    }
+    Ok(write_gguf_with_kv(&kv, &tensors))
+}
+
+/// Writer-built official Gemma4 omitted-`wv` GGUF: `architecture=gemma4` without
+/// `attn_v`.
+///
+/// Same dense `gemma4.*` KV and tensors as [`tiny_gemma4_gguf`] except
+/// `blk.{i}.attn_v` is dropped. Decode follows llama.cpp `src/models/gemma4.cpp`:
+/// `wv` is `TENSOR_NOT_REQUIRED`; when missing, `Vcur = Kcur` before the
+/// unweighted V RMSNorm (K still gets `attn_k_norm` and RoPE). Not a second
+/// architecture. Mixed-hd and SWA-base tinies keep `wv`. Optional `out_scale`
+/// stays omitted. Proportional RoPE is [`tiny_gemma4_rope_freqs_gguf`].
+pub fn tiny_gemma4_no_wv_gguf() -> Vec<u8> {
+    omit_tiny_gemma4_wv(tiny_gemma4_gguf()).unwrap_or_else(|_| Vec::new())
+}
+
+/// Drop `attn_v` weights (and bias if present) so decode uses K as V.
+fn omit_tiny_gemma4_wv(bytes: Vec<u8>) -> Result<Vec<u8>, GgufError> {
+    let g = load_gguf_owned(bytes)?;
+    let kv: Vec<(String, Kv)> = g.kv.iter().map(|(k, v)| (k.clone(), v.clone())).collect();
+    let mut tensors = Vec::new();
+    for t in g.tensors() {
+        if t.name.ends_with("attn_v.weight") || t.name.ends_with("attn_v.bias") {
+            continue;
+        }
+        tensors.push(TensorWrite {
+            name: t.name.to_string(),
+            ty: t.ty,
+            shape: t.shape.to_vec(),
+            data: t.data.to_vec(),
+        });
+    }
+    Ok(write_gguf_with_kv(&kv, &tensors))
+}
+
+/// Writer-built official Gemma4 layer-output-scale GGUF: `architecture=gemma4`
+/// with `blk.0.layer_output_scale`.
+///
+/// Same dense `gemma4.*` KV and tensors as [`tiny_gemma4_gguf`] plus a
+/// length-1 F32 scale. Decode follows llama.cpp `src/models/gemma4.cpp`:
+/// `out_scale` is `TENSOR_NOT_REQUIRED`; when present, `ggml_mul` broadcasts
+/// it onto the residual after FFN (and PLE inject). Not a second architecture.
+/// Proportional RoPE is [`tiny_gemma4_rope_freqs_gguf`].
+pub fn tiny_gemma4_out_scale_gguf() -> Vec<u8> {
+    rewrite_tiny_gemma4_out_scale(tiny_gemma4_gguf()).unwrap_or_else(|_| Vec::new())
+}
+
+/// Append `blk.0.layer_output_scale.weight` = [`TINY_GEMMA4_OUT_SCALE`].
+fn rewrite_tiny_gemma4_out_scale(bytes: Vec<u8>) -> Result<Vec<u8>, GgufError> {
+    let g = load_gguf_owned(bytes)?;
+    let kv: Vec<(String, Kv)> = g.kv.iter().map(|(k, v)| (k.clone(), v.clone())).collect();
+    let mut tensors = Vec::new();
+    for t in g.tensors() {
+        tensors.push(TensorWrite {
+            name: t.name.to_string(),
+            ty: t.ty,
+            shape: t.shape.to_vec(),
+            data: t.data.to_vec(),
+        });
+    }
+    let scale = [TINY_GEMMA4_OUT_SCALE];
+    tensors.push(tw(
+        "blk.0.layer_output_scale.weight",
+        GgmlType::F32,
+        vec![1],
+        pack_vec1d(GgmlType::F32, &scale),
+    ));
+    Ok(write_gguf_with_kv(&kv, &tensors))
+}
+
+/// Convert `generate_extra_tensors` packing for Gemma4 full-attention
+/// proportional RoPE: `1.0` on the rotated NeoX pairs, then `1e30` on the
+/// unrotated pairs (`partial_rotary_factor=0.25`).
+fn tiny_gemma4_rope_freq_values(hd: usize) -> Vec<f32> {
+    let n_pairs = hd / 2;
+    let n_rot_pairs = (hd / TINY_GEMMA4_ROPE_PAIRS_DEN).min(n_pairs);
+    let mut v = vec![1.0f32; n_rot_pairs];
+    v.resize(n_pairs, TINY_GEMMA4_ROPE_FREQ_UNROT);
+    v
+}
+
+/// Writer-built official Gemma4 proportional-RoPE GGUF: `architecture=gemma4`
+/// with `rope_freqs.weight`.
+///
+/// Same mixed-hd tensors as [`tiny_gemma4_mixed_hd_gguf`] plus the convert
+/// `generate_extra_tensors` packing (`LLM_TENSOR_ROPE_FREQS` is `"rope_freqs"`,
+/// not `blk.{i}`). Decode follows llama.cpp `src/models/gemma4.cpp`: non-SWA
+/// layers pass the tensor into `ggml_rope_ext`; ggml `ggml_rope_cache_init`
+/// uses `theta/ff`. SWA keeps `freq_factors` null. Shape is
+/// `{n_embd_head/2}` of the global layer. Not a second architecture.
+pub fn tiny_gemma4_rope_freqs_gguf() -> Vec<u8> {
+    rewrite_tiny_gemma4_rope_freqs(tiny_gemma4_mixed_hd_gguf()).unwrap_or_else(|_| Vec::new())
+}
+
+/// Append `rope_freqs.weight` with convert proportional packing.
+fn rewrite_tiny_gemma4_rope_freqs(bytes: Vec<u8>) -> Result<Vec<u8>, GgufError> {
+    let g = load_gguf_owned(bytes)?;
+    let kv: Vec<(String, Kv)> = g.kv.iter().map(|(k, v)| (k.clone(), v.clone())).collect();
+    let mut tensors = Vec::new();
+    for t in g.tensors() {
+        tensors.push(TensorWrite {
+            name: t.name.to_string(),
+            ty: t.ty,
+            shape: t.shape.to_vec(),
+            data: t.data.to_vec(),
+        });
+    }
+    let freqs = tiny_gemma4_rope_freq_values(TINY_N_ROT);
+    let n = freqs.len();
+    tensors.push(tw(
+        "rope_freqs.weight",
+        GgmlType::F32,
+        vec![n],
+        pack_vec1d(GgmlType::F32, &freqs),
+    ));
+    Ok(write_gguf_with_kv(&kv, &tensors))
+}
+
+/// Writer-built official Gemma4 per-expert down-scale GGUF: `architecture=gemma4`
+/// with `ffn_down_exps.scale`.
+///
+/// Same split-MoE tensors as [`tiny_gemma4_moe_gguf`] plus `{n_expert}` F32
+/// scales. Decode follows llama.cpp `build_lora_mm_id`: after the down expert
+/// GEMM, `ggml_mul` broadcasts `ffn_down_exps.scale[e]` onto that expert's
+/// output. `TENSOR_NOT_REQUIRED`; missing is `1.0`. Writer-tiny zeros
+/// `ffn_gate_inp.weight` so softmax is uniform, and packs split experts as
+/// F32: Q4_K `GELU(gate)` on the tiny is ~0, so a one-hot mix plus
+/// `ffn_post_norm_2` RMSNorm would hide per-expert scale. Not a second
+/// architecture.
+pub fn tiny_gemma4_moe_down_s_gguf() -> Vec<u8> {
+    rewrite_tiny_gemma4_moe_down_s(tiny_gemma4_moe_gguf()).unwrap_or_else(|_| Vec::new())
+}
+
+/// Append `blk.0.ffn_down_exps.scale` = [`TINY_GEMMA4_DOWN_S`]. Zero
+/// `ffn_gate_inp.weight` and rewrite split experts as F32 so per-expert
+/// scale is not hidden by Q4_K-zero GELU or `ffn_post_norm_2` RMSNorm.
+fn rewrite_tiny_gemma4_moe_down_s(bytes: Vec<u8>) -> Result<Vec<u8>, GgufError> {
+    rewrite_tiny_gemma4_moe_down_s_scale(bytes, Some(&TINY_GEMMA4_DOWN_S))
+}
+
+fn rewrite_tiny_gemma4_moe_down_s_scale(
+    bytes: Vec<u8>,
+    down_s: Option<&[f32]>,
+) -> Result<Vec<u8>, GgufError> {
+    rewrite_tiny_gemma4_moe_exps_s(bytes, None, None, down_s)
+}
+
+/// Zero `ffn_gate_inp.weight`, rewrite split/down experts as F32, and attach
+/// optional `{n_expert}` gate/up/down scale tensors. Fused `ffn_gate_up_exps`
+/// stays (already F32); split gate/up are rewritten.
+fn rewrite_tiny_gemma4_moe_exps_s(
+    bytes: Vec<u8>,
+    gate_s: Option<&[f32]>,
+    up_s: Option<&[f32]>,
+    down_s: Option<&[f32]>,
+) -> Result<Vec<u8>, GgufError> {
+    let g = load_gguf_owned(bytes)?;
+    let kv: Vec<(String, Kv)> = g.kv.iter().map(|(k, v)| (k.clone(), v.clone())).collect();
+    let fused = g.tensor("blk.0.ffn_gate_up_exps.weight").is_some();
+    let mut tensors = Vec::new();
+    for t in g.tensors() {
+        if t.name == "blk.0.ffn_down_exps.weight"
+            || t.name == "blk.0.ffn_gate_exps.scale"
+            || t.name == "blk.0.ffn_up_exps.scale"
+            || t.name == "blk.0.ffn_down_exps.scale"
+        {
+            continue;
+        }
+        if !fused
+            && (t.name == "blk.0.ffn_gate_exps.weight" || t.name == "blk.0.ffn_up_exps.weight")
+        {
+            continue;
+        }
+        let mut data = t.data.to_vec();
+        if t.name == "blk.0.ffn_gate_inp.weight" {
+            data.fill(0);
+        }
+        tensors.push(TensorWrite {
+            name: t.name.to_string(),
+            ty: t.ty,
+            shape: t.shape.to_vec(),
+            data,
+        });
+    }
+    if !fused {
+        tensors.push(tw(
+            "blk.0.ffn_gate_exps.weight",
+            GgmlType::F32,
+            vec![TINY_N_EMBD, TINY_N_FF, TINY_GEMMA4_N_EXPERT],
+            pack_mat_exps(
+                GgmlType::F32,
+                TINY_N_EMBD,
+                TINY_N_FF,
+                TINY_GEMMA4_N_EXPERT,
+                23,
+            ),
+        ));
+        tensors.push(tw(
+            "blk.0.ffn_up_exps.weight",
+            GgmlType::F32,
+            vec![TINY_N_EMBD, TINY_N_FF, TINY_GEMMA4_N_EXPERT],
+            pack_mat_exps(
+                GgmlType::F32,
+                TINY_N_EMBD,
+                TINY_N_FF,
+                TINY_GEMMA4_N_EXPERT,
+                24,
+            ),
+        ));
+    }
+    tensors.push(tw(
+        "blk.0.ffn_down_exps.weight",
+        GgmlType::F32,
+        vec![TINY_N_FF, TINY_N_EMBD, TINY_GEMMA4_N_EXPERT],
+        pack_mat_exps(
+            GgmlType::F32,
+            TINY_N_FF,
+            TINY_N_EMBD,
+            TINY_GEMMA4_N_EXPERT,
+            25,
+        ),
+    ));
+    if let Some(s) = gate_s {
+        tensors.push(tw(
+            "blk.0.ffn_gate_exps.scale",
+            GgmlType::F32,
+            vec![TINY_GEMMA4_N_EXPERT],
+            pack_vec1d(GgmlType::F32, s),
+        ));
+    }
+    if let Some(s) = up_s {
+        tensors.push(tw(
+            "blk.0.ffn_up_exps.scale",
+            GgmlType::F32,
+            vec![TINY_GEMMA4_N_EXPERT],
+            pack_vec1d(GgmlType::F32, s),
+        ));
+    }
+    if let Some(s) = down_s {
+        tensors.push(tw(
+            "blk.0.ffn_down_exps.scale",
+            GgmlType::F32,
+            vec![TINY_GEMMA4_N_EXPERT],
+            pack_vec1d(GgmlType::F32, s),
+        ));
+    }
+    Ok(write_gguf_with_kv(&kv, &tensors))
+}
+
+/// Writer-built official Gemma4 per-expert gate/up-scale GGUF:
+/// `architecture=gemma4` with `ffn_gate_exps.scale` and `ffn_up_exps.scale`.
+///
+/// Same split-MoE tensors as [`tiny_gemma4_moe_gguf`] plus `{n_expert}` F32
+/// scales. Decode follows llama.cpp `build_lora_mm_id`: after the gate/up
+/// expert GEMM, `ggml_mul` broadcasts `ffn_{gate,up}_exps.scale[e]` onto that
+/// expert's output. `TENSOR_NOT_REQUIRED`; missing is `1.0`. Fused
+/// `ffn_gate_up_exps` applies `up_exps_s` to both halves and ignores
+/// `gate_exps_s`. Writer-tiny zeros `ffn_gate_inp.weight` so softmax is
+/// uniform, and packs split experts as F32: Q4_K `GELU(gate)` on the tiny is
+/// ~0, so a one-hot mix plus `ffn_post_norm_2` RMSNorm would hide per-expert
+/// scale. Not a second architecture. Omits `ffn_down_exps.scale` (that tensor
+/// is [`tiny_gemma4_moe_down_s_gguf`]).
+pub fn tiny_gemma4_moe_gate_up_s_gguf() -> Vec<u8> {
+    rewrite_tiny_gemma4_moe_exps_s(
+        tiny_gemma4_moe_gguf(),
+        Some(TINY_GEMMA4_GATE_S.as_slice()),
+        Some(TINY_GEMMA4_UP_S.as_slice()),
+        None,
+    )
+    .unwrap_or_else(|_| Vec::new())
+}
+
+/// Writer-built Qwen3-shaped GGUF: `architecture=qwen3` with `qwen3.*` KV.
 ///
 /// Official `general.architecture=qwen3` (`MODEL_ARCH_NAMES[QWEN3] = "qwen3"`,
 /// not `qwen3moe`). Decode follows llama.cpp `src/models/qwen3.cpp`: RMSNorm
@@ -954,6 +5230,9 @@ pub fn tiny_qwen3_gguf() -> Vec<u8> {
         qkv_bias: false,
         add_bos_token: Some(false),
         llama_moe: false,
+        gemma4_moe: false,
+        gemma4_ple: false,
+        gemma4_fused: false,
     })
 }
 
@@ -976,6 +5255,9 @@ pub fn tiny_llama4_gguf() -> Vec<u8> {
         qkv_bias: false,
         add_bos_token: Some(false),
         llama_moe: false,
+        gemma4_moe: false,
+        gemma4_ple: false,
+        gemma4_fused: false,
     })
 }
 
@@ -998,6 +5280,9 @@ pub fn tiny_llama_moe_gguf() -> Vec<u8> {
         qkv_bias: false,
         add_bos_token: None,
         llama_moe: true,
+        gemma4_moe: false,
+        gemma4_ple: false,
+        gemma4_fused: false,
     })
 }
 
@@ -1007,7 +5292,11 @@ pub fn tiny_llama_moe_gguf() -> Vec<u8> {
 /// `general.architecture=qwen2moe`. Decode follows llama.cpp
 /// `src/models/qwen2moe.cpp`: `build_moe_ffn` softmax then top-k, `norm_w=false`;
 /// SwiGLU experts; shared expert (`*_shexp` + `ffn_gate_inp_shexp`) gated by
-/// `silu(x)/x` (sigmoid). Not `qwen3moe`, not Mixtral, not Llama4 sigmoid /
+/// `silu(x)/x` (sigmoid). Optional `{1}` `ffn_down_shexp.scale` is
+/// [`tiny_qwen2moe_ffn_down_shexp_s_gguf`]. Optional `{1}`
+/// `ffn_gate_shexp.scale` is [`tiny_qwen2moe_ffn_gate_shexp_s_gguf`]. Optional
+/// `{1}` `ffn_up_shexp.scale` is [`tiny_qwen2moe_ffn_up_shexp_s_gguf`].
+/// Not `qwen3moe`, not Mixtral, not Llama4 sigmoid /
 /// weight-before-FFN, not llama-MoE `norm_w`. No QK-Norm, embed-scale, or vision.
 pub fn tiny_qwen2moe_gguf() -> Vec<u8> {
     tiny_arch_gguf(TinySpec {
@@ -1019,7 +5308,80 @@ pub fn tiny_qwen2moe_gguf() -> Vec<u8> {
         qkv_bias: false,
         add_bos_token: Some(false),
         llama_moe: false,
+        gemma4_moe: false,
+        gemma4_ple: false,
+        gemma4_fused: false,
     })
+}
+
+/// Writer-built Qwen2MoE GGUF with official `{1}` `ffn_down_shexp.scale`.
+///
+/// Same tensors as [`tiny_qwen2moe_gguf`] plus `blk.0.ffn_down_shexp.scale`.
+/// llama.cpp `build_ffn` applies `ggml_mul` after the shared-expert down GEMM
+/// (`TENSOR_NOT_REQUIRED`; missing is `1.0`) before `ffn_gate_inp_shexp`
+/// sigmoid. Loaded only when `ffn_down_shexp.weight` is present. Dense
+/// `ffn_down.scale` and per-expert `ffn_down_exps.scale` stay those tensors.
+/// Files without shexp that contain `ffn_down_shexp.scale` are ignored (not
+/// loaded).
+pub fn tiny_qwen2moe_ffn_down_shexp_s_gguf() -> Vec<u8> {
+    rewrite_tiny_qwen2moe_ffn_down_shexp_s(
+        tiny_qwen2moe_gguf(),
+        Some(TINY_QWEN2MOE_FFN_DOWN_SHEXP_S),
+    )
+    .unwrap_or_else(|_| Vec::new())
+}
+
+/// Append or omit `blk.0.ffn_down_shexp.scale`.
+fn rewrite_tiny_qwen2moe_ffn_down_shexp_s(
+    bytes: Vec<u8>,
+    scale: Option<f32>,
+) -> Result<Vec<u8>, GgufError> {
+    rewrite_tiny_llama_unit_scale(bytes, "blk.0.ffn_down_shexp.scale", scale)
+}
+
+/// Writer-built Qwen2MoE GGUF with official `{1}` `ffn_gate_shexp.scale`.
+///
+/// Same tensors as [`tiny_qwen2moe_gguf`] plus `blk.0.ffn_gate_shexp.scale`.
+/// llama.cpp `build_ffn` applies `ggml_mul` after the shared-expert gate GEMM
+/// (`TENSOR_NOT_REQUIRED`; missing is `1.0`) before SiLU. Loaded only when
+/// `ffn_gate_shexp.weight` is present. Dense `ffn_gate.scale` stays that
+/// tensor. Files without shexp that contain `ffn_gate_shexp.scale` are
+/// ignored (not loaded).
+pub fn tiny_qwen2moe_ffn_gate_shexp_s_gguf() -> Vec<u8> {
+    rewrite_tiny_qwen2moe_ffn_gate_shexp_s(
+        tiny_qwen2moe_gguf(),
+        Some(TINY_QWEN2MOE_FFN_GATE_SHEXP_S),
+    )
+    .unwrap_or_else(|_| Vec::new())
+}
+
+/// Append or omit `blk.0.ffn_gate_shexp.scale`.
+fn rewrite_tiny_qwen2moe_ffn_gate_shexp_s(
+    bytes: Vec<u8>,
+    scale: Option<f32>,
+) -> Result<Vec<u8>, GgufError> {
+    rewrite_tiny_llama_unit_scale(bytes, "blk.0.ffn_gate_shexp.scale", scale)
+}
+
+/// Writer-built Qwen2MoE GGUF with official `{1}` `ffn_up_shexp.scale`.
+///
+/// Same tensors as [`tiny_qwen2moe_gguf`] plus `blk.0.ffn_up_shexp.scale`.
+/// llama.cpp `build_ffn` applies `ggml_mul` after the shared-expert up GEMM
+/// (`TENSOR_NOT_REQUIRED`; missing is `1.0`) before the gated product. Loaded
+/// only when `ffn_up_shexp.weight` is present. Dense `ffn_up.scale` stays
+/// that tensor. Files without shexp that contain `ffn_up_shexp.scale` are
+/// ignored (not loaded).
+pub fn tiny_qwen2moe_ffn_up_shexp_s_gguf() -> Vec<u8> {
+    rewrite_tiny_qwen2moe_ffn_up_shexp_s(tiny_qwen2moe_gguf(), Some(TINY_QWEN2MOE_FFN_UP_SHEXP_S))
+        .unwrap_or_else(|_| Vec::new())
+}
+
+/// Append or omit `blk.0.ffn_up_shexp.scale`.
+fn rewrite_tiny_qwen2moe_ffn_up_shexp_s(
+    bytes: Vec<u8>,
+    scale: Option<f32>,
+) -> Result<Vec<u8>, GgufError> {
+    rewrite_tiny_llama_unit_scale(bytes, "blk.0.ffn_up_shexp.scale", scale)
 }
 
 /// Writer-built official Qwen3MoE GGUF: `architecture=qwen3moe` with `qwen3moe.*` KV.
@@ -1042,7 +5404,51 @@ pub fn tiny_qwen3moe_gguf() -> Vec<u8> {
         qkv_bias: false,
         add_bos_token: Some(false),
         llama_moe: false,
+        gemma4_moe: false,
+        gemma4_ple: false,
+        gemma4_fused: false,
     })
+}
+
+/// Writer-built two-layer Qwen3MoE tiny (`qwen3moe.block_count=2`).
+///
+/// Layer 1 is a clone of layer 0 tensor bytes so copy-forward L+1 keys exist
+/// in the ExpertStore catalog. 1-layer tinies skip those keys as unknown.
+pub fn tiny_qwen3moe_2layer_gguf() -> Vec<u8> {
+    clone_tiny_blk0_as_next_layer(tiny_qwen3moe_gguf()).unwrap_or_else(|_| Vec::new())
+}
+
+/// Clone every `blk.0.*` tensor as `blk.1.*` and set `*.block_count` to 2.
+fn clone_tiny_blk0_as_next_layer(bytes: Vec<u8>) -> Result<Vec<u8>, GgufError> {
+    let g = load_gguf_owned(bytes)?;
+    let mut kv: Vec<(String, Kv)> = g.kv.iter().map(|(k, v)| (k.clone(), v.clone())).collect();
+    for (k, v) in &mut kv {
+        if k.ends_with(".block_count") {
+            *v = Kv::U32(2);
+        }
+    }
+    let mut tensors = Vec::new();
+    let mut extra = Vec::new();
+    for t in g.tensors() {
+        let shape = t.shape.to_vec();
+        let data = t.data.to_vec();
+        if let Some(rest) = t.name.strip_prefix("blk.0.") {
+            extra.push(TensorWrite {
+                name: format!("blk.1.{rest}"),
+                ty: t.ty,
+                shape: shape.clone(),
+                data: data.clone(),
+            });
+        }
+        tensors.push(TensorWrite {
+            name: t.name.to_string(),
+            ty: t.ty,
+            shape,
+            data,
+        });
+    }
+    tensors.extend(extra);
+    Ok(write_gguf_with_kv(&kv, &tensors))
 }
 
 /// Writer-built official Qwen2VL GGUF: `architecture=qwen2vl` with `qwen2vl.*` KV.
@@ -1065,6 +5471,9 @@ pub fn tiny_qwen2vl_gguf() -> Vec<u8> {
         qkv_bias: true,
         add_bos_token: Some(false),
         llama_moe: false,
+        gemma4_moe: false,
+        gemma4_ple: false,
+        gemma4_fused: false,
     })
 }
 
@@ -1092,6 +5501,9 @@ pub fn tiny_qwen3vl_gguf() -> Vec<u8> {
         qkv_bias: false,
         add_bos_token: Some(false),
         llama_moe: false,
+        gemma4_moe: false,
+        gemma4_ple: false,
+        gemma4_fused: false,
     })
 }
 
@@ -1119,6 +5531,9 @@ pub fn tiny_qwen3next_gguf() -> Vec<u8> {
         qkv_bias: false,
         add_bos_token: Some(false),
         llama_moe: false,
+        gemma4_moe: false,
+        gemma4_ple: false,
+        gemma4_fused: false,
     })
 }
 
@@ -1148,7 +5563,421 @@ pub fn tiny_qwen35_gguf() -> Vec<u8> {
         qkv_bias: false,
         add_bos_token: Some(false),
         llama_moe: false,
+        gemma4_moe: false,
+        gemma4_ple: false,
+        gemma4_fused: false,
     })
+}
+
+/// Writer-built official Phi2 GGUF: `architecture=phi2` with `phi2.*` KV.
+///
+/// Official `LLM_ARCH_NAMES` has `LLM_ARCH_PHI2 = "phi2"`; convert writes
+/// `general.architecture=phi2` (`PhiForCausalLM` → `MODEL_ARCH.PHI2`). Decode
+/// follows llama.cpp `src/models/phi2.cpp`: `LLM_NORM` (LayerNorm + bias),
+/// `LLAMA_ROPE_TYPE_NEOX`, Q scaled by `1/sqrt(n_embd_head)` then attn scale
+/// `1.0`, parallel residual (`LLM_FFN_GELU` / `LLM_FFN_SEQ` from the same
+/// `attn_norm`, no `ffn_gate` / no `ffn_norm`), `output.bias`. Official convert
+/// writes `layer_norm_epsilon`, `feed_forward_length = 4 * n_embd`,
+/// `head_count_kv = n_head`, `rope.dimension_count = int(partial_rotary_factor
+/// * n_embd) // n_head`, and `add_bos_token=false`. Tied `output.weight` reuse
+/// is allowed. Not Mixtral, not `qwen3vlmoe`, not linear-attn, not a phi3 redo.
+pub fn tiny_phi2_gguf() -> Vec<u8> {
+    let n_embd = TINY_N_EMBD;
+    let n_ff = TINY_PHI2_N_FF;
+    let n_vocab = TINY_N_VOCAB;
+    let n_head = TINY_N_HEAD;
+    let n_kv = TINY_PHI2_N_HEAD_KV.saturating_mul(n_embd / n_head);
+    let ones = vec![1.0f32; n_embd];
+    let kv = vec![
+        (
+            "general.alignment".into(),
+            Kv::U32(u32::try_from(GGUF_DEFAULT_ALIGNMENT).unwrap_or(32)),
+        ),
+        ("general.name".into(), Kv::String("llama-rust-tiny".into())),
+        ("general.architecture".into(), Kv::String("phi2".into())),
+        (
+            "phi2.block_count".into(),
+            Kv::U32(u32::try_from(TINY_N_LAYER).unwrap_or(0)),
+        ),
+        (
+            "phi2.embedding_length".into(),
+            Kv::U32(u32::try_from(n_embd).unwrap_or(0)),
+        ),
+        (
+            "phi2.feed_forward_length".into(),
+            Kv::U32(u32::try_from(n_ff).unwrap_or(0)),
+        ),
+        (
+            "phi2.attention.head_count".into(),
+            Kv::U32(u32::try_from(n_head).unwrap_or(0)),
+        ),
+        (
+            "phi2.attention.head_count_kv".into(),
+            Kv::U32(u32::try_from(TINY_PHI2_N_HEAD_KV).unwrap_or(0)),
+        ),
+        (
+            "phi2.rope.dimension_count".into(),
+            Kv::U32(u32::try_from(TINY_PHI2_N_ROT).unwrap_or(0)),
+        ),
+        ("phi2.rope.freq_base".into(), Kv::F32(10_000.0)),
+        (
+            "phi2.attention.layer_norm_epsilon".into(),
+            Kv::F32(1.0 / 100_000.0),
+        ),
+        ("tokenizer.ggml.add_bos_token".into(), Kv::Bool(false)),
+        (
+            "tokenizer.ggml.tokens".into(),
+            Kv::Array {
+                elem: 8,
+                items: ["<unk>", "a", "b", "ab", "<s>", "</s>"]
+                    .into_iter()
+                    .map(|s| Kv::String(s.into()))
+                    .collect(),
+            },
+        ),
+        (
+            "tokenizer.ggml.merges".into(),
+            Kv::Array {
+                elem: 8,
+                items: vec![Kv::String("a b".into())],
+            },
+        ),
+        ("tokenizer.ggml.bos_token_id".into(), Kv::U32(4)),
+        ("tokenizer.ggml.eos_token_id".into(), Kv::U32(5)),
+    ];
+    let tensors = vec![
+        tw(
+            "token_embd.weight",
+            GgmlType::F32,
+            vec![n_embd, n_vocab],
+            pack_mat(GgmlType::F32, n_embd, n_vocab, 1),
+        ),
+        tw(
+            "output_norm.weight",
+            GgmlType::F32,
+            vec![n_embd],
+            pack_vec1d(GgmlType::F32, &ones),
+        ),
+        tw(
+            "output_norm.bias",
+            GgmlType::F32,
+            vec![n_embd],
+            pack_vec1d(GgmlType::F32, &pat_f32(n_embd, 19)),
+        ),
+        tw(
+            "output.weight",
+            GgmlType::F32,
+            vec![n_embd, n_vocab],
+            pack_mat(GgmlType::F32, n_embd, n_vocab, 2),
+        ),
+        tw(
+            "output.bias",
+            GgmlType::F32,
+            vec![n_vocab],
+            pack_vec1d(GgmlType::F32, &pat_f32(n_vocab, 17)),
+        ),
+        tw(
+            "blk.0.attn_norm.weight",
+            GgmlType::F32,
+            vec![n_embd],
+            pack_vec1d(GgmlType::F32, &ones),
+        ),
+        tw(
+            "blk.0.attn_norm.bias",
+            GgmlType::F32,
+            vec![n_embd],
+            pack_vec1d(GgmlType::F32, &pat_f32(n_embd, 18)),
+        ),
+        tw(
+            "blk.0.attn_k.weight",
+            GgmlType::F32,
+            vec![n_embd, n_kv],
+            pack_mat(GgmlType::F32, n_embd, n_kv, 3),
+        ),
+        tw(
+            "blk.0.attn_v.weight",
+            GgmlType::F32,
+            vec![n_embd, n_kv],
+            pack_mat(GgmlType::F32, n_embd, n_kv, 4),
+        ),
+        tw(
+            "blk.0.attn_q.weight",
+            GgmlType::Q4_K,
+            vec![n_embd, n_embd],
+            pack_mat(GgmlType::Q4_K, n_embd, n_embd, 5),
+        ),
+        tw(
+            "blk.0.attn_output.weight",
+            GgmlType::Q4_K,
+            vec![n_embd, n_embd],
+            pack_mat(GgmlType::Q4_K, n_embd, n_embd, 6),
+        ),
+        tw(
+            "blk.0.ffn_up.weight",
+            GgmlType::Q4_K,
+            vec![n_embd, n_ff],
+            pack_mat(GgmlType::Q4_K, n_embd, n_ff, 7),
+        ),
+        tw(
+            "blk.0.ffn_down.weight",
+            GgmlType::Q4_K,
+            vec![n_ff, n_embd],
+            pack_mat(GgmlType::Q4_K, n_ff, n_embd, 8),
+        ),
+        tw(
+            "blk.0.attn_q.bias",
+            GgmlType::F32,
+            vec![n_embd],
+            pack_vec1d(GgmlType::F32, &pat_f32(n_embd, 11)),
+        ),
+        tw(
+            "blk.0.attn_k.bias",
+            GgmlType::F32,
+            vec![n_kv],
+            pack_vec1d(GgmlType::F32, &pat_f32(n_kv, 12)),
+        ),
+        tw(
+            "blk.0.attn_v.bias",
+            GgmlType::F32,
+            vec![n_kv],
+            pack_vec1d(GgmlType::F32, &pat_f32(n_kv, 13)),
+        ),
+        tw(
+            "blk.0.attn_output.bias",
+            GgmlType::F32,
+            vec![n_embd],
+            pack_vec1d(GgmlType::F32, &pat_f32(n_embd, 14)),
+        ),
+        tw(
+            "blk.0.ffn_up.bias",
+            GgmlType::F32,
+            vec![n_ff],
+            pack_vec1d(GgmlType::F32, &pat_f32(n_ff, 15)),
+        ),
+        tw(
+            "blk.0.ffn_down.bias",
+            GgmlType::F32,
+            vec![n_embd],
+            pack_vec1d(GgmlType::F32, &pat_f32(n_embd, 16)),
+        ),
+    ];
+    write_gguf_with_kv(&kv, &tensors)
+}
+
+/// Writer-built official Bloom GGUF: `architecture=bloom` with `bloom.*` KV.
+///
+/// Official `LLM_ARCH_NAMES` has `LLM_ARCH_BLOOM = "bloom"`; convert writes
+/// `general.architecture=bloom` (`BloomForCausalLM` / `BloomModel` →
+/// `MODEL_ARCH.BLOOM`). Decode follows llama.cpp `src/models/bloom.cpp`:
+/// `token_embd_norm` LayerNorm, fused `attn_qkv` (convert restacks HF
+/// interleaved QKV to concatenated Q/K/V), `LLM_NORM` on attn/ffn/output,
+/// sequential residual, `LLM_FFN_GELU`/`LLM_FFN_SEQ` with biases, ALiBi
+/// (`f_max_alibi_bias = 8`, hardcoded; no RoPE). Official convert writes
+/// `layer_norm_epsilon`, `feed_forward_length = 4 * n_embed`,
+/// `head_count_kv = n_head`, `context_length` (`seq_length` else `n_embed`),
+/// and `add_bos_token=false`. No `rope.dimension_count` / `rope.freq_base`.
+/// No `output.bias`. Tied `output.weight` reuse is allowed. Not Mixtral, not
+/// `qwen3vlmoe`, not linear-attn, not a phi2 redo.
+/// Optional `{1}` `attn_qkv.scale` is [`tiny_bloom_attn_qkv_s_gguf`].
+pub fn tiny_bloom_gguf() -> Vec<u8> {
+    let n_embd = TINY_N_EMBD;
+    let n_ff = TINY_BLOOM_N_FF;
+    let n_vocab = TINY_N_VOCAB;
+    let n_head = TINY_N_HEAD;
+    let n_kv = TINY_BLOOM_N_HEAD_KV.saturating_mul(n_embd / n_head);
+    let n_qkv = n_embd.saturating_add(n_kv.saturating_mul(2));
+    let ones = vec![1.0f32; n_embd];
+    let mut qkv_w = pack_mat(GgmlType::Q4_K, n_embd, n_embd, 5);
+    qkv_w.extend(pack_mat(GgmlType::Q4_K, n_embd, n_kv, 3));
+    qkv_w.extend(pack_mat(GgmlType::Q4_K, n_embd, n_kv, 4));
+    let mut qkv_b = pat_f32(n_embd, 11);
+    qkv_b.extend(pat_f32(n_kv, 12));
+    qkv_b.extend(pat_f32(n_kv, 13));
+    let kv = vec![
+        (
+            "general.alignment".into(),
+            Kv::U32(u32::try_from(GGUF_DEFAULT_ALIGNMENT).unwrap_or(32)),
+        ),
+        ("general.name".into(), Kv::String("llama-rust-tiny".into())),
+        ("general.architecture".into(), Kv::String("bloom".into())),
+        (
+            "bloom.block_count".into(),
+            Kv::U32(u32::try_from(TINY_N_LAYER).unwrap_or(0)),
+        ),
+        (
+            "bloom.embedding_length".into(),
+            Kv::U32(u32::try_from(n_embd).unwrap_or(0)),
+        ),
+        (
+            "bloom.feed_forward_length".into(),
+            Kv::U32(u32::try_from(n_ff).unwrap_or(0)),
+        ),
+        (
+            "bloom.attention.head_count".into(),
+            Kv::U32(u32::try_from(n_head).unwrap_or(0)),
+        ),
+        (
+            "bloom.attention.head_count_kv".into(),
+            Kv::U32(u32::try_from(TINY_BLOOM_N_HEAD_KV).unwrap_or(0)),
+        ),
+        (
+            "bloom.context_length".into(),
+            Kv::U32(u32::try_from(TINY_N_EMBD).unwrap_or(0)),
+        ),
+        (
+            "bloom.attention.layer_norm_epsilon".into(),
+            Kv::F32(1.0 / 100_000.0),
+        ),
+        ("tokenizer.ggml.add_bos_token".into(), Kv::Bool(false)),
+        (
+            "tokenizer.ggml.tokens".into(),
+            Kv::Array {
+                elem: 8,
+                items: ["<unk>", "a", "b", "ab", "<s>", "</s>"]
+                    .into_iter()
+                    .map(|s| Kv::String(s.into()))
+                    .collect(),
+            },
+        ),
+        (
+            "tokenizer.ggml.merges".into(),
+            Kv::Array {
+                elem: 8,
+                items: vec![Kv::String("a b".into())],
+            },
+        ),
+        ("tokenizer.ggml.bos_token_id".into(), Kv::U32(4)),
+        ("tokenizer.ggml.eos_token_id".into(), Kv::U32(5)),
+    ];
+    let tensors = vec![
+        tw(
+            "token_embd.weight",
+            GgmlType::F32,
+            vec![n_embd, n_vocab],
+            pack_mat(GgmlType::F32, n_embd, n_vocab, 1),
+        ),
+        tw(
+            "token_embd_norm.weight",
+            GgmlType::F32,
+            vec![n_embd],
+            pack_vec1d(GgmlType::F32, &ones),
+        ),
+        tw(
+            "token_embd_norm.bias",
+            GgmlType::F32,
+            vec![n_embd],
+            pack_vec1d(GgmlType::F32, &pat_f32(n_embd, 20)),
+        ),
+        tw(
+            "output_norm.weight",
+            GgmlType::F32,
+            vec![n_embd],
+            pack_vec1d(GgmlType::F32, &ones),
+        ),
+        tw(
+            "output_norm.bias",
+            GgmlType::F32,
+            vec![n_embd],
+            pack_vec1d(GgmlType::F32, &pat_f32(n_embd, 19)),
+        ),
+        tw(
+            "output.weight",
+            GgmlType::F32,
+            vec![n_embd, n_vocab],
+            pack_mat(GgmlType::F32, n_embd, n_vocab, 2),
+        ),
+        tw(
+            "blk.0.attn_norm.weight",
+            GgmlType::F32,
+            vec![n_embd],
+            pack_vec1d(GgmlType::F32, &ones),
+        ),
+        tw(
+            "blk.0.attn_norm.bias",
+            GgmlType::F32,
+            vec![n_embd],
+            pack_vec1d(GgmlType::F32, &pat_f32(n_embd, 18)),
+        ),
+        tw(
+            "blk.0.attn_qkv.weight",
+            GgmlType::Q4_K,
+            vec![n_embd, n_qkv],
+            qkv_w,
+        ),
+        tw(
+            "blk.0.attn_qkv.bias",
+            GgmlType::F32,
+            vec![n_qkv],
+            pack_vec1d(GgmlType::F32, &qkv_b),
+        ),
+        tw(
+            "blk.0.attn_output.weight",
+            GgmlType::Q4_K,
+            vec![n_embd, n_embd],
+            pack_mat(GgmlType::Q4_K, n_embd, n_embd, 6),
+        ),
+        tw(
+            "blk.0.attn_output.bias",
+            GgmlType::F32,
+            vec![n_embd],
+            pack_vec1d(GgmlType::F32, &pat_f32(n_embd, 14)),
+        ),
+        tw(
+            "blk.0.ffn_norm.weight",
+            GgmlType::F32,
+            vec![n_embd],
+            pack_vec1d(GgmlType::F32, &ones),
+        ),
+        tw(
+            "blk.0.ffn_norm.bias",
+            GgmlType::F32,
+            vec![n_embd],
+            pack_vec1d(GgmlType::F32, &pat_f32(n_embd, 21)),
+        ),
+        tw(
+            "blk.0.ffn_up.weight",
+            GgmlType::Q4_K,
+            vec![n_embd, n_ff],
+            pack_mat(GgmlType::Q4_K, n_embd, n_ff, 7),
+        ),
+        tw(
+            "blk.0.ffn_down.weight",
+            GgmlType::Q4_K,
+            vec![n_ff, n_embd],
+            pack_mat(GgmlType::Q4_K, n_ff, n_embd, 8),
+        ),
+        tw(
+            "blk.0.ffn_up.bias",
+            GgmlType::F32,
+            vec![n_ff],
+            pack_vec1d(GgmlType::F32, &pat_f32(n_ff, 15)),
+        ),
+        tw(
+            "blk.0.ffn_down.bias",
+            GgmlType::F32,
+            vec![n_embd],
+            pack_vec1d(GgmlType::F32, &pat_f32(n_embd, 16)),
+        ),
+    ];
+    write_gguf_with_kv(&kv, &tensors)
+}
+
+/// Writer-built Bloom GGUF with official `{1}` `attn_qkv.scale`.
+///
+/// Same tensors as [`tiny_bloom_gguf`] plus `blk.0.attn_qkv.scale`. llama.cpp
+/// `build_qkv` fused path: after the QKV GEMM, `ggml_mul` broadcasts the
+/// scalar (`TENSOR_NOT_REQUIRED`; missing is `1.0`) before QKV bias. Not a
+/// second architecture. Split `attn_q.scale` / `attn_k.scale` /
+/// `attn_v.scale` stay the llama tensors. Llama files that contain
+/// `attn_qkv.scale` are ignored (not loaded).
+pub fn tiny_bloom_attn_qkv_s_gguf() -> Vec<u8> {
+    rewrite_tiny_bloom_attn_qkv_s(tiny_bloom_gguf(), Some(TINY_BLOOM_ATTN_QKV_S))
+        .unwrap_or_else(|_| Vec::new())
+}
+
+/// Append or omit `blk.0.attn_qkv.scale`.
+fn rewrite_tiny_bloom_attn_qkv_s(bytes: Vec<u8>, scale: Option<f32>) -> Result<Vec<u8>, GgufError> {
+    rewrite_tiny_llama_unit_scale(bytes, "blk.0.attn_qkv.scale", scale)
 }
 
 /// Writer-built Llama GGUF with Q4_K `token_embd.weight`.
@@ -1162,6 +5991,9 @@ pub fn tiny_q4k_embd_gguf() -> Vec<u8> {
         qkv_bias: false,
         add_bos_token: None,
         llama_moe: false,
+        gemma4_moe: false,
+        gemma4_ple: false,
+        gemma4_fused: false,
     })
 }
 
@@ -1176,6 +6008,9 @@ pub fn tiny_q6k_embd_gguf() -> Vec<u8> {
         qkv_bias: false,
         add_bos_token: None,
         llama_moe: false,
+        gemma4_moe: false,
+        gemma4_ple: false,
+        gemma4_fused: false,
     })
 }
 
@@ -1193,6 +6028,9 @@ pub fn tiny_f16_gguf() -> Vec<u8> {
         qkv_bias: false,
         add_bos_token: None,
         llama_moe: false,
+        gemma4_moe: false,
+        gemma4_ple: false,
+        gemma4_fused: false,
     })
 }
 
@@ -1212,6 +6050,9 @@ pub fn tiny_f16_1d_gguf() -> Vec<u8> {
             qkv_bias: false,
             add_bos_token: None,
             llama_moe: false,
+            gemma4_moe: false,
+            gemma4_ple: false,
+            gemma4_fused: false,
         },
         TinyLmHead::Distinct,
         GgmlType::F16,
@@ -1233,6 +6074,9 @@ pub fn tiny_f16_1d_bias_gguf() -> Vec<u8> {
             qkv_bias: true,
             add_bos_token: Some(false),
             llama_moe: false,
+            gemma4_moe: false,
+            gemma4_ple: false,
+            gemma4_fused: false,
         },
         TinyLmHead::Distinct,
         GgmlType::F16,
@@ -1253,6 +6097,9 @@ pub fn tiny_bf16_gguf() -> Vec<u8> {
         qkv_bias: false,
         add_bos_token: None,
         llama_moe: false,
+        gemma4_moe: false,
+        gemma4_ple: false,
+        gemma4_fused: false,
     })
 }
 
@@ -1269,6 +6116,9 @@ pub fn tiny_q2k_gguf() -> Vec<u8> {
         qkv_bias: false,
         add_bos_token: None,
         llama_moe: false,
+        gemma4_moe: false,
+        gemma4_ple: false,
+        gemma4_fused: false,
     })
 }
 
@@ -1285,6 +6135,9 @@ pub fn tiny_q3k_gguf() -> Vec<u8> {
         qkv_bias: false,
         add_bos_token: None,
         llama_moe: false,
+        gemma4_moe: false,
+        gemma4_ple: false,
+        gemma4_fused: false,
     })
 }
 
@@ -1301,6 +6154,9 @@ pub fn tiny_q41_gguf() -> Vec<u8> {
         qkv_bias: false,
         add_bos_token: None,
         llama_moe: false,
+        gemma4_moe: false,
+        gemma4_ple: false,
+        gemma4_fused: false,
     })
 }
 
@@ -1317,6 +6173,9 @@ pub fn tiny_q50_gguf() -> Vec<u8> {
         qkv_bias: false,
         add_bos_token: None,
         llama_moe: false,
+        gemma4_moe: false,
+        gemma4_ple: false,
+        gemma4_fused: false,
     })
 }
 
@@ -1333,6 +6192,9 @@ pub fn tiny_q51_gguf() -> Vec<u8> {
         qkv_bias: false,
         add_bos_token: None,
         llama_moe: false,
+        gemma4_moe: false,
+        gemma4_ple: false,
+        gemma4_fused: false,
     })
 }
 
@@ -1349,12 +6211,16 @@ pub fn tiny_mxfp4_gguf() -> Vec<u8> {
         qkv_bias: false,
         add_bos_token: None,
         llama_moe: false,
+        gemma4_moe: false,
+        gemma4_ple: false,
+        gemma4_fused: false,
     })
 }
 
 /// Writer-built Llama GGUF with NVFP4 2-D weights (token_embd, output, attn/ffn).
 ///
 /// 1-D norms stay F32. `GGML_TYPE_NVFP4` = 40.
+/// Optional `{1}` `output.scale` is [`tiny_nvfp4_output_s_gguf`].
 pub fn tiny_nvfp4_gguf() -> Vec<u8> {
     tiny_arch_gguf(TinySpec {
         arch: "llama",
@@ -1365,7 +6231,27 @@ pub fn tiny_nvfp4_gguf() -> Vec<u8> {
         qkv_bias: false,
         add_bos_token: None,
         llama_moe: false,
+        gemma4_moe: false,
+        gemma4_ple: false,
+        gemma4_fused: false,
     })
+}
+
+/// Writer-built NVFP4 Llama GGUF with official `{1}` `output.scale`.
+///
+/// Same tensors as [`tiny_nvfp4_gguf`] plus `output.scale`. llama.cpp creates
+/// this tensor only when `output.weight` is `GGML_TYPE_NVFP4`. Decode follows
+/// `build_lora_mm`: after the LM-head GEMM, `ggml_mul` broadcasts the scalar
+/// (`TENSOR_NOT_REQUIRED`; missing is `1.0`). Not a second architecture. F32
+/// files that contain `output.scale` are ignored (not loaded).
+pub fn tiny_nvfp4_output_s_gguf() -> Vec<u8> {
+    rewrite_tiny_nvfp4_output_s(tiny_nvfp4_gguf(), Some(TINY_NVFP4_OUTPUT_S))
+        .unwrap_or_else(|_| Vec::new())
+}
+
+/// Append or omit `output.scale`.
+fn rewrite_tiny_nvfp4_output_s(bytes: Vec<u8>, scale: Option<f32>) -> Result<Vec<u8>, GgufError> {
+    rewrite_tiny_llama_unit_scale(bytes, "output.scale", scale)
 }
 
 /// Writer-built Llama GGUF with Q1_0 2-D weights (token_embd, output, attn/ffn).
@@ -1381,6 +6267,9 @@ pub fn tiny_q10_gguf() -> Vec<u8> {
         qkv_bias: false,
         add_bos_token: None,
         llama_moe: false,
+        gemma4_moe: false,
+        gemma4_ple: false,
+        gemma4_fused: false,
     })
 }
 
@@ -1397,6 +6286,43 @@ pub fn tiny_q20_gguf() -> Vec<u8> {
         qkv_bias: false,
         add_bos_token: None,
         llama_moe: false,
+        gemma4_moe: false,
+        gemma4_ple: false,
+        gemma4_fused: false,
+    })
+}
+
+/// Writer-built Llama GGUF with no grouping: `head_count_kv == head_count == 4`.
+///
+/// GQA ratio 1 (plain multi-head attention). Every other fixture uses ratio 2.
+pub fn tiny_mha_gguf() -> Vec<u8> {
+    tiny_arch_gguf_gqa(tiny_llama_spec(), TinyLmHead::Distinct, GgmlType::F32, 4)
+}
+
+/// Writer-built Llama GGUF with a single KV head: `head_count_kv = 1`.
+///
+/// GQA ratio 4 (multi-query attention), the opposite extreme from
+/// [`tiny_mha_gguf`]. Real checkpoints sit between these: Qwen2.5-0.5B is 14/2.
+pub fn tiny_mqa_gguf() -> Vec<u8> {
+    tiny_arch_gguf_gqa(tiny_llama_spec(), TinyLmHead::Distinct, GgmlType::F32, 1)
+}
+
+/// Writer-built Llama GGUF with Q4_0 2-D weights (token_embd, output, attn/ffn).
+///
+/// 1-D norms stay F32. `GGML_TYPE_Q4_0` = 2 (18-byte `block_q4_0`).
+pub fn tiny_q40_gguf() -> Vec<u8> {
+    tiny_arch_gguf(TinySpec {
+        arch: "llama",
+        token_embd: GgmlType::Q4_0,
+        output: GgmlType::Q4_0,
+        layer: Some(GgmlType::Q4_0),
+        rope_dimension_count: true,
+        qkv_bias: false,
+        add_bos_token: None,
+        llama_moe: false,
+        gemma4_moe: false,
+        gemma4_ple: false,
+        gemma4_fused: false,
     })
 }
 
@@ -1413,6 +6339,9 @@ pub fn tiny_q80_gguf() -> Vec<u8> {
         qkv_bias: false,
         add_bos_token: None,
         llama_moe: false,
+        gemma4_moe: false,
+        gemma4_ple: false,
+        gemma4_fused: false,
     })
 }
 
@@ -1429,6 +6358,9 @@ pub fn tiny_q81_gguf() -> Vec<u8> {
         qkv_bias: false,
         add_bos_token: None,
         llama_moe: false,
+        gemma4_moe: false,
+        gemma4_ple: false,
+        gemma4_fused: false,
     })
 }
 
@@ -1445,6 +6377,9 @@ pub fn tiny_tq10_gguf() -> Vec<u8> {
         qkv_bias: false,
         add_bos_token: None,
         llama_moe: false,
+        gemma4_moe: false,
+        gemma4_ple: false,
+        gemma4_fused: false,
     })
 }
 
@@ -1461,6 +6396,9 @@ pub fn tiny_tq20_gguf() -> Vec<u8> {
         qkv_bias: false,
         add_bos_token: None,
         llama_moe: false,
+        gemma4_moe: false,
+        gemma4_ple: false,
+        gemma4_fused: false,
     })
 }
 
@@ -1477,6 +6415,9 @@ pub fn tiny_q5k_gguf() -> Vec<u8> {
         qkv_bias: false,
         add_bos_token: None,
         llama_moe: false,
+        gemma4_moe: false,
+        gemma4_ple: false,
+        gemma4_fused: false,
     })
 }
 
@@ -1494,6 +6435,9 @@ pub fn tiny_iq4nl_gguf() -> Vec<u8> {
         qkv_bias: false,
         add_bos_token: None,
         llama_moe: false,
+        gemma4_moe: false,
+        gemma4_ple: false,
+        gemma4_fused: false,
     })
 }
 
@@ -1511,6 +6455,9 @@ pub fn tiny_iq2xxs_gguf() -> Vec<u8> {
         qkv_bias: false,
         add_bos_token: None,
         llama_moe: false,
+        gemma4_moe: false,
+        gemma4_ple: false,
+        gemma4_fused: false,
     })
 }
 
@@ -1528,6 +6475,9 @@ pub fn tiny_iq2xs_gguf() -> Vec<u8> {
         qkv_bias: false,
         add_bos_token: None,
         llama_moe: false,
+        gemma4_moe: false,
+        gemma4_ple: false,
+        gemma4_fused: false,
     })
 }
 
@@ -1545,6 +6495,9 @@ pub fn tiny_iq1s_gguf() -> Vec<u8> {
         qkv_bias: false,
         add_bos_token: None,
         llama_moe: false,
+        gemma4_moe: false,
+        gemma4_ple: false,
+        gemma4_fused: false,
     })
 }
 
@@ -1562,6 +6515,9 @@ pub fn tiny_iq1m_gguf() -> Vec<u8> {
         qkv_bias: false,
         add_bos_token: None,
         llama_moe: false,
+        gemma4_moe: false,
+        gemma4_ple: false,
+        gemma4_fused: false,
     })
 }
 
@@ -1579,6 +6535,9 @@ pub fn tiny_iq2s_gguf() -> Vec<u8> {
         qkv_bias: false,
         add_bos_token: None,
         llama_moe: false,
+        gemma4_moe: false,
+        gemma4_ple: false,
+        gemma4_fused: false,
     })
 }
 
@@ -1596,6 +6555,9 @@ pub fn tiny_iq3xxs_gguf() -> Vec<u8> {
         qkv_bias: false,
         add_bos_token: None,
         llama_moe: false,
+        gemma4_moe: false,
+        gemma4_ple: false,
+        gemma4_fused: false,
     })
 }
 
@@ -1613,6 +6575,9 @@ pub fn tiny_iq3s_gguf() -> Vec<u8> {
         qkv_bias: false,
         add_bos_token: None,
         llama_moe: false,
+        gemma4_moe: false,
+        gemma4_ple: false,
+        gemma4_fused: false,
     })
 }
 
@@ -1630,6 +6595,9 @@ pub fn tiny_iq4xs_gguf() -> Vec<u8> {
         qkv_bias: false,
         add_bos_token: None,
         llama_moe: false,
+        gemma4_moe: false,
+        gemma4_ple: false,
+        gemma4_fused: false,
     })
 }
 
@@ -1653,6 +6621,14 @@ struct TinySpec {
     add_bos_token: Option<bool>,
     /// Official llama MoE: `architecture=llama` with `n_expert>0` (not a mixtral arch).
     llama_moe: bool,
+    /// Official gemma4 MoE: `architecture=gemma4` with `ffn_gate_inp` (not a second arch).
+    /// Combines with `gemma4_ple` for production E2B/E4B.
+    gemma4_moe: bool,
+    /// Official gemma4 PLE: `embedding_length_per_layer_input > 0` (not a second arch).
+    /// Combines with `gemma4_moe` for production E2B/E4B.
+    gemma4_ple: bool,
+    /// Official gemma4 fused `ffn_gate_up_exps` instead of separate gate/up.
+    gemma4_fused: bool,
 }
 
 /// How the writer emits `output.weight` relative to `token_embd.weight`.
@@ -1674,10 +6650,25 @@ fn tiny_arch_gguf_lm_head(spec: TinySpec, lm_head: TinyLmHead) -> Vec<u8> {
 }
 
 fn tiny_arch_gguf_lm_head_vec1d(spec: TinySpec, lm_head: TinyLmHead, vec1d: GgmlType) -> Vec<u8> {
+    tiny_arch_gguf_gqa(spec, lm_head, vec1d, TINY_N_HEAD_KV)
+}
+
+/// Writer-built tiny with an explicit `attention.head_count_kv`.
+///
+/// Every other fixture pins `head_count_kv = 2` against `head_count = 4`, so the
+/// suite only ever exercised a GQA ratio of 2. Real checkpoints use other ratios
+/// (Qwen2.5-0.5B is 14/2 = 7), and a grouping bug at any other ratio would pass
+/// the whole harness.
+fn tiny_arch_gguf_gqa(
+    spec: TinySpec,
+    lm_head: TinyLmHead,
+    vec1d: GgmlType,
+    n_head_kv: usize,
+) -> Vec<u8> {
     let n_embd = TINY_N_EMBD;
     let n_ff = TINY_N_FF;
     let n_vocab = TINY_N_VOCAB;
-    let n_kv = TINY_N_HEAD_KV * TINY_N_ROT;
+    let n_kv = n_head_kv * TINY_N_ROT;
     let ones = vec![1.0f32; n_embd];
     let mut tensors = vec![
         tw(
@@ -1730,12 +6721,36 @@ fn tiny_arch_gguf_lm_head_vec1d(spec: TinySpec, lm_head: TinyLmHead, vec1d: Ggml
             vec![n_embd],
             pack_vec1d(vec1d, &ones),
         ));
+        if spec.arch == "gemma2"
+            || spec.arch == "gemma3"
+            || spec.arch == "gemma3n"
+            || spec.arch == "gemma4"
+        {
+            // Official gemma2.cpp: `post_attention_norm` AND `ffn_norm` AND
+            // `post_ffw_norm`. Not the qwen3next reuse of post_attention_norm
+            // as pre-FFN.
+            tensors.push(tw(
+                "blk.0.post_attention_norm.weight",
+                vec1d,
+                vec![n_embd],
+                pack_vec1d(vec1d, &ones),
+            ));
+            tensors.push(tw(
+                "blk.0.post_ffw_norm.weight",
+                vec1d,
+                vec![n_embd],
+                pack_vec1d(vec1d, &ones),
+            ));
+        }
     }
     if spec.arch == "qwen3"
         || spec.arch == "qwen3moe"
         || spec.arch == "qwen3vl"
         || spec.arch == "qwen3next"
         || spec.arch == "qwen35"
+        || spec.arch == "gemma3"
+        || spec.arch == "gemma3n"
+        || spec.arch == "gemma4"
     {
         // Official Qwen3Next / Qwen35 QK-Norm is `{n_embd_head_k}`, not `n_rot`.
         let qk_len = if spec.arch == "qwen3next" || spec.arch == "qwen35" {
@@ -2080,6 +7095,83 @@ fn tiny_arch_gguf_lm_head_vec1d(spec: TinySpec, lm_head: TinyLmHead, vec1d: Ggml
             9,
             GgmlType::Q6_K,
         ));
+        if spec.gemma4_moe {
+            // Official gemma4.cpp MoE: dense shared MLP stays, plus router /
+            // extra norms / GELU `*_exps`. Separate gate/up unless
+            // `gemma4_fused` writes `ffn_gate_up_exps`.
+            tensors.push(tw(
+                "blk.0.ffn_gate_inp.weight",
+                GgmlType::F32,
+                vec![n_embd, TINY_GEMMA4_N_EXPERT],
+                pack_mat(GgmlType::F32, n_embd, TINY_GEMMA4_N_EXPERT, 14),
+            ));
+            tensors.push(tw(
+                "blk.0.ffn_gate_inp.scale",
+                GgmlType::F32,
+                vec![n_embd],
+                pack_vec1d(GgmlType::F32, &ones),
+            ));
+            tensors.push(tw(
+                "blk.0.ffn_post_norm_1.weight",
+                vec1d,
+                vec![n_embd],
+                pack_vec1d(vec1d, &ones),
+            ));
+            tensors.push(tw(
+                "blk.0.ffn_pre_norm_2.weight",
+                vec1d,
+                vec![n_embd],
+                pack_vec1d(vec1d, &ones),
+            ));
+            tensors.push(tw(
+                "blk.0.ffn_post_norm_2.weight",
+                vec1d,
+                vec![n_embd],
+                pack_vec1d(vec1d, &ones),
+            ));
+            if spec.gemma4_fused {
+                // F32 plus a distinct seed so fused logits cannot match split
+                // Q4_K gate/up (Q4_K GELU(gate) on the tiny can be ~0 so the
+                // up-half Q4_K difference would not move the 6 logits).
+                tensors.push(layer_tw_exps(
+                    &spec,
+                    "blk.0.ffn_gate_up_exps.weight",
+                    n_embd,
+                    n_ff.saturating_mul(2),
+                    TINY_GEMMA4_N_EXPERT,
+                    23,
+                    GgmlType::F32,
+                ));
+            } else {
+                tensors.push(layer_tw_exps(
+                    &spec,
+                    "blk.0.ffn_gate_exps.weight",
+                    n_embd,
+                    n_ff,
+                    TINY_GEMMA4_N_EXPERT,
+                    15,
+                    GgmlType::Q4_K,
+                ));
+                tensors.push(layer_tw_exps(
+                    &spec,
+                    "blk.0.ffn_up_exps.weight",
+                    n_embd,
+                    n_ff,
+                    TINY_GEMMA4_N_EXPERT,
+                    17,
+                    GgmlType::Q4_K,
+                ));
+            }
+            tensors.push(layer_tw_exps(
+                &spec,
+                "blk.0.ffn_down_exps.weight",
+                n_ff,
+                n_embd,
+                TINY_GEMMA4_N_EXPERT,
+                19,
+                GgmlType::Q4_K,
+            ));
+        }
     }
     if spec.qkv_bias {
         tensors.push(tw(
@@ -2101,7 +7193,202 @@ fn tiny_arch_gguf_lm_head_vec1d(spec: TinySpec, lm_head: TinyLmHead, vec1d: Ggml
             pack_vec1d(vec1d, &pat_f32(n_kv, 13)),
         ));
     }
-    write_gguf_with_kv(&tiny_kv(&spec), &tensors)
+    if spec.arch == "gemma3n" {
+        push_tiny_gemma3n_tensors(&spec, vec1d, n_embd, n_vocab, &ones, &mut tensors);
+    }
+    if spec.gemma4_ple {
+        push_tiny_gemma4_ple_tensors(&spec, vec1d, n_embd, n_vocab, &ones, &mut tensors);
+    }
+    write_gguf_with_kv(&tiny_kv_gqa(&spec, n_head_kv), &tensors)
+}
+
+fn push_tiny_gemma3n_tensors(
+    spec: &TinySpec,
+    vec1d: GgmlType,
+    n_embd: usize,
+    n_vocab: usize,
+    ones: &[f32],
+    tensors: &mut Vec<TensorWrite>,
+) {
+    let n_altup = GEMMA3N_N_ALTUP;
+    let extra = n_altup.saturating_sub(1);
+    let n_embd_altup = GEMMA3N_N_EMBD_ALTUP;
+    let rank = GEMMA3N_LAUREL_RANK;
+    let pl_cols = n_embd_altup.saturating_mul(TINY_N_LAYER);
+    let altup_ones = vec![1.0f32; n_embd_altup];
+    tensors.push(layer_tw_exps(
+        spec,
+        "altup_proj.weight",
+        n_embd,
+        n_embd,
+        extra,
+        40,
+        GgmlType::F32,
+    ));
+    tensors.push(layer_tw_exps(
+        spec,
+        "altup_unembd_proj.weight",
+        n_embd,
+        n_embd,
+        extra,
+        41,
+        GgmlType::F32,
+    ));
+    tensors.push(tw(
+        "per_layer_token_embd.weight",
+        spec.token_embd,
+        vec![pl_cols, n_vocab],
+        pack_mat(spec.token_embd, pl_cols, n_vocab, 42),
+    ));
+    tensors.push(layer_tw(
+        spec,
+        "per_layer_model_proj.weight",
+        n_embd,
+        pl_cols,
+        43,
+        GgmlType::F32,
+    ));
+    tensors.push(tw(
+        "per_layer_proj_norm.weight",
+        vec1d,
+        vec![n_embd_altup],
+        pack_vec1d(vec1d, &altup_ones),
+    ));
+    tensors.push(layer_tw(
+        spec,
+        "blk.0.inp_gate.weight",
+        n_embd,
+        n_embd_altup,
+        44,
+        GgmlType::F32,
+    ));
+    tensors.push(layer_tw(
+        spec,
+        "blk.0.proj.weight",
+        n_embd_altup,
+        n_embd,
+        45,
+        GgmlType::F32,
+    ));
+    tensors.push(tw(
+        "blk.0.post_norm.weight",
+        vec1d,
+        vec![n_embd],
+        pack_vec1d(vec1d, ones),
+    ));
+    tensors.push(layer_tw(
+        spec,
+        "blk.0.altup_correct_coef.weight",
+        n_altup,
+        n_altup,
+        46,
+        GgmlType::F32,
+    ));
+    tensors.push(tw(
+        "blk.0.altup_correct_scale.weight",
+        vec1d,
+        vec![n_embd],
+        pack_vec1d(vec1d, ones),
+    ));
+    tensors.push(layer_tw(
+        spec,
+        "blk.0.altup_predict_coef.weight",
+        n_altup,
+        n_altup.saturating_mul(n_altup),
+        47,
+        GgmlType::F32,
+    ));
+    tensors.push(layer_tw(
+        spec,
+        "blk.0.altup_router.weight",
+        n_embd,
+        n_altup,
+        48,
+        GgmlType::F32,
+    ));
+    tensors.push(tw(
+        "blk.0.altup_router_norm.weight",
+        vec1d,
+        vec![n_embd],
+        pack_vec1d(vec1d, ones),
+    ));
+    tensors.push(layer_tw(
+        spec,
+        "blk.0.laurel_l.weight",
+        n_embd,
+        rank,
+        49,
+        GgmlType::F32,
+    ));
+    tensors.push(layer_tw(
+        spec,
+        "blk.0.laurel_r.weight",
+        rank,
+        n_embd,
+        50,
+        GgmlType::F32,
+    ));
+    tensors.push(tw(
+        "blk.0.laurel_post_norm.weight",
+        vec1d,
+        vec![n_embd],
+        pack_vec1d(vec1d, ones),
+    ));
+}
+
+fn push_tiny_gemma4_ple_tensors(
+    spec: &TinySpec,
+    vec1d: GgmlType,
+    n_embd: usize,
+    n_vocab: usize,
+    ones: &[f32],
+    tensors: &mut Vec<TensorWrite>,
+) {
+    let n_pl = TINY_GEMMA4_N_EMBD_PER_LAYER;
+    let pl_cols = n_pl.saturating_mul(TINY_N_LAYER);
+    let pl_ones = vec![1.0f32; n_pl];
+    tensors.push(tw(
+        "per_layer_token_embd.weight",
+        spec.token_embd,
+        vec![pl_cols, n_vocab],
+        pack_mat(spec.token_embd, pl_cols, n_vocab, 42),
+    ));
+    tensors.push(layer_tw(
+        spec,
+        "per_layer_model_proj.weight",
+        n_embd,
+        pl_cols,
+        43,
+        GgmlType::F32,
+    ));
+    tensors.push(tw(
+        "per_layer_proj_norm.weight",
+        vec1d,
+        vec![n_pl],
+        pack_vec1d(vec1d, &pl_ones),
+    ));
+    tensors.push(layer_tw(
+        spec,
+        "blk.0.inp_gate.weight",
+        n_embd,
+        n_pl,
+        44,
+        GgmlType::F32,
+    ));
+    tensors.push(layer_tw(
+        spec,
+        "blk.0.proj.weight",
+        n_pl,
+        n_embd,
+        45,
+        GgmlType::F32,
+    ));
+    tensors.push(tw(
+        "blk.0.post_norm.weight",
+        vec1d,
+        vec![n_embd],
+        pack_vec1d(vec1d, ones),
+    ));
 }
 
 fn architecture(g: &Gguf) -> Result<&str, LlamaError> {
@@ -2118,6 +7405,10 @@ fn supported_arch(s: &str) -> bool {
         || s == "mistral"
         || s == "phi3"
         || s == "gemma"
+        || s == "gemma2"
+        || s == "gemma3"
+        || s == "gemma3n"
+        || s == "gemma4"
         || s == "qwen3"
         || s == "llama4"
         || s == "qwen2moe"
@@ -2126,6 +7417,8 @@ fn supported_arch(s: &str) -> bool {
         || s == "qwen3vl"
         || s == "qwen3next"
         || s == "qwen35"
+        || s == "phi2"
+        || s == "bloom"
 }
 
 fn arch_key(arch: &str, field: &str) -> String {
@@ -2153,6 +7446,11 @@ fn require_usize(g: &Gguf, arch: &str, field: &str) -> Result<usize, LlamaError>
     usize::try_from(v).map_err(|_| LlamaError::Shape(key))
 }
 
+fn require_f32(g: &Gguf, arch: &str, field: &str) -> Result<f32, LlamaError> {
+    let key = arch_key(arch, field);
+    g.kv_f32(&key).ok_or(LlamaError::MissingKv(key))
+}
+
 fn rope_dimension(g: &Gguf, arch: &str, n_embd: usize, n_head: usize) -> Result<usize, LlamaError> {
     let key = arch_key(arch, "rope.dimension_count");
     if let Some(v) = g.kv_u32(&key) {
@@ -2168,7 +7466,14 @@ fn rope_dimension(g: &Gguf, arch: &str, n_embd: usize, n_head: usize) -> Result<
     Ok(n_embd / n_head)
 }
 
+/// Default-GQA convenience wrapper. Only tests build KV without going through
+/// [`tiny_arch_gguf_gqa`].
+#[cfg(test)]
 fn tiny_kv(spec: &TinySpec) -> Vec<(String, Kv)> {
+    tiny_kv_gqa(spec, TINY_N_HEAD_KV)
+}
+
+fn tiny_kv_gqa(spec: &TinySpec, n_head_kv: usize) -> Vec<(String, Kv)> {
     let arch = spec.arch;
     let mut kv = vec![
         (
@@ -2195,7 +7500,7 @@ fn tiny_kv(spec: &TinySpec) -> Vec<(String, Kv)> {
         ),
         (
             arch_key(arch, "attention.head_count_kv"),
-            Kv::U32(u32::try_from(TINY_N_HEAD_KV).unwrap_or(0)),
+            Kv::U32(u32::try_from(n_head_kv).unwrap_or(0)),
         ),
         (arch_key(arch, "rope.freq_base"), Kv::F32(10_000.0)),
         (
@@ -2378,6 +7683,101 @@ fn tiny_kv(spec: &TinySpec) -> Vec<(String, Kv)> {
             },
         ));
     }
+    if arch == "gemma2" || arch == "gemma3" || arch == "gemma3n" || arch == "gemma4" {
+        // Official convert/gemma.py Gemma2Model / Gemma3Model / Gemma3NModel / Gemma4Model.
+        if arch == "gemma2" {
+            kv.push((
+                arch_key(arch, "attn_logit_softcapping"),
+                Kv::F32(GEMMA2_ATTN_LOGIT_SOFTCAPPING),
+            ));
+            kv.push((
+                arch_key(arch, "final_logit_softcapping"),
+                Kv::F32(GEMMA2_FINAL_LOGIT_SOFTCAPPING),
+            ));
+        }
+        if arch == "gemma3n" {
+            kv.push((
+                arch_key(arch, "final_logit_softcapping"),
+                Kv::F32(GEMMA2_FINAL_LOGIT_SOFTCAPPING),
+            ));
+            kv.push((
+                arch_key(arch, "altup.active_idx"),
+                Kv::U32(u32::try_from(GEMMA3N_I_ALTUP_ACT).unwrap_or(0)),
+            ));
+            kv.push((
+                arch_key(arch, "altup.num_inputs"),
+                Kv::U32(u32::try_from(GEMMA3N_N_ALTUP).unwrap_or(0)),
+            ));
+            kv.push((
+                arch_key(arch, "embedding_length_per_layer_input"),
+                Kv::U32(u32::try_from(GEMMA3N_N_EMBD_ALTUP).unwrap_or(0)),
+            ));
+            kv.push((
+                arch_key(arch, "attention.shared_kv_layers"),
+                Kv::U32(GEMMA3N_N_LAYER_KV_FROM_START),
+            ));
+        }
+        if arch == "gemma4" {
+            // Official gemma4.cpp `get_key` without `false` for SWA head dim and
+            // per-layer embedding width. Writer-tiny dense/MoE keep PLE off;
+            // [`tiny_gemma4_ple_gguf`], [`tiny_gemma4_moe_ple_gguf`], and
+            // [`tiny_gemma4_moe_fused_ple_gguf`] write `n_embd_per_layer > 0`.
+            let n_pl = if spec.gemma4_ple {
+                TINY_GEMMA4_N_EMBD_PER_LAYER
+            } else {
+                0
+            };
+            kv.push((
+                arch_key(arch, "embedding_length_per_layer_input"),
+                Kv::U32(u32::try_from(n_pl).unwrap_or(0)),
+            ));
+            kv.push((
+                arch_key(arch, "attention.key_length_swa"),
+                Kv::U32(u32::try_from(TINY_N_ROT).unwrap_or(0)),
+            ));
+            kv.push((
+                arch_key(arch, "attention.value_length_swa"),
+                Kv::U32(u32::try_from(TINY_N_ROT).unwrap_or(0)),
+            ));
+            kv.push((
+                arch_key(arch, "attention.sliding_window_pattern"),
+                Kv::Array {
+                    elem: GGUF_TYPE_BOOL,
+                    items: vec![Kv::Bool(true); TINY_N_LAYER],
+                },
+            ));
+            if spec.gemma4_moe {
+                kv.push((
+                    arch_key(arch, "expert_count"),
+                    Kv::U32(u32::try_from(TINY_GEMMA4_N_EXPERT).unwrap_or(0)),
+                ));
+                kv.push((
+                    arch_key(arch, "expert_used_count"),
+                    Kv::U32(u32::try_from(TINY_GEMMA4_N_EXPERT_USED).unwrap_or(0)),
+                ));
+                kv.push((
+                    arch_key(arch, "expert_feed_forward_length"),
+                    Kv::U32(u32::try_from(TINY_N_FF).unwrap_or(0)),
+                ));
+            }
+        }
+        kv.push((
+            arch_key(arch, "attention.sliding_window"),
+            Kv::U32(GEMMA2_TINY_N_SWA),
+        ));
+        kv.push((
+            arch_key(arch, "attention.key_length"),
+            Kv::U32(u32::try_from(TINY_N_ROT).unwrap_or(0)),
+        ));
+        kv.push((
+            arch_key(arch, "attention.value_length"),
+            Kv::U32(u32::try_from(TINY_N_ROT).unwrap_or(0)),
+        ));
+        kv.push((
+            arch_key(arch, "context_length"),
+            Kv::U32(u32::try_from(TINY_N_EMBD).unwrap_or(0)),
+        ));
+    }
     kv
 }
 
@@ -2472,6 +7872,7 @@ fn pack_mat(ty: GgmlType, n_cols: usize, n_rows: usize, seed: u32) -> Vec<u8> {
         GgmlType::NVFP4 => pack_nvfp4_mat(n_cols, n_rows, seed),
         GgmlType::Q1_0 => pack_q10_mat(n_cols, n_rows, seed),
         GgmlType::Q2_0 => pack_q20_mat(n_cols, n_rows, seed),
+        GgmlType::Q4_0 => pack_q40_mat(n_cols, n_rows, seed),
         GgmlType::Q8_0 => pack_q80_mat(n_cols, n_rows, seed),
         GgmlType::Q8_1 => pack_q81_mat(n_cols, n_rows, seed),
         GgmlType::TQ1_0 => pack_tq10_mat(n_cols, n_rows, seed),
@@ -2877,6 +8278,28 @@ fn pack_q20_mat(n_cols: usize, n_rows: usize, seed: u32) -> Vec<u8> {
     out
 }
 
+fn pack_q40_mat(n_cols: usize, n_rows: usize, seed: u32) -> Vec<u8> {
+    let mut out = Vec::new();
+    let mut s = seed;
+    let nblocks = n_cols / QK4_0;
+    for _ in 0..n_rows {
+        for _ in 0..nblocks {
+            // `pack_q4_0_block` takes the packed nibbles: byte `j` holds element
+            // `j` in the low nibble and element `j + 16` in the high nibble.
+            let mut packed = [0u8; QK4_0 / 2];
+            for byte in &mut packed {
+                s = s.wrapping_mul(1_664_525).wrapping_add(1);
+                let lo = u8::try_from(s % 16).unwrap_or(0);
+                s = s.wrapping_mul(1_664_525).wrapping_add(1);
+                let hi = u8::try_from(s % 16).unwrap_or(0);
+                *byte = lo | (hi << 4);
+            }
+            out.extend_from_slice(&pack_q4_0_block(25.0 / 100.0, &packed));
+        }
+    }
+    out
+}
+
 fn pack_q80_mat(n_cols: usize, n_rows: usize, seed: u32) -> Vec<u8> {
     let mut out = Vec::new();
     let mut s = seed;
@@ -2975,19 +8398,21 @@ fn pack_q5k_mat(n_cols: usize, n_rows: usize, seed: u32) -> Vec<u8> {
 fn pack_q4k_mat(n_cols: usize, n_rows: usize, seed: u32) -> Vec<u8> {
     let mut out = Vec::new();
     let mut s = seed;
+    let nblocks = n_cols / QK_K;
     for _ in 0..n_rows {
-        let mut qs = [0u8; QK_K];
-        for q in &mut qs {
-            s = s.wrapping_mul(1_664_525).wrapping_add(1);
-            *q = u8::try_from(s % 8).unwrap_or(0);
+        for _ in 0..nblocks {
+            let mut qs = [0u8; QK_K];
+            for q in &mut qs {
+                s = s.wrapping_mul(1_664_525).wrapping_add(1);
+                *q = u8::try_from(s % 8).unwrap_or(0);
+            }
+            let mut sc = [1u8; 8];
+            for c in &mut sc {
+                s = s.wrapping_mul(1_664_525).wrapping_add(1);
+                *c = u8::try_from(1 + s % 4).unwrap_or(1);
+            }
+            out.extend_from_slice(&pack_q4_k_block(25.0 / 100.0, 0.0, &sc, &[0u8; 8], &qs));
         }
-        let mut sc = [1u8; 8];
-        for c in &mut sc {
-            s = s.wrapping_mul(1_664_525).wrapping_add(1);
-            *c = u8::try_from(1 + s % 4).unwrap_or(1);
-        }
-        out.extend_from_slice(&pack_q4_k_block(25.0 / 100.0, 0.0, &sc, &[0u8; 8], &qs));
-        let _ = n_cols;
     }
     out
 }
@@ -3041,6 +8466,13 @@ struct Qwen2MoeHparams {
 
 /// Official qwen3moe.cpp: `n_ff_exp` from `expert_feed_forward_length`, else `n_ff / n_expert_used`.
 struct Qwen3MoeHparams {
+    n_expert: usize,
+    n_expert_used: usize,
+    n_ff_exp: usize,
+}
+
+/// Official gemma4.cpp MoE: `n_expert` / `n_expert_used` when `ffn_gate_inp` is present.
+struct Gemma4MoeHparams {
     n_expert: usize,
     n_expert_used: usize,
     n_ff_exp: usize,
@@ -3237,6 +8669,35 @@ fn load_qwen3moe_hparams(g: &Gguf, arch: &str) -> Result<Qwen3MoeHparams, LlamaE
     })
 }
 
+/// Official gemma4.cpp: dense when `expert_count` is missing or 0. MoE layers
+/// require `ffn_gate_inp` plus `expert_used_count`.
+fn load_gemma4_moe_hparams(g: &Gguf, arch: &str) -> Result<Option<Gemma4MoeHparams>, LlamaError> {
+    let key = arch_key(arch, "expert_count");
+    let n_expert = match g.kv_u32(&key) {
+        None => return Ok(None),
+        Some(0) => return Ok(None),
+        Some(v) => usize::try_from(v).map_err(|_| LlamaError::Shape(key))?,
+    };
+    let n_expert_used = require_usize(g, arch, "expert_used_count")?;
+    if n_expert_used == 0 || n_expert_used > n_expert {
+        return Err(LlamaError::Shape(arch_key(arch, "expert_used_count")));
+    }
+    let n_ff = require_usize(g, arch, "feed_forward_length")?;
+    if n_ff == 0 {
+        return Err(LlamaError::Shape(arch_key(arch, "feed_forward_length")));
+    }
+    let n_ff_exp = match g.kv_u32(&arch_key(arch, "expert_feed_forward_length")) {
+        Some(v) if v > 0 => usize::try_from(v)
+            .map_err(|_| LlamaError::Shape(arch_key(arch, "expert_feed_forward_length")))?,
+        _ => n_ff,
+    };
+    Ok(Some(Gemma4MoeHparams {
+        n_expert,
+        n_expert_used,
+        n_ff_exp,
+    }))
+}
+
 /// Official qwen3next.cpp: `n_expert` must be > 0. `LLM_KV_SSM_*` is required.
 /// `full_attention_interval` defaults to 4. Layer `i` is recurrent when
 /// `(i+1) % interval != 0`.
@@ -3331,6 +8792,22 @@ fn load_qwen35_hparams(g: &Gguf, arch: &str) -> Result<Qwen35Hparams, LlamaError
 
 struct LayerHparams<'a> {
     qk_norm: bool,
+    phi2: bool,
+    bloom: bool,
+    gemma2: bool,
+    gemma3: bool,
+    gemma3n: bool,
+    gemma4: bool,
+    gemma4_n_pl: usize,
+    n_layer_kv_from_start: i32,
+    is_swa: &'a [bool],
+    hd_full: usize,
+    hd_swa: usize,
+    n_rot_full: usize,
+    n_rot_swa: usize,
+    rope_base_full: f32,
+    rope_base_swa: f32,
+    gemma4_moe: Option<&'a Gemma4MoeHparams>,
     llama4: Option<&'a Llama4Hparams>,
     llama_moe: Option<&'a LlamaMoeHparams>,
     qwen2moe: Option<&'a Qwen2MoeHparams>,
@@ -3347,9 +8824,13 @@ fn load_layer(g: &Gguf, i: usize, h: &LayerHparams<'_>) -> Result<Layer, LlamaEr
     let qwen3next = h.qwen3next;
     let qwen35 = h.qwen35;
     let qk_norm = h.qk_norm;
-    let use_rope = match llama4 {
-        Some(h) => llama4_use_rope(i, h.n_no_rope_layer_step),
-        None => true,
+    let use_rope = if h.bloom {
+        false
+    } else {
+        match llama4 {
+            Some(h) => llama4_use_rope(i, h.n_no_rope_layer_step),
+            None => true,
+        }
     };
     let qk_l2 = match llama4 {
         Some(h) => use_rope && h.use_kq_norm,
@@ -3359,11 +8840,7 @@ fn load_layer(g: &Gguf, i: usize, h: &LayerHparams<'_>) -> Result<Layer, LlamaEr
         if llama4_is_moe_layer(i, h.n_moe_layer_step) {
             LayerFfn::Llama4Moe(Box::new(load_llama4_moe(g, i, h)?))
         } else {
-            LayerFfn::Dense(Box::new(DenseFfn {
-                gate: quant_mat(need(g, &format!("blk.{i}.ffn_gate.weight"))?)?,
-                up: quant_mat(need(g, &format!("blk.{i}.ffn_up.weight"))?)?,
-                down: quant_mat(need(g, &format!("blk.{i}.ffn_down.weight"))?)?,
-            }))
+            LayerFfn::Dense(Box::new(load_dense_ffn(g, i)?))
         }
     } else if let Some(h) = llama_moe {
         LayerFfn::LlamaMoe(Box::new(load_llama_moe(g, i, h)?))
@@ -3390,33 +8867,107 @@ fn load_layer(g: &Gguf, i: usize, h: &LayerHparams<'_>) -> Result<Layer, LlamaEr
                 "qwen35 linear attention layer {i}"
             )));
         }
-        LayerFfn::Dense(Box::new(DenseFfn {
-            gate: quant_mat(need(g, &format!("blk.{i}.ffn_gate.weight"))?)?,
+        LayerFfn::Dense(Box::new(load_dense_ffn(g, i)?))
+    } else if h.gemma4 {
+        if g.tensor(&format!("blk.{i}.ffn_gate_inp.weight")).is_some() {
+            let hp = h
+                .gemma4_moe
+                .ok_or_else(|| LlamaError::Shape(arch_key("gemma4", "expert_count")))?;
+            LayerFfn::Gemma4Moe(Box::new(load_gemma4_moe(g, i, hp)?))
+        } else {
+            LayerFfn::Dense(Box::new(load_dense_ffn(g, i)?))
+        }
+    } else if h.phi2 || h.bloom {
+        LayerFfn::Phi2(Box::new(Phi2Ffn {
             up: quant_mat(need(g, &format!("blk.{i}.ffn_up.weight"))?)?,
+            up_b: f32s(need(g, &format!("blk.{i}.ffn_up.bias"))?)?,
             down: quant_mat(need(g, &format!("blk.{i}.ffn_down.weight"))?)?,
+            down_b: f32s(need(g, &format!("blk.{i}.ffn_down.bias"))?)?,
         }))
     } else {
-        LayerFfn::Dense(Box::new(DenseFfn {
-            gate: quant_mat(need(g, &format!("blk.{i}.ffn_gate.weight"))?)?,
-            up: quant_mat(need(g, &format!("blk.{i}.ffn_up.weight"))?)?,
-            down: quant_mat(need(g, &format!("blk.{i}.ffn_down.weight"))?)?,
-        }))
+        LayerFfn::Dense(Box::new(load_dense_ffn(g, i)?))
+    };
+    let has_kv = gemma4_has_kv(h.n_layer_kv_from_start, i);
+    let layer_swa = h.is_swa.get(i).copied().unwrap_or(false);
+    let hd = if layer_swa { h.hd_swa } else { h.hd_full };
+    let n_rot = if layer_swa { h.n_rot_swa } else { h.n_rot_full };
+    let rope_base = if layer_swa {
+        h.rope_base_swa
+    } else {
+        h.rope_base_full
+    };
+    let kv_slot = if has_kv {
+        i
+    } else {
+        gemma4_kv_slot(h.n_layer_kv_from_start, i, layer_swa)?
+    };
+    let (wq, bq, wk, bk, wv, bv) = if h.bloom {
+        let qkv = load_bloom_qkv(g, i)?;
+        (qkv.wq, qkv.bq, Some(qkv.wk), qkv.bk, Some(qkv.wv), qkv.bv)
+    } else if has_kv {
+        let wv = match g.tensor(&format!("blk.{i}.attn_v.weight")) {
+            Some(t) => Some(quant_mat(t)?),
+            None if h.gemma4 => None,
+            None => {
+                return Err(LlamaError::Tensor(format!("blk.{i}.attn_v.weight")));
+            }
+        };
+        (
+            quant_mat(need(g, &format!("blk.{i}.attn_q.weight"))?)?,
+            optional_f32(g, &format!("blk.{i}.attn_q.bias"))?,
+            Some(quant_mat(need(g, &format!("blk.{i}.attn_k.weight"))?)?),
+            optional_f32(g, &format!("blk.{i}.attn_k.bias"))?,
+            wv,
+            optional_f32(g, &format!("blk.{i}.attn_v.bias"))?,
+        )
+    } else {
+        (
+            quant_mat(need(g, &format!("blk.{i}.attn_q.weight"))?)?,
+            optional_f32(g, &format!("blk.{i}.attn_q.bias"))?,
+            None,
+            None,
+            None,
+            None,
+        )
     };
     Ok(Layer {
         attn_norm: f32s(need(g, &format!("blk.{i}.attn_norm.weight"))?)?,
-        wq: quant_mat(need(g, &format!("blk.{i}.attn_q.weight"))?)?,
-        bq: optional_f32(g, &format!("blk.{i}.attn_q.bias"))?,
-        wk: quant_mat(need(g, &format!("blk.{i}.attn_k.weight"))?)?,
-        bk: optional_f32(g, &format!("blk.{i}.attn_k.bias"))?,
-        wv: quant_mat(need(g, &format!("blk.{i}.attn_v.weight"))?)?,
-        bv: optional_f32(g, &format!("blk.{i}.attn_v.bias"))?,
+        attn_norm_b: if h.phi2 || h.bloom {
+            Some(f32s(need(g, &format!("blk.{i}.attn_norm.bias"))?)?)
+        } else {
+            None
+        },
+        wq,
+        bq,
+        q_s: load_unit_scale(g, &format!("blk.{i}.attn_q.scale"))?,
+        qkv_s: if h.bloom {
+            load_unit_scale(g, &format!("blk.{i}.attn_qkv.scale"))?
+        } else {
+            None
+        },
+        wk,
+        bk,
+        k_s: load_unit_scale(g, &format!("blk.{i}.attn_k.scale"))?,
+        wv,
+        bv,
+        v_s: load_unit_scale(g, &format!("blk.{i}.attn_v.scale"))?,
+        kv_slot,
+        hd,
+        n_rot,
+        rope_base,
         wo: quant_mat(need(g, &format!("blk.{i}.attn_output.weight"))?)?,
+        wo_b: if h.phi2 || h.bloom {
+            Some(f32s(need(g, &format!("blk.{i}.attn_output.bias"))?)?)
+        } else {
+            None
+        },
+        wo_s: load_unit_scale(g, &format!("blk.{i}.attn_output.scale"))?,
         attn_q_norm: if qk_norm {
             Some(f32s(need(g, &format!("blk.{i}.attn_q_norm.weight"))?)?)
         } else {
             None
         },
-        attn_k_norm: if qk_norm {
+        attn_k_norm: if qk_norm && has_kv {
             Some(f32s(need(g, &format!("blk.{i}.attn_k_norm.weight"))?)?)
         } else {
             None
@@ -3424,12 +8975,247 @@ fn load_layer(g: &Gguf, i: usize, h: &LayerHparams<'_>) -> Result<Layer, LlamaEr
         use_rope,
         qk_l2,
         attn_q_gate: qwen3next.is_some() || qwen35.is_some(),
-        ffn_norm: if qwen3next.is_some() || qwen35.is_some() {
+        ffn_norm: if h.phi2 {
+            Vec::new()
+        } else if qwen3next.is_some() || qwen35.is_some() {
             f32s(need(g, &format!("blk.{i}.post_attention_norm.weight"))?)?
         } else {
             f32s(need(g, &format!("blk.{i}.ffn_norm.weight"))?)?
         },
+        ffn_norm_b: if h.bloom {
+            Some(f32s(need(g, &format!("blk.{i}.ffn_norm.bias"))?)?)
+        } else {
+            None
+        },
+        attn_post_norm: if h.gemma2 || h.gemma3 || h.gemma3n || h.gemma4 {
+            Some(f32s(need(
+                g,
+                &format!("blk.{i}.post_attention_norm.weight"),
+            )?)?)
+        } else {
+            None
+        },
+        ffn_post_norm: if h.gemma2 || h.gemma3 || h.gemma3n || h.gemma4 {
+            Some(f32s(need(g, &format!("blk.{i}.post_ffw_norm.weight"))?)?)
+        } else {
+            None
+        },
         ffn,
+        gemma3n: if h.gemma3n {
+            Some(load_gemma3n_layer(g, i)?)
+        } else {
+            None
+        },
+        gemma4_ple: if h.gemma4 && h.gemma4_n_pl > 0 {
+            Some(load_gemma4_ple_layer(g, i)?)
+        } else {
+            None
+        },
+        out_scale: if h.gemma4 {
+            match optional_f32(g, &format!("blk.{i}.layer_output_scale.weight"))? {
+                Some(v) if v.len() == 1 => v.first().copied(),
+                Some(_) => {
+                    return Err(LlamaError::Shape(format!(
+                        "blk.{i}.layer_output_scale.weight"
+                    )));
+                }
+                None => None,
+            }
+        } else {
+            None
+        },
+        rope_freqs: if h.gemma4 && !layer_swa {
+            load_gemma4_rope_freqs(g, hd)?
+        } else {
+            None
+        },
+    })
+}
+
+fn load_gemma4_rope_freqs(g: &Gguf, hd: usize) -> Result<Option<Vec<f32>>, LlamaError> {
+    match g.tensor("rope_freqs.weight") {
+        Some(t) => {
+            let w = f32s(t)?;
+            if w.len() != hd / 2 {
+                return Err(LlamaError::Shape("rope_freqs.weight".into()));
+            }
+            Ok(Some(w))
+        }
+        None => Ok(None),
+    }
+}
+
+fn load_gemma4_ple_layer(g: &Gguf, i: usize) -> Result<Gemma4PleLayer, LlamaError> {
+    Ok(Gemma4PleLayer {
+        inp_gate: quant_mat(need(g, &format!("blk.{i}.inp_gate.weight"))?)?,
+        proj: quant_mat(need(g, &format!("blk.{i}.proj.weight"))?)?,
+        post_norm: f32s(need(g, &format!("blk.{i}.post_norm.weight"))?)?,
+    })
+}
+
+fn load_gemma4_ple_weights(
+    g: &Gguf,
+    n_embd: usize,
+    n_layer: usize,
+    n_vocab: usize,
+    n_pl: usize,
+) -> Result<Gemma4PleWeights, LlamaError> {
+    if n_pl == 0 {
+        return Err(LlamaError::Shape(arch_key(
+            "gemma4",
+            "embedding_length_per_layer_input",
+        )));
+    }
+    let per_layer_token_embd = quant_mat(need(g, "per_layer_token_embd.weight")?)?;
+    let per_layer_model_proj = quant_mat(need(g, "per_layer_model_proj.weight")?)?;
+    let want_pl = n_pl
+        .checked_mul(n_layer)
+        .ok_or_else(|| LlamaError::Shape("per_layer_token_embd".into()))?;
+    if per_layer_token_embd.n_cols != want_pl
+        || per_layer_token_embd.n_rows != n_vocab
+        || per_layer_model_proj.n_cols != n_embd
+        || per_layer_model_proj.n_rows != want_pl
+    {
+        return Err(LlamaError::Shape("per_layer_token_embd".into()));
+    }
+    let per_layer_proj_norm = f32s(need(g, "per_layer_proj_norm.weight")?)?;
+    if per_layer_proj_norm.len() != n_pl {
+        return Err(LlamaError::Shape("per_layer_proj_norm".into()));
+    }
+    Ok(Gemma4PleWeights {
+        per_layer_token_embd,
+        per_layer_model_proj,
+        per_layer_proj_norm,
+        n_embd_per_layer: n_pl,
+    })
+}
+
+fn load_gemma3n_layer(g: &Gguf, i: usize) -> Result<Gemma3nLayer, LlamaError> {
+    Ok(Gemma3nLayer {
+        inp_gate: quant_mat(need(g, &format!("blk.{i}.inp_gate.weight"))?)?,
+        proj: quant_mat(need(g, &format!("blk.{i}.proj.weight"))?)?,
+        post_norm: f32s(need(g, &format!("blk.{i}.post_norm.weight"))?)?,
+        altup_correct_coef: quant_mat(need(g, &format!("blk.{i}.altup_correct_coef.weight"))?)?,
+        altup_correct_scale: f32s(need(g, &format!("blk.{i}.altup_correct_scale.weight"))?)?,
+        altup_predict_coef: quant_mat(need(g, &format!("blk.{i}.altup_predict_coef.weight"))?)?,
+        altup_router: quant_mat(need(g, &format!("blk.{i}.altup_router.weight"))?)?,
+        altup_router_norm: f32s(need(g, &format!("blk.{i}.altup_router_norm.weight"))?)?,
+        laurel_l: quant_mat(need(g, &format!("blk.{i}.laurel_l.weight"))?)?,
+        laurel_r: quant_mat(need(g, &format!("blk.{i}.laurel_r.weight"))?)?,
+        laurel_post_norm: f32s(need(g, &format!("blk.{i}.laurel_post_norm.weight"))?)?,
+    })
+}
+
+fn load_gemma3n_weights(
+    g: &Gguf,
+    n_embd: usize,
+    n_layer: usize,
+    n_vocab: usize,
+) -> Result<Gemma3nWeights, LlamaError> {
+    let n_altup = g
+        .kv_u32(&arch_key("gemma3n", "altup.num_inputs"))
+        .map_or(GEMMA3N_N_ALTUP, |v| usize::try_from(v).unwrap_or(0));
+    let i_altup_act = g
+        .kv_u32(&arch_key("gemma3n", "altup.active_idx"))
+        .map_or(GEMMA3N_I_ALTUP_ACT, |v| usize::try_from(v).unwrap_or(0));
+    let n_embd_altup = g
+        .kv_u32(&arch_key("gemma3n", "embedding_length_per_layer_input"))
+        .map_or(GEMMA3N_N_EMBD_ALTUP, |v| usize::try_from(v).unwrap_or(0));
+    if n_altup < 2 || i_altup_act >= n_altup || n_embd_altup == 0 {
+        return Err(LlamaError::Shape("gemma3n altup".into()));
+    }
+    let extra = n_altup.saturating_sub(1);
+    let altup_proj = quant_mat(need(g, "altup_proj.weight")?)?;
+    let altup_unembd_proj = quant_mat(need(g, "altup_unembd_proj.weight")?)?;
+    if altup_proj.n_parts != extra
+        || altup_unembd_proj.n_parts != extra
+        || altup_proj.n_cols != n_embd
+        || altup_proj.n_rows != n_embd
+        || altup_unembd_proj.n_cols != n_embd
+        || altup_unembd_proj.n_rows != n_embd
+    {
+        return Err(LlamaError::Shape("altup_proj".into()));
+    }
+    let per_layer_token_embd = quant_mat(need(g, "per_layer_token_embd.weight")?)?;
+    let per_layer_model_proj = quant_mat(need(g, "per_layer_model_proj.weight")?)?;
+    let want_pl = n_embd_altup
+        .checked_mul(n_layer)
+        .ok_or_else(|| LlamaError::Shape("per_layer_token_embd".into()))?;
+    if per_layer_token_embd.n_cols != want_pl
+        || per_layer_token_embd.n_rows != n_vocab
+        || per_layer_model_proj.n_cols != n_embd
+        || per_layer_model_proj.n_rows != want_pl
+    {
+        return Err(LlamaError::Shape("per_layer_token_embd".into()));
+    }
+    let per_layer_proj_norm = f32s(need(g, "per_layer_proj_norm.weight")?)?;
+    if per_layer_proj_norm.len() != n_embd_altup {
+        return Err(LlamaError::Shape("per_layer_proj_norm".into()));
+    }
+    Ok(Gemma3nWeights {
+        altup_proj,
+        altup_unembd_proj,
+        per_layer_token_embd,
+        per_layer_model_proj,
+        per_layer_proj_norm,
+        n_altup,
+        i_altup_act,
+        n_embd_altup,
+        n_layer_sparsity: GEMMA3N_N_LAYER_SPARSITY,
+    })
+}
+
+/// Official bloom fused `attn_qkv` is concatenated Q then K then V
+/// (`bloom.cpp` view after `wqkv`; convert restacks HF interleaved heads).
+struct BloomQkv {
+    wq: QuantMat,
+    bq: Option<Vec<f32>>,
+    wk: QuantMat,
+    bk: Option<Vec<f32>>,
+    wv: QuantMat,
+    bv: Option<Vec<f32>>,
+}
+
+fn load_bloom_qkv(g: &Gguf, i: usize) -> Result<BloomQkv, LlamaError> {
+    let name = format!("blk.{i}.attn_qkv.weight");
+    let qkv = quant_mat(need(g, &name)?)?;
+    if qkv.n_parts != 1 || qkv.n_cols == 0 || qkv.n_rows <= qkv.n_cols {
+        return Err(LlamaError::Shape(name));
+    }
+    let extra = qkv.n_rows.saturating_sub(qkv.n_cols);
+    if extra == 0 || !extra.is_multiple_of(2) {
+        return Err(LlamaError::Shape(name));
+    }
+    let n_kv = extra / 2;
+    let n_q = qkv.n_cols;
+    let wq = quant_mat_rows(&qkv, 0, n_q)?;
+    let wk = quant_mat_rows(&qkv, n_q, n_kv)?;
+    let wv = quant_mat_rows(&qkv, n_q.saturating_add(n_kv), n_kv)?;
+    let bname = format!("blk.{i}.attn_qkv.bias");
+    let bias = f32s(need(g, &bname)?)?;
+    let want = n_q.saturating_add(n_kv.saturating_mul(2));
+    if bias.len() != want {
+        return Err(LlamaError::Shape(bname));
+    }
+    let bq = bias
+        .get(..n_q)
+        .ok_or_else(|| LlamaError::Shape(bname.clone()))?
+        .to_vec();
+    let bk = bias
+        .get(n_q..n_q.saturating_add(n_kv))
+        .ok_or_else(|| LlamaError::Shape(bname.clone()))?
+        .to_vec();
+    let bv = bias
+        .get(n_q.saturating_add(n_kv)..)
+        .ok_or(LlamaError::Shape(bname))?
+        .to_vec();
+    Ok(BloomQkv {
+        wq,
+        bq: Some(bq),
+        wk,
+        bk: Some(bk),
+        wv,
+        bv: Some(bv),
     })
 }
 
@@ -3497,6 +9283,9 @@ fn load_llama4_moe(g: &Gguf, i: usize, h: &Llama4Hparams) -> Result<Llama4Moe, L
         gate_shexp,
         up_shexp,
         down_shexp,
+        gate_shexp_s: load_unit_scale(g, &format!("blk.{i}.ffn_gate_shexp.scale"))?,
+        up_shexp_s: load_unit_scale(g, &format!("blk.{i}.ffn_up_shexp.scale"))?,
+        down_shexp_s: load_unit_scale(g, &format!("blk.{i}.ffn_down_shexp.scale"))?,
         n_expert: h.n_expert,
         n_expert_used: h.n_expert_used,
     })
@@ -3552,6 +9341,9 @@ fn load_qwen2moe(g: &Gguf, i: usize, h: &Qwen2MoeHparams) -> Result<Qwen2Moe, Ll
         gate_shexp,
         up_shexp,
         down_shexp,
+        gate_shexp_s: load_unit_scale(g, &format!("blk.{i}.ffn_gate_shexp.scale"))?,
+        up_shexp_s: load_unit_scale(g, &format!("blk.{i}.ffn_up_shexp.scale"))?,
+        down_shexp_s: load_unit_scale(g, &format!("blk.{i}.ffn_down_shexp.scale"))?,
         n_expert: h.n_expert,
         n_expert_used: h.n_expert_used,
     })
@@ -3590,6 +9382,88 @@ fn load_qwen3moe(g: &Gguf, i: usize, h: &Qwen3MoeHparams) -> Result<Qwen3Moe, Ll
     })
 }
 
+fn load_gemma4_moe(g: &Gguf, i: usize, h: &Gemma4MoeHparams) -> Result<Gemma4Moe, LlamaError> {
+    let shared = load_dense_ffn(g, i)?;
+    let post_norm_1 = f32s(need(g, &format!("blk.{i}.ffn_post_norm_1.weight"))?)?;
+    let pre_norm_2 = f32s(need(g, &format!("blk.{i}.ffn_pre_norm_2.weight"))?)?;
+    let post_norm_2 = f32s(need(g, &format!("blk.{i}.ffn_post_norm_2.weight"))?)?;
+    let gate_inp = quant_mat(need(g, &format!("blk.{i}.ffn_gate_inp.weight"))?)?;
+    let gate_inp_s = f32s(need(g, &format!("blk.{i}.ffn_gate_inp.scale"))?)?;
+    let down_exps = quant_mat(need(g, &format!("blk.{i}.ffn_down_exps.weight"))?)?;
+    if gate_inp.n_rows != h.n_expert || gate_inp.n_parts != 1 {
+        return Err(LlamaError::Shape(format!("blk.{i}.ffn_gate_inp.weight")));
+    }
+    if gate_inp.n_cols != shared.down.n_rows {
+        return Err(LlamaError::Shape(format!("blk.{i}.ffn_gate_inp.weight")));
+    }
+    if gate_inp_s.len() != gate_inp.n_cols {
+        return Err(LlamaError::Shape(format!("blk.{i}.ffn_gate_inp.scale")));
+    }
+    if post_norm_1.len() != gate_inp.n_cols {
+        return Err(LlamaError::Shape(format!("blk.{i}.ffn_post_norm_1.weight")));
+    }
+    if pre_norm_2.len() != gate_inp.n_cols {
+        return Err(LlamaError::Shape(format!("blk.{i}.ffn_pre_norm_2.weight")));
+    }
+    if post_norm_2.len() != gate_inp.n_cols {
+        return Err(LlamaError::Shape(format!("blk.{i}.ffn_post_norm_2.weight")));
+    }
+    if down_exps.n_parts != h.n_expert || down_exps.n_cols != h.n_ff_exp {
+        return Err(LlamaError::Shape(format!("blk.{i}.ffn_down_exps.weight")));
+    }
+    let fused_n = h
+        .n_ff_exp
+        .checked_mul(2)
+        .ok_or_else(|| LlamaError::Shape(format!("blk.{i}.ffn_gate_up_exps.weight")))?;
+    let (gate_exps, up_exps, gate_up) = if g
+        .tensor(&format!("blk.{i}.ffn_gate_up_exps.weight"))
+        .is_some()
+    {
+        let gate_up = quant_mat(need(g, &format!("blk.{i}.ffn_gate_up_exps.weight"))?)?;
+        if gate_up.n_parts != h.n_expert
+            || gate_up.n_rows != fused_n
+            || gate_up.n_cols != gate_inp.n_cols
+        {
+            return Err(LlamaError::Shape(format!(
+                "blk.{i}.ffn_gate_up_exps.weight"
+            )));
+        }
+        (None, None, Some(gate_up))
+    } else {
+        let gate_exps = quant_mat(need(g, &format!("blk.{i}.ffn_gate_exps.weight"))?)?;
+        let up_exps = quant_mat(need(g, &format!("blk.{i}.ffn_up_exps.weight"))?)?;
+        for (t, name) in [
+            (&gate_exps, format!("blk.{i}.ffn_gate_exps.weight")),
+            (&up_exps, format!("blk.{i}.ffn_up_exps.weight")),
+        ] {
+            if t.n_parts != h.n_expert {
+                return Err(LlamaError::Shape(name));
+            }
+        }
+        if gate_exps.n_rows != h.n_ff_exp || up_exps.n_rows != h.n_ff_exp {
+            return Err(LlamaError::Shape(format!("blk.{i}.ffn_*_exps.weight")));
+        }
+        (Some(gate_exps), Some(up_exps), None)
+    };
+    Ok(Gemma4Moe {
+        shared,
+        post_norm_1,
+        pre_norm_2,
+        post_norm_2,
+        gate_inp,
+        gate_inp_s,
+        gate_exps,
+        up_exps,
+        gate_up,
+        down_exps,
+        gate_s: load_exps_s(g, i, h.n_expert, "gate")?,
+        up_s: load_exps_s(g, i, h.n_expert, "up")?,
+        down_s: load_exps_s(g, i, h.n_expert, "down")?,
+        n_expert: h.n_expert,
+        n_expert_used: h.n_expert_used,
+    })
+}
+
 fn optional_f32(g: &Gguf, name: &str) -> Result<Option<Vec<f32>>, LlamaError> {
     match g.tensor(name) {
         Some(t) => Ok(Some(f32s(t)?)),
@@ -3597,15 +9471,111 @@ fn optional_f32(g: &Gguf, name: &str) -> Result<Option<Vec<f32>>, LlamaError> {
     }
 }
 
+fn load_unit_scale(g: &Gguf, name: &str) -> Result<Option<f32>, LlamaError> {
+    match optional_f32(g, name)? {
+        Some(v) if v.len() == 1 => Ok(v.first().copied()),
+        Some(_) => Err(LlamaError::Shape(name.into())),
+        None => Ok(None),
+    }
+}
+
+fn load_dense_ffn(g: &Gguf, i: usize) -> Result<DenseFfn, LlamaError> {
+    Ok(DenseFfn {
+        gate: quant_mat(need(g, &format!("blk.{i}.ffn_gate.weight"))?)?,
+        gate_s: load_unit_scale(g, &format!("blk.{i}.ffn_gate.scale"))?,
+        up: quant_mat(need(g, &format!("blk.{i}.ffn_up.weight"))?)?,
+        up_s: load_unit_scale(g, &format!("blk.{i}.ffn_up.scale"))?,
+        down: quant_mat(need(g, &format!("blk.{i}.ffn_down.weight"))?)?,
+        down_s: load_unit_scale(g, &format!("blk.{i}.ffn_down.scale"))?,
+    })
+}
+
+fn load_exps_s(
+    g: &Gguf,
+    i: usize,
+    n_expert: usize,
+    which: &str,
+) -> Result<Option<Vec<f32>>, LlamaError> {
+    let name = format!("blk.{i}.ffn_{which}_exps.scale");
+    match optional_f32(g, &name)? {
+        Some(v) if v.len() == n_expert => Ok(Some(v)),
+        Some(_) => Err(LlamaError::Shape(name)),
+        None => Ok(None),
+    }
+}
+
+fn expert_part_scale(s: Option<&[f32]>, expert: usize) -> f32 {
+    s.and_then(|v| v.get(expert).copied()).unwrap_or(1.0)
+}
+
+fn scale_expert_rows(
+    buf: &mut [f32],
+    n_tokens: usize,
+    row: usize,
+    scale: f32,
+    err: &'static str,
+) -> Result<(), LlamaError> {
+    if scale == 1.0 {
+        return Ok(());
+    }
+    for t in 0..n_tokens {
+        let off = t
+            .checked_mul(row)
+            .ok_or_else(|| LlamaError::Shape(err.into()))?;
+        let dst = buf
+            .get_mut(off..off.saturating_add(row))
+            .ok_or_else(|| LlamaError::Shape(err.into()))?;
+        for v in dst {
+            *v *= scale;
+        }
+    }
+    Ok(())
+}
+
 fn is_applied_norm_or_bias(name: &str) -> bool {
     name == "output_norm.weight"
+        || name == "output_norm.bias"
+        || name == "token_embd_norm.weight"
+        || name == "token_embd_norm.bias"
+        || name == "output.scale"
         || name.ends_with(".attn_norm.weight")
+        || name.ends_with(".attn_norm.bias")
         || name.ends_with(".ffn_norm.weight")
+        || name.ends_with(".ffn_norm.bias")
+        || name.ends_with(".post_attention_norm.weight")
+        || name.ends_with(".post_ffw_norm.weight")
+        || name.ends_with(".ffn_post_norm_1.weight")
+        || name.ends_with(".ffn_pre_norm_2.weight")
+        || name.ends_with(".ffn_post_norm_2.weight")
+        || name.ends_with(".ffn_gate_inp.scale")
+        || name.ends_with(".ffn_gate_exps.scale")
+        || name.ends_with(".ffn_up_exps.scale")
+        || name.ends_with(".ffn_down_exps.scale")
+        || name.ends_with(".ffn_down.scale")
+        || name.ends_with(".ffn_down_shexp.scale")
+        || name.ends_with(".ffn_gate_shexp.scale")
+        || name.ends_with(".ffn_up_shexp.scale")
+        || name.ends_with(".ffn_gate.scale")
+        || name.ends_with(".ffn_up.scale")
+        || name.ends_with(".attn_q.scale")
+        || name.ends_with(".attn_k.scale")
+        || name.ends_with(".attn_v.scale")
+        || name.ends_with(".attn_output.scale")
+        || name.ends_with(".attn_qkv.scale")
         || name.ends_with(".attn_q_norm.weight")
         || name.ends_with(".attn_k_norm.weight")
+        || name.ends_with(".post_norm.weight")
+        || name.ends_with(".altup_router_norm.weight")
+        || name.ends_with(".laurel_post_norm.weight")
+        || name.ends_with(".altup_correct_scale.weight")
+        || name == "per_layer_proj_norm.weight"
         || name.ends_with(".attn_q.bias")
         || name.ends_with(".attn_k.bias")
         || name.ends_with(".attn_v.bias")
+        || name.ends_with(".attn_qkv.bias")
+        || name.ends_with(".attn_output.bias")
+        || name.ends_with(".ffn_up.bias")
+        || name.ends_with(".ffn_down.bias")
 }
 
 fn f32s(t: Tensor<'_>) -> Result<Vec<f32>, LlamaError> {
@@ -3653,6 +9623,7 @@ fn quant_mat(t: Tensor<'_>) -> Result<QuantMat, LlamaError> {
         | GgmlType::NVFP4
         | GgmlType::Q1_0
         | GgmlType::Q2_0
+        | GgmlType::Q4_0
         | GgmlType::Q8_0
         | GgmlType::Q8_1
         | GgmlType::TQ1_0
@@ -3699,46 +9670,103 @@ fn quant_mat(t: Tensor<'_>) -> Result<QuantMat, LlamaError> {
     }
 }
 
+/// Row-contiguous slice of `m` (`first .. first + n_rows`) sharing the blob range.
+fn quant_mat_rows(m: &QuantMat, first: usize, n_rows: usize) -> Result<QuantMat, LlamaError> {
+    let last = first
+        .checked_add(n_rows)
+        .ok_or_else(|| LlamaError::Shape(m.name.clone()))?;
+    if n_rows == 0 || last > m.n_rows {
+        return Err(LlamaError::Shape(m.name.clone()));
+    }
+    let rb = row_bytes_for(m.ty, m.n_cols, &m.name)?;
+    let off = first
+        .checked_mul(rb)
+        .ok_or_else(|| LlamaError::Shape(m.name.clone()))?;
+    let bytes = n_rows
+        .checked_mul(rb)
+        .ok_or_else(|| LlamaError::Shape(m.name.clone()))?;
+    let start = m
+        .start
+        .checked_add(off)
+        .ok_or_else(|| LlamaError::Shape(m.name.clone()))?;
+    let end = start
+        .checked_add(bytes)
+        .ok_or_else(|| LlamaError::Shape(m.name.clone()))?;
+    if end > m.end {
+        return Err(LlamaError::Shape(m.name.clone()));
+    }
+    Ok(QuantMat {
+        name: m.name.clone(),
+        ty: m.ty,
+        n_cols: m.n_cols,
+        n_rows,
+        n_parts: m.n_parts,
+        start,
+        end,
+    })
+}
+
 impl Llama {
-    fn gemm_mat(&self, m: &QuantMat, n_tokens: usize, x: &[f32]) -> Result<Vec<f32>, LlamaError> {
+    /// `y[t, r] = W[r] · x[t]`, into `y` (grown to `n_rows * n_tokens`).
+    fn gemm_into(
+        &self,
+        m: &QuantMat,
+        n_tokens: usize,
+        x: &[f32],
+        y: &mut Vec<f32>,
+        pool: &mut GemvPool,
+    ) -> Result<(), LlamaError> {
         if n_tokens == 1 {
-            return self.gemv_mat(m, x);
+            return self.gemv_into(m, x, y, pool);
         }
         let data = self.mat_bytes(m)?;
+        Self::gemm_data_into(m, n_tokens, data, x, y)
+    }
+
+    /// `y[t, r] = W[r] · x[t]` against an already-sliced weight blob.
+    fn gemm_data_into(
+        m: &QuantMat,
+        n_tokens: usize,
+        data: &[u8],
+        x: &[f32],
+        y: &mut Vec<f32>,
+    ) -> Result<(), LlamaError> {
         let n_out = m
             .n_rows
             .checked_mul(n_tokens)
             .ok_or_else(|| LlamaError::Shape(m.name.clone()))?;
-        let mut y = vec![0.0f32; n_out];
+        fit(y, n_out);
+        let y = y.as_mut_slice();
         match m.ty {
-            GgmlType::F32 => gemm_f32(m.n_cols, n_tokens, data, x, &mut y)?,
-            GgmlType::F16 => gemm_f16(m.n_cols, n_tokens, data, x, &mut y)?,
-            GgmlType::BF16 => gemm_bf16(m.n_cols, n_tokens, data, x, &mut y)?,
-            GgmlType::Q2_K => gemm_q2_k_f32(m.n_cols, n_tokens, data, x, &mut y)?,
-            GgmlType::Q3_K => gemm_q3_k_f32(m.n_cols, n_tokens, data, x, &mut y)?,
-            GgmlType::Q4_1 => gemm_q4_1_f32(m.n_cols, n_tokens, data, x, &mut y)?,
-            GgmlType::Q5_0 => gemm_q5_0_f32(m.n_cols, n_tokens, data, x, &mut y)?,
-            GgmlType::Q5_1 => gemm_q5_1_f32(m.n_cols, n_tokens, data, x, &mut y)?,
-            GgmlType::MXFP4 => gemm_mxfp4_f32(m.n_cols, n_tokens, data, x, &mut y)?,
-            GgmlType::NVFP4 => gemm_nvfp4_f32(m.n_cols, n_tokens, data, x, &mut y)?,
-            GgmlType::Q1_0 => gemm_q1_0_f32(m.n_cols, n_tokens, data, x, &mut y)?,
-            GgmlType::Q2_0 => gemm_q2_0_f32(m.n_cols, n_tokens, data, x, &mut y)?,
-            GgmlType::Q8_0 => gemm_q8_0_f32(m.n_cols, n_tokens, data, x, &mut y)?,
-            GgmlType::Q8_1 => gemm_q8_1_f32(m.n_cols, n_tokens, data, x, &mut y)?,
-            GgmlType::TQ1_0 => gemm_tq1_0_f32(m.n_cols, n_tokens, data, x, &mut y)?,
-            GgmlType::TQ2_0 => gemm_tq2_0_f32(m.n_cols, n_tokens, data, x, &mut y)?,
-            GgmlType::Q4_K => gemm_q4_k_f32(m.n_cols, n_tokens, data, x, &mut y)?,
-            GgmlType::Q5_K => gemm_q5_k_f32(m.n_cols, n_tokens, data, x, &mut y)?,
-            GgmlType::Q6_K => gemm_q6_k_f32(m.n_cols, n_tokens, data, x, &mut y)?,
-            GgmlType::IQ1_S => gemm_iq1_s_f32(m.n_cols, n_tokens, data, x, &mut y)?,
-            GgmlType::IQ1_M => gemm_iq1_m_f32(m.n_cols, n_tokens, data, x, &mut y)?,
-            GgmlType::IQ2_XXS => gemm_iq2_xxs_f32(m.n_cols, n_tokens, data, x, &mut y)?,
-            GgmlType::IQ2_XS => gemm_iq2_xs_f32(m.n_cols, n_tokens, data, x, &mut y)?,
-            GgmlType::IQ2_S => gemm_iq2_s_f32(m.n_cols, n_tokens, data, x, &mut y)?,
-            GgmlType::IQ3_XXS => gemm_iq3_xxs_f32(m.n_cols, n_tokens, data, x, &mut y)?,
-            GgmlType::IQ3_S => gemm_iq3_s_f32(m.n_cols, n_tokens, data, x, &mut y)?,
-            GgmlType::IQ4_NL => gemm_iq4_nl_f32(m.n_cols, n_tokens, data, x, &mut y)?,
-            GgmlType::IQ4_XS => gemm_iq4_xs_f32(m.n_cols, n_tokens, data, x, &mut y)?,
+            GgmlType::F32 => gemm_f32(m.n_cols, n_tokens, data, x, y)?,
+            GgmlType::F16 => gemm_f16(m.n_cols, n_tokens, data, x, y)?,
+            GgmlType::BF16 => gemm_bf16(m.n_cols, n_tokens, data, x, y)?,
+            GgmlType::Q2_K => gemm_q2_k_f32(m.n_cols, n_tokens, data, x, y)?,
+            GgmlType::Q3_K => gemm_q3_k_f32(m.n_cols, n_tokens, data, x, y)?,
+            GgmlType::Q4_1 => gemm_q4_1_f32(m.n_cols, n_tokens, data, x, y)?,
+            GgmlType::Q5_0 => gemm_q5_0_f32(m.n_cols, n_tokens, data, x, y)?,
+            GgmlType::Q5_1 => gemm_q5_1_f32(m.n_cols, n_tokens, data, x, y)?,
+            GgmlType::MXFP4 => gemm_mxfp4_f32(m.n_cols, n_tokens, data, x, y)?,
+            GgmlType::NVFP4 => gemm_nvfp4_f32(m.n_cols, n_tokens, data, x, y)?,
+            GgmlType::Q1_0 => gemm_q1_0_f32(m.n_cols, n_tokens, data, x, y)?,
+            GgmlType::Q2_0 => gemm_q2_0_f32(m.n_cols, n_tokens, data, x, y)?,
+            GgmlType::Q4_0 => gemm_q4_0_f32(m.n_cols, n_tokens, data, x, y)?,
+            GgmlType::Q8_0 => gemm_q8_0_f32(m.n_cols, n_tokens, data, x, y)?,
+            GgmlType::Q8_1 => gemm_q8_1_f32(m.n_cols, n_tokens, data, x, y)?,
+            GgmlType::TQ1_0 => gemm_tq1_0_f32(m.n_cols, n_tokens, data, x, y)?,
+            GgmlType::TQ2_0 => gemm_tq2_0_f32(m.n_cols, n_tokens, data, x, y)?,
+            GgmlType::Q4_K => gemm_q4_k_f32(m.n_cols, n_tokens, data, x, y)?,
+            GgmlType::Q5_K => gemm_q5_k_f32(m.n_cols, n_tokens, data, x, y)?,
+            GgmlType::Q6_K => gemm_q6_k_f32(m.n_cols, n_tokens, data, x, y)?,
+            GgmlType::IQ1_S => gemm_iq1_s_f32(m.n_cols, n_tokens, data, x, y)?,
+            GgmlType::IQ1_M => gemm_iq1_m_f32(m.n_cols, n_tokens, data, x, y)?,
+            GgmlType::IQ2_XXS => gemm_iq2_xxs_f32(m.n_cols, n_tokens, data, x, y)?,
+            GgmlType::IQ2_XS => gemm_iq2_xs_f32(m.n_cols, n_tokens, data, x, y)?,
+            GgmlType::IQ2_S => gemm_iq2_s_f32(m.n_cols, n_tokens, data, x, y)?,
+            GgmlType::IQ3_XXS => gemm_iq3_xxs_f32(m.n_cols, n_tokens, data, x, y)?,
+            GgmlType::IQ3_S => gemm_iq3_s_f32(m.n_cols, n_tokens, data, x, y)?,
+            GgmlType::IQ4_NL => gemm_iq4_nl_f32(m.n_cols, n_tokens, data, x, y)?,
+            GgmlType::IQ4_XS => gemm_iq4_xs_f32(m.n_cols, n_tokens, data, x, y)?,
             other => {
                 return Err(LlamaError::Type {
                     tensor: m.name.clone(),
@@ -3746,433 +9774,996 @@ impl Llama {
                 })
             }
         }
-        Ok(y)
+        Ok(())
     }
 
-    fn gemv_mat(&self, m: &QuantMat, x: &[f32]) -> Result<Vec<f32>, LlamaError> {
-        let data = self.mat_bytes(m)?;
-        let mut y = vec![0.0f32; m.n_rows];
-        match m.ty {
-            GgmlType::F32 => gemv_f32(m.n_cols, data, x, &mut y)?,
-            GgmlType::F16 => gemv_f16(m.n_cols, data, x, &mut y)?,
-            GgmlType::BF16 => gemv_bf16(m.n_cols, data, x, &mut y)?,
-            GgmlType::Q2_K => gemv_q2_k_f32(m.n_cols, data, x, &mut y)?,
-            GgmlType::Q3_K => gemv_q3_k_f32(m.n_cols, data, x, &mut y)?,
-            GgmlType::Q4_1 => gemv_q4_1_f32(m.n_cols, data, x, &mut y)?,
-            GgmlType::Q5_0 => gemv_q5_0_f32(m.n_cols, data, x, &mut y)?,
-            GgmlType::Q5_1 => gemv_q5_1_f32(m.n_cols, data, x, &mut y)?,
-            GgmlType::MXFP4 => gemv_mxfp4_f32(m.n_cols, data, x, &mut y)?,
-            GgmlType::NVFP4 => gemv_nvfp4_f32(m.n_cols, data, x, &mut y)?,
-            GgmlType::Q1_0 => gemv_q1_0_f32(m.n_cols, data, x, &mut y)?,
-            GgmlType::Q2_0 => gemv_q2_0_f32(m.n_cols, data, x, &mut y)?,
-            GgmlType::Q8_0 => gemv_q8_0_f32(m.n_cols, data, x, &mut y)?,
-            GgmlType::Q8_1 => gemv_q8_1_f32(m.n_cols, data, x, &mut y)?,
-            GgmlType::TQ1_0 => gemv_tq1_0_f32(m.n_cols, data, x, &mut y)?,
-            GgmlType::TQ2_0 => gemv_tq2_0_f32(m.n_cols, data, x, &mut y)?,
-            GgmlType::Q4_K => gemv_q4_k_f32(m.n_cols, data, x, &mut y)?,
-            GgmlType::Q5_K => gemv_q5_k_f32(m.n_cols, data, x, &mut y)?,
-            GgmlType::Q6_K => gemv_q6_k_f32(m.n_cols, data, x, &mut y)?,
-            GgmlType::IQ1_S => gemv_iq1_s_f32(m.n_cols, data, x, &mut y)?,
-            GgmlType::IQ1_M => gemv_iq1_m_f32(m.n_cols, data, x, &mut y)?,
-            GgmlType::IQ2_XXS => gemv_iq2_xxs_f32(m.n_cols, data, x, &mut y)?,
-            GgmlType::IQ2_XS => gemv_iq2_xs_f32(m.n_cols, data, x, &mut y)?,
-            GgmlType::IQ2_S => gemv_iq2_s_f32(m.n_cols, data, x, &mut y)?,
-            GgmlType::IQ3_XXS => gemv_iq3_xxs_f32(m.n_cols, data, x, &mut y)?,
-            GgmlType::IQ3_S => gemv_iq3_s_f32(m.n_cols, data, x, &mut y)?,
-            GgmlType::IQ4_NL => gemv_iq4_nl_f32(m.n_cols, data, x, &mut y)?,
-            GgmlType::IQ4_XS => gemv_iq4_xs_f32(m.n_cols, data, x, &mut y)?,
-            other => {
-                return Err(LlamaError::Type {
-                    tensor: m.name.clone(),
-                    ty: other.to_i32(),
-                })
+    /// `y[r] = W[r] · x`, into `y` (grown to `n_rows`).
+    fn gemv_into(
+        &self,
+        m: &QuantMat,
+        x: &[f32],
+        y: &mut Vec<f32>,
+        pool: &mut GemvPool,
+    ) -> Result<(), LlamaError> {
+        self.gemv_range_into(m, m.start, m.end.saturating_sub(m.start), x, y, pool)
+    }
+
+    /// [`Llama::gemv_into`] against one part of a 3-D `*_exps` matrix.
+    fn gemv_part_into(
+        &self,
+        m: &QuantMat,
+        part: usize,
+        x: &[f32],
+        y: &mut Vec<f32>,
+        pool: &mut GemvPool,
+    ) -> Result<(), LlamaError> {
+        let (base, len) = self.mat_part_range(m, part)?;
+        self.gemv_range_into(m, base, len, x, y, pool)
+    }
+
+    /// GEMV against the blob range `[base, base + len)`, on the pool when the
+    /// matrix is big enough and the pool accepts the job, else in this thread.
+    fn gemv_range_into(
+        &self,
+        m: &QuantMat,
+        base: usize,
+        len: usize,
+        x: &[f32],
+        y: &mut Vec<f32>,
+        pool: &mut GemvPool,
+    ) -> Result<(), LlamaError> {
+        fit(y, m.n_rows);
+        let y = y.as_mut_slice();
+        if pooled_gemv(m.n_rows, m.n_cols) {
+            if let Some(p) = pool.as_mut() {
+                let row_bytes = row_bytes_for(m.ty, m.n_cols, &m.name)?;
+                let job = GemvJob {
+                    ty: m.ty,
+                    n_cols: m.n_cols,
+                    base,
+                    row_bytes,
+                };
+                if p.run(job, x, y) {
+                    return Ok(());
+                }
             }
         }
-        Ok(y)
+        let data = self
+            .blob
+            .get(base..base.saturating_add(len))
+            .ok_or_else(|| LlamaError::Shape(m.name.clone()))?;
+        if gemv_rows(m.ty, m.n_cols, data, x, y)? {
+            Ok(())
+        } else {
+            Err(LlamaError::Type {
+                tensor: m.name.clone(),
+                ty: m.ty.to_i32(),
+            })
+        }
+    }
+
+    /// Byte offset and length of one part of a 3-D `*_exps` matrix.
+    /// `n_parts == 1` matrices have a single part covering the whole range.
+    fn mat_part_range(&self, m: &QuantMat, part: usize) -> Result<(usize, usize), LlamaError> {
+        if m.n_parts == 0 || part >= m.n_parts {
+            return Err(LlamaError::Shape(m.name.clone()));
+        }
+        let total = self.mat_bytes(m)?.len();
+        let per = total / m.n_parts;
+        if per.saturating_mul(m.n_parts) != total {
+            return Err(LlamaError::Shape(m.name.clone()));
+        }
+        Ok((m.start.saturating_add(part.saturating_mul(per)), per))
+    }
+
+    fn gemv_part_bytes_into(
+        &self,
+        m: &QuantMat,
+        part: usize,
+        x: &[f32],
+        y: &mut Vec<f32>,
+        pool: &mut GemvPool,
+        bytes: Option<&[u8]>,
+    ) -> Result<(), LlamaError> {
+        match bytes {
+            Some(data) => {
+                fit(y, m.n_rows);
+                let y = y.as_mut_slice();
+                if gemv_rows(m.ty, m.n_cols, data, x, y)? {
+                    Ok(())
+                } else {
+                    Err(LlamaError::Type {
+                        tensor: m.name.clone(),
+                        ty: m.ty.to_i32(),
+                    })
+                }
+            }
+            None => self.gemv_part_into(m, part, x, y, pool),
+        }
+    }
+
+    /// GEMM `n_tokens` rows against one expert part. One token stays on the GEMV pool.
+    fn gemm_part_bytes_into(
+        &self,
+        spec: PartBytes<'_>,
+        x: &[f32],
+        y: &mut Vec<f32>,
+        pool: &mut GemvPool,
+    ) -> Result<(), LlamaError> {
+        if spec.n_tokens == 1 {
+            return self.gemv_part_bytes_into(spec.m, spec.part, x, y, pool, spec.bytes);
+        }
+        match spec.bytes {
+            Some(data) => Self::gemm_data_into(spec.m, spec.n_tokens, data, x, y),
+            None => {
+                let (base, len) = self.mat_part_range(spec.m, spec.part)?;
+                let data = self
+                    .blob
+                    .get(base..base.saturating_add(len))
+                    .ok_or_else(|| LlamaError::Shape(spec.m.name.clone()))?;
+                Self::gemm_data_into(spec.m, spec.n_tokens, data, x, y)
+            }
+        }
+    }
+
+    fn take_expert(
+        store: &mut Option<LiveStore>,
+        layer: u32,
+        expert: usize,
+    ) -> Result<(Option<ExpertParts>, Option<ExpertKey>), LlamaError> {
+        let Some(store) = store.as_mut() else {
+            return Ok((None, None));
+        };
+        let e = u32::try_from(expert).map_err(|_| LlamaError::Shape("expert id".into()))?;
+        let key = ExpertKey::new(layer, e);
+        let parts = store.acquire(key)?;
+        store.lease(key)?;
+        Ok((Some(parts), Some(key)))
+    }
+
+    fn put_expert(store: &mut Option<LiveStore>, held: Option<ExpertKey>) {
+        if let (Some(store), Some(key)) = (store.as_mut(), held) {
+            store.release(key);
+        }
+    }
+
+    /// Route every token with one `ffn_gate_inp` GEMM, then one expert GEMM per
+    /// selected expert.
+    fn softmax_routed_layer(
+        &self,
+        spec: SoftmaxMoE<'_>,
+        n_tokens: usize,
+        s: &mut Scratch,
+        run: MoeExec<'_>,
+    ) -> Result<(), LlamaError> {
+        let MoeExec {
+            pool,
+            moe_trace,
+            store,
+        } = run;
+        self.route_softmax_tokens(&spec, n_tokens, s, pool, moe_trace)?;
+        prefetch_routed(moe_trace, store, n_tokens, spec.n_used, &s.moe.sel_e);
+        prefetch_selected(moe_trace, store, n_tokens, spec.n_used, &s.moe.sel_e);
+        self.grouped_routed_ffn(
+            &spec,
+            n_tokens,
+            s,
+            GroupedRun {
+                pool,
+                store,
+                layer: moe_trace.layer,
+                row_seq: &moe_trace.row_seq,
+                sequence: moe_trace.sequence,
+            },
+        )?;
+        Ok(())
+    }
+
+    /// `ffn_gate_inp` GEMM then per-row softmax + top-k. Bit-equal to serial GEMV.
+    fn route_softmax_tokens(
+        &self,
+        spec: &SoftmaxMoE<'_>,
+        n_tokens: usize,
+        s: &mut Scratch,
+        pool: &mut GemvPool,
+        moe_trace: &mut MoeTraceBuf,
+    ) -> Result<(), LlamaError> {
+        self.gemm_into(spec.gate_inp, n_tokens, &s.x, &mut s.moe.logits, pool)?;
+        Self::softmax_select_tokens(spec, n_tokens, s, moe_trace)
+    }
+
+    /// Softmax then top-k on already-written `s.moe.logits`. Gemma4 MoE fills
+    /// those logits from a custom router on `attn_out`, not `ffn_gate_inp · x`.
+    fn softmax_select_tokens(
+        spec: &SoftmaxMoE<'_>,
+        n_tokens: usize,
+        s: &mut Scratch,
+        moe_trace: &mut MoeTraceBuf,
+    ) -> Result<(), LlamaError> {
+        s.moe.sel_e.clear();
+        s.moe.sel_w.clear();
+        for t in 0..n_tokens {
+            {
+                let row = token_row_mut(&mut s.moe.logits, t, spec.n_expert, spec.err)?;
+                softmax(row);
+            }
+            let row = token_row(&s.moe.logits, t, spec.n_expert, spec.err)?;
+            topk_into(row, spec.n_used, &mut s.moe.order)?;
+            fill_router_weights(row, &s.moe.order, &mut s.moe.weights, spec.norm_w);
+            moe_trace.record(t, &s.moe.order, &s.moe.weights);
+            s.moe.sel_e.extend_from_slice(&s.moe.order);
+            s.moe.sel_w.extend_from_slice(&s.moe.weights);
+        }
+        Ok(())
+    }
+
+    fn grouped_routed_ffn(
+        &self,
+        spec: &SoftmaxMoE<'_>,
+        n_tokens: usize,
+        s: &mut Scratch,
+        run: GroupedRun<'_>,
+    ) -> Result<(), LlamaError> {
+        while s.moe.buckets.len() < spec.n_expert {
+            s.moe.buckets.push(Vec::new());
+        }
+        for b in &mut s.moe.buckets {
+            b.clear();
+        }
+        for t in 0..n_tokens {
+            for j in 0..spec.n_used {
+                let idx = t.saturating_mul(spec.n_used).saturating_add(j);
+                let e = *s
+                    .moe
+                    .sel_e
+                    .get(idx)
+                    .ok_or_else(|| LlamaError::Shape(spec.err.into()))?;
+                let bucket = s
+                    .moe
+                    .buckets
+                    .get_mut(e)
+                    .ok_or_else(|| LlamaError::Shape(spec.err.into()))?;
+                bucket.push(t);
+            }
+        }
+        for e in 0..spec.n_expert {
+            let toks = s
+                .moe
+                .buckets
+                .get_mut(e)
+                .map(core::mem::take)
+                .unwrap_or_default();
+            if toks.is_empty() {
+                continue;
+            }
+            self.grouped_one_expert(
+                spec,
+                ExpertJob {
+                    expert: e,
+                    toks: &toks,
+                    layer: run.layer,
+                    row_seq: run.row_seq,
+                    sequence: run.sequence,
+                },
+                s,
+                run.pool,
+                run.store,
+            )?;
+        }
+        Ok(())
+    }
+
+    fn grouped_one_expert(
+        &self,
+        spec: &SoftmaxMoE<'_>,
+        job: ExpertJob<'_>,
+        s: &mut Scratch,
+        pool: &mut GemvPool,
+        store: &mut Option<LiveStore>,
+    ) -> Result<(), LlamaError> {
+        let n = job.toks.len();
+        let width = n
+            .checked_mul(spec.n_embd)
+            .ok_or_else(|| LlamaError::Shape(spec.err.into()))?;
+        fit(&mut s.moe.pack_x, width);
+        for (i, t) in job.toks.iter().copied().enumerate() {
+            let w = if spec.scale_x {
+                token_expert_weight(&s.moe, t, spec.n_used, job.expert).unwrap_or(0.0)
+            } else {
+                0.0
+            };
+            let xt = token_row(&s.x, t, spec.n_embd, spec.err)?;
+            let off = i.saturating_mul(spec.n_embd);
+            let dst = s
+                .moe
+                .pack_x
+                .get_mut(off..off.saturating_add(spec.n_embd))
+                .ok_or_else(|| LlamaError::Shape(spec.err.into()))?;
+            if spec.scale_x {
+                for (d, v) in dst.iter_mut().zip(xt.iter()) {
+                    *d = *v * w;
+                }
+            } else {
+                dst.copy_from_slice(xt);
+            }
+        }
+        bind_row(
+            store,
+            job.row_seq,
+            job.sequence,
+            job.toks.first().copied().unwrap_or(0),
+        );
+        let (parts, held) = Self::take_expert(store, job.layer, job.expert)?;
+        let r = self.swiglu_expert_gemm(
+            spec,
+            ExpertGemm {
+                expert: job.expert,
+                n,
+                parts: parts.as_ref(),
+            },
+            s,
+            pool,
+        );
+        Self::put_expert(store, held);
+        r?;
+        Self::scatter_expert_rows(spec, job.expert, job.toks, s)
+    }
+
+    fn route_llama4_tokens(
+        &self,
+        moe: &Llama4Moe,
+        n_tokens: usize,
+        s: &mut Scratch,
+        pool: &mut GemvPool,
+        moe_trace: &mut MoeTraceBuf,
+    ) -> Result<(), LlamaError> {
+        self.gemm_into(&moe.gate_inp, n_tokens, &s.x, &mut s.moe.logits, pool)?;
+        s.moe.sel_e.clear();
+        s.moe.sel_w.clear();
+        for t in 0..n_tokens {
+            let row = token_row(&s.moe.logits, t, moe.n_expert, "llama4 ffn_gate_inp")?;
+            topk_into(row, moe.n_expert_used, &mut s.moe.order)?;
+            s.moe.weights.clear();
+            for i in 0..s.moe.order.len() {
+                let Some(e) = s.moe.order.get(i).copied() else {
+                    continue;
+                };
+                s.moe
+                    .weights
+                    .push(sigmoid_f32(row.get(e).copied().unwrap_or(0.0)));
+            }
+            moe_trace.record(t, &s.moe.order, &s.moe.weights);
+            s.moe.sel_e.extend_from_slice(&s.moe.order);
+            s.moe.sel_w.extend_from_slice(&s.moe.weights);
+        }
+        Ok(())
+    }
+
+    fn swiglu_expert_gemm(
+        &self,
+        spec: &SoftmaxMoE<'_>,
+        g: ExpertGemm<'_>,
+        s: &mut Scratch,
+        pool: &mut GemvPool,
+    ) -> Result<(), LlamaError> {
+        let gate_b = g.parts.map(|p| p.gate.as_slice());
+        self.gemm_part_bytes_into(
+            PartBytes {
+                m: spec.gate,
+                part: g.expert,
+                n_tokens: g.n,
+                bytes: gate_b,
+            },
+            &s.moe.pack_x,
+            &mut s.moe.g,
+            pool,
+        )?;
+        if spec.fused {
+            let n_ff = spec.down.n_cols;
+            let fused_w = n_ff
+                .checked_mul(2)
+                .ok_or_else(|| LlamaError::Shape(spec.err.into()))?;
+            if n_ff == 0 || spec.gate.n_rows != fused_w {
+                return Err(LlamaError::Shape(spec.err.into()));
+            }
+            let n_out =
+                g.n.checked_mul(n_ff)
+                    .ok_or_else(|| LlamaError::Shape(spec.err.into()))?;
+            fit(&mut s.moe.u, n_out);
+            for t in 0..g.n {
+                let src = t
+                    .checked_mul(fused_w)
+                    .ok_or_else(|| LlamaError::Shape(spec.err.into()))?;
+                let dst = t
+                    .checked_mul(n_ff)
+                    .ok_or_else(|| LlamaError::Shape(spec.err.into()))?;
+                let up = s
+                    .moe
+                    .g
+                    .get(src.saturating_add(n_ff)..src.saturating_add(fused_w))
+                    .ok_or_else(|| LlamaError::Shape(spec.err.into()))?;
+                let ud = s
+                    .moe
+                    .u
+                    .get_mut(dst..dst.saturating_add(n_ff))
+                    .ok_or_else(|| LlamaError::Shape(spec.err.into()))?;
+                ud.copy_from_slice(up);
+            }
+            for t in 0..g.n {
+                let src = t
+                    .checked_mul(fused_w)
+                    .ok_or_else(|| LlamaError::Shape(spec.err.into()))?;
+                let dst = t
+                    .checked_mul(n_ff)
+                    .ok_or_else(|| LlamaError::Shape(spec.err.into()))?;
+                if src != dst {
+                    for i in 0..n_ff {
+                        let v = *s
+                            .moe
+                            .g
+                            .get(src.saturating_add(i))
+                            .ok_or_else(|| LlamaError::Shape(spec.err.into()))?;
+                        if let Some(slot) = s.moe.g.get_mut(dst.saturating_add(i)) {
+                            *slot = v;
+                        } else {
+                            return Err(LlamaError::Shape(spec.err.into()));
+                        }
+                    }
+                }
+            }
+            s.moe.g.truncate(n_out);
+        } else {
+            let up_b = g.parts.map(|p| p.up.as_slice());
+            self.gemm_part_bytes_into(
+                PartBytes {
+                    m: spec.up,
+                    part: g.expert,
+                    n_tokens: g.n,
+                    bytes: up_b,
+                },
+                &s.moe.pack_x,
+                &mut s.moe.u,
+                pool,
+            )?;
+        }
+        let n_ff = spec.down.n_cols;
+        let up_s = expert_part_scale(spec.up_s, g.expert);
+        if spec.fused {
+            scale_expert_rows(&mut s.moe.g, g.n, n_ff, up_s, spec.err)?;
+            scale_expert_rows(&mut s.moe.u, g.n, n_ff, up_s, spec.err)?;
+        } else {
+            let gate_s = expert_part_scale(spec.gate_s, g.expert);
+            scale_expert_rows(&mut s.moe.g, g.n, n_ff, gate_s, spec.err)?;
+            scale_expert_rows(&mut s.moe.u, g.n, n_ff, up_s, spec.err)?;
+        }
+        ffn_gate_act_inplace(&mut s.moe.g, spec.gelu);
+        for (a, b) in s.moe.g.iter_mut().zip(s.moe.u.iter()) {
+            *a *= *b;
+        }
+        let down_b = g.parts.map(|p| p.down.as_slice());
+        self.gemm_part_bytes_into(
+            PartBytes {
+                m: spec.down,
+                part: g.expert,
+                n_tokens: g.n,
+                bytes: down_b,
+            },
+            &s.moe.g,
+            &mut s.moe.y,
+            pool,
+        )
+    }
+
+    fn scatter_expert_rows(
+        spec: &SoftmaxMoE<'_>,
+        expert: usize,
+        toks: &[usize],
+        s: &mut Scratch,
+    ) -> Result<(), LlamaError> {
+        for (i, t) in toks.iter().copied().enumerate() {
+            let w = if spec.scale_x {
+                1.0
+            } else {
+                token_expert_weight(&s.moe, t, spec.n_used, expert).unwrap_or(0.0)
+            };
+            let src_off = i.saturating_mul(spec.n_embd);
+            let src = s
+                .moe
+                .y
+                .get(src_off..src_off.saturating_add(spec.n_embd))
+                .ok_or_else(|| LlamaError::Shape(spec.err.into()))?;
+            let dst_off = t.saturating_mul(spec.n_embd);
+            let dst = s
+                .ffn_out
+                .get_mut(dst_off..dst_off.saturating_add(spec.n_embd))
+                .ok_or_else(|| LlamaError::Shape(spec.err.into()))?;
+            let scale = expert_part_scale(spec.down_s, expert);
+            for (d, v) in dst.iter_mut().zip(src.iter()) {
+                *d += *v * w * scale;
+            }
+        }
+        Ok(())
+    }
+
+    fn shexp_silu_into(
+        &self,
+        moe: &Qwen2Moe,
+        n_tokens: usize,
+        s: &mut Scratch,
+        pool: &mut GemvPool,
+        err: &'static str,
+    ) -> Result<(), LlamaError> {
+        let n_embd = moe.down_shexp.n_rows;
+        self.gemm_into(&moe.gate_shexp, n_tokens, &s.x, &mut s.gate, pool)?;
+        if let Some(scale) = moe.gate_shexp_s {
+            scale_expert_rows(
+                &mut s.gate,
+                n_tokens,
+                moe.gate_shexp.n_rows,
+                scale,
+                "ffn_gate_shexp.scale",
+            )?;
+        }
+        self.gemm_into(&moe.up_shexp, n_tokens, &s.x, &mut s.up, pool)?;
+        if let Some(scale) = moe.up_shexp_s {
+            scale_expert_rows(
+                &mut s.up,
+                n_tokens,
+                moe.up_shexp.n_rows,
+                scale,
+                "ffn_up_shexp.scale",
+            )?;
+        }
+        silu_inplace(&mut s.gate);
+        for (hv, uv) in s.gate.iter_mut().zip(s.up.iter()) {
+            *hv *= *uv;
+        }
+        self.gemm_into(&moe.down_shexp, n_tokens, &s.gate, &mut s.ffn_out, pool)?;
+        if let Some(scale) = moe.down_shexp_s {
+            scale_expert_rows(
+                &mut s.ffn_out,
+                n_tokens,
+                n_embd,
+                scale,
+                "ffn_down_shexp.scale",
+            )?;
+        }
+        self.gemm_into(
+            &moe.gate_inp_shexp,
+            n_tokens,
+            &s.x,
+            &mut s.moe.shexp_gate,
+            pool,
+        )?;
+        if s.moe.shexp_gate.len() != n_tokens {
+            return Err(LlamaError::Shape(format!("{err} ffn_gate_inp_shexp")));
+        }
+        for t in 0..n_tokens {
+            let w = sigmoid_f32(s.moe.shexp_gate.get(t).copied().unwrap_or(0.0));
+            let off = t.saturating_mul(n_embd);
+            let row = s
+                .ffn_out
+                .get_mut(off..off.saturating_add(n_embd))
+                .ok_or_else(|| LlamaError::Shape(format!("{err} shexp")))?;
+            for v in row.iter_mut() {
+                *v *= w;
+            }
+        }
+        Ok(())
     }
 
     /// Official llama.cpp `build_moe_ffn` for `architecture=llama` + `n_expert>0`:
     /// softmax over all experts, then top-k; SwiGLU; weights after the expert
     /// with `norm_w` clamp `2^-14`. No shared expert (Mixtral-shaped).
-    fn llama_moe_rows(
+    ///
+    /// Reads `s.x` and writes `s.ffn_out`.
+    fn llama_moe_into(
         &self,
         moe: &LlamaMoe,
         n_tokens: usize,
-        x: &[f32],
-    ) -> Result<Vec<f32>, LlamaError> {
+        s: &mut Scratch,
+        pool: &mut GemvPool,
+        moe_trace: &mut MoeTraceBuf,
+        store: &mut Option<LiveStore>,
+    ) -> Result<(), LlamaError> {
         let n_embd = moe.down_exps.n_rows;
-        if n_embd == 0 || !x.len().is_multiple_of(n_embd) {
+        if n_embd == 0 || !s.x.len().is_multiple_of(n_embd) {
             return Err(LlamaError::Shape("llama moe".into()));
         }
         let n_out = n_tokens
             .checked_mul(n_embd)
             .ok_or_else(|| LlamaError::Shape("llama moe".into()))?;
-        let mut out = vec![0.0f32; n_out];
-        for t in 0..n_tokens {
-            let xt = token_row(x, t, n_embd, "llama moe x")?;
-            let logits = self.gemv_mat(&moe.gate_inp, xt)?;
-            if logits.len() != moe.n_expert {
-                return Err(LlamaError::Shape("llama ffn_gate_inp".into()));
-            }
-            let mut probs = logits;
-            softmax(&mut probs);
-            let selected = topk_logits(&probs, moe.n_expert_used)?;
-            let mut wsum = 0.0f32;
-            let mut weights = Vec::new();
-            for &e in &selected {
-                let w = probs.get(e).copied().unwrap_or(0.0);
-                weights.push(w);
-                wsum += w;
-            }
-            if wsum < MOE_NORM_W_CLAMP {
-                wsum = MOE_NORM_W_CLAMP;
-            }
-            for w in &mut weights {
-                *w /= wsum;
-            }
-            let off = t.saturating_mul(n_embd);
-            let dst = out
-                .get_mut(off..off.saturating_add(n_embd))
-                .ok_or_else(|| LlamaError::Shape("llama moe out".into()))?;
-            for (e, w) in selected.iter().zip(weights.iter()) {
-                let ge = expert_view(&moe.gate_exps, *e)?;
-                let ue = expert_view(&moe.up_exps, *e)?;
-                let de = expert_view(&moe.down_exps, *e)?;
-                let g = self.gemv_mat(&ge, xt)?;
-                let u = self.gemv_mat(&ue, xt)?;
-                let mut hh = silu(&g)?;
-                for (a, b) in hh.iter_mut().zip(u.iter()) {
-                    *a *= *b;
-                }
-                let y = self.gemv_mat(&de, &hh)?;
-                for (d, v) in dst.iter_mut().zip(y.iter()) {
-                    *d += *v * *w;
-                }
-            }
-        }
-        Ok(out)
+        fit(&mut s.ffn_out, n_out);
+        self.softmax_routed_layer(
+            SoftmaxMoE {
+                gate_inp: &moe.gate_inp,
+                gate: &moe.gate_exps,
+                up: &moe.up_exps,
+                down: &moe.down_exps,
+                n_expert: moe.n_expert,
+                n_used: moe.n_expert_used,
+                n_embd,
+                norm_w: true,
+                scale_x: false,
+                gelu: false,
+                fused: false,
+                gate_s: None,
+                up_s: None,
+                down_s: None,
+                err: "llama moe",
+            },
+            n_tokens,
+            s,
+            MoeExec {
+                pool,
+                moe_trace,
+                store,
+            },
+        )
     }
 
     /// Official llama4.cpp MoE: top-k on raw router logits, sigmoid weights applied
     /// to the FFN input (`weight_before_ffn`), SwiGLU experts, plus shared expert.
-    fn llama4_moe_rows(
+    ///
+    /// Reads `s.x` and writes `s.ffn_out`.
+    fn llama4_moe_into(
         &self,
         moe: &Llama4Moe,
         n_tokens: usize,
-        x: &[f32],
-    ) -> Result<Vec<f32>, LlamaError> {
+        s: &mut Scratch,
+        pool: &mut GemvPool,
+        moe_trace: &mut MoeTraceBuf,
+        store: &mut Option<LiveStore>,
+    ) -> Result<(), LlamaError> {
         let n_embd = moe.down_shexp.n_rows;
-        if n_embd == 0 || !x.len().is_multiple_of(n_embd) {
+        if n_embd == 0 || !s.x.len().is_multiple_of(n_embd) {
             return Err(LlamaError::Shape("llama4 moe".into()));
         }
-        let gate_s = self.gemm_mat(&moe.gate_shexp, n_tokens, x)?;
-        let up_s = self.gemm_mat(&moe.up_shexp, n_tokens, x)?;
-        let mut h_s = silu(&gate_s)?;
-        for (hv, uv) in h_s.iter_mut().zip(up_s.iter()) {
+        self.gemm_into(&moe.gate_shexp, n_tokens, &s.x, &mut s.gate, pool)?;
+        if let Some(scale) = moe.gate_shexp_s {
+            scale_expert_rows(
+                &mut s.gate,
+                n_tokens,
+                moe.gate_shexp.n_rows,
+                scale,
+                "ffn_gate_shexp.scale",
+            )?;
+        }
+        self.gemm_into(&moe.up_shexp, n_tokens, &s.x, &mut s.up, pool)?;
+        if let Some(scale) = moe.up_shexp_s {
+            scale_expert_rows(
+                &mut s.up,
+                n_tokens,
+                moe.up_shexp.n_rows,
+                scale,
+                "ffn_up_shexp.scale",
+            )?;
+        }
+        silu_inplace(&mut s.gate);
+        for (hv, uv) in s.gate.iter_mut().zip(s.up.iter()) {
             *hv *= *uv;
         }
-        let mut out = self.gemm_mat(&moe.down_shexp, n_tokens, &h_s)?;
-        for t in 0..n_tokens {
-            let xt = token_row(x, t, n_embd, "llama4 moe x")?;
-            let logits = self.gemv_mat(&moe.gate_inp, xt)?;
-            if logits.len() != moe.n_expert {
-                return Err(LlamaError::Shape("llama4 ffn_gate_inp".into()));
-            }
-            let selected = topk_logits(&logits, moe.n_expert_used)?;
-            let mut routed = vec![0.0f32; n_embd];
-            for e in selected {
-                let w = sigmoid_f32(logits.get(e).copied().unwrap_or(0.0));
-                let xw: Vec<f32> = xt.iter().map(|v| *v * w).collect();
-                let ge = expert_view(&moe.gate_exps, e)?;
-                let ue = expert_view(&moe.up_exps, e)?;
-                let de = expert_view(&moe.down_exps, e)?;
-                let g = self.gemv_mat(&ge, &xw)?;
-                let u = self.gemv_mat(&ue, &xw)?;
-                let mut hh = silu(&g)?;
-                for (a, b) in hh.iter_mut().zip(u.iter()) {
-                    *a *= *b;
-                }
-                let y = self.gemv_mat(&de, &hh)?;
-                for (o, v) in routed.iter_mut().zip(y.iter()) {
-                    *o += *v;
-                }
-            }
-            let off = t.saturating_mul(n_embd);
-            let dst = out
-                .get_mut(off..off.saturating_add(n_embd))
-                .ok_or_else(|| LlamaError::Shape("llama4 moe out".into()))?;
-            for (d, s) in dst.iter_mut().zip(routed.iter()) {
-                *d += *s;
-            }
+        self.gemm_into(&moe.down_shexp, n_tokens, &s.gate, &mut s.ffn_out, pool)?;
+        if let Some(scale) = moe.down_shexp_s {
+            scale_expert_rows(
+                &mut s.ffn_out,
+                n_tokens,
+                n_embd,
+                scale,
+                "ffn_down_shexp.scale",
+            )?;
         }
-        Ok(out)
+        self.route_llama4_tokens(moe, n_tokens, s, pool, moe_trace)?;
+        prefetch_routed(moe_trace, store, n_tokens, moe.n_expert_used, &s.moe.sel_e);
+        prefetch_selected(moe_trace, store, n_tokens, moe.n_expert_used, &s.moe.sel_e);
+        let spec = SoftmaxMoE {
+            gate_inp: &moe.gate_inp,
+            gate: &moe.gate_exps,
+            up: &moe.up_exps,
+            down: &moe.down_exps,
+            n_expert: moe.n_expert,
+            n_used: moe.n_expert_used,
+            n_embd,
+            norm_w: false,
+            scale_x: true,
+            gelu: false,
+            fused: false,
+            gate_s: None,
+            up_s: None,
+            down_s: None,
+            err: "llama4 moe",
+        };
+        self.grouped_routed_ffn(
+            &spec,
+            n_tokens,
+            s,
+            GroupedRun {
+                pool,
+                store,
+                layer: moe_trace.layer,
+                row_seq: &moe_trace.row_seq,
+                sequence: moe_trace.sequence,
+            },
+        )?;
+        Ok(())
     }
 
     /// Official qwen2moe.cpp: softmax then top-k, weights after SwiGLU (`norm_w=false`),
     /// plus shared expert gated by `silu(x)/x` on `ffn_gate_inp_shexp`.
-    fn qwen2moe_rows(
+    ///
+    /// Reads `s.x` and writes `s.ffn_out`.
+    fn qwen2moe_into(
         &self,
         moe: &Qwen2Moe,
         n_tokens: usize,
-        x: &[f32],
-    ) -> Result<Vec<f32>, LlamaError> {
+        s: &mut Scratch,
+        pool: &mut GemvPool,
+        moe_trace: &mut MoeTraceBuf,
+        store: &mut Option<LiveStore>,
+    ) -> Result<(), LlamaError> {
         let n_embd = moe.down_shexp.n_rows;
-        if n_embd == 0 || !x.len().is_multiple_of(n_embd) {
+        if n_embd == 0 || !s.x.len().is_multiple_of(n_embd) {
             return Err(LlamaError::Shape("qwen2moe".into()));
         }
-        let gate_s = self.gemm_mat(&moe.gate_shexp, n_tokens, x)?;
-        let up_s = self.gemm_mat(&moe.up_shexp, n_tokens, x)?;
-        let mut h_s = silu(&gate_s)?;
-        for (hv, uv) in h_s.iter_mut().zip(up_s.iter()) {
-            *hv *= *uv;
-        }
-        let mut shexp = self.gemm_mat(&moe.down_shexp, n_tokens, &h_s)?;
-        let shexp_gate = self.gemm_mat(&moe.gate_inp_shexp, n_tokens, x)?;
-        if shexp_gate.len() != n_tokens {
-            return Err(LlamaError::Shape("qwen2moe ffn_gate_inp_shexp".into()));
-        }
-        for t in 0..n_tokens {
-            let w = sigmoid_f32(shexp_gate.get(t).copied().unwrap_or(0.0));
-            let off = t.saturating_mul(n_embd);
-            let row = shexp
-                .get_mut(off..off.saturating_add(n_embd))
-                .ok_or_else(|| LlamaError::Shape("qwen2moe shexp".into()))?;
-            for v in row.iter_mut() {
-                *v *= w;
-            }
-        }
-        let n_out = n_tokens
-            .checked_mul(n_embd)
-            .ok_or_else(|| LlamaError::Shape("qwen2moe".into()))?;
-        let mut out = vec![0.0f32; n_out];
-        for t in 0..n_tokens {
-            let xt = token_row(x, t, n_embd, "qwen2moe x")?;
-            let logits = self.gemv_mat(&moe.gate_inp, xt)?;
-            if logits.len() != moe.n_expert {
-                return Err(LlamaError::Shape("qwen2moe ffn_gate_inp".into()));
-            }
-            let mut probs = logits;
-            softmax(&mut probs);
-            let selected = topk_logits(&probs, moe.n_expert_used)?;
-            let off = t.saturating_mul(n_embd);
-            let dst = out
-                .get_mut(off..off.saturating_add(n_embd))
-                .ok_or_else(|| LlamaError::Shape("qwen2moe out".into()))?;
-            for e in selected {
-                let w = probs.get(e).copied().unwrap_or(0.0);
-                let ge = expert_view(&moe.gate_exps, e)?;
-                let ue = expert_view(&moe.up_exps, e)?;
-                let de = expert_view(&moe.down_exps, e)?;
-                let g = self.gemv_mat(&ge, xt)?;
-                let u = self.gemv_mat(&ue, xt)?;
-                let mut hh = silu(&g)?;
-                for (a, b) in hh.iter_mut().zip(u.iter()) {
-                    *a *= *b;
-                }
-                let y = self.gemv_mat(&de, &hh)?;
-                for (d, v) in dst.iter_mut().zip(y.iter()) {
-                    *d += *v * w;
-                }
-            }
-            let srow = shexp
-                .get(off..off.saturating_add(n_embd))
-                .ok_or_else(|| LlamaError::Shape("qwen2moe shexp add".into()))?;
-            for (d, s) in dst.iter_mut().zip(srow.iter()) {
-                *d += *s;
-            }
-        }
-        Ok(out)
+        self.shexp_silu_into(moe, n_tokens, s, pool, "qwen2moe")?;
+        self.softmax_routed_layer(
+            SoftmaxMoE {
+                gate_inp: &moe.gate_inp,
+                gate: &moe.gate_exps,
+                up: &moe.up_exps,
+                down: &moe.down_exps,
+                n_expert: moe.n_expert,
+                n_used: moe.n_expert_used,
+                n_embd,
+                norm_w: false,
+                scale_x: false,
+                gelu: false,
+                fused: false,
+                gate_s: None,
+                up_s: None,
+                down_s: None,
+                err: "qwen2moe",
+            },
+            n_tokens,
+            s,
+            MoeExec {
+                pool,
+                moe_trace,
+                store,
+            },
+        )
     }
 
     /// Official qwen3moe.cpp: softmax then top-k, weights after SwiGLU (`norm_w`
     /// clamp `2^-14`). No shared expert. QK-Norm is applied on Q/K before RoPE.
-    fn qwen3moe_rows(
+    ///
+    /// Reads `s.x` and writes `s.ffn_out`.
+    fn qwen3moe_into(
         &self,
         moe: &Qwen3Moe,
         n_tokens: usize,
-        x: &[f32],
-    ) -> Result<Vec<f32>, LlamaError> {
+        s: &mut Scratch,
+        pool: &mut GemvPool,
+        moe_trace: &mut MoeTraceBuf,
+        store: &mut Option<LiveStore>,
+    ) -> Result<(), LlamaError> {
         let n_embd = moe.down_exps.n_rows;
-        if n_embd == 0 || !x.len().is_multiple_of(n_embd) {
+        if n_embd == 0 || !s.x.len().is_multiple_of(n_embd) {
             return Err(LlamaError::Shape("qwen3moe".into()));
         }
         let n_out = n_tokens
             .checked_mul(n_embd)
             .ok_or_else(|| LlamaError::Shape("qwen3moe".into()))?;
-        let mut out = vec![0.0f32; n_out];
-        for t in 0..n_tokens {
-            let xt = token_row(x, t, n_embd, "qwen3moe x")?;
-            let logits = self.gemv_mat(&moe.gate_inp, xt)?;
-            if logits.len() != moe.n_expert {
-                return Err(LlamaError::Shape("qwen3moe ffn_gate_inp".into()));
-            }
-            let mut probs = logits;
-            softmax(&mut probs);
-            let selected = topk_logits(&probs, moe.n_expert_used)?;
-            let mut wsum = 0.0f32;
-            let mut weights = Vec::new();
-            for &e in &selected {
-                let w = probs.get(e).copied().unwrap_or(0.0);
-                weights.push(w);
-                wsum += w;
-            }
-            if wsum < MOE_NORM_W_CLAMP {
-                wsum = MOE_NORM_W_CLAMP;
-            }
-            for w in &mut weights {
-                *w /= wsum;
-            }
-            let off = t.saturating_mul(n_embd);
-            let dst = out
-                .get_mut(off..off.saturating_add(n_embd))
-                .ok_or_else(|| LlamaError::Shape("qwen3moe out".into()))?;
-            for (e, w) in selected.iter().zip(weights.iter()) {
-                let ge = expert_view(&moe.gate_exps, *e)?;
-                let ue = expert_view(&moe.up_exps, *e)?;
-                let de = expert_view(&moe.down_exps, *e)?;
-                let g = self.gemv_mat(&ge, xt)?;
-                let u = self.gemv_mat(&ue, xt)?;
-                let mut hh = silu(&g)?;
-                for (a, b) in hh.iter_mut().zip(u.iter()) {
-                    *a *= *b;
-                }
-                let y = self.gemv_mat(&de, &hh)?;
-                for (d, v) in dst.iter_mut().zip(y.iter()) {
-                    *d += *v * *w;
-                }
-            }
-        }
-        Ok(out)
+        fit(&mut s.ffn_out, n_out);
+        self.softmax_routed_layer(
+            SoftmaxMoE {
+                gate_inp: &moe.gate_inp,
+                gate: &moe.gate_exps,
+                up: &moe.up_exps,
+                down: &moe.down_exps,
+                n_expert: moe.n_expert,
+                n_used: moe.n_expert_used,
+                n_embd,
+                norm_w: true,
+                scale_x: false,
+                gelu: false,
+                fused: false,
+                gate_s: None,
+                up_s: None,
+                down_s: None,
+                err: "qwen3moe",
+            },
+            n_tokens,
+            s,
+            MoeExec {
+                pool,
+                moe_trace,
+                store,
+            },
+        )
     }
 
     /// Official qwen3next.cpp: softmax then top-k, weights after SwiGLU (`norm_w`
     /// clamp `2^-14`), plus shared expert * sigmoid(`ffn_gate_inp_shexp`).
-    fn qwen3next_rows(
+    ///
+    /// Reads `s.x` and writes `s.ffn_out`.
+    fn qwen3next_into(
         &self,
         moe: &Qwen2Moe,
         n_tokens: usize,
-        x: &[f32],
-    ) -> Result<Vec<f32>, LlamaError> {
+        s: &mut Scratch,
+        pool: &mut GemvPool,
+        moe_trace: &mut MoeTraceBuf,
+        store: &mut Option<LiveStore>,
+    ) -> Result<(), LlamaError> {
         let n_embd = moe.down_shexp.n_rows;
-        if n_embd == 0 || !x.len().is_multiple_of(n_embd) {
+        if n_embd == 0 || !s.x.len().is_multiple_of(n_embd) {
             return Err(LlamaError::Shape("qwen3next".into()));
         }
-        let gate_s = self.gemm_mat(&moe.gate_shexp, n_tokens, x)?;
-        let up_s = self.gemm_mat(&moe.up_shexp, n_tokens, x)?;
-        let mut h_s = silu(&gate_s)?;
-        for (hv, uv) in h_s.iter_mut().zip(up_s.iter()) {
-            *hv *= *uv;
-        }
-        let mut shexp = self.gemm_mat(&moe.down_shexp, n_tokens, &h_s)?;
-        let shexp_gate = self.gemm_mat(&moe.gate_inp_shexp, n_tokens, x)?;
-        if shexp_gate.len() != n_tokens {
-            return Err(LlamaError::Shape("qwen3next ffn_gate_inp_shexp".into()));
-        }
-        for t in 0..n_tokens {
-            let w = sigmoid_f32(shexp_gate.get(t).copied().unwrap_or(0.0));
-            let off = t.saturating_mul(n_embd);
-            let row = shexp
-                .get_mut(off..off.saturating_add(n_embd))
-                .ok_or_else(|| LlamaError::Shape("qwen3next shexp".into()))?;
-            for v in row.iter_mut() {
-                *v *= w;
-            }
+        self.shexp_silu_into(moe, n_tokens, s, pool, "qwen3next")?;
+        self.softmax_routed_layer(
+            SoftmaxMoE {
+                gate_inp: &moe.gate_inp,
+                gate: &moe.gate_exps,
+                up: &moe.up_exps,
+                down: &moe.down_exps,
+                n_expert: moe.n_expert,
+                n_used: moe.n_expert_used,
+                n_embd,
+                norm_w: true,
+                scale_x: false,
+                gelu: false,
+                fused: false,
+                gate_s: None,
+                up_s: None,
+                down_s: None,
+                err: "qwen3next",
+            },
+            n_tokens,
+            s,
+            MoeExec {
+                pool,
+                moe_trace,
+                store,
+            },
+        )
+    }
+
+    /// Official gemma4.cpp MoE: shared dense GeGLU plus routed GELU experts.
+    ///
+    /// On entry `s.x` is `ffn_norm(attn_out)` and `s.residual` is `attn_out`.
+    /// Writes `s.ffn_out` = `post_norm_1(shared)` plus `post_norm_2(experts)`.
+    /// The caller still applies `post_ffw_norm` and the residual add.
+    fn gemma4_moe_into(
+        &self,
+        moe: &Gemma4Moe,
+        n_tokens: usize,
+        s: &mut Scratch,
+        pool: &mut GemvPool,
+        moe_trace: &mut MoeTraceBuf,
+        store: &mut Option<LiveStore>,
+    ) -> Result<(), LlamaError> {
+        let n_embd = moe.down_exps.n_rows;
+        if n_embd == 0 || n_embd != self.n_embd || !s.x.len().is_multiple_of(n_embd) {
+            return Err(LlamaError::Shape("gemma4 moe".into()));
         }
         let n_out = n_tokens
             .checked_mul(n_embd)
-            .ok_or_else(|| LlamaError::Shape("qwen3next".into()))?;
-        let mut out = vec![0.0f32; n_out];
+            .ok_or_else(|| LlamaError::Shape("gemma4 moe".into()))?;
+        self.gemm_into(&moe.shared.gate, n_tokens, &s.x, &mut s.gate, pool)?;
+        if let Some(scale) = moe.shared.gate_s {
+            scale_expert_rows(
+                &mut s.gate,
+                n_tokens,
+                moe.shared.gate.n_rows,
+                scale,
+                "ffn_gate.scale",
+            )?;
+        }
+        self.gemm_into(&moe.shared.up, n_tokens, &s.x, &mut s.up, pool)?;
+        if let Some(scale) = moe.shared.up_s {
+            scale_expert_rows(
+                &mut s.up,
+                n_tokens,
+                moe.shared.up.n_rows,
+                scale,
+                "ffn_up.scale",
+            )?;
+        }
+        ffn_gate_act_inplace(&mut s.gate, true);
+        for (hv, uv) in s.gate.iter_mut().zip(s.up.iter()) {
+            *hv *= *uv;
+        }
+        self.gemm_into(&moe.shared.down, n_tokens, &s.gate, &mut s.ffn_out, pool)?;
+        if let Some(scale) = moe.shared.down_s {
+            scale_expert_rows(&mut s.ffn_out, n_tokens, n_embd, scale, "ffn_down.scale")?;
+        }
+        rmsnorm_rows_inplace(&mut s.ffn_out, n_embd, &moe.post_norm_1, self.rms_eps)?;
+        copy_buf(&mut s.attn, &s.ffn_out);
+        copy_buf(&mut s.x, &s.residual);
+        rmsnorm_rows_inplace(&mut s.x, n_embd, &moe.pre_norm_2, self.rms_eps)?;
+        copy_buf(&mut s.moe.pack_x, &s.residual);
+        rmsnorm_unweighted_rows_inplace(&mut s.moe.pack_x, n_embd, self.rms_eps)?;
+        let n_embd_f = f32::from(u16::try_from(n_embd).unwrap_or(1));
+        let inv = if n_embd_f > 0.0 {
+            1.0 / n_embd_f.sqrt()
+        } else {
+            0.0
+        };
+        if moe.gate_inp_s.len() != n_embd {
+            return Err(LlamaError::Shape("gemma4 moe".into()));
+        }
         for t in 0..n_tokens {
-            let xt = token_row(x, t, n_embd, "qwen3next x")?;
-            let logits = self.gemv_mat(&moe.gate_inp, xt)?;
-            if logits.len() != moe.n_expert {
-                return Err(LlamaError::Shape("qwen3next ffn_gate_inp".into()));
-            }
-            let mut probs = logits;
-            softmax(&mut probs);
-            let selected = topk_logits(&probs, moe.n_expert_used)?;
-            let mut wsum = 0.0f32;
-            let mut weights = Vec::new();
-            for &e in &selected {
-                let w = probs.get(e).copied().unwrap_or(0.0);
-                weights.push(w);
-                wsum += w;
-            }
-            if wsum < MOE_NORM_W_CLAMP {
-                wsum = MOE_NORM_W_CLAMP;
-            }
-            for w in &mut weights {
-                *w /= wsum;
-            }
-            let off = t.saturating_mul(n_embd);
-            let dst = out
-                .get_mut(off..off.saturating_add(n_embd))
-                .ok_or_else(|| LlamaError::Shape("qwen3next out".into()))?;
-            for (e, w) in selected.iter().zip(weights.iter()) {
-                let ge = expert_view(&moe.gate_exps, *e)?;
-                let ue = expert_view(&moe.up_exps, *e)?;
-                let de = expert_view(&moe.down_exps, *e)?;
-                let g = self.gemv_mat(&ge, xt)?;
-                let u = self.gemv_mat(&ue, xt)?;
-                let mut hh = silu(&g)?;
-                for (a, b) in hh.iter_mut().zip(u.iter()) {
-                    *a *= *b;
-                }
-                let y = self.gemv_mat(&de, &hh)?;
-                for (d, v) in dst.iter_mut().zip(y.iter()) {
-                    *d += *v * *w;
-                }
-            }
-            let srow = shexp
-                .get(off..off.saturating_add(n_embd))
-                .ok_or_else(|| LlamaError::Shape("qwen3next shexp add".into()))?;
-            for (d, s) in dst.iter_mut().zip(srow.iter()) {
-                *d += *s;
+            let row = token_row_mut(&mut s.moe.pack_x, t, n_embd, "gemma4 moe")?;
+            for (v, scale) in row.iter_mut().zip(moe.gate_inp_s.iter()) {
+                *v *= inv * *scale;
             }
         }
-        Ok(out)
+        self.gemm_into(
+            &moe.gate_inp,
+            n_tokens,
+            &s.moe.pack_x,
+            &mut s.moe.logits,
+            pool,
+        )?;
+        let fused = moe.gate_up.as_ref();
+        let gate = fused
+            .or(moe.gate_exps.as_ref())
+            .ok_or_else(|| LlamaError::Shape("gemma4 moe".into()))?;
+        let up = fused
+            .or(moe.up_exps.as_ref())
+            .ok_or_else(|| LlamaError::Shape("gemma4 moe".into()))?;
+        let spec = SoftmaxMoE {
+            gate_inp: &moe.gate_inp,
+            gate,
+            up,
+            down: &moe.down_exps,
+            n_expert: moe.n_expert,
+            n_used: moe.n_expert_used,
+            n_embd,
+            norm_w: true,
+            scale_x: false,
+            gelu: true,
+            fused: fused.is_some(),
+            gate_s: moe.gate_s.as_deref(),
+            up_s: moe.up_s.as_deref(),
+            down_s: moe.down_s.as_deref(),
+            err: "gemma4 moe",
+        };
+        Self::softmax_select_tokens(&spec, n_tokens, s, moe_trace)?;
+        prefetch_routed(moe_trace, store, n_tokens, spec.n_used, &s.moe.sel_e);
+        prefetch_selected(moe_trace, store, n_tokens, spec.n_used, &s.moe.sel_e);
+        fit(&mut s.ffn_out, n_out);
+        self.grouped_routed_ffn(
+            &spec,
+            n_tokens,
+            s,
+            GroupedRun {
+                pool,
+                store,
+                layer: moe_trace.layer,
+                row_seq: &moe_trace.row_seq,
+                sequence: moe_trace.sequence,
+            },
+        )?;
+        rmsnorm_rows_inplace(&mut s.ffn_out, n_embd, &moe.post_norm_2, self.rms_eps)?;
+        add_assign(&mut s.ffn_out, &s.attn)?;
+        Ok(())
     }
 
-    fn embed(&self, token: u32) -> Result<Vec<f32>, LlamaError> {
-        let emb = &self.token_embd;
+    /// Dequantize `token`'s embedding row into `y` (`token_embd.n_cols` long).
+    fn embed_into(&self, token: u32, y: &mut [f32]) -> Result<(), LlamaError> {
+        self.embed_mat_into(&self.token_embd, token, y)
+    }
+
+    /// Dequantize `token`'s row of `emb` into `y` (`emb.n_cols` long).
+    fn embed_mat_into(&self, emb: &QuantMat, token: u32, y: &mut [f32]) -> Result<(), LlamaError> {
+        if y.len() != emb.n_cols {
+            return Err(LlamaError::Shape(emb.name.clone()));
+        }
         let data = self.mat_bytes(emb)?;
         let row = usize::try_from(token).map_err(|_| LlamaError::Shape(emb.name.clone()))?;
-        let rb = match emb.ty {
-            GgmlType::F32 => f32_row_bytes(emb.n_cols)?,
-            GgmlType::F16 => f16_row_bytes(emb.n_cols)?,
-            GgmlType::BF16 => bf16_row_bytes(emb.n_cols)?,
-            GgmlType::Q2_K => q2_k_row_bytes(emb.n_cols)?,
-            GgmlType::Q3_K => q3_k_row_bytes(emb.n_cols)?,
-            GgmlType::Q4_1 => q4_1_row_bytes(emb.n_cols)?,
-            GgmlType::Q5_0 => q5_0_row_bytes(emb.n_cols)?,
-            GgmlType::Q5_1 => q5_1_row_bytes(emb.n_cols)?,
-            GgmlType::MXFP4 => mxfp4_row_bytes(emb.n_cols)?,
-            GgmlType::NVFP4 => nvfp4_row_bytes(emb.n_cols)?,
-            GgmlType::Q1_0 => q1_0_row_bytes(emb.n_cols)?,
-            GgmlType::Q2_0 => q2_0_row_bytes(emb.n_cols)?,
-            GgmlType::Q8_0 => q8_0_row_bytes(emb.n_cols)?,
-            GgmlType::Q8_1 => q8_1_row_bytes(emb.n_cols)?,
-            GgmlType::TQ1_0 => tq1_0_row_bytes(emb.n_cols)?,
-            GgmlType::TQ2_0 => tq2_0_row_bytes(emb.n_cols)?,
-            GgmlType::Q4_K => q4_k_row_bytes(emb.n_cols)?,
-            GgmlType::Q5_K => q5_k_row_bytes(emb.n_cols)?,
-            GgmlType::Q6_K => q6_k_row_bytes(emb.n_cols)?,
-            GgmlType::IQ1_S => iq1_s_row_bytes(emb.n_cols)?,
-            GgmlType::IQ1_M => iq1_m_row_bytes(emb.n_cols)?,
-            GgmlType::IQ2_XXS => iq2_xxs_row_bytes(emb.n_cols)?,
-            GgmlType::IQ2_XS => iq2_xs_row_bytes(emb.n_cols)?,
-            GgmlType::IQ2_S => iq2_s_row_bytes(emb.n_cols)?,
-            GgmlType::IQ3_XXS => iq3_xxs_row_bytes(emb.n_cols)?,
-            GgmlType::IQ3_S => iq3_s_row_bytes(emb.n_cols)?,
-            GgmlType::IQ4_NL => iq4_nl_row_bytes(emb.n_cols)?,
-            GgmlType::IQ4_XS => iq4_xs_row_bytes(emb.n_cols)?,
-            other => {
-                return Err(LlamaError::Type {
-                    tensor: emb.name.clone(),
-                    ty: other.to_i32(),
-                })
-            }
-        };
+        let rb = row_bytes_for(emb.ty, emb.n_cols, &emb.name)?;
         let start = row
             .checked_mul(rb)
             .ok_or_else(|| LlamaError::Shape(emb.name.clone()))?;
@@ -4182,36 +10773,36 @@ impl Llama {
         let bytes = data
             .get(start..end)
             .ok_or_else(|| LlamaError::Shape(emb.name.clone()))?;
-        let mut y = vec![0.0f32; emb.n_cols];
         match emb.ty {
-            GgmlType::F32 => dequant_f32_row(emb.n_cols, bytes, &mut y)?,
-            GgmlType::F16 => dequant_f16_row(emb.n_cols, bytes, &mut y)?,
-            GgmlType::BF16 => dequant_bf16_row(emb.n_cols, bytes, &mut y)?,
-            GgmlType::Q2_K => dequant_q2_k_row(emb.n_cols, bytes, &mut y)?,
-            GgmlType::Q3_K => dequant_q3_k_row(emb.n_cols, bytes, &mut y)?,
-            GgmlType::Q4_1 => dequant_q4_1_row(emb.n_cols, bytes, &mut y)?,
-            GgmlType::Q5_0 => dequant_q5_0_row(emb.n_cols, bytes, &mut y)?,
-            GgmlType::Q5_1 => dequant_q5_1_row(emb.n_cols, bytes, &mut y)?,
-            GgmlType::MXFP4 => dequant_mxfp4_row(emb.n_cols, bytes, &mut y)?,
-            GgmlType::NVFP4 => dequant_nvfp4_row(emb.n_cols, bytes, &mut y)?,
-            GgmlType::Q1_0 => dequant_q1_0_row(emb.n_cols, bytes, &mut y)?,
-            GgmlType::Q2_0 => dequant_q2_0_row(emb.n_cols, bytes, &mut y)?,
-            GgmlType::Q8_0 => dequant_q8_0_row(emb.n_cols, bytes, &mut y)?,
-            GgmlType::Q8_1 => dequant_q8_1_row(emb.n_cols, bytes, &mut y)?,
-            GgmlType::TQ1_0 => dequant_tq1_0_row(emb.n_cols, bytes, &mut y)?,
-            GgmlType::TQ2_0 => dequant_tq2_0_row(emb.n_cols, bytes, &mut y)?,
-            GgmlType::Q4_K => dequant_q4_k_row(emb.n_cols, bytes, &mut y)?,
-            GgmlType::Q5_K => dequant_q5_k_row(emb.n_cols, bytes, &mut y)?,
-            GgmlType::Q6_K => dequant_q6_k_row(emb.n_cols, bytes, &mut y)?,
-            GgmlType::IQ1_S => dequant_iq1_s_row(emb.n_cols, bytes, &mut y)?,
-            GgmlType::IQ1_M => dequant_iq1_m_row(emb.n_cols, bytes, &mut y)?,
-            GgmlType::IQ2_XXS => dequant_iq2_xxs_row(emb.n_cols, bytes, &mut y)?,
-            GgmlType::IQ2_XS => dequant_iq2_xs_row(emb.n_cols, bytes, &mut y)?,
-            GgmlType::IQ2_S => dequant_iq2_s_row(emb.n_cols, bytes, &mut y)?,
-            GgmlType::IQ3_XXS => dequant_iq3_xxs_row(emb.n_cols, bytes, &mut y)?,
-            GgmlType::IQ3_S => dequant_iq3_s_row(emb.n_cols, bytes, &mut y)?,
-            GgmlType::IQ4_NL => dequant_iq4_nl_row(emb.n_cols, bytes, &mut y)?,
-            GgmlType::IQ4_XS => dequant_iq4_xs_row(emb.n_cols, bytes, &mut y)?,
+            GgmlType::F32 => dequant_f32_row(emb.n_cols, bytes, y)?,
+            GgmlType::F16 => dequant_f16_row(emb.n_cols, bytes, y)?,
+            GgmlType::BF16 => dequant_bf16_row(emb.n_cols, bytes, y)?,
+            GgmlType::Q2_K => dequant_q2_k_row(emb.n_cols, bytes, y)?,
+            GgmlType::Q3_K => dequant_q3_k_row(emb.n_cols, bytes, y)?,
+            GgmlType::Q4_1 => dequant_q4_1_row(emb.n_cols, bytes, y)?,
+            GgmlType::Q5_0 => dequant_q5_0_row(emb.n_cols, bytes, y)?,
+            GgmlType::Q5_1 => dequant_q5_1_row(emb.n_cols, bytes, y)?,
+            GgmlType::MXFP4 => dequant_mxfp4_row(emb.n_cols, bytes, y)?,
+            GgmlType::NVFP4 => dequant_nvfp4_row(emb.n_cols, bytes, y)?,
+            GgmlType::Q1_0 => dequant_q1_0_row(emb.n_cols, bytes, y)?,
+            GgmlType::Q2_0 => dequant_q2_0_row(emb.n_cols, bytes, y)?,
+            GgmlType::Q4_0 => dequant_q4_0_row(emb.n_cols, bytes, y)?,
+            GgmlType::Q8_0 => dequant_q8_0_row(emb.n_cols, bytes, y)?,
+            GgmlType::Q8_1 => dequant_q8_1_row(emb.n_cols, bytes, y)?,
+            GgmlType::TQ1_0 => dequant_tq1_0_row(emb.n_cols, bytes, y)?,
+            GgmlType::TQ2_0 => dequant_tq2_0_row(emb.n_cols, bytes, y)?,
+            GgmlType::Q4_K => dequant_q4_k_row(emb.n_cols, bytes, y)?,
+            GgmlType::Q5_K => dequant_q5_k_row(emb.n_cols, bytes, y)?,
+            GgmlType::Q6_K => dequant_q6_k_row(emb.n_cols, bytes, y)?,
+            GgmlType::IQ1_S => dequant_iq1_s_row(emb.n_cols, bytes, y)?,
+            GgmlType::IQ1_M => dequant_iq1_m_row(emb.n_cols, bytes, y)?,
+            GgmlType::IQ2_XXS => dequant_iq2_xxs_row(emb.n_cols, bytes, y)?,
+            GgmlType::IQ2_XS => dequant_iq2_xs_row(emb.n_cols, bytes, y)?,
+            GgmlType::IQ2_S => dequant_iq2_s_row(emb.n_cols, bytes, y)?,
+            GgmlType::IQ3_XXS => dequant_iq3_xxs_row(emb.n_cols, bytes, y)?,
+            GgmlType::IQ3_S => dequant_iq3_s_row(emb.n_cols, bytes, y)?,
+            GgmlType::IQ4_NL => dequant_iq4_nl_row(emb.n_cols, bytes, y)?,
+            GgmlType::IQ4_XS => dequant_iq4_xs_row(emb.n_cols, bytes, y)?,
             other => {
                 return Err(LlamaError::Type {
                     tensor: emb.name.clone(),
@@ -4219,7 +10810,19 @@ impl Llama {
                 })
             }
         }
-        Ok(y)
+        Ok(())
+    }
+
+    /// Official bloom `token_embd_norm` (`LLM_NORM`) after the embedding lookup.
+    fn apply_token_embd_norm(&self, x: &mut [f32]) -> Result<(), LlamaError> {
+        match (
+            self.token_embd_norm.as_deref(),
+            self.token_embd_norm_b.as_deref(),
+        ) {
+            (Some(w), Some(b)) => layernorm_rows_inplace(x, self.n_embd, w, Some(b), self.rms_eps),
+            (None, None) => Ok(()),
+            _ => Err(LlamaError::Shape("token_embd_norm".into())),
+        }
     }
 
     #[cfg(test)]
@@ -4234,23 +10837,122 @@ impl Llama {
 
     #[cfg(test)]
     fn gemv_output(&self, x: &[f32]) -> Result<Vec<f32>, LlamaError> {
-        self.gemv_mat(&self.output, x)
+        let mut y = Vec::new();
+        self.gemv_into(&self.output, x, &mut y, &mut None)?;
+        self.mul_output_s(&mut y, 1)?;
+        Ok(y)
     }
 
     #[cfg(test)]
     fn gemv_token_embd(&self, x: &[f32]) -> Result<Vec<f32>, LlamaError> {
-        self.gemv_mat(&self.token_embd, x)
+        let mut y = Vec::new();
+        self.gemv_into(&self.token_embd, x, &mut y, &mut None)?;
+        Ok(y)
     }
 
     #[cfg(test)]
     fn gemm_output(&self, n_tokens: usize, x: &[f32]) -> Result<Vec<f32>, LlamaError> {
-        self.gemm_mat(&self.output, n_tokens, x)
+        let mut y = Vec::new();
+        self.gemm_into(&self.output, n_tokens, x, &mut y, &mut None)?;
+        self.mul_output_s(&mut y, n_tokens)?;
+        Ok(y)
     }
 
     #[cfg(test)]
     fn embed_token(&self, token: u32) -> Result<Vec<f32>, LlamaError> {
-        self.embed(token)
+        let mut y = vec![0.0f32; self.token_embd.n_cols];
+        self.embed_into(token, &mut y)?;
+        Ok(y)
     }
+}
+
+/// `y[r] = W[r] · x` for exactly `y.len()` rows starting at `w`.
+///
+/// The dtype dispatch for both the in-thread path and the pool's workers.
+/// Rows are independent, so a row range is bit-identical to the whole matrix.
+/// `Ok(false)` means `ty` has no GEMV kernel.
+fn gemv_rows(
+    ty: GgmlType,
+    n_cols: usize,
+    w: &[u8],
+    x: &[f32],
+    y: &mut [f32],
+) -> Result<bool, QuantError> {
+    match ty {
+        GgmlType::F32 => gemv_f32(n_cols, w, x, y)?,
+        GgmlType::F16 => gemv_f16(n_cols, w, x, y)?,
+        GgmlType::BF16 => gemv_bf16(n_cols, w, x, y)?,
+        GgmlType::Q2_K => gemv_q2_k_f32(n_cols, w, x, y)?,
+        GgmlType::Q3_K => gemv_q3_k_f32(n_cols, w, x, y)?,
+        GgmlType::Q4_1 => gemv_q4_1_f32(n_cols, w, x, y)?,
+        GgmlType::Q5_0 => gemv_q5_0_f32(n_cols, w, x, y)?,
+        GgmlType::Q5_1 => gemv_q5_1_f32(n_cols, w, x, y)?,
+        GgmlType::MXFP4 => gemv_mxfp4_f32(n_cols, w, x, y)?,
+        GgmlType::NVFP4 => gemv_nvfp4_f32(n_cols, w, x, y)?,
+        GgmlType::Q1_0 => gemv_q1_0_f32(n_cols, w, x, y)?,
+        GgmlType::Q2_0 => gemv_q2_0_f32(n_cols, w, x, y)?,
+        GgmlType::Q4_0 => gemv_q4_0_f32(n_cols, w, x, y)?,
+        GgmlType::Q8_0 => gemv_q8_0_f32(n_cols, w, x, y)?,
+        GgmlType::Q8_1 => gemv_q8_1_f32(n_cols, w, x, y)?,
+        GgmlType::TQ1_0 => gemv_tq1_0_f32(n_cols, w, x, y)?,
+        GgmlType::TQ2_0 => gemv_tq2_0_f32(n_cols, w, x, y)?,
+        GgmlType::Q4_K => gemv_q4_k_f32(n_cols, w, x, y)?,
+        GgmlType::Q5_K => gemv_q5_k_f32(n_cols, w, x, y)?,
+        GgmlType::Q6_K => gemv_q6_k_f32(n_cols, w, x, y)?,
+        GgmlType::IQ1_S => gemv_iq1_s_f32(n_cols, w, x, y)?,
+        GgmlType::IQ1_M => gemv_iq1_m_f32(n_cols, w, x, y)?,
+        GgmlType::IQ2_XXS => gemv_iq2_xxs_f32(n_cols, w, x, y)?,
+        GgmlType::IQ2_XS => gemv_iq2_xs_f32(n_cols, w, x, y)?,
+        GgmlType::IQ2_S => gemv_iq2_s_f32(n_cols, w, x, y)?,
+        GgmlType::IQ3_XXS => gemv_iq3_xxs_f32(n_cols, w, x, y)?,
+        GgmlType::IQ3_S => gemv_iq3_s_f32(n_cols, w, x, y)?,
+        GgmlType::IQ4_NL => gemv_iq4_nl_f32(n_cols, w, x, y)?,
+        GgmlType::IQ4_XS => gemv_iq4_xs_f32(n_cols, w, x, y)?,
+        _ => return Ok(false),
+    }
+    Ok(true)
+}
+
+/// Packed bytes per matrix row for `ty`.
+fn row_bytes_for(ty: GgmlType, n_cols: usize, name: &str) -> Result<usize, LlamaError> {
+    let rb = match ty {
+        GgmlType::F32 => f32_row_bytes(n_cols)?,
+        GgmlType::F16 => f16_row_bytes(n_cols)?,
+        GgmlType::BF16 => bf16_row_bytes(n_cols)?,
+        GgmlType::Q2_K => q2_k_row_bytes(n_cols)?,
+        GgmlType::Q3_K => q3_k_row_bytes(n_cols)?,
+        GgmlType::Q4_1 => q4_1_row_bytes(n_cols)?,
+        GgmlType::Q5_0 => q5_0_row_bytes(n_cols)?,
+        GgmlType::Q5_1 => q5_1_row_bytes(n_cols)?,
+        GgmlType::MXFP4 => mxfp4_row_bytes(n_cols)?,
+        GgmlType::NVFP4 => nvfp4_row_bytes(n_cols)?,
+        GgmlType::Q1_0 => q1_0_row_bytes(n_cols)?,
+        GgmlType::Q2_0 => q2_0_row_bytes(n_cols)?,
+        GgmlType::Q4_0 => q4_0_row_bytes(n_cols)?,
+        GgmlType::Q8_0 => q8_0_row_bytes(n_cols)?,
+        GgmlType::Q8_1 => q8_1_row_bytes(n_cols)?,
+        GgmlType::TQ1_0 => tq1_0_row_bytes(n_cols)?,
+        GgmlType::TQ2_0 => tq2_0_row_bytes(n_cols)?,
+        GgmlType::Q4_K => q4_k_row_bytes(n_cols)?,
+        GgmlType::Q5_K => q5_k_row_bytes(n_cols)?,
+        GgmlType::Q6_K => q6_k_row_bytes(n_cols)?,
+        GgmlType::IQ1_S => iq1_s_row_bytes(n_cols)?,
+        GgmlType::IQ1_M => iq1_m_row_bytes(n_cols)?,
+        GgmlType::IQ2_XXS => iq2_xxs_row_bytes(n_cols)?,
+        GgmlType::IQ2_XS => iq2_xs_row_bytes(n_cols)?,
+        GgmlType::IQ2_S => iq2_s_row_bytes(n_cols)?,
+        GgmlType::IQ3_XXS => iq3_xxs_row_bytes(n_cols)?,
+        GgmlType::IQ3_S => iq3_s_row_bytes(n_cols)?,
+        GgmlType::IQ4_NL => iq4_nl_row_bytes(n_cols)?,
+        GgmlType::IQ4_XS => iq4_xs_row_bytes(n_cols)?,
+        other => {
+            return Err(LlamaError::Type {
+                tensor: name.into(),
+                ty: other.to_i32(),
+            })
+        }
+    };
+    Ok(rb)
 }
 
 fn token_row<'a>(
@@ -4269,24 +10971,50 @@ fn token_row<'a>(
         .ok_or_else(|| LlamaError::Shape(what.into()))
 }
 
-fn rmsnorm_rows(x: &[f32], width: usize, w: &[f32], eps: f32) -> Result<Vec<f32>, LlamaError> {
+fn token_row_mut<'a>(
+    x: &'a mut [f32],
+    t: usize,
+    width: usize,
+    what: &'static str,
+) -> Result<&'a mut [f32], LlamaError> {
+    let start = t
+        .checked_mul(width)
+        .ok_or_else(|| LlamaError::Shape(what.into()))?;
+    let end = start
+        .checked_add(width)
+        .ok_or_else(|| LlamaError::Shape(what.into()))?;
+    x.get_mut(start..end)
+        .ok_or_else(|| LlamaError::Shape(what.into()))
+}
+
+fn rmsnorm_rows_inplace(
+    x: &mut [f32],
+    width: usize,
+    w: &[f32],
+    eps: f32,
+) -> Result<(), LlamaError> {
     if width == 0 || !x.len().is_multiple_of(width) {
         return Err(LlamaError::Shape("rmsnorm".into()));
     }
-    let mut out = Vec::new();
-    for row in x.chunks(width) {
-        out.extend(rmsnorm(row, w, eps)?);
+    for row in x.chunks_mut(width) {
+        rmsnorm_inplace(row, w, eps)?;
     }
-    Ok(out)
+    Ok(())
 }
 
-/// Official Qwen3Next: split joint Q+gate (`n_embd_head * 2` per head) into query and gate.
-fn split_qwen3next_q_gate(
-    q_full: &[f32],
+/// Official Qwen3Next: split joint Q+gate (`n_embd_head * 2` per head) into
+/// query and gate, compacting the query half of `q` in place.
+///
+/// Head `h` of token `t` starts at `t*2*n_head*hd + h*2*hd` and has to end up at
+/// `t*n_head*hd + h*hd`, which is never later in the buffer, so a forward walk
+/// only ever writes behind what it has already read.
+fn split_qwen3next_q_gate_into(
+    q: &mut Vec<f32>,
+    gate: &mut Vec<f32>,
     n_tokens: usize,
     n_head: usize,
     hd: usize,
-) -> Result<(Vec<f32>, Option<Vec<f32>>), LlamaError> {
+) -> Result<(), LlamaError> {
     let q_width = n_head
         .checked_mul(hd)
         .and_then(|v| v.checked_mul(2))
@@ -4294,18 +11022,13 @@ fn split_qwen3next_q_gate(
     let q_out_w = n_head
         .checked_mul(hd)
         .ok_or_else(|| LlamaError::Shape("qwen3next q gate".into()))?;
-    if hd == 0
-        || n_head == 0
-        || !q_full.len().is_multiple_of(q_width)
-        || q_full.len() / q_width != n_tokens
-    {
+    if hd == 0 || n_head == 0 || !q.len().is_multiple_of(q_width) || q.len() / q_width != n_tokens {
         return Err(LlamaError::Shape("qwen3next q gate".into()));
     }
     let n_out = n_tokens
         .checked_mul(q_out_w)
         .ok_or_else(|| LlamaError::Shape("qwen3next q gate".into()))?;
-    let mut q = vec![0.0f32; n_out];
-    let mut gate = vec![0.0f32; n_out];
+    fit(gate, n_out);
     for t in 0..n_tokens {
         for h in 0..n_head {
             let src = t
@@ -4314,49 +11037,28 @@ fn split_qwen3next_q_gate(
             let dst = t
                 .saturating_mul(q_out_w)
                 .saturating_add(h.saturating_mul(hd));
-            let q_src = q_full
-                .get(src..src.saturating_add(hd))
-                .ok_or_else(|| LlamaError::Shape("qwen3next q gate".into()))?;
-            let g_src = q_full
+            let g_src = q
                 .get(src.saturating_add(hd)..src.saturating_add(hd.saturating_mul(2)))
-                .ok_or_else(|| LlamaError::Shape("qwen3next q gate".into()))?;
-            let q_dst = q
-                .get_mut(dst..dst.saturating_add(hd))
                 .ok_or_else(|| LlamaError::Shape("qwen3next q gate".into()))?;
             let g_dst = gate
                 .get_mut(dst..dst.saturating_add(hd))
                 .ok_or_else(|| LlamaError::Shape("qwen3next q gate".into()))?;
-            for (d, s) in q_dst.iter_mut().zip(q_src.iter()) {
-                *d = *s;
-            }
             for (d, s) in g_dst.iter_mut().zip(g_src.iter()) {
                 *d = *s;
             }
+            if src.saturating_add(hd) > q.len() || dst.saturating_add(hd) > q.len() {
+                return Err(LlamaError::Shape("qwen3next q gate".into()));
+            }
+            q.copy_within(src..src.saturating_add(hd), dst);
         }
     }
-    Ok((q, Some(gate)))
+    q.truncate(n_out);
+    Ok(())
 }
 
-/// Official Qwen3 / Qwen3MoE QK-Norm: per-head `LLM_NORM_RMS` on Q or K.
-fn qk_norm_rows(
-    x: Vec<f32>,
-    head_dim: usize,
-    w: Option<&[f32]>,
-    eps: f32,
-) -> Result<Vec<f32>, LlamaError> {
-    match w {
-        Some(w) => rmsnorm_rows(&x, head_dim, w, eps),
-        None => Ok(x),
-    }
-}
-
-fn add_bias_rows(
-    mut x: Vec<f32>,
-    width: usize,
-    bias: Option<&[f32]>,
-) -> Result<Vec<f32>, LlamaError> {
+fn add_bias_rows(x: &mut [f32], width: usize, bias: Option<&[f32]>) -> Result<(), LlamaError> {
     let Some(b) = bias else {
-        return Ok(x);
+        return Ok(());
     };
     if b.len() != width || width == 0 || !x.len().is_multiple_of(width) {
         return Err(LlamaError::Shape("vector add".into()));
@@ -4366,74 +11068,274 @@ fn add_bias_rows(
             *xv += *bv;
         }
     }
-    Ok(x)
+    Ok(())
 }
 
+/// Official `ggml_soft_max_ext` ALiBi slope for head `head` of `n_head`.
+///
+/// `n_head_log2 = 1 << floor(log2(n_head))`, `m0 = 2 ** (-max_bias / n_head_log2)`,
+/// `m1 = 2 ** (-(max_bias/2) / n_head_log2)`, slope is `m0**(h+1)` when
+/// `h < n_head_log2` else `m1**(2*(h-n_head_log2)+1)`. `max_bias <= 0` is off.
+fn alibi_slope(head: usize, n_head: usize, max_bias: f32) -> f32 {
+    if max_bias <= 0.0 || n_head == 0 {
+        return 0.0;
+    }
+    let n_head_log2 = 1usize << n_head.ilog2();
+    let n_head_log2_f = f32::from(u16::try_from(n_head_log2).unwrap_or(1));
+    let m0 = 2.0_f32.powf(-max_bias / n_head_log2_f);
+    let m1 = 2.0_f32.powf(-(max_bias / 2.0) / n_head_log2_f);
+    if head < n_head_log2 {
+        let exp = i32::try_from(head.saturating_add(1)).unwrap_or(i32::MAX);
+        m0.powi(exp)
+    } else {
+        let odd = head
+            .saturating_sub(n_head_log2)
+            .saturating_mul(2)
+            .saturating_add(1);
+        let exp = i32::try_from(odd).unwrap_or(i32::MAX);
+        m1.powi(exp)
+    }
+}
+
+/// Softmax(`score_scale` QK^T) V for one token's heads, accumulated into `out`.
+///
+/// `q` and `out` are `n_head * hd` long; `scores` is grown to `seq`. GQA maps
+/// query head `hq` to KV head `hq / (n_head / n_head_kv)`.
+///
+/// `score_scale` is `1/sqrt(hd)` for every arch except official phi2, which
+/// scales Q after RoPE instead and passes 1.0 here, and official gemma3n /
+/// gemma4, which pass `hparams.f_attention_scale = 1.0`.
+///
+/// `alibi_bias` is official bloom `f_max_alibi_bias` (`8`); `0` disables ALiBi.
+///
+/// `attn_softcap` is official gemma2 `attn_logit_softcapping`; `0` disables.
+/// Applied after scale/ALiBi and before the SWA mask (tanh of `-inf` is `-1`).
+///
+/// `n_swa` is official `LLAMA_SWA_TYPE_STANDARD` window (`p1 - p0 >= n_swa`);
+/// `0` is full causal. Pass `0` on gemma2 dense layers (`set_swa_pattern`).
+#[expect(
+    clippy::too_many_arguments,
+    reason = "cache halves, layout, per-layer head dim, scale, ALiBi, gemma2 softcap/SWA and both scratch buffers are all per-call"
+)]
 fn attend_query(
-    cache: &KvCache,
+    cache_k: &[f32],
+    cache_v: &[f32],
     layer: usize,
-    qh: &[Vec<f32>],
-    n_head_kv: usize,
-    hd: usize,
+    q: &[f32],
+    geom: &KvGeom<'_>,
+    q_hd: usize,
     seq: usize,
-) -> Result<Vec<f32>, LlamaError> {
-    if n_head_kv == 0 {
+    score_scale: f32,
+    alibi_bias: f32,
+    attn_softcap: f32,
+    n_swa: usize,
+    scores: &mut Vec<f32>,
+    out: &mut [f32],
+) -> Result<(), LlamaError> {
+    let n_head_kv = geom.n_head_kv;
+    let stride = geom.hd;
+    if n_head_kv == 0
+        || stride == 0
+        || q_hd == 0
+        || q_hd > stride
+        || q.len() != out.len()
+        || !q.len().is_multiple_of(q_hd)
+    {
         return Err(LlamaError::Shape("gqa".into()));
     }
-    let n_embd = qh.len().saturating_mul(hd);
-    let mut attn = vec![0.0f32; n_embd];
-    let scale = (f32::from(u16::try_from(hd).unwrap_or(1))).sqrt();
-    let inv = if scale > 0.0 { 1.0 / scale } else { 0.0 };
-    let gqa = qh.len() / n_head_kv;
+    let n_head = q.len() / q_hd;
+    let gqa = n_head / n_head_kv;
     if gqa == 0 {
         return Err(LlamaError::Shape("gqa".into()));
     }
-    for (hq, qvec) in qh.iter().enumerate() {
+    fit(scores, seq);
+    let qpos = seq.saturating_sub(1);
+    let qpos_f = f32::from(u16::try_from(qpos).unwrap_or(u16::MAX));
+    for (hq, (qvec, dst)) in q.chunks(q_hd).zip(out.chunks_mut(q_hd)).enumerate() {
         let hkv = hq / gqa;
-        let mut scores = vec![0.0f32; seq];
-        for t in 0..seq {
-            let kv = kv_at(&cache.k, layer, hkv, n_head_kv, cache.max_seq, t, hd)?;
+        let slope = if alibi_bias > 0.0 {
+            alibi_slope(hq, n_head, alibi_bias)
+        } else {
+            0.0
+        };
+        for (t, score) in scores.iter_mut().enumerate() {
+            let kv = kv_at(cache_k, layer, hkv, geom, t)?;
             let mut dot = 0.0f32;
             for (a, b) in qvec.iter().zip(kv.iter()) {
                 dot += *a * *b;
             }
-            if let Some(s) = scores.get_mut(t) {
-                *s = dot * inv;
+            *score = dot * score_scale;
+            if alibi_bias > 0.0 {
+                let t_f = f32::from(u16::try_from(t).unwrap_or(u16::MAX));
+                *score += slope * (t_f - qpos_f);
+            }
+            if attn_softcap > 0.0 {
+                *score = attn_softcap * (*score / attn_softcap).tanh();
+            }
+            if n_swa > 0 && qpos.saturating_sub(t) >= n_swa {
+                *score = f32::NEG_INFINITY;
             }
         }
-        softmax(&mut scores);
-        let mut acc = vec![0.0f32; hd];
-        for t in 0..seq {
-            let Some(&st) = scores.get(t) else { continue };
-            let vv = kv_at(&cache.v, layer, hkv, n_head_kv, cache.max_seq, t, hd)?;
-            for (a, b) in acc.iter_mut().zip(vv.iter()) {
-                *a += st * *b;
-            }
+        softmax(scores);
+        for d in dst.iter_mut() {
+            *d = 0.0;
         }
-        let off = hq.saturating_mul(hd);
-        if let Some(dst) = attn.get_mut(off..off + hd) {
-            for (d, s) in dst.iter_mut().zip(acc.iter()) {
-                *d = *s;
+        for (t, st) in scores.iter().enumerate() {
+            let vv = kv_at(cache_v, layer, hkv, geom, t)?;
+            for (a, b) in dst.iter_mut().zip(vv.iter()) {
+                *a += *st * *b;
             }
         }
     }
-    Ok(attn)
+    Ok(())
 }
 
 /// Official Llama4 `ggml_rms_norm` without a weight (`Llama4TextL2Norm`).
-fn rmsnorm_unweighted(x: &[f32], eps: f32) -> Result<Vec<f32>, LlamaError> {
+/// Gemma3n applies the same op to V (`n_embd_head` rows) before KV store.
+/// Official gemma4.cpp uses the same unweighted V RMSNorm.
+fn rmsnorm_unweighted_inplace(x: &mut [f32], eps: f32) {
     let mut ss = 0.0f32;
-    for v in x {
+    for v in x.iter() {
         ss += *v * *v;
     }
     let n = f32::from(u16::try_from(x.len()).unwrap_or(1));
     let rms = (ss / n + eps).sqrt();
     let inv = if rms > 0.0 { 1.0 / rms } else { 0.0 };
-    let mut out = vec![0.0f32; x.len()];
-    for (o, xv) in out.iter_mut().zip(x.iter()) {
-        *o = *xv * inv;
+    for xv in x.iter_mut() {
+        *xv *= inv;
     }
-    Ok(out)
+}
+
+fn rmsnorm_unweighted_rows_inplace(
+    x: &mut [f32],
+    width: usize,
+    eps: f32,
+) -> Result<(), LlamaError> {
+    if width == 0 || !x.len().is_multiple_of(width) {
+        return Err(LlamaError::Shape("rmsnorm".into()));
+    }
+    for row in x.chunks_mut(width) {
+        rmsnorm_unweighted_inplace(row, eps);
+    }
+    Ok(())
+}
+
+fn altup_stream_off(i: usize, n: usize, n_embd: usize) -> Result<usize, LlamaError> {
+    i.checked_mul(n)
+        .and_then(|v| v.checked_mul(n_embd))
+        .ok_or_else(|| LlamaError::Shape("gemma3n stream".into()))
+}
+
+fn altup_stream(buf: &[f32], i: usize, n: usize, n_embd: usize) -> Result<&[f32], LlamaError> {
+    let off = altup_stream_off(i, n, n_embd)?;
+    let width = n.saturating_mul(n_embd);
+    buf.get(off..off.saturating_add(width))
+        .ok_or_else(|| LlamaError::Shape("gemma3n stream".into()))
+}
+
+fn altup_stream_mut(
+    buf: &mut [f32],
+    i: usize,
+    n: usize,
+    n_embd: usize,
+) -> Result<&mut [f32], LlamaError> {
+    let off = altup_stream_off(i, n, n_embd)?;
+    let width = n.saturating_mul(n_embd);
+    buf.get_mut(off..off.saturating_add(width))
+        .ok_or_else(|| LlamaError::Shape("gemma3n stream".into()))
+}
+
+fn altup_token(
+    buf: &[f32],
+    i: usize,
+    t: usize,
+    n: usize,
+    n_embd: usize,
+) -> Result<&[f32], LlamaError> {
+    let stream = altup_stream(buf, i, n, n_embd)?;
+    token_row(stream, t, n_embd, "gemma3n stream")
+}
+
+fn altup_token_mut(
+    buf: &mut [f32],
+    i: usize,
+    t: usize,
+    n: usize,
+    n_embd: usize,
+) -> Result<&mut [f32], LlamaError> {
+    let tok_off = t
+        .checked_mul(n_embd)
+        .ok_or_else(|| LlamaError::Shape("gemma3n stream".into()))?;
+    let off = altup_stream_off(i, n, n_embd)?
+        .checked_add(tok_off)
+        .ok_or_else(|| LlamaError::Shape("gemma3n stream".into()))?;
+    buf.get_mut(off..off.saturating_add(n_embd))
+        .ok_or_else(|| LlamaError::Shape("gemma3n stream".into()))
+}
+
+fn per_layer_at(
+    buf: &[f32],
+    li: usize,
+    t: usize,
+    n_ea: usize,
+    n_layer: usize,
+) -> Result<&[f32], LlamaError> {
+    let off = t
+        .checked_mul(n_layer)
+        .and_then(|v| v.checked_mul(n_ea))
+        .and_then(|v| li.checked_mul(n_ea).and_then(|o| v.checked_add(o)))
+        .ok_or_else(|| LlamaError::Shape("gemma3n per_layer".into()))?;
+    buf.get(off..off.saturating_add(n_ea))
+        .ok_or_else(|| LlamaError::Shape("gemma3n per_layer".into()))
+}
+
+/// Official gemma3n.cpp `calc_magnitude` then `x * target / new` (no epsilon).
+fn scale_rows_to_match(src: &[f32], dst: &mut [f32], n_embd: usize) -> Result<(), LlamaError> {
+    if src.len() != dst.len() || n_embd == 0 || !src.len().is_multiple_of(n_embd) {
+        return Err(LlamaError::Shape("gemma3n magnitude".into()));
+    }
+    for (s, d) in src.chunks(n_embd).zip(dst.chunks_mut(n_embd)) {
+        let mut ss = 0.0f32;
+        let mut ds = 0.0f32;
+        for (sv, dv) in s.iter().zip(d.iter()) {
+            ss += *sv * *sv;
+            ds += *dv * *dv;
+        }
+        let mag_s = ss.sqrt();
+        let mag_d = ds.sqrt();
+        let scale = if mag_d > 0.0 { mag_s / mag_d } else { 0.0 };
+        for v in d.iter_mut() {
+            *v *= scale;
+        }
+    }
+    Ok(())
+}
+
+/// Official gemma3n.cpp `gaussian_topk`: Bessel std over `n_ff-1`, then ReLU.
+fn gaussian_topk_inplace(x: &mut [f32], n_ff: usize) -> Result<(), LlamaError> {
+    if n_ff < 2 || !x.len().is_multiple_of(n_ff) {
+        return Err(LlamaError::Shape("gaussian_topk".into()));
+    }
+    let n_f = f32::from(u16::try_from(n_ff).unwrap_or(1));
+    let denom = f32::from(u16::try_from(n_ff.saturating_sub(1)).unwrap_or(1));
+    for row in x.chunks_mut(n_ff) {
+        let mut sum = 0.0f32;
+        for v in row.iter() {
+            sum += *v;
+        }
+        let mean = sum / n_f;
+        let mut var = 0.0f32;
+        for v in row.iter() {
+            let d = *v - mean;
+            var += d * d;
+        }
+        let std = (var / denom).sqrt();
+        let cutoff = mean + std * GEMMA3N_SPARSITY_STD_MUL;
+        for v in row.iter_mut() {
+            *v = (*v - cutoff).max(0.0);
+        }
+    }
+    Ok(())
 }
 
 /// Official llama.cpp `llm_graph_input_attn_temp` for Llama4 NoPE layers.
@@ -4447,13 +11349,18 @@ fn sigmoid_f32(x: f32) -> f32 {
     1.0 / (1.0 + (-x).exp())
 }
 
-/// ggml `ggml_argsort_top_k` descending; ties keep the lower index.
-fn topk_logits(logits: &[f32], k: usize) -> Result<Vec<usize>, LlamaError> {
+/// ggml `ggml_argsort_top_k` descending; ties keep the lower index. Writes the
+/// selected indices into `order`.
+///
+/// `sort_unstable_by` rather than `sort_by`: the comparator is a total order
+/// (ties break on index) so the result is the same, and it does not allocate.
+fn topk_into(logits: &[f32], k: usize, order: &mut Vec<usize>) -> Result<(), LlamaError> {
     if k == 0 || k > logits.len() {
         return Err(LlamaError::Shape("expert_used_count".into()));
     }
-    let mut idx: Vec<usize> = (0..logits.len()).collect();
-    idx.sort_by(|&a, &b| {
+    order.clear();
+    order.extend(0..logits.len());
+    order.sort_unstable_by(|&a, &b| {
         let va = logits.get(a).copied().unwrap_or(f32::NEG_INFINITY);
         let vb = logits.get(b).copied().unwrap_or(f32::NEG_INFINITY);
         match vb.partial_cmp(&va) {
@@ -4461,47 +11368,205 @@ fn topk_logits(logits: &[f32], k: usize) -> Result<Vec<usize>, LlamaError> {
             Some(ord) => ord,
         }
     });
-    idx.truncate(k);
-    Ok(idx)
+    order.truncate(k);
+    Ok(())
 }
 
-fn expert_view(m: &QuantMat, e: usize) -> Result<QuantMat, LlamaError> {
-    if m.n_parts == 0 || e >= m.n_parts {
-        return Err(LlamaError::Shape(m.name.clone()));
+fn token_expert_weight(moe: &MoeScratch, t: usize, n_used: usize, expert: usize) -> Option<f32> {
+    let start = t.saturating_mul(n_used);
+    for j in 0..n_used {
+        let idx = start.saturating_add(j);
+        if moe.sel_e.get(idx).copied() == Some(expert) {
+            return moe.sel_w.get(idx).copied();
+        }
     }
-    let total = m.end.saturating_sub(m.start);
-    let part = total / m.n_parts;
-    if part.saturating_mul(m.n_parts) != total {
-        return Err(LlamaError::Shape(m.name.clone()));
-    }
-    let start = m.start.saturating_add(e.saturating_mul(part));
-    Ok(QuantMat {
-        name: m.name.clone(),
-        ty: m.ty,
-        n_cols: m.n_cols,
-        n_rows: m.n_rows,
-        n_parts: 1,
-        start,
-        end: start.saturating_add(part),
-    })
+    None
 }
 
-fn rmsnorm(x: &[f32], w: &[f32], eps: f32) -> Result<Vec<f32>, LlamaError> {
+fn fill_router_weights(logits: &[f32], order: &[usize], weights: &mut Vec<f32>, norm_w: bool) {
+    weights.clear();
+    let mut wsum = 0.0f32;
+    for &e in order {
+        let w = logits.get(e).copied().unwrap_or(0.0);
+        weights.push(w);
+        wsum += w;
+    }
+    if !norm_w {
+        return;
+    }
+    if wsum < MOE_NORM_W_CLAMP {
+        wsum = MOE_NORM_W_CLAMP;
+    }
+    for w in weights.iter_mut() {
+        *w /= wsum;
+    }
+}
+
+/// Observe this layer's router events and prefetch predicted destinations
+/// **before** grouped expert GEMM so H2D of L+1 can overlap this layer's
+/// compute. Unknown catalog keys are skipped. [`Prefetch::None`] is demand
+/// paging only.
+fn prefetch_selected(
+    moe_trace: &mut MoeTraceBuf,
+    store: &mut Option<LiveStore>,
+    n_tokens: usize,
+    n_used: usize,
+    sel_e: &[usize],
+) {
+    for t in 0..n_tokens {
+        bind_row(store, &moe_trace.row_seq, moe_trace.sequence, t);
+        let start = t.saturating_mul(n_used);
+        let experts = sel_e
+            .get(start..start.saturating_add(n_used))
+            .unwrap_or(&[]);
+        moe_trace.prefetch_experts(store, t, experts);
+    }
+}
+
+/// Fault in this layer's unique routed experts before grouped GEMM.
+///
+/// Skipped when the unique set is larger than the cache (`slots`) so a tight
+/// LRU still demand-pages one expert at a time. Distinct keys H2D on the
+/// first using sequence's copy stream ([`LiveStore::bind_sequence`]).
+fn prefetch_routed(
+    moe_trace: &MoeTraceBuf,
+    store: &mut Option<LiveStore>,
+    n_tokens: usize,
+    n_used: usize,
+    sel_e: &[usize],
+) {
+    if matches!(moe_trace.policy.prefetch, Prefetch::None) {
+        return;
+    }
+    let Some(s) = store.as_mut() else {
+        return;
+    };
+    let mut seen = BTreeSet::new();
+    let mut all = Vec::new();
+    let mut owner = BTreeMap::new();
+    for t in 0..n_tokens {
+        let seq = moe_trace.seq_of(t);
+        let start = t.saturating_mul(n_used);
+        let experts = sel_e
+            .get(start..start.saturating_add(n_used))
+            .unwrap_or(&[]);
+        for e in experts {
+            let Ok(ex) = u32::try_from(*e) else {
+                continue;
+            };
+            let k = ExpertKey::new(moe_trace.layer, ex);
+            if seen.insert(k) {
+                all.push(k);
+            }
+            let _owned = owner.entry(k).or_insert(seq);
+        }
+    }
+    if all.is_empty() {
+        return;
+    }
+    if let Some(slots) = s.slots() {
+        if all.len() > slots {
+            return;
+        }
+    }
+    let mut by_seq: BTreeMap<u64, Vec<ExpertKey>> = BTreeMap::new();
+    for (k, seq) in owner {
+        by_seq.entry(seq).or_default().push(k);
+    }
+    for (seq, keys) in by_seq {
+        s.bind_sequence(seq);
+        match s.prefetch(&keys) {
+            Ok(_n) => {}
+            Err(_e) => {}
+        }
+    }
+}
+
+fn bind_row(store: &mut Option<LiveStore>, row_seq: &[u64], sequence: u64, token_off: usize) {
+    let seq = row_seq.get(token_off).copied().unwrap_or(sequence);
+    if let Some(s) = store.as_mut() {
+        s.bind_sequence(seq);
+    }
+}
+
+fn rmsnorm_inplace(x: &mut [f32], w: &[f32], eps: f32) -> Result<(), LlamaError> {
     if x.len() != w.len() {
         return Err(LlamaError::Shape("rmsnorm".into()));
     }
     let mut ss = 0.0f32;
-    for v in x {
+    for v in x.iter() {
         ss += *v * *v;
     }
     let n = f32::from(u16::try_from(x.len()).unwrap_or(1));
     let rms = (ss / n + eps).sqrt();
     let inv = if rms > 0.0 { 1.0 / rms } else { 0.0 };
-    let mut out = vec![0.0f32; x.len()];
-    for ((o, xv), wv) in out.iter_mut().zip(x.iter()).zip(w.iter()) {
-        *o = *xv * inv * *wv;
+    for (xv, wv) in x.iter_mut().zip(w.iter()) {
+        *xv = *xv * inv * *wv;
     }
-    Ok(out)
+    Ok(())
+}
+
+/// Official `ggml_compute_forward_norm_f32` + `build_norm` `LLM_NORM` (weight,
+/// optional bias), writing over its input.
+///
+/// Mean and variance are both taken before any element is written, so this
+/// produces the same bits as normalizing into a fresh buffer.
+fn layernorm_inplace(
+    x: &mut [f32],
+    w: &[f32],
+    b: Option<&[f32]>,
+    eps: f32,
+) -> Result<(), LlamaError> {
+    if x.len() != w.len() {
+        return Err(LlamaError::Shape("layernorm".into()));
+    }
+    if let Some(b) = b {
+        if b.len() != x.len() {
+            return Err(LlamaError::Shape("layernorm".into()));
+        }
+    }
+    let n = f32::from(u16::try_from(x.len()).unwrap_or(1));
+    let mut sum = 0.0f32;
+    for v in x.iter() {
+        sum += *v;
+    }
+    let mean = if n > 0.0 { sum / n } else { 0.0 };
+    let mut var = 0.0f32;
+    for v in x.iter() {
+        let d = *v - mean;
+        var += d * d;
+    }
+    if n > 0.0 {
+        var /= n;
+    }
+    let scale = 1.0 / (var + eps).sqrt();
+    for (i, (xv, wv)) in x.iter_mut().zip(w.iter()).enumerate() {
+        let mut y = (*xv - mean) * scale * *wv;
+        if let Some(b) = b {
+            if let Some(bv) = b.get(i) {
+                y += *bv;
+            }
+        }
+        *xv = y;
+    }
+    Ok(())
+}
+
+/// [`layernorm_rows`] writing over its input.
+fn layernorm_rows_inplace(
+    x: &mut [f32],
+    width: usize,
+    w: &[f32],
+    b: Option<&[f32]>,
+    eps: f32,
+) -> Result<(), LlamaError> {
+    if width == 0 || !x.len().is_multiple_of(width) {
+        return Err(LlamaError::Shape("layernorm".into()));
+    }
+    for row in x.chunks_mut(width) {
+        layernorm_inplace(row, w, b, eps)?;
+    }
+    Ok(())
 }
 
 fn rope(vec: &mut [f32], pos: usize, n_rot: usize, base: f32) -> Result<(), LlamaError> {
@@ -4534,7 +11599,15 @@ fn rope(vec: &mut [f32], pos: usize, n_rot: usize, base: f32) -> Result<(), Llam
 ///
 /// Same theta walk as [`rope`]; only the element pairing differs. NORM rotates
 /// adjacent lanes `(i0, i0+1)`; NEOX rotates `(i0/2, i0/2 + n_dims/2)`.
-fn rope_neox(vec: &mut [f32], pos: usize, n_rot: usize, base: f32) -> Result<(), LlamaError> {
+/// `freq_factors` is ggml `ggml_rope_cache_init`: `theta/ff` then
+/// `theta *= theta_scale`. Missing factors behave as `1.0`.
+fn rope_neox(
+    vec: &mut [f32],
+    pos: usize,
+    n_rot: usize,
+    base: f32,
+    freq_factors: Option<&[f32]>,
+) -> Result<(), LlamaError> {
     let n = n_rot.min(vec.len());
     if n < 2 {
         return Ok(());
@@ -4549,8 +11622,10 @@ fn rope_neox(vec: &mut [f32], pos: usize, n_rot: usize, base: f32) -> Result<(),
     let mut i0 = 0usize;
     while i0 + 1 < n {
         let ic = i0 / 2;
-        let cos = theta.cos();
-        let sin = theta.sin();
+        let ff = freq_factors.and_then(|f| f.get(ic).copied()).unwrap_or(1.0);
+        let angle = theta / ff;
+        let cos = angle.cos();
+        let sin = angle.sin();
         let x0 = *vec.get(ic).unwrap_or(&0.0);
         let x1 = *vec.get(ic.saturating_add(n_offset)).unwrap_or(&0.0);
         if let Some(slot) = vec.get_mut(ic) {
@@ -4565,24 +11640,37 @@ fn rope_neox(vec: &mut [f32], pos: usize, n_rot: usize, base: f32) -> Result<(),
     Ok(())
 }
 
-/// Official Qwen2VL / Qwen3VL text walk: `ggml_rope_multi` when sections are present.
-fn apply_rope(
-    vec: &mut [f32],
+/// Arguments for [`apply_rope`]: ggml `ggml_rope_ext` plus optional
+/// `freq_factors` (`theta/ff` on NeoX).
+struct RopeParams<'a> {
     pos: usize,
     n_rot: usize,
     base: f32,
     sections: Option<[i32; 4]>,
     is_imrope: bool,
     neox: bool,
-) -> Result<(), LlamaError> {
-    if let Some(sections) = sections {
+    freq_factors: Option<&'a [f32]>,
+}
+
+/// Official Qwen2VL / Qwen3VL text walk: `ggml_rope_multi` when sections are present.
+/// Official phi2 uses `LLAMA_ROPE_TYPE_NEOX` (`llama_model_rope_type`).
+/// Official Gemma4 full-attention layers pass `rope_freqs` as `freq_factors`.
+fn apply_rope(vec: &mut [f32], p: &RopeParams<'_>) -> Result<(), LlamaError> {
+    if let Some(sections) = p.sections {
         // Official `llama-graph.cpp` text tokens: `[t,h,w,e] = [p,p,p,0]`.
         // Official `n_pos_per_embd()` is 4 for both MROPE and IMROPE.
-        rope_multi(vec, [pos, pos, pos, 0], n_rot, base, sections, is_imrope)
-    } else if neox {
-        rope_neox(vec, pos, n_rot, base)
+        rope_multi(
+            vec,
+            [p.pos, p.pos, p.pos, 0],
+            p.n_rot,
+            p.base,
+            sections,
+            p.is_imrope,
+        )
+    } else if p.neox {
+        rope_neox(vec, p.pos, p.n_rot, p.base, p.freq_factors)
     } else {
-        rope(vec, pos, n_rot, base)
+        rope(vec, p.pos, p.n_rot, p.base)
     }
 }
 
@@ -4600,9 +11688,10 @@ fn rope_is_neox(arch: &str) -> bool {
     match arch {
         // LLAMA / LLAMA4 => LLAMA_ROPE_TYPE_NORM.
         "llama" | "llama4" | "mistral" => false,
-        // QWEN2 / QWEN2MOE / QWEN3 / QWEN3MOE / QWEN3NEXT / PHI3 / GEMMA
-        // => LLAMA_ROPE_TYPE_NEOX.
-        "qwen2" | "qwen2moe" | "qwen3" | "qwen3moe" | "qwen3next" | "phi3" | "gemma" => true,
+        // QWEN2 / QWEN2MOE / QWEN3 / QWEN3MOE / QWEN3NEXT / PHI2 / PHI3 / GEMMA /
+        // GEMMA2 / GEMMA3 => LLAMA_ROPE_TYPE_NEOX.
+        "qwen2" | "qwen2moe" | "qwen3" | "qwen3moe" | "qwen3next" | "phi2" | "phi3" | "gemma"
+        | "gemma2" | "gemma3" | "gemma3n" | "gemma4" => true,
         // MROPE / IMROPE arches reach `rope_multi`; the flag is unused for them.
         _ => false,
     }
@@ -4728,12 +11817,10 @@ fn rope_multi(
     Ok(())
 }
 
-fn silu(x: &[f32]) -> Result<Vec<f32>, LlamaError> {
-    let mut out = vec![0.0f32; x.len()];
-    for (o, xv) in out.iter_mut().zip(x.iter()) {
-        *o = *xv / (1.0 + (-*xv).exp());
+fn silu_inplace(x: &mut [f32]) {
+    for xv in x.iter_mut() {
+        *xv = *xv / (1.0 + (-*xv).exp());
     }
-    Ok(out)
 }
 
 /// Official llama.cpp Gemma FFN is `LLM_FFN_GELU` → `ggml_gelu` (tanh approx).
@@ -4743,20 +11830,186 @@ fn ggml_gelu_f32(x: f32) -> f32 {
     0.5 * x * (1.0 + (sqrt_2_over_pi * x * (1.0 + coef_a * x * x)).tanh())
 }
 
-fn gelu(x: &[f32]) -> Result<Vec<f32>, LlamaError> {
-    let mut out = vec![0.0f32; x.len()];
-    for (o, xv) in out.iter_mut().zip(x.iter()) {
-        *o = ggml_gelu_f32(*xv);
+fn gelu_inplace(x: &mut [f32]) {
+    for xv in x.iter_mut() {
+        *xv = ggml_gelu_f32(*xv);
     }
-    Ok(out)
 }
 
-fn ffn_gate_act(x: &[f32], use_gelu: bool) -> Result<Vec<f32>, LlamaError> {
+fn ffn_gate_act_inplace(x: &mut [f32], use_gelu: bool) {
     if use_gelu {
-        gelu(x)
+        gelu_inplace(x);
     } else {
-        silu(x)
+        silu_inplace(x);
     }
+}
+
+fn tanh_softcap_inplace(x: &mut [f32], cap: f32) {
+    if cap <= 0.0 {
+        return;
+    }
+    for v in x.iter_mut() {
+        *v = cap * (*v / cap).tanh();
+    }
+}
+
+/// Official `llama_hparams::set_swa_pattern(n_pattern, dense_first=false)`:
+/// `is_swa(il) = n_pattern == 0 || (il % n_pattern < n_pattern - 1)`.
+/// Period 2: even layers are SWA, odd layers are dense. Layer 0 is SWA.
+fn gemma2_is_swa(il: usize, period: u32) -> bool {
+    if period == 0 {
+        true
+    } else {
+        let il = u32::try_from(il).unwrap_or(u32::MAX);
+        il % period < period.saturating_sub(1)
+    }
+}
+
+/// Official gemma4.cpp `get_key_or_arr(LLM_KV_ATTENTION_SLIDING_WINDOW_PATTERN)`.
+/// Convert writes a per-layer bool array; a scalar broadcasts (`!= 0` is SWA).
+fn load_gemma4_is_swa(g: &Gguf, arch: &str, n_layer: usize) -> Result<Vec<bool>, LlamaError> {
+    let key = arch_key(arch, "attention.sliding_window_pattern");
+    match g.kv(&key) {
+        Some(Kv::Array { items, .. }) => {
+            if items.len() != n_layer {
+                return Err(LlamaError::Shape(key));
+            }
+            let mut out = Vec::with_capacity(n_layer);
+            for it in items {
+                match it {
+                    Kv::Bool(b) => out.push(*b),
+                    Kv::U32(v) => out.push(*v != 0),
+                    Kv::I32(v) => out.push(*v != 0),
+                    _ => return Err(LlamaError::Shape(key)),
+                }
+            }
+            Ok(out)
+        }
+        Some(Kv::U32(v)) => Ok(vec![*v != 0; n_layer]),
+        Some(Kv::I32(v)) => Ok(vec![*v != 0; n_layer]),
+        Some(Kv::Bool(b)) => Ok(vec![*b; n_layer]),
+        None => Err(LlamaError::MissingKv(key)),
+        _ => Err(LlamaError::Shape(key)),
+    }
+}
+
+/// Official `llama_hparams::has_kv`: when `n_layer_kv_from_start >= 0`, the first
+/// that many layers own KV. A negative value (unset) means every layer has KV.
+fn gemma4_has_kv(n_layer_kv_from_start: i32, il: usize) -> bool {
+    match usize::try_from(n_layer_kv_from_start) {
+        Ok(n) => il < n,
+        Err(_) => true,
+    }
+}
+
+/// Official gemma4 / gemma3n `layer_reuse_cb` when `!has_kv(il)`:
+/// `n_from_start` minus 2 on SWA, minus 1 on global.
+/// llama.cpp `create_memory` asserts `n_layer_kv_from_start >= 2`.
+fn gemma4_kv_slot(
+    n_layer_kv_from_start: i32,
+    il: usize,
+    is_swa: bool,
+) -> Result<usize, LlamaError> {
+    if gemma4_has_kv(n_layer_kv_from_start, il) {
+        return Ok(il);
+    }
+    if n_layer_kv_from_start < 2 {
+        return Err(LlamaError::Shape(arch_key(
+            "gemma4",
+            "attention.shared_kv_layers",
+        )));
+    }
+    let delta = if is_swa { 2 } else { 1 };
+    let donor = n_layer_kv_from_start - delta;
+    let donor = usize::try_from(donor)
+        .map_err(|_| LlamaError::Shape(arch_key("gemma4", "attention.shared_kv_layers")))?;
+    if !gemma4_has_kv(n_layer_kv_from_start, donor) {
+        return Err(LlamaError::Shape(arch_key(
+            "gemma4",
+            "attention.shared_kv_layers",
+        )));
+    }
+    Ok(donor)
+}
+
+fn gemma4_shared_kv_omitted(rest: &str) -> bool {
+    matches!(
+        rest,
+        "attn_k.weight" | "attn_v.weight" | "attn_k_norm.weight"
+    )
+}
+
+/// Official gemma4.cpp required KV that the writer-tiny honors.
+/// Mixed SWA/global head dims are official (`n_embd_head_k(il)`).
+/// Returns PLE width, shared-KV `n_from_start`, and full/SWA head dims.
+/// `n_pl == 0` is dense/MoE without PLE. Unset `shared_kv_layers` is 0
+/// (every layer has KV). Nonzero shared KV requires `n_from_start >= 2`.
+struct Gemma4ArchHparams {
+    n_pl: usize,
+    n_from_start: i32,
+    hd_full: usize,
+    hd_swa: usize,
+}
+
+fn load_gemma4_hparams(
+    g: &Gguf,
+    arch: &str,
+    n_embd: usize,
+    n_head: usize,
+    n_layer: usize,
+) -> Result<Gemma4ArchHparams, LlamaError> {
+    let n_pl = require_usize(g, arch, "embedding_length_per_layer_input")?;
+    let n_shared = g
+        .kv_u32(&arch_key(arch, "attention.shared_kv_layers"))
+        .unwrap_or(0);
+    let n_layer_i =
+        i32::try_from(n_layer).map_err(|_| LlamaError::Shape(arch_key(arch, "block_count")))?;
+    let n_shared_i = i32::try_from(n_shared)
+        .map_err(|_| LlamaError::Shape(arch_key(arch, "attention.shared_kv_layers")))?;
+    let n_from_start = n_layer_i - n_shared_i;
+    if n_shared != 0 && n_from_start < 2 {
+        return Err(LlamaError::Shape(arch_key(
+            arch,
+            "attention.shared_kv_layers",
+        )));
+    }
+    if n_head == 0 || !n_embd.is_multiple_of(n_head) {
+        return Err(LlamaError::Shape(arch_key(arch, "attention.head_count")));
+    }
+    let hd_default = n_embd / n_head;
+    let hd_full = match g.kv_u32(&arch_key(arch, "attention.key_length")) {
+        Some(k) => {
+            let n = usize::try_from(k)
+                .map_err(|_| LlamaError::Shape(arch_key(arch, "attention.key_length")))?;
+            if n == 0 {
+                return Err(LlamaError::Shape(arch_key(arch, "attention.key_length")));
+            }
+            n
+        }
+        None => hd_default,
+    };
+    let v_full = match g.kv_u32(&arch_key(arch, "attention.value_length")) {
+        Some(v) => usize::try_from(v)
+            .map_err(|_| LlamaError::Shape(arch_key(arch, "attention.value_length")))?,
+        None => hd_full,
+    };
+    if v_full != hd_full {
+        return Err(LlamaError::Shape(arch_key(arch, "attention.key_length")));
+    }
+    let hd_swa = require_usize(g, arch, "attention.key_length_swa")?;
+    let v_swa = require_usize(g, arch, "attention.value_length_swa")?;
+    if hd_swa == 0 || hd_swa != v_swa {
+        return Err(LlamaError::Shape(arch_key(
+            arch,
+            "attention.key_length_swa",
+        )));
+    }
+    Ok(Gemma4ArchHparams {
+        n_pl,
+        n_from_start,
+        hd_full,
+        hd_swa,
+    })
 }
 
 fn softmax(x: &mut [f32]) {
@@ -4773,79 +12026,73 @@ fn softmax(x: &mut [f32]) {
     }
 }
 
-fn add(a: &[f32], b: &[f32]) -> Result<Vec<f32>, LlamaError> {
+/// `dst = a + b`, growing `dst` to fit. `dst` may be neither `a` nor `b`.
+fn add_into(dst: &mut Vec<f32>, a: &[f32], b: &[f32]) -> Result<(), LlamaError> {
     if a.len() != b.len() {
         return Err(LlamaError::Shape("vector add".into()));
     }
-    Ok(a.iter().zip(b.iter()).map(|(x, y)| x + y).collect())
+    fit(dst, a.len());
+    for ((d, av), bv) in dst.iter_mut().zip(a.iter()).zip(b.iter()) {
+        *d = *av + *bv;
+    }
+    Ok(())
 }
 
-fn split_heads(x: &[f32], n_head: usize, hd: usize) -> Result<Vec<Vec<f32>>, LlamaError> {
-    if x.len() != n_head.saturating_mul(hd) {
-        return Err(LlamaError::Shape("split_heads".into()));
+/// `x += r`, elementwise.
+fn add_assign(x: &mut [f32], r: &[f32]) -> Result<(), LlamaError> {
+    if x.len() != r.len() {
+        return Err(LlamaError::Shape("vector add".into()));
     }
-    let mut out = Vec::new();
-    for h in 0..n_head {
-        let off = h.saturating_mul(hd);
-        let row = x
-            .get(off..off + hd)
-            .ok_or_else(|| LlamaError::Shape("split_heads".into()))?;
-        out.push(row.to_vec());
+    for (xv, rv) in x.iter_mut().zip(r.iter()) {
+        *xv += *rv;
     }
-    Ok(out)
+    Ok(())
 }
 
+/// Scatter one token's `n_head_kv * hd` row into the cache.
 fn store_kv(
     cache: &mut [f32],
     layer: usize,
-    n_head_kv: usize,
-    max_seq: usize,
+    geom: &KvGeom<'_>,
     t: usize,
-    heads: &[Vec<f32>],
+    row: &[f32],
 ) -> Result<(), LlamaError> {
-    let hd = heads.first().map(Vec::len).unwrap_or(0);
-    for (h, vec) in heads.iter().enumerate() {
-        let off = kv_offset(layer, h, n_head_kv, max_seq, t, hd)?;
+    let n_head_kv = geom.n_head_kv;
+    let stride = geom.hd;
+    if stride == 0 || n_head_kv == 0 || !row.len().is_multiple_of(n_head_kv) {
+        return Err(LlamaError::Shape("kv store".into()));
+    }
+    let q_hd = row.len() / n_head_kv;
+    if q_hd == 0 || q_hd > stride {
+        return Err(LlamaError::Shape("kv store".into()));
+    }
+    for (h, head) in row.chunks(q_hd).enumerate() {
+        let off = geom
+            .offset(layer, h, t)
+            .ok_or_else(|| LlamaError::Shape("kv offset".into()))?;
         let dst = cache
-            .get_mut(off..off + hd)
+            .get_mut(off..off.saturating_add(stride))
             .ok_or_else(|| LlamaError::Shape("kv store".into()))?;
-        for (d, s) in dst.iter_mut().zip(vec.iter()) {
-            *d = *s;
+        for (i, d) in dst.iter_mut().enumerate() {
+            *d = head.get(i).copied().unwrap_or(0.0);
         }
     }
     Ok(())
 }
 
-fn kv_at(
-    cache: &[f32],
+fn kv_at<'a>(
+    cache: &'a [f32],
     layer: usize,
     head: usize,
-    n_head_kv: usize,
-    max_seq: usize,
+    geom: &KvGeom<'_>,
     t: usize,
-    hd: usize,
-) -> Result<&[f32], LlamaError> {
-    let off = kv_offset(layer, head, n_head_kv, max_seq, t, hd)?;
+) -> Result<&'a [f32], LlamaError> {
+    let off = geom
+        .offset(layer, head, t)
+        .ok_or_else(|| LlamaError::Shape("kv offset".into()))?;
     cache
-        .get(off..off + hd)
+        .get(off..off.saturating_add(geom.hd))
         .ok_or_else(|| LlamaError::Shape("kv load".into()))
-}
-
-fn kv_offset(
-    layer: usize,
-    head: usize,
-    n_head_kv: usize,
-    max_seq: usize,
-    t: usize,
-    hd: usize,
-) -> Result<usize, LlamaError> {
-    layer
-        .checked_mul(n_head_kv)
-        .and_then(|v| v.checked_add(head))
-        .and_then(|v| v.checked_mul(max_seq))
-        .and_then(|v| v.checked_add(t))
-        .and_then(|v| v.checked_mul(hd))
-        .ok_or_else(|| LlamaError::Shape("kv offset".into()))
 }
 
 fn argmax(x: &[f32]) -> u32 {
@@ -4863,7 +12110,7 @@ fn argmax(x: &[f32]) -> u32 {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::gguf::{load_gguf, load_gguf_owned};
+    use crate::{load_gguf, load_gguf_owned};
 
     /// ggml `dequantize_row_q4_K` (oracle).
     fn dequant_q4_k_row(w: &[u8]) -> Vec<f32> {
@@ -4871,8 +12118,8 @@ mod tests {
         let mut y = vec![0.0f32; nblocks * QK_K];
         for b in 0..nblocks {
             let wb = &w[b * crate::quant::Q4_K_BLOCK..(b + 1) * crate::quant::Q4_K_BLOCK];
-            let d = crate::fp16::load_f16_le(wb).unwrap();
-            let minv = crate::fp16::load_f16_le(&wb[2..]).unwrap();
+            let d = crate::fp16::oracle_load_f16_le(wb).unwrap();
+            let minv = crate::fp16::oracle_load_f16_le(&wb[2..]).unwrap();
             let scales = &wb[4..16];
             let mut qoff = 16usize;
             let mut yo = b * QK_K;
@@ -4902,7 +12149,7 @@ mod tests {
 
     /// ggml `ggml_fp16_to_fp32` (oracle). Independent of `dequant_f16_row` / `gemv_f16`.
     fn oracle_f16_elem(bytes: &[u8]) -> f32 {
-        crate::fp16::f16_to_f32(u16::from_le_bytes([bytes[0], bytes[1]]))
+        crate::fp16::oracle_f16_to_f32(u16::from_le_bytes([bytes[0], bytes[1]]))
     }
 
     /// ggml `GGML_BF16_TO_FP32` (oracle). Independent of `dequant_bf16_row` / `gemv_bf16`.
@@ -4939,7 +12186,7 @@ mod tests {
         let mut y = vec![0.0f32; nblocks * QK_K];
         for b in 0..nblocks {
             let wb = &w[b * crate::quant::IQ2_XXS_BLOCK..(b + 1) * crate::quant::IQ2_XXS_BLOCK];
-            let d = crate::fp16::f16_to_f32(u16::from_le_bytes([wb[0], wb[1]]));
+            let d = crate::fp16::oracle_f16_to_f32(u16::from_le_bytes([wb[0], wb[1]]));
             let qs = &wb[2..66];
             let mut yo = b * QK_K;
             for ib32 in 0..QK_K / 32 {
@@ -4969,7 +12216,7 @@ mod tests {
         let mut y = vec![0.0f32; nblocks * QK_K];
         for b in 0..nblocks {
             let wb = &w[b * crate::quant::IQ1_S_BLOCK..(b + 1) * crate::quant::IQ1_S_BLOCK];
-            let d = crate::fp16::f16_to_f32(u16::from_le_bytes([wb[0], wb[1]]));
+            let d = crate::fp16::oracle_f16_to_f32(u16::from_le_bytes([wb[0], wb[1]]));
             let qs = &wb[2..34];
             let qh = &wb[34..50];
             let mut yo = b * QK_K;
@@ -5012,7 +12259,7 @@ mod tests {
                 | ((sc[1] >> 8) & 0x00f0)
                 | ((sc[2] >> 4) & 0x0f00)
                 | (sc[3] & 0xf000);
-            let d = crate::fp16::f16_to_f32(bits);
+            let d = crate::fp16::oracle_f16_to_f32(bits);
             let mut yo = b * QK_K;
             for ib in 0..8 {
                 let scv = sc[ib / 2];
@@ -5047,7 +12294,7 @@ mod tests {
         let mut y = vec![0.0f32; nblocks * QK_K];
         for b in 0..nblocks {
             let wb = &w[b * crate::quant::IQ2_XS_BLOCK..(b + 1) * crate::quant::IQ2_XS_BLOCK];
-            let d = crate::fp16::f16_to_f32(u16::from_le_bytes([wb[0], wb[1]]));
+            let d = crate::fp16::oracle_f16_to_f32(u16::from_le_bytes([wb[0], wb[1]]));
             let qs = &wb[2..66];
             let scales = &wb[66..74];
             let mut yo = b * QK_K;
@@ -5078,7 +12325,7 @@ mod tests {
         let mut y = vec![0.0f32; nblocks * QK_K];
         for b in 0..nblocks {
             let wb = &w[b * crate::quant::IQ2_S_BLOCK..(b + 1) * crate::quant::IQ2_S_BLOCK];
-            let d = crate::fp16::f16_to_f32(u16::from_le_bytes([wb[0], wb[1]]));
+            let d = crate::fp16::oracle_f16_to_f32(u16::from_le_bytes([wb[0], wb[1]]));
             let qs = &wb[2..34];
             let signs = &wb[34..66];
             let qh = &wb[66..74];
@@ -5113,7 +12360,7 @@ mod tests {
         let mut y = vec![0.0f32; nblocks * QK_K];
         for b in 0..nblocks {
             let wb = &w[b * crate::quant::IQ3_XXS_BLOCK..(b + 1) * crate::quant::IQ3_XXS_BLOCK];
-            let d = crate::fp16::f16_to_f32(u16::from_le_bytes([wb[0], wb[1]]));
+            let d = crate::fp16::oracle_f16_to_f32(u16::from_le_bytes([wb[0], wb[1]]));
             let qs = &wb[2..66];
             let ss = &wb[66..98];
             let mut yo = b * QK_K;
@@ -5155,7 +12402,7 @@ mod tests {
         let mut y = vec![0.0f32; nblocks * QK_K];
         for b in 0..nblocks {
             let wb = &w[b * crate::quant::IQ3_S_BLOCK..(b + 1) * crate::quant::IQ3_S_BLOCK];
-            let d = crate::fp16::f16_to_f32(u16::from_le_bytes([wb[0], wb[1]]));
+            let d = crate::fp16::oracle_f16_to_f32(u16::from_le_bytes([wb[0], wb[1]]));
             let qs = &wb[2..66];
             let qh = &wb[66..74];
             let signs = &wb[74..106];
@@ -5229,7 +12476,7 @@ mod tests {
         let mut y = vec![0.0f32; nblocks * QK4_NL];
         for b in 0..nblocks {
             let wb = &w[b * crate::quant::IQ4_NL_BLOCK..(b + 1) * crate::quant::IQ4_NL_BLOCK];
-            let d = crate::fp16::f16_to_f32(u16::from_le_bytes([wb[0], wb[1]]));
+            let d = crate::fp16::oracle_f16_to_f32(u16::from_le_bytes([wb[0], wb[1]]));
             let qs = &wb[2..];
             let yo = b * QK4_NL;
             for j in 0..16 {
@@ -5249,7 +12496,7 @@ mod tests {
         let mut y = vec![0.0f32; nblocks * QK_K];
         for b in 0..nblocks {
             let wb = &w[b * crate::quant::IQ4_XS_BLOCK..(b + 1) * crate::quant::IQ4_XS_BLOCK];
-            let d = crate::fp16::f16_to_f32(u16::from_le_bytes([wb[0], wb[1]]));
+            let d = crate::fp16::oracle_f16_to_f32(u16::from_le_bytes([wb[0], wb[1]]));
             let scales_h = u16::from_le_bytes([wb[2], wb[3]]);
             let scales_l = &wb[4..8];
             let qs = &wb[8..];
@@ -5277,8 +12524,8 @@ mod tests {
         let mut y = vec![0.0f32; nblocks * QK_K];
         for b in 0..nblocks {
             let wb = &w[b * crate::quant::Q2_K_BLOCK..(b + 1) * crate::quant::Q2_K_BLOCK];
-            let d = crate::fp16::f16_to_f32(u16::from_le_bytes([wb[80], wb[81]]));
-            let minv = crate::fp16::f16_to_f32(u16::from_le_bytes([wb[82], wb[83]]));
+            let d = crate::fp16::oracle_f16_to_f32(u16::from_le_bytes([wb[80], wb[81]]));
+            let minv = crate::fp16::oracle_f16_to_f32(u16::from_le_bytes([wb[82], wb[83]]));
             let scales = &wb[0..16];
             let mut yo = b * QK_K;
             let mut is = 0usize;
@@ -5317,7 +12564,7 @@ mod tests {
         const KMASK2: u32 = 0x0f0f_0f0f;
         for b in 0..nblocks {
             let wb = &w[b * crate::quant::Q3_K_BLOCK..(b + 1) * crate::quant::Q3_K_BLOCK];
-            let d_all = crate::fp16::f16_to_f32(u16::from_le_bytes([wb[108], wb[109]]));
+            let d_all = crate::fp16::oracle_f16_to_f32(u16::from_le_bytes([wb[108], wb[109]]));
             let hmask = &wb[0..32];
             let mut aux = [0u32; 4];
             aux[0] = u32::from_le_bytes([wb[96], wb[97], wb[98], wb[99]]);
@@ -5370,8 +12617,8 @@ mod tests {
         let mut y = vec![0.0f32; nblocks * QK4_1];
         for b in 0..nblocks {
             let wb = &w[b * crate::quant::Q4_1_BLOCK..(b + 1) * crate::quant::Q4_1_BLOCK];
-            let d = crate::fp16::f16_to_f32(u16::from_le_bytes([wb[0], wb[1]]));
-            let m = crate::fp16::f16_to_f32(u16::from_le_bytes([wb[2], wb[3]]));
+            let d = crate::fp16::oracle_f16_to_f32(u16::from_le_bytes([wb[0], wb[1]]));
+            let m = crate::fp16::oracle_f16_to_f32(u16::from_le_bytes([wb[2], wb[3]]));
             let qs = &wb[4..];
             let yo = b * QK4_1;
             for j in 0..16 {
@@ -5388,7 +12635,7 @@ mod tests {
         let mut y = vec![0.0f32; nblocks * QK5_0];
         for b in 0..nblocks {
             let wb = &w[b * crate::quant::Q5_0_BLOCK..(b + 1) * crate::quant::Q5_0_BLOCK];
-            let d = crate::fp16::f16_to_f32(u16::from_le_bytes([wb[0], wb[1]]));
+            let d = crate::fp16::oracle_f16_to_f32(u16::from_le_bytes([wb[0], wb[1]]));
             let qh = u32::from_le_bytes([wb[2], wb[3], wb[4], wb[5]]);
             let qs = &wb[6..];
             let yo = b * QK5_0;
@@ -5410,8 +12657,8 @@ mod tests {
         let mut y = vec![0.0f32; nblocks * QK5_1];
         for b in 0..nblocks {
             let wb = &w[b * crate::quant::Q5_1_BLOCK..(b + 1) * crate::quant::Q5_1_BLOCK];
-            let d = crate::fp16::f16_to_f32(u16::from_le_bytes([wb[0], wb[1]]));
-            let m = crate::fp16::f16_to_f32(u16::from_le_bytes([wb[2], wb[3]]));
+            let d = crate::fp16::oracle_f16_to_f32(u16::from_le_bytes([wb[0], wb[1]]));
+            let m = crate::fp16::oracle_f16_to_f32(u16::from_le_bytes([wb[2], wb[3]]));
             let qh = u32::from_le_bytes([wb[4], wb[5], wb[6], wb[7]]);
             let qs = &wb[8..];
             let yo = b * QK5_1;
@@ -5495,7 +12742,7 @@ mod tests {
         let mut y = vec![0.0f32; nblocks * QK1_0];
         for b in 0..nblocks {
             let wb = &w[b * crate::quant::Q1_0_BLOCK..(b + 1) * crate::quant::Q1_0_BLOCK];
-            let d = crate::fp16::f16_to_f32(u16::from_le_bytes([wb[0], wb[1]]));
+            let d = crate::fp16::oracle_f16_to_f32(u16::from_le_bytes([wb[0], wb[1]]));
             let qs = &wb[2..];
             let yo = b * QK1_0;
             for j in 0..QK1_0 {
@@ -5512,7 +12759,7 @@ mod tests {
         let mut y = vec![0.0f32; nblocks * QK2_0];
         for b in 0..nblocks {
             let wb = &w[b * crate::quant::Q2_0_BLOCK..(b + 1) * crate::quant::Q2_0_BLOCK];
-            let d = crate::fp16::f16_to_f32(u16::from_le_bytes([wb[0], wb[1]]));
+            let d = crate::fp16::oracle_f16_to_f32(u16::from_le_bytes([wb[0], wb[1]]));
             let qs = &wb[2..];
             let yo = b * QK2_0;
             for j in 0..QK2_0 {
@@ -5533,7 +12780,7 @@ mod tests {
             let wb = &w[b * crate::quant::TQ1_0_BLOCK..(b + 1) * crate::quant::TQ1_0_BLOCK];
             let qs = &wb[0..48];
             let qh = &wb[48..52];
-            let d = crate::fp16::f16_to_f32(u16::from_le_bytes([wb[52], wb[53]]));
+            let d = crate::fp16::oracle_f16_to_f32(u16::from_le_bytes([wb[52], wb[53]]));
             let mut yo = b * QK_K;
             for &p in &POW3 {
                 for &byte in qs.iter().take(32) {
@@ -5571,7 +12818,7 @@ mod tests {
         for b in 0..nblocks {
             let wb = &w[b * crate::quant::TQ2_0_BLOCK..(b + 1) * crate::quant::TQ2_0_BLOCK];
             let qs = &wb[0..64];
-            let d = crate::fp16::f16_to_f32(u16::from_le_bytes([wb[64], wb[65]]));
+            let d = crate::fp16::oracle_f16_to_f32(u16::from_le_bytes([wb[64], wb[65]]));
             let mut yo = b * QK_K;
             for j in [0usize, 32] {
                 for l in 0..4 {
@@ -5593,11 +12840,30 @@ mod tests {
         let mut y = vec![0.0f32; nblocks * QK8_1];
         for b in 0..nblocks {
             let wb = &w[b * crate::quant::Q8_1_BLOCK..(b + 1) * crate::quant::Q8_1_BLOCK];
-            let d = crate::fp16::f16_to_f32(u16::from_le_bytes([wb[0], wb[1]]));
+            let d = crate::fp16::oracle_f16_to_f32(u16::from_le_bytes([wb[0], wb[1]]));
             let qs = &wb[4..];
             let yo = b * QK8_1;
             for j in 0..QK8_1 {
                 y[yo + j] = f32::from(i8::from_le_bytes([qs[j]])) * d;
+            }
+        }
+        y
+    }
+
+    /// ggml `dequantize_row_q4_0` (oracle). `block_q4_0` is fp16 `d` then 16
+    /// packed nibble bytes, 18 total; `y[j] = ((qs[j] & 0xF) - 8) * d` and
+    /// `y[j + 16] = ((qs[j] >> 4) - 8) * d`. Independent of `dequant_q4_0_row`.
+    fn dequant_q4_0_row_oracle(w: &[u8]) -> Vec<f32> {
+        let nblocks = w.len() / crate::quant::Q4_0_BLOCK;
+        let mut y = vec![0.0f32; nblocks * QK4_0];
+        for b in 0..nblocks {
+            let wb = &w[b * crate::quant::Q4_0_BLOCK..(b + 1) * crate::quant::Q4_0_BLOCK];
+            let d = crate::fp16::oracle_f16_to_f32(u16::from_le_bytes([wb[0], wb[1]]));
+            let qs = &wb[2..];
+            let yo = b * QK4_0;
+            for j in 0..(QK4_0 / 2) {
+                y[yo + j] = ((i32::from(qs[j] & 0x0f) - 8) as f32) * d;
+                y[yo + j + 16] = ((i32::from(qs[j] >> 4) - 8) as f32) * d;
             }
         }
         y
@@ -5610,7 +12876,7 @@ mod tests {
         let mut y = vec![0.0f32; nblocks * QK8_0];
         for b in 0..nblocks {
             let wb = &w[b * crate::quant::Q8_0_BLOCK..(b + 1) * crate::quant::Q8_0_BLOCK];
-            let d = crate::fp16::f16_to_f32(u16::from_le_bytes([wb[0], wb[1]]));
+            let d = crate::fp16::oracle_f16_to_f32(u16::from_le_bytes([wb[0], wb[1]]));
             let qs = &wb[2..];
             let yo = b * QK8_0;
             for j in 0..QK8_0 {
@@ -5626,8 +12892,8 @@ mod tests {
         let mut y = vec![0.0f32; nblocks * QK_K];
         for b in 0..nblocks {
             let wb = &w[b * crate::quant::Q5_K_BLOCK..(b + 1) * crate::quant::Q5_K_BLOCK];
-            let d = crate::fp16::f16_to_f32(u16::from_le_bytes([wb[0], wb[1]]));
-            let minv = crate::fp16::f16_to_f32(u16::from_le_bytes([wb[2], wb[3]]));
+            let d = crate::fp16::oracle_f16_to_f32(u16::from_le_bytes([wb[0], wb[1]]));
+            let minv = crate::fp16::oracle_f16_to_f32(u16::from_le_bytes([wb[2], wb[3]]));
             let scales = &wb[4..16];
             let qh = &wb[16..48];
             let mut qoff = 48usize;
@@ -5668,7 +12934,7 @@ mod tests {
         let mut y = vec![0.0f32; nblocks * QK_K];
         for b in 0..nblocks {
             let wb = &w[b * crate::quant::Q6_K_BLOCK..(b + 1) * crate::quant::Q6_K_BLOCK];
-            let d = crate::fp16::load_f16_le(&wb[208..]).unwrap();
+            let d = crate::fp16::oracle_load_f16_le(&wb[208..]).unwrap();
             let ql = &wb[0..128];
             let qh = &wb[128..192];
             let sc = &wb[192..208];
@@ -5799,6 +13065,13 @@ mod tests {
                 let rb = (n_cols / QK2_0) * crate::quant::Q2_0_BLOCK;
                 for (r, yv) in y.iter_mut().enumerate() {
                     let row = dequant_q2_0_row_oracle(&t.data[r * rb..(r + 1) * rb]);
+                    *yv = row.iter().zip(x.iter()).map(|(a, b)| a * b).sum();
+                }
+            }
+            GgmlType::Q4_0 => {
+                let rb = (n_cols / QK4_0) * crate::quant::Q4_0_BLOCK;
+                for (r, yv) in y.iter_mut().enumerate() {
+                    let row = dequant_q4_0_row_oracle(&t.data[r * rb..(r + 1) * rb]);
                     *yv = row.iter().zip(x.iter()).map(|(a, b)| a * b).sum();
                 }
             }
@@ -5985,6 +13258,10 @@ mod tests {
                 let rb = (n_cols / QK2_0) * crate::quant::Q2_0_BLOCK;
                 dequant_q2_0_row_oracle(&t.data[row * rb..(row + 1) * rb])
             }
+            GgmlType::Q4_0 => {
+                let rb = (n_cols / QK4_0) * crate::quant::Q4_0_BLOCK;
+                dequant_q4_0_row_oracle(&t.data[row * rb..(row + 1) * rb])
+            }
             GgmlType::Q8_0 => {
                 let rb = (n_cols / QK8_0) * crate::quant::Q8_0_BLOCK;
                 dequant_q8_0_row_oracle(&t.data[row * rb..(row + 1) * rb])
@@ -6076,6 +13353,25 @@ mod tests {
         x.iter().zip(w.iter()).map(|(a, b)| a / rms * b).collect()
     }
 
+    /// Independent scalar of official `ggml_compute_forward_norm_f32` + `LLM_NORM`.
+    fn oracle_layernorm(x: &[f32], w: &[f32], b: Option<&[f32]>, eps: f32) -> Vec<f32> {
+        let n = x.len() as f32;
+        let mean = x.iter().sum::<f32>() / n;
+        let var = x.iter().map(|v| (v - mean) * (v - mean)).sum::<f32>() / n;
+        let scale = 1.0 / (var + eps).sqrt();
+        x.iter()
+            .zip(w.iter())
+            .enumerate()
+            .map(|(i, (xv, wv))| {
+                let mut y = (xv - mean) * scale * wv;
+                if let Some(b) = b {
+                    y += b[i];
+                }
+                y
+            })
+            .collect()
+    }
+
     /// Official Llama4 `ggml_rms_norm` without weight (`Llama4TextL2Norm`).
     fn oracle_rmsnorm_unweighted(x: &[f32], eps: f32) -> Vec<f32> {
         let ss: f32 = x.iter().map(|v| v * v).sum();
@@ -6093,7 +13389,7 @@ mod tests {
         assert!(expert < n_parts, "expert {expert} >= {n_parts}");
         let part = t.data.len() / n_parts;
         let start = expert * part;
-        let bytes = crate::gguf::write_gguf(&[TensorWrite {
+        let bytes = crate::write_gguf(&[TensorWrite {
             name: "e".into(),
             ty: t.ty,
             shape: vec![
@@ -6106,13 +13402,30 @@ mod tests {
         oracle_gemv(g.tensor("e").expect("e"), x)
     }
 
+    fn tname(layer: usize, suffix: &str) -> String {
+        format!("blk.{layer}.{suffix}")
+    }
+
     /// Official `build_moe_ffn` on one token: softmax, then top-k; SwiGLU;
     /// weights after the expert with `norm_w` clamp `2^-14`. Used by official
     /// llama MoE and official qwen3moe.cpp (`norm_w=true`).
-    fn oracle_softmax_norm_w_moe(g: &Gguf, arch: &str, xn: &[f32]) -> Vec<f32> {
+    fn oracle_softmax_norm_w_moe(g: &Gguf, arch: &str, xn: &[f32], layer: usize) -> Vec<f32> {
+        let logits = oracle_gemv(g.tensor(&tname(layer, "ffn_gate_inp.weight")).unwrap(), xn);
+        oracle_softmax_norm_w_moe_from_logits(g, arch, xn, layer, &logits, false)
+    }
+
+    /// Same `build_moe_ffn` walk as [`oracle_softmax_norm_w_moe`] with precomputed
+    /// router logits and SILU or GELU expert gates.
+    fn oracle_softmax_norm_w_moe_from_logits(
+        g: &Gguf,
+        arch: &str,
+        xn: &[f32],
+        layer: usize,
+        logits: &[f32],
+        gelu: bool,
+    ) -> Vec<f32> {
         let n_expert = arch_u32(g, arch, "expert_count").unwrap() as usize;
         let n_used = arch_u32(g, arch, "expert_used_count").unwrap() as usize;
-        let logits = oracle_gemv(g.tensor("blk.0.ffn_gate_inp.weight").unwrap(), xn);
         assert_eq!(logits.len(), n_expert);
         let m = logits.iter().copied().fold(f32::NEG_INFINITY, f32::max);
         let mut probs: Vec<f32> = logits.iter().map(|v| (v - m).exp()).collect();
@@ -6141,51 +13454,248 @@ mod tests {
         for w in &mut weights {
             *w /= wsum;
         }
-        let gate_exps = g.tensor("blk.0.ffn_gate_exps.weight").unwrap();
-        let up_exps = g.tensor("blk.0.ffn_up_exps.weight").unwrap();
-        let down_exps = g.tensor("blk.0.ffn_down_exps.weight").unwrap();
+        let gate_exps = g.tensor(&tname(layer, "ffn_gate_exps.weight"));
+        let up_exps = g.tensor(&tname(layer, "ffn_up_exps.weight"));
+        let gate_up = g.tensor(&tname(layer, "ffn_gate_up_exps.weight"));
+        let down_exps = g.tensor(&tname(layer, "ffn_down_exps.weight")).unwrap();
         let mut routed = vec![0.0f32; xn.len()];
         for (e, w) in idx.iter().zip(weights.iter()) {
-            let gate = oracle_gemv_expert(gate_exps, *e, xn);
-            let up = oracle_gemv_expert(up_exps, *e, xn);
+            let (mut gate, mut up) = if let Some(fused) = gate_up {
+                let gu = oracle_gemv_expert(fused, *e, xn);
+                assert_eq!(gu.len() % 2, 0, "fused gate_up rows");
+                let mid = gu.len() / 2;
+                (gu[..mid].to_vec(), gu[mid..].to_vec())
+            } else {
+                (
+                    oracle_gemv_expert(gate_exps.unwrap(), *e, xn),
+                    oracle_gemv_expert(up_exps.unwrap(), *e, xn),
+                )
+            };
+            if arch == "gemma4" {
+                let up_s = g
+                    .tensor(&tname(layer, "ffn_up_exps.scale"))
+                    .and_then(|t| f32s(t).ok())
+                    .and_then(|s| s.get(*e).copied())
+                    .unwrap_or(1.0);
+                if gate_up.is_some() {
+                    for v in gate.iter_mut() {
+                        *v *= up_s;
+                    }
+                    for v in up.iter_mut() {
+                        *v *= up_s;
+                    }
+                } else {
+                    let gate_s = g
+                        .tensor(&tname(layer, "ffn_gate_exps.scale"))
+                        .and_then(|t| f32s(t).ok())
+                        .and_then(|s| s.get(*e).copied())
+                        .unwrap_or(1.0);
+                    for v in gate.iter_mut() {
+                        *v *= gate_s;
+                    }
+                    for v in up.iter_mut() {
+                        *v *= up_s;
+                    }
+                }
+            }
             let h: Vec<f32> = gate
                 .iter()
                 .zip(up.iter())
-                .map(|(gv, u)| (gv / (1.0 + (-gv).exp())) * u)
+                .map(|(gv, u)| {
+                    let act = if gelu {
+                        oracle_gelu(*gv)
+                    } else {
+                        gv / (1.0 + (-gv).exp())
+                    };
+                    act * u
+                })
                 .collect();
             let y = oracle_gemv_expert(down_exps, *e, &h);
+            let scale = if arch == "gemma4" {
+                g.tensor(&tname(layer, "ffn_down_exps.scale"))
+                    .and_then(|t| f32s(t).ok())
+                    .and_then(|s| s.get(*e).copied())
+                    .unwrap_or(1.0)
+            } else {
+                1.0
+            };
             for (o, v) in routed.iter_mut().zip(y.iter()) {
-                *o += *v * *w;
+                *o += *v * *w * scale;
             }
         }
         routed
     }
 
+    /// Official llama.cpp `build_ffn`: `{1}` `ffn_down.scale` `ggml_mul` after
+    /// the down GEMM (`TENSOR_NOT_REQUIRED`; missing is `1.0`).
+    fn oracle_mul_ffn_down_s(g: &Gguf, layer: usize, y: &mut [f32]) {
+        oracle_mul_unit_scale(g, layer, "ffn_down.scale", y);
+    }
+
+    fn oracle_mul_ffn_down_shexp_s(g: &Gguf, layer: usize, y: &mut [f32]) {
+        oracle_mul_unit_scale(g, layer, "ffn_down_shexp.scale", y);
+    }
+
+    fn oracle_mul_ffn_gate_shexp_s(g: &Gguf, layer: usize, y: &mut [f32]) {
+        oracle_mul_unit_scale(g, layer, "ffn_gate_shexp.scale", y);
+    }
+
+    fn oracle_mul_ffn_up_shexp_s(g: &Gguf, layer: usize, y: &mut [f32]) {
+        oracle_mul_unit_scale(g, layer, "ffn_up_shexp.scale", y);
+    }
+
+    fn oracle_mul_ffn_gate_s(g: &Gguf, layer: usize, y: &mut [f32]) {
+        oracle_mul_unit_scale(g, layer, "ffn_gate.scale", y);
+    }
+
+    fn oracle_mul_ffn_up_s(g: &Gguf, layer: usize, y: &mut [f32]) {
+        oracle_mul_unit_scale(g, layer, "ffn_up.scale", y);
+    }
+
+    /// Official llama.cpp `build_lora_mm`: `{1}` `attn_q.scale` `ggml_mul` after
+    /// the Q GEMM (`TENSOR_NOT_REQUIRED`; missing is `1.0`).
+    fn oracle_mul_attn_q_s(g: &Gguf, layer: usize, y: &mut [f32]) {
+        oracle_mul_unit_scale(g, layer, "attn_q.scale", y);
+    }
+
+    fn oracle_mul_attn_out_s(g: &Gguf, layer: usize, y: &mut [f32]) {
+        oracle_mul_unit_scale(g, layer, "attn_output.scale", y);
+    }
+
+    fn oracle_mul_attn_k_s(g: &Gguf, layer: usize, y: &mut [f32]) {
+        oracle_mul_unit_scale(g, layer, "attn_k.scale", y);
+    }
+
+    fn oracle_mul_attn_v_s(g: &Gguf, layer: usize, y: &mut [f32]) {
+        oracle_mul_unit_scale(g, layer, "attn_v.scale", y);
+    }
+
+    /// Official llama.cpp `build_qkv` fused path: `{1}` `attn_qkv.scale`
+    /// `ggml_mul` after the QKV GEMM, before bias (`TENSOR_NOT_REQUIRED`;
+    /// missing is `1.0`).
+    fn oracle_mul_attn_qkv_s(g: &Gguf, layer: usize, y: &mut [f32]) {
+        oracle_mul_unit_scale(g, layer, "attn_qkv.scale", y);
+    }
+
+    /// Official llama.cpp `build_lora_mm`: `{1}` `output.scale` after the
+    /// NVFP4 LM-head GEMM (`TENSOR_NOT_REQUIRED`; missing is `1.0`). Loaded
+    /// only when `output.weight` is [`GgmlType::NVFP4`].
+    fn oracle_mul_output_s(g: &Gguf, y: &mut [f32]) {
+        if g.tensor("output.weight").map(|t| t.ty) != Some(GgmlType::NVFP4) {
+            return;
+        }
+        if let Some(t) = g.tensor("output.scale") {
+            if let Some(&scale) = f32s(t).unwrap().first() {
+                for v in y {
+                    *v *= scale;
+                }
+            }
+        }
+    }
+
+    fn oracle_mul_unit_scale(g: &Gguf, layer: usize, which: &str, y: &mut [f32]) {
+        if let Some(t) = g.tensor(&tname(layer, which)) {
+            if let Some(&scale) = f32s(t).unwrap().first() {
+                for v in y {
+                    *v *= scale;
+                }
+            }
+        }
+    }
+
+    /// Official gemma4.cpp MoE on one token: shared GeGLU plus GELU experts.
+    ///
+    /// `attn_out` is the residual after `post_attention_norm`. `xn_shared` is
+    /// `ffn_norm(attn_out)` (the transformer pre-FFN RMSNorm).
+    fn oracle_gemma4_moe(
+        g: &Gguf,
+        attn_out: &[f32],
+        xn_shared: &[f32],
+        layer: usize,
+        eps: f32,
+    ) -> Vec<f32> {
+        let mut gate = oracle_gemv(
+            g.tensor(&tname(layer, "ffn_gate.weight")).unwrap(),
+            xn_shared,
+        );
+        oracle_mul_ffn_gate_s(g, layer, &mut gate);
+        let mut up = oracle_gemv(g.tensor(&tname(layer, "ffn_up.weight")).unwrap(), xn_shared);
+        oracle_mul_ffn_up_s(g, layer, &mut up);
+        let h: Vec<f32> = gate
+            .iter()
+            .zip(up.iter())
+            .map(|(gv, u)| oracle_gelu(*gv) * *u)
+            .collect();
+        let mut shared = oracle_gemv(g.tensor(&tname(layer, "ffn_down.weight")).unwrap(), &h);
+        oracle_mul_ffn_down_s(g, layer, &mut shared);
+        let pn1 = f32s(g.tensor(&tname(layer, "ffn_post_norm_1.weight")).unwrap()).unwrap();
+        shared = oracle_rmsnorm(&shared, &pn1, eps);
+        let pre2 = f32s(g.tensor(&tname(layer, "ffn_pre_norm_2.weight")).unwrap()).unwrap();
+        let xn_exp = oracle_rmsnorm(attn_out, &pre2, eps);
+        let mut tmp = oracle_rmsnorm_unweighted(attn_out, eps);
+        let n_embd_f = f32::from(u16::try_from(attn_out.len()).unwrap_or(1));
+        let inv = if n_embd_f > 0.0 {
+            1.0 / n_embd_f.sqrt()
+        } else {
+            0.0
+        };
+        let scale = f32s(g.tensor(&tname(layer, "ffn_gate_inp.scale")).unwrap()).unwrap();
+        for (v, s) in tmp.iter_mut().zip(scale.iter()) {
+            *v *= inv * *s;
+        }
+        let logits = oracle_gemv(
+            g.tensor(&tname(layer, "ffn_gate_inp.weight")).unwrap(),
+            &tmp,
+        );
+        let mut routed =
+            oracle_softmax_norm_w_moe_from_logits(g, "gemma4", &xn_exp, layer, &logits, true);
+        let pn2 = f32s(g.tensor(&tname(layer, "ffn_post_norm_2.weight")).unwrap()).unwrap();
+        routed = oracle_rmsnorm(&routed, &pn2, eps);
+        shared
+            .iter()
+            .zip(routed.iter())
+            .map(|(a, b)| a + b)
+            .collect()
+    }
+
     /// Official llama.cpp `build_moe_ffn` on one token: softmax, then top-k;
     /// SwiGLU; weights after the expert with `norm_w` clamp `2^-14`.
-    fn oracle_llama_moe(g: &Gguf, xn: &[f32]) -> Vec<f32> {
-        oracle_softmax_norm_w_moe(g, "llama", xn)
+    fn oracle_llama_moe(g: &Gguf, xn: &[f32], layer: usize) -> Vec<f32> {
+        oracle_softmax_norm_w_moe(g, "llama", xn, layer)
     }
 
     /// Official qwen3moe.cpp on one token: same `build_moe_ffn` as llama MoE
     /// (`SOFTMAX` + `norm_w`). QK-Norm is applied on Q/K in `oracle_forward_seq`.
-    fn oracle_qwen3moe(g: &Gguf, xn: &[f32]) -> Vec<f32> {
-        oracle_softmax_norm_w_moe(g, "qwen3moe", xn)
+    fn oracle_qwen3moe(g: &Gguf, xn: &[f32], layer: usize) -> Vec<f32> {
+        oracle_softmax_norm_w_moe(g, "qwen3moe", xn, layer)
     }
 
     /// Official qwen3next.cpp on one token: softmax then top-k with `norm_w`,
     /// plus shared expert * sigmoid(`ffn_gate_inp_shexp`).
-    fn oracle_qwen3next(g: &Gguf, xn: &[f32]) -> Vec<f32> {
-        let mut routed = oracle_softmax_norm_w_moe(g, "qwen3next", xn);
-        let gate_s = oracle_gemv(g.tensor("blk.0.ffn_gate_shexp.weight").unwrap(), xn);
-        let up_s = oracle_gemv(g.tensor("blk.0.ffn_up_shexp.weight").unwrap(), xn);
+    fn oracle_qwen3next(g: &Gguf, xn: &[f32], layer: usize) -> Vec<f32> {
+        let mut routed = oracle_softmax_norm_w_moe(g, "qwen3next", xn, layer);
+        let mut gate_s = oracle_gemv(
+            g.tensor(&tname(layer, "ffn_gate_shexp.weight")).unwrap(),
+            xn,
+        );
+        oracle_mul_ffn_gate_shexp_s(g, layer, &mut gate_s);
+        let mut up_s = oracle_gemv(g.tensor(&tname(layer, "ffn_up_shexp.weight")).unwrap(), xn);
+        oracle_mul_ffn_up_shexp_s(g, layer, &mut up_s);
         let h_s: Vec<f32> = gate_s
             .iter()
             .zip(up_s.iter())
             .map(|(gv, u)| (gv / (1.0 + (-gv).exp())) * u)
             .collect();
-        let mut shexp = oracle_gemv(g.tensor("blk.0.ffn_down_shexp.weight").unwrap(), &h_s);
-        let gate_inp_s = oracle_gemv(g.tensor("blk.0.ffn_gate_inp_shexp.weight").unwrap(), xn);
+        let mut shexp = oracle_gemv(
+            g.tensor(&tname(layer, "ffn_down_shexp.weight")).unwrap(),
+            &h_s,
+        );
+        oracle_mul_ffn_down_shexp_s(g, layer, &mut shexp);
+        let gate_inp_s = oracle_gemv(
+            g.tensor(&tname(layer, "ffn_gate_inp_shexp.weight"))
+                .unwrap(),
+            xn,
+        );
         assert_eq!(gate_inp_s.len(), 1);
         let sw = 1.0 / (1.0 + (-gate_inp_s[0]).exp());
         for v in &mut shexp {
@@ -6199,10 +13709,10 @@ mod tests {
 
     /// Official llama4.cpp MoE on one token: top-k raw logits, sigmoid weight
     /// before SwiGLU, plus shared expert.
-    fn oracle_llama4_moe(g: &Gguf, xn: &[f32]) -> Vec<f32> {
+    fn oracle_llama4_moe(g: &Gguf, xn: &[f32], layer: usize) -> Vec<f32> {
         let n_expert = arch_u32(g, "llama4", "expert_count").unwrap() as usize;
         let n_used = arch_u32(g, "llama4", "expert_used_count").unwrap() as usize;
-        let logits = oracle_gemv(g.tensor("blk.0.ffn_gate_inp.weight").unwrap(), xn);
+        let logits = oracle_gemv(g.tensor(&tname(layer, "ffn_gate_inp.weight")).unwrap(), xn);
         assert_eq!(logits.len(), n_expert);
         let mut idx: Vec<usize> = (0..n_expert).collect();
         idx.sort_by(|&a, &b| match logits[b].partial_cmp(&logits[a]) {
@@ -6210,9 +13720,9 @@ mod tests {
             Some(ord) => ord,
         });
         idx.truncate(n_used);
-        let gate_exps = g.tensor("blk.0.ffn_gate_exps.weight").unwrap();
-        let up_exps = g.tensor("blk.0.ffn_up_exps.weight").unwrap();
-        let down_exps = g.tensor("blk.0.ffn_down_exps.weight").unwrap();
+        let gate_exps = g.tensor(&tname(layer, "ffn_gate_exps.weight")).unwrap();
+        let up_exps = g.tensor(&tname(layer, "ffn_up_exps.weight")).unwrap();
+        let down_exps = g.tensor(&tname(layer, "ffn_down_exps.weight")).unwrap();
         let mut routed = vec![0.0f32; xn.len()];
         for e in idx {
             let w = 1.0 / (1.0 + (-logits[e]).exp());
@@ -6229,14 +13739,23 @@ mod tests {
                 *o += *v;
             }
         }
-        let gate_s = oracle_gemv(g.tensor("blk.0.ffn_gate_shexp.weight").unwrap(), xn);
-        let up_s = oracle_gemv(g.tensor("blk.0.ffn_up_shexp.weight").unwrap(), xn);
+        let mut gate_s = oracle_gemv(
+            g.tensor(&tname(layer, "ffn_gate_shexp.weight")).unwrap(),
+            xn,
+        );
+        oracle_mul_ffn_gate_shexp_s(g, layer, &mut gate_s);
+        let mut up_s = oracle_gemv(g.tensor(&tname(layer, "ffn_up_shexp.weight")).unwrap(), xn);
+        oracle_mul_ffn_up_shexp_s(g, layer, &mut up_s);
         let h_s: Vec<f32> = gate_s
             .iter()
             .zip(up_s.iter())
             .map(|(gv, u)| (gv / (1.0 + (-gv).exp())) * u)
             .collect();
-        let shexp = oracle_gemv(g.tensor("blk.0.ffn_down_shexp.weight").unwrap(), &h_s);
+        let mut shexp = oracle_gemv(
+            g.tensor(&tname(layer, "ffn_down_shexp.weight")).unwrap(),
+            &h_s,
+        );
+        oracle_mul_ffn_down_shexp_s(g, layer, &mut shexp);
         routed
             .iter()
             .zip(shexp.iter())
@@ -6246,10 +13765,10 @@ mod tests {
 
     /// Official qwen2moe.cpp on one token: softmax then top-k, weights after
     /// SwiGLU without `norm_w`, plus shared expert * sigmoid(`ffn_gate_inp_shexp`).
-    fn oracle_qwen2moe(g: &Gguf, xn: &[f32]) -> Vec<f32> {
+    fn oracle_qwen2moe(g: &Gguf, xn: &[f32], layer: usize) -> Vec<f32> {
         let n_expert = arch_u32(g, "qwen2moe", "expert_count").unwrap() as usize;
         let n_used = arch_u32(g, "qwen2moe", "expert_used_count").unwrap() as usize;
-        let logits = oracle_gemv(g.tensor("blk.0.ffn_gate_inp.weight").unwrap(), xn);
+        let logits = oracle_gemv(g.tensor(&tname(layer, "ffn_gate_inp.weight")).unwrap(), xn);
         assert_eq!(logits.len(), n_expert);
         let m = logits.iter().copied().fold(f32::NEG_INFINITY, f32::max);
         let mut probs: Vec<f32> = logits.iter().map(|v| (v - m).exp()).collect();
@@ -6265,9 +13784,9 @@ mod tests {
             Some(ord) => ord,
         });
         idx.truncate(n_used);
-        let gate_exps = g.tensor("blk.0.ffn_gate_exps.weight").unwrap();
-        let up_exps = g.tensor("blk.0.ffn_up_exps.weight").unwrap();
-        let down_exps = g.tensor("blk.0.ffn_down_exps.weight").unwrap();
+        let gate_exps = g.tensor(&tname(layer, "ffn_gate_exps.weight")).unwrap();
+        let up_exps = g.tensor(&tname(layer, "ffn_up_exps.weight")).unwrap();
+        let down_exps = g.tensor(&tname(layer, "ffn_down_exps.weight")).unwrap();
         let mut routed = vec![0.0f32; xn.len()];
         for e in idx {
             let w = probs[e];
@@ -6283,15 +13802,28 @@ mod tests {
                 *o += *v * w;
             }
         }
-        let gate_s = oracle_gemv(g.tensor("blk.0.ffn_gate_shexp.weight").unwrap(), xn);
-        let up_s = oracle_gemv(g.tensor("blk.0.ffn_up_shexp.weight").unwrap(), xn);
+        let mut gate_s = oracle_gemv(
+            g.tensor(&tname(layer, "ffn_gate_shexp.weight")).unwrap(),
+            xn,
+        );
+        oracle_mul_ffn_gate_shexp_s(g, layer, &mut gate_s);
+        let mut up_s = oracle_gemv(g.tensor(&tname(layer, "ffn_up_shexp.weight")).unwrap(), xn);
+        oracle_mul_ffn_up_shexp_s(g, layer, &mut up_s);
         let h_s: Vec<f32> = gate_s
             .iter()
             .zip(up_s.iter())
             .map(|(gv, u)| (gv / (1.0 + (-gv).exp())) * u)
             .collect();
-        let mut shexp = oracle_gemv(g.tensor("blk.0.ffn_down_shexp.weight").unwrap(), &h_s);
-        let gate_inp_s = oracle_gemv(g.tensor("blk.0.ffn_gate_inp_shexp.weight").unwrap(), xn);
+        let mut shexp = oracle_gemv(
+            g.tensor(&tname(layer, "ffn_down_shexp.weight")).unwrap(),
+            &h_s,
+        );
+        oracle_mul_ffn_down_shexp_s(g, layer, &mut shexp);
+        let gate_inp_s = oracle_gemv(
+            g.tensor(&tname(layer, "ffn_gate_inp_shexp.weight"))
+                .unwrap(),
+            xn,
+        );
         assert_eq!(gate_inp_s.len(), 1);
         let sw = 1.0 / (1.0 + (-gate_inp_s[0]).exp());
         for v in &mut shexp {
@@ -6324,7 +13856,13 @@ mod tests {
     /// `ggml/src/ggml-cpu/ops.cpp` `rotate_pairs(n_dims, n_dims/2, cache, .., scale = 2)`:
     /// `ic = i0/2`, `x0 = src[ic]`, `x1 = src[ic + n_dims/2]`. The theta walk is the
     /// same `i0 += 2` progression as NORM; only the rotated lane pair differs.
-    fn oracle_rope_neox(mut v: Vec<f32>, pos: usize, n_rot: usize, base: f32) -> Vec<f32> {
+    fn oracle_rope_neox(
+        mut v: Vec<f32>,
+        pos: usize,
+        n_rot: usize,
+        base: f32,
+        freq_factors: Option<&[f32]>,
+    ) -> Vec<f32> {
         let n = n_rot.min(v.len());
         if n < 2 || !n.is_multiple_of(2) {
             return v;
@@ -6335,7 +13873,9 @@ mod tests {
         let mut i0 = 0usize;
         while i0 + 1 < n {
             let ic = i0 / 2;
-            let (c, s) = (theta.cos(), theta.sin());
+            let ff = freq_factors.and_then(|f| f.get(ic).copied()).unwrap_or(1.0);
+            let angle = theta / ff;
+            let (c, s) = (angle.cos(), angle.sin());
             let x0 = v[ic];
             let x1 = v[ic + n_offset];
             v[ic] = x0 * c - x1 * s;
@@ -6352,7 +13892,18 @@ mod tests {
     fn oracle_rope_is_neox(arch: &str) -> bool {
         matches!(
             arch,
-            "qwen2" | "qwen2moe" | "qwen3" | "qwen3moe" | "qwen3next" | "phi3" | "gemma"
+            "qwen2"
+                | "qwen2moe"
+                | "qwen3"
+                | "qwen3moe"
+                | "qwen3next"
+                | "phi2"
+                | "phi3"
+                | "gemma"
+                | "gemma2"
+                | "gemma3"
+                | "gemma3n"
+                | "gemma4"
         )
     }
 
@@ -6445,220 +13996,908 @@ mod tests {
         oracle_forward_seq(g, &[token])
     }
 
-    /// Independent scalar Llama math for a token sequence (causal attn + GQA).
-    fn oracle_forward_seq(g: &Gguf, tokens: &[u32]) -> Vec<f32> {
-        let arch = architecture(g).expect("arch");
+    fn oracle_scale_match(src: &[f32], dst: &mut [f32]) {
+        let mag_s: f32 = src.iter().map(|v| v * v).sum::<f32>().sqrt();
+        let mag_d: f32 = dst.iter().map(|v| v * v).sum::<f32>().sqrt();
+        let scale = if mag_d > 0.0 { mag_s / mag_d } else { 0.0 };
+        for v in dst.iter_mut() {
+            *v *= scale;
+        }
+    }
+
+    fn oracle_gaussian_topk(gate: &mut [f32]) {
+        let n_ff = gate.len();
+        if n_ff < 2 {
+            return;
+        }
+        let n_f = n_ff as f32;
+        let mean = gate.iter().sum::<f32>() / n_f;
+        let var = gate
+            .iter()
+            .map(|v| {
+                let d = *v - mean;
+                d * d
+            })
+            .sum::<f32>()
+            / (n_f - 1.0);
+        let cutoff = mean + var.sqrt() * GEMMA3N_SPARSITY_STD_MUL;
+        for v in gate.iter_mut() {
+            *v = (*v - cutoff).max(0.0);
+        }
+    }
+
+    fn oracle_gemma3n_router(g: &Gguf, x: &[f32], li: usize, eps: f32, n_embd: usize) -> Vec<f32> {
+        let rn = f32s(g.tensor(&tname(li, "altup_router_norm.weight")).unwrap()).unwrap();
+        let mut inp = oracle_rmsnorm(x, &rn, eps);
+        let inv = 1.0 / n_embd as f32;
+        for v in &mut inp {
+            *v *= inv;
+        }
+        let mut y = oracle_gemv(g.tensor(&tname(li, "altup_router.weight")).unwrap(), &inp);
+        for v in &mut y {
+            *v = v.tanh();
+        }
+        y
+    }
+
+    fn oracle_gemma3n_predict(
+        g: &Gguf,
+        streams: &[Vec<f32>],
+        li: usize,
+        eps: f32,
+        n_embd: usize,
+        i_act: usize,
+    ) -> Vec<Vec<f32>> {
+        let n_altup = streams.len();
+        let modalities = oracle_gemma3n_router(g, &streams[i_act], li, eps, n_embd);
+        let coefs = oracle_gemv(
+            g.tensor(&tname(li, "altup_predict_coef.weight")).unwrap(),
+            &modalities,
+        );
+        let mut pred = streams.to_vec();
+        for i in 0..n_altup {
+            for j in 0..n_altup {
+                let c = coefs[j + i * n_altup];
+                for (d, s) in pred[i].iter_mut().zip(streams[j].iter()) {
+                    *d += c * *s;
+                }
+            }
+        }
+        pred
+    }
+
+    fn oracle_gemma3n_correct(
+        g: &Gguf,
+        pred: &mut [Vec<f32>],
+        activated: &[f32],
+        li: usize,
+        eps: f32,
+        n_embd: usize,
+        i_act: usize,
+    ) {
+        let n_altup = pred.len();
+        let modalities = oracle_gemma3n_router(g, activated, li, eps, n_embd);
+        let mut coefs = oracle_gemv(
+            g.tensor(&tname(li, "altup_correct_coef.weight")).unwrap(),
+            &modalities,
+        );
+        for c in &mut coefs {
+            *c += 1.0;
+        }
+        let mut innov = vec![0.0f32; n_embd];
+        for ((d, a), p) in innov
+            .iter_mut()
+            .zip(activated.iter())
+            .zip(pred[i_act].iter())
+        {
+            *d = *a - *p;
+        }
+        for i in 0..n_altup {
+            let c = coefs[i];
+            for (d, iv) in pred[i].iter_mut().zip(innov.iter()) {
+                *d += c * *iv;
+            }
+        }
+    }
+
+    /// Independent scalar of official `src/models/gemma3n.cpp` (AltUp, Laurel,
+    /// per-layer inputs, V RMSNorm, attention scale 1.0, gaussian_topk, SWA
+    /// period 5, final tanh softcap).
+    fn oracle_gemma3n_forward_seq(g: &Gguf, tokens: &[u32]) -> Vec<f32> {
+        let arch = "gemma3n";
         let n_embd = arch_u32(g, arch, "embedding_length").unwrap() as usize;
         let n_head = arch_u32(g, arch, "attention.head_count").unwrap() as usize;
         let n_kv = arch_u32(g, arch, "attention.head_count_kv").unwrap() as usize;
+        let n_layer = arch_u32(g, arch, "block_count").unwrap() as usize;
         let n_rot = oracle_n_rot(g, arch, n_embd, n_head);
         let eps = arch_f32(g, arch, "attention.layer_norm_rms_epsilon").unwrap();
-        let base = arch_f32(g, arch, "rope.freq_base").unwrap();
+        let base = arch_f32(g, arch, "rope.freq_base").unwrap_or(10_000.0);
         let hd = n_embd / n_head;
         let gqa = n_head / n_kv;
+        let n_altup = arch_u32(g, arch, "altup.num_inputs")
+            .unwrap_or(u32::try_from(GEMMA3N_N_ALTUP).unwrap_or(0)) as usize;
+        let i_act = arch_u32(g, arch, "altup.active_idx")
+            .unwrap_or(u32::try_from(GEMMA3N_I_ALTUP_ACT).unwrap_or(0))
+            as usize;
+        let n_ea = arch_u32(g, arch, "embedding_length_per_layer_input")
+            .unwrap_or(u32::try_from(GEMMA3N_N_EMBD_ALTUP).unwrap_or(0))
+            as usize;
+        let n_swa = arch_u32(g, arch, "attention.sliding_window").unwrap() as usize;
+        let period = arch_u32(g, arch, "attention.sliding_window_pattern")
+            .unwrap_or(GEMMA3N_SWA_PERIOD_DEFAULT);
+        let cap =
+            arch_f32(g, arch, "final_logit_softcapping").unwrap_or(GEMMA2_FINAL_LOGIT_SOFTCAPPING);
+        let embed_scale = (n_embd as f32).sqrt();
+        let tok_scale = (n_ea as f32).sqrt();
+        let mix_scale = 1.0 / 2.0f32.sqrt();
+        let proj_scale = 1.0 / (n_embd as f32).sqrt();
+        let extra = n_altup - 1;
+        let mut k_cache: Vec<Vec<Vec<Vec<f32>>>> = vec![vec![Vec::new(); n_kv]; n_layer];
+        let mut v_cache: Vec<Vec<Vec<Vec<f32>>>> = vec![vec![Vec::new(); n_kv]; n_layer];
+        let mut last = Vec::new();
+        for (pos, &token) in tokens.iter().enumerate() {
+            let mut residual = oracle_embed(g.tensor("token_embd.weight").unwrap(), token);
+            for v in &mut residual {
+                *v *= embed_scale;
+            }
+            let mut streams: Vec<Vec<f32>> = vec![residual.clone()];
+            for p in 0..extra {
+                let mut extra_s =
+                    oracle_gemv_expert(g.tensor("altup_proj.weight").unwrap(), p, &residual);
+                oracle_scale_match(&residual, &mut extra_s);
+                streams.push(extra_s);
+            }
+            let mut per_tok = oracle_embed(g.tensor("per_layer_token_embd.weight").unwrap(), token);
+            for v in &mut per_tok {
+                *v *= tok_scale;
+            }
+            let mut proj = oracle_gemv(g.tensor("per_layer_model_proj.weight").unwrap(), &residual);
+            for v in &mut proj {
+                *v *= proj_scale;
+            }
+            let pn = f32s(g.tensor("per_layer_proj_norm.weight").unwrap()).unwrap();
+            let mut per_layer: Vec<Vec<f32>> = Vec::new();
+            for li in 0..n_layer {
+                let row = &proj[li * n_ea..(li + 1) * n_ea];
+                let mut nrm = oracle_rmsnorm(row, &pn, eps);
+                let tok_row = &per_tok[li * n_ea..(li + 1) * n_ea];
+                for (nv, tv) in nrm.iter_mut().zip(tok_row.iter()) {
+                    *nv = (*nv + *tv) * mix_scale;
+                }
+                per_layer.push(nrm);
+            }
+            for li in 0..n_layer {
+                let mut pred = oracle_gemma3n_predict(g, &streams, li, eps, n_embd, i_act);
+                let active = pred[i_act].clone();
+                let an = f32s(g.tensor(&tname(li, "attn_norm.weight")).unwrap()).unwrap();
+                let xn = oracle_rmsnorm(&active, &an, eps);
+                let l = oracle_gemv(g.tensor(&tname(li, "laurel_l.weight")).unwrap(), &xn);
+                let mut laurel = oracle_gemv(g.tensor(&tname(li, "laurel_r.weight")).unwrap(), &l);
+                let ln = f32s(g.tensor(&tname(li, "laurel_post_norm.weight")).unwrap()).unwrap();
+                laurel = oracle_rmsnorm(&laurel, &ln, eps);
+                for (a, b) in laurel.iter_mut().zip(xn.iter()) {
+                    *a += *b;
+                }
+                let mut q = oracle_gemv(g.tensor(&tname(li, "attn_q.weight")).unwrap(), &xn);
+                oracle_mul_attn_q_s(g, li, &mut q);
+                let mut k = oracle_gemv(g.tensor(&tname(li, "attn_k.weight")).unwrap(), &xn);
+                oracle_mul_attn_k_s(g, li, &mut k);
+                let mut v = oracle_gemv(g.tensor(&tname(li, "attn_v.weight")).unwrap(), &xn);
+                oracle_mul_attn_v_s(g, li, &mut v);
+                let qn = f32s(g.tensor(&tname(li, "attn_q_norm.weight")).unwrap()).unwrap();
+                let kn = f32s(g.tensor(&tname(li, "attn_k_norm.weight")).unwrap()).unwrap();
+                let mut qh: Vec<Vec<f32>> = q.chunks(hd).map(<[f32]>::to_vec).collect();
+                let mut kh: Vec<Vec<f32>> = k.chunks(hd).map(<[f32]>::to_vec).collect();
+                let mut vh: Vec<Vec<f32>> = v.chunks(hd).map(<[f32]>::to_vec).collect();
+                for h in &mut qh {
+                    *h = oracle_rmsnorm(h, &qn, eps);
+                }
+                for h in &mut kh {
+                    *h = oracle_rmsnorm(h, &kn, eps);
+                }
+                for h in &mut vh {
+                    *h = oracle_rmsnorm_unweighted(h, eps);
+                }
+                for h in &mut kh {
+                    *h = oracle_rope_neox(h.clone(), pos, n_rot, base, None);
+                }
+                for h in &mut qh {
+                    *h = oracle_rope_neox(h.clone(), pos, n_rot, base, None);
+                }
+                for (hkv, khv) in kh.iter().enumerate() {
+                    k_cache[li][hkv].push(khv.clone());
+                    v_cache[li][hkv].push(vh[hkv].clone());
+                }
+                let seq = pos + 1;
+                let mut attn = vec![0.0f32; n_embd];
+                for (hq, qvec) in qh.iter().enumerate() {
+                    let hkv = hq / gqa;
+                    let mut scores = vec![0.0f32; seq];
+                    for t in 0..seq {
+                        let kv = &k_cache[li][hkv][t];
+                        let mut s = qvec.iter().zip(kv.iter()).map(|(a, b)| a * b).sum::<f32>();
+                        if gemma2_is_swa(li, period) && n_swa > 0 && pos.saturating_sub(t) >= n_swa
+                        {
+                            s = f32::NEG_INFINITY;
+                        }
+                        scores[t] = s;
+                    }
+                    let m = scores.iter().copied().fold(f32::NEG_INFINITY, f32::max);
+                    let mut z = 0.0f32;
+                    for v in &mut scores {
+                        *v = (*v - m).exp();
+                        z += *v;
+                    }
+                    if z > 0.0 {
+                        for v in &mut scores {
+                            *v /= z;
+                        }
+                    }
+                    let mut acc = vec![0.0f32; hd];
+                    for t in 0..seq {
+                        let st = scores[t];
+                        for (a, b) in acc.iter_mut().zip(v_cache[li][hkv][t].iter()) {
+                            *a += st * *b;
+                        }
+                    }
+                    let off = hq * hd;
+                    attn[off..off + hd].copy_from_slice(&acc);
+                }
+                let mut attn_out =
+                    oracle_gemv(g.tensor(&tname(li, "attn_output.weight")).unwrap(), &attn);
+                oracle_mul_attn_out_s(g, li, &mut attn_out);
+                let pn_attn =
+                    f32s(g.tensor(&tname(li, "post_attention_norm.weight")).unwrap()).unwrap();
+                attn_out = oracle_rmsnorm(&attn_out, &pn_attn, eps);
+                let attn_gated: Vec<f32> = attn_out
+                    .iter()
+                    .zip(active.iter())
+                    .map(|(a, b)| a + b)
+                    .collect();
+                let attn_laurel: Vec<f32> = attn_gated
+                    .iter()
+                    .zip(laurel.iter())
+                    .map(|(a, b)| (a + b) * mix_scale)
+                    .collect();
+                let fnorm = f32s(g.tensor(&tname(li, "ffn_norm.weight")).unwrap()).unwrap();
+                let xn_ff = oracle_rmsnorm(&attn_laurel, &fnorm, eps);
+                let mut gate =
+                    oracle_gemv(g.tensor(&tname(li, "ffn_gate.weight")).unwrap(), &xn_ff);
+                oracle_mul_ffn_gate_s(g, li, &mut gate);
+                let mut up = oracle_gemv(g.tensor(&tname(li, "ffn_up.weight")).unwrap(), &xn_ff);
+                oracle_mul_ffn_up_s(g, li, &mut up);
+                if li < GEMMA3N_N_LAYER_SPARSITY {
+                    oracle_gaussian_topk(&mut gate);
+                }
+                let h: Vec<f32> = gate
+                    .iter()
+                    .zip(up.iter())
+                    .map(|(gv, u)| oracle_gelu(*gv) * *u)
+                    .collect();
+                let mut down = oracle_gemv(g.tensor(&tname(li, "ffn_down.weight")).unwrap(), &h);
+                oracle_mul_ffn_down_s(g, li, &mut down);
+                let pn_ff = f32s(g.tensor(&tname(li, "post_ffw_norm.weight")).unwrap()).unwrap();
+                down = oracle_rmsnorm(&down, &pn_ff, eps);
+                let activated: Vec<f32> = down
+                    .iter()
+                    .zip(attn_laurel.iter())
+                    .map(|(a, b)| a + b)
+                    .collect();
+                oracle_gemma3n_correct(g, &mut pred, &activated, li, eps, n_embd, i_act);
+                let scale_w =
+                    f32s(g.tensor(&tname(li, "altup_correct_scale.weight")).unwrap()).unwrap();
+                let mut first: Vec<f32> = pred[i_act]
+                    .iter()
+                    .zip(scale_w.iter())
+                    .map(|(a, s)| a * s)
+                    .collect();
+                first = oracle_gemv(g.tensor(&tname(li, "inp_gate.weight")).unwrap(), &first);
+                for v in &mut first {
+                    *v = oracle_gelu(*v);
+                }
+                for (f, p) in first.iter_mut().zip(per_layer[li].iter()) {
+                    *f *= *p;
+                }
+                first = oracle_gemv(g.tensor(&tname(li, "proj.weight")).unwrap(), &first);
+                let post = f32s(g.tensor(&tname(li, "post_norm.weight")).unwrap()).unwrap();
+                first = oracle_rmsnorm(&first, &post, eps);
+                for stream in pred.iter_mut().skip(1) {
+                    for (d, s) in stream.iter_mut().zip(first.iter()) {
+                        *d += *s;
+                    }
+                }
+                streams = pred;
+            }
+            let mut merged = streams[i_act].clone();
+            for p in 0..extra {
+                let mut extra_s = oracle_gemv_expert(
+                    g.tensor("altup_unembd_proj.weight").unwrap(),
+                    p,
+                    &streams[p + 1],
+                );
+                oracle_scale_match(&streams[i_act], &mut extra_s);
+                for (d, s) in merged.iter_mut().zip(extra_s.iter()) {
+                    *d += *s;
+                }
+            }
+            let inv = 1.0 / n_altup as f32;
+            for v in &mut merged {
+                *v *= inv;
+            }
+            let on = f32s(g.tensor("output_norm.weight").unwrap()).unwrap();
+            let x = oracle_rmsnorm(&merged, &on, eps);
+            let lm_head = g
+                .tensor("output.weight")
+                .or_else(|| g.tensor("token_embd.weight"))
+                .expect("lm_head");
+            last = oracle_gemv(lm_head, &x);
+            oracle_mul_output_s(g, &mut last);
+            if cap > 0.0 {
+                for v in &mut last {
+                    *v = cap * (*v / cap).tanh();
+                }
+            }
+        }
+        last
+    }
+
+    fn oracle_gemma4_layer_is_swa(g: &Gguf, arch: &str, li: usize) -> bool {
+        match g.kv(&arch_key(arch, "attention.sliding_window_pattern")) {
+            Some(Kv::Array { items, .. }) => match items.get(li) {
+                Some(Kv::Bool(b)) => *b,
+                Some(Kv::U32(v)) => *v != 0,
+                Some(Kv::I32(v)) => *v != 0,
+                _ => false,
+            },
+            Some(Kv::U32(v)) => *v != 0,
+            Some(Kv::I32(v)) => *v != 0,
+            Some(Kv::Bool(b)) => *b,
+            _ => false,
+        }
+    }
+
+    fn oracle_gemma4_per_layer(
+        g: &Gguf,
+        residual: &[f32],
+        token: u32,
+        n_layer: usize,
+        n_pl: usize,
+        n_embd: usize,
+        eps: f32,
+    ) -> Vec<Vec<f32>> {
+        let tok_scale = (n_pl as f32).sqrt();
+        let proj_scale = 1.0 / (n_embd as f32).sqrt();
+        let mix_scale = 1.0 / 2.0f32.sqrt();
+        let mut per_tok = oracle_embed(g.tensor("per_layer_token_embd.weight").unwrap(), token);
+        for v in &mut per_tok {
+            *v *= tok_scale;
+        }
+        let mut proj = oracle_gemv(g.tensor("per_layer_model_proj.weight").unwrap(), residual);
+        for v in &mut proj {
+            *v *= proj_scale;
+        }
+        let pn = f32s(g.tensor("per_layer_proj_norm.weight").unwrap()).unwrap();
+        let mut out = Vec::new();
+        for li in 0..n_layer {
+            let row = &proj[li * n_pl..(li + 1) * n_pl];
+            let mut nrm = oracle_rmsnorm(row, &pn, eps);
+            let tok_row = &per_tok[li * n_pl..(li + 1) * n_pl];
+            for (nv, tv) in nrm.iter_mut().zip(tok_row.iter()) {
+                *nv = (*nv + *tv) * mix_scale;
+            }
+            out.push(nrm);
+        }
+        out
+    }
+
+    fn oracle_gemma4_ple_inject(g: &Gguf, x: &[f32], pl: &[f32], li: usize, eps: f32) -> Vec<f32> {
+        let mut gate = oracle_gemv(g.tensor(&tname(li, "inp_gate.weight")).unwrap(), x);
+        for v in &mut gate {
+            *v = oracle_gelu(*v);
+        }
+        for (f, p) in gate.iter_mut().zip(pl.iter()) {
+            *f *= *p;
+        }
+        let mut inj = oracle_gemv(g.tensor(&tname(li, "proj.weight")).unwrap(), &gate);
+        let post = f32s(g.tensor(&tname(li, "post_norm.weight")).unwrap()).unwrap();
+        inj = oracle_rmsnorm(&inj, &post, eps);
+        x.iter().zip(inj.iter()).map(|(a, b)| a + b).collect()
+    }
+
+    /// Independent scalar Llama math for a token sequence (causal attn + GQA).
+    fn oracle_forward_seq(g: &Gguf, tokens: &[u32]) -> Vec<f32> {
+        let arch = architecture(g).expect("arch");
+        if arch == "gemma3n" {
+            return oracle_gemma3n_forward_seq(g, tokens);
+        }
+        let n_embd = arch_u32(g, arch, "embedding_length").unwrap() as usize;
+        let n_head = arch_u32(g, arch, "attention.head_count").unwrap() as usize;
+        let n_kv = arch_u32(g, arch, "attention.head_count_kv").unwrap() as usize;
+        let n_layer = arch_u32(g, arch, "block_count").unwrap() as usize;
+        let n_rot = oracle_n_rot(g, arch, n_embd, n_head);
+        let phi2 = arch == "phi2";
+        let bloom = arch == "bloom";
+        let eps = if phi2 || bloom {
+            arch_f32(g, arch, "attention.layer_norm_epsilon").unwrap()
+        } else {
+            arch_f32(g, arch, "attention.layer_norm_rms_epsilon").unwrap()
+        };
+        let base = arch_f32(g, arch, "rope.freq_base").unwrap_or(10_000.0);
+        let gqa = n_head / n_kv;
         let emb = g.tensor("token_embd.weight").unwrap();
-        let gemma = arch == "gemma";
+        let gemma2 = arch == "gemma2";
+        let gemma3 = arch == "gemma3";
+        let gemma4 = arch == "gemma4";
+        let gemma = arch == "gemma" || gemma2 || gemma3 || gemma4;
+        let gemma_post = gemma2 || gemma3 || gemma4;
+        let hd_full = if gemma4 {
+            arch_u32(g, arch, "attention.key_length")
+                .map(|v| v as usize)
+                .unwrap_or(n_embd / n_head)
+        } else {
+            n_embd / n_head
+        };
+        let hd_swa = if gemma4 {
+            arch_u32(g, arch, "attention.key_length_swa")
+                .map(|v| v as usize)
+                .unwrap_or(hd_full)
+        } else {
+            hd_full
+        };
+        let n_rot_swa = if gemma4 {
+            arch_u32(g, arch, "rope.dimension_count_swa")
+                .map(|v| v as usize)
+                .unwrap_or(n_rot)
+        } else {
+            n_rot
+        };
+        let base_swa = if gemma4 {
+            arch_f32(g, arch, "rope.freq_base_swa").unwrap_or(10_000.0)
+        } else {
+            base
+        };
+        let rope_freqs = if gemma4 {
+            g.tensor("rope_freqs.weight").map(|t| f32s(t).unwrap())
+        } else {
+            None
+        };
+        let gemma4_n_pl = if gemma4 {
+            arch_u32(g, arch, "embedding_length_per_layer_input").unwrap_or(0) as usize
+        } else {
+            0
+        };
+        let n_from_start = {
+            let n_layer_i = i32::try_from(n_layer).unwrap_or(i32::MAX);
+            if gemma4 {
+                let n_shared = arch_u32(g, arch, "attention.shared_kv_layers").unwrap_or(0);
+                n_layer_i.saturating_sub(i32::try_from(n_shared).unwrap_or(0))
+            } else {
+                n_layer_i
+            }
+        };
         let embed_scale = if gemma {
             f32::from(u16::try_from(n_embd).unwrap_or(1)).sqrt()
         } else {
             1.0
         };
-        let mut k_cache: Vec<Vec<Vec<f32>>> = vec![Vec::new(); n_kv];
-        let mut v_cache: Vec<Vec<Vec<f32>>> = vec![Vec::new(); n_kv];
+        let mut k_cache: Vec<Vec<Vec<Vec<f32>>>> = vec![vec![Vec::new(); n_kv]; n_layer];
+        let mut v_cache: Vec<Vec<Vec<Vec<f32>>>> = vec![vec![Vec::new(); n_kv]; n_layer];
         let mut last = Vec::new();
         for (pos, &token) in tokens.iter().enumerate() {
             let mut residual = oracle_embed(emb, token);
             for v in &mut residual {
                 *v *= embed_scale;
             }
-            let an = f32s(g.tensor("blk.0.attn_norm.weight").unwrap()).unwrap();
-            let x = oracle_rmsnorm(&residual, &an, eps);
-            let q_full = oracle_add_bias(
-                oracle_gemv(g.tensor("blk.0.attn_q.weight").unwrap(), &x),
-                g.tensor("blk.0.attn_q.bias"),
-            );
-            let k = oracle_add_bias(
-                oracle_gemv(g.tensor("blk.0.attn_k.weight").unwrap(), &x),
-                g.tensor("blk.0.attn_k.bias"),
-            );
-            let v = oracle_add_bias(
-                oracle_gemv(g.tensor("blk.0.attn_v.weight").unwrap(), &x),
-                g.tensor("blk.0.attn_v.bias"),
-            );
-            let qwen3next = arch == "qwen3next";
-            let qwen35 = arch == "qwen35";
-            let (q, attn_gate) = if qwen3next || qwen35 {
-                let mut q = Vec::new();
-                let mut gate = Vec::new();
-                for chunk in q_full.chunks(hd * 2) {
-                    q.extend_from_slice(&chunk[..hd]);
-                    gate.extend_from_slice(&chunk[hd..]);
-                }
-                (q, Some(gate))
+            if bloom {
+                let tw = f32s(g.tensor("token_embd_norm.weight").unwrap()).unwrap();
+                let tb = f32s(g.tensor("token_embd_norm.bias").unwrap()).unwrap();
+                residual = oracle_layernorm(&residual, &tw, Some(&tb), eps);
+            }
+            let per_layer = if gemma4_n_pl > 0 {
+                Some(oracle_gemma4_per_layer(
+                    g,
+                    &residual,
+                    token,
+                    n_layer,
+                    gemma4_n_pl,
+                    n_embd,
+                    eps,
+                ))
             } else {
-                (q_full, None)
+                None
             };
-            let mut qh: Vec<Vec<f32>> = q.chunks(hd).map(<[f32]>::to_vec).collect();
-            let mut kh: Vec<Vec<f32>> = k.chunks(hd).map(<[f32]>::to_vec).collect();
-            let vh: Vec<Vec<f32>> = v.chunks(hd).map(<[f32]>::to_vec).collect();
-            // Official Qwen3 / Qwen3MoE / Qwen3VL / Qwen3Next / Qwen35 QK-Norm (`LLM_NORM_RMS` on each head) before RoPE.
-            if let Some(qn) = g.tensor("blk.0.attn_q_norm.weight") {
-                let w = f32s(qn).unwrap();
-                for h in &mut qh {
-                    *h = oracle_rmsnorm(h, &w, eps);
-                }
-            }
-            if let Some(kn) = g.tensor("blk.0.attn_k_norm.weight") {
-                let w = f32s(kn).unwrap();
-                for h in &mut kh {
-                    *h = oracle_rmsnorm(h, &w, eps);
-                }
-            }
-            // Official llama4.cpp: iRoPE when `(il+1) % n_no_rope_layer_step != 0`.
-            // Writer-built tiny is 1 layer with default step 4, so layer 0 uses RoPE.
-            let llama4 = arch == "llama4";
-            let n_no_rope = if llama4 { LLAMA4_NO_ROPE_LAYER_STEP } else { 0 };
-            let use_rope = !llama4 || (n_no_rope > 0 && 1 % n_no_rope != 0);
-            let n_expert = arch_u32(g, arch, "expert_count").unwrap_or(0) as usize;
-            let qk_l2 = llama4 && use_rope && n_expert != 128;
-            if use_rope {
-                let sections = if arch == "qwen2vl" || arch == "qwen3vl" || arch == "qwen35" {
-                    oracle_rope_sections(g, arch)
-                } else {
+            let mut x = residual.clone();
+            for li in 0..n_layer {
+                let layer_swa = gemma4 && oracle_gemma4_layer_is_swa(g, arch, li);
+                let hd = if layer_swa { hd_swa } else { hd_full };
+                let n_rot_l = if layer_swa { n_rot_swa } else { n_rot };
+                let base_l = if layer_swa { base_swa } else { base };
+                let freq_factors = if layer_swa {
                     None
+                } else {
+                    rope_freqs.as_deref()
                 };
-                let is_imrope = arch == "qwen3vl" || arch == "qwen35";
-                let neox = oracle_rope_is_neox(arch);
-                for h in &mut qh {
-                    *h = match sections {
-                        Some(s) => oracle_rope_multi(
-                            h.clone(),
-                            [pos, pos, pos, 0],
-                            n_rot,
-                            base,
-                            s,
-                            is_imrope,
-                        ),
-                        None if neox => oracle_rope_neox(h.clone(), pos, n_rot, base),
-                        None => oracle_rope(h.clone(), pos, n_rot, base),
+                let an = f32s(g.tensor(&tname(li, "attn_norm.weight")).unwrap()).unwrap();
+                let an_b = g
+                    .tensor(&tname(li, "attn_norm.bias"))
+                    .and_then(|t| f32s(t).ok());
+                let xn_attn = if phi2 || bloom {
+                    oracle_layernorm(&residual, &an, an_b.as_deref(), eps)
+                } else {
+                    oracle_rmsnorm(&residual, &an, eps)
+                };
+                let attn_norm_output = xn_attn.clone();
+                let (mut q_full, k, v) = if bloom {
+                    let mut qkv =
+                        oracle_gemv(g.tensor(&tname(li, "attn_qkv.weight")).unwrap(), &xn_attn);
+                    oracle_mul_attn_qkv_s(g, li, &mut qkv);
+                    let qkv = oracle_add_bias(qkv, g.tensor(&tname(li, "attn_qkv.bias")));
+                    let n_q = n_head * hd;
+                    let n_k = n_kv * hd;
+                    let q = qkv[..n_q].to_vec();
+                    let mut k = qkv[n_q..n_q + n_k].to_vec();
+                    oracle_mul_attn_k_s(g, li, &mut k);
+                    let v = qkv[n_q + n_k..].to_vec();
+                    (q, k, v)
+                } else {
+                    let q = oracle_add_bias(
+                        oracle_gemv(g.tensor(&tname(li, "attn_q.weight")).unwrap(), &xn_attn),
+                        g.tensor(&tname(li, "attn_q.bias")),
+                    );
+                    let (k, v) = if gemma4 && !gemma4_has_kv(n_from_start, li) {
+                        (Vec::new(), Vec::new())
+                    } else {
+                        let mut k = oracle_add_bias(
+                            oracle_gemv(g.tensor(&tname(li, "attn_k.weight")).unwrap(), &xn_attn),
+                            g.tensor(&tname(li, "attn_k.bias")),
+                        );
+                        oracle_mul_attn_k_s(g, li, &mut k);
+                        let v = if let Some(tv) = g.tensor(&tname(li, "attn_v.weight")) {
+                            let mut v = oracle_add_bias(
+                                oracle_gemv(tv, &xn_attn),
+                                g.tensor(&tname(li, "attn_v.bias")),
+                            );
+                            oracle_mul_attn_v_s(g, li, &mut v);
+                            v
+                        } else if gemma4 {
+                            k.clone()
+                        } else {
+                            oracle_add_bias(
+                                oracle_gemv(
+                                    g.tensor(&tname(li, "attn_v.weight")).unwrap(),
+                                    &xn_attn,
+                                ),
+                                g.tensor(&tname(li, "attn_v.bias")),
+                            )
+                        };
+                        (k, v)
                     };
-                }
-                for h in &mut kh {
-                    *h = match sections {
-                        Some(s) => oracle_rope_multi(
-                            h.clone(),
-                            [pos, pos, pos, 0],
-                            n_rot,
-                            base,
-                            s,
-                            is_imrope,
-                        ),
-                        None if neox => oracle_rope_neox(h.clone(), pos, n_rot, base),
-                        None => oracle_rope(h.clone(), pos, n_rot, base),
-                    };
-                }
-                if qk_l2 {
+                    (q, k, v)
+                };
+                oracle_mul_attn_q_s(g, li, &mut q_full);
+                let qwen3next = arch == "qwen3next";
+                let qwen35 = arch == "qwen35";
+                let (q, attn_gate) = if qwen3next || qwen35 {
+                    let mut q = Vec::new();
+                    let mut gate = Vec::new();
+                    for chunk in q_full.chunks(hd * 2) {
+                        q.extend_from_slice(&chunk[..hd]);
+                        gate.extend_from_slice(&chunk[hd..]);
+                    }
+                    (q, Some(gate))
+                } else {
+                    (q_full, None)
+                };
+                let mut qh: Vec<Vec<f32>> = q.chunks(hd).map(<[f32]>::to_vec).collect();
+                let mut kh: Vec<Vec<f32>> = k.chunks(hd).map(<[f32]>::to_vec).collect();
+                let mut vh: Vec<Vec<f32>> = v.chunks(hd).map(<[f32]>::to_vec).collect();
+                // Official Qwen3 / Qwen3MoE / Qwen3VL / Qwen3Next / Qwen35 QK-Norm (`LLM_NORM_RMS` on each head) before RoPE.
+                if let Some(qn) = g.tensor(&tname(li, "attn_q_norm.weight")) {
+                    let w = f32s(qn).unwrap();
                     for h in &mut qh {
+                        *h = oracle_rmsnorm(h, &w, eps);
+                    }
+                }
+                if let Some(kn) = g.tensor(&tname(li, "attn_k_norm.weight")) {
+                    let w = f32s(kn).unwrap();
+                    for h in &mut kh {
+                        *h = oracle_rmsnorm(h, &w, eps);
+                    }
+                }
+                if gemma4 && gemma4_has_kv(n_from_start, li) {
+                    for h in &mut vh {
                         *h = oracle_rmsnorm_unweighted(h, eps);
+                    }
+                }
+                // Official llama4.cpp: iRoPE when `(il+1) % n_no_rope_layer_step != 0`.
+                let llama4 = arch == "llama4";
+                let n_no_rope = if llama4 { LLAMA4_NO_ROPE_LAYER_STEP } else { 0 };
+                let use_rope = !bloom && (!llama4 || (n_no_rope > 0 && (li + 1) % n_no_rope != 0));
+                let n_expert = arch_u32(g, arch, "expert_count").unwrap_or(0) as usize;
+                let qk_l2 = llama4 && use_rope && n_expert != 128;
+                if use_rope {
+                    let sections = if arch == "qwen2vl" || arch == "qwen3vl" || arch == "qwen35" {
+                        oracle_rope_sections(g, arch)
+                    } else {
+                        None
+                    };
+                    let is_imrope = arch == "qwen3vl" || arch == "qwen35";
+                    let neox = oracle_rope_is_neox(arch);
+                    for h in &mut qh {
+                        *h = match sections {
+                            Some(s) => oracle_rope_multi(
+                                h.clone(),
+                                [pos, pos, pos, 0],
+                                n_rot_l,
+                                base_l,
+                                s,
+                                is_imrope,
+                            ),
+                            None if neox => {
+                                oracle_rope_neox(h.clone(), pos, n_rot_l, base_l, freq_factors)
+                            }
+                            None => oracle_rope(h.clone(), pos, n_rot_l, base_l),
+                        };
                     }
                     for h in &mut kh {
-                        *h = oracle_rmsnorm_unweighted(h, eps);
-                    }
-                }
-            } else {
-                let scale = llama4_attn_temp_scale(pos);
-                for h in &mut qh {
-                    for v in h.iter_mut() {
-                        *v *= scale;
-                    }
-                }
-            }
-            for (hkv, khv) in kh.iter().enumerate() {
-                k_cache[hkv].push(khv.clone());
-                v_cache[hkv].push(vh[hkv].clone());
-            }
-            let seq = pos + 1;
-            let inv = 1.0 / (hd as f32).sqrt();
-            let mut attn = vec![0.0f32; n_embd];
-            for (hq, qvec) in qh.iter().enumerate() {
-                let hkv = hq / gqa;
-                let mut scores = vec![0.0f32; seq];
-                for t in 0..seq {
-                    let kv = &k_cache[hkv][t];
-                    scores[t] = qvec.iter().zip(kv.iter()).map(|(a, b)| a * b).sum::<f32>() * inv;
-                }
-                let m = scores.iter().copied().fold(f32::NEG_INFINITY, f32::max);
-                let mut s = 0.0f32;
-                for v in &mut scores {
-                    *v = (*v - m).exp();
-                    s += *v;
-                }
-                if s > 0.0 {
-                    for v in &mut scores {
-                        *v /= s;
-                    }
-                }
-                let mut acc = vec![0.0f32; hd];
-                for t in 0..seq {
-                    let st = scores[t];
-                    for (a, b) in acc.iter_mut().zip(v_cache[hkv][t].iter()) {
-                        *a += st * *b;
-                    }
-                }
-                let off = hq * hd;
-                attn[off..off + hd].copy_from_slice(&acc);
-            }
-            if let Some(gate) = attn_gate.as_ref() {
-                for (a, gv) in attn.iter_mut().zip(gate.iter()) {
-                    *a *= 1.0 / (1.0 + (-gv).exp());
-                }
-            }
-            let mut x = oracle_gemv(g.tensor("blk.0.attn_output.weight").unwrap(), &attn);
-            x = x.iter().zip(residual.iter()).map(|(a, b)| a + b).collect();
-            let fnorm = if qwen3next || qwen35 {
-                f32s(g.tensor("blk.0.post_attention_norm.weight").unwrap()).unwrap()
-            } else {
-                f32s(g.tensor("blk.0.ffn_norm.weight").unwrap()).unwrap()
-            };
-            let xn = oracle_rmsnorm(&x, &fnorm, eps);
-            let llama_moe = arch == "llama" && arch_u32(g, arch, "expert_count").unwrap_or(0) > 0;
-            let qwen2moe = arch == "qwen2moe";
-            let qwen3moe = arch == "qwen3moe";
-            let down = if llama4 {
-                oracle_llama4_moe(g, &xn)
-            } else if llama_moe {
-                oracle_llama_moe(g, &xn)
-            } else if qwen2moe {
-                oracle_qwen2moe(g, &xn)
-            } else if qwen3moe {
-                oracle_qwen3moe(g, &xn)
-            } else if qwen3next {
-                oracle_qwen3next(g, &xn)
-            } else {
-                let gate = oracle_gemv(g.tensor("blk.0.ffn_gate.weight").unwrap(), &xn);
-                let up = oracle_gemv(g.tensor("blk.0.ffn_up.weight").unwrap(), &xn);
-                let h: Vec<f32> = gate
-                    .iter()
-                    .zip(up.iter())
-                    .map(|(gv, u)| {
-                        let act = if gemma {
-                            oracle_gelu(*gv)
-                        } else {
-                            gv / (1.0 + (-gv).exp())
+                        *h = match sections {
+                            Some(s) => oracle_rope_multi(
+                                h.clone(),
+                                [pos, pos, pos, 0],
+                                n_rot_l,
+                                base_l,
+                                s,
+                                is_imrope,
+                            ),
+                            None if neox => {
+                                oracle_rope_neox(h.clone(), pos, n_rot_l, base_l, freq_factors)
+                            }
+                            None => oracle_rope(h.clone(), pos, n_rot_l, base_l),
                         };
-                        act * u
-                    })
-                    .collect();
-                oracle_gemv(g.tensor("blk.0.ffn_down.weight").unwrap(), &h)
-            };
-            x = down.iter().zip(x.iter()).map(|(a, b)| a + b).collect();
+                    }
+                    if qk_l2 {
+                        for h in &mut qh {
+                            *h = oracle_rmsnorm_unweighted(h, eps);
+                        }
+                        for h in &mut kh {
+                            *h = oracle_rmsnorm_unweighted(h, eps);
+                        }
+                    }
+                } else if !bloom {
+                    let scale = llama4_attn_temp_scale(pos);
+                    for h in &mut qh {
+                        for v in h.iter_mut() {
+                            *v *= scale;
+                        }
+                    }
+                }
+                if gemma4_has_kv(n_from_start, li) {
+                    for (hkv, khv) in kh.iter().enumerate() {
+                        k_cache[li][hkv].push(khv.clone());
+                        v_cache[li][hkv].push(vh[hkv].clone());
+                    }
+                }
+                if phi2 && use_rope {
+                    let q_scale = 1.0 / (hd as f32).sqrt();
+                    for h in &mut qh {
+                        for v in h.iter_mut() {
+                            *v *= q_scale;
+                        }
+                    }
+                }
+                let kv_slot = gemma4_kv_slot(n_from_start, li, layer_swa).expect("kv slot");
+                let seq = pos + 1;
+                let inv = if phi2 || gemma4 {
+                    1.0
+                } else {
+                    1.0 / (hd as f32).sqrt()
+                };
+                let mut attn = vec![0.0f32; n_head * hd];
+                for (hq, qvec) in qh.iter().enumerate() {
+                    let hkv = hq / gqa;
+                    let mut scores = vec![0.0f32; seq];
+                    for t in 0..seq {
+                        let kv = &k_cache[kv_slot][hkv][t];
+                        let mut s =
+                            qvec.iter().zip(kv.iter()).map(|(a, b)| a * b).sum::<f32>() * inv;
+                        if bloom {
+                            s += alibi_slope(hq, n_head, BLOOM_MAX_ALIBI_BIAS)
+                                * (t as f32 - pos as f32);
+                        }
+                        if gemma2 {
+                            let cap = arch_f32(g, arch, "attn_logit_softcapping").unwrap_or(0.0);
+                            if cap > 0.0 {
+                                s = cap * (s / cap).tanh();
+                            }
+                        }
+                        if gemma2 || gemma3 || gemma4 {
+                            let n_swa =
+                                arch_u32(g, arch, "attention.sliding_window").unwrap_or(0) as usize;
+                            let is_swa = if gemma4 {
+                                oracle_gemma4_layer_is_swa(g, arch, li)
+                            } else {
+                                let period = arch_u32(g, arch, "attention.sliding_window_pattern")
+                                    .unwrap_or(if gemma3 {
+                                        GEMMA3_SWA_PERIOD_DEFAULT
+                                    } else {
+                                        GEMMA2_SWA_PERIOD_DEFAULT
+                                    });
+                                gemma2_is_swa(li, period)
+                            };
+                            if is_swa && n_swa > 0 && pos.saturating_sub(t) >= n_swa {
+                                s = f32::NEG_INFINITY;
+                            }
+                        }
+                        scores[t] = s;
+                    }
+                    let m = scores.iter().copied().fold(f32::NEG_INFINITY, f32::max);
+                    let mut s = 0.0f32;
+                    for v in &mut scores {
+                        *v = (*v - m).exp();
+                        s += *v;
+                    }
+                    if s > 0.0 {
+                        for v in &mut scores {
+                            *v /= s;
+                        }
+                    }
+                    let mut acc = vec![0.0f32; hd];
+                    for t in 0..seq {
+                        let st = scores[t];
+                        for (a, b) in acc.iter_mut().zip(v_cache[kv_slot][hkv][t].iter()) {
+                            *a += st * *b;
+                        }
+                    }
+                    let off = hq * hd;
+                    attn[off..off + hd].copy_from_slice(&acc);
+                }
+                if let Some(gate) = attn_gate.as_ref() {
+                    for (a, gv) in attn.iter_mut().zip(gate.iter()) {
+                        *a *= 1.0 / (1.0 + (-gv).exp());
+                    }
+                }
+                x = oracle_add_bias(
+                    oracle_gemv(g.tensor(&tname(li, "attn_output.weight")).unwrap(), &attn),
+                    g.tensor(&tname(li, "attn_output.bias")),
+                );
+                oracle_mul_attn_out_s(g, li, &mut x);
+                if gemma_post {
+                    let pn =
+                        f32s(g.tensor(&tname(li, "post_attention_norm.weight")).unwrap()).unwrap();
+                    x = oracle_rmsnorm(&x, &pn, eps);
+                }
+                if phi2 {
+                    let up = oracle_add_bias(
+                        oracle_gemv(
+                            g.tensor(&tname(li, "ffn_up.weight")).unwrap(),
+                            &attn_norm_output,
+                        ),
+                        g.tensor(&tname(li, "ffn_up.bias")),
+                    );
+                    let h: Vec<f32> = up.iter().map(|u| oracle_gelu(*u)).collect();
+                    let down = oracle_add_bias(
+                        oracle_gemv(g.tensor(&tname(li, "ffn_down.weight")).unwrap(), &h),
+                        g.tensor(&tname(li, "ffn_down.bias")),
+                    );
+                    x = x
+                        .iter()
+                        .zip(down.iter())
+                        .zip(residual.iter())
+                        .map(|((a, d), r)| a + d + r)
+                        .collect();
+                } else {
+                    x = x.iter().zip(residual.iter()).map(|(a, b)| a + b).collect();
+                    if bloom {
+                        let fnorm = f32s(g.tensor(&tname(li, "ffn_norm.weight")).unwrap()).unwrap();
+                        let fnorm_b = g
+                            .tensor(&tname(li, "ffn_norm.bias"))
+                            .and_then(|t| f32s(t).ok());
+                        let xn = oracle_layernorm(&x, &fnorm, fnorm_b.as_deref(), eps);
+                        let up = oracle_add_bias(
+                            oracle_gemv(g.tensor(&tname(li, "ffn_up.weight")).unwrap(), &xn),
+                            g.tensor(&tname(li, "ffn_up.bias")),
+                        );
+                        let h: Vec<f32> = up.iter().map(|u| oracle_gelu(*u)).collect();
+                        let down = oracle_add_bias(
+                            oracle_gemv(g.tensor(&tname(li, "ffn_down.weight")).unwrap(), &h),
+                            g.tensor(&tname(li, "ffn_down.bias")),
+                        );
+                        x = down.iter().zip(x.iter()).map(|(a, b)| a + b).collect();
+                    } else {
+                        let fnorm = if qwen3next || qwen35 {
+                            f32s(g.tensor(&tname(li, "post_attention_norm.weight")).unwrap())
+                                .unwrap()
+                        } else {
+                            f32s(g.tensor(&tname(li, "ffn_norm.weight")).unwrap()).unwrap()
+                        };
+                        let xn = oracle_rmsnorm(&x, &fnorm, eps);
+                        let llama_moe =
+                            arch == "llama" && arch_u32(g, arch, "expert_count").unwrap_or(0) > 0;
+                        let qwen2moe = arch == "qwen2moe";
+                        let qwen3moe = arch == "qwen3moe";
+                        let gemma4_moe =
+                            gemma4 && g.tensor(&tname(li, "ffn_gate_inp.weight")).is_some();
+                        let mut down = if llama4 {
+                            oracle_llama4_moe(g, &xn, li)
+                        } else if llama_moe {
+                            oracle_llama_moe(g, &xn, li)
+                        } else if qwen2moe {
+                            oracle_qwen2moe(g, &xn, li)
+                        } else if qwen3moe {
+                            oracle_qwen3moe(g, &xn, li)
+                        } else if qwen3next {
+                            oracle_qwen3next(g, &xn, li)
+                        } else if gemma4_moe {
+                            oracle_gemma4_moe(g, &x, &xn, li, eps)
+                        } else {
+                            let mut gate =
+                                oracle_gemv(g.tensor(&tname(li, "ffn_gate.weight")).unwrap(), &xn);
+                            oracle_mul_ffn_gate_s(g, li, &mut gate);
+                            let mut up =
+                                oracle_gemv(g.tensor(&tname(li, "ffn_up.weight")).unwrap(), &xn);
+                            oracle_mul_ffn_up_s(g, li, &mut up);
+                            let h: Vec<f32> = gate
+                                .iter()
+                                .zip(up.iter())
+                                .map(|(gv, u)| {
+                                    let act = if gemma {
+                                        oracle_gelu(*gv)
+                                    } else {
+                                        gv / (1.0 + (-gv).exp())
+                                    };
+                                    act * u
+                                })
+                                .collect();
+                            let mut down =
+                                oracle_gemv(g.tensor(&tname(li, "ffn_down.weight")).unwrap(), &h);
+                            oracle_mul_ffn_down_s(g, li, &mut down);
+                            down
+                        };
+                        if gemma_post {
+                            let pn = f32s(g.tensor(&tname(li, "post_ffw_norm.weight")).unwrap())
+                                .unwrap();
+                            down = oracle_rmsnorm(&down, &pn, eps);
+                        }
+                        x = down.iter().zip(x.iter()).map(|(a, b)| a + b).collect();
+                        if let Some(pl) = per_layer.as_ref() {
+                            x = oracle_gemma4_ple_inject(g, &x, &pl[li], li, eps);
+                        }
+                    }
+                }
+                if gemma4 {
+                    if let Some(t) = g.tensor(&tname(li, "layer_output_scale.weight")) {
+                        let w = f32s(t).unwrap();
+                        if let Some(&scale) = w.first() {
+                            for v in &mut x {
+                                *v *= scale;
+                            }
+                        }
+                    }
+                }
+                residual = x.clone();
+            }
             let on = f32s(g.tensor("output_norm.weight").unwrap()).unwrap();
-            x = oracle_rmsnorm(&x, &on, eps);
+            let on_b = g.tensor("output_norm.bias").and_then(|t| f32s(t).ok());
+            x = if phi2 || bloom {
+                oracle_layernorm(&x, &on, on_b.as_deref(), eps)
+            } else {
+                oracle_rmsnorm(&x, &on, eps)
+            };
             let lm_head = g
                 .tensor("output.weight")
                 .or_else(|| g.tensor("token_embd.weight"))
                 .expect("lm_head");
             last = oracle_gemv(lm_head, &x);
+            oracle_mul_output_s(g, &mut last);
+            last = oracle_add_bias(last, g.tensor("output.bias"));
+            if gemma2 || gemma3 || gemma4 {
+                let cap = arch_f32(g, arch, "final_logit_softcapping").unwrap_or(0.0);
+                if cap > 0.0 {
+                    for v in &mut last {
+                        *v = cap * (*v / cap).tanh();
+                    }
+                }
+            }
         }
         last
     }
@@ -6715,7 +14954,7 @@ mod tests {
             src[1] * s1 + src[3] * c1,
         ];
         let mut got_neox = src;
-        rope_neox(&mut got_neox, pos, n_rot, base).expect("neox rope");
+        rope_neox(&mut got_neox, pos, n_rot, base, None).expect("neox rope");
         for (got, want) in got_neox.iter().zip(want_neox.iter()) {
             assert!(
                 (got - want).abs() < 1e-6,
@@ -6744,8 +14983,13 @@ mod tests {
             "qwen3",
             "qwen3moe",
             "qwen3next",
+            "phi2",
             "phi3",
             "gemma",
+            "gemma2",
+            "gemma3",
+            "gemma3n",
+            "gemma4",
         ] {
             assert!(rope_is_neox(arch), "{arch} is LLAMA_ROPE_TYPE_NEOX");
             assert!(oracle_rope_is_neox(arch), "{arch} oracle NEOX");
@@ -6768,7 +15012,7 @@ mod tests {
         let src = [0.5f32, -1.5, 2.0, 3.5, -0.25, 1.25, -2.5, 0.75];
 
         let mut neox = src;
-        rope_neox(&mut neox, 3, n_rot, base).expect("neox");
+        rope_neox(&mut neox, 3, n_rot, base, None).expect("neox");
 
         let mut text = src;
         rope_multi(&mut text, [3, 3, 3, 0], n_rot, base, sections, false).expect("mrope text");
@@ -6805,79 +15049,231 @@ mod tests {
 
     /// Differential check against llama.cpp on a real quantized checkpoint.
     ///
-    /// The writer-built tinies and the in-tree oracle cannot substitute for this.
-    /// Every per-dtype oracle calls `crate::fp16::f16_to_f32`, so a bug in that
-    /// primitive is invisible to the whole suite, and the tiny fixtures use
+    /// The writer-built tinies cannot substitute for this. Tiny fixtures use
     /// hand-picked scales that avoid the ranges where real weights live. A
-    /// subnormal binary16 bug that halved real Q4_K / Q6_K weights survived 221
-    /// passing tests for exactly those two reasons.
+    /// subnormal binary16 bug that halved real Q4_K / Q6_K weights survived
+    /// 221 passing tests for that reason; per-dtype oracles now call
+    /// `oracle_f16_to_f32` (IEEE arithmetic, not production bit-surgery)
+    /// so that class of bug is visible without a real GGUF.
+    /// This test is still the llama.cpp greedy identity on a real checkpoint.
     ///
-    /// Skips unless `LLAMA_RUST_REAL_MODEL_DIR` names a directory holding
-    /// `qwen2.5-0.5b-instruct-q4_k_m.gguf`. Reference values, model SHA, capture
-    /// tool, and the reason logits are not compared exactly are recorded in
-    /// `tests/reference/qwen2.5-0.5b-instruct-q4_k_m.json`.
+    /// Skips unless `LLAMA_RUST_REAL_MODEL_DIR` names a directory holding the
+    /// GGUF named in the sidecar JSON. Reference values live in
+    /// `tests/reference/*.json` (NEOX Qwen + NORM Llama).
     #[test]
     fn real_model_matches_llama_cpp_reference() {
+        check_real_fixture("qwen2.5-0.5b-instruct-q4_k_m.json", true);
+    }
+
+    /// NORM-RoPE Llama control (`llama-3.2-1b-instruct-q4_k_m.json`).
+    /// A set `LLAMA_RUST_REAL_MODEL_DIR` must contain the GGUF (fail-loud,
+    /// same as Qwen). Do not invent the capture.
+    #[test]
+    fn real_llama_norm_matches_llama_cpp_reference() {
+        check_real_fixture("llama-3.2-1b-instruct-q4_k_m.json", true);
+    }
+
+    struct RealRef {
+        file: String,
+        architecture: String,
+        n_vocab: u32,
+        tokens: Vec<u32>,
+        prompt: String,
+        max_logit: f32,
+        greedy_ids: Vec<u32>,
+        greedy_text: String,
+    }
+
+    fn check_real_fixture(json_name: &str, required_when_env_set: bool) {
+        let json_path = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("..")
+            .join("tests")
+            .join("reference")
+            .join(json_name);
+        if !required_when_env_set && !json_path.is_file() {
+            return;
+        }
         let Ok(dir) = std::env::var("LLAMA_RUST_REAL_MODEL_DIR") else {
             return;
         };
-        let path = format!("{dir}/qwen2.5-0.5b-instruct-q4_k_m.gguf");
-        let Ok(mut file) = std::fs::File::open(&path) else {
-            return;
-        };
+        let spec = load_real_ref(&json_path);
+        let path = std::path::Path::new(&dir).join(&spec.file);
+        let opened = std::fs::File::open(&path);
+        assert!(
+            opened.is_ok(),
+            "LLAMA_RUST_REAL_MODEL_DIR={dir} is set but {} could not be opened. \
+             Tests run with the crate directory as CWD, so a relative path resolves \
+             against langtax/, not the repo root -- pass an absolute path. \
+             See tests/reference/README.md to fetch the weights.",
+            path.display()
+        );
+        let mut file = opened.expect("checked by the assertion above");
+        eprintln!("real-model differential test: {}", path.display());
         let mut blob = Vec::new();
         let _read = std::io::Read::read_to_end(&mut file, &mut blob).expect("read gguf");
         let g = load_gguf_owned(blob).expect("load real gguf");
         assert_eq!(
             g.kv("general.architecture"),
-            Some(&Kv::String("qwen2".into()))
+            Some(&Kv::String(spec.architecture.clone()))
         );
 
-        // Tokenization must match llama.cpp exactly; a divergence here changes
-        // the model input and invalidates every downstream comparison.
         let tok = Tokenizer::from_gguf(&g).expect("tokenizer");
-        let ids = tok.encode("The capital of France is").expect("encode");
-        assert_eq!(
-            ids,
-            [785u32, 6722, 315, 9625, 374],
-            "tokenization diverged from llama.cpp"
-        );
+        let ids = prompt_ids(&tok, &spec.prompt).expect("encode");
+        assert_eq!(ids, spec.tokens, "tokenization diverged from llama.cpp");
 
         let model = Llama::from_gguf(g).expect("model");
-        assert_eq!(model.n_vocab, 151_936);
+        assert_eq!(
+            model.n_vocab,
+            usize::try_from(spec.n_vocab).expect("n_vocab")
+        );
 
         let mut cache = model.new_cache(64).expect("cache");
         let logits = model.prefill(&mut cache, &ids).expect("prefill");
         let best = argmax(&logits);
-        assert_eq!(best, 12095, "argmax must be token 12095 (\" Paris\")");
+        let want_first = *spec.greedy_ids.first().expect("greedy");
+        assert_eq!(best, want_first, "argmax must be token {want_first}");
 
-        // llama.cpp reports max logit 17.504869 here. The two do genuinely
-        // different arithmetic (llama.cpp quantizes activations to Q8_K for
-        // K-quant dot products; this crate multiplies against f32 activations),
-        // so this is a sanity band, not an equality check. A whole-logit-unit
-        // drift means a real bug.
         let mx = logits.iter().copied().fold(f32::NEG_INFINITY, f32::max);
         assert!(
-            (mx - 17.504_87).abs() < 0.5,
-            "max logit {mx} drifted from llama.cpp 17.504869"
+            (mx - spec.max_logit).abs() < 0.5,
+            "max logit {mx} drifted from llama.cpp {}",
+            spec.max_logit
         );
 
-        // Greedy continuation is the acceptance criterion: it must match
-        // llama.cpp token for token.
         let mut gen = Vec::new();
         let mut cur = best;
-        for _ in 0..8 {
+        for _ in 0..spec.greedy_ids.len() {
             gen.push(cur);
             let step = model.forward(&mut cache, cur).expect("forward");
             cur = argmax(&step);
         }
         assert_eq!(
-            gen,
-            [12095u32, 13, 1084, 374, 279, 7772, 3283, 304],
+            gen, spec.greedy_ids,
             "greedy token ids diverged from llama.cpp"
         );
         let text = tok.decode(&gen);
-        assert_eq!(text, " Paris. It is the largest city in");
+        assert_eq!(text, spec.greedy_text);
+    }
+
+    fn load_real_ref(path: &std::path::Path) -> RealRef {
+        let mut f =
+            std::fs::File::open(path).unwrap_or_else(|e| panic!("open {}: {e}", path.display()));
+        let mut text = String::new();
+        let _n = std::io::Read::read_to_string(&mut f, &mut text).expect("read json");
+        RealRef {
+            file: json_string(&text, "file"),
+            architecture: json_string(&text, "architecture"),
+            n_vocab: json_u32(&text, "n_vocab"),
+            tokens: json_u32_list(&text, "tokens"),
+            prompt: json_string(&text, "prompt"),
+            max_logit: json_f32(&text, "max"),
+            greedy_ids: json_u32_list(&text, "greedy_ids"),
+            greedy_text: json_string(&text, "greedy_text"),
+        }
+    }
+
+    fn after_json_key<'a>(text: &'a str, key: &str) -> &'a str {
+        let needle = format!("\"{key}\":");
+        text.split(&needle)
+            .nth(1)
+            .unwrap_or_else(|| panic!("missing {key}"))
+            .trim()
+    }
+
+    fn json_string(text: &str, key: &str) -> String {
+        let rest = after_json_key(text, key);
+        let rest = rest
+            .strip_prefix('"')
+            .unwrap_or_else(|| panic!("{key} not a string"));
+        let mut out = String::new();
+        let mut chars = rest.chars();
+        while let Some(c) = chars.next() {
+            if c == '\\' {
+                match chars.next() {
+                    Some('n') => out.push('\n'),
+                    Some('t') => out.push('\t'),
+                    Some('"') => out.push('"'),
+                    Some('\\') => out.push('\\'),
+                    Some(o) => out.push(o),
+                    None => break,
+                }
+            } else if c == '"' {
+                break;
+            } else {
+                out.push(c);
+            }
+        }
+        out
+    }
+
+    fn json_u32(text: &str, key: &str) -> u32 {
+        let tok = after_json_key(text, key)
+            .split([',', '}', '\n'])
+            .next()
+            .unwrap_or("")
+            .trim();
+        tok.parse().unwrap_or_else(|_| panic!("bad u32 {key}"))
+    }
+
+    fn json_f32(text: &str, key: &str) -> f32 {
+        let tok = after_json_key(text, key)
+            .split([',', '}', '\n'])
+            .next()
+            .unwrap_or("")
+            .trim();
+        tok.parse().unwrap_or_else(|_| panic!("bad f32 {key}"))
+    }
+
+    fn json_u32_list(text: &str, key: &str) -> Vec<u32> {
+        let rest = after_json_key(text, key);
+        let start = rest.strip_prefix('[').expect("expected []");
+        let inner = start.split(']').next().unwrap_or("");
+        if inner.trim().is_empty() {
+            return Vec::new();
+        }
+        inner
+            .split(',')
+            .map(|p| p.trim().parse().expect("bad u32 in list"))
+            .collect()
+    }
+
+    #[test]
+    fn real_qwen_sidecar_json_parses() {
+        let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("..")
+            .join("tests")
+            .join("reference")
+            .join("qwen2.5-0.5b-instruct-q4_k_m.json");
+        let spec = load_real_ref(&path);
+        assert_eq!(spec.file, "qwen2.5-0.5b-instruct-q4_k_m.gguf");
+        assert_eq!(spec.architecture, "qwen2");
+        assert_eq!(spec.n_vocab, 151_936);
+        assert_eq!(spec.tokens, vec![785, 6722, 315, 9625, 374]);
+        assert_eq!(spec.greedy_ids.len(), 8);
+        assert_eq!(spec.greedy_text, " Paris. It is the largest city in");
+        assert!((spec.max_logit - 17.504_87).abs() < 1e-5);
+        assert_eq!(spec.prompt, "The capital of France is");
+    }
+
+    #[test]
+    fn real_llama_sidecar_json_parses() {
+        let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("..")
+            .join("tests")
+            .join("reference")
+            .join("llama-3.2-1b-instruct-q4_k_m.json");
+        let spec = load_real_ref(&path);
+        assert_eq!(spec.file, "Llama-3.2-1B-Instruct-Q4_K_M.gguf");
+        assert_eq!(spec.architecture, "llama");
+        assert_eq!(spec.n_vocab, 128_256);
+        assert_eq!(spec.tokens, vec![128000, 791, 6864, 315, 9822, 374]);
+        assert_eq!(spec.greedy_ids.len(), 24);
+        assert_eq!(
+            spec.greedy_text,
+            " Paris. The Eiffel Tower is a famous landmark in Paris. The Eiffel Tower is a symbol of France"
+        );
+        assert!((spec.max_logit - 18.816_57).abs() < 1e-5);
+        assert_eq!(spec.prompt, "The capital of France is");
     }
 
     fn load_fwd_match(bytes: &[u8], token: u32) {
@@ -7354,6 +15750,120 @@ mod tests {
         load_fwd_match(&bytes, 3);
     }
 
+    /// GQA ratios other than 2 were entirely uncovered: every writer-built fixture
+    /// pins `head_count = 4, head_count_kv = 2`. A grouping bug at any other ratio
+    /// would pass the whole harness. Real checkpoints do use other ratios
+    /// (Qwen2.5-0.5B is 14/2 = 7, covered only by the gated real-model test).
+    #[test]
+    fn gqa_ratios_other_than_two_match_independent_oracle() {
+        for (bytes, n_head_kv, gqa) in [
+            (tiny_mha_gguf(), 4u32, 1u32),
+            (tiny_mqa_gguf(), 1, 4),
+            (tiny_llama_gguf(), 2, 2),
+        ] {
+            let g = load_gguf(&bytes).expect("load");
+            assert_eq!(g.kv_u32("llama.attention.head_count"), Some(4));
+            assert_eq!(g.kv_u32("llama.attention.head_count_kv"), Some(n_head_kv));
+            assert_eq!(4 / n_head_kv, gqa, "gqa ratio");
+            // Single token and multi-token prefill both walk the KV grouping.
+            load_fwd_match(&bytes, 3);
+            load_prefill_match(&bytes, &[1, 2, 3]);
+        }
+    }
+
+    /// The three ratios must not collapse onto the same logits, otherwise the
+    /// test above would pass even if `head_count_kv` were ignored entirely.
+    #[test]
+    fn gqa_ratio_changes_logits() {
+        let mut seen: Vec<Vec<f32>> = Vec::new();
+        for bytes in [tiny_mha_gguf(), tiny_llama_gguf(), tiny_mqa_gguf()] {
+            let g = load_gguf(&bytes).expect("load");
+            let m = Llama::from_gguf(g).expect("model");
+            let mut c = m.new_cache(8).expect("cache");
+            seen.push(m.prefill(&mut c, &[1, 2, 3]).expect("prefill"));
+        }
+        assert_ne!(seen[0], seen[1], "gqa 1 vs 2 must differ");
+        assert_ne!(seen[1], seen[2], "gqa 2 vs 4 must differ");
+        assert_ne!(seen[0], seen[2], "gqa 1 vs 4 must differ");
+    }
+
+    #[test]
+    fn tiny_q40_logits_match_independent_oracle() {
+        let bytes = tiny_q40_gguf();
+        let g = load_gguf(&bytes).expect("load");
+        assert_eq!(g.tensor("token_embd.weight").unwrap().ty, GgmlType::Q4_0);
+        assert_eq!(g.tensor("output.weight").unwrap().ty, GgmlType::Q4_0);
+        assert_eq!(g.tensor("blk.0.attn_q.weight").unwrap().ty, GgmlType::Q4_0);
+        assert_eq!(
+            g.tensor("blk.0.ffn_gate.weight").unwrap().ty,
+            GgmlType::Q4_0
+        );
+        assert_eq!(g.tensor("output_norm.weight").unwrap().ty, GgmlType::F32);
+        assert_eq!(g.tensor("token_embd.weight").unwrap().ty.to_i32(), 2);
+        load_fwd_match(&bytes, 3);
+    }
+
+    /// Pinned against ggml's own `to_float`, not against the in-tree oracle.
+    ///
+    /// These 18 bytes are one `block_q4_0` whose scale is `0x812B`, a binary16
+    /// *subnormal*. That is deliberate: a subnormal super-block scale is exactly
+    /// what exposed the `f16_to_f32` off-by-one that halved real Q4_K / Q6_K
+    /// weights. The in-tree oracle now uses `oracle_f16_to_f32`
+    /// (IEEE arithmetic) and would catch a repeat; this test still pins the
+    /// dequant against ggml's captured `to_float` on these exact bytes. See
+    /// `tests/reference/README.md` for the capture tool.
+    #[test]
+    fn q4_0_matches_ggml_reference_with_subnormal_scale() {
+        let block: [u8; 18] = [
+            0x2b, 0x81, 0xd9, 0x1e, 0x3f, 0x72, 0x1f, 0xcb, 0x19, 0x71, 0x17, 0x44, 0x94, 0xd6,
+            0x49, 0x3c, 0x9d, 0x5c,
+        ];
+        // Full f32 precision, not rounded: at 1e-5 magnitudes a truncated decimal
+        // dump keeps only ~3 significant digits and would pass against a halved
+        // value, which is precisely the bug being guarded against.
+        let want: [f32; 32] = [
+            -1.7821789e-05,
+            -1.0693073e-04,
+            -1.2475252e-04,
+            1.0693073e-04,
+            -1.2475252e-04,
+            -5.3465366e-05,
+            -1.7821789e-05,
+            1.2475252e-04,
+            1.7821789e-05,
+            7.1287155e-05,
+            7.1287155e-05,
+            3.5643578e-05,
+            -1.7821789e-05,
+            -7.1287155e-05,
+            -8.9108944e-05,
+            -7.1287155e-05,
+            -8.9108944e-05,
+            1.2475252e-04,
+            8.9108944e-05,
+            1.7821789e-05,
+            1.2475252e-04,
+            -7.1287155e-05,
+            1.2475252e-04,
+            1.7821789e-05,
+            1.2475252e-04,
+            7.1287155e-05,
+            -1.7821789e-05,
+            -8.9108944e-05,
+            7.1287155e-05,
+            8.9108944e-05,
+            -1.7821789e-05,
+            5.3465366e-05,
+        ];
+        let mut got = vec![0.0f32; 32];
+        dequant_q4_0_row(32, &block, &mut got).expect("dequant q4_0");
+        for (i, (a, b)) in got.iter().zip(want.iter()).enumerate() {
+            assert!((a - b).abs() < 1e-9, "lane {i}: got {a:e}, ggml {b:e}");
+        }
+        // The oracle must agree too, but that is the weaker of the two checks.
+        assert_eq!(got, dequant_q4_0_row_oracle(&block));
+    }
+
     #[test]
     fn tiny_q80_logits_match_independent_oracle() {
         let bytes = tiny_q80_gguf();
@@ -7650,9 +16160,17 @@ mod tests {
             tiny_q51_gguf(),
             tiny_mxfp4_gguf(),
             tiny_nvfp4_gguf(),
+            tiny_nvfp4_output_s_gguf(),
+            tiny_bloom_attn_qkv_s_gguf(),
+            tiny_qwen2moe_ffn_down_shexp_s_gguf(),
+            tiny_qwen2moe_ffn_gate_shexp_s_gguf(),
+            tiny_qwen2moe_ffn_up_shexp_s_gguf(),
             tiny_q10_gguf(),
             tiny_q20_gguf(),
+            tiny_q40_gguf(),
             tiny_q80_gguf(),
+            tiny_mha_gguf(),
+            tiny_mqa_gguf(),
             tiny_q81_gguf(),
             tiny_tq10_gguf(),
             tiny_tq20_gguf(),
@@ -7669,18 +16187,252 @@ mod tests {
             tiny_tied_gguf(),
             tiny_tied_copy_gguf(),
             tiny_gemma_gguf(),
+            tiny_gemma2_gguf(),
+            tiny_gemma3_gguf(),
+            tiny_gemma3n_gguf(),
+            tiny_gemma4_gguf(),
+            tiny_gemma4_moe_gguf(),
+            tiny_gemma4_ple_gguf(),
+            tiny_gemma4_moe_ple_gguf(),
+            tiny_gemma4_moe_fused_gguf(),
+            tiny_gemma4_moe_fused_ple_gguf(),
+            tiny_gemma4_shared_kv_gguf(),
+            tiny_gemma4_mixed_hd_gguf(),
+            tiny_gemma4_swa_base_gguf(),
+            tiny_gemma4_no_wv_gguf(),
+            tiny_gemma4_out_scale_gguf(),
+            tiny_gemma4_rope_freqs_gguf(),
+            tiny_gemma4_moe_down_s_gguf(),
+            tiny_gemma4_moe_gate_up_s_gguf(),
+            tiny_llama_ffn_down_s_gguf(),
+            tiny_llama_attn_q_s_gguf(),
+            tiny_llama_attn_out_s_gguf(),
+            tiny_llama_attn_k_s_gguf(),
+            tiny_llama_attn_v_s_gguf(),
+            tiny_llama_ffn_gate_s_gguf(),
+            tiny_llama_ffn_up_s_gguf(),
             tiny_qwen3_gguf(),
             tiny_llama4_gguf(),
             tiny_llama_moe_gguf(),
             tiny_qwen2moe_gguf(),
+            tiny_qwen2moe_ffn_down_shexp_s_gguf(),
+            tiny_qwen2moe_ffn_gate_shexp_s_gguf(),
+            tiny_qwen2moe_ffn_up_shexp_s_gguf(),
             tiny_qwen3moe_gguf(),
+            tiny_qwen3moe_2layer_gguf(),
             tiny_qwen2vl_gguf(),
             tiny_qwen3vl_gguf(),
             tiny_qwen3next_gguf(),
             tiny_qwen35_gguf(),
+            tiny_phi2_gguf(),
+            tiny_bloom_gguf(),
+            tiny_bloom_attn_qkv_s_gguf(),
+            tiny_qwen2moe_ffn_down_shexp_s_gguf(),
+            tiny_qwen2moe_ffn_gate_shexp_s_gguf(),
+            tiny_qwen2moe_ffn_up_shexp_s_gguf(),
         ] {
             load_prefill_match(&bytes, &tokens);
             load_prefill_match(&bytes, &[3]);
+        }
+    }
+
+    /// Every logit bit pattern from a decode step routed through the persistent
+    /// GEMV pool, against the same step run single-threaded. A pooled GEMV
+    /// computes rows `first..last` from the byte range `base + first*row_bytes`
+    /// with the same kernel, so it must agree exactly, not just within the
+    /// oracle's 1e-3.
+    #[test]
+    fn pooled_gemv_is_bit_identical_to_sequential() {
+        fn steps(model: &Llama) -> (Vec<u32>, usize) {
+            let mut cache = model.new_cache(16).expect("cache");
+            let mut bits = Vec::new();
+            let push = |l: &[f32], bits: &mut Vec<u32>| {
+                bits.extend(l.iter().map(|v| v.to_bits()));
+            };
+            push(
+                &model.prefill(&mut cache, &[1, 3, 2]).expect("prefill"),
+                &mut bits,
+            );
+            for t in 0..4u32 {
+                push(
+                    &model.forward(&mut cache, t % 4).expect("forward"),
+                    &mut bits,
+                );
+            }
+            (bits, Llama::cache_pool_workers(&cache))
+        }
+        for (name, bytes) in [
+            ("llama", tiny_llama_gguf()),
+            ("qwen2", tiny_qwen2_gguf()),
+            ("gemma", tiny_gemma_gguf()),
+            ("gemma2", tiny_gemma2_gguf()),
+            ("gemma3", tiny_gemma3_gguf()),
+            ("gemma3n", tiny_gemma3n_gguf()),
+            ("gemma4", tiny_gemma4_gguf()),
+            ("gemma4-moe", tiny_gemma4_moe_gguf()),
+            ("gemma4-ple", tiny_gemma4_ple_gguf()),
+            ("gemma4-moe-ple", tiny_gemma4_moe_ple_gguf()),
+            ("gemma4-moe-fused", tiny_gemma4_moe_fused_gguf()),
+            ("gemma4-moe-fused-ple", tiny_gemma4_moe_fused_ple_gguf()),
+            ("gemma4-shared-kv", tiny_gemma4_shared_kv_gguf()),
+            ("gemma4-mixed-hd", tiny_gemma4_mixed_hd_gguf()),
+            ("gemma4-swa-base", tiny_gemma4_swa_base_gguf()),
+            ("gemma4-no-wv", tiny_gemma4_no_wv_gguf()),
+            ("gemma4-out-scale", tiny_gemma4_out_scale_gguf()),
+            ("gemma4-rope-freqs", tiny_gemma4_rope_freqs_gguf()),
+            ("gemma4-moe-down-s", tiny_gemma4_moe_down_s_gguf()),
+            ("gemma4-moe-gate-up-s", tiny_gemma4_moe_gate_up_s_gguf()),
+            ("llama-ffn-down-s", tiny_llama_ffn_down_s_gguf()),
+            ("llama-attn-q-s", tiny_llama_attn_q_s_gguf()),
+            ("llama-attn-out-s", tiny_llama_attn_out_s_gguf()),
+            ("llama-attn-k-s", tiny_llama_attn_k_s_gguf()),
+            ("llama-attn-v-s", tiny_llama_attn_v_s_gguf()),
+            ("llama-ffn-gate-s", tiny_llama_ffn_gate_s_gguf()),
+            ("llama-ffn-up-s", tiny_llama_ffn_up_s_gguf()),
+            ("nvfp4-output-s", tiny_nvfp4_output_s_gguf()),
+            ("bloom-attn-qkv-s", tiny_bloom_attn_qkv_s_gguf()),
+            (
+                "qwen2moe-ffn-down-shexp-s",
+                tiny_qwen2moe_ffn_down_shexp_s_gguf(),
+            ),
+            (
+                "qwen2moe-ffn-gate-shexp-s",
+                tiny_qwen2moe_ffn_gate_shexp_s_gguf(),
+            ),
+            (
+                "qwen2moe-ffn-up-shexp-s",
+                tiny_qwen2moe_ffn_up_shexp_s_gguf(),
+            ),
+            ("qwen3", tiny_qwen3_gguf()),
+            ("llama4", tiny_llama4_gguf()),
+            ("f16", tiny_f16_gguf()),
+            ("bf16", tiny_bf16_gguf()),
+            ("q2k", tiny_q2k_gguf()),
+            ("q5k", tiny_q5k_gguf()),
+            ("iq2xxs", tiny_iq2xxs_gguf()),
+            ("iq3s", tiny_iq3s_gguf()),
+            ("tq2_0", tiny_tq20_gguf()),
+        ] {
+            let model = Llama::from_gguf(load_gguf_owned(bytes).expect("load")).expect("model");
+            let (want, seq_workers) = crate::pool::with_sequential(|| steps(&model));
+            assert_eq!(seq_workers, 0, "{name}: with_sequential built a pool");
+            let (got, par_workers) = with_forced_pool(|| steps(&model));
+            if crate::pool::sequential() || par_workers == 0 {
+                // Single-core host: there is no pool to compare against.
+                continue;
+            }
+            assert!(par_workers >= 2, "{name}: pool had {par_workers} workers");
+            assert_eq!(got, want, "{name}: pooled GEMV changed a logit bit");
+        }
+    }
+
+    /// A steady-state decode step must not touch the allocator. `unsafe impl
+    /// GlobalAlloc` is not available under `#![forbid(unsafe_code)]`, so this
+    /// checks the observable consequence instead: every reused buffer keeps its
+    /// address and capacity, i.e. no `Vec` in the cache, its scratch or its
+    /// pool grows or moves. A changed buffer count fails the same comparison.
+    ///
+    /// [`Llama::forward_logits`] is the entry point under test.
+    /// [`Llama::forward`] copies the logits into a fresh `Vec` by definition,
+    /// so it can never be allocation-free.
+    ///
+    /// The tiny fixtures cover the dense, GeGLU, QK-norm and MoE walks; the
+    /// forced-pool pass covers the pool's input staging and spare buffers,
+    /// which the fixtures are otherwise too small to reach.
+    #[test]
+    fn steady_state_decode_never_regrows_a_buffer() {
+        /// One step through the borrowed-logits path, dropping the borrow so
+        /// the caller can inspect the cache again.
+        fn step(model: &Llama, cache: &mut KvCache, tok: u32) {
+            let logits = model.forward_logits(cache, tok).expect("forward");
+            assert!(!logits.is_empty(), "empty logits");
+        }
+        fn check(name: &str, model: &Llama) {
+            let mut cache = model.new_cache(64).expect("cache");
+            // Warm up: a 3-token prefill plus one decode step sizes every buffer.
+            let _ = model.prefill(&mut cache, &[1, 3, 2]).expect("prefill");
+            step(model, &mut cache, 1);
+            let before = Llama::cache_buffer_ids(&cache);
+            for s in 0..40u32 {
+                step(model, &mut cache, s % 4);
+                assert_eq!(
+                    Llama::cache_buffer_ids(&cache),
+                    before,
+                    "{name}: decode step {s} reallocated a buffer"
+                );
+            }
+            // A prefill wider than the warmup does grow the buffers once, and
+            // then the following decode steps must be steady again.
+            let mut cache = model.new_cache(64).expect("cache");
+            step(model, &mut cache, 1);
+            let narrow = Llama::cache_buffer_ids(&cache);
+            let _ = model.prefill(&mut cache, &[1, 3, 2, 1, 3]).expect("wide");
+            assert_ne!(
+                Llama::cache_buffer_ids(&cache),
+                narrow,
+                "{name}: a 5-token prefill after a 1-token warmup should grow"
+            );
+            let grown = Llama::cache_buffer_ids(&cache);
+            for s in 0..8u32 {
+                step(model, &mut cache, s % 4);
+                assert_eq!(
+                    Llama::cache_buffer_ids(&cache),
+                    grown,
+                    "{name}: decode after prefill reallocated at step {s}"
+                );
+            }
+        }
+        for (name, bytes) in [
+            ("llama", tiny_llama_gguf()),
+            ("gemma", tiny_gemma_gguf()),
+            ("gemma2", tiny_gemma2_gguf()),
+            ("gemma3", tiny_gemma3_gguf()),
+            ("gemma3n", tiny_gemma3n_gguf()),
+            ("gemma4", tiny_gemma4_gguf()),
+            ("gemma4-moe", tiny_gemma4_moe_gguf()),
+            ("gemma4-ple", tiny_gemma4_ple_gguf()),
+            ("gemma4-moe-ple", tiny_gemma4_moe_ple_gguf()),
+            ("gemma4-moe-fused", tiny_gemma4_moe_fused_gguf()),
+            ("gemma4-moe-fused-ple", tiny_gemma4_moe_fused_ple_gguf()),
+            ("gemma4-shared-kv", tiny_gemma4_shared_kv_gguf()),
+            ("gemma4-mixed-hd", tiny_gemma4_mixed_hd_gguf()),
+            ("gemma4-swa-base", tiny_gemma4_swa_base_gguf()),
+            ("gemma4-no-wv", tiny_gemma4_no_wv_gguf()),
+            ("gemma4-out-scale", tiny_gemma4_out_scale_gguf()),
+            ("gemma4-rope-freqs", tiny_gemma4_rope_freqs_gguf()),
+            ("gemma4-moe-down-s", tiny_gemma4_moe_down_s_gguf()),
+            ("gemma4-moe-gate-up-s", tiny_gemma4_moe_gate_up_s_gguf()),
+            ("llama-ffn-down-s", tiny_llama_ffn_down_s_gguf()),
+            ("llama-attn-q-s", tiny_llama_attn_q_s_gguf()),
+            ("llama-attn-out-s", tiny_llama_attn_out_s_gguf()),
+            ("llama-attn-k-s", tiny_llama_attn_k_s_gguf()),
+            ("llama-attn-v-s", tiny_llama_attn_v_s_gguf()),
+            ("llama-ffn-gate-s", tiny_llama_ffn_gate_s_gguf()),
+            ("llama-ffn-up-s", tiny_llama_ffn_up_s_gguf()),
+            ("nvfp4-output-s", tiny_nvfp4_output_s_gguf()),
+            ("bloom-attn-qkv-s", tiny_bloom_attn_qkv_s_gguf()),
+            (
+                "qwen2moe-ffn-down-shexp-s",
+                tiny_qwen2moe_ffn_down_shexp_s_gguf(),
+            ),
+            (
+                "qwen2moe-ffn-gate-shexp-s",
+                tiny_qwen2moe_ffn_gate_shexp_s_gguf(),
+            ),
+            (
+                "qwen2moe-ffn-up-shexp-s",
+                tiny_qwen2moe_ffn_up_shexp_s_gguf(),
+            ),
+            ("qwen3", tiny_qwen3_gguf()),
+            ("llama4", tiny_llama4_gguf()),
+            ("llama-moe", tiny_llama_moe_gguf()),
+            ("qwen2moe", tiny_qwen2moe_gguf()),
+            ("qwen3moe", tiny_qwen3moe_gguf()),
+            ("qwen3next", tiny_qwen3next_gguf()),
+        ] {
+            let model = Llama::from_gguf(load_gguf_owned(bytes).expect("load")).expect("model");
+            check(name, &model);
+            with_forced_pool(|| check(&format!("{name} pooled"), &model));
         }
     }
 
@@ -7702,6 +16454,479 @@ mod tests {
         assert_eq!(batched.n_past, step.n_past);
         let exp = oracle_forward_seq(&g, &tokens);
         assert_logits_match(&pref, &exp);
+    }
+
+    #[test]
+    fn reuse_prefix_rewinds_n_past_and_keeps_lcp_ids() {
+        let model = Llama::from_gguf(load_gguf_owned(tiny_llama_gguf()).expect("load")).expect("m");
+        let mut cache = model.new_cache(16).expect("c");
+        let _l = model.prefill(&mut cache, &[1, 2, 3, 4]).expect("p");
+        assert_eq!(cache.reuse_prefix(&[1, 2, 0]), 2);
+        assert_eq!(cache.n_past, 2);
+        assert_eq!(cache.cached_ids(), &[1, 2]);
+        let _f = model.forward(&mut cache, 5).expect("append");
+        assert_eq!(cache.n_past, 3);
+        assert_eq!(cache.cached_ids(), &[1, 2, 5]);
+    }
+
+    #[test]
+    fn prompt_reuse_logits_match_cold_prefill() {
+        let tokens = [1u32, 2, 3, 4];
+        for bytes in [tiny_llama_gguf(), tiny_qwen3moe_gguf(), tiny_llama4_gguf()] {
+            let model = Llama::from_gguf(load_gguf_owned(bytes).expect("load")).expect("m");
+            let mut cold = model.new_cache(16).expect("cold");
+            let exp = model.prefill(&mut cold, &tokens).expect("cold");
+            let mut hot = model.new_cache(16).expect("hot");
+            let _p = model.prefill(&mut hot, &[1, 2, 3, 0]).expect("warm");
+            let _d = model.forward(&mut hot, 5).expect("dec");
+            let got = model.prompt(&mut hot, &tokens).expect("prompt");
+            assert_logits_match(&got, &exp);
+            assert_eq!(hot.n_past, tokens.len());
+            assert_eq!(hot.cached_ids(), tokens.as_slice());
+            assert_eq!(hot.last_prefix_hit(), 3);
+            let _d2 = model.forward(&mut hot, 5).expect("dec2");
+            let full = model.prompt(&mut hot, &tokens).expect("full");
+            assert_logits_match(&full, &exp);
+            assert_eq!(hot.last_prefix_hit(), tokens.len());
+        }
+    }
+
+    #[test]
+    fn prompt_reuse_greedy_matches_cold_and_store() {
+        let bytes = tiny_qwen3moe_gguf();
+        let g = load_gguf_owned(bytes).expect("owned");
+        let tok = Tokenizer::from_gguf(&g).expect("tok");
+        let model = Llama::from_gguf(g).expect("m");
+        let cold = greedy_generate(&model, &tok, "ab", 2).expect("cold");
+        let mut slot = None;
+        let a = greedy_generate_slot(&model, &tok, &mut slot, "ab", 2, Some(16), None).expect("a");
+        let hit = slot.as_ref().expect("slot").last_prefix_hit();
+        let b = greedy_generate_slot(&model, &tok, &mut slot, "ab", 2, Some(16), None).expect("b");
+        assert_eq!(a, cold);
+        assert_eq!(b, cold);
+        assert_eq!(hit, 0);
+        let hit2 = slot.as_ref().expect("slot").last_prefix_hit();
+        assert!(hit2 > 0, "second prompt must reuse the first prompt prefix");
+        let mut held = model.new_cache(16).expect("store cache");
+        held.attach_expert_store(LiveStore::Direct(
+            model.expert_direct_store().expect("catalog"),
+        ));
+        let mut store_s = Some(held);
+        let via =
+            greedy_generate_slot(&model, &tok, &mut store_s, "ab", 2, Some(16), None).expect("st");
+        assert_eq!(via, cold);
+    }
+
+    #[test]
+    fn paged_kv_logits_match_dense_and_intern_after_divergent_prompt() {
+        let tokens = [1u32, 2, 3, 4];
+        for bytes in [tiny_llama_gguf(), tiny_qwen3moe_gguf(), tiny_llama4_gguf()] {
+            let model = Llama::from_gguf(load_gguf_owned(bytes).expect("load")).expect("m");
+            let mut dense = model.new_cache(16).expect("d");
+            let exp = model.prefill(&mut dense, &tokens).expect("dense");
+            let mut paged = model.new_paged_cache(16, 2).expect("p");
+            let got = model.prefill(&mut paged, &tokens).expect("paged");
+            assert_logits_match(&got, &exp);
+            assert_eq!(paged.n_past, tokens.len());
+            let cow_exp = {
+                let mut d = model.new_cache(16).expect("cow dense");
+                let _p = model.prefill(&mut d, &tokens).expect("cow pre");
+                model
+                    .prompt(&mut d, &[1, 0, 3, 4])
+                    .expect("cow dense prompt")
+            };
+            let cow_got = model.prompt(&mut paged, &[1, 0, 3, 4]).expect("cow paged");
+            assert_logits_match(&cow_got, &cow_exp);
+            let _div = model.prompt(&mut paged, &[5, 0, 5, 0]).expect("div");
+            let again = model.prompt(&mut paged, &tokens).expect("hit");
+            assert_logits_match(&again, &exp);
+            assert!(
+                paged.page_hits() > 0,
+                "interned blocks must be reusable after a rewind"
+            );
+        }
+    }
+
+    #[test]
+    fn paged_kv_greedy_matches_dense() {
+        for bytes in [tiny_llama_gguf(), tiny_qwen3moe_gguf(), tiny_llama4_gguf()] {
+            let g = load_gguf_owned(bytes).expect("owned");
+            let tok = Tokenizer::from_gguf(&g).expect("tok");
+            let model = Llama::from_gguf(g).expect("m");
+            let dense =
+                greedy_generate_slot(&model, &tok, &mut None, "ab", 2, Some(16), None).expect("d");
+            let paged = greedy_generate_slot(&model, &tok, &mut None, "ab", 2, Some(16), Some(2))
+                .expect("p");
+            assert_eq!(dense, paged, "paged greedy must match dense");
+        }
+    }
+
+    #[test]
+    fn prompt_chunk_two_steps_match_full_prompt_logits() {
+        let tokens = [1u32, 2, 3, 4];
+        let model = Llama::from_gguf(load_gguf_owned(tiny_llama_gguf()).expect("load")).expect("m");
+        let mut full = model.new_cache(16).expect("f");
+        let exp = model.prompt(&mut full, &tokens).expect("full");
+        let mut chunked = model.new_paged_cache(16, 2).expect("c");
+        let _a = model.prompt_chunk(&mut chunked, &tokens, 2).expect("c1");
+        assert_eq!(chunked.n_past, 2);
+        let got = model.prompt_chunk(&mut chunked, &tokens, 2).expect("c2");
+        assert_logits_match(got, &exp);
+        assert_eq!(chunked.n_past, tokens.len());
+    }
+
+    #[test]
+    fn shared_paged_pool_interns_across_sequences() {
+        let tokens = [1u32, 2, 3, 4];
+        for bytes in [tiny_llama_gguf(), tiny_qwen3moe_gguf(), tiny_llama4_gguf()] {
+            let model = Llama::from_gguf(load_gguf_owned(bytes).expect("load")).expect("m");
+            let mut dense = model.new_cache(16).expect("d");
+            let exp = model.prefill(&mut dense, &tokens).expect("dense");
+            let pool = model.new_paged_pool(2, 16).expect("pool");
+            let mut a = model.new_paged_cache_on(&pool, 16).expect("a");
+            let mut b = model.new_paged_cache_on(&pool, 16).expect("b");
+            let got = model.prefill(&mut a, &tokens).expect("a prefill");
+            assert_logits_match(&got, &exp);
+            let hit = model.prompt(&mut b, &tokens).expect("b intern");
+            assert_logits_match(&hit, &exp);
+            assert!(
+                b.page_hits() > 0 && pool.hits() > 0,
+                "second sequence must intern-hit the first sequence's full blocks"
+            );
+        }
+    }
+
+    #[test]
+    fn forward_batch_two_paged_matches_sequential() {
+        let prompt = [1u32, 2, 3, 4];
+        for bytes in [tiny_llama_gguf(), tiny_qwen3moe_gguf(), tiny_llama4_gguf()] {
+            let model = Llama::from_gguf(load_gguf_owned(bytes).expect("load")).expect("m");
+            let pool = model.new_paged_pool(2, 16).expect("pool");
+            let mut a = model.new_paged_cache_on(&pool, 16).expect("a");
+            let mut b = model.new_paged_cache_on(&pool, 16).expect("b");
+            let _pa = model.prefill(&mut a, &prompt).expect("pa");
+            let _pb = model.prefill(&mut b, &[5, 0, 5, 0]).expect("pb");
+            let mut a_seq = model.new_paged_cache_on(&pool, 16).expect("as");
+            let mut b_seq = model.new_paged_cache_on(&pool, 16).expect("bs");
+            let _pas = model.prefill(&mut a_seq, &prompt).expect("pas");
+            let _pbs = model.prefill(&mut b_seq, &[5, 0, 5, 0]).expect("pbs");
+            let exp_a = model.forward(&mut a_seq, 1).expect("fa");
+            let exp_b = model.forward(&mut b_seq, 2).expect("fb");
+            let mut pair = [&mut a, &mut b];
+            let got = model.forward_batch(&mut pair, &[1, 2]).expect("batch");
+            assert_eq!(got.len(), 2);
+            assert_logits_match(&got[0], &exp_a);
+            assert_logits_match(&got[1], &exp_b);
+        }
+    }
+
+    #[test]
+    fn forward_batch_three_paged_matches_sequential() {
+        let prompts = [[1u32, 2, 3, 4], [5, 0, 5, 0], [1, 2, 0, 1]];
+        let toks = [1u32, 2, 3];
+        let model = Llama::from_gguf(load_gguf_owned(tiny_llama_gguf()).expect("load")).expect("m");
+        let pool = model.new_paged_pool(2, 32).expect("pool");
+        let mut a = model.new_paged_cache_on(&pool, 16).expect("a");
+        let mut b = model.new_paged_cache_on(&pool, 16).expect("b");
+        let mut c = model.new_paged_cache_on(&pool, 16).expect("c");
+        let _pa = model.prefill(&mut a, &prompts[0]).expect("pa");
+        let _pb = model.prefill(&mut b, &prompts[1]).expect("pb");
+        let _pc = model.prefill(&mut c, &prompts[2]).expect("pc");
+        let mut a_seq = model.new_paged_cache_on(&pool, 16).expect("as");
+        let mut b_seq = model.new_paged_cache_on(&pool, 16).expect("bs");
+        let mut c_seq = model.new_paged_cache_on(&pool, 16).expect("cs");
+        let _pas = model.prefill(&mut a_seq, &prompts[0]).expect("pas");
+        let _pbs = model.prefill(&mut b_seq, &prompts[1]).expect("pbs");
+        let _pcs = model.prefill(&mut c_seq, &prompts[2]).expect("pcs");
+        let exp_a = model.forward(&mut a_seq, toks[0]).expect("fa");
+        let exp_b = model.forward(&mut b_seq, toks[1]).expect("fb");
+        let exp_c = model.forward(&mut c_seq, toks[2]).expect("fc");
+        let mut triple = [&mut a, &mut b, &mut c];
+        let got = model.forward_batch(&mut triple, &toks).expect("batch");
+        assert_eq!(got.len(), 3);
+        assert_logits_match(&got[0], &exp_a);
+        assert_logits_match(&got[1], &exp_b);
+        assert_logits_match(&got[2], &exp_c);
+    }
+
+    #[test]
+    fn forward_batch_mixed_dense_paged_matches_sequential() {
+        let prompt = [1u32, 2, 3, 4];
+        let model = Llama::from_gguf(load_gguf_owned(tiny_llama_gguf()).expect("load")).expect("m");
+        let pool = model.new_paged_pool(2, 16).expect("pool");
+        let mut dense = model.new_cache(16).expect("d");
+        let mut paged = model.new_paged_cache_on(&pool, 16).expect("p");
+        let _pd = model.prefill(&mut dense, &prompt).expect("pd");
+        let _pp = model.prefill(&mut paged, &[5, 0, 5, 0]).expect("pp");
+        let mut d_seq = model.new_cache(16).expect("ds");
+        let mut p_seq = model.new_paged_cache_on(&pool, 16).expect("ps");
+        let _pds = model.prefill(&mut d_seq, &prompt).expect("pds");
+        let _pps = model.prefill(&mut p_seq, &[5, 0, 5, 0]).expect("pps");
+        let exp_d = model.forward(&mut d_seq, 1).expect("fd");
+        let exp_p = model.forward(&mut p_seq, 2).expect("fp");
+        let mut pair = [&mut dense, &mut paged];
+        let got = model.forward_batch(&mut pair, &[1, 2]).expect("batch");
+        assert_eq!(got.len(), 2);
+        assert_logits_match(&got[0], &exp_d);
+        assert_logits_match(&got[1], &exp_p);
+    }
+
+    #[test]
+    fn forward_batch_one_expert_store_matches_sequential_and_counts_hits() {
+        let prompt = [1u32, 2, 3, 4];
+        let model =
+            Llama::from_gguf(load_gguf_owned(tiny_qwen3moe_gguf()).expect("load")).expect("m");
+        let pool = model.new_paged_pool(2, 16).expect("pool");
+        let mut a = model.new_paged_cache_on(&pool, 16).expect("a");
+        let mut b = model.new_paged_cache_on(&pool, 16).expect("b");
+        a.attach_expert_store(LiveStore::Direct(
+            model.expert_direct_store().expect("catalog"),
+        ));
+        let _pa = model.prefill(&mut a, &prompt).expect("pa");
+        let _pb = model.prefill(&mut b, &[5, 0, 5, 0]).expect("pb");
+        let mut a_seq = model.new_paged_cache_on(&pool, 16).expect("as");
+        let mut b_seq = model.new_paged_cache_on(&pool, 16).expect("bs");
+        a_seq.attach_expert_store(LiveStore::Direct(
+            model.expert_direct_store().expect("catalog2"),
+        ));
+        let _pas = model.prefill(&mut a_seq, &prompt).expect("pas");
+        let _pbs = model.prefill(&mut b_seq, &[5, 0, 5, 0]).expect("pbs");
+        let exp_a = model.forward(&mut a_seq, 1).expect("fa");
+        let exp_b = model.forward(&mut b_seq, 2).expect("fb");
+        let hits_before = a.expert_store_metrics().expect("mb").hits;
+        let got = {
+            let mut pair = [&mut a, &mut b];
+            model.forward_batch(&mut pair, &[1, 2]).expect("batch")
+        };
+        assert_eq!(got.len(), 2);
+        assert_logits_match(&got[0], &exp_a);
+        assert_logits_match(&got[1], &exp_b);
+        let hits_after = a.expert_store_metrics().expect("ma").hits;
+        assert!(
+            hits_after > hits_before,
+            "batched GEMM must acquire from the parked store, hits {hits_before} -> {hits_after}"
+        );
+    }
+
+    #[test]
+    fn forward_batch_two_expert_stores_fallback_matches_sequential() {
+        let prompt = [1u32, 2, 3, 4];
+        let model =
+            Llama::from_gguf(load_gguf_owned(tiny_qwen3moe_gguf()).expect("load")).expect("m");
+        let pool = model.new_paged_pool(2, 16).expect("pool");
+        let mut a = model.new_paged_cache_on(&pool, 16).expect("a");
+        let mut b = model.new_paged_cache_on(&pool, 16).expect("b");
+        a.attach_expert_store(LiveStore::Direct(
+            model.expert_direct_store().expect("catalog"),
+        ));
+        b.attach_expert_store(LiveStore::Direct(
+            model.expert_direct_store().expect("catalog-b"),
+        ));
+        let _pa = model.prefill(&mut a, &prompt).expect("pa");
+        let _pb = model.prefill(&mut b, &[5, 0, 5, 0]).expect("pb");
+        let mut a_seq = model.new_paged_cache_on(&pool, 16).expect("as");
+        let mut b_seq = model.new_paged_cache_on(&pool, 16).expect("bs");
+        a_seq.attach_expert_store(LiveStore::Direct(
+            model.expert_direct_store().expect("catalog2"),
+        ));
+        b_seq.attach_expert_store(LiveStore::Direct(
+            model.expert_direct_store().expect("catalog2b"),
+        ));
+        let _pas = model.prefill(&mut a_seq, &prompt).expect("pas");
+        let _pbs = model.prefill(&mut b_seq, &[5, 0, 5, 0]).expect("pbs");
+        let exp_a = model.forward(&mut a_seq, 1).expect("fa");
+        let exp_b = model.forward(&mut b_seq, 2).expect("fb");
+        let mut pair = [&mut a, &mut b];
+        let got = model.forward_batch(&mut pair, &[1, 2]).expect("batch");
+        assert_eq!(got.len(), 2);
+        assert_logits_match(&got[0], &exp_a);
+        assert_logits_match(&got[1], &exp_b);
+    }
+
+    #[test]
+    fn prefill_batch_ragged_paged_matches_sequential() {
+        let a_tok = [1u32, 2];
+        let b_tok = [5u32, 0, 5, 0];
+        for bytes in [tiny_llama_gguf(), tiny_qwen3moe_gguf(), tiny_llama4_gguf()] {
+            let model = Llama::from_gguf(load_gguf_owned(bytes).expect("load")).expect("m");
+            let pool = model.new_paged_pool(2, 16).expect("pool");
+            let mut a = model.new_paged_cache_on(&pool, 16).expect("a");
+            let mut b = model.new_paged_cache_on(&pool, 16).expect("b");
+            let mut a_seq = model.new_paged_cache_on(&pool, 16).expect("as");
+            let mut b_seq = model.new_paged_cache_on(&pool, 16).expect("bs");
+            let exp_a = model.prefill(&mut a_seq, &a_tok).expect("fa");
+            let exp_b = model.prefill(&mut b_seq, &b_tok).expect("fb");
+            let mut pair = [&mut a, &mut b];
+            let groups: [&[u32]; 2] = [&a_tok, &b_tok];
+            let got = model.prefill_batch(&mut pair, &groups).expect("batch");
+            assert_eq!(got.len(), 2);
+            assert_eq!(a.n_past, a_tok.len());
+            assert_eq!(b.n_past, b_tok.len());
+            assert_logits_match(&got[0], &exp_a);
+            assert_logits_match(&got[1], &exp_b);
+        }
+    }
+
+    #[test]
+    fn prefill_batch_one_expert_store_matches_sequential() {
+        let a_tok = [1u32, 2];
+        let b_tok = [5u32, 0, 5, 0];
+        let model =
+            Llama::from_gguf(load_gguf_owned(tiny_qwen3moe_gguf()).expect("load")).expect("m");
+        let pool = model.new_paged_pool(2, 16).expect("pool");
+        let mut a = model.new_paged_cache_on(&pool, 16).expect("a");
+        let mut b = model.new_paged_cache_on(&pool, 16).expect("b");
+        a.attach_expert_store(LiveStore::Direct(
+            model.expert_direct_store().expect("catalog"),
+        ));
+        let mut a_seq = model.new_paged_cache_on(&pool, 16).expect("as");
+        let mut b_seq = model.new_paged_cache_on(&pool, 16).expect("bs");
+        a_seq.attach_expert_store(LiveStore::Direct(
+            model.expert_direct_store().expect("catalog2"),
+        ));
+        let exp_a = model.prefill(&mut a_seq, &a_tok).expect("fa");
+        let exp_b = model.prefill(&mut b_seq, &b_tok).expect("fb");
+        let hits_before = a.expert_store_metrics().expect("mb").hits;
+        let got = {
+            let mut pair = [&mut a, &mut b];
+            let groups: [&[u32]; 2] = [&a_tok, &b_tok];
+            model.prefill_batch(&mut pair, &groups).expect("batch")
+        };
+        assert_eq!(got.len(), 2);
+        assert_logits_match(&got[0], &exp_a);
+        assert_logits_match(&got[1], &exp_b);
+        let hits_after = a.expert_store_metrics().expect("ma").hits;
+        assert!(
+            hits_after > hits_before,
+            "prefill GEMM must acquire from the parked store, hits {hits_before} -> {hits_after}"
+        );
+    }
+
+    #[test]
+    fn prefill_batch_equal_length_paged_matches_sequential() {
+        let prompt = [1u32, 2, 3, 4];
+        let other = [5u32, 0, 5, 0];
+        let model = Llama::from_gguf(load_gguf_owned(tiny_llama_gguf()).expect("load")).expect("m");
+        let pool = model.new_paged_pool(2, 16).expect("pool");
+        let mut a = model.new_paged_cache_on(&pool, 16).expect("a");
+        let mut b = model.new_paged_cache_on(&pool, 16).expect("b");
+        let mut a_seq = model.new_paged_cache_on(&pool, 16).expect("as");
+        let mut b_seq = model.new_paged_cache_on(&pool, 16).expect("bs");
+        let exp_a = model.prefill(&mut a_seq, &prompt).expect("fa");
+        let exp_b = model.prefill(&mut b_seq, &other).expect("fb");
+        let mut pair = [&mut a, &mut b];
+        let groups: [&[u32]; 2] = [&prompt, &other];
+        let got = model.prefill_batch(&mut pair, &groups).expect("batch");
+        assert_eq!(got.len(), 2);
+        assert_logits_match(&got[0], &exp_a);
+        assert_logits_match(&got[1], &exp_b);
+    }
+
+    #[test]
+    fn prefill_batch_traced_qwen3moe_matches_sequential() {
+        let a_tok = [1u32, 2, 3, 4];
+        let b_tok = [5u32, 0, 5, 0];
+        let model =
+            Llama::from_gguf(load_gguf_owned(tiny_qwen3moe_gguf()).expect("load")).expect("m");
+        let pool = model.new_paged_pool(2, 16).expect("pool");
+        let mut a_seq = model.new_paged_cache_on(&pool, 16).expect("as");
+        let mut b_seq = model.new_paged_cache_on(&pool, 16).expect("bs");
+        a_seq.enable_moe_trace(1);
+        b_seq.enable_moe_trace(2);
+        let exp_a = model.prefill(&mut a_seq, &a_tok).expect("fa");
+        let exp_b = model.prefill(&mut b_seq, &b_tok).expect("fb");
+        let tr_a = a_seq.take_moe_trace();
+        let tr_b = b_seq.take_moe_trace();
+        assert!(!tr_a.events.is_empty(), "sequential A must emit MoE events");
+        assert!(!tr_b.events.is_empty(), "sequential B must emit MoE events");
+        let mut a = model.new_paged_cache_on(&pool, 16).expect("a");
+        let mut b = model.new_paged_cache_on(&pool, 16).expect("b");
+        a.enable_moe_trace(1);
+        b.enable_moe_trace(2);
+        let got = {
+            let mut pair = [&mut a, &mut b];
+            let groups: [&[u32]; 2] = [&a_tok, &b_tok];
+            model.prefill_batch(&mut pair, &groups).expect("batch")
+        };
+        assert_eq!(got.len(), 2);
+        assert_logits_match(&got[0], &exp_a);
+        assert_logits_match(&got[1], &exp_b);
+        assert_eq!(a.take_moe_trace(), tr_a);
+        assert_eq!(b.take_moe_trace(), tr_b);
+    }
+
+    #[test]
+    fn prefill_batch_trace_does_not_dump_on_untraced_first() {
+        let a_tok = [1u32, 2, 3, 4];
+        let b_tok = [5u32, 0, 5, 0];
+        let model =
+            Llama::from_gguf(load_gguf_owned(tiny_qwen3moe_gguf()).expect("load")).expect("m");
+        let pool = model.new_paged_pool(2, 16).expect("pool");
+        let mut b_seq = model.new_paged_cache_on(&pool, 16).expect("bs");
+        b_seq.enable_moe_trace(2);
+        let _exp_b = model.prefill(&mut b_seq, &b_tok).expect("fb");
+        let tr_b = b_seq.take_moe_trace();
+        let mut a = model.new_paged_cache_on(&pool, 16).expect("a");
+        let mut b = model.new_paged_cache_on(&pool, 16).expect("b");
+        b.enable_moe_trace(2);
+        let _got = {
+            let mut pair = [&mut a, &mut b];
+            let groups: [&[u32]; 2] = [&a_tok, &b_tok];
+            model.prefill_batch(&mut pair, &groups).expect("batch")
+        };
+        assert!(
+            a.take_moe_trace().events.is_empty(),
+            "untraced first cache must not receive the GEMM-local log"
+        );
+        assert_eq!(b.take_moe_trace(), tr_b);
+    }
+
+    #[test]
+    fn forward_batch_traced_qwen3moe_matches_sequential() {
+        let prompt_a = [1u32, 2, 3, 4];
+        let prompt_b = [5u32, 0, 5, 0];
+        let model =
+            Llama::from_gguf(load_gguf_owned(tiny_qwen3moe_gguf()).expect("load")).expect("m");
+        let pool = model.new_paged_pool(2, 16).expect("pool");
+        let mut a_seq = model.new_paged_cache_on(&pool, 16).expect("as");
+        let mut b_seq = model.new_paged_cache_on(&pool, 16).expect("bs");
+        let _pa = model.prefill(&mut a_seq, &prompt_a).expect("pas");
+        let _pb = model.prefill(&mut b_seq, &prompt_b).expect("pbs");
+        a_seq.enable_moe_trace(1);
+        b_seq.enable_moe_trace(2);
+        let exp_a = model.forward(&mut a_seq, 1).expect("fa");
+        let exp_b = model.forward(&mut b_seq, 2).expect("fb");
+        let tr_a = a_seq.take_moe_trace();
+        let tr_b = b_seq.take_moe_trace();
+        assert!(!tr_a.events.is_empty());
+        assert!(!tr_b.events.is_empty());
+        let mut a = model.new_paged_cache_on(&pool, 16).expect("a");
+        let mut b = model.new_paged_cache_on(&pool, 16).expect("b");
+        let _pa = model.prefill(&mut a, &prompt_a).expect("pa");
+        let _pb = model.prefill(&mut b, &prompt_b).expect("pb");
+        a.enable_moe_trace(1);
+        b.enable_moe_trace(2);
+        let got = {
+            let mut pair = [&mut a, &mut b];
+            model.forward_batch(&mut pair, &[1, 2]).expect("batch")
+        };
+        assert_eq!(got.len(), 2);
+        assert_logits_match(&got[0], &exp_a);
+        assert_logits_match(&got[1], &exp_b);
+        assert_eq!(a.take_moe_trace(), tr_a);
+        assert_eq!(b.take_moe_trace(), tr_b);
+    }
+
+    #[test]
+    fn prepare_append_twice_multi_block_is_idempotent() {
+        let model = Llama::from_gguf(load_gguf_owned(tiny_llama_gguf()).expect("load")).expect("m");
+        let mut cache = model.new_paged_cache(16, 2).expect("c");
+        cache.prepare_append(4).expect("p1");
+        assert_eq!(cache.page_table_len(), 2);
+        cache.prepare_append(4).expect("p2");
+        assert_eq!(cache.page_table_len(), 2);
+        cache.prepare_append(5).expect("p3");
+        assert_eq!(cache.page_table_len(), 3);
     }
 
     #[test]
@@ -7754,6 +16979,3421 @@ mod tests {
         assert_ne!(
             gemma_fwd, llama_fwd,
             "gemma embed-scale+GeGLU must change logits vs llama SwiGLU on the same tiny weights"
+        );
+    }
+
+    #[test]
+    fn tiny_gemma2_load_gemv_gemm_embed_and_greedy() {
+        let bytes = tiny_gemma2_gguf();
+        let g = load_gguf(&bytes).expect("load gemma2");
+        assert_eq!(
+            g.kv("general.architecture"),
+            Some(&Kv::String("gemma2".into()))
+        );
+        assert_eq!(g.kv_u32("gemma2.block_count"), Some(1));
+        assert_eq!(g.kv_u32("gemma2.embedding_length"), Some(256));
+        assert_eq!(g.kv_u32("gemma2.feed_forward_length"), Some(256));
+        assert_eq!(g.kv_u32("gemma2.attention.head_count"), Some(4));
+        assert_eq!(g.kv_u32("gemma2.attention.head_count_kv"), Some(2));
+        assert_eq!(g.kv_u32("gemma2.context_length"), Some(256));
+        assert_eq!(
+            g.kv_f32("gemma2.attn_logit_softcapping"),
+            Some(GEMMA2_ATTN_LOGIT_SOFTCAPPING)
+        );
+        assert_eq!(
+            g.kv_f32("gemma2.final_logit_softcapping"),
+            Some(GEMMA2_FINAL_LOGIT_SOFTCAPPING)
+        );
+        assert_eq!(
+            g.kv_u32("gemma2.attention.sliding_window"),
+            Some(GEMMA2_TINY_N_SWA)
+        );
+        assert_eq!(g.kv_u32("gemma2.attention.key_length"), Some(64));
+        assert_eq!(g.kv_u32("gemma2.attention.value_length"), Some(64));
+        assert_eq!(
+            g.kv_f32("gemma2.attention.layer_norm_rms_epsilon"),
+            Some(1.0 / 100_000.0)
+        );
+        assert!(g.kv_u32("gemma2.rope.dimension_count").is_none());
+        assert!(g
+            .kv_u32("gemma2.attention.sliding_window_pattern")
+            .is_none());
+        assert!(g.kv_u32("llama.block_count").is_none());
+        assert!(g.kv_u32("gemma.block_count").is_none());
+        assert!(g.kv_u32("mixtral.block_count").is_none());
+        assert!(g.kv_u32("qwen3vlmoe.block_count").is_none());
+        assert!(g.tensor("output.weight").is_none());
+        assert!(g.tensor("blk.0.ffn_norm.weight").is_some());
+        assert!(g.tensor("blk.0.post_attention_norm.weight").is_some());
+        assert!(g.tensor("blk.0.post_ffw_norm.weight").is_some());
+        assert!(g.tensor("blk.0.attn_post_norm.weight").is_none());
+        assert!(g.tensor("blk.0.ffn_post_norm.weight").is_none());
+        let model = Llama::from_gguf(g.clone()).expect("model");
+        let x = pat_f32(TINY_N_EMBD, 21);
+        let got_gemv = model.gemv_output(&x).expect("gemv");
+        let exp_gemv = oracle_gemv(g.tensor("token_embd.weight").unwrap(), &x);
+        assert_logits_match(&got_gemv, &exp_gemv);
+        let mut x2 = pat_f32(TINY_N_EMBD, 22);
+        x2.extend(pat_f32(TINY_N_EMBD, 23));
+        let got_gemm = model.gemm_output(2, &x2).expect("gemm");
+        let exp_gemm = {
+            let mut y = oracle_gemv(g.tensor("token_embd.weight").unwrap(), &x2[..TINY_N_EMBD]);
+            y.extend(oracle_gemv(
+                g.tensor("token_embd.weight").unwrap(),
+                &x2[TINY_N_EMBD..],
+            ));
+            y
+        };
+        assert_logits_match(&got_gemm, &exp_gemm);
+        let emb = model.embed_token(3).expect("embed");
+        let exp_emb = oracle_embed(g.tensor("token_embd.weight").unwrap(), 3);
+        assert_logits_match(&emb, &exp_emb);
+        load_fwd_match(&bytes, 3);
+        load_prefill_match(&bytes, &[1, 2, 3]);
+        let tok = Tokenizer::from_gguf(&g).expect("tok");
+        let out = greedy_generate(&model, &tok, "ab", 2).expect("gen");
+        let out2 = greedy_generate(&model, &tok, "ab", 2).expect("gen2");
+        assert_eq!(out, out2);
+        assert!(!out.is_empty());
+        let tokens = [1u32, 2, 3];
+        let gemma_pref = {
+            let ge = load_gguf(&tiny_gemma_gguf()).expect("gemma");
+            let m = Llama::from_gguf(ge).expect("mg");
+            let mut c = m.new_cache(8).expect("cg");
+            m.prefill(&mut c, &tokens).expect("gemma pref")
+        };
+        let mut gc = model.new_cache(8).expect("gc");
+        let gemma2_pref = model.prefill(&mut gc, &tokens).expect("gemma2 pref");
+        assert_ne!(
+            gemma2_pref, gemma_pref,
+            "gemma2 post-norms+softcap+SWA must change logits vs gemma"
+        );
+        assert!(
+            gemma2_is_swa(0, GEMMA2_SWA_PERIOD_DEFAULT),
+            "layer 0 is SWA under set_swa_pattern(2)"
+        );
+        assert!(
+            !gemma2_is_swa(1, GEMMA2_SWA_PERIOD_DEFAULT),
+            "layer 1 is dense under set_swa_pattern(2)"
+        );
+    }
+
+    #[test]
+    fn tiny_gemma3_load_gemv_gemm_embed_and_greedy() {
+        let bytes = tiny_gemma3_gguf();
+        let g = load_gguf(&bytes).expect("load gemma3");
+        assert_eq!(
+            g.kv("general.architecture"),
+            Some(&Kv::String("gemma3".into()))
+        );
+        assert_eq!(g.kv_u32("gemma3.block_count"), Some(1));
+        assert_eq!(g.kv_u32("gemma3.embedding_length"), Some(256));
+        assert_eq!(g.kv_u32("gemma3.feed_forward_length"), Some(256));
+        assert_eq!(g.kv_u32("gemma3.attention.head_count"), Some(4));
+        assert_eq!(g.kv_u32("gemma3.attention.head_count_kv"), Some(2));
+        assert_eq!(g.kv_u32("gemma3.context_length"), Some(256));
+        assert_eq!(
+            g.kv_u32("gemma3.attention.sliding_window"),
+            Some(GEMMA2_TINY_N_SWA)
+        );
+        assert_eq!(g.kv_u32("gemma3.attention.key_length"), Some(64));
+        assert_eq!(g.kv_u32("gemma3.attention.value_length"), Some(64));
+        assert!(g.kv_f32("gemma3.attn_logit_softcapping").is_none());
+        assert!(g.kv_f32("gemma3.final_logit_softcapping").is_none());
+        assert!(g.kv_u32("gemma3.rope.dimension_count").is_none());
+        assert!(g
+            .kv_u32("gemma3.attention.sliding_window_pattern")
+            .is_none());
+        assert!(g.kv_u32("gemma2.block_count").is_none());
+        assert!(g.kv_u32("llama.block_count").is_none());
+        assert!(g.kv_u32("mixtral.block_count").is_none());
+        assert!(g.tensor("output.weight").is_none());
+        assert!(g.tensor("blk.0.ffn_norm.weight").is_some());
+        assert!(g.tensor("blk.0.post_attention_norm.weight").is_some());
+        assert!(g.tensor("blk.0.post_ffw_norm.weight").is_some());
+        assert!(g.tensor("blk.0.attn_q_norm.weight").is_some());
+        assert!(g.tensor("blk.0.attn_k_norm.weight").is_some());
+        assert_eq!(
+            g.tensor("blk.0.attn_q_norm.weight").unwrap().n_cols(),
+            TINY_N_ROT
+        );
+        let model = Llama::from_gguf(g.clone()).expect("model");
+        let x = pat_f32(TINY_N_EMBD, 21);
+        let got_gemv = model.gemv_output(&x).expect("gemv");
+        let exp_gemv = oracle_gemv(g.tensor("token_embd.weight").unwrap(), &x);
+        assert_logits_match(&got_gemv, &exp_gemv);
+        load_fwd_match(&bytes, 3);
+        load_prefill_match(&bytes, &[1, 2, 3]);
+        let tok = Tokenizer::from_gguf(&g).expect("tok");
+        let out = greedy_generate(&model, &tok, "ab", 2).expect("gen");
+        let out2 = greedy_generate(&model, &tok, "ab", 2).expect("gen2");
+        assert_eq!(out, out2);
+        assert!(!out.is_empty());
+        let tokens = [1u32, 2, 3];
+        let gemma2_pref = {
+            let g2 = load_gguf(&tiny_gemma2_gguf()).expect("gemma2");
+            let m = Llama::from_gguf(g2).expect("m2");
+            let mut c = m.new_cache(8).expect("c2");
+            m.prefill(&mut c, &tokens).expect("gemma2 pref")
+        };
+        let mut gc = model.new_cache(8).expect("gc");
+        let gemma3_pref = model.prefill(&mut gc, &tokens).expect("gemma3 pref");
+        assert_ne!(
+            gemma3_pref, gemma2_pref,
+            "gemma3 QK-Norm and no attn softcap must change logits vs gemma2"
+        );
+        assert!(
+            gemma2_is_swa(0, GEMMA3_SWA_PERIOD_DEFAULT),
+            "layer 0 is SWA under set_swa_pattern(6)"
+        );
+        assert!(
+            gemma2_is_swa(4, GEMMA3_SWA_PERIOD_DEFAULT),
+            "layer 4 is SWA under set_swa_pattern(6)"
+        );
+        assert!(
+            !gemma2_is_swa(5, GEMMA3_SWA_PERIOD_DEFAULT),
+            "layer 5 is dense under set_swa_pattern(6)"
+        );
+    }
+
+    #[test]
+    fn tiny_gemma3n_load_gemv_gemm_embed_and_greedy() {
+        let bytes = tiny_gemma3n_gguf();
+        let g = load_gguf(&bytes).expect("load gemma3n");
+        assert_eq!(
+            g.kv("general.architecture"),
+            Some(&Kv::String("gemma3n".into()))
+        );
+        assert_eq!(g.kv_u32("gemma3n.block_count"), Some(1));
+        assert_eq!(g.kv_u32("gemma3n.embedding_length"), Some(256));
+        assert_eq!(g.kv_u32("gemma3n.feed_forward_length"), Some(256));
+        assert_eq!(g.kv_u32("gemma3n.attention.head_count"), Some(4));
+        assert_eq!(g.kv_u32("gemma3n.attention.head_count_kv"), Some(2));
+        assert_eq!(g.kv_u32("gemma3n.context_length"), Some(256));
+        assert_eq!(
+            g.kv_u32("gemma3n.attention.sliding_window"),
+            Some(GEMMA2_TINY_N_SWA)
+        );
+        assert_eq!(g.kv_u32("gemma3n.attention.key_length"), Some(64));
+        assert_eq!(g.kv_u32("gemma3n.attention.value_length"), Some(64));
+        assert_eq!(
+            g.kv_f32("gemma3n.final_logit_softcapping"),
+            Some(GEMMA2_FINAL_LOGIT_SOFTCAPPING)
+        );
+        assert_eq!(
+            g.kv_u32("gemma3n.altup.num_inputs"),
+            Some(u32::try_from(GEMMA3N_N_ALTUP).unwrap())
+        );
+        assert_eq!(
+            g.kv_u32("gemma3n.altup.active_idx"),
+            Some(u32::try_from(GEMMA3N_I_ALTUP_ACT).unwrap())
+        );
+        assert_eq!(
+            g.kv_u32("gemma3n.embedding_length_per_layer_input"),
+            Some(u32::try_from(GEMMA3N_N_EMBD_ALTUP).unwrap())
+        );
+        assert_eq!(
+            g.kv_u32("gemma3n.attention.shared_kv_layers"),
+            Some(GEMMA3N_N_LAYER_KV_FROM_START)
+        );
+        assert!(g.kv_f32("gemma3n.attn_logit_softcapping").is_none());
+        assert!(g.kv_u32("gemma3n.rope.dimension_count").is_none());
+        assert!(g
+            .kv_u32("gemma3n.attention.sliding_window_pattern")
+            .is_none());
+        assert!(g.kv_u32("gemma3.block_count").is_none());
+        assert!(g.kv_u32("llama.block_count").is_none());
+        assert!(g.kv_u32("mixtral.block_count").is_none());
+        assert!(g.tensor("output.weight").is_none());
+        assert!(g.tensor("altup_proj.weight").is_some());
+        assert!(g.tensor("altup_unembd_proj.weight").is_some());
+        assert!(g.tensor("per_layer_token_embd.weight").is_some());
+        assert!(g.tensor("per_layer_model_proj.weight").is_some());
+        assert!(g.tensor("per_layer_proj_norm.weight").is_some());
+        assert!(g.tensor("blk.0.ffn_norm.weight").is_some());
+        assert!(g.tensor("blk.0.post_attention_norm.weight").is_some());
+        assert!(g.tensor("blk.0.post_ffw_norm.weight").is_some());
+        assert!(g.tensor("blk.0.attn_q_norm.weight").is_some());
+        assert!(g.tensor("blk.0.attn_k_norm.weight").is_some());
+        assert!(g.tensor("blk.0.inp_gate.weight").is_some());
+        assert!(g.tensor("blk.0.laurel_l.weight").is_some());
+        assert_eq!(
+            g.tensor("blk.0.attn_q_norm.weight").unwrap().n_cols(),
+            TINY_N_ROT
+        );
+        let model = Llama::from_gguf(g.clone()).expect("model");
+        let x = pat_f32(TINY_N_EMBD, 21);
+        let got_gemv = model.gemv_output(&x).expect("gemv");
+        let exp_gemv = oracle_gemv(g.tensor("token_embd.weight").unwrap(), &x);
+        assert_logits_match(&got_gemv, &exp_gemv);
+        load_fwd_match(&bytes, 3);
+        load_prefill_match(&bytes, &[1, 2, 3]);
+        let tok = Tokenizer::from_gguf(&g).expect("tok");
+        let out = greedy_generate(&model, &tok, "ab", 2).expect("gen");
+        let out2 = greedy_generate(&model, &tok, "ab", 2).expect("gen2");
+        assert_eq!(out, out2);
+        assert!(!out.is_empty());
+        let tokens = [1u32, 2, 3];
+        let gemma3_pref = {
+            let g3 = load_gguf(&tiny_gemma3_gguf()).expect("gemma3");
+            let m = Llama::from_gguf(g3).expect("m3");
+            let mut c = m.new_cache(8).expect("c3");
+            m.prefill(&mut c, &tokens).expect("gemma3 pref")
+        };
+        let mut gc = model.new_cache(8).expect("gc");
+        let gemma3n_pref = model.prefill(&mut gc, &tokens).expect("gemma3n pref");
+        assert_ne!(
+            gemma3n_pref, gemma3_pref,
+            "gemma3n AltUp/Laurel/V-norm/attn-scale must change logits vs gemma3"
+        );
+        assert!(
+            gemma2_is_swa(0, GEMMA3N_SWA_PERIOD_DEFAULT),
+            "layer 0 is SWA under set_swa_pattern(5)"
+        );
+        assert!(
+            gemma2_is_swa(3, GEMMA3N_SWA_PERIOD_DEFAULT),
+            "layer 3 is SWA under set_swa_pattern(5)"
+        );
+        assert!(
+            !gemma2_is_swa(4, GEMMA3N_SWA_PERIOD_DEFAULT),
+            "layer 4 is dense under set_swa_pattern(5)"
+        );
+    }
+
+    #[test]
+    fn tiny_gemma4_load_gemv_gemm_embed_and_greedy() {
+        let bytes = tiny_gemma4_gguf();
+        let g = load_gguf(&bytes).expect("load gemma4");
+        assert_eq!(
+            g.kv("general.architecture"),
+            Some(&Kv::String("gemma4".into()))
+        );
+        assert_eq!(g.kv_u32("gemma4.block_count"), Some(1));
+        assert_eq!(g.kv_u32("gemma4.embedding_length"), Some(256));
+        assert_eq!(g.kv_u32("gemma4.feed_forward_length"), Some(256));
+        assert_eq!(g.kv_u32("gemma4.attention.head_count"), Some(4));
+        assert_eq!(g.kv_u32("gemma4.attention.head_count_kv"), Some(2));
+        assert_eq!(g.kv_u32("gemma4.context_length"), Some(256));
+        assert_eq!(
+            g.kv_u32("gemma4.attention.sliding_window"),
+            Some(GEMMA2_TINY_N_SWA)
+        );
+        assert_eq!(g.kv_u32("gemma4.attention.key_length"), Some(64));
+        assert_eq!(g.kv_u32("gemma4.attention.value_length"), Some(64));
+        assert_eq!(g.kv_u32("gemma4.attention.key_length_swa"), Some(64));
+        assert_eq!(g.kv_u32("gemma4.attention.value_length_swa"), Some(64));
+        assert_eq!(g.kv_u32("gemma4.embedding_length_per_layer_input"), Some(0));
+        assert_eq!(
+            g.kv("gemma4.attention.sliding_window_pattern"),
+            Some(&Kv::Array {
+                elem: GGUF_TYPE_BOOL,
+                items: vec![Kv::Bool(true)],
+            })
+        );
+        assert!(g.kv_f32("gemma4.attn_logit_softcapping").is_none());
+        assert!(g.kv_f32("gemma4.final_logit_softcapping").is_none());
+        assert!(g.kv_u32("gemma4.rope.dimension_count").is_none());
+        assert!(g.kv_u32("gemma4.attention.shared_kv_layers").is_none());
+        assert!(g.kv_u32("gemma3.block_count").is_none());
+        assert!(g.kv_u32("gemma3n.block_count").is_none());
+        assert!(g.kv_u32("llama.block_count").is_none());
+        assert!(g.kv_u32("mixtral.block_count").is_none());
+        assert!(g.tensor("output.weight").is_none());
+        assert!(g.tensor("altup_proj.weight").is_none());
+        assert!(g.tensor("per_layer_token_embd.weight").is_none());
+        assert!(g.tensor("blk.0.ffn_gate_inp.weight").is_none());
+        assert!(g.tensor("blk.0.ffn_norm.weight").is_some());
+        assert!(g.tensor("blk.0.post_attention_norm.weight").is_some());
+        assert!(g.tensor("blk.0.post_ffw_norm.weight").is_some());
+        assert!(g.tensor("blk.0.attn_q_norm.weight").is_some());
+        assert!(g.tensor("blk.0.attn_k_norm.weight").is_some());
+        assert_eq!(
+            g.tensor("blk.0.attn_q_norm.weight").unwrap().n_cols(),
+            TINY_N_ROT
+        );
+        let model = Llama::from_gguf(g.clone()).expect("model");
+        assert!(model.gemma4);
+        assert_eq!(model.is_swa, vec![true]);
+        let x = pat_f32(TINY_N_EMBD, 21);
+        let got_gemv = model.gemv_output(&x).expect("gemv");
+        let exp_gemv = oracle_gemv(g.tensor("token_embd.weight").unwrap(), &x);
+        assert_logits_match(&got_gemv, &exp_gemv);
+        load_fwd_match(&bytes, 3);
+        load_prefill_match(&bytes, &[1, 2, 3]);
+        let tok = Tokenizer::from_gguf(&g).expect("tok");
+        let out = greedy_generate(&model, &tok, "ab", 2).expect("gen");
+        let out2 = greedy_generate(&model, &tok, "ab", 2).expect("gen2");
+        assert_eq!(out, out2);
+        assert!(!out.is_empty());
+        let tokens = [1u32, 2, 3];
+        let gemma3_pref = {
+            let g3 = load_gguf(&tiny_gemma3_gguf()).expect("gemma3");
+            let m = Llama::from_gguf(g3).expect("m3");
+            let mut c = m.new_cache(8).expect("c3");
+            m.prefill(&mut c, &tokens).expect("gemma3 pref")
+        };
+        let mut gc = model.new_cache(8).expect("gc");
+        let gemma4_pref = model.prefill(&mut gc, &tokens).expect("gemma4 pref");
+        assert_ne!(
+            gemma4_pref, gemma3_pref,
+            "gemma4 V-norm and attn-scale 1.0 must change logits vs gemma3"
+        );
+        let gemma3n_pref = {
+            let g3n = load_gguf(&tiny_gemma3n_gguf()).expect("gemma3n");
+            let m = Llama::from_gguf(g3n).expect("m3n");
+            let mut c = m.new_cache(8).expect("c3n");
+            m.prefill(&mut c, &tokens).expect("gemma3n pref")
+        };
+        assert_ne!(
+            gemma4_pref, gemma3n_pref,
+            "gemma4 must not copy gemma3n AltUp/Laurel/per-layer/softcap"
+        );
+    }
+
+    #[test]
+    fn tiny_gemma4_moe_load_gemv_gemm_embed_and_greedy() {
+        let bytes = tiny_gemma4_moe_gguf();
+        let g = load_gguf(&bytes).expect("load gemma4 moe");
+        assert_eq!(
+            g.kv("general.architecture"),
+            Some(&Kv::String("gemma4".into()))
+        );
+        assert_eq!(g.kv_u32("gemma4.block_count"), Some(1));
+        assert_eq!(g.kv_u32("gemma4.embedding_length"), Some(256));
+        assert_eq!(g.kv_u32("gemma4.feed_forward_length"), Some(256));
+        assert_eq!(g.kv_u32("gemma4.expert_count"), Some(4));
+        assert_eq!(g.kv_u32("gemma4.expert_used_count"), Some(2));
+        assert_eq!(g.kv_u32("gemma4.expert_feed_forward_length"), Some(256));
+        assert_eq!(g.kv_u32("gemma4.attention.head_count"), Some(4));
+        assert_eq!(g.kv_u32("gemma4.attention.head_count_kv"), Some(2));
+        assert_eq!(
+            g.kv_u32("gemma4.attention.sliding_window"),
+            Some(GEMMA2_TINY_N_SWA)
+        );
+        assert_eq!(g.kv_u32("gemma4.attention.key_length_swa"), Some(64));
+        assert_eq!(g.kv_u32("gemma4.attention.value_length_swa"), Some(64));
+        assert_eq!(g.kv_u32("gemma4.embedding_length_per_layer_input"), Some(0));
+        assert!(g.kv_u32("gemma4.attention.shared_kv_layers").is_none());
+        assert!(g.kv_u32("qwen3moe.block_count").is_none());
+        assert!(g.kv_u32("llama.block_count").is_none());
+        assert!(g.kv_u32("mixtral.block_count").is_none());
+        assert!(g.tensor("output.weight").is_none());
+        assert!(g.tensor("blk.0.ffn_gate.weight").is_some());
+        assert!(g.tensor("blk.0.ffn_up.weight").is_some());
+        assert!(g.tensor("blk.0.ffn_down.weight").is_some());
+        assert!(g.tensor("blk.0.ffn_gate_inp.weight").is_some());
+        assert!(g.tensor("blk.0.ffn_gate_inp.scale").is_some());
+        assert!(g.tensor("blk.0.ffn_post_norm_1.weight").is_some());
+        assert!(g.tensor("blk.0.ffn_pre_norm_2.weight").is_some());
+        assert!(g.tensor("blk.0.ffn_post_norm_2.weight").is_some());
+        assert!(g.tensor("blk.0.ffn_gate_exps.weight").is_some());
+        assert!(g.tensor("blk.0.ffn_up_exps.weight").is_some());
+        assert!(g.tensor("blk.0.ffn_down_exps.weight").is_some());
+        assert!(g.tensor("blk.0.ffn_gate_up_exps.weight").is_none());
+        assert_eq!(
+            g.tensor("blk.0.ffn_gate_exps.weight").unwrap().shape,
+            &[256, 256, 4]
+        );
+        let model = Llama::from_gguf(g.clone()).expect("model");
+        assert!(model.gemma4);
+        assert_eq!(model.is_swa, vec![true]);
+        let x = pat_f32(TINY_N_EMBD, 21);
+        let got_gemv = model.gemv_output(&x).expect("gemv");
+        let exp_gemv = oracle_gemv(g.tensor("token_embd.weight").unwrap(), &x);
+        assert_logits_match(&got_gemv, &exp_gemv);
+        load_fwd_match(&bytes, 3);
+        load_prefill_match(&bytes, &[1, 2, 3]);
+        let tok = Tokenizer::from_gguf(&g).expect("tok");
+        let out = greedy_generate(&model, &tok, "ab", 2).expect("gen");
+        let out2 = greedy_generate(&model, &tok, "ab", 2).expect("gen2");
+        assert_eq!(out, out2);
+        assert!(!out.is_empty());
+        let tokens = [1u32, 2, 3];
+        let dense_pref = {
+            let dg = load_gguf(&tiny_gemma4_gguf()).expect("dense gemma4");
+            let dm = Llama::from_gguf(dg).expect("dm");
+            let mut c = dm.new_cache(8).expect("cd");
+            dm.prefill(&mut c, &tokens).expect("dense pref")
+        };
+        let mut mc = model.new_cache(8).expect("mc");
+        let moe_pref = model.prefill(&mut mc, &tokens).expect("moe pref");
+        assert_ne!(
+            moe_pref, dense_pref,
+            "gemma4 MoE must change logits vs dense gemma4"
+        );
+        let qwen3moe_pref = {
+            let q3 = load_gguf(&tiny_qwen3moe_gguf()).expect("qwen3moe");
+            let m3 = Llama::from_gguf(q3).expect("m3");
+            let mut c = m3.new_cache(8).expect("c3");
+            m3.prefill(&mut c, &tokens).expect("qwen3moe pref")
+        };
+        assert_ne!(
+            moe_pref, qwen3moe_pref,
+            "gemma4 MoE must not copy qwen3moe SILU / ffn_norm router"
+        );
+        let llama_moe_pref = {
+            let lg = load_gguf(&tiny_llama_moe_gguf()).expect("llama moe");
+            let lm = Llama::from_gguf(lg).expect("lm");
+            let mut c = lm.new_cache(8).expect("cl");
+            lm.prefill(&mut c, &tokens).expect("llama moe pref")
+        };
+        assert_ne!(
+            moe_pref, llama_moe_pref,
+            "gemma4 MoE must not copy llama-MoE SwiGLU / ffn_norm router"
+        );
+        let catalog = model.expert_direct_store().expect("catalog");
+        let via_direct = store_prefill(&model, LiveStore::Direct(catalog), &tokens);
+        assert_eq!(moe_pref, via_direct, "DirectStore GEMV must match the blob");
+    }
+
+    #[test]
+    fn tiny_gemma4_moe_trace_is_identity_and_feeds_expertvm() {
+        let bytes = tiny_gemma4_moe_gguf();
+        let g = load_gguf(&bytes).expect("load");
+        let tok = Tokenizer::from_gguf(&g).expect("tok");
+        let model = Llama::from_gguf(g).expect("model");
+        let plain = greedy_generate(&model, &tok, "ab", 4).expect("plain");
+        let (traced, trace) =
+            greedy_generate_traced(&model, &tok, "ab", 4, None, 0).expect("traced");
+        assert_eq!(plain, traced, "tracing must not change greedy tokens");
+        assert!(!trace.events.is_empty(), "MoE layers must emit accesses");
+        let mut by_token: BTreeMap<u32, u64> = BTreeMap::new();
+        for e in &trace.events {
+            assert_eq!(e.layer, 0);
+            assert_eq!(e.experts.len(), TINY_GEMMA4_N_EXPERT_USED);
+            assert_eq!(e.weight_pt.len(), e.experts.len());
+            for w in &e.weight_pt {
+                assert!(*w <= 1000);
+            }
+            let p = e.prefix.expect("decode traces hash the token-id prefix");
+            match by_token.get(&e.token) {
+                None => {
+                    let _prev = by_token.insert(e.token, p);
+                }
+                Some(old) => assert_eq!(*old, p, "same token must share prefix hash"),
+            }
+        }
+        assert!(
+            by_token.len() >= 2,
+            "prefill + decode must emit more than one prefix hash"
+        );
+        let mut store = expertvm::DirectStore::from_trace(&trace);
+        for k in trace.keys() {
+            let blob = expertvm::ExpertStore::acquire(&mut store, k).expect("blob");
+            assert_eq!(blob.gate, vec![1]);
+        }
+        assert_eq!(expertvm::ExpertStore::misses(&store), 0);
+    }
+
+    #[test]
+    fn tiny_gemma4_ple_load_gemv_gemm_embed_and_greedy() {
+        let bytes = tiny_gemma4_ple_gguf();
+        let g = load_gguf(&bytes).expect("load gemma4 ple");
+        assert_eq!(
+            g.kv("general.architecture"),
+            Some(&Kv::String("gemma4".into()))
+        );
+        assert_eq!(g.kv_u32("gemma4.block_count"), Some(1));
+        assert_eq!(g.kv_u32("gemma4.embedding_length"), Some(256));
+        assert_eq!(
+            g.kv_u32("gemma4.embedding_length_per_layer_input"),
+            Some(u32::try_from(TINY_GEMMA4_N_EMBD_PER_LAYER).unwrap())
+        );
+        assert_eq!(
+            g.kv_u32("gemma4.attention.sliding_window"),
+            Some(GEMMA2_TINY_N_SWA)
+        );
+        assert!(g.kv_u32("gemma4.attention.shared_kv_layers").is_none());
+        assert!(g.kv_u32("gemma4.expert_count").is_none());
+        assert!(g.tensor("output.weight").is_none());
+        assert!(g.tensor("altup_proj.weight").is_none());
+        assert!(g.tensor("blk.0.ffn_gate_inp.weight").is_none());
+        assert!(g.tensor("per_layer_token_embd.weight").is_some());
+        assert!(g.tensor("per_layer_model_proj.weight").is_some());
+        assert!(g.tensor("per_layer_proj_norm.weight").is_some());
+        assert!(g.tensor("blk.0.inp_gate.weight").is_some());
+        assert!(g.tensor("blk.0.proj.weight").is_some());
+        assert!(g.tensor("blk.0.post_norm.weight").is_some());
+        assert_eq!(
+            g.tensor("per_layer_token_embd.weight").unwrap().shape,
+            &[
+                u64::try_from(TINY_GEMMA4_N_EMBD_PER_LAYER).unwrap(),
+                u64::try_from(TINY_N_VOCAB).unwrap()
+            ]
+        );
+        assert_eq!(
+            g.tensor("per_layer_model_proj.weight").unwrap().shape,
+            &[
+                u64::try_from(TINY_N_EMBD).unwrap(),
+                u64::try_from(TINY_GEMMA4_N_EMBD_PER_LAYER).unwrap()
+            ]
+        );
+        let model = Llama::from_gguf(g.clone()).expect("model");
+        assert!(model.gemma4);
+        assert!(model.gemma4_ple.is_some());
+        assert_eq!(model.is_swa, vec![true]);
+        let x = pat_f32(TINY_N_EMBD, 21);
+        let got_gemv = model.gemv_output(&x).expect("gemv");
+        let exp_gemv = oracle_gemv(g.tensor("token_embd.weight").unwrap(), &x);
+        assert_logits_match(&got_gemv, &exp_gemv);
+        load_fwd_match(&bytes, 3);
+        load_prefill_match(&bytes, &[1, 2, 3]);
+        let tok = Tokenizer::from_gguf(&g).expect("tok");
+        let out = greedy_generate(&model, &tok, "ab", 2).expect("gen");
+        let out2 = greedy_generate(&model, &tok, "ab", 2).expect("gen2");
+        assert_eq!(out, out2);
+        assert!(!out.is_empty());
+        let tokens = [1u32, 2, 3];
+        let dense_pref = {
+            let dg = load_gguf(&tiny_gemma4_gguf()).expect("dense gemma4");
+            let dm = Llama::from_gguf(dg).expect("dm");
+            let mut c = dm.new_cache(8).expect("cd");
+            dm.prefill(&mut c, &tokens).expect("dense pref")
+        };
+        let mut pc = model.new_cache(8).expect("pc");
+        let ple_pref = model.prefill(&mut pc, &tokens).expect("ple pref");
+        assert_ne!(
+            ple_pref, dense_pref,
+            "gemma4 PLE must change logits vs dense gemma4"
+        );
+        let gemma3n_pref = {
+            let g3n = load_gguf(&tiny_gemma3n_gguf()).expect("gemma3n");
+            let m = Llama::from_gguf(g3n).expect("m3n");
+            let mut c = m.new_cache(8).expect("c3n");
+            m.prefill(&mut c, &tokens).expect("gemma3n pref")
+        };
+        assert_ne!(
+            ple_pref, gemma3n_pref,
+            "gemma4 PLE must not copy gemma3n AltUp/Laurel/softcap"
+        );
+        let moe_pref = {
+            let mg = load_gguf(&tiny_gemma4_moe_gguf()).expect("moe");
+            let mm = Llama::from_gguf(mg).expect("mm");
+            let mut c = mm.new_cache(8).expect("cm");
+            mm.prefill(&mut c, &tokens).expect("moe pref")
+        };
+        assert_ne!(ple_pref, moe_pref, "gemma4 PLE must not copy gemma4 MoE");
+    }
+
+    #[test]
+    fn tiny_gemma4_moe_ple_load_gemv_gemm_embed_and_greedy() {
+        let bytes = tiny_gemma4_moe_ple_gguf();
+        let g = load_gguf(&bytes).expect("load gemma4 moe ple");
+        assert_eq!(
+            g.kv("general.architecture"),
+            Some(&Kv::String("gemma4".into()))
+        );
+        assert_eq!(g.kv_u32("gemma4.block_count"), Some(1));
+        assert_eq!(g.kv_u32("gemma4.embedding_length"), Some(256));
+        assert_eq!(g.kv_u32("gemma4.expert_count"), Some(4));
+        assert_eq!(g.kv_u32("gemma4.expert_used_count"), Some(2));
+        assert_eq!(
+            g.kv_u32("gemma4.embedding_length_per_layer_input"),
+            Some(u32::try_from(TINY_GEMMA4_N_EMBD_PER_LAYER).unwrap())
+        );
+        assert!(g.kv_u32("gemma4.attention.shared_kv_layers").is_none());
+        assert!(g.tensor("output.weight").is_none());
+        assert!(g.tensor("altup_proj.weight").is_none());
+        assert!(g.tensor("blk.0.ffn_gate_inp.weight").is_some());
+        assert!(g.tensor("blk.0.ffn_gate_inp.scale").is_some());
+        assert!(g.tensor("blk.0.ffn_post_norm_1.weight").is_some());
+        assert!(g.tensor("blk.0.ffn_pre_norm_2.weight").is_some());
+        assert!(g.tensor("blk.0.ffn_post_norm_2.weight").is_some());
+        assert!(g.tensor("blk.0.ffn_gate_exps.weight").is_some());
+        assert!(g.tensor("blk.0.ffn_up_exps.weight").is_some());
+        assert!(g.tensor("blk.0.ffn_down_exps.weight").is_some());
+        assert!(g.tensor("blk.0.ffn_gate_up_exps.weight").is_none());
+        assert!(g.tensor("per_layer_token_embd.weight").is_some());
+        assert!(g.tensor("per_layer_model_proj.weight").is_some());
+        assert!(g.tensor("per_layer_proj_norm.weight").is_some());
+        assert!(g.tensor("blk.0.inp_gate.weight").is_some());
+        assert!(g.tensor("blk.0.proj.weight").is_some());
+        assert!(g.tensor("blk.0.post_norm.weight").is_some());
+        let model = Llama::from_gguf(g.clone()).expect("model");
+        assert!(model.gemma4);
+        assert!(model.gemma4_ple.is_some());
+        assert_eq!(model.is_swa, vec![true]);
+        let x = pat_f32(TINY_N_EMBD, 21);
+        let got_gemv = model.gemv_output(&x).expect("gemv");
+        let exp_gemv = oracle_gemv(g.tensor("token_embd.weight").unwrap(), &x);
+        assert_logits_match(&got_gemv, &exp_gemv);
+        load_fwd_match(&bytes, 3);
+        load_prefill_match(&bytes, &[1, 2, 3]);
+        let tok = Tokenizer::from_gguf(&g).expect("tok");
+        let out = greedy_generate(&model, &tok, "ab", 2).expect("gen");
+        let out2 = greedy_generate(&model, &tok, "ab", 2).expect("gen2");
+        assert_eq!(out, out2);
+        assert!(!out.is_empty());
+        let tokens = [1u32, 2, 3];
+        let mut combo_c = model.new_cache(8).expect("cc");
+        let combo_pref = model.prefill(&mut combo_c, &tokens).expect("combo pref");
+        let dense_pref = {
+            let dg = load_gguf(&tiny_gemma4_gguf()).expect("dense");
+            let dm = Llama::from_gguf(dg).expect("dm");
+            let mut c = dm.new_cache(8).expect("cd");
+            dm.prefill(&mut c, &tokens).expect("dense pref")
+        };
+        assert_ne!(
+            combo_pref, dense_pref,
+            "gemma4 MoE+PLE must change logits vs dense gemma4"
+        );
+        let moe_pref = {
+            let mg = load_gguf(&tiny_gemma4_moe_gguf()).expect("moe");
+            let mm = Llama::from_gguf(mg).expect("mm");
+            let mut c = mm.new_cache(8).expect("cm");
+            mm.prefill(&mut c, &tokens).expect("moe pref")
+        };
+        assert_ne!(
+            combo_pref, moe_pref,
+            "gemma4 MoE+PLE must change logits vs MoE-only"
+        );
+        let ple_pref = {
+            let pg = load_gguf(&tiny_gemma4_ple_gguf()).expect("ple");
+            let pm = Llama::from_gguf(pg).expect("pm");
+            let mut c = pm.new_cache(8).expect("cp");
+            pm.prefill(&mut c, &tokens).expect("ple pref")
+        };
+        assert_ne!(
+            combo_pref, ple_pref,
+            "gemma4 MoE+PLE must change logits vs PLE-only"
+        );
+        let catalog = model.expert_direct_store().expect("catalog");
+        let via_direct = store_prefill(&model, LiveStore::Direct(catalog), &tokens);
+        assert_eq!(
+            combo_pref, via_direct,
+            "DirectStore GEMV must match the blob"
+        );
+    }
+
+    #[test]
+    fn tiny_gemma4_moe_ple_trace_is_identity_and_feeds_expertvm() {
+        let bytes = tiny_gemma4_moe_ple_gguf();
+        let g = load_gguf(&bytes).expect("load");
+        let tok = Tokenizer::from_gguf(&g).expect("tok");
+        let model = Llama::from_gguf(g).expect("model");
+        let plain = greedy_generate(&model, &tok, "ab", 4).expect("plain");
+        let (traced, trace) =
+            greedy_generate_traced(&model, &tok, "ab", 4, None, 0).expect("traced");
+        assert_eq!(plain, traced, "tracing must not change greedy tokens");
+        assert!(!trace.events.is_empty(), "MoE layers must emit accesses");
+        for e in &trace.events {
+            assert_eq!(e.layer, 0);
+            assert_eq!(e.experts.len(), TINY_GEMMA4_N_EXPERT_USED);
+            assert_eq!(e.weight_pt.len(), e.experts.len());
+        }
+        let mut store = expertvm::DirectStore::from_trace(&trace);
+        for k in trace.keys() {
+            let blob = expertvm::ExpertStore::acquire(&mut store, k).expect("blob");
+            assert_eq!(blob.gate, vec![1]);
+        }
+        assert_eq!(expertvm::ExpertStore::misses(&store), 0);
+    }
+
+    #[test]
+    fn tiny_gemma4_moe_fused_load_gemv_gemm_embed_and_greedy() {
+        let bytes = tiny_gemma4_moe_fused_gguf();
+        let g = load_gguf(&bytes).expect("load gemma4 fused");
+        assert_eq!(
+            g.kv("general.architecture"),
+            Some(&Kv::String("gemma4".into()))
+        );
+        assert_eq!(g.kv_u32("gemma4.expert_count"), Some(4));
+        assert_eq!(g.kv_u32("gemma4.expert_used_count"), Some(2));
+        assert!(g.tensor("blk.0.ffn_gate_up_exps.weight").is_some());
+        assert!(g.tensor("blk.0.ffn_gate_exps.weight").is_none());
+        assert!(g.tensor("blk.0.ffn_up_exps.weight").is_none());
+        assert!(g.tensor("blk.0.ffn_down_exps.weight").is_some());
+        assert_eq!(
+            g.tensor("blk.0.ffn_gate_up_exps.weight").unwrap().shape,
+            &[256, 512, 4]
+        );
+        assert_eq!(
+            g.tensor("blk.0.ffn_gate_up_exps.weight").unwrap().ty,
+            GgmlType::F32
+        );
+        let model = Llama::from_gguf(g.clone()).expect("model");
+        assert!(model.gemma4);
+        load_fwd_match(&bytes, 3);
+        load_prefill_match(&bytes, &[1, 2, 3]);
+        let tok = Tokenizer::from_gguf(&g).expect("tok");
+        let out = greedy_generate(&model, &tok, "ab", 2).expect("gen");
+        let out2 = greedy_generate(&model, &tok, "ab", 2).expect("gen2");
+        assert_eq!(out, out2);
+        let tokens = [1u32, 2, 3];
+        let mut fc = model.new_cache(8).expect("fc");
+        let fused_pref = model.prefill(&mut fc, &tokens).expect("fused pref");
+        let moe_pref = {
+            let mg = load_gguf(&tiny_gemma4_moe_gguf()).expect("moe");
+            let mm = Llama::from_gguf(mg).expect("mm");
+            let mut c = mm.new_cache(8).expect("cm");
+            mm.prefill(&mut c, &tokens).expect("moe pref")
+        };
+        assert_ne!(
+            fused_pref, moe_pref,
+            "fused packing must not copy split-expert logits"
+        );
+        let catalog = model.expert_direct_store().expect("catalog");
+        let via_direct = store_prefill(&model, LiveStore::Direct(catalog), &tokens);
+        assert_eq!(
+            fused_pref, via_direct,
+            "DirectStore fused GEMV must match the blob"
+        );
+    }
+
+    #[test]
+    fn tiny_gemma4_moe_fused_trace_is_identity_and_feeds_expertvm() {
+        let bytes = tiny_gemma4_moe_fused_gguf();
+        let g = load_gguf(&bytes).expect("load");
+        let tok = Tokenizer::from_gguf(&g).expect("tok");
+        let model = Llama::from_gguf(g).expect("model");
+        let plain = greedy_generate(&model, &tok, "ab", 4).expect("plain");
+        let (traced, trace) =
+            greedy_generate_traced(&model, &tok, "ab", 4, None, 0).expect("traced");
+        assert_eq!(plain, traced, "tracing must not change greedy tokens");
+        assert!(!trace.events.is_empty(), "MoE layers must emit accesses");
+        let mut by_token: BTreeMap<u32, u64> = BTreeMap::new();
+        for e in &trace.events {
+            assert_eq!(e.layer, 0);
+            assert_eq!(e.experts.len(), TINY_GEMMA4_N_EXPERT_USED);
+            assert_eq!(e.weight_pt.len(), e.experts.len());
+            for w in &e.weight_pt {
+                assert!(*w <= 1000);
+            }
+            let p = e.prefix.expect("decode traces hash the token-id prefix");
+            match by_token.get(&e.token) {
+                None => {
+                    let _prev = by_token.insert(e.token, p);
+                }
+                Some(old) => assert_eq!(*old, p, "same token must share prefix hash"),
+            }
+        }
+        assert!(
+            by_token.len() >= 2,
+            "prefill + decode must emit more than one prefix hash"
+        );
+        let mut store = expertvm::DirectStore::from_trace(&trace);
+        for k in trace.keys() {
+            let blob = expertvm::ExpertStore::acquire(&mut store, k).expect("blob");
+            assert_eq!(blob.gate, vec![1]);
+        }
+        assert_eq!(expertvm::ExpertStore::misses(&store), 0);
+    }
+
+    #[test]
+    fn tiny_gemma4_moe_fused_ple_load_gemv_gemm_embed_and_greedy() {
+        let bytes = tiny_gemma4_moe_fused_ple_gguf();
+        let g = load_gguf(&bytes).expect("load gemma4 fused ple");
+        assert_eq!(
+            g.kv("general.architecture"),
+            Some(&Kv::String("gemma4".into()))
+        );
+        assert_eq!(g.kv_u32("gemma4.expert_count"), Some(4));
+        assert_eq!(g.kv_u32("gemma4.expert_used_count"), Some(2));
+        assert_eq!(
+            g.kv_u32("gemma4.embedding_length_per_layer_input"),
+            Some(u32::try_from(TINY_GEMMA4_N_EMBD_PER_LAYER).unwrap())
+        );
+        assert!(g.tensor("blk.0.ffn_gate_up_exps.weight").is_some());
+        assert!(g.tensor("blk.0.ffn_gate_exps.weight").is_none());
+        assert!(g.tensor("blk.0.ffn_up_exps.weight").is_none());
+        assert!(g.tensor("blk.0.ffn_down_exps.weight").is_some());
+        assert!(g.tensor("per_layer_token_embd.weight").is_some());
+        assert!(g.tensor("blk.0.inp_gate.weight").is_some());
+        assert!(g.tensor("blk.0.proj.weight").is_some());
+        assert!(g.tensor("blk.0.post_norm.weight").is_some());
+        assert_eq!(
+            g.tensor("blk.0.ffn_gate_up_exps.weight").unwrap().shape,
+            &[256, 512, 4]
+        );
+        let model = Llama::from_gguf(g.clone()).expect("model");
+        assert!(model.gemma4);
+        assert!(model.gemma4_ple.is_some());
+        load_fwd_match(&bytes, 3);
+        load_prefill_match(&bytes, &[1, 2, 3]);
+        let tok = Tokenizer::from_gguf(&g).expect("tok");
+        let out = greedy_generate(&model, &tok, "ab", 2).expect("gen");
+        let out2 = greedy_generate(&model, &tok, "ab", 2).expect("gen2");
+        assert_eq!(out, out2);
+        let tokens = [1u32, 2, 3];
+        let mut fc = model.new_cache(8).expect("fc");
+        let combo_pref = model.prefill(&mut fc, &tokens).expect("combo pref");
+        let fused_pref = {
+            let fg = load_gguf(&tiny_gemma4_moe_fused_gguf()).expect("fused");
+            let fm = Llama::from_gguf(fg).expect("fm");
+            let mut c = fm.new_cache(8).expect("cf");
+            fm.prefill(&mut c, &tokens).expect("fused pref")
+        };
+        assert_ne!(
+            combo_pref, fused_pref,
+            "fused plus PLE must change logits vs fused-only"
+        );
+        let moe_ple_pref = {
+            let mg = load_gguf(&tiny_gemma4_moe_ple_gguf()).expect("moe ple");
+            let mm = Llama::from_gguf(mg).expect("mm");
+            let mut c = mm.new_cache(8).expect("cm");
+            mm.prefill(&mut c, &tokens).expect("moe ple pref")
+        };
+        assert_ne!(
+            combo_pref, moe_ple_pref,
+            "fused plus PLE must change logits vs split MoE plus PLE"
+        );
+        let ple_pref = {
+            let pg = load_gguf(&tiny_gemma4_ple_gguf()).expect("ple");
+            let pm = Llama::from_gguf(pg).expect("pm");
+            let mut c = pm.new_cache(8).expect("cp");
+            pm.prefill(&mut c, &tokens).expect("ple pref")
+        };
+        assert_ne!(
+            combo_pref, ple_pref,
+            "fused plus PLE must change logits vs PLE-only"
+        );
+        let catalog = model.expert_direct_store().expect("catalog");
+        let via_direct = store_prefill(&model, LiveStore::Direct(catalog), &tokens);
+        assert_eq!(
+            combo_pref, via_direct,
+            "DirectStore fused plus PLE GEMV must match the blob"
+        );
+    }
+
+    #[test]
+    fn tiny_gemma4_moe_fused_ple_trace_is_identity_and_feeds_expertvm() {
+        let bytes = tiny_gemma4_moe_fused_ple_gguf();
+        let g = load_gguf(&bytes).expect("load");
+        let tok = Tokenizer::from_gguf(&g).expect("tok");
+        let model = Llama::from_gguf(g).expect("model");
+        let plain = greedy_generate(&model, &tok, "ab", 4).expect("plain");
+        let (traced, trace) =
+            greedy_generate_traced(&model, &tok, "ab", 4, None, 0).expect("traced");
+        assert_eq!(plain, traced, "tracing must not change greedy tokens");
+        assert!(!trace.events.is_empty(), "MoE layers must emit accesses");
+        let mut by_token: BTreeMap<u32, u64> = BTreeMap::new();
+        for e in &trace.events {
+            assert_eq!(e.layer, 0);
+            assert_eq!(e.experts.len(), TINY_GEMMA4_N_EXPERT_USED);
+            assert_eq!(e.weight_pt.len(), e.experts.len());
+            for w in &e.weight_pt {
+                assert!(*w <= 1000);
+            }
+            let p = e.prefix.expect("decode traces hash the token-id prefix");
+            match by_token.get(&e.token) {
+                None => {
+                    let _prev = by_token.insert(e.token, p);
+                }
+                Some(old) => assert_eq!(*old, p, "same token must share prefix hash"),
+            }
+        }
+        assert!(
+            by_token.len() >= 2,
+            "prefill + decode must emit more than one prefix hash"
+        );
+        let mut store = expertvm::DirectStore::from_trace(&trace);
+        for k in trace.keys() {
+            let blob = expertvm::ExpertStore::acquire(&mut store, k).expect("blob");
+            assert_eq!(blob.gate, vec![1]);
+        }
+        assert_eq!(expertvm::ExpertStore::misses(&store), 0);
+    }
+
+    #[test]
+    fn gemma4_kv_slot_matches_llama_cpp_reuse() {
+        assert!(gemma4_has_kv(2, 0));
+        assert!(gemma4_has_kv(2, 1));
+        assert!(!gemma4_has_kv(2, 2));
+        assert_eq!(gemma4_kv_slot(2, 0, true).expect("l0"), 0);
+        assert_eq!(gemma4_kv_slot(2, 1, false).expect("l1"), 1);
+        assert_eq!(gemma4_kv_slot(2, 2, true).expect("swa share"), 0);
+        assert_eq!(gemma4_kv_slot(2, 2, false).expect("global share"), 1);
+        assert!(gemma4_kv_slot(1, 1, true).is_err());
+        assert!(gemma4_has_kv(-19, 0));
+    }
+
+    #[test]
+    fn tiny_gemma4_shared_kv_load_gemv_gemm_embed_and_greedy() {
+        let bytes = tiny_gemma4_shared_kv_gguf();
+        let g = load_gguf(&bytes).expect("load gemma4 shared kv");
+        assert_eq!(
+            g.kv("general.architecture"),
+            Some(&Kv::String("gemma4".into()))
+        );
+        assert_eq!(g.kv_u32("gemma4.block_count"), Some(3));
+        assert_eq!(g.kv_u32("gemma4.attention.shared_kv_layers"), Some(1));
+        assert_eq!(
+            g.kv("gemma4.attention.sliding_window_pattern"),
+            Some(&Kv::Array {
+                elem: GGUF_TYPE_BOOL,
+                items: vec![Kv::Bool(true), Kv::Bool(true), Kv::Bool(true)],
+            })
+        );
+        assert!(g.tensor("blk.0.attn_k.weight").is_some());
+        assert!(g.tensor("blk.1.attn_k.weight").is_some());
+        assert!(g.tensor("blk.2.attn_k.weight").is_none());
+        assert!(g.tensor("blk.2.attn_v.weight").is_none());
+        assert!(g.tensor("blk.2.attn_k_norm.weight").is_none());
+        assert!(g.tensor("blk.2.attn_q.weight").is_some());
+        assert!(g.tensor("blk.2.attn_q_norm.weight").is_some());
+        assert!(g.tensor("blk.2.attn_output.weight").is_some());
+        let model = Llama::from_gguf(g.clone()).expect("model");
+        assert!(model.gemma4);
+        assert_eq!(model.layers.len(), 3);
+        assert!(model.layers[0].wk.is_some());
+        assert!(model.layers[1].wk.is_some());
+        assert!(model.layers[2].wk.is_none());
+        assert!(model.layers[2].wv.is_none());
+        assert_eq!(model.layers[0].kv_slot, 0);
+        assert_eq!(model.layers[1].kv_slot, 1);
+        assert_eq!(model.layers[2].kv_slot, 0);
+        assert_eq!(model.is_swa, vec![true, true, true]);
+        load_fwd_match(&bytes, 3);
+        load_prefill_match(&bytes, &[1, 2, 3]);
+        let tok = Tokenizer::from_gguf(&g).expect("tok");
+        let out = greedy_generate(&model, &tok, "ab", 2).expect("gen");
+        let out2 = greedy_generate(&model, &tok, "ab", 2).expect("gen2");
+        assert_eq!(out, out2);
+        let tokens = [1u32, 2, 3];
+        let mut sc = model.new_cache(8).expect("sc");
+        let shared_pref = model.prefill(&mut sc, &tokens).expect("shared pref");
+        let dense_pref = {
+            let dg = load_gguf(&tiny_gemma4_gguf()).expect("dense");
+            let dm = Llama::from_gguf(dg).expect("dm");
+            let mut c = dm.new_cache(8).expect("dc");
+            dm.prefill(&mut c, &tokens).expect("dense pref")
+        };
+        assert_ne!(
+            shared_pref, dense_pref,
+            "shared KV 3-layer must not copy 1-layer dense logits"
+        );
+        let full_pref = {
+            let fb = expand_tiny_gemma4_layers(tiny_gemma4_gguf(), 3, 0).expect("full kv");
+            let fg = load_gguf(&fb).expect("full g");
+            assert!(fg.tensor("blk.2.attn_k.weight").is_some());
+            assert!(fg.kv_u32("gemma4.attention.shared_kv_layers").is_none());
+            let fm = Llama::from_gguf(fg).expect("fm");
+            assert!(fm.layers[2].wk.is_some());
+            assert_eq!(fm.layers[2].kv_slot, 2);
+            let mut c = fm.new_cache(8).expect("fc");
+            fm.prefill(&mut c, &tokens).expect("full pref")
+        };
+        assert_ne!(
+            shared_pref, full_pref,
+            "reusing layer 0 KV must not copy a 3-layer full-KV walk"
+        );
+    }
+
+    #[test]
+    fn tiny_gemma4_mixed_hd_load_gemv_gemm_embed_and_greedy() {
+        let bytes = tiny_gemma4_mixed_hd_gguf();
+        let g = load_gguf(&bytes).expect("load gemma4 mixed hd");
+        assert_eq!(
+            g.kv("general.architecture"),
+            Some(&Kv::String("gemma4".into()))
+        );
+        assert_eq!(g.kv_u32("gemma4.block_count"), Some(2));
+        assert_eq!(g.kv_u32("gemma4.attention.key_length"), Some(64));
+        assert_eq!(g.kv_u32("gemma4.attention.value_length"), Some(64));
+        assert_eq!(g.kv_u32("gemma4.attention.key_length_swa"), Some(32));
+        assert_eq!(g.kv_u32("gemma4.attention.value_length_swa"), Some(32));
+        assert_eq!(g.kv_u32("gemma4.rope.dimension_count_swa"), Some(32));
+        assert_eq!(
+            g.kv("gemma4.attention.sliding_window_pattern"),
+            Some(&Kv::Array {
+                elem: GGUF_TYPE_BOOL,
+                items: vec![Kv::Bool(true), Kv::Bool(false)],
+            })
+        );
+        assert_eq!(g.tensor("blk.0.attn_q.weight").unwrap().n_rows(), 128);
+        assert_eq!(g.tensor("blk.0.attn_k.weight").unwrap().n_rows(), 64);
+        assert_eq!(g.tensor("blk.0.attn_v.weight").unwrap().n_rows(), 64);
+        assert_eq!(g.tensor("blk.0.attn_output.weight").unwrap().n_cols(), 128);
+        assert_eq!(g.tensor("blk.0.attn_q_norm.weight").unwrap().n_cols(), 32);
+        assert_eq!(g.tensor("blk.0.attn_k_norm.weight").unwrap().n_cols(), 32);
+        assert_eq!(g.tensor("blk.1.attn_q.weight").unwrap().n_rows(), 256);
+        assert_eq!(g.tensor("blk.1.attn_k.weight").unwrap().n_rows(), 128);
+        assert_eq!(g.tensor("blk.1.attn_output.weight").unwrap().n_cols(), 256);
+        let model = Llama::from_gguf(g.clone()).expect("model");
+        assert!(model.gemma4);
+        assert_eq!(model.layers.len(), 2);
+        assert_eq!(model.layers[0].hd, 32);
+        assert_eq!(model.layers[1].hd, 64);
+        assert_eq!(model.layers[0].n_rot, 32);
+        assert_eq!(model.layers[1].n_rot, 64);
+        assert_eq!(model.cache_hd().expect("cache hd"), 64);
+        assert_eq!(model.is_swa, vec![true, false]);
+        assert_eq!(model.layers[0].rope_base, 10_000.0);
+        assert_eq!(model.layers[1].rope_base, 10_000.0);
+        assert_eq!(
+            model.layers[1]
+                .attn_q_norm
+                .as_deref()
+                .and_then(|w| w.first())
+                .copied(),
+            Some(TINY_GEMMA4_GLOBAL_QK_NORM)
+        );
+        load_fwd_match(&bytes, 3);
+        load_prefill_match(&bytes, &[1, 2, 3]);
+        let tok = Tokenizer::from_gguf(&g).expect("tok");
+        let out = greedy_generate(&model, &tok, "ab", 2).expect("gen");
+        let out2 = greedy_generate(&model, &tok, "ab", 2).expect("gen2");
+        assert_eq!(out, out2);
+        let tokens = [1u32, 2, 3];
+        let mut sc = model.new_cache(8).expect("sc");
+        let mixed_pref = model.prefill(&mut sc, &tokens).expect("mixed pref");
+        let dense_pref = {
+            let dg = load_gguf(&tiny_gemma4_gguf()).expect("dense");
+            let dm = Llama::from_gguf(dg).expect("dm");
+            let mut c = dm.new_cache(8).expect("dc");
+            dm.prefill(&mut c, &tokens).expect("dense pref")
+        };
+        assert_ne!(
+            mixed_pref, dense_pref,
+            "mixed SWA/global head dims must not copy 1-layer dense logits"
+        );
+        let equal_pref = {
+            let eb = expand_tiny_gemma4_layers(tiny_gemma4_gguf(), 2, 0).expect("equal hd");
+            let eg = load_gguf(&eb).expect("equal g");
+            assert_eq!(eg.tensor("blk.0.attn_q.weight").unwrap().n_rows(), 256);
+            assert_eq!(eg.kv_u32("gemma4.attention.key_length_swa"), Some(64));
+            let em = Llama::from_gguf(eg).expect("em");
+            assert_eq!(em.layers[0].hd, 64);
+            assert_eq!(em.layers[1].hd, 64);
+            let mut c = em.new_cache(8).expect("ec");
+            em.prefill(&mut c, &tokens).expect("equal pref")
+        };
+        assert_ne!(
+            mixed_pref, equal_pref,
+            "SWA hd 32 then global hd 64 must not copy a 2-layer equal-hd walk"
+        );
+    }
+
+    #[test]
+    fn tiny_gemma4_swa_base_load_gemv_gemm_embed_and_greedy() {
+        let bytes = tiny_gemma4_swa_base_gguf();
+        let g = load_gguf(&bytes).expect("load gemma4 swa base");
+        assert_eq!(
+            g.kv("general.architecture"),
+            Some(&Kv::String("gemma4".into()))
+        );
+        assert_eq!(g.kv_f32("gemma4.rope.freq_base"), Some(1_000_000.0));
+        assert_eq!(g.kv_f32("gemma4.rope.freq_base_swa"), Some(10_000.0));
+        assert_eq!(g.kv_u32("gemma4.attention.key_length_swa"), Some(32));
+        let model = Llama::from_gguf(g.clone()).expect("model");
+        assert!(model.gemma4);
+        assert_eq!(model.layers.len(), 2);
+        assert_eq!(model.layers[0].rope_base, 10_000.0);
+        assert_eq!(model.layers[1].rope_base, 1_000_000.0);
+        assert_eq!(model.layers[0].hd, 32);
+        assert_eq!(model.layers[1].hd, 64);
+        assert_eq!(model.is_swa, vec![true, false]);
+        let mixed_bytes = tiny_gemma4_mixed_hd_gguf();
+        let mixed_g = load_gguf(&mixed_bytes).expect("mixed g");
+        assert_eq!(mixed_g.kv_f32("gemma4.rope.freq_base"), Some(10_000.0));
+        assert!(mixed_g.kv_f32("gemma4.rope.freq_base_swa").is_none());
+        assert_eq!(
+            mixed_g.tensor("blk.1.attn_q_norm.weight").unwrap().n_cols(),
+            64
+        );
+        assert_ne!(
+            oracle_rope_neox(vec![1.0f32; 64], 2, 64, 10_000.0, None),
+            oracle_rope_neox(vec![1.0f32; 64], 2, 64, 1_000_000.0, None),
+            "oracle RoPE must depend on base"
+        );
+        assert_ne!(
+            oracle_forward_seq(&g, &[1, 2, 3]),
+            oracle_forward_seq(&mixed_g, &[1, 2, 3]),
+            "oracle SWA-base vs mixed-hd"
+        );
+        load_fwd_match(&bytes, 3);
+        load_prefill_match(&bytes, &[1, 2, 3]);
+        let tok = Tokenizer::from_gguf(&g).expect("tok");
+        let out = greedy_generate(&model, &tok, "ab", 2).expect("gen");
+        let out2 = greedy_generate(&model, &tok, "ab", 2).expect("gen2");
+        assert_eq!(out, out2);
+        let tokens = [1u32, 2, 3];
+        let mut sc = model.new_cache(8).expect("sc");
+        let swa_pref = model.prefill(&mut sc, &tokens).expect("swa pref");
+        let mixed_pref = {
+            let mg = load_gguf(&tiny_gemma4_mixed_hd_gguf()).expect("mixed");
+            let mm = Llama::from_gguf(mg).expect("mm");
+            assert_eq!(mm.layers[0].rope_base, 10_000.0);
+            assert_eq!(mm.layers[1].rope_base, 10_000.0);
+            let mut c = mm.new_cache(8).expect("mc");
+            mm.prefill(&mut c, &tokens).expect("mixed pref")
+        };
+        assert_ne!(
+            swa_pref, mixed_pref,
+            "global freq_base 1e6 must not copy mixed-hd 1e4 logits"
+        );
+    }
+
+    #[test]
+    fn tiny_gemma4_no_wv_load_gemv_gemm_embed_and_greedy() {
+        let bytes = tiny_gemma4_no_wv_gguf();
+        let g = load_gguf(&bytes).expect("load gemma4 no wv");
+        assert_eq!(
+            g.kv("general.architecture"),
+            Some(&Kv::String("gemma4".into()))
+        );
+        assert!(g.tensor("blk.0.attn_k.weight").is_some());
+        assert!(g.tensor("blk.0.attn_v.weight").is_none());
+        assert_eq!(g.kv_u32("gemma4.block_count"), Some(1));
+        let model = Llama::from_gguf(g.clone()).expect("model");
+        assert!(model.gemma4);
+        assert_eq!(model.layers.len(), 1);
+        assert!(model.layers[0].wk.is_some());
+        assert!(model.layers[0].wv.is_none());
+        let dense = load_gguf(&tiny_gemma4_gguf()).expect("dense");
+        assert!(dense.tensor("blk.0.attn_v.weight").is_some());
+        assert_ne!(
+            oracle_forward_seq(&g, &[1, 2, 3]),
+            oracle_forward_seq(&dense, &[1, 2, 3]),
+            "oracle K-as-V vs dense wv"
+        );
+        load_fwd_match(&bytes, 3);
+        load_prefill_match(&bytes, &[1, 2, 3]);
+        let tok = Tokenizer::from_gguf(&g).expect("tok");
+        let out = greedy_generate(&model, &tok, "ab", 2).expect("gen");
+        let out2 = greedy_generate(&model, &tok, "ab", 2).expect("gen2");
+        assert_eq!(out, out2);
+        let tokens = [1u32, 2, 3];
+        let mut sc = model.new_cache(8).expect("sc");
+        let no_wv_pref = model.prefill(&mut sc, &tokens).expect("no wv pref");
+        let dense_pref = {
+            let dm = Llama::from_gguf(dense).expect("dm");
+            let mut c = dm.new_cache(8).expect("dc");
+            dm.prefill(&mut c, &tokens).expect("dense pref")
+        };
+        assert_ne!(
+            no_wv_pref, dense_pref,
+            "omitted wv must use K as V, not copy dense wv logits"
+        );
+    }
+
+    #[test]
+    fn tiny_gemma4_out_scale_load_gemv_gemm_embed_and_greedy() {
+        let bytes = tiny_gemma4_out_scale_gguf();
+        let g = load_gguf(&bytes).expect("load gemma4 out scale");
+        assert_eq!(
+            g.kv("general.architecture"),
+            Some(&Kv::String("gemma4".into()))
+        );
+        let scale = g.tensor("blk.0.layer_output_scale.weight").expect("scale");
+        assert_eq!(scale.n_cols(), 1);
+        let model = Llama::from_gguf(g.clone()).expect("model");
+        assert!(model.gemma4);
+        assert_eq!(model.layers[0].out_scale, Some(TINY_GEMMA4_OUT_SCALE));
+        let dense = load_gguf(&tiny_gemma4_gguf()).expect("dense");
+        assert!(dense.tensor("blk.0.layer_output_scale.weight").is_none());
+        assert_ne!(
+            oracle_forward_seq(&g, &[1, 2, 3]),
+            oracle_forward_seq(&dense, &[1, 2, 3]),
+            "oracle out_scale vs dense"
+        );
+        load_fwd_match(&bytes, 3);
+        load_prefill_match(&bytes, &[1, 2, 3]);
+        let tok = Tokenizer::from_gguf(&g).expect("tok");
+        let out = greedy_generate(&model, &tok, "ab", 2).expect("gen");
+        let out2 = greedy_generate(&model, &tok, "ab", 2).expect("gen2");
+        assert_eq!(out, out2);
+        let tokens = [1u32, 2, 3];
+        let mut sc = model.new_cache(8).expect("sc");
+        let scaled = model.prefill(&mut sc, &tokens).expect("scaled pref");
+        let dense_pref = {
+            let dm = Llama::from_gguf(dense).expect("dm");
+            assert!(dm.layers[0].out_scale.is_none());
+            let mut c = dm.new_cache(8).expect("dc");
+            dm.prefill(&mut c, &tokens).expect("dense pref")
+        };
+        assert_ne!(
+            scaled, dense_pref,
+            "layer_output_scale 0.5 must not copy dense logits"
+        );
+    }
+
+    #[test]
+    fn tiny_gemma4_rope_freqs_load_gemv_gemm_embed_and_greedy() {
+        let bytes = tiny_gemma4_rope_freqs_gguf();
+        let g = load_gguf(&bytes).expect("load gemma4 rope freqs");
+        assert_eq!(
+            g.kv("general.architecture"),
+            Some(&Kv::String("gemma4".into()))
+        );
+        let rf = g.tensor("rope_freqs.weight").expect("rope_freqs");
+        assert_eq!(rf.n_cols(), 32);
+        let want = tiny_gemma4_rope_freq_values(TINY_N_ROT);
+        assert_eq!(f32s(rf).expect("f32s"), want);
+        assert_eq!(want.len(), 32);
+        assert_eq!(want.first().copied(), Some(1.0));
+        assert_eq!(want.get(7).copied(), Some(1.0));
+        assert_eq!(want.get(8).copied(), Some(TINY_GEMMA4_ROPE_FREQ_UNROT));
+        let model = Llama::from_gguf(g.clone()).expect("model");
+        assert!(model.gemma4);
+        assert!(
+            model.layers[0].rope_freqs.is_none(),
+            "SWA must not use rope_freqs"
+        );
+        assert_eq!(model.layers[1].rope_freqs.as_deref(), Some(want.as_slice()));
+        let mixed = load_gguf(&tiny_gemma4_mixed_hd_gguf()).expect("mixed");
+        assert!(mixed.tensor("rope_freqs.weight").is_none());
+        assert_ne!(
+            oracle_rope_neox(vec![1.0f32; 64], 2, 64, 10_000.0, None),
+            oracle_rope_neox(vec![1.0f32; 64], 2, 64, 10_000.0, Some(&want)),
+            "oracle RoPE must depend on freq_factors"
+        );
+        assert_ne!(
+            oracle_forward_seq(&g, &[1, 2, 3]),
+            oracle_forward_seq(&mixed, &[1, 2, 3]),
+            "oracle rope_freqs vs mixed-hd"
+        );
+        load_fwd_match(&bytes, 3);
+        load_prefill_match(&bytes, &[1, 2, 3]);
+        let tok = Tokenizer::from_gguf(&g).expect("tok");
+        let out = greedy_generate(&model, &tok, "ab", 2).expect("gen");
+        let out2 = greedy_generate(&model, &tok, "ab", 2).expect("gen2");
+        assert_eq!(out, out2);
+        let tokens = [1u32, 2, 3];
+        let mut sc = model.new_cache(8).expect("sc");
+        let freqs_pref = model.prefill(&mut sc, &tokens).expect("freqs pref");
+        let mixed_pref = {
+            let mm = Llama::from_gguf(mixed.clone()).expect("mm");
+            assert!(mm.layers[1].rope_freqs.is_none());
+            let mut c = mm.new_cache(8).expect("mc");
+            mm.prefill(&mut c, &tokens).expect("mixed pref")
+        };
+        assert_ne!(
+            freqs_pref, mixed_pref,
+            "proportional rope_freqs must not copy mixed-hd logits"
+        );
+        let ones_pref = {
+            let g0 = load_gguf_owned(tiny_gemma4_mixed_hd_gguf()).expect("ones g0");
+            let kv: Vec<(String, Kv)> = g0.kv.iter().map(|(k, v)| (k.clone(), v.clone())).collect();
+            let mut tensors = Vec::new();
+            for t in g0.tensors() {
+                tensors.push(TensorWrite {
+                    name: t.name.to_string(),
+                    ty: t.ty,
+                    shape: t.shape.to_vec(),
+                    data: t.data.to_vec(),
+                });
+            }
+            let ones = vec![1.0f32; 32];
+            tensors.push(tw(
+                "rope_freqs.weight",
+                GgmlType::F32,
+                vec![32],
+                pack_vec1d(GgmlType::F32, &ones),
+            ));
+            let ones_bytes = write_gguf_with_kv(&kv, &tensors);
+            let og = load_gguf(&ones_bytes).expect("ones g");
+            assert_eq!(
+                oracle_forward_seq(&og, &tokens),
+                oracle_forward_seq(&mixed, &tokens),
+                "ff=1.0 must match omitted rope_freqs"
+            );
+            let om = Llama::from_gguf(og).expect("om");
+            let mut c = om.new_cache(8).expect("oc");
+            om.prefill(&mut c, &tokens).expect("ones pref")
+        };
+        assert_eq!(
+            ones_pref, mixed_pref,
+            "all-ones rope_freqs must be identity with mixed-hd"
+        );
+        let bad = {
+            let g0 = load_gguf_owned(tiny_gemma4_mixed_hd_gguf()).expect("bad g0");
+            let kv: Vec<(String, Kv)> = g0.kv.iter().map(|(k, v)| (k.clone(), v.clone())).collect();
+            let mut tensors = Vec::new();
+            for t in g0.tensors() {
+                tensors.push(TensorWrite {
+                    name: t.name.to_string(),
+                    ty: t.ty,
+                    shape: t.shape.to_vec(),
+                    data: t.data.to_vec(),
+                });
+            }
+            let short = [2.0f32];
+            tensors.push(tw(
+                "rope_freqs.weight",
+                GgmlType::F32,
+                vec![1],
+                pack_vec1d(GgmlType::F32, &short),
+            ));
+            write_gguf_with_kv(&kv, &tensors)
+        };
+        let err = match Llama::from_gguf(load_gguf(&bad).expect("bad load")) {
+            Ok(_) => panic!("expected rope_freqs shape"),
+            Err(e) => e.to_string(),
+        };
+        assert!(
+            err.contains("rope_freqs.weight"),
+            "error should name tensor: {err}"
+        );
+    }
+
+    #[test]
+    fn tiny_gemma4_moe_down_s_load_gemv_gemm_embed_and_greedy() {
+        let bytes = tiny_gemma4_moe_down_s_gguf();
+        let g = load_gguf(&bytes).expect("load gemma4 moe down_s");
+        assert_eq!(
+            g.kv("general.architecture"),
+            Some(&Kv::String("gemma4".into()))
+        );
+        let scale = g.tensor("blk.0.ffn_down_exps.scale").expect("down_s");
+        assert_eq!(scale.n_cols(), TINY_GEMMA4_N_EXPERT);
+        assert_eq!(
+            f32s(scale).expect("f32s").as_slice(),
+            TINY_GEMMA4_DOWN_S.as_slice()
+        );
+        let gate_inp = g.tensor("blk.0.ffn_gate_inp.weight").expect("gate_inp");
+        assert!(
+            gate_inp.data.iter().all(|b| *b == 0),
+            "writer-tiny must zero ffn_gate_inp so routing is not one-hot"
+        );
+        let model = Llama::from_gguf(g.clone()).expect("model");
+        assert!(model.gemma4);
+        match &model.layers[0].ffn {
+            LayerFfn::Gemma4Moe(moe) => {
+                assert_eq!(moe.down_s.as_deref(), Some(TINY_GEMMA4_DOWN_S.as_slice()));
+            }
+            _ => panic!("expected gemma4 moe"),
+        }
+        let moe = load_gguf(&tiny_gemma4_moe_gguf()).expect("moe");
+        assert!(moe.tensor("blk.0.ffn_down_exps.scale").is_none());
+        let flat = load_gguf(
+            &rewrite_tiny_gemma4_moe_down_s_scale(tiny_gemma4_moe_gguf(), None)
+                .expect("flat bytes"),
+        )
+        .expect("flat");
+        assert!(flat.tensor("blk.0.ffn_down_exps.scale").is_none());
+        assert_eq!(
+            flat.tensor("blk.0.ffn_gate_exps.weight")
+                .expect("flat gate")
+                .ty,
+            GgmlType::F32
+        );
+        assert_ne!(
+            oracle_forward_seq(&g, &[1, 2, 3]),
+            oracle_forward_seq(&moe, &[1, 2, 3]),
+            "oracle down_s vs moe"
+        );
+        assert_ne!(
+            oracle_forward_seq(&g, &[1, 2, 3]),
+            oracle_forward_seq(&flat, &[1, 2, 3]),
+            "oracle down_s vs uniform-router F32 moe"
+        );
+        load_fwd_match(&bytes, 3);
+        load_prefill_match(&bytes, &[1, 2, 3]);
+        let tok = Tokenizer::from_gguf(&g).expect("tok");
+        let out = greedy_generate(&model, &tok, "ab", 2).expect("gen");
+        let out2 = greedy_generate(&model, &tok, "ab", 2).expect("gen2");
+        assert_eq!(out, out2);
+        let tokens = [1u32, 2, 3];
+        let mut sc = model.new_cache(8).expect("sc");
+        let scaled = model.prefill(&mut sc, &tokens).expect("down_s pref");
+        let moe_pref = {
+            let mm = Llama::from_gguf(moe.clone()).expect("mm");
+            match &mm.layers[0].ffn {
+                LayerFfn::Gemma4Moe(m) => assert!(m.down_s.is_none()),
+                _ => panic!("expected gemma4 moe"),
+            }
+            let mut c = mm.new_cache(8).expect("mc");
+            mm.prefill(&mut c, &tokens).expect("moe pref")
+        };
+        assert_ne!(
+            scaled, moe_pref,
+            "per-expert down_s must not copy moe logits"
+        );
+        let flat_pref = {
+            let fm = Llama::from_gguf(flat.clone()).expect("fm");
+            let mut c = fm.new_cache(8).expect("fc");
+            fm.prefill(&mut c, &tokens).expect("flat pref")
+        };
+        assert_ne!(
+            scaled, flat_pref,
+            "per-expert down_s must not copy uniform-router F32 logits"
+        );
+        let catalog = model.expert_direct_store().expect("catalog");
+        let via_direct = store_prefill(&model, LiveStore::Direct(catalog), &tokens);
+        assert_eq!(scaled, via_direct, "DirectStore GEMV must match the blob");
+        let ones_pref = {
+            let ones = [1.0f32; TINY_GEMMA4_N_EXPERT];
+            let ones_bytes =
+                rewrite_tiny_gemma4_moe_down_s_scale(tiny_gemma4_moe_gguf(), Some(&ones))
+                    .expect("ones bytes");
+            let og = load_gguf(&ones_bytes).expect("ones g");
+            assert_eq!(
+                oracle_forward_seq(&og, &tokens),
+                oracle_forward_seq(&flat, &tokens),
+                "scale=1.0 must match omitted down_s on the same router"
+            );
+            let om = Llama::from_gguf(og).expect("om");
+            let mut c = om.new_cache(8).expect("oc");
+            om.prefill(&mut c, &tokens).expect("ones pref")
+        };
+        assert_eq!(
+            ones_pref, flat_pref,
+            "all-ones down_s must be identity with uniform-router F32 moe"
+        );
+        let bad = {
+            let g0 = load_gguf_owned(tiny_gemma4_moe_gguf()).expect("bad g0");
+            let kv: Vec<(String, Kv)> = g0.kv.iter().map(|(k, v)| (k.clone(), v.clone())).collect();
+            let mut tensors = Vec::new();
+            for t in g0.tensors() {
+                tensors.push(TensorWrite {
+                    name: t.name.to_string(),
+                    ty: t.ty,
+                    shape: t.shape.to_vec(),
+                    data: t.data.to_vec(),
+                });
+            }
+            let short = [2.0f32];
+            tensors.push(tw(
+                "blk.0.ffn_down_exps.scale",
+                GgmlType::F32,
+                vec![1],
+                pack_vec1d(GgmlType::F32, &short),
+            ));
+            write_gguf_with_kv(&kv, &tensors)
+        };
+        let err = match Llama::from_gguf(load_gguf(&bad).expect("bad load")) {
+            Ok(_) => panic!("expected ffn_down_exps.scale shape"),
+            Err(e) => e.to_string(),
+        };
+        assert!(
+            err.contains("ffn_down_exps.scale"),
+            "error should name tensor: {err}"
+        );
+    }
+
+    #[test]
+    fn tiny_gemma4_moe_gate_up_s_load_gemv_gemm_embed_and_greedy() {
+        let bytes = tiny_gemma4_moe_gate_up_s_gguf();
+        let g = load_gguf(&bytes).expect("load gemma4 moe gate_up_s");
+        assert_eq!(
+            g.kv("general.architecture"),
+            Some(&Kv::String("gemma4".into()))
+        );
+        let gate_s = g.tensor("blk.0.ffn_gate_exps.scale").expect("gate_s");
+        let up_s = g.tensor("blk.0.ffn_up_exps.scale").expect("up_s");
+        assert_eq!(gate_s.n_cols(), TINY_GEMMA4_N_EXPERT);
+        assert_eq!(up_s.n_cols(), TINY_GEMMA4_N_EXPERT);
+        assert_eq!(
+            f32s(gate_s).expect("f32s gate").as_slice(),
+            TINY_GEMMA4_GATE_S.as_slice()
+        );
+        assert_eq!(
+            f32s(up_s).expect("f32s up").as_slice(),
+            TINY_GEMMA4_UP_S.as_slice()
+        );
+        assert!(g.tensor("blk.0.ffn_down_exps.scale").is_none());
+        let gate_inp = g.tensor("blk.0.ffn_gate_inp.weight").expect("gate_inp");
+        assert!(
+            gate_inp.data.iter().all(|b| *b == 0),
+            "writer-tiny must zero ffn_gate_inp so routing is not one-hot"
+        );
+        let model = Llama::from_gguf(g.clone()).expect("model");
+        assert!(model.gemma4);
+        match &model.layers[0].ffn {
+            LayerFfn::Gemma4Moe(moe) => {
+                assert_eq!(moe.gate_s.as_deref(), Some(TINY_GEMMA4_GATE_S.as_slice()));
+                assert_eq!(moe.up_s.as_deref(), Some(TINY_GEMMA4_UP_S.as_slice()));
+                assert!(moe.down_s.is_none());
+            }
+            _ => panic!("expected gemma4 moe"),
+        }
+        let moe = load_gguf(&tiny_gemma4_moe_gguf()).expect("moe");
+        assert!(moe.tensor("blk.0.ffn_gate_exps.scale").is_none());
+        assert!(moe.tensor("blk.0.ffn_up_exps.scale").is_none());
+        let flat = load_gguf(
+            &rewrite_tiny_gemma4_moe_exps_s(tiny_gemma4_moe_gguf(), None, None, None)
+                .expect("flat bytes"),
+        )
+        .expect("flat");
+        assert!(flat.tensor("blk.0.ffn_gate_exps.scale").is_none());
+        assert!(flat.tensor("blk.0.ffn_up_exps.scale").is_none());
+        assert_eq!(
+            flat.tensor("blk.0.ffn_gate_exps.weight")
+                .expect("flat gate")
+                .ty,
+            GgmlType::F32
+        );
+        assert_ne!(
+            oracle_forward_seq(&g, &[1, 2, 3]),
+            oracle_forward_seq(&moe, &[1, 2, 3]),
+            "oracle gate/up_s vs moe"
+        );
+        assert_ne!(
+            oracle_forward_seq(&g, &[1, 2, 3]),
+            oracle_forward_seq(&flat, &[1, 2, 3]),
+            "oracle gate/up_s vs uniform-router F32 moe"
+        );
+        load_fwd_match(&bytes, 3);
+        load_prefill_match(&bytes, &[1, 2, 3]);
+        let tok = Tokenizer::from_gguf(&g).expect("tok");
+        let out = greedy_generate(&model, &tok, "ab", 2).expect("gen");
+        let out2 = greedy_generate(&model, &tok, "ab", 2).expect("gen2");
+        assert_eq!(out, out2);
+        let tokens = [1u32, 2, 3];
+        let mut sc = model.new_cache(8).expect("sc");
+        let scaled = model.prefill(&mut sc, &tokens).expect("gate_up_s pref");
+        let moe_pref = {
+            let mm = Llama::from_gguf(moe.clone()).expect("mm");
+            match &mm.layers[0].ffn {
+                LayerFfn::Gemma4Moe(m) => {
+                    assert!(m.gate_s.is_none());
+                    assert!(m.up_s.is_none());
+                }
+                _ => panic!("expected gemma4 moe"),
+            }
+            let mut c = mm.new_cache(8).expect("mc");
+            mm.prefill(&mut c, &tokens).expect("moe pref")
+        };
+        assert_ne!(
+            scaled, moe_pref,
+            "per-expert gate/up_s must not copy moe logits"
+        );
+        let flat_pref = {
+            let fm = Llama::from_gguf(flat.clone()).expect("fm");
+            let mut c = fm.new_cache(8).expect("fc");
+            fm.prefill(&mut c, &tokens).expect("flat pref")
+        };
+        assert_ne!(
+            scaled, flat_pref,
+            "per-expert gate/up_s must not copy uniform-router F32 logits"
+        );
+        let catalog = model.expert_direct_store().expect("catalog");
+        let via_direct = store_prefill(&model, LiveStore::Direct(catalog), &tokens);
+        assert_eq!(scaled, via_direct, "DirectStore GEMV must match the blob");
+        let ones = [1.0f32; TINY_GEMMA4_N_EXPERT];
+        let ones_pref = {
+            let ones_bytes = rewrite_tiny_gemma4_moe_exps_s(
+                tiny_gemma4_moe_gguf(),
+                Some(&ones),
+                Some(&ones),
+                None,
+            )
+            .expect("ones bytes");
+            let og = load_gguf(&ones_bytes).expect("ones g");
+            assert_eq!(
+                oracle_forward_seq(&og, &tokens),
+                oracle_forward_seq(&flat, &tokens),
+                "scale=1.0 must match omitted gate/up_s on the same router"
+            );
+            let om = Llama::from_gguf(og).expect("om");
+            let mut c = om.new_cache(8).expect("oc");
+            om.prefill(&mut c, &tokens).expect("ones pref")
+        };
+        assert_eq!(
+            ones_pref, flat_pref,
+            "all-ones gate/up_s must be identity with uniform-router F32 moe"
+        );
+        let gate_only = load_gguf(
+            &rewrite_tiny_gemma4_moe_exps_s(
+                tiny_gemma4_moe_gguf(),
+                Some(TINY_GEMMA4_GATE_S.as_slice()),
+                None,
+                None,
+            )
+            .expect("gate only"),
+        )
+        .expect("gate only g");
+        let up_only = load_gguf(
+            &rewrite_tiny_gemma4_moe_exps_s(
+                tiny_gemma4_moe_gguf(),
+                None,
+                Some(TINY_GEMMA4_UP_S.as_slice()),
+                None,
+            )
+            .expect("up only"),
+        )
+        .expect("up only g");
+        assert_ne!(
+            oracle_forward_seq(&gate_only, &tokens),
+            oracle_forward_seq(&flat, &tokens),
+            "gate_s-only must not copy omitted"
+        );
+        assert_ne!(
+            oracle_forward_seq(&up_only, &tokens),
+            oracle_forward_seq(&flat, &tokens),
+            "up_s-only must not copy omitted"
+        );
+        assert_ne!(
+            oracle_forward_seq(&gate_only, &tokens),
+            oracle_forward_seq(&up_only, &tokens),
+            "gate_s-only must not copy up_s-only"
+        );
+        load_fwd_match(
+            &rewrite_tiny_gemma4_moe_exps_s(
+                tiny_gemma4_moe_gguf(),
+                Some(TINY_GEMMA4_GATE_S.as_slice()),
+                None,
+                None,
+            )
+            .expect("gate only bytes"),
+            3,
+        );
+        load_fwd_match(
+            &rewrite_tiny_gemma4_moe_exps_s(
+                tiny_gemma4_moe_gguf(),
+                None,
+                Some(TINY_GEMMA4_UP_S.as_slice()),
+                None,
+            )
+            .expect("up only bytes"),
+            3,
+        );
+        let fused_flat = load_gguf(
+            &rewrite_tiny_gemma4_moe_exps_s(tiny_gemma4_moe_fused_gguf(), None, None, None)
+                .expect("fused flat"),
+        )
+        .expect("fused flat g");
+        let fused_gate = load_gguf(
+            &rewrite_tiny_gemma4_moe_exps_s(
+                tiny_gemma4_moe_fused_gguf(),
+                Some(TINY_GEMMA4_GATE_S.as_slice()),
+                None,
+                None,
+            )
+            .expect("fused gate"),
+        )
+        .expect("fused gate g");
+        let fused_up = load_gguf(
+            &rewrite_tiny_gemma4_moe_exps_s(
+                tiny_gemma4_moe_fused_gguf(),
+                None,
+                Some(TINY_GEMMA4_UP_S.as_slice()),
+                None,
+            )
+            .expect("fused up"),
+        )
+        .expect("fused up g");
+        let fused_both = load_gguf(
+            &rewrite_tiny_gemma4_moe_exps_s(
+                tiny_gemma4_moe_fused_gguf(),
+                Some(TINY_GEMMA4_GATE_S.as_slice()),
+                Some(TINY_GEMMA4_UP_S.as_slice()),
+                None,
+            )
+            .expect("fused both"),
+        )
+        .expect("fused both g");
+        assert_eq!(
+            oracle_forward_seq(&fused_gate, &tokens),
+            oracle_forward_seq(&fused_flat, &tokens),
+            "fused path ignores gate_exps_s"
+        );
+        assert_ne!(
+            oracle_forward_seq(&fused_up, &tokens),
+            oracle_forward_seq(&fused_flat, &tokens),
+            "fused path applies up_exps_s to both halves"
+        );
+        assert_eq!(
+            oracle_forward_seq(&fused_both, &tokens),
+            oracle_forward_seq(&fused_up, &tokens),
+            "fused gate plus up must match up-only"
+        );
+        load_fwd_match(
+            &rewrite_tiny_gemma4_moe_exps_s(
+                tiny_gemma4_moe_fused_gguf(),
+                Some(TINY_GEMMA4_GATE_S.as_slice()),
+                Some(TINY_GEMMA4_UP_S.as_slice()),
+                None,
+            )
+            .expect("fused both bytes"),
+            3,
+        );
+        let fused_gate_pref = {
+            let fm = Llama::from_gguf(fused_gate).expect("fg");
+            match &fm.layers[0].ffn {
+                LayerFfn::Gemma4Moe(m) => {
+                    assert!(m.gate_up.is_some());
+                    assert_eq!(m.gate_s.as_deref(), Some(TINY_GEMMA4_GATE_S.as_slice()));
+                    assert!(m.up_s.is_none());
+                }
+                _ => panic!("expected gemma4 moe"),
+            }
+            let mut c = fm.new_cache(8).expect("fc");
+            fm.prefill(&mut c, &tokens).expect("fused gate pref")
+        };
+        let fused_flat_pref = {
+            let fm = Llama::from_gguf(fused_flat).expect("ff");
+            let mut c = fm.new_cache(8).expect("fc");
+            fm.prefill(&mut c, &tokens).expect("fused flat pref")
+        };
+        assert_eq!(
+            fused_gate_pref, fused_flat_pref,
+            "decode fused path must ignore gate_exps_s"
+        );
+        for name in ["ffn_gate_exps.scale", "ffn_up_exps.scale"] {
+            let bad = {
+                let g0 = load_gguf_owned(tiny_gemma4_moe_gguf()).expect("bad g0");
+                let kv: Vec<(String, Kv)> =
+                    g0.kv.iter().map(|(k, v)| (k.clone(), v.clone())).collect();
+                let mut tensors = Vec::new();
+                for t in g0.tensors() {
+                    tensors.push(TensorWrite {
+                        name: t.name.to_string(),
+                        ty: t.ty,
+                        shape: t.shape.to_vec(),
+                        data: t.data.to_vec(),
+                    });
+                }
+                let short = [2.0f32];
+                tensors.push(tw(
+                    &format!("blk.0.{name}"),
+                    GgmlType::F32,
+                    vec![1],
+                    pack_vec1d(GgmlType::F32, &short),
+                ));
+                write_gguf_with_kv(&kv, &tensors)
+            };
+            let err = match Llama::from_gguf(load_gguf(&bad).expect("bad load")) {
+                Ok(_) => panic!("expected {name} shape"),
+                Err(e) => e.to_string(),
+            };
+            assert!(err.contains(name), "error should name tensor {name}: {err}");
+        }
+    }
+
+    #[test]
+    fn tiny_llama_ffn_down_s_load_gemv_gemm_embed_and_greedy() {
+        let bytes = tiny_llama_ffn_down_s_gguf();
+        let g = load_gguf(&bytes).expect("load llama ffn_down.scale");
+        assert_eq!(
+            g.kv("general.architecture"),
+            Some(&Kv::String("llama".into()))
+        );
+        let scale = g.tensor("blk.0.ffn_down.scale").expect("down_s");
+        assert_eq!(scale.n_cols(), 1);
+        assert_eq!(
+            f32s(scale).expect("f32s").first().copied(),
+            Some(TINY_LLAMA_FFN_DOWN_S)
+        );
+        let model = Llama::from_gguf(g.clone()).expect("model");
+        match &model.layers[0].ffn {
+            LayerFfn::Dense(dense) => {
+                assert_eq!(dense.down_s, Some(TINY_LLAMA_FFN_DOWN_S));
+            }
+            _ => panic!("expected dense ffn"),
+        }
+        let llama = load_gguf(&tiny_llama_gguf()).expect("llama");
+        assert!(llama.tensor("blk.0.ffn_down.scale").is_none());
+        assert_ne!(
+            oracle_forward_seq(&g, &[1, 2, 3]),
+            oracle_forward_seq(&llama, &[1, 2, 3]),
+            "oracle ffn_down.scale vs llama"
+        );
+        load_fwd_match(&bytes, 3);
+        load_prefill_match(&bytes, &[1, 2, 3]);
+        let tok = Tokenizer::from_gguf(&g).expect("tok");
+        let out = greedy_generate(&model, &tok, "ab", 2).expect("gen");
+        let out2 = greedy_generate(&model, &tok, "ab", 2).expect("gen2");
+        assert_eq!(out, out2);
+        let tokens = [1u32, 2, 3];
+        let mut sc = model.new_cache(8).expect("sc");
+        let scaled = model.prefill(&mut sc, &tokens).expect("down_s pref");
+        let llama_pref = {
+            let lm = Llama::from_gguf(llama.clone()).expect("lm");
+            match &lm.layers[0].ffn {
+                LayerFfn::Dense(d) => assert!(d.down_s.is_none()),
+                _ => panic!("expected dense ffn"),
+            }
+            let mut c = lm.new_cache(8).expect("lc");
+            lm.prefill(&mut c, &tokens).expect("llama pref")
+        };
+        assert_ne!(
+            scaled, llama_pref,
+            "ffn_down.scale 0.5 must not copy llama logits"
+        );
+        let ones_pref = {
+            let ones_bytes =
+                rewrite_tiny_llama_ffn_down_s(tiny_llama_gguf(), Some(1.0)).expect("ones bytes");
+            let og = load_gguf(&ones_bytes).expect("ones g");
+            assert_eq!(
+                oracle_forward_seq(&og, &tokens),
+                oracle_forward_seq(&llama, &tokens),
+                "scale=1.0 must match omitted ffn_down.scale"
+            );
+            let om = Llama::from_gguf(og).expect("om");
+            let mut c = om.new_cache(8).expect("oc");
+            om.prefill(&mut c, &tokens).expect("ones pref")
+        };
+        assert_eq!(
+            ones_pref, llama_pref,
+            "all-ones ffn_down.scale must be identity with llama"
+        );
+        let bad = {
+            let g0 = load_gguf_owned(tiny_llama_gguf()).expect("bad g0");
+            let kv: Vec<(String, Kv)> = g0.kv.iter().map(|(k, v)| (k.clone(), v.clone())).collect();
+            let mut tensors = Vec::new();
+            for t in g0.tensors() {
+                tensors.push(TensorWrite {
+                    name: t.name.to_string(),
+                    ty: t.ty,
+                    shape: t.shape.to_vec(),
+                    data: t.data.to_vec(),
+                });
+            }
+            let short = [2.0f32, 3.0];
+            tensors.push(tw(
+                "blk.0.ffn_down.scale",
+                GgmlType::F32,
+                vec![2],
+                pack_vec1d(GgmlType::F32, &short),
+            ));
+            write_gguf_with_kv(&kv, &tensors)
+        };
+        let err = match Llama::from_gguf(load_gguf(&bad).expect("bad load")) {
+            Ok(_) => panic!("expected ffn_down.scale shape"),
+            Err(e) => e.to_string(),
+        };
+        assert!(
+            err.contains("ffn_down.scale"),
+            "error should name tensor: {err}"
+        );
+    }
+
+    #[test]
+    fn tiny_llama_attn_q_s_load_gemv_gemm_embed_and_greedy() {
+        let bytes = tiny_llama_attn_q_s_gguf();
+        let g = load_gguf(&bytes).expect("load llama attn_q.scale");
+        assert_eq!(
+            g.kv("general.architecture"),
+            Some(&Kv::String("llama".into()))
+        );
+        let scale = g.tensor("blk.0.attn_q.scale").expect("q_s");
+        assert_eq!(scale.n_cols(), 1);
+        assert_eq!(
+            f32s(scale).expect("f32s").first().copied(),
+            Some(TINY_LLAMA_ATTN_Q_S)
+        );
+        let model = Llama::from_gguf(g.clone()).expect("model");
+        assert_eq!(model.layers[0].q_s, Some(TINY_LLAMA_ATTN_Q_S));
+        let llama = load_gguf(&tiny_llama_gguf()).expect("llama");
+        assert!(llama.tensor("blk.0.attn_q.scale").is_none());
+        assert_ne!(
+            oracle_forward_seq(&g, &[1, 2, 3]),
+            oracle_forward_seq(&llama, &[1, 2, 3]),
+            "oracle attn_q.scale vs llama"
+        );
+        load_fwd_match(&bytes, 3);
+        load_prefill_match(&bytes, &[1, 2, 3]);
+        let tok = Tokenizer::from_gguf(&g).expect("tok");
+        let out = greedy_generate(&model, &tok, "ab", 2).expect("gen");
+        let out2 = greedy_generate(&model, &tok, "ab", 2).expect("gen2");
+        assert_eq!(out, out2);
+        let tokens = [1u32, 2, 3];
+        let mut sc = model.new_cache(8).expect("sc");
+        let scaled = model.prefill(&mut sc, &tokens).expect("q_s pref");
+        let llama_pref = {
+            let lm = Llama::from_gguf(llama.clone()).expect("lm");
+            assert!(lm.layers[0].q_s.is_none());
+            let mut c = lm.new_cache(8).expect("lc");
+            lm.prefill(&mut c, &tokens).expect("llama pref")
+        };
+        assert_ne!(
+            scaled, llama_pref,
+            "attn_q.scale 2.0 must not copy llama logits"
+        );
+        let ones_pref = {
+            let ones_bytes =
+                rewrite_tiny_llama_attn_q_s(tiny_llama_gguf(), Some(1.0)).expect("ones bytes");
+            let og = load_gguf(&ones_bytes).expect("ones g");
+            assert_eq!(
+                oracle_forward_seq(&og, &tokens),
+                oracle_forward_seq(&llama, &tokens),
+                "scale=1.0 must match omitted attn_q.scale"
+            );
+            let om = Llama::from_gguf(og).expect("om");
+            let mut c = om.new_cache(8).expect("oc");
+            om.prefill(&mut c, &tokens).expect("ones pref")
+        };
+        assert_eq!(
+            ones_pref, llama_pref,
+            "all-ones attn_q.scale must be identity with llama"
+        );
+        let down_s = load_gguf(&tiny_llama_ffn_down_s_gguf()).expect("down_s");
+        assert_ne!(
+            oracle_forward_seq(&g, &tokens),
+            oracle_forward_seq(&down_s, &tokens),
+            "attn_q.scale must not copy ffn_down.scale logits"
+        );
+        let bad = {
+            let g0 = load_gguf_owned(tiny_llama_gguf()).expect("bad g0");
+            let kv: Vec<(String, Kv)> = g0.kv.iter().map(|(k, v)| (k.clone(), v.clone())).collect();
+            let mut tensors = Vec::new();
+            for t in g0.tensors() {
+                tensors.push(TensorWrite {
+                    name: t.name.to_string(),
+                    ty: t.ty,
+                    shape: t.shape.to_vec(),
+                    data: t.data.to_vec(),
+                });
+            }
+            let short = [2.0f32, 3.0];
+            tensors.push(tw(
+                "blk.0.attn_q.scale",
+                GgmlType::F32,
+                vec![2],
+                pack_vec1d(GgmlType::F32, &short),
+            ));
+            write_gguf_with_kv(&kv, &tensors)
+        };
+        let err = match Llama::from_gguf(load_gguf(&bad).expect("bad load")) {
+            Ok(_) => panic!("expected attn_q.scale shape"),
+            Err(e) => e.to_string(),
+        };
+        assert!(
+            err.contains("attn_q.scale"),
+            "error should name tensor: {err}"
+        );
+    }
+
+    #[test]
+    fn tiny_llama_attn_out_s_load_gemv_gemm_embed_and_greedy() {
+        let bytes = tiny_llama_attn_out_s_gguf();
+        let g = load_gguf(&bytes).expect("load llama attn_output.scale");
+        assert_eq!(
+            g.kv("general.architecture"),
+            Some(&Kv::String("llama".into()))
+        );
+        let scale = g.tensor("blk.0.attn_output.scale").expect("wo_s");
+        assert_eq!(scale.n_cols(), 1);
+        assert_eq!(
+            f32s(scale).expect("f32s").first().copied(),
+            Some(TINY_LLAMA_ATTN_OUT_S)
+        );
+        let model = Llama::from_gguf(g.clone()).expect("model");
+        assert_eq!(model.layers[0].wo_s, Some(TINY_LLAMA_ATTN_OUT_S));
+        let llama = load_gguf(&tiny_llama_gguf()).expect("llama");
+        assert!(llama.tensor("blk.0.attn_output.scale").is_none());
+        assert_ne!(
+            oracle_forward_seq(&g, &[1, 2, 3]),
+            oracle_forward_seq(&llama, &[1, 2, 3]),
+            "oracle attn_output.scale vs llama"
+        );
+        load_fwd_match(&bytes, 3);
+        load_prefill_match(&bytes, &[1, 2, 3]);
+        let tok = Tokenizer::from_gguf(&g).expect("tok");
+        let out = greedy_generate(&model, &tok, "ab", 2).expect("gen");
+        let out2 = greedy_generate(&model, &tok, "ab", 2).expect("gen2");
+        assert_eq!(out, out2);
+        let tokens = [1u32, 2, 3];
+        let mut sc = model.new_cache(8).expect("sc");
+        let scaled = model.prefill(&mut sc, &tokens).expect("wo_s pref");
+        let llama_pref = {
+            let lm = Llama::from_gguf(llama.clone()).expect("lm");
+            assert!(lm.layers[0].wo_s.is_none());
+            let mut c = lm.new_cache(8).expect("lc");
+            lm.prefill(&mut c, &tokens).expect("llama pref")
+        };
+        assert_ne!(
+            scaled, llama_pref,
+            "attn_output.scale 1.5 must not copy llama logits"
+        );
+        let ones_pref = {
+            let ones_bytes =
+                rewrite_tiny_llama_attn_out_s(tiny_llama_gguf(), Some(1.0)).expect("ones bytes");
+            let og = load_gguf(&ones_bytes).expect("ones g");
+            assert_eq!(
+                oracle_forward_seq(&og, &tokens),
+                oracle_forward_seq(&llama, &tokens),
+                "scale=1.0 must match omitted attn_output.scale"
+            );
+            let om = Llama::from_gguf(og).expect("om");
+            let mut c = om.new_cache(8).expect("oc");
+            om.prefill(&mut c, &tokens).expect("ones pref")
+        };
+        assert_eq!(
+            ones_pref, llama_pref,
+            "all-ones attn_output.scale must be identity with llama"
+        );
+        let q_s = load_gguf(&tiny_llama_attn_q_s_gguf()).expect("q_s");
+        assert_ne!(
+            oracle_forward_seq(&g, &tokens),
+            oracle_forward_seq(&q_s, &tokens),
+            "attn_output.scale must not copy attn_q.scale logits"
+        );
+        let bad = {
+            let g0 = load_gguf_owned(tiny_llama_gguf()).expect("bad g0");
+            let kv: Vec<(String, Kv)> = g0.kv.iter().map(|(k, v)| (k.clone(), v.clone())).collect();
+            let mut tensors = Vec::new();
+            for t in g0.tensors() {
+                tensors.push(TensorWrite {
+                    name: t.name.to_string(),
+                    ty: t.ty,
+                    shape: t.shape.to_vec(),
+                    data: t.data.to_vec(),
+                });
+            }
+            let short = [2.0f32, 3.0];
+            tensors.push(tw(
+                "blk.0.attn_output.scale",
+                GgmlType::F32,
+                vec![2],
+                pack_vec1d(GgmlType::F32, &short),
+            ));
+            write_gguf_with_kv(&kv, &tensors)
+        };
+        let err = match Llama::from_gguf(load_gguf(&bad).expect("bad load")) {
+            Ok(_) => panic!("expected attn_output.scale shape"),
+            Err(e) => e.to_string(),
+        };
+        assert!(
+            err.contains("attn_output.scale"),
+            "error should name tensor: {err}"
+        );
+    }
+
+    #[test]
+    fn tiny_llama_attn_k_s_load_gemv_gemm_embed_and_greedy() {
+        let bytes = tiny_llama_attn_k_s_gguf();
+        let g = load_gguf(&bytes).expect("load llama attn_k.scale");
+        assert_eq!(
+            g.kv("general.architecture"),
+            Some(&Kv::String("llama".into()))
+        );
+        let scale = g.tensor("blk.0.attn_k.scale").expect("k_s");
+        assert_eq!(scale.n_cols(), 1);
+        assert_eq!(
+            f32s(scale).expect("f32s").first().copied(),
+            Some(TINY_LLAMA_ATTN_K_S)
+        );
+        let model = Llama::from_gguf(g.clone()).expect("model");
+        assert_eq!(model.layers[0].k_s, Some(TINY_LLAMA_ATTN_K_S));
+        let llama = load_gguf(&tiny_llama_gguf()).expect("llama");
+        assert!(llama.tensor("blk.0.attn_k.scale").is_none());
+        assert_ne!(
+            oracle_forward_seq(&g, &[1, 2, 3]),
+            oracle_forward_seq(&llama, &[1, 2, 3]),
+            "oracle attn_k.scale vs llama"
+        );
+        load_fwd_match(&bytes, 3);
+        load_prefill_match(&bytes, &[1, 2, 3]);
+        let tok = Tokenizer::from_gguf(&g).expect("tok");
+        let out = greedy_generate(&model, &tok, "ab", 2).expect("gen");
+        let out2 = greedy_generate(&model, &tok, "ab", 2).expect("gen2");
+        assert_eq!(out, out2);
+        let tokens = [1u32, 2, 3];
+        let mut sc = model.new_cache(8).expect("sc");
+        let scaled = model.prefill(&mut sc, &tokens).expect("k_s pref");
+        let llama_pref = {
+            let lm = Llama::from_gguf(llama.clone()).expect("lm");
+            assert!(lm.layers[0].k_s.is_none());
+            let mut c = lm.new_cache(8).expect("lc");
+            lm.prefill(&mut c, &tokens).expect("llama pref")
+        };
+        assert_ne!(
+            scaled, llama_pref,
+            "attn_k.scale 0.75 must not copy llama logits"
+        );
+        let ones_pref = {
+            let ones_bytes =
+                rewrite_tiny_llama_attn_k_s(tiny_llama_gguf(), Some(1.0)).expect("ones bytes");
+            let og = load_gguf(&ones_bytes).expect("ones g");
+            assert_eq!(
+                oracle_forward_seq(&og, &tokens),
+                oracle_forward_seq(&llama, &tokens),
+                "scale=1.0 must match omitted attn_k.scale"
+            );
+            let om = Llama::from_gguf(og).expect("om");
+            let mut c = om.new_cache(8).expect("oc");
+            om.prefill(&mut c, &tokens).expect("ones pref")
+        };
+        assert_eq!(
+            ones_pref, llama_pref,
+            "all-ones attn_k.scale must be identity with llama"
+        );
+        let q_s = load_gguf(&tiny_llama_attn_q_s_gguf()).expect("q_s");
+        assert_ne!(
+            oracle_forward_seq(&g, &tokens),
+            oracle_forward_seq(&q_s, &tokens),
+            "attn_k.scale must not copy attn_q.scale logits"
+        );
+        let out_s = load_gguf(&tiny_llama_attn_out_s_gguf()).expect("out_s");
+        assert_ne!(
+            oracle_forward_seq(&g, &tokens),
+            oracle_forward_seq(&out_s, &tokens),
+            "attn_k.scale must not copy attn_output.scale logits"
+        );
+        let bad = {
+            let g0 = load_gguf_owned(tiny_llama_gguf()).expect("bad g0");
+            let kv: Vec<(String, Kv)> = g0.kv.iter().map(|(k, v)| (k.clone(), v.clone())).collect();
+            let mut tensors = Vec::new();
+            for t in g0.tensors() {
+                tensors.push(TensorWrite {
+                    name: t.name.to_string(),
+                    ty: t.ty,
+                    shape: t.shape.to_vec(),
+                    data: t.data.to_vec(),
+                });
+            }
+            let short = [2.0f32, 3.0];
+            tensors.push(tw(
+                "blk.0.attn_k.scale",
+                GgmlType::F32,
+                vec![2],
+                pack_vec1d(GgmlType::F32, &short),
+            ));
+            write_gguf_with_kv(&kv, &tensors)
+        };
+        let err = match Llama::from_gguf(load_gguf(&bad).expect("bad load")) {
+            Ok(_) => panic!("expected attn_k.scale shape"),
+            Err(e) => e.to_string(),
+        };
+        assert!(
+            err.contains("attn_k.scale"),
+            "error should name tensor: {err}"
+        );
+    }
+
+    #[test]
+    fn tiny_llama_attn_v_s_load_gemv_gemm_embed_and_greedy() {
+        let bytes = tiny_llama_attn_v_s_gguf();
+        let g = load_gguf(&bytes).expect("load llama attn_v.scale");
+        assert_eq!(
+            g.kv("general.architecture"),
+            Some(&Kv::String("llama".into()))
+        );
+        let scale = g.tensor("blk.0.attn_v.scale").expect("v_s");
+        assert_eq!(scale.n_cols(), 1);
+        assert_eq!(
+            f32s(scale).expect("f32s").first().copied(),
+            Some(TINY_LLAMA_ATTN_V_S)
+        );
+        let model = Llama::from_gguf(g.clone()).expect("model");
+        assert_eq!(model.layers[0].v_s, Some(TINY_LLAMA_ATTN_V_S));
+        let llama = load_gguf(&tiny_llama_gguf()).expect("llama");
+        assert!(llama.tensor("blk.0.attn_v.scale").is_none());
+        assert_ne!(
+            oracle_forward_seq(&g, &[1, 2, 3]),
+            oracle_forward_seq(&llama, &[1, 2, 3]),
+            "oracle attn_v.scale vs llama"
+        );
+        load_fwd_match(&bytes, 3);
+        load_prefill_match(&bytes, &[1, 2, 3]);
+        let tok = Tokenizer::from_gguf(&g).expect("tok");
+        let out = greedy_generate(&model, &tok, "ab", 2).expect("gen");
+        let out2 = greedy_generate(&model, &tok, "ab", 2).expect("gen2");
+        assert_eq!(out, out2);
+        let tokens = [1u32, 2, 3];
+        let mut sc = model.new_cache(8).expect("sc");
+        let scaled = model.prefill(&mut sc, &tokens).expect("v_s pref");
+        let llama_pref = {
+            let lm = Llama::from_gguf(llama.clone()).expect("lm");
+            assert!(lm.layers[0].v_s.is_none());
+            let mut c = lm.new_cache(8).expect("lc");
+            lm.prefill(&mut c, &tokens).expect("llama pref")
+        };
+        assert_ne!(
+            scaled, llama_pref,
+            "attn_v.scale 2.5 must not copy llama logits"
+        );
+        let ones_pref = {
+            let ones_bytes =
+                rewrite_tiny_llama_attn_v_s(tiny_llama_gguf(), Some(1.0)).expect("ones bytes");
+            let og = load_gguf(&ones_bytes).expect("ones g");
+            assert_eq!(
+                oracle_forward_seq(&og, &tokens),
+                oracle_forward_seq(&llama, &tokens),
+                "scale=1.0 must match omitted attn_v.scale"
+            );
+            let om = Llama::from_gguf(og).expect("om");
+            let mut c = om.new_cache(8).expect("oc");
+            om.prefill(&mut c, &tokens).expect("ones pref")
+        };
+        assert_eq!(
+            ones_pref, llama_pref,
+            "all-ones attn_v.scale must be identity with llama"
+        );
+        let k_s = load_gguf(&tiny_llama_attn_k_s_gguf()).expect("k_s");
+        assert_ne!(
+            oracle_forward_seq(&g, &tokens),
+            oracle_forward_seq(&k_s, &tokens),
+            "attn_v.scale must not copy attn_k.scale logits"
+        );
+        let q_s = load_gguf(&tiny_llama_attn_q_s_gguf()).expect("q_s");
+        assert_ne!(
+            oracle_forward_seq(&g, &tokens),
+            oracle_forward_seq(&q_s, &tokens),
+            "attn_v.scale must not copy attn_q.scale logits"
+        );
+        let bad = {
+            let g0 = load_gguf_owned(tiny_llama_gguf()).expect("bad g0");
+            let kv: Vec<(String, Kv)> = g0.kv.iter().map(|(k, v)| (k.clone(), v.clone())).collect();
+            let mut tensors = Vec::new();
+            for t in g0.tensors() {
+                tensors.push(TensorWrite {
+                    name: t.name.to_string(),
+                    ty: t.ty,
+                    shape: t.shape.to_vec(),
+                    data: t.data.to_vec(),
+                });
+            }
+            let short = [2.0f32, 3.0];
+            tensors.push(tw(
+                "blk.0.attn_v.scale",
+                GgmlType::F32,
+                vec![2],
+                pack_vec1d(GgmlType::F32, &short),
+            ));
+            write_gguf_with_kv(&kv, &tensors)
+        };
+        let err = match Llama::from_gguf(load_gguf(&bad).expect("bad load")) {
+            Ok(_) => panic!("expected attn_v.scale shape"),
+            Err(e) => e.to_string(),
+        };
+        assert!(
+            err.contains("attn_v.scale"),
+            "error should name tensor: {err}"
+        );
+    }
+
+    #[test]
+    fn tiny_llama_ffn_gate_s_load_gemv_gemm_embed_and_greedy() {
+        let bytes = tiny_llama_ffn_gate_s_gguf();
+        let g = load_gguf(&bytes).expect("load llama ffn_gate.scale");
+        assert_eq!(
+            g.kv("general.architecture"),
+            Some(&Kv::String("llama".into()))
+        );
+        let scale = g.tensor("blk.0.ffn_gate.scale").expect("gate_s");
+        assert_eq!(scale.n_cols(), 1);
+        assert_eq!(
+            f32s(scale).expect("f32s").first().copied(),
+            Some(TINY_LLAMA_FFN_GATE_S)
+        );
+        let model = Llama::from_gguf(g.clone()).expect("model");
+        match &model.layers[0].ffn {
+            LayerFfn::Dense(dense) => {
+                assert_eq!(dense.gate_s, Some(TINY_LLAMA_FFN_GATE_S));
+            }
+            _ => panic!("expected dense ffn"),
+        }
+        let llama = load_gguf(&tiny_llama_gguf()).expect("llama");
+        assert!(llama.tensor("blk.0.ffn_gate.scale").is_none());
+        assert_ne!(
+            oracle_forward_seq(&g, &[1, 2, 3]),
+            oracle_forward_seq(&llama, &[1, 2, 3]),
+            "oracle ffn_gate.scale vs llama"
+        );
+        load_fwd_match(&bytes, 3);
+        load_prefill_match(&bytes, &[1, 2, 3]);
+        let tok = Tokenizer::from_gguf(&g).expect("tok");
+        let out = greedy_generate(&model, &tok, "ab", 2).expect("gen");
+        let out2 = greedy_generate(&model, &tok, "ab", 2).expect("gen2");
+        assert_eq!(out, out2);
+        let tokens = [1u32, 2, 3];
+        let mut sc = model.new_cache(8).expect("sc");
+        let scaled = model.prefill(&mut sc, &tokens).expect("gate_s pref");
+        let llama_pref = {
+            let lm = Llama::from_gguf(llama.clone()).expect("lm");
+            match &lm.layers[0].ffn {
+                LayerFfn::Dense(d) => assert!(d.gate_s.is_none()),
+                _ => panic!("expected dense ffn"),
+            }
+            let mut c = lm.new_cache(8).expect("lc");
+            lm.prefill(&mut c, &tokens).expect("llama pref")
+        };
+        assert_ne!(
+            scaled, llama_pref,
+            "ffn_gate.scale 1.25 must not copy llama logits"
+        );
+        let ones_pref = {
+            let ones_bytes =
+                rewrite_tiny_llama_ffn_gate_s(tiny_llama_gguf(), Some(1.0)).expect("ones bytes");
+            let og = load_gguf(&ones_bytes).expect("ones g");
+            assert_eq!(
+                oracle_forward_seq(&og, &tokens),
+                oracle_forward_seq(&llama, &tokens),
+                "scale=1.0 must match omitted ffn_gate.scale"
+            );
+            let om = Llama::from_gguf(og).expect("om");
+            let mut c = om.new_cache(8).expect("oc");
+            om.prefill(&mut c, &tokens).expect("ones pref")
+        };
+        assert_eq!(
+            ones_pref, llama_pref,
+            "all-ones ffn_gate.scale must be identity with llama"
+        );
+        let down_s = load_gguf(&tiny_llama_ffn_down_s_gguf()).expect("down_s");
+        assert_ne!(
+            oracle_forward_seq(&g, &tokens),
+            oracle_forward_seq(&down_s, &tokens),
+            "ffn_gate.scale must not copy ffn_down.scale logits"
+        );
+        let v_s = load_gguf(&tiny_llama_attn_v_s_gguf()).expect("v_s");
+        assert_ne!(
+            oracle_forward_seq(&g, &tokens),
+            oracle_forward_seq(&v_s, &tokens),
+            "ffn_gate.scale must not copy attn_v.scale logits"
+        );
+        let bad = {
+            let g0 = load_gguf_owned(tiny_llama_gguf()).expect("bad g0");
+            let kv: Vec<(String, Kv)> = g0.kv.iter().map(|(k, v)| (k.clone(), v.clone())).collect();
+            let mut tensors = Vec::new();
+            for t in g0.tensors() {
+                tensors.push(TensorWrite {
+                    name: t.name.to_string(),
+                    ty: t.ty,
+                    shape: t.shape.to_vec(),
+                    data: t.data.to_vec(),
+                });
+            }
+            let short = [2.0f32, 3.0];
+            tensors.push(tw(
+                "blk.0.ffn_gate.scale",
+                GgmlType::F32,
+                vec![2],
+                pack_vec1d(GgmlType::F32, &short),
+            ));
+            write_gguf_with_kv(&kv, &tensors)
+        };
+        let err = match Llama::from_gguf(load_gguf(&bad).expect("bad load")) {
+            Ok(_) => panic!("expected ffn_gate.scale shape"),
+            Err(e) => e.to_string(),
+        };
+        assert!(
+            err.contains("ffn_gate.scale"),
+            "error should name tensor: {err}"
+        );
+    }
+
+    #[test]
+    fn tiny_llama_ffn_up_s_load_gemv_gemm_embed_and_greedy() {
+        let bytes = tiny_llama_ffn_up_s_gguf();
+        let g = load_gguf(&bytes).expect("load llama ffn_up.scale");
+        assert_eq!(
+            g.kv("general.architecture"),
+            Some(&Kv::String("llama".into()))
+        );
+        let scale = g.tensor("blk.0.ffn_up.scale").expect("up_s");
+        assert_eq!(scale.n_cols(), 1);
+        assert_eq!(
+            f32s(scale).expect("f32s").first().copied(),
+            Some(TINY_LLAMA_FFN_UP_S)
+        );
+        let model = Llama::from_gguf(g.clone()).expect("model");
+        match &model.layers[0].ffn {
+            LayerFfn::Dense(dense) => {
+                assert_eq!(dense.up_s, Some(TINY_LLAMA_FFN_UP_S));
+            }
+            _ => panic!("expected dense ffn"),
+        }
+        let llama = load_gguf(&tiny_llama_gguf()).expect("llama");
+        assert!(llama.tensor("blk.0.ffn_up.scale").is_none());
+        assert_ne!(
+            oracle_forward_seq(&g, &[1, 2, 3]),
+            oracle_forward_seq(&llama, &[1, 2, 3]),
+            "oracle ffn_up.scale vs llama"
+        );
+        load_fwd_match(&bytes, 3);
+        load_prefill_match(&bytes, &[1, 2, 3]);
+        let tok = Tokenizer::from_gguf(&g).expect("tok");
+        let out = greedy_generate(&model, &tok, "ab", 2).expect("gen");
+        let out2 = greedy_generate(&model, &tok, "ab", 2).expect("gen2");
+        assert_eq!(out, out2);
+        let tokens = [1u32, 2, 3];
+        let mut sc = model.new_cache(8).expect("sc");
+        let scaled = model.prefill(&mut sc, &tokens).expect("up_s pref");
+        let llama_pref = {
+            let lm = Llama::from_gguf(llama.clone()).expect("lm");
+            match &lm.layers[0].ffn {
+                LayerFfn::Dense(d) => assert!(d.up_s.is_none()),
+                _ => panic!("expected dense ffn"),
+            }
+            let mut c = lm.new_cache(8).expect("lc");
+            lm.prefill(&mut c, &tokens).expect("llama pref")
+        };
+        assert_ne!(
+            scaled, llama_pref,
+            "ffn_up.scale 3.5 must not copy llama logits"
+        );
+        let ones_pref = {
+            let ones_bytes =
+                rewrite_tiny_llama_ffn_up_s(tiny_llama_gguf(), Some(1.0)).expect("ones bytes");
+            let og = load_gguf(&ones_bytes).expect("ones g");
+            assert_eq!(
+                oracle_forward_seq(&og, &tokens),
+                oracle_forward_seq(&llama, &tokens),
+                "scale=1.0 must match omitted ffn_up.scale"
+            );
+            let om = Llama::from_gguf(og).expect("om");
+            let mut c = om.new_cache(8).expect("oc");
+            om.prefill(&mut c, &tokens).expect("ones pref")
+        };
+        assert_eq!(
+            ones_pref, llama_pref,
+            "all-ones ffn_up.scale must be identity with llama"
+        );
+        let gate_s = load_gguf(&tiny_llama_ffn_gate_s_gguf()).expect("gate_s");
+        assert_ne!(
+            oracle_forward_seq(&g, &tokens),
+            oracle_forward_seq(&gate_s, &tokens),
+            "ffn_up.scale must not copy ffn_gate.scale logits"
+        );
+        let down_s = load_gguf(&tiny_llama_ffn_down_s_gguf()).expect("down_s");
+        assert_ne!(
+            oracle_forward_seq(&g, &tokens),
+            oracle_forward_seq(&down_s, &tokens),
+            "ffn_up.scale must not copy ffn_down.scale logits"
+        );
+        let bad = {
+            let g0 = load_gguf_owned(tiny_llama_gguf()).expect("bad g0");
+            let kv: Vec<(String, Kv)> = g0.kv.iter().map(|(k, v)| (k.clone(), v.clone())).collect();
+            let mut tensors = Vec::new();
+            for t in g0.tensors() {
+                tensors.push(TensorWrite {
+                    name: t.name.to_string(),
+                    ty: t.ty,
+                    shape: t.shape.to_vec(),
+                    data: t.data.to_vec(),
+                });
+            }
+            let short = [2.0f32, 3.0];
+            tensors.push(tw(
+                "blk.0.ffn_up.scale",
+                GgmlType::F32,
+                vec![2],
+                pack_vec1d(GgmlType::F32, &short),
+            ));
+            write_gguf_with_kv(&kv, &tensors)
+        };
+        let err = match Llama::from_gguf(load_gguf(&bad).expect("bad load")) {
+            Ok(_) => panic!("expected ffn_up.scale shape"),
+            Err(e) => e.to_string(),
+        };
+        assert!(
+            err.contains("ffn_up.scale"),
+            "error should name tensor: {err}"
+        );
+    }
+
+    #[test]
+    fn tiny_nvfp4_output_s_load_gemv_gemm_embed_and_greedy() {
+        let bytes = tiny_nvfp4_output_s_gguf();
+        let g = load_gguf(&bytes).expect("load nvfp4 output.scale");
+        assert_eq!(
+            g.kv("general.architecture"),
+            Some(&Kv::String("llama".into()))
+        );
+        assert_eq!(g.tensor("output.weight").unwrap().ty, GgmlType::NVFP4);
+        let scale = g.tensor("output.scale").expect("output_s");
+        assert_eq!(scale.n_cols(), 1);
+        assert_eq!(
+            f32s(scale).expect("f32s").first().copied(),
+            Some(TINY_NVFP4_OUTPUT_S)
+        );
+        let model = Llama::from_gguf(g.clone()).expect("model");
+        assert_eq!(model.output_s, Some(TINY_NVFP4_OUTPUT_S));
+        let nvfp4 = load_gguf(&tiny_nvfp4_gguf()).expect("nvfp4");
+        assert!(nvfp4.tensor("output.scale").is_none());
+        assert_eq!(nvfp4.tensor("output.weight").unwrap().ty, GgmlType::NVFP4);
+        assert_ne!(
+            oracle_forward_seq(&g, &[1, 2, 3]),
+            oracle_forward_seq(&nvfp4, &[1, 2, 3]),
+            "oracle output.scale vs nvfp4"
+        );
+        load_fwd_match(&bytes, 3);
+        load_prefill_match(&bytes, &[1, 2, 3]);
+        let tok = Tokenizer::from_gguf(&g).expect("tok");
+        let out = greedy_generate(&model, &tok, "ab", 2).expect("gen");
+        let out2 = greedy_generate(&model, &tok, "ab", 2).expect("gen2");
+        assert_eq!(out, out2);
+        let tokens = [1u32, 2, 3];
+        let mut sc = model.new_cache(8).expect("sc");
+        let scaled = model.prefill(&mut sc, &tokens).expect("output_s pref");
+        let nvfp4_pref = {
+            let nm = Llama::from_gguf(nvfp4.clone()).expect("nm");
+            assert!(nm.output_s.is_none());
+            let mut c = nm.new_cache(8).expect("nc");
+            nm.prefill(&mut c, &tokens).expect("nvfp4 pref")
+        };
+        assert_ne!(
+            scaled, nvfp4_pref,
+            "output.scale 4.0 must not copy nvfp4 logits"
+        );
+        let x = pat_f32(TINY_N_EMBD, 21);
+        let got_gemv = model.gemv_output(&x).expect("gemv");
+        let mut exp_gemv = oracle_gemv(g.tensor("output.weight").unwrap(), &x);
+        oracle_mul_output_s(&g, &mut exp_gemv);
+        assert_logits_match(&got_gemv, &exp_gemv);
+        let ones_pref = {
+            let ones_bytes =
+                rewrite_tiny_nvfp4_output_s(tiny_nvfp4_gguf(), Some(1.0)).expect("ones bytes");
+            let og = load_gguf(&ones_bytes).expect("ones g");
+            assert_eq!(
+                oracle_forward_seq(&og, &tokens),
+                oracle_forward_seq(&nvfp4, &tokens),
+                "scale=1.0 must match omitted output.scale"
+            );
+            let om = Llama::from_gguf(og).expect("om");
+            let mut c = om.new_cache(8).expect("oc");
+            om.prefill(&mut c, &tokens).expect("ones pref")
+        };
+        assert_eq!(
+            ones_pref, nvfp4_pref,
+            "all-ones output.scale must be identity with nvfp4"
+        );
+        let llama = load_gguf(&tiny_llama_gguf()).expect("llama");
+        let f32_with_scale = rewrite_tiny_llama_unit_scale(
+            tiny_llama_gguf(),
+            "output.scale",
+            Some(TINY_NVFP4_OUTPUT_S),
+        )
+        .expect("f32 scale bytes");
+        let fg = load_gguf(&f32_with_scale).expect("f32 g");
+        assert!(fg.tensor("output.scale").is_some());
+        assert_eq!(fg.tensor("output.weight").unwrap().ty, GgmlType::F32);
+        let fm = Llama::from_gguf(fg.clone()).expect("fm");
+        assert!(fm.output_s.is_none(), "F32 output.scale must not load");
+        assert_eq!(
+            oracle_forward_seq(&fg, &tokens),
+            oracle_forward_seq(&llama, &tokens),
+            "F32 output.scale must not change oracle logits"
+        );
+        let mut fc = fm.new_cache(8).expect("fc");
+        let f32_pref = fm.prefill(&mut fc, &tokens).expect("f32 pref");
+        let llama_pref = {
+            let lm = Llama::from_gguf(llama).expect("lm");
+            let mut c = lm.new_cache(8).expect("lc");
+            lm.prefill(&mut c, &tokens).expect("llama pref")
+        };
+        assert_eq!(
+            f32_pref, llama_pref,
+            "F32 output.scale must be identity with llama"
+        );
+        let bad = {
+            let g0 = load_gguf_owned(tiny_nvfp4_gguf()).expect("bad g0");
+            let kv: Vec<(String, Kv)> = g0.kv.iter().map(|(k, v)| (k.clone(), v.clone())).collect();
+            let mut tensors = Vec::new();
+            for t in g0.tensors() {
+                tensors.push(TensorWrite {
+                    name: t.name.to_string(),
+                    ty: t.ty,
+                    shape: t.shape.to_vec(),
+                    data: t.data.to_vec(),
+                });
+            }
+            let short = [2.0f32, 3.0];
+            tensors.push(tw(
+                "output.scale",
+                GgmlType::F32,
+                vec![2],
+                pack_vec1d(GgmlType::F32, &short),
+            ));
+            write_gguf_with_kv(&kv, &tensors)
+        };
+        let err = match Llama::from_gguf(load_gguf(&bad).expect("bad load")) {
+            Ok(_) => panic!("expected output.scale shape"),
+            Err(e) => e.to_string(),
+        };
+        assert!(
+            err.contains("output.scale"),
+            "error should name tensor: {err}"
+        );
+    }
+
+    #[test]
+    fn tiny_bloom_attn_qkv_s_load_gemv_gemm_embed_and_greedy() {
+        let bytes = tiny_bloom_attn_qkv_s_gguf();
+        let g = load_gguf(&bytes).expect("load bloom attn_qkv.scale");
+        assert_eq!(
+            g.kv("general.architecture"),
+            Some(&Kv::String("bloom".into()))
+        );
+        let scale = g.tensor("blk.0.attn_qkv.scale").expect("qkv_s");
+        assert_eq!(scale.n_cols(), 1);
+        assert_eq!(
+            f32s(scale).expect("f32s").first().copied(),
+            Some(TINY_BLOOM_ATTN_QKV_S)
+        );
+        let model = Llama::from_gguf(g.clone()).expect("model");
+        assert_eq!(model.layers[0].qkv_s, Some(TINY_BLOOM_ATTN_QKV_S));
+        let bloom = load_gguf(&tiny_bloom_gguf()).expect("bloom");
+        assert!(bloom.tensor("blk.0.attn_qkv.scale").is_none());
+        assert!(bloom.tensor("blk.0.attn_qkv.weight").is_some());
+        assert_ne!(
+            oracle_forward_seq(&g, &[1, 2, 3]),
+            oracle_forward_seq(&bloom, &[1, 2, 3]),
+            "oracle attn_qkv.scale vs bloom"
+        );
+        load_fwd_match(&bytes, 3);
+        load_prefill_match(&bytes, &[1, 2, 3]);
+        let tok = Tokenizer::from_gguf(&g).expect("tok");
+        let out = greedy_generate(&model, &tok, "ab", 2).expect("gen");
+        let out2 = greedy_generate(&model, &tok, "ab", 2).expect("gen2");
+        assert_eq!(out, out2);
+        let tokens = [1u32, 2, 3];
+        let mut sc = model.new_cache(8).expect("sc");
+        let scaled = model.prefill(&mut sc, &tokens).expect("qkv_s pref");
+        let bloom_pref = {
+            let bm = Llama::from_gguf(bloom.clone()).expect("bm");
+            assert!(bm.layers[0].qkv_s.is_none());
+            let mut c = bm.new_cache(8).expect("bc");
+            bm.prefill(&mut c, &tokens).expect("bloom pref")
+        };
+        assert_ne!(
+            scaled, bloom_pref,
+            "attn_qkv.scale 3.0 must not copy bloom logits"
+        );
+        let ones_pref = {
+            let ones_bytes =
+                rewrite_tiny_bloom_attn_qkv_s(tiny_bloom_gguf(), Some(1.0)).expect("ones bytes");
+            let og = load_gguf(&ones_bytes).expect("ones g");
+            assert_eq!(
+                oracle_forward_seq(&og, &tokens),
+                oracle_forward_seq(&bloom, &tokens),
+                "scale=1.0 must match omitted attn_qkv.scale"
+            );
+            let om = Llama::from_gguf(og).expect("om");
+            let mut c = om.new_cache(8).expect("oc");
+            om.prefill(&mut c, &tokens).expect("ones pref")
+        };
+        assert_eq!(
+            ones_pref, bloom_pref,
+            "all-ones attn_qkv.scale must be identity with bloom"
+        );
+        let q_s = load_gguf(&tiny_llama_attn_q_s_gguf()).expect("q_s");
+        assert_ne!(
+            oracle_forward_seq(&g, &tokens),
+            oracle_forward_seq(&q_s, &tokens),
+            "attn_qkv.scale must not copy attn_q.scale logits"
+        );
+        let llama_with = {
+            let bytes = rewrite_tiny_llama_unit_scale(
+                tiny_llama_gguf(),
+                "blk.0.attn_qkv.scale",
+                Some(TINY_BLOOM_ATTN_QKV_S),
+            )
+            .expect("llama qkv_s bytes");
+            let lg = load_gguf(&bytes).expect("llama qkv_s g");
+            assert!(lg.tensor("blk.0.attn_qkv.scale").is_some());
+            let llama = load_gguf(&tiny_llama_gguf()).expect("llama");
+            assert_eq!(
+                oracle_forward_seq(&lg, &tokens),
+                oracle_forward_seq(&llama, &tokens),
+                "llama attn_qkv.scale must be ignored"
+            );
+            let lm = Llama::from_gguf(lg).expect("lm");
+            assert!(lm.layers[0].qkv_s.is_none());
+            let mut c = lm.new_cache(8).expect("lc");
+            lm.prefill(&mut c, &tokens).expect("llama qkv_s pref")
+        };
+        let llama_pref = {
+            let llama = load_gguf(&tiny_llama_gguf()).expect("llama");
+            let lm = Llama::from_gguf(llama).expect("lm");
+            let mut c = lm.new_cache(8).expect("lc");
+            lm.prefill(&mut c, &tokens).expect("llama pref")
+        };
+        assert_eq!(
+            llama_with, llama_pref,
+            "llama attn_qkv.scale must be identity with llama"
+        );
+        let bad = {
+            let g0 = load_gguf_owned(tiny_bloom_gguf()).expect("bad g0");
+            let kv: Vec<(String, Kv)> = g0.kv.iter().map(|(k, v)| (k.clone(), v.clone())).collect();
+            let mut tensors = Vec::new();
+            for t in g0.tensors() {
+                tensors.push(TensorWrite {
+                    name: t.name.to_string(),
+                    ty: t.ty,
+                    shape: t.shape.to_vec(),
+                    data: t.data.to_vec(),
+                });
+            }
+            let short = [2.0f32, 3.0];
+            tensors.push(tw(
+                "blk.0.attn_qkv.scale",
+                GgmlType::F32,
+                vec![2],
+                pack_vec1d(GgmlType::F32, &short),
+            ));
+            write_gguf_with_kv(&kv, &tensors)
+        };
+        let err = match Llama::from_gguf(load_gguf(&bad).expect("bad load")) {
+            Ok(_) => panic!("expected attn_qkv.scale shape"),
+            Err(e) => e.to_string(),
+        };
+        assert!(
+            err.contains("attn_qkv.scale"),
+            "error should name tensor: {err}"
+        );
+    }
+
+    #[test]
+    fn tiny_qwen2moe_ffn_down_shexp_s_load_gemv_gemm_embed_and_greedy() {
+        let bytes = tiny_qwen2moe_ffn_down_shexp_s_gguf();
+        let g = load_gguf(&bytes).expect("load qwen2moe ffn_down_shexp.scale");
+        assert_eq!(
+            g.kv("general.architecture"),
+            Some(&Kv::String("qwen2moe".into()))
+        );
+        let scale = g
+            .tensor("blk.0.ffn_down_shexp.scale")
+            .expect("down_shexp_s");
+        assert_eq!(scale.n_cols(), 1);
+        assert_eq!(
+            f32s(scale).expect("f32s").first().copied(),
+            Some(TINY_QWEN2MOE_FFN_DOWN_SHEXP_S)
+        );
+        let model = Llama::from_gguf(g.clone()).expect("model");
+        match &model.layers[0].ffn {
+            LayerFfn::Qwen2Moe(moe) => {
+                assert_eq!(moe.down_shexp_s, Some(TINY_QWEN2MOE_FFN_DOWN_SHEXP_S));
+            }
+            _ => panic!("expected qwen2moe ffn"),
+        }
+        let qwen2moe = load_gguf(&tiny_qwen2moe_gguf()).expect("qwen2moe");
+        assert!(qwen2moe.tensor("blk.0.ffn_down_shexp.scale").is_none());
+        assert!(qwen2moe.tensor("blk.0.ffn_down_shexp.weight").is_some());
+        assert_ne!(
+            oracle_forward_seq(&g, &[1, 2, 3]),
+            oracle_forward_seq(&qwen2moe, &[1, 2, 3]),
+            "oracle ffn_down_shexp.scale vs qwen2moe"
+        );
+        load_fwd_match(&bytes, 3);
+        load_prefill_match(&bytes, &[1, 2, 3]);
+        let tok = Tokenizer::from_gguf(&g).expect("tok");
+        let out = greedy_generate(&model, &tok, "ab", 2).expect("gen");
+        let out2 = greedy_generate(&model, &tok, "ab", 2).expect("gen2");
+        assert_eq!(out, out2);
+        let tokens = [1u32, 2, 3];
+        let mut sc = model.new_cache(8).expect("sc");
+        let scaled = model.prefill(&mut sc, &tokens).expect("shexp_s pref");
+        let qwen2moe_pref = {
+            let qm = Llama::from_gguf(qwen2moe.clone()).expect("qm");
+            match &qm.layers[0].ffn {
+                LayerFfn::Qwen2Moe(moe) => assert!(moe.down_shexp_s.is_none()),
+                _ => panic!("expected qwen2moe ffn"),
+            }
+            let mut c = qm.new_cache(8).expect("qc");
+            qm.prefill(&mut c, &tokens).expect("qwen2moe pref")
+        };
+        assert_ne!(
+            scaled, qwen2moe_pref,
+            "ffn_down_shexp.scale 1.75 must not copy qwen2moe logits"
+        );
+        let ones_pref = {
+            let ones_bytes =
+                rewrite_tiny_qwen2moe_ffn_down_shexp_s(tiny_qwen2moe_gguf(), Some(1.0))
+                    .expect("ones bytes");
+            let og = load_gguf(&ones_bytes).expect("ones g");
+            assert_eq!(
+                oracle_forward_seq(&og, &tokens),
+                oracle_forward_seq(&qwen2moe, &tokens),
+                "scale=1.0 must match omitted ffn_down_shexp.scale"
+            );
+            let om = Llama::from_gguf(og).expect("om");
+            let mut c = om.new_cache(8).expect("oc");
+            om.prefill(&mut c, &tokens).expect("ones pref")
+        };
+        assert_eq!(
+            ones_pref, qwen2moe_pref,
+            "all-ones ffn_down_shexp.scale must be identity with qwen2moe"
+        );
+        let down_s = load_gguf(&tiny_llama_ffn_down_s_gguf()).expect("down_s");
+        assert_ne!(
+            oracle_forward_seq(&g, &tokens),
+            oracle_forward_seq(&down_s, &tokens),
+            "ffn_down_shexp.scale must not copy ffn_down.scale logits"
+        );
+        {
+            let bytes = rewrite_tiny_llama_unit_scale(
+                tiny_qwen2moe_gguf(),
+                "blk.0.ffn_down.scale",
+                Some(TINY_QWEN2MOE_FFN_DOWN_SHEXP_S),
+            )
+            .expect("dense on moe bytes");
+            let dg = load_gguf(&bytes).expect("dense on moe g");
+            assert!(dg.tensor("blk.0.ffn_down.scale").is_some());
+            assert_eq!(
+                oracle_forward_seq(&dg, &tokens),
+                oracle_forward_seq(&qwen2moe, &tokens),
+                "qwen2moe ffn_down.scale must be ignored"
+            );
+        }
+        let llama_with = {
+            let bytes = rewrite_tiny_llama_unit_scale(
+                tiny_llama_gguf(),
+                "blk.0.ffn_down_shexp.scale",
+                Some(TINY_QWEN2MOE_FFN_DOWN_SHEXP_S),
+            )
+            .expect("llama shexp_s bytes");
+            let lg = load_gguf(&bytes).expect("llama shexp_s g");
+            assert!(lg.tensor("blk.0.ffn_down_shexp.scale").is_some());
+            let llama = load_gguf(&tiny_llama_gguf()).expect("llama");
+            assert_eq!(
+                oracle_forward_seq(&lg, &tokens),
+                oracle_forward_seq(&llama, &tokens),
+                "llama ffn_down_shexp.scale must be ignored"
+            );
+            let lm = Llama::from_gguf(lg).expect("lm");
+            match &lm.layers[0].ffn {
+                LayerFfn::Dense(d) => assert!(d.down_s.is_none()),
+                _ => panic!("expected dense ffn"),
+            }
+            let mut c = lm.new_cache(8).expect("lc");
+            lm.prefill(&mut c, &tokens).expect("llama shexp_s pref")
+        };
+        let llama_pref = {
+            let llama = load_gguf(&tiny_llama_gguf()).expect("llama");
+            let lm = Llama::from_gguf(llama).expect("lm");
+            let mut c = lm.new_cache(8).expect("lc");
+            lm.prefill(&mut c, &tokens).expect("llama pref")
+        };
+        assert_eq!(
+            llama_with, llama_pref,
+            "llama ffn_down_shexp.scale must be identity with llama"
+        );
+        let qwen3moe_with = {
+            let bytes = rewrite_tiny_llama_unit_scale(
+                tiny_qwen3moe_gguf(),
+                "blk.0.ffn_down_shexp.scale",
+                Some(TINY_QWEN2MOE_FFN_DOWN_SHEXP_S),
+            )
+            .expect("qwen3moe shexp_s bytes");
+            let mg = load_gguf(&bytes).expect("qwen3moe shexp_s g");
+            assert!(mg.tensor("blk.0.ffn_down_shexp.scale").is_some());
+            let q3 = load_gguf(&tiny_qwen3moe_gguf()).expect("qwen3moe");
+            assert_eq!(
+                oracle_forward_seq(&mg, &tokens),
+                oracle_forward_seq(&q3, &tokens),
+                "qwen3moe ffn_down_shexp.scale must be ignored"
+            );
+            let mm = Llama::from_gguf(mg).expect("mm");
+            match &mm.layers[0].ffn {
+                LayerFfn::Qwen3Moe(_) => {}
+                _ => panic!("expected qwen3moe ffn"),
+            }
+            let mut c = mm.new_cache(8).expect("mc");
+            mm.prefill(&mut c, &tokens).expect("qwen3moe shexp_s pref")
+        };
+        let qwen3moe_pref = {
+            let q3 = load_gguf(&tiny_qwen3moe_gguf()).expect("qwen3moe");
+            let mm = Llama::from_gguf(q3).expect("mm");
+            let mut c = mm.new_cache(8).expect("mc");
+            mm.prefill(&mut c, &tokens).expect("qwen3moe pref")
+        };
+        assert_eq!(
+            qwen3moe_with, qwen3moe_pref,
+            "qwen3moe ffn_down_shexp.scale must be identity with qwen3moe"
+        );
+        {
+            let bytes = rewrite_tiny_llama_unit_scale(
+                tiny_llama4_gguf(),
+                "blk.0.ffn_down_shexp.scale",
+                Some(TINY_QWEN2MOE_FFN_DOWN_SHEXP_S),
+            )
+            .expect("llama4 shexp_s bytes");
+            let l4g = load_gguf(&bytes).expect("llama4 shexp_s g");
+            let l4 = load_gguf(&tiny_llama4_gguf()).expect("llama4");
+            assert_ne!(
+                oracle_forward_seq(&l4g, &tokens),
+                oracle_forward_seq(&l4, &tokens),
+                "llama4 ffn_down_shexp.scale must change logits"
+            );
+            let l4m = Llama::from_gguf(l4g).expect("l4m");
+            match &l4m.layers[0].ffn {
+                LayerFfn::Llama4Moe(moe) => {
+                    assert_eq!(moe.down_shexp_s, Some(TINY_QWEN2MOE_FFN_DOWN_SHEXP_S));
+                }
+                _ => panic!("expected llama4 moe"),
+            }
+        }
+        {
+            let bytes = rewrite_tiny_llama_unit_scale(
+                tiny_qwen3next_gguf(),
+                "blk.0.ffn_down_shexp.scale",
+                Some(TINY_QWEN2MOE_FFN_DOWN_SHEXP_S),
+            )
+            .expect("qwen3next shexp_s bytes");
+            let ng = load_gguf(&bytes).expect("qwen3next shexp_s g");
+            let n0 = load_gguf(&tiny_qwen3next_gguf()).expect("qwen3next");
+            assert_ne!(
+                oracle_forward_seq(&ng, &tokens),
+                oracle_forward_seq(&n0, &tokens),
+                "qwen3next ffn_down_shexp.scale must change logits"
+            );
+            let nm = Llama::from_gguf(ng).expect("nm");
+            match &nm.layers[0].ffn {
+                LayerFfn::Qwen3Next(moe) => {
+                    assert_eq!(moe.down_shexp_s, Some(TINY_QWEN2MOE_FFN_DOWN_SHEXP_S));
+                }
+                _ => panic!("expected qwen3next ffn"),
+            }
+        }
+        let bad = {
+            let g0 = load_gguf_owned(tiny_qwen2moe_gguf()).expect("bad g0");
+            let kv: Vec<(String, Kv)> = g0.kv.iter().map(|(k, v)| (k.clone(), v.clone())).collect();
+            let mut tensors = Vec::new();
+            for t in g0.tensors() {
+                tensors.push(TensorWrite {
+                    name: t.name.to_string(),
+                    ty: t.ty,
+                    shape: t.shape.to_vec(),
+                    data: t.data.to_vec(),
+                });
+            }
+            let short = [2.0f32, 3.0];
+            tensors.push(tw(
+                "blk.0.ffn_down_shexp.scale",
+                GgmlType::F32,
+                vec![2],
+                pack_vec1d(GgmlType::F32, &short),
+            ));
+            write_gguf_with_kv(&kv, &tensors)
+        };
+        let err = match Llama::from_gguf(load_gguf(&bad).expect("bad load")) {
+            Ok(_) => panic!("expected ffn_down_shexp.scale shape"),
+            Err(e) => e.to_string(),
+        };
+        assert!(
+            err.contains("ffn_down_shexp.scale"),
+            "error should name tensor: {err}"
+        );
+    }
+
+    #[test]
+    fn tiny_qwen2moe_ffn_gate_shexp_s_load_gemv_gemm_embed_and_greedy() {
+        let bytes = tiny_qwen2moe_ffn_gate_shexp_s_gguf();
+        let g = load_gguf(&bytes).expect("load qwen2moe ffn_gate_shexp.scale");
+        assert_eq!(
+            g.kv("general.architecture"),
+            Some(&Kv::String("qwen2moe".into()))
+        );
+        let scale = g
+            .tensor("blk.0.ffn_gate_shexp.scale")
+            .expect("gate_shexp_s");
+        assert_eq!(scale.n_cols(), 1);
+        assert_eq!(
+            f32s(scale).expect("f32s").first().copied(),
+            Some(TINY_QWEN2MOE_FFN_GATE_SHEXP_S)
+        );
+        let model = Llama::from_gguf(g.clone()).expect("model");
+        match &model.layers[0].ffn {
+            LayerFfn::Qwen2Moe(moe) => {
+                assert_eq!(moe.gate_shexp_s, Some(TINY_QWEN2MOE_FFN_GATE_SHEXP_S));
+                assert!(moe.down_shexp_s.is_none());
+            }
+            _ => panic!("expected qwen2moe ffn"),
+        }
+        let qwen2moe = load_gguf(&tiny_qwen2moe_gguf()).expect("qwen2moe");
+        assert!(qwen2moe.tensor("blk.0.ffn_gate_shexp.scale").is_none());
+        assert!(qwen2moe.tensor("blk.0.ffn_gate_shexp.weight").is_some());
+        assert_ne!(
+            oracle_forward_seq(&g, &[1, 2, 3]),
+            oracle_forward_seq(&qwen2moe, &[1, 2, 3]),
+            "oracle ffn_gate_shexp.scale vs qwen2moe"
+        );
+        load_fwd_match(&bytes, 3);
+        load_prefill_match(&bytes, &[1, 2, 3]);
+        let tok = Tokenizer::from_gguf(&g).expect("tok");
+        let out = greedy_generate(&model, &tok, "ab", 2).expect("gen");
+        let out2 = greedy_generate(&model, &tok, "ab", 2).expect("gen2");
+        assert_eq!(out, out2);
+        let tokens = [1u32, 2, 3];
+        let mut sc = model.new_cache(8).expect("sc");
+        let scaled = model.prefill(&mut sc, &tokens).expect("gate_shexp_s pref");
+        let qwen2moe_pref = {
+            let qm = Llama::from_gguf(qwen2moe.clone()).expect("qm");
+            match &qm.layers[0].ffn {
+                LayerFfn::Qwen2Moe(moe) => assert!(moe.gate_shexp_s.is_none()),
+                _ => panic!("expected qwen2moe ffn"),
+            }
+            let mut c = qm.new_cache(8).expect("qc");
+            qm.prefill(&mut c, &tokens).expect("qwen2moe pref")
+        };
+        assert_ne!(
+            scaled, qwen2moe_pref,
+            "ffn_gate_shexp.scale 2.25 must not copy qwen2moe logits"
+        );
+        let ones_pref = {
+            let ones_bytes =
+                rewrite_tiny_qwen2moe_ffn_gate_shexp_s(tiny_qwen2moe_gguf(), Some(1.0))
+                    .expect("ones bytes");
+            let og = load_gguf(&ones_bytes).expect("ones g");
+            assert_eq!(
+                oracle_forward_seq(&og, &tokens),
+                oracle_forward_seq(&qwen2moe, &tokens),
+                "scale=1.0 must match omitted ffn_gate_shexp.scale"
+            );
+            let om = Llama::from_gguf(og).expect("om");
+            let mut c = om.new_cache(8).expect("oc");
+            om.prefill(&mut c, &tokens).expect("ones pref")
+        };
+        assert_eq!(
+            ones_pref, qwen2moe_pref,
+            "all-ones ffn_gate_shexp.scale must be identity with qwen2moe"
+        );
+        let down_shexp = load_gguf(&tiny_qwen2moe_ffn_down_shexp_s_gguf()).expect("down_shexp");
+        assert_ne!(
+            oracle_forward_seq(&g, &tokens),
+            oracle_forward_seq(&down_shexp, &tokens),
+            "ffn_gate_shexp.scale must not copy ffn_down_shexp.scale logits"
+        );
+        let dense_gate = load_gguf(&tiny_llama_ffn_gate_s_gguf()).expect("dense gate");
+        assert_ne!(
+            oracle_forward_seq(&g, &tokens),
+            oracle_forward_seq(&dense_gate, &tokens),
+            "ffn_gate_shexp.scale must not copy ffn_gate.scale logits"
+        );
+        {
+            let bytes = rewrite_tiny_llama_unit_scale(
+                tiny_qwen2moe_gguf(),
+                "blk.0.ffn_gate.scale",
+                Some(TINY_QWEN2MOE_FFN_GATE_SHEXP_S),
+            )
+            .expect("dense on moe bytes");
+            let dg = load_gguf(&bytes).expect("dense on moe g");
+            assert!(dg.tensor("blk.0.ffn_gate.scale").is_some());
+            assert_eq!(
+                oracle_forward_seq(&dg, &tokens),
+                oracle_forward_seq(&qwen2moe, &tokens),
+                "qwen2moe ffn_gate.scale must be ignored"
+            );
+        }
+        let llama_with = {
+            let bytes = rewrite_tiny_llama_unit_scale(
+                tiny_llama_gguf(),
+                "blk.0.ffn_gate_shexp.scale",
+                Some(TINY_QWEN2MOE_FFN_GATE_SHEXP_S),
+            )
+            .expect("llama gate_shexp_s bytes");
+            let lg = load_gguf(&bytes).expect("llama gate_shexp_s g");
+            assert!(lg.tensor("blk.0.ffn_gate_shexp.scale").is_some());
+            let llama = load_gguf(&tiny_llama_gguf()).expect("llama");
+            assert_eq!(
+                oracle_forward_seq(&lg, &tokens),
+                oracle_forward_seq(&llama, &tokens),
+                "llama ffn_gate_shexp.scale must be ignored"
+            );
+            let lm = Llama::from_gguf(lg).expect("lm");
+            match &lm.layers[0].ffn {
+                LayerFfn::Dense(d) => assert!(d.gate_s.is_none()),
+                _ => panic!("expected dense ffn"),
+            }
+            let mut c = lm.new_cache(8).expect("lc");
+            lm.prefill(&mut c, &tokens)
+                .expect("llama gate_shexp_s pref")
+        };
+        let llama_pref = {
+            let llama = load_gguf(&tiny_llama_gguf()).expect("llama");
+            let lm = Llama::from_gguf(llama).expect("lm");
+            let mut c = lm.new_cache(8).expect("lc");
+            lm.prefill(&mut c, &tokens).expect("llama pref")
+        };
+        assert_eq!(
+            llama_with, llama_pref,
+            "llama ffn_gate_shexp.scale must be identity with llama"
+        );
+        let qwen3moe_with = {
+            let bytes = rewrite_tiny_llama_unit_scale(
+                tiny_qwen3moe_gguf(),
+                "blk.0.ffn_gate_shexp.scale",
+                Some(TINY_QWEN2MOE_FFN_GATE_SHEXP_S),
+            )
+            .expect("qwen3moe gate_shexp_s bytes");
+            let mg = load_gguf(&bytes).expect("qwen3moe gate_shexp_s g");
+            let q3 = load_gguf(&tiny_qwen3moe_gguf()).expect("qwen3moe");
+            assert_eq!(
+                oracle_forward_seq(&mg, &tokens),
+                oracle_forward_seq(&q3, &tokens),
+                "qwen3moe ffn_gate_shexp.scale must be ignored"
+            );
+            let mm = Llama::from_gguf(mg).expect("mm");
+            let mut c = mm.new_cache(8).expect("mc");
+            mm.prefill(&mut c, &tokens)
+                .expect("qwen3moe gate_shexp_s pref")
+        };
+        let qwen3moe_pref = {
+            let q3 = load_gguf(&tiny_qwen3moe_gguf()).expect("qwen3moe");
+            let mm = Llama::from_gguf(q3).expect("mm");
+            let mut c = mm.new_cache(8).expect("mc");
+            mm.prefill(&mut c, &tokens).expect("qwen3moe pref")
+        };
+        assert_eq!(
+            qwen3moe_with, qwen3moe_pref,
+            "qwen3moe ffn_gate_shexp.scale must be identity with qwen3moe"
+        );
+        {
+            let bytes = rewrite_tiny_llama_unit_scale(
+                tiny_llama4_gguf(),
+                "blk.0.ffn_gate_shexp.scale",
+                Some(TINY_QWEN2MOE_FFN_GATE_SHEXP_S),
+            )
+            .expect("llama4 gate_shexp_s bytes");
+            let l4g = load_gguf(&bytes).expect("llama4 gate_shexp_s g");
+            let l4 = load_gguf(&tiny_llama4_gguf()).expect("llama4");
+            assert_ne!(
+                oracle_forward_seq(&l4g, &tokens),
+                oracle_forward_seq(&l4, &tokens),
+                "llama4 ffn_gate_shexp.scale must change logits"
+            );
+            let l4m = Llama::from_gguf(l4g).expect("l4m");
+            match &l4m.layers[0].ffn {
+                LayerFfn::Llama4Moe(moe) => {
+                    assert_eq!(moe.gate_shexp_s, Some(TINY_QWEN2MOE_FFN_GATE_SHEXP_S));
+                }
+                _ => panic!("expected llama4 moe"),
+            }
+        }
+        {
+            let bytes = rewrite_tiny_llama_unit_scale(
+                tiny_qwen3next_gguf(),
+                "blk.0.ffn_gate_shexp.scale",
+                Some(TINY_QWEN2MOE_FFN_GATE_SHEXP_S),
+            )
+            .expect("qwen3next gate_shexp_s bytes");
+            let ng = load_gguf(&bytes).expect("qwen3next gate_shexp_s g");
+            let n0 = load_gguf(&tiny_qwen3next_gguf()).expect("qwen3next");
+            assert_ne!(
+                oracle_forward_seq(&ng, &tokens),
+                oracle_forward_seq(&n0, &tokens),
+                "qwen3next ffn_gate_shexp.scale must change logits"
+            );
+            let nm = Llama::from_gguf(ng).expect("nm");
+            match &nm.layers[0].ffn {
+                LayerFfn::Qwen3Next(moe) => {
+                    assert_eq!(moe.gate_shexp_s, Some(TINY_QWEN2MOE_FFN_GATE_SHEXP_S));
+                }
+                _ => panic!("expected qwen3next ffn"),
+            }
+        }
+        let bad = {
+            let g0 = load_gguf_owned(tiny_qwen2moe_gguf()).expect("bad g0");
+            let kv: Vec<(String, Kv)> = g0.kv.iter().map(|(k, v)| (k.clone(), v.clone())).collect();
+            let mut tensors = Vec::new();
+            for t in g0.tensors() {
+                tensors.push(TensorWrite {
+                    name: t.name.to_string(),
+                    ty: t.ty,
+                    shape: t.shape.to_vec(),
+                    data: t.data.to_vec(),
+                });
+            }
+            let short = [2.0f32, 3.0];
+            tensors.push(tw(
+                "blk.0.ffn_gate_shexp.scale",
+                GgmlType::F32,
+                vec![2],
+                pack_vec1d(GgmlType::F32, &short),
+            ));
+            write_gguf_with_kv(&kv, &tensors)
+        };
+        let err = match Llama::from_gguf(load_gguf(&bad).expect("bad load")) {
+            Ok(_) => panic!("expected ffn_gate_shexp.scale shape"),
+            Err(e) => e.to_string(),
+        };
+        assert!(
+            err.contains("ffn_gate_shexp.scale"),
+            "error should name tensor: {err}"
+        );
+    }
+
+    #[test]
+    fn tiny_qwen2moe_ffn_up_shexp_s_load_gemv_gemm_embed_and_greedy() {
+        let bytes = tiny_qwen2moe_ffn_up_shexp_s_gguf();
+        let g = load_gguf(&bytes).expect("load qwen2moe ffn_up_shexp.scale");
+        assert_eq!(
+            g.kv("general.architecture"),
+            Some(&Kv::String("qwen2moe".into()))
+        );
+        let scale = g.tensor("blk.0.ffn_up_shexp.scale").expect("up_shexp_s");
+        assert_eq!(scale.n_cols(), 1);
+        assert_eq!(
+            f32s(scale).expect("f32s").first().copied(),
+            Some(TINY_QWEN2MOE_FFN_UP_SHEXP_S)
+        );
+        let model = Llama::from_gguf(g.clone()).expect("model");
+        match &model.layers[0].ffn {
+            LayerFfn::Qwen2Moe(moe) => {
+                assert_eq!(moe.up_shexp_s, Some(TINY_QWEN2MOE_FFN_UP_SHEXP_S));
+                assert!(moe.gate_shexp_s.is_none());
+                assert!(moe.down_shexp_s.is_none());
+            }
+            _ => panic!("expected qwen2moe ffn"),
+        }
+        let qwen2moe = load_gguf(&tiny_qwen2moe_gguf()).expect("qwen2moe");
+        assert!(qwen2moe.tensor("blk.0.ffn_up_shexp.scale").is_none());
+        assert!(qwen2moe.tensor("blk.0.ffn_up_shexp.weight").is_some());
+        assert_ne!(
+            oracle_forward_seq(&g, &[1, 2, 3]),
+            oracle_forward_seq(&qwen2moe, &[1, 2, 3]),
+            "oracle ffn_up_shexp.scale vs qwen2moe"
+        );
+        load_fwd_match(&bytes, 3);
+        load_prefill_match(&bytes, &[1, 2, 3]);
+        let tok = Tokenizer::from_gguf(&g).expect("tok");
+        let out = greedy_generate(&model, &tok, "ab", 2).expect("gen");
+        let out2 = greedy_generate(&model, &tok, "ab", 2).expect("gen2");
+        assert_eq!(out, out2);
+        let tokens = [1u32, 2, 3];
+        let mut sc = model.new_cache(8).expect("sc");
+        let scaled = model.prefill(&mut sc, &tokens).expect("up_shexp_s pref");
+        let qwen2moe_pref = {
+            let qm = Llama::from_gguf(qwen2moe.clone()).expect("qm");
+            match &qm.layers[0].ffn {
+                LayerFfn::Qwen2Moe(moe) => assert!(moe.up_shexp_s.is_none()),
+                _ => panic!("expected qwen2moe ffn"),
+            }
+            let mut c = qm.new_cache(8).expect("qc");
+            qm.prefill(&mut c, &tokens).expect("qwen2moe pref")
+        };
+        assert_ne!(
+            scaled, qwen2moe_pref,
+            "ffn_up_shexp.scale 2.75 must not copy qwen2moe logits"
+        );
+        let ones_pref = {
+            let ones_bytes = rewrite_tiny_qwen2moe_ffn_up_shexp_s(tiny_qwen2moe_gguf(), Some(1.0))
+                .expect("ones bytes");
+            let og = load_gguf(&ones_bytes).expect("ones g");
+            assert_eq!(
+                oracle_forward_seq(&og, &tokens),
+                oracle_forward_seq(&qwen2moe, &tokens),
+                "scale=1.0 must match omitted ffn_up_shexp.scale"
+            );
+            let om = Llama::from_gguf(og).expect("om");
+            let mut c = om.new_cache(8).expect("oc");
+            om.prefill(&mut c, &tokens).expect("ones pref")
+        };
+        assert_eq!(
+            ones_pref, qwen2moe_pref,
+            "all-ones ffn_up_shexp.scale must be identity with qwen2moe"
+        );
+        let gate_shexp = load_gguf(&tiny_qwen2moe_ffn_gate_shexp_s_gguf()).expect("gate_shexp");
+        assert_ne!(
+            oracle_forward_seq(&g, &tokens),
+            oracle_forward_seq(&gate_shexp, &tokens),
+            "ffn_up_shexp.scale must not copy ffn_gate_shexp.scale logits"
+        );
+        let down_shexp = load_gguf(&tiny_qwen2moe_ffn_down_shexp_s_gguf()).expect("down_shexp");
+        assert_ne!(
+            oracle_forward_seq(&g, &tokens),
+            oracle_forward_seq(&down_shexp, &tokens),
+            "ffn_up_shexp.scale must not copy ffn_down_shexp.scale logits"
+        );
+        let dense_up = load_gguf(&tiny_llama_ffn_up_s_gguf()).expect("dense up");
+        assert_ne!(
+            oracle_forward_seq(&g, &tokens),
+            oracle_forward_seq(&dense_up, &tokens),
+            "ffn_up_shexp.scale must not copy ffn_up.scale logits"
+        );
+        {
+            let bytes = rewrite_tiny_llama_unit_scale(
+                tiny_qwen2moe_gguf(),
+                "blk.0.ffn_up.scale",
+                Some(TINY_QWEN2MOE_FFN_UP_SHEXP_S),
+            )
+            .expect("dense on moe bytes");
+            let dg = load_gguf(&bytes).expect("dense on moe g");
+            assert_eq!(
+                oracle_forward_seq(&dg, &tokens),
+                oracle_forward_seq(&qwen2moe, &tokens),
+                "qwen2moe ffn_up.scale must be ignored"
+            );
+        }
+        let llama_with = {
+            let bytes = rewrite_tiny_llama_unit_scale(
+                tiny_llama_gguf(),
+                "blk.0.ffn_up_shexp.scale",
+                Some(TINY_QWEN2MOE_FFN_UP_SHEXP_S),
+            )
+            .expect("llama up_shexp_s bytes");
+            let lg = load_gguf(&bytes).expect("llama up_shexp_s g");
+            let llama = load_gguf(&tiny_llama_gguf()).expect("llama");
+            assert_eq!(
+                oracle_forward_seq(&lg, &tokens),
+                oracle_forward_seq(&llama, &tokens),
+                "llama ffn_up_shexp.scale must be ignored"
+            );
+            let lm = Llama::from_gguf(lg).expect("lm");
+            match &lm.layers[0].ffn {
+                LayerFfn::Dense(d) => assert!(d.up_s.is_none()),
+                _ => panic!("expected dense ffn"),
+            }
+            let mut c = lm.new_cache(8).expect("lc");
+            lm.prefill(&mut c, &tokens).expect("llama up_shexp_s pref")
+        };
+        let llama_pref = {
+            let llama = load_gguf(&tiny_llama_gguf()).expect("llama");
+            let lm = Llama::from_gguf(llama).expect("lm");
+            let mut c = lm.new_cache(8).expect("lc");
+            lm.prefill(&mut c, &tokens).expect("llama pref")
+        };
+        assert_eq!(
+            llama_with, llama_pref,
+            "llama ffn_up_shexp.scale must be identity with llama"
+        );
+        {
+            let bytes = rewrite_tiny_llama_unit_scale(
+                tiny_llama4_gguf(),
+                "blk.0.ffn_up_shexp.scale",
+                Some(TINY_QWEN2MOE_FFN_UP_SHEXP_S),
+            )
+            .expect("llama4 up_shexp_s bytes");
+            let l4g = load_gguf(&bytes).expect("llama4 up_shexp_s g");
+            let l4 = load_gguf(&tiny_llama4_gguf()).expect("llama4");
+            assert_ne!(
+                oracle_forward_seq(&l4g, &tokens),
+                oracle_forward_seq(&l4, &tokens),
+                "llama4 ffn_up_shexp.scale must change logits"
+            );
+            let l4m = Llama::from_gguf(l4g).expect("l4m");
+            match &l4m.layers[0].ffn {
+                LayerFfn::Llama4Moe(moe) => {
+                    assert_eq!(moe.up_shexp_s, Some(TINY_QWEN2MOE_FFN_UP_SHEXP_S));
+                }
+                _ => panic!("expected llama4 moe"),
+            }
+        }
+        {
+            let bytes = rewrite_tiny_llama_unit_scale(
+                tiny_qwen3next_gguf(),
+                "blk.0.ffn_up_shexp.scale",
+                Some(TINY_QWEN2MOE_FFN_UP_SHEXP_S),
+            )
+            .expect("qwen3next up_shexp_s bytes");
+            let ng = load_gguf(&bytes).expect("qwen3next up_shexp_s g");
+            let n0 = load_gguf(&tiny_qwen3next_gguf()).expect("qwen3next");
+            assert_ne!(
+                oracle_forward_seq(&ng, &tokens),
+                oracle_forward_seq(&n0, &tokens),
+                "qwen3next ffn_up_shexp.scale must change logits"
+            );
+            let nm = Llama::from_gguf(ng).expect("nm");
+            match &nm.layers[0].ffn {
+                LayerFfn::Qwen3Next(moe) => {
+                    assert_eq!(moe.up_shexp_s, Some(TINY_QWEN2MOE_FFN_UP_SHEXP_S));
+                }
+                _ => panic!("expected qwen3next ffn"),
+            }
+        }
+        let bad = {
+            let g0 = load_gguf_owned(tiny_qwen2moe_gguf()).expect("bad g0");
+            let kv: Vec<(String, Kv)> = g0.kv.iter().map(|(k, v)| (k.clone(), v.clone())).collect();
+            let mut tensors = Vec::new();
+            for t in g0.tensors() {
+                tensors.push(TensorWrite {
+                    name: t.name.to_string(),
+                    ty: t.ty,
+                    shape: t.shape.to_vec(),
+                    data: t.data.to_vec(),
+                });
+            }
+            let short = [2.0f32, 3.0];
+            tensors.push(tw(
+                "blk.0.ffn_up_shexp.scale",
+                GgmlType::F32,
+                vec![2],
+                pack_vec1d(GgmlType::F32, &short),
+            ));
+            write_gguf_with_kv(&kv, &tensors)
+        };
+        let err = match Llama::from_gguf(load_gguf(&bad).expect("bad load")) {
+            Ok(_) => panic!("expected ffn_up_shexp.scale shape"),
+            Err(e) => e.to_string(),
+        };
+        assert!(
+            err.contains("ffn_up_shexp.scale"),
+            "error should name tensor: {err}"
         );
     }
 
@@ -8113,6 +20753,348 @@ mod tests {
             qwen3moe_pref, llama4_pref,
             "qwen3moe must not copy Llama4 sigmoid / weight-before-FFN"
         );
+    }
+
+    #[test]
+    fn tiny_qwen3moe_trace_is_identity_and_feeds_expertvm() {
+        let bytes = tiny_qwen3moe_gguf();
+        let g = load_gguf(&bytes).expect("load");
+        let tok = Tokenizer::from_gguf(&g).expect("tok");
+        let model = Llama::from_gguf(g).expect("model");
+        let plain = greedy_generate(&model, &tok, "ab", 4).expect("plain");
+        let (traced, trace) =
+            greedy_generate_traced(&model, &tok, "ab", 4, None, 0).expect("traced");
+        assert_eq!(plain, traced, "tracing must not change greedy tokens");
+        assert!(!trace.events.is_empty(), "MoE layers must emit accesses");
+        let mut by_token: BTreeMap<u32, u64> = BTreeMap::new();
+        for e in &trace.events {
+            assert_eq!(e.layer, 0);
+            assert_eq!(e.experts.len(), TINY_QWEN3MOE_N_EXPERT_USED);
+            assert_eq!(e.weight_pt.len(), e.experts.len());
+            for w in &e.weight_pt {
+                assert!(*w <= 1000);
+            }
+            let p = e.prefix.expect("decode traces hash the token-id prefix");
+            match by_token.get(&e.token) {
+                None => {
+                    let _prev = by_token.insert(e.token, p);
+                }
+                Some(old) => assert_eq!(*old, p, "same token must share prefix hash"),
+            }
+        }
+        assert!(
+            by_token.len() >= 2,
+            "prefill + decode must emit more than one prefix hash"
+        );
+        let hashes: Vec<u64> = by_token.values().copied().collect();
+        assert_ne!(
+            hashes[0], hashes[1],
+            "a later token must change the prefix hash"
+        );
+        let mut store = expertvm::DirectStore::from_trace(&trace);
+        for k in trace.keys() {
+            let blob = expertvm::ExpertStore::acquire(&mut store, k).expect("blob");
+            assert_eq!(blob.gate, vec![1]);
+        }
+        assert_eq!(expertvm::ExpertStore::misses(&store), 0);
+        let table = expertvm::compare(&trace, 2, 8);
+        let oracle = table
+            .iter()
+            .find(|r| r.policy == expertvm::Policy::Oracle)
+            .expect("oracle");
+        let lru = table
+            .iter()
+            .find(|r| r.policy == expertvm::Policy::Lru)
+            .expect("lru");
+        assert!(oracle.hits >= lru.hits);
+    }
+
+    fn moe_cached_prefetches(bytes: Vec<u8>, tokens: &[u32]) -> u64 {
+        let g = load_gguf_owned(bytes).expect("owned");
+        let model = Llama::from_gguf(g).expect("m");
+        let catalog = model.expert_direct_store().expect("catalog");
+        let n = catalog.len().max(1);
+        let cached = expertvm::CachedStore::new(catalog, n).expect("cached");
+        let mut c = model
+            .new_cache(tokens.len().saturating_add(2))
+            .expect("cache");
+        c.attach_expert_store(LiveStore::Cached(cached));
+        let _l = model.prefill(&mut c, tokens).expect("prefill");
+        c.expert_store_metrics().expect("metrics").prefetches
+    }
+
+    #[test]
+    fn tiny_qwen3moe_2layer_oracle_store_trace_and_copy_forward() {
+        let bytes = tiny_qwen3moe_2layer_gguf();
+        let g = load_gguf(&bytes).expect("load 2layer");
+        assert_eq!(
+            g.kv("general.architecture"),
+            Some(&Kv::String("qwen3moe".into()))
+        );
+        assert_eq!(g.kv_u32("qwen3moe.block_count"), Some(2));
+        assert!(g.tensor("blk.1.ffn_gate_exps.weight").is_some());
+        assert!(g.tensor("blk.1.ffn_up_exps.weight").is_some());
+        assert!(g.tensor("blk.1.ffn_down_exps.weight").is_some());
+        assert!(g.tensor("blk.1.attn_q.weight").is_some());
+        load_fwd_match(&bytes, 3);
+        load_prefill_match(&bytes, &[1, 2, 3]);
+        let one = tiny_qwen3moe_gguf();
+        let g1 = load_gguf(&one).expect("1layer");
+        let m1 = Llama::from_gguf(g1).expect("m1");
+        let m2 = Llama::from_gguf(g.clone()).expect("m2");
+        let tokens = [1u32, 2, 3];
+        let l1 = {
+            let mut c = m1.new_cache(8).expect("c1");
+            m1.prefill(&mut c, &tokens).expect("p1")
+        };
+        let l2 = {
+            let mut c = m2.new_cache(8).expect("c2");
+            m2.prefill(&mut c, &tokens).expect("p2")
+        };
+        assert_ne!(
+            l1, l2,
+            "cloned layer 1 must still change logits vs the 1-layer tiny"
+        );
+        let catalog = m2.expert_direct_store().expect("catalog");
+        assert!(
+            catalog.keys().any(|k| k.layer == 1),
+            "ExpertStore catalog must include L+1 keys"
+        );
+        let blob = l2.clone();
+        let via_direct = store_prefill(&m2, LiveStore::Direct(catalog.clone()), &tokens);
+        assert_eq!(blob, via_direct, "2-layer DirectStore must match the blob");
+        let n = catalog.len().max(1);
+        let via_cached = store_prefill(
+            &m2,
+            LiveStore::Cached(expertvm::CachedStore::new(catalog, n).expect("cached")),
+            &tokens,
+        );
+        assert_eq!(blob, via_cached, "2-layer CachedStore must match the blob");
+        let n_gpu = m2.expert_direct_store().expect("c4").len().max(1);
+        let gpu = expertvm::SimulatedGpuStore::new(
+            m2.expert_direct_store().expect("c4"),
+            n_gpu,
+            expertvm::HardwareProfile::example_h100_sxm(),
+            4096,
+        )
+        .expect("gpu");
+        let via_gpu = store_prefill(&m2, LiveStore::simulated(gpu), &tokens);
+        assert_eq!(
+            blob, via_gpu,
+            "2-layer SimulatedGpuStore must match the blob"
+        );
+        let tok = Tokenizer::from_gguf(&g).expect("tok");
+        let (text, trace) = greedy_generate_traced(&m2, &tok, "ab", 4, None, 0).expect("traced");
+        assert!(!text.is_empty());
+        assert!(
+            trace.events.iter().any(|e| e.layer == 0),
+            "2-layer traces must include layer 0"
+        );
+        assert!(
+            trace.events.iter().any(|e| e.layer == 1),
+            "2-layer traces must include layer 1"
+        );
+        let p1 = moe_cached_prefetches(one, &tokens);
+        let p2 = moe_cached_prefetches(bytes, &tokens);
+        assert!(
+            p2 > p1,
+            "copy-forward L+1 must prefetch on 2-layer (1-layer skips unknown keys), 1={p1} 2={p2}"
+        );
+    }
+
+    #[test]
+    fn dense_llama_trace_is_empty() {
+        let bytes = tiny_llama_gguf();
+        let g = load_gguf(&bytes).expect("load");
+        let tok = Tokenizer::from_gguf(&g).expect("tok");
+        let model = Llama::from_gguf(g).expect("model");
+        let (text, trace) = greedy_generate_traced(&model, &tok, "ab", 2, None, 0).expect("traced");
+        assert!(!text.is_empty());
+        assert!(trace.events.is_empty());
+    }
+
+    fn store_prefill(model: &Llama, store: LiveStore, tokens: &[u32]) -> Vec<f32> {
+        let mut c = model.new_cache(8).expect("cache");
+        c.attach_expert_store(store);
+        model.prefill(&mut c, tokens).expect("store prefill")
+    }
+
+    #[test]
+    fn tiny_qwen3moe_expert_store_logits_match_blob() {
+        let bytes = tiny_qwen3moe_gguf();
+        let g = load_gguf(&bytes).expect("load");
+        let model = Llama::from_gguf(g).expect("model");
+        let tokens = [3u32];
+        let blob = {
+            let mut c = model.new_cache(8).expect("c");
+            model.prefill(&mut c, &tokens).expect("blob")
+        };
+        let direct = model.expert_direct_store().expect("catalog");
+        assert!(!direct.is_empty());
+        let via_direct = store_prefill(&model, LiveStore::Direct(direct.clone()), &tokens);
+        assert_eq!(
+            blob, via_direct,
+            "DirectStore GEMV must match the blob path"
+        );
+        let n = model.expert_direct_store().expect("catalog2").len().max(1);
+        let cached = expertvm::CachedStore::new(model.expert_direct_store().expect("c3"), n)
+            .expect("cached");
+        let via_cached = store_prefill(&model, LiveStore::Cached(cached), &tokens);
+        assert_eq!(
+            blob, via_cached,
+            "CachedStore copies must match DirectStore"
+        );
+        let gpu = expertvm::SimulatedGpuStore::new(
+            model.expert_direct_store().expect("c4"),
+            n,
+            expertvm::HardwareProfile::example_h100_sxm(),
+            4096,
+        )
+        .expect("gpu");
+        let mut c = model.new_cache(8).expect("cg");
+        c.attach_expert_store(LiveStore::simulated(gpu));
+        let via_gpu = model.prefill(&mut c, &tokens).expect("gpu prefill");
+        assert_eq!(blob, via_gpu, "SimulatedGpuStore CPU copies must match");
+        let gpu_um = expertvm::SimulatedGpuStore::with_managed(
+            model.expert_direct_store().expect("c5"),
+            n,
+            expertvm::HardwareProfile::example_h100_sxm(),
+            4096,
+        )
+        .expect("gpu um");
+        let mut c_um = model.new_cache(8).expect("cgum");
+        c_um.attach_expert_store(LiveStore::simulated(gpu_um));
+        let via_um = model.prefill(&mut c_um, &tokens).expect("gpu um prefill");
+        assert_eq!(
+            blob, via_um,
+            "managed SimulatedGpuStore CPU copies must match"
+        );
+        let via_mapped = store_prefill(
+            &model,
+            LiveStore::simulated(
+                expertvm::SimulatedGpuStore::with_mapped(
+                    model.expert_direct_store().expect("cmap"),
+                    n,
+                    expertvm::HardwareProfile::example_h100_sxm(),
+                    4096,
+                )
+                .expect("gpu mapped"),
+            ),
+            &tokens,
+        );
+        assert_eq!(
+            blob, via_mapped,
+            "mapped SimulatedGpuStore CPU copies must match"
+        );
+        let via_vmm = store_prefill(
+            &model,
+            LiveStore::simulated(
+                expertvm::SimulatedGpuStore::with_vmm(
+                    model.expert_direct_store().expect("cvmm"),
+                    n,
+                    expertvm::HardwareProfile::example_h100_sxm(),
+                    4096,
+                )
+                .expect("gpu vmm"),
+            ),
+            &tokens,
+        );
+        assert_eq!(blob, via_vmm, "VMM SimulatedGpuStore CPU copies must match");
+        let tier = expertvm::TieredStore::memory(model.expert_direct_store().expect("t"), n)
+            .expect("tier");
+        let via_tier = store_prefill(&model, LiveStore::tiered(tier), &tokens);
+        assert_eq!(blob, via_tier, "TieredStore copies must match DirectStore");
+        let one = expertvm::CachedStore::new(model.expert_direct_store().expect("c1"), 1)
+            .expect("one slot");
+        let via_one = store_prefill(&model, LiveStore::Cached(one), &tokens);
+        assert_eq!(
+            blob, via_one,
+            "slots=1 sequential lease/release must still match the blob"
+        );
+        let mut store = c.take_expert_store().expect("store");
+        let score = store.score().expect("score");
+        assert!(score.is_some());
+        assert!(c.expert_store_metrics().is_none());
+    }
+
+    #[test]
+    fn tiny_llama_moe_direct_store_is_identity() {
+        let bytes = tiny_llama_moe_gguf();
+        let g = load_gguf(&bytes).expect("load");
+        let model = Llama::from_gguf(g).expect("model");
+        let tokens = [3u32];
+        let blob = {
+            let mut c = model.new_cache(8).expect("c");
+            model.prefill(&mut c, &tokens).expect("blob")
+        };
+        let via = store_prefill(
+            &model,
+            LiveStore::Direct(model.expert_direct_store().expect("d")),
+            &tokens,
+        );
+        assert_eq!(blob, via);
+    }
+
+    #[test]
+    fn tiny_qwen2moe_direct_store_is_identity() {
+        let bytes = tiny_qwen2moe_gguf();
+        let g = load_gguf(&bytes).expect("load");
+        let model = Llama::from_gguf(g).expect("model");
+        let tokens = [3u32];
+        let blob = {
+            let mut c = model.new_cache(8).expect("c");
+            model.prefill(&mut c, &tokens).expect("blob")
+        };
+        let via = store_prefill(
+            &model,
+            LiveStore::Direct(model.expert_direct_store().expect("d")),
+            &tokens,
+        );
+        assert_eq!(blob, via);
+    }
+
+    #[test]
+    fn tiny_llama4_direct_store_is_identity() {
+        let bytes = tiny_llama4_gguf();
+        let g = load_gguf(&bytes).expect("load");
+        let model = Llama::from_gguf(g).expect("model");
+        let tokens = [3u32];
+        let blob = {
+            let mut c = model.new_cache(8).expect("c");
+            model.prefill(&mut c, &tokens).expect("blob")
+        };
+        let via = store_prefill(
+            &model,
+            LiveStore::Direct(model.expert_direct_store().expect("d")),
+            &tokens,
+        );
+        assert_eq!(blob, via);
+    }
+
+    #[test]
+    fn tiny_qwen3next_direct_store_is_identity() {
+        let bytes = tiny_qwen3next_gguf();
+        let g = load_gguf(&bytes).expect("load");
+        let model = Llama::from_gguf(g).expect("model");
+        let tokens = [3u32];
+        let blob = {
+            let mut c = model.new_cache(8).expect("c");
+            model.prefill(&mut c, &tokens).expect("blob")
+        };
+        let via = store_prefill(
+            &model,
+            LiveStore::Direct(model.expert_direct_store().expect("d")),
+            &tokens,
+        );
+        assert_eq!(blob, via);
+    }
+
+    #[test]
+    fn dense_llama_expert_store_is_empty_catalog() {
+        let bytes = tiny_llama_gguf();
+        let g = load_gguf(&bytes).expect("load");
+        let model = Llama::from_gguf(g).expect("model");
+        assert!(model.expert_direct_store().expect("d").is_empty());
     }
 
     #[test]
@@ -8605,6 +21587,273 @@ mod tests {
     }
 
     #[test]
+    fn tiny_phi2_load_gemv_gemm_embed_and_greedy() {
+        let bytes = tiny_phi2_gguf();
+        let g = load_gguf(&bytes).expect("load phi2");
+        assert_eq!(
+            g.kv("general.architecture"),
+            Some(&Kv::String("phi2".into()))
+        );
+        assert_eq!(g.kv_u32("phi2.block_count"), Some(1));
+        assert_eq!(g.kv_u32("phi2.embedding_length"), Some(256));
+        assert_eq!(g.kv_u32("phi2.feed_forward_length"), Some(1024));
+        assert_eq!(g.kv_u32("phi2.attention.head_count"), Some(4));
+        assert_eq!(g.kv_u32("phi2.attention.head_count_kv"), Some(4));
+        assert_eq!(g.kv_u32("phi2.rope.dimension_count"), Some(32));
+        assert_eq!(
+            g.kv_f32("phi2.attention.layer_norm_epsilon"),
+            Some(1.0 / 100_000.0)
+        );
+        assert!(g.kv_f32("phi2.attention.layer_norm_rms_epsilon").is_none());
+        assert!(g.kv_u32("llama.block_count").is_none());
+        assert!(g.kv_u32("phi3.block_count").is_none());
+        assert!(g.kv_u32("qwen35.block_count").is_none());
+        assert!(g.kv_u32("qwen3vlmoe.block_count").is_none());
+        assert!(g.kv_u32("mixtral.block_count").is_none());
+        assert!(g.tensor("blk.0.attn_norm.bias").is_some());
+        assert!(g.tensor("output_norm.bias").is_some());
+        assert!(g.tensor("output.bias").is_some());
+        assert!(g.tensor("blk.0.attn_output.bias").is_some());
+        assert!(g.tensor("blk.0.ffn_up.bias").is_some());
+        assert!(g.tensor("blk.0.ffn_down.bias").is_some());
+        assert!(g.tensor("blk.0.ffn_gate.weight").is_none());
+        assert!(g.tensor("blk.0.ffn_norm.weight").is_none());
+        assert!(g.tensor("blk.0.attn_q_norm.weight").is_none());
+        assert!(g.tensor("blk.0.post_attention_norm.weight").is_none());
+        assert_eq!(g.kv_bool("tokenizer.ggml.add_bos_token"), Some(false));
+        let model = Llama::from_gguf(g.clone()).expect("model");
+        let x = pat_f32(TINY_N_EMBD, 21);
+        let got_gemv = model.gemv_output(&x).expect("gemv");
+        let exp_gemv = oracle_gemv(g.tensor("output.weight").unwrap(), &x);
+        assert_logits_match(&got_gemv, &exp_gemv);
+        let mut x2 = pat_f32(TINY_N_EMBD, 22);
+        x2.extend(pat_f32(TINY_N_EMBD, 23));
+        let got_gemm = model.gemm_output(2, &x2).expect("gemm");
+        let exp_gemm = {
+            let mut y = oracle_gemv(g.tensor("output.weight").unwrap(), &x2[..TINY_N_EMBD]);
+            y.extend(oracle_gemv(
+                g.tensor("output.weight").unwrap(),
+                &x2[TINY_N_EMBD..],
+            ));
+            y
+        };
+        assert_logits_match(&got_gemm, &exp_gemm);
+        let emb = model.embed_token(3).expect("embed");
+        let exp_emb = oracle_embed(g.tensor("token_embd.weight").unwrap(), 3);
+        assert_logits_match(&emb, &exp_emb);
+        load_fwd_match(&bytes, 3);
+        load_prefill_match(&bytes, &[1, 2, 3]);
+        let tok = Tokenizer::from_gguf(&g).expect("tok");
+        assert!(!tok.add_bos);
+        let out = greedy_generate(&model, &tok, "ab", 2).expect("gen");
+        let out2 = greedy_generate(&model, &tok, "ab", 2).expect("gen2");
+        assert_eq!(out, out2);
+        assert!(!out.is_empty());
+        let tokens = [1u32, 2, 3];
+        let llama_pref = {
+            let l = load_gguf(&tiny_llama_gguf()).expect("llama");
+            let m = Llama::from_gguf(l).expect("ml");
+            let mut c = m.new_cache(8).expect("cl");
+            m.prefill(&mut c, &tokens).expect("llama pref")
+        };
+        let phi3_pref = {
+            let p = load_gguf(&tiny_phi3_gguf()).expect("phi3");
+            let m = Llama::from_gguf(p).expect("mp");
+            let mut c = m.new_cache(8).expect("cp");
+            m.prefill(&mut c, &tokens).expect("phi3 pref")
+        };
+        let gemma_pref = {
+            let ge = load_gguf(&tiny_gemma_gguf()).expect("gemma");
+            let m = Llama::from_gguf(ge).expect("mg");
+            let mut c = m.new_cache(8).expect("cg");
+            m.prefill(&mut c, &tokens).expect("gemma pref")
+        };
+        let mut qc = model.new_cache(8).expect("qc");
+        let phi2_pref = model.prefill(&mut qc, &tokens).expect("phi2 pref");
+        assert_ne!(
+            phi2_pref, llama_pref,
+            "phi2 LayerNorm/GELU-seq/NEOX must change logits vs llama"
+        );
+        assert_ne!(
+            phi2_pref, phi3_pref,
+            "phi2 must not copy phi3 (RMSNorm + SwiGLU)"
+        );
+        assert_ne!(
+            phi2_pref, gemma_pref,
+            "phi2 must not copy gemma (embed-scale + GeGLU)"
+        );
+    }
+
+    #[test]
+    fn phi2_missing_layer_norm_epsilon_names_key() {
+        let bytes = write_gguf_with_kv(
+            &[
+                ("general.alignment".into(), Kv::U32(32)),
+                ("general.architecture".into(), Kv::String("phi2".into())),
+                ("phi2.block_count".into(), Kv::U32(1)),
+                ("phi2.embedding_length".into(), Kv::U32(256)),
+                ("phi2.feed_forward_length".into(), Kv::U32(1024)),
+                ("phi2.attention.head_count".into(), Kv::U32(4)),
+                ("phi2.attention.head_count_kv".into(), Kv::U32(4)),
+                ("phi2.rope.freq_base".into(), Kv::F32(10_000.0)),
+            ],
+            &[],
+        );
+        let g = load_gguf(&bytes).expect("load");
+        let err = match Llama::from_gguf(g) {
+            Ok(_) => panic!("expected missing layer_norm_epsilon"),
+            Err(e) => e.to_string(),
+        };
+        assert!(
+            err.contains("phi2.attention.layer_norm_epsilon"),
+            "error should name kv key: {err}"
+        );
+    }
+
+    #[test]
+    fn tiny_bloom_load_gemv_gemm_embed_and_greedy() {
+        let bytes = tiny_bloom_gguf();
+        let g = load_gguf(&bytes).expect("load bloom");
+        assert_eq!(
+            g.kv("general.architecture"),
+            Some(&Kv::String("bloom".into()))
+        );
+        assert_eq!(g.kv_u32("bloom.block_count"), Some(1));
+        assert_eq!(g.kv_u32("bloom.embedding_length"), Some(256));
+        assert_eq!(g.kv_u32("bloom.feed_forward_length"), Some(1024));
+        assert_eq!(g.kv_u32("bloom.attention.head_count"), Some(4));
+        assert_eq!(g.kv_u32("bloom.attention.head_count_kv"), Some(4));
+        assert_eq!(g.kv_u32("bloom.context_length"), Some(256));
+        assert_eq!(
+            g.kv_f32("bloom.attention.layer_norm_epsilon"),
+            Some(1.0 / 100_000.0)
+        );
+        assert!(g.kv_f32("bloom.attention.layer_norm_rms_epsilon").is_none());
+        assert!(g.kv_u32("bloom.rope.dimension_count").is_none());
+        assert!(g.kv_f32("bloom.rope.freq_base").is_none());
+        assert!(g.kv_u32("llama.block_count").is_none());
+        assert!(g.kv_u32("phi2.block_count").is_none());
+        assert!(g.kv_u32("phi3.block_count").is_none());
+        assert!(g.kv_u32("qwen3vlmoe.block_count").is_none());
+        assert!(g.kv_u32("mixtral.block_count").is_none());
+        assert!(g.tensor("token_embd_norm.weight").is_some());
+        assert!(g.tensor("token_embd_norm.bias").is_some());
+        assert!(g.tensor("blk.0.attn_norm.bias").is_some());
+        assert!(g.tensor("output_norm.bias").is_some());
+        assert!(g.tensor("output.bias").is_none());
+        assert!(g.tensor("blk.0.attn_qkv.weight").is_some());
+        assert!(g.tensor("blk.0.attn_qkv.bias").is_some());
+        assert!(g.tensor("blk.0.attn_q.weight").is_none());
+        assert!(g.tensor("blk.0.attn_k.weight").is_none());
+        assert!(g.tensor("blk.0.attn_v.weight").is_none());
+        assert!(g.tensor("blk.0.attn_output.bias").is_some());
+        assert!(g.tensor("blk.0.ffn_norm.weight").is_some());
+        assert!(g.tensor("blk.0.ffn_norm.bias").is_some());
+        assert!(g.tensor("blk.0.ffn_up.bias").is_some());
+        assert!(g.tensor("blk.0.ffn_down.bias").is_some());
+        assert!(g.tensor("blk.0.ffn_gate.weight").is_none());
+        assert!(g.tensor("blk.0.attn_q_norm.weight").is_none());
+        assert!(g.tensor("blk.0.post_attention_norm.weight").is_none());
+        assert_eq!(g.kv_bool("tokenizer.ggml.add_bos_token"), Some(false));
+        let model = Llama::from_gguf(g.clone()).expect("model");
+        let x = pat_f32(TINY_N_EMBD, 21);
+        let got_gemv = model.gemv_output(&x).expect("gemv");
+        let exp_gemv = oracle_gemv(g.tensor("output.weight").unwrap(), &x);
+        assert_logits_match(&got_gemv, &exp_gemv);
+        let mut x2 = pat_f32(TINY_N_EMBD, 22);
+        x2.extend(pat_f32(TINY_N_EMBD, 23));
+        let got_gemm = model.gemm_output(2, &x2).expect("gemm");
+        let exp_gemm = {
+            let mut y = oracle_gemv(g.tensor("output.weight").unwrap(), &x2[..TINY_N_EMBD]);
+            y.extend(oracle_gemv(
+                g.tensor("output.weight").unwrap(),
+                &x2[TINY_N_EMBD..],
+            ));
+            y
+        };
+        assert_logits_match(&got_gemm, &exp_gemm);
+        let emb = model.embed_token(3).expect("embed");
+        let exp_emb = oracle_embed(g.tensor("token_embd.weight").unwrap(), 3);
+        assert_logits_match(&emb, &exp_emb);
+        load_fwd_match(&bytes, 3);
+        load_prefill_match(&bytes, &[1, 2, 3]);
+        let tok = Tokenizer::from_gguf(&g).expect("tok");
+        assert!(!tok.add_bos);
+        let out = greedy_generate(&model, &tok, "ab", 2).expect("gen");
+        let out2 = greedy_generate(&model, &tok, "ab", 2).expect("gen2");
+        assert_eq!(out, out2);
+        assert!(!out.is_empty());
+        let tokens = [1u32, 2, 3];
+        let llama_pref = {
+            let l = load_gguf(&tiny_llama_gguf()).expect("llama");
+            let m = Llama::from_gguf(l).expect("ml");
+            let mut c = m.new_cache(8).expect("cl");
+            m.prefill(&mut c, &tokens).expect("llama pref")
+        };
+        let phi2_pref = {
+            let p = load_gguf(&tiny_phi2_gguf()).expect("phi2");
+            let m = Llama::from_gguf(p).expect("mp2");
+            let mut c = m.new_cache(8).expect("cp2");
+            m.prefill(&mut c, &tokens).expect("phi2 pref")
+        };
+        let phi3_pref = {
+            let p = load_gguf(&tiny_phi3_gguf()).expect("phi3");
+            let m = Llama::from_gguf(p).expect("mp");
+            let mut c = m.new_cache(8).expect("cp");
+            m.prefill(&mut c, &tokens).expect("phi3 pref")
+        };
+        let gemma_pref = {
+            let ge = load_gguf(&tiny_gemma_gguf()).expect("gemma");
+            let m = Llama::from_gguf(ge).expect("mg");
+            let mut c = m.new_cache(8).expect("cg");
+            m.prefill(&mut c, &tokens).expect("gemma pref")
+        };
+        let mut qc = model.new_cache(8).expect("qc");
+        let bloom_pref = model.prefill(&mut qc, &tokens).expect("bloom pref");
+        assert_ne!(
+            bloom_pref, llama_pref,
+            "bloom ALiBi/tok_norm/GELU-seq must change logits vs llama"
+        );
+        assert_ne!(
+            bloom_pref, phi2_pref,
+            "bloom must not copy phi2 (parallel residual + RoPE)"
+        );
+        assert_ne!(
+            bloom_pref, phi3_pref,
+            "bloom must not copy phi3 (RMSNorm + SwiGLU)"
+        );
+        assert_ne!(
+            bloom_pref, gemma_pref,
+            "bloom must not copy gemma (embed-scale + GeGLU)"
+        );
+    }
+
+    #[test]
+    fn bloom_missing_layer_norm_epsilon_names_key() {
+        let bytes = write_gguf_with_kv(
+            &[
+                ("general.alignment".into(), Kv::U32(32)),
+                ("general.architecture".into(), Kv::String("bloom".into())),
+                ("bloom.block_count".into(), Kv::U32(1)),
+                ("bloom.embedding_length".into(), Kv::U32(256)),
+                ("bloom.feed_forward_length".into(), Kv::U32(1024)),
+                ("bloom.attention.head_count".into(), Kv::U32(4)),
+                ("bloom.attention.head_count_kv".into(), Kv::U32(4)),
+            ],
+            &[],
+        );
+        let g = load_gguf(&bytes).expect("load");
+        let err = match Llama::from_gguf(g) {
+            Ok(_) => panic!("expected missing layer_norm_epsilon"),
+            Err(e) => e.to_string(),
+        };
+        assert!(
+            err.contains("bloom.attention.layer_norm_epsilon"),
+            "error should name kv key: {err}"
+        );
+    }
+
+    #[test]
     fn qwen35_missing_ssm_names_key() {
         let bytes = write_gguf_with_kv(
             &[
@@ -8938,23 +22187,461 @@ mod tests {
     }
 
     #[test]
-    fn gemma2_architecture_error_names_arch() {
+    fn gemma4_missing_layer_norm_rms_epsilon_names_key() {
         let bytes = write_gguf_with_kv(
             &[
                 ("general.alignment".into(), Kv::U32(32)),
-                ("general.architecture".into(), Kv::String("gemma2".into())),
+                ("general.architecture".into(), Kv::String("gemma4".into())),
+                ("gemma4.block_count".into(), Kv::U32(1)),
+                ("gemma4.embedding_length".into(), Kv::U32(256)),
+                ("gemma4.attention.head_count".into(), Kv::U32(4)),
+                ("gemma4.attention.head_count_kv".into(), Kv::U32(2)),
             ],
             &[],
         );
         let g = load_gguf(&bytes).expect("load");
         let err = match Llama::from_gguf(g) {
-            Ok(_) => panic!("expected unknown arch"),
+            Ok(_) => panic!("expected missing layer_norm_rms_epsilon"),
             Err(e) => e.to_string(),
         };
-        assert!(err.contains("gemma2"), "error should name arch: {err}");
         assert!(
-            err.contains("unknown architecture"),
-            "error should name unknown architecture: {err}"
+            err.contains("gemma4.attention.layer_norm_rms_epsilon"),
+            "error should name kv key: {err}"
+        );
+    }
+
+    #[test]
+    fn gemma4_missing_sliding_window_pattern_names_key() {
+        let bytes = write_gguf_with_kv(
+            &[
+                ("general.alignment".into(), Kv::U32(32)),
+                ("general.architecture".into(), Kv::String("gemma4".into())),
+                ("gemma4.block_count".into(), Kv::U32(1)),
+                ("gemma4.embedding_length".into(), Kv::U32(256)),
+                ("gemma4.attention.head_count".into(), Kv::U32(4)),
+                ("gemma4.attention.head_count_kv".into(), Kv::U32(2)),
+                (
+                    "gemma4.attention.layer_norm_rms_epsilon".into(),
+                    Kv::F32(1.0 / 100_000.0),
+                ),
+                ("gemma4.attention.sliding_window".into(), Kv::U32(2)),
+            ],
+            &[],
+        );
+        let g = load_gguf(&bytes).expect("load");
+        let err = match Llama::from_gguf(g) {
+            Ok(_) => panic!("expected missing sliding_window_pattern"),
+            Err(e) => e.to_string(),
+        };
+        assert!(
+            err.contains("gemma4.attention.sliding_window_pattern"),
+            "error should name kv key: {err}"
+        );
+    }
+
+    #[test]
+    fn gemma4_ple_without_token_embd_names_tensor() {
+        let n_embd = TINY_N_EMBD;
+        let ones = vec![1.0f32; n_embd];
+        let bytes = write_gguf_with_kv(
+            &[
+                ("general.alignment".into(), Kv::U32(32)),
+                ("general.architecture".into(), Kv::String("gemma4".into())),
+                ("gemma4.block_count".into(), Kv::U32(1)),
+                ("gemma4.embedding_length".into(), Kv::U32(256)),
+                ("gemma4.attention.head_count".into(), Kv::U32(4)),
+                ("gemma4.attention.head_count_kv".into(), Kv::U32(2)),
+                (
+                    "gemma4.attention.layer_norm_rms_epsilon".into(),
+                    Kv::F32(1.0 / 100_000.0),
+                ),
+                ("gemma4.attention.sliding_window".into(), Kv::U32(2)),
+                (
+                    "gemma4.attention.sliding_window_pattern".into(),
+                    Kv::Array {
+                        elem: GGUF_TYPE_BOOL,
+                        items: vec![Kv::Bool(true)],
+                    },
+                ),
+                (
+                    "gemma4.embedding_length_per_layer_input".into(),
+                    Kv::U32(32),
+                ),
+                ("gemma4.attention.key_length_swa".into(), Kv::U32(64)),
+                ("gemma4.attention.value_length_swa".into(), Kv::U32(64)),
+            ],
+            &[
+                tw(
+                    "token_embd.weight",
+                    GgmlType::F32,
+                    vec![n_embd, TINY_N_VOCAB],
+                    pack_mat(GgmlType::F32, n_embd, TINY_N_VOCAB, 1),
+                ),
+                tw(
+                    "output_norm.weight",
+                    GgmlType::F32,
+                    vec![n_embd],
+                    pack_vec1d(GgmlType::F32, &ones),
+                ),
+            ],
+        );
+        let g = load_gguf(&bytes).expect("load");
+        let err = match Llama::from_gguf(g) {
+            Ok(_) => panic!("expected missing per_layer_token_embd"),
+            Err(e) => e.to_string(),
+        };
+        assert!(
+            err.contains("per_layer_token_embd"),
+            "error should name tensor: {err}"
+        );
+    }
+
+    #[test]
+    fn gemma4_shared_kv_too_small_is_refused() {
+        let bytes = write_gguf_with_kv(
+            &[
+                ("general.alignment".into(), Kv::U32(32)),
+                ("general.architecture".into(), Kv::String("gemma4".into())),
+                ("gemma4.block_count".into(), Kv::U32(1)),
+                ("gemma4.embedding_length".into(), Kv::U32(256)),
+                ("gemma4.attention.head_count".into(), Kv::U32(4)),
+                ("gemma4.attention.head_count_kv".into(), Kv::U32(2)),
+                (
+                    "gemma4.attention.layer_norm_rms_epsilon".into(),
+                    Kv::F32(1.0 / 100_000.0),
+                ),
+                ("gemma4.attention.sliding_window".into(), Kv::U32(2)),
+                (
+                    "gemma4.attention.sliding_window_pattern".into(),
+                    Kv::Array {
+                        elem: GGUF_TYPE_BOOL,
+                        items: vec![Kv::Bool(true)],
+                    },
+                ),
+                ("gemma4.embedding_length_per_layer_input".into(), Kv::U32(0)),
+                ("gemma4.attention.shared_kv_layers".into(), Kv::U32(1)),
+                ("gemma4.attention.key_length_swa".into(), Kv::U32(64)),
+                ("gemma4.attention.value_length_swa".into(), Kv::U32(64)),
+            ],
+            &[],
+        );
+        let g = load_gguf(&bytes).expect("load");
+        let err = match Llama::from_gguf(g) {
+            Ok(_) => panic!("expected shared KV refuse"),
+            Err(e) => e.to_string(),
+        };
+        assert!(
+            err.contains("gemma4.attention.shared_kv_layers"),
+            "error should name kv key: {err}"
+        );
+    }
+
+    #[test]
+    fn gemma4_mixed_swa_head_dim_is_refused() {
+        let bytes = write_gguf_with_kv(
+            &[
+                ("general.alignment".into(), Kv::U32(32)),
+                ("general.architecture".into(), Kv::String("gemma4".into())),
+                ("gemma4.block_count".into(), Kv::U32(1)),
+                ("gemma4.embedding_length".into(), Kv::U32(256)),
+                ("gemma4.attention.head_count".into(), Kv::U32(4)),
+                ("gemma4.attention.head_count_kv".into(), Kv::U32(2)),
+                (
+                    "gemma4.attention.layer_norm_rms_epsilon".into(),
+                    Kv::F32(1.0 / 100_000.0),
+                ),
+                ("gemma4.attention.sliding_window".into(), Kv::U32(2)),
+                (
+                    "gemma4.attention.sliding_window_pattern".into(),
+                    Kv::Array {
+                        elem: GGUF_TYPE_BOOL,
+                        items: vec![Kv::Bool(true)],
+                    },
+                ),
+                ("gemma4.embedding_length_per_layer_input".into(), Kv::U32(0)),
+                ("gemma4.attention.key_length_swa".into(), Kv::U32(32)),
+                ("gemma4.attention.value_length_swa".into(), Kv::U32(64)),
+            ],
+            &[],
+        );
+        let g = load_gguf(&bytes).expect("load");
+        let err = match Llama::from_gguf(g) {
+            Ok(_) => panic!("expected mixed SWA head dim refuse"),
+            Err(e) => e.to_string(),
+        };
+        assert!(
+            err.contains("gemma4.attention.key_length_swa"),
+            "error should name kv key: {err}"
+        );
+    }
+
+    #[test]
+    fn gemma4_missing_sliding_window_names_key() {
+        let bytes = write_gguf_with_kv(
+            &[
+                ("general.alignment".into(), Kv::U32(32)),
+                ("general.architecture".into(), Kv::String("gemma4".into())),
+                ("gemma4.block_count".into(), Kv::U32(1)),
+                ("gemma4.embedding_length".into(), Kv::U32(256)),
+                ("gemma4.attention.head_count".into(), Kv::U32(4)),
+                ("gemma4.attention.head_count_kv".into(), Kv::U32(2)),
+                (
+                    "gemma4.attention.layer_norm_rms_epsilon".into(),
+                    Kv::F32(1.0 / 100_000.0),
+                ),
+            ],
+            &[],
+        );
+        let g = load_gguf(&bytes).expect("load");
+        let err = match Llama::from_gguf(g) {
+            Ok(_) => panic!("expected missing sliding_window"),
+            Err(e) => e.to_string(),
+        };
+        assert!(
+            err.contains("gemma4.attention.sliding_window"),
+            "error should name kv key: {err}"
+        );
+    }
+
+    #[test]
+    fn gemma4_missing_key_length_swa_names_key() {
+        let bytes = write_gguf_with_kv(
+            &[
+                ("general.alignment".into(), Kv::U32(32)),
+                ("general.architecture".into(), Kv::String("gemma4".into())),
+                ("gemma4.block_count".into(), Kv::U32(1)),
+                ("gemma4.embedding_length".into(), Kv::U32(256)),
+                ("gemma4.attention.head_count".into(), Kv::U32(4)),
+                ("gemma4.attention.head_count_kv".into(), Kv::U32(2)),
+                (
+                    "gemma4.attention.layer_norm_rms_epsilon".into(),
+                    Kv::F32(1.0 / 100_000.0),
+                ),
+                ("gemma4.attention.sliding_window".into(), Kv::U32(2)),
+                (
+                    "gemma4.attention.sliding_window_pattern".into(),
+                    Kv::Array {
+                        elem: GGUF_TYPE_BOOL,
+                        items: vec![Kv::Bool(true)],
+                    },
+                ),
+                ("gemma4.embedding_length_per_layer_input".into(), Kv::U32(0)),
+            ],
+            &[],
+        );
+        let g = load_gguf(&bytes).expect("load");
+        let err = match Llama::from_gguf(g) {
+            Ok(_) => panic!("expected missing key_length_swa"),
+            Err(e) => e.to_string(),
+        };
+        assert!(
+            err.contains("gemma4.attention.key_length_swa"),
+            "error should name kv key: {err}"
+        );
+    }
+
+    #[test]
+    fn gemma4_moe_without_expert_count_names_key() {
+        let n_embd = TINY_N_EMBD;
+        let ones = vec![1.0f32; n_embd];
+        let bytes = write_gguf_with_kv(
+            &[
+                ("general.alignment".into(), Kv::U32(32)),
+                ("general.architecture".into(), Kv::String("gemma4".into())),
+                ("gemma4.block_count".into(), Kv::U32(1)),
+                ("gemma4.embedding_length".into(), Kv::U32(256)),
+                ("gemma4.attention.head_count".into(), Kv::U32(4)),
+                ("gemma4.attention.head_count_kv".into(), Kv::U32(2)),
+                (
+                    "gemma4.attention.layer_norm_rms_epsilon".into(),
+                    Kv::F32(1.0 / 100_000.0),
+                ),
+                ("gemma4.attention.sliding_window".into(), Kv::U32(2)),
+                (
+                    "gemma4.attention.sliding_window_pattern".into(),
+                    Kv::Array {
+                        elem: GGUF_TYPE_BOOL,
+                        items: vec![Kv::Bool(true)],
+                    },
+                ),
+                ("gemma4.embedding_length_per_layer_input".into(), Kv::U32(0)),
+                ("gemma4.attention.key_length_swa".into(), Kv::U32(64)),
+                ("gemma4.attention.value_length_swa".into(), Kv::U32(64)),
+            ],
+            &[
+                tw(
+                    "token_embd.weight",
+                    GgmlType::F32,
+                    vec![n_embd, TINY_N_VOCAB],
+                    pack_mat(GgmlType::F32, n_embd, TINY_N_VOCAB, 1),
+                ),
+                tw(
+                    "output_norm.weight",
+                    GgmlType::F32,
+                    vec![n_embd],
+                    pack_vec1d(GgmlType::F32, &ones),
+                ),
+                tw(
+                    "blk.0.ffn_gate_inp.weight",
+                    GgmlType::F32,
+                    vec![n_embd, 1],
+                    pack_mat(GgmlType::F32, n_embd, 1, 7),
+                ),
+            ],
+        );
+        let g = load_gguf(&bytes).expect("load");
+        let err = match Llama::from_gguf(g) {
+            Ok(_) => panic!("expected missing expert_count"),
+            Err(e) => e.to_string(),
+        };
+        assert!(
+            err.contains("gemma4.expert_count"),
+            "error should name kv key: {err}"
+        );
+    }
+
+    #[test]
+    fn gemma4_fused_gate_up_without_layer_still_fails_load() {
+        let n_embd = TINY_N_EMBD;
+        let ones = vec![1.0f32; n_embd];
+        let bytes = write_gguf_with_kv(
+            &[
+                ("general.alignment".into(), Kv::U32(32)),
+                ("general.architecture".into(), Kv::String("gemma4".into())),
+                ("gemma4.block_count".into(), Kv::U32(1)),
+                ("gemma4.embedding_length".into(), Kv::U32(256)),
+                ("gemma4.feed_forward_length".into(), Kv::U32(256)),
+                ("gemma4.attention.head_count".into(), Kv::U32(4)),
+                ("gemma4.attention.head_count_kv".into(), Kv::U32(2)),
+                (
+                    "gemma4.attention.layer_norm_rms_epsilon".into(),
+                    Kv::F32(1.0 / 100_000.0),
+                ),
+                ("gemma4.attention.sliding_window".into(), Kv::U32(2)),
+                (
+                    "gemma4.attention.sliding_window_pattern".into(),
+                    Kv::Array {
+                        elem: GGUF_TYPE_BOOL,
+                        items: vec![Kv::Bool(true)],
+                    },
+                ),
+                ("gemma4.embedding_length_per_layer_input".into(), Kv::U32(0)),
+                ("gemma4.attention.key_length_swa".into(), Kv::U32(64)),
+                ("gemma4.attention.value_length_swa".into(), Kv::U32(64)),
+                ("gemma4.expert_count".into(), Kv::U32(4)),
+                ("gemma4.expert_used_count".into(), Kv::U32(2)),
+            ],
+            &[
+                tw(
+                    "token_embd.weight",
+                    GgmlType::F32,
+                    vec![n_embd, TINY_N_VOCAB],
+                    pack_mat(GgmlType::F32, n_embd, TINY_N_VOCAB, 1),
+                ),
+                tw(
+                    "output_norm.weight",
+                    GgmlType::F32,
+                    vec![n_embd],
+                    pack_vec1d(GgmlType::F32, &ones),
+                ),
+                tw(
+                    "blk.0.ffn_gate_inp.weight",
+                    GgmlType::F32,
+                    vec![n_embd, 4],
+                    pack_mat(GgmlType::F32, n_embd, 4, 7),
+                ),
+                tw(
+                    "blk.0.ffn_gate_up_exps.weight",
+                    GgmlType::F32,
+                    vec![n_embd, 512, 4],
+                    pack_mat_exps(GgmlType::F32, n_embd, 512, 4, 8),
+                ),
+            ],
+        );
+        let g = load_gguf(&bytes).expect("load");
+        let err = match Llama::from_gguf(g) {
+            Ok(_) => panic!("expected missing layer tensors"),
+            Err(e) => e.to_string(),
+        };
+        assert!(
+            err.contains("blk.0.ffn_gate.weight"),
+            "incomplete fused GGUF must still name the missing shared MLP: {err}"
+        );
+    }
+
+    #[test]
+    fn gemma2_missing_attn_logit_softcapping_names_key() {
+        let bytes = write_gguf_with_kv(
+            &[
+                ("general.alignment".into(), Kv::U32(32)),
+                ("general.architecture".into(), Kv::String("gemma2".into())),
+                ("gemma2.block_count".into(), Kv::U32(1)),
+                ("gemma2.embedding_length".into(), Kv::U32(256)),
+                ("gemma2.attention.head_count".into(), Kv::U32(4)),
+                ("gemma2.attention.head_count_kv".into(), Kv::U32(2)),
+                (
+                    "gemma2.attention.layer_norm_rms_epsilon".into(),
+                    Kv::F32(1.0 / 100_000.0),
+                ),
+            ],
+            &[],
+        );
+        let g = load_gguf(&bytes).expect("load");
+        let err = match Llama::from_gguf(g) {
+            Ok(_) => panic!("expected missing attn_logit_softcapping"),
+            Err(e) => e.to_string(),
+        };
+        assert!(
+            err.contains("gemma2.attn_logit_softcapping"),
+            "error should name kv key: {err}"
+        );
+    }
+
+    #[test]
+    fn gemma3_missing_layer_norm_rms_epsilon_names_key() {
+        let bytes = write_gguf_with_kv(
+            &[
+                ("general.alignment".into(), Kv::U32(32)),
+                ("general.architecture".into(), Kv::String("gemma3".into())),
+                ("gemma3.block_count".into(), Kv::U32(1)),
+                ("gemma3.embedding_length".into(), Kv::U32(256)),
+                ("gemma3.attention.head_count".into(), Kv::U32(4)),
+                ("gemma3.attention.head_count_kv".into(), Kv::U32(2)),
+            ],
+            &[],
+        );
+        let g = load_gguf(&bytes).expect("load");
+        let err = match Llama::from_gguf(g) {
+            Ok(_) => panic!("expected missing layer_norm_rms_epsilon"),
+            Err(e) => e.to_string(),
+        };
+        assert!(
+            err.contains("gemma3.attention.layer_norm_rms_epsilon"),
+            "error should name kv key: {err}"
+        );
+    }
+
+    #[test]
+    fn gemma3n_missing_layer_norm_rms_epsilon_names_key() {
+        let bytes = write_gguf_with_kv(
+            &[
+                ("general.alignment".into(), Kv::U32(32)),
+                ("general.architecture".into(), Kv::String("gemma3n".into())),
+                ("gemma3n.block_count".into(), Kv::U32(1)),
+                ("gemma3n.embedding_length".into(), Kv::U32(256)),
+                ("gemma3n.attention.head_count".into(), Kv::U32(4)),
+                ("gemma3n.attention.head_count_kv".into(), Kv::U32(2)),
+            ],
+            &[],
+        );
+        let g = load_gguf(&bytes).expect("load");
+        let err = match Llama::from_gguf(g) {
+            Ok(_) => panic!("expected missing layer_norm_rms_epsilon"),
+            Err(e) => e.to_string(),
+        };
+        assert!(
+            err.contains("gemma3n.attention.layer_norm_rms_epsilon"),
+            "error should name kv key: {err}"
         );
     }
 
@@ -9108,6 +22795,9 @@ mod tests {
                 qkv_bias: false,
                 add_bos_token: None,
                 llama_moe: false,
+                gemma4_moe: false,
+                gemma4_ple: false,
+                gemma4_fused: false,
             }),
             &[tw(
                 "token_embd.weight",
@@ -9166,5 +22856,615 @@ mod tests {
             err.contains("llama.block_count"),
             "error should name kv key: {err}"
         );
+    }
+}
+
+/// Self-contained timing harness. Every test here is `#[ignore]`d so the normal
+/// suite stays fast; run it with
+/// `cargo test --release --lib bench_ -- --ignored --nocapture`.
+///
+/// The tiny oracle fixtures are far too small to time (256-wide, 1 layer,
+/// 6-token vocab), so this module writes a larger synthetic Llama-shaped GGUF
+/// with the Q4_K/Q6_K mix a real `*-Q4_K_M.gguf` uses.
+#[cfg(test)]
+mod bench {
+    use super::*;
+    use crate::load_gguf_owned;
+    use std::hint::black_box;
+    use std::time::{Duration, Instant};
+
+    /// Dimensions of the synthetic benchmark model.
+    struct BenchSpec {
+        n_embd: usize,
+        n_head: usize,
+        n_head_kv: usize,
+        n_ff: usize,
+        n_layer: usize,
+        n_vocab: usize,
+    }
+
+    impl BenchSpec {
+        /// ~40 MiB of weights: wide enough that GEMV work dominates per-row
+        /// bookkeeping, small enough to build and run inside a test.
+        fn default() -> Self {
+            Self {
+                n_embd: 1024,
+                n_head: 16,
+                n_head_kv: 4,
+                n_ff: 2816,
+                n_layer: 4,
+                n_vocab: 4096,
+            }
+        }
+
+        fn head_dim(&self) -> usize {
+            self.n_embd / self.n_head
+        }
+
+        fn n_kv(&self) -> usize {
+            self.n_head_kv * self.head_dim()
+        }
+    }
+
+    /// `pack_mat` emits exactly one block per row (the tiny fixtures are all
+    /// `n_cols == QK_K`). The benchmark needs wide rows, so pack
+    /// `n_cols / QK_K` blocks per row here.
+    fn bench_pack_mat(ty: GgmlType, n_cols: usize, n_rows: usize, seed: u32) -> Vec<u8> {
+        assert!(n_cols.is_multiple_of(QK_K));
+        let mut out = Vec::new();
+        let mut s = seed;
+        let mut next = move || {
+            s = s.wrapping_mul(1_664_525).wrapping_add(1);
+            s
+        };
+        for _ in 0..n_rows.saturating_mul(n_cols / QK_K) {
+            match ty {
+                GgmlType::Q4_K => {
+                    // `y = d*sc*q - dmin*m`. Pick `q` in 0..=8 and `m = 4*sc`
+                    // so rows are zero-mean; all-positive weights saturate a
+                    // 4-layer stack and every logit comes out equal.
+                    let mut qs = [0u8; QK_K];
+                    for q in &mut qs {
+                        *q = u8::try_from(next() % 9).unwrap();
+                    }
+                    let mut sc = [1u8; 8];
+                    let mut mins = [0u8; 8];
+                    for (c, m) in sc.iter_mut().zip(mins.iter_mut()) {
+                        *c = u8::try_from(1 + next() % 4).unwrap();
+                        *m = c.saturating_mul(4);
+                    }
+                    out.extend_from_slice(&pack_q4_k_block(
+                        25.0 / 100.0,
+                        25.0 / 100.0,
+                        &sc,
+                        &mins,
+                        &qs,
+                    ));
+                }
+                GgmlType::Q6_K => {
+                    let mut qs = [0i8; QK_K];
+                    for q in &mut qs {
+                        *q = i8::try_from(i32::try_from(next() % 5).unwrap() - 2).unwrap();
+                    }
+                    let mut sc = [1i8; 16];
+                    for c in &mut sc {
+                        *c = i8::try_from(1 + next() % 3).unwrap();
+                    }
+                    out.extend_from_slice(&pack_q6_k_block(25.0 / 100.0, &sc, &qs));
+                }
+                other => panic!("bench_pack_mat: unhandled type {other:?}"),
+            }
+        }
+        out
+    }
+
+    fn bench_gguf(s: &BenchSpec) -> Vec<u8> {
+        let arch = "llama";
+        let u32v = |v: usize| Kv::U32(u32::try_from(v).unwrap());
+        let kv = vec![
+            ("general.alignment".into(), u32v(GGUF_DEFAULT_ALIGNMENT)),
+            ("general.architecture".into(), Kv::String(arch.into())),
+            (arch_key(arch, "block_count"), u32v(s.n_layer)),
+            (arch_key(arch, "embedding_length"), u32v(s.n_embd)),
+            (arch_key(arch, "feed_forward_length"), u32v(s.n_ff)),
+            (arch_key(arch, "attention.head_count"), u32v(s.n_head)),
+            (arch_key(arch, "attention.head_count_kv"), u32v(s.n_head_kv)),
+            (arch_key(arch, "rope.dimension_count"), u32v(s.head_dim())),
+            (arch_key(arch, "rope.freq_base"), Kv::F32(10_000.0)),
+            (
+                arch_key(arch, "attention.layer_norm_rms_epsilon"),
+                Kv::F32(1.0 / 100_000.0),
+            ),
+        ];
+        let ones = vec![1.0f32; s.n_embd];
+        let mut tensors = vec![
+            tw(
+                "token_embd.weight",
+                GgmlType::Q4_K,
+                vec![s.n_embd, s.n_vocab],
+                bench_pack_mat(GgmlType::Q4_K, s.n_embd, s.n_vocab, 1),
+            ),
+            tw(
+                "output.weight",
+                GgmlType::Q6_K,
+                vec![s.n_embd, s.n_vocab],
+                bench_pack_mat(GgmlType::Q6_K, s.n_embd, s.n_vocab, 2),
+            ),
+            tw(
+                "output_norm.weight",
+                GgmlType::F32,
+                vec![s.n_embd],
+                pack_f32(&ones),
+            ),
+        ];
+        for li in 0..s.n_layer {
+            let seed = u32::try_from(li).unwrap() * 16 + 3;
+            let mat = |name: &str, ty: GgmlType, n_cols: usize, n_rows: usize, bump: u32| {
+                tw(
+                    &format!("blk.{li}.{name}.weight"),
+                    ty,
+                    vec![n_cols, n_rows],
+                    bench_pack_mat(ty, n_cols, n_rows, seed + bump),
+                )
+            };
+            tensors.push(tw(
+                &format!("blk.{li}.attn_norm.weight"),
+                GgmlType::F32,
+                vec![s.n_embd],
+                pack_f32(&ones),
+            ));
+            tensors.push(tw(
+                &format!("blk.{li}.ffn_norm.weight"),
+                GgmlType::F32,
+                vec![s.n_embd],
+                pack_f32(&ones),
+            ));
+            tensors.push(mat("attn_q", GgmlType::Q4_K, s.n_embd, s.n_embd, 0));
+            tensors.push(mat("attn_k", GgmlType::Q4_K, s.n_embd, s.n_kv(), 1));
+            tensors.push(mat("attn_v", GgmlType::Q4_K, s.n_embd, s.n_kv(), 2));
+            tensors.push(mat("attn_output", GgmlType::Q4_K, s.n_embd, s.n_embd, 3));
+            tensors.push(mat("ffn_gate", GgmlType::Q4_K, s.n_embd, s.n_ff, 4));
+            tensors.push(mat("ffn_up", GgmlType::Q4_K, s.n_embd, s.n_ff, 5));
+            tensors.push(mat("ffn_down", GgmlType::Q6_K, s.n_ff, s.n_embd, 6));
+        }
+        write_gguf_with_kv(&kv, &tensors)
+    }
+
+    fn bench_model(s: &BenchSpec) -> Llama {
+        let g = load_gguf_owned(bench_gguf(s)).expect("load bench gguf");
+        Llama::from_gguf(g).expect("bench model")
+    }
+
+    fn median(samples: &mut [Duration]) -> Duration {
+        samples.sort_unstable();
+        samples[samples.len() / 2]
+    }
+
+    fn report(label: &str, mut samples: Vec<Duration>) {
+        let best = *samples.iter().min().unwrap();
+        let med = median(&mut samples);
+        println!(
+            "{label:<44} min {:>10.3} ms   median {:>10.3} ms   n={}",
+            best.as_secs_f64() * 1e3,
+            med.as_secs_f64() * 1e3,
+            samples.len()
+        );
+    }
+
+    /// FNV-1a over the raw bit patterns of a logits vector.
+    fn fingerprint(logits: &[f32]) -> u64 {
+        let mut h = 0xcbf2_9ce4_8422_2325u64;
+        for v in logits {
+            for b in v.to_bits().to_le_bytes() {
+                h ^= u64::from(b);
+                h = h.wrapping_mul(0x100_0000_01b3);
+            }
+        }
+        h
+    }
+
+    /// Prints bit-exact fingerprints of production logits for every arch and a
+    /// spread of dtypes. Not an assertion: it is the tool for checking that a
+    /// refactor is bit-identical, by diffing this output across two checkouts.
+    /// The oracle tests only bound the relative error at 1e-3.
+    #[test]
+    #[ignore = "diagnostic: diff across checkouts"]
+    fn bench_logits_fingerprint() {
+        // Every zero-argument fixture in the suite, so that each architecture
+        // walk and each dtype kernel the decode path can reach is pinned.
+        let cases: [(&str, Vec<u8>); 78] = [
+            ("llama", tiny_llama_gguf()),
+            ("tied", tiny_tied_gguf()),
+            ("tied_copy", tiny_tied_copy_gguf()),
+            ("mistral", tiny_mistral_gguf()),
+            ("mha", tiny_mha_gguf()),
+            ("mqa", tiny_mqa_gguf()),
+            ("llama_moe", tiny_llama_moe_gguf()),
+            ("llama4", tiny_llama4_gguf()),
+            ("qwen2", tiny_qwen2_gguf()),
+            ("qwen2moe", tiny_qwen2moe_gguf()),
+            ("qwen2vl", tiny_qwen2vl_gguf()),
+            ("qwen3", tiny_qwen3_gguf()),
+            ("qwen3moe", tiny_qwen3moe_gguf()),
+            ("qwen3next", tiny_qwen3next_gguf()),
+            ("qwen3vl", tiny_qwen3vl_gguf()),
+            ("qwen35", tiny_qwen35_gguf()),
+            ("phi2", tiny_phi2_gguf()),
+            ("bloom", tiny_bloom_gguf()),
+            ("phi3", tiny_phi3_gguf()),
+            ("gemma", tiny_gemma_gguf()),
+            ("gemma2", tiny_gemma2_gguf()),
+            ("gemma3", tiny_gemma3_gguf()),
+            ("gemma3n", tiny_gemma3n_gguf()),
+            ("gemma4", tiny_gemma4_gguf()),
+            ("gemma4_moe", tiny_gemma4_moe_gguf()),
+            ("gemma4_ple", tiny_gemma4_ple_gguf()),
+            ("gemma4_moe_ple", tiny_gemma4_moe_ple_gguf()),
+            ("gemma4_moe_fused", tiny_gemma4_moe_fused_gguf()),
+            ("gemma4_moe_fused_ple", tiny_gemma4_moe_fused_ple_gguf()),
+            ("gemma4_shared_kv", tiny_gemma4_shared_kv_gguf()),
+            ("gemma4_mixed_hd", tiny_gemma4_mixed_hd_gguf()),
+            ("gemma4_swa_base", tiny_gemma4_swa_base_gguf()),
+            ("gemma4_no_wv", tiny_gemma4_no_wv_gguf()),
+            ("gemma4_out_scale", tiny_gemma4_out_scale_gguf()),
+            ("gemma4_rope_freqs", tiny_gemma4_rope_freqs_gguf()),
+            ("gemma4_moe_down_s", tiny_gemma4_moe_down_s_gguf()),
+            ("gemma4_moe_gate_up_s", tiny_gemma4_moe_gate_up_s_gguf()),
+            ("llama_ffn_down_s", tiny_llama_ffn_down_s_gguf()),
+            ("llama_attn_q_s", tiny_llama_attn_q_s_gguf()),
+            ("llama_attn_out_s", tiny_llama_attn_out_s_gguf()),
+            ("llama_attn_k_s", tiny_llama_attn_k_s_gguf()),
+            ("llama_attn_v_s", tiny_llama_attn_v_s_gguf()),
+            ("llama_ffn_gate_s", tiny_llama_ffn_gate_s_gguf()),
+            ("llama_ffn_up_s", tiny_llama_ffn_up_s_gguf()),
+            ("f16", tiny_f16_gguf()),
+            ("f16_1d", tiny_f16_1d_gguf()),
+            ("f16_1d_bias", tiny_f16_1d_bias_gguf()),
+            ("bf16", tiny_bf16_gguf()),
+            ("q10", tiny_q10_gguf()),
+            ("q20", tiny_q20_gguf()),
+            ("q41", tiny_q41_gguf()),
+            ("q50", tiny_q50_gguf()),
+            ("q51", tiny_q51_gguf()),
+            ("q80", tiny_q80_gguf()),
+            ("q81", tiny_q81_gguf()),
+            ("q2k", tiny_q2k_gguf()),
+            ("q3k", tiny_q3k_gguf()),
+            ("q5k", tiny_q5k_gguf()),
+            ("q4k_embd", tiny_q4k_embd_gguf()),
+            ("q6k_embd", tiny_q6k_embd_gguf()),
+            ("tq10", tiny_tq10_gguf()),
+            ("tq20", tiny_tq20_gguf()),
+            ("mxfp4", tiny_mxfp4_gguf()),
+            ("nvfp4", tiny_nvfp4_gguf()),
+            ("nvfp4_output_s", tiny_nvfp4_output_s_gguf()),
+            ("bloom_attn_qkv_s", tiny_bloom_attn_qkv_s_gguf()),
+            (
+                "qwen2moe_ffn_down_shexp_s",
+                tiny_qwen2moe_ffn_down_shexp_s_gguf(),
+            ),
+            (
+                "qwen2moe_ffn_gate_shexp_s",
+                tiny_qwen2moe_ffn_gate_shexp_s_gguf(),
+            ),
+            (
+                "qwen2moe_ffn_up_shexp_s",
+                tiny_qwen2moe_ffn_up_shexp_s_gguf(),
+            ),
+            ("iq1s", tiny_iq1s_gguf()),
+            ("iq1m", tiny_iq1m_gguf()),
+            ("iq2xxs", tiny_iq2xxs_gguf()),
+            ("iq2xs", tiny_iq2xs_gguf()),
+            ("iq2s", tiny_iq2s_gguf()),
+            ("iq3xxs", tiny_iq3xxs_gguf()),
+            ("iq3s", tiny_iq3s_gguf()),
+            ("iq4nl", tiny_iq4nl_gguf()),
+            ("iq4xs", tiny_iq4xs_gguf()),
+        ];
+        for (name, bytes) in cases {
+            let model = Llama::from_gguf(load_gguf_owned(bytes).expect("load")).expect("model");
+            let mut cache = model.new_cache(8).expect("cache");
+            let one = model.prefill(&mut cache, &[1]).expect("prefill 1");
+            let two = model.forward(&mut cache, 3).expect("forward");
+            let mut cache = model.new_cache(8).expect("cache");
+            let seq = model.prefill(&mut cache, &[1, 3, 2]).expect("prefill 3");
+            println!(
+                "{name:<12} fwd1 {:016x} fwd2 {:016x} pre3 {:016x}",
+                fingerprint(&one),
+                fingerprint(&two),
+                fingerprint(&seq)
+            );
+        }
+        let spec = BenchSpec::default();
+        let model = bench_model(&spec);
+        let mut cache = model.new_cache(16).expect("cache");
+        let one = model.prefill(&mut cache, &[1]).expect("prefill 1");
+        let two = model.forward(&mut cache, 7).expect("forward");
+        let mut cache = model.new_cache(16).expect("cache");
+        let seq = model.prefill(&mut cache, &[1, 7, 2, 9]).expect("prefill 4");
+        println!(
+            "{:<12} fwd1 {:016x} fwd2 {:016x} pre4 {:016x}",
+            "bench1024",
+            fingerprint(&one),
+            fingerprint(&two),
+            fingerprint(&seq)
+        );
+        // A degenerate synthetic model would make every fingerprint match for
+        // uninteresting reasons, so check the logits actually vary and are finite.
+        for l in [&one, &two, &seq] {
+            let lo = l.iter().copied().fold(f32::INFINITY, f32::min);
+            let hi = l.iter().copied().fold(f32::NEG_INFINITY, f32::max);
+            assert!(lo.is_finite() && hi.is_finite() && hi > lo, "{lo} {hi}");
+        }
+        assert_ne!(fingerprint(&one), fingerprint(&two));
+    }
+
+    /// `steps` timed decode steps from one cache, after `warmup` untimed ones.
+    ///
+    /// The warmup matters more than it looks. The weights are 32 MiB and this
+    /// class of host has hundreds of MiB of L3, so the first timed loop in a
+    /// process streams the blob from RAM while every later loop finds it in
+    /// cache. At four warmup steps that alone was worth ~70%, i.e. more than
+    /// anything measured here, and it landed entirely on whichever variant ran
+    /// first.
+    ///
+    /// The cache is sized so no run has to rebuild it mid-loop. `n_past` climbs
+    /// as the loop goes, but attention over the past is under 1% of a step at
+    /// these dimensions, so the samples stay comparable.
+    fn decode_samples(model: &Llama, vocab: u32, warmup: usize, steps: usize) -> Vec<Duration> {
+        let total = warmup.saturating_add(steps);
+        let mut cache = model.new_cache(total.saturating_add(2)).expect("cache");
+        let mut last = model.prefill(&mut cache, &[1]).expect("prefill");
+        let mut samples = Vec::new();
+        for i in 0..total {
+            let tok = argmax(&last) % vocab;
+            let t0 = Instant::now();
+            last = model.forward(&mut cache, tok).expect("forward");
+            let dt = t0.elapsed();
+            if i >= warmup {
+                samples.push(dt);
+            }
+            assert!(!black_box(&last).is_empty());
+        }
+        samples
+    }
+
+    /// [`decode_samples`] through the borrowed-logits entry point.
+    fn decode_borrowed_samples(
+        model: &Llama,
+        vocab: u32,
+        warmup: usize,
+        steps: usize,
+    ) -> Vec<Duration> {
+        let total = warmup.saturating_add(steps);
+        let mut cache = model.new_cache(total.saturating_add(2)).expect("cache");
+        let mut tok = argmax(&model.prefill(&mut cache, &[1]).expect("prefill")) % vocab;
+        let mut samples = Vec::new();
+        for i in 0..total {
+            let t0 = Instant::now();
+            let logits = model.forward_logits(&mut cache, tok).expect("forward");
+            let dt = t0.elapsed();
+            if i >= warmup {
+                samples.push(dt);
+            }
+            tok = argmax(logits) % vocab;
+            assert!(!black_box(logits).is_empty());
+        }
+        samples
+    }
+
+    /// Single-token decode latency.
+    ///
+    /// `forward` is the entry point the pre-refactor checkout has too, so it is
+    /// the number to compare across checkouts. `no pool` runs the same step
+    /// with every GEMV back on `thread::scope`, which isolates the pool inside
+    /// one process and is the only pool comparison not exposed to the ~25%
+    /// run-to-run spread a shared host shows across two binaries.
+    /// `forward_logits` drops the vocab-sized copy. The 1-thread run is immune
+    /// to thread scheduling noise, so it is the honest view of what buffer
+    /// reuse alone bought.
+    #[test]
+    #[ignore = "timing harness"]
+    fn bench_decode_step() {
+        let spec = BenchSpec::default();
+        let model = bench_model(&spec);
+        println!("blob {} MiB", model.blob_len() / (1024 * 1024));
+        let vocab = u32::try_from(spec.n_vocab).unwrap();
+        let (mut par, mut nopool) = (Vec::new(), Vec::new());
+        let (mut borrowed, mut seq) = (Vec::new(), Vec::new());
+        // Interleaved, so clock drift or a noisy neighbour hits every variant
+        // instead of only the one that ran first.
+        for _ in 0..3 {
+            par.extend(decode_samples(&model, vocab, 8, 16));
+            nopool.extend(without_pool(|| decode_samples(&model, vocab, 8, 16)));
+            borrowed.extend(decode_borrowed_samples(&model, vocab, 8, 16));
+            seq.extend(crate::pool::with_sequential(|| {
+                decode_samples(&model, vocab, 4, 8)
+            }));
+        }
+        report("decode 1 token (forward)", par);
+        report("decode 1 token (forward, no pool)", nopool);
+        report("decode 1 token (forward_logits)", borrowed);
+        report("decode 1 token (forward, 1 thread)", seq);
+    }
+
+    /// `reps` timed prefills of `tokens`, after `warmup` untimed ones. Each rep
+    /// gets a fresh cache, so this is the cost a real prompt pays.
+    fn prefill_samples(model: &Llama, tokens: &[u32], warmup: usize, reps: usize) -> Vec<Duration> {
+        let mut samples = Vec::new();
+        for i in 0..warmup.saturating_add(reps) {
+            let mut cache = model
+                .new_cache(tokens.len().saturating_add(1))
+                .expect("cache");
+            let t0 = Instant::now();
+            let out = model.prefill(&mut cache, tokens).expect("prefill");
+            let dt = t0.elapsed();
+            if i >= warmup {
+                samples.push(dt);
+            }
+            assert!(!black_box(&out).is_empty());
+        }
+        samples
+    }
+
+    /// Multi-token prefill (`prefill`, GEMM path).
+    #[test]
+    #[ignore = "timing harness"]
+    fn bench_prefill() {
+        let spec = BenchSpec::default();
+        let model = bench_model(&spec);
+        let sizes = [8usize, 32, 64];
+        let mut all: Vec<Vec<Duration>> = sizes.iter().map(|_| Vec::new()).collect();
+        for _ in 0..3 {
+            for (n, samples) in sizes.iter().zip(all.iter_mut()) {
+                let tokens: Vec<u32> = (0..*n)
+                    .map(|i| u32::try_from(i % spec.n_vocab).unwrap())
+                    .collect();
+                samples.extend(prefill_samples(&model, &tokens, 1, 3));
+            }
+        }
+        for (n, samples) in sizes.iter().zip(all) {
+            report(&format!("prefill {n} tokens"), samples);
+        }
+    }
+
+    /// What is left to win, and where. Times one decode step's worth of GEMV
+    /// against the whole step, both single-threaded, plus the two per-token
+    /// non-matmul loops that looked worth suspecting.
+    ///
+    /// This is the measurement that says when to stop: if the GEMV kernels are
+    /// the step, then no amount of work in `decode.rs` moves the number and the
+    /// next win has to come from the kernels or from more cores.
+    #[test]
+    #[ignore = "timing harness"]
+    fn bench_step_breakdown() {
+        let spec = BenchSpec::default();
+        let model = bench_model(&spec);
+        let vocab = u32::try_from(spec.n_vocab).unwrap();
+        let x = vec![0.01f32; spec.n_embd];
+        let xff = vec![0.01f32; spec.n_ff];
+
+        // Every GEMV a decode step performs, in the order the step does them.
+        let mut mats: Vec<(&QuantMat, &[f32])> = Vec::new();
+        for layer in &model.layers {
+            mats.push((&layer.wq, &x));
+            if let Some(wk) = layer.wk.as_ref() {
+                mats.push((wk, &x));
+            }
+            if let Some(wv) = layer.wv.as_ref() {
+                mats.push((wv, &x));
+            }
+            mats.push((&layer.wo, &x));
+            if let LayerFfn::Dense(dense) = &layer.ffn {
+                mats.push((&dense.gate, &x));
+                mats.push((&dense.up, &x));
+                mats.push((&dense.down, &xff));
+            }
+        }
+        mats.push((&model.output, &x));
+        let n_gemv = mats.len();
+
+        let mut y = Vec::new();
+        let mut samples = Vec::new();
+        for _ in 0..9 {
+            let t0 = Instant::now();
+            crate::pool::with_sequential(|| {
+                for (m, xv) in &mats {
+                    model.gemv_into(m, xv, &mut y, &mut None).expect("gemv");
+                }
+            });
+            samples.push(t0.elapsed());
+            assert!(!black_box(&y).is_empty());
+        }
+        report(&format!("{n_gemv} GEMV only, 1 thread"), samples);
+
+        let rope_calls = spec
+            .n_layer
+            .saturating_mul(spec.n_head.saturating_add(spec.n_head_kv));
+        let mut v = vec![0.5f32; spec.head_dim()];
+        let mut samples = Vec::new();
+        for _ in 0..9 {
+            let t0 = Instant::now();
+            for i in 0..rope_calls {
+                rope(&mut v, 17 + (i & 7), spec.head_dim(), 10_000.0).expect("rope");
+            }
+            samples.push(t0.elapsed());
+        }
+        assert!(black_box(v.iter().sum::<f32>()).is_finite());
+        report(&format!("rope x{rope_calls}, 1 thread"), samples);
+
+        let seq = crate::pool::with_sequential(|| decode_samples(&model, vocab, 4, 8));
+        report("whole step, 1 thread", seq);
+    }
+
+    /// Writes `y[i] = first + i` and nothing else, so a [`Pool::run`] sample is
+    /// all dispatch and no arithmetic — the same shape as the empty-body
+    /// closure the `thread::scope` measurement uses.
+    struct NoopRows;
+
+    impl RowKernel for NoopRows {
+        type Job = ();
+
+        fn rows(&self, _job: (), first: usize, _x: &[f32], y: &mut [f32]) -> bool {
+            for (i, out) in y.iter_mut().enumerate() {
+                *out = black_box(first.saturating_add(i) as f32);
+            }
+            true
+        }
+    }
+
+    /// Row-dispatch cost in isolation: the row body does nothing but a store,
+    /// so the whole sample is fork/join (or hand-off, or loop) overhead.
+    ///
+    /// This is the per-matmul dispatch cost that a decode step pays 7+ times
+    /// per layer. `x` is 1024 floats, the width the benchmark model projects
+    /// from, so the pool's input staging copy is counted at its real size.
+    #[test]
+    #[ignore = "timing harness"]
+    fn bench_dispatch_overhead() {
+        let x = vec![1.0f32; 1024];
+        for n_rows in [64usize, 1024, 4096] {
+            let mut y = vec![0.0f32; n_rows];
+            let reps = 200usize;
+            let per_rep = u32::try_from(reps).unwrap();
+            let mut samples = Vec::new();
+            for _ in 0..9 {
+                let t0 = Instant::now();
+                for _ in 0..reps {
+                    crate::pool::for_each_row(&mut y, |i, out| {
+                        *out = black_box(i as f32);
+                    });
+                }
+                samples.push(t0.elapsed() / per_rep);
+            }
+            report(&format!("dispatch {n_rows} rows, thread::scope"), samples);
+
+            if let Some(mut pool) = Pool::new(Arc::new(NoopRows), n_rows) {
+                let mut samples = Vec::new();
+                for _ in 0..9 {
+                    let t0 = Instant::now();
+                    for _ in 0..reps {
+                        assert!(pool.run((), &x, &mut y));
+                    }
+                    samples.push(t0.elapsed() / per_rep);
+                }
+                report(&format!("dispatch {n_rows} rows, persistent pool"), samples);
+            }
+
+            let mut samples = Vec::new();
+            for _ in 0..9 {
+                let t0 = Instant::now();
+                for _ in 0..reps {
+                    crate::pool::with_sequential(|| {
+                        crate::pool::for_each_row(&mut y, |i, out| {
+                            *out = black_box(i as f32);
+                        });
+                    });
+                }
+                samples.push(t0.elapsed() / per_rep);
+            }
+            report(&format!("dispatch {n_rows} rows, sequential"), samples);
+            assert!(black_box(y.iter().sum::<f32>()) >= 0.0);
+        }
     }
 }

@@ -1,0 +1,95 @@
+{
+  "model": {
+    "hf_repo": "bartowski/Llama-3.2-1B-Instruct-GGUF",
+    "file": "Llama-3.2-1B-Instruct-Q4_K_M.gguf",
+    "sha256": "6f85a640a97cf2bf5b8e764087b1e83da0fdb51d7c9fab7d0fece9385611df83",
+    "architecture": "llama",
+    "rope_type": "NORM",
+    "tensor_dtypes": {
+      "F32": 34,
+      "Q4_K": 96,
+      "Q6_K": 17
+    }
+  },
+  "captured_with": {
+    "source": "llama.cpp libllama via tests/reference/ref.cpp",
+    "llama_cpp_build": "bebc935",
+    "host": "4-core Intel Xeon, linux x86_64",
+    "threads": 4
+  },
+  "prompt": "The capital of France is",
+  "add_bos_token": true,
+  "n_vocab": 128256,
+  "tokens": [
+    128000,
+    791,
+    6864,
+    315,
+    9822,
+    374
+  ],
+  "token_pieces": [
+    "<|begin_of_text|>",
+    "The",
+    " capital",
+    " of",
+    " France",
+    " is"
+  ],
+  "logit_stats": {
+    "min": -7.749692,
+    "max": 18.816570,
+    "mean": 0.554911,
+    "rms": 2.502188
+  },
+  "top20": [
+    [12366, 18.816570],
+    [264, 16.492456],
+    [539, 16.005638],
+    [1131, 15.806182],
+    [3604, 15.015209],
+    [1101, 14.976302],
+    [1148, 14.931988],
+    [25, 14.884554],
+    [7559, 14.848234],
+    [279, 14.756395],
+    [20437, 14.581367],
+    [902, 14.528767],
+    [311, 14.527218],
+    [512, 14.306954],
+    [9522, 13.703090],
+    [38269, 13.590859],
+    [3146, 13.571633],
+    [198, 13.506064],
+    [2204, 13.433515],
+    [3967, 13.328037]
+  ],
+  "greedy_ids": [
+    12366,
+    13,
+    578,
+    469,
+    3168,
+    301,
+    22703,
+    374,
+    264,
+    11495,
+    38350,
+    304,
+    12366,
+    13,
+    578,
+    469,
+    3168,
+    301,
+    22703,
+    374,
+    264,
+    7891,
+    315,
+    9822
+  ],
+  "greedy_text": " Paris. The Eiffel Tower is a famous landmark in Paris. The Eiffel Tower is a symbol of France",
+  "notes": "Greedy continuation and argmax must match exactly. Logits differ because llama.cpp quantizes activations to Q8_K for K-quant dot products while this crate uses f32 activations; see README.md. llama.cpp tokenize(add_special=true) prepends BOS 128000; llama-rust prompt_ids does the same when tokenizer.ggml.add_bos_token is absent (default true). Window is 24 tokens: step 32 drifted by one id from K-quant noise, not a RoPE pairing miss."
+}

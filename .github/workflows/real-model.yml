@@ -1,12 +1,12 @@
 name: real-model
 
-# Differential check against llama.cpp on a real quantized checkpoint.
+# Differential check against llama.cpp on real quantized checkpoints.
 #
-# Not on every push: it downloads ~470 MB of weights. The in-tree oracle cannot
-# replace this, because every per-dtype oracle calls `crate::fp16::f16_to_f32`,
-# so a bug in that primitive is invisible to the whole suite. That is how a
-# subnormal binary16 bug which halved real Q4_K / Q6_K weights survived 221
-# passing tests.
+# Not on every push: it downloads ~1.2 GB of weights (NEOX Qwen + NORM Llama).
+# The in-tree oracle cannot replace this, because every per-dtype oracle
+# calls `crate::fp16::f16_to_f32`, so a bug in that primitive is invisible
+# to the whole suite. That is how a subnormal binary16 bug which halved real
+# Q4_K / Q6_K weights survived 221 passing tests.
 on:
   workflow_dispatch:
   schedule:
@@ -21,32 +21,46 @@ jobs:
 
       - uses: dtolnay/rust-toolchain@stable
 
-      - name: Cache model
+      - name: Cache models
         id: cache-model
         uses: actions/cache@v4
         with:
           path: models
-          key: qwen2.5-0.5b-instruct-q4_k_m
+          key: qwen2.5-0.5b-instruct-q4_k_m-llama-3.2-1b-instruct-q4_k_m
 
-      - name: Download model
+      - name: Download models
         if: steps.cache-model.outputs.cache-hit != 'true'
         run: |
           mkdir -p models
           curl -fL --retry 3 -o models/qwen2.5-0.5b-instruct-q4_k_m.gguf \
             "https://huggingface.co/Qwen/Qwen2.5-0.5B-Instruct-GGUF/resolve/main/qwen2.5-0.5b-instruct-q4_k_m.gguf?download=true"
+          curl -fL --retry 3 -o models/Llama-3.2-1B-Instruct-Q4_K_M.gguf \
+            "https://huggingface.co/bartowski/Llama-3.2-1B-Instruct-GGUF/resolve/main/Llama-3.2-1B-Instruct-Q4_K_M.gguf?download=true"
 
       - name: Verify model identity
         run: |
-          expected=$(python3 -c "import json;print(json.load(open('tests/reference/qwen2.5-0.5b-instruct-q4_k_m.json'))['model']['sha256'])")
-          actual=$(sha256sum models/qwen2.5-0.5b-instruct-q4_k_m.gguf | cut -d' ' -f1)
-          echo "expected $expected"
-          echo "actual   $actual"
-          if [ "$expected" != "$actual" ]; then
-            echo "::error::model SHA256 differs from the committed reference; regenerate tests/reference/ before trusting a pass or failure"
-            exit 1
-          fi
+          check() {
+            json="$1"
+            gguf="$2"
+            expected=$(python3 -c "import json;print(json.load(open('$json'))['model']['sha256'])")
+            actual=$(sha256sum "$gguf" | cut -d' ' -f1)
+            echo "$gguf expected $expected"
+            echo "$gguf actual   $actual"
+            if [ "$expected" != "$actual" ]; then
+              echo "::error::$gguf SHA256 differs from the committed reference; regenerate tests/reference/ before trusting a pass or failure"
+              exit 1
+            fi
+          }
+          check tests/reference/qwen2.5-0.5b-instruct-q4_k_m.json models/qwen2.5-0.5b-instruct-q4_k_m.gguf
+          check tests/reference/llama-3.2-1b-instruct-q4_k_m.json models/Llama-3.2-1B-Instruct-Q4_K_M.gguf
 
+      # Absolute path is required: `cargo test` runs with the crate directory as
+      # CWD, so a relative `models` resolves against `langtax/`. That is not a
+      # cosmetic detail -- it previously made this job pass in 0.00s having
+      # loaded no weights at all. The test now fails loudly rather than skipping
+      # when the variable is set but the model cannot be opened, so a repeat of
+      # this mistake surfaces as a red job instead of a false green.
       - name: Differential test vs llama.cpp reference
         env:
-          LLAMA_RUST_REAL_MODEL_DIR: models
-        run: cargo test --release --lib real_model -- --nocapture
+          LLAMA_RUST_REAL_MODEL_DIR: ${{ github.workspace }}/models
+        run: cargo test --release --lib matches_llama_cpp_reference -- --nocapture

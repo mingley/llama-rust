@@ -11,7 +11,7 @@
 //! # fn main() -> Result<(), llama_rust::Error> {
 //! let model = Model::from_bytes(fixtures::tiny_q4k_embd_gguf())?;
 //! let opts = GenerateOptions::new(4).with_stop_at_eos(false);
-//! let done = model.session().generate_detailed("ab", &opts)?;
+//! let done = model.session(8)?.generate_detailed("ab", &opts)?;
 //! assert_eq!(done.tokens.len(), 4);
 //! # Ok(())
 //! # }

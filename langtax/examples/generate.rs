@@ -46,13 +46,19 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         model.weights().blob_len() / (1024 * 1024),
     );
 
-    let mut session = model.session();
+    let options = GenerateOptions::new(n_predict);
+    let n_ctx = model
+        .encode(&prompt)?
+        .len()
+        .saturating_add(options.n_predict)
+        .saturating_add(1);
+    let mut session = model.session(n_ctx)?;
 
     // Time the two phases apart without doing the work twice: the gap before
     // the first token is prefill, everything after it is decode.
     let start = Instant::now();
     let mut first_token_at = None;
-    let done = session.generate_streaming(&prompt, &GenerateOptions::new(n_predict), |_step| {
+    let done = session.generate_streaming(&prompt, &options, |_step| {
         if first_token_at.is_none() {
             first_token_at = Some(start.elapsed());
         }

@@ -5909,6 +5909,170 @@ fn require_len(what: &'static str, actual: usize, expected: usize) -> Result<(),
     }
 }
 
+/// Scalar building blocks the SIMD fast path needs: the reference its
+/// differential tests compare against and the shared Q4_K scale unpacking.
+/// Keeping them behind one `pub(crate)` facade leaves the kernels themselves
+/// private to this module.
+///
+/// Gated on the targets `crate::simd` actually has kernels for, so nothing here
+/// becomes dead code elsewhere.
+#[cfg(all(
+    feature = "simd",
+    target_endian = "little",
+    any(target_arch = "x86_64", target_arch = "aarch64")
+))]
+pub(crate) mod scalar {
+    /// `GGML_TYPE_F32` weight bytes against an `f32` activation row.
+    #[cfg(test)]
+    pub(crate) fn f32_row(row: &[u8], x: &[f32]) -> f32 {
+        super::vec_dot_f32_row(row, x)
+    }
+
+    /// `GGML_TYPE_F16` weight bytes against an `f32` activation row.
+    #[cfg(test)]
+    pub(crate) fn f16_row(row: &[u8], x: &[f32]) -> f32 {
+        super::vec_dot_f16_row(row, x)
+    }
+
+    /// Q4_0 weight bytes against an `f32` activation row.
+    #[cfg(test)]
+    pub(crate) fn q4_0_f32_row(row: &[u8], x: &[f32]) -> f32 {
+        super::vec_dot_q4_0_f32_row(row, x)
+    }
+
+    /// Q4_K weight bytes against an `f32` activation row.
+    #[cfg(test)]
+    pub(crate) fn q4_k_f32_row(row: &[u8], x: &[f32]) -> f32 {
+        super::vec_dot_q4_k_f32_row(row, x)
+    }
+
+    /// Q6_K weight bytes against an `f32` activation row.
+    #[cfg(test)]
+    pub(crate) fn q6_k_f32_row(row: &[u8], x: &[f32]) -> f32 {
+        super::vec_dot_q6_k_f32_row(row, x)
+    }
+
+    /// Q5_0 weight bytes against an `f32` activation row.
+    #[cfg(test)]
+    pub(crate) fn q5_0_f32_row(row: &[u8], x: &[f32]) -> f32 {
+        super::vec_dot_q5_0_f32_row(row, x)
+    }
+
+    /// Q5_1 weight bytes against an `f32` activation row.
+    #[cfg(test)]
+    pub(crate) fn q5_1_f32_row(row: &[u8], x: &[f32]) -> f32 {
+        super::vec_dot_q5_1_f32_row(row, x)
+    }
+
+    /// Q8_0 weight bytes against an `f32` activation row.
+    #[cfg(test)]
+    pub(crate) fn q8_0_f32_row(row: &[u8], x: &[f32]) -> f32 {
+        super::vec_dot_q8_0_f32_row(row, x)
+    }
+
+    /// Q8_0 weight bytes against a Q8_0 activation row.
+    #[cfg(test)]
+    pub(crate) fn q8_0_row(row: &[u8], x: &[u8]) -> f32 {
+        super::vec_dot_q8_row(row, x)
+    }
+
+    /// ggml `get_scale_min_k4`: 6-bit scale and min for Q4_K sub-block `j`.
+    pub(crate) fn q4_k_scale_min(scales: &[u8], j: usize) -> Option<(u8, u8)> {
+        super::scale_min_k4(scales, j)
+    }
+
+    /// The per-block float add the Q8_0 kernels must agree on, bit for bit.
+    pub(crate) fn add_f32(a: f32, b: f32) -> f32 {
+        super::add_f32(a, b)
+    }
+}
+
+/// Row kernel over GGUF weight bytes and an `f32` activation row.
+type RowDotF32 = fn(&[u8], &[f32]) -> f32;
+
+/// Row kernel over Q8_0 weight bytes and a Q8_0 activation row.
+type RowDotQ8 = fn(&[u8], &[u8]) -> f32;
+
+/// Resolve the row kernel for one dtype once per GEMV/GEMM call, never per row.
+/// Without the `simd` feature these all fold to the scalar kernel at compile
+/// time.
+macro_rules! row_kernel {
+    ($name:ident, $ty:ty, $scalar:ident, $simd:ident) => {
+        #[cfg(feature = "simd")]
+        fn $name() -> $ty {
+            crate::simd::$simd().unwrap_or($scalar)
+        }
+
+        #[cfg(not(feature = "simd"))]
+        fn $name() -> $ty {
+            $scalar
+        }
+    };
+}
+
+row_kernel!(f32_row_kernel, RowDotF32, vec_dot_f32_row, f32_row_dot);
+row_kernel!(f16_row_kernel, RowDotF32, vec_dot_f16_row, f16_row_dot);
+row_kernel!(
+    q4_0_f32_row_kernel,
+    RowDotF32,
+    vec_dot_q4_0_f32_row,
+    q4_0_f32_row_dot
+);
+row_kernel!(
+    q4_k_f32_row_kernel,
+    RowDotF32,
+    vec_dot_q4_k_f32_row,
+    q4_k_f32_row_dot
+);
+row_kernel!(
+    q6_k_f32_row_kernel,
+    RowDotF32,
+    vec_dot_q6_k_f32_row,
+    q6_k_f32_row_dot
+);
+row_kernel!(
+    q5_0_f32_row_kernel,
+    RowDotF32,
+    vec_dot_q5_0_f32_row,
+    q5_0_f32_row_dot
+);
+row_kernel!(
+    q5_1_f32_row_kernel,
+    RowDotF32,
+    vec_dot_q5_1_f32_row,
+    q5_1_f32_row_dot
+);
+row_kernel!(
+    q8_0_f32_row_kernel,
+    RowDotF32,
+    vec_dot_q8_0_f32_row,
+    q8_0_f32_row_dot
+);
+row_kernel!(q8_0_row_kernel, RowDotQ8, vec_dot_q8_row, q8_0_row_dot);
+
+/// The SIMD kernel for `kind`, or `None` when this dtype or this CPU has none.
+/// `gemm_f32_x` resolves it once and each accelerated match arm falls back to
+/// its own scalar kernel.
+#[cfg(feature = "simd")]
+fn simd_row_dot(kind: GemmKind) -> Option<RowDotF32> {
+    match kind {
+        GemmKind::F32 => crate::simd::f32_row_dot(),
+        GemmKind::F16 => crate::simd::f16_row_dot(),
+        GemmKind::Q4K => crate::simd::q4_k_f32_row_dot(),
+        GemmKind::Q6K => crate::simd::q6_k_f32_row_dot(),
+        GemmKind::Q40 => crate::simd::q4_0_f32_row_dot(),
+        GemmKind::Q50 => crate::simd::q5_0_f32_row_dot(),
+        GemmKind::Q51 => crate::simd::q5_1_f32_row_dot(),
+        GemmKind::Q80 => crate::simd::q8_0_f32_row_dot(),
+        _ => None,
+    }
+}
+
+#[cfg(not(feature = "simd"))]
+fn simd_row_dot(_kind: GemmKind) -> Option<RowDotF32> {
+    None
+}
+
 /// `y[m] = W[m, n_cols] x[n_cols]`, W and x as GGUF Q8_0 block streams.
 pub fn gemv_q8_0(n_cols: usize, w: &[u8], x: &[u8], y: &mut [f32]) -> Result<(), QuantError> {
     let rb = q8_0_row_bytes(n_cols)?;
@@ -5922,10 +6086,9 @@ pub fn gemv_q8_0(n_cols: usize, w: &[u8], x: &[u8], y: &mut [f32]) -> Result<(),
     if y.is_empty() {
         return Ok(());
     }
+    let dot = q8_0_row_kernel();
     for_each_row(y, |r, out| {
-        *out = row_bytes(w, rb, r)
-            .map(|row| vec_dot_q8_row(row, x))
-            .unwrap_or(0.0);
+        *out = row_bytes(w, rb, r).map(|row| dot(row, x)).unwrap_or(0.0);
     });
     Ok(())
 }
@@ -5987,10 +6150,9 @@ pub fn gemv_f16(n_cols: usize, w: &[u8], x: &[f32], y: &mut [f32]) -> Result<(),
     if y.is_empty() {
         return Ok(());
     }
+    let dot = f16_row_kernel();
     for_each_row(y, |r, out| {
-        *out = row_bytes(w, rb, r)
-            .map(|row| vec_dot_f16_row(row, x))
-            .unwrap_or(0.0);
+        *out = row_bytes(w, rb, r).map(|row| dot(row, x)).unwrap_or(0.0);
     });
     Ok(())
 }
@@ -6029,10 +6191,9 @@ pub fn gemv_f32(n_cols: usize, w: &[u8], x: &[f32], y: &mut [f32]) -> Result<(),
     if y.is_empty() {
         return Ok(());
     }
+    let dot = f32_row_kernel();
     for_each_row(y, |r, out| {
-        *out = row_bytes(w, rb, r)
-            .map(|row| vec_dot_f32_row(row, x))
-            .unwrap_or(0.0);
+        *out = row_bytes(w, rb, r).map(|row| dot(row, x)).unwrap_or(0.0);
     });
     Ok(())
 }
@@ -6050,10 +6211,9 @@ pub fn gemv_q4_k_f32(n_cols: usize, w: &[u8], x: &[f32], y: &mut [f32]) -> Resul
     if y.is_empty() {
         return Ok(());
     }
+    let dot = q4_k_f32_row_kernel();
     for_each_row(y, |r, out| {
-        *out = row_bytes(w, w_rb, r)
-            .map(|row| vec_dot_q4_k_f32_row(row, x))
-            .unwrap_or(0.0);
+        *out = row_bytes(w, w_rb, r).map(|row| dot(row, x)).unwrap_or(0.0);
     });
     Ok(())
 }
@@ -6285,6 +6445,20 @@ pub fn gemm_q8_1_f32(
     gemm_f32_x(GemmKind::Q81, n_cols, n_tokens, w, x, y)
 }
 
+/// `Y[t, r] = W_q4_0[r, n_cols] · X[t, n_cols]`. Token-major `x` / `y`.
+pub fn gemm_q4_0_f32(
+    n_cols: usize,
+    n_tokens: usize,
+    w: &[u8],
+    x: &[f32],
+    y: &mut [f32],
+) -> Result<(), QuantError> {
+    if n_tokens == 1 {
+        return gemv_q4_0_f32(n_cols, w, x, y);
+    }
+    gemm_f32_x(GemmKind::Q40, n_cols, n_tokens, w, x, y)
+}
+
 /// `Y[t, r] = W_q8_0[r, n_cols] · X[t, n_cols]`. Token-major `x` / `y`.
 pub fn gemm_q8_0_f32(
     n_cols: usize,
@@ -6467,6 +6641,7 @@ enum GemmKind {
     NVFP4,
     Q10,
     Q20,
+    Q40,
     Q80,
     Q81,
     TQ10,
@@ -6527,6 +6702,7 @@ fn gemm_f32_x(
         GemmKind::NVFP4 => (nvfp4_row_bytes(n_cols)?, "W NVFP4 bytes"),
         GemmKind::Q10 => (q1_0_row_bytes(n_cols)?, "W Q1_0 bytes"),
         GemmKind::Q20 => (q2_0_row_bytes(n_cols)?, "W Q2_0 bytes"),
+        GemmKind::Q40 => (q4_0_row_bytes(n_cols)?, "W Q4_0 bytes"),
         GemmKind::Q80 => (q8_0_row_bytes(n_cols)?, "W Q8_0 bytes"),
         GemmKind::Q81 => (q8_1_row_bytes(n_cols)?, "W Q8_1 bytes"),
         GemmKind::TQ10 => (tq1_0_row_bytes(n_cols)?, "W TQ1_0 bytes"),
@@ -6553,6 +6729,9 @@ fn gemm_f32_x(
     if n_rows == 0 {
         return Ok(());
     }
+    // Resolved once for the whole call: `simd` is the kernel for *this* `kind`
+    // only, so each accelerated arm below falls back to its own scalar kernel.
+    let simd = simd_row_dot(kind);
     let mut scratch = vec![0.0f32; y.len()];
     for_each_group(&mut scratch, n_tokens, |r, out| {
         let Some(wrow) = row_bytes(w, rb, r) else {
@@ -6564,25 +6743,26 @@ fn gemm_f32_x(
                 continue;
             };
             *slot = match kind {
-                GemmKind::F16 => vec_dot_f16_row(wrow, xt),
+                GemmKind::F16 => simd.unwrap_or(vec_dot_f16_row)(wrow, xt),
                 GemmKind::BF16 => vec_dot_bf16_row(wrow, xt),
-                GemmKind::F32 => vec_dot_f32_row(wrow, xt),
+                GemmKind::F32 => simd.unwrap_or(vec_dot_f32_row)(wrow, xt),
                 GemmKind::Q2K => vec_dot_q2_k_f32_row(wrow, xt),
                 GemmKind::Q3K => vec_dot_q3_k_f32_row(wrow, xt),
                 GemmKind::Q41 => vec_dot_q4_1_f32_row(wrow, xt),
-                GemmKind::Q50 => vec_dot_q5_0_f32_row(wrow, xt),
-                GemmKind::Q51 => vec_dot_q5_1_f32_row(wrow, xt),
+                GemmKind::Q50 => simd.unwrap_or(vec_dot_q5_0_f32_row)(wrow, xt),
+                GemmKind::Q51 => simd.unwrap_or(vec_dot_q5_1_f32_row)(wrow, xt),
                 GemmKind::MXFP4 => vec_dot_mxfp4_f32_row(wrow, xt),
                 GemmKind::NVFP4 => vec_dot_nvfp4_f32_row(wrow, xt),
                 GemmKind::Q10 => vec_dot_q1_0_f32_row(wrow, xt),
                 GemmKind::Q20 => vec_dot_q2_0_f32_row(wrow, xt),
-                GemmKind::Q80 => vec_dot_q8_0_f32_row(wrow, xt),
+                GemmKind::Q40 => simd.unwrap_or(vec_dot_q4_0_f32_row)(wrow, xt),
+                GemmKind::Q80 => simd.unwrap_or(vec_dot_q8_0_f32_row)(wrow, xt),
                 GemmKind::Q81 => vec_dot_q8_1_f32_row(wrow, xt),
                 GemmKind::TQ10 => vec_dot_tq1_0_f32_row(wrow, xt),
                 GemmKind::TQ20 => vec_dot_tq2_0_f32_row(wrow, xt),
-                GemmKind::Q4K => vec_dot_q4_k_f32_row(wrow, xt),
+                GemmKind::Q4K => simd.unwrap_or(vec_dot_q4_k_f32_row)(wrow, xt),
                 GemmKind::Q5K => vec_dot_q5_k_f32_row(wrow, xt),
-                GemmKind::Q6K => vec_dot_q6_k_f32_row(wrow, xt),
+                GemmKind::Q6K => simd.unwrap_or(vec_dot_q6_k_f32_row)(wrow, xt),
                 GemmKind::IQ1S => vec_dot_iq1_s_f32_row(wrow, xt),
                 GemmKind::IQ1M => vec_dot_iq1_m_f32_row(wrow, xt),
                 GemmKind::IQ2S => vec_dot_iq2_s_f32_row(wrow, xt),
@@ -6620,10 +6800,9 @@ pub fn gemv_q6_k_f32(n_cols: usize, w: &[u8], x: &[f32], y: &mut [f32]) -> Resul
     if y.is_empty() {
         return Ok(());
     }
+    let dot = q6_k_f32_row_kernel();
     for_each_row(y, |r, out| {
-        *out = row_bytes(w, w_rb, r)
-            .map(|row| vec_dot_q6_k_f32_row(row, x))
-            .unwrap_or(0.0);
+        *out = row_bytes(w, w_rb, r).map(|row| dot(row, x)).unwrap_or(0.0);
     });
     Ok(())
 }
@@ -6725,10 +6904,9 @@ pub fn gemv_q5_0_f32(n_cols: usize, w: &[u8], x: &[f32], y: &mut [f32]) -> Resul
     if y.is_empty() {
         return Ok(());
     }
+    let dot = q5_0_f32_row_kernel();
     for_each_row(y, |r, out| {
-        *out = row_bytes(w, w_rb, r)
-            .map(|row| vec_dot_q5_0_f32_row(row, x))
-            .unwrap_or(0.0);
+        *out = row_bytes(w, w_rb, r).map(|row| dot(row, x)).unwrap_or(0.0);
     });
     Ok(())
 }
@@ -6746,10 +6924,9 @@ pub fn gemv_q5_1_f32(n_cols: usize, w: &[u8], x: &[f32], y: &mut [f32]) -> Resul
     if y.is_empty() {
         return Ok(());
     }
+    let dot = q5_1_f32_row_kernel();
     for_each_row(y, |r, out| {
-        *out = row_bytes(w, w_rb, r)
-            .map(|row| vec_dot_q5_1_f32_row(row, x))
-            .unwrap_or(0.0);
+        *out = row_bytes(w, w_rb, r).map(|row| dot(row, x)).unwrap_or(0.0);
     });
     Ok(())
 }
@@ -6859,6 +7036,26 @@ pub fn gemv_q8_1_f32(n_cols: usize, w: &[u8], x: &[f32], y: &mut [f32]) -> Resul
     Ok(())
 }
 
+/// `y[m] = W_q4_0[m, n_cols] x_f32[n_cols]` on GGUF `block_q4_0` bytes.
+pub fn gemv_q4_0_f32(n_cols: usize, w: &[u8], x: &[f32], y: &mut [f32]) -> Result<(), QuantError> {
+    let w_rb = q4_0_row_bytes(n_cols)?;
+    require_len("x F32 elems", x.len(), n_cols)?;
+    let expected_w = w_rb.checked_mul(y.len()).ok_or(QuantError::Size {
+        what: "W Q4_0 bytes overflow",
+        expected: w_rb,
+        actual: y.len(),
+    })?;
+    require_len("W Q4_0 bytes", w.len(), expected_w)?;
+    if y.is_empty() {
+        return Ok(());
+    }
+    let dot = q4_0_f32_row_kernel();
+    for_each_row(y, |r, out| {
+        *out = row_bytes(w, w_rb, r).map(|row| dot(row, x)).unwrap_or(0.0);
+    });
+    Ok(())
+}
+
 /// `y[m] = W_q8_0[m, n_cols] x_f32[n_cols]` on GGUF `block_q8_0` bytes.
 pub fn gemv_q8_0_f32(n_cols: usize, w: &[u8], x: &[f32], y: &mut [f32]) -> Result<(), QuantError> {
     let w_rb = q8_0_row_bytes(n_cols)?;
@@ -6872,10 +7069,9 @@ pub fn gemv_q8_0_f32(n_cols: usize, w: &[u8], x: &[f32], y: &mut [f32]) -> Resul
     if y.is_empty() {
         return Ok(());
     }
+    let dot = q8_0_f32_row_kernel();
     for_each_row(y, |r, out| {
-        *out = row_bytes(w, w_rb, r)
-            .map(|row| vec_dot_q8_0_f32_row(row, x))
-            .unwrap_or(0.0);
+        *out = row_bytes(w, w_rb, r).map(|row| dot(row, x)).unwrap_or(0.0);
     });
     Ok(())
 }
@@ -7532,6 +7728,46 @@ pub fn dequant_q8_0_row(n_cols: usize, row: &[u8], y: &mut [f32]) -> Result<(), 
         for (j, q) in qs.iter().enumerate() {
             if let Some(slot) = y.get_mut(x_base.saturating_add(j)) {
                 *slot = f32::from(i8_from_bits(*q)) * d;
+            }
+        }
+    }
+    Ok(())
+}
+
+/// Unpack one Q4_0 GGUF row into `y[n_cols]` (ggml `dequantize_row_q4_0`:
+/// `y = (q - 8) * d`).
+///
+/// `block_q4_0` is 18 bytes: fp16 `d` then `qs[16]` packed nibbles. Like Q5_0 and
+/// MXFP4 the halves are interleaved across the block, not adjacent: the low
+/// nibble of `qs[j]` is element `j` and the high nibble is element `j + 16`.
+pub fn dequant_q4_0_row(n_cols: usize, row: &[u8], y: &mut [f32]) -> Result<(), QuantError> {
+    let rb = q4_0_row_bytes(n_cols)?;
+    require_len("Q4_0 row bytes", row.len(), rb)?;
+    require_len("Q4_0 y elems", y.len(), n_cols)?;
+    for yv in y.iter_mut() {
+        *yv = 0.0;
+    }
+    let (w_blocks, leftover) = row.as_chunks::<Q4_0_BLOCK>();
+    if !leftover.is_empty() {
+        return Err(QuantError::Size {
+            what: "Q4_0 leftover bytes",
+            expected: 0,
+            actual: leftover.len(),
+        });
+    }
+    for (b, wb) in w_blocks.iter().enumerate() {
+        let Some(d) = load_f16_le(wb) else { continue };
+        let Some(qs) = wb.get(2..) else { continue };
+        let x_base = b.saturating_mul(QK4_0);
+        let hi_base = x_base.saturating_add(16);
+        for (j, p) in qs.iter().enumerate() {
+            let q0 = i32::from(*p & 0x0f) - 8;
+            let q1 = i32::from(*p >> 4) - 8;
+            if let Some(slot) = y.get_mut(x_base.saturating_add(j)) {
+                *slot = (q0 as f32) * d;
+            }
+            if let Some(slot) = y.get_mut(hi_base.saturating_add(j)) {
+                *slot = (q1 as f32) * d;
             }
         }
     }
@@ -8887,6 +9123,31 @@ fn vec_dot_q8_1_f32_row(row: &[u8], x: &[f32]) -> f32 {
     sum
 }
 
+fn vec_dot_q4_0_f32_row(row: &[u8], x: &[f32]) -> f32 {
+    let mut sum = 0.0f32;
+    let (w_blocks, _) = row.as_chunks::<Q4_0_BLOCK>();
+    for (b, wb) in w_blocks.iter().enumerate() {
+        let Some(d) = load_f16_le(wb) else { continue };
+        let Some(qs) = wb.get(2..) else { continue };
+        let x_base = b.saturating_mul(QK4_0);
+        // A block whose activation slice is short contributes nothing, matching
+        // the SIMD kernel and the other 32-wide dtypes (Q5_0 / Q8_0). Production
+        // GEMV/GEMM always pass `n_cols` a multiple of `QK4_0`.
+        let Some(xr) = x.get(x_base..x_base.saturating_add(QK4_0)) else {
+            continue;
+        };
+        let Some(xlo) = xr.get(..16) else { continue };
+        let Some(xhi) = xr.get(16..32) else { continue };
+        for ((p, xl), xh) in qs.iter().zip(xlo.iter()).zip(xhi.iter()) {
+            let q0 = i32::from(*p & 0x0f) - 8;
+            let q1 = i32::from(*p >> 4) - 8;
+            sum += (q0 as f32) * d * *xl;
+            sum += (q1 as f32) * d * *xh;
+        }
+    }
+    sum
+}
+
 fn vec_dot_q8_0_f32_row(row: &[u8], x: &[f32]) -> f32 {
     let mut sum = 0.0f32;
     let (w_blocks, _) = row.as_chunks::<Q8_0_BLOCK>();
@@ -9941,8 +10202,8 @@ mod tests {
         let mut y = vec![0.0f32; nblocks * QK_K];
         for b in 0..nblocks {
             let wb = &w[b * Q5_K_BLOCK..(b + 1) * Q5_K_BLOCK];
-            let d = crate::fp16::f16_to_f32(u16::from_le_bytes([wb[0], wb[1]]));
-            let dmin = crate::fp16::f16_to_f32(u16::from_le_bytes([wb[2], wb[3]]));
+            let d = crate::fp16::oracle_f16_to_f32(u16::from_le_bytes([wb[0], wb[1]]));
+            let dmin = crate::fp16::oracle_f16_to_f32(u16::from_le_bytes([wb[2], wb[3]]));
             let scales = &wb[4..16];
             let qh = &wb[16..48];
             let mut ql_off = 48usize;
@@ -9991,8 +10252,8 @@ mod tests {
         let mut y = vec![0.0f32; nblocks * QK_K];
         for b in 0..nblocks {
             let wb = &w[b * Q2_K_BLOCK..(b + 1) * Q2_K_BLOCK];
-            let d = crate::fp16::f16_to_f32(u16::from_le_bytes([wb[80], wb[81]]));
-            let minv = crate::fp16::f16_to_f32(u16::from_le_bytes([wb[82], wb[83]]));
+            let d = crate::fp16::oracle_f16_to_f32(u16::from_le_bytes([wb[80], wb[81]]));
+            let minv = crate::fp16::oracle_f16_to_f32(u16::from_le_bytes([wb[82], wb[83]]));
             let scales = &wb[0..16];
             let mut yo = b * QK_K;
             let mut is = 0usize;
@@ -10042,7 +10303,7 @@ mod tests {
         const KMASK2: u32 = 0x0f0f_0f0f;
         for b in 0..nblocks {
             let wb = &w[b * Q3_K_BLOCK..(b + 1) * Q3_K_BLOCK];
-            let d_all = crate::fp16::f16_to_f32(u16::from_le_bytes([wb[108], wb[109]]));
+            let d_all = crate::fp16::oracle_f16_to_f32(u16::from_le_bytes([wb[108], wb[109]]));
             let hmask = &wb[0..32];
             let mut aux = [0u32; 4];
             aux[0] = u32::from_le_bytes([wb[96], wb[97], wb[98], wb[99]]);
@@ -10303,8 +10564,8 @@ mod tests {
         let mut y = vec![0.0f32; nblocks * QK4_1];
         for b in 0..nblocks {
             let wb = &w[b * Q4_1_BLOCK..(b + 1) * Q4_1_BLOCK];
-            let d = crate::fp16::f16_to_f32(u16::from_le_bytes([wb[0], wb[1]]));
-            let m = crate::fp16::f16_to_f32(u16::from_le_bytes([wb[2], wb[3]]));
+            let d = crate::fp16::oracle_f16_to_f32(u16::from_le_bytes([wb[0], wb[1]]));
+            let m = crate::fp16::oracle_f16_to_f32(u16::from_le_bytes([wb[2], wb[3]]));
             let qs = &wb[4..];
             let yo = b * QK4_1;
             for j in 0..16 {
@@ -10410,7 +10671,7 @@ mod tests {
         let mut y = vec![0.0f32; nblocks * QK5_0];
         for b in 0..nblocks {
             let wb = &w[b * Q5_0_BLOCK..(b + 1) * Q5_0_BLOCK];
-            let d = crate::fp16::f16_to_f32(u16::from_le_bytes([wb[0], wb[1]]));
+            let d = crate::fp16::oracle_f16_to_f32(u16::from_le_bytes([wb[0], wb[1]]));
             let qh = u32::from_le_bytes([wb[2], wb[3], wb[4], wb[5]]);
             let qs = &wb[6..];
             let yo = b * QK5_0;
@@ -10529,8 +10790,8 @@ mod tests {
         let mut y = vec![0.0f32; nblocks * QK5_1];
         for b in 0..nblocks {
             let wb = &w[b * Q5_1_BLOCK..(b + 1) * Q5_1_BLOCK];
-            let d = crate::fp16::f16_to_f32(u16::from_le_bytes([wb[0], wb[1]]));
-            let m = crate::fp16::f16_to_f32(u16::from_le_bytes([wb[2], wb[3]]));
+            let d = crate::fp16::oracle_f16_to_f32(u16::from_le_bytes([wb[0], wb[1]]));
+            let m = crate::fp16::oracle_f16_to_f32(u16::from_le_bytes([wb[2], wb[3]]));
             let qh = u32::from_le_bytes([wb[4], wb[5], wb[6], wb[7]]);
             let qs = &wb[8..];
             let yo = b * QK5_1;
@@ -10913,7 +11174,7 @@ mod tests {
         let mut y = vec![0.0f32; nblocks * QK1_0];
         for b in 0..nblocks {
             let wb = &w[b * Q1_0_BLOCK..(b + 1) * Q1_0_BLOCK];
-            let d = crate::fp16::f16_to_f32(u16::from_le_bytes([wb[0], wb[1]]));
+            let d = crate::fp16::oracle_f16_to_f32(u16::from_le_bytes([wb[0], wb[1]]));
             let qs = &wb[2..];
             for j in 0..QK1_0 {
                 let bit = (qs[j / 8] >> (j % 8)) & 1;
@@ -11030,7 +11291,7 @@ mod tests {
         let mut y = vec![0.0f32; nblocks * QK2_0];
         for b in 0..nblocks {
             let wb = &w[b * Q2_0_BLOCK..(b + 1) * Q2_0_BLOCK];
-            let d = crate::fp16::f16_to_f32(u16::from_le_bytes([wb[0], wb[1]]));
+            let d = crate::fp16::oracle_f16_to_f32(u16::from_le_bytes([wb[0], wb[1]]));
             let qs = &wb[2..];
             for j in 0..QK2_0 {
                 let q = (qs[j / 4] >> ((j % 4) * 2)) & 0x03;
@@ -11149,7 +11410,7 @@ mod tests {
         let mut y = vec![0.0f32; nblocks * QK8_1];
         for b in 0..nblocks {
             let wb = &w[b * Q8_1_BLOCK..(b + 1) * Q8_1_BLOCK];
-            let d = crate::fp16::f16_to_f32(u16::from_le_bytes([wb[0], wb[1]]));
+            let d = crate::fp16::oracle_f16_to_f32(u16::from_le_bytes([wb[0], wb[1]]));
             let qs = &wb[4..];
             for j in 0..QK8_1 {
                 y[b * QK8_1 + j] = f32::from(i8::from_le_bytes([qs[j]])) * d;
@@ -11296,7 +11557,7 @@ mod tests {
             let wb = &w[b * TQ1_0_BLOCK..(b + 1) * TQ1_0_BLOCK];
             let qs = &wb[0..48];
             let qh = &wb[48..52];
-            let d = crate::fp16::f16_to_f32(u16::from_le_bytes([wb[52], wb[53]]));
+            let d = crate::fp16::oracle_f16_to_f32(u16::from_le_bytes([wb[52], wb[53]]));
             let mut yo = b * QK_K;
             for &p in &POW3 {
                 for &byte in qs.iter().take(32) {
@@ -11462,7 +11723,7 @@ mod tests {
         for b in 0..nblocks {
             let wb = &w[b * TQ2_0_BLOCK..(b + 1) * TQ2_0_BLOCK];
             let qs = &wb[0..64];
-            let d = crate::fp16::f16_to_f32(u16::from_le_bytes([wb[64], wb[65]]));
+            let d = crate::fp16::oracle_f16_to_f32(u16::from_le_bytes([wb[64], wb[65]]));
             let mut yo = b * QK_K;
             for j in [0usize, 32] {
                 for l in 0..4 {
@@ -11650,7 +11911,7 @@ mod tests {
 
     /// Independent IEEE binary16 element (ggml `ggml_fp16_to_fp32`).
     fn oracle_f16_elem(bytes: &[u8]) -> f32 {
-        crate::fp16::f16_to_f32(u16::from_le_bytes([bytes[0], bytes[1]]))
+        crate::fp16::oracle_f16_to_f32(u16::from_le_bytes([bytes[0], bytes[1]]))
     }
 
     fn oracle_f16_dot(row: &[u8], x: &[f32]) -> f32 {
@@ -11673,7 +11934,7 @@ mod tests {
             let exp = oracle_f16_elem(&w[i * 2..i * 2 + 2]);
             let rel = (got - exp).abs() / (1.0 + exp.abs());
             assert!(rel * 100_000.0 < 1.0, "dequant {i}: {got} vs {exp}");
-            let back = crate::fp16::f16_to_f32(crate::fp16::f32_to_f16(*src));
+            let back = crate::fp16::oracle_f16_to_f32(crate::fp16::f32_to_f16(*src));
             assert_eq!(*got, back);
         }
         let x = [1.0f32, 2.0, 0.5, -1.0, 0.25, 4.0, -0.5, 1.0];
@@ -11954,7 +12215,7 @@ mod tests {
         let mut y = vec![0.0f32; nblocks * QK_K];
         for b in 0..nblocks {
             let wb = &w[b * IQ4_XS_BLOCK..(b + 1) * IQ4_XS_BLOCK];
-            let d = crate::fp16::f16_to_f32(u16::from_le_bytes([wb[0], wb[1]]));
+            let d = crate::fp16::oracle_f16_to_f32(u16::from_le_bytes([wb[0], wb[1]]));
             let scales_h = u16::from_le_bytes([wb[2], wb[3]]);
             let scales_l = &wb[4..8];
             let qs = &wb[8..];
@@ -12075,7 +12336,7 @@ mod tests {
         let mut y = vec![0.0f32; nblocks * QK4_NL];
         for b in 0..nblocks {
             let wb = &w[b * IQ4_NL_BLOCK..(b + 1) * IQ4_NL_BLOCK];
-            let d = crate::fp16::f16_to_f32(u16::from_le_bytes([wb[0], wb[1]]));
+            let d = crate::fp16::oracle_f16_to_f32(u16::from_le_bytes([wb[0], wb[1]]));
             let qs = &wb[2..];
             let yo = b * QK4_NL;
             for j in 0..16 {
@@ -12181,7 +12442,7 @@ mod tests {
         let mut y = vec![0.0f32; nblocks * QK_K];
         for b in 0..nblocks {
             let wb = &w[b * IQ3_S_BLOCK..(b + 1) * IQ3_S_BLOCK];
-            let d = crate::fp16::f16_to_f32(u16::from_le_bytes([wb[0], wb[1]]));
+            let d = crate::fp16::oracle_f16_to_f32(u16::from_le_bytes([wb[0], wb[1]]));
             let qs = &wb[2..66];
             let qh = &wb[66..74];
             let signs = &wb[74..106];
@@ -12367,7 +12628,7 @@ mod tests {
         let mut y = vec![0.0f32; nblocks * QK_K];
         for b in 0..nblocks {
             let wb = &w[b * IQ3_XXS_BLOCK..(b + 1) * IQ3_XXS_BLOCK];
-            let d = crate::fp16::f16_to_f32(u16::from_le_bytes([wb[0], wb[1]]));
+            let d = crate::fp16::oracle_f16_to_f32(u16::from_le_bytes([wb[0], wb[1]]));
             let qs = &wb[2..66];
             let ss = &wb[66..98];
             let mut yo = b * QK_K;
@@ -12512,7 +12773,7 @@ mod tests {
         let mut y = vec![0.0f32; nblocks * QK_K];
         for b in 0..nblocks {
             let wb = &w[b * IQ2_S_BLOCK..(b + 1) * IQ2_S_BLOCK];
-            let d = crate::fp16::f16_to_f32(u16::from_le_bytes([wb[0], wb[1]]));
+            let d = crate::fp16::oracle_f16_to_f32(u16::from_le_bytes([wb[0], wb[1]]));
             let qs = &wb[2..34];
             let signs = &wb[34..66];
             let qh = &wb[66..74];
@@ -12660,7 +12921,7 @@ mod tests {
         let mut y = vec![0.0f32; nblocks * QK_K];
         for b in 0..nblocks {
             let wb = &w[b * IQ2_XXS_BLOCK..(b + 1) * IQ2_XXS_BLOCK];
-            let d = crate::fp16::f16_to_f32(u16::from_le_bytes([wb[0], wb[1]]));
+            let d = crate::fp16::oracle_f16_to_f32(u16::from_le_bytes([wb[0], wb[1]]));
             let qs = &wb[2..66];
             let mut yo = b * QK_K;
             for ib32 in 0..QK_K / 32 {
@@ -12792,7 +13053,7 @@ mod tests {
         let mut y = vec![0.0f32; nblocks * QK_K];
         for b in 0..nblocks {
             let wb = &w[b * IQ2_XS_BLOCK..(b + 1) * IQ2_XS_BLOCK];
-            let d = crate::fp16::f16_to_f32(u16::from_le_bytes([wb[0], wb[1]]));
+            let d = crate::fp16::oracle_f16_to_f32(u16::from_le_bytes([wb[0], wb[1]]));
             let qs = &wb[2..66];
             let scales = &wb[66..74];
             let mut yo = b * QK_K;
@@ -12939,7 +13200,7 @@ mod tests {
         let mut y = vec![0.0f32; nblocks * QK_K];
         for b in 0..nblocks {
             let wb = &w[b * IQ1_S_BLOCK..(b + 1) * IQ1_S_BLOCK];
-            let d = crate::fp16::f16_to_f32(u16::from_le_bytes([wb[0], wb[1]]));
+            let d = crate::fp16::oracle_f16_to_f32(u16::from_le_bytes([wb[0], wb[1]]));
             let qs = &wb[2..34];
             let qh = &wb[34..50];
             let mut yo = b * QK_K;
@@ -13095,7 +13356,7 @@ mod tests {
                 | ((sc[1] >> 8) & 0x00f0)
                 | ((sc[2] >> 4) & 0x0f00)
                 | (sc[3] & 0xf000);
-            let d = crate::fp16::f16_to_f32(bits);
+            let d = crate::fp16::oracle_f16_to_f32(bits);
             let mut yo = b * QK_K;
             for ib in 0..8 {
                 let scv = sc[ib / 2];

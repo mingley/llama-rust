@@ -3,5 +3,27 @@
 version = 4
 
 [[package]]
+name = "expertvm"
+version = "0.1.0"
+dependencies = [
+ "gpu-sim",
+]
+
+[[package]]
+name = "gpu-sim"
+version = "0.1.0"
+
+[[package]]
+name = "infer-bench"
+version = "0.1.0"
+dependencies = [
+ "expertvm",
+ "gpu-sim",
+]
+
+[[package]]
 name = "llama-rust"
 version = "0.2.0"
+dependencies = [
+ "expertvm",
+]

@@ -1,0 +1,200 @@
+//! Newtypes so a stream id cannot be passed where a device id is required.
+
+use core::fmt;
+
+/// One simulated GPU in the profile, `0 .. n_gpus`.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
+pub struct DeviceId(pub u16);
+
+impl fmt::Display for DeviceId {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "gpu{}", self.0)
+    }
+}
+
+/// CUDA-like stream on one device. Independent streams are unordered until an event.
+///
+/// [`StreamId::NULL`] (`0`) is the CUDA null stream. Created streams default
+/// to `cudaStreamNonBlocking`. [`crate::Sim::set_stream_blocking`] models
+/// `cudaStreamCreate` (serialize with NULL). [`crate::Sim::set_legacy_null_stream`]
+/// makes NULL serialize with every stream.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
+pub struct StreamId(pub u16);
+
+impl StreamId {
+    /// CUDA null / default stream (`cudaStream_t` 0).
+    pub const NULL: Self = Self(0);
+    /// Internal stream for [`crate::Sim::green_ctx_record_event`] /
+    /// [`crate::Sim::green_ctx_wait_event`]. Not a CUDA stream id; not bound
+    /// to a green context. User work must not use this id.
+    pub const GREEN_CTX_SYNC: Self = Self(u16::MAX);
+}
+
+/// Cross-stream ordering token. Record on one stream, wait on another.
+///
+/// [`crate::Sim::create_event_disable_timing`] is `cudaEventDisableTiming`
+/// (elapsed fails; wait/query still work). [`crate::Sim::create_event_interprocess`]
+/// is Interprocess+DisableTiming for [`crate::Sim::ipc_get_event`]. Implicit
+/// create on record is timing-enabled (`cudaEventDefault`).
+#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
+pub struct EventId(pub u32);
+
+/// Stream-ordered allocation.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
+pub struct AllocId(pub u64);
+
+/// Submitted operation.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
+pub struct OpId(pub u64);
+
+/// Bidirectional interconnect between two places.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
+pub struct LinkId(pub u16);
+
+/// Captured CUDA-like graph. Launch replays the recorded ops; capture does not execute them.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
+pub struct GraphId(pub u32);
+
+/// CUDA memory pool (`cudaMemPool_t`). [`crate::Sim::alloc`] uses the device default pool.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
+pub struct PoolId(pub u32);
+
+impl fmt::Display for PoolId {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "pool{}", self.0)
+    }
+}
+
+/// Physical VMM allocation (`CUmemGenericAllocationHandle`). [`crate::Sim::va_create`]
+/// charges HBM; [`crate::Sim::va_map_handle`] maps it into a reserved VA without a
+/// second charge. [`crate::Sim::va_retain_handle`] increments handle refs.
+/// [`crate::Sim::va_release_handle`] is `cuMemRelease` (allowed while mapped).
+/// [`crate::Sim::va_map`] still Create+Maps in one call.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
+pub struct MemHandleId(pub u64);
+
+impl fmt::Display for MemHandleId {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "handle{}", self.0)
+    }
+}
+
+/// `cudaIpcMemHandle_t`. [`crate::Sim::ipc_get`] exports a device alloc;
+/// [`crate::Sim::ipc_open`] imports an alias that shares the same physicals.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
+pub struct IpcHandleId(pub u64);
+
+impl fmt::Display for IpcHandleId {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "ipc{}", self.0)
+    }
+}
+
+/// `cudaIpcEventHandle_t`. [`crate::Sim::ipc_get_event`] exports an
+/// interprocess event; [`crate::Sim::ipc_open_event`] imports an alias that
+/// shares the source record. `IpcEventHandleId(0)` is reserved (unset).
+#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
+pub struct IpcEventHandleId(pub u64);
+
+impl fmt::Display for IpcEventHandleId {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "ipcev{}", self.0)
+    }
+}
+
+/// `cudaMemPoolExportToShareableHandle` token.
+///
+/// [`crate::Sim::pool_export`] exports a POSIX-FD shareable pool;
+/// [`crate::Sim::pool_import`] is a new [`PoolId`] that shares live/cached
+/// bytes with the exporter.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
+pub struct ShareableHandleId(pub u64);
+
+impl fmt::Display for ShareableHandleId {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "share{}", self.0)
+    }
+}
+
+/// `cudaMemPoolExportPointer` token.
+///
+/// [`crate::Sim::pool_export_ptr`] exports a live pool allocation;
+/// [`crate::Sim::pool_import_ptr`] imports an alias into an imported pool.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
+pub struct PtrExportId(pub u64);
+
+impl fmt::Display for PtrExportId {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "ptr{}", self.0)
+    }
+}
+
+/// Hopper multicast object (`CUmemGenericAllocationHandle` from
+/// [`crate::Sim::multicast_create`] / `cuMulticastCreate`).
+///
+/// [`crate::Sim::multicast_bind_mem`] binds a [`MemHandleId`] per device.
+/// [`crate::Sim::multicast_bind_addr`] binds a mapped VMM VA (retain + BindMem).
+/// [`crate::Sim::multicast_unbind`] drops that bind (not while mapped).
+/// [`crate::Sim::multicast_destroy`] releases the object (`cuMemRelease`).
+/// [`crate::Sim::va_map_multicast`] maps the object into a reserved VA so a
+/// kernel write fans out over NVLink (NVLS), not N sequential P2P copies.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
+pub struct MulticastId(pub u32);
+
+impl fmt::Display for MulticastId {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "mc{}", self.0)
+    }
+}
+
+/// `cudaUserObject_t`. [`crate::Sim::user_object_create`] / `cudaUserObjectCreate`.
+///
+/// Graphs retain references with [`crate::Sim::graph_retain_user_object`].
+/// The destroy callback (`fn_id`) runs when the last reference is released.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
+pub struct UserObjectId(pub u32);
+
+impl fmt::Display for UserObjectId {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "userobj{}", self.0)
+    }
+}
+
+/// `cudaGraphConditionalHandle`. Created on a graph; sampled by IF / WHILE / SWITCH.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
+pub struct CondId(pub u32);
+
+impl fmt::Display for CondId {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "cond{}", self.0)
+    }
+}
+
+/// `CUdevResourceDesc` from [`crate::Sim::dev_resource_generate_desc`].
+///
+/// [`crate::Sim::green_ctx_create`] consumes a copy of the SM span; the desc
+/// stays. `DevResourceDescId(0)` is reserved (unset).
+#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
+pub struct DevResourceDescId(pub u32);
+
+impl fmt::Display for DevResourceDescId {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "desc{}", self.0)
+    }
+}
+
+/// `CUgreenCtx` / `cudaGreenCtx_t` from [`crate::Sim::green_ctx_create`].
+///
+/// Streams bound with [`crate::Sim::green_ctx_stream_create`] /
+/// [`crate::Sim::green_ctx_set_stream`] inherit that SM span (duration and
+/// occupancy). `GreenCtxId(0)` is reserved (unset).
+/// [`crate::Sim::green_ctx_get_id`] is `cuGreenCtxGetId` (not this handle).
+/// [`crate::Sim::green_ctx_get_device`] is `cudaExecutionCtxGetDevice`.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
+pub struct GreenCtxId(pub u32);
+
+impl fmt::Display for GreenCtxId {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "green{}", self.0)
+    }
+}
