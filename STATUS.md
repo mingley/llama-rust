@@ -5,6 +5,16 @@ Visible five-turn extract: [docs/chatgpt-share-6a920fe1.md](docs/chatgpt-share-6
 Complete share-API extract: [docs/chatgpt-share-6a920fe1/](docs/chatgpt-share-6a920fe1/).
 Work lands on `main`. No PRs.
 
+## Shipped 2026-09-01 — CUDA `cuGraphNodeGetContainingGraph`
+
+`gpu-sim` `graph_node_get_containing_graph` is `cuGraphNodeGetContainingGraph`
+(the graph that owns the node). A child-graph node still lives in the parent;
+the nested graph is `graph_child_get_graph`. Query; capture is legal. A parked
+in-flight-destroyed exec is Invalid `"unknown graph"`. Live exec
+GetContainingGraph stays. Definition GetContainingGraph stays. This VM does
+not invent Engine `--graph-containing`. `gpu-profile capture` is still
+refused. Dual score still has no `$/M tokens`.
+
 ## Shipped 2026-09-01 — Parked exec GetAttribute is unknown
 
 `gpu-sim` CUDA `cudaGraphKernelNodeGetAttribute` of an exec whose handle

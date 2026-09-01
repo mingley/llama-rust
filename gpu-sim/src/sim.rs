@@ -10002,6 +10002,27 @@ impl Sim {
         Ok((u64::from(gid) << 32) | u64::from(local))
     }
 
+    /// `cuGraphNodeGetContainingGraph`. Query; legal during capture.
+    ///
+    /// Returns the graph that owns `node`. A child-graph node still lives in
+    /// the parent; the nested graph is [`Self::graph_child_get_graph`]. A node
+    /// added to a child-graph body is owned by that body. Destroyed or unknown
+    /// nodes are Invalid `"unknown graph node"`. A parked in-flight-destroyed
+    /// exec is Invalid `"unknown graph"`. Live exec GetContainingGraph stays.
+    /// Definition GetContainingGraph of the live graph while that exec is
+    /// parked stays. Live in-flight GetContainingGraph stays.
+    pub fn graph_node_get_containing_graph(
+        &self,
+        graph: GraphId,
+        node: usize,
+    ) -> Result<GraphId, SimError> {
+        let g = self.live_graph(graph)?;
+        let _live = live_ok(g.steps.get(node).ok_or(SimError::Invalid {
+            why: "unknown graph node",
+        })?)?;
+        Ok(graph)
+    }
+
     /// `cudaGraphNodeGetType` for node `i`.
     pub fn graph_node_kind(&self, graph: GraphId, i: usize) -> Result<GraphNodeKind, SimError> {
         let g = self.graphs.get(&graph).ok_or(SimError::Invalid {

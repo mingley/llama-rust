@@ -5880,7 +5880,16 @@ model, do not celebrate the sim.
     This VM does not invent Engine `--graph-get-attr-gone`. `gpu-profile
     capture` is still refused. Dual score still has no `$/M tokens`.
 
-552. [ ] Next numbered PLAN item after 551 is the next `gpu-sim` / Engine /
+552. [x] `gpu-sim` `graph_node_get_containing_graph` is CUDA
+    `cuGraphNodeGetContainingGraph` (the graph that owns the node). A
+    child-graph node still lives in the parent; the nested graph is
+    `graph_child_get_graph`. Query; capture is legal. A parked in-flight-destroyed
+    exec is Invalid `"unknown graph"`. Live exec GetContainingGraph stays.
+    Definition GetContainingGraph stays. This VM does not invent Engine
+    `--graph-containing`. `gpu-profile capture` is still refused. Dual score
+    still has no `$/M tokens`.
+
+553. [ ] Next numbered PLAN item after 552 is the next `gpu-sim` / Engine /
     serve / expertvm mechanical API that is still missing, or the next official
     decode family. Prefer remaining CUDA-shaped twins over more
     OpenAI HTTP veneer. Do not invent F32 `output.scale`. Do not invent a
@@ -5897,8 +5906,9 @@ model, do not celebrate the sim.
     `--ctx-id`.
     Do not invent a second `cudaExecutionCtxGetDevice`. Do not invent a
     second `cudaEventGetFlags`. Do not invent a second `cudaGraphGetId` /
-    `cudaGraphExecGetId`. Do not invent a second `cuGraphNodeGetLocalId`.
+    `cudaGraphExecGetId`.     Do not invent a second `cuGraphNodeGetLocalId`.
     Do not invent a second `cuGraphNodeGetToolsId`. Do not invent a second
+    `cuGraphNodeGetContainingGraph`. Do not invent a second
     `cuDeviceGetUuid` / `cudaDeviceGetUuid`. Do not invent a second
     `cuDeviceGetByUuid`. Do not invent a second `cudaDeviceGetPciBusId` /
     `cuDeviceGetPCIBusId`. Do not invent a second `cudaDeviceGetByPCIBusId`.
@@ -6088,6 +6098,14 @@ model, do not celebrate the sim.
     on GetAttribute (live exec definition GetAttribute stays). Do not use
     `as_exec_for_update` on GetAttribute (DeviceLaunch in-flight GetAttribute
     stays).
+    Do not invent a second `cuGraphNodeGetContainingGraph` /
+    `graph_node_get_containing_graph`. Do not invent Engine
+    `--graph-containing`. Do not invent a global `CUgraphNode` handle. Do not
+    return the nested child id for a ChildGraph node (that is
+    `graph_child_get_graph`). Do not walk parent indices into child or IF
+    bodies. Do not reverse `graph_child_get_graph`. Do not reverse live exec
+    GetContainingGraph. Do not reverse definition GetContainingGraph while an
+    exec is parked. Do not refuse GetContainingGraph of a live in-flight exec.
     Do not invent a second DeviceLaunch in-flight destroy-complete check or Engine
     `--device-launch-destroy`. Do not abort an in-flight DeviceLaunch when
     `destroy_graph` succeeds. Do not delay destroy of an idle exec. Do not invent
@@ -6499,6 +6517,14 @@ model, do not celebrate the sim.
     on GetAttribute (live exec definition GetAttribute stays). Do not use
     `as_exec_for_update` on GetAttribute (DeviceLaunch in-flight GetAttribute
     stays).
+    Do not invent a second `cuGraphNodeGetContainingGraph` /
+    `graph_node_get_containing_graph`. Do not invent Engine
+    `--graph-containing`. Do not invent a global `CUgraphNode` handle. Do not
+    return the nested child id for a ChildGraph node (that is
+    `graph_child_get_graph`). Do not walk parent indices into child or IF
+    bodies. Do not reverse `graph_child_get_graph`. Do not reverse live exec
+    GetContainingGraph. Do not reverse definition GetContainingGraph while an
+    exec is parked. Do not refuse GetContainingGraph of a live in-flight exec.
     Do not
     spend the next item on an OpenAI-compatible HTTP veneer.
 

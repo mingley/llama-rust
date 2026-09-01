@@ -1271,7 +1271,13 @@
 //! [`GraphDebugDotFlags::EXTRA_TOPO_INFO`] numbers existing edges;
 //! [`GraphDebugDotFlags::VERBOSE`] prints modeled params and ExtraTopoInfo). Destroyed slots are
 //! omitted. A parked in-flight-destroyed exec is `"unknown graph"` on
-//! GetLocalId plus GetToolsId; a live exec stays. Query; capture is legal. [`begin_capture_to_graph`](Sim::begin_capture_to_graph) is
+//! GetLocalId plus GetToolsId; a live exec stays. Query; capture is legal.
+//! [`graph_node_get_containing_graph`](Sim::graph_node_get_containing_graph) is
+//! `cuGraphNodeGetContainingGraph` (the graph that owns the node). A
+//! child-graph node still lives in the parent; the nested graph is
+//! [`graph_child_get_graph`](Sim::graph_child_get_graph). A parked
+//! in-flight-destroyed exec is `"unknown graph"`; a live exec stays. Query;
+//! capture is legal. [`begin_capture_to_graph`](Sim::begin_capture_to_graph) is
 //! `cudaStreamBeginCaptureToGraph`: append captured nodes onto an existing
 //! uninstantiated graph; capture roots additionally depend on the given node
 //! indices (empty means extra roots). A parked in-flight-destroyed exec is
@@ -5957,6 +5963,41 @@ mod tests {
         let _end = sim.end_capture().unwrap();
         sim.synchronize().unwrap();
         match sim.graph_kernel_node_get_priority(exec, 0).unwrap_err() {
+            SimError::Invalid { why } => assert!(why.contains("unknown"), "{why}"),
+            other => panic!("{other:?}"),
+        }
+        sim.destroy_graph(g).unwrap();
+        sim.destroy_graph(_end).unwrap();
+    }
+
+    #[test]
+    fn parked_exec_get_containing_graph_is_unknown() {
+        let mut sim = Sim::new(h100());
+        let d = DeviceId(0);
+        let s = StreamId(0);
+        let a = sim.malloc(d, 4096).unwrap();
+        let g = sim.create_graph(d, s).unwrap();
+        sim.graph_add_kernel(g, KernelKind::other(1 << 40, 4096), &[a], &[a])
+            .unwrap();
+        let exec = sim.instantiate_graph(g).unwrap();
+        assert_eq!(sim.graph_node_get_containing_graph(exec, 0).unwrap(), exec);
+        let launched = sim.launch_graph(exec, s).unwrap();
+        assert!(launched > 0);
+        let _in_flight = sim.graph_node_get_containing_graph(exec, 0).unwrap();
+        sim.destroy_graph(exec).unwrap();
+        match sim.graph_node_get_containing_graph(exec, 0).unwrap_err() {
+            SimError::Invalid { why } => assert!(why.contains("unknown"), "{why}"),
+            other => panic!("{other:?}"),
+        }
+        assert_eq!(sim.graph_node_get_containing_graph(g, 0).unwrap(), g);
+        sim.begin_capture(d, StreamId(1)).unwrap();
+        match sim.graph_node_get_containing_graph(exec, 0).unwrap_err() {
+            SimError::Invalid { why } => assert!(why.contains("unknown"), "{why}"),
+            other => panic!("{other:?}"),
+        }
+        let _end = sim.end_capture().unwrap();
+        sim.synchronize().unwrap();
+        match sim.graph_node_get_containing_graph(exec, 0).unwrap_err() {
             SimError::Invalid { why } => assert!(why.contains("unknown"), "{why}"),
             other => panic!("{other:?}"),
         }
@@ -15880,6 +15921,48 @@ mod tests {
             other => panic!("{other:?}"),
         }
         assert_eq!(sim.graph_node_get_tools_id(g, 1).unwrap(), t1);
+    }
+
+    #[test]
+    fn graph_node_get_containing_graph_returns_owner() {
+        let mut sim = Sim::new(h100());
+        let d = DeviceId(0);
+        let s = StreamId(0);
+        let a = sim.malloc(d, 4096).unwrap();
+        let g = sim.create_graph(d, s).unwrap();
+        sim.graph_add_kernel(g, KernelKind::other(8, 8), &[a], &[a])
+            .unwrap();
+        assert_eq!(sim.graph_node_get_containing_graph(g, 0).unwrap(), g);
+        let child = sim.create_graph(d, s).unwrap();
+        sim.graph_add_kernel(child, KernelKind::other(8, 8), &[a], &[a])
+            .unwrap();
+        sim.graph_add_child(g, child).unwrap();
+        assert_eq!(
+            sim.graph_node_get_containing_graph(child, 0).unwrap(),
+            child
+        );
+        assert_eq!(sim.graph_node_get_containing_graph(g, 1).unwrap(), g);
+        assert_eq!(sim.graph_child_get_graph(g, 1).unwrap(), child);
+        let exec = sim.instantiate_graph(g).unwrap();
+        assert_eq!(sim.graph_node_get_containing_graph(exec, 0).unwrap(), exec);
+        assert_ne!(sim.graph_node_get_containing_graph(exec, 0).unwrap(), g);
+        sim.begin_capture(d, s).unwrap();
+        assert_eq!(sim.graph_node_get_containing_graph(g, 0).unwrap(), g);
+        let _end = sim.end_capture().unwrap();
+        match sim.graph_node_get_containing_graph(GraphId(99), 0) {
+            Err(SimError::Invalid { why }) => assert!(why.contains("unknown graph"), "{why}"),
+            other => panic!("{other:?}"),
+        }
+        match sim.graph_node_get_containing_graph(g, 9) {
+            Err(SimError::Invalid { why }) => assert!(why.contains("unknown graph node"), "{why}"),
+            other => panic!("{other:?}"),
+        }
+        sim.graph_destroy_node(g, 0).unwrap();
+        match sim.graph_node_get_containing_graph(g, 0) {
+            Err(SimError::Invalid { why }) => assert!(why.contains("unknown graph node"), "{why}"),
+            other => panic!("{other:?}"),
+        }
+        assert_eq!(sim.graph_node_get_containing_graph(g, 1).unwrap(), g);
     }
 
     #[test]

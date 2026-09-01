@@ -121,6 +121,7 @@ warp scheduler, L1, …   ← do not model
 | `cudaGraphGetId` (`graph_get_id`) | unique id matching debug-dot HANDLES; exec/clone differ |
 | `cuGraphNodeGetLocalId` (`graph_node_get_local_id`) | live node id matching debug-dot `n0`; parked exec is unknown |
 | `cuGraphNodeGetToolsId` (`graph_node_get_tools_id`) | unique tools id; parked exec is unknown |
+| `cuGraphNodeGetContainingGraph` (`graph_node_get_containing_graph`) | owning graph; child-graph node stays parent; parked exec is unknown |
 | `cudaGraphDebugDotFlagsRuntimeTypes` | runtime `cudaGraphNodeType*` names; flags `0` stays Debug |
 | `cudaGraphDebugDotFlagsExtraTopoInfo` | numbers existing edges; launch-completion dumps `from_port=2` |
 | `cudaGraphChildGraphNodeGetGraph` / `EventRecordNodeGetEvent` / `WaitNodeGetEvent` / `MemAllocNodeGetParams` | query |
@@ -501,7 +502,7 @@ stays `"graph instantiated"`. Capture-to-graph of the definition stays.
 `NodeGetDependentNodes` plus `cudaGraphDebugDotPrint` / `cudaGraphGetId` / `cuGraphNodeGetLocalId` plus `cuGraphNodeGetToolsId` (live nodes; flags `0`
 is kinds and edges; `GraphDebugDotFlags::RUNTIME_TYPES` prints
 `cudaGraphNodeType*` names; `GraphDebugDotFlags::EXTRA_TOPO_INFO` numbers
-existing edges; `GraphDebugDotFlags::VERBOSE` prints modeled params and ExtraTopoInfo). A parked in-flight-destroyed exec is `"unknown graph"` on GetLocalId plus GetToolsId; a live exec stays. Host-sync
+existing edges; `GraphDebugDotFlags::VERBOSE` prints modeled params and ExtraTopoInfo). A parked in-flight-destroyed exec is `"unknown graph"` on GetLocalId plus GetToolsId; a live exec stays. `graph_node_get_containing_graph` is `cuGraphNodeGetContainingGraph` (the graph that owns the node). A child-graph node still lives in the parent; the nested graph is `graph_child_get_graph`. A parked in-flight-destroyed exec is `"unknown graph"`; a live exec stays. Host-sync
 `malloc` / `free_sync` / `memcpy_sync` / `synchronize_device` / VMM / mempool
 create cannot be captured. A graph that allocates without a matching free
 reuses the pointer on later launches (no second HBM charge) unless
