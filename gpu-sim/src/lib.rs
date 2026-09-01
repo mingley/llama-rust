@@ -23356,11 +23356,10 @@ mod tests {
         assert_eq!(listed[0].0, 0);
         assert_eq!(listed[0].1, h2);
         assert_ne!(listed[0].2, listed[0].3);
+        assert_ne!(listed[0].2, then2);
+        assert_eq!(sim.graph_if_nodes(g2).unwrap(), vec![(0, h2, listed[0].2)]);
         sim.begin_capture(d, s).unwrap();
-        assert_eq!(
-            sim.graph_if_else_nodes(g2).unwrap(),
-            vec![(0, h2, then2, else2)]
-        );
+        assert_eq!(sim.graph_if_else_nodes(g2).unwrap(), listed);
         let _end = sim.end_capture().unwrap();
         match sim.graph_if_else_nodes(GraphId(99)) {
             Err(SimError::Invalid { why }) => assert!(why.contains("unknown graph"), "{why}"),
