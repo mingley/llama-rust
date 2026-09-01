@@ -17983,13 +17983,28 @@ impl Sim {
     /// OpenGL interop is not modeled.
     ///
     /// Always Invalid `"gl image"` (no graphics-resource handles). Distinct
-    /// from [`Self::graphics_gl_register_buffer`] and from
-    /// [`Self::graphics_map_resources`]. Unknown devices are Invalid
-    /// `"device not in profile"`. Query; legal during capture. This VM does
-    /// not invent `cuGraphicsEGLRegisterImage` this slice.
+    /// from [`Self::graphics_gl_register_buffer`], from
+    /// [`Self::graphics_map_resources`], and from
+    /// [`Self::graphics_egl_register_image`]. Unknown devices are Invalid
+    /// `"device not in profile"`. Query; legal during capture.
     pub fn graphics_gl_register_image(&self, device: DeviceId) -> Result<(), SimError> {
         let _gpu = self.profile.gpu(device)?;
         Err(SimError::Invalid { why: "gl image" })
+    }
+
+    /// `cuGraphicsEGLRegisterImage` plus `cudaGraphicsEGLRegisterImage`.
+    /// EGL interop is not modeled.
+    ///
+    /// Always Invalid `"egl register"` (no graphics-resource handles). Distinct
+    /// from [`Self::graphics_gl_register_image`] (why is not a superstring of
+    /// `"gl image"`) and from [`Self::egl_stream_consumer_connect`]. Unknown
+    /// devices are Invalid `"device not in profile"`. Query; legal during
+    /// capture.
+    pub fn graphics_egl_register_image(&self, device: DeviceId) -> Result<(), SimError> {
+        let _gpu = self.profile.gpu(device)?;
+        Err(SimError::Invalid {
+            why: "egl register",
+        })
     }
 
     /// `cuEGLStreamConsumerConnect` plus `cudaEGLStreamConsumerConnect`.

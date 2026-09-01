@@ -185,6 +185,7 @@ warp scheduler, L1, …   ← do not model
 | `graphics_resource_set_map_flags` is Invalid (no graphics-resource handles) | `cuGraphicsResourceSetMapFlags` |
 | `graphics_gl_register_buffer` is Invalid (OpenGL interop is not modeled) | `cuGraphicsGLRegisterBuffer` |
 | `graphics_gl_register_image` is Invalid (OpenGL interop is not modeled) | `cuGraphicsGLRegisterImage` |
+| `graphics_egl_register_image` is Invalid (EGL interop is not modeled) | `cuGraphicsEGLRegisterImage` |
 | `egl_stream_consumer_connect` is Invalid (EGL streams are not modeled) | `cuEGLStreamConsumerConnect` |
 | `egl_stream_consumer_disconnect` is Invalid (EGL streams are not modeled) | `cuEGLStreamConsumerDisconnect` |
 | `egl_stream_consumer_acquire_frame` is Invalid (EGL streams are not modeled) | `cuEGLStreamConsumerAcquireFrame` |
@@ -1128,6 +1129,9 @@ Invalid `"gl buffer"`). Distinct from `graphics_map_resources` and
 `graphics_gl_register_image` is `cuGraphicsGLRegisterImage` (always
 Invalid `"gl image"`). Distinct from `graphics_gl_register_buffer`. Query;
 legal during capture. No Engine `--gl-register-image`.
+`graphics_egl_register_image` is `cuGraphicsEGLRegisterImage` (always
+Invalid `"egl register"`). Distinct from `graphics_gl_register_image`. Query;
+legal during capture. No Engine `--egl-register`.
 `egl_stream_consumer_connect` is `cuEGLStreamConsumerConnect` (always
 Invalid `"egl stream"`). Distinct from `graphics_map_resources`. Query;
 legal during capture. No Engine `--egl-stream`.

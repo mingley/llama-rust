@@ -5,6 +5,15 @@ Visible five-turn extract: [docs/chatgpt-share-6a920fe1.md](docs/chatgpt-share-6
 Complete share-API extract: [docs/chatgpt-share-6a920fe1/](docs/chatgpt-share-6a920fe1/).
 Work lands on `main`. No PRs.
 
+## Shipped 2026-09-01 — CUDA `cuGraphicsEGLRegisterImage`
+
+`gpu-sim` `Sim::graphics_egl_register_image` is
+`cuGraphicsEGLRegisterImage`. Always Invalid `"egl register"` because EGL
+interop is not modeled. Query; legal during capture. Distinct from
+`graphics_gl_register_image` (why is not a superstring of `"gl image"`).
+This VM does not invent an EGL `CUarray` or Engine `--egl-register`.
+`gpu-profile capture` is still refused. Dual score still has no `$/M tokens`.
+
 ## Shipped 2026-09-01 — CUDA `cuMipmappedArrayGetMemoryRequirements`
 
 `gpu-sim` `Sim::mipmapped_array_get_memory_requirements` is

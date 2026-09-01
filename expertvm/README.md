@@ -605,6 +605,8 @@ handles; no Engine flag).
 (Invalid; OpenGL interop is not modeled; no Engine flag).
 `gpu-sim` `graphics_gl_register_image` is `cuGraphicsGLRegisterImage`
 (Invalid; OpenGL interop is not modeled; no Engine flag).
+`gpu-sim` `graphics_egl_register_image` is `cuGraphicsEGLRegisterImage`
+(Invalid; EGL interop is not modeled; no Engine flag).
 `gpu-sim` `egl_stream_consumer_connect` is `cuEGLStreamConsumerConnect`
 (Invalid; EGL streams are not modeled; no Engine flag).
 `gpu-sim` `egl_stream_consumer_disconnect` is

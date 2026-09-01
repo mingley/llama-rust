@@ -630,6 +630,9 @@
 //! [`graphics_gl_register_image`](Sim::graphics_gl_register_image) is
 //! `cuGraphicsGLRegisterImage` (always Invalid `"gl image"`). Query;
 //! legal during capture. No Engine `--gl-register-image`.
+//! [`graphics_egl_register_image`](Sim::graphics_egl_register_image) is
+//! `cuGraphicsEGLRegisterImage` (always Invalid `"egl register"`). Query;
+//! legal during capture. No Engine `--egl-register`.
 //! [`egl_stream_consumer_connect`](Sim::egl_stream_consumer_connect) is
 //! `cuEGLStreamConsumerConnect` (always Invalid `"egl stream"`). Query;
 //! legal during capture. No Engine `--egl-stream`.
@@ -22290,6 +22293,53 @@ mod tests {
         match sim.graphics_map_resources(d, StreamId(0)) {
             Err(SimError::Invalid { why }) => {
                 assert!(why.contains("graphics resource"), "{why}");
+            }
+            other => panic!("{other:?}"),
+        }
+        match sim.graphics_egl_register_image(d) {
+            Err(SimError::Invalid { why }) => {
+                assert!(why.contains("egl register"), "{why}");
+                assert!(!why.contains("gl image"), "{why}");
+            }
+            other => panic!("{other:?}"),
+        }
+    }
+
+    #[test]
+    fn graphics_egl_register_image_is_unsupported() {
+        let mut sim = Sim::new(h100());
+        let d = DeviceId(0);
+        match sim.graphics_egl_register_image(d) {
+            Err(SimError::Invalid { why }) => {
+                assert!(why.contains("egl register"), "{why}");
+                assert!(!why.contains("gl image"), "{why}");
+                assert!(!why.contains("egl stream"), "{why}");
+            }
+            other => panic!("{other:?}"),
+        }
+        sim.begin_capture(d, StreamId(0)).unwrap();
+        match sim.graphics_egl_register_image(d) {
+            Err(SimError::Invalid { why }) => {
+                assert!(why.contains("egl register"), "{why}");
+            }
+            other => panic!("{other:?}"),
+        }
+        let _g = sim.end_capture().unwrap();
+        match sim.graphics_egl_register_image(DeviceId(99)) {
+            Err(SimError::Invalid { why }) => {
+                assert!(why.contains("device not in profile"), "{why}");
+            }
+            other => panic!("{other:?}"),
+        }
+        match sim.graphics_gl_register_image(d) {
+            Err(SimError::Invalid { why }) => {
+                assert!(why.contains("gl image"), "{why}");
+            }
+            other => panic!("{other:?}"),
+        }
+        match sim.egl_stream_consumer_connect(d) {
+            Err(SimError::Invalid { why }) => {
+                assert!(why.contains("egl stream"), "{why}");
             }
             other => panic!("{other:?}"),
         }
