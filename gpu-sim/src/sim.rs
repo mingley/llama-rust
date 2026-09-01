@@ -6975,25 +6975,35 @@ impl Sim {
     /// nodes). Unused reserved bytes stay charged until [`Self::graph_mem_trim`].
     /// Destroying an exec does not; a later [`Self::launch_graph`] of that exec
     /// is unknown, but the definition (and other execs) stay. Clones are
-    /// independent.
+    /// independent. Destroying a parent also destroys graphs that were moved
+    /// into it (`CU_GRAPH_CHILD_GRAPH_OWNERSHIP_MOVE`), including when this id
+    /// is an exec (child ids are mapped back to their definitions).
     pub fn destroy_graph(&mut self, graph: GraphId) -> Result<(), SimError> {
         self.fail_if_capturing("cannot capture graph destroy")?;
         self.require_not_moved(graph)?;
         let g = self.graphs.remove(&graph).ok_or(SimError::Invalid {
             why: "unknown graph",
         })?;
-        let moved_kids: Vec<GraphId> = g
-            .steps
-            .iter()
-            .filter_map(|s| match &s.kind {
-                Kind::ChildGraph { graph, ownership }
-                    if *ownership == GraphChildGraphOwnership::MOVE =>
-                {
-                    Some(*graph)
+        let mut moved_kids = Vec::new();
+        let mut seen = BTreeSet::new();
+        for s in &g.steps {
+            if let Kind::ChildGraph {
+                graph: child,
+                ownership,
+            } = &s.kind
+            {
+                if *ownership != GraphChildGraphOwnership::MOVE {
+                    continue;
                 }
-                _ => None,
-            })
-            .collect();
+                let def = self.def_id(*child);
+                if seen.insert(def) {
+                    moved_kids.push(def);
+                }
+                if *child != def && seen.insert(*child) {
+                    moved_kids.push(*child);
+                }
+            }
+        }
         let device = g.origin.0;
         let _gpu = self.profile.gpu(device)?;
         if g.instantiated {
@@ -7015,10 +7025,16 @@ impl Sim {
         let _src = self.clone_of.remove(&graph);
         self.clock = self.clock.saturating_add(1);
         for kid in moved_kids {
+            let src = self.graphs.get(&kid).and_then(|c| c.src);
             if let Some(c) = self.graphs.get_mut(&kid) {
                 c.moved_to = None;
             } else {
                 continue;
+            }
+            if let Some(src) = src {
+                if let Some(d) = self.graphs.get_mut(&src) {
+                    d.moved_to = None;
+                }
             }
             self.destroy_graph(kid)?;
         }

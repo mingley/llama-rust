@@ -12,7 +12,8 @@ MOVE an uninstantiated `cudaGraphClone` of each GraphBank leaf. CUDA clone
 ownership cannot name a child with mem alloc/free. `clone_graph` of an
 instantiated exec forks the definition's mem ids. Parent
 `AutoFreeOnLaunch` is inherited by MOVE children so auto-free combo
-scratch still frees. Kernel-only combos stay typed `graph_add_child`
+scratch still frees. Destroying a parent exec destroys those moved
+child definitions. Kernel-only combos stay typed `graph_add_child`
 (clone). `gpu-profile capture` is still refused. Dual score still has no
 `$/M tokens`.
 

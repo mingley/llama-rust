@@ -11230,6 +11230,11 @@ mod tests {
         let n = sim.launch_graph(exec, s).unwrap();
         assert_eq!(n, 2);
         sim.synchronize().unwrap();
+        sim.destroy_graph(exec).unwrap();
+        match sim.destroy_graph(child) {
+            Err(SimError::Invalid { why }) => assert!(why.contains("unknown graph"), "{why}"),
+            other => panic!("{other:?}"),
+        }
     }
 
     #[test]
