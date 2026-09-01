@@ -590,6 +590,9 @@
 //! [`graphics_map_resources`](Sim::graphics_map_resources) is
 //! `cuGraphicsMapResources` (always Invalid `"graphics resource"`). Query;
 //! legal during capture. No Engine `--graphics-map`.
+//! [`egl_stream_consumer_connect`](Sim::egl_stream_consumer_connect) is
+//! `cuEGLStreamConsumerConnect` (always Invalid `"egl stream"`). Query;
+//! legal during capture. No Engine `--egl-stream`.
 //! [`DeviceAttr::HostMemoryPoolsSupported`] is always 0 (pools are
 //! device-only; host location is Invalid).
 //! [`DeviceAttr::IsMultiGpuBoard`] / [`MultiGpuBoardGroupID`](DeviceAttr::MultiGpuBoardGroupID)
@@ -21322,6 +21325,38 @@ mod tests {
         match sim.import_external_memory(d) {
             Err(SimError::Invalid { why }) => {
                 assert!(why.contains("external memory"), "{why}");
+            }
+            other => panic!("{other:?}"),
+        }
+    }
+
+    #[test]
+    fn egl_stream_consumer_connect_is_unsupported() {
+        let mut sim = Sim::new(h100());
+        let d = DeviceId(0);
+        match sim.egl_stream_consumer_connect(d) {
+            Err(SimError::Invalid { why }) => {
+                assert!(why.contains("egl stream"), "{why}");
+            }
+            other => panic!("{other:?}"),
+        }
+        sim.begin_capture(d, StreamId(0)).unwrap();
+        match sim.egl_stream_consumer_connect(d) {
+            Err(SimError::Invalid { why }) => {
+                assert!(why.contains("egl stream"), "{why}");
+            }
+            other => panic!("{other:?}"),
+        }
+        let _g = sim.end_capture().unwrap();
+        match sim.egl_stream_consumer_connect(DeviceId(99)) {
+            Err(SimError::Invalid { why }) => {
+                assert!(why.contains("device not in profile"), "{why}");
+            }
+            other => panic!("{other:?}"),
+        }
+        match sim.graphics_map_resources(d, StreamId(0)) {
+            Err(SimError::Invalid { why }) => {
+                assert!(why.contains("graphics resource"), "{why}");
             }
             other => panic!("{other:?}"),
         }

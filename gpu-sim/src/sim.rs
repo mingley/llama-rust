@@ -17677,6 +17677,17 @@ impl Sim {
         })
     }
 
+    /// `cuEGLStreamConsumerConnect` / `cudaEGLStreamConsumerConnect`.
+    ///
+    /// Always Invalid `"egl stream"` (EGL streams are not modeled). Distinct
+    /// from [`Self::graphics_map_resources`]. Unknown devices are Invalid
+    /// `"device not in profile"`. Query; legal during capture. This VM does
+    /// not invent `cuEGLStreamProducerConnect` this slice.
+    pub fn egl_stream_consumer_connect(&self, device: DeviceId) -> Result<(), SimError> {
+        let _gpu = self.profile.gpu(device)?;
+        Err(SimError::Invalid { why: "egl stream" })
+    }
+
     /// `cudaMemcpy3DWithAttributesAsync`.
     ///
     /// [`MemcpySrcAccessOrder::Stream`] is [`Self::memcpy_3d_async`].
