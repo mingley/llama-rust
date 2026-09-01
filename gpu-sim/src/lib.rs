@@ -964,6 +964,9 @@
 //! `cuCtxGetStreamPriorityRange` for that same primary context (same as
 //! [`device_get_stream_priority_range`](Sim::device_get_stream_priority_range);
 //! example H100 is `(0, -5)`). Query; legal during capture. No Engine `--ctx-priority-range`.
+//! [`ctx_get_limit`](Sim::ctx_get_limit) is `cuCtxGetLimit` for that same
+//! primary context (same as [`get_limit`](Sim::get_limit) for a
+//! [`DeviceLimit`]). Query; legal during capture. No Engine `--ctx-get-limit`.
 //! `expertvm sim --device-sync-memops` sets [`DeviceFlags::SYNC_MEMOPS`].
 //! `expertvm sim --device-sync-policy blocking` sets
 //! [`DeviceFlags::SCHEDULE_BLOCKING_SYNC`].
@@ -20794,6 +20797,49 @@ mod tests {
             tight.ctx_get_stream_priority_range(DeviceId(0)).unwrap(),
             (0, -1)
         );
+    }
+
+    #[test]
+    fn ctx_get_limit_matches_device_get_limit() {
+        let mut sim = Sim::new(h100());
+        let d = DeviceId(0);
+        assert_eq!(
+            sim.ctx_get_limit(d, DeviceLimit::StackSize).unwrap(),
+            sim.get_limit(d, DeviceLimit::StackSize).unwrap()
+        );
+        assert_eq!(sim.ctx_get_limit(d, DeviceLimit::StackSize).unwrap(), 1024);
+        assert_eq!(
+            sim.ctx_get_limit(d, DeviceLimit::DevRuntimePendingLaunchCount)
+                .unwrap(),
+            2048
+        );
+        assert_eq!(
+            sim.ctx_get_limit(d, DeviceLimit::PersistingL2CacheSize)
+                .unwrap(),
+            0
+        );
+        sim.set_limit(d, DeviceLimit::StackSize, 4096).unwrap();
+        assert_eq!(sim.ctx_get_limit(d, DeviceLimit::StackSize).unwrap(), 4096);
+        sim.begin_capture(d, StreamId(0)).unwrap();
+        assert_eq!(sim.ctx_get_limit(d, DeviceLimit::StackSize).unwrap(), 4096);
+        let _g = sim.end_capture().unwrap();
+        match sim.ctx_get_limit(DeviceId(99), DeviceLimit::StackSize) {
+            Err(SimError::Invalid { why }) => {
+                assert!(why.contains("device not in profile"), "{why}");
+            }
+            other => panic!("{other:?}"),
+        }
+        let eight = Sim::new(HardwareProfile::example_8xh100_nvlink());
+        assert_eq!(
+            eight
+                .ctx_get_limit(DeviceId(1), DeviceLimit::PrintfFifoSize)
+                .unwrap(),
+            eight
+                .get_limit(DeviceId(1), DeviceLimit::PrintfFifoSize)
+                .unwrap()
+        );
+        sim.reset_device(d).unwrap();
+        assert_eq!(sim.ctx_get_limit(d, DeviceLimit::StackSize).unwrap(), 1024);
     }
 
     #[test]

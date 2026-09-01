@@ -184,6 +184,7 @@ warp scheduler, L1, …   ← do not model
 | `ctx_get_flags` wraps `get_device_flags` for that primary context | `cuCtxGetFlags` |
 | `ctx_get_cache_config` wraps `get_cache_config` for that primary context | `cuCtxGetCacheConfig` |
 | `ctx_get_stream_priority_range` wraps `device_get_stream_priority_range` (H100 `(0, -5)`) | `cuCtxGetStreamPriorityRange` |
+| `ctx_get_limit` wraps `get_limit` for a `DeviceLimit` | `cuCtxGetLimit` |
 | access-policy windows align to `cudaLimitMaxL2FetchGranularity` (default 128; `expertvm sim --l2-fetch N` sets 32/64/128) | exact |
 | `AccessPolicyWindow.hit_ratio_permille` is CUDA `hitRatio` (`expertvm sim --l2-ratio N`; unset 1000) | exact |
 | `AccessPolicyWindow.hit` Streaming skips persist fill (`expertvm sim --l2-streaming`; needs persist) | exact |
@@ -1136,6 +1137,8 @@ context (same as `get_cache_config`; distinct from `get_func_cache_config`).
 `ctx_get_stream_priority_range` is `cuCtxGetStreamPriorityRange` for that
 same primary context (same as `device_get_stream_priority_range`; example
 H100 is `(0, -5)`).
+`ctx_get_limit` is `cuCtxGetLimit` for that same primary context (same as
+`get_limit` for a `DeviceLimit`).
 `green_ctx_get_id` is
 `cuGreenCtxGetId` / `cudaExecutionCtxGetId` (unique per live green ctx;
 not `GreenCtxId`).

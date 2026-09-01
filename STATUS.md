@@ -5,6 +5,14 @@ Visible five-turn extract: [docs/chatgpt-share-6a920fe1.md](docs/chatgpt-share-6
 Complete share-API extract: [docs/chatgpt-share-6a920fe1/](docs/chatgpt-share-6a920fe1/).
 Work lands on `main`. No PRs.
 
+## Shipped 2026-09-01 — CUDA `cuCtxGetLimit`
+
+`gpu-sim` `Sim::ctx_get_limit` is `cuCtxGetLimit` for the seeded
+primary context of an explicit device. Same as `get_limit` for a
+`DeviceLimit`. Query; legal during capture. Distinct from `get_limit`
+(runtime). This VM does not invent `cuCtxSetLimit` or Engine `--ctx-get-limit`.
+`gpu-profile capture` is still refused. Dual score still has no `$/M tokens`.
+
 ## Shipped 2026-09-01 — CUDA `cuCtxGetStreamPriorityRange`
 
 `gpu-sim` `Sim::ctx_get_stream_priority_range` is

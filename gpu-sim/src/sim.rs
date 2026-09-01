@@ -18558,6 +18558,19 @@ impl Sim {
         self.device_get_stream_priority_range(device)
     }
 
+    /// `cuCtxGetLimit` for the seeded primary context of `device`.
+    ///
+    /// Query; legal during capture. There is no TLS current device and no
+    /// `CUcontext` object. Matches [`Self::get_limit`] (`cudaDeviceGetLimit`)
+    /// for the same [`DeviceLimit`]. Distinct from
+    /// [`Self::ctx_get_stream_priority_range`] and from
+    /// [`Self::get_limit`] (runtime). Unknown devices are Invalid
+    /// `"device not in profile"`. This VM does not invent `cuCtxSetLimit`
+    /// this slice (`set_limit` stays the runtime setter).
+    pub fn ctx_get_limit(&self, device: DeviceId, limit: DeviceLimit) -> Result<u64, SimError> {
+        self.get_limit(device, limit)
+    }
+
     /// `cudaInitDevice(device, 0, 0)`. Ensures the primary context (already
     /// seeded at construct). Does not make a thread-current device and does
     /// not change [`Self::get_device_flags`]. Host-synchronous 1 ns. Capture
