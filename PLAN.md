@@ -5516,7 +5516,19 @@ model, do not celebrate the sim.
     ParametersChanged. `gpu-profile capture` is still refused. Dual score
     still has no `$/M tokens`.
 
-513. [ ] Next numbered PLAN item after 512 is the next `gpu-sim` / Engine /
+513. [x] `gpu-sim` CUDA `cudaGraphExecMemsetNodeSetParams` of a 2D/3D
+    node may change address only ([`graph_exec_memset_set_params`]):
+    width, height, pitch, depth, ysize, plus elementSize stay (Invalid
+    `"memset dims"`). 1D nodes may change dimensions.
+    [`graph_exec_node_set_params`] of [`GraphNodeParams::Memset`] uses the
+    same check. Extra [`graph_exec_memset_set_params_2d`] plus
+    [`graph_exec_memset_set_params_3d`] stay legal (PLAN 507). Definition
+    [`graph_memset_set_params`] still accepts geometry changes. This VM
+    does not invent Engine `--graph-memset-dims` or 1D memset work-resource
+    mapping failures. `gpu-profile capture` is still refused. Dual score
+    still has no `$/M tokens`.
+
+514. [ ] Next numbered PLAN item after 513 is the next `gpu-sim` / Engine /
     serve / expertvm mechanical API that is still missing, or the next official
     decode family. Prefer remaining CUDA-shaped twins over more
     OpenAI HTTP veneer. Do not invent F32 `output.scale`. Do not invent a
@@ -5899,6 +5911,12 @@ model, do not celebrate the sim.
     `--graph-memcpy-1d`. Do not invent CUDA-named
     `cudaGraphExecMemcpyNodeSetParams2D`. Do not invent ExecUpdate 2D
     memcpy geometry as ParametersChanged.
+    Do not invent a second CUDA-named `graph_exec_memset_set_params` that
+    changes 2D/3D dimensions (CUDA ExecMemset SetParams freezes geometry).
+    Do not reverse extra `graph_exec_memset_set_params_2d` plus
+    `graph_exec_memset_set_params_3d` helpers. Do not invent Engine
+    `--graph-memset-dims`. Do not invent CUDA-named
+    `cudaGraphExecMemsetNodeSetParams2D`.
     Do not
     spend the next item on an OpenAI-compatible HTTP veneer.
 

@@ -1041,7 +1041,8 @@
 //! [`graph_exec_memset_set_params`](Sim::graph_exec_memset_set_params) /
 //! [`graph_exec_memset_set_params_2d`](Sim::graph_exec_memset_set_params_2d) /
 //! [`graph_exec_memset_set_params_3d`](Sim::graph_exec_memset_set_params_3d)
-//! are `cudaGraphExecMemsetNodeSetParams` / 2D / 3D helpers (same cost;
+//! are CUDA `cudaGraphExecMemsetNodeSetParams` (2D/3D address only; Invalid
+//! `"memset dims"` for geometry) plus extra 2D and 3D helpers (same cost;
 //! zero-byte still illegal; 2D requires [`MemsetOp::is_2d`]; 3D requires
 //! [`MemsetOp::is_3d`]).
 //! [`graph_unique_memset`](Sim::graph_unique_memset) /
@@ -1149,9 +1150,9 @@
 //! [`graph_node_set_params`](Sim::graph_node_set_params) /
 //! [`graph_exec_node_set_params`](Sim::graph_exec_node_set_params) are
 //! `cudaGraphNodeSetParams` / `cudaGraphExecNodeSetParams` (dispatch to the
-//! typed SetParams; exec memcpy is 1D-only; Alloc would resize HBM; Empty has
-//! no params; If, IfElse, While, plus Switch retarget the handle, not type or
-//! bodies).
+//! typed SetParams; exec memcpy is 1D-only; exec memset 2D/3D address only;
+//! Alloc would resize HBM; Empty has no params; If, IfElse, While, plus Switch
+//! retarget the handle, not type or bodies).
 //! [`graph_node_get_params`](Sim::graph_node_get_params) /
 //! [`graph_exec_node_get_params`](Sim::graph_exec_node_get_params) are
 //! `cudaGraphNodeGetParams` on the definition / exec snapshot (query; Empty
@@ -3789,6 +3790,65 @@ mod tests {
             Err(SimError::Invalid { why }) => assert!(why.contains("not unique"), "{why}"),
             other => panic!("{other:?}"),
         }
+    }
+
+    #[test]
+    fn graph_exec_memset_set_params_rejects_2d_dimension_change() {
+        let mut sim = Sim::new(h100());
+        let d = DeviceId(0);
+        let s = StreamId(0);
+        let (a, pitch) = sim.malloc_pitch(d, 256, 8).unwrap();
+        let (b, pitch_b) = sim.malloc_pitch(d, 256, 8).unwrap();
+        assert_eq!(pitch, pitch_b);
+        let op = MemsetOp {
+            id: a,
+            bytes: 256,
+            height: 8,
+            pitch,
+            ..MemsetOp::default()
+        };
+        let g = sim.create_graph(d, s).unwrap();
+        sim.graph_add_memset_2d(g, op).unwrap();
+        let exec = sim.instantiate_graph(g).unwrap();
+        match sim.graph_exec_memset_set_params(exec, 0, MemsetOp { height: 4, ..op }) {
+            Err(SimError::Invalid { why }) => assert!(why.contains("memset dims"), "{why}"),
+            other => panic!("{other:?}"),
+        }
+        match sim.graph_exec_node_set_params(
+            exec,
+            0,
+            GraphNodeParams::Memset(MemsetNodeParams {
+                op: MemsetOp { height: 4, ..op },
+                ctx: None,
+            }),
+        ) {
+            Err(SimError::Invalid { why }) => assert!(why.contains("memset dims"), "{why}"),
+            other => panic!("{other:?}"),
+        }
+        sim.graph_exec_memset_set_params(exec, 0, MemsetOp { id: b, ..op })
+            .unwrap();
+        assert_eq!(sim.graph_exec_memset_get_params(exec, 0).unwrap().id, b);
+        sim.graph_exec_memset_set_params_2d(exec, 0, MemsetOp { height: 4, ..op })
+            .unwrap();
+        assert_eq!(sim.graph_exec_memset_get_params(exec, 0).unwrap().height, 4);
+        sim.graph_memset_set_params(g, 0, MemsetOp { height: 6, ..op })
+            .unwrap();
+        assert_eq!(sim.graph_memset_get_params(g, 0).unwrap().height, 6);
+        let one = sim.create_graph(d, s).unwrap();
+        sim.graph_add_memset(one, KernelBuf::whole(a)).unwrap();
+        let one_exec = sim.instantiate_graph(one).unwrap();
+        sim.graph_exec_memset_set_params(one_exec, 0, KernelBuf::span(a, 0, 2048))
+            .unwrap();
+        assert_eq!(
+            sim.graph_exec_memset_get_params(one_exec, 0).unwrap().bytes,
+            2048
+        );
+        sim.begin_capture(d, s).unwrap();
+        match sim.graph_exec_memset_set_params(exec, 0, MemsetOp { height: 8, ..op }) {
+            Err(SimError::Invalid { why }) => assert!(why.contains("capture"), "{why}"),
+            other => panic!("{other:?}"),
+        }
+        let _cap = sim.end_capture().unwrap();
     }
 
     #[test]

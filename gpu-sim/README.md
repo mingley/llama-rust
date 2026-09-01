@@ -435,7 +435,7 @@ Typed helpers stay (`graph_add_if`, `graph_add_if_else`, `graph_add_while`,
 `value` is a parameter).
 `graph_node_set_params` / `graph_exec_node_set_params` are
 `cudaGraphNodeSetParams` / `cudaGraphExecNodeSetParams` (typed SetParams;
-exec memcpy is 1D-only; Alloc would resize HBM; Empty has no params).
+exec memcpy is 1D-only; exec memset 2D/3D address only; Alloc would resize HBM; Empty has no params).
 `graph_node_get_params` / `graph_exec_node_get_params` are
 `cudaGraphNodeGetParams` on the definition / exec snapshot (query; Empty
 returns `GraphNodeParams::Empty`; Alloc is bytes plus accessDescs;
@@ -569,7 +569,8 @@ the launched/primary snapshot.
 `cudaGraphExecKernelNodeSetParams` / `cudaGraphExecMemcpyNodeSetParams`
 (1D-only: instantiated node and new `MemcpyOp` must be 1D) /
 `cudaGraphExecMemcpyNodeSetParams1D` (may convert 2D/3D) / extra 2D/3D
-helpers / `cudaGraphExecMemsetNodeSetParams` /
+helpers / `cudaGraphExecMemsetNodeSetParams` (2D/3D address only) plus extra
+memset 2D/3D helpers plus
 `cudaGraphExecBatchMemOpNodeSetParams`
 (`graph_set_params_ns`; mem nodes legal; pageable memcpy stays illegal;
 a `GpuOp::BatchMem` item list is a parameter; kernel SetParams keeps the

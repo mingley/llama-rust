@@ -4616,7 +4616,7 @@ impl Sim {
         node: usize,
         op: impl Into<MemsetOp>,
     ) -> Result<(), SimError> {
-        self.set_memset_op(graph, node, op.into(), false, GreenCtxPatch::Keep)
+        self.set_memset_op(graph, node, op.into(), false, GreenCtxPatch::Keep, false)
     }
 
     fn graph_memset_set_params_with_ctx(
@@ -4631,6 +4631,7 @@ impl Sim {
             params.op,
             false,
             GreenCtxPatch::Set(params.ctx),
+            false,
         )
     }
 
@@ -4927,7 +4928,9 @@ impl Sim {
     /// Invalid. [`GraphNodeParams::Empty`] has no params. If / IfElse / While
     /// plus Switch retarget the handle. Capture cannot include it.
     /// [`GraphNodeParams::Memcpy`] is 1-dimensional only (same as
-    /// [`Self::graph_exec_memcpy_set_params`]).
+    /// [`Self::graph_exec_memcpy_set_params`]). [`GraphNodeParams::Memset`] of
+    /// a 2D/3D node may change address only (same as
+    /// [`Self::graph_exec_memset_set_params`]).
     pub fn graph_exec_node_set_params(
         &mut self,
         exec: GraphId,
@@ -5376,20 +5379,21 @@ impl Sim {
 
     /// `cudaGraphExecMemsetNodeSetParams` on an instantiated exec.
     ///
-    /// Node `node` must already be a memset. Dest/span/pitch may change.
-    /// Zero-byte fills stay illegal. Pays `graph_set_params_ns` and clears the
-    /// upload flag. Capture cannot include it. Graphs with mem alloc/free nodes
-    /// are legal (unlike [`Self::update_graph`]). [`KernelBuf`] converts to a
-    /// packed 1D [`MemsetOp`]. [`Self::graph_exec_memset_set_params_2d`]
-    /// requires [`MemsetOp::is_2d`]. [`Self::graph_exec_memset_set_params_3d`]
-    /// requires [`MemsetOp::is_3d`].
+    /// Node `node` must already be a memset. 2D and 3D nodes may change
+    /// address only (Invalid `"memset dims"` for width, height, pitch, depth,
+    /// ysize, plus elementSize). 1D nodes may change dimensions. Zero-byte
+    /// fills stay illegal. Pays `graph_set_params_ns` and clears the upload
+    /// flag. Capture cannot include it. Graphs with mem alloc/free nodes are
+    /// legal (unlike [`Self::update_graph`]). [`KernelBuf`] converts to a
+    /// packed 1D [`MemsetOp`]. Extra [`Self::graph_exec_memset_set_params_2d`]
+    /// plus [`Self::graph_exec_memset_set_params_3d`] stay legal.
     pub fn graph_exec_memset_set_params(
         &mut self,
         exec: GraphId,
         node: usize,
         op: impl Into<MemsetOp>,
     ) -> Result<(), SimError> {
-        self.set_memset_op(exec, node, op.into(), true, GreenCtxPatch::Keep)
+        self.set_memset_op(exec, node, op.into(), true, GreenCtxPatch::Keep, true)
     }
 
     fn graph_exec_memset_set_params_with_ctx(
@@ -5398,7 +5402,14 @@ impl Sim {
         node: usize,
         params: &MemsetNodeParams,
     ) -> Result<(), SimError> {
-        self.set_memset_op(exec, node, params.op, true, GreenCtxPatch::Set(params.ctx))
+        self.set_memset_op(
+            exec,
+            node,
+            params.op,
+            true,
+            GreenCtxPatch::Set(params.ctx),
+            true,
+        )
     }
 
     fn set_memset_op(
@@ -5408,6 +5419,7 @@ impl Sim {
         op: MemsetOp,
         exec: bool,
         ctx: GreenCtxPatch,
+        cuda_named: bool,
     ) -> Result<(), SimError> {
         self.fail_if_capturing(if exec {
             "cannot capture memset set params"
@@ -5415,7 +5427,7 @@ impl Sim {
             "cannot capture memset node set params"
         })?;
         let target = if exec { self.as_exec(graph)? } else { graph };
-        let device = {
+        let (device, cur) = {
             let g = self.graphs.get(&target).ok_or(SimError::Invalid {
                 why: "unknown graph",
             })?;
@@ -5428,14 +5440,19 @@ impl Sim {
                     why: "unknown graph node",
                 })?)?
             };
-            if !matches!(step.kind, Kind::Memset(_)) {
-                return Err(SimError::Invalid {
-                    why: "not a memset node",
-                });
+            match &step.kind {
+                Kind::Memset(cur) => (step.device, *cur),
+                _ => {
+                    return Err(SimError::Invalid {
+                        why: "not a memset node",
+                    });
+                }
             }
-            step.device
         };
         let op = self.resolve_memset_op(op)?;
+        if exec && cuda_named && !memset_exec_update_eq(&cur, &op) {
+            return Err(SimError::Invalid { why: "memset dims" });
+        }
         if let GreenCtxPatch::Set(Some(c)) = ctx {
             self.require_live_green_ctx(c, device)?;
         }
@@ -5471,9 +5488,9 @@ impl Sim {
         }
     }
 
-    /// `cudaGraphExecMemsetNodeSetParams` whose [`MemsetOp`] is [`MemsetOp::is_2d`]
-    /// (`height > 1`, not 3D). Other extents Invalid `"memset2d height"`.
-    /// Typed [`Self::graph_exec_memset_set_params`] stays.
+    /// Extra helper whose [`MemsetOp`] is [`MemsetOp::is_2d`] (`height > 1`,
+    /// not 3D). Other extents Invalid `"memset2d height"`. CUDA-named
+    /// [`Self::graph_exec_memset_set_params`] freezes 2D geometry.
     pub fn graph_exec_memset_set_params_2d(
         &mut self,
         exec: GraphId,
@@ -5485,12 +5502,12 @@ impl Sim {
                 why: "memset2d height",
             });
         }
-        self.graph_exec_memset_set_params(exec, node, op)
+        self.set_memset_op(exec, node, op, true, GreenCtxPatch::Keep, false)
     }
 
-    /// `cudaGraphExecMemsetNodeSetParams` whose [`MemsetOp`] is [`MemsetOp::is_3d`]
-    /// (`depth > 1`). Other extents Invalid `"memset3d depth"`. Typed
-    /// [`Self::graph_exec_memset_set_params`] stays.
+    /// Extra helper whose [`MemsetOp`] is [`MemsetOp::is_3d`] (`depth > 1`).
+    /// Other extents Invalid `"memset3d depth"`. CUDA-named
+    /// [`Self::graph_exec_memset_set_params`] freezes 3D geometry.
     pub fn graph_exec_memset_set_params_3d(
         &mut self,
         exec: GraphId,
@@ -5502,7 +5519,7 @@ impl Sim {
                 why: "memset3d depth",
             });
         }
-        self.graph_exec_memset_set_params(exec, node, op)
+        self.set_memset_op(exec, node, op, true, GreenCtxPatch::Keep, false)
     }
 
     /// `cudaGraphExecHostNodeSetParams` on an instantiated exec.
@@ -24139,8 +24156,9 @@ fn op_eq(a: &Kind, b: &Kind) -> bool {
     }
 }
 
-/// `cudaGraphExecUpdate`: 2D and 3D memset nodes may change address only
-/// (fill value is not modeled). 1D nodes may change dimensions.
+/// `cudaGraphExecUpdate` plus CUDA-named `cudaGraphExecMemsetNodeSetParams`:
+/// 2D and 3D memset nodes may change address only (fill value is not
+/// modeled). 1D nodes may change dimensions.
 fn memset_exec_update_eq(a: &MemsetOp, b: &MemsetOp) -> bool {
     if a.is_2d() || b.is_2d() || a.is_3d() || b.is_3d() {
         a.bytes == b.bytes

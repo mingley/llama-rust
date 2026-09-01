@@ -5,6 +5,17 @@ Visible five-turn extract: [docs/chatgpt-share-6a920fe1.md](docs/chatgpt-share-6
 Complete share-API extract: [docs/chatgpt-share-6a920fe1/](docs/chatgpt-share-6a920fe1/).
 Work lands on `main`. No PRs.
 
+## Shipped 2026-09-01 — CUDA ExecMemset SetParams 2D/3D address-only
+
+`gpu-sim` CUDA `cudaGraphExecMemsetNodeSetParams` of a 2D/3D node may
+change address only (`"memset dims"` for width, height, pitch, depth,
+ysize, plus elementSize). 1D nodes may change dimensions.
+`graph_exec_node_set_params` of memset uses the same check. Extra
+`graph_exec_memset_set_params_2d` plus `_3d` stay legal. Definition
+SetParams still accepts geometry changes. This VM does not invent Engine
+`--graph-memset-dims` or 1D memset work-resource mapping failures.
+`gpu-profile capture` is still refused. Dual score still has no `$/M tokens`.
+
 ## Shipped 2026-09-01 — CUDA ExecMemcpy SetParams 1D-only
 
 `gpu-sim` CUDA `cudaGraphExecMemcpyNodeSetParams` is 1-dimensional only:

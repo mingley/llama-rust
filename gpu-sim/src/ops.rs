@@ -601,7 +601,8 @@ pub struct MemcpyAttributes {
 /// [`Self::depth`] `> 1` is `cudaMemset3DAsync`: billed payload is
 /// `width * height * depth`. [`crate::Sim::graph_exec_memset_set_params`]
 /// patches this on an instantiated memset node
-/// (`cudaGraphExecMemsetNodeSetParams`).
+/// (`cudaGraphExecMemsetNodeSetParams`). 2D/3D geometry is frozen on the
+/// CUDA-named exec API (address may change). Extra 2D/3D helpers stay.
 /// `cudaMemsetParams` / `cudaMemset3DParams` analog.
 ///
 /// [`Self::bytes`] is 1D payload or 2D/3D row width in **bytes** (CUDA's
