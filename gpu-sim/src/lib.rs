@@ -28354,7 +28354,7 @@ mod tests {
             ..MemcpyOp::default()
         };
         let exec = sim.create_graph(d, s).unwrap();
-        sim.graph_add_memcpy(exec, h2d).unwrap();
+        sim.graph_add_memcpy(exec, h2d.clone()).unwrap();
         let _ = sim.instantiate_graph(exec).unwrap();
         let src = sim.create_graph(d, s).unwrap();
         sim.graph_add_memcpy(
