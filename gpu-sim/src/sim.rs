@@ -18299,7 +18299,8 @@ impl Sim {
     /// modeled.
     ///
     /// Always Invalid `"vdpau"`. Distinct from [`Self::gl_get_devices`], from
-    /// [`Self::d3d12_get_devices`], and from [`Self::vdpau_ctx_create`].
+    /// [`Self::d3d12_get_devices`], from [`Self::vdpau_ctx_create`], and from
+    /// [`Self::graphics_vdpau_register_output_surface`].
     /// Unknown devices are Invalid `"device not in profile"`. Query; legal
     /// during capture.
     pub fn vdpau_get_device(&self, device: DeviceId) -> Result<(), SimError> {
@@ -18309,14 +18310,29 @@ impl Sim {
 
     /// `cuVDPAUCtxCreate`. VDPAU interop is not modeled.
     ///
-    /// Always Invalid `"vdpau context"`. Distinct from [`Self::vdpau_get_device`]
-    /// and from [`Self::gl_ctx_create`]. Unknown devices are Invalid
-    /// `"device not in profile"`. Query; legal during capture. This VM does
-    /// not invent `cuGraphicsVDPAURegisterOutputSurface` this slice.
+    /// Always Invalid `"vdpau context"`. Distinct from [`Self::vdpau_get_device`],
+    /// from [`Self::gl_ctx_create`], and from
+    /// [`Self::graphics_vdpau_register_output_surface`]. Unknown devices are
+    /// Invalid `"device not in profile"`. Query; legal during capture.
     pub fn vdpau_ctx_create(&self, device: DeviceId) -> Result<(), SimError> {
         let _gpu = self.profile.gpu(device)?;
         Err(SimError::Invalid {
             why: "vdpau context",
+        })
+    }
+
+    /// `cuGraphicsVDPAURegisterOutputSurface` plus
+    /// `cudaGraphicsVDPAURegisterOutputSurface`. VDPAU interop is not
+    /// modeled.
+    ///
+    /// Always Invalid `"vdpau output"` (no graphics-resource handles). Distinct
+    /// from [`Self::vdpau_ctx_create`] and from [`Self::vdpau_get_device`].
+    /// Unknown devices are Invalid `"device not in profile"`. Query; legal
+    /// during capture.
+    pub fn graphics_vdpau_register_output_surface(&self, device: DeviceId) -> Result<(), SimError> {
+        let _gpu = self.profile.gpu(device)?;
+        Err(SimError::Invalid {
+            why: "vdpau output",
         })
     }
 

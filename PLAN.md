@@ -6896,7 +6896,14 @@ model, do not celebrate the sim.
     or `cudaChooseDevice`. `gpu-profile capture` is still refused. Dual
     score still has no `$/M tokens`.
 
-678. [ ] Next numbered PLAN item after 677 is the next `gpu-sim` / Engine /
+678. [x] `gpu-sim` `Sim::graphics_vdpau_register_output_surface` is
+    `cuGraphicsVDPAURegisterOutputSurface`. Always Invalid `"vdpau output"`
+    because VDPAU interop is not modeled. Query; legal during capture. Distinct
+    from `vdpau_ctx_create` and `vdpau_get_device`. This VM does not invent `cuGraphicsVDPAURegisterVideoSurface`, Engine `--vdpau-output`,
+    or `cudaChooseDevice`. `gpu-profile capture` is still refused. Dual
+    score still has no `$/M tokens`.
+
+679. [ ] Next numbered PLAN item after 678 is the next `gpu-sim` / Engine /
     serve / expertvm mechanical API that is still missing, or the next official
     decode family. Prefer remaining CUDA-shaped twins over more
     OpenAI HTTP veneer. Do not invent F32 `output.scale`. Do not invent a
@@ -7398,6 +7405,10 @@ model, do not celebrate the sim.
     `graphics_d3d10_register_resource`. Do not invent Engine `--d3d10-register`.
     Do not invent a D3D10 `ID3D10Resource` this slice. Do not reverse
     `"d3d10 register"`.
+    Do not invent a second `cuGraphicsVDPAURegisterOutputSurface` /
+    `graphics_vdpau_register_output_surface`. Do not invent Engine `--vdpau-output`.
+    Do not invent `cuGraphicsVDPAURegisterVideoSurface` this slice. Do not reverse
+    `"vdpau output"`.
     Do not invent a second `cudaStreamAddCallback`.
     Do not invent Engine `--stream-callback` (same wall as second live
     `cudaLaunchHostFunc` after miss DMA).
@@ -8002,6 +8013,9 @@ model, do not celebrate the sim.
     Do not invent a second `graphics_d3d10_register_resource` API. Do not invent
     Engine `--register-d3d10`. Do not invent a D3D10 keyed mutex
     this slice. Do not reverse D3D10 register remaining unsupported.
+    Do not invent a second `graphics_vdpau_register_output_surface` API. Do not invent
+    Engine `--register-vdpau-output`. Do not invent a `VdpOutputSurface`
+    this slice. Do not reverse VDPAU output register remaining unsupported.
     Do not invent a second DeviceLaunch in-flight destroy-complete check or Engine
     `--device-launch-destroy`. Do not abort an in-flight DeviceLaunch when
     `destroy_graph` succeeds. Do not delay destroy of an idle exec. Do not invent
@@ -8789,6 +8803,9 @@ model, do not celebrate the sim.
     Do not invent a second `graphics_d3d10_register_resource` method. Do not
     invent Engine `--cu-graphics-d3d10-register-resource`. Do not reverse wrapping
     cuGraphicsD3D10RegisterResource Invalid.
+    Do not invent a second `graphics_vdpau_register_output_surface` method. Do not
+    invent Engine `--cu-graphics-vdpau-register-output-surface`. Do not reverse wrapping
+    cuGraphicsVDPAURegisterOutputSurface Invalid.
     Do not
     spend the next item on an OpenAI-compatible HTTP veneer.
 
