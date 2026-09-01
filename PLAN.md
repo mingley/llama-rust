@@ -6865,7 +6865,14 @@ model, do not celebrate the sim.
     or `cudaChooseDevice`. `gpu-profile capture` is still refused. Dual
     score still has no `$/M tokens`.
 
-674. [ ] Next numbered PLAN item after 673 is the next `gpu-sim` / Engine /
+674. [x] `gpu-sim` `Sim::graphics_d3d11_register_resource` is
+    `cuGraphicsD3D11RegisterResource`. Always Invalid `"d3d11 register"`
+    because Direct3D 11 interop is not modeled. Query; legal during capture.
+    Distinct from `d3d11_ctx_create` and `graphics_map_resources`. This VM does not invent a D3D11 `ID3D11Resource`, Engine `--d3d11-register`,
+    or `cudaChooseDevice`. `gpu-profile capture` is still refused. Dual
+    score still has no `$/M tokens`.
+
+675. [ ] Next numbered PLAN item after 674 is the next `gpu-sim` / Engine /
     serve / expertvm mechanical API that is still missing, or the next official
     decode family. Prefer remaining CUDA-shaped twins over more
     OpenAI HTTP veneer. Do not invent F32 `output.scale`. Do not invent a
@@ -7351,6 +7358,10 @@ model, do not celebrate the sim.
     Do not invent a second `cuGLMapBufferObject` / `gl_map_buffer_object`.
     Do not invent Engine `--gl-map`. Do not invent `cuGLMapBufferObjectAsync`
     this slice. Do not reverse `"gl map"`.
+    Do not invent a second `cuGraphicsD3D11RegisterResource` /
+    `graphics_d3d11_register_resource`. Do not invent Engine `--d3d11-register`.
+    Do not invent a D3D11 `ID3D11Resource` this slice. Do not reverse
+    `"d3d11 register"`.
     Do not invent a second `cudaStreamAddCallback`.
     Do not invent Engine `--stream-callback` (same wall as second live
     `cudaLaunchHostFunc` after miss DMA).
@@ -7943,6 +7954,9 @@ model, do not celebrate the sim.
     Do not invent a second `gl_map_buffer_object` API. Do not invent
     Engine `--map-gl-buffer-object`. Do not invent a GL map offset
     this slice. Do not reverse legacy GL map remaining unsupported.
+    Do not invent a second `graphics_d3d11_register_resource` API. Do not invent
+    Engine `--register-d3d11`. Do not invent a D3D11 keyed mutex
+    this slice. Do not reverse D3D11 register remaining unsupported.
     Do not invent a second DeviceLaunch in-flight destroy-complete check or Engine
     `--device-launch-destroy`. Do not abort an in-flight DeviceLaunch when
     `destroy_graph` succeeds. Do not delay destroy of an idle exec. Do not invent
@@ -8718,6 +8732,9 @@ model, do not celebrate the sim.
     Do not invent a second `gl_map_buffer_object` method. Do not
     invent Engine `--cu-gl-map-buffer-object`. Do not reverse wrapping
     cuGLMapBufferObject Invalid.
+    Do not invent a second `graphics_d3d11_register_resource` method. Do not
+    invent Engine `--cu-graphics-d3d11-register-resource`. Do not reverse wrapping
+    cuGraphicsD3D11RegisterResource Invalid.
     Do not
     spend the next item on an OpenAI-compatible HTTP veneer.
 

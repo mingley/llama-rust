@@ -679,6 +679,9 @@
 //! (always Invalid `"d3d11"`). Query; legal during capture. No Engine `--d3d11-devices`.
 //! [`d3d11_ctx_create`](Sim::d3d11_ctx_create) is `cuD3D11CtxCreate` (always
 //! Invalid `"d3d11 context"`). Query; legal during capture. No Engine `--d3d11-ctx`.
+//! [`graphics_d3d11_register_resource`](Sim::graphics_d3d11_register_resource)
+//! is `cuGraphicsD3D11RegisterResource` (always Invalid `"d3d11 register"`).
+//! Query; legal during capture. No Engine `--d3d11-register`.
 //! [`d3d12_get_devices`](Sim::d3d12_get_devices) is `cuD3D12GetDevices`
 //! (always Invalid `"d3d12"`). Distinct from
 //! [`d3d11_get_devices`](Sim::d3d11_get_devices) and from
@@ -23007,6 +23010,53 @@ mod tests {
         match sim.gl_ctx_create(d) {
             Err(SimError::Invalid { why }) => {
                 assert!(why.contains("gl context"), "{why}");
+            }
+            other => panic!("{other:?}"),
+        }
+        match sim.graphics_d3d11_register_resource(d) {
+            Err(SimError::Invalid { why }) => {
+                assert!(why.contains("d3d11 register"), "{why}");
+                assert!(!why.contains("d3d11 context"), "{why}");
+            }
+            other => panic!("{other:?}"),
+        }
+    }
+
+    #[test]
+    fn graphics_d3d11_register_resource_is_unsupported() {
+        let mut sim = Sim::new(h100());
+        let d = DeviceId(0);
+        match sim.graphics_d3d11_register_resource(d) {
+            Err(SimError::Invalid { why }) => {
+                assert!(why.contains("d3d11 register"), "{why}");
+                assert!(!why.contains("d3d11 context"), "{why}");
+                assert!(!why.contains("graphics resource"), "{why}");
+            }
+            other => panic!("{other:?}"),
+        }
+        sim.begin_capture(d, StreamId(0)).unwrap();
+        match sim.graphics_d3d11_register_resource(d) {
+            Err(SimError::Invalid { why }) => {
+                assert!(why.contains("d3d11 register"), "{why}");
+            }
+            other => panic!("{other:?}"),
+        }
+        let _g = sim.end_capture().unwrap();
+        match sim.graphics_d3d11_register_resource(DeviceId(99)) {
+            Err(SimError::Invalid { why }) => {
+                assert!(why.contains("device not in profile"), "{why}");
+            }
+            other => panic!("{other:?}"),
+        }
+        match sim.d3d11_ctx_create(d) {
+            Err(SimError::Invalid { why }) => {
+                assert!(why.contains("d3d11 context"), "{why}");
+            }
+            other => panic!("{other:?}"),
+        }
+        match sim.graphics_map_resources(d, StreamId(0)) {
+            Err(SimError::Invalid { why }) => {
+                assert!(why.contains("graphics resource"), "{why}");
             }
             other => panic!("{other:?}"),
         }

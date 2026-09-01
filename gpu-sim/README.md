@@ -203,6 +203,7 @@ warp scheduler, L1, …   ← do not model
 | `gl_map_buffer_object` is Invalid (legacy OpenGL interop is not modeled) | `cuGLMapBufferObject` |
 | `d3d11_get_devices` is Invalid (Direct3D 11 interop is not modeled) | `cuD3D11GetDevices` / `cudaD3D11GetDevices` |
 | `d3d11_ctx_create` is Invalid (Direct3D 11 interop is not modeled) | `cuD3D11CtxCreate` |
+| `graphics_d3d11_register_resource` is Invalid (Direct3D 11 interop is not modeled) | `cuGraphicsD3D11RegisterResource` |
 | `d3d12_get_devices` is Invalid (Direct3D 12 interop is not modeled) | `cuD3D12GetDevices` / `cudaD3D12GetDevices` |
 | `d3d12_ctx_create` is Invalid (Direct3D 12 interop is not modeled) | `cuD3D12CtxCreate` |
 | `vdpau_get_device` is Invalid (VDPAU interop is not modeled) | `cuVDPAUGetDevice` / `cudaVDPAUGetDevice` |
@@ -1185,6 +1186,9 @@ Distinct from `gl_get_devices`. Query; legal during capture. No Engine `--d3d11-
 `d3d11_ctx_create` is `cuD3D11CtxCreate` (always Invalid `"d3d11 context"`).
 Distinct from `d3d11_get_devices` and `gl_ctx_create`. Query; legal
 during capture. No Engine `--d3d11-ctx`.
+`graphics_d3d11_register_resource` is `cuGraphicsD3D11RegisterResource`
+(always Invalid `"d3d11 register"`). Distinct from `d3d11_ctx_create`. Query;
+legal during capture. No Engine `--d3d11-register`.
 `d3d12_get_devices` is `cuD3D12GetDevices` (always Invalid `"d3d12"`).
 Distinct from `d3d11_get_devices` and from `D3D12CigSupported` (CIG is
 not GetDevices). Query; legal during capture. No Engine `--d3d12-devices`.

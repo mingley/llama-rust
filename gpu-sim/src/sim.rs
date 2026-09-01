@@ -18226,14 +18226,29 @@ impl Sim {
     /// `cuD3D11CtxCreate`. Direct3D 11 interop is not modeled.
     ///
     /// Always Invalid `"d3d11 context"`. Distinct from
-    /// [`Self::d3d11_get_devices`] and from [`Self::gl_ctx_create`]. Unknown
+    /// [`Self::d3d11_get_devices`], from [`Self::gl_ctx_create`], and from
+    /// [`Self::graphics_d3d11_register_resource`]. Unknown
     /// devices are Invalid `"device not in profile"`. Query; legal during
-    /// capture. This VM does not invent `cuGraphicsD3D11RegisterResource`
-    /// this slice.
+    /// capture.
     pub fn d3d11_ctx_create(&self, device: DeviceId) -> Result<(), SimError> {
         let _gpu = self.profile.gpu(device)?;
         Err(SimError::Invalid {
             why: "d3d11 context",
+        })
+    }
+
+    /// `cuGraphicsD3D11RegisterResource` plus
+    /// `cudaGraphicsD3D11RegisterResource`. Direct3D 11 interop is not
+    /// modeled.
+    ///
+    /// Always Invalid `"d3d11 register"` (no graphics-resource handles).
+    /// Distinct from [`Self::d3d11_ctx_create`] and from
+    /// [`Self::graphics_map_resources`]. Unknown devices are Invalid
+    /// `"device not in profile"`. Query; legal during capture.
+    pub fn graphics_d3d11_register_resource(&self, device: DeviceId) -> Result<(), SimError> {
+        let _gpu = self.profile.gpu(device)?;
+        Err(SimError::Invalid {
+            why: "d3d11 register",
         })
     }
 
