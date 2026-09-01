@@ -2407,7 +2407,9 @@ impl BatchMemOpFlags {
 /// [`crate::Sim::graph_add_batch_mem_op`] / [`crate::Sim::batch_mem_op`] pack a
 /// non-empty vector into one [`GpuOp::BatchMem`] node. Single-item live
 /// [`crate::Sim::write_value64`] / [`crate::Sim::wait_value64`] stay
-/// [`GpuOp::WriteValue`] / [`GpuOp::WaitValue`].
+/// [`GpuOp::WriteValue`] / [`GpuOp::WaitValue`]. A single
+/// [`Self::FlushRemoteWrites`] is [`GpuOp::BatchMem`] (CUDA has no standalone
+/// `cuStreamFlushRemoteWrites`).
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum BatchMemOp {
     /// [`GpuOp::WriteValue`].
@@ -2434,13 +2436,20 @@ pub enum BatchMemOp {
         /// Compare mode.
         cmp: WaitValueCmp,
     },
+    /// `CU_STREAM_MEM_OP_FLUSH_REMOTE_WRITES`. Stream-ordered 1 ns Solo on a
+    /// [`crate::LinkKind::Rdma`] GPU (same tax as
+    /// [`crate::Sim::flush_gpu_direct_rdma_writes`], but not host-sync).
+    /// Capture records a batch-mem-op node. Write visibility is not modeled;
+    /// flush is never a no-op. Non-RDMA is Invalid `"gpu direct rdma"`.
+    FlushRemoteWrites,
 }
 
 /// One submitted GPU primitive. PLAN's Kernel / Memcpy / Collective / Event /
 /// Alloc / Free, plus `cudaMemsetAsync`, `cudaLaunchHostFunc`, stream attach,
 /// empty graph nodes, nested [`Self::ChildGraph`], conditional IF / WHILE /
-/// SWITCH / [`Self::SetConditional`], wait/write-value, and multi-item
-/// [`Self::BatchMem`] (`cuStreamBatchMemOp`). Timing is not stored here.
+/// SWITCH / [`Self::SetConditional`], wait/write-value, flush-remote-writes,
+/// and multi-item [`Self::BatchMem`] (`cuStreamBatchMemOp`). Timing is not
+/// stored here.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum GpuOp {
     /// Stream-ordered device allocation (`cudaMallocAsync`). Capacity is
@@ -2592,10 +2601,11 @@ pub enum GpuOp {
     /// Items run in order inside this one stream op (no compute or copy
     /// occupancy). A wait sees writes **earlier in this vector** via an
     /// overlay; it does not see later writes in the same batch. All writes
-    /// commit to the mailbox when the op **completes**. Capture records one
-    /// node. Empty is Invalid.
+    /// commit to the mailbox when the op **completes**.
+    /// [`BatchMemOp::FlushRemoteWrites`] is a 1 ns Solo barrier (not host-sync).
+    /// Capture records one node. Empty is Invalid.
     BatchMem {
-        /// Wait and write items in CUDA batch order.
+        /// Wait, write, and flush-remote-writes items in CUDA batch order.
         ops: Vec<BatchMemOp>,
     },
     /// `cuStreamWaitValue32` / `WaitValue64`. Stays pending until the mailbox

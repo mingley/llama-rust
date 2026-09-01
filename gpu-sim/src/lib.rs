@@ -337,7 +337,10 @@
 //! word ([`WaitValueFlags`]; [`WaitValueFlags::FLUSH`] is Invalid). Typed
 //! helpers stay. [`batch_mem_op`](Sim::batch_mem_op) is
 //! `cuStreamBatchMemOp` (one stream op; a wait sees earlier writes in that
-//! vector). [`batch_mem_op_with_flags`](Sim::batch_mem_op_with_flags) is the
+//! vector). [`BatchMemOp::FlushRemoteWrites`] is
+//! `CU_STREAM_MEM_OP_FLUSH_REMOTE_WRITES` (1 ns Solo on an RDMA GPU; not
+//! host-sync; [`flush_gpu_direct_rdma_writes`](Sim::flush_gpu_direct_rdma_writes)
+//! stays the device-wide host-sync barrier). [`batch_mem_op_with_flags`](Sim::batch_mem_op_with_flags) is the
 //! CUDA flags word ([`BatchMemOpFlags`]; must be
 //! [`BatchMemOpFlags::DEFAULT`]). Typed helper stays. Kernel / memset / memcpy stores to the
 //! mailbox address are not modeled. Device-resident and mapped-host are legal;
@@ -13518,6 +13521,84 @@ mod tests {
             other => panic!("{other:?}"),
         }
         let _g = sim.end_capture().unwrap();
+    }
+
+    #[test]
+    fn batch_mem_op_flush_remote_writes_is_stream_ordered() {
+        let d = DeviceId(0);
+        let s = StreamId(0);
+        let mut h100 = Sim::new(h100());
+        match h100.batch_mem_op(d, s, &[BatchMemOp::FlushRemoteWrites]) {
+            Err(SimError::Invalid { why }) => assert!(why.contains("gpu direct rdma"), "{why}"),
+            other => panic!("{other:?}"),
+        }
+        let hg = h100.create_graph(d, s).unwrap();
+        match h100.graph_add_batch_mem_op(hg, &[BatchMemOp::FlushRemoteWrites]) {
+            Err(SimError::Invalid { why }) => assert!(why.contains("gpu direct rdma"), "{why}"),
+            other => panic!("{other:?}"),
+        }
+        let mut sim = Sim::new(HardwareProfile::example_2node_rdma());
+        let t0 = sim.clock_ns();
+        enq(sim.batch_mem_op(d, s, &[BatchMemOp::FlushRemoteWrites]));
+        assert_eq!(sim.clock_ns(), t0, "not host-sync");
+        sim.synchronize().unwrap();
+        assert_eq!(sim.clock_ns(), t0.saturating_add(1));
+        let flush = sim
+            .operations()
+            .find(|o| {
+                matches!(
+                    &o.kind,
+                    GpuOp::BatchMem { ops } if ops.as_slice() == [BatchMemOp::FlushRemoteWrites]
+                )
+            })
+            .expect("flush batch");
+        assert_eq!(flush.start_ns, Some(t0));
+        assert_eq!(flush.done_ns, Some(t0.saturating_add(1)));
+        let a = sim.malloc(d, 64).unwrap();
+        enq(sim.batch_mem_op(
+            d,
+            s,
+            &[
+                BatchMemOp::Write {
+                    id: a,
+                    offset: 0,
+                    value: 1,
+                    bits32: false,
+                },
+                BatchMemOp::FlushRemoteWrites,
+                BatchMemOp::Wait {
+                    id: a,
+                    offset: 0,
+                    value: 1,
+                    bits32: false,
+                    cmp: WaitValueCmp::Eq,
+                },
+            ],
+        ));
+        sim.synchronize().unwrap();
+        let g = sim.create_graph(d, s).unwrap();
+        sim.graph_add_batch_mem_op(g, &[BatchMemOp::FlushRemoteWrites])
+            .unwrap();
+        assert_eq!(
+            sim.graph_node_kind(g, 0).unwrap(),
+            GraphNodeKind::BatchMemOp
+        );
+        assert_eq!(
+            sim.graph_batch_mem_ops(g, 0).unwrap(),
+            vec![BatchMemOp::FlushRemoteWrites]
+        );
+        let exec = sim.instantiate_graph(g).unwrap();
+        let n = sim.launch_graph(exec, s).unwrap();
+        assert_eq!(n, 1);
+        sim.synchronize().unwrap();
+        sim.begin_capture(d, s).unwrap();
+        enq(sim.batch_mem_op(d, s, &[BatchMemOp::FlushRemoteWrites]));
+        let cap = sim.end_capture().unwrap();
+        assert_eq!(
+            sim.graph_node_kind(cap, 0).unwrap(),
+            GraphNodeKind::BatchMemOp
+        );
+        let _exec2 = sim.instantiate_graph(cap).unwrap();
     }
 
     #[test]

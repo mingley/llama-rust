@@ -5,6 +5,16 @@ Visible five-turn extract: [docs/chatgpt-share-6a920fe1.md](docs/chatgpt-share-6
 Complete share-API extract: [docs/chatgpt-share-6a920fe1/](docs/chatgpt-share-6a920fe1/).
 Work lands on `main`. No PRs.
 
+## Shipped 2026-09-01 — CUDA stream-ordered RDMA flush
+
+`gpu-sim` `CU_STREAM_MEM_OP_FLUSH_REMOTE_WRITES`:
+`BatchMemOp::FlushRemoteWrites` is stream-ordered 1 ns Solo on an RDMA
+SKU (`cuStreamBatchMemOp`). Distinct from host-sync
+`flush_gpu_direct_rdma_writes` (capture refused). Write visibility is
+not modeled; flush is never a no-op. Non-RDMA is Invalid. Capture
+records a batch-mem-op node. No Engine `--flush-remote`. `gpu-profile
+capture` is still refused. Dual score still has no `$/M tokens`.
+
 ## Shipped 2026-09-01 — CUDA batch pointer GetAttributes
 
 `gpu-sim` `cuPointerGetAttributes`: `pointer_get_attribute_n` is a batch

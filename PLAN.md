@@ -5088,7 +5088,16 @@ model, do not celebrate the sim.
     legal during capture. No Engine `--pointer-attrs`. `gpu-profile
     capture` is still refused. Dual score still has no `$/M tokens`.
 
-474. [ ] Next numbered PLAN item after 473 is the next `gpu-sim` / Engine /
+474. [x] `gpu-sim` `CU_STREAM_MEM_OP_FLUSH_REMOTE_WRITES`:
+    [`BatchMemOp::FlushRemoteWrites`] is stream-ordered 1 ns Solo on an
+    RDMA SKU (`cuStreamBatchMemOp`). Distinct from host-sync
+    [`flush_gpu_direct_rdma_writes`](Sim::flush_gpu_direct_rdma_writes)
+    (capture refused). Write visibility is not modeled; flush is never
+    a no-op. Non-RDMA is Invalid `"gpu direct rdma"`. Capture records a
+    batch-mem-op node. No Engine `--flush-remote`. `gpu-profile capture`
+    is still refused. Dual score still has no `$/M tokens`.
+
+475. [ ] Next numbered PLAN item after 474 is the next `gpu-sim` / Engine /
     serve / expertvm mechanical API that is still missing, or the next official
     decode family. Prefer remaining CUDA-shaped twins over more
     OpenAI HTTP veneer. Do not invent F32 `output.scale`. Do not invent a
@@ -5216,6 +5225,11 @@ model, do not celebrate the sim.
     stores into wait-value mailboxes).
     Do not invent a second `cuPointerGetAttributes` /
     `pointer_get_attribute_n`. Do not invent Engine `--pointer-attrs`.
+    Do not invent a second `CU_STREAM_MEM_OP_FLUSH_REMOTE_WRITES` /
+    `BatchMemOp::FlushRemoteWrites`. Do not invent Engine
+    `--flush-remote`. Do not invent `CU_STREAM_MEM_OP_BARRIER` /
+    `CU_STREAM_MEM_OP_MEMORY_BARRIER` (stream order already serializes
+    wait/write in a batch).
     Do not invent a second `cudaGraphAddNode` If / IfElse / While /
     `GraphNodeParams::If`. Do not invent a second
     `GraphNodeParams::Switch` / `switch_bodies`.

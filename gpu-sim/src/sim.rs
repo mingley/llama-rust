@@ -5169,6 +5169,7 @@ impl Sim {
             let next = batch_ops_set_params_kind(&step.kind, ops)?;
             (step.device, next)
         };
+        self.check_batch_flush(device, ops)?;
         if exec {
             let ns = self.profile.gpu(device)?.graph_set_params_ns.max(1);
             self.clock = self.clock.saturating_add(ns);
@@ -7837,7 +7838,8 @@ impl Sim {
         self.graph_add_wait_value32(graph, id, offset, value, cmp)
     }
 
-    /// `cudaGraphAddBatchMemOpNode`: one node holding the wait/write vector.
+    /// `cudaGraphAddBatchMemOpNode`: one node holding the wait/write/flush
+    /// vector.
     ///
     /// Empty is Invalid. Items run in order inside the node at launch (a wait
     /// sees earlier writes in this vector; it does not see later ones). Capture
@@ -7850,6 +7852,7 @@ impl Sim {
     ) -> Result<(), SimError> {
         self.check_batch_mem_ops(ops)?;
         let (device, stream) = self.graph_origin_for_add(graph)?;
+        self.check_batch_flush(device, ops)?;
         self.graph_push(graph, device, stream, Kind::BatchMem { ops: ops.to_vec() })
     }
 
@@ -7870,6 +7873,7 @@ impl Sim {
     fn graph_add_batch_item(&mut self, graph: GraphId, op: BatchMemOp) -> Result<(), SimError> {
         let (device, stream) = self.graph_origin_for_add(graph)?;
         self.check_batch_mem(op)?;
+        self.check_batch_flush(device, &[op])?;
         self.graph_push(graph, device, stream, kind_from_batch(op))
     }
 
@@ -16901,12 +16905,14 @@ impl Sim {
         self.wait_value32(device, id, offset, value, cmp, stream)
     }
 
-    /// `cuStreamBatchMemOp`. One stream op for the wait/write vector.
+    /// `cuStreamBatchMemOp`. One stream op for the wait/write/flush vector.
     ///
-    /// Empty is Invalid. A single item is [`Self::write_value64`] /
-    /// [`Self::wait_value64`] (same [`crate::GpuOp`] as those APIs). Two or more
-    /// items are [`crate::GpuOp::BatchMem`]. Capture records one graph node.
-    /// Writes commit on complete. A wait sees earlier writes in this vector.
+    /// Empty is Invalid. A single wait or write is [`Self::write_value64`] /
+    /// [`Self::wait_value64`] (same [`crate::GpuOp`] as those APIs). A single
+    /// [`BatchMemOp::FlushRemoteWrites`] is [`crate::GpuOp::BatchMem`]. Two or
+    /// more items are [`crate::GpuOp::BatchMem`]. Capture records one graph
+    /// node. Writes commit on complete. A wait sees earlier writes in this
+    /// vector. Flush is 1 ns Solo on an RDMA GPU (not host-sync).
     pub fn batch_mem_op(
         &mut self,
         device: DeviceId,
@@ -16914,6 +16920,7 @@ impl Sim {
         ops: &[BatchMemOp],
     ) -> Result<OpId, SimError> {
         self.check_batch_mem_ops(ops)?;
+        self.check_batch_flush(device, ops)?;
         if let [op] = ops {
             return self.submit(device, stream, kind_from_batch(*op));
         }
@@ -16951,6 +16958,7 @@ impl Sim {
         op: BatchMemOp,
     ) -> Result<OpId, SimError> {
         self.check_batch_mem(op)?;
+        self.check_batch_flush(device, &[op])?;
         self.submit(device, stream, kind_from_batch(op))
     }
 
@@ -16966,8 +16974,22 @@ impl Sim {
         Ok(())
     }
 
+    fn check_batch_flush(&self, device: DeviceId, ops: &[BatchMemOp]) -> Result<(), SimError> {
+        if ops
+            .iter()
+            .any(|op| matches!(op, BatchMemOp::FlushRemoteWrites))
+            && !self.profile.gpu_direct_rdma_supported(device)
+        {
+            return Err(SimError::Invalid {
+                why: "gpu direct rdma",
+            });
+        }
+        Ok(())
+    }
+
     fn check_batch_mem(&self, op: BatchMemOp) -> Result<(), SimError> {
         let (id, offset, bits32) = match op {
+            BatchMemOp::FlushRemoteWrites => return Ok(()),
             BatchMemOp::Write {
                 id, offset, bits32, ..
             }
@@ -19062,22 +19084,15 @@ impl Sim {
     fn batch_mem_ready(&self, device: DeviceId, ops: &[BatchMemOp]) -> Result<bool, SimError> {
         let mut overlay: BTreeMap<(AllocId, u64), u64> = BTreeMap::new();
         for item in ops {
-            let (alloc, offset, bits32) = match *item {
-                BatchMemOp::Write {
-                    id, offset, bits32, ..
-                }
-                | BatchMemOp::Wait {
-                    id, offset, bits32, ..
-                } => (id, offset, bits32),
-            };
-            self.require_wait_value_resident(device, alloc, offset, bits32)?;
             match *item {
+                BatchMemOp::FlushRemoteWrites => {}
                 BatchMemOp::Write {
                     id,
                     offset,
                     value,
                     bits32,
                 } => {
+                    self.require_wait_value_resident(device, id, offset, bits32)?;
                     let mask = wait_value_mask(bits32);
                     let prev = overlay
                         .get(&(id, offset))
@@ -19093,6 +19108,7 @@ impl Sim {
                     bits32,
                     cmp,
                 } => {
+                    self.require_wait_value_resident(device, id, offset, bits32)?;
                     let mask = wait_value_mask(bits32);
                     let loc = overlay
                         .get(&(id, offset))
@@ -20862,6 +20878,9 @@ fn kind_from_batch(op: BatchMemOp) -> Kind {
             bits32,
             cmp,
         },
+        BatchMemOp::FlushRemoteWrites => Kind::BatchMem {
+            ops: vec![BatchMemOp::FlushRemoteWrites],
+        },
     }
 }
 
@@ -21137,7 +21156,7 @@ fn mailbox_writes(kind: &Kind) -> Vec<(AllocId, u64, u64, bool)> {
                     value,
                     bits32,
                 } => Some((id, offset, value, bits32)),
-                BatchMemOp::Wait { .. } => None,
+                BatchMemOp::Wait { .. } | BatchMemOp::FlushRemoteWrites => None,
             })
             .collect(),
         _ => Vec::new(),
@@ -21170,6 +21189,7 @@ fn remap_batch_op(op: BatchMemOp, map: &BTreeMap<AllocId, AllocId>) -> BatchMemO
             bits32,
             cmp,
         },
+        BatchMemOp::FlushRemoteWrites => BatchMemOp::FlushRemoteWrites,
     }
 }
 
