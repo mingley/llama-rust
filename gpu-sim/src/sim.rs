@@ -17780,12 +17780,29 @@ impl Sim {
     /// memory import is not modeled.
     ///
     /// Always Invalid `"external destroy"` (no external-memory handles).
-    /// Distinct from [`Self::import_external_memory`]. Unknown devices are
+    /// Distinct from [`Self::import_external_memory`] and from
+    /// [`Self::external_memory_get_mapped_buffer`]. Unknown devices are
     /// Invalid `"device not in profile"`. Query; legal during capture.
     pub fn destroy_external_memory(&self, device: DeviceId) -> Result<(), SimError> {
         let _gpu = self.profile.gpu(device)?;
         Err(SimError::Invalid {
             why: "external destroy",
+        })
+    }
+
+    /// `cuExternalMemoryGetMappedBuffer` plus
+    /// `cudaExternalMemoryGetMappedBuffer`. External memory import is not
+    /// modeled.
+    ///
+    /// Always Invalid `"mapped buffer"` (no external-memory handles). Distinct
+    /// from [`Self::destroy_external_memory`], from
+    /// [`Self::import_external_memory`], and from
+    /// [`Self::graphics_resource_get_mapped_pointer`]. Unknown devices are
+    /// Invalid `"device not in profile"`. Query; legal during capture.
+    pub fn external_memory_get_mapped_buffer(&self, device: DeviceId) -> Result<(), SimError> {
+        let _gpu = self.profile.gpu(device)?;
+        Err(SimError::Invalid {
+            why: "mapped buffer",
         })
     }
 

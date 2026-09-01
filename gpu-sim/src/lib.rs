@@ -336,6 +336,9 @@
 //! [`destroy_external_memory`](Sim::destroy_external_memory) is
 //! `cuDestroyExternalMemory` (always Invalid `"external destroy"`). Query;
 //! legal during capture. No Engine `--external-destroy`.
+//! [`external_memory_get_mapped_buffer`](Sim::external_memory_get_mapped_buffer)
+//! is `cuExternalMemoryGetMappedBuffer` (always Invalid `"mapped buffer"`).
+//! Query; legal during capture. No Engine `--mapped-buffer`.
 //! [`va_export_to_shareable_handle`](Sim::va_export_to_shareable_handle) is
 //! `cuMemExportToShareableHandle`. Always Invalid `"not shareable"`
 //! ([`MemAllocationProp::handle_types`] is none; POSIX-FD VMM export is not
@@ -21857,6 +21860,53 @@ mod tests {
         match sim.import_external_memory(d) {
             Err(SimError::Invalid { why }) => {
                 assert!(why.contains("external memory"), "{why}");
+            }
+            other => panic!("{other:?}"),
+        }
+        match sim.external_memory_get_mapped_buffer(d) {
+            Err(SimError::Invalid { why }) => {
+                assert!(why.contains("mapped buffer"), "{why}");
+                assert!(!why.contains("mapped pointer"), "{why}");
+            }
+            other => panic!("{other:?}"),
+        }
+    }
+
+    #[test]
+    fn external_memory_get_mapped_buffer_is_unsupported() {
+        let mut sim = Sim::new(h100());
+        let d = DeviceId(0);
+        match sim.external_memory_get_mapped_buffer(d) {
+            Err(SimError::Invalid { why }) => {
+                assert!(why.contains("mapped buffer"), "{why}");
+                assert!(!why.contains("mapped pointer"), "{why}");
+                assert!(!why.contains("external destroy"), "{why}");
+            }
+            other => panic!("{other:?}"),
+        }
+        sim.begin_capture(d, StreamId(0)).unwrap();
+        match sim.external_memory_get_mapped_buffer(d) {
+            Err(SimError::Invalid { why }) => {
+                assert!(why.contains("mapped buffer"), "{why}");
+            }
+            other => panic!("{other:?}"),
+        }
+        let _g = sim.end_capture().unwrap();
+        match sim.external_memory_get_mapped_buffer(DeviceId(99)) {
+            Err(SimError::Invalid { why }) => {
+                assert!(why.contains("device not in profile"), "{why}");
+            }
+            other => panic!("{other:?}"),
+        }
+        match sim.destroy_external_memory(d) {
+            Err(SimError::Invalid { why }) => {
+                assert!(why.contains("external destroy"), "{why}");
+            }
+            other => panic!("{other:?}"),
+        }
+        match sim.graphics_resource_get_mapped_pointer(d) {
+            Err(SimError::Invalid { why }) => {
+                assert!(why.contains("mapped pointer"), "{why}");
             }
             other => panic!("{other:?}"),
         }
