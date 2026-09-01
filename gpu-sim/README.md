@@ -382,6 +382,10 @@ scratch alloc and the GEMM kernel (H2D copy-engine PCIe tax; needs
 `--graph-mem`; legal with `--graph-memset`).
 `graph_add_dependencies_n` / `graph_remove_dependencies_n` are the same
 APIs with `numDependencies` from/to pairs (all-or-nothing).
+`graph_add_dependencies_n_with_data` is `cudaGraphAddDependencies` v2
+(`GraphEdgeData`; Default type with ports 0 is identity; Programmatic type
+is Invalid). `graph_edges_with_data` is `cudaGraphGetEdges` v2 (existing
+edges are Default, ports 0). Query; legal during capture.
 `graph_remove_dependencies` is `cudaGraphRemoveDependencies` (illegal on an
 exec and during capture). `graph_destroy_node` is `cudaGraphDestroyNode`
 (incident edges dropped; remaining indices stay valid; illegal on an exec

@@ -3379,6 +3379,34 @@ pub struct StreamCaptureInfo {
     pub mode: StreamCaptureMode,
 }
 
+/// `cudaGraphDependencyType` for [`GraphEdgeData::kind`].
+pub struct GraphDependencyType;
+
+impl GraphDependencyType {
+    /// `cudaGraphDependencyTypeDefault` (topology wait).
+    pub const DEFAULT: u8 = 0;
+    /// `cudaGraphDependencyTypeProgrammatic`. Not modeled (Invalid
+    /// `"graph dependency type"`). Distinct from
+    /// [`ProgrammaticLaunch`](crate::ProgrammaticLaunch) on a kernel node.
+    pub const PROGRAMMATIC: u8 = 1;
+}
+
+/// `cudaGraphEdgeData` for [`crate::Sim::graph_add_dependencies_n_with_data`]
+/// / [`crate::Sim::graph_edges_with_data`].
+///
+/// [`Self::kind`] [`GraphDependencyType::DEFAULT`] with ports 0 is identity
+/// with [`crate::Sim::graph_add_dependencies_n`]. Programmatic type is not
+/// modeled. [`Default`] is Default type, ports 0.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct GraphEdgeData {
+    /// `cudaGraphEdgeData::from_port`. Must be 0 with Default type.
+    pub from_port: u8,
+    /// `cudaGraphEdgeData::to_port`. Must be 0 with Default type.
+    pub to_port: u8,
+    /// [`GraphDependencyType`].
+    pub kind: u8,
+}
+
 /// `cudaGraphNodeGetType` tag for one graph node.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum GraphNodeKind {

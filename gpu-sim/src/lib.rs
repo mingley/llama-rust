@@ -979,7 +979,13 @@
 //! PCIe tax; needs `--graph-mem`; legal with `--graph-memset`).
 //! [`graph_add_dependencies_n`](Sim::graph_add_dependencies_n) /
 //! [`graph_remove_dependencies_n`](Sim::graph_remove_dependencies_n) are the
-//! same APIs with `numDependencies` from/to pairs (all-or-nothing). [`graph_remove_dependencies`](Sim::graph_remove_dependencies) is
+//! same APIs with `numDependencies` from/to pairs (all-or-nothing).
+//! [`graph_add_dependencies_n_with_data`](Sim::graph_add_dependencies_n_with_data)
+//! is `cudaGraphAddDependencies` v2 ([`GraphEdgeData`]; Default type with
+//! ports 0 is identity; Programmatic type is Invalid).
+//! [`graph_edges_with_data`](Sim::graph_edges_with_data) is
+//! `cudaGraphGetEdges` v2 (existing edges are Default, ports 0). Query;
+//! legal during capture. [`graph_remove_dependencies`](Sim::graph_remove_dependencies) is
 //! `cudaGraphRemoveDependencies` (illegal on an exec and during capture).
 //! [`graph_destroy_node`](Sim::graph_destroy_node) is `cudaGraphDestroyNode`
 //! (drops incident edges; remaining indices stay valid; illegal on an exec and
@@ -1088,19 +1094,19 @@ pub use ops::{
     DeviceNumaConfig, DeviceP2pAttr, DeviceProperties, EventCreateFlags, EventRecordFlags,
     EventWaitFlags, FlushGpuDirectRdmaScope, FlushGpuDirectRdmaTarget,
     FlushGpuDirectRdmaWritesOptions, FuncAttr, FuncAttributes, FuncCache,
-    GpuDirectRdmaWritesOrdering, GpuOp, GraphAddNode, GraphDebugDotFlags, GraphExecUpdateResult,
-    GraphExecUpdateResultInfo, GraphInstantiateFlags, GraphInstantiateParams,
-    GraphInstantiateResult, GraphMemAttr, GraphNodeKind, GraphNodeParams, GraphUserObjectFlags,
-    GreenCtxFlags, HostAllocFlags, HostGetDevicePointerFlags, HostNodeParams, InitDeviceFlags,
-    IpcMemFlags, KernelAttrs, KernelBuf, KernelKind, KernelNodeAttr, KernelNodeAttrValue,
-    KernelNodeParams, LaunchCompletionEvent, MemAccessDesc, MemAccessFlags, MemAdvise,
-    MemAllocationGranularity, MemAllocationProp, MemAllocationType, MemAttach, MemAttachFlags,
-    MemCreateFlags, MemExportFlags, MemHandleType, MemLocationType, MemMapFlags, MemPoolAttr,
-    MemPoolExportFlags, MemPoolProps, MemRangeAttr, MemRangeAttrValue, MemRangeHandleFlags,
-    MemRangeHandleType, MemReserveFlags, MemSyncDomain, MemSyncDomainMap, MemcpyAttributes,
-    MemcpyFlags, MemcpyOp, MemcpySrcAccessOrder, MemoryType, MemsetOp, MulticastBindFlags,
-    MulticastCreateFlags, MulticastGranularity, MulticastObjectProp, Operation, PdlLaunch,
-    PeerAccessFlags, Place, PointerAttr, PointerAttributes, PortableClusterMode,
+    GpuDirectRdmaWritesOrdering, GpuOp, GraphAddNode, GraphDebugDotFlags, GraphDependencyType,
+    GraphEdgeData, GraphExecUpdateResult, GraphExecUpdateResultInfo, GraphInstantiateFlags,
+    GraphInstantiateParams, GraphInstantiateResult, GraphMemAttr, GraphNodeKind, GraphNodeParams,
+    GraphUserObjectFlags, GreenCtxFlags, HostAllocFlags, HostGetDevicePointerFlags, HostNodeParams,
+    InitDeviceFlags, IpcMemFlags, KernelAttrs, KernelBuf, KernelKind, KernelNodeAttr,
+    KernelNodeAttrValue, KernelNodeParams, LaunchCompletionEvent, MemAccessDesc, MemAccessFlags,
+    MemAdvise, MemAllocationGranularity, MemAllocationProp, MemAllocationType, MemAttach,
+    MemAttachFlags, MemCreateFlags, MemExportFlags, MemHandleType, MemLocationType, MemMapFlags,
+    MemPoolAttr, MemPoolExportFlags, MemPoolProps, MemRangeAttr, MemRangeAttrValue,
+    MemRangeHandleFlags, MemRangeHandleType, MemReserveFlags, MemSyncDomain, MemSyncDomainMap,
+    MemcpyAttributes, MemcpyFlags, MemcpyOp, MemcpySrcAccessOrder, MemoryType, MemsetOp,
+    MulticastBindFlags, MulticastCreateFlags, MulticastGranularity, MulticastObjectProp, Operation,
+    PdlLaunch, PeerAccessFlags, Place, PointerAttr, PointerAttributes, PortableClusterMode,
     PortableSharedMode, PrefetchFlags, ProgrammaticEvent, ProgrammaticLaunch, SharedMemCarveout,
     SharedMemoryMode, SmResource, StreamAttr, StreamAttrValue, StreamCallbackFlags,
     StreamCaptureInfo, StreamCaptureMode, StreamCreateFlags, SynchronizationPolicy,
@@ -20989,6 +20995,83 @@ mod tests {
             Err(SimError::Invalid { why }) => assert!(why.contains("instantiated"), "{why}"),
             other => panic!("{other:?}"),
         }
+    }
+
+    #[test]
+    fn graph_add_dependencies_with_data_is_default_identity() {
+        let mut sim = Sim::new(h100());
+        let d = DeviceId(0);
+        let s = StreamId(0);
+        let a = sim.malloc(d, 4096).unwrap();
+        let g = sim.create_graph(d, s).unwrap();
+        sim.graph_add_empty(g).unwrap();
+        sim.graph_add_empty(g).unwrap();
+        sim.graph_add_empty(g).unwrap();
+        sim.graph_add_dependencies_with_data(g, 0, 1, GraphEdgeData::default())
+            .unwrap();
+        sim.graph_add_dependencies_n_with_data(
+            g,
+            &[(
+                1,
+                2,
+                GraphEdgeData {
+                    from_port: 0,
+                    to_port: 0,
+                    kind: GraphDependencyType::DEFAULT,
+                },
+            )],
+        )
+        .unwrap();
+        assert_eq!(sim.graph_edges(g).unwrap(), vec![(0, 1), (1, 2)]);
+        assert_eq!(
+            sim.graph_edges_with_data(g).unwrap(),
+            vec![
+                (0, 1, GraphEdgeData::default()),
+                (1, 2, GraphEdgeData::default()),
+            ]
+        );
+        match sim.graph_add_dependencies_with_data(
+            g,
+            0,
+            2,
+            GraphEdgeData {
+                kind: GraphDependencyType::PROGRAMMATIC,
+                ..GraphEdgeData::default()
+            },
+        ) {
+            Err(SimError::Invalid { why }) => {
+                assert!(why.contains("graph dependency type"), "{why}");
+            }
+            other => panic!("{other:?}"),
+        }
+        assert_eq!(sim.graph_edges(g).unwrap(), vec![(0, 1), (1, 2)]);
+        match sim.graph_add_dependencies_with_data(
+            g,
+            0,
+            2,
+            GraphEdgeData {
+                from_port: 1,
+                ..GraphEdgeData::default()
+            },
+        ) {
+            Err(SimError::Invalid { why }) => {
+                assert!(why.contains("graph edge port"), "{why}");
+            }
+            other => panic!("{other:?}"),
+        }
+        sim.begin_capture(d, s).unwrap();
+        match sim.graph_add_dependencies_with_data(g, 0, 2, GraphEdgeData::default()) {
+            Err(SimError::Invalid { why }) => assert!(why.contains("capture"), "{why}"),
+            other => panic!("{other:?}"),
+        }
+        assert_eq!(
+            sim.graph_edges_with_data(g).unwrap(),
+            vec![
+                (0, 1, GraphEdgeData::default()),
+                (1, 2, GraphEdgeData::default()),
+            ]
+        );
+        let _cap = sim.end_capture().unwrap();
     }
 
     #[test]

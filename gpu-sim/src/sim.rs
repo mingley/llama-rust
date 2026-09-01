@@ -17,22 +17,22 @@ use crate::ops::{
     EventCreateFlags, EventRecordFlags, EventWaitFlags, FlushGpuDirectRdmaScope,
     FlushGpuDirectRdmaTarget, FlushGpuDirectRdmaWritesOptions, FuncAttr, FuncAttributes, FuncCache,
     GpuDirectRdmaWritesOrdering, GpuOp as Kind, GraphAddNode, GraphDebugDotFlags,
-    GraphExecUpdateResult, GraphExecUpdateResultInfo, GraphInstantiateFlags,
-    GraphInstantiateParams, GraphInstantiateResult, GraphMemAttr, GraphNodeKind, GraphNodeParams,
-    GraphUserObjectFlags, GreenCtxFlags, HostAllocFlags, HostGetDevicePointerFlags, HostNodeParams,
-    InitDeviceFlags, IpcMemFlags, KernelAttrs, KernelBuf, KernelKind, KernelNodeAttr,
-    KernelNodeAttrValue, KernelNodeParams, LaunchCompletionEvent, MemAccessDesc, MemAccessFlags,
-    MemAdvise, MemAllocationGranularity, MemAllocationProp, MemAllocationType, MemAttach,
-    MemAttachFlags, MemCreateFlags, MemExportFlags, MemHandleType, MemLocationType, MemMapFlags,
-    MemPoolAttr, MemPoolExportFlags, MemPoolProps, MemRangeAttr, MemRangeAttrValue,
-    MemRangeHandleFlags, MemRangeHandleType, MemReserveFlags, MemSyncDomain, MemSyncDomainMap,
-    MemcpyAttributes, MemcpyFlags, MemcpyOp, MemcpySrcAccessOrder, MemoryType, MemsetOp,
-    MulticastBindFlags, MulticastCreateFlags, MulticastGranularity, MulticastObjectProp, Operation,
-    PdlLaunch, PeerAccessFlags, Place, PointerAttr, PointerAttributes, PortableClusterMode,
-    PortableSharedMode, PrefetchFlags, ProgrammaticEvent, ProgrammaticLaunch, SharedMemCarveout,
-    SharedMemoryMode, SmResource, StreamAttr, StreamAttrValue, StreamCallbackFlags,
-    StreamCaptureInfo, StreamCaptureMode, StreamCreateFlags, SynchronizationPolicy,
-    UserObjectFlags, WaitValueCmp, WriteValueFlags,
+    GraphDependencyType, GraphEdgeData, GraphExecUpdateResult, GraphExecUpdateResultInfo,
+    GraphInstantiateFlags, GraphInstantiateParams, GraphInstantiateResult, GraphMemAttr,
+    GraphNodeKind, GraphNodeParams, GraphUserObjectFlags, GreenCtxFlags, HostAllocFlags,
+    HostGetDevicePointerFlags, HostNodeParams, InitDeviceFlags, IpcMemFlags, KernelAttrs,
+    KernelBuf, KernelKind, KernelNodeAttr, KernelNodeAttrValue, KernelNodeParams,
+    LaunchCompletionEvent, MemAccessDesc, MemAccessFlags, MemAdvise, MemAllocationGranularity,
+    MemAllocationProp, MemAllocationType, MemAttach, MemAttachFlags, MemCreateFlags,
+    MemExportFlags, MemHandleType, MemLocationType, MemMapFlags, MemPoolAttr, MemPoolExportFlags,
+    MemPoolProps, MemRangeAttr, MemRangeAttrValue, MemRangeHandleFlags, MemRangeHandleType,
+    MemReserveFlags, MemSyncDomain, MemSyncDomainMap, MemcpyAttributes, MemcpyFlags, MemcpyOp,
+    MemcpySrcAccessOrder, MemoryType, MemsetOp, MulticastBindFlags, MulticastCreateFlags,
+    MulticastGranularity, MulticastObjectProp, Operation, PdlLaunch, PeerAccessFlags, Place,
+    PointerAttr, PointerAttributes, PortableClusterMode, PortableSharedMode, PrefetchFlags,
+    ProgrammaticEvent, ProgrammaticLaunch, SharedMemCarveout, SharedMemoryMode, SmResource,
+    StreamAttr, StreamAttrValue, StreamCallbackFlags, StreamCaptureInfo, StreamCaptureMode,
+    StreamCreateFlags, SynchronizationPolicy, UserObjectFlags, WaitValueCmp, WriteValueFlags,
 };
 use crate::profile::{align_up, ns_for_bytes, scale_ns_permille, HardwareProfile, LinkKind};
 
@@ -7532,6 +7532,54 @@ impl Sim {
         Ok(())
     }
 
+    /// `cudaGraphAddDependencies` with [`GraphEdgeData`] (`from`, `to`, data).
+    ///
+    /// [`GraphDependencyType::DEFAULT`] with ports 0 is
+    /// [`Self::graph_add_dependencies`]. Programmatic type Invalid
+    /// `"graph dependency type"`. Nonzero ports Invalid `"graph edge port"`.
+    /// Capture cannot include it. Illegal on an instantiated exec.
+    pub fn graph_add_dependencies_with_data(
+        &mut self,
+        graph: GraphId,
+        from: usize,
+        to: usize,
+        data: GraphEdgeData,
+    ) -> Result<(), SimError> {
+        self.graph_add_dependencies_n_with_data(graph, &[(from, to, data)])
+    }
+
+    /// `cudaGraphAddDependencies` v2 of `numDependencies` from/to/data triples.
+    ///
+    /// All-or-nothing on type, ports, cycle, and index. Empty `edges` is
+    /// success. [`GraphDependencyType::DEFAULT`] with ports 0 is
+    /// [`Self::graph_add_dependencies_n`]. Programmatic type is not modeled.
+    /// Capture cannot include it. Illegal on an instantiated exec.
+    pub fn graph_add_dependencies_n_with_data(
+        &mut self,
+        graph: GraphId,
+        edges: &[(usize, usize, GraphEdgeData)],
+    ) -> Result<(), SimError> {
+        for &(_, _, data) in edges {
+            Self::check_graph_edge_data(data)?;
+        }
+        let pairs: Vec<(usize, usize)> = edges.iter().map(|&(from, to, _)| (from, to)).collect();
+        self.graph_add_dependencies_n(graph, &pairs)
+    }
+
+    fn check_graph_edge_data(data: GraphEdgeData) -> Result<(), SimError> {
+        if data.kind != GraphDependencyType::DEFAULT {
+            return Err(SimError::Invalid {
+                why: "graph dependency type",
+            });
+        }
+        if data.from_port != 0 || data.to_port != 0 {
+            return Err(SimError::Invalid {
+                why: "graph edge port",
+            });
+        }
+        Ok(())
+    }
+
     /// `cudaGraphRemoveDependencies`: drop the `from` → `to` edge.
     ///
     /// Capture cannot include it. Illegal on an instantiated exec. Missing edges are
@@ -7679,6 +7727,21 @@ impl Sim {
             }
         }
         Ok(edges)
+    }
+
+    /// `cudaGraphGetEdges` v2: `(from, to, data)` in node-add order.
+    ///
+    /// Existing edges are [`GraphDependencyType::DEFAULT`] with ports 0
+    /// (Programmatic type is not stored). Query; legal during capture.
+    pub fn graph_edges_with_data(
+        &self,
+        graph: GraphId,
+    ) -> Result<Vec<(usize, usize, GraphEdgeData)>, SimError> {
+        Ok(self
+            .graph_edges(graph)?
+            .into_iter()
+            .map(|(from, to)| (from, to, GraphEdgeData::default()))
+            .collect())
     }
 
     /// `cudaGraphDebugDotPrint` of stored node kinds and edges.

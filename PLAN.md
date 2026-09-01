@@ -4821,7 +4821,16 @@ model, do not celebrate the sim.
     Capture cannot include it. No Engine `--vmm-export`. `gpu-profile capture`
     is still refused. Dual score still has no `$/M tokens`.
 
-441. [ ] Next numbered PLAN item after 440 is the next `gpu-sim` / Engine /
+441. [x] `gpu-sim` `graph_add_dependencies_n_with_data` is
+    `cudaGraphAddDependencies` v2 (`GraphEdgeData`). Default type with ports
+    0 is identity with `graph_add_dependencies_n`. Programmatic type Invalid
+    `"graph dependency type"`. `graph_edges_with_data` is `cudaGraphGetEdges`
+    v2 (existing edges are Default, ports 0). Query; legal during capture.
+    Capture cannot include Add. Distinct from kernel-node PDL. No Engine
+    `--graph-edge-data`. `gpu-profile capture` is still refused. Dual score
+    still has no `$/M tokens`.
+
+442. [ ] Next numbered PLAN item after 441 is the next `gpu-sim` / Engine /
     serve / expertvm mechanical API that is still missing, or the next official
     decode family. Prefer remaining CUDA-shaped twins over more
     OpenAI HTTP veneer. Do not invent F32 `output.scale`. Do not invent a
@@ -4915,6 +4924,9 @@ model, do not celebrate the sim.
     vs Streaming is not mechanically distinct in gpu-sim billing). Do not
     invent a second `cudaStreamBeginCaptureToGraph` deps flag. Do not invent
     a second `graph_add_dependencies` flag. Do not invent a second
+    `cudaGraphAddDependencies` v2 edgeData. Do not invent Programmatic
+    graph dependency edges. Do not invent `cudaGraphRemoveDependencies`
+    edgeData. Do not invent Engine `--graph-edge-data`. Do not invent a second
     `cudaGraphAddHostNode` BETWEEN flag. Do not invent a second captured
     `cudaLaunchHostFunc` BETWEEN piecewise flag. Do not invent a second leaf
     `cudaGraphAddHostNode` / captured `cudaLaunchHostFunc` BEFORE GEMM flag.

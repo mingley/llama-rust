@@ -5,6 +5,16 @@ Visible five-turn extract: [docs/chatgpt-share-6a920fe1.md](docs/chatgpt-share-6
 Complete share-API extract: [docs/chatgpt-share-6a920fe1/](docs/chatgpt-share-6a920fe1/).
 Work lands on `main`. No PRs.
 
+## Shipped 2026-08-31 — CUDA `cudaGraphAddDependencies` v2
+
+`gpu-sim` `graph_add_dependencies_n_with_data` is
+`cudaGraphAddDependencies` v2 (`GraphEdgeData`). Default type with ports
+0 is identity. Programmatic type is Invalid. `graph_edges_with_data` is
+`cudaGraphGetEdges` v2. Query; legal during capture. Capture cannot
+include Add. Distinct from kernel-node PDL. No Engine `--graph-edge-data`.
+`gpu-profile capture` is still refused. Dual score still has no
+`$/M tokens`.
+
 ## Shipped 2026-08-31 — CUDA `cuMemExportToShareableHandle`
 
 `gpu-sim` `va_export_to_shareable_handle` is
