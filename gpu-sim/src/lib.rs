@@ -646,6 +646,9 @@
 //! `srcY`, `srcZ`, `dstXInBytes`, `dstY`, `dstZ`). Default 0 is origin
 //! `(0,0[,0])`. 1D with any origin, or 2D with a z origin, is Invalid
 //! `"memcpy origin"`. No Engine `--memcpy-origin`.
+//! [`MemcpyOp`] `src_lod` / `dst_lod` are CUDA_MEMCPY3D `srcLOD` / `dstLOD`
+//! and must be 0 (CUDA arrays are not modeled). Nonzero is Invalid
+//! `"memcpy lod"`. No Engine `--memcpy-lod`.
 //! [`memcpy_3d_async`](Sim::memcpy_3d_async) / [`memcpy_3d`](Sim::memcpy_3d)
 //! are `cudaMemcpy3DAsync` / `cudaMemcpy3D` ([`MemcpyOp::is_3d`]).
 //! [`memcpy_3d_unaligned`](Sim::memcpy_3d_unaligned) is `cuMemcpy3DUnaligned`
@@ -15535,6 +15538,90 @@ mod tests {
         enq(sim.memcpy_3d(d, op, s));
         sim.synchronize().unwrap();
         assert_eq!(sim.bytes_moved(), 8192);
+    }
+
+    #[test]
+    fn memcpy_3d_lod_is_cuda_memcpy3d_src_lod() {
+        let mut sim = Sim::new(h100());
+        let d = DeviceId(0);
+        let s = StreamId(0);
+        let (a, pitch) = sim.malloc_3d(d, 256, 4, 4).unwrap();
+        let op = MemcpyOp {
+            src: Place::HostPinned,
+            dst: Place::Device(d),
+            alloc: a,
+            bytes: 256,
+            height: 4,
+            src_pitch: 256,
+            dst_pitch: pitch,
+            depth: 4,
+            src_height: 4,
+            dst_height: 4,
+            ..MemcpyOp::default()
+        };
+        enq(sim.memcpy_3d_async(d, op.clone(), s));
+        sim.synchronize().unwrap();
+        assert_eq!(sim.bytes_moved(), 4096);
+        assert_eq!(op.src_lod, 0);
+        assert_eq!(op.dst_lod, 0);
+        match sim.memcpy_3d_async(
+            d,
+            MemcpyOp {
+                src_lod: 1,
+                ..op.clone()
+            },
+            s,
+        ) {
+            Err(SimError::Invalid { why }) => assert!(why.contains("memcpy lod"), "{why}"),
+            other => panic!("{other:?}"),
+        }
+        match sim.memcpy_3d_async(
+            d,
+            MemcpyOp {
+                dst_lod: 1,
+                ..op.clone()
+            },
+            s,
+        ) {
+            Err(SimError::Invalid { why }) => assert!(why.contains("memcpy lod"), "{why}"),
+            other => panic!("{other:?}"),
+        }
+        match sim.memcpy(
+            d,
+            MemcpyOp {
+                src_lod: 1,
+                ..MemcpyOp::packed_1d(Place::HostPinned, Place::Device(d), a, 256)
+            },
+            s,
+        ) {
+            Err(SimError::Invalid { why }) => assert!(why.contains("memcpy lod"), "{why}"),
+            other => panic!("{other:?}"),
+        }
+        let (b, pitch2) = sim.malloc_pitch(d, 256, 8).unwrap();
+        match sim.memcpy_2d_async(
+            d,
+            MemcpyOp {
+                src: Place::HostPinned,
+                dst: Place::Device(d),
+                alloc: b,
+                bytes: 256,
+                height: 8,
+                src_pitch: 256,
+                dst_pitch: pitch2,
+                dst_lod: 1,
+                ..MemcpyOp::default()
+            },
+            s,
+        ) {
+            Err(SimError::Invalid { why }) => assert!(why.contains("memcpy lod"), "{why}"),
+            other => panic!("{other:?}"),
+        }
+        sim.begin_capture(d, s).unwrap();
+        enq(sim.memcpy_3d_async(d, op, s));
+        let g = sim.end_capture().unwrap();
+        let got = sim.graph_memcpy_get_params(g, 0).unwrap();
+        assert_eq!(got.src_lod, 0);
+        assert_eq!(got.dst_lod, 0);
     }
 
     #[test]

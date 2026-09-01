@@ -278,7 +278,9 @@ impl Place {
 /// `CUDA_MEMCPY2D` / `CUDA_MEMCPY3D` `srcXInBytes` / `srcY` / `srcZ` and
 /// `dstXInBytes` / `dstY` / `dstZ`. Default `0` is origin `(0,0[,0])`.
 /// A 1D copy with any origin, or a 2D copy with a z origin, is Invalid
-/// `"memcpy origin"`.
+/// `"memcpy origin"`. [`Self::src_lod`] / [`Self::dst_lod`] are
+/// `CUDA_MEMCPY3D` `srcLOD` / `dstLOD` and must be `0` (CUDA arrays are
+/// not modeled). Nonzero is Invalid `"memcpy lod"`.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct MemcpyOp {
     /// Source.
@@ -323,6 +325,12 @@ pub struct MemcpyOp {
     pub dst_y: u64,
     /// `dstZ`. Slice of the destination origin (`cudaMemcpy3D` only). Default `0`.
     pub dst_z: u64,
+    /// `srcLOD`. CUDA-array level of detail. Must be `0` (arrays are not
+    /// modeled). Default `0`.
+    pub src_lod: u64,
+    /// `dstLOD`. CUDA-array level of detail. Must be `0` (arrays are not
+    /// modeled). Default `0`.
+    pub dst_lod: u64,
 }
 
 impl Default for MemcpyOp {
@@ -345,6 +353,8 @@ impl Default for MemcpyOp {
             dst_x: 0,
             dst_y: 0,
             dst_z: 0,
+            src_lod: 0,
+            dst_lod: 0,
         }
     }
 }
@@ -352,7 +362,7 @@ impl Default for MemcpyOp {
 impl MemcpyOp {
     /// Packed `cudaMemcpy` / `cudaGraphAddMemcpyNode1D` of `bytes`.
     ///
-    /// Height, depth, pitches, and origin stay `0` ([`Self::default`]).
+    /// Height, depth, pitches, origin, and LOD stay `0` ([`Self::default`]).
     #[must_use]
     pub fn packed_1d(src: Place, dst: Place, alloc: AllocId, bytes: u64) -> Self {
         Self {

@@ -5254,7 +5254,13 @@ model, do not celebrate the sim.
     `--memcpy-3d-unaligned`. `gpu-profile capture` is still refused. Dual
     score still has no `$/M tokens`.
 
-490. [ ] Next numbered PLAN item after 489 is the next `gpu-sim` / Engine /
+490. [x] `gpu-sim` CUDA_MEMCPY3D `srcLOD` / `dstLOD`:
+    [`MemcpyOp`] `src_lod` / `dst_lod` must be 0. CUDA arrays are not
+    modeled. Nonzero is Invalid `"memcpy lod"`. Default 0 is identical.
+    No Engine `--memcpy-lod`. `gpu-profile capture` is still refused.
+    Dual score still has no `$/M tokens`.
+
+491. [ ] Next numbered PLAN item after 490 is the next `gpu-sim` / Engine /
     serve / expertvm mechanical API that is still missing, or the next official
     decode family. Prefer remaining CUDA-shaped twins over more
     OpenAI HTTP veneer. Do not invent F32 `output.scale`. Do not invent a
@@ -5535,7 +5541,9 @@ model, do not celebrate the sim.
     `cuMemcpy3DUnaligned` / `memcpy_3d_unaligned`. Do not invent
     `cuMemcpy3DUnalignedAsync` (CUDA has no Async Unaligned). Do not invent
     Engine `--memcpy-3d-unaligned`. Do not add 3D alignment checks to
-    `memcpy_3d`. Do not
+    `memcpy_3d`. Do not invent a second CUDA_MEMCPY3D `srcLOD` / `dstLOD` /
+    `MemcpyOp` `src_lod` / `dst_lod`. Do not invent Engine `--memcpy-lod`.
+    Do not invent CUDA-array memcpy. Do not
     spend the next item on an OpenAI-compatible HTTP veneer.
 
 Stop if Phase 1 traces say residency cannot work. Do not invent an

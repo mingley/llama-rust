@@ -173,7 +173,7 @@ warp scheduler, L1, …   ← do not model
 | `AccessPolicyWindow.hit` Streaming skips persist fill (`expertvm sim --l2-streaming`; needs persist) | exact |
 | `malloc_pitch` charges `pitch * height`; pitch is `align_up(width, 512)` | `cudaMallocPitch` |
 | `malloc_pitch_with_element_size` is `cuMemAllocPitch`; `ElementSizeBytes` 4/8/16; pitch still 512-aligned | `cuMemAllocPitch` |
-| `MemcpyOp` height/pitches bill `width * height` (not pitch padding); origin is srcPos / dstPos | `cudaMemcpy2DAsync` / `CUDA_MEMCPY2D` |
+| `MemcpyOp` height/pitches bill `width * height` (not pitch padding); origin is srcPos / dstPos; LOD must be 0 | `cudaMemcpy2DAsync` / `CUDA_MEMCPY3D` |
 | `MemsetOp` height/pitch bill `width * height` (not pitch padding) | `cudaMemset2DAsync` |
 | `MemsetOp` `element_size` is 1/2/4 (`cudaMemset` stays 1; offset/width/pitch must divide it) | `cudaMemsetNodeParams::elementSize` |
 | `malloc_3d` charges `pitch * height * depth` | `cudaMalloc3D` |
@@ -647,7 +647,9 @@ capture refused). `memcpy_pinned_to_device` / `memcpy_device_to_pinned`
 stay Async. No Engine `--memcpy-htod`. `MemcpyOp` `src_x` / `src_y` /
 `src_z` / `dst_x` / `dst_y` / `dst_z` are CUDA_MEMCPY2D and CUDA_MEMCPY3D
 srcPos / dstPos. Default 0. 1D origin or 2D z origin is `"memcpy origin"`.
-No Engine `--memcpy-origin`. `memcpy_3d` / `memcpy_3d_async` are `cudaMemcpy3D` /
+No Engine `--memcpy-origin`. `MemcpyOp` `src_lod` / `dst_lod` are
+CUDA_MEMCPY3D `srcLOD` / `dstLOD` and must be 0 (CUDA arrays are not
+modeled). Nonzero is `"memcpy lod"`. No Engine `--memcpy-lod`. `memcpy_3d` / `memcpy_3d_async` are `cudaMemcpy3D` /
 `cudaMemcpy3DAsync` (`MemcpyOp` must be 3D). `memcpy_3d_unaligned` is
 `cuMemcpy3DUnaligned` (identity with `memcpy_3d`; this VM does not require
 3D alignment; host-sync; CUDA has no Async Unaligned). No Engine
@@ -924,7 +926,9 @@ must align to `cudaLimitMaxL2FetchGranularity` (SM 8.0+ default 128).
 `cuMemAllocPitch` (`ElementSizeBytes` 4 / 8 / 16; pitch still 512-aligned).
 No Engine `--malloc-pitch-element`. `MemcpyOp` `height` / pitches are
 `cudaMemcpy2DAsync` (payload `width * height`). Origin fields are srcPos /
-dstPos (default 0). No Engine `--memcpy-origin`. `MemsetOp` `height` / `pitch`
+dstPos (default 0). No Engine `--memcpy-origin`. `MemcpyOp` `src_lod` /
+`dst_lod` are CUDA_MEMCPY3D `srcLOD` / `dstLOD` (must be 0). No Engine
+`--memcpy-lod`. `MemsetOp` `height` / `pitch`
 are `cudaMemset2DAsync` (payload `width * height`; padding is not written).
 `MemsetOp` `element_size` is `cudaMemsetNodeParams::elementSize` (`1` / `2` /
 `4`; typed `memset` stays `1`). Offset, width, and nonzero pitch must divide

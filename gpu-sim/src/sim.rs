@@ -21202,6 +21202,9 @@ fn memcpy_batch_attrs(
 }
 
 fn memcpy_2d_check(m: &MemcpyOp) -> Result<(), SimError> {
+    if m.src_lod != 0 || m.dst_lod != 0 {
+        return Err(SimError::Invalid { why: "memcpy lod" });
+    }
     if m.is_1d() {
         if m.has_origin() {
             return Err(SimError::Invalid {
