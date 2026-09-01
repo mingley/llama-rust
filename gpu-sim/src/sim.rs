@@ -20653,17 +20653,17 @@ fn memset_element_check(op: &MemsetOp) -> Result<(), SimError> {
             why: "memset element size",
         });
     }
-    if op.offset % n != 0 {
+    if !op.offset.is_multiple_of(n) {
         return Err(SimError::Invalid {
             why: "memset element align",
         });
     }
-    if op.bytes % n != 0 {
+    if !op.bytes.is_multiple_of(n) {
         return Err(SimError::Invalid {
             why: "memset element width",
         });
     }
-    if op.pitch != 0 && op.pitch % n != 0 {
+    if op.pitch != 0 && !op.pitch.is_multiple_of(n) {
         return Err(SimError::Invalid {
             why: "memset element pitch",
         });
