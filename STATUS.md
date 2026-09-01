@@ -5,6 +5,15 @@ Visible five-turn extract: [docs/chatgpt-share-6a920fe1.md](docs/chatgpt-share-6
 Complete share-API extract: [docs/chatgpt-share-6a920fe1/](docs/chatgpt-share-6a920fe1/).
 Work lands on `main`. No PRs.
 
+## Shipped 2026-09-01 — CUDA graph AddNode v2 edge data
+
+`gpu-sim` `cuGraphAddNode_v2`: `graph_add_node_with_data` is
+`cudaGraphAddNode` with `dependencyData`. `deps` and `data` must match.
+Default type with ports 0 is `graph_add_node`. Programmatic type stays
+Invalid. Edge checks run before the node is created. Capture cannot
+include it. No Engine `--graph-add-node-data`. `gpu-profile capture` is
+still refused. Dual score still has no `$/M tokens`.
+
 ## Shipped 2026-09-01 — CUDA primary-context GetId
 
 `gpu-sim` `cuCtxGetId`: `ctx_get_id` is `cuCtxGetId` for the seeded

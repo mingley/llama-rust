@@ -5115,7 +5115,16 @@ model, do not celebrate the sim.
     during capture. No Engine `--ctx-id`. `gpu-profile capture` is still
     refused. Dual score still has no `$/M tokens`.
 
-477. [ ] Next numbered PLAN item after 476 is the next `gpu-sim` / Engine /
+477. [x] `gpu-sim` `cuGraphAddNode_v2`:
+    [`graph_add_node_with_data`](Sim::graph_add_node_with_data) is
+    `cudaGraphAddNode` with `dependencyData`. `deps` and `data` must match
+    (`"graph add node data"`). [`GraphDependencyType::DEFAULT`] with ports
+    0 is [`graph_add_node`](Sim::graph_add_node). Programmatic type stays
+    Invalid. Edge checks run before the node is created. Capture cannot
+    include it. No Engine `--graph-add-node-data`. `gpu-profile capture`
+    is still refused. Dual score still has no `$/M tokens`.
+
+478. [ ] Next numbered PLAN item after 477 is the next `gpu-sim` / Engine /
     serve / expertvm mechanical API that is still missing, or the next official
     decode family. Prefer remaining CUDA-shaped twins over more
     OpenAI HTTP veneer. Do not invent F32 `output.scale`. Do not invent a
@@ -5305,7 +5314,9 @@ model, do not celebrate the sim.
     invent a second `cudaStreamBeginCaptureToGraph` deps flag. Do not invent
     a second `graph_add_dependencies` flag. Do not invent a second
     `cudaGraphAddDependencies` v2 edgeData. Do not invent Programmatic
-    graph dependency edges. Do not invent `cudaGraphRemoveDependencies`
+    graph dependency edges. Do not invent a second `cuGraphAddNode_v2` /
+    `graph_add_node_with_data`. Do not invent Engine `--graph-add-node-data`.
+    Do not invent `cudaGraphRemoveDependencies`
     edgeData. Do not invent Engine `--graph-edge-data`. Do not invent a second
     `cudaGraphAddHostNode` BETWEEN flag. Do not invent a second captured
     `cudaLaunchHostFunc` BETWEEN piecewise flag. Do not invent a second leaf

@@ -362,6 +362,9 @@ it. Independent streams still launch live. `cudaMallocAsync` / `cudaFreeAsync`
 `cudaGraphAddMemFreeNode` (same reuse / AutoFreeOnLaunch rules).
 `graph_add_node` is `cudaGraphAddNode` (`GraphNodeParams` plus dependency
 indices in the same call). Typed `graph_add_*` stay (empty deps).
+`graph_add_node_with_data` is `cuGraphAddNode_v2` (`dependencyData`; Default
+type with ports 0 is identity; length mismatch Invalid). Programmatic type
+stays Invalid. No Engine `--graph-add-node-data`.
 `GraphNodeParams::If` / `IfElse` / `While` / `Switch` fill `GraphAddNode` bodies.
 Typed helpers stay (`graph_add_if`, `graph_add_if_else`, `graph_add_while`,
 `graph_add_switch`).

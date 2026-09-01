@@ -1013,7 +1013,11 @@
 //! `cudaGraphAdd*` on that id.
 //! [`graph_add_node`](Sim::graph_add_node) is `cudaGraphAddNode`
 //! ([`GraphNodeParams`] plus dependency indices in the same call). Typed
-//! `graph_add_*` stay (empty deps). [`GraphNodeParams::If`] / `IfElse` /
+//! `graph_add_*` stay (empty deps). [`graph_add_node_with_data`](Sim::graph_add_node_with_data)
+//! is `cuGraphAddNode_v2` (`dependencyData`; Default type with ports 0 is
+//! identity; length mismatch Invalid `"graph add node data"`). Programmatic
+//! type stays Invalid. No Engine `--graph-add-node-data`.
+//! [`GraphNodeParams::If`] / `IfElse` /
 //! `While` / `Switch` fill [`GraphAddNode`] bodies. Typed helpers
 //! [`graph_add_if`](Sim::graph_add_if), `graph_add_if_else`, `graph_add_while`,
 //! and `graph_add_switch` stay.
@@ -12539,6 +12543,78 @@ mod tests {
             other => panic!("{other:?}"),
         }
         let _end = sim.end_capture().unwrap();
+    }
+
+    #[test]
+    fn graph_add_node_with_data_is_cu_graph_add_node_v2() {
+        let mut sim = Sim::new(h100());
+        let d = DeviceId(0);
+        let s = StreamId(0);
+        let g = sim.create_graph(d, s).unwrap();
+        let empty = sim
+            .graph_add_node_with_data(g, &[], &[], GraphNodeParams::Empty)
+            .unwrap();
+        assert_eq!(empty.node, 0);
+        let n1 = sim
+            .graph_add_node_with_data(g, &[0], &[GraphEdgeData::default()], GraphNodeParams::Empty)
+            .unwrap();
+        assert_eq!(n1.node, 1);
+        assert_eq!(sim.graph_node_deps(g, 1).unwrap(), vec![0]);
+        assert_eq!(
+            sim.graph_edges_with_data(g).unwrap(),
+            vec![(0, 1, GraphEdgeData::default())]
+        );
+        let n = sim.graph_len(g).unwrap();
+        match sim.graph_add_node_with_data(g, &[0], &[], GraphNodeParams::Empty) {
+            Err(SimError::Invalid { why }) => {
+                assert!(why.contains("graph add node data"), "{why}");
+            }
+            other => panic!("{other:?}"),
+        }
+        assert_eq!(sim.graph_len(g).unwrap(), n);
+        match sim.graph_add_node_with_data(
+            g,
+            &[0],
+            &[GraphEdgeData {
+                kind: GraphDependencyType::PROGRAMMATIC,
+                ..GraphEdgeData::default()
+            }],
+            GraphNodeParams::Empty,
+        ) {
+            Err(SimError::Invalid { why }) => {
+                assert!(why.contains("graph dependency type"), "{why}");
+            }
+            other => panic!("{other:?}"),
+        }
+        assert_eq!(sim.graph_len(g).unwrap(), n);
+        match sim.graph_add_node_with_data(
+            g,
+            &[0],
+            &[GraphEdgeData {
+                from_port: 1,
+                ..GraphEdgeData::default()
+            }],
+            GraphNodeParams::Empty,
+        ) {
+            Err(SimError::Invalid { why }) => {
+                assert!(why.contains("graph edge port"), "{why}");
+            }
+            other => panic!("{other:?}"),
+        }
+        assert_eq!(sim.graph_len(g).unwrap(), n);
+        sim.begin_capture(d, s).unwrap();
+        match sim.graph_add_node_with_data(g, &[], &[], GraphNodeParams::Empty) {
+            Err(SimError::Invalid { why }) => assert!(why.contains("capture"), "{why}"),
+            other => panic!("{other:?}"),
+        }
+        let _end = sim.end_capture().unwrap();
+        let exec = sim.instantiate_graph(g).unwrap();
+        match sim.graph_add_node_with_data(exec, &[], &[], GraphNodeParams::Empty) {
+            Err(SimError::Invalid { why }) => {
+                assert!(why.contains("instantiated"), "{why}");
+            }
+            other => panic!("{other:?}"),
+        }
     }
 
     #[test]

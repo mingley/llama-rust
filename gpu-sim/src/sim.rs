@@ -6994,6 +6994,7 @@ impl Sim {
     /// [`Self::graph_add_set_conditional`]. Capture
     /// cannot include it. Illegal on an instantiated exec.
     /// [`GraphNodeParams::Alloc`] fills [`GraphAddNode::alloc`].
+    /// Flags-word `dependencyData` is [`Self::graph_add_node_with_data`].
     pub fn graph_add_node(
         &mut self,
         graph: GraphId,
@@ -7012,6 +7013,33 @@ impl Sim {
         added.node = self.graph_len(graph)?.saturating_sub(1);
         self.graph_bind_new_deps(graph, added.node, deps)?;
         Ok(added)
+    }
+
+    /// `cuGraphAddNode_v2` (`cudaGraphAddNode` with `dependencyData`).
+    ///
+    /// `deps` and `data` must be the same length (`"graph add node data"`).
+    /// [`GraphDependencyType::DEFAULT`] with ports 0 is
+    /// [`Self::graph_add_node`]. Programmatic type Invalid
+    /// `"graph dependency type"`; nonzero ports `"graph edge port"`. Edge
+    /// checks run before the node is created (all-or-nothing). Capture cannot
+    /// include it. Illegal on an instantiated exec. Typed
+    /// [`Self::graph_add_node`] stays (NULL `dependencyData`).
+    pub fn graph_add_node_with_data(
+        &mut self,
+        graph: GraphId,
+        deps: &[usize],
+        data: &[GraphEdgeData],
+        params: GraphNodeParams,
+    ) -> Result<GraphAddNode, SimError> {
+        if deps.len() != data.len() {
+            return Err(SimError::Invalid {
+                why: "graph add node data",
+            });
+        }
+        for &edge in data {
+            Self::check_graph_edge_data(edge)?;
+        }
+        self.graph_add_node(graph, deps, params)
     }
 
     fn graph_add_node_kind(

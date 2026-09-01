@@ -3499,7 +3499,8 @@ impl GraphDependencyType {
 }
 
 /// `cudaGraphEdgeData` for [`crate::Sim::graph_add_dependencies_n_with_data`]
-/// / [`crate::Sim::graph_edges_with_data`] /
+/// / [`crate::Sim::graph_add_node_with_data`] /
+/// [`crate::Sim::graph_edges_with_data`] /
 /// [`crate::Sim::graph_node_deps_with_data`] /
 /// [`crate::Sim::graph_node_dependents_with_data`] /
 /// [`StreamCaptureInfo::edge_data`].
