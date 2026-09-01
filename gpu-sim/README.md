@@ -356,7 +356,9 @@ it. Independent streams still launch live. `cudaMallocAsync` / `cudaFreeAsync`
 `cudaGraphAddMemFreeNode` (same reuse / AutoFreeOnLaunch rules).
 `graph_add_node` is `cudaGraphAddNode` (`GraphNodeParams` plus dependency
 indices in the same call). Typed `graph_add_*` stay (empty deps).
-IF/WHILE/SWITCH stay `graph_add_if` / `graph_add_if_else` / `graph_add_while` / `graph_add_switch`.
+`GraphNodeParams::If` / `IfElse` / `While` fill `GraphAddNode` bodies;
+typed `graph_add_if` / `graph_add_if_else` / `graph_add_while` stay.
+SWITCH stays `graph_add_switch`.
 `graph_add_set_conditional` is the graph-build analog of captured
 `set_conditional` (`GraphNodeParams::SetConditional`; handle is topology,
 `value` is a parameter).

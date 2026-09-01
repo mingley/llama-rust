@@ -985,9 +985,10 @@
 //! `cudaGraphAdd*` on that id.
 //! [`graph_add_node`](Sim::graph_add_node) is `cudaGraphAddNode`
 //! ([`GraphNodeParams`] plus dependency indices in the same call). Typed
-//! `graph_add_*` stay (empty deps). IF/WHILE/SWITCH stay
-//! [`graph_add_if`](Sim::graph_add_if) / [`graph_add_if_else`](Sim::graph_add_if_else) /
-//! `graph_add_while` / `graph_add_switch`.
+//! `graph_add_*` stay (empty deps). [`GraphNodeParams::If`] / `IfElse` /
+//! `While` fill [`GraphAddNode`] bodies; typed [`graph_add_if`](Sim::graph_add_if) /
+//! `graph_add_if_else` / `graph_add_while` stay. SWITCH stays
+//! [`graph_add_switch`](Sim::graph_add_switch).
 //! [`graph_add_set_conditional`](Sim::graph_add_set_conditional) is the
 //! graph-build analog of captured [`set_conditional`](Sim::set_conditional)
 //! ([`GraphNodeParams::SetConditional`]; handle is topology, `value` is a
@@ -999,7 +1000,8 @@
 //! [`graph_node_get_params`](Sim::graph_node_get_params) /
 //! [`graph_exec_node_get_params`](Sim::graph_exec_node_get_params) are
 //! `cudaGraphNodeGetParams` on the definition / exec snapshot (query; Empty
-//! returns [`GraphNodeParams::Empty`]; Alloc is bytes only).
+//! returns [`GraphNodeParams::Empty`]; Alloc is bytes only; If / IfElse /
+//! While are handle-only).
 //! [`Sim::graph_add_alloc`] / [`graph_add_free`](Sim::graph_add_free) are
 //! `cudaGraphAddMemAllocNode` / `cudaGraphAddMemFreeNode` (same reuse /
 //! AutoFreeOnLaunch rules as captured `cudaMallocAsync`).
@@ -12117,6 +12119,52 @@ mod tests {
             other => panic!("{other:?}"),
         }
         let _end = sim.end_capture().unwrap();
+    }
+
+    #[test]
+    fn graph_add_node_if_fills_cuda_cond_ph_graph_out() {
+        let mut sim = Sim::new(h100());
+        let d = DeviceId(0);
+        let s = StreamId(0);
+        let g = sim.create_graph(d, s).unwrap();
+        let h = sim.graph_conditional_create(g, 0).unwrap();
+        let iff = sim
+            .graph_add_node(g, &[], GraphNodeParams::If { handle: h })
+            .unwrap();
+        assert_eq!(iff.node, 0);
+        assert!(iff.alloc.is_none());
+        assert!(iff.body.is_some());
+        assert!(iff.else_body.is_none());
+        assert_eq!(sim.graph_node_kind(g, 0).unwrap(), GraphNodeKind::If);
+        assert_eq!(
+            sim.graph_node_get_params(g, 0).unwrap(),
+            GraphNodeParams::If { handle: h }
+        );
+        let ifelse = sim
+            .graph_add_node(g, &[0], GraphNodeParams::IfElse { handle: h })
+            .unwrap();
+        assert_eq!(ifelse.node, 1);
+        assert!(ifelse.body.is_some());
+        assert!(ifelse.else_body.is_some());
+        assert_ne!(ifelse.body, ifelse.else_body);
+        assert_eq!(sim.graph_node_deps(g, 1).unwrap(), vec![0]);
+        assert_eq!(
+            sim.graph_node_get_params(g, 1).unwrap(),
+            GraphNodeParams::IfElse { handle: h }
+        );
+        let w = sim
+            .graph_add_node(g, &[], GraphNodeParams::While { handle: h })
+            .unwrap();
+        assert!(w.body.is_some());
+        assert!(w.else_body.is_none());
+        assert_eq!(
+            sim.graph_node_get_params(g, w.node).unwrap(),
+            GraphNodeParams::While { handle: h }
+        );
+        match sim.graph_node_set_params(g, 0, GraphNodeParams::If { handle: h }) {
+            Err(SimError::Invalid { why }) => assert!(why.contains("conditional"), "{why}"),
+            other => panic!("{other:?}"),
+        }
     }
 
     #[test]

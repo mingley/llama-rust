@@ -4993,7 +4993,16 @@ model, do not celebrate the sim.
     `--graph-if-else`. `gpu-profile capture` is still refused. Dual score
     still has no `$/M tokens`.
 
-462. [ ] Next numbered PLAN item after 461 is the next `gpu-sim` / Engine /
+462. [x] `gpu-sim` `GraphNodeParams::If` / `IfElse` / `While` are
+    `cudaGraphAddNode` conditional params. `GraphAddNode::body` /
+    `else_body` are `phGraph_out`. Typed `graph_add_if` /
+    `graph_add_if_else` / `graph_add_while` stay. SWITCH stays
+    `graph_add_switch`. GetParams is handle-only. SetParams is Invalid
+    `"conditional node params"`. No Engine `--graph-if-else`.
+    `gpu-profile capture` is still refused. Dual score still has no
+    `$/M tokens`.
+
+463. [ ] Next numbered PLAN item after 462 is the next `gpu-sim` / Engine /
     serve / expertvm mechanical API that is still missing, or the next official
     decode family. Prefer remaining CUDA-shaped twins over more
     OpenAI HTTP veneer. Do not invent F32 `output.scale`. Do not invent a
@@ -5103,6 +5112,9 @@ model, do not celebrate the sim.
     (ignore the stream and still host-sync) stays weak.
     Do not invent a second `cudaGraphCondTypeIf` else /
     `graph_add_if_else`. Do not invent Engine `--graph-if-else`.
+    Do not invent a second `cudaGraphAddNode` If / IfElse / While /
+    `GraphNodeParams::If`. Do not invent `GraphNodeParams::Switch`
+    (body lists are not `Copy` on [`GraphAddNode`]).
     Do not invent `cuDeviceGetLuid`
     (Windows).
     Do not invent gemma4 `attn_q.scale` / `attn_output.scale` / `attn_k.scale` /

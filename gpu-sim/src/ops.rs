@@ -3530,9 +3530,11 @@ pub enum GraphNodeKind {
 /// `cudaGraphNodeParams` for [`crate::Sim::graph_add_node`] /
 /// [`crate::Sim::graph_node_get_params`].
 ///
-/// IF/WHILE/SWITCH stay [`crate::Sim::graph_add_if`] /
-/// [`crate::Sim::graph_add_if_else`] / `graph_add_while` /
-/// `graph_add_switch` (those return body graphs). Set-conditional is
+/// [`Self::If`] / [`Self::IfElse`] / [`Self::While`] fill
+/// [`GraphAddNode::body`] (and `else_body`). Typed
+/// [`crate::Sim::graph_add_if`] / `graph_add_if_else` / `graph_add_while`
+/// stay. SWITCH stays [`crate::Sim::graph_add_switch`] (those return body
+/// graphs). Set-conditional is
 /// [`crate::Sim::graph_add_set_conditional`] / [`Self::SetConditional`].
 /// External-semaphore nodes are not modeled.
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -3581,6 +3583,21 @@ pub enum GraphNodeParams {
         /// Value written when this node starts.
         value: u32,
     },
+    /// `cudaGraphCondTypeIf` size 1. [`GraphAddNode::body`] is the then-body.
+    If {
+        /// Handle created with [`crate::Sim::graph_conditional_create`].
+        handle: CondId,
+    },
+    /// `cudaGraphCondTypeIf` size 2. [`GraphAddNode::body`] / `else_body`.
+    IfElse {
+        /// Handle created with [`crate::Sim::graph_conditional_create`].
+        handle: CondId,
+    },
+    /// `cudaGraphCondTypeWhile`. [`GraphAddNode::body`] is the loop body.
+    While {
+        /// Handle created with [`crate::Sim::graph_conditional_create`].
+        handle: CondId,
+    },
 }
 
 /// Result of [`crate::Sim::graph_add_node`] (`cudaGraphAddNode`).
@@ -3590,4 +3607,8 @@ pub struct GraphAddNode {
     pub node: usize,
     /// Filled for [`GraphNodeParams::Alloc`] (`cudaMemAllocNodeParams::dptr`).
     pub alloc: Option<AllocId>,
+    /// Then-body / WHILE body (`cudaGraphConditionalNodeParams::phGraph_out[0]`).
+    pub body: Option<GraphId>,
+    /// IF size-2 else-body (`phGraph_out[1]`).
+    pub else_body: Option<GraphId>,
 }

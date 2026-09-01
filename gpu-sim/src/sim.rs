@@ -4642,9 +4642,10 @@ impl Sim {
     ///
     /// Dispatches to the typed SetParams. [`GraphNodeParams::Alloc`] is Invalid
     /// (would resize HBM). [`GraphNodeParams::Empty`] has no params. Event
-    /// External flags are not rewritten (topology). After instantiate this
-    /// does not retarget the exec; use [`Self::graph_exec_node_set_params`].
-    /// Capture cannot include it.
+    /// External flags are not rewritten (topology). [`GraphNodeParams::If`] /
+    /// `IfElse` / `While` are topology (`"conditional node params"`). After
+    /// instantiate this does not retarget the exec; use
+    /// [`Self::graph_exec_node_set_params`]. Capture cannot include it.
     pub fn graph_node_set_params(
         &mut self,
         graph: GraphId,
@@ -4748,14 +4749,21 @@ impl Sim {
             GraphNodeParams::SetConditional { handle, value } => {
                 self.set_conditional_node_params(graph, node, handle, value, exec)
             }
+            GraphNodeParams::If { .. }
+            | GraphNodeParams::IfElse { .. }
+            | GraphNodeParams::While { .. } => Err(SimError::Invalid {
+                why: "conditional node params",
+            }),
         }
     }
 
     /// `cudaGraphNodeGetParams` on the graph definition.
     ///
-    /// Query; legal during capture. Typed GetParams stay. IF/WHILE/SWITCH stay
-    /// [`Self::graph_if_nodes`] / `graph_while_nodes` / `graph_switch_nodes`.
-    /// Set-conditional is [`Self::graph_set_conditional_nodes`] /
+    /// Query; legal during capture. Typed GetParams stay.
+    /// [`GraphNodeParams::If`] / `IfElse` / `While` are handle-only (bodies stay
+    /// [`Self::graph_if_nodes`] / `graph_while_nodes`). SWITCH stays
+    /// [`Self::graph_switch_nodes`]. Set-conditional is
+    /// [`Self::graph_set_conditional_nodes`] /
     /// [`GraphNodeParams::SetConditional`].
     /// [`GraphNodeParams::Alloc`] is bytes only; the pointer is
     /// [`Self::graph_alloc_get_params`]. Empty returns [`GraphNodeParams::Empty`].
@@ -6792,9 +6800,11 @@ impl Sim {
     ///
     /// Typed [`Self::graph_add_kernel`] / `graph_add_memcpy` / … stay; they
     /// start with no dependencies. This call binds `deps` in the same step (all
-    /// indices must already exist). IF/WHILE/SWITCH stay
-    /// [`Self::graph_add_if`] / `graph_add_if_else` / `graph_add_while` /
-    /// `graph_add_switch`.
+    /// indices must already exist). [`GraphNodeParams::If`] /
+    /// [`GraphNodeParams::IfElse`] / [`GraphNodeParams::While`] fill
+    /// [`GraphAddNode::body`] (and `else_body`). Typed [`Self::graph_add_if`] /
+    /// `graph_add_if_else` / `graph_add_while` stay. SWITCH stays
+    /// [`Self::graph_add_switch`].
     /// [`GraphNodeParams::SetConditional`] is
     /// [`Self::graph_add_set_conditional`]. Capture
     /// cannot include it. Illegal on an instantiated exec.
@@ -6813,62 +6823,81 @@ impl Sim {
                 });
             }
         }
-        let alloc = self.graph_add_node_kind(graph, params)?;
+        let (alloc, body, else_body) = self.graph_add_node_kind(graph, params)?;
         let node = self.graph_len(graph)?.saturating_sub(1);
         self.graph_bind_new_deps(graph, node, deps)?;
-        Ok(GraphAddNode { node, alloc })
+        Ok(GraphAddNode {
+            node,
+            alloc,
+            body,
+            else_body,
+        })
     }
 
     fn graph_add_node_kind(
         &mut self,
         graph: GraphId,
         params: GraphNodeParams,
-    ) -> Result<Option<AllocId>, SimError> {
+    ) -> Result<(Option<AllocId>, Option<GraphId>, Option<GraphId>), SimError> {
         match params {
             GraphNodeParams::Kernel(p) => {
                 self.graph_add_kernel_params(graph, p)?;
-                Ok(None)
+                Ok((None, None, None))
             }
             GraphNodeParams::Memcpy(op) => {
                 self.graph_add_memcpy(graph, op)?;
-                Ok(None)
+                Ok((None, None, None))
             }
             GraphNodeParams::Memset(op) => {
                 self.graph_add_memset_op(graph, op)?;
-                Ok(None)
+                Ok((None, None, None))
             }
             GraphNodeParams::Host(p) => {
                 self.graph_add_host_func_params(graph, p)?;
-                Ok(None)
+                Ok((None, None, None))
             }
             GraphNodeParams::Empty => {
                 self.graph_add_empty(graph)?;
-                Ok(None)
+                Ok((None, None, None))
             }
             GraphNodeParams::EventRecord { event, external } => {
                 self.graph_add_event_record(graph, event, external)?;
-                Ok(None)
+                Ok((None, None, None))
             }
             GraphNodeParams::EventWait { event, external } => {
                 self.graph_add_event_wait(graph, event, external)?;
-                Ok(None)
+                Ok((None, None, None))
             }
             GraphNodeParams::ChildGraph(child) => {
                 self.graph_add_child(graph, child)?;
-                Ok(None)
+                Ok((None, None, None))
             }
-            GraphNodeParams::Alloc { bytes } => Ok(Some(self.graph_add_alloc(graph, bytes)?)),
+            GraphNodeParams::Alloc { bytes } => {
+                Ok((Some(self.graph_add_alloc(graph, bytes)?), None, None))
+            }
             GraphNodeParams::Free(id) => {
                 self.graph_add_free(graph, id)?;
-                Ok(None)
+                Ok((None, None, None))
             }
             GraphNodeParams::BatchMemOp(ops) => {
                 self.graph_add_batch_mem_op(graph, &ops)?;
-                Ok(None)
+                Ok((None, None, None))
             }
             GraphNodeParams::SetConditional { handle, value } => {
                 self.graph_add_set_conditional(graph, handle, value)?;
-                Ok(None)
+                Ok((None, None, None))
+            }
+            GraphNodeParams::If { handle } => {
+                let body = self.graph_add_if(graph, handle)?;
+                Ok((None, Some(body), None))
+            }
+            GraphNodeParams::IfElse { handle } => {
+                let (body, else_body) = self.graph_add_if_else(graph, handle)?;
+                Ok((None, Some(body), Some(else_body)))
+            }
+            GraphNodeParams::While { handle } => {
+                let body = self.graph_add_while(graph, handle)?;
+                Ok((None, Some(body), None))
             }
         }
     }
@@ -20667,9 +20696,18 @@ fn node_params_of(kind: &Kind) -> Result<GraphNodeParams, SimError> {
             handle: *handle,
             value: *value,
         },
-        Kind::If { .. }
-        | Kind::While { .. }
-        | Kind::Switch { .. }
+        Kind::If {
+            handle,
+            else_body: None,
+            ..
+        } => GraphNodeParams::If { handle: *handle },
+        Kind::If {
+            handle,
+            else_body: Some(_),
+            ..
+        } => GraphNodeParams::IfElse { handle: *handle },
+        Kind::While { handle, .. } => GraphNodeParams::While { handle: *handle },
+        Kind::Switch { .. }
         | Kind::WhileTick { .. }
         | Kind::Attach { .. }
         | Kind::AllReduce { .. }
