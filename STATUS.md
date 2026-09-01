@@ -5,6 +5,15 @@ Visible five-turn extract: [docs/chatgpt-share-6a920fe1.md](docs/chatgpt-share-6
 Complete share-API extract: [docs/chatgpt-share-6a920fe1/](docs/chatgpt-share-6a920fe1/).
 Work lands on `main`. No PRs.
 
+## Shipped 2026-09-01 — CUDA `cuGLUnregisterBufferObject`
+
+`gpu-sim` `Sim::gl_unregister_buffer_object` is `cuGLUnregisterBufferObject`.
+Always Invalid `"unregister object"` because legacy OpenGL interop is not
+modeled. Query; legal during capture. Distinct from
+`gl_register_buffer_object` (why is not a superstring of `"buffer object"`).
+This VM does not invent `cuGLUnmapBufferObject` or Engine `--gl-unregister-object`.
+`gpu-profile capture` is still refused. Dual score still has no `$/M tokens`.
+
 ## Shipped 2026-09-01 — CUDA `cuExternalMemoryGetMappedMipmappedArray`
 
 `gpu-sim` `Sim::external_memory_get_mapped_mipmapped_array` is

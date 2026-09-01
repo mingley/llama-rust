@@ -6933,7 +6933,14 @@ model, do not celebrate the sim.
     or `cudaChooseDevice`. `gpu-profile capture` is still refused. Dual
     score still has no `$/M tokens`.
 
-683. [ ] Next numbered PLAN item after 682 is the next `gpu-sim` / Engine /
+683. [x] `gpu-sim` `Sim::gl_unregister_buffer_object` is
+    `cuGLUnregisterBufferObject`. Always Invalid `"unregister object"`
+    because legacy OpenGL interop is not modeled. Query; legal during capture.
+    Distinct from `gl_register_buffer_object`. This VM does not invent `cuGLUnmapBufferObject`, Engine `--gl-unregister-object`,
+    or `cudaChooseDevice`. `gpu-profile capture` is still refused. Dual
+    score still has no `$/M tokens`.
+
+684. [ ] Next numbered PLAN item after 683 is the next `gpu-sim` / Engine /
     serve / expertvm mechanical API that is still missing, or the next official
     decode family. Prefer remaining CUDA-shaped twins over more
     OpenAI HTTP veneer. Do not invent F32 `output.scale`. Do not invent a
@@ -7453,6 +7460,10 @@ model, do not celebrate the sim.
     `external_memory_get_mapped_mipmapped_array`. Do not invent Engine `--external-mipmap`.
     Do not invent `cuGLUnregisterBufferObject` this slice. Do not reverse
     `"external mipmap"`.
+    Do not invent a second `cuGLUnregisterBufferObject` /
+    `gl_unregister_buffer_object`. Do not invent Engine `--gl-unregister-object`.
+    Do not invent `cuGLUnmapBufferObject` this slice. Do not reverse
+    `"unregister object"`.
     Do not invent a second `cudaStreamAddCallback`.
     Do not invent Engine `--stream-callback` (same wall as second live
     `cudaLaunchHostFunc` after miss DMA).
@@ -8072,6 +8083,9 @@ model, do not celebrate the sim.
     Do not invent a second `external_memory_get_mapped_mipmapped_array` API. Do not invent
     Engine `--get-external-mipmap`. Do not invent an external mipmap offset
     this slice. Do not reverse external mipmap remaining unsupported.
+    Do not invent a second `gl_unregister_buffer_object` API. Do not invent
+    Engine `--unregister-gl-buffer-object`. Do not invent a GLUT unbind
+    this slice. Do not reverse legacy GL unregister remaining unsupported.
     Do not invent a second DeviceLaunch in-flight destroy-complete check or Engine
     `--device-launch-destroy`. Do not abort an in-flight DeviceLaunch when
     `destroy_graph` succeeds. Do not delay destroy of an idle exec. Do not invent
@@ -8874,6 +8888,9 @@ model, do not celebrate the sim.
     Do not invent a second `external_memory_get_mapped_mipmapped_array` method. Do not
     invent Engine `--cu-external-memory-get-mapped-mipmapped-array`. Do not reverse wrapping
     cuExternalMemoryGetMappedMipmappedArray Invalid.
+    Do not invent a second `gl_unregister_buffer_object` method. Do not
+    invent Engine `--cu-gl-unregister-buffer-object`. Do not reverse wrapping
+    cuGLUnregisterBufferObject Invalid.
     Do not
     spend the next item on an OpenAI-compatible HTTP veneer.
 
