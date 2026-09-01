@@ -6618,7 +6618,16 @@ model, do not celebrate the sim.
     or `cudaChooseDevice`. `gpu-profile capture` is still refused. Dual
     score still has no `$/M tokens`.
 
-640. [ ] Next numbered PLAN item after 639 is the next `gpu-sim` / Engine /
+640. [x] `gpu-sim` `Sim::tex_object_get_resource_view_desc` is
+    `cuTexObjectGetResourceViewDesc` /
+    `cudaGetTextureObjectResourceViewDesc`. Always Invalid `"tex view desc"`
+    because CUDA textures are not modeled. Query; legal during capture.
+    Distinct from `tex_object_get_resource_desc` and
+    `tex_object_get_texture_desc`. This VM does not invent `CU_RES_VIEW_FORMAT`, Engine `--tex-view-desc`,
+    or `cudaChooseDevice`. `gpu-profile capture` is still refused. Dual
+    score still has no `$/M tokens`.
+
+641. [ ] Next numbered PLAN item after 640 is the next `gpu-sim` / Engine /
     serve / expertvm mechanical API that is still missing, or the next official
     decode family. Prefer remaining CUDA-shaped twins over more
     OpenAI HTTP veneer. Do not invent F32 `output.scale`. Do not invent a
@@ -6984,6 +6993,9 @@ model, do not celebrate the sim.
     Do not invent a second `cuTexObjectGetTextureDesc` /
     `tex_object_get_texture_desc`. Do not invent Engine `--tex-desc`. Do not invent
     `CU_TR_FILTER_MODE` this slice. Do not reverse `"texture desc"`.
+    Do not invent a second `cuTexObjectGetResourceViewDesc` /
+    `tex_object_get_resource_view_desc`. Do not invent Engine `--tex-view-desc`. Do not invent
+    `CU_RES_VIEW_FORMAT` this slice. Do not reverse `"tex view desc"`.
     Do not invent a second `cudaStreamAddCallback`.
     Do not invent Engine `--stream-callback` (same wall as second live
     `cudaLaunchHostFunc` after miss DMA).
@@ -7454,6 +7466,10 @@ model, do not celebrate the sim.
     Do not invent a second `tex_object_get_texture_desc` API. Do not
     invent Engine `--get-tex-desc`. Do not invent a filter-mode enum
     this slice. Do not reverse texture desc remaining unsupported.
+    Do not invent a second `tex_object_get_resource_view_desc` API. Do
+    not invent Engine `--get-tex-view`. Do not invent a resource-view
+    format enum this slice. Do not reverse tex view desc remaining
+    unsupported.
     Do not invent a second DeviceLaunch in-flight destroy-complete check or Engine
     `--device-launch-destroy`. Do not abort an in-flight DeviceLaunch when
     `destroy_graph` succeeds. Do not delay destroy of an idle exec. Do not invent
@@ -8127,6 +8143,9 @@ model, do not celebrate the sim.
     Do not invent a second `tex_object_get_texture_desc` method. Do
     not invent Engine `--cu-tex-object-get-texture-desc`. Do not reverse wrapping
     cuTexObjectGetTextureDesc Invalid.
+    Do not invent a second `tex_object_get_resource_view_desc` method.
+    Do not invent Engine `--cu-tex-object-get-resource-view-desc`. Do not reverse wrapping
+    cuTexObjectGetResourceViewDesc Invalid.
     Do not
     spend the next item on an OpenAI-compatible HTTP veneer.
 

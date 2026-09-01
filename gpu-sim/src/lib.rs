@@ -811,6 +811,9 @@
 //! [`tex_object_get_texture_desc`](Sim::tex_object_get_texture_desc) is
 //! `cuTexObjectGetTextureDesc` (always Invalid `"texture desc"`).
 //! Query; legal during capture. No Engine `--tex-desc`.
+//! [`tex_object_get_resource_view_desc`](Sim::tex_object_get_resource_view_desc)
+//! is `cuTexObjectGetResourceViewDesc` (always Invalid `"tex view desc"`).
+//! Query; legal during capture. No Engine `--tex-view-desc`.
 //! [`DeviceAttr::MaxSurface1DLayeredWidth`],
 //! [`MaxSurface1DLayeredLayers`](DeviceAttr::MaxSurface1DLayeredLayers),
 //! [`MaxSurface2DLayeredWidth`](DeviceAttr::MaxSurface2DLayeredWidth),
@@ -21601,6 +21604,44 @@ mod tests {
         match sim.tex_object_destroy(d) {
             Err(SimError::Invalid { why }) => {
                 assert!(why.contains("unknown tex object"), "{why}");
+            }
+            other => panic!("{other:?}"),
+        }
+    }
+
+    #[test]
+    fn tex_object_get_resource_view_desc_is_unsupported() {
+        let mut sim = Sim::new(h100());
+        let d = DeviceId(0);
+        match sim.tex_object_get_resource_view_desc(d) {
+            Err(SimError::Invalid { why }) => {
+                assert!(why.contains("tex view desc"), "{why}");
+            }
+            other => panic!("{other:?}"),
+        }
+        sim.begin_capture(d, StreamId(0)).unwrap();
+        match sim.tex_object_get_resource_view_desc(d) {
+            Err(SimError::Invalid { why }) => {
+                assert!(why.contains("tex view desc"), "{why}");
+            }
+            other => panic!("{other:?}"),
+        }
+        let _g = sim.end_capture().unwrap();
+        match sim.tex_object_get_resource_view_desc(DeviceId(99)) {
+            Err(SimError::Invalid { why }) => {
+                assert!(why.contains("device not in profile"), "{why}");
+            }
+            other => panic!("{other:?}"),
+        }
+        match sim.tex_object_get_resource_desc(d) {
+            Err(SimError::Invalid { why }) => {
+                assert!(why.contains("tex resource desc"), "{why}");
+            }
+            other => panic!("{other:?}"),
+        }
+        match sim.tex_object_get_texture_desc(d) {
+            Err(SimError::Invalid { why }) => {
+                assert!(why.contains("texture desc"), "{why}");
             }
             other => panic!("{other:?}"),
         }

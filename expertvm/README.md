@@ -560,6 +560,9 @@ texture-object handles; no Engine flag).
 (Invalid; no texture-object handles; no Engine flag).
 `gpu-sim` `tex_object_get_texture_desc` is `cuTexObjectGetTextureDesc`
 (Invalid; no texture-object handles; no Engine flag).
+`gpu-sim` `tex_object_get_resource_view_desc` is
+`cuTexObjectGetResourceViewDesc` (Invalid; no texture-object handles; no
+Engine flag).
 `gpu-sim` texture 2D/3D dim caps are always 0 (`cudaDevAttrMaxTexture2DWidth`
 and Height, `MaxTexture3DWidth` / Height / Depth; no Engine flag).
 `gpu-sim` alternate texture 3D dim caps are always 0
