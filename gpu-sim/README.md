@@ -221,6 +221,7 @@ warp scheduler, L1, …   ← do not model
 | `d3d12_get_devices` is Invalid (Direct3D 12 interop is not modeled) | `cuD3D12GetDevices` / `cudaD3D12GetDevices` |
 | `d3d12_get_device` is Invalid (Direct3D 12 interop is not modeled) | `cuD3D12GetDevice` / `cudaD3D12GetDevice` |
 | `d3d12_ctx_create` is Invalid (Direct3D 12 interop is not modeled) | `cuD3D12CtxCreate` |
+| `d3d12_ctx_create_on_device` is Invalid (Direct3D 12 interop is not modeled) | `cuD3D12CtxCreateOnDevice` |
 | `graphics_d3d12_register_resource` is Invalid (Direct3D 12 interop is not modeled) | `cuGraphicsD3D12RegisterResource` |
 | `vdpau_get_device` is Invalid (VDPAU interop is not modeled) | `cuVDPAUGetDevice` / `cudaVDPAUGetDevice` |
 | `vdpau_set_vdpau_device` is Invalid (VDPAU interop is not modeled) | `cudaVDPAUSetVDPAUDevice` |
@@ -1260,6 +1261,9 @@ Distinct from `d3d12_get_devices` and `d3d11_get_device`. Query; legal during ca
 `d3d12_ctx_create` is `cuD3D12CtxCreate` (always Invalid `"d3d12 context"`).
 Distinct from `d3d12_get_devices`, `d3d11_ctx_create`, and
 `D3D12CigSupported`. Query; legal during capture. No Engine `--d3d12-ctx`.
+`d3d12_ctx_create_on_device` is `cuD3D12CtxCreateOnDevice` (always Invalid
+`"d3d12 ondevice"`). Distinct from `d3d12_ctx_create` and
+`d3d11_ctx_create_on_device`. Query; legal during capture. No Engine `--d3d12-on-device`.
 `graphics_d3d12_register_resource` is `cuGraphicsD3D12RegisterResource`
 (always Invalid `"d3d12 register"`). Distinct from `d3d12_ctx_create` and
 `graphics_d3d11_register_resource`. Query; legal during capture. No Engine `--d3d12-register`.

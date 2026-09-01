@@ -18524,13 +18524,28 @@ impl Sim {
     ///
     /// Always Invalid `"d3d12 context"`. Distinct from
     /// [`Self::d3d12_get_devices`], from [`Self::d3d11_ctx_create`], from
-    /// [`DeviceAttr::D3D12CigSupported`], and from
-    /// [`Self::graphics_d3d12_register_resource`]. Unknown devices are Invalid
+    /// [`DeviceAttr::D3D12CigSupported`], from
+    /// [`Self::graphics_d3d12_register_resource`], and from
+    /// [`Self::d3d12_ctx_create_on_device`]. Unknown devices are Invalid
     /// `"device not in profile"`. Query; legal during capture.
     pub fn d3d12_ctx_create(&self, device: DeviceId) -> Result<(), SimError> {
         let _gpu = self.profile.gpu(device)?;
         Err(SimError::Invalid {
             why: "d3d12 context",
+        })
+    }
+
+    /// `cuD3D12CtxCreateOnDevice`. Direct3D 12 interop is not modeled.
+    ///
+    /// Always Invalid `"d3d12 ondevice"`. Distinct from
+    /// [`Self::d3d12_ctx_create`] (why is not `"d3d12 context"`), from
+    /// [`Self::d3d11_ctx_create_on_device`], and from
+    /// [`DeviceAttr::D3D12CigSupported`]. Unknown devices are Invalid
+    /// `"device not in profile"`. Query; legal during capture.
+    pub fn d3d12_ctx_create_on_device(&self, device: DeviceId) -> Result<(), SimError> {
+        let _gpu = self.profile.gpu(device)?;
+        Err(SimError::Invalid {
+            why: "d3d12 ondevice",
         })
     }
 

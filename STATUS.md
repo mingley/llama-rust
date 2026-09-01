@@ -5,6 +5,15 @@ Visible five-turn extract: [docs/chatgpt-share-6a920fe1.md](docs/chatgpt-share-6
 Complete share-API extract: [docs/chatgpt-share-6a920fe1/](docs/chatgpt-share-6a920fe1/).
 Work lands on `main`. No PRs.
 
+## Shipped 2026-09-01 — CUDA `cuD3D12CtxCreateOnDevice`
+
+`gpu-sim` `Sim::d3d12_ctx_create_on_device` is `cuD3D12CtxCreateOnDevice`.
+Always Invalid `"d3d12 ondevice"` because Direct3D 12 interop is not
+modeled. Query; legal during capture. Distinct from
+`d3d12_ctx_create` (why is not `"d3d12 context"`) and from
+`d3d11_ctx_create_on_device`. This VM does not invent `cuD3D9CtxCreateOnDevice` or Engine `--d3d12-on-device`.
+`gpu-profile capture` is still refused. Dual score still has no `$/M tokens`.
+
 ## Shipped 2026-09-01 — CUDA `cuD3D11CtxCreateOnDevice`
 
 `gpu-sim` `Sim::d3d11_ctx_create_on_device` is `cuD3D11CtxCreateOnDevice`.
