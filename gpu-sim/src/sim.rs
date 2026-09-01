@@ -19159,6 +19159,8 @@ impl Sim {
             | DeviceAttr::MaxTexture2DLayeredWidth
             | DeviceAttr::MaxTexture2DLayeredHeight
             | DeviceAttr::MaxTexture2DLayeredLayers
+            | DeviceAttr::MaxTextureCubemapLayeredWidth
+            | DeviceAttr::MaxTextureCubemapLayeredLayers
             | DeviceAttr::MaxSurface1DWidth
             | DeviceAttr::MaxSurface2DWidth
             | DeviceAttr::MaxSurface2DHeight
@@ -19224,6 +19226,7 @@ impl Sim {
     /// Mipmapped texture 1D/2D dims are always 0.
     /// Cubemap texture width is always 0.
     /// Layered texture 1D/2D dims are always 0.
+    /// Cubemap layered texture dims are always 0.
     /// Occupancy SM counts, clock rates, and warp size are not.
     /// Unknown devices are Invalid.
     pub fn device_get_properties(&self, device: DeviceId) -> Result<DeviceProperties, SimError> {
@@ -19273,6 +19276,8 @@ impl Sim {
             max_texture_2d_layered_width: 0,
             max_texture_2d_layered_height: 0,
             max_texture_2d_layered_layers: 0,
+            max_texture_cubemap_layered_width: 0,
+            max_texture_cubemap_layered_layers: 0,
             max_surface_1d_width: 0,
             max_surface_2d_width: 0,
             max_surface_2d_height: 0,

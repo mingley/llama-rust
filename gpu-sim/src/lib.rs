@@ -702,6 +702,10 @@
 //! always 0 (CUDA layered textures are not modeled). Distinct from
 //! [`MaxTexture1DWidth`](DeviceAttr::MaxTexture1DWidth) and from
 //! [`MaxTextureCubemapWidth`](DeviceAttr::MaxTextureCubemapWidth).
+//! [`DeviceAttr::MaxTextureCubemapLayeredWidth`] and
+//! [`MaxTextureCubemapLayeredLayers`](DeviceAttr::MaxTextureCubemapLayeredLayers)
+//! are always 0 (CUDA cubemap layered textures are not modeled). Distinct
+//! from [`MaxTextureCubemapWidth`](DeviceAttr::MaxTextureCubemapWidth).
 //! [`DeviceAttr::MaxSurface1DWidth`], [`MaxSurface2DWidth`](DeviceAttr::MaxSurface2DWidth),
 //! [`MaxSurface2DHeight`](DeviceAttr::MaxSurface2DHeight),
 //! [`MaxSurface3DWidth`](DeviceAttr::MaxSurface3DWidth),
@@ -19045,6 +19049,40 @@ mod tests {
         );
         let _g = sim.end_capture().unwrap();
         match sim.device_get_attribute(DeviceId(99), DeviceAttr::MaxTexture1DLayeredLayers) {
+            Err(SimError::Invalid { why }) => {
+                assert!(why.contains("device not in profile"), "{why}");
+            }
+            other => panic!("{other:?}"),
+        }
+    }
+
+    #[test]
+    fn device_get_attribute_max_texture_cubemap_layered_dims_are_zero() {
+        let mut sim = Sim::new(h100());
+        let d = DeviceId(0);
+        let hp = sim.device_get_properties(d).unwrap();
+        assert_eq!(hp.max_texture_cubemap_layered_width, 0);
+        assert_eq!(hp.max_texture_cubemap_layered_layers, 0);
+        assert_eq!(hp.max_texture_cubemap_width, 0);
+        assert_eq!(hp.max_texture_2d_layered_layers, 0);
+        assert_eq!(
+            sim.device_get_attribute(d, DeviceAttr::MaxTextureCubemapLayeredWidth)
+                .unwrap(),
+            0
+        );
+        assert_eq!(
+            sim.device_get_attribute(d, DeviceAttr::MaxTextureCubemapLayeredLayers)
+                .unwrap(),
+            0
+        );
+        sim.begin_capture(d, StreamId(0)).unwrap();
+        assert_eq!(
+            sim.device_get_attribute(d, DeviceAttr::MaxTextureCubemapLayeredLayers)
+                .unwrap(),
+            0
+        );
+        let _g = sim.end_capture().unwrap();
+        match sim.device_get_attribute(DeviceId(99), DeviceAttr::MaxTextureCubemapLayeredWidth) {
             Err(SimError::Invalid { why }) => {
                 assert!(why.contains("device not in profile"), "{why}");
             }

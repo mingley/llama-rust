@@ -1002,6 +1002,14 @@ pub enum DeviceAttr {
     /// textures are not modeled). Distinct from
     /// [`Self::MaxTexture2DLayeredHeight`].
     MaxTexture2DLayeredLayers,
+    /// `cudaDevAttrMaxTextureCubemapLayeredWidth` (always 0; CUDA cubemap
+    /// layered textures are not modeled). Distinct from
+    /// [`Self::MaxTextureCubemapWidth`].
+    MaxTextureCubemapLayeredWidth,
+    /// `cudaDevAttrMaxTextureCubemapLayeredLayers` (always 0; CUDA cubemap
+    /// layered textures are not modeled). Distinct from
+    /// [`Self::MaxTextureCubemapLayeredWidth`].
+    MaxTextureCubemapLayeredLayers,
     /// `cudaDevAttrMaxSurface1DWidth` (always 0; CUDA surfaces are not
     /// modeled). Distinct from [`Self::SurfaceAlignment`].
     MaxSurface1DWidth,
@@ -1463,6 +1471,16 @@ pub struct DeviceProperties {
     /// textures are not modeled. Distinct from
     /// [`Self::max_texture_2d_layered_height`].
     pub max_texture_2d_layered_layers: u32,
+    /// `cudaDeviceProp::maxTextureCubemapLayered[0]`
+    /// ([`DeviceAttr::MaxTextureCubemapLayeredWidth`]). Always 0; CUDA
+    /// cubemap layered textures are not modeled. Distinct from
+    /// [`Self::max_texture_cubemap_width`].
+    pub max_texture_cubemap_layered_width: u32,
+    /// `cudaDeviceProp::maxTextureCubemapLayered[1]`
+    /// ([`DeviceAttr::MaxTextureCubemapLayeredLayers`]). Always 0; CUDA
+    /// cubemap layered textures are not modeled. Distinct from
+    /// [`Self::max_texture_cubemap_layered_width`].
+    pub max_texture_cubemap_layered_layers: u32,
     /// `cudaDeviceProp::maxSurface1D` ([`DeviceAttr::MaxSurface1DWidth`]).
     /// Always 0; CUDA surfaces are not modeled. Distinct from
     /// [`Self::surface_alignment`].

@@ -496,6 +496,8 @@ and Height; no Engine flag).
 `gpu-sim` layered texture 1D/2D dim caps are always 0
 (`cudaDevAttrMaxTexture1DLayeredWidth` and Layers, `MaxTexture2DLayeredWidth`,
 Height, and Layers; no Engine flag).
+`gpu-sim` cubemap layered texture dim caps are always 0
+(`cudaDevAttrMaxTextureCubemapLayeredWidth` and Layers; no Engine flag).
 `gpu-sim` surface 1D/2D/3D dim caps are always 0 (`cudaDevAttrMaxSurface1DWidth`,
 `MaxSurface2DWidth` and Height, `MaxSurface3DWidth` / Height / Depth;
 no Engine flag).

@@ -5,6 +5,15 @@ Visible five-turn extract: [docs/chatgpt-share-6a920fe1.md](docs/chatgpt-share-6
 Complete share-API extract: [docs/chatgpt-share-6a920fe1/](docs/chatgpt-share-6a920fe1/).
 Work lands on `main`. No PRs.
 
+## Shipped 2026-09-01 — CUDA cubemap layered texture dimension DeviceAttr caps
+
+`gpu-sim` `DeviceAttr::MaxTextureCubemapLayeredWidth` /
+`MaxTextureCubemapLayeredLayers` are always 0. CUDA cubemap layered
+textures are not modeled. Query; legal during capture. Distinct from
+`MaxTextureCubemapWidth`. This VM does not invent Engine
+`--texture-cubemap-layered` or layered surface attrs.
+`gpu-profile capture` is still refused. Dual score still has no `$/M tokens`.
+
 ## Shipped 2026-09-01 — CUDA layered texture 1D/2D dimension DeviceAttr caps
 
 `gpu-sim` `DeviceAttr::MaxTexture1DLayeredWidth` /
