@@ -5,6 +5,15 @@ Visible five-turn extract: [docs/chatgpt-share-6a920fe1.md](docs/chatgpt-share-6
 Complete share-API extract: [docs/chatgpt-share-6a920fe1/](docs/chatgpt-share-6a920fe1/).
 Work lands on `main`. No PRs.
 
+## Shipped 2026-09-01 — CUDA `cudaDevAttrMaxRegistersPerBlock`
+
+`gpu-sim` `DeviceAttr::MaxRegistersPerBlock` is
+`cudaDevAttrMaxRegistersPerBlock` (`cudaDeviceProp` regsPerBlock).
+Example H100 is 65536. Query; legal during capture. This VM does not
+model a register file, invent occupancy SM counts, or invent Engine
+`--max-registers`. `gpu-profile capture` is still refused. Dual score
+still has no `$/M tokens`.
+
 ## Shipped 2026-09-01 — CUDA launch-geometry DeviceAttr caps
 
 `gpu-sim` `DeviceAttr::MaxThreadsPerBlock` / `MaxBlockDimX` / `Y` / `Z` /

@@ -502,8 +502,8 @@
 //! green-context spans, not occupancy SM counts).
 //! [`Sim::device_get_properties`] is `cudaGetDeviceProperties` ([`DeviceProperties`];
 //! modeled caps only — compute capability major/minor are Hopper 9.0 on
-//! example H100; launch-geometry caps are MaxThreadsPerBlock 1024; no
-//! occupancy SM count or clock). [`Sim::device_get_name`] is
+//! example H100; launch-geometry caps are MaxThreadsPerBlock 1024;
+//! MaxRegistersPerBlock is 65536; no occupancy SM count or clock). [`Sim::device_get_name`] is
 //! `cudaDeviceGetName` (the profile name). [`device_get_uuid`](Sim::device_get_uuid)
 //! is `cuDeviceGetUuid` / `cudaDeviceGetUuid` (synthetic 16-octet id; also
 //! [`DeviceProperties::uuid`]). [`device_get_by_uuid`](Sim::device_get_by_uuid)
@@ -620,9 +620,11 @@
 //! [`MaxGridDimX`](DeviceAttr::MaxGridDimX), [`MaxGridDimY`](DeviceAttr::MaxGridDimY),
 //! and [`MaxGridDimZ`](DeviceAttr::MaxGridDimZ) are CUDA launch-geometry caps
 //! (example H100 1024 threads per block; block 1024, 1024, 64; grid
-//! `i32::MAX`, 65535, 65535). This VM does not model a thread-block launch
-//! and does not invent occupancy SM counts. Query; legal during capture.
-//! No Engine flag for max threads.
+//! `i32::MAX`, 65535, 65535). [`DeviceAttr::MaxRegistersPerBlock`] is
+//! `cudaDevAttrMaxRegistersPerBlock` (`cudaDeviceProp` regsPerBlock).
+//! Example H100 is 65536. This VM does not model a thread-block launch
+//! or a register file and does not invent occupancy SM counts. Query;
+//! legal during capture. No Engine flag for max threads or max registers.
 //! [`DeviceAttr::MaxAccessPolicyWindowSize`] is [`crate::GpuProfile::l2_bytes`]
 //! (same as [`MaxPersistingL2CacheSize`](DeviceAttr::MaxPersistingL2CacheSize)).
 //! [`DeviceProperties::persisting_l2_cache_max_size`] is
@@ -18833,6 +18835,32 @@ mod tests {
         );
         let _g = sim.end_capture().unwrap();
         match sim.device_get_attribute(DeviceId(99), DeviceAttr::MaxThreadsPerBlock) {
+            Err(SimError::Invalid { why }) => {
+                assert!(why.contains("device not in profile"), "{why}");
+            }
+            other => panic!("{other:?}"),
+        }
+    }
+
+    #[test]
+    fn device_get_attribute_max_registers_per_block_is_h100() {
+        let mut sim = Sim::new(h100());
+        let d = DeviceId(0);
+        let hp = sim.device_get_properties(d).unwrap();
+        assert_eq!(hp.regs_per_block, DeviceAttr::MAX_REGISTERS_PER_BLOCK);
+        assert_eq!(
+            sim.device_get_attribute(d, DeviceAttr::MaxRegistersPerBlock)
+                .unwrap(),
+            65_536
+        );
+        sim.begin_capture(d, StreamId(0)).unwrap();
+        assert_eq!(
+            sim.device_get_attribute(d, DeviceAttr::MaxRegistersPerBlock)
+                .unwrap(),
+            65_536
+        );
+        let _g = sim.end_capture().unwrap();
+        match sim.device_get_attribute(DeviceId(99), DeviceAttr::MaxRegistersPerBlock) {
             Err(SimError::Invalid { why }) => {
                 assert!(why.contains("device not in profile"), "{why}");
             }

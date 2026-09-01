@@ -1122,6 +1122,11 @@ pub enum DeviceAttr {
     MaxGridDimY,
     /// `cudaDevAttrMaxGridDimZ`. Example H100 is [`Self::MAX_GRID_DIM_Z`].
     MaxGridDimZ,
+    /// `cudaDevAttrMaxRegistersPerBlock`. Example H100 is
+    /// [`Self::MAX_REGISTERS_PER_BLOCK`]. Distinct from occupancy SM
+    /// counts and from a thread-block launch config. This VM does not
+    /// model a register file.
+    MaxRegistersPerBlock,
 }
 
 impl DeviceAttr {
@@ -1146,6 +1151,9 @@ impl DeviceAttr {
     pub const MAX_GRID_DIM_Y: u64 = 65_535;
     /// `cudaDevAttrMaxGridDimZ` on example H100.
     pub const MAX_GRID_DIM_Z: u64 = 65_535;
+    /// `cudaDevAttrMaxRegistersPerBlock` on example H100. Distinct from
+    /// occupancy SM counts. This VM does not model a register file.
+    pub const MAX_REGISTERS_PER_BLOCK: u64 = 65_536;
 }
 
 /// `cudaMemAllocationHandleType` bits for
@@ -1233,6 +1241,10 @@ pub struct DeviceProperties {
     pub max_grid_dim_y: u64,
     /// `cudaDeviceProp::maxGridSize[2]` ([`DeviceAttr::MaxGridDimZ`]).
     pub max_grid_dim_z: u64,
+    /// `cudaDeviceProp::regsPerBlock` ([`DeviceAttr::MaxRegistersPerBlock`]).
+    /// Example H100 is [`DeviceAttr::MAX_REGISTERS_PER_BLOCK`]. Distinct
+    /// from occupancy SM counts.
+    pub regs_per_block: u64,
     /// [`crate::GpuProfile::hbm_bytes`] (`totalGlobalMem`).
     pub total_global_mem: u64,
     /// `cudaDevAttrTotalConstantMemory` ([`DeviceAttr::TotalConstantMemory`]).

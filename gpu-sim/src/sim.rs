@@ -19072,6 +19072,7 @@ impl Sim {
     /// Only attributes this VM already models ([`DeviceAttr`]). Compute
     /// capability major/minor are Hopper 9.0 on example H100. Launch-geometry
     /// caps are MaxThreadsPerBlock 1024 and the H100 block plus grid dims.
+    /// MaxRegistersPerBlock is 65536 on example H100.
     pub fn device_get_attribute(
         &self,
         device: DeviceId,
@@ -19175,6 +19176,7 @@ impl Sim {
             DeviceAttr::MaxGridDimX => DeviceAttr::MAX_GRID_DIM_X,
             DeviceAttr::MaxGridDimY => DeviceAttr::MAX_GRID_DIM_Y,
             DeviceAttr::MaxGridDimZ => DeviceAttr::MAX_GRID_DIM_Z,
+            DeviceAttr::MaxRegistersPerBlock => DeviceAttr::MAX_REGISTERS_PER_BLOCK,
         })
     }
 
@@ -19183,7 +19185,8 @@ impl Sim {
     /// Only fields this VM already models ([`DeviceProperties`]). Compute
     /// capability major/minor are modeled (example H100 is Hopper 9.0).
     /// Launch-geometry caps are MaxThreadsPerBlock 1024 and the H100 block
-    /// plus grid dims. Occupancy SM counts, clock rates, and warp size are not.
+    /// plus grid dims. MaxRegistersPerBlock is 65536. Occupancy SM counts,
+    /// clock rates, and warp size are not.
     /// Unknown devices are Invalid.
     pub fn device_get_properties(&self, device: DeviceId) -> Result<DeviceProperties, SimError> {
         let gpu = self.profile.gpu(device)?;
@@ -19202,6 +19205,7 @@ impl Sim {
             max_grid_dim_x: DeviceAttr::MAX_GRID_DIM_X,
             max_grid_dim_y: DeviceAttr::MAX_GRID_DIM_Y,
             max_grid_dim_z: DeviceAttr::MAX_GRID_DIM_Z,
+            regs_per_block: DeviceAttr::MAX_REGISTERS_PER_BLOCK,
             total_global_mem: gpu.hbm_bytes,
             total_constant_memory: 0,
             texture_alignment: 0,

@@ -6035,7 +6035,16 @@ model, do not celebrate the sim.
     `gpu-profile capture` is still refused. Dual score still has no
     `$/M tokens`.
 
-567. [ ] Next numbered PLAN item after 566 is the next `gpu-sim` / Engine /
+567. [x] `gpu-sim` `DeviceAttr::MaxRegistersPerBlock` is
+    `cudaDevAttrMaxRegistersPerBlock` (`cudaDeviceProp` regsPerBlock).
+    Example H100 is 65536. Query; legal during capture. This VM does not
+    model a register file. This VM does not invent Engine `--max-registers`,
+    occupancy SM counts, `cudaDevAttrMaxRegistersPerMultiprocessor`,
+    `FuncAttributes` numRegs, `cudaDevAttrWarpSize`, clock rates, or
+    `cudaChooseDevice`. `gpu-profile capture` is still refused. Dual
+    score still has no `$/M tokens`.
+
+568. [ ] Next numbered PLAN item after 567 is the next `gpu-sim` / Engine /
     serve / expertvm mechanical API that is still missing, or the next official
     decode family. Prefer remaining CUDA-shaped twins over more
     OpenAI HTTP veneer. Do not invent F32 `output.scale`. Do not invent a
@@ -6112,6 +6121,11 @@ model, do not celebrate the sim.
     Do not model a thread-block launch config on `kernel`. Do not invent
     `cudaDevAttrMaxThreadsPerMultiProcessor`. Do not reverse H100 1024
     threads per block.
+    Do not invent a second `cudaDevAttrMaxRegistersPerBlock` /
+    `MaxRegistersPerBlock`. Do not invent Engine `--max-registers`.
+    Do not invent `cudaDevAttrMaxRegistersPerMultiprocessor`. Do not
+    invent `FuncAttributes` numRegs this slice. Do not reverse H100
+    65536 registers per block.
     Do not invent
     a second
     `cuDeviceGetUuid` / `cudaDeviceGetUuid`. Do not invent a second
@@ -6383,6 +6397,9 @@ model, do not celebrate the sim.
     Do not invent a second launch-geometry DeviceAttr family. Do not invent
     Engine `--max-threads`. Do not reverse MaxThreadsPerBlock 1024. Do not
     invent `cudaDevAttrWarpSize` this slice.
+    Do not invent a second MaxRegistersPerBlock query. Do not invent
+    Engine `--max-registers`. Do not invent per-SM register occupancy
+    this slice.
     Do not invent a second DeviceLaunch in-flight destroy-complete check or Engine
     `--device-launch-destroy`. Do not abort an in-flight DeviceLaunch when
     `destroy_graph` succeeds. Do not delay destroy of an idle exec. Do not invent
@@ -6858,6 +6875,8 @@ model, do not celebrate the sim.
     slice. Do not invent occupancy SM counts.
     Do not invent a second MaxThreadsPerBlock query. Do not invent Engine
     `--max-threads`. Do not invent warp size this slice.
+    Do not invent a second `regsPerBlock` DeviceProperties field. Do not
+    invent Engine `--regs-per-block`. Do not reverse 65536.
     Do not
     spend the next item on an OpenAI-compatible HTTP veneer.
 
