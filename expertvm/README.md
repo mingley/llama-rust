@@ -450,8 +450,10 @@ is a duration-only SM fraction on the decode stream (leftover prefill gets
 the remainder; implies `--decode-priority` on Engine, not on the walker).
 `--green-ctx` binds complementary CUDA green contexts so leftover prefill
 may overlap decode even when occupancy is exclusive (implies
-`--decode-priority`; default 500/500; `--decode-sms 1000` refused). Distinct
-from `--decode-sms` alone (exclusive compute still serializes leftover
+`--decode-priority`; default 500/500; `--decode-sms 1000` refused). Store
+GEMM graphs inherit the launch stream (`CUDA_KERNEL_NODE_PARAMS.ctx` None)
+so an expert captured during prefill still uses the decode partition.
+Distinct from `--decode-sms` alone (exclusive compute still serializes leftover
 prefill). `gpu-sim` `green_ctx_record_event` / `green_ctx_wait_event` join or
 hold every stream bound to a ctx (not a second `--green-ctx`).
 `green_ctx_synchronize` is `cudaExecutionCtxSynchronize` (one ctx; other

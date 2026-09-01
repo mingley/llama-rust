@@ -5,6 +5,16 @@ Visible five-turn extract: [docs/chatgpt-share-6a920fe1.md](docs/chatgpt-share-6
 Complete share-API extract: [docs/chatgpt-share-6a920fe1/](docs/chatgpt-share-6a920fe1/).
 Work lands on `main`. No PRs.
 
+## Shipped 2026-09-01 — store GEMM graphs inherit launch-stream green ctx
+
+Capture from a green-ctx stream snapshots `CUDA_KERNEL_NODE_PARAMS.ctx`
+(CUDA). Store per-leaf GEMM graphs clear that ctx before instantiate so
+occupancy follows the launch stream. An expert captured during prefill
+still uses the decode partition when leftover decode replays it, so
+complementary `--green-ctx` spans can overlap under exclusive compute.
+Walker combo parents with several kernels skip the unique-kernel patch.
+`gpu-profile capture` is still refused. Dual score still has no `$/M tokens`.
+
 ## Shipped 2026-09-01 — expertvm combo graph-mem MOVE children
 
 Walker `--graph-build` combo parents with `--graph-mem` / `--graph-auto-free`

@@ -1125,6 +1125,20 @@ impl Sim {
         self.ops.get(&id).map(|o| o.stream)
     }
 
+    /// Occupancy SM span baked at submit (`cuGreenCtxStreamCreate` / kernel-node ctx).
+    ///
+    /// Full chip when the stream was unbound and the node ctx is [`None`].
+    #[must_use]
+    pub fn op_sm_span(&self, id: OpId) -> Option<SmResource> {
+        self.ops.get(&id).map(|o| o.sm_span)
+    }
+
+    /// Green context baked at kernel submit. [`None`] inherits the launch stream.
+    #[must_use]
+    pub fn op_green_ctx(&self, id: OpId) -> Option<GreenCtxId> {
+        self.ops.get(&id).and_then(|o| o.green_ctx)
+    }
+
     /// Compiled DAG node for a submitted op. Capture-only ids are absent until launch.
     #[must_use]
     pub fn operation(&self, id: OpId) -> Option<Operation> {

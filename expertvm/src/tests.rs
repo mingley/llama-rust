@@ -12744,10 +12744,22 @@ fn simulated_gpu_store_green_ctx_overlap_leftover_prefill() {
         gpu.bind_decode_compute(true);
         let _decode = gpu.acquire(dec).expect("decode");
         gpu.release(dec);
-        gpu.score().expect("score").wall_ns.saturating_sub(t0)
+        let leftover: Vec<_> = gpu
+            .operations()
+            .filter(|o| matches!(o.kind, GpuOp::Kernel { .. }) && o.submit_ns >= t0)
+            .collect();
+        let wall = gpu.score().expect("score").wall_ns.saturating_sub(t0);
+        (wall, leftover, gpu)
     };
-    let serial = run(false);
-    let overlap = run(true);
+    let (serial, _, _) = run(false);
+    let (overlap, leftover, gpu) = run(true);
+    assert_eq!(leftover.len(), 2, "leftover prefill plus decode GEMMs");
+    let a = gpu.op_sm_span(leftover[0].id).expect("span a");
+    let b = gpu.op_sm_span(leftover[1].id).expect("span b");
+    assert!(
+        !a.overlaps(b),
+        "leftover GEMMs must use complementary green-ctx spans; a={a:?} b={b:?}"
+    );
     assert!(
         overlap < serial,
         "green ctx must overlap leftover prefill under exclusive compute; overlap={overlap} serial={serial}"

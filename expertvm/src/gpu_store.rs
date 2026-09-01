@@ -23,12 +23,13 @@ use crate::sim_replay::{
     check_required_cluster, check_share_ptr, check_vmm_handle, check_vmm_retain, close_ipc_alias,
     close_share_alias, collapse_mem_sync_map, d2h_evict_page, d2h_pageable_page,
     drop_managed_replica, ensure_single_attach, free_copy_mailbox, free_mapped_host, hbm_h2d_attr,
-    host_after_copy, instantiate_exec, kernel_leaf, mark_sync_memops, memcpy_batch_attr,
-    mempool_hold, open_ipc_alias, open_share_alias, persist_armed, pin_staging_for_fill,
-    release_vmm_handle, replay_exec, replay_streams, reset_persisting_l2_if, retain_vmm_handle,
-    retarget_parked_kernel, signal_copy_ready, stream_of, unpin_staging_after_fill,
-    upload_after_set_params, vmm_alloc_handle, vmm_handle_of, wait_copy_ready,
-    wait_memcpy_during_allocs, wait_share_ptr_alloc, GemmFlags, LeafMem, LeafWork, StreamPlan,
+    host_after_copy, inherit_launch_stream_green_ctx, instantiate_exec, kernel_leaf,
+    mark_sync_memops, memcpy_batch_attr, mempool_hold, open_ipc_alias, open_share_alias,
+    persist_armed, pin_staging_for_fill, release_vmm_handle, replay_exec, replay_streams,
+    reset_persisting_l2_if, retain_vmm_handle, retarget_parked_kernel, signal_copy_ready,
+    stream_of, unpin_staging_after_fill, upload_after_set_params, vmm_alloc_handle, vmm_handle_of,
+    wait_copy_ready, wait_memcpy_during_allocs, wait_share_ptr_alloc, GemmFlags, LeafMem, LeafWork,
+    StreamPlan,
 };
 use crate::store::{CachedStore, DirectStore, ExpertParts, ExpertPhase, ExpertStore, StoreMetrics};
 use gpu_sim::{
@@ -771,10 +772,12 @@ pub struct GpuStoreCfg {
     ///
     /// Splits the device SM resource (‰) and
     /// [`gpu_sim::Sim::green_ctx_set_stream`]s decode vs prefill so they may
-    /// overlap even when `compute_slots` is 1. Distinct from
-    /// [`Self::decode_sm_permille`] (duration scale without occupancy
-    /// partition). Needs [`Self::decode_priority`]. Default off keeps
-    /// exclusive full-chip compute.
+    /// overlap even when `compute_slots` is 1. Store GEMM graphs inherit the
+    /// launch stream (`CUDA_KERNEL_NODE_PARAMS.ctx` None) so an expert
+    /// captured during prefill still uses the decode partition when replayed
+    /// there. Distinct from [`Self::decode_sm_permille`] (duration scale
+    /// without occupancy partition). Needs [`Self::decode_priority`]. Default
+    /// off keeps exclusive full-chip compute.
     pub green_ctx: bool,
 }
 
@@ -2591,6 +2594,27 @@ impl SimulatedGpuStore {
         self.sim.stream_priority(device, stream)
     }
 
+    /// [`gpu_sim::Sim::stream_get_green_ctx`] for `(device, stream)`.
+    pub fn stream_green_ctx(
+        &self,
+        device: DeviceId,
+        stream: StreamId,
+    ) -> Result<Option<gpu_sim::GreenCtxId>, Error> {
+        Ok(self.sim.stream_get_green_ctx(device, stream)?)
+    }
+
+    /// [`gpu_sim::Sim::op_sm_span`] for a submitted op.
+    #[must_use]
+    pub fn op_sm_span(&self, id: gpu_sim::OpId) -> Option<gpu_sim::SmResource> {
+        self.sim.op_sm_span(id)
+    }
+
+    /// [`gpu_sim::Sim::op_green_ctx`] for a submitted kernel.
+    #[must_use]
+    pub fn op_green_ctx(&self, id: gpu_sim::OpId) -> Option<gpu_sim::GreenCtxId> {
+        self.sim.op_green_ctx(id)
+    }
+
     /// [`gpu_sim::Sim::stream_mem_sync_domain`] for `(device, stream)`.
     #[must_use]
     pub fn stream_mem_sync_domain(
@@ -3333,6 +3357,7 @@ impl SimulatedGpuStore {
     }
 
     fn bind_graph(&mut self, device: DeviceId, src: GraphId) -> Result<GraphId, Error> {
+        inherit_launch_stream_green_ctx(&mut self.sim, src)?;
         if self.graph_update && self.leaf == LeafMem::None {
             if let Some(exec) = self.idle_execs.get_mut(&device).and_then(Vec::pop) {
                 self.sim.update_graph(exec, src)?;

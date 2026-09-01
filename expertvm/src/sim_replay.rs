@@ -3487,6 +3487,7 @@ pub(crate) fn instantiate_exec(
     if use_node_priority {
         flags |= GraphInstantiateFlags::USE_NODE_PRIORITY;
     }
+    inherit_launch_stream_green_ctx(sim, src)?;
     let exec = if flags == 0 {
         sim.instantiate_graph(src)?
     } else {
@@ -3524,6 +3525,30 @@ pub(crate) fn replay_exec(
         let _n = sim.launch_graph(exec, stream)?;
     }
     Ok(())
+}
+
+/// Drop captured `CUDA_KERNEL_NODE_PARAMS.ctx` so occupancy follows the launch stream.
+///
+/// Capture from a green-ctx stream snapshots that ctx (CUDA). Store GEMM graphs
+/// are launched on prefill or decode; a pinned prefill ctx would keep exclusive
+/// compute when leftover decode uses a complementary partition. Typed
+/// `graph_add_kernel` already stores None.
+pub(crate) fn inherit_launch_stream_green_ctx(sim: &mut Sim, graph: GraphId) -> Result<(), Error> {
+    match sim.graph_unique_kernel(graph) {
+        Ok((node, mut params)) => {
+            if params.ctx.is_none() {
+                return Ok(());
+            }
+            params.ctx = None;
+            Ok(sim.graph_kernel_set_params(graph, node, &params)?)
+        }
+        Err(gpu_sim::SimError::Invalid { why })
+            if why.contains("not unique kernel node") || why.contains("not a kernel node") =>
+        {
+            Ok(())
+        }
+        Err(e) => Err(e.into()),
+    }
 }
 
 /// Patch a parked leaf GEMM so it reads/writes `expert` instead of the evicted alloc.

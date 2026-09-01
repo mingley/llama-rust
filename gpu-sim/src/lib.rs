@@ -11447,6 +11447,109 @@ mod tests {
     }
 
     #[test]
+    fn green_ctx_set_stream_capture_graphs_overlap_exclusive_compute() {
+        let d = DeviceId(0);
+        let kind = KernelKind::GroupedMoeGemm {
+            experts: 1,
+            tokens_per_expert: 1,
+            hidden: 64,
+            ff: 64,
+            dtype: DType::Fp16,
+        };
+        let bind = |sim: &mut Sim| {
+            let decode_sm = SmResource {
+                start: 0,
+                width: 500,
+            };
+            let prefill_sm = SmResource {
+                start: 500,
+                width: 500,
+            };
+            let ddesc = sim
+                .dev_resource_generate_desc(std::slice::from_ref(&decode_sm))
+                .unwrap();
+            let pdesc = sim
+                .dev_resource_generate_desc(std::slice::from_ref(&prefill_sm))
+                .unwrap();
+            let dctx = sim
+                .green_ctx_create(ddesc, d, GreenCtxFlags::DEFAULT)
+                .unwrap();
+            let pctx = sim
+                .green_ctx_create(pdesc, d, GreenCtxFlags::DEFAULT)
+                .unwrap();
+            sim.green_ctx_set_stream(dctx, StreamId(2)).unwrap();
+            sim.green_ctx_set_stream(pctx, StreamId(1)).unwrap();
+            (pctx, dctx)
+        };
+        let run = |partition: bool, graphs: bool| {
+            let mut sim = Sim::new(h100());
+            sim.set_created_streams_priority(3).unwrap();
+            let a = sim.alloc(d, 4096, StreamId(0)).unwrap();
+            let b = sim.alloc(d, 4096, StreamId(0)).unwrap();
+            enq(sim.memcpy_pinned_to_device(d, a, 4096, StreamId(0)));
+            enq(sim.memcpy_pinned_to_device(d, b, 4096, StreamId(0)));
+            sim.synchronize().unwrap();
+            let ctxs = if partition {
+                Some(bind(&mut sim))
+            } else {
+                None
+            };
+            let capture_launch = |sim: &mut Sim, buf: AllocId, stream: StreamId| {
+                sim.begin_capture(d, stream).unwrap();
+                enq(sim.kernel(d, kind.clone(), &[buf], &[], stream));
+                let src = sim.end_capture().unwrap();
+                if partition {
+                    let ctx = if stream == StreamId(1) {
+                        ctxs.unwrap().0
+                    } else {
+                        ctxs.unwrap().1
+                    };
+                    assert_eq!(
+                        sim.graph_kernel_get_params(src, 0).unwrap().ctx,
+                        Some(ctx),
+                        "capture must snapshot the stream green ctx"
+                    );
+                }
+                let exec = sim.instantiate_graph(src).unwrap();
+                sim.upload_graph(exec).unwrap();
+                let n = sim.launch_graph(exec, stream).unwrap();
+                assert_eq!(n, 1);
+                exec
+            };
+            if graphs {
+                let pre = capture_launch(&mut sim, a, StreamId(1));
+                let dec = capture_launch(&mut sim, b, StreamId(2));
+                sim.synchronize().unwrap();
+                let t0 = sim.clock_ns();
+                let n = sim.launch_graph(pre, StreamId(1)).unwrap();
+                assert_eq!(n, 1);
+                let n = sim.launch_graph(dec, StreamId(2)).unwrap();
+                assert_eq!(n, 1);
+                sim.synchronize().unwrap();
+                sim.clock_ns().saturating_sub(t0)
+            } else {
+                let t0 = sim.clock_ns();
+                enq(sim.kernel(d, kind.clone(), &[a], &[], StreamId(1)));
+                enq(sim.kernel(d, kind.clone(), &[b], &[], StreamId(2)));
+                sim.synchronize().unwrap();
+                sim.clock_ns().saturating_sub(t0)
+            }
+        };
+        let live_serial = run(false, false);
+        let live_overlap = run(true, false);
+        assert!(
+            live_overlap < live_serial,
+            "green_ctx_set_stream live kernels must overlap; overlap={live_overlap} serial={live_serial}"
+        );
+        let graph_serial = run(false, true);
+        let graph_overlap = run(true, true);
+        assert!(
+            graph_overlap < graph_serial,
+            "captured green-ctx graphs must overlap leftover prefill; overlap={graph_overlap} serial={graph_serial}"
+        );
+    }
+
+    #[test]
     fn green_ctx_record_event_joins_all_bound_streams() {
         let d = DeviceId(0);
         let kind = KernelKind::other(1 << 40, 8);
