@@ -1006,7 +1006,8 @@
 //! [`graph_node_set_params`](Sim::graph_node_set_params) /
 //! [`graph_exec_node_set_params`](Sim::graph_exec_node_set_params) are
 //! `cudaGraphNodeSetParams` / `cudaGraphExecNodeSetParams` (dispatch to the
-//! typed SetParams; Alloc would resize HBM; Empty has no params).
+//! typed SetParams; Alloc would resize HBM; Empty has no params; If, IfElse,
+//! While, plus Switch retarget the handle, not type or bodies).
 //! [`graph_node_get_params`](Sim::graph_node_get_params) /
 //! [`graph_exec_node_get_params`](Sim::graph_exec_node_get_params) are
 //! `cudaGraphNodeGetParams` on the definition / exec snapshot (query; Empty
@@ -12399,10 +12400,16 @@ mod tests {
             sim.graph_node_get_params(g, w.node).unwrap(),
             GraphNodeParams::While { handle: h }
         );
-        match sim.graph_node_set_params(g, 0, GraphNodeParams::If { handle: h }) {
-            Err(SimError::Invalid { why }) => assert!(why.contains("conditional"), "{why}"),
+        match sim.graph_node_set_params(g, 0, GraphNodeParams::IfElse { handle: h }) {
+            Err(SimError::Invalid { why }) => assert!(why.contains("if else"), "{why}"),
             other => panic!("{other:?}"),
         }
+        sim.graph_node_set_params(g, 0, GraphNodeParams::If { handle: h })
+            .unwrap();
+        assert_eq!(
+            sim.graph_node_get_params(g, 0).unwrap(),
+            GraphNodeParams::If { handle: h }
+        );
         let sw = sim
             .graph_add_node(g, &[], GraphNodeParams::Switch { handle: h, n: 2 })
             .unwrap();
@@ -12419,10 +12426,12 @@ mod tests {
             sim.graph_node_get_params(g, sw.node).unwrap(),
             GraphNodeParams::Switch { handle: h, n: 2 }
         );
-        match sim.graph_node_set_params(g, sw.node, GraphNodeParams::Switch { handle: h, n: 2 }) {
-            Err(SimError::Invalid { why }) => assert!(why.contains("conditional"), "{why}"),
+        match sim.graph_node_set_params(g, sw.node, GraphNodeParams::Switch { handle: h, n: 3 }) {
+            Err(SimError::Invalid { why }) => assert!(why.contains("switch branches"), "{why}"),
             other => panic!("{other:?}"),
         }
+        sim.graph_node_set_params(g, sw.node, GraphNodeParams::Switch { handle: h, n: 2 })
+            .unwrap();
         match sim.graph_add_node(g, &[], GraphNodeParams::Switch { handle: h, n: 0 }) {
             Err(SimError::Invalid { why }) => assert!(why.contains("switch branches"), "{why}"),
             other => panic!("{other:?}"),
@@ -23365,6 +23374,128 @@ mod tests {
             Err(SimError::Invalid { why }) => assert!(why.contains("unknown graph"), "{why}"),
             other => panic!("{other:?}"),
         }
+    }
+
+    #[test]
+    fn graph_exec_cond_set_params_retargets_if_handle() {
+        let long = KernelKind::other(1 << 40, 4096);
+        let mut sim = Sim::new(h100());
+        let d = DeviceId(0);
+        let s = StreamId(0);
+        let a = sim.alloc(d, 4096, s).unwrap();
+        enq(sim.memcpy_pinned_to_device(d, a, 4096, s));
+        sim.synchronize().unwrap();
+        let g = sim.create_graph(d, s).unwrap();
+        let h_skip = sim.graph_conditional_create(g, 0).unwrap();
+        let h_run = sim.graph_conditional_create(g, 1).unwrap();
+        let body = sim.graph_add_if(g, h_skip).unwrap();
+        sim.graph_add_kernel(body, long, &[a], &[a]).unwrap();
+        match sim.graph_node_set_params(g, 0, GraphNodeParams::IfElse { handle: h_run }) {
+            Err(SimError::Invalid { why }) => assert!(why.contains("if else"), "{why}"),
+            other => panic!("{other:?}"),
+        }
+        let exec = sim.instantiate_graph(g).unwrap();
+        sim.upload_graph(exec).unwrap();
+        let t0 = sim.clock_ns();
+        let n0 = sim.launch_graph(exec, s).unwrap();
+        sim.synchronize().unwrap();
+        let skip = sim.clock_ns().saturating_sub(t0);
+        assert_eq!(n0, 1);
+        sim.graph_node_set_params(g, 0, GraphNodeParams::If { handle: h_run })
+            .unwrap();
+        assert_eq!(
+            sim.graph_node_get_params(g, 0).unwrap(),
+            GraphNodeParams::If { handle: h_run }
+        );
+        assert_eq!(
+            sim.graph_exec_node_get_params(exec, 0).unwrap(),
+            GraphNodeParams::If { handle: h_skip }
+        );
+        sim.graph_exec_node_set_params(exec, 0, GraphNodeParams::If { handle: h_run })
+            .unwrap();
+        assert!(!sim.graph_uploaded(exec).unwrap());
+        assert_eq!(
+            sim.graph_exec_node_get_params(exec, 0).unwrap(),
+            GraphNodeParams::If { handle: h_run }
+        );
+        let t1 = sim.clock_ns();
+        let n1 = sim.launch_graph(exec, s).unwrap();
+        sim.synchronize().unwrap();
+        let ran = sim.clock_ns().saturating_sub(t1);
+        assert_eq!(n1, 1);
+        assert!(
+            ran > skip,
+            "exec SetParams handle default 1 must run the IF body; ran={ran} skip={skip}"
+        );
+        let other = sim.create_graph(d, s).unwrap();
+        let other_h = sim.graph_conditional_create(other, 1).unwrap();
+        match sim.graph_exec_node_set_params(exec, 0, GraphNodeParams::If { handle: other_h }) {
+            Err(SimError::Invalid { why }) => assert!(why.contains("mismatch"), "{why}"),
+            e => panic!("{e:?}"),
+        }
+        let raw = sim.create_graph(d, s).unwrap();
+        let raw_h = sim.graph_conditional_create(raw, 0).unwrap();
+        let _raw_body = sim.graph_add_if(raw, raw_h).unwrap();
+        match sim.graph_exec_node_set_params(raw, 0, GraphNodeParams::If { handle: raw_h }) {
+            Err(SimError::Invalid { why }) => assert!(why.contains("not instantiated"), "{why}"),
+            other => panic!("{other:?}"),
+        }
+        sim.begin_capture(d, s).unwrap();
+        match sim.graph_node_set_params(g, 0, GraphNodeParams::If { handle: h_skip }) {
+            Err(SimError::Invalid { why }) => assert!(why.contains("capture"), "{why}"),
+            other => panic!("{other:?}"),
+        }
+        match sim.graph_exec_node_set_params(exec, 0, GraphNodeParams::If { handle: h_skip }) {
+            Err(SimError::Invalid { why }) => assert!(why.contains("capture"), "{why}"),
+            other => panic!("{other:?}"),
+        }
+        let _end = sim.end_capture().unwrap();
+
+        let g2 = sim.create_graph(d, s).unwrap();
+        let ha = sim.graph_conditional_create(g2, 0).unwrap();
+        let hb = sim.graph_conditional_create(g2, 1).unwrap();
+        let _ifelse = sim.graph_add_if_else(g2, ha).unwrap();
+        sim.graph_node_set_params(g2, 0, GraphNodeParams::IfElse { handle: hb })
+            .unwrap();
+        assert_eq!(
+            sim.graph_node_get_params(g2, 0).unwrap(),
+            GraphNodeParams::IfElse { handle: hb }
+        );
+        match sim.graph_node_set_params(g2, 0, GraphNodeParams::If { handle: ha }) {
+            Err(SimError::Invalid { why }) => assert!(why.contains("not an if node"), "{why}"),
+            other => panic!("{other:?}"),
+        }
+        let gw = sim.create_graph(d, s).unwrap();
+        let hw0 = sim.graph_conditional_create(gw, 0).unwrap();
+        let hw1 = sim.graph_conditional_create(gw, 1).unwrap();
+        let _wbody = sim.graph_add_while(gw, hw0).unwrap();
+        sim.graph_node_set_params(gw, 0, GraphNodeParams::While { handle: hw1 })
+            .unwrap();
+        assert_eq!(
+            sim.graph_node_get_params(gw, 0).unwrap(),
+            GraphNodeParams::While { handle: hw1 }
+        );
+        let gs = sim.create_graph(d, s).unwrap();
+        let hs0 = sim.graph_conditional_create(gs, 0).unwrap();
+        let hs1 = sim.graph_conditional_create(gs, 1).unwrap();
+        let _branches = sim.graph_add_switch(gs, hs0, 2).unwrap();
+        sim.graph_node_set_params(gs, 0, GraphNodeParams::Switch { handle: hs1, n: 2 })
+            .unwrap();
+        assert_eq!(
+            sim.graph_node_get_params(gs, 0).unwrap(),
+            GraphNodeParams::Switch { handle: hs1, n: 2 }
+        );
+        match sim.graph_node_set_params(gs, 0, GraphNodeParams::Switch { handle: hs1, n: 1 }) {
+            Err(SimError::Invalid { why }) => assert!(why.contains("switch branches"), "{why}"),
+            other => panic!("{other:?}"),
+        }
+        let mem = sim.create_graph(d, s).unwrap();
+        let mh = sim.graph_conditional_create(mem, 0).unwrap();
+        let _scratch = sim.graph_add_alloc(mem, 4096).unwrap();
+        let _mbody = sim.graph_add_if(mem, mh).unwrap();
+        let mexec = sim.instantiate_graph(mem).unwrap();
+        sim.graph_exec_node_set_params(mexec, 1, GraphNodeParams::If { handle: mh })
+            .unwrap();
     }
 
     #[test]

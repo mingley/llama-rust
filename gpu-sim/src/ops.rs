@@ -3532,7 +3532,8 @@ pub enum GraphNodeKind {
 ///
 /// [`Self::If`] / [`Self::IfElse`] / [`Self::While`] fill
 /// [`GraphAddNode::body`] (and `else_body`). [`Self::Switch`] fills
-/// [`GraphAddNode::switch_bodies`] (`1..=64`). Typed
+/// [`GraphAddNode::switch_bodies`] (`1..=64`). SetParams retargets the
+/// handle; type, size, and bodies stay topology. Typed
 /// [`crate::Sim::graph_add_if`] / `graph_add_if_else` / `graph_add_while` /
 /// `graph_add_switch` stay. Set-conditional is
 /// [`crate::Sim::graph_add_set_conditional`] / [`Self::SetConditional`].
@@ -3584,22 +3585,26 @@ pub enum GraphNodeParams {
         value: u32,
     },
     /// `cudaGraphCondTypeIf` size 1. [`GraphAddNode::body`] is the then-body.
+    /// SetParams retargets [`Self::If::handle`]; bodies stay topology.
     If {
         /// Handle created with [`crate::Sim::graph_conditional_create`].
         handle: CondId,
     },
     /// `cudaGraphCondTypeIf` size 2. [`GraphAddNode::body`] / `else_body`.
+    /// SetParams retargets [`Self::IfElse::handle`]; bodies stay topology.
     IfElse {
         /// Handle created with [`crate::Sim::graph_conditional_create`].
         handle: CondId,
     },
     /// `cudaGraphCondTypeWhile`. [`GraphAddNode::body`] is the loop body.
+    /// SetParams retargets [`Self::While::handle`]; the body stays topology.
     While {
         /// Handle created with [`crate::Sim::graph_conditional_create`].
         handle: CondId,
     },
     /// `cudaGraphCondTypeSwitch`. [`GraphAddNode::switch_bodies`] is
-    /// `phGraph_out` (`n` must be `1..=64`).
+    /// `phGraph_out` (`n` must be `1..=64`). SetParams retargets
+    /// [`Self::Switch::handle`]; `n` and bodies stay topology.
     Switch {
         /// Handle created with [`crate::Sim::graph_conditional_create`].
         handle: CondId,

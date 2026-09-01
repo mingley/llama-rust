@@ -5,6 +5,15 @@ Visible five-turn extract: [docs/chatgpt-share-6a920fe1.md](docs/chatgpt-share-6
 Complete share-API extract: [docs/chatgpt-share-6a920fe1/](docs/chatgpt-share-6a920fe1/).
 Work lands on `main`. No PRs.
 
+## Shipped 2026-09-01 — CUDA conditional-node handle SetParams
+
+`gpu-sim` `cudaGraphConditionalNodeSetParams` /
+`cudaGraphExecConditionalNodeSetParams` retarget the IF / IfElse / WHILE /
+SWITCH handle. Type, size, and bodies stay topology. Definition SetParams
+does not retarget the exec. Capture cannot include it. No Engine
+`--graph-cond-set`. `gpu-profile capture` is still refused. Dual score
+still has no `$/M tokens`.
+
 ## Shipped 2026-09-01 — CUDA size-2 IF else-body list
 
 `gpu-sim` `graph_if_else_nodes` lists size-2 IF nodes as `(index,

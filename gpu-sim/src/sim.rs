@@ -691,6 +691,15 @@ enum EventSetKind {
     Wait,
 }
 
+/// IF / IfElse / WHILE / SWITCH SetParams (definition and exec).
+#[derive(Clone, Copy)]
+enum CondSetKind {
+    If,
+    IfElse,
+    While,
+    Switch(u32),
+}
+
 /// `cudaGraphConditionalHandle`.
 struct Cond {
     graph: GraphId,
@@ -4643,8 +4652,8 @@ impl Sim {
     /// Dispatches to the typed SetParams. [`GraphNodeParams::Alloc`] is Invalid
     /// (would resize HBM). [`GraphNodeParams::Empty`] has no params. Event
     /// External flags are not rewritten (topology). [`GraphNodeParams::If`] /
-    /// `IfElse` / `While` / `Switch` are topology (`"conditional node params"`). After
-    /// instantiate this does not retarget the exec; use
+    /// `IfElse` / `While` / `Switch` retarget the handle; type, size, and bodies
+    /// stay topology. After instantiate this does not retarget the exec; use
     /// [`Self::graph_exec_node_set_params`]. Capture cannot include it.
     pub fn graph_node_set_params(
         &mut self,
@@ -4658,8 +4667,8 @@ impl Sim {
     /// `cudaGraphExecNodeSetParams` on an instantiated exec.
     ///
     /// Dispatches to the typed ExecSetParams. [`GraphNodeParams::Alloc`] is
-    /// Invalid. [`GraphNodeParams::Empty`] has no params. Capture cannot
-    /// include it.
+    /// Invalid. [`GraphNodeParams::Empty`] has no params. If / IfElse / While
+    /// plus Switch retarget the handle. Capture cannot include it.
     pub fn graph_exec_node_set_params(
         &mut self,
         exec: GraphId,
@@ -4752,9 +4761,69 @@ impl Sim {
             GraphNodeParams::If { .. }
             | GraphNodeParams::IfElse { .. }
             | GraphNodeParams::While { .. }
-            | GraphNodeParams::Switch { .. } => Err(SimError::Invalid {
-                why: "conditional node params",
-            }),
+            | GraphNodeParams::Switch { .. } => {
+                self.set_cond_node_handle(graph, node, params, exec)
+            }
+        }
+    }
+
+    /// `cudaGraphConditionalNodeSetParams` / `cudaGraphExecConditionalNodeSetParams`.
+    ///
+    /// Retargets the IF / IfElse / WHILE / SWITCH handle. Type, size, and
+    /// bodies stay topology. After instantiate, definition SetParams does not
+    /// retarget the exec. Exec pays `graph_set_params_ns` and clears upload.
+    /// Capture cannot include it. Graphs with mem alloc/free nodes are legal.
+    fn set_cond_node_handle(
+        &mut self,
+        graph: GraphId,
+        node: usize,
+        params: GraphNodeParams,
+        exec: bool,
+    ) -> Result<(), SimError> {
+        self.fail_if_capturing("cannot capture conditional node set params")?;
+        let (handle, set) = cond_set_from_params(&params)?;
+        let target = if exec { self.as_exec(graph)? } else { graph };
+        let owner = if exec { self.def_id(target) } else { graph };
+        let device = {
+            let g = self.graphs.get(&target).ok_or(SimError::Invalid {
+                why: "unknown graph",
+            })?;
+            let step = if exec {
+                live_ok(g.view().get(node).ok_or(SimError::Invalid {
+                    why: "unknown graph node",
+                })?)?
+            } else {
+                live_ok(g.steps.get(node).ok_or(SimError::Invalid {
+                    why: "unknown graph node",
+                })?)?
+            };
+            cond_kind_ok(&step.kind, set)?;
+            step.device
+        };
+        self.require_cond_on_graph(handle, owner)?;
+        if exec {
+            let ns = self.profile.gpu(device)?.graph_set_params_ns.max(1);
+            self.clock = self.clock.saturating_add(ns);
+            let g = self.graphs.get_mut(&target).ok_or(SimError::Invalid {
+                why: "unknown graph",
+            })?;
+            let step = live_ok_mut(g.exec_mut()?.get_mut(node).ok_or(SimError::Invalid {
+                why: "unknown graph node",
+            })?)?;
+            set_kind_cond_handle(&mut step.kind, handle)?;
+            g.uploaded = false;
+            Ok(())
+        } else {
+            let _gpu = self.profile.gpu(device)?;
+            self.clock = self.clock.saturating_add(1);
+            let g = self.graphs.get_mut(&target).ok_or(SimError::Invalid {
+                why: "unknown graph",
+            })?;
+            let step = live_ok_mut(g.steps.get_mut(node).ok_or(SimError::Invalid {
+                why: "unknown graph node",
+            })?)?;
+            set_kind_cond_handle(&mut step.kind, handle)?;
+            Ok(())
         }
     }
 
@@ -20831,6 +20900,71 @@ fn host_params_of(kind: &Kind) -> Result<HostNodeParams, SimError> {
         fn_id: *fn_id,
         user_data: *user_data,
     })
+}
+
+fn cond_set_from_params(params: &GraphNodeParams) -> Result<(CondId, CondSetKind), SimError> {
+    match params {
+        GraphNodeParams::If { handle } => Ok((*handle, CondSetKind::If)),
+        GraphNodeParams::IfElse { handle } => Ok((*handle, CondSetKind::IfElse)),
+        GraphNodeParams::While { handle } => Ok((*handle, CondSetKind::While)),
+        GraphNodeParams::Switch { handle, n } => Ok((*handle, CondSetKind::Switch(*n))),
+        _ => Err(SimError::Invalid {
+            why: "conditional node params",
+        }),
+    }
+}
+
+fn cond_kind_ok(kind: &Kind, set: CondSetKind) -> Result<(), SimError> {
+    match (set, kind) {
+        (
+            CondSetKind::If,
+            Kind::If {
+                else_body: None, ..
+            },
+        ) => Ok(()),
+        (
+            CondSetKind::IfElse,
+            Kind::If {
+                else_body: Some(_), ..
+            },
+        ) => Ok(()),
+        (CondSetKind::While, Kind::While { .. }) => Ok(()),
+        (CondSetKind::Switch(n), Kind::Switch { bodies, .. }) => {
+            let have = u32::try_from(bodies.len()).unwrap_or(0);
+            if have != n {
+                return Err(SimError::Invalid {
+                    why: "switch branches",
+                });
+            }
+            Ok(())
+        }
+        (CondSetKind::If, _) => Err(SimError::Invalid {
+            why: "not an if node",
+        }),
+        (CondSetKind::IfElse, _) => Err(SimError::Invalid {
+            why: "not an if else node",
+        }),
+        (CondSetKind::While, _) => Err(SimError::Invalid {
+            why: "not a while node",
+        }),
+        (CondSetKind::Switch(_), _) => Err(SimError::Invalid {
+            why: "not a switch node",
+        }),
+    }
+}
+
+fn set_kind_cond_handle(kind: &mut Kind, handle: CondId) -> Result<(), SimError> {
+    match kind {
+        Kind::If { handle: have, .. }
+        | Kind::While { handle: have, .. }
+        | Kind::Switch { handle: have, .. } => {
+            *have = handle;
+            Ok(())
+        }
+        _ => Err(SimError::Invalid {
+            why: "conditional node params",
+        }),
+    }
 }
 
 fn node_params_of(kind: &Kind) -> Result<GraphNodeParams, SimError> {

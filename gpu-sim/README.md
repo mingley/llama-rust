@@ -105,6 +105,7 @@ warp scheduler, L1, …   ← do not model
 | `cudaGraphNodeSetEnabled` skips an instantiated node at launch (mem nodes illegal) | `graph_set_params_ns` |
 | `cudaGraphExecChildGraphNodeSetParams` swaps one instantiated child-graph node's nested graph (nested topology must match; child ids are topology for ExecUpdate) | `graph_set_params_ns` |
 | `cudaGraphExecEventRecordNodeSetEvent` / `WaitNodeSetEvent` retarget the event on an instantiated record/wait node (External flag is topology) | `graph_set_params_ns` |
+| `cudaGraphConditionalNodeSetParams` / `ExecConditionalNodeSetParams` retarget the IF / IfElse / WHILE / SWITCH handle (type, size, bodies stay topology) | 1 ns / `graph_set_params_ns` |
 | graph mem alloc/free nodes (`cudaMallocAsync` / `cudaFreeAsync` during capture, or `graph_add_alloc` / `graph_add_free`) | `pool_reuse_ns` on relaunch without free |
 | graph clone is an independent uninstantiated copy; child graphs cloned recursively; mem alloc nodes get new ids | `graph_clone_ns` |
 | `cudaGraphCreate` (`create_graph` / `create_graph_with_flags`) is an empty uninstantiated graph; flags 0 | 1 ns host-sync |
@@ -544,6 +545,8 @@ SetParams (clears upload; distinct from `--graph-enable` SetEnabled).
 64 iterations; SWITCH runs body `i` when the handle equals `i`).
 `graph_if_else_nodes` lists size-2 IF else-bodies (`graph_if_nodes` stays
 then-body).
+`graph_node_set_params` / `graph_exec_node_set_params` retarget the IF /
+IfElse / WHILE / SWITCH handle (type, size, and bodies stay topology).
 `graph_node_find_in_clone` is `cudaGraphNodeFindInClone` (same index on a
 graph produced by `clone_graph` of that original).
 `expertvm --graph-set-params` parks a leaf and retargets the unique kernel
