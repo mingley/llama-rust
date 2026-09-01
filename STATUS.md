@@ -5,6 +5,17 @@ Visible five-turn extract: [docs/chatgpt-share-6a920fe1.md](docs/chatgpt-share-6
 Complete share-API extract: [docs/chatgpt-share-6a920fe1/](docs/chatgpt-share-6a920fe1/).
 Work lands on `main`. No PRs.
 
+## Shipped 2026-09-01 — ExecUpdate 2D memset geometry
+
+`gpu-sim` CUDA `cudaGraphExecUpdate` of 2D and 3D memset nodes may
+change address only (id / offset; fill value is not modeled). Width,
+height, pitch, depth, ysize, and elementSize are
+`GraphExecUpdateResult::ParametersChanged`. 1D memset may change
+dimensions. `graph_exec_memset_set_params_2d` stays legal. This VM does
+not invent Engine `--memset-update` or 1D work-resource mapping
+failures. `gpu-profile capture` is still refused. Dual score still has
+no `$/M tokens`.
+
 ## Shipped 2026-09-01 — ExecUpdate UseNodePriority kernel priority
 
 `gpu-sim` CUDA `cudaGraphExecUpdate` forbids kernel-node priority

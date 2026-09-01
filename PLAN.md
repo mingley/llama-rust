@@ -5449,7 +5449,16 @@ model, do not celebrate the sim.
     `gpu-profile capture` is still refused. Dual score still has no
     `$/M tokens`.
 
-507. [ ] Next numbered PLAN item after 506 is the next `gpu-sim` / Engine /
+507. [x] `gpu-sim` CUDA `cudaGraphExecUpdate` of 2D and 3D memset nodes
+    may change address only (id / offset; fill value is not modeled).
+    Width, height, pitch, depth, ysize, and elementSize are
+    [`GraphExecUpdateResult::ParametersChanged`]. 1D memset may change
+    dimensions. [`graph_exec_memset_set_params_2d`] stays legal. This VM
+    does not invent Engine `--memset-update`, a memset fill value, or
+    1D work-resource mapping failures. `gpu-profile capture` is still
+    refused. Dual score still has no `$/M tokens`.
+
+508. [ ] Next numbered PLAN item after 507 is the next `gpu-sim` / Engine /
     serve / expertvm mechanical API that is still missing, or the next official
     decode family. Prefer remaining CUDA-shaped twins over more
     OpenAI HTTP veneer. Do not invent F32 `output.scale`. Do not invent a
@@ -5796,6 +5805,10 @@ model, do not celebrate the sim.
     child-graph SetParams nested priority as a second check.
     `graph_exec_kernel_node_set_priority` stays legal. Do not invent
     `cudaDeviceGetStreamPriorityRange` clamping for this comparison.
+    Do not invent a second 2D/3D memset ExecUpdate geometry check.
+    Do not invent Engine `--memset-update`. Do not invent a memset fill
+    value. Do not invent 1D memset work-resource mapping failures.
+    `graph_exec_memset_set_params_2d` stays legal.
     Do not
     spend the next item on an OpenAI-compatible HTTP veneer.
 

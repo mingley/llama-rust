@@ -995,10 +995,12 @@
 //! [`GraphInstantiateFlags::USE_NODE_PRIORITY`] forbids kernel-node
 //! priority changes ([`GraphExecUpdateResult::AttributesChanged`]);
 //! matching priorities still update. Default instantiate copies priority
-//! as a parameter.
+//! as a parameter. 2D and 3D memset nodes may change address only
+//! ([`GraphExecUpdateResult::ParametersChanged`] for geometry);
+//! 1D memset may change dimensions.
 //! [`update_graph_with_info`](Sim::update_graph_with_info) fills
 //! [`GraphExecUpdateResultInfo`] even on `Err` (node type, deps, edge ports,
-//! UseNodePriority priority, mem nodes, device-launch).
+//! UseNodePriority priority, 2D memset geometry, mem nodes, device-launch).
 //! [`user_object_create`](Sim::user_object_create) is `cudaUserObjectCreate`
 //! ([`UserObjectFlags::NO_DESTRUCTOR_SYNC`]). [`graph_retain_user_object`](Sim::graph_retain_user_object) /
 //! [`graph_release_user_object`](Sim::graph_release_user_object) are
@@ -28283,6 +28285,56 @@ mod tests {
             sim.graph_exec_kernel_node_get_priority(exec2, 1).unwrap(),
             5
         );
+    }
+
+    #[test]
+    fn update_graph_rejects_2d_memset_geometry_change() {
+        let mut sim = Sim::new(h100());
+        let d = DeviceId(0);
+        let s = StreamId(0);
+        let (a, pitch) = sim.malloc_pitch(d, 256, 8).unwrap();
+        let (b, pitch_b) = sim.malloc_pitch(d, 256, 8).unwrap();
+        assert_eq!(pitch, pitch_b);
+        let op = MemsetOp {
+            id: a,
+            bytes: 256,
+            height: 8,
+            pitch,
+            ..MemsetOp::default()
+        };
+        let exec = sim.create_graph(d, s).unwrap();
+        sim.graph_add_memset_2d(exec, op).unwrap();
+        let _ = sim.instantiate_graph(exec).unwrap();
+        let src = sim.create_graph(d, s).unwrap();
+        sim.graph_add_memset_2d(src, MemsetOp { height: 4, ..op })
+            .unwrap();
+        let mut info = GraphExecUpdateResultInfo::default();
+        let err = sim
+            .update_graph_with_info(exec, src, &mut info)
+            .unwrap_err();
+        match err {
+            SimError::Invalid { why } => assert!(why.contains("topology"), "{why}"),
+            other => panic!("{other:?}"),
+        }
+        assert_eq!(info.result, GraphExecUpdateResult::ParametersChanged);
+        assert_eq!(info.error_node, Some(0));
+        assert_eq!(info.error_from_node, Some(0));
+        let addr = sim.create_graph(d, s).unwrap();
+        sim.graph_add_memset_2d(addr, MemsetOp { id: b, ..op })
+            .unwrap();
+        sim.update_graph_with_info(exec, addr, &mut info).unwrap();
+        assert_eq!(info.result, GraphExecUpdateResult::Success);
+        let one = sim.create_graph(d, s).unwrap();
+        sim.graph_add_memset(one, KernelBuf::whole(a)).unwrap();
+        let _ = sim.instantiate_graph(one).unwrap();
+        let one_src = sim.create_graph(d, s).unwrap();
+        sim.graph_add_memset(one_src, KernelBuf::span(a, 0, 2048))
+            .unwrap();
+        sim.update_graph_with_info(one, one_src, &mut info).unwrap();
+        assert_eq!(info.result, GraphExecUpdateResult::Success);
+        sim.graph_exec_memset_set_params_2d(exec, 0, MemsetOp { height: 4, ..op })
+            .unwrap();
+        assert_eq!(sim.graph_exec_memset_get_params(exec, 0).unwrap().height, 4);
     }
 
     fn map_whole(sim: &mut Sim, device: DeviceId, bytes: u64) -> AllocId {

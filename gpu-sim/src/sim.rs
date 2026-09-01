@@ -4227,7 +4227,11 @@ impl Sim {
     /// kernel-node priority changes
     /// ([`GraphExecUpdateResult::AttributesChanged`]); matching priorities
     /// still update. Default instantiate copies priority as a parameter.
-    /// [`Self::graph_exec_kernel_node_set_priority`] stays legal. Pays
+    /// [`Self::graph_exec_kernel_node_set_priority`] stays legal. 2D and 3D
+    /// memset nodes may change address only
+    /// ([`GraphExecUpdateResult::ParametersChanged`] for width, height,
+    /// pitch, depth, plus elementSize); 1D memset may change dimensions.
+    /// [`Self::graph_exec_memset_set_params_2d`] stays legal. Pays
     /// `graph_update_ns`. Recapture if topology differs. Capture cannot
     /// include it. `exec` must already be instantiated. Graphs with mem alloc
     /// or mem free nodes cannot be updated (`cudaGraphExecUpdate` of mem nodes).
@@ -24024,6 +24028,7 @@ fn op_eq(a: &Kind, b: &Kind) -> bool {
         (Kind::EventRecord { external: x, .. }, Kind::EventRecord { external: y, .. }) => x == y,
         (Kind::EventWait { external: x, .. }, Kind::EventWait { external: y, .. }) => x == y,
         (Kind::Kernel { cooperative: x, .. }, Kind::Kernel { cooperative: y, .. }) => x == y,
+        (Kind::Memset(a), Kind::Memset(b)) => memset_exec_update_eq(a, b),
         (Kind::WriteValue { bits32: x, .. }, Kind::WriteValue { bits32: y, .. }) => x == y,
         (
             Kind::WaitValue {
@@ -24036,6 +24041,21 @@ fn op_eq(a: &Kind, b: &Kind) -> bool {
         (Kind::BatchMem { .. }, Kind::BatchMem { .. }) => true,
         (Kind::HostFunc { .. }, Kind::HostFunc { .. }) => true,
         _ => op_tag(a) == op_tag(b),
+    }
+}
+
+/// `cudaGraphExecUpdate`: 2D and 3D memset nodes may change address only
+/// (fill value is not modeled). 1D nodes may change dimensions.
+fn memset_exec_update_eq(a: &MemsetOp, b: &MemsetOp) -> bool {
+    if a.is_2d() || b.is_2d() || a.is_3d() || b.is_3d() {
+        a.bytes == b.bytes
+            && a.height == b.height
+            && a.pitch == b.pitch
+            && a.depth == b.depth
+            && a.ysize == b.ysize
+            && a.element_size == b.element_size
+    } else {
+        true
     }
 }
 
