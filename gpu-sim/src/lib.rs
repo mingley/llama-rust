@@ -702,6 +702,9 @@
 //! [`gl_unmap_buffer_object`](Sim::gl_unmap_buffer_object) is
 //! `cuGLUnmapBufferObject` (always Invalid `"gl unmap"`). Query;
 //! legal during capture. No Engine `--gl-unmap`.
+//! [`gl_unmap_buffer_object_async`](Sim::gl_unmap_buffer_object_async) is
+//! `cuGLUnmapBufferObjectAsync` (always Invalid `"unmap async"`). Query;
+//! legal during capture. No Engine `--gl-unmap-async`.
 //! [`gl_set_gl_device`](Sim::gl_set_gl_device) is
 //! `cudaGLSetGLDevice` (always Invalid `"gl device"`). Query;
 //! legal during capture. No Engine `--gl-set-device`.
@@ -23427,11 +23430,63 @@ mod tests {
             }
             other => panic!("{other:?}"),
         }
+        match sim.gl_unmap_buffer_object_async(d, StreamId(0)) {
+            Err(SimError::Invalid { why }) => {
+                assert!(why.contains("unmap async"), "{why}");
+                assert!(!why.contains("gl unmap"), "{why}");
+                assert!(!why.contains("graphics unmap"), "{why}");
+            }
+            other => panic!("{other:?}"),
+        }
         match sim.gl_set_gl_device(d) {
             Err(SimError::Invalid { why }) => {
                 assert!(why.contains("gl device"), "{why}");
                 assert!(!why.contains("opengl"), "{why}");
                 assert!(!why.contains("gl context"), "{why}");
+            }
+            other => panic!("{other:?}"),
+        }
+    }
+
+    #[test]
+    fn gl_unmap_buffer_object_async_is_unsupported() {
+        let mut sim = Sim::new(h100());
+        let d = DeviceId(0);
+        let s = StreamId(0);
+        match sim.gl_unmap_buffer_object_async(d, s) {
+            Err(SimError::Invalid { why }) => {
+                assert!(why.contains("unmap async"), "{why}");
+                assert!(!why.contains("gl unmap"), "{why}");
+                assert!(!why.contains("graphics unmap"), "{why}");
+                assert!(!why.contains("gl map"), "{why}");
+            }
+            other => panic!("{other:?}"),
+        }
+        sim.begin_capture(d, s).unwrap();
+        match sim.gl_unmap_buffer_object_async(d, s) {
+            Err(SimError::Invalid { why }) => {
+                assert!(why.contains("unmap async"), "{why}");
+            }
+            other => panic!("{other:?}"),
+        }
+        let _g = sim.end_capture().unwrap();
+        match sim.gl_unmap_buffer_object_async(DeviceId(99), s) {
+            Err(SimError::Invalid { why }) => {
+                assert!(why.contains("device not in profile"), "{why}");
+            }
+            other => panic!("{other:?}"),
+        }
+        match sim.gl_unmap_buffer_object(d) {
+            Err(SimError::Invalid { why }) => {
+                assert!(why.contains("gl unmap"), "{why}");
+                assert!(!why.contains("unmap async"), "{why}");
+            }
+            other => panic!("{other:?}"),
+        }
+        match sim.graphics_unmap_resources(d, s) {
+            Err(SimError::Invalid { why }) => {
+                assert!(why.contains("graphics unmap"), "{why}");
+                assert!(!why.contains("unmap async"), "{why}");
             }
             other => panic!("{other:?}"),
         }

@@ -210,6 +210,7 @@ warp scheduler, L1, …   ← do not model
 | `gl_map_buffer_object` is Invalid (legacy OpenGL interop is not modeled) | `cuGLMapBufferObject` |
 | `gl_unregister_buffer_object` is Invalid (legacy OpenGL interop is not modeled) | `cuGLUnregisterBufferObject` |
 | `gl_unmap_buffer_object` is Invalid (legacy OpenGL interop is not modeled) | `cuGLUnmapBufferObject` |
+| `gl_unmap_buffer_object_async` is Invalid (legacy OpenGL interop is not modeled) | `cuGLUnmapBufferObjectAsync` |
 | `gl_set_gl_device` is Invalid (OpenGL interop is not modeled) | `cudaGLSetGLDevice` |
 | `d3d11_get_devices` is Invalid (Direct3D 11 interop is not modeled) | `cuD3D11GetDevices` / `cudaD3D11GetDevices` |
 | `d3d11_ctx_create` is Invalid (Direct3D 11 interop is not modeled) | `cuD3D11CtxCreate` |
@@ -1224,6 +1225,9 @@ legal during capture. No Engine `--gl-unregister-object`.
 `gl_unmap_buffer_object` is `cuGLUnmapBufferObject` (always Invalid
 `"gl unmap"`). Distinct from `gl_map_buffer_object` and
 `graphics_unmap_resources`. Query; legal during capture. No Engine `--gl-unmap`.
+`gl_unmap_buffer_object_async` is `cuGLUnmapBufferObjectAsync` (always Invalid
+`"unmap async"`). Distinct from `gl_unmap_buffer_object`. Query;
+legal during capture. No Engine `--gl-unmap-async`.
 `gl_set_gl_device` is `cudaGLSetGLDevice` (always Invalid `"gl device"`).
 Distinct from `gl_get_devices` and `gl_ctx_create`. Query; legal during capture. No Engine `--gl-set-device`.
 `d3d11_get_devices` is `cuD3D11GetDevices` (always Invalid `"d3d11"`).
