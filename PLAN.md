@@ -4830,7 +4830,14 @@ model, do not celebrate the sim.
     `--graph-edge-data`. `gpu-profile capture` is still refused. Dual score
     still has no `$/M tokens`.
 
-442. [ ] Next numbered PLAN item after 441 is the next `gpu-sim` / Engine /
+442. [x] `gpu-sim` `device_get_nvscisync_attributes` is
+    `cudaDeviceGetNvSciSyncAttributes`. Always Invalid `"nvscisync not modeled"`
+    (`DeviceAttr::TimelineSemaphoreInteropSupported` is 0). Flags SIGNAL /
+    WAIT (or both). Distinct from `ipc_get_event` and `wait_value32`. Query;
+    legal during capture. No Engine `--nvscisync`. `gpu-profile capture` is
+    still refused. Dual score still has no `$/M tokens`.
+
+443. [ ] Next numbered PLAN item after 442 is the next `gpu-sim` / Engine /
     serve / expertvm mechanical API that is still missing, or the next official
     decode family. Prefer remaining CUDA-shaped twins over more
     OpenAI HTTP veneer. Do not invent F32 `output.scale`. Do not invent a
@@ -4886,6 +4893,9 @@ model, do not celebrate the sim.
     VMM POSIX-FD file descriptor. Do not invent
     `cuMemImportFromShareableHandle` for VMM. Do not invent Engine
     `--vmm-export`.
+    Do not invent a second `cudaDeviceGetNvSciSyncAttributes`. Do not invent
+    an NvSciSync attribute list. Do not invent Engine `--nvscisync`. Do not
+    invent `cudaImportExternalSemaphore` / graph external-semaphore nodes.
     Do not invent `cuDeviceGetLuid`
     (Windows).
     Do not invent gemma4 `attn_q.scale` / `attn_output.scale` / `attn_k.scale` /

@@ -1355,6 +1355,17 @@ pub enum DeviceP2pAttr {
     OnlyPartialNativeAtomicSupported,
 }
 
+/// `cudaDeviceGetNvSciSyncAttributes` flags for
+/// [`crate::Sim::device_get_nvscisync_attributes`].
+pub struct NvSciSyncAttrFlags;
+
+impl NvSciSyncAttrFlags {
+    /// `cudaNvSciSyncAttrSignal`.
+    pub const SIGNAL: u32 = 1;
+    /// `cudaNvSciSyncAttrWait`.
+    pub const WAIT: u32 = 2;
+}
+
 /// One kernel buffer: a whole allocation or a mapped VMM span.
 ///
 /// [`Self::whole`] is `offset = 0`, `bytes = 0` (remainder of the alloc).

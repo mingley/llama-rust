@@ -714,7 +714,10 @@ is always 1 (`WaitValueCmp::Nor`). `TensorMapAccessSupported` is always
 0 (`CUtensorMap` / TMA is not modeled). `UnifiedFunctionPointers` is
 always 0 (device-side function pointers are not modeled).
 `TimelineSemaphoreInteropSupported` is always 0 (NVSci / timeline
-semaphore interop is not modeled). `MemDecompressAlgorithmMask` /
+semaphore interop is not modeled). `device_get_nvscisync_attributes` is
+`cudaDeviceGetNvSciSyncAttributes` (always Invalid `"nvscisync not modeled"`;
+`NvSciSyncAttrFlags::SIGNAL` / `WAIT`). Query; legal during capture. No
+Engine `--nvscisync`. `MemDecompressAlgorithmMask` /
 `MemDecompressMaximumLength` are always 0 (hardware decompress is not
 modeled). `HostNumaVirtualMemoryManagementSupported` is always 0 (host
 NUMA VMM is not modeled; `va_create_with_prop` refuses host location).

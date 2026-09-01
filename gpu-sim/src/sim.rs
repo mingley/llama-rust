@@ -28,11 +28,12 @@ use crate::ops::{
     MemPoolProps, MemRangeAttr, MemRangeAttrValue, MemRangeHandleFlags, MemRangeHandleType,
     MemReserveFlags, MemSyncDomain, MemSyncDomainMap, MemcpyAttributes, MemcpyFlags, MemcpyOp,
     MemcpySrcAccessOrder, MemoryType, MemsetOp, MulticastBindFlags, MulticastCreateFlags,
-    MulticastGranularity, MulticastObjectProp, Operation, PdlLaunch, PeerAccessFlags, Place,
-    PointerAttr, PointerAttributes, PortableClusterMode, PortableSharedMode, PrefetchFlags,
-    ProgrammaticEvent, ProgrammaticLaunch, SharedMemCarveout, SharedMemoryMode, SmResource,
-    StreamAttr, StreamAttrValue, StreamCallbackFlags, StreamCaptureInfo, StreamCaptureMode,
-    StreamCreateFlags, SynchronizationPolicy, UserObjectFlags, WaitValueCmp, WriteValueFlags,
+    MulticastGranularity, MulticastObjectProp, NvSciSyncAttrFlags, Operation, PdlLaunch,
+    PeerAccessFlags, Place, PointerAttr, PointerAttributes, PortableClusterMode,
+    PortableSharedMode, PrefetchFlags, ProgrammaticEvent, ProgrammaticLaunch, SharedMemCarveout,
+    SharedMemoryMode, SmResource, StreamAttr, StreamAttrValue, StreamCallbackFlags,
+    StreamCaptureInfo, StreamCaptureMode, StreamCreateFlags, SynchronizationPolicy,
+    UserObjectFlags, WaitValueCmp, WriteValueFlags,
 };
 use crate::profile::{align_up, ns_for_bytes, scale_ns_permille, HardwareProfile, LinkKind};
 
@@ -15444,6 +15445,31 @@ impl Sim {
             DeviceP2pAttr::NativeAtomicSupported
             | DeviceP2pAttr::CudaArrayAccessFromDevice
             | DeviceP2pAttr::OnlyPartialNativeAtomicSupported => 0,
+        })
+    }
+
+    /// `cudaDeviceGetNvSciSyncAttributes`. Query; legal during capture.
+    ///
+    /// Always Invalid `"nvscisync not modeled"`
+    /// ([`DeviceAttr::TimelineSemaphoreInteropSupported`] is 0). Flags must
+    /// be [`NvSciSyncAttrFlags::SIGNAL`], [`WAIT`](NvSciSyncAttrFlags::WAIT),
+    /// or both. Unknown bits or 0 Invalid `"nvscisync flags"`. Unknown devices
+    /// are Invalid. Distinct from [`Self::ipc_get_event`] and
+    /// [`Self::wait_value32`]. No Engine `--nvscisync`.
+    pub fn device_get_nvscisync_attributes(
+        &self,
+        device: DeviceId,
+        flags: u32,
+    ) -> Result<(), SimError> {
+        const KNOWN: u32 = NvSciSyncAttrFlags::SIGNAL | NvSciSyncAttrFlags::WAIT;
+        if flags == 0 || flags & !KNOWN != 0 {
+            return Err(SimError::Invalid {
+                why: "nvscisync flags",
+            });
+        }
+        let _gpu = self.profile.gpu(device)?;
+        Err(SimError::Invalid {
+            why: "nvscisync not modeled",
         })
     }
 

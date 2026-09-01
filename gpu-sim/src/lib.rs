@@ -468,6 +468,10 @@
 //! pointers are not modeled).
 //! [`DeviceAttr::TimelineSemaphoreInteropSupported`] is always 0 (NVSci /
 //! timeline semaphore interop is not modeled).
+//! [`device_get_nvscisync_attributes`](Sim::device_get_nvscisync_attributes) is
+//! `cudaDeviceGetNvSciSyncAttributes` (always Invalid `"nvscisync not modeled"`;
+//! flags [`NvSciSyncAttrFlags::SIGNAL`] / [`WAIT`](NvSciSyncAttrFlags::WAIT)).
+//! Query; legal during capture.
 //! [`DeviceAttr::MemDecompressAlgorithmMask`] is always 0 (hardware decompress
 //! is not modeled).
 //! [`DeviceAttr::MemDecompressMaximumLength`] is always 0 (hardware decompress
@@ -1105,12 +1109,12 @@ pub use ops::{
     MemPoolAttr, MemPoolExportFlags, MemPoolProps, MemRangeAttr, MemRangeAttrValue,
     MemRangeHandleFlags, MemRangeHandleType, MemReserveFlags, MemSyncDomain, MemSyncDomainMap,
     MemcpyAttributes, MemcpyFlags, MemcpyOp, MemcpySrcAccessOrder, MemoryType, MemsetOp,
-    MulticastBindFlags, MulticastCreateFlags, MulticastGranularity, MulticastObjectProp, Operation,
-    PdlLaunch, PeerAccessFlags, Place, PointerAttr, PointerAttributes, PortableClusterMode,
-    PortableSharedMode, PrefetchFlags, ProgrammaticEvent, ProgrammaticLaunch, SharedMemCarveout,
-    SharedMemoryMode, SmResource, StreamAttr, StreamAttrValue, StreamCallbackFlags,
-    StreamCaptureInfo, StreamCaptureMode, StreamCreateFlags, SynchronizationPolicy,
-    UserObjectFlags, WaitValueCmp, WaitValueFlags, WriteValueFlags,
+    MulticastBindFlags, MulticastCreateFlags, MulticastGranularity, MulticastObjectProp,
+    NvSciSyncAttrFlags, Operation, PdlLaunch, PeerAccessFlags, Place, PointerAttr,
+    PointerAttributes, PortableClusterMode, PortableSharedMode, PrefetchFlags, ProgrammaticEvent,
+    ProgrammaticLaunch, SharedMemCarveout, SharedMemoryMode, SmResource, StreamAttr,
+    StreamAttrValue, StreamCallbackFlags, StreamCaptureInfo, StreamCaptureMode, StreamCreateFlags,
+    SynchronizationPolicy, UserObjectFlags, WaitValueCmp, WaitValueFlags, WriteValueFlags,
 };
 pub use probe::{probe_topology, P2pProbe, TopologyProbe};
 pub use profile::{
@@ -13459,6 +13463,64 @@ mod tests {
                 .unwrap(),
             0
         );
+        let _g = sim.end_capture().unwrap();
+    }
+
+    #[test]
+    fn device_get_nvscisync_attributes_is_not_modeled() {
+        let mut sim = Sim::new(h100());
+        let d = DeviceId(0);
+        assert_eq!(
+            sim.device_get_attribute(d, DeviceAttr::TimelineSemaphoreInteropSupported)
+                .unwrap(),
+            0
+        );
+        match sim.device_get_nvscisync_attributes(d, NvSciSyncAttrFlags::SIGNAL) {
+            Err(SimError::Invalid { why }) => {
+                assert!(why.contains("nvscisync not modeled"), "{why}");
+            }
+            other => panic!("{other:?}"),
+        }
+        match sim.device_get_nvscisync_attributes(d, NvSciSyncAttrFlags::WAIT) {
+            Err(SimError::Invalid { why }) => {
+                assert!(why.contains("nvscisync not modeled"), "{why}");
+            }
+            other => panic!("{other:?}"),
+        }
+        match sim.device_get_nvscisync_attributes(
+            d,
+            NvSciSyncAttrFlags::SIGNAL | NvSciSyncAttrFlags::WAIT,
+        ) {
+            Err(SimError::Invalid { why }) => {
+                assert!(why.contains("nvscisync not modeled"), "{why}");
+            }
+            other => panic!("{other:?}"),
+        }
+        match sim.device_get_nvscisync_attributes(d, 0) {
+            Err(SimError::Invalid { why }) => {
+                assert!(why.contains("nvscisync flags"), "{why}");
+            }
+            other => panic!("{other:?}"),
+        }
+        match sim.device_get_nvscisync_attributes(d, 4) {
+            Err(SimError::Invalid { why }) => {
+                assert!(why.contains("nvscisync flags"), "{why}");
+            }
+            other => panic!("{other:?}"),
+        }
+        match sim.device_get_nvscisync_attributes(DeviceId(9), NvSciSyncAttrFlags::SIGNAL) {
+            Err(SimError::Invalid { why }) => {
+                assert!(why.contains("device not in profile"), "{why}");
+            }
+            other => panic!("{other:?}"),
+        }
+        sim.begin_capture(d, StreamId(0)).unwrap();
+        match sim.device_get_nvscisync_attributes(d, NvSciSyncAttrFlags::SIGNAL) {
+            Err(SimError::Invalid { why }) => {
+                assert!(why.contains("nvscisync not modeled"), "{why}");
+            }
+            other => panic!("{other:?}"),
+        }
         let _g = sim.end_capture().unwrap();
     }
 
