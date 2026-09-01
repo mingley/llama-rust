@@ -1259,7 +1259,9 @@
 //! omitted. [`begin_capture_to_graph`](Sim::begin_capture_to_graph) is
 //! `cudaStreamBeginCaptureToGraph`: append captured nodes onto an existing
 //! uninstantiated graph; capture roots additionally depend on the given node
-//! indices (empty means extra roots). [`Sim::end_capture`] returns that graph.
+//! indices (empty means extra roots). A parked in-flight-destroyed exec is
+//! `"unknown graph"` first; a live exec stays `"graph instantiated"`.
+//! [`Sim::end_capture`] returns that graph.
 //! `expertvm --graph-piecewise` captures combo parents as extra roots;
 //! `--graph-capture-deps` chains those fragments;
 //! `--graph-capture-host` inserts captured [`host_func`](Sim::host_func)
@@ -5351,6 +5353,58 @@ mod tests {
         sim.synchronize().unwrap();
         sim.destroy_graph(g).unwrap();
         sim.user_object_release(obj, 1).unwrap();
+    }
+
+    #[test]
+    fn parked_exec_capture_to_graph_is_unknown() {
+        let mut sim = Sim::new(h100());
+        let d = DeviceId(0);
+        let s = StreamId(0);
+        let a = sim.malloc(d, 4096).unwrap();
+        let g = sim.create_graph(d, s).unwrap();
+        sim.graph_add_kernel(g, KernelKind::other(1 << 40, 4096), &[a], &[a])
+            .unwrap();
+        let exec = sim.instantiate_graph(g).unwrap();
+        match sim.begin_capture_to_graph(d, s, exec, &[]).unwrap_err() {
+            SimError::Invalid { why } => assert!(why.contains("instantiated"), "{why}"),
+            other => panic!("{other:?}"),
+        }
+        let launched = sim.launch_graph(exec, s).unwrap();
+        assert!(launched > 0);
+        sim.destroy_graph(exec).unwrap();
+        match sim.begin_capture_to_graph(d, s, exec, &[]).unwrap_err() {
+            SimError::Invalid { why } => assert!(why.contains("unknown"), "{why}"),
+            other => panic!("{other:?}"),
+        }
+        match sim
+            .begin_capture_to_graph_with_mode(d, StreamId(1), exec, &[], StreamCaptureMode::Relaxed)
+            .unwrap_err()
+        {
+            SimError::Invalid { why } => assert!(why.contains("unknown"), "{why}"),
+            other => panic!("{other:?}"),
+        }
+        sim.begin_capture(d, StreamId(1)).unwrap();
+        match sim
+            .begin_capture_to_graph(d, StreamId(2), exec, &[])
+            .unwrap_err()
+        {
+            SimError::Invalid { why } => assert!(why.contains("nested"), "{why}"),
+            other => panic!("{other:?}"),
+        }
+        let _end = sim.end_capture().unwrap();
+        sim.begin_capture_to_graph(d, StreamId(1), g, &[]).unwrap();
+        let scratch = sim.alloc(d, 64, StreamId(1)).unwrap();
+        let id = sim.end_capture().unwrap();
+        assert_eq!(id, g);
+        assert_eq!(sim.graph_len(g).unwrap(), 2);
+        assert_eq!(sim.graph_mem_allocs(g).unwrap(), vec![scratch]);
+        sim.synchronize().unwrap();
+        match sim.begin_capture_to_graph(d, s, exec, &[]).unwrap_err() {
+            SimError::Invalid { why } => assert!(why.contains("unknown"), "{why}"),
+            other => panic!("{other:?}"),
+        }
+        sim.destroy_graph(g).unwrap();
+        sim.destroy_graph(_end).unwrap();
     }
 
     #[test]

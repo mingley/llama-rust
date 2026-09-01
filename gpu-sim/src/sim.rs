@@ -2909,6 +2909,9 @@ impl Sim {
     /// roots, so they may Hyper-Q overlap prior nodes at launch. Same device
     /// as `graph`'s origin. Nested capture is Invalid. Capture does not run
     /// recorded ops. [`Self::end_capture`] returns `graph`.
+    /// A parked in-flight-destroyed exec is `"unknown graph"` first. Live
+    /// exec still `"graph instantiated"`. Capture-to-graph of the definition
+    /// stays.
     pub fn begin_capture_to_graph(
         &mut self,
         device: DeviceId,
@@ -2945,6 +2948,7 @@ impl Sim {
                 why: "nested graph capture",
             });
         }
+        self.require_live_graph(graph)?;
         if !self.stream_idle(device, stream) {
             return Err(SimError::Invalid {
                 why: "capture requires idle stream",
@@ -2976,9 +2980,7 @@ impl Sim {
         graph: GraphId,
         deps: &[usize],
     ) -> Result<CaptureInto, SimError> {
-        let g = self.graphs.get(&graph).ok_or(SimError::Invalid {
-            why: "unknown graph",
-        })?;
+        let g = self.live_graph(graph)?;
         if g.instantiated {
             return Err(SimError::Invalid {
                 why: "graph instantiated",

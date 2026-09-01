@@ -489,6 +489,8 @@ and during capture; definition destroy does not retarget exec).
 `cudaStreamBeginCaptureToGraph`: append captured nodes onto an existing
 uninstantiated graph; capture roots additionally depend on the given node
 indices (empty `deps` means extra roots, so they may Hyper-Q overlap).
+A parked in-flight-destroyed exec is `"unknown graph"` first; a live exec
+stays `"graph instantiated"`. Capture-to-graph of the definition stays.
 `graph_nodes` / `graph_root_nodes` / `graph_edges` / `graph_node_dependents` /
 `graph_debug_dot` / `graph_debug_dot_with_flags` / `graph_get_id` / `graph_node_get_local_id` / `graph_node_get_tools_id` are `cudaGraphGetNodes` /
 `GetRootNodes` / `GetEdges` /
