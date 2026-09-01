@@ -1100,6 +1100,9 @@
 //! [`kernel_get_function`](Sim::kernel_get_function) is
 //! `cuKernelGetFunction` (always Invalid `"kernel function"`). Query;
 //! legal during capture. No Engine `--kernel-function`.
+//! [`kernel_get_param_info`](Sim::kernel_get_param_info) is
+//! `cuKernelGetParamInfo` (always Invalid `"kernel param"`). Query;
+//! legal during capture. No Engine `--kernel-param`.
 //! [`link_create`](Sim::link_create) is `cuLinkCreate` (always Invalid
 //! `"jit linker"`). Query; legal during capture. No Engine `--jit-link`.
 //! [`Sim::runtime_get_version`] is `cudaRuntimeGetVersion` (same
@@ -19231,6 +19234,57 @@ mod tests {
             Err(SimError::Invalid { why }) => {
                 assert!(why.contains("unknown function"), "{why}");
                 assert!(!why.contains("kernel function"), "{why}");
+            }
+            other => panic!("{other:?}"),
+        }
+        match sim.kernel_get_param_info(d) {
+            Err(SimError::Invalid { why }) => {
+                assert!(why.contains("kernel param"), "{why}");
+                assert!(!why.contains("kernel function"), "{why}");
+            }
+            other => panic!("{other:?}"),
+        }
+        assert_eq!(sim.module_get_loading_mode(), ModuleLoadingMode::Eager);
+    }
+
+    #[test]
+    fn kernel_get_param_info_is_unsupported() {
+        let mut sim = Sim::new(h100());
+        let d = DeviceId(0);
+        match sim.kernel_get_param_info(d) {
+            Err(SimError::Invalid { why }) => {
+                assert!(why.contains("kernel param"), "{why}");
+                assert!(!why.contains("kernel function"), "{why}");
+                assert!(!why.contains("unknown function"), "{why}");
+                assert!(!why.contains("library kernel"), "{why}");
+            }
+            other => panic!("{other:?}"),
+        }
+        sim.begin_capture(d, StreamId(0)).unwrap();
+        match sim.kernel_get_param_info(d) {
+            Err(SimError::Invalid { why }) => {
+                assert!(why.contains("kernel param"), "{why}");
+            }
+            other => panic!("{other:?}"),
+        }
+        let _g = sim.end_capture().unwrap();
+        match sim.kernel_get_param_info(DeviceId(99)) {
+            Err(SimError::Invalid { why }) => {
+                assert!(why.contains("device not in profile"), "{why}");
+            }
+            other => panic!("{other:?}"),
+        }
+        match sim.kernel_get_function(d) {
+            Err(SimError::Invalid { why }) => {
+                assert!(why.contains("kernel function"), "{why}");
+                assert!(!why.contains("kernel param"), "{why}");
+            }
+            other => panic!("{other:?}"),
+        }
+        match sim.func_get_param_info(d, 0) {
+            Err(SimError::Invalid { why }) => {
+                assert!(why.contains("unknown function"), "{why}");
+                assert!(!why.contains("kernel param"), "{why}");
             }
             other => panic!("{other:?}"),
         }

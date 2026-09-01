@@ -265,6 +265,7 @@ warp scheduler, L1, …   ← do not model
 | `library_get_managed` is Invalid (no `CUlibrary` managed symbol) | `cuLibraryGetManaged` |
 | `library_get_unified_function` is Invalid (no `CUlibrary` device function pointer) | `cuLibraryGetUnifiedFunction` |
 | `kernel_get_function` is Invalid (no `CUkernel` / `CUfunction`) | `cuKernelGetFunction` |
+| `kernel_get_param_info` is Invalid (no `CUkernel` parameter blob) | `cuKernelGetParamInfo` |
 | `link_create` is Invalid (no JIT linker or NVRTC) | `cuLinkCreate` |
 | `device_get` is the ordinal in `0 .. count` | `cuDeviceGet` |
 | `flush_gpu_direct_rdma_writes` is a 1 ns host-sync barrier on RDMA SKUs (no write-visibility) | 1 ns |
@@ -1501,6 +1502,9 @@ Query; legal during capture. No Engine `--library-managed`.
 `kernel_get_function` is `cuKernelGetFunction` (always Invalid
 `"kernel function"`). Distinct from `library_get_kernel` and `func_get_module`.
 Query; legal during capture. No Engine `--kernel-function`.
+`kernel_get_param_info` is `cuKernelGetParamInfo` (always Invalid
+`"kernel param"`). Distinct from `kernel_get_function` and `func_get_param_info`.
+Query; legal during capture. No Engine `--kernel-param`.
 `link_create` is `cuLinkCreate` (always Invalid `"jit linker"`; no NVRTC).
 Distinct from `library_load_data`. Query; legal during capture. No Engine `--jit-link`.
 `runtime_get_version` is `cudaRuntimeGetVersion` (same toolkit). Query;
