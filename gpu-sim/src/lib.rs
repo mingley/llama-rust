@@ -641,6 +641,11 @@
 //! [`memcpy_pinned_to_device`](Sim::memcpy_pinned_to_device) /
 //! [`memcpy_device_to_pinned`](Sim::memcpy_device_to_pinned) stay Async.
 //! No Engine `--memcpy-htod`.
+//! [`MemcpyOp`] `src_x` / `src_y` / `src_z` / `dst_x` / `dst_y` / `dst_z`
+//! are CUDA_MEMCPY2D and CUDA_MEMCPY3D srcPos / dstPos (`srcXInBytes`,
+//! `srcY`, `srcZ`, `dstXInBytes`, `dstY`, `dstZ`). Default 0 is origin
+//! `(0,0[,0])`. 1D with any origin, or 2D with a z origin, is Invalid
+//! `"memcpy origin"`. No Engine `--memcpy-origin`.
 //! [`memcpy_3d_async`](Sim::memcpy_3d_async) / [`memcpy_3d`](Sim::memcpy_3d)
 //! are `cudaMemcpy3DAsync` / `cudaMemcpy3D` ([`MemcpyOp::is_3d`]). Typed
 //! [`memcpy`](Sim::memcpy) stays.
@@ -728,7 +733,8 @@
 //! `cuMemAllocPitch` (`ElementSizeBytes` 4 / 8 / 16; pitch still 512-aligned).
 //! No Engine `--malloc-pitch-element`.
 //! [`MemcpyOp`] `height` / pitches are `cudaMemcpy2DAsync` (payload `width *
-//! height`, not pitch padding). [`MemsetOp`] `height` / `pitch` are
+//! height`, not pitch padding). Origin fields are srcPos / dstPos (default 0).
+//! [`MemsetOp`] `height` / `pitch` are
 //! `cudaMemset2DAsync` (payload `width * height`; padding is not written).
 //! [`MemsetOp::element_size`] is `cudaMemsetNodeParams::elementSize`
 //! (`1` / `2` / `4`; typed [`memset`](Sim::memset) stays `1`).
@@ -15360,6 +15366,128 @@ mod tests {
     }
 
     #[test]
+    fn memcpy_2d_origin_is_cuda_memcpy2d_src_pos() {
+        let mut sim = Sim::new(h100());
+        let d = DeviceId(0);
+        let s = StreamId(0);
+        let (a, pitch) = sim.malloc_pitch(d, 256, 8).unwrap();
+        assert_eq!(pitch, 512);
+        let op = MemcpyOp {
+            src: Place::HostPinned,
+            dst: Place::Device(d),
+            alloc: a,
+            bytes: 256,
+            offset: 0,
+            height: 8,
+            src_pitch: 256,
+            dst_pitch: pitch,
+            ..MemcpyOp::default()
+        };
+        enq(sim.memcpy_2d_async(d, op.clone(), s));
+        sim.synchronize().unwrap();
+        assert_eq!(sim.bytes_moved(), 2048);
+        assert_eq!(op.origin_bytes(), 0);
+        enq(sim.memcpy_2d_async(
+            d,
+            MemcpyOp {
+                dst_x: 256,
+                ..op.clone()
+            },
+            s,
+        ));
+        sim.synchronize().unwrap();
+        assert_eq!(sim.bytes_moved(), 4096);
+        match sim.memcpy_2d_async(
+            d,
+            MemcpyOp {
+                dst_x: 257,
+                ..op.clone()
+            },
+            s,
+        ) {
+            Err(SimError::Invalid { why }) => assert!(why.contains("memcpy2d pitch"), "{why}"),
+            other => panic!("{other:?}"),
+        }
+        match sim.memcpy_2d_async(
+            d,
+            MemcpyOp {
+                dst_y: 1,
+                ..op.clone()
+            },
+            s,
+        ) {
+            Err(SimError::Invalid { why }) => assert!(why.contains("memcpy range past"), "{why}"),
+            other => panic!("{other:?}"),
+        }
+        match sim.memcpy(
+            d,
+            MemcpyOp {
+                dst_x: 1,
+                ..MemcpyOp::packed_1d(Place::HostPinned, Place::Device(d), a, 256)
+            },
+            s,
+        ) {
+            Err(SimError::Invalid { why }) => assert!(why.contains("memcpy origin"), "{why}"),
+            other => panic!("{other:?}"),
+        }
+        match sim.memcpy_2d_async(
+            d,
+            MemcpyOp {
+                dst_z: 1,
+                ..op.clone()
+            },
+            s,
+        ) {
+            Err(SimError::Invalid { why }) => assert!(why.contains("memcpy origin"), "{why}"),
+            other => panic!("{other:?}"),
+        }
+        let (b, pitch3) = sim.malloc_3d(d, 256, 4, 4).unwrap();
+        let op3 = MemcpyOp {
+            src: Place::HostPinned,
+            dst: Place::Device(d),
+            alloc: b,
+            bytes: 256,
+            height: 4,
+            src_pitch: 256,
+            dst_pitch: pitch3,
+            depth: 4,
+            src_height: 4,
+            dst_height: 4,
+            ..MemcpyOp::default()
+        };
+        match sim.memcpy_3d_async(
+            d,
+            MemcpyOp {
+                dst_y: 1,
+                ..op3.clone()
+            },
+            s,
+        ) {
+            Err(SimError::Invalid { why }) => assert!(why.contains("memcpy3d height"), "{why}"),
+            other => panic!("{other:?}"),
+        }
+        match sim.memcpy_3d_async(d, MemcpyOp { dst_x: 257, ..op3 }, s) {
+            Err(SimError::Invalid { why }) => assert!(why.contains("memcpy3d pitch"), "{why}"),
+            other => panic!("{other:?}"),
+        }
+        let shifted = MemcpyOp {
+            dst_x: 16,
+            dst_y: 1,
+            height: 7,
+            ..op
+        };
+        assert_eq!(shifted.origin_bytes(), 528);
+        sim.begin_capture(d, s).unwrap();
+        enq(sim.memcpy_2d_async(d, shifted, s));
+        let g = sim.end_capture().unwrap();
+        let got = sim.graph_memcpy_get_params(g, 0).unwrap();
+        assert_eq!(got.dst_x, 16);
+        assert_eq!(got.dst_y, 1);
+        assert_eq!(got.height, 7);
+        assert_eq!(got.origin_bytes(), 528);
+    }
+
+    #[test]
     fn graph_add_memcpy_2d_requires_is_2d() {
         let mut sim = Sim::new(h100());
         let d = DeviceId(0);
@@ -16644,6 +16772,7 @@ mod tests {
                 depth: 4,
                 src_height: 4,
                 dst_height: 4,
+                ..MemcpyOp::default()
             },
             s,
         ));
@@ -16667,6 +16796,7 @@ mod tests {
                 depth: 4,
                 src_height: 4,
                 dst_height: 4,
+                ..MemcpyOp::default()
             },
             s,
         ) {
@@ -16687,6 +16817,7 @@ mod tests {
                 depth: 4,
                 src_height: 2,
                 dst_height: 4,
+                ..MemcpyOp::default()
             },
             s,
         ) {
@@ -16708,6 +16839,7 @@ mod tests {
                 depth: 4,
                 src_height: 4,
                 dst_height: 4,
+                ..MemcpyOp::default()
             },
         )
         .unwrap();

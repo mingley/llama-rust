@@ -5,6 +5,18 @@ Visible five-turn extract: [docs/chatgpt-share-6a920fe1.md](docs/chatgpt-share-6
 Complete share-API extract: [docs/chatgpt-share-6a920fe1/](docs/chatgpt-share-6a920fe1/).
 Work lands on `main`. No PRs.
 
+## Shipped 2026-09-01 — CUDA_MEMCPY2D / 3D srcPos / dstPos
+
+`gpu-sim` CUDA_MEMCPY2D / CUDA_MEMCPY3D srcPos / dstPos: `MemcpyOp`
+`src_x` / `src_y` / `src_z` / `dst_x` / `dst_y` / `dst_z` are
+`srcXInBytes` / `srcY` / `srcZ` / `dstXInBytes` / `dstY` / `dstZ`.
+Default 0 is origin (0,0[,0]). 1D with any origin, or 2D with a z
+origin, is Invalid `"memcpy origin"`. 2D/3D `x + width` vs pitch stays
+`"memcpy2d pitch"` / `"memcpy3d pitch"`. Oversized 2D `srcY` is
+`"memcpy range past alloc"`. Capture GetParams preserves origin. No
+Engine `--memcpy-origin`. `gpu-profile capture` is still refused. Dual
+score still has no `$/M tokens`.
+
 ## Shipped 2026-09-01 — CUDA cuMemAllocPitch
 
 `gpu-sim` `cuMemAllocPitch`: `malloc_pitch_with_element_size` is

@@ -20268,9 +20268,10 @@ impl Sim {
         if require_live && !a.live {
             return Err(SimError::UnknownAlloc { alloc: m.alloc });
         }
+        let origin = m.origin_bytes();
         let span = m.extent_bytes();
-        if (a.vmm || m.offset > 0 || m.is_2d() || m.is_3d())
-            && m.offset.saturating_add(span) > a.bytes
+        if (a.vmm || m.offset > 0 || origin > 0 || m.is_2d() || m.is_3d())
+            && m.offset.saturating_add(origin).saturating_add(span) > a.bytes
         {
             return Err(SimError::Invalid {
                 why: "memcpy range past alloc",
@@ -20297,7 +20298,7 @@ impl Sim {
             Place::Host | Place::HostPinned => {}
             Place::Device(d) => {
                 let src_ok = if a.vmm {
-                    vmm_covers(&a.vmm_maps, d, m.offset, span)
+                    vmm_covers(&a.vmm_maps, d, m.offset.saturating_add(origin), span)
                 } else {
                     a.devices.contains(&d)
                 };
@@ -20310,7 +20311,7 @@ impl Sim {
             }
         }
         if let Place::Device(d) = m.dst {
-            if a.vmm && !vmm_covers(&a.vmm_maps, d, m.offset, span) {
+            if a.vmm && !vmm_covers(&a.vmm_maps, d, m.offset.saturating_add(origin), span) {
                 return Err(SimError::NotResident {
                     alloc: m.alloc,
                     device: d,
@@ -21175,6 +21176,14 @@ fn memcpy_batch_attrs(
 }
 
 fn memcpy_2d_check(m: &MemcpyOp) -> Result<(), SimError> {
+    if m.is_1d() {
+        if m.has_origin() {
+            return Err(SimError::Invalid {
+                why: "memcpy origin",
+            });
+        }
+        return Ok(());
+    }
     if m.is_3d() {
         if m.bytes == 0 {
             return Err(SimError::Invalid {
@@ -21186,27 +21195,35 @@ fn memcpy_2d_check(m: &MemcpyOp) -> Result<(), SimError> {
                 why: "memcpy3d height",
             });
         }
-        if m.bytes > m.src_pitch_or_width() || m.bytes > m.dst_pitch_or_width() {
+        if m.src_x.saturating_add(m.bytes) > m.src_pitch_or_width()
+            || m.dst_x.saturating_add(m.bytes) > m.dst_pitch_or_width()
+        {
             return Err(SimError::Invalid {
                 why: "memcpy3d pitch",
             });
         }
-        if m.height > m.src_height_or_extent() || m.height > m.dst_height_or_extent() {
+        if m.src_y.saturating_add(m.height) > m.src_height_or_extent()
+            || m.dst_y.saturating_add(m.height) > m.dst_height_or_extent()
+        {
             return Err(SimError::Invalid {
                 why: "memcpy3d height",
             });
         }
         return Ok(());
     }
-    if !m.is_2d() {
-        return Ok(());
+    if m.src_z != 0 || m.dst_z != 0 {
+        return Err(SimError::Invalid {
+            why: "memcpy origin",
+        });
     }
     if m.bytes == 0 {
         return Err(SimError::Invalid {
             why: "memcpy2d width",
         });
     }
-    if m.bytes > m.src_pitch_or_width() || m.bytes > m.dst_pitch_or_width() {
+    if m.src_x.saturating_add(m.bytes) > m.src_pitch_or_width()
+        || m.dst_x.saturating_add(m.bytes) > m.dst_pitch_or_width()
+    {
         return Err(SimError::Invalid {
             why: "memcpy2d pitch",
         });
@@ -21931,16 +21948,7 @@ fn remap_alloc_kind(kind: Kind, map: &BTreeMap<AllocId, AllocId>) -> Kind {
         },
         Kind::Memcpy(op) => Kind::Memcpy(MemcpyOp {
             alloc: remap_alloc_id(op.alloc, map),
-            src: op.src,
-            dst: op.dst,
-            bytes: op.bytes,
-            offset: op.offset,
-            height: op.height,
-            src_pitch: op.src_pitch,
-            dst_pitch: op.dst_pitch,
-            depth: op.depth,
-            src_height: op.src_height,
-            dst_height: op.dst_height,
+            ..op
         }),
         Kind::Kernel {
             kind,

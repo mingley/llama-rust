@@ -5234,7 +5234,18 @@ model, do not celebrate the sim.
     capture cannot include it. No Engine `--malloc-pitch-element`.
     `gpu-profile capture` is still refused. Dual score still has no `$/M tokens`.
 
-488. [ ] Next numbered PLAN item after 487 is the next `gpu-sim` / Engine /
+488. [x] `gpu-sim` CUDA_MEMCPY2D / CUDA_MEMCPY3D srcPos / dstPos:
+    [`MemcpyOp`] `src_x` / `src_y` / `src_z` / `dst_x` / `dst_y` /
+    `dst_z` are `srcXInBytes` / `srcY` / `srcZ` / `dstXInBytes` /
+    `dstY` / `dstZ`. Default 0 is origin `(0,0[,0])`. 1D with any
+    origin, or 2D with a z origin, is Invalid `"memcpy origin"`. 2D/3D
+    `x + width` vs pitch stays `"memcpy2d pitch"` / `"memcpy3d pitch"`.
+    3D `y + height` vs ysize stays `"memcpy3d height"`. Oversized 2D
+    `srcY` is `"memcpy range past alloc"`. Capture GetParams preserves
+    origin. No Engine `--memcpy-origin`. `gpu-profile capture` is still
+    refused. Dual score still has no `$/M tokens`.
+
+489. [ ] Next numbered PLAN item after 488 is the next `gpu-sim` / Engine /
     serve / expertvm mechanical API that is still missing, or the next official
     decode family. Prefer remaining CUDA-shaped twins over more
     OpenAI HTTP veneer. Do not invent F32 `output.scale`. Do not invent a
@@ -5509,7 +5520,9 @@ model, do not celebrate the sim.
     [`memcpy_device_to_device`](Sim::memcpy_device_to_device)). Do not invent
     a second `cuMemAllocPitch` / `malloc_pitch_with_element_size`. Do not
     invent Engine `--malloc-pitch-element`. Do not invent pitch that varies
-    by `ElementSizeBytes` (this VM keeps 512-align). Do not
+    by `ElementSizeBytes` (this VM keeps 512-align). Do not invent a second
+    CUDA_MEMCPY2D / CUDA_MEMCPY3D srcPos / dstPos / `MemcpyOp` origin
+    fields. Do not invent Engine `--memcpy-origin`. Do not
     spend the next item on an OpenAI-compatible HTTP veneer.
 
 Stop if Phase 1 traces say residency cannot work. Do not invent an

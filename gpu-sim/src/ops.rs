@@ -272,6 +272,13 @@ impl Place {
 /// (pitch padding is not transferred). [`Self::depth`] `> 1` is
 /// `cudaMemcpy3DAsync`: billed payload is `width * height * depth`
 /// (row and slice padding are not transferred).
+///
+/// [`Self::src_x`] / [`Self::src_y`] / [`Self::src_z`] and
+/// [`Self::dst_x`] / [`Self::dst_y`] / [`Self::dst_z`] are
+/// `CUDA_MEMCPY2D` / `CUDA_MEMCPY3D` `srcXInBytes` / `srcY` / `srcZ` and
+/// `dstXInBytes` / `dstY` / `dstZ`. Default `0` is origin `(0,0[,0])`.
+/// A 1D copy with any origin, or a 2D copy with a z origin, is Invalid
+/// `"memcpy origin"`.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct MemcpyOp {
     /// Source.
@@ -287,8 +294,8 @@ pub struct MemcpyOp {
     /// Host-to-device into a VMM VA copies this span (`cudaMemcpy` of
     /// `ptr + offset`). `0` is the whole-object helpers
     /// ([`crate::Sim::memcpy_pinned_to_device`]). A VMM destination must have
-    /// `[offset, offset+extent)` mapped (`extent` is packed `bytes` or the
-    /// pitched 2D rectangle).
+    /// `[offset + origin, offset + origin + extent)` mapped (`extent` is packed
+    /// `bytes` or the pitched 2D rectangle; `origin` is [`Self::origin_bytes`]).
     pub offset: u64,
     /// Row count for `cudaMemcpy2D`. `0` or `1` is a 1D copy of [`Self::bytes`].
     pub height: u64,
@@ -304,6 +311,18 @@ pub struct MemcpyOp {
     /// Destination 2D-slice height (`cudaPitchedPtr::ysize`). `0` means packed
     /// ([`Self::height`]).
     pub dst_height: u64,
+    /// `srcXInBytes`. Byte column of the source origin. Default `0`.
+    pub src_x: u64,
+    /// `srcY`. Row of the source origin. Default `0`.
+    pub src_y: u64,
+    /// `srcZ`. Slice of the source origin (`cudaMemcpy3D` only). Default `0`.
+    pub src_z: u64,
+    /// `dstXInBytes`. Byte column of the destination origin. Default `0`.
+    pub dst_x: u64,
+    /// `dstY`. Row of the destination origin. Default `0`.
+    pub dst_y: u64,
+    /// `dstZ`. Slice of the destination origin (`cudaMemcpy3D` only). Default `0`.
+    pub dst_z: u64,
 }
 
 impl Default for MemcpyOp {
@@ -320,6 +339,12 @@ impl Default for MemcpyOp {
             depth: 0,
             src_height: 0,
             dst_height: 0,
+            src_x: 0,
+            src_y: 0,
+            src_z: 0,
+            dst_x: 0,
+            dst_y: 0,
+            dst_z: 0,
         }
     }
 }
@@ -327,7 +352,7 @@ impl Default for MemcpyOp {
 impl MemcpyOp {
     /// Packed `cudaMemcpy` / `cudaGraphAddMemcpyNode1D` of `bytes`.
     ///
-    /// Height, depth, and pitches stay `0` ([`Self::default`]).
+    /// Height, depth, pitches, and origin stay `0` ([`Self::default`]).
     #[must_use]
     pub fn packed_1d(src: Place, dst: Place, alloc: AllocId, bytes: u64) -> Self {
         Self {
@@ -411,8 +436,59 @@ impl MemcpyOp {
         }
     }
 
+    /// True when any of [`Self::src_x`] / [`Self::src_y`] / [`Self::src_z`] /
+    /// [`Self::dst_x`] / [`Self::dst_y`] / [`Self::dst_z`] is nonzero.
+    #[must_use]
+    pub fn has_origin(&self) -> bool {
+        self.src_x != 0
+            || self.src_y != 0
+            || self.src_z != 0
+            || self.dst_x != 0
+            || self.dst_y != 0
+            || self.dst_z != 0
+    }
+
+    /// Byte offset of the device-side origin inside [`Self::alloc`], on top of
+    /// [`Self::offset`].
+    ///
+    /// 1D copies return `0` (a nonzero origin is Invalid `"memcpy origin"`
+    /// before range checks). 2D is `y * pitch + x`. 3D adds `z * pitch * ysize`.
+    /// Pitch and ysize follow the device side of the copy (destination for H2D,
+    /// source for D2H, max of both for D2D).
+    #[must_use]
+    pub fn origin_bytes(&self) -> u64 {
+        if self.is_1d() {
+            return 0;
+        }
+        let (x, y, z) = self.device_origin();
+        let pitch = self.device_pitch();
+        let mut off = y.saturating_mul(pitch).saturating_add(x);
+        if self.is_3d() {
+            let slice = pitch.saturating_mul(self.device_ysize());
+            off = z.saturating_mul(slice).saturating_add(off);
+        }
+        off
+    }
+
+    fn device_origin(&self) -> (u64, u64, u64) {
+        let dst_dev = matches!(self.dst, Place::Device(_));
+        let src_dev = matches!(self.src, Place::Device(_));
+        if dst_dev && !src_dev {
+            (self.dst_x, self.dst_y, self.dst_z)
+        } else if src_dev && !dst_dev {
+            (self.src_x, self.src_y, self.src_z)
+        } else {
+            (
+                self.src_x.max(self.dst_x),
+                self.src_y.max(self.dst_y),
+                self.src_z.max(self.dst_z),
+            )
+        }
+    }
+
     /// Contiguous span in [`Self::alloc`] covering the 1D copy, 2D rectangle, or
-    /// 3D box.
+    /// 3D box from origin `(0,0[,0])`. Add [`Self::origin_bytes`] for a nonzero
+    /// srcPos / dstPos.
     #[must_use]
     pub fn extent_bytes(&self) -> u64 {
         if !self.is_2d() && !self.is_3d() {
