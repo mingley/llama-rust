@@ -226,6 +226,7 @@ warp scheduler, L1, …   ← do not model
 | `graphics_vdpau_register_output_surface` is Invalid (VDPAU interop is not modeled) | `cuGraphicsVDPAURegisterOutputSurface` |
 | `graphics_vdpau_register_video_surface` is Invalid (VDPAU interop is not modeled) | `cuGraphicsVDPAURegisterVideoSurface` |
 | `d3d9_get_devices` is Invalid (Direct3D 9 interop is not modeled) | `cuD3D9GetDevices` / `cudaD3D9GetDevices` |
+| `d3d9_get_device` is Invalid (Direct3D 9 interop is not modeled) | `cuD3D9GetDevice` / `cudaD3D9GetDevice` |
 | `d3d9_ctx_create` is Invalid (Direct3D 9 interop is not modeled) | `cuD3D9CtxCreate` |
 | `graphics_d3d9_register_resource` is Invalid (Direct3D 9 interop is not modeled) | `cuGraphicsD3D9RegisterResource` |
 | `d3d10_get_devices` is Invalid (Direct3D 10 interop is not modeled) | `cuD3D10GetDevices` / `cudaD3D10GetDevices` |
@@ -1273,6 +1274,8 @@ during capture. No Engine `--vdpau-video`.
 `d3d9_get_devices` is `cuD3D9GetDevices` (always Invalid `"d3d9"`).
 Distinct from `d3d11_get_devices` and `d3d12_get_devices`. Query; legal
 during capture. No Engine `--d3d9-devices`.
+`d3d9_get_device` is `cuD3D9GetDevice` (always Invalid `"d3d9 device"`).
+Distinct from `d3d9_get_devices`. Query; legal during capture. No Engine `--d3d9-device`.
 `d3d9_ctx_create` is `cuD3D9CtxCreate` (always Invalid `"d3d9 context"`).
 Distinct from `d3d9_get_devices` and `d3d11_ctx_create`. Query; legal
 during capture. No Engine `--d3d9-ctx`.

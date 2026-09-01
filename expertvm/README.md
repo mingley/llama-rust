@@ -701,6 +701,8 @@ modeled; no Engine flag).
 modeled; no Engine flag).
 `gpu-sim` `d3d9_get_devices` is `cuD3D9GetDevices` (Invalid; Direct3D 9
 interop is not modeled; no Engine flag).
+`gpu-sim` `d3d9_get_device` is `cuD3D9GetDevice` (Invalid; Direct3D 9
+interop is not modeled; no Engine flag).
 `gpu-sim` `d3d9_ctx_create` is `cuD3D9CtxCreate` (Invalid; Direct3D 9
 interop is not modeled; no Engine flag).
 `gpu-sim` `graphics_d3d9_register_resource` is
