@@ -2606,6 +2606,29 @@ pub struct MemcpyNodeParams {
     pub ctx: Option<GreenCtxId>,
 }
 
+/// `cuGraphAddMemsetNode` memsetParams plus ctx for [`crate::Sim::graph_add_node`] /
+/// [`crate::Sim::graph_node_get_params`].
+///
+/// [`Self::op`] is `CUDA_MEMSET_NODE_PARAMS`. [`Self::ctx`] is the extra
+/// driver `CUcontext` argument (`cuGraphAddMemsetNode` /
+/// `cuGraphExecMemsetNodeSetParams`), this VM's [`crate::GreenCtxId`] analog
+/// (no `CUcontext`). Typed [`crate::Sim::graph_add_memset_op`] stays [`None`].
+/// Typed [`crate::Sim::graph_memset_set_params`] does not clear ctx.
+/// Parameter, not topology. Fills use copy engines, so ctx does not change
+/// duration (unlike [`KernelNodeParams::ctx`]). Unknown or destroyed is
+/// Invalid `"unknown green ctx"`. Device mismatch is Invalid
+/// `"green ctx device"`. This VM does not invent an Engine flag for memset
+/// ctx.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct MemsetNodeParams {
+    /// `CUDA_MEMSET_NODE_PARAMS`. Zero-byte fills are Invalid.
+    pub op: MemsetOp,
+    /// Driver `cuGraphAddMemsetNode` ctx. [`None`] inherits the launch stream.
+    /// [`Some`] must be a live green context on the graph device. Stored on
+    /// the graph step, not [`crate::GpuOp::Memset`].
+    pub ctx: Option<GreenCtxId>,
+}
+
 /// One submitted GPU primitive. PLAN's Kernel / Memcpy / Collective / Event /
 /// Alloc / Free, plus `cudaMemsetAsync`, `cudaLaunchHostFunc`, stream attach,
 /// empty graph nodes, nested [`Self::ChildGraph`], conditional IF / WHILE /
@@ -3854,7 +3877,8 @@ pub enum GraphNodeParams {
     /// [`MemcpyNodeParams::ctx`] is the driver `cuGraphAddMemcpyNode` ctx.
     Memcpy(MemcpyNodeParams),
     /// `cudaGraphMemsetNode`.
-    Memset(MemsetOp),
+    /// [`MemsetNodeParams::ctx`] is the driver `cuGraphAddMemsetNode` ctx.
+    Memset(MemsetNodeParams),
     /// `cudaGraphHostNode`.
     Host(HostNodeParams),
     /// `cudaGraphEmptyNode`.

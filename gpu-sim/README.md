@@ -219,6 +219,7 @@ warp scheduler, L1, …   ← do not model
 | `CUDA_BATCH_MEM_OP_NODE_PARAMS.ctx` (`BatchMemOpNodeParams::ctx`) | graph batch-mem-op green ctx; wait/write/flush duration unchanged; typed `graph_add_batch_mem_op` stays `None` |
 | `CUDA_CONDITIONAL_NODE_PARAMS.ctx` (`GraphNodeParams::If` ctx) | must match handle create ctx; conditionals do not occupy SMs; typed `graph_add_if` copies the handle |
 | `cuGraphAddMemcpyNode` ctx (`MemcpyNodeParams::ctx`) | graph memcpy green ctx; copy-engine duration unchanged; typed `graph_add_memcpy` stays `None` |
+| `cuGraphAddMemsetNode` ctx (`MemsetNodeParams::ctx`) | graph memset green ctx; copy-engine duration unchanged; typed `graph_add_memset` stays `None` |
 | `memset` / `memset_buf` needs the filled span resident (not mapped host); `memset_op` height/pitch is 2D | HBM write of payload + launch overhead |
 | `cudaMemset` / `2D` / `3D` (`memset_sync` / `memset_op_sync`) wait the stream | host-synchronous; capture refused |
 | peer D2D needs topology + `enable_peer` (`enable_peer_with_flags` must be 0) | link bandwidth |
@@ -281,6 +282,11 @@ node to a live green context. Copies use copy engines, so duration is
 unchanged. Typed `graph_add_memcpy` stays `None`. Typed
 `graph_memcpy_set_params` does not clear ctx. This VM does not invent an
 Engine flag for memcpy ctx.
+`cuGraphAddMemsetNode` ctx (`MemsetNodeParams::ctx`) pins a graph memset
+node to a live green context. Fills use copy engines, so duration is
+unchanged. Typed `graph_add_memset` stays `None`. Typed
+`graph_memset_set_params` does not clear ctx. This VM does not invent an
+Engine flag for memset ctx.
 Copy engines still overlap compute. Profile knobs `gemm_util_permille` (achieved/peak) and `grouped_moe_permille`
 (grouped vs dense duration) scale kernel time. Defaults are 1000
 (identity roofline). They are parseable; they are not a capture. Host PCIe

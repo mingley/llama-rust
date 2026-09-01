@@ -5333,7 +5333,20 @@ model, do not celebrate the sim.
     flag for memcpy ctx. `gpu-profile capture` is still refused. Dual
     score still has no `$/M tokens`.
 
-497. [ ] Next numbered PLAN item after 496 is the next `gpu-sim` / Engine /
+497. [x] `gpu-sim` CUDA `cuGraphAddMemsetNode` ctx:
+    [`MemsetNodeParams::ctx`] is the extra driver `CUcontext` argument on
+    `cuGraphAddMemsetNode` / `cuGraphExecMemsetNodeSetParams`. Stored on
+    the graph step, not `Kind::Memset` or [`MemsetOp`]. GetParams /
+    SetParams / AddNode carry the field. Typed [`graph_add_memset`] stays
+    [`None`]. Typed [`graph_memset_set_params`] does not clear ctx.
+    Fills use copy engines, so duration is unchanged. Unknown or
+    destroyed is Invalid `"unknown green ctx"`. Device mismatch is
+    Invalid `"green ctx device"`. Parameter, not topology. Capture from a
+    green-ctx stream snapshots that ctx. This VM does not invent an Engine
+    flag for memset ctx. `gpu-profile capture` is still refused. Dual
+    score still has no `$/M tokens`.
+
+498. [ ] Next numbered PLAN item after 497 is the next `gpu-sim` / Engine /
     serve / expertvm mechanical API that is still missing, or the next official
     decode family. Prefer remaining CUDA-shaped twins over more
     OpenAI HTTP veneer. Do not invent F32 `output.scale`. Do not invent a
@@ -5639,6 +5652,9 @@ model, do not celebrate the sim.
     Do not invent a second `cuGraphAddMemcpyNode` ctx /
     `MemcpyNodeParams::ctx`. Do not invent an Engine flag for memcpy ctx.
     Do not put `ctx` on `Kind::Memcpy` or [`MemcpyOp`].
+    Do not invent a second `cuGraphAddMemsetNode` ctx /
+    `MemsetNodeParams::ctx`. Do not invent an Engine flag for memset ctx.
+    Do not put `ctx` on `Kind::Memset` or [`MemsetOp`].
     Do not
     spend the next item on an OpenAI-compatible HTTP veneer.
 

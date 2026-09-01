@@ -29,12 +29,13 @@ use crate::ops::{
     MemPoolAttr, MemPoolExportFlags, MemPoolProps, MemRangeAttr, MemRangeAttrValue,
     MemRangeHandleFlags, MemRangeHandleType, MemReserveFlags, MemSyncDomain, MemSyncDomainMap,
     MemcpyAttributes, MemcpyFlags, MemcpyNodeParams, MemcpyOp, MemcpySrcAccessOrder, MemoryType,
-    MemsetOp, MulticastBindFlags, MulticastCreateFlags, MulticastGranularity, MulticastObjectProp,
-    NvSciSyncAttrFlags, Operation, PdlLaunch, PeerAccessFlags, Place, PointerAttr,
-    PointerAttributes, PortableClusterMode, PortableSharedMode, PrefetchFlags, ProgrammaticEvent,
-    ProgrammaticLaunch, SharedMemCarveout, SharedMemoryMode, SmResource, StreamAttr,
-    StreamAttrValue, StreamCallbackFlags, StreamCaptureInfo, StreamCaptureMode, StreamCreateFlags,
-    SynchronizationPolicy, UserObjectFlags, WaitValueCmp, WaitValueFlags, WriteValueFlags,
+    MemsetNodeParams, MemsetOp, MulticastBindFlags, MulticastCreateFlags, MulticastGranularity,
+    MulticastObjectProp, NvSciSyncAttrFlags, Operation, PdlLaunch, PeerAccessFlags, Place,
+    PointerAttr, PointerAttributes, PortableClusterMode, PortableSharedMode, PrefetchFlags,
+    ProgrammaticEvent, ProgrammaticLaunch, SharedMemCarveout, SharedMemoryMode, SmResource,
+    StreamAttr, StreamAttrValue, StreamCallbackFlags, StreamCaptureInfo, StreamCaptureMode,
+    StreamCreateFlags, SynchronizationPolicy, UserObjectFlags, WaitValueCmp, WaitValueFlags,
+    WriteValueFlags,
 };
 use crate::profile::{align_up, ns_for_bytes, scale_ns_permille, HardwareProfile, LinkKind};
 
@@ -371,7 +372,8 @@ enum LaunchCost {
 enum GreenCtxPatch {
     /// Item-list SetParams: leave the node's ctx.
     Keep,
-    /// [`GraphNodeParams::BatchMemOp`] / [`GraphNodeParams::Memcpy`] SetParams.
+    /// [`GraphNodeParams::BatchMemOp`] / [`GraphNodeParams::Memcpy`] /
+    /// [`GraphNodeParams::Memset`] SetParams.
     Set(Option<GreenCtxId>),
 }
 
@@ -563,10 +565,11 @@ struct GraphStep {
     /// `cudaLaunchAttributeNvlinkUtilCentricScheduling`.
     nvlink_util_centric: bool,
     /// CUDA `CUDA_KERNEL_NODE_PARAMS.ctx` / `CUDA_BATCH_MEM_OP_NODE_PARAMS.ctx`
-    /// / `CUDA_CONDITIONAL_NODE_PARAMS.ctx` / `cuGraphAddMemcpyNode` ctx.
+    /// / `CUDA_CONDITIONAL_NODE_PARAMS.ctx` / `cuGraphAddMemcpyNode` ctx /
+    /// `cuGraphAddMemsetNode` ctx.
     /// [`None`] inherits the launch stream. Not stored on [`Kind::Kernel`],
     /// [`Kind::BatchMem`], [`Kind::If`], [`Kind::While`], [`Kind::Switch`],
-    /// or [`Kind::Memcpy`] (parameter, not topology).
+    /// [`Kind::Memcpy`], or [`Kind::Memset`] (parameter, not topology).
     green_ctx: Option<GreenCtxId>,
 }
 
@@ -4461,32 +4464,22 @@ impl Sim {
         node: usize,
         op: impl Into<MemsetOp>,
     ) -> Result<(), SimError> {
-        self.fail_if_capturing("cannot capture memset node set params")?;
-        let device = {
-            let g = self.graphs.get(&graph).ok_or(SimError::Invalid {
-                why: "unknown graph",
-            })?;
-            let step = live_ok(g.steps.get(node).ok_or(SimError::Invalid {
-                why: "unknown graph node",
-            })?)?;
-            if !matches!(step.kind, Kind::Memset(_)) {
-                return Err(SimError::Invalid {
-                    why: "not a memset node",
-                });
-            }
-            step.device
-        };
-        let op = self.resolve_memset_op(op.into())?;
-        let _gpu = self.profile.gpu(device)?;
-        self.clock = self.clock.saturating_add(1);
-        let g = self.graphs.get_mut(&graph).ok_or(SimError::Invalid {
-            why: "unknown graph",
-        })?;
-        let step = live_ok_mut(g.steps.get_mut(node).ok_or(SimError::Invalid {
-            why: "unknown graph node",
-        })?)?;
-        step.kind = Kind::Memset(op);
-        Ok(())
+        self.set_memset_op(graph, node, op.into(), false, GreenCtxPatch::Keep)
+    }
+
+    fn graph_memset_set_params_with_ctx(
+        &mut self,
+        graph: GraphId,
+        node: usize,
+        params: &MemsetNodeParams,
+    ) -> Result<(), SimError> {
+        self.set_memset_op(
+            graph,
+            node,
+            params.op,
+            false,
+            GreenCtxPatch::Set(params.ctx),
+        )
     }
 
     /// `cudaGraphMemsetNodeSetParams` whose [`MemsetOp`] is [`MemsetOp::is_2d`]
@@ -4804,11 +4797,11 @@ impl Sim {
                     self.graph_memcpy_set_params_with_ctx(graph, node, &p)
                 }
             }
-            GraphNodeParams::Memset(op) => {
+            GraphNodeParams::Memset(p) => {
                 if exec {
-                    self.graph_exec_memset_set_params(graph, node, op)
+                    self.graph_exec_memset_set_params_with_ctx(graph, node, &p)
                 } else {
-                    self.graph_memset_set_params(graph, node, op)
+                    self.graph_memset_set_params_with_ctx(graph, node, &p)
                 }
             }
             GraphNodeParams::Host(p) => {
@@ -4974,6 +4967,9 @@ impl Sim {
         }
         if matches!(step.kind, Kind::Memcpy(_)) {
             return Ok(GraphNodeParams::Memcpy(memcpy_node_params_from_step(step)?));
+        }
+        if matches!(step.kind, Kind::Memset(_)) {
+            return Ok(GraphNodeParams::Memset(memset_node_params_from_step(step)?));
         }
         if matches!(
             step.kind,
@@ -5190,15 +5186,45 @@ impl Sim {
         node: usize,
         op: impl Into<MemsetOp>,
     ) -> Result<(), SimError> {
-        self.fail_if_capturing("cannot capture memset set params")?;
-        let exec = self.as_exec(exec)?;
+        self.set_memset_op(exec, node, op.into(), true, GreenCtxPatch::Keep)
+    }
+
+    fn graph_exec_memset_set_params_with_ctx(
+        &mut self,
+        exec: GraphId,
+        node: usize,
+        params: &MemsetNodeParams,
+    ) -> Result<(), SimError> {
+        self.set_memset_op(exec, node, params.op, true, GreenCtxPatch::Set(params.ctx))
+    }
+
+    fn set_memset_op(
+        &mut self,
+        graph: GraphId,
+        node: usize,
+        op: MemsetOp,
+        exec: bool,
+        ctx: GreenCtxPatch,
+    ) -> Result<(), SimError> {
+        self.fail_if_capturing(if exec {
+            "cannot capture memset set params"
+        } else {
+            "cannot capture memset node set params"
+        })?;
+        let target = if exec { self.as_exec(graph)? } else { graph };
         let device = {
-            let g = self.graphs.get(&exec).ok_or(SimError::Invalid {
+            let g = self.graphs.get(&target).ok_or(SimError::Invalid {
                 why: "unknown graph",
             })?;
-            let step = live_ok(g.view().get(node).ok_or(SimError::Invalid {
-                why: "unknown graph node",
-            })?)?;
+            let step = if exec {
+                live_ok(g.view().get(node).ok_or(SimError::Invalid {
+                    why: "unknown graph node",
+                })?)?
+            } else {
+                live_ok(g.steps.get(node).ok_or(SimError::Invalid {
+                    why: "unknown graph node",
+                })?)?
+            };
             if !matches!(step.kind, Kind::Memset(_)) {
                 return Err(SimError::Invalid {
                     why: "not a memset node",
@@ -5206,18 +5232,40 @@ impl Sim {
             }
             step.device
         };
-        let op = self.resolve_memset_op(op.into())?;
-        let ns = self.profile.gpu(device)?.graph_set_params_ns.max(1);
-        self.clock = self.clock.saturating_add(ns);
-        let g = self.graphs.get_mut(&exec).ok_or(SimError::Invalid {
-            why: "unknown graph",
-        })?;
-        let step = live_ok_mut(g.exec_mut()?.get_mut(node).ok_or(SimError::Invalid {
-            why: "unknown graph node",
-        })?)?;
-        step.kind = Kind::Memset(op);
-        g.uploaded = false;
-        Ok(())
+        let op = self.resolve_memset_op(op)?;
+        if let GreenCtxPatch::Set(Some(c)) = ctx {
+            self.require_live_green_ctx(c, device)?;
+        }
+        if exec {
+            let ns = self.profile.gpu(device)?.graph_set_params_ns.max(1);
+            self.clock = self.clock.saturating_add(ns);
+            let g = self.graphs.get_mut(&target).ok_or(SimError::Invalid {
+                why: "unknown graph",
+            })?;
+            let step = live_ok_mut(g.exec_mut()?.get_mut(node).ok_or(SimError::Invalid {
+                why: "unknown graph node",
+            })?)?;
+            step.kind = Kind::Memset(op);
+            if let GreenCtxPatch::Set(c) = ctx {
+                step.green_ctx = c;
+            }
+            g.uploaded = false;
+            Ok(())
+        } else {
+            let _gpu = self.profile.gpu(device)?;
+            self.clock = self.clock.saturating_add(1);
+            let g = self.graphs.get_mut(&target).ok_or(SimError::Invalid {
+                why: "unknown graph",
+            })?;
+            let step = live_ok_mut(g.steps.get_mut(node).ok_or(SimError::Invalid {
+                why: "unknown graph node",
+            })?)?;
+            step.kind = Kind::Memset(op);
+            if let GreenCtxPatch::Set(c) = ctx {
+                step.green_ctx = c;
+            }
+            Ok(())
+        }
     }
 
     /// `cudaGraphExecMemsetNodeSetParams` whose [`MemsetOp`] is [`MemsetOp::is_2d`]
@@ -7275,8 +7323,8 @@ impl Sim {
                 self.graph_add_memcpy_params(graph, p)?;
                 Ok(add_node_out(None, None, None))
             }
-            GraphNodeParams::Memset(op) => {
-                self.graph_add_memset_op(graph, op)?;
+            GraphNodeParams::Memset(p) => {
+                self.graph_add_memset_params(graph, p)?;
                 Ok(add_node_out(None, None, None))
             }
             GraphNodeParams::Host(p) => {
@@ -7557,6 +7605,7 @@ impl Sim {
     }
 
     /// `cudaGraphAddMemsetNode` of a [`KernelBuf`] span (packed 1D).
+    /// [`MemsetNodeParams::ctx`] stays [`None`].
     pub fn graph_add_memset(&mut self, graph: GraphId, buf: KernelBuf) -> Result<(), SimError> {
         self.graph_add_memset_op(graph, MemsetOp::from(buf))
     }
@@ -7564,10 +7613,27 @@ impl Sim {
     /// `cudaGraphAddMemsetNode` / `cudaMemset2D` params ([`MemsetOp`]).
     /// [`Self::graph_add_memset_2d`] requires [`MemsetOp::is_2d`].
     /// [`Self::graph_add_memset_3d`] requires [`MemsetOp::is_3d`].
+    /// [`MemsetNodeParams::ctx`] stays [`None`]. Pin a green context through
+    /// [`Self::graph_add_node`] with [`GraphNodeParams::Memset`].
     pub fn graph_add_memset_op(&mut self, graph: GraphId, op: MemsetOp) -> Result<(), SimError> {
+        self.graph_add_memset_params(graph, MemsetNodeParams { op, ctx: None })
+    }
+
+    fn graph_add_memset_params(
+        &mut self,
+        graph: GraphId,
+        params: MemsetNodeParams,
+    ) -> Result<(), SimError> {
         let (device, stream) = self.graph_origin_for_add(graph)?;
-        let op = self.resolve_memset_op(op)?;
-        self.graph_push(graph, device, stream, Kind::Memset(op))
+        let op = self.resolve_memset_op(params.op)?;
+        if let Some(ctx) = params.ctx {
+            self.require_live_green_ctx(ctx, device)?;
+        }
+        let prev = self.enqueue_green_ctx;
+        self.enqueue_green_ctx = params.ctx;
+        let r = self.graph_push(graph, device, stream, Kind::Memset(op));
+        self.enqueue_green_ctx = prev;
+        r
     }
 
     /// `cudaGraphAddMemsetNode` whose [`MemsetOp`] is [`MemsetOp::is_2d`]
@@ -22010,6 +22076,7 @@ fn kind_has_green_ctx(kind: &Kind) -> bool {
             | Kind::While { .. }
             | Kind::Switch { .. }
             | Kind::Memcpy(_)
+            | Kind::Memset(_)
     )
 }
 
@@ -22025,6 +22092,13 @@ fn batch_mem_params_from_step(step: &GraphStep) -> Result<BatchMemOpNodeParams, 
 fn memcpy_node_params_from_step(step: &GraphStep) -> Result<MemcpyNodeParams, SimError> {
     Ok(MemcpyNodeParams {
         op: memcpy_params_of(&step.kind)?,
+        ctx: step.green_ctx,
+    })
+}
+
+fn memset_node_params_from_step(step: &GraphStep) -> Result<MemsetNodeParams, SimError> {
+    Ok(MemsetNodeParams {
+        op: memset_params_of(&step.kind)?,
         ctx: step.green_ctx,
     })
 }
@@ -22147,7 +22221,10 @@ fn node_params_of(kind: &Kind) -> Result<GraphNodeParams, SimError> {
             op: memcpy_params_of(kind)?,
             ctx: None,
         }),
-        Kind::Memset(_) => GraphNodeParams::Memset(memset_params_of(kind)?),
+        Kind::Memset(_) => GraphNodeParams::Memset(MemsetNodeParams {
+            op: memset_params_of(kind)?,
+            ctx: None,
+        }),
         Kind::HostFunc { .. } => GraphNodeParams::Host(host_params_of(kind)?),
         Kind::Empty => GraphNodeParams::Empty,
         Kind::EventRecord { event, external } => GraphNodeParams::EventRecord {

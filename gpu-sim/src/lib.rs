@@ -86,6 +86,13 @@
 //! destroyed is Invalid `"unknown green ctx"`. Device mismatch is Invalid
 //! `"green ctx device"`. This VM does not invent an Engine flag for memcpy
 //! ctx.
+//! [`MemsetNodeParams::ctx`] is the driver `cuGraphAddMemsetNode` ctx.
+//! Typed [`graph_add_memset`](Sim::graph_add_memset) stays [`None`]. Typed
+//! [`graph_memset_set_params`](Sim::graph_memset_set_params) does not clear
+//! ctx. Fills use copy engines, so duration is unchanged. Unknown or
+//! destroyed is Invalid `"unknown green ctx"`. Device mismatch is Invalid
+//! `"green ctx device"`. This VM does not invent an Engine flag for memset
+//! ctx.
 //! [`Sim::synchronize_device`] is `cudaDeviceSynchronize` (one GPU).
 //! [`Sim::synchronize_event`] is `cudaEventSynchronize`.
 //! [`Sim::alloc`] / [`memcpy`](Sim::memcpy) / [`free`](Sim::free) are
@@ -1282,12 +1289,13 @@ pub use ops::{
     MemMapFlags, MemPoolAttr, MemPoolExportFlags, MemPoolProps, MemRangeAttr, MemRangeAttrValue,
     MemRangeHandleFlags, MemRangeHandleType, MemReserveFlags, MemSyncDomain, MemSyncDomainMap,
     MemcpyAttributes, MemcpyFlags, MemcpyNodeParams, MemcpyOp, MemcpySrcAccessOrder, MemoryType,
-    MemsetOp, MulticastBindFlags, MulticastCreateFlags, MulticastGranularity, MulticastObjectProp,
-    NvSciSyncAttrFlags, Operation, PdlLaunch, PeerAccessFlags, Place, PointerAttr,
-    PointerAttributes, PortableClusterMode, PortableSharedMode, PrefetchFlags, ProgrammaticEvent,
-    ProgrammaticLaunch, SharedMemCarveout, SharedMemoryMode, SmResource, StreamAttr,
-    StreamAttrValue, StreamCallbackFlags, StreamCaptureInfo, StreamCaptureMode, StreamCreateFlags,
-    SynchronizationPolicy, UserObjectFlags, WaitValueCmp, WaitValueFlags, WriteValueFlags,
+    MemsetNodeParams, MemsetOp, MulticastBindFlags, MulticastCreateFlags, MulticastGranularity,
+    MulticastObjectProp, NvSciSyncAttrFlags, Operation, PdlLaunch, PeerAccessFlags, Place,
+    PointerAttr, PointerAttributes, PortableClusterMode, PortableSharedMode, PrefetchFlags,
+    ProgrammaticEvent, ProgrammaticLaunch, SharedMemCarveout, SharedMemoryMode, SmResource,
+    StreamAttr, StreamAttrValue, StreamCallbackFlags, StreamCaptureInfo, StreamCaptureMode,
+    StreamCreateFlags, SynchronizationPolicy, UserObjectFlags, WaitValueCmp, WaitValueFlags,
+    WriteValueFlags,
 };
 pub use probe::{probe_topology, P2pProbe, TopologyProbe};
 pub use profile::{
@@ -10891,6 +10899,129 @@ mod tests {
         let ctx2 = sim.green_ctx_create(desc2, d, 0).unwrap();
         let added = sim
             .graph_add_node(g_dead, &[], GraphNodeParams::Memcpy(params(Some(ctx2))))
+            .unwrap();
+        assert_eq!(added.node, 0);
+        sim.green_ctx_destroy(ctx2).unwrap();
+        let exec_dead = sim.instantiate_graph(g_dead).unwrap();
+        match sim.launch_graph(exec_dead, s) {
+            Err(SimError::Invalid { why }) => {
+                assert!(why.contains("unknown green ctx"), "{why}");
+            }
+            Ok(_) => match sim.synchronize() {
+                Err(SimError::Invalid { why }) => {
+                    assert!(why.contains("unknown green ctx"), "{why}");
+                }
+                other => panic!("{other:?}"),
+            },
+            other => panic!("{other:?}"),
+        }
+    }
+
+    #[test]
+    fn graph_memset_node_ctx_is_cu_graph_add_memset_node_ctx() {
+        let d = DeviceId(0);
+        let s = StreamId(0);
+        let mut sim = Sim::new(h100());
+        let a = sim.malloc(d, 64).unwrap();
+        let op = MemsetOp::from(KernelBuf::whole(a));
+        let params = |ctx: Option<GreenCtxId>| MemsetNodeParams { op, ctx };
+        let desc = sim
+            .dev_resource_generate_desc(&[SmResource {
+                start: 0,
+                width: 500,
+            }])
+            .unwrap();
+        let ctx = sim.green_ctx_create(desc, d, 0).unwrap();
+        let g = sim.create_graph(d, s).unwrap();
+        sim.graph_add_memset(g, KernelBuf::whole(a)).unwrap();
+        match sim.graph_node_get_params(g, 0).unwrap() {
+            GraphNodeParams::Memset(p) => assert_eq!(p.ctx, None),
+            other => panic!("{other:?}"),
+        }
+        sim.graph_node_set_params(g, 0, GraphNodeParams::Memset(params(Some(ctx))))
+            .unwrap();
+        match sim.graph_node_get_params(g, 0).unwrap() {
+            GraphNodeParams::Memset(p) => assert_eq!(p.ctx, Some(ctx)),
+            other => panic!("{other:?}"),
+        }
+        let cloned = sim.clone_graph(g).unwrap();
+        match sim.graph_node_get_params(cloned, 0).unwrap() {
+            GraphNodeParams::Memset(p) => assert_eq!(p.ctx, Some(ctx)),
+            other => panic!("{other:?}"),
+        }
+        sim.graph_memset_set_params(g, 0, KernelBuf::span(a, 0, 32))
+            .unwrap();
+        match sim.graph_node_get_params(g, 0).unwrap() {
+            GraphNodeParams::Memset(p) => {
+                assert_eq!(p.ctx, Some(ctx), "typed SetParams must not clear ctx");
+                assert_eq!(p.op.bytes, 32);
+            }
+            other => panic!("{other:?}"),
+        }
+        sim.graph_node_set_params(g, 0, GraphNodeParams::Memset(params(Some(ctx))))
+            .unwrap();
+        let exec = sim.instantiate_graph(g).unwrap();
+        match sim.graph_exec_node_get_params(exec, 0).unwrap() {
+            GraphNodeParams::Memset(p) => assert_eq!(p.ctx, Some(ctx)),
+            other => panic!("{other:?}"),
+        }
+        let n = sim.launch_graph(exec, s).unwrap();
+        assert_eq!(n, 1);
+        sim.synchronize().unwrap();
+        sim.green_ctx_stream_create(ctx, StreamId(1), StreamCreateFlags::NON_BLOCKING, 0)
+            .unwrap();
+        sim.begin_capture(d, StreamId(1)).unwrap();
+        enq(sim.memset(d, a, 64, StreamId(1)));
+        let captured = sim.end_capture().unwrap();
+        match sim.graph_node_get_params(captured, 0).unwrap() {
+            GraphNodeParams::Memset(p) => assert_eq!(p.ctx, Some(ctx)),
+            other => panic!("{other:?}"),
+        }
+        let g_bad = sim.create_graph(d, s).unwrap();
+        match sim.graph_add_node(
+            g_bad,
+            &[],
+            GraphNodeParams::Memset(params(Some(GreenCtxId(99)))),
+        ) {
+            Err(SimError::Invalid { why }) => {
+                assert!(why.contains("unknown green ctx"), "{why}");
+            }
+            other => panic!("{other:?}"),
+        }
+        let mut dual = Sim::new(HardwareProfile::example_2xh100_pcie());
+        let a0 = dual.malloc(DeviceId(0), 64).unwrap();
+        let op0 = MemsetOp::from(KernelBuf::whole(a0));
+        let desc1 = dual
+            .dev_resource_generate_desc(&[SmResource {
+                start: 0,
+                width: 500,
+            }])
+            .unwrap();
+        let ctx1 = dual.green_ctx_create(desc1, DeviceId(1), 0).unwrap();
+        let g1 = dual.create_graph(DeviceId(0), s).unwrap();
+        match dual.graph_add_node(
+            g1,
+            &[],
+            GraphNodeParams::Memset(MemsetNodeParams {
+                op: op0,
+                ctx: Some(ctx1),
+            }),
+        ) {
+            Err(SimError::Invalid { why }) => {
+                assert!(why.contains("green ctx device"), "{why}");
+            }
+            other => panic!("{other:?}"),
+        }
+        let g_dead = sim.create_graph(d, s).unwrap();
+        let desc2 = sim
+            .dev_resource_generate_desc(&[SmResource {
+                start: 500,
+                width: 500,
+            }])
+            .unwrap();
+        let ctx2 = sim.green_ctx_create(desc2, d, 0).unwrap();
+        let added = sim
+            .graph_add_node(g_dead, &[], GraphNodeParams::Memset(params(Some(ctx2))))
             .unwrap();
         assert_eq!(added.node, 0);
         sim.green_ctx_destroy(ctx2).unwrap();

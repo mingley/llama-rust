@@ -5,6 +5,19 @@ Visible five-turn extract: [docs/chatgpt-share-6a920fe1.md](docs/chatgpt-share-6
 Complete share-API extract: [docs/chatgpt-share-6a920fe1/](docs/chatgpt-share-6a920fe1/).
 Work lands on `main`. No PRs.
 
+## Shipped 2026-09-01 — cuGraphAddMemsetNode ctx
+
+`gpu-sim` CUDA `cuGraphAddMemsetNode` ctx: `MemsetNodeParams::ctx` is the
+extra driver `CUcontext` argument on `cuGraphAddMemsetNode` /
+`cuGraphExecMemsetNodeSetParams`. Stored on the graph step, not
+`Kind::Memset` or `MemsetOp`. Typed `graph_add_memset` stays `None`. Typed
+`graph_memset_set_params` does not clear ctx. Fills use copy engines, so
+duration is unchanged. Unknown or destroyed is Invalid `"unknown green
+ctx"`. Device mismatch is Invalid `"green ctx device"`. Parameter, not
+topology. Capture from a green-ctx stream snapshots that ctx. This VM
+does not invent an Engine flag for memset ctx. `gpu-profile capture` is
+still refused. Dual score still has no `$/M tokens`.
+
 ## Shipped 2026-09-01 — cuGraphAddMemcpyNode ctx
 
 `gpu-sim` CUDA `cuGraphAddMemcpyNode` ctx: `MemcpyNodeParams::ctx` is the
