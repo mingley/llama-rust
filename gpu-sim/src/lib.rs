@@ -768,6 +768,9 @@
 //! (always Invalid `"d3d10 device"`). Query; legal during capture. No Engine `--d3d10-device`.
 //! [`d3d10_ctx_create`](Sim::d3d10_ctx_create) is `cuD3D10CtxCreate` (always
 //! Invalid `"d3d10 context"`). Query; legal during capture. No Engine `--d3d10-ctx`.
+//! [`d3d10_ctx_create_on_device`](Sim::d3d10_ctx_create_on_device) is
+//! `cuD3D10CtxCreateOnDevice` (always Invalid `"d3d10 ondevice"`). Query;
+//! legal during capture. No Engine `--d3d10-on-device`.
 //! [`graphics_d3d10_register_resource`](Sim::graphics_d3d10_register_resource)
 //! is `cuGraphicsD3D10RegisterResource` (always Invalid `"d3d10 register"`).
 //! Query; legal during capture. No Engine `--d3d10-register`.
@@ -24680,6 +24683,71 @@ mod tests {
             }
             other => panic!("{other:?}"),
         }
+        match sim.d3d10_ctx_create_on_device(d) {
+            Err(SimError::Invalid { why }) => {
+                assert!(why.contains("d3d10 ondevice"), "{why}");
+                assert!(!why.contains("d3d10 context"), "{why}");
+                assert!(!why.contains("d3d9 ondevice"), "{why}");
+            }
+            other => panic!("{other:?}"),
+        }
+    }
+
+    #[test]
+    fn d3d10_ctx_create_on_device_is_unsupported() {
+        let mut sim = Sim::new(h100());
+        let d = DeviceId(0);
+        match sim.d3d10_ctx_create_on_device(d) {
+            Err(SimError::Invalid { why }) => {
+                assert!(why.contains("d3d10 ondevice"), "{why}");
+                assert!(!why.contains("d3d10 context"), "{why}");
+                assert!(!why.contains("d3d10 device"), "{why}");
+                assert!(!why.contains("d3d9 ondevice"), "{why}");
+                assert!(!why.contains("d3d11 ondevice"), "{why}");
+                assert!(!why.contains("d3d12 ondevice"), "{why}");
+            }
+            other => panic!("{other:?}"),
+        }
+        sim.begin_capture(d, StreamId(0)).unwrap();
+        match sim.d3d10_ctx_create_on_device(d) {
+            Err(SimError::Invalid { why }) => {
+                assert!(why.contains("d3d10 ondevice"), "{why}");
+            }
+            other => panic!("{other:?}"),
+        }
+        let _g = sim.end_capture().unwrap();
+        match sim.d3d10_ctx_create_on_device(DeviceId(99)) {
+            Err(SimError::Invalid { why }) => {
+                assert!(why.contains("device not in profile"), "{why}");
+            }
+            other => panic!("{other:?}"),
+        }
+        match sim.d3d10_ctx_create(d) {
+            Err(SimError::Invalid { why }) => {
+                assert!(why.contains("d3d10 context"), "{why}");
+                assert!(!why.contains("d3d10 ondevice"), "{why}");
+            }
+            other => panic!("{other:?}"),
+        }
+        match sim.d3d9_ctx_create_on_device(d) {
+            Err(SimError::Invalid { why }) => {
+                assert!(why.contains("d3d9 ondevice"), "{why}");
+                assert!(!why.contains("d3d10 ondevice"), "{why}");
+            }
+            other => panic!("{other:?}"),
+        }
+        match sim.d3d11_ctx_create_on_device(d) {
+            Err(SimError::Invalid { why }) => {
+                assert!(why.contains("d3d11 ondevice"), "{why}");
+                assert!(!why.contains("d3d10 ondevice"), "{why}");
+            }
+            other => panic!("{other:?}"),
+        }
+        assert_eq!(
+            sim.device_get_attribute(d, DeviceAttr::D3D12CigSupported)
+                .unwrap(),
+            0
+        );
     }
 
     #[test]
