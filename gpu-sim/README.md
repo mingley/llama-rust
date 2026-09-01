@@ -513,7 +513,8 @@ device-launch exec is Invalid; cannot combine with `AUTO_FREE_ON_LAUNCH`
 (`"device launch auto free"`).
 `instantiate_graph_with_params` is `cudaGraphInstantiateWithParams`
 (`GraphInstantiateParams` result, err node, and `hUploadStream`).
-`graph_exec_get_flags` is `cudaGraphExecGetFlags`.
+`graph_exec_get_flags` is `cudaGraphExecGetFlags` (`GraphInstantiateFlags::UPLOAD`
+is omitted; it does not affect the executable graph).
 Instantiate returns a new exec id (`cudaGraphExec_t`); the source graph
 stays a definition. `launch_graph` of a definition uses the primary exec.
 `clone_graph` is `cudaGraphClone` (`graph_clone_ns`): an independent

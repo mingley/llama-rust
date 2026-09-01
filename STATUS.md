@@ -5,6 +5,17 @@ Visible five-turn extract: [docs/chatgpt-share-6a920fe1.md](docs/chatgpt-share-6
 Complete share-API extract: [docs/chatgpt-share-6a920fe1/](docs/chatgpt-share-6a920fe1/).
 Work lands on `main`. No PRs.
 
+## Shipped 2026-09-01 — GetFlags omits instantiate Upload
+
+`gpu-sim` CUDA `cudaGraphExecGetFlags` (`graph_exec_get_flags`) omits
+`GraphInstantiateFlags::UPLOAD` (it does not affect the resulting
+executable graph). Instantiate with UPLOAD still host-sync uploads.
+`AUTO_FREE` plus `UPLOAD` and `DEVICE_LAUNCH` plus `UPLOAD` stay legal;
+GetFlags returns the other bits. Capture is a query. This VM does not
+invent Engine `--graph-exec-flags` or omit other instantiate bits.
+`gpu-profile capture` is still refused. Dual score still has no
+`$/M tokens`.
+
 ## Shipped 2026-09-01 — AddDependencies cannot change existing edge data
 
 `gpu-sim` CUDA `cudaGraphAddDependencies` cannot change `GraphEdgeData`

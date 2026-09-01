@@ -828,7 +828,8 @@
 //! [`instantiate_graph_with_params`](Sim::instantiate_graph_with_params) is
 //! `cudaGraphInstantiateWithParams` ([`GraphInstantiateParams`] result, err
 //! node, and `hUploadStream`). [`graph_exec_get_flags`](Sim::graph_exec_get_flags) is
-//! `cudaGraphExecGetFlags`. Instantiate returns a new exec id (`cudaGraphExec_t`);
+//! `cudaGraphExecGetFlags`. [`GraphInstantiateFlags::UPLOAD`] is omitted
+//! (it does not affect the executable graph). Instantiate returns a new exec id (`cudaGraphExec_t`);
 //! the source graph stays a definition. [`launch_graph`](Sim::launch_graph) of a
 //! definition uses the primary exec. `cudaGraphExec*SetParams` accept either id.
 //! [`graph_kernel_set_params`](Sim::graph_kernel_set_params) /
@@ -2192,10 +2193,7 @@ mod tests {
         assert_ne!(exec, g);
         assert_eq!(sim.clock_ns(), t0.saturating_add(27_000));
         assert!(sim.graph_uploaded(g).unwrap());
-        assert_eq!(
-            sim.graph_exec_get_flags(g).unwrap(),
-            GraphInstantiateFlags::UPLOAD
-        );
+        assert_eq!(sim.graph_exec_get_flags(g).unwrap(), 0);
         let t1 = sim.clock_ns();
         let n = sim.launch_graph(g, s).unwrap();
         assert_eq!(n, 1);
@@ -2213,10 +2211,7 @@ mod tests {
             .instantiate_graph_with_flags(g, GraphInstantiateFlags::AUTO_FREE_ON_LAUNCH)
             .unwrap();
         assert_ne!(extra, exec);
-        assert_eq!(
-            sim.graph_exec_get_flags(g).unwrap(),
-            GraphInstantiateFlags::UPLOAD
-        );
+        assert_eq!(sim.graph_exec_get_flags(g).unwrap(), 0);
         assert_eq!(
             sim.graph_exec_get_flags(extra).unwrap(),
             GraphInstantiateFlags::AUTO_FREE_ON_LAUNCH
@@ -2235,9 +2230,77 @@ mod tests {
         sim.graph_add_kernel(k, KernelKind::other(8, 8), &[a], &[a])
             .unwrap();
         let _ = sim.instantiate_graph_with_flags(k, both).unwrap();
-        assert_eq!(sim.graph_exec_get_flags(k).unwrap(), both);
+        assert_eq!(
+            sim.graph_exec_get_flags(k).unwrap(),
+            GraphInstantiateFlags::AUTO_FREE_ON_LAUNCH
+        );
         assert!(sim.graph_uploaded(k).unwrap());
         assert!(sim.graph_auto_free_on_launch(k).unwrap());
+    }
+
+    #[test]
+    fn graph_exec_get_flags_omits_upload() {
+        let mut sim = Sim::new(h100());
+        let d = DeviceId(0);
+        let s = StreamId(0);
+        let a = sim.malloc(d, 4096).unwrap();
+        let g = sim.create_graph(d, s).unwrap();
+        sim.graph_add_kernel(g, KernelKind::other(8, 8), &[a], &[a])
+            .unwrap();
+        let _ = sim
+            .instantiate_graph_with_flags(g, GraphInstantiateFlags::UPLOAD)
+            .unwrap();
+        assert!(sim.graph_uploaded(g).unwrap());
+        assert_eq!(sim.graph_exec_get_flags(g).unwrap(), 0);
+        let af = sim.create_graph(d, s).unwrap();
+        sim.graph_add_kernel(af, KernelKind::other(8, 8), &[a], &[a])
+            .unwrap();
+        let _ = sim
+            .instantiate_graph_with_flags(
+                af,
+                GraphInstantiateFlags::AUTO_FREE_ON_LAUNCH | GraphInstantiateFlags::UPLOAD,
+            )
+            .unwrap();
+        assert_eq!(
+            sim.graph_exec_get_flags(af).unwrap(),
+            GraphInstantiateFlags::AUTO_FREE_ON_LAUNCH
+        );
+        assert!(sim.graph_uploaded(af).unwrap());
+        assert!(sim.graph_auto_free_on_launch(af).unwrap());
+        let dl = sim.create_graph(d, s).unwrap();
+        sim.graph_add_kernel(dl, KernelKind::other(8, 8), &[a], &[a])
+            .unwrap();
+        let _ = sim
+            .instantiate_graph_with_flags(
+                dl,
+                GraphInstantiateFlags::DEVICE_LAUNCH | GraphInstantiateFlags::UPLOAD,
+            )
+            .unwrap();
+        assert_eq!(
+            sim.graph_exec_get_flags(dl).unwrap(),
+            GraphInstantiateFlags::DEVICE_LAUNCH
+        );
+        assert!(sim.graph_uploaded(dl).unwrap());
+        let pri = sim.create_graph(d, s).unwrap();
+        sim.graph_add_kernel(pri, KernelKind::other(8, 8), &[a], &[a])
+            .unwrap();
+        let _ = sim
+            .instantiate_graph_with_flags(
+                pri,
+                GraphInstantiateFlags::USE_NODE_PRIORITY | GraphInstantiateFlags::UPLOAD,
+            )
+            .unwrap();
+        assert_eq!(
+            sim.graph_exec_get_flags(pri).unwrap(),
+            GraphInstantiateFlags::USE_NODE_PRIORITY
+        );
+        sim.begin_capture(d, s).unwrap();
+        assert_eq!(sim.graph_exec_get_flags(g).unwrap(), 0);
+        assert_eq!(
+            sim.graph_exec_get_flags(dl).unwrap(),
+            GraphInstantiateFlags::DEVICE_LAUNCH
+        );
+        let _cap = sim.end_capture().unwrap();
     }
 
     #[test]

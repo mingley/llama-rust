@@ -3897,12 +3897,14 @@ impl Sim {
     /// `cudaGraphExecGetFlags` on an instantiated exec (or a definition's primary).
     ///
     /// Capture is allowed. Uninstantiated graphs are Invalid.
+    /// [`GraphInstantiateFlags::UPLOAD`] is omitted: it does not affect the
+    /// resulting executable graph.
     pub fn graph_exec_get_flags(&self, exec: GraphId) -> Result<u32, SimError> {
         let exec = self.as_exec(exec)?;
         let g = self.graphs.get(&exec).ok_or(SimError::Invalid {
             why: "unknown graph",
         })?;
-        Ok(g.instantiate_flags)
+        Ok(g.instantiate_flags & !GraphInstantiateFlags::UPLOAD)
     }
 
     fn check_instantiate_flags(flags: u32) -> Result<(), SimError> {

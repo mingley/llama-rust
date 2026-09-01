@@ -5568,7 +5568,17 @@ model, do not celebrate the sim.
     check or reverse PLAN 182. `gpu-profile capture` is still refused.
     Dual score still has no `$/M tokens`.
 
-518. [ ] Next numbered PLAN item after 517 is the next `gpu-sim` / Engine /
+518. [x] `gpu-sim` CUDA `cudaGraphExecGetFlags`
+    ([`graph_exec_get_flags`]) omits
+    [`GraphInstantiateFlags::UPLOAD`] (it does not affect the resulting
+    executable graph). Instantiate with UPLOAD still host-sync uploads.
+    `AUTO_FREE` plus `UPLOAD` and `DEVICE_LAUNCH` plus `UPLOAD` stay
+    legal; GetFlags returns the other bits. Capture is a query. This VM
+    does not invent Engine `--graph-exec-flags` or omit other instantiate
+    bits. `gpu-profile capture` is still refused. Dual score still has no
+    `$/M tokens`.
+
+519. [ ] Next numbered PLAN item after 518 is the next `gpu-sim` / Engine /
     serve / expertvm mechanical API that is still missing, or the next official
     decode family. Prefer remaining CUDA-shaped twins over more
     OpenAI HTTP veneer. Do not invent F32 `output.scale`. Do not invent a
@@ -5648,6 +5658,10 @@ model, do not celebrate the sim.
     Do not invent a second existing-edge [`GraphEdgeData`] change check.
     Do not invent a second Engine `--graph-edge-data` (already parked for
     RemoveDependencies).
+    Do not invent a second GetFlags UPLOAD omit or Engine `--graph-exec-flags`.
+    Do not omit [`GraphInstantiateFlags::UPLOAD`] from instantiate (it still
+    uploads). Do not GetFlags-omit `DEVICE_LAUNCH` / `AUTO_FREE` /
+    `USE_NODE_PRIORITY`.
     Do not invent a second `cudaStreamGetCaptureInfo_v3`. Do not invent
     `cudaStreamUpdateCaptureDependencies` v2 edgeData.
     Do not invent a second `cudaDeviceProp::persistingL2CacheMaxSize`.
@@ -5985,6 +5999,9 @@ model, do not celebrate the sim.
     on an existing launch-completion edge stays a no-op that keeps
     launch-completion data). Do not invent existing-edge error on v1
     AddDependencies.
+    Do not invent a second GetFlags UPLOAD omit. Do not reverse
+    instantiate `AUTO_FREE` plus `UPLOAD` or `DEVICE_LAUNCH` plus
+    `UPLOAD`.
     Do not
     spend the next item on an OpenAI-compatible HTTP veneer.
 

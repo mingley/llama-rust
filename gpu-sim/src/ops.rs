@@ -3041,6 +3041,7 @@ impl GraphCreateFlags {
 }
 
 /// `cudaGraphInstantiateFlags` bit names (`cudaGraphExecGetFlags`).
+/// [`Self::UPLOAD`] is accepted at instantiate but omitted from GetFlags.
 pub struct GraphInstantiateFlags;
 
 impl GraphInstantiateFlags {
@@ -3049,6 +3050,7 @@ impl GraphInstantiateFlags {
     pub const AUTO_FREE_ON_LAUNCH: u32 = 1;
     /// `cudaGraphInstantiateFlagUpload`: host-sync upload during instantiate
     /// unless [`GraphInstantiateParams::upload_stream`] is set.
+    /// [`crate::Sim::graph_exec_get_flags`] omits this bit.
     pub const UPLOAD: u32 = 2;
     /// `cudaGraphInstantiateFlagDeviceLaunch`: [`crate::Sim::device_launch_graph`]
     /// is legal after upload. Host [`crate::Sim::launch_graph`] stays legal.
