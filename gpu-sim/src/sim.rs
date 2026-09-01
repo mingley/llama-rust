@@ -19878,6 +19878,17 @@ impl Sim {
         Ok(())
     }
 
+    /// `cuProfilerStart` / `cudaProfilerStart`. Host-synchronous. Capture
+    /// cannot include it.
+    ///
+    /// 1 ns no-op (CUPTI is not modeled). Distinct from [`Self::driver_init`].
+    /// This VM does not invent `cuProfilerStop` this slice.
+    pub fn profiler_start(&mut self) -> Result<(), SimError> {
+        self.fail_if_capturing("cannot capture profiler start")?;
+        self.clock = self.clock.saturating_add(1);
+        Ok(())
+    }
+
     /// `cuModuleGetLoadingMode`. Query; legal during capture.
     ///
     /// Process-wide. Always [`ModuleLoadingMode::Eager`] (CUDA 1).

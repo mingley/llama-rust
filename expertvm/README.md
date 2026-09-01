@@ -508,6 +508,8 @@ kernel exists; no Engine flag).
 kernel exists; no Engine flag).
 `gpu-sim` `driver_init` is `cuInit` (flags 0; already initialized; no
 Engine flag).
+`gpu-sim` `profiler_start` is `cuProfilerStart` (1 ns no-op; capture
+refused; no Engine flag).
 `gpu-sim` `module_get_loading_mode` is `cuModuleGetLoadingMode` (always
 Eager; no Engine flag).
 `gpu-sim` `library_load_data` is `cuLibraryLoadData` (Invalid; no cubin /

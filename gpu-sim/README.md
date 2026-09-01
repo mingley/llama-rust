@@ -178,6 +178,7 @@ warp scheduler, L1, …   ← do not model
 | `coredump_get_attribute` is Invalid (GPU coredumps are not modeled) | `cuCoredumpGetAttribute` |
 | `checkpoint_process_lock` is Invalid (CUDA process checkpoint is not modeled) | `cuCheckpointProcessLock` |
 | `driver_init` is a 1 ns no-op; flags must be 0 | `cuInit` |
+| `profiler_start` is a 1 ns no-op; capture refused | `cuProfilerStart` / `cudaProfilerStart` |
 | `module_get_loading_mode` is always Eager (CUDA 1) | `cuModuleGetLoadingMode` |
 | `library_load_data` is Invalid (no cubin / `CUlibrary`) | `cuLibraryLoadData` |
 | `link_create` is Invalid (no JIT linker or NVRTC) | `cuLinkCreate` |
@@ -1163,6 +1164,9 @@ capture. No Engine `--coredump`. `checkpoint_process_lock` is
 checkpoint is not modeled). Distinct from `coredump_get_attribute`. Query;
 legal during capture. No Engine `--checkpoint`. `driver_init` is `cuInit` (flags 0; already initialized at construct;
 1 ns no-op; capture cannot include it; distinct from `init_device`).
+`profiler_start` is `cuProfilerStart` plus `cudaProfilerStart` (1 ns no-op;
+CUPTI is not modeled; capture cannot include it). Distinct from
+`driver_init`. No Engine `--profiler-start`.
 `module_get_loading_mode` is `cuModuleGetLoadingMode` (always Eager;
 CUDA 1; query; legal during capture; no modules; distinct from
 `driver_init` and `init_device`).

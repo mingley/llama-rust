@@ -862,6 +862,9 @@
 //! during capture. No Engine `--checkpoint`. [`Sim::driver_init`] is `cuInit` (flags 0; already initialized
 //! at [`Sim::new`]; 1 ns no-op). Distinct from [`init_device`](Sim::init_device).
 //! Capture cannot include it. No Engine `--cu-init`.
+//! [`profiler_start`](Sim::profiler_start) is `cuProfilerStart` plus
+//! `cudaProfilerStart` (1 ns no-op; CUPTI is not modeled). Capture cannot
+//! include it. No Engine `--profiler-start`.
 //! [`Sim::module_get_loading_mode`] is `cuModuleGetLoadingMode` (always
 //! [`ModuleLoadingMode::Eager`]). Query; legal during capture. No Engine `--module-loading`.
 //! [`library_load_data`](Sim::library_load_data) is `cuLibraryLoadData`
@@ -18473,6 +18476,26 @@ mod tests {
         let _g = sim.end_capture().unwrap();
         assert_eq!(sim.driver_get_version(), 13_000);
         sim.init_device(DeviceId(0)).unwrap();
+    }
+
+    #[test]
+    fn profiler_start_is_cu_profiler_start_noop() {
+        let mut sim = Sim::new(h100());
+        let t0 = sim.clock_ns();
+        sim.profiler_start().unwrap();
+        assert_eq!(sim.clock_ns(), t0.saturating_add(1));
+        sim.profiler_start().unwrap();
+        assert_eq!(sim.clock_ns(), t0.saturating_add(2));
+        sim.driver_init(0).unwrap();
+        assert_eq!(sim.clock_ns(), t0.saturating_add(3));
+        sim.begin_capture(DeviceId(0), StreamId(0)).unwrap();
+        match sim.profiler_start() {
+            Err(SimError::Invalid { why }) => assert!(why.contains("capture"), "{why}"),
+            other => panic!("{other:?}"),
+        }
+        let _g = sim.end_capture().unwrap();
+        sim.profiler_start().unwrap();
+        assert_eq!(sim.clock_ns(), t0.saturating_add(4));
     }
 
     #[test]
