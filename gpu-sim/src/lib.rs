@@ -31854,7 +31854,7 @@ mod tests {
         let _got = sim.graph_exec_kernel_get_params(g, node).unwrap();
         let _flags = sim.graph_exec_get_flags(g).unwrap();
         assert!(sim.graph_uploaded(g).unwrap());
-        sim.begin_capture(d, s).unwrap();
+        sim.begin_capture(d, StreamId(1)).unwrap();
         let err = sim
             .graph_exec_kernel_set_params(g, node, &params)
             .unwrap_err();
