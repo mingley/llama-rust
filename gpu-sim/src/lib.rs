@@ -393,6 +393,9 @@
 //! accepts Mapped / Portable). Portable / WriteCombined are stored (no DMA
 //! change). IoMemory / ReadOnly are Invalid. Typed helpers stay.
 //! [`Sim::device_get_attribute`] is `cudaDeviceGetAttribute` ([`DeviceAttr`]).
+//! [`device_get_exec_affinity_support`](Sim::device_get_exec_affinity_support)
+//! is `cuDeviceGetExecAffinitySupport` (`SM_COUNT` is 0; this VM uses permille
+//! green-context spans, not occupancy SM counts).
 //! [`Sim::device_get_properties`] is `cudaGetDeviceProperties` ([`DeviceProperties`];
 //! modeled caps only — no SM count or clock). [`Sim::device_get_name`] is
 //! `cudaDeviceGetName` (the profile name). [`device_get_uuid`](Sim::device_get_uuid)
@@ -1114,7 +1117,7 @@ pub use ops::{
     CaptureDepOp, ClusterDim, ClusterSchedulingPolicy, ComputeMode, DType, DevResource,
     DevResourceType, DevSmResourceSplitFlags, DeviceAttr, DeviceFlags, DeviceLimit,
     DeviceNumaConfig, DeviceP2pAttr, DeviceProperties, EventCreateFlags, EventRecordFlags,
-    EventWaitFlags, FlushGpuDirectRdmaScope, FlushGpuDirectRdmaTarget,
+    EventWaitFlags, ExecAffinityType, FlushGpuDirectRdmaScope, FlushGpuDirectRdmaTarget,
     FlushGpuDirectRdmaWritesOptions, FuncAttr, FuncAttributes, FuncCache,
     GpuDirectRdmaWritesOrdering, GpuOp, GraphAddNode, GraphCondFlags, GraphCreateFlags,
     GraphDebugDotFlags, GraphDependencyType, GraphEdgeData, GraphExecUpdateResult,
@@ -13676,6 +13679,36 @@ mod tests {
             0
         );
         let _g = sim.end_capture().unwrap();
+    }
+
+    #[test]
+    fn device_get_exec_affinity_support_sm_count_is_zero() {
+        let mut sim = Sim::new(h100());
+        let d = DeviceId(0);
+        assert_eq!(
+            sim.device_get_exec_affinity_support(d, ExecAffinityType::SM_COUNT)
+                .unwrap(),
+            0
+        );
+        sim.begin_capture(d, StreamId(0)).unwrap();
+        assert_eq!(
+            sim.device_get_exec_affinity_support(d, ExecAffinityType::SM_COUNT)
+                .unwrap(),
+            0
+        );
+        let _g = sim.end_capture().unwrap();
+        match sim.device_get_exec_affinity_support(d, 1) {
+            Err(SimError::Invalid { why }) => {
+                assert!(why.contains("exec affinity type"), "{why}");
+            }
+            other => panic!("{other:?}"),
+        }
+        match sim.device_get_exec_affinity_support(DeviceId(9), ExecAffinityType::SM_COUNT) {
+            Err(SimError::Invalid { why }) => {
+                assert!(why.contains("device not in profile"), "{why}");
+            }
+            other => panic!("{other:?}"),
+        }
     }
 
     #[test]

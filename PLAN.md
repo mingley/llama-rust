@@ -4902,7 +4902,14 @@ model, do not celebrate the sim.
     destroy returns a new id. `gpu-profile capture` is still refused.
     Dual score still has no `$/M tokens`.
 
-451. [ ] Next numbered PLAN item after 450 is the next `gpu-sim` / Engine /
+451. [x] `gpu-sim` `device_get_exec_affinity_support` is
+    `cuDeviceGetExecAffinitySupport`. `SM_COUNT` is 0 (this VM uses
+    permille green-context spans, not occupancy SM counts). Other type
+    ids Invalid `"exec affinity type"`. Query; legal during capture. Do
+    not invent `cuCtxSetExecAffinity`. `gpu-profile capture` is still
+    refused. Dual score still has no `$/M tokens`.
+
+452. [ ] Next numbered PLAN item after 451 is the next `gpu-sim` / Engine /
     serve / expertvm mechanical API that is still missing, or the next official
     decode family. Prefer remaining CUDA-shaped twins over more
     OpenAI HTTP veneer. Do not invent F32 `output.scale`. Do not invent a
@@ -4979,6 +4986,8 @@ model, do not celebrate the sim.
     Do not invent Engine `--graph-cond-flags`. Do not invent other
     `cudaGraphCond*` create flags bits (only `ASSIGN_DEFAULT`).
     Do not invent a second `cuMemPoolGetId`.
+    Do not invent a second `cuDeviceGetExecAffinitySupport`. Do not invent
+    `cuCtxSetExecAffinity` (occupancy SM counts).
     Do not invent `cuDeviceGetLuid`
     (Windows).
     Do not invent gemma4 `attn_q.scale` / `attn_output.scale` / `attn_k.scale` /

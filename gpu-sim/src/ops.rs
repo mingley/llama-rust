@@ -2862,6 +2862,18 @@ impl GreenCtxFlags {
     pub const DEFAULT: u32 = 0;
 }
 
+/// `CUexecAffinityType` for [`crate::Sim::device_get_exec_affinity_support`].
+///
+/// [`Self::SM_COUNT`] is `CU_EXEC_AFFINITY_TYPE_SM_COUNT`. This VM uses
+/// permille green-context spans, not occupancy SM counts, so support is 0.
+/// Other type ids are Invalid `"exec affinity type"`.
+pub struct ExecAffinityType;
+
+impl ExecAffinityType {
+    /// `CU_EXEC_AFFINITY_TYPE_SM_COUNT`. Always unsupported (`0`).
+    pub const SM_COUNT: u32 = 0;
+}
+
 /// `cuDevSmResourceSplitByCount` `useFlags`.
 ///
 /// Only [`Self::DEFAULT`]. Coscheduling / max-cluster split bits are not

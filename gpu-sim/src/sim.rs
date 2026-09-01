@@ -14,7 +14,7 @@ use crate::ops::{
     AccessPolicyWindow, AccessProperty, BatchMemOp, BatchMemOpFlags, CaptureDepOp, ClusterDim,
     ClusterSchedulingPolicy, ComputeMode, DevResource, DevResourceType, DevSmResourceSplitFlags,
     DeviceAttr, DeviceFlags, DeviceLimit, DeviceNumaConfig, DeviceP2pAttr, DeviceProperties,
-    EventCreateFlags, EventRecordFlags, EventWaitFlags, FlushGpuDirectRdmaScope,
+    EventCreateFlags, EventRecordFlags, EventWaitFlags, ExecAffinityType, FlushGpuDirectRdmaScope,
     FlushGpuDirectRdmaTarget, FlushGpuDirectRdmaWritesOptions, FuncAttr, FuncAttributes, FuncCache,
     GpuDirectRdmaWritesOrdering, GpuOp as Kind, GraphAddNode, GraphCondFlags, GraphCreateFlags,
     GraphDebugDotFlags, GraphDependencyType, GraphEdgeData, GraphExecUpdateResult,
@@ -15233,6 +15233,28 @@ impl Sim {
             });
         }
         Ok(a.host_flags)
+    }
+
+    /// `cuDeviceGetExecAffinitySupport`. Query; legal during capture.
+    ///
+    /// [`ExecAffinityType::SM_COUNT`] is 0: this VM's green contexts are
+    /// permille of the chip, not occupancy SM counts. Other type ids are
+    /// Invalid `"exec affinity type"`. Unknown devices are Invalid
+    /// `"device not in profile"`. Distinct from [`Self::green_ctx_create`] /
+    /// [`Self::device_get_dev_resource`]. This VM does not invent
+    /// `cuCtxSetExecAffinity`.
+    pub fn device_get_exec_affinity_support(
+        &self,
+        device: DeviceId,
+        kind: u32,
+    ) -> Result<i32, SimError> {
+        let _gpu = self.profile.gpu(device)?;
+        if kind != ExecAffinityType::SM_COUNT {
+            return Err(SimError::Invalid {
+                why: "exec affinity type",
+            });
+        }
+        Ok(0)
     }
 
     /// `cudaDeviceGetAttribute`. Query; legal during capture.

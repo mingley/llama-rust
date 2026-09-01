@@ -5,6 +5,15 @@ Visible five-turn extract: [docs/chatgpt-share-6a920fe1.md](docs/chatgpt-share-6
 Complete share-API extract: [docs/chatgpt-share-6a920fe1/](docs/chatgpt-share-6a920fe1/).
 Work lands on `main`. No PRs.
 
+## Shipped 2026-09-01 — CUDA `cuDeviceGetExecAffinitySupport`
+
+`gpu-sim` `device_get_exec_affinity_support` is
+`cuDeviceGetExecAffinitySupport`. `SM_COUNT` is 0 (this VM uses permille
+green-context spans, not occupancy SM counts). Other type ids Invalid
+`"exec affinity type"`. Query; legal during capture. Do not invent
+`cuCtxSetExecAffinity`. `gpu-profile capture` is still refused. Dual
+score still has no `$/M tokens`.
+
 ## Shipped 2026-09-01 — CUDA `cuMemPoolGetId`
 
 `gpu-sim` `pool_get_id` is `cuMemPoolGetId`. Unique per `PoolId` handle

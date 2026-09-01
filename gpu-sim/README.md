@@ -140,6 +140,7 @@ warp scheduler, L1, …   ← do not model
 | `host_get_flags` returns the stored `HostAllocFlags` word | `cudaHostGetFlags` |
 | `alloc_host_with_flags` / `host_register_with_flags` (MAPPED / PORTABLE / WRITE_COMBINED stored; IoMemory / ReadOnly Invalid) | `cudaHostAlloc` / `cudaHostRegister` |
 | `device_get_attribute` exposes modeled SKU caps (incl. GPUDirect RDMA / CanFlushRemoteWrites / FlushWritesOptions Host / WritesOrdering None / WithCudaVMM from `LinkKind::Rdma`; MulticastSupported from `LinkKind::Nvlink`; ConcurrentManaged / DirectManagedHost / PageableHostPageTables / HostNativeAtomic / OnlyPartialHostNativeAtomic / CooperativeMultiDevice / Integrated / GenericCompression / Win32 / Win32Kmt / Fabric handle types always 0; ComputeMode always Default; NumaConfig always None; TccDriver / KernelExecTimeout / TensorMapAccessSupported / UnifiedFunctionPointers / TimelineSemaphoreInteropSupported / MemDecompressAlgorithmMask / MemDecompressMaximumLength / HostNumaVirtualMemoryManagementSupported / HostNumaMemoryPoolsSupported / HostNumaMultinodeIpcSupported always 0; CanUse64BitStreamMemOps / CanUseStreamMemOps / CanUseStreamWaitValueNor always 1) | `cudaDeviceGetAttribute` |
+| `device_get_exec_affinity_support` `SM_COUNT` is 0 (permille green ctx, not occupancy SM counts) | `cuDeviceGetExecAffinitySupport` |
 | `device_get_properties` wraps the same SKU caps (incl. synthetic `uuid` and PCI ids) | `cudaGetDeviceProperties` |
 | `device_get_uuid` is a synthetic 16-octet id (also `DeviceProperties.uuid`) | `cuDeviceGetUuid` |
 | `device_get_by_uuid` is the inverse of `device_get_uuid` | `cuDeviceGetByUuid` |
@@ -684,6 +685,9 @@ interior offsets are not modeled). Query; legal during capture.
 `device_get_attribute` is `cudaDeviceGetAttribute` (modeled caps only;
 `TotalGlobalMem` is HBM, `AsyncEngineCount` is copy engines,
 `CanMapHostMemory` / `ManagedMemory` are always 1).
+`device_get_exec_affinity_support` is `cuDeviceGetExecAffinitySupport`
+(`SM_COUNT` is 0; this VM uses permille green-context spans, not
+occupancy SM counts). Other type ids are Invalid.
 `ClusterLaunch` is `max_blocks_per_cluster > 0`. `HostRegisterSupported` /
 `IpcEventSupport` / `CanUseHostPointerForRegisteredMem` are always 1.
 `MemoryPoolSupportedHandleTypes` is POSIX-FD (`MemHandleType`).
