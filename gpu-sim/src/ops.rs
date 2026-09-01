@@ -2776,6 +2776,30 @@ pub enum FuncCache {
     PreferEqual,
 }
 
+/// `CUmoduleLoadingMode` for [`crate::Sim::module_get_loading_mode`].
+///
+/// Process-wide. This VM has no `CUmodule`; loading is always
+/// [`Self::Eager`]. Distinct from [`crate::Sim::driver_init`] and from
+/// per-device [`crate::Sim::init_device`]. This VM does not invent an
+/// environment-variable loading override.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash)]
+#[repr(u32)]
+pub enum ModuleLoadingMode {
+    /// `CU_MODULE_EAGER_LOADING` (CUDA 1). Default.
+    #[default]
+    Eager = 1,
+    /// `CU_MODULE_LAZY_LOADING` (CUDA 2). Not selected.
+    Lazy = 2,
+}
+
+impl ModuleLoadingMode {
+    /// CUDA `CUmoduleLoadingMode` integer.
+    #[must_use]
+    pub fn to_cuda(self) -> u32 {
+        self as u32
+    }
+}
+
 /// `cudaLaunchAttributePortableClusterSizeMode`.
 ///
 /// Launch-time override of [`crate::Sim::set_non_portable_cluster_size_allowed`].

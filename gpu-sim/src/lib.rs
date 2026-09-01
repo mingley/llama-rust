@@ -822,6 +822,8 @@
 //! (CUDA 13.0). [`Sim::driver_init`] is `cuInit` (flags 0; already initialized
 //! at [`Sim::new`]; 1 ns no-op). Distinct from [`init_device`](Sim::init_device).
 //! Capture cannot include it. No Engine `--cu-init`.
+//! [`Sim::module_get_loading_mode`] is `cuModuleGetLoadingMode` (always
+//! [`ModuleLoadingMode::Eager`]). Query; legal during capture. No Engine `--module-loading`.
 //! [`Sim::runtime_get_version`] is `cudaRuntimeGetVersion` (same
 //! toolkit). Query; legal during capture. [`device_get`](Sim::device_get) is `cuDeviceGet` (ordinal in range).
 //! [`Sim::device_can_access_peer`] / [`device_get_p2p_attribute`](Sim::device_get_p2p_attribute)
@@ -1633,12 +1635,13 @@ pub use ops::{
     MemPoolExportFlags, MemPoolProps, MemRangeAttr, MemRangeAttrValue, MemRangeHandleFlags,
     MemRangeHandleType, MemReserveFlags, MemSyncDomain, MemSyncDomainMap, MemcpyAttributes,
     MemcpyFlags, MemcpyNodeParams, MemcpyOp, MemcpySrcAccessOrder, MemoryType, MemsetNodeParams,
-    MemsetOp, MulticastBindFlags, MulticastCreateFlags, MulticastGranularity, MulticastObjectProp,
-    NvSciSyncAttrFlags, Operation, PdlLaunch, PeerAccessFlags, Place, PointerAttr,
-    PointerAttributes, PortableClusterMode, PortableSharedMode, PrefetchFlags, ProgrammaticEvent,
-    ProgrammaticLaunch, SharedMemCarveout, SharedMemoryMode, SmResource, StreamAttr,
-    StreamAttrValue, StreamCallbackFlags, StreamCaptureInfo, StreamCaptureMode, StreamCreateFlags,
-    SynchronizationPolicy, UserObjectFlags, WaitValueCmp, WaitValueFlags, WriteValueFlags,
+    MemsetOp, ModuleLoadingMode, MulticastBindFlags, MulticastCreateFlags, MulticastGranularity,
+    MulticastObjectProp, NvSciSyncAttrFlags, Operation, PdlLaunch, PeerAccessFlags, Place,
+    PointerAttr, PointerAttributes, PortableClusterMode, PortableSharedMode, PrefetchFlags,
+    ProgrammaticEvent, ProgrammaticLaunch, SharedMemCarveout, SharedMemoryMode, SmResource,
+    StreamAttr, StreamAttrValue, StreamCallbackFlags, StreamCaptureInfo, StreamCaptureMode,
+    StreamCreateFlags, SynchronizationPolicy, UserObjectFlags, WaitValueCmp, WaitValueFlags,
+    WriteValueFlags,
 };
 pub use probe::{probe_topology, P2pProbe, TopologyProbe};
 pub use profile::{
@@ -18207,6 +18210,21 @@ mod tests {
         let _g = sim.end_capture().unwrap();
         assert_eq!(sim.driver_get_version(), 13_000);
         sim.init_device(DeviceId(0)).unwrap();
+    }
+
+    #[test]
+    fn module_get_loading_mode_is_always_eager() {
+        let mut sim = Sim::new(h100());
+        assert_eq!(sim.module_get_loading_mode(), ModuleLoadingMode::Eager);
+        assert_eq!(sim.module_get_loading_mode().to_cuda(), 1);
+        assert_eq!(ModuleLoadingMode::Lazy.to_cuda(), 2);
+        sim.begin_capture(DeviceId(0), StreamId(0)).unwrap();
+        assert_eq!(sim.module_get_loading_mode(), ModuleLoadingMode::Eager);
+        let _g = sim.end_capture().unwrap();
+        let eight = Sim::new(HardwareProfile::example_8xh100_nvlink());
+        assert_eq!(eight.module_get_loading_mode(), ModuleLoadingMode::Eager);
+        sim.driver_init(0).unwrap();
+        assert_eq!(sim.module_get_loading_mode(), ModuleLoadingMode::Eager);
     }
 
     #[test]

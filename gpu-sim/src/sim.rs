@@ -29,12 +29,13 @@ use crate::ops::{
     MemPoolExportFlags, MemPoolProps, MemRangeAttr, MemRangeAttrValue, MemRangeHandleFlags,
     MemRangeHandleType, MemReserveFlags, MemSyncDomain, MemSyncDomainMap, MemcpyAttributes,
     MemcpyFlags, MemcpyNodeParams, MemcpyOp, MemcpySrcAccessOrder, MemoryType, MemsetNodeParams,
-    MemsetOp, MulticastBindFlags, MulticastCreateFlags, MulticastGranularity, MulticastObjectProp,
-    NvSciSyncAttrFlags, Operation, PdlLaunch, PeerAccessFlags, Place, PointerAttr,
-    PointerAttributes, PortableClusterMode, PortableSharedMode, PrefetchFlags, ProgrammaticEvent,
-    ProgrammaticLaunch, SharedMemCarveout, SharedMemoryMode, SmResource, StreamAttr,
-    StreamAttrValue, StreamCallbackFlags, StreamCaptureInfo, StreamCaptureMode, StreamCreateFlags,
-    SynchronizationPolicy, UserObjectFlags, WaitValueCmp, WaitValueFlags, WriteValueFlags,
+    MemsetOp, ModuleLoadingMode, MulticastBindFlags, MulticastCreateFlags, MulticastGranularity,
+    MulticastObjectProp, NvSciSyncAttrFlags, Operation, PdlLaunch, PeerAccessFlags, Place,
+    PointerAttr, PointerAttributes, PortableClusterMode, PortableSharedMode, PrefetchFlags,
+    ProgrammaticEvent, ProgrammaticLaunch, SharedMemCarveout, SharedMemoryMode, SmResource,
+    StreamAttr, StreamAttrValue, StreamCallbackFlags, StreamCaptureInfo, StreamCaptureMode,
+    StreamCreateFlags, SynchronizationPolicy, UserObjectFlags, WaitValueCmp, WaitValueFlags,
+    WriteValueFlags,
 };
 use crate::profile::{align_up, ns_for_bytes, scale_ns_permille, HardwareProfile, LinkKind};
 
@@ -19676,6 +19677,18 @@ impl Sim {
         }
         self.clock = self.clock.saturating_add(1);
         Ok(())
+    }
+
+    /// `cuModuleGetLoadingMode`. Query; legal during capture.
+    ///
+    /// Process-wide. Always [`ModuleLoadingMode::Eager`] (CUDA 1).
+    /// [`ModuleLoadingMode::Lazy`] is 2 and is not selected. This VM has
+    /// no `CUmodule`. Distinct from [`Self::driver_init`] and from
+    /// [`Self::init_device`]. This VM does not invent an environment-variable
+    /// loading override or `cuModuleLoad` this slice.
+    #[must_use]
+    pub fn module_get_loading_mode(&self) -> ModuleLoadingMode {
+        ModuleLoadingMode::Eager
     }
 
     /// `cudaRuntimeGetVersion`. Query; legal during capture.
