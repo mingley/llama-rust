@@ -17749,6 +17749,18 @@ impl Sim {
         Err(SimError::Invalid { why: "d3d9" })
     }
 
+    /// `cuD3D10GetDevices` plus `cudaD3D10GetDevices`. Direct3D 10 interop
+    /// is not modeled.
+    ///
+    /// Always Invalid `"d3d10"`. Distinct from [`Self::d3d9_get_devices`]
+    /// and from [`Self::d3d11_get_devices`]. Unknown devices are Invalid
+    /// `"device not in profile"`. Query; legal during capture. This VM does
+    /// not invent `cuD3D10CtxCreate` this slice.
+    pub fn d3d10_get_devices(&self, device: DeviceId) -> Result<(), SimError> {
+        let _gpu = self.profile.gpu(device)?;
+        Err(SimError::Invalid { why: "d3d10" })
+    }
+
     /// `cudaMemcpy3DWithAttributesAsync`.
     ///
     /// [`MemcpySrcAccessOrder::Stream`] is [`Self::memcpy_3d_async`].
