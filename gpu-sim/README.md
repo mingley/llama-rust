@@ -159,6 +159,7 @@ warp scheduler, L1, …   ← do not model
 | `device_get_by_uuid` is the inverse of `device_get_uuid` | `cuDeviceGetByUuid` |
 | `device_get_luid` is always-zero LUID plus node mask (also `DeviceProperties.luid`) | `cuDeviceGetLuid` |
 | `device_get_texture_1d_linear_max_width` is always 0 (CUDA linear textures are not modeled) | `cuDeviceGetTexture1DLinearMaxWidth` |
+| `array_create` is Invalid (CUDA arrays are not modeled) | `cuArrayCreate` / `cuArray3DCreate` |
 | `device_get_pci_bus_id` is a synthetic `domain:bus:device.function` (also `DeviceProperties` PCI ids) | `cudaDeviceGetPciBusId` |
 | `device_get_by_pci_bus_id` is the inverse of `device_get_pci_bus_id` | `cudaDeviceGetByPCIBusId` |
 | `stream_get_flags` is 0 blocking / 1 NonBlocking | `cudaStreamGetFlags` |
@@ -971,7 +972,9 @@ pageable is bounce-buffer; host cannot touch managed while a kernel runs).
 are always 0 (host-mapped atomics and multi-device cooperative are not
 modeled; example SKUs are discrete). `SparseCudaArraySupported` /
 `DeferredMappingCudaArraySupported` / `DmaBufSupported` are always 0
-(CUDA arrays and dma-buf are not modeled). `va_get_handle_for_address_range`
+(CUDA arrays and dma-buf are not modeled). `array_create` is
+`cuArrayCreate` / `cuArray3DCreate` (always Invalid `"cuda array"`).
+`va_get_handle_for_address_range`
 is `cuMemGetHandleForAddressRange` (always Invalid `"dma-buf not modeled"`;
 `MemRangeHandleType::DMA_BUF_FD` only). Distinct from `ipc_get` and
 `create_shareable_pool`. Query; legal during capture. No Engine `--dma-buf`.

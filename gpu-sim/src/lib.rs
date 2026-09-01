@@ -554,6 +554,8 @@
 //! [`DeferredMappingCudaArraySupported`](DeviceAttr::DeferredMappingCudaArraySupported) /
 //! [`DmaBufSupported`](DeviceAttr::DmaBufSupported) are always 0 (CUDA arrays
 //! and dma-buf are not modeled).
+//! [`array_create`](Sim::array_create) is `cuArrayCreate` / `cuArray3DCreate`
+//! (always Invalid `"cuda array"`). Query; legal during capture. No Engine `--array-create`.
 //! [`DeviceAttr::MulticastSupported`] is a GPU↔GPU [`crate::LinkKind::Nvlink`]
 //! link on that device (PCIe P2P and RDMA are not NVLS).
 //! [`DeviceAttr::VirtualMemoryManagementSupported`] is always 1 (this VM has
@@ -20902,6 +20904,37 @@ mod tests {
             }
             other => panic!("{other:?}"),
         }
+    }
+
+    #[test]
+    fn array_create_is_unsupported() {
+        let mut sim = Sim::new(h100());
+        let d = DeviceId(0);
+        match sim.array_create(d) {
+            Err(SimError::Invalid { why }) => {
+                assert!(why.contains("cuda array"), "{why}");
+            }
+            other => panic!("{other:?}"),
+        }
+        sim.begin_capture(d, StreamId(0)).unwrap();
+        match sim.array_create(d) {
+            Err(SimError::Invalid { why }) => {
+                assert!(why.contains("cuda array"), "{why}");
+            }
+            other => panic!("{other:?}"),
+        }
+        let _g = sim.end_capture().unwrap();
+        match sim.array_create(DeviceId(99)) {
+            Err(SimError::Invalid { why }) => {
+                assert!(why.contains("device not in profile"), "{why}");
+            }
+            other => panic!("{other:?}"),
+        }
+        assert_eq!(
+            sim.device_get_attribute(d, DeviceAttr::SparseCudaArraySupported)
+                .unwrap(),
+            0
+        );
     }
 
     #[test]

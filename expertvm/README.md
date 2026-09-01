@@ -522,6 +522,8 @@ unsupported; no Engine flag).
 TMA is not modeled; no Engine flag).
 `gpu-sim` `cooperative_kernel_multi_device` is
 `cudaLaunchCooperativeKernelMultiDevice` (Invalid; no Engine flag).
+`gpu-sim` `array_create` is `cuArrayCreate` (Invalid; CUDA arrays are not
+modeled; no Engine flag).
 `gpu-sim` texture 2D/3D dim caps are always 0 (`cudaDevAttrMaxTexture2DWidth`
 and Height, `MaxTexture3DWidth` / Height / Depth; no Engine flag).
 `gpu-sim` alternate texture 3D dim caps are always 0

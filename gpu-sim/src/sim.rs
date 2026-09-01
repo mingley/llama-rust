@@ -17604,6 +17604,17 @@ impl Sim {
         Err(SimError::Invalid { why: "tensor map" })
     }
 
+    /// `cuArrayCreate` / `cuArray3DCreate`. CUDA arrays are not modeled.
+    ///
+    /// Always Invalid `"cuda array"` ([`DeviceAttr::SparseCudaArraySupported`]
+    /// is 0). Distinct from [`Self::tensor_map_encode_tiled`]. Unknown devices
+    /// are Invalid `"device not in profile"`. This VM does not invent
+    /// `CUarray_format` this slice.
+    pub fn array_create(&self, device: DeviceId) -> Result<(), SimError> {
+        let _gpu = self.profile.gpu(device)?;
+        Err(SimError::Invalid { why: "cuda array" })
+    }
+
     /// `cudaMemcpy3DWithAttributesAsync`.
     ///
     /// [`MemcpySrcAccessOrder::Stream`] is [`Self::memcpy_3d_async`].
