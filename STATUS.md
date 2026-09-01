@@ -5,6 +5,15 @@ Visible five-turn extract: [docs/chatgpt-share-6a920fe1.md](docs/chatgpt-share-6
 Complete share-API extract: [docs/chatgpt-share-6a920fe1/](docs/chatgpt-share-6a920fe1/).
 Work lands on `main`. No PRs.
 
+## Shipped 2026-09-01 — CUDA cuMemAllocPitch
+
+`gpu-sim` `cuMemAllocPitch`: `malloc_pitch_with_element_size` is
+`cuMemAllocPitch`. `element_size` is CUDA `ElementSizeBytes` and must be
+4, 8, or 16. Pitch stays 512-aligned. `malloc_pitch` stays
+`cudaMallocPitch`. Host-sync; capture cannot include it. No Engine
+`--malloc-pitch-element`. `gpu-profile capture` is still refused. Dual
+score still has no `$/M tokens`.
+
 ## Shipped 2026-09-01 — CUDA cuMemcpyHtoD / DtoH
 
 `gpu-sim` `cuMemcpyHtoD` / `cuMemcpyDtoH`: `memcpy_htod` is `cuMemcpyHtoD`

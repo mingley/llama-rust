@@ -724,6 +724,9 @@
 //! `expertvm sim --device-sync-policy blocking` sets
 //! [`DeviceFlags::SCHEDULE_BLOCKING_SYNC`].
 //! [`Sim::malloc_pitch`] is `cudaMallocPitch`.
+//! [`malloc_pitch_with_element_size`](Sim::malloc_pitch_with_element_size) is
+//! `cuMemAllocPitch` (`ElementSizeBytes` 4 / 8 / 16; pitch still 512-aligned).
+//! No Engine `--malloc-pitch-element`.
 //! [`MemcpyOp`] `height` / pitches are `cudaMemcpy2DAsync` (payload `width *
 //! height`, not pitch padding). [`MemsetOp`] `height` / `pitch` are
 //! `cudaMemset2DAsync` (payload `width * height`; padding is not written).
@@ -15169,6 +15172,47 @@ mod tests {
             Err(SimError::Invalid { why }) => assert!(why.contains("memcpy2d pitch"), "{why}"),
             other => panic!("{other:?}"),
         }
+    }
+
+    #[test]
+    fn malloc_pitch_with_element_size_is_cu_mem_alloc_pitch() {
+        let mut sim = Sim::new(h100());
+        let d = DeviceId(0);
+        let s = StreamId(0);
+        let (a, pitch) = sim.malloc_pitch(d, 256, 8).unwrap();
+        assert_eq!(pitch, 512);
+        for elem in [4_u32, 8, 16] {
+            let (b, p) = sim.malloc_pitch_with_element_size(d, 256, 8, elem).unwrap();
+            assert_eq!(p, pitch);
+            assert_eq!(sim.hbm_used(d).unwrap(), 4096 * 2);
+            sim.free_sync(b).unwrap();
+            assert_eq!(sim.hbm_used(d).unwrap(), 4096);
+        }
+        match sim.malloc_pitch_with_element_size(d, 256, 8, 1) {
+            Err(SimError::Invalid { why }) => {
+                assert!(why.contains("malloc pitch element"), "{why}");
+            }
+            other => panic!("{other:?}"),
+        }
+        match sim.malloc_pitch_with_element_size(d, 256, 8, 32) {
+            Err(SimError::Invalid { why }) => {
+                assert!(why.contains("malloc pitch element"), "{why}");
+            }
+            other => panic!("{other:?}"),
+        }
+        match sim.malloc_pitch_with_element_size(d, 0, 8, 4) {
+            Err(SimError::Invalid { why }) => assert!(why.contains("malloc pitch"), "{why}"),
+            other => panic!("{other:?}"),
+        }
+        sim.begin_capture(d, s).unwrap();
+        match sim.malloc_pitch_with_element_size(d, 256, 8, 4) {
+            Err(SimError::Invalid { why }) => {
+                assert!(why.contains("cannot capture alloc/free"), "{why}");
+            }
+            other => panic!("{other:?}"),
+        }
+        let _end = sim.end_capture().unwrap();
+        sim.free_sync(a).unwrap();
     }
 
     #[test]

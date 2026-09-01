@@ -16679,6 +16679,27 @@ impl Sim {
         Ok((id, pitch))
     }
 
+    /// `cuMemAllocPitch`. [`Self::malloc_pitch`] is `cudaMallocPitch`.
+    ///
+    /// `element_size` is CUDA `ElementSizeBytes` and must be 4, 8, or 16.
+    /// Other sizes Invalid `"malloc pitch element"`. Pitch is still
+    /// `align_up(width, 512)` (this VM does not vary pitch by element size).
+    /// Host-synchronous; capture cannot include it.
+    pub fn malloc_pitch_with_element_size(
+        &mut self,
+        device: DeviceId,
+        width: u64,
+        height: u64,
+        element_size: u32,
+    ) -> Result<(AllocId, u64), SimError> {
+        if element_size != 4 && element_size != 8 && element_size != 16 {
+            return Err(SimError::Invalid {
+                why: "malloc pitch element",
+            });
+        }
+        self.malloc_pitch(device, width, height)
+    }
+
     /// `cudaMalloc3D`: aligned 3D allocation. Returns `(ptr, pitch)`.
     ///
     /// Pitch is `align_up(width, 512)`. Size charged is `pitch * height * depth`.

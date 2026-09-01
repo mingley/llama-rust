@@ -5225,7 +5225,16 @@ model, do not celebrate the sim.
     `--memcpy-htod`. `gpu-profile capture` is still refused. Dual score
     still has no `$/M tokens`.
 
-487. [ ] Next numbered PLAN item after 486 is the next `gpu-sim` / Engine /
+487. [x] `gpu-sim` `cuMemAllocPitch`:
+    [`malloc_pitch_with_element_size`](Sim::malloc_pitch_with_element_size)
+    is `cuMemAllocPitch`. `element_size` is CUDA `ElementSizeBytes` and must
+    be 4, 8, or 16 (`"malloc pitch element"`). Pitch stays
+    `align_up(width, 512)` (this VM does not vary pitch by element size).
+    [`malloc_pitch`](Sim::malloc_pitch) stays `cudaMallocPitch`. Host-sync;
+    capture cannot include it. No Engine `--malloc-pitch-element`.
+    `gpu-profile capture` is still refused. Dual score still has no `$/M tokens`.
+
+488. [ ] Next numbered PLAN item after 487 is the next `gpu-sim` / Engine /
     serve / expertvm mechanical API that is still missing, or the next official
     decode family. Prefer remaining CUDA-shaped twins over more
     OpenAI HTTP veneer. Do not invent F32 `output.scale`. Do not invent a
@@ -5497,7 +5506,10 @@ model, do not celebrate the sim.
     Do not invent a second `cuMemcpyDtoH` / `memcpy_dtoh`. Do not invent
     Engine `--memcpy-htod`. Do not invent `cuMemcpyDtoD` as a named alias
     of [`memcpy_peer`](Sim::memcpy_peer) (`cuMemcpyDtoDAsync` stays
-    [`memcpy_device_to_device`](Sim::memcpy_device_to_device)). Do not
+    [`memcpy_device_to_device`](Sim::memcpy_device_to_device)). Do not invent
+    a second `cuMemAllocPitch` / `malloc_pitch_with_element_size`. Do not
+    invent Engine `--malloc-pitch-element`. Do not invent pitch that varies
+    by `ElementSizeBytes` (this VM keeps 512-align). Do not
     spend the next item on an OpenAI-compatible HTTP veneer.
 
 Stop if Phase 1 traces say residency cannot work. Do not invent an
