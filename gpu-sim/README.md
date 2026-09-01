@@ -157,6 +157,7 @@ warp scheduler, L1, …   ← do not model
 | `device_get_uuid` is a synthetic 16-octet id (also `DeviceProperties.uuid`) | `cuDeviceGetUuid` |
 | `device_get_by_uuid` is the inverse of `device_get_uuid` | `cuDeviceGetByUuid` |
 | `device_get_luid` is always-zero LUID plus node mask (also `DeviceProperties.luid`) | `cuDeviceGetLuid` |
+| `device_get_texture_1d_linear_max_width` is always 0 (CUDA linear textures are not modeled) | `cuDeviceGetTexture1DLinearMaxWidth` |
 | `device_get_pci_bus_id` is a synthetic `domain:bus:device.function` (also `DeviceProperties` PCI ids) | `cudaDeviceGetPciBusId` |
 | `device_get_by_pci_bus_id` is the inverse of `device_get_pci_bus_id` | `cudaDeviceGetByPCIBusId` |
 | `stream_get_flags` is 0 blocking / 1 NonBlocking | `cudaStreamGetFlags` |
@@ -1083,7 +1084,9 @@ profile name). `device_get_uuid` is `cuDeviceGetUuid` (synthetic 16-octet
 id; also `DeviceProperties.uuid`). `device_get_by_uuid` is
 `cuDeviceGetByUuid` (inverse). `device_get_luid` is `cuDeviceGetLuid`
 (always-zero Windows LUID plus node mask; also `DeviceProperties.luid`
-and `luidDeviceNodeMask`). `device_get_pci_bus_id` is
+and `luidDeviceNodeMask`). `device_get_texture_1d_linear_max_width` is
+`cuDeviceGetTexture1DLinearMaxWidth` (always 0; CUDA linear textures
+are not modeled). `device_get_pci_bus_id` is
 `cudaDeviceGetPciBusId` (synthetic PCI string; also `DeviceProperties`
 PCI ids; `pciSubSystemID` is always 0; `luid` is always 0). `device_get_by_pci_bus_id` is `cudaDeviceGetByPCIBusId`
 (inverse). `device_total_mem` is `cuDeviceTotalMem` (HBM bytes).

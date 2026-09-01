@@ -965,7 +965,8 @@ pub enum DeviceAttr {
     /// [`Self::MaxTexture3DHeightAlt`].
     MaxTexture3DDepthAlt,
     /// `cudaDevAttrMaxTexture1DLinearWidth` (always 0; CUDA linear textures
-    /// are not modeled). Distinct from [`Self::MaxTexture1DWidth`].
+    /// are not modeled). Distinct from [`Self::MaxTexture1DWidth`]. Also
+    /// [`crate::Sim::device_get_texture_1d_linear_max_width`].
     MaxTexture1DLinearWidth,
     /// `cudaDevAttrMaxTexture2DLinearWidth` (always 0; CUDA linear textures
     /// are not modeled). Distinct from [`Self::MaxTexture2DWidth`].

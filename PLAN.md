@@ -6217,7 +6217,14 @@ model, do not celebrate the sim.
     `gpu-profile capture` is still refused. Dual score still has no
     `$/M tokens`.
 
-588. [ ] Next numbered PLAN item after 587 is the next `gpu-sim` / Engine /
+588. [x] `gpu-sim` `Sim::device_get_texture_1d_linear_max_width` is
+    `cuDeviceGetTexture1DLinearMaxWidth`. Always 0 (CUDA linear textures
+    are not modeled). Query; legal during capture. Distinct from
+    `MaxTexture1DLinearWidth`. This VM does not invent Engine `--texture-1d-linear-max`,
+    occupancy SM counts, or `cudaChooseDevice`. `gpu-profile capture` is
+    still refused. Dual score still has no `$/M tokens`.
+
+589. [ ] Next numbered PLAN item after 588 is the next `gpu-sim` / Engine /
     serve / expertvm mechanical API that is still missing, or the next official
     decode family. Prefer remaining CUDA-shaped twins over more
     OpenAI HTTP veneer. Do not invent F32 `output.scale`. Do not invent a
@@ -6406,6 +6413,10 @@ model, do not celebrate the sim.
     Do not invent a second `cudaDevAttrVulkanCigSupported`. Do not invent
     Engine `--vulkan-cig`. Do not invent OpenGL CIG this slice.
     Do not reverse VulkanCigSupported staying 0.
+    Do not invent a second `cuDeviceGetTexture1DLinearMaxWidth` /
+    `device_get_texture_1d_linear_max_width`. Do not invent Engine
+    `--texture-1d-linear-max`. Do not invent `CUarray_format` this
+    slice. Do not reverse texture 1D linear max width staying 0.
     Do not invent a second `cudaStreamAddCallback`.
     Do not invent Engine `--stream-callback` (same wall as second live
     `cudaLaunchHostFunc` after miss DMA).
@@ -6715,6 +6726,10 @@ model, do not celebrate the sim.
     Do not invent a second VulkanCigSupported DeviceAttr. Do not invent
     Engine `--vulkan`. Do not invent Vulkan interop this slice.
     Do not reverse VulkanCigSupported staying 0.
+    Do not invent a second `device_get_texture_1d_linear_max_width` API.
+    Do not invent Engine `--tex1d-linear-max`. Do not invent format or
+    channel-count args this slice. Do not reverse texture 1D linear max
+    width staying 0.
     Do not invent a second DeviceLaunch in-flight destroy-complete check or Engine
     `--device-launch-destroy`. Do not abort an in-flight DeviceLaunch when
     `destroy_graph` succeeds. Do not delay destroy of an idle exec. Do not invent
@@ -7244,6 +7259,9 @@ model, do not celebrate the sim.
     Do not invent a second `vulkan_cig_supported` DeviceProperties
     field. Do not invent Engine `--cig-vulkan`. Do not reverse
     VulkanCigSupported 0.
+    Do not invent a second `device_get_texture_1d_linear_max_width`
+    method. Do not invent Engine `--linear-max-width`. Do not reverse
+    texture 1D linear max width 0.
     Do not
     spend the next item on an OpenAI-compatible HTTP veneer.
 

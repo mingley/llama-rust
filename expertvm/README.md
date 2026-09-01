@@ -493,7 +493,7 @@ D3D12 CUDA-in-graphics is not modeled; no Engine flag).
 Vulkan CUDA-in-graphics is not modeled; no Engine flag).
 `gpu-sim` linear texture 1D/2D dim caps are always 0
 (`cudaDevAttrMaxTexture1DLinearWidth`, `MaxTexture2DLinearWidth`, Height,
-and Pitch; no Engine flag).
+and Pitch; `cuDeviceGetTexture1DLinearMaxWidth` is the same 0; no Engine flag).
 `gpu-sim` texture 2D gather dim caps are always 0
 (`cudaDevAttrMaxTexture2DGatherWidth` and Height; no Engine flag).
 `gpu-sim` mipmapped texture 1D/2D dim caps are always 0

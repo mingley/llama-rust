@@ -5,6 +5,14 @@ Visible five-turn extract: [docs/chatgpt-share-6a920fe1.md](docs/chatgpt-share-6
 Complete share-API extract: [docs/chatgpt-share-6a920fe1/](docs/chatgpt-share-6a920fe1/).
 Work lands on `main`. No PRs.
 
+## Shipped 2026-09-01 — CUDA `cuDeviceGetTexture1DLinearMaxWidth`
+
+`gpu-sim` `Sim::device_get_texture_1d_linear_max_width` is
+`cuDeviceGetTexture1DLinearMaxWidth`. Always 0 (CUDA linear textures
+are not modeled). Query; legal during capture. Distinct from
+`MaxTexture1DLinearWidth`. This VM does not invent Engine `--texture-1d-linear-max`.
+`gpu-profile capture` is still refused. Dual score still has no `$/M tokens`.
+
 ## Shipped 2026-09-01 — CUDA `cudaDevAttrVulkanCigSupported`
 
 `gpu-sim` `DeviceAttr::VulkanCigSupported` is always 0. Vulkan

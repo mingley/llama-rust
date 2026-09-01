@@ -19433,6 +19433,20 @@ impl Sim {
         Ok(([0; 8], 0))
     }
 
+    /// `cuDeviceGetTexture1DLinearMaxWidth`. Query; legal during capture.
+    ///
+    /// Always 0; CUDA linear textures are not modeled. Format and channel
+    /// count are not arguments (always 0 regardless). Distinct from
+    /// [`DeviceAttr::MaxTexture1DLinearWidth`] (same 0 via
+    /// [`Self::device_get_attribute`]). Unknown devices are Invalid.
+    pub fn device_get_texture_1d_linear_max_width(
+        &self,
+        device: DeviceId,
+    ) -> Result<u64, SimError> {
+        let _gpu = self.profile.gpu(device)?;
+        Ok(0)
+    }
+
     /// `cuDeviceGetByUuid`. Query; legal during capture.
     ///
     /// Inverse of [`Self::device_get_uuid`]. Unknown UUID is Invalid
