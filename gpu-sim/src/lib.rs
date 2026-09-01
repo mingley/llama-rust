@@ -783,6 +783,9 @@
 //! (empty until a compiled kernel exists). Distinct from
 //! [`device_get_name`](Sim::device_get_name). Query; legal during capture.
 //! No Engine `--func-name`.
+//! [`func_get_param_info`](Sim::func_get_param_info) is `cuFuncGetParamInfo`
+//! (always Invalid `"unknown function"` until a compiled kernel exists).
+//! Query; legal during capture. No Engine `--func-param-info`.
 //! [`func_set_attribute`](Sim::func_set_attribute) /
 //! [`func_get_attribute`](Sim::func_get_attribute) are `cudaFuncSetAttribute` /
 //! `GetAttribute` ([`FuncAttr`]). Typed setters stay. Get is a query
@@ -17933,6 +17936,38 @@ mod tests {
         }
         let eight = Sim::new(HardwareProfile::example_8xh100_nvlink());
         assert_eq!(eight.func_get_name(DeviceId(1)).unwrap(), "");
+    }
+
+    #[test]
+    fn func_get_param_info_is_unknown_without_compiled_kernel() {
+        let mut sim = Sim::new(h100());
+        let d = DeviceId(0);
+        match sim.func_get_param_info(d, 0) {
+            Err(SimError::Invalid { why }) => {
+                assert!(why.contains("unknown function"), "{why}");
+            }
+            other => panic!("{other:?}"),
+        }
+        match sim.func_get_param_info(d, 1) {
+            Err(SimError::Invalid { why }) => {
+                assert!(why.contains("unknown function"), "{why}");
+            }
+            other => panic!("{other:?}"),
+        }
+        sim.begin_capture(d, StreamId(0)).unwrap();
+        match sim.func_get_param_info(d, 0) {
+            Err(SimError::Invalid { why }) => {
+                assert!(why.contains("unknown function"), "{why}");
+            }
+            other => panic!("{other:?}"),
+        }
+        let _g = sim.end_capture().unwrap();
+        match sim.func_get_param_info(DeviceId(99), 0) {
+            Err(SimError::Invalid { why }) => {
+                assert!(why.contains("device not in profile"), "{why}");
+            }
+            other => panic!("{other:?}"),
+        }
     }
 
     #[test]
