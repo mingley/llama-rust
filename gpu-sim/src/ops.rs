@@ -957,7 +957,8 @@ pub enum DeviceAttr {
     /// `cudaDevAttrPageableMemoryAccess` (always 0; pageable is bounce-buffer).
     PageableMemoryAccess,
     /// `cudaDevAttrStreamPrioritiesSupported` (always 1; this VM has
-    /// [`crate::Sim::set_stream_priority`]).
+    /// [`crate::Sim::set_stream_priority`] and
+    /// [`crate::Sim::device_get_stream_priority_range`]).
     StreamPrioritiesSupported,
     /// `cudaDevAttrGpuOverlap` ([`crate::GpuProfile::copy_engines`] `> 0`).
     GpuOverlap,
@@ -2146,8 +2147,11 @@ pub struct KernelAttrs {
     ///
     /// [`None`] inherits the stream (`cudaStreamCreateWithPriority`). [`Some`]
     /// overrides for this kernel only; memcpy and other stream work stay on the
-    /// stream priority. Higher values start first when compute contends.
-    /// Decode identity stays [`None`]. Capture snapshots the effective value
+    /// stream priority. Numerically lower values start first when compute
+    /// contends (CUDA). Launch-attribute and graph-node values are stored
+    /// unclamped; stream Get/SetPriority clamp to
+    /// [`crate::Sim::device_get_stream_priority_range`]. Decode identity stays
+    /// [`None`]. Capture snapshots the effective value
     /// (`cudaKernelNodeAttributePriority`). Default graph replay still uses the
     /// launch stream unless `cudaGraphInstantiateFlagUseNodePriority`.
     pub priority: Option<i32>,

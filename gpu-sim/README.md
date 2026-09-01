@@ -188,7 +188,7 @@ warp scheduler, L1, …   ← do not model
 | `MemsetOp` depth/ysize bill `width * height * depth` | `cudaMemset3DAsync` |
 | graph-mem used is live graph allocs; reserved holds unused until trim | `cudaDeviceGetGraphMemAttribute` / `GraphMemTrim` |
 | stream[i+1].start ≥ stream[i].finish (`Operation` timestamps) | queue wait vs run |
-| higher `set_stream_priority` starts first under contention | launch overhead |
+| numerically lower `set_stream_priority` starts first under contention (`cudaDeviceGetStreamPriorityRange`) | launch overhead |
 | `compute_slots>=2` overlaps independent kernels at full issue rate | kernel duration (not SM-partition) |
 | `cudaLaunchCooperativeKernel` occupies every compute slot (`cooperative_kernel`) | leftover kernels cannot Hyper-Q overlap |
 | `cudaLaunchAttributeCooperative` (`KernelNodeAttr::Cooperative`) | same occupancy; `graph_exec_kernel_set_params` still refuses a mismatch |
@@ -213,7 +213,7 @@ warp scheduler, L1, …   ← do not model
 | CUDA 13 `cudaLaunchAttributeSharedMemoryMode` (`PortableSharedMode`) | Default uses `MaxDynamicSharedMemorySize`; RequirePortable refuses oversize; AllowNonPortable allows up to opt-in max |
 | `cudaLaunchKernel` `sharedMemBytes` | `0` is identity; above `max_shared_mem_per_block` needs the function attr or AllowNonPortable |
 | `cudaLaunchAttributeNvlinkUtilCentricScheduling` | hint `0`/`1`; occupies every Hyper-Q slot when the profile has NVLink |
-| `cudaLaunchAttributePriority` (`kernel_with` / `KernelAttrs::priority`) | `None` inherits stream create priority; `Some` overrides that kernel; higher starts first under contention |
+| `cudaLaunchAttributePriority` (`kernel_with` / `KernelAttrs::priority`) | `None` inherits stream create priority; `Some` overrides that kernel; numerically lower starts first under contention; stream Get/SetPriority clamp to `device_get_stream_priority_range` |
 | `set_stream_sm_permille` is a duration-only SM fraction (‰) | compute-bound kernels scale; memory-bound keep full HBM; does not partition Hyper-Q |
 | CUDA green contexts (`cuGreenCtxCreate`) | complementary SM spans may overlap kernels even when `compute_slots` is 1; same-span contexts share exclusive compute |
 | `cuDevSmResourceSplit` (`dev_sm_resource_split`) | explicit ‰ groups; `smCount` 0 is remaining; coschedule counts / BACKFILL stay Invalid |
@@ -1342,8 +1342,11 @@ stream (NULL serializes with every stream).
 `host_pin_bytes` caps page-locked host (`cudaMallocHost` / `cudaHostRegister`);
 overflow is `PinOom`. Example default is unlimited.
 `set_stream_priority` is the priority-only helper.
-`stream_create_with_priority` is `cudaStreamCreateWithPriority` (flags +
-priority; higher first when compute contends). `KernelAttrs::priority` is `cudaLaunchAttributePriority`
+`stream_create_with_priority` is `cudaStreamCreateWithPriority` (flags plus
+priority; clamped to `device_get_stream_priority_range`; numerically lower
+first when compute contends). `device_get_stream_priority_range` is
+`cudaDeviceGetStreamPriorityRange` (example H100 least `0`, greatest `-5`).
+`KernelAttrs::priority` is `cudaLaunchAttributePriority`
 (`None` inherits the stream; `Some` overrides that kernel only).
 `stream_copy_attributes` is `cudaStreamCopyAttributes`
 (priority, SM permille, mem-sync domain/map, synchronization policy,
@@ -1506,7 +1509,7 @@ default instantiate still uses the launch stream unless `USE_NODE_PRIORITY`).
 `--kernel-priority N` is `cudaLaunchAttributePriority`.
 Decode identity stays `kernel`. `USE_NODE_PRIORITY` at
 instantiate schedules those node priorities instead of the launch stream. `set_created_streams_priority` assigns created streams
-their id. `set_stream_sm_permille` is a duration-only SM fraction
+`-id` (then clamps). `set_stream_sm_permille` is a duration-only SM fraction
 (compute-bound kernels scale; memory-bound keep full HBM; default unset is
 a full chip; does not partition Hyper-Q). CUDA green contexts bind an SM
 span so complementary streams may overlap under exclusive compute.

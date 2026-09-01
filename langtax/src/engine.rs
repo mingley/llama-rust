@@ -3298,7 +3298,10 @@ mod tests {
             },
         );
         assert_eq!(on.copy_pri, 0, "copy stays NULL priority 0");
-        assert_eq!(on.compute_pri, 1, "compute is stream 1 at priority 1");
+        assert_eq!(
+            on.compute_pri, -1,
+            "compute is stream 1 at CUDA priority -1"
+        );
         assert_eq!(on.compute_stream, StreamId(1));
         assert!(on.launches >= 2, "launches={}", on.launches);
     }
@@ -3893,8 +3896,8 @@ mod tests {
         assert_eq!(on.copy_pri, 0, "seq 0 copy stays NULL priority 0");
         assert_eq!(on.compute_stream, StreamId(2));
         assert_eq!(
-            on.compute_pri, 2,
-            "compute is stream n_copy at priority n_copy"
+            on.compute_pri, -2,
+            "compute is stream n_copy at CUDA priority -n_copy"
         );
         assert!(on.launches >= 2, "launches={}", on.launches);
     }
@@ -3999,7 +4002,7 @@ mod tests {
             },
         );
         assert_eq!(on.compute_stream, StreamId(2), "decode compute is stream 2");
-        assert_eq!(on.compute_pri, 2, "decode stream priority equals stream id");
+        assert_eq!(on.compute_pri, -2, "decode stream priority is -stream id");
         assert!(on.launches >= 2, "launches={}", on.launches);
     }
 

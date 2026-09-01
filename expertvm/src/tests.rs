@@ -9425,7 +9425,7 @@ fn simulated_gpu_store_stream_priority_marks_compute() {
     )
     .expect("gpu");
     assert_eq!(gpu.stream_priority(DeviceId(0), gpu_sim::StreamId(0)), 0);
-    assert_eq!(gpu.stream_priority(DeviceId(0), gpu_sim::StreamId(1)), 1);
+    assert_eq!(gpu.stream_priority(DeviceId(0), gpu_sim::StreamId(1)), -1);
 }
 
 #[test]
@@ -11002,7 +11002,7 @@ fn simulated_gpu_store_decode_priority_marks_higher_stream() {
     assert_eq!(gpu.compute_stream(), gpu_sim::StreamId(2));
     assert!(
         gpu.stream_priority(DeviceId(0), gpu_sim::StreamId(2))
-            > gpu.stream_priority(DeviceId(0), gpu_sim::StreamId(1)),
+            < gpu.stream_priority(DeviceId(0), gpu_sim::StreamId(1)),
         "decode stream must outrank prefill"
     );
 }

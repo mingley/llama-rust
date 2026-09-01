@@ -649,7 +649,13 @@
 //! (capture-legal); Set is host-side like those setters.
 //! [`Sim::stream_get_flags`] is `cudaStreamGetFlags` (`0` blocking / `1`
 //! NonBlocking; NULL follows [`legacy_null_stream`](Sim::legacy_null_stream)).
-//! [`Sim::stream_get_priority`] is `cudaStreamGetPriority`.
+//! [`Sim::stream_get_priority`] is `cudaStreamGetPriority` (clamped to
+//! [`device_get_stream_priority_range`](Sim::device_get_stream_priority_range)).
+//! [`Sim::device_get_stream_priority_range`] is
+//! `cudaDeviceGetStreamPriorityRange` (example H100 least `0`, greatest `-5`).
+//! Query; legal during capture. Stream create / SetPriority clamp; graph
+//! kernel-node SetPriority stays unclamped (PLAN 506). Numerically lower
+//! priorities start first under contention.
 //! [`Sim::stream_get_id`] is `cudaStreamGetId` (unique per device/stream;
 //! not the caller-chosen [`StreamId`]).
 //! [`Sim::stream_get_device`] is `cudaStreamGetDevice` / `cuStreamGetDevice`
@@ -812,12 +818,13 @@
 //! reserved bytes return on trim). [`graph_pool`](Sim::graph_pool) is that pool.
 //! [`Sim::set_stream_priority`] is the priority-only helper;
 //! [`stream_create_with_priority`](Sim::stream_create_with_priority) is
-//! `cudaStreamCreateWithPriority` (flags + priority).
+//! `cudaStreamCreateWithPriority` (flags plus priority; clamped to
+//! [`device_get_stream_priority_range`](Sim::device_get_stream_priority_range)).
+//! [`Sim::set_created_streams_priority`] assigns created streams `-id`.
 //! [`stream_copy_attributes`](Sim::stream_copy_attributes) is
 //! `cudaStreamCopyAttributes` (priority, SM permille, mem-sync domain/map,
 //! synchronization policy, NVLink-util-centric scheduling, and access-policy
 //! window).
-//! [`Sim::set_created_streams_priority`] assigns created streams their id.
 //! [`Sim::instantiate_graph`] is `cudaGraphInstantiate` (host-sync; returns a
 //! new exec id; first [`launch_graph`](Sim::launch_graph) of a definition
 //! creates a primary exec). Unused conditional handles are
@@ -1018,7 +1025,10 @@
 //! it.
 //! [`KernelAttrs::priority`] is `cudaLaunchAttributePriority`: `None` inherits
 //! the stream (`cudaStreamCreateWithPriority`); `Some` overrides for that kernel
-//! when compute contends (higher first). Capture snapshots the effective value.
+//! when compute contends (numerically lower first). Capture snapshots the
+//! effective value. Stream Get/SetPriority clamp to
+//! [`device_get_stream_priority_range`](Sim::device_get_stream_priority_range);
+//! graph kernel-node SetPriority stays unclamped.
 //! Default instantiate still uses the launch stream unless
 //! [`GraphInstantiateFlags::USE_NODE_PRIORITY`]. Device-launch graphs allow it.
 //! Decode identity stays [`Sim::kernel`] (inherit stream). [`graph_exec_kernel_node_get_priority`](Sim::graph_exec_kernel_node_get_priority) /
@@ -10712,7 +10722,7 @@ mod tests {
             enq(sim.memcpy_pinned_to_device(d, a, 4096, StreamId(0)));
             sim.synchronize().unwrap();
             let hi = KernelAttrs {
-                priority: Some(1),
+                priority: Some(-1),
                 ..KernelAttrs::default()
             };
             if hi_first {
@@ -10743,7 +10753,7 @@ mod tests {
         let mut sim = Sim::new(h100());
         sim.set_stream_priority(d, StreamId(0), 0).unwrap();
         sim.set_stream_priority(d, StreamId(1), 0).unwrap();
-        sim.set_stream_priority(d, StreamId(2), 5).unwrap();
+        sim.set_stream_priority(d, StreamId(2), -5).unwrap();
         let a = sim.alloc(d, 4096, StreamId(0)).unwrap();
         enq(sim.memcpy_pinned_to_device(d, a, 4096, StreamId(0)));
         sim.synchronize().unwrap();
@@ -10768,7 +10778,7 @@ mod tests {
         let kind = KernelKind::other(1 << 40, 4096);
         let mut sim = Sim::new(h100());
         sim.set_stream_priority(d, StreamId(1), 0).unwrap();
-        sim.set_stream_priority(d, StreamId(2), 5).unwrap();
+        sim.set_stream_priority(d, StreamId(2), -5).unwrap();
         let a = sim.alloc(d, 4096, StreamId(0)).unwrap();
         enq(sim.memcpy_pinned_to_device(d, a, 4096, StreamId(0)));
         sim.synchronize().unwrap();
@@ -10793,7 +10803,7 @@ mod tests {
         assert_eq!(
             started,
             vec![StreamId(1)],
-            "explicit launch priority 0 must not keep the stream's 5; {started:?}"
+            "explicit launch priority 0 must not keep the stream's -5; {started:?}"
         );
     }
 
@@ -10812,16 +10822,19 @@ mod tests {
             &[a],
             s,
             KernelAttrs {
-                priority: Some(7),
+                priority: Some(-5),
                 ..KernelAttrs::default()
             },
         ));
         let g = sim.end_capture().unwrap();
-        assert_eq!(sim.graph_kernel_node_get_priority(g, 0).unwrap(), 7);
+        assert_eq!(sim.graph_kernel_node_get_priority(g, 0).unwrap(), -5);
         let exec = sim
             .instantiate_graph_with_flags(g, GraphInstantiateFlags::DEVICE_LAUNCH)
             .expect("device-launch allows launch-attribute priority");
-        assert_eq!(sim.graph_exec_kernel_node_get_priority(exec, 0).unwrap(), 7);
+        assert_eq!(
+            sim.graph_exec_kernel_node_get_priority(exec, 0).unwrap(),
+            -5
+        );
     }
 
     #[test]
@@ -10845,12 +10858,12 @@ mod tests {
                 &[a],
                 StreamId(0),
                 KernelAttrs {
-                    priority: Some(5),
+                    priority: Some(-5),
                     ..KernelAttrs::default()
                 },
             ));
             let g = sim.end_capture().unwrap();
-            assert_eq!(sim.graph_kernel_node_get_priority(g, 0).unwrap(), 5);
+            assert_eq!(sim.graph_kernel_node_get_priority(g, 0).unwrap(), -5);
             let flags = if node_pri {
                 GraphInstantiateFlags::USE_NODE_PRIORITY
             } else {
@@ -10913,7 +10926,7 @@ mod tests {
         let run = |hi_first: bool| {
             let mut sim = Sim::new(h100());
             sim.set_stream_priority(d, StreamId(0), 0).unwrap();
-            sim.set_stream_priority(d, StreamId(1), 1).unwrap();
+            sim.set_stream_priority(d, StreamId(1), -1).unwrap();
             let a = sim.alloc(d, 4096, StreamId(0)).unwrap();
             enq(sim.memcpy_pinned_to_device(d, a, 4096, StreamId(0)));
             sim.synchronize().unwrap();
@@ -10942,7 +10955,7 @@ mod tests {
     fn stream_copy_attributes_copies_priority_and_sm() {
         let mut sim = Sim::new(h100());
         let d = DeviceId(0);
-        sim.set_stream_priority(d, StreamId(1), 7).unwrap();
+        sim.set_stream_priority(d, StreamId(1), -5).unwrap();
         sim.set_stream_sm_permille(d, StreamId(1), 250).unwrap();
         sim.set_stream_mem_sync_domain(d, StreamId(1), MemSyncDomain::Remote)
             .unwrap();
@@ -10954,7 +10967,7 @@ mod tests {
             .unwrap();
         sim.stream_copy_attributes(d, StreamId(2), d, StreamId(1))
             .unwrap();
-        assert_eq!(sim.stream_priority(d, StreamId(2)), 7);
+        assert_eq!(sim.stream_priority(d, StreamId(2)), -5);
         assert_eq!(sim.stream_sm_permille(d, StreamId(2)), 250);
         assert_eq!(
             sim.stream_mem_sync_domain(d, StreamId(2)),
@@ -10990,7 +11003,7 @@ mod tests {
             let d = DeviceId(0);
             sim.set_stream_priority(d, StreamId(0), 0).unwrap();
             sim.set_stream_priority(d, StreamId(1), 0).unwrap();
-            sim.set_stream_priority(d, StreamId(2), 5).unwrap();
+            sim.set_stream_priority(d, StreamId(2), -5).unwrap();
             let a = sim.alloc(d, 4096, StreamId(0)).unwrap();
             let b = sim.alloc(d, 4096, StreamId(0)).unwrap();
             enq(sim.memcpy_pinned_to_device(d, a, 4096, StreamId(0)));
@@ -10999,7 +11012,7 @@ mod tests {
             sim.begin_capture(d, StreamId(2)).unwrap();
             enq(sim.kernel(d, kind.clone(), &[a], &[a], StreamId(2)));
             let g = sim.end_capture().unwrap();
-            assert_eq!(sim.graph_kernel_node_get_priority(g, 0).unwrap(), 5);
+            assert_eq!(sim.graph_kernel_node_get_priority(g, 0).unwrap(), -5);
             let flags = if node_pri {
                 GraphInstantiateFlags::USE_NODE_PRIORITY
             } else {
@@ -11036,21 +11049,21 @@ mod tests {
         let mut sim = Sim::new(h100());
         let d = DeviceId(0);
         let s = StreamId(0);
-        sim.set_stream_priority(d, s, 3).unwrap();
+        sim.set_stream_priority(d, s, -1).unwrap();
         let g = sim.create_graph(d, s).unwrap();
         let a = sim.alloc(d, 4096, s).unwrap();
         enq(sim.memcpy_pinned_to_device(d, a, 4096, s));
         sim.synchronize().unwrap();
         sim.graph_add_kernel(g, KernelKind::other(8, 8), &[a], &[a])
             .unwrap();
-        sim.set_stream_priority(d, s, 9).unwrap();
+        sim.set_stream_priority(d, s, -5).unwrap();
         let h = sim.create_graph(d, s).unwrap();
         sim.graph_add_kernel(h, KernelKind::other(8, 8), &[a], &[a])
             .unwrap();
-        assert_eq!(sim.graph_kernel_node_get_priority(g, 0).unwrap(), 3);
-        assert_eq!(sim.graph_kernel_node_get_priority(h, 0).unwrap(), 9);
+        assert_eq!(sim.graph_kernel_node_get_priority(g, 0).unwrap(), -1);
+        assert_eq!(sim.graph_kernel_node_get_priority(h, 0).unwrap(), -5);
         sim.graph_kernel_node_copy_attributes(g, 0, h, 0).unwrap();
-        assert_eq!(sim.graph_kernel_node_get_priority(g, 0).unwrap(), 9);
+        assert_eq!(sim.graph_kernel_node_get_priority(g, 0).unwrap(), -5);
         sim.graph_kernel_node_set_priority(g, 0, 1).unwrap();
         assert_eq!(sim.graph_kernel_node_get_priority(g, 0).unwrap(), 1);
         let exec = sim.instantiate_graph(g).unwrap();
@@ -11426,7 +11439,7 @@ mod tests {
         let d = DeviceId(0);
         sim.set_stream_priority(d, StreamId(0), 0).unwrap();
         sim.set_stream_priority(d, StreamId(1), 0).unwrap();
-        sim.set_stream_priority(d, StreamId(2), 5).unwrap();
+        sim.set_stream_priority(d, StreamId(2), -5).unwrap();
         let a = sim.alloc(d, 4096, StreamId(0)).unwrap();
         let b = sim.alloc(d, 4096, StreamId(0)).unwrap();
         enq(sim.memcpy_pinned_to_device(d, a, 4096, StreamId(0)));
@@ -11438,11 +11451,11 @@ mod tests {
         let _ = sim
             .instantiate_graph_with_flags(g, GraphInstantiateFlags::USE_NODE_PRIORITY)
             .unwrap();
-        assert_eq!(sim.graph_kernel_node_get_priority(g, 0).unwrap(), 5);
-        assert_eq!(sim.graph_exec_kernel_node_get_priority(g, 0).unwrap(), 5);
+        assert_eq!(sim.graph_kernel_node_get_priority(g, 0).unwrap(), -5);
+        assert_eq!(sim.graph_exec_kernel_node_get_priority(g, 0).unwrap(), -5);
         sim.graph_kernel_node_set_priority(g, 0, 0).unwrap();
         assert_eq!(sim.graph_kernel_node_get_priority(g, 0).unwrap(), 0);
-        assert_eq!(sim.graph_exec_kernel_node_get_priority(g, 0).unwrap(), 5);
+        assert_eq!(sim.graph_exec_kernel_node_get_priority(g, 0).unwrap(), -5);
         enq(sim.kernel(d, kind.clone(), &[b], &[b], StreamId(1)));
         let n = sim.launch_graph(g, StreamId(0)).unwrap();
         assert_eq!(n, 1);
@@ -11466,7 +11479,7 @@ mod tests {
         let d = DeviceId(0);
         sim.set_stream_priority(d, StreamId(0), 0).unwrap();
         sim.set_stream_priority(d, StreamId(1), 0).unwrap();
-        sim.set_stream_priority(d, StreamId(2), 5).unwrap();
+        sim.set_stream_priority(d, StreamId(2), -5).unwrap();
         let a = sim.alloc(d, 4096, StreamId(0)).unwrap();
         let b = sim.alloc(d, 4096, StreamId(0)).unwrap();
         enq(sim.memcpy_pinned_to_device(d, a, 4096, StreamId(0)));
@@ -11479,7 +11492,7 @@ mod tests {
             .instantiate_graph_with_flags(g, GraphInstantiateFlags::USE_NODE_PRIORITY)
             .unwrap();
         sim.graph_exec_kernel_node_set_priority(g, 0, 0).unwrap();
-        assert_eq!(sim.graph_kernel_node_get_priority(g, 0).unwrap(), 5);
+        assert_eq!(sim.graph_kernel_node_get_priority(g, 0).unwrap(), -5);
         assert_eq!(sim.graph_exec_kernel_node_get_priority(g, 0).unwrap(), 0);
         enq(sim.kernel(d, kind, &[b], &[b], StreamId(1)));
         let n = sim.launch_graph(g, StreamId(0)).unwrap();
@@ -11502,7 +11515,7 @@ mod tests {
         let mut sim = Sim::new(h100());
         sim.set_created_streams_priority(2).unwrap();
         assert_eq!(sim.stream_priority(DeviceId(0), StreamId(0)), 0);
-        assert_eq!(sim.stream_priority(DeviceId(0), StreamId(1)), 1);
+        assert_eq!(sim.stream_priority(DeviceId(0), StreamId(1)), -1);
     }
 
     fn sync_policy_pair() -> (Sim, Sim, DeviceId, StreamId) {
@@ -15584,8 +15597,8 @@ mod tests {
         assert_eq!(sim.stream_get_flags(d, StreamId(1)).unwrap(), 0);
         sim.set_stream_blocking(d, StreamId(1), false).unwrap();
         assert_eq!(sim.stream_get_flags(d, StreamId(1)).unwrap(), 1);
-        sim.set_stream_priority(d, StreamId(2), 7).unwrap();
-        assert_eq!(sim.stream_get_priority(d, StreamId(2)).unwrap(), 7);
+        sim.set_stream_priority(d, StreamId(2), -5).unwrap();
+        assert_eq!(sim.stream_get_priority(d, StreamId(2)).unwrap(), -5);
         match sim.stream_get_flags(DeviceId(1), StreamId(0)) {
             Err(SimError::Invalid { why }) => assert!(why.contains("device"), "{why}"),
             other => panic!("{other:?}"),
@@ -15608,11 +15621,11 @@ mod tests {
             .unwrap();
         assert!(!sim.stream_is_blocking(d, s));
         assert_eq!(sim.stream_get_flags(d, s).unwrap(), 1);
-        sim.stream_create_with_priority(d, s, StreamCreateFlags::DEFAULT, 7)
+        sim.stream_create_with_priority(d, s, StreamCreateFlags::DEFAULT, -5)
             .unwrap();
         assert!(sim.stream_is_blocking(d, s));
         assert_eq!(sim.stream_get_flags(d, s).unwrap(), 0);
-        assert_eq!(sim.stream_get_priority(d, s).unwrap(), 7);
+        assert_eq!(sim.stream_get_priority(d, s).unwrap(), -5);
         match sim.stream_create_with_flags(d, s, 2) {
             Err(SimError::Invalid { why }) => {
                 assert!(why.contains("stream create flags"), "{why}");
@@ -15704,6 +15717,43 @@ mod tests {
     }
 
     #[test]
+    fn device_get_stream_priority_range_is_cuda_device_get_stream_priority_range() {
+        let mut sim = Sim::new(h100());
+        let d = DeviceId(0);
+        assert_eq!(sim.device_get_stream_priority_range(d).unwrap(), (0, -5));
+        sim.set_stream_priority(d, StreamId(1), 7).unwrap();
+        assert_eq!(sim.stream_get_priority(d, StreamId(1)).unwrap(), 0);
+        sim.set_stream_priority(d, StreamId(1), -7).unwrap();
+        assert_eq!(sim.stream_get_priority(d, StreamId(1)).unwrap(), -5);
+        sim.set_stream_priority(d, StreamId(1), -1).unwrap();
+        assert_eq!(sim.stream_get_priority(d, StreamId(1)).unwrap(), -1);
+        match sim.device_get_stream_priority_range(DeviceId(1)) {
+            Err(SimError::Invalid { why }) => assert!(why.contains("device"), "{why}"),
+            other => panic!("{other:?}"),
+        }
+        sim.begin_capture(d, StreamId(0)).unwrap();
+        assert_eq!(sim.device_get_stream_priority_range(d).unwrap(), (0, -5));
+        let _g = sim.end_capture().unwrap();
+        let a = sim.malloc(d, 4096).unwrap();
+        let g = sim.create_graph(d, StreamId(0)).unwrap();
+        sim.graph_add_kernel(g, KernelKind::other(8, 8), &[a], &[a])
+            .unwrap();
+        sim.graph_kernel_node_set_priority(g, 0, 9).unwrap();
+        assert_eq!(sim.graph_kernel_node_get_priority(g, 0).unwrap(), 9);
+        let mut tight = Sim::new(
+            HardwareProfile::parse(
+                "gpus=1\nstream_priority_least=0\nstream_priority_greatest=-1\n",
+            )
+            .unwrap(),
+        );
+        tight.set_stream_priority(d, StreamId(2), -5).unwrap();
+        assert_eq!(tight.stream_get_priority(d, StreamId(2)).unwrap(), -1);
+        tight.set_created_streams_priority(3).unwrap();
+        assert_eq!(tight.stream_priority(d, StreamId(1)), -1);
+        assert_eq!(tight.stream_priority(d, StreamId(2)), -1);
+    }
+
+    #[test]
     fn stream_get_set_attribute_wraps_existing_state() {
         let mut sim = Sim::new(h100());
         let d = DeviceId(0);
@@ -15713,13 +15763,13 @@ mod tests {
                 .unwrap(),
             StreamAttrValue::Priority(0)
         );
-        sim.stream_set_attribute(d, s, StreamAttr::Priority, StreamAttrValue::Priority(7))
+        sim.stream_set_attribute(d, s, StreamAttr::Priority, StreamAttrValue::Priority(-5))
             .unwrap();
-        assert_eq!(sim.stream_get_priority(d, s).unwrap(), 7);
+        assert_eq!(sim.stream_get_priority(d, s).unwrap(), -5);
         assert_eq!(
             sim.stream_get_attribute(d, s, StreamAttr::Priority)
                 .unwrap(),
-            StreamAttrValue::Priority(7)
+            StreamAttrValue::Priority(-5)
         );
         sim.stream_set_attribute(
             d,
@@ -15777,11 +15827,11 @@ mod tests {
         assert_eq!(
             sim.stream_get_attribute(d, s, StreamAttr::Priority)
                 .unwrap(),
-            StreamAttrValue::Priority(7)
+            StreamAttrValue::Priority(-5)
         );
-        sim.stream_set_attribute(d, s, StreamAttr::Priority, StreamAttrValue::Priority(1))
+        sim.stream_set_attribute(d, s, StreamAttr::Priority, StreamAttrValue::Priority(-1))
             .unwrap();
-        assert_eq!(sim.stream_get_priority(d, s).unwrap(), 1);
+        assert_eq!(sim.stream_get_priority(d, s).unwrap(), -1);
         let _g = sim.end_capture().unwrap();
     }
 

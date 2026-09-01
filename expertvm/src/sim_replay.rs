@@ -1196,8 +1196,9 @@ pub struct SimCfg {
     pub legacy_null: bool,
     /// `cudaStreamCreateWithPriority` for seq-streams (`set_created_streams_priority`).
     ///
-    /// Created streams get priority equal to their id, so a later sequence
-    /// wins when compute contends. A no-op unless [`Self::seq_streams`].
+    /// Created streams get priority `-id` (CUDA: numerically lower runs first),
+    /// so a later sequence wins when compute contends. A no-op unless
+    /// [`Self::seq_streams`].
     /// [`crate::GpuStoreCfg::stream_priority`] marks the store compute stream.
     pub stream_priority: bool,
     /// `cudaGraphExecUpdate` a parked leaf exec onto the next miss alloc.

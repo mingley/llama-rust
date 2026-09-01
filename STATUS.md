@@ -5,6 +5,17 @@ Visible five-turn extract: [docs/chatgpt-share-6a920fe1.md](docs/chatgpt-share-6
 Complete share-API extract: [docs/chatgpt-share-6a920fe1/](docs/chatgpt-share-6a920fe1/).
 Work lands on `main`. No PRs.
 
+## Shipped 2026-09-01 — CUDA `cudaDeviceGetStreamPriorityRange`
+
+`gpu-sim` `device_get_stream_priority_range` is `cudaDeviceGetStreamPriorityRange`.
+Query; legal during capture. Example H100 is least `0`, greatest `-5`. Stream
+create / SetPriority / SetAttribute clamp out of range. GetPriority reports the
+clamped value. Numerically lower priorities start first under contention.
+Graph kernel-node SetPriority stays unclamped for ExecUpdate (PLAN 506).
+`set_created_streams_priority` assigns `-stream_id` then clamps. This VM does
+not invent Engine `--stream-priority-range` or `cudaStreamDestroy`. `gpu-profile
+capture` is still refused. Dual score still has no `$/M tokens`.
+
 ## Shipped 2026-09-01 — CUDA `cudaStreamBeginRecaptureToGraph`
 
 `gpu-sim` `begin_recapture_to_graph` is `cudaStreamBeginRecaptureToGraph` /

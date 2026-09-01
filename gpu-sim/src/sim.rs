@@ -1,6 +1,5 @@
 //! Discrete-event GPU-systems simulator.
 
-use std::cmp::Reverse;
 use std::collections::btree_map::Entry;
 use std::collections::{BTreeMap, BTreeSet};
 
@@ -319,7 +318,8 @@ struct Op {
     skipped: bool,
     /// Scheduling priority (`cudaStreamCreateWithPriority`,
     /// `cudaLaunchAttributePriority`, or a kernel-node attribute when the exec
-    /// used `cudaGraphInstantiateFlagUseNodePriority`).
+    /// used `cudaGraphInstantiateFlagUseNodePriority`). Numerically lower
+    /// starts first (CUDA).
     priority: i32,
     /// Programmatic dependent launch flags for this op.
     pdl: ProgrammaticLaunch,
@@ -543,6 +543,8 @@ struct GraphStep {
     destroyed: bool,
     /// Stream or launch-attribute priority snapshotted at add/capture
     /// (`cudaKernelNodeAttributePriority` / `cudaLaunchAttributePriority`).
+    /// Unclamped storage (ExecUpdate compares this; PLAN 506). Numerically
+    /// lower starts first when the exec used UseNodePriority.
     priority: i32,
     /// Programmatic dependent launch (`cudaLaunchAttributeProgrammaticStreamSerialization`).
     pdl: ProgrammaticLaunch,
@@ -1461,23 +1463,48 @@ impl Sim {
         self.extra_transfer_ns = ns;
     }
 
-    /// CUDA stream priority (`cudaStreamCreateWithPriority`). Higher runs first
-    /// when multiple ops are ready for the same resource. Default `0`.
+    /// CUDA stream priority (`cudaStreamCreateWithPriority`). Numerically
+    /// lower runs first when multiple ops are ready for the same resource.
+    /// Out of range values are clamped to
+    /// [`Self::device_get_stream_priority_range`]. Default `0`.
     pub fn set_stream_priority(
         &mut self,
         device: DeviceId,
         stream: StreamId,
         priority: i32,
     ) -> Result<(), SimError> {
-        let _gpu = self.profile.gpu(device)?;
+        let priority = self.clamp_stream_priority(device, priority)?;
         let _prev = self.priority.insert((device, stream), priority);
         Ok(())
     }
 
     /// Current priority for `(device, stream)`, or `0` if unset.
+    ///
+    /// Stream SetPriority stores the clamped value. Graph kernel-node
+    /// priorities are a separate unclamped field.
     #[must_use]
     pub fn stream_priority(&self, device: DeviceId, stream: StreamId) -> i32 {
         self.priority.get(&(device, stream)).copied().unwrap_or(0)
+    }
+
+    fn clamp_stream_priority(&self, device: DeviceId, priority: i32) -> Result<i32, SimError> {
+        let gpu = self.profile.gpu(device)?;
+        let lo = gpu.stream_priority_greatest.min(gpu.stream_priority_least);
+        let hi = gpu.stream_priority_greatest.max(gpu.stream_priority_least);
+        Ok(priority.clamp(lo, hi))
+    }
+
+    /// `cudaDeviceGetStreamPriorityRange`. Query; legal during capture.
+    ///
+    /// Returns `(leastPriority, greatestPriority)`. Example H100 is
+    /// `(0, -5)`. Unknown devices are Invalid. Stream create / SetPriority
+    /// clamp to this range. Graph kernel-node SetPriority stays unclamped.
+    pub fn device_get_stream_priority_range(
+        &self,
+        device: DeviceId,
+    ) -> Result<(i32, i32), SimError> {
+        let gpu = self.profile.gpu(device)?;
+        Ok((gpu.stream_priority_least, gpu.stream_priority_greatest))
     }
 
     /// [`KernelAttrs::priority`] if set, else [`Self::stream_priority`].
@@ -2243,8 +2270,8 @@ impl Sim {
     /// `cudaStreamCreateWithPriority`. Capture cannot include it.
     ///
     /// Flags are [`Self::stream_create_with_flags`]. Priority is
-    /// [`Self::set_stream_priority`]. This VM does not cap the range
-    /// (`cudaDeviceGetStreamPriorityRange` is not modeled).
+    /// [`Self::set_stream_priority`] (clamped to
+    /// [`Self::device_get_stream_priority_range`]).
     pub fn stream_create_with_priority(
         &mut self,
         device: DeviceId,
@@ -2280,8 +2307,9 @@ impl Sim {
 
     /// `cudaStreamGetPriority`. Query; legal during capture.
     ///
-    /// Unset streams are `0`. Unknown devices are Invalid. This VM does not
-    /// cap the range (`cudaDeviceGetStreamPriorityRange` is not modeled).
+    /// Unset streams are `0`. Unknown devices are Invalid. Out of range
+    /// SetPriority values are clamped to
+    /// [`Self::device_get_stream_priority_range`].
     pub fn stream_get_priority(&self, device: DeviceId, stream: StreamId) -> Result<i32, SimError> {
         let _gpu = self.profile.gpu(device)?;
         Ok(self.stream_priority(device, stream))
@@ -2401,13 +2429,14 @@ impl Sim {
 
     /// `cudaStreamCreateWithPriority` for streams `1 .. n_streams` on every GPU.
     ///
-    /// Priority equals the stream id (higher id runs first when compute
-    /// contends). [`StreamId::NULL`] stays `0`. `n_streams <= 1` is a no-op.
+    /// Priority is `-stream_id` (numerically lower runs first), then clamped
+    /// to [`Self::device_get_stream_priority_range`]. [`StreamId::NULL`]
+    /// stays `0`. `n_streams <= 1` is a no-op.
     pub fn set_created_streams_priority(&mut self, n_streams: u8) -> Result<(), SimError> {
         let devices: Vec<DeviceId> = self.profile.gpus.iter().map(|g| g.id).collect();
         for d in devices {
             for s in 1..n_streams {
-                self.set_stream_priority(d, StreamId(u16::from(s)), i32::from(s))?;
+                self.set_stream_priority(d, StreamId(u16::from(s)), -i32::from(s))?;
             }
         }
         Ok(())
@@ -10459,7 +10488,9 @@ impl Sim {
     /// After instantiate this does not retarget the exec; use
     /// [`Self::graph_exec_kernel_node_set_priority`]. Capture cannot include it.
     /// A parked in-flight-destroyed exec is `"unknown graph"`. Live exec
-    /// SetAttribute stays.
+    /// SetAttribute stays. Values are stored unclamped (PLAN 506 ExecUpdate);
+    /// stream Get/SetPriority clamp to
+    /// [`Self::device_get_stream_priority_range`].
     pub fn graph_kernel_node_set_priority(
         &mut self,
         graph: GraphId,
@@ -21667,7 +21698,7 @@ impl Sim {
                 let pri = o.priority;
                 candidates.push((pri, id.0, *id));
             }
-            candidates.sort_by_key(|&(pri, oid, _)| (Reverse(pri), oid));
+            candidates.sort_by_key(|&(pri, oid, _)| (pri, oid));
             for (_, _, id) in candidates {
                 if self.try_start(id)? {
                     if self.is_running(id) {

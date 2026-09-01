@@ -595,7 +595,8 @@ Transferring until the copy-stream event completes; `evict` leaves the
 key `Evicting` until the stream-ordered free completes. Lease of
 Transferring/Cold/Evicting is refused. `Operation` timestamps make
 `stream[i+1].start ≥ stream[i].finish` inspectable. `set_stream_priority`
-is CUDA stream priority (higher starts first when compute contends).
+is CUDA stream priority (numerically lower starts first when compute
+contends; clamped to `cudaDeviceGetStreamPriorityRange`).
 `sim_replay` `--max-batch N` is a trace-level admission cap (N sequences
 per engine iteration at a token; `0` admits the whole token).
 `expertvm schedule` is open-loop continuous batching: sequences arrive at
@@ -760,7 +761,7 @@ Agent loop: modify expertvm → `cargo test` (semantics) → simulator
   `cudaMemsetAsync` of pinned/VMM miss pages (HBM write, compute occupancy;
   not mapped/managed/pageable/memcpy-batch; distinct from `--graph-memset`
   scratch). `--stream-priority` is
-  `cudaStreamCreateWithPriority` on seq-streams (priority = stream id). `--graph-update`
+  `cudaStreamCreateWithPriority` on seq-streams (priority `-stream_id`). `--graph-update`
   is `cudaGraphExecUpdate` of a parked leaf (store and `--cuda-graphs`
   walker). `--graph-set-params` is `cudaGraphExecKernelNodeSetParams` of a
   parked leaf (no second capture; legal with mem nodes). `--graph-clone` is `cudaGraphClone` of a leaf capture before
@@ -5927,7 +5928,19 @@ model, do not celebrate the sim.
     `--graph-recapture`. `gpu-profile capture` is still refused. Dual score
     still has no `$/M tokens`.
 
-557. [ ] Next numbered PLAN item after 556 is the next `gpu-sim` / Engine /
+557. [x] `gpu-sim` `device_get_stream_priority_range` is CUDA
+    `cudaDeviceGetStreamPriorityRange`. Query; legal during capture.
+    Returns `(least, greatest)` from the device profile (example H100 is
+    least `0`, greatest `-5`). Stream create / SetPriority / SetAttribute
+    clamp out of range. GetPriority reports the clamped value. Numerically
+    lower priorities start first under contention (CUDA). Graph kernel-node
+    SetPriority stays unclamped for ExecUpdate (PLAN 506).
+    `set_created_streams_priority` assigns `-stream_id` then clamps.
+    This VM does not invent Engine `--stream-priority-range` or
+    `cudaStreamDestroy`. `gpu-profile capture` is still refused. Dual score
+    still has no `$/M tokens`.
+
+558. [ ] Next numbered PLAN item after 557 is the next `gpu-sim` / Engine /
     serve / expertvm mechanical API that is still missing, or the next official
     decode family. Prefer remaining CUDA-shaped twins over more
     OpenAI HTTP veneer. Do not invent F32 `output.scale`. Do not invent a
@@ -6177,6 +6190,14 @@ model, do not celebrate the sim.
     topology or alloc/free mismatches. Do not refuse destroy of an undefined
     graph. Do not reverse matching recapture realloc returning the existing
     graph-mem pointer.
+    Do not invent a second `cudaDeviceGetStreamPriorityRange` /
+    `device_get_stream_priority_range`. Do not invent Engine
+    `--stream-priority-range`. Do not reverse CUDA stream-priority polarity
+    (numerically lower runs first). Do not reverse stream Get/SetPriority
+    clamping to the device range. Do not reverse PLAN 506 unclamped ExecUpdate
+    kernel-node priority comparison. Do not refuse
+    `graph_exec_kernel_node_set_priority` out of the stream range. Do not
+    clamp GraphStep.priority for ExecUpdate.
     Do not invent a second DeviceLaunch in-flight destroy-complete check or Engine
     `--device-launch-destroy`. Do not abort an in-flight DeviceLaunch when
     `destroy_graph` succeeds. Do not delay destroy of an idle exec. Do not invent
@@ -6305,7 +6326,7 @@ model, do not celebrate the sim.
     occupancy APIs). Do not invent
     `cudaGraphMemAllocNodeSetParams` (it would resize HBM),
     a second graph-alloc accessDescs / Engine `--graph-alloc-access`,
-    `cudaDeviceGetStreamPriorityRange`, CUDA version
+    a second `cudaDeviceGetStreamPriorityRange`, CUDA version
     numbers, example `$/M tokens` rents, or `cudaStreamDestroy`.
     **`best_of` / `use_beam_search` stay out of `parse_gen_req` until a
     real beam Engine exists.** Do not default `--engine`. Do not invent
@@ -6618,6 +6639,10 @@ model, do not celebrate the sim.
     topology or alloc/free mismatches. Do not refuse destroy of an undefined
     graph. Do not reverse matching recapture realloc returning the existing
     graph-mem pointer.
+    Do not invent a second `cudaDeviceGetStreamPriorityRange`. Do not invent
+    Engine `--stream-priority-range`. Do not reverse numerically-lower-first
+    stream scheduling. Do not skip clamping stream create to the profile
+    range. Graph kernel-node SetPriority stays unclamped for ExecUpdate.
     Do not
     spend the next item on an OpenAI-compatible HTTP veneer.
 

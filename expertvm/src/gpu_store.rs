@@ -294,7 +294,8 @@ pub struct GpuStoreCfg {
     /// Off by default (`cudaStreamNonBlocking` compute). Decode identity stays
     /// overlapping.
     pub legacy_null: bool,
-    /// `cudaStreamCreateWithPriority` on created streams (priority = stream id).
+    /// `cudaStreamCreateWithPriority` on created streams (priority is
+    /// `-stream_id`, CUDA numerically lower first).
     ///
     /// Default off: copy stays NULL at priority 0, compute is `StreamId(1)`.
     /// [`Self::seq_streams`] also marks the extra copy streams and compute
@@ -750,7 +751,7 @@ pub struct GpuStoreCfg {
     ///
     /// Prefill stays on the existing compute stream. [`Self::stream_priority`]
     /// must also be on so decode actually preempts leftover prefill (priority
-    /// equals stream id). Engine token-boundary ITL then
+    /// is `-stream_id`). Engine token-boundary ITL then
     /// [`SimulatedGpuStore::token_clock_ns`] (decode stream only) so leftover
     /// prefill does not inflate ITL. Default off: one compute stream (decode
     /// identity); ITL still [`SimulatedGpuStore::clock_ns`] (full drain).
