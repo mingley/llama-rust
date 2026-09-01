@@ -130,7 +130,9 @@
 //! is [`pool_trim_to`](Sim::pool_trim_to) `(device_mempool, 0)` after score.
 //! `expertvm sim --mempool-no-reuse` is [`MemPoolAttr::ReuseAllowOpportunistic`]
 //! `0`. `expertvm sim --mempool-max N` is [`create_pool_with_props`](Sim::create_pool_with_props)
-//! with [`MemPoolProps::max_size`] then [`set_device_mempool`](Sim::set_device_mempool). Destroying a user pool returns
+//! with [`MemPoolProps::max_size`] then [`set_device_mempool`](Sim::set_device_mempool).
+//! [`MemPoolProps::usage`] must be [`MemHandleUsage::NONE`] (HW decompress is
+//! not modeled). Destroying a user pool returns
 //! unused cache to the OS; outstanding allocs stay valid; the default pool
 //! cannot be destroyed; destroying the current pool rebinds GetMemPool to
 //! GetDefaultMemPool.
@@ -1215,16 +1217,16 @@ pub use ops::{
     IpcMemFlags, KernelAttrs, KernelBuf, KernelKind, KernelNodeAttr, KernelNodeAttrValue,
     KernelNodeParams, LaunchCompletionEvent, MemAccessDesc, MemAccessFlags, MemAdvise,
     MemAllocationGranularity, MemAllocationProp, MemAllocationType, MemAttach, MemAttachFlags,
-    MemCreateFlags, MemExportFlags, MemHandleType, MemLocationType, MemMapFlags, MemPoolAttr,
-    MemPoolExportFlags, MemPoolProps, MemRangeAttr, MemRangeAttrValue, MemRangeHandleFlags,
-    MemRangeHandleType, MemReserveFlags, MemSyncDomain, MemSyncDomainMap, MemcpyAttributes,
-    MemcpyFlags, MemcpyOp, MemcpySrcAccessOrder, MemoryType, MemsetOp, MulticastBindFlags,
-    MulticastCreateFlags, MulticastGranularity, MulticastObjectProp, NvSciSyncAttrFlags, Operation,
-    PdlLaunch, PeerAccessFlags, Place, PointerAttr, PointerAttributes, PortableClusterMode,
-    PortableSharedMode, PrefetchFlags, ProgrammaticEvent, ProgrammaticLaunch, SharedMemCarveout,
-    SharedMemoryMode, SmResource, StreamAttr, StreamAttrValue, StreamCallbackFlags,
-    StreamCaptureInfo, StreamCaptureMode, StreamCreateFlags, SynchronizationPolicy,
-    UserObjectFlags, WaitValueCmp, WaitValueFlags, WriteValueFlags,
+    MemCreateFlags, MemExportFlags, MemHandleType, MemHandleUsage, MemLocationType, MemMapFlags,
+    MemPoolAttr, MemPoolExportFlags, MemPoolProps, MemRangeAttr, MemRangeAttrValue,
+    MemRangeHandleFlags, MemRangeHandleType, MemReserveFlags, MemSyncDomain, MemSyncDomainMap,
+    MemcpyAttributes, MemcpyFlags, MemcpyOp, MemcpySrcAccessOrder, MemoryType, MemsetOp,
+    MulticastBindFlags, MulticastCreateFlags, MulticastGranularity, MulticastObjectProp,
+    NvSciSyncAttrFlags, Operation, PdlLaunch, PeerAccessFlags, Place, PointerAttr,
+    PointerAttributes, PortableClusterMode, PortableSharedMode, PrefetchFlags, ProgrammaticEvent,
+    ProgrammaticLaunch, SharedMemCarveout, SharedMemoryMode, SmResource, StreamAttr,
+    StreamAttrValue, StreamCallbackFlags, StreamCaptureInfo, StreamCaptureMode, StreamCreateFlags,
+    SynchronizationPolicy, UserObjectFlags, WaitValueCmp, WaitValueFlags, WriteValueFlags,
 };
 pub use probe::{probe_topology, P2pProbe, TopologyProbe};
 pub use profile::{
@@ -17541,6 +17543,27 @@ mod tests {
                 other => panic!("{other:?}"),
             }
             let _g = sim.end_capture().unwrap();
+        }
+    }
+
+    #[test]
+    fn create_pool_with_props_usage_is_cuda_mempool_props_usage() {
+        let mut sim = Sim::new(h100());
+        let p = sim.create_pool_with_props(MemPoolProps::default()).unwrap();
+        assert!(sim.pool_get_id(p).unwrap() >= 1);
+        match sim.create_pool_with_props(MemPoolProps {
+            usage: MemHandleUsage::HW_DECOMPRESS,
+            ..MemPoolProps::default()
+        }) {
+            Err(SimError::Invalid { why }) => assert!(why.contains("pool usage"), "{why}"),
+            other => panic!("{other:?}"),
+        }
+        match sim.create_pool_with_props(MemPoolProps {
+            usage: 1,
+            ..MemPoolProps::default()
+        }) {
+            Err(SimError::Invalid { why }) => assert!(why.contains("pool usage"), "{why}"),
+            other => panic!("{other:?}"),
         }
     }
 

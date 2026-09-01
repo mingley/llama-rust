@@ -928,8 +928,9 @@ completes). `create_pool` / `create_pool_with_props` / `alloc_from_pool` /
 `cudaMemPoolTrimTo` / `cudaMemPoolGetAttribute` / `SetAttribute` /
 `cuMemPoolGetId`.
 `MemPoolProps` is pinned alloc type, NONE or POSIX-FD handles, a device
-location, and `max_size` (`0` unlimited; otherwise reserved cannot grow
-past it). Typed `create_pool` / `create_shareable_pool` stay.
+location, `max_size` (`0` unlimited; otherwise reserved cannot grow
+past it), and `usage` (`MemHandleUsage::NONE` only; HW decompress is not
+modeled). Typed `create_pool` / `create_shareable_pool` stay.
 `MemPoolAttr` is ReleaseThreshold / UsedMemCurrent / UsedMemHigh /
 ReservedMemCurrent / ReservedMemHigh plus reuse flags (default 1). Only
 `ReuseAllowOpportunistic=0` skips cache reuse (OS alloc; unused cached

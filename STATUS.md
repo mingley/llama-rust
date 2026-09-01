@@ -5,6 +5,14 @@ Visible five-turn extract: [docs/chatgpt-share-6a920fe1.md](docs/chatgpt-share-6
 Complete share-API extract: [docs/chatgpt-share-6a920fe1/](docs/chatgpt-share-6a920fe1/).
 Work lands on `main`. No PRs.
 
+## Shipped 2026-09-01 — CUDA mempool props usage
+
+`gpu-sim` `CUmemPoolProps::usage`: `MemPoolProps::usage` is
+`cudaMemPoolProps::usage`. Must be `MemHandleUsage::NONE`.
+`MemHandleUsage::HW_DECOMPRESS` is Invalid (hardware decompress is not
+modeled). Typed `create_pool` stays. No Engine `--pool-usage`.
+`gpu-profile capture` is still refused. Dual score still has no `$/M tokens`.
+
 ## Shipped 2026-09-01 — CUDA cuMemcpy2DUnaligned
 
 `gpu-sim` `cuMemcpy2DUnaligned`: `memcpy_2d_unaligned` is

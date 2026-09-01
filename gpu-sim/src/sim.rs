@@ -24,16 +24,16 @@ use crate::ops::{
     IpcMemFlags, KernelAttrs, KernelBuf, KernelKind, KernelNodeAttr, KernelNodeAttrValue,
     KernelNodeParams, LaunchCompletionEvent, MemAccessDesc, MemAccessFlags, MemAdvise,
     MemAllocationGranularity, MemAllocationProp, MemAllocationType, MemAttach, MemAttachFlags,
-    MemCreateFlags, MemExportFlags, MemHandleType, MemLocationType, MemMapFlags, MemPoolAttr,
-    MemPoolExportFlags, MemPoolProps, MemRangeAttr, MemRangeAttrValue, MemRangeHandleFlags,
-    MemRangeHandleType, MemReserveFlags, MemSyncDomain, MemSyncDomainMap, MemcpyAttributes,
-    MemcpyFlags, MemcpyOp, MemcpySrcAccessOrder, MemoryType, MemsetOp, MulticastBindFlags,
-    MulticastCreateFlags, MulticastGranularity, MulticastObjectProp, NvSciSyncAttrFlags, Operation,
-    PdlLaunch, PeerAccessFlags, Place, PointerAttr, PointerAttributes, PortableClusterMode,
-    PortableSharedMode, PrefetchFlags, ProgrammaticEvent, ProgrammaticLaunch, SharedMemCarveout,
-    SharedMemoryMode, SmResource, StreamAttr, StreamAttrValue, StreamCallbackFlags,
-    StreamCaptureInfo, StreamCaptureMode, StreamCreateFlags, SynchronizationPolicy,
-    UserObjectFlags, WaitValueCmp, WaitValueFlags, WriteValueFlags,
+    MemCreateFlags, MemExportFlags, MemHandleType, MemHandleUsage, MemLocationType, MemMapFlags,
+    MemPoolAttr, MemPoolExportFlags, MemPoolProps, MemRangeAttr, MemRangeAttrValue,
+    MemRangeHandleFlags, MemRangeHandleType, MemReserveFlags, MemSyncDomain, MemSyncDomainMap,
+    MemcpyAttributes, MemcpyFlags, MemcpyOp, MemcpySrcAccessOrder, MemoryType, MemsetOp,
+    MulticastBindFlags, MulticastCreateFlags, MulticastGranularity, MulticastObjectProp,
+    NvSciSyncAttrFlags, Operation, PdlLaunch, PeerAccessFlags, Place, PointerAttr,
+    PointerAttributes, PortableClusterMode, PortableSharedMode, PrefetchFlags, ProgrammaticEvent,
+    ProgrammaticLaunch, SharedMemCarveout, SharedMemoryMode, SmResource, StreamAttr,
+    StreamAttrValue, StreamCallbackFlags, StreamCaptureInfo, StreamCaptureMode, StreamCreateFlags,
+    SynchronizationPolicy, UserObjectFlags, WaitValueCmp, WaitValueFlags, WriteValueFlags,
 };
 use crate::profile::{align_up, ns_for_bytes, scale_ns_permille, HardwareProfile, LinkKind};
 
@@ -10850,7 +10850,9 @@ impl Sim {
     /// [`Self::create_shareable_pool`]. Other handle bits are Invalid
     /// `"pool handle types"`. [`Place::Device`] only (`"pool location"`).
     /// [`MemPoolProps::max_size`] `0` is unlimited; otherwise
-    /// [`Self::alloc_from_pool`] OOMs when reserved would exceed it. Typed
+    /// [`Self::alloc_from_pool`] OOMs when reserved would exceed it.
+    /// [`MemPoolProps::usage`] must be [`MemHandleUsage::NONE`] (`"pool usage"`;
+    /// hardware decompress is not modeled). Typed
     /// helpers stay. Capture cannot include it.
     pub fn create_pool_with_props(&mut self, props: MemPoolProps) -> Result<PoolId, SimError> {
         if props.alloc_type != MemAllocationType::PINNED {
@@ -10875,6 +10877,9 @@ impl Sim {
                 });
             }
         };
+        if props.usage != MemHandleUsage::NONE {
+            return Err(SimError::Invalid { why: "pool usage" });
+        }
         let id = self.insert_pool(device, shareable)?;
         self.pool_mut(id)?.max_size = props.max_size;
         Ok(id)

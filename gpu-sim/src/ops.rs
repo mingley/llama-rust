@@ -3367,13 +3367,27 @@ impl MemPoolExportFlags {
     pub const DEFAULT: u32 = 0;
 }
 
+/// `CUmemHandleUsage` bits for [`MemPoolProps::usage`].
+///
+/// [`Self::HW_DECOMPRESS`] is not modeled ([`crate::DeviceAttr::MemDecompressAlgorithmMask`]
+/// is 0).
+pub struct MemHandleUsage;
+
+impl MemHandleUsage {
+    /// `CU_MEM_HANDLE_USAGE_NONE`.
+    pub const NONE: u16 = 0;
+    /// `CU_MEM_HANDLE_USAGE_HW_DECOMPRESS`. Create is Invalid `"pool usage"`.
+    pub const HW_DECOMPRESS: u16 = 2;
+}
+
 /// `cudaMemPoolProps` for [`crate::Sim::create_pool_with_props`].
 ///
 /// [`Self::alloc_type`] must be [`MemAllocationType::PINNED`].
 /// [`Self::handle_types`] is [`MemHandleType::NONE`] or
 /// [`MemHandleType::POSIX_FILE_DESCRIPTOR`]. [`Self::location`] must be
 /// [`Place::Device`]. [`Self::max_size`] `0` is unlimited; otherwise reserved
-/// (`live + cached`) cannot grow past it.
+/// (`live + cached`) cannot grow past it. [`Self::usage`] must be
+/// [`MemHandleUsage::NONE`].
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct MemPoolProps {
     /// `cudaMemAllocationType`.
@@ -3384,6 +3398,8 @@ pub struct MemPoolProps {
     pub location: Place,
     /// Maximum reserved bytes. `0` is unlimited.
     pub max_size: u64,
+    /// `CUmemPoolProps::usage`. Must be [`MemHandleUsage::NONE`].
+    pub usage: u16,
 }
 
 impl Default for MemPoolProps {
@@ -3393,6 +3409,7 @@ impl Default for MemPoolProps {
             handle_types: MemHandleType::NONE,
             location: Place::Device(DeviceId(0)),
             max_size: 0,
+            usage: MemHandleUsage::NONE,
         }
     }
 }
