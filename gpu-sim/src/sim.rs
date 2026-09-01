@@ -14873,6 +14873,7 @@ impl Sim {
     }
 
     /// `cudaMemcpy3D`. Host-synchronous; capture cannot include it.
+    /// Unaligned pitches are [`Self::memcpy_3d_unaligned`] (identity here).
     pub fn memcpy_3d(
         &mut self,
         device: DeviceId,
@@ -14887,6 +14888,19 @@ impl Sim {
         let id = self.memcpy_3d_async(device, op, stream)?;
         self.synchronize_stream(device, stream)?;
         Ok(id)
+    }
+
+    /// `cuMemcpy3DUnaligned`. Identity with [`Self::memcpy_3d`]: this VM does
+    /// not require CUDA 3D pitch/offset alignment. Host-synchronous; capture
+    /// cannot include it. CUDA has no Async Unaligned; [`Self::memcpy_3d_async`]
+    /// stays.
+    pub fn memcpy_3d_unaligned(
+        &mut self,
+        device: DeviceId,
+        op: MemcpyOp,
+        stream: StreamId,
+    ) -> Result<OpId, SimError> {
+        self.memcpy_3d(device, op, stream)
     }
 
     /// `cudaMemcpyWithAttributesAsync`.

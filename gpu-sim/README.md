@@ -78,6 +78,7 @@ warp scheduler, L1, …   ← do not model
 | `cuMemcpyHtoD` (`memcpy_htod`) waits that stream; `memcpy_pinned_to_device` is `cuMemcpyHtoDAsync` | PCIe |
 | `cuMemcpyDtoH` (`memcpy_dtoh`) waits that stream; `memcpy_device_to_pinned` is `cuMemcpyDtoHAsync` | PCIe |
 | `cudaMemcpy3D` (`memcpy_3d`) waits that stream; `memcpy_3d_async` bills payload not padding | PCIe / NVLink / HBM |
+| `cuMemcpy3DUnaligned` (`memcpy_3d_unaligned`) is identity with `memcpy_3d` | no 3D alignment tax |
 | `cudaMemcpyBatchAsync` (`memcpy_batch_async`) 1D only; intra-batch copies share one stream-order snapshot (or empty DuringApiCall/Any deps); same-stream `cudaMallocAsync` needs no host sync | copy-engine occupancy; DuringApiCall waits those copies |
 | `cudaMemcpyWithAttributesAsync` (`memcpy_with_attributes`) Stream is `memcpy`; DuringApiCall/Any are a one-copy batch | `PreferOverlapWithCompute` ignored (discrete) |
 | `cudaMemcpy3DBatchAsync` (`memcpy_3d_batch_async`) 3D pointer-to-pointer; `flags` 0; CUDA arrays not modeled | same sibling copy-engine occupancy as 1D batch |
@@ -647,7 +648,10 @@ stay Async. No Engine `--memcpy-htod`. `MemcpyOp` `src_x` / `src_y` /
 `src_z` / `dst_x` / `dst_y` / `dst_z` are CUDA_MEMCPY2D and CUDA_MEMCPY3D
 srcPos / dstPos. Default 0. 1D origin or 2D z origin is `"memcpy origin"`.
 No Engine `--memcpy-origin`. `memcpy_3d` / `memcpy_3d_async` are `cudaMemcpy3D` /
-`cudaMemcpy3DAsync` (`MemcpyOp` must be 3D). `memcpy_batch_async` is
+`cudaMemcpy3DAsync` (`MemcpyOp` must be 3D). `memcpy_3d_unaligned` is
+`cuMemcpy3DUnaligned` (identity with `memcpy_3d`; this VM does not require
+3D alignment; host-sync; CUDA has no Async Unaligned). No Engine
+`--memcpy-3d-unaligned`. `memcpy_batch_async` is
 `cudaMemcpyBatchAsync` (1D pointer-to-pointer; copies in one batch do not
 wait for each other; 2D/3D use `memcpy_3d_batch_async`; capture
 cannot include it). `memcpy_with_attributes` is
@@ -926,7 +930,9 @@ are `cudaMemset2DAsync` (payload `width * height`; padding is not written).
 `4`; typed `memset` stays `1`). Offset, width, and nonzero pitch must divide
 that size. No Engine `--memset-element`. The fill value is not modeled.
 `malloc_3d` is `cudaMalloc3D`. `MemcpyOp` `depth` / slice heights are
-`cudaMemcpy3DAsync` (payload `width * height * depth`). `MemsetOp` `depth` /
+`cudaMemcpy3DAsync` (payload `width * height * depth`). `memcpy_3d_unaligned`
+is `cuMemcpy3DUnaligned` (identity with `memcpy_3d`). No Engine
+`--memcpy-3d-unaligned`. `MemsetOp` `depth` /
 `ysize` are `cudaMemset3DAsync` (payload `width * height * depth`).
 `graph_mem_get` / `graph_mem_set` / `graph_mem_trim` are
 `cudaDeviceGetGraphMemAttribute` / `SetGraphMemAttribute` / `GraphMemTrim`

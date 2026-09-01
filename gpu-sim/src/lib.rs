@@ -647,7 +647,10 @@
 //! `(0,0[,0])`. 1D with any origin, or 2D with a z origin, is Invalid
 //! `"memcpy origin"`. No Engine `--memcpy-origin`.
 //! [`memcpy_3d_async`](Sim::memcpy_3d_async) / [`memcpy_3d`](Sim::memcpy_3d)
-//! are `cudaMemcpy3DAsync` / `cudaMemcpy3D` ([`MemcpyOp::is_3d`]). Typed
+//! are `cudaMemcpy3DAsync` / `cudaMemcpy3D` ([`MemcpyOp::is_3d`]).
+//! [`memcpy_3d_unaligned`](Sim::memcpy_3d_unaligned) is `cuMemcpy3DUnaligned`
+//! (identity with `memcpy_3d`; this VM does not require 3D alignment; host-sync;
+//! CUDA has no Async Unaligned). No Engine `--memcpy-3d-unaligned`. Typed
 //! [`memcpy`](Sim::memcpy) stays.
 //! [`memcpy_batch_async`](Sim::memcpy_batch_async) is `cudaMemcpyBatchAsync`
 //! (1D pointer-to-pointer; copies in one batch share one stream-order snapshot
@@ -15485,6 +15488,53 @@ mod tests {
         assert_eq!(got.dst_y, 1);
         assert_eq!(got.height, 7);
         assert_eq!(got.origin_bytes(), 528);
+    }
+
+    #[test]
+    fn memcpy_3d_unaligned_is_cu_memcpy_3d_unaligned() {
+        let mut sim = Sim::new(h100());
+        let d = DeviceId(0);
+        let s = StreamId(0);
+        let (a, pitch) = sim.malloc_3d(d, 256, 4, 4).unwrap();
+        let op = MemcpyOp {
+            src: Place::HostPinned,
+            dst: Place::Device(d),
+            alloc: a,
+            bytes: 256,
+            offset: 0,
+            height: 4,
+            src_pitch: 257,
+            dst_pitch: pitch,
+            depth: 4,
+            src_height: 4,
+            dst_height: 4,
+            ..MemcpyOp::default()
+        };
+        enq(sim.memcpy_3d_unaligned(d, op.clone(), s));
+        sim.synchronize().unwrap();
+        assert_eq!(sim.bytes_moved(), 4096);
+        match sim.memcpy_3d_unaligned(
+            d,
+            MemcpyOp {
+                depth: 1,
+                ..op.clone()
+            },
+            s,
+        ) {
+            Err(SimError::Invalid { why }) => assert!(why.contains("memcpy3d depth"), "{why}"),
+            other => panic!("{other:?}"),
+        }
+        sim.begin_capture(d, s).unwrap();
+        match sim.memcpy_3d_unaligned(d, op.clone(), s) {
+            Err(SimError::Invalid { why }) => {
+                assert!(why.contains("cannot capture host-sync memcpy"), "{why}");
+            }
+            other => panic!("{other:?}"),
+        }
+        let _end = sim.end_capture().unwrap();
+        enq(sim.memcpy_3d(d, op, s));
+        sim.synchronize().unwrap();
+        assert_eq!(sim.bytes_moved(), 8192);
     }
 
     #[test]

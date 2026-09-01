@@ -5245,7 +5245,16 @@ model, do not celebrate the sim.
     origin. No Engine `--memcpy-origin`. `gpu-profile capture` is still
     refused. Dual score still has no `$/M tokens`.
 
-489. [ ] Next numbered PLAN item after 488 is the next `gpu-sim` / Engine /
+489. [x] `gpu-sim` `cuMemcpy3DUnaligned`:
+    [`memcpy_3d_unaligned`](Sim::memcpy_3d_unaligned) is
+    `cuMemcpy3DUnaligned`. Identity with [`memcpy_3d`](Sim::memcpy_3d): this
+    VM does not require CUDA 3D pitch/offset alignment. Host-sync; capture
+    cannot include it. CUDA has no Async Unaligned;
+    [`memcpy_3d_async`](Sim::memcpy_3d_async) stays. No Engine
+    `--memcpy-3d-unaligned`. `gpu-profile capture` is still refused. Dual
+    score still has no `$/M tokens`.
+
+490. [ ] Next numbered PLAN item after 489 is the next `gpu-sim` / Engine /
     serve / expertvm mechanical API that is still missing, or the next official
     decode family. Prefer remaining CUDA-shaped twins over more
     OpenAI HTTP veneer. Do not invent F32 `output.scale`. Do not invent a
@@ -5522,7 +5531,11 @@ model, do not celebrate the sim.
     invent Engine `--malloc-pitch-element`. Do not invent pitch that varies
     by `ElementSizeBytes` (this VM keeps 512-align). Do not invent a second
     CUDA_MEMCPY2D / CUDA_MEMCPY3D srcPos / dstPos / `MemcpyOp` origin
-    fields. Do not invent Engine `--memcpy-origin`. Do not
+    fields. Do not invent Engine `--memcpy-origin`. Do not invent a second
+    `cuMemcpy3DUnaligned` / `memcpy_3d_unaligned`. Do not invent
+    `cuMemcpy3DUnalignedAsync` (CUDA has no Async Unaligned). Do not invent
+    Engine `--memcpy-3d-unaligned`. Do not add 3D alignment checks to
+    `memcpy_3d`. Do not
     spend the next item on an OpenAI-compatible HTTP veneer.
 
 Stop if Phase 1 traces say residency cannot work. Do not invent an
