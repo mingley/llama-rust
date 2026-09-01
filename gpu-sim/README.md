@@ -518,8 +518,8 @@ Exec memcpy/memset/kernel SetParams re-apply those dest rules. Mixed node green 
 `MultipleDevicesNotSupported` (`"graph multiple ctx"`); exec SetParams
 re-apply that mixed-ctx rule; exec SetAttribute cannot attach
 programmatic or launch-completion events; host updates of an in-flight
-device-launch exec are Invalid (`"device launch in flight"`; destroy and
-getters stay); `update_graph` of a
+device-launch exec are Invalid (`"device launch in flight"`; getters stay;
+destroy does not abort the launch); `update_graph` of a
 device-launch exec is Invalid; cannot combine with `AUTO_FREE_ON_LAUNCH`
 (`"device launch auto free"`). Unused conditional handles are
 `ConditionalHandleUnused` (`"conditional handle unused"`).
@@ -533,9 +533,10 @@ stays a definition. `launch_graph` of a definition uses the primary exec.
 uninstantiated copy; child-graph nodes are cloned recursively (a diamond
 of shared children becomes one cloned child). Destroying the original
 child still breaks a parent that names it; a recursive clone of that
-parent keeps working. `destroy_graph` is `cudaGraphDestroy` (1 ns;
+parent keeps working. `destroy_graph` is `cudaGraphDestroy` / `cudaGraphExecDestroy` (1 ns;
 later launch is unknown; remaining graph mem is refunded; user-object
-refs held by the graph are released).
+refs held by the graph are released; destroying an in-flight device-launch
+exec does not abort the launch).
 `user_object_create` is `cudaUserObjectCreate`
 (`UserObjectFlags::NO_DESTRUCTOR_SYNC`; initial refs `1..=i32::MAX`; last
 ref records `destroy_fn`).

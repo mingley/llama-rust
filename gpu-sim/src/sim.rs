@@ -618,6 +618,9 @@ struct Graph {
     instantiate_flags: u32,
     /// Last op of an in-flight [`Sim::device_launch_graph`] (launcher or body tail).
     device_launch_tail: Option<OpId>,
+    /// [`Sim::destroy_graph`] of an in-flight device-launch exec: the handle is
+    /// unknown, but the launch still finishes (`cudaGraphExecDestroy`).
+    handle_gone: bool,
     /// First exec created from this definition. `None` on exec ids.
     primary_exec: Option<GraphId>,
     /// Definition this exec was instantiated from. `None` on definitions.
@@ -654,12 +657,23 @@ impl Sim {
         let g = self.graphs.get(&id).ok_or(SimError::Invalid {
             why: "unknown graph",
         })?;
+        if g.handle_gone {
+            return Err(SimError::Invalid {
+                why: "unknown graph",
+            });
+        }
         if g.instantiated {
             return Ok(id);
         }
-        g.primary_exec.ok_or(SimError::Invalid {
+        let exec = g.primary_exec.ok_or(SimError::Invalid {
             why: "graph not instantiated",
-        })
+        })?;
+        if self.graphs.get(&exec).is_some_and(|e| e.handle_gone) {
+            return Err(SimError::Invalid {
+                why: "unknown graph",
+            });
+        }
+        Ok(exec)
     }
 
     /// [`Self::as_exec`] plus refuse host updates while a device launch is in
@@ -3193,6 +3207,11 @@ impl Sim {
             let g = self.graphs.get(&graph).ok_or(SimError::Invalid {
                 why: "unknown graph",
             })?;
+            if g.handle_gone {
+                return Err(SimError::Invalid {
+                    why: "unknown graph",
+                });
+            }
             (g.origin, g.ready())
         };
         if self.in_capture(origin.0, stream) {
@@ -3233,8 +3252,11 @@ impl Sim {
     /// `stream`. A second device launch of the same exec before that work
     /// finishes is Invalid. Host SetParams, SetAttribute, SetEnabled, and
     /// CopyAttributes of this exec while that work is in flight are Invalid
-    /// `"device launch in flight"`. Destroy and getters stay. Capture cannot
-    /// include it. [`Self::update_graph`] of a device-launch exec is Invalid.
+    /// `"device launch in flight"`. Getters stay. Destroy is legal and does
+    /// not abort the launch (`cudaGraphExecDestroy`: the handle is unknown;
+    /// the launch still finishes). Capture cannot
+    /// include it. [`Self::update_graph`] of a device-launch
+    /// exec is Invalid.
     pub fn device_launch_graph(
         &mut self,
         graph: GraphId,
@@ -4126,6 +4148,7 @@ impl Sim {
                 auto_free_on_launch: auto_free,
                 instantiate_flags: flags,
                 device_launch_tail: None,
+                handle_gone: false,
                 primary_exec: None,
                 src: Some(graph),
                 moved_to: None,
@@ -4216,17 +4239,24 @@ impl Sim {
     }
 
     fn ensure_exec(&mut self, graph: GraphId) -> Result<GraphId, SimError> {
-        let (instantiated, primary) = {
+        let (instantiated, primary, gone) = {
             let g = self.graphs.get(&graph).ok_or(SimError::Invalid {
                 why: "unknown graph",
             })?;
-            (g.instantiated, g.primary_exec)
+            (g.instantiated, g.primary_exec, g.handle_gone)
         };
+        if gone {
+            return Err(SimError::Invalid {
+                why: "unknown graph",
+            });
+        }
         if instantiated {
             return Ok(graph);
         }
         if let Some(p) = primary {
-            return Ok(p);
+            if !self.graphs.get(&p).is_some_and(|e| e.handle_gone) {
+                return Ok(p);
+            }
         }
         self.instantiate_graph(graph)
     }
@@ -7109,6 +7139,7 @@ impl Sim {
                     auto_free_on_launch: false,
                     instantiate_flags: 0,
                     device_launch_tail: None,
+                    handle_gone: false,
                     primary_exec: None,
                     src: None,
                     moved_to: None,
@@ -7354,9 +7385,81 @@ impl Sim {
     /// independent. Destroying a parent also destroys graphs that were moved
     /// into it (`CU_GRAPH_CHILD_GRAPH_OWNERSHIP_MOVE`), including when this id
     /// is an exec (child ids are mapped back to their definitions).
+    /// Destroying an in-flight device-launch exec does not abort the launch
+    /// (`cudaGraphExecDestroy`: freed asynchronously on completion). The handle
+    /// is unknown immediately. Idle execs still drop immediately.
     pub fn destroy_graph(&mut self, graph: GraphId) -> Result<(), SimError> {
         self.fail_if_capturing("cannot capture graph destroy")?;
         self.require_not_moved(graph)?;
+        if self.graphs.get(&graph).is_some_and(|g| g.handle_gone) {
+            return Err(SimError::Invalid {
+                why: "unknown graph",
+            });
+        }
+        if self.graphs.get(&graph).is_some_and(|g| {
+            g.instantiated && g.device_launch_tail.is_some_and(|op| !self.op_done(op))
+        }) {
+            self.park_in_flight_device_launch_exec(graph)?;
+            return Ok(());
+        }
+        self.drop_graph(graph)
+    }
+
+    fn park_in_flight_device_launch_exec(&mut self, graph: GraphId) -> Result<(), SimError> {
+        let src = {
+            let g = self.graphs.get_mut(&graph).ok_or(SimError::Invalid {
+                why: "unknown graph",
+            })?;
+            g.handle_gone = true;
+            g.src
+        };
+        self.unhook_primary_exec(graph, src);
+        let device = self
+            .graphs
+            .get(&graph)
+            .ok_or(SimError::Invalid {
+                why: "unknown graph",
+            })?
+            .origin
+            .0;
+        let _gpu = self.profile.gpu(device)?;
+        self.clock = self.clock.saturating_add(1);
+        Ok(())
+    }
+
+    fn unhook_primary_exec(&mut self, exec: GraphId, src: Option<GraphId>) {
+        let Some(src) = src else {
+            return;
+        };
+        let next = self.graphs.iter().find_map(|(id, x)| {
+            (*id != exec && x.src == Some(src) && !x.handle_gone).then_some(*id)
+        });
+        if let Some(def) = self.graphs.get_mut(&src) {
+            if def.primary_exec == Some(exec) {
+                def.primary_exec = next;
+            }
+        }
+    }
+
+    fn reap_gone_device_launch(&mut self, done: OpId) -> Result<(), SimError> {
+        let ids: Vec<GraphId> = self
+            .graphs
+            .iter()
+            .filter_map(|(id, g)| {
+                (g.handle_gone && g.device_launch_tail == Some(done)).then_some(*id)
+            })
+            .collect();
+        for id in ids {
+            self.drop_graph_inner(id, false)?;
+        }
+        Ok(())
+    }
+
+    fn drop_graph(&mut self, graph: GraphId) -> Result<(), SimError> {
+        self.drop_graph_inner(graph, true)
+    }
+
+    fn drop_graph_inner(&mut self, graph: GraphId, tick: bool) -> Result<(), SimError> {
         let g = self.graphs.remove(&graph).ok_or(SimError::Invalid {
             why: "unknown graph",
         })?;
@@ -7383,23 +7486,15 @@ impl Sim {
         let device = g.origin.0;
         let _gpu = self.profile.gpu(device)?;
         if g.instantiated {
-            if let Some(src) = g.src {
-                let next = self
-                    .graphs
-                    .iter()
-                    .find_map(|(id, x)| (x.src == Some(src)).then_some(*id));
-                if let Some(def) = self.graphs.get_mut(&src) {
-                    if def.primary_exec == Some(graph) {
-                        def.primary_exec = next;
-                    }
-                }
-            }
+            self.unhook_primary_exec(graph, g.src);
         } else {
             self.release_graph_allocs(graph)?;
         }
         self.release_user_objects_for_graph(graph);
         let _src = self.clone_of.remove(&graph);
-        self.clock = self.clock.saturating_add(1);
+        if tick {
+            self.clock = self.clock.saturating_add(1);
+        }
         for kid in moved_kids {
             let src = self.graphs.get(&kid).and_then(|c| c.src);
             if let Some(c) = self.graphs.get_mut(&kid) {
@@ -7711,6 +7806,7 @@ impl Sim {
                 auto_free_on_launch: false,
                 instantiate_flags: 0,
                 device_launch_tail: None,
+                handle_gone: false,
                 primary_exec: None,
                 src: None,
                 moved_to: None,
@@ -22530,6 +22626,7 @@ impl Sim {
         }
         self.bump_graph_mem_from_op(id)?;
         self.finish_device_launch(id)?;
+        self.reap_gone_device_launch(id)?;
         self.continue_while(id)?;
         Ok(())
     }

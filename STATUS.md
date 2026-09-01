@@ -5,6 +5,16 @@ Visible five-turn extract: [docs/chatgpt-share-6a920fe1.md](docs/chatgpt-share-6
 Complete share-API extract: [docs/chatgpt-share-6a920fe1/](docs/chatgpt-share-6a920fe1/).
 Work lands on `main`. No PRs.
 
+## Shipped 2026-09-01 — DeviceLaunch destroy does not abort in-flight launch
+
+`gpu-sim` CUDA `cudaGraphExecDestroy` of an in-flight DeviceLaunch exec
+does not abort the launch (the handle is unknown immediately; the body
+still runs). Capture is still reported first. Idle exec destroy still
+drops immediately. Host `launch_graph` in-flight destroy of a
+DeviceLaunch exec still drops immediately this slice. This VM does not
+invent Engine `--device-launch-destroy`. `gpu-profile capture` is still
+refused. Dual score still has no `$/M tokens`.
+
 ## Shipped 2026-09-01 — DeviceLaunch in-flight host updates are Invalid
 
 `gpu-sim` CUDA host updates of a DeviceLaunch exec while

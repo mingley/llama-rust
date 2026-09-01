@@ -5707,7 +5707,16 @@ model, do not celebrate the sim.
     `--device-launch-in-flight`. `gpu-profile capture` is still refused.
     Dual score still has no `$/M tokens`.
 
-532. [ ] Next numbered PLAN item after 531 is the next `gpu-sim` / Engine /
+532. [x] `gpu-sim` CUDA `cudaGraphExecDestroy` of an in-flight
+    DeviceLaunch exec does not abort the launch (the handle is unknown
+    immediately; the body still runs). Capture is still reported first.
+    Idle exec destroy still drops immediately. Host `launch_graph`
+    in-flight destroy of a DeviceLaunch exec still drops immediately
+    this slice (ops already enqueued). This VM does not invent Engine
+    `--device-launch-destroy`. `gpu-profile capture` is still refused.
+    Dual score still has no `$/M tokens`.
+
+533. [ ] Next numbered PLAN item after 532 is the next `gpu-sim` / Engine /
     serve / expertvm mechanical API that is still missing, or the next official
     decode family. Prefer remaining CUDA-shaped twins over more
     OpenAI HTTP veneer. Do not invent F32 `output.scale`. Do not invent a
@@ -5843,6 +5852,11 @@ model, do not celebrate the sim.
     Do not refuse host `launch_graph` in-flight SetParams. Do not put in-flight
     refuse in `as_exec` itself. Do not refuse `upload_graph` in-flight this
     slice.
+    Do not invent a second DeviceLaunch in-flight destroy-complete check or Engine
+    `--device-launch-destroy`. Do not abort an in-flight DeviceLaunch when
+    `destroy_graph` succeeds. Do not delay destroy of an idle exec. Do not delay
+    host `launch_graph` in-flight destroy of a DeviceLaunch exec this slice.
+    Do not copy user-object retains onto the exec at instantiate this slice.
     Do not invent a second DeviceLaunch mixed-ctx check or Engine
     `--device-launch-ctx`. Do not invent a second
     [`GraphInstantiateResult`] variant for driver MultipleCtxs. Do not

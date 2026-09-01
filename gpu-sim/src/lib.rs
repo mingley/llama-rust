@@ -836,7 +836,8 @@
 //! rule; exec SetAttribute cannot attach programmatic or
 //! launch-completion events; host updates while
 //! [`device_launch_graph`](Sim::device_launch_graph) is in flight are Invalid
-//! `"device launch in flight"`; cannot combine
+//! `"device launch in flight"`; [`destroy_graph`](Sim::destroy_graph) of that
+//! exec does not abort the launch; cannot combine
 //! with [`GraphInstantiateFlags::AUTO_FREE_ON_LAUNCH`] (Invalid
 //! `"device launch auto free"`).
 //! [`instantiate_graph_with_params`](Sim::instantiate_graph_with_params) is
@@ -1048,7 +1049,8 @@
 //! include it. Device-launch execs re-apply instantiate mixed-ctx rules
 //! and kernel-buffer dest rules. Host updates while
 //! [`device_launch_graph`](Sim::device_launch_graph) is in flight are Invalid
-//! `"device launch in flight"` (destroy and getters stay).
+//! `"device launch in flight"` (getters stay; destroy does not abort the
+//! launch).
 //! [`graph_exec_memcpy_set_params`](Sim::graph_exec_memcpy_set_params) /
 //! [`graph_exec_memcpy_set_params_1d`](Sim::graph_exec_memcpy_set_params_1d) /
 //! [`graph_exec_memcpy_set_params_2d`](Sim::graph_exec_memcpy_set_params_2d) /
@@ -1309,7 +1311,8 @@
 //! [`graph_node_find_in_clone`](Sim::graph_node_find_in_clone) is
 //! `cudaGraphNodeFindInClone` (same index on a graph produced by
 //! [`clone_graph`](Sim::clone_graph) of that original).
-//! [`Sim::destroy_graph`] is `cudaGraphDestroy` / `cudaGraphExecDestroy`.
+//! [`Sim::destroy_graph`] is `cudaGraphDestroy` / `cudaGraphExecDestroy`
+//! (in-flight device-launch exec destroy does not abort the launch).
 //! Capture records every stream that [`wait_event`](Sim::wait_event)s an
 //! event recorded in this capture (CUDA forked capture). [`record_event_external`](Sim::record_event_external)
 //! / [`wait_event_external`](Sim::wait_event_external) do not join.
@@ -31877,6 +31880,52 @@ mod tests {
         sim.graph_exec_kernel_set_params(host, hnode, &hparams)
             .unwrap();
         sim.synchronize().unwrap();
+    }
+
+    #[test]
+    fn device_launch_destroy_in_flight_still_completes() {
+        let mut sim = Sim::new(h100());
+        let d = DeviceId(0);
+        let s = StreamId(0);
+        let a = sim.malloc(d, 4096).unwrap();
+        let g = sim.create_graph(d, s).unwrap();
+        sim.graph_add_kernel(g, KernelKind::other(1 << 40, 4096), &[a], &[a])
+            .unwrap();
+        let exec = sim
+            .instantiate_graph_with_flags(
+                g,
+                GraphInstantiateFlags::DEVICE_LAUNCH | GraphInstantiateFlags::UPLOAD,
+            )
+            .unwrap();
+        enq(sim.device_launch_graph(exec, s));
+        sim.destroy_graph(exec).unwrap();
+        let err = sim.device_launch_graph(exec, s).unwrap_err();
+        match err {
+            SimError::Invalid { why } => assert!(why.contains("unknown"), "{why}"),
+            other => panic!("{other:?}"),
+        }
+        let (node, params) = sim.graph_unique_kernel(g).unwrap();
+        let err = sim
+            .graph_exec_kernel_set_params(exec, node, &params)
+            .unwrap_err();
+        match err {
+            SimError::Invalid { why } => assert!(why.contains("unknown"), "{why}"),
+            other => panic!("{other:?}"),
+        }
+        sim.begin_capture(d, StreamId(1)).unwrap();
+        let err = sim.destroy_graph(exec).unwrap_err();
+        match err {
+            SimError::Invalid { why } => assert!(why.contains("capture"), "{why}"),
+            other => panic!("{other:?}"),
+        }
+        let _end = sim.end_capture().unwrap();
+        sim.synchronize().unwrap();
+        let body = sim
+            .operations()
+            .find(|o| matches!(o.kind, GpuOp::Kernel { .. }) && o.stream == s)
+            .expect("body");
+        assert!(body.done_ns.is_some());
+        sim.destroy_graph(g).unwrap();
     }
 
     #[test]
