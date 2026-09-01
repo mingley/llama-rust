@@ -5,6 +5,15 @@ Visible five-turn extract: [docs/chatgpt-share-6a920fe1.md](docs/chatgpt-share-6
 Complete share-API extract: [docs/chatgpt-share-6a920fe1/](docs/chatgpt-share-6a920fe1/).
 Work lands on `main`. No PRs.
 
+## Shipped 2026-09-01 — CUDA `cuGLGetDevices`
+
+`gpu-sim` `Sim::gl_get_devices` is `cuGLGetDevices` / `cudaGLGetDevices`.
+Always Invalid `"opengl"` because OpenGL interop is not modeled. Query;
+legal during capture. Distinct from `graphics_map_resources` and
+`egl_stream_consumer_connect`. This VM does not invent `cuGLCtxCreate`
+or Engine `--gl-devices`.
+`gpu-profile capture` is still refused. Dual score still has no `$/M tokens`.
+
 ## Shipped 2026-09-01 — CUDA `cuEGLStreamConsumerConnect`
 
 `gpu-sim` `Sim::egl_stream_consumer_connect` is

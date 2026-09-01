@@ -593,6 +593,8 @@
 //! [`egl_stream_consumer_connect`](Sim::egl_stream_consumer_connect) is
 //! `cuEGLStreamConsumerConnect` (always Invalid `"egl stream"`). Query;
 //! legal during capture. No Engine `--egl-stream`.
+//! [`gl_get_devices`](Sim::gl_get_devices) is `cuGLGetDevices` (always
+//! Invalid `"opengl"`). Query; legal during capture. No Engine `--gl-devices`.
 //! [`DeviceAttr::HostMemoryPoolsSupported`] is always 0 (pools are
 //! device-only; host location is Invalid).
 //! [`DeviceAttr::IsMultiGpuBoard`] / [`MultiGpuBoardGroupID`](DeviceAttr::MultiGpuBoardGroupID)
@@ -21351,6 +21353,44 @@ mod tests {
         match sim.egl_stream_consumer_connect(DeviceId(99)) {
             Err(SimError::Invalid { why }) => {
                 assert!(why.contains("device not in profile"), "{why}");
+            }
+            other => panic!("{other:?}"),
+        }
+        match sim.graphics_map_resources(d, StreamId(0)) {
+            Err(SimError::Invalid { why }) => {
+                assert!(why.contains("graphics resource"), "{why}");
+            }
+            other => panic!("{other:?}"),
+        }
+    }
+
+    #[test]
+    fn gl_get_devices_is_unsupported() {
+        let mut sim = Sim::new(h100());
+        let d = DeviceId(0);
+        match sim.gl_get_devices(d) {
+            Err(SimError::Invalid { why }) => {
+                assert!(why.contains("opengl"), "{why}");
+            }
+            other => panic!("{other:?}"),
+        }
+        sim.begin_capture(d, StreamId(0)).unwrap();
+        match sim.gl_get_devices(d) {
+            Err(SimError::Invalid { why }) => {
+                assert!(why.contains("opengl"), "{why}");
+            }
+            other => panic!("{other:?}"),
+        }
+        let _g = sim.end_capture().unwrap();
+        match sim.gl_get_devices(DeviceId(99)) {
+            Err(SimError::Invalid { why }) => {
+                assert!(why.contains("device not in profile"), "{why}");
+            }
+            other => panic!("{other:?}"),
+        }
+        match sim.egl_stream_consumer_connect(d) {
+            Err(SimError::Invalid { why }) => {
+                assert!(why.contains("egl stream"), "{why}");
             }
             other => panic!("{other:?}"),
         }

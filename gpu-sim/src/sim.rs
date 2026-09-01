@@ -17688,6 +17688,18 @@ impl Sim {
         Err(SimError::Invalid { why: "egl stream" })
     }
 
+    /// `cuGLGetDevices` / `cudaGLGetDevices`. OpenGL interop is not modeled.
+    ///
+    /// Always Invalid `"opengl"`. Distinct from
+    /// [`Self::graphics_map_resources`] and from
+    /// [`Self::egl_stream_consumer_connect`]. Unknown devices are Invalid
+    /// `"device not in profile"`. Query; legal during capture. This VM does
+    /// not invent `cuGLCtxCreate` this slice.
+    pub fn gl_get_devices(&self, device: DeviceId) -> Result<(), SimError> {
+        let _gpu = self.profile.gpu(device)?;
+        Err(SimError::Invalid { why: "opengl" })
+    }
+
     /// `cudaMemcpy3DWithAttributesAsync`.
     ///
     /// [`MemcpySrcAccessOrder::Stream`] is [`Self::memcpy_3d_async`].
