@@ -151,7 +151,7 @@ warp scheduler, L1, …   ← do not model
 | `host_get_device_pointer` of mapped host returns the same id (`flags` must be 0) | `cudaHostGetDevicePointer` |
 | `host_get_flags` returns the stored `HostAllocFlags` word | `cudaHostGetFlags` |
 | `alloc_host_with_flags` / `host_register_with_flags` (MAPPED / PORTABLE / WRITE_COMBINED stored; IoMemory / ReadOnly Invalid) | `cudaHostAlloc` / `cudaHostRegister` |
-| `device_get_attribute` exposes modeled SKU caps (incl. ComputeCapabilityMajor/Minor Hopper 9.0 on example H100; MaxThreadsPerBlock 1024 and H100 block/grid dims; MaxRegistersPerBlock 65536; GlobalMemoryBusWidth 5120 bits on example H100 / 6144 on example H200; SingleToDoublePrecisionPerfRatio 1 on example H100; linear texture 1D/2D dims always 0; texture 2D gather dims always 0; mipmapped texture 1D/2D dims always 0; cubemap texture width always 0; GPUDirect RDMA / CanFlushRemoteWrites / FlushWritesOptions Host / WritesOrdering None / WithCudaVMM from `LinkKind::Rdma`; MulticastSupported from `LinkKind::Nvlink`; ConcurrentManaged / DirectManagedHost / PageableHostPageTables / HostNativeAtomic / OnlyPartialHostNativeAtomic / CooperativeMultiDevice / Integrated / GenericCompression / Win32 / Win32Kmt / Fabric handle types always 0; ComputeMode always Default; NumaConfig always None; TccDriver / KernelExecTimeout / TensorMapAccessSupported / UnifiedFunctionPointers / TimelineSemaphoreInteropSupported / MemDecompressAlgorithmMask / MemDecompressMaximumLength / HostNumaVirtualMemoryManagementSupported / HostNumaMemoryPoolsSupported / HostNumaMultinodeIpcSupported always 0; CanUse64BitStreamMemOps / CanUseStreamMemOps / CanUseStreamWaitValueNor always 1) | `cudaDeviceGetAttribute` |
+| `device_get_attribute` exposes modeled SKU caps (incl. ComputeCapabilityMajor/Minor Hopper 9.0 on example H100; MaxThreadsPerBlock 1024 and H100 block/grid dims; MaxRegistersPerBlock 65536; GlobalMemoryBusWidth 5120 bits on example H100 / 6144 on example H200; SingleToDoublePrecisionPerfRatio 1 on example H100; linear texture 1D/2D dims always 0; texture 2D gather dims always 0; mipmapped texture 1D/2D dims always 0; cubemap texture width always 0; layered texture 1D/2D dims always 0; GPUDirect RDMA / CanFlushRemoteWrites / FlushWritesOptions Host / WritesOrdering None / WithCudaVMM from `LinkKind::Rdma`; MulticastSupported from `LinkKind::Nvlink`; ConcurrentManaged / DirectManagedHost / PageableHostPageTables / HostNativeAtomic / OnlyPartialHostNativeAtomic / CooperativeMultiDevice / Integrated / GenericCompression / Win32 / Win32Kmt / Fabric handle types always 0; ComputeMode always Default; NumaConfig always None; TccDriver / KernelExecTimeout / TensorMapAccessSupported / UnifiedFunctionPointers / TimelineSemaphoreInteropSupported / MemDecompressAlgorithmMask / MemDecompressMaximumLength / HostNumaVirtualMemoryManagementSupported / HostNumaMemoryPoolsSupported / HostNumaMultinodeIpcSupported always 0; CanUse64BitStreamMemOps / CanUseStreamMemOps / CanUseStreamWaitValueNor always 1) | `cudaDeviceGetAttribute` |
 | `device_get_exec_affinity_support` `SM_COUNT` is 0 (permille green ctx, not occupancy SM counts) | `cuDeviceGetExecAffinitySupport` |
 | `device_get_properties` wraps the same SKU caps (incl. synthetic `uuid` and PCI ids) | `cudaGetDeviceProperties` |
 | `device_get_uuid` is a synthetic 16-octet id (also `DeviceProperties.uuid`) | `cuDeviceGetUuid` |
@@ -1031,6 +1031,10 @@ and from `TexturePitchAlignment`).
 not modeled; distinct from `MaxTexture1DWidth`).
 `MaxTextureCubemapWidth` is always 0 (CUDA cubemap textures are not
 modeled; distinct from `MaxTexture2DWidth`).
+`MaxTexture1DLayeredWidth`, `MaxTexture1DLayeredLayers`,
+`MaxTexture2DLayeredWidth`, `MaxTexture2DLayeredHeight`, and
+`MaxTexture2DLayeredLayers` are always 0 (CUDA layered textures are not
+modeled; distinct from `MaxTexture1DWidth` and from `MaxTextureCubemapWidth`).
 `MaxSurface1DWidth`, `MaxSurface2DWidth`, `MaxSurface2DHeight`,
 `MaxSurface3DWidth`, `MaxSurface3DHeight`, and `MaxSurface3DDepth` are
 always 0 (CUDA surfaces are not modeled; distinct from `SurfaceAlignment`).
@@ -1060,7 +1064,7 @@ atomics are not modeled; distinct from `NativeAtomicSupported` and from
 `device_get_properties` is `cudaGetDeviceProperties` of those same fields
 (compute capability major/minor included; launch-geometry caps included;
 MaxRegistersPerBlock included; GlobalMemoryBusWidth included; SingleToDoublePrecisionPerfRatio included; texture 2D/3D
-dims included; linear texture 1D/2D dims included; texture 2D gather dims included; mipmapped texture 1D/2D dims included; cubemap texture width included; surface 1D/2D/3D dims included; no occupancy SM count or clock). `device_get_name` is `cudaDeviceGetName` (the
+dims included; linear texture 1D/2D dims included; texture 2D gather dims included; mipmapped texture 1D/2D dims included; cubemap texture width included; layered texture 1D/2D dims included; surface 1D/2D/3D dims included; no occupancy SM count or clock). `device_get_name` is `cudaDeviceGetName` (the
 profile name). `device_get_uuid` is `cuDeviceGetUuid` (synthetic 16-octet
 id; also `DeviceProperties.uuid`). `device_get_by_uuid` is
 `cuDeviceGetByUuid` (inverse). `device_get_pci_bus_id` is
