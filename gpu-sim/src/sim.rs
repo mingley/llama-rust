@@ -3846,7 +3846,8 @@ impl Sim {
     /// `"device launch empty"`). Mem alloc/free, events, child graphs,
     /// conditionals, host, empty, and batch-mem nodes are Invalid for
     /// device-launch. Memcpy [`crate::Place::Device`] must match the graph
-    /// origin device ([`crate::Place::HostPinned`] stays).
+    /// origin device ([`crate::Place::HostPinned`] stays). Memset dest must
+    /// be that device or pinned mapped host.
     /// [`GraphInstantiateFlags::DEVICE_LAUNCH`] cannot combine
     /// with [`GraphInstantiateFlags::AUTO_FREE_ON_LAUNCH`] (Invalid
     /// `"device launch auto free"`). Instantiating an exec id is a no-op when
@@ -4127,7 +4128,8 @@ impl Sim {
                     && (device_launch_refused(&s.kind)
                         || s.programmatic_event.is_some()
                         || s.launch_completion.is_some()
-                        || device_launch_memcpy_off_device(&s.kind, origin_dev))
+                        || device_launch_memcpy_off_device(&s.kind, origin_dev)
+                        || device_launch_memset_off_device(&s.kind, origin_dev, &self.allocs))
             })
         } else {
             None
@@ -22814,6 +22816,26 @@ fn memcpy_place_off_device(place: Place, origin: DeviceId) -> bool {
         Place::Host => true,
         Place::HostPinned => false,
     }
+}
+
+fn device_launch_memset_off_device(
+    kind: &Kind,
+    origin: DeviceId,
+    allocs: &BTreeMap<AllocId, Alloc>,
+) -> bool {
+    let Kind::Memset(op) = kind else {
+        return false;
+    };
+    let Some(a) = allocs.get(&op.id) else {
+        return true;
+    };
+    if a.host_pinned || a.host_mapped {
+        return false;
+    }
+    if a.vmm {
+        return !vmm_covers(&a.vmm_maps, origin, op.offset, op.extent_bytes());
+    }
+    !a.devices.contains(&origin)
 }
 
 fn kind_from_batch(op: BatchMemOp) -> Kind {

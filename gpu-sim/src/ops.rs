@@ -3058,7 +3058,8 @@ impl GraphInstantiateFlags {
     /// or memset node. Mem alloc/free, events, child graphs, conditionals,
     /// host, empty, and batch-mem nodes are Invalid. Memcpy
     /// [`crate::Place::Device`] must match the graph origin device
-    /// ([`crate::Place::HostPinned`] stays).
+    /// ([`crate::Place::HostPinned`] stays). Memset dest must be that
+    /// device or pinned mapped host.
     /// Cannot combine with [`GraphInstantiateFlags::AUTO_FREE_ON_LAUNCH`].
     pub const DEVICE_LAUNCH: u32 = 4;
     /// `cudaGraphInstantiateFlagUseNodePriority`: recorded kernels keep the

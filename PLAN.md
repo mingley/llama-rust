@@ -5620,7 +5620,17 @@ model, do not celebrate the sim.
     Engine `--device-launch-memcpy` or CUDA-array memcpy. `gpu-profile
     capture` is still refused. Dual score still has no `$/M tokens`.
 
-523. [ ] Next numbered PLAN item after 522 is the next `gpu-sim` / Engine /
+523. [x] `gpu-sim` CUDA DeviceLaunch memset dest must be origin-device
+    memory or pinned/mapped host ([`instantiate_graph_with_flags`] /
+    [`instantiate_graph_with_params`]; off-device, pageable, or unknown
+    dest is `NodeOperationNotSupported` `"device launch instantiate
+    flag"`). Host instantiate of that memset stays. Capture is still
+    reported first. Origin-device malloc, pinned, and mapped DeviceLaunch
+    memset stay legal. This VM does not invent Engine
+    `--device-launch-memset`. `gpu-profile capture` is still refused.
+    Dual score still has no `$/M tokens`.
+
+524. [ ] Next numbered PLAN item after 523 is the next `gpu-sim` / Engine /
     serve / expertvm mechanical API that is still missing, or the next official
     decode family. Prefer remaining CUDA-shaped twins over more
     OpenAI HTTP veneer. Do not invent F32 `output.scale`. Do not invent a
@@ -5719,6 +5729,10 @@ model, do not celebrate the sim.
     `--device-launch-memcpy`. Do not reverse HostPinned DeviceLaunch
     memcpy. Do not reverse same-device D2D DeviceLaunch memcpy. Do not
     invent CUDA-array memcpy.
+    Do not invent a second DeviceLaunch memset-dest check or Engine
+    `--device-launch-memset`. Do not reverse pinned or mapped DeviceLaunch
+    memset. Do not reverse origin-device DeviceLaunch memset. Do not
+    invent peer-access making off-device DeviceLaunch memset legal.
     Do not invent a second `cudaStreamGetCaptureInfo_v3`. Do not invent
     `cudaStreamUpdateCaptureDependencies` v2 edgeData.
     Do not invent a second `cudaDeviceProp::persistingL2CacheMaxSize`.
@@ -6056,6 +6070,9 @@ model, do not celebrate the sim.
     Invalid `"device launch empty"`.
     Do not reverse HostPinned DeviceLaunch memcpy. Do not reverse
     DeviceLaunch memcpy `Place::Device` matching the graph origin.
+    Do not reverse pinned or mapped DeviceLaunch memset. Do not reverse
+    origin-device DeviceLaunch memset dest. Do not invent Engine
+    `--device-launch-memset`.
     Do not reverse PLAN 182 v1 duplicate-add no-op or missing-remove
     no-op. Do not reverse v2 Default identity with v1 (incoming Default
     on an existing launch-completion edge stays a no-op that keeps

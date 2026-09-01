@@ -5,6 +5,16 @@ Visible five-turn extract: [docs/chatgpt-share-6a920fe1.md](docs/chatgpt-share-6
 Complete share-API extract: [docs/chatgpt-share-6a920fe1/](docs/chatgpt-share-6a920fe1/).
 Work lands on `main`. No PRs.
 
+## Shipped 2026-09-01 — DeviceLaunch memset stays on the graph device
+
+`gpu-sim` CUDA DeviceLaunch memset dest must be origin-device memory or
+pinned/mapped host (off-device, pageable, or unknown dest is `"device
+launch instantiate flag"`). Host instantiate of that memset stays.
+Capture is still reported first. Origin-device malloc, pinned, and
+mapped DeviceLaunch memset stay legal. This VM does not invent Engine
+`--device-launch-memset`. `gpu-profile capture` is still refused. Dual
+score still has no `$/M tokens`.
+
 ## Shipped 2026-09-01 — DeviceLaunch memcpy stays on the graph device
 
 `gpu-sim` CUDA DeviceLaunch memcpy `Place::Device` must match the graph
