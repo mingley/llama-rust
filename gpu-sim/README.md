@@ -738,6 +738,9 @@ do not invent `cudaDevAttrNumaId`).
 `OnlyPartialHostNativeAtomicSupported` is always 0 (host-mapped atomics
 are not modeled; distinct from `HostNativeAtomicSupported`).
 `MaxAccessPolicyWindowSize` is L2 bytes (same as `MaxPersistingL2CacheSize`).
+`DeviceProperties.persisting_l2_cache_max_size` is
+`cudaDeviceProp::persistingL2CacheMaxSize` (that max; distinct from the
+current `persisting_l2_cache_size` limit).
 `GlobalL1CacheSupported` is always 0 (this VM does not model L1 caches;
 distinct from `L2CacheSize`). `LocalL1CacheSupported` is always 0 (this
 VM does not model L1 caches; distinct from `GlobalL1CacheSupported`).

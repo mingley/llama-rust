@@ -1100,6 +1100,11 @@ pub struct DeviceProperties {
     pub reserved_shared_mem_per_block: u32,
     /// [`crate::GpuProfile::l2_bytes`].
     pub l2_cache_size: u64,
+    /// `persistingL2CacheMaxSize` ([`DeviceAttr::MaxPersistingL2CacheSize`]).
+    /// Same bytes as [`Self::l2_cache_size`]. Distinct from the current
+    /// [`crate::Sim::persisting_l2_cache_size`] limit (CUDA default 0) and
+    /// from [`Self::access_policy_max_window_size`].
+    pub persisting_l2_cache_max_size: u64,
     /// `accessPolicyMaxWindowSize` ([`DeviceAttr::MaxAccessPolicyWindowSize`]).
     /// Same bytes as [`Self::l2_cache_size`].
     pub access_policy_max_window_size: u64,

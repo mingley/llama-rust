@@ -15279,6 +15279,7 @@ impl Sim {
             shared_mem_per_block_optin: gpu.max_shared_mem_per_block_optin,
             reserved_shared_mem_per_block: 0,
             l2_cache_size: gpu.l2_bytes,
+            persisting_l2_cache_max_size: gpu.l2_bytes,
             access_policy_max_window_size: gpu.l2_bytes,
             global_l1_cache_supported: false,
             local_l1_cache_supported: false,

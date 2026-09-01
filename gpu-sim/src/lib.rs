@@ -498,6 +498,9 @@
 //! ([`device_get_pci_bus_id`](Sim::device_get_pci_bus_id)).
 //! [`DeviceAttr::MaxAccessPolicyWindowSize`] is [`crate::GpuProfile::l2_bytes`]
 //! (same as [`MaxPersistingL2CacheSize`](DeviceAttr::MaxPersistingL2CacheSize)).
+//! [`DeviceProperties::persisting_l2_cache_max_size`] is
+//! `cudaDeviceProp::persistingL2CacheMaxSize` (that max; distinct from the
+//! current [`persisting_l2_cache_size`](Sim::persisting_l2_cache_size) limit).
 //! [`DeviceAttr::GlobalL1CacheSupported`] is always 0 (this VM does not model
 //! L1 caches). Distinct from [`L2CacheSize`](DeviceAttr::L2CacheSize).
 //! [`DeviceAttr::LocalL1CacheSupported`] is always 0 (this VM does not model
@@ -13848,6 +13851,37 @@ mod tests {
             l2
         );
         let _g = sim.end_capture().unwrap();
+    }
+
+    #[test]
+    fn device_properties_persisting_l2_cache_max_size_is_l2() {
+        let mut sim = Sim::new(h100());
+        let d = DeviceId(0);
+        let hp = sim.device_get_properties(d).unwrap();
+        let l2 = hp.l2_cache_size;
+        assert_eq!(hp.persisting_l2_cache_max_size, l2);
+        assert_eq!(hp.access_policy_max_window_size, l2);
+        assert_eq!(
+            sim.device_get_attribute(d, DeviceAttr::MaxPersistingL2CacheSize)
+                .unwrap(),
+            l2
+        );
+        assert_eq!(sim.persisting_l2_cache_size(d).unwrap(), 0);
+        assert_ne!(hp.persisting_l2_cache_max_size, 0);
+        sim.begin_capture(d, StreamId(0)).unwrap();
+        assert_eq!(
+            sim.device_get_properties(d)
+                .unwrap()
+                .persisting_l2_cache_max_size,
+            l2
+        );
+        let _g = sim.end_capture().unwrap();
+        match sim.device_get_properties(DeviceId(9)) {
+            Err(SimError::Invalid { why }) => {
+                assert!(why.contains("device not in profile"), "{why}")
+            }
+            other => panic!("{other:?}"),
+        }
     }
 
     #[test]

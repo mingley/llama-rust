@@ -5,6 +5,16 @@ Visible five-turn extract: [docs/chatgpt-share-6a920fe1.md](docs/chatgpt-share-6
 Complete share-API extract: [docs/chatgpt-share-6a920fe1/](docs/chatgpt-share-6a920fe1/).
 Work lands on `main`. No PRs.
 
+## Shipped 2026-09-01 — CUDA `cudaDeviceProp::persistingL2CacheMaxSize`
+
+`gpu-sim` `DeviceProperties::persisting_l2_cache_max_size` is
+`cudaDeviceProp::persistingL2CacheMaxSize` /
+`DeviceAttr::MaxPersistingL2CacheSize` (L2 bytes). Distinct from
+`access_policy_max_window_size` and from the current
+`persisting_l2_cache_size` limit (default 0). Query; legal during
+capture. `gpu-profile capture` is still refused. Dual score still has
+no `$/M tokens`.
+
 ## Shipped 2026-09-01 — CUDA `cudaStreamGetCaptureInfo_v3`
 
 `gpu-sim` `StreamCaptureInfo::edge_data` is

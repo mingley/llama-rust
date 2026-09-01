@@ -4863,7 +4863,15 @@ model, do not celebrate the sim.
     `gpu-profile capture` is still refused. Dual score still has no
     `$/M tokens`.
 
-446. [ ] Next numbered PLAN item after 445 is the next `gpu-sim` / Engine /
+446. [x] `gpu-sim` `DeviceProperties::persisting_l2_cache_max_size` is
+    `cudaDeviceProp::persistingL2CacheMaxSize` /
+    `DeviceAttr::MaxPersistingL2CacheSize` (L2 bytes). Distinct from
+    `access_policy_max_window_size` and from the current
+    `persisting_l2_cache_size` limit (default 0). Query; legal during
+    capture. `gpu-profile capture` is still refused. Dual score still has
+    no `$/M tokens`.
+
+447. [ ] Next numbered PLAN item after 446 is the next `gpu-sim` / Engine /
     serve / expertvm mechanical API that is still missing, or the next official
     decode family. Prefer remaining CUDA-shaped twins over more
     OpenAI HTTP veneer. Do not invent F32 `output.scale`. Do not invent a
@@ -4931,6 +4939,7 @@ model, do not celebrate the sim.
     `GetDependentNodes` v2.
     Do not invent a second `cudaStreamGetCaptureInfo_v3`. Do not invent
     `cudaStreamUpdateCaptureDependencies` v2 edgeData.
+    Do not invent a second `cudaDeviceProp::persistingL2CacheMaxSize`.
     Do not invent `cuDeviceGetLuid`
     (Windows).
     Do not invent gemma4 `attn_q.scale` / `attn_output.scale` / `attn_k.scale` /
