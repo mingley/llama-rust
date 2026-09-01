@@ -5,6 +5,18 @@ Visible five-turn extract: [docs/chatgpt-share-6a920fe1.md](docs/chatgpt-share-6
 Complete share-API extract: [docs/chatgpt-share-6a920fe1/](docs/chatgpt-share-6a920fe1/).
 Work lands on `main`. No PRs.
 
+## Shipped 2026-09-01 — In-flight GraphUpload exec destroy parks
+
+`gpu-sim` CUDA `cudaGraphExecDestroy` of an exec with an in-flight
+`upload_graph_async` does not abort the upload (the handle is unknown
+immediately; the upload still completes and user-object exec refs are
+held until that op finishes). Capture is still reported first. Idle
+exec destroy still drops immediately. Host-sync `upload_graph` then
+destroy stays immediate. Host `launch_graph` and DeviceLaunch
+in-flight destroy still park. This VM does not invent Engine
+`--graph-upload-destroy`. `gpu-profile capture` is still refused. Dual
+score still has no `$/M tokens`.
+
 ## Shipped 2026-09-01 — Host launch_graph in-flight exec destroy parks
 
 `gpu-sim` CUDA `cudaGraphExecDestroy` of an in-flight host

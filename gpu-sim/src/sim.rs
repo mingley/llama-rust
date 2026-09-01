@@ -4339,8 +4339,9 @@ impl Sim {
     /// engines). Sets the exec uploaded when the op **completes**. Already
     /// uploaded at start is 1 ns so later ops on `stream` still wait. Typed
     /// [`Self::upload_graph`] stays host-synchronous. [`Self::launch_graph`]
-    /// waits an in-flight upload instead of a second host-sync upload. No
-    /// Engine `--graph-upload-stream`.
+    /// waits an in-flight upload instead of a second host-sync upload. Destroy
+    /// of an exec with this op still in flight does not abort the upload
+    /// (`cudaGraphExecDestroy`). No Engine `--graph-upload-stream`.
     pub fn upload_graph_async(
         &mut self,
         device: DeviceId,
@@ -7433,7 +7434,8 @@ impl Sim {
     /// the work came from [`Self::device_launch_graph`] or host
     /// [`Self::launch_graph`]. The handle is unknown immediately. Idle execs
     /// still drop immediately. An empty host launch does not pin destroy to
-    /// unrelated prior stream work.
+    /// unrelated prior stream work. An in-flight [`Self::upload_graph_async`]
+    /// is the same park (the upload still completes).
     pub fn destroy_graph(&mut self, graph: GraphId) -> Result<(), SimError> {
         self.fail_if_capturing("cannot capture graph destroy")?;
         self.require_not_moved(graph)?;
@@ -7445,7 +7447,7 @@ impl Sim {
         if self
             .graphs
             .get(&graph)
-            .is_some_and(|g| g.instantiated && self.graph_exec_launch_in_flight(g))
+            .is_some_and(|g| g.instantiated && self.graph_exec_in_flight(graph, g))
         {
             self.park_in_flight_exec(graph)?;
             return Ok(());
@@ -7453,9 +7455,10 @@ impl Sim {
         self.drop_graph(graph)
     }
 
-    fn graph_exec_launch_in_flight(&self, g: &Graph) -> bool {
+    fn graph_exec_in_flight(&self, id: GraphId, g: &Graph) -> bool {
         g.device_launch_tail.is_some_and(|op| !self.op_done(op))
             || g.host_launch_tail.is_some_and(|op| !self.op_done(op))
+            || self.pending_graph_upload(id).is_some()
     }
 
     fn park_in_flight_exec(&mut self, graph: GraphId) -> Result<(), SimError> {
@@ -7499,7 +7502,7 @@ impl Sim {
             .graphs
             .iter()
             .filter_map(|(id, g)| {
-                (g.handle_gone && !self.graph_exec_launch_in_flight(g)).then_some(*id)
+                (g.handle_gone && !self.graph_exec_in_flight(*id, g)).then_some(*id)
             })
             .collect();
         for id in ids {

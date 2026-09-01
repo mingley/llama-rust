@@ -5737,7 +5737,17 @@ model, do not celebrate the sim.
     `gpu-profile capture` is still refused. Dual score still has no
     `$/M tokens`.
 
-535. [ ] Next numbered PLAN item after 534 is the next `gpu-sim` / Engine /
+535. [x] `gpu-sim` CUDA `cudaGraphExecDestroy` of an exec with an
+    in-flight `upload_graph_async` does not abort the upload (the
+    handle is unknown immediately; the upload still completes and
+    user-object exec refs are held until that op finishes). Capture is
+    still reported first. Idle exec destroy still drops immediately.
+    Host-sync `upload_graph` then destroy stays immediate. Host
+    `launch_graph` and DeviceLaunch in-flight destroy still park. This
+    VM does not invent Engine `--graph-upload-destroy`. `gpu-profile
+    capture` is still refused. Dual score still has no `$/M tokens`.
+
+536. [ ] Next numbered PLAN item after 535 is the next `gpu-sim` / Engine /
     serve / expertvm mechanical API that is still missing, or the next official
     decode family. Prefer remaining CUDA-shaped twins over more
     OpenAI HTTP veneer. Do not invent F32 `output.scale`. Do not invent a
@@ -5879,7 +5889,10 @@ model, do not celebrate the sim.
     a second host `launch_graph` in-flight destroy park or Engine
     `--graph-exec-destroy-inflight`. Do not put host-launch tails in
     `as_exec_for_update`. Do not pin an empty host launch to unrelated prior
-    stream work.
+    stream work. Do not invent a second in-flight `upload_graph_async` destroy
+    park or Engine `--graph-upload-destroy`. Do not abort an in-flight
+    `upload_graph_async` when `destroy_graph` succeeds. Do not delay host-sync
+    `upload_graph` then destroy.
     Do not invent a second instantiate user-object retain copy or Engine
     `--user-object-instantiate`. Do not reverse retain illegal on an exec.
     Do not reverse clone not copying retains. Do not copy retains added after

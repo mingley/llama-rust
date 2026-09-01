@@ -5173,6 +5173,73 @@ mod tests {
     }
 
     #[test]
+    fn upload_async_destroy_in_flight_holds_user_object() {
+        let mut p = h100();
+        for g in &mut p.gpus {
+            g.graph_upload_ns = 40_000;
+        }
+        let mut sim = Sim::new(p);
+        let d = DeviceId(0);
+        let s = StreamId(0);
+        let a = sim.malloc(d, 4096).unwrap();
+        let g = sim.create_graph(d, s).unwrap();
+        sim.graph_add_kernel(g, KernelKind::other(8, 8), &[a], &[a])
+            .unwrap();
+        let obj = sim
+            .user_object_create(9, 1, UserObjectFlags::NO_DESTRUCTOR_SYNC)
+            .unwrap();
+        sim.graph_retain_user_object(g, obj, 1, GraphUserObjectFlags::MOVE)
+            .unwrap();
+        let exec = sim.instantiate_graph(g).unwrap();
+        enq(sim.upload_graph_async(d, s, exec));
+        assert!(!sim.graph_uploaded(exec).unwrap());
+        sim.destroy_graph(exec).unwrap();
+        sim.destroy_graph(g).unwrap();
+        assert!(sim.user_object_destructors().is_empty());
+        let err = sim.upload_graph_async(d, s, exec).unwrap_err();
+        match err {
+            SimError::Invalid { why } => assert!(why.contains("unknown"), "{why}"),
+            other => panic!("{other:?}"),
+        }
+        let err = sim.graph_uploaded(exec).unwrap_err();
+        match err {
+            SimError::Invalid { why } => assert!(why.contains("unknown"), "{why}"),
+            other => panic!("{other:?}"),
+        }
+        sim.begin_capture(d, StreamId(1)).unwrap();
+        let err = sim.destroy_graph(exec).unwrap_err();
+        match err {
+            SimError::Invalid { why } => assert!(why.contains("capture"), "{why}"),
+            other => panic!("{other:?}"),
+        }
+        let _end = sim.end_capture().unwrap();
+        sim.synchronize().unwrap();
+        assert_eq!(sim.user_object_destructors(), &[(obj, 9)]);
+        let upload = sim
+            .operations()
+            .find(|o| matches!(o.kind, GpuOp::GraphUpload { .. }))
+            .expect("upload");
+        assert!(upload.done_ns.is_some());
+
+        let host = sim.create_graph(d, s).unwrap();
+        sim.graph_add_kernel(host, KernelKind::other(8, 8), &[a], &[a])
+            .unwrap();
+        let obj_host = sim
+            .user_object_create(10, 1, UserObjectFlags::NO_DESTRUCTOR_SYNC)
+            .unwrap();
+        sim.graph_retain_user_object(host, obj_host, 1, GraphUserObjectFlags::MOVE)
+            .unwrap();
+        let hexec = sim.instantiate_graph(host).unwrap();
+        sim.upload_graph(hexec).unwrap();
+        sim.destroy_graph(hexec).unwrap();
+        sim.destroy_graph(host).unwrap();
+        assert!(sim
+            .user_object_destructors()
+            .iter()
+            .any(|(id, fn_id)| *id == obj_host && *fn_id == 10));
+    }
+
+    #[test]
     fn instantiate_and_update_cannot_run_during_capture() {
         let mut sim = Sim::new(h100());
         let d = DeviceId(0);
