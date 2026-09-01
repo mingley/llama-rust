@@ -115,6 +115,7 @@ warp scheduler, L1, …   ← do not model
 | `cudaGraphCreate` (`create_graph` / `create_graph_with_flags`) is an empty uninstantiated graph; flags 0 | 1 ns host-sync |
 | `cudaGraphConditionalHandleCreate` (`graph_conditional_create` / `with_flags` / `with_ctx`) | 1 ns host-sync; `ASSIGN_DEFAULT` resets each launch; flags 0 persists; ctx must match the node |
 | `cudaStreamBeginCaptureToGraph` (`begin_capture_to_graph`) appends captured nodes onto an existing uninstantiated graph; empty deps are extra roots | not timed (capture) |
+| `cudaStreamBeginRecaptureToGraph` (`begin_recapture_to_graph`) updates an existing graph in place; topology/alloc-free fail immediately; other params update unless the callback fails; failure is `"undefined graph"` | not timed (capture) |
 | `cudaStreamGetCaptureInfo_v3` (`StreamCaptureInfo::edge_data`) | Default `GraphEdgeData` per capture dep; query |
 | `cudaGraphGetNodes` / `GetRootNodes` / `GetEdges` / `NodeGetDependentNodes` | query |
 | `cudaGraphNodeGetDependencies` / `GetDependentNodes` v2 | Default `GraphEdgeData`; query |
@@ -392,7 +393,8 @@ kernel on it fails `NotResident` until a copy places it on a device.
 | `Sim::set_extra_transfer_ns` | longer memcpy / allreduce, still `Ok` |
 | over-capacity alloc | `SimError::Oom` |
 
-CUDA graphs: `begin_capture` / `begin_capture_to_graph` / `end_capture` /
+CUDA graphs: `begin_capture` / `begin_capture_to_graph` /
+`begin_recapture_to_graph` / `end_capture` /
 `instantiate_graph` /
 `update_graph` / `clone_graph` / `destroy_graph` / `launch_graph`. Capture does
 not advance the virtual clock. Independent streams stay live. A stream that
@@ -504,6 +506,15 @@ uninstantiated graph; capture roots additionally depend on the given node
 indices (empty `deps` means extra roots, so they may Hyper-Q overlap).
 A parked in-flight-destroyed exec is `"unknown graph"` first; a live exec
 stays `"graph instantiated"`. Capture-to-graph of the definition stays.
+`begin_recapture_to_graph` is `cudaStreamBeginRecaptureToGraph`: recapture
+into an existing graph in place (not append). Topology and alloc/free
+mismatches fail immediately (`"graph recapture"` / `"graph recapture alloc"`).
+Other node parameter mismatches update the original node unless a callback
+returns failure. A `None` callback still applies those updates. Failure
+leaves the graph undefined (`"undefined graph"`); `destroy_graph` stays
+legal. User objects on the graph are released before recapture. Matching
+recapture `cudaMallocAsync` returns the existing graph-mem pointer. A
+parked exec is `"unknown graph"`; a live exec stays `"graph instantiated"`.
 `graph_nodes` / `graph_root_nodes` / `graph_edges` / `graph_node_dependents` /
 `graph_debug_dot` / `graph_debug_dot_with_flags` / `graph_get_id` / `graph_node_get_local_id` / `graph_node_get_tools_id` are `cudaGraphGetNodes` /
 `GetRootNodes` / `GetEdges` /
