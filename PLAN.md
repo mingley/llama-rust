@@ -5438,7 +5438,18 @@ model, do not celebrate the sim.
     or `cudaGraphRemoveDependencies` edgeData. `gpu-profile capture` is
     still refused. Dual score still has no `$/M tokens`.
 
-506. [ ] Next numbered PLAN item after 505 is the next `gpu-sim` / Engine /
+506. [x] `gpu-sim` CUDA `cudaGraphExecUpdate` forbids kernel-node priority
+    changes when the exec was instantiated with
+    [`GraphInstantiateFlags::USE_NODE_PRIORITY`]: mismatch is
+    [`GraphExecUpdateResult::AttributesChanged`]. Matching priorities
+    still update. Default instantiate copies priority as a parameter.
+    [`graph_exec_kernel_node_set_priority`] stays legal. This VM does not
+    invent Engine `--graph-node-priority-update`, child SetParams nested
+    priority, or `cudaDeviceGetStreamPriorityRange` clamping.
+    `gpu-profile capture` is still refused. Dual score still has no
+    `$/M tokens`.
+
+507. [ ] Next numbered PLAN item after 506 is the next `gpu-sim` / Engine /
     serve / expertvm mechanical API that is still missing, or the next official
     decode family. Prefer remaining CUDA-shaped twins over more
     OpenAI HTTP veneer. Do not invent F32 `output.scale`. Do not invent a
@@ -5780,6 +5791,11 @@ model, do not celebrate the sim.
     `--graph-edge-port`. Do not invent nonzero `to_port`. Do not invent
     [`GraphKernelNodePort::PROGRAMMATIC`] edges. Do not invent a second
     ExecUpdate launch-completion port topology check.
+    Do not invent a second UseNodePriority ExecUpdate priority check.
+    Do not invent Engine `--graph-node-priority-update`. Do not invent
+    child-graph SetParams nested priority as a second check.
+    `graph_exec_kernel_node_set_priority` stays legal. Do not invent
+    `cudaDeviceGetStreamPriorityRange` clamping for this comparison.
     Do not
     spend the next item on an OpenAI-compatible HTTP veneer.
 

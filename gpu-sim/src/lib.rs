@@ -992,9 +992,13 @@
 //! `cudaGraphExecUpdate` when device, stream, op kinds, and
 //! [`GraphEdgeData`] ports match. IF, WHILE, plus SWITCH handles are
 //! parameters; bodies stay topology.
+//! [`GraphInstantiateFlags::USE_NODE_PRIORITY`] forbids kernel-node
+//! priority changes ([`GraphExecUpdateResult::AttributesChanged`]);
+//! matching priorities still update. Default instantiate copies priority
+//! as a parameter.
 //! [`update_graph_with_info`](Sim::update_graph_with_info) fills
 //! [`GraphExecUpdateResultInfo`] even on `Err` (node type, deps, edge ports,
-//! mem nodes, device-launch).
+//! UseNodePriority priority, mem nodes, device-launch).
 //! [`user_object_create`](Sim::user_object_create) is `cudaUserObjectCreate`
 //! ([`UserObjectFlags::NO_DESTRUCTOR_SYNC`]). [`graph_retain_user_object`](Sim::graph_retain_user_object) /
 //! [`graph_release_user_object`](Sim::graph_release_user_object) are
@@ -28218,6 +28222,67 @@ mod tests {
         assert_eq!(info.result, GraphExecUpdateResult::Success);
         assert_eq!(info.error_node, None);
         assert_eq!(info.error_from_node, None);
+    }
+
+    #[test]
+    fn update_graph_rejects_priority_change_when_use_node_priority() {
+        let mut sim = Sim::new(h100());
+        let d = DeviceId(0);
+        let s = StreamId(0);
+        let a = sim.malloc(d, 4096).unwrap();
+        let b = sim.malloc(d, 4096).unwrap();
+        let exec = sim.create_graph(d, s).unwrap();
+        sim.graph_add_kernel(exec, KernelKind::other(8, 8), &[a], &[a])
+            .unwrap();
+        sim.graph_add_kernel(exec, KernelKind::other(8, 8), &[b], &[b])
+            .unwrap();
+        sim.graph_add_dependencies(exec, 0, 1).unwrap();
+        let _ = sim
+            .instantiate_graph_with_flags(exec, GraphInstantiateFlags::USE_NODE_PRIORITY)
+            .unwrap();
+        let src = sim.create_graph(d, s).unwrap();
+        sim.graph_add_kernel(src, KernelKind::other(8, 8), &[a], &[a])
+            .unwrap();
+        sim.graph_add_kernel(src, KernelKind::other(8, 8), &[b], &[b])
+            .unwrap();
+        sim.graph_add_dependencies(src, 0, 1).unwrap();
+        sim.graph_kernel_node_set_priority(src, 1, 5).unwrap();
+        let mut info = GraphExecUpdateResultInfo::default();
+        let err = sim
+            .update_graph_with_info(exec, src, &mut info)
+            .unwrap_err();
+        match err {
+            SimError::Invalid { why } => assert!(why.contains("topology"), "{why}"),
+            other => panic!("{other:?}"),
+        }
+        assert_eq!(info.result, GraphExecUpdateResult::AttributesChanged);
+        assert_eq!(info.error_node, Some(1));
+        assert_eq!(info.error_from_node, Some(1));
+        let same = sim.create_graph(d, s).unwrap();
+        sim.graph_add_kernel(same, KernelKind::other(8, 8), &[a], &[a])
+            .unwrap();
+        sim.graph_add_kernel(same, KernelKind::other(16, 16), &[b], &[b])
+            .unwrap();
+        sim.graph_add_dependencies(same, 0, 1).unwrap();
+        sim.update_graph_with_info(exec, same, &mut info).unwrap();
+        assert_eq!(info.result, GraphExecUpdateResult::Success);
+        assert_eq!(info.error_node, None);
+        assert_eq!(info.error_from_node, None);
+        sim.graph_exec_kernel_node_set_priority(exec, 1, 7).unwrap();
+        assert_eq!(sim.graph_exec_kernel_node_get_priority(exec, 1).unwrap(), 7);
+        let exec2 = sim.create_graph(d, s).unwrap();
+        sim.graph_add_kernel(exec2, KernelKind::other(8, 8), &[a], &[a])
+            .unwrap();
+        sim.graph_add_kernel(exec2, KernelKind::other(8, 8), &[b], &[b])
+            .unwrap();
+        sim.graph_add_dependencies(exec2, 0, 1).unwrap();
+        let _ = sim.instantiate_graph(exec2).unwrap();
+        sim.update_graph_with_info(exec2, src, &mut info).unwrap();
+        assert_eq!(info.result, GraphExecUpdateResult::Success);
+        assert_eq!(
+            sim.graph_exec_kernel_node_get_priority(exec2, 1).unwrap(),
+            5
+        );
     }
 
     fn map_whole(sim: &mut Sim, device: DeviceId, bytes: u64) -> AllocId {

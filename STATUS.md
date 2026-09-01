@@ -5,6 +5,18 @@ Visible five-turn extract: [docs/chatgpt-share-6a920fe1.md](docs/chatgpt-share-6
 Complete share-API extract: [docs/chatgpt-share-6a920fe1/](docs/chatgpt-share-6a920fe1/).
 Work lands on `main`. No PRs.
 
+## Shipped 2026-09-01 — ExecUpdate UseNodePriority kernel priority
+
+`gpu-sim` CUDA `cudaGraphExecUpdate` forbids kernel-node priority
+changes when the exec was instantiated with
+`cudaGraphInstantiateFlagUseNodePriority`
+(`GraphExecUpdateResult::AttributesChanged`). Matching priorities still
+update. Default instantiate copies priority as a parameter.
+`graph_exec_kernel_node_set_priority` stays legal. This VM does not
+invent Engine `--graph-node-priority-update`, child SetParams nested
+priority, or `cudaDeviceGetStreamPriorityRange` clamping. `gpu-profile
+capture` is still refused. Dual score still has no `$/M tokens`.
+
 ## Shipped 2026-09-01 — ExecUpdate launch-completion ports are topology
 
 `gpu-sim` CUDA `cudaGraphExecUpdate` treats `GraphEdgeData` ports as

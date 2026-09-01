@@ -4223,10 +4223,14 @@ impl Sim {
     /// [`GraphEdgeData`] ports (Default vs launch-completion is
     /// [`GraphExecUpdateResult::DependenciesChanged`]); KernelBuf / memcpy
     /// sizes may change. IF / WHILE / SWITCH handles are parameters (bodies
-    /// stay topology). Pays `graph_update_ns`. Recapture if topology differs.
-    /// Capture cannot include it. `exec` must already be instantiated. Graphs
-    /// with mem alloc or mem free nodes cannot be updated
-    /// (`cudaGraphExecUpdate` of mem nodes).
+    /// stay topology). [`GraphInstantiateFlags::USE_NODE_PRIORITY`] forbids
+    /// kernel-node priority changes
+    /// ([`GraphExecUpdateResult::AttributesChanged`]); matching priorities
+    /// still update. Default instantiate copies priority as a parameter.
+    /// [`Self::graph_exec_kernel_node_set_priority`] stays legal. Pays
+    /// `graph_update_ns`. Recapture if topology differs. Capture cannot
+    /// include it. `exec` must already be instantiated. Graphs with mem alloc
+    /// or mem free nodes cannot be updated (`cudaGraphExecUpdate` of mem nodes).
     pub fn update_graph(&mut self, exec: GraphId, src: GraphId) -> Result<(), SimError> {
         let mut info = GraphExecUpdateResultInfo::default();
         self.update_graph_with_info(exec, src, &mut info)
@@ -4314,6 +4318,17 @@ impl Sim {
                 diff.error_from_node,
                 "graph update topology",
             );
+        }
+        if exec_flags & GraphInstantiateFlags::USE_NODE_PRIORITY != 0 {
+            if let Some(i) = kernel_priority_mismatch(&exec_norm, &src_norm) {
+                return update_report(
+                    info,
+                    GraphExecUpdateResult::AttributesChanged,
+                    Some(i),
+                    Some(i),
+                    "graph update topology",
+                );
+            }
         }
         if self.graph_has_mem_nodes(exec) || self.graph_has_mem_nodes(src) {
             let node = first_mem_node(&src_norm).or_else(|| first_mem_node(&exec_norm));
@@ -9430,6 +9445,10 @@ impl Sim {
     }
 
     /// `cudaGraphExecKernelNodeSetAttribute` for priority on the exec snapshot.
+    ///
+    /// Legal after [`GraphInstantiateFlags::USE_NODE_PRIORITY`].
+    /// [`Self::update_graph`] of a different kernel-node priority is
+    /// [`GraphExecUpdateResult::AttributesChanged`] when that flag was set.
     pub fn graph_exec_kernel_node_set_priority(
         &mut self,
         exec: GraphId,
@@ -23473,6 +23492,25 @@ fn edge_port_mismatch(x: &GraphStep, y: &GraphStep) -> Option<usize> {
         .iter()
         .copied()
         .find(|&from| x.edge_data_of(from) != y.edge_data_of(from))
+}
+
+/// `cudaGraphInstantiateFlagUseNodePriority`: kernel-node priority is
+/// topology (`cudaGraphExecUpdateErrorAttributesChanged`). Compares stored
+/// (unclamped) kernel-node priority values.
+fn kernel_priority_mismatch(exec: &[GraphStep], src: &[GraphStep]) -> Option<usize> {
+    exec.iter()
+        .zip(src.iter())
+        .enumerate()
+        .find_map(|(i, (x, y))| {
+            if x.destroyed {
+                return None;
+            }
+            if matches!(x.kind, Kind::Kernel { .. }) && x.priority != y.priority {
+                Some(i)
+            } else {
+                None
+            }
+        })
 }
 
 fn child_param_op_eq(a: &Kind, b: &Kind) -> bool {
