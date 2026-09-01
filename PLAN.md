@@ -5649,7 +5649,15 @@ model, do not celebrate the sim.
     error. `gpu-profile capture` is still refused. Dual score still has
     no `$/M tokens`.
 
-526. [ ] Next numbered PLAN item after 525 is the next `gpu-sim` / Engine /
+526. [x] `gpu-sim` CUDA DeviceLaunch memset dest may be managed
+    (`cudaMallocManaged`; UVA device pointer). Origin-device malloc,
+    pinned, and mapped stay. Pageable and off-device malloc stay
+    `NodeOperationNotSupported`. Host instantiate stays. Capture is
+    still reported first. This VM does not invent Engine
+    `--device-launch-managed`. `gpu-profile capture` is still refused.
+    Dual score still has no `$/M tokens`.
+
+527. [ ] Next numbered PLAN item after 526 is the next `gpu-sim` / Engine /
     serve / expertvm mechanical API that is still missing, or the next official
     decode family. Prefer remaining CUDA-shaped twins over more
     OpenAI HTTP veneer. Do not invent F32 `output.scale`. Do not invent a
@@ -5752,6 +5760,9 @@ model, do not celebrate the sim.
     `--device-launch-memset`. Do not reverse pinned or mapped DeviceLaunch
     memset. Do not reverse origin-device DeviceLaunch memset. Do not
     invent peer-access making off-device DeviceLaunch memset legal.
+    Do not invent a second DeviceLaunch managed-memset allow or Engine
+    `--device-launch-managed`. Do not reverse origin-device malloc
+    DeviceLaunch memset. Do not reverse pageable DeviceLaunch memset refuse.
     Do not invent a second DeviceLaunch mixed-ctx check or Engine
     `--device-launch-ctx`. Do not invent a second
     [`GraphInstantiateResult`] variant for driver MultipleCtxs. Do not
@@ -6100,6 +6111,8 @@ model, do not celebrate the sim.
     Do not reverse pinned or mapped DeviceLaunch memset. Do not reverse
     origin-device DeviceLaunch memset dest. Do not invent Engine
     `--device-launch-memset`.
+    Do not reverse DeviceLaunch managed memset dest. Do not invent Engine
+    `--device-launch-managed`.
     Do not reverse same-ctx DeviceLaunch. Do not reverse host instantiate
     of mixed green ctx. Do not invent Engine `--device-launch-ctx`. Do
     not invent a second MultipleCtxs instantiate result.

@@ -5,6 +5,15 @@ Visible five-turn extract: [docs/chatgpt-share-6a920fe1.md](docs/chatgpt-share-6
 Complete share-API extract: [docs/chatgpt-share-6a920fe1/](docs/chatgpt-share-6a920fe1/).
 Work lands on `main`. No PRs.
 
+## Shipped 2026-09-01 — DeviceLaunch memset allows managed dest
+
+`gpu-sim` CUDA DeviceLaunch memset dest may be managed
+(`cudaMallocManaged`). Origin-device malloc, pinned, and mapped stay.
+Pageable and off-device malloc stay `"device launch instantiate flag"`.
+Host instantiate stays. Capture is still reported first. This VM does
+not invent Engine `--device-launch-managed`. `gpu-profile capture` is
+still refused. Dual score still has no `$/M tokens`.
+
 ## Shipped 2026-09-01 — Unused conditional handles fail instantiate
 
 `gpu-sim` CUDA unused conditional handles fail instantiate

@@ -3059,7 +3059,7 @@ impl GraphInstantiateFlags {
     /// host, empty, and batch-mem nodes are Invalid. Memcpy
     /// [`crate::Place::Device`] must match the graph origin device
     /// ([`crate::Place::HostPinned`] stays). Memset dest must be that
-    /// device or pinned mapped host. Mixed node green ctx is
+    /// device, pinned mapped host, or managed. Mixed node green ctx is
     /// [`crate::GraphInstantiateResult::MultipleDevicesNotSupported`].
     /// Cannot combine with [`GraphInstantiateFlags::AUTO_FREE_ON_LAUNCH`].
     pub const DEVICE_LAUNCH: u32 = 4;

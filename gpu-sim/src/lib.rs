@@ -828,8 +828,8 @@
 //! `"device launch empty"`). Mem alloc/free, events, child graphs,
 //! conditionals, host, empty, and batch-mem nodes are Invalid. Memcpy
 //! [`Place::Device`] must match the graph origin device
-//! ([`Place::HostPinned`] stays). Memset dest must be that device or
-//! pinned mapped host. Mixed node green ctx is
+//! ([`Place::HostPinned`] stays). Memset dest must be that device,
+//! pinned mapped host, or managed. Mixed node green ctx is
 //! [`GraphInstantiateResult::MultipleDevicesNotSupported`]
 //! (`"graph multiple ctx"`); cannot combine
 //! with [`GraphInstantiateFlags::AUTO_FREE_ON_LAUNCH`] (Invalid
@@ -31049,6 +31049,13 @@ mod tests {
             .unwrap();
         let _ = sim
             .instantiate_graph_with_flags(on_dev, GraphInstantiateFlags::DEVICE_LAUNCH)
+            .unwrap();
+        let managed = sim.alloc_managed(64).unwrap();
+        let man_g = sim.create_graph(d0, s).unwrap();
+        sim.graph_add_memset(man_g, KernelBuf::whole(managed))
+            .unwrap();
+        let _ = sim
+            .instantiate_graph_with_flags(man_g, GraphInstantiateFlags::DEVICE_LAUNCH)
             .unwrap();
         let host = sim.create_graph(d0, s).unwrap();
         sim.graph_add_memset(host, KernelBuf::whole(remote))

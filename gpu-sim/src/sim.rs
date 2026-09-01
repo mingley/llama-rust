@@ -3852,7 +3852,7 @@ impl Sim {
     /// conditionals, host, empty, and batch-mem nodes are Invalid for
     /// device-launch. Memcpy [`crate::Place::Device`] must match the graph
     /// origin device ([`crate::Place::HostPinned`] stays). Memset dest must
-    /// be that device or pinned mapped host. Mixed node green ctx is
+    /// be that device, pinned mapped host, or managed. Mixed node green ctx is
     /// [`GraphInstantiateResult::MultipleDevicesNotSupported`]
     /// (`"graph multiple ctx"`). Unused conditional handles are
     /// [`GraphInstantiateResult::ConditionalHandleUnused`].
@@ -22863,7 +22863,7 @@ fn device_launch_memset_off_device(
     let Some(a) = allocs.get(&op.id) else {
         return true;
     };
-    if a.host_pinned || a.host_mapped {
+    if a.host_pinned || a.host_mapped || a.managed {
         return false;
     }
     if a.vmm {
