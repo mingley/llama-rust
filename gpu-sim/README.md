@@ -361,9 +361,12 @@ it. Independent streams still launch live. `cudaMallocAsync` / `cudaFreeAsync`
 `graph_add_alloc` / `graph_add_free` are `cudaGraphAddMemAllocNode` /
 `cudaGraphAddMemFreeNode` (same reuse / AutoFreeOnLaunch rules).
 `graph_add_alloc_with_access` is `accessDescs` (empty is `graph_add_alloc`;
-peer PROT_READ / PROT_READ_WRITE without dest HBM after launch). Graph-memory
+peer PROT_READ / PROT_READ_WRITE without dest HBM after launch).
+`GraphNodeParams::Alloc` is the `cudaGraphAddNode` path (same `accessDescs`;
+empty is identity with `graph_add_alloc`). Graph-memory
 pool stays Invalid for `pool_set_access`. `graph_alloc_get_access` /
-`graph_exec_alloc_get_access` are GetParams accessDescs. SetParams of Alloc
+`graph_exec_alloc_get_access` are typed GetParams accessDescs;
+`graph_node_get_params` returns them on Alloc. SetParams of Alloc
 stays Invalid. No Engine `--graph-alloc-access`.
 `graph_add_node` is `cudaGraphAddNode` (`GraphNodeParams` plus dependency
 indices in the same call). Typed `graph_add_*` stay (empty deps).
@@ -381,8 +384,8 @@ Typed helpers stay (`graph_add_if`, `graph_add_if_else`, `graph_add_while`,
 Alloc would resize HBM; Empty has no params).
 `graph_node_get_params` / `graph_exec_node_get_params` are
 `cudaGraphNodeGetParams` on the definition / exec snapshot (query; Empty
-returns `GraphNodeParams::Empty`; Alloc is bytes only; If / IfElse /
-While are handle-only; Switch is handle plus branch count).
+returns `GraphNodeParams::Empty`; Alloc is bytes plus accessDescs;
+If, IfElse, and While are handle-only; Switch is handle plus branch count).
 `graph_add_empty` is `cudaGraphAddEmptyNode` (1 ns; no compute/copy occupancy).
 `graph_add_write_value64` / `graph_add_write_value64_with_flags` /
 `graph_add_write_value32_with_flags` / `graph_add_wait_value64` /

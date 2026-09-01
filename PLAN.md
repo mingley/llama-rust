@@ -5162,7 +5162,21 @@ model, do not celebrate the sim.
     `--memset-d2d`. `gpu-profile capture` is still refused. Dual score still
     has no `$/M tokens`.
 
-481. [ ] Next numbered PLAN item after 480 is the next `gpu-sim` / Engine /
+481. [x] `gpu-sim` `cudaGraphAddNode` mem-alloc accessDescs:
+    [`GraphNodeParams::Alloc`] carries `accessDescs` (`bytes` plus
+    [`MemAccessDesc`] list). [`graph_add_node`](Sim::graph_add_node) with
+    empty access is [`graph_add_alloc`](Sim::graph_add_alloc); peer
+    [`MemAccessFlags::PROT_READ_WRITE`] / [`PROT_READ`](MemAccessFlags::PROT_READ)
+    matches [`graph_add_alloc_with_access`](Sim::graph_add_alloc_with_access)
+    (kernel without dest HBM). GetParams
+    [`graph_node_get_params`](Sim::graph_node_get_params) /
+    [`graph_exec_node_get_params`](Sim::graph_exec_node_get_params) return
+    stored accessDescs. Typed
+    [`graph_add_alloc_with_access`](Sim::graph_add_alloc_with_access) stays.
+    SetParams of Alloc stays Invalid. No Engine `--graph-alloc-access`.
+    `gpu-profile capture` is still refused. Dual score still has no `$/M tokens`.
+
+482. [ ] Next numbered PLAN item after 481 is the next `gpu-sim` / Engine /
     serve / expertvm mechanical API that is still missing, or the next official
     decode family. Prefer remaining CUDA-shaped twins over more
     OpenAI HTTP veneer. Do not invent F32 `output.scale`. Do not invent a
@@ -5361,6 +5375,8 @@ model, do not celebrate the sim.
     `graph_add_node_with_data`. Do not invent Engine `--graph-add-node-data`.
     Do not invent a second `cudaGraphAddMemAllocNode` accessDescs /
     `graph_add_alloc_with_access`. Do not invent Engine `--graph-alloc-access`.
+    Do not invent a second `cudaGraphAddNode` mem-alloc accessDescs /
+    `GraphNodeParams::Alloc` access field.
     Do not invent graph-alloc SetParams that only retargets accessDescs
     (SetParams of Alloc stays Invalid). Do not invent `poolProps` / a caller
     pool on graph mem-alloc nodes (always the device graph-memory pool).

@@ -3448,7 +3448,8 @@ impl MemAccessFlags {
 
 /// `CUmemAccessDesc` / `cudaMemAccessDesc` for [`crate::Sim::va_set_access_n`]
 /// / [`crate::Sim::pool_set_access_n`] /
-/// [`crate::Sim::graph_add_alloc_with_access`].
+/// [`crate::Sim::graph_add_alloc_with_access`] /
+/// [`GraphNodeParams::Alloc`].
 ///
 /// [`Self::location`] must be [`Place::Device`]. Host is Invalid
 /// `"access location"`. Flags are [`MemAccessFlags`].
@@ -3606,10 +3607,15 @@ pub enum GraphNodeParams {
     /// `cudaGraphChildGraphNode`. Child must already be instantiated.
     ChildGraph(GraphId),
     /// `cudaGraphMemAllocNode`. [`GraphAddNode::alloc`] is the pending id.
-    /// Bytes only; `accessDescs` are [`crate::Sim::graph_add_alloc_with_access`].
+    /// Empty `access` is [`crate::Sim::graph_add_alloc`]; peer `accessDescs`
+    /// match [`crate::Sim::graph_add_alloc_with_access`]. SetParams stays
+    /// Invalid.
     Alloc {
         /// Bytes for the pending `cudaMallocAsync`.
         bytes: u64,
+        /// `cudaMemAllocNodeParams::accessDescs`. Empty is identity with
+        /// [`crate::Sim::graph_add_alloc`].
+        access: Vec<MemAccessDesc>,
     },
     /// `cudaGraphMemFreeNode`.
     Free(AllocId),

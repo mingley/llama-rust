@@ -4860,14 +4860,14 @@ impl Sim {
     /// Set-conditional is
     /// [`Self::graph_set_conditional_nodes`] /
     /// [`GraphNodeParams::SetConditional`].
-    /// [`GraphNodeParams::Alloc`] is bytes only; the pointer is
+    /// [`GraphNodeParams::Alloc`] is bytes plus accessDescs; the pointer is
     /// [`Self::graph_alloc_get_params`]. Empty returns [`GraphNodeParams::Empty`].
     pub fn graph_node_get_params(
         &self,
         graph: GraphId,
         node: usize,
     ) -> Result<GraphNodeParams, SimError> {
-        node_params_of(&self.graph_def_step(graph, node)?.kind)
+        self.graph_node_params_of(&self.graph_def_step(graph, node)?.kind)
     }
 
     /// Exec-snapshot [`Self::graph_node_get_params`].
@@ -4879,7 +4879,17 @@ impl Sim {
         exec: GraphId,
         node: usize,
     ) -> Result<GraphNodeParams, SimError> {
-        node_params_of(&self.graph_exec_step(exec, node)?.kind)
+        self.graph_node_params_of(&self.graph_exec_step(exec, node)?.kind)
+    }
+
+    fn graph_node_params_of(&self, kind: &Kind) -> Result<GraphNodeParams, SimError> {
+        if let Kind::Alloc { id, bytes } = kind {
+            return Ok(GraphNodeParams::Alloc {
+                bytes: *bytes,
+                access: self.alloc_ref(*id)?.graph_access.clone(),
+            });
+        }
+        node_params_of(kind)
     }
 
     /// `cudaGraphBatchMemOpNodeSetParams` on the graph definition.
@@ -7050,7 +7060,9 @@ impl Sim {
     /// [`GraphNodeParams::SetConditional`] is
     /// [`Self::graph_add_set_conditional`]. Capture
     /// cannot include it. Illegal on an instantiated exec.
-    /// [`GraphNodeParams::Alloc`] fills [`GraphAddNode::alloc`].
+    /// [`GraphNodeParams::Alloc`] fills [`GraphAddNode::alloc`]. Empty
+    /// `access` is [`Self::graph_add_alloc`]; peer `accessDescs` match
+    /// [`Self::graph_add_alloc_with_access`].
     /// Flags-word `dependencyData` is [`Self::graph_add_node_with_data`].
     pub fn graph_add_node(
         &mut self,
@@ -7137,8 +7149,8 @@ impl Sim {
                 self.graph_add_child(graph, child)?;
                 Ok(add_node_out(None, None, None))
             }
-            GraphNodeParams::Alloc { bytes } => Ok(add_node_out(
-                Some(self.graph_add_alloc(graph, bytes)?),
+            GraphNodeParams::Alloc { bytes, access } => Ok(add_node_out(
+                Some(self.graph_add_alloc_with_access(graph, bytes, &access)?),
                 None,
                 None,
             )),
@@ -8025,7 +8037,8 @@ impl Sim {
     /// include it (use [`Self::alloc`] during stream capture). Illegal on an
     /// instantiated exec. [`Self::update_graph`] of mem nodes is Invalid.
     /// Empty `accessDescs` is this helper; peer access is
-    /// [`Self::graph_add_alloc_with_access`].
+    /// [`Self::graph_add_alloc_with_access`]. [`GraphNodeParams::Alloc`]
+    /// is the `cudaGraphAddNode` entry (empty `access` is this helper).
     pub fn graph_add_alloc(&mut self, graph: GraphId, bytes: u64) -> Result<AllocId, SimError> {
         self.graph_add_alloc_with_access(graph, bytes, &[])
     }
@@ -8041,6 +8054,7 @@ impl Sim {
     /// Invalid `"access location"`; unknown flags `"alloc access flags"`.
     /// All-or-nothing before the node is created. Capture cannot include it.
     /// Illegal on an instantiated exec. SetParams of Alloc stays Invalid.
+    /// [`GraphNodeParams::Alloc`] is the unified `cudaGraphAddNode` entry.
     pub fn graph_add_alloc_with_access(
         &mut self,
         graph: GraphId,
@@ -21544,7 +21558,10 @@ fn node_params_of(kind: &Kind) -> Result<GraphNodeParams, SimError> {
             external: *external,
         },
         Kind::ChildGraph { graph } => GraphNodeParams::ChildGraph(*graph),
-        Kind::Alloc { bytes, .. } => GraphNodeParams::Alloc { bytes: *bytes },
+        Kind::Alloc { bytes, .. } => GraphNodeParams::Alloc {
+            bytes: *bytes,
+            access: Vec::new(),
+        },
         Kind::Free { id } => GraphNodeParams::Free(*id),
         Kind::BatchMem { .. } | Kind::WriteValue { .. } | Kind::WaitValue { .. } => {
             GraphNodeParams::BatchMemOp(batch_items(kind).ok_or(SimError::Invalid {

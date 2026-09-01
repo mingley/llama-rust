@@ -1043,17 +1043,20 @@
 //! [`graph_node_get_params`](Sim::graph_node_get_params) /
 //! [`graph_exec_node_get_params`](Sim::graph_exec_node_get_params) are
 //! `cudaGraphNodeGetParams` on the definition / exec snapshot (query; Empty
-//! returns [`GraphNodeParams::Empty`]; Alloc is bytes only; If / IfElse /
-//! While are handle-only; Switch is handle plus branch count).
+//! returns [`GraphNodeParams::Empty`]; Alloc is bytes plus accessDescs;
+//! If, IfElse, and While are handle-only; Switch is handle plus branch count).
 //! [`Sim::graph_add_alloc`] / [`graph_add_free`](Sim::graph_add_free) are
 //! `cudaGraphAddMemAllocNode` / `cudaGraphAddMemFreeNode` (same reuse /
 //! AutoFreeOnLaunch rules as captured `cudaMallocAsync`).
 //! [`graph_add_alloc_with_access`](Sim::graph_add_alloc_with_access) is
 //! `accessDescs` (empty is [`graph_add_alloc`](Sim::graph_add_alloc); peer
-//! PROT_READ / PROT_READ_WRITE without dest HBM after launch). Graph-memory
+//! PROT_READ / PROT_READ_WRITE without dest HBM after launch).
+//! [`GraphNodeParams::Alloc`] is the `cudaGraphAddNode` path (same
+//! `accessDescs`; empty is identity with `graph_add_alloc`). Graph-memory
 //! pool stays Invalid for [`pool_set_access`](Sim::pool_set_access). GetParams
 //! accessDescs are [`graph_alloc_get_access`](Sim::graph_alloc_get_access) /
-//! [`graph_exec_alloc_get_access`](Sim::graph_exec_alloc_get_access). SetParams
+//! [`graph_exec_alloc_get_access`](Sim::graph_exec_alloc_get_access) and
+//! [`graph_node_get_params`](Sim::graph_node_get_params). SetParams
 //! of Alloc stays Invalid. No Engine `--graph-alloc-access`.
 //! [`Sim::graph_add_dependencies`] is `cudaGraphAddDependencies` (node indices;
 //! independent nodes may Hyper-Q overlap at launch; capture records same-stream
@@ -12534,7 +12537,14 @@ mod tests {
         assert_eq!(sim.graph_edges(g).unwrap(), vec![(0, 1)]);
         assert_eq!(sim.graph_node_kind(g, 1).unwrap(), GraphNodeKind::Kernel);
         let mem = sim
-            .graph_add_node(g, &[1], GraphNodeParams::Alloc { bytes: 4096 })
+            .graph_add_node(
+                g,
+                &[1],
+                GraphNodeParams::Alloc {
+                    bytes: 4096,
+                    access: vec![],
+                },
+            )
             .unwrap();
         assert_eq!(mem.node, 2);
         let id = mem.alloc.expect("alloc node id");
@@ -12741,7 +12751,14 @@ mod tests {
             Err(SimError::Invalid { why }) => assert!(why.contains("empty"), "{why}"),
             other => panic!("{other:?}"),
         }
-        match sim.graph_node_set_params(g, 0, GraphNodeParams::Alloc { bytes: 4096 }) {
+        match sim.graph_node_set_params(
+            g,
+            0,
+            GraphNodeParams::Alloc {
+                bytes: 4096,
+                access: vec![],
+            },
+        ) {
             Err(SimError::Invalid { why }) => assert!(why.contains("alloc"), "{why}"),
             other => panic!("{other:?}"),
         }
@@ -12803,11 +12820,21 @@ mod tests {
         }
         let mem = sim.create_graph(d, s).unwrap();
         let added = sim
-            .graph_add_node(mem, &[], GraphNodeParams::Alloc { bytes: 4096 })
+            .graph_add_node(
+                mem,
+                &[],
+                GraphNodeParams::Alloc {
+                    bytes: 4096,
+                    access: vec![],
+                },
+            )
             .unwrap();
         assert_eq!(
             sim.graph_node_get_params(mem, added.node).unwrap(),
-            GraphNodeParams::Alloc { bytes: 4096 }
+            GraphNodeParams::Alloc {
+                bytes: 4096,
+                access: vec![],
+            }
         );
         let cond = sim.create_graph(d, s).unwrap();
         let h = sim.graph_conditional_create(cond, 0).unwrap();
@@ -22761,6 +22788,100 @@ mod tests {
             }
             other => panic!("{other:?}"),
         }
+    }
+
+    #[test]
+    fn graph_add_node_alloc_is_cuda_graph_node_params_access_descs() {
+        let mut sim = Sim::new(HardwareProfile::example_2xh100_pcie());
+        let d0 = DeviceId(0);
+        let d1 = DeviceId(1);
+        let s = StreamId(0);
+        sim.enable_peer(d0, d1).unwrap();
+        let desc = MemAccessDesc {
+            location: Place::Device(d1),
+            flags: MemAccessFlags::PROT_READ_WRITE,
+        };
+        let g = sim.create_graph(d0, s).unwrap();
+        let added = sim
+            .graph_add_node(
+                g,
+                &[],
+                GraphNodeParams::Alloc {
+                    bytes: 4096,
+                    access: vec![desc],
+                },
+            )
+            .unwrap();
+        let id = added.alloc.expect("alloc node id");
+        assert_eq!(added.node, 0);
+        assert_eq!(
+            sim.graph_node_get_params(g, 0).unwrap(),
+            GraphNodeParams::Alloc {
+                bytes: 4096,
+                access: vec![desc],
+            }
+        );
+        assert_eq!(sim.graph_alloc_get_access(g, 0).unwrap(), vec![desc]);
+        let empty = sim.create_graph(d0, s).unwrap();
+        let e = sim
+            .graph_add_node(
+                empty,
+                &[],
+                GraphNodeParams::Alloc {
+                    bytes: 4096,
+                    access: vec![],
+                },
+            )
+            .unwrap();
+        match sim.graph_node_get_params(empty, e.node).unwrap() {
+            GraphNodeParams::Alloc { bytes, access } => {
+                assert_eq!(bytes, 4096);
+                assert!(access.is_empty());
+            }
+            other => panic!("{other:?}"),
+        }
+        match sim.graph_node_set_params(
+            empty,
+            e.node,
+            GraphNodeParams::Alloc {
+                bytes: 8192,
+                access: vec![desc],
+            },
+        ) {
+            Err(SimError::Invalid { why }) => assert!(why.contains("alloc"), "{why}"),
+            other => panic!("{other:?}"),
+        }
+        let bad = sim.create_graph(d0, s).unwrap();
+        match sim.graph_add_node(
+            bad,
+            &[],
+            GraphNodeParams::Alloc {
+                bytes: 4096,
+                access: vec![MemAccessDesc {
+                    location: Place::Host,
+                    flags: MemAccessFlags::PROT_READ_WRITE,
+                }],
+            },
+        ) {
+            Err(SimError::Invalid { why }) => assert!(why.contains("access location"), "{why}"),
+            other => panic!("{other:?}"),
+        }
+        assert_eq!(sim.graph_len(bad).unwrap(), 0);
+        let exec = sim.instantiate_graph(g).unwrap();
+        match sim.graph_exec_node_get_params(exec, 0).unwrap() {
+            GraphNodeParams::Alloc { bytes, access } => {
+                assert_eq!(bytes, 4096);
+                assert_eq!(access, vec![desc]);
+            }
+            other => panic!("{other:?}"),
+        }
+        assert_eq!(sim.launch_graph(exec, s).unwrap(), 1);
+        sim.synchronize().unwrap();
+        assert!(sim.is_resident(id, d0).unwrap());
+        assert!(!sim.is_resident(id, d1).unwrap());
+        enq(sim.kernel(d1, KernelKind::other(8, 8), &[id], &[id], s));
+        sim.synchronize().unwrap();
+        assert_eq!(sim.hbm_used(d1).unwrap(), 0);
     }
 
     #[test]
