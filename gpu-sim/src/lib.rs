@@ -572,6 +572,9 @@
 //! [`array_get_memory_requirements`](Sim::array_get_memory_requirements) is
 //! `cuArrayGetMemoryRequirements` (always Invalid `"array memory"`). Query;
 //! legal during capture. No Engine `--array-memory`.
+//! [`mipmapped_array_get_memory_requirements`](Sim::mipmapped_array_get_memory_requirements)
+//! is `cuMipmappedArrayGetMemoryRequirements` (always Invalid `"mipmap memory"`).
+//! Query; legal during capture. No Engine `--mipmap-memory`.
 //! [`mipmapped_array_create`](Sim::mipmapped_array_create) is
 //! `cuMipmappedArrayCreate` (always Invalid `"mipmapped array"`). Query;
 //! legal during capture. No Engine `--mipmap-array`.
@@ -21519,6 +21522,53 @@ mod tests {
         match sim.array_get_plane(d) {
             Err(SimError::Invalid { why }) => {
                 assert!(why.contains("array plane"), "{why}");
+            }
+            other => panic!("{other:?}"),
+        }
+        match sim.mipmapped_array_get_memory_requirements(d) {
+            Err(SimError::Invalid { why }) => {
+                assert!(why.contains("mipmap memory"), "{why}");
+                assert!(!why.contains("array memory"), "{why}");
+            }
+            other => panic!("{other:?}"),
+        }
+    }
+
+    #[test]
+    fn mipmapped_array_get_memory_requirements_is_unsupported() {
+        let mut sim = Sim::new(h100());
+        let d = DeviceId(0);
+        match sim.mipmapped_array_get_memory_requirements(d) {
+            Err(SimError::Invalid { why }) => {
+                assert!(why.contains("mipmap memory"), "{why}");
+                assert!(!why.contains("array memory"), "{why}");
+                assert!(!why.contains("mipmapped array"), "{why}");
+            }
+            other => panic!("{other:?}"),
+        }
+        sim.begin_capture(d, StreamId(0)).unwrap();
+        match sim.mipmapped_array_get_memory_requirements(d) {
+            Err(SimError::Invalid { why }) => {
+                assert!(why.contains("mipmap memory"), "{why}");
+            }
+            other => panic!("{other:?}"),
+        }
+        let _g = sim.end_capture().unwrap();
+        match sim.mipmapped_array_get_memory_requirements(DeviceId(99)) {
+            Err(SimError::Invalid { why }) => {
+                assert!(why.contains("device not in profile"), "{why}");
+            }
+            other => panic!("{other:?}"),
+        }
+        match sim.array_get_memory_requirements(d) {
+            Err(SimError::Invalid { why }) => {
+                assert!(why.contains("array memory"), "{why}");
+            }
+            other => panic!("{other:?}"),
+        }
+        match sim.mipmapped_array_create(d) {
+            Err(SimError::Invalid { why }) => {
+                assert!(why.contains("mipmapped array"), "{why}");
             }
             other => panic!("{other:?}"),
         }

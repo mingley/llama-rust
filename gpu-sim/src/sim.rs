@@ -17672,9 +17672,9 @@ impl Sim {
     /// CUDA arrays are not modeled.
     ///
     /// Always Invalid `"array memory"` (no array handles). Distinct from
-    /// [`Self::array_get_plane`]. Unknown devices are Invalid
-    /// `"device not in profile"`. Query; legal during capture. This VM does
-    /// not invent `cuMipmappedArrayGetMemoryRequirements` this slice.
+    /// [`Self::array_get_plane`] and from
+    /// [`Self::mipmapped_array_get_memory_requirements`]. Unknown devices are
+    /// Invalid `"device not in profile"`. Query; legal during capture.
     pub fn array_get_memory_requirements(&self, device: DeviceId) -> Result<(), SimError> {
         let _gpu = self.profile.gpu(device)?;
         Err(SimError::Invalid {
@@ -17682,13 +17682,32 @@ impl Sim {
         })
     }
 
+    /// `cuMipmappedArrayGetMemoryRequirements` plus
+    /// `cudaMipmappedArrayGetMemoryRequirements`. CUDA mipmapped arrays are
+    /// not modeled.
+    ///
+    /// Always Invalid `"mipmap memory"` (no mipmapped-array handles). Distinct
+    /// from [`Self::array_get_memory_requirements`] and from
+    /// [`Self::mipmapped_array_create`]. Unknown devices are Invalid
+    /// `"device not in profile"`. Query; legal during capture.
+    pub fn mipmapped_array_get_memory_requirements(
+        &self,
+        device: DeviceId,
+    ) -> Result<(), SimError> {
+        let _gpu = self.profile.gpu(device)?;
+        Err(SimError::Invalid {
+            why: "mipmap memory",
+        })
+    }
+
     /// `cuMipmappedArrayCreate`. CUDA mipmapped arrays are not modeled.
     ///
     /// Always Invalid `"mipmapped array"`
     /// ([`DeviceAttr::MaxTexture1DMipmappedWidth`] is 0). Distinct from
-    /// [`Self::array_create`]. Unknown devices are Invalid
-    /// `"device not in profile"`. Query; legal during capture. This VM does
-    /// not invent `cuMipmappedArrayGetLevel` this slice.
+    /// [`Self::array_create`] and from
+    /// [`Self::mipmapped_array_get_memory_requirements`]. Unknown devices are
+    /// Invalid `"device not in profile"`. Query; legal during capture. This
+    /// VM does not invent `cuMipmappedArrayGetLevel` this slice.
     pub fn mipmapped_array_create(&self, device: DeviceId) -> Result<(), SimError> {
         let _gpu = self.profile.gpu(device)?;
         Err(SimError::Invalid {

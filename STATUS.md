@@ -5,6 +5,15 @@ Visible five-turn extract: [docs/chatgpt-share-6a920fe1.md](docs/chatgpt-share-6
 Complete share-API extract: [docs/chatgpt-share-6a920fe1/](docs/chatgpt-share-6a920fe1/).
 Work lands on `main`. No PRs.
 
+## Shipped 2026-09-01 — CUDA `cuMipmappedArrayGetMemoryRequirements`
+
+`gpu-sim` `Sim::mipmapped_array_get_memory_requirements` is
+`cuMipmappedArrayGetMemoryRequirements`. Always Invalid `"mipmap memory"`
+because CUDA mipmapped arrays are not modeled. Query; legal during capture.
+Distinct from `array_get_memory_requirements` and `mipmapped_array_create`.
+This VM does not invent `cuMipmappedArrayDestroy` or Engine `--mipmap-memory`.
+`gpu-profile capture` is still refused. Dual score still has no `$/M tokens`.
+
 ## Shipped 2026-09-01 — CUDA `cuEGLStreamConsumerReleaseFrame`
 
 `gpu-sim` `Sim::egl_stream_consumer_release_frame` is

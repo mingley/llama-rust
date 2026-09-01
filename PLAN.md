@@ -6813,7 +6813,15 @@ model, do not celebrate the sim.
     or `cudaChooseDevice`. `gpu-profile capture` is still refused. Dual
     score still has no `$/M tokens`.
 
-667. [ ] Next numbered PLAN item after 666 is the next `gpu-sim` / Engine /
+667. [x] `gpu-sim` `Sim::mipmapped_array_get_memory_requirements` is
+    `cuMipmappedArrayGetMemoryRequirements`. Always Invalid `"mipmap memory"`
+    because CUDA mipmapped arrays are not modeled. Query; legal during capture.
+    Distinct from `array_get_memory_requirements` and `mipmapped_array_create`.
+    This VM does not invent `cuMipmappedArrayDestroy`, Engine `--mipmap-memory`,
+    or `cudaChooseDevice`. `gpu-profile capture` is still refused. Dual
+    score still has no `$/M tokens`.
+
+668. [ ] Next numbered PLAN item after 667 is the next `gpu-sim` / Engine /
     serve / expertvm mechanical API that is still missing, or the next official
     decode family. Prefer remaining CUDA-shaped twins over more
     OpenAI HTTP veneer. Do not invent F32 `output.scale`. Do not invent a
@@ -7275,6 +7283,10 @@ model, do not celebrate the sim.
     `egl_stream_consumer_release_frame`. Do not invent Engine `--egl-consumer-release`.
     Do not invent an EGL consumer release timeout this slice. Do not reverse
     `"consumer release"`.
+    Do not invent a second `cuMipmappedArrayGetMemoryRequirements` /
+    `mipmapped_array_get_memory_requirements`. Do not invent Engine `--mipmap-memory`.
+    Do not invent `cuMipmappedArrayDestroy` this slice. Do not reverse
+    `"mipmap memory"`.
     Do not invent a second `cudaStreamAddCallback`.
     Do not invent Engine `--stream-callback` (same wall as second live
     `cudaLaunchHostFunc` after miss DMA).
@@ -7845,6 +7857,10 @@ model, do not celebrate the sim.
     Engine `--release-egl-consumer`. Do not invent an EGL consumer
     release fence this slice. Do not reverse EGL consumer release remaining
     unsupported.
+    Do not invent a second `mipmapped_array_get_memory_requirements` API. Do not invent
+    Engine `--get-mipmap-memory`. Do not invent a populated
+    `CUDA_ARRAY_MEMORY_REQUIREMENTS` this slice. Do not reverse
+    mipmap memory remaining unsupported.
     Do not invent a second DeviceLaunch in-flight destroy-complete check or Engine
     `--device-launch-destroy`. Do not abort an in-flight DeviceLaunch when
     `destroy_graph` succeeds. Do not delay destroy of an idle exec. Do not invent
@@ -8599,6 +8615,9 @@ model, do not celebrate the sim.
     Do not invent a second `egl_stream_consumer_release_frame` method. Do not
     invent Engine `--cu-egl-consumer-release-frame`. Do not reverse wrapping
     cuEGLStreamConsumerReleaseFrame Invalid.
+    Do not invent a second `mipmapped_array_get_memory_requirements` method. Do not
+    invent Engine `--cu-mipmapped-array-get-memory-requirements`. Do not reverse wrapping
+    cuMipmappedArrayGetMemoryRequirements Invalid.
     Do not
     spend the next item on an OpenAI-compatible HTTP veneer.
 
