@@ -260,6 +260,7 @@ warp scheduler, L1, …   ← do not model
 | `library_load_from_file` is Invalid (no cubin path / `CUlibrary`) | `cuLibraryLoadFromFile` |
 | `library_unload` is Invalid (no `CUlibrary` handle) | `cuLibraryUnload` |
 | `library_get_kernel` is Invalid (no `CUlibrary` / `CUkernel`) | `cuLibraryGetKernel` |
+| `library_get_module` is Invalid (no `CUlibrary` / `CUmodule`) | `cuLibraryGetModule` |
 | `link_create` is Invalid (no JIT linker or NVRTC) | `cuLinkCreate` |
 | `device_get` is the ordinal in `0 .. count` | `cuDeviceGet` |
 | `flush_gpu_direct_rdma_writes` is a 1 ns host-sync barrier on RDMA SKUs (no write-visibility) | 1 ns |
@@ -1481,6 +1482,9 @@ Distinct from `library_load_from_file`. Query; legal during capture. No Engine `
 `library_get_kernel` is `cuLibraryGetKernel` (always Invalid
 `"library kernel"`). Distinct from `library_unload` and `func_get_module`.
 Query; legal during capture. No Engine `--library-kernel`.
+`library_get_module` is `cuLibraryGetModule` (always Invalid
+`"library module"`). Distinct from `library_get_kernel` and `func_get_module`.
+Query; legal during capture. No Engine `--library-module`.
 `link_create` is `cuLinkCreate` (always Invalid `"jit linker"`; no NVRTC).
 Distinct from `library_load_data`. Query; legal during capture. No Engine `--jit-link`.
 `runtime_get_version` is `cudaRuntimeGetVersion` (same toolkit). Query;

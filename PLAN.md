@@ -7080,7 +7080,14 @@ model, do not celebrate the sim.
     or `cudaChooseDevice`. `gpu-profile capture` is still refused. Dual
     score still has no `$/M tokens`.
 
-704. [ ] Next numbered PLAN item after 703 is the next `gpu-sim` / Engine /
+704. [x] `gpu-sim` `Sim::library_get_module` is
+    `cuLibraryGetModule`. Always Invalid `"library module"`
+    because CUDA libraries are not modeled. Query; legal during capture.
+    Distinct from `library_get_kernel`. This VM does not invent `cuLibraryGetGlobal`, Engine `--library-module`,
+    or `cudaChooseDevice`. `gpu-profile capture` is still refused. Dual
+    score still has no `$/M tokens`.
+
+705. [ ] Next numbered PLAN item after 704 is the next `gpu-sim` / Engine /
     serve / expertvm mechanical API that is still missing, or the next official
     decode family. Prefer remaining CUDA-shaped twins over more
     OpenAI HTTP veneer. Do not invent F32 `output.scale`. Do not invent a
@@ -7682,6 +7689,9 @@ model, do not celebrate the sim.
     Do not invent a second `cuLibraryGetKernel` / `library_get_kernel`.
     Do not invent Engine `--library-kernel`. Do not invent
     `cuLibraryGetModule` this slice. Do not reverse `"library kernel"`.
+    Do not invent a second `cuLibraryGetModule` / `library_get_module`.
+    Do not invent Engine `--library-module`. Do not invent
+    `cuLibraryGetGlobal` this slice. Do not reverse `"library module"`.
     Do not invent a second `cudaStreamAddCallback`.
     Do not invent Engine `--stream-callback` (same wall as second live
     `cudaLaunchHostFunc` after miss DMA).
@@ -8364,6 +8374,9 @@ model, do not celebrate the sim.
     Do not invent a second `library_get_kernel` API. Do not invent
     Engine `--get-library-kernel`. Do not invent a CUkernel handle
     this slice. Do not reverse Library GetKernel remaining unsupported.
+    Do not invent a second `library_get_module` API. Do not invent
+    Engine `--get-library-module`. Do not invent a CUmodule from library
+    this slice. Do not reverse Library GetModule remaining unsupported.
     Do not invent a second DeviceLaunch in-flight destroy-complete check or Engine
     `--device-launch-destroy`. Do not abort an in-flight DeviceLaunch when
     `destroy_graph` succeeds. Do not delay destroy of an idle exec. Do not invent
@@ -9229,6 +9242,9 @@ model, do not celebrate the sim.
     Do not invent a second `library_get_kernel` method. Do not
     invent Engine `--cu-library-get-kernel`. Do not reverse wrapping
     cuLibraryGetKernel Invalid.
+    Do not invent a second `library_get_module` method. Do not
+    invent Engine `--cu-library-get-module`. Do not reverse wrapping
+    cuLibraryGetModule Invalid.
     Do not
     spend the next item on an OpenAI-compatible HTTP veneer.
 

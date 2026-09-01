@@ -1085,6 +1085,9 @@
 //! [`library_get_kernel`](Sim::library_get_kernel) is
 //! `cuLibraryGetKernel` (always Invalid `"library kernel"`). Query;
 //! legal during capture. No Engine `--library-kernel`.
+//! [`library_get_module`](Sim::library_get_module) is
+//! `cuLibraryGetModule` (always Invalid `"library module"`). Query;
+//! legal during capture. No Engine `--library-module`.
 //! [`link_create`](Sim::link_create) is `cuLinkCreate` (always Invalid
 //! `"jit linker"`). Query; legal during capture. No Engine `--jit-link`.
 //! [`Sim::runtime_get_version`] is `cudaRuntimeGetVersion` (same
@@ -18966,6 +18969,57 @@ mod tests {
             Err(SimError::Invalid { why }) => {
                 assert!(why.contains("unknown function"), "{why}");
                 assert!(!why.contains("library kernel"), "{why}");
+            }
+            other => panic!("{other:?}"),
+        }
+        match sim.library_get_module(d) {
+            Err(SimError::Invalid { why }) => {
+                assert!(why.contains("library module"), "{why}");
+                assert!(!why.contains("library kernel"), "{why}");
+            }
+            other => panic!("{other:?}"),
+        }
+        assert_eq!(sim.module_get_loading_mode(), ModuleLoadingMode::Eager);
+    }
+
+    #[test]
+    fn library_get_module_is_unsupported() {
+        let mut sim = Sim::new(h100());
+        let d = DeviceId(0);
+        match sim.library_get_module(d) {
+            Err(SimError::Invalid { why }) => {
+                assert!(why.contains("library module"), "{why}");
+                assert!(!why.contains("library kernel"), "{why}");
+                assert!(!why.contains("library unload"), "{why}");
+                assert!(!why.contains("unknown function"), "{why}");
+            }
+            other => panic!("{other:?}"),
+        }
+        sim.begin_capture(d, StreamId(0)).unwrap();
+        match sim.library_get_module(d) {
+            Err(SimError::Invalid { why }) => {
+                assert!(why.contains("library module"), "{why}");
+            }
+            other => panic!("{other:?}"),
+        }
+        let _g = sim.end_capture().unwrap();
+        match sim.library_get_module(DeviceId(99)) {
+            Err(SimError::Invalid { why }) => {
+                assert!(why.contains("device not in profile"), "{why}");
+            }
+            other => panic!("{other:?}"),
+        }
+        match sim.library_get_kernel(d) {
+            Err(SimError::Invalid { why }) => {
+                assert!(why.contains("library kernel"), "{why}");
+                assert!(!why.contains("library module"), "{why}");
+            }
+            other => panic!("{other:?}"),
+        }
+        match sim.func_get_module(d) {
+            Err(SimError::Invalid { why }) => {
+                assert!(why.contains("unknown function"), "{why}");
+                assert!(!why.contains("library module"), "{why}");
             }
             other => panic!("{other:?}"),
         }

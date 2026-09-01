@@ -5,6 +5,15 @@ Visible five-turn extract: [docs/chatgpt-share-6a920fe1.md](docs/chatgpt-share-6
 Complete share-API extract: [docs/chatgpt-share-6a920fe1/](docs/chatgpt-share-6a920fe1/).
 Work lands on `main`. No PRs.
 
+## Shipped 2026-09-01 — CUDA `cuLibraryGetModule`
+
+`gpu-sim` `Sim::library_get_module` is `cuLibraryGetModule`.
+Always Invalid `"library module"` because CUDA libraries are not
+modeled. Query; legal during capture. Distinct from
+`library_get_kernel` (why is not `"library kernel"`) and from
+`func_get_module`. This VM does not invent `cuLibraryGetGlobal` or Engine `--library-module`.
+`gpu-profile capture` is still refused. Dual score still has no `$/M tokens`.
+
 ## Shipped 2026-09-01 — CUDA `cuLibraryGetKernel`
 
 `gpu-sim` `Sim::library_get_kernel` is `cuLibraryGetKernel`.
