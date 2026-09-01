@@ -2684,6 +2684,18 @@ impl StreamCaptureMode {
     }
 }
 
+/// `cudaGraphConditionalHandleCreate` flags for
+/// [`crate::Sim::graph_conditional_create_with_flags`].
+///
+/// [`Self::ASSIGN_DEFAULT`] is `cudaGraphCondAssignDefault`. Flags `0` keeps
+/// the handle across launches. Unknown bits are Invalid `"graph cond flags"`.
+pub struct GraphCondFlags;
+
+impl GraphCondFlags {
+    /// `cudaGraphCondAssignDefault`: each launch resets to the create-time default.
+    pub const ASSIGN_DEFAULT: u32 = 1;
+}
+
 /// `cudaGraphCreate` flags for [`crate::Sim::create_graph_with_flags`].
 ///
 /// CUDA requires 0. Unknown bits are Invalid `"graph create flags"`.

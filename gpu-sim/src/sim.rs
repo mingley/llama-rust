@@ -16,20 +16,20 @@ use crate::ops::{
     DeviceAttr, DeviceFlags, DeviceLimit, DeviceNumaConfig, DeviceP2pAttr, DeviceProperties,
     EventCreateFlags, EventRecordFlags, EventWaitFlags, FlushGpuDirectRdmaScope,
     FlushGpuDirectRdmaTarget, FlushGpuDirectRdmaWritesOptions, FuncAttr, FuncAttributes, FuncCache,
-    GpuDirectRdmaWritesOrdering, GpuOp as Kind, GraphAddNode, GraphCreateFlags, GraphDebugDotFlags,
-    GraphDependencyType, GraphEdgeData, GraphExecUpdateResult, GraphExecUpdateResultInfo,
-    GraphInstantiateFlags, GraphInstantiateParams, GraphInstantiateResult, GraphMemAttr,
-    GraphNodeKind, GraphNodeParams, GraphUserObjectFlags, GreenCtxFlags, HostAllocFlags,
-    HostGetDevicePointerFlags, HostNodeParams, InitDeviceFlags, IpcMemFlags, KernelAttrs,
-    KernelBuf, KernelKind, KernelNodeAttr, KernelNodeAttrValue, KernelNodeParams,
-    LaunchCompletionEvent, MemAccessDesc, MemAccessFlags, MemAdvise, MemAllocationGranularity,
-    MemAllocationProp, MemAllocationType, MemAttach, MemAttachFlags, MemCreateFlags,
-    MemExportFlags, MemHandleType, MemLocationType, MemMapFlags, MemPoolAttr, MemPoolExportFlags,
-    MemPoolProps, MemRangeAttr, MemRangeAttrValue, MemRangeHandleFlags, MemRangeHandleType,
-    MemReserveFlags, MemSyncDomain, MemSyncDomainMap, MemcpyAttributes, MemcpyFlags, MemcpyOp,
-    MemcpySrcAccessOrder, MemoryType, MemsetOp, MulticastBindFlags, MulticastCreateFlags,
-    MulticastGranularity, MulticastObjectProp, NvSciSyncAttrFlags, Operation, PdlLaunch,
-    PeerAccessFlags, Place, PointerAttr, PointerAttributes, PortableClusterMode,
+    GpuDirectRdmaWritesOrdering, GpuOp as Kind, GraphAddNode, GraphCondFlags, GraphCreateFlags,
+    GraphDebugDotFlags, GraphDependencyType, GraphEdgeData, GraphExecUpdateResult,
+    GraphExecUpdateResultInfo, GraphInstantiateFlags, GraphInstantiateParams,
+    GraphInstantiateResult, GraphMemAttr, GraphNodeKind, GraphNodeParams, GraphUserObjectFlags,
+    GreenCtxFlags, HostAllocFlags, HostGetDevicePointerFlags, HostNodeParams, InitDeviceFlags,
+    IpcMemFlags, KernelAttrs, KernelBuf, KernelKind, KernelNodeAttr, KernelNodeAttrValue,
+    KernelNodeParams, LaunchCompletionEvent, MemAccessDesc, MemAccessFlags, MemAdvise,
+    MemAllocationGranularity, MemAllocationProp, MemAllocationType, MemAttach, MemAttachFlags,
+    MemCreateFlags, MemExportFlags, MemHandleType, MemLocationType, MemMapFlags, MemPoolAttr,
+    MemPoolExportFlags, MemPoolProps, MemRangeAttr, MemRangeAttrValue, MemRangeHandleFlags,
+    MemRangeHandleType, MemReserveFlags, MemSyncDomain, MemSyncDomainMap, MemcpyAttributes,
+    MemcpyFlags, MemcpyOp, MemcpySrcAccessOrder, MemoryType, MemsetOp, MulticastBindFlags,
+    MulticastCreateFlags, MulticastGranularity, MulticastObjectProp, NvSciSyncAttrFlags, Operation,
+    PdlLaunch, PeerAccessFlags, Place, PointerAttr, PointerAttributes, PortableClusterMode,
     PortableSharedMode, PrefetchFlags, ProgrammaticEvent, ProgrammaticLaunch, SharedMemCarveout,
     SharedMemoryMode, SmResource, StreamAttr, StreamAttrValue, StreamCallbackFlags,
     StreamCaptureInfo, StreamCaptureMode, StreamCreateFlags, SynchronizationPolicy,
@@ -676,6 +676,8 @@ struct Cond {
     graph: GraphId,
     default: u32,
     value: u32,
+    /// `cudaGraphCondAssignDefault`: reset `value` to `default` on each launch.
+    assign_default: bool,
 }
 
 /// `cudaUserObject_t` refcounts. Destroy callback fires at zero.
@@ -3074,7 +3076,7 @@ impl Sim {
             }
             let src = self.graphs.get(&g).and_then(|gr| gr.src);
             for c in self.conds.values_mut() {
-                if c.graph == g || src == Some(c.graph) {
+                if c.assign_default && (c.graph == g || src == Some(c.graph)) {
                     c.value = c.default;
                 }
             }
@@ -6132,6 +6134,7 @@ impl Sim {
                         graph: c.graph,
                         default: c.default,
                         value: c.default,
+                        assign_default: c.assign_default,
                     },
                 )
             })
@@ -7004,13 +7007,37 @@ impl Sim {
     /// `cudaGraphConditionalHandleCreate` on an uninstantiated graph.
     ///
     /// `default` is applied at each [`Self::launch_graph`] of that graph tree
-    /// (`cudaGraphCondAssignDefault`). Capture cannot include it. Illegal on
-    /// an instantiated exec.
+    /// (`cudaGraphCondAssignDefault`). Flags-word form is
+    /// [`Self::graph_conditional_create_with_flags`]. Capture cannot include
+    /// it. Illegal on an instantiated exec.
     pub fn graph_conditional_create(
         &mut self,
         graph: GraphId,
         default: u32,
     ) -> Result<CondId, SimError> {
+        self.graph_conditional_create_with_flags(graph, default, GraphCondFlags::ASSIGN_DEFAULT)
+    }
+
+    /// `cudaGraphConditionalHandleCreate` with a flags word.
+    ///
+    /// [`GraphCondFlags::ASSIGN_DEFAULT`] is identity with
+    /// [`Self::graph_conditional_create`]: each [`Self::launch_graph`] of that
+    /// graph tree resets the handle to `default`. Flags `0` leaves the handle
+    /// from the previous launch (the create-time `default` is only the initial
+    /// value). Unknown bits are Invalid `"graph cond flags"`. Capture cannot
+    /// include it. Illegal on an instantiated exec. Typed
+    /// [`Self::graph_conditional_create`] stays.
+    pub fn graph_conditional_create_with_flags(
+        &mut self,
+        graph: GraphId,
+        default: u32,
+        flags: u32,
+    ) -> Result<CondId, SimError> {
+        if flags & !GraphCondFlags::ASSIGN_DEFAULT != 0 {
+            return Err(SimError::Invalid {
+                why: "graph cond flags",
+            });
+        }
         self.fail_if_capturing("cannot capture conditional create")?;
         let origin = {
             let g = self.graphs.get(&graph).ok_or(SimError::Invalid {
@@ -7032,6 +7059,7 @@ impl Sim {
                 graph,
                 default,
                 value: default,
+                assign_default: flags & GraphCondFlags::ASSIGN_DEFAULT != 0,
             },
         );
         self.clock = self.clock.saturating_add(1);
@@ -7118,8 +7146,9 @@ impl Sim {
     ///
     /// Capture is allowed. Does not occupy compute or copy engines. A later IF
     /// / WHILE / SWITCH node waits for this op if it depends on it. Each
-    /// [`Self::launch_graph`] resets handles to their create-time default first,
-    /// so a live set before launch is wiped.
+    /// [`Self::launch_graph`] resets handles created with
+    /// [`GraphCondFlags::ASSIGN_DEFAULT`] to their create-time default first,
+    /// so a live set before launch is wiped. Flags `0` keeps a prior set.
     pub fn set_conditional(
         &mut self,
         device: DeviceId,

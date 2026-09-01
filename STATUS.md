@@ -5,6 +5,17 @@ Visible five-turn extract: [docs/chatgpt-share-6a920fe1.md](docs/chatgpt-share-6
 Complete share-API extract: [docs/chatgpt-share-6a920fe1/](docs/chatgpt-share-6a920fe1/).
 Work lands on `main`. No PRs.
 
+## Shipped 2026-09-01 — CUDA `cudaGraphConditionalHandleCreate` flags
+
+`gpu-sim` `graph_conditional_create_with_flags` is
+`cudaGraphConditionalHandleCreate` with the CUDA flags word.
+`GraphCondFlags::ASSIGN_DEFAULT` (`cudaGraphCondAssignDefault`) is
+identity with `graph_conditional_create` (each launch resets to the
+create-time default). Flags 0 keeps the handle across launches. Unknown
+bits Invalid `"graph cond flags"`. Capture cannot include it. No Engine
+`--graph-cond-flags`. `gpu-profile capture` is still refused. Dual score
+still has no `$/M tokens`.
+
 ## Shipped 2026-09-01 — CUDA `cuEventGetId`
 
 `gpu-sim` `event_get_id` is `cuEventGetId` / `cudaEventGetId`. Unique per

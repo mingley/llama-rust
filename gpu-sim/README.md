@@ -107,6 +107,7 @@ warp scheduler, L1, …   ← do not model
 | graph mem alloc/free nodes (`cudaMallocAsync` / `cudaFreeAsync` during capture, or `graph_add_alloc` / `graph_add_free`) | `pool_reuse_ns` on relaunch without free |
 | graph clone is an independent uninstantiated copy; child graphs cloned recursively; mem alloc nodes get new ids | `graph_clone_ns` |
 | `cudaGraphCreate` (`create_graph` / `create_graph_with_flags`) is an empty uninstantiated graph; flags 0 | 1 ns host-sync |
+| `cudaGraphConditionalHandleCreate` (`graph_conditional_create` / `with_flags`) | 1 ns host-sync; `ASSIGN_DEFAULT` resets each launch; flags 0 persists |
 | `cudaStreamBeginCaptureToGraph` (`begin_capture_to_graph`) appends captured nodes onto an existing uninstantiated graph; empty deps are extra roots | not timed (capture) |
 | `cudaStreamGetCaptureInfo_v3` (`StreamCaptureInfo::edge_data`) | Default `GraphEdgeData` per capture dep; query |
 | `cudaGraphGetNodes` / `GetRootNodes` / `GetEdges` / `NodeGetDependentNodes` | query |
@@ -510,10 +511,13 @@ of a captured record still joins. ThreadLocal/Global refuse uncaptured-stream
 submits). `thread_exchange_stream_capture_mode` is
 `cudaThreadExchangeStreamCaptureMode`. `graph_node_kind` is
 `cudaGraphNodeGetType`.
-`graph_conditional_create` / `graph_add_if` are
-`cudaGraphConditionalHandleCreate` and an IF node. Body ops skip at
-start when the handle is `0`. `set_conditional` is device
-`cudaGraphSetConditional` (each launch resets to the create-time default).
+`graph_conditional_create` / `graph_conditional_create_with_flags` /
+`graph_add_if` are `cudaGraphConditionalHandleCreate` and an IF node.
+Body ops skip at start when the handle is `0`. `ASSIGN_DEFAULT` is
+identity with the unflagged create (each launch resets to the create-time
+default). Flags `0` keeps the handle across launches. `set_conditional`
+is device `cudaGraphSetConditional` (`ASSIGN_DEFAULT` launches reset to
+the create-time default).
 `graph_add_set_conditional` is the graph-build analog (handle topology;
 `value` is `graph_exec_set_conditional_params`).
 `expertvm --graph-if` wraps `--graph-build` combo children in
@@ -532,6 +536,8 @@ clones combo parents (recursive children). `--graph-build` is
 `cudaGraphCreate` / `cudaGraphAdd*` (no idle stream; combo children may
 Hyper-Q overlap unless `graph_add_dependencies` chains them).
 `create_graph_with_flags` is the CUDA flags word (0 only).
+`graph_conditional_create_with_flags` is `cudaGraphCondAssignDefault` or
+0 (persist). No Engine `--graph-cond-flags`.
 `expertvm --graph-build-deps` adds those edges. `--graph-host` inserts
 `graph_add_host_func` BETWEEN those children (`host_func_ns`; not a JOIN).
 `--graph-if` wraps those children in `graph_add_if` + `graph_add_set_conditional`

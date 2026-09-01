@@ -1048,11 +1048,14 @@
 //! is `cudaThreadExchangeStreamCaptureMode`. [`graph_node_kind`](Sim::graph_node_kind) is
 //! `cudaGraphNodeGetType`.
 //! [`graph_conditional_create`](Sim::graph_conditional_create) /
+//! [`graph_conditional_create_with_flags`](Sim::graph_conditional_create_with_flags) /
 //! [`graph_add_if`](Sim::graph_add_if) are `cudaGraphConditionalHandleCreate`
 //! and an IF node (`cudaGraphCondTypeIf`). Body ops skip at start when the
-//! handle is `0`. [`set_conditional`](Sim::set_conditional) is device
-//! `cudaGraphSetConditional` (capture allowed; each launch resets to the
-//! create-time default first). [`graph_add_set_conditional`](Sim::graph_add_set_conditional)
+//! handle is `0`. [`GraphCondFlags::ASSIGN_DEFAULT`] is identity with the
+//! unflagged create (each launch resets to the create-time default). Flags `0`
+//! keeps the handle across launches. [`set_conditional`](Sim::set_conditional) is device
+//! `cudaGraphSetConditional` (capture allowed; `ASSIGN_DEFAULT` launches
+//! reset to the create-time default first). [`graph_add_set_conditional`](Sim::graph_add_set_conditional)
 //! is the graph-build analog (handle topology; `value` is
 //! [`graph_exec_set_conditional_params`](Sim::graph_exec_set_conditional_params)).
 //! [`graph_add_while`](Sim::graph_add_while) /
@@ -1111,20 +1114,20 @@ pub use ops::{
     DeviceNumaConfig, DeviceP2pAttr, DeviceProperties, EventCreateFlags, EventRecordFlags,
     EventWaitFlags, FlushGpuDirectRdmaScope, FlushGpuDirectRdmaTarget,
     FlushGpuDirectRdmaWritesOptions, FuncAttr, FuncAttributes, FuncCache,
-    GpuDirectRdmaWritesOrdering, GpuOp, GraphAddNode, GraphCreateFlags, GraphDebugDotFlags,
-    GraphDependencyType, GraphEdgeData, GraphExecUpdateResult, GraphExecUpdateResultInfo,
-    GraphInstantiateFlags, GraphInstantiateParams, GraphInstantiateResult, GraphMemAttr,
-    GraphNodeKind, GraphNodeParams, GraphUserObjectFlags, GreenCtxFlags, HostAllocFlags,
-    HostGetDevicePointerFlags, HostNodeParams, InitDeviceFlags, IpcMemFlags, KernelAttrs,
-    KernelBuf, KernelKind, KernelNodeAttr, KernelNodeAttrValue, KernelNodeParams,
-    LaunchCompletionEvent, MemAccessDesc, MemAccessFlags, MemAdvise, MemAllocationGranularity,
-    MemAllocationProp, MemAllocationType, MemAttach, MemAttachFlags, MemCreateFlags,
-    MemExportFlags, MemHandleType, MemLocationType, MemMapFlags, MemPoolAttr, MemPoolExportFlags,
-    MemPoolProps, MemRangeAttr, MemRangeAttrValue, MemRangeHandleFlags, MemRangeHandleType,
-    MemReserveFlags, MemSyncDomain, MemSyncDomainMap, MemcpyAttributes, MemcpyFlags, MemcpyOp,
-    MemcpySrcAccessOrder, MemoryType, MemsetOp, MulticastBindFlags, MulticastCreateFlags,
-    MulticastGranularity, MulticastObjectProp, NvSciSyncAttrFlags, Operation, PdlLaunch,
-    PeerAccessFlags, Place, PointerAttr, PointerAttributes, PortableClusterMode,
+    GpuDirectRdmaWritesOrdering, GpuOp, GraphAddNode, GraphCondFlags, GraphCreateFlags,
+    GraphDebugDotFlags, GraphDependencyType, GraphEdgeData, GraphExecUpdateResult,
+    GraphExecUpdateResultInfo, GraphInstantiateFlags, GraphInstantiateParams,
+    GraphInstantiateResult, GraphMemAttr, GraphNodeKind, GraphNodeParams, GraphUserObjectFlags,
+    GreenCtxFlags, HostAllocFlags, HostGetDevicePointerFlags, HostNodeParams, InitDeviceFlags,
+    IpcMemFlags, KernelAttrs, KernelBuf, KernelKind, KernelNodeAttr, KernelNodeAttrValue,
+    KernelNodeParams, LaunchCompletionEvent, MemAccessDesc, MemAccessFlags, MemAdvise,
+    MemAllocationGranularity, MemAllocationProp, MemAllocationType, MemAttach, MemAttachFlags,
+    MemCreateFlags, MemExportFlags, MemHandleType, MemLocationType, MemMapFlags, MemPoolAttr,
+    MemPoolExportFlags, MemPoolProps, MemRangeAttr, MemRangeAttrValue, MemRangeHandleFlags,
+    MemRangeHandleType, MemReserveFlags, MemSyncDomain, MemSyncDomainMap, MemcpyAttributes,
+    MemcpyFlags, MemcpyOp, MemcpySrcAccessOrder, MemoryType, MemsetOp, MulticastBindFlags,
+    MulticastCreateFlags, MulticastGranularity, MulticastObjectProp, NvSciSyncAttrFlags, Operation,
+    PdlLaunch, PeerAccessFlags, Place, PointerAttr, PointerAttributes, PortableClusterMode,
     PortableSharedMode, PrefetchFlags, ProgrammaticEvent, ProgrammaticLaunch, SharedMemCarveout,
     SharedMemoryMode, SmResource, StreamAttr, StreamAttrValue, StreamCallbackFlags,
     StreamCaptureInfo, StreamCaptureMode, StreamCreateFlags, SynchronizationPolicy,
@@ -22058,6 +22061,77 @@ mod tests {
             skipped < ran,
             "IF default 0 must skip the body GEMM; skip={skipped} run={ran}"
         );
+    }
+
+    #[test]
+    fn graph_conditional_create_with_flags_persists_without_assign_default() {
+        let long = KernelKind::other(1 << 40, 4096);
+        let two_launches = |create: fn(&mut Sim, GraphId) -> Result<CondId, SimError>| {
+            let mut sim = Sim::new(h100());
+            let d = DeviceId(0);
+            let s = StreamId(0);
+            let a = sim.alloc(d, 4096, s).unwrap();
+            enq(sim.memcpy_pinned_to_device(d, a, 4096, s));
+            sim.synchronize().unwrap();
+            let g = sim.create_graph(d, s).unwrap();
+            let h = create(&mut sim, g).unwrap();
+            let body = sim.graph_add_if(g, h).unwrap();
+            sim.graph_add_kernel(body, long.clone(), &[a], &[a])
+                .unwrap();
+            sim.graph_add_set_conditional(g, h, 1).unwrap();
+            sim.graph_add_dependencies(g, 0, 1).unwrap();
+            let _ = sim.instantiate_graph(g).unwrap();
+            sim.upload_graph(g).unwrap();
+            let t0 = sim.clock_ns();
+            let n0 = sim.launch_graph(g, s).unwrap();
+            sim.synchronize().unwrap();
+            assert_eq!(n0, 2);
+            let first = sim.clock_ns().saturating_sub(t0);
+            let t1 = sim.clock_ns();
+            let n1 = sim.launch_graph(g, s).unwrap();
+            sim.synchronize().unwrap();
+            assert_eq!(n1, 2);
+            (first, sim.clock_ns().saturating_sub(t1))
+        };
+        let (assign_first, assign_second) =
+            two_launches(|sim, g| sim.graph_conditional_create(g, 0));
+        let (flagged_first, flagged_second) = two_launches(|sim, g| {
+            sim.graph_conditional_create_with_flags(g, 0, GraphCondFlags::ASSIGN_DEFAULT)
+        });
+        let (keep_first, keep_second) =
+            two_launches(|sim, g| sim.graph_conditional_create_with_flags(g, 0, 0));
+        assert!(
+            assign_first < keep_second,
+            "ASSIGN_DEFAULT first launch must skip; skip={assign_first} persist={keep_second}"
+        );
+        assert!(
+            assign_second < keep_second,
+            "ASSIGN_DEFAULT second launch must skip; skip={assign_second} persist={keep_second}"
+        );
+        assert!(
+            keep_first < keep_second,
+            "flags 0 first launch must skip, second must run; first={keep_first} second={keep_second}"
+        );
+        assert!(
+            flagged_first < keep_second && flagged_second < keep_second,
+            "with_flags ASSIGN_DEFAULT is identity with create; first={flagged_first} second={flagged_second} persist={keep_second}"
+        );
+        let mut sim = Sim::new(h100());
+        let d = DeviceId(0);
+        let s = StreamId(0);
+        let g = sim.create_graph(d, s).unwrap();
+        match sim.graph_conditional_create_with_flags(g, 0, 2) {
+            Err(SimError::Invalid { why }) => {
+                assert!(why.contains("graph cond flags"), "{why}");
+            }
+            other => panic!("{other:?}"),
+        }
+        sim.begin_capture(d, s).unwrap();
+        match sim.graph_conditional_create_with_flags(g, 0, GraphCondFlags::ASSIGN_DEFAULT) {
+            Err(SimError::Invalid { why }) => assert!(why.contains("capture"), "{why}"),
+            other => panic!("{other:?}"),
+        }
+        let _end = sim.end_capture().unwrap();
     }
 
     #[test]

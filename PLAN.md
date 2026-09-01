@@ -4885,7 +4885,16 @@ model, do not celebrate the sim.
     `gpu-profile capture` is still refused. Dual score still has no
     `$/M tokens`.
 
-449. [ ] Next numbered PLAN item after 448 is the next `gpu-sim` / Engine /
+449. [x] `gpu-sim` `graph_conditional_create_with_flags` is
+    `cudaGraphConditionalHandleCreate` with the CUDA flags word.
+    `GraphCondFlags::ASSIGN_DEFAULT` (`cudaGraphCondAssignDefault`) is
+    identity with `graph_conditional_create` (each launch resets to the
+    create-time default). Flags 0 keeps the handle across launches.
+    Unknown bits Invalid `"graph cond flags"`. Capture cannot include it.
+    No Engine `--graph-cond-flags`. `gpu-profile capture` is still
+    refused. Dual score still has no `$/M tokens`.
+
+450. [ ] Next numbered PLAN item after 449 is the next `gpu-sim` / Engine /
     serve / expertvm mechanical API that is still missing, or the next official
     decode family. Prefer remaining CUDA-shaped twins over more
     OpenAI HTTP veneer. Do not invent F32 `output.scale`. Do not invent a
@@ -4958,6 +4967,9 @@ model, do not celebrate the sim.
     non-zero `cudaGraphCreate` flags. Do not invent Engine
     `--graph-create-flags`.
     Do not invent a second `cuEventGetId` / `cudaEventGetId`.
+    Do not invent a second `cudaGraphConditionalHandleCreate` flags word.
+    Do not invent Engine `--graph-cond-flags`. Do not invent other
+    `cudaGraphCond*` create flags bits (only `ASSIGN_DEFAULT`).
     Do not invent `cuDeviceGetLuid`
     (Windows).
     Do not invent gemma4 `attn_q.scale` / `attn_output.scale` / `attn_k.scale` /
@@ -5010,7 +5022,8 @@ model, do not celebrate the sim.
     after `launch_graph`). Do not invent `stream_update_capture_dependencies`
     as an Engine flag (same topology as begin-capture deps). Do not invent a
     second graph-build `cudaGraphSetConditional` flag. Live `set_conditional`
-    before `launch_graph` is still wiped (create-time default). Do not invent a
+    before `launch_graph` is still wiped when `ASSIGN_DEFAULT` (unflagged
+    `graph_conditional_create`). Do not invent a
     second `--graph-if` / IF wrap flag (SetParams upload tax is the wall vs
     `--graph-enable`). Do not invent a second `--no-read-mostly` /
     UnsetReadMostly flag (prefetch-move vs replicate is the wall vs default
