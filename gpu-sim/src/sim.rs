@@ -8963,8 +8963,10 @@ impl Sim {
     /// [`Self::graph_add_dependencies`]. Programmatic type Invalid
     /// `"graph dependency type"`. [`GraphKernelNodePort::LAUNCH_COMPLETION`]
     /// waits for a source kernel to start. Other nonzero ports Invalid
-    /// `"graph edge port"`.
-    /// Capture cannot include it. Illegal on an instantiated exec.
+    /// `"graph edge port"`. An existing `(from, to)` cannot change stored
+    /// [`GraphEdgeData`] (Invalid `"graph edge data"`). Default incoming on an
+    /// existing edge stays a no-op (PLAN 182). Capture cannot include it.
+    /// Illegal on an instantiated exec.
     pub fn graph_add_dependencies_with_data(
         &mut self,
         graph: GraphId,
@@ -8977,11 +8979,14 @@ impl Sim {
 
     /// `cudaGraphAddDependencies` v2 of `numDependencies` from/to/data triples.
     ///
-    /// All-or-nothing on type, ports, cycle, and index. Empty `edges` is
-    /// success. [`GraphDependencyType::DEFAULT`] with ports 0 is
-    /// [`Self::graph_add_dependencies_n`]. Programmatic type is not modeled.
+    /// All-or-nothing on type, ports, cycle, index, and existing-edge data.
+    /// Empty `edges` is success. [`GraphDependencyType::DEFAULT`] with ports 0
+    /// is [`Self::graph_add_dependencies_n`]. Programmatic type is not modeled.
     /// [`GraphKernelNodePort::LAUNCH_COMPLETION`] waits for a source kernel
-    /// to start. Capture cannot include it. Illegal on an instantiated exec.
+    /// to start. An existing `(from, to)` cannot change stored
+    /// [`GraphEdgeData`] (Invalid `"graph edge data"`). Default incoming on an
+    /// existing edge stays a no-op. Capture cannot include it. Illegal on an
+    /// instantiated exec.
     pub fn graph_add_dependencies_n_with_data(
         &mut self,
         graph: GraphId,
@@ -8993,6 +8998,8 @@ impl Sim {
                 self.require_graph_kernel_edge_src(graph, from)?;
             }
         }
+        let _origin = self.graph_origin_for_add(graph)?;
+        self.reject_graph_edge_data_change(graph, edges)?;
         let pairs: Vec<(usize, usize)> = edges.iter().map(|&(from, to, _)| (from, to)).collect();
         self.graph_add_dependencies_n(graph, &pairs)?;
         for &(from, to, data) in edges {
@@ -9006,6 +9013,44 @@ impl Sim {
                 why: "unknown graph node",
             })?)?;
             let _prev = step.edge_data.insert(from, data);
+        }
+        Ok(())
+    }
+
+    /// CUDA: AddDependencies cannot change [`GraphEdgeData`] of an existing
+    /// `(from, to)`. Default incoming stays a v1 no-op.
+    fn reject_graph_edge_data_change(
+        &self,
+        graph: GraphId,
+        edges: &[(usize, usize, GraphEdgeData)],
+    ) -> Result<(), SimError> {
+        for (i, &(from, to, data)) in edges.iter().enumerate() {
+            for &(from2, to2, data2) in edges.iter().take(i) {
+                if from == from2 && to == to2 && data != data2 {
+                    return Err(SimError::Invalid {
+                        why: "graph edge data",
+                    });
+                }
+            }
+        }
+        let g = self.graphs.get(&graph).ok_or(SimError::Invalid {
+            why: "unknown graph",
+        })?;
+        for &(from, to, data) in edges {
+            if data == GraphEdgeData::default() {
+                continue;
+            }
+            let Some(step) = g.steps.get(to) else {
+                continue;
+            };
+            if step.destroyed {
+                continue;
+            }
+            if step.deps.contains(&from) && step.edge_data_of(from) != data {
+                return Err(SimError::Invalid {
+                    why: "graph edge data",
+                });
+            }
         }
         Ok(())
     }

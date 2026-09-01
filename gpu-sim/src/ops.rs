@@ -3951,7 +3951,9 @@ impl GraphKernelNodePort {
 /// with [`crate::Sim::graph_add_dependencies_n`]. Programmatic type is not
 /// modeled. [`Self::from_port`] [`GraphKernelNodePort::LAUNCH_COMPLETION`]
 /// waits for the source kernel to start (not finish). [`Default`] is Default
-/// type, ports 0. CUDA v1 GetEdges / GetDependencies / GetDependentNodes
+/// type, ports 0. AddDependencies cannot change stored data of an existing
+/// `(from, to)` (Invalid `"graph edge data"`). Incoming [`Default`] is the
+/// v1 no-op. CUDA v1 GetEdges / GetDependencies / GetDependentNodes
 /// (`edgeData` NULL) are Invalid `"lossy query"` when a reported edge is
 /// not [`Default`].
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]

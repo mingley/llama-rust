@@ -469,7 +469,9 @@ APIs with `numDependencies` from/to pairs (all-or-nothing).
 `graph_add_dependencies_n_with_data` is `cudaGraphAddDependencies` v2
 (`GraphEdgeData`; Default type with ports 0 is identity; Programmatic type
 is Invalid; `GraphKernelNodePort::LAUNCH_COMPLETION` waits for a source
-kernel to start). `graph_edges_with_data` is `cudaGraphGetEdges` v2 (stored
+kernel to start). An existing `(from, to)` cannot change stored
+`GraphEdgeData` (`"graph edge data"`). Incoming Default stays a no-op
+(PLAN 182). `graph_edges_with_data` is `cudaGraphGetEdges` v2 (stored
 edge data; Default ports 0 when unset). `graph_node_deps_with_data` /
 `graph_node_dependents_with_data` are `cudaGraphNodeGetDependencies` /
 `GetDependentNodes` v2 (stored edge data). Query;

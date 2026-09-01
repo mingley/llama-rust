@@ -1195,7 +1195,9 @@
 //! is `cudaGraphAddDependencies` v2 ([`GraphEdgeData`]; Default type with
 //! ports 0 is identity; Programmatic type is Invalid;
 //! [`GraphKernelNodePort::LAUNCH_COMPLETION`] waits for a source kernel to
-//! start).
+//! start). An existing `(from, to)` cannot change stored
+//! [`GraphEdgeData`] (Invalid `"graph edge data"`). Incoming Default stays
+//! a no-op (PLAN 182).
 //! [`graph_edges_with_data`](Sim::graph_edges_with_data) is
 //! `cudaGraphGetEdges` v2 (stored edge data; Default ports 0 when unset). Query;
 //! legal during capture. [`graph_node_deps_with_data`](Sim::graph_node_deps_with_data) /
@@ -26594,6 +26596,102 @@ mod tests {
             ]
         );
         let _cap = sim.end_capture().unwrap();
+    }
+
+    #[test]
+    fn graph_add_dependencies_with_data_rejects_existing_edge_change() {
+        let mut sim = Sim::new(h100());
+        let d = DeviceId(0);
+        let s = StreamId(0);
+        let a = sim.malloc(d, 4096).unwrap();
+        let g = sim.create_graph(d, s).unwrap();
+        sim.graph_add_kernel(g, KernelKind::other(8, 8), &[a], &[a])
+            .unwrap();
+        sim.graph_add_kernel(g, KernelKind::other(8, 8), &[a], &[a])
+            .unwrap();
+        sim.graph_add_kernel(g, KernelKind::other(8, 8), &[a], &[a])
+            .unwrap();
+        sim.graph_add_dependencies(g, 0, 1).unwrap();
+        sim.graph_add_dependencies(g, 0, 1).unwrap();
+        assert_eq!(sim.graph_edges(g).unwrap(), vec![(0, 1)]);
+        sim.graph_add_dependencies_with_data(g, 0, 1, GraphEdgeData::default())
+            .unwrap();
+        assert_eq!(
+            sim.graph_edges_with_data(g).unwrap(),
+            vec![(0, 1, GraphEdgeData::default())]
+        );
+        match sim.graph_add_dependencies_with_data(g, 0, 1, GraphEdgeData::launch_completion()) {
+            Err(SimError::Invalid { why }) => assert!(why.contains("graph edge data"), "{why}"),
+            other => panic!("{other:?}"),
+        }
+        assert_eq!(
+            sim.graph_edges_with_data(g).unwrap(),
+            vec![(0, 1, GraphEdgeData::default())]
+        );
+        sim.graph_add_dependencies_with_data(g, 1, 2, GraphEdgeData::launch_completion())
+            .unwrap();
+        assert_eq!(
+            sim.graph_edges_with_data(g).unwrap(),
+            vec![
+                (0, 1, GraphEdgeData::default()),
+                (1, 2, GraphEdgeData::launch_completion()),
+            ]
+        );
+        sim.graph_add_dependencies_with_data(g, 1, 2, GraphEdgeData::launch_completion())
+            .unwrap();
+        sim.graph_add_dependencies(g, 1, 2).unwrap();
+        sim.graph_add_dependencies_with_data(g, 1, 2, GraphEdgeData::default())
+            .unwrap();
+        assert_eq!(
+            sim.graph_edges_with_data(g).unwrap(),
+            vec![
+                (0, 1, GraphEdgeData::default()),
+                (1, 2, GraphEdgeData::launch_completion()),
+            ]
+        );
+        match sim.graph_add_dependencies_n_with_data(
+            g,
+            &[
+                (0, 2, GraphEdgeData::default()),
+                (0, 1, GraphEdgeData::launch_completion()),
+            ],
+        ) {
+            Err(SimError::Invalid { why }) => assert!(why.contains("graph edge data"), "{why}"),
+            other => panic!("{other:?}"),
+        }
+        match sim.graph_add_dependencies_n_with_data(
+            g,
+            &[
+                (0, 2, GraphEdgeData::default()),
+                (0, 2, GraphEdgeData::launch_completion()),
+            ],
+        ) {
+            Err(SimError::Invalid { why }) => assert!(why.contains("graph edge data"), "{why}"),
+            other => panic!("{other:?}"),
+        }
+        assert_eq!(
+            sim.graph_edges_with_data(g).unwrap(),
+            vec![
+                (0, 1, GraphEdgeData::default()),
+                (1, 2, GraphEdgeData::launch_completion()),
+            ]
+        );
+        sim.begin_capture(d, s).unwrap();
+        match sim.graph_add_dependencies_with_data(g, 0, 1, GraphEdgeData::launch_completion()) {
+            Err(SimError::Invalid { why }) => {
+                assert!(why.contains("capture"), "{why}");
+                assert!(!why.contains("graph edge data"), "{why}");
+            }
+            other => panic!("{other:?}"),
+        }
+        let _cap = sim.end_capture().unwrap();
+        assert_eq!(
+            sim.graph_edges_with_data(g).unwrap(),
+            vec![
+                (0, 1, GraphEdgeData::default()),
+                (1, 2, GraphEdgeData::launch_completion()),
+            ]
+        );
     }
 
     #[test]

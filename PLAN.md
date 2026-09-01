@@ -5558,7 +5558,17 @@ model, do not celebrate the sim.
     `--device-launch-auto-free`. `gpu-profile capture` is still refused.
     Dual score still has no `$/M tokens`.
 
-517. [ ] Next numbered PLAN item after 516 is the next `gpu-sim` / Engine /
+517. [x] `gpu-sim` CUDA `cudaGraphAddDependencies` cannot change
+    [`GraphEdgeData`] of an existing `(from, to)` (Invalid
+    `"graph edge data"`). Incoming Default is the v1 no-op (PLAN 182)
+    and does not overwrite stored launch-completion data. Same
+    non-default is idempotent. Intra-batch conflicting data is the same
+    Invalid. Capture is still reported first. New launch-completion
+    pairs stay. This VM does not invent a second existing-edge data
+    check or reverse PLAN 182. `gpu-profile capture` is still refused.
+    Dual score still has no `$/M tokens`.
+
+518. [ ] Next numbered PLAN item after 517 is the next `gpu-sim` / Engine /
     serve / expertvm mechanical API that is still missing, or the next official
     decode family. Prefer remaining CUDA-shaped twins over more
     OpenAI HTTP veneer. Do not invent F32 `output.scale`. Do not invent a
@@ -5635,6 +5645,9 @@ model, do not celebrate the sim.
     Do not invent a second DeviceLaunch plus AutoFreeOnLaunch reject.
     Do not invent Engine `--device-launch-auto-free`. Do not reverse
     `AUTO_FREE` plus `UPLOAD` or `DEVICE_LAUNCH` plus `UPLOAD`.
+    Do not invent a second existing-edge [`GraphEdgeData`] change check.
+    Do not invent a second Engine `--graph-edge-data` (already parked for
+    RemoveDependencies).
     Do not invent a second `cudaStreamGetCaptureInfo_v3`. Do not invent
     `cudaStreamUpdateCaptureDependencies` v2 edgeData.
     Do not invent a second `cudaDeviceProp::persistingL2CacheMaxSize`.
@@ -5967,6 +5980,11 @@ model, do not celebrate the sim.
     Do not invent a second DeviceLaunch plus AutoFreeOnLaunch reject.
     Do not invent Engine `--device-launch-auto-free`. Do not reverse
     `AUTO_FREE` plus `UPLOAD` or `DEVICE_LAUNCH` plus `UPLOAD`.
+    Do not reverse PLAN 182 v1 duplicate-add no-op or missing-remove
+    no-op. Do not reverse v2 Default identity with v1 (incoming Default
+    on an existing launch-completion edge stays a no-op that keeps
+    launch-completion data). Do not invent existing-edge error on v1
+    AddDependencies.
     Do not
     spend the next item on an OpenAI-compatible HTTP veneer.
 
