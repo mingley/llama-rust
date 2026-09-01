@@ -2828,9 +2828,10 @@ impl Sim {
     /// `pending_deps` are extra [`Self::stream_update_capture_dependencies`]
     /// indices not yet consumed (not stream-order predecessors).
     /// `dependencies` is the v2 array: last same-stream captured node union
-    /// those extras (destination-graph indices). `id` is `id_out` (unique per
-    /// sequence; forked streams share it). [`Self::graph_len`] of `info.graph`
-    /// during capture excludes this session's buffer until
+    /// those extras (destination-graph indices). `edge_data` is the v3 array
+    /// (Default type, ports 0; same length as `dependencies`). `id` is `id_out`
+    /// (unique per sequence; forked streams share it). [`Self::graph_len`] of
+    /// `info.graph` during capture excludes this session's buffer until
     /// [`Self::end_capture`].
     #[must_use]
     pub fn stream_capture_info(
@@ -2861,11 +2862,13 @@ impl Sim {
         }
         dependencies.sort_unstable();
         dependencies.dedup();
+        let edge_data = vec![GraphEdgeData::default(); dependencies.len()];
         Some(StreamCaptureInfo {
             graph: cap.into.graph,
             origin: cap.origin,
             pending_deps,
             dependencies,
+            edge_data,
             id: cap.id,
             mode: cap.mode,
         })

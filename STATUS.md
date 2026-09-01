@@ -5,6 +5,17 @@ Visible five-turn extract: [docs/chatgpt-share-6a920fe1.md](docs/chatgpt-share-6
 Complete share-API extract: [docs/chatgpt-share-6a920fe1/](docs/chatgpt-share-6a920fe1/).
 Work lands on `main`. No PRs.
 
+## Shipped 2026-09-01 — CUDA `cudaStreamGetCaptureInfo_v3`
+
+`gpu-sim` `StreamCaptureInfo::edge_data` is
+`cudaStreamGetCaptureInfo_v3` (`GraphEdgeData` parallel to
+`dependencies`). Existing capture deps are Default, ports 0. Query
+during capture. Distinct from `graph_edges_with_data` and
+`graph_node_deps_with_data`. No Engine `--graph-edge-data`. Do not
+invent `cudaStreamUpdateCaptureDependencies` v2 edgeData.
+`gpu-profile capture` is still refused. Dual score still has no
+`$/M tokens`.
+
 ## Shipped 2026-09-01 — CUDA `cudaGraphNodeGetDependencies` v2
 
 `gpu-sim` `graph_node_deps_with_data` / `graph_node_dependents_with_data`

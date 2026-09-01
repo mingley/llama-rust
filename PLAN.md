@@ -4854,7 +4854,16 @@ model, do not celebrate the sim.
     No Engine `--graph-edge-data`. `gpu-profile capture` is still refused.
     Dual score still has no `$/M tokens`.
 
-445. [ ] Next numbered PLAN item after 444 is the next `gpu-sim` / Engine /
+445. [x] `gpu-sim` `StreamCaptureInfo::edge_data` is
+    `cudaStreamGetCaptureInfo_v3` (`GraphEdgeData` parallel to
+    `dependencies`). Existing capture deps are Default, ports 0.
+    Query during capture. Distinct from `graph_edges_with_data` and
+    `graph_node_deps_with_data`. No Engine `--graph-edge-data`. Do not
+    invent `cudaStreamUpdateCaptureDependencies` v2 edgeData.
+    `gpu-profile capture` is still refused. Dual score still has no
+    `$/M tokens`.
+
+446. [ ] Next numbered PLAN item after 445 is the next `gpu-sim` / Engine /
     serve / expertvm mechanical API that is still missing, or the next official
     decode family. Prefer remaining CUDA-shaped twins over more
     OpenAI HTTP veneer. Do not invent F32 `output.scale`. Do not invent a
@@ -4920,6 +4929,8 @@ model, do not celebrate the sim.
     `cudaGraphDebugDotFlagsExtraTopoInfo` extra edges.
     Do not invent a second `cudaGraphNodeGetDependencies` /
     `GetDependentNodes` v2.
+    Do not invent a second `cudaStreamGetCaptureInfo_v3`. Do not invent
+    `cudaStreamUpdateCaptureDependencies` v2 edgeData.
     Do not invent `cuDeviceGetLuid`
     (Windows).
     Do not invent gemma4 `attn_q.scale` / `attn_output.scale` / `attn_k.scale` /

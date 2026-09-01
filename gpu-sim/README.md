@@ -108,6 +108,7 @@ warp scheduler, L1, …   ← do not model
 | graph clone is an independent uninstantiated copy; child graphs cloned recursively; mem alloc nodes get new ids | `graph_clone_ns` |
 | `cudaGraphCreate` (`create_graph`) is an empty uninstantiated graph | 1 ns host-sync |
 | `cudaStreamBeginCaptureToGraph` (`begin_capture_to_graph`) appends captured nodes onto an existing uninstantiated graph; empty deps are extra roots | not timed (capture) |
+| `cudaStreamGetCaptureInfo_v3` (`StreamCaptureInfo::edge_data`) | Default `GraphEdgeData` per capture dep; query |
 | `cudaGraphGetNodes` / `GetRootNodes` / `GetEdges` / `NodeGetDependentNodes` | query |
 | `cudaGraphNodeGetDependencies` / `GetDependentNodes` v2 | Default `GraphEdgeData`; query |
 | `cudaGraphGetId` (`graph_get_id`) | unique id matching debug-dot HANDLES; exec/clone differ |
@@ -499,7 +500,8 @@ parameter; External is topology).
 replaces, `Add` unions). `stream_is_capturing` / `stream_capture_info` are
 `cudaStreamIsCapturing` / `GetCaptureInfo` (includes capture mode).
 `StreamCaptureInfo::dependencies` is `GetCaptureInfo_v2` (last same-stream
-captured node union extra pending deps). `StreamCaptureInfo::id` is
+captured node union extra pending deps). `StreamCaptureInfo::edge_data` is
+`GetCaptureInfo_v3` (Default `GraphEdgeData`, ports 0). `StreamCaptureInfo::id` is
 `id_out` (unique per begin-capture sequence; forked streams share it).
 `begin_capture_with_mode` is `cudaStreamBeginCapture` with
 `StreamCaptureMode` (default Relaxed: independent streams stay live; a wait

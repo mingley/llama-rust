@@ -3383,6 +3383,9 @@ pub struct StreamCaptureInfo {
     /// `dependencies`): last same-stream captured node (destination-graph
     /// index) union [`Self::pending_deps`].
     pub dependencies: Vec<usize>,
+    /// `cudaStreamGetCaptureInfo_v3` `edgeData`: one [`GraphEdgeData`] per
+    /// [`Self::dependencies`] entry. Existing capture deps are Default, ports 0.
+    pub edge_data: Vec<GraphEdgeData>,
     /// Capture-sequence id (`cudaStreamGetCaptureInfo` `id_out`).
     ///
     /// Unique per [`crate::Sim::begin_capture`] / `begin_capture_to_graph`.
@@ -3407,7 +3410,8 @@ impl GraphDependencyType {
 /// `cudaGraphEdgeData` for [`crate::Sim::graph_add_dependencies_n_with_data`]
 /// / [`crate::Sim::graph_edges_with_data`] /
 /// [`crate::Sim::graph_node_deps_with_data`] /
-/// [`crate::Sim::graph_node_dependents_with_data`].
+/// [`crate::Sim::graph_node_dependents_with_data`] /
+/// [`StreamCaptureInfo::edge_data`].
 ///
 /// [`Self::kind`] [`GraphDependencyType::DEFAULT`] with ports 0 is identity
 /// with [`crate::Sim::graph_add_dependencies_n`]. Programmatic type is not

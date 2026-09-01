@@ -1030,6 +1030,8 @@
 //! [`stream_capture_info`](Sim::stream_capture_info) are `cudaStreamIsCapturing`
 //! / `cudaStreamGetCaptureInfo`. [`StreamCaptureInfo::dependencies`] is the v2
 //! array (last same-stream captured node union extra pending deps).
+//! [`StreamCaptureInfo::edge_data`] is the v3 array (Default `GraphEdgeData`,
+//! ports 0; same length as `dependencies`).
 //! [`StreamCaptureInfo::id`] is `id_out` (unique per begin-capture sequence;
 //! forked streams share it). [`begin_capture_with_mode`](Sim::begin_capture_with_mode)
 //! is `cudaStreamBeginCapture` with [`StreamCaptureMode`] (default
@@ -21862,6 +21864,46 @@ mod tests {
         let still = sim.stream_capture_info(d, copy).expect("still");
         assert_eq!(still.id, origin.id);
         let _g3 = sim.end_capture().unwrap();
+    }
+
+    #[test]
+    fn stream_capture_info_edge_data_is_default_identity() {
+        let mut sim = Sim::new(h100());
+        let d = DeviceId(0);
+        let s = StreamId(0);
+        let a = sim.malloc(d, 4096).unwrap();
+        let g = sim.create_graph(d, s).unwrap();
+        sim.graph_add_kernel(g, KernelKind::other(8, 8), &[a], &[a])
+            .unwrap();
+        sim.graph_add_kernel(g, KernelKind::other(8, 8), &[a], &[a])
+            .unwrap();
+        sim.begin_capture_to_graph(d, s, g, &[]).unwrap();
+        let empty = sim.stream_capture_info(d, s).expect("empty");
+        assert!(empty.dependencies.is_empty());
+        assert!(empty.edge_data.is_empty());
+        sim.stream_update_capture_dependencies(d, s, &[0, 1], CaptureDepOp::Set)
+            .unwrap();
+        let pending = sim.stream_capture_info(d, s).expect("pending");
+        assert_eq!(pending.dependencies, vec![0, 1]);
+        assert_eq!(
+            pending.edge_data,
+            vec![GraphEdgeData::default(), GraphEdgeData::default()]
+        );
+        enq(sim.kernel(d, KernelKind::other(8, 8), &[a], &[a], s));
+        let after = sim.stream_capture_info(d, s).expect("after kernel");
+        assert_eq!(after.dependencies, vec![2]);
+        assert_eq!(after.edge_data, vec![GraphEdgeData::default()]);
+        assert_eq!(after.edge_data.len(), after.dependencies.len());
+        assert_ne!(
+            after.edge_data,
+            sim.graph_edges_with_data(g)
+                .unwrap()
+                .into_iter()
+                .map(|(_, _, data)| data)
+                .collect::<Vec<_>>()
+        );
+        let _end = sim.end_capture().unwrap();
+        assert!(sim.stream_capture_info(d, s).is_none());
     }
 
     #[test]
