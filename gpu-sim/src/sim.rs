@@ -12061,11 +12061,17 @@ impl Sim {
     /// plus [`Self::pool_cached`]. [`MemPoolAttr::UsedMemHigh`] /
     /// [`MemPoolAttr::ReservedMemHigh`] are high-water of those. Reuse flags
     /// default to 1. [`MemPoolAttr::MaxPoolSize`] is [`Self::set_pool_max_size`]
-    /// (`0` unlimited). An imported pool reports the exporter. The graph-memory
-    /// pool is Invalid (use [`Self::graph_mem_get`]).
+    /// (`0` unlimited). [`MemPoolAttr::AllocationType`] is always
+    /// [`MemAllocationType::PINNED`]. [`MemPoolAttr::ExportHandleTypes`] is
+    /// [`MemHandleType::POSIX_FILE_DESCRIPTOR`] on shareable exporters and
+    /// [`MemHandleType::NONE`] on default, `create_pool`, and imported handles.
+    /// An imported pool reports the exporter except ExportHandleTypes (imported
+    /// cannot be re-exported). The graph-memory pool is Invalid (use
+    /// [`Self::graph_mem_get`]).
     pub fn pool_get_attribute(&self, pool: PoolId, attr: MemPoolAttr) -> Result<u64, SimError> {
         self.refuse_graph_pool(pool)?;
         self.refuse_destroyed_pool(pool)?;
+        let shareable = self.pool_ref(pool)?.shareable;
         let p = self.pool_ref(self.pool_root(pool)?)?;
         match attr {
             MemPoolAttr::ReleaseThreshold => Ok(p.release_threshold),
@@ -12079,6 +12085,12 @@ impl Sim {
             MemPoolAttr::ReuseAllowOpportunistic => Ok(u64::from(p.reuse_opportunistic)),
             MemPoolAttr::ReuseAllowInternalDependencies => Ok(u64::from(p.reuse_internal)),
             MemPoolAttr::MaxPoolSize => Ok(p.max_size),
+            MemPoolAttr::AllocationType => Ok(u64::from(MemAllocationType::PINNED)),
+            MemPoolAttr::ExportHandleTypes => Ok(if shareable {
+                MemHandleType::POSIX_FILE_DESCRIPTOR
+            } else {
+                MemHandleType::NONE
+            }),
         }
     }
 
@@ -12088,9 +12100,10 @@ impl Sim {
     /// [`MemPoolAttr::MaxPoolSize`] is [`Self::set_pool_max_size`].
     /// Reuse flags are 0 or 1 (other values Invalid `"pool reuse attr"`). Only
     /// [`MemPoolAttr::ReuseAllowOpportunistic`] `0` changes acquire (skip cache
-    /// reuse). Used/Reserved current are read-only. High-water Set `0` resets
-    /// to current (other values Invalid `"pool high attr"`). The graph-memory
-    /// pool is Invalid (use [`Self::graph_mem_set`]).
+    /// reuse). Used/Reserved current, [`MemPoolAttr::AllocationType`], and
+    /// [`MemPoolAttr::ExportHandleTypes`] are read-only. High-water Set `0`
+    /// resets to current (other values Invalid `"pool high attr"`). The
+    /// graph-memory pool is Invalid (use [`Self::graph_mem_set`]).
     pub fn pool_set_attribute(
         &mut self,
         pool: PoolId,
@@ -12100,7 +12113,10 @@ impl Sim {
         match attr {
             MemPoolAttr::ReleaseThreshold => self.set_pool_release_threshold(pool, value),
             MemPoolAttr::MaxPoolSize => self.set_pool_max_size(pool, value),
-            MemPoolAttr::UsedMemCurrent | MemPoolAttr::ReservedMemCurrent => {
+            MemPoolAttr::UsedMemCurrent
+            | MemPoolAttr::ReservedMemCurrent
+            | MemPoolAttr::AllocationType
+            | MemPoolAttr::ExportHandleTypes => {
                 self.fail_if_capturing("cannot capture mempool")?;
                 self.refuse_graph_pool(pool)?;
                 self.refuse_destroyed_pool(pool)?;
@@ -12144,7 +12160,9 @@ impl Sim {
             | MemPoolAttr::ReuseFollowEventDependencies
             | MemPoolAttr::ReuseAllowOpportunistic
             | MemPoolAttr::ReuseAllowInternalDependencies
-            | MemPoolAttr::MaxPoolSize => {
+            | MemPoolAttr::MaxPoolSize
+            | MemPoolAttr::AllocationType
+            | MemPoolAttr::ExportHandleTypes => {
                 return Err(SimError::Invalid {
                     why: "pool high attr",
                 });
@@ -12179,7 +12197,9 @@ impl Sim {
             | MemPoolAttr::UsedMemHigh
             | MemPoolAttr::ReservedMemCurrent
             | MemPoolAttr::ReservedMemHigh
-            | MemPoolAttr::MaxPoolSize => {
+            | MemPoolAttr::MaxPoolSize
+            | MemPoolAttr::AllocationType
+            | MemPoolAttr::ExportHandleTypes => {
                 return Err(SimError::Invalid {
                     why: "pool reuse attr",
                 });

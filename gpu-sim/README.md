@@ -1019,7 +1019,8 @@ past it), and `usage` (`MemHandleUsage::NONE` only; HW decompress is not
 modeled). Typed `create_pool` / `create_shareable_pool` stay.
 `MemPoolAttr` is ReleaseThreshold / UsedMemCurrent / UsedMemHigh /
 ReservedMemCurrent / ReservedMemHigh / MaxPoolSize plus reuse flags
-(default 1). Only
+(default 1). AllocationType is always PINNED. ExportHandleTypes is POSIX-FD
+on shareable exporters and NONE on imported (cannot re-export). Only
 `ReuseAllowOpportunistic=0` skips cache reuse (OS alloc; unused cached
 bytes stay reserved). FollowEvent / Internal do not insert event waits
 or extra sync. High-water Set `0` resets to current; graph mem stays
@@ -1034,7 +1035,11 @@ leftover cache stays reserved). `expertvm sim --mempool-max N` is
 `MemPoolAttr::MaxPoolSize` / `set_pool_max_size` is
 `cudaMemPoolAttrMaxPoolSize` (Set after create; Get reports the stored
 cap; this VM does not round up for alignment). CLI stays create plus
-SetMemPool. Destroying a user pool (`destroy_pool` / `cudaMemPoolDestroy`)
+SetMemPool. `MemPoolAttr::AllocationType` /
+`MemPoolAttr::ExportHandleTypes` are Get-only
+(`cudaMemPoolAttrAllocationType` always PINNED;
+`cudaMemPoolAttrExportHandleTypes` is POSIX-FD on shareable exporters and
+NONE on imported). Destroying a user pool (`destroy_pool` / `cudaMemPoolDestroy`)
 returns unused cache to the OS; outstanding allocs stay valid; the default
 pool cannot be destroyed; destroying the current pool rebinds GetMemPool
 to GetDefaultMemPool. Capture cannot include pool create/trim/set-attribute

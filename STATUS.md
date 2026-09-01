@@ -5,6 +5,19 @@ Visible five-turn extract: [docs/chatgpt-share-6a920fe1.md](docs/chatgpt-share-6
 Complete share-API extract: [docs/chatgpt-share-6a920fe1/](docs/chatgpt-share-6a920fe1/).
 Work lands on `main`. No PRs.
 
+## Shipped 2026-09-01 — CUDA mempool AllocationType and ExportHandleTypes
+
+`gpu-sim` CUDA `cudaMemPoolAttrAllocationType` /
+`cudaMemPoolAttrExportHandleTypes` are Get-only
+(`pool_get_attribute`; Set is `"read-only pool attr"`). AllocationType is
+always `MemAllocationType::PINNED`. ExportHandleTypes is POSIX-FD on
+shareable exporters and `MemHandleType::NONE` on default, `create_pool`,
+and imported handles (imported cannot be re-exported). Graph-memory pool
+stays Invalid. Capture: Get legal, Set Invalid. This VM does not invent
+NT/fabric handle types, Engine `--pool-alloc-type`, or Set of these
+attrs. `gpu-profile capture` is still refused. Dual score still has no
+`$/M tokens`.
+
 ## Shipped 2026-09-01 — CUDA mempool MaxPoolSize attribute
 
 `gpu-sim` CUDA `cudaMemPoolAttrMaxPoolSize` is `MemPoolAttr::MaxPoolSize`

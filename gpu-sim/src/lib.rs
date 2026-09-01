@@ -183,6 +183,10 @@
 //! with [`MemPoolProps::max_size`] then [`set_device_mempool`](Sim::set_device_mempool).
 //! [`MemPoolAttr::MaxPoolSize`] / [`set_pool_max_size`](Sim::set_pool_max_size)
 //! is `cudaMemPoolAttrMaxPoolSize` (Set after create; Get reports the cap).
+//! [`MemPoolAttr::AllocationType`] is Get-only `cudaMemPoolAttrAllocationType`
+//! (always [`MemAllocationType::PINNED`]). [`MemPoolAttr::ExportHandleTypes`]
+//! is Get-only `cudaMemPoolAttrExportHandleTypes` (POSIX-FD on shareable
+//! exporters; [`MemHandleType::NONE`] on imported handles).
 //! [`MemPoolProps::usage`] must be [`MemHandleUsage::NONE`] (HW decompress is
 //! not modeled). Destroying a user pool returns
 //! unused cache to the OS; outstanding allocs stay valid; the default pool
@@ -20565,6 +20569,106 @@ mod tests {
                 2048
             );
         }
+    }
+
+    #[test]
+    fn pool_alloc_type_export_handles_are_cuda_mempool_attrs() {
+        let d = DeviceId(0);
+        let s = StreamId(0);
+        let mut sim = Sim::new(h100());
+        let p = sim.default_pool(d).unwrap();
+        assert_eq!(
+            sim.pool_get_attribute(p, MemPoolAttr::AllocationType)
+                .unwrap(),
+            u64::from(MemAllocationType::PINNED)
+        );
+        assert_eq!(
+            sim.pool_get_attribute(p, MemPoolAttr::ExportHandleTypes)
+                .unwrap(),
+            MemHandleType::NONE
+        );
+        let created = sim.create_pool(d).unwrap();
+        assert_eq!(
+            sim.pool_get_attribute(created, MemPoolAttr::AllocationType)
+                .unwrap(),
+            u64::from(MemAllocationType::PINNED)
+        );
+        assert_eq!(
+            sim.pool_get_attribute(created, MemPoolAttr::ExportHandleTypes)
+                .unwrap(),
+            MemHandleType::NONE
+        );
+        let sp = sim.create_shareable_pool(d).unwrap();
+        assert_eq!(
+            sim.pool_get_attribute(sp, MemPoolAttr::ExportHandleTypes)
+                .unwrap(),
+            MemHandleType::POSIX_FILE_DESCRIPTOR
+        );
+        let h = sim.pool_export(sp).unwrap();
+        let imp = sim.pool_import(d, h).unwrap();
+        assert_eq!(
+            sim.pool_get_attribute(imp, MemPoolAttr::AllocationType)
+                .unwrap(),
+            u64::from(MemAllocationType::PINNED)
+        );
+        assert_eq!(
+            sim.pool_get_attribute(imp, MemPoolAttr::ExportHandleTypes)
+                .unwrap(),
+            MemHandleType::NONE
+        );
+        assert_eq!(
+            sim.pool_get_attribute(sp, MemPoolAttr::ExportHandleTypes)
+                .unwrap(),
+            MemHandleType::POSIX_FILE_DESCRIPTOR
+        );
+        match sim.pool_set_attribute(p, MemPoolAttr::AllocationType, 1) {
+            Err(SimError::Invalid { why }) => assert!(why.contains("read-only"), "{why}"),
+            other => panic!("{other:?}"),
+        }
+        match sim.pool_set_attribute(sp, MemPoolAttr::ExportHandleTypes, 0) {
+            Err(SimError::Invalid { why }) => assert!(why.contains("read-only"), "{why}"),
+            other => panic!("{other:?}"),
+        }
+        let gp = sim.graph_pool(d).unwrap();
+        match sim.pool_get_attribute(gp, MemPoolAttr::AllocationType) {
+            Err(SimError::Invalid { why }) => assert!(why.contains("graph mem"), "{why}"),
+            other => panic!("{other:?}"),
+        }
+        match sim.pool_get_attribute(gp, MemPoolAttr::ExportHandleTypes) {
+            Err(SimError::Invalid { why }) => assert!(why.contains("graph mem"), "{why}"),
+            other => panic!("{other:?}"),
+        }
+        sim.begin_capture(d, s).unwrap();
+        assert_eq!(
+            sim.pool_get_attribute(p, MemPoolAttr::AllocationType)
+                .unwrap(),
+            u64::from(MemAllocationType::PINNED)
+        );
+        assert_eq!(
+            sim.pool_get_attribute(sp, MemPoolAttr::ExportHandleTypes)
+                .unwrap(),
+            MemHandleType::POSIX_FILE_DESCRIPTOR
+        );
+        match sim.pool_set_attribute(p, MemPoolAttr::AllocationType, 1) {
+            Err(SimError::Invalid { why }) => assert!(why.contains("capture"), "{why}"),
+            other => panic!("{other:?}"),
+        }
+        match sim.pool_set_attribute(sp, MemPoolAttr::ExportHandleTypes, 0) {
+            Err(SimError::Invalid { why }) => assert!(why.contains("capture"), "{why}"),
+            other => panic!("{other:?}"),
+        }
+        let _g = sim.end_capture().unwrap();
+        let posix = sim
+            .create_pool_with_props(MemPoolProps {
+                handle_types: MemHandleType::POSIX_FILE_DESCRIPTOR,
+                ..MemPoolProps::default()
+            })
+            .unwrap();
+        assert_eq!(
+            sim.pool_get_attribute(posix, MemPoolAttr::ExportHandleTypes)
+                .unwrap(),
+            MemHandleType::POSIX_FILE_DESCRIPTOR
+        );
     }
 
     #[test]

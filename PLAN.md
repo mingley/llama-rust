@@ -5480,7 +5480,20 @@ model, do not celebrate the sim.
     LocationType / LocationId. `gpu-profile capture` is still refused. Dual
     score still has no `$/M tokens`.
 
-510. [ ] Next numbered PLAN item after 509 is the next `gpu-sim` / Engine /
+510. [x] `gpu-sim` CUDA `cudaMemPoolAttrAllocationType` /
+    `cudaMemPoolAttrExportHandleTypes` are [`MemPoolAttr::AllocationType`]
+    / [`MemPoolAttr::ExportHandleTypes`] (`pool_get_attribute`). Get-only
+    (`pool_set_attribute` is `"read-only pool attr"`). AllocationType is
+    always [`MemAllocationType::PINNED`]. ExportHandleTypes is
+    [`MemHandleType::POSIX_FILE_DESCRIPTOR`] on shareable exporters and
+    [`MemHandleType::NONE`] on default, `create_pool`, and imported handles
+    (imported cannot be re-exported). Graph-memory pool stays Invalid.
+    Capture: Get legal, Set Invalid. This VM does not invent NT/fabric
+    handle types, Engine `--pool-alloc-type`, or Set of these attrs.
+    `gpu-profile capture` is still refused. Dual score still has no
+    `$/M tokens`.
+
+511. [ ] Next numbered PLAN item after 510 is the next `gpu-sim` / Engine /
     serve / expertvm mechanical API that is still missing, or the next official
     decode family. Prefer remaining CUDA-shaped twins over more
     OpenAI HTTP veneer. Do not invent F32 `output.scale`. Do not invent a
@@ -5843,6 +5856,12 @@ model, do not celebrate the sim.
     invent pool `LocationType` / `LocationId` as MemPoolAttr (HostNuma /
     Invisible stay unmodeled). Do not invent shrinking MaxPoolSize freeing
     live allocs.
+    Do not invent a second `cudaMemPoolAttrAllocationType` /
+    [`MemPoolAttr::AllocationType`]. Do not invent a second
+    `cudaMemPoolAttrExportHandleTypes` / [`MemPoolAttr::ExportHandleTypes`].
+    Do not invent Engine `--pool-alloc-type` / `--pool-export-handles`. Do
+    not invent Set of AllocationType / ExportHandleTypes. Do not invent NT
+    or fabric mempool handle types.
     Do not
     spend the next item on an OpenAI-compatible HTTP veneer.
 

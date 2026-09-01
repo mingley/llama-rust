@@ -3833,6 +3833,14 @@ pub enum MemPoolAttr {
     /// [`crate::Sim::set_pool_max_size`] stays. Graph-memory pools stay
     /// [`crate::GraphMemAttr`]. This VM does not round up for alignment.
     MaxPoolSize,
+    /// `cudaMemPoolAttrAllocationType`. Always [`MemAllocationType::PINNED`].
+    /// Get-only.
+    AllocationType,
+    /// `cudaMemPoolAttrExportHandleTypes`. Shareable exporters report
+    /// [`MemHandleType::POSIX_FILE_DESCRIPTOR`]. Default, `create_pool`, and
+    /// imported handles report [`MemHandleType::NONE`] (imported cannot be
+    /// re-exported). Get-only.
+    ExportHandleTypes,
 }
 
 /// `cudaMemAccessFlags` for [`crate::Sim::pool_get_access`],
