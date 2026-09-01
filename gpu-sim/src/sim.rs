@@ -16947,6 +16947,48 @@ impl Sim {
         Ok(id)
     }
 
+    /// `cuMemsetD2D8Async`. `width` is CUDA `Width` (8-bit elements).
+    ///
+    /// Row payload is `width` bytes. `pitch` is destination pitch in bytes.
+    /// `height` must be `>= 1`. Capture is allowed unless sync-memops. Fill
+    /// value is not modeled. [`Self::memset_2d_async`] stays byte-width
+    /// [`MemsetOp`].
+    pub fn memset_d2d8_async(
+        &mut self,
+        device: DeviceId,
+        alloc: AllocId,
+        pitch: u64,
+        width: u64,
+        height: u64,
+        stream: StreamId,
+    ) -> Result<OpId, SimError> {
+        self.memset_op(
+            device,
+            memset_d2d_op(alloc, pitch, width, height, 1)?,
+            stream,
+        )
+    }
+
+    /// `cuMemsetD2D8`. Host-synchronous; capture cannot include it.
+    pub fn memset_d2d8(
+        &mut self,
+        device: DeviceId,
+        alloc: AllocId,
+        pitch: u64,
+        width: u64,
+        height: u64,
+        stream: StreamId,
+    ) -> Result<OpId, SimError> {
+        if self.capturing.is_some() {
+            return Err(SimError::Invalid {
+                why: "cannot capture host-sync memset",
+            });
+        }
+        let id = self.memset_d2d8_async(device, alloc, pitch, width, height, stream)?;
+        self.synchronize_stream(device, stream)?;
+        Ok(id)
+    }
+
     /// `cudaMemset` / `cudaMemset2D` / `cudaMemset3D` (host-synchronous).
     ///
     /// Capture cannot include it. [`Self::memset_op`] is the Async twin.
