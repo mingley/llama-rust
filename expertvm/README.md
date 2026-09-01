@@ -565,6 +565,8 @@ CUDA mipmapped arrays are not modeled; no Engine flag).
 (Invalid; no mipmapped-array handles; no Engine flag).
 `gpu-sim` `import_external_memory` is `cuImportExternalMemory` (Invalid;
 no Engine flag).
+`gpu-sim` `destroy_external_memory` is `cuDestroyExternalMemory` (Invalid;
+no external-memory handles; no Engine flag).
 `gpu-sim` `surf_object_create` is `cuSurfObjectCreate` (Invalid; CUDA
 surfaces are not modeled; no Engine flag).
 `gpu-sim` `surf_object_destroy` is `cuSurfObjectDestroy` (Invalid; no

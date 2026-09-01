@@ -333,6 +333,9 @@
 //! [`import_external_memory`](Sim::import_external_memory) is
 //! `cuImportExternalMemory` (always Invalid `"external memory"`). Query; legal
 //! during capture. No Engine `--external-memory`.
+//! [`destroy_external_memory`](Sim::destroy_external_memory) is
+//! `cuDestroyExternalMemory` (always Invalid `"external destroy"`). Query;
+//! legal during capture. No Engine `--external-destroy`.
 //! [`va_export_to_shareable_handle`](Sim::va_export_to_shareable_handle) is
 //! `cuMemExportToShareableHandle`. Always Invalid `"not shareable"`
 //! ([`MemAllocationProp::handle_types`] is none; POSIX-FD VMM export is not
@@ -21817,6 +21820,46 @@ mod tests {
                 .unwrap(),
             0
         );
+        match sim.destroy_external_memory(d) {
+            Err(SimError::Invalid { why }) => {
+                assert!(why.contains("external destroy"), "{why}");
+                assert!(!why.contains("external memory"), "{why}");
+            }
+            other => panic!("{other:?}"),
+        }
+    }
+
+    #[test]
+    fn destroy_external_memory_is_unsupported() {
+        let mut sim = Sim::new(h100());
+        let d = DeviceId(0);
+        match sim.destroy_external_memory(d) {
+            Err(SimError::Invalid { why }) => {
+                assert!(why.contains("external destroy"), "{why}");
+                assert!(!why.contains("external memory"), "{why}");
+            }
+            other => panic!("{other:?}"),
+        }
+        sim.begin_capture(d, StreamId(0)).unwrap();
+        match sim.destroy_external_memory(d) {
+            Err(SimError::Invalid { why }) => {
+                assert!(why.contains("external destroy"), "{why}");
+            }
+            other => panic!("{other:?}"),
+        }
+        let _g = sim.end_capture().unwrap();
+        match sim.destroy_external_memory(DeviceId(99)) {
+            Err(SimError::Invalid { why }) => {
+                assert!(why.contains("device not in profile"), "{why}");
+            }
+            other => panic!("{other:?}"),
+        }
+        match sim.import_external_memory(d) {
+            Err(SimError::Invalid { why }) => {
+                assert!(why.contains("external memory"), "{why}");
+            }
+            other => panic!("{other:?}"),
+        }
     }
 
     #[test]

@@ -5,6 +5,14 @@ Visible five-turn extract: [docs/chatgpt-share-6a920fe1.md](docs/chatgpt-share-6
 Complete share-API extract: [docs/chatgpt-share-6a920fe1/](docs/chatgpt-share-6a920fe1/).
 Work lands on `main`. No PRs.
 
+## Shipped 2026-09-01 — CUDA `cuDestroyExternalMemory`
+
+`gpu-sim` `Sim::destroy_external_memory` is `cuDestroyExternalMemory`.
+Always Invalid `"external destroy"` because external memory import is not
+modeled. Query; legal during capture. Distinct from `import_external_memory`.
+This VM does not invent `cuExternalMemoryGetMappedBuffer` or Engine `--external-destroy`.
+`gpu-profile capture` is still refused. Dual score still has no `$/M tokens`.
+
 ## Shipped 2026-09-01 — CUDA `cuGraphicsVDPAURegisterVideoSurface`
 
 `gpu-sim` `Sim::graphics_vdpau_register_video_surface` is

@@ -6910,7 +6910,14 @@ model, do not celebrate the sim.
     or `cudaChooseDevice`. `gpu-profile capture` is still refused. Dual
     score still has no `$/M tokens`.
 
-680. [ ] Next numbered PLAN item after 679 is the next `gpu-sim` / Engine /
+680. [x] `gpu-sim` `Sim::destroy_external_memory` is
+    `cuDestroyExternalMemory`. Always Invalid `"external destroy"`
+    because external memory import is not modeled. Query; legal during capture.
+    Distinct from `import_external_memory`. This VM does not invent `cuExternalMemoryGetMappedBuffer`, Engine `--external-destroy`,
+    or `cudaChooseDevice`. `gpu-profile capture` is still refused. Dual
+    score still has no `$/M tokens`.
+
+681. [ ] Next numbered PLAN item after 680 is the next `gpu-sim` / Engine /
     serve / expertvm mechanical API that is still missing, or the next official
     decode family. Prefer remaining CUDA-shaped twins over more
     OpenAI HTTP veneer. Do not invent F32 `output.scale`. Do not invent a
@@ -7419,6 +7426,9 @@ model, do not celebrate the sim.
     Do not invent a second `cuGraphicsVDPAURegisterVideoSurface` /
     `graphics_vdpau_register_video_surface`. Do not invent Engine `--vdpau-video`.
     Do not invent a `VdpVideoSurface` this slice. Do not reverse `"vdpau video"`.
+    Do not invent a second `cuDestroyExternalMemory` / `destroy_external_memory`.
+    Do not invent Engine `--external-destroy`. Do not invent
+    `cuExternalMemoryGetMappedBuffer` this slice. Do not reverse `"external destroy"`.
     Do not invent a second `cudaStreamAddCallback`.
     Do not invent Engine `--stream-callback` (same wall as second live
     `cudaLaunchHostFunc` after miss DMA).
@@ -8029,6 +8039,9 @@ model, do not celebrate the sim.
     Do not invent a second `graphics_vdpau_register_video_surface` API. Do not invent
     Engine `--register-vdpau-video`. Do not invent a VDPAU video mixer
     this slice. Do not reverse VDPAU video register remaining unsupported.
+    Do not invent a second `destroy_external_memory` API. Do not invent
+    Engine `--destroy-external-memory`. Do not invent a mapped external
+    buffer this slice. Do not reverse external destroy remaining unsupported.
     Do not invent a second DeviceLaunch in-flight destroy-complete check or Engine
     `--device-launch-destroy`. Do not abort an in-flight DeviceLaunch when
     `destroy_graph` succeeds. Do not delay destroy of an idle exec. Do not invent
@@ -8822,6 +8835,9 @@ model, do not celebrate the sim.
     Do not invent a second `graphics_vdpau_register_video_surface` method. Do not
     invent Engine `--cu-graphics-vdpau-register-video-surface`. Do not reverse wrapping
     cuGraphicsVDPAURegisterVideoSurface Invalid.
+    Do not invent a second `destroy_external_memory` method. Do not
+    invent Engine `--cu-destroy-external-memory`. Do not reverse wrapping
+    cuDestroyExternalMemory Invalid.
     Do not
     spend the next item on an OpenAI-compatible HTTP veneer.
 

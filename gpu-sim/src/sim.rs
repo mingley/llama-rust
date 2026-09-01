@@ -17765,14 +17765,27 @@ impl Sim {
     ///
     /// Always Invalid `"external memory"` ([`DeviceAttr::DmaBufSupported`] is
     /// 0; Win32 / fabric handles are 0). Distinct from
-    /// [`Self::va_get_handle_for_address_range`] and from
-    /// [`Self::device_get_nvscisync_attributes`]. Unknown devices are Invalid
-    /// `"device not in profile"`. This VM does not invent
-    /// `cuDestroyExternalMemory` this slice.
+    /// [`Self::va_get_handle_for_address_range`], from
+    /// [`Self::device_get_nvscisync_attributes`], and from
+    /// [`Self::destroy_external_memory`]. Unknown devices are Invalid
+    /// `"device not in profile"`. Query; legal during capture.
     pub fn import_external_memory(&self, device: DeviceId) -> Result<(), SimError> {
         let _gpu = self.profile.gpu(device)?;
         Err(SimError::Invalid {
             why: "external memory",
+        })
+    }
+
+    /// `cuDestroyExternalMemory` plus `cudaDestroyExternalMemory`. External
+    /// memory import is not modeled.
+    ///
+    /// Always Invalid `"external destroy"` (no external-memory handles).
+    /// Distinct from [`Self::import_external_memory`]. Unknown devices are
+    /// Invalid `"device not in profile"`. Query; legal during capture.
+    pub fn destroy_external_memory(&self, device: DeviceId) -> Result<(), SimError> {
+        let _gpu = self.profile.gpu(device)?;
+        Err(SimError::Invalid {
+            why: "external destroy",
         })
     }
 

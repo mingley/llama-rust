@@ -171,6 +171,7 @@ warp scheduler, L1, …   ← do not model
 | `mipmapped_array_get_level` is Invalid (no mipmapped-array handles) | `cuMipmappedArrayGetLevel` |
 | `mipmapped_array_destroy` is Invalid (no mipmapped-array handles) | `cuMipmappedArrayDestroy` |
 | `import_external_memory` is Invalid (dma-buf / Win32 / fabric are 0) | `cuImportExternalMemory` |
+| `destroy_external_memory` is Invalid (no external-memory handles) | `cuDestroyExternalMemory` |
 | `surf_object_create` is Invalid (CUDA surfaces are not modeled) | `cuSurfObjectCreate` |
 | `surf_object_destroy` is Invalid (no surface-object handles) | `cuSurfObjectDestroy` / `cudaDestroySurfaceObject` |
 | `surf_object_get_resource_desc` is Invalid (no surface-object handles) | `cuSurfObjectGetResourceDesc` / `cudaGetSurfaceObjectResourceDesc` |
@@ -1076,6 +1077,9 @@ is `cuMemGetHandleForAddressRange` (always Invalid `"dma-buf not modeled"`;
 `create_shareable_pool`. Query; legal during capture. No Engine `--dma-buf`.
 `import_external_memory` is `cuImportExternalMemory` (always Invalid
 `"external memory"`; dma-buf / Win32 / fabric handles are 0).
+`destroy_external_memory` is `cuDestroyExternalMemory` (always Invalid
+`"external destroy"`). Distinct from `import_external_memory`. Query; legal
+during capture. No Engine `--external-destroy`.
 `surf_object_create` is `cuSurfObjectCreate` (always Invalid `"cuda surface"`;
 CUDA surfaces are not modeled). Distinct from `array_create`. Query; legal
 during capture. No Engine `--surf-object`.
