@@ -167,6 +167,7 @@ warp scheduler, L1, …   ← do not model
 | `egl_stream_consumer_connect` is Invalid (EGL streams are not modeled) | `cuEGLStreamConsumerConnect` |
 | `gl_get_devices` is Invalid (OpenGL interop is not modeled) | `cuGLGetDevices` / `cudaGLGetDevices` |
 | `d3d11_get_devices` is Invalid (Direct3D 11 interop is not modeled) | `cuD3D11GetDevices` / `cudaD3D11GetDevices` |
+| `d3d12_get_devices` is Invalid (Direct3D 12 interop is not modeled) | `cuD3D12GetDevices` / `cudaD3D12GetDevices` |
 | `device_get_pci_bus_id` is a synthetic `domain:bus:device.function` (also `DeviceProperties` PCI ids) | `cudaDeviceGetPciBusId` |
 | `device_get_by_pci_bus_id` is the inverse of `device_get_pci_bus_id` | `cudaDeviceGetByPCIBusId` |
 | `stream_get_flags` is 0 blocking / 1 NonBlocking | `cudaStreamGetFlags` |
@@ -1032,6 +1033,9 @@ from `graphics_map_resources` and `egl_stream_consumer_connect`. Query;
 legal during capture. No Engine `--gl-devices`.
 `d3d11_get_devices` is `cuD3D11GetDevices` (always Invalid `"d3d11"`).
 Distinct from `gl_get_devices`. Query; legal during capture. No Engine `--d3d11-devices`.
+`d3d12_get_devices` is `cuD3D12GetDevices` (always Invalid `"d3d12"`).
+Distinct from `d3d11_get_devices` and from `D3D12CigSupported` (CIG is
+not GetDevices). Query; legal during capture. No Engine `--d3d12-devices`.
 `HostMemoryPoolsSupported` is always 0 (pools are device-only).
 `IsMultiGpuBoard` / `MultiGpuBoardGroupID` are always 0 (example SKUs
 are discrete single-GPU packages). `ComputeMode` is always Default

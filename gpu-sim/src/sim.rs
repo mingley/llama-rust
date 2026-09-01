@@ -17712,6 +17712,19 @@ impl Sim {
         Err(SimError::Invalid { why: "d3d11" })
     }
 
+    /// `cuD3D12GetDevices` plus `cudaD3D12GetDevices`. Direct3D 12 interop
+    /// is not modeled.
+    ///
+    /// Always Invalid `"d3d12"`. Distinct from [`Self::d3d11_get_devices`]
+    /// and from [`DeviceAttr::D3D12CigSupported`] (CIG is not GetDevices).
+    /// Unknown devices are Invalid `"device not in profile"`. Query; legal
+    /// during capture. This VM does not invent `cuD3D12CtxCreate` this
+    /// slice.
+    pub fn d3d12_get_devices(&self, device: DeviceId) -> Result<(), SimError> {
+        let _gpu = self.profile.gpu(device)?;
+        Err(SimError::Invalid { why: "d3d12" })
+    }
+
     /// `cudaMemcpy3DWithAttributesAsync`.
     ///
     /// [`MemcpySrcAccessOrder::Stream`] is [`Self::memcpy_3d_async`].

@@ -597,6 +597,10 @@
 //! Invalid `"opengl"`). Query; legal during capture. No Engine `--gl-devices`.
 //! [`d3d11_get_devices`](Sim::d3d11_get_devices) is `cuD3D11GetDevices`
 //! (always Invalid `"d3d11"`). Query; legal during capture. No Engine `--d3d11-devices`.
+//! [`d3d12_get_devices`](Sim::d3d12_get_devices) is `cuD3D12GetDevices`
+//! (always Invalid `"d3d12"`). Distinct from
+//! [`d3d11_get_devices`](Sim::d3d11_get_devices) and from
+//! [`DeviceAttr::D3D12CigSupported`]. Query; legal during capture. No Engine `--d3d12-devices`.
 //! [`DeviceAttr::HostMemoryPoolsSupported`] is always 0 (pools are
 //! device-only; host location is Invalid).
 //! [`DeviceAttr::IsMultiGpuBoard`] / [`MultiGpuBoardGroupID`](DeviceAttr::MultiGpuBoardGroupID)
@@ -21434,6 +21438,43 @@ mod tests {
             }
             other => panic!("{other:?}"),
         }
+    }
+
+    #[test]
+    fn d3d12_get_devices_is_unsupported() {
+        let mut sim = Sim::new(h100());
+        let d = DeviceId(0);
+        match sim.d3d12_get_devices(d) {
+            Err(SimError::Invalid { why }) => {
+                assert!(why.contains("d3d12"), "{why}");
+            }
+            other => panic!("{other:?}"),
+        }
+        sim.begin_capture(d, StreamId(0)).unwrap();
+        match sim.d3d12_get_devices(d) {
+            Err(SimError::Invalid { why }) => {
+                assert!(why.contains("d3d12"), "{why}");
+            }
+            other => panic!("{other:?}"),
+        }
+        let _g = sim.end_capture().unwrap();
+        match sim.d3d12_get_devices(DeviceId(99)) {
+            Err(SimError::Invalid { why }) => {
+                assert!(why.contains("device not in profile"), "{why}");
+            }
+            other => panic!("{other:?}"),
+        }
+        match sim.d3d11_get_devices(d) {
+            Err(SimError::Invalid { why }) => {
+                assert!(why.contains("d3d11"), "{why}");
+            }
+            other => panic!("{other:?}"),
+        }
+        assert_eq!(
+            sim.device_get_attribute(d, DeviceAttr::D3D12CigSupported)
+                .unwrap(),
+            0
+        );
     }
 
     #[test]
