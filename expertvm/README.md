@@ -712,6 +712,8 @@ interop is not modeled; no Engine flag).
 interop is not modeled; no Engine flag).
 `gpu-sim` `d3d9_ctx_create` is `cuD3D9CtxCreate` (Invalid; Direct3D 9
 interop is not modeled; no Engine flag).
+`gpu-sim` `d3d9_ctx_create_on_device` is `cuD3D9CtxCreateOnDevice`
+(Invalid; Direct3D 9 interop is not modeled; no Engine flag).
 `gpu-sim` `graphics_d3d9_register_resource` is
 `cuGraphicsD3D9RegisterResource` (Invalid; Direct3D 9 interop is not
 modeled; no Engine flag).
