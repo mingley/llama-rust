@@ -938,9 +938,12 @@
 //! [`graph_child_get_graph`](Sim::graph_child_get_graph) is
 //! `cudaGraphChildGraphNodeGetGraph`. [`graph_exec_child_get_graph`](Sim::graph_exec_child_get_graph)
 //! is the exec-snapshot GetParams twin (uninstantiated graphs are Invalid).
-//! [`graph_event_record_get_event`](Sim::graph_event_record_get_event) /
+//! [`graph_event_record_get_event`](Sim::graph_event_record_get_event) plus
 //! [`graph_event_wait_get_event`](Sim::graph_event_wait_get_event) are
-//! `cudaGraphEventRecordNodeGetEvent` / `WaitNodeGetEvent`.
+//! `cudaGraphEventRecordNodeGetEvent` plus `WaitNodeGetEvent`.
+//! [`graph_exec_event_record_get_event`](Sim::graph_exec_event_record_get_event)
+//! plus [`graph_exec_event_wait_get_event`](Sim::graph_exec_event_wait_get_event)
+//! are the exec-snapshot twins (uninstantiated graphs are Invalid).
 //! [`graph_alloc_get_params`](Sim::graph_alloc_get_params) is
 //! `cudaGraphMemAllocNodeGetParams` (stored id and bytes).
 //! [`graph_free_get_params`](Sim::graph_free_get_params) is
@@ -11571,6 +11574,79 @@ mod tests {
         );
         let _end = sim.end_capture().unwrap();
         match sim.graph_exec_child_get_graph(GraphId(99), 0) {
+            Err(SimError::Invalid { why }) => assert!(why.contains("unknown graph"), "{why}"),
+            other => panic!("{other:?}"),
+        }
+    }
+
+    #[test]
+    fn graph_exec_event_get_event_reads_exec_snapshot() {
+        let mut sim = Sim::new(h100());
+        let d = DeviceId(0);
+        let s = StreamId(0);
+        sim.create_event(EventId(1)).unwrap();
+        sim.create_event(EventId(2)).unwrap();
+        sim.create_event(EventId(3)).unwrap();
+        sim.create_event(EventId(4)).unwrap();
+        let g = sim.create_graph(d, s).unwrap();
+        sim.graph_add_event_record(g, EventId(1), false).unwrap();
+        sim.graph_add_event_wait(g, EventId(2), false).unwrap();
+        match sim.graph_exec_event_record_get_event(g, 0) {
+            Err(SimError::Invalid { why }) => assert!(why.contains("not instantiated"), "{why}"),
+            other => panic!("{other:?}"),
+        }
+        match sim.graph_exec_event_wait_get_event(g, 1) {
+            Err(SimError::Invalid { why }) => assert!(why.contains("not instantiated"), "{why}"),
+            other => panic!("{other:?}"),
+        }
+        assert_eq!(sim.graph_event_record_get_event(g, 0).unwrap(), EventId(1));
+        assert_eq!(sim.graph_event_wait_get_event(g, 1).unwrap(), EventId(2));
+        let exec = sim.instantiate_graph(g).unwrap();
+        assert_eq!(
+            sim.graph_exec_event_record_get_event(exec, 0).unwrap(),
+            EventId(1)
+        );
+        assert_eq!(
+            sim.graph_exec_event_wait_get_event(exec, 1).unwrap(),
+            EventId(2)
+        );
+        sim.graph_event_record_set_event(g, 0, EventId(3)).unwrap();
+        sim.graph_event_wait_set_event(g, 1, EventId(4)).unwrap();
+        assert_eq!(
+            sim.graph_exec_event_record_get_event(exec, 0).unwrap(),
+            EventId(1)
+        );
+        assert_eq!(
+            sim.graph_exec_event_wait_get_event(exec, 1).unwrap(),
+            EventId(2)
+        );
+        sim.graph_exec_event_record_set_event(exec, 0, EventId(3))
+            .unwrap();
+        sim.graph_exec_event_wait_set_event(exec, 1, EventId(4))
+            .unwrap();
+        assert_eq!(
+            sim.graph_exec_event_record_get_event(exec, 0).unwrap(),
+            EventId(3)
+        );
+        assert_eq!(
+            sim.graph_exec_event_wait_get_event(exec, 1).unwrap(),
+            EventId(4)
+        );
+        match sim.graph_exec_event_record_get_event(exec, 1) {
+            Err(SimError::Invalid { why }) => assert!(why.contains("event record"), "{why}"),
+            other => panic!("{other:?}"),
+        }
+        match sim.graph_exec_event_wait_get_event(exec, 0) {
+            Err(SimError::Invalid { why }) => assert!(why.contains("event wait"), "{why}"),
+            other => panic!("{other:?}"),
+        }
+        sim.begin_capture(d, s).unwrap();
+        assert_eq!(
+            sim.graph_exec_event_record_get_event(exec, 0).unwrap(),
+            EventId(3)
+        );
+        let _end = sim.end_capture().unwrap();
+        match sim.graph_exec_event_record_get_event(GraphId(99), 0) {
             Err(SimError::Invalid { why }) => assert!(why.contains("unknown graph"), "{why}"),
             other => panic!("{other:?}"),
         }

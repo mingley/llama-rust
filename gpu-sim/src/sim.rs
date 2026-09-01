@@ -684,7 +684,7 @@ impl Sim {
     }
 }
 
-/// Record vs wait for event-node SetEvent (definition and exec).
+/// Record vs wait for event-node GetEvent / SetEvent (definition and exec).
 #[derive(Clone, Copy)]
 enum EventSetKind {
     Record,
@@ -5875,6 +5875,9 @@ impl Sim {
     }
 
     /// `cudaGraphEventRecordNodeGetEvent`. Query; legal during capture.
+    ///
+    /// Instantiated ids use the exec snapshot.
+    /// [`Self::graph_exec_event_record_get_event`] refuses uninstantiated graphs.
     pub fn graph_event_record_get_event(
         &self,
         graph: GraphId,
@@ -5888,7 +5891,23 @@ impl Sim {
         }
     }
 
+    /// Exec-snapshot [`Self::graph_event_record_get_event`].
+    ///
+    /// Uninstantiated graphs are Invalid. After instantiate this is the
+    /// launched event. [`Self::graph_event_record_get_event`] stays a view.
+    /// Query; legal during capture.
+    pub fn graph_exec_event_record_get_event(
+        &self,
+        exec: GraphId,
+        node: usize,
+    ) -> Result<EventId, SimError> {
+        self.graph_exec_event_get(exec, node, EventSetKind::Record)
+    }
+
     /// `cudaGraphEventWaitNodeGetEvent`. Query; legal during capture.
+    ///
+    /// Instantiated ids use the exec snapshot.
+    /// [`Self::graph_exec_event_wait_get_event`] refuses uninstantiated graphs.
     pub fn graph_event_wait_get_event(
         &self,
         graph: GraphId,
@@ -5897,6 +5916,37 @@ impl Sim {
         match &self.graph_view_step(graph, node)?.kind {
             Kind::EventWait { event, .. } => Ok(*event),
             _ => Err(SimError::Invalid {
+                why: "not an event wait node",
+            }),
+        }
+    }
+
+    /// Exec-snapshot [`Self::graph_event_wait_get_event`].
+    ///
+    /// Uninstantiated graphs are Invalid. After instantiate this is the
+    /// launched event. [`Self::graph_event_wait_get_event`] stays a view.
+    /// Query; legal during capture.
+    pub fn graph_exec_event_wait_get_event(
+        &self,
+        exec: GraphId,
+        node: usize,
+    ) -> Result<EventId, SimError> {
+        self.graph_exec_event_get(exec, node, EventSetKind::Wait)
+    }
+
+    fn graph_exec_event_get(
+        &self,
+        exec: GraphId,
+        node: usize,
+        kind: EventSetKind,
+    ) -> Result<EventId, SimError> {
+        match (kind, &self.graph_exec_step(exec, node)?.kind) {
+            (EventSetKind::Record, Kind::EventRecord { event, .. })
+            | (EventSetKind::Wait, Kind::EventWait { event, .. }) => Ok(*event),
+            (EventSetKind::Record, _) => Err(SimError::Invalid {
+                why: "not an event record node",
+            }),
+            (EventSetKind::Wait, _) => Err(SimError::Invalid {
                 why: "not an event wait node",
             }),
         }

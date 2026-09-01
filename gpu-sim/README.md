@@ -499,6 +499,8 @@ for `update_graph`; mem nodes legal). Definition-side
 (uninstantiated graphs are Invalid).
 `graph_event_record_get_event` / `graph_event_wait_get_event` are
 `cudaGraphEventRecordNodeGetEvent` / `WaitNodeGetEvent`.
+`graph_exec_event_record_get_event` / `graph_exec_event_wait_get_event`
+are the exec-snapshot twins (uninstantiated graphs are Invalid).
 `graph_alloc_get_params` is `cudaGraphMemAllocNodeGetParams` (id and bytes).
 `graph_free_get_params` is `cudaGraphMemFreeNodeGetParams` (stored id).
 `graph_free_set_params` / `graph_exec_free_set_params` are
