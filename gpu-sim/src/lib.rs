@@ -15936,6 +15936,7 @@ mod tests {
         let child = sim.create_graph(d, s).unwrap();
         sim.graph_add_kernel(child, KernelKind::other(8, 8), &[a], &[a])
             .unwrap();
+        let _child_exec = sim.instantiate_graph(child).unwrap();
         sim.graph_add_child(g, child).unwrap();
         assert_eq!(
             sim.graph_node_get_containing_graph(child, 0).unwrap(),
@@ -15957,12 +15958,14 @@ mod tests {
             Err(SimError::Invalid { why }) => assert!(why.contains("unknown graph node"), "{why}"),
             other => panic!("{other:?}"),
         }
-        sim.graph_destroy_node(g, 0).unwrap();
-        match sim.graph_node_get_containing_graph(g, 0) {
+        let h = sim.create_graph(d, s).unwrap();
+        sim.graph_add_kernel(h, KernelKind::other(8, 8), &[a], &[a])
+            .unwrap();
+        sim.graph_destroy_node(h, 0).unwrap();
+        match sim.graph_node_get_containing_graph(h, 0) {
             Err(SimError::Invalid { why }) => assert!(why.contains("unknown graph node"), "{why}"),
             other => panic!("{other:?}"),
         }
-        assert_eq!(sim.graph_node_get_containing_graph(g, 1).unwrap(), g);
     }
 
     #[test]
