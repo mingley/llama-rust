@@ -3930,6 +3930,8 @@ impl Sim {
     /// Conditional handles created on the graph must be associated with a live
     /// IF / WHILE / SWITCH node
     /// ([`GraphInstantiateResult::ConditionalHandleUnused`]).
+    /// A parked in-flight-destroyed exec is `"unknown graph"`. Instantiating
+    /// the definition after that exec is parked creates a new exec.
     pub fn instantiate_graph(&mut self, graph: GraphId) -> Result<GraphId, SimError> {
         self.instantiate_graph_with_flags(graph, 0)
     }
@@ -4243,9 +4245,7 @@ impl Sim {
         graph: GraphId,
         device_launch: bool,
     ) -> Result<InstantiateSnap, SimError> {
-        let g = self.graphs.get(&graph).ok_or(SimError::Invalid {
-            why: "unknown graph",
-        })?;
+        let g = self.live_graph(graph)?;
         let origin_dev = g.origin.0;
         let device = g.steps.first().map(|s| s.device).unwrap_or(origin_dev);
         let free_node = g
@@ -7194,9 +7194,12 @@ impl Sim {
     /// `cudaMallocAsync` ids (independent HBM), including when `graph` is an
     /// instantiated exec (fork the definition's ids). Instantiating or
     /// updating one id does not change the other. Cycles among child ids fail.
+    /// A parked in-flight-destroyed exec is `"unknown graph"`. Clone of the
+    /// definition stays.
     pub fn clone_graph(&mut self, graph: GraphId) -> Result<GraphId, SimError> {
         self.require_not_moved(graph)?;
         self.fail_if_capturing("cannot capture graph clone")?;
+        self.require_live_graph(graph)?;
         let mut walk = CloneWalk {
             order: Vec::new(),
             seen: BTreeSet::new(),
@@ -7322,9 +7325,7 @@ impl Sim {
             });
         }
         let steps = {
-            let g = self.graphs.get(&graph).ok_or(SimError::Invalid {
-                why: "unknown graph",
-            })?;
+            let g = self.live_graph(graph)?;
             g.steps.clone()
         };
         walk.stack.push(graph);

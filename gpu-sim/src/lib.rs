@@ -5240,6 +5240,63 @@ mod tests {
     }
 
     #[test]
+    fn parked_exec_clone_and_instantiate_are_unknown() {
+        let mut sim = Sim::new(h100());
+        let d = DeviceId(0);
+        let s = StreamId(0);
+        let a = sim.malloc(d, 4096).unwrap();
+        let g = sim.create_graph(d, s).unwrap();
+        sim.graph_add_kernel(g, KernelKind::other(1 << 40, 4096), &[a], &[a])
+            .unwrap();
+        let exec = sim.instantiate_graph(g).unwrap();
+        let again = sim.instantiate_graph(exec).unwrap();
+        assert_eq!(again, exec);
+        let live_clone = sim.clone_graph(exec).unwrap();
+        assert!(!sim.graph_instantiated(live_clone).unwrap());
+        let launched = sim.launch_graph(exec, s).unwrap();
+        assert!(launched > 0);
+        sim.destroy_graph(exec).unwrap();
+        let err = sim.clone_graph(exec).unwrap_err();
+        match err {
+            SimError::Invalid { why } => assert!(why.contains("unknown"), "{why}"),
+            other => panic!("{other:?}"),
+        }
+        let err = sim.instantiate_graph(exec).unwrap_err();
+        match err {
+            SimError::Invalid { why } => assert!(why.contains("unknown"), "{why}"),
+            other => panic!("{other:?}"),
+        }
+        sim.begin_capture(d, StreamId(1)).unwrap();
+        let err = sim.clone_graph(exec).unwrap_err();
+        match err {
+            SimError::Invalid { why } => assert!(why.contains("capture"), "{why}"),
+            other => panic!("{other:?}"),
+        }
+        let err = sim.instantiate_graph(exec).unwrap_err();
+        match err {
+            SimError::Invalid { why } => assert!(why.contains("capture"), "{why}"),
+            other => panic!("{other:?}"),
+        }
+        let _end = sim.end_capture().unwrap();
+        let cloned = sim.clone_graph(g).unwrap();
+        assert!(!sim.graph_instantiated(cloned).unwrap());
+        let exec2 = sim.instantiate_graph(g).unwrap();
+        assert_ne!(exec2, exec);
+        let n = sim.launch_graph(exec2, StreamId(1)).unwrap();
+        assert!(n > 0);
+        sim.synchronize().unwrap();
+        let err = sim.clone_graph(exec).unwrap_err();
+        match err {
+            SimError::Invalid { why } => assert!(why.contains("unknown"), "{why}"),
+            other => panic!("{other:?}"),
+        }
+        sim.destroy_graph(g).unwrap();
+        sim.destroy_graph(exec2).unwrap();
+        sim.destroy_graph(cloned).unwrap();
+        sim.destroy_graph(live_clone).unwrap();
+    }
+
+    #[test]
     fn upload_async_destroy_in_flight_holds_user_object() {
         let mut p = h100();
         for g in &mut p.gpus {

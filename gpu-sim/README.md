@@ -540,6 +540,8 @@ refs held by the graph are released; destroying an in-flight exec does
 not abort the launch, whether the work came from `device_launch_graph`
 or host `launch_graph` (concurrent host launches all finish);
 queries of that exec handle are unknown immediately;
+clone and instantiate of that exec handle are unknown immediately;
+the definition may still be cloned or instantiated as a new exec;
 destroying an exec with an in-flight
 `upload_graph_async` does not abort the upload).
 `user_object_create` is `cudaUserObjectCreate`
