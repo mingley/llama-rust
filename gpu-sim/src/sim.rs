@@ -4531,7 +4531,7 @@ impl Sim {
         node: usize,
         op: &MemcpyOp,
     ) -> Result<(), SimError> {
-        self.set_memcpy_op(graph, node, op, false, GreenCtxPatch::Keep)
+        self.set_memcpy_op(graph, node, op, false, GreenCtxPatch::Keep, false)
     }
 
     fn graph_memcpy_set_params_with_ctx(
@@ -4546,6 +4546,7 @@ impl Sim {
             &params.op,
             false,
             GreenCtxPatch::Set(params.ctx),
+            false,
         )
     }
 
@@ -4925,6 +4926,8 @@ impl Sim {
     /// Dispatches to the typed ExecSetParams. [`GraphNodeParams::Alloc`] is
     /// Invalid. [`GraphNodeParams::Empty`] has no params. If / IfElse / While
     /// plus Switch retarget the handle. Capture cannot include it.
+    /// [`GraphNodeParams::Memcpy`] is 1-dimensional only (same as
+    /// [`Self::graph_exec_memcpy_set_params`]).
     pub fn graph_exec_node_set_params(
         &mut self,
         exec: GraphId,
@@ -5195,21 +5198,22 @@ impl Sim {
 
     /// `cudaGraphExecMemcpyNodeSetParams` on an instantiated exec.
     ///
-    /// Node `node` must already be a memcpy. [`MemcpyOp`] src/dst/alloc/bytes
-    /// may change. Pageable copies stay illegal. Pays `graph_set_params_ns`
-    /// and clears the upload flag. Capture cannot include it. Graphs with
-    /// mem alloc/free nodes are legal (unlike [`Self::update_graph`]).
+    /// CUDA-named API is 1-dimensional only: both the instantiated node and
+    /// `op` must be [`MemcpyOp::is_1d`] (Invalid `"memcpy 1d"`). Pageable
+    /// copies stay illegal. Pays `graph_set_params_ns` and clears the upload
+    /// flag. Capture cannot include it. Graphs with mem alloc/free nodes are
+    /// legal (unlike [`Self::update_graph`]).
     /// [`Self::graph_exec_memcpy_set_params_1d`] is
-    /// `cudaGraphExecMemcpyNodeSetParams1D`. [`Self::graph_exec_memcpy_set_params_2d`]
-    /// requires [`MemcpyOp::is_2d`]. [`Self::graph_exec_memcpy_set_params_3d`]
-    /// requires [`MemcpyOp::is_3d`].
+    /// `cudaGraphExecMemcpyNodeSetParams1D` and may convert a 2D/3D node.
+    /// Extra [`Self::graph_exec_memcpy_set_params_2d`] plus
+    /// [`Self::graph_exec_memcpy_set_params_3d`] stay (not CUDA names).
     pub fn graph_exec_memcpy_set_params(
         &mut self,
         exec: GraphId,
         node: usize,
         op: &MemcpyOp,
     ) -> Result<(), SimError> {
-        self.set_memcpy_op(exec, node, op, true, GreenCtxPatch::Keep)
+        self.set_memcpy_op(exec, node, op, true, GreenCtxPatch::Keep, true)
     }
 
     fn graph_exec_memcpy_set_params_with_ctx(
@@ -5218,7 +5222,14 @@ impl Sim {
         node: usize,
         params: &MemcpyNodeParams,
     ) -> Result<(), SimError> {
-        self.set_memcpy_op(exec, node, &params.op, true, GreenCtxPatch::Set(params.ctx))
+        self.set_memcpy_op(
+            exec,
+            node,
+            &params.op,
+            true,
+            GreenCtxPatch::Set(params.ctx),
+            true,
+        )
     }
 
     fn set_memcpy_op(
@@ -5228,6 +5239,7 @@ impl Sim {
         op: &MemcpyOp,
         exec: bool,
         ctx: GreenCtxPatch,
+        cuda_named_1d: bool,
     ) -> Result<(), SimError> {
         self.fail_if_capturing(if exec {
             "cannot capture memcpy set params"
@@ -5253,10 +5265,17 @@ impl Sim {
                     why: "unknown graph node",
                 })?)?
             };
-            if !matches!(step.kind, Kind::Memcpy(_)) {
-                return Err(SimError::Invalid {
-                    why: "not a memcpy node",
-                });
+            match &step.kind {
+                Kind::Memcpy(cur) => {
+                    if exec && cuda_named_1d && (!op.is_1d() || !cur.is_1d()) {
+                        return Err(SimError::Invalid { why: "memcpy 1d" });
+                    }
+                }
+                _ => {
+                    return Err(SimError::Invalid {
+                        why: "not a memcpy node",
+                    });
+                }
             }
             step.device
         };
@@ -5298,8 +5317,10 @@ impl Sim {
 
     /// `cudaGraphExecMemcpyNodeSetParams1D` on an instantiated exec.
     ///
-    /// Packs a 1D [`MemcpyOp`]. A 2D/3D node may become 1D. Pageable copies
-    /// stay illegal. Pays `graph_set_params_ns`. Capture cannot include it.
+    /// Packs a 1D [`MemcpyOp`]. A 2D/3D node may become 1D (PLAN 190). Pageable
+    /// copies stay illegal. Pays `graph_set_params_ns`. Capture cannot include
+    /// it. Bypasses CUDA-named [`Self::graph_exec_memcpy_set_params`] 1D-only
+    /// original-node check.
     pub fn graph_exec_memcpy_set_params_1d(
         &mut self,
         exec: GraphId,
@@ -5309,12 +5330,19 @@ impl Sim {
         alloc: AllocId,
         bytes: u64,
     ) -> Result<(), SimError> {
-        self.graph_exec_memcpy_set_params(exec, node, &MemcpyOp::packed_1d(src, dst, alloc, bytes))
+        self.set_memcpy_op(
+            exec,
+            node,
+            &MemcpyOp::packed_1d(src, dst, alloc, bytes),
+            true,
+            GreenCtxPatch::Keep,
+            false,
+        )
     }
 
-    /// `cudaGraphExecMemcpyNodeSetParams` whose [`MemcpyOp`] is [`MemcpyOp::is_2d`]
-    /// (`height > 1`, not 3D). Other extents Invalid `"memcpy2d height"`.
-    /// Typed [`Self::graph_exec_memcpy_set_params`] stays.
+    /// Extra helper whose [`MemcpyOp`] is [`MemcpyOp::is_2d`] (`height > 1`,
+    /// not 3D). Other extents Invalid `"memcpy2d height"`. CUDA-named
+    /// [`Self::graph_exec_memcpy_set_params`] is 1D-only.
     pub fn graph_exec_memcpy_set_params_2d(
         &mut self,
         exec: GraphId,
@@ -5326,12 +5354,12 @@ impl Sim {
                 why: "memcpy2d height",
             });
         }
-        self.graph_exec_memcpy_set_params(exec, node, op)
+        self.set_memcpy_op(exec, node, op, true, GreenCtxPatch::Keep, false)
     }
 
-    /// `cudaGraphExecMemcpyNodeSetParams` whose [`MemcpyOp`] is [`MemcpyOp::is_3d`]
-    /// (`depth > 1`). Other extents Invalid `"memcpy3d depth"`. Typed
-    /// [`Self::graph_exec_memcpy_set_params`] stays.
+    /// Extra helper whose [`MemcpyOp`] is [`MemcpyOp::is_3d`] (`depth > 1`).
+    /// Other extents Invalid `"memcpy3d depth"`. CUDA-named
+    /// [`Self::graph_exec_memcpy_set_params`] is 1D-only.
     pub fn graph_exec_memcpy_set_params_3d(
         &mut self,
         exec: GraphId,
@@ -5343,7 +5371,7 @@ impl Sim {
                 why: "memcpy3d depth",
             });
         }
-        self.graph_exec_memcpy_set_params(exec, node, op)
+        self.set_memcpy_op(exec, node, op, true, GreenCtxPatch::Keep, false)
     }
 
     /// `cudaGraphExecMemsetNodeSetParams` on an instantiated exec.

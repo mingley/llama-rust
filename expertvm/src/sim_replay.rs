@@ -3570,7 +3570,13 @@ pub(crate) fn retarget_parked_kernel(
         if !owned.contains(&mop.alloc) {
             mop.alloc = expert;
         }
-        sim.graph_exec_memcpy_set_params(exec, mnode, &mop)?;
+        if mop.is_3d() {
+            sim.graph_exec_memcpy_set_params_3d(exec, mnode, &mop)?;
+        } else if mop.is_2d() {
+            sim.graph_exec_memcpy_set_params_2d(exec, mnode, &mop)?;
+        } else {
+            sim.graph_exec_memcpy_set_params(exec, mnode, &mop)?;
+        }
     }
     if let Some((znode, mut zbuf)) = sim.graph_try_unique_memset(exec)? {
         if !owned.contains(&zbuf.id) {

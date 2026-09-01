@@ -5,6 +5,17 @@ Visible five-turn extract: [docs/chatgpt-share-6a920fe1.md](docs/chatgpt-share-6
 Complete share-API extract: [docs/chatgpt-share-6a920fe1/](docs/chatgpt-share-6a920fe1/).
 Work lands on `main`. No PRs.
 
+## Shipped 2026-09-01 — CUDA ExecMemcpy SetParams 1D-only
+
+`gpu-sim` CUDA `cudaGraphExecMemcpyNodeSetParams` is 1-dimensional only:
+both the instantiated node and new `MemcpyOp` must be `is_1d` (`"memcpy
+1d"`). `graph_exec_node_set_params` of memcpy uses the same check.
+`graph_exec_memcpy_set_params_1d` may still convert a 2D/3D node. Extra
+`graph_exec_memcpy_set_params_2d` plus `_3d` stay. Definition SetParams still
+accepts 2D/3D. This VM does not invent Engine `--graph-memcpy-1d` or
+ExecUpdate 2D memcpy geometry as ParametersChanged. `gpu-profile capture`
+is still refused. Dual score still has no `$/M tokens`.
+
 ## Shipped 2026-09-01 — ExecUpdate kernel function variant
 
 `gpu-sim` CUDA `cudaGraphExecUpdate` of a different kernel-node function

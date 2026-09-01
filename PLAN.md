@@ -5503,7 +5503,20 @@ model, do not celebrate the sim.
     `gpu-profile capture` is still refused. Dual score still has no
     `$/M tokens`.
 
-512. [ ] Next numbered PLAN item after 511 is the next `gpu-sim` / Engine /
+512. [x] `gpu-sim` CUDA `cudaGraphExecMemcpyNodeSetParams` is
+    1-dimensional only ([`graph_exec_memcpy_set_params`]): both the
+    instantiated node and new [`MemcpyOp`] must be [`MemcpyOp::is_1d`]
+    (Invalid `"memcpy 1d"`). [`graph_exec_node_set_params`] of
+    [`GraphNodeParams::Memcpy`] uses the same check.
+    [`graph_exec_memcpy_set_params_1d`] may still convert a 2D/3D node
+    (PLAN 190). Extra [`graph_exec_memcpy_set_params_2d`] plus
+    [`graph_exec_memcpy_set_params_3d`] stay (not CUDA names). Definition
+    [`graph_memcpy_set_params`] still accepts 2D/3D. This VM does not
+    invent Engine `--graph-memcpy-1d` or ExecUpdate 2D memcpy geometry as
+    ParametersChanged. `gpu-profile capture` is still refused. Dual score
+    still has no `$/M tokens`.
+
+513. [ ] Next numbered PLAN item after 512 is the next `gpu-sim` / Engine /
     serve / expertvm mechanical API that is still missing, or the next official
     decode family. Prefer remaining CUDA-shaped twins over more
     OpenAI HTTP veneer. Do not invent F32 `output.scale`. Do not invent a
@@ -5878,6 +5891,14 @@ model, do not celebrate the sim.
     Do not invent child SetParams nested kernel function as a second check.
     `graph_exec_kernel_set_params` stays legal. Do not treat Other FLOPs or
     GEMM shape as function identity.
+    Do not invent a second CUDA-named `graph_exec_memcpy_set_params` that
+    accepts 2D/3D (CUDA ExecMemcpy SetParams is 1D-only). Do not reverse
+    PLAN 190 (`graph_exec_memcpy_set_params_1d` converting 2D to 1D). Do
+    not reverse extra `graph_exec_memcpy_set_params_2d` plus
+    `graph_exec_memcpy_set_params_3d` helpers. Do not invent Engine
+    `--graph-memcpy-1d`. Do not invent CUDA-named
+    `cudaGraphExecMemcpyNodeSetParams2D`. Do not invent ExecUpdate 2D
+    memcpy geometry as ParametersChanged.
     Do not
     spend the next item on an OpenAI-compatible HTTP veneer.
 

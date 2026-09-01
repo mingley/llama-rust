@@ -262,8 +262,8 @@ impl Place {
 /// One asynchronous copy.
 ///
 /// [`crate::Sim::graph_exec_memcpy_set_params`] patches this on an instantiated
-/// memcpy node (`cudaGraphExecMemcpyNodeSetParams`). Pageable src/dst stay
-/// illegal as graph params. [`Self::packed_1d`] is
+/// memcpy node (`cudaGraphExecMemcpyNodeSetParams`, 1-dimensional only).
+/// Pageable src/dst stay illegal as graph params. [`Self::packed_1d`] is
 /// `cudaGraphAddMemcpyNode1D` / `MemcpyNodeSetParams1D`.
 ///
 /// [`Self::height`] `0` or `1` is `cudaMemcpyAsync` of [`Self::bytes`].

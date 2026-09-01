@@ -1032,10 +1032,11 @@
 //! [`graph_exec_memcpy_set_params_1d`](Sim::graph_exec_memcpy_set_params_1d) /
 //! [`graph_exec_memcpy_set_params_2d`](Sim::graph_exec_memcpy_set_params_2d) /
 //! [`graph_exec_memcpy_set_params_3d`](Sim::graph_exec_memcpy_set_params_3d)
-//! are `cudaGraphExecMemcpyNodeSetParams` / `SetParams1D` / 2D / 3D helpers (same
-//! `graph_set_params_ns`; pageable still illegal; mem nodes legal; 1D may
-//! convert a 2D/3D node; 2D requires [`MemcpyOp::is_2d`]; 3D requires
-//! [`MemcpyOp::is_3d`]). [`graph_unique_memcpy`](Sim::graph_unique_memcpy)
+//! are CUDA `cudaGraphExecMemcpyNodeSetParams` (1D-only: instantiated node
+//! and new [`MemcpyOp`] must be [`MemcpyOp::is_1d`]), `SetParams1D` (may
+//! convert a 2D/3D node), plus extra 2D and 3D helpers (same
+//! `graph_set_params_ns`; pageable still illegal; mem nodes legal; 2D requires
+//! [`MemcpyOp::is_2d`]; 3D requires [`MemcpyOp::is_3d`]). [`graph_unique_memcpy`](Sim::graph_unique_memcpy)
 //! / [`graph_try_unique_memcpy`](Sim::graph_try_unique_memcpy) find that node.
 //! [`graph_exec_memset_set_params`](Sim::graph_exec_memset_set_params) /
 //! [`graph_exec_memset_set_params_2d`](Sim::graph_exec_memset_set_params_2d) /
@@ -1148,8 +1149,9 @@
 //! [`graph_node_set_params`](Sim::graph_node_set_params) /
 //! [`graph_exec_node_set_params`](Sim::graph_exec_node_set_params) are
 //! `cudaGraphNodeSetParams` / `cudaGraphExecNodeSetParams` (dispatch to the
-//! typed SetParams; Alloc would resize HBM; Empty has no params; If, IfElse,
-//! While, plus Switch retarget the handle, not type or bodies).
+//! typed SetParams; exec memcpy is 1D-only; Alloc would resize HBM; Empty has
+//! no params; If, IfElse, While, plus Switch retarget the handle, not type or
+//! bodies).
 //! [`graph_node_get_params`](Sim::graph_node_get_params) /
 //! [`graph_exec_node_get_params`](Sim::graph_exec_node_get_params) are
 //! `cudaGraphNodeGetParams` on the definition / exec snapshot (query; Empty
@@ -3564,6 +3566,69 @@ mod tests {
             Err(SimError::Invalid { why }) => assert!(why.contains("not unique"), "{why}"),
             other => panic!("{other:?}"),
         }
+    }
+
+    #[test]
+    fn graph_exec_memcpy_set_params_is_cuda_1d_only() {
+        let mut sim = Sim::new(h100());
+        let d = DeviceId(0);
+        let s = StreamId(0);
+        let (a, pitch) = sim.malloc_pitch(d, 256, 8).unwrap();
+        let one = MemcpyOp::packed_1d(Place::HostPinned, Place::Device(d), a, 256);
+        let two = MemcpyOp {
+            src: Place::HostPinned,
+            dst: Place::Device(d),
+            alloc: a,
+            bytes: 256,
+            height: 8,
+            src_pitch: 256,
+            dst_pitch: pitch,
+            ..MemcpyOp::default()
+        };
+        let g1 = sim.create_graph(d, s).unwrap();
+        sim.graph_add_memcpy(g1, one.clone()).unwrap();
+        let exec1 = sim.instantiate_graph(g1).unwrap();
+        match sim.graph_exec_memcpy_set_params(exec1, 0, &two) {
+            Err(SimError::Invalid { why }) => assert!(why.contains("memcpy 1d"), "{why}"),
+            other => panic!("{other:?}"),
+        }
+        match sim.graph_exec_node_set_params(
+            exec1,
+            0,
+            GraphNodeParams::Memcpy(MemcpyNodeParams {
+                op: two.clone(),
+                ctx: None,
+            }),
+        ) {
+            Err(SimError::Invalid { why }) => assert!(why.contains("memcpy 1d"), "{why}"),
+            other => panic!("{other:?}"),
+        }
+        sim.graph_exec_memcpy_set_params_2d(exec1, 0, &two).unwrap();
+        assert!(sim.graph_exec_memcpy_get_params(exec1, 0).unwrap().is_2d());
+        match sim.graph_exec_memcpy_set_params(exec1, 0, &one) {
+            Err(SimError::Invalid { why }) => assert!(why.contains("memcpy 1d"), "{why}"),
+            other => panic!("{other:?}"),
+        }
+        sim.graph_exec_memcpy_set_params_1d(exec1, 0, Place::HostPinned, Place::Device(d), a, 256)
+            .unwrap();
+        assert!(sim.graph_exec_memcpy_get_params(exec1, 0).unwrap().is_1d());
+        sim.graph_memcpy_set_params(g1, 0, &two).unwrap();
+        assert!(sim.graph_memcpy_get_params(g1, 0).unwrap().is_2d());
+        let g2 = sim.create_graph(d, s).unwrap();
+        sim.graph_add_memcpy(g2, two.clone()).unwrap();
+        let exec2 = sim.instantiate_graph(g2).unwrap();
+        match sim.graph_exec_memcpy_set_params(exec2, 0, &two) {
+            Err(SimError::Invalid { why }) => assert!(why.contains("memcpy 1d"), "{why}"),
+            other => panic!("{other:?}"),
+        }
+        sim.graph_exec_memcpy_set_params_2d(exec2, 0, &two).unwrap();
+        assert!(sim.graph_exec_memcpy_get_params(exec2, 0).unwrap().is_2d());
+        sim.begin_capture(d, s).unwrap();
+        match sim.graph_exec_memcpy_set_params(exec1, 0, &two) {
+            Err(SimError::Invalid { why }) => assert!(why.contains("capture"), "{why}"),
+            other => panic!("{other:?}"),
+        }
+        let _cap = sim.end_capture().unwrap();
     }
 
     #[test]
