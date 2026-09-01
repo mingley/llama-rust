@@ -688,6 +688,8 @@
 //! [`MemcpyOp`] `height` / pitches are `cudaMemcpy2DAsync` (payload `width *
 //! height`, not pitch padding). [`MemsetOp`] `height` / `pitch` are
 //! `cudaMemset2DAsync` (payload `width * height`; padding is not written).
+//! [`MemsetOp::element_size`] is `cudaMemsetNodeParams::elementSize`
+//! (`1` / `2` / `4`; typed [`memset`](Sim::memset) stays `1`).
 //! [`Sim::malloc_3d`] is `cudaMalloc3D`. [`MemcpyOp`] `depth` / slice heights
 //! are `cudaMemcpy3DAsync` (payload `width * height * depth`). [`MemsetOp`]
 //! `depth` / `ysize` are `cudaMemset3DAsync` (payload `width * height * depth`).
@@ -15807,6 +15809,109 @@ mod tests {
             other => panic!("{other:?}"),
         }
         let _g = sim.end_capture().unwrap();
+    }
+
+    #[test]
+    fn memset_element_size_is_cuda_memset_node_params() {
+        let mut sim = Sim::new(h100());
+        let d = DeviceId(0);
+        let s = StreamId(0);
+        let a = sim.malloc(d, 4096).unwrap();
+        let d16 = MemsetOp {
+            id: a,
+            bytes: 4096,
+            element_size: 2,
+            ..MemsetOp::default()
+        };
+        enq(sim.memset_op(d, d16, s));
+        sim.synchronize().unwrap();
+        match sim.memset_op(
+            d,
+            MemsetOp {
+                element_size: 3,
+                ..d16
+            },
+            s,
+        ) {
+            Err(SimError::Invalid { why }) => {
+                assert!(why.contains("memset element size"), "{why}");
+            }
+            other => panic!("{other:?}"),
+        }
+        match sim.memset_op(
+            d,
+            MemsetOp {
+                bytes: 4095,
+                element_size: 2,
+                ..d16
+            },
+            s,
+        ) {
+            Err(SimError::Invalid { why }) => {
+                assert!(why.contains("memset element width"), "{why}");
+            }
+            other => panic!("{other:?}"),
+        }
+        match sim.memset_op(
+            d,
+            MemsetOp {
+                offset: 1,
+                bytes: 2,
+                element_size: 2,
+                ..d16
+            },
+            s,
+        ) {
+            Err(SimError::Invalid { why }) => {
+                assert!(why.contains("memset element align"), "{why}");
+            }
+            other => panic!("{other:?}"),
+        }
+        match sim.memset_2d_async(
+            d,
+            MemsetOp {
+                id: a,
+                bytes: 256,
+                height: 4,
+                pitch: 257,
+                element_size: 2,
+                ..MemsetOp::default()
+            },
+            s,
+        ) {
+            Err(SimError::Invalid { why }) => {
+                assert!(why.contains("memset element pitch"), "{why}");
+            }
+            other => panic!("{other:?}"),
+        }
+        let g = sim.create_graph(d, s).unwrap();
+        sim.graph_add_memset_op(
+            g,
+            MemsetOp {
+                id: a,
+                bytes: 4096,
+                element_size: 4,
+                ..MemsetOp::default()
+            },
+        )
+        .unwrap();
+        assert_eq!(sim.graph_memset_get_params(g, 0).unwrap().element_size, 4);
+        sim.graph_memset_set_params(
+            g,
+            0,
+            MemsetOp {
+                id: a,
+                bytes: 4096,
+                element_size: 2,
+                ..MemsetOp::default()
+            },
+        )
+        .unwrap();
+        assert_eq!(sim.graph_memset_get_params(g, 0).unwrap().element_size, 2);
+        sim.begin_capture(d, s).unwrap();
+        enq(sim.memset_op(d, d16, s));
+        let _cap = sim.end_capture().unwrap();
+        sim.free_sync(a).unwrap();
     }
 
     #[test]

@@ -16479,7 +16479,10 @@ impl Sim {
     ///
     /// [`MemsetOp::height`] `> 1` bills `width * height` as an HBM write (pitch
     /// padding is not written). [`MemsetOp::depth`] `> 1` is `cudaMemset3DAsync`
-    /// (`width * height * depth`). The mapped span is the 2D/3D extent. Capture
+    /// (`width * height * depth`). [`MemsetOp::element_size`] is
+    /// `cudaMemsetNodeParams::elementSize` (`1` / `2` / `4`; typed
+    /// [`Self::memset`] stays `1`). Offset, width, and nonzero pitch must
+    /// divide that size. The mapped span is the 2D/3D extent. Capture
     /// is allowed unless [`PointerAttr::SyncMemops`] or
     /// [`DeviceFlags::SYNC_MEMOPS`] is set (`"cannot capture
     /// sync memops memset"`); those flags also wait the stream after submit.
@@ -19602,7 +19605,7 @@ impl Sim {
     fn resolve_memset_op(&self, op: MemsetOp) -> Result<MemsetOp, SimError> {
         memset_2d_check(&op)?;
         let total = self.alloc_ref(op.id)?.bytes;
-        if op.is_2d() || op.is_3d() {
+        let resolved = if op.is_2d() || op.is_3d() {
             let span = op.extent_bytes();
             if span == 0 {
                 return Err(SimError::Invalid {
@@ -19614,25 +19617,29 @@ impl Sim {
                     why: "memset range past alloc",
                 });
             }
-            return Ok(op);
-        }
-        let buf = KernelBuf {
-            id: op.id,
-            offset: op.offset,
-            bytes: op.bytes,
+            op
+        } else {
+            let buf = KernelBuf {
+                id: op.id,
+                offset: op.offset,
+                bytes: op.bytes,
+            };
+            let (offset, bytes) = kernel_span(total, &buf)?;
+            if bytes == 0 {
+                return Err(SimError::Invalid {
+                    why: "zero-byte memset",
+                });
+            }
+            MemsetOp {
+                id: op.id,
+                offset,
+                bytes,
+                element_size: op.element_size,
+                ..MemsetOp::default()
+            }
         };
-        let (offset, bytes) = kernel_span(total, &buf)?;
-        if bytes == 0 {
-            return Err(SimError::Invalid {
-                why: "zero-byte memset",
-            });
-        }
-        Ok(MemsetOp {
-            id: op.id,
-            offset,
-            bytes,
-            ..MemsetOp::default()
-        })
+        memset_element_check(&resolved)?;
+        Ok(resolved)
     }
 
     fn memcpy_precheck(&self, m: &MemcpyOp) -> Result<(), SimError> {
@@ -20639,6 +20646,31 @@ fn memset_2d_check(op: &MemsetOp) -> Result<(), SimError> {
     Ok(())
 }
 
+fn memset_element_check(op: &MemsetOp) -> Result<(), SimError> {
+    let n = u64::from(op.element_size);
+    if op.element_size != 1 && op.element_size != 2 && op.element_size != 4 {
+        return Err(SimError::Invalid {
+            why: "memset element size",
+        });
+    }
+    if op.offset % n != 0 {
+        return Err(SimError::Invalid {
+            why: "memset element align",
+        });
+    }
+    if op.bytes % n != 0 {
+        return Err(SimError::Invalid {
+            why: "memset element width",
+        });
+    }
+    if op.pitch != 0 && op.pitch % n != 0 {
+        return Err(SimError::Invalid {
+            why: "memset element pitch",
+        });
+    }
+    Ok(())
+}
+
 fn validate_access_policy(window: AccessPolicyWindow) -> Result<(), SimError> {
     if window.hit_ratio_permille > 1000 {
         return Err(SimError::Invalid {
@@ -21276,6 +21308,7 @@ fn remap_alloc_kind(kind: Kind, map: &BTreeMap<AllocId, AllocId>) -> Kind {
             pitch: op.pitch,
             depth: op.depth,
             ysize: op.ysize,
+            element_size: op.element_size,
         }),
         Kind::Attach { id, flags } => Kind::Attach {
             id: remap_alloc_id(id, map),

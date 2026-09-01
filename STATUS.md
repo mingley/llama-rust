@@ -5,6 +5,14 @@ Visible five-turn extract: [docs/chatgpt-share-6a920fe1.md](docs/chatgpt-share-6
 Complete share-API extract: [docs/chatgpt-share-6a920fe1/](docs/chatgpt-share-6a920fe1/).
 Work lands on `main`. No PRs.
 
+## Shipped 2026-09-01 — CUDA memset elementSize 1/2/4
+
+`gpu-sim` `cudaMemsetNodeParams::elementSize`: `MemsetOp::element_size`
+is `1` / `2` / `4` (`cuMemsetD8` / `D16` / `D32`). Typed `memset` stays
+`1`. Offset, width, and nonzero pitch must divide that size. The fill
+value is not modeled. No Engine `--memset-element`. `gpu-profile capture`
+is still refused. Dual score still has no `$/M tokens`.
+
 ## Shipped 2026-09-01 — CUDA pointer AccessFlags on an explicit device
 
 `gpu-sim` `CU_POINTER_ATTRIBUTE_ACCESS_FLAGS`:

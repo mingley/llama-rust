@@ -5071,7 +5071,14 @@ model, do not celebrate the sim.
     unmodeled. `gpu-profile capture` is still refused. Dual score still
     has no `$/M tokens`.
 
-472. [ ] Next numbered PLAN item after 471 is the next `gpu-sim` / Engine /
+472. [x] `gpu-sim` `cudaMemsetNodeParams::elementSize`:
+    [`MemsetOp::element_size`] is `1` / `2` / `4` (`cuMemsetD8` / `D16` /
+    `D32`). Typed `memset` stays `1`. Offset, width, and nonzero pitch
+    must divide that size. The fill value is not modeled. No Engine
+    `--memset-element`. `gpu-profile capture` is still refused. Dual
+    score still has no `$/M tokens`.
+
+473. [ ] Next numbered PLAN item after 472 is the next `gpu-sim` / Engine /
     serve / expertvm mechanical API that is still missing, or the next official
     decode family. Prefer remaining CUDA-shaped twins over more
     OpenAI HTTP veneer. Do not invent F32 `output.scale`. Do not invent a
@@ -5193,6 +5200,10 @@ model, do not celebrate the sim.
     Do not invent `PointerAttr::AccessFlags` (no TLS current device;
     the typed helper takes an explicit `DeviceId`). Do not invent
     `CU_POINTER_ATTRIBUTE_CONTEXT` / P2P tokens.
+    Do not invent a second `cudaMemsetNodeParams::elementSize` /
+    `MemsetOp::element_size`. Do not invent Engine `--memset-element`.
+    Do not invent a memset fill value (this VM does not model memset
+    stores into wait-value mailboxes).
     Do not invent a second `cudaGraphAddNode` If / IfElse / While /
     `GraphNodeParams::If`. Do not invent a second
     `GraphNodeParams::Switch` / `switch_bodies`.

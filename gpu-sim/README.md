@@ -168,6 +168,7 @@ warp scheduler, L1, …   ← do not model
 | `malloc_pitch` charges `pitch * height`; pitch is `align_up(width, 512)` | `cudaMallocPitch` |
 | `MemcpyOp` height/pitches bill `width * height` (not pitch padding) | `cudaMemcpy2DAsync` |
 | `MemsetOp` height/pitch bill `width * height` (not pitch padding) | `cudaMemset2DAsync` |
+| `MemsetOp` `element_size` is 1/2/4 (`cudaMemset` stays 1; offset/width/pitch must divide it) | `cudaMemsetNodeParams::elementSize` |
 | `malloc_3d` charges `pitch * height * depth` | `cudaMalloc3D` |
 | `MemcpyOp` depth/slice heights bill `width * height * depth` | `cudaMemcpy3DAsync` |
 | `MemsetOp` depth/ysize bill `width * height * depth` | `cudaMemset3DAsync` |
@@ -873,6 +874,9 @@ must align to `cudaLimitMaxL2FetchGranularity` (SM 8.0+ default 128).
 `malloc_pitch` is `cudaMallocPitch`. `MemcpyOp` `height` / pitches are
 `cudaMemcpy2DAsync` (payload `width * height`). `MemsetOp` `height` / `pitch`
 are `cudaMemset2DAsync` (payload `width * height`; padding is not written).
+`MemsetOp` `element_size` is `cudaMemsetNodeParams::elementSize` (`1` / `2` /
+`4`; typed `memset` stays `1`). Offset, width, and nonzero pitch must divide
+that size. No Engine `--memset-element`. The fill value is not modeled.
 `malloc_3d` is `cudaMalloc3D`. `MemcpyOp` `depth` / slice heights are
 `cudaMemcpy3DAsync` (payload `width * height * depth`). `MemsetOp` `depth` /
 `ysize` are `cudaMemset3DAsync` (payload `width * height * depth`).

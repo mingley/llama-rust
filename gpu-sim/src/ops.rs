@@ -516,6 +516,10 @@ pub struct MemcpyAttributes {
 /// `width * height * depth`. [`crate::Sim::graph_exec_memset_set_params`]
 /// patches this on an instantiated memset node
 /// (`cudaGraphExecMemsetNodeSetParams`).
+/// `cudaMemsetParams` / `cudaMemset3DParams` analog.
+///
+/// [`Self::bytes`] is 1D payload or 2D/3D row width in **bytes** (CUDA's
+/// graph `width` is that divided by [`Self::element_size`]).
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct MemsetOp {
     /// Allocation to fill.
@@ -532,6 +536,11 @@ pub struct MemsetOp {
     pub depth: u64,
     /// 2D-slice height (`cudaPitchedPtr::ysize`). `0` means packed ([`Self::height`]).
     pub ysize: u64,
+    /// `cudaMemsetNodeParams::elementSize` (`1` / `2` / `4`). Typed
+    /// [`crate::Sim::memset`] stays `1` (`cudaMemset` / `cuMemsetD8`).
+    /// `2` / `4` are `cuMemsetD16` / `cuMemsetD32`. Offset, width, and
+    /// nonzero pitch must divide this size.
+    pub element_size: u32,
 }
 
 impl Default for MemsetOp {
@@ -544,6 +553,7 @@ impl Default for MemsetOp {
             pitch: 0,
             depth: 0,
             ysize: 0,
+            element_size: 1,
         }
     }
 }
