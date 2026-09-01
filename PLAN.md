@@ -6091,7 +6091,17 @@ model, do not celebrate the sim.
     fields. `gpu-profile capture` is still refused. Dual score still has
     no `$/M tokens`.
 
-573. [ ] Next numbered PLAN item after 572 is the next `gpu-sim` / Engine /
+573. [x] `gpu-sim` `DeviceAttr::MaxTexture1DLinearWidth` /
+    `MaxTexture2DLinearWidth` / `MaxTexture2DLinearHeight` /
+    `MaxTexture2DLinearPitch` are CUDA linear-texture dimension caps.
+    Always 0 (CUDA linear textures are not modeled). Query; legal during
+    capture. Distinct from `MaxTexture1DWidth`, `MaxTexture2DWidth`, and
+    `TexturePitchAlignment`. This VM does not invent Engine
+    `--texture-linear`, layered or cubemap texture attrs, occupancy SM
+    counts, or `cudaChooseDevice`. `gpu-profile capture` is still
+    refused. Dual score still has no `$/M tokens`.
+
+574. [ ] Next numbered PLAN item after 573 is the next `gpu-sim` / Engine /
     serve / expertvm mechanical API that is still missing, or the next official
     decode family. Prefer remaining CUDA-shaped twins over more
     OpenAI HTTP veneer. Do not invent F32 `output.scale`. Do not invent a
@@ -6222,6 +6232,11 @@ model, do not celebrate the sim.
     numRegs this slice. Do not invent a compiled kernel or PTX compiler.
     Do not reverse those compiler fields staying 0. Do not copy
     `MaxThreadsPerBlock` 1024 onto function `maxThreadsPerBlock`.
+    Do not invent a second `cudaDevAttrMaxTexture1DLinearWidth`,
+    `MaxTexture2DLinearWidth`, `MaxTexture2DLinearHeight`, or
+    `MaxTexture2DLinearPitch`. Do not invent Engine `--texture-linear`.
+    Do not invent layered or cubemap texture attrs this slice. Do not
+    reverse linear texture dims staying 0.
     Do not invent a second `cudaStreamAddCallback`.
     Do not invent Engine `--stream-callback` (same wall as second live
     `cudaLaunchHostFunc` after miss DMA).
@@ -6485,6 +6500,9 @@ model, do not celebrate the sim.
     not invent Engine `--ptx-version`. Do not invent `FuncAttr` setters
     for sharedSizeBytes this slice. Do not reverse function
     maxThreadsPerBlock staying 0.
+    Do not invent a second linear-texture DeviceAttr family. Do not
+    invent Engine `--linear-texture`. Do not invent CUDA linear bind
+    this slice. Do not reverse linear texture dims staying 0.
     Do not invent a second DeviceLaunch in-flight destroy-complete check or Engine
     `--device-launch-destroy`. Do not abort an in-flight DeviceLaunch when
     `destroy_graph` succeeds. Do not delay destroy of an idle exec. Do not invent
@@ -6974,6 +6992,9 @@ model, do not celebrate the sim.
     Do not invent a second FuncAttributes `shared_size_bytes` field. Do
     not invent Engine `--cache-mode-ca`. Do not reverse compiler
     ptxVersion 0.
+    Do not invent a second maxTexture2DLinear DeviceProperties field. Do
+    not invent Engine `--texture-1d-linear`. Do not reverse those linear
+    dims as 0.
     Do not
     spend the next item on an OpenAI-compatible HTTP veneer.
 

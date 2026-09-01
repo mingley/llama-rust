@@ -5,6 +5,16 @@ Visible five-turn extract: [docs/chatgpt-share-6a920fe1.md](docs/chatgpt-share-6
 Complete share-API extract: [docs/chatgpt-share-6a920fe1/](docs/chatgpt-share-6a920fe1/).
 Work lands on `main`. No PRs.
 
+## Shipped 2026-09-01 — CUDA linear texture 1D/2D dimension DeviceAttr caps
+
+`gpu-sim` `DeviceAttr::MaxTexture1DLinearWidth` / `MaxTexture2DLinearWidth` /
+`MaxTexture2DLinearHeight` / `MaxTexture2DLinearPitch` are always 0. CUDA
+linear textures are not modeled. Query; legal during capture. Distinct
+from `MaxTexture1DWidth`, `MaxTexture2DWidth`, and `TexturePitchAlignment`.
+This VM does not invent Engine `--texture-linear` or layered/cubemap
+texture attrs. `gpu-profile capture` is still refused. Dual score still
+has no `$/M tokens`.
+
 ## Shipped 2026-09-01 — CUDA `cudaFuncGetAttributes` compiler fields
 
 `gpu-sim` `FuncAttributes` compiler-emitted `cudaFuncGetAttributes` fields

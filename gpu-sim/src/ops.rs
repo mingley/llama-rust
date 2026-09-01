@@ -953,6 +953,18 @@ pub enum DeviceAttr {
     /// `cudaDevAttrMaxTexture3DDepth` (always 0; CUDA arrays / textures are
     /// not modeled). Distinct from [`Self::MaxTexture3DHeight`].
     MaxTexture3DDepth,
+    /// `cudaDevAttrMaxTexture1DLinearWidth` (always 0; CUDA linear textures
+    /// are not modeled). Distinct from [`Self::MaxTexture1DWidth`].
+    MaxTexture1DLinearWidth,
+    /// `cudaDevAttrMaxTexture2DLinearWidth` (always 0; CUDA linear textures
+    /// are not modeled). Distinct from [`Self::MaxTexture2DWidth`].
+    MaxTexture2DLinearWidth,
+    /// `cudaDevAttrMaxTexture2DLinearHeight` (always 0; CUDA linear textures
+    /// are not modeled). Distinct from [`Self::MaxTexture2DLinearWidth`].
+    MaxTexture2DLinearHeight,
+    /// `cudaDevAttrMaxTexture2DLinearPitch` (always 0; CUDA linear textures
+    /// are not modeled). Distinct from [`Self::TexturePitchAlignment`].
+    MaxTexture2DLinearPitch,
     /// `cudaDevAttrMaxSurface1DWidth` (always 0; CUDA surfaces are not
     /// modeled). Distinct from [`Self::SurfaceAlignment`].
     MaxSurface1DWidth,
@@ -1345,6 +1357,24 @@ pub struct DeviceProperties {
     /// Always 0; CUDA arrays / textures are not modeled. Distinct from
     /// [`Self::max_texture_3d_height`].
     pub max_texture_3d_depth: u32,
+    /// `cudaDeviceProp::maxTexture1DLinear`
+    /// ([`DeviceAttr::MaxTexture1DLinearWidth`]). Always 0; CUDA linear
+    /// textures are not modeled. Distinct from [`Self::max_texture_1d_width`].
+    pub max_texture_1d_linear_width: u32,
+    /// `cudaDeviceProp::maxTexture2DLinear[0]`
+    /// ([`DeviceAttr::MaxTexture2DLinearWidth`]). Always 0; CUDA linear
+    /// textures are not modeled. Distinct from [`Self::max_texture_2d_width`].
+    pub max_texture_2d_linear_width: u32,
+    /// `cudaDeviceProp::maxTexture2DLinear[1]`
+    /// ([`DeviceAttr::MaxTexture2DLinearHeight`]). Always 0; CUDA linear
+    /// textures are not modeled. Distinct from
+    /// [`Self::max_texture_2d_linear_width`].
+    pub max_texture_2d_linear_height: u32,
+    /// `cudaDeviceProp::maxTexture2DLinear[2]`
+    /// ([`DeviceAttr::MaxTexture2DLinearPitch`]). Always 0; CUDA linear
+    /// textures are not modeled. Distinct from
+    /// [`Self::texture_pitch_alignment`].
+    pub max_texture_2d_linear_pitch: u32,
     /// `cudaDeviceProp::maxSurface1D` ([`DeviceAttr::MaxSurface1DWidth`]).
     /// Always 0; CUDA surfaces are not modeled. Distinct from
     /// [`Self::surface_alignment`].

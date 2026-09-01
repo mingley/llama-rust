@@ -19144,6 +19144,10 @@ impl Sim {
             | DeviceAttr::MaxTexture3DWidth
             | DeviceAttr::MaxTexture3DHeight
             | DeviceAttr::MaxTexture3DDepth
+            | DeviceAttr::MaxTexture1DLinearWidth
+            | DeviceAttr::MaxTexture2DLinearWidth
+            | DeviceAttr::MaxTexture2DLinearHeight
+            | DeviceAttr::MaxTexture2DLinearPitch
             | DeviceAttr::MaxSurface1DWidth
             | DeviceAttr::MaxSurface2DWidth
             | DeviceAttr::MaxSurface2DHeight
@@ -19204,8 +19208,8 @@ impl Sim {
     /// Launch-geometry caps are MaxThreadsPerBlock 1024 and the H100 block
     /// plus grid dims. MaxRegistersPerBlock is 65536. GlobalMemoryBusWidth
     /// is 5120 bits on example H100. SingleToDoublePrecisionPerfRatio is
-    /// 1 on example H100. Occupancy SM counts, clock rates, and warp size
-    /// are not.
+    /// 1 on example H100. Linear texture 1D/2D dims are always 0.
+    /// Occupancy SM counts, clock rates, and warp size are not.
     /// Unknown devices are Invalid.
     pub fn device_get_properties(&self, device: DeviceId) -> Result<DeviceProperties, SimError> {
         let gpu = self.profile.gpu(device)?;
@@ -19239,6 +19243,10 @@ impl Sim {
             max_texture_3d_width: 0,
             max_texture_3d_height: 0,
             max_texture_3d_depth: 0,
+            max_texture_1d_linear_width: 0,
+            max_texture_2d_linear_width: 0,
+            max_texture_2d_linear_height: 0,
+            max_texture_2d_linear_pitch: 0,
             max_surface_1d_width: 0,
             max_surface_2d_width: 0,
             max_surface_2d_height: 0,
