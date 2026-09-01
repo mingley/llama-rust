@@ -5,6 +5,21 @@ Visible five-turn extract: [docs/chatgpt-share-6a920fe1.md](docs/chatgpt-share-6
 Complete share-API extract: [docs/chatgpt-share-6a920fe1/](docs/chatgpt-share-6a920fe1/).
 Work lands on `main`. No PRs.
 
+## Shipped 2026-09-01 — graph kernel-node SynchronizationPolicy
+
+`gpu-sim` CUDA `cudaLaunchAttributeSynchronizationPolicy` on graph kernel
+nodes: `KernelNodeAttr::SynchronizationPolicy` is CUDA 13
+`CU_LAUNCH_ATTRIBUTE_SYNCHRONIZATION_POLICY`. Valid for streams (already)
+and graph nodes, not host launches (`KernelAttrs` stays without it). Typed
+`graph_add_kernel` and capture snapshot the stream policy. `Auto` inherits
+the recording stream at `cudaEventSynchronize` of that node's
+launch-completion or programmatic event. An explicit Spin / Yield /
+BlockingSync taxes that event wait even when the launch stream is Auto.
+Kernel duration is unchanged. Get/Set/CopyAttributes. Capture cannot
+include Set. This VM does not invent an Engine flag for kernel-node sync
+policy. `gpu-profile capture` is still refused. Dual score still has no
+`$/M tokens`.
+
 ## Shipped 2026-09-01 — store GEMM graphs inherit launch-stream green ctx
 
 Capture from a green-ctx stream snapshots `CUDA_KERNEL_NODE_PARAMS.ctx`

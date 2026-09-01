@@ -1794,13 +1794,17 @@ impl Default for MemSyncDomainMap {
 
 /// `cudaLaunchAttributeSynchronizationPolicy` / `cudaSynchronizationPolicy`.
 ///
-/// Stream-only (`cudaStreamSetAttribute` / `cudaStreamCreateWithAttribute`).
-/// Not a kernel launch attribute and not packed into [`KernelAttrs`].
-/// Host-wait tax applies to [`crate::Sim::synchronize_stream`] and
-/// [`crate::Sim::synchronize_event`] (the recording stream).
+/// CUDA 13: valid for streams (`cudaStreamSetAttribute`) and graph kernel
+/// nodes ([`crate::KernelNodeAttr::SynchronizationPolicy`]), not for launches
+/// from the host (not packed into [`KernelAttrs`]). Host-wait tax applies to
+/// [`crate::Sim::synchronize_stream`] and [`crate::Sim::synchronize_event`].
+/// A non-[`Self::Auto`] kernel-node value taxes
+/// [`crate::Sim::synchronize_event`] of that node's launch-completion or
+/// programmatic event even when the launch stream is Auto. [`Self::Auto`]
+/// inherits the recording stream (and then
+/// [`crate::Sim::set_device_flags`], unset tax 0).
 /// [`crate::Sim::synchronize`] / [`crate::Sim::synchronize_device`] are
-/// `cudaDeviceSynchronize` and do not take this tax. [`Self::Auto`] inherits
-/// [`crate::Sim::set_device_flags`] (unset tax 0). Decode identity stays
+/// `cudaDeviceSynchronize` and do not take this tax. Decode identity stays
 /// [`Self::Auto`].
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash)]
 pub enum SynchronizationPolicy {
@@ -1874,6 +1878,17 @@ impl SynchronizationPolicy {
             _ => Err(crate::error::SimError::Invalid {
                 why: "unknown sync-policy",
             }),
+        }
+    }
+
+    /// CLI / debug-dot token matching [`Self::parse`].
+    #[must_use]
+    pub fn token(self) -> &'static str {
+        match self {
+            Self::Auto => "auto",
+            Self::Spin => "spin",
+            Self::Yield => "yield",
+            Self::BlockingSync => "blocking",
         }
     }
 }
@@ -1958,6 +1973,11 @@ pub enum KernelNodeAttr {
     DynamicShared,
     /// `cudaLaunchAttributeNvlinkUtilCentricScheduling`.
     NvlinkUtilCentric,
+    /// `cudaLaunchAttributeSynchronizationPolicy` (graph kernel nodes).
+    ///
+    /// CUDA: not valid for launches from the host. [`KernelAttrs`] stays
+    /// without this field.
+    SynchronizationPolicy,
 }
 
 /// `cudaKernelNodeAttrValue` for [`crate::Sim::graph_kernel_node_get_attribute`].
@@ -1999,6 +2019,8 @@ pub enum KernelNodeAttrValue {
     DynamicShared(u32),
     /// [`KernelNodeAttr::NvlinkUtilCentric`].
     NvlinkUtilCentric(bool),
+    /// [`KernelNodeAttr::SynchronizationPolicy`].
+    SynchronizationPolicy(SynchronizationPolicy),
 }
 
 /// Packed `cudaLaunchKernelEx` / graph kernel-node attributes.
@@ -2010,7 +2032,8 @@ pub enum KernelNodeAttrValue {
 /// Default carveout, not device-updatable, Default shared-memory bank mode,
 /// Default portable-cluster mode, 0 dynamic shared, Default portable-shared,
 /// inherit stream priority, no programmatic event).
-/// [`SynchronizationPolicy`] is a stream attribute, not a field here.
+/// [`SynchronizationPolicy`] is a stream plus graph-kernel-node attribute,
+/// not a field here (CUDA: not valid for launches from the host).
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub struct KernelAttrs {
     /// `cudaLaunchCooperativeKernel`.

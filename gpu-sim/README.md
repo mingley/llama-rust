@@ -197,7 +197,7 @@ warp scheduler, L1, …   ← do not model
 | `cudaLaunchAttributePreferredClusterDimension` | occupies preferred size when it fits in `compute_slots` |
 | `cudaFuncAttributeNonPortableClusterSizeAllowed` | sizes above `portable_cluster_size` until the SKU `max_blocks_per_cluster` |
 | `cudaFuncAttributeClusterDimMustBeSet` / `RequiredClusterWidth` / Height / Depth | no cluster is Invalid; a nonzero required axis must match the launch; `expertvm sim --cluster-must-set` sets ClusterDimMustBeSet (needs `--cluster`; occupancy matches `--cluster`); `expertvm sim --required-cluster N` sets RequiredClusterWidth (needs `--cluster`; must match; occupancy matches `--cluster`) |
-| `cudaLaunchAttributeSynchronizationPolicy` (stream-only) | host-wait tax on `synchronize_stream` / `synchronize_event`; Auto inherits `set_device_flags` (unset / profile default 0) |
+| `cudaLaunchAttributeSynchronizationPolicy` (stream plus graph kernel nodes) | host-wait tax on `synchronize_stream` / `synchronize_event`; kernel-node non-Auto taxes that node's launch-completion / programmatic event; Auto inherits stream / `set_device_flags` (unset / profile default 0) |
 | `cudaLaunchAttributeDeviceUpdatableKernelNode` | graphs-only; `graph_exec_kernel_set_params` keeps the exec uploaded; device-launch graphs allow it |
 | `cudaLaunchAttributePreferredSharedMemoryCarveout` | MaxShared occupies every Hyper-Q slot; Default uses `set_func_carveout` (`cudaFuncAttributePreferredSharedMemoryCarveout`; `expertvm sim --func-max-shared` sets MaxShared; unset never occupies); MaxL1 matches Default occupancy and overrides function MaxShared (`expertvm sim --max-l1`, needs `--func-max-shared`) |
 | `cudaLaunchAttributeSharedMemoryMode` | Default uses function `set_func_shared_mem_config` then device `set_shared_mem_config` (unset never scales); FourByte / EightByte scale duration by `1000 / shared_mem_*_permille` (default 1000) |
@@ -1246,7 +1246,9 @@ priority; higher first when compute contends). `KernelAttrs::priority` is `cudaL
 (priority, SM permille, mem-sync domain/map, synchronization policy,
 NVLink-util-centric scheduling, and access-policy window).
 `set_stream_sync_policy` is `cudaLaunchAttributeSynchronizationPolicy`
-(stream-only; Auto tax 0). `synchronize_stream` / `synchronize_event` add
+on streams. `graph_kernel_node_set_sync_policy` is the CUDA 13 graph
+kernel-node twin (not `KernelAttrs`; not valid for host launches). Auto tax 0.
+`synchronize_stream` / `synchronize_event` add
 `host_sync_spin_ns` / `yield` / `blocking` after the GPU drain (default 0).
 `synchronize` / `synchronize_device` do not take that tax.
 `graph_kernel_node_get_priority` /
@@ -1260,8 +1262,10 @@ device-updatable kernel node (`cudaLaunchAttributeDeviceUpdatableKernelNode`),
 shared-memory bank mode (`cudaLaunchAttributeSharedMemoryMode`), and
 portable-cluster size mode (`cudaLaunchAttributePortableClusterSizeMode`),
 CUDA 13 portable-shared mode (`cudaLaunchAttributeSharedMemoryMode` /
-`PortableSharedMode`), and NVLink-util-centric scheduling
-(`cudaLaunchAttributeNvlinkUtilCentricScheduling`).
+`PortableSharedMode`), NVLink-util-centric scheduling
+(`cudaLaunchAttributeNvlinkUtilCentricScheduling`), and synchronization
+policy (`cudaLaunchAttributeSynchronizationPolicy` on graph kernel nodes;
+not `KernelAttrs`).
 `graph_kernel_node_get_attribute` / `graph_exec_kernel_node_get_attribute` /
 `graph_kernel_node_set_attribute` / `graph_exec_kernel_node_set_attribute`
 are the generic `cudaGraphKernelNodeGetAttribute` / `SetAttribute`

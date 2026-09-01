@@ -123,7 +123,8 @@ exclusive with `--max-shared`. `--non-portable-cluster` is
 exceed portable size up to the SKU max (Hopper portable 8). `--sync-policy
 auto|spin|yield|blocking` is `cudaLaunchAttributeSynchronizationPolicy` on
 created streams (decode-stream ITL pays `host_sync_*_ns` when `--decode-priority`;
-Auto tax 0). `--mem-sync-domain default|remote` is
+Auto tax 0). Graph kernel nodes also accept that attribute via
+`cudaGraphKernelNodeSetAttribute` (not `KernelAttrs`, not an Engine flag). `--mem-sync-domain default|remote` is
 `cudaLaunchAttributeMemSyncDomain` on the decode compute stream (prefill
 stays Default; Remote isolates leftover prefill `same_domain_fence_permille`;
 walker does not imply `--decode-priority`). `--mem-sync-map identity|collapse` is

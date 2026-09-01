@@ -345,6 +345,9 @@ struct Op {
     /// `cudaLaunchAttributeNvlinkUtilCentricScheduling`. Occupies every Hyper-Q
     /// slot when the profile has NVLink.
     nvlink_util_centric: bool,
+    /// `cudaLaunchAttributeSynchronizationPolicy` on a graph kernel node.
+    /// [`SynchronizationPolicy::Auto`] inherits the recording stream.
+    sync_policy: SynchronizationPolicy,
     /// Green-context SM span for occupancy (`cuGreenCtxStreamCreate`).
     ///
     /// Full chip when the stream is not bound. Distinct from
@@ -564,6 +567,13 @@ struct GraphStep {
     portable_shared: PortableSharedMode,
     /// `cudaLaunchAttributeNvlinkUtilCentricScheduling`.
     nvlink_util_centric: bool,
+    /// `cudaLaunchAttributeSynchronizationPolicy` on this kernel node.
+    ///
+    /// [`SynchronizationPolicy::Auto`] inherits the recording stream at
+    /// `cudaEventSynchronize` of this node's launch-completion or programmatic
+    /// event. Capture and typed add snapshot the stream policy. Not a
+    /// [`KernelAttrs`] field (CUDA: not valid for launches from the host).
+    sync_policy: SynchronizationPolicy,
     /// CUDA `CUDA_KERNEL_NODE_PARAMS.ctx` / `CUDA_BATCH_MEM_OP_NODE_PARAMS.ctx`
     /// / `CUDA_CONDITIONAL_NODE_PARAMS.ctx` / `cuGraphAddMemcpyNode` ctx /
     /// `cuGraphAddMemsetNode` ctx.
@@ -924,6 +934,8 @@ pub struct Sim {
     enqueue_portable_shared: PortableSharedMode,
     /// NVLink-util-centric scheduling for the next submit / graph replay.
     enqueue_nvlink_util_centric: bool,
+    /// Graph kernel-node sync policy for the next submit / graph replay.
+    enqueue_sync_policy: SynchronizationPolicy,
     /// Graph kernel-node ctx for the next kernel submit / graph replay.
     enqueue_green_ctx: Option<GreenCtxId>,
     /// Devices with `cudaFuncAttributeNonPortableClusterSizeAllowed`.
@@ -1070,6 +1082,7 @@ impl Sim {
             enqueue_dynamic_shared: 0,
             enqueue_portable_shared: PortableSharedMode::Default,
             enqueue_nvlink_util_centric: false,
+            enqueue_sync_policy: SynchronizationPolicy::Auto,
             enqueue_green_ctx: None,
             non_portable_cluster: BTreeSet::new(),
             max_dynamic_shared: BTreeMap::new(),
@@ -3351,6 +3364,11 @@ impl Sim {
             self.enqueue_dynamic_shared = step.dynamic_shared;
             self.enqueue_portable_shared = step.portable_shared;
             self.enqueue_nvlink_util_centric = step.nvlink_util_centric;
+            self.enqueue_sync_policy = if matches!(step.kind, Kind::Kernel { .. }) {
+                step.sync_policy
+            } else {
+                SynchronizationPolicy::Auto
+            };
             if let Some(ctx) = step.green_ctx {
                 self.require_live_green_ctx(ctx, step.device)?;
             }
@@ -3564,6 +3582,7 @@ impl Sim {
         self.enqueue_dynamic_shared = 0;
         self.enqueue_portable_shared = PortableSharedMode::Default;
         self.enqueue_nvlink_util_centric = false;
+        self.enqueue_sync_policy = SynchronizationPolicy::Auto;
         self.enqueue_green_ctx = None;
         Ok(n)
     }
@@ -10754,6 +10773,92 @@ impl Sim {
         Ok(())
     }
 
+    /// `cudaGraphKernelNodeGetAttribute` for `cudaLaunchAttributeSynchronizationPolicy`.
+    pub fn graph_kernel_node_get_sync_policy(
+        &self,
+        graph: GraphId,
+        node: usize,
+    ) -> Result<SynchronizationPolicy, SimError> {
+        self.kernel_node_sync_policy(graph, node, false)
+    }
+
+    /// `cudaGraphExecKernelNodeGetAttribute` for `cudaLaunchAttributeSynchronizationPolicy`.
+    pub fn graph_exec_kernel_node_get_sync_policy(
+        &self,
+        exec: GraphId,
+        node: usize,
+    ) -> Result<SynchronizationPolicy, SimError> {
+        self.kernel_node_sync_policy(exec, node, true)
+    }
+
+    fn kernel_node_sync_policy(
+        &self,
+        graph: GraphId,
+        node: usize,
+        exec: bool,
+    ) -> Result<SynchronizationPolicy, SimError> {
+        let graph = if exec { self.as_exec(graph)? } else { graph };
+        let g = self.graphs.get(&graph).ok_or(SimError::Invalid {
+            why: "unknown graph",
+        })?;
+        let steps = if exec { g.view() } else { &g.steps };
+        let step = live_ok(steps.get(node).ok_or(SimError::Invalid {
+            why: "unknown graph node",
+        })?)?;
+        if !matches!(step.kind, Kind::Kernel { .. }) {
+            return Err(SimError::Invalid {
+                why: "not a kernel node",
+            });
+        }
+        Ok(step.sync_policy)
+    }
+
+    /// `cudaGraphKernelNodeSetAttribute` for `cudaLaunchAttributeSynchronizationPolicy`.
+    pub fn graph_kernel_node_set_sync_policy(
+        &mut self,
+        graph: GraphId,
+        node: usize,
+        policy: SynchronizationPolicy,
+    ) -> Result<(), SimError> {
+        self.set_kernel_node_sync_policy(graph, node, false, policy)
+    }
+
+    /// `cudaGraphExecKernelNodeSetAttribute` for `cudaLaunchAttributeSynchronizationPolicy`.
+    pub fn graph_exec_kernel_node_set_sync_policy(
+        &mut self,
+        exec: GraphId,
+        node: usize,
+        policy: SynchronizationPolicy,
+    ) -> Result<(), SimError> {
+        self.set_kernel_node_sync_policy(exec, node, true, policy)
+    }
+
+    fn set_kernel_node_sync_policy(
+        &mut self,
+        graph: GraphId,
+        node: usize,
+        exec: bool,
+        policy: SynchronizationPolicy,
+    ) -> Result<(), SimError> {
+        self.fail_if_capturing("cannot capture kernel node set attribute")?;
+        let graph = if exec { self.as_exec(graph)? } else { graph };
+        let g = self.graphs.get_mut(&graph).ok_or(SimError::Invalid {
+            why: "unknown graph",
+        })?;
+        let steps = if exec { g.exec_mut()? } else { &mut g.steps };
+        let step = live_ok_mut(steps.get_mut(node).ok_or(SimError::Invalid {
+            why: "unknown graph node",
+        })?)?;
+        if !matches!(step.kind, Kind::Kernel { .. }) {
+            return Err(SimError::Invalid {
+                why: "not a kernel node",
+            });
+        }
+        step.sync_policy = policy;
+        self.clock = self.clock.saturating_add(1);
+        Ok(())
+    }
+
     /// `cudaGraphKernelNodeGetAttribute` for `cudaLaunchAttributeCooperative`.
     pub fn graph_kernel_node_get_cooperative(
         &self,
@@ -10871,8 +10976,8 @@ impl Sim {
     /// domain/map, cluster dimension, cluster scheduling policy, preferred
     /// cluster dimension, portable-cluster mode, shared-memory carveout,
     /// device-updatable kernel node, shared-memory bank mode, CUDA 13
-    /// portable-shared mode, NVLink-util-centric scheduling, and cooperative
-    /// launch from `src` to `dst`.
+    /// portable-shared mode, NVLink-util-centric scheduling, synchronization
+    /// policy, and cooperative launch from `src` to `dst`.
     ///
     /// Both nodes must be kernels. Capture cannot include it.
     /// [`KernelNodeAttr::DynamicShared`] is `sharedMemBytes` (params, not
@@ -10929,6 +11034,7 @@ impl Sim {
             KernelNodeAttr::SharedMem,
             KernelNodeAttr::PortableShared,
             KernelNodeAttr::NvlinkUtilCentric,
+            KernelNodeAttr::SynchronizationPolicy,
             KernelNodeAttr::Cooperative,
         ];
         for attr in attrs {
@@ -11024,6 +11130,9 @@ impl Sim {
             ),
             KernelNodeAttr::NvlinkUtilCentric => KernelNodeAttrValue::NvlinkUtilCentric(
                 self.kernel_node_nvlink_util_centric(graph, node, exec)?,
+            ),
+            KernelNodeAttr::SynchronizationPolicy => KernelNodeAttrValue::SynchronizationPolicy(
+                self.kernel_node_sync_policy(graph, node, exec)?,
             ),
         })
     }
@@ -11190,6 +11299,16 @@ impl Sim {
                     self.graph_kernel_node_set_nvlink_util_centric(graph, node, yes)
                 }
             }
+            (
+                KernelNodeAttr::SynchronizationPolicy,
+                KernelNodeAttrValue::SynchronizationPolicy(p),
+            ) => {
+                if exec {
+                    self.graph_exec_kernel_node_set_sync_policy(graph, node, p)
+                } else {
+                    self.graph_kernel_node_set_sync_policy(graph, node, p)
+                }
+            }
             _ => Err(SimError::Invalid {
                 why: "kernel node attr",
             }),
@@ -11264,6 +11383,7 @@ impl Sim {
     ) -> Result<(), SimError> {
         let priority = self.snap_priority(device, stream);
         let (mem_sync_domain, mem_sync_map) = self.snap_mem_sync(device, stream, &kind)?;
+        let sync_policy = self.stream_sync_policy(device, stream);
         let green_ctx = if kind_has_green_ctx(&kind) {
             self.enqueue_green_ctx
         } else {
@@ -11296,6 +11416,7 @@ impl Sim {
             dynamic_shared: self.enqueue_dynamic_shared,
             portable_shared: self.enqueue_portable_shared,
             nvlink_util_centric: self.enqueue_nvlink_util_centric,
+            sync_policy,
             green_ctx,
         });
         Ok(())
@@ -18466,7 +18587,9 @@ impl Sim {
     /// Work after the record on the same stream, and work on other streams,
     /// keeps running. An event with no record and no running ops is a deadlock.
     /// After the GPU drain, the host-wait tax from the recording stream's
-    /// [`Self::stream_sync_policy`] is added.
+    /// [`Self::stream_sync_policy`] is added, unless the recorder is a graph
+    /// kernel node with a non-[`SynchronizationPolicy::Auto`]
+    /// [`KernelNodeAttr::SynchronizationPolicy`].
     pub fn synchronize_event(&mut self, event: EventId) -> Result<(), SimError> {
         if !self.events.contains_key(&event) {
             return Err(SimError::UnknownEvent { event: event.0 });
@@ -18662,8 +18785,14 @@ impl Sim {
         };
         let device = row.device;
         let stream = row.stream;
+        let node_policy = row.sync_policy;
         if blocking {
             let tax = self.host_sync_policy_tax_ns(device, SynchronizationPolicy::BlockingSync);
+            self.clock = self.clock.saturating_add(tax);
+            return;
+        }
+        if node_policy != SynchronizationPolicy::Auto {
+            let tax = self.host_sync_policy_tax_ns(device, node_policy);
             self.clock = self.clock.saturating_add(tax);
             return;
         }
@@ -18771,6 +18900,7 @@ impl Sim {
         self.merge_capture_pending(device, stream, &mut deps);
         let priority = self.snap_priority(device, stream);
         let (mem_sync_domain, mem_sync_map) = self.snap_mem_sync(device, stream, &kind)?;
+        let sync_policy = self.stream_sync_policy(device, stream);
         let green_ctx = if kind_has_green_ctx(&kind) {
             self.enqueue_green_ctx
                 .or_else(|| self.stream_green_ctx.get(&(device, stream)).copied())
@@ -18801,6 +18931,7 @@ impl Sim {
             dynamic_shared: self.enqueue_dynamic_shared,
             portable_shared: self.enqueue_portable_shared,
             nvlink_util_centric: self.enqueue_nvlink_util_centric,
+            sync_policy,
             green_ctx,
         });
         let id = OpId(self.next_op);
@@ -18951,6 +19082,7 @@ impl Sim {
                 carveout: self.enqueue_carveout,
                 shared_mem: self.enqueue_shared_mem,
                 nvlink_util_centric: self.enqueue_nvlink_util_centric,
+                sync_policy: self.enqueue_sync_policy,
                 sm_span,
                 green_ctx,
             },
@@ -19375,6 +19507,7 @@ impl Sim {
                 carveout: SharedMemCarveout::Default,
                 shared_mem: SharedMemoryMode::Default,
                 nvlink_util_centric: false,
+                sync_policy: SynchronizationPolicy::Auto,
                 sm_span: self.stream_sm_span(device, stream),
                 green_ctx: None,
             },
@@ -22860,6 +22993,7 @@ fn remap_nested_graphs(
             dynamic_shared: step.dynamic_shared,
             portable_shared: step.portable_shared,
             nvlink_util_centric: step.nvlink_util_centric,
+            sync_policy: step.sync_policy,
             green_ctx: step.green_ctx,
         });
     }
@@ -23128,9 +23262,15 @@ fn debug_dot_label(i: usize, step: &GraphStep, flags: u32) -> String {
                 label.push_str(" w=");
                 label.push_str(&debug_dot_bufs(writes));
             }
-            if flags & GraphDebugDotFlags::KERNEL_NODE_ATTRIBUTES != 0 && step.priority != 0 {
-                label.push_str(" pri=");
-                label.push_str(&step.priority.to_string());
+            if flags & GraphDebugDotFlags::KERNEL_NODE_ATTRIBUTES != 0 {
+                if step.priority != 0 {
+                    label.push_str(" pri=");
+                    label.push_str(&step.priority.to_string());
+                }
+                if step.sync_policy != SynchronizationPolicy::Auto {
+                    label.push_str(" sync=");
+                    label.push_str(step.sync_policy.token());
+                }
             }
         }
         Kind::Memcpy(op) => {

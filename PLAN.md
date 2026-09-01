@@ -5358,7 +5358,22 @@ model, do not celebrate the sim.
     `gpu-profile capture` is still refused. Dual score still has no
     `$/M tokens`.
 
-499. [ ] Next numbered PLAN item after 498 is the next `gpu-sim` / Engine /
+499. [x] `gpu-sim` CUDA `cudaLaunchAttributeSynchronizationPolicy` on graph
+    kernel nodes:
+    [`KernelNodeAttr::SynchronizationPolicy`] is CUDA 13
+    `CU_LAUNCH_ATTRIBUTE_SYNCHRONIZATION_POLICY` on graph kernel nodes.
+    Valid for streams (already) and graph nodes, not host launches
+    ([`KernelAttrs`] stays without it). Typed [`graph_add_kernel`] and
+    capture snapshot the stream policy. [`SynchronizationPolicy::Auto`]
+    inherits the recording stream at `cudaEventSynchronize` of that node's
+    launch-completion or programmatic event. An explicit Spin / Yield /
+    BlockingSync taxes that event wait even when the launch stream is Auto.
+    Kernel duration is unchanged. Get/Set/CopyAttributes. Capture cannot
+    include Set. This VM does not invent an Engine flag for kernel-node
+    sync policy. `gpu-profile capture` is still refused. Dual score still
+    has no `$/M tokens`.
+
+500. [ ] Next numbered PLAN item after 499 is the next `gpu-sim` / Engine /
     serve / expertvm mechanical API that is still missing, or the next official
     decode family. Prefer remaining CUDA-shaped twins over more
     OpenAI HTTP veneer. Do not invent F32 `output.scale`. Do not invent a
@@ -5612,8 +5627,11 @@ model, do not celebrate the sim.
     children (1 ns). Do not invent graph wait/write_value BETWEEN combo
     children (1 ns Solo). Do not invent `graph_add_while` / `graph_add_switch`
     default-1 wrap (same wall as graph-build). Do not invent KernelAttrs
-    SynchronizationPolicy as an Engine flag (stream-only today). Do not
-    invent PDL wait-only. Do not invent in-graph wait_value / event wait
+    SynchronizationPolicy as an Engine flag (graph kernel nodes shipped;
+    still not a host-launch field). Do not invent a second
+    `KernelNodeAttr::SynchronizationPolicy`. Do not invent
+    `KernelAttrs::sync_policy`. Do not invent Engine `--kernel-sync-policy`.
+    Do not invent PDL wait-only. Do not invent in-graph wait_value / event wait
     BEFORE a leaf (same GPU timeline as live wait). Do not invent host AFTER
     kernel on a leaf (exclusive-compute wall matches BEFORE). Do not invent
     `cuStreamBatchMemOp` packing of wait/write (1 ns Solo, not
@@ -5670,6 +5688,9 @@ model, do not celebrate the sim.
     Do not invent a second `CUgraphChildGraphNodeOwnership` /
     `ChildGraphNodeParams::ownership`. Do not invent an Engine flag for
     child-graph ownership. Do not put `ownership` on `GraphNodeKind`.
+    Do not invent a second graph kernel-node SynchronizationPolicy
+    Get/Set/CopyAttributes. Do not invent KernelAttrs SynchronizationPolicy.
+    Do not invent an Engine flag for kernel-node sync policy.
     Do not
     spend the next item on an OpenAI-compatible HTTP veneer.
 

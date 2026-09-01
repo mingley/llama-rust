@@ -12,8 +12,10 @@
 //! leftover kernels on other streams. [`GpuProfile::compute_slots`] is Hyper-Q
 //! occupancy (`1` exclusive; `>=2` concurrent kernels at full issue rate).
 //! [`Sim::set_stream_sync_policy`] is `cudaLaunchAttributeSynchronizationPolicy`
-//! (stream-only; [`SynchronizationPolicy::Auto`] inherits
-//! [`set_device_flags`](Sim::set_device_flags), unset tax 0). Host-wait tax on
+//! on streams. [`KernelNodeAttr::SynchronizationPolicy`] is the CUDA 13 graph
+//! kernel-node twin (not packed into [`KernelAttrs`]: not valid for host
+//! launches). [`SynchronizationPolicy::Auto`] inherits
+//! [`set_device_flags`](Sim::set_device_flags), unset tax 0. Host-wait tax on
 //! [`synchronize_stream`](Sim::synchronize_stream) /
 //! [`synchronize_event`](Sim::synchronize_event) comes from
 //! [`GpuProfile::host_sync_spin_ns`] / `yield` / `blocking` (default 0).
@@ -852,8 +854,9 @@
 //! programmatic event ([`ProgrammaticEvent`]), access-policy window,
 //! mem-sync domain/map, cluster dimension, cluster scheduling policy,
 //! preferred cluster dimension, shared-memory carveout,
-//! device-updatable kernel node, shared-memory bank mode, and portable-cluster
-//! size mode.
+//! device-updatable kernel node, shared-memory bank mode, portable-cluster
+//! size mode, and synchronization policy
+//! ([`KernelNodeAttr::SynchronizationPolicy`]; not [`KernelAttrs`]).
 //! [`graph_exec_kernel_node_copy_attributes`](Sim::graph_exec_kernel_node_copy_attributes)
 //! is the exec-snapshot CopyAttributes twin (uninstantiated graphs are Invalid).
 //! [`graph_kernel_node_get_attribute`](Sim::graph_kernel_node_get_attribute) /
@@ -8215,6 +8218,240 @@ mod tests {
         assert!(sim.graph_kernel_node_get_nvlink_util_centric(g, 0).unwrap());
     }
 
+    fn host_sync_profile() -> HardwareProfile {
+        HardwareProfile::parse(
+            "gpus=1\nhost_sync_yield_ns=5000\nhost_sync_blocking_ns=10000\nfp16_flops=1000000\n",
+        )
+        .expect("host-sync profile")
+    }
+
+    fn graph_kernel_with_launch_completion(
+        sim: &mut Sim,
+        policy: SynchronizationPolicy,
+    ) -> (DeviceId, StreamId, GraphId, EventId) {
+        let d = DeviceId(0);
+        let s = StreamId(0);
+        let a = sim.malloc(d, 4096).unwrap();
+        let ev = EventId(1);
+        let g = sim.create_graph(d, s).unwrap();
+        sim.graph_add_kernel(g, KernelKind::other(8, 8), &[a], &[a])
+            .unwrap();
+        sim.graph_kernel_node_set_launch_completion(
+            g,
+            0,
+            Some(LaunchCompletionEvent {
+                event: ev,
+                external: false,
+            }),
+        )
+        .unwrap();
+        sim.graph_kernel_node_set_sync_policy(g, 0, policy).unwrap();
+        (d, s, g, ev)
+    }
+
+    fn launch_and_sync_completion(sim: &mut Sim, g: GraphId, s: StreamId, ev: EventId) -> u64 {
+        let exec = sim.instantiate_graph(g).unwrap();
+        let n = sim.launch_graph(exec, s).unwrap();
+        assert!(n >= 1);
+        sim.synchronize_event(ev).unwrap();
+        sim.clock_ns()
+    }
+
+    #[test]
+    fn graph_kernel_node_sync_policy_get_set_copy_and_exec_snapshot() {
+        let mut sim = Sim::new(h100());
+        let d = DeviceId(0);
+        let s = StreamId(0);
+        let a = sim.malloc(d, 4096).unwrap();
+        let g = sim.create_graph(d, s).unwrap();
+        sim.graph_add_kernel(g, KernelKind::other(8, 8), &[a], &[a])
+            .unwrap();
+        assert_eq!(
+            sim.graph_kernel_node_get_sync_policy(g, 0).unwrap(),
+            SynchronizationPolicy::Auto
+        );
+        sim.graph_kernel_node_set_sync_policy(g, 0, SynchronizationPolicy::Yield)
+            .unwrap();
+        assert_eq!(
+            sim.graph_kernel_node_get_attribute(g, 0, KernelNodeAttr::SynchronizationPolicy)
+                .unwrap(),
+            KernelNodeAttrValue::SynchronizationPolicy(SynchronizationPolicy::Yield)
+        );
+        let h = sim.create_graph(d, s).unwrap();
+        sim.graph_add_kernel(h, KernelKind::other(8, 8), &[a], &[a])
+            .unwrap();
+        sim.graph_kernel_node_copy_attributes(h, 0, g, 0).unwrap();
+        assert_eq!(
+            sim.graph_kernel_node_get_sync_policy(h, 0).unwrap(),
+            SynchronizationPolicy::Yield
+        );
+        let exec = sim.instantiate_graph(g).unwrap();
+        sim.graph_kernel_node_set_sync_policy(g, 0, SynchronizationPolicy::Spin)
+            .unwrap();
+        assert_eq!(
+            sim.graph_exec_kernel_node_get_sync_policy(exec, 0).unwrap(),
+            SynchronizationPolicy::Yield
+        );
+        sim.graph_exec_kernel_node_set_sync_policy(exec, 0, SynchronizationPolicy::BlockingSync)
+            .unwrap();
+        assert_eq!(
+            sim.graph_kernel_node_get_sync_policy(g, 0).unwrap(),
+            SynchronizationPolicy::Spin
+        );
+        assert_eq!(
+            sim.graph_exec_kernel_node_get_sync_policy(exec, 0).unwrap(),
+            SynchronizationPolicy::BlockingSync
+        );
+        let empty = sim.create_graph(d, s).unwrap();
+        sim.graph_add_empty(empty).unwrap();
+        let err = sim.graph_kernel_node_get_sync_policy(empty, 0).unwrap_err();
+        match err {
+            SimError::Invalid { why } => assert!(why.contains("not a kernel node"), "{why}"),
+            other => panic!("{other:?}"),
+        }
+        match sim.graph_kernel_node_set_attribute(
+            g,
+            0,
+            KernelNodeAttr::SynchronizationPolicy,
+            KernelNodeAttrValue::Priority(1),
+        ) {
+            Err(SimError::Invalid { why }) => assert!(why.contains("kernel node attr"), "{why}"),
+            other => panic!("{other:?}"),
+        }
+        sim.begin_capture(d, s).unwrap();
+        let err = sim
+            .graph_kernel_node_set_sync_policy(g, 0, SynchronizationPolicy::Auto)
+            .unwrap_err();
+        match err {
+            SimError::Invalid { why } => {
+                assert!(
+                    why.contains("cannot capture kernel node set attribute"),
+                    "{why}"
+                )
+            }
+            other => panic!("{other:?}"),
+        }
+        let cap = sim.end_capture().unwrap();
+        assert_ne!(cap, g);
+        let attrs = sim
+            .graph_debug_dot_with_flags(g, GraphDebugDotFlags::KERNEL_NODE_ATTRIBUTES)
+            .unwrap();
+        assert!(attrs.contains("sync=spin"), "{attrs}");
+    }
+
+    #[test]
+    fn graph_kernel_node_sync_policy_capture_and_typed_add_snapshot_stream() {
+        let mut sim = Sim::new(h100());
+        let d = DeviceId(0);
+        let s = StreamId(0);
+        let a = sim.malloc(d, 4096).unwrap();
+        sim.set_stream_sync_policy(d, s, SynchronizationPolicy::Yield)
+            .unwrap();
+        sim.begin_capture(d, s).unwrap();
+        enq(sim.kernel(d, KernelKind::other(8, 8), &[a], &[a], s));
+        let g = sim.end_capture().unwrap();
+        assert_eq!(
+            sim.graph_kernel_node_get_sync_policy(g, 0).unwrap(),
+            SynchronizationPolicy::Yield
+        );
+        let h = sim.create_graph(d, s).unwrap();
+        sim.graph_add_kernel(h, KernelKind::other(8, 8), &[a], &[a])
+            .unwrap();
+        assert_eq!(
+            sim.graph_kernel_node_get_sync_policy(h, 0).unwrap(),
+            SynchronizationPolicy::Yield
+        );
+    }
+
+    #[test]
+    fn graph_kernel_node_sync_policy_taxes_launch_completion_event() {
+        let mut auto = Sim::new(host_sync_profile());
+        let mut yield_n = Sim::new(host_sync_profile());
+        let (_d, s, g_auto, ev_auto) =
+            graph_kernel_with_launch_completion(&mut auto, SynchronizationPolicy::Auto);
+        let (_, _, g_yield, ev_yield) =
+            graph_kernel_with_launch_completion(&mut yield_n, SynchronizationPolicy::Yield);
+        let t_auto = launch_and_sync_completion(&mut auto, g_auto, s, ev_auto);
+        let t_yield = launch_and_sync_completion(&mut yield_n, g_yield, s, ev_yield);
+        assert_eq!(
+            t_yield,
+            t_auto.saturating_add(5000),
+            "node Yield must tax event wait; auto={t_auto} yield={t_yield}"
+        );
+    }
+
+    #[test]
+    fn graph_kernel_node_sync_policy_non_auto_beats_stream_and_auto_inherits() {
+        let mut inherit = Sim::new(host_sync_profile());
+        let mut node_wins = Sim::new(host_sync_profile());
+        let (d, s, g_inh, ev_inh) =
+            graph_kernel_with_launch_completion(&mut inherit, SynchronizationPolicy::Auto);
+        inherit
+            .set_stream_sync_policy(d, s, SynchronizationPolicy::BlockingSync)
+            .unwrap();
+        let (_, _, g_node, ev_node) =
+            graph_kernel_with_launch_completion(&mut node_wins, SynchronizationPolicy::Yield);
+        node_wins
+            .set_stream_sync_policy(d, s, SynchronizationPolicy::BlockingSync)
+            .unwrap();
+        let t_inherit = launch_and_sync_completion(&mut inherit, g_inh, s, ev_inh);
+        let t_node = launch_and_sync_completion(&mut node_wins, g_node, s, ev_node);
+        assert_eq!(
+            t_inherit.saturating_sub(t_node),
+            5000,
+            "Auto inherits stream Blocking (10000) while node Yield is 5000; inherit={t_inherit} node={t_node}"
+        );
+    }
+
+    #[test]
+    fn kernel_with_launch_completion_uses_stream_sync_policy() {
+        let mut stream = Sim::new(host_sync_profile());
+        let mut ident = Sim::new(host_sync_profile());
+        let d = DeviceId(0);
+        let s = StreamId(0);
+        let a = stream.malloc(d, 4096).unwrap();
+        let b = ident.malloc(d, 4096).unwrap();
+        stream
+            .set_stream_sync_policy(d, s, SynchronizationPolicy::Yield)
+            .unwrap();
+        let ev = EventId(3);
+        enq(stream.kernel_with(
+            d,
+            KernelKind::other(8, 8),
+            &[a],
+            &[a],
+            s,
+            KernelAttrs {
+                launch_completion: Some(LaunchCompletionEvent {
+                    event: ev,
+                    external: false,
+                }),
+                ..KernelAttrs::default()
+            },
+        ));
+        enq(ident.kernel_with(
+            d,
+            KernelKind::other(8, 8),
+            &[b],
+            &[b],
+            s,
+            KernelAttrs {
+                launch_completion: Some(LaunchCompletionEvent {
+                    event: ev,
+                    external: false,
+                }),
+                ..KernelAttrs::default()
+            },
+        ));
+        stream.synchronize_event(ev).unwrap();
+        ident.synchronize_event(ev).unwrap();
+        assert_eq!(
+            stream.clock_ns(),
+            ident.clock_ns().saturating_add(5000),
+            "host launches keep stream policy; KernelAttrs has no sync_policy"
+        );
+    }
+
     #[test]
     fn stream_copy_attributes_copies_nvlink_util_centric() {
         let mut sim = Sim::new(h100());
@@ -8680,6 +8917,17 @@ mod tests {
         )
         .unwrap();
         assert!(sim.graph_kernel_node_get_nvlink_util_centric(g, 0).unwrap());
+        sim.graph_kernel_node_set_attribute(
+            g,
+            0,
+            KernelNodeAttr::SynchronizationPolicy,
+            KernelNodeAttrValue::SynchronizationPolicy(SynchronizationPolicy::Yield),
+        )
+        .unwrap();
+        assert_eq!(
+            sim.graph_kernel_node_get_sync_policy(g, 0).unwrap(),
+            SynchronizationPolicy::Yield
+        );
         match sim.graph_kernel_node_get_attribute(g, 1, KernelNodeAttr::Priority) {
             Err(SimError::Invalid { why }) => assert!(why.contains("not a kernel"), "{why}"),
             other => panic!("{other:?}"),
