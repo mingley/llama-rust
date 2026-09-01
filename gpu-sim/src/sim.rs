@@ -19814,6 +19814,17 @@ impl Sim {
         })
     }
 
+    /// `cuCoredumpGetAttribute` / `cudaCoredumpGetAttribute`.
+    ///
+    /// Always Invalid `"coredump"` (GPU coredumps are not modeled). Distinct
+    /// from [`Self::get_proc_address`]. Unknown devices are Invalid
+    /// `"device not in profile"`. Query; legal during capture. This VM does
+    /// not invent `cuCoredumpSetAttribute` this slice.
+    pub fn coredump_get_attribute(&self, device: DeviceId) -> Result<(), SimError> {
+        let _gpu = self.profile.gpu(device)?;
+        Err(SimError::Invalid { why: "coredump" })
+    }
+
     /// `cuInit`. Host-synchronous. Capture cannot include it.
     ///
     /// Flags must be 0 (CUDA requires 0). This VM is already initialized at

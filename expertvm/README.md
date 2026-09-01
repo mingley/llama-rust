@@ -514,6 +514,8 @@ Eager; no Engine flag).
 `CUlibrary`; no Engine flag).
 `gpu-sim` `get_proc_address` is `cuGetProcAddress` (Invalid; no C ABI
 function pointers; no Engine flag).
+`gpu-sim` `coredump_get_attribute` is `cuCoredumpGetAttribute` (Invalid;
+GPU coredumps are not modeled; no Engine flag).
 `gpu-sim` `ctx_get_device` is `cuCtxGetDevice` (explicit device of the
 seeded primary context; no Engine flag).
 `gpu-sim` `ctx_reset_persisting_l2_cache` is `cuCtxResetPersistingL2Cache`

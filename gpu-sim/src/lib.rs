@@ -848,7 +848,10 @@
 //! [`Sim::driver_get_version`] is `cudaDriverGetVersion` / `cuDriverGetVersion`
 //! (CUDA 13.0). [`get_proc_address`](Sim::get_proc_address) is `cuGetProcAddress`
 //! plus `cudaGetDriverEntryPoint` (always Invalid `"proc address"`). Query;
-//! legal during capture. No Engine `--proc-address`. [`Sim::driver_init`] is `cuInit` (flags 0; already initialized
+//! legal during capture. No Engine `--proc-address`.
+//! [`coredump_get_attribute`](Sim::coredump_get_attribute) is
+//! `cuCoredumpGetAttribute` (always Invalid `"coredump"`). Query; legal
+//! during capture. No Engine `--coredump`. [`Sim::driver_init`] is `cuInit` (flags 0; already initialized
 //! at [`Sim::new`]; 1 ns no-op). Distinct from [`init_device`](Sim::init_device).
 //! Capture cannot include it. No Engine `--cu-init`.
 //! [`Sim::module_get_loading_mode`] is `cuModuleGetLoadingMode` (always
@@ -18339,6 +18342,38 @@ mod tests {
         match sim.library_load_data(d) {
             Err(SimError::Invalid { why }) => {
                 assert!(why.contains("cuda library"), "{why}");
+            }
+            other => panic!("{other:?}"),
+        }
+    }
+
+    #[test]
+    fn coredump_get_attribute_is_unsupported() {
+        let mut sim = Sim::new(h100());
+        let d = DeviceId(0);
+        match sim.coredump_get_attribute(d) {
+            Err(SimError::Invalid { why }) => {
+                assert!(why.contains("coredump"), "{why}");
+            }
+            other => panic!("{other:?}"),
+        }
+        sim.begin_capture(d, StreamId(0)).unwrap();
+        match sim.coredump_get_attribute(d) {
+            Err(SimError::Invalid { why }) => {
+                assert!(why.contains("coredump"), "{why}");
+            }
+            other => panic!("{other:?}"),
+        }
+        let _g = sim.end_capture().unwrap();
+        match sim.coredump_get_attribute(DeviceId(99)) {
+            Err(SimError::Invalid { why }) => {
+                assert!(why.contains("device not in profile"), "{why}");
+            }
+            other => panic!("{other:?}"),
+        }
+        match sim.get_proc_address(d) {
+            Err(SimError::Invalid { why }) => {
+                assert!(why.contains("proc address"), "{why}");
             }
             other => panic!("{other:?}"),
         }

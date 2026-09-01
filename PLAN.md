@@ -6460,7 +6460,15 @@ model, do not celebrate the sim.
     `cudaChooseDevice`. `gpu-profile capture` is still refused. Dual
     score still has no `$/M tokens`.
 
-619. [ ] Next numbered PLAN item after 618 is the next `gpu-sim` / Engine /
+619. [x] `gpu-sim` `Sim::coredump_get_attribute` is
+    `cuCoredumpGetAttribute` / `cudaCoredumpGetAttribute`. Always Invalid
+    `"coredump"` because GPU coredumps are not modeled. Query; legal
+    during capture. Distinct from `get_proc_address`. This VM does not
+    invent `cuCoredumpSetAttribute`, Engine `--coredump`, or
+    `cudaChooseDevice`. `gpu-profile capture` is still refused. Dual
+    score still has no `$/M tokens`.
+
+620. [ ] Next numbered PLAN item after 619 is the next `gpu-sim` / Engine /
     serve / expertvm mechanical API that is still missing, or the next official
     decode family. Prefer remaining CUDA-shaped twins over more
     OpenAI HTTP veneer. Do not invent F32 `output.scale`. Do not invent a
@@ -6759,6 +6767,10 @@ model, do not celebrate the sim.
     `graphics_map_resources`. Do not invent Engine `--graphics-map`.
     Do not invent `cuGraphicsGLRegisterBuffer` this slice. Do not reverse
     `"graphics resource"`.
+    Do not invent a second `cuCoredumpGetAttribute` /
+    `coredump_get_attribute`. Do not invent Engine `--coredump`.
+    Do not invent `cuCoredumpSetAttribute` this slice. Do not reverse
+    `"coredump"`.
     Do not invent a second `cudaStreamAddCallback`.
     Do not invent Engine `--stream-callback` (same wall as second live
     `cudaLaunchHostFunc` after miss DMA).
@@ -7164,6 +7176,9 @@ model, do not celebrate the sim.
     Do not invent a second `graphics_map_resources` API. Do not invent
     Engine `--map-graphics`. Do not invent `cuGraphicsUnmapResources`
     this slice. Do not reverse D3D12CigSupported staying 0.
+    Do not invent a second `coredump_get_attribute` API. Do not invent
+    Engine `--get-coredump`. Do not invent a `CU_COREDUMP_FILE` path this
+    slice. Do not reverse coredump remaining unsupported.
     Do not invent a second DeviceLaunch in-flight destroy-complete check or Engine
     `--device-launch-destroy`. Do not abort an in-flight DeviceLaunch when
     `destroy_graph` succeeds. Do not delay destroy of an idle exec. Do not invent
@@ -7774,6 +7789,9 @@ model, do not celebrate the sim.
     Do not invent a second `graphics_map_resources` method. Do not invent
     Engine `--cu-graphics-map`. Do not reverse wrapping
     cuGraphicsMapResources Invalid.
+    Do not invent a second `coredump_get_attribute` method. Do not invent
+    Engine `--cu-coredump`. Do not reverse wrapping cuCoredumpGetAttribute
+    Invalid.
     Do not
     spend the next item on an OpenAI-compatible HTTP veneer.
 
