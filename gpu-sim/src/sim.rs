@@ -3553,7 +3553,9 @@ impl Sim {
         Ok(g.instantiated || g.primary_exec.is_some())
     }
 
-    /// Whether [`Self::upload_graph`] (or a first launch after instantiate) has run.
+    /// Whether [`Self::upload_graph`] or a completed
+    /// [`Self::upload_graph_async`] (or a first launch after instantiate) has
+    /// run.
     pub fn graph_uploaded(&self, graph: GraphId) -> Result<bool, SimError> {
         let exec = self.as_exec(graph)?;
         self.graphs
@@ -3622,22 +3624,37 @@ impl Sim {
         self.instantiate_graph_with_params(graph, &mut params)
     }
 
-    /// `cudaGraphInstantiateWithParams`. Host-synchronous. Capture cannot include it.
+    /// `cudaGraphInstantiateWithParams`. Instantiate is host-synchronous.
+    /// Capture cannot include it.
     ///
     /// Fills [`GraphInstantiateParams::result`] and
     /// [`GraphInstantiateParams::err_node`] even when this returns `Err`.
     /// Success is [`GraphInstantiateResult::Success`] with `err_node = None`.
     /// [`GraphInstantiateParams::flags`] are the instantiate flags (same as
     /// [`Self::instantiate_graph_with_flags`]).
+    /// [`GraphInstantiateParams::upload_stream`] is `hUploadStream`: with
+    /// [`GraphInstantiateFlags::UPLOAD`], `Some` enqueues
+    /// [`Self::upload_graph_async`] (uploaded when that op completes); `None`
+    /// stays host-sync [`Self::upload_graph`]. Ignored when UPLOAD is unset.
     pub fn instantiate_graph_with_params(
         &mut self,
         graph: GraphId,
         params: &mut GraphInstantiateParams,
     ) -> Result<GraphId, SimError> {
         let flags = params.flags;
+        let upload_stream = params.upload_stream;
         let exec = self.instantiate_graph_inner(graph, flags, Some(params))?;
         if flags & GraphInstantiateFlags::UPLOAD != 0 {
-            self.upload_graph(exec)?;
+            let upload = if let Some((device, stream)) = upload_stream {
+                self.upload_graph_async(device, stream, exec).map(|_| ())
+            } else {
+                self.upload_graph(exec)
+            };
+            if let Err(e) = upload {
+                params.result = GraphInstantiateResult::Error;
+                params.err_node = None;
+                return Err(e);
+            }
         }
         Ok(exec)
     }

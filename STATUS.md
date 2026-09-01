@@ -5,6 +5,17 @@ Visible five-turn extract: [docs/chatgpt-share-6a920fe1.md](docs/chatgpt-share-6
 Complete share-API extract: [docs/chatgpt-share-6a920fe1/](docs/chatgpt-share-6a920fe1/).
 Work lands on `main`. No PRs.
 
+## Shipped 2026-09-01 — CUDA `cudaGraphInstantiateWithParams` `hUploadStream`
+
+`gpu-sim` `GraphInstantiateParams::upload_stream` is
+`cudaGraphInstantiateWithParams` `hUploadStream`. With
+`GraphInstantiateFlags::UPLOAD`, `Some` enqueues `upload_graph_async`
+(uploaded when the op completes). `None` stays host-sync
+`upload_graph`. Ignored when UPLOAD is unset.
+`instantiate_graph_with_flags` stays host-sync. No Engine
+`--graph-upload-stream`. `gpu-profile capture` is still refused. Dual
+score still has no `$/M tokens`.
+
 ## Shipped 2026-09-01 — CUDA stream-ordered `cudaGraphUpload`
 
 `gpu-sim` `upload_graph_async` is `cudaGraphUpload` on a stream.

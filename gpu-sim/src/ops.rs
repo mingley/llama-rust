@@ -2718,7 +2718,8 @@ pub struct GraphInstantiateFlags;
 impl GraphInstantiateFlags {
     /// `cudaGraphInstantiateFlagAutoFreeOnLaunch`.
     pub const AUTO_FREE_ON_LAUNCH: u32 = 1;
-    /// `cudaGraphInstantiateFlagUpload`: host-sync upload during instantiate.
+    /// `cudaGraphInstantiateFlagUpload`: host-sync upload during instantiate
+    /// unless [`GraphInstantiateParams::upload_stream`] is set.
     pub const UPLOAD: u32 = 2;
     /// `cudaGraphInstantiateFlagDeviceLaunch`: [`crate::Sim::device_launch_graph`]
     /// is legal after upload. Host [`crate::Sim::launch_graph`] stays legal.
@@ -3076,8 +3077,9 @@ pub enum GraphInstantiateResult {
 
 /// `cudaGraphInstantiateParams` for [`crate::Sim::instantiate_graph_with_params`].
 ///
-/// `flags` are inputs. `err_node` / `result` are outputs (filled even on
-/// `Err`). Decode identity stays [`crate::Sim::instantiate_graph`].
+/// `flags` / `upload_stream` are inputs. `err_node` / `result` are outputs
+/// (filled even on `Err`). Decode identity stays
+/// [`crate::Sim::instantiate_graph`].
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct GraphInstantiateParams {
     /// `cudaGraphInstantiateFlags`.
@@ -3086,6 +3088,10 @@ pub struct GraphInstantiateParams {
     pub err_node: Option<usize>,
     /// CUDA result enum.
     pub result: GraphInstantiateResult,
+    /// `hUploadStream`. When `flags` includes [`GraphInstantiateFlags::UPLOAD`],
+    /// `Some` enqueues [`crate::Sim::upload_graph_async`]. `None` stays
+    /// host-sync [`crate::Sim::upload_graph`]. Ignored when UPLOAD is unset.
+    pub upload_stream: Option<(DeviceId, StreamId)>,
 }
 
 /// `cudaGraphExecUpdateResult` from [`crate::Sim::update_graph_with_info`].

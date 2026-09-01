@@ -420,14 +420,14 @@ forks those ids. `destroy_graph` refunds remaining graph mem. `update_graph`
 of mem nodes is `Invalid`.
 Instantiate, update, and upload are host-synchronous and cannot run during capture.
 `instantiate_graph_with_flags` is `cudaGraphInstantiateWithFlags`
-(`GraphInstantiateFlags::UPLOAD` uploads during instantiate;
+(`GraphInstantiateFlags::UPLOAD` host-sync uploads during instantiate;
 `USE_NODE_PRIORITY` schedules recorded kernels with the add/capture
 priority; `DEVICE_LAUNCH` enables `device_launch_graph` after upload —
 host `launch_graph` stays legal; mem alloc/free, events, child graphs,
 conditionals, and host nodes are Invalid; `update_graph` of a
 device-launch exec is Invalid).
 `instantiate_graph_with_params` is `cudaGraphInstantiateWithParams`
-(`GraphInstantiateParams` result and err node).
+(`GraphInstantiateParams` result, err node, and `hUploadStream`).
 `graph_exec_get_flags` is `cudaGraphExecGetFlags`.
 Instantiate returns a new exec id (`cudaGraphExec_t`); the source graph
 stays a definition. `launch_graph` of a definition uses the primary exec.
@@ -446,7 +446,8 @@ refs held by the graph are released).
 copy retains. Capture cannot include them. First launch instantiates if needed (`graph_instantiate_ns` once)
 then uploads if needed (`graph_upload_ns`). `upload_graph` is `cudaGraphUpload`
 (host-sync). `upload_graph_async` is `cudaGraphUpload` on a stream
-(Solo `graph_upload_ns`; uploaded when the op completes).
+(Solo `graph_upload_ns`; uploaded when the op completes;
+`GraphInstantiateParams::upload_stream` uses it).
 `update_graph` copies source steps into the exec snapshot when the
 device, stream, op kinds, and dependency edges match (`graph_update_ns`); a topology
 mismatch is `Invalid`. Graphs with mem alloc/free nodes cannot be updated.

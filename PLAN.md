@@ -4977,7 +4977,16 @@ model, do not celebrate the sim.
     host-sync upload. No Engine `--graph-upload-stream`. `gpu-profile
     capture` is still refused. Dual score still has no `$/M tokens`.
 
-460. [ ] Next numbered PLAN item after 459 is the next `gpu-sim` / Engine /
+460. [x] `gpu-sim` `GraphInstantiateParams::upload_stream` is
+    `cudaGraphInstantiateWithParams` `hUploadStream`. When
+    `GraphInstantiateFlags::UPLOAD` is set, `Some` enqueues
+    `upload_graph_async` (uploaded when the op completes). `None`
+    stays host-sync `upload_graph`. Ignored when UPLOAD is unset.
+    `instantiate_graph_with_flags` stays host-sync. No Engine
+    `--graph-upload-stream`. `gpu-profile capture` is still
+    refused. Dual score still has no `$/M tokens`.
+
+461. [ ] Next numbered PLAN item after 460 is the next `gpu-sim` / Engine /
     serve / expertvm mechanical API that is still missing, or the next official
     decode family. Prefer remaining CUDA-shaped twins over more
     OpenAI HTTP veneer. Do not invent F32 `output.scale`. Do not invent a
@@ -5081,6 +5090,8 @@ model, do not celebrate the sim.
     `--range-data-size`.
     Do not invent a second `cudaGraphUpload` stream /
     `upload_graph_async`. Do not invent Engine `--graph-upload-stream`.
+    Do not invent a second `cudaGraphInstantiateWithParams`
+    `hUploadStream` / `GraphInstantiateParams::upload_stream`.
     Stream-ordered `cuGraphUpload` / `hUploadStream` as stored-only
     (ignore the stream and still host-sync) stays weak.
     Do not invent `cuDeviceGetLuid`

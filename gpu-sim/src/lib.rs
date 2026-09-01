@@ -704,16 +704,16 @@
 //! creates a primary exec). [`Sim::instantiate_graph_auto_free`]
 //! is `cudaGraphInstantiateFlagAutoFreeOnLaunch`.
 //! [`instantiate_graph_with_flags`](Sim::instantiate_graph_with_flags) is
-//! `cudaGraphInstantiateWithFlags` ([`GraphInstantiateFlags::UPLOAD`] uploads
-//! during instantiate; [`GraphInstantiateFlags::USE_NODE_PRIORITY`] schedules
+//! `cudaGraphInstantiateWithFlags` ([`GraphInstantiateFlags::UPLOAD`] host-sync
+//! uploads during instantiate; [`GraphInstantiateFlags::USE_NODE_PRIORITY`] schedules
 //! recorded kernels with the add/capture priority;
 //! [`GraphInstantiateFlags::DEVICE_LAUNCH`] enables
 //! [`device_launch_graph`](Sim::device_launch_graph) after upload — host
 //! [`launch_graph`](Sim::launch_graph) stays legal; mem alloc/free, events,
 //! child graphs, conditionals, and host nodes are Invalid).
 //! [`instantiate_graph_with_params`](Sim::instantiate_graph_with_params) is
-//! `cudaGraphInstantiateWithParams` ([`GraphInstantiateParams`] result and
-//! err node). [`graph_exec_get_flags`](Sim::graph_exec_get_flags) is
+//! `cudaGraphInstantiateWithParams` ([`GraphInstantiateParams`] result, err
+//! node, and `hUploadStream`). [`graph_exec_get_flags`](Sim::graph_exec_get_flags) is
 //! `cudaGraphExecGetFlags`. Instantiate returns a new exec id (`cudaGraphExec_t`);
 //! the source graph stays a definition. [`launch_graph`](Sim::launch_graph) of a
 //! definition uses the primary exec. `cudaGraphExec*SetParams` accept either id.
@@ -868,7 +868,8 @@
 //! are the exec-snapshot attributes. [`Sim::upload_graph`] is
 //! `cudaGraphUpload` (host-sync; first launch after instantiate calls it).
 //! [`upload_graph_async`](Sim::upload_graph_async) is `cudaGraphUpload` on a
-//! stream (Solo `graph_upload_ns`; uploaded when the op completes).
+//! stream (Solo `graph_upload_ns`; uploaded when the op completes;
+//! [`GraphInstantiateParams::upload_stream`] uses it).
 //! [`Sim::update_graph`] is
 //! `cudaGraphExecUpdate` when device, stream, and op kinds match.
 //! [`update_graph_with_info`](Sim::update_graph_with_info) fills
@@ -2724,6 +2725,79 @@ mod tests {
         enq(sim.upload_graph_async(d, s, exec));
         sim.synchronize().unwrap();
         assert_eq!(sim.clock_ns(), t1.saturating_add(1));
+    }
+
+    #[test]
+    fn instantiate_with_params_upload_stream_is_cuda_h_upload_stream() {
+        let mut p = h100();
+        for g in &mut p.gpus {
+            g.graph_instantiate_ns = 1_000;
+            g.graph_upload_ns = 40_000;
+            g.graph_launch_ns = 1_000;
+            g.launch_overhead_ns = 1_000;
+        }
+        let mut sim = Sim::new(p);
+        let d = DeviceId(0);
+        let s = StreamId(0);
+        let a = sim.alloc(d, 4096, s).unwrap();
+        enq(sim.memcpy_pinned_to_device(d, a, 4096, s));
+        sim.synchronize().unwrap();
+        sim.begin_capture(d, s).unwrap();
+        enq(sim.kernel(d, KernelKind::other(8, 8), &[a], &[a], s));
+        let g = sim.end_capture().unwrap();
+        let t0 = sim.clock_ns();
+        let mut params = GraphInstantiateParams {
+            flags: GraphInstantiateFlags::UPLOAD,
+            upload_stream: Some((d, s)),
+            ..GraphInstantiateParams::default()
+        };
+        let exec = sim.instantiate_graph_with_params(g, &mut params).unwrap();
+        assert_eq!(params.result, GraphInstantiateResult::Success);
+        assert_eq!(sim.clock_ns(), t0.saturating_add(1_000));
+        assert!(!sim.graph_uploaded(exec).unwrap());
+        let n = sim.launch_graph(exec, s).unwrap();
+        assert_eq!(n, 1);
+        assert_eq!(sim.clock_ns(), t0.saturating_add(1_000));
+        sim.synchronize().unwrap();
+        assert!(sim.graph_uploaded(exec).unwrap());
+        assert!(sim.clock_ns() >= t0.saturating_add(41_000));
+        let host = sim.create_graph(d, s).unwrap();
+        sim.graph_add_kernel(host, KernelKind::other(8, 8), &[a], &[a])
+            .unwrap();
+        let t1 = sim.clock_ns();
+        let mut params = GraphInstantiateParams {
+            flags: GraphInstantiateFlags::UPLOAD,
+            ..GraphInstantiateParams::default()
+        };
+        let host_exec = sim
+            .instantiate_graph_with_params(host, &mut params)
+            .unwrap();
+        assert_eq!(sim.clock_ns(), t1.saturating_add(41_000));
+        assert!(sim.graph_uploaded(host_exec).unwrap());
+        let ignored = sim.create_graph(d, s).unwrap();
+        sim.graph_add_kernel(ignored, KernelKind::other(8, 8), &[a], &[a])
+            .unwrap();
+        let mut params = GraphInstantiateParams {
+            upload_stream: Some((d, s)),
+            ..GraphInstantiateParams::default()
+        };
+        let ignored_exec = sim
+            .instantiate_graph_with_params(ignored, &mut params)
+            .unwrap();
+        assert!(!sim.graph_uploaded(ignored_exec).unwrap());
+        let bad = sim.create_graph(d, s).unwrap();
+        sim.graph_add_kernel(bad, KernelKind::other(8, 8), &[a], &[a])
+            .unwrap();
+        let mut params = GraphInstantiateParams {
+            flags: GraphInstantiateFlags::UPLOAD,
+            upload_stream: Some((DeviceId(1), s)),
+            ..GraphInstantiateParams::default()
+        };
+        match sim.instantiate_graph_with_params(bad, &mut params) {
+            Err(SimError::Invalid { why }) => assert!(why.contains("graph device"), "{why}"),
+            other => panic!("{other:?}"),
+        }
+        assert_eq!(params.result, GraphInstantiateResult::Error);
     }
 
     #[test]
