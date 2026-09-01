@@ -7108,7 +7108,14 @@ model, do not celebrate the sim.
     or `cudaChooseDevice`. `gpu-profile capture` is still refused. Dual
     score still has no `$/M tokens`.
 
-708. [ ] Next numbered PLAN item after 707 is the next `gpu-sim` / Engine /
+708. [x] `gpu-sim` `Sim::kernel_get_function` is
+    `cuKernelGetFunction`. Always Invalid `"kernel function"`
+    because CUDA kernels are not modeled. Query; legal during capture.
+    Distinct from `library_get_kernel`. This VM does not invent `cuKernelGetParamInfo`, Engine `--kernel-function`,
+    or `cudaChooseDevice`. `gpu-profile capture` is still refused. Dual
+    score still has no `$/M tokens`.
+
+709. [ ] Next numbered PLAN item after 708 is the next `gpu-sim` / Engine /
     serve / expertvm mechanical API that is still missing, or the next official
     decode family. Prefer remaining CUDA-shaped twins over more
     OpenAI HTTP veneer. Do not invent F32 `output.scale`. Do not invent a
@@ -7723,6 +7730,9 @@ model, do not celebrate the sim.
     `library_get_unified_function`. Do not invent Engine `--library-unified`.
     Do not invent `cuKernelGetFunction` this slice. Do not reverse
     `"library unified"`.
+    Do not invent a second `cuKernelGetFunction` / `kernel_get_function`.
+    Do not invent Engine `--kernel-function`. Do not invent
+    `cuKernelGetParamInfo` this slice. Do not reverse `"kernel function"`.
     Do not invent a second `cudaStreamAddCallback`.
     Do not invent Engine `--stream-callback` (same wall as second live
     `cudaLaunchHostFunc` after miss DMA).
@@ -8417,6 +8427,9 @@ model, do not celebrate the sim.
     Do not invent a second `library_get_unified_function` API. Do not invent
     Engine `--get-library-unified`. Do not invent a library device function
     pointer this slice. Do not reverse Library GetUnifiedFunction remaining unsupported.
+    Do not invent a second `kernel_get_function` API. Do not invent
+    Engine `--get-kernel-function`. Do not invent a CUfunction from kernel
+    this slice. Do not reverse Kernel GetFunction remaining unsupported.
     Do not invent a second DeviceLaunch in-flight destroy-complete check or Engine
     `--device-launch-destroy`. Do not abort an in-flight DeviceLaunch when
     `destroy_graph` succeeds. Do not delay destroy of an idle exec. Do not invent
@@ -9294,6 +9307,9 @@ model, do not celebrate the sim.
     Do not invent a second `library_get_unified_function` method. Do not
     invent Engine `--cu-library-get-unified-function`. Do not reverse wrapping
     cuLibraryGetUnifiedFunction Invalid.
+    Do not invent a second `kernel_get_function` method. Do not
+    invent Engine `--cu-kernel-get-function`. Do not reverse wrapping
+    cuKernelGetFunction Invalid.
     Do not
     spend the next item on an OpenAI-compatible HTTP veneer.
 
