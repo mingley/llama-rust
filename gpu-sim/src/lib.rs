@@ -21002,7 +21002,6 @@ mod tests {
         let mut sim = Sim::new(h100());
         let d = DeviceId(0);
         let s = StreamId(0);
-        let a = sim.malloc(d, 4096).unwrap();
         let g = sim.create_graph(d, s).unwrap();
         sim.graph_add_empty(g).unwrap();
         sim.graph_add_empty(g).unwrap();
