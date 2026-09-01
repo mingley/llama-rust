@@ -513,7 +513,8 @@ contain at least one kernel, memcpy, or memset node (`"device launch
 empty"`). Mem alloc/free, events, child graphs, conditionals, host,
 empty, and batch-mem nodes are Invalid. Memcpy `Place::Device` must match
 the graph origin device (`Place::HostPinned` stays). Memset dest must be
-that device, pinned mapped host, or managed. Mixed node green ctx is
+that device, pinned mapped host, or managed. Exec memcpy/memset SetParams
+re-apply those dest rules. Mixed node green ctx is
 `MultipleDevicesNotSupported` (`"graph multiple ctx"`); `update_graph` of a
 device-launch exec is Invalid; cannot combine with `AUTO_FREE_ON_LAUNCH`
 (`"device launch auto free"`). Unused conditional handles are
@@ -589,6 +590,7 @@ helpers / `cudaGraphExecMemsetNodeSetParams` (2D/3D address only) plus extra
 memset 2D/3D helpers plus
 `cudaGraphExecBatchMemOpNodeSetParams`
 (`graph_set_params_ns`; mem nodes legal; pageable memcpy stays illegal;
+device-launch execs re-apply instantiate dest rules;
 a `GpuOp::BatchMem` item list is a parameter; kernel SetParams keeps the
 exec uploaded when the node is device-updatable).
 `graph_node_set_enabled` is `cudaGraphNodeSetEnabled` (skip a node at launch;

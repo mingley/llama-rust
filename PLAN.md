@@ -5657,7 +5657,18 @@ model, do not celebrate the sim.
     `--device-launch-managed`. `gpu-profile capture` is still refused.
     Dual score still has no `$/M tokens`.
 
-527. [ ] Next numbered PLAN item after 526 is the next `gpu-sim` / Engine /
+527. [x] `gpu-sim` CUDA DeviceLaunch exec memcpy/memset SetParams
+    re-apply instantiate dest rules ([`graph_exec_memcpy_set_params`] /
+    [`graph_exec_memset_set_params`]; off-device dest is Invalid
+    `"device launch instantiate flag"`). Definition SetParams still
+    defer to instantiate. Host-instantiated exec SetParams of
+    off-device dest stays. Capture is still reported first. Legal
+    DeviceLaunch SetParams to HostPinned / origin Device / managed
+    memset dest stay. This VM does not invent Engine
+    `--device-launch-set-params`. `gpu-profile capture` is still
+    refused. Dual score still has no `$/M tokens`.
+
+528. [ ] Next numbered PLAN item after 527 is the next `gpu-sim` / Engine /
     serve / expertvm mechanical API that is still missing, or the next official
     decode family. Prefer remaining CUDA-shaped twins over more
     OpenAI HTTP veneer. Do not invent F32 `output.scale`. Do not invent a
@@ -5763,6 +5774,10 @@ model, do not celebrate the sim.
     Do not invent a second DeviceLaunch managed-memset allow or Engine
     `--device-launch-managed`. Do not reverse origin-device malloc
     DeviceLaunch memset. Do not reverse pageable DeviceLaunch memset refuse.
+    Do not invent a second DeviceLaunch exec SetParams dest check or Engine
+    `--device-launch-set-params`. Do not reverse definition memcpy/memset
+    SetParams deferring dest rules to instantiate. Do not reverse
+    host-instantiated exec SetParams of off-device dest.
     Do not invent a second DeviceLaunch mixed-ctx check or Engine
     `--device-launch-ctx`. Do not invent a second
     [`GraphInstantiateResult`] variant for driver MultipleCtxs. Do not
@@ -6113,6 +6128,9 @@ model, do not celebrate the sim.
     `--device-launch-memset`.
     Do not reverse DeviceLaunch managed memset dest. Do not invent Engine
     `--device-launch-managed`.
+    Do not reverse DeviceLaunch exec memcpy/memset SetParams dest rules.
+    Do not invent Engine `--device-launch-set-params`. Do not reverse
+    definition SetParams deferring dest rules to instantiate.
     Do not reverse same-ctx DeviceLaunch. Do not reverse host instantiate
     of mixed green ctx. Do not invent Engine `--device-launch-ctx`. Do
     not invent a second MultipleCtxs instantiate result.

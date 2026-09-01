@@ -5,6 +5,17 @@ Visible five-turn extract: [docs/chatgpt-share-6a920fe1.md](docs/chatgpt-share-6
 Complete share-API extract: [docs/chatgpt-share-6a920fe1/](docs/chatgpt-share-6a920fe1/).
 Work lands on `main`. No PRs.
 
+## Shipped 2026-09-01 — DeviceLaunch exec SetParams re-check dest
+
+`gpu-sim` CUDA DeviceLaunch exec memcpy/memset SetParams re-apply
+instantiate dest rules (`"device launch instantiate flag"`). Definition
+SetParams still defer to instantiate. Host-instantiated exec SetParams
+of off-device dest stays. Capture is still reported first. Legal
+DeviceLaunch SetParams to HostPinned / origin Device / managed memset
+dest stay. This VM does not invent Engine `--device-launch-set-params`.
+`gpu-profile capture` is still refused. Dual score still has no
+`$/M tokens`.
+
 ## Shipped 2026-09-01 — DeviceLaunch memset allows managed dest
 
 `gpu-sim` CUDA DeviceLaunch memset dest may be managed

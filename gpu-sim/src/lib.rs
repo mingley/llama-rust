@@ -829,7 +829,8 @@
 //! conditionals, host, empty, and batch-mem nodes are Invalid. Memcpy
 //! [`Place::Device`] must match the graph origin device
 //! ([`Place::HostPinned`] stays). Memset dest must be that device,
-//! pinned mapped host, or managed. Mixed node green ctx is
+//! pinned mapped host, or managed. Exec memcpy/memset SetParams
+//! re-apply those dest rules. Mixed node green ctx is
 //! [`GraphInstantiateResult::MultipleDevicesNotSupported`]
 //! (`"graph multiple ctx"`); cannot combine
 //! with [`GraphInstantiateFlags::AUTO_FREE_ON_LAUNCH`] (Invalid
@@ -1048,7 +1049,8 @@
 //! and new [`MemcpyOp`] must be [`MemcpyOp::is_1d`]), `SetParams1D` (may
 //! convert a 2D/3D node), plus extra 2D and 3D helpers (same
 //! `graph_set_params_ns`; pageable still illegal; mem nodes legal; 2D requires
-//! [`MemcpyOp::is_2d`]; 3D requires [`MemcpyOp::is_3d`]). [`graph_unique_memcpy`](Sim::graph_unique_memcpy)
+//! [`MemcpyOp::is_2d`]; 3D requires [`MemcpyOp::is_3d`]; device-launch execs
+//! re-apply instantiate dest rules). [`graph_unique_memcpy`](Sim::graph_unique_memcpy)
 //! / [`graph_try_unique_memcpy`](Sim::graph_try_unique_memcpy) find that node.
 //! [`graph_exec_memset_set_params`](Sim::graph_exec_memset_set_params) /
 //! [`graph_exec_memset_set_params_2d`](Sim::graph_exec_memset_set_params_2d) /
@@ -1056,7 +1058,8 @@
 //! are CUDA `cudaGraphExecMemsetNodeSetParams` (2D/3D address only; Invalid
 //! `"memset dims"` for geometry) plus extra 2D and 3D helpers (same cost;
 //! zero-byte still illegal; 2D requires [`MemsetOp::is_2d`]; 3D requires
-//! [`MemsetOp::is_3d`]).
+//! [`MemsetOp::is_3d`]; device-launch execs re-apply instantiate dest
+//! rules).
 //! [`graph_unique_memset`](Sim::graph_unique_memset) /
 //! [`graph_try_unique_memset`](Sim::graph_try_unique_memset) find that node.
 //! [`graph_exec_host_set_params`](Sim::graph_exec_host_set_params) is
@@ -31063,6 +31066,153 @@ mod tests {
         let _ = sim.instantiate_graph(host).unwrap();
         sim.begin_capture(d0, s).unwrap();
         match sim.instantiate_graph_with_flags(peer, GraphInstantiateFlags::DEVICE_LAUNCH) {
+            Err(SimError::Invalid { why }) => assert!(why.contains("capture"), "{why}"),
+            other => panic!("{other:?}"),
+        }
+        let _end = sim.end_capture().unwrap();
+    }
+
+    #[test]
+    fn device_launch_exec_set_params_rejects_off_device() {
+        let p = HardwareProfile::parse(
+            "gpus=2\nfp16_flops=1000000\nhbm_bps=1000000000000\ncompute_slots=1\nlaunch_overhead_ns=1\n",
+        )
+        .expect("2gpu");
+        let mut sim = Sim::new(p);
+        let d0 = DeviceId(0);
+        let d1 = DeviceId(1);
+        let s = StreamId(0);
+        let a0 = sim.malloc(d0, 64).unwrap();
+        let a1 = sim.malloc(d1, 64).unwrap();
+        let a2 = sim.malloc(d0, 64).unwrap();
+        let mc = sim.create_graph(d0, s).unwrap();
+        sim.graph_add_memcpy_1d(mc, Place::HostPinned, Place::Device(d0), a0, 64)
+            .unwrap();
+        let mc_exec = sim
+            .instantiate_graph_with_flags(mc, GraphInstantiateFlags::DEVICE_LAUNCH)
+            .unwrap();
+        let err = sim
+            .graph_exec_memcpy_set_params_1d(
+                mc_exec,
+                0,
+                Place::HostPinned,
+                Place::Device(d1),
+                a1,
+                64,
+            )
+            .unwrap_err();
+        match err {
+            SimError::Invalid { why } => {
+                assert!(why.contains("device launch instantiate flag"), "{why}")
+            }
+            other => panic!("{other:?}"),
+        }
+        sim.graph_exec_memcpy_set_params_1d(
+            mc_exec,
+            0,
+            Place::HostPinned,
+            Place::Device(d0),
+            a2,
+            64,
+        )
+        .unwrap();
+        match sim.graph_exec_memcpy_set_params_1d(
+            mc_exec,
+            0,
+            Place::Host,
+            Place::Device(d0),
+            a0,
+            64,
+        ) {
+            Err(SimError::Invalid { why }) => {
+                assert!(why.contains("cannot add pageable memcpy"), "{why}")
+            }
+            other => panic!("{other:?}"),
+        }
+        let host_mc = sim.create_graph(d0, s).unwrap();
+        sim.graph_add_memcpy_1d(host_mc, Place::HostPinned, Place::Device(d0), a0, 64)
+            .unwrap();
+        let host_mc_exec = sim.instantiate_graph(host_mc).unwrap();
+        sim.graph_exec_memcpy_set_params_1d(
+            host_mc_exec,
+            0,
+            Place::HostPinned,
+            Place::Device(d1),
+            a1,
+            64,
+        )
+        .unwrap();
+        let def_mc = sim.create_graph(d0, s).unwrap();
+        sim.graph_add_memcpy_1d(def_mc, Place::HostPinned, Place::Device(d0), a0, 64)
+            .unwrap();
+        sim.graph_memcpy_set_params_1d(def_mc, 0, Place::HostPinned, Place::Device(d1), a1, 64)
+            .unwrap();
+        let err = sim
+            .instantiate_graph_with_flags(def_mc, GraphInstantiateFlags::DEVICE_LAUNCH)
+            .unwrap_err();
+        match err {
+            SimError::Invalid { why } => {
+                assert!(why.contains("device launch instantiate flag"), "{why}")
+            }
+            other => panic!("{other:?}"),
+        }
+        let local = sim.malloc(d0, 64).unwrap();
+        let remote = sim.malloc(d1, 64).unwrap();
+        let pinned = sim.alloc_host_pinned(64).unwrap();
+        let managed = sim.alloc_managed(64).unwrap();
+        let ms = sim.create_graph(d0, s).unwrap();
+        sim.graph_add_memset(ms, KernelBuf::whole(local)).unwrap();
+        let ms_exec = sim
+            .instantiate_graph_with_flags(ms, GraphInstantiateFlags::DEVICE_LAUNCH)
+            .unwrap();
+        let err = sim
+            .graph_exec_memset_set_params(ms_exec, 0, KernelBuf::whole(remote))
+            .unwrap_err();
+        match err {
+            SimError::Invalid { why } => {
+                assert!(why.contains("device launch instantiate flag"), "{why}")
+            }
+            other => panic!("{other:?}"),
+        }
+        sim.graph_exec_memset_set_params(ms_exec, 0, KernelBuf::whole(pinned))
+            .unwrap();
+        sim.graph_exec_memset_set_params(ms_exec, 0, KernelBuf::whole(managed))
+            .unwrap();
+        sim.graph_exec_memset_set_params(ms_exec, 0, KernelBuf::whole(local))
+            .unwrap();
+        let host_ms = sim.create_graph(d0, s).unwrap();
+        sim.graph_add_memset(host_ms, KernelBuf::whole(local))
+            .unwrap();
+        let host_ms_exec = sim.instantiate_graph(host_ms).unwrap();
+        sim.graph_exec_memset_set_params(host_ms_exec, 0, KernelBuf::whole(remote))
+            .unwrap();
+        let def_ms = sim.create_graph(d0, s).unwrap();
+        sim.graph_add_memset(def_ms, KernelBuf::whole(local))
+            .unwrap();
+        sim.graph_memset_set_params(def_ms, 0, KernelBuf::whole(remote))
+            .unwrap();
+        let err = sim
+            .instantiate_graph_with_flags(def_ms, GraphInstantiateFlags::DEVICE_LAUNCH)
+            .unwrap_err();
+        match err {
+            SimError::Invalid { why } => {
+                assert!(why.contains("device launch instantiate flag"), "{why}")
+            }
+            other => panic!("{other:?}"),
+        }
+        sim.begin_capture(d0, s).unwrap();
+        match sim.graph_exec_memcpy_set_params_1d(
+            mc_exec,
+            0,
+            Place::HostPinned,
+            Place::Device(d1),
+            a1,
+            64,
+        ) {
+            Err(SimError::Invalid { why }) => assert!(why.contains("capture"), "{why}"),
+            other => panic!("{other:?}"),
+        }
+        match sim.graph_exec_memset_set_params(ms_exec, 0, KernelBuf::whole(remote)) {
             Err(SimError::Invalid { why }) => assert!(why.contains("capture"), "{why}"),
             other => panic!("{other:?}"),
         }

@@ -5277,7 +5277,10 @@ impl Sim {
     ///
     /// CUDA-named API is 1-dimensional only: both the instantiated node and
     /// `op` must be [`MemcpyOp::is_1d`] (Invalid `"memcpy 1d"`). Pageable
-    /// copies stay illegal. Pays `graph_set_params_ns` and clears the upload
+    /// copies stay illegal. Device-launch execs re-apply instantiate memcpy
+    /// dest rules (Invalid `"device launch instantiate flag"` for off-device
+    /// [`Place::Device`]). Definition SetParams still defer to instantiate.
+    /// Pays `graph_set_params_ns` and clears the upload
     /// flag. Capture cannot include it. Graphs with mem alloc/free nodes are
     /// legal (unlike [`Self::update_graph`]).
     /// [`Self::graph_exec_memcpy_set_params_1d`] is
@@ -5329,7 +5332,7 @@ impl Sim {
             });
         }
         let target = if exec { self.as_exec(graph)? } else { graph };
-        let device = {
+        let (device, origin, flags) = {
             let g = self.graphs.get(&target).ok_or(SimError::Invalid {
                 why: "unknown graph",
             })?;
@@ -5354,11 +5357,20 @@ impl Sim {
                     });
                 }
             }
-            step.device
+            (step.device, g.origin.0, g.instantiate_flags)
         };
         self.memcpy_precheck(op)?;
         if let GreenCtxPatch::Set(Some(c)) = ctx {
             self.require_live_green_ctx(c, device)?;
+        }
+        if device_launch_exec_place_refused(
+            exec,
+            flags,
+            memcpy_place_off_device(op.src, origin) || memcpy_place_off_device(op.dst, origin),
+        ) {
+            return Err(SimError::Invalid {
+                why: "device launch instantiate flag",
+            });
         }
         if exec {
             let ns = self.profile.gpu(device)?.graph_set_params_ns.max(1);
@@ -5456,7 +5468,10 @@ impl Sim {
     /// Node `node` must already be a memset. 2D and 3D nodes may change
     /// address only (Invalid `"memset dims"` for width, height, pitch, depth,
     /// ysize, plus elementSize). 1D nodes may change dimensions. Zero-byte
-    /// fills stay illegal. Pays `graph_set_params_ns` and clears the upload
+    /// fills stay illegal. Device-launch execs re-apply instantiate memset
+    /// dest rules (Invalid `"device launch instantiate flag"` for off-device
+    /// dest). Definition SetParams still defer to instantiate. Pays
+    /// `graph_set_params_ns` and clears the upload
     /// flag. Capture cannot include it. Graphs with mem alloc/free nodes are
     /// legal (unlike [`Self::update_graph`]). [`KernelBuf`] converts to a
     /// packed 1D [`MemsetOp`]. Extra [`Self::graph_exec_memset_set_params_2d`]
@@ -5501,7 +5516,7 @@ impl Sim {
             "cannot capture memset node set params"
         })?;
         let target = if exec { self.as_exec(graph)? } else { graph };
-        let (device, cur) = {
+        let (device, cur, origin, flags) = {
             let g = self.graphs.get(&target).ok_or(SimError::Invalid {
                 why: "unknown graph",
             })?;
@@ -5515,7 +5530,7 @@ impl Sim {
                 })?)?
             };
             match &step.kind {
-                Kind::Memset(cur) => (step.device, *cur),
+                Kind::Memset(cur) => (step.device, *cur, g.origin.0, g.instantiate_flags),
                 _ => {
                     return Err(SimError::Invalid {
                         why: "not a memset node",
@@ -5529,6 +5544,15 @@ impl Sim {
         }
         if let GreenCtxPatch::Set(Some(c)) = ctx {
             self.require_live_green_ctx(c, device)?;
+        }
+        if device_launch_exec_place_refused(
+            exec,
+            flags,
+            device_launch_memset_off_device(&Kind::Memset(op), origin, &self.allocs),
+        ) {
+            return Err(SimError::Invalid {
+                why: "device launch instantiate flag",
+            });
         }
         if exec {
             let ns = self.profile.gpu(device)?.graph_set_params_ns.max(1);
@@ -22850,6 +22874,10 @@ fn memcpy_place_off_device(place: Place, origin: DeviceId) -> bool {
         Place::Host => true,
         Place::HostPinned => false,
     }
+}
+
+fn device_launch_exec_place_refused(exec: bool, flags: u32, off_device: bool) -> bool {
+    exec && off_device && flags & GraphInstantiateFlags::DEVICE_LAUNCH != 0
 }
 
 fn device_launch_memset_off_device(
