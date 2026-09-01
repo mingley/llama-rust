@@ -5,6 +5,16 @@ Visible five-turn extract: [docs/chatgpt-share-6a920fe1.md](docs/chatgpt-share-6
 Complete share-API extract: [docs/chatgpt-share-6a920fe1/](docs/chatgpt-share-6a920fe1/).
 Work lands on `main`. No PRs.
 
+## Shipped 2026-09-01 — Instantiate copies user-object retains onto the exec
+
+`gpu-sim` CUDA instantiate copies user-object retains from the
+definition onto the exec. Retain on an exec stays illegal. Clone still
+does not copy retains. Retains added after instantiate stay on the
+definition. In-flight DeviceLaunch exec destroy still holds those exec
+refs until the launch completes. Capture is still reported first. This
+VM does not invent Engine `--user-object-instantiate`. `gpu-profile
+capture` is still refused. Dual score still has no `$/M tokens`.
+
 ## Shipped 2026-09-01 — DeviceLaunch destroy does not abort in-flight launch
 
 `gpu-sim` CUDA `cudaGraphExecDestroy` of an in-flight DeviceLaunch exec

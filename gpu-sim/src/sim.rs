@@ -3858,6 +3858,7 @@ impl Sim {
     /// it has a device-updatable kernel node. The first
     /// [`Self::launch_graph`] of the definition creates a primary exec if
     /// needed. Already-instantiated **exec** ids are a no-op.
+    /// User-object retains on the definition are copied onto the exec.
     /// Conditional handles created on the graph must be associated with a live
     /// IF / WHILE / SWITCH node
     /// ([`GraphInstantiateResult::ConditionalHandleUnused`]).
@@ -4160,6 +4161,7 @@ impl Sim {
         if def.primary_exec.is_none() {
             def.primary_exec = Some(exec_id);
         }
+        self.copy_user_object_retains(graph, exec_id)?;
         if let Some(p) = out.as_mut() {
             p.result = GraphInstantiateResult::Success;
             p.err_node = None;
@@ -7625,7 +7627,9 @@ impl Sim {
     /// `cudaGraphRetainUserObject` on a definition. Host-synchronous.
     ///
     /// Capture cannot include it. Illegal on an instantiated exec. Clone does
-    /// not copy retains. [`GraphUserObjectFlags::MOVE`] transfers one caller
+    /// not copy retains. [`Self::instantiate_graph`] copies current retains onto
+    /// the new exec (CUDA exec retains a copy). Retains added after instantiate
+    /// stay on the definition. [`GraphUserObjectFlags::MOVE`] transfers one caller
     /// reference (`count` ignored, including above `INT_MAX`); otherwise the
     /// graph takes `count` extra refs (`1..=i32::MAX`).
     pub fn graph_retain_user_object(
@@ -7742,6 +7746,29 @@ impl Sim {
             return Err(SimError::Invalid {
                 why: "graph instantiated",
             });
+        }
+        Ok(())
+    }
+
+    fn copy_user_object_retains(&mut self, src: GraphId, exec: GraphId) -> Result<(), SimError> {
+        let copies: Vec<(UserObjectId, u32)> = self
+            .user_objects
+            .iter()
+            .filter_map(|(id, obj)| {
+                obj.graphs
+                    .get(&src)
+                    .copied()
+                    .filter(|n| *n > 0)
+                    .map(|n| (*id, n))
+            })
+            .collect();
+        for (id, n) in copies {
+            let obj = self.user_object_mut(id)?;
+            let held = obj.graphs.get(&exec).copied().unwrap_or(0);
+            let next = held.checked_add(n).ok_or(SimError::Invalid {
+                why: "user object refs overflow",
+            })?;
+            let _prev = obj.graphs.insert(exec, next);
         }
         Ok(())
     }

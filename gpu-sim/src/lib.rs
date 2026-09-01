@@ -1039,7 +1039,9 @@
 //! `cudaGraphRetainUserObject` / `ReleaseUserObject` on a definition.
 //! [`GraphUserObjectFlags::MOVE`] transfers one caller ref. Destroy of the
 //! last reference records [`user_object_destructors`](Sim::user_object_destructors).
-//! Clone does not copy retains. Capture cannot include it.
+//! Clone does not copy retains. Instantiate copies current retains onto
+//! the exec. Retains added after instantiate stay on the definition.
+//! Capture cannot include it.
 //! [`Sim::graph_exec_kernel_set_params`] is `cudaGraphExecKernelNodeSetParams`:
 //! patch one instantiated kernel node's pointers / [`KernelKind`] without a
 //! second graph (`graph_set_params_ns`). Cooperative flag and edges stay.
@@ -5042,6 +5044,58 @@ mod tests {
             .user_object_destructors()
             .iter()
             .any(|(id, fn_id)| *id == obj3 && *fn_id == 1));
+    }
+
+    #[test]
+    fn instantiate_copies_user_object_retains_to_exec() {
+        let mut sim = Sim::new(h100());
+        let d = DeviceId(0);
+        let s = StreamId(0);
+        let g = sim.create_graph(d, s).unwrap();
+        sim.graph_add_kernel(g, KernelKind::other(8, 8), &[], &[])
+            .unwrap();
+        let obj = sim
+            .user_object_create(4, 1, UserObjectFlags::NO_DESTRUCTOR_SYNC)
+            .unwrap();
+        sim.graph_retain_user_object(g, obj, 1, GraphUserObjectFlags::MOVE)
+            .unwrap();
+        let exec = sim.instantiate_graph(g).unwrap();
+        assert_eq!(sim.user_object_graph_refs(g, obj).unwrap(), 1);
+        assert_eq!(sim.user_object_graph_refs(exec, obj).unwrap(), 1);
+        assert_eq!(sim.user_object_refs(obj).unwrap(), 2);
+        sim.destroy_graph(g).unwrap();
+        assert!(sim.user_object_destructors().is_empty());
+        assert_eq!(sim.user_object_graph_refs(exec, obj).unwrap(), 1);
+        sim.destroy_graph(exec).unwrap();
+        assert_eq!(sim.user_object_destructors(), &[(obj, 4)]);
+    }
+
+    #[test]
+    fn device_launch_destroy_defers_exec_user_object() {
+        let mut sim = Sim::new(h100());
+        let d = DeviceId(0);
+        let s = StreamId(0);
+        let a = sim.malloc(d, 4096).unwrap();
+        let g = sim.create_graph(d, s).unwrap();
+        sim.graph_add_kernel(g, KernelKind::other(1 << 40, 4096), &[a], &[a])
+            .unwrap();
+        let obj = sim
+            .user_object_create(5, 1, UserObjectFlags::NO_DESTRUCTOR_SYNC)
+            .unwrap();
+        sim.graph_retain_user_object(g, obj, 1, GraphUserObjectFlags::MOVE)
+            .unwrap();
+        let exec = sim
+            .instantiate_graph_with_flags(
+                g,
+                GraphInstantiateFlags::DEVICE_LAUNCH | GraphInstantiateFlags::UPLOAD,
+            )
+            .unwrap();
+        enq(sim.device_launch_graph(exec, s));
+        sim.destroy_graph(exec).unwrap();
+        sim.destroy_graph(g).unwrap();
+        assert!(sim.user_object_destructors().is_empty());
+        sim.synchronize().unwrap();
+        assert_eq!(sim.user_object_destructors(), &[(obj, 5)]);
     }
 
     #[test]

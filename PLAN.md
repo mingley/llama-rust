@@ -5716,7 +5716,16 @@ model, do not celebrate the sim.
     `--device-launch-destroy`. `gpu-profile capture` is still refused.
     Dual score still has no `$/M tokens`.
 
-533. [ ] Next numbered PLAN item after 532 is the next `gpu-sim` / Engine /
+533. [x] `gpu-sim` CUDA instantiate copies user-object retains from the
+    definition onto the exec. Retain on an exec stays illegal. Clone
+    still does not copy retains. Retains added after instantiate stay
+    on the definition. In-flight DeviceLaunch exec destroy still holds
+    those exec refs until the launch completes. Capture is still
+    reported first. This VM does not invent Engine
+    `--user-object-instantiate`. `gpu-profile capture` is still refused.
+    Dual score still has no `$/M tokens`.
+
+534. [ ] Next numbered PLAN item after 533 is the next `gpu-sim` / Engine /
     serve / expertvm mechanical API that is still missing, or the next official
     decode family. Prefer remaining CUDA-shaped twins over more
     OpenAI HTTP veneer. Do not invent F32 `output.scale`. Do not invent a
@@ -5856,7 +5865,11 @@ model, do not celebrate the sim.
     `--device-launch-destroy`. Do not abort an in-flight DeviceLaunch when
     `destroy_graph` succeeds. Do not delay destroy of an idle exec. Do not delay
     host `launch_graph` in-flight destroy of a DeviceLaunch exec this slice.
-    Do not copy user-object retains onto the exec at instantiate this slice.
+    Do not invent a second instantiate user-object retain copy or Engine
+    `--user-object-instantiate`. Do not reverse retain illegal on an exec.
+    Do not reverse clone not copying retains. Do not copy retains added after
+    instantiate onto an existing exec. Do not apply `INT_MAX` to the copied
+    count (already held).
     Do not invent a second DeviceLaunch mixed-ctx check or Engine
     `--device-launch-ctx`. Do not invent a second
     [`GraphInstantiateResult`] variant for driver MultipleCtxs. Do not
