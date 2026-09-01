@@ -21,9 +21,9 @@ use crate::ops::{
     GraphCondFlags, GraphCreateFlags, GraphDebugDotFlags, GraphDependencyType, GraphEdgeData,
     GraphExecUpdateResult, GraphExecUpdateResultInfo, GraphInstantiateFlags,
     GraphInstantiateParams, GraphInstantiateResult, GraphKernelNodePort, GraphMemAttr,
-    GraphNodeKind, GraphNodeParams, GraphUserObjectFlags, GreenCtxFlags, HostAllocFlags,
-    HostGetDevicePointerFlags, HostNodeParams, InitDeviceFlags, IpcMemFlags, KernelAttrs,
-    KernelBuf, KernelKind, KernelNodeAttr, KernelNodeAttrValue, KernelNodeParams,
+    GraphNodeKind, GraphNodeParams, GraphRecaptureCallback, GraphUserObjectFlags, GreenCtxFlags,
+    HostAllocFlags, HostGetDevicePointerFlags, HostNodeParams, InitDeviceFlags, IpcMemFlags,
+    KernelAttrs, KernelBuf, KernelKind, KernelNodeAttr, KernelNodeAttrValue, KernelNodeParams,
     LaunchCompletionEvent, MemAccessDesc, MemAccessFlags, MemAdvise, MemAllocationGranularity,
     MemAllocationProp, MemAllocationType, MemAttach, MemAttachFlags, MemCreateFlags,
     MemExportFlags, MemHandleType, MemHandleUsage, MemLocationType, MemMapFlags, MemPoolAttr,
@@ -514,6 +514,10 @@ struct Capture {
     mode: StreamCaptureMode,
     /// `cudaStreamGetCaptureInfo` `id_out` (unique per begin-capture sequence).
     id: u64,
+    /// `cudaStreamBeginRecaptureToGraph` (update in place, not append).
+    recapture: bool,
+    /// Optional recapture parameter-mismatch callback (`callbackData`).
+    callback: Option<GraphRecaptureCallback>,
 }
 
 /// Existing graph plus extra root deps for [`Capture::into`].
@@ -631,6 +635,9 @@ struct Graph {
     src: Option<GraphId>,
     /// Parent that moved this definition (`CU_GRAPH_CHILD_GRAPH_OWNERSHIP_MOVE`).
     moved_to: Option<GraphId>,
+    /// Failed [`Sim::begin_recapture_to_graph`]: later ops are Invalid
+    /// `"undefined graph"`. [`Sim::destroy_graph`] still succeeds.
+    undefined: bool,
 }
 
 impl Graph {
@@ -666,6 +673,11 @@ impl Sim {
                 why: "unknown graph",
             });
         }
+        if g.undefined {
+            return Err(SimError::Invalid {
+                why: "undefined graph",
+            });
+        }
         if g.instantiated {
             return Ok(id);
         }
@@ -682,8 +694,14 @@ impl Sim {
 
     fn require_live_graph(&self, id: GraphId) -> Result<(), SimError> {
         match self.graphs.get(&id) {
-            Some(g) if !g.handle_gone => Ok(()),
-            _ => Err(SimError::Invalid {
+            Some(g) if g.handle_gone => Err(SimError::Invalid {
+                why: "unknown graph",
+            }),
+            Some(g) if g.undefined => Err(SimError::Invalid {
+                why: "undefined graph",
+            }),
+            Some(_) => Ok(()),
+            None => Err(SimError::Invalid {
                 why: "unknown graph",
             }),
         }
@@ -722,6 +740,11 @@ impl Sim {
         if g.handle_gone {
             return Err(SimError::Invalid {
                 why: "unknown graph",
+            });
+        }
+        if g.undefined {
+            return Err(SimError::Invalid {
+                why: "undefined graph",
             });
         }
         Ok(g)
@@ -2981,6 +3004,230 @@ impl Sim {
         self.begin_capture_inner(device, stream, graph, deps, mode)
     }
 
+    /// `cudaStreamBeginRecaptureToGraph` plus `cuStreamBeginRecaptureToGraph`.
+    ///
+    /// Recapture `stream` into existing `graph` (not append like
+    /// [`Self::begin_capture_to_graph`]). Node creation order must match the
+    /// original graph. Topology mismatches and alloc/free parameter mismatches
+    /// fail immediately (`"graph recapture"` / `"graph recapture alloc"`). Other
+    /// node parameter mismatches update the original node unless a callback
+    /// returns failure. A `None` callback still applies those updates. If
+    /// recapture fails, the graph is undefined (`"undefined graph"`) and should
+    /// be destroyed; [`Self::destroy_graph`] stays legal. User objects on
+    /// `graph` are released before recapture. See [`Self::begin_capture`] for
+    /// idle stream, nested capture, and end on the same stream. Instantiated
+    /// exec is `"graph instantiated"`. A parked in-flight-destroyed exec is
+    /// `"unknown graph"`. Matching recapture `cudaMallocAsync` returns the
+    /// existing graph-mem pointer. No extra-deps array (unlike
+    /// BeginCaptureToGraph). Capture-to-graph append stays.
+    pub fn begin_recapture_to_graph(
+        &mut self,
+        device: DeviceId,
+        stream: StreamId,
+        graph: GraphId,
+    ) -> Result<(), SimError> {
+        self.begin_recapture_inner(device, stream, graph, self.capture_mode, None)
+    }
+
+    /// `cudaStreamBeginRecaptureToGraph` with an explicit [`StreamCaptureMode`].
+    pub fn begin_recapture_to_graph_with_mode(
+        &mut self,
+        device: DeviceId,
+        stream: StreamId,
+        graph: GraphId,
+        mode: StreamCaptureMode,
+    ) -> Result<(), SimError> {
+        self.begin_recapture_inner(device, stream, graph, mode, None)
+    }
+
+    /// `cudaStreamBeginRecaptureToGraph` with [`GraphRecaptureCallback`].
+    ///
+    /// `None` is `callbackData == NULL` (still apply other-node parameter
+    /// updates). [`GraphRecaptureCallback::fail`] is a non-success return.
+    pub fn begin_recapture_to_graph_with_callback(
+        &mut self,
+        device: DeviceId,
+        stream: StreamId,
+        graph: GraphId,
+        mode: StreamCaptureMode,
+        callback: Option<GraphRecaptureCallback>,
+    ) -> Result<(), SimError> {
+        self.begin_recapture_inner(device, stream, graph, mode, callback)
+    }
+
+    fn begin_recapture_inner(
+        &mut self,
+        device: DeviceId,
+        stream: StreamId,
+        graph: GraphId,
+        mode: StreamCaptureMode,
+        callback: Option<GraphRecaptureCallback>,
+    ) -> Result<(), SimError> {
+        let _gpu = self.profile.gpu(device)?;
+        if self.capturing.is_some() {
+            return Err(SimError::Invalid {
+                why: "nested graph capture",
+            });
+        }
+        self.require_live_graph(graph)?;
+        if !self.stream_idle(device, stream) {
+            return Err(SimError::Invalid {
+                why: "capture requires idle stream",
+            });
+        }
+        let _into = self.capture_into(device, graph, &[])?;
+        self.release_user_objects_for_graph(graph);
+        self.begin_capture_inner(device, stream, graph, &[], mode)?;
+        if let Some(cap) = self.capturing.as_mut() {
+            cap.recapture = true;
+            cap.callback = callback;
+        }
+        Ok(())
+    }
+
+    fn abort_recapture(&mut self, graph: GraphId, err: SimError) -> SimError {
+        let why = match &err {
+            SimError::Invalid { why }
+                if *why == "graph recapture"
+                    || *why == "graph recapture alloc"
+                    || *why == "undefined graph" =>
+            {
+                *why
+            }
+            _ => "graph recapture",
+        };
+        self.capturing = None;
+        self.capture_buf.clear();
+        if let Some(g) = self.graphs.get_mut(&graph) {
+            g.undefined = true;
+        }
+        SimError::Invalid { why }
+    }
+
+    fn recapture_reuse_alloc(&self, bytes: u64) -> Result<AllocId, SimError> {
+        let cap = self.capturing.as_ref().ok_or(SimError::Invalid {
+            why: "graph recapture",
+        })?;
+        if !cap.recapture {
+            return Err(SimError::Invalid {
+                why: "graph recapture",
+            });
+        }
+        let g = self.graphs.get(&cap.into.graph).ok_or(SimError::Invalid {
+            why: "unknown graph",
+        })?;
+        if g.undefined {
+            return Err(SimError::Invalid {
+                why: "undefined graph",
+            });
+        }
+        let orig = g
+            .steps
+            .get(self.capture_buf.len())
+            .ok_or(SimError::Invalid {
+                why: "graph recapture",
+            })?;
+        if orig.destroyed {
+            return Err(SimError::Invalid {
+                why: "graph recapture",
+            });
+        }
+        match &orig.kind {
+            Kind::Alloc { id, bytes: b } if *b == bytes => Ok(*id),
+            Kind::Alloc { .. } => Err(SimError::Invalid {
+                why: "graph recapture alloc",
+            }),
+            _ => Err(SimError::Invalid {
+                why: "graph recapture",
+            }),
+        }
+    }
+
+    fn recapture_check(
+        &self,
+        graph: GraphId,
+        i: usize,
+        captured: &GraphStep,
+        callback: Option<GraphRecaptureCallback>,
+    ) -> Result<(), SimError> {
+        let g = self.graphs.get(&graph).ok_or(SimError::Invalid {
+            why: "unknown graph",
+        })?;
+        if g.undefined {
+            return Err(SimError::Invalid {
+                why: "undefined graph",
+            });
+        }
+        let orig = g.steps.get(i).ok_or(SimError::Invalid {
+            why: "graph recapture",
+        })?;
+        if orig.destroyed {
+            return Err(SimError::Invalid {
+                why: "graph recapture",
+            });
+        }
+        match recapture_mismatch(captured, orig) {
+            RecaptureMismatch::None => Ok(()),
+            RecaptureMismatch::Topology => Err(SimError::Invalid {
+                why: "graph recapture",
+            }),
+            RecaptureMismatch::AllocFree => Err(SimError::Invalid {
+                why: "graph recapture alloc",
+            }),
+            RecaptureMismatch::Params => {
+                if callback.is_some_and(|c| c.fail) {
+                    Err(SimError::Invalid {
+                        why: "graph recapture",
+                    })
+                } else {
+                    Ok(())
+                }
+            }
+        }
+    }
+
+    fn finish_recapture(
+        &mut self,
+        graph: GraphId,
+        steps: Vec<GraphStep>,
+    ) -> Result<GraphId, SimError> {
+        let g = self.graphs.get_mut(&graph).ok_or(SimError::Invalid {
+            why: "unknown graph",
+        })?;
+        if g.handle_gone {
+            return Err(SimError::Invalid {
+                why: "unknown graph",
+            });
+        }
+        if g.undefined {
+            return Err(SimError::Invalid {
+                why: "undefined graph",
+            });
+        }
+        if g.instantiated {
+            g.undefined = true;
+            return Err(SimError::Invalid {
+                why: "graph recapture",
+            });
+        }
+        if steps.len() != g.steps.len() {
+            g.undefined = true;
+            return Err(SimError::Invalid {
+                why: "graph recapture",
+            });
+        }
+        for (i, captured) in steps.into_iter().enumerate() {
+            let Some(orig) = g.steps.get_mut(i) else {
+                g.undefined = true;
+                return Err(SimError::Invalid {
+                    why: "graph recapture",
+                });
+            };
+            apply_recapture_params(orig, captured);
+        }
+        Ok(graph)
+    }
+
     fn begin_capture_inner(
         &mut self,
         device: DeviceId,
@@ -3016,6 +3263,8 @@ impl Sim {
             extra_abs: BTreeMap::new(),
             mode,
             id,
+            recapture: false,
+            callback: None,
         });
         self.capture_buf.clear();
         Ok(())
@@ -3057,7 +3306,8 @@ impl Sim {
     /// Finish capture. The graph is empty of side effects until [`Self::launch_graph`].
     ///
     /// Appends recorded nodes onto the graph from [`Self::begin_capture`] /
-    /// [`Self::begin_capture_to_graph`] and returns that id.
+    /// [`Self::begin_capture_to_graph`] and returns that id. Recapture updates
+    /// existing nodes in place and does not append.
     pub fn end_capture(&mut self) -> Result<GraphId, SimError> {
         let Some(cap) = self.capturing.take() else {
             return Err(SimError::Invalid {
@@ -3065,6 +3315,9 @@ impl Sim {
             });
         };
         let steps = core::mem::take(&mut self.capture_buf);
+        if cap.recapture {
+            return self.finish_recapture(cap.into.graph, steps);
+        }
         self.append_captured(cap.into, steps, cap.mem_allocs, cap.extra_abs)
     }
 
@@ -3301,6 +3554,11 @@ impl Sim {
             if g.handle_gone {
                 return Err(SimError::Invalid {
                     why: "unknown graph",
+                });
+            }
+            if g.undefined {
+                return Err(SimError::Invalid {
+                    why: "undefined graph",
                 });
             }
             (g.origin, g.ready())
@@ -4283,6 +4541,7 @@ impl Sim {
                 primary_exec: None,
                 src: Some(graph),
                 moved_to: None,
+                undefined: false,
             },
         );
         let def = self.graphs.get_mut(&graph).ok_or(SimError::Invalid {
@@ -7325,6 +7584,7 @@ impl Sim {
                     primary_exec: None,
                     src: None,
                     moved_to: None,
+                    undefined: false,
                 },
                 origin.0,
             ));
@@ -8022,6 +8282,7 @@ impl Sim {
                 primary_exec: None,
                 src: None,
                 moved_to: None,
+                undefined: false,
             },
         );
         let _old = self.graph_allocs.insert(id, Vec::new());
@@ -12780,6 +13041,19 @@ impl Sim {
             return Err(SimError::Invalid {
                 why: "pool device mismatch",
             });
+        }
+        if let Some(graph) = self
+            .capturing
+            .as_ref()
+            .and_then(|c| c.recapture.then_some(c.into.graph))
+        {
+            match self.recapture_reuse_alloc(bytes) {
+                Ok(id) => {
+                    let _op = self.submit(device, stream, Kind::Alloc { id, bytes })?;
+                    return Ok(id);
+                }
+                Err(e) => return Err(self.abort_recapture(graph, e)),
+            }
         }
         let id = self.insert_pool_alloc(pool, bytes)?;
         let _op = self.submit(device, stream, Kind::Alloc { id, bytes })?;
@@ -20066,7 +20340,7 @@ impl Sim {
         } else {
             None
         };
-        self.capture_buf.push(GraphStep {
+        let mut step = GraphStep {
             device,
             stream,
             kind,
@@ -20093,7 +20367,28 @@ impl Sim {
             nvlink_util_centric: self.enqueue_nvlink_util_centric,
             sync_policy,
             green_ctx,
+        };
+        let recapture_meta = self.capturing.as_ref().and_then(|c| {
+            c.recapture.then_some((
+                c.into.graph,
+                c.callback,
+                c.extra_abs.get(&self.capture_buf.len()).cloned(),
+            ))
         });
+        if let Some((graph, callback, extras)) = recapture_meta {
+            if let Some(abs) = extras {
+                for extra in abs {
+                    if !step.deps.contains(&extra) {
+                        step.deps.push(extra);
+                    }
+                }
+            }
+            step.deps.sort_unstable();
+            if let Err(e) = self.recapture_check(graph, self.capture_buf.len(), &step, callback) {
+                return Err(self.abort_recapture(graph, e));
+            }
+        }
+        self.capture_buf.push(step);
         let id = OpId(self.next_op);
         self.next_op = self.next_op.saturating_add(1);
         Ok(id)
@@ -24894,6 +25189,109 @@ fn capture_step_deps(
         }
     }
     deps
+}
+
+enum RecaptureMismatch {
+    None,
+    Topology,
+    AllocFree,
+    Params,
+}
+
+fn recapture_mismatch(captured: &GraphStep, orig: &GraphStep) -> RecaptureMismatch {
+    if captured.device != orig.device || captured.stream != orig.stream {
+        return RecaptureMismatch::Topology;
+    }
+    let mut captured_deps = captured.deps.clone();
+    captured_deps.sort_unstable();
+    let mut orig_deps = orig.deps.clone();
+    orig_deps.sort_unstable();
+    if captured_deps != orig_deps || captured.edge_data != orig.edge_data {
+        return RecaptureMismatch::Topology;
+    }
+    if node_kind(&captured.kind) != node_kind(&orig.kind) {
+        return RecaptureMismatch::Topology;
+    }
+    match (&captured.kind, &orig.kind) {
+        (Kind::Alloc { id: a, bytes: ba }, Kind::Alloc { id: b, bytes: bb }) => {
+            if a != b || ba != bb {
+                return RecaptureMismatch::AllocFree;
+            }
+        }
+        (Kind::Free { id: a }, Kind::Free { id: b }) => {
+            if a != b {
+                return RecaptureMismatch::AllocFree;
+            }
+        }
+        (
+            Kind::ChildGraph {
+                graph: a,
+                ownership: oa,
+            },
+            Kind::ChildGraph {
+                graph: b,
+                ownership: ob,
+            },
+        ) => {
+            if a != b || oa != ob {
+                return RecaptureMismatch::Topology;
+            }
+        }
+        (ca, oa) if ca != oa => return RecaptureMismatch::Params,
+        _ => {}
+    }
+    if recapture_params_match(captured, orig) {
+        RecaptureMismatch::None
+    } else {
+        RecaptureMismatch::Params
+    }
+}
+
+fn recapture_params_match(captured: &GraphStep, orig: &GraphStep) -> bool {
+    captured.priority == orig.priority
+        && captured.pdl == orig.pdl
+        && captured.programmatic_event == orig.programmatic_event
+        && captured.launch_completion == orig.launch_completion
+        && captured.access_policy == orig.access_policy
+        && captured.mem_sync_domain == orig.mem_sync_domain
+        && captured.mem_sync_map == orig.mem_sync_map
+        && captured.cluster == orig.cluster
+        && captured.cluster_policy == orig.cluster_policy
+        && captured.preferred_cluster == orig.preferred_cluster
+        && captured.carveout == orig.carveout
+        && captured.device_updatable == orig.device_updatable
+        && captured.shared_mem == orig.shared_mem
+        && captured.portable_cluster == orig.portable_cluster
+        && captured.dynamic_shared == orig.dynamic_shared
+        && captured.portable_shared == orig.portable_shared
+        && captured.nvlink_util_centric == orig.nvlink_util_centric
+        && captured.sync_policy == orig.sync_policy
+        && captured.green_ctx == orig.green_ctx
+}
+
+fn apply_recapture_params(orig: &mut GraphStep, captured: GraphStep) {
+    orig.kind = captured.kind;
+    orig.device = captured.device;
+    orig.stream = captured.stream;
+    orig.priority = captured.priority;
+    orig.pdl = captured.pdl;
+    orig.programmatic_event = captured.programmatic_event;
+    orig.launch_completion = captured.launch_completion;
+    orig.access_policy = captured.access_policy;
+    orig.mem_sync_domain = captured.mem_sync_domain;
+    orig.mem_sync_map = captured.mem_sync_map;
+    orig.cluster = captured.cluster;
+    orig.cluster_policy = captured.cluster_policy;
+    orig.preferred_cluster = captured.preferred_cluster;
+    orig.carveout = captured.carveout;
+    orig.device_updatable = captured.device_updatable;
+    orig.shared_mem = captured.shared_mem;
+    orig.portable_cluster = captured.portable_cluster;
+    orig.dynamic_shared = captured.dynamic_shared;
+    orig.portable_shared = captured.portable_shared;
+    orig.nvlink_util_centric = captured.nvlink_util_centric;
+    orig.sync_policy = captured.sync_policy;
+    orig.green_ctx = captured.green_ctx;
 }
 
 fn graph_topo_order(steps: &[GraphStep]) -> Result<Vec<usize>, SimError> {

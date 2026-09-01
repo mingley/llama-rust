@@ -2994,6 +2994,22 @@ impl StreamCaptureMode {
     }
 }
 
+/// `cudaGraphRecaptureCallbackData` / `CUgraphRecaptureCallback` for
+/// [`crate::Sim::begin_recapture_to_graph_with_callback`].
+///
+/// [`Self::data`] is `userData`. [`Self::fail`] is a non-`cudaSuccess` callback
+/// return: recapture fails immediately on a non-alloc/free parameter mismatch.
+/// `None` callback still applies those parameter updates (that is the point of
+/// recapture versus an identity no-op). Topology and alloc/free mismatches
+/// never invoke the callback.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct GraphRecaptureCallback {
+    /// `userData` passed to the recapture callback.
+    pub data: u64,
+    /// Non-success callback return (`cudaSuccess` is [`Self::fail`] false).
+    pub fail: bool,
+}
+
 /// `cudaGraphConditionalHandleCreate` flags for
 /// [`crate::Sim::graph_conditional_create_with_flags`].
 ///
@@ -3905,7 +3921,8 @@ pub struct MemAccessDesc {
 /// Active stream capture (`cudaStreamGetCaptureInfo`).
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct StreamCaptureInfo {
-    /// Graph being captured into (`cudaStreamBeginCapture` / `ToGraph`).
+    /// Graph being captured into (`cudaStreamBeginCapture` / `ToGraph` /
+    /// RecaptureToGraph).
     pub graph: GraphId,
     /// Capture origin `(device, stream)`.
     pub origin: (DeviceId, StreamId),
@@ -3923,7 +3940,8 @@ pub struct StreamCaptureInfo {
     pub edge_data: Vec<GraphEdgeData>,
     /// Capture-sequence id (`cudaStreamGetCaptureInfo` `id_out`).
     ///
-    /// Unique per [`crate::Sim::begin_capture`] / `begin_capture_to_graph`.
+    /// Unique per [`crate::Sim::begin_capture`] / `begin_capture_to_graph` /
+    /// `begin_recapture_to_graph`.
     /// Forked streams in the same session share it. Not a [`GraphId`].
     pub id: u64,
     /// Mode this capture started with (`cudaStreamGetCaptureInfo` status).

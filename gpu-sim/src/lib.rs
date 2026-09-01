@@ -1295,6 +1295,15 @@
 //! indices (empty means extra roots). A parked in-flight-destroyed exec is
 //! `"unknown graph"` first; a live exec stays `"graph instantiated"`.
 //! [`Sim::end_capture`] returns that graph.
+//! [`begin_recapture_to_graph`](Sim::begin_recapture_to_graph) is
+//! `cudaStreamBeginRecaptureToGraph`: recapture into an existing graph in
+//! place (not append). Topology and alloc/free mismatches fail immediately;
+//! other parameter mismatches update the node unless a callback fails.
+//! Failure leaves the graph undefined (`"undefined graph"`);
+//! [`destroy_graph`](Sim::destroy_graph) stays legal. User objects are
+//! released first. Matching recapture malloc returns the existing graph-mem
+//! pointer. A parked exec is `"unknown graph"`; a live exec stays
+//! `"graph instantiated"`.
 //! `expertvm --graph-piecewise` captures combo parents as extra roots;
 //! `--graph-capture-deps` chains those fragments;
 //! `--graph-capture-host` inserts captured [`host_func`](Sim::host_func)
@@ -1397,9 +1406,9 @@ pub use ops::{
     GraphCreateFlags, GraphDebugDotFlags, GraphDependencyType, GraphEdgeData,
     GraphExecUpdateResult, GraphExecUpdateResultInfo, GraphInstantiateFlags,
     GraphInstantiateParams, GraphInstantiateResult, GraphKernelNodePort, GraphMemAttr,
-    GraphNodeKind, GraphNodeParams, GraphUserObjectFlags, GreenCtxFlags, HostAllocFlags,
-    HostGetDevicePointerFlags, HostNodeParams, InitDeviceFlags, IpcMemFlags, KernelAttrs,
-    KernelBuf, KernelKind, KernelNodeAttr, KernelNodeAttrValue, KernelNodeParams,
+    GraphNodeKind, GraphNodeParams, GraphRecaptureCallback, GraphUserObjectFlags, GreenCtxFlags,
+    HostAllocFlags, HostGetDevicePointerFlags, HostNodeParams, InitDeviceFlags, IpcMemFlags,
+    KernelAttrs, KernelBuf, KernelKind, KernelNodeAttr, KernelNodeAttrValue, KernelNodeParams,
     LaunchCompletionEvent, MemAccessDesc, MemAccessFlags, MemAdvise, MemAllocationGranularity,
     MemAllocationProp, MemAllocationType, MemAttach, MemAttachFlags, MemCreateFlags,
     MemExportFlags, MemHandleType, MemHandleUsage, MemLocationType, MemMapFlags, MemPoolAttr,
@@ -2002,6 +2011,231 @@ mod tests {
         assert_eq!(sim.hbm_peak(), 4096);
         sim.graph_mem_trim(d).unwrap();
         assert_eq!(sim.hbm_used(d).unwrap(), 0);
+    }
+
+    #[test]
+    fn graph_begin_recapture_to_graph_updates_kernel_and_reuses_alloc() {
+        let mut sim = Sim::new(h100());
+        let d = DeviceId(0);
+        let s = StreamId(0);
+        sim.begin_capture(d, s).unwrap();
+        let a = sim.alloc(d, 4096, s).unwrap();
+        enq(sim.kernel(d, KernelKind::other(8, 8), &[a], &[a], s));
+        sim.free(d, a, s).unwrap();
+        let g = sim.end_capture().unwrap();
+        assert_eq!(sim.graph_len(g).unwrap(), 3);
+
+        let obj = sim
+            .user_object_create(1, 1, UserObjectFlags::NO_DESTRUCTOR_SYNC)
+            .unwrap();
+        sim.graph_retain_user_object(g, obj, 1, 0).unwrap();
+        assert_eq!(sim.user_object_graph_refs(g, obj).unwrap(), 1);
+
+        sim.begin_recapture_to_graph(d, s, g).unwrap();
+        assert_eq!(sim.user_object_graph_refs(g, obj).unwrap(), 0);
+        let a2 = sim.alloc(d, 4096, s).unwrap();
+        assert_eq!(a2, a);
+        enq(sim.kernel(d, KernelKind::other(1 << 30, 8), &[a2], &[a2], s));
+        sim.free(d, a2, s).unwrap();
+        let id = sim.end_capture().unwrap();
+        assert_eq!(id, g);
+        assert_eq!(sim.graph_len(g).unwrap(), 3);
+        let params = sim.graph_kernel_get_params(g, 1).unwrap();
+        assert_eq!(params.kind, KernelKind::other(1 << 30, 8));
+        assert_eq!(sim.graph_mem_allocs(g).unwrap(), vec![a]);
+
+        let exec = sim.instantiate_graph(g).unwrap();
+        match sim.begin_recapture_to_graph(d, s, exec) {
+            Err(SimError::Invalid { why }) => assert!(why.contains("instantiated"), "{why}"),
+            other => panic!("{other:?}"),
+        }
+
+        let n = sim.launch_graph(g, s).unwrap();
+        assert_eq!(n, 3);
+        sim.synchronize().unwrap();
+        let t_heavy = sim.clock_ns();
+        assert!(t_heavy > 0);
+
+        let mut light = Sim::new(h100());
+        light.begin_capture(d, s).unwrap();
+        let al = light.alloc(d, 4096, s).unwrap();
+        enq(light.kernel(d, KernelKind::other(8, 8), &[al], &[al], s));
+        light.free(d, al, s).unwrap();
+        let gl = light.end_capture().unwrap();
+        let n_light = light.launch_graph(gl, s).unwrap();
+        assert_eq!(n_light, 3);
+        light.synchronize().unwrap();
+        assert!(t_heavy > light.clock_ns());
+
+        sim.begin_recapture_to_graph_with_mode(d, s, g, StreamCaptureMode::Relaxed)
+            .unwrap();
+        let a3 = sim.alloc(d, 4096, s).unwrap();
+        assert_eq!(a3, a);
+        enq(sim.kernel(d, KernelKind::other(1 << 30, 8), &[a3], &[a3], s));
+        sim.free(d, a3, s).unwrap();
+        let _same = sim.end_capture().unwrap();
+
+        sim.begin_recapture_to_graph_with_callback(d, s, g, StreamCaptureMode::Relaxed, None)
+            .unwrap();
+        let a4 = sim.alloc(d, 4096, s).unwrap();
+        enq(sim.kernel(d, KernelKind::other(1 << 20, 8), &[a4], &[a4], s));
+        sim.free(d, a4, s).unwrap();
+        let _applied = sim.end_capture().unwrap();
+        let applied = sim.graph_kernel_get_params(g, 1).unwrap();
+        assert_eq!(applied.kind, KernelKind::other(1 << 20, 8));
+
+        let live = sim.malloc(d, 64).unwrap();
+        enq(sim.kernel(d, KernelKind::other(8, 8), &[live], &[live], s));
+        match sim.begin_recapture_to_graph(d, s, g) {
+            Err(SimError::Invalid { why }) => assert!(why.contains("idle"), "{why}"),
+            other => panic!("{other:?}"),
+        }
+        assert_eq!(sim.graph_len(g).unwrap(), 3);
+        sim.synchronize().unwrap();
+
+        sim.begin_capture(d, s).unwrap();
+        match sim.begin_recapture_to_graph(d, s, g) {
+            Err(SimError::Invalid { why }) => assert!(why.contains("nested"), "{why}"),
+            other => panic!("{other:?}"),
+        }
+        let cap = sim.end_capture().unwrap();
+        sim.destroy_graph(cap).unwrap();
+
+        match sim.begin_recapture_to_graph(d, s, GraphId(99)) {
+            Err(SimError::Invalid { why }) => assert!(why.contains("unknown"), "{why}"),
+            other => panic!("{other:?}"),
+        }
+
+        let mut nv = Sim::new(HardwareProfile::example_8xh100_nvlink());
+        let buf = nv.malloc(d, 4096).unwrap();
+        nv.begin_capture(d, s).unwrap();
+        enq(nv.kernel(d, KernelKind::other(8, 8), &[buf], &[buf], s));
+        let g_nv = nv.end_capture().unwrap();
+        match nv.begin_recapture_to_graph(DeviceId(1), s, g_nv) {
+            Err(SimError::Invalid { why }) => assert!(why.contains("gpu mismatch"), "{why}"),
+            other => panic!("{other:?}"),
+        }
+        assert_eq!(nv.graph_len(g_nv).unwrap(), 1);
+
+        let g_append = sim.create_graph(d, s).unwrap();
+        sim.graph_add_kernel(g_append, KernelKind::other(8, 8), &[live], &[live])
+            .unwrap();
+        sim.begin_capture_to_graph(d, s, g_append, &[]).unwrap();
+        let scratch = sim.alloc(d, 64, s).unwrap();
+        let appended = sim.end_capture().unwrap();
+        assert_eq!(appended, g_append);
+        assert_eq!(sim.graph_len(g_append).unwrap(), 2);
+        assert_eq!(sim.graph_mem_allocs(g_append).unwrap(), vec![scratch]);
+    }
+
+    #[test]
+    fn graph_begin_recapture_to_graph_fails_undefined() {
+        let d = DeviceId(0);
+        let s = StreamId(0);
+        let cb = GraphRecaptureCallback {
+            data: 7,
+            fail: true,
+        };
+        assert_eq!(cb.data, 7);
+
+        let mut cb_sim = Sim::new(h100());
+        cb_sim.begin_capture(d, s).unwrap();
+        let acb = cb_sim.alloc(d, 4096, s).unwrap();
+        enq(cb_sim.kernel(d, KernelKind::other(8, 8), &[acb], &[acb], s));
+        cb_sim.free(d, acb, s).unwrap();
+        let g_fail = cb_sim.end_capture().unwrap();
+        cb_sim
+            .begin_recapture_to_graph_with_callback(
+                d,
+                s,
+                g_fail,
+                StreamCaptureMode::Relaxed,
+                Some(cb),
+            )
+            .unwrap();
+        let af = cb_sim.alloc(d, 4096, s).unwrap();
+        match cb_sim.kernel(d, KernelKind::other(1 << 20, 8), &[af], &[af], s) {
+            Err(SimError::Invalid { why }) => assert!(why.contains("recapture"), "{why}"),
+            other => panic!("{other:?}"),
+        }
+        match cb_sim.graph_len(g_fail) {
+            Err(SimError::Invalid { why }) => assert!(why.contains("undefined"), "{why}"),
+            other => panic!("{other:?}"),
+        }
+        cb_sim.destroy_graph(g_fail).unwrap();
+
+        let mut topo = Sim::new(h100());
+        topo.begin_capture(d, s).unwrap();
+        let at = topo.alloc(d, 4096, s).unwrap();
+        enq(topo.kernel(d, KernelKind::other(8, 8), &[at], &[at], s));
+        topo.free(d, at, s).unwrap();
+        let g_topo = topo.end_capture().unwrap();
+        topo.begin_recapture_to_graph(d, s, g_topo).unwrap();
+        match topo.kernel(d, KernelKind::other(8, 8), &[at], &[at], s) {
+            Err(SimError::Invalid { why }) => assert!(why.contains("recapture"), "{why}"),
+            other => panic!("{other:?}"),
+        }
+        match topo.graph_len(g_topo) {
+            Err(SimError::Invalid { why }) => assert!(why.contains("undefined"), "{why}"),
+            other => panic!("{other:?}"),
+        }
+        topo.destroy_graph(g_topo).unwrap();
+
+        let mut few = Sim::new(h100());
+        few.begin_capture(d, s).unwrap();
+        let afew = few.alloc(d, 4096, s).unwrap();
+        enq(few.kernel(d, KernelKind::other(8, 8), &[afew], &[afew], s));
+        few.free(d, afew, s).unwrap();
+        let g_few = few.end_capture().unwrap();
+        few.begin_recapture_to_graph(d, s, g_few).unwrap();
+        let reused = few.alloc(d, 4096, s).unwrap();
+        enq(few.kernel(d, KernelKind::other(8, 8), &[reused], &[reused], s));
+        match few.end_capture() {
+            Err(SimError::Invalid { why }) => assert!(why.contains("recapture"), "{why}"),
+            other => panic!("{other:?}"),
+        }
+        match few.graph_len(g_few) {
+            Err(SimError::Invalid { why }) => assert!(why.contains("undefined"), "{why}"),
+            other => panic!("{other:?}"),
+        }
+        few.destroy_graph(g_few).unwrap();
+
+        let mut extra = Sim::new(h100());
+        let live = extra.malloc(d, 4096).unwrap();
+        extra.begin_capture(d, s).unwrap();
+        enq(extra.kernel(d, KernelKind::other(8, 8), &[live], &[live], s));
+        let g_extra = extra.end_capture().unwrap();
+        extra.begin_recapture_to_graph(d, s, g_extra).unwrap();
+        enq(extra.kernel(d, KernelKind::other(8, 8), &[live], &[live], s));
+        match extra.kernel(d, KernelKind::other(8, 8), &[live], &[live], s) {
+            Err(SimError::Invalid { why }) => assert!(why.contains("recapture"), "{why}"),
+            other => panic!("{other:?}"),
+        }
+        match extra.graph_len(g_extra) {
+            Err(SimError::Invalid { why }) => assert!(why.contains("undefined"), "{why}"),
+            other => panic!("{other:?}"),
+        }
+        extra.destroy_graph(g_extra).unwrap();
+
+        let mut sz = Sim::new(h100());
+        sz.begin_capture(d, s).unwrap();
+        let asz = sz.alloc(d, 4096, s).unwrap();
+        enq(sz.kernel(d, KernelKind::other(8, 8), &[asz], &[asz], s));
+        sz.free(d, asz, s).unwrap();
+        let g_sz = sz.end_capture().unwrap();
+        sz.begin_recapture_to_graph(d, s, g_sz).unwrap();
+        match sz.alloc(d, 8192, s) {
+            Err(SimError::Invalid { why }) => {
+                assert!(why.contains("recapture"), "{why}");
+                assert!(why.contains("alloc"), "{why}");
+            }
+            other => panic!("{other:?}"),
+        }
+        match sz.graph_len(g_sz) {
+            Err(SimError::Invalid { why }) => assert!(why.contains("undefined"), "{why}"),
+            other => panic!("{other:?}"),
+        }
+        sz.destroy_graph(g_sz).unwrap();
     }
 
     #[test]
@@ -5438,6 +5672,56 @@ mod tests {
         }
         sim.destroy_graph(g).unwrap();
         sim.destroy_graph(_end).unwrap();
+    }
+
+    #[test]
+    fn parked_exec_recapture_to_graph_is_unknown() {
+        let mut sim = Sim::new(h100());
+        let d = DeviceId(0);
+        let s = StreamId(0);
+        let a = sim.malloc(d, 4096).unwrap();
+        let g = sim.create_graph(d, s).unwrap();
+        sim.graph_add_kernel(g, KernelKind::other(1 << 40, 4096), &[a], &[a])
+            .unwrap();
+        let exec = sim.instantiate_graph(g).unwrap();
+        match sim.begin_recapture_to_graph(d, s, exec) {
+            Err(SimError::Invalid { why }) => assert!(why.contains("instantiated"), "{why}"),
+            other => panic!("{other:?}"),
+        }
+        let launched = sim.launch_graph(exec, s).unwrap();
+        assert!(launched > 0);
+        sim.destroy_graph(exec).unwrap();
+        match sim.begin_recapture_to_graph(d, s, exec) {
+            Err(SimError::Invalid { why }) => assert!(why.contains("unknown"), "{why}"),
+            other => panic!("{other:?}"),
+        }
+        match sim.begin_recapture_to_graph_with_mode(
+            d,
+            StreamId(1),
+            exec,
+            StreamCaptureMode::Relaxed,
+        ) {
+            Err(SimError::Invalid { why }) => assert!(why.contains("unknown"), "{why}"),
+            other => panic!("{other:?}"),
+        }
+        sim.begin_capture(d, StreamId(1)).unwrap();
+        match sim.begin_recapture_to_graph(d, StreamId(2), exec) {
+            Err(SimError::Invalid { why }) => assert!(why.contains("nested"), "{why}"),
+            other => panic!("{other:?}"),
+        }
+        let ended = sim.end_capture().unwrap();
+        sim.synchronize().unwrap();
+        sim.begin_recapture_to_graph(d, s, g).unwrap();
+        enq(sim.kernel(d, KernelKind::other(1 << 40, 4096), &[a], &[a], s));
+        let id = sim.end_capture().unwrap();
+        assert_eq!(id, g);
+        assert_eq!(sim.graph_len(g).unwrap(), 1);
+        match sim.begin_recapture_to_graph(d, s, exec) {
+            Err(SimError::Invalid { why }) => assert!(why.contains("unknown"), "{why}"),
+            other => panic!("{other:?}"),
+        }
+        sim.destroy_graph(g).unwrap();
+        sim.destroy_graph(ended).unwrap();
     }
 
     #[test]

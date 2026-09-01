@@ -5,6 +5,18 @@ Visible five-turn extract: [docs/chatgpt-share-6a920fe1.md](docs/chatgpt-share-6
 Complete share-API extract: [docs/chatgpt-share-6a920fe1/](docs/chatgpt-share-6a920fe1/).
 Work lands on `main`. No PRs.
 
+## Shipped 2026-09-01 — CUDA `cudaStreamBeginRecaptureToGraph`
+
+`gpu-sim` `begin_recapture_to_graph` is `cudaStreamBeginRecaptureToGraph` /
+`cuStreamBeginRecaptureToGraph`. Recapture updates an existing graph in place
+(not append). Topology and alloc/free mismatches fail immediately. Other node
+parameter mismatches update the original node unless a callback returns
+failure. `None` callback still applies those updates. Failure leaves the graph
+undefined (`"undefined graph"`); `destroy_graph` stays legal. User objects are
+released first. Matching recapture malloc returns the existing graph-mem
+pointer. This VM does not invent Engine `--graph-recapture`. `gpu-profile
+capture` is still refused. Dual score still has no `$/M tokens`.
+
 ## Shipped 2026-09-01 — CUDA `cudaDriverGetVersion` / `cudaRuntimeGetVersion`
 
 `gpu-sim` `driver_get_version` / `runtime_get_version` are `cudaDriverGetVersion`
