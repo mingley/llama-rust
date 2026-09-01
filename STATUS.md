@@ -5,6 +5,16 @@ Visible five-turn extract: [docs/chatgpt-share-6a920fe1.md](docs/chatgpt-share-6
 Complete share-API extract: [docs/chatgpt-share-6a920fe1/](docs/chatgpt-share-6a920fe1/).
 Work lands on `main`. No PRs.
 
+## Shipped 2026-09-01 — CUDA `cuMemPoolGetId`
+
+`gpu-sim` `pool_get_id` is `cuMemPoolGetId`. Unique per `PoolId` handle
+(`PoolId + 1`). Distinct from the handle, `event_get_id`, and
+`stream_get_id`. Query; legal during capture. Graph-memory pools are
+legal (distinct from `pool_get_attribute`). Destroyed is Invalid.
+Imported shareable pools differ from the exporter. Recreate after destroy
+returns a new id. `gpu-profile capture` is still refused. Dual score
+still has no `$/M tokens`.
+
 ## Shipped 2026-09-01 — CUDA `cudaGraphConditionalHandleCreate` flags
 
 `gpu-sim` `graph_conditional_create_with_flags` is

@@ -92,7 +92,9 @@
 //! `ImportPointer` (alias, no extra HBM). [`Sim::set_device_mempool`] is
 //! `cudaDeviceSetMemPool`. [`default_pool`](Sim::default_pool) is
 //! `cudaDeviceGetDefaultMemPool` (seeded; SetMemPool does not replace it).
-//! [`device_mempool`](Sim::device_mempool) is `cudaDeviceGetMemPool`. Default and [`create_pool`](Sim::create_pool) pools
+//! [`device_mempool`](Sim::device_mempool) is `cudaDeviceGetMemPool`. [`pool_get_id`](Sim::pool_get_id)
+//! is `cuMemPoolGetId` (query; legal during capture; distinct from the
+//! [`PoolId`] handle; graph-memory pools are legal). Default and [`create_pool`](Sim::create_pool) pools
 //! cannot be exported. Capture cannot include shareable export/import.
 //! [`Sim::alloc`] draws from [`device_mempool`](Sim::device_mempool) (`cudaMallocAsync`).
 //! [`Sim::create_pool`] / [`create_pool_with_props`](Sim::create_pool_with_props) /
@@ -12555,6 +12557,48 @@ mod tests {
             other => panic!("{other:?}"),
         }
         let _g = sim.end_capture().unwrap();
+    }
+
+    #[test]
+    fn pool_get_id_is_unique_per_handle() {
+        let mut sim = Sim::new(h100());
+        let d = DeviceId(0);
+        let def = sim.default_pool(d).unwrap();
+        let p = sim.create_pool(d).unwrap();
+        let id_def = sim.pool_get_id(def).unwrap();
+        let id_p = sim.pool_get_id(p).unwrap();
+        assert_eq!(id_p, u64::from(p.0).saturating_add(1));
+        assert_ne!(id_p, u64::from(p.0));
+        assert_ne!(id_def, id_p);
+        assert_ne!(id_p, sim.stream_get_id(d, StreamId(0)).unwrap());
+        sim.begin_capture(d, StreamId(0)).unwrap();
+        assert_eq!(sim.pool_get_id(p).unwrap(), id_p);
+        let _g = sim.end_capture().unwrap();
+        let gp = sim.graph_pool(d).unwrap();
+        let id_gp = sim.pool_get_id(gp).unwrap();
+        assert_ne!(id_gp, id_p);
+        match sim.pool_get_attribute(gp, MemPoolAttr::UsedMemCurrent) {
+            Err(SimError::Invalid { why }) => assert!(why.contains("graph mem"), "{why}"),
+            other => panic!("{other:?}"),
+        }
+        let share = sim.create_shareable_pool(d).unwrap();
+        let h = sim.pool_export(share).unwrap();
+        let imp = sim.pool_import(d, h).unwrap();
+        assert_ne!(
+            sim.pool_get_id(imp).unwrap(),
+            sim.pool_get_id(share).unwrap()
+        );
+        sim.destroy_pool(p).unwrap();
+        match sim.pool_get_id(p) {
+            Err(SimError::Invalid { why }) => assert!(why.contains("destroyed pool"), "{why}"),
+            other => panic!("{other:?}"),
+        }
+        match sim.pool_get_id(PoolId(9999)) {
+            Err(SimError::Invalid { why }) => assert!(why.contains("unknown pool"), "{why}"),
+            other => panic!("{other:?}"),
+        }
+        let p2 = sim.create_pool(d).unwrap();
+        assert_ne!(sim.pool_get_id(p2).unwrap(), id_p);
     }
 
     #[test]

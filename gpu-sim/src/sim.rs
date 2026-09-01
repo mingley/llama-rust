@@ -10142,12 +10142,27 @@ impl Sim {
             })
     }
 
+    /// `cuMemPoolGetId`. Query; legal during capture.
+    ///
+    /// Unique per [`PoolId`] for this VM. Distinct from the [`PoolId`] handle,
+    /// [`Self::event_get_id`], and [`Self::stream_get_id`]. Unknown pools are
+    /// Invalid `"unknown pool"`. Destroyed handles are Invalid
+    /// `"destroyed pool"`. Graph-memory pools are legal (distinct from
+    /// [`Self::pool_get_attribute`]). Recreating after [`Self::destroy_pool`]
+    /// returns a new id. An imported shareable pool has a different id from
+    /// the exporter.
+    pub fn pool_get_id(&self, pool: PoolId) -> Result<u64, SimError> {
+        self.refuse_destroyed_pool(pool)?;
+        Ok(u64::from(pool.0).saturating_add(1))
+    }
+
     /// Device graph-memory pool (`cudaDeviceGetGraphMemAttribute` backing).
     ///
     /// Not the default mempool. [`Self::alloc_from_pool`] / [`Self::set_device_mempool`]
     /// / [`Self::set_pool_release_threshold`] / [`Self::pool_set_access`] /
     /// [`Self::pool_get_attribute`] / [`Self::pool_set_attribute`] /
     /// [`Self::pool_get_access`] / [`Self::destroy_pool`] refuse it.
+    /// [`Self::pool_get_id`] is legal.
     pub fn graph_pool(&self, device: DeviceId) -> Result<PoolId, SimError> {
         let _gpu = self.profile.gpu(device)?;
         self.graph_pools
@@ -10278,7 +10293,8 @@ impl Sim {
     /// allocations stay valid until freed (later frees do not re-cache).
     /// Destroying the current device mempool rebinds [`Self::device_mempool`]
     /// to [`Self::default_pool`]. The default and graph-memory pools cannot be
-    /// destroyed. A destroyed handle is Invalid for alloc/export/get/set.
+    /// destroyed. A destroyed handle is Invalid for alloc/export/get/set and
+    /// [`Self::pool_get_id`].
     pub fn destroy_pool(&mut self, pool: PoolId) -> Result<(), SimError> {
         self.fail_if_capturing("cannot capture mempool")?;
         self.refuse_graph_pool(pool)?;

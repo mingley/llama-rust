@@ -131,6 +131,7 @@ warp scheduler, L1, …   ← do not model
 | `query_event` is non-blocking | `cudaEventQuery` |
 | `event_get_flags` is the create flags word | `cudaEventGetFlags` |
 | `event_get_id` is unique per event handle (`EventId + 1`) | `cuEventGetId` |
+| `pool_get_id` is unique per pool handle (`PoolId + 1`); graph-memory pools are legal | `cuMemPoolGetId` |
 | `query_stream` is non-blocking | `cudaStreamQuery` |
 | `mem_info` is `(free, total)` HBM | `cudaMemGetInfo` |
 | `pointer_get_attributes` classifies Unregistered / Host / Device / Managed | `cudaPointerGetAttributes` |
@@ -649,6 +650,8 @@ invalid; end-before-start is invalid).
 legal during capture).
 `event_get_id` is `cuEventGetId` / `cudaEventGetId` (unique per event
 handle; not the caller-chosen `EventId`; query; legal during capture).
+`pool_get_id` is `cuMemPoolGetId` (unique per pool handle; not the
+`PoolId`; graph-memory pools are legal; query; legal during capture).
 `query_event` is `cudaEventQuery` (unknown id is semantic; incomplete is
 `Ok(false)`).
 `destroy_event` is `cudaEventDestroy` (waits a recorded incomplete event;
@@ -848,9 +851,10 @@ Default `cudaMallocAsync` uses the device mempool with release threshold
 `0` (unused bytes return to the OS when the stream-ordered free
 completes). `create_pool` / `create_pool_with_props` / `alloc_from_pool` /
 `set_pool_release_threshold` / `pool_trim_to` / `pool_get_attribute` /
-`pool_set_attribute` are `cudaMemPoolCreate` / `Create`+`MemPoolProps` /
+`pool_set_attribute` / `pool_get_id` are `cudaMemPoolCreate` / `Create`+`MemPoolProps` /
 `cudaMallocFromPoolAsync` / `cudaMemPoolAttrReleaseThreshold` /
-`cudaMemPoolTrimTo` / `cudaMemPoolGetAttribute` / `SetAttribute`.
+`cudaMemPoolTrimTo` / `cudaMemPoolGetAttribute` / `SetAttribute` /
+`cuMemPoolGetId`.
 `MemPoolProps` is pinned alloc type, NONE or POSIX-FD handles, a device
 location, and `max_size` (`0` unlimited; otherwise reserved cannot grow
 past it). Typed `create_pool` / `create_shareable_pool` stay.

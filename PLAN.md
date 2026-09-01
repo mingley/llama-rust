@@ -4894,7 +4894,15 @@ model, do not celebrate the sim.
     No Engine `--graph-cond-flags`. `gpu-profile capture` is still
     refused. Dual score still has no `$/M tokens`.
 
-450. [ ] Next numbered PLAN item after 449 is the next `gpu-sim` / Engine /
+450. [x] `gpu-sim` `pool_get_id` is `cuMemPoolGetId`. Unique per `PoolId`
+    handle (`PoolId + 1`). Distinct from the handle, `event_get_id`, and
+    `stream_get_id`. Query; legal during capture. Graph-memory pools are
+    legal (distinct from `pool_get_attribute`). Destroyed is Invalid.
+    Imported shareable pools differ from the exporter. Recreate after
+    destroy returns a new id. `gpu-profile capture` is still refused.
+    Dual score still has no `$/M tokens`.
+
+451. [ ] Next numbered PLAN item after 450 is the next `gpu-sim` / Engine /
     serve / expertvm mechanical API that is still missing, or the next official
     decode family. Prefer remaining CUDA-shaped twins over more
     OpenAI HTTP veneer. Do not invent F32 `output.scale`. Do not invent a
@@ -4970,6 +4978,7 @@ model, do not celebrate the sim.
     Do not invent a second `cudaGraphConditionalHandleCreate` flags word.
     Do not invent Engine `--graph-cond-flags`. Do not invent other
     `cudaGraphCond*` create flags bits (only `ASSIGN_DEFAULT`).
+    Do not invent a second `cuMemPoolGetId`.
     Do not invent `cuDeviceGetLuid`
     (Windows).
     Do not invent gemma4 `attn_q.scale` / `attn_output.scale` / `attn_k.scale` /
