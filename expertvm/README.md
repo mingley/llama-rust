@@ -664,6 +664,9 @@ is not modeled; no Engine flag).
 `gpu-sim` `graphics_vdpau_register_output_surface` is
 `cuGraphicsVDPAURegisterOutputSurface` (Invalid; VDPAU interop is not
 modeled; no Engine flag).
+`gpu-sim` `graphics_vdpau_register_video_surface` is
+`cuGraphicsVDPAURegisterVideoSurface` (Invalid; VDPAU interop is not
+modeled; no Engine flag).
 `gpu-sim` `d3d9_get_devices` is `cuD3D9GetDevices` (Invalid; Direct3D 9
 interop is not modeled; no Engine flag).
 `gpu-sim` `d3d9_ctx_create` is `cuD3D9CtxCreate` (Invalid; Direct3D 9

@@ -18326,14 +18326,27 @@ impl Sim {
     /// modeled.
     ///
     /// Always Invalid `"vdpau output"` (no graphics-resource handles). Distinct
-    /// from [`Self::vdpau_ctx_create`] and from [`Self::vdpau_get_device`].
-    /// Unknown devices are Invalid `"device not in profile"`. Query; legal
-    /// during capture.
+    /// from [`Self::vdpau_ctx_create`], from [`Self::vdpau_get_device`], and
+    /// from [`Self::graphics_vdpau_register_video_surface`]. Unknown devices
+    /// are Invalid `"device not in profile"`. Query; legal during capture.
     pub fn graphics_vdpau_register_output_surface(&self, device: DeviceId) -> Result<(), SimError> {
         let _gpu = self.profile.gpu(device)?;
         Err(SimError::Invalid {
             why: "vdpau output",
         })
+    }
+
+    /// `cuGraphicsVDPAURegisterVideoSurface` plus
+    /// `cudaGraphicsVDPAURegisterVideoSurface`. VDPAU interop is not
+    /// modeled.
+    ///
+    /// Always Invalid `"vdpau video"` (no graphics-resource handles). Distinct
+    /// from [`Self::graphics_vdpau_register_output_surface`] and from
+    /// [`Self::vdpau_ctx_create`]. Unknown devices are Invalid
+    /// `"device not in profile"`. Query; legal during capture.
+    pub fn graphics_vdpau_register_video_surface(&self, device: DeviceId) -> Result<(), SimError> {
+        let _gpu = self.profile.gpu(device)?;
+        Err(SimError::Invalid { why: "vdpau video" })
     }
 
     /// `cuD3D9GetDevices` plus `cudaD3D9GetDevices`. Direct3D 9 interop is
