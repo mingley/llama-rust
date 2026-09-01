@@ -19143,6 +19143,12 @@ impl Sim {
             | DeviceAttr::MaxTexture3DWidth
             | DeviceAttr::MaxTexture3DHeight
             | DeviceAttr::MaxTexture3DDepth
+            | DeviceAttr::MaxSurface1DWidth
+            | DeviceAttr::MaxSurface2DWidth
+            | DeviceAttr::MaxSurface2DHeight
+            | DeviceAttr::MaxSurface3DWidth
+            | DeviceAttr::MaxSurface3DHeight
+            | DeviceAttr::MaxSurface3DDepth
             | DeviceAttr::HandleTypeWin32HandleSupported
             | DeviceAttr::HandleTypeWin32KmtHandleSupported
             | DeviceAttr::HandleTypeFabricSupported
@@ -19226,6 +19232,12 @@ impl Sim {
             max_texture_3d_width: 0,
             max_texture_3d_height: 0,
             max_texture_3d_depth: 0,
+            max_surface_1d_width: 0,
+            max_surface_2d_width: 0,
+            max_surface_2d_height: 0,
+            max_surface_3d_width: 0,
+            max_surface_3d_height: 0,
+            max_surface_3d_depth: 0,
             mem_pitch: DeviceAttr::MAX_PITCH,
             shared_mem_per_block: gpu.max_shared_mem_per_block,
             shared_mem_per_block_optin: gpu.max_shared_mem_per_block_optin,

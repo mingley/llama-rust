@@ -1015,6 +1015,9 @@ distinct from `TextureAlignment`).
 `MaxTexture2DWidth` / `MaxTexture2DHeight` / `MaxTexture3DWidth` /
 `MaxTexture3DHeight` / `MaxTexture3DDepth` are always 0 (CUDA arrays /
 textures are not modeled; distinct from `MaxTexture1DWidth`).
+`MaxSurface1DWidth`, `MaxSurface2DWidth`, `MaxSurface2DHeight`,
+`MaxSurface3DWidth`, `MaxSurface3DHeight`, and `MaxSurface3DDepth` are
+always 0 (CUDA surfaces are not modeled; distinct from `SurfaceAlignment`).
 `MaxPitch` is `DeviceAttr::MAX_PITCH` (`i32::MAX`; this VM does not cap
 2D memcpy / `cudaMallocPitch` pitch; distinct from `TexturePitchAlignment`).
 `ComputeCapabilityMajor` / `ComputeCapabilityMinor` are Hopper 9.0 on
@@ -1038,7 +1041,7 @@ atomics are not modeled; distinct from `NativeAtomicSupported` and from
 `device_get_properties` is `cudaGetDeviceProperties` of those same fields
 (compute capability major/minor included; launch-geometry caps included;
 MaxRegistersPerBlock included; GlobalMemoryBusWidth included; texture 2D/3D
-dims included; no occupancy SM count or clock). `device_get_name` is `cudaDeviceGetName` (the
+dims included; surface 1D/2D/3D dims included; no occupancy SM count or clock). `device_get_name` is `cudaDeviceGetName` (the
 profile name). `device_get_uuid` is `cuDeviceGetUuid` (synthetic 16-octet
 id; also `DeviceProperties.uuid`). `device_get_by_uuid` is
 `cuDeviceGetByUuid` (inverse). `device_get_pci_bus_id` is

@@ -476,6 +476,9 @@ and H100 block/grid dims (no Engine flag; not occupancy SM counts).
 (example H100 5120 bits, H200 6144; no Engine flag; not a memory clock).
 `gpu-sim` texture 2D/3D dim caps are always 0 (`cudaDevAttrMaxTexture2DWidth`
 and Height, `MaxTexture3DWidth` / Height / Depth; no Engine flag).
+`gpu-sim` surface 1D/2D/3D dim caps are always 0 (`cudaDevAttrMaxSurface1DWidth`,
+`MaxSurface2DWidth` and Height, `MaxSurface3DWidth` / Height / Depth;
+no Engine flag).
 Default `--expert-sim` keeps
 one compute stream, exclusive compute (`compute_slots=1`), a full chip of
 SMs, and a full-device clock sample.
