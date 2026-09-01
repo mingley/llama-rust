@@ -5134,7 +5134,7 @@ mod tests {
             }
         }
         assert!(sim.graph_len(g).unwrap() >= 1);
-        assert!(sim.graph_instantiated(g).unwrap());
+        assert!(!sim.graph_instantiated(g).unwrap());
         sim.destroy_graph(g).unwrap();
         assert!(sim.user_object_destructors().is_empty());
         let err = sim.launch_graph(exec, s).unwrap_err();

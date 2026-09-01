@@ -680,6 +680,15 @@ impl Sim {
         Ok(exec)
     }
 
+    fn require_live_graph(&self, id: GraphId) -> Result<(), SimError> {
+        match self.graphs.get(&id) {
+            Some(g) if !g.handle_gone => Ok(()),
+            _ => Err(SimError::Invalid {
+                why: "unknown graph",
+            }),
+        }
+    }
+
     fn live_graph(&self, id: GraphId) -> Result<&Graph, SimError> {
         let g = self.graphs.get(&id).ok_or(SimError::Invalid {
             why: "unknown graph",
@@ -3858,7 +3867,7 @@ impl Sim {
     /// definition, its instantiate exec, and a clone each have their own id.
     /// Unknown graphs are Invalid `"unknown graph"`.
     pub fn graph_get_id(&self, graph: GraphId) -> Result<u32, SimError> {
-        drop(self.live_graph(graph)?);
+        self.require_live_graph(graph)?;
         Ok(graph.0)
     }
 
