@@ -5,6 +5,17 @@ Visible five-turn extract: [docs/chatgpt-share-6a920fe1.md](docs/chatgpt-share-6
 Complete share-API extract: [docs/chatgpt-share-6a920fe1/](docs/chatgpt-share-6a920fe1/).
 Work lands on `main`. No PRs.
 
+## Shipped 2026-09-01 — CUDA `cudaMemPoolSetAccess` ProtRead
+
+`gpu-sim` `pool_set_access_read` is `cudaMemPoolSetAccess`
+`cudaMemAccessFlagsProtRead`. Peer kernels may read without dest HBM;
+writes and memset stay `NotResident` until ReadWrite.
+`pool_set_access_with_flags` / `pool_set_access_n` accept `PROT_READ`.
+`pool_get_access` returns `PROT_READ` on those peers. Owner stays
+ReadWrite. Capture cannot include it. Graph-memory pools stay Invalid.
+No Engine `--pool-prot-read`. `gpu-profile capture` is still refused.
+Dual score still has no `$/M tokens`.
+
 ## Shipped 2026-09-01 — CUDA `cuDeviceGetExecAffinitySupport`
 
 `gpu-sim` `device_get_exec_affinity_support` is

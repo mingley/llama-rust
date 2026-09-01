@@ -180,6 +180,8 @@ struct Pool {
     release_threshold: u64,
     /// GPUs granted [`Sim::pool_set_access`] (`cudaMemPoolSetAccess` ReadWrite).
     accessed_by: BTreeSet<DeviceId>,
+    /// GPUs granted [`Sim::pool_set_access_read`] (`cudaMemAccessFlagsProtRead`).
+    accessed_by_read: BTreeSet<DeviceId>,
     /// Created with `cudaMemAllocationHandleTypePosixFileDescriptor`.
     shareable: bool,
     /// Imported pools share live/cached/threshold with this root.
@@ -214,6 +216,7 @@ impl Pool {
             cached: 0,
             release_threshold: 0,
             accessed_by: BTreeSet::new(),
+            accessed_by_read: BTreeSet::new(),
             shareable: false,
             share_root: None,
             graph: false,
@@ -232,6 +235,10 @@ impl Pool {
         self.reserved_high = self
             .reserved_high
             .max(self.live.saturating_add(self.cached));
+    }
+
+    fn grants(&self, device: DeviceId, write: bool) -> bool {
+        self.accessed_by.contains(&device) || (!write && self.accessed_by_read.contains(&device))
     }
 }
 
@@ -10160,8 +10167,9 @@ impl Sim {
     ///
     /// Not the default mempool. [`Self::alloc_from_pool`] / [`Self::set_device_mempool`]
     /// / [`Self::set_pool_release_threshold`] / [`Self::pool_set_access`] /
-    /// [`Self::pool_get_attribute`] / [`Self::pool_set_attribute`] /
-    /// [`Self::pool_get_access`] / [`Self::destroy_pool`] refuse it.
+    /// [`Self::pool_set_access_read`] / [`Self::pool_get_attribute`] /
+    /// [`Self::pool_set_attribute`] / [`Self::pool_get_access`] /
+    /// [`Self::destroy_pool`] refuse it.
     /// [`Self::pool_get_id`] is legal.
     pub fn graph_pool(&self, device: DeviceId) -> Result<PoolId, SimError> {
         let _gpu = self.profile.gpu(device)?;
@@ -10604,7 +10612,40 @@ impl Sim {
     /// (interconnect). Capture cannot include it. Needs a topology link and
     /// directed peer access from the pool GPU, same as D2D. Same-device is a
     /// no-op that still records access. Applies to existing and later allocs.
+    /// Downgrades a prior [`Self::pool_set_access_read`] on `device`.
     pub fn pool_set_access(&mut self, pool: PoolId, device: DeviceId) -> Result<(), SimError> {
+        self.pool_prepare_set_access(pool, device)?;
+        {
+            let p = self.pool_mut(pool)?;
+            let _ins = p.accessed_by.insert(device);
+            let _was = p.accessed_by_read.remove(&device);
+        }
+        self.clock = self.clock.saturating_add(self.first_alloc_ns().max(1));
+        Ok(())
+    }
+
+    /// `cudaMemPoolSetAccess` ProtRead on `device` for allocations from `pool`.
+    ///
+    /// Host-synchronous. Does not charge dest HBM. A kernel on `device` may
+    /// **read** pointers whose physicals live on the pool's GPU (interconnect).
+    /// Writes and memset stay [`SimError::NotResident`] until
+    /// [`Self::pool_set_access`]. Capture cannot include it. Needs a topology
+    /// link and directed peer access from the pool GPU, same as D2D.
+    /// Same-device still records; [`Self::pool_get_access`] on the owner stays
+    /// ReadWrite. Applies to existing and later allocs. Downgrades a prior
+    /// [`Self::pool_set_access`] on `device`.
+    pub fn pool_set_access_read(&mut self, pool: PoolId, device: DeviceId) -> Result<(), SimError> {
+        self.pool_prepare_set_access(pool, device)?;
+        {
+            let p = self.pool_mut(pool)?;
+            let _ins = p.accessed_by_read.insert(device);
+            let _was = p.accessed_by.remove(&device);
+        }
+        self.clock = self.clock.saturating_add(self.first_alloc_ns().max(1));
+        Ok(())
+    }
+
+    fn pool_prepare_set_access(&self, pool: PoolId, device: DeviceId) -> Result<(), SimError> {
         self.fail_if_capturing("cannot capture mempool")?;
         self.refuse_graph_pool(pool)?;
         self.refuse_destroyed_pool(pool)?;
@@ -10619,8 +10660,6 @@ impl Sim {
                 });
             }
         }
-        let _ins = self.pool_mut(pool)?.accessed_by.insert(device);
-        self.clock = self.clock.saturating_add(self.first_alloc_ns().max(1));
         Ok(())
     }
 
@@ -10628,9 +10667,9 @@ impl Sim {
     ///
     /// [`MemAccessFlags::PROT_READ_WRITE`] is [`Self::pool_set_access`].
     /// [`MemAccessFlags::PROT_NONE`] is [`Self::pool_unset_access`].
-    /// [`MemAccessFlags::PROT_READ`] is Invalid `"pool prot read"` (pool
-    /// ProtRead is not modeled). Other bits are Invalid `"pool access flags"`.
-    /// Typed helpers stay. Capture is refused by those helpers.
+    /// [`MemAccessFlags::PROT_READ`] is [`Self::pool_set_access_read`].
+    /// Other bits are Invalid `"pool access flags"`. Typed helpers stay.
+    /// Capture is refused by those helpers.
     pub fn pool_set_access_with_flags(
         &mut self,
         pool: PoolId,
@@ -10640,9 +10679,7 @@ impl Sim {
         match flags {
             MemAccessFlags::PROT_READ_WRITE => self.pool_set_access(pool, device),
             MemAccessFlags::PROT_NONE => self.pool_unset_access(pool, device),
-            MemAccessFlags::PROT_READ => Err(SimError::Invalid {
-                why: "pool prot read",
-            }),
+            MemAccessFlags::PROT_READ => self.pool_set_access_read(pool, device),
             _ => Err(SimError::Invalid {
                 why: "pool access flags",
             }),
@@ -10652,10 +10689,9 @@ impl Sim {
     /// `cudaMemPoolSetAccess` with a descriptor array (`descList`, `count`).
     ///
     /// Host location Invalid `"access location"`. Flags match
-    /// [`Self::pool_set_access_with_flags`] (`PROT_READ` Invalid `"pool prot
-    /// read"`). All-or-nothing: a later Invalid leaves earlier descriptors
-    /// unapplied. Empty `descs` is a no-op after pool checks. Host-synchronous;
-    /// capture refused. Typed helpers stay.
+    /// [`Self::pool_set_access_with_flags`]. All-or-nothing: a later Invalid
+    /// leaves earlier descriptors unapplied. Empty `descs` is a no-op after
+    /// pool checks. Host-synchronous; capture refused. Typed helpers stay.
     pub fn pool_set_access_n(
         &mut self,
         pool: PoolId,
@@ -10668,12 +10704,9 @@ impl Sim {
         let mut ops = Vec::with_capacity(descs.len());
         for desc in descs {
             match desc.flags {
-                MemAccessFlags::PROT_READ_WRITE | MemAccessFlags::PROT_NONE => {}
-                MemAccessFlags::PROT_READ => {
-                    return Err(SimError::Invalid {
-                        why: "pool prot read",
-                    });
-                }
+                MemAccessFlags::PROT_READ_WRITE
+                | MemAccessFlags::PROT_READ
+                | MemAccessFlags::PROT_NONE => {}
                 _ => {
                     return Err(SimError::Invalid {
                         why: "pool access flags",
@@ -10684,7 +10717,9 @@ impl Sim {
                 why: "access location",
             })?;
             let _gpu = self.profile.gpu(device)?;
-            if desc.flags == MemAccessFlags::PROT_READ_WRITE && owner != device {
+            let grant = desc.flags == MemAccessFlags::PROT_READ_WRITE
+                || desc.flags == MemAccessFlags::PROT_READ;
+            if grant && owner != device {
                 let _link = self.profile.link(Some(owner), Some(device))?;
                 if !self.peer_access(owner, device) {
                     return Err(SimError::PeerDisabled {
@@ -10701,36 +10736,45 @@ impl Sim {
         Ok(())
     }
 
-    /// Drop [`Self::pool_set_access`] for `device` (`cudaMemAccessFlagsProtNone`).
+    /// Drop [`Self::pool_set_access`] / [`Self::pool_set_access_read`] for
+    /// `device` (`cudaMemAccessFlagsProtNone`).
     pub fn pool_unset_access(&mut self, pool: PoolId, device: DeviceId) -> Result<(), SimError> {
         self.fail_if_capturing("cannot capture mempool")?;
         self.refuse_destroyed_pool(pool)?;
         let _gpu = self.profile.gpu(device)?;
         let _p = self.pool_ref(pool)?;
-        let _was = self.pool_mut(pool)?.accessed_by.remove(&device);
+        {
+            let p = self.pool_mut(pool)?;
+            let _was_rw = p.accessed_by.remove(&device);
+            let _was_r = p.accessed_by_read.remove(&device);
+        }
         self.clock = self.clock.saturating_add(self.first_alloc_ns().max(1));
         Ok(())
     }
 
-    /// Whether `device` has [`Self::pool_set_access`] on `pool`.
+    /// Whether `device` has [`Self::pool_set_access`] or
+    /// [`Self::pool_set_access_read`] on `pool`.
     pub fn is_pool_accessed_by(&self, pool: PoolId, device: DeviceId) -> Result<bool, SimError> {
-        Ok(self.pool_ref(pool)?.accessed_by.contains(&device))
+        let p = self.pool_ref(pool)?;
+        Ok(p.accessed_by.contains(&device) || p.accessed_by_read.contains(&device))
     }
 
     /// `cudaMemPoolGetAccess`. Query; legal during capture.
     ///
     /// [`MemAccessFlags::PROT_READ_WRITE`] (`3`) on the owning device (default
-    /// accessibility) and on peers after [`Self::pool_set_access`]. Otherwise
-    /// [`MemAccessFlags::PROT_NONE`] (`0`). [`MemAccessFlags::PROT_READ`] is
-    /// not returned (pool ProtRead is not modeled). The graph-memory pool is
+    /// accessibility) and on peers after [`Self::pool_set_access`].
+    /// [`MemAccessFlags::PROT_READ`] (`1`) after [`Self::pool_set_access_read`].
+    /// Otherwise [`MemAccessFlags::PROT_NONE`] (`0`). The graph-memory pool is
     /// Invalid.
     pub fn pool_get_access(&self, pool: PoolId, device: DeviceId) -> Result<u32, SimError> {
         let _gpu = self.profile.gpu(device)?;
         self.refuse_graph_pool(pool)?;
         self.refuse_destroyed_pool(pool)?;
-        let owner = self.pool_ref(pool)?.device;
-        if owner == device || self.is_pool_accessed_by(pool, device)? {
+        let p = self.pool_ref(pool)?;
+        if p.device == device || p.accessed_by.contains(&device) {
             Ok(MemAccessFlags::PROT_READ_WRITE)
+        } else if p.accessed_by_read.contains(&device) {
+            Ok(MemAccessFlags::PROT_READ)
         } else {
             Ok(MemAccessFlags::PROT_NONE)
         }
@@ -11301,7 +11345,8 @@ impl Sim {
     }
 
     /// Whether `device` has [`MemAdvise::SetAccessedBy`], [`Self::va_set_access`],
-    /// or [`Self::pool_set_access`] on this alloc's mempool.
+    /// [`Self::pool_set_access`], or [`Self::pool_set_access_read`] on this
+    /// alloc's mempool.
     pub fn is_accessed_by(&self, alloc: AllocId, device: DeviceId) -> Result<bool, SimError> {
         let a = self.alloc_ref(alloc)?;
         if !a.live {
@@ -11310,7 +11355,7 @@ impl Sim {
         if a.accessed_by.contains(&device) && (a.managed || a.vmm) {
             return Ok(true);
         }
-        Ok(self.pool_peer_ok(a, device))
+        Ok(self.pool_peer_ok(a, device, false))
     }
 
     /// Whether [`MemAdvise::SetPreferredLocation`] names `device`.
@@ -14173,8 +14218,9 @@ impl Sim {
     ///
     /// A VMM VA must be fully mapped ([`Self::is_resident`]) or peer-readable
     /// via [`Self::va_set_access`] (reads) / [`Self::va_set_access_write`]
-    /// (read and write). A mempool alloc may be read **and written** on a
-    /// peer after [`Self::pool_set_access`]. For a mapped page of a larger
+    /// (read and write). A mempool alloc may be read on a peer after
+    /// [`Self::pool_set_access`] / [`Self::pool_set_access_read`], and written
+    /// after [`Self::pool_set_access`]. For a mapped page of a larger
     /// VA, use [`Self::kernel_bufs`].
     ///
     /// A managed allocation not yet on `device` is [`Self::prefetch`]'d when
@@ -14202,8 +14248,9 @@ impl Sim {
     ///
     /// Each [`KernelBuf`] must be mapped-host, device-resident, a VMM span
     /// covered by [`Self::va_map_range`], a VMM peer [`Self::va_set_access`]
-    /// read, a VMM peer [`Self::va_set_access_write`] (read and write), or a
-    /// mempool peer [`Self::pool_set_access`] (read and write).
+    /// read, a VMM peer [`Self::va_set_access_write`] (read and write), a
+    /// mempool peer [`Self::pool_set_access_read`] (read), or a mempool peer
+    /// [`Self::pool_set_access`] (read and write).
     /// `bytes == 0` means from `offset` to
     /// the end of the allocation. A range past the reservation is `Invalid`.
     /// A live kernel (not a graph replay) page-faults managed memory when it
@@ -18451,13 +18498,14 @@ impl Sim {
             .is_some_and(|h| vmm_covers(&a.vmm_maps, h, off, n));
         let accessed =
             mapped_ok && allow_remote && a.remote_read_ok(device) && (!a.vmm || home_span);
-        let pool_ok = self.pool_peer_ok(a, device);
+        let pool_ok = self.pool_peer_ok(a, device, !allow_remote);
         let vmm_rw = a.vmm && a.vmm_write_by.contains(&device) && home_span;
         Ok(on_device || mapped || accessed || pool_ok || vmm_rw)
     }
 
-    /// Peer ReadWrite via [`Self::pool_set_access`]. Physicals stay on the pool GPU.
-    fn pool_peer_ok(&self, a: &Alloc, device: DeviceId) -> bool {
+    /// Peer access via [`Self::pool_set_access`] (read and write) or
+    /// [`Self::pool_set_access_read`] (read). Physicals stay on the pool GPU.
+    fn pool_peer_ok(&self, a: &Alloc, device: DeviceId, write: bool) -> bool {
         if !a.live {
             return false;
         }
@@ -18476,8 +18524,8 @@ impl Sim {
         let local_ok = self
             .pools
             .get(&pid)
-            .is_some_and(|p| p.accessed_by.contains(&device));
-        local_ok || root.accessed_by.contains(&device)
+            .is_some_and(|p| p.grants(device, write));
+        local_ok || root.grants(device, write)
     }
 
     fn peer_or_host_bps(&self, src: DeviceId, dst: DeviceId) -> Result<u64, SimError> {
@@ -18513,12 +18561,12 @@ impl Sim {
                 continue;
             }
             if a.remote_read_ok(device)
-                || self.pool_peer_ok(a, device)
+                || self.pool_peer_ok(a, device, false)
                 || (a.vmm && a.vmm_write_by.contains(&device))
             {
                 let src = if a.vmm {
                     a.vmm_home()
-                } else if self.pool_peer_ok(a, device) {
+                } else if self.pool_peer_ok(a, device, false) {
                     a.pool
                         .and_then(|p| self.pools.get(&p).map(|pool| pool.device))
                 } else {

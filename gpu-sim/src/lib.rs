@@ -121,16 +121,17 @@
 //! unused cache to the OS; outstanding allocs stay valid; the default pool
 //! cannot be destroyed; destroying the current pool rebinds GetMemPool to
 //! GetDefaultMemPool.
-//! [`Sim::pool_set_access`] / [`pool_unset_access`](Sim::pool_unset_access) /
+//! [`Sim::pool_set_access`] / [`pool_set_access_read`](Sim::pool_set_access_read) /
+//! [`pool_unset_access`](Sim::pool_unset_access) /
 //! [`pool_get_access`](Sim::pool_get_access) are `cudaMemPoolSetAccess`
-//! ReadWrite / ProtNone and `cudaMemPoolGetAccess` (owner is ReadWrite by
+//! ReadWrite / ProtRead / ProtNone and `cudaMemPoolGetAccess` (owner is ReadWrite by
 //! default; peers need SetAccess). [`pool_set_access_with_flags`](Sim::pool_set_access_with_flags)
-//! is the flags word ([`MemAccessFlags::PROT_READ_WRITE`] / [`PROT_NONE`](MemAccessFlags::PROT_NONE);
-//! [`PROT_READ`](MemAccessFlags::PROT_READ) is Invalid `"pool prot read"`).
+//! is the flags word ([`MemAccessFlags::PROT_READ_WRITE`] / [`PROT_READ`](MemAccessFlags::PROT_READ) /
+//! [`PROT_NONE`](MemAccessFlags::PROT_NONE)).
 //! [`pool_set_access_n`](Sim::pool_set_access_n) is the CUDA descriptor array
 //! (all-or-nothing; empty is a no-op after pool checks).
-//! Typed helpers stay. A kernel on a peer may read
-//! **and write** pool allocations without dest HBM (interconnect). Applies to
+//! Typed helpers stay. A kernel on a peer may read pool allocations without dest
+//! HBM after ProtRead; writes need ReadWrite (interconnect). Applies to
 //! existing and later allocs from that pool. [`Sim::malloc`] cannot consume another pool's cache.
 //! [`Sim::alloc_host`] is pageable; [`Sim::host_register`] / [`host_register_mapped`](Sim::host_register_mapped)
 //! are `cudaHostRegister` (host-synchronous mlock). `expertvm sim --host-register`
@@ -17402,6 +17403,79 @@ mod tests {
     }
 
     #[test]
+    fn pool_set_access_read_kernel_reads_without_write() {
+        let mut sim = Sim::new(HardwareProfile::example_2xh100_pcie());
+        let d0 = DeviceId(0);
+        let d1 = DeviceId(1);
+        let s = StreamId(0);
+        let bytes = 32u64 << 20;
+        let p0 = sim.default_pool(d0).unwrap();
+        let a = sim.alloc(d0, bytes, s).unwrap();
+        enq(sim.memcpy_pinned_to_device(d0, a, bytes, s));
+        sim.synchronize().unwrap();
+        sim.pool_set_access_read(p0, d1).unwrap();
+        assert!(sim.is_pool_accessed_by(p0, d1).unwrap());
+        assert!(sim.is_accessed_by(a, d1).unwrap());
+        assert_eq!(
+            sim.pool_get_access(p0, d1).unwrap(),
+            MemAccessFlags::PROT_READ
+        );
+        assert!(!sim.is_resident(a, d1).unwrap());
+        let t0 = sim.clock_ns();
+        enq(sim.kernel(d1, KernelKind::other(8, bytes), &[a], &[], s));
+        sim.synchronize().unwrap();
+        assert!(sim.is_resident(a, d0).unwrap());
+        assert!(!sim.is_resident(a, d1).unwrap());
+        assert_eq!(sim.hbm_used(d1).unwrap(), 0);
+        let remote = sim.clock_ns().saturating_sub(t0);
+        let mut local = Sim::new(HardwareProfile::example_2xh100_pcie());
+        let b = local.alloc(d0, bytes, s).unwrap();
+        enq(local.memcpy_pinned_to_device(d0, b, bytes, s));
+        local.synchronize().unwrap();
+        let t1 = local.clock_ns();
+        enq(local.kernel(d0, KernelKind::other(8, bytes), &[b], &[], s));
+        local.synchronize().unwrap();
+        let hbm = local.clock_ns().saturating_sub(t1);
+        assert!(remote > hbm, "remote={remote} hbm={hbm}");
+        sim.pool_set_access(p0, d1).unwrap();
+        assert_eq!(
+            sim.pool_get_access(p0, d1).unwrap(),
+            MemAccessFlags::PROT_READ_WRITE
+        );
+        enq(sim.kernel(d1, KernelKind::other(8, bytes), &[], &[a], s));
+        sim.synchronize().unwrap();
+        assert_eq!(sim.hbm_used(d1).unwrap(), 0);
+        sim.pool_set_access_read(p0, d1).unwrap();
+        assert_eq!(
+            sim.pool_get_access(p0, d1).unwrap(),
+            MemAccessFlags::PROT_READ
+        );
+        enq(sim.kernel(d1, KernelKind::other(8, bytes), &[], &[a], s));
+        match sim.synchronize() {
+            Err(SimError::NotResident { alloc, device }) => {
+                assert_eq!(alloc, a);
+                assert_eq!(device, d1);
+            }
+            other => panic!("{other:?}"),
+        }
+
+        let mut fill = Sim::new(HardwareProfile::example_2xh100_pcie());
+        let pf = fill.default_pool(d0).unwrap();
+        let c = fill.alloc(d0, bytes, s).unwrap();
+        enq(fill.memcpy_pinned_to_device(d0, c, bytes, s));
+        fill.synchronize().unwrap();
+        fill.pool_set_access_read(pf, d1).unwrap();
+        enq(fill.memset(d1, c, bytes, s));
+        match fill.synchronize() {
+            Err(SimError::NotResident { alloc, device }) => {
+                assert_eq!(alloc, c);
+                assert_eq!(device, d1);
+            }
+            other => panic!("{other:?}"),
+        }
+    }
+
+    #[test]
     fn pool_set_access_rejects_peer_disabled_malloc_and_capture() {
         let mut sim = Sim::new(HardwareProfile::example_2xh100_pcie());
         let d0 = DeviceId(0);
@@ -17448,10 +17522,14 @@ mod tests {
             .pool_set_access_with_flags(pf, d1, MemAccessFlags::PROT_NONE)
             .unwrap();
         assert!(!flags.is_pool_accessed_by(pf, d1).unwrap());
-        match flags.pool_set_access_with_flags(pf, d1, MemAccessFlags::PROT_READ) {
-            Err(SimError::Invalid { why }) => assert!(why.contains("pool prot read"), "{why}"),
-            other => panic!("{other:?}"),
-        }
+        flags
+            .pool_set_access_with_flags(pf, d1, MemAccessFlags::PROT_READ)
+            .unwrap();
+        assert!(flags.is_pool_accessed_by(pf, d1).unwrap());
+        assert_eq!(
+            flags.pool_get_access(pf, d1).unwrap(),
+            MemAccessFlags::PROT_READ
+        );
         match flags.pool_set_access_with_flags(pf, d1, 2) {
             Err(SimError::Invalid { why }) => assert!(why.contains("pool access flags"), "{why}"),
             other => panic!("{other:?}"),
@@ -17485,13 +17563,28 @@ mod tests {
                 },
                 MemAccessDesc {
                     location: Place::Device(d1),
-                    flags: MemAccessFlags::PROT_READ,
+                    flags: 2,
                 },
             ],
         ) {
-            Err(SimError::Invalid { why }) => assert!(why.contains("pool prot read"), "{why}"),
+            Err(SimError::Invalid { why }) => assert!(why.contains("pool access flags"), "{why}"),
             other => panic!("{other:?}"),
         }
+        assert!(!sim.is_pool_accessed_by(p0, d1).unwrap());
+        sim.pool_set_access_n(
+            p0,
+            &[MemAccessDesc {
+                location: Place::Device(d1),
+                flags: MemAccessFlags::PROT_READ,
+            }],
+        )
+        .unwrap();
+        assert!(sim.is_pool_accessed_by(p0, d1).unwrap());
+        assert_eq!(
+            sim.pool_get_access(p0, d1).unwrap(),
+            MemAccessFlags::PROT_READ
+        );
+        sim.pool_unset_access(p0, d1).unwrap();
         assert!(!sim.is_pool_accessed_by(p0, d1).unwrap());
         match sim.pool_set_access_n(
             p0,

@@ -35,6 +35,7 @@ warp scheduler, L1, …   ← do not model
 | `ReuseAllowOpportunistic=0` skips that cache reuse (OS alloc; cache stays reserved) | `alloc_overhead_ns` |
 | `cudaMemPoolProps::maxSize` (`create_pool_with_props`); reserved cannot grow past it | OOM |
 | `cudaMemPoolSetAccess` (`pool_set_access`) ReadWrite on a peer; dest HBM stays 0; writes allowed | interconnect, not local HBM |
+| `cudaMemPoolSetAccess` ProtRead (`pool_set_access_read`); dest HBM stays 0; writes `NotResident` | interconnect, not local HBM |
 | `cudaMalloc` (`malloc`) device-syncs that GPU, then the pointer is usable; it cannot consume another pool's cache | `alloc_overhead_ns` (charged at the call) |
 | `cudaIpcGetMemHandle` / `ipc_open` / `ipc_close` share physicals (`ipc_open_with_flags` lazy-peer is a no-op) | `alloc_overhead_ns` (export/import) |
 | `cudaIpcGetEventHandle` / `ipc_open_event` share the source record | 1 ns (export/import) |
@@ -83,7 +84,7 @@ warp scheduler, L1, …   ← do not model
 | `cudaMemset3D` (`memset_3d`) waits that stream; `memset_3d_async` bills payload not padding | HBM write |
 | `synchronize_device` waits one GPU | other GPUs keep running |
 | stream order, event dependencies | memcpy microseconds |
-| residency: a kernel may only read **device**, **mapped-host**, VMM peer `va_set_access` (reads) / `va_set_access_write` (read/write), or mempool peer `pool_set_access` (read/write) allocations; managed first-touch at kernel start | PCIe / NVLink / HBM bandwidth |
+| residency: a kernel may only read **device**, **mapped-host**, VMM peer `va_set_access` (reads) / `va_set_access_write` (read/write), or mempool peer `pool_set_access_read` (reads) / `pool_set_access` (read/write) allocations; managed first-touch at kernel start | PCIe / NVLink / HBM bandwidth |
 | HBM vs host-pinned: `alloc_host_pinned` does not charge HBM | pageable vs pinned H2D (`pageable_permille`) |
 | copy-engine occupancy | launch overhead |
 | peer accessibility | size-dependent efficiency |
@@ -880,9 +881,8 @@ pool cannot be destroyed; destroying the current pool rebinds GetMemPool
 to GetDefaultMemPool. Capture cannot include pool create/trim/set-attribute
 /destroy.
 `pool_get_access` is `cudaMemPoolGetAccess` (owner ReadWrite by default;
-peers need `pool_set_access`). `pool_set_access_with_flags` is the flags
-word (`PROT_READ_WRITE` / `PROT_NONE`; `PROT_READ` is Invalid `"pool prot
-read"`). Typed helpers stay.
+peers need `pool_set_access` / `pool_set_access_read`). `pool_set_access_with_flags` is the flags
+word (`PROT_READ_WRITE` / `PROT_READ` / `PROT_NONE`). Typed helpers stay.
 `ipc_get` / `ipc_open` / `ipc_close` are `cudaIpcGetMemHandle` /
 `cudaIpcOpenMemHandle` / `cudaIpcCloseMemHandle`: the import aliases the
 source physicals (no extra HBM). `ipc_open_with_flags` accepts
@@ -1040,7 +1040,8 @@ check). Typed helpers stay.
 `va_get_access` is `cuMemGetAccess` (local map ReadWrite; peer Read /
 ReadWrite / None). Query; legal during capture.
 `pool_set_access` is `cudaMemPoolSetAccess`
-ReadWrite on a peer (no dest HBM; kernels may write). `pool_set_access_n`
+ReadWrite on a peer (no dest HBM; kernels may write). `pool_set_access_read` is
+ProtRead (peer reads, no dest HBM; writes stay `NotResident`). `pool_set_access_n`
 is the CUDA descriptor array (all-or-nothing; empty is a no-op after
 pool checks). Typed helpers stay. `kernel()` needs the whole VA covered; `kernel_bufs`, `memset_buf`, and
 `MemcpyOp::offset` touch a mapped page (paged KV). `va_acquire` remaps an idle VA of the same

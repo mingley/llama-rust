@@ -3384,8 +3384,8 @@ pub struct MemAccessFlags;
 impl MemAccessFlags {
     /// `cudaMemAccessFlagsProtNone`.
     pub const PROT_NONE: u32 = 0;
-    /// `cudaMemAccessFlagsProtRead`. Not modeled for pools (Invalid
-    /// `"pool prot read"`). VMM uses [`crate::Sim::va_set_access`].
+    /// `cudaMemAccessFlagsProtRead`. Pools use [`crate::Sim::pool_set_access_read`];
+    /// VMM uses [`crate::Sim::va_set_access`].
     pub const PROT_READ: u32 = 1;
     /// `cudaMemAccessFlagsProtReadWrite` ([`crate::Sim::pool_set_access`] /
     /// [`crate::Sim::va_set_access_write`]).

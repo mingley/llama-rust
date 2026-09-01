@@ -4909,7 +4909,16 @@ model, do not celebrate the sim.
     not invent `cuCtxSetExecAffinity`. `gpu-profile capture` is still
     refused. Dual score still has no `$/M tokens`.
 
-452. [ ] Next numbered PLAN item after 451 is the next `gpu-sim` / Engine /
+452. [x] `gpu-sim` `pool_set_access_read` is `cudaMemPoolSetAccess`
+    `cudaMemAccessFlagsProtRead`. Peer kernels may read without dest
+    HBM; writes and memset stay `NotResident` until ReadWrite.
+    `pool_set_access_with_flags` / `pool_set_access_n` accept
+    `PROT_READ`. `pool_get_access` returns `PROT_READ` on those peers.
+    Owner stays ReadWrite. Capture cannot include it. Graph-memory
+    pools stay Invalid. No Engine `--pool-prot-read`. `gpu-profile
+    capture` is still refused. Dual score still has no `$/M tokens`.
+
+453. [ ] Next numbered PLAN item after 452 is the next `gpu-sim` / Engine /
     serve / expertvm mechanical API that is still missing, or the next official
     decode family. Prefer remaining CUDA-shaped twins over more
     OpenAI HTTP veneer. Do not invent F32 `output.scale`. Do not invent a
@@ -4988,6 +4997,8 @@ model, do not celebrate the sim.
     Do not invent a second `cuMemPoolGetId`.
     Do not invent a second `cuDeviceGetExecAffinitySupport`. Do not invent
     `cuCtxSetExecAffinity` (occupancy SM counts).
+    Do not invent a second pool `PROT_READ`. Do not invent Engine
+    `--pool-prot-read`.
     Do not invent `cuDeviceGetLuid`
     (Windows).
     Do not invent gemma4 `attn_q.scale` / `attn_output.scale` / `attn_k.scale` /
