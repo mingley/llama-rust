@@ -9195,10 +9195,17 @@ fn vec_dot_q4_k_f32_row(row: &[u8], x: &[f32]) -> f32 {
             let b0 = dmin * f32::from(m0);
             let a1 = d * f32::from(sc1);
             let b1 = dmin * f32::from(m1);
-            for ((p, xl), xh) in packed.iter().zip(xlo.iter()).zip(xhi.iter()) {
+            // ggml `dequantize_row_q4_K` then a sequential `y[i]*x[i]`
+            // fold: all 32 lo, then all 32 hi. Interleaving lo/hi per
+            // nibble-byte reassociates the f32 sum enough that bloom
+            // `attn_qkv.scale = 3.0` misses the 0.1% decode logit bound
+            // on the scalar path.
+            for (p, xl) in packed.iter().zip(xlo.iter()) {
                 let q0 = f32::from(p & 0x0f);
-                let q1 = f32::from(p >> 4);
                 sum += (a0 * q0 - b0) * *xl;
+            }
+            for (p, xh) in packed.iter().zip(xhi.iter()) {
+                let q1 = f32::from(p >> 4);
                 sum += (a1 * q1 - b1) * *xh;
             }
         }
@@ -10103,6 +10110,32 @@ mod tests {
             (via_dequant - y[0]).abs() * 100_000.0 < 1.0,
             "{via_dequant} vs {}",
             y[0]
+        );
+    }
+
+    /// Sparse `x` hides summation order. A dense super-block must match
+    /// dequant-then-dot bit for bit on the scalar kernel (the decode
+    /// oracle's Q4_K path). `gemv_q4_k_f32` may dispatch SIMD.
+    #[test]
+    fn dequant_q4_k_row_dot_matches_scalar_gemv_dense() {
+        let mut qs = [0u8; QK_K];
+        for (i, q) in qs.iter_mut().enumerate() {
+            *q = u8::try_from(i % 16).unwrap_or(0);
+        }
+        let sc = [2u8, 3, 4, 5, 1, 2, 3, 4];
+        let mn = [1u8, 0, 1, 0, 1, 0, 1, 0];
+        let w = pack_q4_k_block(25.0 / 100.0, 1.0 / 100.0, &sc, &mn, &qs);
+        let x: Vec<f32> = (0..QK_K)
+            .map(|i| f32::from(u16::try_from(i).unwrap_or(0)) * 0.01 - 0.5)
+            .collect();
+        let via_gemv = vec_dot_q4_k_f32_row(&w, &x);
+        let mut row = [0.0f32; QK_K];
+        dequant_q4_k_row(QK_K, &w, &mut row).unwrap();
+        let via_dequant: f32 = row.iter().zip(x.iter()).map(|(a, b)| a * b).sum();
+        assert_eq!(
+            via_dequant.to_bits(),
+            via_gemv.to_bits(),
+            "{via_dequant} vs {via_gemv}"
         );
     }
 
