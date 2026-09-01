@@ -19965,10 +19965,21 @@ impl Sim {
     /// `cuProfilerStart` / `cudaProfilerStart`. Host-synchronous. Capture
     /// cannot include it.
     ///
-    /// 1 ns no-op (CUPTI is not modeled). Distinct from [`Self::driver_init`].
-    /// This VM does not invent `cuProfilerStop` this slice.
+    /// 1 ns no-op (CUPTI is not modeled). Distinct from [`Self::driver_init`]
+    /// and from [`Self::profiler_stop`].
     pub fn profiler_start(&mut self) -> Result<(), SimError> {
         self.fail_if_capturing("cannot capture profiler start")?;
+        self.clock = self.clock.saturating_add(1);
+        Ok(())
+    }
+
+    /// `cuProfilerStop` plus `cudaProfilerStop`. Host-synchronous. Capture
+    /// cannot include it.
+    ///
+    /// 1 ns no-op (CUPTI is not modeled). Distinct from [`Self::profiler_start`].
+    /// This VM does not invent `cudaProfilerInitialize` this slice.
+    pub fn profiler_stop(&mut self) -> Result<(), SimError> {
+        self.fail_if_capturing("cannot capture profiler stop")?;
         self.clock = self.clock.saturating_add(1);
         Ok(())
     }

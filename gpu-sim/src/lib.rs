@@ -882,6 +882,9 @@
 //! [`profiler_start`](Sim::profiler_start) is `cuProfilerStart` plus
 //! `cudaProfilerStart` (1 ns no-op; CUPTI is not modeled). Capture cannot
 //! include it. No Engine `--profiler-start`.
+//! [`profiler_stop`](Sim::profiler_stop) is `cuProfilerStop` plus
+//! `cudaProfilerStop` (1 ns no-op; CUPTI is not modeled). Capture cannot
+//! include it. Distinct from [`profiler_start`](Sim::profiler_start). No Engine `--profiler-stop`.
 //! [`Sim::module_get_loading_mode`] is `cuModuleGetLoadingMode` (always
 //! [`ModuleLoadingMode::Eager`]). Query; legal during capture. No Engine `--module-loading`.
 //! [`library_load_data`](Sim::library_load_data) is `cuLibraryLoadData`
@@ -18512,6 +18515,30 @@ mod tests {
         }
         let _g = sim.end_capture().unwrap();
         sim.profiler_start().unwrap();
+        assert_eq!(sim.clock_ns(), t0.saturating_add(4));
+    }
+
+    #[test]
+    fn profiler_stop_is_cu_profiler_stop_noop() {
+        let mut sim = Sim::new(h100());
+        let t0 = sim.clock_ns();
+        sim.profiler_stop().unwrap();
+        assert_eq!(sim.clock_ns(), t0.saturating_add(1));
+        sim.profiler_start().unwrap();
+        assert_eq!(sim.clock_ns(), t0.saturating_add(2));
+        sim.profiler_stop().unwrap();
+        assert_eq!(sim.clock_ns(), t0.saturating_add(3));
+        sim.begin_capture(DeviceId(0), StreamId(0)).unwrap();
+        match sim.profiler_stop() {
+            Err(SimError::Invalid { why }) => assert!(why.contains("capture"), "{why}"),
+            other => panic!("{other:?}"),
+        }
+        match sim.profiler_start() {
+            Err(SimError::Invalid { why }) => assert!(why.contains("capture"), "{why}"),
+            other => panic!("{other:?}"),
+        }
+        let _g = sim.end_capture().unwrap();
+        sim.profiler_stop().unwrap();
         assert_eq!(sim.clock_ns(), t0.saturating_add(4));
     }
 

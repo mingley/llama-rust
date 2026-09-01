@@ -186,6 +186,7 @@ warp scheduler, L1, …   ← do not model
 | `checkpoint_process_lock` is Invalid (CUDA process checkpoint is not modeled) | `cuCheckpointProcessLock` |
 | `driver_init` is a 1 ns no-op; flags must be 0 | `cuInit` |
 | `profiler_start` is a 1 ns no-op; capture refused | `cuProfilerStart` / `cudaProfilerStart` |
+| `profiler_stop` is a 1 ns no-op; capture refused | `cuProfilerStop` / `cudaProfilerStop` |
 | `module_get_loading_mode` is always Eager (CUDA 1) | `cuModuleGetLoadingMode` |
 | `library_load_data` is Invalid (no cubin / `CUlibrary`) | `cuLibraryLoadData` |
 | `link_create` is Invalid (no JIT linker or NVRTC) | `cuLinkCreate` |
@@ -1194,6 +1195,9 @@ legal during capture. No Engine `--checkpoint`. `driver_init` is `cuInit` (flags
 `profiler_start` is `cuProfilerStart` plus `cudaProfilerStart` (1 ns no-op;
 CUPTI is not modeled; capture cannot include it). Distinct from
 `driver_init`. No Engine `--profiler-start`.
+`profiler_stop` is `cuProfilerStop` plus `cudaProfilerStop` (1 ns no-op;
+CUPTI is not modeled; capture cannot include it). Distinct from
+`profiler_start`. No Engine `--profiler-stop`.
 `module_get_loading_mode` is `cuModuleGetLoadingMode` (always Eager;
 CUDA 1; query; legal during capture; no modules; distinct from
 `driver_init` and `init_device`).
