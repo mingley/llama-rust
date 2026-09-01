@@ -5,6 +5,13 @@ Visible five-turn extract: [docs/chatgpt-share-6a920fe1.md](docs/chatgpt-share-6
 Complete share-API extract: [docs/chatgpt-share-6a920fe1/](docs/chatgpt-share-6a920fe1/).
 Work lands on `main`. No PRs.
 
+## Shipped 2026-09-01 — CUDA `cudaDevAttrVulkanCigSupported`
+
+`gpu-sim` `DeviceAttr::VulkanCigSupported` is always 0. Vulkan
+CUDA-in-graphics is not modeled. Query; legal during capture. Distinct
+from `D3D12CigSupported`. This VM does not invent Engine `--vulkan-cig`.
+`gpu-profile capture` is still refused. Dual score still has no `$/M tokens`.
+
 ## Shipped 2026-09-01 — CUDA `cudaDevAttrD3D12CigSupported`
 
 `gpu-sim` `DeviceAttr::D3D12CigSupported` is always 0. D3D12

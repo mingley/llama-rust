@@ -567,6 +567,8 @@
 //! [`DeviceAttr::D3D12CigSupported`] is always 0 (D3D12 CUDA-in-graphics is
 //! not modeled). Distinct from
 //! [`HandleTypeWin32HandleSupported`](DeviceAttr::HandleTypeWin32HandleSupported).
+//! [`DeviceAttr::VulkanCigSupported`] is always 0 (Vulkan CUDA-in-graphics is
+//! not modeled). Distinct from [`D3D12CigSupported`](DeviceAttr::D3D12CigSupported).
 //! [`DeviceAttr::HostMemoryPoolsSupported`] is always 0 (pools are
 //! device-only; host location is Invalid).
 //! [`DeviceAttr::IsMultiGpuBoard`] / [`MultiGpuBoardGroupID`](DeviceAttr::MultiGpuBoardGroupID)
@@ -19616,6 +19618,33 @@ mod tests {
         );
         let _g = sim.end_capture().unwrap();
         match sim.device_get_attribute(DeviceId(99), DeviceAttr::D3D12CigSupported) {
+            Err(SimError::Invalid { why }) => {
+                assert!(why.contains("device not in profile"), "{why}");
+            }
+            other => panic!("{other:?}"),
+        }
+    }
+
+    #[test]
+    fn device_get_attribute_vulkan_cig_supported_is_zero() {
+        let mut sim = Sim::new(h100());
+        let d = DeviceId(0);
+        let hp = sim.device_get_properties(d).unwrap();
+        assert!(!hp.vulkan_cig_supported);
+        assert!(!hp.d3d12_cig_supported);
+        assert_eq!(
+            sim.device_get_attribute(d, DeviceAttr::VulkanCigSupported)
+                .unwrap(),
+            0
+        );
+        sim.begin_capture(d, StreamId(0)).unwrap();
+        assert_eq!(
+            sim.device_get_attribute(d, DeviceAttr::VulkanCigSupported)
+                .unwrap(),
+            0
+        );
+        let _g = sim.end_capture().unwrap();
+        match sim.device_get_attribute(DeviceId(99), DeviceAttr::VulkanCigSupported) {
             Err(SimError::Invalid { why }) => {
                 assert!(why.contains("device not in profile"), "{why}");
             }

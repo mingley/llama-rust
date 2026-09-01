@@ -1161,6 +1161,9 @@ pub enum DeviceAttr {
     /// `cudaDevAttrD3D12CigSupported` (always 0; D3D12 CUDA-in-graphics is
     /// not modeled). Distinct from [`Self::HandleTypeWin32HandleSupported`].
     D3D12CigSupported,
+    /// `cudaDevAttrVulkanCigSupported` (always 0; Vulkan CUDA-in-graphics is
+    /// not modeled). Distinct from [`Self::D3D12CigSupported`].
+    VulkanCigSupported,
     /// `cudaDevAttrHandleTypeFabricSupported` (always 0; fabric handles are not
     /// modeled).
     HandleTypeFabricSupported,
@@ -1742,6 +1745,10 @@ pub struct DeviceProperties {
     /// Always false; D3D12 CUDA-in-graphics is not modeled. Distinct from
     /// [`Self::handle_type_win32_handle_supported`].
     pub d3d12_cig_supported: bool,
+    /// `cudaDevAttrVulkanCigSupported` ([`DeviceAttr::VulkanCigSupported`]).
+    /// Always false; Vulkan CUDA-in-graphics is not modeled. Distinct from
+    /// [`Self::d3d12_cig_supported`].
+    pub vulkan_cig_supported: bool,
     /// `cudaDevAttrHandleTypeFabricSupported` (fabric handles are not modeled).
     pub handle_type_fabric_supported: bool,
     /// `cudaDevAttrHostMemoryPoolsSupported` (pools are device-only).
