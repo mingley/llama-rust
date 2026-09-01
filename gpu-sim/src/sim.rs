@@ -5160,7 +5160,8 @@ impl Sim {
     /// [`Self::graph_exec_child_set_params`]. `child` must already be
     /// instantiated, on the same GPU. Nested topology may change (unlike
     /// ExecSetParams). Capture cannot include it. Host-sync 1 ns. A parked
-    /// in-flight-destroyed exec is `"unknown graph"`. Live exec SetParams stays.
+    /// in-flight-destroyed exec is `"unknown graph"` as the parent or as
+    /// `child`. Live exec SetParams stays. Live exec as `child` stays.
     pub fn graph_child_set_params(
         &mut self,
         graph: GraphId,
@@ -5193,6 +5194,7 @@ impl Sim {
             }
             (step.device, *ownership)
         };
+        self.require_live_graph(child)?;
         let (ready, origin) = {
             let c = self.graphs.get(&child).ok_or(SimError::Invalid {
                 why: "unknown graph",
@@ -6025,7 +6027,8 @@ impl Sim {
     /// Capture cannot include it. Graphs with mem alloc/free nodes are legal
     /// (unlike [`Self::update_graph`], which treats child ids as topology).
     /// Nesting `exec` under itself, or a child whose tree already names `exec`,
-    /// is Invalid.
+    /// is Invalid. A parked in-flight-destroyed exec used as `child` is
+    /// `"unknown graph"`. Live exec as `child` stays.
     pub fn graph_exec_child_set_params(
         &mut self,
         exec: GraphId,
@@ -6063,6 +6066,7 @@ impl Sim {
             }
             (step.device, *graph, *ownership)
         };
+        self.require_live_graph(child)?;
         let (child_ok, child_gpu, child_steps) = {
             let c = self.graphs.get(&child).ok_or(SimError::Invalid {
                 why: "unknown graph",
@@ -9140,7 +9144,8 @@ impl Sim {
     /// Sibling children have no dependency until [`Self::graph_add_dependencies`].
     /// Independent children may Hyper-Q overlap at parent launch.
     /// Pin move ownership through [`Self::graph_add_node`] with
-    /// [`GraphNodeParams::ChildGraph`].
+    /// [`GraphNodeParams::ChildGraph`]. A parked in-flight-destroyed exec used
+    /// as `child` is `"unknown graph"`. Live exec as `child` stays.
     pub fn graph_add_child(&mut self, graph: GraphId, child: GraphId) -> Result<(), SimError> {
         self.graph_add_child_params(
             graph,
@@ -9164,6 +9169,7 @@ impl Sim {
             });
         }
         self.require_not_moved(child)?;
+        self.require_live_graph(child)?;
         let ownership = params.ownership;
         if ownership != GraphChildGraphOwnership::CLONE
             && ownership != GraphChildGraphOwnership::MOVE

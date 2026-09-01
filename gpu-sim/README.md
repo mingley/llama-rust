@@ -296,8 +296,10 @@ versus move of a child graph. Typed `graph_add_child` stays clone of an
 instantiated child without mem or conditional nodes. Move lets a parent own
 an uninstantiated child that may contain mem alloc/free. GetParams of a
 moved node reports `INVALID`. Instantiating the parent instantiates the
-moved child and inherits `AutoFreeOnLaunch`. This VM does not invent an
-Engine flag for child-graph ownership.
+moved child and inherits `AutoFreeOnLaunch`. A parked in-flight-destroyed
+exec used as a child-graph handle is `"unknown graph"`; a live exec as
+child stays. This VM does not invent an Engine flag for child-graph
+ownership.
 Copy engines still overlap compute. Profile knobs `gemm_util_permille` (achieved/peak) and `grouped_moe_permille`
 (grouped vs dense duration) scale kernel time. Defaults are 1000
 (identity roofline). They are parseable; they are not a capture. Host PCIe
@@ -621,7 +623,8 @@ enable unchanged.
 (swap the nested graph; nested topology must match; child ids are topology
 for `update_graph`; mem nodes legal). Definition-side
 `graph_child_set_params` stores the child id as passed (same as
-`graph_add_child`).
+`graph_add_child`). A parked in-flight-destroyed exec used as that child
+handle is `"unknown graph"`; a live exec as child stays.
 `graph_child_get_graph` is `cudaGraphChildGraphNodeGetGraph`.
 `graph_exec_child_get_graph` is the exec-snapshot GetParams twin
 (uninstantiated graphs are Invalid).

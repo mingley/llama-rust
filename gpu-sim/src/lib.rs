@@ -1167,6 +1167,8 @@
 //! [`graph_add_cooperative_kernel`](Sim::graph_add_cooperative_kernel) /
 //! [`graph_add_dependencies`](Sim::graph_add_dependencies) are
 //! `cudaGraphAdd*` on that id.
+//! A parked in-flight-destroyed exec used as a child-graph handle is
+//! `"unknown graph"`; a live exec as child stays.
 //! [`graph_add_node`](Sim::graph_add_node) is `cudaGraphAddNode`
 //! ([`GraphNodeParams`] plus dependency indices in the same call; duplicate
 //! `deps` are Invalid `"graph dependency"`). Typed
@@ -5671,6 +5673,81 @@ mod tests {
             other => panic!("{other:?}"),
         }
         sim.destroy_graph(g).unwrap();
+        sim.destroy_graph(_end).unwrap();
+    }
+
+    #[test]
+    fn parked_exec_child_is_unknown() {
+        let mut sim = Sim::new(h100());
+        let d = DeviceId(0);
+        let s = StreamId(0);
+        let a = sim.malloc(d, 4096).unwrap();
+        let child = sim.create_graph(d, s).unwrap();
+        sim.graph_add_kernel(child, KernelKind::other(1 << 40, 4096), &[a], &[a])
+            .unwrap();
+        let parked = sim.instantiate_graph(child).unwrap();
+        let live = sim.instantiate_graph(child).unwrap();
+        let parent = sim.create_graph(d, s).unwrap();
+        sim.graph_add_child(parent, live).unwrap();
+        sim.graph_child_set_params(parent, 0, live).unwrap();
+        let launched = sim.launch_graph(parked, s).unwrap();
+        assert!(launched > 0);
+        sim.destroy_graph(parked).unwrap();
+        let parent2 = sim.create_graph(d, s).unwrap();
+        match sim.graph_add_child(parent2, parked).unwrap_err() {
+            SimError::Invalid { why } => assert!(why.contains("unknown"), "{why}"),
+            other => panic!("{other:?}"),
+        }
+        match sim
+            .graph_add_node(
+                parent2,
+                &[],
+                GraphNodeParams::ChildGraph(ChildGraphNodeParams {
+                    graph: parked,
+                    ownership: GraphChildGraphOwnership::CLONE,
+                }),
+            )
+            .unwrap_err()
+        {
+            SimError::Invalid { why } => assert!(why.contains("unknown"), "{why}"),
+            other => panic!("{other:?}"),
+        }
+        match sim.graph_child_set_params(parent, 0, parked).unwrap_err() {
+            SimError::Invalid { why } => assert!(why.contains("unknown"), "{why}"),
+            other => panic!("{other:?}"),
+        }
+        let parent_exec = sim.instantiate_graph(parent).unwrap();
+        match sim
+            .graph_exec_child_set_params(parent_exec, 0, parked)
+            .unwrap_err()
+        {
+            SimError::Invalid { why } => assert!(why.contains("unknown"), "{why}"),
+            other => panic!("{other:?}"),
+        }
+        sim.graph_exec_child_set_params(parent_exec, 0, live)
+            .unwrap();
+        sim.graph_add_child(parent2, live).unwrap();
+        sim.graph_add_child(parent2, child).unwrap();
+        sim.begin_capture(d, StreamId(1)).unwrap();
+        match sim.graph_add_child(parent2, parked).unwrap_err() {
+            SimError::Invalid { why } => assert!(why.contains("capture"), "{why}"),
+            other => panic!("{other:?}"),
+        }
+        match sim.graph_child_set_params(parent, 0, parked).unwrap_err() {
+            SimError::Invalid { why } => assert!(why.contains("capture"), "{why}"),
+            other => panic!("{other:?}"),
+        }
+        let _end = sim.end_capture().unwrap();
+        sim.synchronize().unwrap();
+        match sim.graph_add_child(parent2, parked).unwrap_err() {
+            SimError::Invalid { why } => assert!(why.contains("unknown"), "{why}"),
+            other => panic!("{other:?}"),
+        }
+        sim.destroy_graph(parent).unwrap();
+        sim.destroy_graph(parent_exec).unwrap();
+        sim.destroy_graph(parent2).unwrap();
+        sim.destroy_graph(live).unwrap();
+        sim.destroy_graph(child).unwrap();
         sim.destroy_graph(_end).unwrap();
     }
 

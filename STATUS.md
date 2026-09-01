@@ -5,6 +5,16 @@ Visible five-turn extract: [docs/chatgpt-share-6a920fe1.md](docs/chatgpt-share-6
 Complete share-API extract: [docs/chatgpt-share-6a920fe1/](docs/chatgpt-share-6a920fe1/).
 Work lands on `main`. No PRs.
 
+## Shipped 2026-09-01 — Parked exec as child graph is unknown
+
+`gpu-sim` CUDA `cudaGraphAddChildGraphNode` /
+`cudaGraphChildGraphNodeSetParams` / `cudaGraphExecChildGraphNodeSetParams`
+whose child handle was destroyed while a launch was in flight is Invalid
+`"unknown graph"`. Capture is still reported first. Live exec as child
+stays. Add-child of the definition after that exec is parked stays. This
+VM does not invent Engine `--graph-child-gone`. `gpu-profile capture` is
+still refused. Dual score still has no `$/M tokens`.
+
 ## Shipped 2026-09-01 — Parked exec SetParams is unknown
 
 `gpu-sim` CUDA definition `cudaGraph*NodeSetParams` / `cudaGraphNodeSetParams`
