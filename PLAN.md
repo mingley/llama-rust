@@ -5078,7 +5078,17 @@ model, do not celebrate the sim.
     `--memset-element`. `gpu-profile capture` is still refused. Dual
     score still has no `$/M tokens`.
 
-473. [ ] Next numbered PLAN item after 472 is the next `gpu-sim` / Engine /
+473. [x] `gpu-sim` `cuPointerGetAttributes`:
+    [`pointer_get_attribute_n`](Sim::pointer_get_attribute_n) is a batch
+    [`pointer_get_attribute`](Sim::pointer_get_attribute). Distinct from
+    [`pointer_get_attributes`](Sim::pointer_get_attributes)
+    (`cudaPointerGetAttributes` struct). Empty is `Ok([])` after a live
+    alloc. All-or-nothing. ACCESS_FLAGS stays
+    [`pointer_get_access_flags`](Sim::pointer_get_access_flags). Query;
+    legal during capture. No Engine `--pointer-attrs`. `gpu-profile
+    capture` is still refused. Dual score still has no `$/M tokens`.
+
+474. [ ] Next numbered PLAN item after 473 is the next `gpu-sim` / Engine /
     serve / expertvm mechanical API that is still missing, or the next official
     decode family. Prefer remaining CUDA-shaped twins over more
     OpenAI HTTP veneer. Do not invent F32 `output.scale`. Do not invent a
@@ -5204,6 +5214,8 @@ model, do not celebrate the sim.
     `MemsetOp::element_size`. Do not invent Engine `--memset-element`.
     Do not invent a memset fill value (this VM does not model memset
     stores into wait-value mailboxes).
+    Do not invent a second `cuPointerGetAttributes` /
+    `pointer_get_attribute_n`. Do not invent Engine `--pointer-attrs`.
     Do not invent a second `cudaGraphAddNode` If / IfElse / While /
     `GraphNodeParams::If`. Do not invent a second
     `GraphNodeParams::Switch` / `switch_bodies`.

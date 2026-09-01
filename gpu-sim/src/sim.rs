@@ -15834,6 +15834,32 @@ impl Sim {
         }
     }
 
+    /// `cuPointerGetAttributes`: batch [`Self::pointer_get_attribute`].
+    ///
+    /// Distinct from [`Self::pointer_get_attributes`] (`cudaPointerGetAttributes`
+    /// struct). Empty `attrs` is `Ok([])` after the pointer is a live alloc.
+    /// All-or-nothing: the first Invalid / UnknownAlloc fails with no partial
+    /// vector. `CU_POINTER_ATTRIBUTE_ACCESS_FLAGS` stays
+    /// [`Self::pointer_get_access_flags`] (explicit device; not a
+    /// [`PointerAttr`]). Query; legal during capture.
+    pub fn pointer_get_attribute_n(
+        &self,
+        alloc: AllocId,
+        attrs: &[PointerAttr],
+    ) -> Result<Vec<u64>, SimError> {
+        let a = self.alloc_ref(alloc)?;
+        if !a.live {
+            return Err(SimError::Invalid {
+                why: "pointer attr",
+            });
+        }
+        attrs
+            .iter()
+            .copied()
+            .map(|attr| self.pointer_get_attribute(alloc, attr))
+            .collect()
+    }
+
     /// `CU_POINTER_ATTRIBUTE_ACCESS_FLAGS` for `device`.
     ///
     /// CUDA's `cuPointerGetAttribute` uses the current context. This VM has

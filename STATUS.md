@@ -5,6 +5,15 @@ Visible five-turn extract: [docs/chatgpt-share-6a920fe1.md](docs/chatgpt-share-6
 Complete share-API extract: [docs/chatgpt-share-6a920fe1/](docs/chatgpt-share-6a920fe1/).
 Work lands on `main`. No PRs.
 
+## Shipped 2026-09-01 — CUDA batch pointer GetAttributes
+
+`gpu-sim` `cuPointerGetAttributes`: `pointer_get_attribute_n` is a batch
+`pointer_get_attribute`. Distinct from `pointer_get_attributes`
+(`cudaPointerGetAttributes` struct). Empty is `Ok([])` after a live
+alloc. All-or-nothing. ACCESS_FLAGS stays `pointer_get_access_flags`.
+Query; legal during capture. No Engine `--pointer-attrs`. `gpu-profile
+capture` is still refused. Dual score still has no `$/M tokens`.
+
 ## Shipped 2026-09-01 — CUDA memset elementSize 1/2/4
 
 `gpu-sim` `cudaMemsetNodeParams::elementSize`: `MemsetOp::element_size`

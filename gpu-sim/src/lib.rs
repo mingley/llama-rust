@@ -395,7 +395,10 @@
 //! [`pointer_get_access_flags`](Sim::pointer_get_access_flags) is
 //! `CU_POINTER_ATTRIBUTE_ACCESS_FLAGS` for an explicit [`DeviceId`]
 //! (no TLS current device; not a [`PointerAttr`]). Flags are
-//! [`MemAccessFlags`] from this VM's kernel residency. Set is
+//! [`MemAccessFlags`] from this VM's kernel residency.
+//! [`pointer_get_attribute_n`](Sim::pointer_get_attribute_n) is
+//! `cuPointerGetAttributes` (batch GetAttribute; distinct from the
+//! `cudaPointerGetAttributes` struct). Set is
 //! capture-refused; Get is a query. `expertvm sim --sync-memops` sets
 //! [`PointerAttr::SyncMemops`] on miss pages (host-sync H2D).
 //! `expertvm sim --device-sync-memops` is [`set_device_flags`](Sim::set_device_flags)
@@ -11146,6 +11149,55 @@ mod tests {
         assert_eq!(
             sim.pointer_get_access_flags(d0, pooled).unwrap(),
             MemAccessFlags::PROT_READ_WRITE
+        );
+        let _g = sim.end_capture().unwrap();
+    }
+
+    #[test]
+    fn pointer_get_attribute_n_is_cu_pointer_get_attributes() {
+        let mut sim = Sim::new(h100());
+        let d = DeviceId(0);
+        let a = sim.malloc(d, 4096).unwrap();
+        assert_eq!(
+            sim.pointer_get_attribute_n(
+                a,
+                &[
+                    PointerAttr::MemoryType,
+                    PointerAttr::RangeSize,
+                    PointerAttr::BufferId,
+                ]
+            )
+            .unwrap(),
+            vec![
+                sim.pointer_get_attribute(a, PointerAttr::MemoryType)
+                    .unwrap(),
+                sim.pointer_get_attribute(a, PointerAttr::RangeSize)
+                    .unwrap(),
+                sim.pointer_get_attribute(a, PointerAttr::BufferId).unwrap(),
+            ]
+        );
+        assert!(sim.pointer_get_attribute_n(a, &[]).unwrap().is_empty());
+        let pin = sim.alloc_host_pinned(64).unwrap();
+        match sim
+            .pointer_get_attribute_n(pin, &[PointerAttr::MemoryType, PointerAttr::DeviceOrdinal])
+        {
+            Err(SimError::Invalid { why }) => assert!(why.contains("pointer attr"), "{why}"),
+            other => panic!("{other:?}"),
+        }
+        sim.free_sync(a).unwrap();
+        match sim.pointer_get_attribute_n(a, &[PointerAttr::RangeSize]) {
+            Err(SimError::Invalid { why }) => assert!(why.contains("pointer attr"), "{why}"),
+            other => panic!("{other:?}"),
+        }
+        match sim.pointer_get_attribute_n(AllocId(u64::MAX), &[]) {
+            Err(SimError::UnknownAlloc { alloc }) => assert_eq!(alloc, AllocId(u64::MAX)),
+            other => panic!("{other:?}"),
+        }
+        sim.begin_capture(d, StreamId(0)).unwrap();
+        assert_eq!(
+            sim.pointer_get_attribute_n(pin, &[PointerAttr::Mapped])
+                .unwrap(),
+            vec![0]
         );
         let _g = sim.end_capture().unwrap();
     }
