@@ -500,6 +500,8 @@
 //! [`device_get_exec_affinity_support`](Sim::device_get_exec_affinity_support)
 //! is `cuDeviceGetExecAffinitySupport` (`SM_COUNT` is 0; this VM uses permille
 //! green-context spans, not occupancy SM counts).
+//! [`ctx_get_exec_affinity`](Sim::ctx_get_exec_affinity) is `cuCtxGetExecAffinity`
+//! (SM_COUNT is Invalid; support is 0). Query; legal during capture. No Engine `--ctx-exec-affinity`.
 //! [`Sim::device_get_properties`] is `cudaGetDeviceProperties` ([`DeviceProperties`];
 //! modeled caps only — compute capability major/minor are Hopper 9.0 on
 //! example H100; launch-geometry caps are MaxThreadsPerBlock 1024;
@@ -20231,6 +20233,44 @@ mod tests {
             }
             other => panic!("{other:?}"),
         }
+    }
+
+    #[test]
+    fn ctx_get_exec_affinity_is_unsupported() {
+        let mut sim = Sim::new(h100());
+        let d = DeviceId(0);
+        match sim.ctx_get_exec_affinity(d, ExecAffinityType::SM_COUNT) {
+            Err(SimError::Invalid { why }) => {
+                assert!(why.contains("unsupported exec affinity"), "{why}");
+                assert!(!why.contains("type"), "{why}");
+            }
+            other => panic!("{other:?}"),
+        }
+        match sim.ctx_get_exec_affinity(d, 1) {
+            Err(SimError::Invalid { why }) => {
+                assert!(why.contains("exec affinity type"), "{why}");
+            }
+            other => panic!("{other:?}"),
+        }
+        sim.begin_capture(d, StreamId(0)).unwrap();
+        match sim.ctx_get_exec_affinity(d, ExecAffinityType::SM_COUNT) {
+            Err(SimError::Invalid { why }) => {
+                assert!(why.contains("unsupported exec affinity"), "{why}");
+            }
+            other => panic!("{other:?}"),
+        }
+        let _g = sim.end_capture().unwrap();
+        match sim.ctx_get_exec_affinity(DeviceId(99), ExecAffinityType::SM_COUNT) {
+            Err(SimError::Invalid { why }) => {
+                assert!(why.contains("device not in profile"), "{why}");
+            }
+            other => panic!("{other:?}"),
+        }
+        assert_eq!(
+            sim.device_get_exec_affinity_support(d, ExecAffinityType::SM_COUNT)
+                .unwrap(),
+            0
+        );
     }
 
     #[test]

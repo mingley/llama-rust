@@ -5,6 +5,15 @@ Visible five-turn extract: [docs/chatgpt-share-6a920fe1.md](docs/chatgpt-share-6
 Complete share-API extract: [docs/chatgpt-share-6a920fe1/](docs/chatgpt-share-6a920fe1/).
 Work lands on `main`. No PRs.
 
+## Shipped 2026-09-01 — CUDA `cuCtxGetExecAffinity`
+
+`gpu-sim` `Sim::ctx_get_exec_affinity` is `cuCtxGetExecAffinity`.
+`SM_COUNT` is Invalid `"unsupported exec affinity"` because
+`device_get_exec_affinity_support` is 0. Query; legal during capture.
+This VM does not invent occupancy SM counts, `cuCtxSetExecAffinity`, or
+Engine `--ctx-exec-affinity`.
+`gpu-profile capture` is still refused. Dual score still has no `$/M tokens`.
+
 ## Shipped 2026-09-01 — CUDA `cuCtxResetPersistingL2Cache`
 
 `gpu-sim` `Sim::ctx_reset_persisting_l2_cache` is

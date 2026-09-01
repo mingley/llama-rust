@@ -3812,7 +3812,8 @@ impl GreenCtxFlags {
 ///
 /// [`Self::SM_COUNT`] is `CU_EXEC_AFFINITY_TYPE_SM_COUNT`. This VM uses
 /// permille green-context spans, not occupancy SM counts, so support is 0.
-/// Other type ids are Invalid `"exec affinity type"`.
+/// [`crate::Sim::ctx_get_exec_affinity`] of [`Self::SM_COUNT`] is Invalid
+/// `"unsupported exec affinity"`. Other type ids are Invalid `"exec affinity type"`.
 pub struct ExecAffinityType;
 
 impl ExecAffinityType {

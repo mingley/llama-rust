@@ -192,6 +192,7 @@ warp scheduler, L1, …   ← do not model
 | `ctx_synchronize` waits every stream on one GPU (other GPUs keep running) | `cuCtxSynchronize` |
 | `ctx_get_shared_mem_config` wraps `get_shared_mem_config` for that primary context | `cuCtxGetSharedMemConfig` |
 | `ctx_reset_persisting_l2_cache` wraps `reset_persisting_l2_cache` (limit stays) | `cuCtxResetPersistingL2Cache` |
+| `ctx_get_exec_affinity` is Invalid (SM_COUNT support is 0) | `cuCtxGetExecAffinity` |
 | `func_get_name` is empty until a compiled kernel exists | `cudaFuncGetName` / `cuFuncGetName` |
 | `func_get_param_info` is Invalid until a compiled kernel exists | `cuFuncGetParamInfo` |
 | `func_is_loaded` is false until a compiled kernel exists | `cuFuncIsLoaded` |
@@ -1175,6 +1176,9 @@ primary context (same as `get_shared_mem_config`; distinct from
 `ctx_reset_persisting_l2_cache` is `cuCtxResetPersistingL2Cache` for that
 same primary context (same as `reset_persisting_l2_cache`; capture cannot
 include it; the persist limit stays).
+`ctx_get_exec_affinity` is `cuCtxGetExecAffinity` for that same primary
+context (`SM_COUNT` is Invalid because support is 0; not occupancy SM
+counts).
 `green_ctx_get_id` is
 `cuGreenCtxGetId` / `cudaExecutionCtxGetId` (unique per live green ctx;
 not `GreenCtxId`).

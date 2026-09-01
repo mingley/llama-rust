@@ -18651,6 +18651,27 @@ impl Sim {
         self.reset_persisting_l2_cache(device)
     }
 
+    /// `cuCtxGetExecAffinity` for the seeded primary context of `device`.
+    ///
+    /// Query; legal during capture. [`ExecAffinityType::SM_COUNT`] is Invalid
+    /// `"unsupported exec affinity"` because
+    /// [`Self::device_get_exec_affinity_support`] is 0 (green contexts are
+    /// permille, not occupancy SM counts). Other type ids are Invalid
+    /// `"exec affinity type"`. Unknown devices are Invalid
+    /// `"device not in profile"`. This VM does not invent
+    /// `cuCtxSetExecAffinity`.
+    pub fn ctx_get_exec_affinity(&self, device: DeviceId, kind: u32) -> Result<(), SimError> {
+        let _gpu = self.profile.gpu(device)?;
+        if kind != ExecAffinityType::SM_COUNT {
+            return Err(SimError::Invalid {
+                why: "exec affinity type",
+            });
+        }
+        Err(SimError::Invalid {
+            why: "unsupported exec affinity",
+        })
+    }
+
     /// `cudaInitDevice(device, 0, 0)`. Ensures the primary context (already
     /// seeded at construct). Does not make a thread-current device and does
     /// not change [`Self::get_device_flags`]. Host-synchronous 1 ns. Capture
