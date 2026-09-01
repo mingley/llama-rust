@@ -600,7 +600,11 @@ graph kernel nodes (`CopyAttributes` copies it). Launch pays `graph_launch_ns`
 once; recorded kernels skip per-kernel launch overhead.
 `memset` is an HBM-write kernel on a resident alloc. `memset_sync` /
 `memset_op_sync` are host-synchronous `cudaMemset` / `2D` / `3D` (capture
-refused). Typed `memset` / `memset_op` stay Async. `memset_2d` /
+refused). Typed `memset` / `memset_op` stay Async. `memset_d16_async` /
+`memset_d16` are `cuMemsetD16Async` / `cuMemsetD16` (`count` is CUDA `N`).
+`memset_d32_async` / `memset_d32` are `cuMemsetD32Async` / `cuMemsetD32`.
+Typed `memset` stays byte-counted. Fill value is not modeled. No Engine
+`--memset-d16`. `memset_2d` /
 `memset_2d_async` are `cudaMemset2D` / `cudaMemset2DAsync` (`MemsetOp` must
 be 2D). `memset_3d` / `memset_3d_async` are `cudaMemset3D` /
 `cudaMemset3DAsync` (`MemsetOp` must be 3D). `host_func` is

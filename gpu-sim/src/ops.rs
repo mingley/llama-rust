@@ -536,10 +536,12 @@ pub struct MemsetOp {
     pub depth: u64,
     /// 2D-slice height (`cudaPitchedPtr::ysize`). `0` means packed ([`Self::height`]).
     pub ysize: u64,
-    /// `cudaMemsetNodeParams::elementSize` (`1` / `2` / `4`). Typed
-    /// [`crate::Sim::memset`] stays `1` (`cudaMemset` / `cuMemsetD8`).
-    /// `2` / `4` are `cuMemsetD16` / `cuMemsetD32`. Offset, width, and
-    /// nonzero pitch must divide this size.
+    /// `cudaMemsetNodeParams::elementSize` (`1` / `2` / `4`).
+    ///
+    /// Typed [`crate::Sim::memset`] stays `1` (`cudaMemset` / `cuMemsetD8`).
+    /// [`crate::Sim::memset_d16_async`] / [`crate::Sim::memset_d32_async`]
+    /// take CUDA `N` and set `2` / `4`. Offset, width, and nonzero pitch must
+    /// divide this size. Fill value is not modeled.
     pub element_size: u32,
 }
 

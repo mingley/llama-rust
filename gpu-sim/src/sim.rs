@@ -16747,6 +16747,108 @@ impl Sim {
         Ok(id)
     }
 
+    /// `cuMemsetD16Async`. `count` is CUDA `N` (number of 16-bit values).
+    ///
+    /// Payload is `count * 2` bytes at offset 0. [`Self::memset`] stays
+    /// byte-counted `element_size` 1. Overflow of `count * 2` is Invalid
+    /// `"memset count"`. Capture is allowed unless sync-memops. Fill value
+    /// is not modeled.
+    pub fn memset_d16_async(
+        &mut self,
+        device: DeviceId,
+        alloc: AllocId,
+        count: u64,
+        stream: StreamId,
+    ) -> Result<OpId, SimError> {
+        self.memset_elements_async(device, alloc, count, 2, stream)
+    }
+
+    /// `cuMemsetD16`. Host-synchronous; capture cannot include it.
+    pub fn memset_d16(
+        &mut self,
+        device: DeviceId,
+        alloc: AllocId,
+        count: u64,
+        stream: StreamId,
+    ) -> Result<OpId, SimError> {
+        self.memset_elements_sync(device, alloc, count, 2, stream)
+    }
+
+    /// `cuMemsetD32Async`. `count` is CUDA `N` (number of 32-bit values).
+    ///
+    /// Payload is `count * 4` bytes at offset 0. [`Self::memset`] stays
+    /// byte-counted `element_size` 1. Overflow of `count * 4` is Invalid
+    /// `"memset count"`. Capture is allowed unless sync-memops. Fill value
+    /// is not modeled.
+    pub fn memset_d32_async(
+        &mut self,
+        device: DeviceId,
+        alloc: AllocId,
+        count: u64,
+        stream: StreamId,
+    ) -> Result<OpId, SimError> {
+        self.memset_elements_async(device, alloc, count, 4, stream)
+    }
+
+    /// `cuMemsetD32`. Host-synchronous; capture cannot include it.
+    pub fn memset_d32(
+        &mut self,
+        device: DeviceId,
+        alloc: AllocId,
+        count: u64,
+        stream: StreamId,
+    ) -> Result<OpId, SimError> {
+        self.memset_elements_sync(device, alloc, count, 4, stream)
+    }
+
+    fn memset_elements_async(
+        &mut self,
+        device: DeviceId,
+        alloc: AllocId,
+        count: u64,
+        element_size: u32,
+        stream: StreamId,
+    ) -> Result<OpId, SimError> {
+        let bytes = count
+            .checked_mul(u64::from(element_size))
+            .ok_or(SimError::Invalid {
+                why: "memset count",
+            })?;
+        if bytes == 0 {
+            return Err(SimError::Invalid {
+                why: "zero-byte memset",
+            });
+        }
+        self.memset_op(
+            device,
+            MemsetOp {
+                id: alloc,
+                bytes,
+                element_size,
+                ..MemsetOp::default()
+            },
+            stream,
+        )
+    }
+
+    fn memset_elements_sync(
+        &mut self,
+        device: DeviceId,
+        alloc: AllocId,
+        count: u64,
+        element_size: u32,
+        stream: StreamId,
+    ) -> Result<OpId, SimError> {
+        if self.capturing.is_some() {
+            return Err(SimError::Invalid {
+                why: "cannot capture host-sync memset",
+            });
+        }
+        let id = self.memset_elements_async(device, alloc, count, element_size, stream)?;
+        self.synchronize_stream(device, stream)?;
+        Ok(id)
+    }
+
     /// `cudaMemset` / `cudaMemset2D` / `cudaMemset3D` (host-synchronous).
     ///
     /// Capture cannot include it. [`Self::memset_op`] is the Async twin.

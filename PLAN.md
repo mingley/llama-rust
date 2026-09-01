@@ -5140,7 +5140,17 @@ model, do not celebrate the sim.
     `--graph-alloc-access`. `gpu-profile capture` is still refused. Dual score
     still has no `$/M tokens`.
 
-479. [ ] Next numbered PLAN item after 478 is the next `gpu-sim` / Engine /
+479. [x] `gpu-sim` `cuMemsetD16` / `cuMemsetD32`:
+    [`memset_d16_async`](Sim::memset_d16_async) / [`memset_d16`](Sim::memset_d16)
+    are `cuMemsetD16Async` / `cuMemsetD16`. [`memset_d32_async`](Sim::memset_d32_async)
+    / [`memset_d32`](Sim::memset_d32) are `cuMemsetD32Async` / `cuMemsetD32`.
+    `count` is CUDA `N` (element count); payload is `count * 2` / `count * 4`.
+    Overflow is Invalid `"memset count"`. Typed [`memset`](Sim::memset) stays
+    byte-counted `element_size` 1. Capture of Async is legal; host-sync is
+    refused. Fill value is not modeled. No Engine `--memset-d16`.
+    `gpu-profile capture` is still refused. Dual score still has no `$/M tokens`.
+
+480. [ ] Next numbered PLAN item after 479 is the next `gpu-sim` / Engine /
     serve / expertvm mechanical API that is still missing, or the next official
     decode family. Prefer remaining CUDA-shaped twins over more
     OpenAI HTTP veneer. Do not invent F32 `output.scale`. Do not invent a
@@ -5266,7 +5276,10 @@ model, do not celebrate the sim.
     `CU_POINTER_ATTRIBUTE_CONTEXT` / P2P tokens.
     Do not invent a second `cudaMemsetNodeParams::elementSize` /
     `MemsetOp::element_size`. Do not invent Engine `--memset-element`.
-    Do not invent a memset fill value (this VM does not model memset
+    Do not invent a second `cuMemsetD16Async` / `cuMemsetD32Async` /
+    `memset_d16_async` / `memset_d32_async`. Do not invent Engine
+    `--memset-d16`. Do not invent `cuMemsetD2D16` / `D2D32` this slice
+    (2D width in elements). Do not invent a memset fill value (this VM does not model memset
     stores into wait-value mailboxes).
     Do not invent a second `cuPointerGetAttributes` /
     `pointer_get_attribute_n`. Do not invent Engine `--pointer-attrs`.

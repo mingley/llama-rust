@@ -5,6 +5,16 @@ Visible five-turn extract: [docs/chatgpt-share-6a920fe1.md](docs/chatgpt-share-6
 Complete share-API extract: [docs/chatgpt-share-6a920fe1/](docs/chatgpt-share-6a920fe1/).
 Work lands on `main`. No PRs.
 
+## Shipped 2026-09-01 — CUDA cuMemsetD16 / D32
+
+`gpu-sim` `cuMemsetD16` / `cuMemsetD32`: `memset_d16_async` / `memset_d16`
+are `cuMemsetD16Async` / `cuMemsetD16`. `memset_d32_async` / `memset_d32`
+are `cuMemsetD32Async` / `cuMemsetD32`. `count` is CUDA `N`; payload is
+`count * 2` / `count * 4`. Overflow is Invalid. Typed `memset` stays
+byte-counted. Capture of Async is legal; host-sync is refused. Fill value
+is not modeled. No Engine `--memset-d16`. `gpu-profile capture` is still
+refused. Dual score still has no `$/M tokens`.
+
 ## Shipped 2026-09-01 — CUDA graph mem-alloc accessDescs
 
 `gpu-sim` `cudaGraphAddMemAllocNode` accessDescs:
