@@ -4321,6 +4321,7 @@ impl Sim {
                 "device-updatable",
             );
         }
+        let enabled: Vec<bool> = exec_steps.iter().map(|s| s.enabled).collect();
         let exec_norm = self.steps_def_ids(exec_steps);
         let src_norm = self.steps_def_ids(src_steps.clone());
         if let Some(diff) = graph_topology_diff(&exec_norm, &src_norm) {
@@ -4356,8 +4357,8 @@ impl Sim {
         let ns = self.profile.gpu(device)?.graph_update_ns.max(1);
         self.clock = self.clock.saturating_add(ns);
         let mut new_steps = src_steps;
-        for (dst, prev) in new_steps.iter_mut().zip(exec_steps.iter()) {
-            dst.enabled = prev.enabled;
+        for (dst, on) in new_steps.iter_mut().zip(enabled.iter()) {
+            dst.enabled = *on;
         }
         let exec = self.graphs.get_mut(&exec).ok_or(SimError::Invalid {
             why: "unknown graph",
