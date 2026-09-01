@@ -5,6 +5,15 @@ Visible five-turn extract: [docs/chatgpt-share-6a920fe1.md](docs/chatgpt-share-6
 Complete share-API extract: [docs/chatgpt-share-6a920fe1/](docs/chatgpt-share-6a920fe1/).
 Work lands on `main`. No PRs.
 
+## Shipped 2026-09-01 — CUDA `cuSurfObjectDestroy`
+
+`gpu-sim` `Sim::surf_object_destroy` is `cuSurfObjectDestroy` /
+`cudaDestroySurfaceObject`. Always Invalid `"unknown surf object"`
+because surface-object handles are not modeled. Query; legal during
+capture. Distinct from `surf_object_create` and `tex_object_destroy`.
+This VM does not invent `cuSurfObjectGetResourceDesc` or Engine `--surf-destroy`.
+`gpu-profile capture` is still refused. Dual score still has no `$/M tokens`.
+
 ## Shipped 2026-09-01 — CUDA `cuTexObjectDestroy`
 
 `gpu-sim` `Sim::tex_object_destroy` is `cuTexObjectDestroy` /

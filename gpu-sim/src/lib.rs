@@ -796,6 +796,8 @@
 //! [`SurfaceAlignment`](DeviceAttr::SurfaceAlignment).
 //! [`surf_object_create`](Sim::surf_object_create) is `cuSurfObjectCreate`
 //! (always Invalid `"cuda surface"`). Query; legal during capture. No Engine `--surf-object`.
+//! [`surf_object_destroy`](Sim::surf_object_destroy) is `cuSurfObjectDestroy`
+//! (always Invalid `"unknown surf object"`). Query; legal during capture. No Engine `--surf-destroy`.
 //! [`tex_object_create`](Sim::tex_object_create) is `cuTexObjectCreate`
 //! (always Invalid `"cuda texture"`). Query; legal during capture. No Engine `--tex-object`.
 //! [`tex_object_destroy`](Sim::tex_object_destroy) is `cuTexObjectDestroy`
@@ -21363,6 +21365,44 @@ mod tests {
         match sim.array_create(d) {
             Err(SimError::Invalid { why }) => {
                 assert!(why.contains("cuda array"), "{why}");
+            }
+            other => panic!("{other:?}"),
+        }
+    }
+
+    #[test]
+    fn surf_object_destroy_is_unsupported() {
+        let mut sim = Sim::new(h100());
+        let d = DeviceId(0);
+        match sim.surf_object_destroy(d) {
+            Err(SimError::Invalid { why }) => {
+                assert!(why.contains("unknown surf object"), "{why}");
+            }
+            other => panic!("{other:?}"),
+        }
+        sim.begin_capture(d, StreamId(0)).unwrap();
+        match sim.surf_object_destroy(d) {
+            Err(SimError::Invalid { why }) => {
+                assert!(why.contains("unknown surf object"), "{why}");
+            }
+            other => panic!("{other:?}"),
+        }
+        let _g = sim.end_capture().unwrap();
+        match sim.surf_object_destroy(DeviceId(99)) {
+            Err(SimError::Invalid { why }) => {
+                assert!(why.contains("device not in profile"), "{why}");
+            }
+            other => panic!("{other:?}"),
+        }
+        match sim.surf_object_create(d) {
+            Err(SimError::Invalid { why }) => {
+                assert!(why.contains("cuda surface"), "{why}");
+            }
+            other => panic!("{other:?}"),
+        }
+        match sim.tex_object_destroy(d) {
+            Err(SimError::Invalid { why }) => {
+                assert!(why.contains("unknown tex object"), "{why}");
             }
             other => panic!("{other:?}"),
         }
