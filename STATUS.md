@@ -5,6 +5,14 @@ Visible five-turn extract: [docs/chatgpt-share-6a920fe1.md](docs/chatgpt-share-6
 Complete share-API extract: [docs/chatgpt-share-6a920fe1/](docs/chatgpt-share-6a920fe1/).
 Work lands on `main`. No PRs.
 
+## Shipped 2026-09-01 — CUDA `cuD3D10CtxCreate`
+
+`gpu-sim` `Sim::d3d10_ctx_create` is `cuD3D10CtxCreate`. Always Invalid
+`"d3d10 context"` because Direct3D 10 interop is not modeled. Query; legal
+during capture. Distinct from `d3d10_get_devices` and `d3d9_ctx_create`.
+This VM does not invent `cuGraphicsD3D10RegisterResource` or Engine `--d3d10-ctx`.
+`gpu-profile capture` is still refused. Dual score still has no `$/M tokens`.
+
 ## Shipped 2026-09-01 — CUDA `cuD3D9CtxCreate`
 
 `gpu-sim` `Sim::d3d9_ctx_create` is `cuD3D9CtxCreate`. Always Invalid

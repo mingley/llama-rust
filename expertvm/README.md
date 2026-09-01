@@ -595,6 +595,8 @@ interop is not modeled; no Engine flag).
 interop is not modeled; no Engine flag).
 `gpu-sim` `d3d10_get_devices` is `cuD3D10GetDevices` (Invalid; Direct3D 10
 interop is not modeled; no Engine flag).
+`gpu-sim` `d3d10_ctx_create` is `cuD3D10CtxCreate` (Invalid; Direct3D 10
+interop is not modeled; no Engine flag).
 `gpu-sim` `MaxSharedMemoryPerMultiprocessor` matches
 `MaxSharedMemoryPerBlockOptin` (`cudaDevAttrMaxSharedMemoryPerMultiprocessor`;
 reserved shared memory is 0; no Engine flag; not occupancy SM counts).

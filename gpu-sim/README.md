@@ -182,6 +182,7 @@ warp scheduler, L1, …   ← do not model
 | `d3d9_get_devices` is Invalid (Direct3D 9 interop is not modeled) | `cuD3D9GetDevices` / `cudaD3D9GetDevices` |
 | `d3d9_ctx_create` is Invalid (Direct3D 9 interop is not modeled) | `cuD3D9CtxCreate` |
 | `d3d10_get_devices` is Invalid (Direct3D 10 interop is not modeled) | `cuD3D10GetDevices` / `cudaD3D10GetDevices` |
+| `d3d10_ctx_create` is Invalid (Direct3D 10 interop is not modeled) | `cuD3D10CtxCreate` |
 | `device_get_pci_bus_id` is a synthetic `domain:bus:device.function` (also `DeviceProperties` PCI ids) | `cudaDeviceGetPciBusId` |
 | `device_get_by_pci_bus_id` is the inverse of `device_get_pci_bus_id` | `cudaDeviceGetByPCIBusId` |
 | `stream_get_flags` is 0 blocking / 1 NonBlocking | `cudaStreamGetFlags` |
@@ -1094,6 +1095,9 @@ during capture. No Engine `--d3d9-ctx`.
 `d3d10_get_devices` is `cuD3D10GetDevices` (always Invalid `"d3d10"`).
 Distinct from `d3d9_get_devices` and `d3d11_get_devices`. Query; legal
 during capture. No Engine `--d3d10-devices`.
+`d3d10_ctx_create` is `cuD3D10CtxCreate` (always Invalid `"d3d10 context"`).
+Distinct from `d3d10_get_devices` and `d3d9_ctx_create`. Query; legal
+during capture. No Engine `--d3d10-ctx`.
 `HostMemoryPoolsSupported` is always 0 (pools are device-only).
 `IsMultiGpuBoard` / `MultiGpuBoardGroupID` are always 0 (example SKUs
 are discrete single-GPU packages). `ComputeMode` is always Default
