@@ -16314,7 +16314,7 @@ mod tests {
             Err(SimError::Invalid { why }) => assert!(why.contains("memset2d height"), "{why}"),
             other => panic!("{other:?}"),
         }
-        match sim.memset_d2d8_async(d, a, pitch, u64::MAX, 8, s) {
+        match sim.memset_d2d8_async(d, a, pitch, 512, 9, s) {
             Err(SimError::Invalid { why }) => assert!(why.contains("range past"), "{why}"),
             other => panic!("{other:?}"),
         }
