@@ -5,6 +5,18 @@ Visible five-turn extract: [docs/chatgpt-share-6a920fe1.md](docs/chatgpt-share-6
 Complete share-API extract: [docs/chatgpt-share-6a920fe1/](docs/chatgpt-share-6a920fe1/).
 Work lands on `main`. No PRs.
 
+## Shipped 2026-09-01 — CUDA cuDevSmResourceSplit
+
+`gpu-sim` `cuDevSmResourceSplit`: `dev_sm_resource_split` is
+`cuDevSmResourceSplit`. `DevSmResourceGroupParams` `smCount` is ‰ of the
+chip (same unit as `dev_sm_resource_split_by_count`). `0` is discovery
+(remaining ‰). `coscheduledSmCount` / `preferredCoscheduledSmCount` must
+be 0. Group flags must be 0 (`BACKFILL` is Invalid). API flags must be
+0. Unequal groups; leftover is remaining. Query; legal during capture.
+Typed `dev_sm_resource_split_by_count` stays. No Engine `--sm-split`.
+`gpu-profile capture` is still refused. Dual score still has no
+`$/M tokens`.
+
 ## Shipped 2026-09-01 — CUDA_MEMCPY3D srcLOD / dstLOD
 
 `gpu-sim` CUDA_MEMCPY3D `srcLOD` / `dstLOD`: `MemcpyOp` `src_lod` /

@@ -2920,6 +2920,59 @@ impl SmResource {
         self.start < b1 && other.start < a1
     }
 
+    /// `cuDevSmResourceSplit`: explicit group widths in ‰.
+    ///
+    /// [`DevSmResourceGroupParams::sm_count`] `0` is discovery (remaining ‰).
+    /// Coschedule counts must be `0`. Group flags must be
+    /// [`DevSmResourceGroupFlags::DEFAULT`]. Leftover ‰ is remaining.
+    /// Distinct from [`Self::split_by_count`].
+    pub fn split(
+        self,
+        group_params: &[DevSmResourceGroupParams],
+    ) -> Result<(Vec<Self>, Self), crate::SimError> {
+        if self.width == 0 || self.start.saturating_add(self.width) > 1000 {
+            return Err(crate::SimError::Invalid { why: "sm resource" });
+        }
+        if group_params.is_empty() {
+            return Err(crate::SimError::Invalid {
+                why: "sm split groups",
+            });
+        }
+        let mut groups = Vec::new();
+        let mut start = self.start;
+        let mut left = self.width;
+        for p in group_params {
+            if p.coscheduled_sm_count != 0 || p.preferred_coscheduled_sm_count != 0 {
+                return Err(crate::SimError::Invalid {
+                    why: "sm split coschedule",
+                });
+            }
+            if p.flags != DevSmResourceGroupFlags::DEFAULT {
+                return Err(crate::SimError::Invalid {
+                    why: "sm split group flags",
+                });
+            }
+            let want = if p.sm_count == 0 {
+                u32::from(left)
+            } else {
+                p.sm_count
+            };
+            if want == 0 || want > u32::from(self.width) {
+                return Err(crate::SimError::Invalid { why: "sm split" });
+            }
+            let Ok(take) = u16::try_from(want) else {
+                return Err(crate::SimError::Invalid { why: "sm split" });
+            };
+            if take > left {
+                return Err(crate::SimError::Invalid { why: "sm split" });
+            }
+            groups.push(Self { start, width: take });
+            start = start.saturating_add(take);
+            left = left.saturating_sub(take);
+        }
+        Ok((groups, Self { start, width: left }))
+    }
+
     /// `cuDevSmResourceSplitByCount`: even groups of at least `min_count` ‰.
     ///
     /// `nb_groups` is the requested count; the actual count is
@@ -3013,6 +3066,36 @@ pub struct DevSmResourceSplitFlags;
 impl DevSmResourceSplitFlags {
     /// Flags `0`.
     pub const DEFAULT: u32 = 0;
+}
+
+/// `CU_DEV_SM_RESOURCE_GROUP_PARAMS` for [`crate::Sim::dev_sm_resource_split`].
+///
+/// [`Self::sm_count`] is ‰ of the chip, not an occupancy SM count.
+/// [`Self::coscheduled_sm_count`] / [`Self::preferred_coscheduled_sm_count`]
+/// must be `0`. [`Self::flags`] must be [`DevSmResourceGroupFlags::DEFAULT`].
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct DevSmResourceGroupParams {
+    /// `smCount`. Width in ‰. `0` is discovery (remaining ‰).
+    pub sm_count: u32,
+    /// `coscheduledSmCount`. Must be `0` (occupancy SM counts are not modeled).
+    pub coscheduled_sm_count: u32,
+    /// `preferredCoscheduledSmCount`. Must be `0`.
+    pub preferred_coscheduled_sm_count: u32,
+    /// Group flags ([`DevSmResourceGroupFlags`]).
+    pub flags: u32,
+}
+
+/// `CUdevSmResourceGroup_flags` for [`DevSmResourceGroupParams::flags`].
+///
+/// Only [`Self::DEFAULT`]. [`Self::BACKFILL`] is Invalid (coschedule fill is
+/// not modeled).
+pub struct DevSmResourceGroupFlags;
+
+impl DevSmResourceGroupFlags {
+    /// `CU_DEV_SM_RESOURCE_GROUP_DEFAULT` (`0`).
+    pub const DEFAULT: u32 = 0;
+    /// `CU_DEV_SM_RESOURCE_GROUP_BACKFILL`. Not modeled.
+    pub const BACKFILL: u32 = 1;
 }
 
 /// `cudaFlushGPUDirectRDMAWritesOptions` bits for

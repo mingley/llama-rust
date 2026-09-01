@@ -28,6 +28,7 @@
 //! [`Sim::set_stream_sm_permille`] is a duration-only SM fraction (compute-bound
 //! kernels scale; memory-bound keep full HBM). Default unset is a full chip.
 //! It does not partition Hyper-Q occupancy. [`Sim::device_get_dev_resource`] /
+//! [`dev_sm_resource_split`](Sim::dev_sm_resource_split) /
 //! [`dev_sm_resource_split_by_count`](Sim::dev_sm_resource_split_by_count) /
 //! [`dev_resource_generate_desc`](Sim::dev_resource_generate_desc) /
 //! [`green_ctx_create`](Sim::green_ctx_create) /
@@ -39,7 +40,8 @@
 //! [`green_ctx_get_id`](Sim::green_ctx_get_id) /
 //! [`green_ctx_get_device`](Sim::green_ctx_get_device) /
 //! [`stream_get_dev_resource`](Sim::stream_get_dev_resource) are CUDA green contexts
-//! (`cuDeviceGetDevResource` / `cuDevSmResourceSplitByCount` /
+//! (`cuDeviceGetDevResource` / `cuDevSmResourceSplit` /
+//! `cuDevSmResourceSplitByCount` /
 //! `cuDevResourceGenerateDesc` / `cuGreenCtxCreate` / `cuGreenCtxStreamCreate` /
 //! `cuGreenCtxRecordEvent` / `cuGreenCtxWaitEvent` / `cudaExecutionCtxSynchronize` /
 //! `cuGreenCtxGetId` / `cudaExecutionCtxGetId` / `cudaExecutionCtxGetDevice` /
@@ -1230,10 +1232,10 @@ pub use ids::{
 pub use ops::{
     parse_nvlink_util_centric, AccessPolicyWindow, AccessProperty, BatchMemOp, BatchMemOpFlags,
     CaptureDepOp, ClusterDim, ClusterSchedulingPolicy, ComputeMode, DType, DevResource,
-    DevResourceType, DevSmResourceSplitFlags, DeviceAttr, DeviceFlags, DeviceLimit,
-    DeviceNumaConfig, DeviceP2pAttr, DeviceProperties, EventCreateFlags, EventRecordFlags,
-    EventWaitFlags, ExecAffinityType, FlushGpuDirectRdmaScope, FlushGpuDirectRdmaTarget,
-    FlushGpuDirectRdmaWritesOptions, FuncAttr, FuncAttributes, FuncCache,
+    DevResourceType, DevSmResourceGroupFlags, DevSmResourceGroupParams, DevSmResourceSplitFlags,
+    DeviceAttr, DeviceFlags, DeviceLimit, DeviceNumaConfig, DeviceP2pAttr, DeviceProperties,
+    EventCreateFlags, EventRecordFlags, EventWaitFlags, ExecAffinityType, FlushGpuDirectRdmaScope,
+    FlushGpuDirectRdmaTarget, FlushGpuDirectRdmaWritesOptions, FuncAttr, FuncAttributes, FuncCache,
     GpuDirectRdmaWritesOrdering, GpuOp, GraphAddNode, GraphCondFlags, GraphCreateFlags,
     GraphDebugDotFlags, GraphDependencyType, GraphEdgeData, GraphExecUpdateResult,
     GraphExecUpdateResultInfo, GraphInstantiateFlags, GraphInstantiateParams,
@@ -9870,6 +9872,225 @@ mod tests {
             Err(SimError::Invalid { why }) => assert!(why.contains("gap"), "{why}"),
             other => panic!("{other:?}"),
         }
+    }
+
+    #[test]
+    fn dev_sm_resource_split_is_cu_dev_sm_resource_split() {
+        let mut sim = Sim::new(h100());
+        let d = DeviceId(0);
+        let DevResource::Sm(sm) = sim.device_get_dev_resource(d, DevResourceType::Sm).unwrap();
+        let (groups, rem) = sim
+            .dev_sm_resource_split(
+                sm,
+                &[
+                    DevSmResourceGroupParams {
+                        sm_count: 250,
+                        ..DevSmResourceGroupParams::default()
+                    },
+                    DevSmResourceGroupParams {
+                        sm_count: 750,
+                        ..DevSmResourceGroupParams::default()
+                    },
+                ],
+                DevSmResourceSplitFlags::DEFAULT,
+            )
+            .unwrap();
+        assert_eq!(groups.len(), 2);
+        assert_eq!(
+            groups[0],
+            SmResource {
+                start: 0,
+                width: 250
+            }
+        );
+        assert_eq!(
+            groups[1],
+            SmResource {
+                start: 250,
+                width: 750
+            }
+        );
+        assert_eq!(rem.width, 0);
+        let (one, rem) = sim
+            .dev_sm_resource_split(
+                sm,
+                &[DevSmResourceGroupParams {
+                    sm_count: 400,
+                    ..DevSmResourceGroupParams::default()
+                }],
+                0,
+            )
+            .unwrap();
+        assert_eq!(one.len(), 1);
+        assert_eq!(
+            one[0],
+            SmResource {
+                start: 0,
+                width: 400
+            }
+        );
+        assert_eq!(
+            rem,
+            SmResource {
+                start: 400,
+                width: 600
+            }
+        );
+        let (disc, rem) = sim
+            .dev_sm_resource_split(
+                sm,
+                &[
+                    DevSmResourceGroupParams {
+                        sm_count: 100,
+                        ..DevSmResourceGroupParams::default()
+                    },
+                    DevSmResourceGroupParams::default(),
+                ],
+                0,
+            )
+            .unwrap();
+        assert_eq!(disc.len(), 2);
+        assert_eq!(disc[1].start, 100);
+        assert_eq!(disc[1].width, 900);
+        assert_eq!(rem.width, 0);
+        match sim.dev_sm_resource_split(sm, &[], 0) {
+            Err(SimError::Invalid { why }) => {
+                assert!(why.contains("sm split groups"), "{why}");
+            }
+            other => panic!("{other:?}"),
+        }
+        match sim.dev_sm_resource_split(
+            sm,
+            &[DevSmResourceGroupParams {
+                sm_count: 1001,
+                ..DevSmResourceGroupParams::default()
+            }],
+            0,
+        ) {
+            Err(SimError::Invalid { why }) => assert!(why.contains("sm split"), "{why}"),
+            other => panic!("{other:?}"),
+        }
+        match sim.dev_sm_resource_split(
+            sm,
+            &[
+                DevSmResourceGroupParams {
+                    sm_count: 600,
+                    ..DevSmResourceGroupParams::default()
+                },
+                DevSmResourceGroupParams {
+                    sm_count: 600,
+                    ..DevSmResourceGroupParams::default()
+                },
+            ],
+            0,
+        ) {
+            Err(SimError::Invalid { why }) => assert!(why.contains("sm split"), "{why}"),
+            other => panic!("{other:?}"),
+        }
+        match sim.dev_sm_resource_split(
+            sm,
+            &[DevSmResourceGroupParams {
+                sm_count: 250,
+                coscheduled_sm_count: 8,
+                ..DevSmResourceGroupParams::default()
+            }],
+            0,
+        ) {
+            Err(SimError::Invalid { why }) => {
+                assert!(why.contains("sm split coschedule"), "{why}");
+            }
+            other => panic!("{other:?}"),
+        }
+        match sim.dev_sm_resource_split(
+            sm,
+            &[DevSmResourceGroupParams {
+                sm_count: 250,
+                preferred_coscheduled_sm_count: 16,
+                ..DevSmResourceGroupParams::default()
+            }],
+            0,
+        ) {
+            Err(SimError::Invalid { why }) => {
+                assert!(why.contains("sm split coschedule"), "{why}");
+            }
+            other => panic!("{other:?}"),
+        }
+        match sim.dev_sm_resource_split(
+            sm,
+            &[DevSmResourceGroupParams {
+                sm_count: 250,
+                flags: DevSmResourceGroupFlags::BACKFILL,
+                ..DevSmResourceGroupParams::default()
+            }],
+            0,
+        ) {
+            Err(SimError::Invalid { why }) => {
+                assert!(why.contains("sm split group flags"), "{why}");
+            }
+            other => panic!("{other:?}"),
+        }
+        match sim.dev_sm_resource_split(
+            sm,
+            &[DevSmResourceGroupParams {
+                sm_count: 250,
+                ..DevSmResourceGroupParams::default()
+            }],
+            1,
+        ) {
+            Err(SimError::Invalid { why }) => {
+                assert!(why.contains("sm split flags"), "{why}");
+            }
+            other => panic!("{other:?}"),
+        }
+        sim.begin_capture(d, StreamId(2)).unwrap();
+        let (cap, _) = sim
+            .dev_sm_resource_split(
+                sm,
+                &[DevSmResourceGroupParams {
+                    sm_count: 500,
+                    ..DevSmResourceGroupParams::default()
+                }],
+                0,
+            )
+            .unwrap();
+        assert_eq!(cap[0].width, 500);
+        let _g = sim.end_capture().unwrap();
+        let desc = sim
+            .dev_resource_generate_desc(&[SmResource {
+                start: 0,
+                width: 250,
+            }])
+            .unwrap();
+        let ctx = sim
+            .green_ctx_create(desc, d, GreenCtxFlags::DEFAULT)
+            .unwrap();
+        let DevResource::Sm(half) = sim
+            .green_ctx_get_dev_resource(ctx, DevResourceType::Sm)
+            .unwrap();
+        let (from_ctx, rem) = sim
+            .dev_sm_resource_split(
+                half,
+                &[DevSmResourceGroupParams {
+                    sm_count: 100,
+                    ..DevSmResourceGroupParams::default()
+                }],
+                0,
+            )
+            .unwrap();
+        assert_eq!(
+            from_ctx[0],
+            SmResource {
+                start: 0,
+                width: 100
+            }
+        );
+        assert_eq!(
+            rem,
+            SmResource {
+                start: 100,
+                width: 150
+            }
+        );
     }
 
     #[test]

@@ -208,6 +208,7 @@ warp scheduler, L1, …   ← do not model
 | `cudaLaunchAttributePriority` (`kernel_with` / `KernelAttrs::priority`) | `None` inherits stream create priority; `Some` overrides that kernel; higher starts first under contention |
 | `set_stream_sm_permille` is a duration-only SM fraction (‰) | compute-bound kernels scale; memory-bound keep full HBM; does not partition Hyper-Q |
 | CUDA green contexts (`cuGreenCtxCreate`) | complementary SM spans may overlap kernels even when `compute_slots` is 1; same-span contexts share exclusive compute |
+| `cuDevSmResourceSplit` (`dev_sm_resource_split`) | explicit ‰ groups; `smCount` 0 is remaining; coschedule counts / BACKFILL stay Invalid |
 | `cuGreenCtxRecordEvent` / `cuGreenCtxWaitEvent` | record joins every bound stream; wait holds later work on the ctx (including streams bound after the wait); not a per-stream record/wait |
 | `cudaExecutionCtxSynchronize` (`green_ctx_synchronize`) | CPU waits that green ctx; other ctxs on the same GPU keep running |
 | `cuStreamGetDevResource` (`stream_get_dev_resource`) | bound stream returns that ctx's SM span; unbound is a full chip; query during capture |
@@ -235,9 +236,11 @@ occupancy at full issue rate (not an SM-partition model).
 `set_stream_sm_permille` is duration-only: compute-bound
 kernels scale as `1000 / permille`; memory-bound keep full HBM. Default
 unset is a full chip (`1000`). It does not partition Hyper-Q occupancy.
-CUDA green contexts (`cuDeviceGetDevResource` / `cuDevSmResourceSplitByCount` /
+CUDA green contexts (`cuDeviceGetDevResource` / `cuDevSmResourceSplit` /
+`cuDevSmResourceSplitByCount` /
 `cuDevResourceGenerateDesc` / `cuGreenCtxCreate`) split the chip in ‰ (not
-occupancy SM counts). Complementary spans may overlap kernels even when
+occupancy SM counts). `cuDevSmResourceSplit` takes explicit ‰ group sizes
+(`smCount` `0` is remaining). Coschedule counts must be 0. Complementary spans may overlap kernels even when
 `compute_slots` is 1; same-span contexts still share exclusive compute.
 `cuGreenCtxRecordEvent` joins work already submitted on every bound stream;
 `cuGreenCtxWaitEvent` holds later submits on that ctx (including streams

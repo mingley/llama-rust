@@ -5260,7 +5260,19 @@ model, do not celebrate the sim.
     No Engine `--memcpy-lod`. `gpu-profile capture` is still refused.
     Dual score still has no `$/M tokens`.
 
-491. [ ] Next numbered PLAN item after 490 is the next `gpu-sim` / Engine /
+491. [x] `gpu-sim` `cuDevSmResourceSplit`:
+    [`dev_sm_resource_split`](Sim::dev_sm_resource_split) is
+    `cuDevSmResourceSplit`. [`DevSmResourceGroupParams`] `smCount` is ‰ of
+    the chip (same unit as [`dev_sm_resource_split_by_count`]). `0` is
+    discovery (remaining ‰). `coscheduledSmCount` /
+    `preferredCoscheduledSmCount` must be 0 (occupancy SM counts are not
+    modeled). Group flags must be 0 (`BACKFILL` is Invalid). API flags
+    must be 0. Unequal groups; leftover is remaining. Query; legal during
+    capture. Typed [`dev_sm_resource_split_by_count`] stays. No Engine
+    `--sm-split`. `gpu-profile capture` is still refused. Dual score still
+    has no `$/M tokens`.
+
+492. [ ] Next numbered PLAN item after 491 is the next `gpu-sim` / Engine /
     serve / expertvm mechanical API that is still missing, or the next official
     decode family. Prefer remaining CUDA-shaped twins over more
     OpenAI HTTP veneer. Do not invent F32 `output.scale`. Do not invent a
@@ -5543,7 +5555,12 @@ model, do not celebrate the sim.
     Engine `--memcpy-3d-unaligned`. Do not add 3D alignment checks to
     `memcpy_3d`. Do not invent a second CUDA_MEMCPY3D `srcLOD` / `dstLOD` /
     `MemcpyOp` `src_lod` / `dst_lod`. Do not invent Engine `--memcpy-lod`.
-    Do not invent CUDA-array memcpy. Do not
+    Do not invent CUDA-array memcpy. Do not invent a second
+    `cuDevSmResourceSplit` / `dev_sm_resource_split`. Do not invent Engine
+    `--sm-split`. Do not invent occupancy SM counts on Split (`smCount`
+    stays ‰). Do not invent `CU_DEV_SM_RESOURCE_GROUP_BACKFILL`. Do not
+    invent `coscheduledSmCount` / `preferredCoscheduledSmCount` / workqueue
+    resources. Do not
     spend the next item on an OpenAI-compatible HTTP veneer.
 
 Stop if Phase 1 traces say residency cannot work. Do not invent an

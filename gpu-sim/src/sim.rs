@@ -12,20 +12,20 @@ use crate::ids::{
 };
 use crate::ops::{
     AccessPolicyWindow, AccessProperty, BatchMemOp, BatchMemOpFlags, CaptureDepOp, ClusterDim,
-    ClusterSchedulingPolicy, ComputeMode, DevResource, DevResourceType, DevSmResourceSplitFlags,
-    DeviceAttr, DeviceFlags, DeviceLimit, DeviceNumaConfig, DeviceP2pAttr, DeviceProperties,
-    EventCreateFlags, EventRecordFlags, EventWaitFlags, ExecAffinityType, FlushGpuDirectRdmaScope,
-    FlushGpuDirectRdmaTarget, FlushGpuDirectRdmaWritesOptions, FuncAttr, FuncAttributes, FuncCache,
-    GpuDirectRdmaWritesOrdering, GpuOp as Kind, GraphAddNode, GraphCondFlags, GraphCreateFlags,
-    GraphDebugDotFlags, GraphDependencyType, GraphEdgeData, GraphExecUpdateResult,
-    GraphExecUpdateResultInfo, GraphInstantiateFlags, GraphInstantiateParams,
-    GraphInstantiateResult, GraphMemAttr, GraphNodeKind, GraphNodeParams, GraphUserObjectFlags,
-    GreenCtxFlags, HostAllocFlags, HostGetDevicePointerFlags, HostNodeParams, InitDeviceFlags,
-    IpcMemFlags, KernelAttrs, KernelBuf, KernelKind, KernelNodeAttr, KernelNodeAttrValue,
-    KernelNodeParams, LaunchCompletionEvent, MemAccessDesc, MemAccessFlags, MemAdvise,
-    MemAllocationGranularity, MemAllocationProp, MemAllocationType, MemAttach, MemAttachFlags,
-    MemCreateFlags, MemExportFlags, MemHandleType, MemHandleUsage, MemLocationType, MemMapFlags,
-    MemPoolAttr, MemPoolExportFlags, MemPoolProps, MemRangeAttr, MemRangeAttrValue,
+    ClusterSchedulingPolicy, ComputeMode, DevResource, DevResourceType, DevSmResourceGroupParams,
+    DevSmResourceSplitFlags, DeviceAttr, DeviceFlags, DeviceLimit, DeviceNumaConfig, DeviceP2pAttr,
+    DeviceProperties, EventCreateFlags, EventRecordFlags, EventWaitFlags, ExecAffinityType,
+    FlushGpuDirectRdmaScope, FlushGpuDirectRdmaTarget, FlushGpuDirectRdmaWritesOptions, FuncAttr,
+    FuncAttributes, FuncCache, GpuDirectRdmaWritesOrdering, GpuOp as Kind, GraphAddNode,
+    GraphCondFlags, GraphCreateFlags, GraphDebugDotFlags, GraphDependencyType, GraphEdgeData,
+    GraphExecUpdateResult, GraphExecUpdateResultInfo, GraphInstantiateFlags,
+    GraphInstantiateParams, GraphInstantiateResult, GraphMemAttr, GraphNodeKind, GraphNodeParams,
+    GraphUserObjectFlags, GreenCtxFlags, HostAllocFlags, HostGetDevicePointerFlags, HostNodeParams,
+    InitDeviceFlags, IpcMemFlags, KernelAttrs, KernelBuf, KernelKind, KernelNodeAttr,
+    KernelNodeAttrValue, KernelNodeParams, LaunchCompletionEvent, MemAccessDesc, MemAccessFlags,
+    MemAdvise, MemAllocationGranularity, MemAllocationProp, MemAllocationType, MemAttach,
+    MemAttachFlags, MemCreateFlags, MemExportFlags, MemHandleType, MemHandleUsage, MemLocationType,
+    MemMapFlags, MemPoolAttr, MemPoolExportFlags, MemPoolProps, MemRangeAttr, MemRangeAttrValue,
     MemRangeHandleFlags, MemRangeHandleType, MemReserveFlags, MemSyncDomain, MemSyncDomainMap,
     MemcpyAttributes, MemcpyFlags, MemcpyOp, MemcpySrcAccessOrder, MemoryType, MemsetOp,
     MulticastBindFlags, MulticastCreateFlags, MulticastGranularity, MulticastObjectProp,
@@ -1345,6 +1345,28 @@ impl Sim {
         match kind {
             DevResourceType::Sm => Ok(DevResource::Sm(SmResource::FULL)),
         }
+    }
+
+    /// `cuDevSmResourceSplit`. Query; legal during capture.
+    ///
+    /// [`DevSmResourceGroupParams::sm_count`] is ‰ of the chip (same unit as
+    /// [`Self::dev_sm_resource_split_by_count`]). `0` is discovery (remaining
+    /// ‰). Coschedule counts must be `0`. Group flags must be
+    /// [`crate::DevSmResourceGroupFlags::DEFAULT`]. `flags` must be
+    /// [`DevSmResourceSplitFlags::DEFAULT`]. Returns `(groups, remaining)`.
+    /// Typed [`Self::dev_sm_resource_split_by_count`] stays.
+    pub fn dev_sm_resource_split(
+        &self,
+        input: SmResource,
+        group_params: &[DevSmResourceGroupParams],
+        flags: u32,
+    ) -> Result<(Vec<SmResource>, SmResource), SimError> {
+        if flags != DevSmResourceSplitFlags::DEFAULT {
+            return Err(SimError::Invalid {
+                why: "sm split flags",
+            });
+        }
+        input.split(group_params)
     }
 
     /// `cuDevSmResourceSplitByCount`. Query; legal during capture.
