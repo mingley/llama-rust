@@ -9187,11 +9187,14 @@ impl Sim {
     /// `cudaGraphDebugDotPrint` with [`GraphDebugDotFlags`].
     ///
     /// Query; legal during capture. Unknown bits (including external-semaphore
-    /// and extra-conditional-edge flags) are Invalid `"graph debug dot flags"`.
-    /// [`GraphDebugDotFlags::VERBOSE`] dumps every modeled param class.
-    /// [`GraphDebugDotFlags::RUNTIME_TYPES`] prints CUDA runtime
-    /// `cudaGraphNodeType*` names. Flags `0` keeps [`GraphNodeKind`] Debug
-    /// names. VM-only kinds keep Debug names under RuntimeTypes.
+    /// flags) are Invalid `"graph debug dot flags"`.
+    /// [`GraphDebugDotFlags::VERBOSE`] dumps every modeled param class and
+    /// ExtraTopoInfo. [`GraphDebugDotFlags::RUNTIME_TYPES`] prints CUDA runtime
+    /// `cudaGraphNodeType*` names. [`GraphDebugDotFlags::EXTRA_TOPO_INFO`]
+    /// numbers existing edges (`label="0"`); launch-completion edges also dump
+    /// `from_port=2`. Extra conditional edges are not invented. Flags `0` keeps
+    /// [`GraphNodeKind`] Debug names and unlabeled edges. VM-only kinds keep
+    /// Debug names under RuntimeTypes.
     pub fn graph_debug_dot_with_flags(
         &self,
         graph: GraphId,
@@ -9209,6 +9212,7 @@ impl Sim {
             | GraphDebugDotFlags::MEM_ALLOC_NODE_PARAMS
             | GraphDebugDotFlags::MEM_FREE_NODE_PARAMS
             | GraphDebugDotFlags::BATCH_MEM_OP_NODE_PARAMS
+            | GraphDebugDotFlags::EXTRA_TOPO_INFO
             | GraphDebugDotFlags::CONDITIONAL_NODE_PARAMS;
         if flags & !KNOWN != 0 {
             return Err(SimError::Invalid {
@@ -9241,16 +9245,21 @@ impl Sim {
             out.push_str(&debug_dot_label(i, step, dump));
             out.push_str("\"];\n");
         }
+        let extra_topo = dump & GraphDebugDotFlags::EXTRA_TOPO_INFO != 0;
+        let mut edge_n = 0_u32;
         for (to, step) in g.steps.iter().enumerate() {
             if step.destroyed {
                 continue;
             }
             for from in &step.deps {
-                out.push_str("  n");
-                out.push_str(&from.to_string());
-                out.push_str(" -> n");
-                out.push_str(&to.to_string());
-                out.push_str(";\n");
+                debug_dot_push_edge(
+                    &mut out,
+                    *from,
+                    to,
+                    step.edge_from_port(*from),
+                    extra_topo,
+                    &mut edge_n,
+                );
             }
         }
         out.push_str("}\n");
@@ -23504,6 +23513,30 @@ fn debug_dot_kind_name(kind: GraphNodeKind, runtime_types: bool) -> String {
         (true, Some(name)) => String::from(name),
         _ => format!("{kind:?}"),
     }
+}
+
+fn debug_dot_push_edge(
+    out: &mut String,
+    from: usize,
+    to: usize,
+    from_port: u8,
+    extra_topo: bool,
+    edge_n: &mut u32,
+) {
+    out.push_str("  n");
+    out.push_str(&from.to_string());
+    out.push_str(" -> n");
+    out.push_str(&to.to_string());
+    if extra_topo {
+        out.push_str(" [label=\"");
+        out.push_str(&edge_n.to_string());
+        if from_port == GraphKernelNodePort::LAUNCH_COMPLETION {
+            out.push_str(" from_port=2");
+        }
+        out.push_str("\"]");
+        *edge_n = edge_n.saturating_add(1);
+    }
+    out.push_str(";\n");
 }
 
 fn debug_dot_label(i: usize, step: &GraphStep, flags: u32) -> String {

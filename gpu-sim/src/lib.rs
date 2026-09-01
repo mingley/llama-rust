@@ -1194,7 +1194,8 @@
 //! / `cudaGraphDebugDotPrint` / `cudaGraphGetId` / `cuGraphNodeGetLocalId` /
 //! `cuGraphNodeGetToolsId` (live nodes; flags `0` is kinds and edges;
 //! [`GraphDebugDotFlags::RUNTIME_TYPES`] prints `cudaGraphNodeType*` names;
-//! [`GraphDebugDotFlags::VERBOSE`] prints modeled params). Destroyed slots are
+//! [`GraphDebugDotFlags::EXTRA_TOPO_INFO`] numbers existing edges;
+//! [`GraphDebugDotFlags::VERBOSE`] prints modeled params and ExtraTopoInfo). Destroyed slots are
 //! omitted. [`begin_capture_to_graph`](Sim::begin_capture_to_graph) is
 //! `cudaStreamBeginCaptureToGraph`: append captured nodes onto an existing
 //! uninstantiated graph; capture roots additionally depend on the given node
@@ -14593,6 +14594,62 @@ mod tests {
             .unwrap()
             .contains("coop=0"));
         let _end = sim.end_capture().unwrap();
+    }
+
+    #[test]
+    fn graph_debug_dot_extra_topo_info_numbers_existing_edges() {
+        let mut sim = Sim::new(h100());
+        let d = DeviceId(0);
+        let s = StreamId(0);
+        let a = sim.malloc(d, 4096).unwrap();
+        let g = sim.create_graph(d, s).unwrap();
+        sim.graph_add_kernel(g, KernelKind::other(8, 8), &[a], &[a])
+            .unwrap();
+        sim.graph_add_kernel(g, KernelKind::other(8, 8), &[a], &[a])
+            .unwrap();
+        sim.graph_add_kernel(g, KernelKind::other(8, 8), &[a], &[a])
+            .unwrap();
+        sim.graph_add_dependencies(g, 0, 1).unwrap();
+        sim.graph_add_dependencies_with_data(g, 1, 2, GraphEdgeData::launch_completion())
+            .unwrap();
+        let plain = sim.graph_debug_dot(g).unwrap();
+        assert!(plain.contains("n0 -> n1;"), "{plain}");
+        assert!(plain.contains("n1 -> n2;"), "{plain}");
+        assert!(!plain.contains("label=\"0\""), "{plain}");
+        assert!(!plain.contains("from_port=2"), "{plain}");
+        let topo = sim
+            .graph_debug_dot_with_flags(g, GraphDebugDotFlags::EXTRA_TOPO_INFO)
+            .unwrap();
+        assert!(topo.contains("n0 -> n1 [label=\"0\"];"), "{topo}");
+        assert!(
+            topo.contains("n1 -> n2 [label=\"1 from_port=2\"];"),
+            "{topo}"
+        );
+        assert!(!topo.contains("n0 -> n1;"), "{topo}");
+        let verbose = sim
+            .graph_debug_dot_with_flags(g, GraphDebugDotFlags::VERBOSE)
+            .unwrap();
+        assert!(verbose.contains("n0 -> n1 [label=\"0\"];"), "{verbose}");
+        assert!(
+            verbose.contains("n1 -> n2 [label=\"1 from_port=2\"];"),
+            "{verbose}"
+        );
+        sim.begin_capture(d, s).unwrap();
+        assert!(sim
+            .graph_debug_dot_with_flags(g, GraphDebugDotFlags::EXTRA_TOPO_INFO)
+            .unwrap()
+            .contains("from_port=2"));
+        let _end = sim.end_capture().unwrap();
+        match sim.graph_debug_dot_with_flags(GraphId(99), GraphDebugDotFlags::EXTRA_TOPO_INFO) {
+            Err(SimError::Invalid { why }) => assert!(why.contains("unknown graph"), "{why}"),
+            other => panic!("{other:?}"),
+        }
+        match sim.graph_debug_dot_with_flags(g, 1 << 7) {
+            Err(SimError::Invalid { why }) => {
+                assert!(why.contains("graph debug dot flags"), "{why}");
+            }
+            other => panic!("{other:?}"),
+        }
     }
 
     #[test]

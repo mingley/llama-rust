@@ -5419,7 +5419,16 @@ model, do not celebrate the sim.
     nonzero `to_port`. `gpu-profile capture` is still refused. Dual score
     still has no `$/M tokens`.
 
-504. [ ] Next numbered PLAN item after 503 is the next `gpu-sim` / Engine /
+504. [x] `gpu-sim` `GraphDebugDotFlags::EXTRA_TOPO_INFO` is
+    `cudaGraphDebugDotFlagsExtraTopoInfo` (`1 << 14`). Debug-dot numbers
+    existing edges (`label="0"`). Launch-completion edges also dump
+    `from_port=2`. `VERBOSE` includes ExtraTopoInfo. Flags `0` stays
+    unlabeled edges. Query; legal during capture. Distinct from
+    param-class dumps and HANDLES. This VM does not invent extra
+    conditional edges or Engine `--graph-debug-dot`. `gpu-profile
+    capture` is still refused. Dual score still has no `$/M tokens`.
+
+505. [ ] Next numbered PLAN item after 504 is the next `gpu-sim` / Engine /
     serve / expertvm mechanical API that is still missing, or the next official
     decode family. Prefer remaining CUDA-shaped twins over more
     OpenAI HTTP veneer. Do not invent F32 `output.scale`. Do not invent a
@@ -5484,7 +5493,8 @@ model, do not celebrate the sim.
     invent Engine `--graph-debug-dot`. Do not invent
     `cudaGraphDebugDotFlagsExtSemasSignalNodeParams` / `WaitNodeParams`
     dumps (bits 7-8 stay Invalid). Do not invent
-    `cudaGraphDebugDotFlagsExtraTopoInfo` extra edges.
+    `cudaGraphDebugDotFlagsExtraTopoInfo` extra edges. Do not invent a
+    second `cudaGraphDebugDotFlagsExtraTopoInfo` edge numbering.
     Do not invent a second `cudaGraphNodeGetDependencies` /
     `GetDependentNodes` v2.
     Do not invent a second `cudaStreamGetCaptureInfo_v3`. Do not invent

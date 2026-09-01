@@ -3436,12 +3436,13 @@ impl HostAllocFlags {
 
 /// `cudaGraphDebugDotFlags` for [`crate::Sim::graph_debug_dot_with_flags`].
 ///
-/// Bit values match CUDA. External-semaphore and extra-conditional-edge flags
-/// are not modeled (Invalid). [`Self::RUNTIME_TYPES`] is bit 1.
+/// Bit values match CUDA. External-semaphore flags (bits 7-8) are not modeled
+/// (Invalid). [`Self::EXTRA_TOPO_INFO`] numbers existing edges; extra
+/// conditional edges are not invented. [`Self::RUNTIME_TYPES`] is bit 1.
 pub struct GraphDebugDotFlags;
 
 impl GraphDebugDotFlags {
-    /// `cudaGraphDebugDotFlagsVerbose` (all modeled param dumps).
+    /// `cudaGraphDebugDotFlagsVerbose` (all modeled param dumps plus ExtraTopoInfo).
     pub const VERBOSE: u32 = 1;
     /// `cudaGraphDebugDotFlagsRuntimeTypes` (CUDA runtime `cudaGraphNodeType*` names).
     pub const RUNTIME_TYPES: u32 = 1 << 1;
@@ -3465,6 +3466,8 @@ impl GraphDebugDotFlags {
     pub const MEM_FREE_NODE_PARAMS: u32 = 1 << 12;
     /// `cudaGraphDebugDotFlagsBatchMemOpNodeParams`.
     pub const BATCH_MEM_OP_NODE_PARAMS: u32 = 1 << 13;
+    /// `cudaGraphDebugDotFlagsExtraTopoInfo` (edge numbering on existing edges).
+    pub const EXTRA_TOPO_INFO: u32 = 1 << 14;
     /// `cudaGraphDebugDotFlagsConditionalNodeParams`.
     pub const CONDITIONAL_NODE_PARAMS: u32 = 1 << 15;
 }

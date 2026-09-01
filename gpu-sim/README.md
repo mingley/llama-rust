@@ -121,6 +121,7 @@ warp scheduler, L1, …   ← do not model
 | `cuGraphNodeGetLocalId` (`graph_node_get_local_id`) | live node id matching debug-dot `n0`; destroyed is Invalid |
 | `cuGraphNodeGetToolsId` (`graph_node_get_tools_id`) | unique tools id; distinct from local id and `graph_get_id` |
 | `cudaGraphDebugDotFlagsRuntimeTypes` | runtime `cudaGraphNodeType*` names; flags `0` stays Debug |
+| `cudaGraphDebugDotFlagsExtraTopoInfo` | numbers existing edges; launch-completion dumps `from_port=2` |
 | `cudaGraphChildGraphNodeGetGraph` / `EventRecordNodeGetEvent` / `WaitNodeGetEvent` / `MemAllocNodeGetParams` | query |
 | `cudaGraphAddKernelNode` / memcpy / `AddMemcpyNode1D` / `graph_add_memcpy_2d` / `graph_add_memcpy_3d` / `graph_add_memset_2d` / `graph_add_memset_3d` / memset / host / empty / event / child / mem alloc/free / cooperative kernel / dependencies (`graph_add_*`) | not timed (host-side topology) |
 | `cudaGraphDestroyNode` (`graph_destroy_node`) drops a definition node and incident edges; remaining indices stay valid | not timed (host-side topology) |
@@ -485,7 +486,8 @@ indices (empty `deps` means extra roots, so they may Hyper-Q overlap).
 `GetRootNodes` / `GetEdges` /
 `NodeGetDependentNodes` / `cudaGraphDebugDotPrint` / `cudaGraphGetId` / `cuGraphNodeGetLocalId` / `cuGraphNodeGetToolsId` (live nodes; flags `0`
 is kinds and edges; `GraphDebugDotFlags::RUNTIME_TYPES` prints
-`cudaGraphNodeType*` names; `GraphDebugDotFlags::VERBOSE` prints modeled params). Host-sync
+`cudaGraphNodeType*` names; `GraphDebugDotFlags::EXTRA_TOPO_INFO` numbers
+existing edges; `GraphDebugDotFlags::VERBOSE` prints modeled params and ExtraTopoInfo). Host-sync
 `malloc` / `free_sync` / `memcpy_sync` / `synchronize_device` / VMM / mempool
 create cannot be captured. A graph that allocates without a matching free
 reuses the pointer on later launches (no second HBM charge) unless

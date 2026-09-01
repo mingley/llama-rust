@@ -5,6 +5,16 @@ Visible five-turn extract: [docs/chatgpt-share-6a920fe1.md](docs/chatgpt-share-6
 Complete share-API extract: [docs/chatgpt-share-6a920fe1/](docs/chatgpt-share-6a920fe1/).
 Work lands on `main`. No PRs.
 
+## Shipped 2026-09-01 — CUDA ExtraTopoInfo edge numbering
+
+`gpu-sim` `GraphDebugDotFlags::EXTRA_TOPO_INFO` is
+`cudaGraphDebugDotFlagsExtraTopoInfo` (`1 << 14`). Debug-dot numbers
+existing edges (`label="0"`). Launch-completion edges also dump
+`from_port=2`. `VERBOSE` includes ExtraTopoInfo. Flags `0` stays
+unlabeled edges. Query; legal during capture. This VM does not invent
+extra conditional edges or Engine `--graph-debug-dot`. `gpu-profile
+capture` is still refused. Dual score still has no `$/M tokens`.
+
 ## Shipped 2026-09-01 — graph launch-completion edge ports
 
 `gpu-sim` CUDA `cudaGraphKernelNodePortLaunchCompletion` on
