@@ -6093,6 +6093,7 @@ fn graph_auto_free_implies_cuda_graphs() {
 
 #[test]
 fn cuda_graphs_graph_auto_free_build_matches_capture() {
+    use crate::sim_replay::GRAPH_SCRATCH_BYTES;
     let t = Trace {
         events: vec![ev(0, 0, &[0, 1]), ev(1, 0, &[0, 2])],
     };
@@ -6124,7 +6125,14 @@ fn cuda_graphs_graph_auto_free_build_matches_capture() {
     assert_eq!(cap.misses, bld.misses);
     assert_eq!(cap.graph_launches, bld.graph_launches);
     assert_eq!(cap.child_graphs, bld.child_graphs);
-    assert_eq!(cap.hbm_peak, bld.hbm_peak);
+    assert_eq!(bld.hbm_peak, 4096 * 2 + GRAPH_SCRATCH_BYTES * 2);
+    assert_eq!(cap.hbm_peak, 4096 * 2 + GRAPH_SCRATCH_BYTES * 3);
+    assert!(
+        bld.hbm_peak < cap.hbm_peak,
+        "MOVE auto-free children release scratch when the parent exec is destroyed; capture clone leaves keep live auto-free scratch on the GraphBank exec; build={} capture={}",
+        bld.hbm_peak,
+        cap.hbm_peak
+    );
 }
 
 #[test]

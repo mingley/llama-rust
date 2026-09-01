@@ -11238,6 +11238,55 @@ mod tests {
     }
 
     #[test]
+    fn graph_move_clone_auto_free_combo_reuses_graph_pool() {
+        let mut sim = Sim::new(h100());
+        let d = DeviceId(0);
+        let s = StreamId(0);
+        let mut leaves = Vec::new();
+        for _ in 0..2 {
+            let leaf = sim.create_graph(d, s).unwrap();
+            let a = sim.graph_add_alloc(leaf, 4096).unwrap();
+            sim.graph_add_kernel(leaf, KernelKind::other(8, 8), &[a], &[a])
+                .unwrap();
+            sim.graph_add_dependencies(leaf, 0, 1).unwrap();
+            let exec = sim.instantiate_graph_auto_free(leaf).unwrap();
+            leaves.push(exec);
+        }
+        let combo = |sim: &mut Sim, leaves: &[GraphId]| {
+            let parent = sim.create_graph(d, s).unwrap();
+            for leaf in leaves {
+                let cloned = sim.clone_graph(*leaf).unwrap();
+                let added = sim
+                    .graph_add_node(
+                        parent,
+                        &[],
+                        GraphNodeParams::ChildGraph(ChildGraphNodeParams {
+                            graph: cloned,
+                            ownership: GraphChildGraphOwnership::MOVE,
+                        }),
+                    )
+                    .unwrap();
+                let _ = added.node;
+            }
+            let exec = sim.instantiate_graph_auto_free(parent).unwrap();
+            let n = sim.launch_graph(exec, s).unwrap();
+            assert_eq!(n, 4);
+            sim.synchronize().unwrap();
+            sim.destroy_graph(exec).unwrap();
+        };
+        combo(&mut sim, &leaves);
+        let peak_one = sim.hbm_peak();
+        combo(&mut sim, &leaves);
+        assert_eq!(
+            sim.hbm_peak(),
+            peak_one,
+            "second MOVE combo must reuse graph-mem pool; first={peak_one} second={}",
+            sim.hbm_peak()
+        );
+        assert_eq!(peak_one, 8192);
+    }
+
+    #[test]
     fn green_ctx_get_id_is_unique_and_stable() {
         let mut sim = Sim::new(h100());
         let d = DeviceId(0);
