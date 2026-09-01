@@ -7059,7 +7059,14 @@ model, do not celebrate the sim.
     or `cudaChooseDevice`. `gpu-profile capture` is still refused. Dual
     score still has no `$/M tokens`.
 
-701. [ ] Next numbered PLAN item after 700 is the next `gpu-sim` / Engine /
+701. [x] `gpu-sim` `Sim::library_load_from_file` is
+    `cuLibraryLoadFromFile`. Always Invalid `"library file"`
+    because CUDA libraries are not modeled. Query; legal during capture.
+    Distinct from `library_load_data`. This VM does not invent `cuLibraryUnload`, Engine `--library-from-file`,
+    or `cudaChooseDevice`. `gpu-profile capture` is still refused. Dual
+    score still has no `$/M tokens`.
+
+702. [ ] Next numbered PLAN item after 701 is the next `gpu-sim` / Engine /
     serve / expertvm mechanical API that is still missing, or the next official
     decode family. Prefer remaining CUDA-shaped twins over more
     OpenAI HTTP veneer. Do not invent F32 `output.scale`. Do not invent a
@@ -7651,6 +7658,10 @@ model, do not celebrate the sim.
     `d3d10_ctx_create_on_device`. Do not invent Engine `--d3d10-on-device`.
     Do not invent `cuLibraryLoadFromFile` this slice. Do not reverse
     `"d3d10 ondevice"`.
+    Do not invent a second `cuLibraryLoadFromFile` /
+    `library_load_from_file`. Do not invent Engine `--library-from-file`.
+    Do not invent `cuLibraryUnload` this slice. Do not reverse
+    `"library file"`.
     Do not invent a second `cudaStreamAddCallback`.
     Do not invent Engine `--stream-callback` (same wall as second live
     `cudaLaunchHostFunc` after miss DMA).
@@ -8324,6 +8335,9 @@ model, do not celebrate the sim.
     Do not invent a second `d3d10_ctx_create_on_device` API. Do not invent
     Engine `--create-d3d10-on-device`. Do not invent a D3D10 OnDevice adapter
     this slice. Do not reverse Direct3D 10 OnDevice remaining unsupported.
+    Do not invent a second `library_load_from_file` API. Do not invent
+    Engine `--load-library-file`. Do not invent a library file path
+    this slice. Do not reverse Library LoadFromFile remaining unsupported.
     Do not invent a second DeviceLaunch in-flight destroy-complete check or Engine
     `--device-launch-destroy`. Do not abort an in-flight DeviceLaunch when
     `destroy_graph` succeeds. Do not delay destroy of an idle exec. Do not invent
@@ -9180,6 +9194,9 @@ model, do not celebrate the sim.
     Do not invent a second `d3d10_ctx_create_on_device` method. Do not
     invent Engine `--cu-d3d10-ctx-create-on-device`. Do not reverse wrapping
     cuD3D10CtxCreateOnDevice Invalid.
+    Do not invent a second `library_load_from_file` method. Do not
+    invent Engine `--cu-library-load-from-file`. Do not reverse wrapping
+    cuLibraryLoadFromFile Invalid.
     Do not
     spend the next item on an OpenAI-compatible HTTP veneer.
 

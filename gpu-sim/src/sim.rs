@@ -21025,8 +21025,7 @@ impl Sim {
     /// `CUlibrary`). Distinct from [`Self::module_get_loading_mode`] (Eager
     /// query) and from [`Self::func_get_module`] (`"unknown function"`).
     /// Unknown devices are Invalid `"device not in profile"`. Query; legal
-    /// during capture. This VM does not invent `cuLibraryLoadFromFile` this
-    /// slice.
+    /// during capture. Distinct from [`Self::library_load_from_file`].
     pub fn library_load_data(&self, device: DeviceId) -> Result<(), SimError> {
         let _gpu = self.profile.gpu(device)?;
         Err(SimError::Invalid {
@@ -21034,10 +21033,25 @@ impl Sim {
         })
     }
 
+    /// `cuLibraryLoadFromFile`. CUDA libraries are not modeled.
+    ///
+    /// Always Invalid `"library file"` (this VM has no cubin or PTX path
+    /// and no `CUlibrary`). Distinct from [`Self::library_load_data`]
+    /// (why is not `"cuda library"`) and from [`Self::link_create`].
+    /// Unknown devices are Invalid `"device not in profile"`. Query; legal
+    /// during capture.
+    pub fn library_load_from_file(&self, device: DeviceId) -> Result<(), SimError> {
+        let _gpu = self.profile.gpu(device)?;
+        Err(SimError::Invalid {
+            why: "library file",
+        })
+    }
+
     /// `cuLinkCreate`. The CUDA driver JIT linker is not modeled.
     ///
     /// Always Invalid `"jit linker"` (this VM has no NVRTC and no cubin
-    /// linker). Distinct from [`Self::library_load_data`]. Unknown devices
+    /// linker). Distinct from [`Self::library_load_data`] and from
+    /// [`Self::library_load_from_file`]. Unknown devices
     /// are Invalid `"device not in profile"`. Query; legal during capture.
     /// This VM does not invent `cuLinkAddData` this slice.
     pub fn link_create(&self, device: DeviceId) -> Result<(), SimError> {

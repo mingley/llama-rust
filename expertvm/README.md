@@ -518,6 +518,8 @@ CUPTI config is not modeled; no Engine flag).
 Eager; no Engine flag).
 `gpu-sim` `library_load_data` is `cuLibraryLoadData` (Invalid; no cubin /
 `CUlibrary`; no Engine flag).
+`gpu-sim` `library_load_from_file` is `cuLibraryLoadFromFile` (Invalid;
+no cubin path / `CUlibrary`; no Engine flag).
 `gpu-sim` `link_create` is `cuLinkCreate` (Invalid; no JIT linker; no
 Engine flag).
 `gpu-sim` `get_proc_address` is `cuGetProcAddress` (Invalid; no C ABI
