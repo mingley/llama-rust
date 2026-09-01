@@ -575,6 +575,8 @@ no Engine flag).
 handles; no Engine flag).
 `gpu-sim` `import_external_semaphore` is `cuImportExternalSemaphore`
 (Invalid; no external-semaphore handles; no Engine flag).
+`gpu-sim` `destroy_external_semaphore` is `cuDestroyExternalSemaphore`
+(Invalid; no external-semaphore handles; no Engine flag).
 `gpu-sim` `surf_object_create` is `cuSurfObjectCreate` (Invalid; CUDA
 surfaces are not modeled; no Engine flag).
 `gpu-sim` `surf_object_destroy` is `cuSurfObjectDestroy` (Invalid; no

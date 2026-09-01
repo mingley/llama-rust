@@ -5,6 +5,15 @@ Visible five-turn extract: [docs/chatgpt-share-6a920fe1.md](docs/chatgpt-share-6
 Complete share-API extract: [docs/chatgpt-share-6a920fe1/](docs/chatgpt-share-6a920fe1/).
 Work lands on `main`. No PRs.
 
+## Shipped 2026-09-01 — CUDA `cuDestroyExternalSemaphore`
+
+`gpu-sim` `Sim::destroy_external_semaphore` is `cuDestroyExternalSemaphore`.
+Always Invalid `"semaphore destroy"` because external semaphore import
+is not modeled. Query; legal during capture. Distinct from
+`import_external_semaphore` (why is not a superstring of `"external semaphore"`)
+and from `destroy_external_memory`. This VM does not invent `cuSignalExternalSemaphoresAsync` or Engine `--semaphore-destroy`.
+`gpu-profile capture` is still refused. Dual score still has no `$/M tokens`.
+
 ## Shipped 2026-09-01 — CUDA `cuImportExternalSemaphore`
 
 `gpu-sim` `Sim::import_external_semaphore` is `cuImportExternalSemaphore`.

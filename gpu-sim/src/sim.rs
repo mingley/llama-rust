@@ -17832,13 +17832,29 @@ impl Sim {
     ///
     /// Always Invalid `"external semaphore"` (no external-semaphore handles).
     /// Distinct from [`Self::import_external_memory`] (why is not a
-    /// superstring of `"external memory"`) and from
-    /// [`Self::device_get_nvscisync_attributes`]. Unknown devices are Invalid
+    /// superstring of `"external memory"`), from
+    /// [`Self::device_get_nvscisync_attributes`], and from
+    /// [`Self::destroy_external_semaphore`]. Unknown devices are Invalid
     /// `"device not in profile"`. Query; legal during capture.
     pub fn import_external_semaphore(&self, device: DeviceId) -> Result<(), SimError> {
         let _gpu = self.profile.gpu(device)?;
         Err(SimError::Invalid {
             why: "external semaphore",
+        })
+    }
+
+    /// `cuDestroyExternalSemaphore` plus `cudaDestroyExternalSemaphore`.
+    /// External semaphore import is not modeled.
+    ///
+    /// Always Invalid `"semaphore destroy"` (no external-semaphore handles).
+    /// Distinct from [`Self::import_external_semaphore`] (why is not a
+    /// superstring of `"external semaphore"`) and from
+    /// [`Self::destroy_external_memory`]. Unknown devices are Invalid
+    /// `"device not in profile"`. Query; legal during capture.
+    pub fn destroy_external_semaphore(&self, device: DeviceId) -> Result<(), SimError> {
+        let _gpu = self.profile.gpu(device)?;
+        Err(SimError::Invalid {
+            why: "semaphore destroy",
         })
     }
 
