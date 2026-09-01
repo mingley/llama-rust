@@ -573,6 +573,8 @@ no Engine flag).
 `gpu-sim` `external_memory_get_mapped_mipmapped_array` is
 `cuExternalMemoryGetMappedMipmappedArray` (Invalid; no external-memory
 handles; no Engine flag).
+`gpu-sim` `import_external_semaphore` is `cuImportExternalSemaphore`
+(Invalid; no external-semaphore handles; no Engine flag).
 `gpu-sim` `surf_object_create` is `cuSurfObjectCreate` (Invalid; CUDA
 surfaces are not modeled; no Engine flag).
 `gpu-sim` `surf_object_destroy` is `cuSurfObjectDestroy` (Invalid; no

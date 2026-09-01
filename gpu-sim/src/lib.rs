@@ -342,6 +342,9 @@
 //! [`external_memory_get_mapped_mipmapped_array`](Sim::external_memory_get_mapped_mipmapped_array)
 //! is `cuExternalMemoryGetMappedMipmappedArray` (always Invalid `"external mipmap"`).
 //! Query; legal during capture. No Engine `--external-mipmap`.
+//! [`import_external_semaphore`](Sim::import_external_semaphore) is
+//! `cuImportExternalSemaphore` (always Invalid `"external semaphore"`). Query;
+//! legal during capture. No Engine `--external-semaphore`.
 //! [`va_export_to_shareable_handle`](Sim::va_export_to_shareable_handle) is
 //! `cuMemExportToShareableHandle`. Always Invalid `"not shareable"`
 //! ([`MemAllocationProp::handle_types`] is none; POSIX-FD VMM export is not
@@ -21966,6 +21969,56 @@ mod tests {
         match sim.graphics_resource_get_mapped_mipmapped_array(d) {
             Err(SimError::Invalid { why }) => {
                 assert!(why.contains("mapped mipmap"), "{why}");
+            }
+            other => panic!("{other:?}"),
+        }
+        match sim.import_external_semaphore(d) {
+            Err(SimError::Invalid { why }) => {
+                assert!(why.contains("external semaphore"), "{why}");
+                assert!(!why.contains("external memory"), "{why}");
+                assert!(!why.contains("nvscisync"), "{why}");
+            }
+            other => panic!("{other:?}"),
+        }
+    }
+
+    #[test]
+    fn import_external_semaphore_is_unsupported() {
+        let mut sim = Sim::new(h100());
+        let d = DeviceId(0);
+        match sim.import_external_semaphore(d) {
+            Err(SimError::Invalid { why }) => {
+                assert!(why.contains("external semaphore"), "{why}");
+                assert!(!why.contains("external memory"), "{why}");
+                assert!(!why.contains("external destroy"), "{why}");
+                assert!(!why.contains("nvscisync"), "{why}");
+            }
+            other => panic!("{other:?}"),
+        }
+        sim.begin_capture(d, StreamId(0)).unwrap();
+        match sim.import_external_semaphore(d) {
+            Err(SimError::Invalid { why }) => {
+                assert!(why.contains("external semaphore"), "{why}");
+            }
+            other => panic!("{other:?}"),
+        }
+        let _g = sim.end_capture().unwrap();
+        match sim.import_external_semaphore(DeviceId(99)) {
+            Err(SimError::Invalid { why }) => {
+                assert!(why.contains("device not in profile"), "{why}");
+            }
+            other => panic!("{other:?}"),
+        }
+        match sim.import_external_memory(d) {
+            Err(SimError::Invalid { why }) => {
+                assert!(why.contains("external memory"), "{why}");
+                assert!(!why.contains("external semaphore"), "{why}");
+            }
+            other => panic!("{other:?}"),
+        }
+        match sim.device_get_nvscisync_attributes(d, NvSciSyncAttrFlags::SIGNAL) {
+            Err(SimError::Invalid { why }) => {
+                assert!(why.contains("nvscisync not modeled"), "{why}");
             }
             other => panic!("{other:?}"),
         }

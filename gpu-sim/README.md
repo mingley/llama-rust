@@ -174,6 +174,7 @@ warp scheduler, L1, …   ← do not model
 | `destroy_external_memory` is Invalid (no external-memory handles) | `cuDestroyExternalMemory` |
 | `external_memory_get_mapped_buffer` is Invalid (no external-memory handles) | `cuExternalMemoryGetMappedBuffer` |
 | `external_memory_get_mapped_mipmapped_array` is Invalid (no external-memory handles) | `cuExternalMemoryGetMappedMipmappedArray` |
+| `import_external_semaphore` is Invalid (no external-semaphore handles) | `cuImportExternalSemaphore` |
 | `surf_object_create` is Invalid (CUDA surfaces are not modeled) | `cuSurfObjectCreate` |
 | `surf_object_destroy` is Invalid (no surface-object handles) | `cuSurfObjectDestroy` / `cudaDestroySurfaceObject` |
 | `surf_object_get_resource_desc` is Invalid (no surface-object handles) | `cuSurfObjectGetResourceDesc` / `cudaGetSurfaceObjectResourceDesc` |
@@ -1092,6 +1093,9 @@ and `graphics_resource_get_mapped_pointer`. Query; legal during capture. No Engi
 `cuExternalMemoryGetMappedMipmappedArray` (always Invalid `"external mipmap"`).
 Distinct from `external_memory_get_mapped_buffer` and
 `graphics_resource_get_mapped_mipmapped_array`. Query; legal during capture. No Engine `--external-mipmap`.
+`import_external_semaphore` is `cuImportExternalSemaphore` (always Invalid
+`"external semaphore"`). Distinct from `import_external_memory`. Query;
+legal during capture. No Engine `--external-semaphore`.
 `surf_object_create` is `cuSurfObjectCreate` (always Invalid `"cuda surface"`;
 CUDA surfaces are not modeled). Distinct from `array_create`. Query; legal
 during capture. No Engine `--surf-object`.
