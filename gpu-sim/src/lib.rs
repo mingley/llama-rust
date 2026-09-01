@@ -615,6 +615,9 @@
 //! (always 0; synthetic PCI has no subsystem id). Distinct from
 //! [`PciDeviceId`](DeviceAttr::PciDeviceId). This VM does not invent
 //! `DeviceAttr::PciSubSystemId`.
+//! [`DeviceProperties::luid`] and [`luid_device_node_mask`](DeviceProperties::luid_device_node_mask)
+//! are `cudaDeviceProp::luid` and `luidDeviceNodeMask` (always 0; Windows
+//! LUID is not modeled). Distinct from [`DeviceProperties::uuid`].
 //! [`DeviceAttr::ComputeCapabilityMajor`] and
 //! [`ComputeCapabilityMinor`](DeviceAttr::ComputeCapabilityMinor) are
 //! `cudaDevAttrComputeCapabilityMajor` and `cudaDevAttrComputeCapabilityMinor`
@@ -20177,6 +20180,28 @@ mod tests {
         assert_eq!(hp.pci_device_id, 0);
         sim.begin_capture(d, StreamId(0)).unwrap();
         assert_eq!(sim.device_get_properties(d).unwrap().pci_subsystem_id, 0);
+        let _g = sim.end_capture().unwrap();
+        match sim.device_get_properties(DeviceId(99)) {
+            Err(SimError::Invalid { why }) => {
+                assert!(why.contains("device not in profile"), "{why}");
+            }
+            other => panic!("{other:?}"),
+        }
+    }
+
+    #[test]
+    fn device_get_properties_luid_is_zero() {
+        let mut sim = Sim::new(h100());
+        let d = DeviceId(0);
+        let hp = sim.device_get_properties(d).unwrap();
+        assert_eq!(hp.luid, [0_u8; 8]);
+        assert_eq!(hp.luid_device_node_mask, 0);
+        assert_ne!(hp.uuid, [0_u8; 16]);
+        sim.begin_capture(d, StreamId(0)).unwrap();
+        assert_eq!(
+            sim.device_get_properties(d).unwrap().luid_device_node_mask,
+            0
+        );
         let _g = sim.end_capture().unwrap();
         match sim.device_get_properties(DeviceId(99)) {
             Err(SimError::Invalid { why }) => {

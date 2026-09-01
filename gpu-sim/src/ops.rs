@@ -1339,7 +1339,8 @@ impl MemExportFlags {
 /// (`cudaUuid_t`), not a real NVIDIA board UUID. [`Self::pci_domain_id`] /
 /// [`Self::pci_bus_id`] / [`Self::pci_device_id`] are the synthetic PCI
 /// identity from [`crate::Sim::device_get_pci_bus_id`].
-/// [`Self::pci_subsystem_id`] is always 0.
+/// [`Self::pci_subsystem_id`] is always 0. [`Self::luid`] and
+/// [`Self::luid_device_node_mask`] are always 0.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct DeviceProperties {
     /// Profile name (`example-h100-sxm`, a capture id, …).
@@ -1347,6 +1348,12 @@ pub struct DeviceProperties {
     /// Synthetic `cudaUuid_t` ([`crate::Sim::device_get_uuid`]). Not a real
     /// NVIDIA UUID and not parsed from a capture file.
     pub uuid: [u8; 16],
+    /// `cudaDeviceProp::luid`. Always 8 zero bytes (Windows LUID is not
+    /// modeled). Distinct from [`Self::uuid`].
+    pub luid: [u8; 8],
+    /// `cudaDeviceProp::luidDeviceNodeMask`. Always 0 (Windows LUID is not
+    /// modeled). Distinct from [`Self::luid`].
+    pub luid_device_node_mask: u32,
     /// Synthetic `pciDomainID` ([`DeviceAttr::PciDomainId`]).
     pub pci_domain_id: u32,
     /// Synthetic `pciBusID` ([`DeviceAttr::PciBusId`]).

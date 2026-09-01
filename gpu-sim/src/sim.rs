@@ -19238,6 +19238,7 @@ impl Sim {
     /// Layered surface 1D/2D dims are always 0.
     /// Cubemap surface dims are always 0.
     /// `pciSubSystemID` is always 0.
+    /// `luid` and `luidDeviceNodeMask` are always 0.
     /// Occupancy SM counts, clock rates, and warp size are not.
     /// Unknown devices are Invalid.
     pub fn device_get_properties(&self, device: DeviceId) -> Result<DeviceProperties, SimError> {
@@ -19245,6 +19246,8 @@ impl Sim {
         Ok(DeviceProperties {
             name: self.profile.name.clone(),
             uuid: synthetic_device_uuid(&self.profile.name, device),
+            luid: [0; 8],
+            luid_device_node_mask: 0,
             pci_domain_id: synthetic_pci_ids(device).0,
             pci_bus_id: synthetic_pci_ids(device).1,
             pci_device_id: synthetic_pci_ids(device).2,
