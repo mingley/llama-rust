@@ -5118,7 +5118,23 @@ mod tests {
         assert!(launched > 0);
         sim.graph_exec_kernel_set_params(exec, node, &params)
             .unwrap();
+        assert!(sim.graph_len(exec).unwrap() >= 1);
+        assert!(sim.graph_instantiated(exec).unwrap());
         sim.destroy_graph(exec).unwrap();
+        for err in [
+            sim.graph_len(exec).unwrap_err(),
+            sim.graph_instantiated(exec).unwrap_err(),
+            sim.graph_get_id(exec).unwrap_err(),
+            sim.graph_nodes(exec).unwrap_err(),
+            sim.graph_debug_dot(exec).unwrap_err(),
+        ] {
+            match err {
+                SimError::Invalid { why } => assert!(why.contains("unknown"), "{why}"),
+                other => panic!("{other:?}"),
+            }
+        }
+        assert!(sim.graph_len(g).unwrap() >= 1);
+        assert!(sim.graph_instantiated(g).unwrap());
         sim.destroy_graph(g).unwrap();
         assert!(sim.user_object_destructors().is_empty());
         let err = sim.launch_graph(exec, s).unwrap_err();

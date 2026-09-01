@@ -5,6 +5,16 @@ Visible five-turn extract: [docs/chatgpt-share-6a920fe1.md](docs/chatgpt-share-6
 Complete share-API extract: [docs/chatgpt-share-6a920fe1/](docs/chatgpt-share-6a920fe1/).
 Work lands on `main`. No PRs.
 
+## Shipped 2026-09-01 — Parked exec queries are unknown
+
+`gpu-sim` CUDA queries of an exec whose handle was destroyed while a
+launch was in flight are Invalid `"unknown graph"` (`graph_len` /
+`graph_instantiated` / `graph_get_id` / `graph_nodes` /
+`graph_debug_dot`). The launch still finishes. Capture is still
+reported first. Getters before destroy stay. Definition queries stay.
+This VM does not invent Engine `--graph-query-gone`. `gpu-profile
+capture` is still refused. Dual score still has no `$/M tokens`.
+
 ## Shipped 2026-09-01 — Concurrent host launches pin every destroy tail
 
 `gpu-sim` CUDA `cudaGraphExecDestroy` of an exec with concurrent in-flight

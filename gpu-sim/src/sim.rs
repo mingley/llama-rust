@@ -680,6 +680,18 @@ impl Sim {
         Ok(exec)
     }
 
+    fn live_graph(&self, id: GraphId) -> Result<&Graph, SimError> {
+        let g = self.graphs.get(&id).ok_or(SimError::Invalid {
+            why: "unknown graph",
+        })?;
+        if g.handle_gone {
+            return Err(SimError::Invalid {
+                why: "unknown graph",
+            });
+        }
+        Ok(g)
+    }
+
     /// [`Self::as_exec`] plus refuse host updates while a device launch is in
     /// flight (`"device launch in flight"`). Query APIs keep [`Self::as_exec`].
     fn as_exec_for_update(&self, id: GraphId) -> Result<GraphId, SimError> {
@@ -3832,14 +3844,11 @@ impl Sim {
     ///
     /// During capture this is the destination graph only; this session's
     /// buffer is not included until [`Self::end_capture`]. Live nodes are
-    /// [`Self::graph_nodes`].
+    /// [`Self::graph_nodes`]. A parked in-flight-destroyed exec is
+    /// `"unknown graph"` (`cudaGraphExecDestroy` invalidates the handle
+    /// immediately).
     pub fn graph_len(&self, graph: GraphId) -> Result<usize, SimError> {
-        self.graphs
-            .get(&graph)
-            .map(|g| g.steps.len())
-            .ok_or(SimError::Invalid {
-                why: "unknown graph",
-            })
+        Ok(self.live_graph(graph)?.steps.len())
     }
 
     /// `cudaGraphGetId` / `cudaGraphExecGetId`. Query; legal during capture.
@@ -3849,11 +3858,7 @@ impl Sim {
     /// definition, its instantiate exec, and a clone each have their own id.
     /// Unknown graphs are Invalid `"unknown graph"`.
     pub fn graph_get_id(&self, graph: GraphId) -> Result<u32, SimError> {
-        if !self.graphs.contains_key(&graph) {
-            return Err(SimError::Invalid {
-                why: "unknown graph",
-            });
-        }
+        self.live_graph(graph)?;
         Ok(graph.0)
     }
 
@@ -3863,9 +3868,7 @@ impl Sim {
     /// graph only. [`Self::graph_destroy_node`] tombstones a slot, so this may
     /// skip indices; [`Self::graph_len`] stays the add-order bound.
     pub fn graph_nodes(&self, graph: GraphId) -> Result<Vec<usize>, SimError> {
-        let g = self.graphs.get(&graph).ok_or(SimError::Invalid {
-            why: "unknown graph",
-        })?;
+        let g = self.live_graph(graph)?;
         Ok(g.steps
             .iter()
             .enumerate()
@@ -3878,9 +3881,7 @@ impl Sim {
     ///
     /// True for an exec id, or a definition that has a primary exec.
     pub fn graph_instantiated(&self, graph: GraphId) -> Result<bool, SimError> {
-        let g = self.graphs.get(&graph).ok_or(SimError::Invalid {
-            why: "unknown graph",
-        })?;
+        let g = self.live_graph(graph)?;
         Ok(g.instantiated || g.primary_exec.is_some())
     }
 
@@ -9766,7 +9767,8 @@ impl Sim {
     /// `cudaGraphDebugDotPrint` with [`GraphDebugDotFlags`].
     ///
     /// Query; legal during capture. Unknown bits (including external-semaphore
-    /// flags) are Invalid `"graph debug dot flags"`.
+    /// flags) are Invalid `"graph debug dot flags"`. A parked
+    /// in-flight-destroyed exec is `"unknown graph"`.
     /// [`GraphDebugDotFlags::VERBOSE`] dumps every modeled param class and
     /// ExtraTopoInfo. [`GraphDebugDotFlags::RUNTIME_TYPES`] prints CUDA runtime
     /// `cudaGraphNodeType*` names. [`GraphDebugDotFlags::EXTRA_TOPO_INFO`]
@@ -9798,9 +9800,7 @@ impl Sim {
                 why: "graph debug dot flags",
             });
         }
-        let g = self.graphs.get(&graph).ok_or(SimError::Invalid {
-            why: "unknown graph",
-        })?;
+        let g = self.live_graph(graph)?;
         let dump = if flags & GraphDebugDotFlags::VERBOSE != 0 {
             KNOWN
         } else {
