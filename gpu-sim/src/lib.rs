@@ -15286,8 +15286,8 @@ mod tests {
         assert!(sim.is_resident(a, d).unwrap());
         assert!(sim.clock_ns() > t0);
         assert_eq!(sim.bytes_moved(), moved0 + 4096);
-        match sim.memcpy_htod(d, a, 8192, s) {
-            Err(SimError::Invalid { why }) => assert!(why.contains("range past"), "{why}"),
+        match sim.memcpy_htod(d, AllocId(u64::MAX), 4096, s) {
+            Err(SimError::UnknownAlloc { .. }) => {}
             other => panic!("{other:?}"),
         }
         let t1 = sim.clock_ns();
