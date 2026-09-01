@@ -219,6 +219,7 @@ warp scheduler, L1, …   ← do not model
 | `cudaStreamDestroy` (`destroy_stream`) returns immediately; in-flight work still completes; NULL is Invalid; recreate while unfinished is `"stream in flight"` | 1 ns |
 | `compute_slots>=2` overlaps independent kernels at full issue rate | kernel duration (not SM-partition) |
 | `cudaLaunchCooperativeKernel` occupies every compute slot (`cooperative_kernel`) | leftover kernels cannot Hyper-Q overlap |
+| `cudaLaunchCooperativeKernelMultiDevice` is Invalid (attr is 0) | `cooperative_kernel_multi_device` |
 | `cudaLaunchAttributeCooperative` (`KernelNodeAttr::Cooperative`) | same occupancy; `graph_exec_kernel_set_params` still refuses a mismatch |
 | programmatic dependent launch: wait kernel starts after the previous same-stream trigger (`pdl_trigger_permille`) | overlap needs `compute_slots >= 2` |
 | `cudaLaunchAttributeAccessPolicyWindow` persisting hits (`kernel_access_policy`) | HBM discount after `set_persisting_l2_cache_size`; CUDA default size is 0 |
@@ -772,6 +773,8 @@ not with `--device-launch`). `--graph-auto-free` is
 AutoFreeOnLaunch (relaunch recharges HBM; not with `--graph-mem`).
 `cooperative_kernel` / `graph_add_cooperative_kernel` are
 `cudaLaunchCooperativeKernel` (occupy every Hyper-Q slot; capture allowed).
+`cooperative_kernel_multi_device` is `cudaLaunchCooperativeKernelMultiDevice`
+(always Invalid `"cooperative multi-device"`; attr is 0).
 `graph_kernel_node_set_cooperative` is `cudaLaunchAttributeCooperative` on
 graph kernel nodes (`CopyAttributes` copies it). Launch pays `graph_launch_ns`
 once; recorded kernels skip per-kernel launch overhead.

@@ -5,6 +5,15 @@ Visible five-turn extract: [docs/chatgpt-share-6a920fe1.md](docs/chatgpt-share-6
 Complete share-API extract: [docs/chatgpt-share-6a920fe1/](docs/chatgpt-share-6a920fe1/).
 Work lands on `main`. No PRs.
 
+## Shipped 2026-09-01 — CUDA `cudaLaunchCooperativeKernelMultiDevice`
+
+`gpu-sim` `Sim::cooperative_kernel_multi_device` is
+`cudaLaunchCooperativeKernelMultiDevice`. Always Invalid
+`"cooperative multi-device"` because `CooperativeMultiDeviceLaunch` is 0.
+Query; legal during capture. Distinct from `cooperative_kernel`. This VM
+does not invent `cudaLaunchParams` packing or Engine `--coop-multi`.
+`gpu-profile capture` is still refused. Dual score still has no `$/M tokens`.
+
 ## Shipped 2026-09-01 — CUDA `cuTensorMapEncodeTiled`
 
 `gpu-sim` `Sim::tensor_map_encode_tiled` is `cuTensorMapEncodeTiled`.

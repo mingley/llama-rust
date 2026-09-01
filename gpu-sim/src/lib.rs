@@ -25,6 +25,10 @@
 //! every compute slot so leftover kernels cannot Hyper-Q overlap it. Capture is
 //! allowed (CUDA 11+). [`GpuProfile::cooperative_launch`] is
 //! `cudaDevAttrCooperativeLaunch` (example H100 is true).
+//! [`cooperative_kernel_multi_device`](Sim::cooperative_kernel_multi_device) is
+//! `cudaLaunchCooperativeKernelMultiDevice` (always Invalid
+//! `"cooperative multi-device"`; [`DeviceAttr::CooperativeMultiDeviceLaunch`]
+//! is 0). Query; legal during capture. No Engine `--coop-multi`.
 //! [`KernelNodeAttr::Cooperative`] is `cudaLaunchAttributeCooperative` on graph
 //! kernel nodes (Get/Set/CopyAttributes).
 //! [`Sim::set_stream_sm_permille`] is a duration-only SM fraction (compute-bound
@@ -12328,6 +12332,38 @@ mod tests {
             }
             other => panic!("{other:?}"),
         }
+    }
+
+    #[test]
+    fn cooperative_kernel_multi_device_is_unsupported() {
+        let mut sim = Sim::new(h100());
+        let d = DeviceId(0);
+        match sim.cooperative_kernel_multi_device(d) {
+            Err(SimError::Invalid { why }) => {
+                assert!(why.contains("cooperative multi-device"), "{why}");
+                assert!(!why.contains("launch not supported"), "{why}");
+            }
+            other => panic!("{other:?}"),
+        }
+        sim.begin_capture(d, StreamId(0)).unwrap();
+        match sim.cooperative_kernel_multi_device(d) {
+            Err(SimError::Invalid { why }) => {
+                assert!(why.contains("cooperative multi-device"), "{why}");
+            }
+            other => panic!("{other:?}"),
+        }
+        let _g = sim.end_capture().unwrap();
+        match sim.cooperative_kernel_multi_device(DeviceId(99)) {
+            Err(SimError::Invalid { why }) => {
+                assert!(why.contains("device not in profile"), "{why}");
+            }
+            other => panic!("{other:?}"),
+        }
+        assert_eq!(
+            sim.device_get_attribute(d, DeviceAttr::CooperativeMultiDeviceLaunch)
+                .unwrap(),
+            0
+        );
     }
 
     #[test]

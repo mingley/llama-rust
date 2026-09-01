@@ -19993,6 +19993,21 @@ impl Sim {
         self.submit_kernel(device, kind, reads, writes, stream, true)
     }
 
+    /// `cudaLaunchCooperativeKernelMultiDevice`. Multi-device cooperative
+    /// launch is not modeled.
+    ///
+    /// Always Invalid `"cooperative multi-device"`
+    /// ([`DeviceAttr::CooperativeMultiDeviceLaunch`] is 0). Distinct from
+    /// [`Self::cooperative_kernel`] (single device). Unknown devices are
+    /// Invalid `"device not in profile"`. This VM does not invent
+    /// `cudaLaunchParams` packing this slice.
+    pub fn cooperative_kernel_multi_device(&self, device: DeviceId) -> Result<(), SimError> {
+        let _gpu = self.profile.gpu(device)?;
+        Err(SimError::Invalid {
+            why: "cooperative multi-device",
+        })
+    }
+
     fn submit_kernel(
         &mut self,
         device: DeviceId,
