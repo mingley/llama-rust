@@ -11902,6 +11902,8 @@ impl Sim {
     /// [`KernelNodeAttr::DynamicShared`] is `sharedMemBytes` (params, not
     /// CopyAttributes). [`Self::graph_exec_kernel_node_copy_attributes`] is
     /// the exec-snapshot twin.
+    /// A parked in-flight-destroyed exec used as `src` or `dst` is
+    /// `"unknown graph"`. Live exec as either end stays.
     pub fn graph_kernel_node_copy_attributes(
         &mut self,
         dst_graph: GraphId,
@@ -11936,6 +11938,8 @@ impl Sim {
         exec: bool,
     ) -> Result<(), SimError> {
         self.fail_if_capturing("cannot capture kernel node copy attributes")?;
+        self.require_live_graph(src_graph)?;
+        self.require_live_graph(dst_graph)?;
         if self.kernel_node_device_updatable(src_graph, src, exec)?
             || self.kernel_node_device_updatable(dst_graph, dst, exec)?
         {

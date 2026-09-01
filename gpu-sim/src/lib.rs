@@ -885,6 +885,8 @@
 //! ([`KernelNodeAttr::SynchronizationPolicy`]; not [`KernelAttrs`]).
 //! [`graph_exec_kernel_node_copy_attributes`](Sim::graph_exec_kernel_node_copy_attributes)
 //! is the exec-snapshot CopyAttributes twin (uninstantiated graphs are Invalid).
+//! A parked in-flight-destroyed exec used as CopyAttributes src or dst is
+//! `"unknown graph"`; a live exec as either end stays.
 //! [`graph_kernel_node_get_attribute`](Sim::graph_kernel_node_get_attribute) /
 //! [`graph_exec_kernel_node_get_attribute`](Sim::graph_exec_kernel_node_get_attribute) /
 //! [`graph_kernel_node_set_attribute`](Sim::graph_kernel_node_set_attribute) /
@@ -5448,6 +5450,66 @@ mod tests {
         }
         sim.destroy_graph(g).unwrap();
         sim.destroy_graph(exec2).unwrap();
+        sim.destroy_graph(_end).unwrap();
+    }
+
+    #[test]
+    fn parked_exec_copy_attributes_is_unknown() {
+        let mut sim = Sim::new(h100());
+        let d = DeviceId(0);
+        let s = StreamId(0);
+        let a = sim.malloc(d, 4096).unwrap();
+        let src_g = sim.create_graph(d, s).unwrap();
+        sim.graph_add_kernel(src_g, KernelKind::other(8, 8), &[a], &[a])
+            .unwrap();
+        let dst_g = sim.create_graph(d, s).unwrap();
+        sim.graph_add_kernel(dst_g, KernelKind::other(1 << 40, 4096), &[a], &[a])
+            .unwrap();
+        sim.graph_kernel_node_copy_attributes(dst_g, 0, src_g, 0)
+            .unwrap();
+        let exec = sim.instantiate_graph(dst_g).unwrap();
+        sim.graph_kernel_node_copy_attributes(src_g, 0, exec, 0)
+            .unwrap();
+        sim.graph_kernel_node_copy_attributes(exec, 0, src_g, 0)
+            .unwrap();
+        let launched = sim.launch_graph(exec, s).unwrap();
+        assert!(launched > 0);
+        sim.destroy_graph(exec).unwrap();
+        match sim
+            .graph_kernel_node_copy_attributes(src_g, 0, exec, 0)
+            .unwrap_err()
+        {
+            SimError::Invalid { why } => assert!(why.contains("unknown"), "{why}"),
+            other => panic!("{other:?}"),
+        }
+        match sim
+            .graph_kernel_node_copy_attributes(exec, 0, src_g, 0)
+            .unwrap_err()
+        {
+            SimError::Invalid { why } => assert!(why.contains("unknown"), "{why}"),
+            other => panic!("{other:?}"),
+        }
+        sim.graph_kernel_node_copy_attributes(dst_g, 0, src_g, 0)
+            .unwrap();
+        sim.begin_capture(d, StreamId(1)).unwrap();
+        match sim
+            .graph_kernel_node_copy_attributes(src_g, 0, exec, 0)
+            .unwrap_err()
+        {
+            SimError::Invalid { why } => assert!(why.contains("capture"), "{why}"),
+            other => panic!("{other:?}"),
+        }
+        let _end = sim.end_capture().unwrap();
+        sim.synchronize().unwrap();
+        match sim
+            .graph_kernel_node_copy_attributes(src_g, 0, exec, 0)
+            .unwrap_err()
+        {
+            SimError::Invalid { why } => assert!(why.contains("unknown"), "{why}"),
+            other => panic!("{other:?}"),
+        }
+        sim.destroy_graph(src_g).unwrap();
+        sim.destroy_graph(dst_g).unwrap();
         sim.destroy_graph(_end).unwrap();
     }
 

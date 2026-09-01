@@ -1341,7 +1341,9 @@ are the generic `cudaGraphKernelNodeGetAttribute` / `SetAttribute`
 (`KernelNodeAttr`). Typed getters stay. Definition Set does not retarget
 exec. Attr/value mismatch is Invalid `"kernel node attr"`.
 `graph_exec_kernel_node_copy_attributes` is the exec-snapshot CopyAttributes
-twin (uninstantiated graphs are Invalid).
+twin (uninstantiated graphs are Invalid). A parked in-flight-destroyed exec
+used as CopyAttributes src or dst is `"unknown graph"`; a live exec as either
+end stays.
 `kernel_pdl` is `cudaLaunchKernelEx` PDL:
 a wait kernel may start after the previous same-stream kernel's trigger
 (`pdl_trigger_permille`) instead of its completion. Overlap needs
