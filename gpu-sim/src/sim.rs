@@ -18568,6 +18568,7 @@ impl Sim {
     /// `"device not in profile"`. This VM does not invent `cuCtxSetLimit`
     /// this slice (`set_limit` stays the runtime setter).
     pub fn ctx_get_limit(&self, device: DeviceId, limit: DeviceLimit) -> Result<u64, SimError> {
+        let _gpu = self.profile.gpu(device)?;
         self.get_limit(device, limit)
     }
 
