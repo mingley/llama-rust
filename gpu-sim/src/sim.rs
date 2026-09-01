@@ -18190,13 +18190,26 @@ impl Sim {
     ///
     /// Always Invalid `"buffer object"` (no GL buffer-object handles). Distinct
     /// from [`Self::graphics_gl_register_buffer`] (why is not a superstring of
-    /// `"gl buffer"`) and from [`Self::gl_ctx_create`]. Unknown devices are
+    /// `"gl buffer"`), from [`Self::gl_ctx_create`], and from
+    /// [`Self::gl_map_buffer_object`]. Unknown devices are
     /// Invalid `"device not in profile"`. Query; legal during capture.
     pub fn gl_register_buffer_object(&self, device: DeviceId) -> Result<(), SimError> {
         let _gpu = self.profile.gpu(device)?;
         Err(SimError::Invalid {
             why: "buffer object",
         })
+    }
+
+    /// `cuGLMapBufferObject` plus `cudaGLMapBufferObject`. Legacy OpenGL
+    /// interop is not modeled.
+    ///
+    /// Always Invalid `"gl map"` (no GL buffer-object handles). Distinct from
+    /// [`Self::gl_register_buffer_object`] and from
+    /// [`Self::graphics_map_resources`]. Unknown devices are Invalid
+    /// `"device not in profile"`. Query; legal during capture.
+    pub fn gl_map_buffer_object(&self, device: DeviceId) -> Result<(), SimError> {
+        let _gpu = self.profile.gpu(device)?;
+        Err(SimError::Invalid { why: "gl map" })
     }
 
     /// `cuD3D11GetDevices` / `cudaD3D11GetDevices`. Direct3D 11 interop is

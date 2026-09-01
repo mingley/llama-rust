@@ -672,6 +672,9 @@
 //! [`gl_register_buffer_object`](Sim::gl_register_buffer_object) is
 //! `cuGLRegisterBufferObject` (always Invalid `"buffer object"`). Query;
 //! legal during capture. No Engine `--gl-buffer-object`.
+//! [`gl_map_buffer_object`](Sim::gl_map_buffer_object) is
+//! `cuGLMapBufferObject` (always Invalid `"gl map"`). Query;
+//! legal during capture. No Engine `--gl-map`.
 //! [`d3d11_get_devices`](Sim::d3d11_get_devices) is `cuD3D11GetDevices`
 //! (always Invalid `"d3d11"`). Query; legal during capture. No Engine `--d3d11-devices`.
 //! [`d3d11_ctx_create`](Sim::d3d11_ctx_create) is `cuD3D11CtxCreate` (always
@@ -22887,6 +22890,53 @@ mod tests {
         match sim.gl_ctx_create(d) {
             Err(SimError::Invalid { why }) => {
                 assert!(why.contains("gl context"), "{why}");
+            }
+            other => panic!("{other:?}"),
+        }
+        match sim.gl_map_buffer_object(d) {
+            Err(SimError::Invalid { why }) => {
+                assert!(why.contains("gl map"), "{why}");
+                assert!(!why.contains("buffer object"), "{why}");
+            }
+            other => panic!("{other:?}"),
+        }
+    }
+
+    #[test]
+    fn gl_map_buffer_object_is_unsupported() {
+        let mut sim = Sim::new(h100());
+        let d = DeviceId(0);
+        match sim.gl_map_buffer_object(d) {
+            Err(SimError::Invalid { why }) => {
+                assert!(why.contains("gl map"), "{why}");
+                assert!(!why.contains("buffer object"), "{why}");
+                assert!(!why.contains("graphics resource"), "{why}");
+            }
+            other => panic!("{other:?}"),
+        }
+        sim.begin_capture(d, StreamId(0)).unwrap();
+        match sim.gl_map_buffer_object(d) {
+            Err(SimError::Invalid { why }) => {
+                assert!(why.contains("gl map"), "{why}");
+            }
+            other => panic!("{other:?}"),
+        }
+        let _g = sim.end_capture().unwrap();
+        match sim.gl_map_buffer_object(DeviceId(99)) {
+            Err(SimError::Invalid { why }) => {
+                assert!(why.contains("device not in profile"), "{why}");
+            }
+            other => panic!("{other:?}"),
+        }
+        match sim.gl_register_buffer_object(d) {
+            Err(SimError::Invalid { why }) => {
+                assert!(why.contains("buffer object"), "{why}");
+            }
+            other => panic!("{other:?}"),
+        }
+        match sim.graphics_map_resources(d, StreamId(0)) {
+            Err(SimError::Invalid { why }) => {
+                assert!(why.contains("graphics resource"), "{why}");
             }
             other => panic!("{other:?}"),
         }

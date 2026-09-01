@@ -200,6 +200,7 @@ warp scheduler, L1, …   ← do not model
 | `gl_get_devices` is Invalid (OpenGL interop is not modeled) | `cuGLGetDevices` / `cudaGLGetDevices` |
 | `gl_ctx_create` is Invalid (OpenGL interop is not modeled) | `cuGLCtxCreate` |
 | `gl_register_buffer_object` is Invalid (legacy OpenGL interop is not modeled) | `cuGLRegisterBufferObject` |
+| `gl_map_buffer_object` is Invalid (legacy OpenGL interop is not modeled) | `cuGLMapBufferObject` |
 | `d3d11_get_devices` is Invalid (Direct3D 11 interop is not modeled) | `cuD3D11GetDevices` / `cudaD3D11GetDevices` |
 | `d3d11_ctx_create` is Invalid (Direct3D 11 interop is not modeled) | `cuD3D11CtxCreate` |
 | `d3d12_get_devices` is Invalid (Direct3D 12 interop is not modeled) | `cuD3D12GetDevices` / `cudaD3D12GetDevices` |
@@ -1177,6 +1178,8 @@ from `gl_get_devices`. Query; legal during capture. No Engine `--gl-ctx`.
 `gl_register_buffer_object` is `cuGLRegisterBufferObject` (always Invalid
 `"buffer object"`). Distinct from `graphics_gl_register_buffer`. Query;
 legal during capture. No Engine `--gl-buffer-object`.
+`gl_map_buffer_object` is `cuGLMapBufferObject` (always Invalid `"gl map"`).
+Distinct from `gl_register_buffer_object`. Query; legal during capture. No Engine `--gl-map`.
 `d3d11_get_devices` is `cuD3D11GetDevices` (always Invalid `"d3d11"`).
 Distinct from `gl_get_devices`. Query; legal during capture. No Engine `--d3d11-devices`.
 `d3d11_ctx_create` is `cuD3D11CtxCreate` (always Invalid `"d3d11 context"`).
