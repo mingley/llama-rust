@@ -33990,7 +33990,7 @@ mod tests {
             sim.pointer_get_attributes(managed).unwrap().kind,
             MemoryType::Managed
         );
-        sim.event_get_id(EventId(1)).unwrap();
+        let _ev = sim.event_get_id(EventId(1)).unwrap();
         assert_eq!(sim.graph_len(g).unwrap(), 1);
         assert_eq!(sim.ctx_get_id(d).unwrap(), ctx_id);
         match sim.green_ctx_get_id(gc) {
@@ -34003,7 +34003,7 @@ mod tests {
             Err(SimError::Invalid { why }) => assert!(why.contains("unknown stream"), "{why}"),
             other => panic!("{other:?}"),
         }
-        sim.stream_get_flags(d, s).unwrap();
+        let _null_flags = sim.stream_get_flags(d, s).unwrap();
         sim.stream_create_with_flags(d, used, StreamCreateFlags::NON_BLOCKING)
             .unwrap();
         assert_eq!(
