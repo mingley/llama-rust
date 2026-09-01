@@ -1158,6 +1158,9 @@ pub enum DeviceAttr {
     /// `cudaDevAttrHandleTypeWin32KmtHandleSupported` (always 0; this VM has
     /// POSIX-FD shareable pools, not Win32 KMT handles).
     HandleTypeWin32KmtHandleSupported,
+    /// `cudaDevAttrD3D12CigSupported` (always 0; D3D12 CUDA-in-graphics is
+    /// not modeled). Distinct from [`Self::HandleTypeWin32HandleSupported`].
+    D3D12CigSupported,
     /// `cudaDevAttrHandleTypeFabricSupported` (always 0; fabric handles are not
     /// modeled).
     HandleTypeFabricSupported,
@@ -1735,6 +1738,10 @@ pub struct DeviceProperties {
     pub handle_type_win32_handle_supported: bool,
     /// `cudaDevAttrHandleTypeWin32KmtHandleSupported` (POSIX-FD only).
     pub handle_type_win32_kmt_handle_supported: bool,
+    /// `cudaDevAttrD3D12CigSupported` ([`DeviceAttr::D3D12CigSupported`]).
+    /// Always false; D3D12 CUDA-in-graphics is not modeled. Distinct from
+    /// [`Self::handle_type_win32_handle_supported`].
+    pub d3d12_cig_supported: bool,
     /// `cudaDevAttrHandleTypeFabricSupported` (fabric handles are not modeled).
     pub handle_type_fabric_supported: bool,
     /// `cudaDevAttrHostMemoryPoolsSupported` (pools are device-only).

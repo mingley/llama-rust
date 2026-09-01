@@ -19180,6 +19180,7 @@ impl Sim {
             | DeviceAttr::MaxSurfaceCubemapLayeredLayers
             | DeviceAttr::HandleTypeWin32HandleSupported
             | DeviceAttr::HandleTypeWin32KmtHandleSupported
+            | DeviceAttr::D3D12CigSupported
             | DeviceAttr::HandleTypeFabricSupported
             | DeviceAttr::HostMemoryPoolsSupported
             | DeviceAttr::IsMultiGpuBoard
@@ -19243,6 +19244,7 @@ impl Sim {
     /// Cubemap surface dims are always 0.
     /// Alternate texture 3D dims are always 0.
     /// `MpsEnabled` is always 0.
+    /// `D3D12CigSupported` is always 0.
     /// `pciSubSystemID` is always 0.
     /// `luid` and `luidDeviceNodeMask` are always 0.
     /// Occupancy SM counts, clock rates, and warp size are not.
@@ -19371,6 +19373,7 @@ impl Sim {
             generic_compression_supported: false,
             handle_type_win32_handle_supported: false,
             handle_type_win32_kmt_handle_supported: false,
+            d3d12_cig_supported: false,
             handle_type_fabric_supported: false,
             host_memory_pools_supported: false,
             is_multi_gpu_board: false,

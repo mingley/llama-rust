@@ -487,6 +487,8 @@ and Height, `MaxTexture3DWidth` / Height / Depth; no Engine flag).
 (`cudaDevAttrMaxTexture3DWidthAlt`, HeightAlt, and DepthAlt; no Engine flag).
 `gpu-sim` `MpsEnabled` is always 0 (`cudaDevAttrMpsEnabled`; CUDA
 Multi-Process Service is not modeled; no Engine flag).
+`gpu-sim` `D3D12CigSupported` is always 0 (`cudaDevAttrD3D12CigSupported`;
+D3D12 CUDA-in-graphics is not modeled; no Engine flag).
 `gpu-sim` linear texture 1D/2D dim caps are always 0
 (`cudaDevAttrMaxTexture1DLinearWidth`, `MaxTexture2DLinearWidth`, Height,
 and Pitch; no Engine flag).

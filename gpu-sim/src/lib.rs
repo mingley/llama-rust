@@ -564,6 +564,9 @@
 //! [`HandleTypeFabricSupported`](DeviceAttr::HandleTypeFabricSupported) are
 //! always 0 (this VM has POSIX-FD shareable pools; fabric handles are not
 //! modeled).
+//! [`DeviceAttr::D3D12CigSupported`] is always 0 (D3D12 CUDA-in-graphics is
+//! not modeled). Distinct from
+//! [`HandleTypeWin32HandleSupported`](DeviceAttr::HandleTypeWin32HandleSupported).
 //! [`DeviceAttr::HostMemoryPoolsSupported`] is always 0 (pools are
 //! device-only; host location is Invalid).
 //! [`DeviceAttr::IsMultiGpuBoard`] / [`MultiGpuBoardGroupID`](DeviceAttr::MultiGpuBoardGroupID)
@@ -19591,6 +19594,33 @@ mod tests {
             0
         );
         let _g = sim.end_capture().unwrap();
+    }
+
+    #[test]
+    fn device_get_attribute_d3d12_cig_supported_is_zero() {
+        let mut sim = Sim::new(h100());
+        let d = DeviceId(0);
+        let hp = sim.device_get_properties(d).unwrap();
+        assert!(!hp.d3d12_cig_supported);
+        assert!(!hp.handle_type_win32_handle_supported);
+        assert_eq!(
+            sim.device_get_attribute(d, DeviceAttr::D3D12CigSupported)
+                .unwrap(),
+            0
+        );
+        sim.begin_capture(d, StreamId(0)).unwrap();
+        assert_eq!(
+            sim.device_get_attribute(d, DeviceAttr::D3D12CigSupported)
+                .unwrap(),
+            0
+        );
+        let _g = sim.end_capture().unwrap();
+        match sim.device_get_attribute(DeviceId(99), DeviceAttr::D3D12CigSupported) {
+            Err(SimError::Invalid { why }) => {
+                assert!(why.contains("device not in profile"), "{why}");
+            }
+            other => panic!("{other:?}"),
+        }
     }
 
     #[test]

@@ -6203,7 +6203,14 @@ model, do not celebrate the sim.
     `gpu-profile capture` is still refused. Dual score still has no
     `$/M tokens`.
 
-586. [ ] Next numbered PLAN item after 585 is the next `gpu-sim` / Engine /
+586. [x] `gpu-sim` `DeviceAttr::D3D12CigSupported` is always 0. D3D12
+    CUDA-in-graphics is not modeled. Query; legal during capture.
+    Distinct from `HandleTypeWin32HandleSupported`. This VM does not invent
+    Engine `--d3d12-cig`, occupancy SM counts, or `cudaChooseDevice`.
+    `gpu-profile capture` is still refused. Dual score still has no
+    `$/M tokens`.
+
+587. [ ] Next numbered PLAN item after 586 is the next `gpu-sim` / Engine /
     serve / expertvm mechanical API that is still missing, or the next official
     decode family. Prefer remaining CUDA-shaped twins over more
     OpenAI HTTP veneer. Do not invent F32 `output.scale`. Do not invent a
@@ -6386,6 +6393,9 @@ model, do not celebrate the sim.
     Do not invent a second `cudaDevAttrMpsEnabled`. Do not invent
     Engine `--mps-enabled`. Do not invent a CUDA MPS server this
     slice. Do not reverse MpsEnabled staying 0.
+    Do not invent a second `cudaDevAttrD3D12CigSupported`. Do not invent
+    Engine `--d3d12-cig`. Do not invent Vulkan CIG this slice.
+    Do not reverse D3D12CigSupported staying 0.
     Do not invent a second `cudaStreamAddCallback`.
     Do not invent Engine `--stream-callback` (same wall as second live
     `cudaLaunchHostFunc` after miss DMA).
@@ -6689,6 +6699,9 @@ model, do not celebrate the sim.
     Do not invent a second MpsEnabled DeviceAttr. Do not invent
     Engine `--mps`. Do not invent a CUDA MPS client this slice.
     Do not reverse MpsEnabled staying 0.
+    Do not invent a second D3D12CigSupported DeviceAttr. Do not invent
+    Engine `--d3d12`. Do not invent D3D12 interop this slice.
+    Do not reverse D3D12CigSupported staying 0.
     Do not invent a second DeviceLaunch in-flight destroy-complete check or Engine
     `--device-launch-destroy`. Do not abort an in-flight DeviceLaunch when
     `destroy_graph` succeeds. Do not delay destroy of an idle exec. Do not invent
@@ -7212,6 +7225,9 @@ model, do not celebrate the sim.
     3D texture dims as 0.
     Do not invent a second `mps_enabled` DeviceProperties field. Do
     not invent Engine `--cuda-mps`. Do not reverse MpsEnabled 0.
+    Do not invent a second `d3d12_cig_supported` DeviceProperties
+    field. Do not invent Engine `--cig-d3d12`. Do not reverse
+    D3D12CigSupported 0.
     Do not
     spend the next item on an OpenAI-compatible HTTP veneer.
 
