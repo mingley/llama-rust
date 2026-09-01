@@ -6491,7 +6491,14 @@ model, do not celebrate the sim.
     `cudaChooseDevice`. `gpu-profile capture` is still refused. Dual
     score still has no `$/M tokens`.
 
-623. [ ] Next numbered PLAN item after 622 is the next `gpu-sim` / Engine /
+623. [x] `gpu-sim` `Sim::get_export_table` is `cuGetExportTable`. Always
+    Invalid `"export table"` because this VM has no C ABI driver tables.
+    Query; legal during capture. Distinct from `get_proc_address`. This
+    VM does not invent a succeeding `CUuuid` table lookup, Engine `--export-table`,
+    or `cudaChooseDevice`. `gpu-profile capture` is still refused. Dual
+    score still has no `$/M tokens`.
+
+624. [ ] Next numbered PLAN item after 623 is the next `gpu-sim` / Engine /
     serve / expertvm mechanical API that is still missing, or the next official
     decode family. Prefer remaining CUDA-shaped twins over more
     OpenAI HTTP veneer. Do not invent F32 `output.scale`. Do not invent a
@@ -6805,6 +6812,9 @@ model, do not celebrate the sim.
     Do not invent a second `cuLinkCreate` / `link_create`. Do not invent
     Engine `--jit-link`. Do not invent `cuLinkAddData` this slice. Do not
     reverse `"jit linker"`.
+    Do not invent a second `cuGetExportTable` / `get_export_table`. Do
+    not invent Engine `--export-table`. Do not invent a succeeding
+    `CUuuid` table lookup this slice. Do not reverse `"export table"`.
     Do not invent a second `cudaStreamAddCallback`.
     Do not invent Engine `--stream-callback` (same wall as second live
     `cudaLaunchHostFunc` after miss DMA).
@@ -7222,6 +7232,9 @@ model, do not celebrate the sim.
     Do not invent a second `link_create` API. Do not invent
     Engine `--link-create`. Do not invent a `CUlinkState` this slice.
     Do not reverse no JIT linker.
+    Do not invent a second `get_export_table` API. Do not invent
+    Engine `--get-export`. Do not invent an internal driver table this
+    slice. Do not reverse no C ABI tables.
     Do not invent a second DeviceLaunch in-flight destroy-complete check or Engine
     `--device-launch-destroy`. Do not abort an in-flight DeviceLaunch when
     `destroy_graph` succeeds. Do not delay destroy of an idle exec. Do not invent
@@ -7843,6 +7856,9 @@ model, do not celebrate the sim.
     cuMipmappedArrayCreate Invalid.
     Do not invent a second `link_create` method. Do not invent
     Engine `--cu-link-create`. Do not reverse wrapping cuLinkCreate
+    Invalid.
+    Do not invent a second `get_export_table` method. Do not invent
+    Engine `--cu-export-table`. Do not reverse wrapping cuGetExportTable
     Invalid.
     Do not
     spend the next item on an OpenAI-compatible HTTP veneer.

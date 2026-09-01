@@ -516,6 +516,8 @@ Eager; no Engine flag).
 Engine flag).
 `gpu-sim` `get_proc_address` is `cuGetProcAddress` (Invalid; no C ABI
 function pointers; no Engine flag).
+`gpu-sim` `get_export_table` is `cuGetExportTable` (Invalid; no internal
+driver tables; no Engine flag).
 `gpu-sim` `coredump_get_attribute` is `cuCoredumpGetAttribute` (Invalid;
 GPU coredumps are not modeled; no Engine flag).
 `gpu-sim` `checkpoint_process_lock` is `cuCheckpointProcessLock` (Invalid;

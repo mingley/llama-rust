@@ -19828,6 +19828,19 @@ impl Sim {
         })
     }
 
+    /// `cuGetExportTable`. Internal driver export tables are not modeled.
+    ///
+    /// Always Invalid `"export table"` (this VM has no C ABI tables). Distinct
+    /// from [`Self::get_proc_address`]. Unknown devices are Invalid
+    /// `"device not in profile"`. Query; legal during capture. This VM does
+    /// not invent a succeeding `CUuuid` table lookup this slice.
+    pub fn get_export_table(&self, device: DeviceId) -> Result<(), SimError> {
+        let _gpu = self.profile.gpu(device)?;
+        Err(SimError::Invalid {
+            why: "export table",
+        })
+    }
+
     /// `cuCoredumpGetAttribute` / `cudaCoredumpGetAttribute`.
     ///
     /// Always Invalid `"coredump"` (GPU coredumps are not modeled). Distinct

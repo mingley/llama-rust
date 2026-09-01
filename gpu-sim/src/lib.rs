@@ -852,6 +852,8 @@
 //! (CUDA 13.0). [`get_proc_address`](Sim::get_proc_address) is `cuGetProcAddress`
 //! plus `cudaGetDriverEntryPoint` (always Invalid `"proc address"`). Query;
 //! legal during capture. No Engine `--proc-address`.
+//! [`get_export_table`](Sim::get_export_table) is `cuGetExportTable`
+//! (always Invalid `"export table"`). Query; legal during capture. No Engine `--export-table`.
 //! [`coredump_get_attribute`](Sim::coredump_get_attribute) is
 //! `cuCoredumpGetAttribute` (always Invalid `"coredump"`). Query; legal
 //! during capture. No Engine `--coredump`.
@@ -18350,6 +18352,38 @@ mod tests {
         match sim.library_load_data(d) {
             Err(SimError::Invalid { why }) => {
                 assert!(why.contains("cuda library"), "{why}");
+            }
+            other => panic!("{other:?}"),
+        }
+    }
+
+    #[test]
+    fn get_export_table_is_unsupported() {
+        let mut sim = Sim::new(h100());
+        let d = DeviceId(0);
+        match sim.get_export_table(d) {
+            Err(SimError::Invalid { why }) => {
+                assert!(why.contains("export table"), "{why}");
+            }
+            other => panic!("{other:?}"),
+        }
+        sim.begin_capture(d, StreamId(0)).unwrap();
+        match sim.get_export_table(d) {
+            Err(SimError::Invalid { why }) => {
+                assert!(why.contains("export table"), "{why}");
+            }
+            other => panic!("{other:?}"),
+        }
+        let _g = sim.end_capture().unwrap();
+        match sim.get_export_table(DeviceId(99)) {
+            Err(SimError::Invalid { why }) => {
+                assert!(why.contains("device not in profile"), "{why}");
+            }
+            other => panic!("{other:?}"),
+        }
+        match sim.get_proc_address(d) {
+            Err(SimError::Invalid { why }) => {
+                assert!(why.contains("proc address"), "{why}");
             }
             other => panic!("{other:?}"),
         }

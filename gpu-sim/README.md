@@ -174,6 +174,7 @@ warp scheduler, L1, …   ← do not model
 | `device_count` is the profile GPU count | `cudaGetDeviceCount` |
 | `driver_get_version` / `runtime_get_version` report CUDA 13.0 | `cudaDriverGetVersion` / `cudaRuntimeGetVersion` |
 | `get_proc_address` is Invalid (no C ABI function pointers) | `cuGetProcAddress` / `cudaGetDriverEntryPoint` |
+| `get_export_table` is Invalid (no internal driver tables) | `cuGetExportTable` |
 | `coredump_get_attribute` is Invalid (GPU coredumps are not modeled) | `cuCoredumpGetAttribute` |
 | `checkpoint_process_lock` is Invalid (CUDA process checkpoint is not modeled) | `cuCheckpointProcessLock` |
 | `driver_init` is a 1 ns no-op; flags must be 0 | `cuInit` |
@@ -1152,7 +1153,9 @@ PCI ids; `pciSubSystemID` is always 0; `GpuPciDeviceId` is always 0;
 13.0). `get_proc_address` is `cuGetProcAddress` / `cudaGetDriverEntryPoint`
 (always Invalid `"proc address"`; no C ABI function pointers). Distinct from
 `driver_get_version` and `library_load_data`. Query; legal during capture.
-No Engine `--proc-address`. `coredump_get_attribute` is
+No Engine `--proc-address`. `get_export_table` is `cuGetExportTable`
+(always Invalid `"export table"`; no internal driver tables). Distinct from
+`get_proc_address`. Query; legal during capture. No Engine `--export-table`. `coredump_get_attribute` is
 `cuCoredumpGetAttribute` (always Invalid `"coredump"`; GPU coredumps are
 not modeled). Distinct from `get_proc_address`. Query; legal during
 capture. No Engine `--coredump`. `checkpoint_process_lock` is
