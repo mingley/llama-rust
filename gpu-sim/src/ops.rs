@@ -2583,6 +2583,29 @@ pub struct BatchMemOpNodeParams {
     pub ctx: Option<GreenCtxId>,
 }
 
+/// `cuGraphAddMemcpyNode` copyParams plus ctx for [`crate::Sim::graph_add_node`] /
+/// [`crate::Sim::graph_node_get_params`].
+///
+/// [`Self::op`] is `CUDA_MEMCPY3D` / `cudaMemcpy3DParms`. [`Self::ctx`] is the
+/// extra driver `CUcontext` argument (`cuGraphAddMemcpyNode` /
+/// `cuGraphExecMemcpyNodeSetParams`), this VM's [`crate::GreenCtxId`] analog
+/// (no `CUcontext`). Typed [`crate::Sim::graph_add_memcpy`] stays [`None`].
+/// Typed [`crate::Sim::graph_memcpy_set_params`] does not clear ctx.
+/// Parameter, not topology. Copies use copy engines, so ctx does not change
+/// duration (unlike [`KernelNodeParams::ctx`]). Unknown or destroyed is
+/// Invalid `"unknown green ctx"`. Device mismatch is Invalid
+/// `"green ctx device"`. This VM does not invent an Engine flag for memcpy
+/// ctx.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct MemcpyNodeParams {
+    /// `CUDA_MEMCPY3D` copyParams. Pageable copies are Invalid.
+    pub op: MemcpyOp,
+    /// Driver `cuGraphAddMemcpyNode` ctx. [`None`] inherits the launch stream.
+    /// [`Some`] must be a live green context on the graph device. Stored on
+    /// the graph step, not [`crate::GpuOp::Memcpy`].
+    pub ctx: Option<GreenCtxId>,
+}
+
 /// One submitted GPU primitive. PLAN's Kernel / Memcpy / Collective / Event /
 /// Alloc / Free, plus `cudaMemsetAsync`, `cudaLaunchHostFunc`, stream attach,
 /// empty graph nodes, nested [`Self::ChildGraph`], conditional IF / WHILE /
@@ -3828,7 +3851,8 @@ pub enum GraphNodeParams {
     /// `cudaGraphKernelNode`.
     Kernel(KernelNodeParams),
     /// `cudaGraphMemcpyNode`. Pageable copies are Invalid.
-    Memcpy(MemcpyOp),
+    /// [`MemcpyNodeParams::ctx`] is the driver `cuGraphAddMemcpyNode` ctx.
+    Memcpy(MemcpyNodeParams),
     /// `cudaGraphMemsetNode`.
     Memset(MemsetOp),
     /// `cudaGraphHostNode`.

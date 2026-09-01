@@ -28,8 +28,8 @@ use crate::ops::{
     MemCreateFlags, MemExportFlags, MemHandleType, MemHandleUsage, MemLocationType, MemMapFlags,
     MemPoolAttr, MemPoolExportFlags, MemPoolProps, MemRangeAttr, MemRangeAttrValue,
     MemRangeHandleFlags, MemRangeHandleType, MemReserveFlags, MemSyncDomain, MemSyncDomainMap,
-    MemcpyAttributes, MemcpyFlags, MemcpyOp, MemcpySrcAccessOrder, MemoryType, MemsetOp,
-    MulticastBindFlags, MulticastCreateFlags, MulticastGranularity, MulticastObjectProp,
+    MemcpyAttributes, MemcpyFlags, MemcpyNodeParams, MemcpyOp, MemcpySrcAccessOrder, MemoryType,
+    MemsetOp, MulticastBindFlags, MulticastCreateFlags, MulticastGranularity, MulticastObjectProp,
     NvSciSyncAttrFlags, Operation, PdlLaunch, PeerAccessFlags, Place, PointerAttr,
     PointerAttributes, PortableClusterMode, PortableSharedMode, PrefetchFlags, ProgrammaticEvent,
     ProgrammaticLaunch, SharedMemCarveout, SharedMemoryMode, SmResource, StreamAttr,
@@ -371,7 +371,7 @@ enum LaunchCost {
 enum GreenCtxPatch {
     /// Item-list SetParams: leave the node's ctx.
     Keep,
-    /// [`GraphNodeParams::BatchMemOp`] SetParams: store this ctx.
+    /// [`GraphNodeParams::BatchMemOp`] / [`GraphNodeParams::Memcpy`] SetParams.
     Set(Option<GreenCtxId>),
 }
 
@@ -563,10 +563,10 @@ struct GraphStep {
     /// `cudaLaunchAttributeNvlinkUtilCentricScheduling`.
     nvlink_util_centric: bool,
     /// CUDA `CUDA_KERNEL_NODE_PARAMS.ctx` / `CUDA_BATCH_MEM_OP_NODE_PARAMS.ctx`
-    /// / `CUDA_CONDITIONAL_NODE_PARAMS.ctx`.
+    /// / `CUDA_CONDITIONAL_NODE_PARAMS.ctx` / `cuGraphAddMemcpyNode` ctx.
     /// [`None`] inherits the launch stream. Not stored on [`Kind::Kernel`],
-    /// [`Kind::BatchMem`], [`Kind::If`], [`Kind::While`], or [`Kind::Switch`]
-    /// (parameter, not topology).
+    /// [`Kind::BatchMem`], [`Kind::If`], [`Kind::While`], [`Kind::Switch`],
+    /// or [`Kind::Memcpy`] (parameter, not topology).
     green_ctx: Option<GreenCtxId>,
 }
 
@@ -4377,37 +4377,22 @@ impl Sim {
         node: usize,
         op: &MemcpyOp,
     ) -> Result<(), SimError> {
-        self.fail_if_capturing("cannot capture memcpy node set params")?;
-        if op.src.is_pageable() || op.dst.is_pageable() {
-            return Err(SimError::Invalid {
-                why: "cannot add pageable memcpy",
-            });
-        }
-        let device = {
-            let g = self.graphs.get(&graph).ok_or(SimError::Invalid {
-                why: "unknown graph",
-            })?;
-            let step = live_ok(g.steps.get(node).ok_or(SimError::Invalid {
-                why: "unknown graph node",
-            })?)?;
-            if !matches!(step.kind, Kind::Memcpy(_)) {
-                return Err(SimError::Invalid {
-                    why: "not a memcpy node",
-                });
-            }
-            step.device
-        };
-        self.memcpy_precheck(op)?;
-        let _gpu = self.profile.gpu(device)?;
-        self.clock = self.clock.saturating_add(1);
-        let g = self.graphs.get_mut(&graph).ok_or(SimError::Invalid {
-            why: "unknown graph",
-        })?;
-        let step = live_ok_mut(g.steps.get_mut(node).ok_or(SimError::Invalid {
-            why: "unknown graph node",
-        })?)?;
-        step.kind = Kind::Memcpy(op.clone());
-        Ok(())
+        self.set_memcpy_op(graph, node, op, false, GreenCtxPatch::Keep)
+    }
+
+    fn graph_memcpy_set_params_with_ctx(
+        &mut self,
+        graph: GraphId,
+        node: usize,
+        params: &MemcpyNodeParams,
+    ) -> Result<(), SimError> {
+        self.set_memcpy_op(
+            graph,
+            node,
+            &params.op,
+            false,
+            GreenCtxPatch::Set(params.ctx),
+        )
     }
 
     /// `cudaGraphMemcpyNodeSetParams1D` on the graph definition.
@@ -4812,11 +4797,11 @@ impl Sim {
                     self.graph_kernel_set_params(graph, node, &p)
                 }
             }
-            GraphNodeParams::Memcpy(op) => {
+            GraphNodeParams::Memcpy(p) => {
                 if exec {
-                    self.graph_exec_memcpy_set_params(graph, node, &op)
+                    self.graph_exec_memcpy_set_params_with_ctx(graph, node, &p)
                 } else {
-                    self.graph_memcpy_set_params(graph, node, &op)
+                    self.graph_memcpy_set_params_with_ctx(graph, node, &p)
                 }
             }
             GraphNodeParams::Memset(op) => {
@@ -4987,6 +4972,9 @@ impl Sim {
         if matches!(step.kind, Kind::Kernel { .. }) {
             return Ok(GraphNodeParams::Kernel(kernel_params_from_step(step)?));
         }
+        if matches!(step.kind, Kind::Memcpy(_)) {
+            return Ok(GraphNodeParams::Memcpy(memcpy_node_params_from_step(step)?));
+        }
         if matches!(
             step.kind,
             Kind::BatchMem { .. } | Kind::WriteValue { .. } | Kind::WaitValue { .. }
@@ -5050,20 +5038,50 @@ impl Sim {
         node: usize,
         op: &MemcpyOp,
     ) -> Result<(), SimError> {
-        self.fail_if_capturing("cannot capture memcpy set params")?;
+        self.set_memcpy_op(exec, node, op, true, GreenCtxPatch::Keep)
+    }
+
+    fn graph_exec_memcpy_set_params_with_ctx(
+        &mut self,
+        exec: GraphId,
+        node: usize,
+        params: &MemcpyNodeParams,
+    ) -> Result<(), SimError> {
+        self.set_memcpy_op(exec, node, &params.op, true, GreenCtxPatch::Set(params.ctx))
+    }
+
+    fn set_memcpy_op(
+        &mut self,
+        graph: GraphId,
+        node: usize,
+        op: &MemcpyOp,
+        exec: bool,
+        ctx: GreenCtxPatch,
+    ) -> Result<(), SimError> {
+        self.fail_if_capturing(if exec {
+            "cannot capture memcpy set params"
+        } else {
+            "cannot capture memcpy node set params"
+        })?;
         if op.src.is_pageable() || op.dst.is_pageable() {
             return Err(SimError::Invalid {
                 why: "cannot add pageable memcpy",
             });
         }
-        let exec = self.as_exec(exec)?;
+        let target = if exec { self.as_exec(graph)? } else { graph };
         let device = {
-            let g = self.graphs.get(&exec).ok_or(SimError::Invalid {
+            let g = self.graphs.get(&target).ok_or(SimError::Invalid {
                 why: "unknown graph",
             })?;
-            let step = live_ok(g.view().get(node).ok_or(SimError::Invalid {
-                why: "unknown graph node",
-            })?)?;
+            let step = if exec {
+                live_ok(g.view().get(node).ok_or(SimError::Invalid {
+                    why: "unknown graph node",
+                })?)?
+            } else {
+                live_ok(g.steps.get(node).ok_or(SimError::Invalid {
+                    why: "unknown graph node",
+                })?)?
+            };
             if !matches!(step.kind, Kind::Memcpy(_)) {
                 return Err(SimError::Invalid {
                     why: "not a memcpy node",
@@ -5072,17 +5090,39 @@ impl Sim {
             step.device
         };
         self.memcpy_precheck(op)?;
-        let ns = self.profile.gpu(device)?.graph_set_params_ns.max(1);
-        self.clock = self.clock.saturating_add(ns);
-        let g = self.graphs.get_mut(&exec).ok_or(SimError::Invalid {
-            why: "unknown graph",
-        })?;
-        let step = live_ok_mut(g.exec_mut()?.get_mut(node).ok_or(SimError::Invalid {
-            why: "unknown graph node",
-        })?)?;
-        step.kind = Kind::Memcpy(op.clone());
-        g.uploaded = false;
-        Ok(())
+        if let GreenCtxPatch::Set(Some(c)) = ctx {
+            self.require_live_green_ctx(c, device)?;
+        }
+        if exec {
+            let ns = self.profile.gpu(device)?.graph_set_params_ns.max(1);
+            self.clock = self.clock.saturating_add(ns);
+            let g = self.graphs.get_mut(&target).ok_or(SimError::Invalid {
+                why: "unknown graph",
+            })?;
+            let step = live_ok_mut(g.exec_mut()?.get_mut(node).ok_or(SimError::Invalid {
+                why: "unknown graph node",
+            })?)?;
+            step.kind = Kind::Memcpy(op.clone());
+            if let GreenCtxPatch::Set(c) = ctx {
+                step.green_ctx = c;
+            }
+            g.uploaded = false;
+            Ok(())
+        } else {
+            let _gpu = self.profile.gpu(device)?;
+            self.clock = self.clock.saturating_add(1);
+            let g = self.graphs.get_mut(&target).ok_or(SimError::Invalid {
+                why: "unknown graph",
+            })?;
+            let step = live_ok_mut(g.steps.get_mut(node).ok_or(SimError::Invalid {
+                why: "unknown graph node",
+            })?)?;
+            step.kind = Kind::Memcpy(op.clone());
+            if let GreenCtxPatch::Set(c) = ctx {
+                step.green_ctx = c;
+            }
+            Ok(())
+        }
     }
 
     /// `cudaGraphExecMemcpyNodeSetParams1D` on an instantiated exec.
@@ -5959,6 +5999,8 @@ impl Sim {
     }
 
     /// `cudaGraphMemcpyNodeGetParams` on the graph definition.
+    ///
+    /// `CUDA_MEMCPY3D` copyParams only. Ctx is [`Self::graph_node_get_params`].
     pub fn graph_memcpy_get_params(
         &self,
         graph: GraphId,
@@ -7229,8 +7271,8 @@ impl Sim {
                 self.graph_add_kernel_params(graph, p)?;
                 Ok(add_node_out(None, None, None))
             }
-            GraphNodeParams::Memcpy(op) => {
-                self.graph_add_memcpy(graph, op)?;
+            GraphNodeParams::Memcpy(p) => {
+                self.graph_add_memcpy_params(graph, p)?;
                 Ok(add_node_out(None, None, None))
             }
             GraphNodeParams::Memset(op) => {
@@ -7448,17 +7490,34 @@ impl Sim {
     /// [`Self::graph_add_memcpy_1d`] is `cudaGraphAddMemcpyNode1D`.
     /// [`Self::graph_add_memcpy_2d`] requires [`MemcpyOp::is_2d`].
     /// [`Self::graph_add_memcpy_3d`] requires [`MemcpyOp::is_3d`].
+    /// [`MemcpyNodeParams::ctx`] stays [`None`]. Pin a green context through
+    /// [`Self::graph_add_node`] with [`GraphNodeParams::Memcpy`].
     pub fn graph_add_memcpy(&mut self, graph: GraphId, op: MemcpyOp) -> Result<(), SimError> {
+        self.graph_add_memcpy_params(graph, MemcpyNodeParams { op, ctx: None })
+    }
+
+    fn graph_add_memcpy_params(
+        &mut self,
+        graph: GraphId,
+        params: MemcpyNodeParams,
+    ) -> Result<(), SimError> {
         let (device, stream) = self.graph_origin_for_add(graph)?;
-        let _a = self.alloc_ref(op.alloc)?;
-        if op.src.is_pageable() || op.dst.is_pageable() {
+        let _a = self.alloc_ref(params.op.alloc)?;
+        if params.op.src.is_pageable() || params.op.dst.is_pageable() {
             return Err(SimError::Invalid {
                 why: "cannot add pageable memcpy",
             });
         }
-        memcpy_2d_check(&op)?;
-        self.memcpy_range_ok(&op)?;
-        self.graph_push(graph, device, stream, Kind::Memcpy(op))
+        memcpy_2d_check(&params.op)?;
+        self.memcpy_range_ok(&params.op)?;
+        if let Some(ctx) = params.ctx {
+            self.require_live_green_ctx(ctx, device)?;
+        }
+        let prev = self.enqueue_green_ctx;
+        self.enqueue_green_ctx = params.ctx;
+        let r = self.graph_push(graph, device, stream, Kind::Memcpy(params.op));
+        self.enqueue_green_ctx = prev;
+        r
     }
 
     /// `cudaGraphAddMemcpyNode1D`. Pageable copies cannot be graph nodes.
@@ -21950,6 +22009,7 @@ fn kind_has_green_ctx(kind: &Kind) -> bool {
             | Kind::If { .. }
             | Kind::While { .. }
             | Kind::Switch { .. }
+            | Kind::Memcpy(_)
     )
 }
 
@@ -21958,6 +22018,13 @@ fn batch_mem_params_from_step(step: &GraphStep) -> Result<BatchMemOpNodeParams, 
         ops: batch_items(&step.kind).ok_or(SimError::Invalid {
             why: "not a batch mem op node",
         })?,
+        ctx: step.green_ctx,
+    })
+}
+
+fn memcpy_node_params_from_step(step: &GraphStep) -> Result<MemcpyNodeParams, SimError> {
+    Ok(MemcpyNodeParams {
+        op: memcpy_params_of(&step.kind)?,
         ctx: step.green_ctx,
     })
 }
@@ -22076,7 +22143,10 @@ fn set_kind_cond_handle(kind: &mut Kind, handle: CondId) -> Result<(), SimError>
 fn node_params_of(kind: &Kind) -> Result<GraphNodeParams, SimError> {
     Ok(match kind {
         Kind::Kernel { .. } => GraphNodeParams::Kernel(kernel_params_of(kind)?),
-        Kind::Memcpy(_) => GraphNodeParams::Memcpy(memcpy_params_of(kind)?),
+        Kind::Memcpy(_) => GraphNodeParams::Memcpy(MemcpyNodeParams {
+            op: memcpy_params_of(kind)?,
+            ctx: None,
+        }),
         Kind::Memset(_) => GraphNodeParams::Memset(memset_params_of(kind)?),
         Kind::HostFunc { .. } => GraphNodeParams::Host(host_params_of(kind)?),
         Kind::Empty => GraphNodeParams::Empty,
