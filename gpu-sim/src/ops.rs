@@ -887,6 +887,12 @@ pub enum DeviceAttr {
     MaxSharedMemoryPerBlock,
     /// `cudaDevAttrMaxSharedMemoryPerBlockOptin`.
     MaxSharedMemoryPerBlockOptin,
+    /// `cudaDevAttrMaxSharedMemoryPerMultiprocessor`. Same bytes as
+    /// [`Self::MaxSharedMemoryPerBlockOptin`] because
+    /// [`Self::ReservedSharedMemoryPerBlock`] is 0. Distinct from
+    /// [`Self::MaxSharedMemoryPerBlock`]. This VM does not invent
+    /// `cudaDevAttrMaxRegistersPerMultiprocessor`.
+    MaxSharedMemoryPerMultiprocessor,
     /// `cudaDevAttrReservedSharedMemoryPerBlock` (always 0; driver-reserved
     /// shared memory is not modeled). Distinct from
     /// [`Self::MaxSharedMemoryPerBlock`].
@@ -1630,6 +1636,13 @@ pub struct DeviceProperties {
     pub shared_mem_per_block: u32,
     /// [`crate::GpuProfile::max_shared_mem_per_block_optin`].
     pub shared_mem_per_block_optin: u32,
+    /// `cudaDeviceProp::sharedMemPerMultiprocessor`
+    /// ([`DeviceAttr::MaxSharedMemoryPerMultiprocessor`]). Same bytes as
+    /// [`Self::shared_mem_per_block_optin`] because
+    /// [`Self::reserved_shared_mem_per_block`] is 0. Distinct from
+    /// [`Self::shared_mem_per_block`]. This VM does not invent
+    /// `cudaDevAttrMaxRegistersPerMultiprocessor`.
+    pub shared_mem_per_multiprocessor: u32,
     /// `cudaDevAttrReservedSharedMemoryPerBlock`
     /// ([`DeviceAttr::ReservedSharedMemoryPerBlock`]). Always 0; driver-reserved
     /// shared memory is not modeled. Distinct from [`Self::shared_mem_per_block`].

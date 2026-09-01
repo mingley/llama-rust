@@ -6224,7 +6224,15 @@ model, do not celebrate the sim.
     occupancy SM counts, or `cudaChooseDevice`. `gpu-profile capture` is
     still refused. Dual score still has no `$/M tokens`.
 
-589. [ ] Next numbered PLAN item after 588 is the next `gpu-sim` / Engine /
+589. [x] `gpu-sim` `DeviceAttr::MaxSharedMemoryPerMultiprocessor` is
+    `cudaDevAttrMaxSharedMemoryPerMultiprocessor`. Same bytes as
+    `MaxSharedMemoryPerBlockOptin` (`ReservedSharedMemoryPerBlock` is 0).
+    Query; legal during capture. Distinct from `MaxSharedMemoryPerBlock`.
+    This VM does not invent `MaxRegistersPerMultiprocessor`, Engine `--shared-per-mp`,
+    occupancy SM counts, or `cudaChooseDevice`. `gpu-profile capture` is
+    still refused. Dual score still has no `$/M tokens`.
+
+590. [ ] Next numbered PLAN item after 589 is the next `gpu-sim` / Engine /
     serve / expertvm mechanical API that is still missing, or the next official
     decode family. Prefer remaining CUDA-shaped twins over more
     OpenAI HTTP veneer. Do not invent F32 `output.scale`. Do not invent a
@@ -6417,6 +6425,10 @@ model, do not celebrate the sim.
     `device_get_texture_1d_linear_max_width`. Do not invent Engine
     `--texture-1d-linear-max`. Do not invent `CUarray_format` this
     slice. Do not reverse texture 1D linear max width staying 0.
+    Do not invent a second `cudaDevAttrMaxSharedMemoryPerMultiprocessor`.
+    Do not invent Engine `--shared-per-mp`. Do not invent
+    `cudaDevAttrMaxRegistersPerMultiprocessor`. Do not reverse
+    MaxSharedMemoryPerMultiprocessor matching optin.
     Do not invent a second `cudaStreamAddCallback`.
     Do not invent Engine `--stream-callback` (same wall as second live
     `cudaLaunchHostFunc` after miss DMA).
@@ -6730,6 +6742,10 @@ model, do not celebrate the sim.
     Do not invent Engine `--tex1d-linear-max`. Do not invent format or
     channel-count args this slice. Do not reverse texture 1D linear max
     width staying 0.
+    Do not invent a second MaxSharedMemoryPerMultiprocessor DeviceAttr.
+    Do not invent Engine `--smem-mp`. Do not invent registers per
+    multiprocessor this slice. Do not reverse per-multiprocessor shared
+    matching optin.
     Do not invent a second DeviceLaunch in-flight destroy-complete check or Engine
     `--device-launch-destroy`. Do not abort an in-flight DeviceLaunch when
     `destroy_graph` succeeds. Do not delay destroy of an idle exec. Do not invent
@@ -7262,6 +7278,9 @@ model, do not celebrate the sim.
     Do not invent a second `device_get_texture_1d_linear_max_width`
     method. Do not invent Engine `--linear-max-width`. Do not reverse
     texture 1D linear max width 0.
+    Do not invent a second `shared_mem_per_multiprocessor`
+    DeviceProperties field. Do not invent Engine `--shared-mp`. Do not
+    reverse MaxSharedMemoryPerMultiprocessor matching optin.
     Do not
     spend the next item on an OpenAI-compatible HTTP veneer.
 

@@ -681,6 +681,11 @@
 //! [`DeviceAttr::ReservedSharedMemoryPerBlock`] is always 0 (driver-reserved
 //! shared memory is not modeled). Distinct from
 //! [`MaxSharedMemoryPerBlock`](DeviceAttr::MaxSharedMemoryPerBlock).
+//! [`DeviceAttr::MaxSharedMemoryPerMultiprocessor`] is
+//! `cudaDevAttrMaxSharedMemoryPerMultiprocessor` (same bytes as
+//! [`MaxSharedMemoryPerBlockOptin`](DeviceAttr::MaxSharedMemoryPerBlockOptin)
+//! because reserved shared memory is 0). Distinct from occupancy SM counts
+//! and from `cudaDevAttrMaxRegistersPerMultiprocessor`.
 //! [`DeviceAttr::TotalConstantMemory`] is always 0 (`__constant__` memory is
 //! not modeled). Distinct from [`TotalGlobalMem`](DeviceAttr::TotalGlobalMem).
 //! [`DeviceAttr::TextureAlignment`] is always 0 (CUDA arrays / textures are
@@ -15630,6 +15635,10 @@ mod tests {
             props.shared_mem_per_block_optin,
             gpu.max_shared_mem_per_block_optin
         );
+        assert_eq!(
+            props.shared_mem_per_multiprocessor,
+            gpu.max_shared_mem_per_block_optin
+        );
         assert_eq!(props.l2_cache_size, gpu.l2_bytes);
         assert_eq!(props.async_engine_count, u32::from(gpu.copy_engines));
         assert!(!props.concurrent_kernels);
@@ -18731,6 +18740,52 @@ mod tests {
             0
         );
         let _g = sim.end_capture().unwrap();
+    }
+
+    #[test]
+    fn device_get_attribute_max_shared_memory_per_multiprocessor_matches_optin() {
+        let mut sim = Sim::new(h100());
+        let d = DeviceId(0);
+        let hp = sim.device_get_properties(d).unwrap();
+        assert_eq!(
+            hp.shared_mem_per_multiprocessor,
+            hp.shared_mem_per_block_optin
+        );
+        assert_eq!(hp.reserved_shared_mem_per_block, 0);
+        assert_eq!(
+            sim.device_get_attribute(d, DeviceAttr::MaxSharedMemoryPerMultiprocessor)
+                .unwrap(),
+            u64::from(hp.shared_mem_per_block_optin)
+        );
+        sim.begin_capture(d, StreamId(0)).unwrap();
+        assert_eq!(
+            sim.device_get_attribute(d, DeviceAttr::MaxSharedMemoryPerMultiprocessor)
+                .unwrap(),
+            u64::from(hp.shared_mem_per_block_optin)
+        );
+        let _g = sim.end_capture().unwrap();
+        let big = Sim::new(
+            HardwareProfile::parse(
+                "gpus=1\nmax_shared_mem_per_block=49152\nmax_shared_mem_per_block_optin=232448\n",
+            )
+            .unwrap(),
+        );
+        let d0 = DeviceId(0);
+        let hp = big.device_get_properties(d0).unwrap();
+        assert_eq!(hp.shared_mem_per_block, 49_152);
+        assert_eq!(hp.shared_mem_per_block_optin, 232_448);
+        assert_eq!(hp.shared_mem_per_multiprocessor, 232_448);
+        assert_eq!(
+            big.device_get_attribute(d0, DeviceAttr::MaxSharedMemoryPerMultiprocessor)
+                .unwrap(),
+            232_448
+        );
+        match big.device_get_attribute(DeviceId(99), DeviceAttr::MaxSharedMemoryPerMultiprocessor) {
+            Err(SimError::Invalid { why }) => {
+                assert!(why.contains("device not in profile"), "{why}");
+            }
+            other => panic!("{other:?}"),
+        }
     }
 
     #[test]

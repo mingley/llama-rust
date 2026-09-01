@@ -489,8 +489,9 @@ and Height, `MaxTexture3DWidth` / Height / Depth; no Engine flag).
 Multi-Process Service is not modeled; no Engine flag).
 `gpu-sim` `D3D12CigSupported` is always 0 (`cudaDevAttrD3D12CigSupported`;
 D3D12 CUDA-in-graphics is not modeled; no Engine flag).
-`gpu-sim` `VulkanCigSupported` is always 0 (`cudaDevAttrVulkanCigSupported`;
-Vulkan CUDA-in-graphics is not modeled; no Engine flag).
+`gpu-sim` `MaxSharedMemoryPerMultiprocessor` matches
+`MaxSharedMemoryPerBlockOptin` (`cudaDevAttrMaxSharedMemoryPerMultiprocessor`;
+reserved shared memory is 0; no Engine flag; not occupancy SM counts).
 `gpu-sim` linear texture 1D/2D dim caps are always 0
 (`cudaDevAttrMaxTexture1DLinearWidth`, `MaxTexture2DLinearWidth`, Height,
 and Pitch; `cuDeviceGetTexture1DLinearMaxWidth` is the same 0; no Engine flag).

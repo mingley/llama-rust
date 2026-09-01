@@ -19088,6 +19088,9 @@ impl Sim {
             DeviceAttr::MaxSharedMemoryPerBlockOptin => {
                 u64::from(gpu.max_shared_mem_per_block_optin)
             }
+            DeviceAttr::MaxSharedMemoryPerMultiprocessor => {
+                u64::from(gpu.max_shared_mem_per_block_optin)
+            }
             DeviceAttr::L2CacheSize
             | DeviceAttr::MaxPersistingL2CacheSize
             | DeviceAttr::MaxAccessPolicyWindowSize => gpu.l2_bytes,
@@ -19247,6 +19250,7 @@ impl Sim {
     /// `MpsEnabled` is always 0.
     /// `D3D12CigSupported` is always 0.
     /// `VulkanCigSupported` is always 0.
+    /// MaxSharedMemoryPerMultiprocessor matches optin.
     /// `pciSubSystemID` is always 0.
     /// `luid` and `luidDeviceNodeMask` are always 0.
     /// Occupancy SM counts, clock rates, and warp size are not.
@@ -19323,6 +19327,7 @@ impl Sim {
             mem_pitch: DeviceAttr::MAX_PITCH,
             shared_mem_per_block: gpu.max_shared_mem_per_block,
             shared_mem_per_block_optin: gpu.max_shared_mem_per_block_optin,
+            shared_mem_per_multiprocessor: gpu.max_shared_mem_per_block_optin,
             reserved_shared_mem_per_block: 0,
             l2_cache_size: gpu.l2_bytes,
             persisting_l2_cache_max_size: gpu.l2_bytes,
