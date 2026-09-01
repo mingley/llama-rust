@@ -22589,7 +22589,7 @@ mod tests {
             other => panic!("{other:?}"),
         }
         let exec0 = sim.instantiate_graph(empty).unwrap();
-        sim.launch_graph(exec0, s).unwrap();
+        assert_eq!(sim.launch_graph(exec0, s).unwrap(), 1);
         sim.synchronize().unwrap();
         enq(sim.kernel(d1, KernelKind::other(8, 8), &[id0], &[], s));
         match sim.synchronize() {
@@ -22625,7 +22625,7 @@ mod tests {
             )
             .unwrap();
         let rexec = read.instantiate_graph(gr).unwrap();
-        read.launch_graph(rexec, s).unwrap();
+        assert_eq!(read.launch_graph(rexec, s).unwrap(), 1);
         read.synchronize().unwrap();
         enq(read.kernel(d1, KernelKind::other(8, 8), &[rid], &[], s));
         read.synchronize().unwrap();
@@ -22656,7 +22656,7 @@ mod tests {
             )
             .unwrap();
         let lexec = last.instantiate_graph(gl).unwrap();
-        last.launch_graph(lexec, s).unwrap();
+        assert_eq!(last.launch_graph(lexec, s).unwrap(), 1);
         last.synchronize().unwrap();
         enq(last.kernel(d1, KernelKind::other(8, 8), &[lid], &[], s));
         match last.synchronize() {
