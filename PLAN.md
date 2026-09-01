@@ -4969,7 +4969,15 @@ model, do not celebrate the sim.
     No Engine `--range-data-size`. `gpu-profile capture` is still
     refused. Dual score still has no `$/M tokens`.
 
-459. [ ] Next numbered PLAN item after 458 is the next `gpu-sim` / Engine /
+459. [x] `gpu-sim` `upload_graph_async` is `cudaGraphUpload` on a stream.
+    Stream-ordered Solo `graph_upload_ns`; the exec is uploaded when the
+    op **completes**. Already uploaded at start is 1 ns. Capture cannot
+    include it. Typed `upload_graph` stays host-synchronous.
+    `launch_graph` waits an in-flight upload instead of a second
+    host-sync upload. No Engine `--graph-upload-stream`. `gpu-profile
+    capture` is still refused. Dual score still has no `$/M tokens`.
+
+460. [ ] Next numbered PLAN item after 459 is the next `gpu-sim` / Engine /
     serve / expertvm mechanical API that is still missing, or the next official
     decode family. Prefer remaining CUDA-shaped twins over more
     OpenAI HTTP veneer. Do not invent F32 `output.scale`. Do not invent a
@@ -5071,6 +5079,10 @@ model, do not celebrate the sim.
     `mem_range_get_attribute_with_data_size` /
     `mem_range_get_attributes_with_data_sizes`. Do not invent Engine
     `--range-data-size`.
+    Do not invent a second `cudaGraphUpload` stream /
+    `upload_graph_async`. Do not invent Engine `--graph-upload-stream`.
+    Stream-ordered `cuGraphUpload` / `hUploadStream` as stored-only
+    (ignore the stream and still host-sync) stays weak.
     Do not invent `cuDeviceGetLuid`
     (Windows).
     Do not invent gemma4 `attn_q.scale` / `attn_output.scale` / `attn_k.scale` /

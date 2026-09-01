@@ -2605,6 +2605,12 @@ pub enum GpuOp {
         /// Instantiated exec launched from the device.
         graph: GraphId,
     },
+    /// Live `cudaGraphUpload` on a stream. Never a `cudaGraphAdd*` node;
+    /// capture is refused. Marks the exec uploaded when the op **completes**.
+    GraphUpload {
+        /// Instantiated exec to upload.
+        exec: GraphId,
+    },
 }
 
 /// One node in the compiled dependency DAG ([`GpuOp`] + stream + deps).
@@ -3506,6 +3512,8 @@ pub enum GraphNodeKind {
     BatchMemOp,
     /// Live [`crate::GpuOp::DeviceLaunch`] (not a `cudaGraphAdd*` node).
     DeviceLaunch,
+    /// Live [`crate::GpuOp::GraphUpload`] (not a `cudaGraphAdd*` node).
+    GraphUpload,
 }
 
 /// `cudaGraphNodeParams` for [`crate::Sim::graph_add_node`] /

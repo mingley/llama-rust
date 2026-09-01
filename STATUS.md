@@ -5,6 +5,16 @@ Visible five-turn extract: [docs/chatgpt-share-6a920fe1.md](docs/chatgpt-share-6
 Complete share-API extract: [docs/chatgpt-share-6a920fe1/](docs/chatgpt-share-6a920fe1/).
 Work lands on `main`. No PRs.
 
+## Shipped 2026-09-01 — CUDA stream-ordered `cudaGraphUpload`
+
+`gpu-sim` `upload_graph_async` is `cudaGraphUpload` on a stream.
+Stream-ordered Solo `graph_upload_ns`; uploaded when the op completes.
+Already uploaded at start is 1 ns. Capture cannot include it. Typed
+`upload_graph` stays host-sync. `launch_graph` waits an in-flight
+upload instead of a second host-sync upload. No Engine
+`--graph-upload-stream`. `gpu-profile capture` is still refused. Dual
+score still has no `$/M tokens`.
+
 ## Shipped 2026-09-01 — CUDA `cudaMemRangeGetAttribute` dataSize
 
 `gpu-sim` `mem_range_get_attribute_with_data_size` /

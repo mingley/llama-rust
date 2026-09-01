@@ -867,6 +867,8 @@
 //! [`graph_exec_kernel_node_set_priority`](Sim::graph_exec_kernel_node_set_priority)
 //! are the exec-snapshot attributes. [`Sim::upload_graph`] is
 //! `cudaGraphUpload` (host-sync; first launch after instantiate calls it).
+//! [`upload_graph_async`](Sim::upload_graph_async) is `cudaGraphUpload` on a
+//! stream (Solo `graph_upload_ns`; uploaded when the op completes).
 //! [`Sim::update_graph`] is
 //! `cudaGraphExecUpdate` when device, stream, and op kinds match.
 //! [`update_graph_with_info`](Sim::update_graph_with_info) fills
@@ -2681,6 +2683,47 @@ mod tests {
         let _ = sim.instantiate_graph(g).unwrap();
         sim.upload_graph(g).unwrap();
         assert!(sim.graph_uploaded(g).unwrap());
+    }
+
+    #[test]
+    fn upload_graph_async_is_cuda_graph_upload_stream() {
+        let mut p = h100();
+        for g in &mut p.gpus {
+            g.graph_instantiate_ns = 1_000;
+            g.graph_upload_ns = 40_000;
+            g.graph_launch_ns = 1_000;
+            g.launch_overhead_ns = 1_000;
+        }
+        let mut sim = Sim::new(p);
+        let d = DeviceId(0);
+        let s = StreamId(0);
+        let a = sim.alloc(d, 4096, s).unwrap();
+        enq(sim.memcpy_pinned_to_device(d, a, 4096, s));
+        sim.synchronize().unwrap();
+        sim.begin_capture(d, s).unwrap();
+        enq(sim.kernel(d, KernelKind::other(8, 8), &[a], &[a], s));
+        let g = sim.end_capture().unwrap();
+        let exec = sim.instantiate_graph(g).unwrap();
+        sim.begin_capture(d, s).unwrap();
+        match sim.upload_graph_async(d, s, exec) {
+            Err(SimError::Invalid { why }) => assert!(why.contains("capture"), "{why}"),
+            other => panic!("{other:?}"),
+        }
+        let _cap = sim.end_capture().unwrap();
+        let t0 = sim.clock_ns();
+        enq(sim.upload_graph_async(d, s, exec));
+        assert_eq!(sim.clock_ns(), t0);
+        assert!(!sim.graph_uploaded(exec).unwrap());
+        let n = sim.launch_graph(exec, s).unwrap();
+        assert_eq!(n, 1);
+        assert_eq!(sim.clock_ns(), t0);
+        sim.synchronize().unwrap();
+        assert!(sim.graph_uploaded(exec).unwrap());
+        assert!(sim.clock_ns() >= t0.saturating_add(40_000));
+        let t1 = sim.clock_ns();
+        enq(sim.upload_graph_async(d, s, exec));
+        sim.synchronize().unwrap();
+        assert_eq!(sim.clock_ns(), t1.saturating_add(1));
     }
 
     #[test]

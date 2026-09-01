@@ -444,7 +444,9 @@ refs held by the graph are released).
 `cudaGraphRetainUserObject` / `ReleaseUserObject` on a definition
 (`GraphUserObjectFlags::MOVE` transfers one caller ref). Clone does not
 copy retains. Capture cannot include them. First launch instantiates if needed (`graph_instantiate_ns` once)
-then uploads if needed (`graph_upload_ns`). `upload_graph` is `cudaGraphUpload`.
+then uploads if needed (`graph_upload_ns`). `upload_graph` is `cudaGraphUpload`
+(host-sync). `upload_graph_async` is `cudaGraphUpload` on a stream
+(Solo `graph_upload_ns`; uploaded when the op completes).
 `update_graph` copies source steps into the exec snapshot when the
 device, stream, op kinds, and dependency edges match (`graph_update_ns`); a topology
 mismatch is `Invalid`. Graphs with mem alloc/free nodes cannot be updated.

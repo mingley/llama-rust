@@ -3014,12 +3014,22 @@ impl Sim {
                 why: "unknown graph",
             })?
             .uploaded;
-        if !uploaded && self.capturing.is_none() {
+        let pending = if uploaded || self.capturing.is_some() {
+            None
+        } else {
+            self.pending_graph_upload(exec)
+        };
+        if pending.is_none() && !uploaded && self.capturing.is_none() {
             self.upload_graph(exec)?;
         }
+        let wait = pending.map(|id| [id]);
+        let extra: &[OpId] = match &wait {
+            Some(w) => w.as_slice(),
+            None => &[],
+        };
         self.reset_graph_tree_conds(exec)?;
         let mut stack = BTreeSet::new();
-        self.enqueue_graph(exec, stream, true, &mut stack, &[])
+        self.enqueue_graph(exec, stream, true, &mut stack, extra)
     }
 
     /// Device-side `cudaGraphLaunch` (`cudaGraphInstantiateFlagDeviceLaunch`).
@@ -3869,7 +3879,8 @@ impl Sim {
     ///
     /// The exec must already be instantiated. Already-uploaded ids are a no-op.
     /// The first [`Self::launch_graph`] calls this when needed. [`Self::update_graph`]
-    /// clears the flag so the next launch uploads again.
+    /// clears the flag so the next launch uploads again. Stream-ordered upload
+    /// is [`Self::upload_graph_async`].
     pub fn upload_graph(&mut self, graph: GraphId) -> Result<(), SimError> {
         self.fail_if_capturing("cannot capture graph upload")?;
         let exec = self.as_exec(graph)?;
@@ -3892,6 +3903,50 @@ impl Sim {
             })?
             .uploaded = true;
         Ok(())
+    }
+
+    /// `cudaGraphUpload` on `stream`. Stream-ordered; capture cannot include it.
+    ///
+    /// Completes after `graph_upload_ns` (Solo; does not occupy compute or copy
+    /// engines). Sets the exec uploaded when the op **completes**. Already
+    /// uploaded at start is 1 ns so later ops on `stream` still wait. Typed
+    /// [`Self::upload_graph`] stays host-synchronous. [`Self::launch_graph`]
+    /// waits an in-flight upload instead of a second host-sync upload. No
+    /// Engine `--graph-upload-stream`.
+    pub fn upload_graph_async(
+        &mut self,
+        device: DeviceId,
+        stream: StreamId,
+        graph: GraphId,
+    ) -> Result<OpId, SimError> {
+        self.fail_if_capturing("cannot capture graph upload")?;
+        let exec = self.as_exec(graph)?;
+        let origin = self
+            .graphs
+            .get(&exec)
+            .ok_or(SimError::Invalid {
+                why: "unknown graph",
+            })?
+            .origin
+            .0;
+        if origin != device {
+            return Err(SimError::Invalid {
+                why: "graph device",
+            });
+        }
+        self.submit(device, stream, Kind::GraphUpload { exec })
+    }
+
+    fn pending_graph_upload(&self, exec: GraphId) -> Option<OpId> {
+        self.ops.iter().find_map(|(id, op)| {
+            if op.done {
+                return None;
+            }
+            match &op.kind {
+                Kind::GraphUpload { exec: e } if *e == exec => Some(*id),
+                _ => None,
+            }
+        })
     }
 
     /// `cudaGraphExecUpdate`: replace `exec` steps with `src` when topology matches.
@@ -18415,6 +18470,27 @@ impl Sim {
                 });
                 Ok(true)
             }
+            Kind::GraphUpload { exec } => {
+                let exec = *exec;
+                let already = self
+                    .graphs
+                    .get(&exec)
+                    .ok_or(SimError::Invalid {
+                        why: "unknown graph",
+                    })?
+                    .uploaded;
+                let ns = if already {
+                    1
+                } else {
+                    self.profile.gpu(device)?.graph_upload_ns.max(1)
+                };
+                self.running.push(Running {
+                    op: id,
+                    remaining_ns: ns,
+                    share: Share::Solo,
+                });
+                Ok(true)
+            }
             Kind::Empty => {
                 self.running.push(Running {
                     op: id,
@@ -19826,12 +19902,24 @@ impl Sim {
             Kind::Attach { id: alloc, flags } => Some((*alloc, *flags, op.stream)),
             _ => None,
         });
+        let upload = self.ops.get(&id).and_then(|op| match &op.kind {
+            Kind::GraphUpload { exec } => Some(*exec),
+            _ => None,
+        });
         let mc_bytes = self.ops.get(&id).and_then(|op| match &op.kind {
             Kind::Kernel { writes, .. } => Some(self.multicast_write_bytes(writes)),
             _ => None,
         });
         if let Some((alloc, flags, stream)) = attach {
             self.alloc_mut(alloc)?.attach = attach_state(flags, stream);
+        }
+        if let Some(exec) = upload {
+            self.graphs
+                .get_mut(&exec)
+                .ok_or(SimError::Invalid {
+                    why: "unknown graph",
+                })?
+                .uploaded = true;
         }
         if let Some((ids, _)) = kernel_work {
             let n = {
@@ -20495,7 +20583,8 @@ fn node_params_of(kind: &Kind) -> Result<GraphNodeParams, SimError> {
         | Kind::WhileTick { .. }
         | Kind::Attach { .. }
         | Kind::AllReduce { .. }
-        | Kind::DeviceLaunch { .. } => {
+        | Kind::DeviceLaunch { .. }
+        | Kind::GraphUpload { .. } => {
             return Err(SimError::Invalid {
                 why: "not a graph node params kind",
             });
@@ -21065,7 +21154,8 @@ fn debug_dot_kind_name(kind: GraphNodeKind, runtime_types: bool) -> String {
         | GraphNodeKind::Attach
         | GraphNodeKind::SetConditional
         | GraphNodeKind::WhileTick
-        | GraphNodeKind::DeviceLaunch => None,
+        | GraphNodeKind::DeviceLaunch
+        | GraphNodeKind::GraphUpload => None,
     };
     match (runtime_types, cuda) {
         (true, Some(name)) => String::from(name),
@@ -21218,6 +21308,7 @@ fn node_kind(kind: &Kind) -> GraphNodeKind {
             GraphNodeKind::BatchMemOp
         }
         Kind::DeviceLaunch { .. } => GraphNodeKind::DeviceLaunch,
+        Kind::GraphUpload { .. } => GraphNodeKind::GraphUpload,
     }
 }
 
@@ -21450,6 +21541,7 @@ fn op_tag(k: &Kind) -> u8 {
         Kind::WaitValue { .. } => 18,
         Kind::DeviceLaunch { .. } => 19,
         Kind::BatchMem { .. } => 20,
+        Kind::GraphUpload { .. } => 21,
     }
 }
 
