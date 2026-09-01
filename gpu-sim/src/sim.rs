@@ -17848,13 +17848,35 @@ impl Sim {
     ///
     /// Always Invalid `"semaphore destroy"` (no external-semaphore handles).
     /// Distinct from [`Self::import_external_semaphore`] (why is not a
-    /// superstring of `"external semaphore"`) and from
-    /// [`Self::destroy_external_memory`]. Unknown devices are Invalid
+    /// superstring of `"external semaphore"`), from
+    /// [`Self::destroy_external_memory`], and from
+    /// [`Self::signal_external_semaphores_async`]. Unknown devices are Invalid
     /// `"device not in profile"`. Query; legal during capture.
     pub fn destroy_external_semaphore(&self, device: DeviceId) -> Result<(), SimError> {
         let _gpu = self.profile.gpu(device)?;
         Err(SimError::Invalid {
             why: "semaphore destroy",
+        })
+    }
+
+    /// `cuSignalExternalSemaphoresAsync` plus
+    /// `cudaSignalExternalSemaphoresAsync`. External semaphore import is
+    /// not modeled.
+    ///
+    /// Always Invalid `"semaphore signal"` (no external-semaphore handles).
+    /// Distinct from [`Self::destroy_external_semaphore`] (why is not a
+    /// superstring of `"semaphore destroy"`) and from
+    /// [`Self::import_external_semaphore`]. Unknown devices are Invalid
+    /// `"device not in profile"`. Query; legal during capture.
+    pub fn signal_external_semaphores_async(
+        &self,
+        device: DeviceId,
+        stream: StreamId,
+    ) -> Result<(), SimError> {
+        let _gpu = self.profile.gpu(device)?;
+        self.require_live_stream(device, stream)?;
+        Err(SimError::Invalid {
+            why: "semaphore signal",
         })
     }
 
