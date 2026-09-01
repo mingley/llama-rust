@@ -687,6 +687,9 @@
 //! [`gl_unregister_buffer_object`](Sim::gl_unregister_buffer_object) is
 //! `cuGLUnregisterBufferObject` (always Invalid `"unregister object"`). Query;
 //! legal during capture. No Engine `--gl-unregister-object`.
+//! [`gl_unmap_buffer_object`](Sim::gl_unmap_buffer_object) is
+//! `cuGLUnmapBufferObject` (always Invalid `"gl unmap"`). Query;
+//! legal during capture. No Engine `--gl-unmap`.
 //! [`d3d11_get_devices`](Sim::d3d11_get_devices) is `cuD3D11GetDevices`
 //! (always Invalid `"d3d11"`). Query; legal during capture. No Engine `--d3d11-devices`.
 //! [`d3d11_ctx_create`](Sim::d3d11_ctx_create) is `cuD3D11CtxCreate` (always
@@ -23148,6 +23151,62 @@ mod tests {
         match sim.graphics_unregister_resource(d) {
             Err(SimError::Invalid { why }) => {
                 assert!(why.contains("graphics unregister"), "{why}");
+            }
+            other => panic!("{other:?}"),
+        }
+        match sim.gl_unmap_buffer_object(d) {
+            Err(SimError::Invalid { why }) => {
+                assert!(why.contains("gl unmap"), "{why}");
+                assert!(!why.contains("gl map"), "{why}");
+                assert!(!why.contains("graphics unmap"), "{why}");
+            }
+            other => panic!("{other:?}"),
+        }
+    }
+
+    #[test]
+    fn gl_unmap_buffer_object_is_unsupported() {
+        let mut sim = Sim::new(h100());
+        let d = DeviceId(0);
+        match sim.gl_unmap_buffer_object(d) {
+            Err(SimError::Invalid { why }) => {
+                assert!(why.contains("gl unmap"), "{why}");
+                assert!(!why.contains("gl map"), "{why}");
+                assert!(!why.contains("graphics unmap"), "{why}");
+            }
+            other => panic!("{other:?}"),
+        }
+        sim.begin_capture(d, StreamId(0)).unwrap();
+        match sim.gl_unmap_buffer_object(d) {
+            Err(SimError::Invalid { why }) => {
+                assert!(why.contains("gl unmap"), "{why}");
+            }
+            other => panic!("{other:?}"),
+        }
+        let _g = sim.end_capture().unwrap();
+        match sim.gl_unmap_buffer_object(DeviceId(99)) {
+            Err(SimError::Invalid { why }) => {
+                assert!(why.contains("device not in profile"), "{why}");
+            }
+            other => panic!("{other:?}"),
+        }
+        match sim.gl_map_buffer_object(d) {
+            Err(SimError::Invalid { why }) => {
+                assert!(why.contains("gl map"), "{why}");
+                assert!(!why.contains("gl unmap"), "{why}");
+            }
+            other => panic!("{other:?}"),
+        }
+        match sim.graphics_unmap_resources(d, StreamId(0)) {
+            Err(SimError::Invalid { why }) => {
+                assert!(why.contains("graphics unmap"), "{why}");
+                assert!(!why.contains("gl unmap"), "{why}");
+            }
+            other => panic!("{other:?}"),
+        }
+        match sim.gl_unregister_buffer_object(d) {
+            Err(SimError::Invalid { why }) => {
+                assert!(why.contains("unregister object"), "{why}");
             }
             other => panic!("{other:?}"),
         }

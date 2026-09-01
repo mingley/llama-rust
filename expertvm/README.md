@@ -653,6 +653,8 @@ not modeled; no Engine flag).
 legacy OpenGL interop is not modeled; no Engine flag).
 `gpu-sim` `gl_unregister_buffer_object` is `cuGLUnregisterBufferObject`
 (Invalid; legacy OpenGL interop is not modeled; no Engine flag).
+`gpu-sim` `gl_unmap_buffer_object` is `cuGLUnmapBufferObject`
+(Invalid; legacy OpenGL interop is not modeled; no Engine flag).
 `gpu-sim` `d3d11_get_devices` is `cuD3D11GetDevices` (Invalid; Direct3D 11
 interop is not modeled; no Engine flag).
 `gpu-sim` `d3d11_ctx_create` is `cuD3D11CtxCreate` (Invalid; Direct3D 11

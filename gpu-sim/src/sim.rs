@@ -17969,8 +17969,9 @@ impl Sim {
     ///
     /// Always Invalid `"graphics unmap"` (no graphics-resource handles).
     /// Distinct from [`Self::graphics_map_resources`], from
-    /// [`Self::graphics_unregister_resource`], and from
-    /// [`Self::graphics_resource_get_mapped_pointer`]. Unknown devices are
+    /// [`Self::graphics_unregister_resource`], from
+    /// [`Self::graphics_resource_get_mapped_pointer`], and from
+    /// [`Self::gl_unmap_buffer_object`]. Unknown devices are
     /// Invalid `"device not in profile"`. Query; legal during capture.
     pub fn graphics_unmap_resources(
         &self,
@@ -18256,7 +18257,8 @@ impl Sim {
     ///
     /// Always Invalid `"gl map"` (no GL buffer-object handles). Distinct from
     /// [`Self::gl_register_buffer_object`], from
-    /// [`Self::graphics_map_resources`], and from
+    /// [`Self::graphics_map_resources`], from
+    /// [`Self::gl_unmap_buffer_object`], and from
     /// [`Self::gl_unregister_buffer_object`]. Unknown devices are Invalid
     /// `"device not in profile"`. Query; legal during capture.
     pub fn gl_map_buffer_object(&self, device: DeviceId) -> Result<(), SimError> {
@@ -18269,14 +18271,28 @@ impl Sim {
     ///
     /// Always Invalid `"unregister object"` (no GL buffer-object handles).
     /// Distinct from [`Self::gl_register_buffer_object`] (why is not a
-    /// superstring of `"buffer object"`) and from
-    /// [`Self::graphics_unregister_resource`]. Unknown devices are Invalid
+    /// superstring of `"buffer object"`), from
+    /// [`Self::graphics_unregister_resource`], and from
+    /// [`Self::gl_unmap_buffer_object`]. Unknown devices are Invalid
     /// `"device not in profile"`. Query; legal during capture.
     pub fn gl_unregister_buffer_object(&self, device: DeviceId) -> Result<(), SimError> {
         let _gpu = self.profile.gpu(device)?;
         Err(SimError::Invalid {
             why: "unregister object",
         })
+    }
+
+    /// `cuGLUnmapBufferObject` plus `cudaGLUnmapBufferObject`. Legacy
+    /// OpenGL interop is not modeled.
+    ///
+    /// Always Invalid `"gl unmap"` (no GL buffer-object handles). Distinct
+    /// from [`Self::gl_map_buffer_object`] (why is not a superstring of
+    /// `"gl map"`) and from [`Self::graphics_unmap_resources`]. Unknown
+    /// devices are Invalid `"device not in profile"`. Query; legal during
+    /// capture.
+    pub fn gl_unmap_buffer_object(&self, device: DeviceId) -> Result<(), SimError> {
+        let _gpu = self.profile.gpu(device)?;
+        Err(SimError::Invalid { why: "gl unmap" })
     }
 
     /// `cuD3D11GetDevices` / `cudaD3D11GetDevices`. Direct3D 11 interop is
