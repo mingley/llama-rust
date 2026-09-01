@@ -599,6 +599,8 @@
 //! Invalid `"gl context"`). Query; legal during capture. No Engine `--gl-ctx`.
 //! [`d3d11_get_devices`](Sim::d3d11_get_devices) is `cuD3D11GetDevices`
 //! (always Invalid `"d3d11"`). Query; legal during capture. No Engine `--d3d11-devices`.
+//! [`d3d11_ctx_create`](Sim::d3d11_ctx_create) is `cuD3D11CtxCreate` (always
+//! Invalid `"d3d11 context"`). Query; legal during capture. No Engine `--d3d11-ctx`.
 //! [`d3d12_get_devices`](Sim::d3d12_get_devices) is `cuD3D12GetDevices`
 //! (always Invalid `"d3d12"`). Distinct from
 //! [`d3d11_get_devices`](Sim::d3d11_get_devices) and from
@@ -21821,6 +21823,44 @@ mod tests {
         match sim.gl_get_devices(d) {
             Err(SimError::Invalid { why }) => {
                 assert!(why.contains("opengl"), "{why}");
+            }
+            other => panic!("{other:?}"),
+        }
+    }
+
+    #[test]
+    fn d3d11_ctx_create_is_unsupported() {
+        let mut sim = Sim::new(h100());
+        let d = DeviceId(0);
+        match sim.d3d11_ctx_create(d) {
+            Err(SimError::Invalid { why }) => {
+                assert!(why.contains("d3d11 context"), "{why}");
+            }
+            other => panic!("{other:?}"),
+        }
+        sim.begin_capture(d, StreamId(0)).unwrap();
+        match sim.d3d11_ctx_create(d) {
+            Err(SimError::Invalid { why }) => {
+                assert!(why.contains("d3d11 context"), "{why}");
+            }
+            other => panic!("{other:?}"),
+        }
+        let _g = sim.end_capture().unwrap();
+        match sim.d3d11_ctx_create(DeviceId(99)) {
+            Err(SimError::Invalid { why }) => {
+                assert!(why.contains("device not in profile"), "{why}");
+            }
+            other => panic!("{other:?}"),
+        }
+        match sim.d3d11_get_devices(d) {
+            Err(SimError::Invalid { why }) => {
+                assert!(why.contains("d3d11"), "{why}");
+            }
+            other => panic!("{other:?}"),
+        }
+        match sim.gl_ctx_create(d) {
+            Err(SimError::Invalid { why }) => {
+                assert!(why.contains("gl context"), "{why}");
             }
             other => panic!("{other:?}"),
         }

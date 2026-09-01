@@ -581,6 +581,8 @@ is not modeled; no Engine flag).
 not modeled; no Engine flag).
 `gpu-sim` `d3d11_get_devices` is `cuD3D11GetDevices` (Invalid; Direct3D 11
 interop is not modeled; no Engine flag).
+`gpu-sim` `d3d11_ctx_create` is `cuD3D11CtxCreate` (Invalid; Direct3D 11
+interop is not modeled; no Engine flag).
 `gpu-sim` `d3d12_get_devices` is `cuD3D12GetDevices` (Invalid; Direct3D 12
 interop is not modeled; distinct from `D3D12CigSupported`; no Engine flag).
 `gpu-sim` `vdpau_get_device` is `cuVDPAUGetDevice` (Invalid; VDPAU interop
