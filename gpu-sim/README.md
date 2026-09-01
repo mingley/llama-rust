@@ -910,7 +910,9 @@ GEMM stays on the source pointer; `cudaFreeAsync` import before source). `set_de
 `create_pool` pools cannot be exported. Capture cannot include shareable
 export/import.
 `alloc_host` is pageable; `host_register` / `host_register_mapped` are
-`cudaHostRegister` (host-synchronous). `alloc_host_mapped` is
+`cudaHostRegister` (host-synchronous). `host_register_with_size` is the CUDA
+`size` argument (`size` must equal the allocation; partial register is not
+modeled). `alloc_host_mapped` is
 `cudaHostAllocMapped`: a kernel may read it with no H2D, billed at host
 PCIe, and it does not charge HBM. `alloc_host_with_flags` /
 `host_register_with_flags` store `PORTABLE` / `WRITE_COMBINED` (alloc) and

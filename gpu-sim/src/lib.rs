@@ -134,7 +134,9 @@
 //! HBM after ProtRead; writes need ReadWrite (interconnect). Applies to
 //! existing and later allocs from that pool. [`Sim::malloc`] cannot consume another pool's cache.
 //! [`Sim::alloc_host`] is pageable; [`Sim::host_register`] / [`host_register_mapped`](Sim::host_register_mapped)
-//! are `cudaHostRegister` (host-synchronous mlock). `expertvm sim --host-register`
+//! are `cudaHostRegister` (host-synchronous mlock). [`host_register_with_size`](Sim::host_register_with_size)
+//! is the CUDA `size` argument (`size` must equal the allocation; partial
+//! register is not modeled). `expertvm sim --host-register`
 //! registers pageable staging then DMA H2D. `expertvm sim --host-unregister`
 //! unregisters that staging after each miss DMA (`synchronize`; next miss
 //! re-registers). `expertvm sim --host-register-mapped`
@@ -405,6 +407,8 @@
 //! [`HostAllocFlags::WRITE_COMBINED`] on alloc; register
 //! accepts Mapped / Portable). Portable / WriteCombined are stored (no DMA
 //! change). IoMemory / ReadOnly are Invalid. Typed helpers stay.
+//! [`host_register_with_size`](Sim::host_register_with_size) is the CUDA `size`
+//! argument.
 //! [`Sim::device_get_attribute`] is `cudaDeviceGetAttribute` ([`DeviceAttr`]).
 //! [`device_get_exec_affinity_support`](Sim::device_get_exec_affinity_support)
 //! is `cuDeviceGetExecAffinitySupport` (`SM_COUNT` is 0; this VM uses permille
@@ -16459,6 +16463,42 @@ mod tests {
             other => panic!("{other:?}"),
         }
         sim.free_host_pinned(h).unwrap();
+    }
+
+    #[test]
+    fn host_register_with_size_is_cuda_host_register_size() {
+        let mut sim = Sim::new(h100());
+        let d = DeviceId(0);
+        let h = sim.alloc_host(4096).unwrap();
+        match sim.host_register_with_size(h, 2048) {
+            Err(SimError::Invalid { why }) => assert!(why.contains("register size"), "{why}"),
+            other => panic!("{other:?}"),
+        }
+        match sim.host_register_with_size(h, 0) {
+            Err(SimError::Invalid { why }) => assert!(why.contains("register size"), "{why}"),
+            other => panic!("{other:?}"),
+        }
+        assert!(sim.is_host_pageable(h).unwrap());
+        sim.host_register_with_size(h, 4096).unwrap();
+        assert!(sim.is_host_pinned(h).unwrap());
+        assert!(sim.is_host_registered(h).unwrap());
+        sim.host_unregister(h).unwrap();
+        sim.begin_capture(d, StreamId(0)).unwrap();
+        match sim.host_register_with_size(h, 4096) {
+            Err(SimError::Invalid { why }) => assert!(why.contains("capture"), "{why}"),
+            other => panic!("{other:?}"),
+        }
+        let _g = sim.end_capture().unwrap();
+        let a = sim.malloc(d, 4096).unwrap();
+        match sim.host_register_with_size(a, 4096) {
+            Err(SimError::Invalid { why }) => assert!(why.contains("pageable"), "{why}"),
+            other => panic!("{other:?}"),
+        }
+        match sim.host_register_with_size(a, 2048) {
+            Err(SimError::Invalid { why }) => assert!(why.contains("pageable"), "{why}"),
+            other => panic!("{other:?}"),
+        }
+        sim.free_host(h).unwrap();
     }
 
     #[test]

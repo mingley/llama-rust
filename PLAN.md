@@ -4949,7 +4949,15 @@ model, do not celebrate the sim.
     during capture. No Engine `--range-size`. `gpu-profile capture` is
     still refused. Dual score still has no `$/M tokens`.
 
-457. [ ] Next numbered PLAN item after 456 is the next `gpu-sim` / Engine /
+457. [x] `gpu-sim` `host_register_with_size` is `cudaHostRegister` with
+    the CUDA `size` argument. `size` must equal the allocation bytes.
+    Other sizes Invalid `"register size"`. Partial register is not
+    modeled. Typed `host_register` / `host_register_mapped` /
+    `host_register_with_flags` stay (full size). Capture cannot include
+    it. No Engine `--register-size`. `gpu-profile capture` is still
+    refused. Dual score still has no `$/M tokens`.
+
+458. [ ] Next numbered PLAN item after 457 is the next `gpu-sim` / Engine /
     serve / expertvm mechanical API that is still missing, or the next official
     decode family. Prefer remaining CUDA-shaped twins over more
     OpenAI HTTP veneer. Do not invent F32 `output.scale`. Do not invent a
@@ -5044,6 +5052,9 @@ model, do not celebrate the sim.
     `mem_range_get_attribute_with_size`. Do not invent Engine
     `--range-size`. Do not invent partial-range
     `cudaMemRangeGetAttribute`.
+    Do not invent a second `cudaHostRegister` size /
+    `host_register_with_size`. Do not invent Engine `--register-size`.
+    Do not invent partial-range `cudaHostRegister`.
     Do not invent `cuDeviceGetLuid`
     (Windows).
     Do not invent gemma4 `attn_q.scale` / `attn_output.scale` / `attn_k.scale` /

@@ -13343,9 +13343,19 @@ impl Sim {
     /// `cudaHostRegister`: pin pageable host for DMA. Host-synchronous (mlock).
     ///
     /// Capture cannot include it. Already-pinned ids fail. [`Self::host_register_mapped`]
-    /// also maps the pointer so a kernel can read it without H2D.
+    /// also maps the pointer so a kernel can read it without H2D. The CUDA `size`
+    /// argument is [`Self::host_register_with_size`].
     pub fn host_register(&mut self, id: AllocId) -> Result<(), SimError> {
         self.host_register_with_flags(id, HostAllocFlags::DEFAULT)
+    }
+
+    /// [`Self::host_register`] with the CUDA `size` argument.
+    ///
+    /// `size` must equal the allocation bytes. Other sizes Invalid
+    /// `"register size"`. Partial register is not modeled. Typed
+    /// [`Self::host_register`] stays. Capture cannot include it.
+    pub fn host_register_with_size(&mut self, id: AllocId, size: u64) -> Result<(), SimError> {
+        self.host_register_flags(id, Some(size), HostAllocFlags::DEFAULT)
     }
 
     /// `cudaHostRegisterMapped`: pin and map pageable host. Kernels may read it
@@ -13358,7 +13368,9 @@ impl Sim {
     ///
     /// Known bits: [`HostAllocFlags::MAPPED`] / [`HostAllocFlags::PORTABLE`].
     /// Portable is stored (no DMA/pin change). IoMemory / ReadOnly are Invalid
-    /// `"host register flags"`. Typed helpers stay.
+    /// `"host register flags"`. Typed helpers stay. Uses the allocation's
+    /// byte count ([`Self::host_register_with_size`] is the CUDA `size`
+    /// argument).
     pub fn host_register_with_flags(&mut self, id: AllocId, flags: u32) -> Result<(), SimError> {
         const KNOWN: u32 = HostAllocFlags::MAPPED | HostAllocFlags::PORTABLE;
         if flags & !KNOWN != 0 {
@@ -13366,7 +13378,7 @@ impl Sim {
                 why: "host register flags",
             });
         }
-        self.host_register_flags(id, flags)
+        self.host_register_flags(id, None, flags)
     }
 
     /// `cudaHostUnregister`. Only ids from [`Self::host_register`]. Must not be leased
@@ -17392,7 +17404,12 @@ impl Sim {
         self.pinned_used = self.pinned_used.saturating_sub(bytes);
     }
 
-    fn host_register_flags(&mut self, id: AllocId, flags: u32) -> Result<(), SimError> {
+    fn host_register_flags(
+        &mut self,
+        id: AllocId,
+        size: Option<u64>,
+        flags: u32,
+    ) -> Result<(), SimError> {
         self.fail_if_capturing("cannot capture host register")?;
         let a = self.alloc_ref(id)?;
         if a.leases > 0 {
@@ -17402,6 +17419,13 @@ impl Sim {
             return Err(SimError::Invalid {
                 why: "not pageable host",
             });
+        }
+        if let Some(size) = size {
+            if size != a.bytes {
+                return Err(SimError::Invalid {
+                    why: "register size",
+                });
+            }
         }
         let bytes = a.bytes;
         self.charge_pin(bytes)?;
