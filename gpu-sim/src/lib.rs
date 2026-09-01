@@ -960,6 +960,10 @@
 //! for that same primary context (same as [`get_cache_config`](Sim::get_cache_config)).
 //! Distinct from [`get_func_cache_config`](Sim::get_func_cache_config). Query;
 //! legal during capture. No Engine `--ctx-cache-config`.
+//! [`ctx_get_stream_priority_range`](Sim::ctx_get_stream_priority_range) is
+//! `cuCtxGetStreamPriorityRange` for that same primary context (same as
+//! [`device_get_stream_priority_range`](Sim::device_get_stream_priority_range);
+//! example H100 is `(0, -5)`). Query; legal during capture. No Engine `--ctx-priority-range`.
 //! `expertvm sim --device-sync-memops` sets [`DeviceFlags::SYNC_MEMOPS`].
 //! `expertvm sim --device-sync-policy blocking` sets
 //! [`DeviceFlags::SCHEDULE_BLOCKING_SYNC`].
@@ -20755,6 +20759,41 @@ mod tests {
         );
         sim.reset_device(d).unwrap();
         assert_eq!(sim.ctx_get_cache_config(d).unwrap(), FuncCache::PreferNone);
+    }
+
+    #[test]
+    fn ctx_get_stream_priority_range_matches_device() {
+        let mut sim = Sim::new(h100());
+        let d = DeviceId(0);
+        assert_eq!(sim.ctx_get_stream_priority_range(d).unwrap(), (0, -5));
+        assert_eq!(
+            sim.ctx_get_stream_priority_range(d).unwrap(),
+            sim.device_get_stream_priority_range(d).unwrap()
+        );
+        sim.begin_capture(d, StreamId(0)).unwrap();
+        assert_eq!(sim.ctx_get_stream_priority_range(d).unwrap(), (0, -5));
+        let _g = sim.end_capture().unwrap();
+        match sim.ctx_get_stream_priority_range(DeviceId(99)) {
+            Err(SimError::Invalid { why }) => {
+                assert!(why.contains("device not in profile"), "{why}");
+            }
+            other => panic!("{other:?}"),
+        }
+        let eight = Sim::new(HardwareProfile::example_8xh100_nvlink());
+        assert_eq!(
+            eight.ctx_get_stream_priority_range(DeviceId(1)).unwrap(),
+            (0, -5)
+        );
+        let tight = Sim::new(
+            HardwareProfile::parse(
+                "gpus=1\nstream_priority_least=0\nstream_priority_greatest=-1\n",
+            )
+            .unwrap(),
+        );
+        assert_eq!(
+            tight.ctx_get_stream_priority_range(DeviceId(0)).unwrap(),
+            (0, -1)
+        );
     }
 
     #[test]

@@ -6280,7 +6280,16 @@ model, do not celebrate the sim.
     or `cudaChooseDevice`. `gpu-profile capture` is still refused. Dual
     score still has no `$/M tokens`.
 
-596. [ ] Next numbered PLAN item after 595 is the next `gpu-sim` / Engine /
+596. [x] `gpu-sim` `Sim::ctx_get_stream_priority_range` is
+    `cuCtxGetStreamPriorityRange` for the seeded primary context of an
+    explicit device. Same as `device_get_stream_priority_range`. Example
+    H100 is `(0, -5)`. Query; legal during capture. Distinct from
+    `device_get_stream_priority_range` (runtime) and from
+    `stream_get_priority`. This VM does not invent Engine `--ctx-priority-range`,
+    occupancy SM counts, or `cudaChooseDevice`. `gpu-profile capture` is
+    still refused. Dual score still has no `$/M tokens`.
+
+597. [ ] Next numbered PLAN item after 596 is the next `gpu-sim` / Engine /
     serve / expertvm mechanical API that is still missing, or the next official
     decode family. Prefer remaining CUDA-shaped twins over more
     OpenAI HTTP veneer. Do not invent F32 `output.scale`. Do not invent a
@@ -6499,6 +6508,10 @@ model, do not celebrate the sim.
     `ctx_get_cache_config`. Do not invent Engine `--ctx-cache-config`.
     Do not invent `cuCtxSetCacheConfig` this slice. Do not reverse
     wrapping `get_cache_config`.
+    Do not invent a second `cuCtxGetStreamPriorityRange` /
+    `ctx_get_stream_priority_range`. Do not invent Engine `--ctx-priority-range`.
+    Do not invent occupancy SM counts from stream priority. Do not
+    reverse example H100 `(0, -5)`.
     Do not invent a second `cudaStreamAddCallback`.
     Do not invent Engine `--stream-callback` (same wall as second live
     `cudaLaunchHostFunc` after miss DMA).
@@ -6834,6 +6847,9 @@ model, do not celebrate the sim.
     Do not invent a second `ctx_get_cache_config` API. Do not invent
     Engine `--context-cache`. Do not invent a second `get_cache_config`.
     Do not reverse wrapping device cache config.
+    Do not invent a second `ctx_get_stream_priority_range` API. Do not
+    invent Engine `--context-priority`. Do not invent a second
+    `device_get_stream_priority_range`. Do not reverse H100 `(0, -5)`.
     Do not invent a second DeviceLaunch in-flight destroy-complete check or Engine
     `--device-launch-destroy`. Do not abort an in-flight DeviceLaunch when
     `destroy_graph` succeeds. Do not delay destroy of an idle exec. Do not invent
@@ -7382,6 +7398,8 @@ model, do not celebrate the sim.
     Engine `--cu-ctx-flags`. Do not reverse wrapping GetDeviceFlags.
     Do not invent a second `ctx_get_cache_config` method. Do not invent
     Engine `--cu-ctx-cache`. Do not reverse wrapping GetCacheConfig.
+    Do not invent a second `ctx_get_stream_priority_range` method. Do
+    not invent Engine `--cu-ctx-priority`. Do not reverse least 0.
     Do not
     spend the next item on an OpenAI-compatible HTTP veneer.
 

@@ -183,6 +183,7 @@ warp scheduler, L1, …   ← do not model
 | `ctx_get_api_version` is CUDA 13.0 for that primary context | `cuCtxGetApiVersion` |
 | `ctx_get_flags` wraps `get_device_flags` for that primary context | `cuCtxGetFlags` |
 | `ctx_get_cache_config` wraps `get_cache_config` for that primary context | `cuCtxGetCacheConfig` |
+| `ctx_get_stream_priority_range` wraps `device_get_stream_priority_range` (H100 `(0, -5)`) | `cuCtxGetStreamPriorityRange` |
 | access-policy windows align to `cudaLimitMaxL2FetchGranularity` (default 128; `expertvm sim --l2-fetch N` sets 32/64/128) | exact |
 | `AccessPolicyWindow.hit_ratio_permille` is CUDA `hitRatio` (`expertvm sim --l2-ratio N`; unset 1000) | exact |
 | `AccessPolicyWindow.hit` Streaming skips persist fill (`expertvm sim --l2-streaming`; needs persist) | exact |
@@ -1132,6 +1133,9 @@ encoding as `driver_get_version`; distinct from Hopper SM version).
 flags as `get_device_flags`; distinct from `device_primary_ctx_get_state`).
 `ctx_get_cache_config` is `cuCtxGetCacheConfig` for that same primary
 context (same as `get_cache_config`; distinct from `get_func_cache_config`).
+`ctx_get_stream_priority_range` is `cuCtxGetStreamPriorityRange` for that
+same primary context (same as `device_get_stream_priority_range`; example
+H100 is `(0, -5)`).
 `green_ctx_get_id` is
 `cuGreenCtxGetId` / `cudaExecutionCtxGetId` (unique per live green ctx;
 not `GreenCtxId`).

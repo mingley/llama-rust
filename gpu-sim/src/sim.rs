@@ -18544,6 +18544,20 @@ impl Sim {
         self.get_cache_config(device)
     }
 
+    /// `cuCtxGetStreamPriorityRange` for the seeded primary context of
+    /// `device`.
+    ///
+    /// Query; legal during capture. There is no TLS current device and no
+    /// `CUcontext` object. Returns `(leastPriority, greatestPriority)` matching
+    /// [`Self::device_get_stream_priority_range`]
+    /// (`cudaDeviceGetStreamPriorityRange`). Example H100 is `(0, -5)`.
+    /// Distinct from [`Self::stream_get_priority`] (one stream) and from
+    /// [`Self::ctx_get_cache_config`]. Unknown devices are Invalid
+    /// `"device not in profile"`.
+    pub fn ctx_get_stream_priority_range(&self, device: DeviceId) -> Result<(i32, i32), SimError> {
+        self.device_get_stream_priority_range(device)
+    }
+
     /// `cudaInitDevice(device, 0, 0)`. Ensures the primary context (already
     /// seeded at construct). Does not make a thread-current device and does
     /// not change [`Self::get_device_flags`]. Host-synchronous 1 ns. Capture
