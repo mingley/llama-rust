@@ -1272,12 +1272,13 @@ pub use ids::{
 };
 pub use ops::{
     parse_nvlink_util_centric, AccessPolicyWindow, AccessProperty, BatchMemOp, BatchMemOpFlags,
-    BatchMemOpNodeParams, CaptureDepOp, ClusterDim, ClusterSchedulingPolicy, ComputeMode, DType,
-    DevResource, DevResourceType, DevSmResourceGroupFlags, DevSmResourceGroupParams,
-    DevSmResourceSplitFlags, DeviceAttr, DeviceFlags, DeviceLimit, DeviceNumaConfig, DeviceP2pAttr,
-    DeviceProperties, EventCreateFlags, EventRecordFlags, EventWaitFlags, ExecAffinityType,
-    FlushGpuDirectRdmaScope, FlushGpuDirectRdmaTarget, FlushGpuDirectRdmaWritesOptions, FuncAttr,
-    FuncAttributes, FuncCache, GpuDirectRdmaWritesOrdering, GpuOp, GraphAddNode, GraphCondFlags,
+    BatchMemOpNodeParams, CaptureDepOp, ChildGraphNodeParams, ClusterDim, ClusterSchedulingPolicy,
+    ComputeMode, DType, DevResource, DevResourceType, DevSmResourceGroupFlags,
+    DevSmResourceGroupParams, DevSmResourceSplitFlags, DeviceAttr, DeviceFlags, DeviceLimit,
+    DeviceNumaConfig, DeviceP2pAttr, DeviceProperties, EventCreateFlags, EventRecordFlags,
+    EventWaitFlags, ExecAffinityType, FlushGpuDirectRdmaScope, FlushGpuDirectRdmaTarget,
+    FlushGpuDirectRdmaWritesOptions, FuncAttr, FuncAttributes, FuncCache,
+    GpuDirectRdmaWritesOrdering, GpuOp, GraphAddNode, GraphChildGraphOwnership, GraphCondFlags,
     GraphCreateFlags, GraphDebugDotFlags, GraphDependencyType, GraphEdgeData,
     GraphExecUpdateResult, GraphExecUpdateResultInfo, GraphInstantiateFlags,
     GraphInstantiateParams, GraphInstantiateResult, GraphMemAttr, GraphNodeKind, GraphNodeParams,
@@ -11036,6 +11037,146 @@ mod tests {
                 }
                 other => panic!("{other:?}"),
             },
+            other => panic!("{other:?}"),
+        }
+    }
+
+    #[test]
+    fn graph_child_graph_ownership_is_cuda_child_graph_node_params_ownership() {
+        let d = DeviceId(0);
+        let s = StreamId(0);
+        let mut sim = Sim::new(h100());
+        let a = sim.malloc(d, 64).unwrap();
+        let leaf = sim.create_graph(d, s).unwrap();
+        sim.graph_add_kernel(leaf, KernelKind::other(8, 8), &[a], &[a])
+            .unwrap();
+        let _ = sim.instantiate_graph(leaf).unwrap();
+        let parent = sim.create_graph(d, s).unwrap();
+        sim.graph_add_child(parent, leaf).unwrap();
+        match sim.graph_node_get_params(parent, 0).unwrap() {
+            GraphNodeParams::ChildGraph(p) => {
+                assert_eq!(p.graph, leaf);
+                assert_eq!(p.ownership, GraphChildGraphOwnership::CLONE);
+            }
+            other => panic!("{other:?}"),
+        }
+        let mem = sim.create_graph(d, s).unwrap();
+        let scratch = sim.graph_add_alloc(mem, 64).unwrap();
+        sim.graph_add_free(mem, scratch).unwrap();
+        sim.graph_add_dependencies(mem, 0, 1).unwrap();
+        let _ = sim.instantiate_graph(mem).unwrap();
+        let p_mem = sim.create_graph(d, s).unwrap();
+        match sim.graph_add_child(p_mem, mem) {
+            Err(SimError::Invalid { why }) => assert!(why.contains("child graph mem"), "{why}"),
+            other => panic!("{other:?}"),
+        }
+        let cond = sim.create_graph(d, s).unwrap();
+        let h = sim.graph_conditional_create(cond, 0).unwrap();
+        let _body = sim.graph_add_if(cond, h).unwrap();
+        let _ = sim.instantiate_graph(cond).unwrap();
+        let p_cond = sim.create_graph(d, s).unwrap();
+        match sim.graph_add_child(p_cond, cond) {
+            Err(SimError::Invalid { why }) => {
+                assert!(why.contains("child graph conditional"), "{why}");
+            }
+            other => panic!("{other:?}"),
+        }
+        match sim.graph_add_node(
+            parent,
+            &[],
+            GraphNodeParams::ChildGraph(ChildGraphNodeParams {
+                graph: leaf,
+                ownership: GraphChildGraphOwnership::MOVE,
+            }),
+        ) {
+            Err(SimError::Invalid { why }) => {
+                assert!(why.contains("child graph instantiated"), "{why}");
+            }
+            other => panic!("{other:?}"),
+        }
+        let raw = sim.create_graph(d, s).unwrap();
+        sim.graph_add_kernel(raw, KernelKind::other(8, 8), &[a], &[a])
+            .unwrap();
+        let mover = sim.create_graph(d, s).unwrap();
+        let added = sim
+            .graph_add_node(
+                mover,
+                &[],
+                GraphNodeParams::ChildGraph(ChildGraphNodeParams {
+                    graph: raw,
+                    ownership: GraphChildGraphOwnership::MOVE,
+                }),
+            )
+            .unwrap();
+        assert_eq!(added.node, 0);
+        match sim.graph_node_get_params(mover, 0).unwrap() {
+            GraphNodeParams::ChildGraph(p) => {
+                assert_eq!(p.graph, raw);
+                assert_eq!(p.ownership, GraphChildGraphOwnership::INVALID);
+            }
+            other => panic!("{other:?}"),
+        }
+        match sim.instantiate_graph(raw) {
+            Err(SimError::Invalid { why }) => assert!(why.contains("child graph moved"), "{why}"),
+            other => panic!("{other:?}"),
+        }
+        match sim.launch_graph(raw, s) {
+            Err(SimError::Invalid { why }) => assert!(why.contains("child graph moved"), "{why}"),
+            other => panic!("{other:?}"),
+        }
+        match sim.destroy_graph(raw) {
+            Err(SimError::Invalid { why }) => assert!(why.contains("child graph moved"), "{why}"),
+            other => panic!("{other:?}"),
+        }
+        let other = sim.create_graph(d, s).unwrap();
+        match sim.graph_add_child(other, raw) {
+            Err(SimError::Invalid { why }) => assert!(why.contains("child graph moved"), "{why}"),
+            other => panic!("{other:?}"),
+        }
+        let own_bad = sim.create_graph(d, s).unwrap();
+        sim.graph_add_kernel(own_bad, KernelKind::other(8, 8), &[a], &[a])
+            .unwrap();
+        let own_parent = sim.create_graph(d, s).unwrap();
+        match sim.graph_add_node(
+            own_parent,
+            &[],
+            GraphNodeParams::ChildGraph(ChildGraphNodeParams {
+                graph: own_bad,
+                ownership: 2,
+            }),
+        ) {
+            Err(SimError::Invalid { why }) => {
+                assert!(why.contains("child graph ownership"), "{why}");
+            }
+            other => panic!("{other:?}"),
+        }
+        let exec = sim.instantiate_graph(mover).unwrap();
+        let n = sim.launch_graph(exec, s).unwrap();
+        assert_eq!(n, 1);
+        sim.synchronize().unwrap();
+        let mem_raw = sim.create_graph(d, s).unwrap();
+        let slot = sim.graph_add_alloc(mem_raw, 64).unwrap();
+        sim.graph_add_free(mem_raw, slot).unwrap();
+        sim.graph_add_dependencies(mem_raw, 0, 1).unwrap();
+        let mem_parent = sim.create_graph(d, s).unwrap();
+        let added_mem = sim
+            .graph_add_node(
+                mem_parent,
+                &[],
+                GraphNodeParams::ChildGraph(ChildGraphNodeParams {
+                    graph: mem_raw,
+                    ownership: GraphChildGraphOwnership::MOVE,
+                }),
+            )
+            .unwrap();
+        assert_eq!(added_mem.node, 0);
+        let mem_exec = sim.instantiate_graph(mem_parent).unwrap();
+        let n = sim.launch_graph(mem_exec, s).unwrap();
+        assert_eq!(n, 2);
+        sim.synchronize().unwrap();
+        sim.destroy_graph(mem_parent).unwrap();
+        match sim.destroy_graph(mem_raw) {
+            Err(SimError::Invalid { why }) => assert!(why.contains("unknown graph"), "{why}"),
             other => panic!("{other:?}"),
         }
     }

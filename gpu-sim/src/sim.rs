@@ -12,21 +12,21 @@ use crate::ids::{
 };
 use crate::ops::{
     AccessPolicyWindow, AccessProperty, BatchMemOp, BatchMemOpFlags, BatchMemOpNodeParams,
-    CaptureDepOp, ClusterDim, ClusterSchedulingPolicy, ComputeMode, DevResource, DevResourceType,
-    DevSmResourceGroupParams, DevSmResourceSplitFlags, DeviceAttr, DeviceFlags, DeviceLimit,
-    DeviceNumaConfig, DeviceP2pAttr, DeviceProperties, EventCreateFlags, EventRecordFlags,
-    EventWaitFlags, ExecAffinityType, FlushGpuDirectRdmaScope, FlushGpuDirectRdmaTarget,
-    FlushGpuDirectRdmaWritesOptions, FuncAttr, FuncAttributes, FuncCache,
-    GpuDirectRdmaWritesOrdering, GpuOp as Kind, GraphAddNode, GraphCondFlags, GraphCreateFlags,
-    GraphDebugDotFlags, GraphDependencyType, GraphEdgeData, GraphExecUpdateResult,
-    GraphExecUpdateResultInfo, GraphInstantiateFlags, GraphInstantiateParams,
-    GraphInstantiateResult, GraphMemAttr, GraphNodeKind, GraphNodeParams, GraphUserObjectFlags,
-    GreenCtxFlags, HostAllocFlags, HostGetDevicePointerFlags, HostNodeParams, InitDeviceFlags,
-    IpcMemFlags, KernelAttrs, KernelBuf, KernelKind, KernelNodeAttr, KernelNodeAttrValue,
-    KernelNodeParams, LaunchCompletionEvent, MemAccessDesc, MemAccessFlags, MemAdvise,
-    MemAllocationGranularity, MemAllocationProp, MemAllocationType, MemAttach, MemAttachFlags,
-    MemCreateFlags, MemExportFlags, MemHandleType, MemHandleUsage, MemLocationType, MemMapFlags,
-    MemPoolAttr, MemPoolExportFlags, MemPoolProps, MemRangeAttr, MemRangeAttrValue,
+    CaptureDepOp, ChildGraphNodeParams, ClusterDim, ClusterSchedulingPolicy, ComputeMode,
+    DevResource, DevResourceType, DevSmResourceGroupParams, DevSmResourceSplitFlags, DeviceAttr,
+    DeviceFlags, DeviceLimit, DeviceNumaConfig, DeviceP2pAttr, DeviceProperties, EventCreateFlags,
+    EventRecordFlags, EventWaitFlags, ExecAffinityType, FlushGpuDirectRdmaScope,
+    FlushGpuDirectRdmaTarget, FlushGpuDirectRdmaWritesOptions, FuncAttr, FuncAttributes, FuncCache,
+    GpuDirectRdmaWritesOrdering, GpuOp as Kind, GraphAddNode, GraphChildGraphOwnership,
+    GraphCondFlags, GraphCreateFlags, GraphDebugDotFlags, GraphDependencyType, GraphEdgeData,
+    GraphExecUpdateResult, GraphExecUpdateResultInfo, GraphInstantiateFlags,
+    GraphInstantiateParams, GraphInstantiateResult, GraphMemAttr, GraphNodeKind, GraphNodeParams,
+    GraphUserObjectFlags, GreenCtxFlags, HostAllocFlags, HostGetDevicePointerFlags, HostNodeParams,
+    InitDeviceFlags, IpcMemFlags, KernelAttrs, KernelBuf, KernelKind, KernelNodeAttr,
+    KernelNodeAttrValue, KernelNodeParams, LaunchCompletionEvent, MemAccessDesc, MemAccessFlags,
+    MemAdvise, MemAllocationGranularity, MemAllocationProp, MemAllocationType, MemAttach,
+    MemAttachFlags, MemCreateFlags, MemExportFlags, MemHandleType, MemHandleUsage, MemLocationType,
+    MemMapFlags, MemPoolAttr, MemPoolExportFlags, MemPoolProps, MemRangeAttr, MemRangeAttrValue,
     MemRangeHandleFlags, MemRangeHandleType, MemReserveFlags, MemSyncDomain, MemSyncDomainMap,
     MemcpyAttributes, MemcpyFlags, MemcpyNodeParams, MemcpyOp, MemcpySrcAccessOrder, MemoryType,
     MemsetNodeParams, MemsetOp, MulticastBindFlags, MulticastCreateFlags, MulticastGranularity,
@@ -594,6 +594,8 @@ struct Graph {
     primary_exec: Option<GraphId>,
     /// Definition this exec was instantiated from. `None` on definitions.
     src: Option<GraphId>,
+    /// Parent that moved this definition (`CU_GRAPH_CHILD_GRAPH_OWNERSHIP_MOVE`).
+    moved_to: Option<GraphId>,
 }
 
 impl Graph {
@@ -634,8 +636,9 @@ impl Sim {
 
     fn remap_kind_to_exec(&self, kind: Kind) -> Result<Kind, SimError> {
         Ok(match kind {
-            Kind::ChildGraph { graph } => Kind::ChildGraph {
+            Kind::ChildGraph { graph, ownership } => Kind::ChildGraph {
                 graph: self.resolved_graph(graph)?,
+                ownership,
             },
             Kind::If {
                 handle,
@@ -684,8 +687,9 @@ impl Sim {
 
     fn kind_def_ids(&self, kind: Kind) -> Kind {
         match kind {
-            Kind::ChildGraph { graph } => Kind::ChildGraph {
+            Kind::ChildGraph { graph, ownership } => Kind::ChildGraph {
                 graph: self.def_id(graph),
+                ownership,
             },
             Kind::If {
                 handle,
@@ -3117,6 +3121,7 @@ impl Sim {
     /// [`Self::upload_graph`] is skipped while any stream is capturing (host-sync
     /// upload cannot run during capture); the live launch still enqueues.
     pub fn launch_graph(&mut self, graph: GraphId, stream: StreamId) -> Result<u32, SimError> {
+        self.require_not_moved(graph)?;
         let (origin, ready) = {
             let g = self.graphs.get(&graph).ok_or(SimError::Invalid {
                 why: "unknown graph",
@@ -3241,7 +3246,14 @@ impl Sim {
                 why: "child graph not instantiated",
             });
         }
-        let _id = self.submit_captured(device, stream, Kind::ChildGraph { graph })?;
+        let _id = self.submit_captured(
+            device,
+            stream,
+            Kind::ChildGraph {
+                graph,
+                ownership: GraphChildGraphOwnership::CLONE,
+            },
+        )?;
         Ok(1)
     }
 
@@ -3343,7 +3355,7 @@ impl Sim {
                 }
                 continue;
             }
-            if let Kind::ChildGraph { graph: child } = &step.kind {
+            if let Kind::ChildGraph { graph: child, .. } = &step.kind {
                 let child = self.resolved_graph(*child)?;
                 let add = self.enqueue_graph(child, s, head, stack, &wait)?;
                 head = false;
@@ -3787,6 +3799,7 @@ impl Sim {
     ) -> Result<GraphId, SimError> {
         let flags = params.flags;
         let upload_stream = params.upload_stream;
+        self.require_not_moved(graph)?;
         let exec = self.instantiate_graph_inner(graph, flags, Some(params))?;
         if flags & GraphInstantiateFlags::UPLOAD != 0 {
             let upload = if let Some((device, stream)) = upload_stream {
@@ -3933,6 +3946,13 @@ impl Sim {
         for body in snapshot.bodies {
             let _exec = self.instantiate_graph_inner(body, 0, None)?;
         }
+        for node in &snapshot.steps {
+            if let Kind::ChildGraph { graph, ownership } = &node.kind {
+                if *ownership == GraphChildGraphOwnership::MOVE {
+                    let _exec = self.instantiate_graph_inner(*graph, 0, None)?;
+                }
+            }
+        }
         let exec_id = GraphId(self.next_graph);
         self.next_graph = self.next_graph.saturating_add(1);
         let mut snap = Vec::with_capacity(snapshot.steps.len());
@@ -3953,6 +3973,7 @@ impl Sim {
                 device_launch_tail: None,
                 primary_exec: None,
                 src: Some(graph),
+                moved_to: None,
             },
         );
         let def = self.graphs.get_mut(&graph).ok_or(SimError::Invalid {
@@ -4136,6 +4157,10 @@ impl Sim {
     ) -> Result<(), SimError> {
         *info = GraphExecUpdateResultInfo::default();
         if let Err(e) = self.fail_if_capturing("cannot capture graph update") {
+            info.result = GraphExecUpdateResult::Error;
+            return Err(e);
+        }
+        if let Err(e) = self.require_not_moved(src) {
             info.result = GraphExecUpdateResult::Error;
             return Err(e);
         }
@@ -4697,19 +4722,24 @@ impl Sim {
                 why: "graph child is self",
             });
         }
-        let device = {
+        let (device, ownership) = {
             let g = self.graphs.get(&graph).ok_or(SimError::Invalid {
                 why: "unknown graph",
             })?;
             let step = live_ok(g.steps.get(node).ok_or(SimError::Invalid {
                 why: "unknown graph node",
             })?)?;
-            if !matches!(step.kind, Kind::ChildGraph { .. }) {
+            let Kind::ChildGraph { ownership, .. } = &step.kind else {
                 return Err(SimError::Invalid {
                     why: "not a child graph node",
                 });
+            };
+            if *ownership == GraphChildGraphOwnership::MOVE {
+                return Err(SimError::Invalid {
+                    why: "child graph ownership",
+                });
             }
-            step.device
+            (step.device, *ownership)
         };
         let (ready, origin) = {
             let c = self.graphs.get(&child).ok_or(SimError::Invalid {
@@ -4740,7 +4770,10 @@ impl Sim {
         let step = live_ok_mut(g.steps.get_mut(node).ok_or(SimError::Invalid {
             why: "unknown graph node",
         })?)?;
-        step.kind = Kind::ChildGraph { graph: child };
+        step.kind = Kind::ChildGraph {
+            graph: child,
+            ownership,
+        };
         Ok(())
     }
 
@@ -4828,11 +4861,16 @@ impl Sim {
                     self.graph_event_wait_set_event(graph, node, event)
                 }
             }
-            GraphNodeParams::ChildGraph(child) => {
+            GraphNodeParams::ChildGraph(p) => {
+                if p.ownership != GraphChildGraphOwnership::CLONE {
+                    return Err(SimError::Invalid {
+                        why: "child graph ownership",
+                    });
+                }
                 if exec {
-                    self.graph_exec_child_set_params(graph, node, child)
+                    self.graph_exec_child_set_params(graph, node, p.graph)
                 } else {
-                    self.graph_child_set_params(graph, node, child)
+                    self.graph_child_set_params(graph, node, p.graph)
                 }
             }
             GraphNodeParams::Alloc { .. } => Err(SimError::Invalid {
@@ -4970,6 +5008,17 @@ impl Sim {
         }
         if matches!(step.kind, Kind::Memset(_)) {
             return Ok(GraphNodeParams::Memset(memset_node_params_from_step(step)?));
+        }
+        if let Kind::ChildGraph { graph, ownership } = &step.kind {
+            let ownership = if *ownership == GraphChildGraphOwnership::MOVE {
+                GraphChildGraphOwnership::INVALID
+            } else {
+                *ownership
+            };
+            return Ok(GraphNodeParams::ChildGraph(ChildGraphNodeParams {
+                graph: *graph,
+                ownership,
+            }));
         }
         if matches!(
             step.kind,
@@ -5466,19 +5515,24 @@ impl Sim {
                 why: "graph child is self",
             });
         }
-        let (device, old_child) = {
+        let (device, old_child, ownership) = {
             let g = self.graphs.get(&exec).ok_or(SimError::Invalid {
                 why: "unknown graph",
             })?;
             let step = live_ok(g.view().get(node).ok_or(SimError::Invalid {
                 why: "unknown graph node",
             })?)?;
-            let Kind::ChildGraph { graph } = &step.kind else {
+            let Kind::ChildGraph { graph, ownership } = &step.kind else {
                 return Err(SimError::Invalid {
                     why: "not a child graph node",
                 });
             };
-            (step.device, *graph)
+            if *ownership == GraphChildGraphOwnership::MOVE {
+                return Err(SimError::Invalid {
+                    why: "child graph ownership",
+                });
+            }
+            (step.device, *graph, *ownership)
         };
         let (child_ok, child_gpu, child_steps) = {
             let c = self.graphs.get(&child).ok_or(SimError::Invalid {
@@ -5526,7 +5580,10 @@ impl Sim {
         let step = live_ok_mut(g.exec_mut()?.get_mut(node).ok_or(SimError::Invalid {
             why: "unknown graph node",
         })?)?;
-        step.kind = Kind::ChildGraph { graph: child_exec };
+        step.kind = Kind::ChildGraph {
+            graph: child_exec,
+            ownership,
+        };
         g.uploaded = false;
         Ok(())
     }
@@ -6137,8 +6194,8 @@ impl Sim {
             if step.destroyed {
                 continue;
             }
-            if let Kind::ChildGraph { graph: child } = step.kind {
-                out.push((i, child));
+            if let Kind::ChildGraph { graph: child, .. } = &step.kind {
+                out.push((i, *child));
             }
         }
         Ok(out)
@@ -6150,7 +6207,7 @@ impl Sim {
     /// [`Self::graph_exec_child_get_graph`] refuses uninstantiated graphs.
     pub fn graph_child_get_graph(&self, graph: GraphId, node: usize) -> Result<GraphId, SimError> {
         match &self.graph_view_step(graph, node)?.kind {
-            Kind::ChildGraph { graph: child } => Ok(*child),
+            Kind::ChildGraph { graph: child, .. } => Ok(*child),
             _ => Err(SimError::Invalid {
                 why: "not a child graph node",
             }),
@@ -6168,7 +6225,7 @@ impl Sim {
         node: usize,
     ) -> Result<GraphId, SimError> {
         match &self.graph_exec_step(exec, node)?.kind {
-            Kind::ChildGraph { graph: child } => Ok(*child),
+            Kind::ChildGraph { graph: child, .. } => Ok(*child),
             _ => Err(SimError::Invalid {
                 why: "not a child graph node",
             }),
@@ -6633,6 +6690,7 @@ impl Sim {
     /// `cudaMallocAsync` ids (independent HBM). Instantiating or updating one
     /// id does not change the other. Cycles among child ids fail.
     pub fn clone_graph(&mut self, graph: GraphId) -> Result<GraphId, SimError> {
+        self.require_not_moved(graph)?;
         self.fail_if_capturing("cannot capture graph clone")?;
         let mut walk = CloneWalk {
             order: Vec::new(),
@@ -6672,6 +6730,7 @@ impl Sim {
                     device_launch_tail: None,
                     primary_exec: None,
                     src: None,
+                    moved_to: None,
                 },
                 origin.0,
             ));
@@ -6914,9 +6973,22 @@ impl Sim {
     /// independent.
     pub fn destroy_graph(&mut self, graph: GraphId) -> Result<(), SimError> {
         self.fail_if_capturing("cannot capture graph destroy")?;
+        self.require_not_moved(graph)?;
         let g = self.graphs.remove(&graph).ok_or(SimError::Invalid {
             why: "unknown graph",
         })?;
+        let moved_kids: Vec<GraphId> = g
+            .steps
+            .iter()
+            .filter_map(|s| match &s.kind {
+                Kind::ChildGraph { graph, ownership }
+                    if *ownership == GraphChildGraphOwnership::MOVE =>
+                {
+                    Some(*graph)
+                }
+                _ => None,
+            })
+            .collect();
         let device = g.origin.0;
         let _gpu = self.profile.gpu(device)?;
         if g.instantiated {
@@ -6937,6 +7009,14 @@ impl Sim {
         self.release_user_objects_for_graph(graph);
         let _src = self.clone_of.remove(&graph);
         self.clock = self.clock.saturating_add(1);
+        for kid in moved_kids {
+            if let Some(c) = self.graphs.get_mut(&kid) {
+                c.moved_to = None;
+            } else {
+                continue;
+            }
+            self.destroy_graph(kid)?;
+        }
         Ok(())
     }
 
@@ -7240,6 +7320,7 @@ impl Sim {
                 device_launch_tail: None,
                 primary_exec: None,
                 src: None,
+                moved_to: None,
             },
         );
         let _old = self.graph_allocs.insert(id, Vec::new());
@@ -7343,8 +7424,8 @@ impl Sim {
                 self.graph_add_event_wait(graph, event, external)?;
                 Ok(add_node_out(None, None, None))
             }
-            GraphNodeParams::ChildGraph(child) => {
-                self.graph_add_child(graph, child)?;
+            GraphNodeParams::ChildGraph(p) => {
+                self.graph_add_child_params(graph, p)?;
                 Ok(add_node_out(None, None, None))
             }
             GraphNodeParams::Alloc { bytes, access } => Ok(add_node_out(
@@ -8374,15 +8455,42 @@ impl Sim {
         self.graph_push(graph, device, stream, kind_from_batch(op))
     }
 
-    /// `cudaGraphAddChildGraphNode`. `child` must already be instantiated.
-    ///
+    /// `cudaGraphAddChildGraphNode`. Typed add is
+    /// [`GraphChildGraphOwnership::CLONE`]: `child` must already be
+    /// instantiated and must not contain mem alloc/free or conditional nodes.
     /// Sibling children have no dependency until [`Self::graph_add_dependencies`].
     /// Independent children may Hyper-Q overlap at parent launch.
+    /// Pin move ownership through [`Self::graph_add_node`] with
+    /// [`GraphNodeParams::ChildGraph`].
     pub fn graph_add_child(&mut self, graph: GraphId, child: GraphId) -> Result<(), SimError> {
+        self.graph_add_child_params(
+            graph,
+            ChildGraphNodeParams {
+                graph: child,
+                ownership: GraphChildGraphOwnership::CLONE,
+            },
+        )
+    }
+
+    fn graph_add_child_params(
+        &mut self,
+        graph: GraphId,
+        params: ChildGraphNodeParams,
+    ) -> Result<(), SimError> {
         let (device, stream) = self.graph_origin_for_add(graph)?;
+        let child = params.graph;
         if child == graph {
             return Err(SimError::Invalid {
                 why: "graph child is self",
+            });
+        }
+        self.require_not_moved(child)?;
+        let ownership = params.ownership;
+        if ownership != GraphChildGraphOwnership::CLONE
+            && ownership != GraphChildGraphOwnership::MOVE
+        {
+            return Err(SimError::Invalid {
+                why: "child graph ownership",
             });
         }
         let (ready, origin) = {
@@ -8391,17 +8499,98 @@ impl Sim {
             })?;
             (c.ready(), c.origin.0)
         };
-        if !ready {
-            return Err(SimError::Invalid {
-                why: "child graph not instantiated",
-            });
-        }
         if origin != device {
             return Err(SimError::Invalid {
                 why: "graph child gpu mismatch",
             });
         }
-        self.graph_push(graph, device, stream, Kind::ChildGraph { graph: child })
+        let (has_mem, has_cond) = self.child_graph_contents(child)?;
+        if has_cond {
+            return Err(SimError::Invalid {
+                why: "child graph conditional",
+            });
+        }
+        if ownership == GraphChildGraphOwnership::CLONE {
+            if !ready {
+                return Err(SimError::Invalid {
+                    why: "child graph not instantiated",
+                });
+            }
+            if has_mem {
+                return Err(SimError::Invalid {
+                    why: "child graph mem",
+                });
+            }
+        } else if ready {
+            return Err(SimError::Invalid {
+                why: "child graph instantiated",
+            });
+        }
+        self.graph_push(
+            graph,
+            device,
+            stream,
+            Kind::ChildGraph {
+                graph: child,
+                ownership,
+            },
+        )?;
+        if ownership == GraphChildGraphOwnership::MOVE {
+            let c = self.graphs.get_mut(&child).ok_or(SimError::Invalid {
+                why: "unknown graph",
+            })?;
+            c.moved_to = Some(graph);
+        }
+        Ok(())
+    }
+
+    fn child_graph_contents(&self, child: GraphId) -> Result<(bool, bool), SimError> {
+        let mut stack = vec![child];
+        let mut seen = BTreeSet::new();
+        let mut has_mem = false;
+        let mut has_cond = false;
+        while let Some(id) = stack.pop() {
+            if !seen.insert(id) {
+                continue;
+            }
+            let g = self.graphs.get(&id).ok_or(SimError::Invalid {
+                why: "unknown graph",
+            })?;
+            for step in &g.steps {
+                match &step.kind {
+                    Kind::Alloc { .. } | Kind::Free { .. } => has_mem = true,
+                    Kind::If { .. }
+                    | Kind::While { .. }
+                    | Kind::Switch { .. }
+                    | Kind::SetConditional { .. } => {
+                        has_cond = true;
+                    }
+                    Kind::ChildGraph { graph, .. } => stack.push(*graph),
+                    _ => {}
+                }
+                stack.extend(cond_body_graphs(&step.kind));
+            }
+        }
+        Ok((has_mem, has_cond))
+    }
+
+    fn require_not_moved(&self, id: GraphId) -> Result<(), SimError> {
+        let g = self.graphs.get(&id).ok_or(SimError::Invalid {
+            why: "unknown graph",
+        })?;
+        if g.moved_to.is_some() {
+            return Err(SimError::Invalid {
+                why: "child graph moved",
+            });
+        }
+        if let Some(src) = g.src {
+            if self.graphs.get(&src).is_some_and(|d| d.moved_to.is_some()) {
+                return Err(SimError::Invalid {
+                    why: "child graph moved",
+                });
+            }
+        }
+        Ok(())
     }
 
     /// `cudaGraphAddMemAllocNode`. Returns a pending `cudaMallocAsync` id.
@@ -11019,6 +11208,7 @@ impl Sim {
 
     fn graph_origin_for_add(&self, graph: GraphId) -> Result<(DeviceId, StreamId), SimError> {
         self.fail_if_capturing("cannot add graph node during capture")?;
+        self.require_not_moved(graph)?;
         let g = self.graphs.get(&graph).ok_or(SimError::Invalid {
             why: "unknown graph",
         })?;
@@ -22235,7 +22425,12 @@ fn node_params_of(kind: &Kind) -> Result<GraphNodeParams, SimError> {
             event: *event,
             external: *external,
         },
-        Kind::ChildGraph { graph } => GraphNodeParams::ChildGraph(*graph),
+        Kind::ChildGraph { graph, ownership } => {
+            GraphNodeParams::ChildGraph(ChildGraphNodeParams {
+                graph: *graph,
+                ownership: *ownership,
+            })
+        }
         Kind::Alloc { bytes, .. } => GraphNodeParams::Alloc {
             bytes: *bytes,
             access: Vec::new(),
@@ -22551,11 +22746,17 @@ fn remap_nested_graphs(
     let mut out = Vec::with_capacity(steps.len());
     for step in steps {
         let kind = match &step.kind {
-            Kind::ChildGraph { graph: child } => {
+            Kind::ChildGraph {
+                graph: child,
+                ownership,
+            } => {
                 let cloned = remap.get(child).copied().ok_or(SimError::Invalid {
                     why: "unknown graph",
                 })?;
-                Kind::ChildGraph { graph: cloned }
+                Kind::ChildGraph {
+                    graph: cloned,
+                    ownership: *ownership,
+                }
             }
             Kind::If {
                 handle,
@@ -22999,7 +23200,7 @@ fn debug_dot_label(i: usize, step: &GraphStep, flags: u32) -> String {
                 label.push_str(&value.to_string());
             }
         }
-        Kind::ChildGraph { graph } if flags & GraphDebugDotFlags::HANDLES != 0 => {
+        Kind::ChildGraph { graph, .. } if flags & GraphDebugDotFlags::HANDLES != 0 => {
             label.push_str(" g=");
             label.push_str(&graph.0.to_string());
         }
@@ -23051,7 +23252,7 @@ fn add_node_out(
 
 fn nested_graphs(kind: &Kind) -> Vec<GraphId> {
     match kind {
-        Kind::ChildGraph { graph } | Kind::While { body: graph, .. } => {
+        Kind::ChildGraph { graph, .. } | Kind::While { body: graph, .. } => {
             vec![*graph]
         }
         Kind::If {
@@ -23220,7 +23421,16 @@ fn alloc_graph_worker(launch: StreamId, worker: &mut u16) -> StreamId {
 
 fn op_eq(a: &Kind, b: &Kind) -> bool {
     match (a, b) {
-        (Kind::ChildGraph { graph: x }, Kind::ChildGraph { graph: y }) => x == y,
+        (
+            Kind::ChildGraph {
+                graph: x,
+                ownership: ox,
+            },
+            Kind::ChildGraph {
+                graph: y,
+                ownership: oy,
+            },
+        ) => x == y && ox == oy,
         (
             Kind::If {
                 body: bx,

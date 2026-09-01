@@ -5,6 +5,18 @@ Visible five-turn extract: [docs/chatgpt-share-6a920fe1.md](docs/chatgpt-share-6
 Complete share-API extract: [docs/chatgpt-share-6a920fe1/](docs/chatgpt-share-6a920fe1/).
 Work lands on `main`. No PRs.
 
+## Shipped 2026-09-01 — CUgraphChildGraphNodeOwnership
+
+`gpu-sim` CUDA `CUgraphChildGraphNodeOwnership`:
+`ChildGraphNodeParams::ownership` is clone versus move. Typed
+`graph_add_child` stays clone of an instantiated child without mem
+alloc/free or conditional nodes. Move lets a parent own an uninstantiated
+child that may contain mem nodes. GetParams of a moved node reports
+`INVALID`. After the move the child cannot be independently instantiated,
+launched, destroyed, cloned, updated, or added as a child of another
+parent. This VM does not invent an Engine flag for child-graph ownership.
+`gpu-profile capture` is still refused. Dual score still has no `$/M tokens`.
+
 ## Shipped 2026-09-01 — cuGraphAddMemsetNode ctx
 
 `gpu-sim` CUDA `cuGraphAddMemsetNode` ctx: `MemsetNodeParams::ctx` is the

@@ -5346,7 +5346,19 @@ model, do not celebrate the sim.
     flag for memset ctx. `gpu-profile capture` is still refused. Dual
     score still has no `$/M tokens`.
 
-498. [ ] Next numbered PLAN item after 497 is the next `gpu-sim` / Engine /
+498. [x] `gpu-sim` CUDA `CUgraphChildGraphNodeOwnership`:
+    [`ChildGraphNodeParams::ownership`] is clone versus move. Typed
+    [`graph_add_child`] stays clone of an instantiated child without mem
+    alloc/free or conditional nodes. Move lets a parent own an
+    uninstantiated child that may contain mem nodes. GetParams of a
+    moved node reports [`GraphChildGraphOwnership::INVALID`]. After the
+    move the child cannot be independently instantiated, launched,
+    destroyed, cloned, updated, or added as a child of another parent.
+    This VM does not invent an Engine flag for child-graph ownership.
+    `gpu-profile capture` is still refused. Dual score still has no
+    `$/M tokens`.
+
+499. [ ] Next numbered PLAN item after 498 is the next `gpu-sim` / Engine /
     serve / expertvm mechanical API that is still missing, or the next official
     decode family. Prefer remaining CUDA-shaped twins over more
     OpenAI HTTP veneer. Do not invent F32 `output.scale`. Do not invent a
@@ -5655,6 +5667,9 @@ model, do not celebrate the sim.
     Do not invent a second `cuGraphAddMemsetNode` ctx /
     `MemsetNodeParams::ctx`. Do not invent an Engine flag for memset ctx.
     Do not put `ctx` on `Kind::Memset` or [`MemsetOp`].
+    Do not invent a second `CUgraphChildGraphNodeOwnership` /
+    `ChildGraphNodeParams::ownership`. Do not invent an Engine flag for
+    child-graph ownership. Do not put `ownership` on `GraphNodeKind`.
     Do not
     spend the next item on an OpenAI-compatible HTTP veneer.
 

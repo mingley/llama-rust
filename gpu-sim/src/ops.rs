@@ -2629,6 +2629,24 @@ pub struct MemsetNodeParams {
     pub ctx: Option<GreenCtxId>,
 }
 
+/// `CUDA_CHILD_GRAPH_NODE_PARAMS` for [`crate::Sim::graph_add_node`] /
+/// [`crate::Sim::graph_node_get_params`].
+///
+/// [`Self::graph`] is the nested graph. [`Self::ownership`] is
+/// `CUgraphChildGraphNodeOwnership`. Typed [`crate::Sim::graph_add_child`]
+/// stays [`GraphChildGraphOwnership::CLONE`] and still requires an
+/// instantiated child. Ownership is topology (clone versus move), not a
+/// SetParams parameter. GetParams of a moved node reports
+/// [`GraphChildGraphOwnership::INVALID`]. This VM does not invent an Engine
+/// flag for child-graph ownership.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct ChildGraphNodeParams {
+    /// Child graph id (clone source or moved definition).
+    pub graph: GraphId,
+    /// [`GraphChildGraphOwnership`]. Typed add is [`GraphChildGraphOwnership::CLONE`].
+    pub ownership: u32,
+}
+
 /// One submitted GPU primitive. PLAN's Kernel / Memcpy / Collective / Event /
 /// Alloc / Free, plus `cudaMemsetAsync`, `cudaLaunchHostFunc`, stream attach,
 /// empty graph nodes, nested [`Self::ChildGraph`], conditional IF / WHILE /
@@ -2715,8 +2733,11 @@ pub enum GpuOp {
     /// Nested graph (`cudaGraphLaunch` while capturing). Expanded at parent
     /// launch; never a live [`crate::Sim::operations`] node.
     ChildGraph {
-        /// Instantiated exec launched as a child node.
+        /// Instantiated exec launched as a child node, or a moved definition.
         graph: GraphId,
+        /// `CUgraphChildGraphNodeOwnership` ([`GraphChildGraphOwnership`]).
+        /// Typed [`crate::Sim::graph_add_child`] is [`GraphChildGraphOwnership::CLONE`].
+        ownership: u32,
     },
     /// Conditional IF node (`cudaGraphNodeTypeConditional` / `If`). Expanded at
     /// parent launch. Then-body ops skip at start when the handle is `0`. The
@@ -2917,6 +2938,27 @@ pub struct GraphCondFlags;
 impl GraphCondFlags {
     /// `cudaGraphCondAssignDefault`: each launch resets to the create-time default.
     pub const ASSIGN_DEFAULT: u32 = 1;
+}
+
+/// `CUgraphChildGraphNodeOwnership` for [`ChildGraphNodeParams::ownership`].
+///
+/// Typed [`crate::Sim::graph_add_child`] is [`Self::CLONE`]. Unknown values
+/// are Invalid `"child graph ownership"`. This VM does not invent an Engine
+/// flag for child-graph ownership.
+pub struct GraphChildGraphOwnership;
+
+impl GraphChildGraphOwnership {
+    /// `CU_GRAPH_CHILD_GRAPH_OWNERSHIP_CLONE`: child must already be
+    /// instantiated and must not contain mem alloc/free or conditional nodes.
+    pub const CLONE: u32 = 0;
+    /// `CU_GRAPH_CHILD_GRAPH_OWNERSHIP_MOVE`: parent owns the child definition.
+    /// Alloc/free nodes are legal. Conditionals stay Invalid. After the move
+    /// the child cannot be independently instantiated, launched, destroyed,
+    /// cloned, updated, or added as a child of another parent.
+    pub const MOVE: u32 = 1;
+    /// `CU_GRAPH_CHILD_GRAPH_OWNERSHIP_INVALID` (CUDA `-1`). GetParams of a
+    /// moved node returns this so the driver-owned graph is not reused.
+    pub const INVALID: u32 = u32::MAX;
 }
 
 /// `cudaGraphCreate` flags for [`crate::Sim::create_graph_with_flags`].
@@ -3897,8 +3939,10 @@ pub enum GraphNodeParams {
         /// `cudaEventWaitExternal`.
         external: bool,
     },
-    /// `cudaGraphChildGraphNode`. Child must already be instantiated.
-    ChildGraph(GraphId),
+    /// `cudaGraphChildGraphNode`. [`ChildGraphNodeParams::ownership`] is
+    /// `CUgraphChildGraphNodeOwnership`. Typed add stays clone of an
+    /// instantiated child.
+    ChildGraph(ChildGraphNodeParams),
     /// `cudaGraphMemAllocNode`. [`GraphAddNode::alloc`] is the pending id.
     /// Empty `access` is [`crate::Sim::graph_add_alloc`]; peer `accessDescs`
     /// match [`crate::Sim::graph_add_alloc_with_access`]. SetParams stays
