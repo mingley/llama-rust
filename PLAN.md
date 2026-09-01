@@ -5398,7 +5398,18 @@ model, do not celebrate the sim.
     Engine flag for opt-out. `gpu-profile capture` is still refused. Dual
     score still has no `$/M tokens`.
 
-502. [ ] Next numbered PLAN item after 501 is the next `gpu-sim` / Engine /
+502. [x] `gpu-sim` CUDA launch-attribute event flags and interprocess:
+    [`ProgrammaticEvent::external`] / [`LaunchCompletionEvent::external`]
+    (`cudaEventRecordExternal` on `programmaticEvent.flags` /
+    `launchCompletionEvent.flags`) is Invalid. An interprocess or
+    IPC-imported event is Invalid. The `external` field stays the CUDA
+    flags word (always false). Decode identity stays no launch-attribute
+    event. This VM does not invent a `flags: u32` field, disable-timing as
+    a requirement, NvSciSync / interop event kinds, or an Engine flag for
+    External. `gpu-profile capture` is still refused. Dual score still has
+    no `$/M tokens`.
+
+503. [ ] Next numbered PLAN item after 502 is the next `gpu-sim` / Engine /
     serve / expertvm mechanical API that is still missing, or the next official
     decode family. Prefer remaining CUDA-shaped twins over more
     OpenAI HTTP veneer. Do not invent F32 `output.scale`. Do not invent a
@@ -5722,7 +5733,14 @@ model, do not celebrate the sim.
     Do not invent `LaunchCompletionEvent::trigger_at_block_start`.
     Do not invent per-block programmatic event records.
     Do not invent a must-be-0 flags word on ProgrammaticEvent (external stays
-    `cudaEventRecordExternal`).
+    `cudaEventRecordExternal` and must be false).
+    Do not invent a `flags: u32` field on ProgrammaticEvent /
+    LaunchCompletionEvent. Do not invent a second External / interprocess
+    rejection on those attributes. Do not invent disable-timing as a
+    requirement for launch-attribute events. Do not invent Engine
+    `--programmatic-event-external` / `--launch-completion-external`.
+    Do not invent NvSciSync / interop event kinds as a second interprocess
+    check.
     Do not invent a second device-updatable opt-out, destroy, CopyAttributes,
     second instantiate, or ExecUpdate. Do not invent `CUgraphDeviceNode` or
     device-side kernel-node updates. Do not invent an Engine flag for

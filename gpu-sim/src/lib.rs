@@ -875,13 +875,19 @@
 //! at the trigger instead of kernel completion. [`ProgrammaticEvent::trigger_at_block_start`]
 //! is CUDA `triggerAtBlockStart`: the event records when the kernel starts.
 //! This VM does not invent an Engine flag for block-start.
+//! [`ProgrammaticEvent::external`] (`cudaEventRecordExternal`) is Invalid
+//! `"programmatic event flags"`. An interprocess or IPC-imported event is
+//! Invalid `"programmatic event interprocess"`.
 //! [`kernel_with`](Sim::kernel_with)
 //! also accepts [`KernelAttrs::programmatic_event`].
 //! `expertvm sim --programmatic-event` / Engine
 //! `--expert-sim --programmatic-event` attach it to grouped expert GEMMs
 //! (store `pin_hot` replica D2D waits the trigger). [`kernel_launch_completion`](Sim::kernel_launch_completion)
 //! is `cudaLaunchAttributeLaunchCompletionEvent`: the event records when the
-//! kernel *starts*. `expertvm sim --launch-completion` / Engine
+//! kernel *starts*. [`LaunchCompletionEvent::external`] is Invalid
+//! `"launch completion flags"`. An interprocess or IPC-imported event is
+//! Invalid `"launch completion interprocess"`.
+//! `expertvm sim --launch-completion` / Engine
 //! `--expert-sim --launch-completion` attach it to grouped expert GEMMs.
 //! [`kernel_access_policy`](Sim::kernel_access_policy) is
 //! `cudaLaunchAttributeAccessPolicyWindow`: persisting hits reduce billed HBM
@@ -5633,11 +5639,7 @@ mod tests {
         sim.graph_kernel_node_set_programmatic_event(
             g,
             0,
-            Some(ProgrammaticEvent {
-                event: ev,
-                external: true,
-                trigger_at_block_start: false,
-            }),
+            Some(ProgrammaticEvent::at_block_start(ev)),
         )
         .unwrap();
         let h = sim.create_graph(d, s).unwrap();
@@ -5653,8 +5655,8 @@ mod tests {
             .unwrap()
             .expect("copied");
         assert_eq!(got.event, ev);
-        assert!(got.external);
-        assert!(!got.trigger_at_block_start);
+        assert!(!got.external);
+        assert!(got.trigger_at_block_start);
         sim.graph_kernel_node_set_programmatic_event(h, 0, None)
             .unwrap();
         assert!(sim
@@ -6170,7 +6172,7 @@ mod tests {
             0,
             Some(LaunchCompletionEvent {
                 event: ev,
-                external: true,
+                external: false,
             }),
         )
         .unwrap();
@@ -6183,7 +6185,7 @@ mod tests {
             .unwrap()
             .expect("copied");
         assert_eq!(got.event, ev);
-        assert!(got.external);
+        assert!(!got.external);
         let err = sim
             .instantiate_graph_with_flags(g, GraphInstantiateFlags::DEVICE_LAUNCH)
             .unwrap_err();
@@ -6191,6 +6193,201 @@ mod tests {
             SimError::Invalid { why } => assert!(why.contains("device launch"), "{why}"),
             other => panic!("{other:?}"),
         }
+    }
+
+    #[test]
+    fn launch_attr_events_reject_external_and_interprocess() {
+        let mut sim = Sim::new(h100());
+        let d = DeviceId(0);
+        let s = StreamId(0);
+        let a = sim.malloc(d, 64).unwrap();
+        let g = sim.create_graph(d, s).unwrap();
+        sim.graph_add_kernel(g, KernelKind::other(8, 8), &[a], &[a])
+            .unwrap();
+        let ext_pde = ProgrammaticEvent {
+            event: EventId(1),
+            external: true,
+            trigger_at_block_start: false,
+        };
+        let ext_lce = LaunchCompletionEvent {
+            event: EventId(2),
+            external: true,
+        };
+        let err = sim
+            .graph_kernel_node_set_programmatic_event(g, 0, Some(ext_pde))
+            .unwrap_err();
+        match err {
+            SimError::Invalid { why } => {
+                assert!(why.contains("programmatic event flags"), "{why}")
+            }
+            other => panic!("{other:?}"),
+        }
+        let err = sim
+            .graph_kernel_node_set_launch_completion(g, 0, Some(ext_lce))
+            .unwrap_err();
+        match err {
+            SimError::Invalid { why } => {
+                assert!(why.contains("launch completion flags"), "{why}")
+            }
+            other => panic!("{other:?}"),
+        }
+        let err = sim
+            .kernel_pdl_event(
+                d,
+                KernelKind::other(8, 8),
+                &[a],
+                &[a],
+                s,
+                PdlLaunch {
+                    pdl: ProgrammaticLaunch {
+                        wait: false,
+                        trigger: true,
+                    },
+                    event: Some(ext_pde),
+                },
+            )
+            .unwrap_err();
+        match err {
+            SimError::Invalid { why } => {
+                assert!(why.contains("programmatic event flags"), "{why}")
+            }
+            other => panic!("{other:?}"),
+        }
+        let err = sim
+            .kernel_launch_completion(d, KernelKind::other(8, 8), &[a], &[a], s, ext_lce)
+            .unwrap_err();
+        match err {
+            SimError::Invalid { why } => {
+                assert!(why.contains("launch completion flags"), "{why}")
+            }
+            other => panic!("{other:?}"),
+        }
+        let err = sim
+            .kernel_with(
+                d,
+                KernelKind::other(8, 8),
+                &[a],
+                &[a],
+                s,
+                KernelAttrs {
+                    programmatic_event: Some(ext_pde),
+                    ..KernelAttrs::default()
+                },
+            )
+            .unwrap_err();
+        match err {
+            SimError::Invalid { why } => {
+                assert!(why.contains("programmatic event flags"), "{why}")
+            }
+            other => panic!("{other:?}"),
+        }
+        sim.begin_capture(d, s).unwrap();
+        let err = sim
+            .kernel_with(
+                d,
+                KernelKind::other(8, 8),
+                &[a],
+                &[a],
+                s,
+                KernelAttrs {
+                    launch_completion: Some(ext_lce),
+                    ..KernelAttrs::default()
+                },
+            )
+            .unwrap_err();
+        match err {
+            SimError::Invalid { why } => {
+                assert!(why.contains("launch completion flags"), "{why}")
+            }
+            other => panic!("{other:?}"),
+        }
+        let _empty = sim.end_capture().unwrap();
+        sim.create_event_interprocess(EventId(20)).unwrap();
+        let err = sim
+            .graph_kernel_node_set_programmatic_event(
+                g,
+                0,
+                Some(ProgrammaticEvent::new(EventId(20))),
+            )
+            .unwrap_err();
+        match err {
+            SimError::Invalid { why } => {
+                assert!(why.contains("programmatic event interprocess"), "{why}")
+            }
+            other => panic!("{other:?}"),
+        }
+        let err = sim
+            .kernel_launch_completion(
+                d,
+                KernelKind::other(8, 8),
+                &[a],
+                &[a],
+                s,
+                LaunchCompletionEvent {
+                    event: EventId(20),
+                    external: false,
+                },
+            )
+            .unwrap_err();
+        match err {
+            SimError::Invalid { why } => {
+                assert!(why.contains("launch completion interprocess"), "{why}")
+            }
+            other => panic!("{other:?}"),
+        }
+        let h = sim.ipc_get_event(EventId(20)).unwrap();
+        let imp = sim.ipc_open_event(h).unwrap();
+        let err = sim
+            .graph_kernel_node_set_launch_completion(
+                g,
+                0,
+                Some(LaunchCompletionEvent {
+                    event: imp,
+                    external: false,
+                }),
+            )
+            .unwrap_err();
+        match err {
+            SimError::Invalid { why } => {
+                assert!(why.contains("launch completion interprocess"), "{why}")
+            }
+            other => panic!("{other:?}"),
+        }
+        let exec = sim.instantiate_graph(g).unwrap();
+        let err = sim
+            .graph_exec_kernel_node_set_programmatic_event(exec, 0, Some(ext_pde))
+            .unwrap_err();
+        match err {
+            SimError::Invalid { why } => {
+                assert!(why.contains("programmatic event flags"), "{why}")
+            }
+            other => panic!("{other:?}"),
+        }
+        sim.graph_kernel_node_set_programmatic_event(
+            g,
+            0,
+            Some(ProgrammaticEvent::new(EventId(30))),
+        )
+        .unwrap();
+        assert_eq!(
+            sim.graph_kernel_node_get_programmatic_event(g, 0)
+                .unwrap()
+                .map(|pe| pe.event),
+            Some(EventId(30))
+        );
+        enq(sim.kernel_launch_completion(
+            d,
+            KernelKind::other(8, 8),
+            &[a],
+            &[a],
+            s,
+            LaunchCompletionEvent {
+                event: EventId(31),
+                external: false,
+            },
+        ));
+        sim.synchronize().unwrap();
+        assert!(sim.query_event(EventId(31)).unwrap());
     }
 
     fn persist_mem_profile() -> HardwareProfile {

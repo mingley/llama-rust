@@ -9393,6 +9393,58 @@ impl Sim {
         Ok(())
     }
 
+    /// CUDA: `programmaticEvent.flags` / `launchCompletionEvent.flags` do not
+    /// accept `cudaEventRecordExternal`. The event must not be interprocess
+    /// or an IPC import (`cudaIpcOpenEventHandle`).
+    fn require_launch_attr_event(
+        &self,
+        event: EventId,
+        external: bool,
+        flags_why: &'static str,
+        ipc_why: &'static str,
+    ) -> Result<(), SimError> {
+        if external {
+            return Err(SimError::Invalid { why: flags_why });
+        }
+        if let Some(ev) = self.events.get(&event) {
+            if ev.interprocess || ev.ipc_src.is_some() {
+                return Err(SimError::Invalid { why: ipc_why });
+            }
+        }
+        Ok(())
+    }
+
+    fn require_programmatic_event_attr(&self, pe: ProgrammaticEvent) -> Result<(), SimError> {
+        self.require_launch_attr_event(
+            pe.event,
+            pe.external,
+            "programmatic event flags",
+            "programmatic event interprocess",
+        )
+    }
+
+    fn require_launch_completion_event_attr(
+        &self,
+        lc: LaunchCompletionEvent,
+    ) -> Result<(), SimError> {
+        self.require_launch_attr_event(
+            lc.event,
+            lc.external,
+            "launch completion flags",
+            "launch completion interprocess",
+        )
+    }
+
+    fn require_enqueued_launch_attr_events(&self) -> Result<(), SimError> {
+        if let Some(pe) = self.enqueue_programmatic_event {
+            self.require_programmatic_event_attr(pe)?;
+        }
+        if let Some(lc) = self.enqueue_launch_completion {
+            self.require_launch_completion_event_attr(lc)?;
+        }
+        Ok(())
+    }
+
     /// `cudaGraphKernelNodeGetAttribute` for programmatic event on the definition.
     pub fn graph_kernel_node_get_programmatic_event(
         &self,
@@ -9434,6 +9486,10 @@ impl Sim {
     }
 
     /// `cudaGraphKernelNodeSetAttribute` for programmatic event on the definition.
+    ///
+    /// [`ProgrammaticEvent::external`] is Invalid `"programmatic event flags"`.
+    /// An interprocess or IPC-imported event is Invalid
+    /// `"programmatic event interprocess"`.
     pub fn graph_kernel_node_set_programmatic_event(
         &mut self,
         graph: GraphId,
@@ -9455,6 +9511,7 @@ impl Sim {
             }
         }
         if let Some(pe) = event {
+            self.require_programmatic_event_attr(pe)?;
             let _ev = self.events.entry(pe.event).or_insert(Ev::new(true));
         }
         let g = self.graphs.get_mut(&graph).ok_or(SimError::Invalid {
@@ -9469,6 +9526,9 @@ impl Sim {
     }
 
     /// `cudaGraphExecKernelNodeSetAttribute` for programmatic event on the exec.
+    ///
+    /// Same External / interprocess Invalid as
+    /// [`Self::graph_kernel_node_set_programmatic_event`].
     pub fn graph_exec_kernel_node_set_programmatic_event(
         &mut self,
         exec: GraphId,
@@ -9478,6 +9538,7 @@ impl Sim {
         self.fail_if_capturing("cannot capture kernel node set attribute")?;
         let exec = self.as_exec(exec)?;
         if let Some(pe) = event {
+            self.require_programmatic_event_attr(pe)?;
             let _ev = self.events.entry(pe.event).or_insert(Ev::new(true));
         }
         let g = self.graphs.get_mut(&exec).ok_or(SimError::Invalid {
@@ -9537,6 +9598,10 @@ impl Sim {
     }
 
     /// `cudaGraphKernelNodeSetAttribute` for launch-completion event on the definition.
+    ///
+    /// [`LaunchCompletionEvent::external`] is Invalid `"launch completion flags"`.
+    /// An interprocess or IPC-imported event is Invalid
+    /// `"launch completion interprocess"`.
     pub fn graph_kernel_node_set_launch_completion(
         &mut self,
         graph: GraphId,
@@ -9558,6 +9623,7 @@ impl Sim {
             }
         }
         if let Some(lc) = event {
+            self.require_launch_completion_event_attr(lc)?;
             let _ev = self.events.entry(lc.event).or_insert(Ev::new(true));
         }
         let g = self.graphs.get_mut(&graph).ok_or(SimError::Invalid {
@@ -9572,6 +9638,9 @@ impl Sim {
     }
 
     /// `cudaGraphExecKernelNodeSetAttribute` for launch-completion event on the exec.
+    ///
+    /// Same External / interprocess Invalid as
+    /// [`Self::graph_kernel_node_set_launch_completion`].
     pub fn graph_exec_kernel_node_set_launch_completion(
         &mut self,
         exec: GraphId,
@@ -9581,6 +9650,7 @@ impl Sim {
         self.fail_if_capturing("cannot capture kernel node set attribute")?;
         let exec = self.as_exec(exec)?;
         if let Some(lc) = event {
+            self.require_launch_completion_event_attr(lc)?;
             let _ev = self.events.entry(lc.event).or_insert(Ev::new(true));
         }
         let g = self.graphs.get_mut(&exec).ok_or(SimError::Invalid {
@@ -15984,8 +16054,9 @@ impl Sim {
     /// Other streams may [`Self::wait_event`] the event after the PDL trigger
     /// when [`ProgrammaticLaunch::trigger`] is set. Without trigger the event
     /// records at kernel completion unless
-    /// [`ProgrammaticEvent::trigger_at_block_start`] (kernel start). Decode
-    /// identity stays [`Self::kernel`].
+    /// [`ProgrammaticEvent::trigger_at_block_start`] (kernel start).
+    /// [`ProgrammaticEvent::external`] and interprocess / IPC events are
+    /// Invalid. Decode identity stays [`Self::kernel`].
     pub fn kernel_pdl_event(
         &mut self,
         device: DeviceId,
@@ -16023,7 +16094,9 @@ impl Sim {
     /// [`Self::kernel`] plus [`LaunchCompletionEvent`] (`cudaLaunchAttributeLaunchCompletionEvent`).
     ///
     /// Other streams may [`Self::wait_event`] the event when this kernel
-    /// *starts*, not when it finishes. Decode identity stays [`Self::kernel`].
+    /// *starts*, not when it finishes. [`LaunchCompletionEvent::external`]
+    /// and interprocess / IPC events are Invalid. Decode identity stays
+    /// [`Self::kernel`].
     pub fn kernel_launch_completion(
         &mut self,
         device: DeviceId,
@@ -18917,6 +18990,7 @@ impl Sim {
                 why: "stream not capturing",
             });
         }
+        self.require_enqueued_launch_attr_events()?;
         if let Kind::EventRecord { event, external } = &kind {
             if !*external {
                 let root = self.event_root(*event);
@@ -19076,6 +19150,7 @@ impl Sim {
                 self.enqueue_portable_shared,
             )?;
         }
+        self.require_enqueued_launch_attr_events()?;
         let id = OpId(self.next_op);
         self.next_op = self.next_op.saturating_add(1);
         let pde = self.enqueue_programmatic_event;

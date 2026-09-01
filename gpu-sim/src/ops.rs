@@ -1602,15 +1602,19 @@ pub struct ProgrammaticLaunch {
 /// the event records when the kernel starts instead of waiting for the PDL
 /// trigger. Other streams may [`crate::Sim::wait_event`] it and start before
 /// the primary finishes. Same-stream later work still waits for completion
-/// unless that work uses PDL wait. [`Self::external`] is
-/// `cudaEventRecordExternal` (captured without forked-capture join). Decode
-/// identity stays [`crate::Sim::kernel`] with no programmatic event. Capture
-/// records the attribute on the kernel node.
+/// unless that work uses PDL wait. [`Self::external`] is the CUDA flags word
+/// (`cudaEventRecordWithFlags`); CUDA does not accept
+/// `cudaEventRecordExternal` here (Invalid `"programmatic event flags"`).
+/// The event must not be interprocess or an IPC import (Invalid
+/// `"programmatic event interprocess"`). Decode identity stays
+/// [`crate::Sim::kernel`] with no programmatic event. Capture records the
+/// attribute on the kernel node.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct ProgrammaticEvent {
     /// Event recorded at the programmatic trigger (or kernel completion).
     pub event: EventId,
-    /// `cudaEventRecordExternal` on the launch attribute.
+    /// CUDA `programmaticEvent.flags`. Must be `false`: CUDA does not accept
+    /// `cudaEventRecordExternal` on this attribute.
     pub external: bool,
     /// CUDA `triggerAtBlockStart`. When true, the event records when the
     /// kernel starts (this VM does not model per-block begins). When false
@@ -1673,14 +1677,18 @@ impl PdlLaunch {
 /// grid has been launched ([`Operation::start_ns`]), not when it finishes.
 /// Other streams may [`crate::Sim::wait_event`] it and start copy or compute
 /// while the primary is still running. Same-stream later work still waits for
-/// completion. [`Self::external`] is `cudaEventRecordExternal`. Decode identity
-/// stays [`crate::Sim::kernel`] with no launch-completion event. Capture
-/// records the attribute on the kernel node.
+/// completion. [`Self::external`] is the CUDA flags word; CUDA does not
+/// accept `cudaEventRecordExternal` here (Invalid `"launch completion flags"`).
+/// The event must not be interprocess or an IPC import (Invalid
+/// `"launch completion interprocess"`). Decode identity stays
+/// [`crate::Sim::kernel`] with no launch-completion event. Capture records
+/// the attribute on the kernel node.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct LaunchCompletionEvent {
     /// Event recorded when the kernel starts.
     pub event: EventId,
-    /// `cudaEventRecordExternal` on the launch attribute.
+    /// CUDA `launchCompletionEvent.flags`. Must be `false`: CUDA does not
+    /// accept `cudaEventRecordExternal` on this attribute.
     pub external: bool,
 }
 
@@ -2147,13 +2155,15 @@ pub struct KernelAttrs {
     /// Other streams may [`crate::Sim::wait_event`] at the PDL trigger when
     /// [`Self::pdl`] has [`ProgrammaticLaunch::trigger`], else at kernel
     /// completion. [`ProgrammaticEvent::trigger_at_block_start`] records at
-    /// kernel start instead (CUDA `triggerAtBlockStart`). Decode identity
-    /// stays [`None`]. Capture records the attribute.
+    /// kernel start instead (CUDA `triggerAtBlockStart`).
+    /// [`ProgrammaticEvent::external`] and interprocess / IPC events are
+    /// Invalid. Decode identity stays [`None`]. Capture records the attribute.
     pub programmatic_event: Option<ProgrammaticEvent>,
     /// `cudaLaunchAttributeLaunchCompletionEvent`. [`None`] records nothing.
     ///
     /// Other streams may [`crate::Sim::wait_event`] when this kernel *starts*.
-    /// Decode identity stays [`None`]. Capture records the attribute.
+    /// [`LaunchCompletionEvent::external`] and interprocess / IPC events are
+    /// Invalid. Decode identity stays [`None`]. Capture records the attribute.
     pub launch_completion: Option<LaunchCompletionEvent>,
 }
 

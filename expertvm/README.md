@@ -440,8 +440,8 @@ priority). `--launch-completion` is `cudaLaunchAttributeLaunchCompletionEvent`
 on grouped GEMMs (store replica D2D waits kernel start; illegal with
 `--device-launch`). `--programmatic-event` is
 `cudaLaunchAttributeProgrammaticEvent` on those GEMMs (store replica D2D
-waits the PDL trigger; `triggerAtBlockStart` stays false; illegal with
-`--device-launch`). `--wait-value` is `cuStreamWaitValue64` / `WriteValue64`
+waits the PDL trigger; `triggerAtBlockStart` stays false; not External;
+illegal with `--device-launch`). `--wait-value` is `cuStreamWaitValue64` / `WriteValue64`
 after H2D (8-byte `cudaMallocAsync` mailbox, copy stream waited before
 H2D so compute wait is resident during DMA; decode identity stays events).
 `--mempool-trim` is `cudaMemPoolTrimTo(0)` after `score()` / walker finish

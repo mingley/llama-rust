@@ -5,6 +5,17 @@ Visible five-turn extract: [docs/chatgpt-share-6a920fe1.md](docs/chatgpt-share-6
 Complete share-API extract: [docs/chatgpt-share-6a920fe1/](docs/chatgpt-share-6a920fe1/).
 Work lands on `main`. No PRs.
 
+## Shipped 2026-09-01 — launch-attribute event flags and interprocess
+
+`gpu-sim` CUDA `cudaLaunchAttributeProgrammaticEvent` /
+`cudaLaunchAttributeLaunchCompletionEvent` flags: `external`
+(`cudaEventRecordExternal`) is Invalid. An interprocess or IPC-imported
+event is Invalid. The `external` field stays the CUDA flags word (always
+false). Decode identity stays no launch-attribute event. This VM does not
+invent a `flags: u32` field, disable-timing as a requirement, NvSciSync /
+interop event kinds, or an Engine flag for External. `gpu-profile capture`
+is still refused. Dual score still has no `$/M tokens`.
+
 ## Shipped 2026-09-01 — device-updatable kernel-node restrictions
 
 `gpu-sim` CUDA `cudaLaunchAttributeDeviceUpdatableKernelNode` restrictions:

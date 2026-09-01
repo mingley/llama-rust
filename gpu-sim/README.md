@@ -199,6 +199,7 @@ warp scheduler, L1, …   ← do not model
 | `cudaFuncAttributeClusterDimMustBeSet` / `RequiredClusterWidth` / Height / Depth | no cluster is Invalid; a nonzero required axis must match the launch; `expertvm sim --cluster-must-set` sets ClusterDimMustBeSet (needs `--cluster`; occupancy matches `--cluster`); `expertvm sim --required-cluster N` sets RequiredClusterWidth (needs `--cluster`; must match; occupancy matches `--cluster`) |
 | `cudaLaunchAttributeSynchronizationPolicy` (stream plus graph kernel nodes) | host-wait tax on `synchronize_stream` / `synchronize_event`; kernel-node non-Auto taxes that node's launch-completion / programmatic event; Auto inherits stream / `set_device_flags` (unset / profile default 0) |
 | `cudaLaunchAttributeDeviceUpdatableKernelNode` | graphs-only; `graph_exec_kernel_set_params` keeps the exec uploaded; device-launch graphs allow it |
+| `cudaLaunchAttributeProgrammaticEvent` / `LaunchCompletionEvent` flags | `cudaEventRecordExternal` is Invalid; interprocess / IPC-imported events are Invalid |
 | `cudaLaunchAttributePreferredSharedMemoryCarveout` | MaxShared occupies every Hyper-Q slot; Default uses `set_func_carveout` (`cudaFuncAttributePreferredSharedMemoryCarveout`; `expertvm sim --func-max-shared` sets MaxShared; unset never occupies); MaxL1 matches Default occupancy and overrides function MaxShared (`expertvm sim --max-l1`, needs `--func-max-shared`) |
 | `cudaLaunchAttributeSharedMemoryMode` | Default uses function `set_func_shared_mem_config` then device `set_shared_mem_config` (unset never scales); FourByte / EightByte scale duration by `1000 / shared_mem_*_permille` (default 1000) |
 | `cudaLaunchAttributePortableClusterSizeMode` | Default uses the function attr; RequirePortable always refuses oversize; AllowNonPortable allows up to SKU max |
@@ -1282,7 +1283,10 @@ for the overlapped primary (all preceding work). `kernel_pdl_event` is
 at the trigger instead of kernel completion.
 `ProgrammaticEvent::trigger_at_block_start` is CUDA `triggerAtBlockStart`:
 the event records when the kernel starts (this VM does not invent an Engine
-flag for programmatic-event block-start). `kernel_with` also accepts
+flag for programmatic-event block-start). `ProgrammaticEvent::external`
+(`cudaEventRecordExternal`) is Invalid; interprocess / IPC-imported events
+are Invalid. The same flags / interprocess rules apply to
+`LaunchCompletionEvent`. `kernel_with` also accepts
 `KernelAttrs::programmatic_event`. `expertvm sim --programmatic-event` /
 `gguf_gemv engine --expert-sim --programmatic-event` attach it to grouped
 GEMMs; store `pin_hot` replica D2D waits the PDL trigger.
