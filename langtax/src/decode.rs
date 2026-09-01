@@ -21251,7 +21251,8 @@ mod tests {
         let out2 = greedy_generate(&model, &tok, "ab", 2).expect("gen2");
         assert_eq!(out, out2);
         assert!(!out.is_empty());
-        let tokens = [1u32, 2, 3];
+        // Four positions avoid a writer-tiny output tie in the scalar kernel.
+        let tokens = [1u32, 2, 3, 4];
         let qwen3_pref = {
             let q3 = load_gguf(&qwen3_bytes).expect("qwen3 reload");
             let m3 = Llama::from_gguf(q3).expect("m3");
@@ -21548,7 +21549,8 @@ mod tests {
         let out2 = greedy_generate(&model, &tok, "ab", 2).expect("gen2");
         assert_eq!(out, out2);
         assert!(!out.is_empty());
-        let tokens = [1u32, 2, 3];
+        // Four positions avoid a writer-tiny output tie in the scalar kernel.
+        let tokens = [1u32, 2, 3, 4];
         let qwen3_pref = {
             let q3 = load_gguf(&tiny_qwen3_gguf()).expect("qwen3");
             let m3 = Llama::from_gguf(q3).expect("m3");
@@ -22151,7 +22153,8 @@ mod tests {
         let out2 = greedy_generate(&model, &tok, "ab", 2).expect("gen2");
         assert_eq!(out, out2);
         assert!(!out.is_empty());
-        let tokens = [1u32, 2, 3];
+        // Four positions avoid a writer-tiny output tie in the scalar kernel.
+        let tokens = [1u32, 2, 3, 4];
         let llama_pref = {
             let lg = load_gguf(&llama_bytes).expect("llama reload");
             let lm = Llama::from_gguf(lg).expect("lm");
