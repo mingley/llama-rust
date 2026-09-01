@@ -17843,14 +17843,27 @@ impl Sim {
     /// `cuD3D12GetDevices` plus `cudaD3D12GetDevices`. Direct3D 12 interop
     /// is not modeled.
     ///
-    /// Always Invalid `"d3d12"`. Distinct from [`Self::d3d11_get_devices`]
-    /// and from [`DeviceAttr::D3D12CigSupported`] (CIG is not GetDevices).
-    /// Unknown devices are Invalid `"device not in profile"`. Query; legal
-    /// during capture. This VM does not invent `cuD3D12CtxCreate` this
-    /// slice.
+    /// Always Invalid `"d3d12"`. Distinct from [`Self::d3d11_get_devices`],
+    /// from [`DeviceAttr::D3D12CigSupported`] (CIG is not GetDevices), and
+    /// from [`Self::d3d12_ctx_create`]. Unknown devices are Invalid
+    /// `"device not in profile"`. Query; legal during capture.
     pub fn d3d12_get_devices(&self, device: DeviceId) -> Result<(), SimError> {
         let _gpu = self.profile.gpu(device)?;
         Err(SimError::Invalid { why: "d3d12" })
+    }
+
+    /// `cuD3D12CtxCreate`. Direct3D 12 interop is not modeled.
+    ///
+    /// Always Invalid `"d3d12 context"`. Distinct from
+    /// [`Self::d3d12_get_devices`], from [`Self::d3d11_ctx_create`], and from
+    /// [`DeviceAttr::D3D12CigSupported`]. Unknown devices are Invalid
+    /// `"device not in profile"`. Query; legal during capture. This VM does
+    /// not invent `cuGraphicsD3D12RegisterResource` this slice.
+    pub fn d3d12_ctx_create(&self, device: DeviceId) -> Result<(), SimError> {
+        let _gpu = self.profile.gpu(device)?;
+        Err(SimError::Invalid {
+            why: "d3d12 context",
+        })
     }
 
     /// `cuVDPAUGetDevice` plus `cudaVDPAUGetDevice`. VDPAU interop is not

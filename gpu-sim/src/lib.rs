@@ -605,6 +605,8 @@
 //! (always Invalid `"d3d12"`). Distinct from
 //! [`d3d11_get_devices`](Sim::d3d11_get_devices) and from
 //! [`DeviceAttr::D3D12CigSupported`]. Query; legal during capture. No Engine `--d3d12-devices`.
+//! [`d3d12_ctx_create`](Sim::d3d12_ctx_create) is `cuD3D12CtxCreate` (always
+//! Invalid `"d3d12 context"`). Query; legal during capture. No Engine `--d3d12-ctx`.
 //! [`vdpau_get_device`](Sim::vdpau_get_device) is `cuVDPAUGetDevice`
 //! (always Invalid `"vdpau"`). Query; legal during capture. No Engine `--vdpau-device`.
 //! [`d3d9_get_devices`](Sim::d3d9_get_devices) is `cuD3D9GetDevices`
@@ -21893,6 +21895,49 @@ mod tests {
         match sim.d3d11_get_devices(d) {
             Err(SimError::Invalid { why }) => {
                 assert!(why.contains("d3d11"), "{why}");
+            }
+            other => panic!("{other:?}"),
+        }
+        assert_eq!(
+            sim.device_get_attribute(d, DeviceAttr::D3D12CigSupported)
+                .unwrap(),
+            0
+        );
+    }
+
+    #[test]
+    fn d3d12_ctx_create_is_unsupported() {
+        let mut sim = Sim::new(h100());
+        let d = DeviceId(0);
+        match sim.d3d12_ctx_create(d) {
+            Err(SimError::Invalid { why }) => {
+                assert!(why.contains("d3d12 context"), "{why}");
+            }
+            other => panic!("{other:?}"),
+        }
+        sim.begin_capture(d, StreamId(0)).unwrap();
+        match sim.d3d12_ctx_create(d) {
+            Err(SimError::Invalid { why }) => {
+                assert!(why.contains("d3d12 context"), "{why}");
+            }
+            other => panic!("{other:?}"),
+        }
+        let _g = sim.end_capture().unwrap();
+        match sim.d3d12_ctx_create(DeviceId(99)) {
+            Err(SimError::Invalid { why }) => {
+                assert!(why.contains("device not in profile"), "{why}");
+            }
+            other => panic!("{other:?}"),
+        }
+        match sim.d3d12_get_devices(d) {
+            Err(SimError::Invalid { why }) => {
+                assert!(why.contains("d3d12"), "{why}");
+            }
+            other => panic!("{other:?}"),
+        }
+        match sim.d3d11_ctx_create(d) {
+            Err(SimError::Invalid { why }) => {
+                assert!(why.contains("d3d11 context"), "{why}");
             }
             other => panic!("{other:?}"),
         }
