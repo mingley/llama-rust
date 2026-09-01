@@ -5,6 +5,15 @@ Visible five-turn extract: [docs/chatgpt-share-6a920fe1.md](docs/chatgpt-share-6
 Complete share-API extract: [docs/chatgpt-share-6a920fe1/](docs/chatgpt-share-6a920fe1/).
 Work lands on `main`. No PRs.
 
+## Shipped 2026-09-01 — CUDA cubemap surface dimension DeviceAttr caps
+
+`gpu-sim` `DeviceAttr::MaxSurfaceCubemapWidth` /
+`MaxSurfaceCubemapLayeredWidth` / `MaxSurfaceCubemapLayeredLayers` are
+always 0. CUDA cubemap surfaces are not modeled. Query; legal during
+capture. Distinct from `MaxSurface2DWidth`. This VM does not invent
+Engine `--surface-cubemap`. `gpu-profile capture` is still refused. Dual
+score still has no `$/M tokens`.
+
 ## Shipped 2026-09-01 — CUDA layered surface 1D/2D dimension DeviceAttr caps
 
 `gpu-sim` `DeviceAttr::MaxSurface1DLayeredWidth` /

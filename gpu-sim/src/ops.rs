@@ -1046,6 +1046,17 @@ pub enum DeviceAttr {
     /// surfaces are not modeled). Distinct from
     /// [`Self::MaxSurface2DLayeredHeight`].
     MaxSurface2DLayeredLayers,
+    /// `cudaDevAttrMaxSurfaceCubemapWidth` (always 0; CUDA cubemap surfaces
+    /// are not modeled). Distinct from [`Self::MaxSurface2DWidth`].
+    MaxSurfaceCubemapWidth,
+    /// `cudaDevAttrMaxSurfaceCubemapLayeredWidth` (always 0; CUDA cubemap
+    /// layered surfaces are not modeled). Distinct from
+    /// [`Self::MaxSurfaceCubemapWidth`].
+    MaxSurfaceCubemapLayeredWidth,
+    /// `cudaDevAttrMaxSurfaceCubemapLayeredLayers` (always 0; CUDA cubemap
+    /// layered surfaces are not modeled). Distinct from
+    /// [`Self::MaxSurfaceCubemapLayeredWidth`].
+    MaxSurfaceCubemapLayeredLayers,
     /// `cudaDevAttrMaxPitch` ([`Self::MAX_PITCH`]; this VM does not cap 2D
     /// memcpy / `cudaMallocPitch` pitch). Distinct from
     /// [`Self::TexturePitchAlignment`] (always 0; textures are not modeled).
@@ -1546,6 +1557,20 @@ pub struct DeviceProperties {
     /// surfaces are not modeled. Distinct from
     /// [`Self::max_surface_2d_layered_height`].
     pub max_surface_2d_layered_layers: u32,
+    /// `cudaDeviceProp::maxSurfaceCubemap`
+    /// ([`DeviceAttr::MaxSurfaceCubemapWidth`]). Always 0; CUDA cubemap
+    /// surfaces are not modeled. Distinct from [`Self::max_surface_2d_width`].
+    pub max_surface_cubemap_width: u32,
+    /// `cudaDeviceProp::maxSurfaceCubemapLayered[0]`
+    /// ([`DeviceAttr::MaxSurfaceCubemapLayeredWidth`]). Always 0; CUDA
+    /// cubemap layered surfaces are not modeled. Distinct from
+    /// [`Self::max_surface_cubemap_width`].
+    pub max_surface_cubemap_layered_width: u32,
+    /// `cudaDeviceProp::maxSurfaceCubemapLayered[1]`
+    /// ([`DeviceAttr::MaxSurfaceCubemapLayeredLayers`]). Always 0; CUDA
+    /// cubemap layered surfaces are not modeled. Distinct from
+    /// [`Self::max_surface_cubemap_layered_width`].
+    pub max_surface_cubemap_layered_layers: u32,
     /// `cudaDevAttrMaxPitch` ([`DeviceAttr::MaxPitch`] / `memPitch`).
     /// [`DeviceAttr::MAX_PITCH`]: this VM does not cap 2D memcpy /
     /// `cudaMallocPitch` pitch. Distinct from [`Self::texture_pitch_alignment`].

@@ -6156,7 +6156,16 @@ model, do not celebrate the sim.
     `cudaChooseDevice`. `gpu-profile capture` is still refused. Dual
     score still has no `$/M tokens`.
 
-580. [ ] Next numbered PLAN item after 579 is the next `gpu-sim` / Engine /
+580. [x] `gpu-sim` `DeviceAttr::MaxSurfaceCubemapWidth` /
+    `MaxSurfaceCubemapLayeredWidth` / `MaxSurfaceCubemapLayeredLayers`
+    are CUDA cubemap-surface dimension caps. Always 0 (CUDA cubemap
+    surfaces are not modeled). Query; legal during capture. Distinct from
+    `MaxSurface2DWidth`. This VM does not invent Engine
+    `--surface-cubemap`, occupancy SM counts, or `cudaChooseDevice`.
+    `gpu-profile capture` is still refused. Dual score still has no
+    `$/M tokens`.
+
+581. [ ] Next numbered PLAN item after 580 is the next `gpu-sim` / Engine /
     serve / expertvm mechanical API that is still missing, or the next official
     decode family. Prefer remaining CUDA-shaped twins over more
     OpenAI HTTP veneer. Do not invent F32 `output.scale`. Do not invent a
@@ -6319,6 +6328,10 @@ model, do not celebrate the sim.
     `MaxSurface2DLayeredHeight`, or `MaxSurface2DLayeredLayers`. Do not
     invent Engine `--surface-layered`. Do not invent cubemap surface
     attrs this slice. Do not reverse layered surface dims staying 0.
+    Do not invent a second `cudaDevAttrMaxSurfaceCubemapWidth`,
+    `MaxSurfaceCubemapLayeredWidth`, or `MaxSurfaceCubemapLayeredLayers`.
+    Do not invent Engine `--surface-cubemap`. Do not reverse cubemap
+    surface dims staying 0.
     Do not invent a second `cudaStreamAddCallback`.
     Do not invent Engine `--stream-callback` (same wall as second live
     `cudaLaunchHostFunc` after miss DMA).
@@ -6604,6 +6617,9 @@ model, do not celebrate the sim.
     Do not invent a second layered-surface DeviceAttr family. Do not
     invent Engine `--layered-surface`. Do not invent CUDA surf1DLayered
     this slice. Do not reverse layered surface dims staying 0.
+    Do not invent a second cubemap-surface DeviceAttr family. Do not
+    invent Engine `--cubemap-surface`. Do not invent CUDA surfCubemap
+    this slice. Do not reverse cubemap surface dims staying 0.
     Do not invent a second DeviceLaunch in-flight destroy-complete check or Engine
     `--device-launch-destroy`. Do not abort an in-flight DeviceLaunch when
     `destroy_graph` succeeds. Do not delay destroy of an idle exec. Do not invent
@@ -7113,6 +7129,9 @@ model, do not celebrate the sim.
     Do not invent a second maxSurface1DLayered DeviceProperties field.
     Do not invent Engine `--surface-1d-layered`. Do not reverse those
     layered surface dims as 0.
+    Do not invent a second maxSurfaceCubemap DeviceProperties field. Do
+    not invent Engine `--surface-cube`. Do not reverse those cubemap
+    surface dims as 0.
     Do not
     spend the next item on an OpenAI-compatible HTTP veneer.
 
