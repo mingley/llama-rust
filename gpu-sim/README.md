@@ -495,6 +495,8 @@ for `update_graph`; mem nodes legal). Definition-side
 `graph_child_set_params` stores the child id as passed (same as
 `graph_add_child`).
 `graph_child_get_graph` is `cudaGraphChildGraphNodeGetGraph`.
+`graph_exec_child_get_graph` is the exec-snapshot GetParams twin
+(uninstantiated graphs are Invalid).
 `graph_event_record_get_event` / `graph_event_wait_get_event` are
 `cudaGraphEventRecordNodeGetEvent` / `WaitNodeGetEvent`.
 `graph_alloc_get_params` is `cudaGraphMemAllocNodeGetParams` (id and bytes).

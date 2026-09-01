@@ -936,7 +936,9 @@
 //! [`graph_unique_child`](Sim::graph_unique_child) /
 //! [`graph_try_unique_child`](Sim::graph_try_unique_child) find those nodes.
 //! [`graph_child_get_graph`](Sim::graph_child_get_graph) is
-//! `cudaGraphChildGraphNodeGetGraph`. [`graph_event_record_get_event`](Sim::graph_event_record_get_event) /
+//! `cudaGraphChildGraphNodeGetGraph`. [`graph_exec_child_get_graph`](Sim::graph_exec_child_get_graph)
+//! is the exec-snapshot GetParams twin (uninstantiated graphs are Invalid).
+//! [`graph_event_record_get_event`](Sim::graph_event_record_get_event) /
 //! [`graph_event_wait_get_event`](Sim::graph_event_wait_get_event) are
 //! `cudaGraphEventRecordNodeGetEvent` / `WaitNodeGetEvent`.
 //! [`graph_alloc_get_params`](Sim::graph_alloc_get_params) is
@@ -11512,6 +11514,63 @@ mod tests {
         assert_eq!(sim.graph_event_record_get_event(g, 0).unwrap(), EventId(1));
         let _end = sim.end_capture().unwrap();
         match sim.graph_child_get_graph(GraphId(99), 0) {
+            Err(SimError::Invalid { why }) => assert!(why.contains("unknown graph"), "{why}"),
+            other => panic!("{other:?}"),
+        }
+    }
+
+    #[test]
+    fn graph_exec_child_get_graph_is_cuda_exec_child_get_params() {
+        let mut sim = Sim::new(h100());
+        let d = DeviceId(0);
+        let s = StreamId(0);
+        let a = sim.malloc(d, 4096).unwrap();
+        let b = sim.malloc(d, 4096).unwrap();
+        let leaf_a = sim.create_graph(d, s).unwrap();
+        sim.graph_add_kernel(leaf_a, KernelKind::other(8, 8), &[a], &[a])
+            .unwrap();
+        let leaf_a_exec = sim.instantiate_graph(leaf_a).unwrap();
+        let leaf_b = sim.create_graph(d, s).unwrap();
+        sim.graph_add_kernel(leaf_b, KernelKind::other(8, 8), &[b], &[b])
+            .unwrap();
+        let leaf_b_exec = sim.instantiate_graph(leaf_b).unwrap();
+        let parent = sim.create_graph(d, s).unwrap();
+        sim.graph_add_child(parent, leaf_a).unwrap();
+        match sim.graph_exec_child_get_graph(parent, 0) {
+            Err(SimError::Invalid { why }) => assert!(why.contains("not instantiated"), "{why}"),
+            other => panic!("{other:?}"),
+        }
+        assert_eq!(sim.graph_child_get_graph(parent, 0).unwrap(), leaf_a);
+        let exec = sim.instantiate_graph(parent).unwrap();
+        assert_eq!(
+            sim.graph_exec_child_get_graph(exec, 0).unwrap(),
+            leaf_a_exec
+        );
+        assert_eq!(
+            sim.graph_exec_child_get_graph(parent, 0).unwrap(),
+            leaf_a_exec
+        );
+        sim.graph_child_set_params(parent, 0, leaf_b).unwrap();
+        assert_eq!(
+            sim.graph_exec_child_get_graph(exec, 0).unwrap(),
+            leaf_a_exec
+        );
+        sim.graph_exec_child_set_params(exec, 0, leaf_b).unwrap();
+        assert_eq!(
+            sim.graph_exec_child_get_graph(exec, 0).unwrap(),
+            leaf_b_exec
+        );
+        match sim.graph_exec_child_get_graph(leaf_a_exec, 0) {
+            Err(SimError::Invalid { why }) => assert!(why.contains("child graph"), "{why}"),
+            other => panic!("{other:?}"),
+        }
+        sim.begin_capture(d, s).unwrap();
+        assert_eq!(
+            sim.graph_exec_child_get_graph(exec, 0).unwrap(),
+            leaf_b_exec
+        );
+        let _end = sim.end_capture().unwrap();
+        match sim.graph_exec_child_get_graph(GraphId(99), 0) {
             Err(SimError::Invalid { why }) => assert!(why.contains("unknown graph"), "{why}"),
             other => panic!("{other:?}"),
         }

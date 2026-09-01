@@ -5846,8 +5846,27 @@ impl Sim {
     /// `cudaGraphChildGraphNodeGetGraph`. Query; legal during capture.
     ///
     /// Instantiated ids use the exec snapshot (same as [`Self::graph_child_nodes`]).
+    /// [`Self::graph_exec_child_get_graph`] refuses uninstantiated graphs.
     pub fn graph_child_get_graph(&self, graph: GraphId, node: usize) -> Result<GraphId, SimError> {
         match &self.graph_view_step(graph, node)?.kind {
+            Kind::ChildGraph { graph: child } => Ok(*child),
+            _ => Err(SimError::Invalid {
+                why: "not a child graph node",
+            }),
+        }
+    }
+
+    /// Exec-snapshot [`Self::graph_child_get_graph`].
+    ///
+    /// Uninstantiated graphs are Invalid. After instantiate this is the
+    /// launched child. [`Self::graph_child_get_graph`] stays a view. Query;
+    /// legal during capture.
+    pub fn graph_exec_child_get_graph(
+        &self,
+        exec: GraphId,
+        node: usize,
+    ) -> Result<GraphId, SimError> {
+        match &self.graph_exec_step(exec, node)?.kind {
             Kind::ChildGraph { graph: child } => Ok(*child),
             _ => Err(SimError::Invalid {
                 why: "not a child graph node",
