@@ -587,7 +587,9 @@ same `why` strings.
 `BatchMemOpNodeSetParams` /
 `EventRecordNodeSetEvent` / `EventWaitNodeSetEvent` /
 `ChildGraphNodeSetParams` on the graph
-definition (do not retarget an already-instantiated exec). Child-graph
+definition (do not retarget an already-instantiated exec). A parked
+in-flight-destroyed exec is `"unknown graph"` on SetParams; a live exec
+stays. Child-graph
 definition SetParams may change nested topology; exec SetParams still
 require matching topology. Event External flags stay topology.
 `graph_*_get_params` / `graph_exec_*_get_params` are

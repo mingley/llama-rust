@@ -5830,7 +5830,17 @@ model, do not celebrate the sim.
     invent Engine `--graph-set-attr-gone`. `gpu-profile capture` is still
     refused. Dual score still has no `$/M tokens`.
 
-546. [ ] Next numbered PLAN item after 545 is the next `gpu-sim` / Engine /
+546. [x] `gpu-sim` CUDA definition `cudaGraph*NodeSetParams` /
+    `cudaGraphNodeSetParams` of an exec whose handle was destroyed while a
+    launch was in flight is Invalid `"unknown graph"` (kernel, memcpy,
+    memset, host, child, event SetEvent, free, batch-mem, conditional).
+    Capture is still reported first. Live exec SetParams stays. Definition
+    SetParams stays. Exec SetParams of a parked dest stays unknown via
+    `as_exec_for_update`. This VM does not invent Engine
+    `--graph-set-params-gone`. `gpu-profile capture` is still refused. Dual
+    score still has no `$/M tokens`.
+
+547. [ ] Next numbered PLAN item after 546 is the next `gpu-sim` / Engine /
     serve / expertvm mechanical API that is still missing, or the next official
     decode family. Prefer remaining CUDA-shaped twins over more
     OpenAI HTTP veneer. Do not invent F32 `output.scale`. Do not invent a
@@ -6002,6 +6012,14 @@ model, do not celebrate the sim.
     SetAttribute. Do not reverse definition SetAttribute while an exec is
     parked. Do not reverse External or interprocess Invalid first on
     programmatic or launch-completion SetAttribute.
+    Do not invent a second SetParams parked-handle unknown check or
+    Engine `--graph-set-params-gone`. Do not reverse live exec
+    SetParams. Do not reverse definition SetParams while an exec is
+    parked. Do not reverse exec SetParams of a parked dest via
+    `as_exec_for_update`. Do not use `require_live_definition` on
+    SetParams (live exec definition SetParams stays). Do not reverse
+    unknown graph beating unknown alloc or unknown event on parked
+    definition SetParams.
     Do not invent a second DeviceLaunch in-flight destroy-complete check or Engine
     `--device-launch-destroy`. Do not abort an in-flight DeviceLaunch when
     `destroy_graph` succeeds. Do not delay destroy of an idle exec. Do not invent

@@ -689,7 +689,7 @@ impl Sim {
         }
     }
 
-    /// Exec snapshot for SetAttribute (`exec`), or a live definition handle.
+    /// Exec snapshot for SetAttribute / SetParams (`exec`), or a live definition handle.
     fn resolve_kernel_attr_graph(&self, graph: GraphId, exec: bool) -> Result<GraphId, SimError> {
         if exec {
             self.as_exec_for_update(graph)
@@ -4773,7 +4773,8 @@ impl Sim {
     /// snapshot; use [`Self::graph_exec_kernel_set_params`]. Cooperative flag
     /// must match (topology). [`KernelNodeParams::ctx`] and
     /// [`KernelNodeParams::shared_mem_bytes`] are parameters. Capture cannot
-    /// include it. Host-sync 1 ns.
+    /// include it. Host-sync 1 ns. A parked in-flight-destroyed exec is
+    /// `"unknown graph"`. Live exec SetParams stays.
     pub fn graph_kernel_set_params(
         &mut self,
         graph: GraphId,
@@ -4781,6 +4782,7 @@ impl Sim {
         params: &KernelNodeParams,
     ) -> Result<(), SimError> {
         self.fail_if_capturing("cannot capture kernel node set params")?;
+        self.require_live_graph(graph)?;
         let (device, cooperative, portable_shared) = {
             let g = self.graphs.get(&graph).ok_or(SimError::Invalid {
                 why: "unknown graph",
@@ -4833,7 +4835,8 @@ impl Sim {
     /// is `cudaGraphMemcpyNodeSetParams1D` (packed 1D, including converting a
     /// 2D/3D node). [`Self::graph_memcpy_set_params_2d`] requires
     /// [`MemcpyOp::is_2d`]. [`Self::graph_memcpy_set_params_3d`] requires
-    /// [`MemcpyOp::is_3d`].
+    /// [`MemcpyOp::is_3d`]. A parked in-flight-destroyed exec is
+    /// `"unknown graph"`. Live exec SetParams stays.
     pub fn graph_memcpy_set_params(
         &mut self,
         graph: GraphId,
@@ -4918,7 +4921,8 @@ impl Sim {
     /// Capture cannot include it. Host-sync 1 ns. [`KernelBuf`] converts to a
     /// packed 1D [`MemsetOp`]. [`Self::graph_memset_set_params_2d`] requires
     /// [`MemsetOp::is_2d`]. [`Self::graph_memset_set_params_3d`] requires
-    /// [`MemsetOp::is_3d`].
+    /// [`MemsetOp::is_3d`]. A parked in-flight-destroyed exec is
+    /// `"unknown graph"`. Live exec SetParams stays.
     pub fn graph_memset_set_params(
         &mut self,
         graph: GraphId,
@@ -4983,7 +4987,8 @@ impl Sim {
     /// After instantiate this does not retarget the exec; use
     /// [`Self::graph_exec_host_set_params`]. [`HostNodeParams::fn_id`] /
     /// [`HostNodeParams::user_data`] are parameters. Capture cannot include it.
-    /// Host-sync 1 ns.
+    /// Host-sync 1 ns. A parked in-flight-destroyed exec is `"unknown graph"`.
+    /// Live exec SetParams stays.
     pub fn graph_host_set_params(
         &mut self,
         graph: GraphId,
@@ -4991,6 +4996,7 @@ impl Sim {
         params: HostNodeParams,
     ) -> Result<(), SimError> {
         self.fail_if_capturing("cannot capture host node set params")?;
+        self.require_live_graph(graph)?;
         let device = {
             let g = self.graphs.get(&graph).ok_or(SimError::Invalid {
                 why: "unknown graph",
@@ -5025,7 +5031,8 @@ impl Sim {
     /// After [`Self::instantiate_graph`], this does not retarget the exec
     /// snapshot; use [`Self::graph_exec_free_set_params`]. Capture cannot
     /// include it. Host-sync 1 ns. The node must already be a mem free node.
-    /// [`Sim::graph_allocs`] stays the alloc-node ids.
+    /// [`Sim::graph_allocs`] stays the alloc-node ids. A parked
+    /// in-flight-destroyed exec is `"unknown graph"` before unknown alloc.
     pub fn graph_free_set_params(
         &mut self,
         graph: GraphId,
@@ -5033,6 +5040,7 @@ impl Sim {
         id: AllocId,
     ) -> Result<(), SimError> {
         self.fail_if_capturing("cannot capture mem free node set params")?;
+        self.require_live_graph(graph)?;
         let _a = self.alloc_ref(id)?;
         let device = {
             let g = self.graphs.get(&graph).ok_or(SimError::Invalid {
@@ -5065,6 +5073,8 @@ impl Sim {
     /// After [`Self::instantiate_graph`], this does not retarget the exec
     /// snapshot; use [`Self::graph_exec_event_record_set_event`]. The External
     /// flag stays (topology). Capture cannot include it. Host-sync 1 ns.
+    /// A parked in-flight-destroyed exec is `"unknown graph"` before
+    /// unknown event. Live exec SetParams stays.
     pub fn graph_event_record_set_event(
         &mut self,
         graph: GraphId,
@@ -5078,7 +5088,9 @@ impl Sim {
     ///
     /// After instantiate this does not retarget the exec; use
     /// [`Self::graph_exec_event_wait_set_event`]. The External flag stays
-    /// (topology). Capture cannot include it. Host-sync 1 ns.
+    /// (topology). Capture cannot include it. Host-sync 1 ns. A parked
+    /// in-flight-destroyed exec is `"unknown graph"` before unknown event.
+    /// Live exec SetParams stays.
     pub fn graph_event_wait_set_event(
         &mut self,
         graph: GraphId,
@@ -5100,6 +5112,7 @@ impl Sim {
             EventSetKind::Wait => "cannot capture event wait set event",
         };
         self.fail_if_capturing(capture)?;
+        self.require_live_graph(graph)?;
         if !self.events.contains_key(&event) {
             return Err(SimError::UnknownEvent { event: event.0 });
         }
@@ -5146,7 +5159,8 @@ impl Sim {
     /// After instantiate this does not retarget the exec; use
     /// [`Self::graph_exec_child_set_params`]. `child` must already be
     /// instantiated, on the same GPU. Nested topology may change (unlike
-    /// ExecSetParams). Capture cannot include it. Host-sync 1 ns.
+    /// ExecSetParams). Capture cannot include it. Host-sync 1 ns. A parked
+    /// in-flight-destroyed exec is `"unknown graph"`. Live exec SetParams stays.
     pub fn graph_child_set_params(
         &mut self,
         graph: GraphId,
@@ -5154,6 +5168,7 @@ impl Sim {
         child: GraphId,
     ) -> Result<(), SimError> {
         self.fail_if_capturing("cannot capture child graph node set params")?;
+        self.require_live_graph(graph)?;
         if child == graph {
             return Err(SimError::Invalid {
                 why: "graph child is self",
@@ -5222,6 +5237,8 @@ impl Sim {
     /// `IfElse` / `While` / `Switch` retarget the handle; type, size, and bodies
     /// stay topology. After instantiate this does not retarget the exec; use
     /// [`Self::graph_exec_node_set_params`]. Capture cannot include it.
+    /// A parked in-flight-destroyed exec is `"unknown graph"`. Live exec
+    /// SetParams stays.
     pub fn graph_node_set_params(
         &mut self,
         graph: GraphId,
@@ -5353,12 +5370,8 @@ impl Sim {
         exec: bool,
     ) -> Result<(), SimError> {
         self.fail_if_capturing("cannot capture conditional node set params")?;
+        let target = self.resolve_kernel_attr_graph(graph, exec)?;
         let (handle, set, ctx) = cond_set_from_params(&params)?;
-        let target = if exec {
-            self.as_exec_for_update(graph)?
-        } else {
-            graph
-        };
         let owner = if exec { self.def_id(target) } else { graph };
         let device = {
             let g = self.graphs.get(&target).ok_or(SimError::Invalid {
@@ -5489,6 +5502,8 @@ impl Sim {
     /// node keeps wait vs write, `bits32`, and compare (topology). A
     /// [`crate::GpuOp::BatchMem`] node treats the item list as parameters
     /// (length may change). Capture cannot include it. Host-sync 1 ns.
+    /// A parked in-flight-destroyed exec is `"unknown graph"`. Live exec
+    /// SetParams stays.
     pub fn graph_batch_mem_op_set_params(
         &mut self,
         graph: GraphId,
@@ -5565,16 +5580,12 @@ impl Sim {
         } else {
             "cannot capture memcpy node set params"
         })?;
+        let target = self.resolve_kernel_attr_graph(graph, exec)?;
         if op.src.is_pageable() || op.dst.is_pageable() {
             return Err(SimError::Invalid {
                 why: "cannot add pageable memcpy",
             });
         }
-        let target = if exec {
-            self.as_exec_for_update(graph)?
-        } else {
-            graph
-        };
         let (device, origin, flags) = {
             let g = self.graphs.get(&target).ok_or(SimError::Invalid {
                 why: "unknown graph",
@@ -5761,11 +5772,7 @@ impl Sim {
         } else {
             "cannot capture memset node set params"
         })?;
-        let target = if exec {
-            self.as_exec_for_update(graph)?
-        } else {
-            graph
-        };
+        let target = self.resolve_kernel_attr_graph(graph, exec)?;
         let (device, cur, origin, flags) = {
             let g = self.graphs.get(&target).ok_or(SimError::Invalid {
                 why: "unknown graph",
@@ -5955,12 +5962,8 @@ impl Sim {
         } else {
             "cannot capture batch mem op node set params"
         })?;
+        let graph = self.resolve_kernel_attr_graph(graph, exec)?;
         self.check_batch_mem_ops(ops)?;
-        let graph = if exec {
-            self.as_exec_for_update(graph)?
-        } else {
-            graph
-        };
         let (device, next) = {
             let g = self.graphs.get(&graph).ok_or(SimError::Invalid {
                 why: "unknown graph",
@@ -6244,7 +6247,8 @@ impl Sim {
     ///
     /// After instantiate this does not retarget the exec; use
     /// [`Self::graph_exec_set_conditional_params`]. [`CondId`] must match
-    /// (topology). Capture cannot include it. Host-sync 1 ns.
+    /// (topology). Capture cannot include it. Host-sync 1 ns. A parked
+    /// in-flight-destroyed exec is `"unknown graph"`. Live exec SetParams stays.
     pub fn graph_set_conditional_params(
         &mut self,
         graph: GraphId,
@@ -6276,9 +6280,15 @@ impl Sim {
         node: usize,
         exec: bool,
     ) -> Result<CondId, SimError> {
+        self.fail_if_capturing(if exec {
+            "cannot capture set-conditional set params"
+        } else {
+            "cannot capture set-conditional node set params"
+        })?;
         let step = if exec {
             self.graph_exec_step(self.as_exec_for_update(graph)?, node)?
         } else {
+            self.require_live_graph(graph)?;
             self.graph_def_step(graph, node)?
         };
         match step.kind {
@@ -6302,6 +6312,9 @@ impl Sim {
         } else {
             "cannot capture set-conditional node set params"
         })?;
+        if !exec {
+            self.require_live_graph(graph)?;
+        }
         if exec {
             let exec = self.as_exec_for_update(graph)?;
             let device = {

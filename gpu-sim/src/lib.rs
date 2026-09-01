@@ -867,7 +867,8 @@
 //! `EventRecordNodeSetEvent` / `EventWaitNodeSetEvent` /
 //! `ChildGraphNodeSetParams`
 //! on the graph and do not retarget an already-instantiated exec.
-//! Child-graph definition SetParams may change nested topology; exec
+//! A parked in-flight-destroyed exec is `"unknown graph"` on SetParams; a
+//! live exec stays. Child-graph definition SetParams may change nested topology; exec
 //! SetParams still require matching topology. Event External flags stay
 //! topology.
 //! [`graph_kernel_node_get_priority`](Sim::graph_kernel_node_get_priority) /
@@ -5569,6 +5570,103 @@ mod tests {
         let _end = sim.end_capture().unwrap();
         sim.synchronize().unwrap();
         match sim.graph_kernel_node_set_priority(exec, 0, 1).unwrap_err() {
+            SimError::Invalid { why } => assert!(why.contains("unknown"), "{why}"),
+            other => panic!("{other:?}"),
+        }
+        sim.destroy_graph(g).unwrap();
+        sim.destroy_graph(_end).unwrap();
+    }
+
+    #[test]
+    fn parked_exec_set_params_is_unknown() {
+        let mut sim = Sim::new(h100());
+        let d = DeviceId(0);
+        let s = StreamId(0);
+        let a = sim.malloc(d, 4096).unwrap();
+        let g = sim.create_graph(d, s).unwrap();
+        sim.graph_add_kernel(g, KernelKind::other(1 << 40, 4096), &[a], &[a])
+            .unwrap();
+        let exec = sim.instantiate_graph(g).unwrap();
+        let params = sim.graph_kernel_get_params(g, 0).unwrap();
+        sim.graph_kernel_set_params(exec, 0, &params).unwrap();
+        sim.graph_exec_kernel_set_params(exec, 0, &params).unwrap();
+        sim.graph_node_set_params(exec, 0, GraphNodeParams::Kernel(params.clone()))
+            .unwrap();
+        let launched = sim.launch_graph(exec, s).unwrap();
+        assert!(launched > 0);
+        sim.destroy_graph(exec).unwrap();
+        match sim.graph_kernel_set_params(exec, 0, &params).unwrap_err() {
+            SimError::Invalid { why } => assert!(why.contains("unknown"), "{why}"),
+            other => panic!("{other:?}"),
+        }
+        match sim
+            .graph_exec_kernel_set_params(exec, 0, &params)
+            .unwrap_err()
+        {
+            SimError::Invalid { why } => assert!(why.contains("unknown"), "{why}"),
+            other => panic!("{other:?}"),
+        }
+        match sim
+            .graph_node_set_params(exec, 0, GraphNodeParams::Kernel(params.clone()))
+            .unwrap_err()
+        {
+            SimError::Invalid { why } => assert!(why.contains("unknown"), "{why}"),
+            other => panic!("{other:?}"),
+        }
+        match sim
+            .graph_memcpy_set_params(
+                exec,
+                0,
+                &MemcpyOp::packed_1d(Place::Device, Place::Device, a, 4096),
+            )
+            .unwrap_err()
+        {
+            SimError::Invalid { why } => assert!(why.contains("unknown"), "{why}"),
+            other => panic!("{other:?}"),
+        }
+        match sim
+            .graph_host_set_params(
+                exec,
+                0,
+                HostNodeParams {
+                    fn_id: 0,
+                    user_data: 0,
+                },
+            )
+            .unwrap_err()
+        {
+            SimError::Invalid { why } => assert!(why.contains("unknown"), "{why}"),
+            other => panic!("{other:?}"),
+        }
+        match sim
+            .graph_free_set_params(exec, 0, AllocId(u64::MAX))
+            .unwrap_err()
+        {
+            SimError::Invalid { why } => assert!(why.contains("unknown"), "{why}"),
+            SimError::UnknownAlloc { .. } => panic!("unknown graph must beat unknown alloc"),
+            other => panic!("{other:?}"),
+        }
+        match sim
+            .graph_event_record_set_event(exec, 0, EventId(1))
+            .unwrap_err()
+        {
+            SimError::Invalid { why } => assert!(why.contains("unknown"), "{why}"),
+            SimError::UnknownEvent { .. } => panic!("unknown graph must beat unknown event"),
+            other => panic!("{other:?}"),
+        }
+        match sim.graph_child_set_params(exec, 0, exec).unwrap_err() {
+            SimError::Invalid { why } => assert!(why.contains("unknown"), "{why}"),
+            other => panic!("{other:?}"),
+        }
+        sim.graph_kernel_set_params(g, 0, &params).unwrap();
+        sim.begin_capture(d, StreamId(1)).unwrap();
+        match sim.graph_kernel_set_params(exec, 0, &params).unwrap_err() {
+            SimError::Invalid { why } => assert!(why.contains("capture"), "{why}"),
+            other => panic!("{other:?}"),
+        }
+        let _end = sim.end_capture().unwrap();
+        sim.synchronize().unwrap();
+        match sim.graph_kernel_set_params(exec, 0, &params).unwrap_err() {
             SimError::Invalid { why } => assert!(why.contains("unknown"), "{why}"),
             other => panic!("{other:?}"),
         }
