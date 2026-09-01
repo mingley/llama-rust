@@ -6366,7 +6366,15 @@ model, do not celebrate the sim.
     Engine `--func-loaded`, or `cudaChooseDevice`. `gpu-profile capture` is
     still refused. Dual score still has no `$/M tokens`.
 
-607. [ ] Next numbered PLAN item after 606 is the next `gpu-sim` / Engine /
+607. [x] `gpu-sim` `Sim::func_get_module` is `cuFuncGetModule`. Always
+    Invalid `"unknown function"` until a compiled kernel exists. Query;
+    legal during capture. This VM has no `CUmodule`. Distinct from
+    `func_is_loaded` (`false`) and `func_get_param_info`. This VM does
+    not invent `cuKernelGetModule`, Engine `--func-module`, or
+    `cudaChooseDevice`. `gpu-profile capture` is still refused. Dual
+    score still has no `$/M tokens`.
+
+608. [ ] Next numbered PLAN item after 607 is the next `gpu-sim` / Engine /
     serve / expertvm mechanical API that is still missing, or the next official
     decode family. Prefer remaining CUDA-shaped twins over more
     OpenAI HTTP veneer. Do not invent F32 `output.scale`. Do not invent a
@@ -6622,6 +6630,9 @@ model, do not celebrate the sim.
     Do not invent a second `cuFuncIsLoaded` / `func_is_loaded`. Do not
     invent Engine `--func-loaded`. Do not invent `cuFuncLoad`. Do not reverse
     false until a compiled kernel exists.
+    Do not invent a second `cuFuncGetModule` / `func_get_module`. Do not
+    invent Engine `--func-module`. Do not invent `cuKernelGetModule`. Do not
+    reverse `"unknown function"`.
     Do not invent a second `cudaStreamAddCallback`.
     Do not invent Engine `--stream-callback` (same wall as second live
     `cudaLaunchHostFunc` after miss DMA).
@@ -6990,6 +7001,9 @@ model, do not celebrate the sim.
     Do not invent a second `func_is_loaded` API. Do not invent
     Engine `--function-loaded`. Do not invent a compiled kernel this
     slice. Do not reverse `Ok(false)`.
+    Do not invent a second `func_get_module` API. Do not invent
+    Engine `--function-module`. Do not invent a `CUmodule` handle this
+    slice. Do not reverse `"unknown function"`.
     Do not invent a second DeviceLaunch in-flight destroy-complete check or Engine
     `--device-launch-destroy`. Do not abort an in-flight DeviceLaunch when
     `destroy_graph` succeeds. Do not delay destroy of an idle exec. Do not invent
@@ -7564,6 +7578,9 @@ model, do not celebrate the sim.
     Do not invent a second `func_is_loaded` method. Do not invent
     Engine `--cu-func-loaded`. Do not reverse wrapping cuFuncIsLoaded
     false.
+    Do not invent a second `func_get_module` method. Do not invent
+    Engine `--cu-func-module`. Do not reverse wrapping cuFuncGetModule
+    unknown-function Invalid.
     Do not
     spend the next item on an OpenAI-compatible HTTP veneer.
 

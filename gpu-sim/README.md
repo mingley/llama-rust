@@ -194,6 +194,7 @@ warp scheduler, L1, …   ← do not model
 | `func_get_name` is empty until a compiled kernel exists | `cudaFuncGetName` / `cuFuncGetName` |
 | `func_get_param_info` is Invalid until a compiled kernel exists | `cuFuncGetParamInfo` |
 | `func_is_loaded` is false until a compiled kernel exists | `cuFuncIsLoaded` |
+| `func_get_module` is Invalid until a compiled kernel exists | `cuFuncGetModule` |
 | access-policy windows align to `cudaLimitMaxL2FetchGranularity` (default 128; `expertvm sim --l2-fetch N` sets 32/64/128) | exact |
 | `AccessPolicyWindow.hit_ratio_permille` is CUDA `hitRatio` (`expertvm sim --l2-ratio N`; unset 1000) | exact |
 | `AccessPolicyWindow.hit` Streaming skips persist fill (`expertvm sim --l2-streaming`; needs persist) | exact |
@@ -1137,6 +1138,8 @@ compiled kernel exists. Distinct from device `MaxThreadsPerBlock`.
 `"unknown function"` until a compiled kernel exists). `func_is_loaded` is
 `cuFuncIsLoaded` (`false` until a compiled kernel exists; distinct from
 empty `func_get_name` and unknown-function `func_get_param_info`).
+`func_get_module` is `cuFuncGetModule` (Invalid `"unknown function"`
+until a compiled kernel exists; this VM has no `CUmodule`).
 `func_set_attribute` /
 `func_get_attribute` are `cudaFuncSetAttribute` / `GetAttribute` (`FuncAttr`).
 Typed setters stay. `stream_get_flags` is `cudaStreamGetFlags`

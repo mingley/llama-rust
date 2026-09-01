@@ -5,6 +5,15 @@ Visible five-turn extract: [docs/chatgpt-share-6a920fe1.md](docs/chatgpt-share-6
 Complete share-API extract: [docs/chatgpt-share-6a920fe1/](docs/chatgpt-share-6a920fe1/).
 Work lands on `main`. No PRs.
 
+## Shipped 2026-09-01 — CUDA `cuFuncGetModule`
+
+`gpu-sim` `Sim::func_get_module` is `cuFuncGetModule`. Always Invalid
+`"unknown function"` until a compiled kernel exists. Query; legal during
+capture. This VM has no `CUmodule`. Distinct from `func_is_loaded`
+(`false`) and `func_get_param_info`. This VM does not invent
+`cuKernelGetModule` or Engine `--func-module`.
+`gpu-profile capture` is still refused. Dual score still has no `$/M tokens`.
+
 ## Shipped 2026-09-01 — CUDA `cuFuncIsLoaded`
 
 `gpu-sim` `Sim::func_is_loaded` is `cuFuncIsLoaded`. `false` until a

@@ -24053,6 +24053,21 @@ impl Sim {
         Ok(false)
     }
 
+    /// `cuFuncGetModule` for the per-device function.
+    ///
+    /// Query; legal during capture. Always Invalid `"unknown function"`
+    /// until a compiled kernel exists (this VM has no `CUmodule`). Distinct
+    /// from [`Self::func_is_loaded`] (`false`) and from
+    /// [`Self::func_get_param_info`] (parameter blob). Unknown devices are
+    /// Invalid `"device not in profile"`. This VM does not invent
+    /// `cuKernelGetModule` this slice.
+    pub fn func_get_module(&self, device: DeviceId) -> Result<(), SimError> {
+        let _gpu = self.profile.gpu(device)?;
+        Err(SimError::Invalid {
+            why: "unknown function",
+        })
+    }
+
     /// `cudaFuncSetAttribute`. Host-side; not a graph node.
     ///
     /// Dispatches [`FuncAttr`] onto the typed setters. Capture-legal like those
