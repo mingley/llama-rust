@@ -6374,7 +6374,15 @@ model, do not celebrate the sim.
     `cudaChooseDevice`. `gpu-profile capture` is still refused. Dual
     score still has no `$/M tokens`.
 
-608. [ ] Next numbered PLAN item after 607 is the next `gpu-sim` / Engine /
+608. [x] `gpu-sim` `Sim::ctx_reset_persisting_l2_cache` is
+    `cuCtxResetPersistingL2Cache`. Wraps `reset_persisting_l2_cache`.
+    Host-synchronous. Capture cannot include it. The persist limit stays.
+    Distinct from `set_persisting_l2_cache_size`. This VM does not invent
+    Engine `--ctx-reset-l2`, a second Engine `--l2-reset`, or
+    `cudaChooseDevice`. `gpu-profile capture` is still refused. Dual
+    score still has no `$/M tokens`.
+
+609. [ ] Next numbered PLAN item after 608 is the next `gpu-sim` / Engine /
     serve / expertvm mechanical API that is still missing, or the next official
     decode family. Prefer remaining CUDA-shaped twins over more
     OpenAI HTTP veneer. Do not invent F32 `output.scale`. Do not invent a
@@ -6633,6 +6641,9 @@ model, do not celebrate the sim.
     Do not invent a second `cuFuncGetModule` / `func_get_module`. Do not
     invent Engine `--func-module`. Do not invent `cuKernelGetModule`. Do not
     reverse `"unknown function"`.
+    Do not invent a second `cuCtxResetPersistingL2Cache` /
+    `ctx_reset_persisting_l2_cache`. Do not invent Engine `--ctx-reset-l2`.
+    Do not reverse wrapping `reset_persisting_l2_cache`.
     Do not invent a second `cudaStreamAddCallback`.
     Do not invent Engine `--stream-callback` (same wall as second live
     `cudaLaunchHostFunc` after miss DMA).
@@ -7004,6 +7015,9 @@ model, do not celebrate the sim.
     Do not invent a second `func_get_module` API. Do not invent
     Engine `--function-module`. Do not invent a `CUmodule` handle this
     slice. Do not reverse `"unknown function"`.
+    Do not invent a second `ctx_reset_persisting_l2_cache` API. Do not invent
+    Engine `--context-reset-l2`. Do not invent a second
+    `reset_persisting_l2_cache`. Do not reverse capture refuse.
     Do not invent a second DeviceLaunch in-flight destroy-complete check or Engine
     `--device-launch-destroy`. Do not abort an in-flight DeviceLaunch when
     `destroy_graph` succeeds. Do not delay destroy of an idle exec. Do not invent
@@ -7581,6 +7595,9 @@ model, do not celebrate the sim.
     Do not invent a second `func_get_module` method. Do not invent
     Engine `--cu-func-module`. Do not reverse wrapping cuFuncGetModule
     unknown-function Invalid.
+    Do not invent a second `ctx_reset_persisting_l2_cache` method. Do not
+    invent Engine `--cu-ctx-reset-l2`. Do not reverse wrapping
+    cudaCtxResetPersistingL2Cache.
     Do not
     spend the next item on an OpenAI-compatible HTTP veneer.
 

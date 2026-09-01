@@ -1006,6 +1006,10 @@
 //! [`get_shared_mem_config`](Sim::get_shared_mem_config)). Distinct from
 //! [`get_func_shared_mem_config`](Sim::get_func_shared_mem_config). Query;
 //! legal during capture. No Engine `--ctx-shared-mem`.
+//! [`ctx_reset_persisting_l2_cache`](Sim::ctx_reset_persisting_l2_cache) is
+//! `cuCtxResetPersistingL2Cache` (wraps
+//! [`reset_persisting_l2_cache`](Sim::reset_persisting_l2_cache)). Capture
+//! cannot include it. No Engine `--ctx-reset-l2`.
 //! `expertvm sim --device-sync-memops` sets [`DeviceFlags::SYNC_MEMOPS`].
 //! `expertvm sim --device-sync-policy blocking` sets
 //! [`DeviceFlags::SCHEDULE_BLOCKING_SYNC`].
@@ -21172,6 +21176,29 @@ mod tests {
             sim.ctx_get_shared_mem_config(d).unwrap(),
             SharedMemoryMode::Default
         );
+    }
+
+    #[test]
+    fn ctx_reset_persisting_l2_cache_wraps_runtime() {
+        let mut sim = Sim::new(h100());
+        let d = DeviceId(0);
+        let t0 = sim.clock_ns();
+        sim.ctx_reset_persisting_l2_cache(d).unwrap();
+        assert_eq!(sim.clock_ns(), t0.saturating_add(1));
+        sim.begin_capture(d, StreamId(0)).unwrap();
+        match sim.ctx_reset_persisting_l2_cache(d) {
+            Err(SimError::Invalid { why }) => assert!(why.contains("capture"), "{why}"),
+            other => panic!("{other:?}"),
+        }
+        let _g = sim.end_capture().unwrap();
+        match sim.ctx_reset_persisting_l2_cache(DeviceId(99)) {
+            Err(SimError::Invalid { why }) => {
+                assert!(why.contains("device not in profile"), "{why}");
+            }
+            other => panic!("{other:?}"),
+        }
+        let mut eight = Sim::new(HardwareProfile::example_8xh100_nvlink());
+        eight.ctx_reset_persisting_l2_cache(DeviceId(1)).unwrap();
     }
 
     #[test]

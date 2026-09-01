@@ -5,6 +5,15 @@ Visible five-turn extract: [docs/chatgpt-share-6a920fe1.md](docs/chatgpt-share-6
 Complete share-API extract: [docs/chatgpt-share-6a920fe1/](docs/chatgpt-share-6a920fe1/).
 Work lands on `main`. No PRs.
 
+## Shipped 2026-09-01 — CUDA `cuCtxResetPersistingL2Cache`
+
+`gpu-sim` `Sim::ctx_reset_persisting_l2_cache` is
+`cuCtxResetPersistingL2Cache`. Wraps `reset_persisting_l2_cache`.
+Host-synchronous. Capture cannot include it. The persist limit stays.
+Distinct from `set_persisting_l2_cache_size`. This VM does not invent
+Engine `--ctx-reset-l2`.
+`gpu-profile capture` is still refused. Dual score still has no `$/M tokens`.
+
 ## Shipped 2026-09-01 — CUDA `cuFuncGetModule`
 
 `gpu-sim` `Sim::func_get_module` is `cuFuncGetModule`. Always Invalid

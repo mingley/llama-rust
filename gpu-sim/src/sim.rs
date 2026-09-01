@@ -18639,6 +18639,18 @@ impl Sim {
         self.get_shared_mem_config(device)
     }
 
+    /// `cuCtxResetPersistingL2Cache` for the seeded primary context of `device`.
+    ///
+    /// Host-synchronous. Wraps [`Self::reset_persisting_l2_cache`]
+    /// (`cudaCtxResetPersistingL2Cache`). Capture cannot include it. Drops
+    /// filled persisting lines; the limit stays. Distinct from
+    /// [`Self::set_persisting_l2_cache_size`]. Unknown devices are Invalid
+    /// `"device not in profile"`. This VM does not invent a second
+    /// Engine `--l2-reset`.
+    pub fn ctx_reset_persisting_l2_cache(&mut self, device: DeviceId) -> Result<(), SimError> {
+        self.reset_persisting_l2_cache(device)
+    }
+
     /// `cudaInitDevice(device, 0, 0)`. Ensures the primary context (already
     /// seeded at construct). Does not make a thread-current device and does
     /// not change [`Self::get_device_flags`]. Host-synchronous 1 ns. Capture
