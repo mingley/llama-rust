@@ -17615,6 +17615,20 @@ impl Sim {
         Err(SimError::Invalid { why: "cuda array" })
     }
 
+    /// `cuMipmappedArrayCreate`. CUDA mipmapped arrays are not modeled.
+    ///
+    /// Always Invalid `"mipmapped array"`
+    /// ([`DeviceAttr::MaxTexture1DMipmappedWidth`] is 0). Distinct from
+    /// [`Self::array_create`]. Unknown devices are Invalid
+    /// `"device not in profile"`. Query; legal during capture. This VM does
+    /// not invent `cuMipmappedArrayGetLevel` this slice.
+    pub fn mipmapped_array_create(&self, device: DeviceId) -> Result<(), SimError> {
+        let _gpu = self.profile.gpu(device)?;
+        Err(SimError::Invalid {
+            why: "mipmapped array",
+        })
+    }
+
     /// `cuImportExternalMemory`. External memory import is not modeled.
     ///
     /// Always Invalid `"external memory"` ([`DeviceAttr::DmaBufSupported`] is

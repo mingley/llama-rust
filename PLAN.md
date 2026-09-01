@@ -6476,7 +6476,15 @@ model, do not celebrate the sim.
     `cudaChooseDevice`. `gpu-profile capture` is still refused. Dual
     score still has no `$/M tokens`.
 
-621. [ ] Next numbered PLAN item after 620 is the next `gpu-sim` / Engine /
+621. [x] `gpu-sim` `Sim::mipmapped_array_create` is
+    `cuMipmappedArrayCreate`. Always Invalid `"mipmapped array"` because
+    CUDA mipmapped arrays are not modeled. Query; legal during capture.
+    Distinct from `array_create`. This VM does not invent
+    `cuMipmappedArrayGetLevel`, Engine `--mipmap-array`, or
+    `cudaChooseDevice`. `gpu-profile capture` is still refused. Dual
+    score still has no `$/M tokens`.
+
+622. [ ] Next numbered PLAN item after 621 is the next `gpu-sim` / Engine /
     serve / expertvm mechanical API that is still missing, or the next official
     decode family. Prefer remaining CUDA-shaped twins over more
     OpenAI HTTP veneer. Do not invent F32 `output.scale`. Do not invent a
@@ -6783,6 +6791,10 @@ model, do not celebrate the sim.
     `checkpoint_process_lock`. Do not invent Engine `--checkpoint`.
     Do not invent `cuCheckpointProcessCheckpoint` this slice. Do not
     reverse `"checkpoint"`.
+    Do not invent a second `cuMipmappedArrayCreate` /
+    `mipmapped_array_create`. Do not invent Engine `--mipmap-array`.
+    Do not invent `cuMipmappedArrayGetLevel` this slice. Do not reverse
+    `"mipmapped array"`.
     Do not invent a second `cudaStreamAddCallback`.
     Do not invent Engine `--stream-callback` (same wall as second live
     `cudaLaunchHostFunc` after miss DMA).
@@ -7194,6 +7206,9 @@ model, do not celebrate the sim.
     Do not invent a second `checkpoint_process_lock` API. Do not invent
     Engine `--lock-checkpoint`. Do not invent `cuCheckpointProcessRestore`
     this slice. Do not reverse checkpoint remaining unsupported.
+    Do not invent a second `mipmapped_array_create` API. Do not invent
+    Engine `--create-mipmap`. Do not invent `cuArrayGetSparseProperties`
+    this slice. Do not reverse mipmapped texture dims staying 0.
     Do not invent a second DeviceLaunch in-flight destroy-complete check or Engine
     `--device-launch-destroy`. Do not abort an in-flight DeviceLaunch when
     `destroy_graph` succeeds. Do not delay destroy of an idle exec. Do not invent
@@ -7810,6 +7825,9 @@ model, do not celebrate the sim.
     Do not invent a second `checkpoint_process_lock` method. Do not invent
     Engine `--cu-checkpoint`. Do not reverse wrapping
     cuCheckpointProcessLock Invalid.
+    Do not invent a second `mipmapped_array_create` method. Do not invent
+    Engine `--cu-mipmap-array`. Do not reverse wrapping
+    cuMipmappedArrayCreate Invalid.
     Do not
     spend the next item on an OpenAI-compatible HTTP veneer.
 
