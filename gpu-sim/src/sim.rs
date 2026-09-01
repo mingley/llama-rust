@@ -18424,12 +18424,28 @@ impl Sim {
     /// `cuD3D11GetDevices` / `cudaD3D11GetDevices`. Direct3D 11 interop is
     /// not modeled.
     ///
-    /// Always Invalid `"d3d11"`. Distinct from [`Self::gl_get_devices`] and
-    /// from [`Self::d3d11_ctx_create`]. Unknown devices are Invalid
-    /// `"device not in profile"`. Query; legal during capture.
+    /// Always Invalid `"d3d11"`. Distinct from [`Self::gl_get_devices`],
+    /// from [`Self::d3d11_ctx_create`], and from [`Self::d3d11_get_device`].
+    /// Unknown devices are Invalid `"device not in profile"`. Query; legal
+    /// during capture.
     pub fn d3d11_get_devices(&self, device: DeviceId) -> Result<(), SimError> {
         let _gpu = self.profile.gpu(device)?;
         Err(SimError::Invalid { why: "d3d11" })
+    }
+
+    /// `cuD3D11GetDevice` plus `cudaD3D11GetDevice`. Direct3D 11 interop is
+    /// not modeled.
+    ///
+    /// Always Invalid `"d3d11 device"`. Distinct from
+    /// [`Self::d3d11_get_devices`] (why is not the bare `"d3d11"` string),
+    /// from [`Self::d3d11_ctx_create`], and from [`Self::gl_set_gl_device`].
+    /// Unknown devices are Invalid `"device not in profile"`. Query; legal
+    /// during capture.
+    pub fn d3d11_get_device(&self, device: DeviceId) -> Result<(), SimError> {
+        let _gpu = self.profile.gpu(device)?;
+        Err(SimError::Invalid {
+            why: "d3d11 device",
+        })
     }
 
     /// `cuD3D11CtxCreate`. Direct3D 11 interop is not modeled.

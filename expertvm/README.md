@@ -673,6 +673,8 @@ legacy OpenGL interop is not modeled; no Engine flag).
 (Invalid; OpenGL interop is not modeled; no Engine flag).
 `gpu-sim` `d3d11_get_devices` is `cuD3D11GetDevices` (Invalid; Direct3D 11
 interop is not modeled; no Engine flag).
+`gpu-sim` `d3d11_get_device` is `cuD3D11GetDevice` (Invalid; Direct3D 11
+interop is not modeled; no Engine flag).
 `gpu-sim` `d3d11_ctx_create` is `cuD3D11CtxCreate` (Invalid; Direct3D 11
 interop is not modeled; no Engine flag).
 `gpu-sim` `graphics_d3d11_register_resource` is
