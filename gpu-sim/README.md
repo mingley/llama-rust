@@ -319,6 +319,7 @@ warp scheduler, L1, …   ← do not model
 | `memcpy_ato_h_async` is Invalid (no `CUarray` array-to-host copy) | `cuMemcpyAtoHAsync` |
 | `memcpy_ato_a_async` is Invalid (no `CUarray` array-to-array copy) | `cuMemcpyAtoAAsync` |
 | `memcpy_2d_to_array` is Invalid (no `CUarray` 2D copy) | `cuMemcpy2DToArray` |
+| `memcpy_2d_from_array` is Invalid (no `CUarray` 2D copy) | `cuMemcpy2DFromArray` |
 | `library_load_data` is Invalid (no cubin / `CUlibrary`) | `cuLibraryLoadData` |
 | `library_load_from_file` is Invalid (no cubin path / `CUlibrary`) | `cuLibraryLoadFromFile` |
 | `library_unload` is Invalid (no `CUlibrary` handle) | `cuLibraryUnload` |
@@ -1704,6 +1705,8 @@ Distinct from `memcpy_hto_a_async` and `memcpy_ato_h`. Query; legal during captu
 Distinct from `memcpy_ato_h_async` and `memcpy_ato_a`. Query; legal during capture. No Engine `--async-atoa`.
 `memcpy_2d_to_array` is `cuMemcpy2DToArray` (always Invalid `"memcpy2d toarr"`; no `CUarray`).
 Distinct from `memcpy_ato_a_async` and `array_create`. Query; legal during capture. No Engine `--memcpy2d-toarr`.
+`memcpy_2d_from_array` is `cuMemcpy2DFromArray` (always Invalid `"memcpy2d fromarr"`; no `CUarray`).
+Distinct from `memcpy_2d_to_array` and `array_create`. Query; legal during capture. No Engine `--memcpy2d-fromarr`.
 `library_load_data` is `cuLibraryLoadData` (always Invalid `"cuda library"`;
 no cubin / `CUlibrary`). Distinct from `module_get_loading_mode` and
 `func_get_module`. Query; legal during capture. No Engine `--library-load`.

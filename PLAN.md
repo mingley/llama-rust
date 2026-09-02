@@ -7675,7 +7675,14 @@ model, do not celebrate the sim.
     or `cudaChooseDevice`. `gpu-profile capture` is still refused. Dual
     score still has no `$/M tokens`.
 
-789. [ ] Next numbered PLAN item after 788 is the next `gpu-sim` / Engine /
+789. [x] `gpu-sim` `Sim::memcpy_2d_from_array` is
+    `cuMemcpy2DFromArray`. Always Invalid `"memcpy2d fromarr"`
+    because CUDA arrays are not modeled. Query; legal during capture.
+    Distinct from `memcpy_2d_to_array` and `array_create`. This VM does not invent `cuMemcpy2DArrayToArray`, Engine `--memcpy2d-fromarr`,
+    or `cudaChooseDevice`. `gpu-profile capture` is still refused. Dual
+    score still has no `$/M tokens`.
+
+790. [ ] Next numbered PLAN item after 789 is the next `gpu-sim` / Engine /
     serve / expertvm mechanical API that is still missing, or the next official
     decode family. Prefer remaining CUDA-shaped twins over more
     OpenAI HTTP veneer. Do not invent F32 `output.scale`. Do not invent a
@@ -8533,6 +8540,9 @@ model, do not celebrate the sim.
     Do not invent a second `cuMemcpy2DToArray` / `memcpy_2d_to_array`.
     Do not invent Engine `--memcpy2d-toarr`. Do not invent
     `cuMemcpy2DFromArray` this slice. Do not reverse `"memcpy2d toarr"`.
+    Do not invent a second `cuMemcpy2DFromArray` / `memcpy_2d_from_array`.
+    Do not invent Engine `--memcpy2d-fromarr`. Do not invent
+    `cuMemcpy2DArrayToArray` this slice. Do not reverse `"memcpy2d fromarr"`.
     Do not invent a second `cudaStreamAddCallback`.
     Do not invent Engine `--stream-callback` (same wall as second live
     `cudaLaunchHostFunc` after miss DMA).
@@ -9470,6 +9480,9 @@ model, do not celebrate the sim.
     Do not invent a second `memcpy_2d_to_array` API. Do not invent
     Engine `--memcpy-2d-to-array`. Do not invent a CUarray memcpy-2d-from-array
     this slice. Do not reverse Memcpy 2DToArray remaining unsupported.
+    Do not invent a second `memcpy_2d_from_array` API. Do not invent
+    Engine `--memcpy-2d-from-array`. Do not invent a CUarray memcpy-2d-array-to-array
+    this slice. Do not reverse Memcpy 2DFromArray remaining unsupported.
     Do not invent a second DeviceLaunch in-flight destroy-complete check or Engine
     `--device-launch-destroy`. Do not abort an in-flight DeviceLaunch when
     `destroy_graph` succeeds. Do not delay destroy of an idle exec. Do not invent
@@ -10590,6 +10603,9 @@ model, do not celebrate the sim.
     Do not invent a second `memcpy_2d_to_array` method. Do not
     invent Engine `--cu-memcpy-2d-to-array`. Do not reverse wrapping
     cuMemcpy2DToArray Invalid.
+    Do not invent a second `memcpy_2d_from_array` method. Do not
+    invent Engine `--cu-memcpy-2d-from-array`. Do not reverse wrapping
+    cuMemcpy2DFromArray Invalid.
     Do not
     spend the next item on an OpenAI-compatible HTTP veneer.
 
