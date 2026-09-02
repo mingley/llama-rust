@@ -26714,7 +26714,6 @@ impl Sim {
     /// `cuStreamBatchMemOp`. Identity with [`Self::batch_mem_op`].
     ///
     /// Capture legal. Distinct from [`Self::stream_wait_value32_with_flags`].
-    /// This VM does not invent occupancy SM counts this slice.
     pub fn stream_batch_mem_op(
         &mut self,
         device: DeviceId,
@@ -26722,6 +26721,21 @@ impl Sim {
         ops: &[BatchMemOp],
     ) -> Result<OpId, SimError> {
         self.batch_mem_op(device, stream, ops)
+    }
+
+    /// `cuStreamBatchMemOp` flags. Identity with
+    /// [`Self::batch_mem_op_with_flags`].
+    ///
+    /// Capture legal. Distinct from [`Self::stream_batch_mem_op`].
+    /// This VM does not invent occupancy SM counts this slice.
+    pub fn stream_batch_mem_op_with_flags(
+        &mut self,
+        device: DeviceId,
+        stream: StreamId,
+        ops: &[BatchMemOp],
+        flags: u32,
+    ) -> Result<OpId, SimError> {
+        self.batch_mem_op_with_flags(device, stream, ops, flags)
     }
 
     /// `cudaLaunchHostFunc`. Stream-ordered host work; does not occupy compute
@@ -27063,6 +27077,8 @@ impl Sim {
     ///
     /// Flags must be [`BatchMemOpFlags::DEFAULT`]. Unknown bits Invalid
     /// `"batch mem op flags"`. Typed [`Self::batch_mem_op`] stays.
+    ///
+    /// Identity wrap [`Self::stream_batch_mem_op_with_flags`].
     pub fn batch_mem_op_with_flags(
         &mut self,
         device: DeviceId,
