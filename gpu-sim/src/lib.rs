@@ -1214,7 +1214,10 @@
 //! [`tex_ref_get_border_color`](Sim::tex_ref_get_border_color) is
 //! `cuTexRefGetBorderColor` (always Invalid `"texref getborder"`). Query; legal
 //! during capture. No Engine `--texref-getborder`.
-//! [`module_get_surf_ref`](Sim::module_get_surf_ref) is `cuModuleGetSurfRef` (always Invalid
+//! [`tex_ref_get_flags`](Sim::tex_ref_get_flags) is
+//! `cuTexRefGetFlags` (always Invalid `"texref getflags"`). Query; legal
+//! during capture. No Engine `--texref-getflags`.
+//! [`module_get_surf_ref`](Sim::module_get_surf_ref) is `cuModuleGetSurfRef` (always Invalid)
 //! `"module surfref"`). Query; legal during capture. No Engine `--module-surfref`.
 //! [`library_load_data`](Sim::library_load_data) is `cuLibraryLoadData`
 //! (always Invalid `"cuda library"`). Query; legal during capture. No Engine `--library-load`.
@@ -21279,6 +21282,64 @@ mod tests {
             Err(SimError::Invalid { why }) => {
                 assert!(why.contains("texref aniso"), "{why}");
                 assert!(!why.contains("texref getborder"), "{why}");
+            }
+            other => panic!("{other:?}"),
+        }
+        match sim.tex_ref_get_flags(d) {
+            Err(SimError::Invalid { why }) => {
+                assert!(why.contains("texref getflags"), "{why}");
+                assert!(!why.contains("texref getborder"), "{why}");
+                assert!(!why.contains("texref flags"), "{why}");
+            }
+            other => panic!("{other:?}"),
+        }
+    }
+
+    #[test]
+    fn tex_ref_get_flags_is_unsupported() {
+        let mut sim = Sim::new(h100());
+        let d = DeviceId(0);
+        match sim.tex_ref_get_flags(d) {
+            Err(SimError::Invalid { why }) => {
+                assert!(why.contains("texref getflags"), "{why}");
+                assert!(!why.contains("texref getborder"), "{why}");
+                assert!(!why.contains("texref flags"), "{why}");
+                assert!(!why.contains("texref getaniso"), "{why}");
+            }
+            other => panic!("{other:?}"),
+        }
+        sim.begin_capture(d, StreamId(0)).unwrap();
+        match sim.tex_ref_get_flags(d) {
+            Err(SimError::Invalid { why }) => {
+                assert!(why.contains("texref getflags"), "{why}");
+            }
+            other => panic!("{other:?}"),
+        }
+        let _g = sim.end_capture().unwrap();
+        match sim.tex_ref_get_flags(DeviceId(99)) {
+            Err(SimError::Invalid { why }) => {
+                assert!(why.contains("device not in profile"), "{why}");
+            }
+            other => panic!("{other:?}"),
+        }
+        match sim.tex_ref_get_border_color(d) {
+            Err(SimError::Invalid { why }) => {
+                assert!(why.contains("texref getborder"), "{why}");
+                assert!(!why.contains("texref getflags"), "{why}");
+            }
+            other => panic!("{other:?}"),
+        }
+        match sim.tex_ref_set_flags(d) {
+            Err(SimError::Invalid { why }) => {
+                assert!(why.contains("texref flags"), "{why}");
+                assert!(!why.contains("texref getflags"), "{why}");
+            }
+            other => panic!("{other:?}"),
+        }
+        match sim.tex_ref_set_border_color(d) {
+            Err(SimError::Invalid { why }) => {
+                assert!(why.contains("texref border"), "{why}");
+                assert!(!why.contains("texref getflags"), "{why}");
             }
             other => panic!("{other:?}"),
         }

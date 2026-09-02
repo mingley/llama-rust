@@ -21786,6 +21786,22 @@ impl Sim {
         })
     }
 
+    /// `cuTexRefGetFlags`. CUDA texture references are not modeled.
+    ///
+    /// Always Invalid `"texref getflags"` (this VM has no `CUtexref`
+    /// flags word). Distinct from [`Self::tex_ref_get_border_color`]
+    /// (why is not `"texref getborder"`) and from
+    /// [`Self::tex_ref_set_flags`] (why is not `"texref flags"`).
+    /// Unknown devices are Invalid `"device not in profile"`. Query; legal
+    /// during capture. This VM does not invent `cuSurfRefSetArray`
+    /// this slice.
+    pub fn tex_ref_get_flags(&self, device: DeviceId) -> Result<(), SimError> {
+        let _gpu = self.profile.gpu(device)?;
+        Err(SimError::Invalid {
+            why: "texref getflags",
+        })
+    }
+
     /// `cuModuleGetSurfRef`. CUDA modules are not modeled.
     ///
     /// Always Invalid `"module surfref"` (this VM has no `CUmodule` and

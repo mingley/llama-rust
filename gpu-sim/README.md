@@ -304,6 +304,7 @@ warp scheduler, L1, …   ← do not model
 | `tex_ref_get_mipmap_level_clamp` is Invalid (no `CUtexref` mipmap LOD clamp) | `cuTexRefGetMipmapLevelClamp` |
 | `tex_ref_get_max_anisotropy` is Invalid (no `CUtexref` anisotropy) | `cuTexRefGetMaxAnisotropy` |
 | `tex_ref_get_border_color` is Invalid (no `CUtexref` border color) | `cuTexRefGetBorderColor` |
+| `tex_ref_get_flags` is Invalid (no `CUtexref` flags word) | `cuTexRefGetFlags` |
 | `module_get_surf_ref` is Invalid (no `CUmodule` / `CUsurfref`) | `cuModuleGetSurfRef` |
 | `library_load_data` is Invalid (no cubin / `CUlibrary`) | `cuLibraryLoadData` |
 | `library_load_from_file` is Invalid (no cubin path / `CUlibrary`) | `cuLibraryLoadFromFile` |
@@ -1660,6 +1661,8 @@ Distinct from `tex_ref_get_mipmap_level_bias` and `tex_ref_set_mipmap_level_clam
 Distinct from `tex_ref_get_mipmap_level_clamp` and `tex_ref_set_max_anisotropy`. Query; legal during capture. No Engine `--texref-getaniso`.
 `tex_ref_get_border_color` is `cuTexRefGetBorderColor` (always Invalid `"texref getborder"`; no `CUtexref`).
 Distinct from `tex_ref_get_max_anisotropy` and `tex_ref_set_border_color`. Query; legal during capture. No Engine `--texref-getborder`.
+`tex_ref_get_flags` is `cuTexRefGetFlags` (always Invalid `"texref getflags"`; no `CUtexref`).
+Distinct from `tex_ref_get_border_color` and `tex_ref_set_flags`. Query; legal during capture. No Engine `--texref-getflags`.
 `module_get_surf_ref` is `cuModuleGetSurfRef` (always Invalid `"module surfref"`; no cubin).
 Distinct from `module_get_tex_ref` and `surf_object_create`. Query; legal during capture. No Engine `--module-surfref`.
 `library_load_data` is `cuLibraryLoadData` (always Invalid `"cuda library"`;

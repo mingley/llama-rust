@@ -5,6 +5,16 @@ Visible five-turn extract: [docs/chatgpt-share-6a920fe1.md](docs/chatgpt-share-6
 Complete share-API extract: [docs/chatgpt-share-6a920fe1/](docs/chatgpt-share-6a920fe1/).
 Work lands on `main`. No PRs.
 
+## Shipped 2026-09-02 — CUDA `cuTexRefGetFlags`
+
+`gpu-sim` `Sim::tex_ref_get_flags` is `cuTexRefGetFlags`.
+Always Invalid `"texref getflags"` because CUDA texture references are not
+modeled. Query; legal during capture. Distinct from
+`tex_ref_get_border_color` (why is not `"texref getborder"`) and
+`tex_ref_set_flags` (why is not `"texref flags"`).
+This VM does not invent `cuSurfRefSetArray` or Engine `--texref-getflags`.
+`gpu-profile capture` is still refused. Dual score still has no `$/M tokens`.
+
 ## Shipped 2026-09-02 — CUDA `cuTexRefGetBorderColor`
 
 `gpu-sim` `Sim::tex_ref_get_border_color` is `cuTexRefGetBorderColor`.
