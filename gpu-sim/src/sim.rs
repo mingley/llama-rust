@@ -8622,8 +8622,7 @@ impl Sim {
     /// [`Self::graph_alloc_get_params`] (`cudaGraphMemAllocNodeGetParams`).
     ///
     /// Query; legal during capture. Distinct from
-    /// [`Self::graph_exec_alloc_get_params`]. This VM does not invent
-    /// occupancy SM counts this slice.
+    /// [`Self::graph_exec_alloc_get_params`].
     pub fn get_graph_alloc_node_params(
         &self,
         graph: GraphId,
@@ -8654,7 +8653,8 @@ impl Sim {
     ///
     /// Uninstantiated graphs are Invalid. After instantiate this is the
     /// launched alloc. [`Self::graph_alloc_get_params`] stays a view. Query;
-    /// legal during capture.
+    /// legal during capture. Driver `cuGraphExecMemAllocNodeGetParams` is
+    /// [`Self::get_graph_exec_alloc_node_params`].
     pub fn graph_exec_alloc_get_params(
         &self,
         exec: GraphId,
@@ -8666,6 +8666,20 @@ impl Sim {
                 why: "not a mem alloc node",
             }),
         }
+    }
+
+    /// `cuGraphExecMemAllocNodeGetParams`. Identity with
+    /// [`Self::graph_exec_alloc_get_params`] (`cudaGraphExecMemAllocNodeGetParams`).
+    ///
+    /// Query; legal during capture. Distinct from
+    /// [`Self::get_graph_alloc_node_params`]. This VM does not invent
+    /// occupancy SM counts this slice.
+    pub fn get_graph_exec_alloc_node_params(
+        &self,
+        exec: GraphId,
+        node: usize,
+    ) -> Result<(AllocId, u64), SimError> {
+        self.graph_exec_alloc_get_params(exec, node)
     }
 
     /// Exec-snapshot [`Self::graph_alloc_get_access`].
