@@ -17846,6 +17846,7 @@ impl Sim {
 
     /// `cudaMemcpy2DAsync`. [`MemcpyOp`] must be [`MemcpyOp::is_2d`] (`height > 1`,
     /// not 3D). Typed [`Self::memcpy`] stays.
+    /// Driver `cuMemcpy2DAsync` is [`Self::mem_cpy_2d_async`].
     pub fn memcpy_2d_async(
         &mut self,
         device: DeviceId,
@@ -17858,6 +17859,20 @@ impl Sim {
             });
         }
         self.memcpy(device, op, stream)
+    }
+
+    /// `cuMemcpy2DAsync`. Identity with [`Self::memcpy_2d_async`]
+    /// (`cudaMemcpy2DAsync`).
+    ///
+    /// Capture-legal (pinned/device). Distinct from [`Self::mem_cpy_2d`].
+    /// This VM does not invent `mem_cpy_3d` this slice.
+    pub fn mem_cpy_2d_async(
+        &mut self,
+        device: DeviceId,
+        op: MemcpyOp,
+        stream: StreamId,
+    ) -> Result<OpId, SimError> {
+        self.memcpy_2d_async(device, op, stream)
     }
 
     /// `cudaMemcpy2D`. Host-synchronous; capture cannot include it.
@@ -17883,7 +17898,6 @@ impl Sim {
     ///
     /// Capture refused. Distinct from [`Self::memcpy_2d_unaligned`] and
     /// [`Self::memcpy_2d_async`].
-    /// This VM does not invent `mem_cpy_2d_async` this slice.
     pub fn mem_cpy_2d(
         &mut self,
         device: DeviceId,
