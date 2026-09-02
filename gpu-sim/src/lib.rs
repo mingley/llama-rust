@@ -643,6 +643,9 @@
 //! [`add_graph_switch`](Sim::add_graph_switch) is `cuGraphAddNode` SWITCH (identity with
 //! [`graph_add_switch`](Sim::graph_add_switch)). Capture refused. Distinct from
 //! [`add_graph_while`](Sim::add_graph_while). No Engine `--graph-add-switch`.
+//! [`add_graph_set_conditional`](Sim::add_graph_set_conditional) is graph-build `cuGraphSetConditional` (identity with
+//! [`graph_add_set_conditional`](Sim::graph_add_set_conditional)). Capture refused. Distinct from
+//! [`add_graph_switch`](Sim::add_graph_switch). No Engine `--graph-add-set-conditional`.
 //! [`Sim::ipc_get_event`] / [`ipc_open_event`](Sim::ipc_open_event) are
 //! `cudaIpcGetEventHandle` / `cudaIpcOpenEventHandle` (interprocess events).
 //! [`Sim::create_shareable_pool`] is `cudaMemPoolCreate` with a POSIX-FD handle
@@ -1310,6 +1313,9 @@
 //! [`add_graph_switch`](Sim::add_graph_switch) is `cuGraphAddNode` SWITCH (identity with
 //! [`graph_add_switch`](Sim::graph_add_switch)). Capture refused. Distinct from
 //! [`add_graph_while`](Sim::add_graph_while). No Engine `--graph-add-switch`.
+//! [`add_graph_set_conditional`](Sim::add_graph_set_conditional) is graph-build `cuGraphSetConditional` (identity with
+//! [`graph_add_set_conditional`](Sim::graph_add_set_conditional)). Capture refused. Distinct from
+//! [`add_graph_switch`](Sim::add_graph_switch). No Engine `--graph-add-set-conditional`.
 //! [`HardwareProfile::host_pin_bytes`] caps `cudaMallocHost` / `cudaHostRegister`.
 //! [`Sim::idle_until`] drains, then jumps the virtual clock (open-loop arrivals).
 //! [`Sim::event_elapsed_ns`] is `cudaEventElapsedTime` in nanoseconds.
@@ -1845,6 +1851,9 @@
 //! [`add_graph_switch`](Sim::add_graph_switch) is `cuGraphAddNode` SWITCH (identity with
 //! [`graph_add_switch`](Sim::graph_add_switch)). Capture refused. Distinct from
 //! [`add_graph_while`](Sim::add_graph_while). No Engine `--graph-add-switch`.
+//! [`add_graph_set_conditional`](Sim::add_graph_set_conditional) is graph-build `cuGraphSetConditional` (identity with
+//! [`graph_add_set_conditional`](Sim::graph_add_set_conditional)). Capture refused. Distinct from
+//! [`add_graph_switch`](Sim::add_graph_switch). No Engine `--graph-add-set-conditional`.
 //! [`mem_host_get_flags`](Sim::mem_host_get_flags) is `cuMemHostGetFlags` (identity with
 //! [`host_get_flags`](Sim::host_get_flags)). Query; legal during capture. No Engine `--mem-host-get-flags`.
 //! [`mem_host_get_device_pointer`](Sim::mem_host_get_device_pointer) is `cuMemHostGetDevicePointer` (identity with
@@ -2346,6 +2355,9 @@
 //! [`add_graph_switch`](Sim::add_graph_switch) is `cuGraphAddNode` SWITCH (identity with
 //! [`graph_add_switch`](Sim::graph_add_switch)). Capture refused. Distinct from
 //! [`add_graph_while`](Sim::add_graph_while). No Engine `--graph-add-switch`.
+//! [`add_graph_set_conditional`](Sim::add_graph_set_conditional) is graph-build `cuGraphSetConditional` (identity with
+//! [`graph_add_set_conditional`](Sim::graph_add_set_conditional)). Capture refused. Distinct from
+//! [`add_graph_switch`](Sim::add_graph_switch). No Engine `--graph-add-set-conditional`.
 //! [`Sim::pointer_get_attributes`] is `cudaPointerGetAttributes`.
 //! [`pointer_set_attribute`](Sim::pointer_set_attribute) /
 //! [`pointer_get_attribute`](Sim::pointer_get_attribute) are
@@ -3254,6 +3266,9 @@
 //! [`add_graph_switch`](Sim::add_graph_switch) is `cuGraphAddNode` SWITCH (identity with
 //! [`graph_add_switch`](Sim::graph_add_switch)). Capture refused. Distinct from
 //! [`add_graph_while`](Sim::add_graph_while). No Engine `--graph-add-switch`.
+//! [`add_graph_set_conditional`](Sim::add_graph_set_conditional) is graph-build `cuGraphSetConditional` (identity with
+//! [`graph_add_set_conditional`](Sim::graph_add_set_conditional)). Capture refused. Distinct from
+//! [`add_graph_switch`](Sim::add_graph_switch). No Engine `--graph-add-set-conditional`.
 //! [`Sim::stream_get_device`] is `cudaStreamGetDevice` / `cuStreamGetDevice`
 //! (the device of the stream; green-ctx streams return the ctx create
 //! device). Query; legal during capture. Distinct from
@@ -3591,6 +3606,9 @@
 //! [`add_graph_switch`](Sim::add_graph_switch) is `cuGraphAddNode` SWITCH (identity with
 //! [`graph_add_switch`](Sim::graph_add_switch)). Capture refused. Distinct from
 //! [`add_graph_while`](Sim::add_graph_while). No Engine `--graph-add-switch`.
+//! [`add_graph_set_conditional`](Sim::add_graph_set_conditional) is graph-build `cuGraphSetConditional` (identity with
+//! [`graph_add_set_conditional`](Sim::graph_add_set_conditional)). Capture refused. Distinct from
+//! [`add_graph_switch`](Sim::add_graph_switch). No Engine `--graph-add-set-conditional`.
 //! [`set_stream_access_policy`](Sim::set_stream_access_policy) is
 //! `cudaStreamAttributeAccessPolicyWindow`: [`kernel`](Sim::kernel) /
 //! [`kernel_bufs`](Sim::kernel_bufs) inherit it; [`kernel_with`](Sim::kernel_with)
@@ -4413,6 +4431,9 @@
 //! [`add_graph_switch`](Sim::add_graph_switch) is `cuGraphAddNode` SWITCH (identity with
 //! [`graph_add_switch`](Sim::graph_add_switch)). Capture refused. Distinct from
 //! [`add_graph_while`](Sim::add_graph_while). No Engine `--graph-add-switch`.
+//! [`add_graph_set_conditional`](Sim::add_graph_set_conditional) is graph-build `cuGraphSetConditional` (identity with
+//! [`graph_add_set_conditional`](Sim::graph_add_set_conditional)). Capture refused. Distinct from
+//! [`add_graph_switch`](Sim::add_graph_switch). No Engine `--graph-add-set-conditional`.
 //! [`Sim::set_stream_priority`] is the priority-only helper;
 //! [`stream_create_with_priority`](Sim::stream_create_with_priority) is
 //! `cudaStreamCreateWithPriority` (flags plus priority; clamped to
@@ -4768,6 +4789,9 @@
 //! [`add_graph_switch`](Sim::add_graph_switch) is `cuGraphAddNode` SWITCH (identity with
 //! [`graph_add_switch`](Sim::graph_add_switch)). Capture refused. Distinct from
 //! [`add_graph_while`](Sim::add_graph_while). No Engine `--graph-add-switch`.
+//! [`add_graph_set_conditional`](Sim::add_graph_set_conditional) is graph-build `cuGraphSetConditional` (identity with
+//! [`graph_add_set_conditional`](Sim::graph_add_set_conditional)). Capture refused. Distinct from
+//! [`add_graph_switch`](Sim::add_graph_switch). No Engine `--graph-add-set-conditional`.
 //! [`destroy_stream`](Sim::destroy_stream) is `cudaStreamDestroy` (returns
 //! immediately; in-flight work still completes; NULL is Invalid; recreate
 //! while unfinished is `"stream in flight"`). Capture cannot include it.
@@ -5103,6 +5127,9 @@
 //! [`add_graph_switch`](Sim::add_graph_switch) is `cuGraphAddNode` SWITCH (identity with
 //! [`graph_add_switch`](Sim::graph_add_switch)). Capture refused. Distinct from
 //! [`add_graph_while`](Sim::add_graph_while). No Engine `--graph-add-switch`.
+//! [`add_graph_set_conditional`](Sim::add_graph_set_conditional) is graph-build `cuGraphSetConditional` (identity with
+//! [`graph_add_set_conditional`](Sim::graph_add_set_conditional)). Capture refused. Distinct from
+//! [`add_graph_switch`](Sim::add_graph_switch). No Engine `--graph-add-set-conditional`.
 //! [`Sim::instantiate_graph`] is `cudaGraphInstantiate` (host-sync; returns a
 //! new exec id; first [`launch_graph`](Sim::launch_graph) of a definition
 //! creates a primary exec). Unused conditional handles are
@@ -5467,6 +5494,9 @@
 //! [`add_graph_switch`](Sim::add_graph_switch) is `cuGraphAddNode` SWITCH (identity with
 //! [`graph_add_switch`](Sim::graph_add_switch)). Capture refused. Distinct from
 //! [`add_graph_while`](Sim::add_graph_while). No Engine `--graph-add-switch`.
+//! [`add_graph_set_conditional`](Sim::add_graph_set_conditional) is graph-build `cuGraphSetConditional` (identity with
+//! [`graph_add_set_conditional`](Sim::graph_add_set_conditional)). Capture refused. Distinct from
+//! [`add_graph_switch`](Sim::add_graph_switch). No Engine `--graph-add-set-conditional`.
 //! [`graph_kernel_node_get_priority`](Sim::graph_kernel_node_get_priority) /
 //! [`graph_kernel_node_set_priority`](Sim::graph_kernel_node_set_priority) /
 //! [`graph_kernel_node_copy_attributes`](Sim::graph_kernel_node_copy_attributes)
@@ -5790,6 +5820,9 @@
 //! [`add_graph_switch`](Sim::add_graph_switch) is `cuGraphAddNode` SWITCH (identity with
 //! [`graph_add_switch`](Sim::graph_add_switch)). Capture refused. Distinct from
 //! [`add_graph_while`](Sim::add_graph_while). No Engine `--graph-add-switch`.
+//! [`add_graph_set_conditional`](Sim::add_graph_set_conditional) is graph-build `cuGraphSetConditional` (identity with
+//! [`graph_add_set_conditional`](Sim::graph_add_set_conditional)). Capture refused. Distinct from
+//! [`add_graph_switch`](Sim::add_graph_switch). No Engine `--graph-add-set-conditional`.
 //! [`graph_kernel_node_get_attribute`](Sim::graph_kernel_node_get_attribute) /
 //! [`graph_exec_kernel_node_get_attribute`](Sim::graph_exec_kernel_node_get_attribute) /
 //! [`graph_kernel_node_set_attribute`](Sim::graph_kernel_node_set_attribute) /
@@ -6119,6 +6152,9 @@
 //! [`add_graph_switch`](Sim::add_graph_switch) is `cuGraphAddNode` SWITCH (identity with
 //! [`graph_add_switch`](Sim::graph_add_switch)). Capture refused. Distinct from
 //! [`add_graph_while`](Sim::add_graph_while). No Engine `--graph-add-switch`.
+//! [`add_graph_set_conditional`](Sim::add_graph_set_conditional) is graph-build `cuGraphSetConditional` (identity with
+//! [`graph_add_set_conditional`](Sim::graph_add_set_conditional)). Capture refused. Distinct from
+//! [`add_graph_switch`](Sim::add_graph_switch). No Engine `--graph-add-set-conditional`.
 //! Device-launch
 //! execs cannot attach programmatic or launch-completion events.
 //! [`kernel_pdl`](Sim::kernel_pdl) is `cudaLaunchKernelEx` PDL: a wait kernel
@@ -6576,6 +6612,9 @@
 //! [`add_graph_switch`](Sim::add_graph_switch) is `cuGraphAddNode` SWITCH (identity with
 //! [`graph_add_switch`](Sim::graph_add_switch)). Capture refused. Distinct from
 //! [`add_graph_while`](Sim::add_graph_while). No Engine `--graph-add-switch`.
+//! [`add_graph_set_conditional`](Sim::add_graph_set_conditional) is graph-build `cuGraphSetConditional` (identity with
+//! [`graph_add_set_conditional`](Sim::graph_add_set_conditional)). Capture refused. Distinct from
+//! [`add_graph_switch`](Sim::add_graph_switch). No Engine `--graph-add-set-conditional`.
 //! [`graph_exec_memcpy_set_params`](Sim::graph_exec_memcpy_set_params) /
 //! [`graph_exec_memcpy_set_params_1d`](Sim::graph_exec_memcpy_set_params_1d) /
 //! [`graph_exec_memcpy_set_params_2d`](Sim::graph_exec_memcpy_set_params_2d) /
@@ -6897,6 +6936,9 @@
 //! [`add_graph_switch`](Sim::add_graph_switch) is `cuGraphAddNode` SWITCH (identity with
 //! [`graph_add_switch`](Sim::graph_add_switch)). Capture refused. Distinct from
 //! [`add_graph_while`](Sim::add_graph_while). No Engine `--graph-add-switch`.
+//! [`add_graph_set_conditional`](Sim::add_graph_set_conditional) is graph-build `cuGraphSetConditional` (identity with
+//! [`graph_add_set_conditional`](Sim::graph_add_set_conditional)). Capture refused. Distinct from
+//! [`add_graph_switch`](Sim::add_graph_switch). No Engine `--graph-add-set-conditional`.
 //! [`get_graph_kernel_node_params`](Sim::get_graph_kernel_node_params) is `cuGraphKernelNodeGetParams` (identity with
 //! [`graph_kernel_get_params`](Sim::graph_kernel_get_params)). Query; legal during capture. Distinct from
 //! [`graph_exec_kernel_get_params`](Sim::graph_exec_kernel_get_params). No Engine `--graph-kernel-get-params`.
@@ -7197,6 +7239,9 @@
 //! [`add_graph_switch`](Sim::add_graph_switch) is `cuGraphAddNode` SWITCH (identity with
 //! [`graph_add_switch`](Sim::graph_add_switch)). Capture refused. Distinct from
 //! [`add_graph_while`](Sim::add_graph_while). No Engine `--graph-add-switch`.
+//! [`add_graph_set_conditional`](Sim::add_graph_set_conditional) is graph-build `cuGraphSetConditional` (identity with
+//! [`graph_add_set_conditional`](Sim::graph_add_set_conditional)). Capture refused. Distinct from
+//! [`add_graph_switch`](Sim::add_graph_switch). No Engine `--graph-add-set-conditional`.
 //! [`graph_exec_kernel_get_params`](Sim::graph_exec_kernel_get_params) /
 //! [`graph_exec_memcpy_get_params`](Sim::graph_exec_memcpy_get_params) /
 //! [`graph_exec_memset_get_params`](Sim::graph_exec_memset_get_params) /
@@ -7488,6 +7533,9 @@
 //! [`add_graph_switch`](Sim::add_graph_switch) is `cuGraphAddNode` SWITCH (identity with
 //! [`graph_add_switch`](Sim::graph_add_switch)). Capture refused. Distinct from
 //! [`add_graph_while`](Sim::add_graph_while). No Engine `--graph-add-switch`.
+//! [`add_graph_set_conditional`](Sim::add_graph_set_conditional) is graph-build `cuGraphSetConditional` (identity with
+//! [`graph_add_set_conditional`](Sim::graph_add_set_conditional)). Capture refused. Distinct from
+//! [`add_graph_switch`](Sim::add_graph_switch). No Engine `--graph-add-set-conditional`.
 //! [`get_graph_exec_kernel_node_params`](Sim::get_graph_exec_kernel_node_params) is `cuGraphExecKernelNodeGetParams` (identity with
 //! [`graph_exec_kernel_get_params`](Sim::graph_exec_kernel_get_params)). Query; legal during capture. Distinct from
 //! [`get_graph_kernel_node_params`](Sim::get_graph_kernel_node_params). No Engine `--graph-exec-kernel-get-params`.
@@ -7785,6 +7833,9 @@
 //! [`add_graph_switch`](Sim::add_graph_switch) is `cuGraphAddNode` SWITCH (identity with
 //! [`graph_add_switch`](Sim::graph_add_switch)). Capture refused. Distinct from
 //! [`add_graph_while`](Sim::add_graph_while). No Engine `--graph-add-switch`.
+//! [`add_graph_set_conditional`](Sim::add_graph_set_conditional) is graph-build `cuGraphSetConditional` (identity with
+//! [`graph_add_set_conditional`](Sim::graph_add_set_conditional)). Capture refused. Distinct from
+//! [`add_graph_switch`](Sim::add_graph_switch). No Engine `--graph-add-set-conditional`.
 //! [`graph_exec_batch_mem_op_set_params`](Sim::graph_exec_batch_mem_op_set_params)
 //! is `cudaGraphExecBatchMemOpNodeSetParams` (id/offset/value; wait vs write,
 //! `bits32`, and compare stay on wait/write nodes;
@@ -31046,6 +31097,80 @@ mod tests {
             other => panic!("{other:?}"),
         }
         match eight.graph_add_switch(g1, h1, 2) {
+            Err(SimError::Invalid { why }) => assert!(why.contains("capture"), "{why}"),
+            other => panic!("{other:?}"),
+        }
+        let _cap = eight.end_capture().unwrap();
+    }
+
+    #[test]
+    fn add_graph_set_conditional_is_cu_graph_set_conditional() {
+        let mut sim = Sim::new(h100());
+        let d = DeviceId(0);
+        let s = StreamId(0);
+        let g = sim.create_graph(d, s).unwrap();
+        let h = sim.graph_conditional_create(g, 0).unwrap();
+        match sim.add_graph_set_conditional(GraphId(99), h, 1) {
+            Err(SimError::Invalid { why }) => assert!(why.contains("unknown"), "{why}"),
+            other => panic!("{other:?}"),
+        }
+        match sim.graph_add_set_conditional(GraphId(99), h, 1) {
+            Err(SimError::Invalid { why }) => assert!(why.contains("unknown"), "{why}"),
+            other => panic!("{other:?}"),
+        }
+        let h2 = sim.graph_conditional_create(g, 0).unwrap();
+        sim.add_graph_set_conditional(g, h, 1).unwrap();
+        sim.graph_add_set_conditional(g, h2, 0).unwrap();
+        assert_eq!(sim.graph_len(g).unwrap(), 2);
+        assert_eq!(
+            sim.graph_node_kind(g, 0).unwrap(),
+            GraphNodeKind::SetConditional
+        );
+        assert_eq!(
+            sim.graph_node_kind(g, 1).unwrap(),
+            GraphNodeKind::SetConditional
+        );
+        let sets = sim.graph_set_conditional_nodes(g).unwrap();
+        assert_eq!(sets.len(), 2);
+        assert_eq!(sets[0].2, 1);
+        assert_eq!(sets[1].2, 0);
+        sim.begin_capture(d, s).unwrap();
+        match sim.add_graph_set_conditional(g, h, 1) {
+            Err(SimError::Invalid { why }) => assert!(why.contains("capture"), "{why}"),
+            other => panic!("{other:?}"),
+        }
+        match sim.graph_add_set_conditional(g, h2, 0) {
+            Err(SimError::Invalid { why }) => assert!(why.contains("capture"), "{why}"),
+            other => panic!("{other:?}"),
+        }
+        let _cap = sim.end_capture().unwrap();
+        let _b1 = sim.graph_add_if(g, h).unwrap();
+        let _b2 = sim.graph_add_if(g, h2).unwrap();
+        let exec = sim.graph_instantiate(g).unwrap();
+        match sim.add_graph_set_conditional(exec, h, 1) {
+            Err(SimError::Invalid { why }) => assert!(why.contains("instantiated"), "{why}"),
+            other => panic!("{other:?}"),
+        }
+        match sim.graph_add_set_conditional(exec, h2, 0) {
+            Err(SimError::Invalid { why }) => assert!(why.contains("instantiated"), "{why}"),
+            other => panic!("{other:?}"),
+        }
+        let mut eight = Sim::new(HardwareProfile::example_8xh100_nvlink());
+        let d1 = DeviceId(1);
+        let g1 = eight.create_graph(d1, s).unwrap();
+        let h1 = eight.graph_conditional_create(g1, 0).unwrap();
+        eight.add_graph_set_conditional(g1, h1, 1).unwrap();
+        assert_eq!(eight.graph_len(g1).unwrap(), 1);
+        assert_eq!(
+            eight.graph_node_kind(g1, 0).unwrap(),
+            GraphNodeKind::SetConditional
+        );
+        eight.begin_capture(d1, s).unwrap();
+        match eight.add_graph_set_conditional(g1, h1, 1) {
+            Err(SimError::Invalid { why }) => assert!(why.contains("capture"), "{why}"),
+            other => panic!("{other:?}"),
+        }
+        match eight.graph_add_set_conditional(g1, h1, 1) {
             Err(SimError::Invalid { why }) => assert!(why.contains("capture"), "{why}"),
             other => panic!("{other:?}"),
         }

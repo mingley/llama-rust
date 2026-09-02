@@ -10650,8 +10650,7 @@ impl Sim {
     /// [`Self::graph_add_switch`] (`cudaGraphAddNode` SWITCH).
     ///
     /// Capture refused. Distinct from
-    /// [`Self::add_graph_while`]. This VM does not invent
-    /// occupancy SM counts this slice.
+    /// [`Self::add_graph_while`].
     pub fn add_graph_switch(
         &mut self,
         graph: GraphId,
@@ -10769,7 +10768,9 @@ impl Sim {
     ///
     /// `handle` must have been created on `graph`. Capture cannot include it.
     /// Illegal on an instantiated exec. Device-launch instantiate refuses this
-    /// node (conditionals). Decode identity does not add set-conditional nodes.
+    /// node (conditionals). Decode identity does not add set-conditional nodes. Driver
+    /// graph-build `cuGraphSetConditional` is
+    /// [`Self::add_graph_set_conditional`].
     pub fn graph_add_set_conditional(
         &mut self,
         graph: GraphId,
@@ -10784,6 +10785,21 @@ impl Sim {
             stream,
             Kind::SetConditional { handle, value },
         )
+    }
+
+    /// Graph-build `cuGraphSetConditional`. Identity with
+    /// [`Self::graph_add_set_conditional`] (graph-build `cudaGraphSetConditional`).
+    ///
+    /// Capture refused. Distinct from
+    /// [`Self::add_graph_switch`]. This VM does not invent
+    /// occupancy SM counts this slice.
+    pub fn add_graph_set_conditional(
+        &mut self,
+        graph: GraphId,
+        handle: CondId,
+        value: u32,
+    ) -> Result<(), SimError> {
+        self.graph_add_set_conditional(graph, handle, value)
     }
 
     /// IF nodes on `graph` as `(index, handle, body)` in add order.

@@ -9037,7 +9037,14 @@ model, do not celebrate the sim.
     or `cudaChooseDevice`. `gpu-profile capture` is still refused. Dual
     score still has no `$/M tokens`.
 
-983. [ ] Next numbered PLAN item after 982 is the next `gpu-sim` / Engine /
+983. [x] `gpu-sim` `Sim::add_graph_set_conditional` is
+    graph-build `cuGraphSetConditional`. Identity with `graph_add_set_conditional`
+    (graph-build `cudaGraphSetConditional`). Capture refused. Distinct from
+    `add_graph_switch`. This VM does not invent occupancy SM counts, Engine `--graph-add-set-conditional`,
+    or `cudaChooseDevice`. `gpu-profile capture` is still refused. Dual
+    score still has no `$/M tokens`.
+
+984. [ ] Next numbered PLAN item after 983 is the next `gpu-sim` / Engine /
     serve / expertvm mechanical API that is still missing, or the next official
     decode family. Prefer remaining CUDA-shaped twins over more
     OpenAI HTTP veneer. Do not invent F32 `output.scale`. Do not invent a
@@ -10477,6 +10484,9 @@ model, do not celebrate the sim.
     Do not invent a second `cuGraphAddNode` SWITCH / `add_graph_switch`.
     Do not invent Engine `--graph-add-switch`. Do not invent
     occupancy SM counts this slice. Do not reverse AddGraphSwitch identity with graph_add_switch.
+    Do not invent a second graph-build `cuGraphSetConditional` / `add_graph_set_conditional`.
+    Do not invent Engine `--graph-add-set-conditional`. Do not invent
+    occupancy SM counts this slice. Do not reverse AddGraphSetConditional identity with graph_add_set_conditional.
     Do not invent a second `cudaStreamAddCallback`.
     Do not invent Engine `--stream-callback` (same wall as second live
     `cudaLaunchHostFunc` after miss DMA).
@@ -11996,6 +12006,9 @@ model, do not celebrate the sim.
     Do not invent a second `add_graph_switch` API. Do not invent
     Engine `--graph-add-switch-identity`. Do not invent a graph-add-set-conditional
     this slice. Do not reverse AddGraphSwitch identity with graph_add_switch.
+    Do not invent a second `add_graph_set_conditional` API. Do not invent
+    Engine `--graph-add-set-conditional-identity`. Do not invent a graph-add-write-value64
+    this slice. Do not reverse AddGraphSetConditional identity with graph_add_set_conditional.
     Do not invent a second DeviceLaunch in-flight destroy-complete check or Engine
     `--device-launch-destroy`. Do not abort an in-flight DeviceLaunch when
     `destroy_graph` succeeds. Do not delay destroy of an idle exec. Do not invent
@@ -13698,6 +13711,9 @@ model, do not celebrate the sim.
     Do not invent a second `add_graph_switch` method. Do not
     invent Engine `--cu-graph-add-switch`. Do not reverse wrapping
     cuGraphAddNode SWITCH identity.
+    Do not invent a second `add_graph_set_conditional` method. Do not
+    invent Engine `--cu-graph-add-set-conditional`. Do not reverse wrapping
+    graph-build cuGraphSetConditional identity.
     Do not
     spend the next item on an OpenAI-compatible HTTP veneer.
 
