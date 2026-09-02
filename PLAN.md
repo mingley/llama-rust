@@ -9205,7 +9205,14 @@ model, do not celebrate the sim.
     or `cudaChooseDevice`. `gpu-profile capture` is still refused. Dual
     score still has no `$/M tokens`.
 
-1007. [ ] Next numbered PLAN item after 1006 is the next `gpu-sim` / Engine /
+1007. [x] `gpu-sim` `Sim::set_graph_free_node_params` is
+    `cuGraphMemFreeNodeSetParams`. Identity with `graph_free_set_params`
+    (`cudaGraphMemFreeNodeSetParams`). Capture refused. Distinct from
+    `graph_exec_free_set_params`. This VM does not invent occupancy SM counts, Engine `--graph-free-set-params`,
+    or `cudaChooseDevice`. `gpu-profile capture` is still refused. Dual
+    score still has no `$/M tokens`.
+
+1008. [ ] Next numbered PLAN item after 1007 is the next `gpu-sim` / Engine /
     serve / expertvm mechanical API that is still missing, or the next official
     decode family. Prefer remaining CUDA-shaped twins over more
     OpenAI HTTP veneer. Do not invent F32 `output.scale`. Do not invent a
@@ -10717,6 +10724,9 @@ model, do not celebrate the sim.
     Do not invent a second `cudaGraphExecMemFreeNodeGetParams` / `get_graph_exec_free_node_params`.
     Do not invent Engine `--graph-exec-free-get-params`. Do not invent
     occupancy SM counts this slice. Do not reverse GetGraphExecFreeNodeParams identity with graph_exec_free_get_params.
+    Do not invent a second `cudaGraphMemFreeNodeSetParams` / `set_graph_free_node_params`.
+    Do not invent Engine `--graph-free-set-params`. Do not invent
+    occupancy SM counts this slice. Do not reverse SetGraphFreeNodeParams identity with graph_free_set_params.
     Do not invent a second `cudaStreamAddCallback`.
     Do not invent Engine `--stream-callback` (same wall as second live
     `cudaLaunchHostFunc` after miss DMA).
@@ -12308,6 +12318,9 @@ model, do not celebrate the sim.
     Do not invent a second `get_graph_exec_free_node_params` API. Do not invent
     Engine `--graph-exec-free-get-params-identity`. Do not invent a graph-free-set-params
     this slice. Do not reverse GetGraphExecFreeNodeParams identity with graph_exec_free_get_params.
+    Do not invent a second `set_graph_free_node_params` API. Do not invent
+    Engine `--graph-free-set-params-identity`. Do not invent a graph-exec-free-set-params
+    this slice. Do not reverse SetGraphFreeNodeParams identity with graph_free_set_params.
     Do not invent a second DeviceLaunch in-flight destroy-complete check or Engine
     `--device-launch-destroy`. Do not abort an in-flight DeviceLaunch when
     `destroy_graph` succeeds. Do not delay destroy of an idle exec. Do not invent
@@ -14082,6 +14095,9 @@ model, do not celebrate the sim.
     Do not invent a second `get_graph_exec_free_node_params` method. Do not
     invent Engine `--cu-graph-exec-free-get-params`. Do not reverse wrapping
     cuGraphExecMemFreeNodeGetParams identity.
+    Do not invent a second `set_graph_free_node_params` method. Do not
+    invent Engine `--cu-graph-free-set-params`. Do not reverse wrapping
+    cuGraphMemFreeNodeSetParams identity.
     Do not
     spend the next item on an OpenAI-compatible HTTP veneer.
 

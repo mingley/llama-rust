@@ -6264,6 +6264,8 @@ impl Sim {
     /// include it. Host-sync 1 ns. The node must already be a mem free node.
     /// [`Sim::graph_allocs`] stays the alloc-node ids. A parked
     /// in-flight-destroyed exec is `"unknown graph"` before unknown alloc.
+    /// Driver `cuGraphMemFreeNodeSetParams` is
+    /// [`Self::set_graph_free_node_params`].
     pub fn graph_free_set_params(
         &mut self,
         graph: GraphId,
@@ -6297,6 +6299,21 @@ impl Sim {
         })?)?;
         step.kind = Kind::Free { id };
         Ok(())
+    }
+
+    /// `cuGraphMemFreeNodeSetParams`. Identity with
+    /// [`Self::graph_free_set_params`] (`cudaGraphMemFreeNodeSetParams`).
+    ///
+    /// Host-synchronous. Capture refused. Distinct from
+    /// [`Self::graph_exec_free_set_params`]. This VM does not invent
+    /// occupancy SM counts this slice.
+    pub fn set_graph_free_node_params(
+        &mut self,
+        graph: GraphId,
+        node: usize,
+        id: AllocId,
+    ) -> Result<(), SimError> {
+        self.graph_free_set_params(graph, node, id)
     }
 
     /// `cudaGraphEventRecordNodeSetEvent` on the graph definition.
@@ -8752,8 +8769,7 @@ impl Sim {
     /// [`Self::graph_exec_free_get_params`] (`cudaGraphExecMemFreeNodeGetParams`).
     ///
     /// Query; legal during capture. Distinct from
-    /// [`Self::get_graph_free_node_params`]. This VM does not invent
-    /// occupancy SM counts this slice.
+    /// [`Self::get_graph_free_node_params`].
     pub fn get_graph_exec_free_node_params(
         &self,
         exec: GraphId,
