@@ -16289,7 +16289,6 @@ impl Sim {
     /// [`Self::destroy_pool`] (`cudaMemPoolDestroy`).
     ///
     /// Capture refused. Distinct from [`Self::mem_pool_create_with_props`].
-    /// This VM does not invent occupancy SM counts this slice.
     pub fn mem_pool_destroy(&mut self, pool: PoolId) -> Result<(), SimError> {
         self.destroy_pool(pool)
     }
@@ -16298,6 +16297,8 @@ impl Sim {
     ///
     /// The graph-memory pool is not a user mempool; use [`Self::alloc`] during
     /// capture or [`Self::graph_add_alloc`].
+    /// Driver `cuMemAllocFromPoolAsync` is [`Self::mem_alloc_from_pool`].
+    /// Identity wrap [`Self::mem_alloc_from_pool`].
     pub fn alloc_from_pool(
         &mut self,
         device: DeviceId,
@@ -16308,6 +16309,21 @@ impl Sim {
         self.refuse_graph_pool(pool)?;
         self.refuse_destroyed_pool(pool)?;
         self.alloc_from_pool_inner(device, pool, bytes, stream)
+    }
+
+    /// `cuMemAllocFromPoolAsync`. Identity with
+    /// [`Self::alloc_from_pool`] (`cudaMallocFromPoolAsync`).
+    ///
+    /// Capture legal. Distinct from [`Self::mem_pool_destroy`].
+    /// This VM does not invent occupancy SM counts this slice.
+    pub fn mem_alloc_from_pool(
+        &mut self,
+        device: DeviceId,
+        pool: PoolId,
+        bytes: u64,
+        stream: StreamId,
+    ) -> Result<AllocId, SimError> {
+        self.alloc_from_pool(device, pool, bytes, stream)
     }
 
     fn alloc_from_pool_inner(
