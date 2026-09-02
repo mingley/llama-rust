@@ -9149,7 +9149,14 @@ model, do not celebrate the sim.
     or `cudaChooseDevice`. `gpu-profile capture` is still refused. Dual
     score still has no `$/M tokens`.
 
-999. [ ] Next numbered PLAN item after 998 is the next `gpu-sim` / Engine /
+999. [x] `gpu-sim` `Sim::retain_user_object` is
+    `cuUserObjectRetain`. Identity with `user_object_retain`
+    (`cudaUserObjectRetain`). Capture refused. Distinct from
+    `create_user_object`. This VM does not invent occupancy SM counts, Engine `--retain-user-object`,
+    or `cudaChooseDevice`. `gpu-profile capture` is still refused. Dual
+    score still has no `$/M tokens`.
+
+1000. [ ] Next numbered PLAN item after 999 is the next `gpu-sim` / Engine /
     serve / expertvm mechanical API that is still missing, or the next official
     decode family. Prefer remaining CUDA-shaped twins over more
     OpenAI HTTP veneer. Do not invent F32 `output.scale`. Do not invent a
@@ -10637,6 +10644,9 @@ model, do not celebrate the sim.
     Do not invent a second `cudaUserObjectCreate` / `create_user_object`.
     Do not invent Engine `--create-user-object`. Do not invent
     occupancy SM counts this slice. Do not reverse CreateUserObject identity with user_object_create.
+    Do not invent a second `cudaUserObjectRetain` / `retain_user_object`.
+    Do not invent Engine `--retain-user-object`. Do not invent
+    occupancy SM counts this slice. Do not reverse RetainUserObject identity with user_object_retain.
     Do not invent a second `cudaStreamAddCallback`.
     Do not invent Engine `--stream-callback` (same wall as second live
     `cudaLaunchHostFunc` after miss DMA).
@@ -12204,6 +12214,9 @@ model, do not celebrate the sim.
     Do not invent a second `create_user_object` API. Do not invent
     Engine `--create-user-object-identity`. Do not invent a user-object-retain
     this slice. Do not reverse CreateUserObject identity with user_object_create.
+    Do not invent a second `retain_user_object` API. Do not invent
+    Engine `--retain-user-object-identity`. Do not invent a user-object-release
+    this slice. Do not reverse RetainUserObject identity with user_object_retain.
     Do not invent a second DeviceLaunch in-flight destroy-complete check or Engine
     `--device-launch-destroy`. Do not abort an in-flight DeviceLaunch when
     `destroy_graph` succeeds. Do not delay destroy of an idle exec. Do not invent
@@ -13954,6 +13967,9 @@ model, do not celebrate the sim.
     Do not invent a second `create_user_object` method. Do not
     invent Engine `--cu-create-user-object`. Do not reverse wrapping
     cuUserObjectCreate identity.
+    Do not invent a second `retain_user_object` method. Do not
+    invent Engine `--cu-retain-user-object`. Do not reverse wrapping
+    cuUserObjectRetain identity.
     Do not
     spend the next item on an OpenAI-compatible HTTP veneer.
 
