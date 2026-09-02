@@ -6066,8 +6066,7 @@ impl Sim {
     /// [`Self::graph_memcpy_set_params_1d`] (`cudaGraphMemcpyNodeSetParams1D`).
     ///
     /// Capture refused. Distinct from
-    /// [`Self::set_graph_memcpy_node_params`]. This VM does not invent
-    /// occupancy SM counts this slice.
+    /// [`Self::set_graph_memcpy_node_params`].
     pub fn set_graph_memcpy_node_params_1d(
         &mut self,
         graph: GraphId,
@@ -7046,7 +7045,9 @@ impl Sim {
     /// Packs a 1D [`MemcpyOp`]. A 2D/3D node may become 1D (PLAN 190). Pageable
     /// copies stay illegal. Pays `graph_set_params_ns`. Capture cannot include
     /// it. Bypasses CUDA-named [`Self::graph_exec_memcpy_set_params`] 1D-only
-    /// original-node check.
+    /// original-node check. Driver
+    /// graph `cudaGraphExecMemcpyNodeSetParams1D` is
+    /// [`Self::set_graph_exec_memcpy_node_params_1d`].
     pub fn graph_exec_memcpy_set_params_1d(
         &mut self,
         exec: GraphId,
@@ -7064,6 +7065,25 @@ impl Sim {
             GreenCtxPatch::Keep,
             false,
         )
+    }
+
+    /// Graph `cudaGraphExecMemcpyNodeSetParams1D`. Identity with
+    /// [`Self::graph_exec_memcpy_set_params_1d`]
+    /// (`cudaGraphExecMemcpyNodeSetParams1D`).
+    ///
+    /// Capture refused. Distinct from
+    /// [`Self::set_graph_exec_memcpy_node_params`]. This VM does not invent
+    /// occupancy SM counts this slice.
+    pub fn set_graph_exec_memcpy_node_params_1d(
+        &mut self,
+        exec: GraphId,
+        node: usize,
+        src: Place,
+        dst: Place,
+        alloc: AllocId,
+        bytes: u64,
+    ) -> Result<(), SimError> {
+        self.graph_exec_memcpy_set_params_1d(exec, node, src, dst, alloc, bytes)
     }
 
     /// Extra helper whose [`MemcpyOp`] is [`MemcpyOp::is_2d`] (`height > 1`,
