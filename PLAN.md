@@ -9854,7 +9854,12 @@ model, do not celebrate the sim.
       `mem_pool_set_access`. This VM does not invent occupancy SM counts, Engine `--mem-pool-set-access-read`,
       or `cudaChooseDevice`. `gpu-profile capture` is still refused. Dual
       score still has no `$/M tokens`.
-1119. [ ] Next numbered PLAN item after 1118 is the next `gpu-sim` / Engine /
+1119. [x] `gpu-sim` `Sim::mem_pool_set_access_with_flags` is
+      `cuMemPoolSetAccess` flags. Identity with `pool_set_access_with_flags` (`cudaMemPoolSetAccess` flags). Capture refused. Distinct from
+      `mem_pool_set_access_read`. This VM does not invent occupancy SM counts, Engine `--mem-pool-set-access-with-flags`,
+      or `cudaChooseDevice`. `gpu-profile capture` is still refused. Dual
+      score still has no `$/M tokens`.
+1120. [ ] Next numbered PLAN item after 1119 is the next `gpu-sim` / Engine /
     serve / expertvm mechanical API that is still missing, or the next official
     decode family. Prefer remaining CUDA-shaped twins over more
     OpenAI HTTP veneer. Do not invent F32 `output.scale`. Do not invent a
@@ -11798,6 +11803,11 @@ model, do not celebrate the sim.
     occupancy SM counts this slice. Do not reverse MemPoolSetAccess ProtRead identity with pool_set_access_read.
     Do not invent `pool_set_access_with_flags` as `mem_pool_set_access_read`.
     Do not invent `cuMemPoolSetAccess` with flags as `mem_pool_set_access_read`.
+    Do not invent a second `cuMemPoolSetAccess` flags / `mem_pool_set_access_with_flags`.
+    Do not invent Engine `--mem-pool-set-access-with-flags`. Do not invent
+    occupancy SM counts this slice. Do not reverse MemPoolSetAccess flags identity with pool_set_access_with_flags.
+    Do not invent `pool_set_access_n` as `mem_pool_set_access_with_flags`.
+    Do not invent `cuMemPoolSetAccess` desc array as `mem_pool_set_access_with_flags`.
     Do not invent a second `cudaStreamAddCallback`.
     Do not invent Engine `--stream-callback` (same wall as second live
     `cudaLaunchHostFunc` after miss DMA).
@@ -13777,6 +13787,11 @@ model, do not celebrate the sim.
     this slice. Do not reverse MemPoolSetAccess ProtRead identity with pool_set_access_read.
     Do not wrap `pool_set_access_read` as `mem_pool_set_access_read`.
     Do not wrap `pool_set_access_with_flags` as `mem_pool_set_access_read`.
+    Do not invent a second `mem_pool_set_access_with_flags` API. Do not invent
+    Engine `--mem-pool-set-access-with-flags-identity`. Do not invent a pool-set-access-n
+    this slice. Do not reverse MemPoolSetAccess flags identity with pool_set_access_with_flags.
+    Do not wrap `pool_set_access_with_flags` as `mem_pool_set_access_with_flags`.
+    Do not wrap `pool_set_access_n` as `mem_pool_set_access_with_flags`.
     Do not invent a second DeviceLaunch in-flight destroy-complete check or Engine
     `--device-launch-destroy`. Do not abort an in-flight DeviceLaunch when
     `destroy_graph` succeeds. Do not delay destroy of an idle exec. Do not invent
@@ -15887,6 +15902,9 @@ model, do not celebrate the sim.
     Do not invent a second `mem_pool_set_access_read` method. Do not
     invent Engine `--cu-mem-pool-set-access-read`. Do not reverse wrapping
     cuMemPoolSetAccess ProtRead identity. Do not wrap `pool_set_access_with_flags` as `mem_pool_set_access_read`.
+    Do not invent a second `mem_pool_set_access_with_flags` method. Do not
+    invent Engine `--cu-mem-pool-set-access-with-flags`. Do not reverse wrapping
+    cuMemPoolSetAccess flags identity. Do not wrap `pool_set_access_n` as `mem_pool_set_access_with_flags`.
     Do not
     spend the next item on an OpenAI-compatible HTTP veneer.
 

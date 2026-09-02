@@ -16691,7 +16691,6 @@ impl Sim {
     /// [`Self::pool_set_access_read`] (`cudaMemPoolSetAccess` ProtRead).
     ///
     /// Capture refused. Distinct from [`Self::mem_pool_set_access`].
-    /// This VM does not invent occupancy SM counts this slice.
     pub fn mem_pool_set_access_read(
         &mut self,
         pool: PoolId,
@@ -16725,6 +16724,8 @@ impl Sim {
     /// [`MemAccessFlags::PROT_READ`] is [`Self::pool_set_access_read`].
     /// Other bits are Invalid `"pool access flags"`. Typed helpers stay.
     /// Capture is refused by those helpers.
+    /// Driver `cuMemPoolSetAccess` flags is [`Self::mem_pool_set_access_with_flags`].
+    /// Identity wrap [`Self::mem_pool_set_access_with_flags`].
     pub fn pool_set_access_with_flags(
         &mut self,
         pool: PoolId,
@@ -16739,6 +16740,20 @@ impl Sim {
                 why: "pool access flags",
             }),
         }
+    }
+
+    /// `cuMemPoolSetAccess` flags. Identity with
+    /// [`Self::pool_set_access_with_flags`] (`cudaMemPoolSetAccess` flags).
+    ///
+    /// Capture refused. Distinct from [`Self::mem_pool_set_access_read`].
+    /// This VM does not invent occupancy SM counts this slice.
+    pub fn mem_pool_set_access_with_flags(
+        &mut self,
+        pool: PoolId,
+        device: DeviceId,
+        flags: u32,
+    ) -> Result<(), SimError> {
+        self.pool_set_access_with_flags(pool, device, flags)
     }
 
     /// `cudaMemPoolSetAccess` with a descriptor array (`descList`, `count`).
