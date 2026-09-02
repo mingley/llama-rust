@@ -16802,6 +16802,16 @@ impl Sim {
         Ok(())
     }
 
+    /// `cuMemHostUnregister`. Identity with [`Self::host_unregister`]
+    /// (`cudaHostUnregister`).
+    ///
+    /// Capture refused. Distinct from [`Self::mem_host_register`]. This VM does
+    /// not invent a register-size identity this slice (`host_register_with_size`
+    /// stays).
+    pub fn mem_host_unregister(&mut self, id: AllocId) -> Result<(), SimError> {
+        self.host_unregister(id)
+    }
+
     /// Drop pageable host memory from [`Self::alloc_host`]. Unregister first if pinned.
     pub fn free_host(&mut self, id: AllocId) -> Result<(), SimError> {
         self.fail_if_capturing("cannot capture alloc/free")?;

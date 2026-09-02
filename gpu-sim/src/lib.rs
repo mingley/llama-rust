@@ -532,6 +532,8 @@
 //! [`host_get_device_pointer_with_flags`](Sim::host_get_device_pointer_with_flags)). Query; legal during capture. No Engine `--mem-host-get-device-pointer`.
 //! [`mem_host_register`](Sim::mem_host_register) is `cuMemHostRegister` (identity with
 //! [`host_register_with_flags`](Sim::host_register_with_flags)). Capture refused. No Engine `--mem-host-register`.
+//! [`mem_host_unregister`](Sim::mem_host_unregister) is `cuMemHostUnregister` (identity with
+//! [`host_unregister`](Sim::host_unregister)). Capture refused. No Engine `--mem-host-unregister`.
 //! [`Sim::pointer_get_attributes`] is `cudaPointerGetAttributes`.
 //! [`pointer_set_attribute`](Sim::pointer_set_attribute) /
 //! [`pointer_get_attribute`](Sim::pointer_get_attribute) are
@@ -33149,6 +33151,49 @@ mod tests {
         }
         let _g = sim.end_capture().unwrap();
         sim.mem_free_host(pin).unwrap();
+        sim.free_host(pageable).unwrap();
+    }
+
+    #[test]
+    fn mem_host_unregister_is_cu_mem_host_unregister() {
+        let mut sim = Sim::new(h100());
+        let d = DeviceId(0);
+        let s = StreamId(0);
+        match sim.mem_host_unregister(AllocId(99)) {
+            Err(SimError::UnknownAlloc { alloc }) => assert_eq!(alloc, AllocId(99)),
+            other => panic!("{other:?}"),
+        }
+        match sim.host_unregister(AllocId(99)) {
+            Err(SimError::UnknownAlloc { alloc }) => assert_eq!(alloc, AllocId(99)),
+            other => panic!("{other:?}"),
+        }
+        let pageable = sim.alloc_host(64).unwrap();
+        match sim.mem_host_unregister(pageable) {
+            Err(SimError::Invalid { why }) => assert!(why.contains("not registered"), "{why}"),
+            other => panic!("{other:?}"),
+        }
+        sim.mem_host_register(pageable, HostAllocFlags::DEFAULT)
+            .unwrap();
+        assert!(sim.is_host_registered(pageable).unwrap());
+        sim.mem_host_unregister(pageable).unwrap();
+        assert!(!sim.is_host_registered(pageable).unwrap());
+        match sim.mem_host_unregister(pageable) {
+            Err(SimError::Invalid { why }) => assert!(why.contains("not registered"), "{why}"),
+            other => panic!("{other:?}"),
+        }
+        sim.mem_host_register(pageable, HostAllocFlags::DEFAULT)
+            .unwrap();
+        sim.begin_capture(d, s).unwrap();
+        match sim.mem_host_unregister(pageable) {
+            Err(SimError::Invalid { why }) => assert!(why.contains("capture"), "{why}"),
+            other => panic!("{other:?}"),
+        }
+        match sim.host_unregister(pageable) {
+            Err(SimError::Invalid { why }) => assert!(why.contains("capture"), "{why}"),
+            other => panic!("{other:?}"),
+        }
+        let _g = sim.end_capture().unwrap();
+        sim.host_unregister(pageable).unwrap();
         sim.free_host(pageable).unwrap();
     }
 
