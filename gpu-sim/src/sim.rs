@@ -10046,8 +10046,7 @@ impl Sim {
     /// [`Self::graph_add_kernel`] (`cudaGraphAddKernelNode`).
     ///
     /// Capture refused. Distinct from
-    /// [`Self::add_graph_event_wait`]. This VM does not invent
-    /// occupancy SM counts this slice.
+    /// [`Self::add_graph_event_wait`].
     pub fn add_graph_kernel(
         &mut self,
         graph: GraphId,
@@ -10107,9 +10106,21 @@ impl Sim {
     /// [`Self::graph_add_memcpy_2d`] requires [`MemcpyOp::is_2d`].
     /// [`Self::graph_add_memcpy_3d`] requires [`MemcpyOp::is_3d`].
     /// [`MemcpyNodeParams::ctx`] stays [`None`]. Pin a green context through
-    /// [`Self::graph_add_node`] with [`GraphNodeParams::Memcpy`].
+    /// [`Self::graph_add_node`] with [`GraphNodeParams::Memcpy`]. Driver
+    /// `cuGraphAddMemcpyNode` is
+    /// [`Self::add_graph_memcpy`].
     pub fn graph_add_memcpy(&mut self, graph: GraphId, op: MemcpyOp) -> Result<(), SimError> {
         self.graph_add_memcpy_params(graph, MemcpyNodeParams { op, ctx: None })
+    }
+
+    /// `cuGraphAddMemcpyNode`. Identity with
+    /// [`Self::graph_add_memcpy`] (`cudaGraphAddMemcpyNode`).
+    ///
+    /// Capture refused. Distinct from
+    /// [`Self::add_graph_kernel`]. This VM does not invent
+    /// occupancy SM counts this slice.
+    pub fn add_graph_memcpy(&mut self, graph: GraphId, op: MemcpyOp) -> Result<(), SimError> {
+        self.graph_add_memcpy(graph, op)
     }
 
     fn graph_add_memcpy_params(
