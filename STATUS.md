@@ -5,6 +5,16 @@ Visible five-turn extract: [docs/chatgpt-share-6a920fe1.md](docs/chatgpt-share-6
 Complete share-API extract: [docs/chatgpt-share-6a920fe1/](docs/chatgpt-share-6a920fe1/).
 Work lands on `main`. No PRs.
 
+## Shipped 2026-09-02 — CUDA `cuTexRefSetMipmappedArray`
+
+`gpu-sim` `Sim::tex_ref_set_mipmapped_array` is `cuTexRefSetMipmappedArray`.
+Always Invalid `"texref setmip"` because CUDA texture references are not
+modeled. Query; legal during capture. Distinct from
+`tex_ref_set_array` (why is not `"texref setarr"`) and
+`mipmapped_array_create` (why is not `"mipmapped array"`).
+This VM does not invent `cuTexRefSetAddress` or Engine `--texref-setmip`.
+`gpu-profile capture` is still refused. Dual score still has no `$/M tokens`.
+
 ## Shipped 2026-09-02 — CUDA `cuTexRefSetArray`
 
 `gpu-sim` `Sim::tex_ref_set_array` is `cuTexRefSetArray`.

@@ -663,6 +663,8 @@ handles; no Engine flag).
 handles; no Engine flag).
 `gpu-sim` `tex_ref_set_array` is `cuTexRefSetArray` (Invalid; no `CUtexref`
 or `CUarray` handles; no Engine flag).
+`gpu-sim` `tex_ref_set_mipmapped_array` is `cuTexRefSetMipmappedArray`
+(Invalid; no `CUtexref` or mipmapped-array handles; no Engine flag).
 `gpu-sim` `mipmapped_array_create` is `cuMipmappedArrayCreate` (Invalid;
 CUDA mipmapped arrays are not modeled; no Engine flag).
 `gpu-sim` `mipmapped_array_get_level` is `cuMipmappedArrayGetLevel`
