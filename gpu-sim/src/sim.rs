@@ -11750,8 +11750,7 @@ impl Sim {
     /// with edgeData).
     ///
     /// Query; legal during capture. Distinct from
-    /// [`Self::get_graph_node_dependent_nodes`]. This VM does not invent
-    /// occupancy SM counts this slice.
+    /// [`Self::get_graph_node_dependent_nodes`].
     pub fn get_graph_node_dependent_nodes_with_data(
         &self,
         graph: GraphId,
@@ -11816,7 +11815,9 @@ impl Sim {
         Ok(graph)
     }
 
-    /// `cudaGraphNodeGetType` for node `i`.
+    /// `cudaGraphNodeGetType` for node `i`. Driver
+    /// `cuGraphNodeGetType` is
+    /// [`Self::get_graph_node_type`].
     pub fn graph_node_kind(&self, graph: GraphId, i: usize) -> Result<GraphNodeKind, SimError> {
         let g = self.graphs.get(&graph).ok_or(SimError::Invalid {
             why: "unknown graph",
@@ -11825,6 +11826,20 @@ impl Sim {
             why: "graph dependency",
         })?)?;
         Ok(node_kind(&st.kind))
+    }
+
+    /// `cuGraphNodeGetType`. Identity with
+    /// [`Self::graph_node_kind`] (`cudaGraphNodeGetType`).
+    ///
+    /// Query; legal during capture. Distinct from
+    /// [`Self::graph_node_find_in_clone`]. This VM does not invent
+    /// occupancy SM counts this slice.
+    pub fn get_graph_node_type(
+        &self,
+        graph: GraphId,
+        node: usize,
+    ) -> Result<GraphNodeKind, SimError> {
+        self.graph_node_kind(graph, node)
     }
 
     /// `cudaGraphKernelNodeGetAttribute` for priority on the graph definition.
