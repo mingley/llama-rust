@@ -4948,8 +4948,7 @@ impl Sim {
     /// [`Self::instantiate_graph`] (`cudaGraphInstantiate`).
     ///
     /// Host-synchronous. Capture refused. Distinct from
-    /// [`Self::instantiate_graph_with_flags`]. This VM does not invent
-    /// occupancy SM counts this slice.
+    /// [`Self::instantiate_graph_with_flags`].
     pub fn graph_instantiate(&mut self, graph: GraphId) -> Result<GraphId, SimError> {
         self.instantiate_graph(graph)
     }
@@ -4989,7 +4988,9 @@ impl Sim {
     /// [`GraphInstantiateFlags::DEVICE_LAUNCH`] cannot combine
     /// with [`GraphInstantiateFlags::AUTO_FREE_ON_LAUNCH`] (Invalid
     /// `"device launch auto free"`). Instantiating an exec id is a no-op when
-    /// `flags` adds no new bits.
+    /// `flags` adds no new bits. Driver
+    /// `cuGraphInstantiateWithFlags` is
+    /// [`Self::graph_instantiate_with_flags`].
     pub fn instantiate_graph_with_flags(
         &mut self,
         graph: GraphId,
@@ -5000,6 +5001,20 @@ impl Sim {
             ..GraphInstantiateParams::default()
         };
         self.instantiate_graph_with_params(graph, &mut params)
+    }
+
+    /// `cuGraphInstantiateWithFlags`. Identity with
+    /// [`Self::instantiate_graph_with_flags`] (`cudaGraphInstantiateWithFlags`).
+    ///
+    /// Host-synchronous. Capture refused. Distinct from
+    /// [`Self::graph_instantiate`]. This VM does not invent
+    /// occupancy SM counts this slice.
+    pub fn graph_instantiate_with_flags(
+        &mut self,
+        graph: GraphId,
+        flags: u32,
+    ) -> Result<GraphId, SimError> {
+        self.instantiate_graph_with_flags(graph, flags)
     }
 
     /// `cudaGraphInstantiateWithParams`. Instantiate is host-synchronous.
