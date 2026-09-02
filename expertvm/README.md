@@ -656,6 +656,7 @@ compiled kernel exists; no Engine flag).
 `gpu-sim` `add_graph_wait_value64` is graph `cuStreamWaitValue64` (identity with `graph_add_wait_value64`; no Engine flag).
 `gpu-sim` `add_graph_wait_value32` is graph `cuStreamWaitValue32` (identity with `graph_add_wait_value32`; no Engine flag).
 `gpu-sim` `add_graph_wait_value64_with_flags` is graph `cuStreamWaitValue64` flags (identity with `graph_add_wait_value64_with_flags`; no Engine flag).
+`gpu-sim` `add_graph_wait_value32_with_flags` is graph `cuStreamWaitValue32` flags (identity with `graph_add_wait_value32_with_flags`; no Engine flag).
 `gpu-sim` `mem_alloc` is `cuMemAlloc` (identity with `malloc`; no Engine flag).
 `gpu-sim` `mem_free` is `cuMemFree` (identity with `free_sync`; no Engine flag).
 `gpu-sim` `mem_free_host` is `cuMemFreeHost` (identity with `free_host_pinned`; no Engine flag).
@@ -836,6 +837,7 @@ compiled kernel exists; no Engine flag).
 `gpu-sim` `add_graph_wait_value64` is graph `cuStreamWaitValue64` (identity with `graph_add_wait_value64`; no Engine flag).
 `gpu-sim` `add_graph_wait_value32` is graph `cuStreamWaitValue32` (identity with `graph_add_wait_value32`; no Engine flag).
 `gpu-sim` `add_graph_wait_value64_with_flags` is graph `cuStreamWaitValue64` flags (identity with `graph_add_wait_value64_with_flags`; no Engine flag).
+`gpu-sim` `add_graph_wait_value32_with_flags` is graph `cuStreamWaitValue32` flags (identity with `graph_add_wait_value32_with_flags`; no Engine flag).
 `gpu-sim` `func_is_loaded` is `cuFuncIsLoaded` (`false` until a compiled
 kernel exists; no Engine flag).
 `gpu-sim` `func_load` is `cuFuncLoad` (Invalid; no compiled kernel; no
