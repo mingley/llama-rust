@@ -16899,7 +16899,6 @@ impl Sim {
     /// [`Self::pool_import`] (`cudaMemPoolImportFromShareableHandle`).
     ///
     /// Capture refused. Distinct from [`Self::mem_pool_export`].
-    /// This VM does not invent occupancy SM counts this slice.
     pub fn mem_pool_import(
         &mut self,
         device: DeviceId,
@@ -16929,6 +16928,8 @@ impl Sim {
     /// [`MemHandleType::POSIX_FILE_DESCRIPTOR`] only. Flags must be
     /// [`MemPoolExportFlags::DEFAULT`]. Typed [`Self::pool_export`] stays.
     /// Host-synchronous; capture refused.
+    /// Driver `cuMemPoolExportToShareableHandle` type is [`Self::mem_pool_export_with_type`].
+    /// Identity wrap [`Self::mem_pool_export_with_type`].
     pub fn pool_export_with_type(
         &mut self,
         pool: PoolId,
@@ -16938,6 +16939,20 @@ impl Sim {
         self.fail_if_capturing("cannot capture mempool")?;
         Self::check_pool_export_type(handle_type, flags, "pool export flags")?;
         self.pool_export(pool)
+    }
+
+    /// `cuMemPoolExportToShareableHandle` type. Identity with
+    /// [`Self::pool_export_with_type`] (`cudaMemPoolExportToShareableHandle` type).
+    ///
+    /// Capture refused. Distinct from [`Self::mem_pool_import`].
+    /// This VM does not invent occupancy SM counts this slice.
+    pub fn mem_pool_export_with_type(
+        &mut self,
+        pool: PoolId,
+        handle_type: u64,
+        flags: u32,
+    ) -> Result<ShareableHandleId, SimError> {
+        self.pool_export_with_type(pool, handle_type, flags)
     }
 
     /// `cudaMemPoolImportFromShareableHandle` with handle type and flags.
