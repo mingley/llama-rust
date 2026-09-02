@@ -18349,7 +18349,6 @@ impl Sim {
     /// [`Self::va_release_handle`] (`cuMemRelease`).
     ///
     /// Capture refused. Distinct from [`Self::mem_map_handle_with_size`].
-    /// This VM does not invent occupancy SM counts this slice.
     pub fn mem_release_handle(&mut self, handle: MemHandleId) -> Result<(), SimError> {
         self.va_release_handle(handle)
     }
@@ -18360,6 +18359,8 @@ impl Sim {
     /// count increments (a released-but-mapped handle is restored to one ref).
     /// A combined [`Self::va_map`] / [`Self::va_map_range`] span is promoted
     /// so later unmaps do not refund until [`Self::va_release_handle`].
+    /// Driver `cuMemRetainAllocationHandle` is [`Self::mem_retain_handle`].
+    /// Identity wrap [`Self::mem_retain_handle`].
     pub fn va_retain_handle(
         &mut self,
         id: AllocId,
@@ -18402,6 +18403,20 @@ impl Sim {
         );
         let _old = self.vmm_handle_at.insert(key, h);
         Ok(h)
+    }
+
+    /// `cuMemRetainAllocationHandle`. Identity with
+    /// [`Self::va_retain_handle`] (`cuMemRetainAllocationHandle`).
+    ///
+    /// Capture refused. Distinct from [`Self::mem_release_handle`].
+    /// This VM does not invent occupancy SM counts this slice.
+    pub fn mem_retain_handle(
+        &mut self,
+        id: AllocId,
+        device: DeviceId,
+        offset: u64,
+    ) -> Result<MemHandleId, SimError> {
+        self.va_retain_handle(id, device, offset)
     }
 
     /// Whether `handle` still has a `cuMemCreate` / retain ref.
