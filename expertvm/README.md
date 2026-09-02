@@ -550,6 +550,7 @@ compiled kernel exists; no Engine flag).
 `gpu-sim` `mem_advise_v2` is `cuMemAdvise_v2` (identity with `mem_advise_with_location`; no Engine flag).
 `gpu-sim` `mem_range_get` is `cuMemRangeGetAttribute` (identity with `mem_range_get_attribute`; no Engine flag).
 `gpu-sim` `mem_range_get_n` is `cuMemRangeGetAttribute` count (identity with `mem_range_get_attribute_with_size`; no Engine flag).
+`gpu-sim` `mem_range_gets` is `cuMemRangeGetAttributes` (identity with `mem_range_get_attributes`; no Engine flag).
 `gpu-sim` `func_is_loaded` is `cuFuncIsLoaded` (`false` until a compiled
 kernel exists; no Engine flag).
 `gpu-sim` `func_load` is `cuFuncLoad` (Invalid; no compiled kernel; no

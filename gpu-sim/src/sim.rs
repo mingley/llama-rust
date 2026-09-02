@@ -14727,9 +14727,7 @@ impl Sim {
     /// [`Self::mem_range_get_attribute_with_size`]
     /// (`cudaMemRangeGetAttribute` count).
     ///
-    /// Query; legal during capture. Distinct from [`Self::mem_range_get`]. This
-    /// VM does not invent `cuMemRangeGetAttributes` this slice
-    /// (`mem_range_get_attributes` stays).
+    /// Query; legal during capture. Distinct from [`Self::mem_range_get`].
     pub fn mem_range_get_n(
         &self,
         alloc: AllocId,
@@ -14745,6 +14743,7 @@ impl Sim {
     /// `attrs` is an empty vec. All-or-nothing: a non-managed pointer fails
     /// the whole call. The CUDA `count` is
     /// [`Self::mem_range_get_attributes_with_size`].
+    /// Driver `cuMemRangeGetAttributes` is [`Self::mem_range_gets`].
     pub fn mem_range_get_attributes(
         &self,
         alloc: AllocId,
@@ -14752,6 +14751,20 @@ impl Sim {
     ) -> Result<Vec<MemRangeAttrValue>, SimError> {
         let size = self.alloc_ref(alloc)?.bytes;
         self.mem_range_get_attributes_with_size(alloc, size, attrs)
+    }
+
+    /// `cuMemRangeGetAttributes`. Identity with [`Self::mem_range_get_attributes`]
+    /// (`cudaMemRangeGetAttributes`).
+    ///
+    /// Query; legal during capture. Distinct from [`Self::mem_range_get`]. This
+    /// VM does not invent a `cuMemRangeGetAttributes` count this slice
+    /// (`mem_range_get_attributes_with_size` stays).
+    pub fn mem_range_gets(
+        &self,
+        alloc: AllocId,
+        attrs: &[MemRangeAttr],
+    ) -> Result<Vec<MemRangeAttrValue>, SimError> {
+        self.mem_range_get_attributes(alloc, attrs)
     }
 
     /// [`Self::mem_range_get_attributes`] with the CUDA `count` argument.
