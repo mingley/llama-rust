@@ -550,6 +550,8 @@ Engine flag).
 Engine flag).
 `gpu-sim` `link_destroy` is `cuLinkDestroy` (Invalid; no JIT linker; no
 Engine flag).
+`gpu-sim` `link_add_file` is `cuLinkAddFile` (Invalid; no JIT linker; no
+Engine flag).
 `gpu-sim` `get_proc_address` is `cuGetProcAddress` (Invalid; no C ABI
 function pointers; no Engine flag).
 `gpu-sim` `get_export_table` is `cuGetExportTable` (Invalid; no internal

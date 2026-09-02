@@ -1120,7 +1120,9 @@
 //! `"link complete"`). Query; legal during capture. No Engine `--link-complete`.
 //! [`link_destroy`](Sim::link_destroy) is `cuLinkDestroy` (always Invalid
 //! `"link destroy"`). Query; legal during capture. No Engine `--link-destroy`.
-//! [`Sim::runtime_get_version`] is `cudaRuntimeGetVersion` (same
+//! [`link_add_file`](Sim::link_add_file) is `cuLinkAddFile` (always Invalid
+//! `"link file"`). Query; legal during capture. No Engine `--link-add-file`.
+//! [`Sim::runtime_get_version`] is `cudaRuntimeGetVersion` (same)
 //! toolkit). Query; legal during capture. [`device_get`](Sim::device_get) is `cuDeviceGet` (ordinal in range).
 //! [`Sim::device_can_access_peer`] / [`device_get_p2p_attribute`](Sim::device_get_p2p_attribute)
 //! are `cudaDeviceCanAccessPeer` / `cudaDeviceGetP2PAttribute` (topology links;
@@ -19627,6 +19629,64 @@ mod tests {
             Err(SimError::Invalid { why }) => {
                 assert!(why.contains("jit linker"), "{why}");
                 assert!(!why.contains("link destroy"), "{why}");
+            }
+            other => panic!("{other:?}"),
+        }
+        match sim.link_add_file(d) {
+            Err(SimError::Invalid { why }) => {
+                assert!(why.contains("link file"), "{why}");
+                assert!(!why.contains("link destroy"), "{why}");
+            }
+            other => panic!("{other:?}"),
+        }
+    }
+
+    #[test]
+    fn link_add_file_is_unsupported() {
+        let mut sim = Sim::new(h100());
+        let d = DeviceId(0);
+        match sim.link_add_file(d) {
+            Err(SimError::Invalid { why }) => {
+                assert!(why.contains("link file"), "{why}");
+                assert!(!why.contains("link add"), "{why}");
+                assert!(!why.contains("library file"), "{why}");
+                assert!(!why.contains("link destroy"), "{why}");
+                assert!(!why.contains("jit linker"), "{why}");
+            }
+            other => panic!("{other:?}"),
+        }
+        sim.begin_capture(d, StreamId(0)).unwrap();
+        match sim.link_add_file(d) {
+            Err(SimError::Invalid { why }) => {
+                assert!(why.contains("link file"), "{why}");
+            }
+            other => panic!("{other:?}"),
+        }
+        let _g = sim.end_capture().unwrap();
+        match sim.link_add_file(DeviceId(99)) {
+            Err(SimError::Invalid { why }) => {
+                assert!(why.contains("device not in profile"), "{why}");
+            }
+            other => panic!("{other:?}"),
+        }
+        match sim.link_add_data(d) {
+            Err(SimError::Invalid { why }) => {
+                assert!(why.contains("link add"), "{why}");
+                assert!(!why.contains("link file"), "{why}");
+            }
+            other => panic!("{other:?}"),
+        }
+        match sim.library_load_from_file(d) {
+            Err(SimError::Invalid { why }) => {
+                assert!(why.contains("library file"), "{why}");
+                assert!(!why.contains("link file"), "{why}");
+            }
+            other => panic!("{other:?}"),
+        }
+        match sim.link_destroy(d) {
+            Err(SimError::Invalid { why }) => {
+                assert!(why.contains("link destroy"), "{why}");
+                assert!(!why.contains("link file"), "{why}");
             }
             other => panic!("{other:?}"),
         }

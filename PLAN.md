@@ -7164,7 +7164,14 @@ model, do not celebrate the sim.
     or `cudaChooseDevice`. `gpu-profile capture` is still refused. Dual
     score still has no `$/M tokens`.
 
-716. [ ] Next numbered PLAN item after 715 is the next `gpu-sim` / Engine /
+716. [x] `gpu-sim` `Sim::link_add_file` is
+    `cuLinkAddFile`. Always Invalid `"link file"`
+    because the CUDA driver JIT linker is not modeled. Query; legal during capture.
+    Distinct from `link_add_data`. This VM does not invent `cuFuncLoad`, Engine `--link-add-file`,
+    or `cudaChooseDevice`. `gpu-profile capture` is still refused. Dual
+    score still has no `$/M tokens`.
+
+717. [ ] Next numbered PLAN item after 716 is the next `gpu-sim` / Engine /
     serve / expertvm mechanical API that is still missing, or the next official
     decode family. Prefer remaining CUDA-shaped twins over more
     OpenAI HTTP veneer. Do not invent F32 `output.scale`. Do not invent a
@@ -7803,6 +7810,9 @@ model, do not celebrate the sim.
     Do not invent a second `cuLinkDestroy` / `link_destroy`.
     Do not invent Engine `--link-destroy`. Do not invent
     `cuLinkAddFile` this slice. Do not reverse `"link destroy"`.
+    Do not invent a second `cuLinkAddFile` / `link_add_file`.
+    Do not invent Engine `--link-add-file`. Do not invent
+    `cuFuncLoad` this slice. Do not reverse `"link file"`.
     Do not invent a second `cudaStreamAddCallback`.
     Do not invent Engine `--stream-callback` (same wall as second live
     `cudaLaunchHostFunc` after miss DMA).
@@ -8521,6 +8531,9 @@ model, do not celebrate the sim.
     Do not invent a second `link_destroy` API. Do not invent
     Engine `--destroy-link`. Do not invent a CUlinkState destroy
     this slice. Do not reverse Link Destroy remaining unsupported.
+    Do not invent a second `link_add_file` API. Do not invent
+    Engine `--add-link-file`. Do not invent a JIT input path
+    this slice. Do not reverse Link AddFile remaining unsupported.
     Do not invent a second DeviceLaunch in-flight destroy-complete check or Engine
     `--device-launch-destroy`. Do not abort an in-flight DeviceLaunch when
     `destroy_graph` succeeds. Do not delay destroy of an idle exec. Do not invent
@@ -9422,6 +9435,9 @@ model, do not celebrate the sim.
     Do not invent a second `link_destroy` method. Do not
     invent Engine `--cu-link-destroy`. Do not reverse wrapping
     cuLinkDestroy Invalid.
+    Do not invent a second `link_add_file` method. Do not
+    invent Engine `--cu-link-add-file`. Do not reverse wrapping
+    cuLinkAddFile Invalid.
     Do not
     spend the next item on an OpenAI-compatible HTTP veneer.
 

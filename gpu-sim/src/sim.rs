@@ -21226,7 +21226,8 @@ impl Sim {
     /// and from [`Self::kernel_get_attribute`] and from
     /// [`Self::kernel_set_attribute`] and from
     /// [`Self::kernel_set_cache_config`] and from [`Self::link_add_data`]
-    /// and from [`Self::link_complete`] and from [`Self::link_destroy`].
+    /// and from [`Self::link_complete`] and from [`Self::link_destroy`]
+    /// and from [`Self::link_add_file`].
     /// Unknown devices
     /// are Invalid `"device not in profile"`. Query; legal during capture.
     pub fn link_create(&self, device: DeviceId) -> Result<(), SimError> {
@@ -21239,7 +21240,7 @@ impl Sim {
     /// Always Invalid `"link add"` (this VM has no NVRTC and no cubin
     /// linker). Distinct from [`Self::link_create`] (why is not
     /// `"jit linker"`) and from [`Self::library_load_data`] and from
-    /// [`Self::link_complete`].
+    /// [`Self::link_complete`] and from [`Self::link_add_file`].
     /// Unknown devices are Invalid `"device not in profile"`. Query; legal
     /// during capture.
     pub fn link_add_data(&self, device: DeviceId) -> Result<(), SimError> {
@@ -21267,7 +21268,7 @@ impl Sim {
     /// Always Invalid `"link destroy"` (this VM has no NVRTC and no cubin
     /// linker). Distinct from [`Self::link_complete`] (why is not
     /// `"link complete"`) and from [`Self::link_add_data`] and from
-    /// [`Self::link_create`].
+    /// [`Self::link_create`] and from [`Self::link_add_file`].
     /// Unknown devices are Invalid `"device not in profile"`. Query; legal
     /// during capture.
     pub fn link_destroy(&self, device: DeviceId) -> Result<(), SimError> {
@@ -21275,6 +21276,19 @@ impl Sim {
         Err(SimError::Invalid {
             why: "link destroy",
         })
+    }
+
+    /// `cuLinkAddFile`. The CUDA driver JIT linker is not modeled.
+    ///
+    /// Always Invalid `"link file"` (this VM has no NVRTC and no cubin
+    /// path). Distinct from [`Self::link_add_data`] (why is not
+    /// `"link add"`) and from [`Self::library_load_from_file`] (why is not
+    /// `"library file"`) and from [`Self::link_destroy`].
+    /// Unknown devices are Invalid `"device not in profile"`. Query; legal
+    /// during capture.
+    pub fn link_add_file(&self, device: DeviceId) -> Result<(), SimError> {
+        let _gpu = self.profile.gpu(device)?;
+        Err(SimError::Invalid { why: "link file" })
     }
 
     /// `cudaRuntimeGetVersion`. Query; legal during capture.
