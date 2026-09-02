@@ -19231,7 +19231,6 @@ impl Sim {
     /// [`Self::va_unmap`] (`cuMemUnmap` + `cuMemRelease` of every physical).
     ///
     /// Capture refused. Distinct from [`Self::mem_retain_handle`].
-    /// This VM does not invent occupancy SM counts this slice.
     pub fn mem_unmap(&mut self, id: AllocId) -> Result<(), SimError> {
         self.va_unmap(id)
     }
@@ -19241,6 +19240,8 @@ impl Sim {
     /// `size` must equal the reserved bytes. Other sizes Invalid `"unmap size"`.
     /// Partial unmap is [`Self::va_unmap_range`]. Host-synchronous; capture
     /// refused.
+    /// Driver `cuMemUnmap` size is [`Self::mem_unmap_with_size`].
+    /// Identity wrap [`Self::mem_unmap_with_size`].
     pub fn va_unmap_with_size(&mut self, id: AllocId, size: u64) -> Result<(), SimError> {
         self.fail_if_capturing("cannot capture alloc/free")?;
         self.synchronize()?;
@@ -19268,6 +19269,15 @@ impl Sim {
         a.vmm_write_by.clear();
         self.drop_multicast_va(id);
         Ok(())
+    }
+
+    /// `cuMemUnmap` size. Identity with
+    /// [`Self::va_unmap_with_size`] (`cuMemUnmap` size).
+    ///
+    /// Capture refused. Distinct from [`Self::mem_unmap`].
+    /// This VM does not invent occupancy SM counts this slice.
+    pub fn mem_unmap_with_size(&mut self, id: AllocId, size: u64) -> Result<(), SimError> {
+        self.va_unmap_with_size(id, size)
     }
 
     /// Unmap one exact `(device, offset, bytes)` physical. The VA stays reserved.
