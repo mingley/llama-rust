@@ -22438,7 +22438,6 @@ impl Sim {
     /// [`Self::kernel_bufs_with`] (`cudaLaunchKernelEx` spans).
     ///
     /// Capture legal. Distinct from [`Self::launch_kernel_ex`].
-    /// This VM does not invent occupancy SM counts this slice.
     pub fn launch_kernel_ex_bufs(
         &mut self,
         device: DeviceId,
@@ -22676,6 +22675,9 @@ impl Sim {
     /// Per device (this VM is not per kernel-function object). Launch Default
     /// inherits this before the device config. Launch FourByte / EightByte
     /// still override. Decode identity stays unset.
+    ///
+    /// Driver `cuFuncSetSharedMemConfig` is [`Self::func_set_shared_mem_config`].
+    /// Identity wrap [`Self::func_set_shared_mem_config`].
     pub fn set_func_shared_mem_config(
         &mut self,
         device: DeviceId,
@@ -22686,6 +22688,19 @@ impl Sim {
         self.gpu_rt_mut(device)?.func_shared_mem_config = mode;
         self.clock = self.clock.saturating_add(1);
         Ok(())
+    }
+
+    /// `cuFuncSetSharedMemConfig`. Identity with
+    /// [`Self::set_func_shared_mem_config`] (`cudaFuncSetSharedMemConfig`).
+    ///
+    /// Capture refused. Distinct from [`Self::launch_kernel_ex_bufs`].
+    /// This VM does not invent occupancy SM counts this slice.
+    pub fn func_set_shared_mem_config(
+        &mut self,
+        device: DeviceId,
+        mode: SharedMemoryMode,
+    ) -> Result<(), SimError> {
+        self.set_func_shared_mem_config(device, mode)
     }
 
     /// `cudaFuncGetSharedMemConfig`. Query; legal during capture.
