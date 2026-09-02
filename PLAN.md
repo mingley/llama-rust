@@ -8988,7 +8988,14 @@ model, do not celebrate the sim.
     or `cudaChooseDevice`. `gpu-profile capture` is still refused. Dual
     score still has no `$/M tokens`.
 
-976. [ ] Next numbered PLAN item after 975 is the next `gpu-sim` / Engine /
+976. [x] `gpu-sim` `Sim::add_graph_free` is
+    `cuGraphAddMemFreeNode`. Identity with `graph_add_free`
+    (`cudaGraphAddMemFreeNode`). Capture refused. Distinct from
+    `add_graph_alloc_with_access`. This VM does not invent occupancy SM counts, Engine `--graph-add-free`,
+    or `cudaChooseDevice`. `gpu-profile capture` is still refused. Dual
+    score still has no `$/M tokens`.
+
+977. [ ] Next numbered PLAN item after 976 is the next `gpu-sim` / Engine /
     serve / expertvm mechanical API that is still missing, or the next official
     decode family. Prefer remaining CUDA-shaped twins over more
     OpenAI HTTP veneer. Do not invent F32 `output.scale`. Do not invent a
@@ -10407,6 +10414,9 @@ model, do not celebrate the sim.
     Do not invent a second `cuGraphAddMemAllocNode` access / `add_graph_alloc_with_access`.
     Do not invent Engine `--graph-add-alloc-with-access`. Do not invent
     occupancy SM counts this slice. Do not reverse AddGraphAllocWithAccess identity with graph_add_alloc_with_access.
+    Do not invent a second `cuGraphAddMemFreeNode` / `add_graph_free`.
+    Do not invent Engine `--graph-add-free`. Do not invent
+    occupancy SM counts this slice. Do not reverse AddGraphFree identity with graph_add_free.
     Do not invent a second `cudaStreamAddCallback`.
     Do not invent Engine `--stream-callback` (same wall as second live
     `cudaLaunchHostFunc` after miss DMA).
@@ -11905,6 +11915,9 @@ model, do not celebrate the sim.
     Do not invent a second `add_graph_alloc_with_access` API. Do not invent
     Engine `--graph-add-alloc-with-access-identity`. Do not invent a graph-add-free
     this slice. Do not reverse AddGraphAllocWithAccess identity with graph_add_alloc_with_access.
+    Do not invent a second `add_graph_free` API. Do not invent
+    Engine `--graph-add-free-identity`. Do not invent a graph-add-node
+    this slice. Do not reverse AddGraphFree identity with graph_add_free.
     Do not invent a second DeviceLaunch in-flight destroy-complete check or Engine
     `--device-launch-destroy`. Do not abort an in-flight DeviceLaunch when
     `destroy_graph` succeeds. Do not delay destroy of an idle exec. Do not invent
@@ -13586,6 +13599,9 @@ model, do not celebrate the sim.
     Do not invent a second `add_graph_alloc_with_access` method. Do not
     invent Engine `--cu-graph-add-alloc-with-access`. Do not reverse wrapping
     cuGraphAddMemAllocNode access identity.
+    Do not invent a second `add_graph_free` method. Do not
+    invent Engine `--cu-graph-add-free`. Do not reverse wrapping
+    cuGraphAddMemFreeNode identity.
     Do not
     spend the next item on an OpenAI-compatible HTTP veneer.
 

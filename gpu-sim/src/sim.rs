@@ -11341,8 +11341,7 @@ impl Sim {
     /// accessDescs).
     ///
     /// Capture refused. Distinct from
-    /// [`Self::add_graph_alloc`]. This VM does not invent
-    /// occupancy SM counts this slice.
+    /// [`Self::add_graph_alloc`].
     pub fn add_graph_alloc_with_access(
         &mut self,
         graph: GraphId,
@@ -11387,11 +11386,23 @@ impl Sim {
         Ok(())
     }
 
-    /// `cudaGraphAddMemFreeNode` of a pending or live allocation.
+    /// `cudaGraphAddMemFreeNode` of a pending or live allocation. Driver
+    /// `cuGraphAddMemFreeNode` is
+    /// [`Self::add_graph_free`].
     pub fn graph_add_free(&mut self, graph: GraphId, id: AllocId) -> Result<(), SimError> {
         let (device, stream) = self.graph_origin_for_add(graph)?;
         let _a = self.alloc_ref(id)?;
         self.graph_push(graph, device, stream, Kind::Free { id })
+    }
+
+    /// `cuGraphAddMemFreeNode`. Identity with
+    /// [`Self::graph_add_free`] (`cudaGraphAddMemFreeNode`).
+    ///
+    /// Capture refused. Distinct from
+    /// [`Self::add_graph_alloc_with_access`]. This VM does not invent
+    /// occupancy SM counts this slice.
+    pub fn add_graph_free(&mut self, graph: GraphId, id: AllocId) -> Result<(), SimError> {
+        self.graph_add_free(graph, id)
     }
 
     /// `cudaGraphAddDependencies`: `from` must complete before `to` starts.
