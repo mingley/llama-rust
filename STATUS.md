@@ -5,6 +5,13 @@ Visible five-turn extract: [docs/chatgpt-share-6a920fe1.md](docs/chatgpt-share-6
 Complete share-API extract: [docs/chatgpt-share-6a920fe1/](docs/chatgpt-share-6a920fe1/).
 Work lands on `main`. No PRs.
 
+## Shipped 2026-09-02 — CUDA `cuEventCreateWithFlags` disable timing
+
+`gpu-sim` `Sim::event_create_disable_timing` is `cuEventCreateWithFlags` disable timing.
+Identity with `create_event_disable_timing` (`cudaEventCreateWithFlags` DisableTiming). Capture refused. Distinct from `event_create_with_flags`.
+This VM does not invent occupancy SM counts or Engine `--event-create-disable-timing`.
+`gpu-profile capture` is still refused. Dual score still has no `$/M tokens`.
+
 ## Shipped 2026-09-02 — CUDA `cuFuncGetAttribute` max dynamic shared memory
 
 `gpu-sim` `Sim::func_get_max_dynamic_shared_memory` is `cuFuncGetAttribute` max dynamic shared memory.

@@ -3069,8 +3069,20 @@ impl Sim {
     ///
     /// Record / wait / query still work. [`Self::event_elapsed_ns`] is
     /// [`SimError::Invalid`].
+    /// Driver `cuEventCreateWithFlags` disable timing is [`Self::event_create_disable_timing`].
+    /// Identity wrap [`Self::event_create_disable_timing`].
     pub fn create_event_disable_timing(&mut self, event: EventId) -> Result<(), SimError> {
         self.create_event_with_flags(event, EventCreateFlags::DISABLE_TIMING)
+    }
+
+    /// `cuEventCreateWithFlags` disable timing. Identity with
+    /// [`Self::create_event_disable_timing`] (`cudaEventCreateWithFlags` DisableTiming).
+    ///
+    /// Host-synchronous. Capture cannot include it. Distinct from
+    /// [`Self::event_create_with_flags`] and [`Self::event_create`].
+    /// This VM does not invent occupancy SM counts this slice.
+    pub fn event_create_disable_timing(&mut self, event: EventId) -> Result<(), SimError> {
+        self.create_event_disable_timing(event)
     }
 
     /// `cudaEventCreateWithFlags(..., cudaEventInterprocess | cudaEventDisableTiming)`.
@@ -30833,7 +30845,6 @@ impl Sim {
     /// [`Self::max_dynamic_shared_memory`] (`cudaFuncGetAttribute` MaxDynamicSharedMemorySize).
     ///
     /// Query; legal during capture. Distinct from [`Self::func_set_max_dynamic_shared_memory`].
-    /// This VM does not invent occupancy SM counts this slice.
     #[must_use]
     pub fn func_get_max_dynamic_shared_memory(&self, device: DeviceId) -> u32 {
         self.max_dynamic_shared_memory(device)
