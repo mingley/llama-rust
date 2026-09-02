@@ -9824,7 +9824,12 @@ model, do not celebrate the sim.
       `mem_pool_import`. This VM does not invent occupancy SM counts, Engine `--mem-pool-export-with-type`,
       or `cudaChooseDevice`. `gpu-profile capture` is still refused. Dual
       score still has no `$/M tokens`.
-1113. [ ] Next numbered PLAN item after 1112 is the next `gpu-sim` / Engine /
+1113. [x] `gpu-sim` `Sim::mem_pool_import_with_type` is
+      `cuMemPoolImportFromShareableHandle` type. Identity with `pool_import_with_type` (`cudaMemPoolImportFromShareableHandle` type). Capture refused. Distinct from
+      `mem_pool_export_with_type`. This VM does not invent occupancy SM counts, Engine `--mem-pool-import-with-type`,
+      or `cudaChooseDevice`. `gpu-profile capture` is still refused. Dual
+      score still has no `$/M tokens`.
+1114. [ ] Next numbered PLAN item after 1113 is the next `gpu-sim` / Engine /
     serve / expertvm mechanical API that is still missing, or the next official
     decode family. Prefer remaining CUDA-shaped twins over more
     OpenAI HTTP veneer. Do not invent F32 `output.scale`. Do not invent a
@@ -11738,6 +11743,11 @@ model, do not celebrate the sim.
     occupancy SM counts this slice. Do not reverse MemPoolExport type identity with pool_export_with_type.
     Do not invent `pool_import_with_type` as `mem_pool_export_with_type`.
     Do not invent `cuMemPoolImportFromShareableHandle` with type as `mem_pool_export_with_type`.
+    Do not invent a second `cuMemPoolImportFromShareableHandle` type / `mem_pool_import_with_type`.
+    Do not invent Engine `--mem-pool-import-with-type`. Do not invent
+    occupancy SM counts this slice. Do not reverse MemPoolImport type identity with pool_import_with_type.
+    Do not invent `pool_export_ptr` as `mem_pool_import_with_type`.
+    Do not invent `cuMemPoolExportPointer` as `mem_pool_import_with_type`.
     Do not invent a second `cudaStreamAddCallback`.
     Do not invent Engine `--stream-callback` (same wall as second live
     `cudaLaunchHostFunc` after miss DMA).
@@ -13687,6 +13697,11 @@ model, do not celebrate the sim.
     this slice. Do not reverse MemPoolExport type identity with pool_export_with_type.
     Do not wrap `pool_export_with_type` as `mem_pool_export_with_type`.
     Do not wrap `pool_import_with_type` as `mem_pool_export_with_type`.
+    Do not invent a second `mem_pool_import_with_type` API. Do not invent
+    Engine `--mem-pool-import-with-type-identity`. Do not invent a pool-export-ptr
+    this slice. Do not reverse MemPoolImport type identity with pool_import_with_type.
+    Do not wrap `pool_import_with_type` as `mem_pool_import_with_type`.
+    Do not wrap `pool_export_ptr` as `mem_pool_import_with_type`.
     Do not invent a second DeviceLaunch in-flight destroy-complete check or Engine
     `--device-launch-destroy`. Do not abort an in-flight DeviceLaunch when
     `destroy_graph` succeeds. Do not delay destroy of an idle exec. Do not invent
@@ -15779,6 +15794,9 @@ model, do not celebrate the sim.
     Do not invent a second `mem_pool_export_with_type` method. Do not
     invent Engine `--cu-mem-pool-export-with-type`. Do not reverse wrapping
     cuMemPoolExportToShareableHandle type identity. Do not wrap `pool_import_with_type` as `mem_pool_export_with_type`.
+    Do not invent a second `mem_pool_import_with_type` method. Do not
+    invent Engine `--cu-mem-pool-import-with-type`. Do not reverse wrapping
+    cuMemPoolImportFromShareableHandle type identity. Do not wrap `pool_export_ptr` as `mem_pool_import_with_type`.
     Do not
     spend the next item on an OpenAI-compatible HTTP veneer.
 
