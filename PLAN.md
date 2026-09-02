@@ -7388,7 +7388,14 @@ model, do not celebrate the sim.
     or `cudaChooseDevice`. `gpu-profile capture` is still refused. Dual
     score still has no `$/M tokens`.
 
-748. [ ] Next numbered PLAN item after 747 is the next `gpu-sim` / Engine /
+748. [x] `gpu-sim` `Sim::mipmapped_array_get_sparse_properties` is
+    `cuMipmappedArrayGetSparseProperties`. Always Invalid `"mipmap sparse"`
+    because sparse CUDA mipmapped arrays are not modeled. Query; legal during capture.
+    Distinct from `array_get_sparse_properties` and `mem_map_array_async`. This VM does not invent `cuTexRefCreate`, Engine `--mipmap-sparse`,
+    or `cudaChooseDevice`. `gpu-profile capture` is still refused. Dual
+    score still has no `$/M tokens`.
+
+749. [ ] Next numbered PLAN item after 748 is the next `gpu-sim` / Engine /
     serve / expertvm mechanical API that is still missing, or the next official
     decode family. Prefer remaining CUDA-shaped twins over more
     OpenAI HTTP veneer. Do not invent F32 `output.scale`. Do not invent a
@@ -8123,6 +8130,9 @@ model, do not celebrate the sim.
     Do not invent a second `cuMemMapArrayAsync` / `mem_map_array_async`.
     Do not invent Engine `--sparse-map`. Do not invent
     `cuMipmappedArrayGetSparseProperties` this slice. Do not reverse `"sparse map"`.
+    Do not invent a second `cuMipmappedArrayGetSparseProperties` / `mipmapped_array_get_sparse_properties`.
+    Do not invent Engine `--mipmap-sparse`. Do not invent
+    `cuTexRefCreate` this slice. Do not reverse `"mipmap sparse"`.
     Do not invent a second `cudaStreamAddCallback`.
     Do not invent Engine `--stream-callback` (same wall as second live
     `cudaLaunchHostFunc` after miss DMA).
@@ -8937,6 +8947,9 @@ model, do not celebrate the sim.
     Do not invent a second `mem_map_array_async` API. Do not invent
     Engine `--map-array-async`. Do not invent a sparse CUDA array tile
     this slice. Do not reverse Mem MapArrayAsync remaining unsupported.
+    Do not invent a second `mipmapped_array_get_sparse_properties` API. Do not invent
+    Engine `--get-mipmap-sparse`. Do not invent a CUDA_ARRAY_SPARSE_PROPERTIES mipmap
+    this slice. Do not reverse MipmappedArray GetSparseProperties remaining unsupported.
     Do not invent a second DeviceLaunch in-flight destroy-complete check or Engine
     `--device-launch-destroy`. Do not abort an in-flight DeviceLaunch when
     `destroy_graph` succeeds. Do not delay destroy of an idle exec. Do not invent
@@ -9934,6 +9947,9 @@ model, do not celebrate the sim.
     Do not invent a second `mem_map_array_async` method. Do not
     invent Engine `--cu-mem-map-array`. Do not reverse wrapping
     cuMemMapArrayAsync Invalid.
+    Do not invent a second `mipmapped_array_get_sparse_properties` method. Do not
+    invent Engine `--cu-mipmap-sparse`. Do not reverse wrapping
+    cuMipmappedArrayGetSparseProperties Invalid.
     Do not
     spend the next item on an OpenAI-compatible HTTP veneer.
 

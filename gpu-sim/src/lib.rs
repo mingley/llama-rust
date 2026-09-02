@@ -601,6 +601,9 @@
 //! [`mipmapped_array_get_memory_requirements`](Sim::mipmapped_array_get_memory_requirements)
 //! is `cuMipmappedArrayGetMemoryRequirements` (always Invalid `"mipmap memory"`).
 //! Query; legal during capture. No Engine `--mipmap-memory`.
+//! [`mipmapped_array_get_sparse_properties`](Sim::mipmapped_array_get_sparse_properties)
+//! is `cuMipmappedArrayGetSparseProperties` (always Invalid `"mipmap sparse"`).
+//! Query; legal during capture. No Engine `--mipmap-sparse`.
 //! [`mipmapped_array_create`](Sim::mipmapped_array_create) is
 //! `cuMipmappedArrayCreate` (always Invalid `"mipmapped array"`). Query;
 //! legal during capture. No Engine `--mipmap-array`.
@@ -19647,6 +19650,57 @@ mod tests {
             Err(SimError::Invalid { why }) => {
                 assert!(why.contains("async unreg"), "{why}");
                 assert!(!why.contains("sparse map"), "{why}");
+            }
+            other => panic!("{other:?}"),
+        }
+        match sim.mipmapped_array_get_sparse_properties(d) {
+            Err(SimError::Invalid { why }) => {
+                assert!(why.contains("mipmap sparse"), "{why}");
+                assert!(!why.contains("sparse map"), "{why}");
+                assert!(!why.contains("array sparse"), "{why}");
+            }
+            other => panic!("{other:?}"),
+        }
+    }
+
+    #[test]
+    fn mipmapped_array_get_sparse_properties_is_unsupported() {
+        let mut sim = Sim::new(h100());
+        let d = DeviceId(0);
+        match sim.mipmapped_array_get_sparse_properties(d) {
+            Err(SimError::Invalid { why }) => {
+                assert!(why.contains("mipmap sparse"), "{why}");
+                assert!(!why.contains("array sparse"), "{why}");
+                assert!(!why.contains("sparse map"), "{why}");
+                assert!(!why.contains("mipmap memory"), "{why}");
+            }
+            other => panic!("{other:?}"),
+        }
+        sim.begin_capture(d, StreamId(0)).unwrap();
+        match sim.mipmapped_array_get_sparse_properties(d) {
+            Err(SimError::Invalid { why }) => {
+                assert!(why.contains("mipmap sparse"), "{why}");
+            }
+            other => panic!("{other:?}"),
+        }
+        let _g = sim.end_capture().unwrap();
+        match sim.mipmapped_array_get_sparse_properties(DeviceId(99)) {
+            Err(SimError::Invalid { why }) => {
+                assert!(why.contains("device not in profile"), "{why}");
+            }
+            other => panic!("{other:?}"),
+        }
+        match sim.mem_map_array_async(d) {
+            Err(SimError::Invalid { why }) => {
+                assert!(why.contains("sparse map"), "{why}");
+                assert!(!why.contains("mipmap sparse"), "{why}");
+            }
+            other => panic!("{other:?}"),
+        }
+        match sim.array_get_sparse_properties(d) {
+            Err(SimError::Invalid { why }) => {
+                assert!(why.contains("array sparse"), "{why}");
+                assert!(!why.contains("mipmap sparse"), "{why}");
             }
             other => panic!("{other:?}"),
         }
