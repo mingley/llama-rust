@@ -21754,6 +21754,22 @@ impl Sim {
         })
     }
 
+    /// `cuTexRefGetMaxAnisotropy`. CUDA texture references are not modeled.
+    ///
+    /// Always Invalid `"texref getaniso"` (this VM has no `CUtexref`
+    /// anisotropy). Distinct from [`Self::tex_ref_get_mipmap_level_clamp`]
+    /// (why is not `"texref getclamp"`) and from
+    /// [`Self::tex_ref_set_max_anisotropy`] (why is not `"texref aniso"`).
+    /// Unknown devices are Invalid `"device not in profile"`. Query; legal
+    /// during capture. This VM does not invent `cuTexRefGetBorderColor`
+    /// this slice.
+    pub fn tex_ref_get_max_anisotropy(&self, device: DeviceId) -> Result<(), SimError> {
+        let _gpu = self.profile.gpu(device)?;
+        Err(SimError::Invalid {
+            why: "texref getaniso",
+        })
+    }
+
     /// `cuModuleGetSurfRef`. CUDA modules are not modeled.
     ///
     /// Always Invalid `"module surfref"` (this VM has no `CUmodule` and

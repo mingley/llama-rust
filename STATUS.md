@@ -5,6 +5,16 @@ Visible five-turn extract: [docs/chatgpt-share-6a920fe1.md](docs/chatgpt-share-6
 Complete share-API extract: [docs/chatgpt-share-6a920fe1/](docs/chatgpt-share-6a920fe1/).
 Work lands on `main`. No PRs.
 
+## Shipped 2026-09-02 — CUDA `cuTexRefGetMaxAnisotropy`
+
+`gpu-sim` `Sim::tex_ref_get_max_anisotropy` is `cuTexRefGetMaxAnisotropy`.
+Always Invalid `"texref getaniso"` because CUDA texture references are not
+modeled. Query; legal during capture. Distinct from
+`tex_ref_get_mipmap_level_clamp` (why is not `"texref getclamp"`) and
+`tex_ref_set_max_anisotropy` (why is not `"texref aniso"`).
+This VM does not invent `cuTexRefGetBorderColor` or Engine `--texref-getaniso`.
+`gpu-profile capture` is still refused. Dual score still has no `$/M tokens`.
+
 ## Shipped 2026-09-02 — CUDA `cuTexRefGetMipmapLevelClamp`
 
 `gpu-sim` `Sim::tex_ref_get_mipmap_level_clamp` is `cuTexRefGetMipmapLevelClamp`.
