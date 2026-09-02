@@ -16571,6 +16571,7 @@ impl Sim {
     /// `size` must equal the allocation bytes. Other sizes Invalid
     /// `"prefetch size"`. Partial prefetch is not modeled. Typed
     /// [`Self::prefetch`] stays. Capture may record it.
+    /// Driver `cuMemPrefetchAsync` count is [`Self::mem_prefetch_n`].
     pub fn prefetch_with_size(
         &mut self,
         device: DeviceId,
@@ -16597,6 +16598,21 @@ impl Sim {
             },
             stream,
         )
+    }
+
+    /// `cuMemPrefetchAsync` count. Identity with [`Self::prefetch_with_size`]
+    /// (`cudaMemPrefetchAsync` count).
+    ///
+    /// Capture-legal (memcpy). Distinct from [`Self::mem_prefetch`]. This VM
+    /// does not invent `mem_prefetch_host` this slice (`prefetch_host` stays).
+    pub fn mem_prefetch_n(
+        &mut self,
+        device: DeviceId,
+        alloc: AllocId,
+        size: u64,
+        stream: StreamId,
+    ) -> Result<OpId, SimError> {
+        self.prefetch_with_size(device, alloc, size, stream)
     }
 
     /// `cudaMemPrefetchAsync(..., cudaCpuDeviceId)`. Pages leave HBM.
@@ -16682,9 +16698,7 @@ impl Sim {
     /// `cuMemPrefetchAsync_v2`. Identity with [`Self::prefetch_with_flags`]
     /// (`cudaMemPrefetchAsync` flags).
     ///
-    /// Capture-legal (memcpy). Distinct from [`Self::mem_prefetch`]. This VM
-    /// does not invent a `cuMemPrefetchAsync` count this slice
-    /// (`prefetch_with_size` stays).
+    /// Capture-legal (memcpy). Distinct from [`Self::mem_prefetch`].
     pub fn mem_prefetch_v2(
         &mut self,
         device: DeviceId,
