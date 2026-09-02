@@ -19356,7 +19356,6 @@ impl Sim {
     /// [`Self::is_multicast_va`].
     ///
     /// Query; legal during capture. Distinct from [`Self::mem_multicast_binds`].
-    /// This VM does not invent occupancy SM counts this slice.
     #[must_use]
     pub fn mem_is_multicast_va(&self, id: AllocId) -> bool {
         self.is_multicast_va(id)
@@ -24794,6 +24793,8 @@ impl Sim {
     /// GPUDirect RDMA capability, allowed handle types, VMM mapping
     /// base/size at offset 0, hardware decompress (always 0), and the VMM
     /// memory-block id (the [`MemHandleId`] covering offset 0).
+    /// Driver `cuPointerGetAttribute` is [`Self::mem_pointer_get_attribute`].
+    /// Identity wrap [`Self::mem_pointer_get_attribute`].
     pub fn pointer_get_attribute(
         &self,
         alloc: AllocId,
@@ -24875,6 +24876,19 @@ impl Sim {
                     })
             }
         }
+    }
+
+    /// `cuPointerGetAttribute`. Identity with
+    /// [`Self::pointer_get_attribute`] (`cuPointerGetAttribute`).
+    ///
+    /// Query; legal during capture. Distinct from [`Self::mem_is_multicast_va`].
+    /// This VM does not invent occupancy SM counts this slice.
+    pub fn mem_pointer_get_attribute(
+        &self,
+        alloc: AllocId,
+        attr: PointerAttr,
+    ) -> Result<u64, SimError> {
+        self.pointer_get_attribute(alloc, attr)
     }
 
     /// `cuPointerGetAttributes`: batch [`Self::pointer_get_attribute`].
