@@ -5,6 +5,13 @@ Visible five-turn extract: [docs/chatgpt-share-6a920fe1.md](docs/chatgpt-share-6
 Complete share-API extract: [docs/chatgpt-share-6a920fe1/](docs/chatgpt-share-6a920fe1/).
 Work lands on `main`. No PRs.
 
+## Shipped 2026-09-02 — CUDA `cuMemPoolImportFromShareableHandle`
+
+`gpu-sim` `Sim::mem_pool_import` is `cuMemPoolImportFromShareableHandle`.
+Identity with `pool_import` (`cudaMemPoolImportFromShareableHandle`). Capture refused. Distinct from `mem_pool_export`.
+This VM does not invent occupancy SM counts or Engine `--mem-pool-import`.
+`gpu-profile capture` is still refused. Dual score still has no `$/M tokens`.
+
 ## Shipped 2026-09-02 — CUDA `cuMemPoolExportToShareableHandle`
 
 `gpu-sim` `Sim::mem_pool_export` is `cuMemPoolExportToShareableHandle`.

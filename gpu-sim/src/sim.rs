@@ -16858,7 +16858,6 @@ impl Sim {
     /// [`Self::pool_export`] (`cudaMemPoolExportToShareableHandle`).
     ///
     /// Capture refused. Distinct from [`Self::mem_alloc_from_pool`].
-    /// This VM does not invent occupancy SM counts this slice.
     pub fn mem_pool_export(&mut self, pool: PoolId) -> Result<ShareableHandleId, SimError> {
         self.pool_export(pool)
     }
@@ -16868,6 +16867,8 @@ impl Sim {
     /// Returns a new [`PoolId`] that shares live/cached/threshold with the
     /// exporter (no extra HBM). `device` must match the exporter. Capture
     /// cannot include it.
+    /// Driver `cuMemPoolImportFromShareableHandle` is [`Self::mem_pool_import`].
+    /// Identity wrap [`Self::mem_pool_import`].
     pub fn pool_import(
         &mut self,
         device: DeviceId,
@@ -16892,6 +16893,19 @@ impl Sim {
         p.share_root = Some(root);
         let _prev = self.pools.insert(id, p);
         Ok(id)
+    }
+
+    /// `cuMemPoolImportFromShareableHandle`. Identity with
+    /// [`Self::pool_import`] (`cudaMemPoolImportFromShareableHandle`).
+    ///
+    /// Capture refused. Distinct from [`Self::mem_pool_export`].
+    /// This VM does not invent occupancy SM counts this slice.
+    pub fn mem_pool_import(
+        &mut self,
+        device: DeviceId,
+        handle: ShareableHandleId,
+    ) -> Result<PoolId, SimError> {
+        self.pool_import(device, handle)
     }
 
     fn check_pool_export_type(

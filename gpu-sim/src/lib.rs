@@ -1050,6 +1050,9 @@
 //! [`mem_pool_export`](Sim::mem_pool_export) is `cuMemPoolExportToShareableHandle` (identity with
 //! [`pool_export`](Sim::pool_export)). Capture refused. Distinct from
 //! [`mem_alloc_from_pool`](Sim::mem_alloc_from_pool). No Engine `--mem-pool-export`.
+//! [`mem_pool_import`](Sim::mem_pool_import) is `cuMemPoolImportFromShareableHandle` (identity with
+//! [`pool_import`](Sim::pool_import)). Capture refused. Distinct from
+//! [`mem_pool_export`](Sim::mem_pool_export). No Engine `--mem-pool-import`.
 //! [`Sim::ipc_get_event`] / [`ipc_open_event`](Sim::ipc_open_event) are
 //! `cudaIpcGetEventHandle` / `cudaIpcOpenEventHandle` (interprocess events).
 //! [`Sim::create_shareable_pool`] is `cudaMemPoolCreate` with a POSIX-FD handle
@@ -2124,6 +2127,9 @@
 //! [`mem_pool_export`](Sim::mem_pool_export) is `cuMemPoolExportToShareableHandle` (identity with
 //! [`pool_export`](Sim::pool_export)). Capture refused. Distinct from
 //! [`mem_alloc_from_pool`](Sim::mem_alloc_from_pool). No Engine `--mem-pool-export`.
+//! [`mem_pool_import`](Sim::mem_pool_import) is `cuMemPoolImportFromShareableHandle` (identity with
+//! [`pool_import`](Sim::pool_import)). Capture refused. Distinct from
+//! [`mem_pool_export`](Sim::mem_pool_export). No Engine `--mem-pool-import`.
 //! [`HardwareProfile::host_pin_bytes`] caps `cudaMallocHost` / `cudaHostRegister`.
 //! [`Sim::idle_until`] drains, then jumps the virtual clock (open-loop arrivals).
 //! [`Sim::event_elapsed_ns`] is `cudaEventElapsedTime` in nanoseconds.
@@ -3066,6 +3072,9 @@
 //! [`mem_pool_export`](Sim::mem_pool_export) is `cuMemPoolExportToShareableHandle` (identity with
 //! [`pool_export`](Sim::pool_export)). Capture refused. Distinct from
 //! [`mem_alloc_from_pool`](Sim::mem_alloc_from_pool). No Engine `--mem-pool-export`.
+//! [`mem_pool_import`](Sim::mem_pool_import) is `cuMemPoolImportFromShareableHandle` (identity with
+//! [`pool_import`](Sim::pool_import)). Capture refused. Distinct from
+//! [`mem_pool_export`](Sim::mem_pool_export). No Engine `--mem-pool-import`.
 //! [`mem_host_get_flags`](Sim::mem_host_get_flags) is `cuMemHostGetFlags` (identity with
 //! [`host_get_flags`](Sim::host_get_flags)). Query; legal during capture. No Engine `--mem-host-get-flags`.
 //! [`mem_host_get_device_pointer`](Sim::mem_host_get_device_pointer) is `cuMemHostGetDevicePointer` (identity with
@@ -3974,6 +3983,9 @@
 //! [`mem_pool_export`](Sim::mem_pool_export) is `cuMemPoolExportToShareableHandle` (identity with
 //! [`pool_export`](Sim::pool_export)). Capture refused. Distinct from
 //! [`mem_alloc_from_pool`](Sim::mem_alloc_from_pool). No Engine `--mem-pool-export`.
+//! [`mem_pool_import`](Sim::mem_pool_import) is `cuMemPoolImportFromShareableHandle` (identity with
+//! [`pool_import`](Sim::pool_import)). Capture refused. Distinct from
+//! [`mem_pool_export`](Sim::mem_pool_export). No Engine `--mem-pool-import`.
 //! [`Sim::pointer_get_attributes`] is `cudaPointerGetAttributes`.
 //! [`pointer_set_attribute`](Sim::pointer_set_attribute) /
 //! [`pointer_get_attribute`](Sim::pointer_get_attribute) are
@@ -5289,6 +5301,9 @@
 //! [`mem_pool_export`](Sim::mem_pool_export) is `cuMemPoolExportToShareableHandle` (identity with
 //! [`pool_export`](Sim::pool_export)). Capture refused. Distinct from
 //! [`mem_alloc_from_pool`](Sim::mem_alloc_from_pool). No Engine `--mem-pool-export`.
+//! [`mem_pool_import`](Sim::mem_pool_import) is `cuMemPoolImportFromShareableHandle` (identity with
+//! [`pool_import`](Sim::pool_import)). Capture refused. Distinct from
+//! [`mem_pool_export`](Sim::mem_pool_export). No Engine `--mem-pool-import`.
 //! [`Sim::stream_get_device`] is `cudaStreamGetDevice` / `cuStreamGetDevice`
 //! (the device of the stream; green-ctx streams return the ctx create
 //! device). Query; legal during capture. Distinct from
@@ -6033,6 +6048,9 @@
 //! [`mem_pool_export`](Sim::mem_pool_export) is `cuMemPoolExportToShareableHandle` (identity with
 //! [`pool_export`](Sim::pool_export)). Capture refused. Distinct from
 //! [`mem_alloc_from_pool`](Sim::mem_alloc_from_pool). No Engine `--mem-pool-export`.
+//! [`mem_pool_import`](Sim::mem_pool_import) is `cuMemPoolImportFromShareableHandle` (identity with
+//! [`pool_import`](Sim::pool_import)). Capture refused. Distinct from
+//! [`mem_pool_export`](Sim::mem_pool_export). No Engine `--mem-pool-import`.
 //! [`set_stream_access_policy`](Sim::set_stream_access_policy) is
 //! `cudaStreamAttributeAccessPolicyWindow`: [`kernel`](Sim::kernel) /
 //! [`kernel_bufs`](Sim::kernel_bufs) inherit it; [`kernel_with`](Sim::kernel_with)
@@ -7262,6 +7280,9 @@
 //! [`mem_pool_export`](Sim::mem_pool_export) is `cuMemPoolExportToShareableHandle` (identity with
 //! [`pool_export`](Sim::pool_export)). Capture refused. Distinct from
 //! [`mem_alloc_from_pool`](Sim::mem_alloc_from_pool). No Engine `--mem-pool-export`.
+//! [`mem_pool_import`](Sim::mem_pool_import) is `cuMemPoolImportFromShareableHandle` (identity with
+//! [`pool_import`](Sim::pool_import)). Capture refused. Distinct from
+//! [`mem_pool_export`](Sim::mem_pool_export). No Engine `--mem-pool-import`.
 //! [`Sim::set_stream_priority`] is the priority-only helper;
 //! [`stream_create_with_priority`](Sim::stream_create_with_priority) is
 //! `cudaStreamCreateWithPriority` (flags plus priority; clamped to
@@ -8024,6 +8045,9 @@
 //! [`mem_pool_export`](Sim::mem_pool_export) is `cuMemPoolExportToShareableHandle` (identity with
 //! [`pool_export`](Sim::pool_export)). Capture refused. Distinct from
 //! [`mem_alloc_from_pool`](Sim::mem_alloc_from_pool). No Engine `--mem-pool-export`.
+//! [`mem_pool_import`](Sim::mem_pool_import) is `cuMemPoolImportFromShareableHandle` (identity with
+//! [`pool_import`](Sim::pool_import)). Capture refused. Distinct from
+//! [`mem_pool_export`](Sim::mem_pool_export). No Engine `--mem-pool-import`.
 //! [`destroy_stream`](Sim::destroy_stream) is `cudaStreamDestroy` (returns
 //! immediately; in-flight work still completes; NULL is Invalid; recreate
 //! while unfinished is `"stream in flight"`). Capture cannot include it.
@@ -8766,6 +8790,9 @@
 //! [`mem_pool_export`](Sim::mem_pool_export) is `cuMemPoolExportToShareableHandle` (identity with
 //! [`pool_export`](Sim::pool_export)). Capture refused. Distinct from
 //! [`mem_alloc_from_pool`](Sim::mem_alloc_from_pool). No Engine `--mem-pool-export`.
+//! [`mem_pool_import`](Sim::mem_pool_import) is `cuMemPoolImportFromShareableHandle` (identity with
+//! [`pool_import`](Sim::pool_import)). Capture refused. Distinct from
+//! [`mem_pool_export`](Sim::mem_pool_export). No Engine `--mem-pool-import`.
 //! [`Sim::instantiate_graph`] is `cudaGraphInstantiate` (host-sync; returns a
 //! new exec id; first [`launch_graph`](Sim::launch_graph) of a definition
 //! creates a primary exec). Unused conditional handles are
@@ -9537,6 +9564,9 @@
 //! [`mem_pool_export`](Sim::mem_pool_export) is `cuMemPoolExportToShareableHandle` (identity with
 //! [`pool_export`](Sim::pool_export)). Capture refused. Distinct from
 //! [`mem_alloc_from_pool`](Sim::mem_alloc_from_pool). No Engine `--mem-pool-export`.
+//! [`mem_pool_import`](Sim::mem_pool_import) is `cuMemPoolImportFromShareableHandle` (identity with
+//! [`pool_import`](Sim::pool_import)). Capture refused. Distinct from
+//! [`mem_pool_export`](Sim::mem_pool_export). No Engine `--mem-pool-import`.
 //! [`graph_kernel_node_get_priority`](Sim::graph_kernel_node_get_priority) /
 //! [`graph_kernel_node_set_priority`](Sim::graph_kernel_node_set_priority) /
 //! [`graph_kernel_node_copy_attributes`](Sim::graph_kernel_node_copy_attributes)
@@ -10267,6 +10297,9 @@
 //! [`mem_pool_export`](Sim::mem_pool_export) is `cuMemPoolExportToShareableHandle` (identity with
 //! [`pool_export`](Sim::pool_export)). Capture refused. Distinct from
 //! [`mem_alloc_from_pool`](Sim::mem_alloc_from_pool). No Engine `--mem-pool-export`.
+//! [`mem_pool_import`](Sim::mem_pool_import) is `cuMemPoolImportFromShareableHandle` (identity with
+//! [`pool_import`](Sim::pool_import)). Capture refused. Distinct from
+//! [`mem_pool_export`](Sim::mem_pool_export). No Engine `--mem-pool-import`.
 //! [`graph_kernel_node_get_attribute`](Sim::graph_kernel_node_get_attribute) /
 //! [`graph_exec_kernel_node_get_attribute`](Sim::graph_exec_kernel_node_get_attribute) /
 //! [`graph_kernel_node_set_attribute`](Sim::graph_kernel_node_set_attribute) /
@@ -11003,6 +11036,9 @@
 //! [`mem_pool_export`](Sim::mem_pool_export) is `cuMemPoolExportToShareableHandle` (identity with
 //! [`pool_export`](Sim::pool_export)). Capture refused. Distinct from
 //! [`mem_alloc_from_pool`](Sim::mem_alloc_from_pool). No Engine `--mem-pool-export`.
+//! [`mem_pool_import`](Sim::mem_pool_import) is `cuMemPoolImportFromShareableHandle` (identity with
+//! [`pool_import`](Sim::pool_import)). Capture refused. Distinct from
+//! [`mem_pool_export`](Sim::mem_pool_export). No Engine `--mem-pool-import`.
 //! Device-launch
 //! execs cannot attach programmatic or launch-completion events.
 //! [`kernel_pdl`](Sim::kernel_pdl) is `cudaLaunchKernelEx` PDL: a wait kernel
@@ -11867,6 +11903,9 @@
 //! [`mem_pool_export`](Sim::mem_pool_export) is `cuMemPoolExportToShareableHandle` (identity with
 //! [`pool_export`](Sim::pool_export)). Capture refused. Distinct from
 //! [`mem_alloc_from_pool`](Sim::mem_alloc_from_pool). No Engine `--mem-pool-export`.
+//! [`mem_pool_import`](Sim::mem_pool_import) is `cuMemPoolImportFromShareableHandle` (identity with
+//! [`pool_import`](Sim::pool_import)). Capture refused. Distinct from
+//! [`mem_pool_export`](Sim::mem_pool_export). No Engine `--mem-pool-import`.
 //! [`graph_exec_memcpy_set_params`](Sim::graph_exec_memcpy_set_params) /
 //! [`graph_exec_memcpy_set_params_1d`](Sim::graph_exec_memcpy_set_params_1d) /
 //! [`graph_exec_memcpy_set_params_2d`](Sim::graph_exec_memcpy_set_params_2d) /
@@ -12595,6 +12634,9 @@
 //! [`mem_pool_export`](Sim::mem_pool_export) is `cuMemPoolExportToShareableHandle` (identity with
 //! [`pool_export`](Sim::pool_export)). Capture refused. Distinct from
 //! [`mem_alloc_from_pool`](Sim::mem_alloc_from_pool). No Engine `--mem-pool-export`.
+//! [`mem_pool_import`](Sim::mem_pool_import) is `cuMemPoolImportFromShareableHandle` (identity with
+//! [`pool_import`](Sim::pool_import)). Capture refused. Distinct from
+//! [`mem_pool_export`](Sim::mem_pool_export). No Engine `--mem-pool-import`.
 //! [`get_graph_kernel_node_params`](Sim::get_graph_kernel_node_params) is `cuGraphKernelNodeGetParams` (identity with
 //! [`graph_kernel_get_params`](Sim::graph_kernel_get_params)). Query; legal during capture. Distinct from
 //! [`graph_exec_kernel_get_params`](Sim::graph_exec_kernel_get_params). No Engine `--graph-kernel-get-params`.
@@ -13302,6 +13344,9 @@
 //! [`mem_pool_export`](Sim::mem_pool_export) is `cuMemPoolExportToShareableHandle` (identity with
 //! [`pool_export`](Sim::pool_export)). Capture refused. Distinct from
 //! [`mem_alloc_from_pool`](Sim::mem_alloc_from_pool). No Engine `--mem-pool-export`.
+//! [`mem_pool_import`](Sim::mem_pool_import) is `cuMemPoolImportFromShareableHandle` (identity with
+//! [`pool_import`](Sim::pool_import)). Capture refused. Distinct from
+//! [`mem_pool_export`](Sim::mem_pool_export). No Engine `--mem-pool-import`.
 //! [`graph_exec_kernel_get_params`](Sim::graph_exec_kernel_get_params) /
 //! [`graph_exec_memcpy_get_params`](Sim::graph_exec_memcpy_get_params) /
 //! [`graph_exec_memset_get_params`](Sim::graph_exec_memset_get_params) /
@@ -14000,6 +14045,9 @@
 //! [`mem_pool_export`](Sim::mem_pool_export) is `cuMemPoolExportToShareableHandle` (identity with
 //! [`pool_export`](Sim::pool_export)). Capture refused. Distinct from
 //! [`mem_alloc_from_pool`](Sim::mem_alloc_from_pool). No Engine `--mem-pool-export`.
+//! [`mem_pool_import`](Sim::mem_pool_import) is `cuMemPoolImportFromShareableHandle` (identity with
+//! [`pool_import`](Sim::pool_import)). Capture refused. Distinct from
+//! [`mem_pool_export`](Sim::mem_pool_export). No Engine `--mem-pool-import`.
 //! [`get_graph_exec_kernel_node_params`](Sim::get_graph_exec_kernel_node_params) is `cuGraphExecKernelNodeGetParams` (identity with
 //! [`graph_exec_kernel_get_params`](Sim::graph_exec_kernel_get_params)). Query; legal during capture. Distinct from
 //! [`get_graph_kernel_node_params`](Sim::get_graph_kernel_node_params). No Engine `--graph-exec-kernel-get-params`.
@@ -14704,6 +14752,9 @@
 //! [`mem_pool_export`](Sim::mem_pool_export) is `cuMemPoolExportToShareableHandle` (identity with
 //! [`pool_export`](Sim::pool_export)). Capture refused. Distinct from
 //! [`mem_alloc_from_pool`](Sim::mem_alloc_from_pool). No Engine `--mem-pool-export`.
+//! [`mem_pool_import`](Sim::mem_pool_import) is `cuMemPoolImportFromShareableHandle` (identity with
+//! [`pool_import`](Sim::pool_import)). Capture refused. Distinct from
+//! [`mem_pool_export`](Sim::mem_pool_export). No Engine `--mem-pool-import`.
 //! [`graph_exec_batch_mem_op_set_params`](Sim::graph_exec_batch_mem_op_set_params)
 //! is `cudaGraphExecBatchMemOpNodeSetParams` (id/offset/value; wait vs write,
 //! `bits32`, and compare stay on wait/write nodes;
@@ -44611,6 +44662,61 @@ mod tests {
             other => panic!("{other:?}"),
         }
         match eight.pool_export(p1) {
+            Err(SimError::Invalid { why }) => assert!(why.contains("capture"), "{why}"),
+            other => panic!("{other:?}"),
+        }
+        let g2 = eight.end_capture().unwrap();
+        assert_eq!(eight.graph_len(g2).unwrap(), 0);
+    }
+
+    #[test]
+    fn mem_pool_import_is_cu_mem_pool_import() {
+        let mut sim = Sim::new(h100());
+        let d = DeviceId(0);
+        let s = StreamId(0);
+        match sim.mem_pool_import(d, ShareableHandleId(9999)) {
+            Err(SimError::Invalid { why }) => assert!(why.contains("unknown"), "{why}"),
+            other => panic!("{other:?}"),
+        }
+        match sim.pool_import(d, ShareableHandleId(9999)) {
+            Err(SimError::Invalid { why }) => assert!(why.contains("unknown"), "{why}"),
+            other => panic!("{other:?}"),
+        }
+        let p = sim.create_shareable_pool(d).unwrap();
+        let h = sim.pool_export(p).unwrap();
+        match sim.mem_pool_import(DeviceId(1), h) {
+            Err(SimError::Invalid { why }) => assert!(why.contains("mismatch"), "{why}"),
+            other => panic!("{other:?}"),
+        }
+        match sim.pool_import(DeviceId(1), h) {
+            Err(SimError::Invalid { why }) => assert!(why.contains("mismatch"), "{why}"),
+            other => panic!("{other:?}"),
+        }
+        let _ = sim.mem_pool_import(d, h).unwrap();
+        let _ = sim.pool_import(d, h).unwrap();
+        sim.begin_capture(d, s).unwrap();
+        match sim.mem_pool_import(d, h) {
+            Err(SimError::Invalid { why }) => assert!(why.contains("capture"), "{why}"),
+            other => panic!("{other:?}"),
+        }
+        match sim.pool_import(d, h) {
+            Err(SimError::Invalid { why }) => assert!(why.contains("capture"), "{why}"),
+            other => panic!("{other:?}"),
+        }
+        let g = sim.end_capture().unwrap();
+        assert_eq!(sim.graph_len(g).unwrap(), 0);
+        let mut eight = Sim::new(HardwareProfile::example_8xh100_nvlink());
+        let d1 = DeviceId(1);
+        let p1 = eight.create_shareable_pool(d1).unwrap();
+        let h1 = eight.pool_export(p1).unwrap();
+        let _ = eight.mem_pool_import(d1, h1).unwrap();
+        let _ = eight.pool_import(d1, h1).unwrap();
+        eight.begin_capture(d1, s).unwrap();
+        match eight.mem_pool_import(d1, h1) {
+            Err(SimError::Invalid { why }) => assert!(why.contains("capture"), "{why}"),
+            other => panic!("{other:?}"),
+        }
+        match eight.pool_import(d1, h1) {
             Err(SimError::Invalid { why }) => assert!(why.contains("capture"), "{why}"),
             other => panic!("{other:?}"),
         }
