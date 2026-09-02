@@ -5,6 +5,14 @@ Visible five-turn extract: [docs/chatgpt-share-6a920fe1.md](docs/chatgpt-share-6
 Complete share-API extract: [docs/chatgpt-share-6a920fe1/](docs/chatgpt-share-6a920fe1/).
 Work lands on `main`. No PRs.
 
+## Shipped 2026-09-02 — CUDA `cuGraphConditionalHandleCreate`
+
+`gpu-sim` `Sim::create_graph_conditional_handle` is `cuGraphConditionalHandleCreate`.
+Identity with `graph_conditional_create` (`cudaGraphConditionalHandleCreate`).
+Capture refused. Distinct from `set_graph_exec_conditional_params`.
+This VM does not invent occupancy SM counts or Engine `--graph-conditional-create`.
+`gpu-profile capture` is still refused. Dual score still has no `$/M tokens`.
+
 ## Shipped 2026-09-02 — CUDA `cuGraphExecNodeSetParams` set-conditional
 
 `gpu-sim` `Sim::set_graph_exec_conditional_params` is `cuGraphExecNodeSetParams` for a set-conditional node.

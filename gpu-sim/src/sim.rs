@@ -7825,8 +7825,7 @@ impl Sim {
     /// [`Self::graph_exec_set_conditional_params`] (`cudaGraphExecNodeSetParams`).
     ///
     /// Capture refused. Distinct from
-    /// [`Self::set_graph_conditional_params`]. This VM does not invent
-    /// occupancy SM counts this slice.
+    /// [`Self::set_graph_conditional_params`].
     pub fn set_graph_exec_conditional_params(
         &mut self,
         exec: GraphId,
@@ -10722,13 +10721,29 @@ impl Sim {
     /// it. Illegal on an instantiated exec. Node ctx stays [`None`] unless
     /// [`Self::graph_conditional_create_with_ctx`] pins a green context.
     /// Instantiate requires the handle on a live IF / WHILE / SWITCH node
-    /// ([`GraphInstantiateResult::ConditionalHandleUnused`]).
+    /// ([`GraphInstantiateResult::ConditionalHandleUnused`]). Driver
+    /// `cuGraphConditionalHandleCreate` is
+    /// [`Self::create_graph_conditional_handle`].
     pub fn graph_conditional_create(
         &mut self,
         graph: GraphId,
         default: u32,
     ) -> Result<CondId, SimError> {
         self.graph_conditional_create_with_flags(graph, default, GraphCondFlags::ASSIGN_DEFAULT)
+    }
+
+    /// `cuGraphConditionalHandleCreate`. Identity with
+    /// [`Self::graph_conditional_create`] (`cudaGraphConditionalHandleCreate`).
+    ///
+    /// Capture refused. Distinct from
+    /// [`Self::set_graph_exec_conditional_params`]. This VM does not invent
+    /// occupancy SM counts this slice.
+    pub fn create_graph_conditional_handle(
+        &mut self,
+        graph: GraphId,
+        default: u32,
+    ) -> Result<CondId, SimError> {
+        self.graph_conditional_create(graph, default)
     }
 
     /// `cudaGraphConditionalHandleCreate` with a flags word.
