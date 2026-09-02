@@ -327,6 +327,7 @@ warp scheduler, L1, …   ← do not model
 | `tensor_map_replace_aligned_addr` is Invalid (TMA is not modeled) | `cuTensorMapReplaceAlignedAddr` |
 | `func_get_name` is empty until a compiled kernel exists | `cudaFuncGetName` / `cuFuncGetName` |
 | `func_get_param_info` is Invalid until a compiled kernel exists | `cuFuncGetParamInfo` |
+| `func_get_param_count` is Invalid until a compiled kernel exists | `cuFuncGetParamCount` |
 | `func_is_loaded` is false until a compiled kernel exists | `cuFuncIsLoaded` |
 | `func_load` is Invalid (no compiled kernel / `CUfunction`) | `cuFuncLoad` |
 | `func_get_module` is Invalid until a compiled kernel exists | `cuFuncGetModule` |
@@ -1639,7 +1640,10 @@ compiled kernel exists. Distinct from device `MaxThreadsPerBlock`.
 `numRegs` is not modeled this slice. `func_get_name` is `cudaFuncGetName` /
 `cuFuncGetName` (empty until a compiled kernel exists; distinct from
 `device_get_name`). `func_get_param_info` is `cuFuncGetParamInfo` (Invalid
-`"unknown function"` until a compiled kernel exists). `func_is_loaded` is
+`"unknown function"` until a compiled kernel exists). `func_get_param_count` is
+`cuFuncGetParamCount` (always Invalid `"func pcount"` until a compiled kernel
+exists). Distinct from `func_get_param_info` and `kernel_get_param_count`. Query;
+legal during capture. No Engine `--func-pcount`. `func_is_loaded` is
 `cuFuncIsLoaded` (`false` until a compiled kernel exists; distinct from
 empty `func_get_name` and unknown-function `func_get_param_info`).
 `func_load` is `cuFuncLoad` (always Invalid `"func load"`; no cubin).

@@ -26027,6 +26027,20 @@ impl Sim {
         })
     }
 
+    /// `cuFuncGetParamCount` for the per-device function.
+    ///
+    /// Always Invalid `"func pcount"` until a compiled kernel exists (this
+    /// VM has no `CUfunction` parameter list). Distinct from
+    /// [`Self::func_get_param_info`] (why is not `"unknown function"`) and
+    /// from [`Self::kernel_get_param_count`] (why is not `"kernel pcount"`).
+    /// Unknown devices are Invalid `"device not in profile"`. Query; legal
+    /// during capture. This VM does not invent `cuLaunchKernelEx` this
+    /// slice.
+    pub fn func_get_param_count(&self, device: DeviceId) -> Result<(), SimError> {
+        let _gpu = self.profile.gpu(device)?;
+        Err(SimError::Invalid { why: "func pcount" })
+    }
+
     /// `cuFuncIsLoaded` for the per-device function.
     ///
     /// Query; legal during capture. `false` until a compiled kernel exists
