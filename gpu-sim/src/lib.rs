@@ -529,6 +529,9 @@
 //! [`graph_exec_destroy`](Sim::graph_exec_destroy) is `cuGraphExecDestroy` (identity with
 //! [`destroy_graph`](Sim::destroy_graph)). Capture refused. Distinct from
 //! [`graph_destroy`](Sim::graph_destroy). No Engine `--graph-exec-destroy`.
+//! [`graph_exec_update`](Sim::graph_exec_update) is `cuGraphExecUpdate` (identity with
+//! [`update_graph`](Sim::update_graph)). Capture refused. Distinct from
+//! [`update_graph_with_info`](Sim::update_graph_with_info). No Engine `--graph-exec-update`.
 //! [`Sim::ipc_get_event`] / [`ipc_open_event`](Sim::ipc_open_event) are
 //! `cudaIpcGetEventHandle` / `cudaIpcOpenEventHandle` (interprocess events).
 //! [`Sim::create_shareable_pool`] is `cudaMemPoolCreate` with a POSIX-FD handle
@@ -1082,6 +1085,9 @@
 //! [`graph_exec_destroy`](Sim::graph_exec_destroy) is `cuGraphExecDestroy` (identity with
 //! [`destroy_graph`](Sim::destroy_graph)). Capture refused. Distinct from
 //! [`graph_destroy`](Sim::graph_destroy). No Engine `--graph-exec-destroy`.
+//! [`graph_exec_update`](Sim::graph_exec_update) is `cuGraphExecUpdate` (identity with
+//! [`update_graph`](Sim::update_graph)). Capture refused. Distinct from
+//! [`update_graph_with_info`](Sim::update_graph_with_info). No Engine `--graph-exec-update`.
 //! [`HardwareProfile::host_pin_bytes`] caps `cudaMallocHost` / `cudaHostRegister`.
 //! [`Sim::idle_until`] drains, then jumps the virtual clock (open-loop arrivals).
 //! [`Sim::event_elapsed_ns`] is `cudaEventElapsedTime` in nanoseconds.
@@ -1503,6 +1509,9 @@
 //! [`graph_exec_destroy`](Sim::graph_exec_destroy) is `cuGraphExecDestroy` (identity with
 //! [`destroy_graph`](Sim::destroy_graph)). Capture refused. Distinct from
 //! [`graph_destroy`](Sim::graph_destroy). No Engine `--graph-exec-destroy`.
+//! [`graph_exec_update`](Sim::graph_exec_update) is `cuGraphExecUpdate` (identity with
+//! [`update_graph`](Sim::update_graph)). Capture refused. Distinct from
+//! [`update_graph_with_info`](Sim::update_graph_with_info). No Engine `--graph-exec-update`.
 //! [`mem_host_get_flags`](Sim::mem_host_get_flags) is `cuMemHostGetFlags` (identity with
 //! [`host_get_flags`](Sim::host_get_flags)). Query; legal during capture. No Engine `--mem-host-get-flags`.
 //! [`mem_host_get_device_pointer`](Sim::mem_host_get_device_pointer) is `cuMemHostGetDevicePointer` (identity with
@@ -1890,6 +1899,9 @@
 //! [`graph_exec_destroy`](Sim::graph_exec_destroy) is `cuGraphExecDestroy` (identity with
 //! [`destroy_graph`](Sim::destroy_graph)). Capture refused. Distinct from
 //! [`graph_destroy`](Sim::graph_destroy). No Engine `--graph-exec-destroy`.
+//! [`graph_exec_update`](Sim::graph_exec_update) is `cuGraphExecUpdate` (identity with
+//! [`update_graph`](Sim::update_graph)). Capture refused. Distinct from
+//! [`update_graph_with_info`](Sim::update_graph_with_info). No Engine `--graph-exec-update`.
 //! [`Sim::pointer_get_attributes`] is `cudaPointerGetAttributes`.
 //! [`pointer_set_attribute`](Sim::pointer_set_attribute) /
 //! [`pointer_get_attribute`](Sim::pointer_get_attribute) are
@@ -2684,6 +2696,9 @@
 //! [`graph_exec_destroy`](Sim::graph_exec_destroy) is `cuGraphExecDestroy` (identity with
 //! [`destroy_graph`](Sim::destroy_graph)). Capture refused. Distinct from
 //! [`graph_destroy`](Sim::graph_destroy). No Engine `--graph-exec-destroy`.
+//! [`graph_exec_update`](Sim::graph_exec_update) is `cuGraphExecUpdate` (identity with
+//! [`update_graph`](Sim::update_graph)). Capture refused. Distinct from
+//! [`update_graph_with_info`](Sim::update_graph_with_info). No Engine `--graph-exec-update`.
 //! [`Sim::stream_get_device`] is `cudaStreamGetDevice` / `cuStreamGetDevice`
 //! (the device of the stream; green-ctx streams return the ctx create
 //! device). Query; legal during capture. Distinct from
@@ -2907,6 +2922,9 @@
 //! [`graph_exec_destroy`](Sim::graph_exec_destroy) is `cuGraphExecDestroy` (identity with
 //! [`destroy_graph`](Sim::destroy_graph)). Capture refused. Distinct from
 //! [`graph_destroy`](Sim::graph_destroy). No Engine `--graph-exec-destroy`.
+//! [`graph_exec_update`](Sim::graph_exec_update) is `cuGraphExecUpdate` (identity with
+//! [`update_graph`](Sim::update_graph)). Capture refused. Distinct from
+//! [`update_graph_with_info`](Sim::update_graph_with_info). No Engine `--graph-exec-update`.
 //! [`set_stream_access_policy`](Sim::set_stream_access_policy) is
 //! `cudaStreamAttributeAccessPolicyWindow`: [`kernel`](Sim::kernel) /
 //! [`kernel_bufs`](Sim::kernel_bufs) inherit it; [`kernel_with`](Sim::kernel_with)
@@ -3615,6 +3633,9 @@
 //! [`graph_exec_destroy`](Sim::graph_exec_destroy) is `cuGraphExecDestroy` (identity with
 //! [`destroy_graph`](Sim::destroy_graph)). Capture refused. Distinct from
 //! [`graph_destroy`](Sim::graph_destroy). No Engine `--graph-exec-destroy`.
+//! [`graph_exec_update`](Sim::graph_exec_update) is `cuGraphExecUpdate` (identity with
+//! [`update_graph`](Sim::update_graph)). Capture refused. Distinct from
+//! [`update_graph_with_info`](Sim::update_graph_with_info). No Engine `--graph-exec-update`.
 //! [`Sim::set_stream_priority`] is the priority-only helper;
 //! [`stream_create_with_priority`](Sim::stream_create_with_priority) is
 //! `cudaStreamCreateWithPriority` (flags plus priority; clamped to
@@ -3856,6 +3877,9 @@
 //! [`graph_exec_destroy`](Sim::graph_exec_destroy) is `cuGraphExecDestroy` (identity with
 //! [`destroy_graph`](Sim::destroy_graph)). Capture refused. Distinct from
 //! [`graph_destroy`](Sim::graph_destroy). No Engine `--graph-exec-destroy`.
+//! [`graph_exec_update`](Sim::graph_exec_update) is `cuGraphExecUpdate` (identity with
+//! [`update_graph`](Sim::update_graph)). Capture refused. Distinct from
+//! [`update_graph_with_info`](Sim::update_graph_with_info). No Engine `--graph-exec-update`.
 //! [`destroy_stream`](Sim::destroy_stream) is `cudaStreamDestroy` (returns
 //! immediately; in-flight work still completes; NULL is Invalid; recreate
 //! while unfinished is `"stream in flight"`). Capture cannot include it.
@@ -4077,6 +4101,9 @@
 //! [`graph_exec_destroy`](Sim::graph_exec_destroy) is `cuGraphExecDestroy` (identity with
 //! [`destroy_graph`](Sim::destroy_graph)). Capture refused. Distinct from
 //! [`graph_destroy`](Sim::graph_destroy). No Engine `--graph-exec-destroy`.
+//! [`graph_exec_update`](Sim::graph_exec_update) is `cuGraphExecUpdate` (identity with
+//! [`update_graph`](Sim::update_graph)). Capture refused. Distinct from
+//! [`update_graph_with_info`](Sim::update_graph_with_info). No Engine `--graph-exec-update`.
 //! [`Sim::instantiate_graph`] is `cudaGraphInstantiate` (host-sync; returns a
 //! new exec id; first [`launch_graph`](Sim::launch_graph) of a definition
 //! creates a primary exec). Unused conditional handles are
@@ -4327,6 +4354,9 @@
 //! [`graph_exec_destroy`](Sim::graph_exec_destroy) is `cuGraphExecDestroy` (identity with
 //! [`destroy_graph`](Sim::destroy_graph)). Capture refused. Distinct from
 //! [`graph_destroy`](Sim::graph_destroy). No Engine `--graph-exec-destroy`.
+//! [`graph_exec_update`](Sim::graph_exec_update) is `cuGraphExecUpdate` (identity with
+//! [`update_graph`](Sim::update_graph)). Capture refused. Distinct from
+//! [`update_graph_with_info`](Sim::update_graph_with_info). No Engine `--graph-exec-update`.
 //! [`graph_kernel_node_get_priority`](Sim::graph_kernel_node_get_priority) /
 //! [`graph_kernel_node_set_priority`](Sim::graph_kernel_node_set_priority) /
 //! [`graph_kernel_node_copy_attributes`](Sim::graph_kernel_node_copy_attributes)
@@ -4536,6 +4566,9 @@
 //! [`graph_exec_destroy`](Sim::graph_exec_destroy) is `cuGraphExecDestroy` (identity with
 //! [`destroy_graph`](Sim::destroy_graph)). Capture refused. Distinct from
 //! [`graph_destroy`](Sim::graph_destroy). No Engine `--graph-exec-destroy`.
+//! [`graph_exec_update`](Sim::graph_exec_update) is `cuGraphExecUpdate` (identity with
+//! [`update_graph`](Sim::update_graph)). Capture refused. Distinct from
+//! [`update_graph_with_info`](Sim::update_graph_with_info). No Engine `--graph-exec-update`.
 //! [`graph_kernel_node_get_attribute`](Sim::graph_kernel_node_get_attribute) /
 //! [`graph_exec_kernel_node_get_attribute`](Sim::graph_exec_kernel_node_get_attribute) /
 //! [`graph_kernel_node_set_attribute`](Sim::graph_kernel_node_set_attribute) /
@@ -4751,6 +4784,9 @@
 //! [`graph_exec_destroy`](Sim::graph_exec_destroy) is `cuGraphExecDestroy` (identity with
 //! [`destroy_graph`](Sim::destroy_graph)). Capture refused. Distinct from
 //! [`graph_destroy`](Sim::graph_destroy). No Engine `--graph-exec-destroy`.
+//! [`graph_exec_update`](Sim::graph_exec_update) is `cuGraphExecUpdate` (identity with
+//! [`update_graph`](Sim::update_graph)). Capture refused. Distinct from
+//! [`update_graph_with_info`](Sim::update_graph_with_info). No Engine `--graph-exec-update`.
 //! Device-launch
 //! execs cannot attach programmatic or launch-completion events.
 //! [`kernel_pdl`](Sim::kernel_pdl) is `cudaLaunchKernelEx` PDL: a wait kernel
@@ -5094,6 +5130,9 @@
 //! [`graph_exec_destroy`](Sim::graph_exec_destroy) is `cuGraphExecDestroy` (identity with
 //! [`destroy_graph`](Sim::destroy_graph)). Capture refused. Distinct from
 //! [`graph_destroy`](Sim::graph_destroy). No Engine `--graph-exec-destroy`.
+//! [`graph_exec_update`](Sim::graph_exec_update) is `cuGraphExecUpdate` (identity with
+//! [`update_graph`](Sim::update_graph)). Capture refused. Distinct from
+//! [`update_graph_with_info`](Sim::update_graph_with_info). No Engine `--graph-exec-update`.
 //! [`graph_exec_memcpy_set_params`](Sim::graph_exec_memcpy_set_params) /
 //! [`graph_exec_memcpy_set_params_1d`](Sim::graph_exec_memcpy_set_params_1d) /
 //! [`graph_exec_memcpy_set_params_2d`](Sim::graph_exec_memcpy_set_params_2d) /
@@ -5301,6 +5340,9 @@
 //! [`graph_exec_destroy`](Sim::graph_exec_destroy) is `cuGraphExecDestroy` (identity with
 //! [`destroy_graph`](Sim::destroy_graph)). Capture refused. Distinct from
 //! [`graph_destroy`](Sim::graph_destroy). No Engine `--graph-exec-destroy`.
+//! [`graph_exec_update`](Sim::graph_exec_update) is `cuGraphExecUpdate` (identity with
+//! [`update_graph`](Sim::update_graph)). Capture refused. Distinct from
+//! [`update_graph_with_info`](Sim::update_graph_with_info). No Engine `--graph-exec-update`.
 //! [`get_graph_kernel_node_params`](Sim::get_graph_kernel_node_params) is `cuGraphKernelNodeGetParams` (identity with
 //! [`graph_kernel_get_params`](Sim::graph_kernel_get_params)). Query; legal during capture. Distinct from
 //! [`graph_exec_kernel_get_params`](Sim::graph_exec_kernel_get_params). No Engine `--graph-kernel-get-params`.
@@ -5487,6 +5529,9 @@
 //! [`graph_exec_destroy`](Sim::graph_exec_destroy) is `cuGraphExecDestroy` (identity with
 //! [`destroy_graph`](Sim::destroy_graph)). Capture refused. Distinct from
 //! [`graph_destroy`](Sim::graph_destroy). No Engine `--graph-exec-destroy`.
+//! [`graph_exec_update`](Sim::graph_exec_update) is `cuGraphExecUpdate` (identity with
+//! [`update_graph`](Sim::update_graph)). Capture refused. Distinct from
+//! [`update_graph_with_info`](Sim::update_graph_with_info). No Engine `--graph-exec-update`.
 //! [`graph_exec_kernel_get_params`](Sim::graph_exec_kernel_get_params) /
 //! [`graph_exec_memcpy_get_params`](Sim::graph_exec_memcpy_get_params) /
 //! [`graph_exec_memset_get_params`](Sim::graph_exec_memset_get_params) /
@@ -5664,6 +5709,9 @@
 //! [`graph_exec_destroy`](Sim::graph_exec_destroy) is `cuGraphExecDestroy` (identity with
 //! [`destroy_graph`](Sim::destroy_graph)). Capture refused. Distinct from
 //! [`graph_destroy`](Sim::graph_destroy). No Engine `--graph-exec-destroy`.
+//! [`graph_exec_update`](Sim::graph_exec_update) is `cuGraphExecUpdate` (identity with
+//! [`update_graph`](Sim::update_graph)). Capture refused. Distinct from
+//! [`update_graph_with_info`](Sim::update_graph_with_info). No Engine `--graph-exec-update`.
 //! [`get_graph_exec_kernel_node_params`](Sim::get_graph_exec_kernel_node_params) is `cuGraphExecKernelNodeGetParams` (identity with
 //! [`graph_exec_kernel_get_params`](Sim::graph_exec_kernel_get_params)). Query; legal during capture. Distinct from
 //! [`get_graph_kernel_node_params`](Sim::get_graph_kernel_node_params). No Engine `--graph-exec-kernel-get-params`.
@@ -5847,6 +5895,9 @@
 //! [`graph_exec_destroy`](Sim::graph_exec_destroy) is `cuGraphExecDestroy` (identity with
 //! [`destroy_graph`](Sim::destroy_graph)). Capture refused. Distinct from
 //! [`graph_destroy`](Sim::graph_destroy). No Engine `--graph-exec-destroy`.
+//! [`graph_exec_update`](Sim::graph_exec_update) is `cuGraphExecUpdate` (identity with
+//! [`update_graph`](Sim::update_graph)). Capture refused. Distinct from
+//! [`update_graph_with_info`](Sim::update_graph_with_info). No Engine `--graph-exec-update`.
 //! [`graph_exec_batch_mem_op_set_params`](Sim::graph_exec_batch_mem_op_set_params)
 //! is `cudaGraphExecBatchMemOpNodeSetParams` (id/offset/value; wait vs write,
 //! `bits32`, and compare stay on wait/write nodes;
@@ -26143,6 +26194,101 @@ mod tests {
         let _cap = eight.end_capture().unwrap();
         eight.graph_exec_destroy(exec1).unwrap();
         assert_eq!(eight.graph_len(g1).unwrap(), 1);
+    }
+
+    #[test]
+    fn graph_exec_update_is_cu_graph_exec_update() {
+        let mut sim = Sim::new(h100());
+        let d = DeviceId(0);
+        let s = StreamId(0);
+        match sim.graph_exec_update(GraphId(99), GraphId(99)) {
+            Err(SimError::Invalid { why }) => assert!(why.contains("unknown"), "{why}"),
+            other => panic!("{other:?}"),
+        }
+        match sim.update_graph(GraphId(99), GraphId(99)) {
+            Err(SimError::Invalid { why }) => assert!(why.contains("unknown"), "{why}"),
+            other => panic!("{other:?}"),
+        }
+        let src = sim.create_graph(d, s).unwrap();
+        sim.graph_add_host_func_params(
+            src,
+            HostNodeParams {
+                fn_id: 9,
+                user_data: 9,
+            },
+        )
+        .unwrap();
+        match sim.graph_exec_update(GraphId(99), src) {
+            Err(SimError::Invalid { why }) => assert!(why.contains("unknown"), "{why}"),
+            other => panic!("{other:?}"),
+        }
+        match sim.update_graph(GraphId(99), src) {
+            Err(SimError::Invalid { why }) => assert!(why.contains("unknown"), "{why}"),
+            other => panic!("{other:?}"),
+        }
+        let def = sim.create_graph(d, s).unwrap();
+        sim.graph_add_host_func_params(
+            def,
+            HostNodeParams {
+                fn_id: 7,
+                user_data: 42,
+            },
+        )
+        .unwrap();
+        match sim.graph_exec_update(def, src) {
+            Err(SimError::Invalid { why }) => assert!(why.contains("instantiated"), "{why}"),
+            other => panic!("{other:?}"),
+        }
+        match sim.update_graph(def, src) {
+            Err(SimError::Invalid { why }) => assert!(why.contains("instantiated"), "{why}"),
+            other => panic!("{other:?}"),
+        }
+        let exec = sim.graph_instantiate(def).unwrap();
+        sim.graph_exec_update(exec, src).unwrap();
+        sim.update_graph(exec, src).unwrap();
+        sim.begin_capture(d, s).unwrap();
+        match sim.graph_exec_update(exec, src) {
+            Err(SimError::Invalid { why }) => assert!(why.contains("capture"), "{why}"),
+            other => panic!("{other:?}"),
+        }
+        match sim.update_graph(exec, src) {
+            Err(SimError::Invalid { why }) => assert!(why.contains("capture"), "{why}"),
+            other => panic!("{other:?}"),
+        }
+        let _cap = sim.end_capture().unwrap();
+        let mut eight = Sim::new(HardwareProfile::example_8xh100_nvlink());
+        let def1 = eight.create_graph(DeviceId(1), s).unwrap();
+        eight
+            .graph_add_host_func_params(
+                def1,
+                HostNodeParams {
+                    fn_id: 5,
+                    user_data: 8,
+                },
+            )
+            .unwrap();
+        let src1 = eight.create_graph(DeviceId(1), s).unwrap();
+        eight
+            .graph_add_host_func_params(
+                src1,
+                HostNodeParams {
+                    fn_id: 3,
+                    user_data: 4,
+                },
+            )
+            .unwrap();
+        let exec1 = eight.graph_instantiate(def1).unwrap();
+        eight.graph_exec_update(exec1, src1).unwrap();
+        eight.begin_capture(DeviceId(1), s).unwrap();
+        match eight.graph_exec_update(exec1, src1) {
+            Err(SimError::Invalid { why }) => assert!(why.contains("capture"), "{why}"),
+            other => panic!("{other:?}"),
+        }
+        match eight.update_graph(exec1, src1) {
+            Err(SimError::Invalid { why }) => assert!(why.contains("capture"), "{why}"),
+            other => panic!("{other:?}"),
+        }
+        let _cap = eight.end_capture().unwrap();
     }
 
     #[test]

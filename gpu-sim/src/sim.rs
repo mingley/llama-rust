@@ -5545,10 +5545,22 @@ impl Sim {
     /// Invalid `"exec in flight"`. Host SetParams of that exec stay.
     /// [`GraphInstantiateFlags::DEVICE_LAUNCH`] update stays NotSupported.
     /// A parked in-flight-destroyed exec used as `src` is `"unknown graph"`.
-    /// Live exec as `src` stays. Definition `src` stays.
+    /// Live exec as `src` stays. Definition `src` stays. Driver
+    /// `cuGraphExecUpdate` is
+    /// [`Self::graph_exec_update`].
     pub fn update_graph(&mut self, exec: GraphId, src: GraphId) -> Result<(), SimError> {
         let mut info = GraphExecUpdateResultInfo::default();
         self.update_graph_with_info(exec, src, &mut info)
+    }
+
+    /// `cuGraphExecUpdate`. Identity with
+    /// [`Self::update_graph`] (`cudaGraphExecUpdate`).
+    ///
+    /// Host-synchronous. Capture refused. Distinct from
+    /// [`Self::update_graph_with_info`]. This VM does not invent
+    /// occupancy SM counts this slice.
+    pub fn graph_exec_update(&mut self, exec: GraphId, src: GraphId) -> Result<(), SimError> {
+        self.update_graph(exec, src)
     }
 
     /// `cudaGraphExecUpdate` with [`GraphExecUpdateResultInfo`].
@@ -9263,8 +9275,7 @@ impl Sim {
     /// [`Self::destroy_graph`] (`cudaGraphExecDestroy`).
     ///
     /// Host-synchronous. Capture refused. Distinct from
-    /// [`Self::graph_destroy`]. This VM does not invent
-    /// occupancy SM counts this slice.
+    /// [`Self::graph_destroy`].
     pub fn graph_exec_destroy(&mut self, exec: GraphId) -> Result<(), SimError> {
         self.destroy_graph(exec)
     }

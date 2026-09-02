@@ -8771,7 +8771,14 @@ model, do not celebrate the sim.
     or `cudaChooseDevice`. `gpu-profile capture` is still refused. Dual
     score still has no `$/M tokens`.
 
-945. [ ] Next numbered PLAN item after 944 is the next `gpu-sim` / Engine /
+945. [x] `gpu-sim` `Sim::graph_exec_update` is
+    `cuGraphExecUpdate`. Identity with `update_graph`
+    (`cudaGraphExecUpdate`). Capture refused. Distinct from
+    `update_graph_with_info`. This VM does not invent occupancy SM counts, Engine `--graph-exec-update`,
+    or `cudaChooseDevice`. `gpu-profile capture` is still refused. Dual
+    score still has no `$/M tokens`.
+
+946. [ ] Next numbered PLAN item after 945 is the next `gpu-sim` / Engine /
     serve / expertvm mechanical API that is still missing, or the next official
     decode family. Prefer remaining CUDA-shaped twins over more
     OpenAI HTTP veneer. Do not invent F32 `output.scale`. Do not invent a
@@ -10097,6 +10104,9 @@ model, do not celebrate the sim.
     Do not invent a second `cuGraphExecDestroy` / `graph_exec_destroy`.
     Do not invent Engine `--graph-exec-destroy`. Do not invent
     occupancy SM counts this slice. Do not reverse GraphExecDestroy identity with destroy_graph.
+    Do not invent a second `cuGraphExecUpdate` / `graph_exec_update`.
+    Do not invent Engine `--graph-exec-update`. Do not invent
+    occupancy SM counts this slice. Do not reverse GraphExecUpdate identity with update_graph.
     Do not invent a second `cudaStreamAddCallback`.
     Do not invent Engine `--stream-callback` (same wall as second live
     `cudaLaunchHostFunc` after miss DMA).
@@ -11502,6 +11512,9 @@ model, do not celebrate the sim.
     Do not invent a second `graph_exec_destroy` API. Do not invent
     Engine `--graph-exec-destroy-identity`. Do not invent a graph-exec-update
     this slice. Do not reverse GraphExecDestroy identity with destroy_graph.
+    Do not invent a second `graph_exec_update` API. Do not invent
+    Engine `--graph-exec-update-identity`. Do not invent a graph-exec-update-with-info
+    this slice. Do not reverse GraphExecUpdate identity with update_graph.
     Do not invent a second DeviceLaunch in-flight destroy-complete check or Engine
     `--device-launch-destroy`. Do not abort an in-flight DeviceLaunch when
     `destroy_graph` succeeds. Do not delay destroy of an idle exec. Do not invent
@@ -13090,6 +13103,9 @@ model, do not celebrate the sim.
     Do not invent a second `graph_exec_destroy` method. Do not
     invent Engine `--cu-graph-exec-destroy`. Do not reverse wrapping
     cuGraphExecDestroy identity.
+    Do not invent a second `graph_exec_update` method. Do not
+    invent Engine `--cu-graph-exec-update`. Do not reverse wrapping
+    cuGraphExecUpdate identity.
     Do not
     spend the next item on an OpenAI-compatible HTTP veneer.
 
