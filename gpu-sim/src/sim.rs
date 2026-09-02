@@ -24882,7 +24882,6 @@ impl Sim {
     /// [`Self::pointer_get_attribute`] (`cuPointerGetAttribute`).
     ///
     /// Query; legal during capture. Distinct from [`Self::mem_is_multicast_va`].
-    /// This VM does not invent occupancy SM counts this slice.
     pub fn mem_pointer_get_attribute(
         &self,
         alloc: AllocId,
@@ -24899,6 +24898,8 @@ impl Sim {
     /// vector. `CU_POINTER_ATTRIBUTE_ACCESS_FLAGS` stays
     /// [`Self::pointer_get_access_flags`] (explicit device; not a
     /// [`PointerAttr`]). Query; legal during capture.
+    /// Driver `cuPointerGetAttributes` is [`Self::mem_pointer_get_attribute_n`].
+    /// Identity wrap [`Self::mem_pointer_get_attribute_n`].
     pub fn pointer_get_attribute_n(
         &self,
         alloc: AllocId,
@@ -24915,6 +24916,19 @@ impl Sim {
             .copied()
             .map(|attr| self.pointer_get_attribute(alloc, attr))
             .collect()
+    }
+
+    /// `cuPointerGetAttributes`. Identity with
+    /// [`Self::pointer_get_attribute_n`] (`cuPointerGetAttributes`).
+    ///
+    /// Query; legal during capture. Distinct from [`Self::mem_pointer_get_attribute`].
+    /// This VM does not invent occupancy SM counts this slice.
+    pub fn mem_pointer_get_attribute_n(
+        &self,
+        alloc: AllocId,
+        attrs: &[PointerAttr],
+    ) -> Result<Vec<u64>, SimError> {
+        self.pointer_get_attribute_n(alloc, attrs)
     }
 
     /// `CU_POINTER_ATTRIBUTE_ACCESS_FLAGS` for `device`.
