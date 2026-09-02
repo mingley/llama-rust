@@ -19352,9 +19352,19 @@ impl Sim {
     }
 
     /// How many devices currently have [`Self::multicast_bind_mem`] on `mc`.
+    /// Identity wrap [`Self::mem_multicast_binds`].
     pub fn multicast_binds(&self, mc: MulticastId) -> Result<u32, SimError> {
         let n = self.mc_ref(mc)?.binds.len();
         Ok(u32::try_from(n).unwrap_or(u32::MAX))
+    }
+
+    /// Multicast bind count. Identity with
+    /// [`Self::multicast_binds`].
+    ///
+    /// Query; legal during capture. Distinct from [`Self::mem_multicast_store`].
+    /// This VM does not invent occupancy SM counts this slice.
+    pub fn mem_multicast_binds(&self, mc: MulticastId) -> Result<u32, SimError> {
+        self.multicast_binds(mc)
     }
 
     /// NVLS kernel store: bind `id`'s VMM maps on `src` and `dests`, then write.
@@ -19394,7 +19404,6 @@ impl Sim {
     /// [`Self::multicast_store`].
     ///
     /// Capture refused. Distinct from [`Self::mem_multicast_destroy`].
-    /// This VM does not invent occupancy SM counts this slice.
     pub fn mem_multicast_store(
         &mut self,
         src: DeviceId,

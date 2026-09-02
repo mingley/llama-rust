@@ -5,6 +5,13 @@ Visible five-turn extract: [docs/chatgpt-share-6a920fe1.md](docs/chatgpt-share-6
 Complete share-API extract: [docs/chatgpt-share-6a920fe1/](docs/chatgpt-share-6a920fe1/).
 Work lands on `main`. No PRs.
 
+## Shipped 2026-09-02 — multicast binds
+
+`gpu-sim` `Sim::mem_multicast_binds` is multicast bind count.
+Identity with `multicast_binds`. Query; legal during capture. Distinct from `mem_multicast_store`.
+This VM does not invent occupancy SM counts or Engine `--mem-multicast-binds`.
+`gpu-profile capture` is still refused. Dual score still has no `$/M tokens`.
+
 ## Shipped 2026-09-02 — NVLS multicast store
 
 `gpu-sim` `Sim::mem_multicast_store` is NVLS kernel store.
