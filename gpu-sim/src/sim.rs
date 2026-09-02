@@ -16026,7 +16026,6 @@ impl Sim {
     /// [`Self::default_pool`] (`cudaDeviceGetDefaultMemPool`).
     ///
     /// Query; legal during capture. Distinct from [`Self::get_device_count`].
-    /// This VM does not invent occupancy SM counts this slice.
     pub fn device_get_default_mempool(&self, device: DeviceId) -> Result<PoolId, SimError> {
         self.default_pool(device)
     }
@@ -16035,6 +16034,8 @@ impl Sim {
     ///
     /// [`Self::alloc`] (`cudaMallocAsync`) draws from this. Starts as
     /// [`Self::default_pool`]; [`Self::set_device_mempool`] rebinds it.
+    /// Driver `cuDeviceGetMemPool` is [`Self::device_get_mempool`].
+    /// Identity wrap [`Self::device_get_mempool`].
     pub fn device_mempool(&self, device: DeviceId) -> Result<PoolId, SimError> {
         let _gpu = self.profile.gpu(device)?;
         self.current_pools
@@ -16043,6 +16044,15 @@ impl Sim {
             .ok_or(SimError::Invalid {
                 why: "device mempool missing",
             })
+    }
+
+    /// `cuDeviceGetMemPool`. Identity with
+    /// [`Self::device_mempool`] (`cudaDeviceGetMemPool`).
+    ///
+    /// Query; legal during capture. Distinct from [`Self::device_get_default_mempool`].
+    /// This VM does not invent occupancy SM counts this slice.
+    pub fn device_get_mempool(&self, device: DeviceId) -> Result<PoolId, SimError> {
+        self.device_mempool(device)
     }
 
     /// `cuMemPoolGetId`. Query; legal during capture.
