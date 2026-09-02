@@ -26637,7 +26637,6 @@ impl Sim {
     /// [`Self::write_value32_with_flags`].
     ///
     /// Capture legal. Distinct from [`Self::stream_write_value64_with_flags`].
-    /// This VM does not invent occupancy SM counts this slice.
     pub fn stream_write_value32_with_flags(
         &mut self,
         device: DeviceId,
@@ -26648,6 +26647,22 @@ impl Sim {
         stream: StreamId,
     ) -> Result<OpId, SimError> {
         self.write_value32_with_flags(device, id, offset, value, flags, stream)
+    }
+
+    /// `cuStreamWaitValue64`. Identity with [`Self::wait_value64`].
+    ///
+    /// Capture legal. Distinct from [`Self::stream_write_value32_with_flags`].
+    /// This VM does not invent occupancy SM counts this slice.
+    pub fn stream_wait_value64(
+        &mut self,
+        device: DeviceId,
+        id: AllocId,
+        offset: u64,
+        value: u64,
+        cmp: WaitValueCmp,
+        stream: StreamId,
+    ) -> Result<OpId, SimError> {
+        self.wait_value64(device, id, offset, value, cmp, stream)
     }
 
     /// `cudaLaunchHostFunc`. Stream-ordered host work; does not occupy compute
@@ -26841,6 +26856,8 @@ impl Sim {
     /// Unwritten locations read as 0. Does not occupy compute or copy engines.
     /// Capture records a batch-mem-op node. An unsatisfied wait plus
     /// [`Self::synchronize`] is deadlock if nothing else is running.
+    ///
+    /// Identity wrap [`Self::stream_wait_value64`].
     pub fn wait_value64(
         &mut self,
         device: DeviceId,
