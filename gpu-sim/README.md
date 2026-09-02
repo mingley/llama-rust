@@ -312,6 +312,7 @@ warp scheduler, L1, …   ← do not model
 | `tensor_map_encode_tiled` is Invalid (TMA is not modeled) | `cuTensorMapEncodeTiled` |
 | `tensor_map_encode_im2col` is Invalid (TMA is not modeled) | `cuTensorMapEncodeIm2col` |
 | `tensor_map_encode_im2col_wide` is Invalid (TMA is not modeled) | `cuTensorMapEncodeIm2colWide` |
+| `tensor_map_replace_aligned_addr` is Invalid (TMA is not modeled) | `cuTensorMapReplaceAlignedAddr` |
 | `func_get_name` is empty until a compiled kernel exists | `cudaFuncGetName` / `cuFuncGetName` |
 | `func_get_param_info` is Invalid until a compiled kernel exists | `cuFuncGetParamInfo` |
 | `func_is_loaded` is false until a compiled kernel exists | `cuFuncIsLoaded` |
@@ -1357,6 +1358,7 @@ is always 1 (`WaitValueCmp::Nor`). `TensorMapAccessSupported` is always
 `cuTensorMapEncodeTiled` (always Invalid `"tensor map"`). `tensor_map_encode_im2col` is
 `cuTensorMapEncodeIm2col` (always Invalid `"tensor im2col"`). Query; legal during capture. No Engine `--tensor-im2col`.
 `tensor_map_encode_im2col_wide` is `cuTensorMapEncodeIm2colWide` (always Invalid `"im2col wide"`). Query; legal during capture. No Engine `--tensor-im2col-wide`.
+`tensor_map_replace_aligned_addr` is `cuTensorMapReplaceAlignedAddr` (always Invalid `"tensor replace"`). Query; legal during capture. No Engine `--tensor-replace`.
 `UnifiedFunctionPointers` is
 always 0 (device-side function pointers are not modeled).
 `TimelineSemaphoreInteropSupported` is always 0 (NVSci / timeline

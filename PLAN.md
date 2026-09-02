@@ -7269,7 +7269,14 @@ model, do not celebrate the sim.
     or `cudaChooseDevice`. `gpu-profile capture` is still refused. Dual
     score still has no `$/M tokens`.
 
-731. [ ] Next numbered PLAN item after 730 is the next `gpu-sim` / Engine /
+731. [x] `gpu-sim` `Sim::tensor_map_replace_aligned_addr` is
+    `cuTensorMapReplaceAlignedAddr`. Always Invalid `"tensor replace"`
+    because TMA is not modeled. Query; legal during capture.
+    Distinct from `tensor_map_encode_tiled`. This VM does not invent `cuCoredumpSetAttribute`, Engine `--tensor-replace`,
+    or `cudaChooseDevice`. `gpu-profile capture` is still refused. Dual
+    score still has no `$/M tokens`.
+
+732. [ ] Next numbered PLAN item after 731 is the next `gpu-sim` / Engine /
     serve / expertvm mechanical API that is still missing, or the next official
     decode family. Prefer remaining CUDA-shaped twins over more
     OpenAI HTTP veneer. Do not invent F32 `output.scale`. Do not invent a
@@ -7953,6 +7960,9 @@ model, do not celebrate the sim.
     Do not invent a second `cuTensorMapEncodeIm2colWide` / `tensor_map_encode_im2col_wide`.
     Do not invent Engine `--tensor-im2col-wide`. Do not invent
     `cuTensorMapReplaceAlignedAddr` this slice. Do not reverse `"im2col wide"`.
+    Do not invent a second `cuTensorMapReplaceAlignedAddr` / `tensor_map_replace_aligned_addr`.
+    Do not invent Engine `--tensor-replace`. Do not invent
+    `cuCoredumpSetAttribute` this slice. Do not reverse `"tensor replace"`.
     Do not invent a second `cudaStreamAddCallback`.
     Do not invent Engine `--stream-callback` (same wall as second live
     `cudaLaunchHostFunc` after miss DMA).
@@ -8716,6 +8726,9 @@ model, do not celebrate the sim.
     Do not invent a second `tensor_map_encode_im2col_wide` API. Do not invent
     Engine `--tma-im2col-wide`. Do not invent a CUtensorMap wide im2col
     this slice. Do not reverse Tensor Map EncodeIm2colWide remaining unsupported.
+    Do not invent a second `tensor_map_replace_aligned_addr` API. Do not invent
+    Engine `--tma-replace-addr`. Do not invent a CUtensorMap replace
+    this slice. Do not reverse Tensor Map ReplaceAlignedAddr remaining unsupported.
     Do not invent a second DeviceLaunch in-flight destroy-complete check or Engine
     `--device-launch-destroy`. Do not abort an in-flight DeviceLaunch when
     `destroy_graph` succeeds. Do not delay destroy of an idle exec. Do not invent
@@ -9662,6 +9675,9 @@ model, do not celebrate the sim.
     Do not invent a second `tensor_map_encode_im2col_wide` method. Do not
     invent Engine `--cu-tensor-map-im2col-wide`. Do not reverse wrapping
     cuTensorMapEncodeIm2colWide Invalid.
+    Do not invent a second `tensor_map_replace_aligned_addr` method. Do not
+    invent Engine `--cu-tensor-map-replace`. Do not reverse wrapping
+    cuTensorMapReplaceAlignedAddr Invalid.
     Do not
     spend the next item on an OpenAI-compatible HTTP veneer.
 

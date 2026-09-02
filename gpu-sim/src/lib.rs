@@ -804,6 +804,9 @@
 //! [`tensor_map_encode_im2col_wide`](Sim::tensor_map_encode_im2col_wide) is
 //! `cuTensorMapEncodeIm2colWide` (always Invalid `"im2col wide"`). Query; legal
 //! during capture. No Engine `--tensor-im2col-wide`.
+//! [`tensor_map_replace_aligned_addr`](Sim::tensor_map_replace_aligned_addr) is
+//! `cuTensorMapReplaceAlignedAddr` (always Invalid `"tensor replace"`). Query; legal
+//! during capture. No Engine `--tensor-replace`.
 //! [`DeviceAttr::UnifiedFunctionPointers`] is always 0 (device-side function
 //! pointers are not modeled).
 //! [`DeviceAttr::TimelineSemaphoreInteropSupported`] is always 0 (NVSci /
@@ -22367,6 +22370,60 @@ mod tests {
             Err(SimError::Invalid { why }) => {
                 assert!(why.contains("tensor map"), "{why}");
                 assert!(!why.contains("im2col wide"), "{why}");
+            }
+            other => panic!("{other:?}"),
+        }
+        match sim.tensor_map_replace_aligned_addr(d) {
+            Err(SimError::Invalid { why }) => {
+                assert!(why.contains("tensor replace"), "{why}");
+                assert!(!why.contains("im2col wide"), "{why}");
+            }
+            other => panic!("{other:?}"),
+        }
+        assert_eq!(
+            sim.device_get_attribute(d, DeviceAttr::TensorMapAccessSupported)
+                .unwrap(),
+            0
+        );
+    }
+
+    #[test]
+    fn tensor_map_replace_aligned_addr_is_unsupported() {
+        let mut sim = Sim::new(h100());
+        let d = DeviceId(0);
+        match sim.tensor_map_replace_aligned_addr(d) {
+            Err(SimError::Invalid { why }) => {
+                assert!(why.contains("tensor replace"), "{why}");
+                assert!(!why.contains("tensor map"), "{why}");
+                assert!(!why.contains("im2col wide"), "{why}");
+            }
+            other => panic!("{other:?}"),
+        }
+        sim.begin_capture(d, StreamId(0)).unwrap();
+        match sim.tensor_map_replace_aligned_addr(d) {
+            Err(SimError::Invalid { why }) => {
+                assert!(why.contains("tensor replace"), "{why}");
+            }
+            other => panic!("{other:?}"),
+        }
+        let _g = sim.end_capture().unwrap();
+        match sim.tensor_map_replace_aligned_addr(DeviceId(99)) {
+            Err(SimError::Invalid { why }) => {
+                assert!(why.contains("device not in profile"), "{why}");
+            }
+            other => panic!("{other:?}"),
+        }
+        match sim.tensor_map_encode_tiled(d) {
+            Err(SimError::Invalid { why }) => {
+                assert!(why.contains("tensor map"), "{why}");
+                assert!(!why.contains("tensor replace"), "{why}");
+            }
+            other => panic!("{other:?}"),
+        }
+        match sim.tensor_map_encode_im2col_wide(d) {
+            Err(SimError::Invalid { why }) => {
+                assert!(why.contains("im2col wide"), "{why}");
+                assert!(!why.contains("tensor replace"), "{why}");
             }
             other => panic!("{other:?}"),
         }

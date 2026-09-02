@@ -598,6 +598,8 @@ TMA is not modeled; no Engine flag).
 TMA is not modeled; no Engine flag).
 `gpu-sim` `tensor_map_encode_im2col_wide` is `cuTensorMapEncodeIm2colWide`
 (Invalid; TMA is not modeled; no Engine flag).
+`gpu-sim` `tensor_map_replace_aligned_addr` is `cuTensorMapReplaceAlignedAddr`
+(Invalid; TMA is not modeled; no Engine flag).
 `gpu-sim` `cooperative_kernel_multi_device` is
 `cudaLaunchCooperativeKernelMultiDevice` (Invalid; no Engine flag).
 `gpu-sim` `array_create` is `cuArrayCreate` (Invalid; CUDA arrays are not
