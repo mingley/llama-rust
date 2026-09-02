@@ -16977,7 +16977,6 @@ impl Sim {
     /// [`Self::pool_import_with_type`] (`cudaMemPoolImportFromShareableHandle` type).
     ///
     /// Capture refused. Distinct from [`Self::mem_pool_export_with_type`].
-    /// This VM does not invent occupancy SM counts this slice.
     pub fn mem_pool_import_with_type(
         &mut self,
         device: DeviceId,
@@ -16992,6 +16991,8 @@ impl Sim {
     ///
     /// The same alloc returns the same handle. [`Self::ipc_get`] of a pool
     /// alloc is Invalid. Capture cannot include it.
+    /// Driver `cuMemPoolExportPointer` is [`Self::mem_pool_export_ptr`].
+    /// Identity wrap [`Self::mem_pool_export_ptr`].
     pub fn pool_export_ptr(&mut self, id: AllocId) -> Result<PtrExportId, SimError> {
         self.fail_if_capturing("cannot capture mempool")?;
         let (pool, device) = {
@@ -17035,6 +17036,15 @@ impl Sim {
         self.next_ptr = self.next_ptr.saturating_add(1);
         let _prev = self.ptr_exports.insert(h, id);
         Ok(h)
+    }
+
+    /// `cuMemPoolExportPointer`. Identity with
+    /// [`Self::pool_export_ptr`] (`cudaMemPoolExportPointer`).
+    ///
+    /// Capture refused. Distinct from [`Self::mem_pool_import_with_type`].
+    /// This VM does not invent occupancy SM counts this slice.
+    pub fn mem_pool_export_ptr(&mut self, id: AllocId) -> Result<PtrExportId, SimError> {
+        self.pool_export_ptr(id)
     }
 
     /// `cudaMemPoolImportPointer` into an imported pool. Alias shares the
