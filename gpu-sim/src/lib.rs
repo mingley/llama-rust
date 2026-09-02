@@ -17336,7 +17336,7 @@ mod tests {
         );
         let _g = sim.end_capture().unwrap();
         sim.free_sync(host).unwrap();
-        let mut eight = Sim::new(HardwareProfile::example_8xh100_nvlink());
+        let eight = Sim::new(HardwareProfile::example_8xh100_nvlink());
         assert_eq!(
             eight
                 .device_graph_mem_get(DeviceId(1), GraphMemAttr::UsedMemCurrent)
