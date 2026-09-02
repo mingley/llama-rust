@@ -6558,8 +6558,7 @@ impl Sim {
     /// [`Self::graph_batch_mem_op_set_params`] (`cudaGraphBatchMemOpNodeSetParams`).
     ///
     /// Capture refused. Distinct from
-    /// [`Self::get_graph_batch_mem_op_node_params`]. This VM does not invent
-    /// occupancy SM counts this slice.
+    /// [`Self::get_graph_batch_mem_op_node_params`].
     pub fn set_graph_batch_mem_op_node_params(
         &mut self,
         graph: GraphId,
@@ -7033,7 +7032,9 @@ impl Sim {
     /// A wait-value / write-value node may change id / offset / value; wait vs
     /// write, `bits32`, and compare stay. A [`crate::GpuOp::BatchMem`] node
     /// replaces the item list (length may change). Pays `graph_set_params_ns`
-    /// and clears the upload flag. Capture cannot include it.
+    /// and clears the upload flag. Capture cannot include it. Driver
+    /// `cuGraphExecBatchMemOpNodeSetParams` is
+    /// [`Self::set_graph_exec_batch_mem_op_node_params`].
     pub fn graph_exec_batch_mem_op_set_params(
         &mut self,
         exec: GraphId,
@@ -7041,6 +7042,21 @@ impl Sim {
         op: BatchMemOp,
     ) -> Result<(), SimError> {
         self.set_batch_mem_ops(exec, node, &[op], true, GreenCtxPatch::Keep)
+    }
+
+    /// `cuGraphExecBatchMemOpNodeSetParams`. Identity with
+    /// [`Self::graph_exec_batch_mem_op_set_params`] (`cudaGraphExecBatchMemOpNodeSetParams`).
+    ///
+    /// Capture refused. Distinct from
+    /// [`Self::set_graph_batch_mem_op_node_params`]. This VM does not invent
+    /// occupancy SM counts this slice.
+    pub fn set_graph_exec_batch_mem_op_node_params(
+        &mut self,
+        exec: GraphId,
+        node: usize,
+        op: &BatchMemOp,
+    ) -> Result<(), SimError> {
+        self.graph_exec_batch_mem_op_set_params(exec, node, *op)
     }
 
     /// Exec-side item-list SetParams for a [`crate::GpuOp::BatchMem`] node.
