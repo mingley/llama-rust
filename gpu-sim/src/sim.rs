@@ -19369,7 +19369,6 @@ impl Sim {
     /// [`Self::va_set_access_write`] (`cuMemSetAccess` PROT_READWRITE).
     ///
     /// Capture refused. Distinct from [`Self::mem_set_access`].
-    /// This VM does not invent occupancy SM counts this slice.
     pub fn mem_set_access_write(&mut self, id: AllocId, device: DeviceId) -> Result<(), SimError> {
         self.va_set_access_write(id, device)
     }
@@ -19381,6 +19380,8 @@ impl Sim {
     /// [`MemAccessFlags::PROT_NONE`] is [`Self::va_unset_access`]. Other bits
     /// are Invalid `"va access flags"`. Typed helpers stay. Capture is refused
     /// by those helpers.
+    /// Driver `cuMemSetAccess` flags is [`Self::mem_set_access_with_flags`].
+    /// Identity wrap [`Self::mem_set_access_with_flags`].
     pub fn va_set_access_with_flags(
         &mut self,
         id: AllocId,
@@ -19390,6 +19391,20 @@ impl Sim {
         self.fail_if_capturing("cannot capture alloc/free")?;
         let bytes = self.alloc_ref(id)?.bytes;
         self.va_set_access_with_size(id, device, bytes, flags)
+    }
+
+    /// `cuMemSetAccess` flags. Identity with
+    /// [`Self::va_set_access_with_flags`] (`cuMemSetAccess` flags).
+    ///
+    /// Capture refused. Distinct from [`Self::mem_set_access_write`].
+    /// This VM does not invent occupancy SM counts this slice.
+    pub fn mem_set_access_with_flags(
+        &mut self,
+        id: AllocId,
+        device: DeviceId,
+        flags: u32,
+    ) -> Result<(), SimError> {
+        self.va_set_access_with_flags(id, device, flags)
     }
 
     /// [`Self::va_set_access_with_flags`] with the CUDA size argument.
