@@ -32485,6 +32485,7 @@ mod tests {
             other => panic!("{other:?}"),
         }
         sim.create_event(ev).unwrap();
+        sim.synchronize().unwrap();
         sim.begin_capture(d, s).unwrap();
         match sim.event_destroy(ev) {
             Err(SimError::Invalid { why }) => assert!(why.contains("capture"), "{why}"),
