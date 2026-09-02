@@ -4887,8 +4887,7 @@ impl Sim {
     /// [`Self::graph_nodes`] (`cudaGraphGetNodes`).
     ///
     /// Query; legal during capture. Distinct from
-    /// [`Self::graph_root_nodes`]. This VM does not invent
-    /// occupancy SM counts this slice.
+    /// [`Self::graph_root_nodes`].
     pub fn get_graph_nodes(&self, graph: GraphId) -> Result<Vec<usize>, SimError> {
         self.graph_nodes(graph)
     }
@@ -11448,6 +11447,10 @@ impl Sim {
     }
 
     /// Root node indices (`cudaGraphGetRootNodes`): nodes with no predecessors.
+    ///
+    /// Query; legal during capture. Driver
+    /// `cuGraphGetRootNodes` is
+    /// [`Self::get_graph_root_nodes`].
     pub fn graph_root_nodes(&self, graph: GraphId) -> Result<Vec<usize>, SimError> {
         let g = self.graphs.get(&graph).ok_or(SimError::Invalid {
             why: "unknown graph",
@@ -11458,6 +11461,16 @@ impl Sim {
             .filter(|(_, s)| !s.destroyed && s.deps.is_empty())
             .map(|(i, _)| i)
             .collect())
+    }
+
+    /// `cuGraphGetRootNodes`. Identity with
+    /// [`Self::graph_root_nodes`] (`cudaGraphGetRootNodes`).
+    ///
+    /// Query; legal during capture. Distinct from
+    /// [`Self::get_graph_nodes`]. This VM does not invent
+    /// occupancy SM counts this slice.
+    pub fn get_graph_root_nodes(&self, graph: GraphId) -> Result<Vec<usize>, SimError> {
+        self.graph_root_nodes(graph)
     }
 
     /// Edges (`cudaGraphGetEdges`): `(from, to)` in node-add order.
