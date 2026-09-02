@@ -1219,6 +1219,9 @@
 //! during capture. No Engine `--texref-getflags`.
 //! [`module_get_surf_ref`](Sim::module_get_surf_ref) is `cuModuleGetSurfRef` (always Invalid)
 //! `"module surfref"`). Query; legal during capture. No Engine `--module-surfref`.
+//! [`surf_ref_set_array`](Sim::surf_ref_set_array) is
+//! `cuSurfRefSetArray` (always Invalid `"surfref setarr"`). Query; legal
+//! during capture. No Engine `--surfref-setarr`.
 //! [`library_load_data`](Sim::library_load_data) is `cuLibraryLoadData`
 //! (always Invalid `"cuda library"`). Query; legal during capture. No Engine `--library-load`.
 //! [`library_load_from_file`](Sim::library_load_from_file) is
@@ -21340,6 +21343,65 @@ mod tests {
             Err(SimError::Invalid { why }) => {
                 assert!(why.contains("texref border"), "{why}");
                 assert!(!why.contains("texref getflags"), "{why}");
+            }
+            other => panic!("{other:?}"),
+        }
+        match sim.surf_ref_set_array(d) {
+            Err(SimError::Invalid { why }) => {
+                assert!(why.contains("surfref setarr"), "{why}");
+                assert!(!why.contains("texref getflags"), "{why}");
+                assert!(!why.contains("texref setarr"), "{why}");
+                assert!(!why.contains("module surfref"), "{why}");
+            }
+            other => panic!("{other:?}"),
+        }
+    }
+
+    #[test]
+    fn surf_ref_set_array_is_unsupported() {
+        let mut sim = Sim::new(h100());
+        let d = DeviceId(0);
+        match sim.surf_ref_set_array(d) {
+            Err(SimError::Invalid { why }) => {
+                assert!(why.contains("surfref setarr"), "{why}");
+                assert!(!why.contains("module surfref"), "{why}");
+                assert!(!why.contains("texref setarr"), "{why}");
+                assert!(!why.contains("cuda surface"), "{why}");
+            }
+            other => panic!("{other:?}"),
+        }
+        sim.begin_capture(d, StreamId(0)).unwrap();
+        match sim.surf_ref_set_array(d) {
+            Err(SimError::Invalid { why }) => {
+                assert!(why.contains("surfref setarr"), "{why}");
+            }
+            other => panic!("{other:?}"),
+        }
+        let _g = sim.end_capture().unwrap();
+        match sim.surf_ref_set_array(DeviceId(99)) {
+            Err(SimError::Invalid { why }) => {
+                assert!(why.contains("device not in profile"), "{why}");
+            }
+            other => panic!("{other:?}"),
+        }
+        match sim.module_get_surf_ref(d) {
+            Err(SimError::Invalid { why }) => {
+                assert!(why.contains("module surfref"), "{why}");
+                assert!(!why.contains("surfref setarr"), "{why}");
+            }
+            other => panic!("{other:?}"),
+        }
+        match sim.tex_ref_set_array(d) {
+            Err(SimError::Invalid { why }) => {
+                assert!(why.contains("texref setarr"), "{why}");
+                assert!(!why.contains("surfref setarr"), "{why}");
+            }
+            other => panic!("{other:?}"),
+        }
+        match sim.surf_object_create(d) {
+            Err(SimError::Invalid { why }) => {
+                assert!(why.contains("cuda surface"), "{why}");
+                assert!(!why.contains("surfref setarr"), "{why}");
             }
             other => panic!("{other:?}"),
         }

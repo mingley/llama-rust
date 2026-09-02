@@ -5,6 +5,16 @@ Visible five-turn extract: [docs/chatgpt-share-6a920fe1.md](docs/chatgpt-share-6
 Complete share-API extract: [docs/chatgpt-share-6a920fe1/](docs/chatgpt-share-6a920fe1/).
 Work lands on `main`. No PRs.
 
+## Shipped 2026-09-02 — CUDA `cuSurfRefSetArray`
+
+`gpu-sim` `Sim::surf_ref_set_array` is `cuSurfRefSetArray`.
+Always Invalid `"surfref setarr"` because CUDA surface references are not
+modeled. Query; legal during capture. Distinct from
+`module_get_surf_ref` (why is not `"module surfref"`) and
+`tex_ref_set_array` (why is not `"texref setarr"`).
+This VM does not invent `cuSurfRefGetArray` or Engine `--surfref-setarr`.
+`gpu-profile capture` is still refused. Dual score still has no `$/M tokens`.
+
 ## Shipped 2026-09-02 — CUDA `cuTexRefGetFlags`
 
 `gpu-sim` `Sim::tex_ref_get_flags` is `cuTexRefGetFlags`.

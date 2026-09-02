@@ -711,6 +711,8 @@ no `CUtexref` filtering; no Engine flag).
 (Invalid; no `CUtexref` border color; no Engine flag).
 `gpu-sim` `tex_ref_get_flags` is `cuTexRefGetFlags`
 (Invalid; no `CUtexref` flags word; no Engine flag).
+`gpu-sim` `surf_ref_set_array` is `cuSurfRefSetArray`
+(Invalid; no `CUsurfref` array binding; no Engine flag).
 `gpu-sim` `mipmapped_array_create` is `cuMipmappedArrayCreate` (Invalid;
 CUDA mipmapped arrays are not modeled; no Engine flag).
 `gpu-sim` `mipmapped_array_get_level` is `cuMipmappedArrayGetLevel`

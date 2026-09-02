@@ -21817,6 +21817,22 @@ impl Sim {
         })
     }
 
+    /// `cuSurfRefSetArray`. CUDA surface references are not modeled.
+    ///
+    /// Always Invalid `"surfref setarr"` (this VM has no `CUsurfref`
+    /// array binding). Distinct from [`Self::module_get_surf_ref`]
+    /// (why is not `"module surfref"`) and from
+    /// [`Self::tex_ref_set_array`] (why is not `"texref setarr"`).
+    /// Unknown devices are Invalid `"device not in profile"`. Query; legal
+    /// during capture. This VM does not invent `cuSurfRefGetArray`
+    /// this slice.
+    pub fn surf_ref_set_array(&self, device: DeviceId) -> Result<(), SimError> {
+        let _gpu = self.profile.gpu(device)?;
+        Err(SimError::Invalid {
+            why: "surfref setarr",
+        })
+    }
+
     /// `cuLibraryLoadData`. CUDA libraries are not modeled.
     ///
     /// Always Invalid `"cuda library"` (this VM has no cubin or PTX and no
