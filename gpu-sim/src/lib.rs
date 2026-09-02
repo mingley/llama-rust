@@ -288,6 +288,10 @@
 //! [`ctx_set_limit`](Sim::ctx_set_limit) is `cuCtxSetLimit` (identity with
 //! [`set_limit`](Sim::set_limit)). Capture refused. Distinct from
 //! [`ctx_get_limit`](Sim::ctx_get_limit). No Engine `--ctx-set-limit`.
+//! [`ctx_set_shared_mem_config`](Sim::ctx_set_shared_mem_config) is `cuCtxSetSharedMemConfig` (identity with
+//! [`set_shared_mem_config`](Sim::set_shared_mem_config)). Capture refused. Distinct from
+//! [`ctx_get_shared_mem_config`](Sim::ctx_get_shared_mem_config) and
+//! [`set_func_shared_mem_config`](Sim::set_func_shared_mem_config). No Engine `--ctx-set-shared-mem`.
 //! [`Sim::ipc_get_event`] / [`ipc_open_event`](Sim::ipc_open_event) are
 //! `cudaIpcGetEventHandle` / `cudaIpcOpenEventHandle` (interprocess events).
 //! [`Sim::create_shareable_pool`] is `cudaMemPoolCreate` with a POSIX-FD handle
@@ -784,6 +788,10 @@
 //! [`ctx_set_limit`](Sim::ctx_set_limit) is `cuCtxSetLimit` (identity with
 //! [`set_limit`](Sim::set_limit)). Capture refused. Distinct from
 //! [`ctx_get_limit`](Sim::ctx_get_limit). No Engine `--ctx-set-limit`.
+//! [`ctx_set_shared_mem_config`](Sim::ctx_set_shared_mem_config) is `cuCtxSetSharedMemConfig` (identity with
+//! [`set_shared_mem_config`](Sim::set_shared_mem_config)). Capture refused. Distinct from
+//! [`ctx_get_shared_mem_config`](Sim::ctx_get_shared_mem_config) and
+//! [`set_func_shared_mem_config`](Sim::set_func_shared_mem_config). No Engine `--ctx-set-shared-mem`.
 //! [`mem_host_get_flags`](Sim::mem_host_get_flags) is `cuMemHostGetFlags` (identity with
 //! [`host_get_flags`](Sim::host_get_flags)). Query; legal during capture. No Engine `--mem-host-get-flags`.
 //! [`mem_host_get_device_pointer`](Sim::mem_host_get_device_pointer) is `cuMemHostGetDevicePointer` (identity with
@@ -930,6 +938,10 @@
 //! [`ctx_set_limit`](Sim::ctx_set_limit) is `cuCtxSetLimit` (identity with
 //! [`set_limit`](Sim::set_limit)). Capture refused. Distinct from
 //! [`ctx_get_limit`](Sim::ctx_get_limit). No Engine `--ctx-set-limit`.
+//! [`ctx_set_shared_mem_config`](Sim::ctx_set_shared_mem_config) is `cuCtxSetSharedMemConfig` (identity with
+//! [`set_shared_mem_config`](Sim::set_shared_mem_config)). Capture refused. Distinct from
+//! [`ctx_get_shared_mem_config`](Sim::ctx_get_shared_mem_config) and
+//! [`set_func_shared_mem_config`](Sim::set_func_shared_mem_config). No Engine `--ctx-set-shared-mem`.
 //! [`Sim::pointer_get_attributes`] is `cudaPointerGetAttributes`.
 //! [`pointer_set_attribute`](Sim::pointer_set_attribute) /
 //! [`pointer_get_attribute`](Sim::pointer_get_attribute) are
@@ -1969,6 +1981,10 @@
 //! [`get_shared_mem_config`](Sim::get_shared_mem_config)). Distinct from
 //! [`get_func_shared_mem_config`](Sim::get_func_shared_mem_config). Query;
 //! legal during capture. No Engine `--ctx-shared-mem`.
+//! [`ctx_set_shared_mem_config`](Sim::ctx_set_shared_mem_config) is `cuCtxSetSharedMemConfig` (identity with
+//! [`set_shared_mem_config`](Sim::set_shared_mem_config)). Capture refused. Distinct from
+//! [`ctx_get_shared_mem_config`](Sim::ctx_get_shared_mem_config) and
+//! [`set_func_shared_mem_config`](Sim::set_func_shared_mem_config). No Engine `--ctx-set-shared-mem`.
 //! [`ctx_reset_persisting_l2_cache`](Sim::ctx_reset_persisting_l2_cache) is
 //! `cuCtxResetPersistingL2Cache` (wraps
 //! [`reset_persisting_l2_cache`](Sim::reset_persisting_l2_cache)). Capture
@@ -31316,6 +31332,65 @@ mod tests {
         assert_eq!(
             sim.ctx_get_shared_mem_config(d).unwrap(),
             SharedMemoryMode::Default
+        );
+    }
+
+    #[test]
+    fn ctx_set_shared_mem_config_is_cu_ctx_set_shared_mem_config() {
+        let mut sim = Sim::new(h100());
+        let d = DeviceId(0);
+        let s = StreamId(0);
+        match sim.ctx_set_shared_mem_config(DeviceId(99), SharedMemoryMode::EightByte) {
+            Err(SimError::Invalid { why }) => assert!(why.contains("device"), "{why}"),
+            other => panic!("{other:?}"),
+        }
+        match sim.set_shared_mem_config(DeviceId(99), SharedMemoryMode::EightByte) {
+            Err(SimError::Invalid { why }) => assert!(why.contains("device"), "{why}"),
+            other => panic!("{other:?}"),
+        }
+        sim.ctx_set_shared_mem_config(d, SharedMemoryMode::EightByte)
+            .unwrap();
+        assert_eq!(
+            sim.ctx_get_shared_mem_config(d).unwrap(),
+            SharedMemoryMode::EightByte
+        );
+        assert_eq!(
+            sim.get_shared_mem_config(d).unwrap(),
+            SharedMemoryMode::EightByte
+        );
+        sim.set_func_shared_mem_config(d, SharedMemoryMode::FourByte)
+            .unwrap();
+        assert_eq!(
+            sim.ctx_get_shared_mem_config(d).unwrap(),
+            SharedMemoryMode::EightByte
+        );
+        sim.set_shared_mem_config(d, SharedMemoryMode::FourByte)
+            .unwrap();
+        assert_eq!(
+            sim.ctx_get_shared_mem_config(d).unwrap(),
+            SharedMemoryMode::FourByte
+        );
+        sim.begin_capture(d, s).unwrap();
+        match sim.ctx_set_shared_mem_config(d, SharedMemoryMode::Default) {
+            Err(SimError::Invalid { why }) => assert!(why.contains("capture"), "{why}"),
+            other => panic!("{other:?}"),
+        }
+        match sim.set_shared_mem_config(d, SharedMemoryMode::Default) {
+            Err(SimError::Invalid { why }) => assert!(why.contains("capture"), "{why}"),
+            other => panic!("{other:?}"),
+        }
+        let _g = sim.end_capture().unwrap();
+        let mut eight = Sim::new(HardwareProfile::example_8xh100_nvlink());
+        eight
+            .ctx_set_shared_mem_config(DeviceId(1), SharedMemoryMode::FourByte)
+            .unwrap();
+        assert_eq!(
+            eight.ctx_get_shared_mem_config(DeviceId(0)).unwrap(),
+            SharedMemoryMode::Default
+        );
+        assert_eq!(
+            eight.ctx_get_shared_mem_config(DeviceId(1)).unwrap(),
+            SharedMemoryMode::FourByte
         );
     }
 

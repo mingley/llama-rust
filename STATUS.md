@@ -5,6 +5,14 @@ Visible five-turn extract: [docs/chatgpt-share-6a920fe1.md](docs/chatgpt-share-6
 Complete share-API extract: [docs/chatgpt-share-6a920fe1/](docs/chatgpt-share-6a920fe1/).
 Work lands on `main`. No PRs.
 
+## Shipped 2026-09-02 — CUDA `cuCtxSetSharedMemConfig`
+
+`gpu-sim` `Sim::ctx_set_shared_mem_config` is `cuCtxSetSharedMemConfig`.
+Identity with `set_shared_mem_config` (`cudaDeviceSetSharedMemConfig`).
+Capture refused. Distinct from `ctx_get_shared_mem_config` and `set_func_shared_mem_config`.
+This VM does not invent occupancy SM counts or Engine `--ctx-set-shared-mem`.
+`gpu-profile capture` is still refused. Dual score still has no `$/M tokens`.
+
 ## Shipped 2026-09-02 — CUDA `cuCtxSetLimit`
 
 `gpu-sim` `Sim::ctx_set_limit` is `cuCtxSetLimit`.

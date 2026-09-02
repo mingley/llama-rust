@@ -435,6 +435,7 @@ warp scheduler, L1, …   ← do not model
 | `ctx_set_limit` is identity with `set_limit` | `cuCtxSetLimit` |
 | `ctx_synchronize` waits every stream on one GPU (other GPUs keep running) | `cuCtxSynchronize` |
 | `ctx_get_shared_mem_config` wraps `get_shared_mem_config` for that primary context | `cuCtxGetSharedMemConfig` |
+| `ctx_set_shared_mem_config` is identity with `set_shared_mem_config` | `cuCtxSetSharedMemConfig` |
 | `ctx_reset_persisting_l2_cache` wraps `reset_persisting_l2_cache` (limit stays) | `cuCtxResetPersistingL2Cache` |
 | `ctx_get_exec_affinity` is Invalid (SM_COUNT support is 0) | `cuCtxGetExecAffinity` |
 | `mem_batch_decompress_async` is Invalid (algorithm mask is 0) | `cuMemBatchDecompressAsync` |
@@ -1925,6 +1926,7 @@ keep running).
 `ctx_get_shared_mem_config` is `cuCtxGetSharedMemConfig` for that same
 primary context (same as `get_shared_mem_config`; distinct from
 `get_func_shared_mem_config`).
+`ctx_set_shared_mem_config` is `cuCtxSetSharedMemConfig` (identity with `set_shared_mem_config`). Capture refused. Distinct from `ctx_get_shared_mem_config` and `set_func_shared_mem_config`. No Engine `--ctx-set-shared-mem`.
 `ctx_reset_persisting_l2_cache` is `cuCtxResetPersistingL2Cache` for that
 same primary context (same as `reset_persisting_l2_cache`; capture cannot
 include it; the persist limit stays).
@@ -1987,6 +1989,7 @@ No Engine `--primary-ctx-flags`.
 `ctx_set_flags` is `cuCtxSetFlags` (identity with `set_device_flags`). Capture refused. Distinct from `ctx_get_flags` and `device_primary_ctx_set_flags`. No Engine `--ctx-set-flags`.
 `ctx_set_cache_config` is `cuCtxSetCacheConfig` (identity with `set_cache_config`). Capture refused. Distinct from `ctx_get_cache_config` and `set_func_cache_config`. No Engine `--ctx-set-cache-config`.
 `ctx_set_limit` is `cuCtxSetLimit` (identity with `set_limit`). Capture refused. Distinct from `ctx_get_limit`. No Engine `--ctx-set-limit`.
+`ctx_set_shared_mem_config` is `cuCtxSetSharedMemConfig` (identity with `set_shared_mem_config`). Capture refused. Distinct from `ctx_get_shared_mem_config` and `set_func_shared_mem_config`. No Engine `--ctx-set-shared-mem`.
 `ctx_get_id` is `cuCtxGetId` for the seeded primary context of an explicit
 device (no TLS current device). Distinct from `green_ctx_get_id`. Query;
 legal during capture. No Engine `--ctx-id`.
@@ -2041,6 +2044,7 @@ No Engine `--malloc-pitch-element`. `mem_alloc` is `cuMemAlloc` (identity with `
 `ctx_set_flags` is `cuCtxSetFlags` (identity with `set_device_flags`). Capture refused. Distinct from `ctx_get_flags` and `device_primary_ctx_set_flags`. No Engine `--ctx-set-flags`.
 `ctx_set_cache_config` is `cuCtxSetCacheConfig` (identity with `set_cache_config`). Capture refused. Distinct from `ctx_get_cache_config` and `set_func_cache_config`. No Engine `--ctx-set-cache-config`.
 `ctx_set_limit` is `cuCtxSetLimit` (identity with `set_limit`). Capture refused. Distinct from `ctx_get_limit`. No Engine `--ctx-set-limit`.
+`ctx_set_shared_mem_config` is `cuCtxSetSharedMemConfig` (identity with `set_shared_mem_config`). Capture refused. Distinct from `ctx_get_shared_mem_config` and `set_func_shared_mem_config`. No Engine `--ctx-set-shared-mem`.
 `mem_host_get_flags` is `cuMemHostGetFlags` (identity with `host_get_flags`). Query; legal during capture. No Engine `--mem-host-get-flags`.
 `mem_host_get_device_pointer` is `cuMemHostGetDevicePointer` (identity with `host_get_device_pointer_with_flags`). Query; legal during capture. No Engine `--mem-host-get-device-pointer`.
 `mem_host_register` is `cuMemHostRegister` (identity with `host_register_with_flags`). Capture refused. No Engine `--mem-host-register`.
@@ -2091,6 +2095,7 @@ No Engine `--malloc-pitch-element`. `mem_alloc` is `cuMemAlloc` (identity with `
 `ctx_set_flags` is `cuCtxSetFlags` (identity with `set_device_flags`). Capture refused. Distinct from `ctx_get_flags` and `device_primary_ctx_set_flags`. No Engine `--ctx-set-flags`.
 `ctx_set_cache_config` is `cuCtxSetCacheConfig` (identity with `set_cache_config`). Capture refused. Distinct from `ctx_get_cache_config` and `set_func_cache_config`. No Engine `--ctx-set-cache-config`.
 `ctx_set_limit` is `cuCtxSetLimit` (identity with `set_limit`). Capture refused. Distinct from `ctx_get_limit`. No Engine `--ctx-set-limit`.
+`ctx_set_shared_mem_config` is `cuCtxSetSharedMemConfig` (identity with `set_shared_mem_config`). Capture refused. Distinct from `ctx_get_shared_mem_config` and `set_func_shared_mem_config`. No Engine `--ctx-set-shared-mem`.
 `MemcpyOp` `height` / pitches are
 `cudaMemcpy2DAsync` (payload `width * height`). Origin fields are srcPos /
 dstPos (default 0). No Engine `--memcpy-origin`. `MemcpyOp` `src_lod` /

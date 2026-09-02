@@ -491,6 +491,8 @@ no Engine flag).
 `synchronize_device`; no Engine flag).
 `gpu-sim` `ctx_get_shared_mem_config` is `cuCtxGetSharedMemConfig` (same
 as `get_shared_mem_config`; no Engine flag).
+`gpu-sim` `ctx_set_shared_mem_config` is `cuCtxSetSharedMemConfig` (identity with
+`set_shared_mem_config`; no Engine flag).
 `gpu-sim` launch-geometry caps are `cudaDevAttrMaxThreadsPerBlock` 1024
 and H100 block/grid dims (no Engine flag; not occupancy SM counts).
 `gpu-sim` `MaxRegistersPerBlock` is `cudaDevAttrMaxRegistersPerBlock` 65536
@@ -583,6 +585,7 @@ compiled kernel exists; no Engine flag).
 `gpu-sim` `ctx_set_flags` is `cuCtxSetFlags` (identity with `set_device_flags`; no Engine flag).
 `gpu-sim` `ctx_set_cache_config` is `cuCtxSetCacheConfig` (identity with `set_cache_config`; no Engine flag).
 `gpu-sim` `ctx_set_limit` is `cuCtxSetLimit` (identity with `set_limit`; no Engine flag).
+`gpu-sim` `ctx_set_shared_mem_config` is `cuCtxSetSharedMemConfig` (identity with `set_shared_mem_config`; no Engine flag).
 `gpu-sim` `func_is_loaded` is `cuFuncIsLoaded` (`false` until a compiled
 kernel exists; no Engine flag).
 `gpu-sim` `func_load` is `cuFuncLoad` (Invalid; no compiled kernel; no

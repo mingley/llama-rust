@@ -20122,6 +20122,7 @@ impl Sim {
     /// [`SharedMemoryMode::Default`] (unscaled). Launch FourByte / EightByte
     /// still override. Decode identity stays unset.
     /// `expertvm sim --device-shared-mem eight` sets [`SharedMemoryMode::EightByte`].
+    /// Driver `cuCtxSetSharedMemConfig` is [`Self::ctx_set_shared_mem_config`].
     pub fn set_shared_mem_config(
         &mut self,
         device: DeviceId,
@@ -20563,9 +20564,7 @@ impl Sim {
     /// `cuCtxSetLimit`. Identity with [`Self::set_limit`]
     /// (`cudaDeviceSetLimit`).
     ///
-    /// Capture refused. Distinct from [`Self::ctx_get_limit`]. This VM does
-    /// not invent `cuCtxSetSharedMemConfig` this slice (`set_shared_mem_config`
-    /// stays).
+    /// Capture refused. Distinct from [`Self::ctx_get_limit`].
     pub fn ctx_set_limit(
         &mut self,
         device: DeviceId,
@@ -20595,14 +20594,27 @@ impl Sim {
     /// (`cudaDeviceGetSharedMemConfig`). Distinct from
     /// [`Self::get_func_shared_mem_config`] and from
     /// [`Self::ctx_get_cache_config`]. Unknown devices are Invalid
-    /// `"device not in profile"`. This VM does not invent
-    /// `cuCtxSetSharedMemConfig` this slice (`set_shared_mem_config` stays
-    /// the runtime setter).
+    /// `"device not in profile"`. Driver `cuCtxSetSharedMemConfig` is
+    /// [`Self::ctx_set_shared_mem_config`].
     pub fn ctx_get_shared_mem_config(
         &self,
         device: DeviceId,
     ) -> Result<SharedMemoryMode, SimError> {
         self.get_shared_mem_config(device)
+    }
+
+    /// `cuCtxSetSharedMemConfig`. Identity with [`Self::set_shared_mem_config`]
+    /// (`cudaDeviceSetSharedMemConfig`).
+    ///
+    /// Capture refused. Distinct from [`Self::ctx_get_shared_mem_config`] and
+    /// [`Self::set_func_shared_mem_config`]. This VM does not invent occupancy
+    /// SM counts this slice.
+    pub fn ctx_set_shared_mem_config(
+        &mut self,
+        device: DeviceId,
+        mode: SharedMemoryMode,
+    ) -> Result<(), SimError> {
+        self.set_shared_mem_config(device, mode)
     }
 
     /// `cuCtxResetPersistingL2Cache` for the seeded primary context of `device`.
