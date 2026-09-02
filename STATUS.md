@@ -5,6 +5,14 @@ Visible five-turn extract: [docs/chatgpt-share-6a920fe1.md](docs/chatgpt-share-6
 Complete share-API extract: [docs/chatgpt-share-6a920fe1/](docs/chatgpt-share-6a920fe1/).
 Work lands on `main`. No PRs.
 
+## Shipped 2026-09-02 — CUDA `cuGraphExecMemFreeNodeSetParams`
+
+`gpu-sim` `Sim::set_graph_exec_free_node_params` is `cuGraphExecMemFreeNodeSetParams`.
+Identity with `graph_exec_free_set_params` (`cudaGraphExecMemFreeNodeSetParams`).
+Capture refused. Distinct from `set_graph_free_node_params`.
+This VM does not invent occupancy SM counts or Engine `--graph-exec-free-set-params`.
+`gpu-profile capture` is still refused. Dual score still has no `$/M tokens`.
+
 ## Shipped 2026-09-02 — CUDA `cuGraphMemFreeNodeSetParams`
 
 `gpu-sim` `Sim::set_graph_free_node_params` is `cuGraphMemFreeNodeSetParams`.

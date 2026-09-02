@@ -6305,8 +6305,7 @@ impl Sim {
     /// [`Self::graph_free_set_params`] (`cudaGraphMemFreeNodeSetParams`).
     ///
     /// Host-synchronous. Capture refused. Distinct from
-    /// [`Self::graph_exec_free_set_params`]. This VM does not invent
-    /// occupancy SM counts this slice.
+    /// [`Self::graph_exec_free_set_params`].
     pub fn set_graph_free_node_params(
         &mut self,
         graph: GraphId,
@@ -7721,6 +7720,8 @@ impl Sim {
     /// Pays `graph_set_params_ns` and clears the upload flag. Capture cannot
     /// include it. Graphs with mem alloc/free nodes are legal (unlike
     /// [`Self::update_graph`]). [`Sim::graph_allocs`] stays the alloc-node ids.
+    /// Driver `cuGraphExecMemFreeNodeSetParams` is
+    /// [`Self::set_graph_exec_free_node_params`].
     pub fn graph_exec_free_set_params(
         &mut self,
         exec: GraphId,
@@ -7755,6 +7756,21 @@ impl Sim {
         step.kind = Kind::Free { id };
         g.uploaded = false;
         Ok(())
+    }
+
+    /// `cuGraphExecMemFreeNodeSetParams`. Identity with
+    /// [`Self::graph_exec_free_set_params`] (`cudaGraphExecMemFreeNodeSetParams`).
+    ///
+    /// Capture refused. Distinct from
+    /// [`Self::set_graph_free_node_params`]. This VM does not invent
+    /// occupancy SM counts this slice.
+    pub fn set_graph_exec_free_node_params(
+        &mut self,
+        exec: GraphId,
+        node: usize,
+        id: AllocId,
+    ) -> Result<(), SimError> {
+        self.graph_exec_free_set_params(exec, node, id)
     }
 
     /// `cudaGraphNodeSetParams` for a set-conditional node on the definition.
