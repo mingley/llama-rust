@@ -5,6 +5,13 @@ Visible five-turn extract: [docs/chatgpt-share-6a920fe1.md](docs/chatgpt-share-6
 Complete share-API extract: [docs/chatgpt-share-6a920fe1/](docs/chatgpt-share-6a920fe1/).
 Work lands on `main`. No PRs.
 
+## Shipped 2026-09-02 — CUDA `cuFuncGetAttributes`
+
+`gpu-sim` `Sim::get_func_attributes` is `cuFuncGetAttributes`.
+Identity with `func_get_attributes` (`cudaFuncGetAttributes`). Query; legal during capture. Distinct from `stream_set_blocking`.
+This VM does not invent occupancy SM counts or Engine `--get-func-attributes`.
+`gpu-profile capture` is still refused. Dual score still has no `$/M tokens`.
+
 ## Shipped 2026-09-02 — CUDA `cuStreamCreate` blocking
 
 `gpu-sim` `Sim::stream_set_blocking` is `cuStreamCreate` blocking.

@@ -2539,7 +2539,6 @@ impl Sim {
     /// [`Self::set_stream_blocking`] (`cudaStreamCreate`).
     ///
     /// Capture legal. Distinct from [`Self::stream_set_priority`].
-    /// This VM does not invent occupancy SM counts this slice.
     pub fn stream_set_blocking(
         &mut self,
         device: DeviceId,
@@ -31082,6 +31081,8 @@ impl Sim {
     /// `binaryVersion`, and `cacheModeCA` are always 0 until a compiled
     /// kernel exists. Distinct from [`DeviceAttr::MaxThreadsPerBlock`].
     /// `numRegs` is not modeled this slice.
+    /// Driver `cuFuncGetAttributes` is [`Self::get_func_attributes`].
+    /// Identity wrap [`Self::get_func_attributes`].
     pub fn func_get_attributes(&self, device: DeviceId) -> Result<FuncAttributes, SimError> {
         let _gpu = self.profile.gpu(device)?;
         let rt = self.gpu_rt(device)?;
@@ -31102,6 +31103,15 @@ impl Sim {
             required_cluster_depth: rt.required_cluster_z,
             cluster_scheduling_policy_preference: rt.func_cluster_policy,
         })
+    }
+
+    /// `cuFuncGetAttributes`. Identity with
+    /// [`Self::func_get_attributes`] (`cudaFuncGetAttributes`).
+    ///
+    /// Query; legal during capture. Distinct from [`Self::stream_set_blocking`].
+    /// This VM does not invent occupancy SM counts this slice.
+    pub fn get_func_attributes(&self, device: DeviceId) -> Result<FuncAttributes, SimError> {
+        self.func_get_attributes(device)
     }
 
     /// `cudaFuncGetName` / `cuFuncGetName` for the per-device function.
