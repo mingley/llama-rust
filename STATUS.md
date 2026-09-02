@@ -5,6 +5,13 @@ Visible five-turn extract: [docs/chatgpt-share-6a920fe1.md](docs/chatgpt-share-6
 Complete share-API extract: [docs/chatgpt-share-6a920fe1/](docs/chatgpt-share-6a920fe1/).
 Work lands on `main`. No PRs.
 
+## Shipped 2026-09-02 — CUDA `cuMemAddressFree`
+
+`gpu-sim` `Sim::mem_address_free` is `cuMemAddressFree`.
+Identity with `va_free` (`cuMemAddressFree`). Capture refused. Distinct from `mem_unmap_with_size`.
+This VM does not invent occupancy SM counts or Engine `--mem-address-free`.
+`gpu-profile capture` is still refused. Dual score still has no `$/M tokens`.
+
 ## Shipped 2026-09-02 — CUDA `cuMemUnmap` size
 
 `gpu-sim` `Sim::mem_unmap_with_size` is `cuMemUnmap` size.

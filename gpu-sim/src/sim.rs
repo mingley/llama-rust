@@ -19275,7 +19275,6 @@ impl Sim {
     /// [`Self::va_unmap_with_size`] (`cuMemUnmap` size).
     ///
     /// Capture refused. Distinct from [`Self::mem_unmap`].
-    /// This VM does not invent occupancy SM counts this slice.
     pub fn mem_unmap_with_size(&mut self, id: AllocId, size: u64) -> Result<(), SimError> {
         self.va_unmap_with_size(id, size)
     }
@@ -19551,10 +19550,21 @@ impl Sim {
     ///
     /// Typed helper; [`Self::va_free_with_size`] is the CUDA size argument
     /// (must match the reservation).
+    /// Driver `cuMemAddressFree` is [`Self::mem_address_free`].
+    /// Identity wrap [`Self::mem_address_free`].
     pub fn va_free(&mut self, id: AllocId) -> Result<(), SimError> {
         self.fail_if_capturing("cannot capture alloc/free")?;
         let bytes = self.alloc_ref(id)?.bytes;
         self.va_free_with_size(id, bytes)
+    }
+
+    /// `cuMemAddressFree`. Identity with
+    /// [`Self::va_free`] (`cuMemAddressFree`).
+    ///
+    /// Capture refused. Distinct from [`Self::mem_unmap_with_size`].
+    /// This VM does not invent occupancy SM counts this slice.
+    pub fn mem_address_free(&mut self, id: AllocId) -> Result<(), SimError> {
+        self.va_free(id)
     }
 
     /// [`Self::va_free`] with the CUDA reservation size.
