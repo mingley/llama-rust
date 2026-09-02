@@ -9114,7 +9114,14 @@ model, do not celebrate the sim.
     or `cudaChooseDevice`. `gpu-profile capture` is still refused. Dual
     score still has no `$/M tokens`.
 
-994. [ ] Next numbered PLAN item after 993 is the next `gpu-sim` / Engine /
+994. [x] `gpu-sim` `Sim::set_graph_memcpy_node_params_1d` is
+    graph `cudaGraphMemcpyNodeSetParams1D`. Identity with `graph_memcpy_set_params_1d`
+    (`cudaGraphMemcpyNodeSetParams1D`). Capture refused. Distinct from
+    `set_graph_memcpy_node_params`. This VM does not invent occupancy SM counts, Engine `--graph-memcpy-set-params-1d`,
+    or `cudaChooseDevice`. `gpu-profile capture` is still refused. Dual
+    score still has no `$/M tokens`.
+
+995. [ ] Next numbered PLAN item after 994 is the next `gpu-sim` / Engine /
     serve / expertvm mechanical API that is still missing, or the next official
     decode family. Prefer remaining CUDA-shaped twins over more
     OpenAI HTTP veneer. Do not invent F32 `output.scale`. Do not invent a
@@ -10587,6 +10594,9 @@ model, do not celebrate the sim.
     Do not invent a second graph unnamed `cudaGraphAddHostNode` / `add_graph_host_func`.
     Do not invent Engine `--graph-add-host-func`. Do not invent
     occupancy SM counts this slice. Do not reverse AddGraphHostFunc identity with graph_add_host_func.
+    Do not invent a second graph `cudaGraphMemcpyNodeSetParams1D` / `set_graph_memcpy_node_params_1d`.
+    Do not invent Engine `--graph-memcpy-set-params-1d`. Do not invent
+    occupancy SM counts this slice. Do not reverse SetGraphMemcpyNodeParams1D identity with graph_memcpy_set_params_1d.
     Do not invent a second `cudaStreamAddCallback`.
     Do not invent Engine `--stream-callback` (same wall as second live
     `cudaLaunchHostFunc` after miss DMA).
@@ -12139,6 +12149,9 @@ model, do not celebrate the sim.
     Do not invent a second `add_graph_host_func` API. Do not invent
     Engine `--graph-add-host-func-identity`. Do not invent an occupancy-sm-count
     this slice. Do not reverse AddGraphHostFunc identity with graph_add_host_func.
+    Do not invent a second `set_graph_memcpy_node_params_1d` API. Do not invent
+    Engine `--graph-memcpy-set-params-1d-identity`. Do not invent a graph-memcpy-set-params-2d
+    this slice. Do not reverse SetGraphMemcpyNodeParams1D identity with graph_memcpy_set_params_1d.
     Do not invent a second DeviceLaunch in-flight destroy-complete check or Engine
     `--device-launch-destroy`. Do not abort an in-flight DeviceLaunch when
     `destroy_graph` succeeds. Do not delay destroy of an idle exec. Do not invent
@@ -13874,6 +13887,9 @@ model, do not celebrate the sim.
     Do not invent a second `add_graph_host_func` method. Do not
     invent Engine `--cu-graph-add-host-func`. Do not reverse wrapping
     graph unnamed cudaGraphAddHostNode identity.
+    Do not invent a second `set_graph_memcpy_node_params_1d` method. Do not
+    invent Engine `--cu-graph-memcpy-set-params-1d`. Do not reverse wrapping
+    graph cudaGraphMemcpyNodeSetParams1D identity.
     Do not
     spend the next item on an OpenAI-compatible HTTP veneer.
 

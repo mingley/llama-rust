@@ -6047,7 +6047,9 @@ impl Sim {
     /// Packs a 1D [`MemcpyOp`] ([`MemcpyOp::packed_1d`]). A 2D/3D node may
     /// become 1D. After instantiate this does not retarget the exec; use
     /// [`Self::graph_exec_memcpy_set_params_1d`]. Pageable copies stay illegal.
-    /// Capture cannot include it. Host-sync 1 ns.
+    /// Capture cannot include it. Host-sync 1 ns. Driver
+    /// graph `cudaGraphMemcpyNodeSetParams1D` is
+    /// [`Self::set_graph_memcpy_node_params_1d`].
     pub fn graph_memcpy_set_params_1d(
         &mut self,
         graph: GraphId,
@@ -6058,6 +6060,24 @@ impl Sim {
         bytes: u64,
     ) -> Result<(), SimError> {
         self.graph_memcpy_set_params(graph, node, &MemcpyOp::packed_1d(src, dst, alloc, bytes))
+    }
+
+    /// Graph `cudaGraphMemcpyNodeSetParams1D`. Identity with
+    /// [`Self::graph_memcpy_set_params_1d`] (`cudaGraphMemcpyNodeSetParams1D`).
+    ///
+    /// Capture refused. Distinct from
+    /// [`Self::set_graph_memcpy_node_params`]. This VM does not invent
+    /// occupancy SM counts this slice.
+    pub fn set_graph_memcpy_node_params_1d(
+        &mut self,
+        graph: GraphId,
+        node: usize,
+        src: Place,
+        dst: Place,
+        alloc: AllocId,
+        bytes: u64,
+    ) -> Result<(), SimError> {
+        self.graph_memcpy_set_params_1d(graph, node, src, dst, alloc, bytes)
     }
 
     /// `cudaGraphMemcpyNodeSetParams` whose [`MemcpyOp`] is [`MemcpyOp::is_2d`]
@@ -10387,8 +10407,7 @@ impl Sim {
     /// callback).
     ///
     /// Capture refused. Distinct from
-    /// [`Self::add_graph_host`]. This VM does not invent
-    /// occupancy SM counts this slice.
+    /// [`Self::add_graph_host`].
     pub fn add_graph_host_func(&mut self, graph: GraphId) -> Result<(), SimError> {
         self.graph_add_host_func(graph)
     }
