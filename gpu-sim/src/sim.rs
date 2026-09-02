@@ -24718,7 +24718,6 @@ impl Sim {
     /// [`Self::pointer_get_attributes`] (`cudaPointerGetAttributes`).
     ///
     /// Query; legal during capture. Distinct from [`Self::mem_pointer_set_attribute`].
-    /// This VM does not invent occupancy SM counts this slice.
     pub fn mem_pointer_get_attributes(&self, id: AllocId) -> Result<PointerAttributes, SimError> {
         self.pointer_get_attributes(id)
     }
@@ -27275,6 +27274,8 @@ impl Sim {
     /// Other sizes Invalid `"malloc pitch element"`. Pitch is still
     /// `align_up(width, 512)` (this VM does not vary pitch by element size).
     /// Host-synchronous; capture cannot include it.
+    /// Driver `cuMemAllocPitch` is [`Self::mem_alloc_pitch_with_element_size`].
+    /// Identity wrap [`Self::mem_alloc_pitch_with_element_size`].
     pub fn malloc_pitch_with_element_size(
         &mut self,
         device: DeviceId,
@@ -27288,6 +27289,21 @@ impl Sim {
             });
         }
         self.malloc_pitch(device, width, height)
+    }
+
+    /// `cuMemAllocPitch`. Identity with
+    /// [`Self::malloc_pitch_with_element_size`] (`cuMemAllocPitch`).
+    ///
+    /// Capture refused. Distinct from [`Self::mem_alloc_pitch`].
+    /// This VM does not invent occupancy SM counts this slice.
+    pub fn mem_alloc_pitch_with_element_size(
+        &mut self,
+        device: DeviceId,
+        width: u64,
+        height: u64,
+        element_size: u32,
+    ) -> Result<(AllocId, u64), SimError> {
+        self.malloc_pitch_with_element_size(device, width, height, element_size)
     }
 
     /// `cudaMalloc3D`: aligned 3D allocation. Returns `(ptr, pitch)`.

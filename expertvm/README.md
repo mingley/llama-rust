@@ -862,6 +862,7 @@ compiled kernel exists; no Engine flag).
 `gpu-sim` `mem_pointer_get_access_flags` is `CU_POINTER_ATTRIBUTE_ACCESS_FLAGS` (identity with `pointer_get_access_flags`; no Engine flag).
 `gpu-sim` `mem_pointer_set_attribute` is `cuPointerSetAttribute` (identity with `pointer_set_attribute`; no Engine flag).
 `gpu-sim` `mem_pointer_get_attributes` is `cudaPointerGetAttributes` (identity with `pointer_get_attributes`; no Engine flag).
+`gpu-sim` `mem_alloc_pitch_with_element_size` is `cuMemAllocPitch` (identity with `malloc_pitch_with_element_size`; no Engine flag).
 `gpu-sim` `mem_alloc` is `cuMemAlloc` (identity with `malloc`; no Engine flag).
 `gpu-sim` `mem_free` is `cuMemFree` (identity with `free_sync`; no Engine flag).
 `gpu-sim` `mem_free_host` is `cuMemFreeHost` (identity with `free_host_pinned`; no Engine flag).
@@ -1248,6 +1249,7 @@ compiled kernel exists; no Engine flag).
 `gpu-sim` `mem_pointer_get_access_flags` is `CU_POINTER_ATTRIBUTE_ACCESS_FLAGS` (identity with `pointer_get_access_flags`; no Engine flag).
 `gpu-sim` `mem_pointer_set_attribute` is `cuPointerSetAttribute` (identity with `pointer_set_attribute`; no Engine flag).
 `gpu-sim` `mem_pointer_get_attributes` is `cudaPointerGetAttributes` (identity with `pointer_get_attributes`; no Engine flag).
+`gpu-sim` `mem_alloc_pitch_with_element_size` is `cuMemAllocPitch` (identity with `malloc_pitch_with_element_size`; no Engine flag).
 `gpu-sim` `func_is_loaded` is `cuFuncIsLoaded` (`false` until a compiled
 kernel exists; no Engine flag).
 `gpu-sim` `func_load` is `cuFuncLoad` (Invalid; no compiled kernel; no

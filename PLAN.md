@@ -10129,7 +10129,12 @@ model, do not celebrate the sim.
       `mem_pointer_set_attribute`. This VM does not invent occupancy SM counts, Engine `--mem-pointer-get-attributes`,
       or `cudaChooseDevice`. `gpu-profile capture` is still refused. Dual
       score still has no `$/M tokens`.
-1174. [ ] Next numbered PLAN item after 1173 is the next `gpu-sim` / Engine /
+1174. [x] `gpu-sim` `Sim::mem_alloc_pitch_with_element_size` is
+      `cuMemAllocPitch`. Identity with `malloc_pitch_with_element_size` (`cuMemAllocPitch`). Capture refused. Distinct from
+      `mem_alloc_pitch`. This VM does not invent occupancy SM counts, Engine `--mem-alloc-pitch-with-element-size`,
+      or `cudaChooseDevice`. `gpu-profile capture` is still refused. Dual
+      score still has no `$/M tokens`.
+1175. [ ] Next numbered PLAN item after 1174 is the next `gpu-sim` / Engine /
     serve / expertvm mechanical API that is still missing, or the next official
     decode family. Prefer remaining CUDA-shaped twins over more
     OpenAI HTTP veneer. Do not invent F32 `output.scale`. Do not invent a
@@ -12350,6 +12355,11 @@ model, do not celebrate the sim.
     occupancy SM counts this slice. Do not reverse MemPointerGetAttributes identity with pointer_get_attributes.
     Do not invent `host_get_device_pointer` as `mem_pointer_get_attributes`.
     Do not invent `cudaHostGetDevicePointer` as `mem_pointer_get_attributes`.
+    Do not invent a second `cuMemAllocPitch` / `mem_alloc_pitch_with_element_size`.
+    Do not invent Engine `--mem-alloc-pitch-with-element-size`. Do not invent
+    occupancy SM counts this slice. Do not reverse MemAllocPitchWithElementSize identity with malloc_pitch_with_element_size.
+    Do not invent `malloc_3d` as `mem_alloc_pitch_with_element_size`.
+    Do not invent `cudaMalloc3D` as `mem_alloc_pitch_with_element_size`.
     Do not invent a second `cudaStreamAddCallback`.
     Do not invent Engine `--stream-callback` (same wall as second live
     `cudaLaunchHostFunc` after miss DMA).
@@ -14607,6 +14617,11 @@ model, do not celebrate the sim.
     this slice. Do not reverse MemPointerGetAttributes identity with pointer_get_attributes.
     Do not wrap `pointer_get_attributes` as `mem_pointer_get_attributes`.
     Do not wrap `host_get_device_pointer` as `mem_pointer_get_attributes`.
+    Do not invent a second `mem_alloc_pitch_with_element_size` API. Do not invent
+    Engine `--mem-alloc-pitch-with-element-size-identity`. Do not invent a malloc-pitch-element
+    this slice. Do not reverse MemAllocPitchWithElementSize identity with malloc_pitch_with_element_size.
+    Do not wrap `malloc_pitch_with_element_size` as `mem_alloc_pitch_with_element_size`.
+    Do not wrap `malloc_3d` as `mem_alloc_pitch_with_element_size`.
     Do not invent a second DeviceLaunch in-flight destroy-complete check or Engine
     `--device-launch-destroy`. Do not abort an in-flight DeviceLaunch when
     `destroy_graph` succeeds. Do not delay destroy of an idle exec. Do not invent
@@ -16892,6 +16907,10 @@ model, do not celebrate the sim.
     invent Engine `--cu-mem-pointer-get-attributes`. Do not reverse wrapping
     cudaPointerGetAttributes identity. Do not wrap `host_get_device_pointer` as `mem_pointer_get_attributes`.
     Do not invent Engine `--pointer-attrs`.
+    Do not invent a second `mem_alloc_pitch_with_element_size` method. Do not
+    invent Engine `--cu-mem-alloc-pitch-with-element-size`. Do not reverse wrapping
+    cuMemAllocPitch identity. Do not wrap `malloc_3d` as `mem_alloc_pitch_with_element_size`.
+    Do not wrap `host_get_device_pointer` as `mem_alloc_pitch_with_element_size`.
     Do not
     spend the next item on an OpenAI-compatible HTTP veneer.
 
