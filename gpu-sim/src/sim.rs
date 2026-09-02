@@ -19517,7 +19517,6 @@ impl Sim {
     /// [`Self::va_set_access_n`] (`cuMemSetAccess` n).
     ///
     /// Capture refused. Distinct from [`Self::mem_set_access_with_size`].
-    /// This VM does not invent occupancy SM counts this slice.
     pub fn mem_set_access_n(
         &mut self,
         id: AllocId,
@@ -19566,6 +19565,8 @@ impl Sim {
 
     /// Drop [`Self::va_set_access`] / [`Self::va_set_access_write`] for `device`.
     /// Host-synchronous.
+    /// Driver `cuMemSetAccess` ProtNone is [`Self::mem_unset_access`].
+    /// Identity wrap [`Self::mem_unset_access`].
     pub fn va_unset_access(&mut self, id: AllocId, device: DeviceId) -> Result<(), SimError> {
         self.fail_if_capturing("cannot capture alloc/free")?;
         let _gpu = self.profile.gpu(device)?;
@@ -19580,6 +19581,15 @@ impl Sim {
         }
         self.clock = self.clock.saturating_add(self.first_alloc_ns().max(1));
         Ok(())
+    }
+
+    /// `cuMemSetAccess` ProtNone. Identity with
+    /// [`Self::va_unset_access`] (`cuMemSetAccess` ProtNone).
+    ///
+    /// Capture refused. Distinct from [`Self::mem_set_access_n`].
+    /// This VM does not invent occupancy SM counts this slice.
+    pub fn mem_unset_access(&mut self, id: AllocId, device: DeviceId) -> Result<(), SimError> {
+        self.va_unset_access(id, device)
     }
 
     /// Whether `device` has [`Self::va_set_access_write`] on this VMM VA.
