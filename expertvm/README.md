@@ -561,6 +561,7 @@ compiled kernel exists; no Engine flag).
 `gpu-sim` `set_graph_memset_node_params` is `cuGraphMemsetNodeSetParams` (identity with `graph_memset_set_params`; no Engine flag).
 `gpu-sim` `set_graph_exec_memset_node_params` is `cuGraphExecMemsetNodeSetParams` (identity with `graph_exec_memset_set_params`; no Engine flag).
 `gpu-sim` `get_graph_host_node_params` is `cuGraphHostNodeGetParams` (identity with `graph_host_get_params`; no Engine flag).
+`gpu-sim` `get_graph_exec_host_node_params` is `cuGraphExecHostNodeGetParams` (identity with `graph_exec_host_get_params`; no Engine flag).
 `gpu-sim` `mem_alloc` is `cuMemAlloc` (identity with `malloc`; no Engine flag).
 `gpu-sim` `mem_free` is `cuMemFree` (identity with `free_sync`; no Engine flag).
 `gpu-sim` `mem_free_host` is `cuMemFreeHost` (identity with `free_host_pinned`; no Engine flag).
@@ -646,6 +647,7 @@ compiled kernel exists; no Engine flag).
 `gpu-sim` `set_graph_memset_node_params` is `cuGraphMemsetNodeSetParams` (identity with `graph_memset_set_params`; no Engine flag).
 `gpu-sim` `set_graph_exec_memset_node_params` is `cuGraphExecMemsetNodeSetParams` (identity with `graph_exec_memset_set_params`; no Engine flag).
 `gpu-sim` `get_graph_host_node_params` is `cuGraphHostNodeGetParams` (identity with `graph_host_get_params`; no Engine flag).
+`gpu-sim` `get_graph_exec_host_node_params` is `cuGraphExecHostNodeGetParams` (identity with `graph_exec_host_get_params`; no Engine flag).
 `gpu-sim` `func_is_loaded` is `cuFuncIsLoaded` (`false` until a compiled
 kernel exists; no Engine flag).
 `gpu-sim` `func_load` is `cuFuncLoad` (Invalid; no compiled kernel; no
