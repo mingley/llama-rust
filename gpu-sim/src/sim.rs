@@ -4384,8 +4384,7 @@ impl Sim {
     /// [`Self::current_graph_exec`] (`cudaGetCurrentGraphExec`).
     ///
     /// Query; legal during capture. Distinct from
-    /// [`Self::launch_device_graph`]. This VM does not invent
-    /// occupancy SM counts this slice.
+    /// [`Self::launch_device_graph`].
     pub fn get_current_graph_exec(&self, device: DeviceId) -> Result<Option<GraphId>, SimError> {
         self.current_graph_exec(device)
     }
@@ -10238,10 +10237,22 @@ impl Sim {
     ///
     /// Completes in 1 ns and does not occupy compute or copy engines, so
     /// leftover kernels may Hyper-Q overlap it. Capture cannot include it.
-    /// Illegal on an instantiated exec.
+    /// Illegal on an instantiated exec. Driver
+    /// `cuGraphAddEmptyNode` is
+    /// [`Self::add_graph_empty`].
     pub fn graph_add_empty(&mut self, graph: GraphId) -> Result<(), SimError> {
         let (device, stream) = self.graph_origin_for_add(graph)?;
         self.graph_push(graph, device, stream, Kind::Empty)
+    }
+
+    /// `cuGraphAddEmptyNode`. Identity with
+    /// [`Self::graph_add_empty`] (`cudaGraphAddEmptyNode`).
+    ///
+    /// Capture refused. Distinct from
+    /// [`Self::graph_add_child`]. This VM does not invent
+    /// occupancy SM counts this slice.
+    pub fn add_graph_empty(&mut self, graph: GraphId) -> Result<(), SimError> {
+        self.graph_add_empty(graph)
     }
 
     /// `cudaGraphConditionalHandleCreate` on an uninstantiated graph.
