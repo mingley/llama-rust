@@ -21099,6 +21099,20 @@ impl Sim {
         Err(SimError::Invalid { why: "ckpt thread" })
     }
 
+    /// `cuCheckpointProcessGetState`. CUDA process checkpoint is not
+    /// modeled.
+    ///
+    /// Always Invalid `"ckpt state"` (why is not `"checkpoint"`,
+    /// `"ckpt exec"`, `"ckpt restore"`, `"ckpt unlock"`, or
+    /// `"ckpt thread"`). Distinct from
+    /// [`Self::checkpoint_process_get_restore_thread_id`]. Unknown devices
+    /// are Invalid `"device not in profile"`. Query; legal during capture.
+    /// This VM does not invent `cuLibraryGetKernelCount` this slice.
+    pub fn checkpoint_process_get_state(&self, device: DeviceId) -> Result<(), SimError> {
+        let _gpu = self.profile.gpu(device)?;
+        Err(SimError::Invalid { why: "ckpt state" })
+    }
+
     /// `cuInit`. Host-synchronous. Capture cannot include it.
     ///
     /// Flags must be 0 (CUDA requires 0). This VM is already initialized at

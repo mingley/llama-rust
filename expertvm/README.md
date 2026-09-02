@@ -599,6 +599,8 @@ CUDA process checkpoint is not modeled; no Engine flag).
 `gpu-sim` `checkpoint_process_get_restore_thread_id` is
 `cuCheckpointProcessGetRestoreThreadId` (Invalid; CUDA process checkpoint
 is not modeled; no Engine flag).
+`gpu-sim` `checkpoint_process_get_state` is `cuCheckpointProcessGetState`
+(Invalid; CUDA process checkpoint is not modeled; no Engine flag).
 `gpu-sim` `ctx_get_device` is `cuCtxGetDevice` (explicit device of the
 seeded primary context; no Engine flag).
 `gpu-sim` `ctx_reset_persisting_l2_cache` is `cuCtxResetPersistingL2Cache`

@@ -1094,6 +1094,9 @@
 //! [`checkpoint_process_get_restore_thread_id`](Sim::checkpoint_process_get_restore_thread_id)
 //! is `cuCheckpointProcessGetRestoreThreadId` (always Invalid `"ckpt thread"`).
 //! Query; legal during capture. No Engine `--ckpt-thread`.
+//! [`checkpoint_process_get_state`](Sim::checkpoint_process_get_state) is
+//! `cuCheckpointProcessGetState` (always Invalid `"ckpt state"`). Query;
+//! legal during capture. No Engine `--ckpt-state`.
 //! [`Sim::driver_init`] is `cuInit` (flags 0; already initialized
 //! at [`Sim::new`]; 1 ns no-op). Distinct from [`init_device`](Sim::init_device).
 //! Capture cannot include it. No Engine `--cu-init`.
@@ -19161,6 +19164,59 @@ mod tests {
             Err(SimError::Invalid { why }) => {
                 assert!(why.contains("ckpt restore"), "{why}");
                 assert!(!why.contains("ckpt thread"), "{why}");
+            }
+            other => panic!("{other:?}"),
+        }
+        match sim.checkpoint_process_get_state(d) {
+            Err(SimError::Invalid { why }) => {
+                assert!(why.contains("ckpt state"), "{why}");
+                assert!(!why.contains("ckpt thread"), "{why}");
+                assert!(!why.contains("checkpoint"), "{why}");
+            }
+            other => panic!("{other:?}"),
+        }
+    }
+
+    #[test]
+    fn checkpoint_process_get_state_is_unsupported() {
+        let mut sim = Sim::new(h100());
+        let d = DeviceId(0);
+        match sim.checkpoint_process_get_state(d) {
+            Err(SimError::Invalid { why }) => {
+                assert!(why.contains("ckpt state"), "{why}");
+                assert!(!why.contains("checkpoint"), "{why}");
+                assert!(!why.contains("ckpt exec"), "{why}");
+                assert!(!why.contains("ckpt restore"), "{why}");
+                assert!(!why.contains("ckpt unlock"), "{why}");
+                assert!(!why.contains("ckpt thread"), "{why}");
+            }
+            other => panic!("{other:?}"),
+        }
+        sim.begin_capture(d, StreamId(0)).unwrap();
+        match sim.checkpoint_process_get_state(d) {
+            Err(SimError::Invalid { why }) => {
+                assert!(why.contains("ckpt state"), "{why}");
+            }
+            other => panic!("{other:?}"),
+        }
+        let _g = sim.end_capture().unwrap();
+        match sim.checkpoint_process_get_state(DeviceId(99)) {
+            Err(SimError::Invalid { why }) => {
+                assert!(why.contains("device not in profile"), "{why}");
+            }
+            other => panic!("{other:?}"),
+        }
+        match sim.checkpoint_process_get_restore_thread_id(d) {
+            Err(SimError::Invalid { why }) => {
+                assert!(why.contains("ckpt thread"), "{why}");
+                assert!(!why.contains("ckpt state"), "{why}");
+            }
+            other => panic!("{other:?}"),
+        }
+        match sim.checkpoint_process_lock(d) {
+            Err(SimError::Invalid { why }) => {
+                assert!(why.contains("checkpoint"), "{why}");
+                assert!(!why.contains("ckpt state"), "{why}");
             }
             other => panic!("{other:?}"),
         }
