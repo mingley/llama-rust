@@ -9789,7 +9789,9 @@ impl Sim {
     /// [`GraphNodeParams::Alloc`] fills [`GraphAddNode::alloc`]. Empty
     /// `access` is [`Self::graph_add_alloc`]; peer `accessDescs` match
     /// [`Self::graph_add_alloc_with_access`].
-    /// Flags-word `dependencyData` is [`Self::graph_add_node_with_data`].
+    /// Flags-word `dependencyData` is [`Self::graph_add_node_with_data`]. Driver
+    /// `cuGraphAddNode` is
+    /// [`Self::add_graph_node`].
     pub fn graph_add_node(
         &mut self,
         graph: GraphId,
@@ -9810,6 +9812,21 @@ impl Sim {
         added.node = self.graph_len(graph)?.saturating_sub(1);
         self.graph_bind_new_deps(graph, added.node, deps)?;
         Ok(added)
+    }
+
+    /// `cuGraphAddNode`. Identity with
+    /// [`Self::graph_add_node`] (`cudaGraphAddNode`).
+    ///
+    /// Capture refused. Distinct from
+    /// [`Self::add_graph_free`]. This VM does not invent
+    /// occupancy SM counts this slice.
+    pub fn add_graph_node(
+        &mut self,
+        graph: GraphId,
+        deps: &[usize],
+        params: GraphNodeParams,
+    ) -> Result<GraphAddNode, SimError> {
+        self.graph_add_node(graph, deps, params)
     }
 
     /// `cuGraphAddNode_v2` (`cudaGraphAddNode` with `dependencyData`).
@@ -11399,8 +11416,7 @@ impl Sim {
     /// [`Self::graph_add_free`] (`cudaGraphAddMemFreeNode`).
     ///
     /// Capture refused. Distinct from
-    /// [`Self::add_graph_alloc_with_access`]. This VM does not invent
-    /// occupancy SM counts this slice.
+    /// [`Self::add_graph_alloc_with_access`].
     pub fn add_graph_free(&mut self, graph: GraphId, id: AllocId) -> Result<(), SimError> {
         self.graph_add_free(graph, id)
     }
