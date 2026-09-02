@@ -8137,8 +8137,7 @@ impl Sim {
     /// [`Self::graph_event_record_get_event`] (`cudaGraphEventRecordNodeGetEvent`).
     ///
     /// Query; legal during capture. Distinct from
-    /// [`Self::graph_exec_event_record_get_event`]. This VM does not invent
-    /// occupancy SM counts this slice.
+    /// [`Self::graph_exec_event_record_get_event`].
     pub fn get_graph_event_record_node_event(
         &self,
         graph: GraphId,
@@ -8151,13 +8150,30 @@ impl Sim {
     ///
     /// Uninstantiated graphs are Invalid. After instantiate this is the
     /// launched event. [`Self::graph_event_record_get_event`] stays a view.
-    /// Query; legal during capture.
+    /// Query; legal during capture. Driver
+    /// `cuGraphExecEventRecordNodeGetEvent` is
+    /// [`Self::get_graph_exec_event_record_node_event`].
     pub fn graph_exec_event_record_get_event(
         &self,
         exec: GraphId,
         node: usize,
     ) -> Result<EventId, SimError> {
         self.graph_exec_event_get(exec, node, EventSetKind::Record)
+    }
+
+    /// `cuGraphExecEventRecordNodeGetEvent`. Identity with
+    /// [`Self::graph_exec_event_record_get_event`] (`cudaGraphEventRecordNodeGetEvent`
+    /// of the exec snapshot).
+    ///
+    /// Query; legal during capture. Distinct from
+    /// [`Self::get_graph_event_record_node_event`]. This VM does not invent
+    /// occupancy SM counts this slice.
+    pub fn get_graph_exec_event_record_node_event(
+        &self,
+        exec: GraphId,
+        node: usize,
+    ) -> Result<EventId, SimError> {
+        self.graph_exec_event_record_get_event(exec, node)
     }
 
     /// `cudaGraphEventWaitNodeGetEvent`. Query; legal during capture.
