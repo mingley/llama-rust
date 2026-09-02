@@ -18056,6 +18056,8 @@ impl Sim {
     /// `cuMemRelease` (allowed while mapped). HBM refunds when refs and maps are
     /// both 0. Typed helper; [`Self::va_create_with_prop`] takes the CUDA prop
     /// and flags word.
+    /// Driver `cuMemCreate` is [`Self::mem_create`].
+    /// Identity wrap [`Self::mem_create`].
     pub fn va_create(&mut self, device: DeviceId, bytes: u64) -> Result<MemHandleId, SimError> {
         self.va_create_with_prop(
             bytes,
@@ -18065,6 +18067,15 @@ impl Sim {
             },
             MemCreateFlags::DEFAULT,
         )
+    }
+
+    /// `cuMemCreate`. Identity with
+    /// [`Self::va_create`] (`cuMemCreate` default prop).
+    ///
+    /// Capture refused. Distinct from [`Self::mem_get_allocation_granularity`].
+    /// This VM does not invent occupancy SM counts this slice.
+    pub fn mem_create(&mut self, device: DeviceId, bytes: u64) -> Result<MemHandleId, SimError> {
+        self.va_create(device, bytes)
     }
 
     /// [`Self::va_create`] with `CUmemAllocationProp` and flags.
@@ -18475,7 +18486,6 @@ impl Sim {
     /// [`Self::va_get_allocation_granularity`] (`cuMemGetAllocationGranularity`).
     ///
     /// Query; legal during capture. Distinct from [`Self::mem_pool_set_max_size`].
-    /// This VM does not invent occupancy SM counts this slice.
     pub fn mem_get_allocation_granularity(
         &self,
         prop: MemAllocationProp,
