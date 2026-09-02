@@ -194,6 +194,7 @@ warp scheduler, L1, …   ← do not model
 | `stream_attach_flags` is identity with `stream_attach_with_flags` | `cuStreamAttachMemAsync` flags |
 | `memcpy_async` is identity with `memcpy` | `cuMemcpyAsync` |
 | `mem_cpy` is identity with `memcpy_sync` | `cuMemcpy` |
+| `mem_address_range` is identity with `mem_get_address_range` | `cuMemGetAddressRange` |
 | `pointer_get_attributes` classifies Unregistered / Host / Device / Managed | `cudaPointerGetAttributes` |
 | `pointer_get_attribute` wraps type / mapped / pool / range / ordinal / start / buffer id / IPC / RDMA / handle types / VMM map / hw decompress 0 / VMM block id; SyncMemops is settable | `cuPointerGetAttribute` / `SetAttribute` |
 | `pointer_get_access_flags` is kernel residency on an explicit device (`MemAccessFlags`; enable_peer is D2D memcpy only) | `CU_POINTER_ATTRIBUTE_ACCESS_FLAGS` |
@@ -1999,6 +2000,7 @@ No Engine `--malloc-pitch-element`. `mem_alloc` is `cuMemAlloc` (identity with `
 `stream_attach_flags` is `cuStreamAttachMemAsync` flags (identity with `stream_attach_with_flags`). Capture refused. Distinct from `stream_attach_n`. No Engine `--stream-attach-flags`.
 `memcpy_async` is `cuMemcpyAsync` (identity with `memcpy`). Capture-legal (pinned/device). Distinct from `memcpy_sync`. No Engine `--memcpy-async`.
 `mem_cpy` is `cuMemcpy` (identity with `memcpy_sync`). Capture refused. Distinct from `memcpy_async`. No Engine `--mem-cpy`.
+`mem_address_range` is `cuMemGetAddressRange` (identity with `mem_get_address_range`). Query; legal during capture. Distinct from `mem_range_get`. No Engine `--mem-address-range`.
 `mem_host_get_flags` is `cuMemHostGetFlags` (identity with `host_get_flags`). Query; legal during capture. No Engine `--mem-host-get-flags`.
 `mem_host_get_device_pointer` is `cuMemHostGetDevicePointer` (identity with `host_get_device_pointer_with_flags`). Query; legal during capture. No Engine `--mem-host-get-device-pointer`.
 `mem_host_register` is `cuMemHostRegister` (identity with `host_register_with_flags`). Capture refused. No Engine `--mem-host-register`.
@@ -2031,6 +2033,7 @@ No Engine `--malloc-pitch-element`. `mem_alloc` is `cuMemAlloc` (identity with `
 `stream_attach_flags` is `cuStreamAttachMemAsync` flags (identity with `stream_attach_with_flags`). Capture refused. Distinct from `stream_attach_n`. No Engine `--stream-attach-flags`.
 `memcpy_async` is `cuMemcpyAsync` (identity with `memcpy`). Capture-legal (pinned/device). Distinct from `memcpy_sync`. No Engine `--memcpy-async`.
 `mem_cpy` is `cuMemcpy` (identity with `memcpy_sync`). Capture refused. Distinct from `memcpy_async`. No Engine `--mem-cpy`.
+`mem_address_range` is `cuMemGetAddressRange` (identity with `mem_get_address_range`). Query; legal during capture. Distinct from `mem_range_get`. No Engine `--mem-address-range`.
 `MemcpyOp` `height` / pitches are
 `cudaMemcpy2DAsync` (payload `width * height`). Origin fields are srcPos /
 dstPos (default 0). No Engine `--memcpy-origin`. `MemcpyOp` `src_lod` /

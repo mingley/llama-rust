@@ -17545,7 +17545,6 @@ impl Sim {
     /// `cuMemcpy`. Identity with [`Self::memcpy_sync`] (`cudaMemcpy`).
     ///
     /// Capture refused. Distinct from [`Self::memcpy_async`].
-    /// This VM does not invent `mem_address_range` this slice.
     pub fn mem_cpy(
         &mut self,
         device: DeviceId,
@@ -20659,6 +20658,7 @@ impl Sim {
     /// Interior offsets are not modeled: the base is `alloc` itself. A never-
     /// created id is [`SimError::UnknownAlloc`]. A freed id is Invalid
     /// `"address range"`.
+    /// Driver `cuMemGetAddressRange` is [`Self::mem_address_range`].
     pub fn mem_get_address_range(&self, alloc: AllocId) -> Result<(AllocId, u64), SimError> {
         let a = self.alloc_ref(alloc)?;
         if !a.live {
@@ -20667,6 +20667,15 @@ impl Sim {
             });
         }
         Ok((alloc, a.bytes))
+    }
+
+    /// `cuMemGetAddressRange`. Identity with [`Self::mem_get_address_range`]
+    /// (`cudaMemGetAddressRange`).
+    ///
+    /// Query; legal during capture. Distinct from [`Self::mem_range_get`].
+    /// This VM does not invent occupancy MaxActiveBlocks this slice.
+    pub fn mem_address_range(&self, alloc: AllocId) -> Result<(AllocId, u64), SimError> {
+        self.mem_get_address_range(alloc)
     }
 
     /// `cuPointerSetAttribute` / GetAttribute for modeled [`PointerAttr`].

@@ -232,6 +232,9 @@
 //! [`mem_cpy`](Sim::mem_cpy) is `cuMemcpy` (identity with
 //! [`memcpy_sync`](Sim::memcpy_sync)). Capture refused. Distinct from
 //! [`memcpy_async`](Sim::memcpy_async). No Engine `--mem-cpy`.
+//! [`mem_address_range`](Sim::mem_address_range) is `cuMemGetAddressRange` (identity with
+//! [`mem_get_address_range`](Sim::mem_get_address_range)). Query; legal during capture. Distinct from
+//! [`mem_range_get`](Sim::mem_range_get). No Engine `--mem-address-range`.
 //! [`Sim::ipc_get_event`] / [`ipc_open_event`](Sim::ipc_open_event) are
 //! `cudaIpcGetEventHandle` / `cudaIpcOpenEventHandle` (interprocess events).
 //! [`Sim::create_shareable_pool`] is `cudaMemPoolCreate` with a POSIX-FD handle
@@ -672,6 +675,9 @@
 //! [`mem_cpy`](Sim::mem_cpy) is `cuMemcpy` (identity with
 //! [`memcpy_sync`](Sim::memcpy_sync)). Capture refused. Distinct from
 //! [`memcpy_async`](Sim::memcpy_async). No Engine `--mem-cpy`.
+//! [`mem_address_range`](Sim::mem_address_range) is `cuMemGetAddressRange` (identity with
+//! [`mem_get_address_range`](Sim::mem_get_address_range)). Query; legal during capture. Distinct from
+//! [`mem_range_get`](Sim::mem_range_get). No Engine `--mem-address-range`.
 //! [`mem_host_get_flags`](Sim::mem_host_get_flags) is `cuMemHostGetFlags` (identity with
 //! [`host_get_flags`](Sim::host_get_flags)). Query; legal during capture. No Engine `--mem-host-get-flags`.
 //! [`mem_host_get_device_pointer`](Sim::mem_host_get_device_pointer) is `cuMemHostGetDevicePointer` (identity with
@@ -762,6 +768,9 @@
 //! [`mem_cpy`](Sim::mem_cpy) is `cuMemcpy` (identity with
 //! [`memcpy_sync`](Sim::memcpy_sync)). Capture refused. Distinct from
 //! [`memcpy_async`](Sim::memcpy_async). No Engine `--mem-cpy`.
+//! [`mem_address_range`](Sim::mem_address_range) is `cuMemGetAddressRange` (identity with
+//! [`mem_get_address_range`](Sim::mem_get_address_range)). Query; legal during capture. Distinct from
+//! [`mem_range_get`](Sim::mem_range_get). No Engine `--mem-address-range`.
 //! [`Sim::pointer_get_attributes`] is `cudaPointerGetAttributes`.
 //! [`pointer_set_attribute`](Sim::pointer_set_attribute) /
 //! [`pointer_get_attribute`](Sim::pointer_get_attribute) are
@@ -34938,6 +34947,37 @@ mod tests {
         }
         let _g = sim.end_capture().unwrap();
         sim.free_sync(a).unwrap();
+    }
+
+    #[test]
+    fn mem_address_range_is_cu_mem_get_address_range() {
+        let mut sim = Sim::new(h100());
+        let d = DeviceId(0);
+        let s = StreamId(0);
+        match sim.mem_address_range(AllocId(99)) {
+            Err(SimError::UnknownAlloc { alloc }) => assert_eq!(alloc, AllocId(99)),
+            other => panic!("{other:?}"),
+        }
+        match sim.mem_get_address_range(AllocId(99)) {
+            Err(SimError::UnknownAlloc { alloc }) => assert_eq!(alloc, AllocId(99)),
+            other => panic!("{other:?}"),
+        }
+        let a = sim.malloc(d, 4096).unwrap();
+        assert_eq!(sim.mem_address_range(a).unwrap(), (a, 4096));
+        assert_eq!(sim.mem_get_address_range(a).unwrap(), (a, 4096));
+        sim.begin_capture(d, s).unwrap();
+        assert_eq!(sim.mem_address_range(a).unwrap(), (a, 4096));
+        assert_eq!(sim.mem_get_address_range(a).unwrap(), (a, 4096));
+        let _g = sim.end_capture().unwrap();
+        sim.free_sync(a).unwrap();
+        match sim.mem_address_range(a) {
+            Err(SimError::Invalid { why }) => assert!(why.contains("address range"), "{why}"),
+            other => panic!("{other:?}"),
+        }
+        match sim.mem_get_address_range(a) {
+            Err(SimError::Invalid { why }) => assert!(why.contains("address range"), "{why}"),
+            other => panic!("{other:?}"),
+        }
     }
 
     #[test]

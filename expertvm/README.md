@@ -559,6 +559,7 @@ compiled kernel exists; no Engine flag).
 `gpu-sim` `stream_attach_flags` is `cuStreamAttachMemAsync` flags (identity with `stream_attach_with_flags`; no Engine flag).
 `gpu-sim` `memcpy_async` is `cuMemcpyAsync` (identity with `memcpy`; no Engine flag).
 `gpu-sim` `mem_cpy` is `cuMemcpy` (identity with `memcpy_sync`; no Engine flag).
+`gpu-sim` `mem_address_range` is `cuMemGetAddressRange` (identity with `mem_get_address_range`; no Engine flag).
 `gpu-sim` `func_is_loaded` is `cuFuncIsLoaded` (`false` until a compiled
 kernel exists; no Engine flag).
 `gpu-sim` `func_load` is `cuFuncLoad` (Invalid; no compiled kernel; no

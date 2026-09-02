@@ -8085,7 +8085,14 @@ model, do not celebrate the sim.
     or `cudaChooseDevice`. `gpu-profile capture` is still refused. Dual
     score still has no `$/M tokens`.
 
-847. [ ] Next numbered PLAN item after 846 is the next `gpu-sim` / Engine /
+847. [x] `gpu-sim` `Sim::mem_address_range` is
+    `cuMemGetAddressRange`. Identity with `mem_get_address_range`
+    (`cudaMemGetAddressRange`). Query; legal during capture. Distinct from
+    `mem_range_get`. This VM does not invent occupancy MaxActiveBlocks, Engine `--mem-address-range`,
+    or `cudaChooseDevice`. `gpu-profile capture` is still refused. Dual
+    score still has no `$/M tokens`.
+
+848. [ ] Next numbered PLAN item after 847 is the next `gpu-sim` / Engine /
     serve / expertvm mechanical API that is still missing, or the next official
     decode family. Prefer remaining CUDA-shaped twins over more
     OpenAI HTTP veneer. Do not invent F32 `output.scale`. Do not invent a
@@ -9117,6 +9124,9 @@ model, do not celebrate the sim.
     Do not invent a second `cuMemcpy` / `mem_cpy`.
     Do not invent Engine `--mem-cpy`. Do not invent
     `mem_address_range` this slice. Do not reverse MemCpy identity with memcpy_sync.
+    Do not invent a second `cuMemGetAddressRange` / `mem_address_range`.
+    Do not invent Engine `--mem-address-range`. Do not invent
+    occupancy MaxActiveBlocks this slice. Do not reverse AddressRange identity with mem_get_address_range.
     Do not invent a second `cudaStreamAddCallback`.
     Do not invent Engine `--stream-callback` (same wall as second live
     `cudaLaunchHostFunc` after miss DMA).
@@ -10228,6 +10238,9 @@ model, do not celebrate the sim.
     Do not invent a second `mem_cpy` API. Do not invent
     Engine `--mem-cpy-identity`. Do not invent a mem-address-range
     this slice. Do not reverse MemCpy identity with memcpy_sync.
+    Do not invent a second `mem_address_range` API. Do not invent
+    Engine `--mem-address-range-identity`. Do not invent a max-active-blocks
+    this slice. Do not reverse AddressRange identity with mem_get_address_range.
     Do not invent a second DeviceLaunch in-flight destroy-complete check or Engine
     `--device-launch-destroy`. Do not abort an in-flight DeviceLaunch when
     `destroy_graph` succeeds. Do not delay destroy of an idle exec. Do not invent
@@ -11522,6 +11535,9 @@ model, do not celebrate the sim.
     Do not invent a second `mem_cpy` method. Do not
     invent Engine `--cu-mem-cpy`. Do not reverse wrapping
     cuMemcpy identity.
+    Do not invent a second `mem_address_range` method. Do not
+    invent Engine `--cu-mem-address-range`. Do not reverse wrapping
+    cuMemGetAddressRange identity.
     Do not
     spend the next item on an OpenAI-compatible HTTP veneer.
 
