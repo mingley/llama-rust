@@ -25702,8 +25702,7 @@ impl Sim {
     /// [`Self::device_get_p2p_attribute`] (`cudaDeviceGetP2PAttribute`).
     ///
     /// Query; legal during capture. Distinct from
-    /// [`Self::can_device_access_peer`]. This VM does not invent
-    /// occupancy SM counts this slice.
+    /// [`Self::can_device_access_peer`].
     pub fn device_p2p_attribute(
         &self,
         src: DeviceId,
@@ -25714,6 +25713,8 @@ impl Sim {
     }
 
     /// `cudaDeviceGetNvSciSyncAttributes`. Query; legal during capture.
+    ///
+    /// Driver `cuDeviceGetNvSciSyncAttributes` is [`Self::device_nvscisync_attributes`].
     ///
     /// Always Invalid `"nvscisync not modeled"`
     /// ([`DeviceAttr::TimelineSemaphoreInteropSupported`] is 0). Flags must
@@ -25736,6 +25737,20 @@ impl Sim {
         Err(SimError::Invalid {
             why: "nvscisync not modeled",
         })
+    }
+
+    /// `cuDeviceGetNvSciSyncAttributes`. Identity with
+    /// [`Self::device_get_nvscisync_attributes`] (`cudaDeviceGetNvSciSyncAttributes`).
+    ///
+    /// Query; legal during capture. Distinct from
+    /// [`Self::device_p2p_attribute`]. This VM does not invent
+    /// occupancy SM counts this slice.
+    pub fn device_nvscisync_attributes(
+        &self,
+        device: DeviceId,
+        flags: u32,
+    ) -> Result<(), SimError> {
+        self.device_get_nvscisync_attributes(device, flags)
     }
 
     /// `cudaDeviceFlushGPUDirectRDMAWrites`. Host-synchronous 1 ns barrier.
