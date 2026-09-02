@@ -17892,7 +17892,6 @@ impl Sim {
     /// (`cudaMemcpy2DPeerAsync`).
     ///
     /// Capture-legal. Distinct from [`Self::mem_cpy_peer_2d`].
-    /// This VM does not invent occupancy SM counts this slice.
     pub fn mem_cpy_peer_2d_async(
         &mut self,
         src: DeviceId,
@@ -18136,6 +18135,7 @@ impl Sim {
     /// same stream without a host sync (the copy waits the alloc via stream
     /// order when it starts). A missing alloc id is still all-or-nothing
     /// [`SimError::UnknownAlloc`].
+    /// Driver `cuMemcpyBatchAsync` is [`Self::mem_cpy_batch_async`].
     pub fn memcpy_batch_async(
         &mut self,
         device: DeviceId,
@@ -18159,6 +18159,22 @@ impl Sim {
             self.memcpy_precheck_enqueue(op)?;
         }
         self.enqueue_memcpy_batch(device, stream, ops, &per, "cannot capture memcpy batch")
+    }
+
+    /// `cuMemcpyBatchAsync`. Identity with [`Self::memcpy_batch_async`]
+    /// (`cudaMemcpyBatchAsync`).
+    ///
+    /// Capture refused. Distinct from [`Self::memcpy_3d_batch_async`].
+    /// This VM does not invent `mem_cpy_3d_batch_async` this slice.
+    pub fn mem_cpy_batch_async(
+        &mut self,
+        device: DeviceId,
+        ops: &[MemcpyOp],
+        attrs: &[MemcpyAttributes],
+        attrs_idxs: &[usize],
+        stream: StreamId,
+    ) -> Result<Vec<OpId>, SimError> {
+        self.memcpy_batch_async(device, ops, attrs, attrs_idxs, stream)
     }
 
     /// `cuMemBatchDecompressAsync`. Hardware decompress is not modeled.
