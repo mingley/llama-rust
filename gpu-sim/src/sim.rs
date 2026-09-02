@@ -18605,8 +18605,19 @@ impl Sim {
     /// `"multicast granularity flags"`. Typed helper;
     /// [`Self::multicast_get_granularity_with_prop`] takes
     /// [`MulticastObjectProp`].
+    /// Driver `cuMulticastGetGranularity` is [`Self::mem_multicast_get_granularity`].
+    /// Identity wrap [`Self::mem_multicast_get_granularity`].
     pub fn multicast_get_granularity(&self, flags: u32) -> Result<u64, SimError> {
         self.multicast_get_granularity_with_prop(MulticastObjectProp::default(), flags)
+    }
+
+    /// `cuMulticastGetGranularity`. Identity with
+    /// [`Self::multicast_get_granularity`] (`cuMulticastGetGranularity`).
+    ///
+    /// Query; legal during capture. Distinct from [`Self::mem_map_multicast_with_size`].
+    /// This VM does not invent occupancy SM counts this slice.
+    pub fn mem_multicast_get_granularity(&self, flags: u32) -> Result<u64, SimError> {
+        self.multicast_get_granularity(flags)
     }
 
     /// [`Self::multicast_get_granularity`] with `CUmulticastObjectProp`.
@@ -19133,7 +19144,6 @@ impl Sim {
     /// [`Self::va_map_multicast_with_size`] (`cuMemMap` multicast size).
     ///
     /// Capture refused. Distinct from [`Self::mem_map_multicast_with_flags`].
-    /// This VM does not invent occupancy SM counts this slice.
     pub fn mem_map_multicast_with_size(
         &mut self,
         id: AllocId,
