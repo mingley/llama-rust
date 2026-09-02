@@ -1167,6 +1167,9 @@
 //! [`tex_ref_set_filter_mode`](Sim::tex_ref_set_filter_mode) is
 //! `cuTexRefSetFilterMode` (always Invalid `"texref filter"`). Query; legal
 //! during capture. No Engine `--texref-filter`.
+//! [`tex_ref_set_mipmap_filter_mode`](Sim::tex_ref_set_mipmap_filter_mode) is
+//! `cuTexRefSetMipmapFilterMode` (always Invalid `"texref mipfilt"`). Query; legal
+//! during capture. No Engine `--texref-mipfilt`.
 //! [`module_get_surf_ref`](Sim::module_get_surf_ref) is `cuModuleGetSurfRef` (always Invalid
 //! `"module surfref"`). Query; legal during capture. No Engine `--module-surfref`.
 //! [`library_load_data`](Sim::library_load_data) is `cuLibraryLoadData`
@@ -20244,6 +20247,64 @@ mod tests {
             Err(SimError::Invalid { why }) => {
                 assert!(why.contains("texref format"), "{why}");
                 assert!(!why.contains("texref filter"), "{why}");
+            }
+            other => panic!("{other:?}"),
+        }
+        match sim.tex_ref_set_mipmap_filter_mode(d) {
+            Err(SimError::Invalid { why }) => {
+                assert!(why.contains("texref mipfilt"), "{why}");
+                assert!(!why.contains("texref filter"), "{why}");
+                assert!(!why.contains("texref setmip"), "{why}");
+            }
+            other => panic!("{other:?}"),
+        }
+    }
+
+    #[test]
+    fn tex_ref_set_mipmap_filter_mode_is_unsupported() {
+        let mut sim = Sim::new(h100());
+        let d = DeviceId(0);
+        match sim.tex_ref_set_mipmap_filter_mode(d) {
+            Err(SimError::Invalid { why }) => {
+                assert!(why.contains("texref mipfilt"), "{why}");
+                assert!(!why.contains("texref filter"), "{why}");
+                assert!(!why.contains("texref setmip"), "{why}");
+                assert!(!why.contains("texref addrmode"), "{why}");
+            }
+            other => panic!("{other:?}"),
+        }
+        sim.begin_capture(d, StreamId(0)).unwrap();
+        match sim.tex_ref_set_mipmap_filter_mode(d) {
+            Err(SimError::Invalid { why }) => {
+                assert!(why.contains("texref mipfilt"), "{why}");
+            }
+            other => panic!("{other:?}"),
+        }
+        let _g = sim.end_capture().unwrap();
+        match sim.tex_ref_set_mipmap_filter_mode(DeviceId(99)) {
+            Err(SimError::Invalid { why }) => {
+                assert!(why.contains("device not in profile"), "{why}");
+            }
+            other => panic!("{other:?}"),
+        }
+        match sim.tex_ref_set_filter_mode(d) {
+            Err(SimError::Invalid { why }) => {
+                assert!(why.contains("texref filter"), "{why}");
+                assert!(!why.contains("texref mipfilt"), "{why}");
+            }
+            other => panic!("{other:?}"),
+        }
+        match sim.tex_ref_set_mipmapped_array(d) {
+            Err(SimError::Invalid { why }) => {
+                assert!(why.contains("texref setmip"), "{why}");
+                assert!(!why.contains("texref mipfilt"), "{why}");
+            }
+            other => panic!("{other:?}"),
+        }
+        match sim.tex_ref_set_address_mode(d) {
+            Err(SimError::Invalid { why }) => {
+                assert!(why.contains("texref addrmode"), "{why}");
+                assert!(!why.contains("texref mipfilt"), "{why}");
             }
             other => panic!("{other:?}"),
         }

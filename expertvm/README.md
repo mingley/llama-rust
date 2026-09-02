@@ -675,6 +675,8 @@ or `CUarray` handles; no Engine flag).
 no `CUtexref` addressing; no Engine flag).
 `gpu-sim` `tex_ref_set_filter_mode` is `cuTexRefSetFilterMode` (Invalid;
 no `CUtexref` filtering; no Engine flag).
+`gpu-sim` `tex_ref_set_mipmap_filter_mode` is `cuTexRefSetMipmapFilterMode`
+(Invalid; no `CUtexref` mipmap filtering; no Engine flag).
 `gpu-sim` `mipmapped_array_create` is `cuMipmappedArrayCreate` (Invalid;
 CUDA mipmapped arrays are not modeled; no Engine flag).
 `gpu-sim` `mipmapped_array_get_level` is `cuMipmappedArrayGetLevel`

@@ -21523,6 +21523,21 @@ impl Sim {
         })
     }
 
+    /// `cuTexRefSetMipmapFilterMode`. CUDA texture references are not modeled.
+    ///
+    /// Always Invalid `"texref mipfilt"` (this VM has no `CUtexref` mipmap
+    /// filtering). Distinct from [`Self::tex_ref_set_filter_mode`] (why is
+    /// not `"texref filter"`) and from [`Self::tex_ref_set_mipmapped_array`]
+    /// (why is not `"texref setmip"`). Unknown devices are Invalid `"device not in profile"`.
+    /// Query; legal during capture. This VM does not invent
+    /// `cuTexRefSetMipmapLevelBias` this slice.
+    pub fn tex_ref_set_mipmap_filter_mode(&self, device: DeviceId) -> Result<(), SimError> {
+        let _gpu = self.profile.gpu(device)?;
+        Err(SimError::Invalid {
+            why: "texref mipfilt",
+        })
+    }
+
     /// `cuModuleGetSurfRef`. CUDA modules are not modeled.
     ///
     /// Always Invalid `"module surfref"` (this VM has no `CUmodule` and
