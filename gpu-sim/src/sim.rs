@@ -14343,8 +14343,6 @@ impl Sim {
     /// (`cudaMallocHost`).
     ///
     /// Capture refused. Distinct from [`Self::mem_host_alloc`] (`cuMemHostAlloc`).
-    /// This VM does not invent `cuMemAllocManaged` this slice
-    /// (`alloc_managed` stays).
     pub fn mem_alloc_host(&mut self, bytes: u64) -> Result<AllocId, SimError> {
         self.alloc_host_pinned(bytes)
     }
@@ -14464,6 +14462,15 @@ impl Sim {
                 why: "managed flags",
             }),
         }
+    }
+
+    /// `cuMemAllocManaged`. Identity with [`Self::alloc_managed_with_flags`]
+    /// (`cudaMallocManaged` flags).
+    ///
+    /// Capture refused. Distinct from [`Self::alloc_managed`]. This VM does not
+    /// invent `cuMemAllocAsync` this slice (`alloc` stays).
+    pub fn mem_alloc_managed(&mut self, bytes: u64, flags: u32) -> Result<AllocId, SimError> {
+        self.alloc_managed_with_flags(bytes, flags)
     }
 
     /// Current `cudaMemAttach*` visibility of a live managed allocation.

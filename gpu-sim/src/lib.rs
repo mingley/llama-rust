@@ -169,6 +169,9 @@
 //! [`mem_alloc_host`](Sim::mem_alloc_host) is `cuMemAllocHost` (identity with
 //! [`alloc_host_pinned`](Sim::alloc_host_pinned)). Capture refused. Distinct from
 //! [`mem_host_alloc`](Sim::mem_host_alloc). No Engine `--mem-alloc-host`.
+//! [`mem_alloc_managed`](Sim::mem_alloc_managed) is `cuMemAllocManaged` (identity with
+//! [`alloc_managed_with_flags`](Sim::alloc_managed_with_flags)). Capture refused. Distinct from
+//! [`alloc_managed`](Sim::alloc_managed). No Engine `--mem-alloc-managed`.
 //! [`Sim::ipc_get_event`] / [`ipc_open_event`](Sim::ipc_open_event) are
 //! `cudaIpcGetEventHandle` / `cudaIpcOpenEventHandle` (interprocess events).
 //! [`Sim::create_shareable_pool`] is `cudaMemPoolCreate` with a POSIX-FD handle
@@ -546,6 +549,9 @@
 //! [`mem_alloc_host`](Sim::mem_alloc_host) is `cuMemAllocHost` (identity with
 //! [`alloc_host_pinned`](Sim::alloc_host_pinned)). Capture refused. Distinct from
 //! [`mem_host_alloc`](Sim::mem_host_alloc). No Engine `--mem-alloc-host`.
+//! [`mem_alloc_managed`](Sim::mem_alloc_managed) is `cuMemAllocManaged` (identity with
+//! [`alloc_managed_with_flags`](Sim::alloc_managed_with_flags)). Capture refused. Distinct from
+//! [`alloc_managed`](Sim::alloc_managed). No Engine `--mem-alloc-managed`.
 //! [`mem_host_get_flags`](Sim::mem_host_get_flags) is `cuMemHostGetFlags` (identity with
 //! [`host_get_flags`](Sim::host_get_flags)). Query; legal during capture. No Engine `--mem-host-get-flags`.
 //! [`mem_host_get_device_pointer`](Sim::mem_host_get_device_pointer) is `cuMemHostGetDevicePointer` (identity with
@@ -573,6 +579,9 @@
 //! [`mem_alloc_host`](Sim::mem_alloc_host) is `cuMemAllocHost` (identity with
 //! [`alloc_host_pinned`](Sim::alloc_host_pinned)). Capture refused. Distinct from
 //! [`mem_host_alloc`](Sim::mem_host_alloc). No Engine `--mem-alloc-host`.
+//! [`mem_alloc_managed`](Sim::mem_alloc_managed) is `cuMemAllocManaged` (identity with
+//! [`alloc_managed_with_flags`](Sim::alloc_managed_with_flags)). Capture refused. Distinct from
+//! [`alloc_managed`](Sim::alloc_managed). No Engine `--mem-alloc-managed`.
 //! [`Sim::pointer_get_attributes`] is `cudaPointerGetAttributes`.
 //! [`pointer_set_attribute`](Sim::pointer_set_attribute) /
 //! [`pointer_get_attribute`](Sim::pointer_get_attribute) are
@@ -33552,6 +33561,56 @@ mod tests {
         let _g = sim.end_capture().unwrap();
         sim.mem_free_host(pin).unwrap();
         sim.mem_free_host(pin2).unwrap();
+    }
+
+    #[test]
+    fn mem_alloc_managed_is_cu_mem_alloc_managed() {
+        let mut sim = Sim::new(h100());
+        let d = DeviceId(0);
+        let s = StreamId(0);
+        match sim.mem_alloc_managed(4096, 0) {
+            Err(SimError::Invalid { why }) => assert!(why.contains("managed flags"), "{why}"),
+            other => panic!("{other:?}"),
+        }
+        match sim.alloc_managed_with_flags(4096, 0) {
+            Err(SimError::Invalid { why }) => assert!(why.contains("managed flags"), "{why}"),
+            other => panic!("{other:?}"),
+        }
+        match sim.mem_alloc_managed(4096, MemAttachFlags::SINGLE) {
+            Err(SimError::Invalid { why }) => assert!(why.contains("managed flags"), "{why}"),
+            other => panic!("{other:?}"),
+        }
+        match sim.mem_alloc_managed(0, MemAttachFlags::GLOBAL) {
+            Err(SimError::Invalid { why }) => assert!(why.contains("zero-byte"), "{why}"),
+            other => panic!("{other:?}"),
+        }
+        match sim.alloc_managed_with_flags(0, MemAttachFlags::GLOBAL) {
+            Err(SimError::Invalid { why }) => assert!(why.contains("zero-byte"), "{why}"),
+            other => panic!("{other:?}"),
+        }
+        let g = sim.mem_alloc_managed(4096, MemAttachFlags::GLOBAL).unwrap();
+        assert!(sim.is_managed(g).unwrap());
+        assert_eq!(sim.mem_attach(g).unwrap(), MemAttach::Global);
+        assert_eq!(sim.hbm_used(d).unwrap(), 0);
+        let h = sim
+            .alloc_managed_with_flags(4096, MemAttachFlags::HOST)
+            .unwrap();
+        assert_eq!(sim.mem_attach(h).unwrap(), MemAttach::Host);
+        let h2 = sim.mem_alloc_managed(64, MemAttachFlags::HOST).unwrap();
+        assert_eq!(sim.mem_attach(h2).unwrap(), MemAttach::Host);
+        sim.begin_capture(d, s).unwrap();
+        match sim.mem_alloc_managed(64, MemAttachFlags::GLOBAL) {
+            Err(SimError::Invalid { why }) => assert!(why.contains("capture"), "{why}"),
+            other => panic!("{other:?}"),
+        }
+        match sim.alloc_managed_with_flags(64, MemAttachFlags::GLOBAL) {
+            Err(SimError::Invalid { why }) => assert!(why.contains("capture"), "{why}"),
+            other => panic!("{other:?}"),
+        }
+        let _cap = sim.end_capture().unwrap();
+        sim.free_sync(g).unwrap();
+        sim.free_sync(h).unwrap();
+        sim.free_sync(h2).unwrap();
     }
 
     #[test]
