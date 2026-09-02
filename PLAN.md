@@ -7732,7 +7732,14 @@ model, do not celebrate the sim.
     or `cudaChooseDevice`. `gpu-profile capture` is still refused. Dual
     score still has no `$/M tokens`.
 
-797. [ ] Next numbered PLAN item after 796 is the next `gpu-sim` / Engine /
+797. [x] `gpu-sim` `Sim::event_query` is
+    `cuEventQuery`. Identity with `query_event` (`cudaEventQuery`).
+    Does not wait. Unknown ids are UnknownEvent. Incomplete records are
+    `Ok(false)`. Query; legal during capture. Distinct from `query_stream`. This VM does not invent `cuStreamQuery`, Engine `--event-query`,
+    or `cudaChooseDevice`. `gpu-profile capture` is still refused. Dual
+    score still has no `$/M tokens`.
+
+798. [ ] Next numbered PLAN item after 797 is the next `gpu-sim` / Engine /
     serve / expertvm mechanical API that is still missing, or the next official
     decode family. Prefer remaining CUDA-shaped twins over more
     OpenAI HTTP veneer. Do not invent F32 `output.scale`. Do not invent a
@@ -8614,6 +8621,9 @@ model, do not celebrate the sim.
     Do not invent a second `cuMemsetD8` / `memset_d8`.
     Do not invent Engine `--memset-d8-sync`. Do not invent
     `cuEventQuery` this slice. Do not reverse D8 host-sync capture refuse.
+    Do not invent a second `cuEventQuery` / `event_query`.
+    Do not invent Engine `--event-query`. Do not invent
+    `cuStreamQuery` this slice. Do not reverse EventQuery identity with query_event.
     Do not invent a second `cudaStreamAddCallback`.
     Do not invent Engine `--stream-callback` (same wall as second live
     `cudaLaunchHostFunc` after miss DMA).
@@ -9575,6 +9585,9 @@ model, do not celebrate the sim.
     Do not invent a second `memset_d8` API. Do not invent
     Engine `--memset-d8-host-sync`. Do not invent an event-query
     this slice. Do not reverse Memset D8 host-sync capture refuse.
+    Do not invent a second `event_query` API. Do not invent
+    Engine `--event-query-identity`. Do not invent a stream-query
+    this slice. Do not reverse EventQuery identity with query_event.
     Do not invent a second DeviceLaunch in-flight destroy-complete check or Engine
     `--device-launch-destroy`. Do not abort an in-flight DeviceLaunch when
     `destroy_graph` succeeds. Do not delay destroy of an idle exec. Do not invent
@@ -10719,6 +10732,9 @@ model, do not celebrate the sim.
     Do not invent a second `memset_d8` method. Do not
     invent Engine `--cu-memset-d8`. Do not reverse wrapping
     cuMemsetD8 host-sync.
+    Do not invent a second `event_query` method. Do not
+    invent Engine `--cu-event-query`. Do not reverse wrapping
+    cuEventQuery identity.
     Do not
     spend the next item on an OpenAI-compatible HTTP veneer.
 

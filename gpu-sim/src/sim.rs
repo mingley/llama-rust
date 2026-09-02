@@ -2793,6 +2793,15 @@ impl Sim {
         Ok(self.event_complete(event))
     }
 
+    /// `cuEventQuery`. Identity with [`Self::query_event`] (`cudaEventQuery`).
+    ///
+    /// Does not wait. Unknown ids are [`SimError::UnknownEvent`]. Incomplete
+    /// records are `Ok(false)`. Query; legal during capture. This VM does
+    /// not invent `cuStreamQuery` this slice (`query_stream` stays).
+    pub fn event_query(&self, event: EventId) -> Result<bool, SimError> {
+        self.query_event(event)
+    }
+
     fn event_root(&self, event: EventId) -> EventId {
         event_root_of(&self.events, event)
     }

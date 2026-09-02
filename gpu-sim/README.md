@@ -139,6 +139,7 @@ warp scheduler, L1, …   ← do not model
 | `event_elapsed_ns` is record-to-record delta | `cudaEventElapsedTime` (ns) |
 | `cudaEventDisableTiming` forbids elapsed | wait / query still work |
 | `query_event` is non-blocking | `cudaEventQuery` |
+| `event_query` is identity with `query_event` | `cuEventQuery` |
 | `event_get_flags` is the create flags word | `cudaEventGetFlags` |
 | `event_get_id` is unique per event handle (`EventId + 1`) | `cuEventGetId` |
 | `pool_get_id` is unique per pool handle (`PoolId + 1`); graph-memory pools are legal | `cuMemPoolGetId` |
@@ -1078,6 +1079,7 @@ handle; not the caller-chosen `EventId`; query; legal during capture).
 `PoolId`; graph-memory pools are legal; query; legal during capture).
 `query_event` is `cudaEventQuery` (unknown id is semantic; incomplete is
 `Ok(false)`).
+`event_query` is `cuEventQuery` (identity with `query_event`). Query; legal during capture. No Engine `--event-query`.
 `destroy_event` is `cudaEventDestroy` (waits a recorded incomplete event;
 never-recorded returns immediately; capture refused; the id may be created
 again).

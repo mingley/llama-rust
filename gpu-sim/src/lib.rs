@@ -487,6 +487,8 @@
 //! [`Sim::destroy_event`] is `cudaEventDestroy` (waits a recorded incomplete
 //! event; never-recorded returns immediately; capture refused).
 //! [`Sim::query_event`] is `cudaEventQuery` (no wait).
+//! [`event_query`](Sim::event_query) is `cuEventQuery` (identity with
+//! [`query_event`](Sim::query_event)). Query; legal during capture. No Engine `--event-query`.
 //! [`Sim::query_stream`] is `cudaStreamQuery` (no wait).
 //! [`Sim::mem_info`] is `cudaMemGetInfo` `(free, total)`.
 //! [`Sim::pointer_get_attributes`] is `cudaPointerGetAttributes`.
@@ -32315,6 +32317,35 @@ mod tests {
             other => panic!("{other:?}"),
         }
         sim.free_sync(a).unwrap();
+    }
+
+    #[test]
+    fn event_query_is_cu_event_query() {
+        let mut sim = Sim::new(h100());
+        let d = DeviceId(0);
+        let s = StreamId(0);
+        let ev = EventId(4);
+        match sim.event_query(ev) {
+            Err(SimError::UnknownEvent { event: 4 }) => {}
+            other => panic!("{other:?}"),
+        }
+        match sim.query_event(ev) {
+            Err(SimError::UnknownEvent { event: 4 }) => {}
+            other => panic!("{other:?}"),
+        }
+        sim.create_event(ev).unwrap();
+        assert!(!sim.event_query(ev).unwrap());
+        assert_eq!(sim.event_query(ev).unwrap(), sim.query_event(ev).unwrap());
+        sim.begin_capture(d, s).unwrap();
+        assert!(!sim.event_query(ev).unwrap());
+        let _g = sim.end_capture().unwrap();
+        let a = sim.alloc(d, 4096, s).unwrap();
+        enq(sim.kernel(d, KernelKind::other(1 << 20, 4096), &[a], &[a], s));
+        enq(sim.record_event(d, ev, s));
+        assert!(!sim.event_query(ev).unwrap());
+        sim.synchronize().unwrap();
+        assert!(sim.event_query(ev).unwrap());
+        assert!(sim.query_event(ev).unwrap());
     }
 
     #[test]

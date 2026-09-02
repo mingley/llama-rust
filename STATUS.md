@@ -5,6 +5,15 @@ Visible five-turn extract: [docs/chatgpt-share-6a920fe1.md](docs/chatgpt-share-6
 Complete share-API extract: [docs/chatgpt-share-6a920fe1/](docs/chatgpt-share-6a920fe1/).
 Work lands on `main`. No PRs.
 
+## Shipped 2026-09-02 — CUDA `cuEventQuery`
+
+`gpu-sim` `Sim::event_query` is `cuEventQuery`.
+Identity with `query_event` (`cudaEventQuery`). Does not wait.
+Unknown ids are UnknownEvent. Incomplete records are `Ok(false)`.
+Query; legal during capture. Distinct from `query_stream`.
+This VM does not invent `cuStreamQuery` or Engine `--event-query`.
+`gpu-profile capture` is still refused. Dual score still has no `$/M tokens`.
+
 ## Shipped 2026-09-02 — CUDA `cuMemsetD8`
 
 `gpu-sim` `Sim::memset_d8` is `cuMemsetD8`.
