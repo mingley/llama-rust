@@ -532,6 +532,7 @@ compiled kernel exists; no Engine flag).
 `gpu-sim` `mem_host_register` is `cuMemHostRegister` (identity with `host_register_with_flags`; no Engine flag).
 `gpu-sim` `mem_host_unregister` is `cuMemHostUnregister` (identity with `host_unregister`; no Engine flag).
 `gpu-sim` `mem_host_register_with_size` is `cuMemHostRegister` size (identity with `host_register_with_size`; no Engine flag).
+`gpu-sim` `ipc_get_mem_handle` is `cuIpcGetMemHandle` (identity with `ipc_get`; no Engine flag).
 `gpu-sim` `func_is_loaded` is `cuFuncIsLoaded` (`false` until a compiled
 kernel exists; no Engine flag).
 `gpu-sim` `func_load` is `cuFuncLoad` (Invalid; no compiled kernel; no

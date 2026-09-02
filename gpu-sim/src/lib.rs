@@ -152,6 +152,8 @@
 //! [`IpcMemFlags::LAZY_ENABLE_PEER_ACCESS`] as a no-op (dest must already hold
 //! the source; cross-GPU lazy peer is not modeled). Typed helper stays.
 //! [`Sim::ipc_get`] of a `cudaMallocAsync` pointer is Invalid (`not device ipc`).
+//! [`ipc_get_mem_handle`](Sim::ipc_get_mem_handle) is `cuIpcGetMemHandle` (identity with
+//! [`ipc_get`](Sim::ipc_get)). Host-sync; capture refused. No Engine `--ipc-get-mem-handle`.
 //! [`Sim::ipc_get_event`] / [`ipc_open_event`](Sim::ipc_open_event) are
 //! `cudaIpcGetEventHandle` / `cudaIpcOpenEventHandle` (interprocess events).
 //! [`Sim::create_shareable_pool`] is `cudaMemPoolCreate` with a POSIX-FD handle
@@ -536,6 +538,8 @@
 //! [`host_unregister`](Sim::host_unregister)). Capture refused. No Engine `--mem-host-unregister`.
 //! [`mem_host_register_with_size`](Sim::mem_host_register_with_size) is `cuMemHostRegister` size (identity with
 //! [`host_register_with_size`](Sim::host_register_with_size)). Capture refused. No Engine `--mem-host-register-size`.
+//! [`ipc_get_mem_handle`](Sim::ipc_get_mem_handle) is `cuIpcGetMemHandle` (identity with
+//! [`ipc_get`](Sim::ipc_get)). Host-sync; capture refused. No Engine `--ipc-get-mem-handle`.
 //! [`Sim::pointer_get_attributes`] is `cudaPointerGetAttributes`.
 //! [`pointer_set_attribute`](Sim::pointer_set_attribute) /
 //! [`pointer_get_attribute`](Sim::pointer_get_attribute) are
@@ -33241,6 +33245,42 @@ mod tests {
         let _g = sim.end_capture().unwrap();
         sim.mem_free(a).unwrap();
         sim.free_host(h).unwrap();
+    }
+
+    #[test]
+    fn ipc_get_mem_handle_is_cu_ipc_get_mem_handle() {
+        let mut sim = Sim::new(h100());
+        let d = DeviceId(0);
+        let s = StreamId(0);
+        match sim.ipc_get_mem_handle(AllocId(99)) {
+            Err(SimError::UnknownAlloc { alloc }) => assert_eq!(alloc, AllocId(99)),
+            other => panic!("{other:?}"),
+        }
+        match sim.ipc_get(AllocId(99)) {
+            Err(SimError::UnknownAlloc { alloc }) => assert_eq!(alloc, AllocId(99)),
+            other => panic!("{other:?}"),
+        }
+        let a = sim.mem_alloc(d, 4096).unwrap();
+        let h = sim.ipc_get_mem_handle(a).unwrap();
+        assert_eq!(h, sim.ipc_get(a).unwrap());
+        assert_eq!(h, sim.ipc_get_mem_handle(a).unwrap());
+        let m = sim.alloc_managed(4096).unwrap();
+        match sim.ipc_get_mem_handle(m) {
+            Err(SimError::Invalid { why }) => assert!(why.contains("not device ipc"), "{why}"),
+            other => panic!("{other:?}"),
+        }
+        sim.begin_capture(d, s).unwrap();
+        match sim.ipc_get_mem_handle(a) {
+            Err(SimError::Invalid { why }) => assert!(why.contains("capture"), "{why}"),
+            other => panic!("{other:?}"),
+        }
+        match sim.ipc_get(a) {
+            Err(SimError::Invalid { why }) => assert!(why.contains("capture"), "{why}"),
+            other => panic!("{other:?}"),
+        }
+        let _g = sim.end_capture().unwrap();
+        sim.mem_free(a).unwrap();
+        sim.free_sync(m).unwrap();
     }
 
     #[test]

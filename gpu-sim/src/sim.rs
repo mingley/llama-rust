@@ -16930,6 +16930,14 @@ impl Sim {
         Ok(h)
     }
 
+    /// `cuIpcGetMemHandle`. Identity with [`Self::ipc_get`] (`cudaIpcGetMemHandle`).
+    ///
+    /// Host-sync; capture refused. Distinct from [`Self::ipc_get_event`]. This VM
+    /// does not invent `cuIpcOpenMemHandle` this slice (`ipc_open` stays).
+    pub fn ipc_get_mem_handle(&mut self, id: AllocId) -> Result<IpcHandleId, SimError> {
+        self.ipc_get(id)
+    }
+
     /// `cudaIpcOpenMemHandle` on `device`. Alias shares the source physicals
     /// (no extra HBM). `device` must already hold the source.
     pub fn ipc_open(&mut self, device: DeviceId, handle: IpcHandleId) -> Result<AllocId, SimError> {
