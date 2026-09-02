@@ -21478,6 +21478,21 @@ impl Sim {
         })
     }
 
+    /// `cuTexRefSetFormat`. CUDA texture references are not modeled.
+    ///
+    /// Always Invalid `"texref format"` (this VM has no `CUtexref` channel
+    /// format). Distinct from [`Self::tex_ref_set_address_2d`] (why is not
+    /// `"texref pitch2d"`) and from [`Self::tex_object_create`] (why is not
+    /// `"cuda texture"`). Unknown devices are Invalid `"device not in profile"`.
+    /// Query; legal during capture. This VM does not invent
+    /// `cuTexRefSetAddressMode` this slice.
+    pub fn tex_ref_set_format(&self, device: DeviceId) -> Result<(), SimError> {
+        let _gpu = self.profile.gpu(device)?;
+        Err(SimError::Invalid {
+            why: "texref format",
+        })
+    }
+
     /// `cuModuleGetSurfRef`. CUDA modules are not modeled.
     ///
     /// Always Invalid `"module surfref"` (this VM has no `CUmodule` and

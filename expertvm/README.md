@@ -669,6 +669,8 @@ or `CUarray` handles; no Engine flag).
 `CUtexref` linear bindings; no Engine flag).
 `gpu-sim` `tex_ref_set_address_2d` is `cuTexRefSetAddress2D` (Invalid; no
 `CUtexref` pitched 2D bindings; no Engine flag).
+`gpu-sim` `tex_ref_set_format` is `cuTexRefSetFormat` (Invalid; no
+`CUtexref` channel format; no Engine flag).
 `gpu-sim` `mipmapped_array_create` is `cuMipmappedArrayCreate` (Invalid;
 CUDA mipmapped arrays are not modeled; no Engine flag).
 `gpu-sim` `mipmapped_array_get_level` is `cuMipmappedArrayGetLevel`

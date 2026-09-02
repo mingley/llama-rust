@@ -7437,7 +7437,14 @@ model, do not celebrate the sim.
     or `cudaChooseDevice`. `gpu-profile capture` is still refused. Dual
     score still has no `$/M tokens`.
 
-755. [ ] Next numbered PLAN item after 754 is the next `gpu-sim` / Engine /
+755. [x] `gpu-sim` `Sim::tex_ref_set_format` is
+    `cuTexRefSetFormat`. Always Invalid `"texref format"`
+    because CUDA texture references are not modeled. Query; legal during capture.
+    Distinct from `tex_ref_set_address_2d` and `tex_object_create`. This VM does not invent `cuTexRefSetAddressMode`, Engine `--texref-format`,
+    or `cudaChooseDevice`. `gpu-profile capture` is still refused. Dual
+    score still has no `$/M tokens`.
+
+756. [ ] Next numbered PLAN item after 755 is the next `gpu-sim` / Engine /
     serve / expertvm mechanical API that is still missing, or the next official
     decode family. Prefer remaining CUDA-shaped twins over more
     OpenAI HTTP veneer. Do not invent F32 `output.scale`. Do not invent a
@@ -8193,6 +8200,9 @@ model, do not celebrate the sim.
     Do not invent a second `cuTexRefSetAddress2D` / `tex_ref_set_address_2d`.
     Do not invent Engine `--texref-pitch2d`. Do not invent
     `cuTexRefSetFormat` this slice. Do not reverse `"texref pitch2d"`.
+    Do not invent a second `cuTexRefSetFormat` / `tex_ref_set_format`.
+    Do not invent Engine `--texref-format`. Do not invent
+    `cuTexRefSetAddressMode` this slice. Do not reverse `"texref format"`.
     Do not invent a second `cudaStreamAddCallback`.
     Do not invent Engine `--stream-callback` (same wall as second live
     `cudaLaunchHostFunc` after miss DMA).
@@ -9028,6 +9038,9 @@ model, do not celebrate the sim.
     Do not invent a second `tex_ref_set_address_2d` API. Do not invent
     Engine `--set-tex-ref-addr2d`. Do not invent a CUtexref channel format
     this slice. Do not reverse TexRef SetAddress2D remaining unsupported.
+    Do not invent a second `tex_ref_set_format` API. Do not invent
+    Engine `--set-tex-ref-format`. Do not invent a CUtexref address mode
+    this slice. Do not reverse TexRef SetFormat remaining unsupported.
     Do not invent a second DeviceLaunch in-flight destroy-complete check or Engine
     `--device-launch-destroy`. Do not abort an in-flight DeviceLaunch when
     `destroy_graph` succeeds. Do not delay destroy of an idle exec. Do not invent
@@ -10046,6 +10059,9 @@ model, do not celebrate the sim.
     Do not invent a second `tex_ref_set_address_2d` method. Do not
     invent Engine `--cu-tex-ref-set-address-2d`. Do not reverse wrapping
     cuTexRefSetAddress2D Invalid.
+    Do not invent a second `tex_ref_set_format` method. Do not
+    invent Engine `--cu-tex-ref-set-format`. Do not reverse wrapping
+    cuTexRefSetFormat Invalid.
     Do not
     spend the next item on an OpenAI-compatible HTTP veneer.
 
