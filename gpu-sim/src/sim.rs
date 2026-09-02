@@ -22021,6 +22021,22 @@ impl Sim {
         })
     }
 
+    /// `cuMemcpy2DArrayToArray`. CUDA arrays are not modeled.
+    ///
+    /// Always Invalid `"memcpy2d a2a"` (this VM has no `CUarray`
+    /// 2D copy). Distinct from [`Self::memcpy_2d_from_array`]
+    /// (why is not `"memcpy2d fromarr"`) and from
+    /// [`Self::memcpy_2d_to_array`] (why is not `"memcpy2d toarr"`).
+    /// Unknown devices are Invalid `"device not in profile"`. Query; legal
+    /// during capture. This VM does not invent `cuMemcpy2DToArrayAsync`
+    /// this slice.
+    pub fn memcpy_2d_array_to_array(&self, device: DeviceId) -> Result<(), SimError> {
+        let _gpu = self.profile.gpu(device)?;
+        Err(SimError::Invalid {
+            why: "memcpy2d a2a",
+        })
+    }
+
     /// `cuLibraryLoadData`. CUDA libraries are not modeled.
     ///
     /// Always Invalid `"cuda library"` (this VM has no cubin or PTX and no

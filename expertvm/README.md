@@ -739,6 +739,8 @@ no `CUtexref` filtering; no Engine flag).
 (Invalid; no `CUarray` 2D copy; no Engine flag).
 `gpu-sim` `memcpy_2d_from_array` is `cuMemcpy2DFromArray`
 (Invalid; no `CUarray` 2D copy; no Engine flag).
+`gpu-sim` `memcpy_2d_array_to_array` is `cuMemcpy2DArrayToArray`
+(Invalid; no `CUarray` 2D copy; no Engine flag).
 `gpu-sim` `mipmapped_array_create` is `cuMipmappedArrayCreate` (Invalid;
 CUDA mipmapped arrays are not modeled; no Engine flag).
 `gpu-sim` `mipmapped_array_get_level` is `cuMipmappedArrayGetLevel`
