@@ -14669,9 +14669,7 @@ impl Sim {
     /// (`cudaMemRangeGetAttribute`).
     ///
     /// Query; legal during capture. Distinct from
-    /// [`Self::mem_range_get_attributes`]. This VM does not invent a
-    /// `cuMemRangeGetAttribute` count this slice
-    /// (`mem_range_get_attribute_with_size` stays).
+    /// [`Self::mem_range_get_attributes`].
     pub fn mem_range_get(
         &self,
         alloc: AllocId,
@@ -14685,6 +14683,7 @@ impl Sim {
     /// `size` must equal the allocation bytes. Other sizes Invalid
     /// `"range size"`. Partial range queries are not modeled. Typed
     /// [`Self::mem_range_get_attribute`] stays. Query; legal during capture.
+    /// Driver `cuMemRangeGetAttribute` count is [`Self::mem_range_get_n`].
     pub fn mem_range_get_attribute_with_size(
         &self,
         alloc: AllocId,
@@ -14722,6 +14721,22 @@ impl Sim {
                 MemLocationType::id_from_place(a.last_prefetch.to_place()),
             ),
         })
+    }
+
+    /// `cuMemRangeGetAttribute` count. Identity with
+    /// [`Self::mem_range_get_attribute_with_size`]
+    /// (`cudaMemRangeGetAttribute` count).
+    ///
+    /// Query; legal during capture. Distinct from [`Self::mem_range_get`]. This
+    /// VM does not invent `cuMemRangeGetAttributes` this slice
+    /// (`mem_range_get_attributes` stays).
+    pub fn mem_range_get_n(
+        &self,
+        alloc: AllocId,
+        size: u64,
+        attr: MemRangeAttr,
+    ) -> Result<MemRangeAttrValue, SimError> {
+        self.mem_range_get_attribute_with_size(alloc, size, attr)
     }
 
     /// `cudaMemRangeGetAttributes`. Query; legal during capture.

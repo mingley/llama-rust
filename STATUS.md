@@ -5,6 +5,14 @@ Visible five-turn extract: [docs/chatgpt-share-6a920fe1.md](docs/chatgpt-share-6
 Complete share-API extract: [docs/chatgpt-share-6a920fe1/](docs/chatgpt-share-6a920fe1/).
 Work lands on `main`. No PRs.
 
+## Shipped 2026-09-02 — CUDA `cuMemRangeGetAttribute` count
+
+`gpu-sim` `Sim::mem_range_get_n` is `cuMemRangeGetAttribute` count.
+Identity with `mem_range_get_attribute_with_size` (`cudaMemRangeGetAttribute` count).
+Query; legal during capture. Distinct from `mem_range_get`.
+This VM does not invent `cuMemRangeGetAttributes` or Engine `--mem-range-get-n`.
+`gpu-profile capture` is still refused. Dual score still has no `$/M tokens`.
+
 ## Shipped 2026-09-02 — CUDA `cuMemRangeGetAttribute`
 
 `gpu-sim` `Sim::mem_range_get` is `cuMemRangeGetAttribute`.
