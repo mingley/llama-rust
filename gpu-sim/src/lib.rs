@@ -658,6 +658,9 @@
 //! [`add_graph_write_value32_with_flags`](Sim::add_graph_write_value32_with_flags) is graph `cuStreamWriteValue32` flags (identity with
 //! [`graph_add_write_value32_with_flags`](Sim::graph_add_write_value32_with_flags)). Capture refused. Distinct from
 //! [`add_graph_write_value64_with_flags`](Sim::add_graph_write_value64_with_flags). No Engine `--graph-add-write-value32-with-flags`.
+//! [`add_graph_wait_value64`](Sim::add_graph_wait_value64) is graph `cuStreamWaitValue64` (identity with
+//! [`graph_add_wait_value64`](Sim::graph_add_wait_value64)). Capture refused. Distinct from
+//! [`add_graph_write_value32_with_flags`](Sim::add_graph_write_value32_with_flags). No Engine `--graph-add-wait-value64`.
 //! [`Sim::ipc_get_event`] / [`ipc_open_event`](Sim::ipc_open_event) are
 //! `cudaIpcGetEventHandle` / `cudaIpcOpenEventHandle` (interprocess events).
 //! [`Sim::create_shareable_pool`] is `cudaMemPoolCreate` with a POSIX-FD handle
@@ -1340,6 +1343,9 @@
 //! [`add_graph_write_value32_with_flags`](Sim::add_graph_write_value32_with_flags) is graph `cuStreamWriteValue32` flags (identity with
 //! [`graph_add_write_value32_with_flags`](Sim::graph_add_write_value32_with_flags)). Capture refused. Distinct from
 //! [`add_graph_write_value64_with_flags`](Sim::add_graph_write_value64_with_flags). No Engine `--graph-add-write-value32-with-flags`.
+//! [`add_graph_wait_value64`](Sim::add_graph_wait_value64) is graph `cuStreamWaitValue64` (identity with
+//! [`graph_add_wait_value64`](Sim::graph_add_wait_value64)). Capture refused. Distinct from
+//! [`add_graph_write_value32_with_flags`](Sim::add_graph_write_value32_with_flags). No Engine `--graph-add-wait-value64`.
 //! [`HardwareProfile::host_pin_bytes`] caps `cudaMallocHost` / `cudaHostRegister`.
 //! [`Sim::idle_until`] drains, then jumps the virtual clock (open-loop arrivals).
 //! [`Sim::event_elapsed_ns`] is `cudaEventElapsedTime` in nanoseconds.
@@ -1890,6 +1896,9 @@
 //! [`add_graph_write_value32_with_flags`](Sim::add_graph_write_value32_with_flags) is graph `cuStreamWriteValue32` flags (identity with
 //! [`graph_add_write_value32_with_flags`](Sim::graph_add_write_value32_with_flags)). Capture refused. Distinct from
 //! [`add_graph_write_value64_with_flags`](Sim::add_graph_write_value64_with_flags). No Engine `--graph-add-write-value32-with-flags`.
+//! [`add_graph_wait_value64`](Sim::add_graph_wait_value64) is graph `cuStreamWaitValue64` (identity with
+//! [`graph_add_wait_value64`](Sim::graph_add_wait_value64)). Capture refused. Distinct from
+//! [`add_graph_write_value32_with_flags`](Sim::add_graph_write_value32_with_flags). No Engine `--graph-add-wait-value64`.
 //! [`mem_host_get_flags`](Sim::mem_host_get_flags) is `cuMemHostGetFlags` (identity with
 //! [`host_get_flags`](Sim::host_get_flags)). Query; legal during capture. No Engine `--mem-host-get-flags`.
 //! [`mem_host_get_device_pointer`](Sim::mem_host_get_device_pointer) is `cuMemHostGetDevicePointer` (identity with
@@ -2406,6 +2415,9 @@
 //! [`add_graph_write_value32_with_flags`](Sim::add_graph_write_value32_with_flags) is graph `cuStreamWriteValue32` flags (identity with
 //! [`graph_add_write_value32_with_flags`](Sim::graph_add_write_value32_with_flags)). Capture refused. Distinct from
 //! [`add_graph_write_value64_with_flags`](Sim::add_graph_write_value64_with_flags). No Engine `--graph-add-write-value32-with-flags`.
+//! [`add_graph_wait_value64`](Sim::add_graph_wait_value64) is graph `cuStreamWaitValue64` (identity with
+//! [`graph_add_wait_value64`](Sim::graph_add_wait_value64)). Capture refused. Distinct from
+//! [`add_graph_write_value32_with_flags`](Sim::add_graph_write_value32_with_flags). No Engine `--graph-add-wait-value64`.
 //! [`Sim::pointer_get_attributes`] is `cudaPointerGetAttributes`.
 //! [`pointer_set_attribute`](Sim::pointer_set_attribute) /
 //! [`pointer_get_attribute`](Sim::pointer_get_attribute) are
@@ -3329,6 +3341,9 @@
 //! [`add_graph_write_value32_with_flags`](Sim::add_graph_write_value32_with_flags) is graph `cuStreamWriteValue32` flags (identity with
 //! [`graph_add_write_value32_with_flags`](Sim::graph_add_write_value32_with_flags)). Capture refused. Distinct from
 //! [`add_graph_write_value64_with_flags`](Sim::add_graph_write_value64_with_flags). No Engine `--graph-add-write-value32-with-flags`.
+//! [`add_graph_wait_value64`](Sim::add_graph_wait_value64) is graph `cuStreamWaitValue64` (identity with
+//! [`graph_add_wait_value64`](Sim::graph_add_wait_value64)). Capture refused. Distinct from
+//! [`add_graph_write_value32_with_flags`](Sim::add_graph_write_value32_with_flags). No Engine `--graph-add-wait-value64`.
 //! [`Sim::stream_get_device`] is `cudaStreamGetDevice` / `cuStreamGetDevice`
 //! (the device of the stream; green-ctx streams return the ctx create
 //! device). Query; legal during capture. Distinct from
@@ -3681,6 +3696,9 @@
 //! [`add_graph_write_value32_with_flags`](Sim::add_graph_write_value32_with_flags) is graph `cuStreamWriteValue32` flags (identity with
 //! [`graph_add_write_value32_with_flags`](Sim::graph_add_write_value32_with_flags)). Capture refused. Distinct from
 //! [`add_graph_write_value64_with_flags`](Sim::add_graph_write_value64_with_flags). No Engine `--graph-add-write-value32-with-flags`.
+//! [`add_graph_wait_value64`](Sim::add_graph_wait_value64) is graph `cuStreamWaitValue64` (identity with
+//! [`graph_add_wait_value64`](Sim::graph_add_wait_value64)). Capture refused. Distinct from
+//! [`add_graph_write_value32_with_flags`](Sim::add_graph_write_value32_with_flags). No Engine `--graph-add-wait-value64`.
 //! [`set_stream_access_policy`](Sim::set_stream_access_policy) is
 //! `cudaStreamAttributeAccessPolicyWindow`: [`kernel`](Sim::kernel) /
 //! [`kernel_bufs`](Sim::kernel_bufs) inherit it; [`kernel_with`](Sim::kernel_with)
@@ -4518,6 +4536,9 @@
 //! [`add_graph_write_value32_with_flags`](Sim::add_graph_write_value32_with_flags) is graph `cuStreamWriteValue32` flags (identity with
 //! [`graph_add_write_value32_with_flags`](Sim::graph_add_write_value32_with_flags)). Capture refused. Distinct from
 //! [`add_graph_write_value64_with_flags`](Sim::add_graph_write_value64_with_flags). No Engine `--graph-add-write-value32-with-flags`.
+//! [`add_graph_wait_value64`](Sim::add_graph_wait_value64) is graph `cuStreamWaitValue64` (identity with
+//! [`graph_add_wait_value64`](Sim::graph_add_wait_value64)). Capture refused. Distinct from
+//! [`add_graph_write_value32_with_flags`](Sim::add_graph_write_value32_with_flags). No Engine `--graph-add-wait-value64`.
 //! [`Sim::set_stream_priority`] is the priority-only helper;
 //! [`stream_create_with_priority`](Sim::stream_create_with_priority) is
 //! `cudaStreamCreateWithPriority` (flags plus priority; clamped to
@@ -4888,6 +4909,9 @@
 //! [`add_graph_write_value32_with_flags`](Sim::add_graph_write_value32_with_flags) is graph `cuStreamWriteValue32` flags (identity with
 //! [`graph_add_write_value32_with_flags`](Sim::graph_add_write_value32_with_flags)). Capture refused. Distinct from
 //! [`add_graph_write_value64_with_flags`](Sim::add_graph_write_value64_with_flags). No Engine `--graph-add-write-value32-with-flags`.
+//! [`add_graph_wait_value64`](Sim::add_graph_wait_value64) is graph `cuStreamWaitValue64` (identity with
+//! [`graph_add_wait_value64`](Sim::graph_add_wait_value64)). Capture refused. Distinct from
+//! [`add_graph_write_value32_with_flags`](Sim::add_graph_write_value32_with_flags). No Engine `--graph-add-wait-value64`.
 //! [`destroy_stream`](Sim::destroy_stream) is `cudaStreamDestroy` (returns
 //! immediately; in-flight work still completes; NULL is Invalid; recreate
 //! while unfinished is `"stream in flight"`). Capture cannot include it.
@@ -5238,6 +5262,9 @@
 //! [`add_graph_write_value32_with_flags`](Sim::add_graph_write_value32_with_flags) is graph `cuStreamWriteValue32` flags (identity with
 //! [`graph_add_write_value32_with_flags`](Sim::graph_add_write_value32_with_flags)). Capture refused. Distinct from
 //! [`add_graph_write_value64_with_flags`](Sim::add_graph_write_value64_with_flags). No Engine `--graph-add-write-value32-with-flags`.
+//! [`add_graph_wait_value64`](Sim::add_graph_wait_value64) is graph `cuStreamWaitValue64` (identity with
+//! [`graph_add_wait_value64`](Sim::graph_add_wait_value64)). Capture refused. Distinct from
+//! [`add_graph_write_value32_with_flags`](Sim::add_graph_write_value32_with_flags). No Engine `--graph-add-wait-value64`.
 //! [`Sim::instantiate_graph`] is `cudaGraphInstantiate` (host-sync; returns a
 //! new exec id; first [`launch_graph`](Sim::launch_graph) of a definition
 //! creates a primary exec). Unused conditional handles are
@@ -5617,6 +5644,9 @@
 //! [`add_graph_write_value32_with_flags`](Sim::add_graph_write_value32_with_flags) is graph `cuStreamWriteValue32` flags (identity with
 //! [`graph_add_write_value32_with_flags`](Sim::graph_add_write_value32_with_flags)). Capture refused. Distinct from
 //! [`add_graph_write_value64_with_flags`](Sim::add_graph_write_value64_with_flags). No Engine `--graph-add-write-value32-with-flags`.
+//! [`add_graph_wait_value64`](Sim::add_graph_wait_value64) is graph `cuStreamWaitValue64` (identity with
+//! [`graph_add_wait_value64`](Sim::graph_add_wait_value64)). Capture refused. Distinct from
+//! [`add_graph_write_value32_with_flags`](Sim::add_graph_write_value32_with_flags). No Engine `--graph-add-wait-value64`.
 //! [`graph_kernel_node_get_priority`](Sim::graph_kernel_node_get_priority) /
 //! [`graph_kernel_node_set_priority`](Sim::graph_kernel_node_set_priority) /
 //! [`graph_kernel_node_copy_attributes`](Sim::graph_kernel_node_copy_attributes)
@@ -5955,6 +5985,9 @@
 //! [`add_graph_write_value32_with_flags`](Sim::add_graph_write_value32_with_flags) is graph `cuStreamWriteValue32` flags (identity with
 //! [`graph_add_write_value32_with_flags`](Sim::graph_add_write_value32_with_flags)). Capture refused. Distinct from
 //! [`add_graph_write_value64_with_flags`](Sim::add_graph_write_value64_with_flags). No Engine `--graph-add-write-value32-with-flags`.
+//! [`add_graph_wait_value64`](Sim::add_graph_wait_value64) is graph `cuStreamWaitValue64` (identity with
+//! [`graph_add_wait_value64`](Sim::graph_add_wait_value64)). Capture refused. Distinct from
+//! [`add_graph_write_value32_with_flags`](Sim::add_graph_write_value32_with_flags). No Engine `--graph-add-wait-value64`.
 //! [`graph_kernel_node_get_attribute`](Sim::graph_kernel_node_get_attribute) /
 //! [`graph_exec_kernel_node_get_attribute`](Sim::graph_exec_kernel_node_get_attribute) /
 //! [`graph_kernel_node_set_attribute`](Sim::graph_kernel_node_set_attribute) /
@@ -6299,6 +6332,9 @@
 //! [`add_graph_write_value32_with_flags`](Sim::add_graph_write_value32_with_flags) is graph `cuStreamWriteValue32` flags (identity with
 //! [`graph_add_write_value32_with_flags`](Sim::graph_add_write_value32_with_flags)). Capture refused. Distinct from
 //! [`add_graph_write_value64_with_flags`](Sim::add_graph_write_value64_with_flags). No Engine `--graph-add-write-value32-with-flags`.
+//! [`add_graph_wait_value64`](Sim::add_graph_wait_value64) is graph `cuStreamWaitValue64` (identity with
+//! [`graph_add_wait_value64`](Sim::graph_add_wait_value64)). Capture refused. Distinct from
+//! [`add_graph_write_value32_with_flags`](Sim::add_graph_write_value32_with_flags). No Engine `--graph-add-wait-value64`.
 //! Device-launch
 //! execs cannot attach programmatic or launch-completion events.
 //! [`kernel_pdl`](Sim::kernel_pdl) is `cudaLaunchKernelEx` PDL: a wait kernel
@@ -6771,6 +6807,9 @@
 //! [`add_graph_write_value32_with_flags`](Sim::add_graph_write_value32_with_flags) is graph `cuStreamWriteValue32` flags (identity with
 //! [`graph_add_write_value32_with_flags`](Sim::graph_add_write_value32_with_flags)). Capture refused. Distinct from
 //! [`add_graph_write_value64_with_flags`](Sim::add_graph_write_value64_with_flags). No Engine `--graph-add-write-value32-with-flags`.
+//! [`add_graph_wait_value64`](Sim::add_graph_wait_value64) is graph `cuStreamWaitValue64` (identity with
+//! [`graph_add_wait_value64`](Sim::graph_add_wait_value64)). Capture refused. Distinct from
+//! [`add_graph_write_value32_with_flags`](Sim::add_graph_write_value32_with_flags). No Engine `--graph-add-wait-value64`.
 //! [`graph_exec_memcpy_set_params`](Sim::graph_exec_memcpy_set_params) /
 //! [`graph_exec_memcpy_set_params_1d`](Sim::graph_exec_memcpy_set_params_1d) /
 //! [`graph_exec_memcpy_set_params_2d`](Sim::graph_exec_memcpy_set_params_2d) /
@@ -7107,6 +7146,9 @@
 //! [`add_graph_write_value32_with_flags`](Sim::add_graph_write_value32_with_flags) is graph `cuStreamWriteValue32` flags (identity with
 //! [`graph_add_write_value32_with_flags`](Sim::graph_add_write_value32_with_flags)). Capture refused. Distinct from
 //! [`add_graph_write_value64_with_flags`](Sim::add_graph_write_value64_with_flags). No Engine `--graph-add-write-value32-with-flags`.
+//! [`add_graph_wait_value64`](Sim::add_graph_wait_value64) is graph `cuStreamWaitValue64` (identity with
+//! [`graph_add_wait_value64`](Sim::graph_add_wait_value64)). Capture refused. Distinct from
+//! [`add_graph_write_value32_with_flags`](Sim::add_graph_write_value32_with_flags). No Engine `--graph-add-wait-value64`.
 //! [`get_graph_kernel_node_params`](Sim::get_graph_kernel_node_params) is `cuGraphKernelNodeGetParams` (identity with
 //! [`graph_kernel_get_params`](Sim::graph_kernel_get_params)). Query; legal during capture. Distinct from
 //! [`graph_exec_kernel_get_params`](Sim::graph_exec_kernel_get_params). No Engine `--graph-kernel-get-params`.
@@ -7422,6 +7464,9 @@
 //! [`add_graph_write_value32_with_flags`](Sim::add_graph_write_value32_with_flags) is graph `cuStreamWriteValue32` flags (identity with
 //! [`graph_add_write_value32_with_flags`](Sim::graph_add_write_value32_with_flags)). Capture refused. Distinct from
 //! [`add_graph_write_value64_with_flags`](Sim::add_graph_write_value64_with_flags). No Engine `--graph-add-write-value32-with-flags`.
+//! [`add_graph_wait_value64`](Sim::add_graph_wait_value64) is graph `cuStreamWaitValue64` (identity with
+//! [`graph_add_wait_value64`](Sim::graph_add_wait_value64)). Capture refused. Distinct from
+//! [`add_graph_write_value32_with_flags`](Sim::add_graph_write_value32_with_flags). No Engine `--graph-add-wait-value64`.
 //! [`graph_exec_kernel_get_params`](Sim::graph_exec_kernel_get_params) /
 //! [`graph_exec_memcpy_get_params`](Sim::graph_exec_memcpy_get_params) /
 //! [`graph_exec_memset_get_params`](Sim::graph_exec_memset_get_params) /
@@ -7728,6 +7773,9 @@
 //! [`add_graph_write_value32_with_flags`](Sim::add_graph_write_value32_with_flags) is graph `cuStreamWriteValue32` flags (identity with
 //! [`graph_add_write_value32_with_flags`](Sim::graph_add_write_value32_with_flags)). Capture refused. Distinct from
 //! [`add_graph_write_value64_with_flags`](Sim::add_graph_write_value64_with_flags). No Engine `--graph-add-write-value32-with-flags`.
+//! [`add_graph_wait_value64`](Sim::add_graph_wait_value64) is graph `cuStreamWaitValue64` (identity with
+//! [`graph_add_wait_value64`](Sim::graph_add_wait_value64)). Capture refused. Distinct from
+//! [`add_graph_write_value32_with_flags`](Sim::add_graph_write_value32_with_flags). No Engine `--graph-add-wait-value64`.
 //! [`get_graph_exec_kernel_node_params`](Sim::get_graph_exec_kernel_node_params) is `cuGraphExecKernelNodeGetParams` (identity with
 //! [`graph_exec_kernel_get_params`](Sim::graph_exec_kernel_get_params)). Query; legal during capture. Distinct from
 //! [`get_graph_kernel_node_params`](Sim::get_graph_kernel_node_params). No Engine `--graph-exec-kernel-get-params`.
@@ -8040,6 +8088,9 @@
 //! [`add_graph_write_value32_with_flags`](Sim::add_graph_write_value32_with_flags) is graph `cuStreamWriteValue32` flags (identity with
 //! [`graph_add_write_value32_with_flags`](Sim::graph_add_write_value32_with_flags)). Capture refused. Distinct from
 //! [`add_graph_write_value64_with_flags`](Sim::add_graph_write_value64_with_flags). No Engine `--graph-add-write-value32-with-flags`.
+//! [`add_graph_wait_value64`](Sim::add_graph_wait_value64) is graph `cuStreamWaitValue64` (identity with
+//! [`graph_add_wait_value64`](Sim::graph_add_wait_value64)). Capture refused. Distinct from
+//! [`add_graph_write_value32_with_flags`](Sim::add_graph_write_value32_with_flags). No Engine `--graph-add-wait-value64`.
 //! [`graph_exec_batch_mem_op_set_params`](Sim::graph_exec_batch_mem_op_set_params)
 //! is `cudaGraphExecBatchMemOpNodeSetParams` (id/offset/value; wait vs write,
 //! `bits32`, and compare stay on wait/write nodes;
@@ -31737,6 +31788,99 @@ mod tests {
             other => panic!("{other:?}"),
         }
         match eight.graph_add_write_value32_with_flags(g1, a1, 0, 3, flags) {
+            Err(SimError::Invalid { why }) => assert!(why.contains("capture"), "{why}"),
+            other => panic!("{other:?}"),
+        }
+        let _cap = eight.end_capture().unwrap();
+    }
+
+    #[test]
+    fn add_graph_wait_value64_is_cu_stream_wait_value64() {
+        let mut sim = Sim::new(h100());
+        let d = DeviceId(0);
+        let s = StreamId(0);
+        let a = sim.malloc(d, 64).unwrap();
+        let b = sim.malloc(d, 64).unwrap();
+        let cmp = WaitValueCmp::Eq;
+        let op_a = BatchMemOp::Wait {
+            id: a,
+            offset: 0,
+            value: 1,
+            bits32: false,
+            cmp,
+            flush: false,
+        };
+        let op_b = BatchMemOp::Wait {
+            id: b,
+            offset: 0,
+            value: 2,
+            bits32: false,
+            cmp,
+            flush: false,
+        };
+        match sim.add_graph_wait_value64(GraphId(99), a, 0, 1, cmp) {
+            Err(SimError::Invalid { why }) => assert!(why.contains("unknown"), "{why}"),
+            other => panic!("{other:?}"),
+        }
+        match sim.graph_add_wait_value64(GraphId(99), b, 0, 2, cmp) {
+            Err(SimError::Invalid { why }) => assert!(why.contains("unknown"), "{why}"),
+            other => panic!("{other:?}"),
+        }
+        let g = sim.create_graph(d, s).unwrap();
+        sim.add_graph_wait_value64(g, a, 0, 1, cmp).unwrap();
+        sim.graph_add_wait_value64(g, b, 0, 2, cmp).unwrap();
+        assert_eq!(sim.graph_len(g).unwrap(), 2);
+        assert_eq!(
+            sim.graph_node_kind(g, 0).unwrap(),
+            GraphNodeKind::BatchMemOp
+        );
+        assert_eq!(
+            sim.graph_node_kind(g, 1).unwrap(),
+            GraphNodeKind::BatchMemOp
+        );
+        assert_eq!(
+            sim.graph_batch_mem_ops_get_params(g, 0).unwrap(),
+            vec![op_a]
+        );
+        assert_eq!(
+            sim.graph_batch_mem_ops_get_params(g, 1).unwrap(),
+            vec![op_b]
+        );
+        sim.begin_capture(d, s).unwrap();
+        match sim.add_graph_wait_value64(g, a, 0, 1, cmp) {
+            Err(SimError::Invalid { why }) => assert!(why.contains("capture"), "{why}"),
+            other => panic!("{other:?}"),
+        }
+        match sim.graph_add_wait_value64(g, b, 0, 2, cmp) {
+            Err(SimError::Invalid { why }) => assert!(why.contains("capture"), "{why}"),
+            other => panic!("{other:?}"),
+        }
+        let _cap = sim.end_capture().unwrap();
+        let exec = sim.graph_instantiate(g).unwrap();
+        match sim.add_graph_wait_value64(exec, a, 0, 1, cmp) {
+            Err(SimError::Invalid { why }) => assert!(why.contains("instantiated"), "{why}"),
+            other => panic!("{other:?}"),
+        }
+        match sim.graph_add_wait_value64(exec, b, 0, 2, cmp) {
+            Err(SimError::Invalid { why }) => assert!(why.contains("instantiated"), "{why}"),
+            other => panic!("{other:?}"),
+        }
+        let mut eight = Sim::new(HardwareProfile::example_8xh100_nvlink());
+        let d1 = DeviceId(1);
+        let a1 = eight.malloc(d1, 64).unwrap();
+        let g1 = eight.create_graph(d1, s).unwrap();
+        eight.add_graph_wait_value64(g1, a1, 0, 3, cmp).unwrap();
+        assert_eq!(eight.graph_len(g1).unwrap(), 1);
+        assert_eq!(
+            eight.graph_node_kind(g1, 0).unwrap(),
+            GraphNodeKind::BatchMemOp
+        );
+        eight.begin_capture(d1, s).unwrap();
+        match eight.add_graph_wait_value64(g1, a1, 0, 3, cmp) {
+            Err(SimError::Invalid { why }) => assert!(why.contains("capture"), "{why}"),
+            other => panic!("{other:?}"),
+        }
+        match eight.graph_add_wait_value64(g1, a1, 0, 3, cmp) {
             Err(SimError::Invalid { why }) => assert!(why.contains("capture"), "{why}"),
             other => panic!("{other:?}"),
         }
