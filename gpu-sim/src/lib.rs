@@ -25600,6 +25600,7 @@ mod tests {
         let n = sim.graph_launch(g, s).unwrap();
         assert_eq!(n, 1);
         assert_eq!(sim.launch_graph(g, s).unwrap(), 1);
+        sim.synchronize().unwrap();
         sim.begin_capture(d, s).unwrap();
         assert_eq!(
             sim.graph_launch(g, s).unwrap(),
@@ -25618,6 +25619,7 @@ mod tests {
             )
             .unwrap();
         assert_eq!(eight.graph_launch(g1, s).unwrap(), 1);
+        eight.synchronize().unwrap();
         eight.begin_capture(DeviceId(1), s).unwrap();
         assert_eq!(
             eight.graph_launch(g1, s).unwrap(),
