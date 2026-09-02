@@ -2364,7 +2364,6 @@ impl Sim {
     /// [`Self::set_stream_access_policy`] (`cudaStreamSetAttribute` AccessPolicyWindow).
     ///
     /// Capture legal. Distinct from [`Self::stream_get_nvlink_util_centric`].
-    /// This VM does not invent occupancy SM counts this slice.
     pub fn stream_set_access_policy(
         &mut self,
         device: DeviceId,
@@ -2375,6 +2374,8 @@ impl Sim {
     }
 
     /// Stream access-policy window, or [`None`] if unset.
+    /// Driver `cuStreamGetAttribute` access policy is [`Self::stream_get_access_policy`].
+    /// Identity wrap [`Self::stream_get_access_policy`].
     #[must_use]
     pub fn stream_access_policy(
         &self,
@@ -2382,6 +2383,20 @@ impl Sim {
         stream: StreamId,
     ) -> Option<AccessPolicyWindow> {
         self.stream_access_policy.get(&(device, stream)).copied()
+    }
+
+    /// `cuStreamGetAttribute` access policy. Identity with
+    /// [`Self::stream_access_policy`] (`cudaStreamGetAttribute` AccessPolicyWindow).
+    ///
+    /// Query; legal during capture. Distinct from [`Self::stream_set_access_policy`].
+    /// This VM does not invent occupancy SM counts this slice.
+    #[must_use]
+    pub fn stream_get_access_policy(
+        &self,
+        device: DeviceId,
+        stream: StreamId,
+    ) -> Option<AccessPolicyWindow> {
+        self.stream_access_policy(device, stream)
     }
 
     /// `cudaStreamCopyAttributes`: copy priority, SM permille, mem-sync

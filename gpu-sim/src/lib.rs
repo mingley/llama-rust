@@ -1005,6 +1005,9 @@
 //! [`stream_set_access_policy`](Sim::stream_set_access_policy) is `cuStreamSetAttribute` access policy (identity with
 //! [`set_stream_access_policy`](Sim::set_stream_access_policy)). Capture legal. Distinct from
 //! [`stream_get_nvlink_util_centric`](Sim::stream_get_nvlink_util_centric). No Engine `--stream-set-access-policy`.
+//! [`stream_get_access_policy`](Sim::stream_get_access_policy) is `cuStreamGetAttribute` access policy (identity with
+//! [`stream_access_policy`](Sim::stream_access_policy)). Query; legal during capture. Distinct from
+//! [`stream_set_access_policy`](Sim::stream_set_access_policy). No Engine `--stream-get-access-policy`.
 //! [`Sim::ipc_get_event`] / [`ipc_open_event`](Sim::ipc_open_event) are
 //! `cudaIpcGetEventHandle` / `cudaIpcOpenEventHandle` (interprocess events).
 //! [`Sim::create_shareable_pool`] is `cudaMemPoolCreate` with a POSIX-FD handle
@@ -2034,6 +2037,9 @@
 //! [`stream_set_access_policy`](Sim::stream_set_access_policy) is `cuStreamSetAttribute` access policy (identity with
 //! [`set_stream_access_policy`](Sim::set_stream_access_policy)). Capture legal. Distinct from
 //! [`stream_get_nvlink_util_centric`](Sim::stream_get_nvlink_util_centric). No Engine `--stream-set-access-policy`.
+//! [`stream_get_access_policy`](Sim::stream_get_access_policy) is `cuStreamGetAttribute` access policy (identity with
+//! [`stream_access_policy`](Sim::stream_access_policy)). Query; legal during capture. Distinct from
+//! [`stream_set_access_policy`](Sim::stream_set_access_policy). No Engine `--stream-get-access-policy`.
 //! [`HardwareProfile::host_pin_bytes`] caps `cudaMallocHost` / `cudaHostRegister`.
 //! [`Sim::idle_until`] drains, then jumps the virtual clock (open-loop arrivals).
 //! [`Sim::event_elapsed_ns`] is `cudaEventElapsedTime` in nanoseconds.
@@ -2931,6 +2937,9 @@
 //! [`stream_set_access_policy`](Sim::stream_set_access_policy) is `cuStreamSetAttribute` access policy (identity with
 //! [`set_stream_access_policy`](Sim::set_stream_access_policy)). Capture legal. Distinct from
 //! [`stream_get_nvlink_util_centric`](Sim::stream_get_nvlink_util_centric). No Engine `--stream-set-access-policy`.
+//! [`stream_get_access_policy`](Sim::stream_get_access_policy) is `cuStreamGetAttribute` access policy (identity with
+//! [`stream_access_policy`](Sim::stream_access_policy)). Query; legal during capture. Distinct from
+//! [`stream_set_access_policy`](Sim::stream_set_access_policy). No Engine `--stream-get-access-policy`.
 //! [`mem_host_get_flags`](Sim::mem_host_get_flags) is `cuMemHostGetFlags` (identity with
 //! [`host_get_flags`](Sim::host_get_flags)). Query; legal during capture. No Engine `--mem-host-get-flags`.
 //! [`mem_host_get_device_pointer`](Sim::mem_host_get_device_pointer) is `cuMemHostGetDevicePointer` (identity with
@@ -3794,6 +3803,9 @@
 //! [`stream_set_access_policy`](Sim::stream_set_access_policy) is `cuStreamSetAttribute` access policy (identity with
 //! [`set_stream_access_policy`](Sim::set_stream_access_policy)). Capture legal. Distinct from
 //! [`stream_get_nvlink_util_centric`](Sim::stream_get_nvlink_util_centric). No Engine `--stream-set-access-policy`.
+//! [`stream_get_access_policy`](Sim::stream_get_access_policy) is `cuStreamGetAttribute` access policy (identity with
+//! [`stream_access_policy`](Sim::stream_access_policy)). Query; legal during capture. Distinct from
+//! [`stream_set_access_policy`](Sim::stream_set_access_policy). No Engine `--stream-get-access-policy`.
 //! [`Sim::pointer_get_attributes`] is `cudaPointerGetAttributes`.
 //! [`pointer_set_attribute`](Sim::pointer_set_attribute) /
 //! [`pointer_get_attribute`](Sim::pointer_get_attribute) are
@@ -5064,6 +5076,9 @@
 //! [`stream_set_access_policy`](Sim::stream_set_access_policy) is `cuStreamSetAttribute` access policy (identity with
 //! [`set_stream_access_policy`](Sim::set_stream_access_policy)). Capture legal. Distinct from
 //! [`stream_get_nvlink_util_centric`](Sim::stream_get_nvlink_util_centric). No Engine `--stream-set-access-policy`.
+//! [`stream_get_access_policy`](Sim::stream_get_access_policy) is `cuStreamGetAttribute` access policy (identity with
+//! [`stream_access_policy`](Sim::stream_access_policy)). Query; legal during capture. Distinct from
+//! [`stream_set_access_policy`](Sim::stream_set_access_policy). No Engine `--stream-get-access-policy`.
 //! [`Sim::stream_get_device`] is `cudaStreamGetDevice` / `cuStreamGetDevice`
 //! (the device of the stream; green-ctx streams return the ctx create
 //! device). Query; legal during capture. Distinct from
@@ -5763,6 +5778,9 @@
 //! [`stream_set_access_policy`](Sim::stream_set_access_policy) is `cuStreamSetAttribute` access policy (identity with
 //! [`set_stream_access_policy`](Sim::set_stream_access_policy)). Capture legal. Distinct from
 //! [`stream_get_nvlink_util_centric`](Sim::stream_get_nvlink_util_centric). No Engine `--stream-set-access-policy`.
+//! [`stream_get_access_policy`](Sim::stream_get_access_policy) is `cuStreamGetAttribute` access policy (identity with
+//! [`stream_access_policy`](Sim::stream_access_policy)). Query; legal during capture. Distinct from
+//! [`stream_set_access_policy`](Sim::stream_set_access_policy). No Engine `--stream-get-access-policy`.
 //! [`set_stream_access_policy`](Sim::set_stream_access_policy) is
 //! `cudaStreamAttributeAccessPolicyWindow`: [`kernel`](Sim::kernel) /
 //! [`kernel_bufs`](Sim::kernel_bufs) inherit it; [`kernel_with`](Sim::kernel_with)
@@ -6947,6 +6965,9 @@
 //! [`stream_set_access_policy`](Sim::stream_set_access_policy) is `cuStreamSetAttribute` access policy (identity with
 //! [`set_stream_access_policy`](Sim::set_stream_access_policy)). Capture legal. Distinct from
 //! [`stream_get_nvlink_util_centric`](Sim::stream_get_nvlink_util_centric). No Engine `--stream-set-access-policy`.
+//! [`stream_get_access_policy`](Sim::stream_get_access_policy) is `cuStreamGetAttribute` access policy (identity with
+//! [`stream_access_policy`](Sim::stream_access_policy)). Query; legal during capture. Distinct from
+//! [`stream_set_access_policy`](Sim::stream_set_access_policy). No Engine `--stream-get-access-policy`.
 //! [`Sim::set_stream_priority`] is the priority-only helper;
 //! [`stream_create_with_priority`](Sim::stream_create_with_priority) is
 //! `cudaStreamCreateWithPriority` (flags plus priority; clamped to
@@ -7664,6 +7685,9 @@
 //! [`stream_set_access_policy`](Sim::stream_set_access_policy) is `cuStreamSetAttribute` access policy (identity with
 //! [`set_stream_access_policy`](Sim::set_stream_access_policy)). Capture legal. Distinct from
 //! [`stream_get_nvlink_util_centric`](Sim::stream_get_nvlink_util_centric). No Engine `--stream-set-access-policy`.
+//! [`stream_get_access_policy`](Sim::stream_get_access_policy) is `cuStreamGetAttribute` access policy (identity with
+//! [`stream_access_policy`](Sim::stream_access_policy)). Query; legal during capture. Distinct from
+//! [`stream_set_access_policy`](Sim::stream_set_access_policy). No Engine `--stream-get-access-policy`.
 //! [`destroy_stream`](Sim::destroy_stream) is `cudaStreamDestroy` (returns
 //! immediately; in-flight work still completes; NULL is Invalid; recreate
 //! while unfinished is `"stream in flight"`). Capture cannot include it.
@@ -8361,6 +8385,9 @@
 //! [`stream_set_access_policy`](Sim::stream_set_access_policy) is `cuStreamSetAttribute` access policy (identity with
 //! [`set_stream_access_policy`](Sim::set_stream_access_policy)). Capture legal. Distinct from
 //! [`stream_get_nvlink_util_centric`](Sim::stream_get_nvlink_util_centric). No Engine `--stream-set-access-policy`.
+//! [`stream_get_access_policy`](Sim::stream_get_access_policy) is `cuStreamGetAttribute` access policy (identity with
+//! [`stream_access_policy`](Sim::stream_access_policy)). Query; legal during capture. Distinct from
+//! [`stream_set_access_policy`](Sim::stream_set_access_policy). No Engine `--stream-get-access-policy`.
 //! [`Sim::instantiate_graph`] is `cudaGraphInstantiate` (host-sync; returns a
 //! new exec id; first [`launch_graph`](Sim::launch_graph) of a definition
 //! creates a primary exec). Unused conditional handles are
@@ -9087,6 +9114,9 @@
 //! [`stream_set_access_policy`](Sim::stream_set_access_policy) is `cuStreamSetAttribute` access policy (identity with
 //! [`set_stream_access_policy`](Sim::set_stream_access_policy)). Capture legal. Distinct from
 //! [`stream_get_nvlink_util_centric`](Sim::stream_get_nvlink_util_centric). No Engine `--stream-set-access-policy`.
+//! [`stream_get_access_policy`](Sim::stream_get_access_policy) is `cuStreamGetAttribute` access policy (identity with
+//! [`stream_access_policy`](Sim::stream_access_policy)). Query; legal during capture. Distinct from
+//! [`stream_set_access_policy`](Sim::stream_set_access_policy). No Engine `--stream-get-access-policy`.
 //! [`graph_kernel_node_get_priority`](Sim::graph_kernel_node_get_priority) /
 //! [`graph_kernel_node_set_priority`](Sim::graph_kernel_node_set_priority) /
 //! [`graph_kernel_node_copy_attributes`](Sim::graph_kernel_node_copy_attributes)
@@ -9772,6 +9802,9 @@
 //! [`stream_set_access_policy`](Sim::stream_set_access_policy) is `cuStreamSetAttribute` access policy (identity with
 //! [`set_stream_access_policy`](Sim::set_stream_access_policy)). Capture legal. Distinct from
 //! [`stream_get_nvlink_util_centric`](Sim::stream_get_nvlink_util_centric). No Engine `--stream-set-access-policy`.
+//! [`stream_get_access_policy`](Sim::stream_get_access_policy) is `cuStreamGetAttribute` access policy (identity with
+//! [`stream_access_policy`](Sim::stream_access_policy)). Query; legal during capture. Distinct from
+//! [`stream_set_access_policy`](Sim::stream_set_access_policy). No Engine `--stream-get-access-policy`.
 //! [`graph_kernel_node_get_attribute`](Sim::graph_kernel_node_get_attribute) /
 //! [`graph_exec_kernel_node_get_attribute`](Sim::graph_exec_kernel_node_get_attribute) /
 //! [`graph_kernel_node_set_attribute`](Sim::graph_kernel_node_set_attribute) /
@@ -10463,6 +10496,9 @@
 //! [`stream_set_access_policy`](Sim::stream_set_access_policy) is `cuStreamSetAttribute` access policy (identity with
 //! [`set_stream_access_policy`](Sim::set_stream_access_policy)). Capture legal. Distinct from
 //! [`stream_get_nvlink_util_centric`](Sim::stream_get_nvlink_util_centric). No Engine `--stream-set-access-policy`.
+//! [`stream_get_access_policy`](Sim::stream_get_access_policy) is `cuStreamGetAttribute` access policy (identity with
+//! [`stream_access_policy`](Sim::stream_access_policy)). Query; legal during capture. Distinct from
+//! [`stream_set_access_policy`](Sim::stream_set_access_policy). No Engine `--stream-get-access-policy`.
 //! Device-launch
 //! execs cannot attach programmatic or launch-completion events.
 //! [`kernel_pdl`](Sim::kernel_pdl) is `cudaLaunchKernelEx` PDL: a wait kernel
@@ -11282,6 +11318,9 @@
 //! [`stream_set_access_policy`](Sim::stream_set_access_policy) is `cuStreamSetAttribute` access policy (identity with
 //! [`set_stream_access_policy`](Sim::set_stream_access_policy)). Capture legal. Distinct from
 //! [`stream_get_nvlink_util_centric`](Sim::stream_get_nvlink_util_centric). No Engine `--stream-set-access-policy`.
+//! [`stream_get_access_policy`](Sim::stream_get_access_policy) is `cuStreamGetAttribute` access policy (identity with
+//! [`stream_access_policy`](Sim::stream_access_policy)). Query; legal during capture. Distinct from
+//! [`stream_set_access_policy`](Sim::stream_set_access_policy). No Engine `--stream-get-access-policy`.
 //! [`graph_exec_memcpy_set_params`](Sim::graph_exec_memcpy_set_params) /
 //! [`graph_exec_memcpy_set_params_1d`](Sim::graph_exec_memcpy_set_params_1d) /
 //! [`graph_exec_memcpy_set_params_2d`](Sim::graph_exec_memcpy_set_params_2d) /
@@ -11965,6 +12004,9 @@
 //! [`stream_set_access_policy`](Sim::stream_set_access_policy) is `cuStreamSetAttribute` access policy (identity with
 //! [`set_stream_access_policy`](Sim::set_stream_access_policy)). Capture legal. Distinct from
 //! [`stream_get_nvlink_util_centric`](Sim::stream_get_nvlink_util_centric). No Engine `--stream-set-access-policy`.
+//! [`stream_get_access_policy`](Sim::stream_get_access_policy) is `cuStreamGetAttribute` access policy (identity with
+//! [`stream_access_policy`](Sim::stream_access_policy)). Query; legal during capture. Distinct from
+//! [`stream_set_access_policy`](Sim::stream_set_access_policy). No Engine `--stream-get-access-policy`.
 //! [`get_graph_kernel_node_params`](Sim::get_graph_kernel_node_params) is `cuGraphKernelNodeGetParams` (identity with
 //! [`graph_kernel_get_params`](Sim::graph_kernel_get_params)). Query; legal during capture. Distinct from
 //! [`graph_exec_kernel_get_params`](Sim::graph_exec_kernel_get_params). No Engine `--graph-kernel-get-params`.
@@ -12627,6 +12669,9 @@
 //! [`stream_set_access_policy`](Sim::stream_set_access_policy) is `cuStreamSetAttribute` access policy (identity with
 //! [`set_stream_access_policy`](Sim::set_stream_access_policy)). Capture legal. Distinct from
 //! [`stream_get_nvlink_util_centric`](Sim::stream_get_nvlink_util_centric). No Engine `--stream-set-access-policy`.
+//! [`stream_get_access_policy`](Sim::stream_get_access_policy) is `cuStreamGetAttribute` access policy (identity with
+//! [`stream_access_policy`](Sim::stream_access_policy)). Query; legal during capture. Distinct from
+//! [`stream_set_access_policy`](Sim::stream_set_access_policy). No Engine `--stream-get-access-policy`.
 //! [`graph_exec_kernel_get_params`](Sim::graph_exec_kernel_get_params) /
 //! [`graph_exec_memcpy_get_params`](Sim::graph_exec_memcpy_get_params) /
 //! [`graph_exec_memset_get_params`](Sim::graph_exec_memset_get_params) /
@@ -13280,6 +13325,9 @@
 //! [`stream_set_access_policy`](Sim::stream_set_access_policy) is `cuStreamSetAttribute` access policy (identity with
 //! [`set_stream_access_policy`](Sim::set_stream_access_policy)). Capture legal. Distinct from
 //! [`stream_get_nvlink_util_centric`](Sim::stream_get_nvlink_util_centric). No Engine `--stream-set-access-policy`.
+//! [`stream_get_access_policy`](Sim::stream_get_access_policy) is `cuStreamGetAttribute` access policy (identity with
+//! [`stream_access_policy`](Sim::stream_access_policy)). Query; legal during capture. Distinct from
+//! [`stream_set_access_policy`](Sim::stream_set_access_policy). No Engine `--stream-get-access-policy`.
 //! [`get_graph_exec_kernel_node_params`](Sim::get_graph_exec_kernel_node_params) is `cuGraphExecKernelNodeGetParams` (identity with
 //! [`graph_exec_kernel_get_params`](Sim::graph_exec_kernel_get_params)). Query; legal during capture. Distinct from
 //! [`get_graph_kernel_node_params`](Sim::get_graph_kernel_node_params). No Engine `--graph-exec-kernel-get-params`.
@@ -13939,6 +13987,9 @@
 //! [`stream_set_access_policy`](Sim::stream_set_access_policy) is `cuStreamSetAttribute` access policy (identity with
 //! [`set_stream_access_policy`](Sim::set_stream_access_policy)). Capture legal. Distinct from
 //! [`stream_get_nvlink_util_centric`](Sim::stream_get_nvlink_util_centric). No Engine `--stream-set-access-policy`.
+//! [`stream_get_access_policy`](Sim::stream_get_access_policy) is `cuStreamGetAttribute` access policy (identity with
+//! [`stream_access_policy`](Sim::stream_access_policy)). Query; legal during capture. Distinct from
+//! [`stream_set_access_policy`](Sim::stream_set_access_policy). No Engine `--stream-get-access-policy`.
 //! [`graph_exec_batch_mem_op_set_params`](Sim::graph_exec_batch_mem_op_set_params)
 //! is `cudaGraphExecBatchMemOpNodeSetParams` (id/offset/value; wait vs write,
 //! `bits32`, and compare stay on wait/write nodes;
@@ -43247,6 +43298,41 @@ mod tests {
         eight.stream_set_access_policy(d1, s, Some(w1)).unwrap();
         assert_eq!(eight.stream_access_policy(d1, s), Some(w1));
         eight.set_stream_access_policy(d1, s, Some(w1)).unwrap();
+        let g2 = eight.end_capture().unwrap();
+        assert_eq!(eight.graph_len(g2).unwrap(), 0);
+    }
+
+    #[test]
+    fn stream_get_access_policy_is_cu_stream_get_attribute_access_policy() {
+        let mut sim = Sim::new(h100());
+        let d = DeviceId(0);
+        let s = StreamId(0);
+        let a = sim.malloc(d, 4096).unwrap();
+        let window = AccessPolicyWindow::persisting(KernelBuf::whole(a));
+        assert_eq!(sim.stream_access_policy(DeviceId(1), s), None);
+        assert_eq!(sim.stream_get_access_policy(DeviceId(1), s), None);
+        assert_eq!(sim.stream_access_policy(d, s), None);
+        assert_eq!(sim.stream_get_access_policy(d, s), None);
+        sim.set_stream_access_policy(d, s, Some(window)).unwrap();
+        assert_eq!(sim.stream_access_policy(d, s), Some(window));
+        assert_eq!(sim.stream_get_access_policy(d, s), Some(window));
+        sim.begin_capture(d, s).unwrap();
+        assert_eq!(sim.stream_access_policy(d, s), Some(window));
+        assert_eq!(sim.stream_get_access_policy(d, s), Some(window));
+        let g = sim.end_capture().unwrap();
+        assert_eq!(sim.graph_len(g).unwrap(), 0);
+        let mut eight = Sim::new(HardwareProfile::example_8xh100_nvlink());
+        let d1 = DeviceId(1);
+        let a1 = eight.malloc(d1, 4096).unwrap();
+        let w1 = AccessPolicyWindow::persisting(KernelBuf::whole(a1));
+        assert_eq!(eight.stream_access_policy(d1, s), None);
+        assert_eq!(eight.stream_get_access_policy(d1, s), None);
+        eight.set_stream_access_policy(d1, s, Some(w1)).unwrap();
+        assert_eq!(eight.stream_access_policy(d1, s), Some(w1));
+        assert_eq!(eight.stream_get_access_policy(d1, s), Some(w1));
+        eight.begin_capture(d1, s).unwrap();
+        assert_eq!(eight.stream_access_policy(d1, s), Some(w1));
+        assert_eq!(eight.stream_get_access_policy(d1, s), Some(w1));
         let g2 = eight.end_capture().unwrap();
         assert_eq!(eight.graph_len(g2).unwrap(), 0);
     }
