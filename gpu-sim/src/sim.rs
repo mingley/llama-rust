@@ -25989,8 +25989,7 @@ impl Sim {
     /// [`Self::cooperative_kernel_multi_device`] (`cudaLaunchCooperativeKernelMultiDevice`).
     ///
     /// Query; legal during capture. Distinct from
-    /// [`Self::launch_cooperative_kernel_bufs`]. This VM does not invent
-    /// occupancy SM counts this slice.
+    /// [`Self::launch_cooperative_kernel_bufs`].
     pub fn launch_cooperative_kernel_multi_device(&self, device: DeviceId) -> Result<(), SimError> {
         self.cooperative_kernel_multi_device(device)
     }
@@ -26020,6 +26019,8 @@ impl Sim {
 
     /// Device-side fill (`cudaMemsetAsync`) of `[0, bytes)`.
     ///
+    /// Identity wrap [`Self::mem_set`]. Not [`Self::memset_d8_async`] (`cuMemsetD8Async`).
+    ///
     /// A VMM destination must have that span mapped ([`Self::is_range_resident`]).
     /// [`Self::kernel`] still needs the whole VA. [`Self::memset_buf`] names an
     /// interior page. Capture is allowed. Host-sync `cudaMalloc` / VMM / mempool
@@ -26038,6 +26039,22 @@ impl Sim {
             });
         }
         self.memset_buf(device, KernelBuf::span(alloc, 0, bytes), stream)
+    }
+
+    /// `cudaMemsetAsync`. Identity with [`Self::memset`].
+    ///
+    /// Capture legal. Distinct from
+    /// [`Self::memset_d8_async`] (`cuMemsetD8Async`) and
+    /// [`Self::launch_cooperative_kernel_multi_device`].
+    /// This VM does not invent occupancy SM counts this slice.
+    pub fn mem_set(
+        &mut self,
+        device: DeviceId,
+        alloc: AllocId,
+        bytes: u64,
+        stream: StreamId,
+    ) -> Result<OpId, SimError> {
+        self.memset(device, alloc, bytes, stream)
     }
 
     /// `cudaMemsetAsync` of a [`KernelBuf`] span (vLLM new-KV-block analog).

@@ -9435,7 +9435,13 @@ model, do not celebrate the sim.
     or `cudaChooseDevice`. `gpu-profile capture` is still refused. Dual
     score still has no `$/M tokens`.
 
-1040. [ ] Next numbered PLAN item after 1039 is the next `gpu-sim` / Engine /
+1040. [x] `gpu-sim` `Sim::mem_set` is
+    `cudaMemsetAsync`. Identity with `memset`. Capture legal. Distinct from
+    `memset_d8_async` (`cuMemsetD8Async`). This VM does not invent occupancy SM counts, Engine `--mem-set`,
+    or `cudaChooseDevice`. `gpu-profile capture` is still refused. Dual
+    score still has no `$/M tokens`.
+
+1041. [ ] Next numbered PLAN item after 1040 is the next `gpu-sim` / Engine /
     serve / expertvm mechanical API that is still missing, or the next official
     decode family. Prefer remaining CUDA-shaped twins over more
     OpenAI HTTP veneer. Do not invent F32 `output.scale`. Do not invent a
@@ -11049,6 +11055,10 @@ model, do not celebrate the sim.
     Do not invent a second `cuLaunchCooperativeKernelMultiDevice` / `launch_cooperative_kernel_multi_device`.
     Do not invent Engine `--launch-cooperative-kernel-multi-device`. Do not invent
     occupancy SM counts this slice. Do not reverse LaunchCooperativeKernelMultiDevice identity with cooperative_kernel_multi_device.
+    Do not invent a second `cudaMemsetAsync` / `mem_set`.
+    Do not invent Engine `--mem-set`. Do not invent
+    occupancy SM counts this slice. Do not reverse Memset identity with memset.
+    Do not invent `cuMemsetD8Async` as `mem_set`.
     Do not invent a second `cudaStreamAddCallback`.
     Do not invent Engine `--stream-callback` (same wall as second live
     `cudaLaunchHostFunc` after miss DMA).
@@ -12739,6 +12749,9 @@ model, do not celebrate the sim.
     Do not invent a second `launch_cooperative_kernel_multi_device` API. Do not invent
     Engine `--launch-cooperative-kernel-multi-device-identity`. Do not invent a memset
     this slice. Do not reverse LaunchCooperativeKernelMultiDevice identity with cooperative_kernel_multi_device.
+    Do not invent a second `mem_set` API. Do not invent
+    Engine `--mem-set-identity`. Do not invent a memset-buf
+    this slice. Do not reverse Memset identity with memset.
     Do not invent a second DeviceLaunch in-flight destroy-complete check or Engine
     `--device-launch-destroy`. Do not abort an in-flight DeviceLaunch when
     `destroy_graph` succeeds. Do not delay destroy of an idle exec. Do not invent
@@ -14612,6 +14625,9 @@ model, do not celebrate the sim.
     Do not invent a second `launch_cooperative_kernel_multi_device` method. Do not
     invent Engine `--cu-launch-cooperative-kernel-multi-device`. Do not reverse wrapping
     cuLaunchCooperativeKernelMultiDevice identity.
+    Do not invent a second `mem_set` method. Do not
+    invent Engine `--cu-mem-set`. Do not reverse wrapping
+    cudaMemsetAsync identity. Do not wrap `cuMemsetD8Async` as `mem_set`.
     Do not
     spend the next item on an OpenAI-compatible HTTP veneer.
 
