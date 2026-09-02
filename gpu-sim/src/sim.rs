@@ -6564,8 +6564,7 @@ impl Sim {
     /// [`Self::graph_node_get_params`] (`cudaGraphNodeGetParams`).
     ///
     /// Query; legal during capture. Distinct from
-    /// [`Self::graph_exec_node_get_params`]. This VM does not invent
-    /// occupancy SM counts this slice.
+    /// [`Self::graph_exec_node_get_params`].
     pub fn get_graph_node_params(
         &self,
         graph: GraphId,
@@ -6578,12 +6577,30 @@ impl Sim {
     ///
     /// Uninstantiated graphs are Invalid. After instantiate this is the
     /// launched node; [`Self::graph_node_get_params`] stays on the definition.
+    /// Driver
+    /// `cuGraphExecNodeGetParams` is
+    /// [`Self::get_graph_exec_node_params`].
     pub fn graph_exec_node_get_params(
         &self,
         exec: GraphId,
         node: usize,
     ) -> Result<GraphNodeParams, SimError> {
         self.graph_node_params_of(self.graph_exec_step(exec, node)?)
+    }
+
+    /// `cuGraphExecNodeGetParams`. Identity with
+    /// [`Self::graph_exec_node_get_params`] (`cudaGraphExecNodeGetParams`
+    /// of the exec snapshot).
+    ///
+    /// Query; legal during capture. Distinct from
+    /// [`Self::get_graph_node_params`]. This VM does not invent
+    /// occupancy SM counts this slice.
+    pub fn get_graph_exec_node_params(
+        &self,
+        exec: GraphId,
+        node: usize,
+    ) -> Result<GraphNodeParams, SimError> {
+        self.graph_exec_node_get_params(exec, node)
     }
 
     fn graph_node_params_of(&self, step: &GraphStep) -> Result<GraphNodeParams, SimError> {
