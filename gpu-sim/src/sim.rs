@@ -17862,6 +17862,7 @@ impl Sim {
 
     /// `cudaMemcpy2D`. Host-synchronous; capture cannot include it.
     /// Unaligned pitches are [`Self::memcpy_2d_unaligned`] (identity here).
+    /// Driver `cuMemcpy2D` is [`Self::mem_cpy_2d`].
     pub fn memcpy_2d(
         &mut self,
         device: DeviceId,
@@ -17876,6 +17877,20 @@ impl Sim {
         let id = self.memcpy_2d_async(device, op, stream)?;
         self.synchronize_stream(device, stream)?;
         Ok(id)
+    }
+
+    /// `cuMemcpy2D`. Identity with [`Self::memcpy_2d`] (`cudaMemcpy2D`).
+    ///
+    /// Capture refused. Distinct from [`Self::memcpy_2d_unaligned`] and
+    /// [`Self::memcpy_2d_async`].
+    /// This VM does not invent `mem_cpy_2d_async` this slice.
+    pub fn mem_cpy_2d(
+        &mut self,
+        device: DeviceId,
+        op: MemcpyOp,
+        stream: StreamId,
+    ) -> Result<OpId, SimError> {
+        self.memcpy_2d(device, op, stream)
     }
 
     /// `cuMemcpy2DUnaligned`. Identity with [`Self::memcpy_2d`]: this VM does
@@ -20673,7 +20688,6 @@ impl Sim {
     /// (`cudaMemGetAddressRange`).
     ///
     /// Query; legal during capture. Distinct from [`Self::mem_range_get`].
-    /// This VM does not invent occupancy MaxActiveBlocks this slice.
     pub fn mem_address_range(&self, alloc: AllocId) -> Result<(AllocId, u64), SimError> {
         self.mem_get_address_range(alloc)
     }

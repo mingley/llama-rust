@@ -235,6 +235,9 @@
 //! [`mem_address_range`](Sim::mem_address_range) is `cuMemGetAddressRange` (identity with
 //! [`mem_get_address_range`](Sim::mem_get_address_range)). Query; legal during capture. Distinct from
 //! [`mem_range_get`](Sim::mem_range_get). No Engine `--mem-address-range`.
+//! [`mem_cpy_2d`](Sim::mem_cpy_2d) is `cuMemcpy2D` (identity with
+//! [`memcpy_2d`](Sim::memcpy_2d)). Capture refused. Distinct from
+//! [`memcpy_2d_unaligned`](Sim::memcpy_2d_unaligned). No Engine `--mem-cpy-2d`.
 //! [`Sim::ipc_get_event`] / [`ipc_open_event`](Sim::ipc_open_event) are
 //! `cudaIpcGetEventHandle` / `cudaIpcOpenEventHandle` (interprocess events).
 //! [`Sim::create_shareable_pool`] is `cudaMemPoolCreate` with a POSIX-FD handle
@@ -678,6 +681,9 @@
 //! [`mem_address_range`](Sim::mem_address_range) is `cuMemGetAddressRange` (identity with
 //! [`mem_get_address_range`](Sim::mem_get_address_range)). Query; legal during capture. Distinct from
 //! [`mem_range_get`](Sim::mem_range_get). No Engine `--mem-address-range`.
+//! [`mem_cpy_2d`](Sim::mem_cpy_2d) is `cuMemcpy2D` (identity with
+//! [`memcpy_2d`](Sim::memcpy_2d)). Capture refused. Distinct from
+//! [`memcpy_2d_unaligned`](Sim::memcpy_2d_unaligned). No Engine `--mem-cpy-2d`.
 //! [`mem_host_get_flags`](Sim::mem_host_get_flags) is `cuMemHostGetFlags` (identity with
 //! [`host_get_flags`](Sim::host_get_flags)). Query; legal during capture. No Engine `--mem-host-get-flags`.
 //! [`mem_host_get_device_pointer`](Sim::mem_host_get_device_pointer) is `cuMemHostGetDevicePointer` (identity with
@@ -771,6 +777,9 @@
 //! [`mem_address_range`](Sim::mem_address_range) is `cuMemGetAddressRange` (identity with
 //! [`mem_get_address_range`](Sim::mem_get_address_range)). Query; legal during capture. Distinct from
 //! [`mem_range_get`](Sim::mem_range_get). No Engine `--mem-address-range`.
+//! [`mem_cpy_2d`](Sim::mem_cpy_2d) is `cuMemcpy2D` (identity with
+//! [`memcpy_2d`](Sim::memcpy_2d)). Capture refused. Distinct from
+//! [`memcpy_2d_unaligned`](Sim::memcpy_2d_unaligned). No Engine `--mem-cpy-2d`.
 //! [`Sim::pointer_get_attributes`] is `cudaPointerGetAttributes`.
 //! [`pointer_set_attribute`](Sim::pointer_set_attribute) /
 //! [`pointer_get_attribute`](Sim::pointer_get_attribute) are
@@ -34978,6 +34987,90 @@ mod tests {
             Err(SimError::Invalid { why }) => assert!(why.contains("address range"), "{why}"),
             other => panic!("{other:?}"),
         }
+    }
+
+    #[test]
+    fn mem_cpy_2d_is_cu_memcpy_2d() {
+        let mut sim = Sim::new(h100());
+        let d = DeviceId(0);
+        let s = StreamId(0);
+        let unknown = MemcpyOp {
+            src: Place::HostPinned,
+            dst: Place::Device(d),
+            alloc: AllocId(99),
+            bytes: 256,
+            offset: 0,
+            height: 8,
+            src_pitch: 256,
+            dst_pitch: 256,
+            ..MemcpyOp::default()
+        };
+        match sim.mem_cpy_2d(d, unknown.clone(), s) {
+            Err(SimError::UnknownAlloc { alloc }) => assert_eq!(alloc, AllocId(99)),
+            other => panic!("{other:?}"),
+        }
+        match sim.memcpy_2d(d, unknown, s) {
+            Err(SimError::UnknownAlloc { alloc }) => assert_eq!(alloc, AllocId(99)),
+            other => panic!("{other:?}"),
+        }
+        let (a, pitch) = sim.malloc_pitch(d, 256, 8).unwrap();
+        let op = MemcpyOp {
+            src: Place::HostPinned,
+            dst: Place::Device(d),
+            alloc: a,
+            bytes: 256,
+            offset: 0,
+            height: 8,
+            src_pitch: 256,
+            dst_pitch: pitch,
+            ..MemcpyOp::default()
+        };
+        match sim.mem_cpy_2d(
+            d,
+            MemcpyOp {
+                height: 1,
+                ..op.clone()
+            },
+            s,
+        ) {
+            Err(SimError::Invalid { why }) => assert!(why.contains("memcpy2d height"), "{why}"),
+            other => panic!("{other:?}"),
+        }
+        match sim.memcpy_2d(
+            d,
+            MemcpyOp {
+                height: 1,
+                ..op.clone()
+            },
+            s,
+        ) {
+            Err(SimError::Invalid { why }) => assert!(why.contains("memcpy2d height"), "{why}"),
+            other => panic!("{other:?}"),
+        }
+        match sim.mem_cpy_2d(DeviceId(99), op.clone(), s) {
+            Err(SimError::Invalid { why }) => assert!(why.contains("device"), "{why}"),
+            other => panic!("{other:?}"),
+        }
+        match sim.memcpy_2d(DeviceId(99), op.clone(), s) {
+            Err(SimError::Invalid { why }) => assert!(why.contains("device"), "{why}"),
+            other => panic!("{other:?}"),
+        }
+        enq(sim.mem_cpy_2d(d, op.clone(), s));
+        assert!(sim.query_stream(d, s).unwrap());
+        assert_eq!(sim.bytes_moved(), 2048);
+        enq(sim.memcpy_2d(d, op.clone(), s));
+        assert!(sim.query_stream(d, s).unwrap());
+        sim.begin_capture(d, s).unwrap();
+        match sim.mem_cpy_2d(d, op.clone(), s) {
+            Err(SimError::Invalid { why }) => assert!(why.contains("capture"), "{why}"),
+            other => panic!("{other:?}"),
+        }
+        match sim.memcpy_2d(d, op, s) {
+            Err(SimError::Invalid { why }) => assert!(why.contains("capture"), "{why}"),
+            other => panic!("{other:?}"),
+        }
+        let _g = sim.end_capture().unwrap();
+        sim.free_sync(a).unwrap();
     }
 
     #[test]
