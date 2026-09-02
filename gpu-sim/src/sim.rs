@@ -14858,8 +14858,6 @@ impl Sim {
     /// (`cudaMemRangeGetAttribute` dataSize).
     ///
     /// Query; legal during capture. Distinct from [`Self::mem_range_get_n`].
-    /// This VM does not invent a `cuMemRangeGetAttributes` dataSizes this
-    /// slice (`mem_range_get_attributes_with_data_sizes` stays).
     pub fn mem_range_get_data(
         &self,
         alloc: AllocId,
@@ -14875,6 +14873,7 @@ impl Sim {
     /// `"range data sizes"`). Each entry follows
     /// [`Self::mem_range_get_attribute_with_data_size`]. Typed
     /// [`Self::mem_range_get_attributes`] stays. Query; legal during capture.
+    /// Driver `cuMemRangeGetAttributes` dataSizes is [`Self::mem_range_gets_data`].
     pub fn mem_range_get_attributes_with_data_sizes(
         &self,
         alloc: AllocId,
@@ -14900,6 +14899,21 @@ impl Sim {
             }
         }
         self.mem_range_get_attributes_with_size(alloc, bytes, attrs)
+    }
+
+    /// `cuMemRangeGetAttributes` dataSizes. Identity with
+    /// [`Self::mem_range_get_attributes_with_data_sizes`]
+    /// (`cudaMemRangeGetAttributes` dataSizes).
+    ///
+    /// Query; legal during capture. Distinct from [`Self::mem_range_get_data`].
+    /// This VM does not invent occupancy SM counts this slice.
+    pub fn mem_range_gets_data(
+        &self,
+        alloc: AllocId,
+        attrs: &[MemRangeAttr],
+        data_sizes: &[u64],
+    ) -> Result<Vec<MemRangeAttrValue>, SimError> {
+        self.mem_range_get_attributes_with_data_sizes(alloc, attrs, data_sizes)
     }
 
     /// Whether [`MemAdvise::SetReadMostly`] is set.

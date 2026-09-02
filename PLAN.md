@@ -8043,7 +8043,14 @@ model, do not celebrate the sim.
     or `cudaChooseDevice`. `gpu-profile capture` is still refused. Dual
     score still has no `$/M tokens`.
 
-841. [ ] Next numbered PLAN item after 840 is the next `gpu-sim` / Engine /
+841. [x] `gpu-sim` `Sim::mem_range_gets_data` is
+    `cuMemRangeGetAttributes` dataSizes. Identity with `mem_range_get_attributes_with_data_sizes`
+    (`cudaMemRangeGetAttributes` dataSizes). Query; legal during capture. Distinct from
+    `mem_range_get_data`. This VM does not invent occupancy SM counts, Engine `--mem-range-gets-data`,
+    or `cudaChooseDevice`. `gpu-profile capture` is still refused. Dual
+    score still has no `$/M tokens`.
+
+842. [ ] Next numbered PLAN item after 841 is the next `gpu-sim` / Engine /
     serve / expertvm mechanical API that is still missing, or the next official
     decode family. Prefer remaining CUDA-shaped twins over more
     OpenAI HTTP veneer. Do not invent F32 `output.scale`. Do not invent a
@@ -9057,6 +9064,9 @@ model, do not celebrate the sim.
     Do not invent a second `cuMemRangeGetAttribute` dataSize / `mem_range_get_data`.
     Do not invent Engine `--mem-range-get-data`. Do not invent
     a `cuMemRangeGetAttributes` dataSizes this slice. Do not reverse RangeGetData identity with mem_range_get_attribute_with_data_size.
+    Do not invent a second `cuMemRangeGetAttributes` dataSizes / `mem_range_gets_data`.
+    Do not invent Engine `--mem-range-gets-data`. Do not invent
+    occupancy SM counts this slice. Do not reverse RangeGetsData identity with mem_range_get_attributes_with_data_sizes.
     Do not invent a second `cudaStreamAddCallback`.
     Do not invent Engine `--stream-callback` (same wall as second live
     `cudaLaunchHostFunc` after miss DMA).
@@ -10150,6 +10160,9 @@ model, do not celebrate the sim.
     Do not invent a second `mem_range_get_data` API. Do not invent
     Engine `--mem-range-get-data-identity`. Do not invent a mem-range-gets-data
     this slice. Do not reverse RangeGetData identity with mem_range_get_attribute_with_data_size.
+    Do not invent a second `mem_range_gets_data` API. Do not invent
+    Engine `--mem-range-gets-data-identity`. Do not invent an occupancy
+    this slice. Do not reverse RangeGetsData identity with mem_range_get_attributes_with_data_sizes.
     Do not invent a second DeviceLaunch in-flight destroy-complete check or Engine
     `--device-launch-destroy`. Do not abort an in-flight DeviceLaunch when
     `destroy_graph` succeeds. Do not delay destroy of an idle exec. Do not invent
@@ -11426,6 +11439,9 @@ model, do not celebrate the sim.
     Do not invent a second `mem_range_get_data` method. Do not
     invent Engine `--cu-mem-range-get-data`. Do not reverse wrapping
     cuMemRangeGetAttribute dataSize identity.
+    Do not invent a second `mem_range_gets_data` method. Do not
+    invent Engine `--cu-mem-range-gets-data`. Do not reverse wrapping
+    cuMemRangeGetAttributes dataSizes identity.
     Do not
     spend the next item on an OpenAI-compatible HTTP veneer.
 
