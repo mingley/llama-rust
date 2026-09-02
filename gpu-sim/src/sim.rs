@@ -17019,8 +17019,7 @@ impl Sim {
     /// `cuIpcOpenMemHandle`. Identity with [`Self::ipc_open_with_flags`]
     /// (`cudaIpcOpenMemHandle` flags).
     ///
-    /// Capture refused. Distinct from [`Self::ipc_open`]. This VM does not invent
-    /// `cuIpcCloseMemHandle` this slice (`ipc_close` stays).
+    /// Capture refused. Distinct from [`Self::ipc_open`].
     pub fn ipc_open_mem_handle(
         &mut self,
         device: DeviceId,
@@ -17034,6 +17033,15 @@ impl Sim {
     pub fn ipc_close(&mut self, id: AllocId) -> Result<(), SimError> {
         self.fail_if_capturing("cannot capture ipc")?;
         self.drop_ipc_import(id)
+    }
+
+    /// `cuIpcCloseMemHandle`. Identity with [`Self::ipc_close`]
+    /// (`cudaIpcCloseMemHandle`).
+    ///
+    /// Capture refused. Distinct from [`Self::ipc_open_mem_handle`]. This VM does
+    /// not invent `cuIpcGetEventHandle` this slice (`ipc_get_event` stays).
+    pub fn ipc_close_mem_handle(&mut self, id: AllocId) -> Result<(), SimError> {
+        self.ipc_close(id)
     }
 
     /// Whether `id` is a live [`Self::ipc_open`] alias.

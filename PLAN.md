@@ -7910,7 +7910,14 @@ model, do not celebrate the sim.
     or `cudaChooseDevice`. `gpu-profile capture` is still refused. Dual
     score still has no `$/M tokens`.
 
-822. [ ] Next numbered PLAN item after 821 is the next `gpu-sim` / Engine /
+822. [x] `gpu-sim` `Sim::ipc_close_mem_handle` is
+    `cuIpcCloseMemHandle`. Identity with `ipc_close`
+    (`cudaIpcCloseMemHandle`). Capture refused. Distinct from
+    `ipc_open_mem_handle`. This VM does not invent `cuIpcGetEventHandle`, Engine `--ipc-close-mem-handle`,
+    or `cudaChooseDevice`. `gpu-profile capture` is still refused. Dual
+    score still has no `$/M tokens`.
+
+823. [ ] Next numbered PLAN item after 822 is the next `gpu-sim` / Engine /
     serve / expertvm mechanical API that is still missing, or the next official
     decode family. Prefer remaining CUDA-shaped twins over more
     OpenAI HTTP veneer. Do not invent F32 `output.scale`. Do not invent a
@@ -8867,6 +8874,9 @@ model, do not celebrate the sim.
     Do not invent a second `cuIpcOpenMemHandle` / `ipc_open_mem_handle`.
     Do not invent Engine `--ipc-open-mem-handle`. Do not invent
     `cuIpcCloseMemHandle` this slice. Do not reverse IpcOpenMemHandle identity with ipc_open_with_flags.
+    Do not invent a second `cuIpcCloseMemHandle` / `ipc_close_mem_handle`.
+    Do not invent Engine `--ipc-close-mem-handle`. Do not invent
+    `cuIpcGetEventHandle` this slice. Do not reverse IpcCloseMemHandle identity with ipc_close.
     Do not invent a second `cudaStreamAddCallback`.
     Do not invent Engine `--stream-callback` (same wall as second live
     `cudaLaunchHostFunc` after miss DMA).
@@ -9903,6 +9913,9 @@ model, do not celebrate the sim.
     Do not invent a second `ipc_open_mem_handle` API. Do not invent
     Engine `--ipc-open-mem-identity`. Do not invent an ipc-close-mem
     this slice. Do not reverse IpcOpenMemHandle identity with ipc_open_with_flags.
+    Do not invent a second `ipc_close_mem_handle` API. Do not invent
+    Engine `--ipc-close-mem-identity`. Do not invent an ipc-get-event-handle
+    this slice. Do not reverse IpcCloseMemHandle identity with ipc_close.
     Do not invent a second DeviceLaunch in-flight destroy-complete check or Engine
     `--device-launch-destroy`. Do not abort an in-flight DeviceLaunch when
     `destroy_graph` succeeds. Do not delay destroy of an idle exec. Do not invent
@@ -11122,6 +11135,9 @@ model, do not celebrate the sim.
     Do not invent a second `ipc_open_mem_handle` method. Do not
     invent Engine `--cu-ipc-open-mem-handle`. Do not reverse wrapping
     cuIpcOpenMemHandle identity.
+    Do not invent a second `ipc_close_mem_handle` method. Do not
+    invent Engine `--cu-ipc-close-mem-handle`. Do not reverse wrapping
+    cuIpcCloseMemHandle identity.
     Do not
     spend the next item on an OpenAI-compatible HTTP veneer.
 

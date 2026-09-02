@@ -169,6 +169,7 @@ warp scheduler, L1, …   ← do not model
 | `mem_host_register_with_size` is identity with `host_register_with_size` | `cuMemHostRegister` size |
 | `ipc_get_mem_handle` is identity with `ipc_get` | `cuIpcGetMemHandle` |
 | `ipc_open_mem_handle` is identity with `ipc_open_with_flags` | `cuIpcOpenMemHandle` |
+| `ipc_close_mem_handle` is identity with `ipc_close` | `cuIpcCloseMemHandle` |
 | `pointer_get_attributes` classifies Unregistered / Host / Device / Managed | `cudaPointerGetAttributes` |
 | `pointer_get_attribute` wraps type / mapped / pool / range / ordinal / start / buffer id / IPC / RDMA / handle types / VMM map / hw decompress 0 / VMM block id; SyncMemops is settable | `cuPointerGetAttribute` / `SetAttribute` |
 | `pointer_get_access_flags` is kernel residency on an explicit device (`MemAccessFlags`; enable_peer is D2D memcpy only) | `CU_POINTER_ATTRIBUTE_ACCESS_FLAGS` |
@@ -1959,6 +1960,7 @@ No Engine `--malloc-pitch-element`. `mem_alloc` is `cuMemAlloc` (identity with `
 `mem_host_register_with_size` is `cuMemHostRegister` size (identity with `host_register_with_size`). Capture refused. No Engine `--mem-host-register-size`.
 `ipc_get_mem_handle` is `cuIpcGetMemHandle` (identity with `ipc_get`). Host-sync; capture refused. No Engine `--ipc-get-mem-handle`.
 `ipc_open_mem_handle` is `cuIpcOpenMemHandle` (identity with `ipc_open_with_flags`). Capture refused. Distinct from `ipc_open`. No Engine `--ipc-open-mem-handle`.
+`ipc_close_mem_handle` is `cuIpcCloseMemHandle` (identity with `ipc_close`). Capture refused. Distinct from `ipc_open_mem_handle`. No Engine `--ipc-close-mem-handle`.
 `MemcpyOp` `height` / pitches are
 `cudaMemcpy2DAsync` (payload `width * height`). Origin fields are srcPos /
 dstPos (default 0). No Engine `--memcpy-origin`. `MemcpyOp` `src_lod` /
@@ -2021,7 +2023,7 @@ peers need `pool_set_access` / `pool_set_access_read`). `pool_set_access_with_fl
 word (`PROT_READ_WRITE` / `PROT_READ` / `PROT_NONE`). Typed helpers stay.
 `ipc_get` / `ipc_open` / `ipc_close` are `cudaIpcGetMemHandle` /
 `cudaIpcOpenMemHandle` / `cudaIpcCloseMemHandle`: the import aliases the
-source physicals (no extra HBM). `ipc_get_mem_handle` is `cuIpcGetMemHandle` (identity with `ipc_get`). Host-sync; capture refused. No Engine `--ipc-get-mem-handle`. `ipc_open_mem_handle` is `cuIpcOpenMemHandle` (identity with `ipc_open_with_flags`). Capture refused. Distinct from `ipc_open`. No Engine `--ipc-open-mem-handle`. `ipc_open_with_flags` accepts
+source physicals (no extra HBM). `ipc_get_mem_handle` is `cuIpcGetMemHandle` (identity with `ipc_get`). Host-sync; capture refused. No Engine `--ipc-get-mem-handle`. `ipc_open_mem_handle` is `cuIpcOpenMemHandle` (identity with `ipc_open_with_flags`). Capture refused. Distinct from `ipc_open`. No Engine `--ipc-open-mem-handle`. `ipc_close_mem_handle` is `cuIpcCloseMemHandle` (identity with `ipc_close`). Capture refused. Distinct from `ipc_open_mem_handle`. No Engine `--ipc-close-mem-handle`. `ipc_open_with_flags` accepts
 `cudaIpcMemLazyEnablePeerAccess` as a no-op (dest must already hold the
 source; cross-GPU lazy peer is not modeled). Free of the source while imports are live
 is Invalid. `ipc_get` of a mempool alloc is Invalid. Capture cannot include IPC.
