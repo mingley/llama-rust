@@ -18165,7 +18165,6 @@ impl Sim {
     /// (`cudaMemcpyBatchAsync`).
     ///
     /// Capture refused. Distinct from [`Self::memcpy_3d_batch_async`].
-    /// This VM does not invent `mem_cpy_3d_batch_async` this slice.
     pub fn mem_cpy_batch_async(
         &mut self,
         device: DeviceId,
@@ -19486,6 +19485,7 @@ impl Sim {
     /// cannot include it (`"cannot capture memcpy3d batch"`). Intra-batch
     /// copies share one stream-order snapshot or empty DuringApiCall/Any deps
     /// like [`Self::memcpy_batch_async`].
+    /// Driver `cuMemcpy3DBatchAsync` is [`Self::mem_cpy_3d_batch_async`].
     pub fn memcpy_3d_batch_async(
         &mut self,
         device: DeviceId,
@@ -19518,6 +19518,22 @@ impl Sim {
             self.memcpy_precheck_enqueue(op)?;
         }
         self.enqueue_memcpy_batch(device, stream, ops, attrs, "cannot capture memcpy3d batch")
+    }
+
+    /// `cuMemcpy3DBatchAsync`. Identity with [`Self::memcpy_3d_batch_async`]
+    /// (`cudaMemcpy3DBatchAsync`).
+    ///
+    /// Capture refused. Distinct from [`Self::mem_cpy_batch_async`].
+    /// This VM does not invent `mem_cpy_3d_with_attributes` this slice.
+    pub fn mem_cpy_3d_batch_async(
+        &mut self,
+        device: DeviceId,
+        ops: &[MemcpyOp],
+        attrs: &[MemcpyAttributes],
+        flags: u64,
+        stream: StreamId,
+    ) -> Result<Vec<OpId>, SimError> {
+        self.memcpy_3d_batch_async(device, ops, attrs, flags, stream)
     }
 
     fn enqueue_memcpy_batch(

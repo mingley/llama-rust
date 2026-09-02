@@ -206,6 +206,7 @@ warp scheduler, L1, …   ← do not model
 | `mem_cpy_peer_2d` is identity with `memcpy_peer_2d` | `cuMemcpy2DPeer` |
 | `mem_cpy_peer_2d_async` is identity with `memcpy_peer_2d_async` | `cuMemcpy2DPeerAsync` |
 | `mem_cpy_batch_async` is identity with `memcpy_batch_async` | `cuMemcpyBatchAsync` |
+| `mem_cpy_3d_batch_async` is identity with `memcpy_3d_batch_async` | `cuMemcpy3DBatchAsync` |
 | `pointer_get_attributes` classifies Unregistered / Host / Device / Managed | `cudaPointerGetAttributes` |
 | `pointer_get_attribute` wraps type / mapped / pool / range / ordinal / start / buffer id / IPC / RDMA / handle types / VMM map / hw decompress 0 / VMM block id; SyncMemops is settable | `cuPointerGetAttribute` / `SetAttribute` |
 | `pointer_get_access_flags` is kernel residency on an explicit device (`MemAccessFlags`; enable_peer is D2D memcpy only) | `CU_POINTER_ATTRIBUTE_ACCESS_FLAGS` |
@@ -2023,6 +2024,7 @@ No Engine `--malloc-pitch-element`. `mem_alloc` is `cuMemAlloc` (identity with `
 `mem_cpy_peer_2d` is `cuMemcpy2DPeer` (identity with `memcpy_peer_2d`). Capture refused. Distinct from `memcpy_peer_2d_async`. No Engine `--mem-cpy-peer-2d`.
 `mem_cpy_peer_2d_async` is `cuMemcpy2DPeerAsync` (identity with `memcpy_peer_2d_async`). Capture-legal. Distinct from `mem_cpy_peer_2d`. No Engine `--mem-cpy-peer-2d-async`.
 `mem_cpy_batch_async` is `cuMemcpyBatchAsync` (identity with `memcpy_batch_async`). Capture refused. Distinct from `memcpy_3d_batch_async`. No Engine `--mem-cpy-batch-async`.
+`mem_cpy_3d_batch_async` is `cuMemcpy3DBatchAsync` (identity with `memcpy_3d_batch_async`). Capture refused. Distinct from `mem_cpy_batch_async`. No Engine `--mem-cpy-3d-batch-async`.
 `mem_host_get_flags` is `cuMemHostGetFlags` (identity with `host_get_flags`). Query; legal during capture. No Engine `--mem-host-get-flags`.
 `mem_host_get_device_pointer` is `cuMemHostGetDevicePointer` (identity with `host_get_device_pointer_with_flags`). Query; legal during capture. No Engine `--mem-host-get-device-pointer`.
 `mem_host_register` is `cuMemHostRegister` (identity with `host_register_with_flags`). Capture refused. No Engine `--mem-host-register`.
@@ -2067,6 +2069,7 @@ No Engine `--malloc-pitch-element`. `mem_alloc` is `cuMemAlloc` (identity with `
 `mem_cpy_peer_2d` is `cuMemcpy2DPeer` (identity with `memcpy_peer_2d`). Capture refused. Distinct from `memcpy_peer_2d_async`. No Engine `--mem-cpy-peer-2d`.
 `mem_cpy_peer_2d_async` is `cuMemcpy2DPeerAsync` (identity with `memcpy_peer_2d_async`). Capture-legal. Distinct from `mem_cpy_peer_2d`. No Engine `--mem-cpy-peer-2d-async`.
 `mem_cpy_batch_async` is `cuMemcpyBatchAsync` (identity with `memcpy_batch_async`). Capture refused. Distinct from `memcpy_3d_batch_async`. No Engine `--mem-cpy-batch-async`.
+`mem_cpy_3d_batch_async` is `cuMemcpy3DBatchAsync` (identity with `memcpy_3d_batch_async`). Capture refused. Distinct from `mem_cpy_batch_async`. No Engine `--mem-cpy-3d-batch-async`.
 `MemcpyOp` `height` / pitches are
 `cudaMemcpy2DAsync` (payload `width * height`). Origin fields are srcPos /
 dstPos (default 0). No Engine `--memcpy-origin`. `MemcpyOp` `src_lod` /
