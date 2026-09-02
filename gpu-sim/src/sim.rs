@@ -11602,8 +11602,7 @@ impl Sim {
     /// [`Self::graph_debug_dot`] (`cudaGraphDebugDotPrint` flags 0).
     ///
     /// Query; legal during capture. Distinct from
-    /// [`Self::graph_debug_dot_with_flags`]. This VM does not invent
-    /// occupancy SM counts this slice.
+    /// [`Self::graph_debug_dot_with_flags`].
     pub fn graph_debug_dot_print(&self, graph: GraphId) -> Result<String, SimError> {
         self.graph_debug_dot(graph)
     }
@@ -11619,7 +11618,9 @@ impl Sim {
     /// numbers existing edges (`label="0"`); launch-completion edges also dump
     /// `from_port=2`. Extra conditional edges are not invented. Flags `0` keeps
     /// [`GraphNodeKind`] Debug names and unlabeled edges. VM-only kinds keep
-    /// Debug names under RuntimeTypes.
+    /// Debug names under RuntimeTypes. Driver
+    /// `cuGraphDebugDotPrint` with flags is
+    /// [`Self::graph_debug_dot_print_with_flags`].
     pub fn graph_debug_dot_with_flags(
         &self,
         graph: GraphId,
@@ -11687,6 +11688,20 @@ impl Sim {
         }
         out.push_str("}\n");
         Ok(out)
+    }
+
+    /// `cuGraphDebugDotPrint` with flags. Identity with
+    /// [`Self::graph_debug_dot_with_flags`] (`cudaGraphDebugDotPrint`).
+    ///
+    /// Query; legal during capture. Distinct from
+    /// [`Self::graph_debug_dot_print`]. This VM does not invent
+    /// occupancy SM counts this slice.
+    pub fn graph_debug_dot_print_with_flags(
+        &self,
+        graph: GraphId,
+        flags: u32,
+    ) -> Result<String, SimError> {
+        self.graph_debug_dot_with_flags(graph, flags)
     }
 
     /// Successors of node `i` (`cudaGraphNodeGetDependentNodes`).
