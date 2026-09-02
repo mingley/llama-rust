@@ -14906,7 +14906,6 @@ impl Sim {
     /// (`cudaMemRangeGetAttributes` dataSizes).
     ///
     /// Query; legal during capture. Distinct from [`Self::mem_range_get_data`].
-    /// This VM does not invent occupancy SM counts this slice.
     pub fn mem_range_gets_data(
         &self,
         alloc: AllocId,
@@ -23952,6 +23951,7 @@ impl Sim {
     /// on `stream` see the new attach. Illegal under stream capture (CUDA
     /// `cudaErrorStreamCaptureUnsupported`). `MemAttach::Single` cannot use the
     /// NULL stream.
+    /// Driver `cuStreamAttachMemAsync` is [`Self::stream_attach_mem`].
     pub fn stream_attach(
         &mut self,
         device: DeviceId,
@@ -23960,6 +23960,21 @@ impl Sim {
         flags: MemAttach,
     ) -> Result<OpId, SimError> {
         self.stream_attach_with_size(device, id, 0, stream, flags)
+    }
+
+    /// `cuStreamAttachMemAsync`. Identity with [`Self::stream_attach`]
+    /// (`cudaStreamAttachMemAsync`).
+    ///
+    /// Capture refused. Distinct from [`Self::stream_attach_with_flags`].
+    /// This VM does not invent `stream_attach_n` this slice.
+    pub fn stream_attach_mem(
+        &mut self,
+        device: DeviceId,
+        id: AllocId,
+        stream: StreamId,
+        flags: MemAttach,
+    ) -> Result<OpId, SimError> {
+        self.stream_attach(device, id, stream, flags)
     }
 
     /// [`Self::stream_attach`] with the CUDA `length` argument.

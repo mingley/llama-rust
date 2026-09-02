@@ -217,6 +217,9 @@
 //! [`mem_range_gets_data`](Sim::mem_range_gets_data) is `cuMemRangeGetAttributes` dataSizes (identity with
 //! [`mem_range_get_attributes_with_data_sizes`](Sim::mem_range_get_attributes_with_data_sizes)). Query; legal during capture. Distinct from
 //! [`mem_range_get_data`](Sim::mem_range_get_data). No Engine `--mem-range-gets-data`.
+//! [`stream_attach_mem`](Sim::stream_attach_mem) is `cuStreamAttachMemAsync` (identity with
+//! [`stream_attach`](Sim::stream_attach)). Capture refused. Distinct from
+//! [`stream_attach_with_flags`](Sim::stream_attach_with_flags). No Engine `--stream-attach-mem`.
 //! [`Sim::ipc_get_event`] / [`ipc_open_event`](Sim::ipc_open_event) are
 //! `cudaIpcGetEventHandle` / `cudaIpcOpenEventHandle` (interprocess events).
 //! [`Sim::create_shareable_pool`] is `cudaMemPoolCreate` with a POSIX-FD handle
@@ -642,6 +645,9 @@
 //! [`mem_range_gets_data`](Sim::mem_range_gets_data) is `cuMemRangeGetAttributes` dataSizes (identity with
 //! [`mem_range_get_attributes_with_data_sizes`](Sim::mem_range_get_attributes_with_data_sizes)). Query; legal during capture. Distinct from
 //! [`mem_range_get_data`](Sim::mem_range_get_data). No Engine `--mem-range-gets-data`.
+//! [`stream_attach_mem`](Sim::stream_attach_mem) is `cuStreamAttachMemAsync` (identity with
+//! [`stream_attach`](Sim::stream_attach)). Capture refused. Distinct from
+//! [`stream_attach_with_flags`](Sim::stream_attach_with_flags). No Engine `--stream-attach-mem`.
 //! [`mem_host_get_flags`](Sim::mem_host_get_flags) is `cuMemHostGetFlags` (identity with
 //! [`host_get_flags`](Sim::host_get_flags)). Query; legal during capture. No Engine `--mem-host-get-flags`.
 //! [`mem_host_get_device_pointer`](Sim::mem_host_get_device_pointer) is `cuMemHostGetDevicePointer` (identity with
@@ -717,6 +723,9 @@
 //! [`mem_range_gets_data`](Sim::mem_range_gets_data) is `cuMemRangeGetAttributes` dataSizes (identity with
 //! [`mem_range_get_attributes_with_data_sizes`](Sim::mem_range_get_attributes_with_data_sizes)). Query; legal during capture. Distinct from
 //! [`mem_range_get_data`](Sim::mem_range_get_data). No Engine `--mem-range-gets-data`.
+//! [`stream_attach_mem`](Sim::stream_attach_mem) is `cuStreamAttachMemAsync` (identity with
+//! [`stream_attach`](Sim::stream_attach)). Capture refused. Distinct from
+//! [`stream_attach_with_flags`](Sim::stream_attach_with_flags). No Engine `--stream-attach-mem`.
 //! [`Sim::pointer_get_attributes`] is `cudaPointerGetAttributes`.
 //! [`pointer_set_attribute`](Sim::pointer_set_attribute) /
 //! [`pointer_get_attribute`](Sim::pointer_get_attribute) are
@@ -34602,6 +34611,60 @@ mod tests {
             vec![MemRangeAttrValue::ReadMostly(true)]
         );
         let _g = sim.end_capture().unwrap();
+        sim.free_sync(m).unwrap();
+    }
+
+    #[test]
+    fn stream_attach_mem_is_cu_stream_attach_mem_async() {
+        let mut sim = Sim::new(h100());
+        let d = DeviceId(0);
+        let s = StreamId(0);
+        match sim.stream_attach_mem(d, AllocId(99), s, MemAttach::Global) {
+            Err(SimError::UnknownAlloc { alloc }) => assert_eq!(alloc, AllocId(99)),
+            other => panic!("{other:?}"),
+        }
+        match sim.stream_attach(d, AllocId(99), s, MemAttach::Global) {
+            Err(SimError::UnknownAlloc { alloc }) => assert_eq!(alloc, AllocId(99)),
+            other => panic!("{other:?}"),
+        }
+        let a = sim.malloc(d, 4096).unwrap();
+        match sim.stream_attach_mem(d, a, s, MemAttach::Global) {
+            Err(SimError::Invalid { why }) => assert!(why.contains("managed"), "{why}"),
+            other => panic!("{other:?}"),
+        }
+        match sim.stream_attach(d, a, s, MemAttach::Global) {
+            Err(SimError::Invalid { why }) => assert!(why.contains("managed"), "{why}"),
+            other => panic!("{other:?}"),
+        }
+        sim.free_sync(a).unwrap();
+        let m = sim.mem_alloc_managed(4096, MemAttachFlags::GLOBAL).unwrap();
+        enq(sim.stream_attach_mem(d, m, s, MemAttach::Host));
+        sim.synchronize().unwrap();
+        assert_eq!(sim.mem_attach(m).unwrap(), MemAttach::Host);
+        enq(sim.stream_attach(d, m, s, MemAttach::Single));
+        sim.synchronize().unwrap();
+        assert_eq!(sim.mem_attach(m).unwrap(), MemAttach::Single);
+        enq(sim.stream_attach_mem(d, m, s, MemAttach::Global));
+        sim.synchronize().unwrap();
+        assert_eq!(sim.mem_attach(m).unwrap(), MemAttach::Global);
+        sim.begin_capture(d, s).unwrap();
+        match sim.stream_attach_mem(d, m, s, MemAttach::Host) {
+            Err(SimError::Invalid { why }) => assert!(why.contains("capture"), "{why}"),
+            other => panic!("{other:?}"),
+        }
+        match sim.stream_attach(d, m, s, MemAttach::Host) {
+            Err(SimError::Invalid { why }) => assert!(why.contains("capture"), "{why}"),
+            other => panic!("{other:?}"),
+        }
+        let _g = sim.end_capture().unwrap();
+        match sim.stream_attach_mem(DeviceId(99), m, s, MemAttach::Global) {
+            Err(SimError::Invalid { why }) => assert!(why.contains("device"), "{why}"),
+            other => panic!("{other:?}"),
+        }
+        match sim.stream_attach(DeviceId(99), m, s, MemAttach::Global) {
+            Err(SimError::Invalid { why }) => assert!(why.contains("device"), "{why}"),
+            other => panic!("{other:?}"),
+        }
         sim.free_sync(m).unwrap();
     }
 

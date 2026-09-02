@@ -5,6 +5,14 @@ Visible five-turn extract: [docs/chatgpt-share-6a920fe1.md](docs/chatgpt-share-6
 Complete share-API extract: [docs/chatgpt-share-6a920fe1/](docs/chatgpt-share-6a920fe1/).
 Work lands on `main`. No PRs.
 
+## Shipped 2026-09-02 — CUDA `cuStreamAttachMemAsync`
+
+`gpu-sim` `Sim::stream_attach_mem` is `cuStreamAttachMemAsync`.
+Identity with `stream_attach` (`cudaStreamAttachMemAsync`).
+Capture refused. Distinct from `stream_attach_with_flags`.
+This VM does not invent `stream_attach_n` or Engine `--stream-attach-mem`.
+`gpu-profile capture` is still refused. Dual score still has no `$/M tokens`.
+
 ## Shipped 2026-09-02 — CUDA `cuMemRangeGetAttributes` dataSizes
 
 `gpu-sim` `Sim::mem_range_gets_data` is `cuMemRangeGetAttributes` dataSizes.
