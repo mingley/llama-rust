@@ -512,6 +512,7 @@ compiled kernel exists; no Engine flag).
 `gpu-sim` `event_query` is `cuEventQuery` (identity with `query_event`; no Engine flag).
 `gpu-sim` `stream_query` is `cuStreamQuery` (identity with `query_stream`; no Engine flag).
 `gpu-sim` `event_synchronize` is `cuEventSynchronize` (identity with `synchronize_event`; no Engine flag).
+`gpu-sim` `stream_synchronize` is `cuStreamSynchronize` (identity with `synchronize_stream`; no Engine flag).
 `gpu-sim` `func_is_loaded` is `cuFuncIsLoaded` (`false` until a compiled
 kernel exists; no Engine flag).
 `gpu-sim` `func_load` is `cuFuncLoad` (Invalid; no compiled kernel; no

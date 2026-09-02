@@ -7753,7 +7753,14 @@ model, do not celebrate the sim.
     or `cudaChooseDevice`. `gpu-profile capture` is still refused. Dual
     score still has no `$/M tokens`.
 
-800. [ ] Next numbered PLAN item after 799 is the next `gpu-sim` / Engine /
+800. [x] `gpu-sim` `Sim::stream_synchronize` is
+    `cuStreamSynchronize`. Identity with `synchronize_stream`
+    (`cudaStreamSynchronize`). Other streams keep running. Unknown devices
+    are Invalid. Capturing stream is Invalid. Distinct from `ctx_synchronize`. This VM does not invent `cuEventDestroy`, Engine `--stream-synchronize`,
+    or `cudaChooseDevice`. `gpu-profile capture` is still refused. Dual
+    score still has no `$/M tokens`.
+
+801. [ ] Next numbered PLAN item after 800 is the next `gpu-sim` / Engine /
     serve / expertvm mechanical API that is still missing, or the next official
     decode family. Prefer remaining CUDA-shaped twins over more
     OpenAI HTTP veneer. Do not invent F32 `output.scale`. Do not invent a
@@ -8644,6 +8651,9 @@ model, do not celebrate the sim.
     Do not invent a second `cuEventSynchronize` / `event_synchronize`.
     Do not invent Engine `--event-synchronize`. Do not invent
     `cuStreamSynchronize` this slice. Do not reverse EventSynchronize identity with synchronize_event.
+    Do not invent a second `cuStreamSynchronize` / `stream_synchronize`.
+    Do not invent Engine `--stream-synchronize`. Do not invent
+    `cuEventDestroy` this slice. Do not reverse StreamSynchronize identity with synchronize_stream.
     Do not invent a second `cudaStreamAddCallback`.
     Do not invent Engine `--stream-callback` (same wall as second live
     `cudaLaunchHostFunc` after miss DMA).
@@ -9614,6 +9624,9 @@ model, do not celebrate the sim.
     Do not invent a second `event_synchronize` API. Do not invent
     Engine `--event-synchronize-identity`. Do not invent a stream-synchronize
     this slice. Do not reverse EventSynchronize identity with synchronize_event.
+    Do not invent a second `stream_synchronize` API. Do not invent
+    Engine `--stream-synchronize-identity`. Do not invent an event-destroy
+    this slice. Do not reverse StreamSynchronize identity with synchronize_stream.
     Do not invent a second DeviceLaunch in-flight destroy-complete check or Engine
     `--device-launch-destroy`. Do not abort an in-flight DeviceLaunch when
     `destroy_graph` succeeds. Do not delay destroy of an idle exec. Do not invent
@@ -10767,6 +10780,9 @@ model, do not celebrate the sim.
     Do not invent a second `event_synchronize` method. Do not
     invent Engine `--cu-event-synchronize`. Do not reverse wrapping
     cuEventSynchronize identity.
+    Do not invent a second `stream_synchronize` method. Do not
+    invent Engine `--cu-stream-synchronize`. Do not reverse wrapping
+    cuStreamSynchronize identity.
     Do not
     spend the next item on an OpenAI-compatible HTTP veneer.
 

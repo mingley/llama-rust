@@ -103,6 +103,8 @@
 //! [`Sim::synchronize_event`] is `cudaEventSynchronize`.
 //! [`event_synchronize`](Sim::event_synchronize) is `cuEventSynchronize` (identity with
 //! [`synchronize_event`](Sim::synchronize_event)). No Engine `--event-synchronize`.
+//! [`stream_synchronize`](Sim::stream_synchronize) is `cuStreamSynchronize` (identity with
+//! [`synchronize_stream`](Sim::synchronize_stream)). Capturing stream is Invalid. No Engine `--stream-synchronize`.
 //! [`Sim::alloc`] / [`memcpy`](Sim::memcpy) / [`free`](Sim::free) are
 //! stream-ordered (`cudaMallocAsync` / `cudaMemcpyAsync` / `cudaFreeAsync`)
 //! except pageable [`Place::Host`] copies, which wait the stream (CUDA bounce
@@ -32414,6 +32416,38 @@ mod tests {
         sim.begin_capture(d, s).unwrap();
         sim.event_synchronize(ev).unwrap();
         sim.synchronize_event(ev).unwrap();
+        let _g = sim.end_capture().unwrap();
+        sim.free_sync(a).unwrap();
+    }
+
+    #[test]
+    fn stream_synchronize_is_cu_stream_synchronize() {
+        let mut sim = Sim::new(h100());
+        let d = DeviceId(0);
+        let s = StreamId(0);
+        match sim.stream_synchronize(DeviceId(99), s) {
+            Err(SimError::Invalid { why }) => assert!(why.contains("device"), "{why}"),
+            other => panic!("{other:?}"),
+        }
+        match sim.synchronize_stream(DeviceId(99), s) {
+            Err(SimError::Invalid { why }) => assert!(why.contains("device"), "{why}"),
+            other => panic!("{other:?}"),
+        }
+        let a = sim.alloc(d, 4096, s).unwrap();
+        enq(sim.kernel(d, KernelKind::other(1 << 20, 4096), &[a], &[a], s));
+        assert!(!sim.stream_query(d, s).unwrap());
+        sim.stream_synchronize(d, s).unwrap();
+        assert!(sim.stream_query(d, s).unwrap());
+        sim.synchronize_stream(d, s).unwrap();
+        sim.begin_capture(d, s).unwrap();
+        match sim.stream_synchronize(d, s) {
+            Err(SimError::Invalid { why }) => assert!(why.contains("capture"), "{why}"),
+            other => panic!("{other:?}"),
+        }
+        match sim.synchronize_stream(d, s) {
+            Err(SimError::Invalid { why }) => assert!(why.contains("capture"), "{why}"),
+            other => panic!("{other:?}"),
+        }
         let _g = sim.end_capture().unwrap();
         sim.free_sync(a).unwrap();
     }

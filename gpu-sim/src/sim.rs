@@ -23797,6 +23797,21 @@ impl Sim {
         Ok(())
     }
 
+    /// `cuStreamSynchronize`. Identity with [`Self::synchronize_stream`]
+    /// (`cudaStreamSynchronize`).
+    ///
+    /// Other streams keep running. Unknown devices are [`SimError::Invalid`].
+    /// A capturing stream is Invalid. Distinct from [`Self::ctx_synchronize`].
+    /// This VM does not invent `cuEventDestroy` this slice
+    /// (`destroy_event` stays).
+    pub fn stream_synchronize(
+        &mut self,
+        device: DeviceId,
+        stream: StreamId,
+    ) -> Result<(), SimError> {
+        self.synchronize_stream(device, stream)
+    }
+
     /// `cudaEventSynchronize`: wait until `event` is recorded and complete.
     ///
     /// Work after the record on the same stream, and work on other streams,

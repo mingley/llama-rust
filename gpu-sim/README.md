@@ -134,6 +134,7 @@ warp scheduler, L1, …   ← do not model
 | `cudaGraphRetainUserObject` / `ReleaseUserObject` on a definition (`MOVE` transfers one caller ref); clone does not copy retains | 1 ns host-sync |
 | graph launch amortizes per-kernel launch overhead | `graph_launch_ns` |
 | `synchronize_stream` waits one stream only | other streams keep running |
+| `stream_synchronize` is identity with `synchronize_stream` | `cuStreamSynchronize` |
 | `synchronize_event` waits the record only | later ops on that stream keep running |
 | `event_synchronize` is identity with `synchronize_event` | `cuEventSynchronize` |
 | `idle_until` drains, then jumps the clock | GPU idle until the next arrival |
@@ -1065,8 +1066,9 @@ on that device (CUDA legacy default stream). Off by default is the
 per-thread default: NULL serializes only with `set_stream_blocking`
 streams (`cudaStreamCreate`). Created streams default to
 `cudaStreamNonBlocking`.
-`synchronize_stream` is `cudaStreamSynchronize`. `synchronize_device` is
-`cudaDeviceSynchronize` (one GPU; other GPUs keep running).
+`synchronize_stream` is `cudaStreamSynchronize`.
+`stream_synchronize` is `cuStreamSynchronize` (identity with `synchronize_stream`). Capturing stream is Invalid. No Engine `--stream-synchronize`.
+`synchronize_device` is `cudaDeviceSynchronize` (one GPU; other GPUs keep running).
 `synchronize_event` is `cudaEventSynchronize` (later ops on that stream keep running).
 `event_synchronize` is `cuEventSynchronize` (identity with `synchronize_event`). No Engine `--event-synchronize`.
 `idle_until` drains in-flight work, then jumps the virtual clock so an
