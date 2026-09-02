@@ -5,6 +5,15 @@ Visible five-turn extract: [docs/chatgpt-share-6a920fe1.md](docs/chatgpt-share-6
 Complete share-API extract: [docs/chatgpt-share-6a920fe1/](docs/chatgpt-share-6a920fe1/).
 Work lands on `main`. No PRs.
 
+## Shipped 2026-09-01 — CUDA `cuKernelSetAttribute`
+
+`gpu-sim` `Sim::kernel_set_attribute` is `cuKernelSetAttribute`.
+Always Invalid `"kernel setattr"` because CUDA kernels are not
+modeled. Query; legal during capture. Distinct from
+`kernel_get_attribute` (why is not `"kernel attribute"`) and from
+`func_set_attribute`. This VM does not invent `cuKernelSetCacheConfig` or Engine `--kernel-setattr`.
+`gpu-profile capture` is still refused. Dual score still has no `$/M tokens`.
+
 ## Shipped 2026-09-01 — CUDA `cuKernelGetAttribute`
 
 `gpu-sim` `Sim::kernel_get_attribute` is `cuKernelGetAttribute`.

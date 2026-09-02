@@ -1106,6 +1106,9 @@
 //! [`kernel_get_attribute`](Sim::kernel_get_attribute) is
 //! `cuKernelGetAttribute` (always Invalid `"kernel attribute"`). Query;
 //! legal during capture. No Engine `--kernel-attribute`.
+//! [`kernel_set_attribute`](Sim::kernel_set_attribute) is
+//! `cuKernelSetAttribute` (always Invalid `"kernel setattr"`). Query;
+//! legal during capture. No Engine `--kernel-setattr`.
 //! [`link_create`](Sim::link_create) is `cuLinkCreate` (always Invalid)
 //! `"jit linker"`). Query; legal during capture. No Engine `--jit-link`.
 //! [`Sim::runtime_get_version`] is `cudaRuntimeGetVersion` (same
@@ -19337,6 +19340,52 @@ mod tests {
         }
         let _dyn = sim
             .func_get_attribute(d, FuncAttr::MaxDynamicSharedMemorySize)
+            .unwrap();
+        match sim.kernel_set_attribute(d) {
+            Err(SimError::Invalid { why }) => {
+                assert!(why.contains("kernel setattr"), "{why}");
+                assert!(!why.contains("kernel attribute"), "{why}");
+            }
+            other => panic!("{other:?}"),
+        }
+        assert_eq!(sim.module_get_loading_mode(), ModuleLoadingMode::Eager);
+    }
+
+    #[test]
+    fn kernel_set_attribute_is_unsupported() {
+        let mut sim = Sim::new(h100());
+        let d = DeviceId(0);
+        match sim.kernel_set_attribute(d) {
+            Err(SimError::Invalid { why }) => {
+                assert!(why.contains("kernel setattr"), "{why}");
+                assert!(!why.contains("kernel attribute"), "{why}");
+                assert!(!why.contains("kernel param"), "{why}");
+                assert!(!why.contains("kernel node attr"), "{why}");
+            }
+            other => panic!("{other:?}"),
+        }
+        sim.begin_capture(d, StreamId(0)).unwrap();
+        match sim.kernel_set_attribute(d) {
+            Err(SimError::Invalid { why }) => {
+                assert!(why.contains("kernel setattr"), "{why}");
+            }
+            other => panic!("{other:?}"),
+        }
+        let _g = sim.end_capture().unwrap();
+        match sim.kernel_set_attribute(DeviceId(99)) {
+            Err(SimError::Invalid { why }) => {
+                assert!(why.contains("device not in profile"), "{why}");
+            }
+            other => panic!("{other:?}"),
+        }
+        match sim.kernel_get_attribute(d) {
+            Err(SimError::Invalid { why }) => {
+                assert!(why.contains("kernel attribute"), "{why}");
+                assert!(!why.contains("kernel setattr"), "{why}");
+            }
+            other => panic!("{other:?}"),
+        }
+        sim.func_set_attribute(d, FuncAttr::NonPortableClusterSizeAllowed, 0)
             .unwrap();
         assert_eq!(sim.module_get_loading_mode(), ModuleLoadingMode::Eager);
     }

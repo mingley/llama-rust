@@ -267,6 +267,7 @@ warp scheduler, L1, …   ← do not model
 | `kernel_get_function` is Invalid (no `CUkernel` / `CUfunction`) | `cuKernelGetFunction` |
 | `kernel_get_param_info` is Invalid (no `CUkernel` parameter blob) | `cuKernelGetParamInfo` |
 | `kernel_get_attribute` is Invalid (no `CUkernel` attribute) | `cuKernelGetAttribute` |
+| `kernel_set_attribute` is Invalid (no `CUkernel` attribute) | `cuKernelSetAttribute` |
 | `link_create` is Invalid (no JIT linker or NVRTC) | `cuLinkCreate` |
 | `device_get` is the ordinal in `0 .. count` | `cuDeviceGet` |
 | `flush_gpu_direct_rdma_writes` is a 1 ns host-sync barrier on RDMA SKUs (no write-visibility) | 1 ns |
@@ -1509,6 +1510,9 @@ Query; legal during capture. No Engine `--kernel-param`.
 `kernel_get_attribute` is `cuKernelGetAttribute` (always Invalid
 `"kernel attribute"`). Distinct from `kernel_get_param_info` and `func_get_attribute`.
 Query; legal during capture. No Engine `--kernel-attribute`.
+`kernel_set_attribute` is `cuKernelSetAttribute` (always Invalid
+`"kernel setattr"`). Distinct from `kernel_get_attribute` and `func_set_attribute`.
+Query; legal during capture. No Engine `--kernel-setattr`.
 `link_create` is `cuLinkCreate` (always Invalid `"jit linker"`; no NVRTC).
 Distinct from `library_load_data`. Query; legal during capture. No Engine `--jit-link`.
 `runtime_get_version` is `cudaRuntimeGetVersion` (same toolkit). Query;
