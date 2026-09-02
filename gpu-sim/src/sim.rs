@@ -25656,12 +25656,26 @@ impl Sim {
         Ok(false)
     }
 
+    /// `cuFuncLoad`. CUDA functions are not modeled.
+    ///
+    /// Always Invalid `"func load"` (this VM has no cubin and no
+    /// `CUfunction` to load). Distinct from [`Self::func_is_loaded`]
+    /// (`false`; why is not used) and from [`Self::func_get_module`]
+    /// (`"unknown function"`) and from [`Self::kernel_get_function`].
+    /// Unknown devices are Invalid `"device not in profile"`. Query; legal
+    /// during capture.
+    pub fn func_load(&self, device: DeviceId) -> Result<(), SimError> {
+        let _gpu = self.profile.gpu(device)?;
+        Err(SimError::Invalid { why: "func load" })
+    }
+
     /// `cuFuncGetModule` for the per-device function.
     ///
     /// Query; legal during capture. Always Invalid `"unknown function"`
     /// until a compiled kernel exists (this VM has no `CUmodule`). Distinct
     /// from [`Self::func_is_loaded`] (`false`) and from
-    /// [`Self::func_get_param_info`] (parameter blob). Unknown devices are
+    /// [`Self::func_get_param_info`] (parameter blob) and from
+    /// [`Self::func_load`]. Unknown devices are
     /// Invalid `"device not in profile"`. This VM does not invent
     /// `cuKernelGetModule` this slice.
     pub fn func_get_module(&self, device: DeviceId) -> Result<(), SimError> {

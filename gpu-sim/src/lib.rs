@@ -1015,6 +1015,8 @@
 //! [`func_get_name`](Sim::func_get_name) and from unknown-function
 //! [`func_get_param_info`](Sim::func_get_param_info). Query; legal during
 //! capture. No Engine `--func-loaded`.
+//! [`func_load`](Sim::func_load) is `cuFuncLoad` (always Invalid
+//! `"func load"`). Query; legal during capture. No Engine `--func-load`.
 //! [`func_get_module`](Sim::func_get_module) is `cuFuncGetModule`
 //! (always Invalid `"unknown function"` until a compiled kernel exists).
 //! Query; legal during capture. No Engine `--func-module`.
@@ -18335,6 +18337,50 @@ mod tests {
         }
         let eight = Sim::new(HardwareProfile::example_8xh100_nvlink());
         assert!(!eight.func_is_loaded(DeviceId(1)).unwrap());
+    }
+
+    #[test]
+    fn func_load_is_unsupported() {
+        let mut sim = Sim::new(h100());
+        let d = DeviceId(0);
+        match sim.func_load(d) {
+            Err(SimError::Invalid { why }) => {
+                assert!(why.contains("func load"), "{why}");
+                assert!(!why.contains("unknown function"), "{why}");
+                assert!(!why.contains("kernel function"), "{why}");
+            }
+            other => panic!("{other:?}"),
+        }
+        assert!(!sim.func_is_loaded(d).unwrap());
+        sim.begin_capture(d, StreamId(0)).unwrap();
+        match sim.func_load(d) {
+            Err(SimError::Invalid { why }) => {
+                assert!(why.contains("func load"), "{why}");
+            }
+            other => panic!("{other:?}"),
+        }
+        let _g = sim.end_capture().unwrap();
+        match sim.func_load(DeviceId(99)) {
+            Err(SimError::Invalid { why }) => {
+                assert!(why.contains("device not in profile"), "{why}");
+            }
+            other => panic!("{other:?}"),
+        }
+        match sim.func_get_module(d) {
+            Err(SimError::Invalid { why }) => {
+                assert!(why.contains("unknown function"), "{why}");
+                assert!(!why.contains("func load"), "{why}");
+            }
+            other => panic!("{other:?}"),
+        }
+        match sim.kernel_get_function(d) {
+            Err(SimError::Invalid { why }) => {
+                assert!(why.contains("kernel function"), "{why}");
+                assert!(!why.contains("func load"), "{why}");
+            }
+            other => panic!("{other:?}"),
+        }
+        assert!(!sim.func_is_loaded(d).unwrap());
     }
 
     #[test]
