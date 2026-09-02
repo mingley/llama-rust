@@ -310,6 +310,9 @@
 //! [`device_graph_mem_set`](Sim::device_graph_mem_set) is `cuDeviceSetGraphMemAttribute` (identity with
 //! [`graph_mem_set`](Sim::graph_mem_set)). Capture refused. Distinct from
 //! [`device_graph_mem_get`](Sim::device_graph_mem_get). No Engine `--graph-mem-set`.
+//! [`device_graph_mem_trim`](Sim::device_graph_mem_trim) is `cuDeviceGraphMemTrim` (identity with
+//! [`graph_mem_trim`](Sim::graph_mem_trim)). Capture refused. Distinct from
+//! [`device_graph_mem_set`](Sim::device_graph_mem_set). No Engine `--graph-mem-trim`.
 //! [`Sim::ipc_get_event`] / [`ipc_open_event`](Sim::ipc_open_event) are
 //! `cudaIpcGetEventHandle` / `cudaIpcOpenEventHandle` (interprocess events).
 //! [`Sim::create_shareable_pool`] is `cudaMemPoolCreate` with a POSIX-FD handle
@@ -644,6 +647,9 @@
 //! [`device_graph_mem_set`](Sim::device_graph_mem_set) is `cuDeviceSetGraphMemAttribute` (identity with
 //! [`graph_mem_set`](Sim::graph_mem_set)). Capture refused. Distinct from
 //! [`device_graph_mem_get`](Sim::device_graph_mem_get). No Engine `--graph-mem-set`.
+//! [`device_graph_mem_trim`](Sim::device_graph_mem_trim) is `cuDeviceGraphMemTrim` (identity with
+//! [`graph_mem_trim`](Sim::graph_mem_trim)). Capture refused. Distinct from
+//! [`device_graph_mem_set`](Sim::device_graph_mem_set). No Engine `--graph-mem-trim`.
 //! [`HardwareProfile::host_pin_bytes`] caps `cudaMallocHost` / `cudaHostRegister`.
 //! [`Sim::idle_until`] drains, then jumps the virtual clock (open-loop arrivals).
 //! [`Sim::event_elapsed_ns`] is `cudaEventElapsedTime` in nanoseconds.
@@ -846,6 +852,9 @@
 //! [`device_graph_mem_set`](Sim::device_graph_mem_set) is `cuDeviceSetGraphMemAttribute` (identity with
 //! [`graph_mem_set`](Sim::graph_mem_set)). Capture refused. Distinct from
 //! [`device_graph_mem_get`](Sim::device_graph_mem_get). No Engine `--graph-mem-set`.
+//! [`device_graph_mem_trim`](Sim::device_graph_mem_trim) is `cuDeviceGraphMemTrim` (identity with
+//! [`graph_mem_trim`](Sim::graph_mem_trim)). Capture refused. Distinct from
+//! [`device_graph_mem_set`](Sim::device_graph_mem_set). No Engine `--graph-mem-trim`.
 //! [`mem_host_get_flags`](Sim::mem_host_get_flags) is `cuMemHostGetFlags` (identity with
 //! [`host_get_flags`](Sim::host_get_flags)). Query; legal during capture. No Engine `--mem-host-get-flags`.
 //! [`mem_host_get_device_pointer`](Sim::mem_host_get_device_pointer) is `cuMemHostGetDevicePointer` (identity with
@@ -1014,6 +1023,9 @@
 //! [`device_graph_mem_set`](Sim::device_graph_mem_set) is `cuDeviceSetGraphMemAttribute` (identity with
 //! [`graph_mem_set`](Sim::graph_mem_set)). Capture refused. Distinct from
 //! [`device_graph_mem_get`](Sim::device_graph_mem_get). No Engine `--graph-mem-set`.
+//! [`device_graph_mem_trim`](Sim::device_graph_mem_trim) is `cuDeviceGraphMemTrim` (identity with
+//! [`graph_mem_trim`](Sim::graph_mem_trim)). Capture refused. Distinct from
+//! [`device_graph_mem_set`](Sim::device_graph_mem_set). No Engine `--graph-mem-trim`.
 //! [`Sim::pointer_get_attributes`] is `cudaPointerGetAttributes`.
 //! [`pointer_set_attribute`](Sim::pointer_set_attribute) /
 //! [`pointer_get_attribute`](Sim::pointer_get_attribute) are
@@ -2093,6 +2105,9 @@
 //! [`device_graph_mem_set`](Sim::device_graph_mem_set) is `cuDeviceSetGraphMemAttribute` (identity with
 //! [`graph_mem_set`](Sim::graph_mem_set)). Capture refused. Distinct from
 //! [`device_graph_mem_get`](Sim::device_graph_mem_get). No Engine `--graph-mem-set`.
+//! [`device_graph_mem_trim`](Sim::device_graph_mem_trim) is `cuDeviceGraphMemTrim` (identity with
+//! [`graph_mem_trim`](Sim::graph_mem_trim)). Capture refused. Distinct from
+//! [`device_graph_mem_set`](Sim::device_graph_mem_set). No Engine `--graph-mem-trim`.
 //! [`Sim::set_stream_priority`] is the priority-only helper;
 //! [`stream_create_with_priority`](Sim::stream_create_with_priority) is
 //! `cudaStreamCreateWithPriority` (flags plus priority; clamped to
@@ -2115,6 +2130,9 @@
 //! [`device_graph_mem_set`](Sim::device_graph_mem_set) is `cuDeviceSetGraphMemAttribute` (identity with
 //! [`graph_mem_set`](Sim::graph_mem_set)). Capture refused. Distinct from
 //! [`device_graph_mem_get`](Sim::device_graph_mem_get). No Engine `--graph-mem-set`.
+//! [`device_graph_mem_trim`](Sim::device_graph_mem_trim) is `cuDeviceGraphMemTrim` (identity with
+//! [`graph_mem_trim`](Sim::graph_mem_trim)). Capture refused. Distinct from
+//! [`device_graph_mem_set`](Sim::device_graph_mem_set). No Engine `--graph-mem-trim`.
 //! [`destroy_stream`](Sim::destroy_stream) is `cudaStreamDestroy` (returns
 //! immediately; in-flight work still completes; NULL is Invalid; recreate
 //! while unfinished is `"stream in flight"`). Capture cannot include it.
@@ -17447,6 +17465,38 @@ mod tests {
                 .unwrap(),
             0
         );
+    }
+
+    #[test]
+    fn device_graph_mem_trim_is_cu_device_graph_mem_trim() {
+        let mut sim = Sim::new(h100());
+        let d = DeviceId(0);
+        let s = StreamId(0);
+        match sim.device_graph_mem_trim(DeviceId(99)) {
+            Err(SimError::Invalid { why }) => assert!(why.contains("device"), "{why}"),
+            other => panic!("{other:?}"),
+        }
+        match sim.graph_mem_trim(DeviceId(99)) {
+            Err(SimError::Invalid { why }) => assert!(why.contains("device"), "{why}"),
+            other => panic!("{other:?}"),
+        }
+        let t0 = sim.clock_ns();
+        sim.device_graph_mem_trim(d).unwrap();
+        assert_eq!(sim.clock_ns(), t0.saturating_add(1));
+        sim.graph_mem_trim(d).unwrap();
+        sim.begin_capture(d, s).unwrap();
+        match sim.device_graph_mem_trim(d) {
+            Err(SimError::Invalid { why }) => assert!(why.contains("capture"), "{why}"),
+            other => panic!("{other:?}"),
+        }
+        match sim.graph_mem_trim(d) {
+            Err(SimError::Invalid { why }) => assert!(why.contains("capture"), "{why}"),
+            other => panic!("{other:?}"),
+        }
+        let _g = sim.end_capture().unwrap();
+        let mut eight = Sim::new(HardwareProfile::example_8xh100_nvlink());
+        eight.device_graph_mem_trim(DeviceId(1)).unwrap();
+        eight.graph_mem_trim(DeviceId(0)).unwrap();
     }
 
     #[test]

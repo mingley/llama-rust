@@ -1437,8 +1437,7 @@ impl Sim {
     /// `cuDeviceSetGraphMemAttribute`. Identity with [`Self::graph_mem_set`]
     /// (`cudaDeviceSetGraphMemAttribute`).
     ///
-    /// Capture refused. Distinct from [`Self::device_graph_mem_get`]. This VM
-    /// does not invent occupancy SM counts this slice.
+    /// Capture refused. Distinct from [`Self::device_graph_mem_get`].
     pub fn device_graph_mem_set(
         &mut self,
         device: DeviceId,
@@ -1452,13 +1451,24 @@ impl Sim {
     ///
     /// Returns unused reserved graph-mem bytes (cached after a graph free or
     /// [`Self::destroy_graph`]) to the OS so [`Self::mem_info`] free grows.
-    /// Live graph allocs are not trimmed.
+    /// Live graph allocs are not trimmed. Driver `cuDeviceGraphMemTrim` is
+    /// [`Self::device_graph_mem_trim`].
     pub fn graph_mem_trim(&mut self, device: DeviceId) -> Result<(), SimError> {
         self.fail_if_capturing("cannot capture graph mem trim")?;
         let pool = self.graph_pool(device)?;
         let _dropped = self.pool_trim_to(pool, 0)?;
         self.clock = self.clock.saturating_add(1);
         Ok(())
+    }
+
+    /// `cuDeviceGraphMemTrim`. Identity with [`Self::graph_mem_trim`]
+    /// (`cudaDeviceGraphMemTrim`).
+    ///
+    /// Host-synchronous. Capture refused. Distinct from
+    /// [`Self::device_graph_mem_set`]. This VM does not invent occupancy SM
+    /// counts this slice.
+    pub fn device_graph_mem_trim(&mut self, device: DeviceId) -> Result<(), SimError> {
+        self.graph_mem_trim(device)
     }
 
     fn graph_mem_used_reserved(&self, device: DeviceId) -> Result<(u64, u64), SimError> {
