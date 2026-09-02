@@ -2672,8 +2672,7 @@ impl Sim {
     /// (`cudaStreamSetAttribute`).
     ///
     /// Capture-legal (host-side, not a graph node). Distinct from
-    /// [`Self::get_stream_attribute`]. This VM does not invent occupancy SM
-    /// counts this slice.
+    /// [`Self::get_stream_attribute`].
     pub fn set_stream_attribute(
         &mut self,
         device: DeviceId,
@@ -13077,7 +13076,9 @@ impl Sim {
     /// mismatch is Invalid `"kernel node attr"`. A parked in-flight-destroyed
     /// exec is Invalid `"unknown graph"`. Live exec GetAttribute stays.
     /// Definition GetAttribute of the live graph while that exec is parked
-    /// stays. Live in-flight GetAttribute stays.
+    /// stays. Live in-flight GetAttribute stays. Driver
+    /// `cuGraphKernelNodeGetAttribute` is
+    /// [`Self::get_graph_kernel_node_attribute`].
     pub fn graph_kernel_node_get_attribute(
         &self,
         graph: GraphId,
@@ -13085,6 +13086,21 @@ impl Sim {
         attr: KernelNodeAttr,
     ) -> Result<KernelNodeAttrValue, SimError> {
         self.kernel_node_attribute(graph, node, attr, false)
+    }
+
+    /// `cuGraphKernelNodeGetAttribute`. Identity with
+    /// [`Self::graph_kernel_node_get_attribute`] (`cudaGraphKernelNodeGetAttribute`).
+    ///
+    /// Query; legal during capture. Distinct from
+    /// [`Self::graph_kernel_node_set_attribute`]. This VM does not invent
+    /// occupancy SM counts this slice.
+    pub fn get_graph_kernel_node_attribute(
+        &self,
+        graph: GraphId,
+        node: usize,
+        attr: KernelNodeAttr,
+    ) -> Result<KernelNodeAttrValue, SimError> {
+        self.graph_kernel_node_get_attribute(graph, node, attr)
     }
 
     /// `cudaGraphExecKernelNodeGetAttribute` on the exec snapshot.

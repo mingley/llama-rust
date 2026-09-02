@@ -169,6 +169,7 @@ warp scheduler, L1, …   ← do not model
 | `copy_stream_attributes` is identity with `stream_copy_attributes` | `cuStreamCopyAttributes` |
 | `get_stream_attribute` is identity with `stream_get_attribute` | `cuStreamGetAttribute` |
 | `set_stream_attribute` is identity with `stream_set_attribute` | `cuStreamSetAttribute` |
+| `get_graph_kernel_node_attribute` is identity with `graph_kernel_node_get_attribute` | `cuGraphKernelNodeGetAttribute` |
 | `mem_alloc` is identity with `malloc` | `cuMemAlloc` |
 | `mem_free` is identity with `free_sync` | `cuMemFree` |
 | `mem_free_host` is identity with `free_host_pinned` | `cuMemFreeHost` |
@@ -1924,6 +1925,7 @@ caller-chosen `StreamId`). `get_stream_id` is `cuStreamGetId` (identity with `st
 `copy_stream_attributes` is `cuStreamCopyAttributes` (identity with `stream_copy_attributes`). Capture-legal (host-side, not a graph node). Distinct from `stream_get_attribute`. No Engine `--stream-copy-attributes`.
 `get_stream_attribute` is `cuStreamGetAttribute` (identity with `stream_get_attribute`). Query; legal during capture. Distinct from `stream_set_attribute`. No Engine `--stream-get-attribute`.
 `set_stream_attribute` is `cuStreamSetAttribute` (identity with `stream_set_attribute`). Capture-legal (host-side, not a graph node). Distinct from `get_stream_attribute`. No Engine `--stream-set-attribute`.
+`get_graph_kernel_node_attribute` is `cuGraphKernelNodeGetAttribute` (identity with `graph_kernel_node_get_attribute`). Query; legal during capture. Distinct from `graph_kernel_node_set_attribute`. No Engine `--graph-kernel-get-attribute`.
 `stream_get_device` is `cudaStreamGetDevice` /
 `cuStreamGetDevice` (the device of the stream; green-ctx streams return
 the ctx create device). Query; legal during capture. Distinct from
@@ -1970,6 +1972,7 @@ Green-context SM permille is not a CUDA stream attribute. Type mismatch is
 Invalid `"stream attr"`. Get is a query (capture-legal).
 `get_stream_attribute` is `cuStreamGetAttribute` (identity with `stream_get_attribute`). Query; legal during capture. Distinct from `stream_set_attribute`. No Engine `--stream-get-attribute`.
 `set_stream_attribute` is `cuStreamSetAttribute` (identity with `stream_set_attribute`). Capture-legal (host-side, not a graph node). Distinct from `get_stream_attribute`. No Engine `--stream-set-attribute`.
+`get_graph_kernel_node_attribute` is `cuGraphKernelNodeGetAttribute` (identity with `graph_kernel_node_get_attribute`). Query; legal during capture. Distinct from `graph_kernel_node_set_attribute`. No Engine `--graph-kernel-get-attribute`.
 `set_stream_access_policy` is `cudaStreamAttributeAccessPolicyWindow`:
 `kernel` / `kernel_bufs` inherit it; `kernel_with` and graph replay use the
 launch / node window. Set `None` clears. This VM does not cap stream-priority
@@ -2029,6 +2032,7 @@ No Engine `--primary-ctx-flags`.
 `copy_stream_attributes` is `cuStreamCopyAttributes` (identity with `stream_copy_attributes`). Capture-legal (host-side, not a graph node). Distinct from `stream_get_attribute`. No Engine `--stream-copy-attributes`.
 `get_stream_attribute` is `cuStreamGetAttribute` (identity with `stream_get_attribute`). Query; legal during capture. Distinct from `stream_set_attribute`. No Engine `--stream-get-attribute`.
 `set_stream_attribute` is `cuStreamSetAttribute` (identity with `stream_set_attribute`). Capture-legal (host-side, not a graph node). Distinct from `get_stream_attribute`. No Engine `--stream-set-attribute`.
+`get_graph_kernel_node_attribute` is `cuGraphKernelNodeGetAttribute` (identity with `graph_kernel_node_get_attribute`). Query; legal during capture. Distinct from `graph_kernel_node_set_attribute`. No Engine `--graph-kernel-get-attribute`.
 `ctx_get_id` is `cuCtxGetId` for the seeded primary context of an explicit
 device (no TLS current device). Distinct from `green_ctx_get_id`. Query;
 legal during capture. No Engine `--ctx-id`.
@@ -2095,6 +2099,7 @@ No Engine `--malloc-pitch-element`. `mem_alloc` is `cuMemAlloc` (identity with `
 `copy_stream_attributes` is `cuStreamCopyAttributes` (identity with `stream_copy_attributes`). Capture-legal (host-side, not a graph node). Distinct from `stream_get_attribute`. No Engine `--stream-copy-attributes`.
 `get_stream_attribute` is `cuStreamGetAttribute` (identity with `stream_get_attribute`). Query; legal during capture. Distinct from `stream_set_attribute`. No Engine `--stream-get-attribute`.
 `set_stream_attribute` is `cuStreamSetAttribute` (identity with `stream_set_attribute`). Capture-legal (host-side, not a graph node). Distinct from `get_stream_attribute`. No Engine `--stream-set-attribute`.
+`get_graph_kernel_node_attribute` is `cuGraphKernelNodeGetAttribute` (identity with `graph_kernel_node_get_attribute`). Query; legal during capture. Distinct from `graph_kernel_node_set_attribute`. No Engine `--graph-kernel-get-attribute`.
 `mem_host_get_flags` is `cuMemHostGetFlags` (identity with `host_get_flags`). Query; legal during capture. No Engine `--mem-host-get-flags`.
 `mem_host_get_device_pointer` is `cuMemHostGetDevicePointer` (identity with `host_get_device_pointer_with_flags`). Query; legal during capture. No Engine `--mem-host-get-device-pointer`.
 `mem_host_register` is `cuMemHostRegister` (identity with `host_register_with_flags`). Capture refused. No Engine `--mem-host-register`.
@@ -2157,6 +2162,7 @@ No Engine `--malloc-pitch-element`. `mem_alloc` is `cuMemAlloc` (identity with `
 `copy_stream_attributes` is `cuStreamCopyAttributes` (identity with `stream_copy_attributes`). Capture-legal (host-side, not a graph node). Distinct from `stream_get_attribute`. No Engine `--stream-copy-attributes`.
 `get_stream_attribute` is `cuStreamGetAttribute` (identity with `stream_get_attribute`). Query; legal during capture. Distinct from `stream_set_attribute`. No Engine `--stream-get-attribute`.
 `set_stream_attribute` is `cuStreamSetAttribute` (identity with `stream_set_attribute`). Capture-legal (host-side, not a graph node). Distinct from `get_stream_attribute`. No Engine `--stream-set-attribute`.
+`get_graph_kernel_node_attribute` is `cuGraphKernelNodeGetAttribute` (identity with `graph_kernel_node_get_attribute`). Query; legal during capture. Distinct from `graph_kernel_node_set_attribute`. No Engine `--graph-kernel-get-attribute`.
 `MemcpyOp` `height` / pitches are
 `cudaMemcpy2DAsync` (payload `width * height`). Origin fields are srcPos /
 dstPos (default 0). No Engine `--memcpy-origin`. `MemcpyOp` `src_lod` /
@@ -2181,6 +2187,7 @@ is `cuMemcpy3DUnaligned` (identity with `memcpy_3d`). No Engine
 `copy_stream_attributes` is `cuStreamCopyAttributes` (identity with `stream_copy_attributes`). Capture-legal (host-side, not a graph node). Distinct from `stream_get_attribute`. No Engine `--stream-copy-attributes`.
 `get_stream_attribute` is `cuStreamGetAttribute` (identity with `stream_get_attribute`). Query; legal during capture. Distinct from `stream_set_attribute`. No Engine `--stream-get-attribute`.
 `set_stream_attribute` is `cuStreamSetAttribute` (identity with `stream_set_attribute`). Capture-legal (host-side, not a graph node). Distinct from `get_stream_attribute`. No Engine `--stream-set-attribute`.
+`get_graph_kernel_node_attribute` is `cuGraphKernelNodeGetAttribute` (identity with `graph_kernel_node_get_attribute`). Query; legal during capture. Distinct from `graph_kernel_node_set_attribute`. No Engine `--graph-kernel-get-attribute`.
 Default `cudaMallocAsync` uses the device mempool with release threshold
 `0` (unused bytes return to the OS when the stream-ordered free
 completes). `create_pool` / `create_pool_with_props` / `alloc_from_pool` /
@@ -2458,6 +2465,7 @@ first when compute contends). `stream_create_priority` is `cuStreamCreateWithPri
 `copy_stream_attributes` is `cuStreamCopyAttributes` (identity with `stream_copy_attributes`). Capture-legal (host-side, not a graph node). Distinct from `stream_get_attribute`. No Engine `--stream-copy-attributes`.
 `get_stream_attribute` is `cuStreamGetAttribute` (identity with `stream_get_attribute`). Query; legal during capture. Distinct from `stream_set_attribute`. No Engine `--stream-get-attribute`.
 `set_stream_attribute` is `cuStreamSetAttribute` (identity with `stream_set_attribute`). Capture-legal (host-side, not a graph node). Distinct from `get_stream_attribute`. No Engine `--stream-set-attribute`.
+`get_graph_kernel_node_attribute` is `cuGraphKernelNodeGetAttribute` (identity with `graph_kernel_node_get_attribute`). Query; legal during capture. Distinct from `graph_kernel_node_set_attribute`. No Engine `--graph-kernel-get-attribute`.
 `destroy_stream` is `cudaStreamDestroy`
 (returns immediately; in-flight work still completes; NULL is Invalid).
 `device_get_stream_priority_range` is
@@ -2480,6 +2488,7 @@ NVLink-util-centric scheduling, and access-policy window).
 `copy_stream_attributes` is `cuStreamCopyAttributes` (identity with `stream_copy_attributes`). Capture-legal (host-side, not a graph node). Distinct from `stream_get_attribute`. No Engine `--stream-copy-attributes`.
 `get_stream_attribute` is `cuStreamGetAttribute` (identity with `stream_get_attribute`). Query; legal during capture. Distinct from `stream_set_attribute`. No Engine `--stream-get-attribute`.
 `set_stream_attribute` is `cuStreamSetAttribute` (identity with `stream_set_attribute`). Capture-legal (host-side, not a graph node). Distinct from `get_stream_attribute`. No Engine `--stream-set-attribute`.
+`get_graph_kernel_node_attribute` is `cuGraphKernelNodeGetAttribute` (identity with `graph_kernel_node_get_attribute`). Query; legal during capture. Distinct from `graph_kernel_node_set_attribute`. No Engine `--graph-kernel-get-attribute`.
 `set_stream_sync_policy` is `cudaLaunchAttributeSynchronizationPolicy`
 on streams. `graph_kernel_node_set_sync_policy` is the CUDA 13 graph
 kernel-node twin (not `KernelAttrs`; not valid for host launches). Auto tax 0.
@@ -2509,6 +2518,7 @@ exec. Attr/value mismatch is Invalid `"kernel node attr"`. A parked
 in-flight-destroyed exec is `"unknown graph"` on SetAttribute; a live exec
 stays. A parked in-flight-destroyed exec is `"unknown graph"` on
 GetAttribute; a live exec stays. Query; capture is legal.
+`get_graph_kernel_node_attribute` is `cuGraphKernelNodeGetAttribute` (identity with `graph_kernel_node_get_attribute`). Query; legal during capture. Distinct from `graph_kernel_node_set_attribute`. No Engine `--graph-kernel-get-attribute`.
 `graph_exec_kernel_node_copy_attributes` is the exec-snapshot CopyAttributes
 twin (uninstantiated graphs are Invalid). A parked in-flight-destroyed exec
 used as CopyAttributes src or dst is `"unknown graph"`; a live exec as either

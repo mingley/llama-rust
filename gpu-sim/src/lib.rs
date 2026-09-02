@@ -325,6 +325,9 @@
 //! [`set_stream_attribute`](Sim::set_stream_attribute) is `cuStreamSetAttribute` (identity with
 //! [`stream_set_attribute`](Sim::stream_set_attribute)). Capture-legal (host-side, not a graph node). Distinct from
 //! [`get_stream_attribute`](Sim::get_stream_attribute). No Engine `--stream-set-attribute`.
+//! [`get_graph_kernel_node_attribute`](Sim::get_graph_kernel_node_attribute) is `cuGraphKernelNodeGetAttribute` (identity with
+//! [`graph_kernel_node_get_attribute`](Sim::graph_kernel_node_get_attribute)). Query; legal during capture. Distinct from
+//! [`graph_kernel_node_set_attribute`](Sim::graph_kernel_node_set_attribute). No Engine `--graph-kernel-get-attribute`.
 //! [`Sim::ipc_get_event`] / [`ipc_open_event`](Sim::ipc_open_event) are
 //! `cudaIpcGetEventHandle` / `cudaIpcOpenEventHandle` (interprocess events).
 //! [`Sim::create_shareable_pool`] is `cudaMemPoolCreate` with a POSIX-FD handle
@@ -674,6 +677,9 @@
 //! [`set_stream_attribute`](Sim::set_stream_attribute) is `cuStreamSetAttribute` (identity with
 //! [`stream_set_attribute`](Sim::stream_set_attribute)). Capture-legal (host-side, not a graph node). Distinct from
 //! [`get_stream_attribute`](Sim::get_stream_attribute). No Engine `--stream-set-attribute`.
+//! [`get_graph_kernel_node_attribute`](Sim::get_graph_kernel_node_attribute) is `cuGraphKernelNodeGetAttribute` (identity with
+//! [`graph_kernel_node_get_attribute`](Sim::graph_kernel_node_get_attribute)). Query; legal during capture. Distinct from
+//! [`graph_kernel_node_set_attribute`](Sim::graph_kernel_node_set_attribute). No Engine `--graph-kernel-get-attribute`.
 //! [`HardwareProfile::host_pin_bytes`] caps `cudaMallocHost` / `cudaHostRegister`.
 //! [`Sim::idle_until`] drains, then jumps the virtual clock (open-loop arrivals).
 //! [`Sim::event_elapsed_ns`] is `cudaEventElapsedTime` in nanoseconds.
@@ -891,6 +897,9 @@
 //! [`set_stream_attribute`](Sim::set_stream_attribute) is `cuStreamSetAttribute` (identity with
 //! [`stream_set_attribute`](Sim::stream_set_attribute)). Capture-legal (host-side, not a graph node). Distinct from
 //! [`get_stream_attribute`](Sim::get_stream_attribute). No Engine `--stream-set-attribute`.
+//! [`get_graph_kernel_node_attribute`](Sim::get_graph_kernel_node_attribute) is `cuGraphKernelNodeGetAttribute` (identity with
+//! [`graph_kernel_node_get_attribute`](Sim::graph_kernel_node_get_attribute)). Query; legal during capture. Distinct from
+//! [`graph_kernel_node_set_attribute`](Sim::graph_kernel_node_set_attribute). No Engine `--graph-kernel-get-attribute`.
 //! [`mem_host_get_flags`](Sim::mem_host_get_flags) is `cuMemHostGetFlags` (identity with
 //! [`host_get_flags`](Sim::host_get_flags)). Query; legal during capture. No Engine `--mem-host-get-flags`.
 //! [`mem_host_get_device_pointer`](Sim::mem_host_get_device_pointer) is `cuMemHostGetDevicePointer` (identity with
@@ -1074,6 +1083,9 @@
 //! [`set_stream_attribute`](Sim::set_stream_attribute) is `cuStreamSetAttribute` (identity with
 //! [`stream_set_attribute`](Sim::stream_set_attribute)). Capture-legal (host-side, not a graph node). Distinct from
 //! [`get_stream_attribute`](Sim::get_stream_attribute). No Engine `--stream-set-attribute`.
+//! [`get_graph_kernel_node_attribute`](Sim::get_graph_kernel_node_attribute) is `cuGraphKernelNodeGetAttribute` (identity with
+//! [`graph_kernel_node_get_attribute`](Sim::graph_kernel_node_get_attribute)). Query; legal during capture. Distinct from
+//! [`graph_kernel_node_set_attribute`](Sim::graph_kernel_node_set_attribute). No Engine `--graph-kernel-get-attribute`.
 //! [`Sim::pointer_get_attributes`] is `cudaPointerGetAttributes`.
 //! [`pointer_set_attribute`](Sim::pointer_set_attribute) /
 //! [`pointer_get_attribute`](Sim::pointer_get_attribute) are
@@ -1664,6 +1676,9 @@
 //! [`set_stream_attribute`](Sim::set_stream_attribute) is `cuStreamSetAttribute` (identity with
 //! [`stream_set_attribute`](Sim::stream_set_attribute)). Capture-legal (host-side, not a graph node). Distinct from
 //! [`get_stream_attribute`](Sim::get_stream_attribute). No Engine `--stream-set-attribute`.
+//! [`get_graph_kernel_node_attribute`](Sim::get_graph_kernel_node_attribute) is `cuGraphKernelNodeGetAttribute` (identity with
+//! [`graph_kernel_node_get_attribute`](Sim::graph_kernel_node_get_attribute)). Query; legal during capture. Distinct from
+//! [`graph_kernel_node_set_attribute`](Sim::graph_kernel_node_set_attribute). No Engine `--graph-kernel-get-attribute`.
 //! [`Sim::stream_get_device`] is `cudaStreamGetDevice` / `cuStreamGetDevice`
 //! (the device of the stream; green-ctx streams return the ctx create
 //! device). Query; legal during capture. Distinct from
@@ -1683,6 +1698,9 @@
 //! [`set_stream_attribute`](Sim::set_stream_attribute) is `cuStreamSetAttribute` (identity with
 //! [`stream_set_attribute`](Sim::stream_set_attribute)). Capture-legal (host-side, not a graph node). Distinct from
 //! [`get_stream_attribute`](Sim::get_stream_attribute). No Engine `--stream-set-attribute`.
+//! [`get_graph_kernel_node_attribute`](Sim::get_graph_kernel_node_attribute) is `cuGraphKernelNodeGetAttribute` (identity with
+//! [`graph_kernel_node_get_attribute`](Sim::graph_kernel_node_get_attribute)). Query; legal during capture. Distinct from
+//! [`graph_kernel_node_set_attribute`](Sim::graph_kernel_node_set_attribute). No Engine `--graph-kernel-get-attribute`.
 //! [`set_stream_access_policy`](Sim::set_stream_access_policy) is
 //! `cudaStreamAttributeAccessPolicyWindow`: [`kernel`](Sim::kernel) /
 //! [`kernel_bufs`](Sim::kernel_bufs) inherit it; [`kernel_with`](Sim::kernel_with)
@@ -2187,6 +2205,9 @@
 //! [`set_stream_attribute`](Sim::set_stream_attribute) is `cuStreamSetAttribute` (identity with
 //! [`stream_set_attribute`](Sim::stream_set_attribute)). Capture-legal (host-side, not a graph node). Distinct from
 //! [`get_stream_attribute`](Sim::get_stream_attribute). No Engine `--stream-set-attribute`.
+//! [`get_graph_kernel_node_attribute`](Sim::get_graph_kernel_node_attribute) is `cuGraphKernelNodeGetAttribute` (identity with
+//! [`graph_kernel_node_get_attribute`](Sim::graph_kernel_node_get_attribute)). Query; legal during capture. Distinct from
+//! [`graph_kernel_node_set_attribute`](Sim::graph_kernel_node_set_attribute). No Engine `--graph-kernel-get-attribute`.
 //! [`Sim::set_stream_priority`] is the priority-only helper;
 //! [`stream_create_with_priority`](Sim::stream_create_with_priority) is
 //! `cudaStreamCreateWithPriority` (flags plus priority; clamped to
@@ -2224,6 +2245,9 @@
 //! [`set_stream_attribute`](Sim::set_stream_attribute) is `cuStreamSetAttribute` (identity with
 //! [`stream_set_attribute`](Sim::stream_set_attribute)). Capture-legal (host-side, not a graph node). Distinct from
 //! [`get_stream_attribute`](Sim::get_stream_attribute). No Engine `--stream-set-attribute`.
+//! [`get_graph_kernel_node_attribute`](Sim::get_graph_kernel_node_attribute) is `cuGraphKernelNodeGetAttribute` (identity with
+//! [`graph_kernel_node_get_attribute`](Sim::graph_kernel_node_get_attribute)). Query; legal during capture. Distinct from
+//! [`graph_kernel_node_set_attribute`](Sim::graph_kernel_node_set_attribute). No Engine `--graph-kernel-get-attribute`.
 //! [`destroy_stream`](Sim::destroy_stream) is `cudaStreamDestroy` (returns
 //! immediately; in-flight work still completes; NULL is Invalid; recreate
 //! while unfinished is `"stream in flight"`). Capture cannot include it.
@@ -2241,6 +2265,9 @@
 //! [`set_stream_attribute`](Sim::set_stream_attribute) is `cuStreamSetAttribute` (identity with
 //! [`stream_set_attribute`](Sim::stream_set_attribute)). Capture-legal (host-side, not a graph node). Distinct from
 //! [`get_stream_attribute`](Sim::get_stream_attribute). No Engine `--stream-set-attribute`.
+//! [`get_graph_kernel_node_attribute`](Sim::get_graph_kernel_node_attribute) is `cuGraphKernelNodeGetAttribute` (identity with
+//! [`graph_kernel_node_get_attribute`](Sim::graph_kernel_node_get_attribute)). Query; legal during capture. Distinct from
+//! [`graph_kernel_node_set_attribute`](Sim::graph_kernel_node_set_attribute). No Engine `--graph-kernel-get-attribute`.
 //! [`Sim::instantiate_graph`] is `cudaGraphInstantiate` (host-sync; returns a
 //! new exec id; first [`launch_graph`](Sim::launch_graph) of a definition
 //! creates a primary exec). Unused conditional handles are
@@ -2338,7 +2365,11 @@
 //! (capture-legal); Set cannot include capture. A parked in-flight-destroyed
 //! exec is `"unknown graph"` on SetAttribute; a live exec stays. A parked
 //! in-flight-destroyed exec is `"unknown graph"` on GetAttribute; a live exec
-//! stays. Query; capture is legal. Device-launch
+//! stays. Query; capture is legal.
+//! [`get_graph_kernel_node_attribute`](Sim::get_graph_kernel_node_attribute) is `cuGraphKernelNodeGetAttribute` (identity with
+//! [`graph_kernel_node_get_attribute`](Sim::graph_kernel_node_get_attribute)). Query; legal during capture. Distinct from
+//! [`graph_kernel_node_set_attribute`](Sim::graph_kernel_node_set_attribute). No Engine `--graph-kernel-get-attribute`.
+//! Device-launch
 //! execs cannot attach programmatic or launch-completion events.
 //! [`kernel_pdl`](Sim::kernel_pdl) is `cudaLaunchKernelEx` PDL: a wait kernel
 //! may start after the previous same-stream kernel's trigger
@@ -17881,6 +17912,85 @@ mod tests {
             )
             .unwrap();
         let _g = eight.end_capture().unwrap();
+    }
+
+    #[test]
+    fn get_graph_kernel_node_attribute_is_cu_graph_kernel_node_get_attribute() {
+        let mut sim = Sim::new(h100());
+        let d = DeviceId(0);
+        let s = StreamId(0);
+        let a = sim.malloc(d, 4096).unwrap();
+        let g = sim.create_graph(d, s).unwrap();
+        sim.graph_add_kernel(g, KernelKind::other(8, 8), &[a], &[a])
+            .unwrap();
+        match sim.get_graph_kernel_node_attribute(GraphId(99), 0, KernelNodeAttr::Priority) {
+            Err(SimError::Invalid { why }) => assert!(why.contains("unknown"), "{why}"),
+            other => panic!("{other:?}"),
+        }
+        match sim.graph_kernel_node_get_attribute(GraphId(99), 0, KernelNodeAttr::Priority) {
+            Err(SimError::Invalid { why }) => assert!(why.contains("unknown"), "{why}"),
+            other => panic!("{other:?}"),
+        }
+        assert_eq!(
+            sim.get_graph_kernel_node_attribute(g, 0, KernelNodeAttr::Priority)
+                .unwrap(),
+            KernelNodeAttrValue::Priority(0)
+        );
+        sim.graph_kernel_node_set_attribute(
+            g,
+            0,
+            KernelNodeAttr::Priority,
+            KernelNodeAttrValue::Priority(7),
+        )
+        .unwrap();
+        assert_eq!(
+            sim.get_graph_kernel_node_attribute(g, 0, KernelNodeAttr::Priority)
+                .unwrap(),
+            KernelNodeAttrValue::Priority(7)
+        );
+        assert_eq!(
+            sim.get_graph_kernel_node_attribute(g, 0, KernelNodeAttr::Priority)
+                .unwrap(),
+            sim.graph_kernel_node_get_attribute(g, 0, KernelNodeAttr::Priority)
+                .unwrap()
+        );
+        sim.begin_capture(d, s).unwrap();
+        assert_eq!(
+            sim.get_graph_kernel_node_attribute(g, 0, KernelNodeAttr::Priority)
+                .unwrap(),
+            KernelNodeAttrValue::Priority(7)
+        );
+        let _cap = sim.end_capture().unwrap();
+        let mut eight = Sim::new(HardwareProfile::example_8xh100_nvlink());
+        let a1 = eight.malloc(DeviceId(1), 4096).unwrap();
+        let g1 = eight.create_graph(DeviceId(1), s).unwrap();
+        eight
+            .graph_add_kernel(g1, KernelKind::other(8, 8), &[a1], &[a1])
+            .unwrap();
+        eight
+            .graph_kernel_node_set_attribute(
+                g1,
+                0,
+                KernelNodeAttr::Priority,
+                KernelNodeAttrValue::Priority(3),
+            )
+            .unwrap();
+        assert_eq!(
+            eight
+                .get_graph_kernel_node_attribute(g1, 0, KernelNodeAttr::Priority)
+                .unwrap(),
+            KernelNodeAttrValue::Priority(3)
+        );
+        eight.begin_capture(DeviceId(1), s).unwrap();
+        assert_eq!(
+            eight
+                .get_graph_kernel_node_attribute(g1, 0, KernelNodeAttr::Priority)
+                .unwrap(),
+            eight
+                .graph_kernel_node_get_attribute(g1, 0, KernelNodeAttr::Priority)
+                .unwrap()
+        );
+        let _cap = eight.end_capture().unwrap();
     }
 
     #[test]
