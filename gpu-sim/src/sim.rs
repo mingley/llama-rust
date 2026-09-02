@@ -11307,8 +11307,7 @@ impl Sim {
     /// v2).
     ///
     /// Capture refused. Distinct from
-    /// [`Self::add_graph_dependencies_with_data`]. This VM does not invent
-    /// occupancy SM counts this slice.
+    /// [`Self::add_graph_dependencies_with_data`].
     pub fn add_graph_dependencies_n_with_data(
         &mut self,
         graph: GraphId,
@@ -11415,7 +11414,9 @@ impl Sim {
     ///
     /// Capture cannot include it. Illegal on an instantiated exec. Missing edges are
     /// a no-op. Independent nodes (no remaining edge) may Hyper-Q overlap at
-    /// [`Self::launch_graph`].
+    /// [`Self::launch_graph`]. Driver
+    /// `cuGraphRemoveDependencies` is
+    /// [`Self::remove_graph_dependencies`].
     pub fn graph_remove_dependencies(
         &mut self,
         graph: GraphId,
@@ -11423,6 +11424,21 @@ impl Sim {
         to: usize,
     ) -> Result<(), SimError> {
         self.graph_remove_dependencies_n(graph, &[(from, to)])
+    }
+
+    /// `cuGraphRemoveDependencies`. Identity with
+    /// [`Self::graph_remove_dependencies`] (`cudaGraphRemoveDependencies`).
+    ///
+    /// Capture refused. Distinct from
+    /// [`Self::graph_remove_dependencies_n`]. This VM does not invent
+    /// occupancy SM counts this slice.
+    pub fn remove_graph_dependencies(
+        &mut self,
+        graph: GraphId,
+        from: usize,
+        to: usize,
+    ) -> Result<(), SimError> {
+        self.graph_remove_dependencies(graph, from, to)
     }
 
     /// `cudaGraphRemoveDependencies` of `numDependencies` from/to pairs.
