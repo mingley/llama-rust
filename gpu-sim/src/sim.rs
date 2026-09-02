@@ -10575,8 +10575,7 @@ impl Sim {
     /// [`Self::graph_add_if_else`] (`cudaGraphAddNode` IF size 2).
     ///
     /// Capture refused. Distinct from
-    /// [`Self::add_graph_if`]. This VM does not invent
-    /// occupancy SM counts this slice.
+    /// [`Self::add_graph_if`].
     pub fn add_graph_if_else(
         &mut self,
         graph: GraphId,
@@ -10589,13 +10588,25 @@ impl Sim {
     ///
     /// Each iteration skips at start when `handle` is `0`. A body that leaves
     /// the handle non-zero is Invalid after 64 iterations. Capture cannot
-    /// include it. Illegal on an instantiated exec.
+    /// include it. Illegal on an instantiated exec. Driver
+    /// `cuGraphAddNode` WHILE is
+    /// [`Self::add_graph_while`].
     pub fn graph_add_while(&mut self, graph: GraphId, handle: CondId) -> Result<GraphId, SimError> {
         let (device, stream) = self.graph_origin_for_add(graph)?;
         self.require_cond_on_graph(handle, graph)?;
         let body = self.insert_graph(device, stream);
         self.graph_push_conditional(graph, device, stream, handle, Kind::While { handle, body })?;
         Ok(body)
+    }
+
+    /// `cuGraphAddNode` WHILE (`cudaGraphCondTypeWhile`). Identity with
+    /// [`Self::graph_add_while`] (`cudaGraphAddNode` WHILE).
+    ///
+    /// Capture refused. Distinct from
+    /// [`Self::add_graph_if_else`]. This VM does not invent
+    /// occupancy SM counts this slice.
+    pub fn add_graph_while(&mut self, graph: GraphId, handle: CondId) -> Result<GraphId, SimError> {
+        self.graph_add_while(graph, handle)
     }
 
     /// `cudaGraphAddNode` SWITCH (`cudaGraphCondTypeSwitch`). Returns `n` bodies.
