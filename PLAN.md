@@ -9495,7 +9495,13 @@ model, do not celebrate the sim.
     or `cudaChooseDevice`. `gpu-profile capture` is still refused. Dual
     score still has no `$/M tokens`.
 
-1050. [ ] Next numbered PLAN item after 1049 is the next `gpu-sim` / Engine /
+1050. [x] `gpu-sim` `Sim::stream_write_value32` is
+    `cuStreamWriteValue32`. Identity with `write_value32`. Capture legal. Distinct from
+    `stream_write_value64`. This VM does not invent occupancy SM counts, Engine `--stream-write-value32`,
+    or `cudaChooseDevice`. `gpu-profile capture` is still refused. Dual
+    score still has no `$/M tokens`.
+
+1051. [ ] Next numbered PLAN item after 1050 is the next `gpu-sim` / Engine /
     serve / expertvm mechanical API that is still missing, or the next official
     decode family. Prefer remaining CUDA-shaped twins over more
     OpenAI HTTP veneer. Do not invent F32 `output.scale`. Do not invent a
@@ -11149,6 +11155,10 @@ model, do not celebrate the sim.
     Do not invent Engine `--stream-write-value64`. Do not invent
     occupancy SM counts this slice. Do not reverse WriteValue64 identity with write_value64.
     Do not invent `cuStreamWriteValue32` as `stream_write_value64`.
+    Do not invent a second `cuStreamWriteValue32` / `stream_write_value32`.
+    Do not invent Engine `--stream-write-value32`. Do not invent
+    occupancy SM counts this slice. Do not reverse WriteValue32 identity with write_value32.
+    Do not invent `cuStreamWriteValue64` as `stream_write_value32`.
     Do not invent a second `cudaStreamAddCallback`.
     Do not invent Engine `--stream-callback` (same wall as second live
     `cudaLaunchHostFunc` after miss DMA).
@@ -12869,6 +12879,9 @@ model, do not celebrate the sim.
     Do not invent a second `stream_write_value64` API. Do not invent
     Engine `--stream-write-value64-identity`. Do not invent a write-value32
     this slice. Do not reverse WriteValue64 identity with write_value64.
+    Do not invent a second `stream_write_value32` API. Do not invent
+    Engine `--stream-write-value32-identity`. Do not invent a write-value64-with-flags
+    this slice. Do not reverse WriteValue32 identity with write_value32.
     Do not invent a second DeviceLaunch in-flight destroy-complete check or Engine
     `--device-launch-destroy`. Do not abort an in-flight DeviceLaunch when
     `destroy_graph` succeeds. Do not delay destroy of an idle exec. Do not invent
@@ -14772,6 +14785,9 @@ model, do not celebrate the sim.
     Do not invent a second `stream_write_value64` method. Do not
     invent Engine `--cu-stream-write-value64`. Do not reverse wrapping
     cuStreamWriteValue64 identity. Do not wrap `cuStreamWriteValue32` as `stream_write_value64`.
+    Do not invent a second `stream_write_value32` method. Do not
+    invent Engine `--cu-stream-write-value32`. Do not reverse wrapping
+    cuStreamWriteValue32 identity. Do not wrap `cuStreamWriteValue64` as `stream_write_value32`.
     Do not
     spend the next item on an OpenAI-compatible HTTP veneer.
 

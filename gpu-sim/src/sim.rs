@@ -26592,7 +26592,6 @@ impl Sim {
     ///
     /// Capture legal. Distinct from [`Self::write_value32`] and
     /// [`Self::add_graph_write_value64`].
-    /// This VM does not invent occupancy SM counts this slice.
     pub fn stream_write_value64(
         &mut self,
         device: DeviceId,
@@ -26602,6 +26601,21 @@ impl Sim {
         stream: StreamId,
     ) -> Result<OpId, SimError> {
         self.write_value64(device, id, offset, value, stream)
+    }
+
+    /// `cuStreamWriteValue32`. Identity with [`Self::write_value32`].
+    ///
+    /// Capture legal. Distinct from [`Self::stream_write_value64`].
+    /// This VM does not invent occupancy SM counts this slice.
+    pub fn stream_write_value32(
+        &mut self,
+        device: DeviceId,
+        id: AllocId,
+        offset: u64,
+        value: u64,
+        stream: StreamId,
+    ) -> Result<OpId, SimError> {
+        self.write_value32(device, id, offset, value, stream)
     }
 
     /// `cudaLaunchHostFunc`. Stream-ordered host work; does not occupy compute
@@ -26719,6 +26733,8 @@ impl Sim {
 
     /// `cuStreamWriteValue32`. Stores the low 32 bits; high bits of a prior
     /// 64-bit write at the same offset stay.
+    ///
+    /// Identity wrap [`Self::stream_write_value32`].
     pub fn write_value32(
         &mut self,
         device: DeviceId,
