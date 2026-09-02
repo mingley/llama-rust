@@ -18615,7 +18615,6 @@ impl Sim {
     /// [`Self::multicast_get_granularity`] (`cuMulticastGetGranularity`).
     ///
     /// Query; legal during capture. Distinct from [`Self::mem_map_multicast_with_size`].
-    /// This VM does not invent occupancy SM counts this slice.
     pub fn mem_multicast_get_granularity(&self, flags: u32) -> Result<u64, SimError> {
         self.multicast_get_granularity(flags)
     }
@@ -18627,6 +18626,8 @@ impl Sim {
     /// `"multicast create flags"`). Size and team size are not validated
     /// (CUDA queries granularity before create). Granularity flags match
     /// [`Self::multicast_get_granularity`].
+    /// Driver `cuMulticastGetGranularity` prop is [`Self::mem_multicast_get_granularity_with_prop`].
+    /// Identity wrap [`Self::mem_multicast_get_granularity_with_prop`].
     pub fn multicast_get_granularity_with_prop(
         &self,
         prop: MulticastObjectProp,
@@ -18649,6 +18650,19 @@ impl Sim {
         }
         let g = self.profile.multicast_granularity_bytes;
         Ok(if g <= 1 { 1 } else { g })
+    }
+
+    /// `cuMulticastGetGranularity` prop. Identity with
+    /// [`Self::multicast_get_granularity_with_prop`] (`cuMulticastGetGranularity` prop).
+    ///
+    /// Query; legal during capture. Distinct from [`Self::mem_multicast_get_granularity`].
+    /// This VM does not invent occupancy SM counts this slice.
+    pub fn mem_multicast_get_granularity_with_prop(
+        &self,
+        prop: MulticastObjectProp,
+        flags: u32,
+    ) -> Result<u64, SimError> {
+        self.multicast_get_granularity_with_prop(prop, flags)
     }
 
     /// `cuMulticastCreate`: an NVLS multicast object. Does not charge HBM.
