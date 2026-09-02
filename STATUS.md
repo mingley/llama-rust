@@ -5,6 +5,14 @@ Visible five-turn extract: [docs/chatgpt-share-6a920fe1.md](docs/chatgpt-share-6
 Complete share-API extract: [docs/chatgpt-share-6a920fe1/](docs/chatgpt-share-6a920fe1/).
 Work lands on `main`. No PRs.
 
+## Shipped 2026-09-02 — CUDA `cuGraphAddHostNode`
+
+`gpu-sim` `Sim::add_graph_host` is `cuGraphAddHostNode`.
+Identity with `graph_add_host_func_params` (`cudaGraphAddHostNode`).
+Capture refused. Distinct from `add_graph_child`.
+This VM does not invent occupancy SM counts or Engine `--graph-add-host`.
+`gpu-profile capture` is still refused. Dual score still has no `$/M tokens`.
+
 ## Shipped 2026-09-02 — CUDA `cuGraphAddChildGraphNode`
 
 `gpu-sim` `Sim::add_graph_child` is `cuGraphAddChildGraphNode`.

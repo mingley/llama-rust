@@ -10215,7 +10215,9 @@ impl Sim {
         self.graph_add_host_func_params(graph, HostNodeParams::default())
     }
 
-    /// `cudaGraphAddHostNode` with [`HostNodeParams`] (`cudaHostFn_t` / `userData`).
+    /// `cudaGraphAddHostNode` with [`HostNodeParams`] (`cudaHostFn_t` / `userData`). Driver
+    /// `cuGraphAddHostNode` is
+    /// [`Self::add_graph_host`].
     pub fn graph_add_host_func_params(
         &mut self,
         graph: GraphId,
@@ -10231,6 +10233,20 @@ impl Sim {
                 user_data: params.user_data,
             },
         )
+    }
+
+    /// `cuGraphAddHostNode`. Identity with
+    /// [`Self::graph_add_host_func_params`] (`cudaGraphAddHostNode`).
+    ///
+    /// Capture refused. Distinct from
+    /// [`Self::add_graph_child`]. This VM does not invent
+    /// occupancy SM counts this slice.
+    pub fn add_graph_host(
+        &mut self,
+        graph: GraphId,
+        params: HostNodeParams,
+    ) -> Result<(), SimError> {
+        self.graph_add_host_func_params(graph, params)
     }
 
     /// `cudaGraphAddEmptyNode`: join/fork with no work.
@@ -10959,8 +10975,7 @@ impl Sim {
     /// [`Self::graph_add_child`] (`cudaGraphAddChildGraphNode`).
     ///
     /// Capture refused. Distinct from
-    /// [`Self::add_graph_empty`]. This VM does not invent
-    /// occupancy SM counts this slice.
+    /// [`Self::add_graph_empty`].
     pub fn add_graph_child(&mut self, graph: GraphId, child: GraphId) -> Result<(), SimError> {
         self.graph_add_child(graph, child)
     }

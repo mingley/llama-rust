@@ -8876,7 +8876,14 @@ model, do not celebrate the sim.
     or `cudaChooseDevice`. `gpu-profile capture` is still refused. Dual
     score still has no `$/M tokens`.
 
-960. [ ] Next numbered PLAN item after 959 is the next `gpu-sim` / Engine /
+960. [x] `gpu-sim` `Sim::add_graph_host` is
+    `cuGraphAddHostNode`. Identity with `graph_add_host_func_params`
+    (`cudaGraphAddHostNode`). Capture refused. Distinct from
+    `add_graph_child`. This VM does not invent occupancy SM counts, Engine `--graph-add-host`,
+    or `cudaChooseDevice`. `gpu-profile capture` is still refused. Dual
+    score still has no `$/M tokens`.
+
+961. [ ] Next numbered PLAN item after 960 is the next `gpu-sim` / Engine /
     serve / expertvm mechanical API that is still missing, or the next official
     decode family. Prefer remaining CUDA-shaped twins over more
     OpenAI HTTP veneer. Do not invent F32 `output.scale`. Do not invent a
@@ -10247,6 +10254,9 @@ model, do not celebrate the sim.
     Do not invent a second `cuGraphAddChildGraphNode` / `add_graph_child`.
     Do not invent Engine `--graph-add-child`. Do not invent
     occupancy SM counts this slice. Do not reverse AddGraphChild identity with graph_add_child.
+    Do not invent a second `cuGraphAddHostNode` / `add_graph_host`.
+    Do not invent Engine `--graph-add-host`. Do not invent
+    occupancy SM counts this slice. Do not reverse AddGraphHost identity with graph_add_host_func_params.
     Do not invent a second `cudaStreamAddCallback`.
     Do not invent Engine `--stream-callback` (same wall as second live
     `cudaLaunchHostFunc` after miss DMA).
@@ -11697,6 +11707,9 @@ model, do not celebrate the sim.
     Do not invent a second `add_graph_child` API. Do not invent
     Engine `--graph-add-child-identity`. Do not invent a graph-add-host
     this slice. Do not reverse AddGraphChild identity with graph_add_child.
+    Do not invent a second `add_graph_host` API. Do not invent
+    Engine `--graph-add-host-identity`. Do not invent a graph-add-event-record
+    this slice. Do not reverse AddGraphHost identity with graph_add_host_func_params.
     Do not invent a second DeviceLaunch in-flight destroy-complete check or Engine
     `--device-launch-destroy`. Do not abort an in-flight DeviceLaunch when
     `destroy_graph` succeeds. Do not delay destroy of an idle exec. Do not invent
@@ -13330,6 +13343,9 @@ model, do not celebrate the sim.
     Do not invent a second `add_graph_child` method. Do not
     invent Engine `--cu-graph-add-child`. Do not reverse wrapping
     cuGraphAddChildGraphNode identity.
+    Do not invent a second `add_graph_host` method. Do not
+    invent Engine `--cu-graph-add-host`. Do not reverse wrapping
+    cuGraphAddHostNode identity.
     Do not
     spend the next item on an OpenAI-compatible HTTP veneer.
 
