@@ -14797,9 +14797,7 @@ impl Sim {
     /// [`Self::mem_range_get_attributes_with_size`]
     /// (`cudaMemRangeGetAttributes` count).
     ///
-    /// Query; legal during capture. Distinct from [`Self::mem_range_gets`]. This
-    /// VM does not invent a `cuMemRangeGetAttribute` dataSize this slice
-    /// (`mem_range_get_attribute_with_data_size` stays).
+    /// Query; legal during capture. Distinct from [`Self::mem_range_gets`].
     pub fn mem_range_gets_n(
         &self,
         alloc: AllocId,
@@ -14836,6 +14834,7 @@ impl Sim {
     /// sufficient `dataSize`). Count is the allocation
     /// ([`Self::mem_range_get_attribute_with_size`]). Query; legal during
     /// capture.
+    /// Driver `cuMemRangeGetAttribute` dataSize is [`Self::mem_range_get_data`].
     pub fn mem_range_get_attribute_with_data_size(
         &self,
         alloc: AllocId,
@@ -14852,6 +14851,22 @@ impl Sim {
             });
         }
         self.mem_range_get_attribute_with_size(alloc, a.bytes, attr)
+    }
+
+    /// `cuMemRangeGetAttribute` dataSize. Identity with
+    /// [`Self::mem_range_get_attribute_with_data_size`]
+    /// (`cudaMemRangeGetAttribute` dataSize).
+    ///
+    /// Query; legal during capture. Distinct from [`Self::mem_range_get_n`].
+    /// This VM does not invent a `cuMemRangeGetAttributes` dataSizes this
+    /// slice (`mem_range_get_attributes_with_data_sizes` stays).
+    pub fn mem_range_get_data(
+        &self,
+        alloc: AllocId,
+        data_size: u64,
+        attr: MemRangeAttr,
+    ) -> Result<MemRangeAttrValue, SimError> {
+        self.mem_range_get_attribute_with_data_size(alloc, data_size, attr)
     }
 
     /// [`Self::mem_range_get_attributes`] with the CUDA `dataSizes` array.
