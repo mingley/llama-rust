@@ -9366,7 +9366,14 @@ model, do not celebrate the sim.
     or `cudaChooseDevice`. `gpu-profile capture` is still refused. Dual
     score still has no `$/M tokens`.
 
-1030. [ ] Next numbered PLAN item after 1029 is the next `gpu-sim` / Engine /
+1030. [x] `gpu-sim` `Sim::ctx_disable_peer_access` is
+    `cuCtxDisablePeerAccess`. Identity with `disable_peer`
+    (`cudaDeviceDisablePeerAccess`). Unknown device refused. Distinct from
+    `ctx_enable_peer_access_with_flags`. This VM does not invent occupancy SM counts, Engine `--ctx-disable-peer-access`,
+    or `cudaChooseDevice`. `gpu-profile capture` is still refused. Dual
+    score still has no `$/M tokens`.
+
+1031. [ ] Next numbered PLAN item after 1030 is the next `gpu-sim` / Engine /
     serve / expertvm mechanical API that is still missing, or the next official
     decode family. Prefer remaining CUDA-shaped twins over more
     OpenAI HTTP veneer. Do not invent F32 `output.scale`. Do not invent a
@@ -10948,6 +10955,9 @@ model, do not celebrate the sim.
     Do not invent a second `cuCtxEnablePeerAccess` with flags / `ctx_enable_peer_access_with_flags`.
     Do not invent Engine `--ctx-enable-peer-access-with-flags`. Do not invent
     occupancy SM counts this slice. Do not reverse CtxEnablePeerAccessWithFlags identity with enable_peer_with_flags.
+    Do not invent a second `cuCtxDisablePeerAccess` / `ctx_disable_peer_access`.
+    Do not invent Engine `--ctx-disable-peer-access`. Do not invent
+    occupancy SM counts this slice. Do not reverse CtxDisablePeerAccess identity with disable_peer.
     Do not invent a second `cudaStreamAddCallback`.
     Do not invent Engine `--stream-callback` (same wall as second live
     `cudaLaunchHostFunc` after miss DMA).
@@ -12608,6 +12618,9 @@ model, do not celebrate the sim.
     Do not invent a second `ctx_enable_peer_access_with_flags` API. Do not invent
     Engine `--ctx-enable-peer-access-with-flags-identity`. Do not invent a disable-peer
     this slice. Do not reverse CtxEnablePeerAccessWithFlags identity with enable_peer_with_flags.
+    Do not invent a second `ctx_disable_peer_access` API. Do not invent
+    Engine `--ctx-disable-peer-access-identity`. Do not invent a device-can-access-peer
+    this slice. Do not reverse CtxDisablePeerAccess identity with disable_peer.
     Do not invent a second DeviceLaunch in-flight destroy-complete check or Engine
     `--device-launch-destroy`. Do not abort an in-flight DeviceLaunch when
     `destroy_graph` succeeds. Do not delay destroy of an idle exec. Do not invent
@@ -14451,6 +14464,9 @@ model, do not celebrate the sim.
     Do not invent a second `ctx_enable_peer_access_with_flags` method. Do not
     invent Engine `--cu-ctx-enable-peer-access-with-flags`. Do not reverse wrapping
     cuCtxEnablePeerAccess flags identity.
+    Do not invent a second `ctx_disable_peer_access` method. Do not
+    invent Engine `--cu-ctx-disable-peer-access`. Do not reverse wrapping
+    cuCtxDisablePeerAccess identity.
     Do not
     spend the next item on an OpenAI-compatible HTTP veneer.
 

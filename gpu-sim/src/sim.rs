@@ -2911,8 +2911,7 @@ impl Sim {
     /// [`Self::enable_peer_with_flags`] (`cudaDeviceEnablePeerAccess` with flags).
     ///
     /// Nonzero flags refused. Distinct from
-    /// [`Self::ctx_enable_peer_access`]. This VM does not invent
-    /// occupancy SM counts this slice.
+    /// [`Self::ctx_enable_peer_access`].
     pub fn ctx_enable_peer_access_with_flags(
         &mut self,
         src: DeviceId,
@@ -2923,6 +2922,8 @@ impl Sim {
     }
 
     /// `cudaDeviceDisablePeerAccess(dst)` from `src`. Later D2D is [`SimError::PeerDisabled`].
+    ///
+    /// Driver `cuCtxDisablePeerAccess` is [`Self::ctx_disable_peer_access`].
     pub fn disable_peer(&mut self, src: DeviceId, dst: DeviceId) -> Result<(), SimError> {
         if src == dst {
             return Ok(());
@@ -2931,6 +2932,20 @@ impl Sim {
         let _gpu_d = self.profile.gpu(dst)?;
         let _was = self.peer_enabled.remove(&(src, dst));
         Ok(())
+    }
+
+    /// `cuCtxDisablePeerAccess`. Identity with
+    /// [`Self::disable_peer`] (`cudaDeviceDisablePeerAccess`).
+    ///
+    /// Unknown device refused. Distinct from
+    /// [`Self::ctx_enable_peer_access_with_flags`]. This VM does not invent
+    /// occupancy SM counts this slice.
+    pub fn ctx_disable_peer_access(
+        &mut self,
+        src: DeviceId,
+        dst: DeviceId,
+    ) -> Result<(), SimError> {
+        self.disable_peer(src, dst)
     }
 
     /// Whether `src` may D2D-read `dst` (directed, like CUDA peer access).
