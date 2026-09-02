@@ -25498,7 +25498,6 @@ impl Sim {
 
     /// `cuDeviceComputeCapability`. Identity with [`Self::device_compute_capability`].
     /// Query; legal during capture. Distinct from [`Self::mem_device_get_properties`].
-    /// This VM does not invent occupancy SM counts this slice.
     pub fn mem_device_compute_capability(&self, device: DeviceId) -> Result<(u32, u32), SimError> {
         self.device_compute_capability(device)
     }
@@ -25528,9 +25527,19 @@ impl Sim {
     /// from [`Self::device_get_name`] and [`DeviceId`]. Two [`Sim`]s with the
     /// same profile agree. Also [`DeviceProperties::uuid`]. Unknown devices
     /// are Invalid. Inverse is [`Self::device_get_by_uuid`].
+    ///
+    /// Driver wrap: [`Self::mem_device_get_uuid`].
+    /// Identity: [`Self::mem_device_get_uuid`].
     pub fn device_get_uuid(&self, device: DeviceId) -> Result<[u8; 16], SimError> {
         let _gpu = self.profile.gpu(device)?;
         Ok(synthetic_device_uuid(&self.profile.name, device))
+    }
+
+    /// `cuDeviceGetUuid`. Identity with [`Self::device_get_uuid`] (`cudaDeviceGetUuid`).
+    /// Query; legal during capture. Distinct from [`Self::mem_device_compute_capability`].
+    /// This VM does not invent occupancy SM counts this slice.
+    pub fn mem_device_get_uuid(&self, device: DeviceId) -> Result<[u8; 16], SimError> {
+        self.device_get_uuid(device)
     }
 
     /// `cuDeviceGetLuid`. Query; legal during capture.
