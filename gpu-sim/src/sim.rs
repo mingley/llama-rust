@@ -10117,8 +10117,7 @@ impl Sim {
     /// [`Self::graph_add_memcpy`] (`cudaGraphAddMemcpyNode`).
     ///
     /// Capture refused. Distinct from
-    /// [`Self::add_graph_kernel`]. This VM does not invent
-    /// occupancy SM counts this slice.
+    /// [`Self::add_graph_kernel`].
     pub fn add_graph_memcpy(&mut self, graph: GraphId, op: MemcpyOp) -> Result<(), SimError> {
         self.graph_add_memcpy(graph, op)
     }
@@ -10147,7 +10146,9 @@ impl Sim {
         r
     }
 
-    /// `cudaGraphAddMemcpyNode1D`. Pageable copies cannot be graph nodes.
+    /// `cudaGraphAddMemcpyNode1D`. Pageable copies cannot be graph nodes. Driver
+    /// `cuGraphAddMemcpyNode1D` is
+    /// [`Self::add_graph_memcpy_1d`].
     pub fn graph_add_memcpy_1d(
         &mut self,
         graph: GraphId,
@@ -10157,6 +10158,23 @@ impl Sim {
         bytes: u64,
     ) -> Result<(), SimError> {
         self.graph_add_memcpy(graph, MemcpyOp::packed_1d(src, dst, alloc, bytes))
+    }
+
+    /// `cuGraphAddMemcpyNode1D`. Identity with
+    /// [`Self::graph_add_memcpy_1d`] (`cudaGraphAddMemcpyNode1D`).
+    ///
+    /// Capture refused. Distinct from
+    /// [`Self::add_graph_memcpy`]. This VM does not invent
+    /// occupancy SM counts this slice.
+    pub fn add_graph_memcpy_1d(
+        &mut self,
+        graph: GraphId,
+        src: Place,
+        dst: Place,
+        alloc: AllocId,
+        bytes: u64,
+    ) -> Result<(), SimError> {
+        self.graph_add_memcpy_1d(graph, src, dst, alloc, bytes)
     }
 
     /// `cudaGraphAddMemcpyNode` whose [`MemcpyOp`] is [`MemcpyOp::is_2d`]
