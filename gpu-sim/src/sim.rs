@@ -13333,6 +13333,20 @@ impl Sim {
         self.alloc_from_pool_inner(device, pool, bytes, stream)
     }
 
+    /// `cuMemAllocAsync`. Identity with [`Self::alloc`] (`cudaMallocAsync`).
+    ///
+    /// Capture-legal (graph mempool). Distinct from [`Self::mem_alloc`]
+    /// (`cuMemAlloc` host-sync). This VM does not invent `cuMemFreeAsync` this
+    /// slice (`free` stays).
+    pub fn mem_alloc_async(
+        &mut self,
+        device: DeviceId,
+        bytes: u64,
+        stream: StreamId,
+    ) -> Result<AllocId, SimError> {
+        self.alloc(device, bytes, stream)
+    }
+
     /// `cudaDeviceGetDefaultMemPool`. Query; legal during capture.
     ///
     /// Seeded at construct. [`Self::set_device_mempool`] does not replace it.
@@ -14467,8 +14481,7 @@ impl Sim {
     /// `cuMemAllocManaged`. Identity with [`Self::alloc_managed_with_flags`]
     /// (`cudaMallocManaged` flags).
     ///
-    /// Capture refused. Distinct from [`Self::alloc_managed`]. This VM does not
-    /// invent `cuMemAllocAsync` this slice (`alloc` stays).
+    /// Capture refused. Distinct from [`Self::alloc_managed`].
     pub fn mem_alloc_managed(&mut self, bytes: u64, flags: u32) -> Result<AllocId, SimError> {
         self.alloc_managed_with_flags(bytes, flags)
     }

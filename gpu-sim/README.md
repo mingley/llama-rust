@@ -174,6 +174,7 @@ warp scheduler, L1, …   ← do not model
 | `ipc_open_event_handle` is identity with `ipc_open_event` | `cuIpcOpenEventHandle` |
 | `mem_alloc_host` is identity with `alloc_host_pinned` | `cuMemAllocHost` |
 | `mem_alloc_managed` is identity with `alloc_managed_with_flags` | `cuMemAllocManaged` |
+| `mem_alloc_async` is identity with `alloc` | `cuMemAllocAsync` |
 | `pointer_get_attributes` classifies Unregistered / Host / Device / Managed | `cudaPointerGetAttributes` |
 | `pointer_get_attribute` wraps type / mapped / pool / range / ordinal / start / buffer id / IPC / RDMA / handle types / VMM map / hw decompress 0 / VMM block id; SyncMemops is settable | `cuPointerGetAttribute` / `SetAttribute` |
 | `pointer_get_access_flags` is kernel residency on an explicit device (`MemAccessFlags`; enable_peer is D2D memcpy only) | `CU_POINTER_ATTRIBUTE_ACCESS_FLAGS` |
@@ -1959,6 +1960,7 @@ No Engine `--malloc-pitch-element`. `mem_alloc` is `cuMemAlloc` (identity with `
 `mem_host_alloc` is `cuMemHostAlloc` (identity with `alloc_host_with_flags`). Capture refused. No Engine `--mem-host-alloc`.
 `mem_alloc_host` is `cuMemAllocHost` (identity with `alloc_host_pinned`). Capture refused. Distinct from `mem_host_alloc`. No Engine `--mem-alloc-host`.
 `mem_alloc_managed` is `cuMemAllocManaged` (identity with `alloc_managed_with_flags`). Capture refused. Distinct from `alloc_managed`. No Engine `--mem-alloc-managed`.
+`mem_alloc_async` is `cuMemAllocAsync` (identity with `alloc`). Capture-legal (graph mempool). Distinct from `mem_alloc`. No Engine `--mem-alloc-async`.
 `mem_host_get_flags` is `cuMemHostGetFlags` (identity with `host_get_flags`). Query; legal during capture. No Engine `--mem-host-get-flags`.
 `mem_host_get_device_pointer` is `cuMemHostGetDevicePointer` (identity with `host_get_device_pointer_with_flags`). Query; legal during capture. No Engine `--mem-host-get-device-pointer`.
 `mem_host_register` is `cuMemHostRegister` (identity with `host_register_with_flags`). Capture refused. No Engine `--mem-host-register`.
@@ -1971,6 +1973,7 @@ No Engine `--malloc-pitch-element`. `mem_alloc` is `cuMemAlloc` (identity with `
 `ipc_open_event_handle` is `cuIpcOpenEventHandle` (identity with `ipc_open_event`). Capture refused. Distinct from `ipc_get_event_handle`. No Engine `--ipc-open-event-handle`.
 `mem_alloc_host` is `cuMemAllocHost` (identity with `alloc_host_pinned`). Capture refused. Distinct from `mem_host_alloc`. No Engine `--mem-alloc-host`.
 `mem_alloc_managed` is `cuMemAllocManaged` (identity with `alloc_managed_with_flags`). Capture refused. Distinct from `alloc_managed`. No Engine `--mem-alloc-managed`.
+`mem_alloc_async` is `cuMemAllocAsync` (identity with `alloc`). Capture-legal (graph mempool). Distinct from `mem_alloc`. No Engine `--mem-alloc-async`.
 `MemcpyOp` `height` / pitches are
 `cudaMemcpy2DAsync` (payload `width * height`). Origin fields are srcPos /
 dstPos (default 0). No Engine `--memcpy-origin`. `MemcpyOp` `src_lod` /

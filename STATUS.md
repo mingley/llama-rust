@@ -5,6 +5,14 @@ Visible five-turn extract: [docs/chatgpt-share-6a920fe1.md](docs/chatgpt-share-6
 Complete share-API extract: [docs/chatgpt-share-6a920fe1/](docs/chatgpt-share-6a920fe1/).
 Work lands on `main`. No PRs.
 
+## Shipped 2026-09-02 — CUDA `cuMemAllocAsync`
+
+`gpu-sim` `Sim::mem_alloc_async` is `cuMemAllocAsync`.
+Identity with `alloc` (`cudaMallocAsync`). Capture-legal (graph mempool).
+Distinct from `mem_alloc`.
+This VM does not invent `cuMemFreeAsync` or Engine `--mem-alloc-async`.
+`gpu-profile capture` is still refused. Dual score still has no `$/M tokens`.
+
 ## Shipped 2026-09-02 — CUDA `cuMemAllocManaged`
 
 `gpu-sim` `Sim::mem_alloc_managed` is `cuMemAllocManaged`.

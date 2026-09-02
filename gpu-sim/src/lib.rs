@@ -172,6 +172,9 @@
 //! [`mem_alloc_managed`](Sim::mem_alloc_managed) is `cuMemAllocManaged` (identity with
 //! [`alloc_managed_with_flags`](Sim::alloc_managed_with_flags)). Capture refused. Distinct from
 //! [`alloc_managed`](Sim::alloc_managed). No Engine `--mem-alloc-managed`.
+//! [`mem_alloc_async`](Sim::mem_alloc_async) is `cuMemAllocAsync` (identity with
+//! [`alloc`](Sim::alloc)). Capture-legal (graph mempool). Distinct from
+//! [`mem_alloc`](Sim::mem_alloc). No Engine `--mem-alloc-async`.
 //! [`Sim::ipc_get_event`] / [`ipc_open_event`](Sim::ipc_open_event) are
 //! `cudaIpcGetEventHandle` / `cudaIpcOpenEventHandle` (interprocess events).
 //! [`Sim::create_shareable_pool`] is `cudaMemPoolCreate` with a POSIX-FD handle
@@ -552,6 +555,9 @@
 //! [`mem_alloc_managed`](Sim::mem_alloc_managed) is `cuMemAllocManaged` (identity with
 //! [`alloc_managed_with_flags`](Sim::alloc_managed_with_flags)). Capture refused. Distinct from
 //! [`alloc_managed`](Sim::alloc_managed). No Engine `--mem-alloc-managed`.
+//! [`mem_alloc_async`](Sim::mem_alloc_async) is `cuMemAllocAsync` (identity with
+//! [`alloc`](Sim::alloc)). Capture-legal (graph mempool). Distinct from
+//! [`mem_alloc`](Sim::mem_alloc). No Engine `--mem-alloc-async`.
 //! [`mem_host_get_flags`](Sim::mem_host_get_flags) is `cuMemHostGetFlags` (identity with
 //! [`host_get_flags`](Sim::host_get_flags)). Query; legal during capture. No Engine `--mem-host-get-flags`.
 //! [`mem_host_get_device_pointer`](Sim::mem_host_get_device_pointer) is `cuMemHostGetDevicePointer` (identity with
@@ -582,6 +588,9 @@
 //! [`mem_alloc_managed`](Sim::mem_alloc_managed) is `cuMemAllocManaged` (identity with
 //! [`alloc_managed_with_flags`](Sim::alloc_managed_with_flags)). Capture refused. Distinct from
 //! [`alloc_managed`](Sim::alloc_managed). No Engine `--mem-alloc-managed`.
+//! [`mem_alloc_async`](Sim::mem_alloc_async) is `cuMemAllocAsync` (identity with
+//! [`alloc`](Sim::alloc)). Capture-legal (graph mempool). Distinct from
+//! [`mem_alloc`](Sim::mem_alloc). No Engine `--mem-alloc-async`.
 //! [`Sim::pointer_get_attributes`] is `cudaPointerGetAttributes`.
 //! [`pointer_set_attribute`](Sim::pointer_set_attribute) /
 //! [`pointer_get_attribute`](Sim::pointer_get_attribute) are
@@ -33611,6 +33620,47 @@ mod tests {
         sim.free_sync(g).unwrap();
         sim.free_sync(h).unwrap();
         sim.free_sync(h2).unwrap();
+    }
+
+    #[test]
+    fn mem_alloc_async_is_cu_mem_alloc_async() {
+        let mut sim = Sim::new(h100());
+        let d = DeviceId(0);
+        let s = StreamId(0);
+        match sim.mem_alloc_async(DeviceId(99), 4096, s) {
+            Err(SimError::Invalid { why }) => assert!(why.contains("device"), "{why}"),
+            other => panic!("{other:?}"),
+        }
+        match sim.alloc(DeviceId(99), 4096, s) {
+            Err(SimError::Invalid { why }) => assert!(why.contains("device"), "{why}"),
+            other => panic!("{other:?}"),
+        }
+        match sim.mem_alloc_async(d, 0, s) {
+            Err(SimError::Invalid { why }) => assert!(why.contains("zero-byte"), "{why}"),
+            other => panic!("{other:?}"),
+        }
+        match sim.alloc(d, 0, s) {
+            Err(SimError::Invalid { why }) => assert!(why.contains("zero-byte"), "{why}"),
+            other => panic!("{other:?}"),
+        }
+        let a = sim.mem_alloc_async(d, 4096, s).unwrap();
+        sim.synchronize_stream(d, s).unwrap();
+        assert!(sim.is_resident(a, d).unwrap());
+        let b = sim.alloc(d, 64, s).unwrap();
+        sim.synchronize_stream(d, s).unwrap();
+        sim.free(d, a, s).unwrap();
+        sim.free(d, b, s).unwrap();
+        sim.synchronize_stream(d, s).unwrap();
+        sim.begin_capture(d, s).unwrap();
+        let ga = sim.mem_alloc_async(d, 64, s).unwrap();
+        sim.free(d, ga, s).unwrap();
+        let gb = sim.alloc(d, 64, s).unwrap();
+        sim.free(d, gb, s).unwrap();
+        match sim.mem_alloc(d, 64) {
+            Err(SimError::Invalid { why }) => assert!(why.contains("capture"), "{why}"),
+            other => panic!("{other:?}"),
+        }
+        let _g = sim.end_capture().unwrap();
     }
 
     #[test]
