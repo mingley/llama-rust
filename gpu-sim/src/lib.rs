@@ -1083,6 +1083,8 @@
 //! `"module data"`). Query; legal during capture. No Engine `--module-data`.
 //! [`module_load_fat_binary`](Sim::module_load_fat_binary) is `cuModuleLoadFatBinary` (always Invalid
 //! `"module fatbin"`). Query; legal during capture. No Engine `--module-fatbin`.
+//! [`module_load_data_ex`](Sim::module_load_data_ex) is `cuModuleLoadDataEx` (always Invalid
+//! `"module jitopt"`). Query; legal during capture. No Engine `--module-jitopt`.
 //! [`module_unload`](Sim::module_unload) is `cuModuleUnload` (always Invalid
 //! `"module unload"`). Query; legal during capture. No Engine `--module-unload`.
 //! [`module_get_function`](Sim::module_get_function) is `cuModuleGetFunction` (always Invalid
@@ -19319,6 +19321,64 @@ mod tests {
             Err(SimError::Invalid { why }) => {
                 assert!(why.contains("cuda library"), "{why}");
                 assert!(!why.contains("module fatbin"), "{why}");
+            }
+            other => panic!("{other:?}"),
+        }
+        match sim.module_load_data_ex(d) {
+            Err(SimError::Invalid { why }) => {
+                assert!(why.contains("module jitopt"), "{why}");
+                assert!(!why.contains("module fatbin"), "{why}");
+            }
+            other => panic!("{other:?}"),
+        }
+        assert_eq!(sim.module_get_loading_mode(), ModuleLoadingMode::Eager);
+    }
+
+    #[test]
+    fn module_load_data_ex_is_unsupported() {
+        let mut sim = Sim::new(h100());
+        let d = DeviceId(0);
+        match sim.module_load_data_ex(d) {
+            Err(SimError::Invalid { why }) => {
+                assert!(why.contains("module jitopt"), "{why}");
+                assert!(!why.contains("module data"), "{why}");
+                assert!(!why.contains("module fatbin"), "{why}");
+                assert!(!why.contains("jit linker"), "{why}");
+            }
+            other => panic!("{other:?}"),
+        }
+        sim.begin_capture(d, StreamId(0)).unwrap();
+        match sim.module_load_data_ex(d) {
+            Err(SimError::Invalid { why }) => {
+                assert!(why.contains("module jitopt"), "{why}");
+            }
+            other => panic!("{other:?}"),
+        }
+        let _g = sim.end_capture().unwrap();
+        match sim.module_load_data_ex(DeviceId(99)) {
+            Err(SimError::Invalid { why }) => {
+                assert!(why.contains("device not in profile"), "{why}");
+            }
+            other => panic!("{other:?}"),
+        }
+        match sim.module_load_data(d) {
+            Err(SimError::Invalid { why }) => {
+                assert!(why.contains("module data"), "{why}");
+                assert!(!why.contains("module jitopt"), "{why}");
+            }
+            other => panic!("{other:?}"),
+        }
+        match sim.module_load_fat_binary(d) {
+            Err(SimError::Invalid { why }) => {
+                assert!(why.contains("module fatbin"), "{why}");
+                assert!(!why.contains("module jitopt"), "{why}");
+            }
+            other => panic!("{other:?}"),
+        }
+        match sim.link_create(d) {
+            Err(SimError::Invalid { why }) => {
+                assert!(why.contains("jit linker"), "{why}");
+                assert!(!why.contains("module jitopt"), "{why}");
             }
             other => panic!("{other:?}"),
         }

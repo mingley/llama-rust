@@ -5,6 +5,15 @@ Visible five-turn extract: [docs/chatgpt-share-6a920fe1.md](docs/chatgpt-share-6
 Complete share-API extract: [docs/chatgpt-share-6a920fe1/](docs/chatgpt-share-6a920fe1/).
 Work lands on `main`. No PRs.
 
+## Shipped 2026-09-02 — CUDA `cuModuleLoadDataEx`
+
+`gpu-sim` `Sim::module_load_data_ex` is `cuModuleLoadDataEx`.
+Always Invalid `"module jitopt"` because CUDA modules are not
+modeled. Query; legal during capture. Distinct from
+`module_load_data` (why is not `"module data"`) and from
+`link_create`. This VM does not invent `cuModuleGetFunctionCount` or Engine `--module-jitopt`.
+`gpu-profile capture` is still refused. Dual score still has no `$/M tokens`.
+
 ## Shipped 2026-09-02 — CUDA `cuModuleLoadFatBinary`
 
 `gpu-sim` `Sim::module_load_fat_binary` is `cuModuleLoadFatBinary`.

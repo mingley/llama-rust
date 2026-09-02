@@ -21052,13 +21052,30 @@ impl Sim {
     /// Always Invalid `"module fatbin"` (this VM has no fatbin image and
     /// no `CUmodule`). Distinct from [`Self::module_load_data`] (why is not
     /// `"module data"`) and from [`Self::module_load`] (why is not
-    /// `"module load"`) and from [`Self::library_load_data`].
+    /// `"module load"`) and from [`Self::library_load_data`] and from
+    /// [`Self::module_load_data_ex`].
     /// Unknown devices are Invalid `"device not in profile"`. Query; legal
     /// during capture.
     pub fn module_load_fat_binary(&self, device: DeviceId) -> Result<(), SimError> {
         let _gpu = self.profile.gpu(device)?;
         Err(SimError::Invalid {
             why: "module fatbin",
+        })
+    }
+
+    /// `cuModuleLoadDataEx`. CUDA modules are not modeled.
+    ///
+    /// Always Invalid `"module jitopt"` (this VM has no cubin image, no
+    /// JIT options, and no `CUmodule`). Distinct from
+    /// [`Self::module_load_fat_binary`] (why is not `"module fatbin"`) and
+    /// from [`Self::module_load_data`] (why is not `"module data"`) and
+    /// from [`Self::link_create`].
+    /// Unknown devices are Invalid `"device not in profile"`. Query; legal
+    /// during capture.
+    pub fn module_load_data_ex(&self, device: DeviceId) -> Result<(), SimError> {
+        let _gpu = self.profile.gpu(device)?;
+        Err(SimError::Invalid {
+            why: "module jitopt",
         })
     }
 

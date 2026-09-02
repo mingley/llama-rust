@@ -7234,7 +7234,14 @@ model, do not celebrate the sim.
     or `cudaChooseDevice`. `gpu-profile capture` is still refused. Dual
     score still has no `$/M tokens`.
 
-726. [ ] Next numbered PLAN item after 725 is the next `gpu-sim` / Engine /
+726. [x] `gpu-sim` `Sim::module_load_data_ex` is
+    `cuModuleLoadDataEx`. Always Invalid `"module jitopt"`
+    because CUDA modules are not modeled. Query; legal during capture.
+    Distinct from `module_load_data`. This VM does not invent `cuModuleGetFunctionCount`, Engine `--module-jitopt`,
+    or `cudaChooseDevice`. `gpu-profile capture` is still refused. Dual
+    score still has no `$/M tokens`.
+
+727. [ ] Next numbered PLAN item after 726 is the next `gpu-sim` / Engine /
     serve / expertvm mechanical API that is still missing, or the next official
     decode family. Prefer remaining CUDA-shaped twins over more
     OpenAI HTTP veneer. Do not invent F32 `output.scale`. Do not invent a
@@ -7903,6 +7910,9 @@ model, do not celebrate the sim.
     Do not invent a second `cuModuleLoadFatBinary` / `module_load_fat_binary`.
     Do not invent Engine `--module-fatbin`. Do not invent
     `cuModuleLoadDataEx` this slice. Do not reverse `"module fatbin"`.
+    Do not invent a second `cuModuleLoadDataEx` / `module_load_data_ex`.
+    Do not invent Engine `--module-jitopt`. Do not invent
+    `cuModuleGetFunctionCount` this slice. Do not reverse `"module jitopt"`.
     Do not invent a second `cudaStreamAddCallback`.
     Do not invent Engine `--stream-callback` (same wall as second live
     `cudaLaunchHostFunc` after miss DMA).
@@ -8651,6 +8661,9 @@ model, do not celebrate the sim.
     Do not invent a second `module_load_fat_binary` API. Do not invent
     Engine `--load-module-fatbin`. Do not invent a fatbin image
     this slice. Do not reverse Module LoadFatBinary remaining unsupported.
+    Do not invent a second `module_load_data_ex` API. Do not invent
+    Engine `--load-module-data-ex`. Do not invent JIT linker options
+    this slice. Do not reverse Module LoadDataEx remaining unsupported.
     Do not invent a second DeviceLaunch in-flight destroy-complete check or Engine
     `--device-launch-destroy`. Do not abort an in-flight DeviceLaunch when
     `destroy_graph` succeeds. Do not delay destroy of an idle exec. Do not invent
@@ -9582,6 +9595,9 @@ model, do not celebrate the sim.
     Do not invent a second `module_load_fat_binary` method. Do not
     invent Engine `--cu-module-load-fatbin`. Do not reverse wrapping
     cuModuleLoadFatBinary Invalid.
+    Do not invent a second `module_load_data_ex` method. Do not
+    invent Engine `--cu-module-load-data-ex`. Do not reverse wrapping
+    cuModuleLoadDataEx Invalid.
     Do not
     spend the next item on an OpenAI-compatible HTTP veneer.
 
