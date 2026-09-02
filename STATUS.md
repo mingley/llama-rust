@@ -5,6 +5,13 @@ Visible five-turn extract: [docs/chatgpt-share-6a920fe1.md](docs/chatgpt-share-6
 Complete share-API extract: [docs/chatgpt-share-6a920fe1/](docs/chatgpt-share-6a920fe1/).
 Work lands on `main`. No PRs.
 
+## Shipped 2026-09-02 — CUDA `cuStreamSetAttribute` sync policy
+
+`gpu-sim` `Sim::stream_set_sync_policy` is `cuStreamSetAttribute` sync policy.
+Identity with `set_stream_sync_policy` (`cudaStreamSetAttribute` SynchronizationPolicy). Capture legal. Distinct from `stream_get_mem_sync_domain_map`.
+This VM does not invent occupancy SM counts or Engine `--stream-set-sync-policy`.
+`gpu-profile capture` is still refused. Dual score still has no `$/M tokens`.
+
 ## Shipped 2026-09-02 — CUDA `cuStreamGetAttribute` mem sync domain map
 
 `gpu-sim` `Sim::stream_get_mem_sync_domain_map` is `cuStreamGetAttribute` mem sync domain map.

@@ -9714,7 +9714,12 @@ model, do not celebrate the sim.
       `stream_get_mem_sync_domain`. This VM does not invent occupancy SM counts, Engine `--stream-get-mem-sync-domain-map`,
       or `cudaChooseDevice`. `gpu-profile capture` is still refused. Dual
       score still has no `$/M tokens`.
-1091. [ ] Next numbered PLAN item after 1090 is the next `gpu-sim` / Engine /
+1091. [x] `gpu-sim` `Sim::stream_set_sync_policy` is
+      `cuStreamSetAttribute` sync policy. Identity with `set_stream_sync_policy` (`cudaStreamSetAttribute` SynchronizationPolicy). Capture legal. Distinct from
+      `stream_get_mem_sync_domain_map`. This VM does not invent occupancy SM counts, Engine `--stream-set-sync-policy`,
+      or `cudaChooseDevice`. `gpu-profile capture` is still refused. Dual
+      score still has no `$/M tokens`.
+1092. [ ] Next numbered PLAN item after 1091 is the next `gpu-sim` / Engine /
     serve / expertvm mechanical API that is still missing, or the next official
     decode family. Prefer remaining CUDA-shaped twins over more
     OpenAI HTTP veneer. Do not invent F32 `output.scale`. Do not invent a
@@ -11532,6 +11537,10 @@ model, do not celebrate the sim.
     Do not invent Engine `--stream-get-mem-sync-domain-map`. Do not invent
     occupancy SM counts this slice. Do not reverse StreamGetMemSyncDomainMap identity with stream_mem_sync_domain_map.
     Do not invent generic `cuStreamGetAttribute` as `stream_get_mem_sync_domain_map`.
+    Do not invent a second `cuStreamSetAttribute` sync policy / `stream_set_sync_policy`.
+    Do not invent Engine `--stream-set-sync-policy`. Do not invent
+    occupancy SM counts this slice. Do not reverse StreamSetSyncPolicy identity with set_stream_sync_policy.
+    Do not invent generic `cuStreamSetAttribute` as `stream_set_sync_policy`.
     Do not invent a second `cudaStreamAddCallback`.
     Do not invent Engine `--stream-callback` (same wall as second live
     `cudaLaunchHostFunc` after miss DMA).
@@ -13379,6 +13388,10 @@ model, do not celebrate the sim.
     Engine `--stream-get-mem-sync-domain-map-identity`. Do not invent a stream-set-sync-policy
     this slice. Do not reverse StreamGetMemSyncDomainMap identity with stream_mem_sync_domain_map.
     Do not wrap `stream_mem_sync_domain_map` as `stream_get_mem_sync_domain_map`.
+    Do not invent a second `stream_set_sync_policy` API. Do not invent
+    Engine `--stream-set-sync-policy-identity`. Do not invent a stream-get-sync-policy
+    this slice. Do not reverse StreamSetSyncPolicy identity with set_stream_sync_policy.
+    Do not wrap `set_stream_sync_policy` as `stream_set_sync_policy`.
     Do not invent a second DeviceLaunch in-flight destroy-complete check or Engine
     `--device-launch-destroy`. Do not abort an in-flight DeviceLaunch when
     `destroy_graph` succeeds. Do not delay destroy of an idle exec. Do not invent
@@ -15405,6 +15418,9 @@ model, do not celebrate the sim.
     Do not invent a second `stream_get_mem_sync_domain_map` method. Do not
     invent Engine `--cu-stream-get-mem-sync-domain-map`. Do not reverse wrapping
     cuStreamGetAttribute mem sync domain map identity. Do not wrap generic `cuStreamGetAttribute` as `stream_get_mem_sync_domain_map`.
+    Do not invent a second `stream_set_sync_policy` method. Do not
+    invent Engine `--cu-stream-set-sync-policy`. Do not reverse wrapping
+    cuStreamSetAttribute sync policy identity. Do not wrap generic `cuStreamSetAttribute` as `stream_set_sync_policy`.
     Do not
     spend the next item on an OpenAI-compatible HTTP veneer.
 

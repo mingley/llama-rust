@@ -2219,7 +2219,6 @@ impl Sim {
     /// [`Self::stream_mem_sync_domain_map`] (`cudaStreamGetAttribute` MemSyncDomainMap).
     ///
     /// Query; legal during capture. Distinct from [`Self::stream_get_mem_sync_domain`].
-    /// This VM does not invent occupancy SM counts this slice.
     pub fn stream_get_mem_sync_domain_map(
         &self,
         device: DeviceId,
@@ -2233,6 +2232,8 @@ impl Sim {
     /// Host-wait tax for [`Self::synchronize_stream`] / [`Self::synchronize_event`].
     /// Missing is [`SynchronizationPolicy::Auto`], which inherits
     /// [`Self::set_device_flags`] (unset Auto tax 0).
+    /// Driver `cuStreamSetAttribute` sync policy is [`Self::stream_set_sync_policy`].
+    /// Identity wrap [`Self::stream_set_sync_policy`].
     pub fn set_stream_sync_policy(
         &mut self,
         device: DeviceId,
@@ -2243,6 +2244,20 @@ impl Sim {
         self.require_live_stream(device, stream)?;
         let _prev = self.stream_sync_policy.insert((device, stream), policy);
         Ok(())
+    }
+
+    /// `cuStreamSetAttribute` sync policy. Identity with
+    /// [`Self::set_stream_sync_policy`] (`cudaStreamSetAttribute` SynchronizationPolicy).
+    ///
+    /// Capture legal. Distinct from [`Self::stream_get_mem_sync_domain_map`].
+    /// This VM does not invent occupancy SM counts this slice.
+    pub fn stream_set_sync_policy(
+        &mut self,
+        device: DeviceId,
+        stream: StreamId,
+        policy: SynchronizationPolicy,
+    ) -> Result<(), SimError> {
+        self.set_stream_sync_policy(device, stream, policy)
     }
 
     /// Stream synchronization policy, or [`SynchronizationPolicy::Auto`] if unset.
