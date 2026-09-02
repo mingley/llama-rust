@@ -640,6 +640,7 @@ compiled kernel exists; no Engine flag).
 `gpu-sim` `add_graph_batch_mem_op` is `cuGraphAddBatchMemOpNode` (identity with `graph_add_batch_mem_op`; no Engine flag).
 `gpu-sim` `add_graph_batch_mem_op_with_flags` is `cuGraphAddBatchMemOpNode` flags (identity with `graph_add_batch_mem_op_with_flags`; no Engine flag).
 `gpu-sim` `add_graph_alloc` is `cuGraphAddMemAllocNode` (identity with `graph_add_alloc`; no Engine flag).
+`gpu-sim` `add_graph_alloc_with_access` is `cuGraphAddMemAllocNode` access (identity with `graph_add_alloc_with_access`; no Engine flag).
 `gpu-sim` `mem_alloc` is `cuMemAlloc` (identity with `malloc`; no Engine flag).
 `gpu-sim` `mem_free` is `cuMemFree` (identity with `free_sync`; no Engine flag).
 `gpu-sim` `mem_free_host` is `cuMemFreeHost` (identity with `free_host_pinned`; no Engine flag).
@@ -804,6 +805,7 @@ compiled kernel exists; no Engine flag).
 `gpu-sim` `add_graph_batch_mem_op` is `cuGraphAddBatchMemOpNode` (identity with `graph_add_batch_mem_op`; no Engine flag).
 `gpu-sim` `add_graph_batch_mem_op_with_flags` is `cuGraphAddBatchMemOpNode` flags (identity with `graph_add_batch_mem_op_with_flags`; no Engine flag).
 `gpu-sim` `add_graph_alloc` is `cuGraphAddMemAllocNode` (identity with `graph_add_alloc`; no Engine flag).
+`gpu-sim` `add_graph_alloc_with_access` is `cuGraphAddMemAllocNode` access (identity with `graph_add_alloc_with_access`; no Engine flag).
 `gpu-sim` `func_is_loaded` is `cuFuncIsLoaded` (`false` until a compiled
 kernel exists; no Engine flag).
 `gpu-sim` `func_load` is `cuFuncLoad` (Invalid; no compiled kernel; no
