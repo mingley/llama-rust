@@ -23729,6 +23729,23 @@ impl Sim {
         self.wait_event_with_flags(device, event, stream, EventWaitFlags::DEFAULT)
     }
 
+    /// `cuStreamWaitEvent`. Identity with [`Self::wait_event`]
+    /// (`cudaStreamWaitEvent`).
+    ///
+    /// Later ops on `stream` wait until `event` is recorded and complete.
+    /// Capture-legal. Distinct from [`Self::wait_event_with_flags`] and
+    /// [`Self::wait_event_external`]. This VM does not invent a
+    /// `wait_event_with_flags` identity this slice (`wait_event_with_flags`
+    /// stays).
+    pub fn stream_wait_event(
+        &mut self,
+        device: DeviceId,
+        event: EventId,
+        stream: StreamId,
+    ) -> Result<OpId, SimError> {
+        self.wait_event(device, event, stream)
+    }
+
     /// `cudaStreamWaitEvent(..., cudaEventWaitExternal)`.
     ///
     /// During capture this is a wait node that does **not** join the waiter into

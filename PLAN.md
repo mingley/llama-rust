@@ -7798,7 +7798,14 @@ model, do not celebrate the sim.
     or `cudaChooseDevice`. `gpu-profile capture` is still refused. Dual
     score still has no `$/M tokens`.
 
-806. [ ] Next numbered PLAN item after 805 is the next `gpu-sim` / Engine /
+806. [x] `gpu-sim` `Sim::stream_wait_event` is
+    `cuStreamWaitEvent`. Identity with `wait_event` (`cudaStreamWaitEvent`).
+    Later ops on the waiter wait the record. Capture-legal. Distinct from
+    `wait_event_with_flags`. This VM does not invent a `wait_event_with_flags` identity, Engine `--stream-wait-event`,
+    or `cudaChooseDevice`. `gpu-profile capture` is still refused. Dual
+    score still has no `$/M tokens`.
+
+807. [ ] Next numbered PLAN item after 806 is the next `gpu-sim` / Engine /
     serve / expertvm mechanical API that is still missing, or the next official
     decode family. Prefer remaining CUDA-shaped twins over more
     OpenAI HTTP veneer. Do not invent F32 `output.scale`. Do not invent a
@@ -8707,6 +8714,9 @@ model, do not celebrate the sim.
     Do not invent a second `cuEventRecordWithFlags` / `event_record_with_flags`.
     Do not invent Engine `--event-record-with-flags`. Do not invent
     `cuStreamWaitEvent` this slice. Do not reverse EventRecordWithFlags identity with record_event_with_flags.
+    Do not invent a second `cuStreamWaitEvent` / `stream_wait_event`.
+    Do not invent Engine `--stream-wait-event`. Do not invent
+    a wait-event-with-flags identity this slice. Do not reverse StreamWaitEvent identity with wait_event.
     Do not invent a second `cudaStreamAddCallback`.
     Do not invent Engine `--stream-callback` (same wall as second live
     `cudaLaunchHostFunc` after miss DMA).
@@ -9695,6 +9705,9 @@ model, do not celebrate the sim.
     Do not invent a second `event_record_with_flags` API. Do not invent
     Engine `--event-record-flags-identity`. Do not invent a stream-wait-event
     this slice. Do not reverse EventRecordWithFlags identity with record_event_with_flags.
+    Do not invent a second `stream_wait_event` API. Do not invent
+    Engine `--stream-wait-event-identity`. Do not invent a wait-event-flags
+    this slice. Do not reverse StreamWaitEvent identity with wait_event.
     Do not invent a second DeviceLaunch in-flight destroy-complete check or Engine
     `--device-launch-destroy`. Do not abort an in-flight DeviceLaunch when
     `destroy_graph` succeeds. Do not delay destroy of an idle exec. Do not invent
@@ -10866,6 +10879,9 @@ model, do not celebrate the sim.
     Do not invent a second `event_record_with_flags` method. Do not
     invent Engine `--cu-event-record-with-flags`. Do not reverse wrapping
     cuEventRecordWithFlags identity.
+    Do not invent a second `stream_wait_event` method. Do not
+    invent Engine `--cu-stream-wait-event`. Do not reverse wrapping
+    cuStreamWaitEvent identity.
     Do not
     spend the next item on an OpenAI-compatible HTTP veneer.
 
