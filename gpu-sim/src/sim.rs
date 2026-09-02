@@ -20372,6 +20372,7 @@ impl Sim {
     /// host-wait tax; explicit stream policy wins. Default `0` is identity.
     /// `expertvm sim --device-sync-policy blocking` sets
     /// [`DeviceFlags::SCHEDULE_BLOCKING_SYNC`].
+    /// Driver `cuCtxSetFlags` is [`Self::ctx_set_flags`].
     pub fn set_device_flags(&mut self, device: DeviceId, flags: u32) -> Result<(), SimError> {
         self.fail_if_capturing("cannot capture device flags")?;
         let _gpu = self.profile.gpu(device)?;
@@ -20486,10 +20487,21 @@ impl Sim {
     /// [`Self::device_primary_ctx_get_state`]. Distinct from
     /// [`Self::get_device_flags`] (runtime) and from
     /// [`Self::ctx_get_api_version`]. Unknown devices are Invalid
-    /// `"device not in profile"`. This VM does not invent `cuCtxSetFlags`
-    /// this slice (`set_device_flags` stays the runtime setter).
+    /// `"device not in profile"`. Driver `cuCtxSetFlags` is
+    /// [`Self::ctx_set_flags`].
     pub fn ctx_get_flags(&self, device: DeviceId) -> Result<u32, SimError> {
         self.get_device_flags(device)
+    }
+
+    /// `cuCtxSetFlags`. Identity with [`Self::set_device_flags`]
+    /// (`cudaSetDeviceFlags`).
+    ///
+    /// Capture refused. Distinct from [`Self::ctx_get_flags`] and
+    /// [`Self::device_primary_ctx_set_flags`] (always Invalid
+    /// `"primary context active"`). This VM does not invent
+    /// `cuCtxSetCacheConfig` this slice (`set_cache_config` stays).
+    pub fn ctx_set_flags(&mut self, device: DeviceId, flags: u32) -> Result<(), SimError> {
+        self.set_device_flags(device, flags)
     }
 
     /// `cuCtxGetCacheConfig` for the seeded primary context of `device`.

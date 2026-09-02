@@ -427,6 +427,7 @@ warp scheduler, L1, …   ← do not model
 | `ctx_get_api_version` is CUDA 13.0 for that primary context | `cuCtxGetApiVersion` |
 | `ctx_get_device` returns the explicit device of that primary context | `cuCtxGetDevice` |
 | `ctx_get_flags` wraps `get_device_flags` for that primary context | `cuCtxGetFlags` |
+| `ctx_set_flags` is identity with `set_device_flags` | `cuCtxSetFlags` |
 | `ctx_get_cache_config` wraps `get_cache_config` for that primary context | `cuCtxGetCacheConfig` |
 | `ctx_get_stream_priority_range` wraps `device_get_stream_priority_range` (H100 `(0, -5)`) | `cuCtxGetStreamPriorityRange` |
 | `ctx_get_limit` wraps `get_limit` for a `DeviceLimit` | `cuCtxGetLimit` |
@@ -1906,6 +1907,7 @@ encoding as `driver_get_version`; distinct from Hopper SM version).
 `stream_get_device`).
 `ctx_get_flags` is `cuCtxGetFlags` for that same primary context (same
 flags as `get_device_flags`; distinct from `device_primary_ctx_get_state`).
+`ctx_set_flags` is `cuCtxSetFlags` (identity with `set_device_flags`). Capture refused. Distinct from `ctx_get_flags` and `device_primary_ctx_set_flags`. No Engine `--ctx-set-flags`.
 `ctx_get_cache_config` is `cuCtxGetCacheConfig` for that same primary
 context (same as `get_cache_config`; distinct from `get_func_cache_config`).
 `ctx_get_stream_priority_range` is `cuCtxGetStreamPriorityRange` for that
@@ -1978,6 +1980,7 @@ name.
 Invalid `"primary context active"`; this VM seeds a primary context at
 construct). Distinct from `set_device_flags`. Capture cannot include it.
 No Engine `--primary-ctx-flags`.
+`ctx_set_flags` is `cuCtxSetFlags` (identity with `set_device_flags`). Capture refused. Distinct from `ctx_get_flags` and `device_primary_ctx_set_flags`. No Engine `--ctx-set-flags`.
 `ctx_get_id` is `cuCtxGetId` for the seeded primary context of an explicit
 device (no TLS current device). Distinct from `green_ctx_get_id`. Query;
 legal during capture. No Engine `--ctx-id`.
@@ -2029,6 +2032,7 @@ No Engine `--malloc-pitch-element`. `mem_alloc` is `cuMemAlloc` (identity with `
 `mem_cpy_3d_batch_async` is `cuMemcpy3DBatchAsync` (identity with `memcpy_3d_batch_async`). Capture refused. Distinct from `mem_cpy_batch_async`. No Engine `--mem-cpy-3d-batch-async`.
 `mem_cpy_3d_with_attributes` is `cuMemcpy3DWithAttributesAsync` (identity with `memcpy_3d_with_attributes`). Stream order is capture-legal (pinned/device). Distinct from `mem_cpy_3d_batch_async`. No Engine `--mem-cpy-3d-with-attributes`.
 `mem_cpy_with_attributes` is `cuMemcpyWithAttributesAsync` (identity with `memcpy_with_attributes`). Stream order is capture-legal (pinned/device). Distinct from `mem_cpy_batch_async`. No Engine `--mem-cpy-with-attributes`.
+`ctx_set_flags` is `cuCtxSetFlags` (identity with `set_device_flags`). Capture refused. Distinct from `ctx_get_flags` and `device_primary_ctx_set_flags`. No Engine `--ctx-set-flags`.
 `mem_host_get_flags` is `cuMemHostGetFlags` (identity with `host_get_flags`). Query; legal during capture. No Engine `--mem-host-get-flags`.
 `mem_host_get_device_pointer` is `cuMemHostGetDevicePointer` (identity with `host_get_device_pointer_with_flags`). Query; legal during capture. No Engine `--mem-host-get-device-pointer`.
 `mem_host_register` is `cuMemHostRegister` (identity with `host_register_with_flags`). Capture refused. No Engine `--mem-host-register`.
@@ -2076,6 +2080,7 @@ No Engine `--malloc-pitch-element`. `mem_alloc` is `cuMemAlloc` (identity with `
 `mem_cpy_3d_batch_async` is `cuMemcpy3DBatchAsync` (identity with `memcpy_3d_batch_async`). Capture refused. Distinct from `mem_cpy_batch_async`. No Engine `--mem-cpy-3d-batch-async`.
 `mem_cpy_3d_with_attributes` is `cuMemcpy3DWithAttributesAsync` (identity with `memcpy_3d_with_attributes`). Stream order is capture-legal (pinned/device). Distinct from `mem_cpy_3d_batch_async`. No Engine `--mem-cpy-3d-with-attributes`.
 `mem_cpy_with_attributes` is `cuMemcpyWithAttributesAsync` (identity with `memcpy_with_attributes`). Stream order is capture-legal (pinned/device). Distinct from `mem_cpy_batch_async`. No Engine `--mem-cpy-with-attributes`.
+`ctx_set_flags` is `cuCtxSetFlags` (identity with `set_device_flags`). Capture refused. Distinct from `ctx_get_flags` and `device_primary_ctx_set_flags`. No Engine `--ctx-set-flags`.
 `MemcpyOp` `height` / pitches are
 `cudaMemcpy2DAsync` (payload `width * height`). Origin fields are srcPos /
 dstPos (default 0). No Engine `--memcpy-origin`. `MemcpyOp` `src_lod` /

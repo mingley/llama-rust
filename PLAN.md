@@ -8190,7 +8190,14 @@ model, do not celebrate the sim.
     or `cudaChooseDevice`. `gpu-profile capture` is still refused. Dual
     score still has no `$/M tokens`.
 
-862. [ ] Next numbered PLAN item after 861 is the next `gpu-sim` / Engine /
+862. [x] `gpu-sim` `Sim::ctx_set_flags` is
+    `cuCtxSetFlags`. Identity with `set_device_flags`
+    (`cudaSetDeviceFlags`). Capture refused. Distinct from
+    `ctx_get_flags` and `device_primary_ctx_set_flags`. This VM does not invent `cuCtxSetCacheConfig`, Engine `--ctx-set-flags`,
+    or `cudaChooseDevice`. `gpu-profile capture` is still refused. Dual
+    score still has no `$/M tokens`.
+
+863. [ ] Next numbered PLAN item after 862 is the next `gpu-sim` / Engine /
     serve / expertvm mechanical API that is still missing, or the next official
     decode family. Prefer remaining CUDA-shaped twins over more
     OpenAI HTTP veneer. Do not invent F32 `output.scale`. Do not invent a
@@ -8403,8 +8410,8 @@ model, do not celebrate the sim.
     Do not invent occupancy SM counts from API version. Do not
     reverse CUDA 13.0.
     Do not invent a second `cuCtxGetFlags` / `ctx_get_flags`. Do not
-    invent Engine `--ctx-flags`. Do not invent `cuCtxSetFlags` this
-    slice. Do not reverse wrapping `get_device_flags`.
+    invent Engine `--ctx-flags`. Do not reverse wrapping `get_device_flags`.
+    Do not invent a second `cuCtxSetFlags` / `ctx_set_flags`. Do not reverse wrapping `set_device_flags`.
     Do not invent a second `cuCtxGetCacheConfig` /
     `ctx_get_cache_config`. Do not invent Engine `--ctx-cache-config`.
     Do not invent `cuCtxSetCacheConfig` this slice. Do not reverse
@@ -9267,6 +9274,9 @@ model, do not celebrate the sim.
     Do not invent a second `cuMemcpyWithAttributesAsync` / `mem_cpy_with_attributes`.
     Do not invent Engine `--mem-cpy-with-attributes`. Do not invent
     occupancy SM counts this slice. Do not reverse MemCpyWithAttributes identity with memcpy_with_attributes.
+    Do not invent a second `cuCtxSetFlags` / `ctx_set_flags`.
+    Do not invent Engine `--ctx-set-flags`. Do not invent
+    `cuCtxSetCacheConfig` this slice. Do not reverse CtxSetFlags identity with set_device_flags.
     Do not invent a second `cudaStreamAddCallback`.
     Do not invent Engine `--stream-callback` (same wall as second live
     `cudaLaunchHostFunc` after miss DMA).
@@ -10423,6 +10433,9 @@ model, do not celebrate the sim.
     Do not invent a second `mem_cpy_with_attributes` API. Do not invent
     Engine `--mem-cpy-with-attributes-identity`. Do not invent occupancy SM counts
     this slice. Do not reverse MemCpyWithAttributes identity with memcpy_with_attributes.
+    Do not invent a second `ctx_set_flags` API. Do not invent
+    Engine `--ctx-set-flags-identity`. Do not invent a ctx-set-cache-config
+    this slice. Do not reverse CtxSetFlags identity with set_device_flags.
     Do not invent a second DeviceLaunch in-flight destroy-complete check or Engine
     `--device-launch-destroy`. Do not abort an in-flight DeviceLaunch when
     `destroy_graph` succeeds. Do not delay destroy of an idle exec. Do not invent
@@ -11762,6 +11775,9 @@ model, do not celebrate the sim.
     Do not invent a second `mem_cpy_with_attributes` method. Do not
     invent Engine `--cu-mem-cpy-with-attributes`. Do not reverse wrapping
     cuMemcpyWithAttributesAsync identity.
+    Do not invent a second `ctx_set_flags` method. Do not
+    invent Engine `--cu-ctx-set-flags`. Do not reverse wrapping
+    cuCtxSetFlags identity.
     Do not
     spend the next item on an OpenAI-compatible HTTP veneer.
 

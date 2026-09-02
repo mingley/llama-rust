@@ -277,6 +277,10 @@
 //! [`mem_cpy_with_attributes`](Sim::mem_cpy_with_attributes) is `cuMemcpyWithAttributesAsync` (identity with
 //! [`memcpy_with_attributes`](Sim::memcpy_with_attributes)). Stream order is capture-legal (pinned/device). Distinct from
 //! [`mem_cpy_batch_async`](Sim::mem_cpy_batch_async). No Engine `--mem-cpy-with-attributes`.
+//! [`ctx_set_flags`](Sim::ctx_set_flags) is `cuCtxSetFlags` (identity with
+//! [`set_device_flags`](Sim::set_device_flags)). Capture refused. Distinct from
+//! [`ctx_get_flags`](Sim::ctx_get_flags) and
+//! [`device_primary_ctx_set_flags`](Sim::device_primary_ctx_set_flags). No Engine `--ctx-set-flags`.
 //! [`Sim::ipc_get_event`] / [`ipc_open_event`](Sim::ipc_open_event) are
 //! `cudaIpcGetEventHandle` / `cudaIpcOpenEventHandle` (interprocess events).
 //! [`Sim::create_shareable_pool`] is `cudaMemPoolCreate` with a POSIX-FD handle
@@ -762,6 +766,10 @@
 //! [`mem_cpy_with_attributes`](Sim::mem_cpy_with_attributes) is `cuMemcpyWithAttributesAsync` (identity with
 //! [`memcpy_with_attributes`](Sim::memcpy_with_attributes)). Stream order is capture-legal (pinned/device). Distinct from
 //! [`mem_cpy_batch_async`](Sim::mem_cpy_batch_async). No Engine `--mem-cpy-with-attributes`.
+//! [`ctx_set_flags`](Sim::ctx_set_flags) is `cuCtxSetFlags` (identity with
+//! [`set_device_flags`](Sim::set_device_flags)). Capture refused. Distinct from
+//! [`ctx_get_flags`](Sim::ctx_get_flags) and
+//! [`device_primary_ctx_set_flags`](Sim::device_primary_ctx_set_flags). No Engine `--ctx-set-flags`.
 //! [`mem_host_get_flags`](Sim::mem_host_get_flags) is `cuMemHostGetFlags` (identity with
 //! [`host_get_flags`](Sim::host_get_flags)). Query; legal during capture. No Engine `--mem-host-get-flags`.
 //! [`mem_host_get_device_pointer`](Sim::mem_host_get_device_pointer) is `cuMemHostGetDevicePointer` (identity with
@@ -897,6 +905,10 @@
 //! [`mem_cpy_with_attributes`](Sim::mem_cpy_with_attributes) is `cuMemcpyWithAttributesAsync` (identity with
 //! [`memcpy_with_attributes`](Sim::memcpy_with_attributes)). Stream order is capture-legal (pinned/device). Distinct from
 //! [`mem_cpy_batch_async`](Sim::mem_cpy_batch_async). No Engine `--mem-cpy-with-attributes`.
+//! [`ctx_set_flags`](Sim::ctx_set_flags) is `cuCtxSetFlags` (identity with
+//! [`set_device_flags`](Sim::set_device_flags)). Capture refused. Distinct from
+//! [`ctx_get_flags`](Sim::ctx_get_flags) and
+//! [`device_primary_ctx_set_flags`](Sim::device_primary_ctx_set_flags). No Engine `--ctx-set-flags`.
 //! [`Sim::pointer_get_attributes`] is `cudaPointerGetAttributes`.
 //! [`pointer_set_attribute`](Sim::pointer_set_attribute) /
 //! [`pointer_get_attribute`](Sim::pointer_get_attribute) are
@@ -1905,6 +1917,10 @@
 //! primary context (same flags as [`get_device_flags`](Sim::get_device_flags)).
 //! Distinct from [`device_primary_ctx_get_state`](Sim::device_primary_ctx_get_state)
 //! (also reports active). Query; legal during capture. No Engine `--ctx-flags`.
+//! [`ctx_set_flags`](Sim::ctx_set_flags) is `cuCtxSetFlags` (identity with
+//! [`set_device_flags`](Sim::set_device_flags)). Capture refused. Distinct from
+//! [`ctx_get_flags`](Sim::ctx_get_flags) and
+//! [`device_primary_ctx_set_flags`](Sim::device_primary_ctx_set_flags). No Engine `--ctx-set-flags`.
 //! [`ctx_get_cache_config`](Sim::ctx_get_cache_config) is `cuCtxGetCacheConfig`
 //! for that same primary context (same as [`get_cache_config`](Sim::get_cache_config)).
 //! Distinct from [`get_func_cache_config`](Sim::get_func_cache_config). Query;
@@ -30883,6 +30899,70 @@ mod tests {
         );
         sim.reset_device(d).unwrap();
         assert_eq!(sim.ctx_get_flags(d).unwrap(), DeviceFlags::SCHEDULE_AUTO);
+    }
+
+    #[test]
+    fn ctx_set_flags_is_cu_ctx_set_flags() {
+        let mut sim = Sim::new(h100());
+        let d = DeviceId(0);
+        let s = StreamId(0);
+        match sim.ctx_set_flags(DeviceId(99), DeviceFlags::MAP_HOST) {
+            Err(SimError::Invalid { why }) => assert!(why.contains("device"), "{why}"),
+            other => panic!("{other:?}"),
+        }
+        match sim.set_device_flags(DeviceId(99), DeviceFlags::MAP_HOST) {
+            Err(SimError::Invalid { why }) => assert!(why.contains("device"), "{why}"),
+            other => panic!("{other:?}"),
+        }
+        match sim.ctx_set_flags(d, 0x20) {
+            Err(SimError::Invalid { why }) => assert!(why.contains("device flags"), "{why}"),
+            other => panic!("{other:?}"),
+        }
+        match sim.set_device_flags(d, 0x20) {
+            Err(SimError::Invalid { why }) => assert!(why.contains("device flags"), "{why}"),
+            other => panic!("{other:?}"),
+        }
+        match sim.ctx_set_flags(d, 3) {
+            Err(SimError::Invalid { why }) => assert!(why.contains("device schedule"), "{why}"),
+            other => panic!("{other:?}"),
+        }
+        match sim.set_device_flags(d, 3) {
+            Err(SimError::Invalid { why }) => assert!(why.contains("device schedule"), "{why}"),
+            other => panic!("{other:?}"),
+        }
+        sim.ctx_set_flags(d, DeviceFlags::MAP_HOST).unwrap();
+        assert_eq!(sim.ctx_get_flags(d).unwrap(), DeviceFlags::MAP_HOST);
+        assert_eq!(sim.get_device_flags(d).unwrap(), DeviceFlags::MAP_HOST);
+        sim.set_device_flags(d, DeviceFlags::SCHEDULE_SPIN).unwrap();
+        assert_eq!(sim.ctx_get_flags(d).unwrap(), DeviceFlags::SCHEDULE_SPIN);
+        sim.begin_capture(d, s).unwrap();
+        match sim.ctx_set_flags(d, DeviceFlags::MAP_HOST) {
+            Err(SimError::Invalid { why }) => assert!(why.contains("capture"), "{why}"),
+            other => panic!("{other:?}"),
+        }
+        match sim.set_device_flags(d, DeviceFlags::MAP_HOST) {
+            Err(SimError::Invalid { why }) => assert!(why.contains("capture"), "{why}"),
+            other => panic!("{other:?}"),
+        }
+        let _g = sim.end_capture().unwrap();
+        match sim.device_primary_ctx_set_flags(d, DeviceFlags::MAP_HOST) {
+            Err(SimError::Invalid { why }) => {
+                assert!(why.contains("primary context active"), "{why}");
+            }
+            other => panic!("{other:?}"),
+        }
+        let mut eight = Sim::new(HardwareProfile::example_8xh100_nvlink());
+        eight
+            .ctx_set_flags(DeviceId(1), DeviceFlags::SCHEDULE_SPIN)
+            .unwrap();
+        assert_eq!(
+            eight.ctx_get_flags(DeviceId(0)).unwrap(),
+            DeviceFlags::SCHEDULE_AUTO
+        );
+        assert_eq!(
+            eight.ctx_get_flags(DeviceId(1)).unwrap(),
+            DeviceFlags::SCHEDULE_SPIN
+        );
     }
 
     #[test]
