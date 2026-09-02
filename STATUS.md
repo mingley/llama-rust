@@ -5,6 +5,14 @@ Visible five-turn extract: [docs/chatgpt-share-6a920fe1.md](docs/chatgpt-share-6
 Complete share-API extract: [docs/chatgpt-share-6a920fe1/](docs/chatgpt-share-6a920fe1/).
 Work lands on `main`. No PRs.
 
+## Shipped 2026-09-02 — CUDA `cuMemAllocHost`
+
+`gpu-sim` `Sim::mem_alloc_host` is `cuMemAllocHost`.
+Identity with `alloc_host_pinned` (`cudaMallocHost`). Capture refused.
+Distinct from `mem_host_alloc`.
+This VM does not invent `cuMemAllocManaged` or Engine `--mem-alloc-host`.
+`gpu-profile capture` is still refused. Dual score still has no `$/M tokens`.
+
 ## Shipped 2026-09-02 — CUDA `cuIpcOpenEventHandle`
 
 `gpu-sim` `Sim::ipc_open_event_handle` is `cuIpcOpenEventHandle`.

@@ -166,6 +166,9 @@
 //! [`ipc_open_event_handle`](Sim::ipc_open_event_handle) is `cuIpcOpenEventHandle` (identity with
 //! [`ipc_open_event`](Sim::ipc_open_event)). Capture refused. Distinct from
 //! [`ipc_get_event_handle`](Sim::ipc_get_event_handle). No Engine `--ipc-open-event-handle`.
+//! [`mem_alloc_host`](Sim::mem_alloc_host) is `cuMemAllocHost` (identity with
+//! [`alloc_host_pinned`](Sim::alloc_host_pinned)). Capture refused. Distinct from
+//! [`mem_host_alloc`](Sim::mem_host_alloc). No Engine `--mem-alloc-host`.
 //! [`Sim::ipc_get_event`] / [`ipc_open_event`](Sim::ipc_open_event) are
 //! `cudaIpcGetEventHandle` / `cudaIpcOpenEventHandle` (interprocess events).
 //! [`Sim::create_shareable_pool`] is `cudaMemPoolCreate` with a POSIX-FD handle
@@ -540,6 +543,9 @@
 //! [`free_host_pinned`](Sim::free_host_pinned)). Host-sync; capture refused. No Engine `--mem-free-host`.
 //! [`mem_host_alloc`](Sim::mem_host_alloc) is `cuMemHostAlloc` (identity with
 //! [`alloc_host_with_flags`](Sim::alloc_host_with_flags)). Capture refused. No Engine `--mem-host-alloc`.
+//! [`mem_alloc_host`](Sim::mem_alloc_host) is `cuMemAllocHost` (identity with
+//! [`alloc_host_pinned`](Sim::alloc_host_pinned)). Capture refused. Distinct from
+//! [`mem_host_alloc`](Sim::mem_host_alloc). No Engine `--mem-alloc-host`.
 //! [`mem_host_get_flags`](Sim::mem_host_get_flags) is `cuMemHostGetFlags` (identity with
 //! [`host_get_flags`](Sim::host_get_flags)). Query; legal during capture. No Engine `--mem-host-get-flags`.
 //! [`mem_host_get_device_pointer`](Sim::mem_host_get_device_pointer) is `cuMemHostGetDevicePointer` (identity with
@@ -564,6 +570,9 @@
 //! [`ipc_open_event_handle`](Sim::ipc_open_event_handle) is `cuIpcOpenEventHandle` (identity with
 //! [`ipc_open_event`](Sim::ipc_open_event)). Capture refused. Distinct from
 //! [`ipc_get_event_handle`](Sim::ipc_get_event_handle). No Engine `--ipc-open-event-handle`.
+//! [`mem_alloc_host`](Sim::mem_alloc_host) is `cuMemAllocHost` (identity with
+//! [`alloc_host_pinned`](Sim::alloc_host_pinned)). Capture refused. Distinct from
+//! [`mem_host_alloc`](Sim::mem_host_alloc). No Engine `--mem-alloc-host`.
 //! [`Sim::pointer_get_attributes`] is `cudaPointerGetAttributes`.
 //! [`pointer_set_attribute`](Sim::pointer_set_attribute) /
 //! [`pointer_get_attribute`](Sim::pointer_get_attribute) are
@@ -33509,6 +33518,40 @@ mod tests {
         sim.destroy_event(imp).unwrap();
         sim.destroy_event(imp2).unwrap();
         sim.destroy_event(EventId(4)).unwrap();
+    }
+
+    #[test]
+    fn mem_alloc_host_is_cu_mem_alloc_host() {
+        let mut sim = Sim::new(h100());
+        let d = DeviceId(0);
+        let s = StreamId(0);
+        match sim.mem_alloc_host(0) {
+            Err(SimError::Invalid { why }) => assert!(why.contains("zero-byte"), "{why}"),
+            other => panic!("{other:?}"),
+        }
+        match sim.alloc_host_pinned(0) {
+            Err(SimError::Invalid { why }) => assert!(why.contains("zero-byte"), "{why}"),
+            other => panic!("{other:?}"),
+        }
+        let pin = sim.mem_alloc_host(4096).unwrap();
+        assert!(sim.is_host_pinned(pin).unwrap());
+        assert_eq!(sim.host_get_flags(pin).unwrap(), HostAllocFlags::DEFAULT);
+        let pin2 = sim.alloc_host_pinned(64).unwrap();
+        assert_eq!(sim.host_get_flags(pin2).unwrap(), HostAllocFlags::DEFAULT);
+        let (free, total) = sim.mem_info(d).unwrap();
+        assert_eq!(free, total);
+        sim.begin_capture(d, s).unwrap();
+        match sim.mem_alloc_host(64) {
+            Err(SimError::Invalid { why }) => assert!(why.contains("capture"), "{why}"),
+            other => panic!("{other:?}"),
+        }
+        match sim.alloc_host_pinned(64) {
+            Err(SimError::Invalid { why }) => assert!(why.contains("capture"), "{why}"),
+            other => panic!("{other:?}"),
+        }
+        let _g = sim.end_capture().unwrap();
+        sim.mem_free_host(pin).unwrap();
+        sim.mem_free_host(pin2).unwrap();
     }
 
     #[test]

@@ -14339,6 +14339,16 @@ impl Sim {
         self.alloc_host_with_flags(bytes, HostAllocFlags::DEFAULT)
     }
 
+    /// `cuMemAllocHost`. Identity with [`Self::alloc_host_pinned`]
+    /// (`cudaMallocHost`).
+    ///
+    /// Capture refused. Distinct from [`Self::mem_host_alloc`] (`cuMemHostAlloc`).
+    /// This VM does not invent `cuMemAllocManaged` this slice
+    /// (`alloc_managed` stays).
+    pub fn mem_alloc_host(&mut self, bytes: u64) -> Result<AllocId, SimError> {
+        self.alloc_host_pinned(bytes)
+    }
+
     /// Pageable host allocation (`malloc`). Pin it with [`Self::host_register`].
     pub fn alloc_host(&mut self, bytes: u64) -> Result<AllocId, SimError> {
         self.insert_host(bytes, true, false, false, false, HostAllocFlags::DEFAULT)
@@ -17133,8 +17143,7 @@ impl Sim {
     /// `cuIpcOpenEventHandle`. Identity with [`Self::ipc_open_event`]
     /// (`cudaIpcOpenEventHandle`).
     ///
-    /// Capture refused. Distinct from [`Self::ipc_get_event_handle`]. This VM does
-    /// not invent `cuMemAllocHost` this slice (`alloc_host_pinned` stays).
+    /// Capture refused. Distinct from [`Self::ipc_get_event_handle`].
     pub fn ipc_open_event_handle(&mut self, handle: IpcEventHandleId) -> Result<EventId, SimError> {
         self.ipc_open_event(handle)
     }
