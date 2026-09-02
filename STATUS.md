@@ -5,6 +5,14 @@ Visible five-turn extract: [docs/chatgpt-share-6a920fe1.md](docs/chatgpt-share-6
 Complete share-API extract: [docs/chatgpt-share-6a920fe1/](docs/chatgpt-share-6a920fe1/).
 Work lands on `main`. No PRs.
 
+## Shipped 2026-09-02 — CUDA `cuGraphChildGraphNodeGetGraph`
+
+`gpu-sim` `Sim::get_graph_child_graph_node_graph` is `cuGraphChildGraphNodeGetGraph`.
+Identity with `graph_child_get_graph` (`cudaGraphChildGraphNodeGetGraph`).
+Query; legal during capture. Distinct from `graph_exec_child_get_graph`.
+This VM does not invent occupancy SM counts or Engine `--graph-child-get-graph`.
+`gpu-profile capture` is still refused. Dual score still has no `$/M tokens`.
+
 ## Shipped 2026-09-02 — CUDA `cuGraphExecEventWaitNodeGetEvent`
 
 `gpu-sim` `Sim::get_graph_exec_event_wait_node_event` is `cuGraphExecEventWaitNodeGetEvent`.
