@@ -7374,7 +7374,14 @@ model, do not celebrate the sim.
     or `cudaChooseDevice`. `gpu-profile capture` is still refused. Dual
     score still has no `$/M tokens`.
 
-746. [ ] Next numbered PLAN item after 745 is the next `gpu-sim` / Engine /
+746. [x] `gpu-sim` `Sim::device_unregister_async_notification` is
+    `cuDeviceUnregisterAsyncNotification`. Always Invalid `"async unreg"`
+    because device async callbacks are not modeled. Query; legal during capture.
+    Distinct from `device_register_async_notification`. This VM does not invent `cuMemMapArrayAsync`, Engine `--async-unreg`,
+    or `cudaChooseDevice`. `gpu-profile capture` is still refused. Dual
+    score still has no `$/M tokens`.
+
+747. [ ] Next numbered PLAN item after 746 is the next `gpu-sim` / Engine /
     serve / expertvm mechanical API that is still missing, or the next official
     decode family. Prefer remaining CUDA-shaped twins over more
     OpenAI HTTP veneer. Do not invent F32 `output.scale`. Do not invent a
@@ -8103,6 +8110,9 @@ model, do not celebrate the sim.
     Do not invent a second `cuDeviceRegisterAsyncNotification` / `device_register_async_notification`.
     Do not invent Engine `--async-notify`. Do not invent
     `cuDeviceUnregisterAsyncNotification` this slice. Do not reverse `"async notify"`.
+    Do not invent a second `cuDeviceUnregisterAsyncNotification` / `device_unregister_async_notification`.
+    Do not invent Engine `--async-unreg`. Do not invent
+    `cuMemMapArrayAsync` this slice. Do not reverse `"async unreg"`.
     Do not invent a second `cudaStreamAddCallback`.
     Do not invent Engine `--stream-callback` (same wall as second live
     `cudaLaunchHostFunc` after miss DMA).
@@ -8911,6 +8921,9 @@ model, do not celebrate the sim.
     Do not invent a second `device_register_async_notification` API. Do not invent
     Engine `--register-async-notify`. Do not invent a CUasyncCallbackHandle
     this slice. Do not reverse Device RegisterAsyncNotification remaining unsupported.
+    Do not invent a second `device_unregister_async_notification` API. Do not invent
+    Engine `--unregister-async-notify`. Do not invent a CUarrayMapInfo list
+    this slice. Do not reverse Device UnregisterAsyncNotification remaining unsupported.
     Do not invent a second DeviceLaunch in-flight destroy-complete check or Engine
     `--device-launch-destroy`. Do not abort an in-flight DeviceLaunch when
     `destroy_graph` succeeds. Do not delay destroy of an idle exec. Do not invent
@@ -9902,6 +9915,9 @@ model, do not celebrate the sim.
     Do not invent a second `device_register_async_notification` method. Do not
     invent Engine `--cu-async-notify`. Do not reverse wrapping
     cuDeviceRegisterAsyncNotification Invalid.
+    Do not invent a second `device_unregister_async_notification` method. Do not
+    invent Engine `--cu-async-unreg`. Do not reverse wrapping
+    cuDeviceUnregisterAsyncNotification Invalid.
     Do not
     spend the next item on an OpenAI-compatible HTTP veneer.
 

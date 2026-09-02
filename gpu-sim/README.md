@@ -260,6 +260,7 @@ warp scheduler, L1, …   ← do not model
 | `checkpoint_process_get_restore_thread_id` is Invalid (CUDA process checkpoint is not modeled) | `cuCheckpointProcessGetRestoreThreadId` |
 | `checkpoint_process_get_state` is Invalid (CUDA process checkpoint is not modeled) | `cuCheckpointProcessGetState` |
 | `device_register_async_notification` is Invalid (device async callbacks are not modeled) | `cuDeviceRegisterAsyncNotification` |
+| `device_unregister_async_notification` is Invalid (device async callbacks are not modeled) | `cuDeviceUnregisterAsyncNotification` |
 | `driver_init` is a 1 ns no-op; flags must be 0 | `cuInit` |
 | `profiler_start` is a 1 ns no-op; capture refused | `cuProfilerStart` / `cudaProfilerStart` |
 | `profiler_stop` is a 1 ns no-op; capture refused | `cuProfilerStop` / `cudaProfilerStop` |
@@ -1535,6 +1536,9 @@ Invalid `"ckpt state"`; CUDA process checkpoint is not modeled). Distinct from
 `device_register_async_notification` is `cuDeviceRegisterAsyncNotification`
 (always Invalid `"async notify"`; device async callbacks are not modeled).
 Distinct from `stream_add_callback`. Query; legal during capture. No Engine `--async-notify`.
+`device_unregister_async_notification` is `cuDeviceUnregisterAsyncNotification`
+(always Invalid `"async unreg"`; device async callbacks are not modeled).
+Distinct from `device_register_async_notification`. Query; legal during capture. No Engine `--async-unreg`.
 `driver_init` is `cuInit` (flags 0; already initialized at construct;
 1 ns no-op; capture cannot include it; distinct from `init_device`).
 `profiler_start` is `cuProfilerStart` plus `cudaProfilerStart` (1 ns no-op;

@@ -21129,6 +21129,20 @@ impl Sim {
         })
     }
 
+    /// `cuDeviceUnregisterAsyncNotification` /
+    /// `cudaDeviceUnregisterAsyncNotification`.
+    ///
+    /// Always Invalid `"async unreg"` (device async callbacks are not
+    /// modeled). Distinct from [`Self::device_register_async_notification`]
+    /// (why is not `"async notify"`) and from [`Self::stream_add_callback`].
+    /// Unknown devices are Invalid `"device not in profile"`. Query; legal
+    /// during capture. This VM does not invent `cuMemMapArrayAsync` this
+    /// slice.
+    pub fn device_unregister_async_notification(&self, device: DeviceId) -> Result<(), SimError> {
+        let _gpu = self.profile.gpu(device)?;
+        Err(SimError::Invalid { why: "async unreg" })
+    }
+
     /// `cuInit`. Host-synchronous. Capture cannot include it.
     ///
     /// Flags must be 0 (CUDA requires 0). This VM is already initialized at

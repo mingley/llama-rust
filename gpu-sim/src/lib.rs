@@ -1103,6 +1103,9 @@
 //! [`device_register_async_notification`](Sim::device_register_async_notification)
 //! is `cuDeviceRegisterAsyncNotification` (always Invalid `"async notify"`).
 //! Query; legal during capture. No Engine `--async-notify`.
+//! [`device_unregister_async_notification`](Sim::device_unregister_async_notification)
+//! is `cuDeviceUnregisterAsyncNotification` (always Invalid `"async unreg"`).
+//! Query; legal during capture. No Engine `--async-unreg`.
 //! [`Sim::driver_init`] is `cuInit` (flags 0; already initialized
 //! at [`Sim::new`]; 1 ns no-op). Distinct from [`init_device`](Sim::init_device).
 //! Capture cannot include it. No Engine `--cu-init`.
@@ -19541,6 +19544,55 @@ mod tests {
             Err(SimError::Invalid { why }) => {
                 assert!(why.contains("async map"), "{why}");
                 assert!(!why.contains("async notify"), "{why}");
+            }
+            other => panic!("{other:?}"),
+        }
+        match sim.device_unregister_async_notification(d) {
+            Err(SimError::Invalid { why }) => {
+                assert!(why.contains("async unreg"), "{why}");
+                assert!(!why.contains("async notify"), "{why}");
+            }
+            other => panic!("{other:?}"),
+        }
+    }
+
+    #[test]
+    fn device_unregister_async_notification_is_unsupported() {
+        let mut sim = Sim::new(h100());
+        let d = DeviceId(0);
+        match sim.device_unregister_async_notification(d) {
+            Err(SimError::Invalid { why }) => {
+                assert!(why.contains("async unreg"), "{why}");
+                assert!(!why.contains("async notify"), "{why}");
+                assert!(!why.contains("stream callback"), "{why}");
+            }
+            other => panic!("{other:?}"),
+        }
+        sim.begin_capture(d, StreamId(0)).unwrap();
+        match sim.device_unregister_async_notification(d) {
+            Err(SimError::Invalid { why }) => {
+                assert!(why.contains("async unreg"), "{why}");
+            }
+            other => panic!("{other:?}"),
+        }
+        let _g = sim.end_capture().unwrap();
+        match sim.device_unregister_async_notification(DeviceId(99)) {
+            Err(SimError::Invalid { why }) => {
+                assert!(why.contains("device not in profile"), "{why}");
+            }
+            other => panic!("{other:?}"),
+        }
+        match sim.device_register_async_notification(d) {
+            Err(SimError::Invalid { why }) => {
+                assert!(why.contains("async notify"), "{why}");
+                assert!(!why.contains("async unreg"), "{why}");
+            }
+            other => panic!("{other:?}"),
+        }
+        match sim.gl_unmap_buffer_object_async(d, StreamId(0)) {
+            Err(SimError::Invalid { why }) => {
+                assert!(why.contains("unmap async"), "{why}");
+                assert!(!why.contains("async unreg"), "{why}");
             }
             other => panic!("{other:?}"),
         }

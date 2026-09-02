@@ -614,6 +614,9 @@ is not modeled; no Engine flag).
 `gpu-sim` `device_register_async_notification` is
 `cuDeviceRegisterAsyncNotification` (Invalid; device async callbacks are
 not modeled; no Engine flag).
+`gpu-sim` `device_unregister_async_notification` is
+`cuDeviceUnregisterAsyncNotification` (Invalid; device async callbacks are
+not modeled; no Engine flag).
 `gpu-sim` `ctx_get_device` is `cuCtxGetDevice` (explicit device of the
 seeded primary context; no Engine flag).
 `gpu-sim` `ctx_reset_persisting_l2_cache` is `cuCtxResetPersistingL2Cache`
