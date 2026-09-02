@@ -154,6 +154,9 @@
 //! [`Sim::ipc_get`] of a `cudaMallocAsync` pointer is Invalid (`not device ipc`).
 //! [`ipc_get_mem_handle`](Sim::ipc_get_mem_handle) is `cuIpcGetMemHandle` (identity with
 //! [`ipc_get`](Sim::ipc_get)). Host-sync; capture refused. No Engine `--ipc-get-mem-handle`.
+//! [`ipc_open_mem_handle`](Sim::ipc_open_mem_handle) is `cuIpcOpenMemHandle` (identity with
+//! [`ipc_open_with_flags`](Sim::ipc_open_with_flags)). Capture refused. Distinct from
+//! [`ipc_open`](Sim::ipc_open). No Engine `--ipc-open-mem-handle`.
 //! [`Sim::ipc_get_event`] / [`ipc_open_event`](Sim::ipc_open_event) are
 //! `cudaIpcGetEventHandle` / `cudaIpcOpenEventHandle` (interprocess events).
 //! [`Sim::create_shareable_pool`] is `cudaMemPoolCreate` with a POSIX-FD handle
@@ -540,6 +543,9 @@
 //! [`host_register_with_size`](Sim::host_register_with_size)). Capture refused. No Engine `--mem-host-register-size`.
 //! [`ipc_get_mem_handle`](Sim::ipc_get_mem_handle) is `cuIpcGetMemHandle` (identity with
 //! [`ipc_get`](Sim::ipc_get)). Host-sync; capture refused. No Engine `--ipc-get-mem-handle`.
+//! [`ipc_open_mem_handle`](Sim::ipc_open_mem_handle) is `cuIpcOpenMemHandle` (identity with
+//! [`ipc_open_with_flags`](Sim::ipc_open_with_flags)). Capture refused. Distinct from
+//! [`ipc_open`](Sim::ipc_open). No Engine `--ipc-open-mem-handle`.
 //! [`Sim::pointer_get_attributes`] is `cudaPointerGetAttributes`.
 //! [`pointer_set_attribute`](Sim::pointer_set_attribute) /
 //! [`pointer_get_attribute`](Sim::pointer_get_attribute) are
@@ -33281,6 +33287,76 @@ mod tests {
         let _g = sim.end_capture().unwrap();
         sim.mem_free(a).unwrap();
         sim.free_sync(m).unwrap();
+    }
+
+    #[test]
+    fn ipc_open_mem_handle_is_cu_ipc_open_mem_handle() {
+        let mut sim = Sim::new(h100());
+        let d = DeviceId(0);
+        let s = StreamId(0);
+        match sim.ipc_open_mem_handle(d, IpcHandleId(99), IpcMemFlags::DEFAULT) {
+            Err(SimError::Invalid { why }) => assert!(why.contains("unknown ipc"), "{why}"),
+            other => panic!("{other:?}"),
+        }
+        match sim.ipc_open_with_flags(d, IpcHandleId(99), IpcMemFlags::DEFAULT) {
+            Err(SimError::Invalid { why }) => assert!(why.contains("unknown ipc"), "{why}"),
+            other => panic!("{other:?}"),
+        }
+        match sim.ipc_open_mem_handle(d, IpcHandleId(99), 2) {
+            Err(SimError::Invalid { why }) => assert!(why.contains("ipc open flags"), "{why}"),
+            other => panic!("{other:?}"),
+        }
+        match sim.ipc_open_with_flags(d, IpcHandleId(99), 2) {
+            Err(SimError::Invalid { why }) => assert!(why.contains("ipc open flags"), "{why}"),
+            other => panic!("{other:?}"),
+        }
+        let a = sim.mem_alloc(d, 4096).unwrap();
+        let h = sim.ipc_get_mem_handle(a).unwrap();
+        match sim.ipc_open_mem_handle(DeviceId(99), h, IpcMemFlags::DEFAULT) {
+            Err(SimError::Invalid { why }) => {
+                assert!(why.contains("ipc device mismatch"), "{why}");
+            }
+            other => panic!("{other:?}"),
+        }
+        match sim.ipc_open_with_flags(DeviceId(99), h, IpcMemFlags::DEFAULT) {
+            Err(SimError::Invalid { why }) => {
+                assert!(why.contains("ipc device mismatch"), "{why}");
+            }
+            other => panic!("{other:?}"),
+        }
+        let used = sim.hbm_used(d).unwrap();
+        let imp = sim.ipc_open_mem_handle(d, h, IpcMemFlags::DEFAULT).unwrap();
+        assert!(sim.is_ipc_import(imp).unwrap());
+        assert_eq!(sim.hbm_used(d).unwrap(), used);
+        let imp2 = sim.ipc_open_with_flags(d, h, IpcMemFlags::DEFAULT).unwrap();
+        assert!(sim.is_ipc_import(imp2).unwrap());
+        assert_eq!(sim.hbm_used(d).unwrap(), used);
+        sim.ipc_close(imp).unwrap();
+        sim.ipc_close(imp2).unwrap();
+        let lazy = sim
+            .ipc_open_mem_handle(d, h, IpcMemFlags::LAZY_ENABLE_PEER_ACCESS)
+            .unwrap();
+        assert!(sim.is_ipc_import(lazy).unwrap());
+        sim.ipc_close(lazy).unwrap();
+        sim.begin_capture(d, s).unwrap();
+        match sim.ipc_open_mem_handle(d, h, IpcMemFlags::DEFAULT) {
+            Err(SimError::Invalid { why }) => assert!(why.contains("capture"), "{why}"),
+            other => panic!("{other:?}"),
+        }
+        match sim.ipc_open_with_flags(d, h, IpcMemFlags::DEFAULT) {
+            Err(SimError::Invalid { why }) => assert!(why.contains("capture"), "{why}"),
+            other => panic!("{other:?}"),
+        }
+        let _g = sim.end_capture().unwrap();
+        sim.mem_free(a).unwrap();
+        match sim.ipc_open_mem_handle(d, h, IpcMemFlags::DEFAULT) {
+            Err(SimError::Invalid { why }) => assert!(why.contains("freed"), "{why}"),
+            other => panic!("{other:?}"),
+        }
+        match sim.ipc_open_with_flags(d, h, IpcMemFlags::DEFAULT) {
+            Err(SimError::Invalid { why }) => assert!(why.contains("freed"), "{why}"),
+            other => panic!("{other:?}"),
+        }
     }
 
     #[test]

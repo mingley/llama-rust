@@ -3946,7 +3946,8 @@ impl HostGetDevicePointerFlags {
     pub const DEFAULT: u32 = 0;
 }
 
-/// `cudaIpcOpenMemHandle` flags for [`crate::Sim::ipc_open_with_flags`].
+/// `cudaIpcOpenMemHandle` flags for [`crate::Sim::ipc_open_with_flags`]
+/// and [`crate::Sim::ipc_open_mem_handle`].
 ///
 /// [`Self::LAZY_ENABLE_PEER_ACCESS`] is a no-op: the dest GPU must already hold the
 /// source. Cross-GPU lazy peer is not modeled. Unknown bits are Invalid

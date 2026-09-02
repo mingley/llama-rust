@@ -16932,8 +16932,7 @@ impl Sim {
 
     /// `cuIpcGetMemHandle`. Identity with [`Self::ipc_get`] (`cudaIpcGetMemHandle`).
     ///
-    /// Host-sync; capture refused. Distinct from [`Self::ipc_get_event`]. This VM
-    /// does not invent `cuIpcOpenMemHandle` this slice (`ipc_open` stays).
+    /// Host-sync; capture refused. Distinct from [`Self::ipc_get_event`].
     pub fn ipc_get_mem_handle(&mut self, id: AllocId) -> Result<IpcHandleId, SimError> {
         self.ipc_get(id)
     }
@@ -17015,6 +17014,20 @@ impl Sim {
             });
         }
         self.ipc_open(device, handle)
+    }
+
+    /// `cuIpcOpenMemHandle`. Identity with [`Self::ipc_open_with_flags`]
+    /// (`cudaIpcOpenMemHandle` flags).
+    ///
+    /// Capture refused. Distinct from [`Self::ipc_open`]. This VM does not invent
+    /// `cuIpcCloseMemHandle` this slice (`ipc_close` stays).
+    pub fn ipc_open_mem_handle(
+        &mut self,
+        device: DeviceId,
+        handle: IpcHandleId,
+        flags: u32,
+    ) -> Result<AllocId, SimError> {
+        self.ipc_open_with_flags(device, handle, flags)
     }
 
     /// `cudaIpcCloseMemHandle`. Does not refund source HBM.
