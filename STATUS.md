@@ -5,6 +5,16 @@ Visible five-turn extract: [docs/chatgpt-share-6a920fe1.md](docs/chatgpt-share-6
 Complete share-API extract: [docs/chatgpt-share-6a920fe1/](docs/chatgpt-share-6a920fe1/).
 Work lands on `main`. No PRs.
 
+## Shipped 2026-09-02 — CUDA `cuTexRefGetAddressMode`
+
+`gpu-sim` `Sim::tex_ref_get_address_mode` is `cuTexRefGetAddressMode`.
+Always Invalid `"texref getmode"` because CUDA texture references are not
+modeled. Query; legal during capture. Distinct from
+`tex_ref_get_address` (why is not `"texref getaddr"`) and
+`tex_ref_set_address_mode` (why is not `"texref addrmode"`).
+This VM does not invent `cuTexRefGetFilterMode` or Engine `--texref-getmode`.
+`gpu-profile capture` is still refused. Dual score still has no `$/M tokens`.
+
 ## Shipped 2026-09-02 — CUDA `cuTexRefGetAddress`
 
 `gpu-sim` `Sim::tex_ref_get_address` is `cuTexRefGetAddress`.

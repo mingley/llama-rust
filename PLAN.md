@@ -7521,7 +7521,14 @@ model, do not celebrate the sim.
     or `cudaChooseDevice`. `gpu-profile capture` is still refused. Dual
     score still has no `$/M tokens`.
 
-767. [ ] Next numbered PLAN item after 766 is the next `gpu-sim` / Engine /
+767. [x] `gpu-sim` `Sim::tex_ref_get_address_mode` is
+    `cuTexRefGetAddressMode`. Always Invalid `"texref getmode"`
+    because CUDA texture references are not modeled. Query; legal during capture.
+    Distinct from `tex_ref_get_address` and `tex_ref_set_address_mode`. This VM does not invent `cuTexRefGetFilterMode`, Engine `--texref-getmode`,
+    or `cudaChooseDevice`. `gpu-profile capture` is still refused. Dual
+    score still has no `$/M tokens`.
+
+768. [ ] Next numbered PLAN item after 767 is the next `gpu-sim` / Engine /
     serve / expertvm mechanical API that is still missing, or the next official
     decode family. Prefer remaining CUDA-shaped twins over more
     OpenAI HTTP veneer. Do not invent F32 `output.scale`. Do not invent a
@@ -8313,6 +8320,9 @@ model, do not celebrate the sim.
     Do not invent a second `cuTexRefGetAddress` / `tex_ref_get_address`.
     Do not invent Engine `--texref-getaddr`. Do not invent
     `cuTexRefGetAddressMode` this slice. Do not reverse `"texref getaddr"`.
+    Do not invent a second `cuTexRefGetAddressMode` / `tex_ref_get_address_mode`.
+    Do not invent Engine `--texref-getmode`. Do not invent
+    `cuTexRefGetFilterMode` this slice. Do not reverse `"texref getmode"`.
     Do not invent a second `cudaStreamAddCallback`.
     Do not invent Engine `--stream-callback` (same wall as second live
     `cudaLaunchHostFunc` after miss DMA).
@@ -9184,6 +9194,9 @@ model, do not celebrate the sim.
     Do not invent a second `tex_ref_get_address` API. Do not invent
     Engine `--get-tex-ref-addr`. Do not invent a CUtexref get-address-mode
     this slice. Do not reverse TexRef GetAddress remaining unsupported.
+    Do not invent a second `tex_ref_get_address_mode` API. Do not invent
+    Engine `--get-tex-ref-addr-mode`. Do not invent a CUtexref get-filter-mode
+    this slice. Do not reverse TexRef GetAddressMode remaining unsupported.
     Do not invent a second DeviceLaunch in-flight destroy-complete check or Engine
     `--device-launch-destroy`. Do not abort an in-flight DeviceLaunch when
     `destroy_graph` succeeds. Do not delay destroy of an idle exec. Do not invent
@@ -10238,6 +10251,9 @@ model, do not celebrate the sim.
     Do not invent a second `tex_ref_get_address` method. Do not
     invent Engine `--cu-tex-ref-get-address`. Do not reverse wrapping
     cuTexRefGetAddress Invalid.
+    Do not invent a second `tex_ref_get_address_mode` method. Do not
+    invent Engine `--cu-tex-ref-get-address-mode`. Do not reverse wrapping
+    cuTexRefGetAddressMode Invalid.
     Do not
     spend the next item on an OpenAI-compatible HTTP veneer.
 

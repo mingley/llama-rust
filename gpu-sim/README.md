@@ -296,6 +296,7 @@ warp scheduler, L1, …   ← do not model
 | `tex_ref_get_array` is Invalid (no `CUtexref` / `CUarray` handles) | `cuTexRefGetArray` |
 | `tex_ref_get_mipmapped_array` is Invalid (no `CUtexref` / mipmapped-array handles) | `cuTexRefGetMipmappedArray` |
 | `tex_ref_get_address` is Invalid (no `CUtexref` linear bindings) | `cuTexRefGetAddress` |
+| `tex_ref_get_address_mode` is Invalid (no `CUtexref` addressing) | `cuTexRefGetAddressMode` |
 | `module_get_surf_ref` is Invalid (no `CUmodule` / `CUsurfref`) | `cuModuleGetSurfRef` |
 | `library_load_data` is Invalid (no cubin / `CUlibrary`) | `cuLibraryLoadData` |
 | `library_load_from_file` is Invalid (no cubin path / `CUlibrary`) | `cuLibraryLoadFromFile` |
@@ -1636,6 +1637,8 @@ Distinct from `tex_ref_set_flags` and `tex_ref_set_array`. Query; legal during c
 Distinct from `tex_ref_get_array` and `tex_ref_set_mipmapped_array`. Query; legal during capture. No Engine `--texref-getmip`.
 `tex_ref_get_address` is `cuTexRefGetAddress` (always Invalid `"texref getaddr"`; no `CUtexref`).
 Distinct from `tex_ref_get_mipmapped_array` and `tex_ref_set_address`. Query; legal during capture. No Engine `--texref-getaddr`.
+`tex_ref_get_address_mode` is `cuTexRefGetAddressMode` (always Invalid `"texref getmode"`; no `CUtexref`).
+Distinct from `tex_ref_get_address` and `tex_ref_set_address_mode`. Query; legal during capture. No Engine `--texref-getmode`.
 `module_get_surf_ref` is `cuModuleGetSurfRef` (always Invalid `"module surfref"`; no cubin).
 Distinct from `module_get_tex_ref` and `surf_object_create`. Query; legal during capture. No Engine `--module-surfref`.
 `library_load_data` is `cuLibraryLoadData` (always Invalid `"cuda library"`;

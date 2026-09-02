@@ -21662,6 +21662,21 @@ impl Sim {
         })
     }
 
+    /// `cuTexRefGetAddressMode`. CUDA texture references are not modeled.
+    ///
+    /// Always Invalid `"texref getmode"` (this VM has no `CUtexref`
+    /// addressing). Distinct from [`Self::tex_ref_get_address`] (why is not
+    /// `"texref getaddr"`) and from [`Self::tex_ref_set_address_mode`] (why
+    /// is not `"texref addrmode"`). Unknown devices are Invalid `"device not in profile"`.
+    /// Query; legal during capture. This VM does not invent
+    /// `cuTexRefGetFilterMode` this slice.
+    pub fn tex_ref_get_address_mode(&self, device: DeviceId) -> Result<(), SimError> {
+        let _gpu = self.profile.gpu(device)?;
+        Err(SimError::Invalid {
+            why: "texref getmode",
+        })
+    }
+
     /// `cuModuleGetSurfRef`. CUDA modules are not modeled.
     ///
     /// Always Invalid `"module surfref"` (this VM has no `CUmodule` and
