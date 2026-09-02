@@ -5,6 +5,13 @@ Visible five-turn extract: [docs/chatgpt-share-6a920fe1.md](docs/chatgpt-share-6
 Complete share-API extract: [docs/chatgpt-share-6a920fe1/](docs/chatgpt-share-6a920fe1/).
 Work lands on `main`. No PRs.
 
+## Shipped 2026-09-02 — CUDA `cuFuncGetAttribute` non-portable cluster size
+
+`gpu-sim` `Sim::func_get_non_portable_cluster_size_allowed` is `cuFuncGetAttribute` non-portable cluster size.
+Identity with `non_portable_cluster_size_allowed` (`cudaFuncGetAttribute` NonPortableClusterSizeAllowed). Query; legal during capture. Distinct from `func_set_non_portable_cluster_size_allowed`.
+This VM does not invent occupancy SM counts or Engine `--func-get-non-portable-cluster-size-allowed`.
+`gpu-profile capture` is still refused. Dual score still has no `$/M tokens`.
+
 ## Shipped 2026-09-02 — CUDA `cuFuncSetAttribute` non-portable cluster size
 
 `gpu-sim` `Sim::func_set_non_portable_cluster_size_allowed` is `cuFuncSetAttribute` non-portable cluster size.

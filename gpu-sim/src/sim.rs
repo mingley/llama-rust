@@ -30727,7 +30727,6 @@ impl Sim {
     /// [`Self::set_non_portable_cluster_size_allowed`] (`cudaFuncSetAttribute` NonPortableClusterSizeAllowed).
     ///
     /// Capture legal. Distinct from [`Self::func_get_required_cluster_depth`].
-    /// This VM does not invent occupancy SM counts this slice.
     pub fn func_set_non_portable_cluster_size_allowed(
         &mut self,
         device: DeviceId,
@@ -30737,9 +30736,21 @@ impl Sim {
     }
 
     /// Current [`Self::set_non_portable_cluster_size_allowed`] for `device`.
+    /// Driver `cuFuncGetAttribute` non-portable cluster size is [`Self::func_get_non_portable_cluster_size_allowed`].
+    /// Identity wrap [`Self::func_get_non_portable_cluster_size_allowed`].
     #[must_use]
     pub fn non_portable_cluster_size_allowed(&self, device: DeviceId) -> bool {
         self.non_portable_cluster.contains(&device)
+    }
+
+    /// `cuFuncGetAttribute` non-portable cluster size. Identity with
+    /// [`Self::non_portable_cluster_size_allowed`] (`cudaFuncGetAttribute` NonPortableClusterSizeAllowed).
+    ///
+    /// Query; legal during capture. Distinct from [`Self::func_set_non_portable_cluster_size_allowed`].
+    /// This VM does not invent occupancy SM counts this slice.
+    #[must_use]
+    pub fn func_get_non_portable_cluster_size_allowed(&self, device: DeviceId) -> bool {
+        self.non_portable_cluster_size_allowed(device)
     }
 
     fn validate_dynamic_shared(
