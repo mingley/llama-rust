@@ -7451,7 +7451,14 @@ model, do not celebrate the sim.
     or `cudaChooseDevice`. `gpu-profile capture` is still refused. Dual
     score still has no `$/M tokens`.
 
-757. [ ] Next numbered PLAN item after 756 is the next `gpu-sim` / Engine /
+757. [x] `gpu-sim` `Sim::tex_ref_set_filter_mode` is
+    `cuTexRefSetFilterMode`. Always Invalid `"texref filter"`
+    because CUDA texture references are not modeled. Query; legal during capture.
+    Distinct from `tex_ref_set_address_mode` and `tex_object_get_texture_desc`. This VM does not invent `cuTexRefSetMipmapFilterMode`, Engine `--texref-filter`,
+    or `cudaChooseDevice`. `gpu-profile capture` is still refused. Dual
+    score still has no `$/M tokens`.
+
+758. [ ] Next numbered PLAN item after 757 is the next `gpu-sim` / Engine /
     serve / expertvm mechanical API that is still missing, or the next official
     decode family. Prefer remaining CUDA-shaped twins over more
     OpenAI HTTP veneer. Do not invent F32 `output.scale`. Do not invent a
@@ -8213,6 +8220,9 @@ model, do not celebrate the sim.
     Do not invent a second `cuTexRefSetAddressMode` / `tex_ref_set_address_mode`.
     Do not invent Engine `--texref-addrmode`. Do not invent
     `cuTexRefSetFilterMode` this slice. Do not reverse `"texref addrmode"`.
+    Do not invent a second `cuTexRefSetFilterMode` / `tex_ref_set_filter_mode`.
+    Do not invent Engine `--texref-filter`. Do not invent
+    `cuTexRefSetMipmapFilterMode` this slice. Do not reverse `"texref filter"`.
     Do not invent a second `cudaStreamAddCallback`.
     Do not invent Engine `--stream-callback` (same wall as second live
     `cudaLaunchHostFunc` after miss DMA).
@@ -9054,6 +9064,9 @@ model, do not celebrate the sim.
     Do not invent a second `tex_ref_set_address_mode` API. Do not invent
     Engine `--set-tex-ref-addr-mode`. Do not invent a CUtexref filter mode
     this slice. Do not reverse TexRef SetAddressMode remaining unsupported.
+    Do not invent a second `tex_ref_set_filter_mode` API. Do not invent
+    Engine `--set-tex-ref-filter`. Do not invent a CUtexref mipmap filter
+    this slice. Do not reverse TexRef SetFilterMode remaining unsupported.
     Do not invent a second DeviceLaunch in-flight destroy-complete check or Engine
     `--device-launch-destroy`. Do not abort an in-flight DeviceLaunch when
     `destroy_graph` succeeds. Do not delay destroy of an idle exec. Do not invent
@@ -10078,6 +10091,9 @@ model, do not celebrate the sim.
     Do not invent a second `tex_ref_set_address_mode` method. Do not
     invent Engine `--cu-tex-ref-set-address-mode`. Do not reverse wrapping
     cuTexRefSetAddressMode Invalid.
+    Do not invent a second `tex_ref_set_filter_mode` method. Do not
+    invent Engine `--cu-tex-ref-set-filter`. Do not reverse wrapping
+    cuTexRefSetFilterMode Invalid.
     Do not
     spend the next item on an OpenAI-compatible HTTP veneer.
 
