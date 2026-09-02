@@ -9818,8 +9818,7 @@ impl Sim {
     /// [`Self::graph_add_node`] (`cudaGraphAddNode`).
     ///
     /// Capture refused. Distinct from
-    /// [`Self::add_graph_free`]. This VM does not invent
-    /// occupancy SM counts this slice.
+    /// [`Self::add_graph_free`].
     pub fn add_graph_node(
         &mut self,
         graph: GraphId,
@@ -9840,7 +9839,9 @@ impl Sim {
     /// `"graph edge port"`. Edge
     /// checks run before the node is created (all-or-nothing). Capture cannot
     /// include it. Illegal on an instantiated exec. Typed
-    /// [`Self::graph_add_node`] stays (NULL `dependencyData`).
+    /// [`Self::graph_add_node`] stays (NULL `dependencyData`). Driver
+    /// `cuGraphAddNode_v2` is
+    /// [`Self::add_graph_node_with_data`].
     pub fn graph_add_node_with_data(
         &mut self,
         graph: GraphId,
@@ -9862,6 +9863,23 @@ impl Sim {
         let added = self.graph_add_node(graph, deps, params)?;
         self.store_graph_edge_data(graph, added.node, deps, data)?;
         Ok(added)
+    }
+
+    /// `cuGraphAddNode_v2`. Identity with
+    /// [`Self::graph_add_node_with_data`] (`cudaGraphAddNode` with
+    /// `dependencyData`).
+    ///
+    /// Capture refused. Distinct from
+    /// [`Self::add_graph_node`]. This VM does not invent
+    /// occupancy SM counts this slice.
+    pub fn add_graph_node_with_data(
+        &mut self,
+        graph: GraphId,
+        deps: &[usize],
+        data: &[GraphEdgeData],
+        params: GraphNodeParams,
+    ) -> Result<GraphAddNode, SimError> {
+        self.graph_add_node_with_data(graph, deps, data, params)
     }
 
     fn reject_duplicate_graph_deps(deps: &[usize]) -> Result<(), SimError> {
