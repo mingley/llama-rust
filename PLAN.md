@@ -9051,7 +9051,14 @@ model, do not celebrate the sim.
     or `cudaChooseDevice`. `gpu-profile capture` is still refused. Dual
     score still has no `$/M tokens`.
 
-985. [ ] Next numbered PLAN item after 984 is the next `gpu-sim` / Engine /
+985. [x] `gpu-sim` `Sim::add_graph_write_value32` is
+    graph `cuStreamWriteValue32`. Identity with `graph_add_write_value32`
+    (`cuStreamWriteValue32` as `cudaGraphAddBatchMemOpNode`). Capture refused. Distinct from
+    `add_graph_write_value64`. This VM does not invent occupancy SM counts, Engine `--graph-add-write-value32`,
+    or `cudaChooseDevice`. `gpu-profile capture` is still refused. Dual
+    score still has no `$/M tokens`.
+
+986. [ ] Next numbered PLAN item after 985 is the next `gpu-sim` / Engine /
     serve / expertvm mechanical API that is still missing, or the next official
     decode family. Prefer remaining CUDA-shaped twins over more
     OpenAI HTTP veneer. Do not invent F32 `output.scale`. Do not invent a
@@ -10497,6 +10504,9 @@ model, do not celebrate the sim.
     Do not invent a second graph `cuStreamWriteValue64` / `add_graph_write_value64`.
     Do not invent Engine `--graph-add-write-value64`. Do not invent
     occupancy SM counts this slice. Do not reverse AddGraphWriteValue64 identity with graph_add_write_value64.
+    Do not invent a second graph `cuStreamWriteValue32` / `add_graph_write_value32`.
+    Do not invent Engine `--graph-add-write-value32`. Do not invent
+    occupancy SM counts this slice. Do not reverse AddGraphWriteValue32 identity with graph_add_write_value32.
     Do not invent a second `cudaStreamAddCallback`.
     Do not invent Engine `--stream-callback` (same wall as second live
     `cudaLaunchHostFunc` after miss DMA).
@@ -12022,6 +12032,9 @@ model, do not celebrate the sim.
     Do not invent a second `add_graph_write_value64` API. Do not invent
     Engine `--graph-add-write-value64-identity`. Do not invent a graph-add-write-value32
     this slice. Do not reverse AddGraphWriteValue64 identity with graph_add_write_value64.
+    Do not invent a second `add_graph_write_value32` API. Do not invent
+    Engine `--graph-add-write-value32-identity`. Do not invent a graph-add-write-value64-with-flags
+    this slice. Do not reverse AddGraphWriteValue32 identity with graph_add_write_value32.
     Do not invent a second DeviceLaunch in-flight destroy-complete check or Engine
     `--device-launch-destroy`. Do not abort an in-flight DeviceLaunch when
     `destroy_graph` succeeds. Do not delay destroy of an idle exec. Do not invent
@@ -13730,6 +13743,9 @@ model, do not celebrate the sim.
     Do not invent a second `add_graph_write_value64` method. Do not
     invent Engine `--cu-graph-add-write-value64`. Do not reverse wrapping
     graph cuStreamWriteValue64 identity.
+    Do not invent a second `add_graph_write_value32` method. Do not
+    invent Engine `--cu-graph-add-write-value32`. Do not reverse wrapping
+    graph cuStreamWriteValue32 identity.
     Do not
     spend the next item on an OpenAI-compatible HTTP veneer.
 

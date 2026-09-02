@@ -11003,8 +11003,7 @@ impl Sim {
     /// `cudaGraphAddBatchMemOpNode`).
     ///
     /// Capture refused. Distinct from
-    /// [`Self::add_graph_set_conditional`]. This VM does not invent
-    /// occupancy SM counts this slice.
+    /// [`Self::add_graph_set_conditional`].
     pub fn add_graph_write_value64(
         &mut self,
         graph: GraphId,
@@ -11015,7 +11014,9 @@ impl Sim {
         self.graph_add_write_value64(graph, id, offset, value)
     }
 
-    /// `cuStreamWriteValue32` as a `cudaGraphAddBatchMemOpNode`.
+    /// `cuStreamWriteValue32` as a `cudaGraphAddBatchMemOpNode`. Driver
+    /// graph `cuStreamWriteValue32` is
+    /// [`Self::add_graph_write_value32`].
     pub fn graph_add_write_value32(
         &mut self,
         graph: GraphId,
@@ -11032,6 +11033,23 @@ impl Sim {
                 bits32: true,
             },
         )
+    }
+
+    /// Graph `cuStreamWriteValue32`. Identity with
+    /// [`Self::graph_add_write_value32`] (`cuStreamWriteValue32` as
+    /// `cudaGraphAddBatchMemOpNode`).
+    ///
+    /// Capture refused. Distinct from
+    /// [`Self::add_graph_write_value64`]. This VM does not invent
+    /// occupancy SM counts this slice.
+    pub fn add_graph_write_value32(
+        &mut self,
+        graph: GraphId,
+        id: AllocId,
+        offset: u64,
+        value: u64,
+    ) -> Result<(), SimError> {
+        self.graph_add_write_value32(graph, id, offset, value)
     }
 
     /// [`Self::graph_add_write_value64`] with a [`WriteValueFlags`] word.
