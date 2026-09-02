@@ -163,6 +163,7 @@ warp scheduler, L1, …   ← do not model
 | `mem_free_host` is identity with `free_host_pinned` | `cuMemFreeHost` |
 | `mem_host_alloc` is identity with `alloc_host_with_flags` | `cuMemHostAlloc` |
 | `mem_host_get_flags` is identity with `host_get_flags` | `cuMemHostGetFlags` |
+| `mem_host_get_device_pointer` is identity with `host_get_device_pointer_with_flags` | `cuMemHostGetDevicePointer` |
 | `pointer_get_attributes` classifies Unregistered / Host / Device / Managed | `cudaPointerGetAttributes` |
 | `pointer_get_attribute` wraps type / mapped / pool / range / ordinal / start / buffer id / IPC / RDMA / handle types / VMM map / hw decompress 0 / VMM block id; SyncMemops is settable | `cuPointerGetAttribute` / `SetAttribute` |
 | `pointer_get_access_flags` is kernel residency on an explicit device (`MemAccessFlags`; enable_peer is D2D memcpy only) | `CU_POINTER_ATTRIBUTE_ACCESS_FLAGS` |
@@ -1947,6 +1948,7 @@ No Engine `--malloc-pitch-element`. `mem_alloc` is `cuMemAlloc` (identity with `
 `mem_free_host` is `cuMemFreeHost` (identity with `free_host_pinned`). Host-sync; capture refused. No Engine `--mem-free-host`.
 `mem_host_alloc` is `cuMemHostAlloc` (identity with `alloc_host_with_flags`). Capture refused. No Engine `--mem-host-alloc`.
 `mem_host_get_flags` is `cuMemHostGetFlags` (identity with `host_get_flags`). Query; legal during capture. No Engine `--mem-host-get-flags`.
+`mem_host_get_device_pointer` is `cuMemHostGetDevicePointer` (identity with `host_get_device_pointer_with_flags`). Query; legal during capture. No Engine `--mem-host-get-device-pointer`.
 `MemcpyOp` `height` / pitches are
 `cudaMemcpy2DAsync` (payload `width * height`). Origin fields are srcPos /
 dstPos (default 0). No Engine `--memcpy-origin`. `MemcpyOp` `src_lod` /

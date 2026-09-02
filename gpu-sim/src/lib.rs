@@ -528,6 +528,8 @@
 //! [`alloc_host_with_flags`](Sim::alloc_host_with_flags)). Capture refused. No Engine `--mem-host-alloc`.
 //! [`mem_host_get_flags`](Sim::mem_host_get_flags) is `cuMemHostGetFlags` (identity with
 //! [`host_get_flags`](Sim::host_get_flags)). Query; legal during capture. No Engine `--mem-host-get-flags`.
+//! [`mem_host_get_device_pointer`](Sim::mem_host_get_device_pointer) is `cuMemHostGetDevicePointer` (identity with
+//! [`host_get_device_pointer_with_flags`](Sim::host_get_device_pointer_with_flags)). Query; legal during capture. No Engine `--mem-host-get-device-pointer`.
 //! [`Sim::pointer_get_attributes`] is `cudaPointerGetAttributes`.
 //! [`pointer_set_attribute`](Sim::pointer_set_attribute) /
 //! [`pointer_get_attribute`](Sim::pointer_get_attribute) are
@@ -33048,6 +33050,55 @@ mod tests {
         sim.mem_free_host(pin).unwrap();
         sim.mem_free_host(mapped).unwrap();
         sim.mem_free(a).unwrap();
+    }
+
+    #[test]
+    fn mem_host_get_device_pointer_is_cu_mem_host_get_device_pointer() {
+        let mut sim = Sim::new(h100());
+        let d = DeviceId(0);
+        let s = StreamId(0);
+        match sim.mem_host_get_device_pointer(AllocId(99), HostGetDevicePointerFlags::DEFAULT) {
+            Err(SimError::UnknownAlloc { alloc }) => assert_eq!(alloc, AllocId(99)),
+            other => panic!("{other:?}"),
+        }
+        match sim
+            .host_get_device_pointer_with_flags(AllocId(99), HostGetDevicePointerFlags::DEFAULT)
+        {
+            Err(SimError::UnknownAlloc { alloc }) => assert_eq!(alloc, AllocId(99)),
+            other => panic!("{other:?}"),
+        }
+        let mapped = sim.mem_host_alloc(64, HostAllocFlags::MAPPED).unwrap();
+        assert_eq!(
+            sim.mem_host_get_device_pointer(mapped, HostGetDevicePointerFlags::DEFAULT)
+                .unwrap(),
+            sim.host_get_device_pointer_with_flags(mapped, HostGetDevicePointerFlags::DEFAULT)
+                .unwrap()
+        );
+        assert_eq!(
+            sim.mem_host_get_device_pointer(mapped, HostGetDevicePointerFlags::DEFAULT)
+                .unwrap(),
+            mapped
+        );
+        match sim.mem_host_get_device_pointer(mapped, 1) {
+            Err(SimError::Invalid { why }) => {
+                assert!(why.contains("host get device pointer flags"), "{why}");
+            }
+            other => panic!("{other:?}"),
+        }
+        let pin = sim.mem_host_alloc(64, HostAllocFlags::DEFAULT).unwrap();
+        match sim.mem_host_get_device_pointer(pin, HostGetDevicePointerFlags::DEFAULT) {
+            Err(SimError::Invalid { why }) => assert!(why.contains("not mapped"), "{why}"),
+            other => panic!("{other:?}"),
+        }
+        sim.begin_capture(d, s).unwrap();
+        assert_eq!(
+            sim.mem_host_get_device_pointer(mapped, HostGetDevicePointerFlags::DEFAULT)
+                .unwrap(),
+            sim.host_get_device_pointer(mapped).unwrap()
+        );
+        let _g = sim.end_capture().unwrap();
+        sim.mem_free_host(mapped).unwrap();
+        sim.mem_free_host(pin).unwrap();
     }
 
     #[test]

@@ -20577,6 +20577,21 @@ impl Sim {
         self.host_get_device_pointer(id)
     }
 
+    /// `cuMemHostGetDevicePointer`. Identity with
+    /// [`Self::host_get_device_pointer_with_flags`] (`cudaHostGetDevicePointer`
+    /// flags).
+    ///
+    /// Query; legal during capture. Distinct from [`Self::host_get_device_pointer`].
+    /// This VM does not invent `cuMemHostRegister` this slice
+    /// (`host_register` stays).
+    pub fn mem_host_get_device_pointer(
+        &self,
+        id: AllocId,
+        flags: u32,
+    ) -> Result<AllocId, SimError> {
+        self.host_get_device_pointer_with_flags(id, flags)
+    }
+
     /// `cudaHostGetFlags`. Query; legal during capture.
     ///
     /// Returns the flag word passed to [`Self::alloc_host_with_flags`] /

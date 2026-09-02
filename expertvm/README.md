@@ -528,6 +528,7 @@ compiled kernel exists; no Engine flag).
 `gpu-sim` `mem_free_host` is `cuMemFreeHost` (identity with `free_host_pinned`; no Engine flag).
 `gpu-sim` `mem_host_alloc` is `cuMemHostAlloc` (identity with `alloc_host_with_flags`; no Engine flag).
 `gpu-sim` `mem_host_get_flags` is `cuMemHostGetFlags` (identity with `host_get_flags`; no Engine flag).
+`gpu-sim` `mem_host_get_device_pointer` is `cuMemHostGetDevicePointer` (identity with `host_get_device_pointer_with_flags`; no Engine flag).
 `gpu-sim` `func_is_loaded` is `cuFuncIsLoaded` (`false` until a compiled
 kernel exists; no Engine flag).
 `gpu-sim` `func_load` is `cuFuncLoad` (Invalid; no compiled kernel; no
