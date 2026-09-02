@@ -21434,14 +21434,20 @@ mod tests {
             sim.graph_exec_event_record_get_event(exec, 0).unwrap(),
             EventId(2)
         );
-        assert_eq!(sim.graph_event_record_get_event(g, 0).unwrap(), EventId(1));
+        assert_eq!(
+            sim.graph_event_record_get_event(exec, 0).unwrap(),
+            EventId(2)
+        );
         sim.graph_exec_event_record_set_event(exec, 0, EventId(3))
             .unwrap();
         assert_eq!(
             sim.graph_exec_event_record_get_event(exec, 0).unwrap(),
             EventId(3)
         );
-        assert_eq!(sim.graph_event_record_get_event(g, 0).unwrap(), EventId(1));
+        assert_eq!(
+            sim.graph_event_record_get_event(exec, 0).unwrap(),
+            EventId(3)
+        );
         sim.begin_capture(d, s).unwrap();
         match sim.set_graph_exec_event_record_node_event(exec, 0, EventId(2)) {
             Err(SimError::Invalid { why }) => assert!(why.contains("capture"), "{why}"),
