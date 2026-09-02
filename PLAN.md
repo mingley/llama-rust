@@ -7332,7 +7332,14 @@ model, do not celebrate the sim.
     or `cudaChooseDevice`. `gpu-profile capture` is still refused. Dual
     score still has no `$/M tokens`.
 
-740. [ ] Next numbered PLAN item after 739 is the next `gpu-sim` / Engine /
+740. [x] `gpu-sim` `Sim::library_get_kernel_count` is
+    `cuLibraryGetKernelCount`. Always Invalid `"library kcount"`
+    because CUDA libraries are not modeled. Query; legal during capture.
+    Distinct from `library_get_kernel`. This VM does not invent `cuLibraryEnumerateKernels`, Engine `--library-kcount`,
+    or `cudaChooseDevice`. `gpu-profile capture` is still refused. Dual
+    score still has no `$/M tokens`.
+
+741. [ ] Next numbered PLAN item after 740 is the next `gpu-sim` / Engine /
     serve / expertvm mechanical API that is still missing, or the next official
     decode family. Prefer remaining CUDA-shaped twins over more
     OpenAI HTTP veneer. Do not invent F32 `output.scale`. Do not invent a
@@ -8043,6 +8050,9 @@ model, do not celebrate the sim.
     Do not invent a second `cuCheckpointProcessGetState` / `checkpoint_process_get_state`.
     Do not invent Engine `--ckpt-state`. Do not invent
     `cuLibraryGetKernelCount` this slice. Do not reverse `"ckpt state"`.
+    Do not invent a second `cuLibraryGetKernelCount` / `library_get_kernel_count`.
+    Do not invent Engine `--library-kcount`. Do not invent
+    `cuLibraryEnumerateKernels` this slice. Do not reverse `"library kcount"`.
     Do not invent a second `cudaStreamAddCallback`.
     Do not invent Engine `--stream-callback` (same wall as second live
     `cudaLaunchHostFunc` after miss DMA).
@@ -8833,6 +8843,9 @@ model, do not celebrate the sim.
     Do not invent a second `checkpoint_process_get_state` API. Do not invent
     Engine `--get-ckpt-state`. Do not invent a CUprocessState enum
     this slice. Do not reverse Checkpoint GetState remaining unsupported.
+    Do not invent a second `library_get_kernel_count` API. Do not invent
+    Engine `--get-library-kcount`. Do not invent a CUkernel count
+    this slice. Do not reverse Library GetKernelCount remaining unsupported.
     Do not invent a second DeviceLaunch in-flight destroy-complete check or Engine
     `--device-launch-destroy`. Do not abort an in-flight DeviceLaunch when
     `destroy_graph` succeeds. Do not delay destroy of an idle exec. Do not invent
@@ -9806,6 +9819,9 @@ model, do not celebrate the sim.
     Do not invent a second `checkpoint_process_get_state` method. Do not
     invent Engine `--cu-checkpoint-state`. Do not reverse wrapping
     cuCheckpointProcessGetState Invalid.
+    Do not invent a second `library_get_kernel_count` method. Do not
+    invent Engine `--cu-library-kcount`. Do not reverse wrapping
+    cuLibraryGetKernelCount Invalid.
     Do not
     spend the next item on an OpenAI-compatible HTTP veneer.
 

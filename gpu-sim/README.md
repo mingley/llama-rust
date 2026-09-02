@@ -283,6 +283,7 @@ warp scheduler, L1, …   ← do not model
 | `library_get_global` is Invalid (no `CUlibrary` device symbol) | `cuLibraryGetGlobal` |
 | `library_get_managed` is Invalid (no `CUlibrary` managed symbol) | `cuLibraryGetManaged` |
 | `library_get_unified_function` is Invalid (no `CUlibrary` device function pointer) | `cuLibraryGetUnifiedFunction` |
+| `library_get_kernel_count` is Invalid (no `CUlibrary` kernel list) | `cuLibraryGetKernelCount` |
 | `kernel_get_function` is Invalid (no `CUkernel` / `CUfunction`) | `cuKernelGetFunction` |
 | `kernel_get_param_info` is Invalid (no `CUkernel` parameter blob) | `cuKernelGetParamInfo` |
 | `kernel_get_attribute` is Invalid (no `CUkernel` attribute) | `cuKernelGetAttribute` |
@@ -1585,6 +1586,9 @@ Query; legal during capture. No Engine `--library-managed`.
 `library_get_unified_function` is `cuLibraryGetUnifiedFunction` (always Invalid
 `"library unified"`). Distinct from `library_get_managed` and
 `UnifiedFunctionPointers`. Query; legal during capture. No Engine `--library-unified`.
+`library_get_kernel_count` is `cuLibraryGetKernelCount` (always Invalid
+`"library kcount"`). Distinct from `library_get_kernel` and
+`module_get_function_count`. Query; legal during capture. No Engine `--library-kcount`.
 `kernel_get_function` is `cuKernelGetFunction` (always Invalid
 `"kernel function"`). Distinct from `library_get_kernel` and `func_get_module`.
 Query; legal during capture. No Engine `--kernel-function`.

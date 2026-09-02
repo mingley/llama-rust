@@ -556,6 +556,8 @@ handle; no Engine flag).
 `CUlibrary` managed symbol; no Engine flag).
 `gpu-sim` `library_get_unified_function` is `cuLibraryGetUnifiedFunction`
 (Invalid; no `CUlibrary` device function pointer; no Engine flag).
+`gpu-sim` `library_get_kernel_count` is `cuLibraryGetKernelCount` (Invalid;
+no `CUlibrary` kernel list; no Engine flag).
 `gpu-sim` `kernel_get_function` is `cuKernelGetFunction` (Invalid; no
 `CUkernel` / `CUfunction`; no Engine flag).
 `gpu-sim` `kernel_get_param_info` is `cuKernelGetParamInfo` (Invalid; no
