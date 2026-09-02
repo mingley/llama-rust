@@ -16422,7 +16422,6 @@ impl Sim {
     /// [`Self::set_pool_release_threshold`] (`cudaMemPoolAttrReleaseThreshold`).
     ///
     /// Capture refused. Distinct from [`Self::mem_pool_trim_to`].
-    /// This VM does not invent occupancy SM counts this slice.
     pub fn mem_pool_set_release_threshold(
         &mut self,
         pool: PoolId,
@@ -16436,6 +16435,8 @@ impl Sim {
     /// allocs if the new cap is below current reserved. Also
     /// [`Self::pool_set_attribute`] [`MemPoolAttr::MaxPoolSize`]. Capture
     /// cannot include it. The graph-memory pool is Invalid.
+    /// Driver `cuMemPoolSetAttribute` MaxPoolSize is [`Self::mem_pool_set_max_size`].
+    /// Identity wrap [`Self::mem_pool_set_max_size`].
     pub fn set_pool_max_size(&mut self, pool: PoolId, bytes: u64) -> Result<(), SimError> {
         self.fail_if_capturing("cannot capture mempool")?;
         let root = self.pool_root(pool)?;
@@ -16443,6 +16444,15 @@ impl Sim {
         self.refuse_destroyed_pool(root)?;
         self.pool_mut(root)?.max_size = bytes;
         Ok(())
+    }
+
+    /// `cuMemPoolSetAttribute` MaxPoolSize. Identity with
+    /// [`Self::set_pool_max_size`] (`cudaMemPoolAttrMaxPoolSize`).
+    ///
+    /// Capture refused. Distinct from [`Self::mem_pool_set_release_threshold`].
+    /// This VM does not invent occupancy SM counts this slice.
+    pub fn mem_pool_set_max_size(&mut self, pool: PoolId, bytes: u64) -> Result<(), SimError> {
+        self.set_pool_max_size(pool, bytes)
     }
 
     /// `cudaMemPoolGetAttribute`. Query; legal during capture.

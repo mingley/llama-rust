@@ -9889,7 +9889,12 @@ model, do not celebrate the sim.
       `mem_pool_trim_to`. This VM does not invent occupancy SM counts, Engine `--mem-pool-set-release-threshold`,
       or `cudaChooseDevice`. `gpu-profile capture` is still refused. Dual
       score still has no `$/M tokens`.
-1126. [ ] Next numbered PLAN item after 1125 is the next `gpu-sim` / Engine /
+1126. [x] `gpu-sim` `Sim::mem_pool_set_max_size` is
+      `cuMemPoolSetAttribute` MaxPoolSize. Identity with `set_pool_max_size` (`cudaMemPoolAttrMaxPoolSize`). Capture refused. Distinct from
+      `mem_pool_set_release_threshold`. This VM does not invent occupancy SM counts, Engine `--mem-pool-set-max-size`,
+      or `cudaChooseDevice`. `gpu-profile capture` is still refused. Dual
+      score still has no `$/M tokens`.
+1127. [ ] Next numbered PLAN item after 1126 is the next `gpu-sim` / Engine /
     serve / expertvm mechanical API that is still missing, or the next official
     decode family. Prefer remaining CUDA-shaped twins over more
     OpenAI HTTP veneer. Do not invent F32 `output.scale`. Do not invent a
@@ -11868,6 +11873,11 @@ model, do not celebrate the sim.
     occupancy SM counts this slice. Do not reverse MemPoolSetAttribute ReleaseThreshold identity with set_pool_release_threshold.
     Do not invent `set_pool_max_size` as `mem_pool_set_release_threshold`.
     Do not invent `cuMemPoolSetAttribute` MaxPoolSize as `mem_pool_set_release_threshold`.
+    Do not invent a second `cuMemPoolSetAttribute` MaxPoolSize / `mem_pool_set_max_size`.
+    Do not invent Engine `--mem-pool-set-max-size`. Do not invent
+    occupancy SM counts this slice. Do not reverse MemPoolSetAttribute MaxPoolSize identity with set_pool_max_size.
+    Do not invent `set_default_pool_release_threshold` as `mem_pool_set_max_size`.
+    Do not invent `pool_cached` as `mem_pool_set_max_size`.
     Do not invent a second `cudaStreamAddCallback`.
     Do not invent Engine `--stream-callback` (same wall as second live
     `cudaLaunchHostFunc` after miss DMA).
@@ -13882,6 +13892,11 @@ model, do not celebrate the sim.
     this slice. Do not reverse MemPoolSetAttribute ReleaseThreshold identity with set_pool_release_threshold.
     Do not wrap `set_pool_release_threshold` as `mem_pool_set_release_threshold`.
     Do not wrap `set_pool_max_size` as `mem_pool_set_release_threshold`.
+    Do not invent a second `mem_pool_set_max_size` API. Do not invent
+    Engine `--mem-pool-set-max-size-identity`. Do not invent a default-pool-release
+    this slice. Do not reverse MemPoolSetAttribute MaxPoolSize identity with set_pool_max_size.
+    Do not wrap `set_pool_max_size` as `mem_pool_set_max_size`.
+    Do not wrap `set_default_pool_release_threshold` as `mem_pool_set_max_size`.
     Do not invent a second DeviceLaunch in-flight destroy-complete check or Engine
     `--device-launch-destroy`. Do not abort an in-flight DeviceLaunch when
     `destroy_graph` succeeds. Do not delay destroy of an idle exec. Do not invent
@@ -16013,6 +16028,9 @@ model, do not celebrate the sim.
     Do not invent a second `mem_pool_set_release_threshold` method. Do not
     invent Engine `--cu-mem-pool-set-release-threshold`. Do not reverse wrapping
     cuMemPoolSetAttribute ReleaseThreshold identity. Do not wrap `set_pool_max_size` as `mem_pool_set_release_threshold`.
+    Do not invent a second `mem_pool_set_max_size` method. Do not
+    invent Engine `--cu-mem-pool-set-max-size`. Do not reverse wrapping
+    cuMemPoolSetAttribute MaxPoolSize identity. Do not wrap `set_default_pool_release_threshold` as `mem_pool_set_max_size`.
     Do not
     spend the next item on an OpenAI-compatible HTTP veneer.
 
