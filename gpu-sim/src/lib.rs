@@ -163,6 +163,9 @@
 //! [`ipc_get_event_handle`](Sim::ipc_get_event_handle) is `cuIpcGetEventHandle` (identity with
 //! [`ipc_get_event`](Sim::ipc_get_event)). Host-sync; capture refused. Distinct from
 //! [`ipc_get_mem_handle`](Sim::ipc_get_mem_handle). No Engine `--ipc-get-event-handle`.
+//! [`ipc_open_event_handle`](Sim::ipc_open_event_handle) is `cuIpcOpenEventHandle` (identity with
+//! [`ipc_open_event`](Sim::ipc_open_event)). Capture refused. Distinct from
+//! [`ipc_get_event_handle`](Sim::ipc_get_event_handle). No Engine `--ipc-open-event-handle`.
 //! [`Sim::ipc_get_event`] / [`ipc_open_event`](Sim::ipc_open_event) are
 //! `cudaIpcGetEventHandle` / `cudaIpcOpenEventHandle` (interprocess events).
 //! [`Sim::create_shareable_pool`] is `cudaMemPoolCreate` with a POSIX-FD handle
@@ -558,6 +561,9 @@
 //! [`ipc_get_event_handle`](Sim::ipc_get_event_handle) is `cuIpcGetEventHandle` (identity with
 //! [`ipc_get_event`](Sim::ipc_get_event)). Host-sync; capture refused. Distinct from
 //! [`ipc_get_mem_handle`](Sim::ipc_get_mem_handle). No Engine `--ipc-get-event-handle`.
+//! [`ipc_open_event_handle`](Sim::ipc_open_event_handle) is `cuIpcOpenEventHandle` (identity with
+//! [`ipc_open_event`](Sim::ipc_open_event)). Capture refused. Distinct from
+//! [`ipc_get_event_handle`](Sim::ipc_get_event_handle). No Engine `--ipc-open-event-handle`.
 //! [`Sim::pointer_get_attributes`] is `cudaPointerGetAttributes`.
 //! [`pointer_set_attribute`](Sim::pointer_set_attribute) /
 //! [`pointer_get_attribute`](Sim::pointer_get_attribute) are
@@ -33463,6 +33469,46 @@ mod tests {
         sim.destroy_event(imp).unwrap();
         sim.destroy_event(EventId(4)).unwrap();
         sim.destroy_event(EventId(1)).unwrap();
+    }
+
+    #[test]
+    fn ipc_open_event_handle_is_cu_ipc_open_event_handle() {
+        let mut sim = Sim::new(h100());
+        let d = DeviceId(0);
+        let s = StreamId(0);
+        match sim.ipc_open_event_handle(IpcEventHandleId(99)) {
+            Err(SimError::Invalid { why }) => assert!(why.contains("unknown ipc event"), "{why}"),
+            other => panic!("{other:?}"),
+        }
+        match sim.ipc_open_event(IpcEventHandleId(99)) {
+            Err(SimError::Invalid { why }) => assert!(why.contains("unknown ipc event"), "{why}"),
+            other => panic!("{other:?}"),
+        }
+        sim.create_event_interprocess(EventId(4)).unwrap();
+        let h = sim.ipc_get_event_handle(EventId(4)).unwrap();
+        sim.begin_capture(d, s).unwrap();
+        match sim.ipc_open_event_handle(h) {
+            Err(SimError::Invalid { why }) => assert!(why.contains("capture"), "{why}"),
+            other => panic!("{other:?}"),
+        }
+        match sim.ipc_open_event(h) {
+            Err(SimError::Invalid { why }) => assert!(why.contains("capture"), "{why}"),
+            other => panic!("{other:?}"),
+        }
+        let _g = sim.end_capture().unwrap();
+        let imp = sim.ipc_open_event_handle(h).unwrap();
+        assert!(sim.is_ipc_event_import(imp).unwrap());
+        assert!(!sim.is_ipc_event_import(EventId(4)).unwrap());
+        let imp2 = sim.ipc_open_event(h).unwrap();
+        assert!(sim.is_ipc_event_import(imp2).unwrap());
+        assert_ne!(imp, imp2);
+        match sim.ipc_get_event_handle(imp) {
+            Err(SimError::Invalid { why }) => assert!(why.contains("ipc event import"), "{why}"),
+            other => panic!("{other:?}"),
+        }
+        sim.destroy_event(imp).unwrap();
+        sim.destroy_event(imp2).unwrap();
+        sim.destroy_event(EventId(4)).unwrap();
     }
 
     #[test]

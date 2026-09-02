@@ -5,6 +5,14 @@ Visible five-turn extract: [docs/chatgpt-share-6a920fe1.md](docs/chatgpt-share-6
 Complete share-API extract: [docs/chatgpt-share-6a920fe1/](docs/chatgpt-share-6a920fe1/).
 Work lands on `main`. No PRs.
 
+## Shipped 2026-09-02 — CUDA `cuIpcOpenEventHandle`
+
+`gpu-sim` `Sim::ipc_open_event_handle` is `cuIpcOpenEventHandle`.
+Identity with `ipc_open_event` (`cudaIpcOpenEventHandle`). Capture refused.
+Distinct from `ipc_get_event_handle`.
+This VM does not invent `cuMemAllocHost` or Engine `--ipc-open-event-handle`.
+`gpu-profile capture` is still refused. Dual score still has no `$/M tokens`.
+
 ## Shipped 2026-09-02 — CUDA `cuIpcGetEventHandle`
 
 `gpu-sim` `Sim::ipc_get_event_handle` is `cuIpcGetEventHandle`.

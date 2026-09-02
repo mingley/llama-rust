@@ -17088,8 +17088,6 @@ impl Sim {
     /// (`cudaIpcGetEventHandle`).
     ///
     /// Host-sync; capture refused. Distinct from [`Self::ipc_get_mem_handle`].
-    /// This VM does not invent `cuIpcOpenEventHandle` this slice
-    /// (`ipc_open_event` stays).
     pub fn ipc_get_event_handle(&mut self, event: EventId) -> Result<IpcEventHandleId, SimError> {
         self.ipc_get_event(event)
     }
@@ -17130,6 +17128,15 @@ impl Sim {
         ev.ipc_src = Some(src);
         let _prev = self.events.insert(id, ev);
         Ok(id)
+    }
+
+    /// `cuIpcOpenEventHandle`. Identity with [`Self::ipc_open_event`]
+    /// (`cudaIpcOpenEventHandle`).
+    ///
+    /// Capture refused. Distinct from [`Self::ipc_get_event_handle`]. This VM does
+    /// not invent `cuMemAllocHost` this slice (`alloc_host_pinned` stays).
+    pub fn ipc_open_event_handle(&mut self, handle: IpcEventHandleId) -> Result<EventId, SimError> {
+        self.ipc_open_event(handle)
     }
 
     /// Whether `event` is a live [`Self::ipc_open_event`] alias.
