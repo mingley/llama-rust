@@ -10119,7 +10119,12 @@ model, do not celebrate the sim.
       `mem_pointer_get_attribute_n`. This VM does not invent occupancy SM counts, Engine `--mem-pointer-get-access-flags`,
       or `cudaChooseDevice`. `gpu-profile capture` is still refused. Dual
       score still has no `$/M tokens`.
-1172. [ ] Next numbered PLAN item after 1171 is the next `gpu-sim` / Engine /
+1172. [x] `gpu-sim` `Sim::mem_pointer_set_attribute` is
+      `cuPointerSetAttribute`. Identity with `pointer_set_attribute` (`cuPointerSetAttribute`). Capture refused. Distinct from
+      `mem_pointer_get_access_flags`. This VM does not invent occupancy SM counts, Engine `--mem-pointer-set-attribute`,
+      or `cudaChooseDevice`. `gpu-profile capture` is still refused. Dual
+      score still has no `$/M tokens`.
+1173. [ ] Next numbered PLAN item after 1172 is the next `gpu-sim` / Engine /
     serve / expertvm mechanical API that is still missing, or the next official
     decode family. Prefer remaining CUDA-shaped twins over more
     OpenAI HTTP veneer. Do not invent F32 `output.scale`. Do not invent a
@@ -12330,6 +12335,11 @@ model, do not celebrate the sim.
     occupancy SM counts this slice. Do not reverse MemPointerGetAccessFlags identity with pointer_get_access_flags.
     Do not invent `pointer_set_attribute` as `mem_pointer_get_access_flags`.
     Do not invent `cuPointerSetAttribute` as `mem_pointer_get_access_flags`.
+    Do not invent a second `cuPointerSetAttribute` / `mem_pointer_set_attribute`.
+    Do not invent Engine `--mem-pointer-set-attribute`. Do not invent
+    occupancy SM counts this slice. Do not reverse MemPointerSetAttribute identity with pointer_set_attribute.
+    Do not invent `pointer_get_attributes` as `mem_pointer_set_attribute`.
+    Do not invent `cudaPointerGetAttributes` as `mem_pointer_set_attribute`.
     Do not invent a second `cudaStreamAddCallback`.
     Do not invent Engine `--stream-callback` (same wall as second live
     `cudaLaunchHostFunc` after miss DMA).
@@ -14577,6 +14587,11 @@ model, do not celebrate the sim.
     this slice. Do not reverse MemPointerGetAccessFlags identity with pointer_get_access_flags.
     Do not wrap `pointer_get_access_flags` as `mem_pointer_get_access_flags`.
     Do not wrap `pointer_set_attribute` as `mem_pointer_get_access_flags`.
+    Do not invent a second `mem_pointer_set_attribute` API. Do not invent
+    Engine `--mem-pointer-set-attribute-identity`. Do not invent a pointer-get-attributes
+    this slice. Do not reverse MemPointerSetAttribute identity with pointer_set_attribute.
+    Do not wrap `pointer_set_attribute` as `mem_pointer_set_attribute`.
+    Do not wrap `pointer_get_attributes` as `mem_pointer_set_attribute`.
     Do not invent a second DeviceLaunch in-flight destroy-complete check or Engine
     `--device-launch-destroy`. Do not abort an in-flight DeviceLaunch when
     `destroy_graph` succeeds. Do not delay destroy of an idle exec. Do not invent
@@ -16854,6 +16869,10 @@ model, do not celebrate the sim.
     CU_POINTER_ATTRIBUTE_ACCESS_FLAGS identity. Do not wrap `pointer_set_attribute` as `mem_pointer_get_access_flags`.
     Do not wrap `pointer_get_attributes` as `mem_pointer_get_access_flags`.
     Do not invent Engine `--pointer-access`.
+    Do not invent a second `mem_pointer_set_attribute` method. Do not
+    invent Engine `--cu-mem-pointer-set-attribute`. Do not reverse wrapping
+    cuPointerSetAttribute identity. Do not wrap `pointer_get_attributes` as `mem_pointer_set_attribute`.
+    Do not invent `cudaPointerGetAttributes` as `mem_pointer_set_attribute`.
     Do not
     spend the next item on an OpenAI-compatible HTTP veneer.
 

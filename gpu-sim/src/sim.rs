@@ -24741,6 +24741,8 @@ impl Sim {
     /// are query-only (Invalid `"pointer attr"`). Capture refused
     /// (`"cannot capture pointer attr"`). Unknown ids are
     /// [`SimError::UnknownAlloc`]; freed ids are Invalid `"pointer attr"`.
+    /// Driver `cuPointerSetAttribute` is [`Self::mem_pointer_set_attribute`].
+    /// Identity wrap [`Self::mem_pointer_set_attribute`].
     pub fn pointer_set_attribute(
         &mut self,
         alloc: AllocId,
@@ -24784,6 +24786,20 @@ impl Sim {
                 why: "pointer attr",
             }),
         }
+    }
+
+    /// `cuPointerSetAttribute`. Identity with
+    /// [`Self::pointer_set_attribute`] (`cuPointerSetAttribute`).
+    ///
+    /// Capture refused. Distinct from [`Self::mem_pointer_get_access_flags`].
+    /// This VM does not invent occupancy SM counts this slice.
+    pub fn mem_pointer_set_attribute(
+        &mut self,
+        alloc: AllocId,
+        attr: PointerAttr,
+        value: u64,
+    ) -> Result<(), SimError> {
+        self.pointer_set_attribute(alloc, attr, value)
     }
 
     /// `cuPointerGetAttribute` twin of [`Self::pointer_set_attribute`]. Query;
@@ -24976,7 +24992,6 @@ impl Sim {
     /// [`Self::pointer_get_access_flags`] (`CU_POINTER_ATTRIBUTE_ACCESS_FLAGS`).
     ///
     /// Query; legal during capture. Distinct from [`Self::mem_pointer_get_attribute_n`].
-    /// This VM does not invent occupancy SM counts this slice.
     pub fn mem_pointer_get_access_flags(
         &self,
         device: DeviceId,
