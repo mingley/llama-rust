@@ -184,6 +184,9 @@
 //! [`mem_prefetch`](Sim::mem_prefetch) is `cuMemPrefetchAsync` (identity with
 //! [`prefetch`](Sim::prefetch)). Capture-legal (memcpy). Distinct from
 //! [`prefetch_with_flags`](Sim::prefetch_with_flags). No Engine `--mem-prefetch`.
+//! [`mem_prefetch_v2`](Sim::mem_prefetch_v2) is `cuMemPrefetchAsync_v2` (identity with
+//! [`prefetch_with_flags`](Sim::prefetch_with_flags)). Capture-legal (memcpy). Distinct from
+//! [`mem_prefetch`](Sim::mem_prefetch). No Engine `--mem-prefetch-v2`.
 //! [`Sim::ipc_get_event`] / [`ipc_open_event`](Sim::ipc_open_event) are
 //! `cudaIpcGetEventHandle` / `cudaIpcOpenEventHandle` (interprocess events).
 //! [`Sim::create_shareable_pool`] is `cudaMemPoolCreate` with a POSIX-FD handle
@@ -576,6 +579,9 @@
 //! [`mem_prefetch`](Sim::mem_prefetch) is `cuMemPrefetchAsync` (identity with
 //! [`prefetch`](Sim::prefetch)). Capture-legal (memcpy). Distinct from
 //! [`prefetch_with_flags`](Sim::prefetch_with_flags). No Engine `--mem-prefetch`.
+//! [`mem_prefetch_v2`](Sim::mem_prefetch_v2) is `cuMemPrefetchAsync_v2` (identity with
+//! [`prefetch_with_flags`](Sim::prefetch_with_flags)). Capture-legal (memcpy). Distinct from
+//! [`mem_prefetch`](Sim::mem_prefetch). No Engine `--mem-prefetch-v2`.
 //! [`mem_host_get_flags`](Sim::mem_host_get_flags) is `cuMemHostGetFlags` (identity with
 //! [`host_get_flags`](Sim::host_get_flags)). Query; legal during capture. No Engine `--mem-host-get-flags`.
 //! [`mem_host_get_device_pointer`](Sim::mem_host_get_device_pointer) is `cuMemHostGetDevicePointer` (identity with
@@ -618,6 +624,9 @@
 //! [`mem_prefetch`](Sim::mem_prefetch) is `cuMemPrefetchAsync` (identity with
 //! [`prefetch`](Sim::prefetch)). Capture-legal (memcpy). Distinct from
 //! [`prefetch_with_flags`](Sim::prefetch_with_flags). No Engine `--mem-prefetch`.
+//! [`mem_prefetch_v2`](Sim::mem_prefetch_v2) is `cuMemPrefetchAsync_v2` (identity with
+//! [`prefetch_with_flags`](Sim::prefetch_with_flags)). Capture-legal (memcpy). Distinct from
+//! [`mem_prefetch`](Sim::mem_prefetch). No Engine `--mem-prefetch-v2`.
 //! [`Sim::pointer_get_attributes`] is `cudaPointerGetAttributes`.
 //! [`pointer_set_attribute`](Sim::pointer_set_attribute) /
 //! [`pointer_get_attribute`](Sim::pointer_get_attribute) are
@@ -33835,6 +33844,73 @@ mod tests {
         sim.begin_capture(d, s).unwrap();
         enq(sim.mem_prefetch(d, m, s));
         enq(sim.prefetch(d, m, s));
+        let g = sim.end_capture().unwrap();
+        assert_eq!(sim.graph_len(g).unwrap(), 2);
+        sim.free_sync(m).unwrap();
+    }
+
+    #[test]
+    fn mem_prefetch_v2_is_cu_mem_prefetch_async_v2() {
+        let mut sim = Sim::new(h100());
+        let d = DeviceId(0);
+        let s = StreamId(0);
+        match sim.mem_prefetch_v2(d, AllocId(99), Place::Device(d), 1, s) {
+            Err(SimError::Invalid { why }) => assert!(why.contains("prefetch flags"), "{why}"),
+            other => panic!("{other:?}"),
+        }
+        match sim.prefetch_with_flags(d, AllocId(99), Place::Device(d), 1, s) {
+            Err(SimError::Invalid { why }) => assert!(why.contains("prefetch flags"), "{why}"),
+            other => panic!("{other:?}"),
+        }
+        match sim.mem_prefetch_v2(d, AllocId(99), Place::Device(d), PrefetchFlags::DEFAULT, s) {
+            Err(SimError::UnknownAlloc { alloc }) => assert_eq!(alloc, AllocId(99)),
+            other => panic!("{other:?}"),
+        }
+        match sim.prefetch_with_flags(d, AllocId(99), Place::Device(d), PrefetchFlags::DEFAULT, s) {
+            Err(SimError::UnknownAlloc { alloc }) => assert_eq!(alloc, AllocId(99)),
+            other => panic!("{other:?}"),
+        }
+        let a = sim.malloc(d, 4096).unwrap();
+        match sim.mem_prefetch_v2(d, a, Place::Device(d), PrefetchFlags::DEFAULT, s) {
+            Err(SimError::Invalid { why }) => assert!(why.contains("managed"), "{why}"),
+            other => panic!("{other:?}"),
+        }
+        match sim.prefetch_with_flags(d, a, Place::Device(d), PrefetchFlags::DEFAULT, s) {
+            Err(SimError::Invalid { why }) => assert!(why.contains("managed"), "{why}"),
+            other => panic!("{other:?}"),
+        }
+        sim.free_sync(a).unwrap();
+        let m = sim.mem_alloc_managed(4096, MemAttachFlags::GLOBAL).unwrap();
+        match sim.mem_prefetch_v2(
+            DeviceId(99),
+            m,
+            Place::Device(DeviceId(99)),
+            PrefetchFlags::DEFAULT,
+            s,
+        ) {
+            Err(SimError::Invalid { why }) => assert!(why.contains("device"), "{why}"),
+            other => panic!("{other:?}"),
+        }
+        match sim.prefetch_with_flags(
+            DeviceId(99),
+            m,
+            Place::Device(DeviceId(99)),
+            PrefetchFlags::DEFAULT,
+            s,
+        ) {
+            Err(SimError::Invalid { why }) => assert!(why.contains("device"), "{why}"),
+            other => panic!("{other:?}"),
+        }
+        enq(sim.mem_prefetch_v2(d, m, Place::Device(d), PrefetchFlags::DEFAULT, s));
+        sim.synchronize_stream(d, s).unwrap();
+        assert!(sim.is_resident(m, d).unwrap());
+        assert_eq!(sim.hbm_used(d).unwrap(), 4096);
+        enq(sim.prefetch_with_flags(d, m, Place::Host, PrefetchFlags::DEFAULT, s));
+        sim.synchronize_stream(d, s).unwrap();
+        assert!(!sim.is_resident(m, d).unwrap());
+        sim.begin_capture(d, s).unwrap();
+        enq(sim.mem_prefetch_v2(d, m, Place::Device(d), PrefetchFlags::DEFAULT, s));
+        enq(sim.prefetch_with_flags(d, m, Place::Device(d), PrefetchFlags::DEFAULT, s));
         let g = sim.end_capture().unwrap();
         assert_eq!(sim.graph_len(g).unwrap(), 2);
         sim.free_sync(m).unwrap();

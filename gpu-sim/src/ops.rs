@@ -3926,7 +3926,7 @@ impl PeerAccessFlags {
 }
 
 /// `cudaMemPrefetchAsync` / `cuMemPrefetchAsync_v2` flags for
-/// [`crate::Sim::prefetch_with_flags`].
+/// [`crate::Sim::prefetch_with_flags`] and [`crate::Sim::mem_prefetch_v2`].
 ///
 /// CUDA requires 0. Unknown bits are Invalid `"prefetch flags"`.
 pub struct PrefetchFlags;

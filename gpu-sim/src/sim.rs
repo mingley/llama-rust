@@ -16557,8 +16557,6 @@ impl Sim {
     /// (`cudaMemPrefetchAsync`).
     ///
     /// Capture-legal (memcpy). Distinct from [`Self::prefetch_with_flags`].
-    /// This VM does not invent `cuMemPrefetchAsync_v2` this slice
-    /// (`prefetch_with_flags` stays).
     pub fn mem_prefetch(
         &mut self,
         device: DeviceId,
@@ -16661,6 +16659,7 @@ impl Sim {
     /// [`Self::prefetch_with_size`] / [`Self::prefetch_host_with_size`].
     /// Typed helpers stay.
     /// Capture may record the memcpy.
+    /// Driver `cuMemPrefetchAsync_v2` is [`Self::mem_prefetch_v2`].
     pub fn prefetch_with_flags(
         &mut self,
         device: DeviceId,
@@ -16678,6 +16677,23 @@ impl Sim {
             Place::Device(d) => self.prefetch(d, alloc, stream),
             Place::Host | Place::HostPinned => self.prefetch_host(device, alloc, stream),
         }
+    }
+
+    /// `cuMemPrefetchAsync_v2`. Identity with [`Self::prefetch_with_flags`]
+    /// (`cudaMemPrefetchAsync` flags).
+    ///
+    /// Capture-legal (memcpy). Distinct from [`Self::mem_prefetch`]. This VM
+    /// does not invent a `cuMemPrefetchAsync` count this slice
+    /// (`prefetch_with_size` stays).
+    pub fn mem_prefetch_v2(
+        &mut self,
+        device: DeviceId,
+        alloc: AllocId,
+        dest: Place,
+        flags: u32,
+        stream: StreamId,
+    ) -> Result<OpId, SimError> {
+        self.prefetch_with_flags(device, alloc, dest, flags, stream)
     }
 
     /// `cudaMemPrefetchBatchAsync`.
