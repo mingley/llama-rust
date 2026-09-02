@@ -7255,7 +7255,14 @@ model, do not celebrate the sim.
     or `cudaChooseDevice`. `gpu-profile capture` is still refused. Dual
     score still has no `$/M tokens`.
 
-729. [ ] Next numbered PLAN item after 728 is the next `gpu-sim` / Engine /
+729. [x] `gpu-sim` `Sim::tensor_map_encode_im2col` is
+    `cuTensorMapEncodeIm2col`. Always Invalid `"tensor im2col"`
+    because TMA is not modeled. Query; legal during capture.
+    Distinct from `tensor_map_encode_tiled`. This VM does not invent `cuTensorMapEncodeIm2colWide`, Engine `--tensor-im2col`,
+    or `cudaChooseDevice`. `gpu-profile capture` is still refused. Dual
+    score still has no `$/M tokens`.
+
+730. [ ] Next numbered PLAN item after 729 is the next `gpu-sim` / Engine /
     serve / expertvm mechanical API that is still missing, or the next official
     decode family. Prefer remaining CUDA-shaped twins over more
     OpenAI HTTP veneer. Do not invent F32 `output.scale`. Do not invent a
@@ -7933,6 +7940,9 @@ model, do not celebrate the sim.
     Do not invent a second `cuModuleEnumerateFunctions` / `module_enumerate_functions`.
     Do not invent Engine `--module-enumfn`. Do not invent
     `cuTensorMapEncodeIm2col` this slice. Do not reverse `"module enumfn"`.
+    Do not invent a second `cuTensorMapEncodeIm2col` / `tensor_map_encode_im2col`.
+    Do not invent Engine `--tensor-im2col`. Do not invent
+    `cuTensorMapEncodeIm2colWide` this slice. Do not reverse `"tensor im2col"`.
     Do not invent a second `cudaStreamAddCallback`.
     Do not invent Engine `--stream-callback` (same wall as second live
     `cudaLaunchHostFunc` after miss DMA).
@@ -8690,6 +8700,9 @@ model, do not celebrate the sim.
     Do not invent a second `module_enumerate_functions` API. Do not invent
     Engine `--enum-module-functions`. Do not invent a CUfunction array
     this slice. Do not reverse Module EnumerateFunctions remaining unsupported.
+    Do not invent a second `tensor_map_encode_im2col` API. Do not invent
+    Engine `--tma-im2col`. Do not invent a CUtensorMap im2col object
+    this slice. Do not reverse Tensor Map EncodeIm2col remaining unsupported.
     Do not invent a second DeviceLaunch in-flight destroy-complete check or Engine
     `--device-launch-destroy`. Do not abort an in-flight DeviceLaunch when
     `destroy_graph` succeeds. Do not delay destroy of an idle exec. Do not invent
@@ -9630,6 +9643,9 @@ model, do not celebrate the sim.
     Do not invent a second `module_enumerate_functions` method. Do not
     invent Engine `--cu-module-enumerate-functions`. Do not reverse wrapping
     cuModuleEnumerateFunctions Invalid.
+    Do not invent a second `tensor_map_encode_im2col` method. Do not
+    invent Engine `--cu-tensor-map-im2col`. Do not reverse wrapping
+    cuTensorMapEncodeIm2col Invalid.
     Do not
     spend the next item on an OpenAI-compatible HTTP veneer.
 

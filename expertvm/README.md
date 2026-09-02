@@ -594,6 +594,8 @@ unsupported; no Engine flag).
 (Invalid; hardware decompress is not modeled; no Engine flag).
 `gpu-sim` `tensor_map_encode_tiled` is `cuTensorMapEncodeTiled` (Invalid;
 TMA is not modeled; no Engine flag).
+`gpu-sim` `tensor_map_encode_im2col` is `cuTensorMapEncodeIm2col` (Invalid;
+TMA is not modeled; no Engine flag).
 `gpu-sim` `cooperative_kernel_multi_device` is
 `cudaLaunchCooperativeKernelMultiDevice` (Invalid; no Engine flag).
 `gpu-sim` `array_create` is `cuArrayCreate` (Invalid; CUDA arrays are not

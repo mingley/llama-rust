@@ -5,6 +5,15 @@ Visible five-turn extract: [docs/chatgpt-share-6a920fe1.md](docs/chatgpt-share-6
 Complete share-API extract: [docs/chatgpt-share-6a920fe1/](docs/chatgpt-share-6a920fe1/).
 Work lands on `main`. No PRs.
 
+## Shipped 2026-09-02 — CUDA `cuTensorMapEncodeIm2col`
+
+`gpu-sim` `Sim::tensor_map_encode_im2col` is `cuTensorMapEncodeIm2col`.
+Always Invalid `"tensor im2col"` because TMA is not
+modeled. Query; legal during capture. Distinct from
+`tensor_map_encode_tiled` (why is not `"tensor map"`).
+This VM does not invent `cuTensorMapEncodeIm2colWide` or Engine `--tensor-im2col`.
+`gpu-profile capture` is still refused. Dual score still has no `$/M tokens`.
+
 ## Shipped 2026-09-02 — CUDA `cuModuleEnumerateFunctions`
 
 `gpu-sim` `Sim::module_enumerate_functions` is `cuModuleEnumerateFunctions`.

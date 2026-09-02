@@ -798,6 +798,9 @@
 //! [`tensor_map_encode_tiled`](Sim::tensor_map_encode_tiled) is
 //! `cuTensorMapEncodeTiled` (always Invalid `"tensor map"`). Query; legal
 //! during capture. No Engine `--tensor-map`.
+//! [`tensor_map_encode_im2col`](Sim::tensor_map_encode_im2col) is
+//! `cuTensorMapEncodeIm2col` (always Invalid `"tensor im2col"`). Query; legal
+//! during capture. No Engine `--tensor-im2col`.
 //! [`DeviceAttr::UnifiedFunctionPointers`] is always 0 (device-side function
 //! pointers are not modeled).
 //! [`DeviceAttr::TimelineSemaphoreInteropSupported`] is always 0 (NVSci /
@@ -19486,6 +19489,13 @@ mod tests {
             }
             other => panic!("{other:?}"),
         }
+        match sim.tensor_map_encode_im2col(d) {
+            Err(SimError::Invalid { why }) => {
+                assert!(why.contains("tensor im2col"), "{why}");
+                assert!(!why.contains("module enumfn"), "{why}");
+            }
+            other => panic!("{other:?}"),
+        }
         assert_eq!(sim.module_get_loading_mode(), ModuleLoadingMode::Eager);
     }
 
@@ -22254,6 +22264,52 @@ mod tests {
         match sim.tensor_map_encode_tiled(DeviceId(99)) {
             Err(SimError::Invalid { why }) => {
                 assert!(why.contains("device not in profile"), "{why}");
+            }
+            other => panic!("{other:?}"),
+        }
+        match sim.tensor_map_encode_im2col(d) {
+            Err(SimError::Invalid { why }) => {
+                assert!(why.contains("tensor im2col"), "{why}");
+                assert!(!why.contains("tensor map"), "{why}");
+            }
+            other => panic!("{other:?}"),
+        }
+        assert_eq!(
+            sim.device_get_attribute(d, DeviceAttr::TensorMapAccessSupported)
+                .unwrap(),
+            0
+        );
+    }
+
+    #[test]
+    fn tensor_map_encode_im2col_is_unsupported() {
+        let mut sim = Sim::new(h100());
+        let d = DeviceId(0);
+        match sim.tensor_map_encode_im2col(d) {
+            Err(SimError::Invalid { why }) => {
+                assert!(why.contains("tensor im2col"), "{why}");
+                assert!(!why.contains("tensor map"), "{why}");
+            }
+            other => panic!("{other:?}"),
+        }
+        sim.begin_capture(d, StreamId(0)).unwrap();
+        match sim.tensor_map_encode_im2col(d) {
+            Err(SimError::Invalid { why }) => {
+                assert!(why.contains("tensor im2col"), "{why}");
+            }
+            other => panic!("{other:?}"),
+        }
+        let _g = sim.end_capture().unwrap();
+        match sim.tensor_map_encode_im2col(DeviceId(99)) {
+            Err(SimError::Invalid { why }) => {
+                assert!(why.contains("device not in profile"), "{why}");
+            }
+            other => panic!("{other:?}"),
+        }
+        match sim.tensor_map_encode_tiled(d) {
+            Err(SimError::Invalid { why }) => {
+                assert!(why.contains("tensor map"), "{why}");
+                assert!(!why.contains("tensor im2col"), "{why}");
             }
             other => panic!("{other:?}"),
         }
