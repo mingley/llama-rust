@@ -22990,7 +22990,6 @@ impl Sim {
     /// [`Self::set_required_cluster_height`] (`cudaFuncSetAttribute` RequiredClusterHeight).
     ///
     /// Capture legal. Distinct from [`Self::func_get_required_cluster_width`].
-    /// This VM does not invent occupancy SM counts this slice.
     pub fn func_set_required_cluster_height(
         &mut self,
         device: DeviceId,
@@ -23000,9 +22999,20 @@ impl Sim {
     }
 
     /// Current [`Self::set_required_cluster_height`]. Query; legal during capture.
+    /// Driver `cuFuncGetAttribute` required cluster height is [`Self::func_get_required_cluster_height`].
+    /// Identity wrap [`Self::func_get_required_cluster_height`].
     pub fn required_cluster_height(&self, device: DeviceId) -> Result<u32, SimError> {
         let _gpu = self.profile.gpu(device)?;
         Ok(self.gpu_rt(device)?.required_cluster_y)
+    }
+
+    /// `cuFuncGetAttribute` required cluster height. Identity with
+    /// [`Self::required_cluster_height`] (`cudaFuncGetAttribute` RequiredClusterHeight).
+    ///
+    /// Query; legal during capture. Distinct from [`Self::func_set_required_cluster_height`].
+    /// This VM does not invent occupancy SM counts this slice.
+    pub fn func_get_required_cluster_height(&self, device: DeviceId) -> Result<u32, SimError> {
+        self.required_cluster_height(device)
     }
 
     /// `cudaFuncSetAttribute(..., cudaFuncAttributeRequiredClusterDepth)`.
