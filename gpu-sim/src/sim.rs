@@ -23963,6 +23963,16 @@ impl Sim {
         })
     }
 
+    /// `cuEventElapsedTime`. Identity with [`Self::event_elapsed_ns`]
+    /// (`cudaEventElapsedTime`).
+    ///
+    /// Nanoseconds (this crate is ns, not milliseconds). Query. Distinct from
+    /// a millisecond conversion. This VM does not invent a millisecond elapsed
+    /// this slice (`event_elapsed_ns` stays).
+    pub fn event_elapsed(&self, start: EventId, end: EventId) -> Result<u64, SimError> {
+        self.event_elapsed_ns(start, end)
+    }
+
     fn require_event_timing(&self, event: EventId) -> Result<(), SimError> {
         match self.events.get(&event) {
             None => Err(SimError::UnknownEvent { event: event.0 }),

@@ -468,6 +468,8 @@
 //! [`HardwareProfile::host_pin_bytes`] caps `cudaMallocHost` / `cudaHostRegister`.
 //! [`Sim::idle_until`] drains, then jumps the virtual clock (open-loop arrivals).
 //! [`Sim::event_elapsed_ns`] is `cudaEventElapsedTime` in nanoseconds.
+//! [`event_elapsed`](Sim::event_elapsed) is `cuEventElapsedTime` (identity with
+//! [`event_elapsed_ns`](Sim::event_elapsed_ns); ns, not milliseconds). Query. No Engine `--event-elapsed`.
 //! [`Sim::create_event_disable_timing`] is `cudaEventDisableTiming` (elapsed fails).
 //! [`Sim::create_event_with_flags`] is `cudaEventCreateWithFlags`
 //! ([`EventCreateFlags::DISABLE_TIMING`] / [`EventCreateFlags::INTERPROCESS`] /
@@ -32708,6 +32710,53 @@ mod tests {
         enq(sim.stream_wait_event_with_flags(d, ev, wait, EventWaitFlags::EXTERNAL));
         enq(sim.wait_event_with_flags(d, ev, StreamId(2), EventWaitFlags::EXTERNAL));
         let _g = sim.end_capture().unwrap();
+        sim.free_sync(a).unwrap();
+    }
+
+    #[test]
+    fn event_elapsed_is_cu_event_elapsed_time() {
+        let mut sim = Sim::new(h100());
+        let d = DeviceId(0);
+        let s = StreamId(0);
+        let start = EventId(1);
+        let end = EventId(2);
+        sim.event_create(start).unwrap();
+        sim.event_create(end).unwrap();
+        let a = sim.alloc(d, 4096, s).unwrap();
+        enq(sim.event_record(d, start, s));
+        enq(sim.kernel(d, KernelKind::other(1 << 20, 4096), &[a], &[a], s));
+        enq(sim.event_record(d, end, s));
+        match sim.event_elapsed(start, end) {
+            Err(SimError::Invalid { why }) => assert!(why.contains("not complete"), "{why}"),
+            other => panic!("{other:?}"),
+        }
+        match sim.event_elapsed_ns(start, end) {
+            Err(SimError::Invalid { why }) => assert!(why.contains("not complete"), "{why}"),
+            other => panic!("{other:?}"),
+        }
+        sim.synchronize().unwrap();
+        let ns = sim.event_elapsed(start, end).unwrap();
+        assert_eq!(ns, sim.event_elapsed_ns(start, end).unwrap());
+        assert!(ns > 0, "elapsed={ns}");
+        match sim.event_elapsed(end, start) {
+            Err(SimError::Invalid { why }) => assert!(why.contains("end before start"), "{why}"),
+            other => panic!("{other:?}"),
+        }
+        match sim.event_elapsed(EventId(99), end) {
+            Err(SimError::UnknownEvent { event: 99 }) => {}
+            other => panic!("{other:?}"),
+        }
+        sim.begin_capture(d, s).unwrap();
+        assert_eq!(
+            sim.event_elapsed(start, end).unwrap(),
+            sim.event_elapsed_ns(start, end).unwrap()
+        );
+        let _g = sim.end_capture().unwrap();
+        sim.create_event_disable_timing(EventId(3)).unwrap();
+        match sim.event_elapsed(EventId(3), end) {
+            Err(SimError::Invalid { why }) => assert!(why.contains("disable timing"), "{why}"),
+            other => panic!("{other:?}"),
+        }
         sim.free_sync(a).unwrap();
     }
 

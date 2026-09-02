@@ -139,6 +139,7 @@ warp scheduler, L1, …   ← do not model
 | `event_synchronize` is identity with `synchronize_event` | `cuEventSynchronize` |
 | `idle_until` drains, then jumps the clock | GPU idle until the next arrival |
 | `event_elapsed_ns` is record-to-record delta | `cudaEventElapsedTime` (ns) |
+| `event_elapsed` is identity with `event_elapsed_ns` | `cuEventElapsedTime` (ns) |
 | `cudaEventDisableTiming` forbids elapsed | wait / query still work |
 | `query_event` is non-blocking | `cudaEventQuery` |
 | `event_query` is identity with `query_event` | `cuEventQuery` |
@@ -1083,6 +1084,7 @@ open-loop arrival can wait without `sleep`.
 `event_elapsed_ns` is `cudaEventElapsedTime` in nanoseconds (both records
 must be complete and timing-enabled; `create_event_disable_timing` is
 invalid; end-before-start is invalid).
+`event_elapsed` is `cuEventElapsedTime` (identity with `event_elapsed_ns`; ns, not milliseconds). Query. No Engine `--event-elapsed`.
 `event_get_flags` is `cudaEventGetFlags` (the create flags word; query;
 legal during capture).
 `event_get_id` is `cuEventGetId` / `cudaEventGetId` (unique per event
