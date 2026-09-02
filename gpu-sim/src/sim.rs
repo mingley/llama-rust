@@ -25888,8 +25888,7 @@ impl Sim {
 
     /// `cudaMalloc3D`. Identity with [`Self::malloc_3d`].
     ///
-    /// Capture refused. Distinct from [`Self::mem_alloc_pitch`]. This VM does
-    /// not invent occupancy SM counts this slice.
+    /// Capture refused. Distinct from [`Self::mem_alloc_pitch`].
     pub fn mem_alloc_3d(
         &mut self,
         device: DeviceId,
@@ -25901,6 +25900,8 @@ impl Sim {
     }
 
     /// `cudaLaunchCooperativeKernel` on whole allocations.
+    ///
+    /// Driver `cuLaunchCooperativeKernel` is [`Self::launch_cooperative_kernel`].
     ///
     /// Same lease / residency rules as [`Self::kernel`]. The grid occupies
     /// every [`crate::GpuProfile::compute_slots`] so leftover kernels on other
@@ -25918,6 +25919,23 @@ impl Sim {
         let reads: Vec<KernelBuf> = reads.iter().copied().map(KernelBuf::whole).collect();
         let writes: Vec<KernelBuf> = writes.iter().copied().map(KernelBuf::whole).collect();
         self.cooperative_kernel_bufs(device, kind, &reads, &writes, stream)
+    }
+
+    /// `cuLaunchCooperativeKernel`. Identity with
+    /// [`Self::cooperative_kernel`] (`cudaLaunchCooperativeKernel`).
+    ///
+    /// Capture legal. Distinct from
+    /// [`Self::mem_alloc_3d`]. This VM does not invent
+    /// occupancy SM counts this slice.
+    pub fn launch_cooperative_kernel(
+        &mut self,
+        device: DeviceId,
+        kind: KernelKind,
+        reads: &[AllocId],
+        writes: &[AllocId],
+        stream: StreamId,
+    ) -> Result<OpId, SimError> {
+        self.cooperative_kernel(device, kind, reads, writes, stream)
     }
 
     /// `cudaLaunchCooperativeKernel` on explicit buffer spans.
