@@ -10099,7 +10099,12 @@ model, do not celebrate the sim.
       `mem_multicast_store`. This VM does not invent occupancy SM counts, Engine `--mem-multicast-binds`,
       or `cudaChooseDevice`. `gpu-profile capture` is still refused. Dual
       score still has no `$/M tokens`.
-1168. [ ] Next numbered PLAN item after 1167 is the next `gpu-sim` / Engine /
+1168. [x] `gpu-sim` `Sim::mem_is_multicast_va` is
+      multicast VA query. Identity with `is_multicast_va`. Query; legal during capture. Distinct from
+      `mem_multicast_binds`. This VM does not invent occupancy SM counts, Engine `--mem-is-multicast-va`,
+      or `cudaChooseDevice`. `gpu-profile capture` is still refused. Dual
+      score still has no `$/M tokens`.
+1169. [ ] Next numbered PLAN item after 1168 is the next `gpu-sim` / Engine /
     serve / expertvm mechanical API that is still missing, or the next official
     decode family. Prefer remaining CUDA-shaped twins over more
     OpenAI HTTP veneer. Do not invent F32 `output.scale`. Do not invent a
@@ -12290,6 +12295,11 @@ model, do not celebrate the sim.
     occupancy SM counts this slice. Do not reverse MemMulticastBinds identity with multicast_binds.
     Do not invent `is_multicast_va` as `mem_multicast_binds`.
     Do not invent `cuMulticastGetBindCount` as `mem_multicast_binds`.
+    Do not invent a second `mem_is_multicast_va`.
+    Do not invent Engine `--mem-is-multicast-va`. Do not invent
+    occupancy SM counts this slice. Do not reverse MemIsMulticastVa identity with is_multicast_va.
+    Do not invent `pointer_get_attribute` as `mem_is_multicast_va`.
+    Do not invent `cuPointerGetAttribute` as `mem_is_multicast_va`.
     Do not invent a second `cudaStreamAddCallback`.
     Do not invent Engine `--stream-callback` (same wall as second live
     `cudaLaunchHostFunc` after miss DMA).
@@ -14517,6 +14527,11 @@ model, do not celebrate the sim.
     this slice. Do not reverse MemMulticastBinds identity with multicast_binds.
     Do not wrap `multicast_binds` as `mem_multicast_binds`.
     Do not wrap `is_multicast_va` as `mem_multicast_binds`.
+    Do not invent a second `mem_is_multicast_va` API. Do not invent
+    Engine `--mem-is-multicast-va-identity`. Do not invent a pointer-get-attribute
+    this slice. Do not reverse MemIsMulticastVa identity with is_multicast_va.
+    Do not wrap `is_multicast_va` as `mem_is_multicast_va`.
+    Do not wrap `pointer_get_attribute` as `mem_is_multicast_va`.
     Do not invent a second DeviceLaunch in-flight destroy-complete check or Engine
     `--device-launch-destroy`. Do not abort an in-flight DeviceLaunch when
     `destroy_graph` succeeds. Do not delay destroy of an idle exec. Do not invent
@@ -16777,6 +16792,10 @@ model, do not celebrate the sim.
     invent Engine `--cu-mem-multicast-binds`. Do not reverse wrapping
     multicast binds identity. Do not wrap `is_multicast_va` as `mem_multicast_binds`.
     Do not invent `cuMulticastGetBindCount` as `mem_multicast_binds`.
+    Do not invent a second `mem_is_multicast_va` method. Do not
+    invent Engine `--cu-mem-is-multicast-va`. Do not reverse wrapping
+    multicast VA query identity. Do not wrap `pointer_get_attribute` as `mem_is_multicast_va`.
+    Do not invent `cuPointerGetAttribute` as `mem_is_multicast_va`.
     Do not
     spend the next item on an OpenAI-compatible HTTP veneer.
 

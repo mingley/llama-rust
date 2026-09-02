@@ -19346,9 +19346,20 @@ impl Sim {
     }
 
     /// Whether `id` is a reserved VA mapped with [`Self::va_map_multicast`].
+    /// Identity wrap [`Self::mem_is_multicast_va`].
     #[must_use]
     pub fn is_multicast_va(&self, id: AllocId) -> bool {
         self.mc_vas.contains_key(&id)
+    }
+
+    /// Multicast VA query. Identity with
+    /// [`Self::is_multicast_va`].
+    ///
+    /// Query; legal during capture. Distinct from [`Self::mem_multicast_binds`].
+    /// This VM does not invent occupancy SM counts this slice.
+    #[must_use]
+    pub fn mem_is_multicast_va(&self, id: AllocId) -> bool {
+        self.is_multicast_va(id)
     }
 
     /// How many devices currently have [`Self::multicast_bind_mem`] on `mc`.
@@ -19362,7 +19373,6 @@ impl Sim {
     /// [`Self::multicast_binds`].
     ///
     /// Query; legal during capture. Distinct from [`Self::mem_multicast_store`].
-    /// This VM does not invent occupancy SM counts this slice.
     pub fn mem_multicast_binds(&self, mc: MulticastId) -> Result<u32, SimError> {
         self.multicast_binds(mc)
     }

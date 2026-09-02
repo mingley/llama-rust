@@ -856,6 +856,7 @@ compiled kernel exists; no Engine flag).
 `gpu-sim` `mem_multicast_destroy` is `cuMemRelease` multicast (identity with `multicast_destroy`; no Engine flag).
 `gpu-sim` `mem_multicast_store` is NVLS kernel store (identity with `multicast_store`; no Engine flag).
 `gpu-sim` `mem_multicast_binds` is multicast bind count (identity with `multicast_binds`; no Engine flag).
+`gpu-sim` `mem_is_multicast_va` is multicast VA query (identity with `is_multicast_va`; no Engine flag).
 `gpu-sim` `mem_alloc` is `cuMemAlloc` (identity with `malloc`; no Engine flag).
 `gpu-sim` `mem_free` is `cuMemFree` (identity with `free_sync`; no Engine flag).
 `gpu-sim` `mem_free_host` is `cuMemFreeHost` (identity with `free_host_pinned`; no Engine flag).
@@ -1236,6 +1237,7 @@ compiled kernel exists; no Engine flag).
 `gpu-sim` `mem_multicast_destroy` is `cuMemRelease` multicast (identity with `multicast_destroy`; no Engine flag).
 `gpu-sim` `mem_multicast_store` is NVLS kernel store (identity with `multicast_store`; no Engine flag).
 `gpu-sim` `mem_multicast_binds` is multicast bind count (identity with `multicast_binds`; no Engine flag).
+`gpu-sim` `mem_is_multicast_va` is multicast VA query (identity with `is_multicast_va`; no Engine flag).
 `gpu-sim` `func_is_loaded` is `cuFuncIsLoaded` (`false` until a compiled
 kernel exists; no Engine flag).
 `gpu-sim` `func_load` is `cuFuncLoad` (Invalid; no compiled kernel; no
