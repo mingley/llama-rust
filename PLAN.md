@@ -9644,7 +9644,12 @@ model, do not celebrate the sim.
       `func_get_required_cluster_height`. This VM does not invent occupancy SM counts, Engine `--func-set-required-cluster-depth`,
       or `cudaChooseDevice`. `gpu-profile capture` is still refused. Dual
       score still has no `$/M tokens`.
-1077. [ ] Next numbered PLAN item after 1076 is the next `gpu-sim` / Engine /
+1077. [x] `gpu-sim` `Sim::func_get_required_cluster_depth` is
+      `cuFuncGetAttribute` required cluster depth. Identity with `required_cluster_depth` (`cudaFuncGetAttribute` RequiredClusterDepth). Query; legal during capture. Distinct from
+      `func_set_required_cluster_depth`. This VM does not invent occupancy SM counts, Engine `--func-get-required-cluster-depth`,
+      or `cudaChooseDevice`. `gpu-profile capture` is still refused. Dual
+      score still has no `$/M tokens`.
+1078. [ ] Next numbered PLAN item after 1077 is the next `gpu-sim` / Engine /
     serve / expertvm mechanical API that is still missing, or the next official
     decode family. Prefer remaining CUDA-shaped twins over more
     OpenAI HTTP veneer. Do not invent F32 `output.scale`. Do not invent a
@@ -11406,6 +11411,10 @@ model, do not celebrate the sim.
     Do not invent Engine `--func-set-required-cluster-depth`. Do not invent
     occupancy SM counts this slice. Do not reverse FuncSetRequiredClusterDepth identity with set_required_cluster_depth.
     Do not invent generic `cuFuncSetAttribute` as `func_set_required_cluster_depth`.
+    Do not invent a second `cuFuncGetAttribute` required cluster depth / `func_get_required_cluster_depth`.
+    Do not invent Engine `--func-get-required-cluster-depth`. Do not invent
+    occupancy SM counts this slice. Do not reverse FuncGetRequiredClusterDepth identity with required_cluster_depth.
+    Do not invent generic `cuFuncGetAttribute` as `func_get_required_cluster_depth`.
     Do not invent a second `cudaStreamAddCallback`.
     Do not invent Engine `--stream-callback` (same wall as second live
     `cudaLaunchHostFunc` after miss DMA).
@@ -13207,6 +13216,9 @@ model, do not celebrate the sim.
     Do not invent a second `func_set_required_cluster_depth` API. Do not invent
     Engine `--func-set-required-cluster-depth-identity`. Do not invent a get-required-cluster-depth
     this slice. Do not reverse FuncSetRequiredClusterDepth identity with set_required_cluster_depth.
+    Do not invent a second `func_get_required_cluster_depth` API. Do not invent
+    Engine `--func-get-required-cluster-depth-identity`. Do not invent a non-portable-cluster-size
+    this slice. Do not reverse FuncGetRequiredClusterDepth identity with required_cluster_depth.
     Do not invent a second DeviceLaunch in-flight destroy-complete check or Engine
     `--device-launch-destroy`. Do not abort an in-flight DeviceLaunch when
     `destroy_graph` succeeds. Do not delay destroy of an idle exec. Do not invent
@@ -15191,6 +15203,9 @@ model, do not celebrate the sim.
     Do not invent a second `func_set_required_cluster_depth` method. Do not
     invent Engine `--cu-func-set-required-cluster-depth`. Do not reverse wrapping
     cuFuncSetAttribute required cluster depth identity. Do not wrap generic `cuFuncSetAttribute` as `func_set_required_cluster_depth`.
+    Do not invent a second `func_get_required_cluster_depth` method. Do not
+    invent Engine `--cu-func-get-required-cluster-depth`. Do not reverse wrapping
+    cuFuncGetAttribute required cluster depth identity. Do not wrap generic `cuFuncGetAttribute` as `func_get_required_cluster_depth`.
     Do not
     spend the next item on an OpenAI-compatible HTTP veneer.
 

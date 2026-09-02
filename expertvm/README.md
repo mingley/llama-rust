@@ -755,6 +755,8 @@ compiled kernel exists; no Engine flag).
 `gpu-sim` `func_get_required_cluster_height` is `cuFuncGetAttribute` required cluster height (identity with `required_cluster_height`; no Engine flag).
 
 `gpu-sim` `func_set_required_cluster_depth` is `cuFuncSetAttribute` required cluster depth (identity with `set_required_cluster_depth`; no Engine flag).
+
+`gpu-sim` `func_get_required_cluster_depth` is `cuFuncGetAttribute` required cluster depth (identity with `required_cluster_depth`; no Engine flag).
 `gpu-sim` `mem_alloc` is `cuMemAlloc` (identity with `malloc`; no Engine flag).
 `gpu-sim` `mem_free` is `cuMemFree` (identity with `free_sync`; no Engine flag).
 `gpu-sim` `mem_free_host` is `cuMemFreeHost` (identity with `free_host_pinned`; no Engine flag).
@@ -1034,6 +1036,8 @@ compiled kernel exists; no Engine flag).
 `gpu-sim` `func_get_required_cluster_height` is `cuFuncGetAttribute` required cluster height (identity with `required_cluster_height`; no Engine flag).
 
 `gpu-sim` `func_set_required_cluster_depth` is `cuFuncSetAttribute` required cluster depth (identity with `set_required_cluster_depth`; no Engine flag).
+
+`gpu-sim` `func_get_required_cluster_depth` is `cuFuncGetAttribute` required cluster depth (identity with `required_cluster_depth`; no Engine flag).
 `gpu-sim` `func_is_loaded` is `cuFuncIsLoaded` (`false` until a compiled
 kernel exists; no Engine flag).
 `gpu-sim` `func_load` is `cuFuncLoad` (Invalid; no compiled kernel; no
