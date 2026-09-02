@@ -4106,8 +4106,7 @@ impl Sim {
     /// [`Self::device_launch_graph`] (device-side `cudaGraphLaunch`).
     ///
     /// Capture refused. Distinct from
-    /// [`Self::graph_launch`]. This VM does not invent
-    /// occupancy SM counts this slice.
+    /// [`Self::graph_launch`].
     pub fn launch_device_graph(
         &mut self,
         graph: GraphId,
@@ -4370,13 +4369,25 @@ impl Sim {
     /// capture. Unknown devices are Invalid. Concurrent in-flight
     /// DeviceLaunch execs on one GPU return the lowest [`GraphId`]. A
     /// parked in-flight destroy still reports that exec until the launch
-    /// tail completes.
+    /// tail completes. Driver
+    /// `cuGetCurrentGraphExec` is
+    /// [`Self::get_current_graph_exec`].
     pub fn current_graph_exec(&self, device: DeviceId) -> Result<Option<GraphId>, SimError> {
         let _gpu = self.profile.gpu(device)?;
         Ok(self.graphs.iter().find_map(|(&id, g)| {
             (g.origin.0 == device && g.device_launch_tail.is_some_and(|tail| !self.op_done(tail)))
                 .then_some(id)
         }))
+    }
+
+    /// `cuGetCurrentGraphExec`. Identity with
+    /// [`Self::current_graph_exec`] (`cudaGetCurrentGraphExec`).
+    ///
+    /// Query; legal during capture. Distinct from
+    /// [`Self::launch_device_graph`]. This VM does not invent
+    /// occupancy SM counts this slice.
+    pub fn get_current_graph_exec(&self, device: DeviceId) -> Result<Option<GraphId>, SimError> {
+        self.current_graph_exec(device)
     }
 
     fn reset_graph_tree_conds(&mut self, root: GraphId) -> Result<(), SimError> {

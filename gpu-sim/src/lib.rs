@@ -565,6 +565,9 @@
 //! [`launch_device_graph`](Sim::launch_device_graph) is device-side `cuGraphLaunch` (identity with
 //! [`device_launch_graph`](Sim::device_launch_graph)). Capture refused. Distinct from
 //! [`graph_launch`](Sim::graph_launch). No Engine `--device-launch-graph`.
+//! [`get_current_graph_exec`](Sim::get_current_graph_exec) is `cuGetCurrentGraphExec` (identity with
+//! [`current_graph_exec`](Sim::current_graph_exec)). Query; legal during capture. Distinct from
+//! [`launch_device_graph`](Sim::launch_device_graph). No Engine `--get-current-graph-exec`.
 //! [`Sim::ipc_get_event`] / [`ipc_open_event`](Sim::ipc_open_event) are
 //! `cudaIpcGetEventHandle` / `cudaIpcOpenEventHandle` (interprocess events).
 //! [`Sim::create_shareable_pool`] is `cudaMemPoolCreate` with a POSIX-FD handle
@@ -1154,6 +1157,9 @@
 //! [`launch_device_graph`](Sim::launch_device_graph) is device-side `cuGraphLaunch` (identity with
 //! [`device_launch_graph`](Sim::device_launch_graph)). Capture refused. Distinct from
 //! [`graph_launch`](Sim::graph_launch). No Engine `--device-launch-graph`.
+//! [`get_current_graph_exec`](Sim::get_current_graph_exec) is `cuGetCurrentGraphExec` (identity with
+//! [`current_graph_exec`](Sim::current_graph_exec)). Query; legal during capture. Distinct from
+//! [`launch_device_graph`](Sim::launch_device_graph). No Engine `--get-current-graph-exec`.
 //! [`HardwareProfile::host_pin_bytes`] caps `cudaMallocHost` / `cudaHostRegister`.
 //! [`Sim::idle_until`] drains, then jumps the virtual clock (open-loop arrivals).
 //! [`Sim::event_elapsed_ns`] is `cudaEventElapsedTime` in nanoseconds.
@@ -1611,6 +1617,9 @@
 //! [`launch_device_graph`](Sim::launch_device_graph) is device-side `cuGraphLaunch` (identity with
 //! [`device_launch_graph`](Sim::device_launch_graph)). Capture refused. Distinct from
 //! [`graph_launch`](Sim::graph_launch). No Engine `--device-launch-graph`.
+//! [`get_current_graph_exec`](Sim::get_current_graph_exec) is `cuGetCurrentGraphExec` (identity with
+//! [`current_graph_exec`](Sim::current_graph_exec)). Query; legal during capture. Distinct from
+//! [`launch_device_graph`](Sim::launch_device_graph). No Engine `--get-current-graph-exec`.
 //! [`mem_host_get_flags`](Sim::mem_host_get_flags) is `cuMemHostGetFlags` (identity with
 //! [`host_get_flags`](Sim::host_get_flags)). Query; legal during capture. No Engine `--mem-host-get-flags`.
 //! [`mem_host_get_device_pointer`](Sim::mem_host_get_device_pointer) is `cuMemHostGetDevicePointer` (identity with
@@ -2034,6 +2043,9 @@
 //! [`launch_device_graph`](Sim::launch_device_graph) is device-side `cuGraphLaunch` (identity with
 //! [`device_launch_graph`](Sim::device_launch_graph)). Capture refused. Distinct from
 //! [`graph_launch`](Sim::graph_launch). No Engine `--device-launch-graph`.
+//! [`get_current_graph_exec`](Sim::get_current_graph_exec) is `cuGetCurrentGraphExec` (identity with
+//! [`current_graph_exec`](Sim::current_graph_exec)). Query; legal during capture. Distinct from
+//! [`launch_device_graph`](Sim::launch_device_graph). No Engine `--get-current-graph-exec`.
 //! [`Sim::pointer_get_attributes`] is `cudaPointerGetAttributes`.
 //! [`pointer_set_attribute`](Sim::pointer_set_attribute) /
 //! [`pointer_get_attribute`](Sim::pointer_get_attribute) are
@@ -2864,6 +2876,9 @@
 //! [`launch_device_graph`](Sim::launch_device_graph) is device-side `cuGraphLaunch` (identity with
 //! [`device_launch_graph`](Sim::device_launch_graph)). Capture refused. Distinct from
 //! [`graph_launch`](Sim::graph_launch). No Engine `--device-launch-graph`.
+//! [`get_current_graph_exec`](Sim::get_current_graph_exec) is `cuGetCurrentGraphExec` (identity with
+//! [`current_graph_exec`](Sim::current_graph_exec)). Query; legal during capture. Distinct from
+//! [`launch_device_graph`](Sim::launch_device_graph). No Engine `--get-current-graph-exec`.
 //! [`Sim::stream_get_device`] is `cudaStreamGetDevice` / `cuStreamGetDevice`
 //! (the device of the stream; green-ctx streams return the ctx create
 //! device). Query; legal during capture. Distinct from
@@ -3123,6 +3138,9 @@
 //! [`launch_device_graph`](Sim::launch_device_graph) is device-side `cuGraphLaunch` (identity with
 //! [`device_launch_graph`](Sim::device_launch_graph)). Capture refused. Distinct from
 //! [`graph_launch`](Sim::graph_launch). No Engine `--device-launch-graph`.
+//! [`get_current_graph_exec`](Sim::get_current_graph_exec) is `cuGetCurrentGraphExec` (identity with
+//! [`current_graph_exec`](Sim::current_graph_exec)). Query; legal during capture. Distinct from
+//! [`launch_device_graph`](Sim::launch_device_graph). No Engine `--get-current-graph-exec`.
 //! [`set_stream_access_policy`](Sim::set_stream_access_policy) is
 //! `cudaStreamAttributeAccessPolicyWindow`: [`kernel`](Sim::kernel) /
 //! [`kernel_bufs`](Sim::kernel_bufs) inherit it; [`kernel_with`](Sim::kernel_with)
@@ -3867,6 +3885,9 @@
 //! [`launch_device_graph`](Sim::launch_device_graph) is device-side `cuGraphLaunch` (identity with
 //! [`device_launch_graph`](Sim::device_launch_graph)). Capture refused. Distinct from
 //! [`graph_launch`](Sim::graph_launch). No Engine `--device-launch-graph`.
+//! [`get_current_graph_exec`](Sim::get_current_graph_exec) is `cuGetCurrentGraphExec` (identity with
+//! [`current_graph_exec`](Sim::current_graph_exec)). Query; legal during capture. Distinct from
+//! [`launch_device_graph`](Sim::launch_device_graph). No Engine `--get-current-graph-exec`.
 //! [`Sim::set_stream_priority`] is the priority-only helper;
 //! [`stream_create_with_priority`](Sim::stream_create_with_priority) is
 //! `cudaStreamCreateWithPriority` (flags plus priority; clamped to
@@ -4144,6 +4165,9 @@
 //! [`launch_device_graph`](Sim::launch_device_graph) is device-side `cuGraphLaunch` (identity with
 //! [`device_launch_graph`](Sim::device_launch_graph)). Capture refused. Distinct from
 //! [`graph_launch`](Sim::graph_launch). No Engine `--device-launch-graph`.
+//! [`get_current_graph_exec`](Sim::get_current_graph_exec) is `cuGetCurrentGraphExec` (identity with
+//! [`current_graph_exec`](Sim::current_graph_exec)). Query; legal during capture. Distinct from
+//! [`launch_device_graph`](Sim::launch_device_graph). No Engine `--get-current-graph-exec`.
 //! [`destroy_stream`](Sim::destroy_stream) is `cudaStreamDestroy` (returns
 //! immediately; in-flight work still completes; NULL is Invalid; recreate
 //! while unfinished is `"stream in flight"`). Capture cannot include it.
@@ -4401,6 +4425,9 @@
 //! [`launch_device_graph`](Sim::launch_device_graph) is device-side `cuGraphLaunch` (identity with
 //! [`device_launch_graph`](Sim::device_launch_graph)). Capture refused. Distinct from
 //! [`graph_launch`](Sim::graph_launch). No Engine `--device-launch-graph`.
+//! [`get_current_graph_exec`](Sim::get_current_graph_exec) is `cuGetCurrentGraphExec` (identity with
+//! [`current_graph_exec`](Sim::current_graph_exec)). Query; legal during capture. Distinct from
+//! [`launch_device_graph`](Sim::launch_device_graph). No Engine `--get-current-graph-exec`.
 //! [`Sim::instantiate_graph`] is `cudaGraphInstantiate` (host-sync; returns a
 //! new exec id; first [`launch_graph`](Sim::launch_graph) of a definition
 //! creates a primary exec). Unused conditional handles are
@@ -4687,6 +4714,9 @@
 //! [`launch_device_graph`](Sim::launch_device_graph) is device-side `cuGraphLaunch` (identity with
 //! [`device_launch_graph`](Sim::device_launch_graph)). Capture refused. Distinct from
 //! [`graph_launch`](Sim::graph_launch). No Engine `--device-launch-graph`.
+//! [`get_current_graph_exec`](Sim::get_current_graph_exec) is `cuGetCurrentGraphExec` (identity with
+//! [`current_graph_exec`](Sim::current_graph_exec)). Query; legal during capture. Distinct from
+//! [`launch_device_graph`](Sim::launch_device_graph). No Engine `--get-current-graph-exec`.
 //! [`graph_kernel_node_get_priority`](Sim::graph_kernel_node_get_priority) /
 //! [`graph_kernel_node_set_priority`](Sim::graph_kernel_node_set_priority) /
 //! [`graph_kernel_node_copy_attributes`](Sim::graph_kernel_node_copy_attributes)
@@ -4932,6 +4962,9 @@
 //! [`launch_device_graph`](Sim::launch_device_graph) is device-side `cuGraphLaunch` (identity with
 //! [`device_launch_graph`](Sim::device_launch_graph)). Capture refused. Distinct from
 //! [`graph_launch`](Sim::graph_launch). No Engine `--device-launch-graph`.
+//! [`get_current_graph_exec`](Sim::get_current_graph_exec) is `cuGetCurrentGraphExec` (identity with
+//! [`current_graph_exec`](Sim::current_graph_exec)). Query; legal during capture. Distinct from
+//! [`launch_device_graph`](Sim::launch_device_graph). No Engine `--get-current-graph-exec`.
 //! [`graph_kernel_node_get_attribute`](Sim::graph_kernel_node_get_attribute) /
 //! [`graph_exec_kernel_node_get_attribute`](Sim::graph_exec_kernel_node_get_attribute) /
 //! [`graph_kernel_node_set_attribute`](Sim::graph_kernel_node_set_attribute) /
@@ -5183,6 +5216,9 @@
 //! [`launch_device_graph`](Sim::launch_device_graph) is device-side `cuGraphLaunch` (identity with
 //! [`device_launch_graph`](Sim::device_launch_graph)). Capture refused. Distinct from
 //! [`graph_launch`](Sim::graph_launch). No Engine `--device-launch-graph`.
+//! [`get_current_graph_exec`](Sim::get_current_graph_exec) is `cuGetCurrentGraphExec` (identity with
+//! [`current_graph_exec`](Sim::current_graph_exec)). Query; legal during capture. Distinct from
+//! [`launch_device_graph`](Sim::launch_device_graph). No Engine `--get-current-graph-exec`.
 //! Device-launch
 //! execs cannot attach programmatic or launch-completion events.
 //! [`kernel_pdl`](Sim::kernel_pdl) is `cudaLaunchKernelEx` PDL: a wait kernel
@@ -5562,6 +5598,9 @@
 //! [`launch_device_graph`](Sim::launch_device_graph) is device-side `cuGraphLaunch` (identity with
 //! [`device_launch_graph`](Sim::device_launch_graph)). Capture refused. Distinct from
 //! [`graph_launch`](Sim::graph_launch). No Engine `--device-launch-graph`.
+//! [`get_current_graph_exec`](Sim::get_current_graph_exec) is `cuGetCurrentGraphExec` (identity with
+//! [`current_graph_exec`](Sim::current_graph_exec)). Query; legal during capture. Distinct from
+//! [`launch_device_graph`](Sim::launch_device_graph). No Engine `--get-current-graph-exec`.
 //! [`graph_exec_memcpy_set_params`](Sim::graph_exec_memcpy_set_params) /
 //! [`graph_exec_memcpy_set_params_1d`](Sim::graph_exec_memcpy_set_params_1d) /
 //! [`graph_exec_memcpy_set_params_2d`](Sim::graph_exec_memcpy_set_params_2d) /
@@ -5805,6 +5844,9 @@
 //! [`launch_device_graph`](Sim::launch_device_graph) is device-side `cuGraphLaunch` (identity with
 //! [`device_launch_graph`](Sim::device_launch_graph)). Capture refused. Distinct from
 //! [`graph_launch`](Sim::graph_launch). No Engine `--device-launch-graph`.
+//! [`get_current_graph_exec`](Sim::get_current_graph_exec) is `cuGetCurrentGraphExec` (identity with
+//! [`current_graph_exec`](Sim::current_graph_exec)). Query; legal during capture. Distinct from
+//! [`launch_device_graph`](Sim::launch_device_graph). No Engine `--get-current-graph-exec`.
 //! [`get_graph_kernel_node_params`](Sim::get_graph_kernel_node_params) is `cuGraphKernelNodeGetParams` (identity with
 //! [`graph_kernel_get_params`](Sim::graph_kernel_get_params)). Query; legal during capture. Distinct from
 //! [`graph_exec_kernel_get_params`](Sim::graph_exec_kernel_get_params). No Engine `--graph-kernel-get-params`.
@@ -6027,6 +6069,9 @@
 //! [`launch_device_graph`](Sim::launch_device_graph) is device-side `cuGraphLaunch` (identity with
 //! [`device_launch_graph`](Sim::device_launch_graph)). Capture refused. Distinct from
 //! [`graph_launch`](Sim::graph_launch). No Engine `--device-launch-graph`.
+//! [`get_current_graph_exec`](Sim::get_current_graph_exec) is `cuGetCurrentGraphExec` (identity with
+//! [`current_graph_exec`](Sim::current_graph_exec)). Query; legal during capture. Distinct from
+//! [`launch_device_graph`](Sim::launch_device_graph). No Engine `--get-current-graph-exec`.
 //! [`graph_exec_kernel_get_params`](Sim::graph_exec_kernel_get_params) /
 //! [`graph_exec_memcpy_get_params`](Sim::graph_exec_memcpy_get_params) /
 //! [`graph_exec_memset_get_params`](Sim::graph_exec_memset_get_params) /
@@ -6240,6 +6285,9 @@
 //! [`launch_device_graph`](Sim::launch_device_graph) is device-side `cuGraphLaunch` (identity with
 //! [`device_launch_graph`](Sim::device_launch_graph)). Capture refused. Distinct from
 //! [`graph_launch`](Sim::graph_launch). No Engine `--device-launch-graph`.
+//! [`get_current_graph_exec`](Sim::get_current_graph_exec) is `cuGetCurrentGraphExec` (identity with
+//! [`current_graph_exec`](Sim::current_graph_exec)). Query; legal during capture. Distinct from
+//! [`launch_device_graph`](Sim::launch_device_graph). No Engine `--get-current-graph-exec`.
 //! [`get_graph_exec_kernel_node_params`](Sim::get_graph_exec_kernel_node_params) is `cuGraphExecKernelNodeGetParams` (identity with
 //! [`graph_exec_kernel_get_params`](Sim::graph_exec_kernel_get_params)). Query; legal during capture. Distinct from
 //! [`get_graph_kernel_node_params`](Sim::get_graph_kernel_node_params). No Engine `--graph-exec-kernel-get-params`.
@@ -6459,6 +6507,9 @@
 //! [`launch_device_graph`](Sim::launch_device_graph) is device-side `cuGraphLaunch` (identity with
 //! [`device_launch_graph`](Sim::device_launch_graph)). Capture refused. Distinct from
 //! [`graph_launch`](Sim::graph_launch). No Engine `--device-launch-graph`.
+//! [`get_current_graph_exec`](Sim::get_current_graph_exec) is `cuGetCurrentGraphExec` (identity with
+//! [`current_graph_exec`](Sim::current_graph_exec)). Query; legal during capture. Distinct from
+//! [`launch_device_graph`](Sim::launch_device_graph). No Engine `--get-current-graph-exec`.
 //! [`graph_exec_batch_mem_op_set_params`](Sim::graph_exec_batch_mem_op_set_params)
 //! is `cudaGraphExecBatchMemOpNodeSetParams` (id/offset/value; wait vs write,
 //! `bits32`, and compare stay on wait/write nodes;
@@ -27882,6 +27933,65 @@ mod tests {
             other => panic!("{other:?}"),
         }
         let _cap = eight.end_capture().unwrap();
+    }
+
+    #[test]
+    fn get_current_graph_exec_is_cu_get_current_graph_exec() {
+        let mut sim = Sim::new(h100());
+        let d = DeviceId(0);
+        let s = StreamId(0);
+        match sim.get_current_graph_exec(DeviceId(99)) {
+            Err(SimError::Invalid { why }) => assert!(why.contains("device"), "{why}"),
+            other => panic!("{other:?}"),
+        }
+        match sim.current_graph_exec(DeviceId(99)) {
+            Err(SimError::Invalid { why }) => assert!(why.contains("device"), "{why}"),
+            other => panic!("{other:?}"),
+        }
+        assert_eq!(sim.get_current_graph_exec(d).unwrap(), None);
+        assert_eq!(sim.current_graph_exec(d).unwrap(), None);
+        let a = sim.malloc(d, 4096).unwrap();
+        let g = sim.create_graph(d, s).unwrap();
+        sim.graph_add_kernel(g, KernelKind::other(1 << 40, 4096), &[a], &[a])
+            .unwrap();
+        let exec = sim
+            .instantiate_graph_with_flags(
+                g,
+                GraphInstantiateFlags::DEVICE_LAUNCH | GraphInstantiateFlags::UPLOAD,
+            )
+            .unwrap();
+        enq(sim.device_launch_graph(exec, s));
+        assert_eq!(sim.get_current_graph_exec(d).unwrap(), Some(exec));
+        assert_eq!(sim.current_graph_exec(d).unwrap(), Some(exec));
+        sim.begin_capture(d, StreamId(1)).unwrap();
+        assert_eq!(sim.get_current_graph_exec(d).unwrap(), Some(exec));
+        assert_eq!(sim.current_graph_exec(d).unwrap(), Some(exec));
+        let _cap = sim.end_capture().unwrap();
+        sim.synchronize().unwrap();
+        assert_eq!(sim.get_current_graph_exec(d).unwrap(), None);
+        assert_eq!(sim.current_graph_exec(d).unwrap(), None);
+        let mut eight = Sim::new(HardwareProfile::example_8xh100_nvlink());
+        let d1 = DeviceId(1);
+        let a1 = eight.malloc(d1, 4096).unwrap();
+        let g1 = eight.create_graph(d1, s).unwrap();
+        eight
+            .graph_add_kernel(g1, KernelKind::other(1 << 40, 4096), &[a1], &[a1])
+            .unwrap();
+        let exec1 = eight
+            .instantiate_graph_with_flags(
+                g1,
+                GraphInstantiateFlags::DEVICE_LAUNCH | GraphInstantiateFlags::UPLOAD,
+            )
+            .unwrap();
+        assert_eq!(eight.get_current_graph_exec(d1).unwrap(), None);
+        enq(eight.device_launch_graph(exec1, s));
+        assert_eq!(eight.get_current_graph_exec(d1).unwrap(), Some(exec1));
+        eight.begin_capture(d1, StreamId(1)).unwrap();
+        assert_eq!(eight.get_current_graph_exec(d1).unwrap(), Some(exec1));
+        assert_eq!(eight.current_graph_exec(d1).unwrap(), Some(exec1));
+        let _cap = eight.end_capture().unwrap();
+        eight.synchronize().unwrap();
+        assert_eq!(eight.get_current_graph_exec(d1).unwrap(), None);
     }
 
     #[test]
