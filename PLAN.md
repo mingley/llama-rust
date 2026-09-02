@@ -8939,7 +8939,14 @@ model, do not celebrate the sim.
     or `cudaChooseDevice`. `gpu-profile capture` is still refused. Dual
     score still has no `$/M tokens`.
 
-969. [ ] Next numbered PLAN item after 968 is the next `gpu-sim` / Engine /
+969. [x] `gpu-sim` `Sim::add_graph_memset_op` is
+    `cuGraphAddMemsetNode` params. Identity with `graph_add_memset_op`
+    (`cudaGraphAddMemsetNode` with `MemsetOp`). Capture refused. Distinct from
+    `add_graph_memset`. This VM does not invent occupancy SM counts, Engine `--graph-add-memset-op`,
+    or `cudaChooseDevice`. `gpu-profile capture` is still refused. Dual
+    score still has no `$/M tokens`.
+
+970. [ ] Next numbered PLAN item after 969 is the next `gpu-sim` / Engine /
     serve / expertvm mechanical API that is still missing, or the next official
     decode family. Prefer remaining CUDA-shaped twins over more
     OpenAI HTTP veneer. Do not invent F32 `output.scale`. Do not invent a
@@ -10337,6 +10344,9 @@ model, do not celebrate the sim.
     Do not invent a second packed 1D `cuGraphAddMemsetNode` / `add_graph_memset`.
     Do not invent Engine `--graph-add-memset`. Do not invent
     occupancy SM counts this slice. Do not reverse AddGraphMemset identity with graph_add_memset.
+    Do not invent a second `cuGraphAddMemsetNode` params / `add_graph_memset_op`.
+    Do not invent Engine `--graph-add-memset-op`. Do not invent
+    occupancy SM counts this slice. Do not reverse AddGraphMemsetOp identity with graph_add_memset_op.
     Do not invent a second `cudaStreamAddCallback`.
     Do not invent Engine `--stream-callback` (same wall as second live
     `cudaLaunchHostFunc` after miss DMA).
@@ -11814,6 +11824,9 @@ model, do not celebrate the sim.
     Do not invent a second `add_graph_memset` API. Do not invent
     Engine `--graph-add-memset-identity`. Do not invent a graph-add-memset-op
     this slice. Do not reverse AddGraphMemset identity with graph_add_memset.
+    Do not invent a second `add_graph_memset_op` API. Do not invent
+    Engine `--graph-add-memset-op-identity`. Do not invent a graph-add-memset-2d
+    this slice. Do not reverse AddGraphMemsetOp identity with graph_add_memset_op.
     Do not invent a second DeviceLaunch in-flight destroy-complete check or Engine
     `--device-launch-destroy`. Do not abort an in-flight DeviceLaunch when
     `destroy_graph` succeeds. Do not delay destroy of an idle exec. Do not invent
@@ -13474,6 +13487,9 @@ model, do not celebrate the sim.
     Do not invent a second `add_graph_memset` method. Do not
     invent Engine `--cu-graph-add-memset`. Do not reverse wrapping
     packed 1D cuGraphAddMemsetNode identity.
+    Do not invent a second `add_graph_memset_op` method. Do not
+    invent Engine `--cu-graph-add-memset-op`. Do not reverse wrapping
+    cuGraphAddMemsetNode params identity.
     Do not
     spend the next item on an OpenAI-compatible HTTP veneer.
 

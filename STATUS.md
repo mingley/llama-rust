@@ -5,6 +5,14 @@ Visible five-turn extract: [docs/chatgpt-share-6a920fe1.md](docs/chatgpt-share-6
 Complete share-API extract: [docs/chatgpt-share-6a920fe1/](docs/chatgpt-share-6a920fe1/).
 Work lands on `main`. No PRs.
 
+## Shipped 2026-09-02 — CUDA `cuGraphAddMemsetNode` params
+
+`gpu-sim` `Sim::add_graph_memset_op` is `cuGraphAddMemsetNode` params.
+Identity with `graph_add_memset_op` (`cudaGraphAddMemsetNode` with `MemsetOp`).
+Capture refused. Distinct from packed 1D `add_graph_memset`.
+This VM does not invent occupancy SM counts or Engine `--graph-add-memset-op`.
+`gpu-profile capture` is still refused. Dual score still has no `$/M tokens`.
+
 ## Shipped 2026-09-02 — CUDA packed 1D `cuGraphAddMemsetNode`
 
 `gpu-sim` `Sim::add_graph_memset` is packed 1D `cuGraphAddMemsetNode`.

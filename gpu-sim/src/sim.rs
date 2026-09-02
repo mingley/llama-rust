@@ -10234,8 +10234,7 @@ impl Sim {
     /// [`Self::graph_add_memset`] (`cudaGraphAddMemsetNode` packed 1D).
     ///
     /// Capture refused. Distinct from
-    /// [`Self::add_graph_memcpy_3d`]. This VM does not invent
-    /// occupancy SM counts this slice.
+    /// [`Self::add_graph_memcpy_3d`].
     pub fn add_graph_memset(&mut self, graph: GraphId, buf: KernelBuf) -> Result<(), SimError> {
         self.graph_add_memset(graph, buf)
     }
@@ -10244,9 +10243,22 @@ impl Sim {
     /// [`Self::graph_add_memset_2d`] requires [`MemsetOp::is_2d`].
     /// [`Self::graph_add_memset_3d`] requires [`MemsetOp::is_3d`].
     /// [`MemsetNodeParams::ctx`] stays [`None`]. Pin a green context through
-    /// [`Self::graph_add_node`] with [`GraphNodeParams::Memset`].
+    /// [`Self::graph_add_node`] with [`GraphNodeParams::Memset`]. Driver
+    /// `cuGraphAddMemsetNode` params is
+    /// [`Self::add_graph_memset_op`].
     pub fn graph_add_memset_op(&mut self, graph: GraphId, op: MemsetOp) -> Result<(), SimError> {
         self.graph_add_memset_params(graph, MemsetNodeParams { op, ctx: None })
+    }
+
+    /// `cuGraphAddMemsetNode` params. Identity with
+    /// [`Self::graph_add_memset_op`] (`cudaGraphAddMemsetNode` with
+    /// [`MemsetOp`]).
+    ///
+    /// Capture refused. Distinct from
+    /// [`Self::add_graph_memset`]. This VM does not invent
+    /// occupancy SM counts this slice.
+    pub fn add_graph_memset_op(&mut self, graph: GraphId, op: MemsetOp) -> Result<(), SimError> {
+        self.graph_add_memset_op(graph, op)
     }
 
     fn graph_add_memset_params(
