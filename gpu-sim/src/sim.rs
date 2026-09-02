@@ -10095,7 +10095,9 @@ impl Sim {
     ///
     /// Occupies every Hyper-Q slot at launch. Capture cannot include it.
     /// Illegal on an instantiated exec. Device must advertise
-    /// [`crate::GpuProfile::cooperative_launch`].
+    /// [`crate::GpuProfile::cooperative_launch`]. Driver
+    /// graph cooperative `cudaGraphAddKernelNode` is
+    /// [`Self::add_graph_cooperative_kernel`].
     pub fn graph_add_cooperative_kernel(
         &mut self,
         graph: GraphId,
@@ -10104,6 +10106,23 @@ impl Sim {
         writes: &[AllocId],
     ) -> Result<(), SimError> {
         self.graph_add_kernel_node(graph, kind, reads, writes, true)
+    }
+
+    /// Graph cooperative `cudaGraphAddKernelNode`. Identity with
+    /// [`Self::graph_add_cooperative_kernel`] (`cudaGraphAddKernelNode` for a
+    /// [`Self::cooperative_kernel`] launch).
+    ///
+    /// Capture refused. Distinct from
+    /// [`Self::add_graph_kernel`]. This VM does not invent
+    /// occupancy SM counts this slice.
+    pub fn add_graph_cooperative_kernel(
+        &mut self,
+        graph: GraphId,
+        kind: KernelKind,
+        reads: &[AllocId],
+        writes: &[AllocId],
+    ) -> Result<(), SimError> {
+        self.graph_add_cooperative_kernel(graph, kind, reads, writes)
     }
 
     fn graph_add_kernel_node(
@@ -11277,8 +11296,7 @@ impl Sim {
     /// flags).
     ///
     /// Capture refused. Distinct from
-    /// [`Self::add_graph_wait_value64_with_flags`]. This VM does not invent
-    /// occupancy SM counts this slice.
+    /// [`Self::add_graph_wait_value64_with_flags`].
     pub fn add_graph_wait_value32_with_flags(
         &mut self,
         graph: GraphId,
