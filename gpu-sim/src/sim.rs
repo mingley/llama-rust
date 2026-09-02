@@ -10164,8 +10164,7 @@ impl Sim {
     /// [`Self::graph_add_memcpy_1d`] (`cudaGraphAddMemcpyNode1D`).
     ///
     /// Capture refused. Distinct from
-    /// [`Self::add_graph_memcpy`]. This VM does not invent
-    /// occupancy SM counts this slice.
+    /// [`Self::add_graph_memcpy`].
     pub fn add_graph_memcpy_1d(
         &mut self,
         graph: GraphId,
@@ -10179,7 +10178,9 @@ impl Sim {
 
     /// `cudaGraphAddMemcpyNode` whose [`MemcpyOp`] is [`MemcpyOp::is_2d`]
     /// (`height > 1`, not 3D). Other extents Invalid `"memcpy2d height"`.
-    /// Typed [`Self::graph_add_memcpy`] stays.
+    /// Typed [`Self::graph_add_memcpy`] stays. Driver
+    /// 2D `cuGraphAddMemcpyNode` is
+    /// [`Self::add_graph_memcpy_2d`].
     pub fn graph_add_memcpy_2d(&mut self, graph: GraphId, op: MemcpyOp) -> Result<(), SimError> {
         if !op.is_2d() {
             return Err(SimError::Invalid {
@@ -10187,6 +10188,16 @@ impl Sim {
             });
         }
         self.graph_add_memcpy(graph, op)
+    }
+
+    /// 2D `cuGraphAddMemcpyNode`. Identity with
+    /// [`Self::graph_add_memcpy_2d`] (`cudaGraphAddMemcpyNode` 2D).
+    ///
+    /// Capture refused. Distinct from
+    /// [`Self::add_graph_memcpy_1d`]. This VM does not invent
+    /// occupancy SM counts this slice.
+    pub fn add_graph_memcpy_2d(&mut self, graph: GraphId, op: MemcpyOp) -> Result<(), SimError> {
+        self.graph_add_memcpy_2d(graph, op)
     }
 
     /// `cudaGraphAddMemcpyNode` whose [`MemcpyOp`] is [`MemcpyOp::is_3d`]
