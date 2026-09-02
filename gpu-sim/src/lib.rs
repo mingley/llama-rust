@@ -490,6 +490,8 @@
 //! helpers stay.
 //! [`Sim::destroy_event`] is `cudaEventDestroy` (waits a recorded incomplete
 //! event; never-recorded returns immediately; capture refused).
+//! [`event_destroy`](Sim::event_destroy) is `cuEventDestroy` (identity with
+//! [`destroy_event`](Sim::destroy_event)). Host-sync; capture refused. No Engine `--event-destroy`.
 //! [`Sim::query_event`] is `cudaEventQuery` (no wait).
 //! [`event_query`](Sim::event_query) is `cuEventQuery` (identity with
 //! [`query_event`](Sim::query_event)). Query; legal during capture. No Engine `--event-query`.
@@ -32449,6 +32451,51 @@ mod tests {
             other => panic!("{other:?}"),
         }
         let _g = sim.end_capture().unwrap();
+        sim.free_sync(a).unwrap();
+    }
+
+    #[test]
+    fn event_destroy_is_cu_event_destroy() {
+        let mut sim = Sim::new(h100());
+        let d = DeviceId(0);
+        let s = StreamId(0);
+        let ev = EventId(4);
+        match sim.event_destroy(ev) {
+            Err(SimError::UnknownEvent { event: 4 }) => {}
+            other => panic!("{other:?}"),
+        }
+        match sim.destroy_event(ev) {
+            Err(SimError::UnknownEvent { event: 4 }) => {}
+            other => panic!("{other:?}"),
+        }
+        sim.create_event(ev).unwrap();
+        sim.event_destroy(ev).unwrap();
+        match sim.event_query(ev) {
+            Err(SimError::UnknownEvent { event: 4 }) => {}
+            other => panic!("{other:?}"),
+        }
+        sim.create_event(ev).unwrap();
+        let a = sim.alloc(d, 4096, s).unwrap();
+        enq(sim.kernel(d, KernelKind::other(1 << 20, 4096), &[a], &[a], s));
+        enq(sim.record_event(d, ev, s));
+        assert!(!sim.event_query(ev).unwrap());
+        sim.event_destroy(ev).unwrap();
+        match sim.event_query(ev) {
+            Err(SimError::UnknownEvent { event: 4 }) => {}
+            other => panic!("{other:?}"),
+        }
+        sim.create_event(ev).unwrap();
+        sim.begin_capture(d, s).unwrap();
+        match sim.event_destroy(ev) {
+            Err(SimError::Invalid { why }) => assert!(why.contains("capture"), "{why}"),
+            other => panic!("{other:?}"),
+        }
+        match sim.destroy_event(ev) {
+            Err(SimError::Invalid { why }) => assert!(why.contains("capture"), "{why}"),
+            other => panic!("{other:?}"),
+        }
+        let _g = sim.end_capture().unwrap();
+        sim.event_destroy(ev).unwrap();
         sim.free_sync(a).unwrap();
     }
 

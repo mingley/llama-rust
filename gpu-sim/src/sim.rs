@@ -2938,6 +2938,16 @@ impl Sim {
         Ok(())
     }
 
+    /// `cuEventDestroy`. Identity with [`Self::destroy_event`]
+    /// (`cudaEventDestroy`).
+    ///
+    /// Host-synchronous. Capture cannot include it. Unknown ids are
+    /// [`SimError::UnknownEvent`]. This VM does not invent `cuEventCreate`
+    /// this slice (`create_event` stays).
+    pub fn event_destroy(&mut self, event: EventId) -> Result<(), SimError> {
+        self.destroy_event(event)
+    }
+
     /// Whether `event` was created with timing enabled (`cudaEventDefault`).
     pub fn event_timing(&self, event: EventId) -> Result<bool, SimError> {
         self.events

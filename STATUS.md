@@ -5,6 +5,15 @@ Visible five-turn extract: [docs/chatgpt-share-6a920fe1.md](docs/chatgpt-share-6
 Complete share-API extract: [docs/chatgpt-share-6a920fe1/](docs/chatgpt-share-6a920fe1/).
 Work lands on `main`. No PRs.
 
+## Shipped 2026-09-02 — CUDA `cuEventDestroy`
+
+`gpu-sim` `Sim::event_destroy` is `cuEventDestroy`.
+Identity with `destroy_event` (`cudaEventDestroy`). Host-synchronous;
+capture cannot include it. Waits a recorded incomplete event.
+Never-recorded returns immediately. Unknown ids are UnknownEvent.
+This VM does not invent `cuEventCreate` or Engine `--event-destroy`.
+`gpu-profile capture` is still refused. Dual score still has no `$/M tokens`.
+
 ## Shipped 2026-09-02 — CUDA `cuStreamSynchronize`
 
 `gpu-sim` `Sim::stream_synchronize` is `cuStreamSynchronize`.
