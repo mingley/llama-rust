@@ -7423,7 +7423,14 @@ model, do not celebrate the sim.
     or `cudaChooseDevice`. `gpu-profile capture` is still refused. Dual
     score still has no `$/M tokens`.
 
-753. [ ] Next numbered PLAN item after 752 is the next `gpu-sim` / Engine /
+753. [x] `gpu-sim` `Sim::tex_ref_set_address` is
+    `cuTexRefSetAddress`. Always Invalid `"texref linear"`
+    because CUDA texture references are not modeled. Query; legal during capture.
+    Distinct from `tex_ref_set_mipmapped_array` and `tex_ref_set_array`. This VM does not invent `cuTexRefSetAddress2D`, Engine `--texref-linear`,
+    or `cudaChooseDevice`. `gpu-profile capture` is still refused. Dual
+    score still has no `$/M tokens`.
+
+754. [ ] Next numbered PLAN item after 753 is the next `gpu-sim` / Engine /
     serve / expertvm mechanical API that is still missing, or the next official
     decode family. Prefer remaining CUDA-shaped twins over more
     OpenAI HTTP veneer. Do not invent F32 `output.scale`. Do not invent a
@@ -8173,6 +8180,9 @@ model, do not celebrate the sim.
     Do not invent a second `cuTexRefSetMipmappedArray` / `tex_ref_set_mipmapped_array`.
     Do not invent Engine `--texref-setmip`. Do not invent
     `cuTexRefSetAddress` this slice. Do not reverse `"texref setmip"`.
+    Do not invent a second `cuTexRefSetAddress` / `tex_ref_set_address`.
+    Do not invent Engine `--texref-linear`. Do not invent
+    `cuTexRefSetAddress2D` this slice. Do not reverse `"texref linear"`.
     Do not invent a second `cudaStreamAddCallback`.
     Do not invent Engine `--stream-callback` (same wall as second live
     `cudaLaunchHostFunc` after miss DMA).
@@ -9002,6 +9012,9 @@ model, do not celebrate the sim.
     Do not invent a second `tex_ref_set_mipmapped_array` API. Do not invent
     Engine `--set-tex-ref-mip`. Do not invent a CUtexref linear address
     this slice. Do not reverse TexRef SetMipmappedArray remaining unsupported.
+    Do not invent a second `tex_ref_set_address` API. Do not invent
+    Engine `--set-tex-ref-addr`. Do not invent a CUtexref pitch2D address
+    this slice. Do not reverse TexRef SetAddress remaining unsupported.
     Do not invent a second DeviceLaunch in-flight destroy-complete check or Engine
     `--device-launch-destroy`. Do not abort an in-flight DeviceLaunch when
     `destroy_graph` succeeds. Do not delay destroy of an idle exec. Do not invent
@@ -10014,6 +10027,9 @@ model, do not celebrate the sim.
     Do not invent a second `tex_ref_set_mipmapped_array` method. Do not
     invent Engine `--cu-tex-ref-set-mip`. Do not reverse wrapping
     cuTexRefSetMipmappedArray Invalid.
+    Do not invent a second `tex_ref_set_address` method. Do not
+    invent Engine `--cu-tex-ref-set-address`. Do not reverse wrapping
+    cuTexRefSetAddress Invalid.
     Do not
     spend the next item on an OpenAI-compatible HTTP veneer.
 
