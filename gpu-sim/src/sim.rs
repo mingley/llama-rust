@@ -2274,7 +2274,6 @@ impl Sim {
     /// [`Self::stream_sync_policy`] (`cudaStreamGetAttribute` SynchronizationPolicy).
     ///
     /// Query; legal during capture. Distinct from [`Self::stream_set_sync_policy`].
-    /// This VM does not invent occupancy SM counts this slice.
     #[must_use]
     pub fn stream_get_sync_policy(
         &self,
@@ -2289,6 +2288,8 @@ impl Sim {
     /// Inherited by [`Self::kernel`] / [`Self::kernel_bufs`] on this stream.
     /// [`Self::kernel_with`] and graph replay use the launch / node value.
     /// Decode identity stays disabled.
+    /// Driver `cuStreamSetAttribute` nvlink util centric is [`Self::stream_set_nvlink_util_centric`].
+    /// Identity wrap [`Self::stream_set_nvlink_util_centric`].
     pub fn set_stream_nvlink_util_centric(
         &mut self,
         device: DeviceId,
@@ -2303,6 +2304,20 @@ impl Sim {
             let _rm = self.stream_nvlink_util_centric.remove(&(device, stream));
         }
         Ok(())
+    }
+
+    /// `cuStreamSetAttribute` nvlink util centric. Identity with
+    /// [`Self::set_stream_nvlink_util_centric`] (`cudaStreamSetAttribute` NvlinkUtilCentricScheduling).
+    ///
+    /// Capture legal. Distinct from [`Self::stream_get_sync_policy`].
+    /// This VM does not invent occupancy SM counts this slice.
+    pub fn stream_set_nvlink_util_centric(
+        &mut self,
+        device: DeviceId,
+        stream: StreamId,
+        enabled: bool,
+    ) -> Result<(), SimError> {
+        self.set_stream_nvlink_util_centric(device, stream, enabled)
     }
 
     /// Stream NVLink-util-centric flag, or `false` if unset.

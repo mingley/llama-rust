@@ -781,6 +781,7 @@ compiled kernel exists; no Engine flag).
 `gpu-sim` `stream_get_mem_sync_domain_map` is `cuStreamGetAttribute` mem sync domain map (identity with `stream_mem_sync_domain_map`; no Engine flag).
 `gpu-sim` `stream_set_sync_policy` is `cuStreamSetAttribute` sync policy (identity with `set_stream_sync_policy`; no Engine flag).
 `gpu-sim` `stream_get_sync_policy` is `cuStreamGetAttribute` sync policy (identity with `stream_sync_policy`; no Engine flag).
+`gpu-sim` `stream_set_nvlink_util_centric` is `cuStreamSetAttribute` nvlink util centric (identity with `set_stream_nvlink_util_centric`; no Engine flag).
 `gpu-sim` `mem_alloc` is `cuMemAlloc` (identity with `malloc`; no Engine flag).
 `gpu-sim` `mem_free` is `cuMemFree` (identity with `free_sync`; no Engine flag).
 `gpu-sim` `mem_free_host` is `cuMemFreeHost` (identity with `free_host_pinned`; no Engine flag).
@@ -1086,6 +1087,7 @@ compiled kernel exists; no Engine flag).
 `gpu-sim` `stream_get_mem_sync_domain_map` is `cuStreamGetAttribute` mem sync domain map (identity with `stream_mem_sync_domain_map`; no Engine flag).
 `gpu-sim` `stream_set_sync_policy` is `cuStreamSetAttribute` sync policy (identity with `set_stream_sync_policy`; no Engine flag).
 `gpu-sim` `stream_get_sync_policy` is `cuStreamGetAttribute` sync policy (identity with `stream_sync_policy`; no Engine flag).
+`gpu-sim` `stream_set_nvlink_util_centric` is `cuStreamSetAttribute` nvlink util centric (identity with `set_stream_nvlink_util_centric`; no Engine flag).
 `gpu-sim` `func_is_loaded` is `cuFuncIsLoaded` (`false` until a compiled
 kernel exists; no Engine flag).
 `gpu-sim` `func_load` is `cuFuncLoad` (Invalid; no compiled kernel; no
