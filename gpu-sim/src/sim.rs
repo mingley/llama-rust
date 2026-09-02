@@ -10318,8 +10318,7 @@ impl Sim {
     /// [`Self::graph_add_memset_3d`] (`cudaGraphAddMemsetNode` 3D).
     ///
     /// Capture refused. Distinct from
-    /// [`Self::add_graph_memset_2d`]. This VM does not invent
-    /// occupancy SM counts this slice.
+    /// [`Self::add_graph_memset_2d`].
     pub fn add_graph_memset_3d(&mut self, graph: GraphId, op: MemsetOp) -> Result<(), SimError> {
         self.graph_add_memset_3d(graph, op)
     }
@@ -11045,7 +11044,9 @@ impl Sim {
     /// cannot include it (use [`Self::batch_mem_op`] during capture). Illegal
     /// after instantiate. [`BatchMemOpNodeParams::ctx`] stays [`None`]. Pin a
     /// green context through [`Self::graph_add_node`] with
-    /// [`GraphNodeParams::BatchMemOp`].
+    /// [`GraphNodeParams::BatchMemOp`]. Driver
+    /// `cuGraphAddBatchMemOpNode` is
+    /// [`Self::add_graph_batch_mem_op`].
     pub fn graph_add_batch_mem_op(
         &mut self,
         graph: GraphId,
@@ -11055,6 +11056,20 @@ impl Sim {
         let (device, stream) = self.graph_origin_for_add(graph)?;
         self.check_batch_flush(device, ops)?;
         self.graph_push(graph, device, stream, Kind::BatchMem { ops: ops.to_vec() })
+    }
+
+    /// `cuGraphAddBatchMemOpNode`. Identity with
+    /// [`Self::graph_add_batch_mem_op`] (`cudaGraphAddBatchMemOpNode`).
+    ///
+    /// Capture refused. Distinct from
+    /// [`Self::add_graph_memset_3d`]. This VM does not invent
+    /// occupancy SM counts this slice.
+    pub fn add_graph_batch_mem_op(
+        &mut self,
+        graph: GraphId,
+        ops: &[BatchMemOp],
+    ) -> Result<(), SimError> {
+        self.graph_add_batch_mem_op(graph, ops)
     }
 
     fn graph_add_batch_mem_op_params(
