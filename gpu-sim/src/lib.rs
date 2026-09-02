@@ -1170,6 +1170,9 @@
 //! [`tex_ref_set_mipmap_filter_mode`](Sim::tex_ref_set_mipmap_filter_mode) is
 //! `cuTexRefSetMipmapFilterMode` (always Invalid `"texref mipfilt"`). Query; legal
 //! during capture. No Engine `--texref-mipfilt`.
+//! [`tex_ref_set_mipmap_level_bias`](Sim::tex_ref_set_mipmap_level_bias) is
+//! `cuTexRefSetMipmapLevelBias` (always Invalid `"texref mipbias"`). Query; legal
+//! during capture. No Engine `--texref-mipbias`.
 //! [`module_get_surf_ref`](Sim::module_get_surf_ref) is `cuModuleGetSurfRef` (always Invalid
 //! `"module surfref"`). Query; legal during capture. No Engine `--module-surfref`.
 //! [`library_load_data`](Sim::library_load_data) is `cuLibraryLoadData`
@@ -20305,6 +20308,64 @@ mod tests {
             Err(SimError::Invalid { why }) => {
                 assert!(why.contains("texref addrmode"), "{why}");
                 assert!(!why.contains("texref mipfilt"), "{why}");
+            }
+            other => panic!("{other:?}"),
+        }
+        match sim.tex_ref_set_mipmap_level_bias(d) {
+            Err(SimError::Invalid { why }) => {
+                assert!(why.contains("texref mipbias"), "{why}");
+                assert!(!why.contains("texref mipfilt"), "{why}");
+                assert!(!why.contains("texref filter"), "{why}");
+            }
+            other => panic!("{other:?}"),
+        }
+    }
+
+    #[test]
+    fn tex_ref_set_mipmap_level_bias_is_unsupported() {
+        let mut sim = Sim::new(h100());
+        let d = DeviceId(0);
+        match sim.tex_ref_set_mipmap_level_bias(d) {
+            Err(SimError::Invalid { why }) => {
+                assert!(why.contains("texref mipbias"), "{why}");
+                assert!(!why.contains("texref mipfilt"), "{why}");
+                assert!(!why.contains("texref filter"), "{why}");
+                assert!(!why.contains("texref setmip"), "{why}");
+            }
+            other => panic!("{other:?}"),
+        }
+        sim.begin_capture(d, StreamId(0)).unwrap();
+        match sim.tex_ref_set_mipmap_level_bias(d) {
+            Err(SimError::Invalid { why }) => {
+                assert!(why.contains("texref mipbias"), "{why}");
+            }
+            other => panic!("{other:?}"),
+        }
+        let _g = sim.end_capture().unwrap();
+        match sim.tex_ref_set_mipmap_level_bias(DeviceId(99)) {
+            Err(SimError::Invalid { why }) => {
+                assert!(why.contains("device not in profile"), "{why}");
+            }
+            other => panic!("{other:?}"),
+        }
+        match sim.tex_ref_set_mipmap_filter_mode(d) {
+            Err(SimError::Invalid { why }) => {
+                assert!(why.contains("texref mipfilt"), "{why}");
+                assert!(!why.contains("texref mipbias"), "{why}");
+            }
+            other => panic!("{other:?}"),
+        }
+        match sim.tex_ref_set_filter_mode(d) {
+            Err(SimError::Invalid { why }) => {
+                assert!(why.contains("texref filter"), "{why}");
+                assert!(!why.contains("texref mipbias"), "{why}");
+            }
+            other => panic!("{other:?}"),
+        }
+        match sim.tex_ref_set_mipmapped_array(d) {
+            Err(SimError::Invalid { why }) => {
+                assert!(why.contains("texref setmip"), "{why}");
+                assert!(!why.contains("texref mipbias"), "{why}");
             }
             other => panic!("{other:?}"),
         }

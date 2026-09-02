@@ -288,6 +288,7 @@ warp scheduler, L1, …   ← do not model
 | `tex_ref_set_address_mode` is Invalid (no `CUtexref` addressing) | `cuTexRefSetAddressMode` |
 | `tex_ref_set_filter_mode` is Invalid (no `CUtexref` filtering) | `cuTexRefSetFilterMode` |
 | `tex_ref_set_mipmap_filter_mode` is Invalid (no `CUtexref` mipmap filtering) | `cuTexRefSetMipmapFilterMode` |
+| `tex_ref_set_mipmap_level_bias` is Invalid (no `CUtexref` mipmap LOD bias) | `cuTexRefSetMipmapLevelBias` |
 | `module_get_surf_ref` is Invalid (no `CUmodule` / `CUsurfref`) | `cuModuleGetSurfRef` |
 | `library_load_data` is Invalid (no cubin / `CUlibrary`) | `cuLibraryLoadData` |
 | `library_load_from_file` is Invalid (no cubin path / `CUlibrary`) | `cuLibraryLoadFromFile` |
@@ -1612,6 +1613,8 @@ Distinct from `tex_ref_set_format` and `tex_ref_set_address`. Query; legal durin
 Distinct from `tex_ref_set_address_mode` and `tex_object_get_texture_desc`. Query; legal during capture. No Engine `--texref-filter`.
 `tex_ref_set_mipmap_filter_mode` is `cuTexRefSetMipmapFilterMode` (always Invalid `"texref mipfilt"`; no `CUtexref`).
 Distinct from `tex_ref_set_filter_mode` and `tex_ref_set_mipmapped_array`. Query; legal during capture. No Engine `--texref-mipfilt`.
+`tex_ref_set_mipmap_level_bias` is `cuTexRefSetMipmapLevelBias` (always Invalid `"texref mipbias"`; no `CUtexref`).
+Distinct from `tex_ref_set_mipmap_filter_mode` and `tex_ref_set_filter_mode`. Query; legal during capture. No Engine `--texref-mipbias`.
 `module_get_surf_ref` is `cuModuleGetSurfRef` (always Invalid `"module surfref"`; no cubin).
 Distinct from `module_get_tex_ref` and `surf_object_create`. Query; legal during capture. No Engine `--module-surfref`.
 `library_load_data` is `cuLibraryLoadData` (always Invalid `"cuda library"`;

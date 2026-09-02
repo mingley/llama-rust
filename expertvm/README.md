@@ -677,6 +677,8 @@ no `CUtexref` addressing; no Engine flag).
 no `CUtexref` filtering; no Engine flag).
 `gpu-sim` `tex_ref_set_mipmap_filter_mode` is `cuTexRefSetMipmapFilterMode`
 (Invalid; no `CUtexref` mipmap filtering; no Engine flag).
+`gpu-sim` `tex_ref_set_mipmap_level_bias` is `cuTexRefSetMipmapLevelBias`
+(Invalid; no `CUtexref` mipmap LOD bias; no Engine flag).
 `gpu-sim` `mipmapped_array_create` is `cuMipmappedArrayCreate` (Invalid;
 CUDA mipmapped arrays are not modeled; no Engine flag).
 `gpu-sim` `mipmapped_array_get_level` is `cuMipmappedArrayGetLevel`
