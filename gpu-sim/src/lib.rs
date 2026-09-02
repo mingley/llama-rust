@@ -226,6 +226,9 @@
 //! [`stream_attach_flags`](Sim::stream_attach_flags) is `cuStreamAttachMemAsync` flags (identity with
 //! [`stream_attach_with_flags`](Sim::stream_attach_with_flags)). Capture refused. Distinct from
 //! [`stream_attach_n`](Sim::stream_attach_n). No Engine `--stream-attach-flags`.
+//! [`memcpy_async`](Sim::memcpy_async) is `cuMemcpyAsync` (identity with
+//! [`memcpy`](Sim::memcpy)). Capture-legal (pinned/device). Distinct from
+//! [`memcpy_sync`](Sim::memcpy_sync). No Engine `--memcpy-async`.
 //! [`Sim::ipc_get_event`] / [`ipc_open_event`](Sim::ipc_open_event) are
 //! `cudaIpcGetEventHandle` / `cudaIpcOpenEventHandle` (interprocess events).
 //! [`Sim::create_shareable_pool`] is `cudaMemPoolCreate` with a POSIX-FD handle
@@ -660,6 +663,9 @@
 //! [`stream_attach_flags`](Sim::stream_attach_flags) is `cuStreamAttachMemAsync` flags (identity with
 //! [`stream_attach_with_flags`](Sim::stream_attach_with_flags)). Capture refused. Distinct from
 //! [`stream_attach_n`](Sim::stream_attach_n). No Engine `--stream-attach-flags`.
+//! [`memcpy_async`](Sim::memcpy_async) is `cuMemcpyAsync` (identity with
+//! [`memcpy`](Sim::memcpy)). Capture-legal (pinned/device). Distinct from
+//! [`memcpy_sync`](Sim::memcpy_sync). No Engine `--memcpy-async`.
 //! [`mem_host_get_flags`](Sim::mem_host_get_flags) is `cuMemHostGetFlags` (identity with
 //! [`host_get_flags`](Sim::host_get_flags)). Query; legal during capture. No Engine `--mem-host-get-flags`.
 //! [`mem_host_get_device_pointer`](Sim::mem_host_get_device_pointer) is `cuMemHostGetDevicePointer` (identity with
@@ -744,6 +750,9 @@
 //! [`stream_attach_flags`](Sim::stream_attach_flags) is `cuStreamAttachMemAsync` flags (identity with
 //! [`stream_attach_with_flags`](Sim::stream_attach_with_flags)). Capture refused. Distinct from
 //! [`stream_attach_n`](Sim::stream_attach_n). No Engine `--stream-attach-flags`.
+//! [`memcpy_async`](Sim::memcpy_async) is `cuMemcpyAsync` (identity with
+//! [`memcpy`](Sim::memcpy)). Capture-legal (pinned/device). Distinct from
+//! [`memcpy_sync`](Sim::memcpy_sync). No Engine `--memcpy-async`.
 //! [`Sim::pointer_get_attributes`] is `cudaPointerGetAttributes`.
 //! [`pointer_set_attribute`](Sim::pointer_set_attribute) /
 //! [`pointer_get_attribute`](Sim::pointer_get_attribute) are
@@ -34812,6 +34821,58 @@ mod tests {
             other => panic!("{other:?}"),
         }
         sim.free_sync(m).unwrap();
+    }
+
+    #[test]
+    fn memcpy_async_is_cu_memcpy_async() {
+        let mut sim = Sim::new(h100());
+        let d = DeviceId(0);
+        let s = StreamId(0);
+        let unknown = MemcpyOp {
+            src: Place::HostPinned,
+            dst: Place::Device(d),
+            alloc: AllocId(99),
+            bytes: 4096,
+            offset: 0,
+            ..MemcpyOp::default()
+        };
+        match sim.memcpy_async(d, unknown.clone(), s) {
+            Err(SimError::UnknownAlloc { alloc }) => assert_eq!(alloc, AllocId(99)),
+            other => panic!("{other:?}"),
+        }
+        match sim.memcpy(d, unknown, s) {
+            Err(SimError::UnknownAlloc { alloc }) => assert_eq!(alloc, AllocId(99)),
+            other => panic!("{other:?}"),
+        }
+        let a = sim.malloc(d, 4096).unwrap();
+        let op = MemcpyOp {
+            src: Place::HostPinned,
+            dst: Place::Device(d),
+            alloc: a,
+            bytes: 4096,
+            offset: 0,
+            ..MemcpyOp::default()
+        };
+        match sim.memcpy_async(DeviceId(99), op.clone(), s) {
+            Err(SimError::Invalid { why }) => assert!(why.contains("device"), "{why}"),
+            other => panic!("{other:?}"),
+        }
+        match sim.memcpy(DeviceId(99), op.clone(), s) {
+            Err(SimError::Invalid { why }) => assert!(why.contains("device"), "{why}"),
+            other => panic!("{other:?}"),
+        }
+        enq(sim.memcpy_async(d, op.clone(), s));
+        sim.synchronize_stream(d, s).unwrap();
+        assert!(sim.is_resident(a, d).unwrap());
+        enq(sim.memcpy(d, op.clone(), s));
+        sim.synchronize_stream(d, s).unwrap();
+        assert!(sim.is_resident(a, d).unwrap());
+        sim.begin_capture(d, s).unwrap();
+        enq(sim.memcpy_async(d, op.clone(), s));
+        enq(sim.memcpy(d, op, s));
+        let g = sim.end_capture().unwrap();
+        assert_eq!(sim.graph_len(g).unwrap(), 2);
+        sim.free_sync(a).unwrap();
     }
 
     #[test]

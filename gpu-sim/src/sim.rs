@@ -17483,6 +17483,7 @@ impl Sim {
     /// `width * height`, not pitch padding. [`MemcpyOp::depth`] `> 1` is
     /// `cudaMemcpy3DAsync`: billed bytes are `width * height * depth`, not
     /// row or slice padding.
+    /// Driver `cuMemcpyAsync` is [`Self::memcpy_async`].
     pub fn memcpy(
         &mut self,
         device: DeviceId,
@@ -17507,6 +17508,19 @@ impl Sim {
             self.synchronize_stream(device, stream)?;
         }
         Ok(id)
+    }
+
+    /// `cuMemcpyAsync`. Identity with [`Self::memcpy`] (`cudaMemcpyAsync`).
+    ///
+    /// Capture-legal (pinned/device). Distinct from [`Self::memcpy_sync`].
+    /// This VM does not invent `mem_cpy` this slice.
+    pub fn memcpy_async(
+        &mut self,
+        device: DeviceId,
+        op: MemcpyOp,
+        stream: StreamId,
+    ) -> Result<OpId, SimError> {
+        self.memcpy(device, op, stream)
     }
 
     /// `cudaMemcpy`: enqueue then wait for that stream (host-synchronous).
@@ -24057,7 +24071,6 @@ impl Sim {
     /// [`Self::stream_attach_with_flags`] (`cudaStreamAttachMemAsync` flags).
     ///
     /// Capture refused. Distinct from [`Self::stream_attach_n`].
-    /// This VM does not invent `memcpy_async` this slice.
     pub fn stream_attach_flags(
         &mut self,
         device: DeviceId,
