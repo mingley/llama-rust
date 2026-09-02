@@ -17921,6 +17921,7 @@ impl Sim {
 
     /// `cudaMemcpy3DAsync`. [`MemcpyOp`] must be [`MemcpyOp::is_3d`] (`depth > 1`).
     /// Typed [`Self::memcpy`] stays.
+    /// Driver `cuMemcpy3DAsync` is [`Self::mem_cpy_3d_async`].
     pub fn memcpy_3d_async(
         &mut self,
         device: DeviceId,
@@ -17933,6 +17934,20 @@ impl Sim {
             });
         }
         self.memcpy(device, op, stream)
+    }
+
+    /// `cuMemcpy3DAsync`. Identity with [`Self::memcpy_3d_async`]
+    /// (`cudaMemcpy3DAsync`).
+    ///
+    /// Capture-legal (pinned/device). Distinct from [`Self::mem_cpy_3d`].
+    /// This VM does not invent `mem_cpy_peer` this slice.
+    pub fn mem_cpy_3d_async(
+        &mut self,
+        device: DeviceId,
+        op: MemcpyOp,
+        stream: StreamId,
+    ) -> Result<OpId, SimError> {
+        self.memcpy_3d_async(device, op, stream)
     }
 
     /// `cudaMemcpy3D`. Host-synchronous; capture cannot include it.
@@ -17958,7 +17973,6 @@ impl Sim {
     ///
     /// Capture refused. Distinct from [`Self::memcpy_3d_unaligned`] and
     /// [`Self::memcpy_3d_async`].
-    /// This VM does not invent `mem_cpy_3d_async` this slice.
     pub fn mem_cpy_3d(
         &mut self,
         device: DeviceId,
