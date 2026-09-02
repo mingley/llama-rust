@@ -26158,7 +26158,6 @@ impl Sim {
     ///
     /// Capture refused. Distinct from [`Self::mem_set_op`] and
     /// [`Self::memset_d8`] (`cuMemsetD8`).
-    /// This VM does not invent occupancy SM counts this slice.
     pub fn mem_set_sync(
         &mut self,
         device: DeviceId,
@@ -26431,6 +26430,8 @@ impl Sim {
 
     /// `cudaMemset` / `cudaMemset2D` / `cudaMemset3D` (host-synchronous).
     ///
+    /// Identity wrap [`Self::mem_set_op_sync`]. Not [`Self::memset_2d`] (`cudaMemset2D`).
+    ///
     /// Capture cannot include it. [`Self::memset_op`] is the Async twin.
     pub fn memset_op_sync(
         &mut self,
@@ -26446,6 +26447,21 @@ impl Sim {
         let id = self.memset_op(device, op, stream)?;
         self.synchronize_stream(device, stream)?;
         Ok(id)
+    }
+
+    /// `cudaMemset` / `cudaMemset2D` / `cudaMemset3D`. Identity with
+    /// [`Self::memset_op_sync`].
+    ///
+    /// Capture refused. Distinct from [`Self::mem_set_sync`] and
+    /// [`Self::memset_2d`] (`cudaMemset2D`).
+    /// This VM does not invent occupancy SM counts this slice.
+    pub fn mem_set_op_sync(
+        &mut self,
+        device: DeviceId,
+        op: MemsetOp,
+        stream: StreamId,
+    ) -> Result<OpId, SimError> {
+        self.memset_op_sync(device, op, stream)
     }
 
     /// `cudaMemset2DAsync`. [`MemsetOp`] must be [`MemsetOp::is_2d`] (`height > 1`,
