@@ -4043,7 +4043,9 @@ impl Sim {
     /// [`Self::current_graph_exec`] still returns the lowest in-flight
     /// DeviceLaunch id (including FAF children and siblings).
     /// [`DeviceLimit::DevRuntimePendingLaunchCount`] caps how many of those
-    /// launches may be in flight (`"pending launch count"`).
+    /// launches may be in flight (`"pending launch count"`). Driver
+    /// device-side `cuGraphLaunch` is
+    /// [`Self::launch_device_graph`].
     pub fn device_launch_graph(
         &mut self,
         graph: GraphId,
@@ -4098,6 +4100,20 @@ impl Sim {
         g.device_faf.clear();
         g.device_tail_child = None;
         Ok(id)
+    }
+
+    /// Device-side `cuGraphLaunch`. Identity with
+    /// [`Self::device_launch_graph`] (device-side `cudaGraphLaunch`).
+    ///
+    /// Capture refused. Distinct from
+    /// [`Self::graph_launch`]. This VM does not invent
+    /// occupancy SM counts this slice.
+    pub fn launch_device_graph(
+        &mut self,
+        graph: GraphId,
+        stream: StreamId,
+    ) -> Result<OpId, SimError> {
+        self.device_launch_graph(graph, stream)
     }
 
     fn device_tail_queued(&self, exec: GraphId) -> bool {
@@ -11679,8 +11695,7 @@ impl Sim {
     /// [`Self::graph_destroy_node`] (`cudaGraphDestroyNode`).
     ///
     /// Capture refused. Distinct from
-    /// [`Self::graph_destroy`]. This VM does not invent
-    /// occupancy SM counts this slice.
+    /// [`Self::graph_destroy`].
     pub fn destroy_graph_node(&mut self, graph: GraphId, node: usize) -> Result<(), SimError> {
         self.graph_destroy_node(graph, node)
     }

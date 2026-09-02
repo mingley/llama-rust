@@ -8848,7 +8848,14 @@ model, do not celebrate the sim.
     or `cudaChooseDevice`. `gpu-profile capture` is still refused. Dual
     score still has no `$/M tokens`.
 
-956. [ ] Next numbered PLAN item after 955 is the next `gpu-sim` / Engine /
+956. [x] `gpu-sim` `Sim::launch_device_graph` is
+    device-side `cuGraphLaunch`. Identity with `device_launch_graph`
+    (device-side `cudaGraphLaunch`). Capture refused. Distinct from
+    `graph_launch`. This VM does not invent occupancy SM counts, Engine `--device-launch-graph`,
+    or `cudaChooseDevice`. `gpu-profile capture` is still refused. Dual
+    score still has no `$/M tokens`.
+
+957. [ ] Next numbered PLAN item after 956 is the next `gpu-sim` / Engine /
     serve / expertvm mechanical API that is still missing, or the next official
     decode family. Prefer remaining CUDA-shaped twins over more
     OpenAI HTTP veneer. Do not invent F32 `output.scale`. Do not invent a
@@ -10207,6 +10214,9 @@ model, do not celebrate the sim.
     Do not invent a second `cuGraphDestroyNode` / `destroy_graph_node`.
     Do not invent Engine `--graph-destroy-node`. Do not invent
     occupancy SM counts this slice. Do not reverse DestroyGraphNode identity with graph_destroy_node.
+    Do not invent a second device-side `cuGraphLaunch` / `launch_device_graph`.
+    Do not invent Engine `--device-launch-graph`. Do not invent
+    occupancy SM counts this slice. Do not reverse LaunchDeviceGraph identity with device_launch_graph.
     Do not invent a second `cudaStreamAddCallback`.
     Do not invent Engine `--stream-callback` (same wall as second live
     `cudaLaunchHostFunc` after miss DMA).
@@ -11645,6 +11655,9 @@ model, do not celebrate the sim.
     Do not invent a second `destroy_graph_node` API. Do not invent
     Engine `--graph-destroy-node-identity`. Do not invent a device-launch-graph
     this slice. Do not reverse DestroyGraphNode identity with graph_destroy_node.
+    Do not invent a second `launch_device_graph` API. Do not invent
+    Engine `--device-launch-graph-identity`. Do not invent a current-graph-exec
+    this slice. Do not reverse LaunchDeviceGraph identity with device_launch_graph.
     Do not invent a second DeviceLaunch in-flight destroy-complete check or Engine
     `--device-launch-destroy`. Do not abort an in-flight DeviceLaunch when
     `destroy_graph` succeeds. Do not delay destroy of an idle exec. Do not invent
@@ -13266,6 +13279,9 @@ model, do not celebrate the sim.
     Do not invent a second `destroy_graph_node` method. Do not
     invent Engine `--cu-graph-destroy-node`. Do not reverse wrapping
     cuGraphDestroyNode identity.
+    Do not invent a second `launch_device_graph` method. Do not
+    invent Engine `--cu-device-launch-graph`. Do not reverse wrapping
+    device-side cuGraphLaunch identity.
     Do not
     spend the next item on an OpenAI-compatible HTTP veneer.
 
