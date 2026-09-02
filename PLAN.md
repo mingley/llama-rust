@@ -7861,7 +7861,14 @@ model, do not celebrate the sim.
     or `cudaChooseDevice`. `gpu-profile capture` is still refused. Dual
     score still has no `$/M tokens`.
 
-815. [ ] Next numbered PLAN item after 814 is the next `gpu-sim` / Engine /
+815. [x] `gpu-sim` `Sim::mem_host_get_flags` is
+    `cuMemHostGetFlags`. Identity with `host_get_flags`
+    (`cudaHostGetFlags`). Query. Distinct from
+    `host_get_device_pointer`. This VM does not invent `cuMemHostGetDevicePointer`, Engine `--mem-host-get-flags`,
+    or `cudaChooseDevice`. `gpu-profile capture` is still refused. Dual
+    score still has no `$/M tokens`.
+
+816. [ ] Next numbered PLAN item after 815 is the next `gpu-sim` / Engine /
     serve / expertvm mechanical API that is still missing, or the next official
     decode family. Prefer remaining CUDA-shaped twins over more
     OpenAI HTTP veneer. Do not invent F32 `output.scale`. Do not invent a
@@ -8797,6 +8804,9 @@ model, do not celebrate the sim.
     Do not invent a second `cuMemHostAlloc` / `mem_host_alloc`.
     Do not invent Engine `--mem-host-alloc`. Do not invent
     `cuMemHostGetFlags` this slice. Do not reverse MemHostAlloc identity with alloc_host_with_flags.
+    Do not invent a second `cuMemHostGetFlags` / `mem_host_get_flags`.
+    Do not invent Engine `--mem-host-get-flags`. Do not invent
+    `cuMemHostGetDevicePointer` this slice. Do not reverse MemHostGetFlags identity with host_get_flags.
     Do not invent a second `cudaStreamAddCallback`.
     Do not invent Engine `--stream-callback` (same wall as second live
     `cudaLaunchHostFunc` after miss DMA).
@@ -9812,6 +9822,9 @@ model, do not celebrate the sim.
     Do not invent a second `mem_host_alloc` API. Do not invent
     Engine `--mem-host-alloc-identity`. Do not invent a mem-host-get-flags
     this slice. Do not reverse MemHostAlloc identity with alloc_host_with_flags.
+    Do not invent a second `mem_host_get_flags` API. Do not invent
+    Engine `--mem-host-get-flags-identity`. Do not invent a mem-host-get-device-pointer
+    this slice. Do not reverse MemHostGetFlags identity with host_get_flags.
     Do not invent a second DeviceLaunch in-flight destroy-complete check or Engine
     `--device-launch-destroy`. Do not abort an in-flight DeviceLaunch when
     `destroy_graph` succeeds. Do not delay destroy of an idle exec. Do not invent
@@ -11010,6 +11023,9 @@ model, do not celebrate the sim.
     Do not invent a second `mem_host_alloc` method. Do not
     invent Engine `--cu-mem-host-alloc`. Do not reverse wrapping
     cuMemHostAlloc identity.
+    Do not invent a second `mem_host_get_flags` method. Do not
+    invent Engine `--cu-mem-host-get-flags`. Do not reverse wrapping
+    cuMemHostGetFlags identity.
     Do not
     spend the next item on an OpenAI-compatible HTTP veneer.
 

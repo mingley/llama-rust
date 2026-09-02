@@ -20595,6 +20595,16 @@ impl Sim {
         Ok(a.host_flags)
     }
 
+    /// `cuMemHostGetFlags`. Identity with [`Self::host_get_flags`]
+    /// (`cudaHostGetFlags`).
+    ///
+    /// Query; legal during capture. Distinct from [`Self::host_get_device_pointer`].
+    /// This VM does not invent `cuMemHostGetDevicePointer` this slice
+    /// (`host_get_device_pointer` stays).
+    pub fn mem_host_get_flags(&self, id: AllocId) -> Result<u32, SimError> {
+        self.host_get_flags(id)
+    }
+
     /// `cuDeviceGetExecAffinitySupport`. Query; legal during capture.
     ///
     /// [`ExecAffinityType::SM_COUNT`] is 0: this VM's green contexts are
