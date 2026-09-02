@@ -651,6 +651,7 @@ compiled kernel exists; no Engine flag).
 `gpu-sim` `add_graph_set_conditional` is graph-build `cuGraphSetConditional` (identity with `graph_add_set_conditional`; no Engine flag).
 `gpu-sim` `add_graph_write_value64` is graph `cuStreamWriteValue64` (identity with `graph_add_write_value64`; no Engine flag).
 `gpu-sim` `add_graph_write_value32` is graph `cuStreamWriteValue32` (identity with `graph_add_write_value32`; no Engine flag).
+`gpu-sim` `add_graph_write_value64_with_flags` is graph `cuStreamWriteValue64` flags (identity with `graph_add_write_value64_with_flags`; no Engine flag).
 `gpu-sim` `mem_alloc` is `cuMemAlloc` (identity with `malloc`; no Engine flag).
 `gpu-sim` `mem_free` is `cuMemFree` (identity with `free_sync`; no Engine flag).
 `gpu-sim` `mem_free_host` is `cuMemFreeHost` (identity with `free_host_pinned`; no Engine flag).
@@ -826,6 +827,7 @@ compiled kernel exists; no Engine flag).
 `gpu-sim` `add_graph_set_conditional` is graph-build `cuGraphSetConditional` (identity with `graph_add_set_conditional`; no Engine flag).
 `gpu-sim` `add_graph_write_value64` is graph `cuStreamWriteValue64` (identity with `graph_add_write_value64`; no Engine flag).
 `gpu-sim` `add_graph_write_value32` is graph `cuStreamWriteValue32` (identity with `graph_add_write_value32`; no Engine flag).
+`gpu-sim` `add_graph_write_value64_with_flags` is graph `cuStreamWriteValue64` flags (identity with `graph_add_write_value64_with_flags`; no Engine flag).
 `gpu-sim` `func_is_loaded` is `cuFuncIsLoaded` (`false` until a compiled
 kernel exists; no Engine flag).
 `gpu-sim` `func_load` is `cuFuncLoad` (Invalid; no compiled kernel; no
