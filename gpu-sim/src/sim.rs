@@ -18690,7 +18690,6 @@ impl Sim {
     /// [`Self::multicast_create`] (`cuMulticastCreate`).
     ///
     /// Capture refused. Distinct from [`Self::mem_multicast_get_granularity_with_prop`].
-    /// This VM does not invent occupancy SM counts this slice.
     pub fn mem_multicast_create(
         &mut self,
         bytes: u64,
@@ -18705,6 +18704,8 @@ impl Sim {
     /// Flags must be 0 ([`MulticastCreateFlags::DEFAULT`]; unknown bits Invalid
     /// `"multicast create flags"`). Size and team rules match
     /// [`Self::multicast_create`].
+    /// Driver `cuMulticastCreate` prop is [`Self::mem_multicast_create_with_prop`].
+    /// Identity wrap [`Self::mem_multicast_create_with_prop`].
     pub fn multicast_create_with_prop(
         &mut self,
         prop: MulticastObjectProp,
@@ -18747,6 +18748,18 @@ impl Sim {
             },
         );
         Ok(id)
+    }
+
+    /// `cuMulticastCreate` prop. Identity with
+    /// [`Self::multicast_create_with_prop`] (`cuMulticastCreate` prop).
+    ///
+    /// Capture refused. Distinct from [`Self::mem_multicast_create`].
+    /// This VM does not invent occupancy SM counts this slice.
+    pub fn mem_multicast_create_with_prop(
+        &mut self,
+        prop: MulticastObjectProp,
+    ) -> Result<MulticastId, SimError> {
+        self.multicast_create_with_prop(prop)
     }
 
     /// `cuMulticastAddDevice`. Host-synchronous. Capture cannot include it.
