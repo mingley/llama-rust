@@ -10139,7 +10139,12 @@ model, do not celebrate the sim.
       `mem_alloc_pitch_with_element_size`. This VM does not invent occupancy SM counts, Engine `--mem-device-get-attribute`,
       or `cudaChooseDevice`. `gpu-profile capture` is still refused. Dual
       score still has no `$/M tokens`.
-1176. [ ] Next numbered PLAN item after 1175 is the next `gpu-sim` / Engine /
+1176. [x] `gpu-sim` `Sim::mem_device_get_properties` is
+      `cuDeviceGetProperties`. Identity with `device_get_properties` (`cudaGetDeviceProperties`). Query; legal during capture. Distinct from
+      `mem_device_get_attribute`. This VM does not invent occupancy SM counts, Engine `--mem-device-get-properties`,
+      or `cudaChooseDevice`. `gpu-profile capture` is still refused. Dual
+      score still has no `$/M tokens`.
+1177. [ ] Next numbered PLAN item after 1176 is the next `gpu-sim` / Engine /
     serve / expertvm mechanical API that is still missing, or the next official
     decode family. Prefer remaining CUDA-shaped twins over more
     OpenAI HTTP veneer. Do not invent F32 `output.scale`. Do not invent a
@@ -12370,6 +12375,11 @@ model, do not celebrate the sim.
     occupancy SM counts this slice. Do not reverse MemDeviceGetAttribute identity with device_get_attribute.
     Do not invent `device_get_properties` as `mem_device_get_attribute`.
     Do not invent `cudaGetDeviceProperties` as `mem_device_get_attribute`.
+    Do not invent a second `cuDeviceGetProperties` / `mem_device_get_properties`.
+    Do not invent Engine `--mem-device-get-properties`. Do not invent
+    occupancy SM counts this slice. Do not reverse MemDeviceGetProperties identity with device_get_properties.
+    Do not invent `device_compute_capability` as `mem_device_get_properties`.
+    Do not invent `cuDeviceComputeCapability` as `mem_device_get_properties`.
     Do not invent a second `cudaStreamAddCallback`.
     Do not invent Engine `--stream-callback` (same wall as second live
     `cudaLaunchHostFunc` after miss DMA).
@@ -14637,6 +14647,11 @@ model, do not celebrate the sim.
     this slice. Do not reverse MemDeviceGetAttribute identity with device_get_attribute.
     Do not wrap `device_get_attribute` as `mem_device_get_attribute`.
     Do not wrap `device_get_properties` as `mem_device_get_attribute`.
+    Do not invent a second `mem_device_get_properties` API. Do not invent
+    Engine `--mem-device-get-properties-identity`. Do not invent a device-compute-capability
+    this slice. Do not reverse MemDeviceGetProperties identity with device_get_properties.
+    Do not wrap `device_get_properties` as `mem_device_get_properties`.
+    Do not wrap `device_compute_capability` as `mem_device_get_properties`.
     Do not invent a second DeviceLaunch in-flight destroy-complete check or Engine
     `--device-launch-destroy`. Do not abort an in-flight DeviceLaunch when
     `destroy_graph` succeeds. Do not delay destroy of an idle exec. Do not invent
@@ -16930,6 +16945,10 @@ model, do not celebrate the sim.
     invent Engine `--cu-mem-device-get-attribute`. Do not reverse wrapping
     cuDeviceGetAttribute identity. Do not wrap `device_get_properties` as `mem_device_get_attribute`.
     Do not wrap `malloc_3d` as `mem_device_get_attribute`.
+    Do not invent a second `mem_device_get_properties` method. Do not
+    invent Engine `--cu-mem-device-get-properties`. Do not reverse wrapping
+    cuDeviceGetProperties identity. Do not wrap `device_compute_capability` as `mem_device_get_properties`.
+    Do not wrap `device_get_name` as `mem_device_get_properties`.
     Do not
     spend the next item on an OpenAI-compatible HTTP veneer.
 

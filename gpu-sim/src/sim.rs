@@ -25280,7 +25280,6 @@ impl Sim {
     /// [`Self::device_get_attribute`] (`cudaDeviceGetAttribute`).
     ///
     /// Query; legal during capture. Distinct from [`Self::mem_alloc_pitch_with_element_size`].
-    /// This VM does not invent occupancy SM counts this slice.
     pub fn mem_device_get_attribute(
         &self,
         device: DeviceId,
@@ -25315,6 +25314,9 @@ impl Sim {
     /// `luid` and `luidDeviceNodeMask` are always 0.
     /// Occupancy SM counts, clock rates, and warp size are not.
     /// Unknown devices are Invalid.
+    ///
+    /// Driver wrap: [`Self::mem_device_get_properties`].
+    /// Identity: [`Self::mem_device_get_properties`].
     pub fn device_get_properties(&self, device: DeviceId) -> Result<DeviceProperties, SimError> {
         let gpu = self.profile.gpu(device)?;
         Ok(DeviceProperties {
@@ -25465,6 +25467,16 @@ impl Sim {
             numa_config: DeviceNumaConfig::NONE,
             only_partial_host_native_atomic_supported: false,
         })
+    }
+
+    /// `cuDeviceGetProperties`. Identity with [`Self::device_get_properties`] (`cudaGetDeviceProperties`).
+    /// Query; legal during capture. Distinct from [`Self::mem_device_get_attribute`].
+    /// This VM does not invent occupancy SM counts this slice.
+    pub fn mem_device_get_properties(
+        &self,
+        device: DeviceId,
+    ) -> Result<DeviceProperties, SimError> {
+        self.device_get_properties(device)
     }
 
     /// `cuDeviceComputeCapability`. Query; legal during capture.
