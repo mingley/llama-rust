@@ -25471,7 +25471,6 @@ impl Sim {
 
     /// `cuDeviceGetProperties`. Identity with [`Self::device_get_properties`] (`cudaGetDeviceProperties`).
     /// Query; legal during capture. Distinct from [`Self::mem_device_get_attribute`].
-    /// This VM does not invent occupancy SM counts this slice.
     pub fn mem_device_get_properties(
         &self,
         device: DeviceId,
@@ -25486,12 +25485,22 @@ impl Sim {
     /// and [`DeviceAttr::ComputeCapabilityMinor`] (same values) and from
     /// [`Self::driver_get_version`]. Occupancy SM counts are not invented.
     /// Unknown devices are Invalid.
+    ///
+    /// Driver wrap: [`Self::mem_device_compute_capability`].
+    /// Identity: [`Self::mem_device_compute_capability`].
     pub fn device_compute_capability(&self, device: DeviceId) -> Result<(u32, u32), SimError> {
         let gpu = self.profile.gpu(device)?;
         Ok((
             u32::from(gpu.compute_capability_major),
             u32::from(gpu.compute_capability_minor),
         ))
+    }
+
+    /// `cuDeviceComputeCapability`. Identity with [`Self::device_compute_capability`].
+    /// Query; legal during capture. Distinct from [`Self::mem_device_get_properties`].
+    /// This VM does not invent occupancy SM counts this slice.
+    pub fn mem_device_compute_capability(&self, device: DeviceId) -> Result<(u32, u32), SimError> {
+        self.device_compute_capability(device)
     }
 
     /// `cudaDeviceGetName`. Query; legal during capture.
