@@ -5730,7 +5730,9 @@ impl Sim {
     /// must match (topology). [`KernelNodeParams::ctx`] and
     /// [`KernelNodeParams::shared_mem_bytes`] are parameters. Capture cannot
     /// include it. Host-sync 1 ns. A parked in-flight-destroyed exec is
-    /// `"unknown graph"`. Live exec SetParams stays.
+    /// `"unknown graph"`. Live exec SetParams stays. Driver
+    /// `cuGraphKernelNodeSetParams` is
+    /// [`Self::set_graph_kernel_node_params`].
     pub fn graph_kernel_set_params(
         &mut self,
         graph: GraphId,
@@ -5781,6 +5783,21 @@ impl Sim {
         step.green_ctx = params.ctx;
         step.dynamic_shared = params.shared_mem_bytes;
         Ok(())
+    }
+
+    /// `cuGraphKernelNodeSetParams`. Identity with
+    /// [`Self::graph_kernel_set_params`] (`cudaGraphKernelNodeSetParams`).
+    ///
+    /// Capture refused. Distinct from
+    /// [`Self::get_graph_kernel_node_params`]. This VM does not invent
+    /// occupancy SM counts this slice.
+    pub fn set_graph_kernel_node_params(
+        &mut self,
+        graph: GraphId,
+        node: usize,
+        params: &KernelNodeParams,
+    ) -> Result<(), SimError> {
+        self.graph_kernel_set_params(graph, node, params)
     }
 
     /// `cudaGraphMemcpyNodeSetParams` on the graph definition.
@@ -7627,8 +7644,7 @@ impl Sim {
     /// [`Self::graph_exec_kernel_get_params`] (`cudaGraphExecKernelNodeGetParams`).
     ///
     /// Query; legal during capture. Distinct from
-    /// [`Self::get_graph_kernel_node_params`]. This VM does not invent
-    /// occupancy SM counts this slice.
+    /// [`Self::get_graph_kernel_node_params`].
     pub fn get_graph_exec_kernel_node_params(
         &self,
         exec: GraphId,
