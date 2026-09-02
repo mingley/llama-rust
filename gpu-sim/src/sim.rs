@@ -22694,7 +22694,6 @@ impl Sim {
     /// [`Self::set_func_shared_mem_config`] (`cudaFuncSetSharedMemConfig`).
     ///
     /// Capture refused. Distinct from [`Self::launch_kernel_ex_bufs`].
-    /// This VM does not invent occupancy SM counts this slice.
     pub fn func_set_shared_mem_config(
         &mut self,
         device: DeviceId,
@@ -22704,12 +22703,26 @@ impl Sim {
     }
 
     /// `cudaFuncGetSharedMemConfig`. Query; legal during capture.
+    /// Driver `cuFuncGetSharedMemConfig` is [`Self::func_get_shared_mem_config`].
+    /// Identity wrap [`Self::func_get_shared_mem_config`].
     pub fn get_func_shared_mem_config(
         &self,
         device: DeviceId,
     ) -> Result<SharedMemoryMode, SimError> {
         let _gpu = self.profile.gpu(device)?;
         Ok(self.gpu_rt(device)?.func_shared_mem_config)
+    }
+
+    /// `cuFuncGetSharedMemConfig`. Identity with
+    /// [`Self::get_func_shared_mem_config`] (`cudaFuncGetSharedMemConfig`).
+    ///
+    /// Query; legal during capture. Distinct from [`Self::func_set_shared_mem_config`].
+    /// This VM does not invent occupancy SM counts this slice.
+    pub fn func_get_shared_mem_config(
+        &self,
+        device: DeviceId,
+    ) -> Result<SharedMemoryMode, SimError> {
+        self.get_func_shared_mem_config(device)
     }
 
     /// `cudaDeviceSetCacheConfig`. Host-synchronous. Capture cannot include it.
