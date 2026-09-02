@@ -1186,6 +1186,9 @@
 //! (always Invalid `"texref flags"`). Query; legal during capture. No Engine `--texref-flags`.
 //! [`tex_ref_get_array`](Sim::tex_ref_get_array) is `cuTexRefGetArray`
 //! (always Invalid `"texref getarr"`). Query; legal during capture. No Engine `--texref-getarr`.
+//! [`tex_ref_get_mipmapped_array`](Sim::tex_ref_get_mipmapped_array) is
+//! `cuTexRefGetMipmappedArray` (always Invalid `"texref getmip"`). Query; legal
+//! during capture. No Engine `--texref-getmip`.
 //! [`module_get_surf_ref`](Sim::module_get_surf_ref) is `cuModuleGetSurfRef` (always Invalid
 //! `"module surfref"`). Query; legal during capture. No Engine `--module-surfref`.
 //! [`library_load_data`](Sim::library_load_data) is `cuLibraryLoadData`
@@ -20669,6 +20672,64 @@ mod tests {
             Err(SimError::Invalid { why }) => {
                 assert!(why.contains("cuda array"), "{why}");
                 assert!(!why.contains("texref getarr"), "{why}");
+            }
+            other => panic!("{other:?}"),
+        }
+        match sim.tex_ref_get_mipmapped_array(d) {
+            Err(SimError::Invalid { why }) => {
+                assert!(why.contains("texref getmip"), "{why}");
+                assert!(!why.contains("texref getarr"), "{why}");
+                assert!(!why.contains("texref setmip"), "{why}");
+            }
+            other => panic!("{other:?}"),
+        }
+    }
+
+    #[test]
+    fn tex_ref_get_mipmapped_array_is_unsupported() {
+        let mut sim = Sim::new(h100());
+        let d = DeviceId(0);
+        match sim.tex_ref_get_mipmapped_array(d) {
+            Err(SimError::Invalid { why }) => {
+                assert!(why.contains("texref getmip"), "{why}");
+                assert!(!why.contains("texref getarr"), "{why}");
+                assert!(!why.contains("texref setmip"), "{why}");
+                assert!(!why.contains("mipmapped array"), "{why}");
+            }
+            other => panic!("{other:?}"),
+        }
+        sim.begin_capture(d, StreamId(0)).unwrap();
+        match sim.tex_ref_get_mipmapped_array(d) {
+            Err(SimError::Invalid { why }) => {
+                assert!(why.contains("texref getmip"), "{why}");
+            }
+            other => panic!("{other:?}"),
+        }
+        let _g = sim.end_capture().unwrap();
+        match sim.tex_ref_get_mipmapped_array(DeviceId(99)) {
+            Err(SimError::Invalid { why }) => {
+                assert!(why.contains("device not in profile"), "{why}");
+            }
+            other => panic!("{other:?}"),
+        }
+        match sim.tex_ref_get_array(d) {
+            Err(SimError::Invalid { why }) => {
+                assert!(why.contains("texref getarr"), "{why}");
+                assert!(!why.contains("texref getmip"), "{why}");
+            }
+            other => panic!("{other:?}"),
+        }
+        match sim.tex_ref_set_mipmapped_array(d) {
+            Err(SimError::Invalid { why }) => {
+                assert!(why.contains("texref setmip"), "{why}");
+                assert!(!why.contains("texref getmip"), "{why}");
+            }
+            other => panic!("{other:?}"),
+        }
+        match sim.mipmapped_array_create(d) {
+            Err(SimError::Invalid { why }) => {
+                assert!(why.contains("mipmapped array"), "{why}");
+                assert!(!why.contains("texref getmip"), "{why}");
             }
             other => panic!("{other:?}"),
         }

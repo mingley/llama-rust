@@ -21631,6 +21631,22 @@ impl Sim {
         })
     }
 
+    /// `cuTexRefGetMipmappedArray`. CUDA texture references are not modeled.
+    ///
+    /// Always Invalid `"texref getmip"` (this VM has no `CUtexref` or
+    /// mipmapped-array handles). Distinct from [`Self::tex_ref_get_array`]
+    /// (why is not `"texref getarr"`) and from
+    /// [`Self::tex_ref_set_mipmapped_array`] (why is not `"texref setmip"`).
+    /// Unknown devices are Invalid `"device not in profile"`. Query; legal
+    /// during capture. This VM does not invent `cuTexRefGetAddress` this
+    /// slice.
+    pub fn tex_ref_get_mipmapped_array(&self, device: DeviceId) -> Result<(), SimError> {
+        let _gpu = self.profile.gpu(device)?;
+        Err(SimError::Invalid {
+            why: "texref getmip",
+        })
+    }
+
     /// `cuModuleGetSurfRef`. CUDA modules are not modeled.
     ///
     /// Always Invalid `"module surfref"` (this VM has no `CUmodule` and
