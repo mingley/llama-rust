@@ -8540,7 +8540,14 @@ model, do not celebrate the sim.
     or `cudaChooseDevice`. `gpu-profile capture` is still refused. Dual
     score still has no `$/M tokens`.
 
-912. [ ] Next numbered PLAN item after 911 is the next `gpu-sim` / Engine /
+912. [x] `gpu-sim` `Sim::get_graph_exec_child_graph_node_graph` is
+    `cuGraphExecChildGraphNodeGetGraph`. Identity with `graph_exec_child_get_graph`
+    (`cudaGraphChildGraphNodeGetGraph` of the exec snapshot). Query; legal during capture. Distinct from
+    `get_graph_child_graph_node_graph`. This VM does not invent occupancy SM counts, Engine `--graph-exec-child-get-graph`,
+    or `cudaChooseDevice`. `gpu-profile capture` is still refused. Dual
+    score still has no `$/M tokens`.
+
+913. [ ] Next numbered PLAN item after 912 is the next `gpu-sim` / Engine /
     serve / expertvm mechanical API that is still missing, or the next official
     decode family. Prefer remaining CUDA-shaped twins over more
     OpenAI HTTP veneer. Do not invent F32 `output.scale`. Do not invent a
@@ -9767,6 +9774,9 @@ model, do not celebrate the sim.
     Do not invent a second `cuGraphChildGraphNodeGetGraph` / `get_graph_child_graph_node_graph`.
     Do not invent Engine `--graph-child-get-graph`. Do not invent
     occupancy SM counts this slice. Do not reverse GetGraphChildGraphNodeGraph identity with graph_child_get_graph.
+    Do not invent a second `cuGraphExecChildGraphNodeGetGraph` / `get_graph_exec_child_graph_node_graph`.
+    Do not invent Engine `--graph-exec-child-get-graph`. Do not invent
+    occupancy SM counts this slice. Do not reverse GetGraphExecChildGraphNodeGraph identity with graph_exec_child_get_graph.
     Do not invent a second `cudaStreamAddCallback`.
     Do not invent Engine `--stream-callback` (same wall as second live
     `cudaLaunchHostFunc` after miss DMA).
@@ -11073,6 +11083,9 @@ model, do not celebrate the sim.
     Do not invent a second `get_graph_child_graph_node_graph` API. Do not invent
     Engine `--graph-child-get-graph-identity`. Do not invent a graph-exec-child-get-graph
     this slice. Do not reverse GetGraphChildGraphNodeGraph identity with graph_child_get_graph.
+    Do not invent a second `get_graph_exec_child_graph_node_graph` API. Do not invent
+    Engine `--graph-exec-child-get-graph-identity`. Do not invent a graph-child-set-params
+    this slice. Do not reverse GetGraphExecChildGraphNodeGraph identity with graph_exec_child_get_graph.
     Do not invent a second DeviceLaunch in-flight destroy-complete check or Engine
     `--device-launch-destroy`. Do not abort an in-flight DeviceLaunch when
     `destroy_graph` succeeds. Do not delay destroy of an idle exec. Do not invent
@@ -12562,6 +12575,9 @@ model, do not celebrate the sim.
     Do not invent a second `get_graph_child_graph_node_graph` method. Do not
     invent Engine `--cu-graph-child-get-graph`. Do not reverse wrapping
     cuGraphChildGraphNodeGetGraph identity.
+    Do not invent a second `get_graph_exec_child_graph_node_graph` method. Do not
+    invent Engine `--cu-graph-exec-child-get-graph`. Do not reverse wrapping
+    cuGraphExecChildGraphNodeGetGraph identity.
     Do not
     spend the next item on an OpenAI-compatible HTTP veneer.
 

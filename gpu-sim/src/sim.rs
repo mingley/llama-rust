@@ -8102,8 +8102,7 @@ impl Sim {
     /// [`Self::graph_child_get_graph`] (`cudaGraphChildGraphNodeGetGraph`).
     ///
     /// Query; legal during capture. Distinct from
-    /// [`Self::graph_exec_child_get_graph`]. This VM does not invent
-    /// occupancy SM counts this slice.
+    /// [`Self::graph_exec_child_get_graph`].
     pub fn get_graph_child_graph_node_graph(
         &self,
         graph: GraphId,
@@ -8116,7 +8115,9 @@ impl Sim {
     ///
     /// Uninstantiated graphs are Invalid. After instantiate this is the
     /// launched child. [`Self::graph_child_get_graph`] stays a view. Query;
-    /// legal during capture.
+    /// legal during capture. Driver
+    /// `cuGraphExecChildGraphNodeGetGraph` is
+    /// [`Self::get_graph_exec_child_graph_node_graph`].
     pub fn graph_exec_child_get_graph(
         &self,
         exec: GraphId,
@@ -8128,6 +8129,21 @@ impl Sim {
                 why: "not a child graph node",
             }),
         }
+    }
+
+    /// `cuGraphExecChildGraphNodeGetGraph`. Identity with
+    /// [`Self::graph_exec_child_get_graph`] (`cudaGraphChildGraphNodeGetGraph`
+    /// of the exec snapshot).
+    ///
+    /// Query; legal during capture. Distinct from
+    /// [`Self::get_graph_child_graph_node_graph`]. This VM does not invent
+    /// occupancy SM counts this slice.
+    pub fn get_graph_exec_child_graph_node_graph(
+        &self,
+        exec: GraphId,
+        node: usize,
+    ) -> Result<GraphId, SimError> {
+        self.graph_exec_child_get_graph(exec, node)
     }
 
     /// `cudaGraphEventRecordNodeGetEvent`. Query; legal during capture.
