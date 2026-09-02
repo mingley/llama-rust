@@ -21463,6 +21463,21 @@ impl Sim {
         })
     }
 
+    /// `cuTexRefSetAddress2D`. CUDA texture references are not modeled.
+    ///
+    /// Always Invalid `"texref pitch2d"` (this VM has no `CUtexref` pitched
+    /// 2D bindings). Distinct from [`Self::tex_ref_set_address`] (why is not
+    /// `"texref linear"`) and from [`Self::tex_ref_set_array`] (why is not
+    /// `"texref setarr"`). Unknown devices are Invalid `"device not in profile"`.
+    /// Query; legal during capture. This VM does not invent
+    /// `cuTexRefSetFormat` this slice.
+    pub fn tex_ref_set_address_2d(&self, device: DeviceId) -> Result<(), SimError> {
+        let _gpu = self.profile.gpu(device)?;
+        Err(SimError::Invalid {
+            why: "texref pitch2d",
+        })
+    }
+
     /// `cuModuleGetSurfRef`. CUDA modules are not modeled.
     ///
     /// Always Invalid `"module surfref"` (this VM has no `CUmodule` and

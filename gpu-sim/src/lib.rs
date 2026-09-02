@@ -1157,6 +1157,8 @@
 //! during capture. No Engine `--texref-setmip`.
 //! [`tex_ref_set_address`](Sim::tex_ref_set_address) is `cuTexRefSetAddress`
 //! (always Invalid `"texref linear"`). Query; legal during capture. No Engine `--texref-linear`.
+//! [`tex_ref_set_address_2d`](Sim::tex_ref_set_address_2d) is `cuTexRefSetAddress2D`
+//! (always Invalid `"texref pitch2d"`). Query; legal during capture. No Engine `--texref-pitch2d`.
 //! [`module_get_surf_ref`](Sim::module_get_surf_ref) is `cuModuleGetSurfRef` (always Invalid
 //! `"module surfref"`). Query; legal during capture. No Engine `--module-surfref`.
 //! [`library_load_data`](Sim::library_load_data) is `cuLibraryLoadData`
@@ -20002,6 +20004,64 @@ mod tests {
             Err(SimError::Invalid { why }) => {
                 assert!(why.contains("texref destroy"), "{why}");
                 assert!(!why.contains("texref linear"), "{why}");
+            }
+            other => panic!("{other:?}"),
+        }
+        match sim.tex_ref_set_address_2d(d) {
+            Err(SimError::Invalid { why }) => {
+                assert!(why.contains("texref pitch2d"), "{why}");
+                assert!(!why.contains("texref linear"), "{why}");
+                assert!(!why.contains("texref setarr"), "{why}");
+            }
+            other => panic!("{other:?}"),
+        }
+    }
+
+    #[test]
+    fn tex_ref_set_address_2d_is_unsupported() {
+        let mut sim = Sim::new(h100());
+        let d = DeviceId(0);
+        match sim.tex_ref_set_address_2d(d) {
+            Err(SimError::Invalid { why }) => {
+                assert!(why.contains("texref pitch2d"), "{why}");
+                assert!(!why.contains("texref linear"), "{why}");
+                assert!(!why.contains("texref setarr"), "{why}");
+                assert!(!why.contains("texref setmip"), "{why}");
+            }
+            other => panic!("{other:?}"),
+        }
+        sim.begin_capture(d, StreamId(0)).unwrap();
+        match sim.tex_ref_set_address_2d(d) {
+            Err(SimError::Invalid { why }) => {
+                assert!(why.contains("texref pitch2d"), "{why}");
+            }
+            other => panic!("{other:?}"),
+        }
+        let _g = sim.end_capture().unwrap();
+        match sim.tex_ref_set_address_2d(DeviceId(99)) {
+            Err(SimError::Invalid { why }) => {
+                assert!(why.contains("device not in profile"), "{why}");
+            }
+            other => panic!("{other:?}"),
+        }
+        match sim.tex_ref_set_address(d) {
+            Err(SimError::Invalid { why }) => {
+                assert!(why.contains("texref linear"), "{why}");
+                assert!(!why.contains("texref pitch2d"), "{why}");
+            }
+            other => panic!("{other:?}"),
+        }
+        match sim.tex_ref_set_array(d) {
+            Err(SimError::Invalid { why }) => {
+                assert!(why.contains("texref setarr"), "{why}");
+                assert!(!why.contains("texref pitch2d"), "{why}");
+            }
+            other => panic!("{other:?}"),
+        }
+        match sim.tex_ref_set_mipmapped_array(d) {
+            Err(SimError::Invalid { why }) => {
+                assert!(why.contains("texref setmip"), "{why}");
+                assert!(!why.contains("texref pitch2d"), "{why}");
             }
             other => panic!("{other:?}"),
         }
