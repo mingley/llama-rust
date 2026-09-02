@@ -1377,7 +1377,8 @@ impl Sim {
     /// Counts [`Self::graph_add_alloc`] / captured `cudaMallocAsync` from that
     /// pool, not ordinary [`Self::malloc`] / live [`Self::alloc`]. Used is live
     /// graph allocs. Reserved is live plus unused cached bytes held until
-    /// [`Self::graph_mem_trim`]. Capture is allowed (query).
+    /// [`Self::graph_mem_trim`]. Capture is allowed (query). Driver
+    /// `cuDeviceGetGraphMemAttribute` is [`Self::device_graph_mem_get`].
     pub fn graph_mem_get(&self, device: DeviceId, attr: GraphMemAttr) -> Result<u64, SimError> {
         let (used, reserved) = self.graph_mem_used_reserved(device)?;
         let rt = self.gpu_rt(device)?;
@@ -1387,6 +1388,19 @@ impl Sim {
             GraphMemAttr::UsedMemHigh => rt.graph_used_high.max(used),
             GraphMemAttr::ReservedMemHigh => rt.graph_reserved_high.max(reserved),
         })
+    }
+
+    /// `cuDeviceGetGraphMemAttribute`. Identity with [`Self::graph_mem_get`]
+    /// (`cudaDeviceGetGraphMemAttribute`).
+    ///
+    /// Query; legal during capture. Distinct from [`Self::graph_mem_set`]. This
+    /// VM does not invent occupancy SM counts this slice.
+    pub fn device_graph_mem_get(
+        &self,
+        device: DeviceId,
+        attr: GraphMemAttr,
+    ) -> Result<u64, SimError> {
+        self.graph_mem_get(device, attr)
     }
 
     /// `cudaDeviceSetGraphMemAttribute`. Only the High attrs; `value` must be `0`
@@ -2485,8 +2499,7 @@ impl Sim {
     /// (`cudaStreamGetPriority`).
     ///
     /// Query; legal during capture. Distinct from [`Self::stream_flags`] and
-    /// [`Self::set_stream_priority`]. This VM does not invent occupancy SM
-    /// counts this slice.
+    /// [`Self::set_stream_priority`].
     pub fn get_stream_priority(&self, device: DeviceId, stream: StreamId) -> Result<i32, SimError> {
         self.stream_get_priority(device, stream)
     }

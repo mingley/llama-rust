@@ -162,6 +162,7 @@ warp scheduler, L1, …   ← do not model
 | `stream_create_flags` is identity with `stream_create_with_flags` | `cuStreamCreateWithFlags` |
 | `stream_flags` is identity with `stream_get_flags` | `cuStreamGetFlags` |
 | `get_stream_priority` is identity with `stream_get_priority` | `cuStreamGetPriority` |
+| `device_graph_mem_get` is identity with `graph_mem_get` | `cuDeviceGetGraphMemAttribute` |
 | `mem_alloc` is identity with `malloc` | `cuMemAlloc` |
 | `mem_free` is identity with `free_sync` | `cuMemFree` |
 | `mem_free_host` is identity with `free_host_pinned` | `cuMemFreeHost` |
@@ -468,6 +469,7 @@ warp scheduler, L1, …   ← do not model
 | `MemcpyOp` depth/slice heights bill `width * height * depth` | `cudaMemcpy3DAsync` |
 | `MemsetOp` depth/ysize bill `width * height * depth` | `cudaMemset3DAsync` |
 | graph-mem used is live graph allocs; reserved holds unused until trim | `cudaDeviceGetGraphMemAttribute` / `GraphMemTrim` |
+| `device_graph_mem_get` is identity with `graph_mem_get` | `cuDeviceGetGraphMemAttribute` |
 | stream[i+1].start ≥ stream[i].finish (`Operation` timestamps) | queue wait vs run |
 | numerically lower `set_stream_priority` starts first under contention (`cudaDeviceGetStreamPriorityRange`) | launch overhead |
 | `cudaGetCurrentGraphExec` (`current_graph_exec`) is the DeviceLaunch exec in flight; host `launch_graph` does not count | query |
@@ -2002,6 +2004,7 @@ No Engine `--primary-ctx-flags`.
 `stream_create_flags` is `cuStreamCreateWithFlags` (identity with `stream_create_with_flags`). Capture refused. Distinct from `stream_create`. No Engine `--stream-create-flags`.
 `stream_flags` is `cuStreamGetFlags` (identity with `stream_get_flags`). Query; legal during capture. Distinct from `stream_get_priority`. No Engine `--stream-flags`.
 `get_stream_priority` is `cuStreamGetPriority` (identity with `stream_get_priority`). Query; legal during capture. Distinct from `stream_flags`. No Engine `--stream-get-priority`.
+`device_graph_mem_get` is `cuDeviceGetGraphMemAttribute` (identity with `graph_mem_get`). Query; legal during capture. Distinct from `graph_mem_set`. No Engine `--graph-mem-get`.
 `ctx_get_id` is `cuCtxGetId` for the seeded primary context of an explicit
 device (no TLS current device). Distinct from `green_ctx_get_id`. Query;
 legal during capture. No Engine `--ctx-id`.
@@ -2061,6 +2064,7 @@ No Engine `--malloc-pitch-element`. `mem_alloc` is `cuMemAlloc` (identity with `
 `stream_create_flags` is `cuStreamCreateWithFlags` (identity with `stream_create_with_flags`). Capture refused. Distinct from `stream_create`. No Engine `--stream-create-flags`.
 `stream_flags` is `cuStreamGetFlags` (identity with `stream_get_flags`). Query; legal during capture. Distinct from `stream_get_priority`. No Engine `--stream-flags`.
 `get_stream_priority` is `cuStreamGetPriority` (identity with `stream_get_priority`). Query; legal during capture. Distinct from `stream_flags`. No Engine `--stream-get-priority`.
+`device_graph_mem_get` is `cuDeviceGetGraphMemAttribute` (identity with `graph_mem_get`). Query; legal during capture. Distinct from `graph_mem_set`. No Engine `--graph-mem-get`.
 `mem_host_get_flags` is `cuMemHostGetFlags` (identity with `host_get_flags`). Query; legal during capture. No Engine `--mem-host-get-flags`.
 `mem_host_get_device_pointer` is `cuMemHostGetDevicePointer` (identity with `host_get_device_pointer_with_flags`). Query; legal during capture. No Engine `--mem-host-get-device-pointer`.
 `mem_host_register` is `cuMemHostRegister` (identity with `host_register_with_flags`). Capture refused. No Engine `--mem-host-register`.
@@ -2116,6 +2120,7 @@ No Engine `--malloc-pitch-element`. `mem_alloc` is `cuMemAlloc` (identity with `
 `stream_create_flags` is `cuStreamCreateWithFlags` (identity with `stream_create_with_flags`). Capture refused. Distinct from `stream_create`. No Engine `--stream-create-flags`.
 `stream_flags` is `cuStreamGetFlags` (identity with `stream_get_flags`). Query; legal during capture. Distinct from `stream_get_priority`. No Engine `--stream-flags`.
 `get_stream_priority` is `cuStreamGetPriority` (identity with `stream_get_priority`). Query; legal during capture. Distinct from `stream_flags`. No Engine `--stream-get-priority`.
+`device_graph_mem_get` is `cuDeviceGetGraphMemAttribute` (identity with `graph_mem_get`). Query; legal during capture. Distinct from `graph_mem_set`. No Engine `--graph-mem-get`.
 `MemcpyOp` `height` / pitches are
 `cudaMemcpy2DAsync` (payload `width * height`). Origin fields are srcPos /
 dstPos (default 0). No Engine `--memcpy-origin`. `MemcpyOp` `src_lod` /
@@ -2133,6 +2138,7 @@ is `cuMemcpy3DUnaligned` (identity with `memcpy_3d`). No Engine
 `graph_mem_get` / `graph_mem_set` / `graph_mem_trim` are
 `cudaDeviceGetGraphMemAttribute` / `SetGraphMemAttribute` / `GraphMemTrim`
 (device graph-memory pool only; unused reserved bytes return on trim).
+`device_graph_mem_get` is `cuDeviceGetGraphMemAttribute` (identity with `graph_mem_get`). Query; legal during capture. Distinct from `graph_mem_set`. No Engine `--graph-mem-get`.
 Default `cudaMallocAsync` uses the device mempool with release threshold
 `0` (unused bytes return to the OS when the stream-ordered free
 completes). `create_pool` / `create_pool_with_props` / `alloc_from_pool` /
@@ -2403,6 +2409,7 @@ first when compute contends). `stream_create_priority` is `cuStreamCreateWithPri
 `stream_create_flags` is `cuStreamCreateWithFlags` (identity with `stream_create_with_flags`). Capture refused. Distinct from `stream_create`. No Engine `--stream-create-flags`.
 `stream_flags` is `cuStreamGetFlags` (identity with `stream_get_flags`). Query; legal during capture. Distinct from `stream_get_priority`. No Engine `--stream-flags`.
 `get_stream_priority` is `cuStreamGetPriority` (identity with `stream_get_priority`). Query; legal during capture. Distinct from `stream_flags`. No Engine `--stream-get-priority`.
+`device_graph_mem_get` is `cuDeviceGetGraphMemAttribute` (identity with `graph_mem_get`). Query; legal during capture. Distinct from `graph_mem_set`. No Engine `--graph-mem-get`.
 `destroy_stream` is `cudaStreamDestroy`
 (returns immediately; in-flight work still completes; NULL is Invalid).
 `device_get_stream_priority_range` is
