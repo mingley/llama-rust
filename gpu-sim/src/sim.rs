@@ -18223,7 +18223,6 @@ impl Sim {
     /// [`Self::va_map_handle_with_flags`] (`cuMemMap` flags).
     ///
     /// Capture refused. Distinct from [`Self::mem_map_handle`].
-    /// This VM does not invent occupancy SM counts this slice.
     pub fn mem_map_handle_with_flags(
         &mut self,
         id: AllocId,
@@ -18239,6 +18238,8 @@ impl Sim {
     ///
     /// `size` must equal the handle bytes. Other sizes Invalid `"mem map size"`.
     /// Flags must be [`MemMapFlags::DEFAULT`].
+    /// Driver `cuMemMap` size is [`Self::mem_map_handle_with_size`].
+    /// Identity wrap [`Self::mem_map_handle_with_size`].
     pub fn va_map_handle_with_size(
         &mut self,
         id: AllocId,
@@ -18306,6 +18307,23 @@ impl Sim {
             .vmm_handle_at
             .insert((id, device, offset, bytes), handle);
         Ok(())
+    }
+
+    /// `cuMemMap` size. Identity with
+    /// [`Self::va_map_handle_with_size`] (`cuMemMap` size).
+    ///
+    /// Capture refused. Distinct from [`Self::mem_map_handle_with_flags`].
+    /// This VM does not invent occupancy SM counts this slice.
+    pub fn mem_map_handle_with_size(
+        &mut self,
+        id: AllocId,
+        device: DeviceId,
+        offset: u64,
+        handle: MemHandleId,
+        size: u64,
+        flags: u32,
+    ) -> Result<(), SimError> {
+        self.va_map_handle_with_size(id, device, offset, handle, size, flags)
     }
 
     /// `cuMemRelease`. Allowed while the physical is still mapped.
