@@ -8838,7 +8838,9 @@ impl Sim {
     /// instantiated exec (fork the definition's ids). Instantiating or
     /// updating one id does not change the other. Cycles among child ids fail.
     /// A parked in-flight-destroyed exec is `"unknown graph"`. Clone of the
-    /// definition stays.
+    /// definition stays. Driver
+    /// `cuGraphClone` is
+    /// [`Self::graph_clone`].
     pub fn clone_graph(&mut self, graph: GraphId) -> Result<GraphId, SimError> {
         self.require_not_moved(graph)?;
         self.fail_if_capturing("cannot capture graph clone")?;
@@ -8905,6 +8907,16 @@ impl Sim {
         remap.get(&graph).copied().ok_or(SimError::Invalid {
             why: "unknown graph",
         })
+    }
+
+    /// `cuGraphClone`. Identity with
+    /// [`Self::clone_graph`] (`cudaGraphClone`).
+    ///
+    /// Host-synchronous. Capture refused. Distinct from
+    /// [`Self::find_graph_node_in_clone`]. This VM does not invent
+    /// occupancy SM counts this slice.
+    pub fn graph_clone(&mut self, graph: GraphId) -> Result<GraphId, SimError> {
+        self.clone_graph(graph)
     }
 
     fn clone_conditionals(&mut self, remap: &BTreeMap<GraphId, GraphId>) -> Result<(), SimError> {
@@ -14253,8 +14265,7 @@ impl Sim {
     /// [`Self::graph_node_find_in_clone`] (`cudaGraphNodeFindInClone`).
     ///
     /// Query; legal during capture. Distinct from
-    /// [`Self::clone_graph`]. This VM does not invent
-    /// occupancy SM counts this slice.
+    /// [`Self::clone_graph`].
     pub fn find_graph_node_in_clone(
         &self,
         original: GraphId,

@@ -8694,7 +8694,14 @@ model, do not celebrate the sim.
     or `cudaChooseDevice`. `gpu-profile capture` is still refused. Dual
     score still has no `$/M tokens`.
 
-934. [ ] Next numbered PLAN item after 933 is the next `gpu-sim` / Engine /
+934. [x] `gpu-sim` `Sim::graph_clone` is
+    `cuGraphClone`. Identity with `clone_graph`
+    (`cudaGraphClone`). Capture refused. Distinct from
+    `find_graph_node_in_clone`. This VM does not invent occupancy SM counts, Engine `--clone-graph`,
+    or `cudaChooseDevice`. `gpu-profile capture` is still refused. Dual
+    score still has no `$/M tokens`.
+
+935. [ ] Next numbered PLAN item after 934 is the next `gpu-sim` / Engine /
     serve / expertvm mechanical API that is still missing, or the next official
     decode family. Prefer remaining CUDA-shaped twins over more
     OpenAI HTTP veneer. Do not invent F32 `output.scale`. Do not invent a
@@ -9987,6 +9994,9 @@ model, do not celebrate the sim.
     Do not invent a second `cuGraphNodeFindInClone` / `find_graph_node_in_clone`.
     Do not invent Engine `--graph-node-find-in-clone`. Do not invent
     occupancy SM counts this slice. Do not reverse FindGraphNodeInClone identity with graph_node_find_in_clone.
+    Do not invent a second `cuGraphClone` / `graph_clone`.
+    Do not invent Engine `--clone-graph`. Do not invent
+    occupancy SM counts this slice. Do not reverse GraphClone identity with clone_graph.
     Do not invent a second `cudaStreamAddCallback`.
     Do not invent Engine `--stream-callback` (same wall as second live
     `cudaLaunchHostFunc` after miss DMA).
@@ -11359,6 +11369,9 @@ model, do not celebrate the sim.
     Do not invent a second `find_graph_node_in_clone` API. Do not invent
     Engine `--graph-node-find-in-clone-identity`. Do not invent a graph-clone
     this slice. Do not reverse FindGraphNodeInClone identity with graph_node_find_in_clone.
+    Do not invent a second `graph_clone` API. Do not invent
+    Engine `--clone-graph-identity`. Do not invent a graph-debug-dot
+    this slice. Do not reverse GraphClone identity with clone_graph.
     Do not invent a second DeviceLaunch in-flight destroy-complete check or Engine
     `--device-launch-destroy`. Do not abort an in-flight DeviceLaunch when
     `destroy_graph` succeeds. Do not delay destroy of an idle exec. Do not invent
@@ -12914,6 +12927,9 @@ model, do not celebrate the sim.
     Do not invent a second `find_graph_node_in_clone` method. Do not
     invent Engine `--cu-graph-node-find-in-clone`. Do not reverse wrapping
     cuGraphNodeFindInClone identity.
+    Do not invent a second `graph_clone` method. Do not
+    invent Engine `--cu-graph-clone`. Do not reverse wrapping
+    cuGraphClone identity.
     Do not
     spend the next item on an OpenAI-compatible HTTP veneer.
 

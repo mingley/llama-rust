@@ -5,6 +5,14 @@ Visible five-turn extract: [docs/chatgpt-share-6a920fe1.md](docs/chatgpt-share-6
 Complete share-API extract: [docs/chatgpt-share-6a920fe1/](docs/chatgpt-share-6a920fe1/).
 Work lands on `main`. No PRs.
 
+## Shipped 2026-09-02 — CUDA `cuGraphClone`
+
+`gpu-sim` `Sim::graph_clone` is `cuGraphClone`.
+Identity with `clone_graph` (`cudaGraphClone`).
+Capture refused. Distinct from `find_graph_node_in_clone`.
+This VM does not invent occupancy SM counts or Engine `--clone-graph`.
+`gpu-profile capture` is still refused. Dual score still has no `$/M tokens`.
+
 ## Shipped 2026-09-02 — CUDA `cuGraphNodeFindInClone`
 
 `gpu-sim` `Sim::find_graph_node_in_clone` is `cuGraphNodeFindInClone`.
