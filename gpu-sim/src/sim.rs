@@ -26123,7 +26123,6 @@ impl Sim {
     ///
     /// Capture legal. Distinct from [`Self::mem_set_buf`] and
     /// [`Self::memset_2d_async`] (`cudaMemset2DAsync`).
-    /// This VM does not invent occupancy SM counts this slice.
     pub fn mem_set_op(
         &mut self,
         device: DeviceId,
@@ -26134,6 +26133,8 @@ impl Sim {
     }
 
     /// `cudaMemset`: enqueue then wait for that stream (host-synchronous).
+    ///
+    /// Identity wrap [`Self::mem_set_sync`]. Not [`Self::memset_d8`] (`cuMemsetD8`).
     ///
     /// Capture cannot include it. [`Self::memset`] is `cudaMemsetAsync`.
     pub fn memset_sync(
@@ -26151,6 +26152,21 @@ impl Sim {
         let id = self.memset(device, alloc, bytes, stream)?;
         self.synchronize_stream(device, stream)?;
         Ok(id)
+    }
+
+    /// `cudaMemset`. Identity with [`Self::memset_sync`].
+    ///
+    /// Capture refused. Distinct from [`Self::mem_set_op`] and
+    /// [`Self::memset_d8`] (`cuMemsetD8`).
+    /// This VM does not invent occupancy SM counts this slice.
+    pub fn mem_set_sync(
+        &mut self,
+        device: DeviceId,
+        alloc: AllocId,
+        bytes: u64,
+        stream: StreamId,
+    ) -> Result<OpId, SimError> {
+        self.memset_sync(device, alloc, bytes, stream)
     }
 
     /// `cuMemsetD8Async`. `count` is CUDA `N` (number of 8-bit values).
