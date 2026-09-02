@@ -9310,7 +9310,14 @@ model, do not celebrate the sim.
     or `cudaChooseDevice`. `gpu-profile capture` is still refused. Dual
     score still has no `$/M tokens`.
 
-1022. [ ] Next numbered PLAN item after 1021 is the next `gpu-sim` / Engine /
+1022. [x] `gpu-sim` `Sim::update_stream_capture_dependencies` is
+    `cuStreamUpdateCaptureDependencies`. Identity with `stream_update_capture_dependencies`
+    (`cudaStreamUpdateCaptureDependencies`). Not capturing refused. Distinct from
+    `stream_end_capture`. This VM does not invent occupancy SM counts, Engine `--update-stream-capture-dependencies`,
+    or `cudaChooseDevice`. `gpu-profile capture` is still refused. Dual
+    score still has no `$/M tokens`.
+
+1023. [ ] Next numbered PLAN item after 1022 is the next `gpu-sim` / Engine /
     serve / expertvm mechanical API that is still missing, or the next official
     decode family. Prefer remaining CUDA-shaped twins over more
     OpenAI HTTP veneer. Do not invent F32 `output.scale`. Do not invent a
@@ -10867,6 +10874,9 @@ model, do not celebrate the sim.
     Do not invent a second `cuStreamEndCapture` / `stream_end_capture`.
     Do not invent Engine `--stream-end-capture`. Do not invent
     occupancy SM counts this slice. Do not reverse StreamEndCapture identity with end_capture.
+    Do not invent a second `cuStreamUpdateCaptureDependencies` / `update_stream_capture_dependencies`.
+    Do not invent Engine `--update-stream-capture-dependencies`. Do not invent
+    occupancy SM counts this slice. Do not reverse UpdateStreamCaptureDependencies identity with stream_update_capture_dependencies.
     Do not invent a second `cudaStreamAddCallback`.
     Do not invent Engine `--stream-callback` (same wall as second live
     `cudaLaunchHostFunc` after miss DMA).
@@ -12503,6 +12513,9 @@ model, do not celebrate the sim.
     Do not invent a second `stream_end_capture` API. Do not invent
     Engine `--stream-end-capture-identity`. Do not invent a stream-update-capture-dependencies
     this slice. Do not reverse StreamEndCapture identity with end_capture.
+    Do not invent a second `update_stream_capture_dependencies` API. Do not invent
+    Engine `--update-stream-capture-dependencies-identity`. Do not invent a stream-is-capturing
+    this slice. Do not reverse UpdateStreamCaptureDependencies identity with stream_update_capture_dependencies.
     Do not invent a second DeviceLaunch in-flight destroy-complete check or Engine
     `--device-launch-destroy`. Do not abort an in-flight DeviceLaunch when
     `destroy_graph` succeeds. Do not delay destroy of an idle exec. Do not invent
@@ -14322,6 +14335,9 @@ model, do not celebrate the sim.
     Do not invent a second `stream_end_capture` method. Do not
     invent Engine `--cu-stream-end-capture`. Do not reverse wrapping
     cuStreamEndCapture identity.
+    Do not invent a second `update_stream_capture_dependencies` method. Do not
+    invent Engine `--cu-update-stream-capture-dependencies`. Do not reverse wrapping
+    cuStreamUpdateCaptureDependencies identity.
     Do not
     spend the next item on an OpenAI-compatible HTTP veneer.
 

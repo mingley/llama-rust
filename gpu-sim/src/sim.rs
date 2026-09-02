@@ -3799,8 +3799,7 @@ impl Sim {
     /// [`Self::end_capture`] (`cudaStreamEndCapture`).
     ///
     /// Without begin refused. Distinct from
-    /// [`Self::stream_begin_recapture_to_graph_with_callback`]. This VM does not invent
-    /// occupancy SM counts this slice.
+    /// [`Self::stream_begin_recapture_to_graph_with_callback`].
     pub fn stream_end_capture(&mut self) -> Result<GraphId, SimError> {
         self.end_capture()
     }
@@ -3814,7 +3813,9 @@ impl Sim {
     /// replaces the pending set; [`CaptureDepOp::Add`] unions. The pending set
     /// is consumed by the next captured submit on this stream. The stream must
     /// be in the capture set. Same-stream independent children still need
-    /// separate [`Self::begin_capture_to_graph`] sessions.
+    /// separate [`Self::begin_capture_to_graph`] sessions. Driver
+    /// `cuStreamUpdateCaptureDependencies` is
+    /// [`Self::update_stream_capture_dependencies`].
     pub fn stream_update_capture_dependencies(
         &mut self,
         device: DeviceId,
@@ -3864,6 +3865,22 @@ impl Sim {
             }
         }
         Ok(())
+    }
+
+    /// `cuStreamUpdateCaptureDependencies`. Identity with
+    /// [`Self::stream_update_capture_dependencies`] (`cudaStreamUpdateCaptureDependencies`).
+    ///
+    /// Not capturing refused. Distinct from
+    /// [`Self::stream_end_capture`]. This VM does not invent
+    /// occupancy SM counts this slice.
+    pub fn update_stream_capture_dependencies(
+        &mut self,
+        device: DeviceId,
+        stream: StreamId,
+        deps: &[usize],
+        mode: CaptureDepOp,
+    ) -> Result<(), SimError> {
+        self.stream_update_capture_dependencies(device, stream, deps, mode)
     }
 
     /// `cudaStreamIsCapturing`.
