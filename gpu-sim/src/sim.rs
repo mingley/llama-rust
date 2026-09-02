@@ -19168,6 +19168,8 @@ impl Sim {
     /// [`Self::kernel`] needs the full VA covered; [`Self::kernel_bufs`]
     /// may run on this span. A hole is [`SimError::NotResident`] for that API.
     /// Capture cannot include it.
+    /// Driver `cuMemMap` range is [`Self::mem_map_range`].
+    /// Identity wrap [`Self::mem_map_range`].
     pub fn va_map_range(
         &mut self,
         id: AllocId,
@@ -19212,6 +19214,21 @@ impl Sim {
         }
         self.vmm_idle.retain(|&x| x != id);
         Ok(())
+    }
+
+    /// `cuMemMap` range. Identity with
+    /// [`Self::va_map_range`] (`cuMemMap` range).
+    ///
+    /// Capture refused. Distinct from [`Self::mem_get_access`].
+    /// This VM does not invent occupancy SM counts this slice.
+    pub fn mem_map_range(
+        &mut self,
+        id: AllocId,
+        device: DeviceId,
+        offset: u64,
+        bytes: u64,
+    ) -> Result<(), SimError> {
+        self.va_map_range(id, device, offset, bytes)
     }
 
     /// `cuMemUnmap` + `cuMemRelease` for every physical on this VA.
@@ -19632,7 +19649,6 @@ impl Sim {
     /// [`Self::va_get_access`] (`cuMemGetAccess`).
     ///
     /// Query; legal during capture. Distinct from [`Self::mem_unset_access`].
-    /// This VM does not invent occupancy SM counts this slice.
     pub fn mem_get_access(&self, id: AllocId, device: DeviceId) -> Result<u32, SimError> {
         self.va_get_access(id, device)
     }
