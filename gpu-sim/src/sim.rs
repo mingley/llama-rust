@@ -10295,15 +10295,16 @@ impl Sim {
     /// [`Self::graph_add_memset_2d`] (`cudaGraphAddMemsetNode` 2D).
     ///
     /// Capture refused. Distinct from
-    /// [`Self::add_graph_memset_op`]. This VM does not invent
-    /// occupancy SM counts this slice.
+    /// [`Self::add_graph_memset_op`].
     pub fn add_graph_memset_2d(&mut self, graph: GraphId, op: MemsetOp) -> Result<(), SimError> {
         self.graph_add_memset_2d(graph, op)
     }
 
     /// `cudaGraphAddMemsetNode` whose [`MemsetOp`] is [`MemsetOp::is_3d`]
     /// (`depth > 1`). Other extents Invalid `"memset3d depth"`. Typed
-    /// [`Self::graph_add_memset_op`] stays.
+    /// [`Self::graph_add_memset_op`] stays. Driver
+    /// 3D `cuGraphAddMemsetNode` is
+    /// [`Self::add_graph_memset_3d`].
     pub fn graph_add_memset_3d(&mut self, graph: GraphId, op: MemsetOp) -> Result<(), SimError> {
         if !op.is_3d() {
             return Err(SimError::Invalid {
@@ -10311,6 +10312,16 @@ impl Sim {
             });
         }
         self.graph_add_memset_op(graph, op)
+    }
+
+    /// 3D `cuGraphAddMemsetNode`. Identity with
+    /// [`Self::graph_add_memset_3d`] (`cudaGraphAddMemsetNode` 3D).
+    ///
+    /// Capture refused. Distinct from
+    /// [`Self::add_graph_memset_2d`]. This VM does not invent
+    /// occupancy SM counts this slice.
+    pub fn add_graph_memset_3d(&mut self, graph: GraphId, op: MemsetOp) -> Result<(), SimError> {
+        self.graph_add_memset_3d(graph, op)
     }
 
     /// `cudaGraphAddHostNode` (`cudaLaunchHostFunc`) with the unnamed callback.
