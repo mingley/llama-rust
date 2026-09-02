@@ -8645,7 +8645,14 @@ model, do not celebrate the sim.
     or `cudaChooseDevice`. `gpu-profile capture` is still refused. Dual
     score still has no `$/M tokens`.
 
-927. [ ] Next numbered PLAN item after 926 is the next `gpu-sim` / Engine /
+927. [x] `gpu-sim` `Sim::get_graph_edges_with_data` is
+    `cuGraphGetEdges` v2. Identity with `graph_edges_with_data`
+    (`cudaGraphGetEdges` with edgeData). Query; legal during capture. Distinct from
+    `get_graph_edges`. This VM does not invent occupancy SM counts, Engine `--graph-get-edges-with-data`,
+    or `cudaChooseDevice`. `gpu-profile capture` is still refused. Dual
+    score still has no `$/M tokens`.
+
+928. [ ] Next numbered PLAN item after 927 is the next `gpu-sim` / Engine /
     serve / expertvm mechanical API that is still missing, or the next official
     decode family. Prefer remaining CUDA-shaped twins over more
     OpenAI HTTP veneer. Do not invent F32 `output.scale`. Do not invent a
@@ -9917,6 +9924,9 @@ model, do not celebrate the sim.
     Do not invent a second `cuGraphGetEdges` / `get_graph_edges`.
     Do not invent Engine `--graph-get-edges`. Do not invent
     occupancy SM counts this slice. Do not reverse GetGraphEdges identity with graph_edges.
+    Do not invent a second `cuGraphGetEdges` v2 / `get_graph_edges_with_data`.
+    Do not invent Engine `--graph-get-edges-with-data`. Do not invent
+    occupancy SM counts this slice. Do not reverse GetGraphEdgesWithData identity with graph_edges_with_data.
     Do not invent a second `cudaStreamAddCallback`.
     Do not invent Engine `--stream-callback` (same wall as second live
     `cudaLaunchHostFunc` after miss DMA).
@@ -11268,6 +11278,9 @@ model, do not celebrate the sim.
     Do not invent a second `get_graph_edges` API. Do not invent
     Engine `--graph-get-edges-identity`. Do not invent a graph-edges-with-data
     this slice. Do not reverse GetGraphEdges identity with graph_edges.
+    Do not invent a second `get_graph_edges_with_data` API. Do not invent
+    Engine `--graph-get-edges-with-data-identity`. Do not invent a graph-node-get-dependencies
+    this slice. Do not reverse GetGraphEdgesWithData identity with graph_edges_with_data.
     Do not invent a second DeviceLaunch in-flight destroy-complete check or Engine
     `--device-launch-destroy`. Do not abort an in-flight DeviceLaunch when
     `destroy_graph` succeeds. Do not delay destroy of an idle exec. Do not invent
@@ -12802,6 +12815,9 @@ model, do not celebrate the sim.
     Do not invent a second `get_graph_edges` method. Do not
     invent Engine `--cu-graph-get-edges`. Do not reverse wrapping
     cuGraphGetEdges identity.
+    Do not invent a second `get_graph_edges_with_data` method. Do not
+    invent Engine `--cu-graph-get-edges-with-data`. Do not reverse wrapping
+    cuGraphGetEdges v2 identity.
     Do not
     spend the next item on an OpenAI-compatible HTTP veneer.
 

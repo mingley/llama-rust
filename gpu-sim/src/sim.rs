@@ -11503,8 +11503,7 @@ impl Sim {
     /// [`Self::graph_edges`] (`cudaGraphGetEdges`).
     ///
     /// Query; legal during capture. Distinct from
-    /// [`Self::graph_edges_with_data`]. This VM does not invent
-    /// occupancy SM counts this slice.
+    /// [`Self::graph_edges_with_data`].
     pub fn get_graph_edges(&self, graph: GraphId) -> Result<Vec<(usize, usize)>, SimError> {
         self.graph_edges(graph)
     }
@@ -11513,7 +11512,9 @@ impl Sim {
     ///
     /// Existing edges report stored [`GraphEdgeData`] (Default ports 0 when
     /// unset; Programmatic type is not stored). Not [`Self::graph_edges`]
-    /// LossyQuery. Query; legal during capture.
+    /// LossyQuery. Query; legal during capture. Driver
+    /// `cuGraphGetEdges` v2 is
+    /// [`Self::get_graph_edges_with_data`].
     pub fn graph_edges_with_data(
         &self,
         graph: GraphId,
@@ -11531,6 +11532,19 @@ impl Sim {
             }
         }
         Ok(edges)
+    }
+
+    /// `cuGraphGetEdges` v2. Identity with
+    /// [`Self::graph_edges_with_data`] (`cudaGraphGetEdges` with edgeData).
+    ///
+    /// Query; legal during capture. Distinct from
+    /// [`Self::get_graph_edges`]. This VM does not invent
+    /// occupancy SM counts this slice.
+    pub fn get_graph_edges_with_data(
+        &self,
+        graph: GraphId,
+    ) -> Result<Vec<(usize, usize, GraphEdgeData)>, SimError> {
+        self.graph_edges_with_data(graph)
     }
 
     /// `cudaGraphDebugDotPrint` of stored node kinds and edges.
