@@ -18754,7 +18754,6 @@ impl Sim {
     /// [`Self::multicast_create_with_prop`] (`cuMulticastCreate` prop).
     ///
     /// Capture refused. Distinct from [`Self::mem_multicast_create`].
-    /// This VM does not invent occupancy SM counts this slice.
     pub fn mem_multicast_create_with_prop(
         &mut self,
         prop: MulticastObjectProp,
@@ -18766,6 +18765,8 @@ impl Sim {
     ///
     /// Must run before bind/map. Duplicate add is Invalid. The completed team
     /// must be an NVLink clique.
+    /// Driver `cuMulticastAddDevice` is [`Self::mem_multicast_add_device`].
+    /// Identity wrap [`Self::mem_multicast_add_device`].
     pub fn multicast_add_device(
         &mut self,
         mc: MulticastId,
@@ -18797,6 +18798,19 @@ impl Sim {
             nvlink_clique(&self.profile, &team)?;
         }
         Ok(())
+    }
+
+    /// `cuMulticastAddDevice`. Identity with
+    /// [`Self::multicast_add_device`] (`cuMulticastAddDevice`).
+    ///
+    /// Capture refused. Distinct from [`Self::mem_multicast_create_with_prop`].
+    /// This VM does not invent occupancy SM counts this slice.
+    pub fn mem_multicast_add_device(
+        &mut self,
+        mc: MulticastId,
+        device: DeviceId,
+    ) -> Result<(), SimError> {
+        self.multicast_add_device(mc, device)
     }
 
     /// `cuMulticastBindMem` of a [`Self::va_create`] handle on `device`.
