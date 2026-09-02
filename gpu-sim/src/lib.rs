@@ -524,6 +524,8 @@
 //! [`free_sync`](Sim::free_sync)). Host-sync; capture refused. No Engine `--mem-free`.
 //! [`mem_free_host`](Sim::mem_free_host) is `cuMemFreeHost` (identity with
 //! [`free_host_pinned`](Sim::free_host_pinned)). Host-sync; capture refused. No Engine `--mem-free-host`.
+//! [`mem_host_alloc`](Sim::mem_host_alloc) is `cuMemHostAlloc` (identity with
+//! [`alloc_host_with_flags`](Sim::alloc_host_with_flags)). Capture refused. No Engine `--mem-host-alloc`.
 //! [`Sim::pointer_get_attributes`] is `cudaPointerGetAttributes`.
 //! [`pointer_set_attribute`](Sim::pointer_set_attribute) /
 //! [`pointer_get_attribute`](Sim::pointer_get_attribute) are
@@ -32964,6 +32966,39 @@ mod tests {
         sim.free_host_pinned(host2).unwrap();
         sim.mem_free(dev).unwrap();
         assert_eq!(sim.mem_info(d).unwrap().0, total);
+    }
+
+    #[test]
+    fn mem_host_alloc_is_cu_mem_host_alloc() {
+        let mut sim = Sim::new(h100());
+        let d = DeviceId(0);
+        let s = StreamId(0);
+        match sim.mem_host_alloc(64, 8) {
+            Err(SimError::Invalid { why }) => assert!(why.contains("host alloc flags"), "{why}"),
+            other => panic!("{other:?}"),
+        }
+        match sim.alloc_host_with_flags(64, 8) {
+            Err(SimError::Invalid { why }) => assert!(why.contains("host alloc flags"), "{why}"),
+            other => panic!("{other:?}"),
+        }
+        let pin = sim.mem_host_alloc(4096, HostAllocFlags::DEFAULT).unwrap();
+        assert_eq!(sim.host_get_flags(pin).unwrap(), HostAllocFlags::DEFAULT);
+        let (free, total) = sim.mem_info(d).unwrap();
+        assert_eq!(free, total);
+        let mapped = sim.mem_host_alloc(64, HostAllocFlags::MAPPED).unwrap();
+        assert_eq!(sim.host_get_flags(mapped).unwrap(), HostAllocFlags::MAPPED);
+        sim.begin_capture(d, s).unwrap();
+        match sim.mem_host_alloc(64, HostAllocFlags::DEFAULT) {
+            Err(SimError::Invalid { why }) => assert!(why.contains("capture"), "{why}"),
+            other => panic!("{other:?}"),
+        }
+        match sim.alloc_host_with_flags(64, HostAllocFlags::DEFAULT) {
+            Err(SimError::Invalid { why }) => assert!(why.contains("capture"), "{why}"),
+            other => panic!("{other:?}"),
+        }
+        let _g = sim.end_capture().unwrap();
+        sim.mem_free_host(pin).unwrap();
+        sim.mem_free_host(mapped).unwrap();
     }
 
     #[test]

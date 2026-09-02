@@ -14369,6 +14369,16 @@ impl Sim {
         self.insert_host(bytes, false, true, mapped, false, flags)
     }
 
+    /// `cuMemHostAlloc`. Identity with [`Self::alloc_host_with_flags`]
+    /// (`cudaHostAlloc`).
+    ///
+    /// Capture refused. Distinct from [`Self::alloc_host_pinned`]
+    /// (`cudaMallocHost` DEFAULT). This VM does not invent `cuMemHostGetFlags`
+    /// this slice (`host_get_flags` stays).
+    pub fn mem_host_alloc(&mut self, bytes: u64, flags: u32) -> Result<AllocId, SimError> {
+        self.alloc_host_with_flags(bytes, flags)
+    }
+
     /// `cudaMallocManaged`: pointer is live immediately, no HBM until a
     /// device first-touch or [`Self::prefetch`]. Default attach is
     /// [`MemAttach::Global`]. [`Self::alloc_managed_host`] is Host.
