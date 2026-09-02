@@ -18409,7 +18409,6 @@ impl Sim {
     /// [`Self::va_retain_handle`] (`cuMemRetainAllocationHandle`).
     ///
     /// Capture refused. Distinct from [`Self::mem_release_handle`].
-    /// This VM does not invent occupancy SM counts this slice.
     pub fn mem_retain_handle(
         &mut self,
         id: AllocId,
@@ -19220,10 +19219,21 @@ impl Sim {
     /// Host-synchronous: in-flight kernels using this pointer complete first.
     /// Typed helper; [`Self::va_unmap_with_size`] is the CUDA size argument
     /// (must match the reservation).
+    /// Driver `cuMemUnmap` is [`Self::mem_unmap`].
+    /// Identity wrap [`Self::mem_unmap`].
     pub fn va_unmap(&mut self, id: AllocId) -> Result<(), SimError> {
         self.fail_if_capturing("cannot capture alloc/free")?;
         let bytes = self.alloc_ref(id)?.bytes;
         self.va_unmap_with_size(id, bytes)
+    }
+
+    /// `cuMemUnmap`. Identity with
+    /// [`Self::va_unmap`] (`cuMemUnmap` + `cuMemRelease` of every physical).
+    ///
+    /// Capture refused. Distinct from [`Self::mem_retain_handle`].
+    /// This VM does not invent occupancy SM counts this slice.
+    pub fn mem_unmap(&mut self, id: AllocId) -> Result<(), SimError> {
+        self.va_unmap(id)
     }
 
     /// [`Self::va_unmap`] with the CUDA reservation size.
