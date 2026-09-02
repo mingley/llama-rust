@@ -3269,6 +3269,8 @@ impl Sim {
         )
     }
 
+    /// `cudaStreamBeginCapture`.
+    ///
     /// Start recording later submits on `(device, stream)`. Recorded ops do not run.
     ///
     /// Default mode is [`StreamCaptureMode::Relaxed`] (or the last
@@ -3280,6 +3282,7 @@ impl Sim {
     /// clock tick); [`Self::end_capture`] appends recorded nodes and returns
     /// that id. For an existing graph see [`Self::begin_capture_to_graph`].
     /// [`Self::begin_capture_with_mode`] picks the mode for this capture only.
+    /// Driver `cuStreamBeginCapture` is [`Self::stream_begin_capture`].
     pub fn begin_capture(&mut self, device: DeviceId, stream: StreamId) -> Result<(), SimError> {
         if self.capturing.is_some() {
             return Err(SimError::Invalid {
@@ -3295,6 +3298,20 @@ impl Sim {
         }
         let graph = self.insert_graph(device, stream);
         self.begin_capture_inner(device, stream, graph, &[], self.capture_mode)
+    }
+
+    /// `cuStreamBeginCapture`. Identity with
+    /// [`Self::begin_capture`] (`cudaStreamBeginCapture`).
+    ///
+    /// Nested capture refused. Distinct from
+    /// [`Self::begin_capture_with_mode`]. This VM does not invent
+    /// occupancy SM counts this slice.
+    pub fn stream_begin_capture(
+        &mut self,
+        device: DeviceId,
+        stream: StreamId,
+    ) -> Result<(), SimError> {
+        self.begin_capture(device, stream)
     }
 
     /// `cudaStreamBeginCapture` with an explicit [`StreamCaptureMode`].
@@ -10840,8 +10857,7 @@ impl Sim {
     /// [`Self::graph_conditional_create_with_ctx`] (`cudaGraphConditionalHandleCreate` with ctx).
     ///
     /// Capture refused. Distinct from
-    /// [`Self::create_graph_conditional_handle_with_flags`]. This VM does not invent
-    /// occupancy SM counts this slice.
+    /// [`Self::create_graph_conditional_handle_with_flags`].
     pub fn create_graph_conditional_handle_with_ctx(
         &mut self,
         graph: GraphId,

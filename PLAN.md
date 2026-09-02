@@ -9254,7 +9254,14 @@ model, do not celebrate the sim.
     or `cudaChooseDevice`. `gpu-profile capture` is still refused. Dual
     score still has no `$/M tokens`.
 
-1014. [ ] Next numbered PLAN item after 1013 is the next `gpu-sim` / Engine /
+1014. [x] `gpu-sim` `Sim::stream_begin_capture` is
+    `cuStreamBeginCapture`. Identity with `begin_capture`
+    (`cudaStreamBeginCapture`). Nested capture refused. Distinct from
+    `begin_capture_with_mode`. This VM does not invent occupancy SM counts, Engine `--stream-begin-capture`,
+    or `cudaChooseDevice`. `gpu-profile capture` is still refused. Dual
+    score still has no `$/M tokens`.
+
+1015. [ ] Next numbered PLAN item after 1014 is the next `gpu-sim` / Engine /
     serve / expertvm mechanical API that is still missing, or the next official
     decode family. Prefer remaining CUDA-shaped twins over more
     OpenAI HTTP veneer. Do not invent F32 `output.scale`. Do not invent a
@@ -10787,6 +10794,9 @@ model, do not celebrate the sim.
     Do not invent a second `cuGraphConditionalHandleCreate` with ctx / `create_graph_conditional_handle_with_ctx`.
     Do not invent Engine `--graph-conditional-create-with-ctx`. Do not invent
     occupancy SM counts this slice. Do not reverse CreateGraphConditionalHandleWithCtx identity with graph_conditional_create_with_ctx.
+    Do not invent a second `cuStreamBeginCapture` / `stream_begin_capture`.
+    Do not invent Engine `--stream-begin-capture`. Do not invent
+    occupancy SM counts this slice. Do not reverse StreamBeginCapture identity with begin_capture.
     Do not invent a second `cudaStreamAddCallback`.
     Do not invent Engine `--stream-callback` (same wall as second live
     `cudaLaunchHostFunc` after miss DMA).
@@ -12399,6 +12409,9 @@ model, do not celebrate the sim.
     Do not invent a second `create_graph_conditional_handle_with_ctx` API. Do not invent
     Engine `--graph-conditional-create-with-ctx-identity`. Do not invent a stream-begin-capture
     this slice. Do not reverse CreateGraphConditionalHandleWithCtx identity with graph_conditional_create_with_ctx.
+    Do not invent a second `stream_begin_capture` API. Do not invent
+    Engine `--stream-begin-capture-identity`. Do not invent a begin-capture-with-mode
+    this slice. Do not reverse StreamBeginCapture identity with begin_capture.
     Do not invent a second DeviceLaunch in-flight destroy-complete check or Engine
     `--device-launch-destroy`. Do not abort an in-flight DeviceLaunch when
     `destroy_graph` succeeds. Do not delay destroy of an idle exec. Do not invent
@@ -14194,6 +14207,9 @@ model, do not celebrate the sim.
     Do not invent a second `create_graph_conditional_handle_with_ctx` method. Do not
     invent Engine `--cu-graph-conditional-create-with-ctx`. Do not reverse wrapping
     cuGraphConditionalHandleCreate ctx identity.
+    Do not invent a second `stream_begin_capture` method. Do not
+    invent Engine `--cu-stream-begin-capture`. Do not reverse wrapping
+    cuStreamBeginCapture identity.
     Do not
     spend the next item on an OpenAI-compatible HTTP veneer.
 
