@@ -3343,8 +3343,7 @@ impl Sim {
     /// [`Self::begin_capture_with_mode`] (`cudaStreamBeginCapture` with mode).
     ///
     /// Nested capture refused. Distinct from
-    /// [`Self::stream_begin_capture`]. This VM does not invent
-    /// occupancy SM counts this slice.
+    /// [`Self::stream_begin_capture`].
     pub fn stream_begin_capture_with_mode(
         &mut self,
         device: DeviceId,
@@ -3364,7 +3363,8 @@ impl Sim {
     /// recorded ops. [`Self::end_capture`] returns `graph`.
     /// A parked in-flight-destroyed exec is `"unknown graph"` first. Live
     /// exec still `"graph instantiated"`. Capture-to-graph of the definition
-    /// stays.
+    /// stays. Driver `cuStreamBeginCaptureToGraph` is
+    /// [`Self::stream_begin_capture_to_graph`].
     pub fn begin_capture_to_graph(
         &mut self,
         device: DeviceId,
@@ -3373,6 +3373,22 @@ impl Sim {
         deps: &[usize],
     ) -> Result<(), SimError> {
         self.begin_capture_inner(device, stream, graph, deps, self.capture_mode)
+    }
+
+    /// `cuStreamBeginCaptureToGraph`. Identity with
+    /// [`Self::begin_capture_to_graph`] (`cudaStreamBeginCaptureToGraph`).
+    ///
+    /// Nested capture refused. Distinct from
+    /// [`Self::stream_begin_capture_with_mode`]. This VM does not invent
+    /// occupancy SM counts this slice.
+    pub fn stream_begin_capture_to_graph(
+        &mut self,
+        device: DeviceId,
+        stream: StreamId,
+        graph: GraphId,
+        deps: &[usize],
+    ) -> Result<(), SimError> {
+        self.begin_capture_to_graph(device, stream, graph, deps)
     }
 
     /// `cudaStreamBeginCaptureToGraph` with an explicit [`StreamCaptureMode`].
