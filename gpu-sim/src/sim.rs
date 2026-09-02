@@ -25581,7 +25581,6 @@ impl Sim {
 
     /// `cuDeviceGetTexture1DLinearMaxWidth`. Identity with [`Self::device_get_texture_1d_linear_max_width`].
     /// Query; legal during capture. Distinct from [`Self::mem_device_get_luid`].
-    /// This VM does not invent occupancy SM counts this slice.
     pub fn mem_device_get_texture_1d_linear_max_width(
         &self,
         device: DeviceId,
@@ -25593,6 +25592,9 @@ impl Sim {
     ///
     /// Inverse of [`Self::device_get_uuid`]. Unknown UUID is Invalid
     /// `"unknown device uuid"`. Distinct from [`Self::device_get`] (ordinal).
+    ///
+    /// Driver wrap: [`Self::mem_device_get_by_uuid`].
+    /// Identity: [`Self::mem_device_get_by_uuid`].
     pub fn device_get_by_uuid(&self, uuid: [u8; 16]) -> Result<DeviceId, SimError> {
         self.profile
             .gpus
@@ -25602,6 +25604,13 @@ impl Sim {
             .ok_or(SimError::Invalid {
                 why: "unknown device uuid",
             })
+    }
+
+    /// `cuDeviceGetByUuid`. Identity with [`Self::device_get_by_uuid`].
+    /// Query; legal during capture. Distinct from [`Self::mem_device_get_texture_1d_linear_max_width`].
+    /// This VM does not invent occupancy SM counts this slice.
+    pub fn mem_device_get_by_uuid(&self, uuid: [u8; 16]) -> Result<DeviceId, SimError> {
+        self.device_get_by_uuid(uuid)
     }
 
     /// `cudaDeviceGetPciBusId` / `cuDeviceGetPCIBusId`. Query; legal during
