@@ -4861,8 +4861,7 @@ impl Sim {
     /// [`Self::graph_get_id`] (`cudaGraphExecGetId`).
     ///
     /// Query; legal during capture. Distinct from
-    /// [`Self::get_graph_id`]. This VM does not invent
-    /// occupancy SM counts this slice.
+    /// [`Self::get_graph_id`].
     pub fn get_graph_exec_id(&self, exec: GraphId) -> Result<u32, SimError> {
         self.graph_get_id(exec)
     }
@@ -4871,7 +4870,9 @@ impl Sim {
     ///
     /// Query; legal during capture. During capture this is the destination
     /// graph only. [`Self::graph_destroy_node`] tombstones a slot, so this may
-    /// skip indices; [`Self::graph_len`] stays the add-order bound.
+    /// skip indices; [`Self::graph_len`] stays the add-order bound. Driver
+    /// `cuGraphGetNodes` is
+    /// [`Self::get_graph_nodes`].
     pub fn graph_nodes(&self, graph: GraphId) -> Result<Vec<usize>, SimError> {
         let g = self.live_graph(graph)?;
         Ok(g.steps
@@ -4880,6 +4881,16 @@ impl Sim {
             .filter(|(_, s)| !s.destroyed)
             .map(|(i, _)| i)
             .collect())
+    }
+
+    /// `cuGraphGetNodes`. Identity with
+    /// [`Self::graph_nodes`] (`cudaGraphGetNodes`).
+    ///
+    /// Query; legal during capture. Distinct from
+    /// [`Self::graph_root_nodes`]. This VM does not invent
+    /// occupancy SM counts this slice.
+    pub fn get_graph_nodes(&self, graph: GraphId) -> Result<Vec<usize>, SimError> {
+        self.graph_nodes(graph)
     }
 
     /// Whether [`Self::instantiate_graph`] (or a first launch) has created an exec.
