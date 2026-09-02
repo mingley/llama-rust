@@ -262,6 +262,7 @@ warp scheduler, L1, …   ← do not model
 | `module_get_function` is Invalid (no `CUmodule` / `CUfunction`) | `cuModuleGetFunction` |
 | `module_get_global` is Invalid (no `CUmodule` device symbol) | `cuModuleGetGlobal` |
 | `module_get_tex_ref` is Invalid (no `CUmodule` / `CUtexref`) | `cuModuleGetTexRef` |
+| `module_get_surf_ref` is Invalid (no `CUmodule` / `CUsurfref`) | `cuModuleGetSurfRef` |
 | `library_load_data` is Invalid (no cubin / `CUlibrary`) | `cuLibraryLoadData` |
 | `library_load_from_file` is Invalid (no cubin path / `CUlibrary`) | `cuLibraryLoadFromFile` |
 | `library_unload` is Invalid (no `CUlibrary` handle) | `cuLibraryUnload` |
@@ -1502,6 +1503,8 @@ Distinct from `kernel_get_function` and `func_get_module`. Query; legal during c
 Distinct from `library_get_global` and `module_get_function`. Query; legal during capture. No Engine `--module-global`.
 `module_get_tex_ref` is `cuModuleGetTexRef` (always Invalid `"module texref"`; no cubin).
 Distinct from `module_get_global` and `tex_object_create`. Query; legal during capture. No Engine `--module-texref`.
+`module_get_surf_ref` is `cuModuleGetSurfRef` (always Invalid `"module surfref"`; no cubin).
+Distinct from `module_get_tex_ref` and `surf_object_create`. Query; legal during capture. No Engine `--module-surfref`.
 `library_load_data` is `cuLibraryLoadData` (always Invalid `"cuda library"`;
 no cubin / `CUlibrary`). Distinct from `module_get_loading_mode` and
 `func_get_module`. Query; legal during capture. No Engine `--library-load`.

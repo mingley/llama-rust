@@ -530,6 +530,8 @@ handle; no Engine flag).
 `CUmodule` device symbol; no Engine flag).
 `gpu-sim` `module_get_tex_ref` is `cuModuleGetTexRef` (Invalid; no
 `CUmodule` texref; no Engine flag).
+`gpu-sim` `module_get_surf_ref` is `cuModuleGetSurfRef` (Invalid; no
+`CUmodule` surfref; no Engine flag).
 `gpu-sim` `library_load_data` is `cuLibraryLoadData` (Invalid; no cubin /
 `CUlibrary`; no Engine flag).
 `gpu-sim` `library_load_from_file` is `cuLibraryLoadFromFile` (Invalid;

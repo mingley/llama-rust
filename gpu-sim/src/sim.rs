@@ -21098,13 +21098,29 @@ impl Sim {
     /// Always Invalid `"module texref"` (this VM has no `CUmodule` and
     /// no `CUtexref`). Distinct from [`Self::module_get_global`] (why is
     /// not `"module global"`) and from [`Self::tex_object_create`] (why is
-    /// not `"cuda texture"`) and from [`Self::tex_object_get_texture_desc`].
+    /// not `"cuda texture"`) and from [`Self::tex_object_get_texture_desc`]
+    /// and from [`Self::module_get_surf_ref`].
     /// Unknown devices are Invalid `"device not in profile"`. Query; legal
     /// during capture.
     pub fn module_get_tex_ref(&self, device: DeviceId) -> Result<(), SimError> {
         let _gpu = self.profile.gpu(device)?;
         Err(SimError::Invalid {
             why: "module texref",
+        })
+    }
+
+    /// `cuModuleGetSurfRef`. CUDA modules are not modeled.
+    ///
+    /// Always Invalid `"module surfref"` (this VM has no `CUmodule` and
+    /// no `CUsurfref`). Distinct from [`Self::module_get_tex_ref`] (why is
+    /// not `"module texref"`) and from [`Self::surf_object_create`] (why is
+    /// not `"cuda surface"`) and from [`Self::surf_object_get_resource_desc`].
+    /// Unknown devices are Invalid `"device not in profile"`. Query; legal
+    /// during capture.
+    pub fn module_get_surf_ref(&self, device: DeviceId) -> Result<(), SimError> {
+        let _gpu = self.profile.gpu(device)?;
+        Err(SimError::Invalid {
+            why: "module surfref",
         })
     }
 

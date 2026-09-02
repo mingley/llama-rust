@@ -1089,6 +1089,8 @@
 //! `"module global"`). Query; legal during capture. No Engine `--module-global`.
 //! [`module_get_tex_ref`](Sim::module_get_tex_ref) is `cuModuleGetTexRef` (always Invalid
 //! `"module texref"`). Query; legal during capture. No Engine `--module-texref`.
+//! [`module_get_surf_ref`](Sim::module_get_surf_ref) is `cuModuleGetSurfRef` (always Invalid
+//! `"module surfref"`). Query; legal during capture. No Engine `--module-surfref`.
 //! [`library_load_data`](Sim::library_load_data) is `cuLibraryLoadData`
 //! (always Invalid `"cuda library"`). Query; legal during capture. No Engine `--library-load`.
 //! [`library_load_from_file`](Sim::library_load_from_file) is
@@ -19199,6 +19201,64 @@ mod tests {
             Err(SimError::Invalid { why }) => {
                 assert!(why.contains("texture desc"), "{why}");
                 assert!(!why.contains("module texref"), "{why}");
+            }
+            other => panic!("{other:?}"),
+        }
+        match sim.module_get_surf_ref(d) {
+            Err(SimError::Invalid { why }) => {
+                assert!(why.contains("module surfref"), "{why}");
+                assert!(!why.contains("module texref"), "{why}");
+            }
+            other => panic!("{other:?}"),
+        }
+        assert_eq!(sim.module_get_loading_mode(), ModuleLoadingMode::Eager);
+    }
+
+    #[test]
+    fn module_get_surf_ref_is_unsupported() {
+        let mut sim = Sim::new(h100());
+        let d = DeviceId(0);
+        match sim.module_get_surf_ref(d) {
+            Err(SimError::Invalid { why }) => {
+                assert!(why.contains("module surfref"), "{why}");
+                assert!(!why.contains("module texref"), "{why}");
+                assert!(!why.contains("cuda surface"), "{why}");
+                assert!(!why.contains("surf resource desc"), "{why}");
+            }
+            other => panic!("{other:?}"),
+        }
+        sim.begin_capture(d, StreamId(0)).unwrap();
+        match sim.module_get_surf_ref(d) {
+            Err(SimError::Invalid { why }) => {
+                assert!(why.contains("module surfref"), "{why}");
+            }
+            other => panic!("{other:?}"),
+        }
+        let _g = sim.end_capture().unwrap();
+        match sim.module_get_surf_ref(DeviceId(99)) {
+            Err(SimError::Invalid { why }) => {
+                assert!(why.contains("device not in profile"), "{why}");
+            }
+            other => panic!("{other:?}"),
+        }
+        match sim.module_get_tex_ref(d) {
+            Err(SimError::Invalid { why }) => {
+                assert!(why.contains("module texref"), "{why}");
+                assert!(!why.contains("module surfref"), "{why}");
+            }
+            other => panic!("{other:?}"),
+        }
+        match sim.surf_object_create(d) {
+            Err(SimError::Invalid { why }) => {
+                assert!(why.contains("cuda surface"), "{why}");
+                assert!(!why.contains("module surfref"), "{why}");
+            }
+            other => panic!("{other:?}"),
+        }
+        match sim.surf_object_get_resource_desc(d) {
+            Err(SimError::Invalid { why }) => {
+                assert!(why.contains("surf resource desc"), "{why}");
+                assert!(!why.contains("module surfref"), "{why}");
             }
             other => panic!("{other:?}"),
         }
