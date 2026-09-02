@@ -21002,13 +21002,26 @@ impl Sim {
         })
     }
 
+    /// `cuCoredumpGetAttributeGlobal` / `cudaCoredumpGetAttributeGlobal`.
+    ///
+    /// Always Invalid `"dump global"` (GPU coredumps are not modeled).
+    /// Distinct from [`Self::coredump_get_attribute`] (why is not
+    /// `"coredump"`) and from [`Self::coredump_set_attribute`] (why is not
+    /// `"dump setattr"`). Unknown devices are Invalid
+    /// `"device not in profile"`. Query; legal during capture. This VM does
+    /// not invent `cuCoredumpSetAttributeGlobal` this slice.
+    pub fn coredump_get_attribute_global(&self, device: DeviceId) -> Result<(), SimError> {
+        let _gpu = self.profile.gpu(device)?;
+        Err(SimError::Invalid { why: "dump global" })
+    }
+
     /// `cuCheckpointProcessLock`. CUDA process checkpoint is not modeled.
     ///
     /// Always Invalid `"checkpoint"`. Distinct from
-    /// [`Self::coredump_get_attribute`] and from
-    /// [`Self::coredump_set_attribute`]. Unknown devices are Invalid
-    /// `"device not in profile"`. Query; legal during capture. This VM does
-    /// not invent `cuCheckpointProcessCheckpoint` this slice.
+    /// [`Self::coredump_get_attribute`], [`Self::coredump_set_attribute`],
+    /// and [`Self::coredump_get_attribute_global`]. Unknown devices are
+    /// Invalid `"device not in profile"`. Query; legal during capture. This
+    /// VM does not invent `cuCheckpointProcessCheckpoint` this slice.
     pub fn checkpoint_process_lock(&self, device: DeviceId) -> Result<(), SimError> {
         let _gpu = self.profile.gpu(device)?;
         Err(SimError::Invalid { why: "checkpoint" })

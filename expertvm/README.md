@@ -584,6 +584,8 @@ driver tables; no Engine flag).
 GPU coredumps are not modeled; no Engine flag).
 `gpu-sim` `coredump_set_attribute` is `cuCoredumpSetAttribute` (Invalid;
 GPU coredumps are not modeled; no Engine flag).
+`gpu-sim` `coredump_get_attribute_global` is `cuCoredumpGetAttributeGlobal`
+(Invalid; GPU coredumps are not modeled; no Engine flag).
 `gpu-sim` `checkpoint_process_lock` is `cuCheckpointProcessLock` (Invalid;
 CUDA process checkpoint is not modeled; no Engine flag).
 `gpu-sim` `ctx_get_device` is `cuCtxGetDevice` (explicit device of the
