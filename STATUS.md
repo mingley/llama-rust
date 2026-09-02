@@ -5,6 +5,13 @@ Visible five-turn extract: [docs/chatgpt-share-6a920fe1.md](docs/chatgpt-share-6
 Complete share-API extract: [docs/chatgpt-share-6a920fe1/](docs/chatgpt-share-6a920fe1/).
 Work lands on `main`. No PRs.
 
+## Shipped 2026-09-02 — CUDA `cuStreamBatchMemOp`
+
+`gpu-sim` `Sim::stream_batch_mem_op` is `cuStreamBatchMemOp`.
+Identity with `batch_mem_op`. Capture legal. Distinct from `stream_wait_value32_with_flags`.
+This VM does not invent occupancy SM counts or Engine `--stream-batch-mem-op`.
+`gpu-profile capture` is still refused. Dual score still has no `$/M tokens`.
+
 ## Shipped 2026-09-02 — CUDA `cuStreamWaitValue32` flags
 
 `gpu-sim` `Sim::stream_wait_value32_with_flags` is `cuStreamWaitValue32` flags.

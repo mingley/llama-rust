@@ -865,6 +865,9 @@
 //! [`stream_wait_value32_with_flags`](Sim::stream_wait_value32_with_flags) is `cuStreamWaitValue32` flags (identity with
 //! [`wait_value32_with_flags`](Sim::wait_value32_with_flags)). Capture legal. Distinct from
 //! [`stream_wait_value64_with_flags`](Sim::stream_wait_value64_with_flags). No Engine `--stream-wait-value32-with-flags`.
+//! [`stream_batch_mem_op`](Sim::stream_batch_mem_op) is `cuStreamBatchMemOp` (identity with
+//! [`batch_mem_op`](Sim::batch_mem_op)). Capture legal. Distinct from
+//! [`stream_wait_value32_with_flags`](Sim::stream_wait_value32_with_flags). No Engine `--stream-batch-mem-op`.
 //! [`Sim::ipc_get_event`] / [`ipc_open_event`](Sim::ipc_open_event) are
 //! `cudaIpcGetEventHandle` / `cudaIpcOpenEventHandle` (interprocess events).
 //! [`Sim::create_shareable_pool`] is `cudaMemPoolCreate` with a POSIX-FD handle
@@ -1754,6 +1757,9 @@
 //! [`stream_wait_value32_with_flags`](Sim::stream_wait_value32_with_flags) is `cuStreamWaitValue32` flags (identity with
 //! [`wait_value32_with_flags`](Sim::wait_value32_with_flags)). Capture legal. Distinct from
 //! [`stream_wait_value64_with_flags`](Sim::stream_wait_value64_with_flags). No Engine `--stream-wait-value32-with-flags`.
+//! [`stream_batch_mem_op`](Sim::stream_batch_mem_op) is `cuStreamBatchMemOp` (identity with
+//! [`batch_mem_op`](Sim::batch_mem_op)). Capture legal. Distinct from
+//! [`stream_wait_value32_with_flags`](Sim::stream_wait_value32_with_flags). No Engine `--stream-batch-mem-op`.
 //! [`HardwareProfile::host_pin_bytes`] caps `cudaMallocHost` / `cudaHostRegister`.
 //! [`Sim::idle_until`] drains, then jumps the virtual clock (open-loop arrivals).
 //! [`Sim::event_elapsed_ns`] is `cudaEventElapsedTime` in nanoseconds.
@@ -2511,6 +2517,9 @@
 //! [`stream_wait_value32_with_flags`](Sim::stream_wait_value32_with_flags) is `cuStreamWaitValue32` flags (identity with
 //! [`wait_value32_with_flags`](Sim::wait_value32_with_flags)). Capture legal. Distinct from
 //! [`stream_wait_value64_with_flags`](Sim::stream_wait_value64_with_flags). No Engine `--stream-wait-value32-with-flags`.
+//! [`stream_batch_mem_op`](Sim::stream_batch_mem_op) is `cuStreamBatchMemOp` (identity with
+//! [`batch_mem_op`](Sim::batch_mem_op)). Capture legal. Distinct from
+//! [`stream_wait_value32_with_flags`](Sim::stream_wait_value32_with_flags). No Engine `--stream-batch-mem-op`.
 //! [`mem_host_get_flags`](Sim::mem_host_get_flags) is `cuMemHostGetFlags` (identity with
 //! [`host_get_flags`](Sim::host_get_flags)). Query; legal during capture. No Engine `--mem-host-get-flags`.
 //! [`mem_host_get_device_pointer`](Sim::mem_host_get_device_pointer) is `cuMemHostGetDevicePointer` (identity with
@@ -3234,6 +3243,9 @@
 //! [`stream_wait_value32_with_flags`](Sim::stream_wait_value32_with_flags) is `cuStreamWaitValue32` flags (identity with
 //! [`wait_value32_with_flags`](Sim::wait_value32_with_flags)). Capture legal. Distinct from
 //! [`stream_wait_value64_with_flags`](Sim::stream_wait_value64_with_flags). No Engine `--stream-wait-value32-with-flags`.
+//! [`stream_batch_mem_op`](Sim::stream_batch_mem_op) is `cuStreamBatchMemOp` (identity with
+//! [`batch_mem_op`](Sim::batch_mem_op)). Capture legal. Distinct from
+//! [`stream_wait_value32_with_flags`](Sim::stream_wait_value32_with_flags). No Engine `--stream-batch-mem-op`.
 //! [`Sim::pointer_get_attributes`] is `cudaPointerGetAttributes`.
 //! [`pointer_set_attribute`](Sim::pointer_set_attribute) /
 //! [`pointer_get_attribute`](Sim::pointer_get_attribute) are
@@ -4364,6 +4376,9 @@
 //! [`stream_wait_value32_with_flags`](Sim::stream_wait_value32_with_flags) is `cuStreamWaitValue32` flags (identity with
 //! [`wait_value32_with_flags`](Sim::wait_value32_with_flags)). Capture legal. Distinct from
 //! [`stream_wait_value64_with_flags`](Sim::stream_wait_value64_with_flags). No Engine `--stream-wait-value32-with-flags`.
+//! [`stream_batch_mem_op`](Sim::stream_batch_mem_op) is `cuStreamBatchMemOp` (identity with
+//! [`batch_mem_op`](Sim::batch_mem_op)). Capture legal. Distinct from
+//! [`stream_wait_value32_with_flags`](Sim::stream_wait_value32_with_flags). No Engine `--stream-batch-mem-op`.
 //! [`Sim::stream_get_device`] is `cudaStreamGetDevice` / `cuStreamGetDevice`
 //! (the device of the stream; green-ctx streams return the ctx create
 //! device). Query; legal during capture. Distinct from
@@ -4923,6 +4938,9 @@
 //! [`stream_wait_value32_with_flags`](Sim::stream_wait_value32_with_flags) is `cuStreamWaitValue32` flags (identity with
 //! [`wait_value32_with_flags`](Sim::wait_value32_with_flags)). Capture legal. Distinct from
 //! [`stream_wait_value64_with_flags`](Sim::stream_wait_value64_with_flags). No Engine `--stream-wait-value32-with-flags`.
+//! [`stream_batch_mem_op`](Sim::stream_batch_mem_op) is `cuStreamBatchMemOp` (identity with
+//! [`batch_mem_op`](Sim::batch_mem_op)). Capture legal. Distinct from
+//! [`stream_wait_value32_with_flags`](Sim::stream_wait_value32_with_flags). No Engine `--stream-batch-mem-op`.
 //! [`set_stream_access_policy`](Sim::set_stream_access_policy) is
 //! `cudaStreamAttributeAccessPolicyWindow`: [`kernel`](Sim::kernel) /
 //! [`kernel_bufs`](Sim::kernel_bufs) inherit it; [`kernel_with`](Sim::kernel_with)
@@ -5967,6 +5985,9 @@
 //! [`stream_wait_value32_with_flags`](Sim::stream_wait_value32_with_flags) is `cuStreamWaitValue32` flags (identity with
 //! [`wait_value32_with_flags`](Sim::wait_value32_with_flags)). Capture legal. Distinct from
 //! [`stream_wait_value64_with_flags`](Sim::stream_wait_value64_with_flags). No Engine `--stream-wait-value32-with-flags`.
+//! [`stream_batch_mem_op`](Sim::stream_batch_mem_op) is `cuStreamBatchMemOp` (identity with
+//! [`batch_mem_op`](Sim::batch_mem_op)). Capture legal. Distinct from
+//! [`stream_wait_value32_with_flags`](Sim::stream_wait_value32_with_flags). No Engine `--stream-batch-mem-op`.
 //! [`Sim::set_stream_priority`] is the priority-only helper;
 //! [`stream_create_with_priority`](Sim::stream_create_with_priority) is
 //! `cudaStreamCreateWithPriority` (flags plus priority; clamped to
@@ -6544,6 +6565,9 @@
 //! [`stream_wait_value32_with_flags`](Sim::stream_wait_value32_with_flags) is `cuStreamWaitValue32` flags (identity with
 //! [`wait_value32_with_flags`](Sim::wait_value32_with_flags)). Capture legal. Distinct from
 //! [`stream_wait_value64_with_flags`](Sim::stream_wait_value64_with_flags). No Engine `--stream-wait-value32-with-flags`.
+//! [`stream_batch_mem_op`](Sim::stream_batch_mem_op) is `cuStreamBatchMemOp` (identity with
+//! [`batch_mem_op`](Sim::batch_mem_op)). Capture legal. Distinct from
+//! [`stream_wait_value32_with_flags`](Sim::stream_wait_value32_with_flags). No Engine `--stream-batch-mem-op`.
 //! [`destroy_stream`](Sim::destroy_stream) is `cudaStreamDestroy` (returns
 //! immediately; in-flight work still completes; NULL is Invalid; recreate
 //! while unfinished is `"stream in flight"`). Capture cannot include it.
@@ -7101,6 +7125,9 @@
 //! [`stream_wait_value32_with_flags`](Sim::stream_wait_value32_with_flags) is `cuStreamWaitValue32` flags (identity with
 //! [`wait_value32_with_flags`](Sim::wait_value32_with_flags)). Capture legal. Distinct from
 //! [`stream_wait_value64_with_flags`](Sim::stream_wait_value64_with_flags). No Engine `--stream-wait-value32-with-flags`.
+//! [`stream_batch_mem_op`](Sim::stream_batch_mem_op) is `cuStreamBatchMemOp` (identity with
+//! [`batch_mem_op`](Sim::batch_mem_op)). Capture legal. Distinct from
+//! [`stream_wait_value32_with_flags`](Sim::stream_wait_value32_with_flags). No Engine `--stream-batch-mem-op`.
 //! [`Sim::instantiate_graph`] is `cudaGraphInstantiate` (host-sync; returns a
 //! new exec id; first [`launch_graph`](Sim::launch_graph) of a definition
 //! creates a primary exec). Unused conditional handles are
@@ -7687,6 +7714,9 @@
 //! [`stream_wait_value32_with_flags`](Sim::stream_wait_value32_with_flags) is `cuStreamWaitValue32` flags (identity with
 //! [`wait_value32_with_flags`](Sim::wait_value32_with_flags)). Capture legal. Distinct from
 //! [`stream_wait_value64_with_flags`](Sim::stream_wait_value64_with_flags). No Engine `--stream-wait-value32-with-flags`.
+//! [`stream_batch_mem_op`](Sim::stream_batch_mem_op) is `cuStreamBatchMemOp` (identity with
+//! [`batch_mem_op`](Sim::batch_mem_op)). Capture legal. Distinct from
+//! [`stream_wait_value32_with_flags`](Sim::stream_wait_value32_with_flags). No Engine `--stream-batch-mem-op`.
 //! [`graph_kernel_node_get_priority`](Sim::graph_kernel_node_get_priority) /
 //! [`graph_kernel_node_set_priority`](Sim::graph_kernel_node_set_priority) /
 //! [`graph_kernel_node_copy_attributes`](Sim::graph_kernel_node_copy_attributes)
@@ -8232,6 +8262,9 @@
 //! [`stream_wait_value32_with_flags`](Sim::stream_wait_value32_with_flags) is `cuStreamWaitValue32` flags (identity with
 //! [`wait_value32_with_flags`](Sim::wait_value32_with_flags)). Capture legal. Distinct from
 //! [`stream_wait_value64_with_flags`](Sim::stream_wait_value64_with_flags). No Engine `--stream-wait-value32-with-flags`.
+//! [`stream_batch_mem_op`](Sim::stream_batch_mem_op) is `cuStreamBatchMemOp` (identity with
+//! [`batch_mem_op`](Sim::batch_mem_op)). Capture legal. Distinct from
+//! [`stream_wait_value32_with_flags`](Sim::stream_wait_value32_with_flags). No Engine `--stream-batch-mem-op`.
 //! [`graph_kernel_node_get_attribute`](Sim::graph_kernel_node_get_attribute) /
 //! [`graph_exec_kernel_node_get_attribute`](Sim::graph_exec_kernel_node_get_attribute) /
 //! [`graph_kernel_node_set_attribute`](Sim::graph_kernel_node_set_attribute) /
@@ -8783,6 +8816,9 @@
 //! [`stream_wait_value32_with_flags`](Sim::stream_wait_value32_with_flags) is `cuStreamWaitValue32` flags (identity with
 //! [`wait_value32_with_flags`](Sim::wait_value32_with_flags)). Capture legal. Distinct from
 //! [`stream_wait_value64_with_flags`](Sim::stream_wait_value64_with_flags). No Engine `--stream-wait-value32-with-flags`.
+//! [`stream_batch_mem_op`](Sim::stream_batch_mem_op) is `cuStreamBatchMemOp` (identity with
+//! [`batch_mem_op`](Sim::batch_mem_op)). Capture legal. Distinct from
+//! [`stream_wait_value32_with_flags`](Sim::stream_wait_value32_with_flags). No Engine `--stream-batch-mem-op`.
 //! Device-launch
 //! execs cannot attach programmatic or launch-completion events.
 //! [`kernel_pdl`](Sim::kernel_pdl) is `cudaLaunchKernelEx` PDL: a wait kernel
@@ -9462,6 +9498,9 @@
 //! [`stream_wait_value32_with_flags`](Sim::stream_wait_value32_with_flags) is `cuStreamWaitValue32` flags (identity with
 //! [`wait_value32_with_flags`](Sim::wait_value32_with_flags)). Capture legal. Distinct from
 //! [`stream_wait_value64_with_flags`](Sim::stream_wait_value64_with_flags). No Engine `--stream-wait-value32-with-flags`.
+//! [`stream_batch_mem_op`](Sim::stream_batch_mem_op) is `cuStreamBatchMemOp` (identity with
+//! [`batch_mem_op`](Sim::batch_mem_op)). Capture legal. Distinct from
+//! [`stream_wait_value32_with_flags`](Sim::stream_wait_value32_with_flags). No Engine `--stream-batch-mem-op`.
 //! [`graph_exec_memcpy_set_params`](Sim::graph_exec_memcpy_set_params) /
 //! [`graph_exec_memcpy_set_params_1d`](Sim::graph_exec_memcpy_set_params_1d) /
 //! [`graph_exec_memcpy_set_params_2d`](Sim::graph_exec_memcpy_set_params_2d) /
@@ -10005,6 +10044,9 @@
 //! [`stream_wait_value32_with_flags`](Sim::stream_wait_value32_with_flags) is `cuStreamWaitValue32` flags (identity with
 //! [`wait_value32_with_flags`](Sim::wait_value32_with_flags)). Capture legal. Distinct from
 //! [`stream_wait_value64_with_flags`](Sim::stream_wait_value64_with_flags). No Engine `--stream-wait-value32-with-flags`.
+//! [`stream_batch_mem_op`](Sim::stream_batch_mem_op) is `cuStreamBatchMemOp` (identity with
+//! [`batch_mem_op`](Sim::batch_mem_op)). Capture legal. Distinct from
+//! [`stream_wait_value32_with_flags`](Sim::stream_wait_value32_with_flags). No Engine `--stream-batch-mem-op`.
 //! [`get_graph_kernel_node_params`](Sim::get_graph_kernel_node_params) is `cuGraphKernelNodeGetParams` (identity with
 //! [`graph_kernel_get_params`](Sim::graph_kernel_get_params)). Query; legal during capture. Distinct from
 //! [`graph_exec_kernel_get_params`](Sim::graph_exec_kernel_get_params). No Engine `--graph-kernel-get-params`.
@@ -10527,6 +10569,9 @@
 //! [`stream_wait_value32_with_flags`](Sim::stream_wait_value32_with_flags) is `cuStreamWaitValue32` flags (identity with
 //! [`wait_value32_with_flags`](Sim::wait_value32_with_flags)). Capture legal. Distinct from
 //! [`stream_wait_value64_with_flags`](Sim::stream_wait_value64_with_flags). No Engine `--stream-wait-value32-with-flags`.
+//! [`stream_batch_mem_op`](Sim::stream_batch_mem_op) is `cuStreamBatchMemOp` (identity with
+//! [`batch_mem_op`](Sim::batch_mem_op)). Capture legal. Distinct from
+//! [`stream_wait_value32_with_flags`](Sim::stream_wait_value32_with_flags). No Engine `--stream-batch-mem-op`.
 //! [`graph_exec_kernel_get_params`](Sim::graph_exec_kernel_get_params) /
 //! [`graph_exec_memcpy_get_params`](Sim::graph_exec_memcpy_get_params) /
 //! [`graph_exec_memset_get_params`](Sim::graph_exec_memset_get_params) /
@@ -11040,6 +11085,9 @@
 //! [`stream_wait_value32_with_flags`](Sim::stream_wait_value32_with_flags) is `cuStreamWaitValue32` flags (identity with
 //! [`wait_value32_with_flags`](Sim::wait_value32_with_flags)). Capture legal. Distinct from
 //! [`stream_wait_value64_with_flags`](Sim::stream_wait_value64_with_flags). No Engine `--stream-wait-value32-with-flags`.
+//! [`stream_batch_mem_op`](Sim::stream_batch_mem_op) is `cuStreamBatchMemOp` (identity with
+//! [`batch_mem_op`](Sim::batch_mem_op)). Capture legal. Distinct from
+//! [`stream_wait_value32_with_flags`](Sim::stream_wait_value32_with_flags). No Engine `--stream-batch-mem-op`.
 //! [`get_graph_exec_kernel_node_params`](Sim::get_graph_exec_kernel_node_params) is `cuGraphExecKernelNodeGetParams` (identity with
 //! [`graph_exec_kernel_get_params`](Sim::graph_exec_kernel_get_params)). Query; legal during capture. Distinct from
 //! [`get_graph_kernel_node_params`](Sim::get_graph_kernel_node_params). No Engine `--graph-exec-kernel-get-params`.
@@ -11559,6 +11607,9 @@
 //! [`stream_wait_value32_with_flags`](Sim::stream_wait_value32_with_flags) is `cuStreamWaitValue32` flags (identity with
 //! [`wait_value32_with_flags`](Sim::wait_value32_with_flags)). Capture legal. Distinct from
 //! [`stream_wait_value64_with_flags`](Sim::stream_wait_value64_with_flags). No Engine `--stream-wait-value32-with-flags`.
+//! [`stream_batch_mem_op`](Sim::stream_batch_mem_op) is `cuStreamBatchMemOp` (identity with
+//! [`batch_mem_op`](Sim::batch_mem_op)). Capture legal. Distinct from
+//! [`stream_wait_value32_with_flags`](Sim::stream_wait_value32_with_flags). No Engine `--stream-batch-mem-op`.
 //! [`graph_exec_batch_mem_op_set_params`](Sim::graph_exec_batch_mem_op_set_params)
 //! is `cudaGraphExecBatchMemOpNodeSetParams` (id/offset/value; wait vs write,
 //! `bits32`, and compare stay on wait/write nodes;
@@ -39059,6 +39110,69 @@ mod tests {
         eight.begin_capture(d1, s).unwrap();
         enq(eight.stream_wait_value32_with_flags(d1, a1, 0, 0, flags, s));
         enq(eight.wait_value32_with_flags(d1, a1, 0, 0, flags, s));
+        let g3 = eight.end_capture().unwrap();
+        assert_eq!(eight.graph_len(g3).unwrap(), 2);
+        eight.free_sync(a1).unwrap();
+    }
+
+    #[test]
+    fn stream_batch_mem_op_is_cu_stream_batch_mem_op() {
+        let mut sim = Sim::new(h100());
+        let d = DeviceId(0);
+        let s = StreamId(0);
+        let bad = [BatchMemOp::Write {
+            id: AllocId(99),
+            offset: 0,
+            value: 1,
+            bits32: false,
+        }];
+        match sim.stream_batch_mem_op(d, s, &bad) {
+            Err(SimError::UnknownAlloc { alloc }) => assert_eq!(alloc, AllocId(99)),
+            other => panic!("{other:?}"),
+        }
+        match sim.batch_mem_op(d, s, &bad) {
+            Err(SimError::UnknownAlloc { alloc }) => assert_eq!(alloc, AllocId(99)),
+            other => panic!("{other:?}"),
+        }
+        let a = sim.malloc(d, 64).unwrap();
+        let ops = [BatchMemOp::Write {
+            id: a,
+            offset: 0,
+            value: 1,
+            bits32: false,
+        }];
+        match sim.stream_batch_mem_op(DeviceId(1), s, &ops) {
+            Err(SimError::Invalid { why }) => assert!(why.contains("device"), "{why}"),
+            other => panic!("{other:?}"),
+        }
+        match sim.batch_mem_op(DeviceId(1), s, &ops) {
+            Err(SimError::Invalid { why }) => assert!(why.contains("device"), "{why}"),
+            other => panic!("{other:?}"),
+        }
+        enq(sim.stream_batch_mem_op(d, s, &ops));
+        enq(sim.batch_mem_op(d, s, &ops));
+        sim.synchronize().unwrap();
+        sim.begin_capture(d, s).unwrap();
+        enq(sim.stream_batch_mem_op(d, s, &ops));
+        enq(sim.batch_mem_op(d, s, &ops));
+        let g = sim.end_capture().unwrap();
+        assert_eq!(sim.graph_len(g).unwrap(), 2);
+        sim.free_sync(a).unwrap();
+        let mut eight = Sim::new(HardwareProfile::example_8xh100_nvlink());
+        let d1 = DeviceId(1);
+        let a1 = eight.malloc(d1, 64).unwrap();
+        let ops1 = [BatchMemOp::Write {
+            id: a1,
+            offset: 0,
+            value: 1,
+            bits32: false,
+        }];
+        enq(eight.stream_batch_mem_op(d1, s, &ops1));
+        enq(eight.batch_mem_op(d1, s, &ops1));
+        eight.synchronize().unwrap();
+        eight.begin_capture(d1, s).unwrap();
+        enq(eight.stream_batch_mem_op(d1, s, &ops1));
+        enq(eight.batch_mem_op(d1, s, &ops1));
         let g3 = eight.end_capture().unwrap();
         assert_eq!(eight.graph_len(g3).unwrap(), 2);
         eight.free_sync(a1).unwrap();

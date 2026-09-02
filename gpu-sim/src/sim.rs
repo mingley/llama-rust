@@ -26699,7 +26699,6 @@ impl Sim {
     /// [`Self::wait_value32_with_flags`].
     ///
     /// Capture legal. Distinct from [`Self::stream_wait_value64_with_flags`].
-    /// This VM does not invent occupancy SM counts this slice.
     pub fn stream_wait_value32_with_flags(
         &mut self,
         device: DeviceId,
@@ -26710,6 +26709,19 @@ impl Sim {
         stream: StreamId,
     ) -> Result<OpId, SimError> {
         self.wait_value32_with_flags(device, id, offset, value, flags, stream)
+    }
+
+    /// `cuStreamBatchMemOp`. Identity with [`Self::batch_mem_op`].
+    ///
+    /// Capture legal. Distinct from [`Self::stream_wait_value32_with_flags`].
+    /// This VM does not invent occupancy SM counts this slice.
+    pub fn stream_batch_mem_op(
+        &mut self,
+        device: DeviceId,
+        stream: StreamId,
+        ops: &[BatchMemOp],
+    ) -> Result<OpId, SimError> {
+        self.batch_mem_op(device, stream, ops)
     }
 
     /// `cudaLaunchHostFunc`. Stream-ordered host work; does not occupy compute
@@ -27022,6 +27034,8 @@ impl Sim {
     /// more items are [`crate::GpuOp::BatchMem`]. Capture records one graph
     /// node. Writes commit on complete. A wait sees earlier writes in this
     /// vector. Flush is 1 ns Solo on an RDMA GPU (not host-sync).
+    ///
+    /// Identity wrap [`Self::stream_batch_mem_op`].
     pub fn batch_mem_op(
         &mut self,
         device: DeviceId,
