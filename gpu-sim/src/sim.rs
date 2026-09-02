@@ -18313,7 +18313,6 @@ impl Sim {
     /// [`Self::va_map_handle_with_size`] (`cuMemMap` size).
     ///
     /// Capture refused. Distinct from [`Self::mem_map_handle_with_flags`].
-    /// This VM does not invent occupancy SM counts this slice.
     pub fn mem_map_handle_with_size(
         &mut self,
         id: AllocId,
@@ -18331,6 +18330,8 @@ impl Sim {
     /// Drops one handle ref. HBM refunds when refs and maps are both 0.
     /// Capture cannot include it. A released handle cannot be mapped again;
     /// [`Self::va_retain_handle`] on a still-mapped VA restores a ref.
+    /// Driver `cuMemRelease` is [`Self::mem_release_handle`].
+    /// Identity wrap [`Self::mem_release_handle`].
     pub fn va_release_handle(&mut self, handle: MemHandleId) -> Result<(), SimError> {
         self.fail_if_capturing("cannot capture alloc/free")?;
         let refs = self.handle_ref(handle)?.refs;
@@ -18342,6 +18343,15 @@ impl Sim {
         self.handle_mut(handle)?.refs = refs.saturating_sub(1);
         self.clock = self.clock.saturating_add(1);
         self.maybe_refund_handle(handle)
+    }
+
+    /// `cuMemRelease`. Identity with
+    /// [`Self::va_release_handle`] (`cuMemRelease`).
+    ///
+    /// Capture refused. Distinct from [`Self::mem_map_handle_with_size`].
+    /// This VM does not invent occupancy SM counts this slice.
+    pub fn mem_release_handle(&mut self, handle: MemHandleId) -> Result<(), SimError> {
+        self.va_release_handle(handle)
     }
 
     /// `cuMemRetainAllocationHandle` at a mapped `(device, offset)` span.
