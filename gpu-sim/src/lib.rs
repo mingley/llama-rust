@@ -1077,6 +1077,8 @@
 //! Query; legal during capture. No Engine `--profiler-init`.
 //! [`Sim::module_get_loading_mode`] is `cuModuleGetLoadingMode` (always
 //! [`ModuleLoadingMode::Eager`]). Query; legal during capture. No Engine `--module-loading`.
+//! [`module_load`](Sim::module_load) is `cuModuleLoad` (always Invalid
+//! `"module load"`). Query; legal during capture. No Engine `--module-load`.
 //! [`library_load_data`](Sim::library_load_data) is `cuLibraryLoadData`
 //! (always Invalid `"cuda library"`). Query; legal during capture. No Engine `--library-load`.
 //! [`library_load_from_file`](Sim::library_load_from_file) is
@@ -18864,6 +18866,58 @@ mod tests {
         let eight = Sim::new(HardwareProfile::example_8xh100_nvlink());
         assert_eq!(eight.module_get_loading_mode(), ModuleLoadingMode::Eager);
         sim.driver_init(0).unwrap();
+        assert_eq!(sim.module_get_loading_mode(), ModuleLoadingMode::Eager);
+    }
+
+    #[test]
+    fn module_load_is_unsupported() {
+        let mut sim = Sim::new(h100());
+        let d = DeviceId(0);
+        match sim.module_load(d) {
+            Err(SimError::Invalid { why }) => {
+                assert!(why.contains("module load"), "{why}");
+                assert!(!why.contains("cuda library"), "{why}");
+                assert!(!why.contains("func load"), "{why}");
+                assert!(!why.contains("library module"), "{why}");
+            }
+            other => panic!("{other:?}"),
+        }
+        assert_eq!(sim.module_get_loading_mode(), ModuleLoadingMode::Eager);
+        sim.begin_capture(d, StreamId(0)).unwrap();
+        match sim.module_load(d) {
+            Err(SimError::Invalid { why }) => {
+                assert!(why.contains("module load"), "{why}");
+            }
+            other => panic!("{other:?}"),
+        }
+        let _g = sim.end_capture().unwrap();
+        match sim.module_load(DeviceId(99)) {
+            Err(SimError::Invalid { why }) => {
+                assert!(why.contains("device not in profile"), "{why}");
+            }
+            other => panic!("{other:?}"),
+        }
+        match sim.library_load_data(d) {
+            Err(SimError::Invalid { why }) => {
+                assert!(why.contains("cuda library"), "{why}");
+                assert!(!why.contains("module load"), "{why}");
+            }
+            other => panic!("{other:?}"),
+        }
+        match sim.func_load(d) {
+            Err(SimError::Invalid { why }) => {
+                assert!(why.contains("func load"), "{why}");
+                assert!(!why.contains("module load"), "{why}");
+            }
+            other => panic!("{other:?}"),
+        }
+        match sim.library_get_module(d) {
+            Err(SimError::Invalid { why }) => {
+                assert!(why.contains("library module"), "{why}");
+                assert!(!why.contains("module load"), "{why}");
+            }
+            other => panic!("{other:?}"),
+        }
         assert_eq!(sim.module_get_loading_mode(), ModuleLoadingMode::Eager);
     }
 

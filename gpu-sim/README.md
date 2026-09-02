@@ -256,6 +256,7 @@ warp scheduler, L1, …   ← do not model
 | `profiler_stop` is a 1 ns no-op; capture refused | `cuProfilerStop` / `cudaProfilerStop` |
 | `profiler_initialize` is Invalid (CUPTI config files are not modeled) | `cudaProfilerInitialize` |
 | `module_get_loading_mode` is always Eager (CUDA 1) | `cuModuleGetLoadingMode` |
+| `module_load` is Invalid (no cubin path / `CUmodule`) | `cuModuleLoad` |
 | `library_load_data` is Invalid (no cubin / `CUlibrary`) | `cuLibraryLoadData` |
 | `library_load_from_file` is Invalid (no cubin path / `CUlibrary`) | `cuLibraryLoadFromFile` |
 | `library_unload` is Invalid (no `CUlibrary` handle) | `cuLibraryUnload` |
@@ -1484,6 +1485,8 @@ CUPTI is not modeled; capture cannot include it). Distinct from
 `module_get_loading_mode` is `cuModuleGetLoadingMode` (always Eager;
 CUDA 1; query; legal during capture; no modules; distinct from
 `driver_init` and `init_device`).
+`module_load` is `cuModuleLoad` (always Invalid `"module load"`; no cubin).
+Distinct from `module_get_loading_mode` and `library_load_data`. Query; legal during capture. No Engine `--module-load`.
 `library_load_data` is `cuLibraryLoadData` (always Invalid `"cuda library"`;
 no cubin / `CUlibrary`). Distinct from `module_get_loading_mode` and
 `func_get_module`. Query; legal during capture. No Engine `--library-load`.
