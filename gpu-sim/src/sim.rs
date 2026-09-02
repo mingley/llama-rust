@@ -19170,7 +19170,6 @@ impl Sim {
     /// [`Self::multicast_destroy`] (`cuMemRelease` of a multicast handle).
     ///
     /// Capture refused. Distinct from [`Self::mem_multicast_unbind_with_size`].
-    /// This VM does not invent occupancy SM counts this slice.
     pub fn mem_multicast_destroy(&mut self, mc: MulticastId) -> Result<(), SimError> {
         self.multicast_destroy(mc)
     }
@@ -19365,6 +19364,7 @@ impl Sim {
     /// one NVLink hop of `id`'s bytes, not `dests.len()` sequential D2Ds.
     /// Capture cannot include the create/bind/map; the kernel may be captured
     /// later. `dests` must be nonempty and not include `src`.
+    /// Identity wrap [`Self::mem_multicast_store`].
     pub fn multicast_store(
         &mut self,
         src: DeviceId,
@@ -19388,6 +19388,21 @@ impl Sim {
         let va = self.va_reserve(bytes)?;
         self.va_map_multicast(va, src, 0, mc)?;
         self.kernel(src, KernelKind::other(0, bytes), &[id], &[va], stream)
+    }
+
+    /// NVLS kernel store. Identity with
+    /// [`Self::multicast_store`].
+    ///
+    /// Capture refused. Distinct from [`Self::mem_multicast_destroy`].
+    /// This VM does not invent occupancy SM counts this slice.
+    pub fn mem_multicast_store(
+        &mut self,
+        src: DeviceId,
+        id: AllocId,
+        dests: &[DeviceId],
+        stream: StreamId,
+    ) -> Result<OpId, SimError> {
+        self.multicast_store(src, id, dests, stream)
     }
 
     fn require_whole_maps(&self, id: AllocId, team: &[DeviceId]) -> Result<(), SimError> {
