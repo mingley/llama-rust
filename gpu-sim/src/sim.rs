@@ -10718,8 +10718,7 @@ impl Sim {
     /// [`Self::graph_add_event_record`] (`cudaGraphAddEventRecordNode`).
     ///
     /// Capture refused. Distinct from
-    /// [`Self::add_graph_host`]. This VM does not invent
-    /// occupancy SM counts this slice.
+    /// [`Self::add_graph_host`].
     pub fn add_graph_event_record(
         &mut self,
         graph: GraphId,
@@ -10729,7 +10728,9 @@ impl Sim {
         self.graph_add_event_record(graph, event, external)
     }
 
-    /// `cudaGraphAddEventWaitNode`. `external` is `cudaEventWaitExternal`.
+    /// `cudaGraphAddEventWaitNode`. `external` is `cudaEventWaitExternal`. Driver
+    /// `cuGraphAddEventWaitNode` is
+    /// [`Self::add_graph_event_wait`].
     pub fn graph_add_event_wait(
         &mut self,
         graph: GraphId,
@@ -10741,6 +10742,21 @@ impl Sim {
             return Err(SimError::UnknownEvent { event: event.0 });
         }
         self.graph_push(graph, device, stream, Kind::EventWait { event, external })
+    }
+
+    /// `cuGraphAddEventWaitNode`. Identity with
+    /// [`Self::graph_add_event_wait`] (`cudaGraphAddEventWaitNode`).
+    ///
+    /// Capture refused. Distinct from
+    /// [`Self::add_graph_event_record`]. This VM does not invent
+    /// occupancy SM counts this slice.
+    pub fn add_graph_event_wait(
+        &mut self,
+        graph: GraphId,
+        event: EventId,
+        external: bool,
+    ) -> Result<(), SimError> {
+        self.graph_add_event_wait(graph, event, external)
     }
 
     /// `cuStreamWriteValue64` as a `cudaGraphAddBatchMemOpNode`.
