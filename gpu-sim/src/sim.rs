@@ -11430,8 +11430,7 @@ impl Sim {
     /// [`Self::graph_remove_dependencies`] (`cudaGraphRemoveDependencies`).
     ///
     /// Capture refused. Distinct from
-    /// [`Self::graph_remove_dependencies_n`]. This VM does not invent
-    /// occupancy SM counts this slice.
+    /// [`Self::graph_remove_dependencies_n`].
     pub fn remove_graph_dependencies(
         &mut self,
         graph: GraphId,
@@ -11445,7 +11444,9 @@ impl Sim {
     ///
     /// All-or-nothing on out-of-range indices (nothing is removed). Missing
     /// edges are a no-op. Empty `edges` is success. Capture cannot include it.
-    /// Illegal on an instantiated exec.
+    /// Illegal on an instantiated exec. Driver
+    /// `cuGraphRemoveDependencies` of pairs is
+    /// [`Self::remove_graph_dependencies_n`].
     pub fn graph_remove_dependencies_n(
         &mut self,
         graph: GraphId,
@@ -11482,6 +11483,21 @@ impl Sim {
             let _gone = step.edge_data.remove(&from);
         }
         Ok(())
+    }
+
+    /// `cuGraphRemoveDependencies` of pairs. Identity with
+    /// [`Self::graph_remove_dependencies_n`] (`cudaGraphRemoveDependencies` of
+    /// `numDependencies` from/to pairs).
+    ///
+    /// Capture refused. Distinct from
+    /// [`Self::remove_graph_dependencies`]. This VM does not invent
+    /// occupancy SM counts this slice.
+    pub fn remove_graph_dependencies_n(
+        &mut self,
+        graph: GraphId,
+        edges: &[(usize, usize)],
+    ) -> Result<(), SimError> {
+        self.graph_remove_dependencies_n(graph, edges)
     }
 
     /// `cudaGraphRemoveDependencies` v2 with [`GraphEdgeData`].
