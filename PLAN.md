@@ -7381,7 +7381,14 @@ model, do not celebrate the sim.
     or `cudaChooseDevice`. `gpu-profile capture` is still refused. Dual
     score still has no `$/M tokens`.
 
-747. [ ] Next numbered PLAN item after 746 is the next `gpu-sim` / Engine /
+747. [x] `gpu-sim` `Sim::mem_map_array_async` is
+    `cuMemMapArrayAsync`. Always Invalid `"sparse map"`
+    because sparse CUDA array mapping is not modeled. Query; legal during capture.
+    Distinct from `array_get_sparse_properties`. This VM does not invent `cuMipmappedArrayGetSparseProperties`, Engine `--sparse-map`,
+    or `cudaChooseDevice`. `gpu-profile capture` is still refused. Dual
+    score still has no `$/M tokens`.
+
+748. [ ] Next numbered PLAN item after 747 is the next `gpu-sim` / Engine /
     serve / expertvm mechanical API that is still missing, or the next official
     decode family. Prefer remaining CUDA-shaped twins over more
     OpenAI HTTP veneer. Do not invent F32 `output.scale`. Do not invent a
@@ -8113,6 +8120,9 @@ model, do not celebrate the sim.
     Do not invent a second `cuDeviceUnregisterAsyncNotification` / `device_unregister_async_notification`.
     Do not invent Engine `--async-unreg`. Do not invent
     `cuMemMapArrayAsync` this slice. Do not reverse `"async unreg"`.
+    Do not invent a second `cuMemMapArrayAsync` / `mem_map_array_async`.
+    Do not invent Engine `--sparse-map`. Do not invent
+    `cuMipmappedArrayGetSparseProperties` this slice. Do not reverse `"sparse map"`.
     Do not invent a second `cudaStreamAddCallback`.
     Do not invent Engine `--stream-callback` (same wall as second live
     `cudaLaunchHostFunc` after miss DMA).
@@ -8924,6 +8934,9 @@ model, do not celebrate the sim.
     Do not invent a second `device_unregister_async_notification` API. Do not invent
     Engine `--unregister-async-notify`. Do not invent a CUarrayMapInfo list
     this slice. Do not reverse Device UnregisterAsyncNotification remaining unsupported.
+    Do not invent a second `mem_map_array_async` API. Do not invent
+    Engine `--map-array-async`. Do not invent a sparse CUDA array tile
+    this slice. Do not reverse Mem MapArrayAsync remaining unsupported.
     Do not invent a second DeviceLaunch in-flight destroy-complete check or Engine
     `--device-launch-destroy`. Do not abort an in-flight DeviceLaunch when
     `destroy_graph` succeeds. Do not delay destroy of an idle exec. Do not invent
@@ -9918,6 +9931,9 @@ model, do not celebrate the sim.
     Do not invent a second `device_unregister_async_notification` method. Do not
     invent Engine `--cu-async-unreg`. Do not reverse wrapping
     cuDeviceUnregisterAsyncNotification Invalid.
+    Do not invent a second `mem_map_array_async` method. Do not
+    invent Engine `--cu-mem-map-array`. Do not reverse wrapping
+    cuMemMapArrayAsync Invalid.
     Do not
     spend the next item on an OpenAI-compatible HTTP veneer.
 

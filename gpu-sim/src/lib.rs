@@ -590,6 +590,9 @@
 //! [`array_get_sparse_properties`](Sim::array_get_sparse_properties) is
 //! `cuArrayGetSparseProperties` (always Invalid `"array sparse"`). Query;
 //! legal during capture. No Engine `--array-sparse`.
+//! [`mem_map_array_async`](Sim::mem_map_array_async) is
+//! `cuMemMapArrayAsync` (always Invalid `"sparse map"`). Query; legal
+//! during capture. No Engine `--sparse-map`.
 //! [`array_get_plane`](Sim::array_get_plane) is `cuArrayGetPlane` (always
 //! Invalid `"array plane"`). Query; legal during capture. No Engine `--array-plane`.
 //! [`array_get_memory_requirements`](Sim::array_get_memory_requirements) is
@@ -19593,6 +19596,57 @@ mod tests {
             Err(SimError::Invalid { why }) => {
                 assert!(why.contains("unmap async"), "{why}");
                 assert!(!why.contains("async unreg"), "{why}");
+            }
+            other => panic!("{other:?}"),
+        }
+        match sim.mem_map_array_async(d) {
+            Err(SimError::Invalid { why }) => {
+                assert!(why.contains("sparse map"), "{why}");
+                assert!(!why.contains("async unreg"), "{why}");
+                assert!(!why.contains("array sparse"), "{why}");
+            }
+            other => panic!("{other:?}"),
+        }
+    }
+
+    #[test]
+    fn mem_map_array_async_is_unsupported() {
+        let mut sim = Sim::new(h100());
+        let d = DeviceId(0);
+        match sim.mem_map_array_async(d) {
+            Err(SimError::Invalid { why }) => {
+                assert!(why.contains("sparse map"), "{why}");
+                assert!(!why.contains("array sparse"), "{why}");
+                assert!(!why.contains("tensor map"), "{why}");
+                assert!(!why.contains("async map"), "{why}");
+            }
+            other => panic!("{other:?}"),
+        }
+        sim.begin_capture(d, StreamId(0)).unwrap();
+        match sim.mem_map_array_async(d) {
+            Err(SimError::Invalid { why }) => {
+                assert!(why.contains("sparse map"), "{why}");
+            }
+            other => panic!("{other:?}"),
+        }
+        let _g = sim.end_capture().unwrap();
+        match sim.mem_map_array_async(DeviceId(99)) {
+            Err(SimError::Invalid { why }) => {
+                assert!(why.contains("device not in profile"), "{why}");
+            }
+            other => panic!("{other:?}"),
+        }
+        match sim.array_get_sparse_properties(d) {
+            Err(SimError::Invalid { why }) => {
+                assert!(why.contains("array sparse"), "{why}");
+                assert!(!why.contains("sparse map"), "{why}");
+            }
+            other => panic!("{other:?}"),
+        }
+        match sim.device_unregister_async_notification(d) {
+            Err(SimError::Invalid { why }) => {
+                assert!(why.contains("async unreg"), "{why}");
+                assert!(!why.contains("sparse map"), "{why}");
             }
             other => panic!("{other:?}"),
         }

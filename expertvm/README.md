@@ -645,6 +645,8 @@ array handles; no Engine flag).
 no array handles; no Engine flag).
 `gpu-sim` `array_get_sparse_properties` is `cuArrayGetSparseProperties`
 (Invalid; sparse CUDA arrays are not modeled; no Engine flag).
+`gpu-sim` `mem_map_array_async` is `cuMemMapArrayAsync` (Invalid; sparse
+CUDA array mapping is not modeled; no Engine flag).
 `gpu-sim` `array_get_plane` is `cuArrayGetPlane` (Invalid; no array
 handles; no Engine flag).
 `gpu-sim` `array_get_memory_requirements` is

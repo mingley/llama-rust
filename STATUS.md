@@ -5,6 +5,15 @@ Visible five-turn extract: [docs/chatgpt-share-6a920fe1.md](docs/chatgpt-share-6
 Complete share-API extract: [docs/chatgpt-share-6a920fe1/](docs/chatgpt-share-6a920fe1/).
 Work lands on `main`. No PRs.
 
+## Shipped 2026-09-02 — CUDA `cuMemMapArrayAsync`
+
+`gpu-sim` `Sim::mem_map_array_async` is `cuMemMapArrayAsync`.
+Always Invalid `"sparse map"` because sparse CUDA array mapping is not
+modeled. Query; legal during capture. Distinct from
+`array_get_sparse_properties` (why is not `"array sparse"`).
+This VM does not invent `cuMipmappedArrayGetSparseProperties` or Engine `--sparse-map`.
+`gpu-profile capture` is still refused. Dual score still has no `$/M tokens`.
+
 ## Shipped 2026-09-02 — CUDA `cuDeviceUnregisterAsyncNotification`
 
 `gpu-sim` `Sim::device_unregister_async_notification` is `cuDeviceUnregisterAsyncNotification`.

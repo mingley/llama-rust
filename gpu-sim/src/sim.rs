@@ -17711,6 +17711,19 @@ impl Sim {
         })
     }
 
+    /// `cuMemMapArrayAsync`. Sparse CUDA array mapping is not modeled.
+    ///
+    /// Always Invalid `"sparse map"` (no `CUarrayMapInfo` / sparse array
+    /// tiles). Distinct from [`Self::array_get_sparse_properties`] (why is
+    /// not `"array sparse"`) and from [`Self::va_map`] (live VMM). Unknown
+    /// devices are Invalid `"device not in profile"`. Query; legal during
+    /// capture. This VM does not invent
+    /// `cuMipmappedArrayGetSparseProperties` this slice.
+    pub fn mem_map_array_async(&self, device: DeviceId) -> Result<(), SimError> {
+        let _gpu = self.profile.gpu(device)?;
+        Err(SimError::Invalid { why: "sparse map" })
+    }
+
     /// `cuArrayGetPlane` plus `cudaArrayGetPlane`. CUDA arrays are not
     /// modeled.
     ///

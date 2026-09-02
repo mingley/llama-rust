@@ -164,6 +164,7 @@ warp scheduler, L1, …   ← do not model
 | `array_get_descriptor` is Invalid (no array handles) | `cuArrayGetDescriptor` |
 | `array_3d_get_descriptor` is Invalid (no array handles) | `cuArray3DGetDescriptor` |
 | `array_get_sparse_properties` is Invalid (sparse CUDA arrays are not modeled) | `cuArrayGetSparseProperties` |
+| `mem_map_array_async` is Invalid (sparse CUDA array mapping is not modeled) | `cuMemMapArrayAsync` |
 | `array_get_plane` is Invalid (no array handles) | `cuArrayGetPlane` |
 | `array_get_memory_requirements` is Invalid (no array handles) | `cuArrayGetMemoryRequirements` |
 | `mipmapped_array_get_memory_requirements` is Invalid (no mipmapped-array handles) | `cuMipmappedArrayGetMemoryRequirements` |
@@ -1119,6 +1120,9 @@ legal during capture. No Engine `--array-3d-desc`.
 `array_get_sparse_properties` is `cuArrayGetSparseProperties` (always
 Invalid `"array sparse"`). Distinct from `array_3d_get_descriptor`. Query;
 legal during capture. No Engine `--array-sparse`.
+`mem_map_array_async` is `cuMemMapArrayAsync` (always Invalid `"sparse map"`).
+Distinct from `array_get_sparse_properties` and `va_map`. Query; legal
+during capture. No Engine `--sparse-map`.
 `array_get_plane` is `cuArrayGetPlane` (always Invalid `"array plane"`).
 Distinct from `array_get_sparse_properties`. Query; legal during capture. No Engine `--array-plane`.
 `array_get_memory_requirements` is `cuArrayGetMemoryRequirements` (always
