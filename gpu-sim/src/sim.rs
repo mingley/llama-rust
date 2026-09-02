@@ -9541,8 +9541,7 @@ impl Sim {
     /// [`Self::create_graph_with_flags`] (`cudaGraphCreate` flags).
     ///
     /// Host-synchronous. Capture refused. Distinct from
-    /// [`Self::graph_create`]. This VM does not invent
-    /// occupancy SM counts this slice.
+    /// [`Self::graph_create`].
     pub fn graph_create_with_flags(
         &mut self,
         device: DeviceId,
@@ -9558,7 +9557,9 @@ impl Sim {
     /// `initial_refcount` must be in `1..=i32::MAX` (CUDA `INT_MAX`).
     /// `destroy_fn` is the host callback id recorded when the
     /// last reference is released (no Rust callback). Decode identity does not
-    /// create user objects.
+    /// create user objects. Driver
+    /// `cuUserObjectCreate` is
+    /// [`Self::create_user_object`].
     pub fn user_object_create(
         &mut self,
         destroy_fn: u64,
@@ -9584,6 +9585,21 @@ impl Sim {
         );
         self.clock = self.clock.saturating_add(1);
         Ok(id)
+    }
+
+    /// `cuUserObjectCreate`. Identity with
+    /// [`Self::user_object_create`] (`cudaUserObjectCreate`).
+    ///
+    /// Host-synchronous. Capture refused. Distinct from
+    /// [`Self::graph_create_with_flags`]. This VM does not invent
+    /// occupancy SM counts this slice.
+    pub fn create_user_object(
+        &mut self,
+        destroy_fn: u64,
+        initial_refcount: u32,
+        flags: u32,
+    ) -> Result<UserObjectId, SimError> {
+        self.user_object_create(destroy_fn, initial_refcount, flags)
     }
 
     /// `cudaUserObjectRetain`. Host-synchronous. Capture cannot include it.
