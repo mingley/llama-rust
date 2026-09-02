@@ -3080,7 +3080,6 @@ impl Sim {
     ///
     /// Host-synchronous. Capture cannot include it. Distinct from
     /// [`Self::event_create_with_flags`] and [`Self::event_create`].
-    /// This VM does not invent occupancy SM counts this slice.
     pub fn event_create_disable_timing(&mut self, event: EventId) -> Result<(), SimError> {
         self.create_event_disable_timing(event)
     }
@@ -3089,11 +3088,23 @@ impl Sim {
     ///
     /// Required for [`Self::ipc_get_event`]. Timing is disabled (CUDA: Interprocess
     /// requires DisableTiming).
+    /// Driver `cuEventCreateWithFlags` interprocess is [`Self::event_create_interprocess`].
+    /// Identity wrap [`Self::event_create_interprocess`].
     pub fn create_event_interprocess(&mut self, event: EventId) -> Result<(), SimError> {
         self.create_event_with_flags(
             event,
             EventCreateFlags::DISABLE_TIMING | EventCreateFlags::INTERPROCESS,
         )
+    }
+
+    /// `cuEventCreateWithFlags` interprocess. Identity with
+    /// [`Self::create_event_interprocess`] (`cudaEventCreateWithFlags` Interprocess|DisableTiming).
+    ///
+    /// Host-synchronous. Capture cannot include it. Distinct from
+    /// [`Self::event_create_disable_timing`].
+    /// This VM does not invent occupancy SM counts this slice.
+    pub fn event_create_interprocess(&mut self, event: EventId) -> Result<(), SimError> {
+        self.create_event_interprocess(event)
     }
 
     /// `cudaEventCreateWithFlags(..., cudaEventBlockingSync)`.
