@@ -17608,13 +17608,25 @@ impl Sim {
     ///
     /// Always Invalid `"tensor im2col"` ([`DeviceAttr::TensorMapAccessSupported`]
     /// is 0). Distinct from [`Self::tensor_map_encode_tiled`] (why is not
-    /// `"tensor map"`). Unknown devices are Invalid `"device not in profile"`.
+    /// `"tensor map"`) and from [`Self::tensor_map_encode_im2col_wide`].
     /// Query; legal during capture.
     pub fn tensor_map_encode_im2col(&self, device: DeviceId) -> Result<(), SimError> {
         let _gpu = self.profile.gpu(device)?;
         Err(SimError::Invalid {
             why: "tensor im2col",
         })
+    }
+
+    /// `cuTensorMapEncodeIm2colWide`. TMA is not modeled.
+    ///
+    /// Always Invalid `"im2col wide"` ([`DeviceAttr::TensorMapAccessSupported`]
+    /// is 0). Distinct from [`Self::tensor_map_encode_im2col`] (why is not
+    /// `"tensor im2col"`) and from [`Self::tensor_map_encode_tiled`].
+    /// Unknown devices are Invalid `"device not in profile"`. Query; legal
+    /// during capture.
+    pub fn tensor_map_encode_im2col_wide(&self, device: DeviceId) -> Result<(), SimError> {
+        let _gpu = self.profile.gpu(device)?;
+        Err(SimError::Invalid { why: "im2col wide" })
     }
 
     /// `cuArrayCreate` / `cuArray3DCreate`. CUDA arrays are not modeled.

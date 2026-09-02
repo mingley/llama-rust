@@ -311,6 +311,7 @@ warp scheduler, L1, …   ← do not model
 | `mem_batch_decompress_async` is Invalid (algorithm mask is 0) | `cuMemBatchDecompressAsync` |
 | `tensor_map_encode_tiled` is Invalid (TMA is not modeled) | `cuTensorMapEncodeTiled` |
 | `tensor_map_encode_im2col` is Invalid (TMA is not modeled) | `cuTensorMapEncodeIm2col` |
+| `tensor_map_encode_im2col_wide` is Invalid (TMA is not modeled) | `cuTensorMapEncodeIm2colWide` |
 | `func_get_name` is empty until a compiled kernel exists | `cudaFuncGetName` / `cuFuncGetName` |
 | `func_get_param_info` is Invalid until a compiled kernel exists | `cuFuncGetParamInfo` |
 | `func_is_loaded` is false until a compiled kernel exists | `cuFuncIsLoaded` |
@@ -1355,6 +1356,7 @@ is always 1 (`WaitValueCmp::Nor`). `TensorMapAccessSupported` is always
 0 (`CUtensorMap` / TMA is not modeled). `tensor_map_encode_tiled` is
 `cuTensorMapEncodeTiled` (always Invalid `"tensor map"`). `tensor_map_encode_im2col` is
 `cuTensorMapEncodeIm2col` (always Invalid `"tensor im2col"`). Query; legal during capture. No Engine `--tensor-im2col`.
+`tensor_map_encode_im2col_wide` is `cuTensorMapEncodeIm2colWide` (always Invalid `"im2col wide"`). Query; legal during capture. No Engine `--tensor-im2col-wide`.
 `UnifiedFunctionPointers` is
 always 0 (device-side function pointers are not modeled).
 `TimelineSemaphoreInteropSupported` is always 0 (NVSci / timeline
