@@ -8913,8 +8913,7 @@ impl Sim {
     /// [`Self::clone_graph`] (`cudaGraphClone`).
     ///
     /// Host-synchronous. Capture refused. Distinct from
-    /// [`Self::find_graph_node_in_clone`]. This VM does not invent
-    /// occupancy SM counts this slice.
+    /// [`Self::find_graph_node_in_clone`].
     pub fn graph_clone(&mut self, graph: GraphId) -> Result<GraphId, SimError> {
         self.clone_graph(graph)
     }
@@ -11593,8 +11592,20 @@ impl Sim {
     ///
     /// Query; legal during capture. Destination graph only during capture
     /// (same as [`Self::graph_len`]). Flags `0` prints kinds and edges only.
+    /// Driver `cuGraphDebugDotPrint` is
+    /// [`Self::graph_debug_dot_print`].
     pub fn graph_debug_dot(&self, graph: GraphId) -> Result<String, SimError> {
         self.graph_debug_dot_with_flags(graph, 0)
+    }
+
+    /// `cuGraphDebugDotPrint`. Identity with
+    /// [`Self::graph_debug_dot`] (`cudaGraphDebugDotPrint` flags 0).
+    ///
+    /// Query; legal during capture. Distinct from
+    /// [`Self::graph_debug_dot_with_flags`]. This VM does not invent
+    /// occupancy SM counts this slice.
+    pub fn graph_debug_dot_print(&self, graph: GraphId) -> Result<String, SimError> {
+        self.graph_debug_dot(graph)
     }
 
     /// `cudaGraphDebugDotPrint` with [`GraphDebugDotFlags`].
