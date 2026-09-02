@@ -26075,7 +26075,6 @@ impl Sim {
     /// [`Self::memset_buf`].
     ///
     /// Capture legal. Distinct from [`Self::mem_set`].
-    /// This VM does not invent occupancy SM counts this slice.
     pub fn mem_set_buf(
         &mut self,
         device: DeviceId,
@@ -26086,6 +26085,8 @@ impl Sim {
     }
 
     /// `cudaMemsetAsync` / `cudaMemset2DAsync`.
+    ///
+    /// Identity wrap [`Self::mem_set_op`]. Not [`Self::memset_2d_async`] (`cudaMemset2DAsync`).
     ///
     /// [`MemsetOp::height`] `> 1` bills `width * height` as an HBM write (pitch
     /// padding is not written). [`MemsetOp::depth`] `> 1` is `cudaMemset3DAsync`
@@ -26116,6 +26117,20 @@ impl Sim {
             self.synchronize_stream(device, stream)?;
         }
         Ok(id)
+    }
+
+    /// `cudaMemsetAsync` / `cudaMemset2DAsync`. Identity with [`Self::memset_op`].
+    ///
+    /// Capture legal. Distinct from [`Self::mem_set_buf`] and
+    /// [`Self::memset_2d_async`] (`cudaMemset2DAsync`).
+    /// This VM does not invent occupancy SM counts this slice.
+    pub fn mem_set_op(
+        &mut self,
+        device: DeviceId,
+        op: MemsetOp,
+        stream: StreamId,
+    ) -> Result<OpId, SimError> {
+        self.memset_op(device, op, stream)
     }
 
     /// `cudaMemset`: enqueue then wait for that stream (host-synchronous).
