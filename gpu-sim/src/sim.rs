@@ -7600,8 +7600,7 @@ impl Sim {
     /// [`Self::graph_kernel_get_params`] (`cudaGraphKernelNodeGetParams`).
     ///
     /// Query; legal during capture. Distinct from
-    /// [`Self::graph_exec_kernel_get_params`]. This VM does not invent
-    /// occupancy SM counts this slice.
+    /// [`Self::graph_exec_kernel_get_params`].
     pub fn get_graph_kernel_node_params(
         &self,
         graph: GraphId,
@@ -7614,13 +7613,28 @@ impl Sim {
     ///
     /// Uninstantiated graphs are Invalid. After instantiate this is the
     /// launched kernel; [`Self::graph_kernel_get_params`] stays on the
-    /// definition.
+    /// definition. Driver `cuGraphExecKernelNodeGetParams` is
+    /// [`Self::get_graph_exec_kernel_node_params`].
     pub fn graph_exec_kernel_get_params(
         &self,
         exec: GraphId,
         node: usize,
     ) -> Result<KernelNodeParams, SimError> {
         kernel_params_from_step(self.graph_exec_step(exec, node)?)
+    }
+
+    /// `cuGraphExecKernelNodeGetParams`. Identity with
+    /// [`Self::graph_exec_kernel_get_params`] (`cudaGraphExecKernelNodeGetParams`).
+    ///
+    /// Query; legal during capture. Distinct from
+    /// [`Self::get_graph_kernel_node_params`]. This VM does not invent
+    /// occupancy SM counts this slice.
+    pub fn get_graph_exec_kernel_node_params(
+        &self,
+        exec: GraphId,
+        node: usize,
+    ) -> Result<KernelNodeParams, SimError> {
+        self.graph_exec_kernel_get_params(exec, node)
     }
 
     /// `cudaGraphMemcpyNodeGetParams` on the graph definition.
