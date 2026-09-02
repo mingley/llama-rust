@@ -7241,7 +7241,14 @@ model, do not celebrate the sim.
     or `cudaChooseDevice`. `gpu-profile capture` is still refused. Dual
     score still has no `$/M tokens`.
 
-727. [ ] Next numbered PLAN item after 726 is the next `gpu-sim` / Engine /
+727. [x] `gpu-sim` `Sim::module_get_function_count` is
+    `cuModuleGetFunctionCount`. Always Invalid `"module fncount"`
+    because CUDA modules are not modeled. Query; legal during capture.
+    Distinct from `module_get_function`. This VM does not invent `cuModuleEnumerateFunctions`, Engine `--module-fncount`,
+    or `cudaChooseDevice`. `gpu-profile capture` is still refused. Dual
+    score still has no `$/M tokens`.
+
+728. [ ] Next numbered PLAN item after 727 is the next `gpu-sim` / Engine /
     serve / expertvm mechanical API that is still missing, or the next official
     decode family. Prefer remaining CUDA-shaped twins over more
     OpenAI HTTP veneer. Do not invent F32 `output.scale`. Do not invent a
@@ -7913,6 +7920,9 @@ model, do not celebrate the sim.
     Do not invent a second `cuModuleLoadDataEx` / `module_load_data_ex`.
     Do not invent Engine `--module-jitopt`. Do not invent
     `cuModuleGetFunctionCount` this slice. Do not reverse `"module jitopt"`.
+    Do not invent a second `cuModuleGetFunctionCount` / `module_get_function_count`.
+    Do not invent Engine `--module-fncount`. Do not invent
+    `cuModuleEnumerateFunctions` this slice. Do not reverse `"module fncount"`.
     Do not invent a second `cudaStreamAddCallback`.
     Do not invent Engine `--stream-callback` (same wall as second live
     `cudaLaunchHostFunc` after miss DMA).
@@ -8664,6 +8674,9 @@ model, do not celebrate the sim.
     Do not invent a second `module_load_data_ex` API. Do not invent
     Engine `--load-module-data-ex`. Do not invent JIT linker options
     this slice. Do not reverse Module LoadDataEx remaining unsupported.
+    Do not invent a second `module_get_function_count` API. Do not invent
+    Engine `--get-module-fncount`. Do not invent a module function list
+    this slice. Do not reverse Module GetFunctionCount remaining unsupported.
     Do not invent a second DeviceLaunch in-flight destroy-complete check or Engine
     `--device-launch-destroy`. Do not abort an in-flight DeviceLaunch when
     `destroy_graph` succeeds. Do not delay destroy of an idle exec. Do not invent
@@ -9598,6 +9611,9 @@ model, do not celebrate the sim.
     Do not invent a second `module_load_data_ex` method. Do not
     invent Engine `--cu-module-load-data-ex`. Do not reverse wrapping
     cuModuleLoadDataEx Invalid.
+    Do not invent a second `module_get_function_count` method. Do not
+    invent Engine `--cu-module-get-function-count`. Do not reverse wrapping
+    cuModuleGetFunctionCount Invalid.
     Do not
     spend the next item on an OpenAI-compatible HTTP veneer.
 

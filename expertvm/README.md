@@ -526,6 +526,8 @@ image; no Engine flag).
 no fatbin image; no Engine flag).
 `gpu-sim` `module_load_data_ex` is `cuModuleLoadDataEx` (Invalid; no
 JIT options; no Engine flag).
+`gpu-sim` `module_get_function_count` is `cuModuleGetFunctionCount`
+(Invalid; no `CUmodule` function list; no Engine flag).
 `gpu-sim` `module_unload` is `cuModuleUnload` (Invalid; no `CUmodule`
 handle; no Engine flag).
 `gpu-sim` `module_get_function` is `cuModuleGetFunction` (Invalid; no

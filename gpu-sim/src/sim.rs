@@ -21069,13 +21069,28 @@ impl Sim {
     /// JIT options, and no `CUmodule`). Distinct from
     /// [`Self::module_load_fat_binary`] (why is not `"module fatbin"`) and
     /// from [`Self::module_load_data`] (why is not `"module data"`) and
-    /// from [`Self::link_create`].
+    /// from [`Self::link_create`] and from [`Self::module_get_function_count`].
     /// Unknown devices are Invalid `"device not in profile"`. Query; legal
     /// during capture.
     pub fn module_load_data_ex(&self, device: DeviceId) -> Result<(), SimError> {
         let _gpu = self.profile.gpu(device)?;
         Err(SimError::Invalid {
             why: "module jitopt",
+        })
+    }
+
+    /// `cuModuleGetFunctionCount`. CUDA modules are not modeled.
+    ///
+    /// Always Invalid `"module fncount"` (this VM has no `CUmodule`
+    /// function list). Distinct from [`Self::module_load_data_ex`] (why is
+    /// not `"module jitopt"`) and from [`Self::module_get_function`] (why
+    /// is not `"module function"`).
+    /// Unknown devices are Invalid `"device not in profile"`. Query; legal
+    /// during capture.
+    pub fn module_get_function_count(&self, device: DeviceId) -> Result<(), SimError> {
+        let _gpu = self.profile.gpu(device)?;
+        Err(SimError::Invalid {
+            why: "module fncount",
         })
     }
 
