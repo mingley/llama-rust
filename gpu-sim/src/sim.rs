@@ -13092,8 +13092,7 @@ impl Sim {
     /// [`Self::graph_kernel_node_get_attribute`] (`cudaGraphKernelNodeGetAttribute`).
     ///
     /// Query; legal during capture. Distinct from
-    /// [`Self::graph_kernel_node_set_attribute`]. This VM does not invent
-    /// occupancy SM counts this slice.
+    /// [`Self::graph_kernel_node_set_attribute`].
     pub fn get_graph_kernel_node_attribute(
         &self,
         graph: GraphId,
@@ -13189,7 +13188,9 @@ impl Sim {
     /// retarget the exec; use [`Self::graph_exec_kernel_node_set_attribute`].
     /// Capture cannot include it. Attr/value type mismatch is Invalid
     /// `"kernel node attr"`. A parked in-flight-destroyed exec is
-    /// `"unknown graph"`. Live exec SetAttribute stays.
+    /// `"unknown graph"`. Live exec SetAttribute stays. Driver
+    /// `cuGraphKernelNodeSetAttribute` is
+    /// [`Self::set_graph_kernel_node_attribute`].
     pub fn graph_kernel_node_set_attribute(
         &mut self,
         graph: GraphId,
@@ -13198,6 +13199,21 @@ impl Sim {
         value: KernelNodeAttrValue,
     ) -> Result<(), SimError> {
         self.set_kernel_node_attribute(graph, node, attr, value, false)
+    }
+
+    /// `cuGraphKernelNodeSetAttribute`. Identity with
+    /// [`Self::graph_kernel_node_set_attribute`] (`cudaGraphKernelNodeSetAttribute`).
+    ///
+    /// Capture refused. Distinct from [`Self::get_graph_kernel_node_attribute`].
+    /// This VM does not invent occupancy SM counts this slice.
+    pub fn set_graph_kernel_node_attribute(
+        &mut self,
+        graph: GraphId,
+        node: usize,
+        attr: KernelNodeAttr,
+        value: KernelNodeAttrValue,
+    ) -> Result<(), SimError> {
+        self.graph_kernel_node_set_attribute(graph, node, attr, value)
     }
 
     /// `cudaGraphExecKernelNodeSetAttribute` on the exec snapshot.
