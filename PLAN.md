@@ -9914,7 +9914,12 @@ model, do not celebrate the sim.
       `mem_create_with_prop`. This VM does not invent occupancy SM counts, Engine `--mem-map-handle`,
       or `cudaChooseDevice`. `gpu-profile capture` is still refused. Dual
       score still has no `$/M tokens`.
-1131. [ ] Next numbered PLAN item after 1130 is the next `gpu-sim` / Engine /
+1131. [x] `gpu-sim` `Sim::mem_map_handle_with_flags` is
+      `cuMemMap` flags. Identity with `va_map_handle_with_flags` (`cuMemMap` flags). Capture refused. Distinct from
+      `mem_map_handle`. This VM does not invent occupancy SM counts, Engine `--mem-map-handle-with-flags`,
+      or `cudaChooseDevice`. `gpu-profile capture` is still refused. Dual
+      score still has no `$/M tokens`.
+1132. [ ] Next numbered PLAN item after 1131 is the next `gpu-sim` / Engine /
     serve / expertvm mechanical API that is still missing, or the next official
     decode family. Prefer remaining CUDA-shaped twins over more
     OpenAI HTTP veneer. Do not invent F32 `output.scale`. Do not invent a
@@ -11918,6 +11923,11 @@ model, do not celebrate the sim.
     occupancy SM counts this slice. Do not reverse MemMap identity with va_map_handle.
     Do not invent `va_map_handle_with_flags` as `mem_map_handle`.
     Do not invent `cuMemMap` flags as `mem_map_handle`.
+    Do not invent a second `cuMemMap` flags / `mem_map_handle_with_flags`.
+    Do not invent Engine `--mem-map-handle-with-flags`. Do not invent
+    occupancy SM counts this slice. Do not reverse MemMap flags identity with va_map_handle_with_flags.
+    Do not invent `va_map_handle_with_size` as `mem_map_handle_with_flags`.
+    Do not invent `cuMemMap` size as `mem_map_handle_with_flags`.
     Do not invent a second `cudaStreamAddCallback`.
     Do not invent Engine `--stream-callback` (same wall as second live
     `cudaLaunchHostFunc` after miss DMA).
@@ -13957,6 +13967,11 @@ model, do not celebrate the sim.
     this slice. Do not reverse MemMap identity with va_map_handle.
     Do not wrap `va_map_handle` as `mem_map_handle`.
     Do not wrap `va_map_handle_with_flags` as `mem_map_handle`.
+    Do not invent a second `mem_map_handle_with_flags` API. Do not invent
+    Engine `--mem-map-handle-with-flags-identity`. Do not invent a va-unmap
+    this slice. Do not reverse MemMap flags identity with va_map_handle_with_flags.
+    Do not wrap `va_map_handle_with_flags` as `mem_map_handle_with_flags`.
+    Do not wrap `va_map_handle_with_size` as `mem_map_handle_with_flags`.
     Do not invent a second DeviceLaunch in-flight destroy-complete check or Engine
     `--device-launch-destroy`. Do not abort an in-flight DeviceLaunch when
     `destroy_graph` succeeds. Do not delay destroy of an idle exec. Do not invent
@@ -16103,6 +16118,9 @@ model, do not celebrate the sim.
     Do not invent a second `mem_map_handle` method. Do not
     invent Engine `--cu-mem-map-handle`. Do not reverse wrapping
     cuMemMap identity. Do not wrap `va_map_handle_with_flags` as `mem_map_handle`.
+    Do not invent a second `mem_map_handle_with_flags` method. Do not
+    invent Engine `--cu-mem-map-handle-with-flags`. Do not reverse wrapping
+    cuMemMap flags identity. Do not wrap `va_map_handle_with_size` as `mem_map_handle_with_flags`.
     Do not
     spend the next item on an OpenAI-compatible HTTP veneer.
 

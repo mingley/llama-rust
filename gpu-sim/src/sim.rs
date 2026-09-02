@@ -18186,7 +18186,6 @@ impl Sim {
     /// [`Self::va_map_handle`] (`cuMemMap` default flags).
     ///
     /// Capture refused. Distinct from [`Self::mem_create_with_prop`].
-    /// This VM does not invent occupancy SM counts this slice.
     pub fn mem_map_handle(
         &mut self,
         id: AllocId,
@@ -18200,6 +18199,8 @@ impl Sim {
     /// [`Self::va_map_handle`] with a flags word.
     ///
     /// CUDA requires 0. Unknown bits Invalid `"mem map flags"`.
+    /// Driver `cuMemMap` flags is [`Self::mem_map_handle_with_flags`].
+    /// Identity wrap [`Self::mem_map_handle_with_flags`].
     pub fn va_map_handle_with_flags(
         &mut self,
         id: AllocId,
@@ -18216,6 +18217,22 @@ impl Sim {
         }
         let bytes = self.handle_ref(handle)?.bytes;
         self.va_map_handle_with_size(id, device, offset, handle, bytes, flags)
+    }
+
+    /// `cuMemMap` flags. Identity with
+    /// [`Self::va_map_handle_with_flags`] (`cuMemMap` flags).
+    ///
+    /// Capture refused. Distinct from [`Self::mem_map_handle`].
+    /// This VM does not invent occupancy SM counts this slice.
+    pub fn mem_map_handle_with_flags(
+        &mut self,
+        id: AllocId,
+        device: DeviceId,
+        offset: u64,
+        handle: MemHandleId,
+        flags: u32,
+    ) -> Result<(), SimError> {
+        self.va_map_handle_with_flags(id, device, offset, handle, flags)
     }
 
     /// [`Self::va_map_handle`] with the CUDA size and flags.
