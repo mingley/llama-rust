@@ -13104,7 +13104,9 @@ impl Sim {
 
     /// `cudaGraphExecKernelNodeGetAttribute` on the exec snapshot.
     ///
-    /// Query; legal during capture. Uninstantiated exec is Invalid.
+    /// Query; legal during capture. Uninstantiated exec is Invalid. Driver
+    /// `cuGraphExecKernelNodeGetAttribute` is
+    /// [`Self::get_graph_exec_kernel_node_attribute`].
     pub fn graph_exec_kernel_node_get_attribute(
         &self,
         exec: GraphId,
@@ -13112,6 +13114,22 @@ impl Sim {
         attr: KernelNodeAttr,
     ) -> Result<KernelNodeAttrValue, SimError> {
         self.kernel_node_attribute(exec, node, attr, true)
+    }
+
+    /// `cuGraphExecKernelNodeGetAttribute`. Identity with
+    /// [`Self::graph_exec_kernel_node_get_attribute`]
+    /// (`cudaGraphExecKernelNodeGetAttribute`).
+    ///
+    /// Query; legal during capture. Distinct from
+    /// [`Self::get_graph_kernel_node_attribute`]. This VM does not invent
+    /// occupancy SM counts this slice.
+    pub fn get_graph_exec_kernel_node_attribute(
+        &self,
+        exec: GraphId,
+        node: usize,
+        attr: KernelNodeAttr,
+    ) -> Result<KernelNodeAttrValue, SimError> {
+        self.graph_exec_kernel_node_get_attribute(exec, node, attr)
     }
 
     fn kernel_node_attribute(
@@ -13205,7 +13223,6 @@ impl Sim {
     /// [`Self::graph_kernel_node_set_attribute`] (`cudaGraphKernelNodeSetAttribute`).
     ///
     /// Capture refused. Distinct from [`Self::get_graph_kernel_node_attribute`].
-    /// This VM does not invent occupancy SM counts this slice.
     pub fn set_graph_kernel_node_attribute(
         &mut self,
         graph: GraphId,
