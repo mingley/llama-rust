@@ -712,6 +712,9 @@
 //! [`get_graph_free_node_params`](Sim::get_graph_free_node_params) is `cuGraphMemFreeNodeGetParams` (identity with
 //! [`graph_free_get_params`](Sim::graph_free_get_params)). Query; legal during capture. Distinct from
 //! [`graph_exec_free_get_params`](Sim::graph_exec_free_get_params). No Engine `--graph-free-get-params`.
+//! [`get_graph_exec_free_node_params`](Sim::get_graph_exec_free_node_params) is `cuGraphExecMemFreeNodeGetParams` (identity with
+//! [`graph_exec_free_get_params`](Sim::graph_exec_free_get_params)). Query; legal during capture. Distinct from
+//! [`get_graph_free_node_params`](Sim::get_graph_free_node_params). No Engine `--graph-exec-free-get-params`.
 //! [`Sim::ipc_get_event`] / [`ipc_open_event`](Sim::ipc_open_event) are
 //! `cudaIpcGetEventHandle` / `cudaIpcOpenEventHandle` (interprocess events).
 //! [`Sim::create_shareable_pool`] is `cudaMemPoolCreate` with a POSIX-FD handle
@@ -1448,6 +1451,9 @@
 //! [`get_graph_free_node_params`](Sim::get_graph_free_node_params) is `cuGraphMemFreeNodeGetParams` (identity with
 //! [`graph_free_get_params`](Sim::graph_free_get_params)). Query; legal during capture. Distinct from
 //! [`graph_exec_free_get_params`](Sim::graph_exec_free_get_params). No Engine `--graph-free-get-params`.
+//! [`get_graph_exec_free_node_params`](Sim::get_graph_exec_free_node_params) is `cuGraphExecMemFreeNodeGetParams` (identity with
+//! [`graph_exec_free_get_params`](Sim::graph_exec_free_get_params)). Query; legal during capture. Distinct from
+//! [`get_graph_free_node_params`](Sim::get_graph_free_node_params). No Engine `--graph-exec-free-get-params`.
 //! [`HardwareProfile::host_pin_bytes`] caps `cudaMallocHost` / `cudaHostRegister`.
 //! [`Sim::idle_until`] drains, then jumps the virtual clock (open-loop arrivals).
 //! [`Sim::event_elapsed_ns`] is `cudaEventElapsedTime` in nanoseconds.
@@ -2052,6 +2058,9 @@
 //! [`get_graph_free_node_params`](Sim::get_graph_free_node_params) is `cuGraphMemFreeNodeGetParams` (identity with
 //! [`graph_free_get_params`](Sim::graph_free_get_params)). Query; legal during capture. Distinct from
 //! [`graph_exec_free_get_params`](Sim::graph_exec_free_get_params). No Engine `--graph-free-get-params`.
+//! [`get_graph_exec_free_node_params`](Sim::get_graph_exec_free_node_params) is `cuGraphExecMemFreeNodeGetParams` (identity with
+//! [`graph_exec_free_get_params`](Sim::graph_exec_free_get_params)). Query; legal during capture. Distinct from
+//! [`get_graph_free_node_params`](Sim::get_graph_free_node_params). No Engine `--graph-exec-free-get-params`.
 //! [`mem_host_get_flags`](Sim::mem_host_get_flags) is `cuMemHostGetFlags` (identity with
 //! [`host_get_flags`](Sim::host_get_flags)). Query; legal during capture. No Engine `--mem-host-get-flags`.
 //! [`mem_host_get_device_pointer`](Sim::mem_host_get_device_pointer) is `cuMemHostGetDevicePointer` (identity with
@@ -2622,6 +2631,9 @@
 //! [`get_graph_free_node_params`](Sim::get_graph_free_node_params) is `cuGraphMemFreeNodeGetParams` (identity with
 //! [`graph_free_get_params`](Sim::graph_free_get_params)). Query; legal during capture. Distinct from
 //! [`graph_exec_free_get_params`](Sim::graph_exec_free_get_params). No Engine `--graph-free-get-params`.
+//! [`get_graph_exec_free_node_params`](Sim::get_graph_exec_free_node_params) is `cuGraphExecMemFreeNodeGetParams` (identity with
+//! [`graph_exec_free_get_params`](Sim::graph_exec_free_get_params)). Query; legal during capture. Distinct from
+//! [`get_graph_free_node_params`](Sim::get_graph_free_node_params). No Engine `--graph-exec-free-get-params`.
 //! [`Sim::pointer_get_attributes`] is `cudaPointerGetAttributes`.
 //! [`pointer_set_attribute`](Sim::pointer_set_attribute) /
 //! [`pointer_get_attribute`](Sim::pointer_get_attribute) are
@@ -3599,6 +3611,9 @@
 //! [`get_graph_free_node_params`](Sim::get_graph_free_node_params) is `cuGraphMemFreeNodeGetParams` (identity with
 //! [`graph_free_get_params`](Sim::graph_free_get_params)). Query; legal during capture. Distinct from
 //! [`graph_exec_free_get_params`](Sim::graph_exec_free_get_params). No Engine `--graph-free-get-params`.
+//! [`get_graph_exec_free_node_params`](Sim::get_graph_exec_free_node_params) is `cuGraphExecMemFreeNodeGetParams` (identity with
+//! [`graph_exec_free_get_params`](Sim::graph_exec_free_get_params)). Query; legal during capture. Distinct from
+//! [`get_graph_free_node_params`](Sim::get_graph_free_node_params). No Engine `--graph-exec-free-get-params`.
 //! [`Sim::stream_get_device`] is `cudaStreamGetDevice` / `cuStreamGetDevice`
 //! (the device of the stream; green-ctx streams return the ctx create
 //! device). Query; legal during capture. Distinct from
@@ -4005,6 +4020,9 @@
 //! [`get_graph_free_node_params`](Sim::get_graph_free_node_params) is `cuGraphMemFreeNodeGetParams` (identity with
 //! [`graph_free_get_params`](Sim::graph_free_get_params)). Query; legal during capture. Distinct from
 //! [`graph_exec_free_get_params`](Sim::graph_exec_free_get_params). No Engine `--graph-free-get-params`.
+//! [`get_graph_exec_free_node_params`](Sim::get_graph_exec_free_node_params) is `cuGraphExecMemFreeNodeGetParams` (identity with
+//! [`graph_exec_free_get_params`](Sim::graph_exec_free_get_params)). Query; legal during capture. Distinct from
+//! [`get_graph_free_node_params`](Sim::get_graph_free_node_params). No Engine `--graph-exec-free-get-params`.
 //! [`set_stream_access_policy`](Sim::set_stream_access_policy) is
 //! `cudaStreamAttributeAccessPolicyWindow`: [`kernel`](Sim::kernel) /
 //! [`kernel_bufs`](Sim::kernel_bufs) inherit it; [`kernel_with`](Sim::kernel_with)
@@ -4896,6 +4914,9 @@
 //! [`get_graph_free_node_params`](Sim::get_graph_free_node_params) is `cuGraphMemFreeNodeGetParams` (identity with
 //! [`graph_free_get_params`](Sim::graph_free_get_params)). Query; legal during capture. Distinct from
 //! [`graph_exec_free_get_params`](Sim::graph_exec_free_get_params). No Engine `--graph-free-get-params`.
+//! [`get_graph_exec_free_node_params`](Sim::get_graph_exec_free_node_params) is `cuGraphExecMemFreeNodeGetParams` (identity with
+//! [`graph_exec_free_get_params`](Sim::graph_exec_free_get_params)). Query; legal during capture. Distinct from
+//! [`get_graph_free_node_params`](Sim::get_graph_free_node_params). No Engine `--graph-exec-free-get-params`.
 //! [`Sim::set_stream_priority`] is the priority-only helper;
 //! [`stream_create_with_priority`](Sim::stream_create_with_priority) is
 //! `cudaStreamCreateWithPriority` (flags plus priority; clamped to
@@ -5320,6 +5341,9 @@
 //! [`get_graph_free_node_params`](Sim::get_graph_free_node_params) is `cuGraphMemFreeNodeGetParams` (identity with
 //! [`graph_free_get_params`](Sim::graph_free_get_params)). Query; legal during capture. Distinct from
 //! [`graph_exec_free_get_params`](Sim::graph_exec_free_get_params). No Engine `--graph-free-get-params`.
+//! [`get_graph_exec_free_node_params`](Sim::get_graph_exec_free_node_params) is `cuGraphExecMemFreeNodeGetParams` (identity with
+//! [`graph_exec_free_get_params`](Sim::graph_exec_free_get_params)). Query; legal during capture. Distinct from
+//! [`get_graph_free_node_params`](Sim::get_graph_free_node_params). No Engine `--graph-exec-free-get-params`.
 //! [`destroy_stream`](Sim::destroy_stream) is `cudaStreamDestroy` (returns
 //! immediately; in-flight work still completes; NULL is Invalid; recreate
 //! while unfinished is `"stream in flight"`). Capture cannot include it.
@@ -5724,6 +5748,9 @@
 //! [`get_graph_free_node_params`](Sim::get_graph_free_node_params) is `cuGraphMemFreeNodeGetParams` (identity with
 //! [`graph_free_get_params`](Sim::graph_free_get_params)). Query; legal during capture. Distinct from
 //! [`graph_exec_free_get_params`](Sim::graph_exec_free_get_params). No Engine `--graph-free-get-params`.
+//! [`get_graph_exec_free_node_params`](Sim::get_graph_exec_free_node_params) is `cuGraphExecMemFreeNodeGetParams` (identity with
+//! [`graph_exec_free_get_params`](Sim::graph_exec_free_get_params)). Query; legal during capture. Distinct from
+//! [`get_graph_free_node_params`](Sim::get_graph_free_node_params). No Engine `--graph-exec-free-get-params`.
 //! [`Sim::instantiate_graph`] is `cudaGraphInstantiate` (host-sync; returns a
 //! new exec id; first [`launch_graph`](Sim::launch_graph) of a definition
 //! creates a primary exec). Unused conditional handles are
@@ -6157,6 +6184,9 @@
 //! [`get_graph_free_node_params`](Sim::get_graph_free_node_params) is `cuGraphMemFreeNodeGetParams` (identity with
 //! [`graph_free_get_params`](Sim::graph_free_get_params)). Query; legal during capture. Distinct from
 //! [`graph_exec_free_get_params`](Sim::graph_exec_free_get_params). No Engine `--graph-free-get-params`.
+//! [`get_graph_exec_free_node_params`](Sim::get_graph_exec_free_node_params) is `cuGraphExecMemFreeNodeGetParams` (identity with
+//! [`graph_exec_free_get_params`](Sim::graph_exec_free_get_params)). Query; legal during capture. Distinct from
+//! [`get_graph_free_node_params`](Sim::get_graph_free_node_params). No Engine `--graph-exec-free-get-params`.
 //! [`graph_kernel_node_get_priority`](Sim::graph_kernel_node_get_priority) /
 //! [`graph_kernel_node_set_priority`](Sim::graph_kernel_node_set_priority) /
 //! [`graph_kernel_node_copy_attributes`](Sim::graph_kernel_node_copy_attributes)
@@ -6549,6 +6579,9 @@
 //! [`get_graph_free_node_params`](Sim::get_graph_free_node_params) is `cuGraphMemFreeNodeGetParams` (identity with
 //! [`graph_free_get_params`](Sim::graph_free_get_params)). Query; legal during capture. Distinct from
 //! [`graph_exec_free_get_params`](Sim::graph_exec_free_get_params). No Engine `--graph-free-get-params`.
+//! [`get_graph_exec_free_node_params`](Sim::get_graph_exec_free_node_params) is `cuGraphExecMemFreeNodeGetParams` (identity with
+//! [`graph_exec_free_get_params`](Sim::graph_exec_free_get_params)). Query; legal during capture. Distinct from
+//! [`get_graph_free_node_params`](Sim::get_graph_free_node_params). No Engine `--graph-exec-free-get-params`.
 //! [`graph_kernel_node_get_attribute`](Sim::graph_kernel_node_get_attribute) /
 //! [`graph_exec_kernel_node_get_attribute`](Sim::graph_exec_kernel_node_get_attribute) /
 //! [`graph_kernel_node_set_attribute`](Sim::graph_kernel_node_set_attribute) /
@@ -6947,6 +6980,9 @@
 //! [`get_graph_free_node_params`](Sim::get_graph_free_node_params) is `cuGraphMemFreeNodeGetParams` (identity with
 //! [`graph_free_get_params`](Sim::graph_free_get_params)). Query; legal during capture. Distinct from
 //! [`graph_exec_free_get_params`](Sim::graph_exec_free_get_params). No Engine `--graph-free-get-params`.
+//! [`get_graph_exec_free_node_params`](Sim::get_graph_exec_free_node_params) is `cuGraphExecMemFreeNodeGetParams` (identity with
+//! [`graph_exec_free_get_params`](Sim::graph_exec_free_get_params)). Query; legal during capture. Distinct from
+//! [`get_graph_free_node_params`](Sim::get_graph_free_node_params). No Engine `--graph-exec-free-get-params`.
 //! Device-launch
 //! execs cannot attach programmatic or launch-completion events.
 //! [`kernel_pdl`](Sim::kernel_pdl) is `cudaLaunchKernelEx` PDL: a wait kernel
@@ -7473,6 +7509,9 @@
 //! [`get_graph_free_node_params`](Sim::get_graph_free_node_params) is `cuGraphMemFreeNodeGetParams` (identity with
 //! [`graph_free_get_params`](Sim::graph_free_get_params)). Query; legal during capture. Distinct from
 //! [`graph_exec_free_get_params`](Sim::graph_exec_free_get_params). No Engine `--graph-free-get-params`.
+//! [`get_graph_exec_free_node_params`](Sim::get_graph_exec_free_node_params) is `cuGraphExecMemFreeNodeGetParams` (identity with
+//! [`graph_exec_free_get_params`](Sim::graph_exec_free_get_params)). Query; legal during capture. Distinct from
+//! [`get_graph_free_node_params`](Sim::get_graph_free_node_params). No Engine `--graph-exec-free-get-params`.
 //! [`graph_exec_memcpy_set_params`](Sim::graph_exec_memcpy_set_params) /
 //! [`graph_exec_memcpy_set_params_1d`](Sim::graph_exec_memcpy_set_params_1d) /
 //! [`graph_exec_memcpy_set_params_2d`](Sim::graph_exec_memcpy_set_params_2d) /
@@ -7863,6 +7902,9 @@
 //! [`get_graph_free_node_params`](Sim::get_graph_free_node_params) is `cuGraphMemFreeNodeGetParams` (identity with
 //! [`graph_free_get_params`](Sim::graph_free_get_params)). Query; legal during capture. Distinct from
 //! [`graph_exec_free_get_params`](Sim::graph_exec_free_get_params). No Engine `--graph-free-get-params`.
+//! [`get_graph_exec_free_node_params`](Sim::get_graph_exec_free_node_params) is `cuGraphExecMemFreeNodeGetParams` (identity with
+//! [`graph_exec_free_get_params`](Sim::graph_exec_free_get_params)). Query; legal during capture. Distinct from
+//! [`get_graph_free_node_params`](Sim::get_graph_free_node_params). No Engine `--graph-exec-free-get-params`.
 //! [`get_graph_kernel_node_params`](Sim::get_graph_kernel_node_params) is `cuGraphKernelNodeGetParams` (identity with
 //! [`graph_kernel_get_params`](Sim::graph_kernel_get_params)). Query; legal during capture. Distinct from
 //! [`graph_exec_kernel_get_params`](Sim::graph_exec_kernel_get_params). No Engine `--graph-kernel-get-params`.
@@ -8232,6 +8274,9 @@
 //! [`get_graph_free_node_params`](Sim::get_graph_free_node_params) is `cuGraphMemFreeNodeGetParams` (identity with
 //! [`graph_free_get_params`](Sim::graph_free_get_params)). Query; legal during capture. Distinct from
 //! [`graph_exec_free_get_params`](Sim::graph_exec_free_get_params). No Engine `--graph-free-get-params`.
+//! [`get_graph_exec_free_node_params`](Sim::get_graph_exec_free_node_params) is `cuGraphExecMemFreeNodeGetParams` (identity with
+//! [`graph_exec_free_get_params`](Sim::graph_exec_free_get_params)). Query; legal during capture. Distinct from
+//! [`get_graph_free_node_params`](Sim::get_graph_free_node_params). No Engine `--graph-exec-free-get-params`.
 //! [`graph_exec_kernel_get_params`](Sim::graph_exec_kernel_get_params) /
 //! [`graph_exec_memcpy_get_params`](Sim::graph_exec_memcpy_get_params) /
 //! [`graph_exec_memset_get_params`](Sim::graph_exec_memset_get_params) /
@@ -8592,6 +8637,9 @@
 //! [`get_graph_free_node_params`](Sim::get_graph_free_node_params) is `cuGraphMemFreeNodeGetParams` (identity with
 //! [`graph_free_get_params`](Sim::graph_free_get_params)). Query; legal during capture. Distinct from
 //! [`graph_exec_free_get_params`](Sim::graph_exec_free_get_params). No Engine `--graph-free-get-params`.
+//! [`get_graph_exec_free_node_params`](Sim::get_graph_exec_free_node_params) is `cuGraphExecMemFreeNodeGetParams` (identity with
+//! [`graph_exec_free_get_params`](Sim::graph_exec_free_get_params)). Query; legal during capture. Distinct from
+//! [`get_graph_free_node_params`](Sim::get_graph_free_node_params). No Engine `--graph-exec-free-get-params`.
 //! [`get_graph_exec_kernel_node_params`](Sim::get_graph_exec_kernel_node_params) is `cuGraphExecKernelNodeGetParams` (identity with
 //! [`graph_exec_kernel_get_params`](Sim::graph_exec_kernel_get_params)). Query; legal during capture. Distinct from
 //! [`get_graph_kernel_node_params`](Sim::get_graph_kernel_node_params). No Engine `--graph-exec-kernel-get-params`.
@@ -8958,6 +9006,9 @@
 //! [`get_graph_free_node_params`](Sim::get_graph_free_node_params) is `cuGraphMemFreeNodeGetParams` (identity with
 //! [`graph_free_get_params`](Sim::graph_free_get_params)). Query; legal during capture. Distinct from
 //! [`graph_exec_free_get_params`](Sim::graph_exec_free_get_params). No Engine `--graph-free-get-params`.
+//! [`get_graph_exec_free_node_params`](Sim::get_graph_exec_free_node_params) is `cuGraphExecMemFreeNodeGetParams` (identity with
+//! [`graph_exec_free_get_params`](Sim::graph_exec_free_get_params)). Query; legal during capture. Distinct from
+//! [`get_graph_free_node_params`](Sim::get_graph_free_node_params). No Engine `--graph-exec-free-get-params`.
 //! [`graph_exec_batch_mem_op_set_params`](Sim::graph_exec_batch_mem_op_set_params)
 //! is `cudaGraphExecBatchMemOpNodeSetParams` (id/offset/value; wait vs write,
 //! `bits32`, and compare stay on wait/write nodes;
@@ -33886,6 +33937,55 @@ mod tests {
         assert_eq!(
             eight.get_graph_free_node_params(g1, 0).unwrap(),
             eight.graph_free_get_params(g1, 0).unwrap()
+        );
+        let _cap = eight.end_capture().unwrap();
+    }
+
+    #[test]
+    fn get_graph_exec_free_node_params_is_cu_graph_exec_mem_free_node_get_params() {
+        let mut sim = Sim::new(h100());
+        let d = DeviceId(0);
+        let s = StreamId(0);
+        match sim.get_graph_exec_free_node_params(GraphId(99), 0) {
+            Err(SimError::Invalid { why }) => assert!(why.contains("unknown"), "{why}"),
+            other => panic!("{other:?}"),
+        }
+        match sim.graph_exec_free_get_params(GraphId(99), 0) {
+            Err(SimError::Invalid { why }) => assert!(why.contains("unknown"), "{why}"),
+            other => panic!("{other:?}"),
+        }
+        let a = sim.malloc(d, 4096).unwrap();
+        let g = sim.create_graph(d, s).unwrap();
+        sim.graph_add_free(g, a).unwrap();
+        match sim.get_graph_exec_free_node_params(g, 0) {
+            Err(SimError::Invalid { why }) => assert!(why.contains("instantiated"), "{why}"),
+            other => panic!("{other:?}"),
+        }
+        match sim.graph_exec_free_get_params(g, 0) {
+            Err(SimError::Invalid { why }) => assert!(why.contains("instantiated"), "{why}"),
+            other => panic!("{other:?}"),
+        }
+        let exec = sim.instantiate_graph(g).unwrap();
+        let snap = sim.get_graph_exec_free_node_params(exec, 0).unwrap();
+        assert_eq!(snap, a);
+        assert_eq!(snap, sim.graph_exec_free_get_params(exec, 0).unwrap());
+        sim.begin_capture(d, s).unwrap();
+        assert_eq!(
+            sim.get_graph_exec_free_node_params(exec, 0).unwrap(),
+            sim.graph_exec_free_get_params(exec, 0).unwrap()
+        );
+        let _cap = sim.end_capture().unwrap();
+        let mut eight = Sim::new(HardwareProfile::example_8xh100_nvlink());
+        let d1 = DeviceId(1);
+        let a1 = eight.malloc(d1, 4096).unwrap();
+        let g1 = eight.create_graph(d1, s).unwrap();
+        eight.graph_add_free(g1, a1).unwrap();
+        let exec1 = eight.instantiate_graph(g1).unwrap();
+        assert_eq!(eight.get_graph_exec_free_node_params(exec1, 0).unwrap(), a1);
+        eight.begin_capture(d1, s).unwrap();
+        assert_eq!(
+            eight.get_graph_exec_free_node_params(exec1, 0).unwrap(),
+            eight.graph_exec_free_get_params(exec1, 0).unwrap()
         );
         let _cap = eight.end_capture().unwrap();
     }
