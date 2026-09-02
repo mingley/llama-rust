@@ -474,6 +474,8 @@
 //! [`EventCreateFlags::BLOCKING_SYNC`]; Interprocess requires DisableTiming).
 //! [`event_create`](Sim::event_create) is `cuEventCreate` (identity with
 //! [`create_event`](Sim::create_event), default flags). Host-sync; capture refused. No Engine `--event-create`.
+//! [`event_create_with_flags`](Sim::event_create_with_flags) is `cuEventCreateWithFlags` (identity with
+//! [`create_event_with_flags`](Sim::create_event_with_flags)). Host-sync; capture refused. No Engine `--event-create-with-flags`.
 //! [`Sim::event_get_flags`] is `cudaEventGetFlags` (query; legal during capture).
 //! [`Sim::event_get_id`] is `cuEventGetId` / `cudaEventGetId` (query; legal
 //! during capture; distinct from the caller-chosen [`EventId`] handle).
@@ -32533,6 +32535,57 @@ mod tests {
         }
         let _g = sim.end_capture().unwrap();
         sim.event_destroy(ev).unwrap();
+    }
+
+    #[test]
+    fn event_create_with_flags_is_cu_event_create_with_flags() {
+        let mut sim = Sim::new(h100());
+        let d = DeviceId(0);
+        let s = StreamId(0);
+        let ev = EventId(4);
+        match sim.event_create_with_flags(ev, 8) {
+            Err(SimError::Invalid { why }) => {
+                assert!(why.contains("event create flags"), "{why}");
+            }
+            other => panic!("{other:?}"),
+        }
+        match sim.create_event_with_flags(ev, 8) {
+            Err(SimError::Invalid { why }) => {
+                assert!(why.contains("event create flags"), "{why}");
+            }
+            other => panic!("{other:?}"),
+        }
+        match sim.event_create_with_flags(ev, EventCreateFlags::INTERPROCESS) {
+            Err(SimError::Invalid { why }) => {
+                assert!(why.contains("interprocess timing"), "{why}");
+            }
+            other => panic!("{other:?}"),
+        }
+        sim.event_create_with_flags(ev, EventCreateFlags::DISABLE_TIMING)
+            .unwrap();
+        assert_eq!(
+            sim.event_get_flags(ev).unwrap(),
+            EventCreateFlags::DISABLE_TIMING
+        );
+        assert!(!sim.event_timing(ev).unwrap());
+        sim.create_event_with_flags(EventId(5), EventCreateFlags::DISABLE_TIMING)
+            .unwrap();
+        assert_eq!(
+            sim.event_get_flags(ev).unwrap(),
+            sim.event_get_flags(EventId(5)).unwrap()
+        );
+        sim.begin_capture(d, s).unwrap();
+        match sim.event_create_with_flags(EventId(6), 0) {
+            Err(SimError::Invalid { why }) => assert!(why.contains("capture"), "{why}"),
+            other => panic!("{other:?}"),
+        }
+        match sim.create_event_with_flags(EventId(6), 0) {
+            Err(SimError::Invalid { why }) => assert!(why.contains("capture"), "{why}"),
+            other => panic!("{other:?}"),
+        }
+        let _g = sim.end_capture().unwrap();
+        sim.event_destroy(ev).unwrap();
+        sim.event_destroy(EventId(5)).unwrap();
     }
 
     #[test]

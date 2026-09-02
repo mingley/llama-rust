@@ -7776,7 +7776,15 @@ model, do not celebrate the sim.
     or `cudaChooseDevice`. `gpu-profile capture` is still refused. Dual
     score still has no `$/M tokens`.
 
-803. [ ] Next numbered PLAN item after 802 is the next `gpu-sim` / Engine /
+803. [x] `gpu-sim` `Sim::event_create_with_flags` is
+    `cuEventCreateWithFlags`. Identity with `create_event_with_flags`
+    (`cudaEventCreateWithFlags`). Host-synchronous; capture cannot include
+    it. Unknown bits are Invalid. Interprocess requires DisableTiming.
+    Distinct from `event_create`. This VM does not invent `cuEventRecord`, Engine `--event-create-with-flags`,
+    or `cudaChooseDevice`. `gpu-profile capture` is still refused. Dual
+    score still has no `$/M tokens`.
+
+804. [ ] Next numbered PLAN item after 803 is the next `gpu-sim` / Engine /
     serve / expertvm mechanical API that is still missing, or the next official
     decode family. Prefer remaining CUDA-shaped twins over more
     OpenAI HTTP veneer. Do not invent F32 `output.scale`. Do not invent a
@@ -8676,6 +8684,9 @@ model, do not celebrate the sim.
     Do not invent a second `cuEventCreate` / `event_create`.
     Do not invent Engine `--event-create`. Do not invent
     `cuEventCreateWithFlags` this slice. Do not reverse EventCreate identity with create_event.
+    Do not invent a second `cuEventCreateWithFlags` / `event_create_with_flags`.
+    Do not invent Engine `--event-create-with-flags`. Do not invent
+    `cuEventRecord` this slice. Do not reverse EventCreateWithFlags identity with create_event_with_flags.
     Do not invent a second `cudaStreamAddCallback`.
     Do not invent Engine `--stream-callback` (same wall as second live
     `cudaLaunchHostFunc` after miss DMA).
@@ -9655,6 +9666,9 @@ model, do not celebrate the sim.
     Do not invent a second `event_create` API. Do not invent
     Engine `--event-create-identity`. Do not invent an event-create-with-flags
     this slice. Do not reverse EventCreate identity with create_event.
+    Do not invent a second `event_create_with_flags` API. Do not invent
+    Engine `--event-create-flags-identity`. Do not invent an event-record
+    this slice. Do not reverse EventCreateWithFlags identity with create_event_with_flags.
     Do not invent a second DeviceLaunch in-flight destroy-complete check or Engine
     `--device-launch-destroy`. Do not abort an in-flight DeviceLaunch when
     `destroy_graph` succeeds. Do not delay destroy of an idle exec. Do not invent
@@ -10817,6 +10831,9 @@ model, do not celebrate the sim.
     Do not invent a second `event_create` method. Do not
     invent Engine `--cu-event-create`. Do not reverse wrapping
     cuEventCreate identity.
+    Do not invent a second `event_create_with_flags` method. Do not
+    invent Engine `--cu-event-create-with-flags`. Do not reverse wrapping
+    cuEventCreateWithFlags identity.
     Do not
     spend the next item on an OpenAI-compatible HTTP veneer.
 

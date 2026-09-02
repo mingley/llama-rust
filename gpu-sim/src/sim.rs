@@ -2914,6 +2914,17 @@ impl Sim {
         self.insert_event(event, !disable, interprocess, blocking)
     }
 
+    /// `cuEventCreateWithFlags`. Identity with [`Self::create_event_with_flags`]
+    /// (`cudaEventCreateWithFlags`).
+    ///
+    /// Host-synchronous. Capture cannot include it. Unknown bits are Invalid
+    /// `"event create flags"`. Interprocess requires DisableTiming. Distinct
+    /// from [`Self::event_create`] (default flags). This VM does not invent
+    /// `cuEventRecord` this slice (`record_event` stays).
+    pub fn event_create_with_flags(&mut self, event: EventId, flags: u32) -> Result<(), SimError> {
+        self.create_event_with_flags(event, flags)
+    }
+
     /// `cudaEventDestroy`. Host-synchronous. Capture cannot include it.
     ///
     /// An event that was recorded and is not yet complete waits like
