@@ -9734,7 +9734,12 @@ model, do not celebrate the sim.
       `stream_set_nvlink_util_centric`. This VM does not invent occupancy SM counts, Engine `--stream-get-nvlink-util-centric`,
       or `cudaChooseDevice`. `gpu-profile capture` is still refused. Dual
       score still has no `$/M tokens`.
-1095. [ ] Next numbered PLAN item after 1094 is the next `gpu-sim` / Engine /
+1095. [x] `gpu-sim` `Sim::stream_set_access_policy` is
+      `cuStreamSetAttribute` access policy. Identity with `set_stream_access_policy` (`cudaStreamSetAttribute` AccessPolicyWindow). Capture legal. Distinct from
+      `stream_get_nvlink_util_centric`. This VM does not invent occupancy SM counts, Engine `--stream-set-access-policy`,
+      or `cudaChooseDevice`. `gpu-profile capture` is still refused. Dual
+      score still has no `$/M tokens`.
+1096. [ ] Next numbered PLAN item after 1095 is the next `gpu-sim` / Engine /
     serve / expertvm mechanical API that is still missing, or the next official
     decode family. Prefer remaining CUDA-shaped twins over more
     OpenAI HTTP veneer. Do not invent F32 `output.scale`. Do not invent a
@@ -11568,6 +11573,10 @@ model, do not celebrate the sim.
     Do not invent Engine `--stream-get-nvlink-util-centric`. Do not invent
     occupancy SM counts this slice. Do not reverse StreamGetNvlinkUtilCentric identity with stream_nvlink_util_centric.
     Do not invent generic `cuStreamGetAttribute` as `stream_get_nvlink_util_centric`.
+    Do not invent a second `cuStreamSetAttribute` access policy / `stream_set_access_policy`.
+    Do not invent Engine `--stream-set-access-policy`. Do not invent
+    occupancy SM counts this slice. Do not reverse StreamSetAccessPolicy identity with set_stream_access_policy.
+    Do not invent generic `cuStreamSetAttribute` as `stream_set_access_policy`.
     Do not invent a second `cudaStreamAddCallback`.
     Do not invent Engine `--stream-callback` (same wall as second live
     `cudaLaunchHostFunc` after miss DMA).
@@ -13431,6 +13440,10 @@ model, do not celebrate the sim.
     Engine `--stream-get-nvlink-util-centric-identity`. Do not invent a stream-set-access-policy
     this slice. Do not reverse StreamGetNvlinkUtilCentric identity with stream_nvlink_util_centric.
     Do not wrap `stream_nvlink_util_centric` as `stream_get_nvlink_util_centric`.
+    Do not invent a second `stream_set_access_policy` API. Do not invent
+    Engine `--stream-set-access-policy-identity`. Do not invent a stream-get-access-policy
+    this slice. Do not reverse StreamSetAccessPolicy identity with set_stream_access_policy.
+    Do not wrap `set_stream_access_policy` as `stream_set_access_policy`.
     Do not invent a second DeviceLaunch in-flight destroy-complete check or Engine
     `--device-launch-destroy`. Do not abort an in-flight DeviceLaunch when
     `destroy_graph` succeeds. Do not delay destroy of an idle exec. Do not invent
@@ -15469,6 +15482,9 @@ model, do not celebrate the sim.
     Do not invent a second `stream_get_nvlink_util_centric` method. Do not
     invent Engine `--cu-stream-get-nvlink-util-centric`. Do not reverse wrapping
     cuStreamGetAttribute nvlink util centric identity. Do not wrap generic `cuStreamGetAttribute` as `stream_get_nvlink_util_centric`.
+    Do not invent a second `stream_set_access_policy` method. Do not
+    invent Engine `--cu-stream-set-access-policy`. Do not reverse wrapping
+    cuStreamSetAttribute access policy identity. Do not wrap generic `cuStreamSetAttribute` as `stream_set_access_policy`.
     Do not
     spend the next item on an OpenAI-compatible HTTP veneer.
 

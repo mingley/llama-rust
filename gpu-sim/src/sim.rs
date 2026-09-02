@@ -2331,7 +2331,6 @@ impl Sim {
     /// [`Self::stream_nvlink_util_centric`] (`cudaStreamGetAttribute` NvlinkUtilCentricScheduling).
     ///
     /// Query; legal during capture. Distinct from [`Self::stream_set_nvlink_util_centric`].
-    /// This VM does not invent occupancy SM counts this slice.
     #[must_use]
     pub fn stream_get_nvlink_util_centric(&self, device: DeviceId, stream: StreamId) -> bool {
         self.stream_nvlink_util_centric(device, stream)
@@ -2342,6 +2341,8 @@ impl Sim {
     /// Inherited by [`Self::kernel`] / [`Self::kernel_bufs`] on this stream.
     /// [`Self::kernel_with`] and graph replay use the launch / node window.
     /// [`None`] clears. Decode identity stays no window.
+    /// Driver `cuStreamSetAttribute` access policy is [`Self::stream_set_access_policy`].
+    /// Identity wrap [`Self::stream_set_access_policy`].
     pub fn set_stream_access_policy(
         &mut self,
         device: DeviceId,
@@ -2357,6 +2358,20 @@ impl Sim {
             let _rm = self.stream_access_policy.remove(&(device, stream));
         }
         Ok(())
+    }
+
+    /// `cuStreamSetAttribute` access policy. Identity with
+    /// [`Self::set_stream_access_policy`] (`cudaStreamSetAttribute` AccessPolicyWindow).
+    ///
+    /// Capture legal. Distinct from [`Self::stream_get_nvlink_util_centric`].
+    /// This VM does not invent occupancy SM counts this slice.
+    pub fn stream_set_access_policy(
+        &mut self,
+        device: DeviceId,
+        stream: StreamId,
+        window: Option<AccessPolicyWindow>,
+    ) -> Result<(), SimError> {
+        self.set_stream_access_policy(device, stream, window)
     }
 
     /// Stream access-policy window, or [`None`] if unset.

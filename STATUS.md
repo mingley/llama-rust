@@ -5,6 +5,13 @@ Visible five-turn extract: [docs/chatgpt-share-6a920fe1.md](docs/chatgpt-share-6
 Complete share-API extract: [docs/chatgpt-share-6a920fe1/](docs/chatgpt-share-6a920fe1/).
 Work lands on `main`. No PRs.
 
+## Shipped 2026-09-02 — CUDA `cuStreamSetAttribute` access policy
+
+`gpu-sim` `Sim::stream_set_access_policy` is `cuStreamSetAttribute` access policy.
+Identity with `set_stream_access_policy` (`cudaStreamSetAttribute` AccessPolicyWindow). Capture legal. Distinct from `stream_get_nvlink_util_centric`.
+This VM does not invent occupancy SM counts or Engine `--stream-set-access-policy`.
+`gpu-profile capture` is still refused. Dual score still has no `$/M tokens`.
+
 ## Shipped 2026-09-02 — CUDA `cuStreamGetAttribute` nvlink util centric
 
 `gpu-sim` `Sim::stream_get_nvlink_util_centric` is `cuStreamGetAttribute` nvlink util centric.
