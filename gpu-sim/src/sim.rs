@@ -16010,6 +16010,8 @@ impl Sim {
     /// `cudaDeviceGetDefaultMemPool`. Query; legal during capture.
     ///
     /// Seeded at construct. [`Self::set_device_mempool`] does not replace it.
+    /// Driver `cuDeviceGetDefaultMemPool` is [`Self::device_get_default_mempool`].
+    /// Identity wrap [`Self::device_get_default_mempool`].
     pub fn default_pool(&self, device: DeviceId) -> Result<PoolId, SimError> {
         let _gpu = self.profile.gpu(device)?;
         self.default_pools
@@ -16018,6 +16020,15 @@ impl Sim {
             .ok_or(SimError::Invalid {
                 why: "default pool missing",
             })
+    }
+
+    /// `cuDeviceGetDefaultMemPool`. Identity with
+    /// [`Self::default_pool`] (`cudaDeviceGetDefaultMemPool`).
+    ///
+    /// Query; legal during capture. Distinct from [`Self::get_device_count`].
+    /// This VM does not invent occupancy SM counts this slice.
+    pub fn device_get_default_mempool(&self, device: DeviceId) -> Result<PoolId, SimError> {
+        self.default_pool(device)
     }
 
     /// `cudaDeviceGetMemPool`. Query; legal during capture.
@@ -24649,7 +24660,6 @@ impl Sim {
     /// [`Self::device_count`] (`cudaGetDeviceCount`).
     ///
     /// Query; legal during capture. Distinct from [`Self::get_device_name`].
-    /// This VM does not invent occupancy SM counts this slice.
     #[must_use]
     pub fn get_device_count(&self) -> u32 {
         self.device_count()
