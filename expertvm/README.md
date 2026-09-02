@@ -517,6 +517,7 @@ compiled kernel exists; no Engine flag).
 `gpu-sim` `event_create` is `cuEventCreate` (identity with `create_event`; no Engine flag).
 `gpu-sim` `event_create_with_flags` is `cuEventCreateWithFlags` (identity with `create_event_with_flags`; no Engine flag).
 `gpu-sim` `event_record` is `cuEventRecord` (identity with `record_event`; no Engine flag).
+`gpu-sim` `event_record_with_flags` is `cuEventRecordWithFlags` (identity with `record_event_with_flags`; no Engine flag).
 `gpu-sim` `func_is_loaded` is `cuFuncIsLoaded` (`false` until a compiled
 kernel exists; no Engine flag).
 `gpu-sim` `func_load` is `cuFuncLoad` (Invalid; no compiled kernel; no

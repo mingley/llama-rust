@@ -5,6 +5,15 @@ Visible five-turn extract: [docs/chatgpt-share-6a920fe1.md](docs/chatgpt-share-6
 Complete share-API extract: [docs/chatgpt-share-6a920fe1/](docs/chatgpt-share-6a920fe1/).
 Work lands on `main`. No PRs.
 
+## Shipped 2026-09-02 — CUDA `cuEventRecordWithFlags`
+
+`gpu-sim` `Sim::event_record_with_flags` is `cuEventRecordWithFlags`.
+Identity with `record_event_with_flags` (`cudaEventRecordWithFlags`).
+Unknown bits are Invalid. Capture-legal. Distinct from `event_record`
+and `record_event_external`.
+This VM does not invent `cuStreamWaitEvent` or Engine `--event-record-with-flags`.
+`gpu-profile capture` is still refused. Dual score still has no `$/M tokens`.
+
 ## Shipped 2026-09-02 — CUDA `cuEventRecord`
 
 `gpu-sim` `Sim::event_record` is `cuEventRecord`.

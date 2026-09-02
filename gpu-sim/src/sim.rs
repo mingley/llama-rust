@@ -23691,6 +23691,23 @@ impl Sim {
         )
     }
 
+    /// `cuEventRecordWithFlags`. Identity with [`Self::record_event_with_flags`]
+    /// (`cudaEventRecordWithFlags`).
+    ///
+    /// Unknown bits are Invalid `"event record flags"`. Capture-legal.
+    /// Distinct from [`Self::event_record`] (default flags) and
+    /// [`Self::record_event_external`]. This VM does not invent
+    /// `cuStreamWaitEvent` this slice (`wait_event` stays).
+    pub fn event_record_with_flags(
+        &mut self,
+        device: DeviceId,
+        event: EventId,
+        stream: StreamId,
+        flags: u32,
+    ) -> Result<OpId, SimError> {
+        self.record_event_with_flags(device, event, stream, flags)
+    }
+
     fn record_event_flags(
         &mut self,
         device: DeviceId,

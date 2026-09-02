@@ -494,6 +494,8 @@
 //! helpers stay.
 //! [`event_record`](Sim::event_record) is `cuEventRecord` (identity with
 //! [`record_event`](Sim::record_event)). Capture-legal. No Engine `--event-record`.
+//! [`event_record_with_flags`](Sim::event_record_with_flags) is `cuEventRecordWithFlags` (identity with
+//! [`record_event_with_flags`](Sim::record_event_with_flags)). Capture-legal. No Engine `--event-record-with-flags`.
 //! [`Sim::destroy_event`] is `cudaEventDestroy` (waits a recorded incomplete
 //! event; never-recorded returns immediately; capture refused).
 //! [`event_destroy`](Sim::event_destroy) is `cuEventDestroy` (identity with
@@ -32610,6 +32612,38 @@ mod tests {
         assert!(sim.event_query(EventId(5)).unwrap());
         sim.begin_capture(d, s).unwrap();
         enq(sim.event_record(d, ev, s));
+        let _g = sim.end_capture().unwrap();
+        sim.free_sync(a).unwrap();
+    }
+
+    #[test]
+    fn event_record_with_flags_is_cu_event_record_with_flags() {
+        let mut sim = Sim::new(h100());
+        let d = DeviceId(0);
+        let s = StreamId(0);
+        let ev = EventId(4);
+        sim.event_create(ev).unwrap();
+        match sim.event_record_with_flags(d, ev, s, 2) {
+            Err(SimError::Invalid { why }) => {
+                assert!(why.contains("event record flags"), "{why}");
+            }
+            other => panic!("{other:?}"),
+        }
+        match sim.record_event_with_flags(d, ev, s, 2) {
+            Err(SimError::Invalid { why }) => {
+                assert!(why.contains("event record flags"), "{why}");
+            }
+            other => panic!("{other:?}"),
+        }
+        let a = sim.alloc(d, 4096, s).unwrap();
+        enq(sim.kernel(d, KernelKind::other(1 << 20, 4096), &[a], &[a], s));
+        enq(sim.event_record_with_flags(d, ev, s, EventRecordFlags::DEFAULT));
+        assert!(!sim.event_query(ev).unwrap());
+        sim.synchronize().unwrap();
+        assert!(sim.event_query(ev).unwrap());
+        sim.begin_capture(d, s).unwrap();
+        enq(sim.event_record_with_flags(d, ev, s, EventRecordFlags::EXTERNAL));
+        enq(sim.record_event_with_flags(d, EventId(5), s, EventRecordFlags::EXTERNAL));
         let _g = sim.end_capture().unwrap();
         sim.free_sync(a).unwrap();
     }

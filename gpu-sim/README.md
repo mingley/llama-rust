@@ -146,6 +146,7 @@ warp scheduler, L1, …   ← do not model
 | `event_create` is identity with `create_event` | `cuEventCreate` |
 | `event_create_with_flags` is identity with `create_event_with_flags` | `cuEventCreateWithFlags` |
 | `event_record` is identity with `record_event` | `cuEventRecord` |
+| `event_record_with_flags` is identity with `record_event_with_flags` | `cuEventRecordWithFlags` |
 | `event_get_flags` is the create flags word | `cudaEventGetFlags` |
 | `event_get_id` is unique per event handle (`EventId + 1`) | `cuEventGetId` |
 | `pool_get_id` is unique per pool handle (`PoolId + 1`); graph-memory pools are legal | `cuMemPoolGetId` |
@@ -1096,6 +1097,7 @@ again).
 `event_create` is `cuEventCreate` (identity with `create_event`, default flags). Host-sync; capture refused. No Engine `--event-create`.
 `event_create_with_flags` is `cuEventCreateWithFlags` (identity with `create_event_with_flags`). Host-sync; capture refused. No Engine `--event-create-with-flags`.
 `event_record` is `cuEventRecord` (identity with `record_event`). Capture-legal. No Engine `--event-record`.
+`event_record_with_flags` is `cuEventRecordWithFlags` (identity with `record_event_with_flags`). Capture-legal. No Engine `--event-record-with-flags`.
 `query_stream` is `cudaStreamQuery` (unknown device is semantic; a busy
 stream is `Ok(false)`; the clock does not advance).
 `stream_query` is `cuStreamQuery` (identity with `query_stream`). Capturing stream is Invalid. No Engine `--stream-query`.
