@@ -5,6 +5,15 @@ Visible five-turn extract: [docs/chatgpt-share-6a920fe1.md](docs/chatgpt-share-6
 Complete share-API extract: [docs/chatgpt-share-6a920fe1/](docs/chatgpt-share-6a920fe1/).
 Work lands on `main`. No PRs.
 
+## Shipped 2026-09-01 — CUDA `cuKernelSetCacheConfig`
+
+`gpu-sim` `Sim::kernel_set_cache_config` is `cuKernelSetCacheConfig`.
+Always Invalid `"kernel cache"` because CUDA kernels are not
+modeled. Query; legal during capture. Distinct from
+`kernel_set_attribute` (why is not `"kernel setattr"`) and from
+`set_func_cache_config`. This VM does not invent `cuLinkAddData` or Engine `--kernel-cache`.
+`gpu-profile capture` is still refused. Dual score still has no `$/M tokens`.
+
 ## Shipped 2026-09-01 — CUDA `cuKernelSetAttribute`
 
 `gpu-sim` `Sim::kernel_set_attribute` is `cuKernelSetAttribute`.

@@ -540,6 +540,8 @@ handle; no Engine flag).
 `CUkernel` attribute; no Engine flag).
 `gpu-sim` `kernel_set_attribute` is `cuKernelSetAttribute` (Invalid; no
 `CUkernel` attribute; no Engine flag).
+`gpu-sim` `kernel_set_cache_config` is `cuKernelSetCacheConfig` (Invalid;
+no `CUkernel` cache config; no Engine flag).
 `gpu-sim` `link_create` is `cuLinkCreate` (Invalid; no JIT linker; no)
 Engine flag).
 `gpu-sim` `get_proc_address` is `cuGetProcAddress` (Invalid; no C ABI

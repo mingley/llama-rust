@@ -1109,6 +1109,9 @@
 //! [`kernel_set_attribute`](Sim::kernel_set_attribute) is
 //! `cuKernelSetAttribute` (always Invalid `"kernel setattr"`). Query;
 //! legal during capture. No Engine `--kernel-setattr`.
+//! [`kernel_set_cache_config`](Sim::kernel_set_cache_config) is
+//! `cuKernelSetCacheConfig` (always Invalid `"kernel cache"`). Query;
+//! legal during capture. No Engine `--kernel-cache`.
 //! [`link_create`](Sim::link_create) is `cuLinkCreate` (always Invalid)
 //! `"jit linker"`). Query; legal during capture. No Engine `--jit-link`.
 //! [`Sim::runtime_get_version`] is `cudaRuntimeGetVersion` (same
@@ -19387,6 +19390,51 @@ mod tests {
         }
         sim.func_set_attribute(d, FuncAttr::NonPortableClusterSizeAllowed, 0)
             .unwrap();
+        match sim.kernel_set_cache_config(d) {
+            Err(SimError::Invalid { why }) => {
+                assert!(why.contains("kernel cache"), "{why}");
+                assert!(!why.contains("kernel setattr"), "{why}");
+            }
+            other => panic!("{other:?}"),
+        }
+        assert_eq!(sim.module_get_loading_mode(), ModuleLoadingMode::Eager);
+    }
+
+    #[test]
+    fn kernel_set_cache_config_is_unsupported() {
+        let mut sim = Sim::new(h100());
+        let d = DeviceId(0);
+        sim.set_func_cache_config(d, FuncCache::PreferNone).unwrap();
+        match sim.kernel_set_cache_config(d) {
+            Err(SimError::Invalid { why }) => {
+                assert!(why.contains("kernel cache"), "{why}");
+                assert!(!why.contains("kernel setattr"), "{why}");
+                assert!(!why.contains("kernel attribute"), "{why}");
+            }
+            other => panic!("{other:?}"),
+        }
+        sim.begin_capture(d, StreamId(0)).unwrap();
+        match sim.kernel_set_cache_config(d) {
+            Err(SimError::Invalid { why }) => {
+                assert!(why.contains("kernel cache"), "{why}");
+            }
+            other => panic!("{other:?}"),
+        }
+        let _g = sim.end_capture().unwrap();
+        match sim.kernel_set_cache_config(DeviceId(99)) {
+            Err(SimError::Invalid { why }) => {
+                assert!(why.contains("device not in profile"), "{why}");
+            }
+            other => panic!("{other:?}"),
+        }
+        match sim.kernel_set_attribute(d) {
+            Err(SimError::Invalid { why }) => {
+                assert!(why.contains("kernel setattr"), "{why}");
+                assert!(!why.contains("kernel cache"), "{why}");
+            }
+            other => panic!("{other:?}"),
+        }
+        assert_eq!(sim.get_func_cache_config(d).unwrap(), FuncCache::PreferNone);
         assert_eq!(sim.module_get_loading_mode(), ModuleLoadingMode::Eager);
     }
 

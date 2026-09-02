@@ -21188,13 +21188,28 @@ impl Sim {
     ///
     /// Always Invalid `"kernel setattr"` (this VM has no `CUkernel`
     /// attribute). Distinct from [`Self::kernel_get_attribute`] (why is not
-    /// `"kernel attribute"`) and from [`Self::func_set_attribute`].
+    /// `"kernel attribute"`) and from [`Self::func_set_attribute`] and from
+    /// [`Self::kernel_set_cache_config`].
     /// Unknown devices are Invalid `"device not in profile"`. Query; legal
     /// during capture.
     pub fn kernel_set_attribute(&self, device: DeviceId) -> Result<(), SimError> {
         let _gpu = self.profile.gpu(device)?;
         Err(SimError::Invalid {
             why: "kernel setattr",
+        })
+    }
+
+    /// `cuKernelSetCacheConfig`. CUDA kernels are not modeled.
+    ///
+    /// Always Invalid `"kernel cache"` (this VM has no `CUkernel` cache
+    /// config). Distinct from [`Self::kernel_set_attribute`] (why is not
+    /// `"kernel setattr"`) and from [`Self::set_func_cache_config`].
+    /// Unknown devices are Invalid `"device not in profile"`. Query; legal
+    /// during capture.
+    pub fn kernel_set_cache_config(&self, device: DeviceId) -> Result<(), SimError> {
+        let _gpu = self.profile.gpu(device)?;
+        Err(SimError::Invalid {
+            why: "kernel cache",
         })
     }
 
@@ -21209,7 +21224,8 @@ impl Sim {
     /// [`Self::library_get_unified_function`] and from
     /// [`Self::kernel_get_function`] and from [`Self::kernel_get_param_info`]
     /// and from [`Self::kernel_get_attribute`] and from
-    /// [`Self::kernel_set_attribute`].
+    /// [`Self::kernel_set_attribute`] and from
+    /// [`Self::kernel_set_cache_config`].
     /// Unknown devices
     /// are Invalid `"device not in profile"`. Query; legal during capture.
     /// This VM does not invent `cuLinkAddData` this slice.
