@@ -9380,7 +9380,14 @@ model, do not celebrate the sim.
     or `cudaChooseDevice`. `gpu-profile capture` is still refused. Dual
     score still has no `$/M tokens`.
 
-1032. [ ] Next numbered PLAN item after 1031 is the next `gpu-sim` / Engine /
+1032. [x] `gpu-sim` `Sim::device_p2p_attribute` is
+    `cuDeviceGetP2PAttribute`. Identity with `device_get_p2p_attribute`
+    (`cudaDeviceGetP2PAttribute`). Query; legal during capture. Distinct from
+    `can_device_access_peer`. This VM does not invent occupancy SM counts, Engine `--device-p2p-attribute`,
+    or `cudaChooseDevice`. `gpu-profile capture` is still refused. Dual
+    score still has no `$/M tokens`.
+
+1033. [ ] Next numbered PLAN item after 1032 is the next `gpu-sim` / Engine /
     serve / expertvm mechanical API that is still missing, or the next official
     decode family. Prefer remaining CUDA-shaped twins over more
     OpenAI HTTP veneer. Do not invent F32 `output.scale`. Do not invent a
@@ -10968,6 +10975,9 @@ model, do not celebrate the sim.
     Do not invent a second `cuDeviceCanAccessPeer` / `can_device_access_peer`.
     Do not invent Engine `--can-device-access-peer`. Do not invent
     occupancy SM counts this slice. Do not reverse DeviceCanAccessPeer identity with device_can_access_peer.
+    Do not invent a second `cuDeviceGetP2PAttribute` / `device_p2p_attribute`.
+    Do not invent Engine `--device-p2p-attribute`. Do not invent
+    occupancy SM counts this slice. Do not reverse DeviceGetP2PAttribute identity with device_get_p2p_attribute.
     Do not invent a second `cudaStreamAddCallback`.
     Do not invent Engine `--stream-callback` (same wall as second live
     `cudaLaunchHostFunc` after miss DMA).
@@ -12634,6 +12644,9 @@ model, do not celebrate the sim.
     Do not invent a second `can_device_access_peer` API. Do not invent
     Engine `--can-device-access-peer-identity`. Do not invent a device-get-p2p-attribute
     this slice. Do not reverse DeviceCanAccessPeer identity with device_can_access_peer.
+    Do not invent a second `device_p2p_attribute` API. Do not invent
+    Engine `--device-p2p-attribute-identity`. Do not invent a device-get-nvscisync-attributes
+    this slice. Do not reverse DeviceGetP2PAttribute identity with device_get_p2p_attribute.
     Do not invent a second DeviceLaunch in-flight destroy-complete check or Engine
     `--device-launch-destroy`. Do not abort an in-flight DeviceLaunch when
     `destroy_graph` succeeds. Do not delay destroy of an idle exec. Do not invent
@@ -14483,6 +14496,9 @@ model, do not celebrate the sim.
     Do not invent a second `can_device_access_peer` method. Do not
     invent Engine `--cu-can-device-access-peer`. Do not reverse wrapping
     cuDeviceCanAccessPeer identity.
+    Do not invent a second `device_p2p_attribute` method. Do not
+    invent Engine `--cu-device-p2p-attribute`. Do not reverse wrapping
+    cuDeviceGetP2PAttribute identity.
     Do not
     spend the next item on an OpenAI-compatible HTTP veneer.
 

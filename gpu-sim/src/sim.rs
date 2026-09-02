@@ -25654,8 +25654,7 @@ impl Sim {
     /// [`Self::device_can_access_peer`] (`cudaDeviceCanAccessPeer`).
     ///
     /// Query; legal during capture. Distinct from
-    /// [`Self::ctx_disable_peer_access`]. This VM does not invent
-    /// occupancy SM counts this slice.
+    /// [`Self::ctx_disable_peer_access`].
     pub fn can_device_access_peer(
         &self,
         device: DeviceId,
@@ -25665,6 +25664,8 @@ impl Sim {
     }
 
     /// `cudaDeviceGetP2PAttribute`. Query; legal during capture.
+    ///
+    /// Driver `cuDeviceGetP2PAttribute` is [`Self::device_p2p_attribute`].
     ///
     /// [`DeviceP2pAttr::AccessSupported`] is a profile device–device link.
     /// [`DeviceP2pAttr::PerformanceRank`] is unique GPU↔GPU link `bps`
@@ -25695,6 +25696,21 @@ impl Sim {
             | DeviceP2pAttr::CudaArrayAccessFromDevice
             | DeviceP2pAttr::OnlyPartialNativeAtomicSupported => 0,
         })
+    }
+
+    /// `cuDeviceGetP2PAttribute`. Identity with
+    /// [`Self::device_get_p2p_attribute`] (`cudaDeviceGetP2PAttribute`).
+    ///
+    /// Query; legal during capture. Distinct from
+    /// [`Self::can_device_access_peer`]. This VM does not invent
+    /// occupancy SM counts this slice.
+    pub fn device_p2p_attribute(
+        &self,
+        src: DeviceId,
+        dst: DeviceId,
+        attr: DeviceP2pAttr,
+    ) -> Result<u64, SimError> {
+        self.device_get_p2p_attribute(src, dst, attr)
     }
 
     /// `cudaDeviceGetNvSciSyncAttributes`. Query; legal during capture.
