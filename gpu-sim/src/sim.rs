@@ -14536,6 +14536,7 @@ impl Sim {
     /// `size` must equal the allocation bytes. Other sizes Invalid
     /// `"advise size"`. Partial advise is not modeled. Typed
     /// [`Self::mem_advise`] stays. Capture cannot include it.
+    /// Driver `cuMemAdvise` is [`Self::mem_advise_n`].
     pub fn mem_advise_with_size(
         &mut self,
         alloc: AllocId,
@@ -14579,6 +14580,21 @@ impl Sim {
         }
         self.clock = self.clock.saturating_add(self.first_alloc_ns().max(1));
         Ok(())
+    }
+
+    /// `cuMemAdvise`. Identity with [`Self::mem_advise_with_size`]
+    /// (`cudaMemAdvise` count).
+    ///
+    /// Capture refused. Distinct from [`Self::mem_advise`]. This VM does not
+    /// invent `cuMemPrefetchAsync` this slice (`prefetch` stays).
+    pub fn mem_advise_n(
+        &mut self,
+        alloc: AllocId,
+        size: u64,
+        advice: MemAdvise,
+        device: DeviceId,
+    ) -> Result<(), SimError> {
+        self.mem_advise_with_size(alloc, size, advice, device)
     }
 
     /// `cudaMemAdvise` / `cudaMemAdvise_v2` with a [`Place`] location.
@@ -16937,8 +16953,7 @@ impl Sim {
     /// `cuMemFreeAsync`. Identity with [`Self::free`] (`cudaFreeAsync`).
     ///
     /// Capture-legal (graph mem free node). Distinct from [`Self::mem_free`]
-    /// (`cuMemFree` host-sync). This VM does not invent `cuMemAdvise` this slice
-    /// (`mem_advise` stays).
+    /// (`cuMemFree` host-sync).
     pub fn mem_free_async(
         &mut self,
         device: DeviceId,
