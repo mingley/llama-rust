@@ -10029,7 +10029,9 @@ impl Sim {
     /// kernel; [`Self::launch_graph`] does. [`KernelNodeParams::ctx`] is
     /// [`None`] (inherit the launch stream). [`KernelNodeParams::shared_mem_bytes`]
     /// stays `0`. Pin a green context or dynamic shared through
-    /// [`Self::graph_add_node`] with [`GraphNodeParams::Kernel`].
+    /// [`Self::graph_add_node`] with [`GraphNodeParams::Kernel`]. Driver
+    /// `cuGraphAddKernelNode` is
+    /// [`Self::add_graph_kernel`].
     pub fn graph_add_kernel(
         &mut self,
         graph: GraphId,
@@ -10038,6 +10040,22 @@ impl Sim {
         writes: &[AllocId],
     ) -> Result<(), SimError> {
         self.graph_add_kernel_node(graph, kind, reads, writes, false)
+    }
+
+    /// `cuGraphAddKernelNode`. Identity with
+    /// [`Self::graph_add_kernel`] (`cudaGraphAddKernelNode`).
+    ///
+    /// Capture refused. Distinct from
+    /// [`Self::add_graph_event_wait`]. This VM does not invent
+    /// occupancy SM counts this slice.
+    pub fn add_graph_kernel(
+        &mut self,
+        graph: GraphId,
+        kind: KernelKind,
+        reads: &[AllocId],
+        writes: &[AllocId],
+    ) -> Result<(), SimError> {
+        self.graph_add_kernel(graph, kind, reads, writes)
     }
 
     /// `cudaGraphAddKernelNode` for a [`Self::cooperative_kernel`] launch.
@@ -10748,8 +10766,7 @@ impl Sim {
     /// [`Self::graph_add_event_wait`] (`cudaGraphAddEventWaitNode`).
     ///
     /// Capture refused. Distinct from
-    /// [`Self::add_graph_event_record`]. This VM does not invent
-    /// occupancy SM counts this slice.
+    /// [`Self::add_graph_event_record`].
     pub fn add_graph_event_wait(
         &mut self,
         graph: GraphId,
