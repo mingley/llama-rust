@@ -16603,8 +16603,7 @@ impl Sim {
     /// `cuMemPrefetchAsync` count. Identity with [`Self::prefetch_with_size`]
     /// (`cudaMemPrefetchAsync` count).
     ///
-    /// Capture-legal (memcpy). Distinct from [`Self::mem_prefetch`]. This VM
-    /// does not invent `mem_prefetch_host` this slice (`prefetch_host` stays).
+    /// Capture-legal (memcpy). Distinct from [`Self::mem_prefetch`].
     pub fn mem_prefetch_n(
         &mut self,
         device: DeviceId,
@@ -16619,6 +16618,7 @@ impl Sim {
     ///
     /// Submit on `device`'s `stream` (the stream that owns the work). Already
     /// on the host is a 1 ns no-op on that stream.
+    /// Driver host dest `cuMemPrefetchAsync` is [`Self::mem_prefetch_host`].
     pub fn prefetch_host(
         &mut self,
         device: DeviceId,
@@ -16627,6 +16627,21 @@ impl Sim {
     ) -> Result<OpId, SimError> {
         let size = self.alloc_ref(alloc)?.bytes;
         self.prefetch_host_with_size(device, alloc, size, stream)
+    }
+
+    /// Host dest `cuMemPrefetchAsync`. Identity with [`Self::prefetch_host`]
+    /// (`cudaMemPrefetchAsync` cpu device).
+    ///
+    /// Capture-legal (memcpy). Distinct from [`Self::mem_prefetch`]. This VM
+    /// does not invent `mem_prefetch_host_n` this slice
+    /// (`prefetch_host_with_size` stays).
+    pub fn mem_prefetch_host(
+        &mut self,
+        device: DeviceId,
+        alloc: AllocId,
+        stream: StreamId,
+    ) -> Result<OpId, SimError> {
+        self.prefetch_host(device, alloc, stream)
     }
 
     /// [`Self::prefetch_host`] with the CUDA `count` argument.

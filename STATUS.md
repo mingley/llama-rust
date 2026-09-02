@@ -5,6 +5,14 @@ Visible five-turn extract: [docs/chatgpt-share-6a920fe1.md](docs/chatgpt-share-6
 Complete share-API extract: [docs/chatgpt-share-6a920fe1/](docs/chatgpt-share-6a920fe1/).
 Work lands on `main`. No PRs.
 
+## Shipped 2026-09-02 — CUDA host dest `cuMemPrefetchAsync`
+
+`gpu-sim` `Sim::mem_prefetch_host` is host dest `cuMemPrefetchAsync`.
+Identity with `prefetch_host` (`cudaMemPrefetchAsync` cpu device).
+Capture-legal (memcpy). Distinct from `mem_prefetch`.
+This VM does not invent `mem_prefetch_host_n` or Engine `--mem-prefetch-host`.
+`gpu-profile capture` is still refused. Dual score still has no `$/M tokens`.
+
 ## Shipped 2026-09-02 — CUDA `cuMemPrefetchAsync` count
 
 `gpu-sim` `Sim::mem_prefetch_n` is `cuMemPrefetchAsync` count.

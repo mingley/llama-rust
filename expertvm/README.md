@@ -545,6 +545,7 @@ compiled kernel exists; no Engine flag).
 `gpu-sim` `mem_prefetch` is `cuMemPrefetchAsync` (identity with `prefetch`; no Engine flag).
 `gpu-sim` `mem_prefetch_v2` is `cuMemPrefetchAsync_v2` (identity with `prefetch_with_flags`; no Engine flag).
 `gpu-sim` `mem_prefetch_n` is `cuMemPrefetchAsync` count (identity with `prefetch_with_size`; no Engine flag).
+`gpu-sim` `mem_prefetch_host` is host dest `cuMemPrefetchAsync` (identity with `prefetch_host`; no Engine flag).
 `gpu-sim` `func_is_loaded` is `cuFuncIsLoaded` (`false` until a compiled
 kernel exists; no Engine flag).
 `gpu-sim` `func_load` is `cuFuncLoad` (Invalid; no compiled kernel; no
