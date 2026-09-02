@@ -7794,8 +7794,7 @@ impl Sim {
     /// [`Self::graph_set_conditional_params`] (`cudaGraphNodeSetParams`).
     ///
     /// Capture refused. Distinct from
-    /// [`Self::graph_exec_set_conditional_params`]. This VM does not invent
-    /// occupancy SM counts this slice.
+    /// [`Self::graph_exec_set_conditional_params`].
     pub fn set_graph_conditional_params(
         &mut self,
         graph: GraphId,
@@ -7810,6 +7809,8 @@ impl Sim {
     /// [`CondId`] must match (topology). `value` may change. Pays
     /// `graph_set_params_ns` and clears the upload flag. Capture cannot
     /// include it. Graphs with mem alloc/free nodes are legal.
+    /// Driver `cuGraphExecNodeSetParams` for a set-conditional node is
+    /// [`Self::set_graph_exec_conditional_params`].
     pub fn graph_exec_set_conditional_params(
         &mut self,
         exec: GraphId,
@@ -7818,6 +7819,21 @@ impl Sim {
     ) -> Result<(), SimError> {
         let handle = self.set_conditional_handle(exec, node, true)?;
         self.set_conditional_node_params(exec, node, handle, value, true)
+    }
+
+    /// `cuGraphExecNodeSetParams` for a set-conditional node. Identity with
+    /// [`Self::graph_exec_set_conditional_params`] (`cudaGraphExecNodeSetParams`).
+    ///
+    /// Capture refused. Distinct from
+    /// [`Self::set_graph_conditional_params`]. This VM does not invent
+    /// occupancy SM counts this slice.
+    pub fn set_graph_exec_conditional_params(
+        &mut self,
+        exec: GraphId,
+        node: usize,
+        value: u32,
+    ) -> Result<(), SimError> {
+        self.graph_exec_set_conditional_params(exec, node, value)
     }
 
     fn set_conditional_handle(
