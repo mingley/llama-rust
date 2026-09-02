@@ -5,6 +5,13 @@ Visible five-turn extract: [docs/chatgpt-share-6a920fe1.md](docs/chatgpt-share-6
 Complete share-API extract: [docs/chatgpt-share-6a920fe1/](docs/chatgpt-share-6a920fe1/).
 Work lands on `main`. No PRs.
 
+## Shipped 2026-09-02 — CUDA `cuFuncSetCacheConfig`
+
+`gpu-sim` `Sim::func_set_cache_config` is `cuFuncSetCacheConfig`.
+Identity with `set_func_cache_config` (`cudaFuncSetCacheConfig`). Capture refused. Distinct from `func_get_shared_mem_config`.
+This VM does not invent occupancy SM counts or Engine `--func-set-cache-config`.
+`gpu-profile capture` is still refused. Dual score still has no `$/M tokens`.
+
 ## Shipped 2026-09-02 — CUDA `cuFuncGetSharedMemConfig`
 
 `gpu-sim` `Sim::func_get_shared_mem_config` is `cuFuncGetSharedMemConfig`.

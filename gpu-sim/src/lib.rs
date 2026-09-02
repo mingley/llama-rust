@@ -890,6 +890,10 @@
 //! [`func_get_shared_mem_config`](Sim::func_get_shared_mem_config) is `cuFuncGetSharedMemConfig` (identity with
 //! [`get_func_shared_mem_config`](Sim::get_func_shared_mem_config)). Query; legal during capture. Distinct from
 //! [`func_set_shared_mem_config`](Sim::func_set_shared_mem_config). No Engine `--func-get-shared-mem-config`.
+
+//! [`func_set_cache_config`](Sim::func_set_cache_config) is `cuFuncSetCacheConfig` (identity with
+//! [`set_func_cache_config`](Sim::set_func_cache_config)). Capture refused. Distinct from
+//! [`func_get_shared_mem_config`](Sim::func_get_shared_mem_config). No Engine `--func-set-cache-config`.
 //! [`Sim::ipc_get_event`] / [`ipc_open_event`](Sim::ipc_open_event) are
 //! `cudaIpcGetEventHandle` / `cudaIpcOpenEventHandle` (interprocess events).
 //! [`Sim::create_shareable_pool`] is `cudaMemPoolCreate` with a POSIX-FD handle
@@ -1804,6 +1808,10 @@
 //! [`func_get_shared_mem_config`](Sim::func_get_shared_mem_config) is `cuFuncGetSharedMemConfig` (identity with
 //! [`get_func_shared_mem_config`](Sim::get_func_shared_mem_config)). Query; legal during capture. Distinct from
 //! [`func_set_shared_mem_config`](Sim::func_set_shared_mem_config). No Engine `--func-get-shared-mem-config`.
+
+//! [`func_set_cache_config`](Sim::func_set_cache_config) is `cuFuncSetCacheConfig` (identity with
+//! [`set_func_cache_config`](Sim::set_func_cache_config)). Capture refused. Distinct from
+//! [`func_get_shared_mem_config`](Sim::func_get_shared_mem_config). No Engine `--func-set-cache-config`.
 //! [`HardwareProfile::host_pin_bytes`] caps `cudaMallocHost` / `cudaHostRegister`.
 //! [`Sim::idle_until`] drains, then jumps the virtual clock (open-loop arrivals).
 //! [`Sim::event_elapsed_ns`] is `cudaEventElapsedTime` in nanoseconds.
@@ -2586,6 +2594,10 @@
 //! [`func_get_shared_mem_config`](Sim::func_get_shared_mem_config) is `cuFuncGetSharedMemConfig` (identity with
 //! [`get_func_shared_mem_config`](Sim::get_func_shared_mem_config)). Query; legal during capture. Distinct from
 //! [`func_set_shared_mem_config`](Sim::func_set_shared_mem_config). No Engine `--func-get-shared-mem-config`.
+
+//! [`func_set_cache_config`](Sim::func_set_cache_config) is `cuFuncSetCacheConfig` (identity with
+//! [`set_func_cache_config`](Sim::set_func_cache_config)). Capture refused. Distinct from
+//! [`func_get_shared_mem_config`](Sim::func_get_shared_mem_config). No Engine `--func-set-cache-config`.
 //! [`mem_host_get_flags`](Sim::mem_host_get_flags) is `cuMemHostGetFlags` (identity with
 //! [`host_get_flags`](Sim::host_get_flags)). Query; legal during capture. No Engine `--mem-host-get-flags`.
 //! [`mem_host_get_device_pointer`](Sim::mem_host_get_device_pointer) is `cuMemHostGetDevicePointer` (identity with
@@ -3334,6 +3346,10 @@
 //! [`func_get_shared_mem_config`](Sim::func_get_shared_mem_config) is `cuFuncGetSharedMemConfig` (identity with
 //! [`get_func_shared_mem_config`](Sim::get_func_shared_mem_config)). Query; legal during capture. Distinct from
 //! [`func_set_shared_mem_config`](Sim::func_set_shared_mem_config). No Engine `--func-get-shared-mem-config`.
+
+//! [`func_set_cache_config`](Sim::func_set_cache_config) is `cuFuncSetCacheConfig` (identity with
+//! [`set_func_cache_config`](Sim::set_func_cache_config)). Capture refused. Distinct from
+//! [`func_get_shared_mem_config`](Sim::func_get_shared_mem_config). No Engine `--func-set-cache-config`.
 //! [`Sim::pointer_get_attributes`] is `cudaPointerGetAttributes`.
 //! [`pointer_set_attribute`](Sim::pointer_set_attribute) /
 //! [`pointer_get_attribute`](Sim::pointer_get_attribute) are
@@ -4489,6 +4505,10 @@
 //! [`func_get_shared_mem_config`](Sim::func_get_shared_mem_config) is `cuFuncGetSharedMemConfig` (identity with
 //! [`get_func_shared_mem_config`](Sim::get_func_shared_mem_config)). Query; legal during capture. Distinct from
 //! [`func_set_shared_mem_config`](Sim::func_set_shared_mem_config). No Engine `--func-get-shared-mem-config`.
+
+//! [`func_set_cache_config`](Sim::func_set_cache_config) is `cuFuncSetCacheConfig` (identity with
+//! [`set_func_cache_config`](Sim::set_func_cache_config)). Capture refused. Distinct from
+//! [`func_get_shared_mem_config`](Sim::func_get_shared_mem_config). No Engine `--func-set-cache-config`.
 //! [`Sim::stream_get_device`] is `cudaStreamGetDevice` / `cuStreamGetDevice`
 //! (the device of the stream; green-ctx streams return the ctx create
 //! device). Query; legal during capture. Distinct from
@@ -5073,6 +5093,10 @@
 //! [`func_get_shared_mem_config`](Sim::func_get_shared_mem_config) is `cuFuncGetSharedMemConfig` (identity with
 //! [`get_func_shared_mem_config`](Sim::get_func_shared_mem_config)). Query; legal during capture. Distinct from
 //! [`func_set_shared_mem_config`](Sim::func_set_shared_mem_config). No Engine `--func-get-shared-mem-config`.
+
+//! [`func_set_cache_config`](Sim::func_set_cache_config) is `cuFuncSetCacheConfig` (identity with
+//! [`set_func_cache_config`](Sim::set_func_cache_config)). Capture refused. Distinct from
+//! [`func_get_shared_mem_config`](Sim::func_get_shared_mem_config). No Engine `--func-set-cache-config`.
 //! [`set_stream_access_policy`](Sim::set_stream_access_policy) is
 //! `cudaStreamAttributeAccessPolicyWindow`: [`kernel`](Sim::kernel) /
 //! [`kernel_bufs`](Sim::kernel_bufs) inherit it; [`kernel_with`](Sim::kernel_with)
@@ -6142,6 +6166,10 @@
 //! [`func_get_shared_mem_config`](Sim::func_get_shared_mem_config) is `cuFuncGetSharedMemConfig` (identity with
 //! [`get_func_shared_mem_config`](Sim::get_func_shared_mem_config)). Query; legal during capture. Distinct from
 //! [`func_set_shared_mem_config`](Sim::func_set_shared_mem_config). No Engine `--func-get-shared-mem-config`.
+
+//! [`func_set_cache_config`](Sim::func_set_cache_config) is `cuFuncSetCacheConfig` (identity with
+//! [`set_func_cache_config`](Sim::set_func_cache_config)). Capture refused. Distinct from
+//! [`func_get_shared_mem_config`](Sim::func_get_shared_mem_config). No Engine `--func-set-cache-config`.
 //! [`Sim::set_stream_priority`] is the priority-only helper;
 //! [`stream_create_with_priority`](Sim::stream_create_with_priority) is
 //! `cudaStreamCreateWithPriority` (flags plus priority; clamped to
@@ -6744,6 +6772,10 @@
 //! [`func_get_shared_mem_config`](Sim::func_get_shared_mem_config) is `cuFuncGetSharedMemConfig` (identity with
 //! [`get_func_shared_mem_config`](Sim::get_func_shared_mem_config)). Query; legal during capture. Distinct from
 //! [`func_set_shared_mem_config`](Sim::func_set_shared_mem_config). No Engine `--func-get-shared-mem-config`.
+
+//! [`func_set_cache_config`](Sim::func_set_cache_config) is `cuFuncSetCacheConfig` (identity with
+//! [`set_func_cache_config`](Sim::set_func_cache_config)). Capture refused. Distinct from
+//! [`func_get_shared_mem_config`](Sim::func_get_shared_mem_config). No Engine `--func-set-cache-config`.
 //! [`destroy_stream`](Sim::destroy_stream) is `cudaStreamDestroy` (returns
 //! immediately; in-flight work still completes; NULL is Invalid; recreate
 //! while unfinished is `"stream in flight"`). Capture cannot include it.
@@ -7326,6 +7358,10 @@
 //! [`func_get_shared_mem_config`](Sim::func_get_shared_mem_config) is `cuFuncGetSharedMemConfig` (identity with
 //! [`get_func_shared_mem_config`](Sim::get_func_shared_mem_config)). Query; legal during capture. Distinct from
 //! [`func_set_shared_mem_config`](Sim::func_set_shared_mem_config). No Engine `--func-get-shared-mem-config`.
+
+//! [`func_set_cache_config`](Sim::func_set_cache_config) is `cuFuncSetCacheConfig` (identity with
+//! [`set_func_cache_config`](Sim::set_func_cache_config)). Capture refused. Distinct from
+//! [`func_get_shared_mem_config`](Sim::func_get_shared_mem_config). No Engine `--func-set-cache-config`.
 //! [`Sim::instantiate_graph`] is `cudaGraphInstantiate` (host-sync; returns a
 //! new exec id; first [`launch_graph`](Sim::launch_graph) of a definition
 //! creates a primary exec). Unused conditional handles are
@@ -7937,6 +7973,10 @@
 //! [`func_get_shared_mem_config`](Sim::func_get_shared_mem_config) is `cuFuncGetSharedMemConfig` (identity with
 //! [`get_func_shared_mem_config`](Sim::get_func_shared_mem_config)). Query; legal during capture. Distinct from
 //! [`func_set_shared_mem_config`](Sim::func_set_shared_mem_config). No Engine `--func-get-shared-mem-config`.
+
+//! [`func_set_cache_config`](Sim::func_set_cache_config) is `cuFuncSetCacheConfig` (identity with
+//! [`set_func_cache_config`](Sim::set_func_cache_config)). Capture refused. Distinct from
+//! [`func_get_shared_mem_config`](Sim::func_get_shared_mem_config). No Engine `--func-set-cache-config`.
 //! [`graph_kernel_node_get_priority`](Sim::graph_kernel_node_get_priority) /
 //! [`graph_kernel_node_set_priority`](Sim::graph_kernel_node_set_priority) /
 //! [`graph_kernel_node_copy_attributes`](Sim::graph_kernel_node_copy_attributes)
@@ -8507,6 +8547,10 @@
 //! [`func_get_shared_mem_config`](Sim::func_get_shared_mem_config) is `cuFuncGetSharedMemConfig` (identity with
 //! [`get_func_shared_mem_config`](Sim::get_func_shared_mem_config)). Query; legal during capture. Distinct from
 //! [`func_set_shared_mem_config`](Sim::func_set_shared_mem_config). No Engine `--func-get-shared-mem-config`.
+
+//! [`func_set_cache_config`](Sim::func_set_cache_config) is `cuFuncSetCacheConfig` (identity with
+//! [`set_func_cache_config`](Sim::set_func_cache_config)). Capture refused. Distinct from
+//! [`func_get_shared_mem_config`](Sim::func_get_shared_mem_config). No Engine `--func-set-cache-config`.
 //! [`graph_kernel_node_get_attribute`](Sim::graph_kernel_node_get_attribute) /
 //! [`graph_exec_kernel_node_get_attribute`](Sim::graph_exec_kernel_node_get_attribute) /
 //! [`graph_kernel_node_set_attribute`](Sim::graph_kernel_node_set_attribute) /
@@ -9083,6 +9127,10 @@
 //! [`func_get_shared_mem_config`](Sim::func_get_shared_mem_config) is `cuFuncGetSharedMemConfig` (identity with
 //! [`get_func_shared_mem_config`](Sim::get_func_shared_mem_config)). Query; legal during capture. Distinct from
 //! [`func_set_shared_mem_config`](Sim::func_set_shared_mem_config). No Engine `--func-get-shared-mem-config`.
+
+//! [`func_set_cache_config`](Sim::func_set_cache_config) is `cuFuncSetCacheConfig` (identity with
+//! [`set_func_cache_config`](Sim::set_func_cache_config)). Capture refused. Distinct from
+//! [`func_get_shared_mem_config`](Sim::func_get_shared_mem_config). No Engine `--func-set-cache-config`.
 //! Device-launch
 //! execs cannot attach programmatic or launch-completion events.
 //! [`kernel_pdl`](Sim::kernel_pdl) is `cudaLaunchKernelEx` PDL: a wait kernel
@@ -9787,6 +9835,10 @@
 //! [`func_get_shared_mem_config`](Sim::func_get_shared_mem_config) is `cuFuncGetSharedMemConfig` (identity with
 //! [`get_func_shared_mem_config`](Sim::get_func_shared_mem_config)). Query; legal during capture. Distinct from
 //! [`func_set_shared_mem_config`](Sim::func_set_shared_mem_config). No Engine `--func-get-shared-mem-config`.
+
+//! [`func_set_cache_config`](Sim::func_set_cache_config) is `cuFuncSetCacheConfig` (identity with
+//! [`set_func_cache_config`](Sim::set_func_cache_config)). Capture refused. Distinct from
+//! [`func_get_shared_mem_config`](Sim::func_get_shared_mem_config). No Engine `--func-set-cache-config`.
 //! [`graph_exec_memcpy_set_params`](Sim::graph_exec_memcpy_set_params) /
 //! [`graph_exec_memcpy_set_params_1d`](Sim::graph_exec_memcpy_set_params_1d) /
 //! [`graph_exec_memcpy_set_params_2d`](Sim::graph_exec_memcpy_set_params_2d) /
@@ -10355,6 +10407,10 @@
 //! [`func_get_shared_mem_config`](Sim::func_get_shared_mem_config) is `cuFuncGetSharedMemConfig` (identity with
 //! [`get_func_shared_mem_config`](Sim::get_func_shared_mem_config)). Query; legal during capture. Distinct from
 //! [`func_set_shared_mem_config`](Sim::func_set_shared_mem_config). No Engine `--func-get-shared-mem-config`.
+
+//! [`func_set_cache_config`](Sim::func_set_cache_config) is `cuFuncSetCacheConfig` (identity with
+//! [`set_func_cache_config`](Sim::set_func_cache_config)). Capture refused. Distinct from
+//! [`func_get_shared_mem_config`](Sim::func_get_shared_mem_config). No Engine `--func-set-cache-config`.
 //! [`get_graph_kernel_node_params`](Sim::get_graph_kernel_node_params) is `cuGraphKernelNodeGetParams` (identity with
 //! [`graph_kernel_get_params`](Sim::graph_kernel_get_params)). Query; legal during capture. Distinct from
 //! [`graph_exec_kernel_get_params`](Sim::graph_exec_kernel_get_params). No Engine `--graph-kernel-get-params`.
@@ -10902,6 +10958,10 @@
 //! [`func_get_shared_mem_config`](Sim::func_get_shared_mem_config) is `cuFuncGetSharedMemConfig` (identity with
 //! [`get_func_shared_mem_config`](Sim::get_func_shared_mem_config)). Query; legal during capture. Distinct from
 //! [`func_set_shared_mem_config`](Sim::func_set_shared_mem_config). No Engine `--func-get-shared-mem-config`.
+
+//! [`func_set_cache_config`](Sim::func_set_cache_config) is `cuFuncSetCacheConfig` (identity with
+//! [`set_func_cache_config`](Sim::set_func_cache_config)). Capture refused. Distinct from
+//! [`func_get_shared_mem_config`](Sim::func_get_shared_mem_config). No Engine `--func-set-cache-config`.
 //! [`graph_exec_kernel_get_params`](Sim::graph_exec_kernel_get_params) /
 //! [`graph_exec_memcpy_get_params`](Sim::graph_exec_memcpy_get_params) /
 //! [`graph_exec_memset_get_params`](Sim::graph_exec_memset_get_params) /
@@ -11440,6 +11500,10 @@
 //! [`func_get_shared_mem_config`](Sim::func_get_shared_mem_config) is `cuFuncGetSharedMemConfig` (identity with
 //! [`get_func_shared_mem_config`](Sim::get_func_shared_mem_config)). Query; legal during capture. Distinct from
 //! [`func_set_shared_mem_config`](Sim::func_set_shared_mem_config). No Engine `--func-get-shared-mem-config`.
+
+//! [`func_set_cache_config`](Sim::func_set_cache_config) is `cuFuncSetCacheConfig` (identity with
+//! [`set_func_cache_config`](Sim::set_func_cache_config)). Capture refused. Distinct from
+//! [`func_get_shared_mem_config`](Sim::func_get_shared_mem_config). No Engine `--func-set-cache-config`.
 //! [`get_graph_exec_kernel_node_params`](Sim::get_graph_exec_kernel_node_params) is `cuGraphExecKernelNodeGetParams` (identity with
 //! [`graph_exec_kernel_get_params`](Sim::graph_exec_kernel_get_params)). Query; legal during capture. Distinct from
 //! [`get_graph_kernel_node_params`](Sim::get_graph_kernel_node_params). No Engine `--graph-exec-kernel-get-params`.
@@ -11984,6 +12048,10 @@
 //! [`func_get_shared_mem_config`](Sim::func_get_shared_mem_config) is `cuFuncGetSharedMemConfig` (identity with
 //! [`get_func_shared_mem_config`](Sim::get_func_shared_mem_config)). Query; legal during capture. Distinct from
 //! [`func_set_shared_mem_config`](Sim::func_set_shared_mem_config). No Engine `--func-get-shared-mem-config`.
+
+//! [`func_set_cache_config`](Sim::func_set_cache_config) is `cuFuncSetCacheConfig` (identity with
+//! [`set_func_cache_config`](Sim::set_func_cache_config)). Capture refused. Distinct from
+//! [`func_get_shared_mem_config`](Sim::func_get_shared_mem_config). No Engine `--func-set-cache-config`.
 //! [`graph_exec_batch_mem_op_set_params`](Sim::graph_exec_batch_mem_op_set_params)
 //! is `cudaGraphExecBatchMemOpNodeSetParams` (id/offset/value; wait vs write,
 //! `bits32`, and compare stay on wait/write nodes;
@@ -39929,6 +39997,53 @@ mod tests {
         );
         let g2 = eight.end_capture().unwrap();
         assert_eq!(eight.graph_len(g2).unwrap(), 0);
+    }
+
+    #[test]
+    fn func_set_cache_config_is_cu_func_set_cache_config() {
+        let mut sim = Sim::new(h100());
+        let d = DeviceId(0);
+        let s = StreamId(0);
+        let cache = FuncCache::PreferL1;
+        match sim.func_set_cache_config(DeviceId(1), cache) {
+            Err(SimError::Invalid { why }) => assert!(why.contains("device"), "{why}"),
+            other => panic!("{other:?}"),
+        }
+        match sim.set_func_cache_config(DeviceId(1), cache) {
+            Err(SimError::Invalid { why }) => assert!(why.contains("device"), "{why}"),
+            other => panic!("{other:?}"),
+        }
+        sim.func_set_cache_config(d, cache).unwrap();
+        assert_eq!(sim.get_func_cache_config(d).unwrap(), cache);
+        sim.set_func_cache_config(d, cache).unwrap();
+        assert_eq!(sim.get_func_cache_config(d).unwrap(), cache);
+        sim.begin_capture(d, s).unwrap();
+        match sim.func_set_cache_config(d, FuncCache::PreferNone) {
+            Err(SimError::Invalid { why }) => assert!(why.contains("capture"), "{why}"),
+            other => panic!("{other:?}"),
+        }
+        match sim.set_func_cache_config(d, FuncCache::PreferNone) {
+            Err(SimError::Invalid { why }) => assert!(why.contains("capture"), "{why}"),
+            other => panic!("{other:?}"),
+        }
+        let g = sim.end_capture().unwrap();
+        assert_eq!(sim.graph_len(g).unwrap(), 0);
+        let mut eight = Sim::new(HardwareProfile::example_8xh100_nvlink());
+        let d1 = DeviceId(1);
+        eight.func_set_cache_config(d1, cache).unwrap();
+        assert_eq!(eight.get_func_cache_config(d1).unwrap(), cache);
+        eight.set_func_cache_config(d1, cache).unwrap();
+        eight.begin_capture(d1, s).unwrap();
+        match eight.func_set_cache_config(d1, FuncCache::PreferNone) {
+            Err(SimError::Invalid { why }) => assert!(why.contains("capture"), "{why}"),
+            other => panic!("{other:?}"),
+        }
+        match eight.set_func_cache_config(d1, FuncCache::PreferNone) {
+            Err(SimError::Invalid { why }) => assert!(why.contains("capture"), "{why}"),
+            other => panic!("{other:?}"),
+        }
+        let g3 = eight.end_capture().unwrap();
+        assert_eq!(eight.graph_len(g3).unwrap(), 0);
     }
 
     #[test]

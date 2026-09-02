@@ -22717,7 +22717,6 @@ impl Sim {
     /// [`Self::get_func_shared_mem_config`] (`cudaFuncGetSharedMemConfig`).
     ///
     /// Query; legal during capture. Distinct from [`Self::func_set_shared_mem_config`].
-    /// This VM does not invent occupancy SM counts this slice.
     pub fn func_get_shared_mem_config(
         &self,
         device: DeviceId,
@@ -22751,6 +22750,8 @@ impl Sim {
     ///
     /// Per device (this VM is not per kernel-function object). Stored; L1 is
     /// not modeled. Decode identity stays PreferNone.
+    /// Driver `cuFuncSetCacheConfig` is [`Self::func_set_cache_config`].
+    /// Identity wrap [`Self::func_set_cache_config`].
     pub fn set_func_cache_config(
         &mut self,
         device: DeviceId,
@@ -22761,6 +22762,19 @@ impl Sim {
         self.gpu_rt_mut(device)?.func_cache_config = cache;
         self.clock = self.clock.saturating_add(1);
         Ok(())
+    }
+
+    /// `cuFuncSetCacheConfig`. Identity with
+    /// [`Self::set_func_cache_config`] (`cudaFuncSetCacheConfig`).
+    ///
+    /// Capture refused. Distinct from [`Self::func_get_shared_mem_config`].
+    /// This VM does not invent occupancy SM counts this slice.
+    pub fn func_set_cache_config(
+        &mut self,
+        device: DeviceId,
+        cache: FuncCache,
+    ) -> Result<(), SimError> {
+        self.set_func_cache_config(device, cache)
     }
 
     /// Current [`Self::set_func_cache_config`]. Query; legal during capture.

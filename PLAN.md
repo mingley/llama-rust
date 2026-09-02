@@ -9584,7 +9584,12 @@ model, do not celebrate the sim.
       `func_set_shared_mem_config`. This VM does not invent occupancy SM counts, Engine `--func-get-shared-mem-config`,
       or `cudaChooseDevice`. `gpu-profile capture` is still refused. Dual
       score still has no `$/M tokens`.
-1065. [ ] Next numbered PLAN item after 1064 is the next `gpu-sim` / Engine /
+1065. [x] `gpu-sim` `Sim::func_set_cache_config` is
+      `cuFuncSetCacheConfig`. Identity with `set_func_cache_config` (`cudaFuncSetCacheConfig`). Capture refused. Distinct from
+      `func_get_shared_mem_config`. This VM does not invent occupancy SM counts, Engine `--func-set-cache-config`,
+      or `cudaChooseDevice`. `gpu-profile capture` is still refused. Dual
+      score still has no `$/M tokens`.
+1066. [ ] Next numbered PLAN item after 1065 is the next `gpu-sim` / Engine /
     serve / expertvm mechanical API that is still missing, or the next official
     decode family. Prefer remaining CUDA-shaped twins over more
     OpenAI HTTP veneer. Do not invent F32 `output.scale`. Do not invent a
@@ -11298,6 +11303,10 @@ model, do not celebrate the sim.
     Do not invent Engine `--func-get-shared-mem-config`. Do not invent
     occupancy SM counts this slice. Do not reverse FuncGetSharedMemConfig identity with get_func_shared_mem_config.
     Do not invent `cuCtxGetSharedMemConfig` as `func_get_shared_mem_config`.
+    Do not invent a second `cuFuncSetCacheConfig` / `func_set_cache_config`.
+    Do not invent Engine `--func-set-cache-config`. Do not invent
+    occupancy SM counts this slice. Do not reverse FuncSetCacheConfig identity with set_func_cache_config.
+    Do not invent `cuCtxSetCacheConfig` as `func_set_cache_config`.
     Do not invent a second `cudaStreamAddCallback`.
     Do not invent Engine `--stream-callback` (same wall as second live
     `cudaLaunchHostFunc` after miss DMA).
@@ -13063,6 +13072,9 @@ model, do not celebrate the sim.
     Do not invent a second `func_get_shared_mem_config` API. Do not invent
     Engine `--func-get-shared-mem-config-identity`. Do not invent a func-set-cache-config
     this slice. Do not reverse FuncGetSharedMemConfig identity with get_func_shared_mem_config.
+    Do not invent a second `func_set_cache_config` API. Do not invent
+    Engine `--func-set-cache-config-identity`. Do not invent a func-get-cache-config
+    this slice. Do not reverse FuncSetCacheConfig identity with set_func_cache_config.
     Do not invent a second DeviceLaunch in-flight destroy-complete check or Engine
     `--device-launch-destroy`. Do not abort an in-flight DeviceLaunch when
     `destroy_graph` succeeds. Do not delay destroy of an idle exec. Do not invent
@@ -15011,6 +15023,9 @@ model, do not celebrate the sim.
     Do not invent a second `func_get_shared_mem_config` method. Do not
     invent Engine `--cu-func-get-shared-mem-config`. Do not reverse wrapping
     cuFuncGetSharedMemConfig identity. Do not wrap `cuCtxGetSharedMemConfig` as `func_get_shared_mem_config`.
+    Do not invent a second `func_set_cache_config` method. Do not
+    invent Engine `--cu-func-set-cache-config`. Do not reverse wrapping
+    cuFuncSetCacheConfig identity. Do not wrap `cuCtxSetCacheConfig` as `func_set_cache_config`.
     Do not
     spend the next item on an OpenAI-compatible HTTP veneer.
 
