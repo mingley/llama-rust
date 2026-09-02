@@ -7402,7 +7402,14 @@ model, do not celebrate the sim.
     or `cudaChooseDevice`. `gpu-profile capture` is still refused. Dual
     score still has no `$/M tokens`.
 
-750. [ ] Next numbered PLAN item after 749 is the next `gpu-sim` / Engine /
+750. [x] `gpu-sim` `Sim::tex_ref_destroy` is
+    `cuTexRefDestroy`. Always Invalid `"texref destroy"`
+    because CUDA texture references are not modeled. Query; legal during capture.
+    Distinct from `tex_ref_create` and `module_get_tex_ref`. This VM does not invent `cuTexRefSetArray`, Engine `--texref-destroy`,
+    or `cudaChooseDevice`. `gpu-profile capture` is still refused. Dual
+    score still has no `$/M tokens`.
+
+751. [ ] Next numbered PLAN item after 750 is the next `gpu-sim` / Engine /
     serve / expertvm mechanical API that is still missing, or the next official
     decode family. Prefer remaining CUDA-shaped twins over more
     OpenAI HTTP veneer. Do not invent F32 `output.scale`. Do not invent a
@@ -8143,6 +8150,9 @@ model, do not celebrate the sim.
     Do not invent a second `cuTexRefCreate` / `tex_ref_create`.
     Do not invent Engine `--texref-create`. Do not invent
     `cuTexRefDestroy` this slice. Do not reverse `"texref create"`.
+    Do not invent a second `cuTexRefDestroy` / `tex_ref_destroy`.
+    Do not invent Engine `--texref-destroy`. Do not invent
+    `cuTexRefSetArray` this slice. Do not reverse `"texref destroy"`.
     Do not invent a second `cudaStreamAddCallback`.
     Do not invent Engine `--stream-callback` (same wall as second live
     `cudaLaunchHostFunc` after miss DMA).
@@ -8963,6 +8973,9 @@ model, do not celebrate the sim.
     Do not invent a second `tex_ref_create` API. Do not invent
     Engine `--create-tex-ref`. Do not invent a CUtexref destroy
     this slice. Do not reverse TexRef Create remaining unsupported.
+    Do not invent a second `tex_ref_destroy` API. Do not invent
+    Engine `--destroy-tex-ref`. Do not invent a CUtexref set-array
+    this slice. Do not reverse TexRef Destroy remaining unsupported.
     Do not invent a second DeviceLaunch in-flight destroy-complete check or Engine
     `--device-launch-destroy`. Do not abort an in-flight DeviceLaunch when
     `destroy_graph` succeeds. Do not delay destroy of an idle exec. Do not invent
@@ -9966,6 +9979,9 @@ model, do not celebrate the sim.
     Do not invent a second `tex_ref_create` method. Do not
     invent Engine `--cu-tex-ref-create`. Do not reverse wrapping
     cuTexRefCreate Invalid.
+    Do not invent a second `tex_ref_destroy` method. Do not
+    invent Engine `--cu-tex-ref-destroy`. Do not reverse wrapping
+    cuTexRefDestroy Invalid.
     Do not
     spend the next item on an OpenAI-compatible HTTP veneer.
 

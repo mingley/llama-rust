@@ -279,6 +279,7 @@ warp scheduler, L1, …   ← do not model
 | `module_get_global` is Invalid (no `CUmodule` device symbol) | `cuModuleGetGlobal` |
 | `module_get_tex_ref` is Invalid (no `CUmodule` / `CUtexref`) | `cuModuleGetTexRef` |
 | `tex_ref_create` is Invalid (no `CUtexref` handles) | `cuTexRefCreate` |
+| `tex_ref_destroy` is Invalid (no `CUtexref` handles) | `cuTexRefDestroy` |
 | `module_get_surf_ref` is Invalid (no `CUmodule` / `CUsurfref`) | `cuModuleGetSurfRef` |
 | `library_load_data` is Invalid (no cubin / `CUlibrary`) | `cuLibraryLoadData` |
 | `library_load_from_file` is Invalid (no cubin path / `CUlibrary`) | `cuLibraryLoadFromFile` |
@@ -1585,6 +1586,8 @@ Distinct from `library_get_global` and `module_get_function`. Query; legal durin
 Distinct from `module_get_global` and `tex_object_create`. Query; legal during capture. No Engine `--module-texref`.
 `tex_ref_create` is `cuTexRefCreate` (always Invalid `"texref create"`; no `CUtexref`).
 Distinct from `module_get_tex_ref` and `tex_object_create`. Query; legal during capture. No Engine `--texref-create`.
+`tex_ref_destroy` is `cuTexRefDestroy` (always Invalid `"texref destroy"`; no `CUtexref`).
+Distinct from `tex_ref_create` and `module_get_tex_ref`. Query; legal during capture. No Engine `--texref-destroy`.
 `module_get_surf_ref` is `cuModuleGetSurfRef` (always Invalid `"module surfref"`; no cubin).
 Distinct from `module_get_tex_ref` and `surf_object_create`. Query; legal during capture. No Engine `--module-surfref`.
 `library_load_data` is `cuLibraryLoadData` (always Invalid `"cuda library"`;

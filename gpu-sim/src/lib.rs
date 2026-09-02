@@ -1148,6 +1148,8 @@
 //! `"module texref"`). Query; legal during capture. No Engine `--module-texref`.
 //! [`tex_ref_create`](Sim::tex_ref_create) is `cuTexRefCreate` (always Invalid
 //! `"texref create"`). Query; legal during capture. No Engine `--texref-create`.
+//! [`tex_ref_destroy`](Sim::tex_ref_destroy) is `cuTexRefDestroy` (always Invalid
+//! `"texref destroy"`). Query; legal during capture. No Engine `--texref-destroy`.
 //! [`module_get_surf_ref`](Sim::module_get_surf_ref) is `cuModuleGetSurfRef` (always Invalid
 //! `"module surfref"`). Query; legal during capture. No Engine `--module-surfref`.
 //! [`library_load_data`](Sim::library_load_data) is `cuLibraryLoadData`
@@ -19761,6 +19763,64 @@ mod tests {
             Err(SimError::Invalid { why }) => {
                 assert!(why.contains("mipmap sparse"), "{why}");
                 assert!(!why.contains("texref create"), "{why}");
+            }
+            other => panic!("{other:?}"),
+        }
+        match sim.tex_ref_destroy(d) {
+            Err(SimError::Invalid { why }) => {
+                assert!(why.contains("texref destroy"), "{why}");
+                assert!(!why.contains("texref create"), "{why}");
+                assert!(!why.contains("module texref"), "{why}");
+            }
+            other => panic!("{other:?}"),
+        }
+    }
+
+    #[test]
+    fn tex_ref_destroy_is_unsupported() {
+        let mut sim = Sim::new(h100());
+        let d = DeviceId(0);
+        match sim.tex_ref_destroy(d) {
+            Err(SimError::Invalid { why }) => {
+                assert!(why.contains("texref destroy"), "{why}");
+                assert!(!why.contains("texref create"), "{why}");
+                assert!(!why.contains("module texref"), "{why}");
+                assert!(!why.contains("cuda texture"), "{why}");
+            }
+            other => panic!("{other:?}"),
+        }
+        sim.begin_capture(d, StreamId(0)).unwrap();
+        match sim.tex_ref_destroy(d) {
+            Err(SimError::Invalid { why }) => {
+                assert!(why.contains("texref destroy"), "{why}");
+            }
+            other => panic!("{other:?}"),
+        }
+        let _g = sim.end_capture().unwrap();
+        match sim.tex_ref_destroy(DeviceId(99)) {
+            Err(SimError::Invalid { why }) => {
+                assert!(why.contains("device not in profile"), "{why}");
+            }
+            other => panic!("{other:?}"),
+        }
+        match sim.tex_ref_create(d) {
+            Err(SimError::Invalid { why }) => {
+                assert!(why.contains("texref create"), "{why}");
+                assert!(!why.contains("texref destroy"), "{why}");
+            }
+            other => panic!("{other:?}"),
+        }
+        match sim.module_get_tex_ref(d) {
+            Err(SimError::Invalid { why }) => {
+                assert!(why.contains("module texref"), "{why}");
+                assert!(!why.contains("texref destroy"), "{why}");
+            }
+            other => panic!("{other:?}"),
+        }
+        match sim.tex_object_destroy(d) {
+            Err(SimError::Invalid { why }) => {
+                assert!(why.contains("unknown tex object"), "{why}");
+                assert!(!why.contains("texref destroy"), "{why}");
             }
             other => panic!("{other:?}"),
         }

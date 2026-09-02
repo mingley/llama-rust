@@ -5,6 +5,16 @@ Visible five-turn extract: [docs/chatgpt-share-6a920fe1.md](docs/chatgpt-share-6
 Complete share-API extract: [docs/chatgpt-share-6a920fe1/](docs/chatgpt-share-6a920fe1/).
 Work lands on `main`. No PRs.
 
+## Shipped 2026-09-02 — CUDA `cuTexRefDestroy`
+
+`gpu-sim` `Sim::tex_ref_destroy` is `cuTexRefDestroy`.
+Always Invalid `"texref destroy"` because CUDA texture references are not
+modeled. Query; legal during capture. Distinct from
+`tex_ref_create` (why is not `"texref create"`) and
+`module_get_tex_ref` (why is not `"module texref"`).
+This VM does not invent `cuTexRefSetArray` or Engine `--texref-destroy`.
+`gpu-profile capture` is still refused. Dual score still has no `$/M tokens`.
+
 ## Shipped 2026-09-02 — CUDA `cuTexRefCreate`
 
 `gpu-sim` `Sim::tex_ref_create` is `cuTexRefCreate`.
