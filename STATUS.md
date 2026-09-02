@@ -5,6 +5,14 @@ Visible five-turn extract: [docs/chatgpt-share-6a920fe1.md](docs/chatgpt-share-6
 Complete share-API extract: [docs/chatgpt-share-6a920fe1/](docs/chatgpt-share-6a920fe1/).
 Work lands on `main`. No PRs.
 
+## Shipped 2026-09-02 — CUDA `cuDeviceSetGraphMemAttribute`
+
+`gpu-sim` `Sim::device_graph_mem_set` is `cuDeviceSetGraphMemAttribute`.
+Identity with `graph_mem_set` (`cudaDeviceSetGraphMemAttribute`).
+Capture refused. Distinct from `device_graph_mem_get`.
+This VM does not invent occupancy SM counts or Engine `--graph-mem-set`.
+`gpu-profile capture` is still refused. Dual score still has no `$/M tokens`.
+
 ## Shipped 2026-09-02 — CUDA `cuDeviceGetGraphMemAttribute`
 
 `gpu-sim` `Sim::device_graph_mem_get` is `cuDeviceGetGraphMemAttribute`.

@@ -307,6 +307,9 @@
 //! [`device_graph_mem_get`](Sim::device_graph_mem_get) is `cuDeviceGetGraphMemAttribute` (identity with
 //! [`graph_mem_get`](Sim::graph_mem_get)). Query; legal during capture. Distinct from
 //! [`graph_mem_set`](Sim::graph_mem_set). No Engine `--graph-mem-get`.
+//! [`device_graph_mem_set`](Sim::device_graph_mem_set) is `cuDeviceSetGraphMemAttribute` (identity with
+//! [`graph_mem_set`](Sim::graph_mem_set)). Capture refused. Distinct from
+//! [`device_graph_mem_get`](Sim::device_graph_mem_get). No Engine `--graph-mem-set`.
 //! [`Sim::ipc_get_event`] / [`ipc_open_event`](Sim::ipc_open_event) are
 //! `cudaIpcGetEventHandle` / `cudaIpcOpenEventHandle` (interprocess events).
 //! [`Sim::create_shareable_pool`] is `cudaMemPoolCreate` with a POSIX-FD handle
@@ -638,6 +641,9 @@
 //! [`device_graph_mem_get`](Sim::device_graph_mem_get) is `cuDeviceGetGraphMemAttribute` (identity with
 //! [`graph_mem_get`](Sim::graph_mem_get)). Query; legal during capture. Distinct from
 //! [`graph_mem_set`](Sim::graph_mem_set). No Engine `--graph-mem-get`.
+//! [`device_graph_mem_set`](Sim::device_graph_mem_set) is `cuDeviceSetGraphMemAttribute` (identity with
+//! [`graph_mem_set`](Sim::graph_mem_set)). Capture refused. Distinct from
+//! [`device_graph_mem_get`](Sim::device_graph_mem_get). No Engine `--graph-mem-set`.
 //! [`HardwareProfile::host_pin_bytes`] caps `cudaMallocHost` / `cudaHostRegister`.
 //! [`Sim::idle_until`] drains, then jumps the virtual clock (open-loop arrivals).
 //! [`Sim::event_elapsed_ns`] is `cudaEventElapsedTime` in nanoseconds.
@@ -837,6 +843,9 @@
 //! [`device_graph_mem_get`](Sim::device_graph_mem_get) is `cuDeviceGetGraphMemAttribute` (identity with
 //! [`graph_mem_get`](Sim::graph_mem_get)). Query; legal during capture. Distinct from
 //! [`graph_mem_set`](Sim::graph_mem_set). No Engine `--graph-mem-get`.
+//! [`device_graph_mem_set`](Sim::device_graph_mem_set) is `cuDeviceSetGraphMemAttribute` (identity with
+//! [`graph_mem_set`](Sim::graph_mem_set)). Capture refused. Distinct from
+//! [`device_graph_mem_get`](Sim::device_graph_mem_get). No Engine `--graph-mem-set`.
 //! [`mem_host_get_flags`](Sim::mem_host_get_flags) is `cuMemHostGetFlags` (identity with
 //! [`host_get_flags`](Sim::host_get_flags)). Query; legal during capture. No Engine `--mem-host-get-flags`.
 //! [`mem_host_get_device_pointer`](Sim::mem_host_get_device_pointer) is `cuMemHostGetDevicePointer` (identity with
@@ -1002,6 +1011,9 @@
 //! [`device_graph_mem_get`](Sim::device_graph_mem_get) is `cuDeviceGetGraphMemAttribute` (identity with
 //! [`graph_mem_get`](Sim::graph_mem_get)). Query; legal during capture. Distinct from
 //! [`graph_mem_set`](Sim::graph_mem_set). No Engine `--graph-mem-get`.
+//! [`device_graph_mem_set`](Sim::device_graph_mem_set) is `cuDeviceSetGraphMemAttribute` (identity with
+//! [`graph_mem_set`](Sim::graph_mem_set)). Capture refused. Distinct from
+//! [`device_graph_mem_get`](Sim::device_graph_mem_get). No Engine `--graph-mem-set`.
 //! [`Sim::pointer_get_attributes`] is `cudaPointerGetAttributes`.
 //! [`pointer_set_attribute`](Sim::pointer_set_attribute) /
 //! [`pointer_get_attribute`](Sim::pointer_get_attribute) are
@@ -2078,6 +2090,9 @@
 //! [`device_graph_mem_get`](Sim::device_graph_mem_get) is `cuDeviceGetGraphMemAttribute` (identity with
 //! [`graph_mem_get`](Sim::graph_mem_get)). Query; legal during capture. Distinct from
 //! [`graph_mem_set`](Sim::graph_mem_set). No Engine `--graph-mem-get`.
+//! [`device_graph_mem_set`](Sim::device_graph_mem_set) is `cuDeviceSetGraphMemAttribute` (identity with
+//! [`graph_mem_set`](Sim::graph_mem_set)). Capture refused. Distinct from
+//! [`device_graph_mem_get`](Sim::device_graph_mem_get). No Engine `--graph-mem-set`.
 //! [`Sim::set_stream_priority`] is the priority-only helper;
 //! [`stream_create_with_priority`](Sim::stream_create_with_priority) is
 //! `cudaStreamCreateWithPriority` (flags plus priority; clamped to
@@ -2097,6 +2112,9 @@
 //! [`device_graph_mem_get`](Sim::device_graph_mem_get) is `cuDeviceGetGraphMemAttribute` (identity with
 //! [`graph_mem_get`](Sim::graph_mem_get)). Query; legal during capture. Distinct from
 //! [`graph_mem_set`](Sim::graph_mem_set). No Engine `--graph-mem-get`.
+//! [`device_graph_mem_set`](Sim::device_graph_mem_set) is `cuDeviceSetGraphMemAttribute` (identity with
+//! [`graph_mem_set`](Sim::graph_mem_set)). Capture refused. Distinct from
+//! [`device_graph_mem_get`](Sim::device_graph_mem_get). No Engine `--graph-mem-set`.
 //! [`destroy_stream`](Sim::destroy_stream) is `cudaStreamDestroy` (returns
 //! immediately; in-flight work still completes; NULL is Invalid; recreate
 //! while unfinished is `"stream in flight"`). Capture cannot include it.
@@ -17350,6 +17368,84 @@ mod tests {
             eight
                 .graph_mem_get(DeviceId(0), GraphMemAttr::UsedMemCurrent)
                 .unwrap()
+        );
+    }
+
+    #[test]
+    fn device_graph_mem_set_is_cu_device_set_graph_mem_attribute() {
+        let mut sim = Sim::new(h100());
+        let d = DeviceId(0);
+        let s = StreamId(0);
+        match sim.device_graph_mem_set(DeviceId(99), GraphMemAttr::UsedMemHigh, 0) {
+            Err(SimError::Invalid { why }) => assert!(why.contains("device"), "{why}"),
+            other => panic!("{other:?}"),
+        }
+        match sim.graph_mem_set(DeviceId(99), GraphMemAttr::UsedMemHigh, 0) {
+            Err(SimError::Invalid { why }) => assert!(why.contains("device"), "{why}"),
+            other => panic!("{other:?}"),
+        }
+        match sim.device_graph_mem_set(d, GraphMemAttr::UsedMemCurrent, 0) {
+            Err(SimError::Invalid { why }) => {
+                assert!(why.contains("graph mem attribute"), "{why}");
+            }
+            other => panic!("{other:?}"),
+        }
+        match sim.graph_mem_set(d, GraphMemAttr::UsedMemCurrent, 0) {
+            Err(SimError::Invalid { why }) => {
+                assert!(why.contains("graph mem attribute"), "{why}");
+            }
+            other => panic!("{other:?}"),
+        }
+        match sim.device_graph_mem_set(d, GraphMemAttr::UsedMemHigh, 1) {
+            Err(SimError::Invalid { why }) => {
+                assert!(why.contains("graph mem attribute value"), "{why}");
+            }
+            other => panic!("{other:?}"),
+        }
+        match sim.graph_mem_set(d, GraphMemAttr::UsedMemHigh, 1) {
+            Err(SimError::Invalid { why }) => {
+                assert!(why.contains("graph mem attribute value"), "{why}");
+            }
+            other => panic!("{other:?}"),
+        }
+        sim.device_graph_mem_set(d, GraphMemAttr::UsedMemHigh, 0)
+            .unwrap();
+        assert_eq!(
+            sim.device_graph_mem_get(d, GraphMemAttr::UsedMemHigh)
+                .unwrap(),
+            0
+        );
+        sim.graph_mem_set(d, GraphMemAttr::ReservedMemHigh, 0)
+            .unwrap();
+        assert_eq!(
+            sim.graph_mem_get(d, GraphMemAttr::ReservedMemHigh).unwrap(),
+            0
+        );
+        sim.begin_capture(d, s).unwrap();
+        match sim.device_graph_mem_set(d, GraphMemAttr::UsedMemHigh, 0) {
+            Err(SimError::Invalid { why }) => assert!(why.contains("capture"), "{why}"),
+            other => panic!("{other:?}"),
+        }
+        match sim.graph_mem_set(d, GraphMemAttr::UsedMemHigh, 0) {
+            Err(SimError::Invalid { why }) => assert!(why.contains("capture"), "{why}"),
+            other => panic!("{other:?}"),
+        }
+        let _g = sim.end_capture().unwrap();
+        let mut eight = Sim::new(HardwareProfile::example_8xh100_nvlink());
+        eight
+            .device_graph_mem_set(DeviceId(1), GraphMemAttr::UsedMemHigh, 0)
+            .unwrap();
+        assert_eq!(
+            eight
+                .device_graph_mem_get(DeviceId(1), GraphMemAttr::UsedMemHigh)
+                .unwrap(),
+            0
+        );
+        assert_eq!(
+            eight
+                .device_graph_mem_get(DeviceId(0), GraphMemAttr::UsedMemHigh)
+                .unwrap(),
+            0
         );
     }
 

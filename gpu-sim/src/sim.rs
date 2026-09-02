@@ -1393,8 +1393,7 @@ impl Sim {
     /// `cuDeviceGetGraphMemAttribute`. Identity with [`Self::graph_mem_get`]
     /// (`cudaDeviceGetGraphMemAttribute`).
     ///
-    /// Query; legal during capture. Distinct from [`Self::graph_mem_set`]. This
-    /// VM does not invent occupancy SM counts this slice.
+    /// Query; legal during capture. Distinct from [`Self::graph_mem_set`].
     pub fn device_graph_mem_get(
         &self,
         device: DeviceId,
@@ -1405,7 +1404,8 @@ impl Sim {
 
     /// `cudaDeviceSetGraphMemAttribute`. Only the High attrs; `value` must be `0`
     /// (reset that high-water to the current used/reserved). Host-synchronous.
-    /// Capture cannot include it.
+    /// Capture cannot include it. Driver `cuDeviceSetGraphMemAttribute` is
+    /// [`Self::device_graph_mem_set`].
     pub fn graph_mem_set(
         &mut self,
         device: DeviceId,
@@ -1432,6 +1432,20 @@ impl Sim {
         }
         self.clock = self.clock.saturating_add(1);
         Ok(())
+    }
+
+    /// `cuDeviceSetGraphMemAttribute`. Identity with [`Self::graph_mem_set`]
+    /// (`cudaDeviceSetGraphMemAttribute`).
+    ///
+    /// Capture refused. Distinct from [`Self::device_graph_mem_get`]. This VM
+    /// does not invent occupancy SM counts this slice.
+    pub fn device_graph_mem_set(
+        &mut self,
+        device: DeviceId,
+        attr: GraphMemAttr,
+        value: u64,
+    ) -> Result<(), SimError> {
+        self.graph_mem_set(device, attr, value)
     }
 
     /// `cudaDeviceGraphMemTrim`. Host-synchronous. Capture cannot include it.
