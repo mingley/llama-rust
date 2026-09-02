@@ -5,6 +5,15 @@ Visible five-turn extract: [docs/chatgpt-share-6a920fe1.md](docs/chatgpt-share-6
 Complete share-API extract: [docs/chatgpt-share-6a920fe1/](docs/chatgpt-share-6a920fe1/).
 Work lands on `main`. No PRs.
 
+## Shipped 2026-09-01 — CUDA `cuModuleGetFunction`
+
+`gpu-sim` `Sim::module_get_function` is `cuModuleGetFunction`.
+Always Invalid `"module function"` because CUDA modules are not
+modeled. Query; legal during capture. Distinct from
+`kernel_get_function` (why is not `"kernel function"`) and from
+`func_get_module`. This VM does not invent `cuModuleGetGlobal` or Engine `--module-function`.
+`gpu-profile capture` is still refused. Dual score still has no `$/M tokens`.
+
 ## Shipped 2026-09-01 — CUDA `cuModuleUnload`
 
 `gpu-sim` `Sim::module_unload` is `cuModuleUnload`.

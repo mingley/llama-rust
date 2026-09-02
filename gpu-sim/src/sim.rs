@@ -21051,13 +21051,29 @@ impl Sim {
     /// Always Invalid `"module unload"` (this VM has no `CUmodule`
     /// handle). Distinct from [`Self::module_load_data`] (why is not
     /// `"module data"`) and from [`Self::module_load`] (why is not
-    /// `"module load"`) and from [`Self::library_unload`].
+    /// `"module load"`) and from [`Self::library_unload`] and from
+    /// [`Self::module_get_function`].
     /// Unknown devices are Invalid `"device not in profile"`. Query; legal
     /// during capture.
     pub fn module_unload(&self, device: DeviceId) -> Result<(), SimError> {
         let _gpu = self.profile.gpu(device)?;
         Err(SimError::Invalid {
             why: "module unload",
+        })
+    }
+
+    /// `cuModuleGetFunction`. CUDA modules are not modeled.
+    ///
+    /// Always Invalid `"module function"` (this VM has no `CUmodule` and
+    /// no `CUfunction`). Distinct from [`Self::module_unload`] (why is not
+    /// `"module unload"`) and from [`Self::kernel_get_function`] (why is
+    /// not `"kernel function"`) and from [`Self::func_get_module`].
+    /// Unknown devices are Invalid `"device not in profile"`. Query; legal
+    /// during capture.
+    pub fn module_get_function(&self, device: DeviceId) -> Result<(), SimError> {
+        let _gpu = self.profile.gpu(device)?;
+        Err(SimError::Invalid {
+            why: "module function",
         })
     }
 
