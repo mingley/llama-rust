@@ -8841,7 +8841,14 @@ model, do not celebrate the sim.
     or `cudaChooseDevice`. `gpu-profile capture` is still refused. Dual
     score still has no `$/M tokens`.
 
-955. [ ] Next numbered PLAN item after 954 is the next `gpu-sim` / Engine /
+955. [x] `gpu-sim` `Sim::destroy_graph_node` is
+    `cuGraphDestroyNode`. Identity with `graph_destroy_node`
+    (`cudaGraphDestroyNode`). Capture refused. Distinct from
+    `graph_destroy`. This VM does not invent occupancy SM counts, Engine `--graph-destroy-node`,
+    or `cudaChooseDevice`. `gpu-profile capture` is still refused. Dual
+    score still has no `$/M tokens`.
+
+956. [ ] Next numbered PLAN item after 955 is the next `gpu-sim` / Engine /
     serve / expertvm mechanical API that is still missing, or the next official
     decode family. Prefer remaining CUDA-shaped twins over more
     OpenAI HTTP veneer. Do not invent F32 `output.scale`. Do not invent a
@@ -10197,6 +10204,9 @@ model, do not celebrate the sim.
     Do not invent a second `cuGraphRemoveDependencies` v2 / `remove_graph_dependencies_n_with_data`.
     Do not invent Engine `--graph-remove-dependencies-n-with-data`. Do not invent
     occupancy SM counts this slice. Do not reverse RemoveGraphDependenciesNWithData identity with graph_remove_dependencies_n_with_data.
+    Do not invent a second `cuGraphDestroyNode` / `destroy_graph_node`.
+    Do not invent Engine `--graph-destroy-node`. Do not invent
+    occupancy SM counts this slice. Do not reverse DestroyGraphNode identity with graph_destroy_node.
     Do not invent a second `cudaStreamAddCallback`.
     Do not invent Engine `--stream-callback` (same wall as second live
     `cudaLaunchHostFunc` after miss DMA).
@@ -11632,6 +11642,9 @@ model, do not celebrate the sim.
     Do not invent a second `remove_graph_dependencies_n_with_data` API. Do not invent
     Engine `--graph-remove-dependencies-n-with-data-identity`. Do not invent a graph-destroy-node
     this slice. Do not reverse RemoveGraphDependenciesNWithData identity with graph_remove_dependencies_n_with_data.
+    Do not invent a second `destroy_graph_node` API. Do not invent
+    Engine `--graph-destroy-node-identity`. Do not invent a device-launch-graph
+    this slice. Do not reverse DestroyGraphNode identity with graph_destroy_node.
     Do not invent a second DeviceLaunch in-flight destroy-complete check or Engine
     `--device-launch-destroy`. Do not abort an in-flight DeviceLaunch when
     `destroy_graph` succeeds. Do not delay destroy of an idle exec. Do not invent
@@ -13250,6 +13263,9 @@ model, do not celebrate the sim.
     Do not invent a second `remove_graph_dependencies_n_with_data` method. Do not
     invent Engine `--cu-graph-remove-dependencies-n-with-data`. Do not reverse wrapping
     cuGraphRemoveDependencies v2 identity.
+    Do not invent a second `destroy_graph_node` method. Do not
+    invent Engine `--cu-graph-destroy-node`. Do not reverse wrapping
+    cuGraphDestroyNode identity.
     Do not
     spend the next item on an OpenAI-compatible HTTP veneer.
 

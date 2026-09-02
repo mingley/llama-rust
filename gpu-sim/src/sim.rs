@@ -11617,8 +11617,7 @@ impl Sim {
     /// v2).
     ///
     /// Capture refused. Distinct from
-    /// [`Self::remove_graph_dependencies_with_data`]. This VM does not invent
-    /// occupancy SM counts this slice.
+    /// [`Self::remove_graph_dependencies_with_data`].
     pub fn remove_graph_dependencies_n_with_data(
         &mut self,
         graph: GraphId,
@@ -11634,7 +11633,9 @@ impl Sim {
     /// A device-updatable kernel node cannot be destroyed. Does not retarget
     /// an already-instantiated exec. Destroying a mem alloc node unlinks it
     /// from [`Self::graph_mem_allocs`]. Nested child-graph objects are not
-    /// destroyed.
+    /// destroyed. Driver
+    /// `cuGraphDestroyNode` is
+    /// [`Self::destroy_graph_node`].
     pub fn graph_destroy_node(&mut self, graph: GraphId, node: usize) -> Result<(), SimError> {
         self.fail_if_capturing("cannot destroy graph node during capture")?;
         self.require_live_definition(graph)?;
@@ -11672,6 +11673,16 @@ impl Sim {
             }
         }
         Ok(())
+    }
+
+    /// `cuGraphDestroyNode`. Identity with
+    /// [`Self::graph_destroy_node`] (`cudaGraphDestroyNode`).
+    ///
+    /// Capture refused. Distinct from
+    /// [`Self::graph_destroy`]. This VM does not invent
+    /// occupancy SM counts this slice.
+    pub fn destroy_graph_node(&mut self, graph: GraphId, node: usize) -> Result<(), SimError> {
+        self.graph_destroy_node(graph, node)
     }
 
     /// Predecessor indices of node `i` (`cudaGraphNodeGetDependencies`).
