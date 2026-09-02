@@ -1225,6 +1225,9 @@
 //! [`surf_ref_get_array`](Sim::surf_ref_get_array) is
 //! `cuSurfRefGetArray` (always Invalid `"surfref getarr"`). Query; legal
 //! during capture. No Engine `--surfref-getarr`.
+//! [`memcpy_dto_a`](Sim::memcpy_dto_a) is
+//! `cuMemcpyDtoA` (always Invalid `"memcpy dtoa"`). Query; legal
+//! during capture. No Engine `--memcpy-dtoa`.
 //! [`library_load_data`](Sim::library_load_data) is `cuLibraryLoadData`
 //! (always Invalid `"cuda library"`). Query; legal during capture. No Engine `--library-load`.
 //! [`library_load_from_file`](Sim::library_load_from_file) is
@@ -21463,6 +21466,64 @@ mod tests {
             Err(SimError::Invalid { why }) => {
                 assert!(why.contains("module surfref"), "{why}");
                 assert!(!why.contains("surfref getarr"), "{why}");
+            }
+            other => panic!("{other:?}"),
+        }
+        match sim.memcpy_dto_a(d) {
+            Err(SimError::Invalid { why }) => {
+                assert!(why.contains("memcpy dtoa"), "{why}");
+                assert!(!why.contains("surfref getarr"), "{why}");
+                assert!(!why.contains("cuda array"), "{why}");
+            }
+            other => panic!("{other:?}"),
+        }
+    }
+
+    #[test]
+    fn memcpy_dto_a_is_unsupported() {
+        let mut sim = Sim::new(h100());
+        let d = DeviceId(0);
+        match sim.memcpy_dto_a(d) {
+            Err(SimError::Invalid { why }) => {
+                assert!(why.contains("memcpy dtoa"), "{why}");
+                assert!(!why.contains("surfref getarr"), "{why}");
+                assert!(!why.contains("cuda array"), "{why}");
+                assert!(!why.contains("memcpy 1d"), "{why}");
+            }
+            other => panic!("{other:?}"),
+        }
+        sim.begin_capture(d, StreamId(0)).unwrap();
+        match sim.memcpy_dto_a(d) {
+            Err(SimError::Invalid { why }) => {
+                assert!(why.contains("memcpy dtoa"), "{why}");
+            }
+            other => panic!("{other:?}"),
+        }
+        let _g = sim.end_capture().unwrap();
+        match sim.memcpy_dto_a(DeviceId(99)) {
+            Err(SimError::Invalid { why }) => {
+                assert!(why.contains("device not in profile"), "{why}");
+            }
+            other => panic!("{other:?}"),
+        }
+        match sim.surf_ref_get_array(d) {
+            Err(SimError::Invalid { why }) => {
+                assert!(why.contains("surfref getarr"), "{why}");
+                assert!(!why.contains("memcpy dtoa"), "{why}");
+            }
+            other => panic!("{other:?}"),
+        }
+        match sim.array_create(d) {
+            Err(SimError::Invalid { why }) => {
+                assert!(why.contains("cuda array"), "{why}");
+                assert!(!why.contains("memcpy dtoa"), "{why}");
+            }
+            other => panic!("{other:?}"),
+        }
+        match sim.array_destroy(d) {
+            Err(SimError::Invalid { why }) => {
+                assert!(why.contains("array destroy"), "{why}");
+                assert!(!why.contains("memcpy dtoa"), "{why}");
             }
             other => panic!("{other:?}"),
         }

@@ -308,6 +308,7 @@ warp scheduler, L1, …   ← do not model
 | `module_get_surf_ref` is Invalid (no `CUmodule` / `CUsurfref`) | `cuModuleGetSurfRef` |
 | `surf_ref_set_array` is Invalid (no `CUsurfref` array binding) | `cuSurfRefSetArray` |
 | `surf_ref_get_array` is Invalid (no `CUsurfref` array binding) | `cuSurfRefGetArray` |
+| `memcpy_dto_a` is Invalid (no `CUarray` device-to-array copy) | `cuMemcpyDtoA` |
 | `library_load_data` is Invalid (no cubin / `CUlibrary`) | `cuLibraryLoadData` |
 | `library_load_from_file` is Invalid (no cubin path / `CUlibrary`) | `cuLibraryLoadFromFile` |
 | `library_unload` is Invalid (no `CUlibrary` handle) | `cuLibraryUnload` |
@@ -1671,6 +1672,8 @@ Distinct from `module_get_tex_ref` and `surf_object_create`. Query; legal during
 Distinct from `module_get_surf_ref` and `tex_ref_set_array`. Query; legal during capture. No Engine `--surfref-setarr`.
 `surf_ref_get_array` is `cuSurfRefGetArray` (always Invalid `"surfref getarr"`; no `CUsurfref`).
 Distinct from `surf_ref_set_array` and `tex_ref_get_array`. Query; legal during capture. No Engine `--surfref-getarr`.
+`memcpy_dto_a` is `cuMemcpyDtoA` (always Invalid `"memcpy dtoa"`; no `CUarray`).
+Distinct from `surf_ref_get_array` and `array_create`. Query; legal during capture. No Engine `--memcpy-dtoa`.
 `library_load_data` is `cuLibraryLoadData` (always Invalid `"cuda library"`;
 no cubin / `CUlibrary`). Distinct from `module_get_loading_mode` and
 `func_get_module`. Query; legal during capture. No Engine `--library-load`.

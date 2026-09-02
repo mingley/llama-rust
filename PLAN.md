@@ -7598,7 +7598,14 @@ model, do not celebrate the sim.
     or `cudaChooseDevice`. `gpu-profile capture` is still refused. Dual
     score still has no `$/M tokens`.
 
-778. [ ] Next numbered PLAN item after 777 is the next `gpu-sim` / Engine /
+778. [x] `gpu-sim` `Sim::memcpy_dto_a` is
+    `cuMemcpyDtoA`. Always Invalid `"memcpy dtoa"`
+    because CUDA arrays are not modeled. Query; legal during capture.
+    Distinct from `surf_ref_get_array` and `array_create`. This VM does not invent `cuMemcpyAtoD`, Engine `--memcpy-dtoa`,
+    or `cudaChooseDevice`. `gpu-profile capture` is still refused. Dual
+    score still has no `$/M tokens`.
+
+779. [ ] Next numbered PLAN item after 778 is the next `gpu-sim` / Engine /
     serve / expertvm mechanical API that is still missing, or the next official
     decode family. Prefer remaining CUDA-shaped twins over more
     OpenAI HTTP veneer. Do not invent F32 `output.scale`. Do not invent a
@@ -8423,6 +8430,9 @@ model, do not celebrate the sim.
     Do not invent a second `cuSurfRefGetArray` / `surf_ref_get_array`.
     Do not invent Engine `--surfref-getarr`. Do not invent
     `cuMemcpyDtoA` this slice. Do not reverse `"surfref getarr"`.
+    Do not invent a second `cuMemcpyDtoA` / `memcpy_dto_a`.
+    Do not invent Engine `--memcpy-dtoa`. Do not invent
+    `cuMemcpyAtoD` this slice. Do not reverse `"memcpy dtoa"`.
     Do not invent a second `cudaStreamAddCallback`.
     Do not invent Engine `--stream-callback` (same wall as second live
     `cudaLaunchHostFunc` after miss DMA).
@@ -9327,6 +9337,9 @@ model, do not celebrate the sim.
     Do not invent a second `surf_ref_get_array` API. Do not invent
     Engine `--get-surf-ref-array`. Do not invent a CUarray memcpy-dto-a
     this slice. Do not reverse SurfRef GetArray remaining unsupported.
+    Do not invent a second `memcpy_dto_a` API. Do not invent
+    Engine `--memcpy-d-to-a`. Do not invent a CUarray memcpy-ato-d
+    this slice. Do not reverse Memcpy DtoA remaining unsupported.
     Do not invent a second DeviceLaunch in-flight destroy-complete check or Engine
     `--device-launch-destroy`. Do not abort an in-flight DeviceLaunch when
     `destroy_graph` succeeds. Do not delay destroy of an idle exec. Do not invent
@@ -10414,6 +10427,9 @@ model, do not celebrate the sim.
     Do not invent a second `surf_ref_get_array` method. Do not
     invent Engine `--cu-surf-ref-get-array`. Do not reverse wrapping
     cuSurfRefGetArray Invalid.
+    Do not invent a second `memcpy_dto_a` method. Do not
+    invent Engine `--cu-memcpy-dto-a`. Do not reverse wrapping
+    cuMemcpyDtoA Invalid.
     Do not
     spend the next item on an OpenAI-compatible HTTP veneer.
 
