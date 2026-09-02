@@ -6051,8 +6051,7 @@ impl Sim {
     /// [`Self::graph_host_set_params`] (`cudaGraphHostNodeSetParams`).
     ///
     /// Capture refused. Distinct from
-    /// [`Self::get_graph_host_node_params`]. This VM does not invent
-    /// occupancy SM counts this slice.
+    /// [`Self::get_graph_host_node_params`].
     pub fn set_graph_host_node_params(
         &mut self,
         graph: GraphId,
@@ -6957,7 +6956,9 @@ impl Sim {
     /// Node `node` must already be a host node. [`HostNodeParams::fn_id`] /
     /// [`HostNodeParams::user_data`] may change. Pays `graph_set_params_ns` and
     /// clears the upload flag. Capture cannot include it. Graphs with mem
-    /// alloc/free nodes are legal (unlike [`Self::update_graph`]).
+    /// alloc/free nodes are legal (unlike [`Self::update_graph`]). Driver
+    /// `cuGraphExecHostNodeSetParams` is
+    /// [`Self::set_graph_exec_host_node_params`].
     pub fn graph_exec_host_set_params(
         &mut self,
         exec: GraphId,
@@ -6994,6 +6995,21 @@ impl Sim {
         };
         g.uploaded = false;
         Ok(())
+    }
+
+    /// `cuGraphExecHostNodeSetParams`. Identity with
+    /// [`Self::graph_exec_host_set_params`] (`cudaGraphExecHostNodeSetParams`).
+    ///
+    /// Capture refused. Distinct from
+    /// [`Self::set_graph_host_node_params`]. This VM does not invent
+    /// occupancy SM counts this slice.
+    pub fn set_graph_exec_host_node_params(
+        &mut self,
+        exec: GraphId,
+        node: usize,
+        params: &HostNodeParams,
+    ) -> Result<(), SimError> {
+        self.graph_exec_host_set_params(exec, node, *params)
     }
 
     /// `cudaGraphExecBatchMemOpNodeSetParams` on an instantiated exec.
