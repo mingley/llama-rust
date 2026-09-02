@@ -436,6 +436,9 @@
 //! [`set_graph_child_graph_node_params`](Sim::set_graph_child_graph_node_params) is `cuGraphChildGraphNodeSetParams` (identity with
 //! [`graph_child_set_params`](Sim::graph_child_set_params)). Capture refused. Distinct from
 //! [`get_graph_child_graph_node_graph`](Sim::get_graph_child_graph_node_graph). No Engine `--graph-child-set-params`.
+//! [`set_graph_exec_child_graph_node_params`](Sim::set_graph_exec_child_graph_node_params) is `cuGraphExecChildGraphNodeSetParams` (identity with
+//! [`graph_exec_child_set_params`](Sim::graph_exec_child_set_params)). Capture refused. Distinct from
+//! [`set_graph_child_graph_node_params`](Sim::set_graph_child_graph_node_params). No Engine `--graph-exec-child-set-params`.
 //! [`Sim::ipc_get_event`] / [`ipc_open_event`](Sim::ipc_open_event) are
 //! `cudaIpcGetEventHandle` / `cudaIpcOpenEventHandle` (interprocess events).
 //! [`Sim::create_shareable_pool`] is `cudaMemPoolCreate` with a POSIX-FD handle
@@ -896,6 +899,9 @@
 //! [`set_graph_child_graph_node_params`](Sim::set_graph_child_graph_node_params) is `cuGraphChildGraphNodeSetParams` (identity with
 //! [`graph_child_set_params`](Sim::graph_child_set_params)). Capture refused. Distinct from
 //! [`get_graph_child_graph_node_graph`](Sim::get_graph_child_graph_node_graph). No Engine `--graph-child-set-params`.
+//! [`set_graph_exec_child_graph_node_params`](Sim::set_graph_exec_child_graph_node_params) is `cuGraphExecChildGraphNodeSetParams` (identity with
+//! [`graph_exec_child_set_params`](Sim::graph_exec_child_set_params)). Capture refused. Distinct from
+//! [`set_graph_child_graph_node_params`](Sim::set_graph_child_graph_node_params). No Engine `--graph-exec-child-set-params`.
 //! [`HardwareProfile::host_pin_bytes`] caps `cudaMallocHost` / `cudaHostRegister`.
 //! [`Sim::idle_until`] drains, then jumps the virtual clock (open-loop arrivals).
 //! [`Sim::event_elapsed_ns`] is `cudaEventElapsedTime` in nanoseconds.
@@ -1224,6 +1230,9 @@
 //! [`set_graph_child_graph_node_params`](Sim::set_graph_child_graph_node_params) is `cuGraphChildGraphNodeSetParams` (identity with
 //! [`graph_child_set_params`](Sim::graph_child_set_params)). Capture refused. Distinct from
 //! [`get_graph_child_graph_node_graph`](Sim::get_graph_child_graph_node_graph). No Engine `--graph-child-set-params`.
+//! [`set_graph_exec_child_graph_node_params`](Sim::set_graph_exec_child_graph_node_params) is `cuGraphExecChildGraphNodeSetParams` (identity with
+//! [`graph_exec_child_set_params`](Sim::graph_exec_child_set_params)). Capture refused. Distinct from
+//! [`set_graph_child_graph_node_params`](Sim::set_graph_child_graph_node_params). No Engine `--graph-exec-child-set-params`.
 //! [`mem_host_get_flags`](Sim::mem_host_get_flags) is `cuMemHostGetFlags` (identity with
 //! [`host_get_flags`](Sim::host_get_flags)). Query; legal during capture. No Engine `--mem-host-get-flags`.
 //! [`mem_host_get_device_pointer`](Sim::mem_host_get_device_pointer) is `cuMemHostGetDevicePointer` (identity with
@@ -1518,6 +1527,9 @@
 //! [`set_graph_child_graph_node_params`](Sim::set_graph_child_graph_node_params) is `cuGraphChildGraphNodeSetParams` (identity with
 //! [`graph_child_set_params`](Sim::graph_child_set_params)). Capture refused. Distinct from
 //! [`get_graph_child_graph_node_graph`](Sim::get_graph_child_graph_node_graph). No Engine `--graph-child-set-params`.
+//! [`set_graph_exec_child_graph_node_params`](Sim::set_graph_exec_child_graph_node_params) is `cuGraphExecChildGraphNodeSetParams` (identity with
+//! [`graph_exec_child_set_params`](Sim::graph_exec_child_set_params)). Capture refused. Distinct from
+//! [`set_graph_child_graph_node_params`](Sim::set_graph_child_graph_node_params). No Engine `--graph-exec-child-set-params`.
 //! [`Sim::pointer_get_attributes`] is `cudaPointerGetAttributes`.
 //! [`pointer_set_attribute`](Sim::pointer_set_attribute) /
 //! [`pointer_get_attribute`](Sim::pointer_get_attribute) are
@@ -2219,6 +2231,9 @@
 //! [`set_graph_child_graph_node_params`](Sim::set_graph_child_graph_node_params) is `cuGraphChildGraphNodeSetParams` (identity with
 //! [`graph_child_set_params`](Sim::graph_child_set_params)). Capture refused. Distinct from
 //! [`get_graph_child_graph_node_graph`](Sim::get_graph_child_graph_node_graph). No Engine `--graph-child-set-params`.
+//! [`set_graph_exec_child_graph_node_params`](Sim::set_graph_exec_child_graph_node_params) is `cuGraphExecChildGraphNodeSetParams` (identity with
+//! [`graph_exec_child_set_params`](Sim::graph_exec_child_set_params)). Capture refused. Distinct from
+//! [`set_graph_child_graph_node_params`](Sim::set_graph_child_graph_node_params). No Engine `--graph-exec-child-set-params`.
 //! [`Sim::stream_get_device`] is `cudaStreamGetDevice` / `cuStreamGetDevice`
 //! (the device of the stream; green-ctx streams return the ctx create
 //! device). Query; legal during capture. Distinct from
@@ -2349,6 +2364,9 @@
 //! [`set_graph_child_graph_node_params`](Sim::set_graph_child_graph_node_params) is `cuGraphChildGraphNodeSetParams` (identity with
 //! [`graph_child_set_params`](Sim::graph_child_set_params)). Capture refused. Distinct from
 //! [`get_graph_child_graph_node_graph`](Sim::get_graph_child_graph_node_graph). No Engine `--graph-child-set-params`.
+//! [`set_graph_exec_child_graph_node_params`](Sim::set_graph_exec_child_graph_node_params) is `cuGraphExecChildGraphNodeSetParams` (identity with
+//! [`graph_exec_child_set_params`](Sim::graph_exec_child_set_params)). Capture refused. Distinct from
+//! [`set_graph_child_graph_node_params`](Sim::set_graph_child_graph_node_params). No Engine `--graph-exec-child-set-params`.
 //! [`set_stream_access_policy`](Sim::set_stream_access_policy) is
 //! `cudaStreamAttributeAccessPolicyWindow`: [`kernel`](Sim::kernel) /
 //! [`kernel_bufs`](Sim::kernel_bufs) inherit it; [`kernel_with`](Sim::kernel_with)
@@ -2964,6 +2982,9 @@
 //! [`set_graph_child_graph_node_params`](Sim::set_graph_child_graph_node_params) is `cuGraphChildGraphNodeSetParams` (identity with
 //! [`graph_child_set_params`](Sim::graph_child_set_params)). Capture refused. Distinct from
 //! [`get_graph_child_graph_node_graph`](Sim::get_graph_child_graph_node_graph). No Engine `--graph-child-set-params`.
+//! [`set_graph_exec_child_graph_node_params`](Sim::set_graph_exec_child_graph_node_params) is `cuGraphExecChildGraphNodeSetParams` (identity with
+//! [`graph_exec_child_set_params`](Sim::graph_exec_child_set_params)). Capture refused. Distinct from
+//! [`set_graph_child_graph_node_params`](Sim::set_graph_child_graph_node_params). No Engine `--graph-exec-child-set-params`.
 //! [`Sim::set_stream_priority`] is the priority-only helper;
 //! [`stream_create_with_priority`](Sim::stream_create_with_priority) is
 //! `cudaStreamCreateWithPriority` (flags plus priority; clamped to
@@ -3112,6 +3133,9 @@
 //! [`set_graph_child_graph_node_params`](Sim::set_graph_child_graph_node_params) is `cuGraphChildGraphNodeSetParams` (identity with
 //! [`graph_child_set_params`](Sim::graph_child_set_params)). Capture refused. Distinct from
 //! [`get_graph_child_graph_node_graph`](Sim::get_graph_child_graph_node_graph). No Engine `--graph-child-set-params`.
+//! [`set_graph_exec_child_graph_node_params`](Sim::set_graph_exec_child_graph_node_params) is `cuGraphExecChildGraphNodeSetParams` (identity with
+//! [`graph_exec_child_set_params`](Sim::graph_exec_child_set_params)). Capture refused. Distinct from
+//! [`set_graph_child_graph_node_params`](Sim::set_graph_child_graph_node_params). No Engine `--graph-exec-child-set-params`.
 //! [`destroy_stream`](Sim::destroy_stream) is `cudaStreamDestroy` (returns
 //! immediately; in-flight work still completes; NULL is Invalid; recreate
 //! while unfinished is `"stream in flight"`). Capture cannot include it.
@@ -3240,6 +3264,9 @@
 //! [`set_graph_child_graph_node_params`](Sim::set_graph_child_graph_node_params) is `cuGraphChildGraphNodeSetParams` (identity with
 //! [`graph_child_set_params`](Sim::graph_child_set_params)). Capture refused. Distinct from
 //! [`get_graph_child_graph_node_graph`](Sim::get_graph_child_graph_node_graph). No Engine `--graph-child-set-params`.
+//! [`set_graph_exec_child_graph_node_params`](Sim::set_graph_exec_child_graph_node_params) is `cuGraphExecChildGraphNodeSetParams` (identity with
+//! [`graph_exec_child_set_params`](Sim::graph_exec_child_set_params)). Capture refused. Distinct from
+//! [`set_graph_child_graph_node_params`](Sim::set_graph_child_graph_node_params). No Engine `--graph-exec-child-set-params`.
 //! [`Sim::instantiate_graph`] is `cudaGraphInstantiate` (host-sync; returns a
 //! new exec id; first [`launch_graph`](Sim::launch_graph) of a definition
 //! creates a primary exec). Unused conditional handles are
@@ -3397,6 +3424,9 @@
 //! [`set_graph_child_graph_node_params`](Sim::set_graph_child_graph_node_params) is `cuGraphChildGraphNodeSetParams` (identity with
 //! [`graph_child_set_params`](Sim::graph_child_set_params)). Capture refused. Distinct from
 //! [`get_graph_child_graph_node_graph`](Sim::get_graph_child_graph_node_graph). No Engine `--graph-child-set-params`.
+//! [`set_graph_exec_child_graph_node_params`](Sim::set_graph_exec_child_graph_node_params) is `cuGraphExecChildGraphNodeSetParams` (identity with
+//! [`graph_exec_child_set_params`](Sim::graph_exec_child_set_params)). Capture refused. Distinct from
+//! [`set_graph_child_graph_node_params`](Sim::set_graph_child_graph_node_params). No Engine `--graph-exec-child-set-params`.
 //! [`graph_kernel_node_get_priority`](Sim::graph_kernel_node_get_priority) /
 //! [`graph_kernel_node_set_priority`](Sim::graph_kernel_node_set_priority) /
 //! [`graph_kernel_node_copy_attributes`](Sim::graph_kernel_node_copy_attributes)
@@ -3513,6 +3543,9 @@
 //! [`set_graph_child_graph_node_params`](Sim::set_graph_child_graph_node_params) is `cuGraphChildGraphNodeSetParams` (identity with
 //! [`graph_child_set_params`](Sim::graph_child_set_params)). Capture refused. Distinct from
 //! [`get_graph_child_graph_node_graph`](Sim::get_graph_child_graph_node_graph). No Engine `--graph-child-set-params`.
+//! [`set_graph_exec_child_graph_node_params`](Sim::set_graph_exec_child_graph_node_params) is `cuGraphExecChildGraphNodeSetParams` (identity with
+//! [`graph_exec_child_set_params`](Sim::graph_exec_child_set_params)). Capture refused. Distinct from
+//! [`set_graph_child_graph_node_params`](Sim::set_graph_child_graph_node_params). No Engine `--graph-exec-child-set-params`.
 //! [`graph_kernel_node_get_attribute`](Sim::graph_kernel_node_get_attribute) /
 //! [`graph_exec_kernel_node_get_attribute`](Sim::graph_exec_kernel_node_get_attribute) /
 //! [`graph_kernel_node_set_attribute`](Sim::graph_kernel_node_set_attribute) /
@@ -3635,6 +3668,9 @@
 //! [`set_graph_child_graph_node_params`](Sim::set_graph_child_graph_node_params) is `cuGraphChildGraphNodeSetParams` (identity with
 //! [`graph_child_set_params`](Sim::graph_child_set_params)). Capture refused. Distinct from
 //! [`get_graph_child_graph_node_graph`](Sim::get_graph_child_graph_node_graph). No Engine `--graph-child-set-params`.
+//! [`set_graph_exec_child_graph_node_params`](Sim::set_graph_exec_child_graph_node_params) is `cuGraphExecChildGraphNodeSetParams` (identity with
+//! [`graph_exec_child_set_params`](Sim::graph_exec_child_set_params)). Capture refused. Distinct from
+//! [`set_graph_child_graph_node_params`](Sim::set_graph_child_graph_node_params). No Engine `--graph-exec-child-set-params`.
 //! Device-launch
 //! execs cannot attach programmatic or launch-completion events.
 //! [`kernel_pdl`](Sim::kernel_pdl) is `cudaLaunchKernelEx` PDL: a wait kernel
@@ -3885,6 +3921,9 @@
 //! [`set_graph_child_graph_node_params`](Sim::set_graph_child_graph_node_params) is `cuGraphChildGraphNodeSetParams` (identity with
 //! [`graph_child_set_params`](Sim::graph_child_set_params)). Capture refused. Distinct from
 //! [`get_graph_child_graph_node_graph`](Sim::get_graph_child_graph_node_graph). No Engine `--graph-child-set-params`.
+//! [`set_graph_exec_child_graph_node_params`](Sim::set_graph_exec_child_graph_node_params) is `cuGraphExecChildGraphNodeSetParams` (identity with
+//! [`graph_exec_child_set_params`](Sim::graph_exec_child_set_params)). Capture refused. Distinct from
+//! [`set_graph_child_graph_node_params`](Sim::set_graph_child_graph_node_params). No Engine `--graph-exec-child-set-params`.
 //! [`graph_exec_memcpy_set_params`](Sim::graph_exec_memcpy_set_params) /
 //! [`graph_exec_memcpy_set_params_1d`](Sim::graph_exec_memcpy_set_params_1d) /
 //! [`graph_exec_memcpy_set_params_2d`](Sim::graph_exec_memcpy_set_params_2d) /
@@ -3999,6 +4038,9 @@
 //! [`set_graph_child_graph_node_params`](Sim::set_graph_child_graph_node_params) is `cuGraphChildGraphNodeSetParams` (identity with
 //! [`graph_child_set_params`](Sim::graph_child_set_params)). Capture refused. Distinct from
 //! [`get_graph_child_graph_node_graph`](Sim::get_graph_child_graph_node_graph). No Engine `--graph-child-set-params`.
+//! [`set_graph_exec_child_graph_node_params`](Sim::set_graph_exec_child_graph_node_params) is `cuGraphExecChildGraphNodeSetParams` (identity with
+//! [`graph_exec_child_set_params`](Sim::graph_exec_child_set_params)). Capture refused. Distinct from
+//! [`set_graph_child_graph_node_params`](Sim::set_graph_child_graph_node_params). No Engine `--graph-exec-child-set-params`.
 //! [`get_graph_kernel_node_params`](Sim::get_graph_kernel_node_params) is `cuGraphKernelNodeGetParams` (identity with
 //! [`graph_kernel_get_params`](Sim::graph_kernel_get_params)). Query; legal during capture. Distinct from
 //! [`graph_exec_kernel_get_params`](Sim::graph_exec_kernel_get_params). No Engine `--graph-kernel-get-params`.
@@ -4092,6 +4134,9 @@
 //! [`set_graph_child_graph_node_params`](Sim::set_graph_child_graph_node_params) is `cuGraphChildGraphNodeSetParams` (identity with
 //! [`graph_child_set_params`](Sim::graph_child_set_params)). Capture refused. Distinct from
 //! [`get_graph_child_graph_node_graph`](Sim::get_graph_child_graph_node_graph). No Engine `--graph-child-set-params`.
+//! [`set_graph_exec_child_graph_node_params`](Sim::set_graph_exec_child_graph_node_params) is `cuGraphExecChildGraphNodeSetParams` (identity with
+//! [`graph_exec_child_set_params`](Sim::graph_exec_child_set_params)). Capture refused. Distinct from
+//! [`set_graph_child_graph_node_params`](Sim::set_graph_child_graph_node_params). No Engine `--graph-exec-child-set-params`.
 //! [`graph_exec_kernel_get_params`](Sim::graph_exec_kernel_get_params) /
 //! [`graph_exec_memcpy_get_params`](Sim::graph_exec_memcpy_get_params) /
 //! [`graph_exec_memset_get_params`](Sim::graph_exec_memset_get_params) /
@@ -4176,6 +4221,9 @@
 //! [`set_graph_child_graph_node_params`](Sim::set_graph_child_graph_node_params) is `cuGraphChildGraphNodeSetParams` (identity with
 //! [`graph_child_set_params`](Sim::graph_child_set_params)). Capture refused. Distinct from
 //! [`get_graph_child_graph_node_graph`](Sim::get_graph_child_graph_node_graph). No Engine `--graph-child-set-params`.
+//! [`set_graph_exec_child_graph_node_params`](Sim::set_graph_exec_child_graph_node_params) is `cuGraphExecChildGraphNodeSetParams` (identity with
+//! [`graph_exec_child_set_params`](Sim::graph_exec_child_set_params)). Capture refused. Distinct from
+//! [`set_graph_child_graph_node_params`](Sim::set_graph_child_graph_node_params). No Engine `--graph-exec-child-set-params`.
 //! [`get_graph_exec_kernel_node_params`](Sim::get_graph_exec_kernel_node_params) is `cuGraphExecKernelNodeGetParams` (identity with
 //! [`graph_exec_kernel_get_params`](Sim::graph_exec_kernel_get_params)). Query; legal during capture. Distinct from
 //! [`get_graph_kernel_node_params`](Sim::get_graph_kernel_node_params). No Engine `--graph-exec-kernel-get-params`.
@@ -4266,6 +4314,9 @@
 //! [`set_graph_child_graph_node_params`](Sim::set_graph_child_graph_node_params) is `cuGraphChildGraphNodeSetParams` (identity with
 //! [`graph_child_set_params`](Sim::graph_child_set_params)). Capture refused. Distinct from
 //! [`get_graph_child_graph_node_graph`](Sim::get_graph_child_graph_node_graph). No Engine `--graph-child-set-params`.
+//! [`set_graph_exec_child_graph_node_params`](Sim::set_graph_exec_child_graph_node_params) is `cuGraphExecChildGraphNodeSetParams` (identity with
+//! [`graph_exec_child_set_params`](Sim::graph_exec_child_set_params)). Capture refused. Distinct from
+//! [`set_graph_child_graph_node_params`](Sim::set_graph_child_graph_node_params). No Engine `--graph-exec-child-set-params`.
 //! [`graph_exec_batch_mem_op_set_params`](Sim::graph_exec_batch_mem_op_set_params)
 //! is `cudaGraphExecBatchMemOpNodeSetParams` (id/offset/value; wait vs write,
 //! `bits32`, and compare stay on wait/write nodes;
@@ -22470,6 +22521,93 @@ mod tests {
             other => panic!("{other:?}"),
         }
         match eight.graph_child_set_params(parent1, 0, leaf1) {
+            Err(SimError::Invalid { why }) => assert!(why.contains("capture"), "{why}"),
+            other => panic!("{other:?}"),
+        }
+        let _cap = eight.end_capture().unwrap();
+    }
+
+    #[test]
+    fn set_graph_exec_child_graph_node_params_is_cu_graph_exec_child_graph_node_set_params() {
+        let mut sim = Sim::new(h100());
+        let d = DeviceId(0);
+        let s = StreamId(0);
+        let leaf = sim.create_graph(d, s).unwrap();
+        sim.graph_add_empty(leaf).unwrap();
+        let _leaf_exec = sim.instantiate_graph(leaf).unwrap();
+        match sim.set_graph_exec_child_graph_node_params(GraphId(99), 0, leaf) {
+            Err(SimError::Invalid { why }) => assert!(why.contains("unknown"), "{why}"),
+            other => panic!("{other:?}"),
+        }
+        match sim.graph_exec_child_set_params(GraphId(99), 0, leaf) {
+            Err(SimError::Invalid { why }) => assert!(why.contains("unknown"), "{why}"),
+            other => panic!("{other:?}"),
+        }
+        let leaf_a = sim.create_graph(d, s).unwrap();
+        sim.graph_add_empty(leaf_a).unwrap();
+        let leaf_a_exec = sim.instantiate_graph(leaf_a).unwrap();
+        let leaf_b = sim.create_graph(d, s).unwrap();
+        sim.graph_add_empty(leaf_b).unwrap();
+        let leaf_b_exec = sim.instantiate_graph(leaf_b).unwrap();
+        let parent = sim.create_graph(d, s).unwrap();
+        sim.graph_add_child(parent, leaf_a).unwrap();
+        match sim.set_graph_exec_child_graph_node_params(parent, 0, leaf_b) {
+            Err(SimError::Invalid { why }) => assert!(why.contains("instantiated"), "{why}"),
+            other => panic!("{other:?}"),
+        }
+        match sim.graph_exec_child_set_params(parent, 0, leaf_b) {
+            Err(SimError::Invalid { why }) => assert!(why.contains("instantiated"), "{why}"),
+            other => panic!("{other:?}"),
+        }
+        let exec = sim.instantiate_graph(parent).unwrap();
+        sim.set_graph_exec_child_graph_node_params(exec, 0, leaf_b)
+            .unwrap();
+        assert_eq!(
+            sim.get_graph_exec_child_graph_node_graph(exec, 0).unwrap(),
+            leaf_b_exec
+        );
+        assert_eq!(sim.graph_child_get_graph(exec, 0).unwrap(), leaf_b_exec);
+        sim.graph_exec_child_set_params(exec, 0, leaf_a).unwrap();
+        assert_eq!(
+            sim.get_graph_exec_child_graph_node_graph(exec, 0).unwrap(),
+            leaf_a_exec
+        );
+        sim.begin_capture(d, s).unwrap();
+        match sim.set_graph_exec_child_graph_node_params(exec, 0, leaf_b) {
+            Err(SimError::Invalid { why }) => assert!(why.contains("capture"), "{why}"),
+            other => panic!("{other:?}"),
+        }
+        match sim.graph_exec_child_set_params(exec, 0, leaf_b) {
+            Err(SimError::Invalid { why }) => assert!(why.contains("capture"), "{why}"),
+            other => panic!("{other:?}"),
+        }
+        let _cap = sim.end_capture().unwrap();
+        let mut eight = Sim::new(HardwareProfile::example_8xh100_nvlink());
+        let d1 = DeviceId(1);
+        let leaf1 = eight.create_graph(d1, s).unwrap();
+        eight.graph_add_empty(leaf1).unwrap();
+        let _leaf1_exec = eight.instantiate_graph(leaf1).unwrap();
+        let leaf2 = eight.create_graph(d1, s).unwrap();
+        eight.graph_add_empty(leaf2).unwrap();
+        let leaf2_exec = eight.instantiate_graph(leaf2).unwrap();
+        let parent1 = eight.create_graph(d1, s).unwrap();
+        eight.graph_add_child(parent1, leaf1).unwrap();
+        let exec1 = eight.instantiate_graph(parent1).unwrap();
+        eight
+            .set_graph_exec_child_graph_node_params(exec1, 0, leaf2)
+            .unwrap();
+        assert_eq!(
+            eight
+                .get_graph_exec_child_graph_node_graph(exec1, 0)
+                .unwrap(),
+            leaf2_exec
+        );
+        eight.begin_capture(d1, s).unwrap();
+        match eight.set_graph_exec_child_graph_node_params(exec1, 0, leaf1) {
+            Err(SimError::Invalid { why }) => assert!(why.contains("capture"), "{why}"),
+            other => panic!("{other:?}"),
+        }
+        match eight.graph_exec_child_set_params(exec1, 0, leaf1) {
             Err(SimError::Invalid { why }) => assert!(why.contains("capture"), "{why}"),
             other => panic!("{other:?}"),
         }
