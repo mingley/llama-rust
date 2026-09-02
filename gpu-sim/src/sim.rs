@@ -19397,7 +19397,6 @@ impl Sim {
     /// [`Self::va_set_access_with_flags`] (`cuMemSetAccess` flags).
     ///
     /// Capture refused. Distinct from [`Self::mem_set_access_write`].
-    /// This VM does not invent occupancy SM counts this slice.
     pub fn mem_set_access_with_flags(
         &mut self,
         id: AllocId,
@@ -19411,6 +19410,8 @@ impl Sim {
     ///
     /// `size` must equal the reserved bytes. Other sizes Invalid `"access size"`.
     /// Partial SetAccess is not modeled. Flags are [`MemAccessFlags`].
+    /// Driver `cuMemSetAccess` size is [`Self::mem_set_access_with_size`].
+    /// Identity wrap [`Self::mem_set_access_with_size`].
     pub fn va_set_access_with_size(
         &mut self,
         id: AllocId,
@@ -19438,6 +19439,21 @@ impl Sim {
             return self.va_set_access_write(id, device);
         }
         self.va_unset_access(id, device)
+    }
+
+    /// `cuMemSetAccess` size. Identity with
+    /// [`Self::va_set_access_with_size`] (`cuMemSetAccess` size).
+    ///
+    /// Capture refused. Distinct from [`Self::mem_set_access_with_flags`].
+    /// This VM does not invent occupancy SM counts this slice.
+    pub fn mem_set_access_with_size(
+        &mut self,
+        id: AllocId,
+        device: DeviceId,
+        size: u64,
+        flags: u32,
+    ) -> Result<(), SimError> {
+        self.va_set_access_with_size(id, device, size, flags)
     }
 
     /// `cuMemSetAccess` with a descriptor array (`desc`, `count`).
