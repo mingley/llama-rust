@@ -18656,7 +18656,6 @@ impl Sim {
     /// [`Self::multicast_get_granularity_with_prop`] (`cuMulticastGetGranularity` prop).
     ///
     /// Query; legal during capture. Distinct from [`Self::mem_multicast_get_granularity`].
-    /// This VM does not invent occupancy SM counts this slice.
     pub fn mem_multicast_get_granularity_with_prop(
         &self,
         prop: MulticastObjectProp,
@@ -18673,6 +18672,8 @@ impl Sim {
     /// 1-GPU profiles still create; bind/map fail without an NVLink clique.
     /// Typed helper; [`Self::multicast_create_with_prop`] takes
     /// [`MulticastObjectProp`].
+    /// Driver `cuMulticastCreate` is [`Self::mem_multicast_create`].
+    /// Identity wrap [`Self::mem_multicast_create`].
     pub fn multicast_create(
         &mut self,
         bytes: u64,
@@ -18683,6 +18684,19 @@ impl Sim {
             size: bytes,
             ..MulticastObjectProp::default()
         })
+    }
+
+    /// `cuMulticastCreate`. Identity with
+    /// [`Self::multicast_create`] (`cuMulticastCreate`).
+    ///
+    /// Capture refused. Distinct from [`Self::mem_multicast_get_granularity_with_prop`].
+    /// This VM does not invent occupancy SM counts this slice.
+    pub fn mem_multicast_create(
+        &mut self,
+        bytes: u64,
+        num_devices: u32,
+    ) -> Result<MulticastId, SimError> {
+        self.multicast_create(bytes, num_devices)
     }
 
     /// [`Self::multicast_create`] with `CUmulticastObjectProp`.

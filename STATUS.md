@@ -5,6 +5,13 @@ Visible five-turn extract: [docs/chatgpt-share-6a920fe1.md](docs/chatgpt-share-6
 Complete share-API extract: [docs/chatgpt-share-6a920fe1/](docs/chatgpt-share-6a920fe1/).
 Work lands on `main`. No PRs.
 
+## Shipped 2026-09-02 — CUDA `cuMulticastCreate`
+
+`gpu-sim` `Sim::mem_multicast_create` is `cuMulticastCreate`.
+Identity with `multicast_create` (`cuMulticastCreate`). Capture refused. Distinct from `mem_multicast_get_granularity_with_prop`.
+This VM does not invent occupancy SM counts or Engine `--mem-multicast-create`.
+`gpu-profile capture` is still refused. Dual score still has no `$/M tokens`.
+
 ## Shipped 2026-09-02 — CUDA `cuMulticastGetGranularity` prop
 
 `gpu-sim` `Sim::mem_multicast_get_granularity_with_prop` is `cuMulticastGetGranularity` prop.

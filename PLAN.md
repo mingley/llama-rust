@@ -10029,7 +10029,12 @@ model, do not celebrate the sim.
       `mem_multicast_get_granularity`. This VM does not invent occupancy SM counts, Engine `--mem-multicast-get-granularity-with-prop`,
       or `cudaChooseDevice`. `gpu-profile capture` is still refused. Dual
       score still has no `$/M tokens`.
-1154. [ ] Next numbered PLAN item after 1153 is the next `gpu-sim` / Engine /
+1154. [x] `gpu-sim` `Sim::mem_multicast_create` is
+      `cuMulticastCreate`. Identity with `multicast_create` (`cuMulticastCreate`). Capture refused. Distinct from
+      `mem_multicast_get_granularity_with_prop`. This VM does not invent occupancy SM counts, Engine `--mem-multicast-create`,
+      or `cudaChooseDevice`. `gpu-profile capture` is still refused. Dual
+      score still has no `$/M tokens`.
+1155. [ ] Next numbered PLAN item after 1154 is the next `gpu-sim` / Engine /
     serve / expertvm mechanical API that is still missing, or the next official
     decode family. Prefer remaining CUDA-shaped twins over more
     OpenAI HTTP veneer. Do not invent F32 `output.scale`. Do not invent a
@@ -12148,6 +12153,11 @@ model, do not celebrate the sim.
     occupancy SM counts this slice. Do not reverse MemMulticastGetGranularity prop identity with multicast_get_granularity_with_prop.
     Do not invent `multicast_create` as `mem_multicast_get_granularity_with_prop`.
     Do not invent `cuMulticastCreate` as `mem_multicast_get_granularity_with_prop`.
+    Do not invent a second `cuMulticastCreate` / `mem_multicast_create`.
+    Do not invent Engine `--mem-multicast-create`. Do not invent
+    occupancy SM counts this slice. Do not reverse MemMulticastCreate identity with multicast_create.
+    Do not invent `multicast_create_with_prop` as `mem_multicast_create`.
+    Do not invent `cuMulticastCreate` prop as `mem_multicast_create`.
     Do not invent a second `cudaStreamAddCallback`.
     Do not invent Engine `--stream-callback` (same wall as second live
     `cudaLaunchHostFunc` after miss DMA).
@@ -14302,6 +14312,11 @@ model, do not celebrate the sim.
     this slice. Do not reverse MemMulticastGetGranularity prop identity with multicast_get_granularity_with_prop.
     Do not wrap `multicast_get_granularity_with_prop` as `mem_multicast_get_granularity_with_prop`.
     Do not wrap `multicast_create` as `mem_multicast_get_granularity_with_prop`.
+    Do not invent a second `mem_multicast_create` API. Do not invent
+    Engine `--mem-multicast-create-identity`. Do not invent a multicast-create-prop
+    this slice. Do not reverse MemMulticastCreate identity with multicast_create.
+    Do not wrap `multicast_create` as `mem_multicast_create`.
+    Do not wrap `multicast_create_with_prop` as `mem_multicast_create`.
     Do not invent a second DeviceLaunch in-flight destroy-complete check or Engine
     `--device-launch-destroy`. Do not abort an in-flight DeviceLaunch when
     `destroy_graph` succeeds. Do not delay destroy of an idle exec. Do not invent
@@ -16517,6 +16532,9 @@ model, do not celebrate the sim.
     Do not invent a second `mem_multicast_get_granularity_with_prop` method. Do not
     invent Engine `--cu-mem-multicast-get-granularity-with-prop`. Do not reverse wrapping
     cuMulticastGetGranularity prop identity. Do not wrap `multicast_create` as `mem_multicast_get_granularity_with_prop`.
+    Do not invent a second `mem_multicast_create` method. Do not
+    invent Engine `--cu-mem-multicast-create`. Do not reverse wrapping
+    cuMulticastCreate identity. Do not wrap `multicast_create_with_prop` as `mem_multicast_create`.
     Do not
     spend the next item on an OpenAI-compatible HTTP veneer.
 
