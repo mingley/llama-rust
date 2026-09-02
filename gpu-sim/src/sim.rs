@@ -9228,7 +9228,9 @@ impl Sim {
     /// destroy waits for all of them. An in-flight [`Self::upload_graph_async`]
     /// is the same park (the upload still completes). Driver
     /// `cuGraphDestroy` is
-    /// [`Self::graph_destroy`].
+    /// [`Self::graph_destroy`]. Driver
+    /// `cuGraphExecDestroy` is
+    /// [`Self::graph_exec_destroy`].
     pub fn destroy_graph(&mut self, graph: GraphId) -> Result<(), SimError> {
         self.fail_if_capturing("cannot capture graph destroy")?;
         self.require_not_moved(graph)?;
@@ -9252,10 +9254,19 @@ impl Sim {
     /// [`Self::destroy_graph`] (`cudaGraphDestroy`).
     ///
     /// Host-synchronous. Capture refused. Distinct from
-    /// [`Self::graph_destroy_node`]. This VM does not invent
-    /// occupancy SM counts this slice.
+    /// [`Self::graph_destroy_node`].
     pub fn graph_destroy(&mut self, graph: GraphId) -> Result<(), SimError> {
         self.destroy_graph(graph)
+    }
+
+    /// `cuGraphExecDestroy`. Identity with
+    /// [`Self::destroy_graph`] (`cudaGraphExecDestroy`).
+    ///
+    /// Host-synchronous. Capture refused. Distinct from
+    /// [`Self::graph_destroy`]. This VM does not invent
+    /// occupancy SM counts this slice.
+    pub fn graph_exec_destroy(&mut self, exec: GraphId) -> Result<(), SimError> {
+        self.destroy_graph(exec)
     }
 
     fn graph_exec_in_flight(&self, id: GraphId, g: &Graph) -> bool {
