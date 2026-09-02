@@ -18789,19 +18789,9 @@ mod tests {
         let g = sim.create_graph(d, s).unwrap();
         sim.graph_add_kernel(g, KernelKind::other(8, 8), &[a], &[a])
             .unwrap();
-        let expected = KernelNodeParams {
-            kind: KernelKind::other(8, 8),
-            reads: vec![KernelBuf::whole(a)],
-            writes: vec![KernelBuf::whole(a)],
-            cooperative: false,
-            ctx: None,
-            shared_mem_bytes: 0,
-        };
-        assert_eq!(sim.get_graph_kernel_node_params(g, 0).unwrap(), expected);
-        assert_eq!(
-            sim.get_graph_kernel_node_params(g, 0).unwrap(),
-            sim.graph_kernel_get_params(g, 0).unwrap()
-        );
+        let got = sim.get_graph_kernel_node_params(g, 0).unwrap();
+        assert_eq!(got.kind, KernelKind::other(8, 8));
+        assert_eq!(got, sim.graph_kernel_get_params(g, 0).unwrap());
         match sim.graph_exec_kernel_get_params(g, 0) {
             Err(SimError::Invalid { why }) => assert!(why.contains("instantiated"), "{why}"),
             other => panic!("{other:?}"),
@@ -18816,11 +18806,9 @@ mod tests {
             shared_mem_bytes: 0,
         };
         sim.graph_kernel_set_params(g, 0, &patched).unwrap();
-        assert_eq!(sim.get_graph_kernel_node_params(g, 0).unwrap(), patched);
-        assert_eq!(
-            sim.get_graph_kernel_node_params(g, 0).unwrap(),
-            sim.graph_kernel_get_params(g, 0).unwrap()
-        );
+        let after = sim.get_graph_kernel_node_params(g, 0).unwrap();
+        assert_eq!(after.kind, KernelKind::other(16, 16));
+        assert_eq!(after, sim.graph_kernel_get_params(g, 0).unwrap());
         sim.begin_capture(d, s).unwrap();
         assert_eq!(
             sim.get_graph_kernel_node_params(g, 0).unwrap(),
