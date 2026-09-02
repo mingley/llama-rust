@@ -575,6 +575,7 @@ compiled kernel exists; no Engine flag).
 `gpu-sim` `get_graph_event_record_node_event` is `cuGraphEventRecordNodeGetEvent` (identity with `graph_event_record_get_event`; no Engine flag).
 `gpu-sim` `get_graph_exec_event_record_node_event` is `cuGraphExecEventRecordNodeGetEvent` (identity with `graph_exec_event_record_get_event`; no Engine flag).
 `gpu-sim` `get_graph_event_wait_node_event` is `cuGraphEventWaitNodeGetEvent` (identity with `graph_event_wait_get_event`; no Engine flag).
+`gpu-sim` `get_graph_exec_event_wait_node_event` is `cuGraphExecEventWaitNodeGetEvent` (identity with `graph_exec_event_wait_get_event`; no Engine flag).
 `gpu-sim` `mem_alloc` is `cuMemAlloc` (identity with `malloc`; no Engine flag).
 `gpu-sim` `mem_free` is `cuMemFree` (identity with `free_sync`; no Engine flag).
 `gpu-sim` `mem_free_host` is `cuMemFreeHost` (identity with `free_host_pinned`; no Engine flag).
@@ -674,6 +675,7 @@ compiled kernel exists; no Engine flag).
 `gpu-sim` `get_graph_event_record_node_event` is `cuGraphEventRecordNodeGetEvent` (identity with `graph_event_record_get_event`; no Engine flag).
 `gpu-sim` `get_graph_exec_event_record_node_event` is `cuGraphExecEventRecordNodeGetEvent` (identity with `graph_exec_event_record_get_event`; no Engine flag).
 `gpu-sim` `get_graph_event_wait_node_event` is `cuGraphEventWaitNodeGetEvent` (identity with `graph_event_wait_get_event`; no Engine flag).
+`gpu-sim` `get_graph_exec_event_wait_node_event` is `cuGraphExecEventWaitNodeGetEvent` (identity with `graph_exec_event_wait_get_event`; no Engine flag).
 `gpu-sim` `func_is_loaded` is `cuFuncIsLoaded` (`false` until a compiled
 kernel exists; no Engine flag).
 `gpu-sim` `func_load` is `cuFuncLoad` (Invalid; no compiled kernel; no
