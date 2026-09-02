@@ -562,6 +562,7 @@ compiled kernel exists; no Engine flag).
 `gpu-sim` `mem_address_range` is `cuMemGetAddressRange` (identity with `mem_get_address_range`; no Engine flag).
 `gpu-sim` `mem_cpy_2d` is `cuMemcpy2D` (identity with `memcpy_2d`; no Engine flag).
 `gpu-sim` `mem_cpy_2d_async` is `cuMemcpy2DAsync` (identity with `memcpy_2d_async`; no Engine flag).
+`gpu-sim` `mem_cpy_3d` is `cuMemcpy3D` (identity with `memcpy_3d`; no Engine flag).
 `gpu-sim` `func_is_loaded` is `cuFuncIsLoaded` (`false` until a compiled
 kernel exists; no Engine flag).
 `gpu-sim` `func_load` is `cuFuncLoad` (Invalid; no compiled kernel; no

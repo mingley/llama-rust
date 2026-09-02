@@ -5,6 +5,14 @@ Visible five-turn extract: [docs/chatgpt-share-6a920fe1.md](docs/chatgpt-share-6
 Complete share-API extract: [docs/chatgpt-share-6a920fe1/](docs/chatgpt-share-6a920fe1/).
 Work lands on `main`. No PRs.
 
+## Shipped 2026-09-02 — CUDA `cuMemcpy3D`
+
+`gpu-sim` `Sim::mem_cpy_3d` is `cuMemcpy3D`.
+Identity with `memcpy_3d` (`cudaMemcpy3D`).
+Capture refused. Distinct from `memcpy_3d_unaligned`.
+This VM does not invent `mem_cpy_3d_async` or Engine `--mem-cpy-3d`.
+`gpu-profile capture` is still refused. Dual score still has no `$/M tokens`.
+
 ## Shipped 2026-09-02 — CUDA `cuMemcpy2DAsync`
 
 `gpu-sim` `Sim::mem_cpy_2d_async` is `cuMemcpy2DAsync`.
