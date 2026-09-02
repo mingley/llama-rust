@@ -196,6 +196,9 @@
 //! [`mem_prefetch_host_n`](Sim::mem_prefetch_host_n) is host dest `cuMemPrefetchAsync` count (identity with
 //! [`prefetch_host_with_size`](Sim::prefetch_host_with_size)). Capture-legal (memcpy). Distinct from
 //! [`mem_prefetch_host`](Sim::mem_prefetch_host). No Engine `--mem-prefetch-host-n`.
+//! [`mem_advise_v2`](Sim::mem_advise_v2) is `cuMemAdvise_v2` (identity with
+//! [`mem_advise_with_location`](Sim::mem_advise_with_location)). Capture refused. Distinct from
+//! [`mem_advise_n`](Sim::mem_advise_n). No Engine `--mem-advise-v2`.
 //! [`Sim::ipc_get_event`] / [`ipc_open_event`](Sim::ipc_open_event) are
 //! `cudaIpcGetEventHandle` / `cudaIpcOpenEventHandle` (interprocess events).
 //! [`Sim::create_shareable_pool`] is `cudaMemPoolCreate` with a POSIX-FD handle
@@ -600,6 +603,9 @@
 //! [`mem_prefetch_host_n`](Sim::mem_prefetch_host_n) is host dest `cuMemPrefetchAsync` count (identity with
 //! [`prefetch_host_with_size`](Sim::prefetch_host_with_size)). Capture-legal (memcpy). Distinct from
 //! [`mem_prefetch_host`](Sim::mem_prefetch_host). No Engine `--mem-prefetch-host-n`.
+//! [`mem_advise_v2`](Sim::mem_advise_v2) is `cuMemAdvise_v2` (identity with
+//! [`mem_advise_with_location`](Sim::mem_advise_with_location)). Capture refused. Distinct from
+//! [`mem_advise_n`](Sim::mem_advise_n). No Engine `--mem-advise-v2`.
 //! [`mem_host_get_flags`](Sim::mem_host_get_flags) is `cuMemHostGetFlags` (identity with
 //! [`host_get_flags`](Sim::host_get_flags)). Query; legal during capture. No Engine `--mem-host-get-flags`.
 //! [`mem_host_get_device_pointer`](Sim::mem_host_get_device_pointer) is `cuMemHostGetDevicePointer` (identity with
@@ -654,6 +660,9 @@
 //! [`mem_prefetch_host_n`](Sim::mem_prefetch_host_n) is host dest `cuMemPrefetchAsync` count (identity with
 //! [`prefetch_host_with_size`](Sim::prefetch_host_with_size)). Capture-legal (memcpy). Distinct from
 //! [`mem_prefetch_host`](Sim::mem_prefetch_host). No Engine `--mem-prefetch-host-n`.
+//! [`mem_advise_v2`](Sim::mem_advise_v2) is `cuMemAdvise_v2` (identity with
+//! [`mem_advise_with_location`](Sim::mem_advise_with_location)). Capture refused. Distinct from
+//! [`mem_advise_n`](Sim::mem_advise_n). No Engine `--mem-advise-v2`.
 //! [`Sim::pointer_get_attributes`] is `cudaPointerGetAttributes`.
 //! [`pointer_set_attribute`](Sim::pointer_set_attribute) /
 //! [`pointer_get_attribute`](Sim::pointer_get_attribute) are
@@ -34107,6 +34116,69 @@ mod tests {
         enq(sim.prefetch_host_with_size(d, m, 4096, s));
         let g = sim.end_capture().unwrap();
         assert_eq!(sim.graph_len(g).unwrap(), 2);
+        sim.free_sync(m).unwrap();
+    }
+
+    #[test]
+    fn mem_advise_v2_is_cu_mem_advise_v2() {
+        let mut sim = Sim::new(h100());
+        let d = DeviceId(0);
+        let s = StreamId(0);
+        match sim.mem_advise_v2(AllocId(99), MemAdvise::SetReadMostly, Place::Device(d)) {
+            Err(SimError::UnknownAlloc { alloc }) => assert_eq!(alloc, AllocId(99)),
+            other => panic!("{other:?}"),
+        }
+        match sim.mem_advise_with_location(AllocId(99), MemAdvise::SetReadMostly, Place::Device(d))
+        {
+            Err(SimError::UnknownAlloc { alloc }) => assert_eq!(alloc, AllocId(99)),
+            other => panic!("{other:?}"),
+        }
+        let a = sim.malloc(d, 4096).unwrap();
+        match sim.mem_advise_v2(a, MemAdvise::SetReadMostly, Place::Device(d)) {
+            Err(SimError::Invalid { why }) => assert!(why.contains("managed"), "{why}"),
+            other => panic!("{other:?}"),
+        }
+        match sim.mem_advise_with_location(a, MemAdvise::SetReadMostly, Place::Device(d)) {
+            Err(SimError::Invalid { why }) => assert!(why.contains("managed"), "{why}"),
+            other => panic!("{other:?}"),
+        }
+        sim.free_sync(a).unwrap();
+        let m = sim.mem_alloc_managed(4096, MemAttachFlags::GLOBAL).unwrap();
+        match sim.mem_advise_v2(m, MemAdvise::SetAccessedBy, Place::Host) {
+            Err(SimError::Invalid { why }) => assert!(why.contains("advise location"), "{why}"),
+            other => panic!("{other:?}"),
+        }
+        match sim.mem_advise_with_location(m, MemAdvise::SetAccessedBy, Place::Host) {
+            Err(SimError::Invalid { why }) => assert!(why.contains("advise location"), "{why}"),
+            other => panic!("{other:?}"),
+        }
+        match sim.mem_advise_v2(m, MemAdvise::SetAccessedBy, Place::Device(DeviceId(99))) {
+            Err(SimError::Invalid { why }) => assert!(why.contains("device"), "{why}"),
+            other => panic!("{other:?}"),
+        }
+        match sim.mem_advise_with_location(m, MemAdvise::SetAccessedBy, Place::Device(DeviceId(99)))
+        {
+            Err(SimError::Invalid { why }) => assert!(why.contains("device"), "{why}"),
+            other => panic!("{other:?}"),
+        }
+        sim.mem_advise_v2(m, MemAdvise::SetReadMostly, Place::Device(d))
+            .unwrap();
+        assert!(sim.is_read_mostly(m).unwrap());
+        sim.mem_advise_with_location(m, MemAdvise::UnsetReadMostly, Place::Host)
+            .unwrap();
+        assert!(!sim.is_read_mostly(m).unwrap());
+        sim.mem_advise_v2(m, MemAdvise::SetReadMostly, Place::Device(d))
+            .unwrap();
+        sim.begin_capture(d, s).unwrap();
+        match sim.mem_advise_v2(m, MemAdvise::UnsetReadMostly, Place::Device(d)) {
+            Err(SimError::Invalid { why }) => assert!(why.contains("capture"), "{why}"),
+            other => panic!("{other:?}"),
+        }
+        match sim.mem_advise_with_location(m, MemAdvise::UnsetReadMostly, Place::Device(d)) {
+            Err(SimError::Invalid { why }) => assert!(why.contains("capture"), "{why}"),
+            other => panic!("{other:?}"),
+        }
+        let _g = sim.end_capture().unwrap();
         sim.free_sync(m).unwrap();
     }
 

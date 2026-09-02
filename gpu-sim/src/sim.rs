@@ -14604,6 +14604,7 @@ impl Sim {
     /// [`MemAdvise::SetPreferredLocationHost`]. AccessedBy requires
     /// [`Place::Device`] (host is Invalid `"advise location"`). Typed
     /// [`Self::mem_advise`] stays. Capture refused by that helper.
+    /// Driver `cuMemAdvise_v2` is [`Self::mem_advise_v2`].
     pub fn mem_advise_with_location(
         &mut self,
         alloc: AllocId,
@@ -14634,6 +14635,21 @@ impl Sim {
                 }),
             },
         }
+    }
+
+    /// `cuMemAdvise_v2`. Identity with [`Self::mem_advise_with_location`]
+    /// (`cudaMemAdvise_v2` location).
+    ///
+    /// Capture refused. Distinct from [`Self::mem_advise_n`]. This VM does not
+    /// invent `cuMemRangeGetAttribute` this slice
+    /// (`mem_range_get_attribute` stays).
+    pub fn mem_advise_v2(
+        &mut self,
+        alloc: AllocId,
+        advice: MemAdvise,
+        location: Place,
+    ) -> Result<(), SimError> {
+        self.mem_advise_with_location(alloc, advice, location)
     }
 
     /// `cudaMemRangeGetAttribute`. Query; legal during capture.
@@ -16683,9 +16699,7 @@ impl Sim {
     /// Host dest `cuMemPrefetchAsync` count. Identity with
     /// [`Self::prefetch_host_with_size`] (`cudaMemPrefetchAsync` cpu count).
     ///
-    /// Capture-legal (memcpy). Distinct from [`Self::mem_prefetch_host`]. This
-    /// VM does not invent `mem_advise_v2` this slice
-    /// (`mem_advise_with_location` stays).
+    /// Capture-legal (memcpy). Distinct from [`Self::mem_prefetch_host`].
     pub fn mem_prefetch_host_n(
         &mut self,
         device: DeviceId,

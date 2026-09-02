@@ -5,6 +5,14 @@ Visible five-turn extract: [docs/chatgpt-share-6a920fe1.md](docs/chatgpt-share-6
 Complete share-API extract: [docs/chatgpt-share-6a920fe1/](docs/chatgpt-share-6a920fe1/).
 Work lands on `main`. No PRs.
 
+## Shipped 2026-09-02 — CUDA `cuMemAdvise_v2`
+
+`gpu-sim` `Sim::mem_advise_v2` is `cuMemAdvise_v2`.
+Identity with `mem_advise_with_location` (`cudaMemAdvise_v2` location).
+Capture refused. Distinct from `mem_advise_n`.
+This VM does not invent `cuMemRangeGetAttribute` or Engine `--mem-advise-v2`.
+`gpu-profile capture` is still refused. Dual score still has no `$/M tokens`.
+
 ## Shipped 2026-09-02 — CUDA host dest `cuMemPrefetchAsync` count
 
 `gpu-sim` `Sim::mem_prefetch_host_n` is host dest `cuMemPrefetchAsync` count.
