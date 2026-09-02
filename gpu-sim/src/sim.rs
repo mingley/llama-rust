@@ -21225,7 +21225,8 @@ impl Sim {
     /// [`Self::kernel_get_function`] and from [`Self::kernel_get_param_info`]
     /// and from [`Self::kernel_get_attribute`] and from
     /// [`Self::kernel_set_attribute`] and from
-    /// [`Self::kernel_set_cache_config`] and from [`Self::link_add_data`].
+    /// [`Self::kernel_set_cache_config`] and from [`Self::link_add_data`]
+    /// and from [`Self::link_complete`].
     /// Unknown devices
     /// are Invalid `"device not in profile"`. Query; legal during capture.
     pub fn link_create(&self, device: DeviceId) -> Result<(), SimError> {
@@ -21237,12 +21238,27 @@ impl Sim {
     ///
     /// Always Invalid `"link add"` (this VM has no NVRTC and no cubin
     /// linker). Distinct from [`Self::link_create`] (why is not
-    /// `"jit linker"`) and from [`Self::library_load_data`].
+    /// `"jit linker"`) and from [`Self::library_load_data`] and from
+    /// [`Self::link_complete`].
     /// Unknown devices are Invalid `"device not in profile"`. Query; legal
     /// during capture.
     pub fn link_add_data(&self, device: DeviceId) -> Result<(), SimError> {
         let _gpu = self.profile.gpu(device)?;
         Err(SimError::Invalid { why: "link add" })
+    }
+
+    /// `cuLinkComplete`. The CUDA driver JIT linker is not modeled.
+    ///
+    /// Always Invalid `"link complete"` (this VM has no NVRTC and no cubin
+    /// linker). Distinct from [`Self::link_add_data`] (why is not
+    /// `"link add"`) and from [`Self::link_create`].
+    /// Unknown devices are Invalid `"device not in profile"`. Query; legal
+    /// during capture.
+    pub fn link_complete(&self, device: DeviceId) -> Result<(), SimError> {
+        let _gpu = self.profile.gpu(device)?;
+        Err(SimError::Invalid {
+            why: "link complete",
+        })
     }
 
     /// `cudaRuntimeGetVersion`. Query; legal during capture.
