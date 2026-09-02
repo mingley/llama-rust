@@ -9296,7 +9296,14 @@ model, do not celebrate the sim.
     or `cudaChooseDevice`. `gpu-profile capture` is still refused. Dual
     score still has no `$/M tokens`.
 
-1020. [ ] Next numbered PLAN item after 1019 is the next `gpu-sim` / Engine /
+1020. [x] `gpu-sim` `Sim::stream_begin_recapture_to_graph_with_callback` is
+    `cuStreamBeginRecaptureToGraph` with callback. Identity with `begin_recapture_to_graph_with_callback`
+    (`cudaStreamBeginRecaptureToGraph` with callback). Nested capture refused. Distinct from
+    `stream_begin_recapture_to_graph_with_mode`. This VM does not invent occupancy SM counts, Engine `--stream-begin-recapture-to-graph-with-callback`,
+    or `cudaChooseDevice`. `gpu-profile capture` is still refused. Dual
+    score still has no `$/M tokens`.
+
+1021. [ ] Next numbered PLAN item after 1020 is the next `gpu-sim` / Engine /
     serve / expertvm mechanical API that is still missing, or the next official
     decode family. Prefer remaining CUDA-shaped twins over more
     OpenAI HTTP veneer. Do not invent F32 `output.scale`. Do not invent a
@@ -10847,6 +10854,9 @@ model, do not celebrate the sim.
     Do not invent a second `cuStreamBeginRecaptureToGraph` with mode / `stream_begin_recapture_to_graph_with_mode`.
     Do not invent Engine `--stream-begin-recapture-to-graph-with-mode`. Do not invent
     occupancy SM counts this slice. Do not reverse StreamBeginRecaptureToGraphWithMode identity with begin_recapture_to_graph_with_mode.
+    Do not invent a second `cuStreamBeginRecaptureToGraph` with callback / `stream_begin_recapture_to_graph_with_callback`.
+    Do not invent Engine `--stream-begin-recapture-to-graph-with-callback`. Do not invent
+    occupancy SM counts this slice. Do not reverse StreamBeginRecaptureToGraphWithCallback identity with begin_recapture_to_graph_with_callback.
     Do not invent a second `cudaStreamAddCallback`.
     Do not invent Engine `--stream-callback` (same wall as second live
     `cudaLaunchHostFunc` after miss DMA).
@@ -12477,6 +12487,9 @@ model, do not celebrate the sim.
     Do not invent a second `stream_begin_recapture_to_graph_with_mode` API. Do not invent
     Engine `--stream-begin-recapture-to-graph-with-mode-identity`. Do not invent a begin-recapture-to-graph-with-callback
     this slice. Do not reverse StreamBeginRecaptureToGraphWithMode identity with begin_recapture_to_graph_with_mode.
+    Do not invent a second `stream_begin_recapture_to_graph_with_callback` API. Do not invent
+    Engine `--stream-begin-recapture-to-graph-with-callback-identity`. Do not invent a end-capture
+    this slice. Do not reverse StreamBeginRecaptureToGraphWithCallback identity with begin_recapture_to_graph_with_callback.
     Do not invent a second DeviceLaunch in-flight destroy-complete check or Engine
     `--device-launch-destroy`. Do not abort an in-flight DeviceLaunch when
     `destroy_graph` succeeds. Do not delay destroy of an idle exec. Do not invent
@@ -14290,6 +14303,9 @@ model, do not celebrate the sim.
     Do not invent a second `stream_begin_recapture_to_graph_with_mode` method. Do not
     invent Engine `--cu-stream-begin-recapture-to-graph-with-mode`. Do not reverse wrapping
     cuStreamBeginRecaptureToGraph mode identity.
+    Do not invent a second `stream_begin_recapture_to_graph_with_callback` method. Do not
+    invent Engine `--cu-stream-begin-recapture-to-graph-with-callback`. Do not reverse wrapping
+    cuStreamBeginRecaptureToGraph callback identity.
     Do not
     spend the next item on an OpenAI-compatible HTTP veneer.
 
