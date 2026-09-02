@@ -1085,6 +1085,9 @@
 //! [`checkpoint_process_checkpoint`](Sim::checkpoint_process_checkpoint) is
 //! `cuCheckpointProcessCheckpoint` (always Invalid `"ckpt exec"`). Query;
 //! legal during capture. No Engine `--ckpt-exec`.
+//! [`checkpoint_process_restore`](Sim::checkpoint_process_restore) is
+//! `cuCheckpointProcessRestore` (always Invalid `"ckpt restore"`). Query;
+//! legal during capture. No Engine `--ckpt-restore`.
 //! [`Sim::driver_init`] is `cuInit` (flags 0; already initialized
 //! at [`Sim::new`]; 1 ns no-op). Distinct from [`init_device`](Sim::init_device).
 //! Capture cannot include it. No Engine `--cu-init`.
@@ -18999,6 +19002,56 @@ mod tests {
             Err(SimError::Invalid { why }) => {
                 assert!(why.contains("dump setglob"), "{why}");
                 assert!(!why.contains("ckpt exec"), "{why}");
+            }
+            other => panic!("{other:?}"),
+        }
+        match sim.checkpoint_process_restore(d) {
+            Err(SimError::Invalid { why }) => {
+                assert!(why.contains("ckpt restore"), "{why}");
+                assert!(!why.contains("ckpt exec"), "{why}");
+                assert!(!why.contains("checkpoint"), "{why}");
+            }
+            other => panic!("{other:?}"),
+        }
+    }
+
+    #[test]
+    fn checkpoint_process_restore_is_unsupported() {
+        let mut sim = Sim::new(h100());
+        let d = DeviceId(0);
+        match sim.checkpoint_process_restore(d) {
+            Err(SimError::Invalid { why }) => {
+                assert!(why.contains("ckpt restore"), "{why}");
+                assert!(!why.contains("checkpoint"), "{why}");
+                assert!(!why.contains("ckpt exec"), "{why}");
+            }
+            other => panic!("{other:?}"),
+        }
+        sim.begin_capture(d, StreamId(0)).unwrap();
+        match sim.checkpoint_process_restore(d) {
+            Err(SimError::Invalid { why }) => {
+                assert!(why.contains("ckpt restore"), "{why}");
+            }
+            other => panic!("{other:?}"),
+        }
+        let _g = sim.end_capture().unwrap();
+        match sim.checkpoint_process_restore(DeviceId(99)) {
+            Err(SimError::Invalid { why }) => {
+                assert!(why.contains("device not in profile"), "{why}");
+            }
+            other => panic!("{other:?}"),
+        }
+        match sim.checkpoint_process_checkpoint(d) {
+            Err(SimError::Invalid { why }) => {
+                assert!(why.contains("ckpt exec"), "{why}");
+                assert!(!why.contains("ckpt restore"), "{why}");
+            }
+            other => panic!("{other:?}"),
+        }
+        match sim.checkpoint_process_lock(d) {
+            Err(SimError::Invalid { why }) => {
+                assert!(why.contains("checkpoint"), "{why}");
+                assert!(!why.contains("ckpt restore"), "{why}");
             }
             other => panic!("{other:?}"),
         }

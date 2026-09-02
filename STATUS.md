@@ -5,6 +5,16 @@ Visible five-turn extract: [docs/chatgpt-share-6a920fe1.md](docs/chatgpt-share-6
 Complete share-API extract: [docs/chatgpt-share-6a920fe1/](docs/chatgpt-share-6a920fe1/).
 Work lands on `main`. No PRs.
 
+## Shipped 2026-09-02 — CUDA `cuCheckpointProcessRestore`
+
+`gpu-sim` `Sim::checkpoint_process_restore` is `cuCheckpointProcessRestore`.
+Always Invalid `"ckpt restore"` because CUDA process checkpoint is not
+modeled. Query; legal during capture. Distinct from
+`checkpoint_process_lock` (why is not `"checkpoint"`) and
+`checkpoint_process_checkpoint` (why is not `"ckpt exec"`).
+This VM does not invent `cuCheckpointProcessUnlock` or Engine `--ckpt-restore`.
+`gpu-profile capture` is still refused. Dual score still has no `$/M tokens`.
+
 ## Shipped 2026-09-02 — CUDA `cuCheckpointProcessCheckpoint`
 
 `gpu-sim` `Sim::checkpoint_process_checkpoint` is `cuCheckpointProcessCheckpoint`.

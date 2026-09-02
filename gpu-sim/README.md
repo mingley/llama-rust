@@ -255,6 +255,7 @@ warp scheduler, L1, …   ← do not model
 | `coredump_set_attribute_global` is Invalid (GPU coredumps are not modeled) | `cuCoredumpSetAttributeGlobal` |
 | `checkpoint_process_lock` is Invalid (CUDA process checkpoint is not modeled) | `cuCheckpointProcessLock` |
 | `checkpoint_process_checkpoint` is Invalid (CUDA process checkpoint is not modeled) | `cuCheckpointProcessCheckpoint` |
+| `checkpoint_process_restore` is Invalid (CUDA process checkpoint is not modeled) | `cuCheckpointProcessRestore` |
 | `driver_init` is a 1 ns no-op; flags must be 0 | `cuInit` |
 | `profiler_start` is a 1 ns no-op; capture refused | `cuProfilerStart` / `cudaProfilerStart` |
 | `profiler_stop` is a 1 ns no-op; capture refused | `cuProfilerStop` / `cudaProfilerStop` |
@@ -1507,6 +1508,10 @@ legal during capture. No Engine `--checkpoint`.
 `checkpoint_process_checkpoint` is `cuCheckpointProcessCheckpoint` (always
 Invalid `"ckpt exec"`; CUDA process checkpoint is not modeled). Distinct from
 `checkpoint_process_lock`. Query; legal during capture. No Engine `--ckpt-exec`.
+`checkpoint_process_restore` is `cuCheckpointProcessRestore` (always
+Invalid `"ckpt restore"`; CUDA process checkpoint is not modeled). Distinct from
+`checkpoint_process_lock` and `checkpoint_process_checkpoint`. Query; legal
+during capture. No Engine `--ckpt-restore`.
 `driver_init` is `cuInit` (flags 0; already initialized at construct;
 1 ns no-op; capture cannot include it; distinct from `init_device`).
 `profiler_start` is `cuProfilerStart` plus `cudaProfilerStart` (1 ns no-op;
