@@ -270,6 +270,7 @@ warp scheduler, L1, …   ← do not model
 | `kernel_set_attribute` is Invalid (no `CUkernel` attribute) | `cuKernelSetAttribute` |
 | `kernel_set_cache_config` is Invalid (no `CUkernel` cache config) | `cuKernelSetCacheConfig` |
 | `link_create` is Invalid (no JIT linker or NVRTC) | `cuLinkCreate` |
+| `link_add_data` is Invalid (no JIT linker or NVRTC) | `cuLinkAddData` |
 | `device_get` is the ordinal in `0 .. count` | `cuDeviceGet` |
 | `flush_gpu_direct_rdma_writes` is a 1 ns host-sync barrier on RDMA SKUs (no write-visibility) | 1 ns |
 | `BatchMemOp::FlushRemoteWrites` is stream-ordered `CU_STREAM_MEM_OP_FLUSH_REMOTE_WRITES` (capture legal; never a no-op) | 1 ns Solo |
@@ -1519,6 +1520,8 @@ Query; legal during capture. No Engine `--kernel-setattr`.
 Query; legal during capture. No Engine `--kernel-cache`.
 `link_create` is `cuLinkCreate` (always Invalid `"jit linker"`; no NVRTC).
 Distinct from `library_load_data`. Query; legal during capture. No Engine `--jit-link`.
+`link_add_data` is `cuLinkAddData` (always Invalid `"link add"`; no NVRTC).
+Distinct from `link_create` and `library_load_data`. Query; legal during capture. No Engine `--link-add`.
 `runtime_get_version` is `cudaRuntimeGetVersion` (same toolkit). Query;
 legal during capture.
 `func_get_attributes` is `cudaFuncGetAttributes`

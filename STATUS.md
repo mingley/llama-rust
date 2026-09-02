@@ -5,6 +5,15 @@ Visible five-turn extract: [docs/chatgpt-share-6a920fe1.md](docs/chatgpt-share-6
 Complete share-API extract: [docs/chatgpt-share-6a920fe1/](docs/chatgpt-share-6a920fe1/).
 Work lands on `main`. No PRs.
 
+## Shipped 2026-09-01 — CUDA `cuLinkAddData`
+
+`gpu-sim` `Sim::link_add_data` is `cuLinkAddData`.
+Always Invalid `"link add"` because the CUDA driver JIT linker is not
+modeled. Query; legal during capture. Distinct from
+`link_create` (why is not `"jit linker"`) and from
+`library_load_data`. This VM does not invent `cuLinkComplete` or Engine `--link-add`.
+`gpu-profile capture` is still refused. Dual score still has no `$/M tokens`.
+
 ## Shipped 2026-09-01 — CUDA `cuKernelSetCacheConfig`
 
 `gpu-sim` `Sim::kernel_set_cache_config` is `cuKernelSetCacheConfig`.

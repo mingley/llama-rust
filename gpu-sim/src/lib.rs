@@ -1114,6 +1114,8 @@
 //! legal during capture. No Engine `--kernel-cache`.
 //! [`link_create`](Sim::link_create) is `cuLinkCreate` (always Invalid)
 //! `"jit linker"`). Query; legal during capture. No Engine `--jit-link`.
+//! [`link_add_data`](Sim::link_add_data) is `cuLinkAddData` (always Invalid
+//! `"link add"`). Query; legal during capture. No Engine `--link-add`.
 //! [`Sim::runtime_get_version`] is `cudaRuntimeGetVersion` (same
 //! toolkit). Query; legal during capture. [`device_get`](Sim::device_get) is `cuDeviceGet` (ordinal in range).
 //! [`Sim::device_can_access_peer`] / [`device_get_p2p_attribute`](Sim::device_get_p2p_attribute)
@@ -19465,6 +19467,56 @@ mod tests {
         match sim.library_load_data(d) {
             Err(SimError::Invalid { why }) => {
                 assert!(why.contains("cuda library"), "{why}");
+            }
+            other => panic!("{other:?}"),
+        }
+        match sim.link_add_data(d) {
+            Err(SimError::Invalid { why }) => {
+                assert!(why.contains("link add"), "{why}");
+                assert!(!why.contains("jit linker"), "{why}");
+            }
+            other => panic!("{other:?}"),
+        }
+    }
+
+    #[test]
+    fn link_add_data_is_unsupported() {
+        let mut sim = Sim::new(h100());
+        let d = DeviceId(0);
+        match sim.link_add_data(d) {
+            Err(SimError::Invalid { why }) => {
+                assert!(why.contains("link add"), "{why}");
+                assert!(!why.contains("jit linker"), "{why}");
+                assert!(!why.contains("cuda library"), "{why}");
+                assert!(!why.contains("library file"), "{why}");
+            }
+            other => panic!("{other:?}"),
+        }
+        sim.begin_capture(d, StreamId(0)).unwrap();
+        match sim.link_add_data(d) {
+            Err(SimError::Invalid { why }) => {
+                assert!(why.contains("link add"), "{why}");
+            }
+            other => panic!("{other:?}"),
+        }
+        let _g = sim.end_capture().unwrap();
+        match sim.link_add_data(DeviceId(99)) {
+            Err(SimError::Invalid { why }) => {
+                assert!(why.contains("device not in profile"), "{why}");
+            }
+            other => panic!("{other:?}"),
+        }
+        match sim.link_create(d) {
+            Err(SimError::Invalid { why }) => {
+                assert!(why.contains("jit linker"), "{why}");
+                assert!(!why.contains("link add"), "{why}");
+            }
+            other => panic!("{other:?}"),
+        }
+        match sim.library_load_data(d) {
+            Err(SimError::Invalid { why }) => {
+                assert!(why.contains("cuda library"), "{why}");
+                assert!(!why.contains("link add"), "{why}");
             }
             other => panic!("{other:?}"),
         }

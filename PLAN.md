@@ -7143,7 +7143,14 @@ model, do not celebrate the sim.
     or `cudaChooseDevice`. `gpu-profile capture` is still refused. Dual
     score still has no `$/M tokens`.
 
-713. [ ] Next numbered PLAN item after 712 is the next `gpu-sim` / Engine /
+713. [x] `gpu-sim` `Sim::link_add_data` is
+    `cuLinkAddData`. Always Invalid `"link add"`
+    because the CUDA driver JIT linker is not modeled. Query; legal during capture.
+    Distinct from `link_create`. This VM does not invent `cuLinkComplete`, Engine `--link-add`,
+    or `cudaChooseDevice`. `gpu-profile capture` is still refused. Dual
+    score still has no `$/M tokens`.
+
+714. [ ] Next numbered PLAN item after 713 is the next `gpu-sim` / Engine /
     serve / expertvm mechanical API that is still missing, or the next official
     decode family. Prefer remaining CUDA-shaped twins over more
     OpenAI HTTP veneer. Do not invent F32 `output.scale`. Do not invent a
@@ -7773,6 +7780,9 @@ model, do not celebrate the sim.
     Do not invent a second `cuKernelSetCacheConfig` /
     `kernel_set_cache_config`. Do not invent Engine `--kernel-cache`.
     Do not invent `cuLinkAddData` this slice. Do not reverse `"kernel cache"`.
+    Do not invent a second `cuLinkAddData` / `link_add_data`.
+    Do not invent Engine `--link-add`. Do not invent
+    `cuLinkComplete` this slice. Do not reverse `"link add"`.
     Do not invent a second `cudaStreamAddCallback`.
     Do not invent Engine `--stream-callback` (same wall as second live
     `cudaLaunchHostFunc` after miss DMA).
@@ -8482,6 +8492,9 @@ model, do not celebrate the sim.
     Do not invent a second `kernel_set_cache_config` API. Do not invent
     Engine `--set-kernel-cache`. Do not invent a CUkernel cache config
     this slice. Do not reverse Kernel SetCacheConfig remaining unsupported.
+    Do not invent a second `link_add_data` API. Do not invent
+    Engine `--add-link-data`. Do not invent a JIT input blob
+    this slice. Do not reverse Link AddData remaining unsupported.
     Do not invent a second DeviceLaunch in-flight destroy-complete check or Engine
     `--device-launch-destroy`. Do not abort an in-flight DeviceLaunch when
     `destroy_graph` succeeds. Do not delay destroy of an idle exec. Do not invent
@@ -9374,6 +9387,9 @@ model, do not celebrate the sim.
     Do not invent a second `kernel_set_cache_config` method. Do not
     invent Engine `--cu-kernel-set-cache-config`. Do not reverse wrapping
     cuKernelSetCacheConfig Invalid.
+    Do not invent a second `link_add_data` method. Do not
+    invent Engine `--cu-link-add-data`. Do not reverse wrapping
+    cuLinkAddData Invalid.
     Do not
     spend the next item on an OpenAI-compatible HTTP veneer.
 
