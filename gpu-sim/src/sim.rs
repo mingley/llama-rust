@@ -9870,8 +9870,7 @@ impl Sim {
     /// `dependencyData`).
     ///
     /// Capture refused. Distinct from
-    /// [`Self::add_graph_node`]. This VM does not invent
-    /// occupancy SM counts this slice.
+    /// [`Self::add_graph_node`].
     pub fn add_graph_node_with_data(
         &mut self,
         graph: GraphId,
@@ -10512,7 +10511,9 @@ impl Sim {
     /// Add nodes to the body, then instantiate the parent. Then-body ops skip at
     /// start when `handle` is `0`. Size 2 (if/else) is [`Self::graph_add_if_else`].
     /// `handle` must have been created on `graph`. Capture cannot include it.
-    /// Illegal on an instantiated exec. Copies the handle ctx onto the node.
+    /// Illegal on an instantiated exec. Copies the handle ctx onto the node. Driver
+    /// `cuGraphAddNode` IF is
+    /// [`Self::add_graph_if`].
     pub fn graph_add_if(&mut self, graph: GraphId, handle: CondId) -> Result<GraphId, SimError> {
         let (device, stream) = self.graph_origin_for_add(graph)?;
         self.require_cond_on_graph(handle, graph)?;
@@ -10529,6 +10530,16 @@ impl Sim {
             },
         )?;
         Ok(body)
+    }
+
+    /// `cuGraphAddNode` IF (`cudaGraphCondTypeIf`, size 1). Identity with
+    /// [`Self::graph_add_if`] (`cudaGraphAddNode` IF).
+    ///
+    /// Capture refused. Distinct from
+    /// [`Self::add_graph_node_with_data`]. This VM does not invent
+    /// occupancy SM counts this slice.
+    pub fn add_graph_if(&mut self, graph: GraphId, handle: CondId) -> Result<GraphId, SimError> {
+        self.graph_add_if(graph, handle)
     }
 
     /// `cudaGraphAddNode` IF (`cudaGraphCondTypeIf`, size 2). Returns then, else.

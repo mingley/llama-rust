@@ -9009,7 +9009,14 @@ model, do not celebrate the sim.
     or `cudaChooseDevice`. `gpu-profile capture` is still refused. Dual
     score still has no `$/M tokens`.
 
-979. [ ] Next numbered PLAN item after 978 is the next `gpu-sim` / Engine /
+979. [x] `gpu-sim` `Sim::add_graph_if` is
+    `cuGraphAddNode` IF. Identity with `graph_add_if`
+    (`cudaGraphAddNode` IF). Capture refused. Distinct from
+    `add_graph_node_with_data`. This VM does not invent occupancy SM counts, Engine `--graph-add-if`,
+    or `cudaChooseDevice`. `gpu-profile capture` is still refused. Dual
+    score still has no `$/M tokens`.
+
+980. [ ] Next numbered PLAN item after 979 is the next `gpu-sim` / Engine /
     serve / expertvm mechanical API that is still missing, or the next official
     decode family. Prefer remaining CUDA-shaped twins over more
     OpenAI HTTP veneer. Do not invent F32 `output.scale`. Do not invent a
@@ -10437,6 +10444,9 @@ model, do not celebrate the sim.
     Do not invent a second `cuGraphAddNode_v2` / `add_graph_node_with_data`.
     Do not invent Engine `--graph-add-node-with-data`. Do not invent
     occupancy SM counts this slice. Do not reverse AddGraphNodeWithData identity with graph_add_node_with_data.
+    Do not invent a second `cuGraphAddNode` IF / `add_graph_if`.
+    Do not invent Engine `--graph-add-if`. Do not invent
+    occupancy SM counts this slice. Do not reverse AddGraphIf identity with graph_add_if.
     Do not invent a second `cudaStreamAddCallback`.
     Do not invent Engine `--stream-callback` (same wall as second live
     `cudaLaunchHostFunc` after miss DMA).
@@ -11944,6 +11954,9 @@ model, do not celebrate the sim.
     Do not invent a second `add_graph_node_with_data` API. Do not invent
     Engine `--graph-add-node-with-data-identity`. Do not invent a graph-add-if
     this slice. Do not reverse AddGraphNodeWithData identity with graph_add_node_with_data.
+    Do not invent a second `add_graph_if` API. Do not invent
+    Engine `--graph-add-if-identity`. Do not invent a graph-add-if-else
+    this slice. Do not reverse AddGraphIf identity with graph_add_if.
     Do not invent a second DeviceLaunch in-flight destroy-complete check or Engine
     `--device-launch-destroy`. Do not abort an in-flight DeviceLaunch when
     `destroy_graph` succeeds. Do not delay destroy of an idle exec. Do not invent
@@ -13634,6 +13647,9 @@ model, do not celebrate the sim.
     Do not invent a second `add_graph_node_with_data` method. Do not
     invent Engine `--cu-graph-add-node-with-data`. Do not reverse wrapping
     cuGraphAddNode_v2 identity.
+    Do not invent a second `add_graph_if` method. Do not
+    invent Engine `--cu-graph-add-if`. Do not reverse wrapping
+    cuGraphAddNode IF identity.
     Do not
     spend the next item on an OpenAI-compatible HTTP veneer.
 

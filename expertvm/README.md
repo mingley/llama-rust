@@ -644,6 +644,7 @@ compiled kernel exists; no Engine flag).
 `gpu-sim` `add_graph_free` is `cuGraphAddMemFreeNode` (identity with `graph_add_free`; no Engine flag).
 `gpu-sim` `add_graph_node` is `cuGraphAddNode` (identity with `graph_add_node`; no Engine flag).
 `gpu-sim` `add_graph_node_with_data` is `cuGraphAddNode_v2` (identity with `graph_add_node_with_data`; no Engine flag).
+`gpu-sim` `add_graph_if` is `cuGraphAddNode` IF (identity with `graph_add_if`; no Engine flag).
 `gpu-sim` `mem_alloc` is `cuMemAlloc` (identity with `malloc`; no Engine flag).
 `gpu-sim` `mem_free` is `cuMemFree` (identity with `free_sync`; no Engine flag).
 `gpu-sim` `mem_free_host` is `cuMemFreeHost` (identity with `free_host_pinned`; no Engine flag).
@@ -812,6 +813,7 @@ compiled kernel exists; no Engine flag).
 `gpu-sim` `add_graph_free` is `cuGraphAddMemFreeNode` (identity with `graph_add_free`; no Engine flag).
 `gpu-sim` `add_graph_node` is `cuGraphAddNode` (identity with `graph_add_node`; no Engine flag).
 `gpu-sim` `add_graph_node_with_data` is `cuGraphAddNode_v2` (identity with `graph_add_node_with_data`; no Engine flag).
+`gpu-sim` `add_graph_if` is `cuGraphAddNode` IF (identity with `graph_add_if`; no Engine flag).
 `gpu-sim` `func_is_loaded` is `cuFuncIsLoaded` (`false` until a compiled
 kernel exists; no Engine flag).
 `gpu-sim` `func_load` is `cuFuncLoad` (Invalid; no compiled kernel; no
