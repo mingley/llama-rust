@@ -21387,6 +21387,21 @@ impl Sim {
         })
     }
 
+    /// `cuTexRefCreate`. CUDA texture references are not modeled.
+    ///
+    /// Always Invalid `"texref create"` (this VM has no `CUtexref`
+    /// handles). Distinct from [`Self::module_get_tex_ref`] (why is not
+    /// `"module texref"`) and from [`Self::tex_object_create`] (why is not
+    /// `"cuda texture"`). Unknown devices are Invalid `"device not in profile"`.
+    /// Query; legal during capture. This VM does not invent
+    /// `cuTexRefDestroy` this slice.
+    pub fn tex_ref_create(&self, device: DeviceId) -> Result<(), SimError> {
+        let _gpu = self.profile.gpu(device)?;
+        Err(SimError::Invalid {
+            why: "texref create",
+        })
+    }
+
     /// `cuModuleGetSurfRef`. CUDA modules are not modeled.
     ///
     /// Always Invalid `"module surfref"` (this VM has no `CUmodule` and

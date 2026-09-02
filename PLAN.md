@@ -7395,7 +7395,14 @@ model, do not celebrate the sim.
     or `cudaChooseDevice`. `gpu-profile capture` is still refused. Dual
     score still has no `$/M tokens`.
 
-749. [ ] Next numbered PLAN item after 748 is the next `gpu-sim` / Engine /
+749. [x] `gpu-sim` `Sim::tex_ref_create` is
+    `cuTexRefCreate`. Always Invalid `"texref create"`
+    because CUDA texture references are not modeled. Query; legal during capture.
+    Distinct from `module_get_tex_ref` and `tex_object_create`. This VM does not invent `cuTexRefDestroy`, Engine `--texref-create`,
+    or `cudaChooseDevice`. `gpu-profile capture` is still refused. Dual
+    score still has no `$/M tokens`.
+
+750. [ ] Next numbered PLAN item after 749 is the next `gpu-sim` / Engine /
     serve / expertvm mechanical API that is still missing, or the next official
     decode family. Prefer remaining CUDA-shaped twins over more
     OpenAI HTTP veneer. Do not invent F32 `output.scale`. Do not invent a
@@ -8133,6 +8140,9 @@ model, do not celebrate the sim.
     Do not invent a second `cuMipmappedArrayGetSparseProperties` / `mipmapped_array_get_sparse_properties`.
     Do not invent Engine `--mipmap-sparse`. Do not invent
     `cuTexRefCreate` this slice. Do not reverse `"mipmap sparse"`.
+    Do not invent a second `cuTexRefCreate` / `tex_ref_create`.
+    Do not invent Engine `--texref-create`. Do not invent
+    `cuTexRefDestroy` this slice. Do not reverse `"texref create"`.
     Do not invent a second `cudaStreamAddCallback`.
     Do not invent Engine `--stream-callback` (same wall as second live
     `cudaLaunchHostFunc` after miss DMA).
@@ -8950,6 +8960,9 @@ model, do not celebrate the sim.
     Do not invent a second `mipmapped_array_get_sparse_properties` API. Do not invent
     Engine `--get-mipmap-sparse`. Do not invent a CUDA_ARRAY_SPARSE_PROPERTIES mipmap
     this slice. Do not reverse MipmappedArray GetSparseProperties remaining unsupported.
+    Do not invent a second `tex_ref_create` API. Do not invent
+    Engine `--create-tex-ref`. Do not invent a CUtexref destroy
+    this slice. Do not reverse TexRef Create remaining unsupported.
     Do not invent a second DeviceLaunch in-flight destroy-complete check or Engine
     `--device-launch-destroy`. Do not abort an in-flight DeviceLaunch when
     `destroy_graph` succeeds. Do not delay destroy of an idle exec. Do not invent
@@ -9950,6 +9963,9 @@ model, do not celebrate the sim.
     Do not invent a second `mipmapped_array_get_sparse_properties` method. Do not
     invent Engine `--cu-mipmap-sparse`. Do not reverse wrapping
     cuMipmappedArrayGetSparseProperties Invalid.
+    Do not invent a second `tex_ref_create` method. Do not
+    invent Engine `--cu-tex-ref-create`. Do not reverse wrapping
+    cuTexRefCreate Invalid.
     Do not
     spend the next item on an OpenAI-compatible HTTP veneer.
 
