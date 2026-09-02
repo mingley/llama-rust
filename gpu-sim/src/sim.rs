@@ -18956,7 +18956,6 @@ impl Sim {
     /// [`Self::multicast_bind_mem_with_size`] (`cuMulticastBindMem` size).
     ///
     /// Capture refused. Distinct from [`Self::mem_multicast_bind_mem_with_flags`].
-    /// This VM does not invent occupancy SM counts this slice.
     pub fn mem_multicast_bind_mem_with_size(
         &mut self,
         mc: MulticastId,
@@ -18973,6 +18972,8 @@ impl Sim {
     /// Retains a [`MemHandleId`] for the map at offset 0, then
     /// [`Self::multicast_bind_mem`]. Partial offset/size bind is not modeled.
     /// Typed helper; flags must be [`MulticastBindFlags::DEFAULT`].
+    /// Driver `cuMulticastBindAddr` is [`Self::mem_multicast_bind_addr`].
+    /// Identity wrap [`Self::mem_multicast_bind_addr`].
     pub fn multicast_bind_addr(
         &mut self,
         mc: MulticastId,
@@ -18980,6 +18981,20 @@ impl Sim {
         id: AllocId,
     ) -> Result<(), SimError> {
         self.multicast_bind_addr_with_flags(mc, device, id, MulticastBindFlags::DEFAULT)
+    }
+
+    /// `cuMulticastBindAddr`. Identity with
+    /// [`Self::multicast_bind_addr`] (`cuMulticastBindAddr`).
+    ///
+    /// Capture refused. Distinct from [`Self::mem_multicast_bind_mem_with_size`].
+    /// This VM does not invent occupancy SM counts this slice.
+    pub fn mem_multicast_bind_addr(
+        &mut self,
+        mc: MulticastId,
+        device: DeviceId,
+        id: AllocId,
+    ) -> Result<(), SimError> {
+        self.multicast_bind_addr(mc, device, id)
     }
 
     /// [`Self::multicast_bind_addr`] with a flags word.
