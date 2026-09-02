@@ -24922,7 +24922,6 @@ impl Sim {
     /// [`Self::pointer_get_attribute_n`] (`cuPointerGetAttributes`).
     ///
     /// Query; legal during capture. Distinct from [`Self::mem_pointer_get_attribute`].
-    /// This VM does not invent occupancy SM counts this slice.
     pub fn mem_pointer_get_attribute_n(
         &self,
         alloc: AllocId,
@@ -24949,6 +24948,8 @@ impl Sim {
     /// ProtRead, VMM `va_set_access`, and managed SetAccessedBy are Read.
     /// Unknown device is Invalid `"device not in profile"`. Freed ids are
     /// Invalid `"pointer attr"`. Query; legal during capture.
+    /// Driver `CU_POINTER_ATTRIBUTE_ACCESS_FLAGS` is [`Self::mem_pointer_get_access_flags`].
+    /// Identity wrap [`Self::mem_pointer_get_access_flags`].
     pub fn pointer_get_access_flags(
         &self,
         device: DeviceId,
@@ -24969,6 +24970,19 @@ impl Sim {
             return Ok(MemAccessFlags::PROT_READ);
         }
         Ok(MemAccessFlags::PROT_NONE)
+    }
+
+    /// `CU_POINTER_ATTRIBUTE_ACCESS_FLAGS`. Identity with
+    /// [`Self::pointer_get_access_flags`] (`CU_POINTER_ATTRIBUTE_ACCESS_FLAGS`).
+    ///
+    /// Query; legal during capture. Distinct from [`Self::mem_pointer_get_attribute_n`].
+    /// This VM does not invent occupancy SM counts this slice.
+    pub fn mem_pointer_get_access_flags(
+        &self,
+        device: DeviceId,
+        alloc: AllocId,
+    ) -> Result<u32, SimError> {
+        self.pointer_get_access_flags(device, alloc)
     }
 
     /// `cudaHostGetDevicePointer`. Query; legal during capture.
