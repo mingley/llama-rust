@@ -6339,8 +6339,7 @@ impl Sim {
     /// [`Self::graph_node_set_params`] (`cudaGraphNodeSetParams`).
     ///
     /// Capture refused. Distinct from
-    /// [`Self::graph_exec_node_set_params`]. This VM does not invent
-    /// occupancy SM counts this slice.
+    /// [`Self::graph_exec_node_set_params`].
     pub fn set_graph_node_params(
         &mut self,
         graph: GraphId,
@@ -6358,7 +6357,9 @@ impl Sim {
     /// [`GraphNodeParams::Memcpy`] is 1-dimensional only (same as
     /// [`Self::graph_exec_memcpy_set_params`]). [`GraphNodeParams::Memset`] of
     /// a 2D/3D node may change address only (same as
-    /// [`Self::graph_exec_memset_set_params`]).
+    /// [`Self::graph_exec_memset_set_params`]). Driver
+    /// `cuGraphExecNodeSetParams` is
+    /// [`Self::set_graph_exec_node_params`].
     pub fn graph_exec_node_set_params(
         &mut self,
         exec: GraphId,
@@ -6366,6 +6367,21 @@ impl Sim {
         params: GraphNodeParams,
     ) -> Result<(), SimError> {
         self.set_node_params(exec, node, params, true)
+    }
+
+    /// `cuGraphExecNodeSetParams`. Identity with
+    /// [`Self::graph_exec_node_set_params`] (`cudaGraphExecNodeSetParams`).
+    ///
+    /// Capture refused. Distinct from
+    /// [`Self::set_graph_node_params`]. This VM does not invent
+    /// occupancy SM counts this slice.
+    pub fn set_graph_exec_node_params(
+        &mut self,
+        exec: GraphId,
+        node: usize,
+        params: &GraphNodeParams,
+    ) -> Result<(), SimError> {
+        self.graph_exec_node_set_params(exec, node, params.clone())
     }
 
     fn set_node_params(
