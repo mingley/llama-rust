@@ -11832,8 +11832,7 @@ impl Sim {
     /// [`Self::graph_node_kind`] (`cudaGraphNodeGetType`).
     ///
     /// Query; legal during capture. Distinct from
-    /// [`Self::graph_node_find_in_clone`]. This VM does not invent
-    /// occupancy SM counts this slice.
+    /// [`Self::graph_node_find_in_clone`].
     pub fn get_graph_node_type(
         &self,
         graph: GraphId,
@@ -14209,7 +14208,9 @@ impl Sim {
     /// `cloned` must have been produced by [`Self::clone_graph`] of `original`
     /// (a nested graph cloned in that same call counts). Capture is allowed.
     /// Add order is preserved, so the index is unchanged. A second clone of the
-    /// clone does not map nodes from the first original.
+    /// clone does not map nodes from the first original. Driver
+    /// `cuGraphNodeFindInClone` is
+    /// [`Self::find_graph_node_in_clone`].
     pub fn graph_node_find_in_clone(
         &self,
         original: GraphId,
@@ -14246,6 +14247,21 @@ impl Sim {
             });
         }
         Ok(node)
+    }
+
+    /// `cuGraphNodeFindInClone`. Identity with
+    /// [`Self::graph_node_find_in_clone`] (`cudaGraphNodeFindInClone`).
+    ///
+    /// Query; legal during capture. Distinct from
+    /// [`Self::clone_graph`]. This VM does not invent
+    /// occupancy SM counts this slice.
+    pub fn find_graph_node_in_clone(
+        &self,
+        original: GraphId,
+        node: usize,
+        cloned: GraphId,
+    ) -> Result<usize, SimError> {
+        self.graph_node_find_in_clone(original, node, cloned)
     }
 
     fn graph_origin_for_add(&self, graph: GraphId) -> Result<(DeviceId, StreamId), SimError> {
