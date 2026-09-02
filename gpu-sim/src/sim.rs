@@ -2770,6 +2770,16 @@ impl Sim {
         Ok(self.stream_idle(device, stream))
     }
 
+    /// `cuStreamQuery`. Identity with [`Self::query_stream`] (`cudaStreamQuery`).
+    ///
+    /// Does not wait. Unknown devices are [`SimError::Invalid`]. A busy stream
+    /// is `Ok(false)`. A capturing stream is Invalid. Distinct from
+    /// [`Self::stream_is_idle`] (already wraps `query_stream`). This VM does
+    /// not invent `cuEventSynchronize` this slice (`synchronize_event` stays).
+    pub fn stream_query(&self, device: DeviceId, stream: StreamId) -> Result<bool, SimError> {
+        self.query_stream(device, stream)
+    }
+
     /// Recorded event that has fired ([`Self::query_event`] / wait).
     ///
     /// A [`ProgrammaticEvent`] with [`ProgrammaticEvent::trigger_at_block_start`]

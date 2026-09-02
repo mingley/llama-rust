@@ -490,6 +490,8 @@
 //! [`event_query`](Sim::event_query) is `cuEventQuery` (identity with
 //! [`query_event`](Sim::query_event)). Query; legal during capture. No Engine `--event-query`.
 //! [`Sim::query_stream`] is `cudaStreamQuery` (no wait).
+//! [`stream_query`](Sim::stream_query) is `cuStreamQuery` (identity with
+//! [`query_stream`](Sim::query_stream)). Capturing stream is Invalid. No Engine `--stream-query`.
 //! [`Sim::mem_info`] is `cudaMemGetInfo` `(free, total)`.
 //! [`Sim::pointer_get_attributes`] is `cudaPointerGetAttributes`.
 //! [`pointer_set_attribute`](Sim::pointer_set_attribute) /
@@ -32346,6 +32348,43 @@ mod tests {
         sim.synchronize().unwrap();
         assert!(sim.event_query(ev).unwrap());
         assert!(sim.query_event(ev).unwrap());
+    }
+
+    #[test]
+    fn stream_query_is_cu_stream_query() {
+        let mut sim = Sim::new(h100());
+        let d = DeviceId(0);
+        let s = StreamId(0);
+        match sim.stream_query(DeviceId(99), s) {
+            Err(SimError::Invalid { why }) => assert!(why.contains("device"), "{why}"),
+            other => panic!("{other:?}"),
+        }
+        match sim.query_stream(DeviceId(99), s) {
+            Err(SimError::Invalid { why }) => assert!(why.contains("device"), "{why}"),
+            other => panic!("{other:?}"),
+        }
+        assert!(sim.stream_query(d, s).unwrap());
+        assert_eq!(
+            sim.stream_query(d, s).unwrap(),
+            sim.query_stream(d, s).unwrap()
+        );
+        let a = sim.alloc(d, 4096, s).unwrap();
+        enq(sim.kernel(d, KernelKind::other(1 << 20, 4096), &[a], &[a], s));
+        assert!(!sim.stream_query(d, s).unwrap());
+        sim.synchronize().unwrap();
+        assert!(sim.stream_query(d, s).unwrap());
+        assert!(sim.query_stream(d, s).unwrap());
+        sim.begin_capture(d, s).unwrap();
+        match sim.stream_query(d, s) {
+            Err(SimError::Invalid { why }) => assert!(why.contains("capture"), "{why}"),
+            other => panic!("{other:?}"),
+        }
+        match sim.query_stream(d, s) {
+            Err(SimError::Invalid { why }) => assert!(why.contains("capture"), "{why}"),
+            other => panic!("{other:?}"),
+        }
+        let _g = sim.end_capture().unwrap();
+        sim.free_sync(a).unwrap();
     }
 
     #[test]

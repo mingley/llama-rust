@@ -144,6 +144,7 @@ warp scheduler, L1, …   ← do not model
 | `event_get_id` is unique per event handle (`EventId + 1`) | `cuEventGetId` |
 | `pool_get_id` is unique per pool handle (`PoolId + 1`); graph-memory pools are legal | `cuMemPoolGetId` |
 | `query_stream` is non-blocking | `cudaStreamQuery` |
+| `stream_query` is identity with `query_stream` | `cuStreamQuery` |
 | `mem_info` is `(free, total)` HBM | `cudaMemGetInfo` |
 | `pointer_get_attributes` classifies Unregistered / Host / Device / Managed | `cudaPointerGetAttributes` |
 | `pointer_get_attribute` wraps type / mapped / pool / range / ordinal / start / buffer id / IPC / RDMA / handle types / VMM map / hw decompress 0 / VMM block id; SyncMemops is settable | `cuPointerGetAttribute` / `SetAttribute` |
@@ -1085,6 +1086,7 @@ never-recorded returns immediately; capture refused; the id may be created
 again).
 `query_stream` is `cudaStreamQuery` (unknown device is semantic; a busy
 stream is `Ok(false)`; the clock does not advance).
+`stream_query` is `cuStreamQuery` (identity with `query_stream`). Capturing stream is Invalid. No Engine `--stream-query`.
 `mem_info` is `cudaMemGetInfo` `(free, total)` HBM bytes.
 `pointer_get_attributes` is `cudaPointerGetAttributes`.
 `pointer_set_attribute` / `pointer_get_attribute` are
