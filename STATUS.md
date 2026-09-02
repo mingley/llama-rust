@@ -5,6 +5,14 @@ Visible five-turn extract: [docs/chatgpt-share-6a920fe1.md](docs/chatgpt-share-6
 Complete share-API extract: [docs/chatgpt-share-6a920fe1/](docs/chatgpt-share-6a920fe1/).
 Work lands on `main`. No PRs.
 
+## Shipped 2026-09-02 — CUDA `cuEventRecord`
+
+`gpu-sim` `Sim::event_record` is `cuEventRecord`.
+Identity with `record_event` (`cudaEventRecord`). Records after prior
+ops on the stream. Capture-legal. Distinct from `record_event_with_flags`.
+This VM does not invent `cuEventRecordWithFlags` or Engine `--event-record`.
+`gpu-profile capture` is still refused. Dual score still has no `$/M tokens`.
+
 ## Shipped 2026-09-02 — CUDA `cuEventCreateWithFlags`
 
 `gpu-sim` `Sim::event_create_with_flags` is `cuEventCreateWithFlags`.

@@ -492,6 +492,8 @@
 //! are `cudaEventRecordWithFlags` / `cudaStreamWaitEvent` flags
 //! ([`EventRecordFlags::EXTERNAL`] / [`EventWaitFlags::EXTERNAL`]). Typed
 //! helpers stay.
+//! [`event_record`](Sim::event_record) is `cuEventRecord` (identity with
+//! [`record_event`](Sim::record_event)). Capture-legal. No Engine `--event-record`.
 //! [`Sim::destroy_event`] is `cudaEventDestroy` (waits a recorded incomplete
 //! event; never-recorded returns immediately; capture refused).
 //! [`event_destroy`](Sim::event_destroy) is `cuEventDestroy` (identity with
@@ -32586,6 +32588,30 @@ mod tests {
         let _g = sim.end_capture().unwrap();
         sim.event_destroy(ev).unwrap();
         sim.event_destroy(EventId(5)).unwrap();
+    }
+
+    #[test]
+    fn event_record_is_cu_event_record() {
+        let mut sim = Sim::new(h100());
+        let d = DeviceId(0);
+        let s = StreamId(0);
+        let ev = EventId(4);
+        sim.event_create(ev).unwrap();
+        let a = sim.alloc(d, 4096, s).unwrap();
+        enq(sim.kernel(d, KernelKind::other(1 << 20, 4096), &[a], &[a], s));
+        enq(sim.event_record(d, ev, s));
+        assert!(!sim.event_query(ev).unwrap());
+        sim.synchronize().unwrap();
+        assert!(sim.event_query(ev).unwrap());
+        sim.event_create(EventId(5)).unwrap();
+        enq(sim.kernel(d, KernelKind::other(1 << 20, 4096), &[a], &[a], s));
+        enq(sim.record_event(d, EventId(5), s));
+        sim.synchronize().unwrap();
+        assert!(sim.event_query(EventId(5)).unwrap());
+        sim.begin_capture(d, s).unwrap();
+        enq(sim.event_record(d, ev, s));
+        let _g = sim.end_capture().unwrap();
+        sim.free_sync(a).unwrap();
     }
 
     #[test]

@@ -23641,6 +23641,20 @@ impl Sim {
         self.record_event_with_flags(device, event, stream, EventRecordFlags::DEFAULT)
     }
 
+    /// `cuEventRecord`. Identity with [`Self::record_event`] (`cudaEventRecord`).
+    ///
+    /// Records after prior ops on `stream`. Capture-legal (a record node).
+    /// Distinct from [`Self::record_event_with_flags`]. This VM does not invent
+    /// `cuEventRecordWithFlags` this slice (`record_event_with_flags` stays).
+    pub fn event_record(
+        &mut self,
+        device: DeviceId,
+        event: EventId,
+        stream: StreamId,
+    ) -> Result<OpId, SimError> {
+        self.record_event(device, event, stream)
+    }
+
     /// `cudaEventRecordWithFlags(..., cudaEventRecordExternal)`.
     ///
     /// During capture this is a record node that does **not** put `event` in the
