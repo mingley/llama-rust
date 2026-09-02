@@ -16811,7 +16811,6 @@ impl Sim {
     /// [`Self::pool_set_access_n`] (`cudaMemPoolSetAccess` desc array).
     ///
     /// Capture refused. Distinct from [`Self::mem_pool_set_access_with_flags`].
-    /// This VM does not invent occupancy SM counts this slice.
     pub fn mem_pool_set_access_n(
         &mut self,
         pool: PoolId,
@@ -16822,6 +16821,8 @@ impl Sim {
 
     /// Drop [`Self::pool_set_access`] / [`Self::pool_set_access_read`] for
     /// `device` (`cudaMemAccessFlagsProtNone`).
+    /// Driver `cuMemPoolSetAccess` ProtNone is [`Self::mem_pool_unset_access`].
+    /// Identity wrap [`Self::mem_pool_unset_access`].
     pub fn pool_unset_access(&mut self, pool: PoolId, device: DeviceId) -> Result<(), SimError> {
         self.fail_if_capturing("cannot capture mempool")?;
         self.refuse_destroyed_pool(pool)?;
@@ -16834,6 +16835,19 @@ impl Sim {
         }
         self.clock = self.clock.saturating_add(self.first_alloc_ns().max(1));
         Ok(())
+    }
+
+    /// `cuMemPoolSetAccess` ProtNone. Identity with
+    /// [`Self::pool_unset_access`] (`cudaMemPoolSetAccess` ProtNone).
+    ///
+    /// Capture refused. Distinct from [`Self::mem_pool_set_access_n`].
+    /// This VM does not invent occupancy SM counts this slice.
+    pub fn mem_pool_unset_access(
+        &mut self,
+        pool: PoolId,
+        device: DeviceId,
+    ) -> Result<(), SimError> {
+        self.pool_unset_access(pool, device)
     }
 
     /// Whether `device` has [`Self::pool_set_access`] or
