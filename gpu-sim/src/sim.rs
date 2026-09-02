@@ -19350,7 +19350,6 @@ impl Sim {
     /// [`Self::va_set_access`] (`cuMemSetAccess` PROT_READ).
     ///
     /// Capture refused. Distinct from [`Self::mem_unmap_range`].
-    /// This VM does not invent occupancy SM counts this slice.
     pub fn mem_set_access(&mut self, id: AllocId, device: DeviceId) -> Result<(), SimError> {
         self.va_set_access(id, device)
     }
@@ -19360,8 +19359,19 @@ impl Sim {
     /// Host-synchronous. Does not charge dest HBM. A kernel on `device` may
     /// read **and write** home physicals (interconnect), same class as
     /// [`Self::pool_set_access`]. Capture cannot include it.
+    /// Driver `cuMemSetAccess` write is [`Self::mem_set_access_write`].
+    /// Identity wrap [`Self::mem_set_access_write`].
     pub fn va_set_access_write(&mut self, id: AllocId, device: DeviceId) -> Result<(), SimError> {
         self.va_set_access_inner(id, device, true)
+    }
+
+    /// `cuMemSetAccess` write. Identity with
+    /// [`Self::va_set_access_write`] (`cuMemSetAccess` PROT_READWRITE).
+    ///
+    /// Capture refused. Distinct from [`Self::mem_set_access`].
+    /// This VM does not invent occupancy SM counts this slice.
+    pub fn mem_set_access_write(&mut self, id: AllocId, device: DeviceId) -> Result<(), SimError> {
+        self.va_set_access_write(id, device)
     }
 
     /// `cuMemSetAccess` with a flags word.

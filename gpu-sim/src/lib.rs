@@ -1140,6 +1140,9 @@
 //! [`mem_set_access`](Sim::mem_set_access) is `cuMemSetAccess` (identity with
 //! [`va_set_access`](Sim::va_set_access)). Capture refused. Distinct from
 //! [`mem_unmap_range`](Sim::mem_unmap_range). No Engine `--mem-set-access`.
+//! [`mem_set_access_write`](Sim::mem_set_access_write) is `cuMemSetAccess` write (identity with
+//! [`va_set_access_write`](Sim::va_set_access_write)). Capture refused. Distinct from
+//! [`mem_set_access`](Sim::mem_set_access). No Engine `--mem-set-access-write`.
 //! [`Sim::ipc_get_event`] / [`ipc_open_event`](Sim::ipc_open_event) are
 //! `cudaIpcGetEventHandle` / `cudaIpcOpenEventHandle` (interprocess events).
 //! [`Sim::create_shareable_pool`] is `cudaMemPoolCreate` with a POSIX-FD handle
@@ -2304,6 +2307,9 @@
 //! [`mem_set_access`](Sim::mem_set_access) is `cuMemSetAccess` (identity with
 //! [`va_set_access`](Sim::va_set_access)). Capture refused. Distinct from
 //! [`mem_unmap_range`](Sim::mem_unmap_range). No Engine `--mem-set-access`.
+//! [`mem_set_access_write`](Sim::mem_set_access_write) is `cuMemSetAccess` write (identity with
+//! [`va_set_access_write`](Sim::va_set_access_write)). Capture refused. Distinct from
+//! [`mem_set_access`](Sim::mem_set_access). No Engine `--mem-set-access-write`.
 //! [`HardwareProfile::host_pin_bytes`] caps `cudaMallocHost` / `cudaHostRegister`.
 //! [`Sim::idle_until`] drains, then jumps the virtual clock (open-loop arrivals).
 //! [`Sim::event_elapsed_ns`] is `cudaEventElapsedTime` in nanoseconds.
@@ -3336,6 +3342,9 @@
 //! [`mem_set_access`](Sim::mem_set_access) is `cuMemSetAccess` (identity with
 //! [`va_set_access`](Sim::va_set_access)). Capture refused. Distinct from
 //! [`mem_unmap_range`](Sim::mem_unmap_range). No Engine `--mem-set-access`.
+//! [`mem_set_access_write`](Sim::mem_set_access_write) is `cuMemSetAccess` write (identity with
+//! [`va_set_access_write`](Sim::va_set_access_write)). Capture refused. Distinct from
+//! [`mem_set_access`](Sim::mem_set_access). No Engine `--mem-set-access-write`.
 //! [`mem_host_get_flags`](Sim::mem_host_get_flags) is `cuMemHostGetFlags` (identity with
 //! [`host_get_flags`](Sim::host_get_flags)). Query; legal during capture. No Engine `--mem-host-get-flags`.
 //! [`mem_host_get_device_pointer`](Sim::mem_host_get_device_pointer) is `cuMemHostGetDevicePointer` (identity with
@@ -4334,6 +4343,9 @@
 //! [`mem_set_access`](Sim::mem_set_access) is `cuMemSetAccess` (identity with
 //! [`va_set_access`](Sim::va_set_access)). Capture refused. Distinct from
 //! [`mem_unmap_range`](Sim::mem_unmap_range). No Engine `--mem-set-access`.
+//! [`mem_set_access_write`](Sim::mem_set_access_write) is `cuMemSetAccess` write (identity with
+//! [`va_set_access_write`](Sim::va_set_access_write)). Capture refused. Distinct from
+//! [`mem_set_access`](Sim::mem_set_access). No Engine `--mem-set-access-write`.
 //! [`Sim::pointer_get_attributes`] is `cudaPointerGetAttributes`.
 //! [`pointer_set_attribute`](Sim::pointer_set_attribute) /
 //! [`pointer_get_attribute`](Sim::pointer_get_attribute) are
@@ -5739,6 +5751,9 @@
 //! [`mem_set_access`](Sim::mem_set_access) is `cuMemSetAccess` (identity with
 //! [`va_set_access`](Sim::va_set_access)). Capture refused. Distinct from
 //! [`mem_unmap_range`](Sim::mem_unmap_range). No Engine `--mem-set-access`.
+//! [`mem_set_access_write`](Sim::mem_set_access_write) is `cuMemSetAccess` write (identity with
+//! [`va_set_access_write`](Sim::va_set_access_write)). Capture refused. Distinct from
+//! [`mem_set_access`](Sim::mem_set_access). No Engine `--mem-set-access-write`.
 //! [`Sim::stream_get_device`] is `cudaStreamGetDevice` / `cuStreamGetDevice`
 //! (the device of the stream; green-ctx streams return the ctx create
 //! device). Query; legal during capture. Distinct from
@@ -6573,6 +6588,9 @@
 //! [`mem_set_access`](Sim::mem_set_access) is `cuMemSetAccess` (identity with
 //! [`va_set_access`](Sim::va_set_access)). Capture refused. Distinct from
 //! [`mem_unmap_range`](Sim::mem_unmap_range). No Engine `--mem-set-access`.
+//! [`mem_set_access_write`](Sim::mem_set_access_write) is `cuMemSetAccess` write (identity with
+//! [`va_set_access_write`](Sim::va_set_access_write)). Capture refused. Distinct from
+//! [`mem_set_access`](Sim::mem_set_access). No Engine `--mem-set-access-write`.
 //! [`set_stream_access_policy`](Sim::set_stream_access_policy) is
 //! `cudaStreamAttributeAccessPolicyWindow`: [`kernel`](Sim::kernel) /
 //! [`kernel_bufs`](Sim::kernel_bufs) inherit it; [`kernel_with`](Sim::kernel_with)
@@ -7892,6 +7910,9 @@
 //! [`mem_set_access`](Sim::mem_set_access) is `cuMemSetAccess` (identity with
 //! [`va_set_access`](Sim::va_set_access)). Capture refused. Distinct from
 //! [`mem_unmap_range`](Sim::mem_unmap_range). No Engine `--mem-set-access`.
+//! [`mem_set_access_write`](Sim::mem_set_access_write) is `cuMemSetAccess` write (identity with
+//! [`va_set_access_write`](Sim::va_set_access_write)). Capture refused. Distinct from
+//! [`mem_set_access`](Sim::mem_set_access). No Engine `--mem-set-access-write`.
 //! [`Sim::set_stream_priority`] is the priority-only helper;
 //! [`stream_create_with_priority`](Sim::stream_create_with_priority) is
 //! `cudaStreamCreateWithPriority` (flags plus priority; clamped to
@@ -8744,6 +8765,9 @@
 //! [`mem_set_access`](Sim::mem_set_access) is `cuMemSetAccess` (identity with
 //! [`va_set_access`](Sim::va_set_access)). Capture refused. Distinct from
 //! [`mem_unmap_range`](Sim::mem_unmap_range). No Engine `--mem-set-access`.
+//! [`mem_set_access_write`](Sim::mem_set_access_write) is `cuMemSetAccess` write (identity with
+//! [`va_set_access_write`](Sim::va_set_access_write)). Capture refused. Distinct from
+//! [`mem_set_access`](Sim::mem_set_access). No Engine `--mem-set-access-write`.
 //! [`destroy_stream`](Sim::destroy_stream) is `cudaStreamDestroy` (returns
 //! immediately; in-flight work still completes; NULL is Invalid; recreate
 //! while unfinished is `"stream in flight"`). Capture cannot include it.
@@ -9576,6 +9600,9 @@
 //! [`mem_set_access`](Sim::mem_set_access) is `cuMemSetAccess` (identity with
 //! [`va_set_access`](Sim::va_set_access)). Capture refused. Distinct from
 //! [`mem_unmap_range`](Sim::mem_unmap_range). No Engine `--mem-set-access`.
+//! [`mem_set_access_write`](Sim::mem_set_access_write) is `cuMemSetAccess` write (identity with
+//! [`va_set_access_write`](Sim::va_set_access_write)). Capture refused. Distinct from
+//! [`mem_set_access`](Sim::mem_set_access). No Engine `--mem-set-access-write`.
 //! [`Sim::instantiate_graph`] is `cudaGraphInstantiate` (host-sync; returns a
 //! new exec id; first [`launch_graph`](Sim::launch_graph) of a definition
 //! creates a primary exec). Unused conditional handles are
@@ -10437,6 +10464,9 @@
 //! [`mem_set_access`](Sim::mem_set_access) is `cuMemSetAccess` (identity with
 //! [`va_set_access`](Sim::va_set_access)). Capture refused. Distinct from
 //! [`mem_unmap_range`](Sim::mem_unmap_range). No Engine `--mem-set-access`.
+//! [`mem_set_access_write`](Sim::mem_set_access_write) is `cuMemSetAccess` write (identity with
+//! [`va_set_access_write`](Sim::va_set_access_write)). Capture refused. Distinct from
+//! [`mem_set_access`](Sim::mem_set_access). No Engine `--mem-set-access-write`.
 //! [`graph_kernel_node_get_priority`](Sim::graph_kernel_node_get_priority) /
 //! [`graph_kernel_node_set_priority`](Sim::graph_kernel_node_set_priority) /
 //! [`graph_kernel_node_copy_attributes`](Sim::graph_kernel_node_copy_attributes)
@@ -11257,6 +11287,9 @@
 //! [`mem_set_access`](Sim::mem_set_access) is `cuMemSetAccess` (identity with
 //! [`va_set_access`](Sim::va_set_access)). Capture refused. Distinct from
 //! [`mem_unmap_range`](Sim::mem_unmap_range). No Engine `--mem-set-access`.
+//! [`mem_set_access_write`](Sim::mem_set_access_write) is `cuMemSetAccess` write (identity with
+//! [`va_set_access_write`](Sim::va_set_access_write)). Capture refused. Distinct from
+//! [`mem_set_access`](Sim::mem_set_access). No Engine `--mem-set-access-write`.
 //! [`graph_kernel_node_get_attribute`](Sim::graph_kernel_node_get_attribute) /
 //! [`graph_exec_kernel_node_get_attribute`](Sim::graph_exec_kernel_node_get_attribute) /
 //! [`graph_kernel_node_set_attribute`](Sim::graph_kernel_node_set_attribute) /
@@ -12083,6 +12116,9 @@
 //! [`mem_set_access`](Sim::mem_set_access) is `cuMemSetAccess` (identity with
 //! [`va_set_access`](Sim::va_set_access)). Capture refused. Distinct from
 //! [`mem_unmap_range`](Sim::mem_unmap_range). No Engine `--mem-set-access`.
+//! [`mem_set_access_write`](Sim::mem_set_access_write) is `cuMemSetAccess` write (identity with
+//! [`va_set_access_write`](Sim::va_set_access_write)). Capture refused. Distinct from
+//! [`mem_set_access`](Sim::mem_set_access). No Engine `--mem-set-access-write`.
 //! Device-launch
 //! execs cannot attach programmatic or launch-completion events.
 //! [`kernel_pdl`](Sim::kernel_pdl) is `cudaLaunchKernelEx` PDL: a wait kernel
@@ -13037,6 +13073,9 @@
 //! [`mem_set_access`](Sim::mem_set_access) is `cuMemSetAccess` (identity with
 //! [`va_set_access`](Sim::va_set_access)). Capture refused. Distinct from
 //! [`mem_unmap_range`](Sim::mem_unmap_range). No Engine `--mem-set-access`.
+//! [`mem_set_access_write`](Sim::mem_set_access_write) is `cuMemSetAccess` write (identity with
+//! [`va_set_access_write`](Sim::va_set_access_write)). Capture refused. Distinct from
+//! [`mem_set_access`](Sim::mem_set_access). No Engine `--mem-set-access-write`.
 //! [`graph_exec_memcpy_set_params`](Sim::graph_exec_memcpy_set_params) /
 //! [`graph_exec_memcpy_set_params_1d`](Sim::graph_exec_memcpy_set_params_1d) /
 //! [`graph_exec_memcpy_set_params_2d`](Sim::graph_exec_memcpy_set_params_2d) /
@@ -13855,6 +13894,9 @@
 //! [`mem_set_access`](Sim::mem_set_access) is `cuMemSetAccess` (identity with
 //! [`va_set_access`](Sim::va_set_access)). Capture refused. Distinct from
 //! [`mem_unmap_range`](Sim::mem_unmap_range). No Engine `--mem-set-access`.
+//! [`mem_set_access_write`](Sim::mem_set_access_write) is `cuMemSetAccess` write (identity with
+//! [`va_set_access_write`](Sim::va_set_access_write)). Capture refused. Distinct from
+//! [`mem_set_access`](Sim::mem_set_access). No Engine `--mem-set-access-write`.
 //! [`get_graph_kernel_node_params`](Sim::get_graph_kernel_node_params) is `cuGraphKernelNodeGetParams` (identity with
 //! [`graph_kernel_get_params`](Sim::graph_kernel_get_params)). Query; legal during capture. Distinct from
 //! [`graph_exec_kernel_get_params`](Sim::graph_exec_kernel_get_params). No Engine `--graph-kernel-get-params`.
@@ -14652,6 +14694,9 @@
 //! [`mem_set_access`](Sim::mem_set_access) is `cuMemSetAccess` (identity with
 //! [`va_set_access`](Sim::va_set_access)). Capture refused. Distinct from
 //! [`mem_unmap_range`](Sim::mem_unmap_range). No Engine `--mem-set-access`.
+//! [`mem_set_access_write`](Sim::mem_set_access_write) is `cuMemSetAccess` write (identity with
+//! [`va_set_access_write`](Sim::va_set_access_write)). Capture refused. Distinct from
+//! [`mem_set_access`](Sim::mem_set_access). No Engine `--mem-set-access-write`.
 //! [`graph_exec_kernel_get_params`](Sim::graph_exec_kernel_get_params) /
 //! [`graph_exec_memcpy_get_params`](Sim::graph_exec_memcpy_get_params) /
 //! [`graph_exec_memset_get_params`](Sim::graph_exec_memset_get_params) /
@@ -15440,6 +15485,9 @@
 //! [`mem_set_access`](Sim::mem_set_access) is `cuMemSetAccess` (identity with
 //! [`va_set_access`](Sim::va_set_access)). Capture refused. Distinct from
 //! [`mem_unmap_range`](Sim::mem_unmap_range). No Engine `--mem-set-access`.
+//! [`mem_set_access_write`](Sim::mem_set_access_write) is `cuMemSetAccess` write (identity with
+//! [`va_set_access_write`](Sim::va_set_access_write)). Capture refused. Distinct from
+//! [`mem_set_access`](Sim::mem_set_access). No Engine `--mem-set-access-write`.
 //! [`get_graph_exec_kernel_node_params`](Sim::get_graph_exec_kernel_node_params) is `cuGraphExecKernelNodeGetParams` (identity with
 //! [`graph_exec_kernel_get_params`](Sim::graph_exec_kernel_get_params)). Query; legal during capture. Distinct from
 //! [`get_graph_kernel_node_params`](Sim::get_graph_kernel_node_params). No Engine `--graph-exec-kernel-get-params`.
@@ -16234,6 +16282,9 @@
 //! [`mem_set_access`](Sim::mem_set_access) is `cuMemSetAccess` (identity with
 //! [`va_set_access`](Sim::va_set_access)). Capture refused. Distinct from
 //! [`mem_unmap_range`](Sim::mem_unmap_range). No Engine `--mem-set-access`.
+//! [`mem_set_access_write`](Sim::mem_set_access_write) is `cuMemSetAccess` write (identity with
+//! [`va_set_access_write`](Sim::va_set_access_write)). Capture refused. Distinct from
+//! [`mem_set_access`](Sim::mem_set_access). No Engine `--mem-set-access-write`.
 //! [`graph_exec_batch_mem_op_set_params`](Sim::graph_exec_batch_mem_op_set_params)
 //! is `cudaGraphExecBatchMemOpNodeSetParams` (id/offset/value; wait vs write,
 //! `bits32`, and compare stay on wait/write nodes;
@@ -47808,6 +47859,82 @@ mod tests {
             other => panic!("{other:?}"),
         }
         match eight.va_set_access(e2, d0) {
+            Err(SimError::Invalid { why }) => assert!(why.contains("capture"), "{why}"),
+            other => panic!("{other:?}"),
+        }
+        let g2 = eight.end_capture().unwrap();
+        assert_eq!(eight.graph_len(g2).unwrap(), 0);
+    }
+
+    #[test]
+    fn mem_set_access_write_is_cu_mem_set_access() {
+        let mut sim = Sim::new(h100());
+        let d = DeviceId(0);
+        let s = StreamId(0);
+        let bytes = 4096u64;
+        match sim.mem_set_access_write(AllocId(9999), d) {
+            Err(SimError::UnknownAlloc { alloc }) => assert_eq!(alloc, AllocId(9999)),
+            other => panic!("{other:?}"),
+        }
+        match sim.va_set_access_write(AllocId(9999), d) {
+            Err(SimError::UnknownAlloc { alloc }) => assert_eq!(alloc, AllocId(9999)),
+            other => panic!("{other:?}"),
+        }
+        match sim.mem_set_access_write(AllocId(9999), DeviceId(1)) {
+            Err(SimError::Invalid { why }) => assert!(why.contains("device"), "{why}"),
+            other => panic!("{other:?}"),
+        }
+        match sim.va_set_access_write(AllocId(9999), DeviceId(1)) {
+            Err(SimError::Invalid { why }) => assert!(why.contains("device"), "{why}"),
+            other => panic!("{other:?}"),
+        }
+        let va = sim.va_reserve(bytes).unwrap();
+        match sim.mem_set_access_write(va, d) {
+            Err(SimError::Invalid { why }) => assert!(why.contains("mapped"), "{why}"),
+            other => panic!("{other:?}"),
+        }
+        match sim.va_set_access_write(va, d) {
+            Err(SimError::Invalid { why }) => assert!(why.contains("mapped"), "{why}"),
+            other => panic!("{other:?}"),
+        }
+        sim.va_map(va, d).unwrap();
+        sim.mem_set_access_write(va, d).unwrap();
+        assert!(sim.is_va_write_accessed_by(va, d).unwrap());
+        let va2 = sim.va_reserve(bytes).unwrap();
+        sim.va_map(va2, d).unwrap();
+        sim.va_set_access_write(va2, d).unwrap();
+        assert!(sim.is_va_write_accessed_by(va2, d).unwrap());
+        let va3 = sim.va_reserve(bytes).unwrap();
+        sim.va_map(va3, d).unwrap();
+        sim.begin_capture(d, s).unwrap();
+        match sim.mem_set_access_write(va3, d) {
+            Err(SimError::Invalid { why }) => assert!(why.contains("capture"), "{why}"),
+            other => panic!("{other:?}"),
+        }
+        match sim.va_set_access_write(va3, d) {
+            Err(SimError::Invalid { why }) => assert!(why.contains("capture"), "{why}"),
+            other => panic!("{other:?}"),
+        }
+        let g = sim.end_capture().unwrap();
+        assert_eq!(sim.graph_len(g).unwrap(), 0);
+        let mut eight = Sim::new(HardwareProfile::example_8xh100_nvlink());
+        let d0 = DeviceId(0);
+        let d1 = DeviceId(1);
+        let e0 = eight.va_reserve(bytes).unwrap();
+        eight.va_map(e0, d0).unwrap();
+        eight.mem_set_access_write(e0, d1).unwrap();
+        assert!(eight.is_va_write_accessed_by(e0, d1).unwrap());
+        let e1 = eight.va_reserve(bytes).unwrap();
+        eight.va_map(e1, d0).unwrap();
+        eight.va_set_access_write(e1, d1).unwrap();
+        let e2 = eight.va_reserve(bytes).unwrap();
+        eight.va_map(e2, d1).unwrap();
+        eight.begin_capture(d1, s).unwrap();
+        match eight.mem_set_access_write(e2, d0) {
+            Err(SimError::Invalid { why }) => assert!(why.contains("capture"), "{why}"),
+            other => panic!("{other:?}"),
+        }
+        match eight.va_set_access_write(e2, d0) {
             Err(SimError::Invalid { why }) => assert!(why.contains("capture"), "{why}"),
             other => panic!("{other:?}"),
         }

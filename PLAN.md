@@ -9964,7 +9964,12 @@ model, do not celebrate the sim.
       `mem_unmap_range`. This VM does not invent occupancy SM counts, Engine `--mem-set-access`,
       or `cudaChooseDevice`. `gpu-profile capture` is still refused. Dual
       score still has no `$/M tokens`.
-1141. [ ] Next numbered PLAN item after 1140 is the next `gpu-sim` / Engine /
+1141. [x] `gpu-sim` `Sim::mem_set_access_write` is
+      `cuMemSetAccess` write. Identity with `va_set_access_write` (`cuMemSetAccess` PROT_READWRITE). Capture refused. Distinct from
+      `mem_set_access`. This VM does not invent occupancy SM counts, Engine `--mem-set-access-write`,
+      or `cudaChooseDevice`. `gpu-profile capture` is still refused. Dual
+      score still has no `$/M tokens`.
+1142. [ ] Next numbered PLAN item after 1141 is the next `gpu-sim` / Engine /
     serve / expertvm mechanical API that is still missing, or the next official
     decode family. Prefer remaining CUDA-shaped twins over more
     OpenAI HTTP veneer. Do not invent F32 `output.scale`. Do not invent a
@@ -12018,6 +12023,11 @@ model, do not celebrate the sim.
     occupancy SM counts this slice. Do not reverse MemSetAccess identity with va_set_access.
     Do not invent `va_set_access_write` as `mem_set_access`.
     Do not invent `cuMemSetAccess` write as `mem_set_access`.
+    Do not invent a second `cuMemSetAccess` write / `mem_set_access_write`.
+    Do not invent Engine `--mem-set-access-write`. Do not invent
+    occupancy SM counts this slice. Do not reverse MemSetAccess write identity with va_set_access_write.
+    Do not invent `va_set_access_with_flags` as `mem_set_access_write`.
+    Do not invent `cuMemSetAccess` flags as `mem_set_access_write`.
     Do not invent a second `cudaStreamAddCallback`.
     Do not invent Engine `--stream-callback` (same wall as second live
     `cudaLaunchHostFunc` after miss DMA).
@@ -14107,6 +14117,11 @@ model, do not celebrate the sim.
     this slice. Do not reverse MemSetAccess identity with va_set_access.
     Do not wrap `va_set_access` as `mem_set_access`.
     Do not wrap `va_set_access_write` as `mem_set_access`.
+    Do not invent a second `mem_set_access_write` API. Do not invent
+    Engine `--mem-set-access-write-identity`. Do not invent a va-set-access-flags
+    this slice. Do not reverse MemSetAccess write identity with va_set_access_write.
+    Do not wrap `va_set_access_write` as `mem_set_access_write`.
+    Do not wrap `va_set_access_with_flags` as `mem_set_access_write`.
     Do not invent a second DeviceLaunch in-flight destroy-complete check or Engine
     `--device-launch-destroy`. Do not abort an in-flight DeviceLaunch when
     `destroy_graph` succeeds. Do not delay destroy of an idle exec. Do not invent
@@ -16283,6 +16298,9 @@ model, do not celebrate the sim.
     Do not invent a second `mem_set_access` method. Do not
     invent Engine `--cu-mem-set-access`. Do not reverse wrapping
     cuMemSetAccess identity. Do not wrap `va_set_access_write` as `mem_set_access`.
+    Do not invent a second `mem_set_access_write` method. Do not
+    invent Engine `--cu-mem-set-access-write`. Do not reverse wrapping
+    cuMemSetAccess write identity. Do not wrap `va_set_access_with_flags` as `mem_set_access_write`.
     Do not
     spend the next item on an OpenAI-compatible HTTP veneer.
 
