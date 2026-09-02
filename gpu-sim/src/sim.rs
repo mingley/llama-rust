@@ -22767,6 +22767,23 @@ impl Sim {
         Ok(id)
     }
 
+    /// `cuMemsetD8Async`. `count` is CUDA `N` (number of 8-bit values).
+    ///
+    /// Payload is `count` bytes at offset 0. [`Self::memset`] stays
+    /// byte-counted `element_size` 1 (same payload). `count == 0` is Invalid
+    /// `"zero-byte memset"`. Capture is allowed unless sync-memops. Fill
+    /// value is not modeled. This VM does not invent `cuMemsetD8`
+    /// this slice.
+    pub fn memset_d8_async(
+        &mut self,
+        device: DeviceId,
+        alloc: AllocId,
+        count: u64,
+        stream: StreamId,
+    ) -> Result<OpId, SimError> {
+        self.memset_elements_async(device, alloc, count, 1, stream)
+    }
+
     /// `cuMemsetD16Async`. `count` is CUDA `N` (number of 16-bit values).
     ///
     /// Payload is `count * 2` bytes at offset 0. [`Self::memset`] stays

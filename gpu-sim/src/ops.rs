@@ -626,6 +626,7 @@ pub struct MemsetOp {
     /// `cudaMemsetNodeParams::elementSize` (`1` / `2` / `4`).
     ///
     /// Typed [`crate::Sim::memset`] stays `1` (`cudaMemset` / `cuMemsetD8`).
+    /// [`crate::Sim::memset_d8_async`] takes CUDA `N` and keeps `1`.
     /// [`crate::Sim::memset_d16_async`] / [`crate::Sim::memset_d32_async`]
     /// take CUDA `N` and set `2` / `4`. Offset, width, and nonzero pitch must
     /// divide this size. Fill value is not modeled.

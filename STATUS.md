@@ -5,6 +5,15 @@ Visible five-turn extract: [docs/chatgpt-share-6a920fe1.md](docs/chatgpt-share-6
 Complete share-API extract: [docs/chatgpt-share-6a920fe1/](docs/chatgpt-share-6a920fe1/).
 Work lands on `main`. No PRs.
 
+## Shipped 2026-09-02 — CUDA `cuMemsetD8Async`
+
+`gpu-sim` `Sim::memset_d8_async` is `cuMemsetD8Async`.
+`count` is CUDA `N` of 8-bit values; payload is `count` bytes.
+Typed `memset` stays byte-counted `element_size` 1. Capture of Async is
+legal. Fill value is not modeled. Distinct from `memset_d16_async`.
+This VM does not invent `cuMemsetD8` or Engine `--memset-d8`.
+`gpu-profile capture` is still refused. Dual score still has no `$/M tokens`.
+
 ## Shipped 2026-09-02 — CUDA `cuFuncGetCacheConfig`
 
 `gpu-sim` `Sim::func_get_cache_config` is `cuFuncGetCacheConfig`.

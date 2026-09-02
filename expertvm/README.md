@@ -506,6 +506,8 @@ compiled kernel exists; no Engine flag).
 compiled kernel exists; no Engine flag).
 `gpu-sim` `func_get_cache_config` is `cuFuncGetCacheConfig` (Invalid until a
 compiled kernel exists; no Engine flag).
+`gpu-sim` `memset_d8_async` is `cuMemsetD8Async`
+(count is CUDA `N` of 8-bit values; no Engine flag).
 `gpu-sim` `func_is_loaded` is `cuFuncIsLoaded` (`false` until a compiled
 kernel exists; no Engine flag).
 `gpu-sim` `func_load` is `cuFuncLoad` (Invalid; no compiled kernel; no

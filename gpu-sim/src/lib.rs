@@ -122,6 +122,9 @@
 //! [`memset_3d_async`](Sim::memset_3d_async) / [`memset_3d`](Sim::memset_3d)
 //! are `cudaMemset3DAsync` / `cudaMemset3D` ([`MemsetOp::is_3d`]). Typed
 //! [`memset_op`](Sim::memset_op) stays.
+//! [`memset_d8_async`](Sim::memset_d8_async) is `cuMemsetD8Async`
+//! (`count` is CUDA `N` of 8-bit values; payload is `count` bytes). Typed
+//! [`memset`](Sim::memset) stays byte-counted. No Engine `--memset-d8`.
 //! [`memset_d16_async`](Sim::memset_d16_async) / [`memset_d16`](Sim::memset_d16)
 //! are `cuMemsetD16Async` / `cuMemsetD16` (`count` is CUDA `N`).
 //! [`memset_d32_async`](Sim::memset_d32_async) / [`memset_d32`](Sim::memset_d32)
@@ -32250,6 +32253,39 @@ mod tests {
         sim.begin_capture(d, s).unwrap();
         enq(sim.memset_op(d, d16, s));
         let _cap = sim.end_capture().unwrap();
+        sim.free_sync(a).unwrap();
+    }
+
+    #[test]
+    fn memset_d8_async_is_cu_memset_d8_async() {
+        let mut sim = Sim::new(h100());
+        let d = DeviceId(0);
+        let s = StreamId(0);
+        let a = sim.malloc(d, 4096).unwrap();
+        enq(sim.memset_d8_async(d, a, 4096, s));
+        sim.synchronize().unwrap();
+        match sim.memset_d8_async(d, a, 0, s) {
+            Err(SimError::Invalid { why }) => assert!(why.contains("zero-byte"), "{why}"),
+            other => panic!("{other:?}"),
+        }
+        match sim.memset_d8_async(d, a, 4097, s) {
+            Err(SimError::Invalid { why }) => assert!(why.contains("range past"), "{why}"),
+            other => panic!("{other:?}"),
+        }
+        sim.begin_capture(d, s).unwrap();
+        enq(sim.memset_d8_async(d, a, 4096, s));
+        match sim.memset_d16(d, a, 2048, s) {
+            Err(SimError::Invalid { why }) => {
+                assert!(why.contains("host-sync memset"), "{why}");
+            }
+            other => panic!("{other:?}"),
+        }
+        let g = sim.end_capture().unwrap();
+        let p = sim.graph_memset_get_params(g, 0).unwrap();
+        assert_eq!(p.element_size, 1);
+        assert_eq!(p.bytes, 4096);
+        enq(sim.memset_d16_async(d, a, 2048, s));
+        sim.synchronize().unwrap();
         sim.free_sync(a).unwrap();
     }
 
