@@ -5,6 +5,16 @@ Visible five-turn extract: [docs/chatgpt-share-6a920fe1.md](docs/chatgpt-share-6
 Complete share-API extract: [docs/chatgpt-share-6a920fe1/](docs/chatgpt-share-6a920fe1/).
 Work lands on `main`. No PRs.
 
+## Shipped 2026-09-02 — CUDA `cuTexRefGetMipmapFilterMode`
+
+`gpu-sim` `Sim::tex_ref_get_mipmap_filter_mode` is `cuTexRefGetMipmapFilterMode`.
+Always Invalid `"texref gmipfilt"` because CUDA texture references are not
+modeled. Query; legal during capture. Distinct from
+`tex_ref_get_format` (why is not `"texref getfmt"`) and
+`tex_ref_set_mipmap_filter_mode` (why is not `"texref mipfilt"`).
+This VM does not invent `cuTexRefGetMipmapLevelBias` or Engine `--texref-gmipfilt`.
+`gpu-profile capture` is still refused. Dual score still has no `$/M tokens`.
+
 ## Shipped 2026-09-02 — CUDA `cuTexRefGetFormat`
 
 `gpu-sim` `Sim::tex_ref_get_format` is `cuTexRefGetFormat`.
