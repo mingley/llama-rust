@@ -7001,8 +7001,7 @@ impl Sim {
     /// [`Self::graph_exec_host_set_params`] (`cudaGraphExecHostNodeSetParams`).
     ///
     /// Capture refused. Distinct from
-    /// [`Self::set_graph_host_node_params`]. This VM does not invent
-    /// occupancy SM counts this slice.
+    /// [`Self::set_graph_host_node_params`].
     pub fn set_graph_exec_host_node_params(
         &mut self,
         exec: GraphId,
@@ -7917,7 +7916,9 @@ impl Sim {
 
     /// `cudaGraphBatchMemOpNodeGetParams` on the graph definition.
     ///
-    /// Wait-value / write-value nodes are a one-item list.
+    /// Wait-value / write-value nodes are a one-item list. Driver
+    /// `cuGraphBatchMemOpNodeGetParams` is
+    /// [`Self::get_graph_batch_mem_op_node_params`].
     pub fn graph_batch_mem_ops_get_params(
         &self,
         graph: GraphId,
@@ -7926,6 +7927,20 @@ impl Sim {
         batch_items(&self.graph_def_step(graph, node)?.kind).ok_or(SimError::Invalid {
             why: "not a batch mem op node",
         })
+    }
+
+    /// `cuGraphBatchMemOpNodeGetParams`. Identity with
+    /// [`Self::graph_batch_mem_ops_get_params`] (`cudaGraphBatchMemOpNodeGetParams`).
+    ///
+    /// Query; legal during capture. Distinct from
+    /// [`Self::graph_exec_batch_mem_ops_get_params`]. This VM does not invent
+    /// occupancy SM counts this slice.
+    pub fn get_graph_batch_mem_op_node_params(
+        &self,
+        graph: GraphId,
+        node: usize,
+    ) -> Result<Vec<BatchMemOp>, SimError> {
+        self.graph_batch_mem_ops_get_params(graph, node)
     }
 
     /// Exec-snapshot batch-mem-op items. Uninstantiated graphs are Invalid.
