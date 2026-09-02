@@ -17042,13 +17042,14 @@ impl Sim {
     /// [`Self::pool_export_ptr`] (`cudaMemPoolExportPointer`).
     ///
     /// Capture refused. Distinct from [`Self::mem_pool_import_with_type`].
-    /// This VM does not invent occupancy SM counts this slice.
     pub fn mem_pool_export_ptr(&mut self, id: AllocId) -> Result<PtrExportId, SimError> {
         self.pool_export_ptr(id)
     }
 
     /// `cudaMemPoolImportPointer` into an imported pool. Alias shares the
     /// source physicals (no extra HBM). Capture cannot include it.
+    /// Driver `cuMemPoolImportPointer` is [`Self::mem_pool_import_ptr`].
+    /// Identity wrap [`Self::mem_pool_import_ptr`].
     pub fn pool_import_ptr(
         &mut self,
         pool: PoolId,
@@ -17119,6 +17120,19 @@ impl Sim {
             },
         );
         Ok(id)
+    }
+
+    /// `cuMemPoolImportPointer`. Identity with
+    /// [`Self::pool_import_ptr`] (`cudaMemPoolImportPointer`).
+    ///
+    /// Capture refused. Distinct from [`Self::mem_pool_export_ptr`].
+    /// This VM does not invent occupancy SM counts this slice.
+    pub fn mem_pool_import_ptr(
+        &mut self,
+        pool: PoolId,
+        export: PtrExportId,
+    ) -> Result<AllocId, SimError> {
+        self.pool_import_ptr(pool, export)
     }
 
     /// Whether `id` is a live [`Self::pool_import_ptr`] alias.
