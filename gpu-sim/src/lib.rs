@@ -1118,6 +1118,8 @@
 //! `"link add"`). Query; legal during capture. No Engine `--link-add`.
 //! [`link_complete`](Sim::link_complete) is `cuLinkComplete` (always Invalid
 //! `"link complete"`). Query; legal during capture. No Engine `--link-complete`.
+//! [`link_destroy`](Sim::link_destroy) is `cuLinkDestroy` (always Invalid
+//! `"link destroy"`). Query; legal during capture. No Engine `--link-destroy`.
 //! [`Sim::runtime_get_version`] is `cudaRuntimeGetVersion` (same
 //! toolkit). Query; legal during capture. [`device_get`](Sim::device_get) is `cuDeviceGet` (ordinal in range).
 //! [`Sim::device_can_access_peer`] / [`device_get_p2p_attribute`](Sim::device_get_p2p_attribute)
@@ -19568,6 +19570,63 @@ mod tests {
             Err(SimError::Invalid { why }) => {
                 assert!(why.contains("jit linker"), "{why}");
                 assert!(!why.contains("link complete"), "{why}");
+            }
+            other => panic!("{other:?}"),
+        }
+        match sim.link_destroy(d) {
+            Err(SimError::Invalid { why }) => {
+                assert!(why.contains("link destroy"), "{why}");
+                assert!(!why.contains("link complete"), "{why}");
+            }
+            other => panic!("{other:?}"),
+        }
+    }
+
+    #[test]
+    fn link_destroy_is_unsupported() {
+        let mut sim = Sim::new(h100());
+        let d = DeviceId(0);
+        match sim.link_destroy(d) {
+            Err(SimError::Invalid { why }) => {
+                assert!(why.contains("link destroy"), "{why}");
+                assert!(!why.contains("link complete"), "{why}");
+                assert!(!why.contains("link add"), "{why}");
+                assert!(!why.contains("jit linker"), "{why}");
+            }
+            other => panic!("{other:?}"),
+        }
+        sim.begin_capture(d, StreamId(0)).unwrap();
+        match sim.link_destroy(d) {
+            Err(SimError::Invalid { why }) => {
+                assert!(why.contains("link destroy"), "{why}");
+            }
+            other => panic!("{other:?}"),
+        }
+        let _g = sim.end_capture().unwrap();
+        match sim.link_destroy(DeviceId(99)) {
+            Err(SimError::Invalid { why }) => {
+                assert!(why.contains("device not in profile"), "{why}");
+            }
+            other => panic!("{other:?}"),
+        }
+        match sim.link_complete(d) {
+            Err(SimError::Invalid { why }) => {
+                assert!(why.contains("link complete"), "{why}");
+                assert!(!why.contains("link destroy"), "{why}");
+            }
+            other => panic!("{other:?}"),
+        }
+        match sim.link_add_data(d) {
+            Err(SimError::Invalid { why }) => {
+                assert!(why.contains("link add"), "{why}");
+                assert!(!why.contains("link destroy"), "{why}");
+            }
+            other => panic!("{other:?}"),
+        }
+        match sim.link_create(d) {
+            Err(SimError::Invalid { why }) => {
+                assert!(why.contains("jit linker"), "{why}");
+                assert!(!why.contains("link destroy"), "{why}");
             }
             other => panic!("{other:?}"),
         }
