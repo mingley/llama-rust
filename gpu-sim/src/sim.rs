@@ -6787,8 +6787,7 @@ impl Sim {
     /// [`Self::graph_exec_memset_set_params`] (`cudaGraphExecMemsetNodeSetParams`).
     ///
     /// Capture refused. Distinct from
-    /// [`Self::set_graph_memset_node_params`]. This VM does not invent
-    /// occupancy SM counts this slice.
+    /// [`Self::set_graph_memset_node_params`].
     pub fn set_graph_exec_memset_node_params(
         &mut self,
         exec: GraphId,
@@ -7834,12 +7833,29 @@ impl Sim {
     }
 
     /// `cudaGraphHostNodeGetParams` on the graph definition.
+    ///
+    /// Query; capture is legal. Driver `cuGraphHostNodeGetParams` is
+    /// [`Self::get_graph_host_node_params`].
     pub fn graph_host_get_params(
         &self,
         graph: GraphId,
         node: usize,
     ) -> Result<HostNodeParams, SimError> {
         host_params_of(&self.graph_def_step(graph, node)?.kind)
+    }
+
+    /// `cuGraphHostNodeGetParams`. Identity with
+    /// [`Self::graph_host_get_params`] (`cudaGraphHostNodeGetParams`).
+    ///
+    /// Query; legal during capture. Distinct from
+    /// [`Self::graph_exec_host_get_params`]. This VM does not invent
+    /// occupancy SM counts this slice.
+    pub fn get_graph_host_node_params(
+        &self,
+        graph: GraphId,
+        node: usize,
+    ) -> Result<HostNodeParams, SimError> {
+        self.graph_host_get_params(graph, node)
     }
 
     /// Exec-snapshot host params. Uninstantiated graphs are Invalid.
