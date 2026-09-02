@@ -21024,12 +21024,26 @@ impl Sim {
     /// Always Invalid `"module load"` (this VM has no cubin path and no
     /// `CUmodule`). Distinct from [`Self::module_get_loading_mode`] (Eager
     /// query) and from [`Self::library_load_data`] (why is not
-    /// `"cuda library"`) and from [`Self::func_load`].
+    /// `"cuda library"`) and from [`Self::func_load`] and from
+    /// [`Self::module_load_data`].
     /// Unknown devices are Invalid `"device not in profile"`. Query; legal
     /// during capture.
     pub fn module_load(&self, device: DeviceId) -> Result<(), SimError> {
         let _gpu = self.profile.gpu(device)?;
         Err(SimError::Invalid { why: "module load" })
+    }
+
+    /// `cuModuleLoadData`. CUDA modules are not modeled.
+    ///
+    /// Always Invalid `"module data"` (this VM has no cubin image and no
+    /// `CUmodule`). Distinct from [`Self::module_load`] (why is not
+    /// `"module load"`) and from [`Self::library_load_data`] (why is not
+    /// `"cuda library"`).
+    /// Unknown devices are Invalid `"device not in profile"`. Query; legal
+    /// during capture.
+    pub fn module_load_data(&self, device: DeviceId) -> Result<(), SimError> {
+        let _gpu = self.profile.gpu(device)?;
+        Err(SimError::Invalid { why: "module data" })
     }
 
     /// `cuLibraryLoadData`. CUDA libraries are not modeled.

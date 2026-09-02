@@ -520,6 +520,8 @@ CUPTI config is not modeled; no Engine flag).
 Eager; no Engine flag).
 `gpu-sim` `module_load` is `cuModuleLoad` (Invalid; no cubin path; no
 Engine flag).
+`gpu-sim` `module_load_data` is `cuModuleLoadData` (Invalid; no cubin
+image; no Engine flag).
 `gpu-sim` `library_load_data` is `cuLibraryLoadData` (Invalid; no cubin /
 `CUlibrary`; no Engine flag).
 `gpu-sim` `library_load_from_file` is `cuLibraryLoadFromFile` (Invalid;
