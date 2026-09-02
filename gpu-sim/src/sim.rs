@@ -3304,8 +3304,7 @@ impl Sim {
     /// [`Self::begin_capture`] (`cudaStreamBeginCapture`).
     ///
     /// Nested capture refused. Distinct from
-    /// [`Self::begin_capture_with_mode`]. This VM does not invent
-    /// occupancy SM counts this slice.
+    /// [`Self::begin_capture_with_mode`].
     pub fn stream_begin_capture(
         &mut self,
         device: DeviceId,
@@ -3317,6 +3316,7 @@ impl Sim {
     /// `cudaStreamBeginCapture` with an explicit [`StreamCaptureMode`].
     ///
     /// Does not change the thread default ([`Self::thread_exchange_stream_capture_mode`]).
+    /// Driver `cuStreamBeginCapture` with mode is [`Self::stream_begin_capture_with_mode`].
     pub fn begin_capture_with_mode(
         &mut self,
         device: DeviceId,
@@ -3337,6 +3337,21 @@ impl Sim {
         }
         let graph = self.insert_graph(device, stream);
         self.begin_capture_inner(device, stream, graph, &[], mode)
+    }
+
+    /// `cuStreamBeginCapture` with mode. Identity with
+    /// [`Self::begin_capture_with_mode`] (`cudaStreamBeginCapture` with mode).
+    ///
+    /// Nested capture refused. Distinct from
+    /// [`Self::stream_begin_capture`]. This VM does not invent
+    /// occupancy SM counts this slice.
+    pub fn stream_begin_capture_with_mode(
+        &mut self,
+        device: DeviceId,
+        stream: StreamId,
+        mode: StreamCaptureMode,
+    ) -> Result<(), SimError> {
+        self.begin_capture_with_mode(device, stream, mode)
     }
 
     /// `cudaStreamBeginCaptureToGraph`: record later submits into `graph`.
