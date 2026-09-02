@@ -23049,7 +23049,6 @@ impl Sim {
     /// [`Self::required_cluster_depth`] (`cudaFuncGetAttribute` RequiredClusterDepth).
     ///
     /// Query; legal during capture. Distinct from [`Self::func_set_required_cluster_depth`].
-    /// This VM does not invent occupancy SM counts this slice.
     pub fn func_get_required_cluster_depth(&self, device: DeviceId) -> Result<u32, SimError> {
         self.required_cluster_depth(device)
     }
@@ -30707,6 +30706,8 @@ impl Sim {
     /// [`crate::GpuProfile::portable_cluster_size`] is Invalid until this is
     /// true, unless the launch uses [`PortableClusterMode::AllowNonPortable`].
     /// Decode identity stays disallowed.
+    /// Driver `cuFuncSetAttribute` non-portable cluster size is [`Self::func_set_non_portable_cluster_size_allowed`].
+    /// Identity wrap [`Self::func_set_non_portable_cluster_size_allowed`].
     pub fn set_non_portable_cluster_size_allowed(
         &mut self,
         device: DeviceId,
@@ -30720,6 +30721,19 @@ impl Sim {
         }
         self.clock = self.clock.saturating_add(1);
         Ok(())
+    }
+
+    /// `cuFuncSetAttribute` non-portable cluster size. Identity with
+    /// [`Self::set_non_portable_cluster_size_allowed`] (`cudaFuncSetAttribute` NonPortableClusterSizeAllowed).
+    ///
+    /// Capture legal. Distinct from [`Self::func_get_required_cluster_depth`].
+    /// This VM does not invent occupancy SM counts this slice.
+    pub fn func_set_non_portable_cluster_size_allowed(
+        &mut self,
+        device: DeviceId,
+        allowed: bool,
+    ) -> Result<(), SimError> {
+        self.set_non_portable_cluster_size_allowed(device, allowed)
     }
 
     /// Current [`Self::set_non_portable_cluster_size_allowed`] for `device`.
