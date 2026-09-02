@@ -25925,8 +25925,7 @@ impl Sim {
     /// [`Self::cooperative_kernel`] (`cudaLaunchCooperativeKernel`).
     ///
     /// Capture legal. Distinct from
-    /// [`Self::mem_alloc_3d`]. This VM does not invent
-    /// occupancy SM counts this slice.
+    /// [`Self::mem_alloc_3d`].
     pub fn launch_cooperative_kernel(
         &mut self,
         device: DeviceId,
@@ -25939,6 +25938,8 @@ impl Sim {
     }
 
     /// `cudaLaunchCooperativeKernel` on explicit buffer spans.
+    ///
+    /// Driver `cuLaunchCooperativeKernel` spans is [`Self::launch_cooperative_kernel_bufs`].
     pub fn cooperative_kernel_bufs(
         &mut self,
         device: DeviceId,
@@ -25949,6 +25950,23 @@ impl Sim {
     ) -> Result<OpId, SimError> {
         self.require_cooperative(device)?;
         self.submit_kernel(device, kind, reads, writes, stream, true)
+    }
+
+    /// `cuLaunchCooperativeKernel` on explicit buffer spans. Identity with
+    /// [`Self::cooperative_kernel_bufs`] (`cudaLaunchCooperativeKernel` spans).
+    ///
+    /// Capture legal. Distinct from
+    /// [`Self::launch_cooperative_kernel`]. This VM does not invent
+    /// occupancy SM counts this slice.
+    pub fn launch_cooperative_kernel_bufs(
+        &mut self,
+        device: DeviceId,
+        kind: KernelKind,
+        reads: &[KernelBuf],
+        writes: &[KernelBuf],
+        stream: StreamId,
+    ) -> Result<OpId, SimError> {
+        self.cooperative_kernel_bufs(device, kind, reads, writes, stream)
     }
 
     /// `cudaLaunchCooperativeKernelMultiDevice`. Multi-device cooperative
