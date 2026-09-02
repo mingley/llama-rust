@@ -5,6 +5,13 @@ Visible five-turn extract: [docs/chatgpt-share-6a920fe1.md](docs/chatgpt-share-6
 Complete share-API extract: [docs/chatgpt-share-6a920fe1/](docs/chatgpt-share-6a920fe1/).
 Work lands on `main`. No PRs.
 
+## Shipped 2026-09-02 — CUDA `cuFuncGetAttribute` carveout
+
+`gpu-sim` `Sim::func_get_carveout` is `cuFuncGetAttribute` carveout.
+Identity with `get_func_carveout` (`cudaFuncGetAttribute` PreferredSharedMemoryCarveout). Query; legal during capture. Distinct from `func_set_carveout`.
+This VM does not invent occupancy SM counts or Engine `--func-get-carveout`.
+`gpu-profile capture` is still refused. Dual score still has no `$/M tokens`.
+
 ## Shipped 2026-09-02 — CUDA `cuFuncSetAttribute` carveout
 
 `gpu-sim` `Sim::func_set_carveout` is `cuFuncSetAttribute` carveout.

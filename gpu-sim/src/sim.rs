@@ -22808,7 +22808,6 @@ impl Sim {
     /// [`Self::set_func_carveout`] (`cudaFuncSetAttribute` PreferredSharedMemoryCarveout).
     ///
     /// Capture legal. Distinct from [`Self::func_set_cache_config`].
-    /// This VM does not invent occupancy SM counts this slice.
     pub fn func_set_carveout(
         &mut self,
         device: DeviceId,
@@ -22818,9 +22817,20 @@ impl Sim {
     }
 
     /// Current [`Self::set_func_carveout`]. Query; legal during capture.
+    /// Driver `cuFuncGetAttribute` carveout is [`Self::func_get_carveout`].
+    /// Identity wrap [`Self::func_get_carveout`].
     pub fn get_func_carveout(&self, device: DeviceId) -> Result<SharedMemCarveout, SimError> {
         let _gpu = self.profile.gpu(device)?;
         Ok(self.gpu_rt(device)?.func_carveout)
+    }
+
+    /// `cuFuncGetAttribute` carveout. Identity with
+    /// [`Self::get_func_carveout`] (`cudaFuncGetAttribute` PreferredSharedMemoryCarveout).
+    ///
+    /// Query; legal during capture. Distinct from [`Self::func_set_carveout`].
+    /// This VM does not invent occupancy SM counts this slice.
+    pub fn func_get_carveout(&self, device: DeviceId) -> Result<SharedMemCarveout, SimError> {
+        self.get_func_carveout(device)
     }
 
     /// `cudaFuncSetAttribute(..., cudaFuncAttributeClusterSchedulingPolicyPreference)`.
