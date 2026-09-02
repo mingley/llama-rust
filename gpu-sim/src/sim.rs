@@ -8672,8 +8672,7 @@ impl Sim {
     /// [`Self::graph_exec_alloc_get_params`] (`cudaGraphExecMemAllocNodeGetParams`).
     ///
     /// Query; legal during capture. Distinct from
-    /// [`Self::get_graph_alloc_node_params`]. This VM does not invent
-    /// occupancy SM counts this slice.
+    /// [`Self::get_graph_alloc_node_params`].
     pub fn get_graph_exec_alloc_node_params(
         &self,
         exec: GraphId,
@@ -8706,6 +8705,8 @@ impl Sim {
     /// (same as [`Self::graph_alloc_get_params`]). [`Sim::graph_allocs`] is
     /// alloc-node ids for AutoFree / destroy refund, not this free target.
     /// [`Self::graph_exec_free_get_params`] refuses uninstantiated graphs.
+    /// Driver `cuGraphMemFreeNodeGetParams` is
+    /// [`Self::get_graph_free_node_params`].
     pub fn graph_free_get_params(&self, graph: GraphId, node: usize) -> Result<AllocId, SimError> {
         match &self.graph_view_step(graph, node)?.kind {
             Kind::Free { id } => Ok(*id),
@@ -8713,6 +8714,20 @@ impl Sim {
                 why: "not a mem free node",
             }),
         }
+    }
+
+    /// `cuGraphMemFreeNodeGetParams`. Identity with
+    /// [`Self::graph_free_get_params`] (`cudaGraphMemFreeNodeGetParams`).
+    ///
+    /// Query; legal during capture. Distinct from
+    /// [`Self::graph_exec_free_get_params`]. This VM does not invent
+    /// occupancy SM counts this slice.
+    pub fn get_graph_free_node_params(
+        &self,
+        graph: GraphId,
+        node: usize,
+    ) -> Result<AllocId, SimError> {
+        self.graph_free_get_params(graph, node)
     }
 
     /// Exec-snapshot [`Self::graph_free_get_params`].
