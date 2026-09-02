@@ -8785,7 +8785,14 @@ model, do not celebrate the sim.
     or `cudaChooseDevice`. `gpu-profile capture` is still refused. Dual
     score still has no `$/M tokens`.
 
-947. [ ] Next numbered PLAN item after 946 is the next `gpu-sim` / Engine /
+947. [x] `gpu-sim` `Sim::add_graph_dependencies` is
+    `cuGraphAddDependencies`. Identity with `graph_add_dependencies`
+    (`cudaGraphAddDependencies`). Capture refused. Distinct from
+    `graph_add_dependencies_n`. This VM does not invent occupancy SM counts, Engine `--graph-add-dependencies`,
+    or `cudaChooseDevice`. `gpu-profile capture` is still refused. Dual
+    score still has no `$/M tokens`.
+
+948. [ ] Next numbered PLAN item after 947 is the next `gpu-sim` / Engine /
     serve / expertvm mechanical API that is still missing, or the next official
     decode family. Prefer remaining CUDA-shaped twins over more
     OpenAI HTTP veneer. Do not invent F32 `output.scale`. Do not invent a
@@ -10117,6 +10124,9 @@ model, do not celebrate the sim.
     Do not invent a second `cuGraphExecUpdate` with info / `graph_exec_update_with_info`.
     Do not invent Engine `--graph-exec-update-with-info`. Do not invent
     occupancy SM counts this slice. Do not reverse GraphExecUpdateWithInfo identity with update_graph_with_info.
+    Do not invent a second `cuGraphAddDependencies` / `add_graph_dependencies`.
+    Do not invent Engine `--graph-add-dependencies`. Do not invent
+    occupancy SM counts this slice. Do not reverse AddGraphDependencies identity with graph_add_dependencies.
     Do not invent a second `cudaStreamAddCallback`.
     Do not invent Engine `--stream-callback` (same wall as second live
     `cudaLaunchHostFunc` after miss DMA).
@@ -11528,6 +11538,9 @@ model, do not celebrate the sim.
     Do not invent a second `graph_exec_update_with_info` API. Do not invent
     Engine `--graph-exec-update-with-info-identity`. Do not invent a graph-add-dependencies
     this slice. Do not reverse GraphExecUpdateWithInfo identity with update_graph_with_info.
+    Do not invent a second `add_graph_dependencies` API. Do not invent
+    Engine `--graph-add-dependencies-identity`. Do not invent a graph-add-dependencies-n
+    this slice. Do not reverse AddGraphDependencies identity with graph_add_dependencies.
     Do not invent a second DeviceLaunch in-flight destroy-complete check or Engine
     `--device-launch-destroy`. Do not abort an in-flight DeviceLaunch when
     `destroy_graph` succeeds. Do not delay destroy of an idle exec. Do not invent
@@ -13122,6 +13135,9 @@ model, do not celebrate the sim.
     Do not invent a second `graph_exec_update_with_info` method. Do not
     invent Engine `--cu-graph-exec-update-with-info`. Do not reverse wrapping
     cuGraphExecUpdate with info identity.
+    Do not invent a second `add_graph_dependencies` method. Do not
+    invent Engine `--cu-graph-add-dependencies`. Do not reverse wrapping
+    cuGraphAddDependencies identity.
     Do not
     spend the next item on an OpenAI-compatible HTTP veneer.
 

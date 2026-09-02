@@ -5707,8 +5707,7 @@ impl Sim {
     /// [`GraphExecUpdateResultInfo`]).
     ///
     /// Host-synchronous. Capture refused. Distinct from
-    /// [`Self::graph_exec_update`]. This VM does not invent
-    /// occupancy SM counts this slice.
+    /// [`Self::graph_exec_update`].
     pub fn graph_exec_update_with_info(
         &mut self,
         exec: GraphId,
@@ -11130,7 +11129,9 @@ impl Sim {
     ///
     /// Capture cannot include it. Illegal on an instantiated exec. Indices are
     /// 0-based in add order. A cycle is Invalid. Independent nodes (no edge)
-    /// may Hyper-Q overlap at [`Self::launch_graph`].
+    /// may Hyper-Q overlap at [`Self::launch_graph`]. Driver
+    /// `cuGraphAddDependencies` is
+    /// [`Self::add_graph_dependencies`].
     pub fn graph_add_dependencies(
         &mut self,
         graph: GraphId,
@@ -11138,6 +11139,21 @@ impl Sim {
         to: usize,
     ) -> Result<(), SimError> {
         self.graph_add_dependencies_n(graph, &[(from, to)])
+    }
+
+    /// `cuGraphAddDependencies`. Identity with
+    /// [`Self::graph_add_dependencies`] (`cudaGraphAddDependencies`).
+    ///
+    /// Capture refused. Distinct from
+    /// [`Self::graph_add_dependencies_n`]. This VM does not invent
+    /// occupancy SM counts this slice.
+    pub fn add_graph_dependencies(
+        &mut self,
+        graph: GraphId,
+        from: usize,
+        to: usize,
+    ) -> Result<(), SimError> {
+        self.graph_add_dependencies(graph, from, to)
     }
 
     /// `cudaGraphAddDependencies` of `numDependencies` from/to pairs.
