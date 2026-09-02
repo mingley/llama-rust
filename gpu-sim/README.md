@@ -285,6 +285,7 @@ warp scheduler, L1, …   ← do not model
 | `tex_ref_set_address` is Invalid (no `CUtexref` linear bindings) | `cuTexRefSetAddress` |
 | `tex_ref_set_address_2d` is Invalid (no `CUtexref` pitched 2D bindings) | `cuTexRefSetAddress2D` |
 | `tex_ref_set_format` is Invalid (no `CUtexref` channel format) | `cuTexRefSetFormat` |
+| `tex_ref_set_address_mode` is Invalid (no `CUtexref` addressing) | `cuTexRefSetAddressMode` |
 | `module_get_surf_ref` is Invalid (no `CUmodule` / `CUsurfref`) | `cuModuleGetSurfRef` |
 | `library_load_data` is Invalid (no cubin / `CUlibrary`) | `cuLibraryLoadData` |
 | `library_load_from_file` is Invalid (no cubin path / `CUlibrary`) | `cuLibraryLoadFromFile` |
@@ -1603,6 +1604,8 @@ Distinct from `tex_ref_set_mipmapped_array` and `tex_ref_set_array`. Query; lega
 Distinct from `tex_ref_set_address` and `tex_ref_set_array`. Query; legal during capture. No Engine `--texref-pitch2d`.
 `tex_ref_set_format` is `cuTexRefSetFormat` (always Invalid `"texref format"`; no `CUtexref`).
 Distinct from `tex_ref_set_address_2d` and `tex_object_create`. Query; legal during capture. No Engine `--texref-format`.
+`tex_ref_set_address_mode` is `cuTexRefSetAddressMode` (always Invalid `"texref addrmode"`; no `CUtexref`).
+Distinct from `tex_ref_set_format` and `tex_ref_set_address`. Query; legal during capture. No Engine `--texref-addrmode`.
 `module_get_surf_ref` is `cuModuleGetSurfRef` (always Invalid `"module surfref"`; no cubin).
 Distinct from `module_get_tex_ref` and `surf_object_create`. Query; legal during capture. No Engine `--module-surfref`.
 `library_load_data` is `cuLibraryLoadData` (always Invalid `"cuda library"`;

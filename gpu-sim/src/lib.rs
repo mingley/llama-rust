@@ -1161,6 +1161,9 @@
 //! (always Invalid `"texref pitch2d"`). Query; legal during capture. No Engine `--texref-pitch2d`.
 //! [`tex_ref_set_format`](Sim::tex_ref_set_format) is `cuTexRefSetFormat`
 //! (always Invalid `"texref format"`). Query; legal during capture. No Engine `--texref-format`.
+//! [`tex_ref_set_address_mode`](Sim::tex_ref_set_address_mode) is
+//! `cuTexRefSetAddressMode` (always Invalid `"texref addrmode"`). Query; legal
+//! during capture. No Engine `--texref-addrmode`.
 //! [`module_get_surf_ref`](Sim::module_get_surf_ref) is `cuModuleGetSurfRef` (always Invalid
 //! `"module surfref"`). Query; legal during capture. No Engine `--module-surfref`.
 //! [`library_load_data`](Sim::library_load_data) is `cuLibraryLoadData`
@@ -20122,6 +20125,64 @@ mod tests {
             Err(SimError::Invalid { why }) => {
                 assert!(why.contains("texref linear"), "{why}");
                 assert!(!why.contains("texref format"), "{why}");
+            }
+            other => panic!("{other:?}"),
+        }
+        match sim.tex_ref_set_address_mode(d) {
+            Err(SimError::Invalid { why }) => {
+                assert!(why.contains("texref addrmode"), "{why}");
+                assert!(!why.contains("texref format"), "{why}");
+                assert!(!why.contains("texref linear"), "{why}");
+            }
+            other => panic!("{other:?}"),
+        }
+    }
+
+    #[test]
+    fn tex_ref_set_address_mode_is_unsupported() {
+        let mut sim = Sim::new(h100());
+        let d = DeviceId(0);
+        match sim.tex_ref_set_address_mode(d) {
+            Err(SimError::Invalid { why }) => {
+                assert!(why.contains("texref addrmode"), "{why}");
+                assert!(!why.contains("texref format"), "{why}");
+                assert!(!why.contains("texref linear"), "{why}");
+                assert!(!why.contains("texref pitch2d"), "{why}");
+            }
+            other => panic!("{other:?}"),
+        }
+        sim.begin_capture(d, StreamId(0)).unwrap();
+        match sim.tex_ref_set_address_mode(d) {
+            Err(SimError::Invalid { why }) => {
+                assert!(why.contains("texref addrmode"), "{why}");
+            }
+            other => panic!("{other:?}"),
+        }
+        let _g = sim.end_capture().unwrap();
+        match sim.tex_ref_set_address_mode(DeviceId(99)) {
+            Err(SimError::Invalid { why }) => {
+                assert!(why.contains("device not in profile"), "{why}");
+            }
+            other => panic!("{other:?}"),
+        }
+        match sim.tex_ref_set_format(d) {
+            Err(SimError::Invalid { why }) => {
+                assert!(why.contains("texref format"), "{why}");
+                assert!(!why.contains("texref addrmode"), "{why}");
+            }
+            other => panic!("{other:?}"),
+        }
+        match sim.tex_ref_set_address(d) {
+            Err(SimError::Invalid { why }) => {
+                assert!(why.contains("texref linear"), "{why}");
+                assert!(!why.contains("texref addrmode"), "{why}");
+            }
+            other => panic!("{other:?}"),
+        }
+        match sim.tex_ref_set_address_2d(d) {
+            Err(SimError::Invalid { why }) => {
+                assert!(why.contains("texref pitch2d"), "{why}");
+                assert!(!why.contains("texref addrmode"), "{why}");
             }
             other => panic!("{other:?}"),
         }
