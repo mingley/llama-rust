@@ -5,6 +5,13 @@ Visible five-turn extract: [docs/chatgpt-share-6a920fe1.md](docs/chatgpt-share-6
 Complete share-API extract: [docs/chatgpt-share-6a920fe1/](docs/chatgpt-share-6a920fe1/).
 Work lands on `main`. No PRs.
 
+## Shipped 2026-09-02 — CUDA `cuMemRelease` multicast
+
+`gpu-sim` `Sim::mem_multicast_destroy` is `cuMemRelease` multicast.
+Identity with `multicast_destroy` (`cuMemRelease` of a multicast handle). Capture refused. Distinct from `mem_multicast_unbind_with_size`.
+This VM does not invent occupancy SM counts or Engine `--mem-multicast-destroy`.
+`gpu-profile capture` is still refused. Dual score still has no `$/M tokens`.
+
 ## Shipped 2026-09-02 — CUDA `cuMulticastUnbind` size
 
 `gpu-sim` `Sim::mem_multicast_unbind_with_size` is `cuMulticastUnbind` size.

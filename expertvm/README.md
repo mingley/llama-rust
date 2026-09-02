@@ -853,6 +853,7 @@ compiled kernel exists; no Engine flag).
 `gpu-sim` `mem_multicast_bind_addr_with_size` is `cuMulticastBindAddr` size (identity with `multicast_bind_addr_with_size`; no Engine flag).
 `gpu-sim` `mem_multicast_unbind` is `cuMulticastUnbind` (identity with `multicast_unbind`; no Engine flag).
 `gpu-sim` `mem_multicast_unbind_with_size` is `cuMulticastUnbind` size (identity with `multicast_unbind_with_size`; no Engine flag).
+`gpu-sim` `mem_multicast_destroy` is `cuMemRelease` multicast (identity with `multicast_destroy`; no Engine flag).
 `gpu-sim` `mem_alloc` is `cuMemAlloc` (identity with `malloc`; no Engine flag).
 `gpu-sim` `mem_free` is `cuMemFree` (identity with `free_sync`; no Engine flag).
 `gpu-sim` `mem_free_host` is `cuMemFreeHost` (identity with `free_host_pinned`; no Engine flag).
@@ -1230,6 +1231,7 @@ compiled kernel exists; no Engine flag).
 `gpu-sim` `mem_multicast_bind_addr_with_size` is `cuMulticastBindAddr` size (identity with `multicast_bind_addr_with_size`; no Engine flag).
 `gpu-sim` `mem_multicast_unbind` is `cuMulticastUnbind` (identity with `multicast_unbind`; no Engine flag).
 `gpu-sim` `mem_multicast_unbind_with_size` is `cuMulticastUnbind` size (identity with `multicast_unbind_with_size`; no Engine flag).
+`gpu-sim` `mem_multicast_destroy` is `cuMemRelease` multicast (identity with `multicast_destroy`; no Engine flag).
 `gpu-sim` `func_is_loaded` is `cuFuncIsLoaded` (`false` until a compiled
 kernel exists; no Engine flag).
 `gpu-sim` `func_load` is `cuFuncLoad` (Invalid; no compiled kernel; no

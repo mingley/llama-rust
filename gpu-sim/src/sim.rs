@@ -19137,7 +19137,6 @@ impl Sim {
     /// [`Self::multicast_unbind_with_size`] (`cuMulticastUnbind` size).
     ///
     /// Capture refused. Distinct from [`Self::mem_multicast_unbind`].
-    /// This VM does not invent occupancy SM counts this slice.
     pub fn mem_multicast_unbind_with_size(
         &mut self,
         mc: MulticastId,
@@ -19153,6 +19152,8 @@ impl Sim {
     /// [`Self::va_map_multicast`] maps are Invalid `"still mapped"`. Remaining
     /// binds are dropped (handles stay live). Unknown ids are Invalid
     /// `"unknown multicast"`.
+    /// Driver `cuMemRelease` multicast is [`Self::mem_multicast_destroy`].
+    /// Identity wrap [`Self::mem_multicast_destroy`].
     pub fn multicast_destroy(&mut self, mc: MulticastId) -> Result<(), SimError> {
         self.fail_if_capturing("cannot capture alloc/free")?;
         if self.mc_ref(mc)?.maps > 0 {
@@ -19163,6 +19164,15 @@ impl Sim {
         let _gone = self.multicasts.remove(&mc);
         self.clock = self.clock.saturating_add(1);
         Ok(())
+    }
+
+    /// `cuMemRelease` multicast. Identity with
+    /// [`Self::multicast_destroy`] (`cuMemRelease` of a multicast handle).
+    ///
+    /// Capture refused. Distinct from [`Self::mem_multicast_unbind_with_size`].
+    /// This VM does not invent occupancy SM counts this slice.
+    pub fn mem_multicast_destroy(&mut self, mc: MulticastId) -> Result<(), SimError> {
+        self.multicast_destroy(mc)
     }
 
     /// `cuMemMap` of a multicast object into a reserved VA (no extra HBM).
