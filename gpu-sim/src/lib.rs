@@ -313,6 +313,9 @@
 //! [`device_graph_mem_trim`](Sim::device_graph_mem_trim) is `cuDeviceGraphMemTrim` (identity with
 //! [`graph_mem_trim`](Sim::graph_mem_trim)). Capture refused. Distinct from
 //! [`device_graph_mem_set`](Sim::device_graph_mem_set). No Engine `--graph-mem-trim`.
+//! [`get_stream_id`](Sim::get_stream_id) is `cuStreamGetId` (identity with
+//! [`stream_get_id`](Sim::stream_get_id)). Query; legal during capture. Distinct from
+//! [`stream_get_device`](Sim::stream_get_device). No Engine `--stream-get-id`.
 //! [`Sim::ipc_get_event`] / [`ipc_open_event`](Sim::ipc_open_event) are
 //! `cudaIpcGetEventHandle` / `cudaIpcOpenEventHandle` (interprocess events).
 //! [`Sim::create_shareable_pool`] is `cudaMemPoolCreate` with a POSIX-FD handle
@@ -650,6 +653,9 @@
 //! [`device_graph_mem_trim`](Sim::device_graph_mem_trim) is `cuDeviceGraphMemTrim` (identity with
 //! [`graph_mem_trim`](Sim::graph_mem_trim)). Capture refused. Distinct from
 //! [`device_graph_mem_set`](Sim::device_graph_mem_set). No Engine `--graph-mem-trim`.
+//! [`get_stream_id`](Sim::get_stream_id) is `cuStreamGetId` (identity with
+//! [`stream_get_id`](Sim::stream_get_id)). Query; legal during capture. Distinct from
+//! [`stream_get_device`](Sim::stream_get_device). No Engine `--stream-get-id`.
 //! [`HardwareProfile::host_pin_bytes`] caps `cudaMallocHost` / `cudaHostRegister`.
 //! [`Sim::idle_until`] drains, then jumps the virtual clock (open-loop arrivals).
 //! [`Sim::event_elapsed_ns`] is `cudaEventElapsedTime` in nanoseconds.
@@ -855,6 +861,9 @@
 //! [`device_graph_mem_trim`](Sim::device_graph_mem_trim) is `cuDeviceGraphMemTrim` (identity with
 //! [`graph_mem_trim`](Sim::graph_mem_trim)). Capture refused. Distinct from
 //! [`device_graph_mem_set`](Sim::device_graph_mem_set). No Engine `--graph-mem-trim`.
+//! [`get_stream_id`](Sim::get_stream_id) is `cuStreamGetId` (identity with
+//! [`stream_get_id`](Sim::stream_get_id)). Query; legal during capture. Distinct from
+//! [`stream_get_device`](Sim::stream_get_device). No Engine `--stream-get-id`.
 //! [`mem_host_get_flags`](Sim::mem_host_get_flags) is `cuMemHostGetFlags` (identity with
 //! [`host_get_flags`](Sim::host_get_flags)). Query; legal during capture. No Engine `--mem-host-get-flags`.
 //! [`mem_host_get_device_pointer`](Sim::mem_host_get_device_pointer) is `cuMemHostGetDevicePointer` (identity with
@@ -1026,6 +1035,9 @@
 //! [`device_graph_mem_trim`](Sim::device_graph_mem_trim) is `cuDeviceGraphMemTrim` (identity with
 //! [`graph_mem_trim`](Sim::graph_mem_trim)). Capture refused. Distinct from
 //! [`device_graph_mem_set`](Sim::device_graph_mem_set). No Engine `--graph-mem-trim`.
+//! [`get_stream_id`](Sim::get_stream_id) is `cuStreamGetId` (identity with
+//! [`stream_get_id`](Sim::stream_get_id)). Query; legal during capture. Distinct from
+//! [`stream_get_device`](Sim::stream_get_device). No Engine `--stream-get-id`.
 //! [`Sim::pointer_get_attributes`] is `cudaPointerGetAttributes`.
 //! [`pointer_set_attribute`](Sim::pointer_set_attribute) /
 //! [`pointer_get_attribute`](Sim::pointer_get_attribute) are
@@ -1604,6 +1616,9 @@
 //! priorities start first under contention.
 //! [`Sim::stream_get_id`] is `cudaStreamGetId` (unique per device/stream;
 //! not the caller-chosen [`StreamId`]).
+//! [`get_stream_id`](Sim::get_stream_id) is `cuStreamGetId` (identity with
+//! [`stream_get_id`](Sim::stream_get_id)). Query; legal during capture. Distinct from
+//! [`stream_get_device`](Sim::stream_get_device). No Engine `--stream-get-id`.
 //! [`Sim::stream_get_device`] is `cudaStreamGetDevice` / `cuStreamGetDevice`
 //! (the device of the stream; green-ctx streams return the ctx create
 //! device). Query; legal during capture. Distinct from
@@ -2108,6 +2123,9 @@
 //! [`device_graph_mem_trim`](Sim::device_graph_mem_trim) is `cuDeviceGraphMemTrim` (identity with
 //! [`graph_mem_trim`](Sim::graph_mem_trim)). Capture refused. Distinct from
 //! [`device_graph_mem_set`](Sim::device_graph_mem_set). No Engine `--graph-mem-trim`.
+//! [`get_stream_id`](Sim::get_stream_id) is `cuStreamGetId` (identity with
+//! [`stream_get_id`](Sim::stream_get_id)). Query; legal during capture. Distinct from
+//! [`stream_get_device`](Sim::stream_get_device). No Engine `--stream-get-id`.
 //! [`Sim::set_stream_priority`] is the priority-only helper;
 //! [`stream_create_with_priority`](Sim::stream_create_with_priority) is
 //! `cudaStreamCreateWithPriority` (flags plus priority; clamped to
@@ -2133,6 +2151,9 @@
 //! [`device_graph_mem_trim`](Sim::device_graph_mem_trim) is `cuDeviceGraphMemTrim` (identity with
 //! [`graph_mem_trim`](Sim::graph_mem_trim)). Capture refused. Distinct from
 //! [`device_graph_mem_set`](Sim::device_graph_mem_set). No Engine `--graph-mem-trim`.
+//! [`get_stream_id`](Sim::get_stream_id) is `cuStreamGetId` (identity with
+//! [`stream_get_id`](Sim::stream_get_id)). Query; legal during capture. Distinct from
+//! [`stream_get_device`](Sim::stream_get_device). No Engine `--stream-get-id`.
 //! [`destroy_stream`](Sim::destroy_stream) is `cudaStreamDestroy` (returns
 //! immediately; in-flight work still completes; NULL is Invalid; recreate
 //! while unfinished is `"stream in flight"`). Capture cannot include it.
@@ -17497,6 +17518,55 @@ mod tests {
         let mut eight = Sim::new(HardwareProfile::example_8xh100_nvlink());
         eight.device_graph_mem_trim(DeviceId(1)).unwrap();
         eight.graph_mem_trim(DeviceId(0)).unwrap();
+    }
+
+    #[test]
+    fn get_stream_id_is_cu_stream_get_id() {
+        let mut sim = Sim::new(h100());
+        let d = DeviceId(0);
+        match sim.get_stream_id(DeviceId(99), StreamId(0)) {
+            Err(SimError::Invalid { why }) => assert!(why.contains("device"), "{why}"),
+            other => panic!("{other:?}"),
+        }
+        match sim.stream_get_id(DeviceId(99), StreamId(0)) {
+            Err(SimError::Invalid { why }) => assert!(why.contains("device"), "{why}"),
+            other => panic!("{other:?}"),
+        }
+        let null = sim.get_stream_id(d, StreamId::NULL).unwrap();
+        let created = sim.get_stream_id(d, StreamId(1)).unwrap();
+        assert_ne!(null, created);
+        assert_eq!(null, sim.stream_get_id(d, StreamId::NULL).unwrap());
+        assert_eq!(created, sim.stream_get_id(d, StreamId(1)).unwrap());
+        sim.begin_capture(d, StreamId(0)).unwrap();
+        assert_eq!(sim.get_stream_id(d, StreamId(1)).unwrap(), created);
+        assert_eq!(
+            sim.get_stream_id(d, StreamId(1)).unwrap(),
+            sim.stream_get_id(d, StreamId(1)).unwrap()
+        );
+        let _g = sim.end_capture().unwrap();
+        sim.destroy_stream(d, StreamId(1)).unwrap();
+        match sim.get_stream_id(d, StreamId(1)) {
+            Err(SimError::Invalid { why }) => assert!(why.contains("unknown stream"), "{why}"),
+            other => panic!("{other:?}"),
+        }
+        match sim.stream_get_id(d, StreamId(1)) {
+            Err(SimError::Invalid { why }) => assert!(why.contains("unknown stream"), "{why}"),
+            other => panic!("{other:?}"),
+        }
+        let mut eight = Sim::new(HardwareProfile::example_8xh100_nvlink());
+        let gpu0 = eight.get_stream_id(DeviceId(0), StreamId::NULL).unwrap();
+        let gpu1 = eight.get_stream_id(DeviceId(1), StreamId::NULL).unwrap();
+        assert_ne!(gpu0, gpu1);
+        eight.begin_capture(DeviceId(1), StreamId(0)).unwrap();
+        assert_eq!(
+            eight.get_stream_id(DeviceId(1), StreamId::NULL).unwrap(),
+            gpu1
+        );
+        assert_eq!(
+            eight.get_stream_id(DeviceId(1), StreamId::NULL).unwrap(),
+            eight.stream_get_id(DeviceId(1), StreamId::NULL).unwrap()
+        );
+        let _g = eight.end_capture().unwrap();
     }
 
     #[test]

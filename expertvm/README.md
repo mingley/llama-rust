@@ -538,6 +538,7 @@ compiled kernel exists; no Engine flag).
 `gpu-sim` `device_graph_mem_get` is `cuDeviceGetGraphMemAttribute` (identity with `graph_mem_get`; no Engine flag).
 `gpu-sim` `device_graph_mem_set` is `cuDeviceSetGraphMemAttribute` (identity with `graph_mem_set`; no Engine flag).
 `gpu-sim` `device_graph_mem_trim` is `cuDeviceGraphMemTrim` (identity with `graph_mem_trim`; no Engine flag).
+`gpu-sim` `get_stream_id` is `cuStreamGetId` (identity with `stream_get_id`; no Engine flag).
 `gpu-sim` `mem_alloc` is `cuMemAlloc` (identity with `malloc`; no Engine flag).
 `gpu-sim` `mem_free` is `cuMemFree` (identity with `free_sync`; no Engine flag).
 `gpu-sim` `mem_free_host` is `cuMemFreeHost` (identity with `free_host_pinned`; no Engine flag).
@@ -600,6 +601,7 @@ compiled kernel exists; no Engine flag).
 `gpu-sim` `device_graph_mem_get` is `cuDeviceGetGraphMemAttribute` (identity with `graph_mem_get`; no Engine flag).
 `gpu-sim` `device_graph_mem_set` is `cuDeviceSetGraphMemAttribute` (identity with `graph_mem_set`; no Engine flag).
 `gpu-sim` `device_graph_mem_trim` is `cuDeviceGraphMemTrim` (identity with `graph_mem_trim`; no Engine flag).
+`gpu-sim` `get_stream_id` is `cuStreamGetId` (identity with `stream_get_id`; no Engine flag).
 `gpu-sim` `func_is_loaded` is `cuFuncIsLoaded` (`false` until a compiled
 kernel exists; no Engine flag).
 `gpu-sim` `func_load` is `cuFuncLoad` (Invalid; no compiled kernel; no

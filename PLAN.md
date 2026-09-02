@@ -8267,7 +8267,14 @@ model, do not celebrate the sim.
     or `cudaChooseDevice`. `gpu-profile capture` is still refused. Dual
     score still has no `$/M tokens`.
 
-873. [ ] Next numbered PLAN item after 872 is the next `gpu-sim` / Engine /
+873. [x] `gpu-sim` `Sim::get_stream_id` is
+    `cuStreamGetId`. Identity with `stream_get_id`
+    (`cudaStreamGetId`). Query; legal during capture. Distinct from
+    `stream_get_device`. This VM does not invent occupancy SM counts, Engine `--stream-get-id`,
+    or `cudaChooseDevice`. `gpu-profile capture` is still refused. Dual
+    score still has no `$/M tokens`.
+
+874. [ ] Next numbered PLAN item after 873 is the next `gpu-sim` / Engine /
     serve / expertvm mechanical API that is still missing, or the next official
     decode family. Prefer remaining CUDA-shaped twins over more
     OpenAI HTTP veneer. Do not invent F32 `output.scale`. Do not invent a
@@ -9377,6 +9384,9 @@ model, do not celebrate the sim.
     Do not invent a second `cuDeviceGraphMemTrim` / `device_graph_mem_trim`.
     Do not invent Engine `--graph-mem-trim`. Do not invent
     occupancy SM counts this slice. Do not reverse DeviceGraphMemTrim identity with graph_mem_trim.
+    Do not invent a second `cuStreamGetId` / `get_stream_id`.
+    Do not invent Engine `--stream-get-id`. Do not invent
+    occupancy SM counts this slice. Do not reverse GetStreamId identity with stream_get_id.
     Do not invent a second `cudaStreamAddCallback`.
     Do not invent Engine `--stream-callback` (same wall as second live
     `cudaLaunchHostFunc` after miss DMA).
@@ -10566,6 +10576,9 @@ model, do not celebrate the sim.
     Do not invent a second `device_graph_mem_trim` API. Do not invent
     Engine `--graph-mem-trim-identity`. Do not invent a stream-get-id
     this slice. Do not reverse DeviceGraphMemTrim identity with graph_mem_trim.
+    Do not invent a second `get_stream_id` API. Do not invent
+    Engine `--stream-get-id-identity`. Do not invent a stream-copy-attributes
+    this slice. Do not reverse GetStreamId identity with stream_get_id.
     Do not invent a second DeviceLaunch in-flight destroy-complete check or Engine
     `--device-launch-destroy`. Do not abort an in-flight DeviceLaunch when
     `destroy_graph` succeeds. Do not delay destroy of an idle exec. Do not invent
@@ -11938,6 +11951,9 @@ model, do not celebrate the sim.
     Do not invent a second `device_graph_mem_trim` method. Do not
     invent Engine `--cu-graph-mem-trim`. Do not reverse wrapping
     cuDeviceGraphMemTrim identity.
+    Do not invent a second `get_stream_id` method. Do not
+    invent Engine `--cu-stream-get-id`. Do not reverse wrapping
+    cuStreamGetId identity.
     Do not
     spend the next item on an OpenAI-compatible HTTP veneer.
 

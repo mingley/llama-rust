@@ -1465,8 +1465,7 @@ impl Sim {
     /// (`cudaDeviceGraphMemTrim`).
     ///
     /// Host-synchronous. Capture refused. Distinct from
-    /// [`Self::device_graph_mem_set`]. This VM does not invent occupancy SM
-    /// counts this slice.
+    /// [`Self::device_graph_mem_set`].
     pub fn device_graph_mem_trim(&mut self, device: DeviceId) -> Result<(), SimError> {
         self.graph_mem_trim(device)
     }
@@ -2533,13 +2532,22 @@ impl Sim {
     /// Unique per `(device, stream)` for this VM. [`StreamId`] stays
     /// caller-chosen; this is not that handle and not a capture-sequence id.
     /// Unknown devices are Invalid. A [`Self::destroy_stream`] handle is
-    /// Invalid `"unknown stream"` until create.
+    /// Invalid `"unknown stream"` until create. Driver `cuStreamGetId` is
+    /// [`Self::get_stream_id`].
     pub fn stream_get_id(&self, device: DeviceId, stream: StreamId) -> Result<u64, SimError> {
         let _gpu = self.profile.gpu(device)?;
         self.require_live_stream(device, stream)?;
         Ok((u64::from(device.0) << 16)
             .saturating_add(u64::from(stream.0))
             .saturating_add(1))
+    }
+
+    /// `cuStreamGetId`. Identity with [`Self::stream_get_id`] (`cudaStreamGetId`).
+    ///
+    /// Query; legal during capture. Distinct from [`Self::stream_get_device`].
+    /// This VM does not invent occupancy SM counts this slice.
+    pub fn get_stream_id(&self, device: DeviceId, stream: StreamId) -> Result<u64, SimError> {
+        self.stream_get_id(device, stream)
     }
 
     /// `cudaStreamGetDevice` / `cuStreamGetDevice`. Query; legal during capture.
