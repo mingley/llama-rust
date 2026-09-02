@@ -6542,7 +6542,9 @@ impl Sim {
     /// [`crate::GpuOp::BatchMem`] node treats the item list as parameters
     /// (length may change). Capture cannot include it. Host-sync 1 ns.
     /// A parked in-flight-destroyed exec is `"unknown graph"`. Live exec
-    /// SetParams stays.
+    /// SetParams stays. Driver
+    /// `cuGraphBatchMemOpNodeSetParams` is
+    /// [`Self::set_graph_batch_mem_op_node_params`].
     pub fn graph_batch_mem_op_set_params(
         &mut self,
         graph: GraphId,
@@ -6550,6 +6552,21 @@ impl Sim {
         op: BatchMemOp,
     ) -> Result<(), SimError> {
         self.set_batch_mem_ops(graph, node, &[op], false, GreenCtxPatch::Keep)
+    }
+
+    /// `cuGraphBatchMemOpNodeSetParams`. Identity with
+    /// [`Self::graph_batch_mem_op_set_params`] (`cudaGraphBatchMemOpNodeSetParams`).
+    ///
+    /// Capture refused. Distinct from
+    /// [`Self::get_graph_batch_mem_op_node_params`]. This VM does not invent
+    /// occupancy SM counts this slice.
+    pub fn set_graph_batch_mem_op_node_params(
+        &mut self,
+        graph: GraphId,
+        node: usize,
+        op: &BatchMemOp,
+    ) -> Result<(), SimError> {
+        self.graph_batch_mem_op_set_params(graph, node, *op)
     }
 
     /// Replace the item list of a [`crate::GpuOp::BatchMem`] graph node.
@@ -7960,8 +7977,7 @@ impl Sim {
     /// of the exec snapshot).
     ///
     /// Query; legal during capture. Distinct from
-    /// [`Self::get_graph_batch_mem_op_node_params`]. This VM does not invent
-    /// occupancy SM counts this slice.
+    /// [`Self::get_graph_batch_mem_op_node_params`].
     pub fn get_graph_exec_batch_mem_op_node_params(
         &self,
         exec: GraphId,
