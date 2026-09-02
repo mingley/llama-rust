@@ -16796,6 +16796,8 @@ impl Sim {
     /// [`MemAccessFlags::PROT_READ`] (`1`) after [`Self::pool_set_access_read`].
     /// Otherwise [`MemAccessFlags::PROT_NONE`] (`0`). The graph-memory pool is
     /// Invalid.
+    /// Driver `cuMemPoolGetAccess` is [`Self::mem_pool_get_access`].
+    /// Identity wrap [`Self::mem_pool_get_access`].
     pub fn pool_get_access(&self, pool: PoolId, device: DeviceId) -> Result<u32, SimError> {
         let _gpu = self.profile.gpu(device)?;
         self.refuse_graph_pool(pool)?;
@@ -16808,6 +16810,15 @@ impl Sim {
         } else {
             Ok(MemAccessFlags::PROT_NONE)
         }
+    }
+
+    /// `cuMemPoolGetAccess`. Identity with
+    /// [`Self::pool_get_access`] (`cudaMemPoolGetAccess`).
+    ///
+    /// Query; legal during capture. Distinct from [`Self::mem_pool_import_ptr`].
+    /// This VM does not invent occupancy SM counts this slice.
+    pub fn mem_pool_get_access(&self, pool: PoolId, device: DeviceId) -> Result<u32, SimError> {
+        self.pool_get_access(pool, device)
     }
 
     /// Whether `pool` was created with a POSIX-FD shareable handle type.
@@ -17126,7 +17137,6 @@ impl Sim {
     /// [`Self::pool_import_ptr`] (`cudaMemPoolImportPointer`).
     ///
     /// Capture refused. Distinct from [`Self::mem_pool_export_ptr`].
-    /// This VM does not invent occupancy SM counts this slice.
     pub fn mem_pool_import_ptr(
         &mut self,
         pool: PoolId,
