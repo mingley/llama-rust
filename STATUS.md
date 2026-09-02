@@ -5,6 +5,13 @@ Visible five-turn extract: [docs/chatgpt-share-6a920fe1.md](docs/chatgpt-share-6
 Complete share-API extract: [docs/chatgpt-share-6a920fe1/](docs/chatgpt-share-6a920fe1/).
 Work lands on `main`. No PRs.
 
+## Shipped 2026-09-02 — CUDA `cudaPointerGetAttributes`
+
+`gpu-sim` `Sim::mem_pointer_get_attributes` is `cudaPointerGetAttributes`.
+Identity with `pointer_get_attributes` (`cudaPointerGetAttributes`). Query; legal during capture. Distinct from `mem_pointer_set_attribute`.
+This VM does not invent occupancy SM counts or Engine `--mem-pointer-get-attributes`.
+`gpu-profile capture` is still refused. Dual score still has no `$/M tokens`.
+
 ## Shipped 2026-09-02 — CUDA `cuPointerSetAttribute`
 
 `gpu-sim` `Sim::mem_pointer_set_attribute` is `cuPointerSetAttribute`.

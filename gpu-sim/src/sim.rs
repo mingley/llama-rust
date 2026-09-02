@@ -24669,6 +24669,8 @@ impl Sim {
     ///
     /// A never-created id is [`SimError::UnknownAlloc`]. A freed id is
     /// [`MemoryType::Unregistered`] (CUDA 11+).
+    /// Driver `cudaPointerGetAttributes` is [`Self::mem_pointer_get_attributes`].
+    /// Identity wrap [`Self::mem_pointer_get_attributes`].
     pub fn pointer_get_attributes(&self, id: AllocId) -> Result<PointerAttributes, SimError> {
         let a = self.alloc_ref(id)?;
         if !a.live {
@@ -24710,6 +24712,15 @@ impl Sim {
             device_pointer: true,
             host_pointer: false,
         })
+    }
+
+    /// `cudaPointerGetAttributes`. Identity with
+    /// [`Self::pointer_get_attributes`] (`cudaPointerGetAttributes`).
+    ///
+    /// Query; legal during capture. Distinct from [`Self::mem_pointer_set_attribute`].
+    /// This VM does not invent occupancy SM counts this slice.
+    pub fn mem_pointer_get_attributes(&self, id: AllocId) -> Result<PointerAttributes, SimError> {
+        self.pointer_get_attributes(id)
     }
 
     /// `cudaMemGetAddressRange`. Query; legal during capture.
@@ -24792,7 +24803,6 @@ impl Sim {
     /// [`Self::pointer_set_attribute`] (`cuPointerSetAttribute`).
     ///
     /// Capture refused. Distinct from [`Self::mem_pointer_get_access_flags`].
-    /// This VM does not invent occupancy SM counts this slice.
     pub fn mem_pointer_set_attribute(
         &mut self,
         alloc: AllocId,
