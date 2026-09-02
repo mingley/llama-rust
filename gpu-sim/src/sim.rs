@@ -11189,8 +11189,7 @@ impl Sim {
     /// `cudaGraphAddBatchMemOpNode`).
     ///
     /// Capture refused. Distinct from
-    /// [`Self::add_graph_wait_value64`]. This VM does not invent
-    /// occupancy SM counts this slice.
+    /// [`Self::add_graph_wait_value64`].
     pub fn add_graph_wait_value32(
         &mut self,
         graph: GraphId,
@@ -11206,7 +11205,9 @@ impl Sim {
     ///
     /// [`crate::WaitValueFlags::FLUSH`] requires an RDMA SKU (same as
     /// [`BatchMemOp::FlushRemoteWrites`]). Unknown bits Invalid `"wait value flags"`.
-    /// Typed helper stays.
+    /// Typed helper stays. Driver
+    /// graph `cuStreamWaitValue64` flags is
+    /// [`Self::add_graph_wait_value64_with_flags`].
     pub fn graph_add_wait_value64_with_flags(
         &mut self,
         graph: GraphId,
@@ -11227,6 +11228,24 @@ impl Sim {
                 flush: flags & WaitValueFlags::FLUSH != 0,
             },
         )
+    }
+
+    /// Graph `cuStreamWaitValue64` flags. Identity with
+    /// [`Self::graph_add_wait_value64_with_flags`] (`cuStreamWaitValue64`
+    /// flags).
+    ///
+    /// Capture refused. Distinct from
+    /// [`Self::add_graph_wait_value32`]. This VM does not invent
+    /// occupancy SM counts this slice.
+    pub fn add_graph_wait_value64_with_flags(
+        &mut self,
+        graph: GraphId,
+        id: AllocId,
+        offset: u64,
+        value: u64,
+        flags: u32,
+    ) -> Result<(), SimError> {
+        self.graph_add_wait_value64_with_flags(graph, id, offset, value, flags)
     }
 
     /// [`Self::graph_add_wait_value32`] with a [`crate::WaitValueFlags`] word.
