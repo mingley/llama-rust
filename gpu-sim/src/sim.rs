@@ -5445,8 +5445,7 @@ impl Sim {
     /// [`Self::upload_graph`] (`cudaGraphUpload`).
     ///
     /// Host-synchronous. Capture refused. Distinct from
-    /// [`Self::upload_graph_async`]. This VM does not invent
-    /// occupancy SM counts this slice.
+    /// [`Self::upload_graph_async`].
     pub fn graph_upload(&mut self, graph: GraphId) -> Result<(), SimError> {
         self.upload_graph(graph)
     }
@@ -5461,7 +5460,9 @@ impl Sim {
     /// of an exec with this op still in flight does not abort the upload
     /// (`cudaGraphExecDestroy`). Host upload of a DeviceLaunch exec while
     /// [`Self::device_launch_graph`] is in flight is Invalid
-    /// `"device launch in flight"`. No Engine `--graph-upload-stream`.
+    /// `"device launch in flight"`. No Engine `--graph-upload-stream`. Driver
+    /// `cuGraphUpload` on a stream is
+    /// [`Self::graph_upload_async`].
     pub fn upload_graph_async(
         &mut self,
         device: DeviceId,
@@ -5485,6 +5486,21 @@ impl Sim {
             });
         }
         self.submit(device, stream, Kind::GraphUpload { exec })
+    }
+
+    /// `cuGraphUpload` on a stream. Identity with
+    /// [`Self::upload_graph_async`] (`cudaGraphUpload` on `stream`).
+    ///
+    /// Stream-ordered. Capture refused. Distinct from
+    /// [`Self::graph_upload`]. This VM does not invent
+    /// occupancy SM counts this slice.
+    pub fn graph_upload_async(
+        &mut self,
+        device: DeviceId,
+        stream: StreamId,
+        graph: GraphId,
+    ) -> Result<OpId, SimError> {
+        self.upload_graph_async(device, stream, graph)
     }
 
     fn pending_graph_upload(&self, exec: GraphId) -> Option<OpId> {
