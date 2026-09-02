@@ -1100,6 +1100,9 @@
 //! [`checkpoint_process_get_state`](Sim::checkpoint_process_get_state) is
 //! `cuCheckpointProcessGetState` (always Invalid `"ckpt state"`). Query;
 //! legal during capture. No Engine `--ckpt-state`.
+//! [`device_register_async_notification`](Sim::device_register_async_notification)
+//! is `cuDeviceRegisterAsyncNotification` (always Invalid `"async notify"`).
+//! Query; legal during capture. No Engine `--async-notify`.
 //! [`Sim::driver_init`] is `cuInit` (flags 0; already initialized
 //! at [`Sim::new`]; 1 ns no-op). Distinct from [`init_device`](Sim::init_device).
 //! Capture cannot include it. No Engine `--cu-init`.
@@ -19487,6 +19490,57 @@ mod tests {
             Err(SimError::Invalid { why }) => {
                 assert!(why.contains("kernel pcount"), "{why}");
                 assert!(!why.contains("func pcount"), "{why}");
+            }
+            other => panic!("{other:?}"),
+        }
+        match sim.device_register_async_notification(d) {
+            Err(SimError::Invalid { why }) => {
+                assert!(why.contains("async notify"), "{why}");
+                assert!(!why.contains("func pcount"), "{why}");
+                assert!(!why.contains("stream callback"), "{why}");
+            }
+            other => panic!("{other:?}"),
+        }
+    }
+
+    #[test]
+    fn device_register_async_notification_is_unsupported() {
+        let mut sim = Sim::new(h100());
+        let d = DeviceId(0);
+        match sim.device_register_async_notification(d) {
+            Err(SimError::Invalid { why }) => {
+                assert!(why.contains("async notify"), "{why}");
+                assert!(!why.contains("stream callback"), "{why}");
+                assert!(!why.contains("async map"), "{why}");
+                assert!(!why.contains("unmap async"), "{why}");
+            }
+            other => panic!("{other:?}"),
+        }
+        sim.begin_capture(d, StreamId(0)).unwrap();
+        match sim.device_register_async_notification(d) {
+            Err(SimError::Invalid { why }) => {
+                assert!(why.contains("async notify"), "{why}");
+            }
+            other => panic!("{other:?}"),
+        }
+        let _g = sim.end_capture().unwrap();
+        match sim.device_register_async_notification(DeviceId(99)) {
+            Err(SimError::Invalid { why }) => {
+                assert!(why.contains("device not in profile"), "{why}");
+            }
+            other => panic!("{other:?}"),
+        }
+        match sim.func_get_param_count(d) {
+            Err(SimError::Invalid { why }) => {
+                assert!(why.contains("func pcount"), "{why}");
+                assert!(!why.contains("async notify"), "{why}");
+            }
+            other => panic!("{other:?}"),
+        }
+        match sim.gl_map_buffer_object_async(d, StreamId(0)) {
+            Err(SimError::Invalid { why }) => {
+                assert!(why.contains("async map"), "{why}");
+                assert!(!why.contains("async notify"), "{why}");
             }
             other => panic!("{other:?}"),
         }

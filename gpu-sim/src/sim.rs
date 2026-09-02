@@ -21113,6 +21113,22 @@ impl Sim {
         Err(SimError::Invalid { why: "ckpt state" })
     }
 
+    /// `cuDeviceRegisterAsyncNotification` /
+    /// `cudaDeviceRegisterAsyncNotification`.
+    ///
+    /// Always Invalid `"async notify"` (device async callbacks are not
+    /// modeled). Distinct from [`Self::stream_add_callback`] (live host
+    /// enqueue) and from [`Self::checkpoint_process_get_state`]. Unknown
+    /// devices are Invalid `"device not in profile"`. Query; legal during
+    /// capture. This VM does not invent
+    /// `cuDeviceUnregisterAsyncNotification` this slice.
+    pub fn device_register_async_notification(&self, device: DeviceId) -> Result<(), SimError> {
+        let _gpu = self.profile.gpu(device)?;
+        Err(SimError::Invalid {
+            why: "async notify",
+        })
+    }
+
     /// `cuInit`. Host-synchronous. Capture cannot include it.
     ///
     /// Flags must be 0 (CUDA requires 0). This VM is already initialized at

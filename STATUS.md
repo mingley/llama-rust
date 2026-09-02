@@ -5,6 +5,15 @@ Visible five-turn extract: [docs/chatgpt-share-6a920fe1.md](docs/chatgpt-share-6
 Complete share-API extract: [docs/chatgpt-share-6a920fe1/](docs/chatgpt-share-6a920fe1/).
 Work lands on `main`. No PRs.
 
+## Shipped 2026-09-02 — CUDA `cuDeviceRegisterAsyncNotification`
+
+`gpu-sim` `Sim::device_register_async_notification` is `cuDeviceRegisterAsyncNotification`.
+Always Invalid `"async notify"` because device async callbacks are not
+modeled. Query; legal during capture. Distinct from
+`stream_add_callback` (live host enqueue).
+This VM does not invent `cuDeviceUnregisterAsyncNotification` or Engine `--async-notify`.
+`gpu-profile capture` is still refused. Dual score still has no `$/M tokens`.
+
 ## Shipped 2026-09-02 — CUDA `cuFuncGetParamCount`
 
 `gpu-sim` `Sim::func_get_param_count` is `cuFuncGetParamCount`.
