@@ -5,6 +5,14 @@ Visible five-turn extract: [docs/chatgpt-share-6a920fe1.md](docs/chatgpt-share-6
 Complete share-API extract: [docs/chatgpt-share-6a920fe1/](docs/chatgpt-share-6a920fe1/).
 Work lands on `main`. No PRs.
 
+## Shipped 2026-09-02 — CUDA `cuUserObjectRelease`
+
+`gpu-sim` `Sim::release_user_object` is `cuUserObjectRelease`.
+Identity with `user_object_release` (`cudaUserObjectRelease`).
+Capture refused. Distinct from `retain_user_object`.
+This VM does not invent occupancy SM counts or Engine `--release-user-object`.
+`gpu-profile capture` is still refused. Dual score still has no `$/M tokens`.
+
 ## Shipped 2026-09-02 — CUDA `cuUserObjectRetain`
 
 `gpu-sim` `Sim::retain_user_object` is `cuUserObjectRetain`.

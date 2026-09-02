@@ -9621,8 +9621,7 @@ impl Sim {
     /// [`Self::user_object_retain`] (`cudaUserObjectRetain`).
     ///
     /// Host-synchronous. Capture refused. Distinct from
-    /// [`Self::create_user_object`]. This VM does not invent
-    /// occupancy SM counts this slice.
+    /// [`Self::create_user_object`].
     pub fn retain_user_object(&mut self, object: UserObjectId, count: u32) -> Result<(), SimError> {
         self.user_object_retain(object, count)
     }
@@ -9630,7 +9629,9 @@ impl Sim {
     /// `cudaUserObjectRelease`. Host-synchronous. Capture cannot include it.
     ///
     /// Releasing the last reference records [`Self::user_object_destructors`].
-    /// `count` must be in `1..=i32::MAX` (CUDA `INT_MAX`).
+    /// `count` must be in `1..=i32::MAX` (CUDA `INT_MAX`). Driver
+    /// `cuUserObjectRelease` is
+    /// [`Self::release_user_object`].
     pub fn user_object_release(
         &mut self,
         object: UserObjectId,
@@ -9650,6 +9651,20 @@ impl Sim {
         self.maybe_destroy_user_object(object);
         self.clock = self.clock.saturating_add(1);
         Ok(())
+    }
+
+    /// `cuUserObjectRelease`. Identity with
+    /// [`Self::user_object_release`] (`cudaUserObjectRelease`).
+    ///
+    /// Host-synchronous. Capture refused. Distinct from
+    /// [`Self::retain_user_object`]. This VM does not invent
+    /// occupancy SM counts this slice.
+    pub fn release_user_object(
+        &mut self,
+        object: UserObjectId,
+        count: u32,
+    ) -> Result<(), SimError> {
+        self.user_object_release(object, count)
     }
 
     /// `cudaGraphRetainUserObject` on a definition. Host-synchronous.
