@@ -2330,7 +2330,8 @@ impl Sim {
     /// `"stream create flags"`. [`StreamId::NULL`] is Invalid (use
     /// [`Self::set_legacy_null_stream`]). Typed [`Self::set_stream_blocking`]
     /// stays. Created streams still default to non-blocking until this is
-    /// called with [`StreamCreateFlags::DEFAULT`].
+    /// called with [`StreamCreateFlags::DEFAULT`]. Driver
+    /// `cuStreamCreateWithFlags` is [`Self::stream_create_flags`].
     pub fn stream_create_with_flags(
         &mut self,
         device: DeviceId,
@@ -2345,6 +2346,21 @@ impl Sim {
             });
         }
         self.set_stream_blocking(device, stream, flags & StreamCreateFlags::NON_BLOCKING == 0)
+    }
+
+    /// `cuStreamCreateWithFlags`. Identity with [`Self::stream_create_with_flags`]
+    /// (`cudaStreamCreateWithFlags`).
+    ///
+    /// Capture refused. Distinct from [`Self::stream_create`] and
+    /// [`Self::stream_create_priority`]. This VM does not invent occupancy SM
+    /// counts this slice.
+    pub fn stream_create_flags(
+        &mut self,
+        device: DeviceId,
+        stream: StreamId,
+        flags: u32,
+    ) -> Result<(), SimError> {
+        self.stream_create_with_flags(device, stream, flags)
     }
 
     /// `cudaStreamCreate` / `cuStreamCreate` default flags. Identity with
@@ -2379,8 +2395,7 @@ impl Sim {
     /// `cuStreamCreateWithPriority`. Identity with
     /// [`Self::stream_create_with_priority`] (`cudaStreamCreateWithPriority`).
     ///
-    /// Capture refused. Distinct from [`Self::stream_create`]. This VM does
-    /// not invent occupancy SM counts this slice.
+    /// Capture refused. Distinct from [`Self::stream_create`].
     pub fn stream_create_priority(
         &mut self,
         device: DeviceId,
