@@ -25631,7 +25631,6 @@ impl Sim {
 
     /// `cuDeviceGetPCIBusId`. Identity with [`Self::device_get_pci_bus_id`] (`cudaDeviceGetPciBusId`).
     /// Query; legal during capture. Distinct from [`Self::mem_device_get_by_uuid`].
-    /// This VM does not invent occupancy SM counts this slice.
     pub fn mem_device_get_pci_bus_id(&self, device: DeviceId) -> Result<String, SimError> {
         self.device_get_pci_bus_id(device)
     }
@@ -25641,6 +25640,9 @@ impl Sim {
     /// Inverse of [`Self::device_get_pci_bus_id`]. Unknown or malformed bus id
     /// is Invalid `"unknown pci bus id"`. Distinct from
     /// [`Self::device_get_by_uuid`].
+    ///
+    /// Driver wrap: [`Self::mem_device_get_by_pci_bus_id`].
+    /// Identity: [`Self::mem_device_get_by_pci_bus_id`].
     pub fn device_get_by_pci_bus_id(&self, pci_bus_id: &str) -> Result<DeviceId, SimError> {
         self.profile
             .gpus
@@ -25650,6 +25652,13 @@ impl Sim {
             .ok_or(SimError::Invalid {
                 why: "unknown pci bus id",
             })
+    }
+
+    /// `cudaDeviceGetByPCIBusId`. Identity with [`Self::device_get_by_pci_bus_id`].
+    /// Query; legal during capture. Distinct from [`Self::mem_device_get_pci_bus_id`].
+    /// This VM does not invent occupancy SM counts this slice.
+    pub fn mem_device_get_by_pci_bus_id(&self, pci_bus_id: &str) -> Result<DeviceId, SimError> {
+        self.device_get_by_pci_bus_id(pci_bus_id)
     }
 
     /// `cuDeviceTotalMem`. Query; legal during capture.
