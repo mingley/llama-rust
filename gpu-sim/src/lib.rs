@@ -703,6 +703,9 @@
 //! [`release_graph_user_object`](Sim::release_graph_user_object) is `cuGraphReleaseUserObject` (identity with
 //! [`graph_release_user_object`](Sim::graph_release_user_object)). Capture refused. Distinct from
 //! [`retain_graph_user_object`](Sim::retain_graph_user_object). No Engine `--release-graph-user-object`.
+//! [`get_graph_alloc_node_params`](Sim::get_graph_alloc_node_params) is `cuGraphMemAllocNodeGetParams` (identity with
+//! [`graph_alloc_get_params`](Sim::graph_alloc_get_params)). Query; legal during capture. Distinct from
+//! [`graph_exec_alloc_get_params`](Sim::graph_exec_alloc_get_params). No Engine `--graph-alloc-get-params`.
 //! [`Sim::ipc_get_event`] / [`ipc_open_event`](Sim::ipc_open_event) are
 //! `cudaIpcGetEventHandle` / `cudaIpcOpenEventHandle` (interprocess events).
 //! [`Sim::create_shareable_pool`] is `cudaMemPoolCreate` with a POSIX-FD handle
@@ -1430,6 +1433,9 @@
 //! [`release_graph_user_object`](Sim::release_graph_user_object) is `cuGraphReleaseUserObject` (identity with
 //! [`graph_release_user_object`](Sim::graph_release_user_object)). Capture refused. Distinct from
 //! [`retain_graph_user_object`](Sim::retain_graph_user_object). No Engine `--release-graph-user-object`.
+//! [`get_graph_alloc_node_params`](Sim::get_graph_alloc_node_params) is `cuGraphMemAllocNodeGetParams` (identity with
+//! [`graph_alloc_get_params`](Sim::graph_alloc_get_params)). Query; legal during capture. Distinct from
+//! [`graph_exec_alloc_get_params`](Sim::graph_exec_alloc_get_params). No Engine `--graph-alloc-get-params`.
 //! [`HardwareProfile::host_pin_bytes`] caps `cudaMallocHost` / `cudaHostRegister`.
 //! [`Sim::idle_until`] drains, then jumps the virtual clock (open-loop arrivals).
 //! [`Sim::event_elapsed_ns`] is `cudaEventElapsedTime` in nanoseconds.
@@ -2025,6 +2031,9 @@
 //! [`release_graph_user_object`](Sim::release_graph_user_object) is `cuGraphReleaseUserObject` (identity with
 //! [`graph_release_user_object`](Sim::graph_release_user_object)). Capture refused. Distinct from
 //! [`retain_graph_user_object`](Sim::retain_graph_user_object). No Engine `--release-graph-user-object`.
+//! [`get_graph_alloc_node_params`](Sim::get_graph_alloc_node_params) is `cuGraphMemAllocNodeGetParams` (identity with
+//! [`graph_alloc_get_params`](Sim::graph_alloc_get_params)). Query; legal during capture. Distinct from
+//! [`graph_exec_alloc_get_params`](Sim::graph_exec_alloc_get_params). No Engine `--graph-alloc-get-params`.
 //! [`mem_host_get_flags`](Sim::mem_host_get_flags) is `cuMemHostGetFlags` (identity with
 //! [`host_get_flags`](Sim::host_get_flags)). Query; legal during capture. No Engine `--mem-host-get-flags`.
 //! [`mem_host_get_device_pointer`](Sim::mem_host_get_device_pointer) is `cuMemHostGetDevicePointer` (identity with
@@ -2586,6 +2595,9 @@
 //! [`release_graph_user_object`](Sim::release_graph_user_object) is `cuGraphReleaseUserObject` (identity with
 //! [`graph_release_user_object`](Sim::graph_release_user_object)). Capture refused. Distinct from
 //! [`retain_graph_user_object`](Sim::retain_graph_user_object). No Engine `--release-graph-user-object`.
+//! [`get_graph_alloc_node_params`](Sim::get_graph_alloc_node_params) is `cuGraphMemAllocNodeGetParams` (identity with
+//! [`graph_alloc_get_params`](Sim::graph_alloc_get_params)). Query; legal during capture. Distinct from
+//! [`graph_exec_alloc_get_params`](Sim::graph_exec_alloc_get_params). No Engine `--graph-alloc-get-params`.
 //! [`Sim::pointer_get_attributes`] is `cudaPointerGetAttributes`.
 //! [`pointer_set_attribute`](Sim::pointer_set_attribute) /
 //! [`pointer_get_attribute`](Sim::pointer_get_attribute) are
@@ -3554,6 +3566,9 @@
 //! [`release_graph_user_object`](Sim::release_graph_user_object) is `cuGraphReleaseUserObject` (identity with
 //! [`graph_release_user_object`](Sim::graph_release_user_object)). Capture refused. Distinct from
 //! [`retain_graph_user_object`](Sim::retain_graph_user_object). No Engine `--release-graph-user-object`.
+//! [`get_graph_alloc_node_params`](Sim::get_graph_alloc_node_params) is `cuGraphMemAllocNodeGetParams` (identity with
+//! [`graph_alloc_get_params`](Sim::graph_alloc_get_params)). Query; legal during capture. Distinct from
+//! [`graph_exec_alloc_get_params`](Sim::graph_exec_alloc_get_params). No Engine `--graph-alloc-get-params`.
 //! [`Sim::stream_get_device`] is `cudaStreamGetDevice` / `cuStreamGetDevice`
 //! (the device of the stream; green-ctx streams return the ctx create
 //! device). Query; legal during capture. Distinct from
@@ -3951,6 +3966,9 @@
 //! [`release_graph_user_object`](Sim::release_graph_user_object) is `cuGraphReleaseUserObject` (identity with
 //! [`graph_release_user_object`](Sim::graph_release_user_object)). Capture refused. Distinct from
 //! [`retain_graph_user_object`](Sim::retain_graph_user_object). No Engine `--release-graph-user-object`.
+//! [`get_graph_alloc_node_params`](Sim::get_graph_alloc_node_params) is `cuGraphMemAllocNodeGetParams` (identity with
+//! [`graph_alloc_get_params`](Sim::graph_alloc_get_params)). Query; legal during capture. Distinct from
+//! [`graph_exec_alloc_get_params`](Sim::graph_exec_alloc_get_params). No Engine `--graph-alloc-get-params`.
 //! [`set_stream_access_policy`](Sim::set_stream_access_policy) is
 //! `cudaStreamAttributeAccessPolicyWindow`: [`kernel`](Sim::kernel) /
 //! [`kernel_bufs`](Sim::kernel_bufs) inherit it; [`kernel_with`](Sim::kernel_with)
@@ -4833,6 +4851,9 @@
 //! [`release_graph_user_object`](Sim::release_graph_user_object) is `cuGraphReleaseUserObject` (identity with
 //! [`graph_release_user_object`](Sim::graph_release_user_object)). Capture refused. Distinct from
 //! [`retain_graph_user_object`](Sim::retain_graph_user_object). No Engine `--release-graph-user-object`.
+//! [`get_graph_alloc_node_params`](Sim::get_graph_alloc_node_params) is `cuGraphMemAllocNodeGetParams` (identity with
+//! [`graph_alloc_get_params`](Sim::graph_alloc_get_params)). Query; legal during capture. Distinct from
+//! [`graph_exec_alloc_get_params`](Sim::graph_exec_alloc_get_params). No Engine `--graph-alloc-get-params`.
 //! [`Sim::set_stream_priority`] is the priority-only helper;
 //! [`stream_create_with_priority`](Sim::stream_create_with_priority) is
 //! `cudaStreamCreateWithPriority` (flags plus priority; clamped to
@@ -5248,6 +5269,9 @@
 //! [`release_graph_user_object`](Sim::release_graph_user_object) is `cuGraphReleaseUserObject` (identity with
 //! [`graph_release_user_object`](Sim::graph_release_user_object)). Capture refused. Distinct from
 //! [`retain_graph_user_object`](Sim::retain_graph_user_object). No Engine `--release-graph-user-object`.
+//! [`get_graph_alloc_node_params`](Sim::get_graph_alloc_node_params) is `cuGraphMemAllocNodeGetParams` (identity with
+//! [`graph_alloc_get_params`](Sim::graph_alloc_get_params)). Query; legal during capture. Distinct from
+//! [`graph_exec_alloc_get_params`](Sim::graph_exec_alloc_get_params). No Engine `--graph-alloc-get-params`.
 //! [`destroy_stream`](Sim::destroy_stream) is `cudaStreamDestroy` (returns
 //! immediately; in-flight work still completes; NULL is Invalid; recreate
 //! while unfinished is `"stream in flight"`). Capture cannot include it.
@@ -5643,6 +5667,9 @@
 //! [`release_graph_user_object`](Sim::release_graph_user_object) is `cuGraphReleaseUserObject` (identity with
 //! [`graph_release_user_object`](Sim::graph_release_user_object)). Capture refused. Distinct from
 //! [`retain_graph_user_object`](Sim::retain_graph_user_object). No Engine `--release-graph-user-object`.
+//! [`get_graph_alloc_node_params`](Sim::get_graph_alloc_node_params) is `cuGraphMemAllocNodeGetParams` (identity with
+//! [`graph_alloc_get_params`](Sim::graph_alloc_get_params)). Query; legal during capture. Distinct from
+//! [`graph_exec_alloc_get_params`](Sim::graph_exec_alloc_get_params). No Engine `--graph-alloc-get-params`.
 //! [`Sim::instantiate_graph`] is `cudaGraphInstantiate` (host-sync; returns a
 //! new exec id; first [`launch_graph`](Sim::launch_graph) of a definition
 //! creates a primary exec). Unused conditional handles are
@@ -6067,6 +6094,9 @@
 //! [`release_graph_user_object`](Sim::release_graph_user_object) is `cuGraphReleaseUserObject` (identity with
 //! [`graph_release_user_object`](Sim::graph_release_user_object)). Capture refused. Distinct from
 //! [`retain_graph_user_object`](Sim::retain_graph_user_object). No Engine `--release-graph-user-object`.
+//! [`get_graph_alloc_node_params`](Sim::get_graph_alloc_node_params) is `cuGraphMemAllocNodeGetParams` (identity with
+//! [`graph_alloc_get_params`](Sim::graph_alloc_get_params)). Query; legal during capture. Distinct from
+//! [`graph_exec_alloc_get_params`](Sim::graph_exec_alloc_get_params). No Engine `--graph-alloc-get-params`.
 //! [`graph_kernel_node_get_priority`](Sim::graph_kernel_node_get_priority) /
 //! [`graph_kernel_node_set_priority`](Sim::graph_kernel_node_set_priority) /
 //! [`graph_kernel_node_copy_attributes`](Sim::graph_kernel_node_copy_attributes)
@@ -6450,6 +6480,9 @@
 //! [`release_graph_user_object`](Sim::release_graph_user_object) is `cuGraphReleaseUserObject` (identity with
 //! [`graph_release_user_object`](Sim::graph_release_user_object)). Capture refused. Distinct from
 //! [`retain_graph_user_object`](Sim::retain_graph_user_object). No Engine `--release-graph-user-object`.
+//! [`get_graph_alloc_node_params`](Sim::get_graph_alloc_node_params) is `cuGraphMemAllocNodeGetParams` (identity with
+//! [`graph_alloc_get_params`](Sim::graph_alloc_get_params)). Query; legal during capture. Distinct from
+//! [`graph_exec_alloc_get_params`](Sim::graph_exec_alloc_get_params). No Engine `--graph-alloc-get-params`.
 //! [`graph_kernel_node_get_attribute`](Sim::graph_kernel_node_get_attribute) /
 //! [`graph_exec_kernel_node_get_attribute`](Sim::graph_exec_kernel_node_get_attribute) /
 //! [`graph_kernel_node_set_attribute`](Sim::graph_kernel_node_set_attribute) /
@@ -6839,6 +6872,9 @@
 //! [`release_graph_user_object`](Sim::release_graph_user_object) is `cuGraphReleaseUserObject` (identity with
 //! [`graph_release_user_object`](Sim::graph_release_user_object)). Capture refused. Distinct from
 //! [`retain_graph_user_object`](Sim::retain_graph_user_object). No Engine `--release-graph-user-object`.
+//! [`get_graph_alloc_node_params`](Sim::get_graph_alloc_node_params) is `cuGraphMemAllocNodeGetParams` (identity with
+//! [`graph_alloc_get_params`](Sim::graph_alloc_get_params)). Query; legal during capture. Distinct from
+//! [`graph_exec_alloc_get_params`](Sim::graph_exec_alloc_get_params). No Engine `--graph-alloc-get-params`.
 //! Device-launch
 //! execs cannot attach programmatic or launch-completion events.
 //! [`kernel_pdl`](Sim::kernel_pdl) is `cudaLaunchKernelEx` PDL: a wait kernel
@@ -7356,6 +7392,9 @@
 //! [`release_graph_user_object`](Sim::release_graph_user_object) is `cuGraphReleaseUserObject` (identity with
 //! [`graph_release_user_object`](Sim::graph_release_user_object)). Capture refused. Distinct from
 //! [`retain_graph_user_object`](Sim::retain_graph_user_object). No Engine `--release-graph-user-object`.
+//! [`get_graph_alloc_node_params`](Sim::get_graph_alloc_node_params) is `cuGraphMemAllocNodeGetParams` (identity with
+//! [`graph_alloc_get_params`](Sim::graph_alloc_get_params)). Query; legal during capture. Distinct from
+//! [`graph_exec_alloc_get_params`](Sim::graph_exec_alloc_get_params). No Engine `--graph-alloc-get-params`.
 //! [`graph_exec_memcpy_set_params`](Sim::graph_exec_memcpy_set_params) /
 //! [`graph_exec_memcpy_set_params_1d`](Sim::graph_exec_memcpy_set_params_1d) /
 //! [`graph_exec_memcpy_set_params_2d`](Sim::graph_exec_memcpy_set_params_2d) /
@@ -7737,6 +7776,9 @@
 //! [`release_graph_user_object`](Sim::release_graph_user_object) is `cuGraphReleaseUserObject` (identity with
 //! [`graph_release_user_object`](Sim::graph_release_user_object)). Capture refused. Distinct from
 //! [`retain_graph_user_object`](Sim::retain_graph_user_object). No Engine `--release-graph-user-object`.
+//! [`get_graph_alloc_node_params`](Sim::get_graph_alloc_node_params) is `cuGraphMemAllocNodeGetParams` (identity with
+//! [`graph_alloc_get_params`](Sim::graph_alloc_get_params)). Query; legal during capture. Distinct from
+//! [`graph_exec_alloc_get_params`](Sim::graph_exec_alloc_get_params). No Engine `--graph-alloc-get-params`.
 //! [`get_graph_kernel_node_params`](Sim::get_graph_kernel_node_params) is `cuGraphKernelNodeGetParams` (identity with
 //! [`graph_kernel_get_params`](Sim::graph_kernel_get_params)). Query; legal during capture. Distinct from
 //! [`graph_exec_kernel_get_params`](Sim::graph_exec_kernel_get_params). No Engine `--graph-kernel-get-params`.
@@ -8097,6 +8139,9 @@
 //! [`release_graph_user_object`](Sim::release_graph_user_object) is `cuGraphReleaseUserObject` (identity with
 //! [`graph_release_user_object`](Sim::graph_release_user_object)). Capture refused. Distinct from
 //! [`retain_graph_user_object`](Sim::retain_graph_user_object). No Engine `--release-graph-user-object`.
+//! [`get_graph_alloc_node_params`](Sim::get_graph_alloc_node_params) is `cuGraphMemAllocNodeGetParams` (identity with
+//! [`graph_alloc_get_params`](Sim::graph_alloc_get_params)). Query; legal during capture. Distinct from
+//! [`graph_exec_alloc_get_params`](Sim::graph_exec_alloc_get_params). No Engine `--graph-alloc-get-params`.
 //! [`graph_exec_kernel_get_params`](Sim::graph_exec_kernel_get_params) /
 //! [`graph_exec_memcpy_get_params`](Sim::graph_exec_memcpy_get_params) /
 //! [`graph_exec_memset_get_params`](Sim::graph_exec_memset_get_params) /
@@ -8448,6 +8493,9 @@
 //! [`release_graph_user_object`](Sim::release_graph_user_object) is `cuGraphReleaseUserObject` (identity with
 //! [`graph_release_user_object`](Sim::graph_release_user_object)). Capture refused. Distinct from
 //! [`retain_graph_user_object`](Sim::retain_graph_user_object). No Engine `--release-graph-user-object`.
+//! [`get_graph_alloc_node_params`](Sim::get_graph_alloc_node_params) is `cuGraphMemAllocNodeGetParams` (identity with
+//! [`graph_alloc_get_params`](Sim::graph_alloc_get_params)). Query; legal during capture. Distinct from
+//! [`graph_exec_alloc_get_params`](Sim::graph_exec_alloc_get_params). No Engine `--graph-alloc-get-params`.
 //! [`get_graph_exec_kernel_node_params`](Sim::get_graph_exec_kernel_node_params) is `cuGraphExecKernelNodeGetParams` (identity with
 //! [`graph_exec_kernel_get_params`](Sim::graph_exec_kernel_get_params)). Query; legal during capture. Distinct from
 //! [`get_graph_kernel_node_params`](Sim::get_graph_kernel_node_params). No Engine `--graph-exec-kernel-get-params`.
@@ -8805,6 +8853,9 @@
 //! [`release_graph_user_object`](Sim::release_graph_user_object) is `cuGraphReleaseUserObject` (identity with
 //! [`graph_release_user_object`](Sim::graph_release_user_object)). Capture refused. Distinct from
 //! [`retain_graph_user_object`](Sim::retain_graph_user_object). No Engine `--release-graph-user-object`.
+//! [`get_graph_alloc_node_params`](Sim::get_graph_alloc_node_params) is `cuGraphMemAllocNodeGetParams` (identity with
+//! [`graph_alloc_get_params`](Sim::graph_alloc_get_params)). Query; legal during capture. Distinct from
+//! [`graph_exec_alloc_get_params`](Sim::graph_exec_alloc_get_params). No Engine `--graph-alloc-get-params`.
 //! [`graph_exec_batch_mem_op_set_params`](Sim::graph_exec_batch_mem_op_set_params)
 //! is `cudaGraphExecBatchMemOpNodeSetParams` (id/offset/value; wait vs write,
 //! `bits32`, and compare stay on wait/write nodes;
@@ -33597,6 +33648,50 @@ mod tests {
             Err(SimError::Invalid { why }) => assert!(why.contains("capture"), "{why}"),
             other => panic!("{other:?}"),
         }
+        let _cap = eight.end_capture().unwrap();
+    }
+
+    #[test]
+    fn get_graph_alloc_node_params_is_cu_graph_mem_alloc_node_get_params() {
+        let mut sim = Sim::new(h100());
+        let d = DeviceId(0);
+        let s = StreamId(0);
+        match sim.get_graph_alloc_node_params(GraphId(99), 0) {
+            Err(SimError::Invalid { why }) => assert!(why.contains("unknown"), "{why}"),
+            other => panic!("{other:?}"),
+        }
+        match sim.graph_alloc_get_params(GraphId(99), 0) {
+            Err(SimError::Invalid { why }) => assert!(why.contains("unknown"), "{why}"),
+            other => panic!("{other:?}"),
+        }
+        let g = sim.create_graph(d, s).unwrap();
+        let id = sim.graph_add_alloc(g, 4096).unwrap();
+        let got = sim.get_graph_alloc_node_params(g, 0).unwrap();
+        assert_eq!(got, (id, 4096));
+        assert_eq!(got, sim.graph_alloc_get_params(g, 0).unwrap());
+        match sim.graph_exec_alloc_get_params(g, 0) {
+            Err(SimError::Invalid { why }) => assert!(why.contains("instantiated"), "{why}"),
+            other => panic!("{other:?}"),
+        }
+        sim.begin_capture(d, s).unwrap();
+        assert_eq!(
+            sim.get_graph_alloc_node_params(g, 0).unwrap(),
+            sim.graph_alloc_get_params(g, 0).unwrap()
+        );
+        let _cap = sim.end_capture().unwrap();
+        let mut eight = Sim::new(HardwareProfile::example_8xh100_nvlink());
+        let d1 = DeviceId(1);
+        let g1 = eight.create_graph(d1, s).unwrap();
+        let id1 = eight.graph_add_alloc(g1, 4096).unwrap();
+        assert_eq!(
+            eight.get_graph_alloc_node_params(g1, 0).unwrap(),
+            (id1, 4096)
+        );
+        eight.begin_capture(d1, s).unwrap();
+        assert_eq!(
+            eight.get_graph_alloc_node_params(g1, 0).unwrap(),
+            eight.graph_alloc_get_params(g1, 0).unwrap()
+        );
         let _cap = eight.end_capture().unwrap();
     }
 

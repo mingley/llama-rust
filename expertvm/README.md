@@ -668,6 +668,7 @@ compiled kernel exists; no Engine flag).
 `gpu-sim` `release_user_object` is `cuUserObjectRelease` (identity with `user_object_release`; no Engine flag).
 `gpu-sim` `retain_graph_user_object` is `cuGraphRetainUserObject` (identity with `graph_retain_user_object`; no Engine flag).
 `gpu-sim` `release_graph_user_object` is `cuGraphReleaseUserObject` (identity with `graph_release_user_object`; no Engine flag).
+`gpu-sim` `get_graph_alloc_node_params` is `cuGraphMemAllocNodeGetParams` (identity with `graph_alloc_get_params`; no Engine flag).
 `gpu-sim` `mem_alloc` is `cuMemAlloc` (identity with `malloc`; no Engine flag).
 `gpu-sim` `mem_free` is `cuMemFree` (identity with `free_sync`; no Engine flag).
 `gpu-sim` `mem_free_host` is `cuMemFreeHost` (identity with `free_host_pinned`; no Engine flag).
@@ -860,6 +861,7 @@ compiled kernel exists; no Engine flag).
 `gpu-sim` `release_user_object` is `cuUserObjectRelease` (identity with `user_object_release`; no Engine flag).
 `gpu-sim` `retain_graph_user_object` is `cuGraphRetainUserObject` (identity with `graph_retain_user_object`; no Engine flag).
 `gpu-sim` `release_graph_user_object` is `cuGraphReleaseUserObject` (identity with `graph_release_user_object`; no Engine flag).
+`gpu-sim` `get_graph_alloc_node_params` is `cuGraphMemAllocNodeGetParams` (identity with `graph_alloc_get_params`; no Engine flag).
 `gpu-sim` `func_is_loaded` is `cuFuncIsLoaded` (`false` until a compiled
 kernel exists; no Engine flag).
 `gpu-sim` `func_load` is `cuFuncLoad` (Invalid; no compiled kernel; no

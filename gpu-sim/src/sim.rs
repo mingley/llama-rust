@@ -8602,7 +8602,9 @@ impl Sim {
     /// Query; legal during capture. Pool identity stays the graph-memory pool.
     /// Instantiated ids use the exec snapshot.
     /// [`Self::graph_exec_alloc_get_params`] refuses uninstantiated graphs.
-    /// `accessDescs` are [`Self::graph_alloc_get_access`].
+    /// `accessDescs` are [`Self::graph_alloc_get_access`]. Driver
+    /// `cuGraphMemAllocNodeGetParams` is
+    /// [`Self::get_graph_alloc_node_params`].
     pub fn graph_alloc_get_params(
         &self,
         graph: GraphId,
@@ -8614,6 +8616,20 @@ impl Sim {
                 why: "not a mem alloc node",
             }),
         }
+    }
+
+    /// `cuGraphMemAllocNodeGetParams`. Identity with
+    /// [`Self::graph_alloc_get_params`] (`cudaGraphMemAllocNodeGetParams`).
+    ///
+    /// Query; legal during capture. Distinct from
+    /// [`Self::graph_exec_alloc_get_params`]. This VM does not invent
+    /// occupancy SM counts this slice.
+    pub fn get_graph_alloc_node_params(
+        &self,
+        graph: GraphId,
+        node: usize,
+    ) -> Result<(AllocId, u64), SimError> {
+        self.graph_alloc_get_params(graph, node)
     }
 
     /// `cudaMemAllocNodeParams::accessDescs` on a mem-alloc node.
@@ -9753,8 +9769,7 @@ impl Sim {
     /// [`Self::graph_release_user_object`] (`cudaGraphReleaseUserObject`).
     ///
     /// Host-synchronous. Capture refused. Distinct from
-    /// [`Self::retain_graph_user_object`]. This VM does not invent
-    /// occupancy SM counts this slice.
+    /// [`Self::retain_graph_user_object`].
     pub fn release_graph_user_object(
         &mut self,
         graph: GraphId,
