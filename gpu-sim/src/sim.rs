@@ -2624,7 +2624,6 @@ impl Sim {
     /// (`cudaStreamGetAttribute`).
     ///
     /// Query; legal during capture. Distinct from [`Self::stream_set_attribute`].
-    /// This VM does not invent occupancy SM counts this slice.
     pub fn get_stream_attribute(
         &self,
         device: DeviceId,
@@ -2637,7 +2636,8 @@ impl Sim {
     /// `cudaStreamSetAttribute`. Host-side; not a graph node.
     ///
     /// Same capture rule as the dedicated setters (legal during capture).
-    /// Attr/value type mismatch is Invalid `"stream attr"`.
+    /// Attr/value type mismatch is Invalid `"stream attr"`. Driver
+    /// `cuStreamSetAttribute` is [`Self::set_stream_attribute`].
     pub fn stream_set_attribute(
         &mut self,
         device: DeviceId,
@@ -2666,6 +2666,22 @@ impl Sim {
             }
             _ => Err(SimError::Invalid { why: "stream attr" }),
         }
+    }
+
+    /// `cuStreamSetAttribute`. Identity with [`Self::stream_set_attribute`]
+    /// (`cudaStreamSetAttribute`).
+    ///
+    /// Capture-legal (host-side, not a graph node). Distinct from
+    /// [`Self::get_stream_attribute`]. This VM does not invent occupancy SM
+    /// counts this slice.
+    pub fn set_stream_attribute(
+        &mut self,
+        device: DeviceId,
+        stream: StreamId,
+        attr: StreamAttr,
+        value: StreamAttrValue,
+    ) -> Result<(), SimError> {
+        self.stream_set_attribute(device, stream, attr, value)
     }
 
     /// Mark streams `1 .. n_streams` blocking on every GPU (`cudaStreamCreate`).

@@ -322,6 +322,9 @@
 //! [`get_stream_attribute`](Sim::get_stream_attribute) is `cuStreamGetAttribute` (identity with
 //! [`stream_get_attribute`](Sim::stream_get_attribute)). Query; legal during capture. Distinct from
 //! [`stream_set_attribute`](Sim::stream_set_attribute). No Engine `--stream-get-attribute`.
+//! [`set_stream_attribute`](Sim::set_stream_attribute) is `cuStreamSetAttribute` (identity with
+//! [`stream_set_attribute`](Sim::stream_set_attribute)). Capture-legal (host-side, not a graph node). Distinct from
+//! [`get_stream_attribute`](Sim::get_stream_attribute). No Engine `--stream-set-attribute`.
 //! [`Sim::ipc_get_event`] / [`ipc_open_event`](Sim::ipc_open_event) are
 //! `cudaIpcGetEventHandle` / `cudaIpcOpenEventHandle` (interprocess events).
 //! [`Sim::create_shareable_pool`] is `cudaMemPoolCreate` with a POSIX-FD handle
@@ -668,6 +671,9 @@
 //! [`get_stream_attribute`](Sim::get_stream_attribute) is `cuStreamGetAttribute` (identity with
 //! [`stream_get_attribute`](Sim::stream_get_attribute)). Query; legal during capture. Distinct from
 //! [`stream_set_attribute`](Sim::stream_set_attribute). No Engine `--stream-get-attribute`.
+//! [`set_stream_attribute`](Sim::set_stream_attribute) is `cuStreamSetAttribute` (identity with
+//! [`stream_set_attribute`](Sim::stream_set_attribute)). Capture-legal (host-side, not a graph node). Distinct from
+//! [`get_stream_attribute`](Sim::get_stream_attribute). No Engine `--stream-set-attribute`.
 //! [`HardwareProfile::host_pin_bytes`] caps `cudaMallocHost` / `cudaHostRegister`.
 //! [`Sim::idle_until`] drains, then jumps the virtual clock (open-loop arrivals).
 //! [`Sim::event_elapsed_ns`] is `cudaEventElapsedTime` in nanoseconds.
@@ -882,6 +888,9 @@
 //! [`get_stream_attribute`](Sim::get_stream_attribute) is `cuStreamGetAttribute` (identity with
 //! [`stream_get_attribute`](Sim::stream_get_attribute)). Query; legal during capture. Distinct from
 //! [`stream_set_attribute`](Sim::stream_set_attribute). No Engine `--stream-get-attribute`.
+//! [`set_stream_attribute`](Sim::set_stream_attribute) is `cuStreamSetAttribute` (identity with
+//! [`stream_set_attribute`](Sim::stream_set_attribute)). Capture-legal (host-side, not a graph node). Distinct from
+//! [`get_stream_attribute`](Sim::get_stream_attribute). No Engine `--stream-set-attribute`.
 //! [`mem_host_get_flags`](Sim::mem_host_get_flags) is `cuMemHostGetFlags` (identity with
 //! [`host_get_flags`](Sim::host_get_flags)). Query; legal during capture. No Engine `--mem-host-get-flags`.
 //! [`mem_host_get_device_pointer`](Sim::mem_host_get_device_pointer) is `cuMemHostGetDevicePointer` (identity with
@@ -1062,6 +1071,9 @@
 //! [`get_stream_attribute`](Sim::get_stream_attribute) is `cuStreamGetAttribute` (identity with
 //! [`stream_get_attribute`](Sim::stream_get_attribute)). Query; legal during capture. Distinct from
 //! [`stream_set_attribute`](Sim::stream_set_attribute). No Engine `--stream-get-attribute`.
+//! [`set_stream_attribute`](Sim::set_stream_attribute) is `cuStreamSetAttribute` (identity with
+//! [`stream_set_attribute`](Sim::stream_set_attribute)). Capture-legal (host-side, not a graph node). Distinct from
+//! [`get_stream_attribute`](Sim::get_stream_attribute). No Engine `--stream-set-attribute`.
 //! [`Sim::pointer_get_attributes`] is `cudaPointerGetAttributes`.
 //! [`pointer_set_attribute`](Sim::pointer_set_attribute) /
 //! [`pointer_get_attribute`](Sim::pointer_get_attribute) are
@@ -1649,6 +1661,9 @@
 //! [`get_stream_attribute`](Sim::get_stream_attribute) is `cuStreamGetAttribute` (identity with
 //! [`stream_get_attribute`](Sim::stream_get_attribute)). Query; legal during capture. Distinct from
 //! [`stream_set_attribute`](Sim::stream_set_attribute). No Engine `--stream-get-attribute`.
+//! [`set_stream_attribute`](Sim::set_stream_attribute) is `cuStreamSetAttribute` (identity with
+//! [`stream_set_attribute`](Sim::stream_set_attribute)). Capture-legal (host-side, not a graph node). Distinct from
+//! [`get_stream_attribute`](Sim::get_stream_attribute). No Engine `--stream-set-attribute`.
 //! [`Sim::stream_get_device`] is `cudaStreamGetDevice` / `cuStreamGetDevice`
 //! (the device of the stream; green-ctx streams return the ctx create
 //! device). Query; legal during capture. Distinct from
@@ -1665,6 +1680,9 @@
 //! [`get_stream_attribute`](Sim::get_stream_attribute) is `cuStreamGetAttribute` (identity with
 //! [`stream_get_attribute`](Sim::stream_get_attribute)). Query; legal during capture. Distinct from
 //! [`stream_set_attribute`](Sim::stream_set_attribute). No Engine `--stream-get-attribute`.
+//! [`set_stream_attribute`](Sim::set_stream_attribute) is `cuStreamSetAttribute` (identity with
+//! [`stream_set_attribute`](Sim::stream_set_attribute)). Capture-legal (host-side, not a graph node). Distinct from
+//! [`get_stream_attribute`](Sim::get_stream_attribute). No Engine `--stream-set-attribute`.
 //! [`set_stream_access_policy`](Sim::set_stream_access_policy) is
 //! `cudaStreamAttributeAccessPolicyWindow`: [`kernel`](Sim::kernel) /
 //! [`kernel_bufs`](Sim::kernel_bufs) inherit it; [`kernel_with`](Sim::kernel_with)
@@ -2166,6 +2184,9 @@
 //! [`get_stream_attribute`](Sim::get_stream_attribute) is `cuStreamGetAttribute` (identity with
 //! [`stream_get_attribute`](Sim::stream_get_attribute)). Query; legal during capture. Distinct from
 //! [`stream_set_attribute`](Sim::stream_set_attribute). No Engine `--stream-get-attribute`.
+//! [`set_stream_attribute`](Sim::set_stream_attribute) is `cuStreamSetAttribute` (identity with
+//! [`stream_set_attribute`](Sim::stream_set_attribute)). Capture-legal (host-side, not a graph node). Distinct from
+//! [`get_stream_attribute`](Sim::get_stream_attribute). No Engine `--stream-set-attribute`.
 //! [`Sim::set_stream_priority`] is the priority-only helper;
 //! [`stream_create_with_priority`](Sim::stream_create_with_priority) is
 //! `cudaStreamCreateWithPriority` (flags plus priority; clamped to
@@ -2200,6 +2221,9 @@
 //! [`get_stream_attribute`](Sim::get_stream_attribute) is `cuStreamGetAttribute` (identity with
 //! [`stream_get_attribute`](Sim::stream_get_attribute)). Query; legal during capture. Distinct from
 //! [`stream_set_attribute`](Sim::stream_set_attribute). No Engine `--stream-get-attribute`.
+//! [`set_stream_attribute`](Sim::set_stream_attribute) is `cuStreamSetAttribute` (identity with
+//! [`stream_set_attribute`](Sim::stream_set_attribute)). Capture-legal (host-side, not a graph node). Distinct from
+//! [`get_stream_attribute`](Sim::get_stream_attribute). No Engine `--stream-set-attribute`.
 //! [`destroy_stream`](Sim::destroy_stream) is `cudaStreamDestroy` (returns
 //! immediately; in-flight work still completes; NULL is Invalid; recreate
 //! while unfinished is `"stream in flight"`). Capture cannot include it.
@@ -2214,6 +2238,9 @@
 //! [`get_stream_attribute`](Sim::get_stream_attribute) is `cuStreamGetAttribute` (identity with
 //! [`stream_get_attribute`](Sim::stream_get_attribute)). Query; legal during capture. Distinct from
 //! [`stream_set_attribute`](Sim::stream_set_attribute). No Engine `--stream-get-attribute`.
+//! [`set_stream_attribute`](Sim::set_stream_attribute) is `cuStreamSetAttribute` (identity with
+//! [`stream_set_attribute`](Sim::stream_set_attribute)). Capture-legal (host-side, not a graph node). Distinct from
+//! [`get_stream_attribute`](Sim::get_stream_attribute). No Engine `--stream-set-attribute`.
 //! [`Sim::instantiate_graph`] is `cudaGraphInstantiate` (host-sync; returns a
 //! new exec id; first [`launch_graph`](Sim::launch_graph) of a definition
 //! creates a primary exec). Unused conditional handles are
@@ -17747,6 +17774,112 @@ mod tests {
                 .stream_get_attribute(DeviceId(1), s, StreamAttr::Priority)
                 .unwrap()
         );
+        let _g = eight.end_capture().unwrap();
+    }
+
+    #[test]
+    fn set_stream_attribute_is_cu_stream_set_attribute() {
+        let mut sim = Sim::new(h100());
+        let d = DeviceId(0);
+        let s = StreamId(1);
+        match sim.set_stream_attribute(
+            DeviceId(99),
+            s,
+            StreamAttr::Priority,
+            StreamAttrValue::Priority(-5),
+        ) {
+            Err(SimError::Invalid { why }) => assert!(why.contains("device"), "{why}"),
+            other => panic!("{other:?}"),
+        }
+        match sim.stream_set_attribute(
+            DeviceId(99),
+            s,
+            StreamAttr::Priority,
+            StreamAttrValue::Priority(-5),
+        ) {
+            Err(SimError::Invalid { why }) => assert!(why.contains("device"), "{why}"),
+            other => panic!("{other:?}"),
+        }
+        match sim.set_stream_attribute(
+            d,
+            s,
+            StreamAttr::Priority,
+            StreamAttrValue::NvlinkUtilCentric(false),
+        ) {
+            Err(SimError::Invalid { why }) => assert!(why.contains("stream attr"), "{why}"),
+            other => panic!("{other:?}"),
+        }
+        match sim.stream_set_attribute(
+            d,
+            s,
+            StreamAttr::Priority,
+            StreamAttrValue::NvlinkUtilCentric(false),
+        ) {
+            Err(SimError::Invalid { why }) => assert!(why.contains("stream attr"), "{why}"),
+            other => panic!("{other:?}"),
+        }
+        sim.set_stream_attribute(d, s, StreamAttr::Priority, StreamAttrValue::Priority(-5))
+            .unwrap();
+        assert_eq!(
+            sim.get_stream_attribute(d, s, StreamAttr::Priority)
+                .unwrap(),
+            StreamAttrValue::Priority(-5)
+        );
+        sim.stream_set_attribute(d, s, StreamAttr::Priority, StreamAttrValue::Priority(0))
+            .unwrap();
+        assert_eq!(
+            sim.get_stream_attribute(d, s, StreamAttr::Priority)
+                .unwrap(),
+            StreamAttrValue::Priority(0)
+        );
+        sim.begin_capture(d, StreamId(0)).unwrap();
+        sim.set_stream_attribute(d, s, StreamAttr::Priority, StreamAttrValue::Priority(-5))
+            .unwrap();
+        assert_eq!(
+            sim.get_stream_attribute(d, s, StreamAttr::Priority)
+                .unwrap(),
+            StreamAttrValue::Priority(-5)
+        );
+        let _g = sim.end_capture().unwrap();
+        sim.destroy_stream(d, s).unwrap();
+        match sim.set_stream_attribute(d, s, StreamAttr::Priority, StreamAttrValue::Priority(0)) {
+            Err(SimError::Invalid { why }) => assert!(why.contains("unknown stream"), "{why}"),
+            other => panic!("{other:?}"),
+        }
+        match sim.stream_set_attribute(d, s, StreamAttr::Priority, StreamAttrValue::Priority(0)) {
+            Err(SimError::Invalid { why }) => assert!(why.contains("unknown stream"), "{why}"),
+            other => panic!("{other:?}"),
+        }
+        let mut eight = Sim::new(HardwareProfile::example_8xh100_nvlink());
+        eight
+            .set_stream_attribute(
+                DeviceId(1),
+                s,
+                StreamAttr::Priority,
+                StreamAttrValue::Priority(-5),
+            )
+            .unwrap();
+        assert_eq!(
+            eight
+                .get_stream_attribute(DeviceId(1), s, StreamAttr::Priority)
+                .unwrap(),
+            StreamAttrValue::Priority(-5)
+        );
+        assert_eq!(
+            eight
+                .get_stream_attribute(DeviceId(0), s, StreamAttr::Priority)
+                .unwrap(),
+            StreamAttrValue::Priority(0)
+        );
+        eight.begin_capture(DeviceId(1), StreamId(0)).unwrap();
+        eight
+            .stream_set_attribute(
+                DeviceId(1),
+                s,
+                StreamAttr::Priority,
+                StreamAttrValue::Priority(0),
+            )
+            .unwrap();
         let _g = eight.end_capture().unwrap();
     }
 

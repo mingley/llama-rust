@@ -8288,7 +8288,14 @@ model, do not celebrate the sim.
     or `cudaChooseDevice`. `gpu-profile capture` is still refused. Dual
     score still has no `$/M tokens`.
 
-876. [ ] Next numbered PLAN item after 875 is the next `gpu-sim` / Engine /
+876. [x] `gpu-sim` `Sim::set_stream_attribute` is
+    `cuStreamSetAttribute`. Identity with `stream_set_attribute`
+    (`cudaStreamSetAttribute`). Capture-legal (host-side, not a graph node). Distinct from
+    `get_stream_attribute`. This VM does not invent occupancy SM counts, Engine `--stream-set-attribute`,
+    or `cudaChooseDevice`. `gpu-profile capture` is still refused. Dual
+    score still has no `$/M tokens`.
+
+877. [ ] Next numbered PLAN item after 876 is the next `gpu-sim` / Engine /
     serve / expertvm mechanical API that is still missing, or the next official
     decode family. Prefer remaining CUDA-shaped twins over more
     OpenAI HTTP veneer. Do not invent F32 `output.scale`. Do not invent a
@@ -9407,6 +9414,9 @@ model, do not celebrate the sim.
     Do not invent a second `cuStreamGetAttribute` / `get_stream_attribute`.
     Do not invent Engine `--stream-get-attribute`. Do not invent
     occupancy SM counts this slice. Do not reverse GetStreamAttribute identity with stream_get_attribute.
+    Do not invent a second `cuStreamSetAttribute` / `set_stream_attribute`.
+    Do not invent Engine `--stream-set-attribute`. Do not invent
+    occupancy SM counts this slice. Do not reverse SetStreamAttribute identity with stream_set_attribute.
     Do not invent a second `cudaStreamAddCallback`.
     Do not invent Engine `--stream-callback` (same wall as second live
     `cudaLaunchHostFunc` after miss DMA).
@@ -10605,6 +10615,9 @@ model, do not celebrate the sim.
     Do not invent a second `get_stream_attribute` API. Do not invent
     Engine `--stream-get-attribute-identity`. Do not invent a stream-set-attribute
     this slice. Do not reverse GetStreamAttribute identity with stream_get_attribute.
+    Do not invent a second `set_stream_attribute` API. Do not invent
+    Engine `--stream-set-attribute-identity`. Do not invent a graph-kernel-get-attribute
+    this slice. Do not reverse SetStreamAttribute identity with stream_set_attribute.
     Do not invent a second DeviceLaunch in-flight destroy-complete check or Engine
     `--device-launch-destroy`. Do not abort an in-flight DeviceLaunch when
     `destroy_graph` succeeds. Do not delay destroy of an idle exec. Do not invent
@@ -11986,6 +11999,9 @@ model, do not celebrate the sim.
     Do not invent a second `get_stream_attribute` method. Do not
     invent Engine `--cu-stream-get-attribute`. Do not reverse wrapping
     cuStreamGetAttribute identity.
+    Do not invent a second `set_stream_attribute` method. Do not
+    invent Engine `--cu-stream-set-attribute`. Do not reverse wrapping
+    cuStreamSetAttribute identity.
     Do not
     spend the next item on an OpenAI-compatible HTTP veneer.
 
