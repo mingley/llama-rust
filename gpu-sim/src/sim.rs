@@ -3512,8 +3512,7 @@ impl Sim {
     /// [`Self::begin_recapture_to_graph_with_callback`] (`cudaStreamBeginRecaptureToGraph` with callback).
     ///
     /// Nested capture refused. Distinct from
-    /// [`Self::stream_begin_recapture_to_graph_with_mode`]. This VM does not invent
-    /// occupancy SM counts this slice.
+    /// [`Self::stream_begin_recapture_to_graph_with_mode`].
     pub fn stream_begin_recapture_to_graph_with_callback(
         &mut self,
         device: DeviceId,
@@ -3775,11 +3774,14 @@ impl Sim {
         Ok(CaptureInto { graph, deps: extra })
     }
 
+    /// `cudaStreamEndCapture`.
+    ///
     /// Finish capture. The graph is empty of side effects until [`Self::launch_graph`].
     ///
     /// Appends recorded nodes onto the graph from [`Self::begin_capture`] /
     /// [`Self::begin_capture_to_graph`] and returns that id. Recapture updates
     /// existing nodes in place and does not append.
+    /// Driver `cuStreamEndCapture` is [`Self::stream_end_capture`].
     pub fn end_capture(&mut self) -> Result<GraphId, SimError> {
         let Some(cap) = self.capturing.take() else {
             return Err(SimError::Invalid {
@@ -3791,6 +3793,16 @@ impl Sim {
             return self.finish_recapture(cap.into.graph, steps);
         }
         self.append_captured(cap.into, steps, cap.mem_allocs, cap.extra_abs)
+    }
+
+    /// `cuStreamEndCapture`. Identity with
+    /// [`Self::end_capture`] (`cudaStreamEndCapture`).
+    ///
+    /// Without begin refused. Distinct from
+    /// [`Self::stream_begin_recapture_to_graph_with_callback`]. This VM does not invent
+    /// occupancy SM counts this slice.
+    pub fn stream_end_capture(&mut self) -> Result<GraphId, SimError> {
+        self.end_capture()
     }
 
     /// `cudaStreamUpdateCaptureDependencies`: extra deps for the next captured

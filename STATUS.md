@@ -5,6 +5,14 @@ Visible five-turn extract: [docs/chatgpt-share-6a920fe1.md](docs/chatgpt-share-6
 Complete share-API extract: [docs/chatgpt-share-6a920fe1/](docs/chatgpt-share-6a920fe1/).
 Work lands on `main`. No PRs.
 
+## Shipped 2026-09-02 — CUDA `cuStreamEndCapture`
+
+`gpu-sim` `Sim::stream_end_capture` is `cuStreamEndCapture`.
+Identity with `end_capture` (`cudaStreamEndCapture`).
+Without begin refused. Distinct from `stream_begin_recapture_to_graph_with_callback`.
+This VM does not invent occupancy SM counts or Engine `--stream-end-capture`.
+`gpu-profile capture` is still refused. Dual score still has no `$/M tokens`.
+
 ## Shipped 2026-09-02 — CUDA `cuStreamBeginRecaptureToGraph` callback
 
 `gpu-sim` `Sim::stream_begin_recapture_to_graph_with_callback` is `cuStreamBeginRecaptureToGraph` with callback.
