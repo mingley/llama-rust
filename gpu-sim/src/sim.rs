@@ -26782,6 +26782,22 @@ impl Sim {
         Err(SimError::Invalid { why: "func pcount" })
     }
 
+    /// `cuFuncGetCacheConfig`. CUDA functions are not modeled.
+    ///
+    /// Always Invalid `"func gcache"` until a compiled kernel exists (this
+    /// VM has no `CUfunction` cache config). Distinct from
+    /// [`Self::get_func_cache_config`] (per-device stored
+    /// `cudaFuncSetCacheConfig`) and from
+    /// [`Self::kernel_set_cache_config`] (why is not `"kernel cache"`) and
+    /// from [`Self::func_get_param_count`] (why is not `"func pcount"`).
+    /// Unknown devices are Invalid `"device not in profile"`. Query; legal
+    /// during capture. This VM does not invent `cuMemsetD8Async`
+    /// this slice.
+    pub fn func_get_cache_config(&self, device: DeviceId) -> Result<(), SimError> {
+        let _gpu = self.profile.gpu(device)?;
+        Err(SimError::Invalid { why: "func gcache" })
+    }
+
     /// `cuFuncIsLoaded` for the per-device function.
     ///
     /// Query; legal during capture. `false` until a compiled kernel exists

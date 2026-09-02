@@ -504,6 +504,8 @@ kernel exists; no Engine flag).
 compiled kernel exists; no Engine flag).
 `gpu-sim` `func_get_param_count` is `cuFuncGetParamCount` (Invalid until a
 compiled kernel exists; no Engine flag).
+`gpu-sim` `func_get_cache_config` is `cuFuncGetCacheConfig` (Invalid until a
+compiled kernel exists; no Engine flag).
 `gpu-sim` `func_is_loaded` is `cuFuncIsLoaded` (`false` until a compiled
 kernel exists; no Engine flag).
 `gpu-sim` `func_load` is `cuFuncLoad` (Invalid; no compiled kernel; no

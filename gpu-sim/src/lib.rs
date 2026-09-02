@@ -1028,6 +1028,9 @@
 //! [`func_get_param_count`](Sim::func_get_param_count) is `cuFuncGetParamCount`
 //! (always Invalid `"func pcount"` until a compiled kernel exists). Query;
 //! legal during capture. No Engine `--func-pcount`.
+//! [`func_get_cache_config`](Sim::func_get_cache_config) is
+//! `cuFuncGetCacheConfig` (always Invalid `"func gcache"` until a compiled
+//! kernel exists). Query; legal during capture. No Engine `--func-gcache`.
 //! [`func_is_loaded`](Sim::func_is_loaded) is `cuFuncIsLoaded`
 //! (`false` until a compiled kernel exists). Distinct from empty
 //! [`func_get_name`](Sim::func_get_name) and from unknown-function
@@ -22452,6 +22455,67 @@ mod tests {
             Err(SimError::Invalid { why }) => {
                 assert!(why.contains("async atoa"), "{why}");
                 assert!(!why.contains("async 2da2a"), "{why}");
+            }
+            other => panic!("{other:?}"),
+        }
+        match sim.func_get_cache_config(d) {
+            Err(SimError::Invalid { why }) => {
+                assert!(why.contains("func gcache"), "{why}");
+                assert!(!why.contains("async 2da2a"), "{why}");
+                assert!(!why.contains("func pcount"), "{why}");
+                assert!(!why.contains("kernel cache"), "{why}");
+            }
+            other => panic!("{other:?}"),
+        }
+    }
+
+    #[test]
+    fn func_get_cache_config_is_unsupported() {
+        let mut sim = Sim::new(h100());
+        let d = DeviceId(0);
+        match sim.func_get_cache_config(d) {
+            Err(SimError::Invalid { why }) => {
+                assert!(why.contains("func gcache"), "{why}");
+                assert!(!why.contains("func pcount"), "{why}");
+                assert!(!why.contains("kernel cache"), "{why}");
+                assert!(!why.contains("func load"), "{why}");
+                assert!(!why.contains("func attr"), "{why}");
+            }
+            other => panic!("{other:?}"),
+        }
+        sim.begin_capture(d, StreamId(0)).unwrap();
+        match sim.func_get_cache_config(d) {
+            Err(SimError::Invalid { why }) => {
+                assert!(why.contains("func gcache"), "{why}");
+            }
+            other => panic!("{other:?}"),
+        }
+        let _g = sim.end_capture().unwrap();
+        match sim.func_get_cache_config(DeviceId(99)) {
+            Err(SimError::Invalid { why }) => {
+                assert!(why.contains("device not in profile"), "{why}");
+            }
+            other => panic!("{other:?}"),
+        }
+        assert_eq!(sim.get_func_cache_config(d).unwrap(), FuncCache::PreferNone);
+        match sim.kernel_set_cache_config(d) {
+            Err(SimError::Invalid { why }) => {
+                assert!(why.contains("kernel cache"), "{why}");
+                assert!(!why.contains("func gcache"), "{why}");
+            }
+            other => panic!("{other:?}"),
+        }
+        match sim.func_get_param_count(d) {
+            Err(SimError::Invalid { why }) => {
+                assert!(why.contains("func pcount"), "{why}");
+                assert!(!why.contains("func gcache"), "{why}");
+            }
+            other => panic!("{other:?}"),
+        }
+        match sim.memcpy_2d_array_to_array_async(d) {
+            Err(SimError::Invalid { why }) => {
+                assert!(why.contains("async 2da2a"), "{why}");
+                assert!(!why.contains("func gcache"), "{why}");
             }
             other => panic!("{other:?}"),
         }

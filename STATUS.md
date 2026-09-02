@@ -5,6 +5,16 @@ Visible five-turn extract: [docs/chatgpt-share-6a920fe1.md](docs/chatgpt-share-6
 Complete share-API extract: [docs/chatgpt-share-6a920fe1/](docs/chatgpt-share-6a920fe1/).
 Work lands on `main`. No PRs.
 
+## Shipped 2026-09-02 — CUDA `cuFuncGetCacheConfig`
+
+`gpu-sim` `Sim::func_get_cache_config` is `cuFuncGetCacheConfig`.
+Always Invalid `"func gcache"` until a compiled kernel exists.
+Query; legal during capture. Distinct from
+`get_func_cache_config` (per-device stored `cudaFuncSetCacheConfig`) and
+`kernel_set_cache_config` (why is not `"kernel cache"`).
+This VM does not invent `cuMemsetD8Async` or Engine `--func-gcache`.
+`gpu-profile capture` is still refused. Dual score still has no `$/M tokens`.
+
 ## Shipped 2026-09-02 — CUDA `cuMemcpy2DArrayToArrayAsync`
 
 `gpu-sim` `Sim::memcpy_2d_array_to_array_async` is `cuMemcpy2DArrayToArrayAsync`.

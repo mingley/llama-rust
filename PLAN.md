@@ -7710,7 +7710,14 @@ model, do not celebrate the sim.
     or `cudaChooseDevice`. `gpu-profile capture` is still refused. Dual
     score still has no `$/M tokens`.
 
-794. [ ] Next numbered PLAN item after 793 is the next `gpu-sim` / Engine /
+794. [x] `gpu-sim` `Sim::func_get_cache_config` is
+    `cuFuncGetCacheConfig`. Always Invalid `"func gcache"`
+    until a compiled kernel exists. Query; legal during capture.
+    Distinct from `get_func_cache_config` and `kernel_set_cache_config`. This VM does not invent `cuMemsetD8Async`, Engine `--func-gcache`,
+    or `cudaChooseDevice`. `gpu-profile capture` is still refused. Dual
+    score still has no `$/M tokens`.
+
+795. [ ] Next numbered PLAN item after 794 is the next `gpu-sim` / Engine /
     serve / expertvm mechanical API that is still missing, or the next official
     decode family. Prefer remaining CUDA-shaped twins over more
     OpenAI HTTP veneer. Do not invent F32 `output.scale`. Do not invent a
@@ -8583,6 +8590,9 @@ model, do not celebrate the sim.
     Do not invent a second `cuMemcpy2DArrayToArrayAsync` / `memcpy_2d_array_to_array_async`.
     Do not invent Engine `--async-2da2a`. Do not invent
     `cuFuncGetCacheConfig` this slice. Do not reverse `"async 2da2a"`.
+    Do not invent a second `cuFuncGetCacheConfig` / `func_get_cache_config`.
+    Do not invent Engine `--func-gcache`. Do not invent
+    `cuMemsetD8Async` this slice. Do not reverse `"func gcache"`.
     Do not invent a second `cudaStreamAddCallback`.
     Do not invent Engine `--stream-callback` (same wall as second live
     `cudaLaunchHostFunc` after miss DMA).
@@ -9535,6 +9545,9 @@ model, do not celebrate the sim.
     Do not invent a second `memcpy_2d_array_to_array_async` API. Do not invent
     Engine `--memcpy-2d-array-to-array-async`. Do not invent a CUfunction func-get-cache-config
     this slice. Do not reverse Memcpy 2DArrayToArrayAsync remaining unsupported.
+    Do not invent a second `func_get_cache_config` API. Do not invent
+    Engine `--func-get-cache-config`. Do not invent a memset d8-async
+    this slice. Do not reverse Func GetCacheConfig remaining unsupported.
     Do not invent a second DeviceLaunch in-flight destroy-complete check or Engine
     `--device-launch-destroy`. Do not abort an in-flight DeviceLaunch when
     `destroy_graph` succeeds. Do not delay destroy of an idle exec. Do not invent
@@ -10670,6 +10683,9 @@ model, do not celebrate the sim.
     Do not invent a second `memcpy_2d_array_to_array_async` method. Do not
     invent Engine `--cu-memcpy-2d-array-to-array-async`. Do not reverse wrapping
     cuMemcpy2DArrayToArrayAsync Invalid.
+    Do not invent a second `func_get_cache_config` method. Do not
+    invent Engine `--cu-func-get-cache-config`. Do not reverse wrapping
+    cuFuncGetCacheConfig Invalid.
     Do not
     spend the next item on an OpenAI-compatible HTTP veneer.
 

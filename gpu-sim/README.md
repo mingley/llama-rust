@@ -377,6 +377,7 @@ warp scheduler, L1, …   ← do not model
 | `func_get_name` is empty until a compiled kernel exists | `cudaFuncGetName` / `cuFuncGetName` |
 | `func_get_param_info` is Invalid until a compiled kernel exists | `cuFuncGetParamInfo` |
 | `func_get_param_count` is Invalid until a compiled kernel exists | `cuFuncGetParamCount` |
+| `func_get_cache_config` is Invalid until a compiled kernel exists | `cuFuncGetCacheConfig` |
 | `func_is_loaded` is false until a compiled kernel exists | `cuFuncIsLoaded` |
 | `func_load` is Invalid (no compiled kernel / `CUfunction`) | `cuFuncLoad` |
 | `func_get_module` is Invalid until a compiled kernel exists | `cuFuncGetModule` |
@@ -1795,7 +1796,10 @@ compiled kernel exists. Distinct from device `MaxThreadsPerBlock`.
 `"unknown function"` until a compiled kernel exists). `func_get_param_count` is
 `cuFuncGetParamCount` (always Invalid `"func pcount"` until a compiled kernel
 exists). Distinct from `func_get_param_info` and `kernel_get_param_count`. Query;
-legal during capture. No Engine `--func-pcount`. `func_is_loaded` is
+legal during capture. No Engine `--func-pcount`. `func_get_cache_config` is
+`cuFuncGetCacheConfig` (always Invalid `"func gcache"` until a compiled kernel
+exists). Distinct from `get_func_cache_config` and `kernel_set_cache_config`. Query;
+legal during capture. No Engine `--func-gcache`. `func_is_loaded` is
 `cuFuncIsLoaded` (`false` until a compiled kernel exists; distinct from
 empty `func_get_name` and unknown-function `func_get_param_info`).
 `func_load` is `cuFuncLoad` (always Invalid `"func load"`; no cubin).
