@@ -1076,6 +1076,9 @@
 //! [`coredump_get_attribute_global`](Sim::coredump_get_attribute_global) is
 //! `cuCoredumpGetAttributeGlobal` (always Invalid `"dump global"`). Query;
 //! legal during capture. No Engine `--dump-global`.
+//! [`coredump_set_attribute_global`](Sim::coredump_set_attribute_global) is
+//! `cuCoredumpSetAttributeGlobal` (always Invalid `"dump setglob"`). Query;
+//! legal during capture. No Engine `--dump-setglob`.
 //! [`checkpoint_process_lock`](Sim::checkpoint_process_lock) is
 //! `cuCheckpointProcessLock` (always Invalid `"checkpoint"`). Query; legal
 //! during capture. No Engine `--checkpoint`. [`Sim::driver_init`] is `cuInit` (flags 0; already initialized
@@ -18852,6 +18855,58 @@ mod tests {
             Err(SimError::Invalid { why }) => {
                 assert!(why.contains("dump setattr"), "{why}");
                 assert!(!why.contains("dump global"), "{why}");
+            }
+            other => panic!("{other:?}"),
+        }
+        match sim.coredump_set_attribute_global(d) {
+            Err(SimError::Invalid { why }) => {
+                assert!(why.contains("dump setglob"), "{why}");
+                assert!(!why.contains("dump global"), "{why}");
+                assert!(!why.contains("dump setattr"), "{why}");
+                assert!(!why.contains("coredump"), "{why}");
+            }
+            other => panic!("{other:?}"),
+        }
+    }
+
+    #[test]
+    fn coredump_set_attribute_global_is_unsupported() {
+        let mut sim = Sim::new(h100());
+        let d = DeviceId(0);
+        match sim.coredump_set_attribute_global(d) {
+            Err(SimError::Invalid { why }) => {
+                assert!(why.contains("dump setglob"), "{why}");
+                assert!(!why.contains("coredump"), "{why}");
+                assert!(!why.contains("dump setattr"), "{why}");
+                assert!(!why.contains("dump global"), "{why}");
+            }
+            other => panic!("{other:?}"),
+        }
+        sim.begin_capture(d, StreamId(0)).unwrap();
+        match sim.coredump_set_attribute_global(d) {
+            Err(SimError::Invalid { why }) => {
+                assert!(why.contains("dump setglob"), "{why}");
+            }
+            other => panic!("{other:?}"),
+        }
+        let _g = sim.end_capture().unwrap();
+        match sim.coredump_set_attribute_global(DeviceId(99)) {
+            Err(SimError::Invalid { why }) => {
+                assert!(why.contains("device not in profile"), "{why}");
+            }
+            other => panic!("{other:?}"),
+        }
+        match sim.coredump_get_attribute_global(d) {
+            Err(SimError::Invalid { why }) => {
+                assert!(why.contains("dump global"), "{why}");
+                assert!(!why.contains("dump setglob"), "{why}");
+            }
+            other => panic!("{other:?}"),
+        }
+        match sim.coredump_set_attribute(d) {
+            Err(SimError::Invalid { why }) => {
+                assert!(why.contains("dump setattr"), "{why}");
+                assert!(!why.contains("dump setglob"), "{why}");
             }
             other => panic!("{other:?}"),
         }

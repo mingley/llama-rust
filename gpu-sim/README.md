@@ -252,6 +252,7 @@ warp scheduler, L1, …   ← do not model
 | `coredump_get_attribute` is Invalid (GPU coredumps are not modeled) | `cuCoredumpGetAttribute` |
 | `coredump_set_attribute` is Invalid (GPU coredumps are not modeled) | `cuCoredumpSetAttribute` |
 | `coredump_get_attribute_global` is Invalid (GPU coredumps are not modeled) | `cuCoredumpGetAttributeGlobal` |
+| `coredump_set_attribute_global` is Invalid (GPU coredumps are not modeled) | `cuCoredumpSetAttributeGlobal` |
 | `checkpoint_process_lock` is Invalid (CUDA process checkpoint is not modeled) | `cuCheckpointProcessLock` |
 | `driver_init` is a 1 ns no-op; flags must be 0 | `cuInit` |
 | `profiler_start` is a 1 ns no-op; capture refused | `cuProfilerStart` / `cudaProfilerStart` |
@@ -1494,6 +1495,10 @@ capture. No Engine `--dump-setattr`. `coredump_get_attribute_global` is
 `cuCoredumpGetAttributeGlobal` (always Invalid `"dump global"`; GPU coredumps
 are not modeled). Distinct from `coredump_get_attribute` and
 `coredump_set_attribute`. Query; legal during capture. No Engine `--dump-global`.
+`coredump_set_attribute_global` is `cuCoredumpSetAttributeGlobal` (always
+Invalid `"dump setglob"`; GPU coredumps are not modeled). Distinct from
+`coredump_set_attribute` and `coredump_get_attribute_global`. Query; legal
+during capture. No Engine `--dump-setglob`.
 `checkpoint_process_lock` is
 `cuCheckpointProcessLock` (always Invalid `"checkpoint"`; CUDA process
 checkpoint is not modeled). Distinct from `coredump_get_attribute`. Query;

@@ -5,6 +5,16 @@ Visible five-turn extract: [docs/chatgpt-share-6a920fe1.md](docs/chatgpt-share-6
 Complete share-API extract: [docs/chatgpt-share-6a920fe1/](docs/chatgpt-share-6a920fe1/).
 Work lands on `main`. No PRs.
 
+## Shipped 2026-09-02 — CUDA `cuCoredumpSetAttributeGlobal`
+
+`gpu-sim` `Sim::coredump_set_attribute_global` is `cuCoredumpSetAttributeGlobal`.
+Always Invalid `"dump setglob"` because GPU coredumps are not
+modeled. Query; legal during capture. Distinct from
+`coredump_set_attribute` (why is not `"dump setattr"`) and
+`coredump_get_attribute_global` (why is not `"dump global"`).
+This VM does not invent `cuCheckpointProcessCheckpoint` or Engine `--dump-setglob`.
+`gpu-profile capture` is still refused. Dual score still has no `$/M tokens`.
+
 ## Shipped 2026-09-02 — CUDA `cuCoredumpGetAttributeGlobal`
 
 `gpu-sim` `Sim::coredump_get_attribute_global` is `cuCoredumpGetAttributeGlobal`.
