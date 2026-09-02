@@ -8740,8 +8740,7 @@ impl Sim {
     /// [`Self::graph_node_set_enabled`] (`cudaGraphNodeSetEnabled`).
     ///
     /// Capture refused. Distinct from
-    /// [`Self::graph_node_get_enabled`]. This VM does not invent
-    /// occupancy SM counts this slice.
+    /// [`Self::graph_node_get_enabled`].
     pub fn set_graph_node_enabled(
         &mut self,
         exec: GraphId,
@@ -8752,6 +8751,10 @@ impl Sim {
     }
 
     /// `cudaGraphNodeGetEnabled` on an instantiated exec.
+    ///
+    /// Query; legal during capture. Driver
+    /// `cuGraphNodeGetEnabled` is
+    /// [`Self::get_graph_node_enabled`].
     pub fn graph_node_get_enabled(&self, exec: GraphId, node: usize) -> Result<bool, SimError> {
         let exec = self.as_exec(exec)?;
         let g = self.graphs.get(&exec).ok_or(SimError::Invalid {
@@ -8761,6 +8764,16 @@ impl Sim {
             why: "unknown graph node",
         })?)?;
         Ok(step.enabled)
+    }
+
+    /// `cuGraphNodeGetEnabled`. Identity with
+    /// [`Self::graph_node_get_enabled`] (`cudaGraphNodeGetEnabled`).
+    ///
+    /// Query; legal during capture. Distinct from
+    /// [`Self::set_graph_node_enabled`]. This VM does not invent
+    /// occupancy SM counts this slice.
+    pub fn get_graph_node_enabled(&self, exec: GraphId, node: usize) -> Result<bool, SimError> {
+        self.graph_node_get_enabled(exec, node)
     }
 
     /// Graph mem alloc node ids (`cudaMallocAsync` / `cudaGraphAddMemAllocNode`).

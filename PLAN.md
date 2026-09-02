@@ -8596,7 +8596,14 @@ model, do not celebrate the sim.
     or `cudaChooseDevice`. `gpu-profile capture` is still refused. Dual
     score still has no `$/M tokens`.
 
-920. [ ] Next numbered PLAN item after 919 is the next `gpu-sim` / Engine /
+920. [x] `gpu-sim` `Sim::get_graph_node_enabled` is
+    `cuGraphNodeGetEnabled`. Identity with `graph_node_get_enabled`
+    (`cudaGraphNodeGetEnabled`). Query; legal during capture. Distinct from
+    `set_graph_node_enabled`. This VM does not invent occupancy SM counts, Engine `--graph-node-get-enabled`,
+    or `cudaChooseDevice`. `gpu-profile capture` is still refused. Dual
+    score still has no `$/M tokens`.
+
+921. [ ] Next numbered PLAN item after 920 is the next `gpu-sim` / Engine /
     serve / expertvm mechanical API that is still missing, or the next official
     decode family. Prefer remaining CUDA-shaped twins over more
     OpenAI HTTP veneer. Do not invent F32 `output.scale`. Do not invent a
@@ -9847,6 +9854,9 @@ model, do not celebrate the sim.
     Do not invent a second `cuGraphNodeSetEnabled` / `set_graph_node_enabled`.
     Do not invent Engine `--graph-node-set-enabled`. Do not invent
     occupancy SM counts this slice. Do not reverse SetGraphNodeEnabled identity with graph_node_set_enabled.
+    Do not invent a second `cuGraphNodeGetEnabled` / `get_graph_node_enabled`.
+    Do not invent Engine `--graph-node-get-enabled`. Do not invent
+    occupancy SM counts this slice. Do not reverse GetGraphNodeEnabled identity with graph_node_get_enabled.
     Do not invent a second `cudaStreamAddCallback`.
     Do not invent Engine `--stream-callback` (same wall as second live
     `cudaLaunchHostFunc` after miss DMA).
@@ -11177,6 +11187,9 @@ model, do not celebrate the sim.
     Do not invent a second `set_graph_node_enabled` API. Do not invent
     Engine `--graph-node-set-enabled-identity`. Do not invent a graph-node-get-enabled
     this slice. Do not reverse SetGraphNodeEnabled identity with graph_node_set_enabled.
+    Do not invent a second `get_graph_node_enabled` API. Do not invent
+    Engine `--graph-node-get-enabled-identity`. Do not invent a graph-exec-get-flags
+    this slice. Do not reverse GetGraphNodeEnabled identity with graph_node_get_enabled.
     Do not invent a second DeviceLaunch in-flight destroy-complete check or Engine
     `--device-launch-destroy`. Do not abort an in-flight DeviceLaunch when
     `destroy_graph` succeeds. Do not delay destroy of an idle exec. Do not invent
@@ -12690,6 +12703,9 @@ model, do not celebrate the sim.
     Do not invent a second `set_graph_node_enabled` method. Do not
     invent Engine `--cu-graph-node-set-enabled`. Do not reverse wrapping
     cuGraphNodeSetEnabled identity.
+    Do not invent a second `get_graph_node_enabled` method. Do not
+    invent Engine `--cu-graph-node-get-enabled`. Do not reverse wrapping
+    cuGraphNodeGetEnabled identity.
     Do not
     spend the next item on an OpenAI-compatible HTTP veneer.
 
