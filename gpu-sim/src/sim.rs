@@ -5557,8 +5557,7 @@ impl Sim {
     /// [`Self::update_graph`] (`cudaGraphExecUpdate`).
     ///
     /// Host-synchronous. Capture refused. Distinct from
-    /// [`Self::update_graph_with_info`]. This VM does not invent
-    /// occupancy SM counts this slice.
+    /// [`Self::update_graph_with_info`].
     pub fn graph_exec_update(&mut self, exec: GraphId, src: GraphId) -> Result<(), SimError> {
         self.update_graph(exec, src)
     }
@@ -5568,7 +5567,9 @@ impl Sim {
     /// Fills `info` even when this returns `Err`. Success is
     /// [`GraphExecUpdateResult::Success`] with both node fields `None`.
     /// [`Self::update_graph`] keeps the same `why` strings.
-    /// A parked in-flight-destroyed exec used as `src` is `"unknown graph"`.
+    /// A parked in-flight-destroyed exec used as `src` is `"unknown graph"`. Driver
+    /// `cuGraphExecUpdate` with info is
+    /// [`Self::graph_exec_update_with_info`].
     pub fn update_graph_with_info(
         &mut self,
         exec: GraphId,
@@ -5699,6 +5700,22 @@ impl Sim {
         exec.uploaded = false;
         info.result = GraphExecUpdateResult::Success;
         Ok(())
+    }
+
+    /// `cuGraphExecUpdate` with info. Identity with
+    /// [`Self::update_graph_with_info`] (`cudaGraphExecUpdate` with
+    /// [`GraphExecUpdateResultInfo`]).
+    ///
+    /// Host-synchronous. Capture refused. Distinct from
+    /// [`Self::graph_exec_update`]. This VM does not invent
+    /// occupancy SM counts this slice.
+    pub fn graph_exec_update_with_info(
+        &mut self,
+        exec: GraphId,
+        src: GraphId,
+        info: &mut GraphExecUpdateResultInfo,
+    ) -> Result<(), SimError> {
+        self.update_graph_with_info(exec, src, info)
     }
 
     fn update_graph_pair(
