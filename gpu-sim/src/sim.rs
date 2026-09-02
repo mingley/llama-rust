@@ -5600,7 +5600,8 @@ impl Sim {
     /// execs re-apply instantiate mixed-ctx rules (Invalid `"graph multiple
     /// ctx"`) and kernel-buffer dest rules (Invalid `"device launch instantiate
     /// flag"`). Graphs with mem alloc/free nodes are legal (unlike
-    /// [`Self::update_graph`]).
+    /// [`Self::update_graph`]). Driver `cuGraphExecKernelNodeSetParams` is
+    /// [`Self::set_graph_exec_kernel_node_params`].
     pub fn graph_exec_kernel_set_params(
         &mut self,
         exec: GraphId,
@@ -5677,6 +5678,21 @@ impl Sim {
             g.uploaded = false;
         }
         Ok(())
+    }
+
+    /// `cuGraphExecKernelNodeSetParams`. Identity with
+    /// [`Self::graph_exec_kernel_set_params`] (`cudaGraphExecKernelNodeSetParams`).
+    ///
+    /// Capture refused. Distinct from
+    /// [`Self::set_graph_kernel_node_params`]. This VM does not invent
+    /// occupancy SM counts this slice.
+    pub fn set_graph_exec_kernel_node_params(
+        &mut self,
+        exec: GraphId,
+        node: usize,
+        params: &KernelNodeParams,
+    ) -> Result<(), SimError> {
+        self.graph_exec_kernel_set_params(exec, node, params)
     }
 
     fn refuse_device_launch_exec_ctx(
@@ -5789,8 +5805,7 @@ impl Sim {
     /// [`Self::graph_kernel_set_params`] (`cudaGraphKernelNodeSetParams`).
     ///
     /// Capture refused. Distinct from
-    /// [`Self::get_graph_kernel_node_params`]. This VM does not invent
-    /// occupancy SM counts this slice.
+    /// [`Self::get_graph_kernel_node_params`].
     pub fn set_graph_kernel_node_params(
         &mut self,
         graph: GraphId,
