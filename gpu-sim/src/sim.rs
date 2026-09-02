@@ -16526,7 +16526,6 @@ impl Sim {
     /// [`Self::pool_set_attribute`] (`cudaMemPoolSetAttribute`).
     ///
     /// Capture refused. Distinct from [`Self::mem_pool_get_attribute`].
-    /// This VM does not invent occupancy SM counts this slice.
     pub fn mem_pool_set_attribute(
         &mut self,
         pool: PoolId,
@@ -16625,6 +16624,8 @@ impl Sim {
     /// `expertvm sim --mempool-trim` / `GpuStoreCfg::mempool_trim` is
     /// [`Self::pool_trim_to`] `(device_mempool, 0)` after score (idle), not
     /// token ITL.
+    /// Driver `cuMemPoolTrimTo` is [`Self::mem_pool_trim_to`].
+    /// Identity wrap [`Self::mem_pool_trim_to`].
     pub fn pool_trim_to(&mut self, pool: PoolId, min_bytes: u64) -> Result<u64, SimError> {
         self.fail_if_capturing("cannot capture mempool")?;
         let root = self.pool_root(pool)?;
@@ -16645,6 +16646,15 @@ impl Sim {
         let used = self.gpu_rt(device)?.used;
         self.gpu_rt_mut(device)?.used = used.saturating_sub(drop);
         Ok(drop)
+    }
+
+    /// `cuMemPoolTrimTo`. Identity with
+    /// [`Self::pool_trim_to`] (`cudaMemPoolTrimTo`).
+    ///
+    /// Capture refused. Distinct from [`Self::mem_pool_set_attribute`].
+    /// This VM does not invent occupancy SM counts this slice.
+    pub fn mem_pool_trim_to(&mut self, pool: PoolId, min_bytes: u64) -> Result<u64, SimError> {
+        self.pool_trim_to(pool, min_bytes)
     }
 
     /// Unused bytes held by `pool` (`cudaMemGetInfo` still counts them used).
