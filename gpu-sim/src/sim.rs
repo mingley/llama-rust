@@ -22333,7 +22333,6 @@ impl Sim {
     /// `cuLaunchKernelEx`. Identity with [`Self::kernel_with`] (`cudaLaunchKernelEx`).
     ///
     /// Capture legal. Distinct from [`Self::launch_kernel_bufs`].
-    /// This VM does not invent occupancy SM counts this slice.
     pub fn launch_kernel_ex(
         &mut self,
         device: DeviceId,
@@ -22347,6 +22346,9 @@ impl Sim {
     }
 
     /// [`Self::kernel_bufs`] plus packed [`KernelAttrs`].
+    ///
+    /// Driver `cuLaunchKernelEx` spans is [`Self::launch_kernel_ex_bufs`].
+    /// Identity wrap [`Self::launch_kernel_ex_bufs`].
     pub fn kernel_bufs_with(
         &mut self,
         device: DeviceId,
@@ -22430,6 +22432,23 @@ impl Sim {
         self.enqueue_programmatic_event = prev_pde;
         self.enqueue_launch_completion = prev_lce;
         out
+    }
+
+    /// `cuLaunchKernelEx` on explicit buffer spans. Identity with
+    /// [`Self::kernel_bufs_with`] (`cudaLaunchKernelEx` spans).
+    ///
+    /// Capture legal. Distinct from [`Self::launch_kernel_ex`].
+    /// This VM does not invent occupancy SM counts this slice.
+    pub fn launch_kernel_ex_bufs(
+        &mut self,
+        device: DeviceId,
+        kind: KernelKind,
+        reads: &[KernelBuf],
+        writes: &[KernelBuf],
+        stream: StreamId,
+        attrs: KernelAttrs,
+    ) -> Result<OpId, SimError> {
+        self.kernel_bufs_with(device, kind, reads, writes, stream, attrs)
     }
 
     /// [`Self::kernel`] plus [`AccessPolicyWindow`] (`cudaLaunchAttributeAccessPolicyWindow`).
