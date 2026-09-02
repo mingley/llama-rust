@@ -7933,8 +7933,7 @@ impl Sim {
     /// [`Self::graph_batch_mem_ops_get_params`] (`cudaGraphBatchMemOpNodeGetParams`).
     ///
     /// Query; legal during capture. Distinct from
-    /// [`Self::graph_exec_batch_mem_ops_get_params`]. This VM does not invent
-    /// occupancy SM counts this slice.
+    /// [`Self::graph_exec_batch_mem_ops_get_params`].
     pub fn get_graph_batch_mem_op_node_params(
         &self,
         graph: GraphId,
@@ -7944,6 +7943,8 @@ impl Sim {
     }
 
     /// Exec-snapshot batch-mem-op items. Uninstantiated graphs are Invalid.
+    /// Query; capture is legal. Driver `cuGraphExecBatchMemOpNodeGetParams` is
+    /// [`Self::get_graph_exec_batch_mem_op_node_params`].
     pub fn graph_exec_batch_mem_ops_get_params(
         &self,
         exec: GraphId,
@@ -7952,6 +7953,21 @@ impl Sim {
         batch_items(&self.graph_exec_step(exec, node)?.kind).ok_or(SimError::Invalid {
             why: "not a batch mem op node",
         })
+    }
+
+    /// `cuGraphExecBatchMemOpNodeGetParams`. Identity with
+    /// [`Self::graph_exec_batch_mem_ops_get_params`] (`cudaGraphBatchMemOpNodeGetParams`
+    /// of the exec snapshot).
+    ///
+    /// Query; legal during capture. Distinct from
+    /// [`Self::get_graph_batch_mem_op_node_params`]. This VM does not invent
+    /// occupancy SM counts this slice.
+    pub fn get_graph_exec_batch_mem_op_node_params(
+        &self,
+        exec: GraphId,
+        node: usize,
+    ) -> Result<Vec<BatchMemOp>, SimError> {
+        self.graph_exec_batch_mem_ops_get_params(exec, node)
     }
 
     /// Child-graph nodes on `graph` as `(index, nested GraphId)` in add order.
