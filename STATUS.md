@@ -5,6 +5,13 @@ Visible five-turn extract: [docs/chatgpt-share-6a920fe1.md](docs/chatgpt-share-6
 Complete share-API extract: [docs/chatgpt-share-6a920fe1/](docs/chatgpt-share-6a920fe1/).
 Work lands on `main`. No PRs.
 
+## Shipped 2026-09-02 — CUDA `cuLaunchKernel` spans
+
+`gpu-sim` `Sim::launch_kernel_bufs` is `cuLaunchKernel` spans.
+Identity with `kernel_bufs` (`cudaLaunchKernel` spans). Capture legal. Distinct from `launch_kernel`.
+This VM does not invent occupancy SM counts or Engine `--launch-kernel-bufs`.
+`gpu-profile capture` is still refused. Dual score still has no `$/M tokens`.
+
 ## Shipped 2026-09-02 — CUDA `cuLaunchKernel`
 
 `gpu-sim` `Sim::launch_kernel` is `cuLaunchKernel`.

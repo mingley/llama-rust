@@ -22122,7 +22122,6 @@ impl Sim {
     /// `cuLaunchKernel`. Identity with [`Self::kernel`] (`cudaLaunchKernel`).
     ///
     /// Capture legal. Distinct from [`Self::stream_batch_mem_op_with_flags`].
-    /// This VM does not invent occupancy SM counts this slice.
     pub fn launch_kernel(
         &mut self,
         device: DeviceId,
@@ -22148,6 +22147,9 @@ impl Sim {
     /// Host attach and Single attach on another stream fail `not attached`.
     /// Inherits [`Self::set_stream_nvlink_util_centric`] and
     /// [`Self::set_stream_access_policy`] on `stream`.
+    ///
+    /// Driver `cuLaunchKernel` spans is [`Self::launch_kernel_bufs`].
+    /// Identity wrap [`Self::launch_kernel_bufs`].
     pub fn kernel_bufs(
         &mut self,
         device: DeviceId,
@@ -22168,6 +22170,22 @@ impl Sim {
         self.enqueue_nvlink_util_centric = prev_nv;
         self.enqueue_access_policy = prev_win;
         out
+    }
+
+    /// `cuLaunchKernel` on explicit buffer spans. Identity with
+    /// [`Self::kernel_bufs`] (`cudaLaunchKernel` spans).
+    ///
+    /// Capture legal. Distinct from [`Self::launch_kernel`].
+    /// This VM does not invent occupancy SM counts this slice.
+    pub fn launch_kernel_bufs(
+        &mut self,
+        device: DeviceId,
+        kind: KernelKind,
+        reads: &[KernelBuf],
+        writes: &[KernelBuf],
+        stream: StreamId,
+    ) -> Result<OpId, SimError> {
+        self.kernel_bufs(device, kind, reads, writes, stream)
     }
 
     /// Same as [`Self::kernel`] with [`ProgrammaticLaunch`] (CUDA PDL).
