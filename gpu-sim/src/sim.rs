@@ -22828,7 +22828,6 @@ impl Sim {
     /// [`Self::get_func_carveout`] (`cudaFuncGetAttribute` PreferredSharedMemoryCarveout).
     ///
     /// Query; legal during capture. Distinct from [`Self::func_set_carveout`].
-    /// This VM does not invent occupancy SM counts this slice.
     pub fn func_get_carveout(&self, device: DeviceId) -> Result<SharedMemCarveout, SimError> {
         self.get_func_carveout(device)
     }
@@ -22839,6 +22838,8 @@ impl Sim {
     /// occupancy. Launch Spread / LoadBalancing still override. Capture-legal
     /// like other function attributes. Decode identity stays Default.
     /// `expertvm sim --func-cluster-spread` sets [`ClusterSchedulingPolicy::Spread`].
+    /// Driver `cuFuncSetAttribute` cluster policy is [`Self::func_set_cluster_policy`].
+    /// Identity wrap [`Self::func_set_cluster_policy`].
     pub fn set_func_cluster_policy(
         &mut self,
         device: DeviceId,
@@ -22848,6 +22849,19 @@ impl Sim {
         self.gpu_rt_mut(device)?.func_cluster_policy = policy;
         self.clock = self.clock.saturating_add(1);
         Ok(())
+    }
+
+    /// `cuFuncSetAttribute` cluster policy. Identity with
+    /// [`Self::set_func_cluster_policy`] (`cudaFuncSetAttribute` ClusterSchedulingPolicyPreference).
+    ///
+    /// Capture legal. Distinct from [`Self::func_get_carveout`].
+    /// This VM does not invent occupancy SM counts this slice.
+    pub fn func_set_cluster_policy(
+        &mut self,
+        device: DeviceId,
+        policy: ClusterSchedulingPolicy,
+    ) -> Result<(), SimError> {
+        self.set_func_cluster_policy(device, policy)
     }
 
     /// Current [`Self::set_func_cluster_policy`]. Query; legal during capture.

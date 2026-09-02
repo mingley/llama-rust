@@ -9599,7 +9599,12 @@ model, do not celebrate the sim.
       `func_set_carveout`. This VM does not invent occupancy SM counts, Engine `--func-get-carveout`,
       or `cudaChooseDevice`. `gpu-profile capture` is still refused. Dual
       score still has no `$/M tokens`.
-1068. [ ] Next numbered PLAN item after 1067 is the next `gpu-sim` / Engine /
+1068. [x] `gpu-sim` `Sim::func_set_cluster_policy` is
+      `cuFuncSetAttribute` cluster policy. Identity with `set_func_cluster_policy` (`cudaFuncSetAttribute` ClusterSchedulingPolicyPreference). Capture legal. Distinct from
+      `func_get_carveout`. This VM does not invent occupancy SM counts, Engine `--func-set-cluster-policy`,
+      or `cudaChooseDevice`. `gpu-profile capture` is still refused. Dual
+      score still has no `$/M tokens`.
+1069. [ ] Next numbered PLAN item after 1068 is the next `gpu-sim` / Engine /
     serve / expertvm mechanical API that is still missing, or the next official
     decode family. Prefer remaining CUDA-shaped twins over more
     OpenAI HTTP veneer. Do not invent F32 `output.scale`. Do not invent a
@@ -11325,6 +11330,10 @@ model, do not celebrate the sim.
     Do not invent Engine `--func-get-carveout`. Do not invent
     occupancy SM counts this slice. Do not reverse FuncGetCarveout identity with get_func_carveout.
     Do not invent generic `cuFuncGetAttribute` as `func_get_carveout`.
+    Do not invent a second `cuFuncSetAttribute` cluster policy / `func_set_cluster_policy`.
+    Do not invent Engine `--func-set-cluster-policy`. Do not invent
+    occupancy SM counts this slice. Do not reverse FuncSetClusterPolicy identity with set_func_cluster_policy.
+    Do not invent generic `cuFuncSetAttribute` as `func_set_cluster_policy`.
     Do not invent a second `cudaStreamAddCallback`.
     Do not invent Engine `--stream-callback` (same wall as second live
     `cudaLaunchHostFunc` after miss DMA).
@@ -13099,6 +13108,9 @@ model, do not celebrate the sim.
     Do not invent a second `func_get_carveout` API. Do not invent
     Engine `--func-get-carveout-identity`. Do not invent a func-set-cluster-policy
     this slice. Do not reverse FuncGetCarveout identity with get_func_carveout.
+    Do not invent a second `func_set_cluster_policy` API. Do not invent
+    Engine `--func-set-cluster-policy-identity`. Do not invent a func-get-cluster-policy
+    this slice. Do not reverse FuncSetClusterPolicy identity with set_func_cluster_policy.
     Do not invent a second DeviceLaunch in-flight destroy-complete check or Engine
     `--device-launch-destroy`. Do not abort an in-flight DeviceLaunch when
     `destroy_graph` succeeds. Do not delay destroy of an idle exec. Do not invent
@@ -15056,6 +15068,9 @@ model, do not celebrate the sim.
     Do not invent a second `func_get_carveout` method. Do not
     invent Engine `--cu-func-get-carveout`. Do not reverse wrapping
     cuFuncGetAttribute carveout identity. Do not wrap generic `cuFuncGetAttribute` as `func_get_carveout`.
+    Do not invent a second `func_set_cluster_policy` method. Do not
+    invent Engine `--cu-func-set-cluster-policy`. Do not reverse wrapping
+    cuFuncSetAttribute cluster policy identity. Do not wrap generic `cuFuncSetAttribute` as `func_set_cluster_policy`.
     Do not
     spend the next item on an OpenAI-compatible HTTP veneer.
 
