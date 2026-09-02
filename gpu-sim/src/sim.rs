@@ -11467,8 +11467,7 @@ impl Sim {
     /// [`Self::graph_root_nodes`] (`cudaGraphGetRootNodes`).
     ///
     /// Query; legal during capture. Distinct from
-    /// [`Self::get_graph_nodes`]. This VM does not invent
-    /// occupancy SM counts this slice.
+    /// [`Self::get_graph_nodes`].
     pub fn get_graph_root_nodes(&self, graph: GraphId) -> Result<Vec<usize>, SimError> {
         self.graph_root_nodes(graph)
     }
@@ -11478,7 +11477,9 @@ impl Sim {
     /// CUDA v1 (`edgeData == NULL`): any non-default stored [`GraphEdgeData`]
     /// is Invalid `"lossy query"` (`cudaErrorLossyQuery`). Default-only graphs
     /// stay. [`Self::graph_edges_with_data`] is lossless. Query; legal during
-    /// capture.
+    /// capture. Driver
+    /// `cuGraphGetEdges` is
+    /// [`Self::get_graph_edges`].
     pub fn graph_edges(&self, graph: GraphId) -> Result<Vec<(usize, usize)>, SimError> {
         let g = self.graphs.get(&graph).ok_or(SimError::Invalid {
             why: "unknown graph",
@@ -11496,6 +11497,16 @@ impl Sim {
             }
         }
         Ok(edges)
+    }
+
+    /// `cuGraphGetEdges`. Identity with
+    /// [`Self::graph_edges`] (`cudaGraphGetEdges`).
+    ///
+    /// Query; legal during capture. Distinct from
+    /// [`Self::graph_edges_with_data`]. This VM does not invent
+    /// occupancy SM counts this slice.
+    pub fn get_graph_edges(&self, graph: GraphId) -> Result<Vec<(usize, usize)>, SimError> {
+        self.graph_edges(graph)
     }
 
     /// `cudaGraphGetEdges` v2: `(from, to, data)` in node-add order.

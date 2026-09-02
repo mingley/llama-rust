@@ -5,6 +5,14 @@ Visible five-turn extract: [docs/chatgpt-share-6a920fe1.md](docs/chatgpt-share-6
 Complete share-API extract: [docs/chatgpt-share-6a920fe1/](docs/chatgpt-share-6a920fe1/).
 Work lands on `main`. No PRs.
 
+## Shipped 2026-09-02 — CUDA `cuGraphGetEdges`
+
+`gpu-sim` `Sim::get_graph_edges` is `cuGraphGetEdges`.
+Identity with `graph_edges` (`cudaGraphGetEdges`).
+Query; legal during capture. Distinct from `graph_edges_with_data`.
+This VM does not invent occupancy SM counts or Engine `--graph-get-edges`.
+`gpu-profile capture` is still refused. Dual score still has no `$/M tokens`.
+
 ## Shipped 2026-09-02 — CUDA `cuGraphGetRootNodes`
 
 `gpu-sim` `Sim::get_graph_root_nodes` is `cuGraphGetRootNodes`.
