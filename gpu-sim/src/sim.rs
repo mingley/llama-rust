@@ -6373,8 +6373,7 @@ impl Sim {
     /// [`Self::graph_exec_node_set_params`] (`cudaGraphExecNodeSetParams`).
     ///
     /// Capture refused. Distinct from
-    /// [`Self::set_graph_node_params`]. This VM does not invent
-    /// occupancy SM counts this slice.
+    /// [`Self::set_graph_node_params`].
     pub fn set_graph_exec_node_params(
         &mut self,
         exec: GraphId,
@@ -6550,13 +6549,29 @@ impl Sim {
     /// [`GraphNodeParams::Alloc`] is bytes plus accessDescs; the pointer is
     /// [`Self::graph_alloc_get_params`]. Empty returns [`GraphNodeParams::Empty`].
     /// A parked in-flight-destroyed exec is `"unknown graph"`. Live exec
-    /// GetParams stays. Query; capture is legal.
+    /// GetParams stays. Query; capture is legal. Driver
+    /// `cuGraphNodeGetParams` is
+    /// [`Self::get_graph_node_params`].
     pub fn graph_node_get_params(
         &self,
         graph: GraphId,
         node: usize,
     ) -> Result<GraphNodeParams, SimError> {
         self.graph_node_params_of(self.graph_def_step(graph, node)?)
+    }
+
+    /// `cuGraphNodeGetParams`. Identity with
+    /// [`Self::graph_node_get_params`] (`cudaGraphNodeGetParams`).
+    ///
+    /// Query; legal during capture. Distinct from
+    /// [`Self::graph_exec_node_get_params`]. This VM does not invent
+    /// occupancy SM counts this slice.
+    pub fn get_graph_node_params(
+        &self,
+        graph: GraphId,
+        node: usize,
+    ) -> Result<GraphNodeParams, SimError> {
+        self.graph_node_get_params(graph, node)
     }
 
     /// Exec-snapshot [`Self::graph_node_get_params`].
