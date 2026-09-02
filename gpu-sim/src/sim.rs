@@ -19017,7 +19017,6 @@ impl Sim {
     /// [`Self::multicast_bind_addr_with_flags`] (`cuMulticastBindAddr` flags).
     ///
     /// Capture refused. Distinct from [`Self::mem_multicast_bind_addr`].
-    /// This VM does not invent occupancy SM counts this slice.
     pub fn mem_multicast_bind_addr_with_flags(
         &mut self,
         mc: MulticastId,
@@ -19033,6 +19032,8 @@ impl Sim {
     /// `size` must equal the reserved VA. Other sizes Invalid `"bind size"`.
     /// CUDA `mcOffset` is 0 (partial bind is not modeled). Flags must be
     /// [`MulticastBindFlags::DEFAULT`].
+    /// Driver `cuMulticastBindAddr` size is [`Self::mem_multicast_bind_addr_with_size`].
+    /// Identity wrap [`Self::mem_multicast_bind_addr_with_size`].
     pub fn multicast_bind_addr_with_size(
         &mut self,
         mc: MulticastId,
@@ -19053,6 +19054,22 @@ impl Sim {
         }
         let h = self.handle_for_bind(id, device)?;
         self.multicast_bind_mem(mc, device, h)
+    }
+
+    /// `cuMulticastBindAddr` size. Identity with
+    /// [`Self::multicast_bind_addr_with_size`] (`cuMulticastBindAddr` size).
+    ///
+    /// Capture refused. Distinct from [`Self::mem_multicast_bind_addr_with_flags`].
+    /// This VM does not invent occupancy SM counts this slice.
+    pub fn mem_multicast_bind_addr_with_size(
+        &mut self,
+        mc: MulticastId,
+        device: DeviceId,
+        id: AllocId,
+        size: u64,
+        flags: u32,
+    ) -> Result<(), SimError> {
+        self.multicast_bind_addr_with_size(mc, device, id, size, flags)
     }
 
     /// `cuMulticastUnbind` of a whole-handle bind on `device`.
