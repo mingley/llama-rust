@@ -498,6 +498,8 @@
 //! [`record_event_with_flags`](Sim::record_event_with_flags)). Capture-legal. No Engine `--event-record-with-flags`.
 //! [`stream_wait_event`](Sim::stream_wait_event) is `cuStreamWaitEvent` (identity with
 //! [`wait_event`](Sim::wait_event)). Capture-legal. No Engine `--stream-wait-event`.
+//! [`stream_wait_event_with_flags`](Sim::stream_wait_event_with_flags) is `cuStreamWaitEvent` with flags (identity with
+//! [`wait_event_with_flags`](Sim::wait_event_with_flags)). Capture-legal. No Engine `--stream-wait-event-flags`.
 //! [`Sim::destroy_event`] is `cudaEventDestroy` (waits a recorded incomplete
 //! event; never-recorded returns immediately; capture refused).
 //! [`event_destroy`](Sim::event_destroy) is `cuEventDestroy` (identity with
@@ -32670,6 +32672,41 @@ mod tests {
         enq(sim.event_record(d, ev, rec));
         enq(sim.stream_wait_event(d, ev, wait));
         enq(sim.wait_event(d, ev, StreamId(2)));
+        let _g = sim.end_capture().unwrap();
+        sim.free_sync(a).unwrap();
+    }
+
+    #[test]
+    fn stream_wait_event_with_flags_is_cu_stream_wait_event_flags() {
+        let mut sim = Sim::new(h100());
+        let d = DeviceId(0);
+        let rec = StreamId(0);
+        let wait = StreamId(1);
+        let ev = EventId(4);
+        sim.event_create(ev).unwrap();
+        match sim.stream_wait_event_with_flags(d, ev, wait, 2) {
+            Err(SimError::Invalid { why }) => {
+                assert!(why.contains("event wait flags"), "{why}");
+            }
+            other => panic!("{other:?}"),
+        }
+        match sim.wait_event_with_flags(d, ev, wait, 2) {
+            Err(SimError::Invalid { why }) => {
+                assert!(why.contains("event wait flags"), "{why}");
+            }
+            other => panic!("{other:?}"),
+        }
+        let a = sim.alloc(d, 4096, rec).unwrap();
+        enq(sim.kernel(d, KernelKind::other(1 << 20, 4096), &[a], &[a], rec));
+        enq(sim.event_record(d, ev, rec));
+        enq(sim.stream_wait_event_with_flags(d, ev, wait, EventWaitFlags::DEFAULT));
+        assert!(!sim.stream_query(d, wait).unwrap());
+        sim.synchronize().unwrap();
+        assert!(sim.stream_query(d, wait).unwrap());
+        sim.begin_capture(d, rec).unwrap();
+        enq(sim.event_record(d, ev, rec));
+        enq(sim.stream_wait_event_with_flags(d, ev, wait, EventWaitFlags::EXTERNAL));
+        enq(sim.wait_event_with_flags(d, ev, StreamId(2), EventWaitFlags::EXTERNAL));
         let _g = sim.end_capture().unwrap();
         sim.free_sync(a).unwrap();
     }

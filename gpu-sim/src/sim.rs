@@ -23779,6 +23779,23 @@ impl Sim {
         self.wait_event_flags(device, event, stream, flags & EventWaitFlags::EXTERNAL != 0)
     }
 
+    /// `cuStreamWaitEvent` with flags. Identity with [`Self::wait_event_with_flags`]
+    /// (`cudaStreamWaitEvent` flags).
+    ///
+    /// Unknown bits are Invalid `"event wait flags"`. Capture-legal. Distinct
+    /// from [`Self::stream_wait_event`] (default flags) and
+    /// [`Self::wait_event_external`]. This VM does not invent
+    /// `cuEventElapsedTime` this slice (`event_elapsed_ns` stays).
+    pub fn stream_wait_event_with_flags(
+        &mut self,
+        device: DeviceId,
+        event: EventId,
+        stream: StreamId,
+        flags: u32,
+    ) -> Result<OpId, SimError> {
+        self.wait_event_with_flags(device, event, stream, flags)
+    }
+
     fn wait_event_flags(
         &mut self,
         device: DeviceId,
