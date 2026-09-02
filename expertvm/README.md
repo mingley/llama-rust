@@ -560,6 +560,8 @@ handle; no Engine flag).
 no `CUlibrary` kernel list; no Engine flag).
 `gpu-sim` `library_enumerate_kernels` is `cuLibraryEnumerateKernels` (Invalid;
 no `CUlibrary` kernel list; no Engine flag).
+`gpu-sim` `kernel_get_library` is `cuKernelGetLibrary` (Invalid; no
+`CUkernel` / `CUlibrary`; no Engine flag).
 `gpu-sim` `kernel_get_function` is `cuKernelGetFunction` (Invalid; no
 `CUkernel` / `CUfunction`; no Engine flag).
 `gpu-sim` `kernel_get_param_info` is `cuKernelGetParamInfo` (Invalid; no
