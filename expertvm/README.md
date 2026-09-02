@@ -795,6 +795,7 @@ compiled kernel exists; no Engine flag).
 `gpu-sim` `device_set_mempool` is `cuDeviceSetMemPool` (identity with `set_device_mempool`; no Engine flag).
 `gpu-sim` `mem_pool_create` is `cuMemPoolCreate` (identity with `create_pool`; no Engine flag).
 `gpu-sim` `mem_pool_create_shareable` is `cuMemPoolCreate` POSIX (identity with `create_shareable_pool`; no Engine flag).
+`gpu-sim` `mem_pool_create_with_props` is `cuMemPoolCreate` with props (identity with `create_pool_with_props`; no Engine flag).
 `gpu-sim` `mem_alloc` is `cuMemAlloc` (identity with `malloc`; no Engine flag).
 `gpu-sim` `mem_free` is `cuMemFree` (identity with `free_sync`; no Engine flag).
 `gpu-sim` `mem_free_host` is `cuMemFreeHost` (identity with `free_host_pinned`; no Engine flag).
@@ -1114,6 +1115,7 @@ compiled kernel exists; no Engine flag).
 `gpu-sim` `device_set_mempool` is `cuDeviceSetMemPool` (identity with `set_device_mempool`; no Engine flag).
 `gpu-sim` `mem_pool_create` is `cuMemPoolCreate` (identity with `create_pool`; no Engine flag).
 `gpu-sim` `mem_pool_create_shareable` is `cuMemPoolCreate` POSIX (identity with `create_shareable_pool`; no Engine flag).
+`gpu-sim` `mem_pool_create_with_props` is `cuMemPoolCreate` with props (identity with `create_pool_with_props`; no Engine flag).
 `gpu-sim` `func_is_loaded` is `cuFuncIsLoaded` (`false` until a compiled
 kernel exists; no Engine flag).
 `gpu-sim` `func_load` is `cuFuncLoad` (Invalid; no compiled kernel; no

@@ -9794,7 +9794,12 @@ model, do not celebrate the sim.
       `mem_pool_create`. This VM does not invent occupancy SM counts, Engine `--mem-pool-create-shareable`,
       or `cudaChooseDevice`. `gpu-profile capture` is still refused. Dual
       score still has no `$/M tokens`.
-1107. [ ] Next numbered PLAN item after 1106 is the next `gpu-sim` / Engine /
+1107. [x] `gpu-sim` `Sim::mem_pool_create_with_props` is
+      `cuMemPoolCreate` with props. Identity with `create_pool_with_props` (`cudaMemPoolCreate` with `MemPoolProps`). Capture refused. Distinct from
+      `mem_pool_create_shareable`. This VM does not invent occupancy SM counts, Engine `--mem-pool-create-with-props`,
+      or `cudaChooseDevice`. `gpu-profile capture` is still refused. Dual
+      score still has no `$/M tokens`.
+1108. [ ] Next numbered PLAN item after 1107 is the next `gpu-sim` / Engine /
     serve / expertvm mechanical API that is still missing, or the next official
     decode family. Prefer remaining CUDA-shaped twins over more
     OpenAI HTTP veneer. Do not invent F32 `output.scale`. Do not invent a
@@ -11678,6 +11683,11 @@ model, do not celebrate the sim.
     occupancy SM counts this slice. Do not reverse MemPoolCreate POSIX identity with create_shareable_pool.
     Do not invent `create_pool_with_props` as `mem_pool_create_shareable`.
     Do not invent `cuMemPoolDestroy` as `mem_pool_create_shareable`.
+    Do not invent a second `cuMemPoolCreate` with props / `mem_pool_create_with_props`.
+    Do not invent Engine `--mem-pool-create-with-props`. Do not invent
+    occupancy SM counts this slice. Do not reverse MemPoolCreate props identity with create_pool_with_props.
+    Do not invent `cuMemPoolDestroy` as `mem_pool_create_with_props`.
+    Do not invent `destroy_pool` as `mem_pool_create_with_props`.
     Do not invent a second `cudaStreamAddCallback`.
     Do not invent Engine `--stream-callback` (same wall as second live
     `cudaLaunchHostFunc` after miss DMA).
@@ -13597,6 +13607,11 @@ model, do not celebrate the sim.
     this slice. Do not reverse MemPoolCreate POSIX identity with create_shareable_pool.
     Do not wrap `create_shareable_pool` as `mem_pool_create_shareable`.
     Do not wrap `create_pool_with_props` as `mem_pool_create_shareable`.
+    Do not invent a second `mem_pool_create_with_props` API. Do not invent
+    Engine `--mem-pool-create-with-props-identity`. Do not invent a mem-pool-destroy
+    this slice. Do not reverse MemPoolCreate props identity with create_pool_with_props.
+    Do not wrap `create_pool_with_props` as `mem_pool_create_with_props`.
+    Do not wrap `destroy_pool` as `mem_pool_create_with_props`.
     Do not invent a second DeviceLaunch in-flight destroy-complete check or Engine
     `--device-launch-destroy`. Do not abort an in-flight DeviceLaunch when
     `destroy_graph` succeeds. Do not delay destroy of an idle exec. Do not invent
@@ -15671,6 +15686,9 @@ model, do not celebrate the sim.
     Do not invent a second `mem_pool_create_shareable` method. Do not
     invent Engine `--cu-mem-pool-create-shareable`. Do not reverse wrapping
     cuMemPoolCreate POSIX identity. Do not wrap `create_pool_with_props` as `mem_pool_create_shareable`.
+    Do not invent a second `mem_pool_create_with_props` method. Do not
+    invent Engine `--cu-mem-pool-create-with-props`. Do not reverse wrapping
+    cuMemPoolCreate props identity. Do not wrap `destroy_pool` as `mem_pool_create_with_props`.
     Do not
     spend the next item on an OpenAI-compatible HTTP veneer.
 

@@ -16178,7 +16178,6 @@ impl Sim {
     /// [`Self::create_shareable_pool`] (`cudaMemPoolCreate` POSIX-FD).
     ///
     /// Capture refused. Distinct from [`Self::mem_pool_create`].
-    /// This VM does not invent occupancy SM counts this slice.
     pub fn mem_pool_create_shareable(&mut self, device: DeviceId) -> Result<PoolId, SimError> {
         self.create_shareable_pool(device)
     }
@@ -16194,6 +16193,8 @@ impl Sim {
     /// [`MemPoolProps::usage`] must be [`MemHandleUsage::NONE`] (`"pool usage"`;
     /// hardware decompress is not modeled). Typed
     /// helpers stay. Capture cannot include it.
+    /// Driver `cuMemPoolCreate` with props is [`Self::mem_pool_create_with_props`].
+    /// Identity wrap [`Self::mem_pool_create_with_props`].
     pub fn create_pool_with_props(&mut self, props: MemPoolProps) -> Result<PoolId, SimError> {
         if props.alloc_type != MemAllocationType::PINNED {
             return Err(SimError::Invalid {
@@ -16223,6 +16224,15 @@ impl Sim {
         let id = self.insert_pool(device, shareable)?;
         self.pool_mut(id)?.max_size = props.max_size;
         Ok(id)
+    }
+
+    /// `cuMemPoolCreate` with props. Identity with
+    /// [`Self::create_pool_with_props`] (`cudaMemPoolCreate` with [`MemPoolProps`]).
+    ///
+    /// Capture refused. Distinct from [`Self::mem_pool_create_shareable`].
+    /// This VM does not invent occupancy SM counts this slice.
+    pub fn mem_pool_create_with_props(&mut self, props: MemPoolProps) -> Result<PoolId, SimError> {
+        self.create_pool_with_props(props)
     }
 
     fn insert_pool(&mut self, device: DeviceId, shareable: bool) -> Result<PoolId, SimError> {
