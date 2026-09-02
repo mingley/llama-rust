@@ -719,6 +719,8 @@ no `CUtexref` filtering; no Engine flag).
 (Invalid; no `CUarray` device-to-array copy; no Engine flag).
 `gpu-sim` `memcpy_ato_d` is `cuMemcpyAtoD`
 (Invalid; no `CUarray` array-to-device copy; no Engine flag).
+`gpu-sim` `memcpy_hto_a` is `cuMemcpyHtoA`
+(Invalid; no `CUarray` host-to-array copy; no Engine flag).
 `gpu-sim` `mipmapped_array_create` is `cuMipmappedArrayCreate` (Invalid;
 CUDA mipmapped arrays are not modeled; no Engine flag).
 `gpu-sim` `mipmapped_array_get_level` is `cuMipmappedArrayGetLevel`
