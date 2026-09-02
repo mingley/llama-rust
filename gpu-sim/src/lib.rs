@@ -1085,6 +1085,8 @@
 //! `"module unload"`). Query; legal during capture. No Engine `--module-unload`.
 //! [`module_get_function`](Sim::module_get_function) is `cuModuleGetFunction` (always Invalid
 //! `"module function"`). Query; legal during capture. No Engine `--module-function`.
+//! [`module_get_global`](Sim::module_get_global) is `cuModuleGetGlobal` (always Invalid
+//! `"module global"`). Query; legal during capture. No Engine `--module-global`.
 //! [`library_load_data`](Sim::library_load_data) is `cuLibraryLoadData`
 //! (always Invalid `"cuda library"`). Query; legal during capture. No Engine `--library-load`.
 //! [`library_load_from_file`](Sim::library_load_from_file) is
@@ -19087,6 +19089,56 @@ mod tests {
             Err(SimError::Invalid { why }) => {
                 assert!(why.contains("module unload"), "{why}");
                 assert!(!why.contains("module function"), "{why}");
+            }
+            other => panic!("{other:?}"),
+        }
+        match sim.module_get_global(d) {
+            Err(SimError::Invalid { why }) => {
+                assert!(why.contains("module global"), "{why}");
+                assert!(!why.contains("module function"), "{why}");
+            }
+            other => panic!("{other:?}"),
+        }
+        assert_eq!(sim.module_get_loading_mode(), ModuleLoadingMode::Eager);
+    }
+
+    #[test]
+    fn module_get_global_is_unsupported() {
+        let mut sim = Sim::new(h100());
+        let d = DeviceId(0);
+        match sim.module_get_global(d) {
+            Err(SimError::Invalid { why }) => {
+                assert!(why.contains("module global"), "{why}");
+                assert!(!why.contains("library global"), "{why}");
+                assert!(!why.contains("module function"), "{why}");
+            }
+            other => panic!("{other:?}"),
+        }
+        sim.begin_capture(d, StreamId(0)).unwrap();
+        match sim.module_get_global(d) {
+            Err(SimError::Invalid { why }) => {
+                assert!(why.contains("module global"), "{why}");
+            }
+            other => panic!("{other:?}"),
+        }
+        let _g = sim.end_capture().unwrap();
+        match sim.module_get_global(DeviceId(99)) {
+            Err(SimError::Invalid { why }) => {
+                assert!(why.contains("device not in profile"), "{why}");
+            }
+            other => panic!("{other:?}"),
+        }
+        match sim.library_get_global(d) {
+            Err(SimError::Invalid { why }) => {
+                assert!(why.contains("library global"), "{why}");
+                assert!(!why.contains("module global"), "{why}");
+            }
+            other => panic!("{other:?}"),
+        }
+        match sim.module_get_function(d) {
+            Err(SimError::Invalid { why }) => {
+                assert!(why.contains("module function"), "{why}");
+                assert!(!why.contains("module global"), "{why}");
             }
             other => panic!("{other:?}"),
         }

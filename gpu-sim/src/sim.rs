@@ -21067,13 +21067,29 @@ impl Sim {
     /// Always Invalid `"module function"` (this VM has no `CUmodule` and
     /// no `CUfunction`). Distinct from [`Self::module_unload`] (why is not
     /// `"module unload"`) and from [`Self::kernel_get_function`] (why is
-    /// not `"kernel function"`) and from [`Self::func_get_module`].
+    /// not `"kernel function"`) and from [`Self::func_get_module`] and from
+    /// [`Self::module_get_global`].
     /// Unknown devices are Invalid `"device not in profile"`. Query; legal
     /// during capture.
     pub fn module_get_function(&self, device: DeviceId) -> Result<(), SimError> {
         let _gpu = self.profile.gpu(device)?;
         Err(SimError::Invalid {
             why: "module function",
+        })
+    }
+
+    /// `cuModuleGetGlobal`. CUDA modules are not modeled.
+    ///
+    /// Always Invalid `"module global"` (this VM has no `CUmodule`
+    /// device symbol). Distinct from [`Self::module_get_function`] (why is
+    /// not `"module function"`) and from [`Self::library_get_global`] (why
+    /// is not `"library global"`).
+    /// Unknown devices are Invalid `"device not in profile"`. Query; legal
+    /// during capture.
+    pub fn module_get_global(&self, device: DeviceId) -> Result<(), SimError> {
+        let _gpu = self.profile.gpu(device)?;
+        Err(SimError::Invalid {
+            why: "module global",
         })
     }
 

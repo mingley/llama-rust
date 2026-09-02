@@ -526,6 +526,8 @@ image; no Engine flag).
 handle; no Engine flag).
 `gpu-sim` `module_get_function` is `cuModuleGetFunction` (Invalid; no
 `CUmodule` function; no Engine flag).
+`gpu-sim` `module_get_global` is `cuModuleGetGlobal` (Invalid; no
+`CUmodule` device symbol; no Engine flag).
 `gpu-sim` `library_load_data` is `cuLibraryLoadData` (Invalid; no cubin /
 `CUlibrary`; no Engine flag).
 `gpu-sim` `library_load_from_file` is `cuLibraryLoadFromFile` (Invalid;

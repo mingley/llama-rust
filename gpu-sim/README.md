@@ -260,6 +260,7 @@ warp scheduler, L1, …   ← do not model
 | `module_load_data` is Invalid (no cubin image / `CUmodule`) | `cuModuleLoadData` |
 | `module_unload` is Invalid (no `CUmodule` handle) | `cuModuleUnload` |
 | `module_get_function` is Invalid (no `CUmodule` / `CUfunction`) | `cuModuleGetFunction` |
+| `module_get_global` is Invalid (no `CUmodule` device symbol) | `cuModuleGetGlobal` |
 | `library_load_data` is Invalid (no cubin / `CUlibrary`) | `cuLibraryLoadData` |
 | `library_load_from_file` is Invalid (no cubin path / `CUlibrary`) | `cuLibraryLoadFromFile` |
 | `library_unload` is Invalid (no `CUlibrary` handle) | `cuLibraryUnload` |
@@ -1496,6 +1497,8 @@ Distinct from `module_load` and `library_load_data`. Query; legal during capture
 Distinct from `module_load` and `library_unload`. Query; legal during capture. No Engine `--module-unload`.
 `module_get_function` is `cuModuleGetFunction` (always Invalid `"module function"`; no cubin).
 Distinct from `kernel_get_function` and `func_get_module`. Query; legal during capture. No Engine `--module-function`.
+`module_get_global` is `cuModuleGetGlobal` (always Invalid `"module global"`; no cubin).
+Distinct from `library_get_global` and `module_get_function`. Query; legal during capture. No Engine `--module-global`.
 `library_load_data` is `cuLibraryLoadData` (always Invalid `"cuda library"`;
 no cubin / `CUlibrary`). Distinct from `module_get_loading_mode` and
 `func_get_module`. Query; legal during capture. No Engine `--library-load`.
