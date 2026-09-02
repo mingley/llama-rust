@@ -7966,7 +7966,14 @@ model, do not celebrate the sim.
     or `cudaChooseDevice`. `gpu-profile capture` is still refused. Dual
     score still has no `$/M tokens`.
 
-830. [ ] Next numbered PLAN item after 829 is the next `gpu-sim` / Engine /
+830. [x] `gpu-sim` `Sim::mem_prefetch` is
+    `cuMemPrefetchAsync`. Identity with `prefetch`
+    (`cudaMemPrefetchAsync`). Capture-legal (memcpy). Distinct from
+    `prefetch_with_flags`. This VM does not invent `cuMemPrefetchAsync_v2`, Engine `--mem-prefetch`,
+    or `cudaChooseDevice`. `gpu-profile capture` is still refused. Dual
+    score still has no `$/M tokens`.
+
+831. [ ] Next numbered PLAN item after 830 is the next `gpu-sim` / Engine /
     serve / expertvm mechanical API that is still missing, or the next official
     decode family. Prefer remaining CUDA-shaped twins over more
     OpenAI HTTP veneer. Do not invent F32 `output.scale`. Do not invent a
@@ -8947,6 +8954,9 @@ model, do not celebrate the sim.
     Do not invent a second `cuMemAdvise` / `mem_advise_n`.
     Do not invent Engine `--mem-advise-n`. Do not invent
     `cuMemPrefetchAsync` this slice. Do not reverse MemAdvise identity with mem_advise_with_size.
+    Do not invent a second `cuMemPrefetchAsync` / `mem_prefetch`.
+    Do not invent Engine `--mem-prefetch`. Do not invent
+    `cuMemPrefetchAsync_v2` this slice. Do not reverse Prefetch identity with prefetch.
     Do not invent a second `cudaStreamAddCallback`.
     Do not invent Engine `--stream-callback` (same wall as second live
     `cudaLaunchHostFunc` after miss DMA).
@@ -10007,6 +10017,9 @@ model, do not celebrate the sim.
     Do not invent a second `mem_advise_n` API. Do not invent
     Engine `--mem-advise-n-identity`. Do not invent a mem-prefetch
     this slice. Do not reverse MemAdvise identity with mem_advise_with_size.
+    Do not invent a second `mem_prefetch` API. Do not invent
+    Engine `--mem-prefetch-identity`. Do not invent a mem-prefetch-v2
+    this slice. Do not reverse Prefetch identity with prefetch.
     Do not invent a second DeviceLaunch in-flight destroy-complete check or Engine
     `--device-launch-destroy`. Do not abort an in-flight DeviceLaunch when
     `destroy_graph` succeeds. Do not delay destroy of an idle exec. Do not invent
@@ -11250,6 +11263,9 @@ model, do not celebrate the sim.
     Do not invent a second `mem_advise_n` method. Do not
     invent Engine `--cu-mem-advise`. Do not reverse wrapping
     cuMemAdvise identity.
+    Do not invent a second `mem_prefetch` method. Do not
+    invent Engine `--cu-mem-prefetch`. Do not reverse wrapping
+    cuMemPrefetchAsync identity.
     Do not
     spend the next item on an OpenAI-compatible HTTP veneer.
 

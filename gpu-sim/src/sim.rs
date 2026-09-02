@@ -14585,8 +14585,7 @@ impl Sim {
     /// `cuMemAdvise`. Identity with [`Self::mem_advise_with_size`]
     /// (`cudaMemAdvise` count).
     ///
-    /// Capture refused. Distinct from [`Self::mem_advise`]. This VM does not
-    /// invent `cuMemPrefetchAsync` this slice (`prefetch` stays).
+    /// Capture refused. Distinct from [`Self::mem_advise`].
     pub fn mem_advise_n(
         &mut self,
         alloc: AllocId,
@@ -16543,6 +16542,7 @@ impl Sim {
     ///
     /// Capture may record it (it is a memcpy). A kernel that first-touches
     /// managed memory calls this on the same stream before the GEMM.
+    /// Driver `cuMemPrefetchAsync` is [`Self::mem_prefetch`].
     pub fn prefetch(
         &mut self,
         device: DeviceId,
@@ -16551,6 +16551,21 @@ impl Sim {
     ) -> Result<OpId, SimError> {
         let size = self.alloc_ref(alloc)?.bytes;
         self.prefetch_with_size(device, alloc, size, stream)
+    }
+
+    /// `cuMemPrefetchAsync`. Identity with [`Self::prefetch`]
+    /// (`cudaMemPrefetchAsync`).
+    ///
+    /// Capture-legal (memcpy). Distinct from [`Self::prefetch_with_flags`].
+    /// This VM does not invent `cuMemPrefetchAsync_v2` this slice
+    /// (`prefetch_with_flags` stays).
+    pub fn mem_prefetch(
+        &mut self,
+        device: DeviceId,
+        alloc: AllocId,
+        stream: StreamId,
+    ) -> Result<OpId, SimError> {
+        self.prefetch(device, alloc, stream)
     }
 
     /// [`Self::prefetch`] with the CUDA `count` argument.

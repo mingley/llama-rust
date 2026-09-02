@@ -177,6 +177,7 @@ warp scheduler, L1, …   ← do not model
 | `mem_alloc_async` is identity with `alloc` | `cuMemAllocAsync` |
 | `mem_free_async` is identity with `free` | `cuMemFreeAsync` |
 | `mem_advise_n` is identity with `mem_advise_with_size` | `cuMemAdvise` |
+| `mem_prefetch` is identity with `prefetch` | `cuMemPrefetchAsync` |
 | `pointer_get_attributes` classifies Unregistered / Host / Device / Managed | `cudaPointerGetAttributes` |
 | `pointer_get_attribute` wraps type / mapped / pool / range / ordinal / start / buffer id / IPC / RDMA / handle types / VMM map / hw decompress 0 / VMM block id; SyncMemops is settable | `cuPointerGetAttribute` / `SetAttribute` |
 | `pointer_get_access_flags` is kernel residency on an explicit device (`MemAccessFlags`; enable_peer is D2D memcpy only) | `CU_POINTER_ATTRIBUTE_ACCESS_FLAGS` |
@@ -1965,6 +1966,7 @@ No Engine `--malloc-pitch-element`. `mem_alloc` is `cuMemAlloc` (identity with `
 `mem_alloc_async` is `cuMemAllocAsync` (identity with `alloc`). Capture-legal (graph mempool). Distinct from `mem_alloc`. No Engine `--mem-alloc-async`.
 `mem_free_async` is `cuMemFreeAsync` (identity with `free`). Capture-legal (graph mem free). Distinct from `mem_free`. No Engine `--mem-free-async`.
 `mem_advise_n` is `cuMemAdvise` (identity with `mem_advise_with_size`). Capture refused. Distinct from `mem_advise`. No Engine `--mem-advise-n`.
+`mem_prefetch` is `cuMemPrefetchAsync` (identity with `prefetch`). Capture-legal (memcpy). Distinct from `prefetch_with_flags`. No Engine `--mem-prefetch`.
 `mem_host_get_flags` is `cuMemHostGetFlags` (identity with `host_get_flags`). Query; legal during capture. No Engine `--mem-host-get-flags`.
 `mem_host_get_device_pointer` is `cuMemHostGetDevicePointer` (identity with `host_get_device_pointer_with_flags`). Query; legal during capture. No Engine `--mem-host-get-device-pointer`.
 `mem_host_register` is `cuMemHostRegister` (identity with `host_register_with_flags`). Capture refused. No Engine `--mem-host-register`.
@@ -1980,6 +1982,7 @@ No Engine `--malloc-pitch-element`. `mem_alloc` is `cuMemAlloc` (identity with `
 `mem_alloc_async` is `cuMemAllocAsync` (identity with `alloc`). Capture-legal (graph mempool). Distinct from `mem_alloc`. No Engine `--mem-alloc-async`.
 `mem_free_async` is `cuMemFreeAsync` (identity with `free`). Capture-legal (graph mem free). Distinct from `mem_free`. No Engine `--mem-free-async`.
 `mem_advise_n` is `cuMemAdvise` (identity with `mem_advise_with_size`). Capture refused. Distinct from `mem_advise`. No Engine `--mem-advise-n`.
+`mem_prefetch` is `cuMemPrefetchAsync` (identity with `prefetch`). Capture-legal (memcpy). Distinct from `prefetch_with_flags`. No Engine `--mem-prefetch`.
 `MemcpyOp` `height` / pitches are
 `cudaMemcpy2DAsync` (payload `width * height`). Origin fields are srcPos /
 dstPos (default 0). No Engine `--memcpy-origin`. `MemcpyOp` `src_lod` /
