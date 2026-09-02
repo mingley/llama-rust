@@ -5,6 +5,15 @@ Visible five-turn extract: [docs/chatgpt-share-6a920fe1.md](docs/chatgpt-share-6
 Complete share-API extract: [docs/chatgpt-share-6a920fe1/](docs/chatgpt-share-6a920fe1/).
 Work lands on `main`. No PRs.
 
+## Shipped 2026-09-02 — CUDA `cuEventCreate`
+
+`gpu-sim` `Sim::event_create` is `cuEventCreate`.
+Identity with `create_event` (`cudaEventCreate`). Timing enabled
+(default flags). Host-synchronous; capture cannot include it.
+Duplicate ids are Invalid. Distinct from `create_event_with_flags`.
+This VM does not invent `cuEventCreateWithFlags` or Engine `--event-create`.
+`gpu-profile capture` is still refused. Dual score still has no `$/M tokens`.
+
 ## Shipped 2026-09-02 — CUDA `cuEventDestroy`
 
 `gpu-sim` `Sim::event_destroy` is `cuEventDestroy`.

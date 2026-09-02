@@ -143,6 +143,7 @@ warp scheduler, L1, …   ← do not model
 | `query_event` is non-blocking | `cudaEventQuery` |
 | `event_query` is identity with `query_event` | `cuEventQuery` |
 | `event_destroy` is identity with `destroy_event` | `cuEventDestroy` |
+| `event_create` is identity with `create_event` | `cuEventCreate` |
 | `event_get_flags` is the create flags word | `cudaEventGetFlags` |
 | `event_get_id` is unique per event handle (`EventId + 1`) | `cuEventGetId` |
 | `pool_get_id` is unique per pool handle (`PoolId + 1`); graph-memory pools are legal | `cuMemPoolGetId` |
@@ -1090,6 +1091,7 @@ handle; not the caller-chosen `EventId`; query; legal during capture).
 never-recorded returns immediately; capture refused; the id may be created
 again).
 `event_destroy` is `cuEventDestroy` (identity with `destroy_event`). Host-sync; capture refused. No Engine `--event-destroy`.
+`event_create` is `cuEventCreate` (identity with `create_event`, default flags). Host-sync; capture refused. No Engine `--event-create`.
 `query_stream` is `cudaStreamQuery` (unknown device is semantic; a busy
 stream is `Ok(false)`; the clock does not advance).
 `stream_query` is `cuStreamQuery` (identity with `query_stream`). Capturing stream is Invalid. No Engine `--stream-query`.

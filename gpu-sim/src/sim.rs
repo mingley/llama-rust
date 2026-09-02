@@ -2850,6 +2850,16 @@ impl Sim {
         self.create_event_with_flags(event, EventCreateFlags::DEFAULT)
     }
 
+    /// `cuEventCreate`. Identity with [`Self::create_event`] (`cudaEventCreate`).
+    ///
+    /// Timing enabled (default flags). Host-synchronous. Capture cannot include
+    /// it. Duplicate ids are Invalid. Distinct from
+    /// [`Self::create_event_with_flags`]. This VM does not invent
+    /// `cuEventCreateWithFlags` this slice (`create_event_with_flags` stays).
+    pub fn event_create(&mut self, event: EventId) -> Result<(), SimError> {
+        self.create_event(event)
+    }
+
     /// `cudaEventCreateWithFlags(..., cudaEventDisableTiming)`.
     ///
     /// Record / wait / query still work. [`Self::event_elapsed_ns`] is

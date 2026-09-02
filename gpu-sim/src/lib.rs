@@ -472,6 +472,8 @@
 //! [`Sim::create_event_with_flags`] is `cudaEventCreateWithFlags`
 //! ([`EventCreateFlags::DISABLE_TIMING`] / [`EventCreateFlags::INTERPROCESS`] /
 //! [`EventCreateFlags::BLOCKING_SYNC`]; Interprocess requires DisableTiming).
+//! [`event_create`](Sim::event_create) is `cuEventCreate` (identity with
+//! [`create_event`](Sim::create_event), default flags). Host-sync; capture refused. No Engine `--event-create`.
 //! [`Sim::event_get_flags`] is `cudaEventGetFlags` (query; legal during capture).
 //! [`Sim::event_get_id`] is `cuEventGetId` / `cudaEventGetId` (query; legal
 //! during capture; distinct from the caller-chosen [`EventId`] handle).
@@ -32498,6 +32500,39 @@ mod tests {
         let _g = sim.end_capture().unwrap();
         sim.event_destroy(ev).unwrap();
         sim.free_sync(a).unwrap();
+    }
+
+    #[test]
+    fn event_create_is_cu_event_create() {
+        let mut sim = Sim::new(h100());
+        let d = DeviceId(0);
+        let s = StreamId(0);
+        let ev = EventId(4);
+        sim.event_create(ev).unwrap();
+        assert!(!sim.event_query(ev).unwrap());
+        match sim.event_create(ev) {
+            Err(SimError::Invalid { why }) => assert!(why.contains("already"), "{why}"),
+            other => panic!("{other:?}"),
+        }
+        match sim.create_event(ev) {
+            Err(SimError::Invalid { why }) => assert!(why.contains("already"), "{why}"),
+            other => panic!("{other:?}"),
+        }
+        sim.event_destroy(ev).unwrap();
+        sim.create_event(ev).unwrap();
+        sim.event_destroy(ev).unwrap();
+        sim.event_create(ev).unwrap();
+        sim.begin_capture(d, s).unwrap();
+        match sim.event_create(EventId(5)) {
+            Err(SimError::Invalid { why }) => assert!(why.contains("capture"), "{why}"),
+            other => panic!("{other:?}"),
+        }
+        match sim.create_event(EventId(5)) {
+            Err(SimError::Invalid { why }) => assert!(why.contains("capture"), "{why}"),
+            other => panic!("{other:?}"),
+        }
+        let _g = sim.end_capture().unwrap();
+        sim.event_destroy(ev).unwrap();
     }
 
     #[test]
