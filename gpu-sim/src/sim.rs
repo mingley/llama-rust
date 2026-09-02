@@ -11145,8 +11145,7 @@ impl Sim {
     /// [`Self::graph_add_dependencies`] (`cudaGraphAddDependencies`).
     ///
     /// Capture refused. Distinct from
-    /// [`Self::graph_add_dependencies_n`]. This VM does not invent
-    /// occupancy SM counts this slice.
+    /// [`Self::graph_add_dependencies_n`].
     pub fn add_graph_dependencies(
         &mut self,
         graph: GraphId,
@@ -11160,7 +11159,9 @@ impl Sim {
     ///
     /// All-or-nothing: a cycle or out-of-range index adds nothing. Duplicate
     /// edges are a no-op. Empty `edges` is success. Capture cannot include it.
-    /// Illegal on an instantiated exec.
+    /// Illegal on an instantiated exec. Driver
+    /// `cuGraphAddDependencies` of pairs is
+    /// [`Self::add_graph_dependencies_n`].
     pub fn graph_add_dependencies_n(
         &mut self,
         graph: GraphId,
@@ -11205,6 +11206,21 @@ impl Sim {
             dst.deps = src.deps;
         }
         Ok(())
+    }
+
+    /// `cuGraphAddDependencies` of pairs. Identity with
+    /// [`Self::graph_add_dependencies_n`] (`cudaGraphAddDependencies` of
+    /// `numDependencies` from/to pairs).
+    ///
+    /// Capture refused. Distinct from
+    /// [`Self::add_graph_dependencies`]. This VM does not invent
+    /// occupancy SM counts this slice.
+    pub fn add_graph_dependencies_n(
+        &mut self,
+        graph: GraphId,
+        edges: &[(usize, usize)],
+    ) -> Result<(), SimError> {
+        self.graph_add_dependencies_n(graph, edges)
     }
 
     /// `cudaGraphAddDependencies` with [`GraphEdgeData`] (`from`, `to`, data).

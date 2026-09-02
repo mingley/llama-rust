@@ -538,6 +538,9 @@
 //! [`add_graph_dependencies`](Sim::add_graph_dependencies) is `cuGraphAddDependencies` (identity with
 //! [`graph_add_dependencies`](Sim::graph_add_dependencies)). Capture refused. Distinct from
 //! [`graph_add_dependencies_n`](Sim::graph_add_dependencies_n). No Engine `--graph-add-dependencies`.
+//! [`add_graph_dependencies_n`](Sim::add_graph_dependencies_n) is `cuGraphAddDependencies` of pairs (identity with
+//! [`graph_add_dependencies_n`](Sim::graph_add_dependencies_n)). Capture refused. Distinct from
+//! [`add_graph_dependencies`](Sim::add_graph_dependencies). No Engine `--graph-add-dependencies-n`.
 //! [`Sim::ipc_get_event`] / [`ipc_open_event`](Sim::ipc_open_event) are
 //! `cudaIpcGetEventHandle` / `cudaIpcOpenEventHandle` (interprocess events).
 //! [`Sim::create_shareable_pool`] is `cudaMemPoolCreate` with a POSIX-FD handle
@@ -1100,6 +1103,9 @@
 //! [`add_graph_dependencies`](Sim::add_graph_dependencies) is `cuGraphAddDependencies` (identity with
 //! [`graph_add_dependencies`](Sim::graph_add_dependencies)). Capture refused. Distinct from
 //! [`graph_add_dependencies_n`](Sim::graph_add_dependencies_n). No Engine `--graph-add-dependencies`.
+//! [`add_graph_dependencies_n`](Sim::add_graph_dependencies_n) is `cuGraphAddDependencies` of pairs (identity with
+//! [`graph_add_dependencies_n`](Sim::graph_add_dependencies_n)). Capture refused. Distinct from
+//! [`add_graph_dependencies`](Sim::add_graph_dependencies). No Engine `--graph-add-dependencies-n`.
 //! [`HardwareProfile::host_pin_bytes`] caps `cudaMallocHost` / `cudaHostRegister`.
 //! [`Sim::idle_until`] drains, then jumps the virtual clock (open-loop arrivals).
 //! [`Sim::event_elapsed_ns`] is `cudaEventElapsedTime` in nanoseconds.
@@ -1530,6 +1536,9 @@
 //! [`add_graph_dependencies`](Sim::add_graph_dependencies) is `cuGraphAddDependencies` (identity with
 //! [`graph_add_dependencies`](Sim::graph_add_dependencies)). Capture refused. Distinct from
 //! [`graph_add_dependencies_n`](Sim::graph_add_dependencies_n). No Engine `--graph-add-dependencies`.
+//! [`add_graph_dependencies_n`](Sim::add_graph_dependencies_n) is `cuGraphAddDependencies` of pairs (identity with
+//! [`graph_add_dependencies_n`](Sim::graph_add_dependencies_n)). Capture refused. Distinct from
+//! [`add_graph_dependencies`](Sim::add_graph_dependencies). No Engine `--graph-add-dependencies-n`.
 //! [`mem_host_get_flags`](Sim::mem_host_get_flags) is `cuMemHostGetFlags` (identity with
 //! [`host_get_flags`](Sim::host_get_flags)). Query; legal during capture. No Engine `--mem-host-get-flags`.
 //! [`mem_host_get_device_pointer`](Sim::mem_host_get_device_pointer) is `cuMemHostGetDevicePointer` (identity with
@@ -1926,6 +1935,9 @@
 //! [`add_graph_dependencies`](Sim::add_graph_dependencies) is `cuGraphAddDependencies` (identity with
 //! [`graph_add_dependencies`](Sim::graph_add_dependencies)). Capture refused. Distinct from
 //! [`graph_add_dependencies_n`](Sim::graph_add_dependencies_n). No Engine `--graph-add-dependencies`.
+//! [`add_graph_dependencies_n`](Sim::add_graph_dependencies_n) is `cuGraphAddDependencies` of pairs (identity with
+//! [`graph_add_dependencies_n`](Sim::graph_add_dependencies_n)). Capture refused. Distinct from
+//! [`add_graph_dependencies`](Sim::add_graph_dependencies). No Engine `--graph-add-dependencies-n`.
 //! [`Sim::pointer_get_attributes`] is `cudaPointerGetAttributes`.
 //! [`pointer_set_attribute`](Sim::pointer_set_attribute) /
 //! [`pointer_get_attribute`](Sim::pointer_get_attribute) are
@@ -2729,6 +2741,9 @@
 //! [`add_graph_dependencies`](Sim::add_graph_dependencies) is `cuGraphAddDependencies` (identity with
 //! [`graph_add_dependencies`](Sim::graph_add_dependencies)). Capture refused. Distinct from
 //! [`graph_add_dependencies_n`](Sim::graph_add_dependencies_n). No Engine `--graph-add-dependencies`.
+//! [`add_graph_dependencies_n`](Sim::add_graph_dependencies_n) is `cuGraphAddDependencies` of pairs (identity with
+//! [`graph_add_dependencies_n`](Sim::graph_add_dependencies_n)). Capture refused. Distinct from
+//! [`add_graph_dependencies`](Sim::add_graph_dependencies). No Engine `--graph-add-dependencies-n`.
 //! [`Sim::stream_get_device`] is `cudaStreamGetDevice` / `cuStreamGetDevice`
 //! (the device of the stream; green-ctx streams return the ctx create
 //! device). Query; legal during capture. Distinct from
@@ -2961,6 +2976,9 @@
 //! [`add_graph_dependencies`](Sim::add_graph_dependencies) is `cuGraphAddDependencies` (identity with
 //! [`graph_add_dependencies`](Sim::graph_add_dependencies)). Capture refused. Distinct from
 //! [`graph_add_dependencies_n`](Sim::graph_add_dependencies_n). No Engine `--graph-add-dependencies`.
+//! [`add_graph_dependencies_n`](Sim::add_graph_dependencies_n) is `cuGraphAddDependencies` of pairs (identity with
+//! [`graph_add_dependencies_n`](Sim::graph_add_dependencies_n)). Capture refused. Distinct from
+//! [`add_graph_dependencies`](Sim::add_graph_dependencies). No Engine `--graph-add-dependencies-n`.
 //! [`set_stream_access_policy`](Sim::set_stream_access_policy) is
 //! `cudaStreamAttributeAccessPolicyWindow`: [`kernel`](Sim::kernel) /
 //! [`kernel_bufs`](Sim::kernel_bufs) inherit it; [`kernel_with`](Sim::kernel_with)
@@ -3678,6 +3696,9 @@
 //! [`add_graph_dependencies`](Sim::add_graph_dependencies) is `cuGraphAddDependencies` (identity with
 //! [`graph_add_dependencies`](Sim::graph_add_dependencies)). Capture refused. Distinct from
 //! [`graph_add_dependencies_n`](Sim::graph_add_dependencies_n). No Engine `--graph-add-dependencies`.
+//! [`add_graph_dependencies_n`](Sim::add_graph_dependencies_n) is `cuGraphAddDependencies` of pairs (identity with
+//! [`graph_add_dependencies_n`](Sim::graph_add_dependencies_n)). Capture refused. Distinct from
+//! [`add_graph_dependencies`](Sim::add_graph_dependencies). No Engine `--graph-add-dependencies-n`.
 //! [`Sim::set_stream_priority`] is the priority-only helper;
 //! [`stream_create_with_priority`](Sim::stream_create_with_priority) is
 //! `cudaStreamCreateWithPriority` (flags plus priority; clamped to
@@ -3928,6 +3949,9 @@
 //! [`add_graph_dependencies`](Sim::add_graph_dependencies) is `cuGraphAddDependencies` (identity with
 //! [`graph_add_dependencies`](Sim::graph_add_dependencies)). Capture refused. Distinct from
 //! [`graph_add_dependencies_n`](Sim::graph_add_dependencies_n). No Engine `--graph-add-dependencies`.
+//! [`add_graph_dependencies_n`](Sim::add_graph_dependencies_n) is `cuGraphAddDependencies` of pairs (identity with
+//! [`graph_add_dependencies_n`](Sim::graph_add_dependencies_n)). Capture refused. Distinct from
+//! [`add_graph_dependencies`](Sim::add_graph_dependencies). No Engine `--graph-add-dependencies-n`.
 //! [`destroy_stream`](Sim::destroy_stream) is `cudaStreamDestroy` (returns
 //! immediately; in-flight work still completes; NULL is Invalid; recreate
 //! while unfinished is `"stream in flight"`). Capture cannot include it.
@@ -4158,6 +4182,9 @@
 //! [`add_graph_dependencies`](Sim::add_graph_dependencies) is `cuGraphAddDependencies` (identity with
 //! [`graph_add_dependencies`](Sim::graph_add_dependencies)). Capture refused. Distinct from
 //! [`graph_add_dependencies_n`](Sim::graph_add_dependencies_n). No Engine `--graph-add-dependencies`.
+//! [`add_graph_dependencies_n`](Sim::add_graph_dependencies_n) is `cuGraphAddDependencies` of pairs (identity with
+//! [`graph_add_dependencies_n`](Sim::graph_add_dependencies_n)). Capture refused. Distinct from
+//! [`add_graph_dependencies`](Sim::add_graph_dependencies). No Engine `--graph-add-dependencies-n`.
 //! [`Sim::instantiate_graph`] is `cudaGraphInstantiate` (host-sync; returns a
 //! new exec id; first [`launch_graph`](Sim::launch_graph) of a definition
 //! creates a primary exec). Unused conditional handles are
@@ -4417,6 +4444,9 @@
 //! [`add_graph_dependencies`](Sim::add_graph_dependencies) is `cuGraphAddDependencies` (identity with
 //! [`graph_add_dependencies`](Sim::graph_add_dependencies)). Capture refused. Distinct from
 //! [`graph_add_dependencies_n`](Sim::graph_add_dependencies_n). No Engine `--graph-add-dependencies`.
+//! [`add_graph_dependencies_n`](Sim::add_graph_dependencies_n) is `cuGraphAddDependencies` of pairs (identity with
+//! [`graph_add_dependencies_n`](Sim::graph_add_dependencies_n)). Capture refused. Distinct from
+//! [`add_graph_dependencies`](Sim::add_graph_dependencies). No Engine `--graph-add-dependencies-n`.
 //! [`graph_kernel_node_get_priority`](Sim::graph_kernel_node_get_priority) /
 //! [`graph_kernel_node_set_priority`](Sim::graph_kernel_node_set_priority) /
 //! [`graph_kernel_node_copy_attributes`](Sim::graph_kernel_node_copy_attributes)
@@ -4635,6 +4665,9 @@
 //! [`add_graph_dependencies`](Sim::add_graph_dependencies) is `cuGraphAddDependencies` (identity with
 //! [`graph_add_dependencies`](Sim::graph_add_dependencies)). Capture refused. Distinct from
 //! [`graph_add_dependencies_n`](Sim::graph_add_dependencies_n). No Engine `--graph-add-dependencies`.
+//! [`add_graph_dependencies_n`](Sim::add_graph_dependencies_n) is `cuGraphAddDependencies` of pairs (identity with
+//! [`graph_add_dependencies_n`](Sim::graph_add_dependencies_n)). Capture refused. Distinct from
+//! [`add_graph_dependencies`](Sim::add_graph_dependencies). No Engine `--graph-add-dependencies-n`.
 //! [`graph_kernel_node_get_attribute`](Sim::graph_kernel_node_get_attribute) /
 //! [`graph_exec_kernel_node_get_attribute`](Sim::graph_exec_kernel_node_get_attribute) /
 //! [`graph_kernel_node_set_attribute`](Sim::graph_kernel_node_set_attribute) /
@@ -4859,6 +4892,9 @@
 //! [`add_graph_dependencies`](Sim::add_graph_dependencies) is `cuGraphAddDependencies` (identity with
 //! [`graph_add_dependencies`](Sim::graph_add_dependencies)). Capture refused. Distinct from
 //! [`graph_add_dependencies_n`](Sim::graph_add_dependencies_n). No Engine `--graph-add-dependencies`.
+//! [`add_graph_dependencies_n`](Sim::add_graph_dependencies_n) is `cuGraphAddDependencies` of pairs (identity with
+//! [`graph_add_dependencies_n`](Sim::graph_add_dependencies_n)). Capture refused. Distinct from
+//! [`add_graph_dependencies`](Sim::add_graph_dependencies). No Engine `--graph-add-dependencies-n`.
 //! Device-launch
 //! execs cannot attach programmatic or launch-completion events.
 //! [`kernel_pdl`](Sim::kernel_pdl) is `cudaLaunchKernelEx` PDL: a wait kernel
@@ -5211,6 +5247,9 @@
 //! [`add_graph_dependencies`](Sim::add_graph_dependencies) is `cuGraphAddDependencies` (identity with
 //! [`graph_add_dependencies`](Sim::graph_add_dependencies)). Capture refused. Distinct from
 //! [`graph_add_dependencies_n`](Sim::graph_add_dependencies_n). No Engine `--graph-add-dependencies`.
+//! [`add_graph_dependencies_n`](Sim::add_graph_dependencies_n) is `cuGraphAddDependencies` of pairs (identity with
+//! [`graph_add_dependencies_n`](Sim::graph_add_dependencies_n)). Capture refused. Distinct from
+//! [`add_graph_dependencies`](Sim::add_graph_dependencies). No Engine `--graph-add-dependencies-n`.
 //! [`graph_exec_memcpy_set_params`](Sim::graph_exec_memcpy_set_params) /
 //! [`graph_exec_memcpy_set_params_1d`](Sim::graph_exec_memcpy_set_params_1d) /
 //! [`graph_exec_memcpy_set_params_2d`](Sim::graph_exec_memcpy_set_params_2d) /
@@ -5427,6 +5466,9 @@
 //! [`add_graph_dependencies`](Sim::add_graph_dependencies) is `cuGraphAddDependencies` (identity with
 //! [`graph_add_dependencies`](Sim::graph_add_dependencies)). Capture refused. Distinct from
 //! [`graph_add_dependencies_n`](Sim::graph_add_dependencies_n). No Engine `--graph-add-dependencies`.
+//! [`add_graph_dependencies_n`](Sim::add_graph_dependencies_n) is `cuGraphAddDependencies` of pairs (identity with
+//! [`graph_add_dependencies_n`](Sim::graph_add_dependencies_n)). Capture refused. Distinct from
+//! [`add_graph_dependencies`](Sim::add_graph_dependencies). No Engine `--graph-add-dependencies-n`.
 //! [`get_graph_kernel_node_params`](Sim::get_graph_kernel_node_params) is `cuGraphKernelNodeGetParams` (identity with
 //! [`graph_kernel_get_params`](Sim::graph_kernel_get_params)). Query; legal during capture. Distinct from
 //! [`graph_exec_kernel_get_params`](Sim::graph_exec_kernel_get_params). No Engine `--graph-kernel-get-params`.
@@ -5622,6 +5664,9 @@
 //! [`add_graph_dependencies`](Sim::add_graph_dependencies) is `cuGraphAddDependencies` (identity with
 //! [`graph_add_dependencies`](Sim::graph_add_dependencies)). Capture refused. Distinct from
 //! [`graph_add_dependencies_n`](Sim::graph_add_dependencies_n). No Engine `--graph-add-dependencies`.
+//! [`add_graph_dependencies_n`](Sim::add_graph_dependencies_n) is `cuGraphAddDependencies` of pairs (identity with
+//! [`graph_add_dependencies_n`](Sim::graph_add_dependencies_n)). Capture refused. Distinct from
+//! [`add_graph_dependencies`](Sim::add_graph_dependencies). No Engine `--graph-add-dependencies-n`.
 //! [`graph_exec_kernel_get_params`](Sim::graph_exec_kernel_get_params) /
 //! [`graph_exec_memcpy_get_params`](Sim::graph_exec_memcpy_get_params) /
 //! [`graph_exec_memset_get_params`](Sim::graph_exec_memset_get_params) /
@@ -5808,6 +5853,9 @@
 //! [`add_graph_dependencies`](Sim::add_graph_dependencies) is `cuGraphAddDependencies` (identity with
 //! [`graph_add_dependencies`](Sim::graph_add_dependencies)). Capture refused. Distinct from
 //! [`graph_add_dependencies_n`](Sim::graph_add_dependencies_n). No Engine `--graph-add-dependencies`.
+//! [`add_graph_dependencies_n`](Sim::add_graph_dependencies_n) is `cuGraphAddDependencies` of pairs (identity with
+//! [`graph_add_dependencies_n`](Sim::graph_add_dependencies_n)). Capture refused. Distinct from
+//! [`add_graph_dependencies`](Sim::add_graph_dependencies). No Engine `--graph-add-dependencies-n`.
 //! [`get_graph_exec_kernel_node_params`](Sim::get_graph_exec_kernel_node_params) is `cuGraphExecKernelNodeGetParams` (identity with
 //! [`graph_exec_kernel_get_params`](Sim::graph_exec_kernel_get_params)). Query; legal during capture. Distinct from
 //! [`get_graph_kernel_node_params`](Sim::get_graph_kernel_node_params). No Engine `--graph-exec-kernel-get-params`.
@@ -6000,6 +6048,9 @@
 //! [`add_graph_dependencies`](Sim::add_graph_dependencies) is `cuGraphAddDependencies` (identity with
 //! [`graph_add_dependencies`](Sim::graph_add_dependencies)). Capture refused. Distinct from
 //! [`graph_add_dependencies_n`](Sim::graph_add_dependencies_n). No Engine `--graph-add-dependencies`.
+//! [`add_graph_dependencies_n`](Sim::add_graph_dependencies_n) is `cuGraphAddDependencies` of pairs (identity with
+//! [`graph_add_dependencies_n`](Sim::graph_add_dependencies_n)). Capture refused. Distinct from
+//! [`add_graph_dependencies`](Sim::add_graph_dependencies). No Engine `--graph-add-dependencies-n`.
 //! [`graph_exec_batch_mem_op_set_params`](Sim::graph_exec_batch_mem_op_set_params)
 //! is `cudaGraphExecBatchMemOpNodeSetParams` (id/offset/value; wait vs write,
 //! `bits32`, and compare stay on wait/write nodes;
@@ -26582,6 +26633,102 @@ mod tests {
             other => panic!("{other:?}"),
         }
         match eight.graph_add_dependencies(g1, 0, 1) {
+            Err(SimError::Invalid { why }) => assert!(why.contains("capture"), "{why}"),
+            other => panic!("{other:?}"),
+        }
+        let _cap = eight.end_capture().unwrap();
+    }
+
+    #[test]
+    fn add_graph_dependencies_n_is_cu_graph_add_dependencies_n() {
+        let mut sim = Sim::new(h100());
+        let d = DeviceId(0);
+        let s = StreamId(0);
+        match sim.add_graph_dependencies_n(GraphId(99), &[]) {
+            Err(SimError::Invalid { why }) => assert!(why.contains("unknown"), "{why}"),
+            other => panic!("{other:?}"),
+        }
+        match sim.graph_add_dependencies_n(GraphId(99), &[]) {
+            Err(SimError::Invalid { why }) => assert!(why.contains("unknown"), "{why}"),
+            other => panic!("{other:?}"),
+        }
+        let g = sim.create_graph(d, s).unwrap();
+        sim.graph_add_host_func_params(
+            g,
+            HostNodeParams {
+                fn_id: 7,
+                user_data: 42,
+            },
+        )
+        .unwrap();
+        sim.graph_add_host_func_params(
+            g,
+            HostNodeParams {
+                fn_id: 3,
+                user_data: 9,
+            },
+        )
+        .unwrap();
+        sim.graph_add_host_func_params(
+            g,
+            HostNodeParams {
+                fn_id: 1,
+                user_data: 2,
+            },
+        )
+        .unwrap();
+        sim.add_graph_dependencies_n(g, &[]).unwrap();
+        sim.add_graph_dependencies_n(g, &[(0, 1), (1, 2)]).unwrap();
+        sim.graph_add_dependencies_n(g, &[(0, 1), (1, 2)]).unwrap();
+        assert_eq!(sim.graph_node_deps(g, 1).unwrap(), vec![0]);
+        assert_eq!(sim.graph_node_deps(g, 2).unwrap(), vec![1]);
+        sim.begin_capture(d, s).unwrap();
+        match sim.add_graph_dependencies_n(g, &[(0, 1)]) {
+            Err(SimError::Invalid { why }) => assert!(why.contains("capture"), "{why}"),
+            other => panic!("{other:?}"),
+        }
+        match sim.graph_add_dependencies_n(g, &[(0, 1)]) {
+            Err(SimError::Invalid { why }) => assert!(why.contains("capture"), "{why}"),
+            other => panic!("{other:?}"),
+        }
+        let _cap = sim.end_capture().unwrap();
+        let exec = sim.graph_instantiate(g).unwrap();
+        match sim.add_graph_dependencies_n(exec, &[(0, 1)]) {
+            Err(SimError::Invalid { why }) => assert!(why.contains("instantiated"), "{why}"),
+            other => panic!("{other:?}"),
+        }
+        match sim.graph_add_dependencies_n(exec, &[(0, 1)]) {
+            Err(SimError::Invalid { why }) => assert!(why.contains("instantiated"), "{why}"),
+            other => panic!("{other:?}"),
+        }
+        let mut eight = Sim::new(HardwareProfile::example_8xh100_nvlink());
+        let g1 = eight.create_graph(DeviceId(1), s).unwrap();
+        eight
+            .graph_add_host_func_params(
+                g1,
+                HostNodeParams {
+                    fn_id: 5,
+                    user_data: 8,
+                },
+            )
+            .unwrap();
+        eight
+            .graph_add_host_func_params(
+                g1,
+                HostNodeParams {
+                    fn_id: 1,
+                    user_data: 2,
+                },
+            )
+            .unwrap();
+        eight.add_graph_dependencies_n(g1, &[(0, 1)]).unwrap();
+        assert_eq!(eight.graph_node_deps(g1, 1).unwrap(), vec![0]);
+        eight.begin_capture(DeviceId(1), s).unwrap();
+        match eight.add_graph_dependencies_n(g1, &[(0, 1)]) {
+            Err(SimError::Invalid { why }) => assert!(why.contains("capture"), "{why}"),
+            other => panic!("{other:?}"),
+        }
+        match eight.graph_add_dependencies_n(g1, &[(0, 1)]) {
             Err(SimError::Invalid { why }) => assert!(why.contains("capture"), "{why}"),
             other => panic!("{other:?}"),
         }
