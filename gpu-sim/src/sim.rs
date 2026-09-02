@@ -23966,7 +23966,6 @@ impl Sim {
     /// (`cudaStreamAttachMemAsync`).
     ///
     /// Capture refused. Distinct from [`Self::stream_attach_with_flags`].
-    /// This VM does not invent `stream_attach_n` this slice.
     pub fn stream_attach_mem(
         &mut self,
         device: DeviceId,
@@ -23983,6 +23982,7 @@ impl Sim {
     /// must equal the allocation bytes. Other sizes Invalid `"attach size"`.
     /// Partial attach is not modeled. Typed [`Self::stream_attach`] stays
     /// (`length` 0). Capture cannot include it.
+    /// Driver `cuStreamAttachMemAsync` length is [`Self::stream_attach_n`].
     pub fn stream_attach_with_size(
         &mut self,
         device: DeviceId,
@@ -24008,6 +24008,22 @@ impl Sim {
             });
         }
         self.submit(device, stream, Kind::Attach { id, flags })
+    }
+
+    /// `cuStreamAttachMemAsync` length. Identity with
+    /// [`Self::stream_attach_with_size`] (`cudaStreamAttachMemAsync` length).
+    ///
+    /// Capture refused. Distinct from [`Self::stream_attach_mem`].
+    /// This VM does not invent `stream_attach_flags` this slice.
+    pub fn stream_attach_n(
+        &mut self,
+        device: DeviceId,
+        id: AllocId,
+        size: u64,
+        stream: StreamId,
+        flags: MemAttach,
+    ) -> Result<OpId, SimError> {
+        self.stream_attach_with_size(device, id, size, stream, flags)
     }
 
     /// `cudaStreamAttachMemAsync` with a flags word.

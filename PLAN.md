@@ -8057,7 +8057,14 @@ model, do not celebrate the sim.
     or `cudaChooseDevice`. `gpu-profile capture` is still refused. Dual
     score still has no `$/M tokens`.
 
-843. [ ] Next numbered PLAN item after 842 is the next `gpu-sim` / Engine /
+843. [x] `gpu-sim` `Sim::stream_attach_n` is
+    `cuStreamAttachMemAsync` length. Identity with `stream_attach_with_size`
+    (`cudaStreamAttachMemAsync` length). Capture refused. Distinct from
+    `stream_attach_mem`. This VM does not invent `stream_attach_flags`, Engine `--stream-attach-n`,
+    or `cudaChooseDevice`. `gpu-profile capture` is still refused. Dual
+    score still has no `$/M tokens`.
+
+844. [ ] Next numbered PLAN item after 843 is the next `gpu-sim` / Engine /
     serve / expertvm mechanical API that is still missing, or the next official
     decode family. Prefer remaining CUDA-shaped twins over more
     OpenAI HTTP veneer. Do not invent F32 `output.scale`. Do not invent a
@@ -9077,6 +9084,9 @@ model, do not celebrate the sim.
     Do not invent a second `cuStreamAttachMemAsync` / `stream_attach_mem`.
     Do not invent Engine `--stream-attach-mem`. Do not invent
     `stream_attach_n` this slice. Do not reverse AttachMem identity with stream_attach.
+    Do not invent a second `cuStreamAttachMemAsync` length / `stream_attach_n`.
+    Do not invent Engine `--stream-attach-n`. Do not invent
+    `stream_attach_flags` this slice. Do not reverse AttachN identity with stream_attach_with_size.
     Do not invent a second `cudaStreamAddCallback`.
     Do not invent Engine `--stream-callback` (same wall as second live
     `cudaLaunchHostFunc` after miss DMA).
@@ -10176,6 +10186,9 @@ model, do not celebrate the sim.
     Do not invent a second `stream_attach_mem` API. Do not invent
     Engine `--stream-attach-mem-identity`. Do not invent a stream-attach-n
     this slice. Do not reverse AttachMem identity with stream_attach.
+    Do not invent a second `stream_attach_n` API. Do not invent
+    Engine `--stream-attach-n-identity`. Do not invent a stream-attach-flags
+    this slice. Do not reverse AttachN identity with stream_attach_with_size.
     Do not invent a second DeviceLaunch in-flight destroy-complete check or Engine
     `--device-launch-destroy`. Do not abort an in-flight DeviceLaunch when
     `destroy_graph` succeeds. Do not delay destroy of an idle exec. Do not invent
@@ -11458,6 +11471,9 @@ model, do not celebrate the sim.
     Do not invent a second `stream_attach_mem` method. Do not
     invent Engine `--cu-stream-attach-mem`. Do not reverse wrapping
     cuStreamAttachMemAsync identity.
+    Do not invent a second `stream_attach_n` method. Do not
+    invent Engine `--cu-stream-attach-n`. Do not reverse wrapping
+    cuStreamAttachMemAsync length identity.
     Do not
     spend the next item on an OpenAI-compatible HTTP veneer.
 

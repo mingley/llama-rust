@@ -555,6 +555,7 @@ compiled kernel exists; no Engine flag).
 `gpu-sim` `mem_range_get_data` is `cuMemRangeGetAttribute` dataSize (identity with `mem_range_get_attribute_with_data_size`; no Engine flag).
 `gpu-sim` `mem_range_gets_data` is `cuMemRangeGetAttributes` dataSizes (identity with `mem_range_get_attributes_with_data_sizes`; no Engine flag).
 `gpu-sim` `stream_attach_mem` is `cuStreamAttachMemAsync` (identity with `stream_attach`; no Engine flag).
+`gpu-sim` `stream_attach_n` is `cuStreamAttachMemAsync` length (identity with `stream_attach_with_size`; no Engine flag).
 `gpu-sim` `func_is_loaded` is `cuFuncIsLoaded` (`false` until a compiled
 kernel exists; no Engine flag).
 `gpu-sim` `func_load` is `cuFuncLoad` (Invalid; no compiled kernel; no
