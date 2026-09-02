@@ -6593,8 +6593,7 @@ impl Sim {
     /// of the exec snapshot).
     ///
     /// Query; legal during capture. Distinct from
-    /// [`Self::get_graph_node_params`]. This VM does not invent
-    /// occupancy SM counts this slice.
+    /// [`Self::get_graph_node_params`].
     pub fn get_graph_exec_node_params(
         &self,
         exec: GraphId,
@@ -8699,7 +8698,9 @@ impl Sim {
     /// include it. Does not clear the upload flag (topology unchanged).
     /// [`Self::update_graph`] and typed ExecSetParams leave enable unchanged.
     /// Device-launch execs refuse this while [`Self::device_launch_graph`] is
-    /// in flight (Invalid `"device launch in flight"`). Getters stay.
+    /// in flight (Invalid `"device launch in flight"`). Getters stay. Driver
+    /// `cuGraphNodeSetEnabled` is
+    /// [`Self::set_graph_node_enabled`].
     pub fn graph_node_set_enabled(
         &mut self,
         exec: GraphId,
@@ -8733,6 +8734,21 @@ impl Sim {
         })?)?;
         step.enabled = enabled;
         Ok(())
+    }
+
+    /// `cuGraphNodeSetEnabled`. Identity with
+    /// [`Self::graph_node_set_enabled`] (`cudaGraphNodeSetEnabled`).
+    ///
+    /// Capture refused. Distinct from
+    /// [`Self::graph_node_get_enabled`]. This VM does not invent
+    /// occupancy SM counts this slice.
+    pub fn set_graph_node_enabled(
+        &mut self,
+        exec: GraphId,
+        node: usize,
+        enabled: bool,
+    ) -> Result<(), SimError> {
+        self.graph_node_set_enabled(exec, node, enabled)
     }
 
     /// `cudaGraphNodeGetEnabled` on an instantiated exec.
