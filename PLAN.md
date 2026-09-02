@@ -8498,7 +8498,14 @@ model, do not celebrate the sim.
     or `cudaChooseDevice`. `gpu-profile capture` is still refused. Dual
     score still has no `$/M tokens`.
 
-906. [ ] Next numbered PLAN item after 905 is the next `gpu-sim` / Engine /
+906. [x] `gpu-sim` `Sim::set_graph_exec_event_wait_node_event` is
+    `cuGraphExecEventWaitNodeSetEvent`. Identity with `graph_exec_event_wait_set_event`
+    (`cudaGraphExecEventWaitNodeSetEvent`). Capture refused. Distinct from
+    `set_graph_event_wait_node_event`. This VM does not invent occupancy SM counts, Engine `--graph-exec-event-wait-set-event`,
+    or `cudaChooseDevice`. `gpu-profile capture` is still refused. Dual
+    score still has no `$/M tokens`.
+
+907. [ ] Next numbered PLAN item after 906 is the next `gpu-sim` / Engine /
     serve / expertvm mechanical API that is still missing, or the next official
     decode family. Prefer remaining CUDA-shaped twins over more
     OpenAI HTTP veneer. Do not invent F32 `output.scale`. Do not invent a
@@ -9707,6 +9714,9 @@ model, do not celebrate the sim.
     Do not invent a second `cuGraphEventWaitNodeSetEvent` / `set_graph_event_wait_node_event`.
     Do not invent Engine `--graph-event-wait-set-event`. Do not invent
     occupancy SM counts this slice. Do not reverse SetGraphEventWaitNodeEvent identity with graph_event_wait_set_event.
+    Do not invent a second `cuGraphExecEventWaitNodeSetEvent` / `set_graph_exec_event_wait_node_event`.
+    Do not invent Engine `--graph-exec-event-wait-set-event`. Do not invent
+    occupancy SM counts this slice. Do not reverse SetGraphExecEventWaitNodeEvent identity with graph_exec_event_wait_set_event.
     Do not invent a second `cudaStreamAddCallback`.
     Do not invent Engine `--stream-callback` (same wall as second live
     `cudaLaunchHostFunc` after miss DMA).
@@ -10995,6 +11005,9 @@ model, do not celebrate the sim.
     Do not invent a second `set_graph_event_wait_node_event` API. Do not invent
     Engine `--graph-event-wait-set-event-identity`. Do not invent a graph-exec-event-wait-set-event
     this slice. Do not reverse SetGraphEventWaitNodeEvent identity with graph_event_wait_set_event.
+    Do not invent a second `set_graph_exec_event_wait_node_event` API. Do not invent
+    Engine `--graph-exec-event-wait-set-event-identity`. Do not invent a graph-event-record-get-event
+    this slice. Do not reverse SetGraphExecEventWaitNodeEvent identity with graph_exec_event_wait_set_event.
     Do not invent a second DeviceLaunch in-flight destroy-complete check or Engine
     `--device-launch-destroy`. Do not abort an in-flight DeviceLaunch when
     `destroy_graph` succeeds. Do not delay destroy of an idle exec. Do not invent
@@ -12466,6 +12479,9 @@ model, do not celebrate the sim.
     Do not invent a second `set_graph_event_wait_node_event` method. Do not
     invent Engine `--cu-graph-event-wait-set-event`. Do not reverse wrapping
     cuGraphEventWaitNodeSetEvent identity.
+    Do not invent a second `set_graph_exec_event_wait_node_event` method. Do not
+    invent Engine `--cu-graph-exec-event-wait-set-event`. Do not reverse wrapping
+    cuGraphExecEventWaitNodeSetEvent identity.
     Do not
     spend the next item on an OpenAI-compatible HTTP veneer.
 

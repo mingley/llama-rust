@@ -6157,8 +6157,7 @@ impl Sim {
     /// [`Self::graph_event_wait_set_event`] (`cudaGraphEventWaitNodeSetEvent`).
     ///
     /// Capture refused. Distinct from
-    /// [`Self::graph_event_wait_get_event`]. This VM does not invent
-    /// occupancy SM counts this slice.
+    /// [`Self::graph_event_wait_get_event`].
     pub fn set_graph_event_wait_node_event(
         &mut self,
         graph: GraphId,
@@ -7306,7 +7305,9 @@ impl Sim {
     ///
     /// Node `node` must already be an event-wait node. The event id may change;
     /// the External flag stays (topology). Pays `graph_set_params_ns` and
-    /// clears the upload flag. Capture cannot include it.
+    /// clears the upload flag. Capture cannot include it. Driver
+    /// `cuGraphExecEventWaitNodeSetEvent` is
+    /// [`Self::set_graph_exec_event_wait_node_event`].
     pub fn graph_exec_event_wait_set_event(
         &mut self,
         exec: GraphId,
@@ -7314,6 +7315,21 @@ impl Sim {
         event: EventId,
     ) -> Result<(), SimError> {
         self.graph_exec_event_set(exec, node, event, EventSetKind::Wait)
+    }
+
+    /// `cuGraphExecEventWaitNodeSetEvent`. Identity with
+    /// [`Self::graph_exec_event_wait_set_event`] (`cudaGraphExecEventWaitNodeSetEvent`).
+    ///
+    /// Capture refused. Distinct from
+    /// [`Self::set_graph_event_wait_node_event`]. This VM does not invent
+    /// occupancy SM counts this slice.
+    pub fn set_graph_exec_event_wait_node_event(
+        &mut self,
+        exec: GraphId,
+        node: usize,
+        event: EventId,
+    ) -> Result<(), SimError> {
+        self.graph_exec_event_wait_set_event(exec, node, event)
     }
 
     fn graph_exec_event_set(
