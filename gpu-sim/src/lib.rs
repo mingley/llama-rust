@@ -534,6 +534,8 @@
 //! [`host_register_with_flags`](Sim::host_register_with_flags)). Capture refused. No Engine `--mem-host-register`.
 //! [`mem_host_unregister`](Sim::mem_host_unregister) is `cuMemHostUnregister` (identity with
 //! [`host_unregister`](Sim::host_unregister)). Capture refused. No Engine `--mem-host-unregister`.
+//! [`mem_host_register_with_size`](Sim::mem_host_register_with_size) is `cuMemHostRegister` size (identity with
+//! [`host_register_with_size`](Sim::host_register_with_size)). Capture refused. No Engine `--mem-host-register-size`.
 //! [`Sim::pointer_get_attributes`] is `cudaPointerGetAttributes`.
 //! [`pointer_set_attribute`](Sim::pointer_set_attribute) /
 //! [`pointer_get_attribute`](Sim::pointer_get_attribute) are
@@ -33195,6 +33197,50 @@ mod tests {
         let _g = sim.end_capture().unwrap();
         sim.host_unregister(pageable).unwrap();
         sim.free_host(pageable).unwrap();
+    }
+
+    #[test]
+    fn mem_host_register_with_size_is_cu_mem_host_register_size() {
+        let mut sim = Sim::new(h100());
+        let d = DeviceId(0);
+        let s = StreamId(0);
+        match sim.mem_host_register_with_size(AllocId(99), 64) {
+            Err(SimError::UnknownAlloc { alloc }) => assert_eq!(alloc, AllocId(99)),
+            other => panic!("{other:?}"),
+        }
+        match sim.host_register_with_size(AllocId(99), 64) {
+            Err(SimError::UnknownAlloc { alloc }) => assert_eq!(alloc, AllocId(99)),
+            other => panic!("{other:?}"),
+        }
+        let h = sim.alloc_host(64).unwrap();
+        match sim.mem_host_register_with_size(h, 32) {
+            Err(SimError::Invalid { why }) => assert!(why.contains("register size"), "{why}"),
+            other => panic!("{other:?}"),
+        }
+        match sim.host_register_with_size(h, 32) {
+            Err(SimError::Invalid { why }) => assert!(why.contains("register size"), "{why}"),
+            other => panic!("{other:?}"),
+        }
+        sim.mem_host_register_with_size(h, 64).unwrap();
+        assert!(sim.is_host_registered(h).unwrap());
+        sim.mem_host_unregister(h).unwrap();
+        let a = sim.mem_alloc(d, 64).unwrap();
+        match sim.mem_host_register_with_size(a, 64) {
+            Err(SimError::Invalid { why }) => assert!(why.contains("pageable"), "{why}"),
+            other => panic!("{other:?}"),
+        }
+        sim.begin_capture(d, s).unwrap();
+        match sim.mem_host_register_with_size(h, 64) {
+            Err(SimError::Invalid { why }) => assert!(why.contains("capture"), "{why}"),
+            other => panic!("{other:?}"),
+        }
+        match sim.host_register_with_size(h, 64) {
+            Err(SimError::Invalid { why }) => assert!(why.contains("capture"), "{why}"),
+            other => panic!("{other:?}"),
+        }
+        let _g = sim.end_capture().unwrap();
+        sim.mem_free(a).unwrap();
+        sim.free_host(h).unwrap();
     }
 
     #[test]

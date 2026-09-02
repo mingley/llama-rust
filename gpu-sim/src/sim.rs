@@ -16740,6 +16740,16 @@ impl Sim {
         self.host_register_flags(id, Some(size), HostAllocFlags::DEFAULT)
     }
 
+    /// `cuMemHostRegister` size argument. Identity with
+    /// [`Self::host_register_with_size`] (`cudaHostRegister` size).
+    ///
+    /// `size` must equal the allocation bytes. Capture refused. Distinct from
+    /// [`Self::mem_host_register`] (flags; full size). This VM does not invent
+    /// `cuIpcGetMemHandle` this slice (`ipc_get` stays).
+    pub fn mem_host_register_with_size(&mut self, id: AllocId, size: u64) -> Result<(), SimError> {
+        self.host_register_with_size(id, size)
+    }
+
     /// `cudaHostRegisterMapped`: pin and map pageable host. Kernels may read it
     /// over PCIe without a device copy.
     pub fn host_register_mapped(&mut self, id: AllocId) -> Result<(), SimError> {

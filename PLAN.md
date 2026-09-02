@@ -7889,7 +7889,14 @@ model, do not celebrate the sim.
     or `cudaChooseDevice`. `gpu-profile capture` is still refused. Dual
     score still has no `$/M tokens`.
 
-819. [ ] Next numbered PLAN item after 818 is the next `gpu-sim` / Engine /
+819. [x] `gpu-sim` `Sim::mem_host_register_with_size` is
+    `cuMemHostRegister` size. Identity with `host_register_with_size`
+    (`cudaHostRegister` size). Capture refused. Distinct from
+    `mem_host_register`. This VM does not invent `cuIpcGetMemHandle`, Engine `--mem-host-register-size`,
+    or `cudaChooseDevice`. `gpu-profile capture` is still refused. Dual
+    score still has no `$/M tokens`.
+
+820. [ ] Next numbered PLAN item after 819 is the next `gpu-sim` / Engine /
     serve / expertvm mechanical API that is still missing, or the next official
     decode family. Prefer remaining CUDA-shaped twins over more
     OpenAI HTTP veneer. Do not invent F32 `output.scale`. Do not invent a
@@ -8837,6 +8844,9 @@ model, do not celebrate the sim.
     Do not invent a second `cuMemHostUnregister` / `mem_host_unregister`.
     Do not invent Engine `--mem-host-unregister`. Do not invent
     a register-size identity this slice. Do not reverse MemHostUnregister identity with host_unregister.
+    Do not invent a second `cuMemHostRegister` size / `mem_host_register_with_size`.
+    Do not invent Engine `--mem-host-register-size`. Do not invent
+    `cuIpcGetMemHandle` this slice. Do not reverse MemHostRegisterSize identity with host_register_with_size.
     Do not invent a second `cudaStreamAddCallback`.
     Do not invent Engine `--stream-callback` (same wall as second live
     `cudaLaunchHostFunc` after miss DMA).
@@ -9864,6 +9874,9 @@ model, do not celebrate the sim.
     Do not invent a second `mem_host_unregister` API. Do not invent
     Engine `--mem-host-unregister-identity`. Do not invent a register-size
     this slice. Do not reverse MemHostUnregister identity with host_unregister.
+    Do not invent a second `mem_host_register_with_size` API. Do not invent
+    Engine `--mem-host-register-size-identity`. Do not invent an ipc-get-mem
+    this slice. Do not reverse MemHostRegisterSize identity with host_register_with_size.
     Do not invent a second DeviceLaunch in-flight destroy-complete check or Engine
     `--device-launch-destroy`. Do not abort an in-flight DeviceLaunch when
     `destroy_graph` succeeds. Do not delay destroy of an idle exec. Do not invent
@@ -11074,6 +11087,9 @@ model, do not celebrate the sim.
     Do not invent a second `mem_host_unregister` method. Do not
     invent Engine `--cu-mem-host-unregister`. Do not reverse wrapping
     cuMemHostUnregister identity.
+    Do not invent a second `mem_host_register_with_size` method. Do not
+    invent Engine `--cu-mem-host-register-size`. Do not reverse wrapping
+    cuMemHostRegister size identity.
     Do not
     spend the next item on an OpenAI-compatible HTTP veneer.
 

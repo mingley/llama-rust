@@ -5,6 +5,14 @@ Visible five-turn extract: [docs/chatgpt-share-6a920fe1.md](docs/chatgpt-share-6
 Complete share-API extract: [docs/chatgpt-share-6a920fe1/](docs/chatgpt-share-6a920fe1/).
 Work lands on `main`. No PRs.
 
+## Shipped 2026-09-02 — CUDA `cuMemHostRegister` size
+
+`gpu-sim` `Sim::mem_host_register_with_size` is `cuMemHostRegister` size.
+Identity with `host_register_with_size` (`cudaHostRegister` size).
+Capture refused. Distinct from `mem_host_register`.
+This VM does not invent `cuIpcGetMemHandle` or Engine `--mem-host-register-size`.
+`gpu-profile capture` is still refused. Dual score still has no `$/M tokens`.
+
 ## Shipped 2026-09-02 — CUDA `cuMemHostUnregister`
 
 `gpu-sim` `Sim::mem_host_unregister` is `cuMemHostUnregister`.
