@@ -21905,6 +21905,20 @@ impl Sim {
         Err(SimError::Invalid { why: "memcpy atoh" })
     }
 
+    /// `cuMemcpyAtoA`. CUDA arrays are not modeled.
+    ///
+    /// Always Invalid `"memcpy atoa"` (this VM has no `CUarray`
+    /// array-to-array copy). Distinct from [`Self::memcpy_ato_h`]
+    /// (why is not `"memcpy atoh"`) and from
+    /// [`Self::array_create`] (why is not `"cuda array"`).
+    /// Unknown devices are Invalid `"device not in profile"`. Query; legal
+    /// during capture. This VM does not invent `cuMemcpyDtoAAsync`
+    /// this slice.
+    pub fn memcpy_ato_a(&self, device: DeviceId) -> Result<(), SimError> {
+        let _gpu = self.profile.gpu(device)?;
+        Err(SimError::Invalid { why: "memcpy atoa" })
+    }
+
     /// `cuLibraryLoadData`. CUDA libraries are not modeled.
     ///
     /// Always Invalid `"cuda library"` (this VM has no cubin or PTX and no

@@ -312,6 +312,7 @@ warp scheduler, L1, …   ← do not model
 | `memcpy_ato_d` is Invalid (no `CUarray` array-to-device copy) | `cuMemcpyAtoD` |
 | `memcpy_hto_a` is Invalid (no `CUarray` host-to-array copy) | `cuMemcpyHtoA` |
 | `memcpy_ato_h` is Invalid (no `CUarray` array-to-host copy) | `cuMemcpyAtoH` |
+| `memcpy_ato_a` is Invalid (no `CUarray` array-to-array copy) | `cuMemcpyAtoA` |
 | `library_load_data` is Invalid (no cubin / `CUlibrary`) | `cuLibraryLoadData` |
 | `library_load_from_file` is Invalid (no cubin path / `CUlibrary`) | `cuLibraryLoadFromFile` |
 | `library_unload` is Invalid (no `CUlibrary` handle) | `cuLibraryUnload` |
@@ -1683,6 +1684,8 @@ Distinct from `memcpy_dto_a` and `array_create`. Query; legal during capture. No
 Distinct from `memcpy_ato_d` and `array_create`. Query; legal during capture. No Engine `--memcpy-htoa`.
 `memcpy_ato_h` is `cuMemcpyAtoH` (always Invalid `"memcpy atoh"`; no `CUarray`).
 Distinct from `memcpy_hto_a` and `array_create`. Query; legal during capture. No Engine `--memcpy-atoh`.
+`memcpy_ato_a` is `cuMemcpyAtoA` (always Invalid `"memcpy atoa"`; no `CUarray`).
+Distinct from `memcpy_ato_h` and `array_create`. Query; legal during capture. No Engine `--memcpy-atoa`.
 `library_load_data` is `cuLibraryLoadData` (always Invalid `"cuda library"`;
 no cubin / `CUlibrary`). Distinct from `module_get_loading_mode` and
 `func_get_module`. Query; legal during capture. No Engine `--library-load`.
