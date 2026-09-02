@@ -531,6 +531,7 @@ compiled kernel exists; no Engine flag).
 `gpu-sim` `event_elapsed` is `cuEventElapsedTime` (identity with `event_elapsed_ns`; ns, not milliseconds; no Engine flag).
 `gpu-sim` `mem_get_info` is `cuMemGetInfo` (identity with `mem_info`; no Engine flag).
 `gpu-sim` `stream_create` is `cudaStreamCreate` / `cuStreamCreate` default flags (identity with `stream_create_with_flags` DEFAULT; blocking; no Engine flag).
+`gpu-sim` `stream_create_priority` is `cuStreamCreateWithPriority` (identity with `stream_create_with_priority`; no Engine flag).
 `gpu-sim` `mem_alloc` is `cuMemAlloc` (identity with `malloc`; no Engine flag).
 `gpu-sim` `mem_free` is `cuMemFree` (identity with `free_sync`; no Engine flag).
 `gpu-sim` `mem_free_host` is `cuMemFreeHost` (identity with `free_host_pinned`; no Engine flag).
@@ -586,6 +587,7 @@ compiled kernel exists; no Engine flag).
 `gpu-sim` `ctx_set_cache_config` is `cuCtxSetCacheConfig` (identity with `set_cache_config`; no Engine flag).
 `gpu-sim` `ctx_set_limit` is `cuCtxSetLimit` (identity with `set_limit`; no Engine flag).
 `gpu-sim` `ctx_set_shared_mem_config` is `cuCtxSetSharedMemConfig` (identity with `set_shared_mem_config`; no Engine flag).
+`gpu-sim` `stream_create_priority` is `cuStreamCreateWithPriority` (identity with `stream_create_with_priority`; no Engine flag).
 `gpu-sim` `func_is_loaded` is `cuFuncIsLoaded` (`false` until a compiled
 kernel exists; no Engine flag).
 `gpu-sim` `func_load` is `cuFuncLoad` (Invalid; no compiled kernel; no

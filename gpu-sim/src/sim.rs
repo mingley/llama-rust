@@ -2353,9 +2353,8 @@ impl Sim {
     ///
     /// Implicit streams stay non-blocking until this or
     /// [`Self::stream_create_with_flags`] with DEFAULT. Capture refused.
-    /// Distinct from [`Self::stream_create_with_priority`]. This VM does not
-    /// invent `cuStreamCreateWithPriority` this slice
-    /// (`stream_create_with_priority` stays).
+    /// Distinct from [`Self::stream_create_with_priority`]. Driver
+    /// `cuStreamCreateWithPriority` is [`Self::stream_create_priority`].
     pub fn stream_create(&mut self, device: DeviceId, stream: StreamId) -> Result<(), SimError> {
         self.stream_create_with_flags(device, stream, StreamCreateFlags::DEFAULT)
     }
@@ -2364,7 +2363,8 @@ impl Sim {
     ///
     /// Flags are [`Self::stream_create_with_flags`]. Priority is
     /// [`Self::set_stream_priority`] (clamped to
-    /// [`Self::device_get_stream_priority_range`]).
+    /// [`Self::device_get_stream_priority_range`]). Driver
+    /// `cuStreamCreateWithPriority` is [`Self::stream_create_priority`].
     pub fn stream_create_with_priority(
         &mut self,
         device: DeviceId,
@@ -2374,6 +2374,21 @@ impl Sim {
     ) -> Result<(), SimError> {
         self.stream_create_with_flags(device, stream, flags)?;
         self.set_stream_priority(device, stream, priority)
+    }
+
+    /// `cuStreamCreateWithPriority`. Identity with
+    /// [`Self::stream_create_with_priority`] (`cudaStreamCreateWithPriority`).
+    ///
+    /// Capture refused. Distinct from [`Self::stream_create`]. This VM does
+    /// not invent occupancy SM counts this slice.
+    pub fn stream_create_priority(
+        &mut self,
+        device: DeviceId,
+        stream: StreamId,
+        flags: u32,
+        priority: i32,
+    ) -> Result<(), SimError> {
+        self.stream_create_with_priority(device, stream, flags, priority)
     }
 
     /// `cudaStreamDestroy`. Returns immediately; in-flight work still
@@ -20607,8 +20622,7 @@ impl Sim {
     /// (`cudaDeviceSetSharedMemConfig`).
     ///
     /// Capture refused. Distinct from [`Self::ctx_get_shared_mem_config`] and
-    /// [`Self::set_func_shared_mem_config`]. This VM does not invent occupancy
-    /// SM counts this slice.
+    /// [`Self::set_func_shared_mem_config`].
     pub fn ctx_set_shared_mem_config(
         &mut self,
         device: DeviceId,

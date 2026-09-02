@@ -292,6 +292,9 @@
 //! [`set_shared_mem_config`](Sim::set_shared_mem_config)). Capture refused. Distinct from
 //! [`ctx_get_shared_mem_config`](Sim::ctx_get_shared_mem_config) and
 //! [`set_func_shared_mem_config`](Sim::set_func_shared_mem_config). No Engine `--ctx-set-shared-mem`.
+//! [`stream_create_priority`](Sim::stream_create_priority) is `cuStreamCreateWithPriority` (identity with
+//! [`stream_create_with_priority`](Sim::stream_create_with_priority)). Capture refused. Distinct from
+//! [`stream_create`](Sim::stream_create). No Engine `--stream-create-priority`.
 //! [`Sim::ipc_get_event`] / [`ipc_open_event`](Sim::ipc_open_event) are
 //! `cudaIpcGetEventHandle` / `cudaIpcOpenEventHandle` (interprocess events).
 //! [`Sim::create_shareable_pool`] is `cudaMemPoolCreate` with a POSIX-FD handle
@@ -608,6 +611,9 @@
 //! [`stream_create`](Sim::stream_create) is `cudaStreamCreate` / `cuStreamCreate` default
 //! flags (identity with [`stream_create_with_flags`](Sim::stream_create_with_flags)
 //! DEFAULT; blocking). Capture refused. No Engine `--stream-create`.
+//! [`stream_create_priority`](Sim::stream_create_priority) is `cuStreamCreateWithPriority` (identity with
+//! [`stream_create_with_priority`](Sim::stream_create_with_priority)). Capture refused. Distinct from
+//! [`stream_create`](Sim::stream_create). No Engine `--stream-create-priority`.
 //! [`HardwareProfile::host_pin_bytes`] caps `cudaMallocHost` / `cudaHostRegister`.
 //! [`Sim::idle_until`] drains, then jumps the virtual clock (open-loop arrivals).
 //! [`Sim::event_elapsed_ns`] is `cudaEventElapsedTime` in nanoseconds.
@@ -792,6 +798,9 @@
 //! [`set_shared_mem_config`](Sim::set_shared_mem_config)). Capture refused. Distinct from
 //! [`ctx_get_shared_mem_config`](Sim::ctx_get_shared_mem_config) and
 //! [`set_func_shared_mem_config`](Sim::set_func_shared_mem_config). No Engine `--ctx-set-shared-mem`.
+//! [`stream_create_priority`](Sim::stream_create_priority) is `cuStreamCreateWithPriority` (identity with
+//! [`stream_create_with_priority`](Sim::stream_create_with_priority)). Capture refused. Distinct from
+//! [`stream_create`](Sim::stream_create). No Engine `--stream-create-priority`.
 //! [`mem_host_get_flags`](Sim::mem_host_get_flags) is `cuMemHostGetFlags` (identity with
 //! [`host_get_flags`](Sim::host_get_flags)). Query; legal during capture. No Engine `--mem-host-get-flags`.
 //! [`mem_host_get_device_pointer`](Sim::mem_host_get_device_pointer) is `cuMemHostGetDevicePointer` (identity with
@@ -942,6 +951,9 @@
 //! [`set_shared_mem_config`](Sim::set_shared_mem_config)). Capture refused. Distinct from
 //! [`ctx_get_shared_mem_config`](Sim::ctx_get_shared_mem_config) and
 //! [`set_func_shared_mem_config`](Sim::set_func_shared_mem_config). No Engine `--ctx-set-shared-mem`.
+//! [`stream_create_priority`](Sim::stream_create_priority) is `cuStreamCreateWithPriority` (identity with
+//! [`stream_create_with_priority`](Sim::stream_create_with_priority)). Capture refused. Distinct from
+//! [`stream_create`](Sim::stream_create). No Engine `--stream-create-priority`.
 //! [`Sim::pointer_get_attributes`] is `cudaPointerGetAttributes`.
 //! [`pointer_set_attribute`](Sim::pointer_set_attribute) /
 //! [`pointer_get_attribute`](Sim::pointer_get_attribute) are
@@ -2013,6 +2025,9 @@
 //! [`stream_create_with_priority`](Sim::stream_create_with_priority) is
 //! `cudaStreamCreateWithPriority` (flags plus priority; clamped to
 //! [`device_get_stream_priority_range`](Sim::device_get_stream_priority_range)).
+//! [`stream_create_priority`](Sim::stream_create_priority) is `cuStreamCreateWithPriority` (identity with
+//! [`stream_create_with_priority`](Sim::stream_create_with_priority)). Capture refused. Distinct from
+//! [`stream_create`](Sim::stream_create). No Engine `--stream-create-priority`.
 //! [`destroy_stream`](Sim::destroy_stream) is `cudaStreamDestroy` (returns
 //! immediately; in-flight work still completes; NULL is Invalid; recreate
 //! while unfinished is `"stream in flight"`). Capture cannot include it.
@@ -16953,6 +16968,90 @@ mod tests {
             other => panic!("{other:?}"),
         }
         let _g = sim.end_capture().unwrap();
+    }
+
+    #[test]
+    fn stream_create_priority_is_cu_stream_create_with_priority() {
+        let mut sim = Sim::new(h100());
+        let d = DeviceId(0);
+        let s = StreamId(1);
+        match sim.stream_create_priority(DeviceId(99), s, StreamCreateFlags::DEFAULT, -5) {
+            Err(SimError::Invalid { why }) => assert!(why.contains("device"), "{why}"),
+            other => panic!("{other:?}"),
+        }
+        match sim.stream_create_with_priority(DeviceId(99), s, StreamCreateFlags::DEFAULT, -5) {
+            Err(SimError::Invalid { why }) => assert!(why.contains("device"), "{why}"),
+            other => panic!("{other:?}"),
+        }
+        match sim.stream_create_priority(d, s, 2, -5) {
+            Err(SimError::Invalid { why }) => {
+                assert!(why.contains("stream create flags"), "{why}");
+            }
+            other => panic!("{other:?}"),
+        }
+        match sim.stream_create_with_priority(d, s, 2, -5) {
+            Err(SimError::Invalid { why }) => {
+                assert!(why.contains("stream create flags"), "{why}");
+            }
+            other => panic!("{other:?}"),
+        }
+        match sim.stream_create_priority(d, StreamId::NULL, 0, -5) {
+            Err(SimError::Invalid { why }) => assert!(why.contains("null stream"), "{why}"),
+            other => panic!("{other:?}"),
+        }
+        match sim.stream_create_with_priority(d, StreamId::NULL, 0, -5) {
+            Err(SimError::Invalid { why }) => assert!(why.contains("null stream"), "{why}"),
+            other => panic!("{other:?}"),
+        }
+        assert!(!sim.stream_is_blocking(d, s));
+        sim.stream_create_priority(d, s, StreamCreateFlags::DEFAULT, -5)
+            .unwrap();
+        assert!(sim.stream_is_blocking(d, s));
+        assert_eq!(sim.stream_get_flags(d, s).unwrap(), 0);
+        assert_eq!(sim.stream_get_priority(d, s).unwrap(), -5);
+        sim.stream_create_with_priority(d, StreamId(2), StreamCreateFlags::DEFAULT, -5)
+            .unwrap();
+        assert_eq!(
+            sim.stream_is_blocking(d, s),
+            sim.stream_is_blocking(d, StreamId(2))
+        );
+        assert_eq!(
+            sim.stream_get_flags(d, s).unwrap(),
+            sim.stream_get_flags(d, StreamId(2)).unwrap()
+        );
+        assert_eq!(
+            sim.stream_get_priority(d, s).unwrap(),
+            sim.stream_get_priority(d, StreamId(2)).unwrap()
+        );
+        sim.stream_create_priority(d, StreamId(3), StreamCreateFlags::NON_BLOCKING, 0)
+            .unwrap();
+        assert!(!sim.stream_is_blocking(d, StreamId(3)));
+        assert_eq!(sim.stream_get_flags(d, StreamId(3)).unwrap(), 1);
+        assert_eq!(sim.stream_get_priority(d, StreamId(3)).unwrap(), 0);
+        sim.begin_capture(d, StreamId(0)).unwrap();
+        match sim.stream_create_priority(d, StreamId(4), StreamCreateFlags::DEFAULT, -5) {
+            Err(SimError::Invalid { why }) => assert!(why.contains("capture"), "{why}"),
+            other => panic!("{other:?}"),
+        }
+        match sim.stream_create_with_priority(d, StreamId(4), StreamCreateFlags::DEFAULT, -5) {
+            Err(SimError::Invalid { why }) => assert!(why.contains("capture"), "{why}"),
+            other => panic!("{other:?}"),
+        }
+        let _g = sim.end_capture().unwrap();
+        let mut eight = Sim::new(HardwareProfile::example_8xh100_nvlink());
+        eight
+            .stream_create_priority(DeviceId(1), StreamId(1), StreamCreateFlags::DEFAULT, -5)
+            .unwrap();
+        assert!(eight.stream_is_blocking(DeviceId(1), StreamId(1)));
+        assert!(!eight.stream_is_blocking(DeviceId(0), StreamId(1)));
+        assert_eq!(
+            eight.stream_get_priority(DeviceId(1), StreamId(1)).unwrap(),
+            -5
+        );
+        assert_eq!(
+            eight.stream_get_priority(DeviceId(0), StreamId(1)).unwrap(),
+            0
+        );
     }
 
     #[test]

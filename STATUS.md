@@ -5,6 +5,14 @@ Visible five-turn extract: [docs/chatgpt-share-6a920fe1.md](docs/chatgpt-share-6
 Complete share-API extract: [docs/chatgpt-share-6a920fe1/](docs/chatgpt-share-6a920fe1/).
 Work lands on `main`. No PRs.
 
+## Shipped 2026-09-02 — CUDA `cuStreamCreateWithPriority`
+
+`gpu-sim` `Sim::stream_create_priority` is `cuStreamCreateWithPriority`.
+Identity with `stream_create_with_priority` (`cudaStreamCreateWithPriority`).
+Capture refused. Distinct from `stream_create`.
+This VM does not invent occupancy SM counts or Engine `--stream-create-priority`.
+`gpu-profile capture` is still refused. Dual score still has no `$/M tokens`.
+
 ## Shipped 2026-09-02 — CUDA `cuCtxSetSharedMemConfig`
 
 `gpu-sim` `Sim::ctx_set_shared_mem_config` is `cuCtxSetSharedMemConfig`.
