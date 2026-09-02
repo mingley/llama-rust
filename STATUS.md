@@ -5,6 +5,13 @@ Visible five-turn extract: [docs/chatgpt-share-6a920fe1.md](docs/chatgpt-share-6
 Complete share-API extract: [docs/chatgpt-share-6a920fe1/](docs/chatgpt-share-6a920fe1/).
 Work lands on `main`. No PRs.
 
+## Shipped 2026-09-02 — CUDA `cuFuncGetAttribute` cluster policy
+
+`gpu-sim` `Sim::func_get_cluster_policy` is `cuFuncGetAttribute` cluster policy.
+Identity with `get_func_cluster_policy` (`cudaFuncGetAttribute` ClusterSchedulingPolicyPreference). Query; legal during capture. Distinct from `func_set_cluster_policy`.
+This VM does not invent occupancy SM counts or Engine `--func-get-cluster-policy`.
+`gpu-profile capture` is still refused. Dual score still has no `$/M tokens`.
+
 ## Shipped 2026-09-02 — CUDA `cuFuncSetAttribute` cluster policy
 
 `gpu-sim` `Sim::func_set_cluster_policy` is `cuFuncSetAttribute` cluster policy.

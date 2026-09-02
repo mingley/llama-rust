@@ -22855,7 +22855,6 @@ impl Sim {
     /// [`Self::set_func_cluster_policy`] (`cudaFuncSetAttribute` ClusterSchedulingPolicyPreference).
     ///
     /// Capture legal. Distinct from [`Self::func_get_carveout`].
-    /// This VM does not invent occupancy SM counts this slice.
     pub fn func_set_cluster_policy(
         &mut self,
         device: DeviceId,
@@ -22865,12 +22864,26 @@ impl Sim {
     }
 
     /// Current [`Self::set_func_cluster_policy`]. Query; legal during capture.
+    /// Driver `cuFuncGetAttribute` cluster policy is [`Self::func_get_cluster_policy`].
+    /// Identity wrap [`Self::func_get_cluster_policy`].
     pub fn get_func_cluster_policy(
         &self,
         device: DeviceId,
     ) -> Result<ClusterSchedulingPolicy, SimError> {
         let _gpu = self.profile.gpu(device)?;
         Ok(self.gpu_rt(device)?.func_cluster_policy)
+    }
+
+    /// `cuFuncGetAttribute` cluster policy. Identity with
+    /// [`Self::get_func_cluster_policy`] (`cudaFuncGetAttribute` ClusterSchedulingPolicyPreference).
+    ///
+    /// Query; legal during capture. Distinct from [`Self::func_set_cluster_policy`].
+    /// This VM does not invent occupancy SM counts this slice.
+    pub fn func_get_cluster_policy(
+        &self,
+        device: DeviceId,
+    ) -> Result<ClusterSchedulingPolicy, SimError> {
+        self.get_func_cluster_policy(device)
     }
 
     /// `cudaFuncSetAttribute(..., cudaFuncAttributeClusterDimMustBeSet)`.
