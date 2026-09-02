@@ -14640,9 +14640,7 @@ impl Sim {
     /// `cuMemAdvise_v2`. Identity with [`Self::mem_advise_with_location`]
     /// (`cudaMemAdvise_v2` location).
     ///
-    /// Capture refused. Distinct from [`Self::mem_advise_n`]. This VM does not
-    /// invent `cuMemRangeGetAttribute` this slice
-    /// (`mem_range_get_attribute` stays).
+    /// Capture refused. Distinct from [`Self::mem_advise_n`].
     pub fn mem_advise_v2(
         &mut self,
         alloc: AllocId,
@@ -14657,6 +14655,7 @@ impl Sim {
     /// This VM tracks advice per live managed allocation, not per byte range.
     /// Non-managed pointers are Invalid `"not managed"`. The CUDA `count` is
     /// [`Self::mem_range_get_attribute_with_size`].
+    /// Driver `cuMemRangeGetAttribute` is [`Self::mem_range_get`].
     pub fn mem_range_get_attribute(
         &self,
         alloc: AllocId,
@@ -14664,6 +14663,21 @@ impl Sim {
     ) -> Result<MemRangeAttrValue, SimError> {
         let size = self.alloc_ref(alloc)?.bytes;
         self.mem_range_get_attribute_with_size(alloc, size, attr)
+    }
+
+    /// `cuMemRangeGetAttribute`. Identity with [`Self::mem_range_get_attribute`]
+    /// (`cudaMemRangeGetAttribute`).
+    ///
+    /// Query; legal during capture. Distinct from
+    /// [`Self::mem_range_get_attributes`]. This VM does not invent a
+    /// `cuMemRangeGetAttribute` count this slice
+    /// (`mem_range_get_attribute_with_size` stays).
+    pub fn mem_range_get(
+        &self,
+        alloc: AllocId,
+        attr: MemRangeAttr,
+    ) -> Result<MemRangeAttrValue, SimError> {
+        self.mem_range_get_attribute(alloc, attr)
     }
 
     /// [`Self::mem_range_get_attribute`] with the CUDA `count` argument.

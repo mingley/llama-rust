@@ -199,6 +199,9 @@
 //! [`mem_advise_v2`](Sim::mem_advise_v2) is `cuMemAdvise_v2` (identity with
 //! [`mem_advise_with_location`](Sim::mem_advise_with_location)). Capture refused. Distinct from
 //! [`mem_advise_n`](Sim::mem_advise_n). No Engine `--mem-advise-v2`.
+//! [`mem_range_get`](Sim::mem_range_get) is `cuMemRangeGetAttribute` (identity with
+//! [`mem_range_get_attribute`](Sim::mem_range_get_attribute)). Query; legal during capture. Distinct from
+//! [`mem_range_get_attributes`](Sim::mem_range_get_attributes). No Engine `--mem-range-get`.
 //! [`Sim::ipc_get_event`] / [`ipc_open_event`](Sim::ipc_open_event) are
 //! `cudaIpcGetEventHandle` / `cudaIpcOpenEventHandle` (interprocess events).
 //! [`Sim::create_shareable_pool`] is `cudaMemPoolCreate` with a POSIX-FD handle
@@ -606,6 +609,9 @@
 //! [`mem_advise_v2`](Sim::mem_advise_v2) is `cuMemAdvise_v2` (identity with
 //! [`mem_advise_with_location`](Sim::mem_advise_with_location)). Capture refused. Distinct from
 //! [`mem_advise_n`](Sim::mem_advise_n). No Engine `--mem-advise-v2`.
+//! [`mem_range_get`](Sim::mem_range_get) is `cuMemRangeGetAttribute` (identity with
+//! [`mem_range_get_attribute`](Sim::mem_range_get_attribute)). Query; legal during capture. Distinct from
+//! [`mem_range_get_attributes`](Sim::mem_range_get_attributes). No Engine `--mem-range-get`.
 //! [`mem_host_get_flags`](Sim::mem_host_get_flags) is `cuMemHostGetFlags` (identity with
 //! [`host_get_flags`](Sim::host_get_flags)). Query; legal during capture. No Engine `--mem-host-get-flags`.
 //! [`mem_host_get_device_pointer`](Sim::mem_host_get_device_pointer) is `cuMemHostGetDevicePointer` (identity with
@@ -663,6 +669,9 @@
 //! [`mem_advise_v2`](Sim::mem_advise_v2) is `cuMemAdvise_v2` (identity with
 //! [`mem_advise_with_location`](Sim::mem_advise_with_location)). Capture refused. Distinct from
 //! [`mem_advise_n`](Sim::mem_advise_n). No Engine `--mem-advise-v2`.
+//! [`mem_range_get`](Sim::mem_range_get) is `cuMemRangeGetAttribute` (identity with
+//! [`mem_range_get_attribute`](Sim::mem_range_get_attribute)). Query; legal during capture. Distinct from
+//! [`mem_range_get_attributes`](Sim::mem_range_get_attributes). No Engine `--mem-range-get`.
 //! [`Sim::pointer_get_attributes`] is `cudaPointerGetAttributes`.
 //! [`pointer_set_attribute`](Sim::pointer_set_attribute) /
 //! [`pointer_get_attribute`](Sim::pointer_get_attribute) are
@@ -34178,6 +34187,59 @@ mod tests {
             Err(SimError::Invalid { why }) => assert!(why.contains("capture"), "{why}"),
             other => panic!("{other:?}"),
         }
+        let _g = sim.end_capture().unwrap();
+        sim.free_sync(m).unwrap();
+    }
+
+    #[test]
+    fn mem_range_get_is_cu_mem_range_get_attribute() {
+        let mut sim = Sim::new(h100());
+        let d = DeviceId(0);
+        let s = StreamId(0);
+        match sim.mem_range_get(AllocId(99), MemRangeAttr::ReadMostly) {
+            Err(SimError::UnknownAlloc { alloc }) => assert_eq!(alloc, AllocId(99)),
+            other => panic!("{other:?}"),
+        }
+        match sim.mem_range_get_attribute(AllocId(99), MemRangeAttr::ReadMostly) {
+            Err(SimError::UnknownAlloc { alloc }) => assert_eq!(alloc, AllocId(99)),
+            other => panic!("{other:?}"),
+        }
+        let a = sim.malloc(d, 4096).unwrap();
+        match sim.mem_range_get(a, MemRangeAttr::ReadMostly) {
+            Err(SimError::Invalid { why }) => assert!(why.contains("managed"), "{why}"),
+            other => panic!("{other:?}"),
+        }
+        match sim.mem_range_get_attribute(a, MemRangeAttr::ReadMostly) {
+            Err(SimError::Invalid { why }) => assert!(why.contains("managed"), "{why}"),
+            other => panic!("{other:?}"),
+        }
+        sim.free_sync(a).unwrap();
+        let m = sim.mem_alloc_managed(4096, MemAttachFlags::GLOBAL).unwrap();
+        assert_eq!(
+            sim.mem_range_get(m, MemRangeAttr::ReadMostly).unwrap(),
+            MemRangeAttrValue::ReadMostly(false)
+        );
+        sim.mem_advise_n(m, 4096, MemAdvise::SetReadMostly, d)
+            .unwrap();
+        assert_eq!(
+            sim.mem_range_get(m, MemRangeAttr::ReadMostly).unwrap(),
+            MemRangeAttrValue::ReadMostly(true)
+        );
+        assert_eq!(
+            sim.mem_range_get_attribute(m, MemRangeAttr::ReadMostly)
+                .unwrap(),
+            MemRangeAttrValue::ReadMostly(true)
+        );
+        sim.begin_capture(d, s).unwrap();
+        assert_eq!(
+            sim.mem_range_get(m, MemRangeAttr::ReadMostly).unwrap(),
+            MemRangeAttrValue::ReadMostly(true)
+        );
+        assert_eq!(
+            sim.mem_range_get_attribute(m, MemRangeAttr::ReadMostly)
+                .unwrap(),
+            MemRangeAttrValue::ReadMostly(true)
+        );
         let _g = sim.end_capture().unwrap();
         sim.free_sync(m).unwrap();
     }
