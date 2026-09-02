@@ -7321,8 +7321,7 @@ impl Sim {
     /// [`Self::graph_exec_event_wait_set_event`] (`cudaGraphExecEventWaitNodeSetEvent`).
     ///
     /// Capture refused. Distinct from
-    /// [`Self::set_graph_event_wait_node_event`]. This VM does not invent
-    /// occupancy SM counts this slice.
+    /// [`Self::set_graph_event_wait_node_event`].
     pub fn set_graph_exec_event_wait_node_event(
         &mut self,
         exec: GraphId,
@@ -8119,6 +8118,8 @@ impl Sim {
     ///
     /// Instantiated ids use the exec snapshot.
     /// [`Self::graph_exec_event_record_get_event`] refuses uninstantiated graphs.
+    /// Driver `cuGraphEventRecordNodeGetEvent` is
+    /// [`Self::get_graph_event_record_node_event`].
     pub fn graph_event_record_get_event(
         &self,
         graph: GraphId,
@@ -8130,6 +8131,20 @@ impl Sim {
                 why: "not an event record node",
             }),
         }
+    }
+
+    /// `cuGraphEventRecordNodeGetEvent`. Identity with
+    /// [`Self::graph_event_record_get_event`] (`cudaGraphEventRecordNodeGetEvent`).
+    ///
+    /// Query; legal during capture. Distinct from
+    /// [`Self::graph_exec_event_record_get_event`]. This VM does not invent
+    /// occupancy SM counts this slice.
+    pub fn get_graph_event_record_node_event(
+        &self,
+        graph: GraphId,
+        node: usize,
+    ) -> Result<EventId, SimError> {
+        self.graph_event_record_get_event(graph, node)
     }
 
     /// Exec-snapshot [`Self::graph_event_record_get_event`].
