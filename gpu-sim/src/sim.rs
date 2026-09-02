@@ -22103,6 +22103,9 @@ impl Sim {
     /// on another stream fail [`SimError::Invalid`] (`not attached`) instead
     /// of paging. Inherits [`Self::set_stream_nvlink_util_centric`] and
     /// [`Self::set_stream_access_policy`] on `stream` via [`Self::kernel_bufs`].
+    ///
+    /// Driver `cuLaunchKernel` is [`Self::launch_kernel`].
+    /// Identity wrap [`Self::launch_kernel`].
     pub fn kernel(
         &mut self,
         device: DeviceId,
@@ -22114,6 +22117,21 @@ impl Sim {
         let reads: Vec<KernelBuf> = reads.iter().copied().map(KernelBuf::whole).collect();
         let writes: Vec<KernelBuf> = writes.iter().copied().map(KernelBuf::whole).collect();
         self.kernel_bufs(device, kind, &reads, &writes, stream)
+    }
+
+    /// `cuLaunchKernel`. Identity with [`Self::kernel`] (`cudaLaunchKernel`).
+    ///
+    /// Capture legal. Distinct from [`Self::stream_batch_mem_op_with_flags`].
+    /// This VM does not invent occupancy SM counts this slice.
+    pub fn launch_kernel(
+        &mut self,
+        device: DeviceId,
+        kind: KernelKind,
+        reads: &[AllocId],
+        writes: &[AllocId],
+        stream: StreamId,
+    ) -> Result<OpId, SimError> {
+        self.kernel(device, kind, reads, writes, stream)
     }
 
     /// Enqueue a kernel on explicit buffer spans (vLLM paged-KV analog).
@@ -26727,7 +26745,6 @@ impl Sim {
     /// [`Self::batch_mem_op_with_flags`].
     ///
     /// Capture legal. Distinct from [`Self::stream_batch_mem_op`].
-    /// This VM does not invent occupancy SM counts this slice.
     pub fn stream_batch_mem_op_with_flags(
         &mut self,
         device: DeviceId,

@@ -9549,7 +9549,13 @@ model, do not celebrate the sim.
     or `cudaChooseDevice`. `gpu-profile capture` is still refused. Dual
     score still has no `$/M tokens`.
 
-1059. [ ] Next numbered PLAN item after 1058 is the next `gpu-sim` / Engine /
+1059. [x] `gpu-sim` `Sim::launch_kernel` is
+    `cuLaunchKernel`. Identity with `kernel` (`cudaLaunchKernel`). Capture legal. Distinct from
+    `stream_batch_mem_op_with_flags`. This VM does not invent occupancy SM counts, Engine `--launch-kernel`,
+    or `cudaChooseDevice`. `gpu-profile capture` is still refused. Dual
+    score still has no `$/M tokens`.
+
+1060. [ ] Next numbered PLAN item after 1059 is the next `gpu-sim` / Engine /
     serve / expertvm mechanical API that is still missing, or the next official
     decode family. Prefer remaining CUDA-shaped twins over more
     OpenAI HTTP veneer. Do not invent F32 `output.scale`. Do not invent a
@@ -11239,6 +11245,10 @@ model, do not celebrate the sim.
     Do not invent Engine `--stream-batch-mem-op-with-flags`. Do not invent
     occupancy SM counts this slice. Do not reverse BatchMemOpWithFlags identity with batch_mem_op_with_flags.
     Do not invent `cuGraphAddBatchMemOpNode` flags as `stream_batch_mem_op_with_flags`.
+    Do not invent a second `cuLaunchKernel` / `launch_kernel`.
+    Do not invent Engine `--launch-kernel`. Do not invent
+    occupancy SM counts this slice. Do not reverse LaunchKernel identity with kernel.
+    Do not invent `cuLaunchCooperativeKernel` as `launch_kernel`.
     Do not invent a second `cudaStreamAddCallback`.
     Do not invent Engine `--stream-callback` (same wall as second live
     `cudaLaunchHostFunc` after miss DMA).
@@ -12986,6 +12996,9 @@ model, do not celebrate the sim.
     Do not invent a second `stream_batch_mem_op_with_flags` API. Do not invent
     Engine `--stream-batch-mem-op-with-flags-identity`. Do not invent a host-func-params
     this slice. Do not reverse BatchMemOpWithFlags identity with batch_mem_op_with_flags.
+    Do not invent a second `launch_kernel` API. Do not invent
+    Engine `--launch-kernel-identity`. Do not invent a kernel-bufs
+    this slice. Do not reverse LaunchKernel identity with kernel.
     Do not invent a second DeviceLaunch in-flight destroy-complete check or Engine
     `--device-launch-destroy`. Do not abort an in-flight DeviceLaunch when
     `destroy_graph` succeeds. Do not delay destroy of an idle exec. Do not invent
@@ -14916,6 +14929,9 @@ model, do not celebrate the sim.
     Do not invent a second `stream_batch_mem_op_with_flags` method. Do not
     invent Engine `--cu-stream-batch-mem-op-with-flags`. Do not reverse wrapping
     cuStreamBatchMemOp flags identity. Do not wrap `cuGraphAddBatchMemOpNode` flags as `stream_batch_mem_op_with_flags`.
+    Do not invent a second `launch_kernel` method. Do not
+    invent Engine `--cu-launch-kernel`. Do not reverse wrapping
+    cuLaunchKernel identity. Do not wrap `cuLaunchCooperativeKernel` as `launch_kernel`.
     Do not
     spend the next item on an OpenAI-compatible HTTP veneer.
 
