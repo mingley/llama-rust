@@ -18081,7 +18081,6 @@ impl Sim {
     /// [`Self::va_create_with_prop`] (`cuMemCreate` props).
     ///
     /// Capture refused. Distinct from [`Self::mem_create`].
-    /// This VM does not invent occupancy SM counts this slice.
     pub fn mem_create_with_prop(
         &mut self,
         bytes: u64,
@@ -18171,6 +18170,8 @@ impl Sim {
     /// have a ref ([`Self::va_release_handle`] while mapped forbids further
     /// maps). Capture cannot include it. Typed helper;
     /// [`Self::va_map_handle_with_flags`] takes the CUDA flags word.
+    /// Driver `cuMemMap` is [`Self::mem_map_handle`].
+    /// Identity wrap [`Self::mem_map_handle`].
     pub fn va_map_handle(
         &mut self,
         id: AllocId,
@@ -18179,6 +18180,21 @@ impl Sim {
         handle: MemHandleId,
     ) -> Result<(), SimError> {
         self.va_map_handle_with_flags(id, device, offset, handle, MemMapFlags::DEFAULT)
+    }
+
+    /// `cuMemMap`. Identity with
+    /// [`Self::va_map_handle`] (`cuMemMap` default flags).
+    ///
+    /// Capture refused. Distinct from [`Self::mem_create_with_prop`].
+    /// This VM does not invent occupancy SM counts this slice.
+    pub fn mem_map_handle(
+        &mut self,
+        id: AllocId,
+        device: DeviceId,
+        offset: u64,
+        handle: MemHandleId,
+    ) -> Result<(), SimError> {
+        self.va_map_handle(id, device, offset, handle)
     }
 
     /// [`Self::va_map_handle`] with a flags word.
