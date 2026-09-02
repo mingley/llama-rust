@@ -5,6 +5,14 @@ Visible five-turn extract: [docs/chatgpt-share-6a920fe1.md](docs/chatgpt-share-6
 Complete share-API extract: [docs/chatgpt-share-6a920fe1/](docs/chatgpt-share-6a920fe1/).
 Work lands on `main`. No PRs.
 
+## Shipped 2026-09-02 — CUDA graph `cuStreamWriteValue32` flags
+
+`gpu-sim` `Sim::add_graph_write_value32_with_flags` is graph `cuStreamWriteValue32` flags.
+Identity with `graph_add_write_value32_with_flags` (`cuStreamWriteValue32` flags).
+Capture refused. Distinct from `add_graph_write_value64_with_flags`.
+This VM does not invent occupancy SM counts or Engine `--graph-add-write-value32-with-flags`.
+`gpu-profile capture` is still refused. Dual score still has no `$/M tokens`.
+
 ## Shipped 2026-09-02 — CUDA graph `cuStreamWriteValue64` flags
 
 `gpu-sim` `Sim::add_graph_write_value64_with_flags` is graph `cuStreamWriteValue64` flags.
