@@ -661,6 +661,7 @@ compiled kernel exists; no Engine flag).
 `gpu-sim` `add_graph_host_func` is graph unnamed `cudaGraphAddHostNode` (identity with `graph_add_host_func`; no Engine flag).
 `gpu-sim` `set_graph_memcpy_node_params_1d` is graph `cudaGraphMemcpyNodeSetParams1D` (identity with `graph_memcpy_set_params_1d`; no Engine flag).
 `gpu-sim` `set_graph_exec_memcpy_node_params_1d` is graph `cudaGraphExecMemcpyNodeSetParams1D` (identity with `graph_exec_memcpy_set_params_1d`; no Engine flag).
+`gpu-sim` `graph_create` is `cuGraphCreate` (identity with `create_graph`; no Engine flag).
 `gpu-sim` `mem_alloc` is `cuMemAlloc` (identity with `malloc`; no Engine flag).
 `gpu-sim` `mem_free` is `cuMemFree` (identity with `free_sync`; no Engine flag).
 `gpu-sim` `mem_free_host` is `cuMemFreeHost` (identity with `free_host_pinned`; no Engine flag).
@@ -846,6 +847,7 @@ compiled kernel exists; no Engine flag).
 `gpu-sim` `add_graph_host_func` is graph unnamed `cudaGraphAddHostNode` (identity with `graph_add_host_func`; no Engine flag).
 `gpu-sim` `set_graph_memcpy_node_params_1d` is graph `cudaGraphMemcpyNodeSetParams1D` (identity with `graph_memcpy_set_params_1d`; no Engine flag).
 `gpu-sim` `set_graph_exec_memcpy_node_params_1d` is graph `cudaGraphExecMemcpyNodeSetParams1D` (identity with `graph_exec_memcpy_set_params_1d`; no Engine flag).
+`gpu-sim` `graph_create` is `cuGraphCreate` (identity with `create_graph`; no Engine flag).
 `gpu-sim` `func_is_loaded` is `cuFuncIsLoaded` (`false` until a compiled
 kernel exists; no Engine flag).
 `gpu-sim` `func_load` is `cuFuncLoad` (Invalid; no compiled kernel; no

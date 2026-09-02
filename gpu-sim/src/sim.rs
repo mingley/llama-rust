@@ -7072,8 +7072,7 @@ impl Sim {
     /// (`cudaGraphExecMemcpyNodeSetParams1D`).
     ///
     /// Capture refused. Distinct from
-    /// [`Self::set_graph_exec_memcpy_node_params`]. This VM does not invent
-    /// occupancy SM counts this slice.
+    /// [`Self::set_graph_exec_memcpy_node_params`].
     pub fn set_graph_exec_memcpy_node_params_1d(
         &mut self,
         exec: GraphId,
@@ -9484,13 +9483,29 @@ impl Sim {
     /// Capture cannot include it. The origin `(device, stream)` is the capture
     /// analog: [`Self::launch_graph`] remaps those nodes onto the launch stream.
     /// Add nodes with [`Self::graph_add_kernel`] and friends, then instantiate.
-    /// Flags-word form is [`Self::create_graph_with_flags`].
+    /// Flags-word form is [`Self::create_graph_with_flags`]. Driver
+    /// `cuGraphCreate` is
+    /// [`Self::graph_create`].
     pub fn create_graph(
         &mut self,
         device: DeviceId,
         stream: StreamId,
     ) -> Result<GraphId, SimError> {
         self.create_graph_with_flags(device, stream, GraphCreateFlags::DEFAULT)
+    }
+
+    /// `cuGraphCreate`. Identity with
+    /// [`Self::create_graph`] (`cudaGraphCreate`).
+    ///
+    /// Host-synchronous. Capture refused. Distinct from
+    /// [`Self::create_graph_with_flags`]. This VM does not invent
+    /// occupancy SM counts this slice.
+    pub fn graph_create(
+        &mut self,
+        device: DeviceId,
+        stream: StreamId,
+    ) -> Result<GraphId, SimError> {
+        self.create_graph(device, stream)
     }
 
     /// `cudaGraphCreate` with a flags word.
