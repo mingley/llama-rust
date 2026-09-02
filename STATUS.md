@@ -5,6 +5,13 @@ Visible five-turn extract: [docs/chatgpt-share-6a920fe1.md](docs/chatgpt-share-6
 Complete share-API extract: [docs/chatgpt-share-6a920fe1/](docs/chatgpt-share-6a920fe1/).
 Work lands on `main`. No PRs.
 
+## Shipped 2026-09-02 — CUDA `cuMemCreate` props
+
+`gpu-sim` `Sim::mem_create_with_prop` is `cuMemCreate` props.
+Identity with `va_create_with_prop` (`cuMemCreate` props). Capture refused. Distinct from `mem_create`.
+This VM does not invent occupancy SM counts or Engine `--mem-create-with-prop`.
+`gpu-profile capture` is still refused. Dual score still has no `$/M tokens`.
+
 ## Shipped 2026-09-02 — CUDA `cuMemCreate`
 
 `gpu-sim` `Sim::mem_create` is `cuMemCreate`.

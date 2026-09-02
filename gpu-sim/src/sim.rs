@@ -18073,9 +18073,22 @@ impl Sim {
     /// [`Self::va_create`] (`cuMemCreate` default prop).
     ///
     /// Capture refused. Distinct from [`Self::mem_get_allocation_granularity`].
-    /// This VM does not invent occupancy SM counts this slice.
     pub fn mem_create(&mut self, device: DeviceId, bytes: u64) -> Result<MemHandleId, SimError> {
         self.va_create(device, bytes)
+    }
+
+    /// `cuMemCreate` props. Identity with
+    /// [`Self::va_create_with_prop`] (`cuMemCreate` props).
+    ///
+    /// Capture refused. Distinct from [`Self::mem_create`].
+    /// This VM does not invent occupancy SM counts this slice.
+    pub fn mem_create_with_prop(
+        &mut self,
+        bytes: u64,
+        prop: MemAllocationProp,
+        flags: u32,
+    ) -> Result<MemHandleId, SimError> {
+        self.va_create_with_prop(bytes, prop, flags)
     }
 
     /// [`Self::va_create`] with `CUmemAllocationProp` and flags.
@@ -18088,6 +18101,8 @@ impl Sim {
     /// [`MemAllocationProp::gpu_direct_rdma_capable`] is ignored (Get reports
     /// the SKU). [`MemAllocationProp::compression`] must be 0 (`"mem compression"`).
     /// [`MemAllocationProp::usage`] must be [`MemHandleUsage::NONE`] (`"mem usage"`).
+    /// Driver `cuMemCreate` props is [`Self::mem_create_with_prop`].
+    /// Identity wrap [`Self::mem_create_with_prop`].
     pub fn va_create_with_prop(
         &mut self,
         bytes: u64,

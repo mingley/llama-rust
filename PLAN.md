@@ -9904,7 +9904,12 @@ model, do not celebrate the sim.
       `mem_get_allocation_granularity`. This VM does not invent occupancy SM counts, Engine `--mem-create`,
       or `cudaChooseDevice`. `gpu-profile capture` is still refused. Dual
       score still has no `$/M tokens`.
-1129. [ ] Next numbered PLAN item after 1128 is the next `gpu-sim` / Engine /
+1129. [x] `gpu-sim` `Sim::mem_create_with_prop` is
+      `cuMemCreate` props. Identity with `va_create_with_prop` (`cuMemCreate` props). Capture refused. Distinct from
+      `mem_create`. This VM does not invent occupancy SM counts, Engine `--mem-create-with-prop`,
+      or `cudaChooseDevice`. `gpu-profile capture` is still refused. Dual
+      score still has no `$/M tokens`.
+1130. [ ] Next numbered PLAN item after 1129 is the next `gpu-sim` / Engine /
     serve / expertvm mechanical API that is still missing, or the next official
     decode family. Prefer remaining CUDA-shaped twins over more
     OpenAI HTTP veneer. Do not invent F32 `output.scale`. Do not invent a
@@ -11898,6 +11903,11 @@ model, do not celebrate the sim.
     occupancy SM counts this slice. Do not reverse MemCreate identity with va_create.
     Do not invent `va_create_with_prop` as `mem_create`.
     Do not invent `cuMemCreate` props as `mem_create`.
+    Do not invent a second `cuMemCreate` props / `mem_create_with_prop`.
+    Do not invent Engine `--mem-create-with-prop`. Do not invent
+    occupancy SM counts this slice. Do not reverse MemCreate props identity with va_create_with_prop.
+    Do not invent `va_map_handle` as `mem_create_with_prop`.
+    Do not invent `cuMemMap` as `mem_create_with_prop`.
     Do not invent a second `cudaStreamAddCallback`.
     Do not invent Engine `--stream-callback` (same wall as second live
     `cudaLaunchHostFunc` after miss DMA).
@@ -13927,6 +13937,11 @@ model, do not celebrate the sim.
     this slice. Do not reverse MemCreate identity with va_create.
     Do not wrap `va_create` as `mem_create`.
     Do not wrap `va_create_with_prop` as `mem_create`.
+    Do not invent a second `mem_create_with_prop` API. Do not invent
+    Engine `--mem-create-with-prop-identity`. Do not invent a va-map-handle-flags
+    this slice. Do not reverse MemCreate props identity with va_create_with_prop.
+    Do not wrap `va_create_with_prop` as `mem_create_with_prop`.
+    Do not wrap `va_map_handle` as `mem_create_with_prop`.
     Do not invent a second DeviceLaunch in-flight destroy-complete check or Engine
     `--device-launch-destroy`. Do not abort an in-flight DeviceLaunch when
     `destroy_graph` succeeds. Do not delay destroy of an idle exec. Do not invent
@@ -16067,6 +16082,9 @@ model, do not celebrate the sim.
     Do not invent a second `mem_create` method. Do not
     invent Engine `--cu-mem-create`. Do not reverse wrapping
     cuMemCreate identity. Do not wrap `va_create_with_prop` as `mem_create`.
+    Do not invent a second `mem_create_with_prop` method. Do not
+    invent Engine `--cu-mem-create-with-prop`. Do not reverse wrapping
+    cuMemCreate props identity. Do not wrap `va_map_handle` as `mem_create_with_prop`.
     Do not
     spend the next item on an OpenAI-compatible HTTP veneer.
 
