@@ -6228,7 +6228,9 @@ impl Sim {
     /// instantiated, on the same GPU. Nested topology may change (unlike
     /// ExecSetParams). Capture cannot include it. Host-sync 1 ns. A parked
     /// in-flight-destroyed exec is `"unknown graph"` as the parent or as
-    /// `child`. Live exec SetParams stays. Live exec as `child` stays.
+    /// `child`. Live exec SetParams stays. Live exec as `child` stays. Driver
+    /// `cuGraphChildGraphNodeSetParams` is
+    /// [`Self::set_graph_child_graph_node_params`].
     pub fn graph_child_set_params(
         &mut self,
         graph: GraphId,
@@ -6296,6 +6298,21 @@ impl Sim {
             ownership,
         };
         Ok(())
+    }
+
+    /// `cuGraphChildGraphNodeSetParams`. Identity with
+    /// [`Self::graph_child_set_params`] (`cudaGraphChildGraphNodeSetParams`).
+    ///
+    /// Capture refused. Distinct from
+    /// [`Self::get_graph_child_graph_node_graph`]. This VM does not invent
+    /// occupancy SM counts this slice.
+    pub fn set_graph_child_graph_node_params(
+        &mut self,
+        graph: GraphId,
+        node: usize,
+        child: GraphId,
+    ) -> Result<(), SimError> {
+        self.graph_child_set_params(graph, node, child)
     }
 
     /// `cudaGraphNodeSetParams` on the graph definition.
@@ -8136,8 +8153,7 @@ impl Sim {
     /// of the exec snapshot).
     ///
     /// Query; legal during capture. Distinct from
-    /// [`Self::get_graph_child_graph_node_graph`]. This VM does not invent
-    /// occupancy SM counts this slice.
+    /// [`Self::get_graph_child_graph_node_graph`].
     pub fn get_graph_exec_child_graph_node_graph(
         &self,
         exec: GraphId,
