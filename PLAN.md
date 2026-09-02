@@ -7493,7 +7493,14 @@ model, do not celebrate the sim.
     or `cudaChooseDevice`. `gpu-profile capture` is still refused. Dual
     score still has no `$/M tokens`.
 
-763. [ ] Next numbered PLAN item after 762 is the next `gpu-sim` / Engine /
+763. [x] `gpu-sim` `Sim::tex_ref_set_flags` is
+    `cuTexRefSetFlags`. Always Invalid `"texref flags"`
+    because CUDA texture references are not modeled. Query; legal during capture.
+    Distinct from `tex_ref_set_border_color` and `tex_ref_create`. This VM does not invent `cuTexRefGetArray`, Engine `--texref-flags`,
+    or `cudaChooseDevice`. `gpu-profile capture` is still refused. Dual
+    score still has no `$/M tokens`.
+
+764. [ ] Next numbered PLAN item after 763 is the next `gpu-sim` / Engine /
     serve / expertvm mechanical API that is still missing, or the next official
     decode family. Prefer remaining CUDA-shaped twins over more
     OpenAI HTTP veneer. Do not invent F32 `output.scale`. Do not invent a
@@ -8273,6 +8280,9 @@ model, do not celebrate the sim.
     Do not invent a second `cuTexRefSetBorderColor` / `tex_ref_set_border_color`.
     Do not invent Engine `--texref-border`. Do not invent
     `cuTexRefSetFlags` this slice. Do not reverse `"texref border"`.
+    Do not invent a second `cuTexRefSetFlags` / `tex_ref_set_flags`.
+    Do not invent Engine `--texref-flags`. Do not invent
+    `cuTexRefGetArray` this slice. Do not reverse `"texref flags"`.
     Do not invent a second `cudaStreamAddCallback`.
     Do not invent Engine `--stream-callback` (same wall as second live
     `cudaLaunchHostFunc` after miss DMA).
@@ -9132,6 +9142,9 @@ model, do not celebrate the sim.
     Do not invent a second `tex_ref_set_border_color` API. Do not invent
     Engine `--set-tex-ref-border`. Do not invent a CUtexref flags word
     this slice. Do not reverse TexRef SetBorderColor remaining unsupported.
+    Do not invent a second `tex_ref_set_flags` API. Do not invent
+    Engine `--set-tex-ref-flags`. Do not invent a CUtexref get-array
+    this slice. Do not reverse TexRef SetFlags remaining unsupported.
     Do not invent a second DeviceLaunch in-flight destroy-complete check or Engine
     `--device-launch-destroy`. Do not abort an in-flight DeviceLaunch when
     `destroy_graph` succeeds. Do not delay destroy of an idle exec. Do not invent
@@ -10174,6 +10187,9 @@ model, do not celebrate the sim.
     Do not invent a second `tex_ref_set_border_color` method. Do not
     invent Engine `--cu-tex-ref-set-border`. Do not reverse wrapping
     cuTexRefSetBorderColor Invalid.
+    Do not invent a second `tex_ref_set_flags` method. Do not
+    invent Engine `--cu-tex-ref-set-flags`. Do not reverse wrapping
+    cuTexRefSetFlags Invalid.
     Do not
     spend the next item on an OpenAI-compatible HTTP veneer.
 
