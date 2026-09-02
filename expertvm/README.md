@@ -596,6 +596,7 @@ compiled kernel exists; no Engine flag).
 `gpu-sim` `get_graph_node_dependencies` is `cuGraphNodeGetDependencies` (identity with `graph_node_deps`; no Engine flag).
 `gpu-sim` `get_graph_node_dependencies_with_data` is `cuGraphNodeGetDependencies` v2 (identity with `graph_node_deps_with_data`; no Engine flag).
 `gpu-sim` `get_graph_node_dependent_nodes` is `cuGraphNodeGetDependentNodes` (identity with `graph_node_dependents`; no Engine flag).
+`gpu-sim` `get_graph_node_dependent_nodes_with_data` is `cuGraphNodeGetDependentNodes` v2 (identity with `graph_node_dependents_with_data`; no Engine flag).
 `gpu-sim` `mem_alloc` is `cuMemAlloc` (identity with `malloc`; no Engine flag).
 `gpu-sim` `mem_free` is `cuMemFree` (identity with `free_sync`; no Engine flag).
 `gpu-sim` `mem_free_host` is `cuMemFreeHost` (identity with `free_host_pinned`; no Engine flag).
@@ -716,6 +717,7 @@ compiled kernel exists; no Engine flag).
 `gpu-sim` `get_graph_node_dependencies` is `cuGraphNodeGetDependencies` (identity with `graph_node_deps`; no Engine flag).
 `gpu-sim` `get_graph_node_dependencies_with_data` is `cuGraphNodeGetDependencies` v2 (identity with `graph_node_deps_with_data`; no Engine flag).
 `gpu-sim` `get_graph_node_dependent_nodes` is `cuGraphNodeGetDependentNodes` (identity with `graph_node_dependents`; no Engine flag).
+`gpu-sim` `get_graph_node_dependent_nodes_with_data` is `cuGraphNodeGetDependentNodes` v2 (identity with `graph_node_dependents_with_data`; no Engine flag).
 `gpu-sim` `func_is_loaded` is `cuFuncIsLoaded` (`false` until a compiled
 kernel exists; no Engine flag).
 `gpu-sim` `func_load` is `cuFuncLoad` (Invalid; no compiled kernel; no

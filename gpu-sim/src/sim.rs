@@ -11704,8 +11704,7 @@ impl Sim {
     /// [`Self::graph_node_dependents`] (`cudaGraphNodeGetDependentNodes`).
     ///
     /// Query; legal during capture. Distinct from
-    /// [`Self::graph_node_dependents_with_data`]. This VM does not invent
-    /// occupancy SM counts this slice.
+    /// [`Self::graph_node_dependents_with_data`].
     pub fn get_graph_node_dependent_nodes(
         &self,
         graph: GraphId,
@@ -11719,7 +11718,9 @@ impl Sim {
     /// Existing edges report stored [`GraphEdgeData`] (Default ports 0 when
     /// unset). Not [`Self::graph_node_dependents`] LossyQuery. Query; legal
     /// during capture. A parked in-flight-destroyed exec is `"unknown graph"`.
-    /// Live exec GetDependentNodes stays.
+    /// Live exec GetDependentNodes stays. Driver
+    /// `cuGraphNodeGetDependentNodes` v2 is
+    /// [`Self::get_graph_node_dependent_nodes_with_data`].
     pub fn graph_node_dependents_with_data(
         &self,
         graph: GraphId,
@@ -11742,6 +11743,21 @@ impl Sim {
             .filter(|(_, s)| !s.destroyed && s.deps.contains(&i))
             .map(|(to, s)| (to, s.edge_data_of(i)))
             .collect())
+    }
+
+    /// `cuGraphNodeGetDependentNodes` v2. Identity with
+    /// [`Self::graph_node_dependents_with_data`] (`cudaGraphNodeGetDependentNodes`
+    /// with edgeData).
+    ///
+    /// Query; legal during capture. Distinct from
+    /// [`Self::get_graph_node_dependent_nodes`]. This VM does not invent
+    /// occupancy SM counts this slice.
+    pub fn get_graph_node_dependent_nodes_with_data(
+        &self,
+        graph: GraphId,
+        node: usize,
+    ) -> Result<Vec<(usize, GraphEdgeData)>, SimError> {
+        self.graph_node_dependents_with_data(graph, node)
     }
 
     /// `cuGraphNodeGetLocalId`. Query; legal during capture.
