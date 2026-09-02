@@ -614,6 +614,7 @@ compiled kernel exists; no Engine flag).
 `gpu-sim` `graph_exec_update_with_info` is `cuGraphExecUpdate` with info (identity with `update_graph_with_info`; no Engine flag).
 `gpu-sim` `add_graph_dependencies` is `cuGraphAddDependencies` (identity with `graph_add_dependencies`; no Engine flag).
 `gpu-sim` `add_graph_dependencies_n` is `cuGraphAddDependencies` of pairs (identity with `graph_add_dependencies_n`; no Engine flag).
+`gpu-sim` `add_graph_dependencies_with_data` is `cuGraphAddDependencies` with data (identity with `graph_add_dependencies_with_data`; no Engine flag).
 `gpu-sim` `mem_alloc` is `cuMemAlloc` (identity with `malloc`; no Engine flag).
 `gpu-sim` `mem_free` is `cuMemFree` (identity with `free_sync`; no Engine flag).
 `gpu-sim` `mem_free_host` is `cuMemFreeHost` (identity with `free_host_pinned`; no Engine flag).
@@ -752,6 +753,7 @@ compiled kernel exists; no Engine flag).
 `gpu-sim` `graph_exec_update_with_info` is `cuGraphExecUpdate` with info (identity with `update_graph_with_info`; no Engine flag).
 `gpu-sim` `add_graph_dependencies` is `cuGraphAddDependencies` (identity with `graph_add_dependencies`; no Engine flag).
 `gpu-sim` `add_graph_dependencies_n` is `cuGraphAddDependencies` of pairs (identity with `graph_add_dependencies_n`; no Engine flag).
+`gpu-sim` `add_graph_dependencies_with_data` is `cuGraphAddDependencies` with data (identity with `graph_add_dependencies_with_data`; no Engine flag).
 `gpu-sim` `func_is_loaded` is `cuFuncIsLoaded` (`false` until a compiled
 kernel exists; no Engine flag).
 `gpu-sim` `func_load` is `cuFuncLoad` (Invalid; no compiled kernel; no
