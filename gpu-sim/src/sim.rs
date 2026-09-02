@@ -18996,7 +18996,6 @@ impl Sim {
     /// [`Self::va_map_multicast`] (`cuMemMap` of a multicast handle).
     ///
     /// Capture refused. Distinct from [`Self::mem_get_allocation_properties`].
-    /// This VM does not invent occupancy SM counts this slice.
     pub fn mem_map_multicast(
         &mut self,
         id: AllocId,
@@ -19010,6 +19009,8 @@ impl Sim {
     /// [`Self::va_map_multicast`] with a flags word.
     ///
     /// CUDA requires 0. Unknown bits Invalid `"mem map flags"`.
+    /// Driver `cuMemMap` multicast flags is [`Self::mem_map_multicast_with_flags`].
+    /// Identity wrap [`Self::mem_map_multicast_with_flags`].
     pub fn va_map_multicast_with_flags(
         &mut self,
         id: AllocId,
@@ -19026,6 +19027,22 @@ impl Sim {
         }
         let bytes = self.mc_ref(mc)?.bytes;
         self.va_map_multicast_with_size(id, device, offset, mc, bytes, flags)
+    }
+
+    /// `cuMemMap` multicast flags. Identity with
+    /// [`Self::va_map_multicast_with_flags`] (`cuMemMap` multicast flags).
+    ///
+    /// Capture refused. Distinct from [`Self::mem_map_multicast`].
+    /// This VM does not invent occupancy SM counts this slice.
+    pub fn mem_map_multicast_with_flags(
+        &mut self,
+        id: AllocId,
+        device: DeviceId,
+        offset: u64,
+        mc: MulticastId,
+        flags: u32,
+    ) -> Result<(), SimError> {
+        self.va_map_multicast_with_flags(id, device, offset, mc, flags)
     }
 
     /// [`Self::va_map_multicast`] with the CUDA size and flags.
