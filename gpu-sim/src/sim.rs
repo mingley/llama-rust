@@ -11249,8 +11249,7 @@ impl Sim {
     /// with data).
     ///
     /// Capture refused. Distinct from
-    /// [`Self::add_graph_dependencies_n`]. This VM does not invent
-    /// occupancy SM counts this slice.
+    /// [`Self::add_graph_dependencies_n`].
     pub fn add_graph_dependencies_with_data(
         &mut self,
         graph: GraphId,
@@ -11270,7 +11269,9 @@ impl Sim {
     /// to start. An existing `(from, to)` cannot change stored
     /// [`GraphEdgeData`] (Invalid `"graph edge data"`). Default incoming on an
     /// existing edge stays a no-op. Capture cannot include it. Illegal on an
-    /// instantiated exec.
+    /// instantiated exec. Driver
+    /// `cuGraphAddDependencies` v2 is
+    /// [`Self::add_graph_dependencies_n_with_data`].
     pub fn graph_add_dependencies_n_with_data(
         &mut self,
         graph: GraphId,
@@ -11299,6 +11300,21 @@ impl Sim {
             let _prev = step.edge_data.insert(from, data);
         }
         Ok(())
+    }
+
+    /// `cuGraphAddDependencies` v2 of from/to/data triples. Identity with
+    /// [`Self::graph_add_dependencies_n_with_data`] (`cudaGraphAddDependencies`
+    /// v2).
+    ///
+    /// Capture refused. Distinct from
+    /// [`Self::add_graph_dependencies_with_data`]. This VM does not invent
+    /// occupancy SM counts this slice.
+    pub fn add_graph_dependencies_n_with_data(
+        &mut self,
+        graph: GraphId,
+        edges: &[(usize, usize, GraphEdgeData)],
+    ) -> Result<(), SimError> {
+        self.graph_add_dependencies_n_with_data(graph, edges)
     }
 
     /// CUDA: AddDependencies cannot change [`GraphEdgeData`] of an existing
