@@ -5,6 +5,16 @@ Visible five-turn extract: [docs/chatgpt-share-6a920fe1.md](docs/chatgpt-share-6
 Complete share-API extract: [docs/chatgpt-share-6a920fe1/](docs/chatgpt-share-6a920fe1/).
 Work lands on `main`. No PRs.
 
+## Shipped 2026-09-02 — CUDA `cuMemcpyDtoAAsync`
+
+`gpu-sim` `Sim::memcpy_dto_a_async` is `cuMemcpyDtoAAsync`.
+Always Invalid `"async dtoa"` because CUDA arrays are not modeled.
+Query; legal during capture. Distinct from
+`memcpy_ato_a` (why is not `"memcpy atoa"`) and
+`memcpy_dto_a` (why is not `"memcpy dtoa"`).
+This VM does not invent `cuMemcpyAtoDAsync` or Engine `--async-dtoa`.
+`gpu-profile capture` is still refused. Dual score still has no `$/M tokens`.
+
 ## Shipped 2026-09-02 — CUDA `cuMemcpyAtoA`
 
 `gpu-sim` `Sim::memcpy_ato_a` is `cuMemcpyAtoA`.
