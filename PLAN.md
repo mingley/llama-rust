@@ -9894,7 +9894,12 @@ model, do not celebrate the sim.
       `mem_pool_set_release_threshold`. This VM does not invent occupancy SM counts, Engine `--mem-pool-set-max-size`,
       or `cudaChooseDevice`. `gpu-profile capture` is still refused. Dual
       score still has no `$/M tokens`.
-1127. [ ] Next numbered PLAN item after 1126 is the next `gpu-sim` / Engine /
+1127. [x] `gpu-sim` `Sim::mem_get_allocation_granularity` is
+      `cuMemGetAllocationGranularity`. Identity with `va_get_allocation_granularity` (`cuMemGetAllocationGranularity`). Query; legal during capture. Distinct from
+      `mem_pool_set_max_size`. This VM does not invent occupancy SM counts, Engine `--mem-get-allocation-granularity`,
+      or `cudaChooseDevice`. `gpu-profile capture` is still refused. Dual
+      score still has no `$/M tokens`.
+1128. [ ] Next numbered PLAN item after 1127 is the next `gpu-sim` / Engine /
     serve / expertvm mechanical API that is still missing, or the next official
     decode family. Prefer remaining CUDA-shaped twins over more
     OpenAI HTTP veneer. Do not invent F32 `output.scale`. Do not invent a
@@ -11878,6 +11883,11 @@ model, do not celebrate the sim.
     occupancy SM counts this slice. Do not reverse MemPoolSetAttribute MaxPoolSize identity with set_pool_max_size.
     Do not invent `set_default_pool_release_threshold` as `mem_pool_set_max_size`.
     Do not invent `pool_cached` as `mem_pool_set_max_size`.
+    Do not invent a second `cuMemGetAllocationGranularity` / `mem_get_allocation_granularity`.
+    Do not invent Engine `--mem-get-allocation-granularity`. Do not invent
+    occupancy SM counts this slice. Do not reverse MemGetAllocationGranularity identity with va_get_allocation_granularity.
+    Do not invent `va_create` as `mem_get_allocation_granularity`.
+    Do not invent `cuMemCreate` as `mem_get_allocation_granularity`.
     Do not invent a second `cudaStreamAddCallback`.
     Do not invent Engine `--stream-callback` (same wall as second live
     `cudaLaunchHostFunc` after miss DMA).
@@ -13897,6 +13907,11 @@ model, do not celebrate the sim.
     this slice. Do not reverse MemPoolSetAttribute MaxPoolSize identity with set_pool_max_size.
     Do not wrap `set_pool_max_size` as `mem_pool_set_max_size`.
     Do not wrap `set_default_pool_release_threshold` as `mem_pool_set_max_size`.
+    Do not invent a second `mem_get_allocation_granularity` API. Do not invent
+    Engine `--mem-get-allocation-granularity-identity`. Do not invent a va-create
+    this slice. Do not reverse MemGetAllocationGranularity identity with va_get_allocation_granularity.
+    Do not wrap `va_get_allocation_granularity` as `mem_get_allocation_granularity`.
+    Do not wrap `va_create` as `mem_get_allocation_granularity`.
     Do not invent a second DeviceLaunch in-flight destroy-complete check or Engine
     `--device-launch-destroy`. Do not abort an in-flight DeviceLaunch when
     `destroy_graph` succeeds. Do not delay destroy of an idle exec. Do not invent
@@ -16031,6 +16046,9 @@ model, do not celebrate the sim.
     Do not invent a second `mem_pool_set_max_size` method. Do not
     invent Engine `--cu-mem-pool-set-max-size`. Do not reverse wrapping
     cuMemPoolSetAttribute MaxPoolSize identity. Do not wrap `set_default_pool_release_threshold` as `mem_pool_set_max_size`.
+    Do not invent a second `mem_get_allocation_granularity` method. Do not
+    invent Engine `--cu-mem-get-allocation-granularity`. Do not reverse wrapping
+    cuMemGetAllocationGranularity identity. Do not wrap `va_create` as `mem_get_allocation_granularity`.
     Do not
     spend the next item on an OpenAI-compatible HTTP veneer.
 

@@ -16450,7 +16450,6 @@ impl Sim {
     /// [`Self::set_pool_max_size`] (`cudaMemPoolAttrMaxPoolSize`).
     ///
     /// Capture refused. Distinct from [`Self::mem_pool_set_release_threshold`].
-    /// This VM does not invent occupancy SM counts this slice.
     pub fn mem_pool_set_max_size(&mut self, pool: PoolId, bytes: u64) -> Result<(), SimError> {
         self.set_pool_max_size(pool, bytes)
     }
@@ -18442,6 +18441,8 @@ impl Sim {
     /// [`MemAllocationProp::alloc_type`] must be pinned;
     /// [`MemAllocationProp::location`] must be a device in the profile.
     /// Handle types / RDMA on `prop` are ignored.
+    /// Driver `cuMemGetAllocationGranularity` is [`Self::mem_get_allocation_granularity`].
+    /// Identity wrap [`Self::mem_get_allocation_granularity`].
     pub fn va_get_allocation_granularity(
         &self,
         prop: MemAllocationProp,
@@ -18468,6 +18469,19 @@ impl Sim {
         let _gpu = self.profile.gpu(device)?;
         let g = self.profile.va_granularity_bytes;
         Ok(if g <= 1 { 1 } else { g })
+    }
+
+    /// `cuMemGetAllocationGranularity`. Identity with
+    /// [`Self::va_get_allocation_granularity`] (`cuMemGetAllocationGranularity`).
+    ///
+    /// Query; legal during capture. Distinct from [`Self::mem_pool_set_max_size`].
+    /// This VM does not invent occupancy SM counts this slice.
+    pub fn mem_get_allocation_granularity(
+        &self,
+        prop: MemAllocationProp,
+        flags: u32,
+    ) -> Result<u64, SimError> {
+        self.va_get_allocation_granularity(prop, flags)
     }
 
     /// `cuMulticastGetGranularity`. Query; legal during capture.
