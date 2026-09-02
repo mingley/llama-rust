@@ -9394,7 +9394,14 @@ model, do not celebrate the sim.
     or `cudaChooseDevice`. `gpu-profile capture` is still refused. Dual
     score still has no `$/M tokens`.
 
-1034. [ ] Next numbered PLAN item after 1033 is the next `gpu-sim` / Engine /
+1034. [x] `gpu-sim` `Sim::device_flush_gpu_direct_rdma_writes` is
+    `cuFlushGPUDirectRDMAWrites`. Identity with `flush_gpu_direct_rdma_writes`
+    (`cudaDeviceFlushGPUDirectRDMAWrites`). Capture refused. Distinct from
+    `device_nvscisync_attributes`. This VM does not invent occupancy SM counts, Engine `--device-flush-gpu-direct-rdma-writes`,
+    or `cudaChooseDevice`. `gpu-profile capture` is still refused. Dual
+    score still has no `$/M tokens`.
+
+1035. [ ] Next numbered PLAN item after 1034 is the next `gpu-sim` / Engine /
     serve / expertvm mechanical API that is still missing, or the next official
     decode family. Prefer remaining CUDA-shaped twins over more
     OpenAI HTTP veneer. Do not invent F32 `output.scale`. Do not invent a
@@ -10988,6 +10995,9 @@ model, do not celebrate the sim.
     Do not invent a second `cuDeviceGetNvSciSyncAttributes` / `device_nvscisync_attributes`.
     Do not invent Engine `--device-nvscisync-attributes`. Do not invent
     occupancy SM counts this slice. Do not reverse DeviceGetNvSciSyncAttributes identity with device_get_nvscisync_attributes.
+    Do not invent a second `cuFlushGPUDirectRDMAWrites` / `device_flush_gpu_direct_rdma_writes`.
+    Do not invent Engine `--device-flush-gpu-direct-rdma-writes`. Do not invent
+    occupancy SM counts this slice. Do not reverse FlushGPUDirectRDMAWrites identity with flush_gpu_direct_rdma_writes.
     Do not invent a second `cudaStreamAddCallback`.
     Do not invent Engine `--stream-callback` (same wall as second live
     `cudaLaunchHostFunc` after miss DMA).
@@ -12660,6 +12670,9 @@ model, do not celebrate the sim.
     Do not invent a second `device_nvscisync_attributes` API. Do not invent
     Engine `--device-nvscisync-attributes-identity`. Do not invent a flush-gpu-direct-rdma-writes
     this slice. Do not reverse DeviceGetNvSciSyncAttributes identity with device_get_nvscisync_attributes.
+    Do not invent a second `device_flush_gpu_direct_rdma_writes` API. Do not invent
+    Engine `--device-flush-gpu-direct-rdma-writes-identity`. Do not invent a malloc-pitch
+    this slice. Do not reverse FlushGPUDirectRDMAWrites identity with flush_gpu_direct_rdma_writes.
     Do not invent a second DeviceLaunch in-flight destroy-complete check or Engine
     `--device-launch-destroy`. Do not abort an in-flight DeviceLaunch when
     `destroy_graph` succeeds. Do not delay destroy of an idle exec. Do not invent
@@ -14515,6 +14528,9 @@ model, do not celebrate the sim.
     Do not invent a second `device_nvscisync_attributes` method. Do not
     invent Engine `--cu-device-nvscisync-attributes`. Do not reverse wrapping
     cuDeviceGetNvSciSyncAttributes identity.
+    Do not invent a second `device_flush_gpu_direct_rdma_writes` method. Do not
+    invent Engine `--cu-device-flush-gpu-direct-rdma-writes`. Do not reverse wrapping
+    cuFlushGPUDirectRDMAWrites identity.
     Do not
     spend the next item on an OpenAI-compatible HTTP veneer.
 

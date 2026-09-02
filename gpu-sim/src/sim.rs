@@ -25743,8 +25743,7 @@ impl Sim {
     /// [`Self::device_get_nvscisync_attributes`] (`cudaDeviceGetNvSciSyncAttributes`).
     ///
     /// Query; legal during capture. Distinct from
-    /// [`Self::device_p2p_attribute`]. This VM does not invent
-    /// occupancy SM counts this slice.
+    /// [`Self::device_p2p_attribute`].
     pub fn device_nvscisync_attributes(
         &self,
         device: DeviceId,
@@ -25754,6 +25753,8 @@ impl Sim {
     }
 
     /// `cudaDeviceFlushGPUDirectRDMAWrites`. Host-synchronous 1 ns barrier.
+    ///
+    /// Driver `cuFlushGPUDirectRDMAWrites` is [`Self::device_flush_gpu_direct_rdma_writes`].
     ///
     /// Capture cannot include it. Devices without a GPU↔GPU
     /// [`crate::LinkKind::Rdma`] link are Invalid `"gpu direct rdma"`. Target
@@ -25788,6 +25789,21 @@ impl Sim {
         }
         self.clock = self.clock.saturating_add(1);
         Ok(())
+    }
+
+    /// `cuFlushGPUDirectRDMAWrites`. Identity with
+    /// [`Self::flush_gpu_direct_rdma_writes`] (`cudaDeviceFlushGPUDirectRDMAWrites`).
+    ///
+    /// Capture refused. Distinct from
+    /// [`Self::device_nvscisync_attributes`]. This VM does not invent
+    /// occupancy SM counts this slice.
+    pub fn device_flush_gpu_direct_rdma_writes(
+        &mut self,
+        device: DeviceId,
+        target: u32,
+        scope: u32,
+    ) -> Result<(), SimError> {
+        self.flush_gpu_direct_rdma_writes(device, target, scope)
     }
 
     /// `cudaMallocPitch`: aligned 2D allocation. Returns `(ptr, pitch)`.
