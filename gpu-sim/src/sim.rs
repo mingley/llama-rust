@@ -21586,6 +21586,21 @@ impl Sim {
         })
     }
 
+    /// `cuTexRefSetBorderColor`. CUDA texture references are not modeled.
+    ///
+    /// Always Invalid `"texref border"` (this VM has no `CUtexref` border
+    /// color). Distinct from [`Self::tex_ref_set_max_anisotropy`] (why is
+    /// not `"texref aniso"`) and from [`Self::tex_ref_set_address_mode`]
+    /// (why is not `"texref addrmode"`). Unknown devices are Invalid
+    /// `"device not in profile"`. Query; legal during capture. This VM does
+    /// not invent `cuTexRefSetFlags` this slice.
+    pub fn tex_ref_set_border_color(&self, device: DeviceId) -> Result<(), SimError> {
+        let _gpu = self.profile.gpu(device)?;
+        Err(SimError::Invalid {
+            why: "texref border",
+        })
+    }
+
     /// `cuModuleGetSurfRef`. CUDA modules are not modeled.
     ///
     /// Always Invalid `"module surfref"` (this VM has no `CUmodule` and
