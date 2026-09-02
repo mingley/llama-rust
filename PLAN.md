@@ -9664,7 +9664,12 @@ model, do not celebrate the sim.
       `func_get_non_portable_cluster_size_allowed`. This VM does not invent occupancy SM counts, Engine `--func-set-max-dynamic-shared-memory`,
       or `cudaChooseDevice`. `gpu-profile capture` is still refused. Dual
       score still has no `$/M tokens`.
-1081. [ ] Next numbered PLAN item after 1080 is the next `gpu-sim` / Engine /
+1081. [x] `gpu-sim` `Sim::func_get_max_dynamic_shared_memory` is
+      `cuFuncGetAttribute` max dynamic shared memory. Identity with `max_dynamic_shared_memory` (`cudaFuncGetAttribute` MaxDynamicSharedMemorySize). Query; legal during capture. Distinct from
+      `func_set_max_dynamic_shared_memory`. This VM does not invent occupancy SM counts, Engine `--func-get-max-dynamic-shared-memory`,
+      or `cudaChooseDevice`. `gpu-profile capture` is still refused. Dual
+      score still has no `$/M tokens`.
+1082. [ ] Next numbered PLAN item after 1081 is the next `gpu-sim` / Engine /
     serve / expertvm mechanical API that is still missing, or the next official
     decode family. Prefer remaining CUDA-shaped twins over more
     OpenAI HTTP veneer. Do not invent F32 `output.scale`. Do not invent a
@@ -11442,6 +11447,10 @@ model, do not celebrate the sim.
     Do not invent Engine `--func-set-max-dynamic-shared-memory`. Do not invent
     occupancy SM counts this slice. Do not reverse FuncSetMaxDynamicSharedMemory identity with set_max_dynamic_shared_memory.
     Do not invent generic `cuFuncSetAttribute` as `func_set_max_dynamic_shared_memory`.
+    Do not invent a second `cuFuncGetAttribute` max dynamic shared memory / `func_get_max_dynamic_shared_memory`.
+    Do not invent Engine `--func-get-max-dynamic-shared-memory`. Do not invent
+    occupancy SM counts this slice. Do not reverse FuncGetMaxDynamicSharedMemory identity with max_dynamic_shared_memory.
+    Do not invent generic `cuFuncGetAttribute` as `func_get_max_dynamic_shared_memory`.
     Do not invent a second `cudaStreamAddCallback`.
     Do not invent Engine `--stream-callback` (same wall as second live
     `cudaLaunchHostFunc` after miss DMA).
@@ -13255,6 +13264,9 @@ model, do not celebrate the sim.
     Do not invent a second `func_set_max_dynamic_shared_memory` API. Do not invent
     Engine `--func-set-max-dynamic-shared-memory-identity`. Do not invent a get-max-dynamic-shared
     this slice. Do not reverse FuncSetMaxDynamicSharedMemory identity with set_max_dynamic_shared_memory.
+    Do not invent a second `func_get_max_dynamic_shared_memory` API. Do not invent
+    Engine `--func-get-max-dynamic-shared-memory-identity`. Do not invent a event-create-disable-timing
+    this slice. Do not reverse FuncGetMaxDynamicSharedMemory identity with max_dynamic_shared_memory.
     Do not invent a second DeviceLaunch in-flight destroy-complete check or Engine
     `--device-launch-destroy`. Do not abort an in-flight DeviceLaunch when
     `destroy_graph` succeeds. Do not delay destroy of an idle exec. Do not invent
@@ -15251,6 +15263,9 @@ model, do not celebrate the sim.
     Do not invent a second `func_set_max_dynamic_shared_memory` method. Do not
     invent Engine `--cu-func-set-max-dynamic-shared-memory`. Do not reverse wrapping
     cuFuncSetAttribute max dynamic shared memory identity. Do not wrap generic `cuFuncSetAttribute` as `func_set_max_dynamic_shared_memory`.
+    Do not invent a second `func_get_max_dynamic_shared_memory` method. Do not
+    invent Engine `--cu-func-get-max-dynamic-shared-memory`. Do not reverse wrapping
+    cuFuncGetAttribute max dynamic shared memory identity. Do not wrap generic `cuFuncGetAttribute` as `func_get_max_dynamic_shared_memory`.
     Do not
     spend the next item on an OpenAI-compatible HTTP veneer.
 

@@ -30813,7 +30813,6 @@ impl Sim {
     /// [`Self::set_max_dynamic_shared_memory`] (`cudaFuncSetAttribute` MaxDynamicSharedMemorySize).
     ///
     /// Capture legal. Distinct from [`Self::func_get_non_portable_cluster_size_allowed`].
-    /// This VM does not invent occupancy SM counts this slice.
     pub fn func_set_max_dynamic_shared_memory(
         &mut self,
         device: DeviceId,
@@ -30823,9 +30822,21 @@ impl Sim {
     }
 
     /// Current [`Self::set_max_dynamic_shared_memory`] for `device`.
+    /// Driver `cuFuncGetAttribute` max dynamic shared memory is [`Self::func_get_max_dynamic_shared_memory`].
+    /// Identity wrap [`Self::func_get_max_dynamic_shared_memory`].
     #[must_use]
     pub fn max_dynamic_shared_memory(&self, device: DeviceId) -> u32 {
         self.max_dynamic_shared.get(&device).copied().unwrap_or(0)
+    }
+
+    /// `cuFuncGetAttribute` max dynamic shared memory. Identity with
+    /// [`Self::max_dynamic_shared_memory`] (`cudaFuncGetAttribute` MaxDynamicSharedMemorySize).
+    ///
+    /// Query; legal during capture. Distinct from [`Self::func_set_max_dynamic_shared_memory`].
+    /// This VM does not invent occupancy SM counts this slice.
+    #[must_use]
+    pub fn func_get_max_dynamic_shared_memory(&self, device: DeviceId) -> u32 {
+        self.max_dynamic_shared_memory(device)
     }
 
     /// `cudaFuncGetAttributes` of modeled per-device function attrs.

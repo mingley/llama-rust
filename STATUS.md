@@ -5,6 +5,13 @@ Visible five-turn extract: [docs/chatgpt-share-6a920fe1.md](docs/chatgpt-share-6
 Complete share-API extract: [docs/chatgpt-share-6a920fe1/](docs/chatgpt-share-6a920fe1/).
 Work lands on `main`. No PRs.
 
+## Shipped 2026-09-02 — CUDA `cuFuncGetAttribute` max dynamic shared memory
+
+`gpu-sim` `Sim::func_get_max_dynamic_shared_memory` is `cuFuncGetAttribute` max dynamic shared memory.
+Identity with `max_dynamic_shared_memory` (`cudaFuncGetAttribute` MaxDynamicSharedMemorySize). Query; legal during capture. Distinct from `func_set_max_dynamic_shared_memory`.
+This VM does not invent occupancy SM counts or Engine `--func-get-max-dynamic-shared-memory`.
+`gpu-profile capture` is still refused. Dual score still has no `$/M tokens`.
+
 ## Shipped 2026-09-02 — CUDA `cuFuncSetAttribute` max dynamic shared memory
 
 `gpu-sim` `Sim::func_set_max_dynamic_shared_memory` is `cuFuncSetAttribute` max dynamic shared memory.
