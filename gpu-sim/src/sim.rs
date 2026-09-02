@@ -10603,8 +10603,7 @@ impl Sim {
     /// [`Self::graph_add_while`] (`cudaGraphAddNode` WHILE).
     ///
     /// Capture refused. Distinct from
-    /// [`Self::add_graph_if_else`]. This VM does not invent
-    /// occupancy SM counts this slice.
+    /// [`Self::add_graph_if_else`].
     pub fn add_graph_while(&mut self, graph: GraphId, handle: CondId) -> Result<GraphId, SimError> {
         self.graph_add_while(graph, handle)
     }
@@ -10614,7 +10613,9 @@ impl Sim {
     /// Branch `i` runs when the handle equals `i`. Out of range skips every
     /// body. `n` must be `1..=64`. [`GraphNodeParams::Switch`] fills
     /// [`GraphAddNode::switch_bodies`]. Capture cannot include it. Illegal on
-    /// an instantiated exec.
+    /// an instantiated exec. Driver
+    /// `cuGraphAddNode` SWITCH is
+    /// [`Self::add_graph_switch`].
     pub fn graph_add_switch(
         &mut self,
         graph: GraphId,
@@ -10643,6 +10644,21 @@ impl Sim {
             },
         )?;
         Ok(bodies)
+    }
+
+    /// `cuGraphAddNode` SWITCH (`cudaGraphCondTypeSwitch`). Identity with
+    /// [`Self::graph_add_switch`] (`cudaGraphAddNode` SWITCH).
+    ///
+    /// Capture refused. Distinct from
+    /// [`Self::add_graph_while`]. This VM does not invent
+    /// occupancy SM counts this slice.
+    pub fn add_graph_switch(
+        &mut self,
+        graph: GraphId,
+        handle: CondId,
+        n: u32,
+    ) -> Result<Vec<GraphId>, SimError> {
+        self.graph_add_switch(graph, handle, n)
     }
 
     fn require_cond_on_graph(&self, handle: CondId, graph: GraphId) -> Result<(), SimError> {

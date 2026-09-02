@@ -9030,7 +9030,14 @@ model, do not celebrate the sim.
     or `cudaChooseDevice`. `gpu-profile capture` is still refused. Dual
     score still has no `$/M tokens`.
 
-982. [ ] Next numbered PLAN item after 981 is the next `gpu-sim` / Engine /
+982. [x] `gpu-sim` `Sim::add_graph_switch` is
+    `cuGraphAddNode` SWITCH. Identity with `graph_add_switch`
+    (`cudaGraphAddNode` SWITCH). Capture refused. Distinct from
+    `add_graph_while`. This VM does not invent occupancy SM counts, Engine `--graph-add-switch`,
+    or `cudaChooseDevice`. `gpu-profile capture` is still refused. Dual
+    score still has no `$/M tokens`.
+
+983. [ ] Next numbered PLAN item after 982 is the next `gpu-sim` / Engine /
     serve / expertvm mechanical API that is still missing, or the next official
     decode family. Prefer remaining CUDA-shaped twins over more
     OpenAI HTTP veneer. Do not invent F32 `output.scale`. Do not invent a
@@ -10467,6 +10474,9 @@ model, do not celebrate the sim.
     Do not invent a second `cuGraphAddNode` WHILE / `add_graph_while`.
     Do not invent Engine `--graph-add-while`. Do not invent
     occupancy SM counts this slice. Do not reverse AddGraphWhile identity with graph_add_while.
+    Do not invent a second `cuGraphAddNode` SWITCH / `add_graph_switch`.
+    Do not invent Engine `--graph-add-switch`. Do not invent
+    occupancy SM counts this slice. Do not reverse AddGraphSwitch identity with graph_add_switch.
     Do not invent a second `cudaStreamAddCallback`.
     Do not invent Engine `--stream-callback` (same wall as second live
     `cudaLaunchHostFunc` after miss DMA).
@@ -11983,6 +11993,9 @@ model, do not celebrate the sim.
     Do not invent a second `add_graph_while` API. Do not invent
     Engine `--graph-add-while-identity`. Do not invent a graph-add-switch
     this slice. Do not reverse AddGraphWhile identity with graph_add_while.
+    Do not invent a second `add_graph_switch` API. Do not invent
+    Engine `--graph-add-switch-identity`. Do not invent a graph-add-set-conditional
+    this slice. Do not reverse AddGraphSwitch identity with graph_add_switch.
     Do not invent a second DeviceLaunch in-flight destroy-complete check or Engine
     `--device-launch-destroy`. Do not abort an in-flight DeviceLaunch when
     `destroy_graph` succeeds. Do not delay destroy of an idle exec. Do not invent
@@ -13682,6 +13695,9 @@ model, do not celebrate the sim.
     Do not invent a second `add_graph_while` method. Do not
     invent Engine `--cu-graph-add-while`. Do not reverse wrapping
     cuGraphAddNode WHILE identity.
+    Do not invent a second `add_graph_switch` method. Do not
+    invent Engine `--cu-graph-add-switch`. Do not reverse wrapping
+    cuGraphAddNode SWITCH identity.
     Do not
     spend the next item on an OpenAI-compatible HTTP veneer.
 
