@@ -17740,6 +17740,7 @@ impl Sim {
     }
 
     /// `cudaMemcpyPeer`. Host-synchronous; capture cannot include it.
+    /// Driver `cuMemcpyPeer` is [`Self::mem_cpy_peer`].
     pub fn memcpy_peer(
         &mut self,
         src: DeviceId,
@@ -17756,6 +17757,21 @@ impl Sim {
         let id = self.memcpy_peer_async(src, dst, alloc, bytes, stream)?;
         self.synchronize_stream(src, stream)?;
         Ok(id)
+    }
+
+    /// `cuMemcpyPeer`. Identity with [`Self::memcpy_peer`] (`cudaMemcpyPeer`).
+    ///
+    /// Capture refused. Distinct from [`Self::memcpy_peer_async`].
+    /// This VM does not invent `mem_cpy_peer_async` this slice.
+    pub fn mem_cpy_peer(
+        &mut self,
+        src: DeviceId,
+        dst: DeviceId,
+        alloc: AllocId,
+        bytes: u64,
+        stream: StreamId,
+    ) -> Result<OpId, SimError> {
+        self.memcpy_peer(src, dst, alloc, bytes, stream)
     }
 
     fn memcpy_peer_extent_async(
@@ -17940,7 +17956,6 @@ impl Sim {
     /// (`cudaMemcpy3DAsync`).
     ///
     /// Capture-legal (pinned/device). Distinct from [`Self::mem_cpy_3d`].
-    /// This VM does not invent `mem_cpy_peer` this slice.
     pub fn mem_cpy_3d_async(
         &mut self,
         device: DeviceId,

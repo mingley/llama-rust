@@ -8120,7 +8120,14 @@ model, do not celebrate the sim.
     or `cudaChooseDevice`. `gpu-profile capture` is still refused. Dual
     score still has no `$/M tokens`.
 
-852. [ ] Next numbered PLAN item after 851 is the next `gpu-sim` / Engine /
+852. [x] `gpu-sim` `Sim::mem_cpy_peer` is
+    `cuMemcpyPeer`. Identity with `memcpy_peer`
+    (`cudaMemcpyPeer`). Capture refused. Distinct from
+    `memcpy_peer_async`. This VM does not invent `mem_cpy_peer_async`, Engine `--mem-cpy-peer`,
+    or `cudaChooseDevice`. `gpu-profile capture` is still refused. Dual
+    score still has no `$/M tokens`.
+
+853. [ ] Next numbered PLAN item after 852 is the next `gpu-sim` / Engine /
     serve / expertvm mechanical API that is still missing, or the next official
     decode family. Prefer remaining CUDA-shaped twins over more
     OpenAI HTTP veneer. Do not invent F32 `output.scale`. Do not invent a
@@ -9167,6 +9174,9 @@ model, do not celebrate the sim.
     Do not invent a second `cuMemcpy3DAsync` / `mem_cpy_3d_async`.
     Do not invent Engine `--mem-cpy-3d-async`. Do not invent
     `mem_cpy_peer` this slice. Do not reverse MemCpy3dAsync identity with memcpy_3d_async.
+    Do not invent a second `cuMemcpyPeer` / `mem_cpy_peer`.
+    Do not invent Engine `--mem-cpy-peer`. Do not invent
+    `mem_cpy_peer_async` this slice. Do not reverse MemCpyPeer identity with memcpy_peer.
     Do not invent a second `cudaStreamAddCallback`.
     Do not invent Engine `--stream-callback` (same wall as second live
     `cudaLaunchHostFunc` after miss DMA).
@@ -10293,6 +10303,9 @@ model, do not celebrate the sim.
     Do not invent a second `mem_cpy_3d_async` API. Do not invent
     Engine `--mem-cpy-3d-async-identity`. Do not invent a mem-cpy-peer
     this slice. Do not reverse MemCpy3dAsync identity with memcpy_3d_async.
+    Do not invent a second `mem_cpy_peer` API. Do not invent
+    Engine `--mem-cpy-peer-identity`. Do not invent a mem-cpy-peer-async
+    this slice. Do not reverse MemCpyPeer identity with memcpy_peer.
     Do not invent a second DeviceLaunch in-flight destroy-complete check or Engine
     `--device-launch-destroy`. Do not abort an in-flight DeviceLaunch when
     `destroy_graph` succeeds. Do not delay destroy of an idle exec. Do not invent
@@ -11602,6 +11615,9 @@ model, do not celebrate the sim.
     Do not invent a second `mem_cpy_3d_async` method. Do not
     invent Engine `--cu-mem-cpy-3d-async`. Do not reverse wrapping
     cuMemcpy3DAsync identity.
+    Do not invent a second `mem_cpy_peer` method. Do not
+    invent Engine `--cu-mem-cpy-peer`. Do not reverse wrapping
+    cuMemcpyPeer identity.
     Do not
     spend the next item on an OpenAI-compatible HTTP veneer.
 
