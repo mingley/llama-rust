@@ -1070,6 +1070,9 @@
 //! [`coredump_get_attribute`](Sim::coredump_get_attribute) is
 //! `cuCoredumpGetAttribute` (always Invalid `"coredump"`). Query; legal
 //! during capture. No Engine `--coredump`.
+//! [`coredump_set_attribute`](Sim::coredump_set_attribute) is
+//! `cuCoredumpSetAttribute` (always Invalid `"dump setattr"`). Query; legal
+//! during capture. No Engine `--dump-setattr`.
 //! [`checkpoint_process_lock`](Sim::checkpoint_process_lock) is
 //! `cuCheckpointProcessLock` (always Invalid `"checkpoint"`). Query; legal
 //! during capture. No Engine `--checkpoint`. [`Sim::driver_init`] is `cuInit` (flags 0; already initialized
@@ -18747,6 +18750,55 @@ mod tests {
         match sim.get_proc_address(d) {
             Err(SimError::Invalid { why }) => {
                 assert!(why.contains("proc address"), "{why}");
+            }
+            other => panic!("{other:?}"),
+        }
+        match sim.coredump_set_attribute(d) {
+            Err(SimError::Invalid { why }) => {
+                assert!(why.contains("dump setattr"), "{why}");
+                assert!(!why.contains("coredump"), "{why}");
+            }
+            other => panic!("{other:?}"),
+        }
+    }
+
+    #[test]
+    fn coredump_set_attribute_is_unsupported() {
+        let mut sim = Sim::new(h100());
+        let d = DeviceId(0);
+        match sim.coredump_set_attribute(d) {
+            Err(SimError::Invalid { why }) => {
+                assert!(why.contains("dump setattr"), "{why}");
+                assert!(!why.contains("coredump"), "{why}");
+                assert!(!why.contains("kernel setattr"), "{why}");
+            }
+            other => panic!("{other:?}"),
+        }
+        sim.begin_capture(d, StreamId(0)).unwrap();
+        match sim.coredump_set_attribute(d) {
+            Err(SimError::Invalid { why }) => {
+                assert!(why.contains("dump setattr"), "{why}");
+            }
+            other => panic!("{other:?}"),
+        }
+        let _g = sim.end_capture().unwrap();
+        match sim.coredump_set_attribute(DeviceId(99)) {
+            Err(SimError::Invalid { why }) => {
+                assert!(why.contains("device not in profile"), "{why}");
+            }
+            other => panic!("{other:?}"),
+        }
+        match sim.coredump_get_attribute(d) {
+            Err(SimError::Invalid { why }) => {
+                assert!(why.contains("coredump"), "{why}");
+                assert!(!why.contains("dump setattr"), "{why}");
+            }
+            other => panic!("{other:?}"),
+        }
+        match sim.kernel_set_attribute(d) {
+            Err(SimError::Invalid { why }) => {
+                assert!(why.contains("kernel setattr"), "{why}");
+                assert!(!why.contains("dump setattr"), "{why}");
             }
             other => panic!("{other:?}"),
         }
