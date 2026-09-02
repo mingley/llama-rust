@@ -3958,8 +3958,7 @@ impl Sim {
     /// [`Self::launch_graph`] (`cudaGraphLaunch`).
     ///
     /// Live host launch. Capture records a child graph. Distinct from
-    /// [`Self::device_launch_graph`]. This VM does not invent
-    /// occupancy SM counts this slice.
+    /// [`Self::device_launch_graph`].
     pub fn graph_launch(&mut self, graph: GraphId, stream: StreamId) -> Result<u32, SimError> {
         self.launch_graph(graph, stream)
     }
@@ -5414,7 +5413,9 @@ impl Sim {
     /// clears the flag so the next launch uploads again. Stream-ordered upload
     /// is [`Self::upload_graph_async`]. Host upload of a DeviceLaunch exec while
     /// [`Self::device_launch_graph`] is in flight is Invalid
-    /// `"device launch in flight"`.
+    /// `"device launch in flight"`. Driver
+    /// `cuGraphUpload` is
+    /// [`Self::graph_upload`].
     pub fn upload_graph(&mut self, graph: GraphId) -> Result<(), SimError> {
         self.fail_if_capturing("cannot capture graph upload")?;
         let exec = self.as_exec(graph)?;
@@ -5438,6 +5439,16 @@ impl Sim {
             })?
             .uploaded = true;
         Ok(())
+    }
+
+    /// `cuGraphUpload`. Identity with
+    /// [`Self::upload_graph`] (`cudaGraphUpload`).
+    ///
+    /// Host-synchronous. Capture refused. Distinct from
+    /// [`Self::upload_graph_async`]. This VM does not invent
+    /// occupancy SM counts this slice.
+    pub fn graph_upload(&mut self, graph: GraphId) -> Result<(), SimError> {
+        self.upload_graph(graph)
     }
 
     /// `cudaGraphUpload` on `stream`. Stream-ordered; capture cannot include it.
