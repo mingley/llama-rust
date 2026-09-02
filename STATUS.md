@@ -5,6 +5,14 @@ Visible five-turn extract: [docs/chatgpt-share-6a920fe1.md](docs/chatgpt-share-6
 Complete share-API extract: [docs/chatgpt-share-6a920fe1/](docs/chatgpt-share-6a920fe1/).
 Work lands on `main`. No PRs.
 
+## Shipped 2026-09-02 — CUDA `cuStreamBeginRecaptureToGraph`
+
+`gpu-sim` `Sim::stream_begin_recapture_to_graph` is `cuStreamBeginRecaptureToGraph`.
+Identity with `begin_recapture_to_graph` (`cudaStreamBeginRecaptureToGraph`).
+Nested capture refused. Distinct from `stream_begin_capture_to_graph_with_mode`.
+This VM does not invent occupancy SM counts or Engine `--stream-begin-recapture-to-graph`.
+`gpu-profile capture` is still refused. Dual score still has no `$/M tokens`.
+
 ## Shipped 2026-09-02 — CUDA `cuStreamBeginCaptureToGraph` mode
 
 `gpu-sim` `Sim::stream_begin_capture_to_graph_with_mode` is `cuStreamBeginCaptureToGraph` with mode.

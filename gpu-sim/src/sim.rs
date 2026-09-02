@@ -3409,8 +3409,7 @@ impl Sim {
     /// [`Self::begin_capture_to_graph_with_mode`] (`cudaStreamBeginCaptureToGraph` with mode).
     ///
     /// Nested capture refused. Distinct from
-    /// [`Self::stream_begin_capture_to_graph`]. This VM does not invent
-    /// occupancy SM counts this slice.
+    /// [`Self::stream_begin_capture_to_graph`].
     pub fn stream_begin_capture_to_graph_with_mode(
         &mut self,
         device: DeviceId,
@@ -3437,7 +3436,9 @@ impl Sim {
     /// exec is `"graph instantiated"`. A parked in-flight-destroyed exec is
     /// `"unknown graph"`. Matching recapture `cudaMallocAsync` returns the
     /// existing graph-mem pointer. No extra-deps array (unlike
-    /// BeginCaptureToGraph). Capture-to-graph append stays.
+    /// BeginCaptureToGraph). Capture-to-graph append stays. Driver
+    /// `cuStreamBeginRecaptureToGraph` is
+    /// [`Self::stream_begin_recapture_to_graph`].
     pub fn begin_recapture_to_graph(
         &mut self,
         device: DeviceId,
@@ -3445,6 +3446,21 @@ impl Sim {
         graph: GraphId,
     ) -> Result<(), SimError> {
         self.begin_recapture_inner(device, stream, graph, self.capture_mode, None)
+    }
+
+    /// `cuStreamBeginRecaptureToGraph`. Identity with
+    /// [`Self::begin_recapture_to_graph`] (`cudaStreamBeginRecaptureToGraph`).
+    ///
+    /// Nested capture refused. Distinct from
+    /// [`Self::stream_begin_capture_to_graph_with_mode`]. This VM does not invent
+    /// occupancy SM counts this slice.
+    pub fn stream_begin_recapture_to_graph(
+        &mut self,
+        device: DeviceId,
+        stream: StreamId,
+        graph: GraphId,
+    ) -> Result<(), SimError> {
+        self.begin_recapture_to_graph(device, stream, graph)
     }
 
     /// `cudaStreamBeginRecaptureToGraph` with an explicit [`StreamCaptureMode`].
