@@ -19562,7 +19562,6 @@ impl Sim {
     /// [`Self::va_free`] (`cuMemAddressFree`).
     ///
     /// Capture refused. Distinct from [`Self::mem_unmap_with_size`].
-    /// This VM does not invent occupancy SM counts this slice.
     pub fn mem_address_free(&mut self, id: AllocId) -> Result<(), SimError> {
         self.va_free(id)
     }
@@ -19573,6 +19572,8 @@ impl Sim {
     /// Partial free is not modeled. Still mapped is Invalid `"VA still mapped"`.
     /// Non-VMM / freed is [`SimError::UnknownAlloc`]. Host-synchronous;
     /// capture refused.
+    /// Driver `cuMemAddressFree` size is [`Self::mem_address_free_with_size`].
+    /// Identity wrap [`Self::mem_address_free_with_size`].
     pub fn va_free_with_size(&mut self, id: AllocId, size: u64) -> Result<(), SimError> {
         self.fail_if_capturing("cannot capture alloc/free")?;
         let a = self.alloc_ref(id)?;
@@ -19593,6 +19594,15 @@ impl Sim {
         self.vmm_idle.retain(|&x| x != id);
         self.alloc_mut(id)?.live = false;
         Ok(())
+    }
+
+    /// `cuMemAddressFree` size. Identity with
+    /// [`Self::va_free_with_size`] (`cuMemAddressFree` size).
+    ///
+    /// Capture refused. Distinct from [`Self::mem_address_free`].
+    /// This VM does not invent occupancy SM counts this slice.
+    pub fn mem_address_free_with_size(&mut self, id: AllocId, size: u64) -> Result<(), SimError> {
+        self.va_free_with_size(id, size)
     }
 
     fn take_idle_va(&mut self, bytes: u64) -> Option<AllocId> {

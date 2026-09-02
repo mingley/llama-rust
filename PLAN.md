@@ -9949,7 +9949,12 @@ model, do not celebrate the sim.
       `mem_unmap_with_size`. This VM does not invent occupancy SM counts, Engine `--mem-address-free`,
       or `cudaChooseDevice`. `gpu-profile capture` is still refused. Dual
       score still has no `$/M tokens`.
-1138. [ ] Next numbered PLAN item after 1137 is the next `gpu-sim` / Engine /
+1138. [x] `gpu-sim` `Sim::mem_address_free_with_size` is
+      `cuMemAddressFree` size. Identity with `va_free_with_size` (`cuMemAddressFree` size). Capture refused. Distinct from
+      `mem_address_free`. This VM does not invent occupancy SM counts, Engine `--mem-address-free-with-size`,
+      or `cudaChooseDevice`. `gpu-profile capture` is still refused. Dual
+      score still has no `$/M tokens`.
+1139. [ ] Next numbered PLAN item after 1138 is the next `gpu-sim` / Engine /
     serve / expertvm mechanical API that is still missing, or the next official
     decode family. Prefer remaining CUDA-shaped twins over more
     OpenAI HTTP veneer. Do not invent F32 `output.scale`. Do not invent a
@@ -11988,6 +11993,11 @@ model, do not celebrate the sim.
     occupancy SM counts this slice. Do not reverse MemAddressFree identity with va_free.
     Do not invent `va_free_with_size` as `mem_address_free`.
     Do not invent `cuMemAddressFree` size as `mem_address_free`.
+    Do not invent a second `cuMemAddressFree` size / `mem_address_free_with_size`.
+    Do not invent Engine `--mem-address-free-with-size`. Do not invent
+    occupancy SM counts this slice. Do not reverse MemAddressFree size identity with va_free_with_size.
+    Do not invent `va_unmap_range` as `mem_address_free_with_size`.
+    Do not invent `cuMemUnmap` range as `mem_address_free_with_size`.
     Do not invent a second `cudaStreamAddCallback`.
     Do not invent Engine `--stream-callback` (same wall as second live
     `cudaLaunchHostFunc` after miss DMA).
@@ -14062,6 +14072,11 @@ model, do not celebrate the sim.
     this slice. Do not reverse MemAddressFree identity with va_free.
     Do not wrap `va_free` as `mem_address_free`.
     Do not wrap `va_free_with_size` as `mem_address_free`.
+    Do not invent a second `mem_address_free_with_size` API. Do not invent
+    Engine `--mem-address-free-with-size-identity`. Do not invent a va-unmap-range
+    this slice. Do not reverse MemAddressFree size identity with va_free_with_size.
+    Do not wrap `va_free_with_size` as `mem_address_free_with_size`.
+    Do not wrap `va_unmap_range` as `mem_address_free_with_size`.
     Do not invent a second DeviceLaunch in-flight destroy-complete check or Engine
     `--device-launch-destroy`. Do not abort an in-flight DeviceLaunch when
     `destroy_graph` succeeds. Do not delay destroy of an idle exec. Do not invent
@@ -16229,6 +16244,9 @@ model, do not celebrate the sim.
     Do not invent a second `mem_address_free` method. Do not
     invent Engine `--cu-mem-address-free`. Do not reverse wrapping
     cuMemAddressFree identity. Do not wrap `va_free_with_size` as `mem_address_free`.
+    Do not invent a second `mem_address_free_with_size` method. Do not
+    invent Engine `--cu-mem-address-free-with-size`. Do not reverse wrapping
+    cuMemAddressFree size identity. Do not wrap `va_unmap_range` as `mem_address_free_with_size`.
     Do not
     spend the next item on an OpenAI-compatible HTTP veneer.
 
