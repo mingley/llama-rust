@@ -21738,6 +21738,22 @@ impl Sim {
         })
     }
 
+    /// `cuTexRefGetMipmapLevelClamp`. CUDA texture references are not modeled.
+    ///
+    /// Always Invalid `"texref getclamp"` (this VM has no `CUtexref` mipmap
+    /// LOD clamp). Distinct from [`Self::tex_ref_get_mipmap_level_bias`]
+    /// (why is not `"texref getbias"`) and from
+    /// [`Self::tex_ref_set_mipmap_level_clamp`] (why is not `"texref mipclamp"`).
+    /// Unknown devices are Invalid `"device not in profile"`. Query; legal
+    /// during capture. This VM does not invent `cuTexRefGetMaxAnisotropy`
+    /// this slice.
+    pub fn tex_ref_get_mipmap_level_clamp(&self, device: DeviceId) -> Result<(), SimError> {
+        let _gpu = self.profile.gpu(device)?;
+        Err(SimError::Invalid {
+            why: "texref getclamp",
+        })
+    }
+
     /// `cuModuleGetSurfRef`. CUDA modules are not modeled.
     ///
     /// Always Invalid `"module surfref"` (this VM has no `CUmodule` and

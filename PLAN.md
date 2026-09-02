@@ -7556,7 +7556,14 @@ model, do not celebrate the sim.
     or `cudaChooseDevice`. `gpu-profile capture` is still refused. Dual
     score still has no `$/M tokens`.
 
-772. [ ] Next numbered PLAN item after 771 is the next `gpu-sim` / Engine /
+772. [x] `gpu-sim` `Sim::tex_ref_get_mipmap_level_clamp` is
+    `cuTexRefGetMipmapLevelClamp`. Always Invalid `"texref getclamp"`
+    because CUDA texture references are not modeled. Query; legal during capture.
+    Distinct from `tex_ref_get_mipmap_level_bias` and `tex_ref_set_mipmap_level_clamp`. This VM does not invent `cuTexRefGetMaxAnisotropy`, Engine `--texref-getclamp`,
+    or `cudaChooseDevice`. `gpu-profile capture` is still refused. Dual
+    score still has no `$/M tokens`.
+
+773. [ ] Next numbered PLAN item after 772 is the next `gpu-sim` / Engine /
     serve / expertvm mechanical API that is still missing, or the next official
     decode family. Prefer remaining CUDA-shaped twins over more
     OpenAI HTTP veneer. Do not invent F32 `output.scale`. Do not invent a
@@ -8363,6 +8370,9 @@ model, do not celebrate the sim.
     Do not invent a second `cuTexRefGetMipmapLevelBias` / `tex_ref_get_mipmap_level_bias`.
     Do not invent Engine `--texref-getbias`. Do not invent
     `cuTexRefGetMipmapLevelClamp` this slice. Do not reverse `"texref getbias"`.
+    Do not invent a second `cuTexRefGetMipmapLevelClamp` / `tex_ref_get_mipmap_level_clamp`.
+    Do not invent Engine `--texref-getclamp`. Do not invent
+    `cuTexRefGetMaxAnisotropy` this slice. Do not reverse `"texref getclamp"`.
     Do not invent a second `cudaStreamAddCallback`.
     Do not invent Engine `--stream-callback` (same wall as second live
     `cudaLaunchHostFunc` after miss DMA).
@@ -9249,6 +9259,9 @@ model, do not celebrate the sim.
     Do not invent a second `tex_ref_get_mipmap_level_bias` API. Do not invent
     Engine `--get-tex-ref-mip-bias`. Do not invent a CUtexref get-mipmap-clamp
     this slice. Do not reverse TexRef GetMipmapLevelBias remaining unsupported.
+    Do not invent a second `tex_ref_get_mipmap_level_clamp` API. Do not invent
+    Engine `--get-tex-ref-mip-clamp`. Do not invent a CUtexref get-anisotropy
+    this slice. Do not reverse TexRef GetMipmapLevelClamp remaining unsupported.
     Do not invent a second DeviceLaunch in-flight destroy-complete check or Engine
     `--device-launch-destroy`. Do not abort an in-flight DeviceLaunch when
     `destroy_graph` succeeds. Do not delay destroy of an idle exec. Do not invent
@@ -10318,6 +10331,9 @@ model, do not celebrate the sim.
     Do not invent a second `tex_ref_get_mipmap_level_bias` method. Do not
     invent Engine `--cu-tex-ref-get-mip-bias`. Do not reverse wrapping
     cuTexRefGetMipmapLevelBias Invalid.
+    Do not invent a second `tex_ref_get_mipmap_level_clamp` method. Do not
+    invent Engine `--cu-tex-ref-get-mip-clamp`. Do not reverse wrapping
+    cuTexRefGetMipmapLevelClamp Invalid.
     Do not
     spend the next item on an OpenAI-compatible HTTP veneer.
 
