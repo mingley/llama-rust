@@ -9401,7 +9401,14 @@ model, do not celebrate the sim.
     or `cudaChooseDevice`. `gpu-profile capture` is still refused. Dual
     score still has no `$/M tokens`.
 
-1035. [ ] Next numbered PLAN item after 1034 is the next `gpu-sim` / Engine /
+1035. [x] `gpu-sim` `Sim::mem_alloc_pitch` is
+    `cudaMallocPitch`. Identity with `malloc_pitch`. Capture refused. Distinct from
+    `malloc_pitch_with_element_size` (`cuMemAllocPitch`) and `device_flush_gpu_direct_rdma_writes`.
+    This VM does not invent occupancy SM counts, Engine `--mem-alloc-pitch`,
+    or `cudaChooseDevice`. `gpu-profile capture` is still refused. Dual
+    score still has no `$/M tokens`.
+
+1036. [ ] Next numbered PLAN item after 1035 is the next `gpu-sim` / Engine /
     serve / expertvm mechanical API that is still missing, or the next official
     decode family. Prefer remaining CUDA-shaped twins over more
     OpenAI HTTP veneer. Do not invent F32 `output.scale`. Do not invent a
@@ -10998,6 +11005,10 @@ model, do not celebrate the sim.
     Do not invent a second `cuFlushGPUDirectRDMAWrites` / `device_flush_gpu_direct_rdma_writes`.
     Do not invent Engine `--device-flush-gpu-direct-rdma-writes`. Do not invent
     occupancy SM counts this slice. Do not reverse FlushGPUDirectRDMAWrites identity with flush_gpu_direct_rdma_writes.
+    Do not invent a second `cudaMallocPitch` / `mem_alloc_pitch`.
+    Do not invent Engine `--mem-alloc-pitch`. Do not invent
+    occupancy SM counts this slice. Do not reverse MallocPitch identity with malloc_pitch.
+    Do not invent `cuMemAllocPitch` as `mem_alloc_pitch`.
     Do not invent a second `cudaStreamAddCallback`.
     Do not invent Engine `--stream-callback` (same wall as second live
     `cudaLaunchHostFunc` after miss DMA).
@@ -12673,6 +12684,9 @@ model, do not celebrate the sim.
     Do not invent a second `device_flush_gpu_direct_rdma_writes` API. Do not invent
     Engine `--device-flush-gpu-direct-rdma-writes-identity`. Do not invent a malloc-pitch
     this slice. Do not reverse FlushGPUDirectRDMAWrites identity with flush_gpu_direct_rdma_writes.
+    Do not invent a second `mem_alloc_pitch` API. Do not invent
+    Engine `--mem-alloc-pitch-identity`. Do not invent a malloc-3d
+    this slice. Do not reverse MallocPitch identity with malloc_pitch.
     Do not invent a second DeviceLaunch in-flight destroy-complete check or Engine
     `--device-launch-destroy`. Do not abort an in-flight DeviceLaunch when
     `destroy_graph` succeeds. Do not delay destroy of an idle exec. Do not invent
@@ -14531,6 +14545,9 @@ model, do not celebrate the sim.
     Do not invent a second `device_flush_gpu_direct_rdma_writes` method. Do not
     invent Engine `--cu-device-flush-gpu-direct-rdma-writes`. Do not reverse wrapping
     cuFlushGPUDirectRDMAWrites identity.
+    Do not invent a second `mem_alloc_pitch` method. Do not
+    invent Engine `--cu-mem-alloc-pitch`. Do not reverse wrapping
+    cudaMallocPitch identity. Do not wrap `cuMemAllocPitch` as `mem_alloc_pitch`.
     Do not
     spend the next item on an OpenAI-compatible HTTP veneer.
 

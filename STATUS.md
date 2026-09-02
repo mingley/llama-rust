@@ -5,6 +5,14 @@ Visible five-turn extract: [docs/chatgpt-share-6a920fe1.md](docs/chatgpt-share-6
 Complete share-API extract: [docs/chatgpt-share-6a920fe1/](docs/chatgpt-share-6a920fe1/).
 Work lands on `main`. No PRs.
 
+## Shipped 2026-09-02 — CUDA `cudaMallocPitch`
+
+`gpu-sim` `Sim::mem_alloc_pitch` is `cudaMallocPitch`.
+Identity with `malloc_pitch`. Capture refused. Distinct from
+`malloc_pitch_with_element_size` (`cuMemAllocPitch`).
+This VM does not invent occupancy SM counts or Engine `--mem-alloc-pitch`.
+`gpu-profile capture` is still refused. Dual score still has no `$/M tokens`.
+
 ## Shipped 2026-09-02 — CUDA `cuFlushGPUDirectRDMAWrites`
 
 `gpu-sim` `Sim::device_flush_gpu_direct_rdma_writes` is `cuFlushGPUDirectRDMAWrites`.

@@ -25795,8 +25795,7 @@ impl Sim {
     /// [`Self::flush_gpu_direct_rdma_writes`] (`cudaDeviceFlushGPUDirectRDMAWrites`).
     ///
     /// Capture refused. Distinct from
-    /// [`Self::device_nvscisync_attributes`]. This VM does not invent
-    /// occupancy SM counts this slice.
+    /// [`Self::device_nvscisync_attributes`].
     pub fn device_flush_gpu_direct_rdma_writes(
         &mut self,
         device: DeviceId,
@@ -25807,6 +25806,9 @@ impl Sim {
     }
 
     /// `cudaMallocPitch`: aligned 2D allocation. Returns `(ptr, pitch)`.
+    ///
+    /// Identity wrap [`Self::mem_alloc_pitch`]. Not
+    /// [`Self::malloc_pitch_with_element_size`] (`cuMemAllocPitch`).
     ///
     /// Pitch is `align_up(width, 512)`. Size charged is `pitch * height`.
     /// Host-synchronous like [`Self::malloc`]. Capture cannot include it.
@@ -25825,6 +25827,21 @@ impl Sim {
         let bytes = pitch.saturating_mul(height);
         let id = self.malloc(device, bytes)?;
         Ok((id, pitch))
+    }
+
+    /// `cudaMallocPitch`. Identity with [`Self::malloc_pitch`].
+    ///
+    /// Capture refused. Distinct from
+    /// [`Self::malloc_pitch_with_element_size`] (`cuMemAllocPitch`) and
+    /// [`Self::device_flush_gpu_direct_rdma_writes`]. This VM does not invent
+    /// occupancy SM counts this slice.
+    pub fn mem_alloc_pitch(
+        &mut self,
+        device: DeviceId,
+        width: u64,
+        height: u64,
+    ) -> Result<(AllocId, u64), SimError> {
+        self.malloc_pitch(device, width, height)
     }
 
     /// `cuMemAllocPitch`. [`Self::malloc_pitch`] is `cudaMallocPitch`.
