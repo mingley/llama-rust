@@ -1264,6 +1264,9 @@
 //! [`memcpy_2d_array_to_array`](Sim::memcpy_2d_array_to_array) is
 //! `cuMemcpy2DArrayToArray` (always Invalid `"memcpy2d a2a"`). Query; legal
 //! during capture. No Engine `--memcpy2d-a2a`.
+//! [`memcpy_2d_to_array_async`](Sim::memcpy_2d_to_array_async) is
+//! `cuMemcpy2DToArrayAsync` (always Invalid `"async 2dtoarr"`). Query; legal
+//! during capture. No Engine `--async-2dtoarr`.
 //! [`library_load_data`](Sim::library_load_data) is `cuLibraryLoadData`
 //! (always Invalid `"cuda library"`). Query; legal during capture. No Engine `--library-load`.
 //! [`library_load_from_file`](Sim::library_load_from_file) is
@@ -22260,6 +22263,67 @@ mod tests {
             Err(SimError::Invalid { why }) => {
                 assert!(why.contains("cuda array"), "{why}");
                 assert!(!why.contains("memcpy2d a2a"), "{why}");
+            }
+            other => panic!("{other:?}"),
+        }
+        match sim.memcpy_2d_to_array_async(d) {
+            Err(SimError::Invalid { why }) => {
+                assert!(why.contains("async 2dtoarr"), "{why}");
+                assert!(!why.contains("memcpy2d a2a"), "{why}");
+                assert!(!why.contains("memcpy2d toarr"), "{why}");
+            }
+            other => panic!("{other:?}"),
+        }
+    }
+
+    #[test]
+    fn memcpy_2d_to_array_async_is_unsupported() {
+        let mut sim = Sim::new(h100());
+        let d = DeviceId(0);
+        match sim.memcpy_2d_to_array_async(d) {
+            Err(SimError::Invalid { why }) => {
+                assert!(why.contains("async 2dtoarr"), "{why}");
+                assert!(!why.contains("memcpy2d toarr"), "{why}");
+                assert!(!why.contains("memcpy2d a2a"), "{why}");
+                assert!(!why.contains("async atoa"), "{why}");
+                assert!(!why.contains("async dtoa"), "{why}");
+                assert!(!why.contains("cuda array"), "{why}");
+                assert!(!why.contains("memcpy2d height"), "{why}");
+            }
+            other => panic!("{other:?}"),
+        }
+        sim.begin_capture(d, StreamId(0)).unwrap();
+        match sim.memcpy_2d_to_array_async(d) {
+            Err(SimError::Invalid { why }) => {
+                assert!(why.contains("async 2dtoarr"), "{why}");
+            }
+            other => panic!("{other:?}"),
+        }
+        let _g = sim.end_capture().unwrap();
+        match sim.memcpy_2d_to_array_async(DeviceId(99)) {
+            Err(SimError::Invalid { why }) => {
+                assert!(why.contains("device not in profile"), "{why}");
+            }
+            other => panic!("{other:?}"),
+        }
+        match sim.memcpy_2d_to_array(d) {
+            Err(SimError::Invalid { why }) => {
+                assert!(why.contains("memcpy2d toarr"), "{why}");
+                assert!(!why.contains("async 2dtoarr"), "{why}");
+            }
+            other => panic!("{other:?}"),
+        }
+        match sim.memcpy_2d_array_to_array(d) {
+            Err(SimError::Invalid { why }) => {
+                assert!(why.contains("memcpy2d a2a"), "{why}");
+                assert!(!why.contains("async 2dtoarr"), "{why}");
+            }
+            other => panic!("{other:?}"),
+        }
+        match sim.memcpy_ato_a_async(d) {
+            Err(SimError::Invalid { why }) => {
+                assert!(why.contains("async atoa"), "{why}");
+                assert!(!why.contains("async 2dtoarr"), "{why}");
             }
             other => panic!("{other:?}"),
         }
