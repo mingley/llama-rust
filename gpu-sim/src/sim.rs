@@ -11407,7 +11407,9 @@ impl Sim {
     /// Invalid `"lossy query"` (`cudaErrorLossyQuery`). Default-only predecessors
     /// stay. [`Self::graph_node_deps_with_data`] is lossless. Query; legal
     /// during capture. A parked in-flight-destroyed exec is `"unknown graph"`.
-    /// Live exec GetDependencies stays.
+    /// Live exec GetDependencies stays. Driver
+    /// `cuGraphNodeGetDependencies` is
+    /// [`Self::get_graph_node_dependencies`].
     pub fn graph_node_deps(&self, graph: GraphId, i: usize) -> Result<Vec<usize>, SimError> {
         let step = self.graph_node_dep_step(graph, i)?;
         if step
@@ -11418,6 +11420,20 @@ impl Sim {
             return Err(SimError::Invalid { why: "lossy query" });
         }
         Ok(step.deps.clone())
+    }
+
+    /// `cuGraphNodeGetDependencies`. Identity with
+    /// [`Self::graph_node_deps`] (`cudaGraphNodeGetDependencies`).
+    ///
+    /// Query; legal during capture. Distinct from
+    /// [`Self::graph_node_deps_with_data`]. This VM does not invent
+    /// occupancy SM counts this slice.
+    pub fn get_graph_node_dependencies(
+        &self,
+        graph: GraphId,
+        node: usize,
+    ) -> Result<Vec<usize>, SimError> {
+        self.graph_node_deps(graph, node)
     }
 
     /// `cudaGraphNodeGetDependencies` v2: `(from, data)` predecessors.
@@ -11538,8 +11554,7 @@ impl Sim {
     /// [`Self::graph_edges_with_data`] (`cudaGraphGetEdges` with edgeData).
     ///
     /// Query; legal during capture. Distinct from
-    /// [`Self::get_graph_edges`]. This VM does not invent
-    /// occupancy SM counts this slice.
+    /// [`Self::get_graph_edges`].
     pub fn get_graph_edges_with_data(
         &self,
         graph: GraphId,
