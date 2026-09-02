@@ -3149,6 +3149,8 @@ impl Sim {
 
     /// `cudaEventGetFlags`. Query; legal during capture.
     ///
+    /// Driver `cuEventGetFlags` is [`Self::event_flags`].
+    ///
     /// Reconstructs the [`EventCreateFlags`] word stored at create. Unknown
     /// events are [`SimError::UnknownEvent`]. Distinct from
     /// [`Self::event_timing`] / [`Self::event_blocking_sync`]. An
@@ -3169,6 +3171,16 @@ impl Sim {
             flags |= EventCreateFlags::BLOCKING_SYNC;
         }
         Ok(flags)
+    }
+
+    /// `cuEventGetFlags`. Identity with
+    /// [`Self::event_get_flags`] (`cudaEventGetFlags`).
+    ///
+    /// Query; legal during capture. Distinct from
+    /// [`Self::get_stream_capture_mode`]. This VM does not invent
+    /// occupancy SM counts this slice.
+    pub fn event_flags(&self, event: EventId) -> Result<u32, SimError> {
+        self.event_get_flags(event)
     }
 
     /// `cuEventGetId` / `cudaEventGetId`. Query; legal during capture.
@@ -4009,8 +4021,8 @@ impl Sim {
     /// [`Self::stream_capture_mode`].
     ///
     /// Query; legal during capture. Distinct from
-    /// [`Self::exchange_thread_stream_capture_mode`]. This VM does not invent
-    /// occupancy SM counts this slice. CUDA has no `cuStreamGetCaptureMode`.
+    /// [`Self::exchange_thread_stream_capture_mode`]. CUDA has no
+    /// `cuStreamGetCaptureMode`.
     #[must_use]
     pub fn get_stream_capture_mode(&self) -> StreamCaptureMode {
         self.stream_capture_mode()
