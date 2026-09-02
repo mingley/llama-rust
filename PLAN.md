@@ -9338,7 +9338,14 @@ model, do not celebrate the sim.
     or `cudaChooseDevice`. `gpu-profile capture` is still refused. Dual
     score still has no `$/M tokens`.
 
-1026. [ ] Next numbered PLAN item after 1025 is the next `gpu-sim` / Engine /
+1026. [x] `gpu-sim` `Sim::get_stream_capture_mode` is
+    the thread-default `cudaStreamCaptureMode` query. Identity with `stream_capture_mode`.
+    Query; legal during capture. Distinct from
+    `exchange_thread_stream_capture_mode`. This VM does not invent occupancy SM counts, Engine `--get-stream-capture-mode`,
+    or `cudaChooseDevice`. `gpu-profile capture` is still refused. Dual
+    score still has no `$/M tokens`.
+
+1027. [ ] Next numbered PLAN item after 1026 is the next `gpu-sim` / Engine /
     serve / expertvm mechanical API that is still missing, or the next official
     decode family. Prefer remaining CUDA-shaped twins over more
     OpenAI HTTP veneer. Do not invent F32 `output.scale`. Do not invent a
@@ -10907,6 +10914,10 @@ model, do not celebrate the sim.
     Do not invent a second `cuThreadExchangeStreamCaptureMode` / `exchange_thread_stream_capture_mode`.
     Do not invent Engine `--exchange-thread-stream-capture-mode`. Do not invent
     occupancy SM counts this slice. Do not reverse ThreadExchangeStreamCaptureMode identity with thread_exchange_stream_capture_mode.
+    Do not invent a second thread-default `cudaStreamCaptureMode` query / `get_stream_capture_mode`.
+    Do not invent Engine `--get-stream-capture-mode`. Do not invent
+    occupancy SM counts this slice. Do not reverse StreamCaptureMode query identity with stream_capture_mode.
+    Do not invent `cuStreamGetCaptureMode`.
     Do not invent a second `cudaStreamAddCallback`.
     Do not invent Engine `--stream-callback` (same wall as second live
     `cudaLaunchHostFunc` after miss DMA).
@@ -12555,6 +12566,9 @@ model, do not celebrate the sim.
     Do not invent a second `exchange_thread_stream_capture_mode` API. Do not invent
     Engine `--exchange-thread-stream-capture-mode-identity`. Do not invent a stream-capture-mode
     this slice. Do not reverse ThreadExchangeStreamCaptureMode identity with thread_exchange_stream_capture_mode.
+    Do not invent a second `get_stream_capture_mode` API. Do not invent
+    Engine `--get-stream-capture-mode-identity`. Do not invent a event-get-flags
+    this slice. Do not reverse StreamCaptureMode query identity with stream_capture_mode.
     Do not invent a second DeviceLaunch in-flight destroy-complete check or Engine
     `--device-launch-destroy`. Do not abort an in-flight DeviceLaunch when
     `destroy_graph` succeeds. Do not delay destroy of an idle exec. Do not invent
@@ -14386,6 +14400,9 @@ model, do not celebrate the sim.
     Do not invent a second `exchange_thread_stream_capture_mode` method. Do not
     invent Engine `--cu-exchange-thread-stream-capture-mode`. Do not reverse wrapping
     cuThreadExchangeStreamCaptureMode identity.
+    Do not invent a second `get_stream_capture_mode` method. Do not
+    invent Engine `--cu-get-stream-capture-mode`. Do not reverse wrapping
+    thread-default cudaStreamCaptureMode query identity.
     Do not
     spend the next item on an OpenAI-compatible HTTP veneer.
 

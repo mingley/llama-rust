@@ -3987,8 +3987,7 @@ impl Sim {
     /// [`Self::thread_exchange_stream_capture_mode`] (`cudaThreadExchangeStreamCaptureMode`).
     ///
     /// Returns previous; legal during capture. Distinct from
-    /// [`Self::get_stream_capture_info`]. This VM does not invent
-    /// occupancy SM counts this slice.
+    /// [`Self::get_stream_capture_info`].
     pub fn exchange_thread_stream_capture_mode(
         &mut self,
         mode: StreamCaptureMode,
@@ -3996,10 +3995,25 @@ impl Sim {
         self.thread_exchange_stream_capture_mode(mode)
     }
 
-    /// Thread default [`StreamCaptureMode`] for [`Self::begin_capture`].
+    /// Thread default `cudaStreamCaptureMode` for [`Self::begin_capture`].
+    ///
+    /// Query identity is [`Self::get_stream_capture_mode`]. CUDA has no
+    /// `cuStreamGetCaptureMode`; exchanging is
+    /// [`Self::exchange_thread_stream_capture_mode`].
     #[must_use]
     pub fn stream_capture_mode(&self) -> StreamCaptureMode {
         self.capture_mode
+    }
+
+    /// Thread-default `cudaStreamCaptureMode` query. Identity with
+    /// [`Self::stream_capture_mode`].
+    ///
+    /// Query; legal during capture. Distinct from
+    /// [`Self::exchange_thread_stream_capture_mode`]. This VM does not invent
+    /// occupancy SM counts this slice. CUDA has no `cuStreamGetCaptureMode`.
+    #[must_use]
+    pub fn get_stream_capture_mode(&self) -> StreamCaptureMode {
+        self.stream_capture_mode()
     }
 
     fn append_captured(
