@@ -285,6 +285,9 @@
 //! [`set_cache_config`](Sim::set_cache_config)). Capture refused. Distinct from
 //! [`ctx_get_cache_config`](Sim::ctx_get_cache_config) and
 //! [`set_func_cache_config`](Sim::set_func_cache_config). No Engine `--ctx-set-cache-config`.
+//! [`ctx_set_limit`](Sim::ctx_set_limit) is `cuCtxSetLimit` (identity with
+//! [`set_limit`](Sim::set_limit)). Capture refused. Distinct from
+//! [`ctx_get_limit`](Sim::ctx_get_limit). No Engine `--ctx-set-limit`.
 //! [`Sim::ipc_get_event`] / [`ipc_open_event`](Sim::ipc_open_event) are
 //! `cudaIpcGetEventHandle` / `cudaIpcOpenEventHandle` (interprocess events).
 //! [`Sim::create_shareable_pool`] is `cudaMemPoolCreate` with a POSIX-FD handle
@@ -778,6 +781,9 @@
 //! [`set_cache_config`](Sim::set_cache_config)). Capture refused. Distinct from
 //! [`ctx_get_cache_config`](Sim::ctx_get_cache_config) and
 //! [`set_func_cache_config`](Sim::set_func_cache_config). No Engine `--ctx-set-cache-config`.
+//! [`ctx_set_limit`](Sim::ctx_set_limit) is `cuCtxSetLimit` (identity with
+//! [`set_limit`](Sim::set_limit)). Capture refused. Distinct from
+//! [`ctx_get_limit`](Sim::ctx_get_limit). No Engine `--ctx-set-limit`.
 //! [`mem_host_get_flags`](Sim::mem_host_get_flags) is `cuMemHostGetFlags` (identity with
 //! [`host_get_flags`](Sim::host_get_flags)). Query; legal during capture. No Engine `--mem-host-get-flags`.
 //! [`mem_host_get_device_pointer`](Sim::mem_host_get_device_pointer) is `cuMemHostGetDevicePointer` (identity with
@@ -921,6 +927,9 @@
 //! [`set_cache_config`](Sim::set_cache_config)). Capture refused. Distinct from
 //! [`ctx_get_cache_config`](Sim::ctx_get_cache_config) and
 //! [`set_func_cache_config`](Sim::set_func_cache_config). No Engine `--ctx-set-cache-config`.
+//! [`ctx_set_limit`](Sim::ctx_set_limit) is `cuCtxSetLimit` (identity with
+//! [`set_limit`](Sim::set_limit)). Capture refused. Distinct from
+//! [`ctx_get_limit`](Sim::ctx_get_limit). No Engine `--ctx-set-limit`.
 //! [`Sim::pointer_get_attributes`] is `cudaPointerGetAttributes`.
 //! [`pointer_set_attribute`](Sim::pointer_set_attribute) /
 //! [`pointer_get_attribute`](Sim::pointer_get_attribute) are
@@ -1948,6 +1957,9 @@
 //! [`ctx_get_limit`](Sim::ctx_get_limit) is `cuCtxGetLimit` for that same
 //! primary context (same as [`get_limit`](Sim::get_limit) for a
 //! [`DeviceLimit`]). Query; legal during capture. No Engine `--ctx-get-limit`.
+//! [`ctx_set_limit`](Sim::ctx_set_limit) is `cuCtxSetLimit` (identity with
+//! [`set_limit`](Sim::set_limit)). Capture refused. Distinct from
+//! [`ctx_get_limit`](Sim::ctx_get_limit). No Engine `--ctx-set-limit`.
 //! [`ctx_synchronize`](Sim::ctx_synchronize) is `cuCtxSynchronize` for that
 //! same primary context (same wait as [`synchronize_device`](Sim::synchronize_device)).
 //! Capture cannot include it. Distinct from
@@ -31145,6 +31157,71 @@ mod tests {
         );
         sim.reset_device(d).unwrap();
         assert_eq!(sim.ctx_get_limit(d, DeviceLimit::StackSize).unwrap(), 1024);
+    }
+
+    #[test]
+    fn ctx_set_limit_is_cu_ctx_set_limit() {
+        let mut sim = Sim::new(h100());
+        let d = DeviceId(0);
+        let s = StreamId(0);
+        match sim.ctx_set_limit(DeviceId(99), DeviceLimit::StackSize, 4096) {
+            Err(SimError::Invalid { why }) => assert!(why.contains("device"), "{why}"),
+            other => panic!("{other:?}"),
+        }
+        match sim.set_limit(DeviceId(99), DeviceLimit::StackSize, 4096) {
+            Err(SimError::Invalid { why }) => assert!(why.contains("device"), "{why}"),
+            other => panic!("{other:?}"),
+        }
+        match sim.ctx_set_limit(d, DeviceLimit::StackSize, 0) {
+            Err(SimError::Invalid { why }) => assert!(why.contains("device limit"), "{why}"),
+            other => panic!("{other:?}"),
+        }
+        match sim.set_limit(d, DeviceLimit::StackSize, 0) {
+            Err(SimError::Invalid { why }) => assert!(why.contains("device limit"), "{why}"),
+            other => panic!("{other:?}"),
+        }
+        match sim.ctx_set_limit(d, DeviceLimit::MaxL2FetchGranularity, 16) {
+            Err(SimError::Invalid { why }) => assert!(why.contains("l2 fetch"), "{why}"),
+            other => panic!("{other:?}"),
+        }
+        match sim.set_limit(d, DeviceLimit::MaxL2FetchGranularity, 16) {
+            Err(SimError::Invalid { why }) => assert!(why.contains("l2 fetch"), "{why}"),
+            other => panic!("{other:?}"),
+        }
+        sim.ctx_set_limit(d, DeviceLimit::StackSize, 4096).unwrap();
+        assert_eq!(sim.ctx_get_limit(d, DeviceLimit::StackSize).unwrap(), 4096);
+        assert_eq!(sim.get_limit(d, DeviceLimit::StackSize).unwrap(), 4096);
+        sim.set_limit(d, DeviceLimit::PrintfFifoSize, 8192).unwrap();
+        assert_eq!(
+            sim.ctx_get_limit(d, DeviceLimit::PrintfFifoSize).unwrap(),
+            8192
+        );
+        sim.begin_capture(d, s).unwrap();
+        match sim.ctx_set_limit(d, DeviceLimit::StackSize, 2048) {
+            Err(SimError::Invalid { why }) => assert!(why.contains("capture"), "{why}"),
+            other => panic!("{other:?}"),
+        }
+        match sim.set_limit(d, DeviceLimit::StackSize, 2048) {
+            Err(SimError::Invalid { why }) => assert!(why.contains("capture"), "{why}"),
+            other => panic!("{other:?}"),
+        }
+        let _g = sim.end_capture().unwrap();
+        let mut eight = Sim::new(HardwareProfile::example_8xh100_nvlink());
+        eight
+            .ctx_set_limit(DeviceId(1), DeviceLimit::StackSize, 4096)
+            .unwrap();
+        assert_eq!(
+            eight
+                .ctx_get_limit(DeviceId(0), DeviceLimit::StackSize)
+                .unwrap(),
+            1024
+        );
+        assert_eq!(
+            eight
+                .ctx_get_limit(DeviceId(1), DeviceLimit::StackSize)
+                .unwrap(),
+            4096
+        );
     }
 
     #[test]

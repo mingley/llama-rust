@@ -20055,6 +20055,7 @@ impl Sim {
     /// caps in-flight [`Self::device_launch_graph`] (host, fire-and-forget,
     /// sibling, and flushed tail). A queued tail does not occupy a slot.
     /// Exceeding is Invalid `"pending launch count"`. Default 2048.
+    /// Driver `cuCtxSetLimit` is [`Self::ctx_set_limit`].
     pub fn set_limit(
         &mut self,
         device: DeviceId,
@@ -20522,8 +20523,7 @@ impl Sim {
     /// (`cudaDeviceSetCacheConfig`).
     ///
     /// Capture refused. Distinct from [`Self::ctx_get_cache_config`] and
-    /// [`Self::set_func_cache_config`]. This VM does not invent
-    /// `cuCtxSetLimit` this slice (`set_limit` stays).
+    /// [`Self::set_func_cache_config`].
     pub fn ctx_set_cache_config(
         &mut self,
         device: DeviceId,
@@ -20553,11 +20553,26 @@ impl Sim {
     /// for the same [`DeviceLimit`]. Distinct from
     /// [`Self::ctx_get_stream_priority_range`] and from
     /// [`Self::get_limit`] (runtime). Unknown devices are Invalid
-    /// `"device not in profile"`. This VM does not invent `cuCtxSetLimit`
-    /// this slice (`set_limit` stays the runtime setter).
+    /// `"device not in profile"`. Driver `cuCtxSetLimit` is
+    /// [`Self::ctx_set_limit`].
     pub fn ctx_get_limit(&self, device: DeviceId, limit: DeviceLimit) -> Result<u64, SimError> {
         let _gpu = self.profile.gpu(device)?;
         self.get_limit(device, limit)
+    }
+
+    /// `cuCtxSetLimit`. Identity with [`Self::set_limit`]
+    /// (`cudaDeviceSetLimit`).
+    ///
+    /// Capture refused. Distinct from [`Self::ctx_get_limit`]. This VM does
+    /// not invent `cuCtxSetSharedMemConfig` this slice (`set_shared_mem_config`
+    /// stays).
+    pub fn ctx_set_limit(
+        &mut self,
+        device: DeviceId,
+        limit: DeviceLimit,
+        value: u64,
+    ) -> Result<(), SimError> {
+        self.set_limit(device, limit, value)
     }
 
     /// `cuCtxSynchronize` for the seeded primary context of `device`.

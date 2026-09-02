@@ -485,6 +485,8 @@ seeded primary context; no Engine flag).
 (example H100 `(0, -5)`; no Engine flag).
 `gpu-sim` `ctx_get_limit` is `cuCtxGetLimit` (same as `get_limit`; no
 Engine flag).
+`gpu-sim` `ctx_set_limit` is `cuCtxSetLimit` (identity with `set_limit`;
+no Engine flag).
 `gpu-sim` `ctx_synchronize` is `cuCtxSynchronize` (same wait as
 `synchronize_device`; no Engine flag).
 `gpu-sim` `ctx_get_shared_mem_config` is `cuCtxGetSharedMemConfig` (same
@@ -580,6 +582,7 @@ compiled kernel exists; no Engine flag).
 `gpu-sim` `mem_cpy_with_attributes` is `cuMemcpyWithAttributesAsync` (identity with `memcpy_with_attributes`; no Engine flag).
 `gpu-sim` `ctx_set_flags` is `cuCtxSetFlags` (identity with `set_device_flags`; no Engine flag).
 `gpu-sim` `ctx_set_cache_config` is `cuCtxSetCacheConfig` (identity with `set_cache_config`; no Engine flag).
+`gpu-sim` `ctx_set_limit` is `cuCtxSetLimit` (identity with `set_limit`; no Engine flag).
 `gpu-sim` `func_is_loaded` is `cuFuncIsLoaded` (`false` until a compiled
 kernel exists; no Engine flag).
 `gpu-sim` `func_load` is `cuFuncLoad` (Invalid; no compiled kernel; no
