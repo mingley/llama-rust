@@ -9561,7 +9561,13 @@ model, do not celebrate the sim.
     or `cudaChooseDevice`. `gpu-profile capture` is still refused. Dual
     score still has no `$/M tokens`.
 
-1061. [ ] Next numbered PLAN item after 1060 is the next `gpu-sim` / Engine /
+1061. [x] `gpu-sim` `Sim::launch_kernel_ex` is
+    `cuLaunchKernelEx`. Identity with `kernel_with` (`cudaLaunchKernelEx`). Capture legal. Distinct from
+    `launch_kernel_bufs`. This VM does not invent occupancy SM counts, Engine `--launch-kernel-ex`,
+    or `cudaChooseDevice`. `gpu-profile capture` is still refused. Dual
+    score still has no `$/M tokens`.
+
+1062. [ ] Next numbered PLAN item after 1061 is the next `gpu-sim` / Engine /
     serve / expertvm mechanical API that is still missing, or the next official
     decode family. Prefer remaining CUDA-shaped twins over more
     OpenAI HTTP veneer. Do not invent F32 `output.scale`. Do not invent a
@@ -11259,6 +11265,10 @@ model, do not celebrate the sim.
     Do not invent Engine `--launch-kernel-bufs`. Do not invent
     occupancy SM counts this slice. Do not reverse LaunchKernelBufs identity with kernel_bufs.
     Do not invent `cuLaunchCooperativeKernel` spans as `launch_kernel_bufs`.
+    Do not invent a second `cuLaunchKernelEx` / `launch_kernel_ex`.
+    Do not invent Engine `--launch-kernel-ex`. Do not invent
+    occupancy SM counts this slice. Do not reverse LaunchKernelEx identity with kernel_with.
+    Do not invent `kernel_pdl` as `launch_kernel_ex`.
     Do not invent a second `cudaStreamAddCallback`.
     Do not invent Engine `--stream-callback` (same wall as second live
     `cudaLaunchHostFunc` after miss DMA).
@@ -13012,6 +13022,9 @@ model, do not celebrate the sim.
     Do not invent a second `launch_kernel_bufs` API. Do not invent
     Engine `--launch-kernel-bufs-identity`. Do not invent a kernel-pdl
     this slice. Do not reverse LaunchKernelBufs identity with kernel_bufs.
+    Do not invent a second `launch_kernel_ex` API. Do not invent
+    Engine `--launch-kernel-ex-identity`. Do not invent a kernel-bufs-with
+    this slice. Do not reverse LaunchKernelEx identity with kernel_with.
     Do not invent a second DeviceLaunch in-flight destroy-complete check or Engine
     `--device-launch-destroy`. Do not abort an in-flight DeviceLaunch when
     `destroy_graph` succeeds. Do not delay destroy of an idle exec. Do not invent
@@ -14948,6 +14961,9 @@ model, do not celebrate the sim.
     Do not invent a second `launch_kernel_bufs` method. Do not
     invent Engine `--cu-launch-kernel-bufs`. Do not reverse wrapping
     cuLaunchKernel spans identity. Do not wrap `cuLaunchCooperativeKernel` spans as `launch_kernel_bufs`.
+    Do not invent a second `launch_kernel_ex` method. Do not
+    invent Engine `--cu-launch-kernel-ex`. Do not reverse wrapping
+    cuLaunchKernelEx identity. Do not wrap `kernel_pdl` as `launch_kernel_ex`.
     Do not
     spend the next item on an OpenAI-compatible HTTP veneer.
 

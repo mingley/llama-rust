@@ -22176,7 +22176,6 @@ impl Sim {
     /// [`Self::kernel_bufs`] (`cudaLaunchKernel` spans).
     ///
     /// Capture legal. Distinct from [`Self::launch_kernel`].
-    /// This VM does not invent occupancy SM counts this slice.
     pub fn launch_kernel_bufs(
         &mut self,
         device: DeviceId,
@@ -22314,6 +22313,9 @@ impl Sim {
     /// programmatic event, and a launch-completion event on one submit. Does
     /// not inherit [`Self::set_stream_access_policy`]. Decode identity stays
     /// [`Self::kernel`] ([`KernelAttrs::default`]).
+    ///
+    /// Driver `cuLaunchKernelEx` is [`Self::launch_kernel_ex`].
+    /// Identity wrap [`Self::launch_kernel_ex`].
     pub fn kernel_with(
         &mut self,
         device: DeviceId,
@@ -22326,6 +22328,22 @@ impl Sim {
         let reads: Vec<KernelBuf> = reads.iter().copied().map(KernelBuf::whole).collect();
         let writes: Vec<KernelBuf> = writes.iter().copied().map(KernelBuf::whole).collect();
         self.kernel_bufs_with(device, kind, &reads, &writes, stream, attrs)
+    }
+
+    /// `cuLaunchKernelEx`. Identity with [`Self::kernel_with`] (`cudaLaunchKernelEx`).
+    ///
+    /// Capture legal. Distinct from [`Self::launch_kernel_bufs`].
+    /// This VM does not invent occupancy SM counts this slice.
+    pub fn launch_kernel_ex(
+        &mut self,
+        device: DeviceId,
+        kind: KernelKind,
+        reads: &[AllocId],
+        writes: &[AllocId],
+        stream: StreamId,
+        attrs: KernelAttrs,
+    ) -> Result<OpId, SimError> {
+        self.kernel_with(device, kind, reads, writes, stream, attrs)
     }
 
     /// [`Self::kernel_bufs`] plus packed [`KernelAttrs`].
