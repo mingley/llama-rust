@@ -7585,13 +7585,29 @@ impl Sim {
     ///
     /// Includes [`KernelNodeParams::ctx`] (CUDA 13 `CUDA_KERNEL_NODE_PARAMS.ctx`).
     /// A parked in-flight-destroyed exec is `"unknown graph"`. Live exec
-    /// GetParams stays. Query; capture is legal.
+    /// GetParams stays. Query; capture is legal. Driver
+    /// `cuGraphKernelNodeGetParams` is
+    /// [`Self::get_graph_kernel_node_params`].
     pub fn graph_kernel_get_params(
         &self,
         graph: GraphId,
         node: usize,
     ) -> Result<KernelNodeParams, SimError> {
         kernel_params_from_step(self.graph_def_step(graph, node)?)
+    }
+
+    /// `cuGraphKernelNodeGetParams`. Identity with
+    /// [`Self::graph_kernel_get_params`] (`cudaGraphKernelNodeGetParams`).
+    ///
+    /// Query; legal during capture. Distinct from
+    /// [`Self::graph_exec_kernel_get_params`]. This VM does not invent
+    /// occupancy SM counts this slice.
+    pub fn get_graph_kernel_node_params(
+        &self,
+        graph: GraphId,
+        node: usize,
+    ) -> Result<KernelNodeParams, SimError> {
+        self.graph_kernel_get_params(graph, node)
     }
 
     /// `cudaGraphKernelNodeGetParams` of the exec snapshot.
@@ -13037,8 +13053,7 @@ impl Sim {
     /// (`cudaGraphExecKernelNodeCopyAttributes`).
     ///
     /// Capture refused. Distinct from
-    /// [`Self::copy_graph_kernel_node_attributes`]. This VM does not invent
-    /// occupancy SM counts this slice.
+    /// [`Self::copy_graph_kernel_node_attributes`].
     pub fn copy_graph_exec_kernel_node_attributes(
         &mut self,
         dst_exec: GraphId,
