@@ -5,6 +5,14 @@ Visible five-turn extract: [docs/chatgpt-share-6a920fe1.md](docs/chatgpt-share-6
 Complete share-API extract: [docs/chatgpt-share-6a920fe1/](docs/chatgpt-share-6a920fe1/).
 Work lands on `main`. No PRs.
 
+## Shipped 2026-09-02 — CUDA `cuGraphExecEventRecordNodeSetEvent`
+
+`gpu-sim` `Sim::set_graph_exec_event_record_node_event` is `cuGraphExecEventRecordNodeSetEvent`.
+Identity with `graph_exec_event_record_set_event` (`cudaGraphExecEventRecordNodeSetEvent`).
+Capture refused. Distinct from `set_graph_event_record_node_event`.
+This VM does not invent occupancy SM counts or Engine `--graph-exec-event-record-set-event`.
+`gpu-profile capture` is still refused. Dual score still has no `$/M tokens`.
+
 ## Shipped 2026-09-02 — CUDA `cuGraphEventRecordNodeSetEvent`
 
 `gpu-sim` `Sim::set_graph_event_record_node_event` is `cuGraphEventRecordNodeSetEvent`.
