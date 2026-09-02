@@ -521,6 +521,7 @@ compiled kernel exists; no Engine flag).
 `gpu-sim` `stream_wait_event` is `cuStreamWaitEvent` (identity with `wait_event`; no Engine flag).
 `gpu-sim` `stream_wait_event_with_flags` is `cuStreamWaitEvent` with flags (identity with `wait_event_with_flags`; no Engine flag).
 `gpu-sim` `event_elapsed` is `cuEventElapsedTime` (identity with `event_elapsed_ns`; ns, not milliseconds; no Engine flag).
+`gpu-sim` `mem_get_info` is `cuMemGetInfo` (identity with `mem_info`; no Engine flag).
 `gpu-sim` `func_is_loaded` is `cuFuncIsLoaded` (`false` until a compiled
 kernel exists; no Engine flag).
 `gpu-sim` `func_load` is `cuFuncLoad` (Invalid; no compiled kernel; no

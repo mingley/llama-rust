@@ -5,6 +5,14 @@ Visible five-turn extract: [docs/chatgpt-share-6a920fe1.md](docs/chatgpt-share-6
 Complete share-API extract: [docs/chatgpt-share-6a920fe1/](docs/chatgpt-share-6a920fe1/).
 Work lands on `main`. No PRs.
 
+## Shipped 2026-09-02 — CUDA `cuMemGetInfo`
+
+`gpu-sim` `Sim::mem_get_info` is `cuMemGetInfo`.
+Identity with `mem_info` (`cudaMemGetInfo`). `(free, total)` HBM
+bytes. Query. Distinct from `device_total_mem`.
+This VM does not invent `cuStreamCreate` or Engine `--mem-get-info`.
+`gpu-profile capture` is still refused. Dual score still has no `$/M tokens`.
+
 ## Shipped 2026-09-02 — CUDA `cuEventElapsedTime`
 
 `gpu-sim` `Sim::event_elapsed` is `cuEventElapsedTime`.

@@ -1362,6 +1362,16 @@ impl Sim {
         Ok((total.saturating_sub(used), total))
     }
 
+    /// `cuMemGetInfo`. Identity with [`Self::mem_info`] (`cudaMemGetInfo`).
+    ///
+    /// `(free, total)` HBM bytes. Unknown devices are [`SimError::Invalid`].
+    /// Query; legal during capture. Distinct from [`Self::device_total_mem`].
+    /// This VM does not invent `cuStreamCreate` this slice
+    /// (`stream_create_with_flags` stays).
+    pub fn mem_get_info(&self, device: DeviceId) -> Result<(u64, u64), SimError> {
+        self.mem_info(device)
+    }
+
     /// `cudaDeviceGetGraphMemAttribute` for the device graph-memory pool.
     ///
     /// Counts [`Self::graph_add_alloc`] / captured `cudaMallocAsync` from that

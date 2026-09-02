@@ -156,6 +156,7 @@ warp scheduler, L1, …   ← do not model
 | `query_stream` is non-blocking | `cudaStreamQuery` |
 | `stream_query` is identity with `query_stream` | `cuStreamQuery` |
 | `mem_info` is `(free, total)` HBM | `cudaMemGetInfo` |
+| `mem_get_info` is identity with `mem_info` | `cuMemGetInfo` |
 | `pointer_get_attributes` classifies Unregistered / Host / Device / Managed | `cudaPointerGetAttributes` |
 | `pointer_get_attribute` wraps type / mapped / pool / range / ordinal / start / buffer id / IPC / RDMA / handle types / VMM map / hw decompress 0 / VMM block id; SyncMemops is settable | `cuPointerGetAttribute` / `SetAttribute` |
 | `pointer_get_access_flags` is kernel residency on an explicit device (`MemAccessFlags`; enable_peer is D2D memcpy only) | `CU_POINTER_ATTRIBUTE_ACCESS_FLAGS` |
@@ -1108,6 +1109,7 @@ again).
 stream is `Ok(false)`; the clock does not advance).
 `stream_query` is `cuStreamQuery` (identity with `query_stream`). Capturing stream is Invalid. No Engine `--stream-query`.
 `mem_info` is `cudaMemGetInfo` `(free, total)` HBM bytes.
+`mem_get_info` is `cuMemGetInfo` (identity with `mem_info`). Query; legal during capture. No Engine `--mem-get-info`.
 `pointer_get_attributes` is `cudaPointerGetAttributes`.
 `pointer_set_attribute` / `pointer_get_attribute` are
 `cuPointerSetAttribute` / `GetAttribute` (`PointerAttr`: SyncMemops is

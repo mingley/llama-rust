@@ -513,6 +513,8 @@
 //! [`stream_query`](Sim::stream_query) is `cuStreamQuery` (identity with
 //! [`query_stream`](Sim::query_stream)). Capturing stream is Invalid. No Engine `--stream-query`.
 //! [`Sim::mem_info`] is `cudaMemGetInfo` `(free, total)`.
+//! [`mem_get_info`](Sim::mem_get_info) is `cuMemGetInfo` (identity with
+//! [`mem_info`](Sim::mem_info)). Query; legal during capture. No Engine `--mem-get-info`.
 //! [`Sim::pointer_get_attributes`] is `cudaPointerGetAttributes`.
 //! [`pointer_set_attribute`](Sim::pointer_set_attribute) /
 //! [`pointer_get_attribute`](Sim::pointer_get_attribute) are
@@ -32757,6 +32759,35 @@ mod tests {
             Err(SimError::Invalid { why }) => assert!(why.contains("disable timing"), "{why}"),
             other => panic!("{other:?}"),
         }
+        sim.free_sync(a).unwrap();
+    }
+
+    #[test]
+    fn mem_get_info_is_cu_mem_get_info() {
+        let mut sim = Sim::new(h100());
+        let d = DeviceId(0);
+        let s = StreamId(0);
+        match sim.mem_get_info(DeviceId(99)) {
+            Err(SimError::Invalid { why }) => assert!(why.contains("device"), "{why}"),
+            other => panic!("{other:?}"),
+        }
+        match sim.mem_info(DeviceId(99)) {
+            Err(SimError::Invalid { why }) => assert!(why.contains("device"), "{why}"),
+            other => panic!("{other:?}"),
+        }
+        let (free0, total0) = sim.mem_get_info(d).unwrap();
+        assert_eq!((free0, total0), sim.mem_info(d).unwrap());
+        assert_eq!(total0, sim.device_total_mem(d).unwrap());
+        let bytes = 1u64 << 20;
+        let a = sim.alloc(d, bytes, s).unwrap();
+        sim.synchronize().unwrap();
+        let (free1, total1) = sim.mem_get_info(d).unwrap();
+        assert_eq!((free1, total1), sim.mem_info(d).unwrap());
+        assert_eq!(total1, total0);
+        assert!(free1 < free0);
+        sim.begin_capture(d, s).unwrap();
+        assert_eq!(sim.mem_get_info(d).unwrap(), sim.mem_info(d).unwrap());
+        let _g = sim.end_capture().unwrap();
         sim.free_sync(a).unwrap();
     }
 
