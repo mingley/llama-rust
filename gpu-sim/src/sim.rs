@@ -2347,6 +2347,19 @@ impl Sim {
         self.set_stream_blocking(device, stream, flags & StreamCreateFlags::NON_BLOCKING == 0)
     }
 
+    /// `cudaStreamCreate` / `cuStreamCreate` default flags. Identity with
+    /// [`Self::stream_create_with_flags`] using [`StreamCreateFlags::DEFAULT`]
+    /// (blocking).
+    ///
+    /// Implicit streams stay non-blocking until this or
+    /// [`Self::stream_create_with_flags`] with DEFAULT. Capture refused.
+    /// Distinct from [`Self::stream_create_with_priority`]. This VM does not
+    /// invent `cuStreamCreateWithPriority` this slice
+    /// (`stream_create_with_priority` stays).
+    pub fn stream_create(&mut self, device: DeviceId, stream: StreamId) -> Result<(), SimError> {
+        self.stream_create_with_flags(device, stream, StreamCreateFlags::DEFAULT)
+    }
+
     /// `cudaStreamCreateWithPriority`. Capture cannot include it.
     ///
     /// Flags are [`Self::stream_create_with_flags`]. Priority is

@@ -465,6 +465,9 @@
 //! ([`StreamCreateFlags::NON_BLOCKING`]; unknown bits Invalid). Capture cannot
 //! include them. Typed [`set_stream_blocking`](Sim::set_stream_blocking) /
 //! [`set_stream_priority`](Sim::set_stream_priority) stay.
+//! [`stream_create`](Sim::stream_create) is `cudaStreamCreate` / `cuStreamCreate` default
+//! flags (identity with [`stream_create_with_flags`](Sim::stream_create_with_flags)
+//! DEFAULT; blocking). Capture refused. No Engine `--stream-create`.
 //! [`HardwareProfile::host_pin_bytes`] caps `cudaMallocHost` / `cudaHostRegister`.
 //! [`Sim::idle_until`] drains, then jumps the virtual clock (open-loop arrivals).
 //! [`Sim::event_elapsed_ns`] is `cudaEventElapsedTime` in nanoseconds.
@@ -16469,6 +16472,48 @@ mod tests {
         let _g = sim.end_capture().unwrap();
         sim.set_stream_blocking(d, s, true).unwrap();
         assert!(sim.stream_is_blocking(d, s));
+    }
+
+    #[test]
+    fn stream_create_is_cuda_stream_create() {
+        let mut sim = Sim::new(h100());
+        let d = DeviceId(0);
+        let s = StreamId(1);
+        match sim.stream_create(DeviceId(99), s) {
+            Err(SimError::Invalid { why }) => assert!(why.contains("device"), "{why}"),
+            other => panic!("{other:?}"),
+        }
+        match sim.stream_create(d, StreamId::NULL) {
+            Err(SimError::Invalid { why }) => assert!(why.contains("null stream"), "{why}"),
+            other => panic!("{other:?}"),
+        }
+        assert!(!sim.stream_is_blocking(d, s));
+        sim.stream_create(d, s).unwrap();
+        assert!(sim.stream_is_blocking(d, s));
+        assert_eq!(sim.stream_get_flags(d, s).unwrap(), 0);
+        sim.stream_create_with_flags(d, StreamId(2), StreamCreateFlags::DEFAULT)
+            .unwrap();
+        assert_eq!(
+            sim.stream_is_blocking(d, s),
+            sim.stream_is_blocking(d, StreamId(2))
+        );
+        assert_eq!(
+            sim.stream_get_flags(d, s).unwrap(),
+            sim.stream_get_flags(d, StreamId(2)).unwrap()
+        );
+        sim.stream_create_with_flags(d, StreamId(3), StreamCreateFlags::NON_BLOCKING)
+            .unwrap();
+        assert!(!sim.stream_is_blocking(d, StreamId(3)));
+        sim.begin_capture(d, StreamId(0)).unwrap();
+        match sim.stream_create(d, StreamId(4)) {
+            Err(SimError::Invalid { why }) => assert!(why.contains("capture"), "{why}"),
+            other => panic!("{other:?}"),
+        }
+        match sim.stream_create_with_flags(d, StreamId(4), StreamCreateFlags::DEFAULT) {
+            Err(SimError::Invalid { why }) => assert!(why.contains("capture"), "{why}"),
+            other => panic!("{other:?}"),
+        }
+        let _g = sim.end_capture().unwrap();
     }
 
     #[test]

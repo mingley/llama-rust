@@ -157,6 +157,7 @@ warp scheduler, L1, …   ← do not model
 | `stream_query` is identity with `query_stream` | `cuStreamQuery` |
 | `mem_info` is `(free, total)` HBM | `cudaMemGetInfo` |
 | `mem_get_info` is identity with `mem_info` | `cuMemGetInfo` |
+| `stream_create` is identity with `stream_create_with_flags` DEFAULT | `cudaStreamCreate` / `cuStreamCreate` |
 | `pointer_get_attributes` classifies Unregistered / Host / Device / Managed | `cudaPointerGetAttributes` |
 | `pointer_get_attribute` wraps type / mapped / pool / range / ordinal / start / buffer id / IPC / RDMA / handle types / VMM map / hw decompress 0 / VMM block id; SyncMemops is settable | `cuPointerGetAttribute` / `SetAttribute` |
 | `pointer_get_access_flags` is kernel residency on an explicit device (`MemAccessFlags`; enable_peer is D2D memcpy only) | `CU_POINTER_ATTRIBUTE_ACCESS_FLAGS` |
@@ -2209,7 +2210,10 @@ barrier). `batch_mem_op_with_flags` is the CUDA flags word
 (NULL serializes with blocking streams; created streams default to
 non-blocking). `stream_create_with_flags` / `stream_create_with_priority`
 are the CUDA flag-word twins (`StreamCreateFlags::NON_BLOCKING`; unknown
-bits Invalid; capture refused). `set_legacy_null_stream` is the CUDA legacy default
+bits Invalid; capture refused). `stream_create` is `cudaStreamCreate` /
+`cuStreamCreate` default flags (identity with `stream_create_with_flags`
+DEFAULT; blocking). Capture refused. No Engine `--stream-create`.
+`set_legacy_null_stream` is the CUDA legacy default
 stream (NULL serializes with every stream).
 `host_pin_bytes` caps page-locked host (`cudaMallocHost` / `cudaHostRegister`);
 overflow is `PinOom`. Example default is unlimited.
