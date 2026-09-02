@@ -769,6 +769,8 @@ compiled kernel exists; no Engine flag).
 `gpu-sim` `event_create_disable_timing` is `cuEventCreateWithFlags` disable timing (identity with `create_event_disable_timing`; no Engine flag).
 
 `gpu-sim` `event_create_interprocess` is `cuEventCreateWithFlags` interprocess (identity with `create_event_interprocess`; no Engine flag).
+
+`gpu-sim` `event_create_blocking_sync` is `cuEventCreateWithFlags` blocking sync (identity with `create_event_blocking_sync`; no Engine flag).
 `gpu-sim` `mem_alloc` is `cuMemAlloc` (identity with `malloc`; no Engine flag).
 `gpu-sim` `mem_free` is `cuMemFree` (identity with `free_sync`; no Engine flag).
 `gpu-sim` `mem_free_host` is `cuMemFreeHost` (identity with `free_host_pinned`; no Engine flag).
@@ -1062,6 +1064,8 @@ compiled kernel exists; no Engine flag).
 `gpu-sim` `event_create_disable_timing` is `cuEventCreateWithFlags` disable timing (identity with `create_event_disable_timing`; no Engine flag).
 
 `gpu-sim` `event_create_interprocess` is `cuEventCreateWithFlags` interprocess (identity with `create_event_interprocess`; no Engine flag).
+
+`gpu-sim` `event_create_blocking_sync` is `cuEventCreateWithFlags` blocking sync (identity with `create_event_blocking_sync`; no Engine flag).
 `gpu-sim` `func_is_loaded` is `cuFuncIsLoaded` (`false` until a compiled
 kernel exists; no Engine flag).
 `gpu-sim` `func_load` is `cuFuncLoad` (Invalid; no compiled kernel; no

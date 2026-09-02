@@ -3102,7 +3102,6 @@ impl Sim {
     ///
     /// Host-synchronous. Capture cannot include it. Distinct from
     /// [`Self::event_create_disable_timing`].
-    /// This VM does not invent occupancy SM counts this slice.
     pub fn event_create_interprocess(&mut self, event: EventId) -> Result<(), SimError> {
         self.create_event_interprocess(event)
     }
@@ -3111,8 +3110,20 @@ impl Sim {
     ///
     /// [`Self::synchronize_event`] pays [`crate::GpuProfile::host_sync_blocking_ns`].
     /// Timing stays enabled.
+    /// Driver `cuEventCreateWithFlags` blocking sync is [`Self::event_create_blocking_sync`].
+    /// Identity wrap [`Self::event_create_blocking_sync`].
     pub fn create_event_blocking_sync(&mut self, event: EventId) -> Result<(), SimError> {
         self.create_event_with_flags(event, EventCreateFlags::BLOCKING_SYNC)
+    }
+
+    /// `cuEventCreateWithFlags` blocking sync. Identity with
+    /// [`Self::create_event_blocking_sync`] (`cudaEventCreateWithFlags` BlockingSync).
+    ///
+    /// Host-synchronous. Capture cannot include it. Distinct from
+    /// [`Self::event_create_interprocess`].
+    /// This VM does not invent occupancy SM counts this slice.
+    pub fn event_create_blocking_sync(&mut self, event: EventId) -> Result<(), SimError> {
+        self.create_event_blocking_sync(event)
     }
 
     /// `cudaEventCreateWithFlags`. Capture cannot include it.
