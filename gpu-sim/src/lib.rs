@@ -125,6 +125,8 @@
 //! [`memset_d8_async`](Sim::memset_d8_async) is `cuMemsetD8Async`
 //! (`count` is CUDA `N` of 8-bit values; payload is `count` bytes). Typed
 //! [`memset`](Sim::memset) stays byte-counted. No Engine `--memset-d8`.
+//! [`memset_d8`](Sim::memset_d8) is `cuMemsetD8` (host-sync; capture
+//! refused). No Engine `--memset-d8-sync`.
 //! [`memset_d16_async`](Sim::memset_d16_async) / [`memset_d16`](Sim::memset_d16)
 //! are `cuMemsetD16Async` / `cuMemsetD16` (`count` is CUDA `N`).
 //! [`memset_d32_async`](Sim::memset_d32_async) / [`memset_d32`](Sim::memset_d32)
@@ -32286,6 +32288,32 @@ mod tests {
         assert_eq!(p.bytes, 4096);
         enq(sim.memset_d16_async(d, a, 2048, s));
         sim.synchronize().unwrap();
+        sim.free_sync(a).unwrap();
+    }
+
+    #[test]
+    fn memset_d8_is_cu_memset_d8() {
+        let mut sim = Sim::new(h100());
+        let d = DeviceId(0);
+        let s = StreamId(0);
+        let a = sim.malloc(d, 4096).unwrap();
+        enq(sim.memset_d8(d, a, 4096, s));
+        sim.synchronize().unwrap();
+        sim.begin_capture(d, s).unwrap();
+        enq(sim.memset_d8_async(d, a, 4096, s));
+        match sim.memset_d8(d, a, 4096, s) {
+            Err(SimError::Invalid { why }) => {
+                assert!(why.contains("host-sync memset"), "{why}");
+            }
+            other => panic!("{other:?}"),
+        }
+        let _g = sim.end_capture().unwrap();
+        enq(sim.memset_d8(d, a, 2048, s));
+        sim.synchronize().unwrap();
+        match sim.memset_d8(d, a, 0, s) {
+            Err(SimError::Invalid { why }) => assert!(why.contains("zero-byte"), "{why}"),
+            other => panic!("{other:?}"),
+        }
         sim.free_sync(a).unwrap();
     }
 

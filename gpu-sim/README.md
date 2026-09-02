@@ -965,6 +965,7 @@ once; recorded kernels skip per-kernel launch overhead.
 refused). Typed `memset` / `memset_op` stay Async. `memset_d8_async` is
 `cuMemsetD8Async` (`count` is CUDA `N` of 8-bit values; payload is `count`
 bytes). Typed `memset` stays byte-counted. Fill value is not modeled. No Engine `--memset-d8`.
+`memset_d8` is `cuMemsetD8` (host-sync; capture refused). No Engine `--memset-d8-sync`.
 `memset_d16_async` /
 `memset_d16` are `cuMemsetD16Async` / `cuMemsetD16` (`count` is CUDA `N`).
 `memset_d32_async` / `memset_d32` are `cuMemsetD32Async` / `cuMemsetD32`.

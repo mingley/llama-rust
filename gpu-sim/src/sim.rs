@@ -22784,6 +22784,21 @@ impl Sim {
         self.memset_elements_async(device, alloc, count, 1, stream)
     }
 
+    /// `cuMemsetD8`. Host-synchronous; capture cannot include it.
+    ///
+    /// `count` is CUDA `N` (number of 8-bit values). Payload is `count`
+    /// bytes. Distinct from [`Self::memset_d8_async`] (capture-legal).
+    /// This VM does not invent `cuEventQuery` this slice.
+    pub fn memset_d8(
+        &mut self,
+        device: DeviceId,
+        alloc: AllocId,
+        count: u64,
+        stream: StreamId,
+    ) -> Result<OpId, SimError> {
+        self.memset_elements_sync(device, alloc, count, 1, stream)
+    }
+
     /// `cuMemsetD16Async`. `count` is CUDA `N` (number of 16-bit values).
     ///
     /// Payload is `count * 2` bytes at offset 0. [`Self::memset`] stays
