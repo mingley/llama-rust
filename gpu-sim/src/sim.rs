@@ -26652,7 +26652,6 @@ impl Sim {
     /// `cuStreamWaitValue64`. Identity with [`Self::wait_value64`].
     ///
     /// Capture legal. Distinct from [`Self::stream_write_value32_with_flags`].
-    /// This VM does not invent occupancy SM counts this slice.
     pub fn stream_wait_value64(
         &mut self,
         device: DeviceId,
@@ -26663,6 +26662,22 @@ impl Sim {
         stream: StreamId,
     ) -> Result<OpId, SimError> {
         self.wait_value64(device, id, offset, value, cmp, stream)
+    }
+
+    /// `cuStreamWaitValue32`. Identity with [`Self::wait_value32`].
+    ///
+    /// Capture legal. Distinct from [`Self::stream_wait_value64`].
+    /// This VM does not invent occupancy SM counts this slice.
+    pub fn stream_wait_value32(
+        &mut self,
+        device: DeviceId,
+        id: AllocId,
+        offset: u64,
+        value: u64,
+        cmp: WaitValueCmp,
+        stream: StreamId,
+    ) -> Result<OpId, SimError> {
+        self.wait_value32(device, id, offset, value, cmp, stream)
     }
 
     /// `cudaLaunchHostFunc`. Stream-ordered host work; does not occupy compute
@@ -26882,6 +26897,8 @@ impl Sim {
     }
 
     /// `cuStreamWaitValue32`. Compares the low 32 bits of the mailbox word.
+    ///
+    /// Identity wrap [`Self::stream_wait_value32`].
     pub fn wait_value32(
         &mut self,
         device: DeviceId,

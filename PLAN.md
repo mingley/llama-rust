@@ -9519,7 +9519,13 @@ model, do not celebrate the sim.
     or `cudaChooseDevice`. `gpu-profile capture` is still refused. Dual
     score still has no `$/M tokens`.
 
-1054. [ ] Next numbered PLAN item after 1053 is the next `gpu-sim` / Engine /
+1054. [x] `gpu-sim` `Sim::stream_wait_value32` is
+    `cuStreamWaitValue32`. Identity with `wait_value32`. Capture legal. Distinct from
+    `stream_wait_value64`. This VM does not invent occupancy SM counts, Engine `--stream-wait-value32`,
+    or `cudaChooseDevice`. `gpu-profile capture` is still refused. Dual
+    score still has no `$/M tokens`.
+
+1055. [ ] Next numbered PLAN item after 1054 is the next `gpu-sim` / Engine /
     serve / expertvm mechanical API that is still missing, or the next official
     decode family. Prefer remaining CUDA-shaped twins over more
     OpenAI HTTP veneer. Do not invent F32 `output.scale`. Do not invent a
@@ -11189,6 +11195,10 @@ model, do not celebrate the sim.
     Do not invent Engine `--stream-wait-value64`. Do not invent
     occupancy SM counts this slice. Do not reverse WaitValue64 identity with wait_value64.
     Do not invent `cuStreamWaitValue32` as `stream_wait_value64`.
+    Do not invent a second `cuStreamWaitValue32` / `stream_wait_value32`.
+    Do not invent Engine `--stream-wait-value32`. Do not invent
+    occupancy SM counts this slice. Do not reverse WaitValue32 identity with wait_value32.
+    Do not invent `cuStreamWaitValue64` as `stream_wait_value32`.
     Do not invent a second `cudaStreamAddCallback`.
     Do not invent Engine `--stream-callback` (same wall as second live
     `cudaLaunchHostFunc` after miss DMA).
@@ -12921,6 +12931,9 @@ model, do not celebrate the sim.
     Do not invent a second `stream_wait_value64` API. Do not invent
     Engine `--stream-wait-value64-identity`. Do not invent a wait-value32
     this slice. Do not reverse WaitValue64 identity with wait_value64.
+    Do not invent a second `stream_wait_value32` API. Do not invent
+    Engine `--stream-wait-value32-identity`. Do not invent a wait-value64-with-flags
+    this slice. Do not reverse WaitValue32 identity with wait_value32.
     Do not invent a second DeviceLaunch in-flight destroy-complete check or Engine
     `--device-launch-destroy`. Do not abort an in-flight DeviceLaunch when
     `destroy_graph` succeeds. Do not delay destroy of an idle exec. Do not invent
@@ -14836,6 +14849,9 @@ model, do not celebrate the sim.
     Do not invent a second `stream_wait_value64` method. Do not
     invent Engine `--cu-stream-wait-value64`. Do not reverse wrapping
     cuStreamWaitValue64 identity. Do not wrap `cuStreamWaitValue32` as `stream_wait_value64`.
+    Do not invent a second `stream_wait_value32` method. Do not
+    invent Engine `--cu-stream-wait-value32`. Do not reverse wrapping
+    cuStreamWaitValue32 identity. Do not wrap `cuStreamWaitValue64` as `stream_wait_value32`.
     Do not
     spend the next item on an OpenAI-compatible HTTP veneer.
 
