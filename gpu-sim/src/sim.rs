@@ -2315,8 +2315,7 @@ impl Sim {
     /// (`cudaStreamCopyAttributes`).
     ///
     /// Capture-legal (host-side, not a graph node). Distinct from
-    /// [`Self::stream_get_attribute`]. This VM does not invent occupancy SM
-    /// counts this slice.
+    /// [`Self::stream_get_attribute`].
     pub fn copy_stream_attributes(
         &mut self,
         dst_device: DeviceId,
@@ -2591,7 +2590,8 @@ impl Sim {
     /// `cudaStreamGetAttribute`. Query; legal during capture.
     ///
     /// Wraps existing stream state only. Green-context SM permille is not a
-    /// CUDA stream attribute.
+    /// CUDA stream attribute. Driver `cuStreamGetAttribute` is
+    /// [`Self::get_stream_attribute`].
     pub fn stream_get_attribute(
         &self,
         device: DeviceId,
@@ -2618,6 +2618,20 @@ impl Sim {
                 StreamAttrValue::AccessPolicy(self.stream_access_policy(device, stream))
             }
         })
+    }
+
+    /// `cuStreamGetAttribute`. Identity with [`Self::stream_get_attribute`]
+    /// (`cudaStreamGetAttribute`).
+    ///
+    /// Query; legal during capture. Distinct from [`Self::stream_set_attribute`].
+    /// This VM does not invent occupancy SM counts this slice.
+    pub fn get_stream_attribute(
+        &self,
+        device: DeviceId,
+        stream: StreamId,
+        attr: StreamAttr,
+    ) -> Result<StreamAttrValue, SimError> {
+        self.stream_get_attribute(device, stream, attr)
     }
 
     /// `cudaStreamSetAttribute`. Host-side; not a graph node.
