@@ -9507,7 +9507,13 @@ model, do not celebrate the sim.
     or `cudaChooseDevice`. `gpu-profile capture` is still refused. Dual
     score still has no `$/M tokens`.
 
-1052. [ ] Next numbered PLAN item after 1051 is the next `gpu-sim` / Engine /
+1052. [x] `gpu-sim` `Sim::stream_write_value32_with_flags` is
+    `cuStreamWriteValue32` flags. Identity with `write_value32_with_flags`. Capture legal. Distinct from
+    `stream_write_value64_with_flags`. This VM does not invent occupancy SM counts, Engine `--stream-write-value32-with-flags`,
+    or `cudaChooseDevice`. `gpu-profile capture` is still refused. Dual
+    score still has no `$/M tokens`.
+
+1053. [ ] Next numbered PLAN item after 1052 is the next `gpu-sim` / Engine /
     serve / expertvm mechanical API that is still missing, or the next official
     decode family. Prefer remaining CUDA-shaped twins over more
     OpenAI HTTP veneer. Do not invent F32 `output.scale`. Do not invent a
@@ -11169,6 +11175,10 @@ model, do not celebrate the sim.
     Do not invent Engine `--stream-write-value64-with-flags`. Do not invent
     occupancy SM counts this slice. Do not reverse WriteValue64WithFlags identity with write_value64_with_flags.
     Do not invent `cuStreamWriteValue32` flags as `stream_write_value64_with_flags`.
+    Do not invent a second `cuStreamWriteValue32` flags / `stream_write_value32_with_flags`.
+    Do not invent Engine `--stream-write-value32-with-flags`. Do not invent
+    occupancy SM counts this slice. Do not reverse WriteValue32WithFlags identity with write_value32_with_flags.
+    Do not invent `cuStreamWriteValue64` flags as `stream_write_value32_with_flags`.
     Do not invent a second `cudaStreamAddCallback`.
     Do not invent Engine `--stream-callback` (same wall as second live
     `cudaLaunchHostFunc` after miss DMA).
@@ -12895,6 +12905,9 @@ model, do not celebrate the sim.
     Do not invent a second `stream_write_value64_with_flags` API. Do not invent
     Engine `--stream-write-value64-with-flags-identity`. Do not invent a write-value32-with-flags
     this slice. Do not reverse WriteValue64WithFlags identity with write_value64_with_flags.
+    Do not invent a second `stream_write_value32_with_flags` API. Do not invent
+    Engine `--stream-write-value32-with-flags-identity`. Do not invent a wait-value64
+    this slice. Do not reverse WriteValue32WithFlags identity with write_value32_with_flags.
     Do not invent a second DeviceLaunch in-flight destroy-complete check or Engine
     `--device-launch-destroy`. Do not abort an in-flight DeviceLaunch when
     `destroy_graph` succeeds. Do not delay destroy of an idle exec. Do not invent
@@ -14804,6 +14817,9 @@ model, do not celebrate the sim.
     Do not invent a second `stream_write_value64_with_flags` method. Do not
     invent Engine `--cu-stream-write-value64-with-flags`. Do not reverse wrapping
     cuStreamWriteValue64 flags identity. Do not wrap `cuStreamWriteValue32` flags as `stream_write_value64_with_flags`.
+    Do not invent a second `stream_write_value32_with_flags` method. Do not
+    invent Engine `--cu-stream-write-value32-with-flags`. Do not reverse wrapping
+    cuStreamWriteValue32 flags identity. Do not wrap `cuStreamWriteValue64` flags as `stream_write_value32_with_flags`.
     Do not
     spend the next item on an OpenAI-compatible HTTP veneer.
 
