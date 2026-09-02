@@ -34618,7 +34618,7 @@ mod tests {
     fn stream_attach_mem_is_cu_stream_attach_mem_async() {
         let mut sim = Sim::new(h100());
         let d = DeviceId(0);
-        let s = StreamId(0);
+        let s = StreamId(1);
         match sim.stream_attach_mem(d, AllocId(99), s, MemAttach::Global) {
             Err(SimError::UnknownAlloc { alloc }) => assert_eq!(alloc, AllocId(99)),
             other => panic!("{other:?}"),
@@ -34647,7 +34647,7 @@ mod tests {
         enq(sim.stream_attach_mem(d, m, s, MemAttach::Global));
         sim.synchronize().unwrap();
         assert_eq!(sim.mem_attach(m).unwrap(), MemAttach::Global);
-        sim.begin_capture(d, s).unwrap();
+        sim.begin_capture(d, StreamId(0)).unwrap();
         match sim.stream_attach_mem(d, m, s, MemAttach::Host) {
             Err(SimError::Invalid { why }) => assert!(why.contains("capture"), "{why}"),
             other => panic!("{other:?}"),
