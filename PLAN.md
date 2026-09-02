@@ -9408,7 +9408,13 @@ model, do not celebrate the sim.
     or `cudaChooseDevice`. `gpu-profile capture` is still refused. Dual
     score still has no `$/M tokens`.
 
-1036. [ ] Next numbered PLAN item after 1035 is the next `gpu-sim` / Engine /
+1036. [x] `gpu-sim` `Sim::mem_alloc_3d` is
+    `cudaMalloc3D`. Identity with `malloc_3d`. Capture refused. Distinct from
+    `mem_alloc_pitch`. This VM does not invent occupancy SM counts, Engine `--mem-alloc-3d`,
+    or `cudaChooseDevice`. `gpu-profile capture` is still refused. Dual
+    score still has no `$/M tokens`.
+
+1037. [ ] Next numbered PLAN item after 1036 is the next `gpu-sim` / Engine /
     serve / expertvm mechanical API that is still missing, or the next official
     decode family. Prefer remaining CUDA-shaped twins over more
     OpenAI HTTP veneer. Do not invent F32 `output.scale`. Do not invent a
@@ -11009,6 +11015,10 @@ model, do not celebrate the sim.
     Do not invent Engine `--mem-alloc-pitch`. Do not invent
     occupancy SM counts this slice. Do not reverse MallocPitch identity with malloc_pitch.
     Do not invent `cuMemAllocPitch` as `mem_alloc_pitch`.
+    Do not invent a second `cudaMalloc3D` / `mem_alloc_3d`.
+    Do not invent Engine `--mem-alloc-3d`. Do not invent
+    occupancy SM counts this slice. Do not reverse Malloc3D identity with malloc_3d.
+    Do not invent `cuMemAlloc3D` / `cuMalloc3D` as `mem_alloc_3d`.
     Do not invent a second `cudaStreamAddCallback`.
     Do not invent Engine `--stream-callback` (same wall as second live
     `cudaLaunchHostFunc` after miss DMA).
@@ -12687,6 +12697,9 @@ model, do not celebrate the sim.
     Do not invent a second `mem_alloc_pitch` API. Do not invent
     Engine `--mem-alloc-pitch-identity`. Do not invent a malloc-3d
     this slice. Do not reverse MallocPitch identity with malloc_pitch.
+    Do not invent a second `mem_alloc_3d` API. Do not invent
+    Engine `--mem-alloc-3d-identity`. Do not invent a cooperative-kernel
+    this slice. Do not reverse Malloc3D identity with malloc_3d.
     Do not invent a second DeviceLaunch in-flight destroy-complete check or Engine
     `--device-launch-destroy`. Do not abort an in-flight DeviceLaunch when
     `destroy_graph` succeeds. Do not delay destroy of an idle exec. Do not invent
@@ -14548,6 +14561,9 @@ model, do not celebrate the sim.
     Do not invent a second `mem_alloc_pitch` method. Do not
     invent Engine `--cu-mem-alloc-pitch`. Do not reverse wrapping
     cudaMallocPitch identity. Do not wrap `cuMemAllocPitch` as `mem_alloc_pitch`.
+    Do not invent a second `mem_alloc_3d` method. Do not
+    invent Engine `--cu-mem-alloc-3d`. Do not reverse wrapping
+    cudaMalloc3D identity. Do not wrap `cuMemAlloc3D` as `mem_alloc_3d`.
     Do not
     spend the next item on an OpenAI-compatible HTTP veneer.
 

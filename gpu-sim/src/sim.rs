@@ -25833,8 +25833,7 @@ impl Sim {
     ///
     /// Capture refused. Distinct from
     /// [`Self::malloc_pitch_with_element_size`] (`cuMemAllocPitch`) and
-    /// [`Self::device_flush_gpu_direct_rdma_writes`]. This VM does not invent
-    /// occupancy SM counts this slice.
+    /// [`Self::device_flush_gpu_direct_rdma_writes`].
     pub fn mem_alloc_pitch(
         &mut self,
         device: DeviceId,
@@ -25867,6 +25866,8 @@ impl Sim {
 
     /// `cudaMalloc3D`: aligned 3D allocation. Returns `(ptr, pitch)`.
     ///
+    /// Identity wrap [`Self::mem_alloc_3d`]. Not `cuMemAlloc3D` / `cuMalloc3D`.
+    ///
     /// Pitch is `align_up(width, 512)`. Size charged is `pitch * height * depth`.
     /// Host-synchronous like [`Self::malloc`]. Capture cannot include it.
     pub fn malloc_3d(
@@ -25883,6 +25884,20 @@ impl Sim {
         let bytes = pitch.saturating_mul(height).saturating_mul(depth);
         let id = self.malloc(device, bytes)?;
         Ok((id, pitch))
+    }
+
+    /// `cudaMalloc3D`. Identity with [`Self::malloc_3d`].
+    ///
+    /// Capture refused. Distinct from [`Self::mem_alloc_pitch`]. This VM does
+    /// not invent occupancy SM counts this slice.
+    pub fn mem_alloc_3d(
+        &mut self,
+        device: DeviceId,
+        width: u64,
+        height: u64,
+        depth: u64,
+    ) -> Result<(AllocId, u64), SimError> {
+        self.malloc_3d(device, width, height, depth)
     }
 
     /// `cudaLaunchCooperativeKernel` on whole allocations.
