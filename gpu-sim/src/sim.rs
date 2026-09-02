@@ -10249,8 +10249,7 @@ impl Sim {
     /// [`Self::graph_add_empty`] (`cudaGraphAddEmptyNode`).
     ///
     /// Capture refused. Distinct from
-    /// [`Self::graph_add_child`]. This VM does not invent
-    /// occupancy SM counts this slice.
+    /// [`Self::graph_add_child`].
     pub fn add_graph_empty(&mut self, graph: GraphId) -> Result<(), SimError> {
         self.graph_add_empty(graph)
     }
@@ -10943,7 +10942,9 @@ impl Sim {
     /// Independent children may Hyper-Q overlap at parent launch.
     /// Pin move ownership through [`Self::graph_add_node`] with
     /// [`GraphNodeParams::ChildGraph`]. A parked in-flight-destroyed exec used
-    /// as `child` is `"unknown graph"`. Live exec as `child` stays.
+    /// as `child` is `"unknown graph"`. Live exec as `child` stays. Driver
+    /// `cuGraphAddChildGraphNode` is
+    /// [`Self::add_graph_child`].
     pub fn graph_add_child(&mut self, graph: GraphId, child: GraphId) -> Result<(), SimError> {
         self.graph_add_child_params(
             graph,
@@ -10952,6 +10953,16 @@ impl Sim {
                 ownership: GraphChildGraphOwnership::CLONE,
             },
         )
+    }
+
+    /// `cuGraphAddChildGraphNode`. Identity with
+    /// [`Self::graph_add_child`] (`cudaGraphAddChildGraphNode`).
+    ///
+    /// Capture refused. Distinct from
+    /// [`Self::add_graph_empty`]. This VM does not invent
+    /// occupancy SM counts this slice.
+    pub fn add_graph_child(&mut self, graph: GraphId, child: GraphId) -> Result<(), SimError> {
+        self.graph_add_child(graph, child)
     }
 
     fn graph_add_child_params(

@@ -624,6 +624,7 @@ compiled kernel exists; no Engine flag).
 `gpu-sim` `launch_device_graph` is device-side `cuGraphLaunch` (identity with `device_launch_graph`; no Engine flag).
 `gpu-sim` `get_current_graph_exec` is `cuGetCurrentGraphExec` (identity with `current_graph_exec`; no Engine flag).
 `gpu-sim` `add_graph_empty` is `cuGraphAddEmptyNode` (identity with `graph_add_empty`; no Engine flag).
+`gpu-sim` `add_graph_child` is `cuGraphAddChildGraphNode` (identity with `graph_add_child`; no Engine flag).
 `gpu-sim` `mem_alloc` is `cuMemAlloc` (identity with `malloc`; no Engine flag).
 `gpu-sim` `mem_free` is `cuMemFree` (identity with `free_sync`; no Engine flag).
 `gpu-sim` `mem_free_host` is `cuMemFreeHost` (identity with `free_host_pinned`; no Engine flag).
@@ -772,6 +773,7 @@ compiled kernel exists; no Engine flag).
 `gpu-sim` `launch_device_graph` is device-side `cuGraphLaunch` (identity with `device_launch_graph`; no Engine flag).
 `gpu-sim` `get_current_graph_exec` is `cuGetCurrentGraphExec` (identity with `current_graph_exec`; no Engine flag).
 `gpu-sim` `add_graph_empty` is `cuGraphAddEmptyNode` (identity with `graph_add_empty`; no Engine flag).
+`gpu-sim` `add_graph_child` is `cuGraphAddChildGraphNode` (identity with `graph_add_child`; no Engine flag).
 `gpu-sim` `func_is_loaded` is `cuFuncIsLoaded` (`false` until a compiled
 kernel exists; no Engine flag).
 `gpu-sim` `func_load` is `cuFuncLoad` (Invalid; no compiled kernel; no
