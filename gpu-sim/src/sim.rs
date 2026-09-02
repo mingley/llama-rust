@@ -26683,7 +26683,6 @@ impl Sim {
     /// [`Self::wait_value64_with_flags`].
     ///
     /// Capture legal. Distinct from [`Self::stream_wait_value32`].
-    /// This VM does not invent occupancy SM counts this slice.
     pub fn stream_wait_value64_with_flags(
         &mut self,
         device: DeviceId,
@@ -26694,6 +26693,23 @@ impl Sim {
         stream: StreamId,
     ) -> Result<OpId, SimError> {
         self.wait_value64_with_flags(device, id, offset, value, flags, stream)
+    }
+
+    /// `cuStreamWaitValue32` flags. Identity with
+    /// [`Self::wait_value32_with_flags`].
+    ///
+    /// Capture legal. Distinct from [`Self::stream_wait_value64_with_flags`].
+    /// This VM does not invent occupancy SM counts this slice.
+    pub fn stream_wait_value32_with_flags(
+        &mut self,
+        device: DeviceId,
+        id: AllocId,
+        offset: u64,
+        value: u64,
+        flags: u32,
+        stream: StreamId,
+    ) -> Result<OpId, SimError> {
+        self.wait_value32_with_flags(device, id, offset, value, flags, stream)
     }
 
     /// `cudaLaunchHostFunc`. Stream-ordered host work; does not occupy compute
@@ -26972,6 +26988,8 @@ impl Sim {
     /// [`crate::WaitValueFlags::FLUSH`] requires an RDMA SKU (same as
     /// [`BatchMemOp::FlushRemoteWrites`]). Unknown bits Invalid `"wait value flags"`.
     /// Typed [`Self::wait_value32`] stays.
+    ///
+    /// Identity wrap [`Self::stream_wait_value32_with_flags`].
     pub fn wait_value32_with_flags(
         &mut self,
         device: DeviceId,
