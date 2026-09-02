@@ -18804,7 +18804,6 @@ impl Sim {
     /// [`Self::multicast_add_device`] (`cuMulticastAddDevice`).
     ///
     /// Capture refused. Distinct from [`Self::mem_multicast_create_with_prop`].
-    /// This VM does not invent occupancy SM counts this slice.
     pub fn mem_multicast_add_device(
         &mut self,
         mc: MulticastId,
@@ -18819,6 +18818,8 @@ impl Sim {
     /// size must match. All devices must already be added. Dest HBM is the
     /// handle (already charged); bind does not charge again. Typed helper;
     /// flags must be [`MulticastBindFlags::DEFAULT`].
+    /// Driver `cuMulticastBindMem` is [`Self::mem_multicast_bind_mem`].
+    /// Identity wrap [`Self::mem_multicast_bind_mem`].
     pub fn multicast_bind_mem(
         &mut self,
         mc: MulticastId,
@@ -18826,6 +18827,20 @@ impl Sim {
         handle: MemHandleId,
     ) -> Result<(), SimError> {
         self.multicast_bind_mem_with_flags(mc, device, handle, MulticastBindFlags::DEFAULT)
+    }
+
+    /// `cuMulticastBindMem`. Identity with
+    /// [`Self::multicast_bind_mem`] (`cuMulticastBindMem`).
+    ///
+    /// Capture refused. Distinct from [`Self::mem_multicast_add_device`].
+    /// This VM does not invent occupancy SM counts this slice.
+    pub fn mem_multicast_bind_mem(
+        &mut self,
+        mc: MulticastId,
+        device: DeviceId,
+        handle: MemHandleId,
+    ) -> Result<(), SimError> {
+        self.multicast_bind_mem(mc, device, handle)
     }
 
     /// [`Self::multicast_bind_mem`] with a flags word.

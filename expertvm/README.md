@@ -845,6 +845,7 @@ compiled kernel exists; no Engine flag).
 `gpu-sim` `mem_multicast_create` is `cuMulticastCreate` (identity with `multicast_create`; no Engine flag).
 `gpu-sim` `mem_multicast_create_with_prop` is `cuMulticastCreate` prop (identity with `multicast_create_with_prop`; no Engine flag).
 `gpu-sim` `mem_multicast_add_device` is `cuMulticastAddDevice` (identity with `multicast_add_device`; no Engine flag).
+`gpu-sim` `mem_multicast_bind_mem` is `cuMulticastBindMem` (identity with `multicast_bind_mem`; no Engine flag).
 `gpu-sim` `mem_alloc` is `cuMemAlloc` (identity with `malloc`; no Engine flag).
 `gpu-sim` `mem_free` is `cuMemFree` (identity with `free_sync`; no Engine flag).
 `gpu-sim` `mem_free_host` is `cuMemFreeHost` (identity with `free_host_pinned`; no Engine flag).
@@ -1214,6 +1215,7 @@ compiled kernel exists; no Engine flag).
 `gpu-sim` `mem_multicast_create` is `cuMulticastCreate` (identity with `multicast_create`; no Engine flag).
 `gpu-sim` `mem_multicast_create_with_prop` is `cuMulticastCreate` prop (identity with `multicast_create_with_prop`; no Engine flag).
 `gpu-sim` `mem_multicast_add_device` is `cuMulticastAddDevice` (identity with `multicast_add_device`; no Engine flag).
+`gpu-sim` `mem_multicast_bind_mem` is `cuMulticastBindMem` (identity with `multicast_bind_mem`; no Engine flag).
 `gpu-sim` `func_is_loaded` is `cuFuncIsLoaded` (`false` until a compiled
 kernel exists; no Engine flag).
 `gpu-sim` `func_load` is `cuFuncLoad` (Invalid; no compiled kernel; no
