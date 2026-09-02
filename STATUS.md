@@ -5,6 +5,14 @@ Visible five-turn extract: [docs/chatgpt-share-6a920fe1.md](docs/chatgpt-share-6
 Complete share-API extract: [docs/chatgpt-share-6a920fe1/](docs/chatgpt-share-6a920fe1/).
 Work lands on `main`. No PRs.
 
+## Shipped 2026-09-02 — CUDA `cuGraphCreate` flags
+
+`gpu-sim` `Sim::graph_create_with_flags` is `cuGraphCreate` flags.
+Identity with `create_graph_with_flags` (`cudaGraphCreate` flags).
+Capture refused. Distinct from `graph_create`.
+This VM does not invent occupancy SM counts or Engine `--graph-create-with-flags`.
+`gpu-profile capture` is still refused. Dual score still has no `$/M tokens`.
+
 ## Shipped 2026-09-02 — CUDA `cuGraphCreate`
 
 `gpu-sim` `Sim::graph_create` is `cuGraphCreate`.

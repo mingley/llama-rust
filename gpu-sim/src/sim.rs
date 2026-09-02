@@ -9498,8 +9498,7 @@ impl Sim {
     /// [`Self::create_graph`] (`cudaGraphCreate`).
     ///
     /// Host-synchronous. Capture refused. Distinct from
-    /// [`Self::create_graph_with_flags`]. This VM does not invent
-    /// occupancy SM counts this slice.
+    /// [`Self::create_graph_with_flags`].
     pub fn graph_create(
         &mut self,
         device: DeviceId,
@@ -9512,7 +9511,9 @@ impl Sim {
     ///
     /// CUDA requires `flags == 0` ([`GraphCreateFlags::DEFAULT`]). Other bits
     /// are Invalid `"graph create flags"`. Typed [`Self::create_graph`] stays.
-    /// Capture cannot include it. Distinct from [`GraphInstantiateFlags`].
+    /// Capture cannot include it. Distinct from [`GraphInstantiateFlags`]. Driver
+    /// `cuGraphCreate` flags is
+    /// [`Self::graph_create_with_flags`].
     pub fn create_graph_with_flags(
         &mut self,
         device: DeviceId,
@@ -9534,6 +9535,21 @@ impl Sim {
         let id = self.insert_graph(device, stream);
         self.clock = self.clock.saturating_add(1);
         Ok(id)
+    }
+
+    /// `cuGraphCreate` flags. Identity with
+    /// [`Self::create_graph_with_flags`] (`cudaGraphCreate` flags).
+    ///
+    /// Host-synchronous. Capture refused. Distinct from
+    /// [`Self::graph_create`]. This VM does not invent
+    /// occupancy SM counts this slice.
+    pub fn graph_create_with_flags(
+        &mut self,
+        device: DeviceId,
+        stream: StreamId,
+        flags: u32,
+    ) -> Result<GraphId, SimError> {
+        self.create_graph_with_flags(device, stream, flags)
     }
 
     /// `cudaUserObjectCreate`. Host-synchronous. Capture cannot include it.
