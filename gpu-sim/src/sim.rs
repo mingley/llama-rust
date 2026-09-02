@@ -1576,7 +1576,6 @@ impl Sim {
     /// [`Self::set_stream_priority`] (`cudaStreamSetAttribute` Priority).
     ///
     /// Capture legal. Distinct from [`Self::stream_get_access_policy`].
-    /// This VM does not invent occupancy SM counts this slice.
     pub fn stream_set_priority(
         &mut self,
         device: DeviceId,
@@ -2500,6 +2499,8 @@ impl Sim {
     /// Blocking streams serialize with [`StreamId::NULL`] even when legacy null
     /// is off. Created streams default to non-blocking (vLLM-style). The null
     /// stream's flags are [`Self::set_legacy_null_stream`], not this call.
+    /// Driver `cuStreamCreate` blocking is [`Self::stream_set_blocking`].
+    /// Identity wrap [`Self::stream_set_blocking`].
     pub fn set_stream_blocking(
         &mut self,
         device: DeviceId,
@@ -2532,6 +2533,20 @@ impl Sim {
             let _was = self.blocking.remove(&(device, stream));
         }
         Ok(())
+    }
+
+    /// `cuStreamCreate` blocking. Identity with
+    /// [`Self::set_stream_blocking`] (`cudaStreamCreate`).
+    ///
+    /// Capture legal. Distinct from [`Self::stream_set_priority`].
+    /// This VM does not invent occupancy SM counts this slice.
+    pub fn stream_set_blocking(
+        &mut self,
+        device: DeviceId,
+        stream: StreamId,
+        yes: bool,
+    ) -> Result<(), SimError> {
+        self.set_stream_blocking(device, stream, yes)
     }
 
     /// `cudaStreamCreateWithFlags`. Capture cannot include it.

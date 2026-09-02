@@ -9749,7 +9749,12 @@ model, do not celebrate the sim.
       `stream_get_access_policy`. This VM does not invent occupancy SM counts, Engine `--stream-set-priority`,
       or `cudaChooseDevice`. `gpu-profile capture` is still refused. Dual
       score still has no `$/M tokens`.
-1098. [ ] Next numbered PLAN item after 1097 is the next `gpu-sim` / Engine /
+1098. [x] `gpu-sim` `Sim::stream_set_blocking` is
+      `cuStreamCreate` blocking. Identity with `set_stream_blocking` (`cudaStreamCreate`). Capture legal. Distinct from
+      `stream_set_priority`. This VM does not invent occupancy SM counts, Engine `--stream-set-blocking`,
+      or `cudaChooseDevice`. `gpu-profile capture` is still refused. Dual
+      score still has no `$/M tokens`.
+1099. [ ] Next numbered PLAN item after 1098 is the next `gpu-sim` / Engine /
     serve / expertvm mechanical API that is still missing, or the next official
     decode family. Prefer remaining CUDA-shaped twins over more
     OpenAI HTTP veneer. Do not invent F32 `output.scale`. Do not invent a
@@ -11595,6 +11600,10 @@ model, do not celebrate the sim.
     Do not invent Engine `--stream-set-priority`. Do not invent
     occupancy SM counts this slice. Do not reverse StreamSetPriority identity with set_stream_priority.
     Do not invent generic `cuStreamSetAttribute` as `stream_set_priority`.
+    Do not invent a second `cuStreamCreate` blocking / `stream_set_blocking`.
+    Do not invent Engine `--stream-set-blocking`. Do not invent
+    occupancy SM counts this slice. Do not reverse StreamSetBlocking identity with set_stream_blocking.
+    Do not invent generic `cuStreamCreateWithFlags` as `stream_set_blocking`.
     Do not invent a second `cudaStreamAddCallback`.
     Do not invent Engine `--stream-callback` (same wall as second live
     `cudaLaunchHostFunc` after miss DMA).
@@ -13470,6 +13479,10 @@ model, do not celebrate the sim.
     Engine `--stream-set-priority-identity`. Do not invent a stream-set-blocking
     this slice. Do not reverse StreamSetPriority identity with set_stream_priority.
     Do not wrap `set_stream_priority` as `stream_set_priority`.
+    Do not invent a second `stream_set_blocking` API. Do not invent
+    Engine `--stream-set-blocking-identity`. Do not invent a stream-is-blocking
+    this slice. Do not reverse StreamSetBlocking identity with set_stream_blocking.
+    Do not wrap `set_stream_blocking` as `stream_set_blocking`.
     Do not invent a second DeviceLaunch in-flight destroy-complete check or Engine
     `--device-launch-destroy`. Do not abort an in-flight DeviceLaunch when
     `destroy_graph` succeeds. Do not delay destroy of an idle exec. Do not invent
@@ -15517,6 +15530,9 @@ model, do not celebrate the sim.
     Do not invent a second `stream_set_priority` method. Do not
     invent Engine `--cu-stream-set-priority`. Do not reverse wrapping
     cuStreamSetAttribute priority identity. Do not wrap generic `cuStreamSetAttribute` as `stream_set_priority`.
+    Do not invent a second `stream_set_blocking` method. Do not
+    invent Engine `--cu-stream-set-blocking`. Do not reverse wrapping
+    cuStreamCreate blocking identity. Do not wrap generic `cuStreamCreateWithFlags` as `stream_set_blocking`.
     Do not
     spend the next item on an OpenAI-compatible HTTP veneer.
 

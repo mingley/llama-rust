@@ -786,6 +786,7 @@ compiled kernel exists; no Engine flag).
 `gpu-sim` `stream_set_access_policy` is `cuStreamSetAttribute` access policy (identity with `set_stream_access_policy`; no Engine flag).
 `gpu-sim` `stream_get_access_policy` is `cuStreamGetAttribute` access policy (identity with `stream_access_policy`; no Engine flag).
 `gpu-sim` `stream_set_priority` is `cuStreamSetAttribute` priority (identity with `set_stream_priority`; no Engine flag).
+`gpu-sim` `stream_set_blocking` is `cuStreamCreate` blocking (identity with `set_stream_blocking`; no Engine flag).
 `gpu-sim` `mem_alloc` is `cuMemAlloc` (identity with `malloc`; no Engine flag).
 `gpu-sim` `mem_free` is `cuMemFree` (identity with `free_sync`; no Engine flag).
 `gpu-sim` `mem_free_host` is `cuMemFreeHost` (identity with `free_host_pinned`; no Engine flag).
@@ -1096,6 +1097,7 @@ compiled kernel exists; no Engine flag).
 `gpu-sim` `stream_set_access_policy` is `cuStreamSetAttribute` access policy (identity with `set_stream_access_policy`; no Engine flag).
 `gpu-sim` `stream_get_access_policy` is `cuStreamGetAttribute` access policy (identity with `stream_access_policy`; no Engine flag).
 `gpu-sim` `stream_set_priority` is `cuStreamSetAttribute` priority (identity with `set_stream_priority`; no Engine flag).
+`gpu-sim` `stream_set_blocking` is `cuStreamCreate` blocking (identity with `set_stream_blocking`; no Engine flag).
 `gpu-sim` `func_is_loaded` is `cuFuncIsLoaded` (`false` until a compiled
 kernel exists; no Engine flag).
 `gpu-sim` `func_load` is `cuFuncLoad` (Invalid; no compiled kernel; no
