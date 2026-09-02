@@ -10113,8 +10113,7 @@ impl Sim {
     /// [`Self::cooperative_kernel`] launch).
     ///
     /// Capture refused. Distinct from
-    /// [`Self::add_graph_kernel`]. This VM does not invent
-    /// occupancy SM counts this slice.
+    /// [`Self::add_graph_kernel`].
     pub fn add_graph_cooperative_kernel(
         &mut self,
         graph: GraphId,
@@ -10376,9 +10375,22 @@ impl Sim {
         self.graph_add_memset_3d(graph, op)
     }
 
-    /// `cudaGraphAddHostNode` (`cudaLaunchHostFunc`) with the unnamed callback.
+    /// `cudaGraphAddHostNode` (`cudaLaunchHostFunc`) with the unnamed callback. Driver
+    /// graph unnamed `cudaGraphAddHostNode` is
+    /// [`Self::add_graph_host_func`].
     pub fn graph_add_host_func(&mut self, graph: GraphId) -> Result<(), SimError> {
         self.graph_add_host_func_params(graph, HostNodeParams::default())
+    }
+
+    /// Graph unnamed `cudaGraphAddHostNode`. Identity with
+    /// [`Self::graph_add_host_func`] (`cudaGraphAddHostNode` with the unnamed
+    /// callback).
+    ///
+    /// Capture refused. Distinct from
+    /// [`Self::add_graph_host`]. This VM does not invent
+    /// occupancy SM counts this slice.
+    pub fn add_graph_host_func(&mut self, graph: GraphId) -> Result<(), SimError> {
+        self.graph_add_host_func(graph)
     }
 
     /// `cudaGraphAddHostNode` with [`HostNodeParams`] (`cudaHostFn_t` / `userData`). Driver
