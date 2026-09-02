@@ -5,6 +5,14 @@ Visible five-turn extract: [docs/chatgpt-share-6a920fe1.md](docs/chatgpt-share-6
 Complete share-API extract: [docs/chatgpt-share-6a920fe1/](docs/chatgpt-share-6a920fe1/).
 Work lands on `main`. No PRs.
 
+## Shipped 2026-09-02 — CUDA `cuGraphRemoveDependencies` with data
+
+`gpu-sim` `Sim::remove_graph_dependencies_with_data` is `cuGraphRemoveDependencies` with data.
+Identity with `graph_remove_dependencies_with_data` (`cudaGraphRemoveDependencies` with data).
+Capture refused. Distinct from `remove_graph_dependencies_n`.
+This VM does not invent occupancy SM counts or Engine `--graph-remove-dependencies-with-data`.
+`gpu-profile capture` is still refused. Dual score still has no `$/M tokens`.
+
 ## Shipped 2026-09-02 — CUDA `cuGraphRemoveDependencies` of pairs
 
 `gpu-sim` `Sim::remove_graph_dependencies_n` is `cuGraphRemoveDependencies` of pairs.
