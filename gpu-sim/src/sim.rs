@@ -19587,7 +19587,6 @@ impl Sim {
     /// [`Self::va_unset_access`] (`cuMemSetAccess` ProtNone).
     ///
     /// Capture refused. Distinct from [`Self::mem_set_access_n`].
-    /// This VM does not invent occupancy SM counts this slice.
     pub fn mem_unset_access(&mut self, id: AllocId, device: DeviceId) -> Result<(), SimError> {
         self.va_unset_access(id, device)
     }
@@ -19609,6 +19608,8 @@ impl Sim {
     /// [`MemAccessFlags::PROT_READ`] after [`Self::va_set_access`]. Else
     /// [`MemAccessFlags::PROT_NONE`]. Unmapped `va_reserve` is Invalid
     /// `"not mapped"`. Non-VMM is Invalid `"not a VA"`.
+    /// Driver `cuMemGetAccess` is [`Self::mem_get_access`].
+    /// Identity wrap [`Self::mem_get_access`].
     pub fn va_get_access(&self, id: AllocId, device: DeviceId) -> Result<u32, SimError> {
         let _gpu = self.profile.gpu(device)?;
         let a = self.alloc_ref(id)?;
@@ -19625,6 +19626,15 @@ impl Sim {
             return Ok(MemAccessFlags::PROT_READ);
         }
         Ok(MemAccessFlags::PROT_NONE)
+    }
+
+    /// `cuMemGetAccess`. Identity with
+    /// [`Self::va_get_access`] (`cuMemGetAccess`).
+    ///
+    /// Query; legal during capture. Distinct from [`Self::mem_unset_access`].
+    /// This VM does not invent occupancy SM counts this slice.
+    pub fn mem_get_access(&self, id: AllocId, device: DeviceId) -> Result<u32, SimError> {
+        self.va_get_access(id, device)
     }
 
     /// Mapped bytes of `alloc` currently charged on `device`.
