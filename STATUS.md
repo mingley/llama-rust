@@ -5,6 +5,13 @@ Visible five-turn extract: [docs/chatgpt-share-6a920fe1.md](docs/chatgpt-share-6
 Complete share-API extract: [docs/chatgpt-share-6a920fe1/](docs/chatgpt-share-6a920fe1/).
 Work lands on `main`. No PRs.
 
+## Shipped 2026-09-02 — CUDA `cuMemSetAccess`
+
+`gpu-sim` `Sim::mem_set_access` is `cuMemSetAccess`.
+Identity with `va_set_access` (`cuMemSetAccess` PROT_READ). Capture refused. Distinct from `mem_unmap_range`.
+This VM does not invent occupancy SM counts or Engine `--mem-set-access`.
+`gpu-profile capture` is still refused. Dual score still has no `$/M tokens`.
+
 ## Shipped 2026-09-02 — CUDA `cuMemUnmap` range
 
 `gpu-sim` `Sim::mem_unmap_range` is `cuMemUnmap` range.

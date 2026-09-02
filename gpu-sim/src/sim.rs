@@ -19323,7 +19323,6 @@ impl Sim {
     /// [`Self::va_unmap_range`] (`cuMemUnmap` range).
     ///
     /// Capture refused. Distinct from [`Self::mem_address_free_with_size`].
-    /// This VM does not invent occupancy SM counts this slice.
     pub fn mem_unmap_range(
         &mut self,
         id: AllocId,
@@ -19341,8 +19340,19 @@ impl Sim {
     /// need a local map unless [`Self::va_set_access_write`]. Capture cannot
     /// include it. Needs a topology link and directed peer access from the
     /// home GPU, same as D2D. Downgrades a prior PROT_READWRITE on `device`.
+    /// Driver `cuMemSetAccess` is [`Self::mem_set_access`].
+    /// Identity wrap [`Self::mem_set_access`].
     pub fn va_set_access(&mut self, id: AllocId, device: DeviceId) -> Result<(), SimError> {
         self.va_set_access_inner(id, device, false)
+    }
+
+    /// `cuMemSetAccess`. Identity with
+    /// [`Self::va_set_access`] (`cuMemSetAccess` PROT_READ).
+    ///
+    /// Capture refused. Distinct from [`Self::mem_unmap_range`].
+    /// This VM does not invent occupancy SM counts this slice.
+    pub fn mem_set_access(&mut self, id: AllocId, device: DeviceId) -> Result<(), SimError> {
+        self.va_set_access(id, device)
     }
 
     /// `cuMemSetAccess` PROT_READWRITE on `device` for a mapped VMM VA.
