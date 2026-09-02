@@ -535,6 +535,7 @@ compiled kernel exists; no Engine flag).
 `gpu-sim` `ipc_get_mem_handle` is `cuIpcGetMemHandle` (identity with `ipc_get`; no Engine flag).
 `gpu-sim` `ipc_open_mem_handle` is `cuIpcOpenMemHandle` (identity with `ipc_open_with_flags`; no Engine flag).
 `gpu-sim` `ipc_close_mem_handle` is `cuIpcCloseMemHandle` (identity with `ipc_close`; no Engine flag).
+`gpu-sim` `ipc_get_event_handle` is `cuIpcGetEventHandle` (identity with `ipc_get_event`; no Engine flag).
 `gpu-sim` `func_is_loaded` is `cuFuncIsLoaded` (`false` until a compiled
 kernel exists; no Engine flag).
 `gpu-sim` `func_load` is `cuFuncLoad` (Invalid; no compiled kernel; no

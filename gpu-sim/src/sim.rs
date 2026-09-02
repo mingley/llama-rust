@@ -17038,8 +17038,7 @@ impl Sim {
     /// `cuIpcCloseMemHandle`. Identity with [`Self::ipc_close`]
     /// (`cudaIpcCloseMemHandle`).
     ///
-    /// Capture refused. Distinct from [`Self::ipc_open_mem_handle`]. This VM does
-    /// not invent `cuIpcGetEventHandle` this slice (`ipc_get_event` stays).
+    /// Capture refused. Distinct from [`Self::ipc_open_mem_handle`].
     pub fn ipc_close_mem_handle(&mut self, id: AllocId) -> Result<(), SimError> {
         self.ipc_close(id)
     }
@@ -17083,6 +17082,16 @@ impl Sim {
         self.next_ipc_event = self.next_ipc_event.saturating_add(1);
         let _prev = self.ipc_event_handles.insert(h, event);
         Ok(h)
+    }
+
+    /// `cuIpcGetEventHandle`. Identity with [`Self::ipc_get_event`]
+    /// (`cudaIpcGetEventHandle`).
+    ///
+    /// Host-sync; capture refused. Distinct from [`Self::ipc_get_mem_handle`].
+    /// This VM does not invent `cuIpcOpenEventHandle` this slice
+    /// (`ipc_open_event` stays).
+    pub fn ipc_get_event_handle(&mut self, event: EventId) -> Result<IpcEventHandleId, SimError> {
+        self.ipc_get_event(event)
     }
 
     /// `cudaIpcOpenEventHandle`. Alias shares the source record (no extra event).
