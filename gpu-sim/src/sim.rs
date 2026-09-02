@@ -21043,6 +21043,18 @@ impl Sim {
         Err(SimError::Invalid { why: "checkpoint" })
     }
 
+    /// `cuCheckpointProcessCheckpoint`. CUDA process checkpoint is not
+    /// modeled.
+    ///
+    /// Always Invalid `"ckpt exec"` (why is not `"checkpoint"`). Distinct
+    /// from [`Self::checkpoint_process_lock`]. Unknown devices are Invalid
+    /// `"device not in profile"`. Query; legal during capture. This VM does
+    /// not invent `cuCheckpointProcessRestore` this slice.
+    pub fn checkpoint_process_checkpoint(&self, device: DeviceId) -> Result<(), SimError> {
+        let _gpu = self.profile.gpu(device)?;
+        Err(SimError::Invalid { why: "ckpt exec" })
+    }
+
     /// `cuInit`. Host-synchronous. Capture cannot include it.
     ///
     /// Flags must be 0 (CUDA requires 0). This VM is already initialized at

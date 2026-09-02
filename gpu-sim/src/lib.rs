@@ -1081,7 +1081,11 @@
 //! legal during capture. No Engine `--dump-setglob`.
 //! [`checkpoint_process_lock`](Sim::checkpoint_process_lock) is
 //! `cuCheckpointProcessLock` (always Invalid `"checkpoint"`). Query; legal
-//! during capture. No Engine `--checkpoint`. [`Sim::driver_init`] is `cuInit` (flags 0; already initialized
+//! during capture. No Engine `--checkpoint`.
+//! [`checkpoint_process_checkpoint`](Sim::checkpoint_process_checkpoint) is
+//! `cuCheckpointProcessCheckpoint` (always Invalid `"ckpt exec"`). Query;
+//! legal during capture. No Engine `--ckpt-exec`.
+//! [`Sim::driver_init`] is `cuInit` (flags 0; already initialized
 //! at [`Sim::new`]; 1 ns no-op). Distinct from [`init_device`](Sim::init_device).
 //! Capture cannot include it. No Engine `--cu-init`.
 //! [`profiler_start`](Sim::profiler_start) is `cuProfilerStart` plus
@@ -18910,6 +18914,13 @@ mod tests {
             }
             other => panic!("{other:?}"),
         }
+        match sim.checkpoint_process_checkpoint(d) {
+            Err(SimError::Invalid { why }) => {
+                assert!(why.contains("ckpt exec"), "{why}");
+                assert!(!why.contains("dump setglob"), "{why}");
+            }
+            other => panic!("{other:?}"),
+        }
     }
 
     #[test]
@@ -18939,6 +18950,55 @@ mod tests {
         match sim.coredump_get_attribute(d) {
             Err(SimError::Invalid { why }) => {
                 assert!(why.contains("coredump"), "{why}");
+            }
+            other => panic!("{other:?}"),
+        }
+        match sim.checkpoint_process_checkpoint(d) {
+            Err(SimError::Invalid { why }) => {
+                assert!(why.contains("ckpt exec"), "{why}");
+                assert!(!why.contains("checkpoint"), "{why}");
+            }
+            other => panic!("{other:?}"),
+        }
+    }
+
+    #[test]
+    fn checkpoint_process_checkpoint_is_unsupported() {
+        let mut sim = Sim::new(h100());
+        let d = DeviceId(0);
+        match sim.checkpoint_process_checkpoint(d) {
+            Err(SimError::Invalid { why }) => {
+                assert!(why.contains("ckpt exec"), "{why}");
+                assert!(!why.contains("checkpoint"), "{why}");
+                assert!(!why.contains("dump setglob"), "{why}");
+            }
+            other => panic!("{other:?}"),
+        }
+        sim.begin_capture(d, StreamId(0)).unwrap();
+        match sim.checkpoint_process_checkpoint(d) {
+            Err(SimError::Invalid { why }) => {
+                assert!(why.contains("ckpt exec"), "{why}");
+            }
+            other => panic!("{other:?}"),
+        }
+        let _g = sim.end_capture().unwrap();
+        match sim.checkpoint_process_checkpoint(DeviceId(99)) {
+            Err(SimError::Invalid { why }) => {
+                assert!(why.contains("device not in profile"), "{why}");
+            }
+            other => panic!("{other:?}"),
+        }
+        match sim.checkpoint_process_lock(d) {
+            Err(SimError::Invalid { why }) => {
+                assert!(why.contains("checkpoint"), "{why}");
+                assert!(!why.contains("ckpt exec"), "{why}");
+            }
+            other => panic!("{other:?}"),
+        }
+        match sim.coredump_set_attribute_global(d) {
+            Err(SimError::Invalid { why }) => {
+                assert!(why.contains("dump setglob"), "{why}");
+                assert!(!why.contains("ckpt exec"), "{why}");
             }
             other => panic!("{other:?}"),
         }
