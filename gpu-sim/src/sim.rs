@@ -5839,8 +5839,7 @@ impl Sim {
     /// [`Self::graph_memcpy_set_params`] (`cudaGraphMemcpyNodeSetParams`).
     ///
     /// Capture refused. Distinct from
-    /// [`Self::get_graph_memcpy_node_params`]. This VM does not invent
-    /// occupancy SM counts this slice.
+    /// [`Self::get_graph_memcpy_node_params`].
     pub fn set_graph_memcpy_node_params(
         &mut self,
         graph: GraphId,
@@ -6548,7 +6547,9 @@ impl Sim {
     /// [`Self::graph_exec_memcpy_set_params_1d`] is
     /// `cudaGraphExecMemcpyNodeSetParams1D` and may convert a 2D/3D node.
     /// Extra [`Self::graph_exec_memcpy_set_params_2d`] plus
-    /// [`Self::graph_exec_memcpy_set_params_3d`] stay (not CUDA names).
+    /// [`Self::graph_exec_memcpy_set_params_3d`] stay (not CUDA names). Driver
+    /// `cuGraphExecMemcpyNodeSetParams` is
+    /// [`Self::set_graph_exec_memcpy_node_params`].
     pub fn graph_exec_memcpy_set_params(
         &mut self,
         exec: GraphId,
@@ -6556,6 +6557,21 @@ impl Sim {
         op: &MemcpyOp,
     ) -> Result<(), SimError> {
         self.set_memcpy_op(exec, node, op, true, GreenCtxPatch::Keep, true)
+    }
+
+    /// `cuGraphExecMemcpyNodeSetParams`. Identity with
+    /// [`Self::graph_exec_memcpy_set_params`] (`cudaGraphExecMemcpyNodeSetParams`).
+    ///
+    /// Capture refused. Distinct from
+    /// [`Self::set_graph_memcpy_node_params`]. This VM does not invent
+    /// occupancy SM counts this slice.
+    pub fn set_graph_exec_memcpy_node_params(
+        &mut self,
+        exec: GraphId,
+        node: usize,
+        op: &MemcpyOp,
+    ) -> Result<(), SimError> {
+        self.graph_exec_memcpy_set_params(exec, node, op)
     }
 
     fn graph_exec_memcpy_set_params_with_ctx(
