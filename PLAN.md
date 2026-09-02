@@ -9874,7 +9874,12 @@ model, do not celebrate the sim.
       `mem_pool_unset_access`. This VM does not invent occupancy SM counts, Engine `--mem-pool-get-attribute`,
       or `cudaChooseDevice`. `gpu-profile capture` is still refused. Dual
       score still has no `$/M tokens`.
-1123. [ ] Next numbered PLAN item after 1122 is the next `gpu-sim` / Engine /
+1123. [x] `gpu-sim` `Sim::mem_pool_set_attribute` is
+      `cuMemPoolSetAttribute`. Identity with `pool_set_attribute` (`cudaMemPoolSetAttribute`). Capture refused. Distinct from
+      `mem_pool_get_attribute`. This VM does not invent occupancy SM counts, Engine `--mem-pool-set-attribute`,
+      or `cudaChooseDevice`. `gpu-profile capture` is still refused. Dual
+      score still has no `$/M tokens`.
+1124. [ ] Next numbered PLAN item after 1123 is the next `gpu-sim` / Engine /
     serve / expertvm mechanical API that is still missing, or the next official
     decode family. Prefer remaining CUDA-shaped twins over more
     OpenAI HTTP veneer. Do not invent F32 `output.scale`. Do not invent a
@@ -11838,6 +11843,11 @@ model, do not celebrate the sim.
     occupancy SM counts this slice. Do not reverse MemPoolGetAttribute identity with pool_get_attribute.
     Do not invent `pool_set_attribute` as `mem_pool_get_attribute`.
     Do not invent `cuMemPoolSetAttribute` as `mem_pool_get_attribute`.
+    Do not invent a second `cuMemPoolSetAttribute` / `mem_pool_set_attribute`.
+    Do not invent Engine `--mem-pool-set-attribute`. Do not invent
+    occupancy SM counts this slice. Do not reverse MemPoolSetAttribute identity with pool_set_attribute.
+    Do not invent `pool_trim_to` as `mem_pool_set_attribute`.
+    Do not invent `cuMemPoolTrimTo` as `mem_pool_set_attribute`.
     Do not invent a second `cudaStreamAddCallback`.
     Do not invent Engine `--stream-callback` (same wall as second live
     `cudaLaunchHostFunc` after miss DMA).
@@ -13837,6 +13847,11 @@ model, do not celebrate the sim.
     this slice. Do not reverse MemPoolGetAttribute identity with pool_get_attribute.
     Do not wrap `pool_get_attribute` as `mem_pool_get_attribute`.
     Do not wrap `pool_set_attribute` as `mem_pool_get_attribute`.
+    Do not invent a second `mem_pool_set_attribute` API. Do not invent
+    Engine `--mem-pool-set-attribute-identity`. Do not invent a pool-trim-to
+    this slice. Do not reverse MemPoolSetAttribute identity with pool_set_attribute.
+    Do not wrap `pool_set_attribute` as `mem_pool_set_attribute`.
+    Do not wrap `pool_trim_to` as `mem_pool_set_attribute`.
     Do not invent a second DeviceLaunch in-flight destroy-complete check or Engine
     `--device-launch-destroy`. Do not abort an in-flight DeviceLaunch when
     `destroy_graph` succeeds. Do not delay destroy of an idle exec. Do not invent
@@ -15959,6 +15974,9 @@ model, do not celebrate the sim.
     Do not invent a second `mem_pool_get_attribute` method. Do not
     invent Engine `--cu-mem-pool-get-attribute`. Do not reverse wrapping
     cuMemPoolGetAttribute identity. Do not wrap `pool_set_attribute` as `mem_pool_get_attribute`.
+    Do not invent a second `mem_pool_set_attribute` method. Do not
+    invent Engine `--cu-mem-pool-set-attribute`. Do not reverse wrapping
+    cuMemPoolSetAttribute identity. Do not wrap `pool_trim_to` as `mem_pool_set_attribute`.
     Do not
     spend the next item on an OpenAI-compatible HTTP veneer.
 

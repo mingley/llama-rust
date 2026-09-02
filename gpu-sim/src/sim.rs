@@ -16475,7 +16475,6 @@ impl Sim {
     /// [`Self::pool_get_attribute`] (`cudaMemPoolGetAttribute`).
     ///
     /// Query; legal during capture. Distinct from [`Self::mem_pool_unset_access`].
-    /// This VM does not invent occupancy SM counts this slice.
     pub fn mem_pool_get_attribute(&self, pool: PoolId, attr: MemPoolAttr) -> Result<u64, SimError> {
         self.pool_get_attribute(pool, attr)
     }
@@ -16490,6 +16489,8 @@ impl Sim {
     /// [`MemPoolAttr::ExportHandleTypes`] are read-only. High-water Set `0`
     /// resets to current (other values Invalid `"pool high attr"`). The
     /// graph-memory pool is Invalid (use [`Self::graph_mem_set`]).
+    /// Driver `cuMemPoolSetAttribute` is [`Self::mem_pool_set_attribute`].
+    /// Identity wrap [`Self::mem_pool_set_attribute`].
     pub fn pool_set_attribute(
         &mut self,
         pool: PoolId,
@@ -16519,6 +16520,20 @@ impl Sim {
                 self.set_pool_reuse_attr(pool, attr, value)
             }
         }
+    }
+
+    /// `cuMemPoolSetAttribute`. Identity with
+    /// [`Self::pool_set_attribute`] (`cudaMemPoolSetAttribute`).
+    ///
+    /// Capture refused. Distinct from [`Self::mem_pool_get_attribute`].
+    /// This VM does not invent occupancy SM counts this slice.
+    pub fn mem_pool_set_attribute(
+        &mut self,
+        pool: PoolId,
+        attr: MemPoolAttr,
+        value: u64,
+    ) -> Result<(), SimError> {
+        self.pool_set_attribute(pool, attr, value)
     }
 
     fn set_pool_high_attr(
