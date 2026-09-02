@@ -24014,7 +24014,6 @@ impl Sim {
     /// [`Self::stream_attach_with_size`] (`cudaStreamAttachMemAsync` length).
     ///
     /// Capture refused. Distinct from [`Self::stream_attach_mem`].
-    /// This VM does not invent `stream_attach_flags` this slice.
     pub fn stream_attach_n(
         &mut self,
         device: DeviceId,
@@ -24033,6 +24032,7 @@ impl Sim {
     /// Invalid `"stream attach flags"`. Typed [`Self::stream_attach`] stays.
     /// The CUDA `length` is [`Self::stream_attach_with_size`]. Capture cannot
     /// include it.
+    /// Driver `cuStreamAttachMemAsync` flags is [`Self::stream_attach_flags`].
     pub fn stream_attach_with_flags(
         &mut self,
         device: DeviceId,
@@ -24051,6 +24051,21 @@ impl Sim {
             }
         };
         self.stream_attach(device, id, stream, attach)
+    }
+
+    /// `cuStreamAttachMemAsync` flags. Identity with
+    /// [`Self::stream_attach_with_flags`] (`cudaStreamAttachMemAsync` flags).
+    ///
+    /// Capture refused. Distinct from [`Self::stream_attach_n`].
+    /// This VM does not invent `memcpy_async` this slice.
+    pub fn stream_attach_flags(
+        &mut self,
+        device: DeviceId,
+        id: AllocId,
+        stream: StreamId,
+        flags: u32,
+    ) -> Result<OpId, SimError> {
+        self.stream_attach_with_flags(device, id, stream, flags)
     }
 
     /// Record `event` after prior ops on `stream` (`cudaEventRecord`).
