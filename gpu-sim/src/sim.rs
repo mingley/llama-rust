@@ -11062,8 +11062,7 @@ impl Sim {
     /// [`Self::graph_add_batch_mem_op`] (`cudaGraphAddBatchMemOpNode`).
     ///
     /// Capture refused. Distinct from
-    /// [`Self::add_graph_memset_3d`]. This VM does not invent
-    /// occupancy SM counts this slice.
+    /// [`Self::add_graph_memset_3d`].
     pub fn add_graph_batch_mem_op(
         &mut self,
         graph: GraphId,
@@ -11093,7 +11092,9 @@ impl Sim {
     /// [`Self::graph_add_batch_mem_op`] with a [`BatchMemOpFlags`] word.
     ///
     /// Flags must be [`BatchMemOpFlags::DEFAULT`]. Unknown bits Invalid
-    /// `"batch mem op flags"`. Typed helper stays.
+    /// `"batch mem op flags"`. Typed helper stays. Driver
+    /// `cuGraphAddBatchMemOpNode` flags is
+    /// [`Self::add_graph_batch_mem_op_with_flags`].
     pub fn graph_add_batch_mem_op_with_flags(
         &mut self,
         graph: GraphId,
@@ -11102,6 +11103,22 @@ impl Sim {
     ) -> Result<(), SimError> {
         Self::check_batch_mem_op_flags(flags)?;
         self.graph_add_batch_mem_op(graph, ops)
+    }
+
+    /// `cuGraphAddBatchMemOpNode` flags. Identity with
+    /// [`Self::graph_add_batch_mem_op_with_flags`] (`cudaGraphAddBatchMemOpNode`
+    /// flags).
+    ///
+    /// Capture refused. Distinct from
+    /// [`Self::add_graph_batch_mem_op`]. This VM does not invent
+    /// occupancy SM counts this slice.
+    pub fn add_graph_batch_mem_op_with_flags(
+        &mut self,
+        graph: GraphId,
+        ops: &[BatchMemOp],
+        flags: u32,
+    ) -> Result<(), SimError> {
+        self.graph_add_batch_mem_op_with_flags(graph, ops, flags)
     }
 
     fn graph_add_batch_item(&mut self, graph: GraphId, op: BatchMemOp) -> Result<(), SimError> {

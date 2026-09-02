@@ -8967,7 +8967,14 @@ model, do not celebrate the sim.
     or `cudaChooseDevice`. `gpu-profile capture` is still refused. Dual
     score still has no `$/M tokens`.
 
-973. [ ] Next numbered PLAN item after 972 is the next `gpu-sim` / Engine /
+973. [x] `gpu-sim` `Sim::add_graph_batch_mem_op_with_flags` is
+    `cuGraphAddBatchMemOpNode` flags. Identity with `graph_add_batch_mem_op_with_flags`
+    (`cudaGraphAddBatchMemOpNode` flags). Capture refused. Distinct from
+    `add_graph_batch_mem_op`. This VM does not invent occupancy SM counts, Engine `--graph-add-batch-mem-op-with-flags`,
+    or `cudaChooseDevice`. `gpu-profile capture` is still refused. Dual
+    score still has no `$/M tokens`.
+
+974. [ ] Next numbered PLAN item after 973 is the next `gpu-sim` / Engine /
     serve / expertvm mechanical API that is still missing, or the next official
     decode family. Prefer remaining CUDA-shaped twins over more
     OpenAI HTTP veneer. Do not invent F32 `output.scale`. Do not invent a
@@ -10377,6 +10384,9 @@ model, do not celebrate the sim.
     Do not invent a second `cuGraphAddBatchMemOpNode` / `add_graph_batch_mem_op`.
     Do not invent Engine `--graph-add-batch-mem-op`. Do not invent
     occupancy SM counts this slice. Do not reverse AddGraphBatchMemOp identity with graph_add_batch_mem_op.
+    Do not invent a second `cuGraphAddBatchMemOpNode` flags / `add_graph_batch_mem_op_with_flags`.
+    Do not invent Engine `--graph-add-batch-mem-op-with-flags`. Do not invent
+    occupancy SM counts this slice. Do not reverse AddGraphBatchMemOpWithFlags identity with graph_add_batch_mem_op_with_flags.
     Do not invent a second `cudaStreamAddCallback`.
     Do not invent Engine `--stream-callback` (same wall as second live
     `cudaLaunchHostFunc` after miss DMA).
@@ -11866,6 +11876,9 @@ model, do not celebrate the sim.
     Do not invent a second `add_graph_batch_mem_op` API. Do not invent
     Engine `--graph-add-batch-mem-op-identity`. Do not invent a graph-add-batch-mem-op-with-flags
     this slice. Do not reverse AddGraphBatchMemOp identity with graph_add_batch_mem_op.
+    Do not invent a second `add_graph_batch_mem_op_with_flags` API. Do not invent
+    Engine `--graph-add-batch-mem-op-with-flags-identity`. Do not invent a graph-add-alloc
+    this slice. Do not reverse AddGraphBatchMemOpWithFlags identity with graph_add_batch_mem_op_with_flags.
     Do not invent a second DeviceLaunch in-flight destroy-complete check or Engine
     `--device-launch-destroy`. Do not abort an in-flight DeviceLaunch when
     `destroy_graph` succeeds. Do not delay destroy of an idle exec. Do not invent
@@ -13538,6 +13551,9 @@ model, do not celebrate the sim.
     Do not invent a second `add_graph_batch_mem_op` method. Do not
     invent Engine `--cu-graph-add-batch-mem-op`. Do not reverse wrapping
     cuGraphAddBatchMemOpNode identity.
+    Do not invent a second `add_graph_batch_mem_op_with_flags` method. Do not
+    invent Engine `--cu-graph-add-batch-mem-op-with-flags`. Do not reverse wrapping
+    cuGraphAddBatchMemOpNode flags identity.
     Do not
     spend the next item on an OpenAI-compatible HTTP veneer.
 
