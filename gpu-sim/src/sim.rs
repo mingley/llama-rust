@@ -2250,7 +2250,6 @@ impl Sim {
     /// [`Self::set_stream_sync_policy`] (`cudaStreamSetAttribute` SynchronizationPolicy).
     ///
     /// Capture legal. Distinct from [`Self::stream_get_mem_sync_domain_map`].
-    /// This VM does not invent occupancy SM counts this slice.
     pub fn stream_set_sync_policy(
         &mut self,
         device: DeviceId,
@@ -2261,12 +2260,28 @@ impl Sim {
     }
 
     /// Stream synchronization policy, or [`SynchronizationPolicy::Auto`] if unset.
+    /// Driver `cuStreamGetAttribute` sync policy is [`Self::stream_get_sync_policy`].
+    /// Identity wrap [`Self::stream_get_sync_policy`].
     #[must_use]
     pub fn stream_sync_policy(&self, device: DeviceId, stream: StreamId) -> SynchronizationPolicy {
         self.stream_sync_policy
             .get(&(device, stream))
             .copied()
             .unwrap_or(SynchronizationPolicy::Auto)
+    }
+
+    /// `cuStreamGetAttribute` sync policy. Identity with
+    /// [`Self::stream_sync_policy`] (`cudaStreamGetAttribute` SynchronizationPolicy).
+    ///
+    /// Query; legal during capture. Distinct from [`Self::stream_set_sync_policy`].
+    /// This VM does not invent occupancy SM counts this slice.
+    #[must_use]
+    pub fn stream_get_sync_policy(
+        &self,
+        device: DeviceId,
+        stream: StreamId,
+    ) -> SynchronizationPolicy {
+        self.stream_sync_policy(device, stream)
     }
 
     /// `cudaStreamSetAttribute` for `cudaLaunchAttributeNvlinkUtilCentricScheduling`.
