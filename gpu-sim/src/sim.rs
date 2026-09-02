@@ -2138,7 +2138,6 @@ impl Sim {
     /// [`Self::set_stream_mem_sync_domain`] (`cudaStreamSetAttribute` MemSyncDomain).
     ///
     /// Capture legal. Distinct from [`Self::stream_wait_event_external`].
-    /// This VM does not invent occupancy SM counts this slice.
     pub fn stream_set_mem_sync_domain(
         &mut self,
         device: DeviceId,
@@ -2162,6 +2161,8 @@ impl Sim {
     /// Does not tick the clock. Hopper identity is default→0, remote→1.
     /// `expertvm sim --mem-sync-map collapse` sets `{default: 0, remote: 0}`
     /// on the decode stream (needs `--mem-sync-domain remote`).
+    /// Driver `cuStreamSetAttribute` mem sync domain map is [`Self::stream_set_mem_sync_domain_map`].
+    /// Identity wrap [`Self::stream_set_mem_sync_domain_map`].
     pub fn set_stream_mem_sync_domain_map(
         &mut self,
         device: DeviceId,
@@ -2172,6 +2173,20 @@ impl Sim {
         self.require_live_stream(device, stream)?;
         let _prev = self.stream_mem_sync_map.insert((device, stream), map);
         Ok(())
+    }
+
+    /// `cuStreamSetAttribute` mem sync domain map. Identity with
+    /// [`Self::set_stream_mem_sync_domain_map`] (`cudaStreamSetAttribute` MemSyncDomainMap).
+    ///
+    /// Capture legal. Distinct from [`Self::stream_set_mem_sync_domain`].
+    /// This VM does not invent occupancy SM counts this slice.
+    pub fn stream_set_mem_sync_domain_map(
+        &mut self,
+        device: DeviceId,
+        stream: StreamId,
+        map: MemSyncDomainMap,
+    ) -> Result<(), SimError> {
+        self.set_stream_mem_sync_domain_map(device, stream, map)
     }
 
     /// Stream mem-sync map, or CUDA identity for this device's domain count.

@@ -776,6 +776,7 @@ compiled kernel exists; no Engine flag).
 
 `gpu-sim` `stream_wait_event_external` is `cuStreamWaitEvent` external (identity with `wait_event_external`; no Engine flag).
 `gpu-sim` `stream_set_mem_sync_domain` is `cuStreamSetAttribute` mem sync domain (identity with `set_stream_mem_sync_domain`; no Engine flag).
+`gpu-sim` `stream_set_mem_sync_domain_map` is `cuStreamSetAttribute` mem sync domain map (identity with `set_stream_mem_sync_domain_map`; no Engine flag).
 `gpu-sim` `mem_alloc` is `cuMemAlloc` (identity with `malloc`; no Engine flag).
 `gpu-sim` `mem_free` is `cuMemFree` (identity with `free_sync`; no Engine flag).
 `gpu-sim` `mem_free_host` is `cuMemFreeHost` (identity with `free_host_pinned`; no Engine flag).
@@ -1076,6 +1077,7 @@ compiled kernel exists; no Engine flag).
 
 `gpu-sim` `stream_wait_event_external` is `cuStreamWaitEvent` external (identity with `wait_event_external`; no Engine flag).
 `gpu-sim` `stream_set_mem_sync_domain` is `cuStreamSetAttribute` mem sync domain (identity with `set_stream_mem_sync_domain`; no Engine flag).
+`gpu-sim` `stream_set_mem_sync_domain_map` is `cuStreamSetAttribute` mem sync domain map (identity with `set_stream_mem_sync_domain_map`; no Engine flag).
 `gpu-sim` `func_is_loaded` is `cuFuncIsLoaded` (`false` until a compiled
 kernel exists; no Engine flag).
 `gpu-sim` `func_load` is `cuFuncLoad` (Invalid; no compiled kernel; no
