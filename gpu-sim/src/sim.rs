@@ -14321,6 +14321,15 @@ impl Sim {
         self.reserve_now(device, bytes)
     }
 
+    /// `cuMemAlloc`. Identity with [`Self::malloc`] (`cudaMalloc`).
+    ///
+    /// Device-sync then the pointer is usable. Capture refused. Distinct from
+    /// [`Self::alloc`] (`cudaMallocAsync`). This VM does not invent `cuMemFree`
+    /// this slice (`free_sync` stays).
+    pub fn mem_alloc(&mut self, device: DeviceId, bytes: u64) -> Result<AllocId, SimError> {
+        self.malloc(device, bytes)
+    }
+
     /// Immediate page-locked host allocation. Does not charge HBM.
     ///
     /// A kernel may not read this object until a copy has placed it on a

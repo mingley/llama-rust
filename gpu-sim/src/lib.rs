@@ -518,6 +518,8 @@
 //! [`Sim::mem_info`] is `cudaMemGetInfo` `(free, total)`.
 //! [`mem_get_info`](Sim::mem_get_info) is `cuMemGetInfo` (identity with
 //! [`mem_info`](Sim::mem_info)). Query; legal during capture. No Engine `--mem-get-info`.
+//! [`mem_alloc`](Sim::mem_alloc) is `cuMemAlloc` (identity with
+//! [`malloc`](Sim::malloc)). Host-sync; capture refused. No Engine `--mem-alloc`.
 //! [`Sim::pointer_get_attributes`] is `cudaPointerGetAttributes`.
 //! [`pointer_set_attribute`](Sim::pointer_set_attribute) /
 //! [`pointer_get_attribute`](Sim::pointer_get_attribute) are
@@ -32832,6 +32834,44 @@ mod tests {
         assert!(free1 < free0);
         sim.begin_capture(d, s).unwrap();
         assert_eq!(sim.mem_get_info(d).unwrap(), sim.mem_info(d).unwrap());
+        let _g = sim.end_capture().unwrap();
+        sim.free_sync(a).unwrap();
+    }
+
+    #[test]
+    fn mem_alloc_is_cu_mem_alloc() {
+        let mut sim = Sim::new(h100());
+        let d = DeviceId(0);
+        let s = StreamId(0);
+        match sim.mem_alloc(DeviceId(99), 4096) {
+            Err(SimError::Invalid { why }) => assert!(why.contains("device"), "{why}"),
+            other => panic!("{other:?}"),
+        }
+        match sim.malloc(DeviceId(99), 4096) {
+            Err(SimError::Invalid { why }) => assert!(why.contains("device"), "{why}"),
+            other => panic!("{other:?}"),
+        }
+        match sim.mem_alloc(d, 0) {
+            Err(SimError::Invalid { why }) => assert!(why.contains("zero-byte"), "{why}"),
+            other => panic!("{other:?}"),
+        }
+        match sim.malloc(d, 0) {
+            Err(SimError::Invalid { why }) => assert!(why.contains("zero-byte"), "{why}"),
+            other => panic!("{other:?}"),
+        }
+        let a = sim.mem_alloc(d, 4096).unwrap();
+        assert!(sim.is_resident(a, d).unwrap());
+        let (free, total) = sim.mem_info(d).unwrap();
+        assert_eq!(free, total.saturating_sub(4096));
+        sim.begin_capture(d, s).unwrap();
+        match sim.mem_alloc(d, 4096) {
+            Err(SimError::Invalid { why }) => assert!(why.contains("capture"), "{why}"),
+            other => panic!("{other:?}"),
+        }
+        match sim.malloc(d, 4096) {
+            Err(SimError::Invalid { why }) => assert!(why.contains("capture"), "{why}"),
+            other => panic!("{other:?}"),
+        }
         let _g = sim.end_capture().unwrap();
         sim.free_sync(a).unwrap();
     }
