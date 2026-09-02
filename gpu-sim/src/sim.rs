@@ -2262,6 +2262,7 @@ impl Sim {
     /// and access-policy window from `src` to `dst`.
     ///
     /// Same device required. Capture is allowed (host-side, not a graph node).
+    /// Driver `cuStreamCopyAttributes` is [`Self::copy_stream_attributes`].
     pub fn stream_copy_attributes(
         &mut self,
         dst_device: DeviceId,
@@ -2308,6 +2309,22 @@ impl Sim {
         self.set_stream_nvlink_util_centric(dst_device, dst, nvlink)?;
         self.set_stream_access_policy(dst_device, dst, access)?;
         Ok(())
+    }
+
+    /// `cuStreamCopyAttributes`. Identity with [`Self::stream_copy_attributes`]
+    /// (`cudaStreamCopyAttributes`).
+    ///
+    /// Capture-legal (host-side, not a graph node). Distinct from
+    /// [`Self::stream_get_attribute`]. This VM does not invent occupancy SM
+    /// counts this slice.
+    pub fn copy_stream_attributes(
+        &mut self,
+        dst_device: DeviceId,
+        dst: StreamId,
+        src_device: DeviceId,
+        src: StreamId,
+    ) -> Result<(), SimError> {
+        self.stream_copy_attributes(dst_device, dst, src_device, src)
     }
 
     /// CUDA legacy null stream: [`StreamId::NULL`] serializes with every other stream
@@ -2545,7 +2562,6 @@ impl Sim {
     /// `cuStreamGetId`. Identity with [`Self::stream_get_id`] (`cudaStreamGetId`).
     ///
     /// Query; legal during capture. Distinct from [`Self::stream_get_device`].
-    /// This VM does not invent occupancy SM counts this slice.
     pub fn get_stream_id(&self, device: DeviceId, stream: StreamId) -> Result<u64, SimError> {
         self.stream_get_id(device, stream)
     }
