@@ -258,6 +258,7 @@ warp scheduler, L1, …   ← do not model
 | `module_get_loading_mode` is always Eager (CUDA 1) | `cuModuleGetLoadingMode` |
 | `module_load` is Invalid (no cubin path / `CUmodule`) | `cuModuleLoad` |
 | `module_load_data` is Invalid (no cubin image / `CUmodule`) | `cuModuleLoadData` |
+| `module_load_fat_binary` is Invalid (no fatbin image / `CUmodule`) | `cuModuleLoadFatBinary` |
 | `module_unload` is Invalid (no `CUmodule` handle) | `cuModuleUnload` |
 | `module_get_function` is Invalid (no `CUmodule` / `CUfunction`) | `cuModuleGetFunction` |
 | `module_get_global` is Invalid (no `CUmodule` device symbol) | `cuModuleGetGlobal` |
@@ -1495,6 +1496,8 @@ CUDA 1; query; legal during capture; no modules; distinct from
 Distinct from `module_get_loading_mode` and `library_load_data`. Query; legal during capture. No Engine `--module-load`.
 `module_load_data` is `cuModuleLoadData` (always Invalid `"module data"`; no cubin).
 Distinct from `module_load` and `library_load_data`. Query; legal during capture. No Engine `--module-data`.
+`module_load_fat_binary` is `cuModuleLoadFatBinary` (always Invalid `"module fatbin"`; no cubin).
+Distinct from `module_load` and `module_load_data`. Query; legal during capture. No Engine `--module-fatbin`.
 `module_unload` is `cuModuleUnload` (always Invalid `"module unload"`; no `CUmodule`).
 Distinct from `module_load` and `library_unload`. Query; legal during capture. No Engine `--module-unload`.
 `module_get_function` is `cuModuleGetFunction` (always Invalid `"module function"`; no cubin).

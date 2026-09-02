@@ -7227,7 +7227,14 @@ model, do not celebrate the sim.
     or `cudaChooseDevice`. `gpu-profile capture` is still refused. Dual
     score still has no `$/M tokens`.
 
-725. [ ] Next numbered PLAN item after 724 is the next `gpu-sim` / Engine /
+725. [x] `gpu-sim` `Sim::module_load_fat_binary` is
+    `cuModuleLoadFatBinary`. Always Invalid `"module fatbin"`
+    because CUDA modules are not modeled. Query; legal during capture.
+    Distinct from `module_load`. This VM does not invent `cuModuleLoadDataEx`, Engine `--module-fatbin`,
+    or `cudaChooseDevice`. `gpu-profile capture` is still refused. Dual
+    score still has no `$/M tokens`.
+
+726. [ ] Next numbered PLAN item after 725 is the next `gpu-sim` / Engine /
     serve / expertvm mechanical API that is still missing, or the next official
     decode family. Prefer remaining CUDA-shaped twins over more
     OpenAI HTTP veneer. Do not invent F32 `output.scale`. Do not invent a
@@ -7893,6 +7900,9 @@ model, do not celebrate the sim.
     Do not invent a second `cuModuleGetSurfRef` / `module_get_surf_ref`.
     Do not invent Engine `--module-surfref`. Do not invent
     `cuModuleLoadFatBinary` this slice. Do not reverse `"module surfref"`.
+    Do not invent a second `cuModuleLoadFatBinary` / `module_load_fat_binary`.
+    Do not invent Engine `--module-fatbin`. Do not invent
+    `cuModuleLoadDataEx` this slice. Do not reverse `"module fatbin"`.
     Do not invent a second `cudaStreamAddCallback`.
     Do not invent Engine `--stream-callback` (same wall as second live
     `cudaLaunchHostFunc` after miss DMA).
@@ -8638,6 +8648,9 @@ model, do not celebrate the sim.
     Do not invent a second `module_get_surf_ref` API. Do not invent
     Engine `--get-module-surfref`. Do not invent a CUsurfref from module
     this slice. Do not reverse Module GetSurfRef remaining unsupported.
+    Do not invent a second `module_load_fat_binary` API. Do not invent
+    Engine `--load-module-fatbin`. Do not invent a fatbin image
+    this slice. Do not reverse Module LoadFatBinary remaining unsupported.
     Do not invent a second DeviceLaunch in-flight destroy-complete check or Engine
     `--device-launch-destroy`. Do not abort an in-flight DeviceLaunch when
     `destroy_graph` succeeds. Do not delay destroy of an idle exec. Do not invent
@@ -9566,6 +9579,9 @@ model, do not celebrate the sim.
     Do not invent a second `module_get_surf_ref` method. Do not
     invent Engine `--cu-module-get-surfref`. Do not reverse wrapping
     cuModuleGetSurfRef Invalid.
+    Do not invent a second `module_load_fat_binary` method. Do not
+    invent Engine `--cu-module-load-fatbin`. Do not reverse wrapping
+    cuModuleLoadFatBinary Invalid.
     Do not
     spend the next item on an OpenAI-compatible HTTP veneer.
 
