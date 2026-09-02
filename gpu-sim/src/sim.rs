@@ -13336,8 +13336,7 @@ impl Sim {
     /// `cuMemAllocAsync`. Identity with [`Self::alloc`] (`cudaMallocAsync`).
     ///
     /// Capture-legal (graph mempool). Distinct from [`Self::mem_alloc`]
-    /// (`cuMemAlloc` host-sync). This VM does not invent `cuMemFreeAsync` this
-    /// slice (`free` stays).
+    /// (`cuMemAlloc` host-sync).
     pub fn mem_alloc_async(
         &mut self,
         device: DeviceId,
@@ -16933,6 +16932,20 @@ impl Sim {
     ) -> Result<(), SimError> {
         let _op = self.submit(device, stream, Kind::Free { id })?;
         Ok(())
+    }
+
+    /// `cuMemFreeAsync`. Identity with [`Self::free`] (`cudaFreeAsync`).
+    ///
+    /// Capture-legal (graph mem free node). Distinct from [`Self::mem_free`]
+    /// (`cuMemFree` host-sync). This VM does not invent `cuMemAdvise` this slice
+    /// (`mem_advise` stays).
+    pub fn mem_free_async(
+        &mut self,
+        device: DeviceId,
+        id: AllocId,
+        stream: StreamId,
+    ) -> Result<(), SimError> {
+        self.free(device, id, stream)
     }
 
     /// `cudaIpcGetMemHandle` of a live device allocation. Host-synchronous.

@@ -175,6 +175,9 @@
 //! [`mem_alloc_async`](Sim::mem_alloc_async) is `cuMemAllocAsync` (identity with
 //! [`alloc`](Sim::alloc)). Capture-legal (graph mempool). Distinct from
 //! [`mem_alloc`](Sim::mem_alloc). No Engine `--mem-alloc-async`.
+//! [`mem_free_async`](Sim::mem_free_async) is `cuMemFreeAsync` (identity with
+//! [`free`](Sim::free)). Capture-legal (graph mem free). Distinct from
+//! [`mem_free`](Sim::mem_free). No Engine `--mem-free-async`.
 //! [`Sim::ipc_get_event`] / [`ipc_open_event`](Sim::ipc_open_event) are
 //! `cudaIpcGetEventHandle` / `cudaIpcOpenEventHandle` (interprocess events).
 //! [`Sim::create_shareable_pool`] is `cudaMemPoolCreate` with a POSIX-FD handle
@@ -558,6 +561,9 @@
 //! [`mem_alloc_async`](Sim::mem_alloc_async) is `cuMemAllocAsync` (identity with
 //! [`alloc`](Sim::alloc)). Capture-legal (graph mempool). Distinct from
 //! [`mem_alloc`](Sim::mem_alloc). No Engine `--mem-alloc-async`.
+//! [`mem_free_async`](Sim::mem_free_async) is `cuMemFreeAsync` (identity with
+//! [`free`](Sim::free)). Capture-legal (graph mem free). Distinct from
+//! [`mem_free`](Sim::mem_free). No Engine `--mem-free-async`.
 //! [`mem_host_get_flags`](Sim::mem_host_get_flags) is `cuMemHostGetFlags` (identity with
 //! [`host_get_flags`](Sim::host_get_flags)). Query; legal during capture. No Engine `--mem-host-get-flags`.
 //! [`mem_host_get_device_pointer`](Sim::mem_host_get_device_pointer) is `cuMemHostGetDevicePointer` (identity with
@@ -591,6 +597,9 @@
 //! [`mem_alloc_async`](Sim::mem_alloc_async) is `cuMemAllocAsync` (identity with
 //! [`alloc`](Sim::alloc)). Capture-legal (graph mempool). Distinct from
 //! [`mem_alloc`](Sim::mem_alloc). No Engine `--mem-alloc-async`.
+//! [`mem_free_async`](Sim::mem_free_async) is `cuMemFreeAsync` (identity with
+//! [`free`](Sim::free)). Capture-legal (graph mem free). Distinct from
+//! [`mem_free`](Sim::mem_free). No Engine `--mem-free-async`.
 //! [`Sim::pointer_get_attributes`] is `cudaPointerGetAttributes`.
 //! [`pointer_set_attribute`](Sim::pointer_set_attribute) /
 //! [`pointer_get_attribute`](Sim::pointer_get_attribute) are
@@ -33661,6 +33670,47 @@ mod tests {
             other => panic!("{other:?}"),
         }
         let _g = sim.end_capture().unwrap();
+    }
+
+    #[test]
+    fn mem_free_async_is_cu_mem_free_async() {
+        let mut sim = Sim::new(h100());
+        let d = DeviceId(0);
+        let s = StreamId(0);
+        match sim.mem_free_async(DeviceId(99), AllocId(99), s) {
+            Err(SimError::Invalid { why }) => assert!(why.contains("device"), "{why}"),
+            other => panic!("{other:?}"),
+        }
+        match sim.free(DeviceId(99), AllocId(99), s) {
+            Err(SimError::Invalid { why }) => assert!(why.contains("device"), "{why}"),
+            other => panic!("{other:?}"),
+        }
+        let a = sim.mem_alloc_async(d, 4096, s).unwrap();
+        sim.synchronize_stream(d, s).unwrap();
+        assert!(sim.is_resident(a, d).unwrap());
+        sim.mem_free_async(d, a, s).unwrap();
+        sim.synchronize_stream(d, s).unwrap();
+        assert!(!sim.is_resident(a, d).unwrap());
+        assert_eq!(sim.hbm_used(d).unwrap(), 0);
+        let b = sim.alloc(d, 64, s).unwrap();
+        sim.synchronize_stream(d, s).unwrap();
+        sim.free(d, b, s).unwrap();
+        sim.synchronize_stream(d, s).unwrap();
+        sim.begin_capture(d, s).unwrap();
+        let ga = sim.mem_alloc_async(d, 64, s).unwrap();
+        sim.mem_free_async(d, ga, s).unwrap();
+        let gb = sim.alloc(d, 64, s).unwrap();
+        sim.free(d, gb, s).unwrap();
+        match sim.mem_free(ga) {
+            Err(SimError::Invalid { why }) => assert!(why.contains("capture"), "{why}"),
+            other => panic!("{other:?}"),
+        }
+        let _g = sim.end_capture().unwrap();
+        sim.mem_free_async(d, AllocId(99), s).unwrap();
+        match sim.synchronize() {
+            Err(SimError::UnknownAlloc { alloc }) => assert_eq!(alloc, AllocId(99)),
+            other => panic!("{other:?}"),
+        }
     }
 
     #[test]
