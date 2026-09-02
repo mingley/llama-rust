@@ -6141,7 +6141,9 @@ impl Sim {
     /// [`Self::graph_exec_event_wait_set_event`]. The External flag stays
     /// (topology). Capture cannot include it. Host-sync 1 ns. A parked
     /// in-flight-destroyed exec is `"unknown graph"` before unknown event.
-    /// Live exec SetParams stays.
+    /// Live exec SetParams stays. Driver
+    /// `cuGraphEventWaitNodeSetEvent` is
+    /// [`Self::set_graph_event_wait_node_event`].
     pub fn graph_event_wait_set_event(
         &mut self,
         graph: GraphId,
@@ -6149,6 +6151,21 @@ impl Sim {
         event: EventId,
     ) -> Result<(), SimError> {
         self.graph_def_event_set(graph, node, event, EventSetKind::Wait)
+    }
+
+    /// `cuGraphEventWaitNodeSetEvent`. Identity with
+    /// [`Self::graph_event_wait_set_event`] (`cudaGraphEventWaitNodeSetEvent`).
+    ///
+    /// Capture refused. Distinct from
+    /// [`Self::graph_event_wait_get_event`]. This VM does not invent
+    /// occupancy SM counts this slice.
+    pub fn set_graph_event_wait_node_event(
+        &mut self,
+        graph: GraphId,
+        node: usize,
+        event: EventId,
+    ) -> Result<(), SimError> {
+        self.graph_event_wait_set_event(graph, node, event)
     }
 
     fn graph_def_event_set(
@@ -7275,8 +7292,7 @@ impl Sim {
     /// [`Self::graph_exec_event_record_set_event`] (`cudaGraphExecEventRecordNodeSetEvent`).
     ///
     /// Capture refused. Distinct from
-    /// [`Self::set_graph_event_record_node_event`]. This VM does not invent
-    /// occupancy SM counts this slice.
+    /// [`Self::set_graph_event_record_node_event`].
     pub fn set_graph_exec_event_record_node_event(
         &mut self,
         exec: GraphId,
