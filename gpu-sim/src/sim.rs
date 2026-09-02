@@ -19445,7 +19445,6 @@ impl Sim {
     /// [`Self::va_set_access_with_size`] (`cuMemSetAccess` size).
     ///
     /// Capture refused. Distinct from [`Self::mem_set_access_with_flags`].
-    /// This VM does not invent occupancy SM counts this slice.
     pub fn mem_set_access_with_size(
         &mut self,
         id: AllocId,
@@ -19463,6 +19462,8 @@ impl Sim {
     /// later Invalid leaves earlier descriptors unapplied. Empty `descs` is a
     /// no-op after the size check. Host-synchronous; capture refused. Typed
     /// helpers stay.
+    /// Driver `cuMemSetAccess` n is [`Self::mem_set_access_n`].
+    /// Identity wrap [`Self::mem_set_access_n`].
     pub fn va_set_access_n(
         &mut self,
         id: AllocId,
@@ -19510,6 +19511,20 @@ impl Sim {
             self.va_set_access_with_size(id, device, size, flags)?;
         }
         Ok(())
+    }
+
+    /// `cuMemSetAccess` n. Identity with
+    /// [`Self::va_set_access_n`] (`cuMemSetAccess` n).
+    ///
+    /// Capture refused. Distinct from [`Self::mem_set_access_with_size`].
+    /// This VM does not invent occupancy SM counts this slice.
+    pub fn mem_set_access_n(
+        &mut self,
+        id: AllocId,
+        size: u64,
+        descs: &[MemAccessDesc],
+    ) -> Result<(), SimError> {
+        self.va_set_access_n(id, size, descs)
     }
 
     fn va_set_access_inner(
