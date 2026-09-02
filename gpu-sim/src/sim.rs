@@ -10770,8 +10770,7 @@ impl Sim {
     /// [`Self::graph_conditional_create_with_flags`] (`cudaGraphConditionalHandleCreate` flags).
     ///
     /// Capture refused. Distinct from
-    /// [`Self::create_graph_conditional_handle`]. This VM does not invent
-    /// occupancy SM counts this slice.
+    /// [`Self::create_graph_conditional_handle`].
     pub fn create_graph_conditional_handle_with_flags(
         &mut self,
         graph: GraphId,
@@ -10792,7 +10791,9 @@ impl Sim {
     /// Typed [`Self::graph_add_if`] copies this ctx onto the node. Conditionals
     /// do not occupy SMs, so duration is unchanged. Capture cannot include it.
     /// Illegal on an instantiated exec. This VM does not invent an Engine flag
-    /// for conditional ctx.
+    /// for conditional ctx. Driver
+    /// `cuGraphConditionalHandleCreate` with ctx is
+    /// [`Self::create_graph_conditional_handle_with_ctx`].
     pub fn graph_conditional_create_with_ctx(
         &mut self,
         graph: GraphId,
@@ -10833,6 +10834,22 @@ impl Sim {
         );
         self.clock = self.clock.saturating_add(1);
         Ok(id)
+    }
+
+    /// `cuGraphConditionalHandleCreate` with a ctx argument. Identity with
+    /// [`Self::graph_conditional_create_with_ctx`] (`cudaGraphConditionalHandleCreate` with ctx).
+    ///
+    /// Capture refused. Distinct from
+    /// [`Self::create_graph_conditional_handle_with_flags`]. This VM does not invent
+    /// occupancy SM counts this slice.
+    pub fn create_graph_conditional_handle_with_ctx(
+        &mut self,
+        graph: GraphId,
+        default: u32,
+        flags: u32,
+        ctx: Option<GreenCtxId>,
+    ) -> Result<CondId, SimError> {
+        self.graph_conditional_create_with_ctx(graph, default, flags, ctx)
     }
 
     /// `cudaGraphAddNode` IF (`cudaGraphCondTypeIf`, size 1). Returns the then-body.
