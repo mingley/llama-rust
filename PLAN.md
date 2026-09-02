@@ -9428,7 +9428,14 @@ model, do not celebrate the sim.
     or `cudaChooseDevice`. `gpu-profile capture` is still refused. Dual
     score still has no `$/M tokens`.
 
-1039. [ ] Next numbered PLAN item after 1038 is the next `gpu-sim` / Engine /
+1039. [x] `gpu-sim` `Sim::launch_cooperative_kernel_multi_device` is
+    `cuLaunchCooperativeKernelMultiDevice`. Identity with `cooperative_kernel_multi_device`
+    (`cudaLaunchCooperativeKernelMultiDevice`). Query; legal during capture. Distinct from
+    `launch_cooperative_kernel_bufs`. This VM does not invent occupancy SM counts, Engine `--launch-cooperative-kernel-multi-device`,
+    or `cudaChooseDevice`. `gpu-profile capture` is still refused. Dual
+    score still has no `$/M tokens`.
+
+1040. [ ] Next numbered PLAN item after 1039 is the next `gpu-sim` / Engine /
     serve / expertvm mechanical API that is still missing, or the next official
     decode family. Prefer remaining CUDA-shaped twins over more
     OpenAI HTTP veneer. Do not invent F32 `output.scale`. Do not invent a
@@ -11039,6 +11046,9 @@ model, do not celebrate the sim.
     Do not invent a second `cuLaunchCooperativeKernel` spans / `launch_cooperative_kernel_bufs`.
     Do not invent Engine `--launch-cooperative-kernel-bufs`. Do not invent
     occupancy SM counts this slice. Do not reverse LaunchCooperativeKernelBufs identity with cooperative_kernel_bufs.
+    Do not invent a second `cuLaunchCooperativeKernelMultiDevice` / `launch_cooperative_kernel_multi_device`.
+    Do not invent Engine `--launch-cooperative-kernel-multi-device`. Do not invent
+    occupancy SM counts this slice. Do not reverse LaunchCooperativeKernelMultiDevice identity with cooperative_kernel_multi_device.
     Do not invent a second `cudaStreamAddCallback`.
     Do not invent Engine `--stream-callback` (same wall as second live
     `cudaLaunchHostFunc` after miss DMA).
@@ -12726,6 +12736,9 @@ model, do not celebrate the sim.
     Do not invent a second `launch_cooperative_kernel_bufs` API. Do not invent
     Engine `--launch-cooperative-kernel-bufs-identity`. Do not invent a cooperative-kernel-multi-device
     this slice. Do not reverse LaunchCooperativeKernelBufs identity with cooperative_kernel_bufs.
+    Do not invent a second `launch_cooperative_kernel_multi_device` API. Do not invent
+    Engine `--launch-cooperative-kernel-multi-device-identity`. Do not invent a memset
+    this slice. Do not reverse LaunchCooperativeKernelMultiDevice identity with cooperative_kernel_multi_device.
     Do not invent a second DeviceLaunch in-flight destroy-complete check or Engine
     `--device-launch-destroy`. Do not abort an in-flight DeviceLaunch when
     `destroy_graph` succeeds. Do not delay destroy of an idle exec. Do not invent
@@ -14596,6 +14609,9 @@ model, do not celebrate the sim.
     Do not invent a second `launch_cooperative_kernel_bufs` method. Do not
     invent Engine `--cu-launch-cooperative-kernel-bufs`. Do not reverse wrapping
     cuLaunchCooperativeKernel spans identity.
+    Do not invent a second `launch_cooperative_kernel_multi_device` method. Do not
+    invent Engine `--cu-launch-cooperative-kernel-multi-device`. Do not reverse wrapping
+    cuLaunchCooperativeKernelMultiDevice identity.
     Do not
     spend the next item on an OpenAI-compatible HTTP veneer.
 

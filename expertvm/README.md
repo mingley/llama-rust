@@ -704,6 +704,7 @@ compiled kernel exists; no Engine flag).
 `gpu-sim` `mem_alloc_3d` is `cudaMalloc3D` (identity with `malloc_3d`; no Engine flag).
 `gpu-sim` `launch_cooperative_kernel` is `cuLaunchCooperativeKernel` (identity with `cooperative_kernel`; no Engine flag).
 `gpu-sim` `launch_cooperative_kernel_bufs` is `cuLaunchCooperativeKernel` spans (identity with `cooperative_kernel_bufs`; no Engine flag).
+`gpu-sim` `launch_cooperative_kernel_multi_device` is `cuLaunchCooperativeKernelMultiDevice` (identity with `cooperative_kernel_multi_device`; no Engine flag).
 `gpu-sim` `mem_alloc` is `cuMemAlloc` (identity with `malloc`; no Engine flag).
 `gpu-sim` `mem_free` is `cuMemFree` (identity with `free_sync`; no Engine flag).
 `gpu-sim` `mem_free_host` is `cuMemFreeHost` (identity with `free_host_pinned`; no Engine flag).
@@ -932,6 +933,7 @@ compiled kernel exists; no Engine flag).
 `gpu-sim` `mem_alloc_3d` is `cudaMalloc3D` (identity with `malloc_3d`; no Engine flag).
 `gpu-sim` `launch_cooperative_kernel` is `cuLaunchCooperativeKernel` (identity with `cooperative_kernel`; no Engine flag).
 `gpu-sim` `launch_cooperative_kernel_bufs` is `cuLaunchCooperativeKernel` spans (identity with `cooperative_kernel_bufs`; no Engine flag).
+`gpu-sim` `launch_cooperative_kernel_multi_device` is `cuLaunchCooperativeKernelMultiDevice` (identity with `cooperative_kernel_multi_device`; no Engine flag).
 `gpu-sim` `func_is_loaded` is `cuFuncIsLoaded` (`false` until a compiled
 kernel exists; no Engine flag).
 `gpu-sim` `func_load` is `cuFuncLoad` (Invalid; no compiled kernel; no

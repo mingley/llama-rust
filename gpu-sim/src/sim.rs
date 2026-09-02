@@ -25956,8 +25956,7 @@ impl Sim {
     /// [`Self::cooperative_kernel_bufs`] (`cudaLaunchCooperativeKernel` spans).
     ///
     /// Capture legal. Distinct from
-    /// [`Self::launch_cooperative_kernel`]. This VM does not invent
-    /// occupancy SM counts this slice.
+    /// [`Self::launch_cooperative_kernel`].
     pub fn launch_cooperative_kernel_bufs(
         &mut self,
         device: DeviceId,
@@ -25972,6 +25971,8 @@ impl Sim {
     /// `cudaLaunchCooperativeKernelMultiDevice`. Multi-device cooperative
     /// launch is not modeled.
     ///
+    /// Driver `cuLaunchCooperativeKernelMultiDevice` is [`Self::launch_cooperative_kernel_multi_device`].
+    ///
     /// Always Invalid `"cooperative multi-device"`
     /// ([`DeviceAttr::CooperativeMultiDeviceLaunch`] is 0). Distinct from
     /// [`Self::cooperative_kernel`] (single device). Unknown devices are
@@ -25982,6 +25983,16 @@ impl Sim {
         Err(SimError::Invalid {
             why: "cooperative multi-device",
         })
+    }
+
+    /// `cuLaunchCooperativeKernelMultiDevice`. Identity with
+    /// [`Self::cooperative_kernel_multi_device`] (`cudaLaunchCooperativeKernelMultiDevice`).
+    ///
+    /// Query; legal during capture. Distinct from
+    /// [`Self::launch_cooperative_kernel_bufs`]. This VM does not invent
+    /// occupancy SM counts this slice.
+    pub fn launch_cooperative_kernel_multi_device(&self, device: DeviceId) -> Result<(), SimError> {
+        self.cooperative_kernel_multi_device(device)
     }
 
     fn submit_kernel(
