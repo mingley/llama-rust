@@ -514,6 +514,9 @@
 //! [`graph_instantiate_with_params`](Sim::graph_instantiate_with_params) is `cuGraphInstantiateWithParams` (identity with
 //! [`instantiate_graph_with_params`](Sim::instantiate_graph_with_params)). Capture refused. Distinct from
 //! [`graph_instantiate_with_flags`](Sim::graph_instantiate_with_flags). No Engine `--graph-instantiate-with-params`.
+//! [`graph_launch`](Sim::graph_launch) is `cuGraphLaunch` (identity with
+//! [`launch_graph`](Sim::launch_graph)). Live host launch; capture records a child. Distinct from
+//! [`device_launch_graph`](Sim::device_launch_graph). No Engine `--graph-launch`.
 //! [`Sim::ipc_get_event`] / [`ipc_open_event`](Sim::ipc_open_event) are
 //! `cudaIpcGetEventHandle` / `cudaIpcOpenEventHandle` (interprocess events).
 //! [`Sim::create_shareable_pool`] is `cudaMemPoolCreate` with a POSIX-FD handle
@@ -1052,6 +1055,9 @@
 //! [`graph_instantiate_with_params`](Sim::graph_instantiate_with_params) is `cuGraphInstantiateWithParams` (identity with
 //! [`instantiate_graph_with_params`](Sim::instantiate_graph_with_params)). Capture refused. Distinct from
 //! [`graph_instantiate_with_flags`](Sim::graph_instantiate_with_flags). No Engine `--graph-instantiate-with-params`.
+//! [`graph_launch`](Sim::graph_launch) is `cuGraphLaunch` (identity with
+//! [`launch_graph`](Sim::launch_graph)). Live host launch; capture records a child. Distinct from
+//! [`device_launch_graph`](Sim::device_launch_graph). No Engine `--graph-launch`.
 //! [`HardwareProfile::host_pin_bytes`] caps `cudaMallocHost` / `cudaHostRegister`.
 //! [`Sim::idle_until`] drains, then jumps the virtual clock (open-loop arrivals).
 //! [`Sim::event_elapsed_ns`] is `cudaEventElapsedTime` in nanoseconds.
@@ -1458,6 +1464,9 @@
 //! [`graph_instantiate_with_params`](Sim::graph_instantiate_with_params) is `cuGraphInstantiateWithParams` (identity with
 //! [`instantiate_graph_with_params`](Sim::instantiate_graph_with_params)). Capture refused. Distinct from
 //! [`graph_instantiate_with_flags`](Sim::graph_instantiate_with_flags). No Engine `--graph-instantiate-with-params`.
+//! [`graph_launch`](Sim::graph_launch) is `cuGraphLaunch` (identity with
+//! [`launch_graph`](Sim::launch_graph)). Live host launch; capture records a child. Distinct from
+//! [`device_launch_graph`](Sim::device_launch_graph). No Engine `--graph-launch`.
 //! [`mem_host_get_flags`](Sim::mem_host_get_flags) is `cuMemHostGetFlags` (identity with
 //! [`host_get_flags`](Sim::host_get_flags)). Query; legal during capture. No Engine `--mem-host-get-flags`.
 //! [`mem_host_get_device_pointer`](Sim::mem_host_get_device_pointer) is `cuMemHostGetDevicePointer` (identity with
@@ -1830,6 +1839,9 @@
 //! [`graph_instantiate_with_params`](Sim::graph_instantiate_with_params) is `cuGraphInstantiateWithParams` (identity with
 //! [`instantiate_graph_with_params`](Sim::instantiate_graph_with_params)). Capture refused. Distinct from
 //! [`graph_instantiate_with_flags`](Sim::graph_instantiate_with_flags). No Engine `--graph-instantiate-with-params`.
+//! [`graph_launch`](Sim::graph_launch) is `cuGraphLaunch` (identity with
+//! [`launch_graph`](Sim::launch_graph)). Live host launch; capture records a child. Distinct from
+//! [`device_launch_graph`](Sim::device_launch_graph). No Engine `--graph-launch`.
 //! [`Sim::pointer_get_attributes`] is `cudaPointerGetAttributes`.
 //! [`pointer_set_attribute`](Sim::pointer_set_attribute) /
 //! [`pointer_get_attribute`](Sim::pointer_get_attribute) are
@@ -2609,6 +2621,9 @@
 //! [`graph_instantiate_with_params`](Sim::graph_instantiate_with_params) is `cuGraphInstantiateWithParams` (identity with
 //! [`instantiate_graph_with_params`](Sim::instantiate_graph_with_params)). Capture refused. Distinct from
 //! [`graph_instantiate_with_flags`](Sim::graph_instantiate_with_flags). No Engine `--graph-instantiate-with-params`.
+//! [`graph_launch`](Sim::graph_launch) is `cuGraphLaunch` (identity with
+//! [`launch_graph`](Sim::launch_graph)). Live host launch; capture records a child. Distinct from
+//! [`device_launch_graph`](Sim::device_launch_graph). No Engine `--graph-launch`.
 //! [`Sim::stream_get_device`] is `cudaStreamGetDevice` / `cuStreamGetDevice`
 //! (the device of the stream; green-ctx streams return the ctx create
 //! device). Query; legal during capture. Distinct from
@@ -2817,6 +2832,9 @@
 //! [`graph_instantiate_with_params`](Sim::graph_instantiate_with_params) is `cuGraphInstantiateWithParams` (identity with
 //! [`instantiate_graph_with_params`](Sim::instantiate_graph_with_params)). Capture refused. Distinct from
 //! [`graph_instantiate_with_flags`](Sim::graph_instantiate_with_flags). No Engine `--graph-instantiate-with-params`.
+//! [`graph_launch`](Sim::graph_launch) is `cuGraphLaunch` (identity with
+//! [`launch_graph`](Sim::launch_graph)). Live host launch; capture records a child. Distinct from
+//! [`device_launch_graph`](Sim::device_launch_graph). No Engine `--graph-launch`.
 //! [`set_stream_access_policy`](Sim::set_stream_access_policy) is
 //! `cudaStreamAttributeAccessPolicyWindow`: [`kernel`](Sim::kernel) /
 //! [`kernel_bufs`](Sim::kernel_bufs) inherit it; [`kernel_with`](Sim::kernel_with)
@@ -3510,6 +3528,9 @@
 //! [`graph_instantiate_with_params`](Sim::graph_instantiate_with_params) is `cuGraphInstantiateWithParams` (identity with
 //! [`instantiate_graph_with_params`](Sim::instantiate_graph_with_params)). Capture refused. Distinct from
 //! [`graph_instantiate_with_flags`](Sim::graph_instantiate_with_flags). No Engine `--graph-instantiate-with-params`.
+//! [`graph_launch`](Sim::graph_launch) is `cuGraphLaunch` (identity with
+//! [`launch_graph`](Sim::launch_graph)). Live host launch; capture records a child. Distinct from
+//! [`device_launch_graph`](Sim::device_launch_graph). No Engine `--graph-launch`.
 //! [`Sim::set_stream_priority`] is the priority-only helper;
 //! [`stream_create_with_priority`](Sim::stream_create_with_priority) is
 //! `cudaStreamCreateWithPriority` (flags plus priority; clamped to
@@ -3736,6 +3757,9 @@
 //! [`graph_instantiate_with_params`](Sim::graph_instantiate_with_params) is `cuGraphInstantiateWithParams` (identity with
 //! [`instantiate_graph_with_params`](Sim::instantiate_graph_with_params)). Capture refused. Distinct from
 //! [`graph_instantiate_with_flags`](Sim::graph_instantiate_with_flags). No Engine `--graph-instantiate-with-params`.
+//! [`graph_launch`](Sim::graph_launch) is `cuGraphLaunch` (identity with
+//! [`launch_graph`](Sim::launch_graph)). Live host launch; capture records a child. Distinct from
+//! [`device_launch_graph`](Sim::device_launch_graph). No Engine `--graph-launch`.
 //! [`destroy_stream`](Sim::destroy_stream) is `cudaStreamDestroy` (returns
 //! immediately; in-flight work still completes; NULL is Invalid; recreate
 //! while unfinished is `"stream in flight"`). Capture cannot include it.
@@ -3942,6 +3966,9 @@
 //! [`graph_instantiate_with_params`](Sim::graph_instantiate_with_params) is `cuGraphInstantiateWithParams` (identity with
 //! [`instantiate_graph_with_params`](Sim::instantiate_graph_with_params)). Capture refused. Distinct from
 //! [`graph_instantiate_with_flags`](Sim::graph_instantiate_with_flags). No Engine `--graph-instantiate-with-params`.
+//! [`graph_launch`](Sim::graph_launch) is `cuGraphLaunch` (identity with
+//! [`launch_graph`](Sim::launch_graph)). Live host launch; capture records a child. Distinct from
+//! [`device_launch_graph`](Sim::device_launch_graph). No Engine `--graph-launch`.
 //! [`Sim::instantiate_graph`] is `cudaGraphInstantiate` (host-sync; returns a
 //! new exec id; first [`launch_graph`](Sim::launch_graph) of a definition
 //! creates a primary exec). Unused conditional handles are
@@ -4177,6 +4204,9 @@
 //! [`graph_instantiate_with_params`](Sim::graph_instantiate_with_params) is `cuGraphInstantiateWithParams` (identity with
 //! [`instantiate_graph_with_params`](Sim::instantiate_graph_with_params)). Capture refused. Distinct from
 //! [`graph_instantiate_with_flags`](Sim::graph_instantiate_with_flags). No Engine `--graph-instantiate-with-params`.
+//! [`graph_launch`](Sim::graph_launch) is `cuGraphLaunch` (identity with
+//! [`launch_graph`](Sim::launch_graph)). Live host launch; capture records a child. Distinct from
+//! [`device_launch_graph`](Sim::device_launch_graph). No Engine `--graph-launch`.
 //! [`graph_kernel_node_get_priority`](Sim::graph_kernel_node_get_priority) /
 //! [`graph_kernel_node_set_priority`](Sim::graph_kernel_node_set_priority) /
 //! [`graph_kernel_node_copy_attributes`](Sim::graph_kernel_node_copy_attributes)
@@ -4371,6 +4401,9 @@
 //! [`graph_instantiate_with_params`](Sim::graph_instantiate_with_params) is `cuGraphInstantiateWithParams` (identity with
 //! [`instantiate_graph_with_params`](Sim::instantiate_graph_with_params)). Capture refused. Distinct from
 //! [`graph_instantiate_with_flags`](Sim::graph_instantiate_with_flags). No Engine `--graph-instantiate-with-params`.
+//! [`graph_launch`](Sim::graph_launch) is `cuGraphLaunch` (identity with
+//! [`launch_graph`](Sim::launch_graph)). Live host launch; capture records a child. Distinct from
+//! [`device_launch_graph`](Sim::device_launch_graph). No Engine `--graph-launch`.
 //! [`graph_kernel_node_get_attribute`](Sim::graph_kernel_node_get_attribute) /
 //! [`graph_exec_kernel_node_get_attribute`](Sim::graph_exec_kernel_node_get_attribute) /
 //! [`graph_kernel_node_set_attribute`](Sim::graph_kernel_node_set_attribute) /
@@ -4571,6 +4604,9 @@
 //! [`graph_instantiate_with_params`](Sim::graph_instantiate_with_params) is `cuGraphInstantiateWithParams` (identity with
 //! [`instantiate_graph_with_params`](Sim::instantiate_graph_with_params)). Capture refused. Distinct from
 //! [`graph_instantiate_with_flags`](Sim::graph_instantiate_with_flags). No Engine `--graph-instantiate-with-params`.
+//! [`graph_launch`](Sim::graph_launch) is `cuGraphLaunch` (identity with
+//! [`launch_graph`](Sim::launch_graph)). Live host launch; capture records a child. Distinct from
+//! [`device_launch_graph`](Sim::device_launch_graph). No Engine `--graph-launch`.
 //! Device-launch
 //! execs cannot attach programmatic or launch-completion events.
 //! [`kernel_pdl`](Sim::kernel_pdl) is `cudaLaunchKernelEx` PDL: a wait kernel
@@ -4899,6 +4935,9 @@
 //! [`graph_instantiate_with_params`](Sim::graph_instantiate_with_params) is `cuGraphInstantiateWithParams` (identity with
 //! [`instantiate_graph_with_params`](Sim::instantiate_graph_with_params)). Capture refused. Distinct from
 //! [`graph_instantiate_with_flags`](Sim::graph_instantiate_with_flags). No Engine `--graph-instantiate-with-params`.
+//! [`graph_launch`](Sim::graph_launch) is `cuGraphLaunch` (identity with
+//! [`launch_graph`](Sim::launch_graph)). Live host launch; capture records a child. Distinct from
+//! [`device_launch_graph`](Sim::device_launch_graph). No Engine `--graph-launch`.
 //! [`graph_exec_memcpy_set_params`](Sim::graph_exec_memcpy_set_params) /
 //! [`graph_exec_memcpy_set_params_1d`](Sim::graph_exec_memcpy_set_params_1d) /
 //! [`graph_exec_memcpy_set_params_2d`](Sim::graph_exec_memcpy_set_params_2d) /
@@ -5091,6 +5130,9 @@
 //! [`graph_instantiate_with_params`](Sim::graph_instantiate_with_params) is `cuGraphInstantiateWithParams` (identity with
 //! [`instantiate_graph_with_params`](Sim::instantiate_graph_with_params)). Capture refused. Distinct from
 //! [`graph_instantiate_with_flags`](Sim::graph_instantiate_with_flags). No Engine `--graph-instantiate-with-params`.
+//! [`graph_launch`](Sim::graph_launch) is `cuGraphLaunch` (identity with
+//! [`launch_graph`](Sim::launch_graph)). Live host launch; capture records a child. Distinct from
+//! [`device_launch_graph`](Sim::device_launch_graph). No Engine `--graph-launch`.
 //! [`get_graph_kernel_node_params`](Sim::get_graph_kernel_node_params) is `cuGraphKernelNodeGetParams` (identity with
 //! [`graph_kernel_get_params`](Sim::graph_kernel_get_params)). Query; legal during capture. Distinct from
 //! [`graph_exec_kernel_get_params`](Sim::graph_exec_kernel_get_params). No Engine `--graph-kernel-get-params`.
@@ -5262,6 +5304,9 @@
 //! [`graph_instantiate_with_params`](Sim::graph_instantiate_with_params) is `cuGraphInstantiateWithParams` (identity with
 //! [`instantiate_graph_with_params`](Sim::instantiate_graph_with_params)). Capture refused. Distinct from
 //! [`graph_instantiate_with_flags`](Sim::graph_instantiate_with_flags). No Engine `--graph-instantiate-with-params`.
+//! [`graph_launch`](Sim::graph_launch) is `cuGraphLaunch` (identity with
+//! [`launch_graph`](Sim::launch_graph)). Live host launch; capture records a child. Distinct from
+//! [`device_launch_graph`](Sim::device_launch_graph). No Engine `--graph-launch`.
 //! [`graph_exec_kernel_get_params`](Sim::graph_exec_kernel_get_params) /
 //! [`graph_exec_memcpy_get_params`](Sim::graph_exec_memcpy_get_params) /
 //! [`graph_exec_memset_get_params`](Sim::graph_exec_memset_get_params) /
@@ -5424,6 +5469,9 @@
 //! [`graph_instantiate_with_params`](Sim::graph_instantiate_with_params) is `cuGraphInstantiateWithParams` (identity with
 //! [`instantiate_graph_with_params`](Sim::instantiate_graph_with_params)). Capture refused. Distinct from
 //! [`graph_instantiate_with_flags`](Sim::graph_instantiate_with_flags). No Engine `--graph-instantiate-with-params`.
+//! [`graph_launch`](Sim::graph_launch) is `cuGraphLaunch` (identity with
+//! [`launch_graph`](Sim::launch_graph)). Live host launch; capture records a child. Distinct from
+//! [`device_launch_graph`](Sim::device_launch_graph). No Engine `--graph-launch`.
 //! [`get_graph_exec_kernel_node_params`](Sim::get_graph_exec_kernel_node_params) is `cuGraphExecKernelNodeGetParams` (identity with
 //! [`graph_exec_kernel_get_params`](Sim::graph_exec_kernel_get_params)). Query; legal during capture. Distinct from
 //! [`get_graph_kernel_node_params`](Sim::get_graph_kernel_node_params). No Engine `--graph-exec-kernel-get-params`.
@@ -5592,6 +5640,9 @@
 //! [`graph_instantiate_with_params`](Sim::graph_instantiate_with_params) is `cuGraphInstantiateWithParams` (identity with
 //! [`instantiate_graph_with_params`](Sim::instantiate_graph_with_params)). Capture refused. Distinct from
 //! [`graph_instantiate_with_flags`](Sim::graph_instantiate_with_flags). No Engine `--graph-instantiate-with-params`.
+//! [`graph_launch`](Sim::graph_launch) is `cuGraphLaunch` (identity with
+//! [`launch_graph`](Sim::launch_graph)). Live host launch; capture records a child. Distinct from
+//! [`device_launch_graph`](Sim::device_launch_graph). No Engine `--graph-launch`.
 //! [`graph_exec_batch_mem_op_set_params`](Sim::graph_exec_batch_mem_op_set_params)
 //! is `cudaGraphExecBatchMemOpNodeSetParams` (id/offset/value; wait vs write,
 //! `bits32`, and compare stay on wait/write nodes;
@@ -25521,6 +25572,57 @@ mod tests {
             Err(SimError::Invalid { why }) => assert!(why.contains("capture"), "{why}"),
             other => panic!("{other:?}"),
         }
+        let _cap = eight.end_capture().unwrap();
+    }
+
+    #[test]
+    fn graph_launch_is_cu_graph_launch() {
+        let mut sim = Sim::new(h100());
+        let d = DeviceId(0);
+        let s = StreamId(0);
+        match sim.graph_launch(GraphId(99), s) {
+            Err(SimError::Invalid { why }) => assert!(why.contains("unknown"), "{why}"),
+            other => panic!("{other:?}"),
+        }
+        match sim.launch_graph(GraphId(99), s) {
+            Err(SimError::Invalid { why }) => assert!(why.contains("unknown"), "{why}"),
+            other => panic!("{other:?}"),
+        }
+        let g = sim.create_graph(d, s).unwrap();
+        sim.graph_add_host_func_params(
+            g,
+            HostNodeParams {
+                fn_id: 7,
+                user_data: 42,
+            },
+        )
+        .unwrap();
+        let n = sim.graph_launch(g, s).unwrap();
+        assert_eq!(n, 1);
+        assert_eq!(sim.launch_graph(g, s).unwrap(), 1);
+        sim.begin_capture(d, s).unwrap();
+        assert_eq!(
+            sim.graph_launch(g, s).unwrap(),
+            sim.launch_graph(g, s).unwrap()
+        );
+        let _cap = sim.end_capture().unwrap();
+        let mut eight = Sim::new(HardwareProfile::example_8xh100_nvlink());
+        let g1 = eight.create_graph(DeviceId(1), s).unwrap();
+        eight
+            .graph_add_host_func_params(
+                g1,
+                HostNodeParams {
+                    fn_id: 5,
+                    user_data: 8,
+                },
+            )
+            .unwrap();
+        assert_eq!(eight.graph_launch(g1, s).unwrap(), 1);
+        eight.begin_capture(DeviceId(1), s).unwrap();
+        assert_eq!(
+            eight.graph_launch(g1, s).unwrap(),
+            eight.launch_graph(g1, s).unwrap()
+        );
         let _cap = eight.end_capture().unwrap();
     }
 

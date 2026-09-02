@@ -3897,7 +3897,9 @@ impl Sim {
     /// [`Self::upload_graph`] is skipped while any stream is capturing (host-sync
     /// upload cannot run during capture); the live launch still enqueues.
     /// Destroying an in-flight exec does not abort this launch
-    /// (`cudaGraphExecDestroy`). Host SetParams during this launch stay.
+    /// (`cudaGraphExecDestroy`). Host SetParams during this launch stay. Driver
+    /// `cuGraphLaunch` is
+    /// [`Self::graph_launch`].
     pub fn launch_graph(&mut self, graph: GraphId, stream: StreamId) -> Result<u32, SimError> {
         self.require_not_moved(graph)?;
         let (origin, ready) = {
@@ -3950,6 +3952,16 @@ impl Sim {
         let n = self.enqueue_graph(exec, stream, true, &mut stack, extra)?;
         self.pin_host_launch_tail(exec, stream, n)?;
         Ok(n)
+    }
+
+    /// `cuGraphLaunch`. Identity with
+    /// [`Self::launch_graph`] (`cudaGraphLaunch`).
+    ///
+    /// Live host launch. Capture records a child graph. Distinct from
+    /// [`Self::device_launch_graph`]. This VM does not invent
+    /// occupancy SM counts this slice.
+    pub fn graph_launch(&mut self, graph: GraphId, stream: StreamId) -> Result<u32, SimError> {
+        self.launch_graph(graph, stream)
     }
 
     /// Record launch-stream tails after a live host launch. Empty launches
@@ -5058,8 +5070,7 @@ impl Sim {
     /// [`Self::instantiate_graph_with_params`] (`cudaGraphInstantiateWithParams`).
     ///
     /// Host-synchronous. Capture refused. Distinct from
-    /// [`Self::graph_instantiate_with_flags`]. This VM does not invent
-    /// occupancy SM counts this slice.
+    /// [`Self::graph_instantiate_with_flags`].
     pub fn graph_instantiate_with_params(
         &mut self,
         graph: GraphId,
