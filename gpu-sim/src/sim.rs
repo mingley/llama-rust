@@ -19452,6 +19452,7 @@ impl Sim {
     /// [`MemcpySrcAccessOrder::Stream`] is [`Self::memcpy_3d_async`].
     /// [`MemcpySrcAccessOrder::DuringApiCall`] / [`MemcpySrcAccessOrder::Any`]
     /// are a one-copy [`Self::memcpy_3d_batch_async`]. `flags` must be `0`.
+    /// Driver `cuMemcpy3DWithAttributesAsync` is [`Self::mem_cpy_3d_with_attributes`].
     pub fn memcpy_3d_with_attributes(
         &mut self,
         device: DeviceId,
@@ -19476,6 +19477,23 @@ impl Sim {
                     why: "memcpy3d attributes empty",
                 }),
         }
+    }
+
+    /// `cuMemcpy3DWithAttributesAsync`. Identity with
+    /// [`Self::memcpy_3d_with_attributes`] (`cudaMemcpy3DWithAttributesAsync`).
+    ///
+    /// Stream order is capture-legal (pinned/device). Distinct from
+    /// [`Self::mem_cpy_3d_batch_async`].
+    /// This VM does not invent `mem_cpy_with_attributes` this slice.
+    pub fn mem_cpy_3d_with_attributes(
+        &mut self,
+        device: DeviceId,
+        op: MemcpyOp,
+        attr: MemcpyAttributes,
+        flags: u64,
+        stream: StreamId,
+    ) -> Result<OpId, SimError> {
+        self.memcpy_3d_with_attributes(device, op, attr, flags, stream)
     }
 
     /// `cudaMemcpy3DBatchAsync`. Pointer-to-pointer 3D copies only.
@@ -19524,7 +19542,6 @@ impl Sim {
     /// (`cudaMemcpy3DBatchAsync`).
     ///
     /// Capture refused. Distinct from [`Self::mem_cpy_batch_async`].
-    /// This VM does not invent `mem_cpy_3d_with_attributes` this slice.
     pub fn mem_cpy_3d_batch_async(
         &mut self,
         device: DeviceId,
