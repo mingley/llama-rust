@@ -19060,7 +19060,6 @@ impl Sim {
     /// [`Self::multicast_bind_addr_with_size`] (`cuMulticastBindAddr` size).
     ///
     /// Capture refused. Distinct from [`Self::mem_multicast_bind_addr_with_flags`].
-    /// This VM does not invent occupancy SM counts this slice.
     pub fn mem_multicast_bind_addr_with_size(
         &mut self,
         mc: MulticastId,
@@ -19079,10 +19078,25 @@ impl Sim {
     /// `"still mapped"`. A device that is not currently bound is Invalid
     /// `"not bound"`. Typed helper; [`Self::multicast_unbind_with_size`] is the
     /// CUDA size argument (must match the multicast object).
+    /// Driver `cuMulticastUnbind` is [`Self::mem_multicast_unbind`].
+    /// Identity wrap [`Self::mem_multicast_unbind`].
     pub fn multicast_unbind(&mut self, mc: MulticastId, device: DeviceId) -> Result<(), SimError> {
         self.fail_if_capturing("cannot capture alloc/free")?;
         let bytes = self.mc_ref(mc)?.bytes;
         self.multicast_unbind_with_size(mc, device, bytes)
+    }
+
+    /// `cuMulticastUnbind`. Identity with
+    /// [`Self::multicast_unbind`] (`cuMulticastUnbind`).
+    ///
+    /// Capture refused. Distinct from [`Self::mem_multicast_bind_addr_with_size`].
+    /// This VM does not invent occupancy SM counts this slice.
+    pub fn mem_multicast_unbind(
+        &mut self,
+        mc: MulticastId,
+        device: DeviceId,
+    ) -> Result<(), SimError> {
+        self.multicast_unbind(mc, device)
     }
 
     /// [`Self::multicast_unbind`] with the CUDA multicast size.
