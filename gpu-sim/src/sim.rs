@@ -4997,13 +4997,25 @@ impl Sim {
     ///
     /// Capture is allowed. Uninstantiated graphs are Invalid.
     /// [`GraphInstantiateFlags::UPLOAD`] is omitted: it does not affect the
-    /// resulting executable graph.
+    /// resulting executable graph. Driver
+    /// `cuGraphExecGetFlags` is
+    /// [`Self::get_graph_exec_flags`].
     pub fn graph_exec_get_flags(&self, exec: GraphId) -> Result<u32, SimError> {
         let exec = self.as_exec(exec)?;
         let g = self.graphs.get(&exec).ok_or(SimError::Invalid {
             why: "unknown graph",
         })?;
         Ok(g.instantiate_flags & !GraphInstantiateFlags::UPLOAD)
+    }
+
+    /// `cuGraphExecGetFlags`. Identity with
+    /// [`Self::graph_exec_get_flags`] (`cudaGraphExecGetFlags`).
+    ///
+    /// Query; legal during capture. Distinct from
+    /// [`Self::instantiate_graph_with_flags`]. This VM does not invent
+    /// occupancy SM counts this slice.
+    pub fn get_graph_exec_flags(&self, exec: GraphId) -> Result<u32, SimError> {
+        self.graph_exec_get_flags(exec)
     }
 
     fn check_instantiate_flags(flags: u32) -> Result<(), SimError> {
@@ -8770,8 +8782,7 @@ impl Sim {
     /// [`Self::graph_node_get_enabled`] (`cudaGraphNodeGetEnabled`).
     ///
     /// Query; legal during capture. Distinct from
-    /// [`Self::set_graph_node_enabled`]. This VM does not invent
-    /// occupancy SM counts this slice.
+    /// [`Self::set_graph_node_enabled`].
     pub fn get_graph_node_enabled(&self, exec: GraphId, node: usize) -> Result<bool, SimError> {
         self.graph_node_get_enabled(exec, node)
     }
