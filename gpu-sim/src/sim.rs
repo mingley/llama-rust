@@ -2938,8 +2938,7 @@ impl Sim {
     /// [`Self::disable_peer`] (`cudaDeviceDisablePeerAccess`).
     ///
     /// Unknown device refused. Distinct from
-    /// [`Self::ctx_enable_peer_access_with_flags`]. This VM does not invent
-    /// occupancy SM counts this slice.
+    /// [`Self::ctx_enable_peer_access_with_flags`].
     pub fn ctx_disable_peer_access(
         &mut self,
         src: DeviceId,
@@ -25639,6 +25638,8 @@ impl Sim {
 
     /// `cudaDeviceCanAccessPeer`. Query; legal during capture.
     ///
+    /// Driver `cuDeviceCanAccessPeer` is [`Self::can_device_access_peer`].
+    ///
     /// Hardware topology only (a profile link). Same device is false.
     /// [`Self::enable_peer`] is still required before D2D.
     pub fn device_can_access_peer(
@@ -25647,6 +25648,20 @@ impl Sim {
         peer: DeviceId,
     ) -> Result<bool, SimError> {
         Ok(self.device_get_p2p_attribute(device, peer, DeviceP2pAttr::AccessSupported)? != 0)
+    }
+
+    /// `cuDeviceCanAccessPeer`. Identity with
+    /// [`Self::device_can_access_peer`] (`cudaDeviceCanAccessPeer`).
+    ///
+    /// Query; legal during capture. Distinct from
+    /// [`Self::ctx_disable_peer_access`]. This VM does not invent
+    /// occupancy SM counts this slice.
+    pub fn can_device_access_peer(
+        &self,
+        device: DeviceId,
+        peer: DeviceId,
+    ) -> Result<bool, SimError> {
+        self.device_can_access_peer(device, peer)
     }
 
     /// `cudaDeviceGetP2PAttribute`. Query; legal during capture.

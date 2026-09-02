@@ -5,6 +5,14 @@ Visible five-turn extract: [docs/chatgpt-share-6a920fe1.md](docs/chatgpt-share-6
 Complete share-API extract: [docs/chatgpt-share-6a920fe1/](docs/chatgpt-share-6a920fe1/).
 Work lands on `main`. No PRs.
 
+## Shipped 2026-09-02 — CUDA `cuDeviceCanAccessPeer`
+
+`gpu-sim` `Sim::can_device_access_peer` is `cuDeviceCanAccessPeer`.
+Identity with `device_can_access_peer` (`cudaDeviceCanAccessPeer`).
+Query; legal during capture. Distinct from `ctx_disable_peer_access`.
+This VM does not invent occupancy SM counts or Engine `--can-device-access-peer`.
+`gpu-profile capture` is still refused. Dual score still has no `$/M tokens`.
+
 ## Shipped 2026-09-02 — CUDA `cuCtxDisablePeerAccess`
 
 `gpu-sim` `Sim::ctx_disable_peer_access` is `cuCtxDisablePeerAccess`.
