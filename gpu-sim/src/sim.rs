@@ -17513,7 +17513,6 @@ impl Sim {
     /// `cuMemcpyAsync`. Identity with [`Self::memcpy`] (`cudaMemcpyAsync`).
     ///
     /// Capture-legal (pinned/device). Distinct from [`Self::memcpy_sync`].
-    /// This VM does not invent `mem_cpy` this slice.
     pub fn memcpy_async(
         &mut self,
         device: DeviceId,
@@ -17526,6 +17525,7 @@ impl Sim {
     /// `cudaMemcpy`: enqueue then wait for that stream (host-synchronous).
     ///
     /// Capture cannot include it. [`Self::memcpy`] is `cudaMemcpyAsync`.
+    /// Driver `cuMemcpy` is [`Self::mem_cpy`].
     pub fn memcpy_sync(
         &mut self,
         device: DeviceId,
@@ -17540,6 +17540,19 @@ impl Sim {
         let id = self.memcpy(device, op, stream)?;
         self.synchronize_stream(device, stream)?;
         Ok(id)
+    }
+
+    /// `cuMemcpy`. Identity with [`Self::memcpy_sync`] (`cudaMemcpy`).
+    ///
+    /// Capture refused. Distinct from [`Self::memcpy_async`].
+    /// This VM does not invent `mem_address_range` this slice.
+    pub fn mem_cpy(
+        &mut self,
+        device: DeviceId,
+        op: MemcpyOp,
+        stream: StreamId,
+    ) -> Result<OpId, SimError> {
+        self.memcpy_sync(device, op, stream)
     }
 
     /// Pageable host → `device`. Host-synchronous and slower than pinned DMA.
