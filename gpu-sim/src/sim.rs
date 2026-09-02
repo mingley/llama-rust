@@ -2148,12 +2148,24 @@ impl Sim {
     }
 
     /// Stream mem-sync domain, or [`MemSyncDomain::Default`] if unset.
+    /// Driver `cuStreamGetAttribute` mem sync domain is [`Self::stream_get_mem_sync_domain`].
+    /// Identity wrap [`Self::stream_get_mem_sync_domain`].
     #[must_use]
     pub fn stream_mem_sync_domain(&self, device: DeviceId, stream: StreamId) -> MemSyncDomain {
         self.stream_mem_sync_domain
             .get(&(device, stream))
             .copied()
             .unwrap_or(MemSyncDomain::Default)
+    }
+
+    /// `cuStreamGetAttribute` mem sync domain. Identity with
+    /// [`Self::stream_mem_sync_domain`] (`cudaStreamGetAttribute` MemSyncDomain).
+    ///
+    /// Query; legal during capture. Distinct from [`Self::stream_set_mem_sync_domain_map`].
+    /// This VM does not invent occupancy SM counts this slice.
+    #[must_use]
+    pub fn stream_get_mem_sync_domain(&self, device: DeviceId, stream: StreamId) -> MemSyncDomain {
+        self.stream_mem_sync_domain(device, stream)
     }
 
     /// `cudaStreamSetAttribute` for `cudaLaunchAttributeMemSyncDomainMap`.
@@ -2179,7 +2191,6 @@ impl Sim {
     /// [`Self::set_stream_mem_sync_domain_map`] (`cudaStreamSetAttribute` MemSyncDomainMap).
     ///
     /// Capture legal. Distinct from [`Self::stream_set_mem_sync_domain`].
-    /// This VM does not invent occupancy SM counts this slice.
     pub fn stream_set_mem_sync_domain_map(
         &mut self,
         device: DeviceId,
