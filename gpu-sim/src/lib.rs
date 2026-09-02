@@ -44109,8 +44109,8 @@ mod tests {
             Err(SimError::Invalid { why }) => assert!(why.contains("device"), "{why}"),
             other => panic!("{other:?}"),
         }
-        sim.mem_pool_create(d).unwrap();
-        sim.create_pool(d).unwrap();
+        drop(sim.mem_pool_create(d).unwrap());
+        drop(sim.create_pool(d).unwrap());
         sim.begin_capture(d, s).unwrap();
         match sim.mem_pool_create(d) {
             Err(SimError::Invalid { why }) => assert!(why.contains("capture"), "{why}"),
@@ -44124,8 +44124,8 @@ mod tests {
         assert_eq!(sim.graph_len(g).unwrap(), 0);
         let mut eight = Sim::new(HardwareProfile::example_8xh100_nvlink());
         let d1 = DeviceId(1);
-        eight.mem_pool_create(d1).unwrap();
-        eight.create_pool(d1).unwrap();
+        drop(eight.mem_pool_create(d1).unwrap());
+        drop(eight.create_pool(d1).unwrap());
         eight.begin_capture(d1, s).unwrap();
         match eight.mem_pool_create(d1) {
             Err(SimError::Invalid { why }) => assert!(why.contains("capture"), "{why}"),
