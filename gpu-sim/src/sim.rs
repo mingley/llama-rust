@@ -6007,7 +6007,9 @@ impl Sim {
     /// [`Self::graph_exec_host_set_params`]. [`HostNodeParams::fn_id`] /
     /// [`HostNodeParams::user_data`] are parameters. Capture cannot include it.
     /// Host-sync 1 ns. A parked in-flight-destroyed exec is `"unknown graph"`.
-    /// Live exec SetParams stays.
+    /// Live exec SetParams stays. Driver
+    /// `cuGraphHostNodeSetParams` is
+    /// [`Self::set_graph_host_node_params`].
     pub fn graph_host_set_params(
         &mut self,
         graph: GraphId,
@@ -6043,6 +6045,21 @@ impl Sim {
             user_data: params.user_data,
         };
         Ok(())
+    }
+
+    /// `cuGraphHostNodeSetParams`. Identity with
+    /// [`Self::graph_host_set_params`] (`cudaGraphHostNodeSetParams`).
+    ///
+    /// Capture refused. Distinct from
+    /// [`Self::get_graph_host_node_params`]. This VM does not invent
+    /// occupancy SM counts this slice.
+    pub fn set_graph_host_node_params(
+        &mut self,
+        graph: GraphId,
+        node: usize,
+        params: &HostNodeParams,
+    ) -> Result<(), SimError> {
+        self.graph_host_set_params(graph, node, *params)
     }
 
     /// `cudaGraphMemFreeNodeSetParams` on the graph definition.
@@ -7873,8 +7890,7 @@ impl Sim {
     /// of the exec snapshot).
     ///
     /// Query; legal during capture. Distinct from
-    /// [`Self::get_graph_host_node_params`]. This VM does not invent
-    /// occupancy SM counts this slice.
+    /// [`Self::get_graph_host_node_params`].
     pub fn get_graph_exec_host_node_params(
         &self,
         exec: GraphId,
