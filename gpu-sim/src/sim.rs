@@ -2352,8 +2352,7 @@ impl Sim {
     /// (`cudaStreamCreateWithFlags`).
     ///
     /// Capture refused. Distinct from [`Self::stream_create`] and
-    /// [`Self::stream_create_priority`]. This VM does not invent occupancy SM
-    /// counts this slice.
+    /// [`Self::stream_create_priority`].
     pub fn stream_create_flags(
         &mut self,
         device: DeviceId,
@@ -2449,7 +2448,8 @@ impl Sim {
     /// `0` is `cudaStreamDefault` (blocking). `1` is `cudaStreamNonBlocking`.
     /// [`StreamId::NULL`] uses [`Self::legacy_null_stream`] (off → NonBlocking).
     /// Unknown devices are Invalid. Any other stream id is legal (created
-    /// streams default to NonBlocking).
+    /// streams default to NonBlocking). Driver `cuStreamGetFlags` is
+    /// [`Self::stream_flags`].
     pub fn stream_get_flags(&self, device: DeviceId, stream: StreamId) -> Result<u32, SimError> {
         let _gpu = self.profile.gpu(device)?;
         self.require_live_stream(device, stream)?;
@@ -2459,6 +2459,15 @@ impl Sim {
             self.stream_is_blocking(device, stream)
         };
         Ok(u32::from(!blocking))
+    }
+
+    /// `cuStreamGetFlags`. Identity with [`Self::stream_get_flags`]
+    /// (`cudaStreamGetFlags`).
+    ///
+    /// Query; legal during capture. Distinct from [`Self::stream_get_priority`].
+    /// This VM does not invent occupancy SM counts this slice.
+    pub fn stream_flags(&self, device: DeviceId, stream: StreamId) -> Result<u32, SimError> {
+        self.stream_get_flags(device, stream)
     }
 
     /// `cudaStreamGetPriority`. Query; legal during capture.
