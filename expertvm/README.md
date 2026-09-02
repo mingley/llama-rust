@@ -870,6 +870,7 @@ compiled kernel exists; no Engine flag).
 `gpu-sim` `mem_device_get_luid` is `cuDeviceGetLuid` (identity with `device_get_luid`; no Engine flag).
 `gpu-sim` `mem_device_get_texture_1d_linear_max_width` is `cuDeviceGetTexture1DLinearMaxWidth` (identity with `device_get_texture_1d_linear_max_width`; no Engine flag).
 `gpu-sim` `mem_device_get_by_uuid` is `cuDeviceGetByUuid` (identity with `device_get_by_uuid`; no Engine flag).
+`gpu-sim` `mem_device_get_pci_bus_id` is `cuDeviceGetPCIBusId` (identity with `device_get_pci_bus_id`; no Engine flag).
 `gpu-sim` `mem_alloc` is `cuMemAlloc` (identity with `malloc`; no Engine flag).
 `gpu-sim` `mem_free` is `cuMemFree` (identity with `free_sync`; no Engine flag).
 `gpu-sim` `mem_free_host` is `cuMemFreeHost` (identity with `free_host_pinned`; no Engine flag).
@@ -1264,6 +1265,7 @@ compiled kernel exists; no Engine flag).
 `gpu-sim` `mem_device_get_luid` is `cuDeviceGetLuid` (identity with `device_get_luid`; no Engine flag).
 `gpu-sim` `mem_device_get_texture_1d_linear_max_width` is `cuDeviceGetTexture1DLinearMaxWidth` (identity with `device_get_texture_1d_linear_max_width`; no Engine flag).
 `gpu-sim` `mem_device_get_by_uuid` is `cuDeviceGetByUuid` (identity with `device_get_by_uuid`; no Engine flag).
+`gpu-sim` `mem_device_get_pci_bus_id` is `cuDeviceGetPCIBusId` (identity with `device_get_pci_bus_id`; no Engine flag).
 `gpu-sim` `func_is_loaded` is `cuFuncIsLoaded` (`false` until a compiled
 kernel exists; no Engine flag).
 `gpu-sim` `func_load` is `cuFuncLoad` (Invalid; no compiled kernel; no
