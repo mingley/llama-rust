@@ -26606,7 +26606,6 @@ impl Sim {
     /// `cuStreamWriteValue32`. Identity with [`Self::write_value32`].
     ///
     /// Capture legal. Distinct from [`Self::stream_write_value64`].
-    /// This VM does not invent occupancy SM counts this slice.
     pub fn stream_write_value32(
         &mut self,
         device: DeviceId,
@@ -26616,6 +26615,23 @@ impl Sim {
         stream: StreamId,
     ) -> Result<OpId, SimError> {
         self.write_value32(device, id, offset, value, stream)
+    }
+
+    /// `cuStreamWriteValue64` flags. Identity with
+    /// [`Self::write_value64_with_flags`].
+    ///
+    /// Capture legal. Distinct from [`Self::stream_write_value32`].
+    /// This VM does not invent occupancy SM counts this slice.
+    pub fn stream_write_value64_with_flags(
+        &mut self,
+        device: DeviceId,
+        id: AllocId,
+        offset: u64,
+        value: u64,
+        flags: u32,
+        stream: StreamId,
+    ) -> Result<OpId, SimError> {
+        self.write_value64_with_flags(device, id, offset, value, flags, stream)
     }
 
     /// `cudaLaunchHostFunc`. Stream-ordered host work; does not occupy compute
@@ -26769,6 +26785,8 @@ impl Sim {
     /// Flags must be [`WriteValueFlags::DEFAULT`].
     /// [`WriteValueFlags::NO_MEMORY_BARRIER`] is Invalid `"write value flags"`.
     /// Typed [`Self::write_value64`] stays.
+    ///
+    /// Identity wrap [`Self::stream_write_value64_with_flags`].
     pub fn write_value64_with_flags(
         &mut self,
         device: DeviceId,
