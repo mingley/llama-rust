@@ -11148,8 +11148,7 @@ impl Sim {
     /// `cudaGraphAddBatchMemOpNode`).
     ///
     /// Capture refused. Distinct from
-    /// [`Self::add_graph_write_value32_with_flags`]. This VM does not invent
-    /// occupancy SM counts this slice.
+    /// [`Self::add_graph_write_value32_with_flags`].
     pub fn add_graph_wait_value64(
         &mut self,
         graph: GraphId,
@@ -11161,7 +11160,9 @@ impl Sim {
         self.graph_add_wait_value64(graph, id, offset, value, cmp)
     }
 
-    /// `cuStreamWaitValue32` as a `cudaGraphAddBatchMemOpNode`.
+    /// `cuStreamWaitValue32` as a `cudaGraphAddBatchMemOpNode`. Driver
+    /// graph `cuStreamWaitValue32` is
+    /// [`Self::add_graph_wait_value32`].
     pub fn graph_add_wait_value32(
         &mut self,
         graph: GraphId,
@@ -11181,6 +11182,24 @@ impl Sim {
                 flush: false,
             },
         )
+    }
+
+    /// Graph `cuStreamWaitValue32`. Identity with
+    /// [`Self::graph_add_wait_value32`] (`cuStreamWaitValue32` as
+    /// `cudaGraphAddBatchMemOpNode`).
+    ///
+    /// Capture refused. Distinct from
+    /// [`Self::add_graph_wait_value64`]. This VM does not invent
+    /// occupancy SM counts this slice.
+    pub fn add_graph_wait_value32(
+        &mut self,
+        graph: GraphId,
+        id: AllocId,
+        offset: u64,
+        value: u64,
+        cmp: WaitValueCmp,
+    ) -> Result<(), SimError> {
+        self.graph_add_wait_value32(graph, id, offset, value, cmp)
     }
 
     /// [`Self::graph_add_wait_value64`] with a [`crate::WaitValueFlags`] word.
