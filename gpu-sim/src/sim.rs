@@ -16443,6 +16443,8 @@ impl Sim {
     /// An imported pool reports the exporter except ExportHandleTypes (imported
     /// cannot be re-exported). The graph-memory pool is Invalid (use
     /// [`Self::graph_mem_get`]).
+    /// Driver `cuMemPoolGetAttribute` is [`Self::mem_pool_get_attribute`].
+    /// Identity wrap [`Self::mem_pool_get_attribute`].
     pub fn pool_get_attribute(&self, pool: PoolId, attr: MemPoolAttr) -> Result<u64, SimError> {
         self.refuse_graph_pool(pool)?;
         self.refuse_destroyed_pool(pool)?;
@@ -16467,6 +16469,15 @@ impl Sim {
                 MemHandleType::NONE
             }),
         }
+    }
+
+    /// `cuMemPoolGetAttribute`. Identity with
+    /// [`Self::pool_get_attribute`] (`cudaMemPoolGetAttribute`).
+    ///
+    /// Query; legal during capture. Distinct from [`Self::mem_pool_unset_access`].
+    /// This VM does not invent occupancy SM counts this slice.
+    pub fn mem_pool_get_attribute(&self, pool: PoolId, attr: MemPoolAttr) -> Result<u64, SimError> {
+        self.pool_get_attribute(pool, attr)
     }
 
     /// `cudaMemPoolSetAttribute`. Host-synchronous. Capture cannot include it.
@@ -16841,7 +16852,6 @@ impl Sim {
     /// [`Self::pool_unset_access`] (`cudaMemPoolSetAccess` ProtNone).
     ///
     /// Capture refused. Distinct from [`Self::mem_pool_set_access_n`].
-    /// This VM does not invent occupancy SM counts this slice.
     pub fn mem_pool_unset_access(
         &mut self,
         pool: PoolId,

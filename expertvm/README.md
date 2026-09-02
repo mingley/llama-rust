@@ -810,6 +810,7 @@ compiled kernel exists; no Engine flag).
 `gpu-sim` `mem_pool_set_access_with_flags` is `cuMemPoolSetAccess` flags (identity with `pool_set_access_with_flags`; no Engine flag).
 `gpu-sim` `mem_pool_set_access_n` is `cuMemPoolSetAccess` n (identity with `pool_set_access_n`; no Engine flag).
 `gpu-sim` `mem_pool_unset_access` is `cuMemPoolSetAccess` ProtNone (identity with `pool_unset_access`; no Engine flag).
+`gpu-sim` `mem_pool_get_attribute` is `cuMemPoolGetAttribute` (identity with `pool_get_attribute`; no Engine flag).
 `gpu-sim` `mem_alloc` is `cuMemAlloc` (identity with `malloc`; no Engine flag).
 `gpu-sim` `mem_free` is `cuMemFree` (identity with `free_sync`; no Engine flag).
 `gpu-sim` `mem_free_host` is `cuMemFreeHost` (identity with `free_host_pinned`; no Engine flag).
@@ -1144,6 +1145,7 @@ compiled kernel exists; no Engine flag).
 `gpu-sim` `mem_pool_set_access_with_flags` is `cuMemPoolSetAccess` flags (identity with `pool_set_access_with_flags`; no Engine flag).
 `gpu-sim` `mem_pool_set_access_n` is `cuMemPoolSetAccess` n (identity with `pool_set_access_n`; no Engine flag).
 `gpu-sim` `mem_pool_unset_access` is `cuMemPoolSetAccess` ProtNone (identity with `pool_unset_access`; no Engine flag).
+`gpu-sim` `mem_pool_get_attribute` is `cuMemPoolGetAttribute` (identity with `pool_get_attribute`; no Engine flag).
 `gpu-sim` `func_is_loaded` is `cuFuncIsLoaded` (`false` until a compiled
 kernel exists; no Engine flag).
 `gpu-sim` `func_load` is `cuFuncLoad` (Invalid; no compiled kernel; no
