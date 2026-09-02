@@ -602,6 +602,7 @@ compiled kernel exists; no Engine flag).
 `gpu-sim` `graph_clone` is `cuGraphClone` (identity with `clone_graph`; no Engine flag).
 `gpu-sim` `graph_debug_dot_print` is `cuGraphDebugDotPrint` (identity with `graph_debug_dot`; no Engine flag).
 `gpu-sim` `graph_debug_dot_print_with_flags` is `cuGraphDebugDotPrint` with flags (identity with `graph_debug_dot_with_flags`; no Engine flag).
+`gpu-sim` `graph_instantiate` is `cuGraphInstantiate` (identity with `instantiate_graph`; no Engine flag).
 `gpu-sim` `mem_alloc` is `cuMemAlloc` (identity with `malloc`; no Engine flag).
 `gpu-sim` `mem_free` is `cuMemFree` (identity with `free_sync`; no Engine flag).
 `gpu-sim` `mem_free_host` is `cuMemFreeHost` (identity with `free_host_pinned`; no Engine flag).
@@ -728,6 +729,7 @@ compiled kernel exists; no Engine flag).
 `gpu-sim` `graph_clone` is `cuGraphClone` (identity with `clone_graph`; no Engine flag).
 `gpu-sim` `graph_debug_dot_print` is `cuGraphDebugDotPrint` (identity with `graph_debug_dot`; no Engine flag).
 `gpu-sim` `graph_debug_dot_print_with_flags` is `cuGraphDebugDotPrint` with flags (identity with `graph_debug_dot_with_flags`; no Engine flag).
+`gpu-sim` `graph_instantiate` is `cuGraphInstantiate` (identity with `instantiate_graph`; no Engine flag).
 `gpu-sim` `func_is_loaded` is `cuFuncIsLoaded` (`false` until a compiled
 kernel exists; no Engine flag).
 `gpu-sim` `func_load` is `cuFuncLoad` (Invalid; no compiled kernel; no

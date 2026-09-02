@@ -4937,9 +4937,21 @@ impl Sim {
     /// IF / WHILE / SWITCH node
     /// ([`GraphInstantiateResult::ConditionalHandleUnused`]).
     /// A parked in-flight-destroyed exec is `"unknown graph"`. Instantiating
-    /// the definition after that exec is parked creates a new exec.
+    /// the definition after that exec is parked creates a new exec. Driver
+    /// `cuGraphInstantiate` is
+    /// [`Self::graph_instantiate`].
     pub fn instantiate_graph(&mut self, graph: GraphId) -> Result<GraphId, SimError> {
         self.instantiate_graph_with_flags(graph, 0)
+    }
+
+    /// `cuGraphInstantiate`. Identity with
+    /// [`Self::instantiate_graph`] (`cudaGraphInstantiate`).
+    ///
+    /// Host-synchronous. Capture refused. Distinct from
+    /// [`Self::instantiate_graph_with_flags`]. This VM does not invent
+    /// occupancy SM counts this slice.
+    pub fn graph_instantiate(&mut self, graph: GraphId) -> Result<GraphId, SimError> {
+        self.instantiate_graph(graph)
     }
 
     /// `cudaGraphInstantiate` with `cudaGraphInstantiateFlagAutoFreeOnLaunch`.
@@ -11694,8 +11706,7 @@ impl Sim {
     /// [`Self::graph_debug_dot_with_flags`] (`cudaGraphDebugDotPrint`).
     ///
     /// Query; legal during capture. Distinct from
-    /// [`Self::graph_debug_dot_print`]. This VM does not invent
-    /// occupancy SM counts this slice.
+    /// [`Self::graph_debug_dot_print`].
     pub fn graph_debug_dot_print_with_flags(
         &self,
         graph: GraphId,

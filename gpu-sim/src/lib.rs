@@ -505,6 +505,9 @@
 //! [`graph_debug_dot_print_with_flags`](Sim::graph_debug_dot_print_with_flags) is `cuGraphDebugDotPrint` with flags (identity with
 //! [`graph_debug_dot_with_flags`](Sim::graph_debug_dot_with_flags)). Query; legal during capture. Distinct from
 //! [`graph_debug_dot_print`](Sim::graph_debug_dot_print). No Engine `--graph-debug-dot-print-with-flags`.
+//! [`graph_instantiate`](Sim::graph_instantiate) is `cuGraphInstantiate` (identity with
+//! [`instantiate_graph`](Sim::instantiate_graph)). Capture refused. Distinct from
+//! [`instantiate_graph_with_flags`](Sim::instantiate_graph_with_flags). No Engine `--graph-instantiate`.
 //! [`Sim::ipc_get_event`] / [`ipc_open_event`](Sim::ipc_open_event) are
 //! `cudaIpcGetEventHandle` / `cudaIpcOpenEventHandle` (interprocess events).
 //! [`Sim::create_shareable_pool`] is `cudaMemPoolCreate` with a POSIX-FD handle
@@ -1034,6 +1037,9 @@
 //! [`graph_debug_dot_print_with_flags`](Sim::graph_debug_dot_print_with_flags) is `cuGraphDebugDotPrint` with flags (identity with
 //! [`graph_debug_dot_with_flags`](Sim::graph_debug_dot_with_flags)). Query; legal during capture. Distinct from
 //! [`graph_debug_dot_print`](Sim::graph_debug_dot_print). No Engine `--graph-debug-dot-print-with-flags`.
+//! [`graph_instantiate`](Sim::graph_instantiate) is `cuGraphInstantiate` (identity with
+//! [`instantiate_graph`](Sim::instantiate_graph)). Capture refused. Distinct from
+//! [`instantiate_graph_with_flags`](Sim::instantiate_graph_with_flags). No Engine `--graph-instantiate`.
 //! [`HardwareProfile::host_pin_bytes`] caps `cudaMallocHost` / `cudaHostRegister`.
 //! [`Sim::idle_until`] drains, then jumps the virtual clock (open-loop arrivals).
 //! [`Sim::event_elapsed_ns`] is `cudaEventElapsedTime` in nanoseconds.
@@ -1431,6 +1437,9 @@
 //! [`graph_debug_dot_print_with_flags`](Sim::graph_debug_dot_print_with_flags) is `cuGraphDebugDotPrint` with flags (identity with
 //! [`graph_debug_dot_with_flags`](Sim::graph_debug_dot_with_flags)). Query; legal during capture. Distinct from
 //! [`graph_debug_dot_print`](Sim::graph_debug_dot_print). No Engine `--graph-debug-dot-print-with-flags`.
+//! [`graph_instantiate`](Sim::graph_instantiate) is `cuGraphInstantiate` (identity with
+//! [`instantiate_graph`](Sim::instantiate_graph)). Capture refused. Distinct from
+//! [`instantiate_graph_with_flags`](Sim::instantiate_graph_with_flags). No Engine `--graph-instantiate`.
 //! [`mem_host_get_flags`](Sim::mem_host_get_flags) is `cuMemHostGetFlags` (identity with
 //! [`host_get_flags`](Sim::host_get_flags)). Query; legal during capture. No Engine `--mem-host-get-flags`.
 //! [`mem_host_get_device_pointer`](Sim::mem_host_get_device_pointer) is `cuMemHostGetDevicePointer` (identity with
@@ -1794,6 +1803,9 @@
 //! [`graph_debug_dot_print_with_flags`](Sim::graph_debug_dot_print_with_flags) is `cuGraphDebugDotPrint` with flags (identity with
 //! [`graph_debug_dot_with_flags`](Sim::graph_debug_dot_with_flags)). Query; legal during capture. Distinct from
 //! [`graph_debug_dot_print`](Sim::graph_debug_dot_print). No Engine `--graph-debug-dot-print-with-flags`.
+//! [`graph_instantiate`](Sim::graph_instantiate) is `cuGraphInstantiate` (identity with
+//! [`instantiate_graph`](Sim::instantiate_graph)). Capture refused. Distinct from
+//! [`instantiate_graph_with_flags`](Sim::instantiate_graph_with_flags). No Engine `--graph-instantiate`.
 //! [`Sim::pointer_get_attributes`] is `cudaPointerGetAttributes`.
 //! [`pointer_set_attribute`](Sim::pointer_set_attribute) /
 //! [`pointer_get_attribute`](Sim::pointer_get_attribute) are
@@ -2564,6 +2576,9 @@
 //! [`graph_debug_dot_print_with_flags`](Sim::graph_debug_dot_print_with_flags) is `cuGraphDebugDotPrint` with flags (identity with
 //! [`graph_debug_dot_with_flags`](Sim::graph_debug_dot_with_flags)). Query; legal during capture. Distinct from
 //! [`graph_debug_dot_print`](Sim::graph_debug_dot_print). No Engine `--graph-debug-dot-print-with-flags`.
+//! [`graph_instantiate`](Sim::graph_instantiate) is `cuGraphInstantiate` (identity with
+//! [`instantiate_graph`](Sim::instantiate_graph)). Capture refused. Distinct from
+//! [`instantiate_graph_with_flags`](Sim::instantiate_graph_with_flags). No Engine `--graph-instantiate`.
 //! [`Sim::stream_get_device`] is `cudaStreamGetDevice` / `cuStreamGetDevice`
 //! (the device of the stream; green-ctx streams return the ctx create
 //! device). Query; legal during capture. Distinct from
@@ -2763,6 +2778,9 @@
 //! [`graph_debug_dot_print_with_flags`](Sim::graph_debug_dot_print_with_flags) is `cuGraphDebugDotPrint` with flags (identity with
 //! [`graph_debug_dot_with_flags`](Sim::graph_debug_dot_with_flags)). Query; legal during capture. Distinct from
 //! [`graph_debug_dot_print`](Sim::graph_debug_dot_print). No Engine `--graph-debug-dot-print-with-flags`.
+//! [`graph_instantiate`](Sim::graph_instantiate) is `cuGraphInstantiate` (identity with
+//! [`instantiate_graph`](Sim::instantiate_graph)). Capture refused. Distinct from
+//! [`instantiate_graph_with_flags`](Sim::instantiate_graph_with_flags). No Engine `--graph-instantiate`.
 //! [`set_stream_access_policy`](Sim::set_stream_access_policy) is
 //! `cudaStreamAttributeAccessPolicyWindow`: [`kernel`](Sim::kernel) /
 //! [`kernel_bufs`](Sim::kernel_bufs) inherit it; [`kernel_with`](Sim::kernel_with)
@@ -3447,6 +3465,9 @@
 //! [`graph_debug_dot_print_with_flags`](Sim::graph_debug_dot_print_with_flags) is `cuGraphDebugDotPrint` with flags (identity with
 //! [`graph_debug_dot_with_flags`](Sim::graph_debug_dot_with_flags)). Query; legal during capture. Distinct from
 //! [`graph_debug_dot_print`](Sim::graph_debug_dot_print). No Engine `--graph-debug-dot-print-with-flags`.
+//! [`graph_instantiate`](Sim::graph_instantiate) is `cuGraphInstantiate` (identity with
+//! [`instantiate_graph`](Sim::instantiate_graph)). Capture refused. Distinct from
+//! [`instantiate_graph_with_flags`](Sim::instantiate_graph_with_flags). No Engine `--graph-instantiate`.
 //! [`Sim::set_stream_priority`] is the priority-only helper;
 //! [`stream_create_with_priority`](Sim::stream_create_with_priority) is
 //! `cudaStreamCreateWithPriority` (flags plus priority; clamped to
@@ -3664,6 +3685,9 @@
 //! [`graph_debug_dot_print_with_flags`](Sim::graph_debug_dot_print_with_flags) is `cuGraphDebugDotPrint` with flags (identity with
 //! [`graph_debug_dot_with_flags`](Sim::graph_debug_dot_with_flags)). Query; legal during capture. Distinct from
 //! [`graph_debug_dot_print`](Sim::graph_debug_dot_print). No Engine `--graph-debug-dot-print-with-flags`.
+//! [`graph_instantiate`](Sim::graph_instantiate) is `cuGraphInstantiate` (identity with
+//! [`instantiate_graph`](Sim::instantiate_graph)). Capture refused. Distinct from
+//! [`instantiate_graph_with_flags`](Sim::instantiate_graph_with_flags). No Engine `--graph-instantiate`.
 //! [`destroy_stream`](Sim::destroy_stream) is `cudaStreamDestroy` (returns
 //! immediately; in-flight work still completes; NULL is Invalid; recreate
 //! while unfinished is `"stream in flight"`). Capture cannot include it.
@@ -3861,6 +3885,9 @@
 //! [`graph_debug_dot_print_with_flags`](Sim::graph_debug_dot_print_with_flags) is `cuGraphDebugDotPrint` with flags (identity with
 //! [`graph_debug_dot_with_flags`](Sim::graph_debug_dot_with_flags)). Query; legal during capture. Distinct from
 //! [`graph_debug_dot_print`](Sim::graph_debug_dot_print). No Engine `--graph-debug-dot-print-with-flags`.
+//! [`graph_instantiate`](Sim::graph_instantiate) is `cuGraphInstantiate` (identity with
+//! [`instantiate_graph`](Sim::instantiate_graph)). Capture refused. Distinct from
+//! [`instantiate_graph_with_flags`](Sim::instantiate_graph_with_flags). No Engine `--graph-instantiate`.
 //! [`Sim::instantiate_graph`] is `cudaGraphInstantiate` (host-sync; returns a
 //! new exec id; first [`launch_graph`](Sim::launch_graph) of a definition
 //! creates a primary exec). Unused conditional handles are
@@ -4087,6 +4114,9 @@
 //! [`graph_debug_dot_print_with_flags`](Sim::graph_debug_dot_print_with_flags) is `cuGraphDebugDotPrint` with flags (identity with
 //! [`graph_debug_dot_with_flags`](Sim::graph_debug_dot_with_flags)). Query; legal during capture. Distinct from
 //! [`graph_debug_dot_print`](Sim::graph_debug_dot_print). No Engine `--graph-debug-dot-print-with-flags`.
+//! [`graph_instantiate`](Sim::graph_instantiate) is `cuGraphInstantiate` (identity with
+//! [`instantiate_graph`](Sim::instantiate_graph)). Capture refused. Distinct from
+//! [`instantiate_graph_with_flags`](Sim::instantiate_graph_with_flags). No Engine `--graph-instantiate`.
 //! [`graph_kernel_node_get_priority`](Sim::graph_kernel_node_get_priority) /
 //! [`graph_kernel_node_set_priority`](Sim::graph_kernel_node_set_priority) /
 //! [`graph_kernel_node_copy_attributes`](Sim::graph_kernel_node_copy_attributes)
@@ -4272,6 +4302,9 @@
 //! [`graph_debug_dot_print_with_flags`](Sim::graph_debug_dot_print_with_flags) is `cuGraphDebugDotPrint` with flags (identity with
 //! [`graph_debug_dot_with_flags`](Sim::graph_debug_dot_with_flags)). Query; legal during capture. Distinct from
 //! [`graph_debug_dot_print`](Sim::graph_debug_dot_print). No Engine `--graph-debug-dot-print-with-flags`.
+//! [`graph_instantiate`](Sim::graph_instantiate) is `cuGraphInstantiate` (identity with
+//! [`instantiate_graph`](Sim::instantiate_graph)). Capture refused. Distinct from
+//! [`instantiate_graph_with_flags`](Sim::instantiate_graph_with_flags). No Engine `--graph-instantiate`.
 //! [`graph_kernel_node_get_attribute`](Sim::graph_kernel_node_get_attribute) /
 //! [`graph_exec_kernel_node_get_attribute`](Sim::graph_exec_kernel_node_get_attribute) /
 //! [`graph_kernel_node_set_attribute`](Sim::graph_kernel_node_set_attribute) /
@@ -4463,6 +4496,9 @@
 //! [`graph_debug_dot_print_with_flags`](Sim::graph_debug_dot_print_with_flags) is `cuGraphDebugDotPrint` with flags (identity with
 //! [`graph_debug_dot_with_flags`](Sim::graph_debug_dot_with_flags)). Query; legal during capture. Distinct from
 //! [`graph_debug_dot_print`](Sim::graph_debug_dot_print). No Engine `--graph-debug-dot-print-with-flags`.
+//! [`graph_instantiate`](Sim::graph_instantiate) is `cuGraphInstantiate` (identity with
+//! [`instantiate_graph`](Sim::instantiate_graph)). Capture refused. Distinct from
+//! [`instantiate_graph_with_flags`](Sim::instantiate_graph_with_flags). No Engine `--graph-instantiate`.
 //! Device-launch
 //! execs cannot attach programmatic or launch-completion events.
 //! [`kernel_pdl`](Sim::kernel_pdl) is `cudaLaunchKernelEx` PDL: a wait kernel
@@ -4782,6 +4818,9 @@
 //! [`graph_debug_dot_print_with_flags`](Sim::graph_debug_dot_print_with_flags) is `cuGraphDebugDotPrint` with flags (identity with
 //! [`graph_debug_dot_with_flags`](Sim::graph_debug_dot_with_flags)). Query; legal during capture. Distinct from
 //! [`graph_debug_dot_print`](Sim::graph_debug_dot_print). No Engine `--graph-debug-dot-print-with-flags`.
+//! [`graph_instantiate`](Sim::graph_instantiate) is `cuGraphInstantiate` (identity with
+//! [`instantiate_graph`](Sim::instantiate_graph)). Capture refused. Distinct from
+//! [`instantiate_graph_with_flags`](Sim::instantiate_graph_with_flags). No Engine `--graph-instantiate`.
 //! [`graph_exec_memcpy_set_params`](Sim::graph_exec_memcpy_set_params) /
 //! [`graph_exec_memcpy_set_params_1d`](Sim::graph_exec_memcpy_set_params_1d) /
 //! [`graph_exec_memcpy_set_params_2d`](Sim::graph_exec_memcpy_set_params_2d) /
@@ -4965,6 +5004,9 @@
 //! [`graph_debug_dot_print_with_flags`](Sim::graph_debug_dot_print_with_flags) is `cuGraphDebugDotPrint` with flags (identity with
 //! [`graph_debug_dot_with_flags`](Sim::graph_debug_dot_with_flags)). Query; legal during capture. Distinct from
 //! [`graph_debug_dot_print`](Sim::graph_debug_dot_print). No Engine `--graph-debug-dot-print-with-flags`.
+//! [`graph_instantiate`](Sim::graph_instantiate) is `cuGraphInstantiate` (identity with
+//! [`instantiate_graph`](Sim::instantiate_graph)). Capture refused. Distinct from
+//! [`instantiate_graph_with_flags`](Sim::instantiate_graph_with_flags). No Engine `--graph-instantiate`.
 //! [`get_graph_kernel_node_params`](Sim::get_graph_kernel_node_params) is `cuGraphKernelNodeGetParams` (identity with
 //! [`graph_kernel_get_params`](Sim::graph_kernel_get_params)). Query; legal during capture. Distinct from
 //! [`graph_exec_kernel_get_params`](Sim::graph_exec_kernel_get_params). No Engine `--graph-kernel-get-params`.
@@ -5127,6 +5169,9 @@
 //! [`graph_debug_dot_print_with_flags`](Sim::graph_debug_dot_print_with_flags) is `cuGraphDebugDotPrint` with flags (identity with
 //! [`graph_debug_dot_with_flags`](Sim::graph_debug_dot_with_flags)). Query; legal during capture. Distinct from
 //! [`graph_debug_dot_print`](Sim::graph_debug_dot_print). No Engine `--graph-debug-dot-print-with-flags`.
+//! [`graph_instantiate`](Sim::graph_instantiate) is `cuGraphInstantiate` (identity with
+//! [`instantiate_graph`](Sim::instantiate_graph)). Capture refused. Distinct from
+//! [`instantiate_graph_with_flags`](Sim::instantiate_graph_with_flags). No Engine `--graph-instantiate`.
 //! [`graph_exec_kernel_get_params`](Sim::graph_exec_kernel_get_params) /
 //! [`graph_exec_memcpy_get_params`](Sim::graph_exec_memcpy_get_params) /
 //! [`graph_exec_memset_get_params`](Sim::graph_exec_memset_get_params) /
@@ -5280,6 +5325,9 @@
 //! [`graph_debug_dot_print_with_flags`](Sim::graph_debug_dot_print_with_flags) is `cuGraphDebugDotPrint` with flags (identity with
 //! [`graph_debug_dot_with_flags`](Sim::graph_debug_dot_with_flags)). Query; legal during capture. Distinct from
 //! [`graph_debug_dot_print`](Sim::graph_debug_dot_print). No Engine `--graph-debug-dot-print-with-flags`.
+//! [`graph_instantiate`](Sim::graph_instantiate) is `cuGraphInstantiate` (identity with
+//! [`instantiate_graph`](Sim::instantiate_graph)). Capture refused. Distinct from
+//! [`instantiate_graph_with_flags`](Sim::instantiate_graph_with_flags). No Engine `--graph-instantiate`.
 //! [`get_graph_exec_kernel_node_params`](Sim::get_graph_exec_kernel_node_params) is `cuGraphExecKernelNodeGetParams` (identity with
 //! [`graph_exec_kernel_get_params`](Sim::graph_exec_kernel_get_params)). Query; legal during capture. Distinct from
 //! [`get_graph_kernel_node_params`](Sim::get_graph_kernel_node_params). No Engine `--graph-exec-kernel-get-params`.
@@ -5439,6 +5487,9 @@
 //! [`graph_debug_dot_print_with_flags`](Sim::graph_debug_dot_print_with_flags) is `cuGraphDebugDotPrint` with flags (identity with
 //! [`graph_debug_dot_with_flags`](Sim::graph_debug_dot_with_flags)). Query; legal during capture. Distinct from
 //! [`graph_debug_dot_print`](Sim::graph_debug_dot_print). No Engine `--graph-debug-dot-print-with-flags`.
+//! [`graph_instantiate`](Sim::graph_instantiate) is `cuGraphInstantiate` (identity with
+//! [`instantiate_graph`](Sim::instantiate_graph)). Capture refused. Distinct from
+//! [`instantiate_graph_with_flags`](Sim::instantiate_graph_with_flags). No Engine `--graph-instantiate`.
 //! [`graph_exec_batch_mem_op_set_params`](Sim::graph_exec_batch_mem_op_set_params)
 //! is `cudaGraphExecBatchMemOpNodeSetParams` (id/offset/value; wait vs write,
 //! `bits32`, and compare stay on wait/write nodes;
@@ -25177,6 +25228,67 @@ mod tests {
             eight.graph_debug_dot_print_with_flags(g1, 0).unwrap(),
             eight.graph_debug_dot_with_flags(g1, 0).unwrap()
         );
+        let _cap = eight.end_capture().unwrap();
+    }
+
+    #[test]
+    fn graph_instantiate_is_cu_graph_instantiate() {
+        let mut sim = Sim::new(h100());
+        let d = DeviceId(0);
+        let s = StreamId(0);
+        match sim.graph_instantiate(GraphId(99)) {
+            Err(SimError::Invalid { why }) => assert!(why.contains("unknown"), "{why}"),
+            other => panic!("{other:?}"),
+        }
+        match sim.instantiate_graph(GraphId(99)) {
+            Err(SimError::Invalid { why }) => assert!(why.contains("unknown"), "{why}"),
+            other => panic!("{other:?}"),
+        }
+        let g = sim.create_graph(d, s).unwrap();
+        sim.graph_add_host_func_params(
+            g,
+            HostNodeParams {
+                fn_id: 7,
+                user_data: 42,
+            },
+        )
+        .unwrap();
+        let e1 = sim.graph_instantiate(g).unwrap();
+        let e2 = sim.instantiate_graph(g).unwrap();
+        assert_ne!(e1, g);
+        assert_ne!(e2, g);
+        assert_ne!(e1, e2);
+        assert!(sim.graph_instantiated(g).unwrap());
+        assert!(sim.graph_instantiated(e1).unwrap());
+        sim.begin_capture(d, s).unwrap();
+        match sim.graph_instantiate(g) {
+            Err(SimError::Invalid { why }) => assert!(why.contains("capture"), "{why}"),
+            other => panic!("{other:?}"),
+        }
+        match sim.instantiate_graph(g) {
+            Err(SimError::Invalid { why }) => assert!(why.contains("capture"), "{why}"),
+            other => panic!("{other:?}"),
+        }
+        let _cap = sim.end_capture().unwrap();
+        let mut eight = Sim::new(HardwareProfile::example_8xh100_nvlink());
+        let g1 = eight.create_graph(DeviceId(1), s).unwrap();
+        eight
+            .graph_add_host_func_params(
+                g1,
+                HostNodeParams {
+                    fn_id: 5,
+                    user_data: 8,
+                },
+            )
+            .unwrap();
+        let exec = eight.graph_instantiate(g1).unwrap();
+        assert_ne!(exec, g1);
+        assert!(eight.graph_instantiated(g1).unwrap());
+        eight.begin_capture(DeviceId(1), s).unwrap();
+        match eight.graph_instantiate(g1) {
+            Err(SimError::Invalid { why }) => assert!(why.contains("capture"), "{why}"),
+            other => panic!("{other:?}"),
+        }
         let _cap = eight.end_capture().unwrap();
     }
 
