@@ -9489,7 +9489,13 @@ model, do not celebrate the sim.
     or `cudaChooseDevice`. `gpu-profile capture` is still refused. Dual
     score still has no `$/M tokens`.
 
-1049. [ ] Next numbered PLAN item after 1048 is the next `gpu-sim` / Engine /
+1049. [x] `gpu-sim` `Sim::stream_write_value64` is
+    `cuStreamWriteValue64`. Identity with `write_value64`. Capture legal. Distinct from
+    `write_value32`. This VM does not invent occupancy SM counts, Engine `--stream-write-value64`,
+    or `cudaChooseDevice`. `gpu-profile capture` is still refused. Dual
+    score still has no `$/M tokens`.
+
+1050. [ ] Next numbered PLAN item after 1049 is the next `gpu-sim` / Engine /
     serve / expertvm mechanical API that is still missing, or the next official
     decode family. Prefer remaining CUDA-shaped twins over more
     OpenAI HTTP veneer. Do not invent F32 `output.scale`. Do not invent a
@@ -11139,6 +11145,10 @@ model, do not celebrate the sim.
     Do not invent Engine `--mem-set-3d`. Do not invent
     occupancy SM counts this slice. Do not reverse Memset3D identity with memset_3d.
     Do not invent `cuMemset3D` as `mem_set_3d`.
+    Do not invent a second `cuStreamWriteValue64` / `stream_write_value64`.
+    Do not invent Engine `--stream-write-value64`. Do not invent
+    occupancy SM counts this slice. Do not reverse WriteValue64 identity with write_value64.
+    Do not invent `cuStreamWriteValue32` as `stream_write_value64`.
     Do not invent a second `cudaStreamAddCallback`.
     Do not invent Engine `--stream-callback` (same wall as second live
     `cudaLaunchHostFunc` after miss DMA).
@@ -12856,6 +12866,9 @@ model, do not celebrate the sim.
     Do not invent a second `mem_set_3d` API. Do not invent
     Engine `--mem-set-3d-identity`. Do not invent a host-func
     this slice. Do not reverse Memset3D identity with memset_3d.
+    Do not invent a second `stream_write_value64` API. Do not invent
+    Engine `--stream-write-value64-identity`. Do not invent a write-value32
+    this slice. Do not reverse WriteValue64 identity with write_value64.
     Do not invent a second DeviceLaunch in-flight destroy-complete check or Engine
     `--device-launch-destroy`. Do not abort an in-flight DeviceLaunch when
     `destroy_graph` succeeds. Do not delay destroy of an idle exec. Do not invent
@@ -14756,6 +14769,9 @@ model, do not celebrate the sim.
     Do not invent a second `mem_set_3d` method. Do not
     invent Engine `--cu-mem-set-3d`. Do not reverse wrapping
     cudaMemset3D identity. Do not wrap `cuMemset3D` as `mem_set_3d`.
+    Do not invent a second `stream_write_value64` method. Do not
+    invent Engine `--cu-stream-write-value64`. Do not reverse wrapping
+    cuStreamWriteValue64 identity. Do not wrap `cuStreamWriteValue32` as `stream_write_value64`.
     Do not
     spend the next item on an OpenAI-compatible HTTP veneer.
 

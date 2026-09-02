@@ -26579,7 +26579,6 @@ impl Sim {
     /// `cudaMemset3D`. Identity with [`Self::memset_3d`].
     ///
     /// Capture refused. Distinct from [`Self::mem_set_3d_async`].
-    /// This VM does not invent occupancy SM counts this slice.
     pub fn mem_set_3d(
         &mut self,
         device: DeviceId,
@@ -26587,6 +26586,22 @@ impl Sim {
         stream: StreamId,
     ) -> Result<OpId, SimError> {
         self.memset_3d(device, op, stream)
+    }
+
+    /// `cuStreamWriteValue64`. Identity with [`Self::write_value64`].
+    ///
+    /// Capture legal. Distinct from [`Self::write_value32`] and
+    /// [`Self::add_graph_write_value64`].
+    /// This VM does not invent occupancy SM counts this slice.
+    pub fn stream_write_value64(
+        &mut self,
+        device: DeviceId,
+        id: AllocId,
+        offset: u64,
+        value: u64,
+        stream: StreamId,
+    ) -> Result<OpId, SimError> {
+        self.write_value64(device, id, offset, value, stream)
     }
 
     /// `cudaLaunchHostFunc`. Stream-ordered host work; does not occupy compute
@@ -26680,6 +26695,8 @@ impl Sim {
     ///
     /// Does not occupy compute or copy engines. Capture records a batch-mem-op
     /// node. Alignment is 8 bytes; the span must fit the allocation.
+    ///
+    /// Identity wrap [`Self::stream_write_value64`].
     pub fn write_value64(
         &mut self,
         device: DeviceId,
