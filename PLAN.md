@@ -10004,7 +10004,12 @@ model, do not celebrate the sim.
       `mem_map_range`. This VM does not invent occupancy SM counts, Engine `--mem-get-allocation-properties`,
       or `cudaChooseDevice`. `gpu-profile capture` is still refused. Dual
       score still has no `$/M tokens`.
-1149. [ ] Next numbered PLAN item after 1148 is the next `gpu-sim` / Engine /
+1149. [x] `gpu-sim` `Sim::mem_map_multicast` is
+      `cuMemMap` multicast. Identity with `va_map_multicast` (`cuMemMap` of a multicast handle). Capture refused. Distinct from
+      `mem_get_allocation_properties`. This VM does not invent occupancy SM counts, Engine `--mem-map-multicast`,
+      or `cudaChooseDevice`. `gpu-profile capture` is still refused. Dual
+      score still has no `$/M tokens`.
+1150. [ ] Next numbered PLAN item after 1149 is the next `gpu-sim` / Engine /
     serve / expertvm mechanical API that is still missing, or the next official
     decode family. Prefer remaining CUDA-shaped twins over more
     OpenAI HTTP veneer. Do not invent F32 `output.scale`. Do not invent a
@@ -12098,6 +12103,11 @@ model, do not celebrate the sim.
     occupancy SM counts this slice. Do not reverse MemGetAllocationProperties identity with va_get_allocation_properties.
     Do not invent `va_map_multicast` as `mem_get_allocation_properties`.
     Do not invent `cuMemMap` multicast as `mem_get_allocation_properties`.
+    Do not invent a second `cuMemMap` multicast / `mem_map_multicast`.
+    Do not invent Engine `--mem-map-multicast`. Do not invent
+    occupancy SM counts this slice. Do not reverse MemMapMulticast identity with va_map_multicast.
+    Do not invent `va_map_multicast_with_flags` as `mem_map_multicast`.
+    Do not invent `cuMemMap` multicast flags as `mem_map_multicast`.
     Do not invent a second `cudaStreamAddCallback`.
     Do not invent Engine `--stream-callback` (same wall as second live
     `cudaLaunchHostFunc` after miss DMA).
@@ -14227,6 +14237,11 @@ model, do not celebrate the sim.
     this slice. Do not reverse MemGetAllocationProperties identity with va_get_allocation_properties.
     Do not wrap `va_get_allocation_properties` as `mem_get_allocation_properties`.
     Do not wrap `va_map_multicast` as `mem_get_allocation_properties`.
+    Do not invent a second `mem_map_multicast` API. Do not invent
+    Engine `--mem-map-multicast-identity`. Do not invent a va-map-multicast-flags
+    this slice. Do not reverse MemMapMulticast identity with va_map_multicast.
+    Do not wrap `va_map_multicast` as `mem_map_multicast`.
+    Do not wrap `va_map_multicast_with_flags` as `mem_map_multicast`.
     Do not invent a second DeviceLaunch in-flight destroy-complete check or Engine
     `--device-launch-destroy`. Do not abort an in-flight DeviceLaunch when
     `destroy_graph` succeeds. Do not delay destroy of an idle exec. Do not invent
@@ -16427,6 +16442,9 @@ model, do not celebrate the sim.
     Do not invent a second `mem_get_allocation_properties` method. Do not
     invent Engine `--cu-mem-get-allocation-properties`. Do not reverse wrapping
     cuMemGetAllocationPropertiesFromHandle identity. Do not wrap `va_map_multicast` as `mem_get_allocation_properties`.
+    Do not invent a second `mem_map_multicast` method. Do not
+    invent Engine `--cu-mem-map-multicast`. Do not reverse wrapping
+    cuMemMap multicast identity. Do not wrap `va_map_multicast_with_flags` as `mem_map_multicast`.
     Do not
     spend the next item on an OpenAI-compatible HTTP veneer.
 

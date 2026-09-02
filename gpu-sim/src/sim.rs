@@ -18462,7 +18462,6 @@ impl Sim {
     /// [`Self::va_get_allocation_properties`] (`cuMemGetAllocationPropertiesFromHandle`).
     ///
     /// Query; legal during capture. Distinct from [`Self::mem_map_range`].
-    /// This VM does not invent occupancy SM counts this slice.
     pub fn mem_get_allocation_properties(
         &self,
         handle: MemHandleId,
@@ -18981,6 +18980,8 @@ impl Sim {
     /// already be bound. Kernel writes to this VA are billed as one NVLS hop
     /// and occupy compute (not a copy engine). Typed helper; flags must be
     /// [`MemMapFlags::DEFAULT`].
+    /// Driver `cuMemMap` multicast is [`Self::mem_map_multicast`].
+    /// Identity wrap [`Self::mem_map_multicast`].
     pub fn va_map_multicast(
         &mut self,
         id: AllocId,
@@ -18989,6 +18990,21 @@ impl Sim {
         mc: MulticastId,
     ) -> Result<(), SimError> {
         self.va_map_multicast_with_flags(id, device, offset, mc, MemMapFlags::DEFAULT)
+    }
+
+    /// `cuMemMap` multicast. Identity with
+    /// [`Self::va_map_multicast`] (`cuMemMap` of a multicast handle).
+    ///
+    /// Capture refused. Distinct from [`Self::mem_get_allocation_properties`].
+    /// This VM does not invent occupancy SM counts this slice.
+    pub fn mem_map_multicast(
+        &mut self,
+        id: AllocId,
+        device: DeviceId,
+        offset: u64,
+        mc: MulticastId,
+    ) -> Result<(), SimError> {
+        self.va_map_multicast(id, device, offset, mc)
     }
 
     /// [`Self::va_map_multicast`] with a flags word.
