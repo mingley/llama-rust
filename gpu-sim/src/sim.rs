@@ -2865,6 +2865,8 @@ impl Sim {
     }
 
     /// `cudaDeviceEnablePeerAccess(dst)` from `src`. No-op if `src == dst`.
+    ///
+    /// Driver `cuCtxEnablePeerAccess` is [`Self::ctx_enable_peer_access`].
     pub fn enable_peer(&mut self, src: DeviceId, dst: DeviceId) -> Result<(), SimError> {
         if src == dst {
             return Ok(());
@@ -2872,6 +2874,16 @@ impl Sim {
         let _link = self.profile.link(Some(src), Some(dst))?;
         let _was = self.peer_enabled.insert((src, dst));
         Ok(())
+    }
+
+    /// `cuCtxEnablePeerAccess`. Identity with
+    /// [`Self::enable_peer`] (`cudaDeviceEnablePeerAccess`).
+    ///
+    /// Capture legal. Distinct from
+    /// [`Self::event_flags`]. This VM does not invent
+    /// occupancy SM counts this slice.
+    pub fn ctx_enable_peer_access(&mut self, src: DeviceId, dst: DeviceId) -> Result<(), SimError> {
+        self.enable_peer(src, dst)
     }
 
     /// `cudaDeviceEnablePeerAccess` with a flags word.
@@ -3177,8 +3189,7 @@ impl Sim {
     /// [`Self::event_get_flags`] (`cudaEventGetFlags`).
     ///
     /// Query; legal during capture. Distinct from
-    /// [`Self::get_stream_capture_mode`]. This VM does not invent
-    /// occupancy SM counts this slice.
+    /// [`Self::get_stream_capture_mode`].
     pub fn event_flags(&self, event: EventId) -> Result<u32, SimError> {
         self.event_get_flags(event)
     }
