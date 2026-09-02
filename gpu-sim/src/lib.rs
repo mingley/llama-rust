@@ -1261,6 +1261,10 @@
 //! [`mem_device_get_luid`](Sim::mem_device_get_luid) is `cuDeviceGetLuid` (identity with
 //! [`device_get_luid`](Sim::device_get_luid)). Query; legal during capture. Distinct from
 //! [`mem_device_get_uuid`](Sim::mem_device_get_uuid). No Engine `--mem-device-get-luid`.
+//!
+//! [`mem_device_get_texture_1d_linear_max_width`](Sim::mem_device_get_texture_1d_linear_max_width) is `cuDeviceGetTexture1DLinearMaxWidth` (identity with
+//! [`device_get_texture_1d_linear_max_width`](Sim::device_get_texture_1d_linear_max_width)). Query; legal during capture. Distinct from
+//! [`mem_device_get_luid`](Sim::mem_device_get_luid). No Engine `--mem-device-get-texture-1d-linear-max-width`.
 //! [`Sim::ipc_get_event`] / [`ipc_open_event`](Sim::ipc_open_event) are
 //! `cudaIpcGetEventHandle` / `cudaIpcOpenEventHandle` (interprocess events).
 //! [`Sim::create_shareable_pool`] is `cudaMemPoolCreate` with a POSIX-FD handle
@@ -2546,6 +2550,10 @@
 //! [`mem_device_get_luid`](Sim::mem_device_get_luid) is `cuDeviceGetLuid` (identity with
 //! [`device_get_luid`](Sim::device_get_luid)). Query; legal during capture. Distinct from
 //! [`mem_device_get_uuid`](Sim::mem_device_get_uuid). No Engine `--mem-device-get-luid`.
+//!
+//! [`mem_device_get_texture_1d_linear_max_width`](Sim::mem_device_get_texture_1d_linear_max_width) is `cuDeviceGetTexture1DLinearMaxWidth` (identity with
+//! [`device_get_texture_1d_linear_max_width`](Sim::device_get_texture_1d_linear_max_width)). Query; legal during capture. Distinct from
+//! [`mem_device_get_luid`](Sim::mem_device_get_luid). No Engine `--mem-device-get-texture-1d-linear-max-width`.
 //! [`HardwareProfile::host_pin_bytes`] caps `cudaMallocHost` / `cudaHostRegister`.
 //! [`Sim::idle_until`] drains, then jumps the virtual clock (open-loop arrivals).
 //! [`Sim::event_elapsed_ns`] is `cudaEventElapsedTime` in nanoseconds.
@@ -3699,6 +3707,10 @@
 //! [`mem_device_get_luid`](Sim::mem_device_get_luid) is `cuDeviceGetLuid` (identity with
 //! [`device_get_luid`](Sim::device_get_luid)). Query; legal during capture. Distinct from
 //! [`mem_device_get_uuid`](Sim::mem_device_get_uuid). No Engine `--mem-device-get-luid`.
+//!
+//! [`mem_device_get_texture_1d_linear_max_width`](Sim::mem_device_get_texture_1d_linear_max_width) is `cuDeviceGetTexture1DLinearMaxWidth` (identity with
+//! [`device_get_texture_1d_linear_max_width`](Sim::device_get_texture_1d_linear_max_width)). Query; legal during capture. Distinct from
+//! [`mem_device_get_luid`](Sim::mem_device_get_luid). No Engine `--mem-device-get-texture-1d-linear-max-width`.
 //! [`mem_host_get_flags`](Sim::mem_host_get_flags) is `cuMemHostGetFlags` (identity with
 //! [`host_get_flags`](Sim::host_get_flags)). Query; legal during capture. No Engine `--mem-host-get-flags`.
 //! [`mem_host_get_device_pointer`](Sim::mem_host_get_device_pointer) is `cuMemHostGetDevicePointer` (identity with
@@ -4818,6 +4830,10 @@
 //! [`mem_device_get_luid`](Sim::mem_device_get_luid) is `cuDeviceGetLuid` (identity with
 //! [`device_get_luid`](Sim::device_get_luid)). Query; legal during capture. Distinct from
 //! [`mem_device_get_uuid`](Sim::mem_device_get_uuid). No Engine `--mem-device-get-luid`.
+//!
+//! [`mem_device_get_texture_1d_linear_max_width`](Sim::mem_device_get_texture_1d_linear_max_width) is `cuDeviceGetTexture1DLinearMaxWidth` (identity with
+//! [`device_get_texture_1d_linear_max_width`](Sim::device_get_texture_1d_linear_max_width)). Query; legal during capture. Distinct from
+//! [`mem_device_get_luid`](Sim::mem_device_get_luid). No Engine `--mem-device-get-texture-1d-linear-max-width`.
 //! [`Sim::pointer_get_attributes`] is `cudaPointerGetAttributes`.
 //! [`pointer_set_attribute`](Sim::pointer_set_attribute) /
 //! [`pointer_get_attribute`](Sim::pointer_get_attribute) are
@@ -6344,6 +6360,10 @@
 //! [`mem_device_get_luid`](Sim::mem_device_get_luid) is `cuDeviceGetLuid` (identity with
 //! [`device_get_luid`](Sim::device_get_luid)). Query; legal during capture. Distinct from
 //! [`mem_device_get_uuid`](Sim::mem_device_get_uuid). No Engine `--mem-device-get-luid`.
+//!
+//! [`mem_device_get_texture_1d_linear_max_width`](Sim::mem_device_get_texture_1d_linear_max_width) is `cuDeviceGetTexture1DLinearMaxWidth` (identity with
+//! [`device_get_texture_1d_linear_max_width`](Sim::device_get_texture_1d_linear_max_width)). Query; legal during capture. Distinct from
+//! [`mem_device_get_luid`](Sim::mem_device_get_luid). No Engine `--mem-device-get-texture-1d-linear-max-width`.
 //! [`Sim::stream_get_device`] is `cudaStreamGetDevice` / `cuStreamGetDevice`
 //! (the device of the stream; green-ctx streams return the ctx create
 //! device). Query; legal during capture. Distinct from
@@ -7299,6 +7319,10 @@
 //! [`mem_device_get_luid`](Sim::mem_device_get_luid) is `cuDeviceGetLuid` (identity with
 //! [`device_get_luid`](Sim::device_get_luid)). Query; legal during capture. Distinct from
 //! [`mem_device_get_uuid`](Sim::mem_device_get_uuid). No Engine `--mem-device-get-luid`.
+//!
+//! [`mem_device_get_texture_1d_linear_max_width`](Sim::mem_device_get_texture_1d_linear_max_width) is `cuDeviceGetTexture1DLinearMaxWidth` (identity with
+//! [`device_get_texture_1d_linear_max_width`](Sim::device_get_texture_1d_linear_max_width)). Query; legal during capture. Distinct from
+//! [`mem_device_get_luid`](Sim::mem_device_get_luid). No Engine `--mem-device-get-texture-1d-linear-max-width`.
 //! [`set_stream_access_policy`](Sim::set_stream_access_policy) is
 //! `cudaStreamAttributeAccessPolicyWindow`: [`kernel`](Sim::kernel) /
 //! [`kernel_bufs`](Sim::kernel_bufs) inherit it; [`kernel_with`](Sim::kernel_with)
@@ -8739,6 +8763,10 @@
 //! [`mem_device_get_luid`](Sim::mem_device_get_luid) is `cuDeviceGetLuid` (identity with
 //! [`device_get_luid`](Sim::device_get_luid)). Query; legal during capture. Distinct from
 //! [`mem_device_get_uuid`](Sim::mem_device_get_uuid). No Engine `--mem-device-get-luid`.
+//!
+//! [`mem_device_get_texture_1d_linear_max_width`](Sim::mem_device_get_texture_1d_linear_max_width) is `cuDeviceGetTexture1DLinearMaxWidth` (identity with
+//! [`device_get_texture_1d_linear_max_width`](Sim::device_get_texture_1d_linear_max_width)). Query; legal during capture. Distinct from
+//! [`mem_device_get_luid`](Sim::mem_device_get_luid). No Engine `--mem-device-get-texture-1d-linear-max-width`.
 //! [`Sim::set_stream_priority`] is the priority-only helper;
 //! [`stream_create_with_priority`](Sim::stream_create_with_priority) is
 //! `cudaStreamCreateWithPriority` (flags plus priority; clamped to
@@ -9712,6 +9740,10 @@
 //! [`mem_device_get_luid`](Sim::mem_device_get_luid) is `cuDeviceGetLuid` (identity with
 //! [`device_get_luid`](Sim::device_get_luid)). Query; legal during capture. Distinct from
 //! [`mem_device_get_uuid`](Sim::mem_device_get_uuid). No Engine `--mem-device-get-luid`.
+//!
+//! [`mem_device_get_texture_1d_linear_max_width`](Sim::mem_device_get_texture_1d_linear_max_width) is `cuDeviceGetTexture1DLinearMaxWidth` (identity with
+//! [`device_get_texture_1d_linear_max_width`](Sim::device_get_texture_1d_linear_max_width)). Query; legal during capture. Distinct from
+//! [`mem_device_get_luid`](Sim::mem_device_get_luid). No Engine `--mem-device-get-texture-1d-linear-max-width`.
 //! [`destroy_stream`](Sim::destroy_stream) is `cudaStreamDestroy` (returns
 //! immediately; in-flight work still completes; NULL is Invalid; recreate
 //! while unfinished is `"stream in flight"`). Capture cannot include it.
@@ -10665,6 +10697,10 @@
 //! [`mem_device_get_luid`](Sim::mem_device_get_luid) is `cuDeviceGetLuid` (identity with
 //! [`device_get_luid`](Sim::device_get_luid)). Query; legal during capture. Distinct from
 //! [`mem_device_get_uuid`](Sim::mem_device_get_uuid). No Engine `--mem-device-get-luid`.
+//!
+//! [`mem_device_get_texture_1d_linear_max_width`](Sim::mem_device_get_texture_1d_linear_max_width) is `cuDeviceGetTexture1DLinearMaxWidth` (identity with
+//! [`device_get_texture_1d_linear_max_width`](Sim::device_get_texture_1d_linear_max_width)). Query; legal during capture. Distinct from
+//! [`mem_device_get_luid`](Sim::mem_device_get_luid). No Engine `--mem-device-get-texture-1d-linear-max-width`.
 //! [`Sim::instantiate_graph`] is `cudaGraphInstantiate` (host-sync; returns a
 //! new exec id; first [`launch_graph`](Sim::launch_graph) of a definition
 //! creates a primary exec). Unused conditional handles are
@@ -11647,6 +11683,10 @@
 //! [`mem_device_get_luid`](Sim::mem_device_get_luid) is `cuDeviceGetLuid` (identity with
 //! [`device_get_luid`](Sim::device_get_luid)). Query; legal during capture. Distinct from
 //! [`mem_device_get_uuid`](Sim::mem_device_get_uuid). No Engine `--mem-device-get-luid`.
+//!
+//! [`mem_device_get_texture_1d_linear_max_width`](Sim::mem_device_get_texture_1d_linear_max_width) is `cuDeviceGetTexture1DLinearMaxWidth` (identity with
+//! [`device_get_texture_1d_linear_max_width`](Sim::device_get_texture_1d_linear_max_width)). Query; legal during capture. Distinct from
+//! [`mem_device_get_luid`](Sim::mem_device_get_luid). No Engine `--mem-device-get-texture-1d-linear-max-width`.
 //! [`graph_kernel_node_get_priority`](Sim::graph_kernel_node_get_priority) /
 //! [`graph_kernel_node_set_priority`](Sim::graph_kernel_node_set_priority) /
 //! [`graph_kernel_node_copy_attributes`](Sim::graph_kernel_node_copy_attributes)
@@ -12588,6 +12628,10 @@
 //! [`mem_device_get_luid`](Sim::mem_device_get_luid) is `cuDeviceGetLuid` (identity with
 //! [`device_get_luid`](Sim::device_get_luid)). Query; legal during capture. Distinct from
 //! [`mem_device_get_uuid`](Sim::mem_device_get_uuid). No Engine `--mem-device-get-luid`.
+//!
+//! [`mem_device_get_texture_1d_linear_max_width`](Sim::mem_device_get_texture_1d_linear_max_width) is `cuDeviceGetTexture1DLinearMaxWidth` (identity with
+//! [`device_get_texture_1d_linear_max_width`](Sim::device_get_texture_1d_linear_max_width)). Query; legal during capture. Distinct from
+//! [`mem_device_get_luid`](Sim::mem_device_get_luid). No Engine `--mem-device-get-texture-1d-linear-max-width`.
 //! [`graph_kernel_node_get_attribute`](Sim::graph_kernel_node_get_attribute) /
 //! [`graph_exec_kernel_node_get_attribute`](Sim::graph_exec_kernel_node_get_attribute) /
 //! [`graph_kernel_node_set_attribute`](Sim::graph_kernel_node_set_attribute) /
@@ -13535,6 +13579,10 @@
 //! [`mem_device_get_luid`](Sim::mem_device_get_luid) is `cuDeviceGetLuid` (identity with
 //! [`device_get_luid`](Sim::device_get_luid)). Query; legal during capture. Distinct from
 //! [`mem_device_get_uuid`](Sim::mem_device_get_uuid). No Engine `--mem-device-get-luid`.
+//!
+//! [`mem_device_get_texture_1d_linear_max_width`](Sim::mem_device_get_texture_1d_linear_max_width) is `cuDeviceGetTexture1DLinearMaxWidth` (identity with
+//! [`device_get_texture_1d_linear_max_width`](Sim::device_get_texture_1d_linear_max_width)). Query; legal during capture. Distinct from
+//! [`mem_device_get_luid`](Sim::mem_device_get_luid). No Engine `--mem-device-get-texture-1d-linear-max-width`.
 //! Device-launch
 //! execs cannot attach programmatic or launch-completion events.
 //! [`kernel_pdl`](Sim::kernel_pdl) is `cudaLaunchKernelEx` PDL: a wait kernel
@@ -14610,6 +14658,10 @@
 //! [`mem_device_get_luid`](Sim::mem_device_get_luid) is `cuDeviceGetLuid` (identity with
 //! [`device_get_luid`](Sim::device_get_luid)). Query; legal during capture. Distinct from
 //! [`mem_device_get_uuid`](Sim::mem_device_get_uuid). No Engine `--mem-device-get-luid`.
+//!
+//! [`mem_device_get_texture_1d_linear_max_width`](Sim::mem_device_get_texture_1d_linear_max_width) is `cuDeviceGetTexture1DLinearMaxWidth` (identity with
+//! [`device_get_texture_1d_linear_max_width`](Sim::device_get_texture_1d_linear_max_width)). Query; legal during capture. Distinct from
+//! [`mem_device_get_luid`](Sim::mem_device_get_luid). No Engine `--mem-device-get-texture-1d-linear-max-width`.
 //! [`graph_exec_memcpy_set_params`](Sim::graph_exec_memcpy_set_params) /
 //! [`graph_exec_memcpy_set_params_1d`](Sim::graph_exec_memcpy_set_params_1d) /
 //! [`graph_exec_memcpy_set_params_2d`](Sim::graph_exec_memcpy_set_params_2d) /
@@ -15549,6 +15601,10 @@
 //! [`mem_device_get_luid`](Sim::mem_device_get_luid) is `cuDeviceGetLuid` (identity with
 //! [`device_get_luid`](Sim::device_get_luid)). Query; legal during capture. Distinct from
 //! [`mem_device_get_uuid`](Sim::mem_device_get_uuid). No Engine `--mem-device-get-luid`.
+//!
+//! [`mem_device_get_texture_1d_linear_max_width`](Sim::mem_device_get_texture_1d_linear_max_width) is `cuDeviceGetTexture1DLinearMaxWidth` (identity with
+//! [`device_get_texture_1d_linear_max_width`](Sim::device_get_texture_1d_linear_max_width)). Query; legal during capture. Distinct from
+//! [`mem_device_get_luid`](Sim::mem_device_get_luid). No Engine `--mem-device-get-texture-1d-linear-max-width`.
 //! [`get_graph_kernel_node_params`](Sim::get_graph_kernel_node_params) is `cuGraphKernelNodeGetParams` (identity with
 //! [`graph_kernel_get_params`](Sim::graph_kernel_get_params)). Query; legal during capture. Distinct from
 //! [`graph_exec_kernel_get_params`](Sim::graph_exec_kernel_get_params). No Engine `--graph-kernel-get-params`.
@@ -16467,6 +16523,10 @@
 //! [`mem_device_get_luid`](Sim::mem_device_get_luid) is `cuDeviceGetLuid` (identity with
 //! [`device_get_luid`](Sim::device_get_luid)). Query; legal during capture. Distinct from
 //! [`mem_device_get_uuid`](Sim::mem_device_get_uuid). No Engine `--mem-device-get-luid`.
+//!
+//! [`mem_device_get_texture_1d_linear_max_width`](Sim::mem_device_get_texture_1d_linear_max_width) is `cuDeviceGetTexture1DLinearMaxWidth` (identity with
+//! [`device_get_texture_1d_linear_max_width`](Sim::device_get_texture_1d_linear_max_width)). Query; legal during capture. Distinct from
+//! [`mem_device_get_luid`](Sim::mem_device_get_luid). No Engine `--mem-device-get-texture-1d-linear-max-width`.
 //! [`graph_exec_kernel_get_params`](Sim::graph_exec_kernel_get_params) /
 //! [`graph_exec_memcpy_get_params`](Sim::graph_exec_memcpy_get_params) /
 //! [`graph_exec_memset_get_params`](Sim::graph_exec_memset_get_params) /
@@ -17376,6 +17436,10 @@
 //! [`mem_device_get_luid`](Sim::mem_device_get_luid) is `cuDeviceGetLuid` (identity with
 //! [`device_get_luid`](Sim::device_get_luid)). Query; legal during capture. Distinct from
 //! [`mem_device_get_uuid`](Sim::mem_device_get_uuid). No Engine `--mem-device-get-luid`.
+//!
+//! [`mem_device_get_texture_1d_linear_max_width`](Sim::mem_device_get_texture_1d_linear_max_width) is `cuDeviceGetTexture1DLinearMaxWidth` (identity with
+//! [`device_get_texture_1d_linear_max_width`](Sim::device_get_texture_1d_linear_max_width)). Query; legal during capture. Distinct from
+//! [`mem_device_get_luid`](Sim::mem_device_get_luid). No Engine `--mem-device-get-texture-1d-linear-max-width`.
 //! [`get_graph_exec_kernel_node_params`](Sim::get_graph_exec_kernel_node_params) is `cuGraphExecKernelNodeGetParams` (identity with
 //! [`graph_exec_kernel_get_params`](Sim::graph_exec_kernel_get_params)). Query; legal during capture. Distinct from
 //! [`get_graph_kernel_node_params`](Sim::get_graph_kernel_node_params). No Engine `--graph-exec-kernel-get-params`.
@@ -18291,6 +18355,10 @@
 //! [`mem_device_get_luid`](Sim::mem_device_get_luid) is `cuDeviceGetLuid` (identity with
 //! [`device_get_luid`](Sim::device_get_luid)). Query; legal during capture. Distinct from
 //! [`mem_device_get_uuid`](Sim::mem_device_get_uuid). No Engine `--mem-device-get-luid`.
+//!
+//! [`mem_device_get_texture_1d_linear_max_width`](Sim::mem_device_get_texture_1d_linear_max_width) is `cuDeviceGetTexture1DLinearMaxWidth` (identity with
+//! [`device_get_texture_1d_linear_max_width`](Sim::device_get_texture_1d_linear_max_width)). Query; legal during capture. Distinct from
+//! [`mem_device_get_luid`](Sim::mem_device_get_luid). No Engine `--mem-device-get-texture-1d-linear-max-width`.
 //! [`graph_exec_batch_mem_op_set_params`](Sim::graph_exec_batch_mem_op_set_params)
 //! is `cudaGraphExecBatchMemOpNodeSetParams` (id/offset/value; wait vs write,
 //! `bits32`, and compare stay on wait/write nodes;
@@ -52492,6 +52560,58 @@ mod tests {
         assert_eq!(
             eight.mem_device_get_luid(d1).unwrap(),
             eight.device_get_luid(d1).unwrap()
+        );
+        let g2 = eight.end_capture().unwrap();
+        assert_eq!(eight.graph_len(g2).unwrap(), 0);
+    }
+
+    #[test]
+    fn mem_device_get_texture_1d_linear_max_width_is_cu_device_get_texture_1d_linear_max_width() {
+        let mut sim = Sim::new(h100());
+        let d = DeviceId(0);
+        let s = StreamId(0);
+        match sim.mem_device_get_texture_1d_linear_max_width(DeviceId(9)) {
+            Err(SimError::Invalid { why }) => {
+                assert!(why.contains("device not in profile"), "{why}")
+            }
+            other => panic!("{other:?}"),
+        }
+        match sim.device_get_texture_1d_linear_max_width(DeviceId(9)) {
+            Err(SimError::Invalid { why }) => {
+                assert!(why.contains("device not in profile"), "{why}")
+            }
+            other => panic!("{other:?}"),
+        }
+        assert_eq!(
+            sim.mem_device_get_texture_1d_linear_max_width(d).unwrap(),
+            sim.device_get_texture_1d_linear_max_width(d).unwrap()
+        );
+        assert_eq!(
+            sim.mem_device_get_texture_1d_linear_max_width(d).unwrap(),
+            0
+        );
+        sim.begin_capture(d, s).unwrap();
+        assert_eq!(
+            sim.mem_device_get_texture_1d_linear_max_width(d).unwrap(),
+            sim.device_get_texture_1d_linear_max_width(d).unwrap()
+        );
+        let g = sim.end_capture().unwrap();
+        assert_eq!(sim.graph_len(g).unwrap(), 0);
+
+        let mut eight = Sim::new(HardwareProfile::example_8xh100_nvlink());
+        let d1 = DeviceId(1);
+        assert_eq!(
+            eight
+                .mem_device_get_texture_1d_linear_max_width(d1)
+                .unwrap(),
+            eight.device_get_texture_1d_linear_max_width(d1).unwrap()
+        );
+        eight.begin_capture(d1, s).unwrap();
+        assert_eq!(
+            eight
+                .mem_device_get_texture_1d_linear_max_width(d1)
+                .unwrap(),
+            eight.device_get_texture_1d_linear_max_width(d1).unwrap()
         );
         let g2 = eight.end_capture().unwrap();
         assert_eq!(eight.graph_len(g2).unwrap(), 0);

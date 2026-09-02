@@ -25558,7 +25558,6 @@ impl Sim {
 
     /// `cuDeviceGetLuid`. Identity with [`Self::device_get_luid`].
     /// Query; legal during capture. Distinct from [`Self::mem_device_get_uuid`].
-    /// This VM does not invent occupancy SM counts this slice.
     pub fn mem_device_get_luid(&self, device: DeviceId) -> Result<([u8; 8], u32), SimError> {
         self.device_get_luid(device)
     }
@@ -25569,12 +25568,25 @@ impl Sim {
     /// count are not arguments (always 0 regardless). Distinct from
     /// [`DeviceAttr::MaxTexture1DLinearWidth`] (same 0 via
     /// [`Self::device_get_attribute`]). Unknown devices are Invalid.
+    ///
+    /// Driver wrap: [`Self::mem_device_get_texture_1d_linear_max_width`].
+    /// Identity: [`Self::mem_device_get_texture_1d_linear_max_width`].
     pub fn device_get_texture_1d_linear_max_width(
         &self,
         device: DeviceId,
     ) -> Result<u64, SimError> {
         let _gpu = self.profile.gpu(device)?;
         Ok(0)
+    }
+
+    /// `cuDeviceGetTexture1DLinearMaxWidth`. Identity with [`Self::device_get_texture_1d_linear_max_width`].
+    /// Query; legal during capture. Distinct from [`Self::mem_device_get_luid`].
+    /// This VM does not invent occupancy SM counts this slice.
+    pub fn mem_device_get_texture_1d_linear_max_width(
+        &self,
+        device: DeviceId,
+    ) -> Result<u64, SimError> {
+        self.device_get_texture_1d_linear_max_width(device)
     }
 
     /// `cuDeviceGetByUuid`. Query; legal during capture.
