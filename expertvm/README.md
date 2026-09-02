@@ -788,6 +788,7 @@ compiled kernel exists; no Engine flag).
 `gpu-sim` `stream_set_priority` is `cuStreamSetAttribute` priority (identity with `set_stream_priority`; no Engine flag).
 `gpu-sim` `stream_set_blocking` is `cuStreamCreate` blocking (identity with `set_stream_blocking`; no Engine flag).
 `gpu-sim` `get_func_attributes` is `cuFuncGetAttributes` (identity with `func_get_attributes`; no Engine flag).
+`gpu-sim` `get_device_name` is `cuDeviceGetName` (identity with `device_get_name`; no Engine flag).
 `gpu-sim` `mem_alloc` is `cuMemAlloc` (identity with `malloc`; no Engine flag).
 `gpu-sim` `mem_free` is `cuMemFree` (identity with `free_sync`; no Engine flag).
 `gpu-sim` `mem_free_host` is `cuMemFreeHost` (identity with `free_host_pinned`; no Engine flag).
@@ -1100,6 +1101,7 @@ compiled kernel exists; no Engine flag).
 `gpu-sim` `stream_set_priority` is `cuStreamSetAttribute` priority (identity with `set_stream_priority`; no Engine flag).
 `gpu-sim` `stream_set_blocking` is `cuStreamCreate` blocking (identity with `set_stream_blocking`; no Engine flag).
 `gpu-sim` `get_func_attributes` is `cuFuncGetAttributes` (identity with `func_get_attributes`; no Engine flag).
+`gpu-sim` `get_device_name` is `cuDeviceGetName` (identity with `device_get_name`; no Engine flag).
 `gpu-sim` `func_is_loaded` is `cuFuncIsLoaded` (`false` until a compiled
 kernel exists; no Engine flag).
 `gpu-sim` `func_load` is `cuFuncLoad` (Invalid; no compiled kernel; no

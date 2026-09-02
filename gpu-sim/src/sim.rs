@@ -24532,9 +24532,20 @@ impl Sim {
     ///
     /// The profile name ([`HardwareProfile::name`]; same as
     /// [`DeviceProperties::name`]). Unknown devices are Invalid.
+    /// Driver `cuDeviceGetName` is [`Self::get_device_name`].
+    /// Identity wrap [`Self::get_device_name`].
     pub fn device_get_name(&self, device: DeviceId) -> Result<String, SimError> {
         let _gpu = self.profile.gpu(device)?;
         Ok(self.profile.name.clone())
+    }
+
+    /// `cuDeviceGetName`. Identity with
+    /// [`Self::device_get_name`] (`cudaDeviceGetName`).
+    ///
+    /// Query; legal during capture. Distinct from [`Self::get_func_attributes`].
+    /// This VM does not invent occupancy SM counts this slice.
+    pub fn get_device_name(&self, device: DeviceId) -> Result<String, SimError> {
+        self.device_get_name(device)
     }
 
     /// `cuDeviceGetUuid` / `cudaDeviceGetUuid`. Query; legal during capture.
@@ -31109,7 +31120,6 @@ impl Sim {
     /// [`Self::func_get_attributes`] (`cudaFuncGetAttributes`).
     ///
     /// Query; legal during capture. Distinct from [`Self::stream_set_blocking`].
-    /// This VM does not invent occupancy SM counts this slice.
     pub fn get_func_attributes(&self, device: DeviceId) -> Result<FuncAttributes, SimError> {
         self.func_get_attributes(device)
     }
