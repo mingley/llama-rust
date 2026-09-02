@@ -135,6 +135,7 @@ warp scheduler, L1, …   ← do not model
 | graph launch amortizes per-kernel launch overhead | `graph_launch_ns` |
 | `synchronize_stream` waits one stream only | other streams keep running |
 | `synchronize_event` waits the record only | later ops on that stream keep running |
+| `event_synchronize` is identity with `synchronize_event` | `cuEventSynchronize` |
 | `idle_until` drains, then jumps the clock | GPU idle until the next arrival |
 | `event_elapsed_ns` is record-to-record delta | `cudaEventElapsedTime` (ns) |
 | `cudaEventDisableTiming` forbids elapsed | wait / query still work |
@@ -1067,6 +1068,7 @@ streams (`cudaStreamCreate`). Created streams default to
 `synchronize_stream` is `cudaStreamSynchronize`. `synchronize_device` is
 `cudaDeviceSynchronize` (one GPU; other GPUs keep running).
 `synchronize_event` is `cudaEventSynchronize` (later ops on that stream keep running).
+`event_synchronize` is `cuEventSynchronize` (identity with `synchronize_event`). No Engine `--event-synchronize`.
 `idle_until` drains in-flight work, then jumps the virtual clock so an
 open-loop arrival can wait without `sleep`.
 `event_elapsed_ns` is `cudaEventElapsedTime` in nanoseconds (both records

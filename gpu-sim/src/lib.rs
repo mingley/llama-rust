@@ -101,6 +101,8 @@
 //! ctx.
 //! [`Sim::synchronize_device`] is `cudaDeviceSynchronize` (one GPU).
 //! [`Sim::synchronize_event`] is `cudaEventSynchronize`.
+//! [`event_synchronize`](Sim::event_synchronize) is `cuEventSynchronize` (identity with
+//! [`synchronize_event`](Sim::synchronize_event)). No Engine `--event-synchronize`.
 //! [`Sim::alloc`] / [`memcpy`](Sim::memcpy) / [`free`](Sim::free) are
 //! stream-ordered (`cudaMallocAsync` / `cudaMemcpyAsync` / `cudaFreeAsync`)
 //! except pageable [`Place::Host`] copies, which wait the stream (CUDA bounce
@@ -32383,6 +32385,35 @@ mod tests {
             Err(SimError::Invalid { why }) => assert!(why.contains("capture"), "{why}"),
             other => panic!("{other:?}"),
         }
+        let _g = sim.end_capture().unwrap();
+        sim.free_sync(a).unwrap();
+    }
+
+    #[test]
+    fn event_synchronize_is_cu_event_synchronize() {
+        let mut sim = Sim::new(h100());
+        let d = DeviceId(0);
+        let s = StreamId(0);
+        let ev = EventId(4);
+        match sim.event_synchronize(ev) {
+            Err(SimError::UnknownEvent { event: 4 }) => {}
+            other => panic!("{other:?}"),
+        }
+        match sim.synchronize_event(ev) {
+            Err(SimError::UnknownEvent { event: 4 }) => {}
+            other => panic!("{other:?}"),
+        }
+        sim.create_event(ev).unwrap();
+        let a = sim.alloc(d, 4096, s).unwrap();
+        enq(sim.kernel(d, KernelKind::other(1 << 20, 4096), &[a], &[a], s));
+        enq(sim.record_event(d, ev, s));
+        assert!(!sim.event_query(ev).unwrap());
+        sim.event_synchronize(ev).unwrap();
+        assert!(sim.event_query(ev).unwrap());
+        sim.synchronize_event(ev).unwrap();
+        sim.begin_capture(d, s).unwrap();
+        sim.event_synchronize(ev).unwrap();
+        sim.synchronize_event(ev).unwrap();
         let _g = sim.end_capture().unwrap();
         sim.free_sync(a).unwrap();
     }

@@ -5,6 +5,15 @@ Visible five-turn extract: [docs/chatgpt-share-6a920fe1.md](docs/chatgpt-share-6
 Complete share-API extract: [docs/chatgpt-share-6a920fe1/](docs/chatgpt-share-6a920fe1/).
 Work lands on `main`. No PRs.
 
+## Shipped 2026-09-02 — CUDA `cuEventSynchronize`
+
+`gpu-sim` `Sim::event_synchronize` is `cuEventSynchronize`.
+Identity with `synchronize_event` (`cudaEventSynchronize`). Waits the
+record only. Unknown ids are UnknownEvent. Distinct from
+`synchronize_stream`.
+This VM does not invent `cuStreamSynchronize` or Engine `--event-synchronize`.
+`gpu-profile capture` is still refused. Dual score still has no `$/M tokens`.
+
 ## Shipped 2026-09-02 — CUDA `cuStreamQuery`
 
 `gpu-sim` `Sim::stream_query` is `cuStreamQuery`.

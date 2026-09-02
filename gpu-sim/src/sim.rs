@@ -23826,6 +23826,16 @@ impl Sim {
         Ok(())
     }
 
+    /// `cuEventSynchronize`. Identity with [`Self::synchronize_event`]
+    /// (`cudaEventSynchronize`).
+    ///
+    /// Waits the record only. Unknown ids are [`SimError::UnknownEvent`]. This
+    /// VM does not invent `cuStreamSynchronize` this slice
+    /// (`synchronize_stream` stays).
+    pub fn event_synchronize(&mut self, event: EventId) -> Result<(), SimError> {
+        self.synchronize_event(event)
+    }
+
     /// `cudaEventElapsedTime` in nanoseconds (this crate is ns, not milliseconds).
     ///
     /// Both events must be recorded, complete, and created with timing enabled.
