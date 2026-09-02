@@ -10791,8 +10791,7 @@ impl Sim {
     /// [`Self::graph_add_set_conditional`] (graph-build `cudaGraphSetConditional`).
     ///
     /// Capture refused. Distinct from
-    /// [`Self::add_graph_switch`]. This VM does not invent
-    /// occupancy SM counts this slice.
+    /// [`Self::add_graph_switch`].
     pub fn add_graph_set_conditional(
         &mut self,
         graph: GraphId,
@@ -10978,7 +10977,9 @@ impl Sim {
     /// `cuStreamWriteValue64` as a `cudaGraphAddBatchMemOpNode`.
     ///
     /// Capture cannot include it (use [`Self::write_value64`] during capture).
-    /// Illegal on an instantiated exec.
+    /// Illegal on an instantiated exec. Driver
+    /// graph `cuStreamWriteValue64` is
+    /// [`Self::add_graph_write_value64`].
     pub fn graph_add_write_value64(
         &mut self,
         graph: GraphId,
@@ -10995,6 +10996,23 @@ impl Sim {
                 bits32: false,
             },
         )
+    }
+
+    /// Graph `cuStreamWriteValue64`. Identity with
+    /// [`Self::graph_add_write_value64`] (`cuStreamWriteValue64` as
+    /// `cudaGraphAddBatchMemOpNode`).
+    ///
+    /// Capture refused. Distinct from
+    /// [`Self::add_graph_set_conditional`]. This VM does not invent
+    /// occupancy SM counts this slice.
+    pub fn add_graph_write_value64(
+        &mut self,
+        graph: GraphId,
+        id: AllocId,
+        offset: u64,
+        value: u64,
+    ) -> Result<(), SimError> {
+        self.graph_add_write_value64(graph, id, offset, value)
     }
 
     /// `cuStreamWriteValue32` as a `cudaGraphAddBatchMemOpNode`.
