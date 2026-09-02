@@ -10194,15 +10194,16 @@ impl Sim {
     /// [`Self::graph_add_memcpy_2d`] (`cudaGraphAddMemcpyNode` 2D).
     ///
     /// Capture refused. Distinct from
-    /// [`Self::add_graph_memcpy_1d`]. This VM does not invent
-    /// occupancy SM counts this slice.
+    /// [`Self::add_graph_memcpy_1d`].
     pub fn add_graph_memcpy_2d(&mut self, graph: GraphId, op: MemcpyOp) -> Result<(), SimError> {
         self.graph_add_memcpy_2d(graph, op)
     }
 
     /// `cudaGraphAddMemcpyNode` whose [`MemcpyOp`] is [`MemcpyOp::is_3d`]
     /// (`depth > 1`). Other extents Invalid `"memcpy3d depth"`. Typed
-    /// [`Self::graph_add_memcpy`] stays.
+    /// [`Self::graph_add_memcpy`] stays. Driver
+    /// 3D `cuGraphAddMemcpyNode` is
+    /// [`Self::add_graph_memcpy_3d`].
     pub fn graph_add_memcpy_3d(&mut self, graph: GraphId, op: MemcpyOp) -> Result<(), SimError> {
         if !op.is_3d() {
             return Err(SimError::Invalid {
@@ -10210,6 +10211,16 @@ impl Sim {
             });
         }
         self.graph_add_memcpy(graph, op)
+    }
+
+    /// 3D `cuGraphAddMemcpyNode`. Identity with
+    /// [`Self::graph_add_memcpy_3d`] (`cudaGraphAddMemcpyNode` 3D).
+    ///
+    /// Capture refused. Distinct from
+    /// [`Self::add_graph_memcpy_2d`]. This VM does not invent
+    /// occupancy SM counts this slice.
+    pub fn add_graph_memcpy_3d(&mut self, graph: GraphId, op: MemcpyOp) -> Result<(), SimError> {
+        self.graph_add_memcpy_3d(graph, op)
     }
 
     /// `cudaGraphAddMemsetNode` of a [`KernelBuf`] span (packed 1D).
