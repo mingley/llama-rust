@@ -33815,6 +33815,7 @@ mod tests {
             Err(SimError::Invalid { why }) => assert!(why.contains("managed"), "{why}"),
             other => panic!("{other:?}"),
         }
+        sim.free_sync(a).unwrap();
         let m = sim.mem_alloc_managed(4096, MemAttachFlags::GLOBAL).unwrap();
         match sim.mem_prefetch(DeviceId(99), m, s) {
             Err(SimError::Invalid { why }) => assert!(why.contains("device"), "{why}"),
@@ -33836,7 +33837,6 @@ mod tests {
         enq(sim.prefetch(d, m, s));
         let g = sim.end_capture().unwrap();
         assert_eq!(sim.graph_len(g).unwrap(), 2);
-        sim.free_sync(a).unwrap();
         sim.free_sync(m).unwrap();
     }
 
