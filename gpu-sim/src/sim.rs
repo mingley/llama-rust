@@ -27610,7 +27610,6 @@ impl Sim {
     /// [`Self::record_event_external`] (`cudaEventRecordWithFlags` External).
     ///
     /// Capture legal. Distinct from [`Self::event_record_with_flags`].
-    /// This VM does not invent occupancy SM counts this slice.
     pub fn event_record_external(
         &mut self,
         device: DeviceId,
@@ -27703,6 +27702,8 @@ impl Sim {
     /// the graph. Graph replay waits for a live record of `event`, not a
     /// [`Self::record_event_external`] node in the same graph. Live this matches
     /// [`Self::wait_event`].
+    /// Driver `cuStreamWaitEvent` external is [`Self::stream_wait_event_external`].
+    /// Identity wrap [`Self::stream_wait_event_external`].
     pub fn wait_event_external(
         &mut self,
         device: DeviceId,
@@ -27710,6 +27711,20 @@ impl Sim {
         stream: StreamId,
     ) -> Result<OpId, SimError> {
         self.wait_event_with_flags(device, event, stream, EventWaitFlags::EXTERNAL)
+    }
+
+    /// `cuStreamWaitEvent` external. Identity with
+    /// [`Self::wait_event_external`] (`cudaStreamWaitEvent` WaitExternal).
+    ///
+    /// Capture legal. Distinct from [`Self::stream_wait_event_with_flags`].
+    /// This VM does not invent occupancy SM counts this slice.
+    pub fn stream_wait_event_external(
+        &mut self,
+        device: DeviceId,
+        event: EventId,
+        stream: StreamId,
+    ) -> Result<OpId, SimError> {
+        self.wait_event_external(device, event, stream)
     }
 
     /// `cudaStreamWaitEvent` with flags. Unknown bits are Invalid

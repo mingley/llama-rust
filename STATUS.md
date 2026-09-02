@@ -5,6 +5,13 @@ Visible five-turn extract: [docs/chatgpt-share-6a920fe1.md](docs/chatgpt-share-6
 Complete share-API extract: [docs/chatgpt-share-6a920fe1/](docs/chatgpt-share-6a920fe1/).
 Work lands on `main`. No PRs.
 
+## Shipped 2026-09-02 — CUDA `cuStreamWaitEvent` external
+
+`gpu-sim` `Sim::stream_wait_event_external` is `cuStreamWaitEvent` external.
+Identity with `wait_event_external` (`cudaStreamWaitEvent` WaitExternal). Capture legal. Distinct from `stream_wait_event_with_flags`.
+This VM does not invent occupancy SM counts or Engine `--stream-wait-event-external`.
+`gpu-profile capture` is still refused. Dual score still has no `$/M tokens`.
+
 ## Shipped 2026-09-02 — CUDA `cuEventRecordWithFlags` external
 
 `gpu-sim` `Sim::event_record_external` is `cuEventRecordWithFlags` external.
