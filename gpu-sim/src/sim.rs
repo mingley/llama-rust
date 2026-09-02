@@ -19280,6 +19280,8 @@ impl Sim {
     }
 
     /// Unmap one exact `(device, offset, bytes)` physical. The VA stays reserved.
+    /// Driver `cuMemUnmap` range is [`Self::mem_unmap_range`].
+    /// Identity wrap [`Self::mem_unmap_range`].
     pub fn va_unmap_range(
         &mut self,
         id: AllocId,
@@ -19315,6 +19317,21 @@ impl Sim {
             self.drop_multicast_va(id);
         }
         Ok(())
+    }
+
+    /// `cuMemUnmap` range. Identity with
+    /// [`Self::va_unmap_range`] (`cuMemUnmap` range).
+    ///
+    /// Capture refused. Distinct from [`Self::mem_address_free_with_size`].
+    /// This VM does not invent occupancy SM counts this slice.
+    pub fn mem_unmap_range(
+        &mut self,
+        id: AllocId,
+        device: DeviceId,
+        offset: u64,
+        bytes: u64,
+    ) -> Result<(), SimError> {
+        self.va_unmap_range(id, device, offset, bytes)
     }
 
     /// `cuMemSetAccess` PROT_READ on `device` for a mapped VMM VA.
@@ -19600,7 +19617,6 @@ impl Sim {
     /// [`Self::va_free_with_size`] (`cuMemAddressFree` size).
     ///
     /// Capture refused. Distinct from [`Self::mem_address_free`].
-    /// This VM does not invent occupancy SM counts this slice.
     pub fn mem_address_free_with_size(&mut self, id: AllocId, size: u64) -> Result<(), SimError> {
         self.va_free_with_size(id, size)
     }
