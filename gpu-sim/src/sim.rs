@@ -16632,9 +16632,7 @@ impl Sim {
     /// Host dest `cuMemPrefetchAsync`. Identity with [`Self::prefetch_host`]
     /// (`cudaMemPrefetchAsync` cpu device).
     ///
-    /// Capture-legal (memcpy). Distinct from [`Self::mem_prefetch`]. This VM
-    /// does not invent `mem_prefetch_host_n` this slice
-    /// (`prefetch_host_with_size` stays).
+    /// Capture-legal (memcpy). Distinct from [`Self::mem_prefetch`].
     pub fn mem_prefetch_host(
         &mut self,
         device: DeviceId,
@@ -16649,6 +16647,7 @@ impl Sim {
     /// `size` must equal the allocation bytes. Other sizes Invalid
     /// `"prefetch size"`. Partial prefetch is not modeled. Typed
     /// [`Self::prefetch_host`] stays. Capture may record it.
+    /// Driver host dest `cuMemPrefetchAsync` count is [`Self::mem_prefetch_host_n`].
     pub fn prefetch_host_with_size(
         &mut self,
         device: DeviceId,
@@ -16679,6 +16678,22 @@ impl Sim {
             },
             stream,
         )
+    }
+
+    /// Host dest `cuMemPrefetchAsync` count. Identity with
+    /// [`Self::prefetch_host_with_size`] (`cudaMemPrefetchAsync` cpu count).
+    ///
+    /// Capture-legal (memcpy). Distinct from [`Self::mem_prefetch_host`]. This
+    /// VM does not invent `mem_advise_v2` this slice
+    /// (`mem_advise_with_location` stays).
+    pub fn mem_prefetch_host_n(
+        &mut self,
+        device: DeviceId,
+        alloc: AllocId,
+        size: u64,
+        stream: StreamId,
+    ) -> Result<OpId, SimError> {
+        self.prefetch_host_with_size(device, alloc, size, stream)
     }
 
     /// `cudaMemPrefetchAsync` / `cuMemPrefetchAsync_v2` with a flags word.

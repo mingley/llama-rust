@@ -193,6 +193,9 @@
 //! [`mem_prefetch_host`](Sim::mem_prefetch_host) is host dest `cuMemPrefetchAsync` (identity with
 //! [`prefetch_host`](Sim::prefetch_host)). Capture-legal (memcpy). Distinct from
 //! [`mem_prefetch`](Sim::mem_prefetch). No Engine `--mem-prefetch-host`.
+//! [`mem_prefetch_host_n`](Sim::mem_prefetch_host_n) is host dest `cuMemPrefetchAsync` count (identity with
+//! [`prefetch_host_with_size`](Sim::prefetch_host_with_size)). Capture-legal (memcpy). Distinct from
+//! [`mem_prefetch_host`](Sim::mem_prefetch_host). No Engine `--mem-prefetch-host-n`.
 //! [`Sim::ipc_get_event`] / [`ipc_open_event`](Sim::ipc_open_event) are
 //! `cudaIpcGetEventHandle` / `cudaIpcOpenEventHandle` (interprocess events).
 //! [`Sim::create_shareable_pool`] is `cudaMemPoolCreate` with a POSIX-FD handle
@@ -594,6 +597,9 @@
 //! [`mem_prefetch_host`](Sim::mem_prefetch_host) is host dest `cuMemPrefetchAsync` (identity with
 //! [`prefetch_host`](Sim::prefetch_host)). Capture-legal (memcpy). Distinct from
 //! [`mem_prefetch`](Sim::mem_prefetch). No Engine `--mem-prefetch-host`.
+//! [`mem_prefetch_host_n`](Sim::mem_prefetch_host_n) is host dest `cuMemPrefetchAsync` count (identity with
+//! [`prefetch_host_with_size`](Sim::prefetch_host_with_size)). Capture-legal (memcpy). Distinct from
+//! [`mem_prefetch_host`](Sim::mem_prefetch_host). No Engine `--mem-prefetch-host-n`.
 //! [`mem_host_get_flags`](Sim::mem_host_get_flags) is `cuMemHostGetFlags` (identity with
 //! [`host_get_flags`](Sim::host_get_flags)). Query; legal during capture. No Engine `--mem-host-get-flags`.
 //! [`mem_host_get_device_pointer`](Sim::mem_host_get_device_pointer) is `cuMemHostGetDevicePointer` (identity with
@@ -645,6 +651,9 @@
 //! [`mem_prefetch_host`](Sim::mem_prefetch_host) is host dest `cuMemPrefetchAsync` (identity with
 //! [`prefetch_host`](Sim::prefetch_host)). Capture-legal (memcpy). Distinct from
 //! [`mem_prefetch`](Sim::mem_prefetch). No Engine `--mem-prefetch-host`.
+//! [`mem_prefetch_host_n`](Sim::mem_prefetch_host_n) is host dest `cuMemPrefetchAsync` count (identity with
+//! [`prefetch_host_with_size`](Sim::prefetch_host_with_size)). Capture-legal (memcpy). Distinct from
+//! [`mem_prefetch_host`](Sim::mem_prefetch_host). No Engine `--mem-prefetch-host-n`.
 //! [`Sim::pointer_get_attributes`] is `cudaPointerGetAttributes`.
 //! [`pointer_set_attribute`](Sim::pointer_set_attribute) /
 //! [`pointer_get_attribute`](Sim::pointer_get_attribute) are
@@ -34036,6 +34045,66 @@ mod tests {
         sim.begin_capture(d, s).unwrap();
         enq(sim.mem_prefetch_host(d, m, s));
         enq(sim.prefetch_host(d, m, s));
+        let g = sim.end_capture().unwrap();
+        assert_eq!(sim.graph_len(g).unwrap(), 2);
+        sim.free_sync(m).unwrap();
+    }
+
+    #[test]
+    fn mem_prefetch_host_n_is_cu_mem_prefetch_async_cpu_count() {
+        let mut sim = Sim::new(h100());
+        let d = DeviceId(0);
+        let s = StreamId(0);
+        match sim.mem_prefetch_host_n(d, AllocId(99), 4096, s) {
+            Err(SimError::UnknownAlloc { alloc }) => assert_eq!(alloc, AllocId(99)),
+            other => panic!("{other:?}"),
+        }
+        match sim.prefetch_host_with_size(d, AllocId(99), 4096, s) {
+            Err(SimError::UnknownAlloc { alloc }) => assert_eq!(alloc, AllocId(99)),
+            other => panic!("{other:?}"),
+        }
+        let a = sim.malloc(d, 4096).unwrap();
+        match sim.mem_prefetch_host_n(d, a, 4096, s) {
+            Err(SimError::Invalid { why }) => assert!(why.contains("managed"), "{why}"),
+            other => panic!("{other:?}"),
+        }
+        match sim.prefetch_host_with_size(d, a, 4096, s) {
+            Err(SimError::Invalid { why }) => assert!(why.contains("managed"), "{why}"),
+            other => panic!("{other:?}"),
+        }
+        sim.free_sync(a).unwrap();
+        let m = sim.mem_alloc_managed(4096, MemAttachFlags::GLOBAL).unwrap();
+        match sim.mem_prefetch_host_n(d, m, 2048, s) {
+            Err(SimError::Invalid { why }) => assert!(why.contains("prefetch size"), "{why}"),
+            other => panic!("{other:?}"),
+        }
+        match sim.prefetch_host_with_size(d, m, 2048, s) {
+            Err(SimError::Invalid { why }) => assert!(why.contains("prefetch size"), "{why}"),
+            other => panic!("{other:?}"),
+        }
+        match sim.mem_prefetch_host_n(DeviceId(99), m, 4096, s) {
+            Err(SimError::Invalid { why }) => assert!(why.contains("device"), "{why}"),
+            other => panic!("{other:?}"),
+        }
+        match sim.prefetch_host_with_size(DeviceId(99), m, 4096, s) {
+            Err(SimError::Invalid { why }) => assert!(why.contains("device"), "{why}"),
+            other => panic!("{other:?}"),
+        }
+        enq(sim.mem_prefetch(d, m, s));
+        sim.synchronize_stream(d, s).unwrap();
+        assert!(sim.is_resident(m, d).unwrap());
+        enq(sim.mem_prefetch_host_n(d, m, 4096, s));
+        sim.synchronize_stream(d, s).unwrap();
+        assert!(!sim.is_resident(m, d).unwrap());
+        assert_eq!(sim.hbm_used(d).unwrap(), 0);
+        enq(sim.prefetch(d, m, s));
+        sim.synchronize_stream(d, s).unwrap();
+        enq(sim.prefetch_host_with_size(d, m, 4096, s));
+        sim.synchronize_stream(d, s).unwrap();
+        assert!(!sim.is_resident(m, d).unwrap());
+        sim.begin_capture(d, s).unwrap();
+        enq(sim.mem_prefetch_host_n(d, m, 4096, s));
+        enq(sim.prefetch_host_with_size(d, m, 4096, s));
         let g = sim.end_capture().unwrap();
         assert_eq!(sim.graph_len(g).unwrap(), 2);
         sim.free_sync(m).unwrap();
