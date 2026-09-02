@@ -1197,6 +1197,8 @@
 //! [`tex_ref_get_filter_mode`](Sim::tex_ref_get_filter_mode) is
 //! `cuTexRefGetFilterMode` (always Invalid `"texref getfilt"`). Query; legal
 //! during capture. No Engine `--texref-getfilt`.
+//! [`tex_ref_get_format`](Sim::tex_ref_get_format) is `cuTexRefGetFormat`
+//! (always Invalid `"texref getfmt"`). Query; legal during capture. No Engine `--texref-getfmt`.
 //! [`module_get_surf_ref`](Sim::module_get_surf_ref) is `cuModuleGetSurfRef` (always Invalid
 //! `"module surfref"`). Query; legal during capture. No Engine `--module-surfref`.
 //! [`library_load_data`](Sim::library_load_data) is `cuLibraryLoadData`
@@ -20912,6 +20914,64 @@ mod tests {
             Err(SimError::Invalid { why }) => {
                 assert!(why.contains("texture desc"), "{why}");
                 assert!(!why.contains("texref getfilt"), "{why}");
+            }
+            other => panic!("{other:?}"),
+        }
+        match sim.tex_ref_get_format(d) {
+            Err(SimError::Invalid { why }) => {
+                assert!(why.contains("texref getfmt"), "{why}");
+                assert!(!why.contains("texref getfilt"), "{why}");
+                assert!(!why.contains("texref format"), "{why}");
+            }
+            other => panic!("{other:?}"),
+        }
+    }
+
+    #[test]
+    fn tex_ref_get_format_is_unsupported() {
+        let mut sim = Sim::new(h100());
+        let d = DeviceId(0);
+        match sim.tex_ref_get_format(d) {
+            Err(SimError::Invalid { why }) => {
+                assert!(why.contains("texref getfmt"), "{why}");
+                assert!(!why.contains("texref getfilt"), "{why}");
+                assert!(!why.contains("texref format"), "{why}");
+                assert!(!why.contains("texref getmode"), "{why}");
+            }
+            other => panic!("{other:?}"),
+        }
+        sim.begin_capture(d, StreamId(0)).unwrap();
+        match sim.tex_ref_get_format(d) {
+            Err(SimError::Invalid { why }) => {
+                assert!(why.contains("texref getfmt"), "{why}");
+            }
+            other => panic!("{other:?}"),
+        }
+        let _g = sim.end_capture().unwrap();
+        match sim.tex_ref_get_format(DeviceId(99)) {
+            Err(SimError::Invalid { why }) => {
+                assert!(why.contains("device not in profile"), "{why}");
+            }
+            other => panic!("{other:?}"),
+        }
+        match sim.tex_ref_get_filter_mode(d) {
+            Err(SimError::Invalid { why }) => {
+                assert!(why.contains("texref getfilt"), "{why}");
+                assert!(!why.contains("texref getfmt"), "{why}");
+            }
+            other => panic!("{other:?}"),
+        }
+        match sim.tex_ref_set_format(d) {
+            Err(SimError::Invalid { why }) => {
+                assert!(why.contains("texref format"), "{why}");
+                assert!(!why.contains("texref getfmt"), "{why}");
+            }
+            other => panic!("{other:?}"),
+        }
+        match sim.tex_ref_get_address_mode(d) {
+            Err(SimError::Invalid { why }) => {
+                assert!(why.contains("texref getmode"), "{why}");
+                assert!(!why.contains("texref getfmt"), "{why}");
             }
             other => panic!("{other:?}"),
         }
