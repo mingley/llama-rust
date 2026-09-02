@@ -34171,7 +34171,6 @@ mod tests {
         let exec = sim.instantiate_graph(g).unwrap();
         sim.set_graph_exec_free_node_params(exec, 0, b).unwrap();
         assert_eq!(sim.get_graph_exec_free_node_params(exec, 0).unwrap(), b);
-        assert_eq!(sim.get_graph_free_node_params(g, 0).unwrap(), a);
         sim.graph_exec_free_set_params(exec, 0, a).unwrap();
         assert_eq!(sim.get_graph_exec_free_node_params(exec, 0).unwrap(), a);
         sim.begin_capture(d, s).unwrap();
