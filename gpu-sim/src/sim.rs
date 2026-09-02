@@ -16230,7 +16230,6 @@ impl Sim {
     /// [`Self::create_pool_with_props`] (`cudaMemPoolCreate` with [`MemPoolProps`]).
     ///
     /// Capture refused. Distinct from [`Self::mem_pool_create_shareable`].
-    /// This VM does not invent occupancy SM counts this slice.
     pub fn mem_pool_create_with_props(&mut self, props: MemPoolProps) -> Result<PoolId, SimError> {
         self.create_pool_with_props(props)
     }
@@ -16254,6 +16253,8 @@ impl Sim {
     /// to [`Self::default_pool`]. The default and graph-memory pools cannot be
     /// destroyed. A destroyed handle is Invalid for alloc/export/get/set and
     /// [`Self::pool_get_id`].
+    /// Driver `cuMemPoolDestroy` is [`Self::mem_pool_destroy`].
+    /// Identity wrap [`Self::mem_pool_destroy`].
     pub fn destroy_pool(&mut self, pool: PoolId) -> Result<(), SimError> {
         self.fail_if_capturing("cannot capture mempool")?;
         self.refuse_graph_pool(pool)?;
@@ -16282,6 +16283,15 @@ impl Sim {
         self.share_handles.retain(|_, src| *src != pool);
         self.clock = self.clock.saturating_add(self.first_alloc_ns().max(1));
         Ok(())
+    }
+
+    /// `cuMemPoolDestroy`. Identity with
+    /// [`Self::destroy_pool`] (`cudaMemPoolDestroy`).
+    ///
+    /// Capture refused. Distinct from [`Self::mem_pool_create_with_props`].
+    /// This VM does not invent occupancy SM counts this slice.
+    pub fn mem_pool_destroy(&mut self, pool: PoolId) -> Result<(), SimError> {
+        self.destroy_pool(pool)
     }
 
     /// `cudaMallocFromPoolAsync`. `pool` must belong to `device`.
