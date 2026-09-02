@@ -250,6 +250,9 @@
 //! [`mem_cpy_peer`](Sim::mem_cpy_peer) is `cuMemcpyPeer` (identity with
 //! [`memcpy_peer`](Sim::memcpy_peer)). Capture refused. Distinct from
 //! [`memcpy_peer_async`](Sim::memcpy_peer_async). No Engine `--mem-cpy-peer`.
+//! [`mem_cpy_peer_async`](Sim::mem_cpy_peer_async) is `cuMemcpyPeerAsync` (identity with
+//! [`memcpy_peer_async`](Sim::memcpy_peer_async)). Capture-legal. Distinct from
+//! [`mem_cpy_peer`](Sim::mem_cpy_peer). No Engine `--mem-cpy-peer-async`.
 //! [`Sim::ipc_get_event`] / [`ipc_open_event`](Sim::ipc_open_event) are
 //! `cudaIpcGetEventHandle` / `cudaIpcOpenEventHandle` (interprocess events).
 //! [`Sim::create_shareable_pool`] is `cudaMemPoolCreate` with a POSIX-FD handle
@@ -708,6 +711,9 @@
 //! [`mem_cpy_peer`](Sim::mem_cpy_peer) is `cuMemcpyPeer` (identity with
 //! [`memcpy_peer`](Sim::memcpy_peer)). Capture refused. Distinct from
 //! [`memcpy_peer_async`](Sim::memcpy_peer_async). No Engine `--mem-cpy-peer`.
+//! [`mem_cpy_peer_async`](Sim::mem_cpy_peer_async) is `cuMemcpyPeerAsync` (identity with
+//! [`memcpy_peer_async`](Sim::memcpy_peer_async)). Capture-legal. Distinct from
+//! [`mem_cpy_peer`](Sim::mem_cpy_peer). No Engine `--mem-cpy-peer-async`.
 //! [`mem_host_get_flags`](Sim::mem_host_get_flags) is `cuMemHostGetFlags` (identity with
 //! [`host_get_flags`](Sim::host_get_flags)). Query; legal during capture. No Engine `--mem-host-get-flags`.
 //! [`mem_host_get_device_pointer`](Sim::mem_host_get_device_pointer) is `cuMemHostGetDevicePointer` (identity with
@@ -816,6 +822,9 @@
 //! [`mem_cpy_peer`](Sim::mem_cpy_peer) is `cuMemcpyPeer` (identity with
 //! [`memcpy_peer`](Sim::memcpy_peer)). Capture refused. Distinct from
 //! [`memcpy_peer_async`](Sim::memcpy_peer_async). No Engine `--mem-cpy-peer`.
+//! [`mem_cpy_peer_async`](Sim::mem_cpy_peer_async) is `cuMemcpyPeerAsync` (identity with
+//! [`memcpy_peer_async`](Sim::memcpy_peer_async)). Capture-legal. Distinct from
+//! [`mem_cpy_peer`](Sim::mem_cpy_peer). No Engine `--mem-cpy-peer-async`.
 //! [`Sim::pointer_get_attributes`] is `cudaPointerGetAttributes`.
 //! [`pointer_set_attribute`](Sim::pointer_set_attribute) /
 //! [`pointer_get_attribute`](Sim::pointer_get_attribute) are
@@ -35401,6 +35410,42 @@ mod tests {
             other => panic!("{other:?}"),
         }
         let _g = sim.end_capture().unwrap();
+        sim.free_sync(a).unwrap();
+    }
+
+    #[test]
+    fn mem_cpy_peer_async_is_cu_memcpy_peer_async() {
+        let mut sim = Sim::new(HardwareProfile::example_8xh100_nvlink());
+        let d0 = DeviceId(0);
+        let d1 = DeviceId(1);
+        let s = StreamId(0);
+        match sim.mem_cpy_peer_async(d0, d1, AllocId(99), 4096, s) {
+            Err(SimError::UnknownAlloc { alloc }) => assert_eq!(alloc, AllocId(99)),
+            other => panic!("{other:?}"),
+        }
+        match sim.memcpy_peer_async(d0, d1, AllocId(99), 4096, s) {
+            Err(SimError::UnknownAlloc { alloc }) => assert_eq!(alloc, AllocId(99)),
+            other => panic!("{other:?}"),
+        }
+        let a = sim.malloc(d0, 4096).unwrap();
+        match sim.mem_cpy_peer_async(DeviceId(99), d1, a, 4096, s) {
+            Err(SimError::Invalid { why }) => assert!(why.contains("device"), "{why}"),
+            other => panic!("{other:?}"),
+        }
+        match sim.memcpy_peer_async(DeviceId(99), d1, a, 4096, s) {
+            Err(SimError::Invalid { why }) => assert!(why.contains("device"), "{why}"),
+            other => panic!("{other:?}"),
+        }
+        enq(sim.mem_cpy_peer_async(d0, d1, a, 4096, s));
+        sim.synchronize_stream(d0, s).unwrap();
+        assert!(sim.is_resident(a, d1).unwrap());
+        enq(sim.memcpy_peer_async(d0, d1, a, 4096, s));
+        sim.synchronize_stream(d0, s).unwrap();
+        sim.begin_capture(d0, s).unwrap();
+        enq(sim.mem_cpy_peer_async(d0, d1, a, 4096, s));
+        enq(sim.memcpy_peer_async(d0, d1, a, 4096, s));
+        let g = sim.end_capture().unwrap();
+        assert_eq!(sim.graph_len(g).unwrap(), 2);
         sim.free_sync(a).unwrap();
     }
 
