@@ -5941,8 +5941,7 @@ impl Sim {
     /// [`Self::graph_memset_set_params`] (`cudaGraphMemsetNodeSetParams`).
     ///
     /// Capture refused. Distinct from
-    /// [`Self::get_graph_memset_node_params`]. This VM does not invent
-    /// occupancy SM counts this slice.
+    /// [`Self::get_graph_memset_node_params`].
     pub fn set_graph_memset_node_params(
         &mut self,
         graph: GraphId,
@@ -6772,7 +6771,9 @@ impl Sim {
     /// flag. Capture cannot include it. Graphs with mem alloc/free nodes are
     /// legal (unlike [`Self::update_graph`]). [`KernelBuf`] converts to a
     /// packed 1D [`MemsetOp`]. Extra [`Self::graph_exec_memset_set_params_2d`]
-    /// plus [`Self::graph_exec_memset_set_params_3d`] stay legal.
+    /// plus [`Self::graph_exec_memset_set_params_3d`] stay legal. Driver
+    /// `cuGraphExecMemsetNodeSetParams` is
+    /// [`Self::set_graph_exec_memset_node_params`].
     pub fn graph_exec_memset_set_params(
         &mut self,
         exec: GraphId,
@@ -6780,6 +6781,21 @@ impl Sim {
         op: impl Into<MemsetOp>,
     ) -> Result<(), SimError> {
         self.set_memset_op(exec, node, op.into(), true, GreenCtxPatch::Keep, true)
+    }
+
+    /// `cuGraphExecMemsetNodeSetParams`. Identity with
+    /// [`Self::graph_exec_memset_set_params`] (`cudaGraphExecMemsetNodeSetParams`).
+    ///
+    /// Capture refused. Distinct from
+    /// [`Self::set_graph_memset_node_params`]. This VM does not invent
+    /// occupancy SM counts this slice.
+    pub fn set_graph_exec_memset_node_params(
+        &mut self,
+        exec: GraphId,
+        node: usize,
+        op: &MemsetOp,
+    ) -> Result<(), SimError> {
+        self.graph_exec_memset_set_params(exec, node, *op)
     }
 
     fn graph_exec_memset_set_params_with_ctx(
