@@ -340,6 +340,9 @@
 //! [`copy_graph_kernel_node_attributes`](Sim::copy_graph_kernel_node_attributes) is `cuGraphKernelNodeCopyAttributes` (identity with
 //! [`graph_kernel_node_copy_attributes`](Sim::graph_kernel_node_copy_attributes)). Capture refused. Distinct from
 //! [`graph_exec_kernel_node_copy_attributes`](Sim::graph_exec_kernel_node_copy_attributes). No Engine `--graph-kernel-copy-attributes`.
+//! [`copy_graph_exec_kernel_node_attributes`](Sim::copy_graph_exec_kernel_node_attributes) is `cuGraphExecKernelNodeCopyAttributes` (identity with
+//! [`graph_exec_kernel_node_copy_attributes`](Sim::graph_exec_kernel_node_copy_attributes)). Capture refused. Distinct from
+//! [`copy_graph_kernel_node_attributes`](Sim::copy_graph_kernel_node_attributes). No Engine `--graph-exec-kernel-copy-attributes`.
 //! [`Sim::ipc_get_event`] / [`ipc_open_event`](Sim::ipc_open_event) are
 //! `cudaIpcGetEventHandle` / `cudaIpcOpenEventHandle` (interprocess events).
 //! [`Sim::create_shareable_pool`] is `cudaMemPoolCreate` with a POSIX-FD handle
@@ -704,6 +707,9 @@
 //! [`copy_graph_kernel_node_attributes`](Sim::copy_graph_kernel_node_attributes) is `cuGraphKernelNodeCopyAttributes` (identity with
 //! [`graph_kernel_node_copy_attributes`](Sim::graph_kernel_node_copy_attributes)). Capture refused. Distinct from
 //! [`graph_exec_kernel_node_copy_attributes`](Sim::graph_exec_kernel_node_copy_attributes). No Engine `--graph-kernel-copy-attributes`.
+//! [`copy_graph_exec_kernel_node_attributes`](Sim::copy_graph_exec_kernel_node_attributes) is `cuGraphExecKernelNodeCopyAttributes` (identity with
+//! [`graph_exec_kernel_node_copy_attributes`](Sim::graph_exec_kernel_node_copy_attributes)). Capture refused. Distinct from
+//! [`copy_graph_kernel_node_attributes`](Sim::copy_graph_kernel_node_attributes). No Engine `--graph-exec-kernel-copy-attributes`.
 //! [`HardwareProfile::host_pin_bytes`] caps `cudaMallocHost` / `cudaHostRegister`.
 //! [`Sim::idle_until`] drains, then jumps the virtual clock (open-loop arrivals).
 //! [`Sim::event_elapsed_ns`] is `cudaEventElapsedTime` in nanoseconds.
@@ -936,6 +942,9 @@
 //! [`copy_graph_kernel_node_attributes`](Sim::copy_graph_kernel_node_attributes) is `cuGraphKernelNodeCopyAttributes` (identity with
 //! [`graph_kernel_node_copy_attributes`](Sim::graph_kernel_node_copy_attributes)). Capture refused. Distinct from
 //! [`graph_exec_kernel_node_copy_attributes`](Sim::graph_exec_kernel_node_copy_attributes). No Engine `--graph-kernel-copy-attributes`.
+//! [`copy_graph_exec_kernel_node_attributes`](Sim::copy_graph_exec_kernel_node_attributes) is `cuGraphExecKernelNodeCopyAttributes` (identity with
+//! [`graph_exec_kernel_node_copy_attributes`](Sim::graph_exec_kernel_node_copy_attributes)). Capture refused. Distinct from
+//! [`copy_graph_kernel_node_attributes`](Sim::copy_graph_kernel_node_attributes). No Engine `--graph-exec-kernel-copy-attributes`.
 //! [`mem_host_get_flags`](Sim::mem_host_get_flags) is `cuMemHostGetFlags` (identity with
 //! [`host_get_flags`](Sim::host_get_flags)). Query; legal during capture. No Engine `--mem-host-get-flags`.
 //! [`mem_host_get_device_pointer`](Sim::mem_host_get_device_pointer) is `cuMemHostGetDevicePointer` (identity with
@@ -1134,6 +1143,9 @@
 //! [`copy_graph_kernel_node_attributes`](Sim::copy_graph_kernel_node_attributes) is `cuGraphKernelNodeCopyAttributes` (identity with
 //! [`graph_kernel_node_copy_attributes`](Sim::graph_kernel_node_copy_attributes)). Capture refused. Distinct from
 //! [`graph_exec_kernel_node_copy_attributes`](Sim::graph_exec_kernel_node_copy_attributes). No Engine `--graph-kernel-copy-attributes`.
+//! [`copy_graph_exec_kernel_node_attributes`](Sim::copy_graph_exec_kernel_node_attributes) is `cuGraphExecKernelNodeCopyAttributes` (identity with
+//! [`graph_exec_kernel_node_copy_attributes`](Sim::graph_exec_kernel_node_copy_attributes)). Capture refused. Distinct from
+//! [`copy_graph_kernel_node_attributes`](Sim::copy_graph_kernel_node_attributes). No Engine `--graph-exec-kernel-copy-attributes`.
 //! [`Sim::pointer_get_attributes`] is `cudaPointerGetAttributes`.
 //! [`pointer_set_attribute`](Sim::pointer_set_attribute) /
 //! [`pointer_get_attribute`](Sim::pointer_get_attribute) are
@@ -1739,6 +1751,9 @@
 //! [`copy_graph_kernel_node_attributes`](Sim::copy_graph_kernel_node_attributes) is `cuGraphKernelNodeCopyAttributes` (identity with
 //! [`graph_kernel_node_copy_attributes`](Sim::graph_kernel_node_copy_attributes)). Capture refused. Distinct from
 //! [`graph_exec_kernel_node_copy_attributes`](Sim::graph_exec_kernel_node_copy_attributes). No Engine `--graph-kernel-copy-attributes`.
+//! [`copy_graph_exec_kernel_node_attributes`](Sim::copy_graph_exec_kernel_node_attributes) is `cuGraphExecKernelNodeCopyAttributes` (identity with
+//! [`graph_exec_kernel_node_copy_attributes`](Sim::graph_exec_kernel_node_copy_attributes)). Capture refused. Distinct from
+//! [`copy_graph_kernel_node_attributes`](Sim::copy_graph_kernel_node_attributes). No Engine `--graph-exec-kernel-copy-attributes`.
 //! [`Sim::stream_get_device`] is `cudaStreamGetDevice` / `cuStreamGetDevice`
 //! (the device of the stream; green-ctx streams return the ctx create
 //! device). Query; legal during capture. Distinct from
@@ -1773,6 +1788,9 @@
 //! [`copy_graph_kernel_node_attributes`](Sim::copy_graph_kernel_node_attributes) is `cuGraphKernelNodeCopyAttributes` (identity with
 //! [`graph_kernel_node_copy_attributes`](Sim::graph_kernel_node_copy_attributes)). Capture refused. Distinct from
 //! [`graph_exec_kernel_node_copy_attributes`](Sim::graph_exec_kernel_node_copy_attributes). No Engine `--graph-kernel-copy-attributes`.
+//! [`copy_graph_exec_kernel_node_attributes`](Sim::copy_graph_exec_kernel_node_attributes) is `cuGraphExecKernelNodeCopyAttributes` (identity with
+//! [`graph_exec_kernel_node_copy_attributes`](Sim::graph_exec_kernel_node_copy_attributes)). Capture refused. Distinct from
+//! [`copy_graph_kernel_node_attributes`](Sim::copy_graph_kernel_node_attributes). No Engine `--graph-exec-kernel-copy-attributes`.
 //! [`set_stream_access_policy`](Sim::set_stream_access_policy) is
 //! `cudaStreamAttributeAccessPolicyWindow`: [`kernel`](Sim::kernel) /
 //! [`kernel_bufs`](Sim::kernel_bufs) inherit it; [`kernel_with`](Sim::kernel_with)
@@ -2292,6 +2310,9 @@
 //! [`copy_graph_kernel_node_attributes`](Sim::copy_graph_kernel_node_attributes) is `cuGraphKernelNodeCopyAttributes` (identity with
 //! [`graph_kernel_node_copy_attributes`](Sim::graph_kernel_node_copy_attributes)). Capture refused. Distinct from
 //! [`graph_exec_kernel_node_copy_attributes`](Sim::graph_exec_kernel_node_copy_attributes). No Engine `--graph-kernel-copy-attributes`.
+//! [`copy_graph_exec_kernel_node_attributes`](Sim::copy_graph_exec_kernel_node_attributes) is `cuGraphExecKernelNodeCopyAttributes` (identity with
+//! [`graph_exec_kernel_node_copy_attributes`](Sim::graph_exec_kernel_node_copy_attributes)). Capture refused. Distinct from
+//! [`copy_graph_kernel_node_attributes`](Sim::copy_graph_kernel_node_attributes). No Engine `--graph-exec-kernel-copy-attributes`.
 //! [`Sim::set_stream_priority`] is the priority-only helper;
 //! [`stream_create_with_priority`](Sim::stream_create_with_priority) is
 //! `cudaStreamCreateWithPriority` (flags plus priority; clamped to
@@ -2344,6 +2365,9 @@
 //! [`copy_graph_kernel_node_attributes`](Sim::copy_graph_kernel_node_attributes) is `cuGraphKernelNodeCopyAttributes` (identity with
 //! [`graph_kernel_node_copy_attributes`](Sim::graph_kernel_node_copy_attributes)). Capture refused. Distinct from
 //! [`graph_exec_kernel_node_copy_attributes`](Sim::graph_exec_kernel_node_copy_attributes). No Engine `--graph-kernel-copy-attributes`.
+//! [`copy_graph_exec_kernel_node_attributes`](Sim::copy_graph_exec_kernel_node_attributes) is `cuGraphExecKernelNodeCopyAttributes` (identity with
+//! [`graph_exec_kernel_node_copy_attributes`](Sim::graph_exec_kernel_node_copy_attributes)). Capture refused. Distinct from
+//! [`copy_graph_kernel_node_attributes`](Sim::copy_graph_kernel_node_attributes). No Engine `--graph-exec-kernel-copy-attributes`.
 //! [`destroy_stream`](Sim::destroy_stream) is `cudaStreamDestroy` (returns
 //! immediately; in-flight work still completes; NULL is Invalid; recreate
 //! while unfinished is `"stream in flight"`). Capture cannot include it.
@@ -2376,6 +2400,9 @@
 //! [`copy_graph_kernel_node_attributes`](Sim::copy_graph_kernel_node_attributes) is `cuGraphKernelNodeCopyAttributes` (identity with
 //! [`graph_kernel_node_copy_attributes`](Sim::graph_kernel_node_copy_attributes)). Capture refused. Distinct from
 //! [`graph_exec_kernel_node_copy_attributes`](Sim::graph_exec_kernel_node_copy_attributes). No Engine `--graph-kernel-copy-attributes`.
+//! [`copy_graph_exec_kernel_node_attributes`](Sim::copy_graph_exec_kernel_node_attributes) is `cuGraphExecKernelNodeCopyAttributes` (identity with
+//! [`graph_exec_kernel_node_copy_attributes`](Sim::graph_exec_kernel_node_copy_attributes)). Capture refused. Distinct from
+//! [`copy_graph_kernel_node_attributes`](Sim::copy_graph_kernel_node_attributes). No Engine `--graph-exec-kernel-copy-attributes`.
 //! [`Sim::instantiate_graph`] is `cudaGraphInstantiate` (host-sync; returns a
 //! new exec id; first [`launch_graph`](Sim::launch_graph) of a definition
 //! creates a primary exec). Unused conditional handles are
@@ -2466,6 +2493,9 @@
 //! [`copy_graph_kernel_node_attributes`](Sim::copy_graph_kernel_node_attributes) is `cuGraphKernelNodeCopyAttributes` (identity with
 //! [`graph_kernel_node_copy_attributes`](Sim::graph_kernel_node_copy_attributes)). Capture refused. Distinct from
 //! [`graph_exec_kernel_node_copy_attributes`](Sim::graph_exec_kernel_node_copy_attributes). No Engine `--graph-kernel-copy-attributes`.
+//! [`copy_graph_exec_kernel_node_attributes`](Sim::copy_graph_exec_kernel_node_attributes) is `cuGraphExecKernelNodeCopyAttributes` (identity with
+//! [`graph_exec_kernel_node_copy_attributes`](Sim::graph_exec_kernel_node_copy_attributes)). Capture refused. Distinct from
+//! [`copy_graph_kernel_node_attributes`](Sim::copy_graph_kernel_node_attributes). No Engine `--graph-exec-kernel-copy-attributes`.
 //! [`graph_kernel_node_get_attribute`](Sim::graph_kernel_node_get_attribute) /
 //! [`graph_exec_kernel_node_get_attribute`](Sim::graph_exec_kernel_node_get_attribute) /
 //! [`graph_kernel_node_set_attribute`](Sim::graph_kernel_node_set_attribute) /
@@ -2492,6 +2522,9 @@
 //! [`copy_graph_kernel_node_attributes`](Sim::copy_graph_kernel_node_attributes) is `cuGraphKernelNodeCopyAttributes` (identity with
 //! [`graph_kernel_node_copy_attributes`](Sim::graph_kernel_node_copy_attributes)). Capture refused. Distinct from
 //! [`graph_exec_kernel_node_copy_attributes`](Sim::graph_exec_kernel_node_copy_attributes). No Engine `--graph-kernel-copy-attributes`.
+//! [`copy_graph_exec_kernel_node_attributes`](Sim::copy_graph_exec_kernel_node_attributes) is `cuGraphExecKernelNodeCopyAttributes` (identity with
+//! [`graph_exec_kernel_node_copy_attributes`](Sim::graph_exec_kernel_node_copy_attributes)). Capture refused. Distinct from
+//! [`copy_graph_kernel_node_attributes`](Sim::copy_graph_kernel_node_attributes). No Engine `--graph-exec-kernel-copy-attributes`.
 //! Device-launch
 //! execs cannot attach programmatic or launch-completion events.
 //! [`kernel_pdl`](Sim::kernel_pdl) is `cudaLaunchKernelEx` PDL: a wait kernel
@@ -18581,6 +18614,122 @@ mod tests {
         );
         eight.begin_capture(DeviceId(1), s).unwrap();
         match eight.graph_kernel_node_copy_attributes(dst1, 0, src1, 0) {
+            Err(SimError::Invalid { why }) => assert!(why.contains("capture"), "{why}"),
+            other => panic!("{other:?}"),
+        }
+        let _cap = eight.end_capture().unwrap();
+    }
+
+    #[test]
+    fn copy_graph_exec_kernel_node_attributes_is_cu_graph_exec_kernel_node_copy_attributes() {
+        let mut sim = Sim::new(h100());
+        let d = DeviceId(0);
+        let s = StreamId(0);
+        let a = sim.malloc(d, 4096).unwrap();
+        match sim.copy_graph_exec_kernel_node_attributes(GraphId(99), 0, GraphId(99), 0) {
+            Err(SimError::Invalid { why }) => assert!(why.contains("unknown"), "{why}"),
+            other => panic!("{other:?}"),
+        }
+        match sim.graph_exec_kernel_node_copy_attributes(GraphId(99), 0, GraphId(99), 0) {
+            Err(SimError::Invalid { why }) => assert!(why.contains("unknown"), "{why}"),
+            other => panic!("{other:?}"),
+        }
+        let src = sim.create_graph(d, s).unwrap();
+        sim.graph_add_kernel(src, KernelKind::other(8, 8), &[a], &[a])
+            .unwrap();
+        let dst = sim.create_graph(d, s).unwrap();
+        sim.graph_add_kernel(dst, KernelKind::other(8, 8), &[a], &[a])
+            .unwrap();
+        match sim.copy_graph_exec_kernel_node_attributes(dst, 0, src, 0) {
+            Err(SimError::Invalid { why }) => assert!(why.contains("instantiated"), "{why}"),
+            other => panic!("{other:?}"),
+        }
+        match sim.graph_exec_kernel_node_copy_attributes(dst, 0, src, 0) {
+            Err(SimError::Invalid { why }) => assert!(why.contains("instantiated"), "{why}"),
+            other => panic!("{other:?}"),
+        }
+        sim.set_graph_kernel_node_attribute(
+            src,
+            0,
+            KernelNodeAttr::Priority,
+            KernelNodeAttrValue::Priority(7),
+        )
+        .unwrap();
+        let src_exec = sim.instantiate_graph(src).unwrap();
+        let dst_exec = sim.instantiate_graph(dst).unwrap();
+        sim.copy_graph_exec_kernel_node_attributes(dst_exec, 0, src_exec, 0)
+            .unwrap();
+        assert_eq!(
+            sim.get_graph_exec_kernel_node_attribute(dst_exec, 0, KernelNodeAttr::Priority)
+                .unwrap(),
+            KernelNodeAttrValue::Priority(7)
+        );
+        assert_eq!(
+            sim.get_graph_kernel_node_attribute(dst, 0, KernelNodeAttr::Priority)
+                .unwrap(),
+            KernelNodeAttrValue::Priority(0)
+        );
+        sim.set_graph_exec_kernel_node_attribute(
+            src_exec,
+            0,
+            KernelNodeAttr::Priority,
+            KernelNodeAttrValue::Priority(2),
+        )
+        .unwrap();
+        sim.graph_exec_kernel_node_copy_attributes(dst_exec, 0, src_exec, 0)
+            .unwrap();
+        assert_eq!(
+            sim.get_graph_exec_kernel_node_attribute(dst_exec, 0, KernelNodeAttr::Priority)
+                .unwrap(),
+            KernelNodeAttrValue::Priority(2)
+        );
+        assert_eq!(
+            sim.get_graph_exec_kernel_node_attribute(dst_exec, 0, KernelNodeAttr::Priority)
+                .unwrap(),
+            sim.graph_exec_kernel_node_get_attribute(dst_exec, 0, KernelNodeAttr::Priority)
+                .unwrap()
+        );
+        sim.begin_capture(d, s).unwrap();
+        match sim.copy_graph_exec_kernel_node_attributes(dst_exec, 0, src_exec, 0) {
+            Err(SimError::Invalid { why }) => assert!(why.contains("capture"), "{why}"),
+            other => panic!("{other:?}"),
+        }
+        match sim.graph_exec_kernel_node_copy_attributes(dst_exec, 0, src_exec, 0) {
+            Err(SimError::Invalid { why }) => assert!(why.contains("capture"), "{why}"),
+            other => panic!("{other:?}"),
+        }
+        let _cap = sim.end_capture().unwrap();
+        let mut eight = Sim::new(HardwareProfile::example_8xh100_nvlink());
+        let a1 = eight.malloc(DeviceId(1), 4096).unwrap();
+        let src1 = eight.create_graph(DeviceId(1), s).unwrap();
+        eight
+            .graph_add_kernel(src1, KernelKind::other(8, 8), &[a1], &[a1])
+            .unwrap();
+        let dst1 = eight.create_graph(DeviceId(1), s).unwrap();
+        eight
+            .graph_add_kernel(dst1, KernelKind::other(8, 8), &[a1], &[a1])
+            .unwrap();
+        eight
+            .set_graph_kernel_node_attribute(
+                src1,
+                0,
+                KernelNodeAttr::Priority,
+                KernelNodeAttrValue::Priority(5),
+            )
+            .unwrap();
+        let src_e = eight.instantiate_graph(src1).unwrap();
+        let dst_e = eight.instantiate_graph(dst1).unwrap();
+        eight
+            .copy_graph_exec_kernel_node_attributes(dst_e, 0, src_e, 0)
+            .unwrap();
+        assert_eq!(
+            eight
+                .get_graph_exec_kernel_node_attribute(dst_e, 0, KernelNodeAttr::Priority)
+                .unwrap(),
+            KernelNodeAttrValue::Priority(5)
+        );
+        eight.begin_capture(DeviceId(1), s).unwrap();
+        match eight.graph_exec_kernel_node_copy_attributes(dst_e, 0, src_e, 0) {
             Err(SimError::Invalid { why }) => assert!(why.contains("capture"), "{why}"),
             other => panic!("{other:?}"),
         }

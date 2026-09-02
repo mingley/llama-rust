@@ -13004,8 +13004,7 @@ impl Sim {
     /// [`Self::graph_kernel_node_copy_attributes`] (`cudaGraphKernelNodeCopyAttributes`).
     ///
     /// Capture refused. Distinct from
-    /// [`Self::graph_exec_kernel_node_copy_attributes`]. This VM does not invent
-    /// occupancy SM counts this slice.
+    /// [`Self::graph_exec_kernel_node_copy_attributes`].
     pub fn copy_graph_kernel_node_attributes(
         &mut self,
         dst_graph: GraphId,
@@ -13020,7 +13019,9 @@ impl Sim {
     ///
     /// Uninstantiated graphs are Invalid. After instantiate this copies the
     /// launched attributes. Definition CopyAttributes does not retarget the
-    /// exec. Capture cannot include it.
+    /// exec. Capture cannot include it. Driver
+    /// `cuGraphExecKernelNodeCopyAttributes` is
+    /// [`Self::copy_graph_exec_kernel_node_attributes`].
     pub fn graph_exec_kernel_node_copy_attributes(
         &mut self,
         dst_exec: GraphId,
@@ -13029,6 +13030,23 @@ impl Sim {
         src: usize,
     ) -> Result<(), SimError> {
         self.copy_kernel_node_attributes(dst_exec, dst, src_exec, src, true)
+    }
+
+    /// `cuGraphExecKernelNodeCopyAttributes`. Identity with
+    /// [`Self::graph_exec_kernel_node_copy_attributes`]
+    /// (`cudaGraphExecKernelNodeCopyAttributes`).
+    ///
+    /// Capture refused. Distinct from
+    /// [`Self::copy_graph_kernel_node_attributes`]. This VM does not invent
+    /// occupancy SM counts this slice.
+    pub fn copy_graph_exec_kernel_node_attributes(
+        &mut self,
+        dst_exec: GraphId,
+        dst: usize,
+        src_exec: GraphId,
+        src: usize,
+    ) -> Result<(), SimError> {
+        self.graph_exec_kernel_node_copy_attributes(dst_exec, dst, src_exec, src)
     }
 
     fn copy_kernel_node_attributes(
