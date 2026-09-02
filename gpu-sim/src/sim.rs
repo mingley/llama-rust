@@ -26046,7 +26046,6 @@ impl Sim {
     /// Capture legal. Distinct from
     /// [`Self::memset_d8_async`] (`cuMemsetD8Async`) and
     /// [`Self::launch_cooperative_kernel_multi_device`].
-    /// This VM does not invent occupancy SM counts this slice.
     pub fn mem_set(
         &mut self,
         device: DeviceId,
@@ -26059,6 +26058,8 @@ impl Sim {
 
     /// `cudaMemsetAsync` of a [`KernelBuf`] span (vLLM new-KV-block analog).
     ///
+    /// Identity wrap [`Self::mem_set_buf`]. Not [`Self::mem_set`] (whole-alloc `cudaMemsetAsync`).
+    ///
     /// `bytes == 0` means from `offset` to the end of the allocation. A range
     /// past the reservation is `Invalid`. Mapped host is not a memset dest.
     pub fn memset_buf(
@@ -26068,6 +26069,20 @@ impl Sim {
         stream: StreamId,
     ) -> Result<OpId, SimError> {
         self.memset_op(device, MemsetOp::from(buf), stream)
+    }
+
+    /// `cudaMemsetAsync` of a [`KernelBuf`] span. Identity with
+    /// [`Self::memset_buf`].
+    ///
+    /// Capture legal. Distinct from [`Self::mem_set`].
+    /// This VM does not invent occupancy SM counts this slice.
+    pub fn mem_set_buf(
+        &mut self,
+        device: DeviceId,
+        buf: KernelBuf,
+        stream: StreamId,
+    ) -> Result<OpId, SimError> {
+        self.memset_buf(device, buf, stream)
     }
 
     /// `cudaMemsetAsync` / `cudaMemset2DAsync`.
