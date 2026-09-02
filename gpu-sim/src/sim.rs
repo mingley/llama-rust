@@ -16407,6 +16407,8 @@ impl Sim {
     /// free completes. `u64::MAX` holds them so [`Self::mem_info`] still counts
     /// them used until [`Self::pool_trim_to`]. Also
     /// [`Self::pool_set_attribute`] [`MemPoolAttr::ReleaseThreshold`].
+    /// Driver `cuMemPoolSetAttribute` ReleaseThreshold is [`Self::mem_pool_set_release_threshold`].
+    /// Identity wrap [`Self::mem_pool_set_release_threshold`].
     pub fn set_pool_release_threshold(&mut self, pool: PoolId, bytes: u64) -> Result<(), SimError> {
         self.fail_if_capturing("cannot capture mempool")?;
         let root = self.pool_root(pool)?;
@@ -16414,6 +16416,19 @@ impl Sim {
         self.refuse_destroyed_pool(root)?;
         self.pool_mut(root)?.release_threshold = bytes;
         Ok(())
+    }
+
+    /// `cuMemPoolSetAttribute` ReleaseThreshold. Identity with
+    /// [`Self::set_pool_release_threshold`] (`cudaMemPoolAttrReleaseThreshold`).
+    ///
+    /// Capture refused. Distinct from [`Self::mem_pool_trim_to`].
+    /// This VM does not invent occupancy SM counts this slice.
+    pub fn mem_pool_set_release_threshold(
+        &mut self,
+        pool: PoolId,
+        bytes: u64,
+    ) -> Result<(), SimError> {
+        self.set_pool_release_threshold(pool, bytes)
     }
 
     /// `cudaMemPoolAttrMaxPoolSize`. Later [`Self::alloc_from_pool`] OOMs when
@@ -16652,7 +16667,6 @@ impl Sim {
     /// [`Self::pool_trim_to`] (`cudaMemPoolTrimTo`).
     ///
     /// Capture refused. Distinct from [`Self::mem_pool_set_attribute`].
-    /// This VM does not invent occupancy SM counts this slice.
     pub fn mem_pool_trim_to(&mut self, pool: PoolId, min_bytes: u64) -> Result<u64, SimError> {
         self.pool_trim_to(pool, min_bytes)
     }
