@@ -3452,8 +3452,7 @@ impl Sim {
     /// [`Self::begin_recapture_to_graph`] (`cudaStreamBeginRecaptureToGraph`).
     ///
     /// Nested capture refused. Distinct from
-    /// [`Self::stream_begin_capture_to_graph_with_mode`]. This VM does not invent
-    /// occupancy SM counts this slice.
+    /// [`Self::stream_begin_capture_to_graph_with_mode`].
     pub fn stream_begin_recapture_to_graph(
         &mut self,
         device: DeviceId,
@@ -3464,6 +3463,9 @@ impl Sim {
     }
 
     /// `cudaStreamBeginRecaptureToGraph` with an explicit [`StreamCaptureMode`].
+    ///
+    /// Driver `cuStreamBeginRecaptureToGraph` with mode is
+    /// [`Self::stream_begin_recapture_to_graph_with_mode`].
     pub fn begin_recapture_to_graph_with_mode(
         &mut self,
         device: DeviceId,
@@ -3472,6 +3474,22 @@ impl Sim {
         mode: StreamCaptureMode,
     ) -> Result<(), SimError> {
         self.begin_recapture_inner(device, stream, graph, mode, None)
+    }
+
+    /// `cuStreamBeginRecaptureToGraph` with mode. Identity with
+    /// [`Self::begin_recapture_to_graph_with_mode`] (`cudaStreamBeginRecaptureToGraph` with mode).
+    ///
+    /// Nested capture refused. Distinct from
+    /// [`Self::stream_begin_recapture_to_graph`]. This VM does not invent
+    /// occupancy SM counts this slice.
+    pub fn stream_begin_recapture_to_graph_with_mode(
+        &mut self,
+        device: DeviceId,
+        stream: StreamId,
+        graph: GraphId,
+        mode: StreamCaptureMode,
+    ) -> Result<(), SimError> {
+        self.begin_recapture_to_graph_with_mode(device, stream, graph, mode)
     }
 
     /// `cudaStreamBeginRecaptureToGraph` with [`GraphRecaptureCallback`].
