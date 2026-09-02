@@ -18095,6 +18095,7 @@ impl Sim {
     /// [`DeviceAttr::PageableMemoryAccess`] are 0).
     /// [`MemcpyFlags::PREFER_OVERLAP_WITH_COMPUTE`] is accepted and ignored
     /// (discrete GPU). Unknown flags Invalid `"memcpy flags"`.
+    /// Driver `cuMemcpyWithAttributesAsync` is [`Self::mem_cpy_with_attributes`].
     pub fn memcpy_with_attributes(
         &mut self,
         device: DeviceId,
@@ -18113,6 +18114,22 @@ impl Sim {
                     why: "memcpy attributes empty",
                 }),
         }
+    }
+
+    /// `cuMemcpyWithAttributesAsync`. Identity with
+    /// [`Self::memcpy_with_attributes`] (`cudaMemcpyWithAttributesAsync`).
+    ///
+    /// Stream order is capture-legal (pinned/device). Distinct from
+    /// [`Self::mem_cpy_batch_async`].
+    /// This VM does not invent occupancy SM counts this slice.
+    pub fn mem_cpy_with_attributes(
+        &mut self,
+        device: DeviceId,
+        op: MemcpyOp,
+        attr: MemcpyAttributes,
+        stream: StreamId,
+    ) -> Result<OpId, SimError> {
+        self.memcpy_with_attributes(device, op, attr, stream)
     }
 
     /// `cudaMemcpyBatchAsync`. Pointer-to-pointer 1D copies only.
@@ -19484,7 +19501,6 @@ impl Sim {
     ///
     /// Stream order is capture-legal (pinned/device). Distinct from
     /// [`Self::mem_cpy_3d_batch_async`].
-    /// This VM does not invent `mem_cpy_with_attributes` this slice.
     pub fn mem_cpy_3d_with_attributes(
         &mut self,
         device: DeviceId,

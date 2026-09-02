@@ -8183,7 +8183,14 @@ model, do not celebrate the sim.
     or `cudaChooseDevice`. `gpu-profile capture` is still refused. Dual
     score still has no `$/M tokens`.
 
-861. [ ] Next numbered PLAN item after 860 is the next `gpu-sim` / Engine /
+861. [x] `gpu-sim` `Sim::mem_cpy_with_attributes` is
+    `cuMemcpyWithAttributesAsync`. Identity with `memcpy_with_attributes`
+    (`cudaMemcpyWithAttributesAsync`). Stream order is capture-legal (pinned/device). Distinct from
+    `mem_cpy_batch_async`. This VM does not invent occupancy SM counts, Engine `--mem-cpy-with-attributes`,
+    or `cudaChooseDevice`. `gpu-profile capture` is still refused. Dual
+    score still has no `$/M tokens`.
+
+862. [ ] Next numbered PLAN item after 861 is the next `gpu-sim` / Engine /
     serve / expertvm mechanical API that is still missing, or the next official
     decode family. Prefer remaining CUDA-shaped twins over more
     OpenAI HTTP veneer. Do not invent F32 `output.scale`. Do not invent a
@@ -9257,6 +9264,9 @@ model, do not celebrate the sim.
     Do not invent a second `cuMemcpy3DWithAttributesAsync` / `mem_cpy_3d_with_attributes`.
     Do not invent Engine `--mem-cpy-3d-with-attributes`. Do not invent
     `mem_cpy_with_attributes` this slice. Do not reverse MemCpy3dWithAttributes identity with memcpy_3d_with_attributes.
+    Do not invent a second `cuMemcpyWithAttributesAsync` / `mem_cpy_with_attributes`.
+    Do not invent Engine `--mem-cpy-with-attributes`. Do not invent
+    occupancy SM counts this slice. Do not reverse MemCpyWithAttributes identity with memcpy_with_attributes.
     Do not invent a second `cudaStreamAddCallback`.
     Do not invent Engine `--stream-callback` (same wall as second live
     `cudaLaunchHostFunc` after miss DMA).
@@ -10410,6 +10420,9 @@ model, do not celebrate the sim.
     Do not invent a second `mem_cpy_3d_with_attributes` API. Do not invent
     Engine `--mem-cpy-3d-with-attributes-identity`. Do not invent a mem-cpy-with-attributes
     this slice. Do not reverse MemCpy3dWithAttributes identity with memcpy_3d_with_attributes.
+    Do not invent a second `mem_cpy_with_attributes` API. Do not invent
+    Engine `--mem-cpy-with-attributes-identity`. Do not invent occupancy SM counts
+    this slice. Do not reverse MemCpyWithAttributes identity with memcpy_with_attributes.
     Do not invent a second DeviceLaunch in-flight destroy-complete check or Engine
     `--device-launch-destroy`. Do not abort an in-flight DeviceLaunch when
     `destroy_graph` succeeds. Do not delay destroy of an idle exec. Do not invent
@@ -11746,6 +11759,9 @@ model, do not celebrate the sim.
     Do not invent a second `mem_cpy_3d_with_attributes` method. Do not
     invent Engine `--cu-mem-cpy-3d-with-attributes`. Do not reverse wrapping
     cuMemcpy3DWithAttributesAsync identity.
+    Do not invent a second `mem_cpy_with_attributes` method. Do not
+    invent Engine `--cu-mem-cpy-with-attributes`. Do not reverse wrapping
+    cuMemcpyWithAttributesAsync identity.
     Do not
     spend the next item on an OpenAI-compatible HTTP veneer.
 

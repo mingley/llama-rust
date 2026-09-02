@@ -274,6 +274,9 @@
 //! [`mem_cpy_3d_with_attributes`](Sim::mem_cpy_3d_with_attributes) is `cuMemcpy3DWithAttributesAsync` (identity with
 //! [`memcpy_3d_with_attributes`](Sim::memcpy_3d_with_attributes)). Stream order is capture-legal (pinned/device). Distinct from
 //! [`mem_cpy_3d_batch_async`](Sim::mem_cpy_3d_batch_async). No Engine `--mem-cpy-3d-with-attributes`.
+//! [`mem_cpy_with_attributes`](Sim::mem_cpy_with_attributes) is `cuMemcpyWithAttributesAsync` (identity with
+//! [`memcpy_with_attributes`](Sim::memcpy_with_attributes)). Stream order is capture-legal (pinned/device). Distinct from
+//! [`mem_cpy_batch_async`](Sim::mem_cpy_batch_async). No Engine `--mem-cpy-with-attributes`.
 //! [`Sim::ipc_get_event`] / [`ipc_open_event`](Sim::ipc_open_event) are
 //! `cudaIpcGetEventHandle` / `cudaIpcOpenEventHandle` (interprocess events).
 //! [`Sim::create_shareable_pool`] is `cudaMemPoolCreate` with a POSIX-FD handle
@@ -756,6 +759,9 @@
 //! [`mem_cpy_3d_with_attributes`](Sim::mem_cpy_3d_with_attributes) is `cuMemcpy3DWithAttributesAsync` (identity with
 //! [`memcpy_3d_with_attributes`](Sim::memcpy_3d_with_attributes)). Stream order is capture-legal (pinned/device). Distinct from
 //! [`mem_cpy_3d_batch_async`](Sim::mem_cpy_3d_batch_async). No Engine `--mem-cpy-3d-with-attributes`.
+//! [`mem_cpy_with_attributes`](Sim::mem_cpy_with_attributes) is `cuMemcpyWithAttributesAsync` (identity with
+//! [`memcpy_with_attributes`](Sim::memcpy_with_attributes)). Stream order is capture-legal (pinned/device). Distinct from
+//! [`mem_cpy_batch_async`](Sim::mem_cpy_batch_async). No Engine `--mem-cpy-with-attributes`.
 //! [`mem_host_get_flags`](Sim::mem_host_get_flags) is `cuMemHostGetFlags` (identity with
 //! [`host_get_flags`](Sim::host_get_flags)). Query; legal during capture. No Engine `--mem-host-get-flags`.
 //! [`mem_host_get_device_pointer`](Sim::mem_host_get_device_pointer) is `cuMemHostGetDevicePointer` (identity with
@@ -888,6 +894,9 @@
 //! [`mem_cpy_3d_with_attributes`](Sim::mem_cpy_3d_with_attributes) is `cuMemcpy3DWithAttributesAsync` (identity with
 //! [`memcpy_3d_with_attributes`](Sim::memcpy_3d_with_attributes)). Stream order is capture-legal (pinned/device). Distinct from
 //! [`mem_cpy_3d_batch_async`](Sim::mem_cpy_3d_batch_async). No Engine `--mem-cpy-3d-with-attributes`.
+//! [`mem_cpy_with_attributes`](Sim::mem_cpy_with_attributes) is `cuMemcpyWithAttributesAsync` (identity with
+//! [`memcpy_with_attributes`](Sim::memcpy_with_attributes)). Stream order is capture-legal (pinned/device). Distinct from
+//! [`mem_cpy_batch_async`](Sim::mem_cpy_batch_async). No Engine `--mem-cpy-with-attributes`.
 //! [`Sim::pointer_get_attributes`] is `cudaPointerGetAttributes`.
 //! [`pointer_set_attribute`](Sim::pointer_set_attribute) /
 //! [`pointer_get_attribute`](Sim::pointer_get_attribute) are
@@ -36078,6 +36087,51 @@ mod tests {
         sim.begin_capture(d, s).unwrap();
         enq(sim.mem_cpy_3d_with_attributes(d, op.clone(), attr, 0, s));
         enq(sim.memcpy_3d_with_attributes(d, op, attr, 0, s));
+        let g = sim.end_capture().unwrap();
+        assert_eq!(sim.graph_len(g).unwrap(), 2);
+        sim.free_sync(a).unwrap();
+    }
+
+    #[test]
+    fn mem_cpy_with_attributes_is_cu_memcpy_with_attributes_async() {
+        let mut sim = Sim::new(h100());
+        let d = DeviceId(0);
+        let s = StreamId(0);
+        let attr = MemcpyAttributes::default();
+        match sim.mem_cpy_with_attributes(d, pinned_h2d(d, AllocId(99), 4096), attr, s) {
+            Err(SimError::UnknownAlloc { alloc }) => assert_eq!(alloc, AllocId(99)),
+            other => panic!("{other:?}"),
+        }
+        match sim.memcpy_with_attributes(d, pinned_h2d(d, AllocId(99), 4096), attr, s) {
+            Err(SimError::UnknownAlloc { alloc }) => assert_eq!(alloc, AllocId(99)),
+            other => panic!("{other:?}"),
+        }
+        let a = sim.malloc(d, 4096).unwrap();
+        let op = pinned_h2d(d, a, 4096);
+        match sim.mem_cpy_with_attributes(d, op.clone(), MemcpyAttributes { flags: 2, ..attr }, s) {
+            Err(SimError::Invalid { why }) => assert!(why.contains("memcpy flags"), "{why}"),
+            other => panic!("{other:?}"),
+        }
+        match sim.memcpy_with_attributes(d, op.clone(), MemcpyAttributes { flags: 2, ..attr }, s) {
+            Err(SimError::Invalid { why }) => assert!(why.contains("memcpy flags"), "{why}"),
+            other => panic!("{other:?}"),
+        }
+        match sim.mem_cpy_with_attributes(DeviceId(99), op.clone(), attr, s) {
+            Err(SimError::Invalid { why }) => assert!(why.contains("device"), "{why}"),
+            other => panic!("{other:?}"),
+        }
+        match sim.memcpy_with_attributes(DeviceId(99), op.clone(), attr, s) {
+            Err(SimError::Invalid { why }) => assert!(why.contains("device"), "{why}"),
+            other => panic!("{other:?}"),
+        }
+        enq(sim.mem_cpy_with_attributes(d, op.clone(), attr, s));
+        sim.synchronize_stream(d, s).unwrap();
+        assert_eq!(sim.bytes_moved(), 4096);
+        enq(sim.memcpy_with_attributes(d, op.clone(), attr, s));
+        sim.synchronize_stream(d, s).unwrap();
+        sim.begin_capture(d, s).unwrap();
+        enq(sim.mem_cpy_with_attributes(d, op.clone(), attr, s));
+        enq(sim.memcpy_with_attributes(d, op, attr, s));
         let g = sim.end_capture().unwrap();
         assert_eq!(sim.graph_len(g).unwrap(), 2);
         sim.free_sync(a).unwrap();
