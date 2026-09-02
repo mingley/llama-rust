@@ -707,6 +707,8 @@ no `CUtexref` filtering; no Engine flag).
 (Invalid; no `CUtexref` mipmap LOD clamp; no Engine flag).
 `gpu-sim` `tex_ref_get_max_anisotropy` is `cuTexRefGetMaxAnisotropy`
 (Invalid; no `CUtexref` anisotropy; no Engine flag).
+`gpu-sim` `tex_ref_get_border_color` is `cuTexRefGetBorderColor`
+(Invalid; no `CUtexref` border color; no Engine flag).
 `gpu-sim` `mipmapped_array_create` is `cuMipmappedArrayCreate` (Invalid;
 CUDA mipmapped arrays are not modeled; no Engine flag).
 `gpu-sim` `mipmapped_array_get_level` is `cuMipmappedArrayGetLevel`

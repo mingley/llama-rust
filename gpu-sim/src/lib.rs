@@ -1211,6 +1211,9 @@
 //! [`tex_ref_get_max_anisotropy`](Sim::tex_ref_get_max_anisotropy) is
 //! `cuTexRefGetMaxAnisotropy` (always Invalid `"texref getaniso"`). Query; legal
 //! during capture. No Engine `--texref-getaniso`.
+//! [`tex_ref_get_border_color`](Sim::tex_ref_get_border_color) is
+//! `cuTexRefGetBorderColor` (always Invalid `"texref getborder"`). Query; legal
+//! during capture. No Engine `--texref-getborder`.
 //! [`module_get_surf_ref`](Sim::module_get_surf_ref) is `cuModuleGetSurfRef` (always Invalid
 //! `"module surfref"`). Query; legal during capture. No Engine `--module-surfref`.
 //! [`library_load_data`](Sim::library_load_data) is `cuLibraryLoadData`
@@ -21218,6 +21221,64 @@ mod tests {
             Err(SimError::Invalid { why }) => {
                 assert!(why.contains("texref getbias"), "{why}");
                 assert!(!why.contains("texref getaniso"), "{why}");
+            }
+            other => panic!("{other:?}"),
+        }
+        match sim.tex_ref_get_border_color(d) {
+            Err(SimError::Invalid { why }) => {
+                assert!(why.contains("texref getborder"), "{why}");
+                assert!(!why.contains("texref getaniso"), "{why}");
+                assert!(!why.contains("texref border"), "{why}");
+            }
+            other => panic!("{other:?}"),
+        }
+    }
+
+    #[test]
+    fn tex_ref_get_border_color_is_unsupported() {
+        let mut sim = Sim::new(h100());
+        let d = DeviceId(0);
+        match sim.tex_ref_get_border_color(d) {
+            Err(SimError::Invalid { why }) => {
+                assert!(why.contains("texref getborder"), "{why}");
+                assert!(!why.contains("texref getaniso"), "{why}");
+                assert!(!why.contains("texref border"), "{why}");
+                assert!(!why.contains("texref getclamp"), "{why}");
+            }
+            other => panic!("{other:?}"),
+        }
+        sim.begin_capture(d, StreamId(0)).unwrap();
+        match sim.tex_ref_get_border_color(d) {
+            Err(SimError::Invalid { why }) => {
+                assert!(why.contains("texref getborder"), "{why}");
+            }
+            other => panic!("{other:?}"),
+        }
+        let _g = sim.end_capture().unwrap();
+        match sim.tex_ref_get_border_color(DeviceId(99)) {
+            Err(SimError::Invalid { why }) => {
+                assert!(why.contains("device not in profile"), "{why}");
+            }
+            other => panic!("{other:?}"),
+        }
+        match sim.tex_ref_get_max_anisotropy(d) {
+            Err(SimError::Invalid { why }) => {
+                assert!(why.contains("texref getaniso"), "{why}");
+                assert!(!why.contains("texref getborder"), "{why}");
+            }
+            other => panic!("{other:?}"),
+        }
+        match sim.tex_ref_set_border_color(d) {
+            Err(SimError::Invalid { why }) => {
+                assert!(why.contains("texref border"), "{why}");
+                assert!(!why.contains("texref getborder"), "{why}");
+            }
+            other => panic!("{other:?}"),
+        }
+        match sim.tex_ref_set_max_anisotropy(d) {
+            Err(SimError::Invalid { why }) => {
+                assert!(why.contains("texref aniso"), "{why}");
+                assert!(!why.contains("texref getborder"), "{why}");
             }
             other => panic!("{other:?}"),
         }

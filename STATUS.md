@@ -5,6 +5,16 @@ Visible five-turn extract: [docs/chatgpt-share-6a920fe1.md](docs/chatgpt-share-6
 Complete share-API extract: [docs/chatgpt-share-6a920fe1/](docs/chatgpt-share-6a920fe1/).
 Work lands on `main`. No PRs.
 
+## Shipped 2026-09-02 — CUDA `cuTexRefGetBorderColor`
+
+`gpu-sim` `Sim::tex_ref_get_border_color` is `cuTexRefGetBorderColor`.
+Always Invalid `"texref getborder"` because CUDA texture references are not
+modeled. Query; legal during capture. Distinct from
+`tex_ref_get_max_anisotropy` (why is not `"texref getaniso"`) and
+`tex_ref_set_border_color` (why is not `"texref border"`).
+This VM does not invent `cuTexRefGetFlags` or Engine `--texref-getborder`.
+`gpu-profile capture` is still refused. Dual score still has no `$/M tokens`.
+
 ## Shipped 2026-09-02 — CUDA `cuTexRefGetMaxAnisotropy`
 
 `gpu-sim` `Sim::tex_ref_get_max_anisotropy` is `cuTexRefGetMaxAnisotropy`.
