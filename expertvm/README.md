@@ -558,6 +558,8 @@ handle; no Engine flag).
 (Invalid; no `CUlibrary` device function pointer; no Engine flag).
 `gpu-sim` `library_get_kernel_count` is `cuLibraryGetKernelCount` (Invalid;
 no `CUlibrary` kernel list; no Engine flag).
+`gpu-sim` `library_enumerate_kernels` is `cuLibraryEnumerateKernels` (Invalid;
+no `CUlibrary` kernel list; no Engine flag).
 `gpu-sim` `kernel_get_function` is `cuKernelGetFunction` (Invalid; no
 `CUkernel` / `CUfunction`; no Engine flag).
 `gpu-sim` `kernel_get_param_info` is `cuKernelGetParamInfo` (Invalid; no

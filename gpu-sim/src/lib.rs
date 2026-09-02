@@ -1158,6 +1158,9 @@
 //! [`library_get_kernel_count`](Sim::library_get_kernel_count) is
 //! `cuLibraryGetKernelCount` (always Invalid `"library kcount"`). Query;
 //! legal during capture. No Engine `--library-kcount`.
+//! [`library_enumerate_kernels`](Sim::library_enumerate_kernels) is
+//! `cuLibraryEnumerateKernels` (always Invalid `"library enumk"`). Query;
+//! legal during capture. No Engine `--library-enumk`.
 //! [`kernel_get_function`](Sim::kernel_get_function) is
 //! `cuKernelGetFunction` (always Invalid `"kernel function"`). Query;
 //! legal during capture. No Engine `--kernel-function`.
@@ -19271,6 +19274,57 @@ mod tests {
             Err(SimError::Invalid { why }) => {
                 assert!(why.contains("module fncount"), "{why}");
                 assert!(!why.contains("library kcount"), "{why}");
+            }
+            other => panic!("{other:?}"),
+        }
+        match sim.library_enumerate_kernels(d) {
+            Err(SimError::Invalid { why }) => {
+                assert!(why.contains("library enumk"), "{why}");
+                assert!(!why.contains("library kcount"), "{why}");
+                assert!(!why.contains("library kernel"), "{why}");
+            }
+            other => panic!("{other:?}"),
+        }
+    }
+
+    #[test]
+    fn library_enumerate_kernels_is_unsupported() {
+        let mut sim = Sim::new(h100());
+        let d = DeviceId(0);
+        match sim.library_enumerate_kernels(d) {
+            Err(SimError::Invalid { why }) => {
+                assert!(why.contains("library enumk"), "{why}");
+                assert!(!why.contains("library kcount"), "{why}");
+                assert!(!why.contains("library kernel"), "{why}");
+                assert!(!why.contains("module enumfn"), "{why}");
+            }
+            other => panic!("{other:?}"),
+        }
+        sim.begin_capture(d, StreamId(0)).unwrap();
+        match sim.library_enumerate_kernels(d) {
+            Err(SimError::Invalid { why }) => {
+                assert!(why.contains("library enumk"), "{why}");
+            }
+            other => panic!("{other:?}"),
+        }
+        let _g = sim.end_capture().unwrap();
+        match sim.library_enumerate_kernels(DeviceId(99)) {
+            Err(SimError::Invalid { why }) => {
+                assert!(why.contains("device not in profile"), "{why}");
+            }
+            other => panic!("{other:?}"),
+        }
+        match sim.library_get_kernel_count(d) {
+            Err(SimError::Invalid { why }) => {
+                assert!(why.contains("library kcount"), "{why}");
+                assert!(!why.contains("library enumk"), "{why}");
+            }
+            other => panic!("{other:?}"),
+        }
+        match sim.module_enumerate_functions(d) {
+            Err(SimError::Invalid { why }) => {
+                assert!(why.contains("module enumfn"), "{why}");
+                assert!(!why.contains("library enumk"), "{why}");
             }
             other => panic!("{other:?}"),
         }

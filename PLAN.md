@@ -7339,7 +7339,14 @@ model, do not celebrate the sim.
     or `cudaChooseDevice`. `gpu-profile capture` is still refused. Dual
     score still has no `$/M tokens`.
 
-741. [ ] Next numbered PLAN item after 740 is the next `gpu-sim` / Engine /
+741. [x] `gpu-sim` `Sim::library_enumerate_kernels` is
+    `cuLibraryEnumerateKernels`. Always Invalid `"library enumk"`
+    because CUDA libraries are not modeled. Query; legal during capture.
+    Distinct from `library_get_kernel_count`. This VM does not invent `cuKernelGetLibrary`, Engine `--library-enumk`,
+    or `cudaChooseDevice`. `gpu-profile capture` is still refused. Dual
+    score still has no `$/M tokens`.
+
+742. [ ] Next numbered PLAN item after 741 is the next `gpu-sim` / Engine /
     serve / expertvm mechanical API that is still missing, or the next official
     decode family. Prefer remaining CUDA-shaped twins over more
     OpenAI HTTP veneer. Do not invent F32 `output.scale`. Do not invent a
@@ -8053,6 +8060,9 @@ model, do not celebrate the sim.
     Do not invent a second `cuLibraryGetKernelCount` / `library_get_kernel_count`.
     Do not invent Engine `--library-kcount`. Do not invent
     `cuLibraryEnumerateKernels` this slice. Do not reverse `"library kcount"`.
+    Do not invent a second `cuLibraryEnumerateKernels` / `library_enumerate_kernels`.
+    Do not invent Engine `--library-enumk`. Do not invent
+    `cuKernelGetLibrary` this slice. Do not reverse `"library enumk"`.
     Do not invent a second `cudaStreamAddCallback`.
     Do not invent Engine `--stream-callback` (same wall as second live
     `cudaLaunchHostFunc` after miss DMA).
@@ -8846,6 +8856,9 @@ model, do not celebrate the sim.
     Do not invent a second `library_get_kernel_count` API. Do not invent
     Engine `--get-library-kcount`. Do not invent a CUkernel count
     this slice. Do not reverse Library GetKernelCount remaining unsupported.
+    Do not invent a second `library_enumerate_kernels` API. Do not invent
+    Engine `--enum-library-kernels`. Do not invent a CUkernel array
+    this slice. Do not reverse Library EnumerateKernels remaining unsupported.
     Do not invent a second DeviceLaunch in-flight destroy-complete check or Engine
     `--device-launch-destroy`. Do not abort an in-flight DeviceLaunch when
     `destroy_graph` succeeds. Do not delay destroy of an idle exec. Do not invent
@@ -9822,6 +9835,9 @@ model, do not celebrate the sim.
     Do not invent a second `library_get_kernel_count` method. Do not
     invent Engine `--cu-library-kcount`. Do not reverse wrapping
     cuLibraryGetKernelCount Invalid.
+    Do not invent a second `library_enumerate_kernels` method. Do not
+    invent Engine `--cu-library-enumk`. Do not reverse wrapping
+    cuLibraryEnumerateKernels Invalid.
     Do not
     spend the next item on an OpenAI-compatible HTTP veneer.
 

@@ -21478,6 +21478,21 @@ impl Sim {
         })
     }
 
+    /// `cuLibraryEnumerateKernels`. CUDA libraries are not modeled.
+    ///
+    /// Always Invalid `"library enumk"` (this VM has no `CUlibrary`
+    /// kernel list). Distinct from [`Self::library_get_kernel_count`] (why
+    /// is not `"library kcount"`) and from [`Self::library_get_kernel`]
+    /// (why is not `"library kernel"`). Unknown devices are Invalid
+    /// `"device not in profile"`. Query; legal during capture. This VM does
+    /// not invent `cuKernelGetLibrary` this slice.
+    pub fn library_enumerate_kernels(&self, device: DeviceId) -> Result<(), SimError> {
+        let _gpu = self.profile.gpu(device)?;
+        Err(SimError::Invalid {
+            why: "library enumk",
+        })
+    }
+
     /// `cuKernelGetFunction`. CUDA kernels are not modeled.
     ///
     /// Always Invalid `"kernel function"` (this VM has no `CUkernel` and

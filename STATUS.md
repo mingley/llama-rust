@@ -5,6 +5,15 @@ Visible five-turn extract: [docs/chatgpt-share-6a920fe1.md](docs/chatgpt-share-6
 Complete share-API extract: [docs/chatgpt-share-6a920fe1/](docs/chatgpt-share-6a920fe1/).
 Work lands on `main`. No PRs.
 
+## Shipped 2026-09-02 — CUDA `cuLibraryEnumerateKernels`
+
+`gpu-sim` `Sim::library_enumerate_kernels` is `cuLibraryEnumerateKernels`.
+Always Invalid `"library enumk"` because CUDA libraries are not
+modeled. Query; legal during capture. Distinct from
+`library_get_kernel_count` (why is not `"library kcount"`).
+This VM does not invent `cuKernelGetLibrary` or Engine `--library-enumk`.
+`gpu-profile capture` is still refused. Dual score still has no `$/M tokens`.
+
 ## Shipped 2026-09-02 — CUDA `cuLibraryGetKernelCount`
 
 `gpu-sim` `Sim::library_get_kernel_count` is `cuLibraryGetKernelCount`.
