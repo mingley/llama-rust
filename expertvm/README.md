@@ -733,6 +733,8 @@ compiled kernel exists; no Engine flag).
 `gpu-sim` `func_get_shared_mem_config` is `cuFuncGetSharedMemConfig` (identity with `get_func_shared_mem_config`; no Engine flag).
 
 `gpu-sim` `func_set_cache_config` is `cuFuncSetCacheConfig` (identity with `set_func_cache_config`; no Engine flag).
+
+`gpu-sim` `func_set_carveout` is `cuFuncSetAttribute` carveout (identity with `set_func_carveout`; no Engine flag).
 `gpu-sim` `mem_alloc` is `cuMemAlloc` (identity with `malloc`; no Engine flag).
 `gpu-sim` `mem_free` is `cuMemFree` (identity with `free_sync`; no Engine flag).
 `gpu-sim` `mem_free_host` is `cuMemFreeHost` (identity with `free_host_pinned`; no Engine flag).
@@ -990,6 +992,8 @@ compiled kernel exists; no Engine flag).
 `gpu-sim` `func_get_shared_mem_config` is `cuFuncGetSharedMemConfig` (identity with `get_func_shared_mem_config`; no Engine flag).
 
 `gpu-sim` `func_set_cache_config` is `cuFuncSetCacheConfig` (identity with `set_func_cache_config`; no Engine flag).
+
+`gpu-sim` `func_set_carveout` is `cuFuncSetAttribute` carveout (identity with `set_func_carveout`; no Engine flag).
 `gpu-sim` `func_is_loaded` is `cuFuncIsLoaded` (`false` until a compiled
 kernel exists; no Engine flag).
 `gpu-sim` `func_load` is `cuFuncLoad` (Invalid; no compiled kernel; no

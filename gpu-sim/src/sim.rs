@@ -22768,7 +22768,6 @@ impl Sim {
     /// [`Self::set_func_cache_config`] (`cudaFuncSetCacheConfig`).
     ///
     /// Capture refused. Distinct from [`Self::func_get_shared_mem_config`].
-    /// This VM does not invent occupancy SM counts this slice.
     pub fn func_set_cache_config(
         &mut self,
         device: DeviceId,
@@ -22792,6 +22791,8 @@ impl Sim {
     /// occupancy. Launch MaxL1 / MaxShared still override. Capture-legal like
     /// other function attributes. Decode identity stays Default.
     /// `expertvm sim --func-max-shared` sets [`SharedMemCarveout::MaxShared`].
+    /// Driver `cuFuncSetAttribute` carveout is [`Self::func_set_carveout`].
+    /// Identity wrap [`Self::func_set_carveout`].
     pub fn set_func_carveout(
         &mut self,
         device: DeviceId,
@@ -22801,6 +22802,19 @@ impl Sim {
         self.gpu_rt_mut(device)?.func_carveout = carveout;
         self.clock = self.clock.saturating_add(1);
         Ok(())
+    }
+
+    /// `cuFuncSetAttribute` carveout. Identity with
+    /// [`Self::set_func_carveout`] (`cudaFuncSetAttribute` PreferredSharedMemoryCarveout).
+    ///
+    /// Capture legal. Distinct from [`Self::func_set_cache_config`].
+    /// This VM does not invent occupancy SM counts this slice.
+    pub fn func_set_carveout(
+        &mut self,
+        device: DeviceId,
+        carveout: SharedMemCarveout,
+    ) -> Result<(), SimError> {
+        self.set_func_carveout(device, carveout)
     }
 
     /// Current [`Self::set_func_carveout`]. Query; legal during capture.
