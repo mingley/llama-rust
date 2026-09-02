@@ -24543,7 +24543,6 @@ impl Sim {
     /// [`Self::device_get_name`] (`cudaDeviceGetName`).
     ///
     /// Query; legal during capture. Distinct from [`Self::get_func_attributes`].
-    /// This VM does not invent occupancy SM counts this slice.
     pub fn get_device_name(&self, device: DeviceId) -> Result<String, SimError> {
         self.device_get_name(device)
     }
@@ -24639,9 +24638,21 @@ impl Sim {
     }
 
     /// `cudaGetDeviceCount`. Query; legal during capture.
+    /// Driver `cuDeviceGetCount` is [`Self::get_device_count`].
+    /// Identity wrap [`Self::get_device_count`].
     #[must_use]
     pub fn device_count(&self) -> u32 {
         u32::try_from(self.profile.gpus.len()).unwrap_or(u32::MAX)
+    }
+
+    /// `cuDeviceGetCount`. Identity with
+    /// [`Self::device_count`] (`cudaGetDeviceCount`).
+    ///
+    /// Query; legal during capture. Distinct from [`Self::get_device_name`].
+    /// This VM does not invent occupancy SM counts this slice.
+    #[must_use]
+    pub fn get_device_count(&self) -> u32 {
+        self.device_count()
     }
 
     /// `cudaDriverGetVersion` / `cuDriverGetVersion`. Query; legal during capture.

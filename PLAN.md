@@ -9764,7 +9764,12 @@ model, do not celebrate the sim.
       `get_func_attributes`. This VM does not invent occupancy SM counts, Engine `--get-device-name`,
       or `cudaChooseDevice`. `gpu-profile capture` is still refused. Dual
       score still has no `$/M tokens`.
-1101. [ ] Next numbered PLAN item after 1100 is the next `gpu-sim` / Engine /
+1101. [x] `gpu-sim` `Sim::get_device_count` is
+      `cuDeviceGetCount`. Identity with `device_count` (`cudaGetDeviceCount`). Query; legal during capture. Distinct from
+      `get_device_name`. This VM does not invent occupancy SM counts, Engine `--get-device-count`,
+      or `cudaChooseDevice`. `gpu-profile capture` is still refused. Dual
+      score still has no `$/M tokens`.
+1102. [ ] Next numbered PLAN item after 1101 is the next `gpu-sim` / Engine /
     serve / expertvm mechanical API that is still missing, or the next official
     decode family. Prefer remaining CUDA-shaped twins over more
     OpenAI HTTP veneer. Do not invent F32 `output.scale`. Do not invent a
@@ -11622,6 +11627,10 @@ model, do not celebrate the sim.
     Do not invent Engine `--get-device-name`. Do not invent
     occupancy SM counts this slice. Do not reverse DeviceGetName identity with device_get_name.
     Do not invent `cuDeviceGetUuid` as `get_device_name`.
+    Do not invent a second `cuDeviceGetCount` / `get_device_count`.
+    Do not invent Engine `--get-device-count`. Do not invent
+    occupancy SM counts this slice. Do not reverse DeviceGetCount identity with device_count.
+    Do not invent `cuDeviceGet` as `get_device_count`.
     Do not invent a second `cudaStreamAddCallback`.
     Do not invent Engine `--stream-callback` (same wall as second live
     `cudaLaunchHostFunc` after miss DMA).
@@ -13511,6 +13520,11 @@ model, do not celebrate the sim.
     this slice. Do not reverse DeviceGetName identity with device_get_name.
     Do not wrap `device_get_name` as `get_device_name`.
     Do not wrap `device_get_uuid` as `get_device_name`.
+    Do not invent a second `get_device_count` API. Do not invent
+    Engine `--get-device-count-identity`. Do not invent a stream-is-idle
+    this slice. Do not reverse DeviceGetCount identity with device_count.
+    Do not wrap `device_count` as `get_device_count`.
+    Do not wrap `driver_get_version` as `get_driver_version`.
     Do not invent a second DeviceLaunch in-flight destroy-complete check or Engine
     `--device-launch-destroy`. Do not abort an in-flight DeviceLaunch when
     `destroy_graph` succeeds. Do not delay destroy of an idle exec. Do not invent
@@ -15567,6 +15581,9 @@ model, do not celebrate the sim.
     Do not invent a second `get_device_name` method. Do not
     invent Engine `--cu-get-device-name`. Do not reverse wrapping
     cuDeviceGetName identity. Do not wrap `cuDeviceGetUuid` as `get_device_name`.
+    Do not invent a second `get_device_count` method. Do not
+    invent Engine `--cu-get-device-count`. Do not reverse wrapping
+    cuDeviceGetCount identity. Do not wrap `cuDeviceGet` as `get_device_count`.
     Do not
     spend the next item on an OpenAI-compatible HTTP veneer.
 
