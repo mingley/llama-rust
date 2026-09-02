@@ -4838,10 +4838,22 @@ impl Sim {
     /// Matches the id printed by [`Self::graph_debug_dot_with_flags`] with
     /// [`GraphDebugDotFlags::HANDLES`]. Distinct from node indices. A
     /// definition, its instantiate exec, and a clone each have their own id.
-    /// Unknown graphs are Invalid `"unknown graph"`.
+    /// Unknown graphs are Invalid `"unknown graph"`. Driver
+    /// `cuGraphGetId` is
+    /// [`Self::get_graph_id`].
     pub fn graph_get_id(&self, graph: GraphId) -> Result<u32, SimError> {
         self.require_live_graph(graph)?;
         Ok(graph.0)
+    }
+
+    /// `cuGraphGetId`. Identity with
+    /// [`Self::graph_get_id`] (`cudaGraphGetId`).
+    ///
+    /// Query; legal during capture. Distinct from
+    /// [`Self::get_graph_exec_flags`]. This VM does not invent
+    /// occupancy SM counts this slice.
+    pub fn get_graph_id(&self, graph: GraphId) -> Result<u32, SimError> {
+        self.graph_get_id(graph)
     }
 
     /// `cudaGraphGetNodes` — live node indices in creation order.
@@ -5012,8 +5024,7 @@ impl Sim {
     /// [`Self::graph_exec_get_flags`] (`cudaGraphExecGetFlags`).
     ///
     /// Query; legal during capture. Distinct from
-    /// [`Self::instantiate_graph_with_flags`]. This VM does not invent
-    /// occupancy SM counts this slice.
+    /// [`Self::instantiate_graph_with_flags`].
     pub fn get_graph_exec_flags(&self, exec: GraphId) -> Result<u32, SimError> {
         self.graph_exec_get_flags(exec)
     }
