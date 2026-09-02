@@ -9624,7 +9624,12 @@ model, do not celebrate the sim.
       `func_get_cluster_dim_must_be_set`. This VM does not invent occupancy SM counts, Engine `--func-set-required-cluster-width`,
       or `cudaChooseDevice`. `gpu-profile capture` is still refused. Dual
       score still has no `$/M tokens`.
-1073. [ ] Next numbered PLAN item after 1072 is the next `gpu-sim` / Engine /
+1073. [x] `gpu-sim` `Sim::func_get_required_cluster_width` is
+      `cuFuncGetAttribute` required cluster width. Identity with `required_cluster_width` (`cudaFuncGetAttribute` RequiredClusterWidth). Query; legal during capture. Distinct from
+      `func_set_required_cluster_width`. This VM does not invent occupancy SM counts, Engine `--func-get-required-cluster-width`,
+      or `cudaChooseDevice`. `gpu-profile capture` is still refused. Dual
+      score still has no `$/M tokens`.
+1074. [ ] Next numbered PLAN item after 1073 is the next `gpu-sim` / Engine /
     serve / expertvm mechanical API that is still missing, or the next official
     decode family. Prefer remaining CUDA-shaped twins over more
     OpenAI HTTP veneer. Do not invent F32 `output.scale`. Do not invent a
@@ -11370,6 +11375,10 @@ model, do not celebrate the sim.
     Do not invent Engine `--func-set-required-cluster-width`. Do not invent
     occupancy SM counts this slice. Do not reverse FuncSetRequiredClusterWidth identity with set_required_cluster_width.
     Do not invent generic `cuFuncSetAttribute` as `func_set_required_cluster_width`.
+    Do not invent a second `cuFuncGetAttribute` required cluster width / `func_get_required_cluster_width`.
+    Do not invent Engine `--func-get-required-cluster-width`. Do not invent
+    occupancy SM counts this slice. Do not reverse FuncGetRequiredClusterWidth identity with required_cluster_width.
+    Do not invent generic `cuFuncGetAttribute` as `func_get_required_cluster_width`.
     Do not invent a second `cudaStreamAddCallback`.
     Do not invent Engine `--stream-callback` (same wall as second live
     `cudaLaunchHostFunc` after miss DMA).
@@ -13159,6 +13168,9 @@ model, do not celebrate the sim.
     Do not invent a second `func_set_required_cluster_width` API. Do not invent
     Engine `--func-set-required-cluster-width-identity`. Do not invent a get-required-cluster-width
     this slice. Do not reverse FuncSetRequiredClusterWidth identity with set_required_cluster_width.
+    Do not invent a second `func_get_required_cluster_width` API. Do not invent
+    Engine `--func-get-required-cluster-width-identity`. Do not invent a required-cluster-height
+    this slice. Do not reverse FuncGetRequiredClusterWidth identity with required_cluster_width.
     Do not invent a second DeviceLaunch in-flight destroy-complete check or Engine
     `--device-launch-destroy`. Do not abort an in-flight DeviceLaunch when
     `destroy_graph` succeeds. Do not delay destroy of an idle exec. Do not invent
@@ -15131,6 +15143,9 @@ model, do not celebrate the sim.
     Do not invent a second `func_set_required_cluster_width` method. Do not
     invent Engine `--cu-func-set-required-cluster-width`. Do not reverse wrapping
     cuFuncSetAttribute required cluster width identity. Do not wrap generic `cuFuncSetAttribute` as `func_set_required_cluster_width`.
+    Do not invent a second `func_get_required_cluster_width` method. Do not
+    invent Engine `--cu-func-get-required-cluster-width`. Do not reverse wrapping
+    cuFuncGetAttribute required cluster width identity. Do not wrap generic `cuFuncGetAttribute` as `func_get_required_cluster_width`.
     Do not
     spend the next item on an OpenAI-compatible HTTP veneer.
 
