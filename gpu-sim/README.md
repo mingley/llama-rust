@@ -261,6 +261,7 @@ warp scheduler, L1, …   ← do not model
 | `module_load_fat_binary` is Invalid (no fatbin image / `CUmodule`) | `cuModuleLoadFatBinary` |
 | `module_load_data_ex` is Invalid (no cubin image or JIT options) | `cuModuleLoadDataEx` |
 | `module_get_function_count` is Invalid (no `CUmodule` function list) | `cuModuleGetFunctionCount` |
+| `module_enumerate_functions` is Invalid (no `CUmodule` function list) | `cuModuleEnumerateFunctions` |
 | `module_unload` is Invalid (no `CUmodule` handle) | `cuModuleUnload` |
 | `module_get_function` is Invalid (no `CUmodule` / `CUfunction`) | `cuModuleGetFunction` |
 | `module_get_global` is Invalid (no `CUmodule` device symbol) | `cuModuleGetGlobal` |
@@ -1504,6 +1505,8 @@ Distinct from `module_load` and `module_load_data`. Query; legal during capture.
 Distinct from `module_load_data` and `link_create`. Query; legal during capture. No Engine `--module-jitopt`.
 `module_get_function_count` is `cuModuleGetFunctionCount` (always Invalid `"module fncount"`; no cubin).
 Distinct from `module_get_function` and `module_load_data_ex`. Query; legal during capture. No Engine `--module-fncount`.
+`module_enumerate_functions` is `cuModuleEnumerateFunctions` (always Invalid `"module enumfn"`; no cubin).
+Distinct from `module_get_function_count` and `module_get_function`. Query; legal during capture. No Engine `--module-enumfn`.
 `module_unload` is `cuModuleUnload` (always Invalid `"module unload"`; no `CUmodule`).
 Distinct from `module_load` and `library_unload`. Query; legal during capture. No Engine `--module-unload`.
 `module_get_function` is `cuModuleGetFunction` (always Invalid `"module function"`; no cubin).

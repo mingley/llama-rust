@@ -7248,7 +7248,14 @@ model, do not celebrate the sim.
     or `cudaChooseDevice`. `gpu-profile capture` is still refused. Dual
     score still has no `$/M tokens`.
 
-728. [ ] Next numbered PLAN item after 727 is the next `gpu-sim` / Engine /
+728. [x] `gpu-sim` `Sim::module_enumerate_functions` is
+    `cuModuleEnumerateFunctions`. Always Invalid `"module enumfn"`
+    because CUDA modules are not modeled. Query; legal during capture.
+    Distinct from `module_get_function_count`. This VM does not invent `cuTensorMapEncodeIm2col`, Engine `--module-enumfn`,
+    or `cudaChooseDevice`. `gpu-profile capture` is still refused. Dual
+    score still has no `$/M tokens`.
+
+729. [ ] Next numbered PLAN item after 728 is the next `gpu-sim` / Engine /
     serve / expertvm mechanical API that is still missing, or the next official
     decode family. Prefer remaining CUDA-shaped twins over more
     OpenAI HTTP veneer. Do not invent F32 `output.scale`. Do not invent a
@@ -7923,6 +7930,9 @@ model, do not celebrate the sim.
     Do not invent a second `cuModuleGetFunctionCount` / `module_get_function_count`.
     Do not invent Engine `--module-fncount`. Do not invent
     `cuModuleEnumerateFunctions` this slice. Do not reverse `"module fncount"`.
+    Do not invent a second `cuModuleEnumerateFunctions` / `module_enumerate_functions`.
+    Do not invent Engine `--module-enumfn`. Do not invent
+    `cuTensorMapEncodeIm2col` this slice. Do not reverse `"module enumfn"`.
     Do not invent a second `cudaStreamAddCallback`.
     Do not invent Engine `--stream-callback` (same wall as second live
     `cudaLaunchHostFunc` after miss DMA).
@@ -8677,6 +8687,9 @@ model, do not celebrate the sim.
     Do not invent a second `module_get_function_count` API. Do not invent
     Engine `--get-module-fncount`. Do not invent a module function list
     this slice. Do not reverse Module GetFunctionCount remaining unsupported.
+    Do not invent a second `module_enumerate_functions` API. Do not invent
+    Engine `--enum-module-functions`. Do not invent a CUfunction array
+    this slice. Do not reverse Module EnumerateFunctions remaining unsupported.
     Do not invent a second DeviceLaunch in-flight destroy-complete check or Engine
     `--device-launch-destroy`. Do not abort an in-flight DeviceLaunch when
     `destroy_graph` succeeds. Do not delay destroy of an idle exec. Do not invent
@@ -9614,6 +9627,9 @@ model, do not celebrate the sim.
     Do not invent a second `module_get_function_count` method. Do not
     invent Engine `--cu-module-get-function-count`. Do not reverse wrapping
     cuModuleGetFunctionCount Invalid.
+    Do not invent a second `module_enumerate_functions` method. Do not
+    invent Engine `--cu-module-enumerate-functions`. Do not reverse wrapping
+    cuModuleEnumerateFunctions Invalid.
     Do not
     spend the next item on an OpenAI-compatible HTTP veneer.
 

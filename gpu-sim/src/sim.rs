@@ -21084,13 +21084,28 @@ impl Sim {
     /// Always Invalid `"module fncount"` (this VM has no `CUmodule`
     /// function list). Distinct from [`Self::module_load_data_ex`] (why is
     /// not `"module jitopt"`) and from [`Self::module_get_function`] (why
-    /// is not `"module function"`).
+    /// is not `"module function"`) and from [`Self::module_enumerate_functions`].
     /// Unknown devices are Invalid `"device not in profile"`. Query; legal
     /// during capture.
     pub fn module_get_function_count(&self, device: DeviceId) -> Result<(), SimError> {
         let _gpu = self.profile.gpu(device)?;
         Err(SimError::Invalid {
             why: "module fncount",
+        })
+    }
+
+    /// `cuModuleEnumerateFunctions`. CUDA modules are not modeled.
+    ///
+    /// Always Invalid `"module enumfn"` (this VM has no `CUmodule`
+    /// function list). Distinct from [`Self::module_get_function_count`]
+    /// (why is not `"module fncount"`) and from [`Self::module_get_function`]
+    /// (why is not `"module function"`).
+    /// Unknown devices are Invalid `"device not in profile"`. Query; legal
+    /// during capture.
+    pub fn module_enumerate_functions(&self, device: DeviceId) -> Result<(), SimError> {
+        let _gpu = self.profile.gpu(device)?;
+        Err(SimError::Invalid {
+            why: "module enumfn",
         })
     }
 

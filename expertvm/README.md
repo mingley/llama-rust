@@ -528,6 +528,8 @@ no fatbin image; no Engine flag).
 JIT options; no Engine flag).
 `gpu-sim` `module_get_function_count` is `cuModuleGetFunctionCount`
 (Invalid; no `CUmodule` function list; no Engine flag).
+`gpu-sim` `module_enumerate_functions` is `cuModuleEnumerateFunctions`
+(Invalid; no `CUmodule` function list; no Engine flag).
 `gpu-sim` `module_unload` is `cuModuleUnload` (Invalid; no `CUmodule`
 handle; no Engine flag).
 `gpu-sim` `module_get_function` is `cuModuleGetFunction` (Invalid; no
