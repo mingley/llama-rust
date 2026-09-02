@@ -7500,7 +7500,14 @@ model, do not celebrate the sim.
     or `cudaChooseDevice`. `gpu-profile capture` is still refused. Dual
     score still has no `$/M tokens`.
 
-764. [ ] Next numbered PLAN item after 763 is the next `gpu-sim` / Engine /
+764. [x] `gpu-sim` `Sim::tex_ref_get_array` is
+    `cuTexRefGetArray`. Always Invalid `"texref getarr"`
+    because CUDA texture references are not modeled. Query; legal during capture.
+    Distinct from `tex_ref_set_flags` and `tex_ref_set_array`. This VM does not invent `cuTexRefGetMipmappedArray`, Engine `--texref-getarr`,
+    or `cudaChooseDevice`. `gpu-profile capture` is still refused. Dual
+    score still has no `$/M tokens`.
+
+765. [ ] Next numbered PLAN item after 764 is the next `gpu-sim` / Engine /
     serve / expertvm mechanical API that is still missing, or the next official
     decode family. Prefer remaining CUDA-shaped twins over more
     OpenAI HTTP veneer. Do not invent F32 `output.scale`. Do not invent a
@@ -8283,6 +8290,9 @@ model, do not celebrate the sim.
     Do not invent a second `cuTexRefSetFlags` / `tex_ref_set_flags`.
     Do not invent Engine `--texref-flags`. Do not invent
     `cuTexRefGetArray` this slice. Do not reverse `"texref flags"`.
+    Do not invent a second `cuTexRefGetArray` / `tex_ref_get_array`.
+    Do not invent Engine `--texref-getarr`. Do not invent
+    `cuTexRefGetMipmappedArray` this slice. Do not reverse `"texref getarr"`.
     Do not invent a second `cudaStreamAddCallback`.
     Do not invent Engine `--stream-callback` (same wall as second live
     `cudaLaunchHostFunc` after miss DMA).
@@ -9145,6 +9155,9 @@ model, do not celebrate the sim.
     Do not invent a second `tex_ref_set_flags` API. Do not invent
     Engine `--set-tex-ref-flags`. Do not invent a CUtexref get-array
     this slice. Do not reverse TexRef SetFlags remaining unsupported.
+    Do not invent a second `tex_ref_get_array` API. Do not invent
+    Engine `--get-tex-ref-array`. Do not invent a CUtexref get-mipmapped-array
+    this slice. Do not reverse TexRef GetArray remaining unsupported.
     Do not invent a second DeviceLaunch in-flight destroy-complete check or Engine
     `--device-launch-destroy`. Do not abort an in-flight DeviceLaunch when
     `destroy_graph` succeeds. Do not delay destroy of an idle exec. Do not invent
@@ -10190,6 +10203,9 @@ model, do not celebrate the sim.
     Do not invent a second `tex_ref_set_flags` method. Do not
     invent Engine `--cu-tex-ref-set-flags`. Do not reverse wrapping
     cuTexRefSetFlags Invalid.
+    Do not invent a second `tex_ref_get_array` method. Do not
+    invent Engine `--cu-tex-ref-get-array`. Do not reverse wrapping
+    cuTexRefGetArray Invalid.
     Do not
     spend the next item on an OpenAI-compatible HTTP veneer.
 
