@@ -12987,7 +12987,9 @@ impl Sim {
     /// CopyAttributes). [`Self::graph_exec_kernel_node_copy_attributes`] is
     /// the exec-snapshot twin.
     /// A parked in-flight-destroyed exec used as `src` or `dst` is
-    /// `"unknown graph"`. Live exec as either end stays.
+    /// `"unknown graph"`. Live exec as either end stays. Driver
+    /// `cuGraphKernelNodeCopyAttributes` is
+    /// [`Self::copy_graph_kernel_node_attributes`].
     pub fn graph_kernel_node_copy_attributes(
         &mut self,
         dst_graph: GraphId,
@@ -12996,6 +12998,22 @@ impl Sim {
         src: usize,
     ) -> Result<(), SimError> {
         self.copy_kernel_node_attributes(dst_graph, dst, src_graph, src, false)
+    }
+
+    /// `cuGraphKernelNodeCopyAttributes`. Identity with
+    /// [`Self::graph_kernel_node_copy_attributes`] (`cudaGraphKernelNodeCopyAttributes`).
+    ///
+    /// Capture refused. Distinct from
+    /// [`Self::graph_exec_kernel_node_copy_attributes`]. This VM does not invent
+    /// occupancy SM counts this slice.
+    pub fn copy_graph_kernel_node_attributes(
+        &mut self,
+        dst_graph: GraphId,
+        dst: usize,
+        src_graph: GraphId,
+        src: usize,
+    ) -> Result<(), SimError> {
+        self.graph_kernel_node_copy_attributes(dst_graph, dst, src_graph, src)
     }
 
     /// Exec-snapshot [`Self::graph_kernel_node_copy_attributes`].
@@ -13251,7 +13269,6 @@ impl Sim {
     /// (`cudaGraphExecKernelNodeSetAttribute`).
     ///
     /// Capture refused. Distinct from [`Self::get_graph_exec_kernel_node_attribute`].
-    /// This VM does not invent occupancy SM counts this slice.
     pub fn set_graph_exec_kernel_node_attribute(
         &mut self,
         exec: GraphId,
