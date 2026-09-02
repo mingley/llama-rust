@@ -35866,31 +35866,31 @@ mod tests {
             Err(SimError::Invalid { why }) => assert!(why.contains("memcpy batch 1d"), "{why}"),
             other => panic!("{other:?}"),
         }
-        match sim.mem_cpy_batch_async(DeviceId(99), &[op.clone()], &[attr], &[0], s) {
+        match sim.mem_cpy_batch_async(DeviceId(99), std::slice::from_ref(&op), &[attr], &[0], s) {
             Err(SimError::Invalid { why }) => assert!(why.contains("device"), "{why}"),
             other => panic!("{other:?}"),
         }
-        match sim.memcpy_batch_async(DeviceId(99), &[op.clone()], &[attr], &[0], s) {
+        match sim.memcpy_batch_async(DeviceId(99), std::slice::from_ref(&op), &[attr], &[0], s) {
             Err(SimError::Invalid { why }) => assert!(why.contains("device"), "{why}"),
             other => panic!("{other:?}"),
         }
         let named = sim
-            .mem_cpy_batch_async(d, &[op.clone()], &[attr], &[0], s)
+            .mem_cpy_batch_async(d, std::slice::from_ref(&op), &[attr], &[0], s)
             .unwrap();
         assert_eq!(named.len(), 1);
         sim.synchronize_stream(d, s).unwrap();
         assert_eq!(sim.bytes_moved(), 4096);
         let twin = sim
-            .memcpy_batch_async(d, &[op.clone()], &[attr], &[0], s)
+            .memcpy_batch_async(d, std::slice::from_ref(&op), &[attr], &[0], s)
             .unwrap();
         assert_eq!(twin.len(), 1);
         sim.synchronize_stream(d, s).unwrap();
         sim.begin_capture(d, s).unwrap();
-        match sim.mem_cpy_batch_async(d, &[op.clone()], &[attr], &[0], s) {
+        match sim.mem_cpy_batch_async(d, std::slice::from_ref(&op), &[attr], &[0], s) {
             Err(SimError::Invalid { why }) => assert!(why.contains("capture"), "{why}"),
             other => panic!("{other:?}"),
         }
-        match sim.memcpy_batch_async(d, &[op], &[attr], &[0], s) {
+        match sim.memcpy_batch_async(d, std::slice::from_ref(&op), &[attr], &[0], s) {
             Err(SimError::Invalid { why }) => assert!(why.contains("capture"), "{why}"),
             other => panic!("{other:?}"),
         }
