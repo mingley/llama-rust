@@ -4840,7 +4840,9 @@ impl Sim {
     /// definition, its instantiate exec, and a clone each have their own id.
     /// Unknown graphs are Invalid `"unknown graph"`. Driver
     /// `cuGraphGetId` is
-    /// [`Self::get_graph_id`].
+    /// [`Self::get_graph_id`]. Driver
+    /// `cuGraphExecGetId` is
+    /// [`Self::get_graph_exec_id`].
     pub fn graph_get_id(&self, graph: GraphId) -> Result<u32, SimError> {
         self.require_live_graph(graph)?;
         Ok(graph.0)
@@ -4850,10 +4852,19 @@ impl Sim {
     /// [`Self::graph_get_id`] (`cudaGraphGetId`).
     ///
     /// Query; legal during capture. Distinct from
-    /// [`Self::get_graph_exec_flags`]. This VM does not invent
-    /// occupancy SM counts this slice.
+    /// [`Self::get_graph_exec_flags`].
     pub fn get_graph_id(&self, graph: GraphId) -> Result<u32, SimError> {
         self.graph_get_id(graph)
+    }
+
+    /// `cuGraphExecGetId`. Identity with
+    /// [`Self::graph_get_id`] (`cudaGraphExecGetId`).
+    ///
+    /// Query; legal during capture. Distinct from
+    /// [`Self::get_graph_id`]. This VM does not invent
+    /// occupancy SM counts this slice.
+    pub fn get_graph_exec_id(&self, exec: GraphId) -> Result<u32, SimError> {
+        self.graph_get_id(exec)
     }
 
     /// `cudaGraphGetNodes` — live node indices in creation order.
