@@ -19090,7 +19090,6 @@ impl Sim {
     /// [`Self::multicast_unbind`] (`cuMulticastUnbind`).
     ///
     /// Capture refused. Distinct from [`Self::mem_multicast_bind_addr_with_size`].
-    /// This VM does not invent occupancy SM counts this slice.
     pub fn mem_multicast_unbind(
         &mut self,
         mc: MulticastId,
@@ -19104,6 +19103,8 @@ impl Sim {
     /// `size` must equal the object bytes. Other sizes Invalid `"unbind size"`.
     /// CUDA `mcOffset` is 0 (partial unbind is not modeled). Host-synchronous;
     /// capture refused.
+    /// Driver `cuMulticastUnbind` size is [`Self::mem_multicast_unbind_with_size`].
+    /// Identity wrap [`Self::mem_multicast_unbind_with_size`].
     pub fn multicast_unbind_with_size(
         &mut self,
         mc: MulticastId,
@@ -19130,6 +19131,20 @@ impl Sim {
         let _gone = self.mc_mut(mc)?.binds.remove(&device);
         self.clock = self.clock.saturating_add(1);
         Ok(())
+    }
+
+    /// `cuMulticastUnbind` size. Identity with
+    /// [`Self::multicast_unbind_with_size`] (`cuMulticastUnbind` size).
+    ///
+    /// Capture refused. Distinct from [`Self::mem_multicast_unbind`].
+    /// This VM does not invent occupancy SM counts this slice.
+    pub fn mem_multicast_unbind_with_size(
+        &mut self,
+        mc: MulticastId,
+        device: DeviceId,
+        size: u64,
+    ) -> Result<(), SimError> {
+        self.multicast_unbind_with_size(mc, device, size)
     }
 
     /// `cuMemRelease` of a [`MulticastId`] (`cuMulticastCreate` handle).
