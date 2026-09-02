@@ -1170,6 +1170,9 @@
 //! [`kernel_get_param_info`](Sim::kernel_get_param_info) is
 //! `cuKernelGetParamInfo` (always Invalid `"kernel param"`). Query;
 //! legal during capture. No Engine `--kernel-param`.
+//! [`kernel_get_param_count`](Sim::kernel_get_param_count) is
+//! `cuKernelGetParamCount` (always Invalid `"kernel pcount"`). Query;
+//! legal during capture. No Engine `--kernel-pcount`.
 //! [`kernel_get_attribute`](Sim::kernel_get_attribute) is
 //! `cuKernelGetAttribute` (always Invalid `"kernel attribute"`). Query;
 //! legal during capture. No Engine `--kernel-attribute`.
@@ -19379,6 +19382,57 @@ mod tests {
             Err(SimError::Invalid { why }) => {
                 assert!(why.contains("kernel function"), "{why}");
                 assert!(!why.contains("kernel library"), "{why}");
+            }
+            other => panic!("{other:?}"),
+        }
+        match sim.kernel_get_param_count(d) {
+            Err(SimError::Invalid { why }) => {
+                assert!(why.contains("kernel pcount"), "{why}");
+                assert!(!why.contains("kernel library"), "{why}");
+                assert!(!why.contains("kernel param"), "{why}");
+            }
+            other => panic!("{other:?}"),
+        }
+    }
+
+    #[test]
+    fn kernel_get_param_count_is_unsupported() {
+        let mut sim = Sim::new(h100());
+        let d = DeviceId(0);
+        match sim.kernel_get_param_count(d) {
+            Err(SimError::Invalid { why }) => {
+                assert!(why.contains("kernel pcount"), "{why}");
+                assert!(!why.contains("kernel param"), "{why}");
+                assert!(!why.contains("kernel library"), "{why}");
+                assert!(!why.contains("unknown function"), "{why}");
+            }
+            other => panic!("{other:?}"),
+        }
+        sim.begin_capture(d, StreamId(0)).unwrap();
+        match sim.kernel_get_param_count(d) {
+            Err(SimError::Invalid { why }) => {
+                assert!(why.contains("kernel pcount"), "{why}");
+            }
+            other => panic!("{other:?}"),
+        }
+        let _g = sim.end_capture().unwrap();
+        match sim.kernel_get_param_count(DeviceId(99)) {
+            Err(SimError::Invalid { why }) => {
+                assert!(why.contains("device not in profile"), "{why}");
+            }
+            other => panic!("{other:?}"),
+        }
+        match sim.kernel_get_param_info(d) {
+            Err(SimError::Invalid { why }) => {
+                assert!(why.contains("kernel param"), "{why}");
+                assert!(!why.contains("kernel pcount"), "{why}");
+            }
+            other => panic!("{other:?}"),
+        }
+        match sim.func_get_param_info(d, 0) {
+            Err(SimError::Invalid { why }) => {
+                assert!(why.contains("unknown function"), "{why}");
+                assert!(!why.contains("kernel pcount"), "{why}");
             }
             other => panic!("{other:?}"),
         }

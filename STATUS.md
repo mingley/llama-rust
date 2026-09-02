@@ -5,6 +5,15 @@ Visible five-turn extract: [docs/chatgpt-share-6a920fe1.md](docs/chatgpt-share-6
 Complete share-API extract: [docs/chatgpt-share-6a920fe1/](docs/chatgpt-share-6a920fe1/).
 Work lands on `main`. No PRs.
 
+## Shipped 2026-09-02 — CUDA `cuKernelGetParamCount`
+
+`gpu-sim` `Sim::kernel_get_param_count` is `cuKernelGetParamCount`.
+Always Invalid `"kernel pcount"` because CUDA kernels are not
+modeled. Query; legal during capture. Distinct from
+`kernel_get_param_info` (why is not `"kernel param"`).
+This VM does not invent `cuFuncGetParamCount` or Engine `--kernel-pcount`.
+`gpu-profile capture` is still refused. Dual score still has no `$/M tokens`.
+
 ## Shipped 2026-09-02 — CUDA `cuKernelGetLibrary`
 
 `gpu-sim` `Sim::kernel_get_library` is `cuKernelGetLibrary`.

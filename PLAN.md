@@ -7353,7 +7353,14 @@ model, do not celebrate the sim.
     or `cudaChooseDevice`. `gpu-profile capture` is still refused. Dual
     score still has no `$/M tokens`.
 
-743. [ ] Next numbered PLAN item after 742 is the next `gpu-sim` / Engine /
+743. [x] `gpu-sim` `Sim::kernel_get_param_count` is
+    `cuKernelGetParamCount`. Always Invalid `"kernel pcount"`
+    because CUDA kernels are not modeled. Query; legal during capture.
+    Distinct from `kernel_get_param_info`. This VM does not invent `cuFuncGetParamCount`, Engine `--kernel-pcount`,
+    or `cudaChooseDevice`. `gpu-profile capture` is still refused. Dual
+    score still has no `$/M tokens`.
+
+744. [ ] Next numbered PLAN item after 743 is the next `gpu-sim` / Engine /
     serve / expertvm mechanical API that is still missing, or the next official
     decode family. Prefer remaining CUDA-shaped twins over more
     OpenAI HTTP veneer. Do not invent F32 `output.scale`. Do not invent a
@@ -8073,6 +8080,9 @@ model, do not celebrate the sim.
     Do not invent a second `cuKernelGetLibrary` / `kernel_get_library`.
     Do not invent Engine `--kernel-library`. Do not invent
     `cuKernelGetParamCount` this slice. Do not reverse `"kernel library"`.
+    Do not invent a second `cuKernelGetParamCount` / `kernel_get_param_count`.
+    Do not invent Engine `--kernel-pcount`. Do not invent
+    `cuFuncGetParamCount` this slice. Do not reverse `"kernel pcount"`.
     Do not invent a second `cudaStreamAddCallback`.
     Do not invent Engine `--stream-callback` (same wall as second live
     `cudaLaunchHostFunc` after miss DMA).
@@ -8872,6 +8882,9 @@ model, do not celebrate the sim.
     Do not invent a second `kernel_get_library` API. Do not invent
     Engine `--get-kernel-library`. Do not invent a CUlibrary from kernel
     this slice. Do not reverse Kernel GetLibrary remaining unsupported.
+    Do not invent a second `kernel_get_param_count` API. Do not invent
+    Engine `--get-kernel-pcount`. Do not invent a CUkernel param count
+    this slice. Do not reverse Kernel GetParamCount remaining unsupported.
     Do not invent a second DeviceLaunch in-flight destroy-complete check or Engine
     `--device-launch-destroy`. Do not abort an in-flight DeviceLaunch when
     `destroy_graph` succeeds. Do not delay destroy of an idle exec. Do not invent
@@ -9854,6 +9867,9 @@ model, do not celebrate the sim.
     Do not invent a second `kernel_get_library` method. Do not
     invent Engine `--cu-kernel-get-library`. Do not reverse wrapping
     cuKernelGetLibrary Invalid.
+    Do not invent a second `kernel_get_param_count` method. Do not
+    invent Engine `--cu-kernel-get-param-count`. Do not reverse wrapping
+    cuKernelGetParamCount Invalid.
     Do not
     spend the next item on an OpenAI-compatible HTTP veneer.
 

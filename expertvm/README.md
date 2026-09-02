@@ -566,6 +566,8 @@ no `CUlibrary` kernel list; no Engine flag).
 `CUkernel` / `CUfunction`; no Engine flag).
 `gpu-sim` `kernel_get_param_info` is `cuKernelGetParamInfo` (Invalid; no
 `CUkernel` parameter blob; no Engine flag).
+`gpu-sim` `kernel_get_param_count` is `cuKernelGetParamCount` (Invalid; no
+`CUkernel` parameter list; no Engine flag).
 `gpu-sim` `kernel_get_attribute` is `cuKernelGetAttribute` (Invalid; no
 `CUkernel` attribute; no Engine flag).
 `gpu-sim` `kernel_set_attribute` is `cuKernelSetAttribute` (Invalid; no

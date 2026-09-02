@@ -21538,6 +21538,21 @@ impl Sim {
         })
     }
 
+    /// `cuKernelGetParamCount`. CUDA kernels are not modeled.
+    ///
+    /// Always Invalid `"kernel pcount"` (this VM has no `CUkernel`
+    /// parameter list). Distinct from [`Self::kernel_get_param_info`] (why
+    /// is not `"kernel param"`) and from [`Self::func_get_param_info`].
+    /// Unknown devices are Invalid `"device not in profile"`. Query; legal
+    /// during capture. This VM does not invent `cuFuncGetParamCount` this
+    /// slice.
+    pub fn kernel_get_param_count(&self, device: DeviceId) -> Result<(), SimError> {
+        let _gpu = self.profile.gpu(device)?;
+        Err(SimError::Invalid {
+            why: "kernel pcount",
+        })
+    }
+
     /// `cuKernelGetAttribute`. CUDA kernels are not modeled.
     ///
     /// Always Invalid `"kernel attribute"` (this VM has no `CUkernel`

@@ -288,6 +288,7 @@ warp scheduler, L1, …   ← do not model
 | `kernel_get_library` is Invalid (no `CUkernel` / `CUlibrary`) | `cuKernelGetLibrary` |
 | `kernel_get_function` is Invalid (no `CUkernel` / `CUfunction`) | `cuKernelGetFunction` |
 | `kernel_get_param_info` is Invalid (no `CUkernel` parameter blob) | `cuKernelGetParamInfo` |
+| `kernel_get_param_count` is Invalid (no `CUkernel` parameter list) | `cuKernelGetParamCount` |
 | `kernel_get_attribute` is Invalid (no `CUkernel` attribute) | `cuKernelGetAttribute` |
 | `kernel_set_attribute` is Invalid (no `CUkernel` attribute) | `cuKernelSetAttribute` |
 | `kernel_set_cache_config` is Invalid (no `CUkernel` cache config) | `cuKernelSetCacheConfig` |
@@ -1603,6 +1604,9 @@ Query; legal during capture. No Engine `--kernel-function`.
 `kernel_get_param_info` is `cuKernelGetParamInfo` (always Invalid
 `"kernel param"`). Distinct from `kernel_get_function` and `func_get_param_info`.
 Query; legal during capture. No Engine `--kernel-param`.
+`kernel_get_param_count` is `cuKernelGetParamCount` (always Invalid
+`"kernel pcount"`). Distinct from `kernel_get_param_info` and
+`func_get_param_info`. Query; legal during capture. No Engine `--kernel-pcount`.
 `kernel_get_attribute` is `cuKernelGetAttribute` (always Invalid
 `"kernel attribute"`). Distinct from `kernel_get_param_info` and `func_get_attribute`.
 Query; legal during capture. No Engine `--kernel-attribute`.
