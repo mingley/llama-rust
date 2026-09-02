@@ -566,6 +566,7 @@ compiled kernel exists; no Engine flag).
 `gpu-sim` `mem_cpy_3d_async` is `cuMemcpy3DAsync` (identity with `memcpy_3d_async`; no Engine flag).
 `gpu-sim` `mem_cpy_peer` is `cuMemcpyPeer` (identity with `memcpy_peer`; no Engine flag).
 `gpu-sim` `mem_cpy_peer_async` is `cuMemcpyPeerAsync` (identity with `memcpy_peer_async`; no Engine flag).
+`gpu-sim` `mem_cpy_peer_3d` is `cuMemcpy3DPeer` (identity with `memcpy_peer_3d`; no Engine flag).
 `gpu-sim` `func_is_loaded` is `cuFuncIsLoaded` (`false` until a compiled
 kernel exists; no Engine flag).
 `gpu-sim` `func_load` is `cuFuncLoad` (Invalid; no compiled kernel; no

@@ -253,6 +253,9 @@
 //! [`mem_cpy_peer_async`](Sim::mem_cpy_peer_async) is `cuMemcpyPeerAsync` (identity with
 //! [`memcpy_peer_async`](Sim::memcpy_peer_async)). Capture-legal. Distinct from
 //! [`mem_cpy_peer`](Sim::mem_cpy_peer). No Engine `--mem-cpy-peer-async`.
+//! [`mem_cpy_peer_3d`](Sim::mem_cpy_peer_3d) is `cuMemcpy3DPeer` (identity with
+//! [`memcpy_peer_3d`](Sim::memcpy_peer_3d)). Capture refused. Distinct from
+//! [`memcpy_peer_3d_async`](Sim::memcpy_peer_3d_async). No Engine `--mem-cpy-peer-3d`.
 //! [`Sim::ipc_get_event`] / [`ipc_open_event`](Sim::ipc_open_event) are
 //! `cudaIpcGetEventHandle` / `cudaIpcOpenEventHandle` (interprocess events).
 //! [`Sim::create_shareable_pool`] is `cudaMemPoolCreate` with a POSIX-FD handle
@@ -714,6 +717,9 @@
 //! [`mem_cpy_peer_async`](Sim::mem_cpy_peer_async) is `cuMemcpyPeerAsync` (identity with
 //! [`memcpy_peer_async`](Sim::memcpy_peer_async)). Capture-legal. Distinct from
 //! [`mem_cpy_peer`](Sim::mem_cpy_peer). No Engine `--mem-cpy-peer-async`.
+//! [`mem_cpy_peer_3d`](Sim::mem_cpy_peer_3d) is `cuMemcpy3DPeer` (identity with
+//! [`memcpy_peer_3d`](Sim::memcpy_peer_3d)). Capture refused. Distinct from
+//! [`memcpy_peer_3d_async`](Sim::memcpy_peer_3d_async). No Engine `--mem-cpy-peer-3d`.
 //! [`mem_host_get_flags`](Sim::mem_host_get_flags) is `cuMemHostGetFlags` (identity with
 //! [`host_get_flags`](Sim::host_get_flags)). Query; legal during capture. No Engine `--mem-host-get-flags`.
 //! [`mem_host_get_device_pointer`](Sim::mem_host_get_device_pointer) is `cuMemHostGetDevicePointer` (identity with
@@ -825,6 +831,9 @@
 //! [`mem_cpy_peer_async`](Sim::mem_cpy_peer_async) is `cuMemcpyPeerAsync` (identity with
 //! [`memcpy_peer_async`](Sim::memcpy_peer_async)). Capture-legal. Distinct from
 //! [`mem_cpy_peer`](Sim::mem_cpy_peer). No Engine `--mem-cpy-peer-async`.
+//! [`mem_cpy_peer_3d`](Sim::mem_cpy_peer_3d) is `cuMemcpy3DPeer` (identity with
+//! [`memcpy_peer_3d`](Sim::memcpy_peer_3d)). Capture refused. Distinct from
+//! [`memcpy_peer_3d_async`](Sim::memcpy_peer_3d_async). No Engine `--mem-cpy-peer-3d`.
 //! [`Sim::pointer_get_attributes`] is `cudaPointerGetAttributes`.
 //! [`pointer_set_attribute`](Sim::pointer_set_attribute) /
 //! [`pointer_get_attribute`](Sim::pointer_get_attribute) are
@@ -35446,6 +35455,94 @@ mod tests {
         enq(sim.memcpy_peer_async(d0, d1, a, 4096, s));
         let g = sim.end_capture().unwrap();
         assert_eq!(sim.graph_len(g).unwrap(), 2);
+        sim.free_sync(a).unwrap();
+    }
+
+    #[test]
+    fn mem_cpy_peer_3d_is_cu_memcpy_3d_peer() {
+        let mut sim = Sim::new(HardwareProfile::example_8xh100_nvlink());
+        let d0 = DeviceId(0);
+        let d1 = DeviceId(1);
+        let s = StreamId(0);
+        let unknown = MemcpyOp {
+            alloc: AllocId(99),
+            bytes: 256,
+            height: 4,
+            src_pitch: 256,
+            dst_pitch: 256,
+            depth: 4,
+            src_height: 4,
+            dst_height: 4,
+            ..MemcpyOp::default()
+        };
+        match sim.mem_cpy_peer_3d(d0, d1, unknown.clone(), s) {
+            Err(SimError::UnknownAlloc { alloc }) => assert_eq!(alloc, AllocId(99)),
+            other => panic!("{other:?}"),
+        }
+        match sim.memcpy_peer_3d(d0, d1, unknown.clone(), s) {
+            Err(SimError::UnknownAlloc { alloc }) => assert_eq!(alloc, AllocId(99)),
+            other => panic!("{other:?}"),
+        }
+        match sim.mem_cpy_peer_3d(
+            d0,
+            d1,
+            MemcpyOp {
+                depth: 1,
+                ..unknown.clone()
+            },
+            s,
+        ) {
+            Err(SimError::Invalid { why }) => assert!(why.contains("memcpy3d depth"), "{why}"),
+            other => panic!("{other:?}"),
+        }
+        match sim.memcpy_peer_3d(
+            d0,
+            d1,
+            MemcpyOp {
+                depth: 1,
+                ..unknown
+            },
+            s,
+        ) {
+            Err(SimError::Invalid { why }) => assert!(why.contains("memcpy3d depth"), "{why}"),
+            other => panic!("{other:?}"),
+        }
+        let (a, pitch) = sim.malloc_3d(d0, 256, 4, 4).unwrap();
+        let op = MemcpyOp {
+            alloc: a,
+            bytes: 256,
+            height: 4,
+            src_pitch: pitch,
+            dst_pitch: pitch,
+            depth: 4,
+            src_height: 4,
+            dst_height: 4,
+            ..MemcpyOp::default()
+        };
+        match sim.mem_cpy_peer_3d(DeviceId(99), d1, op.clone(), s) {
+            Err(SimError::Invalid { why }) => assert!(why.contains("device"), "{why}"),
+            other => panic!("{other:?}"),
+        }
+        match sim.memcpy_peer_3d(DeviceId(99), d1, op.clone(), s) {
+            Err(SimError::Invalid { why }) => assert!(why.contains("device"), "{why}"),
+            other => panic!("{other:?}"),
+        }
+        enq(sim.mem_cpy_peer_3d(d0, d1, op.clone(), s));
+        assert!(sim.query_stream(d0, s).unwrap());
+        assert!(sim.is_resident(a, d1).unwrap());
+        assert_eq!(sim.bytes_moved(), 4096);
+        enq(sim.memcpy_peer_3d(d0, d1, op.clone(), s));
+        assert!(sim.query_stream(d0, s).unwrap());
+        sim.begin_capture(d0, s).unwrap();
+        match sim.mem_cpy_peer_3d(d0, d1, op.clone(), s) {
+            Err(SimError::Invalid { why }) => assert!(why.contains("capture"), "{why}"),
+            other => panic!("{other:?}"),
+        }
+        match sim.memcpy_peer_3d(d0, d1, op, s) {
+            Err(SimError::Invalid { why }) => assert!(why.contains("capture"), "{why}"),
+            other => panic!("{other:?}"),
+        }
+        let _g = sim.end_capture().unwrap();
         sim.free_sync(a).unwrap();
     }
 
