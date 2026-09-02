@@ -22878,7 +22878,6 @@ impl Sim {
     /// [`Self::get_func_cluster_policy`] (`cudaFuncGetAttribute` ClusterSchedulingPolicyPreference).
     ///
     /// Query; legal during capture. Distinct from [`Self::func_set_cluster_policy`].
-    /// This VM does not invent occupancy SM counts this slice.
     pub fn func_get_cluster_policy(
         &self,
         device: DeviceId,
@@ -22891,6 +22890,8 @@ impl Sim {
     /// Per device. When true, a kernel without
     /// [`KernelAttrs::cluster`] is Invalid `"cluster dim must be set"`.
     /// Capture-legal. Decode identity stays false.
+    /// Driver `cuFuncSetAttribute` cluster dim must be set is [`Self::func_set_cluster_dim_must_be_set`].
+    /// Identity wrap [`Self::func_set_cluster_dim_must_be_set`].
     pub fn set_cluster_dim_must_be_set(
         &mut self,
         device: DeviceId,
@@ -22900,6 +22901,19 @@ impl Sim {
         self.gpu_rt_mut(device)?.cluster_dim_must_be_set = required;
         self.clock = self.clock.saturating_add(1);
         Ok(())
+    }
+
+    /// `cuFuncSetAttribute` cluster dim must be set. Identity with
+    /// [`Self::set_cluster_dim_must_be_set`] (`cudaFuncSetAttribute` ClusterDimMustBeSet).
+    ///
+    /// Capture legal. Distinct from [`Self::func_get_cluster_policy`].
+    /// This VM does not invent occupancy SM counts this slice.
+    pub fn func_set_cluster_dim_must_be_set(
+        &mut self,
+        device: DeviceId,
+        required: bool,
+    ) -> Result<(), SimError> {
+        self.set_cluster_dim_must_be_set(device, required)
     }
 
     /// Current [`Self::set_cluster_dim_must_be_set`]. Query; legal during capture.

@@ -9609,7 +9609,12 @@ model, do not celebrate the sim.
       `func_set_cluster_policy`. This VM does not invent occupancy SM counts, Engine `--func-get-cluster-policy`,
       or `cudaChooseDevice`. `gpu-profile capture` is still refused. Dual
       score still has no `$/M tokens`.
-1070. [ ] Next numbered PLAN item after 1069 is the next `gpu-sim` / Engine /
+1070. [x] `gpu-sim` `Sim::func_set_cluster_dim_must_be_set` is
+      `cuFuncSetAttribute` cluster dim must be set. Identity with `set_cluster_dim_must_be_set` (`cudaFuncSetAttribute` ClusterDimMustBeSet). Capture legal. Distinct from
+      `func_get_cluster_policy`. This VM does not invent occupancy SM counts, Engine `--func-set-cluster-dim-must-be-set`,
+      or `cudaChooseDevice`. `gpu-profile capture` is still refused. Dual
+      score still has no `$/M tokens`.
+1071. [ ] Next numbered PLAN item after 1070 is the next `gpu-sim` / Engine /
     serve / expertvm mechanical API that is still missing, or the next official
     decode family. Prefer remaining CUDA-shaped twins over more
     OpenAI HTTP veneer. Do not invent F32 `output.scale`. Do not invent a
@@ -11343,6 +11348,10 @@ model, do not celebrate the sim.
     Do not invent Engine `--func-get-cluster-policy`. Do not invent
     occupancy SM counts this slice. Do not reverse FuncGetClusterPolicy identity with get_func_cluster_policy.
     Do not invent generic `cuFuncGetAttribute` as `func_get_cluster_policy`.
+    Do not invent a second `cuFuncSetAttribute` cluster dim must be set / `func_set_cluster_dim_must_be_set`.
+    Do not invent Engine `--func-set-cluster-dim-must-be-set`. Do not invent
+    occupancy SM counts this slice. Do not reverse FuncSetClusterDimMustBeSet identity with set_cluster_dim_must_be_set.
+    Do not invent generic `cuFuncSetAttribute` as `func_set_cluster_dim_must_be_set`.
     Do not invent a second `cudaStreamAddCallback`.
     Do not invent Engine `--stream-callback` (same wall as second live
     `cudaLaunchHostFunc` after miss DMA).
@@ -13123,6 +13132,9 @@ model, do not celebrate the sim.
     Do not invent a second `func_get_cluster_policy` API. Do not invent
     Engine `--func-get-cluster-policy-identity`. Do not invent a cluster-dim-must-be-set
     this slice. Do not reverse FuncGetClusterPolicy identity with get_func_cluster_policy.
+    Do not invent a second `func_set_cluster_dim_must_be_set` API. Do not invent
+    Engine `--func-set-cluster-dim-must-be-set-identity`. Do not invent a get-cluster-dim-must-be-set
+    this slice. Do not reverse FuncSetClusterDimMustBeSet identity with set_cluster_dim_must_be_set.
     Do not invent a second DeviceLaunch in-flight destroy-complete check or Engine
     `--device-launch-destroy`. Do not abort an in-flight DeviceLaunch when
     `destroy_graph` succeeds. Do not delay destroy of an idle exec. Do not invent
@@ -15086,6 +15098,9 @@ model, do not celebrate the sim.
     Do not invent a second `func_get_cluster_policy` method. Do not
     invent Engine `--cu-func-get-cluster-policy`. Do not reverse wrapping
     cuFuncGetAttribute cluster policy identity. Do not wrap generic `cuFuncGetAttribute` as `func_get_cluster_policy`.
+    Do not invent a second `func_set_cluster_dim_must_be_set` method. Do not
+    invent Engine `--cu-func-set-cluster-dim-must-be-set`. Do not reverse wrapping
+    cuFuncSetAttribute cluster dim must be set identity. Do not wrap generic `cuFuncSetAttribute` as `func_set_cluster_dim_must_be_set`.
     Do not
     spend the next item on an OpenAI-compatible HTTP veneer.
 
