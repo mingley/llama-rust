@@ -9809,7 +9809,12 @@ model, do not celebrate the sim.
       `mem_pool_destroy`. This VM does not invent occupancy SM counts, Engine `--mem-alloc-from-pool`,
       or `cudaChooseDevice`. `gpu-profile capture` is still refused. Dual
       score still has no `$/M tokens`.
-1110. [ ] Next numbered PLAN item after 1109 is the next `gpu-sim` / Engine /
+1110. [x] `gpu-sim` `Sim::mem_pool_export` is
+      `cuMemPoolExportToShareableHandle`. Identity with `pool_export` (`cudaMemPoolExportToShareableHandle`). Capture refused. Distinct from
+      `mem_alloc_from_pool`. This VM does not invent occupancy SM counts, Engine `--mem-pool-export`,
+      or `cudaChooseDevice`. `gpu-profile capture` is still refused. Dual
+      score still has no `$/M tokens`.
+1111. [ ] Next numbered PLAN item after 1110 is the next `gpu-sim` / Engine /
     serve / expertvm mechanical API that is still missing, or the next official
     decode family. Prefer remaining CUDA-shaped twins over more
     OpenAI HTTP veneer. Do not invent F32 `output.scale`. Do not invent a
@@ -11708,6 +11713,11 @@ model, do not celebrate the sim.
     occupancy SM counts this slice. Do not reverse MemAllocFromPool identity with alloc_from_pool.
     Do not invent `cuMemPoolExportToShareableHandle` as `mem_alloc_from_pool`.
     Do not invent `pool_export` as `mem_alloc_from_pool`.
+    Do not invent a second `cuMemPoolExportToShareableHandle` / `mem_pool_export`.
+    Do not invent Engine `--mem-pool-export`. Do not invent
+    occupancy SM counts this slice. Do not reverse MemPoolExport identity with pool_export.
+    Do not invent `cuMemPoolImportFromShareableHandle` as `mem_pool_export`.
+    Do not invent `pool_import` as `mem_pool_export`.
     Do not invent a second `cudaStreamAddCallback`.
     Do not invent Engine `--stream-callback` (same wall as second live
     `cudaLaunchHostFunc` after miss DMA).
@@ -13642,6 +13652,11 @@ model, do not celebrate the sim.
     this slice. Do not reverse MemAllocFromPool identity with alloc_from_pool.
     Do not wrap `alloc_from_pool` as `mem_alloc_from_pool`.
     Do not wrap `pool_export` as `mem_alloc_from_pool`.
+    Do not invent a second `mem_pool_export` API. Do not invent
+    Engine `--mem-pool-export-identity`. Do not invent a pool-import
+    this slice. Do not reverse MemPoolExport identity with pool_export.
+    Do not wrap `pool_export` as `mem_pool_export`.
+    Do not wrap `pool_import` as `mem_pool_export`.
     Do not invent a second DeviceLaunch in-flight destroy-complete check or Engine
     `--device-launch-destroy`. Do not abort an in-flight DeviceLaunch when
     `destroy_graph` succeeds. Do not delay destroy of an idle exec. Do not invent
@@ -15725,6 +15740,9 @@ model, do not celebrate the sim.
     Do not invent a second `mem_alloc_from_pool` method. Do not
     invent Engine `--cu-mem-alloc-from-pool`. Do not reverse wrapping
     cuMemAllocFromPoolAsync identity. Do not wrap `cuMemPoolExportToShareableHandle` as `mem_alloc_from_pool`.
+    Do not invent a second `mem_pool_export` method. Do not
+    invent Engine `--cu-mem-pool-export`. Do not reverse wrapping
+    cuMemPoolExportToShareableHandle identity. Do not wrap `pool_import` as `mem_pool_export`.
     Do not
     spend the next item on an OpenAI-compatible HTTP veneer.
 

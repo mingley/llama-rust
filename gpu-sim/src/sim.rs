@@ -16315,7 +16315,6 @@ impl Sim {
     /// [`Self::alloc_from_pool`] (`cudaMallocFromPoolAsync`).
     ///
     /// Capture legal. Distinct from [`Self::mem_pool_destroy`].
-    /// This VM does not invent occupancy SM counts this slice.
     pub fn mem_alloc_from_pool(
         &mut self,
         device: DeviceId,
@@ -16826,6 +16825,8 @@ impl Sim {
     /// Only [`Self::create_shareable_pool`] pools export. Default and
     /// [`Self::create_pool`] pools are `not shareable`. The same pool returns
     /// the same handle. Capture cannot include it.
+    /// Driver `cuMemPoolExportToShareableHandle` is [`Self::mem_pool_export`].
+    /// Identity wrap [`Self::mem_pool_export`].
     pub fn pool_export(&mut self, pool: PoolId) -> Result<ShareableHandleId, SimError> {
         self.fail_if_capturing("cannot capture mempool")?;
         self.refuse_destroyed_pool(pool)?;
@@ -16851,6 +16852,15 @@ impl Sim {
         self.next_share = self.next_share.saturating_add(1);
         let _prev = self.share_handles.insert(h, pool);
         Ok(h)
+    }
+
+    /// `cuMemPoolExportToShareableHandle`. Identity with
+    /// [`Self::pool_export`] (`cudaMemPoolExportToShareableHandle`).
+    ///
+    /// Capture refused. Distinct from [`Self::mem_alloc_from_pool`].
+    /// This VM does not invent occupancy SM counts this slice.
+    pub fn mem_pool_export(&mut self, pool: PoolId) -> Result<ShareableHandleId, SimError> {
+        self.pool_export(pool)
     }
 
     /// `cudaMemPoolImportFromShareableHandle` on `device`.
