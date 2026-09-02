@@ -18987,7 +18987,6 @@ impl Sim {
     /// [`Self::multicast_bind_addr`] (`cuMulticastBindAddr`).
     ///
     /// Capture refused. Distinct from [`Self::mem_multicast_bind_mem_with_size`].
-    /// This VM does not invent occupancy SM counts this slice.
     pub fn mem_multicast_bind_addr(
         &mut self,
         mc: MulticastId,
@@ -19000,6 +18999,8 @@ impl Sim {
     /// [`Self::multicast_bind_addr`] with a flags word.
     ///
     /// CUDA requires 0. Unknown bits are Invalid `"multicast bind flags"`.
+    /// Driver `cuMulticastBindAddr` flags is [`Self::mem_multicast_bind_addr_with_flags`].
+    /// Identity wrap [`Self::mem_multicast_bind_addr_with_flags`].
     pub fn multicast_bind_addr_with_flags(
         &mut self,
         mc: MulticastId,
@@ -19010,6 +19011,21 @@ impl Sim {
         self.fail_if_capturing("cannot capture alloc/free")?;
         let bytes = self.alloc_ref(id)?.bytes;
         self.multicast_bind_addr_with_size(mc, device, id, bytes, flags)
+    }
+
+    /// `cuMulticastBindAddr` flags. Identity with
+    /// [`Self::multicast_bind_addr_with_flags`] (`cuMulticastBindAddr` flags).
+    ///
+    /// Capture refused. Distinct from [`Self::mem_multicast_bind_addr`].
+    /// This VM does not invent occupancy SM counts this slice.
+    pub fn mem_multicast_bind_addr_with_flags(
+        &mut self,
+        mc: MulticastId,
+        device: DeviceId,
+        id: AllocId,
+        flags: u32,
+    ) -> Result<(), SimError> {
+        self.multicast_bind_addr_with_flags(mc, device, id, flags)
     }
 
     /// [`Self::multicast_bind_addr`] with the CUDA size and flags.
