@@ -2120,6 +2120,8 @@ impl Sim {
     }
 
     /// `cudaStreamSetAttribute` for `cudaLaunchAttributeMemSyncDomain`.
+    /// Driver `cuStreamSetAttribute` mem sync domain is [`Self::stream_set_mem_sync_domain`].
+    /// Identity wrap [`Self::stream_set_mem_sync_domain`].
     pub fn set_stream_mem_sync_domain(
         &mut self,
         device: DeviceId,
@@ -2130,6 +2132,20 @@ impl Sim {
         self.require_live_stream(device, stream)?;
         let _prev = self.stream_mem_sync_domain.insert((device, stream), domain);
         Ok(())
+    }
+
+    /// `cuStreamSetAttribute` mem sync domain. Identity with
+    /// [`Self::set_stream_mem_sync_domain`] (`cudaStreamSetAttribute` MemSyncDomain).
+    ///
+    /// Capture legal. Distinct from [`Self::stream_wait_event_external`].
+    /// This VM does not invent occupancy SM counts this slice.
+    pub fn stream_set_mem_sync_domain(
+        &mut self,
+        device: DeviceId,
+        stream: StreamId,
+        domain: MemSyncDomain,
+    ) -> Result<(), SimError> {
+        self.set_stream_mem_sync_domain(device, stream, domain)
     }
 
     /// Stream mem-sync domain, or [`MemSyncDomain::Default`] if unset.
@@ -27717,7 +27733,6 @@ impl Sim {
     /// [`Self::wait_event_external`] (`cudaStreamWaitEvent` WaitExternal).
     ///
     /// Capture legal. Distinct from [`Self::stream_wait_event_with_flags`].
-    /// This VM does not invent occupancy SM counts this slice.
     pub fn stream_wait_event_external(
         &mut self,
         device: DeviceId,
