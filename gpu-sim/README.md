@@ -368,6 +368,7 @@ warp scheduler, L1, …   ← do not model
 | `func_get_required_cluster_width` is identity with `required_cluster_width` | `cuFuncGetAttribute` required cluster width |
 | `func_set_required_cluster_height` is identity with `set_required_cluster_height` | `cuFuncSetAttribute` required cluster height |
 | `func_get_required_cluster_height` is identity with `required_cluster_height` | `cuFuncGetAttribute` required cluster height |
+| `func_set_required_cluster_depth` is identity with `set_required_cluster_depth` | `cuFuncSetAttribute` required cluster depth |
 | `mem_alloc` is identity with `malloc` | `cuMemAlloc` |
 | `mem_free` is identity with `free_sync` | `cuMemFree` |
 | `mem_free_host` is identity with `free_host_pinned` | `cuMemFreeHost` |
@@ -1326,6 +1327,8 @@ require matching topology. Event External flags stay topology.
 `func_set_required_cluster_height` is `cuFuncSetAttribute` required cluster height (identity with `set_required_cluster_height`). Capture legal. Distinct from `func_get_required_cluster_width`. No Engine `--func-set-required-cluster-height`.
 
 `func_get_required_cluster_height` is `cuFuncGetAttribute` required cluster height (identity with `required_cluster_height`). Query; legal during capture. Distinct from `func_set_required_cluster_height`. No Engine `--func-get-required-cluster-height`.
+
+`func_set_required_cluster_depth` is `cuFuncSetAttribute` required cluster depth (identity with `set_required_cluster_depth`). Capture legal. Distinct from `func_get_required_cluster_height`. No Engine `--func-set-required-cluster-depth`.
 `graph_*_get_params` / `graph_exec_*_get_params` are
 `cudaGraph*NodeGetParams` / `cudaGraphExec*NodeGetParams`
 (query; no clock tick; capture is legal). Graph GetParams reads the
@@ -1534,6 +1537,8 @@ the launched/primary snapshot.
 `func_set_required_cluster_height` is `cuFuncSetAttribute` required cluster height (identity with `set_required_cluster_height`). Capture legal. Distinct from `func_get_required_cluster_width`. No Engine `--func-set-required-cluster-height`.
 
 `func_get_required_cluster_height` is `cuFuncGetAttribute` required cluster height (identity with `required_cluster_height`). Query; legal during capture. Distinct from `func_set_required_cluster_height`. No Engine `--func-get-required-cluster-height`.
+
+`func_set_required_cluster_depth` is `cuFuncSetAttribute` required cluster depth (identity with `set_required_cluster_depth`). Capture legal. Distinct from `func_get_required_cluster_height`. No Engine `--func-set-required-cluster-depth`.
 `get_graph_kernel_node_params` is `cuGraphKernelNodeGetParams` (identity with `graph_kernel_get_params`). Query; legal during capture. Distinct from `graph_exec_kernel_get_params`. No Engine `--graph-kernel-get-params`.
 `get_graph_exec_kernel_node_params` is `cuGraphExecKernelNodeGetParams` (identity with `graph_exec_kernel_get_params`). Query; legal during capture. Distinct from `get_graph_kernel_node_params`. No Engine `--graph-exec-kernel-get-params`.
 `set_graph_kernel_node_params` is `cuGraphKernelNodeSetParams` (identity with `graph_kernel_set_params`). Capture refused. Distinct from `get_graph_kernel_node_params`. No Engine `--graph-kernel-set-params`.
@@ -1739,6 +1744,8 @@ the launched/primary snapshot.
 `func_set_required_cluster_height` is `cuFuncSetAttribute` required cluster height (identity with `set_required_cluster_height`). Capture legal. Distinct from `func_get_required_cluster_width`. No Engine `--func-set-required-cluster-height`.
 
 `func_get_required_cluster_height` is `cuFuncGetAttribute` required cluster height (identity with `required_cluster_height`). Query; legal during capture. Distinct from `func_set_required_cluster_height`. No Engine `--func-get-required-cluster-height`.
+
+`func_set_required_cluster_depth` is `cuFuncSetAttribute` required cluster depth (identity with `set_required_cluster_depth`). Capture legal. Distinct from `func_get_required_cluster_height`. No Engine `--func-set-required-cluster-depth`.
 `graph_exec_kernel_set_params` / `graph_exec_memcpy_set_params` /
 `graph_exec_memcpy_set_params_1d` / `graph_exec_memcpy_set_params_2d` / `graph_exec_memcpy_set_params_3d` / `graph_exec_memset_set_params` / `graph_exec_memset_set_params_2d` / `graph_exec_memset_set_params_3d` /
 `graph_exec_batch_mem_op_set_params` /
@@ -2943,6 +2950,8 @@ caller-chosen `StreamId`). `get_stream_id` is `cuStreamGetId` (identity with `st
 `func_set_required_cluster_height` is `cuFuncSetAttribute` required cluster height (identity with `set_required_cluster_height`). Capture legal. Distinct from `func_get_required_cluster_width`. No Engine `--func-set-required-cluster-height`.
 
 `func_get_required_cluster_height` is `cuFuncGetAttribute` required cluster height (identity with `required_cluster_height`). Query; legal during capture. Distinct from `func_set_required_cluster_height`. No Engine `--func-get-required-cluster-height`.
+
+`func_set_required_cluster_depth` is `cuFuncSetAttribute` required cluster depth (identity with `set_required_cluster_depth`). Capture legal. Distinct from `func_get_required_cluster_height`. No Engine `--func-set-required-cluster-depth`.
 `stream_get_device` is `cudaStreamGetDevice` /
 `cuStreamGetDevice` (the device of the stream; green-ctx streams return
 the ctx create device). Query; legal during capture. Distinct from
@@ -3200,6 +3209,8 @@ Invalid `"stream attr"`. Get is a query (capture-legal).
 `func_set_required_cluster_height` is `cuFuncSetAttribute` required cluster height (identity with `set_required_cluster_height`). Capture legal. Distinct from `func_get_required_cluster_width`. No Engine `--func-set-required-cluster-height`.
 
 `func_get_required_cluster_height` is `cuFuncGetAttribute` required cluster height (identity with `required_cluster_height`). Query; legal during capture. Distinct from `func_set_required_cluster_height`. No Engine `--func-get-required-cluster-height`.
+
+`func_set_required_cluster_depth` is `cuFuncSetAttribute` required cluster depth (identity with `set_required_cluster_depth`). Capture legal. Distinct from `func_get_required_cluster_height`. No Engine `--func-set-required-cluster-depth`.
 `set_stream_access_policy` is `cudaStreamAttributeAccessPolicyWindow`:
 `kernel` / `kernel_bufs` inherit it; `kernel_with` and graph replay use the
 launch / node window. Set `None` clears. This VM does not cap stream-priority
@@ -3470,6 +3481,8 @@ No Engine `--primary-ctx-flags`.
 `func_set_required_cluster_height` is `cuFuncSetAttribute` required cluster height (identity with `set_required_cluster_height`). Capture legal. Distinct from `func_get_required_cluster_width`. No Engine `--func-set-required-cluster-height`.
 
 `func_get_required_cluster_height` is `cuFuncGetAttribute` required cluster height (identity with `required_cluster_height`). Query; legal during capture. Distinct from `func_set_required_cluster_height`. No Engine `--func-get-required-cluster-height`.
+
+`func_set_required_cluster_depth` is `cuFuncSetAttribute` required cluster depth (identity with `set_required_cluster_depth`). Capture legal. Distinct from `func_get_required_cluster_height`. No Engine `--func-set-required-cluster-depth`.
 `ctx_get_id` is `cuCtxGetId` for the seeded primary context of an explicit
 device (no TLS current device). Distinct from `green_ctx_get_id`. Query;
 legal during capture. No Engine `--ctx-id`.
@@ -3747,6 +3760,8 @@ No Engine `--malloc-pitch-element`. `mem_alloc` is `cuMemAlloc` (identity with `
 `func_set_required_cluster_height` is `cuFuncSetAttribute` required cluster height (identity with `set_required_cluster_height`). Capture legal. Distinct from `func_get_required_cluster_width`. No Engine `--func-set-required-cluster-height`.
 
 `func_get_required_cluster_height` is `cuFuncGetAttribute` required cluster height (identity with `required_cluster_height`). Query; legal during capture. Distinct from `func_set_required_cluster_height`. No Engine `--func-get-required-cluster-height`.
+
+`func_set_required_cluster_depth` is `cuFuncSetAttribute` required cluster depth (identity with `set_required_cluster_depth`). Capture legal. Distinct from `func_get_required_cluster_height`. No Engine `--func-set-required-cluster-depth`.
 `mem_host_get_flags` is `cuMemHostGetFlags` (identity with `host_get_flags`). Query; legal during capture. No Engine `--mem-host-get-flags`.
 `mem_host_get_device_pointer` is `cuMemHostGetDevicePointer` (identity with `host_get_device_pointer_with_flags`). Query; legal during capture. No Engine `--mem-host-get-device-pointer`.
 `mem_host_register` is `cuMemHostRegister` (identity with `host_register_with_flags`). Capture refused. No Engine `--mem-host-register`.
@@ -4020,6 +4035,8 @@ No Engine `--malloc-pitch-element`. `mem_alloc` is `cuMemAlloc` (identity with `
 `func_set_required_cluster_height` is `cuFuncSetAttribute` required cluster height (identity with `set_required_cluster_height`). Capture legal. Distinct from `func_get_required_cluster_width`. No Engine `--func-set-required-cluster-height`.
 
 `func_get_required_cluster_height` is `cuFuncGetAttribute` required cluster height (identity with `required_cluster_height`). Query; legal during capture. Distinct from `func_set_required_cluster_height`. No Engine `--func-get-required-cluster-height`.
+
+`func_set_required_cluster_depth` is `cuFuncSetAttribute` required cluster depth (identity with `set_required_cluster_depth`). Capture legal. Distinct from `func_get_required_cluster_height`. No Engine `--func-set-required-cluster-depth`.
 `MemcpyOp` `height` / pitches are
 `cudaMemcpy2DAsync` (payload `width * height`). Origin fields are srcPos /
 dstPos (default 0). No Engine `--memcpy-origin`. `MemcpyOp` `src_lod` /
@@ -4255,6 +4272,8 @@ is `cuMemcpy3DUnaligned` (identity with `memcpy_3d`). No Engine
 `func_set_required_cluster_height` is `cuFuncSetAttribute` required cluster height (identity with `set_required_cluster_height`). Capture legal. Distinct from `func_get_required_cluster_width`. No Engine `--func-set-required-cluster-height`.
 
 `func_get_required_cluster_height` is `cuFuncGetAttribute` required cluster height (identity with `required_cluster_height`). Query; legal during capture. Distinct from `func_set_required_cluster_height`. No Engine `--func-get-required-cluster-height`.
+
+`func_set_required_cluster_depth` is `cuFuncSetAttribute` required cluster depth (identity with `set_required_cluster_depth`). Capture legal. Distinct from `func_get_required_cluster_height`. No Engine `--func-set-required-cluster-depth`.
 Default `cudaMallocAsync` uses the device mempool with release threshold
 `0` (unused bytes return to the OS when the stream-ordered free
 completes). `create_pool` / `create_pool_with_props` / `alloc_from_pool` /
@@ -4743,6 +4762,8 @@ first when compute contends). `stream_create_priority` is `cuStreamCreateWithPri
 `func_set_required_cluster_height` is `cuFuncSetAttribute` required cluster height (identity with `set_required_cluster_height`). Capture legal. Distinct from `func_get_required_cluster_width`. No Engine `--func-set-required-cluster-height`.
 
 `func_get_required_cluster_height` is `cuFuncGetAttribute` required cluster height (identity with `required_cluster_height`). Query; legal during capture. Distinct from `func_set_required_cluster_height`. No Engine `--func-get-required-cluster-height`.
+
+`func_set_required_cluster_depth` is `cuFuncSetAttribute` required cluster depth (identity with `set_required_cluster_depth`). Capture legal. Distinct from `func_get_required_cluster_height`. No Engine `--func-set-required-cluster-depth`.
 `destroy_stream` is `cudaStreamDestroy`
 (returns immediately; in-flight work still completes; NULL is Invalid).
 `device_get_stream_priority_range` is
@@ -4976,6 +4997,8 @@ NVLink-util-centric scheduling, and access-policy window).
 `func_set_required_cluster_height` is `cuFuncSetAttribute` required cluster height (identity with `set_required_cluster_height`). Capture legal. Distinct from `func_get_required_cluster_width`. No Engine `--func-set-required-cluster-height`.
 
 `func_get_required_cluster_height` is `cuFuncGetAttribute` required cluster height (identity with `required_cluster_height`). Query; legal during capture. Distinct from `func_set_required_cluster_height`. No Engine `--func-get-required-cluster-height`.
+
+`func_set_required_cluster_depth` is `cuFuncSetAttribute` required cluster depth (identity with `set_required_cluster_depth`). Capture legal. Distinct from `func_get_required_cluster_height`. No Engine `--func-set-required-cluster-depth`.
 `set_stream_sync_policy` is `cudaLaunchAttributeSynchronizationPolicy`
 on streams. `graph_kernel_node_set_sync_policy` is the CUDA 13 graph
 kernel-node twin (not `KernelAttrs`; not valid for host launches). Auto tax 0.
@@ -5204,6 +5227,8 @@ not `KernelAttrs`).
 `func_set_required_cluster_height` is `cuFuncSetAttribute` required cluster height (identity with `set_required_cluster_height`). Capture legal. Distinct from `func_get_required_cluster_width`. No Engine `--func-set-required-cluster-height`.
 
 `func_get_required_cluster_height` is `cuFuncGetAttribute` required cluster height (identity with `required_cluster_height`). Query; legal during capture. Distinct from `func_set_required_cluster_height`. No Engine `--func-get-required-cluster-height`.
+
+`func_set_required_cluster_depth` is `cuFuncSetAttribute` required cluster depth (identity with `set_required_cluster_depth`). Capture legal. Distinct from `func_get_required_cluster_height`. No Engine `--func-set-required-cluster-depth`.
 `graph_kernel_node_get_attribute` / `graph_exec_kernel_node_get_attribute` /
 `graph_kernel_node_set_attribute` / `graph_exec_kernel_node_set_attribute`
 are the generic `cudaGraphKernelNodeGetAttribute` / `SetAttribute`
@@ -5423,6 +5448,8 @@ GetAttribute; a live exec stays. Query; capture is legal.
 `func_set_required_cluster_height` is `cuFuncSetAttribute` required cluster height (identity with `set_required_cluster_height`). Capture legal. Distinct from `func_get_required_cluster_width`. No Engine `--func-set-required-cluster-height`.
 
 `func_get_required_cluster_height` is `cuFuncGetAttribute` required cluster height (identity with `required_cluster_height`). Query; legal during capture. Distinct from `func_set_required_cluster_height`. No Engine `--func-get-required-cluster-height`.
+
+`func_set_required_cluster_depth` is `cuFuncSetAttribute` required cluster depth (identity with `set_required_cluster_depth`). Capture legal. Distinct from `func_get_required_cluster_height`. No Engine `--func-set-required-cluster-depth`.
 `graph_exec_kernel_node_copy_attributes` is the exec-snapshot CopyAttributes
 twin (uninstantiated graphs are Invalid). A parked in-flight-destroyed exec
 used as CopyAttributes src or dst is `"unknown graph"`; a live exec as either
@@ -5633,6 +5660,8 @@ end stays.
 `func_set_required_cluster_height` is `cuFuncSetAttribute` required cluster height (identity with `set_required_cluster_height`). Capture legal. Distinct from `func_get_required_cluster_width`. No Engine `--func-set-required-cluster-height`.
 
 `func_get_required_cluster_height` is `cuFuncGetAttribute` required cluster height (identity with `required_cluster_height`). Query; legal during capture. Distinct from `func_set_required_cluster_height`. No Engine `--func-get-required-cluster-height`.
+
+`func_set_required_cluster_depth` is `cuFuncSetAttribute` required cluster depth (identity with `set_required_cluster_depth`). Capture legal. Distinct from `func_get_required_cluster_height`. No Engine `--func-set-required-cluster-depth`.
 `kernel_pdl` is `cudaLaunchKernelEx` PDL:
 a wait kernel may start after the previous same-stream kernel's trigger
 (`pdl_trigger_permille`) instead of its completion. Overlap needs

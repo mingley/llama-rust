@@ -934,6 +934,10 @@
 //! [`func_get_required_cluster_height`](Sim::func_get_required_cluster_height) is `cuFuncGetAttribute` required cluster height (identity with
 //! [`required_cluster_height`](Sim::required_cluster_height)). Query; legal during capture. Distinct from
 //! [`func_set_required_cluster_height`](Sim::func_set_required_cluster_height). No Engine `--func-get-required-cluster-height`.
+
+//! [`func_set_required_cluster_depth`](Sim::func_set_required_cluster_depth) is `cuFuncSetAttribute` required cluster depth (identity with
+//! [`set_required_cluster_depth`](Sim::set_required_cluster_depth)). Capture legal. Distinct from
+//! [`func_get_required_cluster_height`](Sim::func_get_required_cluster_height). No Engine `--func-set-required-cluster-depth`.
 //! [`Sim::ipc_get_event`] / [`ipc_open_event`](Sim::ipc_open_event) are
 //! `cudaIpcGetEventHandle` / `cudaIpcOpenEventHandle` (interprocess events).
 //! [`Sim::create_shareable_pool`] is `cudaMemPoolCreate` with a POSIX-FD handle
@@ -1892,6 +1896,10 @@
 //! [`func_get_required_cluster_height`](Sim::func_get_required_cluster_height) is `cuFuncGetAttribute` required cluster height (identity with
 //! [`required_cluster_height`](Sim::required_cluster_height)). Query; legal during capture. Distinct from
 //! [`func_set_required_cluster_height`](Sim::func_set_required_cluster_height). No Engine `--func-get-required-cluster-height`.
+
+//! [`func_set_required_cluster_depth`](Sim::func_set_required_cluster_depth) is `cuFuncSetAttribute` required cluster depth (identity with
+//! [`set_required_cluster_depth`](Sim::set_required_cluster_depth)). Capture legal. Distinct from
+//! [`func_get_required_cluster_height`](Sim::func_get_required_cluster_height). No Engine `--func-set-required-cluster-depth`.
 //! [`HardwareProfile::host_pin_bytes`] caps `cudaMallocHost` / `cudaHostRegister`.
 //! [`Sim::idle_until`] drains, then jumps the virtual clock (open-loop arrivals).
 //! [`Sim::event_elapsed_ns`] is `cudaEventElapsedTime` in nanoseconds.
@@ -2718,6 +2726,10 @@
 //! [`func_get_required_cluster_height`](Sim::func_get_required_cluster_height) is `cuFuncGetAttribute` required cluster height (identity with
 //! [`required_cluster_height`](Sim::required_cluster_height)). Query; legal during capture. Distinct from
 //! [`func_set_required_cluster_height`](Sim::func_set_required_cluster_height). No Engine `--func-get-required-cluster-height`.
+
+//! [`func_set_required_cluster_depth`](Sim::func_set_required_cluster_depth) is `cuFuncSetAttribute` required cluster depth (identity with
+//! [`set_required_cluster_depth`](Sim::set_required_cluster_depth)). Capture legal. Distinct from
+//! [`func_get_required_cluster_height`](Sim::func_get_required_cluster_height). No Engine `--func-set-required-cluster-depth`.
 //! [`mem_host_get_flags`](Sim::mem_host_get_flags) is `cuMemHostGetFlags` (identity with
 //! [`host_get_flags`](Sim::host_get_flags)). Query; legal during capture. No Engine `--mem-host-get-flags`.
 //! [`mem_host_get_device_pointer`](Sim::mem_host_get_device_pointer) is `cuMemHostGetDevicePointer` (identity with
@@ -3510,6 +3522,10 @@
 //! [`func_get_required_cluster_height`](Sim::func_get_required_cluster_height) is `cuFuncGetAttribute` required cluster height (identity with
 //! [`required_cluster_height`](Sim::required_cluster_height)). Query; legal during capture. Distinct from
 //! [`func_set_required_cluster_height`](Sim::func_set_required_cluster_height). No Engine `--func-get-required-cluster-height`.
+
+//! [`func_set_required_cluster_depth`](Sim::func_set_required_cluster_depth) is `cuFuncSetAttribute` required cluster depth (identity with
+//! [`set_required_cluster_depth`](Sim::set_required_cluster_depth)). Capture legal. Distinct from
+//! [`func_get_required_cluster_height`](Sim::func_get_required_cluster_height). No Engine `--func-set-required-cluster-depth`.
 //! [`Sim::pointer_get_attributes`] is `cudaPointerGetAttributes`.
 //! [`pointer_set_attribute`](Sim::pointer_set_attribute) /
 //! [`pointer_get_attribute`](Sim::pointer_get_attribute) are
@@ -4709,6 +4725,10 @@
 //! [`func_get_required_cluster_height`](Sim::func_get_required_cluster_height) is `cuFuncGetAttribute` required cluster height (identity with
 //! [`required_cluster_height`](Sim::required_cluster_height)). Query; legal during capture. Distinct from
 //! [`func_set_required_cluster_height`](Sim::func_set_required_cluster_height). No Engine `--func-get-required-cluster-height`.
+
+//! [`func_set_required_cluster_depth`](Sim::func_set_required_cluster_depth) is `cuFuncSetAttribute` required cluster depth (identity with
+//! [`set_required_cluster_depth`](Sim::set_required_cluster_depth)). Capture legal. Distinct from
+//! [`func_get_required_cluster_height`](Sim::func_get_required_cluster_height). No Engine `--func-set-required-cluster-depth`.
 //! [`Sim::stream_get_device`] is `cudaStreamGetDevice` / `cuStreamGetDevice`
 //! (the device of the stream; green-ctx streams return the ctx create
 //! device). Query; legal during capture. Distinct from
@@ -5337,6 +5357,10 @@
 //! [`func_get_required_cluster_height`](Sim::func_get_required_cluster_height) is `cuFuncGetAttribute` required cluster height (identity with
 //! [`required_cluster_height`](Sim::required_cluster_height)). Query; legal during capture. Distinct from
 //! [`func_set_required_cluster_height`](Sim::func_set_required_cluster_height). No Engine `--func-get-required-cluster-height`.
+
+//! [`func_set_required_cluster_depth`](Sim::func_set_required_cluster_depth) is `cuFuncSetAttribute` required cluster depth (identity with
+//! [`set_required_cluster_depth`](Sim::set_required_cluster_depth)). Capture legal. Distinct from
+//! [`func_get_required_cluster_height`](Sim::func_get_required_cluster_height). No Engine `--func-set-required-cluster-depth`.
 //! [`set_stream_access_policy`](Sim::set_stream_access_policy) is
 //! `cudaStreamAttributeAccessPolicyWindow`: [`kernel`](Sim::kernel) /
 //! [`kernel_bufs`](Sim::kernel_bufs) inherit it; [`kernel_with`](Sim::kernel_with)
@@ -6450,6 +6474,10 @@
 //! [`func_get_required_cluster_height`](Sim::func_get_required_cluster_height) is `cuFuncGetAttribute` required cluster height (identity with
 //! [`required_cluster_height`](Sim::required_cluster_height)). Query; legal during capture. Distinct from
 //! [`func_set_required_cluster_height`](Sim::func_set_required_cluster_height). No Engine `--func-get-required-cluster-height`.
+
+//! [`func_set_required_cluster_depth`](Sim::func_set_required_cluster_depth) is `cuFuncSetAttribute` required cluster depth (identity with
+//! [`set_required_cluster_depth`](Sim::set_required_cluster_depth)). Capture legal. Distinct from
+//! [`func_get_required_cluster_height`](Sim::func_get_required_cluster_height). No Engine `--func-set-required-cluster-depth`.
 //! [`Sim::set_stream_priority`] is the priority-only helper;
 //! [`stream_create_with_priority`](Sim::stream_create_with_priority) is
 //! `cudaStreamCreateWithPriority` (flags plus priority; clamped to
@@ -7096,6 +7124,10 @@
 //! [`func_get_required_cluster_height`](Sim::func_get_required_cluster_height) is `cuFuncGetAttribute` required cluster height (identity with
 //! [`required_cluster_height`](Sim::required_cluster_height)). Query; legal during capture. Distinct from
 //! [`func_set_required_cluster_height`](Sim::func_set_required_cluster_height). No Engine `--func-get-required-cluster-height`.
+
+//! [`func_set_required_cluster_depth`](Sim::func_set_required_cluster_depth) is `cuFuncSetAttribute` required cluster depth (identity with
+//! [`set_required_cluster_depth`](Sim::set_required_cluster_depth)). Capture legal. Distinct from
+//! [`func_get_required_cluster_height`](Sim::func_get_required_cluster_height). No Engine `--func-set-required-cluster-depth`.
 //! [`destroy_stream`](Sim::destroy_stream) is `cudaStreamDestroy` (returns
 //! immediately; in-flight work still completes; NULL is Invalid; recreate
 //! while unfinished is `"stream in flight"`). Capture cannot include it.
@@ -7722,6 +7754,10 @@
 //! [`func_get_required_cluster_height`](Sim::func_get_required_cluster_height) is `cuFuncGetAttribute` required cluster height (identity with
 //! [`required_cluster_height`](Sim::required_cluster_height)). Query; legal during capture. Distinct from
 //! [`func_set_required_cluster_height`](Sim::func_set_required_cluster_height). No Engine `--func-get-required-cluster-height`.
+
+//! [`func_set_required_cluster_depth`](Sim::func_set_required_cluster_depth) is `cuFuncSetAttribute` required cluster depth (identity with
+//! [`set_required_cluster_depth`](Sim::set_required_cluster_depth)). Capture legal. Distinct from
+//! [`func_get_required_cluster_height`](Sim::func_get_required_cluster_height). No Engine `--func-set-required-cluster-depth`.
 //! [`Sim::instantiate_graph`] is `cudaGraphInstantiate` (host-sync; returns a
 //! new exec id; first [`launch_graph`](Sim::launch_graph) of a definition
 //! creates a primary exec). Unused conditional handles are
@@ -8377,6 +8413,10 @@
 //! [`func_get_required_cluster_height`](Sim::func_get_required_cluster_height) is `cuFuncGetAttribute` required cluster height (identity with
 //! [`required_cluster_height`](Sim::required_cluster_height)). Query; legal during capture. Distinct from
 //! [`func_set_required_cluster_height`](Sim::func_set_required_cluster_height). No Engine `--func-get-required-cluster-height`.
+
+//! [`func_set_required_cluster_depth`](Sim::func_set_required_cluster_depth) is `cuFuncSetAttribute` required cluster depth (identity with
+//! [`set_required_cluster_depth`](Sim::set_required_cluster_depth)). Capture legal. Distinct from
+//! [`func_get_required_cluster_height`](Sim::func_get_required_cluster_height). No Engine `--func-set-required-cluster-depth`.
 //! [`graph_kernel_node_get_priority`](Sim::graph_kernel_node_get_priority) /
 //! [`graph_kernel_node_set_priority`](Sim::graph_kernel_node_set_priority) /
 //! [`graph_kernel_node_copy_attributes`](Sim::graph_kernel_node_copy_attributes)
@@ -8991,6 +9031,10 @@
 //! [`func_get_required_cluster_height`](Sim::func_get_required_cluster_height) is `cuFuncGetAttribute` required cluster height (identity with
 //! [`required_cluster_height`](Sim::required_cluster_height)). Query; legal during capture. Distinct from
 //! [`func_set_required_cluster_height`](Sim::func_set_required_cluster_height). No Engine `--func-get-required-cluster-height`.
+
+//! [`func_set_required_cluster_depth`](Sim::func_set_required_cluster_depth) is `cuFuncSetAttribute` required cluster depth (identity with
+//! [`set_required_cluster_depth`](Sim::set_required_cluster_depth)). Capture legal. Distinct from
+//! [`func_get_required_cluster_height`](Sim::func_get_required_cluster_height). No Engine `--func-set-required-cluster-depth`.
 //! [`graph_kernel_node_get_attribute`](Sim::graph_kernel_node_get_attribute) /
 //! [`graph_exec_kernel_node_get_attribute`](Sim::graph_exec_kernel_node_get_attribute) /
 //! [`graph_kernel_node_set_attribute`](Sim::graph_kernel_node_set_attribute) /
@@ -9611,6 +9655,10 @@
 //! [`func_get_required_cluster_height`](Sim::func_get_required_cluster_height) is `cuFuncGetAttribute` required cluster height (identity with
 //! [`required_cluster_height`](Sim::required_cluster_height)). Query; legal during capture. Distinct from
 //! [`func_set_required_cluster_height`](Sim::func_set_required_cluster_height). No Engine `--func-get-required-cluster-height`.
+
+//! [`func_set_required_cluster_depth`](Sim::func_set_required_cluster_depth) is `cuFuncSetAttribute` required cluster depth (identity with
+//! [`set_required_cluster_depth`](Sim::set_required_cluster_depth)). Capture legal. Distinct from
+//! [`func_get_required_cluster_height`](Sim::func_get_required_cluster_height). No Engine `--func-set-required-cluster-depth`.
 //! Device-launch
 //! execs cannot attach programmatic or launch-completion events.
 //! [`kernel_pdl`](Sim::kernel_pdl) is `cudaLaunchKernelEx` PDL: a wait kernel
@@ -10359,6 +10407,10 @@
 //! [`func_get_required_cluster_height`](Sim::func_get_required_cluster_height) is `cuFuncGetAttribute` required cluster height (identity with
 //! [`required_cluster_height`](Sim::required_cluster_height)). Query; legal during capture. Distinct from
 //! [`func_set_required_cluster_height`](Sim::func_set_required_cluster_height). No Engine `--func-get-required-cluster-height`.
+
+//! [`func_set_required_cluster_depth`](Sim::func_set_required_cluster_depth) is `cuFuncSetAttribute` required cluster depth (identity with
+//! [`set_required_cluster_depth`](Sim::set_required_cluster_depth)). Capture legal. Distinct from
+//! [`func_get_required_cluster_height`](Sim::func_get_required_cluster_height). No Engine `--func-set-required-cluster-depth`.
 //! [`graph_exec_memcpy_set_params`](Sim::graph_exec_memcpy_set_params) /
 //! [`graph_exec_memcpy_set_params_1d`](Sim::graph_exec_memcpy_set_params_1d) /
 //! [`graph_exec_memcpy_set_params_2d`](Sim::graph_exec_memcpy_set_params_2d) /
@@ -10971,6 +11023,10 @@
 //! [`func_get_required_cluster_height`](Sim::func_get_required_cluster_height) is `cuFuncGetAttribute` required cluster height (identity with
 //! [`required_cluster_height`](Sim::required_cluster_height)). Query; legal during capture. Distinct from
 //! [`func_set_required_cluster_height`](Sim::func_set_required_cluster_height). No Engine `--func-get-required-cluster-height`.
+
+//! [`func_set_required_cluster_depth`](Sim::func_set_required_cluster_depth) is `cuFuncSetAttribute` required cluster depth (identity with
+//! [`set_required_cluster_depth`](Sim::set_required_cluster_depth)). Capture legal. Distinct from
+//! [`func_get_required_cluster_height`](Sim::func_get_required_cluster_height). No Engine `--func-set-required-cluster-depth`.
 //! [`get_graph_kernel_node_params`](Sim::get_graph_kernel_node_params) is `cuGraphKernelNodeGetParams` (identity with
 //! [`graph_kernel_get_params`](Sim::graph_kernel_get_params)). Query; legal during capture. Distinct from
 //! [`graph_exec_kernel_get_params`](Sim::graph_exec_kernel_get_params). No Engine `--graph-kernel-get-params`.
@@ -11562,6 +11618,10 @@
 //! [`func_get_required_cluster_height`](Sim::func_get_required_cluster_height) is `cuFuncGetAttribute` required cluster height (identity with
 //! [`required_cluster_height`](Sim::required_cluster_height)). Query; legal during capture. Distinct from
 //! [`func_set_required_cluster_height`](Sim::func_set_required_cluster_height). No Engine `--func-get-required-cluster-height`.
+
+//! [`func_set_required_cluster_depth`](Sim::func_set_required_cluster_depth) is `cuFuncSetAttribute` required cluster depth (identity with
+//! [`set_required_cluster_depth`](Sim::set_required_cluster_depth)). Capture legal. Distinct from
+//! [`func_get_required_cluster_height`](Sim::func_get_required_cluster_height). No Engine `--func-set-required-cluster-depth`.
 //! [`graph_exec_kernel_get_params`](Sim::graph_exec_kernel_get_params) /
 //! [`graph_exec_memcpy_get_params`](Sim::graph_exec_memcpy_get_params) /
 //! [`graph_exec_memset_get_params`](Sim::graph_exec_memset_get_params) /
@@ -12144,6 +12204,10 @@
 //! [`func_get_required_cluster_height`](Sim::func_get_required_cluster_height) is `cuFuncGetAttribute` required cluster height (identity with
 //! [`required_cluster_height`](Sim::required_cluster_height)). Query; legal during capture. Distinct from
 //! [`func_set_required_cluster_height`](Sim::func_set_required_cluster_height). No Engine `--func-get-required-cluster-height`.
+
+//! [`func_set_required_cluster_depth`](Sim::func_set_required_cluster_depth) is `cuFuncSetAttribute` required cluster depth (identity with
+//! [`set_required_cluster_depth`](Sim::set_required_cluster_depth)). Capture legal. Distinct from
+//! [`func_get_required_cluster_height`](Sim::func_get_required_cluster_height). No Engine `--func-set-required-cluster-depth`.
 //! [`get_graph_exec_kernel_node_params`](Sim::get_graph_exec_kernel_node_params) is `cuGraphExecKernelNodeGetParams` (identity with
 //! [`graph_exec_kernel_get_params`](Sim::graph_exec_kernel_get_params)). Query; legal during capture. Distinct from
 //! [`get_graph_kernel_node_params`](Sim::get_graph_kernel_node_params). No Engine `--graph-exec-kernel-get-params`.
@@ -12732,6 +12796,10 @@
 //! [`func_get_required_cluster_height`](Sim::func_get_required_cluster_height) is `cuFuncGetAttribute` required cluster height (identity with
 //! [`required_cluster_height`](Sim::required_cluster_height)). Query; legal during capture. Distinct from
 //! [`func_set_required_cluster_height`](Sim::func_set_required_cluster_height). No Engine `--func-get-required-cluster-height`.
+
+//! [`func_set_required_cluster_depth`](Sim::func_set_required_cluster_depth) is `cuFuncSetAttribute` required cluster depth (identity with
+//! [`set_required_cluster_depth`](Sim::set_required_cluster_depth)). Capture legal. Distinct from
+//! [`func_get_required_cluster_height`](Sim::func_get_required_cluster_height). No Engine `--func-set-required-cluster-depth`.
 //! [`graph_exec_batch_mem_op_set_params`](Sim::graph_exec_batch_mem_op_set_params)
 //! is `cudaGraphExecBatchMemOpNodeSetParams` (id/offset/value; wait vs write,
 //! `bits32`, and compare stay on wait/write nodes;
@@ -41209,6 +41277,45 @@ mod tests {
         assert_eq!(eight.func_get_required_cluster_height(d1).unwrap(), 2);
         let g3 = eight.end_capture().unwrap();
         assert_eq!(eight.graph_len(g3).unwrap(), 0);
+    }
+
+    #[test]
+    fn func_set_required_cluster_depth_is_cu_func_set_attribute_required_cluster_depth() {
+        let mut sim = Sim::new(h100());
+        let d = DeviceId(0);
+        let s = StreamId(0);
+        let depth = 2u32;
+        match sim.func_set_required_cluster_depth(DeviceId(1), depth) {
+            Err(SimError::Invalid { why }) => assert!(why.contains("device"), "{why}"),
+            other => panic!("{other:?}"),
+        }
+        match sim.set_required_cluster_depth(DeviceId(1), depth) {
+            Err(SimError::Invalid { why }) => assert!(why.contains("device"), "{why}"),
+            other => panic!("{other:?}"),
+        }
+        assert_eq!(sim.required_cluster_depth(d).unwrap(), 0);
+        sim.func_set_required_cluster_depth(d, depth).unwrap();
+        assert_eq!(sim.required_cluster_depth(d).unwrap(), depth);
+        sim.set_required_cluster_depth(d, depth).unwrap();
+        assert_eq!(sim.required_cluster_depth(d).unwrap(), depth);
+        sim.begin_capture(d, s).unwrap();
+        sim.func_set_required_cluster_depth(d, depth).unwrap();
+        assert_eq!(sim.required_cluster_depth(d).unwrap(), depth);
+        sim.set_required_cluster_depth(d, depth).unwrap();
+        assert_eq!(sim.required_cluster_depth(d).unwrap(), depth);
+        let g = sim.end_capture().unwrap();
+        assert_eq!(sim.graph_len(g).unwrap(), 0);
+        let mut eight = Sim::new(HardwareProfile::example_8xh100_nvlink());
+        let d1 = DeviceId(1);
+        eight.func_set_required_cluster_depth(d1, depth).unwrap();
+        assert_eq!(eight.required_cluster_depth(d1).unwrap(), depth);
+        eight.set_required_cluster_depth(d1, depth).unwrap();
+        eight.begin_capture(d1, s).unwrap();
+        eight.func_set_required_cluster_depth(d1, depth).unwrap();
+        assert_eq!(eight.required_cluster_depth(d1).unwrap(), depth);
+        eight.set_required_cluster_depth(d1, depth).unwrap();
+        let g2 = eight.end_capture().unwrap();
+        assert_eq!(eight.graph_len(g2).unwrap(), 0);
     }
 
     #[test]
