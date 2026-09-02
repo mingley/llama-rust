@@ -10054,7 +10054,12 @@ model, do not celebrate the sim.
       `mem_multicast_bind_mem`. This VM does not invent occupancy SM counts, Engine `--mem-multicast-bind-mem-with-flags`,
       or `cudaChooseDevice`. `gpu-profile capture` is still refused. Dual
       score still has no `$/M tokens`.
-1159. [ ] Next numbered PLAN item after 1158 is the next `gpu-sim` / Engine /
+1159. [x] `gpu-sim` `Sim::mem_multicast_bind_mem_with_size` is
+      `cuMulticastBindMem` size. Identity with `multicast_bind_mem_with_size` (`cuMulticastBindMem` size). Capture refused. Distinct from
+      `mem_multicast_bind_mem_with_flags`. This VM does not invent occupancy SM counts, Engine `--mem-multicast-bind-mem-with-size`,
+      or `cudaChooseDevice`. `gpu-profile capture` is still refused. Dual
+      score still has no `$/M tokens`.
+1160. [ ] Next numbered PLAN item after 1159 is the next `gpu-sim` / Engine /
     serve / expertvm mechanical API that is still missing, or the next official
     decode family. Prefer remaining CUDA-shaped twins over more
     OpenAI HTTP veneer. Do not invent F32 `output.scale`. Do not invent a
@@ -12198,6 +12203,11 @@ model, do not celebrate the sim.
     occupancy SM counts this slice. Do not reverse MemMulticastBindMem flags identity with multicast_bind_mem_with_flags.
     Do not invent `multicast_bind_mem_with_size` as `mem_multicast_bind_mem_with_flags`.
     Do not invent `cuMulticastBindMem` size as `mem_multicast_bind_mem_with_flags`.
+    Do not invent a second `cuMulticastBindMem` size / `mem_multicast_bind_mem_with_size`.
+    Do not invent Engine `--mem-multicast-bind-mem-with-size`. Do not invent
+    occupancy SM counts this slice. Do not reverse MemMulticastBindMem size identity with multicast_bind_mem_with_size.
+    Do not invent `multicast_bind_addr` as `mem_multicast_bind_mem_with_size`.
+    Do not invent `cuMulticastBindAddr` as `mem_multicast_bind_mem_with_size`.
     Do not invent a second `cudaStreamAddCallback`.
     Do not invent Engine `--stream-callback` (same wall as second live
     `cudaLaunchHostFunc` after miss DMA).
@@ -14377,6 +14387,11 @@ model, do not celebrate the sim.
     this slice. Do not reverse MemMulticastBindMem flags identity with multicast_bind_mem_with_flags.
     Do not wrap `multicast_bind_mem_with_flags` as `mem_multicast_bind_mem_with_flags`.
     Do not wrap `multicast_bind_mem_with_size` as `mem_multicast_bind_mem_with_flags`.
+    Do not invent a second `mem_multicast_bind_mem_with_size` API. Do not invent
+    Engine `--mem-multicast-bind-mem-with-size-identity`. Do not invent a multicast-bind-addr
+    this slice. Do not reverse MemMulticastBindMem size identity with multicast_bind_mem_with_size.
+    Do not wrap `multicast_bind_mem_with_size` as `mem_multicast_bind_mem_with_size`.
+    Do not wrap `multicast_bind_addr` as `mem_multicast_bind_mem_with_size`.
     Do not invent a second DeviceLaunch in-flight destroy-complete check or Engine
     `--device-launch-destroy`. Do not abort an in-flight DeviceLaunch when
     `destroy_graph` succeeds. Do not delay destroy of an idle exec. Do not invent
@@ -16607,6 +16622,9 @@ model, do not celebrate the sim.
     Do not invent a second `mem_multicast_bind_mem_with_flags` method. Do not
     invent Engine `--cu-mem-multicast-bind-mem-with-flags`. Do not reverse wrapping
     cuMulticastBindMem flags identity. Do not wrap `multicast_bind_mem_with_size` as `mem_multicast_bind_mem_with_flags`.
+    Do not invent a second `mem_multicast_bind_mem_with_size` method. Do not
+    invent Engine `--cu-mem-multicast-bind-mem-with-size`. Do not reverse wrapping
+    cuMulticastBindMem size identity. Do not wrap `multicast_bind_addr` as `mem_multicast_bind_mem_with_size`.
     Do not
     spend the next item on an OpenAI-compatible HTTP veneer.
 
