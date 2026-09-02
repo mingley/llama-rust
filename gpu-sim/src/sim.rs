@@ -21722,6 +21722,22 @@ impl Sim {
         })
     }
 
+    /// `cuTexRefGetMipmapLevelBias`. CUDA texture references are not modeled.
+    ///
+    /// Always Invalid `"texref getbias"` (this VM has no `CUtexref` mipmap
+    /// LOD bias). Distinct from [`Self::tex_ref_get_mipmap_filter_mode`]
+    /// (why is not `"texref gmipfilt"`) and from
+    /// [`Self::tex_ref_set_mipmap_level_bias`] (why is not `"texref mipbias"`).
+    /// Unknown devices are Invalid `"device not in profile"`. Query; legal
+    /// during capture. This VM does not invent `cuTexRefGetMipmapLevelClamp`
+    /// this slice.
+    pub fn tex_ref_get_mipmap_level_bias(&self, device: DeviceId) -> Result<(), SimError> {
+        let _gpu = self.profile.gpu(device)?;
+        Err(SimError::Invalid {
+            why: "texref getbias",
+        })
+    }
+
     /// `cuModuleGetSurfRef`. CUDA modules are not modeled.
     ///
     /// Always Invalid `"module surfref"` (this VM has no `CUmodule` and

@@ -300,6 +300,7 @@ warp scheduler, L1, …   ← do not model
 | `tex_ref_get_filter_mode` is Invalid (no `CUtexref` filtering) | `cuTexRefGetFilterMode` |
 | `tex_ref_get_format` is Invalid (no `CUtexref` channel format) | `cuTexRefGetFormat` |
 | `tex_ref_get_mipmap_filter_mode` is Invalid (no `CUtexref` mipmap filtering) | `cuTexRefGetMipmapFilterMode` |
+| `tex_ref_get_mipmap_level_bias` is Invalid (no `CUtexref` mipmap LOD bias) | `cuTexRefGetMipmapLevelBias` |
 | `module_get_surf_ref` is Invalid (no `CUmodule` / `CUsurfref`) | `cuModuleGetSurfRef` |
 | `library_load_data` is Invalid (no cubin / `CUlibrary`) | `cuLibraryLoadData` |
 | `library_load_from_file` is Invalid (no cubin path / `CUlibrary`) | `cuLibraryLoadFromFile` |
@@ -1648,6 +1649,8 @@ Distinct from `tex_ref_get_address_mode` and `tex_ref_set_filter_mode`. Query; l
 Distinct from `tex_ref_get_filter_mode` and `tex_ref_set_format`. Query; legal during capture. No Engine `--texref-getfmt`.
 `tex_ref_get_mipmap_filter_mode` is `cuTexRefGetMipmapFilterMode` (always Invalid `"texref gmipfilt"`; no `CUtexref`).
 Distinct from `tex_ref_get_format` and `tex_ref_set_mipmap_filter_mode`. Query; legal during capture. No Engine `--texref-gmipfilt`.
+`tex_ref_get_mipmap_level_bias` is `cuTexRefGetMipmapLevelBias` (always Invalid `"texref getbias"`; no `CUtexref`).
+Distinct from `tex_ref_get_mipmap_filter_mode` and `tex_ref_set_mipmap_level_bias`. Query; legal during capture. No Engine `--texref-getbias`.
 `module_get_surf_ref` is `cuModuleGetSurfRef` (always Invalid `"module surfref"`; no cubin).
 Distinct from `module_get_tex_ref` and `surf_object_create`. Query; legal during capture. No Engine `--module-surfref`.
 `library_load_data` is `cuLibraryLoadData` (always Invalid `"cuda library"`;
