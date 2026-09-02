@@ -301,6 +301,9 @@
 //! [`stream_flags`](Sim::stream_flags) is `cuStreamGetFlags` (identity with
 //! [`stream_get_flags`](Sim::stream_get_flags)). Query; legal during capture. Distinct from
 //! [`stream_get_priority`](Sim::stream_get_priority). No Engine `--stream-flags`.
+//! [`get_stream_priority`](Sim::get_stream_priority) is `cuStreamGetPriority` (identity with
+//! [`stream_get_priority`](Sim::stream_get_priority)). Query; legal during capture. Distinct from
+//! [`stream_flags`](Sim::stream_flags). No Engine `--stream-get-priority`.
 //! [`Sim::ipc_get_event`] / [`ipc_open_event`](Sim::ipc_open_event) are
 //! `cudaIpcGetEventHandle` / `cudaIpcOpenEventHandle` (interprocess events).
 //! [`Sim::create_shareable_pool`] is `cudaMemPoolCreate` with a POSIX-FD handle
@@ -626,6 +629,9 @@
 //! [`stream_flags`](Sim::stream_flags) is `cuStreamGetFlags` (identity with
 //! [`stream_get_flags`](Sim::stream_get_flags)). Query; legal during capture. Distinct from
 //! [`stream_get_priority`](Sim::stream_get_priority). No Engine `--stream-flags`.
+//! [`get_stream_priority`](Sim::get_stream_priority) is `cuStreamGetPriority` (identity with
+//! [`stream_get_priority`](Sim::stream_get_priority)). Query; legal during capture. Distinct from
+//! [`stream_flags`](Sim::stream_flags). No Engine `--stream-get-priority`.
 //! [`HardwareProfile::host_pin_bytes`] caps `cudaMallocHost` / `cudaHostRegister`.
 //! [`Sim::idle_until`] drains, then jumps the virtual clock (open-loop arrivals).
 //! [`Sim::event_elapsed_ns`] is `cudaEventElapsedTime` in nanoseconds.
@@ -819,6 +825,9 @@
 //! [`stream_flags`](Sim::stream_flags) is `cuStreamGetFlags` (identity with
 //! [`stream_get_flags`](Sim::stream_get_flags)). Query; legal during capture. Distinct from
 //! [`stream_get_priority`](Sim::stream_get_priority). No Engine `--stream-flags`.
+//! [`get_stream_priority`](Sim::get_stream_priority) is `cuStreamGetPriority` (identity with
+//! [`stream_get_priority`](Sim::stream_get_priority)). Query; legal during capture. Distinct from
+//! [`stream_flags`](Sim::stream_flags). No Engine `--stream-get-priority`.
 //! [`mem_host_get_flags`](Sim::mem_host_get_flags) is `cuMemHostGetFlags` (identity with
 //! [`host_get_flags`](Sim::host_get_flags)). Query; legal during capture. No Engine `--mem-host-get-flags`.
 //! [`mem_host_get_device_pointer`](Sim::mem_host_get_device_pointer) is `cuMemHostGetDevicePointer` (identity with
@@ -978,6 +987,9 @@
 //! [`stream_flags`](Sim::stream_flags) is `cuStreamGetFlags` (identity with
 //! [`stream_get_flags`](Sim::stream_get_flags)). Query; legal during capture. Distinct from
 //! [`stream_get_priority`](Sim::stream_get_priority). No Engine `--stream-flags`.
+//! [`get_stream_priority`](Sim::get_stream_priority) is `cuStreamGetPriority` (identity with
+//! [`stream_get_priority`](Sim::stream_get_priority)). Query; legal during capture. Distinct from
+//! [`stream_flags`](Sim::stream_flags). No Engine `--stream-get-priority`.
 //! [`Sim::pointer_get_attributes`] is `cudaPointerGetAttributes`.
 //! [`pointer_set_attribute`](Sim::pointer_set_attribute) /
 //! [`pointer_get_attribute`](Sim::pointer_get_attribute) are
@@ -1546,6 +1558,9 @@
 //! [`stream_get_priority`](Sim::stream_get_priority). No Engine `--stream-flags`.
 //! [`Sim::stream_get_priority`] is `cudaStreamGetPriority` (clamped to
 //! [`device_get_stream_priority_range`](Sim::device_get_stream_priority_range)).
+//! [`get_stream_priority`](Sim::get_stream_priority) is `cuStreamGetPriority` (identity with
+//! [`stream_get_priority`](Sim::stream_get_priority)). Query; legal during capture. Distinct from
+//! [`stream_flags`](Sim::stream_flags). No Engine `--stream-get-priority`.
 //! [`Sim::device_get_stream_priority_range`] is
 //! `cudaDeviceGetStreamPriorityRange` (example H100 least `0`, greatest `-5`).
 //! Query; legal during capture. Stream create / SetPriority clamp; graph
@@ -2061,6 +2076,9 @@
 //! [`stream_flags`](Sim::stream_flags) is `cuStreamGetFlags` (identity with
 //! [`stream_get_flags`](Sim::stream_get_flags)). Query; legal during capture. Distinct from
 //! [`stream_get_priority`](Sim::stream_get_priority). No Engine `--stream-flags`.
+//! [`get_stream_priority`](Sim::get_stream_priority) is `cuStreamGetPriority` (identity with
+//! [`stream_get_priority`](Sim::stream_get_priority)). Query; legal during capture. Distinct from
+//! [`stream_flags`](Sim::stream_flags). No Engine `--stream-get-priority`.
 //! [`destroy_stream`](Sim::destroy_stream) is `cudaStreamDestroy` (returns
 //! immediately; in-flight work still completes; NULL is Invalid; recreate
 //! while unfinished is `"stream in flight"`). Capture cannot include it.
@@ -17208,6 +17226,57 @@ mod tests {
         assert_eq!(
             eight.stream_flags(DeviceId(1), StreamId(1)).unwrap(),
             eight.stream_get_flags(DeviceId(1), StreamId(1)).unwrap()
+        );
+    }
+
+    #[test]
+    fn get_stream_priority_is_cu_stream_get_priority() {
+        let mut sim = Sim::new(h100());
+        let d = DeviceId(0);
+        let s = StreamId(1);
+        match sim.get_stream_priority(DeviceId(99), s) {
+            Err(SimError::Invalid { why }) => assert!(why.contains("device"), "{why}"),
+            other => panic!("{other:?}"),
+        }
+        match sim.stream_get_priority(DeviceId(99), s) {
+            Err(SimError::Invalid { why }) => assert!(why.contains("device"), "{why}"),
+            other => panic!("{other:?}"),
+        }
+        assert_eq!(sim.get_stream_priority(d, s).unwrap(), 0);
+        assert_eq!(
+            sim.get_stream_priority(d, s).unwrap(),
+            sim.stream_get_priority(d, s).unwrap()
+        );
+        assert_eq!(sim.get_stream_priority(d, StreamId::NULL).unwrap(), 0);
+        sim.stream_create_priority(d, s, StreamCreateFlags::DEFAULT, -5)
+            .unwrap();
+        assert_eq!(sim.get_stream_priority(d, s).unwrap(), -5);
+        assert_eq!(
+            sim.get_stream_priority(d, s).unwrap(),
+            sim.stream_get_priority(d, s).unwrap()
+        );
+        sim.begin_capture(d, StreamId(0)).unwrap();
+        assert_eq!(sim.get_stream_priority(d, s).unwrap(), -5);
+        assert_eq!(
+            sim.get_stream_priority(d, s).unwrap(),
+            sim.stream_get_priority(d, s).unwrap()
+        );
+        let _g = sim.end_capture().unwrap();
+        let mut eight = Sim::new(HardwareProfile::example_8xh100_nvlink());
+        eight
+            .stream_create_priority(DeviceId(1), StreamId(1), StreamCreateFlags::DEFAULT, -5)
+            .unwrap();
+        assert_eq!(
+            eight.get_stream_priority(DeviceId(1), StreamId(1)).unwrap(),
+            -5
+        );
+        assert_eq!(
+            eight.get_stream_priority(DeviceId(0), StreamId(1)).unwrap(),
+            0
+        );
+        assert_eq!(
+            eight.get_stream_priority(DeviceId(1), StreamId(1)).unwrap(),
+            eight.stream_get_priority(DeviceId(1), StreamId(1)).unwrap()
         );
     }
 

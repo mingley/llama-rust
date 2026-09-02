@@ -5,6 +5,14 @@ Visible five-turn extract: [docs/chatgpt-share-6a920fe1.md](docs/chatgpt-share-6
 Complete share-API extract: [docs/chatgpt-share-6a920fe1/](docs/chatgpt-share-6a920fe1/).
 Work lands on `main`. No PRs.
 
+## Shipped 2026-09-02 — CUDA `cuStreamGetPriority`
+
+`gpu-sim` `Sim::get_stream_priority` is `cuStreamGetPriority`.
+Identity with `stream_get_priority` (`cudaStreamGetPriority`).
+Query; legal during capture. Distinct from `stream_flags` and `set_stream_priority`.
+This VM does not invent occupancy SM counts or Engine `--stream-get-priority`.
+`gpu-profile capture` is still refused. Dual score still has no `$/M tokens`.
+
 ## Shipped 2026-09-02 — CUDA `cuStreamGetFlags`
 
 `gpu-sim` `Sim::stream_flags` is `cuStreamGetFlags`.

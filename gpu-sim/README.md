@@ -161,6 +161,7 @@ warp scheduler, L1, …   ← do not model
 | `stream_create_priority` is identity with `stream_create_with_priority` | `cuStreamCreateWithPriority` |
 | `stream_create_flags` is identity with `stream_create_with_flags` | `cuStreamCreateWithFlags` |
 | `stream_flags` is identity with `stream_get_flags` | `cuStreamGetFlags` |
+| `get_stream_priority` is identity with `stream_get_priority` | `cuStreamGetPriority` |
 | `mem_alloc` is identity with `malloc` | `cuMemAlloc` |
 | `mem_free` is identity with `free_sync` | `cuMemFree` |
 | `mem_free_host` is identity with `free_host_pinned` | `cuMemFreeHost` |
@@ -313,6 +314,7 @@ warp scheduler, L1, …   ← do not model
 | `stream_get_flags` is 0 blocking / 1 NonBlocking | `cudaStreamGetFlags` |
 | `stream_flags` is identity with `stream_get_flags` | `cuStreamGetFlags` |
 | `stream_get_priority` is the create priority | `cudaStreamGetPriority` |
+| `get_stream_priority` is identity with `stream_get_priority` | `cuStreamGetPriority` |
 | `stream_get_id` is unique per device/stream | `cudaStreamGetId` |
 | `stream_get_device` is the device of the stream (green-ctx streams return the ctx device) | `cudaStreamGetDevice` / `cuStreamGetDevice` |
 | `stream_get_attribute` / `stream_set_attribute` wrap existing stream state | `cudaStreamGetAttribute` / `SetAttribute` |
@@ -1901,6 +1903,7 @@ until a compiled kernel exists; this VM has no `CUmodule`).
 Typed setters stay. `stream_get_flags` is `cudaStreamGetFlags`
 (`0` `cudaStreamDefault` / `1` `cudaStreamNonBlocking`; NULL follows
 `set_legacy_null_stream`). `stream_flags` is `cuStreamGetFlags` (identity with `stream_get_flags`). Query; legal during capture. Distinct from `stream_get_priority`. No Engine `--stream-flags`.
+`get_stream_priority` is `cuStreamGetPriority` (identity with `stream_get_priority`). Query; legal during capture. Distinct from `stream_flags`. No Engine `--stream-get-priority`.
 `stream_get_priority` is `cudaStreamGetPriority`.
 `stream_get_id` is `cudaStreamGetId` (unique per device/stream; not the
 caller-chosen `StreamId`). `stream_get_device` is `cudaStreamGetDevice` /
@@ -1998,6 +2001,7 @@ No Engine `--primary-ctx-flags`.
 `stream_create_priority` is `cuStreamCreateWithPriority` (identity with `stream_create_with_priority`). Capture refused. Distinct from `stream_create`. No Engine `--stream-create-priority`.
 `stream_create_flags` is `cuStreamCreateWithFlags` (identity with `stream_create_with_flags`). Capture refused. Distinct from `stream_create`. No Engine `--stream-create-flags`.
 `stream_flags` is `cuStreamGetFlags` (identity with `stream_get_flags`). Query; legal during capture. Distinct from `stream_get_priority`. No Engine `--stream-flags`.
+`get_stream_priority` is `cuStreamGetPriority` (identity with `stream_get_priority`). Query; legal during capture. Distinct from `stream_flags`. No Engine `--stream-get-priority`.
 `ctx_get_id` is `cuCtxGetId` for the seeded primary context of an explicit
 device (no TLS current device). Distinct from `green_ctx_get_id`. Query;
 legal during capture. No Engine `--ctx-id`.
@@ -2056,6 +2060,7 @@ No Engine `--malloc-pitch-element`. `mem_alloc` is `cuMemAlloc` (identity with `
 `stream_create_priority` is `cuStreamCreateWithPriority` (identity with `stream_create_with_priority`). Capture refused. Distinct from `stream_create`. No Engine `--stream-create-priority`.
 `stream_create_flags` is `cuStreamCreateWithFlags` (identity with `stream_create_with_flags`). Capture refused. Distinct from `stream_create`. No Engine `--stream-create-flags`.
 `stream_flags` is `cuStreamGetFlags` (identity with `stream_get_flags`). Query; legal during capture. Distinct from `stream_get_priority`. No Engine `--stream-flags`.
+`get_stream_priority` is `cuStreamGetPriority` (identity with `stream_get_priority`). Query; legal during capture. Distinct from `stream_flags`. No Engine `--stream-get-priority`.
 `mem_host_get_flags` is `cuMemHostGetFlags` (identity with `host_get_flags`). Query; legal during capture. No Engine `--mem-host-get-flags`.
 `mem_host_get_device_pointer` is `cuMemHostGetDevicePointer` (identity with `host_get_device_pointer_with_flags`). Query; legal during capture. No Engine `--mem-host-get-device-pointer`.
 `mem_host_register` is `cuMemHostRegister` (identity with `host_register_with_flags`). Capture refused. No Engine `--mem-host-register`.
@@ -2110,6 +2115,7 @@ No Engine `--malloc-pitch-element`. `mem_alloc` is `cuMemAlloc` (identity with `
 `stream_create_priority` is `cuStreamCreateWithPriority` (identity with `stream_create_with_priority`). Capture refused. Distinct from `stream_create`. No Engine `--stream-create-priority`.
 `stream_create_flags` is `cuStreamCreateWithFlags` (identity with `stream_create_with_flags`). Capture refused. Distinct from `stream_create`. No Engine `--stream-create-flags`.
 `stream_flags` is `cuStreamGetFlags` (identity with `stream_get_flags`). Query; legal during capture. Distinct from `stream_get_priority`. No Engine `--stream-flags`.
+`get_stream_priority` is `cuStreamGetPriority` (identity with `stream_get_priority`). Query; legal during capture. Distinct from `stream_flags`. No Engine `--stream-get-priority`.
 `MemcpyOp` `height` / pitches are
 `cudaMemcpy2DAsync` (payload `width * height`). Origin fields are srcPos /
 dstPos (default 0). No Engine `--memcpy-origin`. `MemcpyOp` `src_lod` /
@@ -2396,6 +2402,7 @@ priority; clamped to `device_get_stream_priority_range`; numerically lower
 first when compute contends). `stream_create_priority` is `cuStreamCreateWithPriority` (identity with `stream_create_with_priority`). Capture refused. Distinct from `stream_create`. No Engine `--stream-create-priority`.
 `stream_create_flags` is `cuStreamCreateWithFlags` (identity with `stream_create_with_flags`). Capture refused. Distinct from `stream_create`. No Engine `--stream-create-flags`.
 `stream_flags` is `cuStreamGetFlags` (identity with `stream_get_flags`). Query; legal during capture. Distinct from `stream_get_priority`. No Engine `--stream-flags`.
+`get_stream_priority` is `cuStreamGetPriority` (identity with `stream_get_priority`). Query; legal during capture. Distinct from `stream_flags`. No Engine `--stream-get-priority`.
 `destroy_stream` is `cudaStreamDestroy`
 (returns immediately; in-flight work still completes; NULL is Invalid).
 `device_get_stream_priority_range` is

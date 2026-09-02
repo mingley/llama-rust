@@ -2465,7 +2465,6 @@ impl Sim {
     /// (`cudaStreamGetFlags`).
     ///
     /// Query; legal during capture. Distinct from [`Self::stream_get_priority`].
-    /// This VM does not invent occupancy SM counts this slice.
     pub fn stream_flags(&self, device: DeviceId, stream: StreamId) -> Result<u32, SimError> {
         self.stream_get_flags(device, stream)
     }
@@ -2474,11 +2473,22 @@ impl Sim {
     ///
     /// Unset streams are `0`. Unknown devices are Invalid. Out of range
     /// SetPriority values are clamped to
-    /// [`Self::device_get_stream_priority_range`].
+    /// [`Self::device_get_stream_priority_range`]. Driver
+    /// `cuStreamGetPriority` is [`Self::get_stream_priority`].
     pub fn stream_get_priority(&self, device: DeviceId, stream: StreamId) -> Result<i32, SimError> {
         let _gpu = self.profile.gpu(device)?;
         self.require_live_stream(device, stream)?;
         Ok(self.stream_priority(device, stream))
+    }
+
+    /// `cuStreamGetPriority`. Identity with [`Self::stream_get_priority`]
+    /// (`cudaStreamGetPriority`).
+    ///
+    /// Query; legal during capture. Distinct from [`Self::stream_flags`] and
+    /// [`Self::set_stream_priority`]. This VM does not invent occupancy SM
+    /// counts this slice.
+    pub fn get_stream_priority(&self, device: DeviceId, stream: StreamId) -> Result<i32, SimError> {
+        self.stream_get_priority(device, stream)
     }
 
     /// `cudaStreamGetId`. Query; legal during capture.
