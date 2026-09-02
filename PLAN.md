@@ -9170,7 +9170,14 @@ model, do not celebrate the sim.
     or `cudaChooseDevice`. `gpu-profile capture` is still refused. Dual
     score still has no `$/M tokens`.
 
-1002. [ ] Next numbered PLAN item after 1001 is the next `gpu-sim` / Engine /
+1002. [x] `gpu-sim` `Sim::release_graph_user_object` is
+    `cuGraphReleaseUserObject`. Identity with `graph_release_user_object`
+    (`cudaGraphReleaseUserObject`). Capture refused. Distinct from
+    `retain_graph_user_object`. This VM does not invent occupancy SM counts, Engine `--release-graph-user-object`,
+    or `cudaChooseDevice`. `gpu-profile capture` is still refused. Dual
+    score still has no `$/M tokens`.
+
+1003. [ ] Next numbered PLAN item after 1002 is the next `gpu-sim` / Engine /
     serve / expertvm mechanical API that is still missing, or the next official
     decode family. Prefer remaining CUDA-shaped twins over more
     OpenAI HTTP veneer. Do not invent F32 `output.scale`. Do not invent a
@@ -10667,6 +10674,9 @@ model, do not celebrate the sim.
     Do not invent a second `cudaGraphRetainUserObject` / `retain_graph_user_object`.
     Do not invent Engine `--retain-graph-user-object`. Do not invent
     occupancy SM counts this slice. Do not reverse RetainGraphUserObject identity with graph_retain_user_object.
+    Do not invent a second `cudaGraphReleaseUserObject` / `release_graph_user_object`.
+    Do not invent Engine `--release-graph-user-object`. Do not invent
+    occupancy SM counts this slice. Do not reverse ReleaseGraphUserObject identity with graph_release_user_object.
     Do not invent a second `cudaStreamAddCallback`.
     Do not invent Engine `--stream-callback` (same wall as second live
     `cudaLaunchHostFunc` after miss DMA).
@@ -12243,6 +12253,9 @@ model, do not celebrate the sim.
     Do not invent a second `retain_graph_user_object` API. Do not invent
     Engine `--retain-graph-user-object-identity`. Do not invent a graph-release-user-object
     this slice. Do not reverse RetainGraphUserObject identity with graph_retain_user_object.
+    Do not invent a second `release_graph_user_object` API. Do not invent
+    Engine `--release-graph-user-object-identity`. Do not invent a graph-alloc-get-params
+    this slice. Do not reverse ReleaseGraphUserObject identity with graph_release_user_object.
     Do not invent a second DeviceLaunch in-flight destroy-complete check or Engine
     `--device-launch-destroy`. Do not abort an in-flight DeviceLaunch when
     `destroy_graph` succeeds. Do not delay destroy of an idle exec. Do not invent
@@ -14002,6 +14015,9 @@ model, do not celebrate the sim.
     Do not invent a second `retain_graph_user_object` method. Do not
     invent Engine `--cu-retain-graph-user-object`. Do not reverse wrapping
     cuGraphRetainUserObject identity.
+    Do not invent a second `release_graph_user_object` method. Do not
+    invent Engine `--cu-release-graph-user-object`. Do not reverse wrapping
+    cuGraphReleaseUserObject identity.
     Do not
     spend the next item on an OpenAI-compatible HTTP veneer.
 

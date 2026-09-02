@@ -9718,8 +9718,7 @@ impl Sim {
     /// [`Self::graph_retain_user_object`] (`cudaGraphRetainUserObject`).
     ///
     /// Host-synchronous. Capture refused. Distinct from
-    /// [`Self::release_user_object`]. This VM does not invent
-    /// occupancy SM counts this slice.
+    /// [`Self::release_user_object`].
     pub fn retain_graph_user_object(
         &mut self,
         graph: GraphId,
@@ -9733,7 +9732,9 @@ impl Sim {
     /// `cudaGraphReleaseUserObject` on a definition. Host-synchronous.
     ///
     /// Capture cannot include it. Illegal on an instantiated exec.
-    /// `count` must be in `1..=i32::MAX` (CUDA `INT_MAX`).
+    /// `count` must be in `1..=i32::MAX` (CUDA `INT_MAX`). Driver
+    /// `cuGraphReleaseUserObject` is
+    /// [`Self::release_graph_user_object`].
     pub fn graph_release_user_object(
         &mut self,
         graph: GraphId,
@@ -9746,6 +9747,21 @@ impl Sim {
         self.graph_release_user_object_inner(graph, object, count)?;
         self.clock = self.clock.saturating_add(1);
         Ok(())
+    }
+
+    /// `cuGraphReleaseUserObject`. Identity with
+    /// [`Self::graph_release_user_object`] (`cudaGraphReleaseUserObject`).
+    ///
+    /// Host-synchronous. Capture refused. Distinct from
+    /// [`Self::retain_graph_user_object`]. This VM does not invent
+    /// occupancy SM counts this slice.
+    pub fn release_graph_user_object(
+        &mut self,
+        graph: GraphId,
+        object: UserObjectId,
+        count: u32,
+    ) -> Result<(), SimError> {
+        self.graph_release_user_object(graph, object, count)
     }
 
     /// Total remaining references (caller plus graphs).
