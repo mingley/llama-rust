@@ -5007,8 +5007,7 @@ impl Sim {
     /// [`Self::instantiate_graph_with_flags`] (`cudaGraphInstantiateWithFlags`).
     ///
     /// Host-synchronous. Capture refused. Distinct from
-    /// [`Self::graph_instantiate`]. This VM does not invent
-    /// occupancy SM counts this slice.
+    /// [`Self::graph_instantiate`].
     pub fn graph_instantiate_with_flags(
         &mut self,
         graph: GraphId,
@@ -5029,6 +5028,8 @@ impl Sim {
     /// [`GraphInstantiateFlags::UPLOAD`], `Some` enqueues
     /// [`Self::upload_graph_async`] (uploaded when that op completes); `None`
     /// stays host-sync [`Self::upload_graph`]. Ignored when UPLOAD is unset.
+    /// Driver `cuGraphInstantiateWithParams` is
+    /// [`Self::graph_instantiate_with_params`].
     pub fn instantiate_graph_with_params(
         &mut self,
         graph: GraphId,
@@ -5051,6 +5052,20 @@ impl Sim {
             }
         }
         Ok(exec)
+    }
+
+    /// `cuGraphInstantiateWithParams`. Identity with
+    /// [`Self::instantiate_graph_with_params`] (`cudaGraphInstantiateWithParams`).
+    ///
+    /// Host-synchronous. Capture refused. Distinct from
+    /// [`Self::graph_instantiate_with_flags`]. This VM does not invent
+    /// occupancy SM counts this slice.
+    pub fn graph_instantiate_with_params(
+        &mut self,
+        graph: GraphId,
+        params: &mut GraphInstantiateParams,
+    ) -> Result<GraphId, SimError> {
+        self.instantiate_graph_with_params(graph, params)
     }
 
     /// `cudaGraphExecGetFlags` on an instantiated exec (or a definition's primary).

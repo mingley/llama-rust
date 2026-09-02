@@ -8729,7 +8729,14 @@ model, do not celebrate the sim.
     or `cudaChooseDevice`. `gpu-profile capture` is still refused. Dual
     score still has no `$/M tokens`.
 
-939. [ ] Next numbered PLAN item after 938 is the next `gpu-sim` / Engine /
+939. [x] `gpu-sim` `Sim::graph_instantiate_with_params` is
+    `cuGraphInstantiateWithParams`. Identity with `instantiate_graph_with_params`
+    (`cudaGraphInstantiateWithParams`). Capture refused. Distinct from
+    `graph_instantiate_with_flags`. This VM does not invent occupancy SM counts, Engine `--graph-instantiate-with-params`,
+    or `cudaChooseDevice`. `gpu-profile capture` is still refused. Dual
+    score still has no `$/M tokens`.
+
+940. [ ] Next numbered PLAN item after 939 is the next `gpu-sim` / Engine /
     serve / expertvm mechanical API that is still missing, or the next official
     decode family. Prefer remaining CUDA-shaped twins over more
     OpenAI HTTP veneer. Do not invent F32 `output.scale`. Do not invent a
@@ -10037,6 +10044,9 @@ model, do not celebrate the sim.
     Do not invent a second `cuGraphInstantiateWithFlags` / `graph_instantiate_with_flags`.
     Do not invent Engine `--graph-instantiate-with-flags`. Do not invent
     occupancy SM counts this slice. Do not reverse GraphInstantiateWithFlags identity with instantiate_graph_with_flags.
+    Do not invent a second `cuGraphInstantiateWithParams` / `graph_instantiate_with_params`.
+    Do not invent Engine `--graph-instantiate-with-params`. Do not invent
+    occupancy SM counts this slice. Do not reverse GraphInstantiateWithParams identity with instantiate_graph_with_params.
     Do not invent a second `cudaStreamAddCallback`.
     Do not invent Engine `--stream-callback` (same wall as second live
     `cudaLaunchHostFunc` after miss DMA).
@@ -11424,6 +11434,9 @@ model, do not celebrate the sim.
     Do not invent a second `graph_instantiate_with_flags` API. Do not invent
     Engine `--graph-instantiate-with-flags-identity`. Do not invent a graph-instantiate-with-params
     this slice. Do not reverse GraphInstantiateWithFlags identity with instantiate_graph_with_flags.
+    Do not invent a second `graph_instantiate_with_params` API. Do not invent
+    Engine `--graph-instantiate-with-params-identity`. Do not invent a graph-launch
+    this slice. Do not reverse GraphInstantiateWithParams identity with instantiate_graph_with_params.
     Do not invent a second DeviceLaunch in-flight destroy-complete check or Engine
     `--device-launch-destroy`. Do not abort an in-flight DeviceLaunch when
     `destroy_graph` succeeds. Do not delay destroy of an idle exec. Do not invent
@@ -12994,6 +13007,9 @@ model, do not celebrate the sim.
     Do not invent a second `graph_instantiate_with_flags` method. Do not
     invent Engine `--cu-graph-instantiate-with-flags`. Do not reverse wrapping
     cuGraphInstantiateWithFlags identity.
+    Do not invent a second `graph_instantiate_with_params` method. Do not
+    invent Engine `--cu-graph-instantiate-with-params`. Do not reverse wrapping
+    cuGraphInstantiateWithParams identity.
     Do not
     spend the next item on an OpenAI-compatible HTTP veneer.
 
