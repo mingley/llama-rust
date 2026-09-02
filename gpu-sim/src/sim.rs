@@ -16643,6 +16643,8 @@ impl Sim {
     /// directed peer access from the pool GPU, same as D2D. Same-device is a
     /// no-op that still records access. Applies to existing and later allocs.
     /// Downgrades a prior [`Self::pool_set_access_read`] on `device`.
+    /// Driver `cuMemPoolSetAccess` is [`Self::mem_pool_set_access`].
+    /// Identity wrap [`Self::mem_pool_set_access`].
     pub fn pool_set_access(&mut self, pool: PoolId, device: DeviceId) -> Result<(), SimError> {
         self.pool_prepare_set_access(pool, device)?;
         {
@@ -16652,6 +16654,15 @@ impl Sim {
         }
         self.clock = self.clock.saturating_add(self.first_alloc_ns().max(1));
         Ok(())
+    }
+
+    /// `cuMemPoolSetAccess`. Identity with
+    /// [`Self::pool_set_access`] (`cudaMemPoolSetAccess` ReadWrite).
+    ///
+    /// Capture refused. Distinct from [`Self::mem_pool_get_access`].
+    /// This VM does not invent occupancy SM counts this slice.
+    pub fn mem_pool_set_access(&mut self, pool: PoolId, device: DeviceId) -> Result<(), SimError> {
+        self.pool_set_access(pool, device)
     }
 
     /// `cudaMemPoolSetAccess` ProtRead on `device` for allocations from `pool`.
@@ -16816,7 +16827,6 @@ impl Sim {
     /// [`Self::pool_get_access`] (`cudaMemPoolGetAccess`).
     ///
     /// Query; legal during capture. Distinct from [`Self::mem_pool_import_ptr`].
-    /// This VM does not invent occupancy SM counts this slice.
     pub fn mem_pool_get_access(&self, pool: PoolId, device: DeviceId) -> Result<u32, SimError> {
         self.pool_get_access(pool, device)
     }
