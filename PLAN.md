@@ -7213,7 +7213,14 @@ model, do not celebrate the sim.
     or `cudaChooseDevice`. `gpu-profile capture` is still refused. Dual
     score still has no `$/M tokens`.
 
-723. [ ] Next numbered PLAN item after 722 is the next `gpu-sim` / Engine /
+723. [x] `gpu-sim` `Sim::module_get_tex_ref` is
+    `cuModuleGetTexRef`. Always Invalid `"module texref"`
+    because CUDA modules are not modeled. Query; legal during capture.
+    Distinct from `module_get_global`. This VM does not invent `cuModuleGetSurfRef`, Engine `--module-texref`,
+    or `cudaChooseDevice`. `gpu-profile capture` is still refused. Dual
+    score still has no `$/M tokens`.
+
+724. [ ] Next numbered PLAN item after 723 is the next `gpu-sim` / Engine /
     serve / expertvm mechanical API that is still missing, or the next official
     decode family. Prefer remaining CUDA-shaped twins over more
     OpenAI HTTP veneer. Do not invent F32 `output.scale`. Do not invent a
@@ -7873,6 +7880,9 @@ model, do not celebrate the sim.
     Do not invent a second `cuModuleGetGlobal` / `module_get_global`.
     Do not invent Engine `--module-global`. Do not invent
     `cuModuleGetTexRef` this slice. Do not reverse `"module global"`.
+    Do not invent a second `cuModuleGetTexRef` / `module_get_tex_ref`.
+    Do not invent Engine `--module-texref`. Do not invent
+    `cuModuleGetSurfRef` this slice. Do not reverse `"module texref"`.
     Do not invent a second `cudaStreamAddCallback`.
     Do not invent Engine `--stream-callback` (same wall as second live
     `cudaLaunchHostFunc` after miss DMA).
@@ -8612,6 +8622,9 @@ model, do not celebrate the sim.
     Do not invent a second `module_get_global` API. Do not invent
     Engine `--get-module-global`. Do not invent a module device symbol
     this slice. Do not reverse Module GetGlobal remaining unsupported.
+    Do not invent a second `module_get_tex_ref` API. Do not invent
+    Engine `--get-module-texref`. Do not invent a CUtexref from module
+    this slice. Do not reverse Module GetTexRef remaining unsupported.
     Do not invent a second DeviceLaunch in-flight destroy-complete check or Engine
     `--device-launch-destroy`. Do not abort an in-flight DeviceLaunch when
     `destroy_graph` succeeds. Do not delay destroy of an idle exec. Do not invent
@@ -9534,6 +9547,9 @@ model, do not celebrate the sim.
     Do not invent a second `module_get_global` method. Do not
     invent Engine `--cu-module-get-global`. Do not reverse wrapping
     cuModuleGetGlobal Invalid.
+    Do not invent a second `module_get_tex_ref` method. Do not
+    invent Engine `--cu-module-get-texref`. Do not reverse wrapping
+    cuModuleGetTexRef Invalid.
     Do not
     spend the next item on an OpenAI-compatible HTTP veneer.
 

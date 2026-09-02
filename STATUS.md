@@ -5,6 +5,15 @@ Visible five-turn extract: [docs/chatgpt-share-6a920fe1.md](docs/chatgpt-share-6
 Complete share-API extract: [docs/chatgpt-share-6a920fe1/](docs/chatgpt-share-6a920fe1/).
 Work lands on `main`. No PRs.
 
+## Shipped 2026-09-02 — CUDA `cuModuleGetTexRef`
+
+`gpu-sim` `Sim::module_get_tex_ref` is `cuModuleGetTexRef`.
+Always Invalid `"module texref"` because CUDA modules are not
+modeled. Query; legal during capture. Distinct from
+`module_get_global` (why is not `"module global"`) and from
+`tex_object_create`. This VM does not invent `cuModuleGetSurfRef` or Engine `--module-texref`.
+`gpu-profile capture` is still refused. Dual score still has no `$/M tokens`.
+
 ## Shipped 2026-09-01 — CUDA `cuModuleGetGlobal`
 
 `gpu-sim` `Sim::module_get_global` is `cuModuleGetGlobal`.
