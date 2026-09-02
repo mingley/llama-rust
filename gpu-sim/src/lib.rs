@@ -37065,36 +37065,24 @@ mod tests {
             other => panic!("{other:?}"),
         }
         let a = sim.malloc(d, 4096).unwrap();
-        sim.launch_cooperative_kernel(d, kind.clone(), &[a], &[a], s)
-            .unwrap();
-        sim.cooperative_kernel(d, kind.clone(), &[a], &[a], s)
-            .unwrap();
+        enq(sim.launch_cooperative_kernel(d, kind.clone(), &[a], &[a], s));
+        enq(sim.cooperative_kernel(d, kind.clone(), &[a], &[a], s));
         sim.synchronize().unwrap();
         sim.begin_capture(d, s).unwrap();
-        sim.launch_cooperative_kernel(d, kind.clone(), &[a], &[a], s)
-            .unwrap();
-        sim.cooperative_kernel(d, kind.clone(), &[a], &[a], s)
-            .unwrap();
+        enq(sim.launch_cooperative_kernel(d, kind.clone(), &[a], &[a], s));
+        enq(sim.cooperative_kernel(d, kind.clone(), &[a], &[a], s));
         let g = sim.end_capture().unwrap();
         assert_eq!(sim.graph_len(g).unwrap(), 2);
         sim.free_sync(a).unwrap();
         let mut eight = Sim::new(HardwareProfile::example_8xh100_nvlink());
         let d1 = DeviceId(1);
         let a1 = eight.malloc(d1, 4096).unwrap();
-        eight
-            .launch_cooperative_kernel(d1, kind.clone(), &[a1], &[a1], s)
-            .unwrap();
-        eight
-            .cooperative_kernel(d1, kind.clone(), &[a1], &[a1], s)
-            .unwrap();
+        enq(eight.launch_cooperative_kernel(d1, kind.clone(), &[a1], &[a1], s));
+        enq(eight.cooperative_kernel(d1, kind.clone(), &[a1], &[a1], s));
         eight.synchronize().unwrap();
         eight.begin_capture(d1, s).unwrap();
-        eight
-            .launch_cooperative_kernel(d1, kind.clone(), &[a1], &[a1], s)
-            .unwrap();
-        eight
-            .cooperative_kernel(d1, kind.clone(), &[a1], &[a1], s)
-            .unwrap();
+        enq(eight.launch_cooperative_kernel(d1, kind.clone(), &[a1], &[a1], s));
+        enq(eight.cooperative_kernel(d1, kind.clone(), &[a1], &[a1], s));
         let g3 = eight.end_capture().unwrap();
         assert_eq!(eight.graph_len(g3).unwrap(), 2);
         eight.free_sync(a1).unwrap();
