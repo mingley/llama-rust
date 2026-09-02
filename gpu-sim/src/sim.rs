@@ -3121,7 +3121,6 @@ impl Sim {
     ///
     /// Host-synchronous. Capture cannot include it. Distinct from
     /// [`Self::event_create_interprocess`].
-    /// This VM does not invent occupancy SM counts this slice.
     pub fn event_create_blocking_sync(&mut self, event: EventId) -> Result<(), SimError> {
         self.create_event_blocking_sync(event)
     }
@@ -27596,6 +27595,8 @@ impl Sim {
     /// During capture this is a record node that does **not** put `event` in the
     /// forked-capture join set. A later [`Self::wait_event`] on another stream
     /// stays live. Live (non-capturing) this matches [`Self::record_event`].
+    /// Driver `cuEventRecordWithFlags` external is [`Self::event_record_external`].
+    /// Identity wrap [`Self::event_record_external`].
     pub fn record_event_external(
         &mut self,
         device: DeviceId,
@@ -27603,6 +27604,20 @@ impl Sim {
         stream: StreamId,
     ) -> Result<OpId, SimError> {
         self.record_event_with_flags(device, event, stream, EventRecordFlags::EXTERNAL)
+    }
+
+    /// `cuEventRecordWithFlags` external. Identity with
+    /// [`Self::record_event_external`] (`cudaEventRecordWithFlags` External).
+    ///
+    /// Capture legal. Distinct from [`Self::event_record_with_flags`].
+    /// This VM does not invent occupancy SM counts this slice.
+    pub fn event_record_external(
+        &mut self,
+        device: DeviceId,
+        event: EventId,
+        stream: StreamId,
+    ) -> Result<OpId, SimError> {
+        self.record_event_external(device, event, stream)
     }
 
     /// `cudaEventRecordWithFlags`. Unknown bits are Invalid `"event record flags"`.

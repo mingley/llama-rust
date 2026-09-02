@@ -9684,7 +9684,12 @@ model, do not celebrate the sim.
       `event_create_interprocess`. This VM does not invent occupancy SM counts, Engine `--event-create-blocking-sync`,
       or `cudaChooseDevice`. `gpu-profile capture` is still refused. Dual
       score still has no `$/M tokens`.
-1085. [ ] Next numbered PLAN item after 1084 is the next `gpu-sim` / Engine /
+1085. [x] `gpu-sim` `Sim::event_record_external` is
+      `cuEventRecordWithFlags` external. Identity with `record_event_external` (`cudaEventRecordWithFlags` External). Capture legal. Distinct from
+      `event_record_with_flags`. This VM does not invent occupancy SM counts, Engine `--event-record-external`,
+      or `cudaChooseDevice`. `gpu-profile capture` is still refused. Dual
+      score still has no `$/M tokens`.
+1086. [ ] Next numbered PLAN item after 1085 is the next `gpu-sim` / Engine /
     serve / expertvm mechanical API that is still missing, or the next official
     decode family. Prefer remaining CUDA-shaped twins over more
     OpenAI HTTP veneer. Do not invent F32 `output.scale`. Do not invent a
@@ -11478,6 +11483,10 @@ model, do not celebrate the sim.
     Do not invent Engine `--event-create-blocking-sync`. Do not invent
     occupancy SM counts this slice. Do not reverse EventCreateBlockingSync identity with create_event_blocking_sync.
     Do not invent generic `cuEventCreateWithFlags` as `event_create_blocking_sync`.
+    Do not invent a second `cuEventRecordWithFlags` external / `event_record_external`.
+    Do not invent Engine `--event-record-external`. Do not invent
+    occupancy SM counts this slice. Do not reverse EventRecordExternal identity with record_event_external.
+    Do not invent generic `cuEventRecordWithFlags` as `event_record_external`.
     Do not invent a second `cudaStreamAddCallback`.
     Do not invent Engine `--stream-callback` (same wall as second live
     `cudaLaunchHostFunc` after miss DMA).
@@ -13303,6 +13312,9 @@ model, do not celebrate the sim.
     Do not invent a second `event_create_blocking_sync` API. Do not invent
     Engine `--event-create-blocking-sync-identity`. Do not invent a event-record-external
     this slice. Do not reverse EventCreateBlockingSync identity with create_event_blocking_sync.
+    Do not invent a second `event_record_external` API. Do not invent
+    Engine `--event-record-external-identity`. Do not invent a wait-event-external
+    this slice. Do not reverse EventRecordExternal identity with record_event_external.
     Do not invent a second DeviceLaunch in-flight destroy-complete check or Engine
     `--device-launch-destroy`. Do not abort an in-flight DeviceLaunch when
     `destroy_graph` succeeds. Do not delay destroy of an idle exec. Do not invent
@@ -15311,6 +15323,9 @@ model, do not celebrate the sim.
     Do not invent a second `event_create_blocking_sync` method. Do not
     invent Engine `--cu-event-create-blocking-sync`. Do not reverse wrapping
     cuEventCreateWithFlags blocking sync identity. Do not wrap generic `cuEventCreateWithFlags` as `event_create_blocking_sync`.
+    Do not invent a second `event_record_external` method. Do not
+    invent Engine `--cu-event-record-external`. Do not reverse wrapping
+    cuEventRecordWithFlags external identity. Do not wrap generic `cuEventRecordWithFlags` as `event_record_external`.
     Do not
     spend the next item on an OpenAI-compatible HTTP veneer.
 
