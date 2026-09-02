@@ -5,6 +5,13 @@ Visible five-turn extract: [docs/chatgpt-share-6a920fe1.md](docs/chatgpt-share-6
 Complete share-API extract: [docs/chatgpt-share-6a920fe1/](docs/chatgpt-share-6a920fe1/).
 Work lands on `main`. No PRs.
 
+## Shipped 2026-09-02 — CUDA `cuFuncGetAttribute` cluster dim must be set
+
+`gpu-sim` `Sim::func_get_cluster_dim_must_be_set` is `cuFuncGetAttribute` cluster dim must be set.
+Identity with `cluster_dim_must_be_set` (`cudaFuncGetAttribute` ClusterDimMustBeSet). Query; legal during capture. Distinct from `func_set_cluster_dim_must_be_set`.
+This VM does not invent occupancy SM counts or Engine `--func-get-cluster-dim-must-be-set`.
+`gpu-profile capture` is still refused. Dual score still has no `$/M tokens`.
+
 ## Shipped 2026-09-02 — CUDA `cuFuncSetAttribute` cluster dim must be set
 
 `gpu-sim` `Sim::func_set_cluster_dim_must_be_set` is `cuFuncSetAttribute` cluster dim must be set.

@@ -743,6 +743,8 @@ compiled kernel exists; no Engine flag).
 `gpu-sim` `func_get_cluster_policy` is `cuFuncGetAttribute` cluster policy (identity with `get_func_cluster_policy`; no Engine flag).
 
 `gpu-sim` `func_set_cluster_dim_must_be_set` is `cuFuncSetAttribute` cluster dim must be set (identity with `set_cluster_dim_must_be_set`; no Engine flag).
+
+`gpu-sim` `func_get_cluster_dim_must_be_set` is `cuFuncGetAttribute` cluster dim must be set (identity with `cluster_dim_must_be_set`; no Engine flag).
 `gpu-sim` `mem_alloc` is `cuMemAlloc` (identity with `malloc`; no Engine flag).
 `gpu-sim` `mem_free` is `cuMemFree` (identity with `free_sync`; no Engine flag).
 `gpu-sim` `mem_free_host` is `cuMemFreeHost` (identity with `free_host_pinned`; no Engine flag).
@@ -1010,6 +1012,8 @@ compiled kernel exists; no Engine flag).
 `gpu-sim` `func_get_cluster_policy` is `cuFuncGetAttribute` cluster policy (identity with `get_func_cluster_policy`; no Engine flag).
 
 `gpu-sim` `func_set_cluster_dim_must_be_set` is `cuFuncSetAttribute` cluster dim must be set (identity with `set_cluster_dim_must_be_set`; no Engine flag).
+
+`gpu-sim` `func_get_cluster_dim_must_be_set` is `cuFuncGetAttribute` cluster dim must be set (identity with `cluster_dim_must_be_set`; no Engine flag).
 `gpu-sim` `func_is_loaded` is `cuFuncIsLoaded` (`false` until a compiled
 kernel exists; no Engine flag).
 `gpu-sim` `func_load` is `cuFuncLoad` (Invalid; no compiled kernel; no
