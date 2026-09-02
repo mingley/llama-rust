@@ -7840,7 +7840,14 @@ model, do not celebrate the sim.
     or `cudaChooseDevice`. `gpu-profile capture` is still refused. Dual
     score still has no `$/M tokens`.
 
-812. [ ] Next numbered PLAN item after 811 is the next `gpu-sim` / Engine /
+812. [x] `gpu-sim` `Sim::mem_free` is
+    `cuMemFree`. Identity with `free_sync`
+    (`cudaFree`). Host-sync; capture refused. Distinct from
+    `free` (`cudaFreeAsync`). This VM does not invent `cuMemFreeHost`, Engine `--mem-free`,
+    or `cudaChooseDevice`. `gpu-profile capture` is still refused. Dual
+    score still has no `$/M tokens`.
+
+813. [ ] Next numbered PLAN item after 812 is the next `gpu-sim` / Engine /
     serve / expertvm mechanical API that is still missing, or the next official
     decode family. Prefer remaining CUDA-shaped twins over more
     OpenAI HTTP veneer. Do not invent F32 `output.scale`. Do not invent a
@@ -8767,6 +8774,9 @@ model, do not celebrate the sim.
     Do not invent a second `cuMemAlloc` / `mem_alloc`.
     Do not invent Engine `--mem-alloc`. Do not invent
     `cuMemFree` this slice. Do not reverse MemAlloc identity with malloc.
+    Do not invent a second `cuMemFree` / `mem_free`.
+    Do not invent Engine `--mem-free`. Do not invent
+    `cuMemFreeHost` this slice. Do not reverse MemFree identity with free_sync.
     Do not invent a second `cudaStreamAddCallback`.
     Do not invent Engine `--stream-callback` (same wall as second live
     `cudaLaunchHostFunc` after miss DMA).
@@ -9773,6 +9783,9 @@ model, do not celebrate the sim.
     Do not invent a second `mem_alloc` API. Do not invent
     Engine `--mem-alloc-identity`. Do not invent a mem-free
     this slice. Do not reverse MemAlloc identity with malloc.
+    Do not invent a second `mem_free` API. Do not invent
+    Engine `--mem-free-identity`. Do not invent a mem-free-host
+    this slice. Do not reverse MemFree identity with free_sync.
     Do not invent a second DeviceLaunch in-flight destroy-complete check or Engine
     `--device-launch-destroy`. Do not abort an in-flight DeviceLaunch when
     `destroy_graph` succeeds. Do not delay destroy of an idle exec. Do not invent
@@ -10962,6 +10975,9 @@ model, do not celebrate the sim.
     Do not invent a second `mem_alloc` method. Do not
     invent Engine `--cu-mem-alloc`. Do not reverse wrapping
     cuMemAlloc identity.
+    Do not invent a second `mem_free` method. Do not
+    invent Engine `--cu-mem-free`. Do not reverse wrapping
+    cuMemFree identity.
     Do not
     spend the next item on an OpenAI-compatible HTTP veneer.
 

@@ -5,6 +5,14 @@ Visible five-turn extract: [docs/chatgpt-share-6a920fe1.md](docs/chatgpt-share-6
 Complete share-API extract: [docs/chatgpt-share-6a920fe1/](docs/chatgpt-share-6a920fe1/).
 Work lands on `main`. No PRs.
 
+## Shipped 2026-09-02 — CUDA `cuMemFree`
+
+`gpu-sim` `Sim::mem_free` is `cuMemFree`.
+Identity with `free_sync` (`cudaFree`). Host-sync; capture refused.
+Distinct from `free` (`cudaFreeAsync`).
+This VM does not invent `cuMemFreeHost` or Engine `--mem-free`.
+`gpu-profile capture` is still refused. Dual score still has no `$/M tokens`.
+
 ## Shipped 2026-09-02 — CUDA `cuMemAlloc`
 
 `gpu-sim` `Sim::mem_alloc` is `cuMemAlloc`.

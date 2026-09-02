@@ -159,6 +159,7 @@ warp scheduler, L1, …   ← do not model
 | `mem_get_info` is identity with `mem_info` | `cuMemGetInfo` |
 | `stream_create` is identity with `stream_create_with_flags` DEFAULT | `cudaStreamCreate` / `cuStreamCreate` |
 | `mem_alloc` is identity with `malloc` | `cuMemAlloc` |
+| `mem_free` is identity with `free_sync` | `cuMemFree` |
 | `pointer_get_attributes` classifies Unregistered / Host / Device / Managed | `cudaPointerGetAttributes` |
 | `pointer_get_attribute` wraps type / mapped / pool / range / ordinal / start / buffer id / IPC / RDMA / handle types / VMM map / hw decompress 0 / VMM block id; SyncMemops is settable | `cuPointerGetAttribute` / `SetAttribute` |
 | `pointer_get_access_flags` is kernel residency on an explicit device (`MemAccessFlags`; enable_peer is D2D memcpy only) | `CU_POINTER_ATTRIBUTE_ACCESS_FLAGS` |
@@ -1939,6 +1940,7 @@ must align to `cudaLimitMaxL2FetchGranularity` (SM 8.0+ default 128).
 `malloc_pitch` is `cudaMallocPitch`. `malloc_pitch_with_element_size` is
 `cuMemAllocPitch` (`ElementSizeBytes` 4 / 8 / 16; pitch still 512-aligned).
 No Engine `--malloc-pitch-element`. `mem_alloc` is `cuMemAlloc` (identity with `malloc`). Host-sync; capture refused. No Engine `--mem-alloc`.
+`mem_free` is `cuMemFree` (identity with `free_sync`). Host-sync; capture refused. No Engine `--mem-free`.
 `MemcpyOp` `height` / pitches are
 `cudaMemcpy2DAsync` (payload `width * height`). Origin fields are srcPos /
 dstPos (default 0). No Engine `--memcpy-origin`. `MemcpyOp` `src_lod` /

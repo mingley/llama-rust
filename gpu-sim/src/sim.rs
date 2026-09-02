@@ -17135,6 +17135,15 @@ impl Sim {
         Ok(())
     }
 
+    /// `cuMemFree`. Identity with [`Self::free_sync`] (`cudaFree`).
+    ///
+    /// Host-sync; capture refused. Distinct from [`Self::free`] (`cudaFreeAsync`).
+    /// Host-pinned ids are [`SimError::UnknownAlloc`]. This VM does not invent
+    /// `cuMemFreeHost` this slice (`free_host_pinned` stays).
+    pub fn mem_free(&mut self, id: AllocId) -> Result<(), SimError> {
+        self.free_sync(id)
+    }
+
     /// Asynchronous copy (`cudaMemcpyAsync`) when both ends are device or pinned.
     ///
     /// Pageable host (`Place::Host`) is host-synchronous: the driver bounces
