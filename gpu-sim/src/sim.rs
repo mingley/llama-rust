@@ -16660,7 +16660,6 @@ impl Sim {
     /// [`Self::pool_set_access`] (`cudaMemPoolSetAccess` ReadWrite).
     ///
     /// Capture refused. Distinct from [`Self::mem_pool_get_access`].
-    /// This VM does not invent occupancy SM counts this slice.
     pub fn mem_pool_set_access(&mut self, pool: PoolId, device: DeviceId) -> Result<(), SimError> {
         self.pool_set_access(pool, device)
     }
@@ -16675,6 +16674,8 @@ impl Sim {
     /// Same-device still records; [`Self::pool_get_access`] on the owner stays
     /// ReadWrite. Applies to existing and later allocs. Downgrades a prior
     /// [`Self::pool_set_access`] on `device`.
+    /// Driver `cuMemPoolSetAccess` ProtRead is [`Self::mem_pool_set_access_read`].
+    /// Identity wrap [`Self::mem_pool_set_access_read`].
     pub fn pool_set_access_read(&mut self, pool: PoolId, device: DeviceId) -> Result<(), SimError> {
         self.pool_prepare_set_access(pool, device)?;
         {
@@ -16684,6 +16685,19 @@ impl Sim {
         }
         self.clock = self.clock.saturating_add(self.first_alloc_ns().max(1));
         Ok(())
+    }
+
+    /// `cuMemPoolSetAccess` ProtRead. Identity with
+    /// [`Self::pool_set_access_read`] (`cudaMemPoolSetAccess` ProtRead).
+    ///
+    /// Capture refused. Distinct from [`Self::mem_pool_set_access`].
+    /// This VM does not invent occupancy SM counts this slice.
+    pub fn mem_pool_set_access_read(
+        &mut self,
+        pool: PoolId,
+        device: DeviceId,
+    ) -> Result<(), SimError> {
+        self.pool_set_access_read(pool, device)
     }
 
     fn pool_prepare_set_access(&self, pool: PoolId, device: DeviceId) -> Result<(), SimError> {
