@@ -1558,6 +1558,8 @@ impl Sim {
     /// lower runs first when multiple ops are ready for the same resource.
     /// Out of range values are clamped to
     /// [`Self::device_get_stream_priority_range`]. Default `0`.
+    /// Driver `cuStreamSetAttribute` priority is [`Self::stream_set_priority`].
+    /// Identity wrap [`Self::stream_set_priority`].
     pub fn set_stream_priority(
         &mut self,
         device: DeviceId,
@@ -1568,6 +1570,20 @@ impl Sim {
         self.require_live_stream(device, stream)?;
         let _prev = self.priority.insert((device, stream), priority);
         Ok(())
+    }
+
+    /// `cuStreamSetAttribute` priority. Identity with
+    /// [`Self::set_stream_priority`] (`cudaStreamSetAttribute` Priority).
+    ///
+    /// Capture legal. Distinct from [`Self::stream_get_access_policy`].
+    /// This VM does not invent occupancy SM counts this slice.
+    pub fn stream_set_priority(
+        &mut self,
+        device: DeviceId,
+        stream: StreamId,
+        priority: i32,
+    ) -> Result<(), SimError> {
+        self.set_stream_priority(device, stream, priority)
     }
 
     /// Current priority for `(device, stream)`, or `0` if unset.
@@ -2389,7 +2405,6 @@ impl Sim {
     /// [`Self::stream_access_policy`] (`cudaStreamGetAttribute` AccessPolicyWindow).
     ///
     /// Query; legal during capture. Distinct from [`Self::stream_set_access_policy`].
-    /// This VM does not invent occupancy SM counts this slice.
     #[must_use]
     pub fn stream_get_access_policy(
         &self,
