@@ -16145,7 +16145,6 @@ impl Sim {
     /// [`Self::set_device_mempool`] (`cudaDeviceSetMemPool`).
     ///
     /// Capture refused. Distinct from [`Self::device_get_mempool`].
-    /// This VM does not invent occupancy SM counts this slice.
     pub fn device_set_mempool(&mut self, device: DeviceId, pool: PoolId) -> Result<(), SimError> {
         self.set_device_mempool(device, pool)
     }
@@ -16154,8 +16153,19 @@ impl Sim {
     ///
     /// Not shareable (`cudaMemHandleTypeNone`). Use
     /// [`Self::create_shareable_pool`] for POSIX-FD export.
+    /// Driver `cuMemPoolCreate` is [`Self::mem_pool_create`].
+    /// Identity wrap [`Self::mem_pool_create`].
     pub fn create_pool(&mut self, device: DeviceId) -> Result<PoolId, SimError> {
         self.insert_pool(device, false)
+    }
+
+    /// `cuMemPoolCreate`. Identity with
+    /// [`Self::create_pool`] (`cudaMemPoolCreate`).
+    ///
+    /// Capture refused. Distinct from [`Self::device_set_mempool`].
+    /// This VM does not invent occupancy SM counts this slice.
+    pub fn mem_pool_create(&mut self, device: DeviceId) -> Result<PoolId, SimError> {
+        self.create_pool(device)
     }
 
     /// `cudaMemPoolCreate` with `cudaMemAllocationHandleTypePosixFileDescriptor`.
