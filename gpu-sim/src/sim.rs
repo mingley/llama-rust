@@ -16763,6 +16763,15 @@ impl Sim {
         self.host_register_flags(id, None, flags)
     }
 
+    /// `cuMemHostRegister`. Identity with [`Self::host_register_with_flags`]
+    /// (`cudaHostRegister` flags).
+    ///
+    /// Capture refused. Distinct from [`Self::host_register`] (DEFAULT). This VM
+    /// does not invent `cuMemHostUnregister` this slice (`host_unregister` stays).
+    pub fn mem_host_register(&mut self, id: AllocId, flags: u32) -> Result<(), SimError> {
+        self.host_register_with_flags(id, flags)
+    }
+
     /// `cudaHostUnregister`. Only ids from [`Self::host_register`]. Must not be leased
     /// or resident on a device.
     pub fn host_unregister(&mut self, id: AllocId) -> Result<(), SimError> {
