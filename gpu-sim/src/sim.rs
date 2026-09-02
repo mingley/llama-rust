@@ -20172,6 +20172,7 @@ impl Sim {
     /// config does not change kernel duration. Distinct from
     /// [`Self::set_shared_mem_config`] and [`Self::set_func_carveout`].
     /// Decode identity stays PreferNone.
+    /// Driver `cuCtxSetCacheConfig` is [`Self::ctx_set_cache_config`].
     pub fn set_cache_config(&mut self, device: DeviceId, cache: FuncCache) -> Result<(), SimError> {
         self.fail_if_capturing("cannot capture cache config")?;
         let _gpu = self.profile.gpu(device)?;
@@ -20498,8 +20499,7 @@ impl Sim {
     ///
     /// Capture refused. Distinct from [`Self::ctx_get_flags`] and
     /// [`Self::device_primary_ctx_set_flags`] (always Invalid
-    /// `"primary context active"`). This VM does not invent
-    /// `cuCtxSetCacheConfig` this slice (`set_cache_config` stays).
+    /// `"primary context active"`).
     pub fn ctx_set_flags(&mut self, device: DeviceId, flags: u32) -> Result<(), SimError> {
         self.set_device_flags(device, flags)
     }
@@ -20511,11 +20511,25 @@ impl Sim {
     /// (`cudaDeviceGetCacheConfig`). Distinct from
     /// [`Self::get_func_cache_config`] (`cudaFuncSetCacheConfig` stored
     /// value) and from [`Self::ctx_get_flags`]. Unknown devices are Invalid
-    /// `"device not in profile"`. This VM does not invent `cuCtxSetCacheConfig`
-    /// this slice (`set_cache_config` stays the runtime setter). Cache
+    /// `"device not in profile"`. Driver `cuCtxSetCacheConfig` is
+    /// [`Self::ctx_set_cache_config`]. Cache
     /// config does not change kernel duration (L1 is not modeled).
     pub fn ctx_get_cache_config(&self, device: DeviceId) -> Result<FuncCache, SimError> {
         self.get_cache_config(device)
+    }
+
+    /// `cuCtxSetCacheConfig`. Identity with [`Self::set_cache_config`]
+    /// (`cudaDeviceSetCacheConfig`).
+    ///
+    /// Capture refused. Distinct from [`Self::ctx_get_cache_config`] and
+    /// [`Self::set_func_cache_config`]. This VM does not invent
+    /// `cuCtxSetLimit` this slice (`set_limit` stays).
+    pub fn ctx_set_cache_config(
+        &mut self,
+        device: DeviceId,
+        cache: FuncCache,
+    ) -> Result<(), SimError> {
+        self.set_cache_config(device, cache)
     }
 
     /// `cuCtxGetStreamPriorityRange` for the seeded primary context of

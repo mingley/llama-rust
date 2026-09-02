@@ -479,6 +479,8 @@ seeded primary context; no Engine flag).
 `set_device_flags`; no Engine flag).
 `gpu-sim` `ctx_get_cache_config` is `cuCtxGetCacheConfig` (same as
 `get_cache_config`; no Engine flag).
+`gpu-sim` `ctx_set_cache_config` is `cuCtxSetCacheConfig` (identity with
+`set_cache_config`; no Engine flag).
 `gpu-sim` `ctx_get_stream_priority_range` is `cuCtxGetStreamPriorityRange`
 (example H100 `(0, -5)`; no Engine flag).
 `gpu-sim` `ctx_get_limit` is `cuCtxGetLimit` (same as `get_limit`; no
@@ -577,6 +579,7 @@ compiled kernel exists; no Engine flag).
 `gpu-sim` `mem_cpy_3d_with_attributes` is `cuMemcpy3DWithAttributesAsync` (identity with `memcpy_3d_with_attributes`; no Engine flag).
 `gpu-sim` `mem_cpy_with_attributes` is `cuMemcpyWithAttributesAsync` (identity with `memcpy_with_attributes`; no Engine flag).
 `gpu-sim` `ctx_set_flags` is `cuCtxSetFlags` (identity with `set_device_flags`; no Engine flag).
+`gpu-sim` `ctx_set_cache_config` is `cuCtxSetCacheConfig` (identity with `set_cache_config`; no Engine flag).
 `gpu-sim` `func_is_loaded` is `cuFuncIsLoaded` (`false` until a compiled
 kernel exists; no Engine flag).
 `gpu-sim` `func_load` is `cuFuncLoad` (Invalid; no compiled kernel; no

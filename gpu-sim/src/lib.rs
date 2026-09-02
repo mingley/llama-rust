@@ -281,6 +281,10 @@
 //! [`set_device_flags`](Sim::set_device_flags)). Capture refused. Distinct from
 //! [`ctx_get_flags`](Sim::ctx_get_flags) and
 //! [`device_primary_ctx_set_flags`](Sim::device_primary_ctx_set_flags). No Engine `--ctx-set-flags`.
+//! [`ctx_set_cache_config`](Sim::ctx_set_cache_config) is `cuCtxSetCacheConfig` (identity with
+//! [`set_cache_config`](Sim::set_cache_config)). Capture refused. Distinct from
+//! [`ctx_get_cache_config`](Sim::ctx_get_cache_config) and
+//! [`set_func_cache_config`](Sim::set_func_cache_config). No Engine `--ctx-set-cache-config`.
 //! [`Sim::ipc_get_event`] / [`ipc_open_event`](Sim::ipc_open_event) are
 //! `cudaIpcGetEventHandle` / `cudaIpcOpenEventHandle` (interprocess events).
 //! [`Sim::create_shareable_pool`] is `cudaMemPoolCreate` with a POSIX-FD handle
@@ -770,6 +774,10 @@
 //! [`set_device_flags`](Sim::set_device_flags)). Capture refused. Distinct from
 //! [`ctx_get_flags`](Sim::ctx_get_flags) and
 //! [`device_primary_ctx_set_flags`](Sim::device_primary_ctx_set_flags). No Engine `--ctx-set-flags`.
+//! [`ctx_set_cache_config`](Sim::ctx_set_cache_config) is `cuCtxSetCacheConfig` (identity with
+//! [`set_cache_config`](Sim::set_cache_config)). Capture refused. Distinct from
+//! [`ctx_get_cache_config`](Sim::ctx_get_cache_config) and
+//! [`set_func_cache_config`](Sim::set_func_cache_config). No Engine `--ctx-set-cache-config`.
 //! [`mem_host_get_flags`](Sim::mem_host_get_flags) is `cuMemHostGetFlags` (identity with
 //! [`host_get_flags`](Sim::host_get_flags)). Query; legal during capture. No Engine `--mem-host-get-flags`.
 //! [`mem_host_get_device_pointer`](Sim::mem_host_get_device_pointer) is `cuMemHostGetDevicePointer` (identity with
@@ -909,6 +917,10 @@
 //! [`set_device_flags`](Sim::set_device_flags)). Capture refused. Distinct from
 //! [`ctx_get_flags`](Sim::ctx_get_flags) and
 //! [`device_primary_ctx_set_flags`](Sim::device_primary_ctx_set_flags). No Engine `--ctx-set-flags`.
+//! [`ctx_set_cache_config`](Sim::ctx_set_cache_config) is `cuCtxSetCacheConfig` (identity with
+//! [`set_cache_config`](Sim::set_cache_config)). Capture refused. Distinct from
+//! [`ctx_get_cache_config`](Sim::ctx_get_cache_config) and
+//! [`set_func_cache_config`](Sim::set_func_cache_config). No Engine `--ctx-set-cache-config`.
 //! [`Sim::pointer_get_attributes`] is `cudaPointerGetAttributes`.
 //! [`pointer_set_attribute`](Sim::pointer_set_attribute) /
 //! [`pointer_get_attribute`](Sim::pointer_get_attribute) are
@@ -1925,6 +1937,10 @@
 //! for that same primary context (same as [`get_cache_config`](Sim::get_cache_config)).
 //! Distinct from [`get_func_cache_config`](Sim::get_func_cache_config). Query;
 //! legal during capture. No Engine `--ctx-cache-config`.
+//! [`ctx_set_cache_config`](Sim::ctx_set_cache_config) is `cuCtxSetCacheConfig` (identity with
+//! [`set_cache_config`](Sim::set_cache_config)). Capture refused. Distinct from
+//! [`ctx_get_cache_config`](Sim::ctx_get_cache_config) and
+//! [`set_func_cache_config`](Sim::set_func_cache_config). No Engine `--ctx-set-cache-config`.
 //! [`ctx_get_stream_priority_range`](Sim::ctx_get_stream_priority_range) is
 //! `cuCtxGetStreamPriorityRange` for that same primary context (same as
 //! [`device_get_stream_priority_range`](Sim::device_get_stream_priority_range);
@@ -31006,6 +31022,51 @@ mod tests {
         );
         sim.reset_device(d).unwrap();
         assert_eq!(sim.ctx_get_cache_config(d).unwrap(), FuncCache::PreferNone);
+    }
+
+    #[test]
+    fn ctx_set_cache_config_is_cu_ctx_set_cache_config() {
+        let mut sim = Sim::new(h100());
+        let d = DeviceId(0);
+        let s = StreamId(0);
+        match sim.ctx_set_cache_config(DeviceId(99), FuncCache::PreferL1) {
+            Err(SimError::Invalid { why }) => assert!(why.contains("device"), "{why}"),
+            other => panic!("{other:?}"),
+        }
+        match sim.set_cache_config(DeviceId(99), FuncCache::PreferL1) {
+            Err(SimError::Invalid { why }) => assert!(why.contains("device"), "{why}"),
+            other => panic!("{other:?}"),
+        }
+        sim.ctx_set_cache_config(d, FuncCache::PreferL1).unwrap();
+        assert_eq!(sim.ctx_get_cache_config(d).unwrap(), FuncCache::PreferL1);
+        assert_eq!(sim.get_cache_config(d).unwrap(), FuncCache::PreferL1);
+        sim.set_func_cache_config(d, FuncCache::PreferShared)
+            .unwrap();
+        assert_eq!(sim.ctx_get_cache_config(d).unwrap(), FuncCache::PreferL1);
+        sim.set_cache_config(d, FuncCache::PreferEqual).unwrap();
+        assert_eq!(sim.ctx_get_cache_config(d).unwrap(), FuncCache::PreferEqual);
+        sim.begin_capture(d, s).unwrap();
+        match sim.ctx_set_cache_config(d, FuncCache::PreferNone) {
+            Err(SimError::Invalid { why }) => assert!(why.contains("capture"), "{why}"),
+            other => panic!("{other:?}"),
+        }
+        match sim.set_cache_config(d, FuncCache::PreferNone) {
+            Err(SimError::Invalid { why }) => assert!(why.contains("capture"), "{why}"),
+            other => panic!("{other:?}"),
+        }
+        let _g = sim.end_capture().unwrap();
+        let mut eight = Sim::new(HardwareProfile::example_8xh100_nvlink());
+        eight
+            .ctx_set_cache_config(DeviceId(1), FuncCache::PreferEqual)
+            .unwrap();
+        assert_eq!(
+            eight.ctx_get_cache_config(DeviceId(0)).unwrap(),
+            FuncCache::PreferNone
+        );
+        assert_eq!(
+            eight.ctx_get_cache_config(DeviceId(1)).unwrap(),
+            FuncCache::PreferEqual
+        );
     }
 
     #[test]

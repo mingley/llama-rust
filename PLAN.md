@@ -8197,7 +8197,14 @@ model, do not celebrate the sim.
     or `cudaChooseDevice`. `gpu-profile capture` is still refused. Dual
     score still has no `$/M tokens`.
 
-863. [ ] Next numbered PLAN item after 862 is the next `gpu-sim` / Engine /
+863. [x] `gpu-sim` `Sim::ctx_set_cache_config` is
+    `cuCtxSetCacheConfig`. Identity with `set_cache_config`
+    (`cudaDeviceSetCacheConfig`). Capture refused. Distinct from
+    `ctx_get_cache_config` and `set_func_cache_config`. This VM does not invent `cuCtxSetLimit`, Engine `--ctx-set-cache-config`,
+    or `cudaChooseDevice`. `gpu-profile capture` is still refused. Dual
+    score still has no `$/M tokens`.
+
+864. [ ] Next numbered PLAN item after 863 is the next `gpu-sim` / Engine /
     serve / expertvm mechanical API that is still missing, or the next official
     decode family. Prefer remaining CUDA-shaped twins over more
     OpenAI HTTP veneer. Do not invent F32 `output.scale`. Do not invent a
@@ -8414,8 +8421,8 @@ model, do not celebrate the sim.
     Do not invent a second `cuCtxSetFlags` / `ctx_set_flags`. Do not reverse wrapping `set_device_flags`.
     Do not invent a second `cuCtxGetCacheConfig` /
     `ctx_get_cache_config`. Do not invent Engine `--ctx-cache-config`.
-    Do not invent `cuCtxSetCacheConfig` this slice. Do not reverse
-    wrapping `get_cache_config`.
+    Do not invent a second `cuCtxSetCacheConfig` / `ctx_set_cache_config`. Do not reverse
+    wrapping `get_cache_config` / `set_cache_config`.
     Do not invent a second `cuCtxGetStreamPriorityRange` /
     `ctx_get_stream_priority_range`. Do not invent Engine `--ctx-priority-range`.
     Do not invent occupancy SM counts from stream priority. Do not
@@ -9277,6 +9284,9 @@ model, do not celebrate the sim.
     Do not invent a second `cuCtxSetFlags` / `ctx_set_flags`.
     Do not invent Engine `--ctx-set-flags`. Do not invent
     `cuCtxSetCacheConfig` this slice. Do not reverse CtxSetFlags identity with set_device_flags.
+    Do not invent a second `cuCtxSetCacheConfig` / `ctx_set_cache_config`.
+    Do not invent Engine `--ctx-set-cache-config`. Do not invent
+    `cuCtxSetLimit` this slice. Do not reverse CtxSetCacheConfig identity with set_cache_config.
     Do not invent a second `cudaStreamAddCallback`.
     Do not invent Engine `--stream-callback` (same wall as second live
     `cudaLaunchHostFunc` after miss DMA).
@@ -10436,6 +10446,9 @@ model, do not celebrate the sim.
     Do not invent a second `ctx_set_flags` API. Do not invent
     Engine `--ctx-set-flags-identity`. Do not invent a ctx-set-cache-config
     this slice. Do not reverse CtxSetFlags identity with set_device_flags.
+    Do not invent a second `ctx_set_cache_config` API. Do not invent
+    Engine `--ctx-set-cache-config-identity`. Do not invent a ctx-set-limit
+    this slice. Do not reverse CtxSetCacheConfig identity with set_cache_config.
     Do not invent a second DeviceLaunch in-flight destroy-complete check or Engine
     `--device-launch-destroy`. Do not abort an in-flight DeviceLaunch when
     `destroy_graph` succeeds. Do not delay destroy of an idle exec. Do not invent
@@ -11778,6 +11791,9 @@ model, do not celebrate the sim.
     Do not invent a second `ctx_set_flags` method. Do not
     invent Engine `--cu-ctx-set-flags`. Do not reverse wrapping
     cuCtxSetFlags identity.
+    Do not invent a second `ctx_set_cache_config` method. Do not
+    invent Engine `--cu-ctx-set-cache-config`. Do not reverse wrapping
+    cuCtxSetCacheConfig identity.
     Do not
     spend the next item on an OpenAI-compatible HTTP veneer.
 

@@ -5,6 +5,14 @@ Visible five-turn extract: [docs/chatgpt-share-6a920fe1.md](docs/chatgpt-share-6
 Complete share-API extract: [docs/chatgpt-share-6a920fe1/](docs/chatgpt-share-6a920fe1/).
 Work lands on `main`. No PRs.
 
+## Shipped 2026-09-02 — CUDA `cuCtxSetCacheConfig`
+
+`gpu-sim` `Sim::ctx_set_cache_config` is `cuCtxSetCacheConfig`.
+Identity with `set_cache_config` (`cudaDeviceSetCacheConfig`).
+Capture refused. Distinct from `ctx_get_cache_config` and `set_func_cache_config`.
+This VM does not invent `cuCtxSetLimit` or Engine `--ctx-set-cache-config`.
+`gpu-profile capture` is still refused. Dual score still has no `$/M tokens`.
+
 ## Shipped 2026-09-02 — CUDA `cuCtxSetFlags`
 
 `gpu-sim` `Sim::ctx_set_flags` is `cuCtxSetFlags`.
