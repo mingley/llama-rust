@@ -522,6 +522,8 @@ Eager; no Engine flag).
 Engine flag).
 `gpu-sim` `module_load_data` is `cuModuleLoadData` (Invalid; no cubin
 image; no Engine flag).
+`gpu-sim` `module_unload` is `cuModuleUnload` (Invalid; no `CUmodule`
+handle; no Engine flag).
 `gpu-sim` `library_load_data` is `cuLibraryLoadData` (Invalid; no cubin /
 `CUlibrary`; no Engine flag).
 `gpu-sim` `library_load_from_file` is `cuLibraryLoadFromFile` (Invalid;
