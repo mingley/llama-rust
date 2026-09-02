@@ -5,6 +5,14 @@ Visible five-turn extract: [docs/chatgpt-share-6a920fe1.md](docs/chatgpt-share-6
 Complete share-API extract: [docs/chatgpt-share-6a920fe1/](docs/chatgpt-share-6a920fe1/).
 Work lands on `main`. No PRs.
 
+## Shipped 2026-09-02 — CUDA `cuGraphAddNode` IF size 2
+
+`gpu-sim` `Sim::add_graph_if_else` is `cuGraphAddNode` IF size 2.
+Identity with `graph_add_if_else` (`cudaGraphAddNode` IF size 2).
+Capture refused. Distinct from `add_graph_if`.
+This VM does not invent occupancy SM counts or Engine `--graph-add-if-else`.
+`gpu-profile capture` is still refused. Dual score still has no `$/M tokens`.
+
 ## Shipped 2026-09-02 — CUDA `cuGraphAddNode` IF
 
 `gpu-sim` `Sim::add_graph_if` is `cuGraphAddNode` IF.

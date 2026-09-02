@@ -10536,8 +10536,7 @@ impl Sim {
     /// [`Self::graph_add_if`] (`cudaGraphAddNode` IF).
     ///
     /// Capture refused. Distinct from
-    /// [`Self::add_graph_node_with_data`]. This VM does not invent
-    /// occupancy SM counts this slice.
+    /// [`Self::add_graph_node_with_data`].
     pub fn add_graph_if(&mut self, graph: GraphId, handle: CondId) -> Result<GraphId, SimError> {
         self.graph_add_if(graph, handle)
     }
@@ -10546,7 +10545,9 @@ impl Sim {
     ///
     /// Then-body ops skip at start when `handle` is `0`; the else-body runs
     /// instead. `handle` must have been created on `graph`. Capture cannot
-    /// include it. Illegal on an instantiated exec. No Engine `--graph-if-else`.
+    /// include it. Illegal on an instantiated exec. No Engine `--graph-if-else`. Driver
+    /// `cuGraphAddNode` IF size 2 is
+    /// [`Self::add_graph_if_else`].
     pub fn graph_add_if_else(
         &mut self,
         graph: GraphId,
@@ -10568,6 +10569,20 @@ impl Sim {
             },
         )?;
         Ok((body, else_body))
+    }
+
+    /// `cuGraphAddNode` IF (`cudaGraphCondTypeIf`, size 2). Identity with
+    /// [`Self::graph_add_if_else`] (`cudaGraphAddNode` IF size 2).
+    ///
+    /// Capture refused. Distinct from
+    /// [`Self::add_graph_if`]. This VM does not invent
+    /// occupancy SM counts this slice.
+    pub fn add_graph_if_else(
+        &mut self,
+        graph: GraphId,
+        handle: CondId,
+    ) -> Result<(GraphId, GraphId), SimError> {
+        self.graph_add_if_else(graph, handle)
     }
 
     /// `cudaGraphAddNode` WHILE (`cudaGraphCondTypeWhile`). Returns the body.
