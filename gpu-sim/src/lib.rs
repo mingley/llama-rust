@@ -522,6 +522,8 @@
 //! [`malloc`](Sim::malloc)). Host-sync; capture refused. No Engine `--mem-alloc`.
 //! [`mem_free`](Sim::mem_free) is `cuMemFree` (identity with
 //! [`free_sync`](Sim::free_sync)). Host-sync; capture refused. No Engine `--mem-free`.
+//! [`mem_free_host`](Sim::mem_free_host) is `cuMemFreeHost` (identity with
+//! [`free_host_pinned`](Sim::free_host_pinned)). Host-sync; capture refused. No Engine `--mem-free-host`.
 //! [`Sim::pointer_get_attributes`] is `cudaPointerGetAttributes`.
 //! [`pointer_set_attribute`](Sim::pointer_set_attribute) /
 //! [`pointer_get_attribute`](Sim::pointer_get_attribute) are
@@ -32919,6 +32921,49 @@ mod tests {
         }
         let _g = sim.end_capture().unwrap();
         sim.free_sync(b).unwrap();
+    }
+
+    #[test]
+    fn mem_free_host_is_cu_mem_free_host() {
+        let mut sim = Sim::new(h100());
+        let d = DeviceId(0);
+        let s = StreamId(0);
+        match sim.mem_free_host(AllocId(99)) {
+            Err(SimError::UnknownAlloc { alloc }) => assert_eq!(alloc, AllocId(99)),
+            other => panic!("{other:?}"),
+        }
+        match sim.free_host_pinned(AllocId(99)) {
+            Err(SimError::UnknownAlloc { alloc }) => assert_eq!(alloc, AllocId(99)),
+            other => panic!("{other:?}"),
+        }
+        let dev = sim.mem_alloc(d, 4096).unwrap();
+        match sim.mem_free_host(dev) {
+            Err(SimError::UnknownAlloc { alloc }) => assert_eq!(alloc, dev),
+            other => panic!("{other:?}"),
+        }
+        let (free0, total) = sim.mem_info(d).unwrap();
+        let host = sim.alloc_host_pinned(4096).unwrap();
+        let (free1, _) = sim.mem_info(d).unwrap();
+        assert_eq!(free1, free0);
+        sim.mem_free_host(host).unwrap();
+        match sim.mem_free_host(host) {
+            Err(SimError::UnknownAlloc { alloc }) => assert_eq!(alloc, host),
+            other => panic!("{other:?}"),
+        }
+        let host2 = sim.alloc_host_pinned(4096).unwrap();
+        sim.begin_capture(d, s).unwrap();
+        match sim.mem_free_host(host2) {
+            Err(SimError::Invalid { why }) => assert!(why.contains("capture"), "{why}"),
+            other => panic!("{other:?}"),
+        }
+        match sim.free_host_pinned(host2) {
+            Err(SimError::Invalid { why }) => assert!(why.contains("capture"), "{why}"),
+            other => panic!("{other:?}"),
+        }
+        let _g = sim.end_capture().unwrap();
+        sim.free_host_pinned(host2).unwrap();
+        sim.mem_free(dev).unwrap();
+        assert_eq!(sim.mem_info(d).unwrap().0, total);
     }
 
     #[test]

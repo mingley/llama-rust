@@ -16844,6 +16844,15 @@ impl Sim {
         Ok(())
     }
 
+    /// `cuMemFreeHost`. Identity with [`Self::free_host_pinned`] (`cudaFreeHost`).
+    ///
+    /// Host-sync; capture refused. Distinct from [`Self::mem_free`] (`cuMemFree`).
+    /// Device ids are [`SimError::UnknownAlloc`]. This VM does not invent
+    /// `cuMemHostAlloc` this slice (`alloc_host_pinned` stays).
+    pub fn mem_free_host(&mut self, id: AllocId) -> Result<(), SimError> {
+        self.free_host_pinned(id)
+    }
+
     /// Stream-ordered free (`cudaFreeAsync`). Illegal while a kernel lease is held.
     ///
     /// Capture records a graph mem free node.
