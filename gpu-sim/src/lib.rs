@@ -1246,6 +1246,9 @@
 //! [`memcpy_ato_d_async`](Sim::memcpy_ato_d_async) is
 //! `cuMemcpyAtoDAsync` (always Invalid `"async atod"`). Query; legal
 //! during capture. No Engine `--async-atod`.
+//! [`memcpy_hto_a_async`](Sim::memcpy_hto_a_async) is
+//! `cuMemcpyHtoAAsync` (always Invalid `"async htoa"`). Query; legal
+//! during capture. No Engine `--async-htoa`.
 //! [`library_load_data`](Sim::library_load_data) is `cuLibraryLoadData`
 //! (always Invalid `"cuda library"`). Query; legal during capture. No Engine `--library-load`.
 //! [`library_load_from_file`](Sim::library_load_from_file) is
@@ -21890,6 +21893,64 @@ mod tests {
             Err(SimError::Invalid { why }) => {
                 assert!(why.contains("cuda array"), "{why}");
                 assert!(!why.contains("async atod"), "{why}");
+            }
+            other => panic!("{other:?}"),
+        }
+        match sim.memcpy_hto_a_async(d) {
+            Err(SimError::Invalid { why }) => {
+                assert!(why.contains("async htoa"), "{why}");
+                assert!(!why.contains("async atod"), "{why}");
+                assert!(!why.contains("memcpy htoa"), "{why}");
+            }
+            other => panic!("{other:?}"),
+        }
+    }
+
+    #[test]
+    fn memcpy_hto_a_async_is_unsupported() {
+        let mut sim = Sim::new(h100());
+        let d = DeviceId(0);
+        match sim.memcpy_hto_a_async(d) {
+            Err(SimError::Invalid { why }) => {
+                assert!(why.contains("async htoa"), "{why}");
+                assert!(!why.contains("async atod"), "{why}");
+                assert!(!why.contains("memcpy htoa"), "{why}");
+                assert!(!why.contains("async dtoa"), "{why}");
+            }
+            other => panic!("{other:?}"),
+        }
+        sim.begin_capture(d, StreamId(0)).unwrap();
+        match sim.memcpy_hto_a_async(d) {
+            Err(SimError::Invalid { why }) => {
+                assert!(why.contains("async htoa"), "{why}");
+            }
+            other => panic!("{other:?}"),
+        }
+        let _g = sim.end_capture().unwrap();
+        match sim.memcpy_hto_a_async(DeviceId(99)) {
+            Err(SimError::Invalid { why }) => {
+                assert!(why.contains("device not in profile"), "{why}");
+            }
+            other => panic!("{other:?}"),
+        }
+        match sim.memcpy_ato_d_async(d) {
+            Err(SimError::Invalid { why }) => {
+                assert!(why.contains("async atod"), "{why}");
+                assert!(!why.contains("async htoa"), "{why}");
+            }
+            other => panic!("{other:?}"),
+        }
+        match sim.memcpy_hto_a(d) {
+            Err(SimError::Invalid { why }) => {
+                assert!(why.contains("memcpy htoa"), "{why}");
+                assert!(!why.contains("async htoa"), "{why}");
+            }
+            other => panic!("{other:?}"),
+        }
+        match sim.array_create(d) {
+            Err(SimError::Invalid { why }) => {
+                assert!(why.contains("cuda array"), "{why}");
+                assert!(!why.contains("async htoa"), "{why}");
             }
             other => panic!("{other:?}"),
         }
