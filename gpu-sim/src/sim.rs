@@ -26548,7 +26548,6 @@ impl Sim {
     ///
     /// Capture legal. Distinct from [`Self::mem_set_2d`] and
     /// [`Self::memset_3d`] (`cudaMemset3D`).
-    /// This VM does not invent occupancy SM counts this slice.
     pub fn mem_set_3d_async(
         &mut self,
         device: DeviceId,
@@ -26559,6 +26558,8 @@ impl Sim {
     }
 
     /// `cudaMemset3D`. Host-synchronous; capture cannot include it.
+    ///
+    /// Identity wrap [`Self::mem_set_3d`]. Not a fake `cuMemset3D`.
     pub fn memset_3d(
         &mut self,
         device: DeviceId,
@@ -26573,6 +26574,19 @@ impl Sim {
         let id = self.memset_3d_async(device, op, stream)?;
         self.synchronize_stream(device, stream)?;
         Ok(id)
+    }
+
+    /// `cudaMemset3D`. Identity with [`Self::memset_3d`].
+    ///
+    /// Capture refused. Distinct from [`Self::mem_set_3d_async`].
+    /// This VM does not invent occupancy SM counts this slice.
+    pub fn mem_set_3d(
+        &mut self,
+        device: DeviceId,
+        op: MemsetOp,
+        stream: StreamId,
+    ) -> Result<OpId, SimError> {
+        self.memset_3d(device, op, stream)
     }
 
     /// `cudaLaunchHostFunc`. Stream-ordered host work; does not occupy compute

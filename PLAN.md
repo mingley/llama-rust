@@ -9483,7 +9483,13 @@ model, do not celebrate the sim.
     or `cudaChooseDevice`. `gpu-profile capture` is still refused. Dual
     score still has no `$/M tokens`.
 
-1048. [ ] Next numbered PLAN item after 1047 is the next `gpu-sim` / Engine /
+1048. [x] `gpu-sim` `Sim::mem_set_3d` is
+    `cudaMemset3D`. Identity with `memset_3d`. Capture refused. Distinct from
+    `mem_set_3d_async`. This VM does not invent occupancy SM counts, Engine `--mem-set-3d`,
+    or `cudaChooseDevice`. `gpu-profile capture` is still refused. Dual
+    score still has no `$/M tokens`.
+
+1049. [ ] Next numbered PLAN item after 1048 is the next `gpu-sim` / Engine /
     serve / expertvm mechanical API that is still missing, or the next official
     decode family. Prefer remaining CUDA-shaped twins over more
     OpenAI HTTP veneer. Do not invent F32 `output.scale`. Do not invent a
@@ -11129,6 +11135,10 @@ model, do not celebrate the sim.
     Do not invent Engine `--mem-set-3d-async`. Do not invent
     occupancy SM counts this slice. Do not reverse Memset3DAsync identity with memset_3d_async.
     Do not invent `cudaMemset3D` as `mem_set_3d_async`.
+    Do not invent a second `cudaMemset3D` / `mem_set_3d`.
+    Do not invent Engine `--mem-set-3d`. Do not invent
+    occupancy SM counts this slice. Do not reverse Memset3D identity with memset_3d.
+    Do not invent `cuMemset3D` as `mem_set_3d`.
     Do not invent a second `cudaStreamAddCallback`.
     Do not invent Engine `--stream-callback` (same wall as second live
     `cudaLaunchHostFunc` after miss DMA).
@@ -12843,6 +12853,9 @@ model, do not celebrate the sim.
     Do not invent a second `mem_set_3d_async` API. Do not invent
     Engine `--mem-set-3d-async-identity`. Do not invent a memset-3d
     this slice. Do not reverse Memset3DAsync identity with memset_3d_async.
+    Do not invent a second `mem_set_3d` API. Do not invent
+    Engine `--mem-set-3d-identity`. Do not invent a host-func
+    this slice. Do not reverse Memset3D identity with memset_3d.
     Do not invent a second DeviceLaunch in-flight destroy-complete check or Engine
     `--device-launch-destroy`. Do not abort an in-flight DeviceLaunch when
     `destroy_graph` succeeds. Do not delay destroy of an idle exec. Do not invent
@@ -14740,6 +14753,9 @@ model, do not celebrate the sim.
     Do not invent a second `mem_set_3d_async` method. Do not
     invent Engine `--cu-mem-set-3d-async`. Do not reverse wrapping
     cudaMemset3DAsync identity. Do not wrap `cudaMemset3D` as `mem_set_3d_async`.
+    Do not invent a second `mem_set_3d` method. Do not
+    invent Engine `--cu-mem-set-3d`. Do not reverse wrapping
+    cudaMemset3D identity. Do not wrap `cuMemset3D` as `mem_set_3d`.
     Do not
     spend the next item on an OpenAI-compatible HTTP veneer.
 
