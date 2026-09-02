@@ -5,6 +5,13 @@ Visible five-turn extract: [docs/chatgpt-share-6a920fe1.md](docs/chatgpt-share-6
 Complete share-API extract: [docs/chatgpt-share-6a920fe1/](docs/chatgpt-share-6a920fe1/).
 Work lands on `main`. No PRs.
 
+## Shipped 2026-09-02 — CUDA `cuFuncSetAttribute` required cluster height
+
+`gpu-sim` `Sim::func_set_required_cluster_height` is `cuFuncSetAttribute` required cluster height.
+Identity with `set_required_cluster_height` (`cudaFuncSetAttribute` RequiredClusterHeight). Capture legal. Distinct from `func_get_required_cluster_width`.
+This VM does not invent occupancy SM counts or Engine `--func-set-required-cluster-height`.
+`gpu-profile capture` is still refused. Dual score still has no `$/M tokens`.
+
 ## Shipped 2026-09-02 — CUDA `cuFuncGetAttribute` required cluster width
 
 `gpu-sim` `Sim::func_get_required_cluster_width` is `cuFuncGetAttribute` required cluster width.
