@@ -7762,8 +7762,7 @@ impl Sim {
     /// [`Self::graph_exec_free_set_params`] (`cudaGraphExecMemFreeNodeSetParams`).
     ///
     /// Capture refused. Distinct from
-    /// [`Self::set_graph_free_node_params`]. This VM does not invent
-    /// occupancy SM counts this slice.
+    /// [`Self::set_graph_free_node_params`].
     pub fn set_graph_exec_free_node_params(
         &mut self,
         exec: GraphId,
@@ -7779,6 +7778,8 @@ impl Sim {
     /// [`Self::graph_exec_set_conditional_params`]. [`CondId`] must match
     /// (topology). Capture cannot include it. Host-sync 1 ns. A parked
     /// in-flight-destroyed exec is `"unknown graph"`. Live exec SetParams stays.
+    /// Driver `cuGraphNodeSetParams` for a set-conditional node is
+    /// [`Self::set_graph_conditional_params`].
     pub fn graph_set_conditional_params(
         &mut self,
         graph: GraphId,
@@ -7787,6 +7788,21 @@ impl Sim {
     ) -> Result<(), SimError> {
         let handle = self.set_conditional_handle(graph, node, false)?;
         self.set_conditional_node_params(graph, node, handle, value, false)
+    }
+
+    /// `cuGraphNodeSetParams` for a set-conditional node. Identity with
+    /// [`Self::graph_set_conditional_params`] (`cudaGraphNodeSetParams`).
+    ///
+    /// Capture refused. Distinct from
+    /// [`Self::graph_exec_set_conditional_params`]. This VM does not invent
+    /// occupancy SM counts this slice.
+    pub fn set_graph_conditional_params(
+        &mut self,
+        graph: GraphId,
+        node: usize,
+        value: u32,
+    ) -> Result<(), SimError> {
+        self.graph_set_conditional_params(graph, node, value)
     }
 
     /// `cudaGraphExecNodeSetParams` for a set-conditional node on an exec.
