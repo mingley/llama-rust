@@ -30747,7 +30747,6 @@ impl Sim {
     /// [`Self::non_portable_cluster_size_allowed`] (`cudaFuncGetAttribute` NonPortableClusterSizeAllowed).
     ///
     /// Query; legal during capture. Distinct from [`Self::func_set_non_portable_cluster_size_allowed`].
-    /// This VM does not invent occupancy SM counts this slice.
     #[must_use]
     pub fn func_get_non_portable_cluster_size_allowed(&self, device: DeviceId) -> bool {
         self.non_portable_cluster_size_allowed(device)
@@ -30784,6 +30783,8 @@ impl Sim {
     /// Default `0` allows only [`crate::GpuProfile::max_shared_mem_per_block`].
     /// `bytes` above [`crate::GpuProfile::max_shared_mem_per_block_optin`] is
     /// Invalid. Decode identity stays `0`.
+    /// Driver `cuFuncSetAttribute` max dynamic shared memory is [`Self::func_set_max_dynamic_shared_memory`].
+    /// Identity wrap [`Self::func_set_max_dynamic_shared_memory`].
     pub fn set_max_dynamic_shared_memory(
         &mut self,
         device: DeviceId,
@@ -30806,6 +30807,19 @@ impl Sim {
         }
         self.clock = self.clock.saturating_add(1);
         Ok(())
+    }
+
+    /// `cuFuncSetAttribute` max dynamic shared memory. Identity with
+    /// [`Self::set_max_dynamic_shared_memory`] (`cudaFuncSetAttribute` MaxDynamicSharedMemorySize).
+    ///
+    /// Capture legal. Distinct from [`Self::func_get_non_portable_cluster_size_allowed`].
+    /// This VM does not invent occupancy SM counts this slice.
+    pub fn func_set_max_dynamic_shared_memory(
+        &mut self,
+        device: DeviceId,
+        bytes: u32,
+    ) -> Result<(), SimError> {
+        self.set_max_dynamic_shared_memory(device, bytes)
     }
 
     /// Current [`Self::set_max_dynamic_shared_memory`] for `device`.

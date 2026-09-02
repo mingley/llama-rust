@@ -761,6 +761,8 @@ compiled kernel exists; no Engine flag).
 `gpu-sim` `func_set_non_portable_cluster_size_allowed` is `cuFuncSetAttribute` non-portable cluster size (identity with `set_non_portable_cluster_size_allowed`; no Engine flag).
 
 `gpu-sim` `func_get_non_portable_cluster_size_allowed` is `cuFuncGetAttribute` non-portable cluster size (identity with `non_portable_cluster_size_allowed`; no Engine flag).
+
+`gpu-sim` `func_set_max_dynamic_shared_memory` is `cuFuncSetAttribute` max dynamic shared memory (identity with `set_max_dynamic_shared_memory`; no Engine flag).
 `gpu-sim` `mem_alloc` is `cuMemAlloc` (identity with `malloc`; no Engine flag).
 `gpu-sim` `mem_free` is `cuMemFree` (identity with `free_sync`; no Engine flag).
 `gpu-sim` `mem_free_host` is `cuMemFreeHost` (identity with `free_host_pinned`; no Engine flag).
@@ -1046,6 +1048,8 @@ compiled kernel exists; no Engine flag).
 `gpu-sim` `func_set_non_portable_cluster_size_allowed` is `cuFuncSetAttribute` non-portable cluster size (identity with `set_non_portable_cluster_size_allowed`; no Engine flag).
 
 `gpu-sim` `func_get_non_portable_cluster_size_allowed` is `cuFuncGetAttribute` non-portable cluster size (identity with `non_portable_cluster_size_allowed`; no Engine flag).
+
+`gpu-sim` `func_set_max_dynamic_shared_memory` is `cuFuncSetAttribute` max dynamic shared memory (identity with `set_max_dynamic_shared_memory`; no Engine flag).
 `gpu-sim` `func_is_loaded` is `cuFuncIsLoaded` (`false` until a compiled
 kernel exists; no Engine flag).
 `gpu-sim` `func_load` is `cuFuncLoad` (Invalid; no compiled kernel; no
