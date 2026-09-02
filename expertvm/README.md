@@ -536,7 +536,9 @@ handle; no Engine flag).
 `CUkernel` / `CUfunction`; no Engine flag).
 `gpu-sim` `kernel_get_param_info` is `cuKernelGetParamInfo` (Invalid; no
 `CUkernel` parameter blob; no Engine flag).
-`gpu-sim` `link_create` is `cuLinkCreate` (Invalid; no JIT linker; no
+`gpu-sim` `kernel_get_attribute` is `cuKernelGetAttribute` (Invalid; no
+`CUkernel` attribute; no Engine flag).
+`gpu-sim` `link_create` is `cuLinkCreate` (Invalid; no JIT linker; no)
 Engine flag).
 `gpu-sim` `get_proc_address` is `cuGetProcAddress` (Invalid; no C ABI
 function pointers; no Engine flag).

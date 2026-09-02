@@ -21158,13 +21158,28 @@ impl Sim {
     ///
     /// Always Invalid `"kernel param"` (this VM has no `CUkernel`
     /// parameter blob). Distinct from [`Self::kernel_get_function`] (why is
-    /// not `"kernel function"`) and from [`Self::func_get_param_info`].
+    /// not `"kernel function"`) and from [`Self::func_get_param_info`] and
+    /// from [`Self::kernel_get_attribute`].
     /// Unknown devices are Invalid `"device not in profile"`. Query; legal
     /// during capture.
     pub fn kernel_get_param_info(&self, device: DeviceId) -> Result<(), SimError> {
         let _gpu = self.profile.gpu(device)?;
         Err(SimError::Invalid {
             why: "kernel param",
+        })
+    }
+
+    /// `cuKernelGetAttribute`. CUDA kernels are not modeled.
+    ///
+    /// Always Invalid `"kernel attribute"` (this VM has no `CUkernel`
+    /// attribute). Distinct from [`Self::kernel_get_param_info`] (why is
+    /// not `"kernel param"`) and from [`Self::func_get_attribute`].
+    /// Unknown devices are Invalid `"device not in profile"`. Query; legal
+    /// during capture.
+    pub fn kernel_get_attribute(&self, device: DeviceId) -> Result<(), SimError> {
+        let _gpu = self.profile.gpu(device)?;
+        Err(SimError::Invalid {
+            why: "kernel attribute",
         })
     }
 
@@ -21177,7 +21192,8 @@ impl Sim {
     /// [`Self::library_get_module`] and from [`Self::library_get_global`]
     /// and from [`Self::library_get_managed`] and from
     /// [`Self::library_get_unified_function`] and from
-    /// [`Self::kernel_get_function`] and from [`Self::kernel_get_param_info`].
+    /// [`Self::kernel_get_function`] and from [`Self::kernel_get_param_info`]
+    /// and from [`Self::kernel_get_attribute`].
     /// Unknown devices
     /// are Invalid `"device not in profile"`. Query; legal during capture.
     /// This VM does not invent `cuLinkAddData` this slice.
