@@ -999,6 +999,9 @@
 //! [`stream_set_nvlink_util_centric`](Sim::stream_set_nvlink_util_centric) is `cuStreamSetAttribute` nvlink util centric (identity with
 //! [`set_stream_nvlink_util_centric`](Sim::set_stream_nvlink_util_centric)). Capture legal. Distinct from
 //! [`stream_get_sync_policy`](Sim::stream_get_sync_policy). No Engine `--stream-set-nvlink-util-centric`.
+//! [`stream_get_nvlink_util_centric`](Sim::stream_get_nvlink_util_centric) is `cuStreamGetAttribute` nvlink util centric (identity with
+//! [`stream_nvlink_util_centric`](Sim::stream_nvlink_util_centric)). Query; legal during capture. Distinct from
+//! [`stream_set_nvlink_util_centric`](Sim::stream_set_nvlink_util_centric). No Engine `--stream-get-nvlink-util-centric`.
 //! [`Sim::ipc_get_event`] / [`ipc_open_event`](Sim::ipc_open_event) are
 //! `cudaIpcGetEventHandle` / `cudaIpcOpenEventHandle` (interprocess events).
 //! [`Sim::create_shareable_pool`] is `cudaMemPoolCreate` with a POSIX-FD handle
@@ -2022,6 +2025,9 @@
 //! [`stream_set_nvlink_util_centric`](Sim::stream_set_nvlink_util_centric) is `cuStreamSetAttribute` nvlink util centric (identity with
 //! [`set_stream_nvlink_util_centric`](Sim::set_stream_nvlink_util_centric)). Capture legal. Distinct from
 //! [`stream_get_sync_policy`](Sim::stream_get_sync_policy). No Engine `--stream-set-nvlink-util-centric`.
+//! [`stream_get_nvlink_util_centric`](Sim::stream_get_nvlink_util_centric) is `cuStreamGetAttribute` nvlink util centric (identity with
+//! [`stream_nvlink_util_centric`](Sim::stream_nvlink_util_centric)). Query; legal during capture. Distinct from
+//! [`stream_set_nvlink_util_centric`](Sim::stream_set_nvlink_util_centric). No Engine `--stream-get-nvlink-util-centric`.
 //! [`HardwareProfile::host_pin_bytes`] caps `cudaMallocHost` / `cudaHostRegister`.
 //! [`Sim::idle_until`] drains, then jumps the virtual clock (open-loop arrivals).
 //! [`Sim::event_elapsed_ns`] is `cudaEventElapsedTime` in nanoseconds.
@@ -2913,6 +2919,9 @@
 //! [`stream_set_nvlink_util_centric`](Sim::stream_set_nvlink_util_centric) is `cuStreamSetAttribute` nvlink util centric (identity with
 //! [`set_stream_nvlink_util_centric`](Sim::set_stream_nvlink_util_centric)). Capture legal. Distinct from
 //! [`stream_get_sync_policy`](Sim::stream_get_sync_policy). No Engine `--stream-set-nvlink-util-centric`.
+//! [`stream_get_nvlink_util_centric`](Sim::stream_get_nvlink_util_centric) is `cuStreamGetAttribute` nvlink util centric (identity with
+//! [`stream_nvlink_util_centric`](Sim::stream_nvlink_util_centric)). Query; legal during capture. Distinct from
+//! [`stream_set_nvlink_util_centric`](Sim::stream_set_nvlink_util_centric). No Engine `--stream-get-nvlink-util-centric`.
 //! [`mem_host_get_flags`](Sim::mem_host_get_flags) is `cuMemHostGetFlags` (identity with
 //! [`host_get_flags`](Sim::host_get_flags)). Query; legal during capture. No Engine `--mem-host-get-flags`.
 //! [`mem_host_get_device_pointer`](Sim::mem_host_get_device_pointer) is `cuMemHostGetDevicePointer` (identity with
@@ -3770,6 +3779,9 @@
 //! [`stream_set_nvlink_util_centric`](Sim::stream_set_nvlink_util_centric) is `cuStreamSetAttribute` nvlink util centric (identity with
 //! [`set_stream_nvlink_util_centric`](Sim::set_stream_nvlink_util_centric)). Capture legal. Distinct from
 //! [`stream_get_sync_policy`](Sim::stream_get_sync_policy). No Engine `--stream-set-nvlink-util-centric`.
+//! [`stream_get_nvlink_util_centric`](Sim::stream_get_nvlink_util_centric) is `cuStreamGetAttribute` nvlink util centric (identity with
+//! [`stream_nvlink_util_centric`](Sim::stream_nvlink_util_centric)). Query; legal during capture. Distinct from
+//! [`stream_set_nvlink_util_centric`](Sim::stream_set_nvlink_util_centric). No Engine `--stream-get-nvlink-util-centric`.
 //! [`Sim::pointer_get_attributes`] is `cudaPointerGetAttributes`.
 //! [`pointer_set_attribute`](Sim::pointer_set_attribute) /
 //! [`pointer_get_attribute`](Sim::pointer_get_attribute) are
@@ -5034,6 +5046,9 @@
 //! [`stream_set_nvlink_util_centric`](Sim::stream_set_nvlink_util_centric) is `cuStreamSetAttribute` nvlink util centric (identity with
 //! [`set_stream_nvlink_util_centric`](Sim::set_stream_nvlink_util_centric)). Capture legal. Distinct from
 //! [`stream_get_sync_policy`](Sim::stream_get_sync_policy). No Engine `--stream-set-nvlink-util-centric`.
+//! [`stream_get_nvlink_util_centric`](Sim::stream_get_nvlink_util_centric) is `cuStreamGetAttribute` nvlink util centric (identity with
+//! [`stream_nvlink_util_centric`](Sim::stream_nvlink_util_centric)). Query; legal during capture. Distinct from
+//! [`stream_set_nvlink_util_centric`](Sim::stream_set_nvlink_util_centric). No Engine `--stream-get-nvlink-util-centric`.
 //! [`Sim::stream_get_device`] is `cudaStreamGetDevice` / `cuStreamGetDevice`
 //! (the device of the stream; green-ctx streams return the ctx create
 //! device). Query; legal during capture. Distinct from
@@ -5727,6 +5742,9 @@
 //! [`stream_set_nvlink_util_centric`](Sim::stream_set_nvlink_util_centric) is `cuStreamSetAttribute` nvlink util centric (identity with
 //! [`set_stream_nvlink_util_centric`](Sim::set_stream_nvlink_util_centric)). Capture legal. Distinct from
 //! [`stream_get_sync_policy`](Sim::stream_get_sync_policy). No Engine `--stream-set-nvlink-util-centric`.
+//! [`stream_get_nvlink_util_centric`](Sim::stream_get_nvlink_util_centric) is `cuStreamGetAttribute` nvlink util centric (identity with
+//! [`stream_nvlink_util_centric`](Sim::stream_nvlink_util_centric)). Query; legal during capture. Distinct from
+//! [`stream_set_nvlink_util_centric`](Sim::stream_set_nvlink_util_centric). No Engine `--stream-get-nvlink-util-centric`.
 //! [`set_stream_access_policy`](Sim::set_stream_access_policy) is
 //! `cudaStreamAttributeAccessPolicyWindow`: [`kernel`](Sim::kernel) /
 //! [`kernel_bufs`](Sim::kernel_bufs) inherit it; [`kernel_with`](Sim::kernel_with)
@@ -6905,6 +6923,9 @@
 //! [`stream_set_nvlink_util_centric`](Sim::stream_set_nvlink_util_centric) is `cuStreamSetAttribute` nvlink util centric (identity with
 //! [`set_stream_nvlink_util_centric`](Sim::set_stream_nvlink_util_centric)). Capture legal. Distinct from
 //! [`stream_get_sync_policy`](Sim::stream_get_sync_policy). No Engine `--stream-set-nvlink-util-centric`.
+//! [`stream_get_nvlink_util_centric`](Sim::stream_get_nvlink_util_centric) is `cuStreamGetAttribute` nvlink util centric (identity with
+//! [`stream_nvlink_util_centric`](Sim::stream_nvlink_util_centric)). Query; legal during capture. Distinct from
+//! [`stream_set_nvlink_util_centric`](Sim::stream_set_nvlink_util_centric). No Engine `--stream-get-nvlink-util-centric`.
 //! [`Sim::set_stream_priority`] is the priority-only helper;
 //! [`stream_create_with_priority`](Sim::stream_create_with_priority) is
 //! `cudaStreamCreateWithPriority` (flags plus priority; clamped to
@@ -7616,6 +7637,9 @@
 //! [`stream_set_nvlink_util_centric`](Sim::stream_set_nvlink_util_centric) is `cuStreamSetAttribute` nvlink util centric (identity with
 //! [`set_stream_nvlink_util_centric`](Sim::set_stream_nvlink_util_centric)). Capture legal. Distinct from
 //! [`stream_get_sync_policy`](Sim::stream_get_sync_policy). No Engine `--stream-set-nvlink-util-centric`.
+//! [`stream_get_nvlink_util_centric`](Sim::stream_get_nvlink_util_centric) is `cuStreamGetAttribute` nvlink util centric (identity with
+//! [`stream_nvlink_util_centric`](Sim::stream_nvlink_util_centric)). Query; legal during capture. Distinct from
+//! [`stream_set_nvlink_util_centric`](Sim::stream_set_nvlink_util_centric). No Engine `--stream-get-nvlink-util-centric`.
 //! [`destroy_stream`](Sim::destroy_stream) is `cudaStreamDestroy` (returns
 //! immediately; in-flight work still completes; NULL is Invalid; recreate
 //! while unfinished is `"stream in flight"`). Capture cannot include it.
@@ -8307,6 +8331,9 @@
 //! [`stream_set_nvlink_util_centric`](Sim::stream_set_nvlink_util_centric) is `cuStreamSetAttribute` nvlink util centric (identity with
 //! [`set_stream_nvlink_util_centric`](Sim::set_stream_nvlink_util_centric)). Capture legal. Distinct from
 //! [`stream_get_sync_policy`](Sim::stream_get_sync_policy). No Engine `--stream-set-nvlink-util-centric`.
+//! [`stream_get_nvlink_util_centric`](Sim::stream_get_nvlink_util_centric) is `cuStreamGetAttribute` nvlink util centric (identity with
+//! [`stream_nvlink_util_centric`](Sim::stream_nvlink_util_centric)). Query; legal during capture. Distinct from
+//! [`stream_set_nvlink_util_centric`](Sim::stream_set_nvlink_util_centric). No Engine `--stream-get-nvlink-util-centric`.
 //! [`Sim::instantiate_graph`] is `cudaGraphInstantiate` (host-sync; returns a
 //! new exec id; first [`launch_graph`](Sim::launch_graph) of a definition
 //! creates a primary exec). Unused conditional handles are
@@ -9027,6 +9054,9 @@
 //! [`stream_set_nvlink_util_centric`](Sim::stream_set_nvlink_util_centric) is `cuStreamSetAttribute` nvlink util centric (identity with
 //! [`set_stream_nvlink_util_centric`](Sim::set_stream_nvlink_util_centric)). Capture legal. Distinct from
 //! [`stream_get_sync_policy`](Sim::stream_get_sync_policy). No Engine `--stream-set-nvlink-util-centric`.
+//! [`stream_get_nvlink_util_centric`](Sim::stream_get_nvlink_util_centric) is `cuStreamGetAttribute` nvlink util centric (identity with
+//! [`stream_nvlink_util_centric`](Sim::stream_nvlink_util_centric)). Query; legal during capture. Distinct from
+//! [`stream_set_nvlink_util_centric`](Sim::stream_set_nvlink_util_centric). No Engine `--stream-get-nvlink-util-centric`.
 //! [`graph_kernel_node_get_priority`](Sim::graph_kernel_node_get_priority) /
 //! [`graph_kernel_node_set_priority`](Sim::graph_kernel_node_set_priority) /
 //! [`graph_kernel_node_copy_attributes`](Sim::graph_kernel_node_copy_attributes)
@@ -9706,6 +9736,9 @@
 //! [`stream_set_nvlink_util_centric`](Sim::stream_set_nvlink_util_centric) is `cuStreamSetAttribute` nvlink util centric (identity with
 //! [`set_stream_nvlink_util_centric`](Sim::set_stream_nvlink_util_centric)). Capture legal. Distinct from
 //! [`stream_get_sync_policy`](Sim::stream_get_sync_policy). No Engine `--stream-set-nvlink-util-centric`.
+//! [`stream_get_nvlink_util_centric`](Sim::stream_get_nvlink_util_centric) is `cuStreamGetAttribute` nvlink util centric (identity with
+//! [`stream_nvlink_util_centric`](Sim::stream_nvlink_util_centric)). Query; legal during capture. Distinct from
+//! [`stream_set_nvlink_util_centric`](Sim::stream_set_nvlink_util_centric). No Engine `--stream-get-nvlink-util-centric`.
 //! [`graph_kernel_node_get_attribute`](Sim::graph_kernel_node_get_attribute) /
 //! [`graph_exec_kernel_node_get_attribute`](Sim::graph_exec_kernel_node_get_attribute) /
 //! [`graph_kernel_node_set_attribute`](Sim::graph_kernel_node_set_attribute) /
@@ -10391,6 +10424,9 @@
 //! [`stream_set_nvlink_util_centric`](Sim::stream_set_nvlink_util_centric) is `cuStreamSetAttribute` nvlink util centric (identity with
 //! [`set_stream_nvlink_util_centric`](Sim::set_stream_nvlink_util_centric)). Capture legal. Distinct from
 //! [`stream_get_sync_policy`](Sim::stream_get_sync_policy). No Engine `--stream-set-nvlink-util-centric`.
+//! [`stream_get_nvlink_util_centric`](Sim::stream_get_nvlink_util_centric) is `cuStreamGetAttribute` nvlink util centric (identity with
+//! [`stream_nvlink_util_centric`](Sim::stream_nvlink_util_centric)). Query; legal during capture. Distinct from
+//! [`stream_set_nvlink_util_centric`](Sim::stream_set_nvlink_util_centric). No Engine `--stream-get-nvlink-util-centric`.
 //! Device-launch
 //! execs cannot attach programmatic or launch-completion events.
 //! [`kernel_pdl`](Sim::kernel_pdl) is `cudaLaunchKernelEx` PDL: a wait kernel
@@ -11204,6 +11240,9 @@
 //! [`stream_set_nvlink_util_centric`](Sim::stream_set_nvlink_util_centric) is `cuStreamSetAttribute` nvlink util centric (identity with
 //! [`set_stream_nvlink_util_centric`](Sim::set_stream_nvlink_util_centric)). Capture legal. Distinct from
 //! [`stream_get_sync_policy`](Sim::stream_get_sync_policy). No Engine `--stream-set-nvlink-util-centric`.
+//! [`stream_get_nvlink_util_centric`](Sim::stream_get_nvlink_util_centric) is `cuStreamGetAttribute` nvlink util centric (identity with
+//! [`stream_nvlink_util_centric`](Sim::stream_nvlink_util_centric)). Query; legal during capture. Distinct from
+//! [`stream_set_nvlink_util_centric`](Sim::stream_set_nvlink_util_centric). No Engine `--stream-get-nvlink-util-centric`.
 //! [`graph_exec_memcpy_set_params`](Sim::graph_exec_memcpy_set_params) /
 //! [`graph_exec_memcpy_set_params_1d`](Sim::graph_exec_memcpy_set_params_1d) /
 //! [`graph_exec_memcpy_set_params_2d`](Sim::graph_exec_memcpy_set_params_2d) /
@@ -11881,6 +11920,9 @@
 //! [`stream_set_nvlink_util_centric`](Sim::stream_set_nvlink_util_centric) is `cuStreamSetAttribute` nvlink util centric (identity with
 //! [`set_stream_nvlink_util_centric`](Sim::set_stream_nvlink_util_centric)). Capture legal. Distinct from
 //! [`stream_get_sync_policy`](Sim::stream_get_sync_policy). No Engine `--stream-set-nvlink-util-centric`.
+//! [`stream_get_nvlink_util_centric`](Sim::stream_get_nvlink_util_centric) is `cuStreamGetAttribute` nvlink util centric (identity with
+//! [`stream_nvlink_util_centric`](Sim::stream_nvlink_util_centric)). Query; legal during capture. Distinct from
+//! [`stream_set_nvlink_util_centric`](Sim::stream_set_nvlink_util_centric). No Engine `--stream-get-nvlink-util-centric`.
 //! [`get_graph_kernel_node_params`](Sim::get_graph_kernel_node_params) is `cuGraphKernelNodeGetParams` (identity with
 //! [`graph_kernel_get_params`](Sim::graph_kernel_get_params)). Query; legal during capture. Distinct from
 //! [`graph_exec_kernel_get_params`](Sim::graph_exec_kernel_get_params). No Engine `--graph-kernel-get-params`.
@@ -12537,6 +12579,9 @@
 //! [`stream_set_nvlink_util_centric`](Sim::stream_set_nvlink_util_centric) is `cuStreamSetAttribute` nvlink util centric (identity with
 //! [`set_stream_nvlink_util_centric`](Sim::set_stream_nvlink_util_centric)). Capture legal. Distinct from
 //! [`stream_get_sync_policy`](Sim::stream_get_sync_policy). No Engine `--stream-set-nvlink-util-centric`.
+//! [`stream_get_nvlink_util_centric`](Sim::stream_get_nvlink_util_centric) is `cuStreamGetAttribute` nvlink util centric (identity with
+//! [`stream_nvlink_util_centric`](Sim::stream_nvlink_util_centric)). Query; legal during capture. Distinct from
+//! [`stream_set_nvlink_util_centric`](Sim::stream_set_nvlink_util_centric). No Engine `--stream-get-nvlink-util-centric`.
 //! [`graph_exec_kernel_get_params`](Sim::graph_exec_kernel_get_params) /
 //! [`graph_exec_memcpy_get_params`](Sim::graph_exec_memcpy_get_params) /
 //! [`graph_exec_memset_get_params`](Sim::graph_exec_memset_get_params) /
@@ -13184,6 +13229,9 @@
 //! [`stream_set_nvlink_util_centric`](Sim::stream_set_nvlink_util_centric) is `cuStreamSetAttribute` nvlink util centric (identity with
 //! [`set_stream_nvlink_util_centric`](Sim::set_stream_nvlink_util_centric)). Capture legal. Distinct from
 //! [`stream_get_sync_policy`](Sim::stream_get_sync_policy). No Engine `--stream-set-nvlink-util-centric`.
+//! [`stream_get_nvlink_util_centric`](Sim::stream_get_nvlink_util_centric) is `cuStreamGetAttribute` nvlink util centric (identity with
+//! [`stream_nvlink_util_centric`](Sim::stream_nvlink_util_centric)). Query; legal during capture. Distinct from
+//! [`stream_set_nvlink_util_centric`](Sim::stream_set_nvlink_util_centric). No Engine `--stream-get-nvlink-util-centric`.
 //! [`get_graph_exec_kernel_node_params`](Sim::get_graph_exec_kernel_node_params) is `cuGraphExecKernelNodeGetParams` (identity with
 //! [`graph_exec_kernel_get_params`](Sim::graph_exec_kernel_get_params)). Query; legal during capture. Distinct from
 //! [`get_graph_kernel_node_params`](Sim::get_graph_kernel_node_params). No Engine `--graph-exec-kernel-get-params`.
@@ -13837,6 +13885,9 @@
 //! [`stream_set_nvlink_util_centric`](Sim::stream_set_nvlink_util_centric) is `cuStreamSetAttribute` nvlink util centric (identity with
 //! [`set_stream_nvlink_util_centric`](Sim::set_stream_nvlink_util_centric)). Capture legal. Distinct from
 //! [`stream_get_sync_policy`](Sim::stream_get_sync_policy). No Engine `--stream-set-nvlink-util-centric`.
+//! [`stream_get_nvlink_util_centric`](Sim::stream_get_nvlink_util_centric) is `cuStreamGetAttribute` nvlink util centric (identity with
+//! [`stream_nvlink_util_centric`](Sim::stream_nvlink_util_centric)). Query; legal during capture. Distinct from
+//! [`stream_set_nvlink_util_centric`](Sim::stream_set_nvlink_util_centric). No Engine `--stream-get-nvlink-util-centric`.
 //! [`graph_exec_batch_mem_op_set_params`](Sim::graph_exec_batch_mem_op_set_params)
 //! is `cudaGraphExecBatchMemOpNodeSetParams` (id/offset/value; wait vs write,
 //! `bits32`, and compare stay on wait/write nodes;
@@ -43072,6 +43123,37 @@ mod tests {
         eight
             .set_stream_nvlink_util_centric(d1, s, enabled)
             .unwrap();
+        let g2 = eight.end_capture().unwrap();
+        assert_eq!(eight.graph_len(g2).unwrap(), 0);
+    }
+
+    #[test]
+    fn stream_get_nvlink_util_centric_is_cu_stream_get_attribute_nvlink_util_centric() {
+        let mut sim = Sim::new(h100());
+        let d = DeviceId(0);
+        let s = StreamId(0);
+        assert!(!sim.stream_nvlink_util_centric(DeviceId(1), s));
+        assert!(!sim.stream_get_nvlink_util_centric(DeviceId(1), s));
+        assert!(!sim.stream_nvlink_util_centric(d, s));
+        assert!(!sim.stream_get_nvlink_util_centric(d, s));
+        sim.set_stream_nvlink_util_centric(d, s, true).unwrap();
+        assert!(sim.stream_nvlink_util_centric(d, s));
+        assert!(sim.stream_get_nvlink_util_centric(d, s));
+        sim.begin_capture(d, s).unwrap();
+        assert!(sim.stream_nvlink_util_centric(d, s));
+        assert!(sim.stream_get_nvlink_util_centric(d, s));
+        let g = sim.end_capture().unwrap();
+        assert_eq!(sim.graph_len(g).unwrap(), 0);
+        let mut eight = Sim::new(HardwareProfile::example_8xh100_nvlink());
+        let d1 = DeviceId(1);
+        assert!(!eight.stream_nvlink_util_centric(d1, s));
+        assert!(!eight.stream_get_nvlink_util_centric(d1, s));
+        eight.set_stream_nvlink_util_centric(d1, s, true).unwrap();
+        assert!(eight.stream_nvlink_util_centric(d1, s));
+        assert!(eight.stream_get_nvlink_util_centric(d1, s));
+        eight.begin_capture(d1, s).unwrap();
+        assert!(eight.stream_nvlink_util_centric(d1, s));
+        assert!(eight.stream_get_nvlink_util_centric(d1, s));
         let g2 = eight.end_capture().unwrap();
         assert_eq!(eight.graph_len(g2).unwrap(), 0);
     }

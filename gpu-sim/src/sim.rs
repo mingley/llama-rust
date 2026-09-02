@@ -2310,7 +2310,6 @@ impl Sim {
     /// [`Self::set_stream_nvlink_util_centric`] (`cudaStreamSetAttribute` NvlinkUtilCentricScheduling).
     ///
     /// Capture legal. Distinct from [`Self::stream_get_sync_policy`].
-    /// This VM does not invent occupancy SM counts this slice.
     pub fn stream_set_nvlink_util_centric(
         &mut self,
         device: DeviceId,
@@ -2321,9 +2320,21 @@ impl Sim {
     }
 
     /// Stream NVLink-util-centric flag, or `false` if unset.
+    /// Driver `cuStreamGetAttribute` nvlink util centric is [`Self::stream_get_nvlink_util_centric`].
+    /// Identity wrap [`Self::stream_get_nvlink_util_centric`].
     #[must_use]
     pub fn stream_nvlink_util_centric(&self, device: DeviceId, stream: StreamId) -> bool {
         self.stream_nvlink_util_centric.contains(&(device, stream))
+    }
+
+    /// `cuStreamGetAttribute` nvlink util centric. Identity with
+    /// [`Self::stream_nvlink_util_centric`] (`cudaStreamGetAttribute` NvlinkUtilCentricScheduling).
+    ///
+    /// Query; legal during capture. Distinct from [`Self::stream_set_nvlink_util_centric`].
+    /// This VM does not invent occupancy SM counts this slice.
+    #[must_use]
+    pub fn stream_get_nvlink_util_centric(&self, device: DeviceId, stream: StreamId) -> bool {
+        self.stream_nvlink_util_centric(device, stream)
     }
 
     /// `cudaStreamSetAttribute` for `cudaStreamAttributeAccessPolicyWindow`.
