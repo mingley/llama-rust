@@ -3904,8 +3904,7 @@ impl Sim {
     /// [`Self::stream_capture_info`] (`cudaStreamGetCaptureInfo`).
     ///
     /// Query; legal during capture. Distinct from
-    /// [`Self::is_stream_capturing`]. This VM does not invent
-    /// occupancy SM counts this slice.
+    /// [`Self::is_stream_capturing`].
     #[must_use]
     pub fn get_stream_capture_info(
         &self,
@@ -3970,6 +3969,9 @@ impl Sim {
 
     /// `cudaThreadExchangeStreamCaptureMode`. Returns the previous default.
     ///
+    /// Driver `cuThreadExchangeStreamCaptureMode` is
+    /// [`Self::exchange_thread_stream_capture_mode`].
+    ///
     /// The next [`Self::begin_capture`] / [`Self::begin_capture_to_graph`] uses
     /// `mode`. An in-flight capture keeps the mode it started with.
     pub fn thread_exchange_stream_capture_mode(
@@ -3979,6 +3981,19 @@ impl Sim {
         let prev = self.capture_mode;
         self.capture_mode = mode;
         prev
+    }
+
+    /// `cuThreadExchangeStreamCaptureMode`. Identity with
+    /// [`Self::thread_exchange_stream_capture_mode`] (`cudaThreadExchangeStreamCaptureMode`).
+    ///
+    /// Returns previous; legal during capture. Distinct from
+    /// [`Self::get_stream_capture_info`]. This VM does not invent
+    /// occupancy SM counts this slice.
+    pub fn exchange_thread_stream_capture_mode(
+        &mut self,
+        mode: StreamCaptureMode,
+    ) -> StreamCaptureMode {
+        self.thread_exchange_stream_capture_mode(mode)
     }
 
     /// Thread default [`StreamCaptureMode`] for [`Self::begin_capture`].

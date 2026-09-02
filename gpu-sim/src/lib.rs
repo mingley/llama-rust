@@ -769,6 +769,9 @@
 //! [`get_stream_capture_info`](Sim::get_stream_capture_info) is `cuStreamGetCaptureInfo` (identity with
 //! [`stream_capture_info`](Sim::stream_capture_info)). Query; legal during capture. Distinct from
 //! [`is_stream_capturing`](Sim::is_stream_capturing). No Engine `--get-stream-capture-info`.
+//! [`exchange_thread_stream_capture_mode`](Sim::exchange_thread_stream_capture_mode) is `cuThreadExchangeStreamCaptureMode` (identity with
+//! [`thread_exchange_stream_capture_mode`](Sim::thread_exchange_stream_capture_mode)). Returns previous; legal during capture. Distinct from
+//! [`get_stream_capture_info`](Sim::get_stream_capture_info). No Engine `--exchange-thread-stream-capture-mode`.
 //! [`Sim::ipc_get_event`] / [`ipc_open_event`](Sim::ipc_open_event) are
 //! `cudaIpcGetEventHandle` / `cudaIpcOpenEventHandle` (interprocess events).
 //! [`Sim::create_shareable_pool`] is `cudaMemPoolCreate` with a POSIX-FD handle
@@ -1562,6 +1565,9 @@
 //! [`get_stream_capture_info`](Sim::get_stream_capture_info) is `cuStreamGetCaptureInfo` (identity with
 //! [`stream_capture_info`](Sim::stream_capture_info)). Query; legal during capture. Distinct from
 //! [`is_stream_capturing`](Sim::is_stream_capturing). No Engine `--get-stream-capture-info`.
+//! [`exchange_thread_stream_capture_mode`](Sim::exchange_thread_stream_capture_mode) is `cuThreadExchangeStreamCaptureMode` (identity with
+//! [`thread_exchange_stream_capture_mode`](Sim::thread_exchange_stream_capture_mode)). Returns previous; legal during capture. Distinct from
+//! [`get_stream_capture_info`](Sim::get_stream_capture_info). No Engine `--exchange-thread-stream-capture-mode`.
 //! [`HardwareProfile::host_pin_bytes`] caps `cudaMallocHost` / `cudaHostRegister`.
 //! [`Sim::idle_until`] drains, then jumps the virtual clock (open-loop arrivals).
 //! [`Sim::event_elapsed_ns`] is `cudaEventElapsedTime` in nanoseconds.
@@ -2223,6 +2229,9 @@
 //! [`get_stream_capture_info`](Sim::get_stream_capture_info) is `cuStreamGetCaptureInfo` (identity with
 //! [`stream_capture_info`](Sim::stream_capture_info)). Query; legal during capture. Distinct from
 //! [`is_stream_capturing`](Sim::is_stream_capturing). No Engine `--get-stream-capture-info`.
+//! [`exchange_thread_stream_capture_mode`](Sim::exchange_thread_stream_capture_mode) is `cuThreadExchangeStreamCaptureMode` (identity with
+//! [`thread_exchange_stream_capture_mode`](Sim::thread_exchange_stream_capture_mode)). Returns previous; legal during capture. Distinct from
+//! [`get_stream_capture_info`](Sim::get_stream_capture_info). No Engine `--exchange-thread-stream-capture-mode`.
 //! [`mem_host_get_flags`](Sim::mem_host_get_flags) is `cuMemHostGetFlags` (identity with
 //! [`host_get_flags`](Sim::host_get_flags)). Query; legal during capture. No Engine `--mem-host-get-flags`.
 //! [`mem_host_get_device_pointer`](Sim::mem_host_get_device_pointer) is `cuMemHostGetDevicePointer` (identity with
@@ -2850,6 +2859,9 @@
 //! [`get_stream_capture_info`](Sim::get_stream_capture_info) is `cuStreamGetCaptureInfo` (identity with
 //! [`stream_capture_info`](Sim::stream_capture_info)). Query; legal during capture. Distinct from
 //! [`is_stream_capturing`](Sim::is_stream_capturing). No Engine `--get-stream-capture-info`.
+//! [`exchange_thread_stream_capture_mode`](Sim::exchange_thread_stream_capture_mode) is `cuThreadExchangeStreamCaptureMode` (identity with
+//! [`thread_exchange_stream_capture_mode`](Sim::thread_exchange_stream_capture_mode)). Returns previous; legal during capture. Distinct from
+//! [`get_stream_capture_info`](Sim::get_stream_capture_info). No Engine `--exchange-thread-stream-capture-mode`.
 //! [`Sim::pointer_get_attributes`] is `cudaPointerGetAttributes`.
 //! [`pointer_set_attribute`](Sim::pointer_set_attribute) /
 //! [`pointer_get_attribute`](Sim::pointer_get_attribute) are
@@ -3884,6 +3896,9 @@
 //! [`get_stream_capture_info`](Sim::get_stream_capture_info) is `cuStreamGetCaptureInfo` (identity with
 //! [`stream_capture_info`](Sim::stream_capture_info)). Query; legal during capture. Distinct from
 //! [`is_stream_capturing`](Sim::is_stream_capturing). No Engine `--get-stream-capture-info`.
+//! [`exchange_thread_stream_capture_mode`](Sim::exchange_thread_stream_capture_mode) is `cuThreadExchangeStreamCaptureMode` (identity with
+//! [`thread_exchange_stream_capture_mode`](Sim::thread_exchange_stream_capture_mode)). Returns previous; legal during capture. Distinct from
+//! [`get_stream_capture_info`](Sim::get_stream_capture_info). No Engine `--exchange-thread-stream-capture-mode`.
 //! [`Sim::stream_get_device`] is `cudaStreamGetDevice` / `cuStreamGetDevice`
 //! (the device of the stream; green-ctx streams return the ctx create
 //! device). Query; legal during capture. Distinct from
@@ -4347,6 +4362,9 @@
 //! [`get_stream_capture_info`](Sim::get_stream_capture_info) is `cuStreamGetCaptureInfo` (identity with
 //! [`stream_capture_info`](Sim::stream_capture_info)). Query; legal during capture. Distinct from
 //! [`is_stream_capturing`](Sim::is_stream_capturing). No Engine `--get-stream-capture-info`.
+//! [`exchange_thread_stream_capture_mode`](Sim::exchange_thread_stream_capture_mode) is `cuThreadExchangeStreamCaptureMode` (identity with
+//! [`thread_exchange_stream_capture_mode`](Sim::thread_exchange_stream_capture_mode)). Returns previous; legal during capture. Distinct from
+//! [`get_stream_capture_info`](Sim::get_stream_capture_info). No Engine `--exchange-thread-stream-capture-mode`.
 //! [`set_stream_access_policy`](Sim::set_stream_access_policy) is
 //! `cudaStreamAttributeAccessPolicyWindow`: [`kernel`](Sim::kernel) /
 //! [`kernel_bufs`](Sim::kernel_bufs) inherit it; [`kernel_with`](Sim::kernel_with)
@@ -5295,6 +5313,9 @@
 //! [`get_stream_capture_info`](Sim::get_stream_capture_info) is `cuStreamGetCaptureInfo` (identity with
 //! [`stream_capture_info`](Sim::stream_capture_info)). Query; legal during capture. Distinct from
 //! [`is_stream_capturing`](Sim::is_stream_capturing). No Engine `--get-stream-capture-info`.
+//! [`exchange_thread_stream_capture_mode`](Sim::exchange_thread_stream_capture_mode) is `cuThreadExchangeStreamCaptureMode` (identity with
+//! [`thread_exchange_stream_capture_mode`](Sim::thread_exchange_stream_capture_mode)). Returns previous; legal during capture. Distinct from
+//! [`get_stream_capture_info`](Sim::get_stream_capture_info). No Engine `--exchange-thread-stream-capture-mode`.
 //! [`Sim::set_stream_priority`] is the priority-only helper;
 //! [`stream_create_with_priority`](Sim::stream_create_with_priority) is
 //! `cudaStreamCreateWithPriority` (flags plus priority; clamped to
@@ -5776,6 +5797,9 @@
 //! [`get_stream_capture_info`](Sim::get_stream_capture_info) is `cuStreamGetCaptureInfo` (identity with
 //! [`stream_capture_info`](Sim::stream_capture_info)). Query; legal during capture. Distinct from
 //! [`is_stream_capturing`](Sim::is_stream_capturing). No Engine `--get-stream-capture-info`.
+//! [`exchange_thread_stream_capture_mode`](Sim::exchange_thread_stream_capture_mode) is `cuThreadExchangeStreamCaptureMode` (identity with
+//! [`thread_exchange_stream_capture_mode`](Sim::thread_exchange_stream_capture_mode)). Returns previous; legal during capture. Distinct from
+//! [`get_stream_capture_info`](Sim::get_stream_capture_info). No Engine `--exchange-thread-stream-capture-mode`.
 //! [`destroy_stream`](Sim::destroy_stream) is `cudaStreamDestroy` (returns
 //! immediately; in-flight work still completes; NULL is Invalid; recreate
 //! while unfinished is `"stream in flight"`). Capture cannot include it.
@@ -6237,6 +6261,9 @@
 //! [`get_stream_capture_info`](Sim::get_stream_capture_info) is `cuStreamGetCaptureInfo` (identity with
 //! [`stream_capture_info`](Sim::stream_capture_info)). Query; legal during capture. Distinct from
 //! [`is_stream_capturing`](Sim::is_stream_capturing). No Engine `--get-stream-capture-info`.
+//! [`exchange_thread_stream_capture_mode`](Sim::exchange_thread_stream_capture_mode) is `cuThreadExchangeStreamCaptureMode` (identity with
+//! [`thread_exchange_stream_capture_mode`](Sim::thread_exchange_stream_capture_mode)). Returns previous; legal during capture. Distinct from
+//! [`get_stream_capture_info`](Sim::get_stream_capture_info). No Engine `--exchange-thread-stream-capture-mode`.
 //! [`Sim::instantiate_graph`] is `cudaGraphInstantiate` (host-sync; returns a
 //! new exec id; first [`launch_graph`](Sim::launch_graph) of a definition
 //! creates a primary exec). Unused conditional handles are
@@ -6727,6 +6754,9 @@
 //! [`get_stream_capture_info`](Sim::get_stream_capture_info) is `cuStreamGetCaptureInfo` (identity with
 //! [`stream_capture_info`](Sim::stream_capture_info)). Query; legal during capture. Distinct from
 //! [`is_stream_capturing`](Sim::is_stream_capturing). No Engine `--get-stream-capture-info`.
+//! [`exchange_thread_stream_capture_mode`](Sim::exchange_thread_stream_capture_mode) is `cuThreadExchangeStreamCaptureMode` (identity with
+//! [`thread_exchange_stream_capture_mode`](Sim::thread_exchange_stream_capture_mode)). Returns previous; legal during capture. Distinct from
+//! [`get_stream_capture_info`](Sim::get_stream_capture_info). No Engine `--exchange-thread-stream-capture-mode`.
 //! [`graph_kernel_node_get_priority`](Sim::graph_kernel_node_get_priority) /
 //! [`graph_kernel_node_set_priority`](Sim::graph_kernel_node_set_priority) /
 //! [`graph_kernel_node_copy_attributes`](Sim::graph_kernel_node_copy_attributes)
@@ -7176,6 +7206,9 @@
 //! [`get_stream_capture_info`](Sim::get_stream_capture_info) is `cuStreamGetCaptureInfo` (identity with
 //! [`stream_capture_info`](Sim::stream_capture_info)). Query; legal during capture. Distinct from
 //! [`is_stream_capturing`](Sim::is_stream_capturing). No Engine `--get-stream-capture-info`.
+//! [`exchange_thread_stream_capture_mode`](Sim::exchange_thread_stream_capture_mode) is `cuThreadExchangeStreamCaptureMode` (identity with
+//! [`thread_exchange_stream_capture_mode`](Sim::thread_exchange_stream_capture_mode)). Returns previous; legal during capture. Distinct from
+//! [`get_stream_capture_info`](Sim::get_stream_capture_info). No Engine `--exchange-thread-stream-capture-mode`.
 //! [`graph_kernel_node_get_attribute`](Sim::graph_kernel_node_get_attribute) /
 //! [`graph_exec_kernel_node_get_attribute`](Sim::graph_exec_kernel_node_get_attribute) /
 //! [`graph_kernel_node_set_attribute`](Sim::graph_kernel_node_set_attribute) /
@@ -7631,6 +7664,9 @@
 //! [`get_stream_capture_info`](Sim::get_stream_capture_info) is `cuStreamGetCaptureInfo` (identity with
 //! [`stream_capture_info`](Sim::stream_capture_info)). Query; legal during capture. Distinct from
 //! [`is_stream_capturing`](Sim::is_stream_capturing). No Engine `--get-stream-capture-info`.
+//! [`exchange_thread_stream_capture_mode`](Sim::exchange_thread_stream_capture_mode) is `cuThreadExchangeStreamCaptureMode` (identity with
+//! [`thread_exchange_stream_capture_mode`](Sim::thread_exchange_stream_capture_mode)). Returns previous; legal during capture. Distinct from
+//! [`get_stream_capture_info`](Sim::get_stream_capture_info). No Engine `--exchange-thread-stream-capture-mode`.
 //! Device-launch
 //! execs cannot attach programmatic or launch-completion events.
 //! [`kernel_pdl`](Sim::kernel_pdl) is `cudaLaunchKernelEx` PDL: a wait kernel
@@ -8214,6 +8250,9 @@
 //! [`get_stream_capture_info`](Sim::get_stream_capture_info) is `cuStreamGetCaptureInfo` (identity with
 //! [`stream_capture_info`](Sim::stream_capture_info)). Query; legal during capture. Distinct from
 //! [`is_stream_capturing`](Sim::is_stream_capturing). No Engine `--get-stream-capture-info`.
+//! [`exchange_thread_stream_capture_mode`](Sim::exchange_thread_stream_capture_mode) is `cuThreadExchangeStreamCaptureMode` (identity with
+//! [`thread_exchange_stream_capture_mode`](Sim::thread_exchange_stream_capture_mode)). Returns previous; legal during capture. Distinct from
+//! [`get_stream_capture_info`](Sim::get_stream_capture_info). No Engine `--exchange-thread-stream-capture-mode`.
 //! [`graph_exec_memcpy_set_params`](Sim::graph_exec_memcpy_set_params) /
 //! [`graph_exec_memcpy_set_params_1d`](Sim::graph_exec_memcpy_set_params_1d) /
 //! [`graph_exec_memcpy_set_params_2d`](Sim::graph_exec_memcpy_set_params_2d) /
@@ -8661,6 +8700,9 @@
 //! [`get_stream_capture_info`](Sim::get_stream_capture_info) is `cuStreamGetCaptureInfo` (identity with
 //! [`stream_capture_info`](Sim::stream_capture_info)). Query; legal during capture. Distinct from
 //! [`is_stream_capturing`](Sim::is_stream_capturing). No Engine `--get-stream-capture-info`.
+//! [`exchange_thread_stream_capture_mode`](Sim::exchange_thread_stream_capture_mode) is `cuThreadExchangeStreamCaptureMode` (identity with
+//! [`thread_exchange_stream_capture_mode`](Sim::thread_exchange_stream_capture_mode)). Returns previous; legal during capture. Distinct from
+//! [`get_stream_capture_info`](Sim::get_stream_capture_info). No Engine `--exchange-thread-stream-capture-mode`.
 //! [`get_graph_kernel_node_params`](Sim::get_graph_kernel_node_params) is `cuGraphKernelNodeGetParams` (identity with
 //! [`graph_kernel_get_params`](Sim::graph_kernel_get_params)). Query; legal during capture. Distinct from
 //! [`graph_exec_kernel_get_params`](Sim::graph_exec_kernel_get_params). No Engine `--graph-kernel-get-params`.
@@ -9087,6 +9129,9 @@
 //! [`get_stream_capture_info`](Sim::get_stream_capture_info) is `cuStreamGetCaptureInfo` (identity with
 //! [`stream_capture_info`](Sim::stream_capture_info)). Query; legal during capture. Distinct from
 //! [`is_stream_capturing`](Sim::is_stream_capturing). No Engine `--get-stream-capture-info`.
+//! [`exchange_thread_stream_capture_mode`](Sim::exchange_thread_stream_capture_mode) is `cuThreadExchangeStreamCaptureMode` (identity with
+//! [`thread_exchange_stream_capture_mode`](Sim::thread_exchange_stream_capture_mode)). Returns previous; legal during capture. Distinct from
+//! [`get_stream_capture_info`](Sim::get_stream_capture_info). No Engine `--exchange-thread-stream-capture-mode`.
 //! [`graph_exec_kernel_get_params`](Sim::graph_exec_kernel_get_params) /
 //! [`graph_exec_memcpy_get_params`](Sim::graph_exec_memcpy_get_params) /
 //! [`graph_exec_memset_get_params`](Sim::graph_exec_memset_get_params) /
@@ -9504,6 +9549,9 @@
 //! [`get_stream_capture_info`](Sim::get_stream_capture_info) is `cuStreamGetCaptureInfo` (identity with
 //! [`stream_capture_info`](Sim::stream_capture_info)). Query; legal during capture. Distinct from
 //! [`is_stream_capturing`](Sim::is_stream_capturing). No Engine `--get-stream-capture-info`.
+//! [`exchange_thread_stream_capture_mode`](Sim::exchange_thread_stream_capture_mode) is `cuThreadExchangeStreamCaptureMode` (identity with
+//! [`thread_exchange_stream_capture_mode`](Sim::thread_exchange_stream_capture_mode)). Returns previous; legal during capture. Distinct from
+//! [`get_stream_capture_info`](Sim::get_stream_capture_info). No Engine `--exchange-thread-stream-capture-mode`.
 //! [`get_graph_exec_kernel_node_params`](Sim::get_graph_exec_kernel_node_params) is `cuGraphExecKernelNodeGetParams` (identity with
 //! [`graph_exec_kernel_get_params`](Sim::graph_exec_kernel_get_params)). Query; legal during capture. Distinct from
 //! [`get_graph_kernel_node_params`](Sim::get_graph_kernel_node_params). No Engine `--graph-exec-kernel-get-params`.
@@ -9927,6 +9975,9 @@
 //! [`get_stream_capture_info`](Sim::get_stream_capture_info) is `cuStreamGetCaptureInfo` (identity with
 //! [`stream_capture_info`](Sim::stream_capture_info)). Query; legal during capture. Distinct from
 //! [`is_stream_capturing`](Sim::is_stream_capturing). No Engine `--get-stream-capture-info`.
+//! [`exchange_thread_stream_capture_mode`](Sim::exchange_thread_stream_capture_mode) is `cuThreadExchangeStreamCaptureMode` (identity with
+//! [`thread_exchange_stream_capture_mode`](Sim::thread_exchange_stream_capture_mode)). Returns previous; legal during capture. Distinct from
+//! [`get_stream_capture_info`](Sim::get_stream_capture_info). No Engine `--exchange-thread-stream-capture-mode`.
 //! [`graph_exec_batch_mem_op_set_params`](Sim::graph_exec_batch_mem_op_set_params)
 //! is `cudaGraphExecBatchMemOpNodeSetParams` (id/offset/value; wait vs write,
 //! `bits32`, and compare stay on wait/write nodes;
@@ -35873,6 +35924,44 @@ mod tests {
         assert_eq!(eight.graph_len(g3).unwrap(), 0);
         assert!(eight.get_stream_capture_info(d1, s).is_none());
         assert!(eight.stream_capture_info(d1, s).is_none());
+    }
+
+    #[test]
+    fn exchange_thread_stream_capture_mode_is_cu_thread_exchange_stream_capture_mode() {
+        let mut a = Sim::new(h100());
+        let mut b = Sim::new(h100());
+        assert_eq!(a.stream_capture_mode(), StreamCaptureMode::Relaxed);
+        assert_eq!(b.stream_capture_mode(), StreamCaptureMode::Relaxed);
+        let wa = a.exchange_thread_stream_capture_mode(StreamCaptureMode::ThreadLocal);
+        let hb = b.thread_exchange_stream_capture_mode(StreamCaptureMode::ThreadLocal);
+        assert_eq!(wa, hb);
+        assert_eq!(wa, StreamCaptureMode::Relaxed);
+        assert_eq!(a.stream_capture_mode(), b.stream_capture_mode());
+        assert_eq!(a.stream_capture_mode(), StreamCaptureMode::ThreadLocal);
+        let wa = a.exchange_thread_stream_capture_mode(StreamCaptureMode::Global);
+        let hb = b.thread_exchange_stream_capture_mode(StreamCaptureMode::Global);
+        assert_eq!(wa, hb);
+        assert_eq!(a.stream_capture_mode(), b.stream_capture_mode());
+        let d = DeviceId(0);
+        let s = StreamId(0);
+        a.begin_capture(d, s).unwrap();
+        let prev = a.exchange_thread_stream_capture_mode(StreamCaptureMode::Relaxed);
+        assert_eq!(prev, StreamCaptureMode::Global);
+        assert!(a.get_stream_capture_info(d, s).is_some());
+        let g = a.end_capture().unwrap();
+        assert_eq!(a.graph_len(g).unwrap(), 0);
+        let mut eight = Sim::new(HardwareProfile::example_8xh100_nvlink());
+        let mut eight_h = Sim::new(HardwareProfile::example_8xh100_nvlink());
+        let w3 = eight.exchange_thread_stream_capture_mode(StreamCaptureMode::ThreadLocal);
+        let h3 = eight_h.thread_exchange_stream_capture_mode(StreamCaptureMode::ThreadLocal);
+        assert_eq!(w3, h3);
+        assert_eq!(eight.stream_capture_mode(), eight_h.stream_capture_mode());
+        eight.begin_capture(DeviceId(1), s).unwrap();
+        let prev3 = eight.exchange_thread_stream_capture_mode(StreamCaptureMode::Relaxed);
+        assert_eq!(prev3, StreamCaptureMode::ThreadLocal);
+        assert!(eight.get_stream_capture_info(DeviceId(1), s).is_some());
+        let g3 = eight.end_capture().unwrap();
+        assert_eq!(eight.graph_len(g3).unwrap(), 0);
     }
 
     #[test]
