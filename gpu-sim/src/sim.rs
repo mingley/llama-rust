@@ -5925,7 +5925,9 @@ impl Sim {
     /// packed 1D [`MemsetOp`]. [`Self::graph_memset_set_params_2d`] requires
     /// [`MemsetOp::is_2d`]. [`Self::graph_memset_set_params_3d`] requires
     /// [`MemsetOp::is_3d`]. A parked in-flight-destroyed exec is
-    /// `"unknown graph"`. Live exec SetParams stays.
+    /// `"unknown graph"`. Live exec SetParams stays. Driver
+    /// `cuGraphMemsetNodeSetParams` is
+    /// [`Self::set_graph_memset_node_params`].
     pub fn graph_memset_set_params(
         &mut self,
         graph: GraphId,
@@ -5933,6 +5935,21 @@ impl Sim {
         op: impl Into<MemsetOp>,
     ) -> Result<(), SimError> {
         self.set_memset_op(graph, node, op.into(), false, GreenCtxPatch::Keep, false)
+    }
+
+    /// `cuGraphMemsetNodeSetParams`. Identity with
+    /// [`Self::graph_memset_set_params`] (`cudaGraphMemsetNodeSetParams`).
+    ///
+    /// Capture refused. Distinct from
+    /// [`Self::get_graph_memset_node_params`]. This VM does not invent
+    /// occupancy SM counts this slice.
+    pub fn set_graph_memset_node_params(
+        &mut self,
+        graph: GraphId,
+        node: usize,
+        op: &MemsetOp,
+    ) -> Result<(), SimError> {
+        self.graph_memset_set_params(graph, node, *op)
     }
 
     fn graph_memset_set_params_with_ctx(
@@ -7791,8 +7808,7 @@ impl Sim {
     /// of the exec snapshot).
     ///
     /// Query; legal during capture. Distinct from
-    /// [`Self::get_graph_memset_node_params`]. This VM does not invent
-    /// occupancy SM counts this slice.
+    /// [`Self::get_graph_memset_node_params`].
     pub fn get_graph_exec_memset_node_params(
         &self,
         exec: GraphId,
