@@ -25537,7 +25537,6 @@ impl Sim {
 
     /// `cuDeviceGetUuid`. Identity with [`Self::device_get_uuid`] (`cudaDeviceGetUuid`).
     /// Query; legal during capture. Distinct from [`Self::mem_device_compute_capability`].
-    /// This VM does not invent occupancy SM counts this slice.
     pub fn mem_device_get_uuid(&self, device: DeviceId) -> Result<[u8; 16], SimError> {
         self.device_get_uuid(device)
     }
@@ -25549,9 +25548,19 @@ impl Sim {
     /// [`DeviceProperties::luid`] and
     /// [`DeviceProperties::luid_device_node_mask`]. Unknown devices are
     /// Invalid.
+    ///
+    /// Driver wrap: [`Self::mem_device_get_luid`].
+    /// Identity: [`Self::mem_device_get_luid`].
     pub fn device_get_luid(&self, device: DeviceId) -> Result<([u8; 8], u32), SimError> {
         let _gpu = self.profile.gpu(device)?;
         Ok(([0; 8], 0))
+    }
+
+    /// `cuDeviceGetLuid`. Identity with [`Self::device_get_luid`].
+    /// Query; legal during capture. Distinct from [`Self::mem_device_get_uuid`].
+    /// This VM does not invent occupancy SM counts this slice.
+    pub fn mem_device_get_luid(&self, device: DeviceId) -> Result<([u8; 8], u32), SimError> {
+        self.device_get_luid(device)
     }
 
     /// `cuDeviceGetTexture1DLinearMaxWidth`. Query; legal during capture.

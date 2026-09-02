@@ -5,6 +5,13 @@ Visible five-turn extract: [docs/chatgpt-share-6a920fe1.md](docs/chatgpt-share-6
 Complete share-API extract: [docs/chatgpt-share-6a920fe1/](docs/chatgpt-share-6a920fe1/).
 Work lands on `main`. No PRs.
 
+## Shipped 2026-09-02 — CUDA `cuDeviceGetLuid`
+
+`gpu-sim` `Sim::mem_device_get_luid` is `cuDeviceGetLuid`.
+Identity with `device_get_luid`. Query; legal during capture. Distinct from `mem_device_get_uuid`.
+This VM does not invent occupancy SM counts or Engine `--mem-device-get-luid`.
+`gpu-profile capture` is still refused. Dual score still has no `$/M tokens`.
+
 ## Shipped 2026-09-02 — CUDA `cuDeviceGetUuid`
 
 `gpu-sim` `Sim::mem_device_get_uuid` is `cuDeviceGetUuid`.

@@ -10154,7 +10154,12 @@ model, do not celebrate the sim.
       `mem_device_compute_capability`. This VM does not invent occupancy SM counts, Engine `--mem-device-get-uuid`,
       or `cudaChooseDevice`. `gpu-profile capture` is still refused. Dual
       score still has no `$/M tokens`.
-1179. [ ] Next numbered PLAN item after 1178 is the next `gpu-sim` / Engine /
+1179. [x] `gpu-sim` `Sim::mem_device_get_luid` is
+      `cuDeviceGetLuid`. Identity with `device_get_luid`. Query; legal during capture. Distinct from
+      `mem_device_get_uuid`. This VM does not invent occupancy SM counts, Engine `--mem-device-get-luid`,
+      or `cudaChooseDevice`. `gpu-profile capture` is still refused. Dual
+      score still has no `$/M tokens`.
+1180. [ ] Next numbered PLAN item after 1179 is the next `gpu-sim` / Engine /
     serve / expertvm mechanical API that is still missing, or the next official
     decode family. Prefer remaining CUDA-shaped twins over more
     OpenAI HTTP veneer. Do not invent F32 `output.scale`. Do not invent a
@@ -12400,6 +12405,11 @@ model, do not celebrate the sim.
     occupancy SM counts this slice. Do not reverse MemDeviceGetUuid identity with device_get_uuid.
     Do not invent `device_get_luid` as `mem_device_get_uuid`.
     Do not invent `cuDeviceGetLuid` as `mem_device_get_uuid`.
+    Do not invent a second `cuDeviceGetLuid` / `mem_device_get_luid`.
+    Do not invent Engine `--mem-device-get-luid`. Do not invent
+    occupancy SM counts this slice. Do not reverse MemDeviceGetLuid identity with device_get_luid.
+    Do not invent `device_get_texture_1d_linear_max_width` as `mem_device_get_luid`.
+    Do not invent `cuDeviceGetTexture1DLinearMaxWidth` as `mem_device_get_luid`.
     Do not invent a second `cudaStreamAddCallback`.
     Do not invent Engine `--stream-callback` (same wall as second live
     `cudaLaunchHostFunc` after miss DMA).
@@ -14682,6 +14692,11 @@ model, do not celebrate the sim.
     this slice. Do not reverse MemDeviceGetUuid identity with device_get_uuid.
     Do not wrap `device_get_uuid` as `mem_device_get_uuid`.
     Do not wrap `device_get_luid` as `mem_device_get_uuid`.
+    Do not invent a second `mem_device_get_luid` API. Do not invent
+    Engine `--mem-device-get-luid-identity`. Do not invent a device-get-texture-1d
+    this slice. Do not reverse MemDeviceGetLuid identity with device_get_luid.
+    Do not wrap `device_get_luid` as `mem_device_get_luid`.
+    Do not wrap `device_get_texture_1d_linear_max_width` as `mem_device_get_luid`.
     Do not invent a second DeviceLaunch in-flight destroy-complete check or Engine
     `--device-launch-destroy`. Do not abort an in-flight DeviceLaunch when
     `destroy_graph` succeeds. Do not delay destroy of an idle exec. Do not invent
@@ -16987,6 +17002,10 @@ model, do not celebrate the sim.
     invent Engine `--cu-mem-device-get-uuid`. Do not reverse wrapping
     cuDeviceGetUuid identity. Do not wrap `device_get_name` as `mem_device_get_uuid`.
     Do not wrap `device_get_luid` as `mem_device_get_uuid`.
+    Do not invent a second `mem_device_get_luid` method. Do not
+    invent Engine `--cu-mem-device-get-luid`. Do not reverse wrapping
+    cuDeviceGetLuid identity. Do not wrap `device_get_uuid` as `mem_device_get_luid`.
+    Do not wrap `device_get_texture_1d_linear_max_width` as `mem_device_get_luid`.
     Do not
     spend the next item on an OpenAI-compatible HTTP veneer.
 
