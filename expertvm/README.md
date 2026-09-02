@@ -694,6 +694,7 @@ compiled kernel exists; no Engine flag).
 `gpu-sim` `get_stream_capture_mode` is the thread-default `cudaStreamCaptureMode` query (identity with `stream_capture_mode`; no Engine flag).
 `gpu-sim` `event_flags` is `cuEventGetFlags` (identity with `event_get_flags`; no Engine flag).
 `gpu-sim` `ctx_enable_peer_access` is `cuCtxEnablePeerAccess` (identity with `enable_peer`; no Engine flag).
+`gpu-sim` `ctx_enable_peer_access_with_flags` is `cuCtxEnablePeerAccess` with flags (identity with `enable_peer_with_flags`; no Engine flag).
 `gpu-sim` `mem_alloc` is `cuMemAlloc` (identity with `malloc`; no Engine flag).
 `gpu-sim` `mem_free` is `cuMemFree` (identity with `free_sync`; no Engine flag).
 `gpu-sim` `mem_free_host` is `cuMemFreeHost` (identity with `free_host_pinned`; no Engine flag).
@@ -912,6 +913,7 @@ compiled kernel exists; no Engine flag).
 `gpu-sim` `get_stream_capture_mode` is the thread-default `cudaStreamCaptureMode` query (identity with `stream_capture_mode`; no Engine flag).
 `gpu-sim` `event_flags` is `cuEventGetFlags` (identity with `event_get_flags`; no Engine flag).
 `gpu-sim` `ctx_enable_peer_access` is `cuCtxEnablePeerAccess` (identity with `enable_peer`; no Engine flag).
+`gpu-sim` `ctx_enable_peer_access_with_flags` is `cuCtxEnablePeerAccess` with flags (identity with `enable_peer_with_flags`; no Engine flag).
 `gpu-sim` `func_is_loaded` is `cuFuncIsLoaded` (`false` until a compiled
 kernel exists; no Engine flag).
 `gpu-sim` `func_load` is `cuFuncLoad` (Invalid; no compiled kernel; no

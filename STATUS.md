@@ -5,6 +5,14 @@ Visible five-turn extract: [docs/chatgpt-share-6a920fe1.md](docs/chatgpt-share-6
 Complete share-API extract: [docs/chatgpt-share-6a920fe1/](docs/chatgpt-share-6a920fe1/).
 Work lands on `main`. No PRs.
 
+## Shipped 2026-09-02 — CUDA `cuCtxEnablePeerAccess` flags
+
+`gpu-sim` `Sim::ctx_enable_peer_access_with_flags` is `cuCtxEnablePeerAccess` with flags.
+Identity with `enable_peer_with_flags` (`cudaDeviceEnablePeerAccess` with flags).
+Nonzero flags refused. Distinct from `ctx_enable_peer_access`.
+This VM does not invent occupancy SM counts or Engine `--ctx-enable-peer-access-with-flags`.
+`gpu-profile capture` is still refused. Dual score still has no `$/M tokens`.
+
 ## Shipped 2026-09-02 — CUDA `cuCtxEnablePeerAccess`
 
 `gpu-sim` `Sim::ctx_enable_peer_access` is `cuCtxEnablePeerAccess`.

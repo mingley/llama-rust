@@ -2880,13 +2880,15 @@ impl Sim {
     /// [`Self::enable_peer`] (`cudaDeviceEnablePeerAccess`).
     ///
     /// Capture legal. Distinct from
-    /// [`Self::event_flags`]. This VM does not invent
-    /// occupancy SM counts this slice.
+    /// [`Self::event_flags`].
     pub fn ctx_enable_peer_access(&mut self, src: DeviceId, dst: DeviceId) -> Result<(), SimError> {
         self.enable_peer(src, dst)
     }
 
     /// `cudaDeviceEnablePeerAccess` with a flags word.
+    ///
+    /// Driver `cuCtxEnablePeerAccess` with flags is
+    /// [`Self::ctx_enable_peer_access_with_flags`].
     ///
     /// CUDA requires `flags == 0` ([`PeerAccessFlags::DEFAULT`]). Other bits
     /// are Invalid `"peer access flags"`. Typed [`Self::enable_peer`] stays.
@@ -2903,6 +2905,21 @@ impl Sim {
             });
         }
         self.enable_peer(src, dst)
+    }
+
+    /// `cuCtxEnablePeerAccess` with flags. Identity with
+    /// [`Self::enable_peer_with_flags`] (`cudaDeviceEnablePeerAccess` with flags).
+    ///
+    /// Nonzero flags refused. Distinct from
+    /// [`Self::ctx_enable_peer_access`]. This VM does not invent
+    /// occupancy SM counts this slice.
+    pub fn ctx_enable_peer_access_with_flags(
+        &mut self,
+        src: DeviceId,
+        dst: DeviceId,
+        flags: u32,
+    ) -> Result<(), SimError> {
+        self.enable_peer_with_flags(src, dst, flags)
     }
 
     /// `cudaDeviceDisablePeerAccess(dst)` from `src`. Later D2D is [`SimError::PeerDisabled`].
