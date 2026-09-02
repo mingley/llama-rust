@@ -25116,6 +25116,8 @@ impl Sim {
     /// MaxRegistersPerBlock is 65536 on example H100. GlobalMemoryBusWidth
     /// is 5120 bits on example H100. SingleToDoublePrecisionPerfRatio is
     /// 1 on example H100.
+    /// Driver `cuDeviceGetAttribute` is [`Self::mem_device_get_attribute`].
+    /// Identity wrap [`Self::mem_device_get_attribute`].
     pub fn device_get_attribute(
         &self,
         device: DeviceId,
@@ -25272,6 +25274,19 @@ impl Sim {
                 DeviceAttr::SINGLE_TO_DOUBLE_PRECISION_PERF_RATIO
             }
         })
+    }
+
+    /// `cuDeviceGetAttribute`. Identity with
+    /// [`Self::device_get_attribute`] (`cudaDeviceGetAttribute`).
+    ///
+    /// Query; legal during capture. Distinct from [`Self::mem_alloc_pitch_with_element_size`].
+    /// This VM does not invent occupancy SM counts this slice.
+    pub fn mem_device_get_attribute(
+        &self,
+        device: DeviceId,
+        attr: DeviceAttr,
+    ) -> Result<u64, SimError> {
+        self.device_get_attribute(device, attr)
     }
 
     /// `cudaGetDeviceProperties`. Query; legal during capture.
@@ -27295,7 +27310,6 @@ impl Sim {
     /// [`Self::malloc_pitch_with_element_size`] (`cuMemAllocPitch`).
     ///
     /// Capture refused. Distinct from [`Self::mem_alloc_pitch`].
-    /// This VM does not invent occupancy SM counts this slice.
     pub fn mem_alloc_pitch_with_element_size(
         &mut self,
         device: DeviceId,
