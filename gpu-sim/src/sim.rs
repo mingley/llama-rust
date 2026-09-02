@@ -3871,8 +3871,7 @@ impl Sim {
     /// [`Self::stream_update_capture_dependencies`] (`cudaStreamUpdateCaptureDependencies`).
     ///
     /// Not capturing refused. Distinct from
-    /// [`Self::stream_end_capture`]. This VM does not invent
-    /// occupancy SM counts this slice.
+    /// [`Self::stream_end_capture`].
     pub fn update_stream_capture_dependencies(
         &mut self,
         device: DeviceId,
@@ -3884,9 +3883,22 @@ impl Sim {
     }
 
     /// `cudaStreamIsCapturing`.
+    ///
+    /// Driver `cuStreamIsCapturing` is [`Self::is_stream_capturing`].
     #[must_use]
     pub fn stream_is_capturing(&self, device: DeviceId, stream: StreamId) -> bool {
         self.in_capture(device, stream)
+    }
+
+    /// `cuStreamIsCapturing`. Identity with
+    /// [`Self::stream_is_capturing`] (`cudaStreamIsCapturing`).
+    ///
+    /// Query; legal during capture. Distinct from
+    /// [`Self::update_stream_capture_dependencies`]. This VM does not invent
+    /// occupancy SM counts this slice.
+    #[must_use]
+    pub fn is_stream_capturing(&self, device: DeviceId, stream: StreamId) -> bool {
+        self.stream_is_capturing(device, stream)
     }
 
     /// `cudaStreamGetCaptureInfo`. `None` if this stream is not capturing.

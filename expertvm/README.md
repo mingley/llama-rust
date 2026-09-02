@@ -688,6 +688,7 @@ compiled kernel exists; no Engine flag).
 `gpu-sim` `stream_begin_recapture_to_graph_with_callback` is `cuStreamBeginRecaptureToGraph` with callback (identity with `begin_recapture_to_graph_with_callback`; no Engine flag).
 `gpu-sim` `stream_end_capture` is `cuStreamEndCapture` (identity with `end_capture`; no Engine flag).
 `gpu-sim` `update_stream_capture_dependencies` is `cuStreamUpdateCaptureDependencies` (identity with `stream_update_capture_dependencies`; no Engine flag).
+`gpu-sim` `is_stream_capturing` is `cuStreamIsCapturing` (identity with `stream_is_capturing`; no Engine flag).
 `gpu-sim` `mem_alloc` is `cuMemAlloc` (identity with `malloc`; no Engine flag).
 `gpu-sim` `mem_free` is `cuMemFree` (identity with `free_sync`; no Engine flag).
 `gpu-sim` `mem_free_host` is `cuMemFreeHost` (identity with `free_host_pinned`; no Engine flag).
@@ -900,6 +901,7 @@ compiled kernel exists; no Engine flag).
 `gpu-sim` `stream_begin_recapture_to_graph_with_callback` is `cuStreamBeginRecaptureToGraph` with callback (identity with `begin_recapture_to_graph_with_callback`; no Engine flag).
 `gpu-sim` `stream_end_capture` is `cuStreamEndCapture` (identity with `end_capture`; no Engine flag).
 `gpu-sim` `update_stream_capture_dependencies` is `cuStreamUpdateCaptureDependencies` (identity with `stream_update_capture_dependencies`; no Engine flag).
+`gpu-sim` `is_stream_capturing` is `cuStreamIsCapturing` (identity with `stream_is_capturing`; no Engine flag).
 `gpu-sim` `func_is_loaded` is `cuFuncIsLoaded` (`false` until a compiled
 kernel exists; no Engine flag).
 `gpu-sim` `func_load` is `cuFuncLoad` (Invalid; no compiled kernel; no

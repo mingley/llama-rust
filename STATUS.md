@@ -5,6 +5,14 @@ Visible five-turn extract: [docs/chatgpt-share-6a920fe1.md](docs/chatgpt-share-6
 Complete share-API extract: [docs/chatgpt-share-6a920fe1/](docs/chatgpt-share-6a920fe1/).
 Work lands on `main`. No PRs.
 
+## Shipped 2026-09-02 — CUDA `cuStreamIsCapturing`
+
+`gpu-sim` `Sim::is_stream_capturing` is `cuStreamIsCapturing`.
+Identity with `stream_is_capturing` (`cudaStreamIsCapturing`).
+Query; legal during capture. Distinct from `update_stream_capture_dependencies`.
+This VM does not invent occupancy SM counts or Engine `--is-stream-capturing`.
+`gpu-profile capture` is still refused. Dual score still has no `$/M tokens`.
+
 ## Shipped 2026-09-02 — CUDA `cuStreamUpdateCaptureDependencies`
 
 `gpu-sim` `Sim::update_stream_capture_dependencies` is `cuStreamUpdateCaptureDependencies`.
