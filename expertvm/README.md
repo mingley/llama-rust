@@ -836,6 +836,7 @@ compiled kernel exists; no Engine flag).
 `gpu-sim` `mem_unset_access` is `cuMemSetAccess` ProtNone (identity with `va_unset_access`; no Engine flag).
 `gpu-sim` `mem_get_access` is `cuMemGetAccess` (identity with `va_get_access`; no Engine flag).
 `gpu-sim` `mem_map_range` is `cuMemMap` range (identity with `va_map_range`; no Engine flag).
+`gpu-sim` `mem_get_allocation_properties` is `cuMemGetAllocationPropertiesFromHandle` (identity with `va_get_allocation_properties`; no Engine flag).
 `gpu-sim` `mem_alloc` is `cuMemAlloc` (identity with `malloc`; no Engine flag).
 `gpu-sim` `mem_free` is `cuMemFree` (identity with `free_sync`; no Engine flag).
 `gpu-sim` `mem_free_host` is `cuMemFreeHost` (identity with `free_host_pinned`; no Engine flag).
@@ -1196,6 +1197,7 @@ compiled kernel exists; no Engine flag).
 `gpu-sim` `mem_unset_access` is `cuMemSetAccess` ProtNone (identity with `va_unset_access`; no Engine flag).
 `gpu-sim` `mem_get_access` is `cuMemGetAccess` (identity with `va_get_access`; no Engine flag).
 `gpu-sim` `mem_map_range` is `cuMemMap` range (identity with `va_map_range`; no Engine flag).
+`gpu-sim` `mem_get_allocation_properties` is `cuMemGetAllocationPropertiesFromHandle` (identity with `va_get_allocation_properties`; no Engine flag).
 `gpu-sim` `func_is_loaded` is `cuFuncIsLoaded` (`false` until a compiled
 kernel exists; no Engine flag).
 `gpu-sim` `func_load` is `cuFuncLoad` (Invalid; no compiled kernel; no

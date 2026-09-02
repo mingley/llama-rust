@@ -18441,6 +18441,8 @@ impl Sim {
     /// is an RDMA link on that GPU. [`MemAllocationProp::compression`] /
     /// [`MemAllocationProp::usage`] are always none.
     /// Unknown ids are Invalid `"unknown handle"`.
+    /// Driver `cuMemGetAllocationPropertiesFromHandle` is [`Self::mem_get_allocation_properties`].
+    /// Identity wrap [`Self::mem_get_allocation_properties`].
     pub fn va_get_allocation_properties(
         &self,
         handle: MemHandleId,
@@ -18454,6 +18456,18 @@ impl Sim {
             compression: 0,
             usage: MemHandleUsage::NONE,
         })
+    }
+
+    /// `cuMemGetAllocationPropertiesFromHandle`. Identity with
+    /// [`Self::va_get_allocation_properties`] (`cuMemGetAllocationPropertiesFromHandle`).
+    ///
+    /// Query; legal during capture. Distinct from [`Self::mem_map_range`].
+    /// This VM does not invent occupancy SM counts this slice.
+    pub fn mem_get_allocation_properties(
+        &self,
+        handle: MemHandleId,
+    ) -> Result<MemAllocationProp, SimError> {
+        self.va_get_allocation_properties(handle)
     }
 
     /// `cuMemGetHandleForAddressRange`. Query; legal during capture.
@@ -19220,7 +19234,6 @@ impl Sim {
     /// [`Self::va_map_range`] (`cuMemMap` range).
     ///
     /// Capture refused. Distinct from [`Self::mem_get_access`].
-    /// This VM does not invent occupancy SM counts this slice.
     pub fn mem_map_range(
         &mut self,
         id: AllocId,

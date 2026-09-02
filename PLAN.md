@@ -9999,7 +9999,12 @@ model, do not celebrate the sim.
       `mem_get_access`. This VM does not invent occupancy SM counts, Engine `--mem-map-range`,
       or `cudaChooseDevice`. `gpu-profile capture` is still refused. Dual
       score still has no `$/M tokens`.
-1148. [ ] Next numbered PLAN item after 1147 is the next `gpu-sim` / Engine /
+1148. [x] `gpu-sim` `Sim::mem_get_allocation_properties` is
+      `cuMemGetAllocationPropertiesFromHandle`. Identity with `va_get_allocation_properties` (`cuMemGetAllocationPropertiesFromHandle`). Query; legal during capture. Distinct from
+      `mem_map_range`. This VM does not invent occupancy SM counts, Engine `--mem-get-allocation-properties`,
+      or `cudaChooseDevice`. `gpu-profile capture` is still refused. Dual
+      score still has no `$/M tokens`.
+1149. [ ] Next numbered PLAN item after 1148 is the next `gpu-sim` / Engine /
     serve / expertvm mechanical API that is still missing, or the next official
     decode family. Prefer remaining CUDA-shaped twins over more
     OpenAI HTTP veneer. Do not invent F32 `output.scale`. Do not invent a
@@ -12088,6 +12093,11 @@ model, do not celebrate the sim.
     occupancy SM counts this slice. Do not reverse MemMapRange identity with va_map_range.
     Do not invent `va_get_allocation_properties` as `mem_map_range`.
     Do not invent `cuMemGetAllocationPropertiesFromHandle` as `mem_map_range`.
+    Do not invent a second `cuMemGetAllocationPropertiesFromHandle` / `mem_get_allocation_properties`.
+    Do not invent Engine `--mem-get-allocation-properties`. Do not invent
+    occupancy SM counts this slice. Do not reverse MemGetAllocationProperties identity with va_get_allocation_properties.
+    Do not invent `va_map_multicast` as `mem_get_allocation_properties`.
+    Do not invent `cuMemMap` multicast as `mem_get_allocation_properties`.
     Do not invent a second `cudaStreamAddCallback`.
     Do not invent Engine `--stream-callback` (same wall as second live
     `cudaLaunchHostFunc` after miss DMA).
@@ -14212,6 +14222,11 @@ model, do not celebrate the sim.
     this slice. Do not reverse MemMapRange identity with va_map_range.
     Do not wrap `va_map_range` as `mem_map_range`.
     Do not wrap `va_get_allocation_properties` as `mem_map_range`.
+    Do not invent a second `mem_get_allocation_properties` API. Do not invent
+    Engine `--mem-get-allocation-properties-identity`. Do not invent a va-map-multicast
+    this slice. Do not reverse MemGetAllocationProperties identity with va_get_allocation_properties.
+    Do not wrap `va_get_allocation_properties` as `mem_get_allocation_properties`.
+    Do not wrap `va_map_multicast` as `mem_get_allocation_properties`.
     Do not invent a second DeviceLaunch in-flight destroy-complete check or Engine
     `--device-launch-destroy`. Do not abort an in-flight DeviceLaunch when
     `destroy_graph` succeeds. Do not delay destroy of an idle exec. Do not invent
@@ -16409,6 +16424,9 @@ model, do not celebrate the sim.
     Do not invent a second `mem_map_range` method. Do not
     invent Engine `--cu-mem-map-range`. Do not reverse wrapping
     cuMemMap range identity. Do not wrap `va_get_allocation_properties` as `mem_map_range`.
+    Do not invent a second `mem_get_allocation_properties` method. Do not
+    invent Engine `--cu-mem-get-allocation-properties`. Do not reverse wrapping
+    cuMemGetAllocationPropertiesFromHandle identity. Do not wrap `va_map_multicast` as `mem_get_allocation_properties`.
     Do not
     spend the next item on an OpenAI-compatible HTTP veneer.
 
