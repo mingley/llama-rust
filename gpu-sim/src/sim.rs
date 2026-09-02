@@ -11110,8 +11110,7 @@ impl Sim {
     /// flags).
     ///
     /// Capture refused. Distinct from
-    /// [`Self::add_graph_batch_mem_op`]. This VM does not invent
-    /// occupancy SM counts this slice.
+    /// [`Self::add_graph_batch_mem_op`].
     pub fn add_graph_batch_mem_op_with_flags(
         &mut self,
         graph: GraphId,
@@ -11286,9 +11285,21 @@ impl Sim {
     /// instantiated exec. [`Self::update_graph`] of mem nodes is Invalid.
     /// Empty `accessDescs` is this helper; peer access is
     /// [`Self::graph_add_alloc_with_access`]. [`GraphNodeParams::Alloc`]
-    /// is the `cudaGraphAddNode` entry (empty `access` is this helper).
+    /// is the `cudaGraphAddNode` entry (empty `access` is this helper). Driver
+    /// `cuGraphAddMemAllocNode` is
+    /// [`Self::add_graph_alloc`].
     pub fn graph_add_alloc(&mut self, graph: GraphId, bytes: u64) -> Result<AllocId, SimError> {
         self.graph_add_alloc_with_access(graph, bytes, &[])
+    }
+
+    /// `cuGraphAddMemAllocNode`. Identity with
+    /// [`Self::graph_add_alloc`] (`cudaGraphAddMemAllocNode`).
+    ///
+    /// Capture refused. Distinct from
+    /// [`Self::add_graph_batch_mem_op_with_flags`]. This VM does not invent
+    /// occupancy SM counts this slice.
+    pub fn add_graph_alloc(&mut self, graph: GraphId, bytes: u64) -> Result<AllocId, SimError> {
+        self.graph_add_alloc(graph, bytes)
     }
 
     /// `cudaGraphAddMemAllocNode` with `accessDescs`.
