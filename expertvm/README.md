@@ -792,6 +792,7 @@ compiled kernel exists; no Engine flag).
 `gpu-sim` `get_device_count` is `cuDeviceGetCount` (identity with `device_count`; no Engine flag).
 `gpu-sim` `device_get_default_mempool` is `cuDeviceGetDefaultMemPool` (identity with `default_pool`; no Engine flag).
 `gpu-sim` `device_get_mempool` is `cuDeviceGetMemPool` (identity with `device_mempool`; no Engine flag).
+`gpu-sim` `device_set_mempool` is `cuDeviceSetMemPool` (identity with `set_device_mempool`; no Engine flag).
 `gpu-sim` `mem_alloc` is `cuMemAlloc` (identity with `malloc`; no Engine flag).
 `gpu-sim` `mem_free` is `cuMemFree` (identity with `free_sync`; no Engine flag).
 `gpu-sim` `mem_free_host` is `cuMemFreeHost` (identity with `free_host_pinned`; no Engine flag).
@@ -1108,6 +1109,7 @@ compiled kernel exists; no Engine flag).
 `gpu-sim` `get_device_count` is `cuDeviceGetCount` (identity with `device_count`; no Engine flag).
 `gpu-sim` `device_get_default_mempool` is `cuDeviceGetDefaultMemPool` (identity with `default_pool`; no Engine flag).
 `gpu-sim` `device_get_mempool` is `cuDeviceGetMemPool` (identity with `device_mempool`; no Engine flag).
+`gpu-sim` `device_set_mempool` is `cuDeviceSetMemPool` (identity with `set_device_mempool`; no Engine flag).
 `gpu-sim` `func_is_loaded` is `cuFuncIsLoaded` (`false` until a compiled
 kernel exists; no Engine flag).
 `gpu-sim` `func_load` is `cuFuncLoad` (Invalid; no compiled kernel; no

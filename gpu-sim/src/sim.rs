@@ -16050,7 +16050,6 @@ impl Sim {
     /// [`Self::device_mempool`] (`cudaDeviceGetMemPool`).
     ///
     /// Query; legal during capture. Distinct from [`Self::device_get_default_mempool`].
-    /// This VM does not invent occupancy SM counts this slice.
     pub fn device_get_mempool(&self, device: DeviceId) -> Result<PoolId, SimError> {
         self.device_mempool(device)
     }
@@ -16125,6 +16124,8 @@ impl Sim {
     /// sibling is legal). Does not change live/cached bytes. The graph-memory
     /// pool is not a valid device mempool. [`Self::default_pool`] stays the
     /// seeded default.
+    /// Driver `cuDeviceSetMemPool` is [`Self::device_set_mempool`].
+    /// Identity wrap [`Self::device_set_mempool`].
     pub fn set_device_mempool(&mut self, device: DeviceId, pool: PoolId) -> Result<(), SimError> {
         self.fail_if_capturing("cannot capture mempool")?;
         self.refuse_graph_pool(pool)?;
@@ -16138,6 +16139,15 @@ impl Sim {
         let _prev = self.current_pools.insert(device, pool);
         self.clock = self.clock.saturating_add(self.first_alloc_ns().max(1));
         Ok(())
+    }
+
+    /// `cuDeviceSetMemPool`. Identity with
+    /// [`Self::set_device_mempool`] (`cudaDeviceSetMemPool`).
+    ///
+    /// Capture refused. Distinct from [`Self::device_get_mempool`].
+    /// This VM does not invent occupancy SM counts this slice.
+    pub fn device_set_mempool(&mut self, device: DeviceId, pool: PoolId) -> Result<(), SimError> {
+        self.set_device_mempool(device, pool)
     }
 
     /// `cudaMemPoolCreate` for `device`. Release threshold starts at 0.

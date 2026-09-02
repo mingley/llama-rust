@@ -9779,7 +9779,12 @@ model, do not celebrate the sim.
       `device_get_default_mempool`. This VM does not invent occupancy SM counts, Engine `--device-get-mempool`,
       or `cudaChooseDevice`. `gpu-profile capture` is still refused. Dual
       score still has no `$/M tokens`.
-1104. [ ] Next numbered PLAN item after 1103 is the next `gpu-sim` / Engine /
+1104. [x] `gpu-sim` `Sim::device_set_mempool` is
+      `cuDeviceSetMemPool`. Identity with `set_device_mempool` (`cudaDeviceSetMemPool`). Capture refused. Distinct from
+      `device_get_mempool`. This VM does not invent occupancy SM counts, Engine `--device-set-mempool`,
+      or `cudaChooseDevice`. `gpu-profile capture` is still refused. Dual
+      score still has no `$/M tokens`.
+1105. [ ] Next numbered PLAN item after 1104 is the next `gpu-sim` / Engine /
     serve / expertvm mechanical API that is still missing, or the next official
     decode family. Prefer remaining CUDA-shaped twins over more
     OpenAI HTTP veneer. Do not invent F32 `output.scale`. Do not invent a
@@ -11649,6 +11654,10 @@ model, do not celebrate the sim.
     Do not invent Engine `--device-get-mempool`. Do not invent
     occupancy SM counts this slice. Do not reverse DeviceGetMemPool identity with device_mempool.
     Do not invent `cuDeviceSetMemPool` as `device_get_mempool`.
+    Do not invent a second `cuDeviceSetMemPool` / `device_set_mempool`.
+    Do not invent Engine `--device-set-mempool`. Do not invent
+    occupancy SM counts this slice. Do not reverse DeviceSetMemPool identity with set_device_mempool.
+    Do not invent `cuMemPoolCreate` as `device_set_mempool`.
     Do not invent a second `cudaStreamAddCallback`.
     Do not invent Engine `--stream-callback` (same wall as second live
     `cudaLaunchHostFunc` after miss DMA).
@@ -13553,6 +13562,11 @@ model, do not celebrate the sim.
     this slice. Do not reverse DeviceGetMemPool identity with device_mempool.
     Do not wrap `device_mempool` as `device_get_mempool`.
     Do not wrap `set_device_mempool` as `device_get_mempool`.
+    Do not invent a second `device_set_mempool` API. Do not invent
+    Engine `--device-set-mempool-identity`. Do not invent a mem-pool-create
+    this slice. Do not reverse DeviceSetMemPool identity with set_device_mempool.
+    Do not wrap `set_device_mempool` as `device_set_mempool`.
+    Do not wrap `create_pool` as `device_set_mempool`.
     Do not invent a second DeviceLaunch in-flight destroy-complete check or Engine
     `--device-launch-destroy`. Do not abort an in-flight DeviceLaunch when
     `destroy_graph` succeeds. Do not delay destroy of an idle exec. Do not invent
@@ -15618,6 +15632,9 @@ model, do not celebrate the sim.
     Do not invent a second `device_get_mempool` method. Do not
     invent Engine `--cu-device-get-mempool`. Do not reverse wrapping
     cuDeviceGetMemPool identity. Do not wrap `cuDeviceSetMemPool` as `device_get_mempool`.
+    Do not invent a second `device_set_mempool` method. Do not
+    invent Engine `--cu-device-set-mempool`. Do not reverse wrapping
+    cuDeviceSetMemPool identity. Do not wrap `cuMemPoolCreate` as `device_set_mempool`.
     Do not
     spend the next item on an OpenAI-compatible HTTP veneer.
 
