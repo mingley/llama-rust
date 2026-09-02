@@ -19033,7 +19033,6 @@ impl Sim {
     /// [`Self::va_map_multicast_with_flags`] (`cuMemMap` multicast flags).
     ///
     /// Capture refused. Distinct from [`Self::mem_map_multicast`].
-    /// This VM does not invent occupancy SM counts this slice.
     pub fn mem_map_multicast_with_flags(
         &mut self,
         id: AllocId,
@@ -19049,6 +19048,8 @@ impl Sim {
     ///
     /// `size` must equal the multicast object bytes. Other sizes Invalid
     /// `"mem map size"`. Flags must be [`MemMapFlags::DEFAULT`].
+    /// Driver `cuMemMap` multicast size is [`Self::mem_map_multicast_with_size`].
+    /// Identity wrap [`Self::mem_map_multicast_with_size`].
     pub fn va_map_multicast_with_size(
         &mut self,
         id: AllocId,
@@ -19126,6 +19127,23 @@ impl Sim {
         self.mc_mut(mc)?.maps = maps.saturating_add(1);
         let _prev = self.mc_vas.insert(id, mc);
         Ok(())
+    }
+
+    /// `cuMemMap` multicast size. Identity with
+    /// [`Self::va_map_multicast_with_size`] (`cuMemMap` multicast size).
+    ///
+    /// Capture refused. Distinct from [`Self::mem_map_multicast_with_flags`].
+    /// This VM does not invent occupancy SM counts this slice.
+    pub fn mem_map_multicast_with_size(
+        &mut self,
+        id: AllocId,
+        device: DeviceId,
+        offset: u64,
+        mc: MulticastId,
+        size: u64,
+        flags: u32,
+    ) -> Result<(), SimError> {
+        self.va_map_multicast_with_size(id, device, offset, mc, size, flags)
     }
 
     /// Whether `id` is a reserved VA mapped with [`Self::va_map_multicast`].
