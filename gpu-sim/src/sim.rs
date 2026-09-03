@@ -22419,7 +22419,6 @@ impl Sim {
 
     /// `cuExternalMemoryGetMappedMipmappedArray`. Identity with [`Self::external_memory_get_mapped_mipmapped_array`].
     /// Query; legal during capture. Distinct from [`Self::mem_external_memory_get_mapped_buffer`].
-    /// This VM does not invent occupancy SM counts this slice.
     pub fn mem_external_memory_get_mapped_mipmapped_array(
         &self,
         device: DeviceId,
@@ -22436,11 +22435,20 @@ impl Sim {
     /// [`Self::device_get_nvscisync_attributes`], and from
     /// [`Self::destroy_external_semaphore`]. Unknown devices are Invalid
     /// `"device not in profile"`. Query; legal during capture.
+    /// Driver wrap: [`Self::mem_import_external_semaphore`].
+    /// Identity: [`Self::mem_import_external_semaphore`].
     pub fn import_external_semaphore(&self, device: DeviceId) -> Result<(), SimError> {
         let _gpu = self.profile.gpu(device)?;
         Err(SimError::Invalid {
             why: "external semaphore",
         })
+    }
+
+    /// `cuImportExternalSemaphore`. Identity with [`Self::import_external_semaphore`].
+    /// Query; legal during capture. Distinct from [`Self::mem_external_memory_get_mapped_mipmapped_array`].
+    /// This VM does not invent occupancy SM counts this slice.
+    pub fn mem_import_external_semaphore(&self, device: DeviceId) -> Result<(), SimError> {
+        self.import_external_semaphore(device)
     }
 
     /// `cuDestroyExternalSemaphore` plus `cudaDestroyExternalSemaphore`.

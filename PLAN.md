@@ -10909,7 +10909,12 @@ model, do not celebrate the sim.
       `mem_external_memory_get_mapped_buffer`. This VM does not invent occupancy SM counts, Engine `--mem-external-memory-get-mapped-mipmapped-array`,
       or `cudaChooseDevice`. `gpu-profile capture` is still refused. Dual
       score still has no `$/M tokens`.
-1330. [ ] Next numbered PLAN item after 1329 is the next `gpu-sim` / Engine /
+1330. [x] `gpu-sim` `Sim::mem_import_external_semaphore` is
+      `cuImportExternalSemaphore`. Identity with `import_external_semaphore`. Query; legal during capture. Distinct from
+      `mem_external_memory_get_mapped_mipmapped_array`. This VM does not invent occupancy SM counts, Engine `--mem-import-external-semaphore`,
+      or `cudaChooseDevice`. `gpu-profile capture` is still refused. Dual
+      score still has no `$/M tokens`.
+1331. [ ] Next numbered PLAN item after 1330 is the next `gpu-sim` / Engine /
     serve / expertvm mechanical API that is still missing, or the next official
     decode family. Prefer remaining CUDA-shaped twins over more
     OpenAI HTTP veneer. Do not invent F32 `output.scale`. Do not invent a
@@ -13910,6 +13915,11 @@ model, do not celebrate the sim.
     occupancy SM counts this slice. Do not reverse MemExternalMemoryGetMappedMipmappedArray identity with external_memory_get_mapped_mipmapped_array.
     Do not invent `import_external_semaphore` as `mem_external_memory_get_mapped_mipmapped_array`.
     Do not invent `cuImportExternalSemaphore` as `mem_external_memory_get_mapped_mipmapped_array`.
+    Do not invent a second `cuImportExternalSemaphore` / `mem_import_external_semaphore`.
+    Do not invent Engine `--mem-import-external-semaphore`. Do not invent
+    occupancy SM counts this slice. Do not reverse MemImportExternalSemaphore identity with import_external_semaphore.
+    Do not invent `destroy_external_semaphore` as `mem_import_external_semaphore`.
+    Do not invent `cuDestroyExternalSemaphore` as `mem_import_external_semaphore`.
     Do not invent a second `cudaStreamAddCallback`.
     Do not invent Engine `--stream-callback` (same wall as second live
     `cudaLaunchHostFunc` after miss DMA).
@@ -16947,6 +16957,11 @@ model, do not celebrate the sim.
     this slice. Do not reverse MemExternalMemoryGetMappedMipmappedArray identity with external_memory_get_mapped_mipmapped_array.
     Do not wrap `external_memory_get_mapped_mipmapped_array` as `mem_external_memory_get_mapped_mipmapped_array`.
     Do not wrap `import_external_semaphore` as `mem_external_memory_get_mapped_mipmapped_array`.
+    Do not invent a second `mem_import_external_semaphore` API. Do not invent
+    Engine `--mem-import-external-semaphore-identity`. Do not invent a cu-destroy-external-semaphore
+    this slice. Do not reverse MemImportExternalSemaphore identity with import_external_semaphore.
+    Do not wrap `import_external_semaphore` as `mem_import_external_semaphore`.
+    Do not wrap `destroy_external_semaphore` as `mem_import_external_semaphore`.
     Do not invent a second DeviceLaunch in-flight destroy-complete check or Engine
     `--device-launch-destroy`. Do not abort an in-flight DeviceLaunch when
     `destroy_graph` succeeds. Do not delay destroy of an idle exec. Do not invent
@@ -19856,6 +19871,10 @@ model, do not celebrate the sim.
     invent Engine `--cu-mem-external-memory-get-mapped-mipmapped-array`. Do not reverse wrapping
     cuExternalMemoryGetMappedMipmappedArray identity. Do not wrap `external_memory_get_mapped_buffer` as `mem_external_memory_get_mapped_mipmapped_array`.
     Do not wrap `import_external_semaphore` as `mem_external_memory_get_mapped_mipmapped_array`.
+    Do not invent a second `mem_import_external_semaphore` method. Do not
+    invent Engine `--cu-mem-import-external-semaphore`. Do not reverse wrapping
+    cuImportExternalSemaphore identity. Do not wrap `external_memory_get_mapped_mipmapped_array` as `mem_import_external_semaphore`.
+    Do not wrap `destroy_external_semaphore` as `mem_import_external_semaphore`.
     Do not
     spend the next item on an OpenAI-compatible HTTP veneer.
 
