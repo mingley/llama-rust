@@ -22115,7 +22115,6 @@ impl Sim {
 
     /// `cuArray3DGetDescriptor`. Identity with [`Self::array_3d_get_descriptor`].
     /// Query; legal during capture. Distinct from [`Self::mem_array_get_descriptor`].
-    /// This VM does not invent occupancy SM counts this slice.
     pub fn mem_array_3d_get_descriptor(&self, device: DeviceId) -> Result<(), SimError> {
         self.array_3d_get_descriptor(device)
     }
@@ -22128,11 +22127,20 @@ impl Sim {
     /// from [`Self::array_create`], and from [`Self::array_get_plane`]. Unknown
     /// devices are Invalid `"device not in profile"`. Query; legal during
     /// capture.
+    /// Driver wrap: [`Self::mem_array_get_sparse_properties`].
+    /// Identity: [`Self::mem_array_get_sparse_properties`].
     pub fn array_get_sparse_properties(&self, device: DeviceId) -> Result<(), SimError> {
         let _gpu = self.profile.gpu(device)?;
         Err(SimError::Invalid {
             why: "array sparse",
         })
+    }
+
+    /// `cuArrayGetSparseProperties`. Identity with [`Self::array_get_sparse_properties`].
+    /// Query; legal during capture. Distinct from [`Self::mem_array_3d_get_descriptor`].
+    /// This VM does not invent occupancy SM counts this slice.
+    pub fn mem_array_get_sparse_properties(&self, device: DeviceId) -> Result<(), SimError> {
+        self.array_get_sparse_properties(device)
     }
 
     /// `cuMemMapArrayAsync`. Sparse CUDA array mapping is not modeled.

@@ -1006,6 +1006,7 @@ compiled kernel exists; no Engine flag).
 `gpu-sim` `mem_tensor_map_replace_aligned_addr` is `cuTensorMapReplaceAlignedAddr` (identity with `tensor_map_replace_aligned_addr`; no Engine flag).
 `gpu-sim` `mem_array_get_descriptor` is `cuArrayGetDescriptor` (identity with `array_get_descriptor`; no Engine flag).
 `gpu-sim` `mem_array_3d_get_descriptor` is `cuArray3DGetDescriptor` (identity with `array_3d_get_descriptor`; no Engine flag).
+`gpu-sim` `mem_array_get_sparse_properties` is `cuArrayGetSparseProperties` (identity with `array_get_sparse_properties`; no Engine flag).
 `gpu-sim` `mem_alloc` is `cuMemAlloc` (identity with `malloc`; no Engine flag).
 `gpu-sim` `mem_free` is `cuMemFree` (identity with `free_sync`; no Engine flag).
 `gpu-sim` `mem_free_host` is `cuMemFreeHost` (identity with `free_host_pinned`; no Engine flag).
@@ -1536,6 +1537,7 @@ compiled kernel exists; no Engine flag).
 `gpu-sim` `mem_tensor_map_replace_aligned_addr` is `cuTensorMapReplaceAlignedAddr` (identity with `tensor_map_replace_aligned_addr`; no Engine flag).
 `gpu-sim` `mem_array_get_descriptor` is `cuArrayGetDescriptor` (identity with `array_get_descriptor`; no Engine flag).
 `gpu-sim` `mem_array_3d_get_descriptor` is `cuArray3DGetDescriptor` (identity with `array_3d_get_descriptor`; no Engine flag).
+`gpu-sim` `mem_array_get_sparse_properties` is `cuArrayGetSparseProperties` (identity with `array_get_sparse_properties`; no Engine flag).
 `gpu-sim` `func_is_loaded` is `cuFuncIsLoaded` (`false` until a compiled
 kernel exists; no Engine flag).
 `gpu-sim` `func_load` is `cuFuncLoad` (Invalid; no compiled kernel; no

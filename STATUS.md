@@ -82,6 +82,13 @@ Identity with `checkpoint_process_unlock`. Query; legal during capture. Distinct
 This VM does not invent occupancy SM counts or Engine `--mem-checkpoint-process-unlock`.
 `gpu-profile capture` is still refused. Dual score still has no `$/M tokens`.
 
+## Shipped 2026-09-03 — CUDA `cuArrayGetSparseProperties`
+
+`gpu-sim` `Sim::mem_array_get_sparse_properties` is `cuArrayGetSparseProperties`.
+Identity with `array_get_sparse_properties`. Query; legal during capture. Distinct from `mem_array_3d_get_descriptor`.
+This VM does not invent occupancy SM counts or Engine `--mem-array-get-sparse-properties`.
+`gpu-profile capture` is still refused. Dual score still has no `$/M tokens`.
+
 ## Shipped 2026-09-03 — CUDA `cuArray3DGetDescriptor`
 
 `gpu-sim` `Sim::mem_array_3d_get_descriptor` is `cuArray3DGetDescriptor`.
