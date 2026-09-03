@@ -10299,7 +10299,12 @@ model, do not celebrate the sim.
       `mem_module_load_data`. This VM does not invent occupancy SM counts, Engine `--mem-module-load-fat-binary`,
       or `cudaChooseDevice`. `gpu-profile capture` is still refused. Dual
       score still has no `$/M tokens`.
-1208. [ ] Next numbered PLAN item after 1207 is the next `gpu-sim` / Engine /
+1208. [x] `gpu-sim` `Sim::mem_module_load_data_ex` is
+      `cuModuleLoadDataEx`. Identity with `module_load_data_ex`. Query; legal during capture. Distinct from
+      `mem_module_load_fat_binary`. This VM does not invent occupancy SM counts, Engine `--mem-module-load-data-ex`,
+      or `cudaChooseDevice`. `gpu-profile capture` is still refused. Dual
+      score still has no `$/M tokens`.
+1209. [ ] Next numbered PLAN item after 1208 is the next `gpu-sim` / Engine /
     serve / expertvm mechanical API that is still missing, or the next official
     decode family. Prefer remaining CUDA-shaped twins over more
     OpenAI HTTP veneer. Do not invent F32 `output.scale`. Do not invent a
@@ -12690,6 +12695,11 @@ model, do not celebrate the sim.
     occupancy SM counts this slice. Do not reverse MemModuleLoadFatBinary identity with module_load_fat_binary.
     Do not invent `module_load_data_ex` as `mem_module_load_fat_binary`.
     Do not invent `cuModuleLoadDataEx` as `mem_module_load_fat_binary`.
+    Do not invent a second `cuModuleLoadDataEx` / `mem_module_load_data_ex`.
+    Do not invent Engine `--mem-module-load-data-ex`. Do not invent
+    occupancy SM counts this slice. Do not reverse MemModuleLoadDataEx identity with module_load_data_ex.
+    Do not invent `module_get_function_count` as `mem_module_load_data_ex`.
+    Do not invent `cuModuleGetFunctionCount` as `mem_module_load_data_ex`.
     Do not invent a second `cudaStreamAddCallback`.
     Do not invent Engine `--stream-callback` (same wall as second live
     `cudaLaunchHostFunc` after miss DMA).
@@ -15117,6 +15127,11 @@ model, do not celebrate the sim.
     this slice. Do not reverse MemModuleLoadFatBinary identity with module_load_fat_binary.
     Do not wrap `module_load_fat_binary` as `mem_module_load_fat_binary`.
     Do not wrap `module_load_data_ex` as `mem_module_load_fat_binary`.
+    Do not invent a second `mem_module_load_data_ex` API. Do not invent
+    Engine `--mem-module-load-data-ex-identity`. Do not invent a module-get-function-count
+    this slice. Do not reverse MemModuleLoadDataEx identity with module_load_data_ex.
+    Do not wrap `module_load_data_ex` as `mem_module_load_data_ex`.
+    Do not wrap `module_get_function_count` as `mem_module_load_data_ex`.
     Do not invent a second DeviceLaunch in-flight destroy-complete check or Engine
     `--device-launch-destroy`. Do not abort an in-flight DeviceLaunch when
     `destroy_graph` succeeds. Do not delay destroy of an idle exec. Do not invent
@@ -17538,6 +17553,10 @@ model, do not celebrate the sim.
     invent Engine `--cu-mem-module-load-fat-binary`. Do not reverse wrapping
     cuModuleLoadFatBinary identity. Do not wrap `module_load_data` as `mem_module_load_fat_binary`.
     Do not wrap `module_load_data_ex` as `mem_module_load_fat_binary`.
+    Do not invent a second `mem_module_load_data_ex` method. Do not
+    invent Engine `--cu-mem-module-load-data-ex`. Do not reverse wrapping
+    cuModuleLoadDataEx identity. Do not wrap `module_load_fat_binary` as `mem_module_load_data_ex`.
+    Do not wrap `module_get_function_count` as `mem_module_load_data_ex`.
     Do not
     spend the next item on an OpenAI-compatible HTTP veneer.
 
