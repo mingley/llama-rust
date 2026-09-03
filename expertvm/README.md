@@ -911,6 +911,7 @@ compiled kernel exists; no Engine flag).
 `gpu-sim` `mem_tex_ref_set_address_2d` is `cuTexRefSetAddress2D` (identity with `tex_ref_set_address_2d`; no Engine flag).
 `gpu-sim` `mem_tex_ref_set_format` is `cuTexRefSetFormat` (identity with `tex_ref_set_format`; no Engine flag).
 `gpu-sim` `mem_tex_ref_set_address_mode` is `cuTexRefSetAddressMode` (identity with `tex_ref_set_address_mode`; no Engine flag).
+`gpu-sim` `mem_tex_ref_set_filter_mode` is `cuTexRefSetFilterMode` (identity with `tex_ref_set_filter_mode`; no Engine flag).
 `gpu-sim` `mem_alloc` is `cuMemAlloc` (identity with `malloc`; no Engine flag).
 `gpu-sim` `mem_free` is `cuMemFree` (identity with `free_sync`; no Engine flag).
 `gpu-sim` `mem_free_host` is `cuMemFreeHost` (identity with `free_host_pinned`; no Engine flag).
@@ -1346,6 +1347,7 @@ compiled kernel exists; no Engine flag).
 `gpu-sim` `mem_tex_ref_set_address_2d` is `cuTexRefSetAddress2D` (identity with `tex_ref_set_address_2d`; no Engine flag).
 `gpu-sim` `mem_tex_ref_set_format` is `cuTexRefSetFormat` (identity with `tex_ref_set_format`; no Engine flag).
 `gpu-sim` `mem_tex_ref_set_address_mode` is `cuTexRefSetAddressMode` (identity with `tex_ref_set_address_mode`; no Engine flag).
+`gpu-sim` `mem_tex_ref_set_filter_mode` is `cuTexRefSetFilterMode` (identity with `tex_ref_set_filter_mode`; no Engine flag).
 `gpu-sim` `func_is_loaded` is `cuFuncIsLoaded` (`false` until a compiled
 kernel exists; no Engine flag).
 `gpu-sim` `func_load` is `cuFuncLoad` (Invalid; no compiled kernel; no
