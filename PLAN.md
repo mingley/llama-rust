@@ -10334,7 +10334,12 @@ model, do not celebrate the sim.
       `mem_module_get_global`. This VM does not invent occupancy SM counts, Engine `--mem-module-get-tex-ref`,
       or `cudaChooseDevice`. `gpu-profile capture` is still refused. Dual
       score still has no `$/M tokens`.
-1215. [ ] Next numbered PLAN item after 1214 is the next `gpu-sim` / Engine /
+1215. [x] `gpu-sim` `Sim::mem_tex_ref_create` is
+      `cuTexRefCreate`. Identity with `tex_ref_create`. Query; legal during capture. Distinct from
+      `mem_module_get_tex_ref`. This VM does not invent occupancy SM counts, Engine `--mem-tex-ref-create`,
+      or `cudaChooseDevice`. `gpu-profile capture` is still refused. Dual
+      score still has no `$/M tokens`.
+1216. [ ] Next numbered PLAN item after 1215 is the next `gpu-sim` / Engine /
     serve / expertvm mechanical API that is still missing, or the next official
     decode family. Prefer remaining CUDA-shaped twins over more
     OpenAI HTTP veneer. Do not invent F32 `output.scale`. Do not invent a
@@ -12760,6 +12765,11 @@ model, do not celebrate the sim.
     occupancy SM counts this slice. Do not reverse MemModuleGetTexRef identity with module_get_tex_ref.
     Do not invent `tex_ref_create` as `mem_module_get_tex_ref`.
     Do not invent `cuTexRefCreate` as `mem_module_get_tex_ref`.
+    Do not invent a second `cuTexRefCreate` / `mem_tex_ref_create`.
+    Do not invent Engine `--mem-tex-ref-create`. Do not invent
+    occupancy SM counts this slice. Do not reverse MemTexRefCreate identity with tex_ref_create.
+    Do not invent `tex_ref_destroy` as `mem_tex_ref_create`.
+    Do not invent `cuTexRefDestroy` as `mem_tex_ref_create`.
     Do not invent a second `cudaStreamAddCallback`.
     Do not invent Engine `--stream-callback` (same wall as second live
     `cudaLaunchHostFunc` after miss DMA).
@@ -15222,6 +15232,11 @@ model, do not celebrate the sim.
     this slice. Do not reverse MemModuleGetTexRef identity with module_get_tex_ref.
     Do not wrap `module_get_tex_ref` as `mem_module_get_tex_ref`.
     Do not wrap `tex_ref_create` as `mem_module_get_tex_ref`.
+    Do not invent a second `mem_tex_ref_create` API. Do not invent
+    Engine `--mem-tex-ref-create-identity`. Do not invent a tex-ref-destroy
+    this slice. Do not reverse MemTexRefCreate identity with tex_ref_create.
+    Do not wrap `tex_ref_create` as `mem_tex_ref_create`.
+    Do not wrap `tex_ref_destroy` as `mem_tex_ref_create`.
     Do not invent a second DeviceLaunch in-flight destroy-complete check or Engine
     `--device-launch-destroy`. Do not abort an in-flight DeviceLaunch when
     `destroy_graph` succeeds. Do not delay destroy of an idle exec. Do not invent
@@ -17671,6 +17686,10 @@ model, do not celebrate the sim.
     invent Engine `--cu-mem-module-get-tex-ref`. Do not reverse wrapping
     cuModuleGetTexRef identity. Do not wrap `module_get_global` as `mem_module_get_tex_ref`.
     Do not wrap `tex_ref_create` as `mem_module_get_tex_ref`.
+    Do not invent a second `mem_tex_ref_create` method. Do not
+    invent Engine `--cu-mem-tex-ref-create`. Do not reverse wrapping
+    cuTexRefCreate identity. Do not wrap `module_get_tex_ref` as `mem_tex_ref_create`.
+    Do not wrap `tex_ref_destroy` as `mem_tex_ref_create`.
     Do not
     spend the next item on an OpenAI-compatible HTTP veneer.
 

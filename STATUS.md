@@ -82,6 +82,13 @@ Identity with `checkpoint_process_unlock`. Query; legal during capture. Distinct
 This VM does not invent occupancy SM counts or Engine `--mem-checkpoint-process-unlock`.
 `gpu-profile capture` is still refused. Dual score still has no `$/M tokens`.
 
+## Shipped 2026-09-03 — CUDA `cuTexRefCreate`
+
+`gpu-sim` `Sim::mem_tex_ref_create` is `cuTexRefCreate`.
+Identity with `tex_ref_create`. Query; legal during capture. Distinct from `mem_module_get_tex_ref`.
+This VM does not invent occupancy SM counts or Engine `--mem-tex-ref-create`.
+`gpu-profile capture` is still refused. Dual score still has no `$/M tokens`.
+
 ## Shipped 2026-09-03 — CUDA `cuModuleGetTexRef`
 
 `gpu-sim` `Sim::mem_module_get_tex_ref` is `cuModuleGetTexRef`.
