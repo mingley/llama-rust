@@ -22321,7 +22321,6 @@ impl Sim {
 
     /// `cuMipmappedArrayDestroy`. Identity with [`Self::mipmapped_array_destroy`].
     /// Query; legal during capture. Distinct from [`Self::mem_mipmapped_array_get_level`].
-    /// This VM does not invent occupancy SM counts this slice.
     pub fn mem_mipmapped_array_destroy(&self, device: DeviceId) -> Result<(), SimError> {
         self.mipmapped_array_destroy(device)
     }
@@ -22335,11 +22334,20 @@ impl Sim {
     /// [`Self::destroy_external_memory`], and from
     /// [`Self::import_external_semaphore`]. Unknown devices are Invalid
     /// `"device not in profile"`. Query; legal during capture.
+    /// Driver wrap: [`Self::mem_import_external_memory`].
+    /// Identity: [`Self::mem_import_external_memory`].
     pub fn import_external_memory(&self, device: DeviceId) -> Result<(), SimError> {
         let _gpu = self.profile.gpu(device)?;
         Err(SimError::Invalid {
             why: "external memory",
         })
+    }
+
+    /// `cuImportExternalMemory`. Identity with [`Self::import_external_memory`].
+    /// Query; legal during capture. Distinct from [`Self::mem_mipmapped_array_destroy`].
+    /// This VM does not invent occupancy SM counts this slice.
+    pub fn mem_import_external_memory(&self, device: DeviceId) -> Result<(), SimError> {
+        self.import_external_memory(device)
     }
 
     /// `cuDestroyExternalMemory` plus `cudaDestroyExternalMemory`. External
