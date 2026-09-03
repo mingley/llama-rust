@@ -904,6 +904,7 @@ compiled kernel exists; no Engine flag).
 `gpu-sim` `mem_module_get_global` is `cuModuleGetGlobal` (identity with `module_get_global`; no Engine flag).
 `gpu-sim` `mem_module_get_tex_ref` is `cuModuleGetTexRef` (identity with `module_get_tex_ref`; no Engine flag).
 `gpu-sim` `mem_tex_ref_create` is `cuTexRefCreate` (identity with `tex_ref_create`; no Engine flag).
+`gpu-sim` `mem_tex_ref_destroy` is `cuTexRefDestroy` (identity with `tex_ref_destroy`; no Engine flag).
 `gpu-sim` `mem_alloc` is `cuMemAlloc` (identity with `malloc`; no Engine flag).
 `gpu-sim` `mem_free` is `cuMemFree` (identity with `free_sync`; no Engine flag).
 `gpu-sim` `mem_free_host` is `cuMemFreeHost` (identity with `free_host_pinned`; no Engine flag).
@@ -1332,6 +1333,7 @@ compiled kernel exists; no Engine flag).
 `gpu-sim` `mem_module_get_global` is `cuModuleGetGlobal` (identity with `module_get_global`; no Engine flag).
 `gpu-sim` `mem_module_get_tex_ref` is `cuModuleGetTexRef` (identity with `module_get_tex_ref`; no Engine flag).
 `gpu-sim` `mem_tex_ref_create` is `cuTexRefCreate` (identity with `tex_ref_create`; no Engine flag).
+`gpu-sim` `mem_tex_ref_destroy` is `cuTexRefDestroy` (identity with `tex_ref_destroy`; no Engine flag).
 `gpu-sim` `func_is_loaded` is `cuFuncIsLoaded` (`false` until a compiled
 kernel exists; no Engine flag).
 `gpu-sim` `func_load` is `cuFuncLoad` (Invalid; no compiled kernel; no
