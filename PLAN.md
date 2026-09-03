@@ -10779,7 +10779,12 @@ model, do not celebrate the sim.
       `mem_green_ctx_synchronize`. This VM does not invent occupancy SM counts, Engine `--mem-graph-node-get-local-id`,
       or `cudaChooseDevice`. `gpu-profile capture` is still refused. Dual
       score still has no `$/M tokens`.
-1304. [ ] Next numbered PLAN item after 1303 is the next `gpu-sim` / Engine /
+1304. [x] `gpu-sim` `Sim::mem_graph_node_get_tools_id` is
+      `cuGraphNodeGetToolsId`. Identity with `graph_node_get_tools_id`. Query; legal during capture. Distinct from
+      `mem_graph_node_get_local_id`. This VM does not invent occupancy SM counts, Engine `--mem-graph-node-get-tools-id`,
+      or `cudaChooseDevice`. `gpu-profile capture` is still refused. Dual
+      score still has no `$/M tokens`.
+1305. [ ] Next numbered PLAN item after 1304 is the next `gpu-sim` / Engine /
     serve / expertvm mechanical API that is still missing, or the next official
     decode family. Prefer remaining CUDA-shaped twins over more
     OpenAI HTTP veneer. Do not invent F32 `output.scale`. Do not invent a
@@ -13650,6 +13655,11 @@ model, do not celebrate the sim.
     occupancy SM counts this slice. Do not reverse MemGraphNodeGetLocalId identity with graph_node_get_local_id.
     Do not invent `graph_node_get_tools_id` as `mem_graph_node_get_local_id`.
     Do not invent `cuGraphNodeGetToolsId` as `mem_graph_node_get_local_id`.
+    Do not invent a second `cuGraphNodeGetToolsId` / `mem_graph_node_get_tools_id`.
+    Do not invent Engine `--mem-graph-node-get-tools-id`. Do not invent
+    occupancy SM counts this slice. Do not reverse MemGraphNodeGetToolsId identity with graph_node_get_tools_id.
+    Do not invent `graph_node_get_containing_graph` as `mem_graph_node_get_tools_id`.
+    Do not invent `cuGraphNodeGetContainingGraph` as `mem_graph_node_get_tools_id`.
     Do not invent a second `cudaStreamAddCallback`.
     Do not invent Engine `--stream-callback` (same wall as second live
     `cudaLaunchHostFunc` after miss DMA).
@@ -16557,6 +16567,11 @@ model, do not celebrate the sim.
     this slice. Do not reverse MemGraphNodeGetLocalId identity with graph_node_get_local_id.
     Do not wrap `graph_node_get_local_id` as `mem_graph_node_get_local_id`.
     Do not wrap `graph_node_get_tools_id` as `mem_graph_node_get_local_id`.
+    Do not invent a second `mem_graph_node_get_tools_id` API. Do not invent
+    Engine `--mem-graph-node-get-tools-id-identity`. Do not invent a cu-graph-node-get-containing-graph
+    this slice. Do not reverse MemGraphNodeGetToolsId identity with graph_node_get_tools_id.
+    Do not wrap `graph_node_get_tools_id` as `mem_graph_node_get_tools_id`.
+    Do not wrap `graph_node_get_containing_graph` as `mem_graph_node_get_tools_id`.
     Do not invent a second DeviceLaunch in-flight destroy-complete check or Engine
     `--device-launch-destroy`. Do not abort an in-flight DeviceLaunch when
     `destroy_graph` succeeds. Do not delay destroy of an idle exec. Do not invent
@@ -19362,6 +19377,10 @@ model, do not celebrate the sim.
     invent Engine `--cu-mem-graph-node-get-local-id`. Do not reverse wrapping
     cuGraphNodeGetLocalId identity. Do not wrap `green_ctx_synchronize` as `mem_graph_node_get_local_id`.
     Do not wrap `graph_node_get_tools_id` as `mem_graph_node_get_local_id`.
+    Do not invent a second `mem_graph_node_get_tools_id` method. Do not
+    invent Engine `--cu-mem-graph-node-get-tools-id`. Do not reverse wrapping
+    cuGraphNodeGetToolsId identity. Do not wrap `graph_node_get_local_id` as `mem_graph_node_get_tools_id`.
+    Do not wrap `graph_node_get_containing_graph` as `mem_graph_node_get_tools_id`.
     Do not
     spend the next item on an OpenAI-compatible HTTP veneer.
 

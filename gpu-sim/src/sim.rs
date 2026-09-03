@@ -13522,7 +13522,6 @@ impl Sim {
 
     /// `cuGraphNodeGetLocalId`. Identity with [`Self::graph_node_get_local_id`].
     /// Query; legal during capture. Distinct from [`Self::mem_green_ctx_synchronize`].
-    /// This VM does not invent occupancy SM counts this slice.
     pub fn mem_graph_node_get_local_id(
         &self,
         graph: GraphId,
@@ -13540,10 +13539,23 @@ impl Sim {
     /// `"unknown graph node"`. A parked in-flight-destroyed exec is Invalid
     /// `"unknown graph"` (CUDA `cuGraphNodeGetToolsId`). Query; capture is
     /// legal. Live exec GetToolsId stays. Definition GetToolsId stays.
+    /// Driver wrap: [`Self::mem_graph_node_get_tools_id`].
+    /// Identity: [`Self::mem_graph_node_get_tools_id`].
     pub fn graph_node_get_tools_id(&self, graph: GraphId, node: usize) -> Result<u64, SimError> {
         let local = self.graph_node_get_local_id(graph, node)?;
         let gid = self.graph_get_id(graph)?;
         Ok((u64::from(gid) << 32) | u64::from(local))
+    }
+
+    /// `cuGraphNodeGetToolsId`. Identity with [`Self::graph_node_get_tools_id`].
+    /// Query; legal during capture. Distinct from [`Self::mem_graph_node_get_local_id`].
+    /// This VM does not invent occupancy SM counts this slice.
+    pub fn mem_graph_node_get_tools_id(
+        &self,
+        graph: GraphId,
+        node: usize,
+    ) -> Result<u64, SimError> {
+        self.graph_node_get_tools_id(graph, node)
     }
 
     /// `cuGraphNodeGetContainingGraph`. Query; legal during capture.
