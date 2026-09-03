@@ -22275,7 +22275,6 @@ impl Sim {
 
     /// `cuMipmappedArrayCreate`. Identity with [`Self::mipmapped_array_create`].
     /// Query; legal during capture. Distinct from [`Self::mem_mipmapped_array_get_sparse_properties`].
-    /// This VM does not invent occupancy SM counts this slice.
     pub fn mem_mipmapped_array_create(&self, device: DeviceId) -> Result<(), SimError> {
         self.mipmapped_array_create(device)
     }
@@ -22288,11 +22287,20 @@ impl Sim {
     /// [`Self::mipmapped_array_get_memory_requirements`], and from
     /// [`Self::mipmapped_array_destroy`]. Unknown devices are
     /// Invalid `"device not in profile"`. Query; legal during capture.
+    /// Driver wrap: [`Self::mem_mipmapped_array_get_level`].
+    /// Identity: [`Self::mem_mipmapped_array_get_level`].
     pub fn mipmapped_array_get_level(&self, device: DeviceId) -> Result<(), SimError> {
         let _gpu = self.profile.gpu(device)?;
         Err(SimError::Invalid {
             why: "mipmap level",
         })
+    }
+
+    /// `cuMipmappedArrayGetLevel`. Identity with [`Self::mipmapped_array_get_level`].
+    /// Query; legal during capture. Distinct from [`Self::mem_mipmapped_array_create`].
+    /// This VM does not invent occupancy SM counts this slice.
+    pub fn mem_mipmapped_array_get_level(&self, device: DeviceId) -> Result<(), SimError> {
+        self.mipmapped_array_get_level(device)
     }
 
     /// `cuMipmappedArrayDestroy` plus `cudaFreeMipmappedArray`. CUDA
