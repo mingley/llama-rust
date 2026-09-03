@@ -21298,7 +21298,6 @@ impl Sim {
 
     /// `cuMemcpyHtoD`. Identity with [`Self::memcpy_htod`].
     /// Host-sync; capture refused. Distinct from [`Self::mem_pool_get_id`].
-    /// This VM does not invent occupancy SM counts this slice.
     pub fn mem_memcpy_htod(
         &mut self,
         device: DeviceId,
@@ -21362,6 +21361,8 @@ impl Sim {
     /// [`Self::memcpy_device_to_pinned`] is `cuMemcpyDtoHAsync`.
     /// [`Self::memcpy_device_to_host`] stays pageable.
     /// [`Self::memcpy_sync`] stays generic `cudaMemcpy`.
+    /// Driver wrap: [`Self::mem_memcpy_dtoh`].
+    /// Identity: [`Self::mem_memcpy_dtoh`].
     pub fn memcpy_dtoh(
         &mut self,
         device: DeviceId,
@@ -21377,6 +21378,19 @@ impl Sim {
         let id = self.memcpy_device_to_pinned(device, alloc, bytes, stream)?;
         self.synchronize_stream(device, stream)?;
         Ok(id)
+    }
+
+    /// `cuMemcpyDtoH`. Identity with [`Self::memcpy_dtoh`].
+    /// Host-sync; capture refused. Distinct from [`Self::mem_memcpy_htod`].
+    /// This VM does not invent occupancy SM counts this slice.
+    pub fn mem_memcpy_dtoh(
+        &mut self,
+        device: DeviceId,
+        alloc: AllocId,
+        bytes: u64,
+        stream: StreamId,
+    ) -> Result<OpId, SimError> {
+        self.memcpy_dtoh(device, alloc, bytes, stream)
     }
 
     /// Peer copy `src` → `dst` of an existing allocation (hot replica).

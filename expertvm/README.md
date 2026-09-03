@@ -996,6 +996,7 @@ compiled kernel exists; no Engine flag).
 `gpu-sim` `mem_graph_node_get_containing_graph` is `cuGraphNodeGetContainingGraph` (identity with `graph_node_get_containing_graph`; no Engine flag).
 `gpu-sim` `mem_pool_get_id` is `cuMemPoolGetId` (identity with `pool_get_id`; no Engine flag).
 `gpu-sim` `mem_memcpy_htod` is `cuMemcpyHtoD` (identity with `memcpy_htod`; no Engine flag).
+`gpu-sim` `mem_memcpy_dtoh` is `cuMemcpyDtoH` (identity with `memcpy_dtoh`; no Engine flag).
 `gpu-sim` `mem_alloc` is `cuMemAlloc` (identity with `malloc`; no Engine flag).
 `gpu-sim` `mem_free` is `cuMemFree` (identity with `free_sync`; no Engine flag).
 `gpu-sim` `mem_free_host` is `cuMemFreeHost` (identity with `free_host_pinned`; no Engine flag).
@@ -1516,6 +1517,7 @@ compiled kernel exists; no Engine flag).
 `gpu-sim` `mem_graph_node_get_containing_graph` is `cuGraphNodeGetContainingGraph` (identity with `graph_node_get_containing_graph`; no Engine flag).
 `gpu-sim` `mem_pool_get_id` is `cuMemPoolGetId` (identity with `pool_get_id`; no Engine flag).
 `gpu-sim` `mem_memcpy_htod` is `cuMemcpyHtoD` (identity with `memcpy_htod`; no Engine flag).
+`gpu-sim` `mem_memcpy_dtoh` is `cuMemcpyDtoH` (identity with `memcpy_dtoh`; no Engine flag).
 `gpu-sim` `func_is_loaded` is `cuFuncIsLoaded` (`false` until a compiled
 kernel exists; no Engine flag).
 `gpu-sim` `func_load` is `cuFuncLoad` (Invalid; no compiled kernel; no

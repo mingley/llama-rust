@@ -10799,7 +10799,12 @@ model, do not celebrate the sim.
       `mem_pool_get_id`. This VM does not invent occupancy SM counts, Engine `--mem-memcpy-htod`,
       or `cudaChooseDevice`. `gpu-profile capture` is still refused. Dual
       score still has no `$/M tokens`.
-1308. [ ] Next numbered PLAN item after 1307 is the next `gpu-sim` / Engine /
+1308. [x] `gpu-sim` `Sim::mem_memcpy_dtoh` is
+      `cuMemcpyDtoH`. Identity with `memcpy_dtoh`. Host-sync; capture refused. Distinct from
+      `mem_memcpy_htod`. This VM does not invent occupancy SM counts, Engine `--mem-memcpy-dtoh`,
+      or `cudaChooseDevice`. `gpu-profile capture` is still refused. Dual
+      score still has no `$/M tokens`.
+1309. [ ] Next numbered PLAN item after 1308 is the next `gpu-sim` / Engine /
     serve / expertvm mechanical API that is still missing, or the next official
     decode family. Prefer remaining CUDA-shaped twins over more
     OpenAI HTTP veneer. Do not invent F32 `output.scale`. Do not invent a
@@ -13690,6 +13695,11 @@ model, do not celebrate the sim.
     occupancy SM counts this slice. Do not reverse MemMemcpyHtod identity with memcpy_htod.
     Do not invent `memcpy_dtoh` as `mem_memcpy_htod`.
     Do not invent `cuMemcpyDtoH` as `mem_memcpy_htod`.
+    Do not invent a second `cuMemcpyDtoH` / `mem_memcpy_dtoh`.
+    Do not invent Engine `--mem-memcpy-dtoh`. Do not invent
+    occupancy SM counts this slice. Do not reverse MemMemcpyDtoh identity with memcpy_dtoh.
+    Do not invent `prefetch_batch_async` as `mem_memcpy_dtoh`.
+    Do not invent `cudaMemPrefetchBatchAsync` as `mem_memcpy_dtoh`.
     Do not invent a second `cudaStreamAddCallback`.
     Do not invent Engine `--stream-callback` (same wall as second live
     `cudaLaunchHostFunc` after miss DMA).
@@ -16617,6 +16627,11 @@ model, do not celebrate the sim.
     this slice. Do not reverse MemMemcpyHtod identity with memcpy_htod.
     Do not wrap `memcpy_htod` as `mem_memcpy_htod`.
     Do not wrap `memcpy_dtoh` as `mem_memcpy_htod`.
+    Do not invent a second `mem_memcpy_dtoh` API. Do not invent
+    Engine `--mem-memcpy-dtoh-identity`. Do not invent a cu-prefetch-batch-async
+    this slice. Do not reverse MemMemcpyDtoh identity with memcpy_dtoh.
+    Do not wrap `memcpy_dtoh` as `mem_memcpy_dtoh`.
+    Do not wrap `prefetch_batch_async` as `mem_memcpy_dtoh`.
     Do not invent a second DeviceLaunch in-flight destroy-complete check or Engine
     `--device-launch-destroy`. Do not abort an in-flight DeviceLaunch when
     `destroy_graph` succeeds. Do not delay destroy of an idle exec. Do not invent
@@ -19438,6 +19453,10 @@ model, do not celebrate the sim.
     invent Engine `--cu-mem-memcpy-htod`. Do not reverse wrapping
     cuMemcpyHtoD identity. Do not wrap `pool_get_id` as `mem_memcpy_htod`.
     Do not wrap `memcpy_dtoh` as `mem_memcpy_htod`.
+    Do not invent a second `mem_memcpy_dtoh` method. Do not
+    invent Engine `--cu-mem-memcpy-dtoh`. Do not reverse wrapping
+    cuMemcpyDtoH identity. Do not wrap `memcpy_htod` as `mem_memcpy_dtoh`.
+    Do not wrap `prefetch_batch_async` as `mem_memcpy_dtoh`.
     Do not
     spend the next item on an OpenAI-compatible HTTP veneer.
 
