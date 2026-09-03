@@ -27650,7 +27650,6 @@ impl Sim {
 
     /// `cuLibraryEnumerateKernels`. Identity with [`Self::library_enumerate_kernels`].
     /// Query; legal during capture. Distinct from [`Self::mem_library_get_kernel_count`].
-    /// This VM does not invent occupancy SM counts this slice.
     pub fn mem_library_enumerate_kernels(&self, device: DeviceId) -> Result<(), SimError> {
         self.library_enumerate_kernels(device)
     }
@@ -27663,11 +27662,20 @@ impl Sim {
     /// (why is not `"library enumk"`). Unknown devices are Invalid
     /// `"device not in profile"`. Query; legal during capture. This VM does
     /// not invent `cuKernelGetParamCount` this slice.
+    /// Driver wrap: [`Self::mem_kernel_get_library`].
+    /// Identity: [`Self::mem_kernel_get_library`].
     pub fn kernel_get_library(&self, device: DeviceId) -> Result<(), SimError> {
         let _gpu = self.profile.gpu(device)?;
         Err(SimError::Invalid {
             why: "kernel library",
         })
+    }
+
+    /// `cuKernelGetLibrary`. Identity with [`Self::kernel_get_library`].
+    /// Query; legal during capture. Distinct from [`Self::mem_library_enumerate_kernels`].
+    /// This VM does not invent occupancy SM counts this slice.
+    pub fn mem_kernel_get_library(&self, device: DeviceId) -> Result<(), SimError> {
+        self.kernel_get_library(device)
     }
 
     /// `cuKernelGetFunction`. CUDA kernels are not modeled.
