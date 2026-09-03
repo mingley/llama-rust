@@ -25995,7 +25995,6 @@ impl Sim {
 
     /// `cuDeviceRegisterAsyncNotification`. Identity with [`Self::device_register_async_notification`].
     /// Query; legal during capture. Distinct from [`Self::mem_checkpoint_process_get_state`].
-    /// This VM does not invent occupancy SM counts this slice.
     pub fn mem_device_register_async_notification(&self, device: DeviceId) -> Result<(), SimError> {
         self.device_register_async_notification(device)
     }
@@ -26009,9 +26008,21 @@ impl Sim {
     /// Unknown devices are Invalid `"device not in profile"`. Query; legal
     /// during capture. This VM does not invent `cuMemMapArrayAsync` this
     /// slice.
+    /// Driver wrap: [`Self::mem_device_unregister_async_notification`].
+    /// Identity: [`Self::mem_device_unregister_async_notification`].
     pub fn device_unregister_async_notification(&self, device: DeviceId) -> Result<(), SimError> {
         let _gpu = self.profile.gpu(device)?;
         Err(SimError::Invalid { why: "async unreg" })
+    }
+
+    /// `cuDeviceUnregisterAsyncNotification`. Identity with [`Self::device_unregister_async_notification`].
+    /// Query; legal during capture. Distinct from [`Self::mem_device_register_async_notification`].
+    /// This VM does not invent occupancy SM counts this slice.
+    pub fn mem_device_unregister_async_notification(
+        &self,
+        device: DeviceId,
+    ) -> Result<(), SimError> {
+        self.device_unregister_async_notification(device)
     }
 
     /// `cuInit`. Host-synchronous. Capture cannot include it.
