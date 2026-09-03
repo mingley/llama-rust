@@ -25731,7 +25731,6 @@ impl Sim {
 
     /// `cuGetProcAddress`. Identity with [`Self::get_proc_address`] (`cudaGetDriverEntryPoint`).
     /// Query; legal during capture. Distinct from [`Self::mem_driver_get_version`].
-    /// This VM does not invent occupancy SM counts this slice.
     pub fn mem_get_proc_address(&self, device: DeviceId) -> Result<(), SimError> {
         self.get_proc_address(device)
     }
@@ -25742,11 +25741,20 @@ impl Sim {
     /// from [`Self::get_proc_address`]. Unknown devices are Invalid
     /// `"device not in profile"`. Query; legal during capture. This VM does
     /// not invent a succeeding `CUuuid` table lookup this slice.
+    /// Driver wrap: [`Self::mem_get_export_table`].
+    /// Identity: [`Self::mem_get_export_table`].
     pub fn get_export_table(&self, device: DeviceId) -> Result<(), SimError> {
         let _gpu = self.profile.gpu(device)?;
         Err(SimError::Invalid {
             why: "export table",
         })
+    }
+
+    /// `cuGetExportTable`. Identity with [`Self::get_export_table`].
+    /// Query; legal during capture. Distinct from [`Self::mem_get_proc_address`].
+    /// This VM does not invent occupancy SM counts this slice.
+    pub fn mem_get_export_table(&self, device: DeviceId) -> Result<(), SimError> {
+        self.get_export_table(device)
     }
 
     /// `cuCoredumpGetAttribute` / `cudaCoredumpGetAttribute`.
