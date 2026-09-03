@@ -10469,7 +10469,12 @@ model, do not celebrate the sim.
       `mem_tex_ref_get_border_color`. This VM does not invent occupancy SM counts, Engine `--mem-tex-ref-get-flags`,
       or `cudaChooseDevice`. `gpu-profile capture` is still refused. Dual
       score still has no `$/M tokens`.
-1242. [ ] Next numbered PLAN item after 1241 is the next `gpu-sim` / Engine /
+1242. [x] `gpu-sim` `Sim::mem_module_get_surf_ref` is
+      `cuModuleGetSurfRef`. Identity with `module_get_surf_ref`. Query; legal during capture. Distinct from
+      `mem_tex_ref_get_flags`. This VM does not invent occupancy SM counts, Engine `--mem-module-get-surf-ref`,
+      or `cudaChooseDevice`. `gpu-profile capture` is still refused. Dual
+      score still has no `$/M tokens`.
+1243. [ ] Next numbered PLAN item after 1242 is the next `gpu-sim` / Engine /
     serve / expertvm mechanical API that is still missing, or the next official
     decode family. Prefer remaining CUDA-shaped twins over more
     OpenAI HTTP veneer. Do not invent F32 `output.scale`. Do not invent a
@@ -13030,6 +13035,11 @@ model, do not celebrate the sim.
     occupancy SM counts this slice. Do not reverse MemTexRefGetFlags identity with tex_ref_get_flags.
     Do not invent `module_get_surf_ref` as `mem_tex_ref_get_flags`.
     Do not invent `cuModuleGetSurfRef` as `mem_tex_ref_get_flags`.
+    Do not invent a second `cuModuleGetSurfRef` / `mem_module_get_surf_ref`.
+    Do not invent Engine `--mem-module-get-surf-ref`. Do not invent
+    occupancy SM counts this slice. Do not reverse MemModuleGetSurfRef identity with module_get_surf_ref.
+    Do not invent `surf_ref_set_array` as `mem_module_get_surf_ref`.
+    Do not invent `cuSurfRefSetArray` as `mem_module_get_surf_ref`.
     Do not invent a second `cudaStreamAddCallback`.
     Do not invent Engine `--stream-callback` (same wall as second live
     `cudaLaunchHostFunc` after miss DMA).
@@ -15627,6 +15637,11 @@ model, do not celebrate the sim.
     this slice. Do not reverse MemTexRefGetFlags identity with tex_ref_get_flags.
     Do not wrap `tex_ref_get_flags` as `mem_tex_ref_get_flags`.
     Do not wrap `module_get_surf_ref` as `mem_tex_ref_get_flags`.
+    Do not invent a second `mem_module_get_surf_ref` API. Do not invent
+    Engine `--mem-module-get-surf-ref-identity`. Do not invent a surf-ref-set-array
+    this slice. Do not reverse MemModuleGetSurfRef identity with module_get_surf_ref.
+    Do not wrap `module_get_surf_ref` as `mem_module_get_surf_ref`.
+    Do not wrap `surf_ref_set_array` as `mem_module_get_surf_ref`.
     Do not invent a second DeviceLaunch in-flight destroy-complete check or Engine
     `--device-launch-destroy`. Do not abort an in-flight DeviceLaunch when
     `destroy_graph` succeeds. Do not delay destroy of an idle exec. Do not invent
@@ -18184,6 +18199,10 @@ model, do not celebrate the sim.
     invent Engine `--cu-mem-tex-ref-get-flags`. Do not reverse wrapping
     cuTexRefGetFlags identity. Do not wrap `tex_ref_get_border_color` as `mem_tex_ref_get_flags`.
     Do not wrap `module_get_surf_ref` as `mem_tex_ref_get_flags`.
+    Do not invent a second `mem_module_get_surf_ref` method. Do not
+    invent Engine `--cu-mem-module-get-surf-ref`. Do not reverse wrapping
+    cuModuleGetSurfRef identity. Do not wrap `tex_ref_get_flags` as `mem_module_get_surf_ref`.
+    Do not wrap `surf_ref_set_array` as `mem_module_get_surf_ref`.
     Do not
     spend the next item on an OpenAI-compatible HTTP veneer.
 
