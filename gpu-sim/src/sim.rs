@@ -33174,6 +33174,8 @@ impl Sim {
     /// `"func attr"`. Cluster-dim-must-be-set is `0`/`1`. Required cluster
     /// axes are nonnegative (`0` unset). Typed helpers stay. Decode identity
     /// stays `0` / disallowed / Default / unset.
+    /// Driver wrap: [`Self::mem_func_set_attribute`].
+    /// Identity: [`Self::mem_func_set_attribute`].
     pub fn func_set_attribute(
         &mut self,
         device: DeviceId,
@@ -33221,6 +33223,18 @@ impl Sim {
         }
     }
 
+    /// `cudaFuncSetAttribute`. Identity with [`Self::func_set_attribute`].
+    /// Host-side; legal during capture. Distinct from [`Self::mem_func_get_attribute`].
+    /// This VM does not invent occupancy SM counts this slice.
+    pub fn mem_func_set_attribute(
+        &mut self,
+        device: DeviceId,
+        attr: FuncAttr,
+        value: i32,
+    ) -> Result<(), SimError> {
+        self.func_set_attribute(device, attr, value)
+    }
+
     /// `cudaFuncGetAttribute`. Query; legal during capture.
     ///
     /// Unknown devices are Invalid. This VM has one function-attr set per
@@ -33255,7 +33269,6 @@ impl Sim {
 
     /// `cudaFuncGetAttribute`. Identity with [`Self::func_get_attribute`].
     /// Query; legal during capture. Distinct from [`Self::mem_func_get_param_info`].
-    /// This VM does not invent occupancy SM counts this slice.
     pub fn mem_func_get_attribute(
         &self,
         device: DeviceId,
