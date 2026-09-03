@@ -26843,7 +26843,6 @@ impl Sim {
 
     /// `cuTexRefGetFormat`. Identity with [`Self::tex_ref_get_format`].
     /// Query; legal during capture. Distinct from [`Self::mem_tex_ref_get_filter_mode`].
-    /// This VM does not invent occupancy SM counts this slice.
     pub fn mem_tex_ref_get_format(&self, device: DeviceId) -> Result<(), SimError> {
         self.tex_ref_get_format(device)
     }
@@ -26856,11 +26855,20 @@ impl Sim {
     /// (why is not `"texref mipfilt"`). Unknown devices are Invalid `"device not in profile"`.
     /// Query; legal during capture. This VM does not invent
     /// `cuTexRefGetMipmapLevelBias` this slice.
+    /// Driver wrap: [`Self::mem_tex_ref_get_mipmap_filter_mode`].
+    /// Identity: [`Self::mem_tex_ref_get_mipmap_filter_mode`].
     pub fn tex_ref_get_mipmap_filter_mode(&self, device: DeviceId) -> Result<(), SimError> {
         let _gpu = self.profile.gpu(device)?;
         Err(SimError::Invalid {
             why: "texref gmipfilt",
         })
+    }
+
+    /// `cuTexRefGetMipmapFilterMode`. Identity with [`Self::tex_ref_get_mipmap_filter_mode`].
+    /// Query; legal during capture. Distinct from [`Self::mem_tex_ref_get_format`].
+    /// This VM does not invent occupancy SM counts this slice.
+    pub fn mem_tex_ref_get_mipmap_filter_mode(&self, device: DeviceId) -> Result<(), SimError> {
+        self.tex_ref_get_mipmap_filter_mode(device)
     }
 
     /// `cuTexRefGetMipmapLevelBias`. CUDA texture references are not modeled.
