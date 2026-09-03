@@ -10709,7 +10709,12 @@ model, do not celebrate the sim.
       `mem_func_load`. This VM does not invent occupancy SM counts, Engine `--mem-func-get-module`,
       or `cudaChooseDevice`. `gpu-profile capture` is still refused. Dual
       score still has no `$/M tokens`.
-1290. [ ] Next numbered PLAN item after 1289 is the next `gpu-sim` / Engine /
+1290. [x] `gpu-sim` `Sim::mem_func_get_name` is
+      `cuFuncGetName`. Identity with `func_get_name`. Query; legal during capture. Distinct from
+      `mem_func_get_module`. This VM does not invent occupancy SM counts, Engine `--mem-func-get-name`,
+      or `cudaChooseDevice`. `gpu-profile capture` is still refused. Dual
+      score still has no `$/M tokens`.
+1291. [ ] Next numbered PLAN item after 1290 is the next `gpu-sim` / Engine /
     serve / expertvm mechanical API that is still missing, or the next official
     decode family. Prefer remaining CUDA-shaped twins over more
     OpenAI HTTP veneer. Do not invent F32 `output.scale`. Do not invent a
@@ -13510,6 +13515,11 @@ model, do not celebrate the sim.
     occupancy SM counts this slice. Do not reverse MemFuncGetModule identity with func_get_module.
     Do not invent `func_set_attribute` as `mem_func_get_module`.
     Do not invent `cudaFuncSetAttribute` as `mem_func_get_module`.
+    Do not invent a second `cuFuncGetName` / `mem_func_get_name`.
+    Do not invent Engine `--mem-func-get-name`. Do not invent
+    occupancy SM counts this slice. Do not reverse MemFuncGetName identity with func_get_name.
+    Do not invent `func_get_param_info` as `mem_func_get_name`.
+    Do not invent `cuFuncGetParamInfo` as `mem_func_get_name`.
     Do not invent a second `cudaStreamAddCallback`.
     Do not invent Engine `--stream-callback` (same wall as second live
     `cudaLaunchHostFunc` after miss DMA).
@@ -16347,6 +16357,11 @@ model, do not celebrate the sim.
     this slice. Do not reverse MemFuncGetModule identity with func_get_module.
     Do not wrap `func_get_module` as `mem_func_get_module`.
     Do not wrap `func_set_attribute` as `mem_func_get_module`.
+    Do not invent a second `mem_func_get_name` API. Do not invent
+    Engine `--mem-func-get-name-identity`. Do not invent a func-get-param-info
+    this slice. Do not reverse MemFuncGetName identity with func_get_name.
+    Do not wrap `func_get_name` as `mem_func_get_name`.
+    Do not wrap `func_get_param_info` as `mem_func_get_name`.
     Do not invent a second DeviceLaunch in-flight destroy-complete check or Engine
     `--device-launch-destroy`. Do not abort an in-flight DeviceLaunch when
     `destroy_graph` succeeds. Do not delay destroy of an idle exec. Do not invent
@@ -19096,6 +19111,10 @@ model, do not celebrate the sim.
     invent Engine `--cu-mem-func-get-module`. Do not reverse wrapping
     cuFuncGetModule identity. Do not wrap `func_load` as `mem_func_get_module`.
     Do not wrap `func_set_attribute` as `mem_func_get_module`.
+    Do not invent a second `mem_func_get_name` method. Do not
+    invent Engine `--cu-mem-func-get-name`. Do not reverse wrapping
+    cuFuncGetName identity. Do not wrap `func_get_module` as `mem_func_get_name`.
+    Do not wrap `func_get_param_info` as `mem_func_get_name`.
     Do not
     spend the next item on an OpenAI-compatible HTTP veneer.
 
