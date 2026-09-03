@@ -82,6 +82,13 @@ Identity with `checkpoint_process_unlock`. Query; legal during capture. Distinct
 This VM does not invent occupancy SM counts or Engine `--mem-checkpoint-process-unlock`.
 `gpu-profile capture` is still refused. Dual score still has no `$/M tokens`.
 
+## Shipped 2026-09-03 — CUDA `cudaProfilerInitialize`
+
+`gpu-sim` `Sim::mem_profiler_initialize` is `cudaProfilerInitialize`.
+Identity with `profiler_initialize`. Query; legal during capture. Distinct from `mem_profiler_stop`.
+This VM does not invent occupancy SM counts or Engine `--mem-profiler-initialize`.
+`gpu-profile capture` is still refused. Dual score still has no `$/M tokens`.
+
 ## Shipped 2026-09-03 — CUDA `cuProfilerStop`
 
 `gpu-sim` `Sim::mem_profiler_stop` is `cuProfilerStop`.

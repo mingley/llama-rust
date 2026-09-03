@@ -26081,7 +26081,6 @@ impl Sim {
 
     /// `cuProfilerStop`. Identity with [`Self::profiler_stop`].
     /// Host-synchronous. Capture refused. Distinct from [`Self::mem_profiler_start`].
-    /// This VM does not invent occupancy SM counts this slice.
     pub fn mem_profiler_stop(&mut self) -> Result<(), SimError> {
         self.profiler_stop()
     }
@@ -26092,10 +26091,19 @@ impl Sim {
     /// [`Self::profiler_start`] and from [`Self::profiler_stop`]. Query;
     /// legal during capture. This VM does not invent a CUPTI activity
     /// buffer this slice.
+    /// Driver wrap: [`Self::mem_profiler_initialize`].
+    /// Identity: [`Self::mem_profiler_initialize`].
     pub fn profiler_initialize(&self) -> Result<(), SimError> {
         Err(SimError::Invalid {
             why: "profiler initialize",
         })
+    }
+
+    /// `cudaProfilerInitialize`. Identity with [`Self::profiler_initialize`].
+    /// Query; legal during capture. Distinct from [`Self::mem_profiler_stop`].
+    /// This VM does not invent occupancy SM counts this slice.
+    pub fn mem_profiler_initialize(&self) -> Result<(), SimError> {
+        self.profiler_initialize()
     }
 
     /// `cuModuleGetLoadingMode`. Query; legal during capture.

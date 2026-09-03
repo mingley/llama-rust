@@ -891,6 +891,7 @@ compiled kernel exists; no Engine flag).
 `gpu-sim` `mem_driver_init` is `cuInit` (identity with `driver_init`; no Engine flag).
 `gpu-sim` `mem_profiler_start` is `cuProfilerStart` (identity with `profiler_start`; no Engine flag).
 `gpu-sim` `mem_profiler_stop` is `cuProfilerStop` (identity with `profiler_stop`; no Engine flag).
+`gpu-sim` `mem_profiler_initialize` is `cudaProfilerInitialize` (identity with `profiler_initialize`; no Engine flag).
 `gpu-sim` `mem_alloc` is `cuMemAlloc` (identity with `malloc`; no Engine flag).
 `gpu-sim` `mem_free` is `cuMemFree` (identity with `free_sync`; no Engine flag).
 `gpu-sim` `mem_free_host` is `cuMemFreeHost` (identity with `free_host_pinned`; no Engine flag).
@@ -1306,6 +1307,7 @@ compiled kernel exists; no Engine flag).
 `gpu-sim` `mem_driver_init` is `cuInit` (identity with `driver_init`; no Engine flag).
 `gpu-sim` `mem_profiler_start` is `cuProfilerStart` (identity with `profiler_start`; no Engine flag).
 `gpu-sim` `mem_profiler_stop` is `cuProfilerStop` (identity with `profiler_stop`; no Engine flag).
+`gpu-sim` `mem_profiler_initialize` is `cudaProfilerInitialize` (identity with `profiler_initialize`; no Engine flag).
 `gpu-sim` `func_is_loaded` is `cuFuncIsLoaded` (`false` until a compiled
 kernel exists; no Engine flag).
 `gpu-sim` `func_load` is `cuFuncLoad` (Invalid; no compiled kernel; no
