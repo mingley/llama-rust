@@ -26,6 +26,13 @@ Identity with `get_export_table`. Query; legal during capture. Distinct from `me
 This VM does not invent occupancy SM counts or Engine `--mem-get-export-table`.
 `gpu-profile capture` is still refused. Dual score still has no `$/M tokens`.
 
+## Shipped 2026-09-03 — CUDA `cuCoredumpGetAttribute`
+
+`gpu-sim` `Sim::mem_coredump_get_attribute` is `cuCoredumpGetAttribute`.
+Identity with `coredump_get_attribute` (`cudaCoredumpGetAttribute`). Query; legal during capture. Distinct from `mem_get_export_table`.
+This VM does not invent occupancy SM counts or Engine `--mem-coredump-get-attribute`.
+`gpu-profile capture` is still refused. Dual score still has no `$/M tokens`.
+
 ## Shipped 2026-09-03 — CUDA `cuDeviceTotalMem`
 
 `gpu-sim` `Sim::mem_device_total_mem` is `cuDeviceTotalMem`.

@@ -876,6 +876,7 @@ compiled kernel exists; no Engine flag).
 `gpu-sim` `mem_driver_get_version` is `cuDriverGetVersion` (identity with `driver_get_version`; no Engine flag).
 `gpu-sim` `mem_get_proc_address` is `cuGetProcAddress` (identity with `get_proc_address`; no Engine flag).
 `gpu-sim` `mem_get_export_table` is `cuGetExportTable` (identity with `get_export_table`; no Engine flag).
+`gpu-sim` `mem_coredump_get_attribute` is `cuCoredumpGetAttribute` (identity with `coredump_get_attribute`; no Engine flag).
 `gpu-sim` `mem_alloc` is `cuMemAlloc` (identity with `malloc`; no Engine flag).
 `gpu-sim` `mem_free` is `cuMemFree` (identity with `free_sync`; no Engine flag).
 `gpu-sim` `mem_free_host` is `cuMemFreeHost` (identity with `free_host_pinned`; no Engine flag).
@@ -1276,6 +1277,7 @@ compiled kernel exists; no Engine flag).
 `gpu-sim` `mem_driver_get_version` is `cuDriverGetVersion` (identity with `driver_get_version`; no Engine flag).
 `gpu-sim` `mem_get_proc_address` is `cuGetProcAddress` (identity with `get_proc_address`; no Engine flag).
 `gpu-sim` `mem_get_export_table` is `cuGetExportTable` (identity with `get_export_table`; no Engine flag).
+`gpu-sim` `mem_coredump_get_attribute` is `cuCoredumpGetAttribute` (identity with `coredump_get_attribute`; no Engine flag).
 `gpu-sim` `func_is_loaded` is `cuFuncIsLoaded` (`false` until a compiled
 kernel exists; no Engine flag).
 `gpu-sim` `func_load` is `cuFuncLoad` (Invalid; no compiled kernel; no

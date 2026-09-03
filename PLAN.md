@@ -10199,7 +10199,12 @@ model, do not celebrate the sim.
       `mem_get_proc_address`. This VM does not invent occupancy SM counts, Engine `--mem-get-export-table`,
       or `cudaChooseDevice`. `gpu-profile capture` is still refused. Dual
       score still has no `$/M tokens`.
-1188. [ ] Next numbered PLAN item after 1187 is the next `gpu-sim` / Engine /
+1188. [x] `gpu-sim` `Sim::mem_coredump_get_attribute` is
+      `cuCoredumpGetAttribute`. Identity with `coredump_get_attribute` (`cudaCoredumpGetAttribute`). Query; legal during capture. Distinct from
+      `mem_get_export_table`. This VM does not invent occupancy SM counts, Engine `--mem-coredump-get-attribute`,
+      or `cudaChooseDevice`. `gpu-profile capture` is still refused. Dual
+      score still has no `$/M tokens`.
+1189. [ ] Next numbered PLAN item after 1188 is the next `gpu-sim` / Engine /
     serve / expertvm mechanical API that is still missing, or the next official
     decode family. Prefer remaining CUDA-shaped twins over more
     OpenAI HTTP veneer. Do not invent F32 `output.scale`. Do not invent a
@@ -12490,6 +12495,11 @@ model, do not celebrate the sim.
     occupancy SM counts this slice. Do not reverse MemGetExportTable identity with get_export_table.
     Do not invent `coredump_get_attribute` as `mem_get_export_table`.
     Do not invent `cuCoredumpGetAttribute` as `mem_get_export_table`.
+    Do not invent a second `cuCoredumpGetAttribute` / `mem_coredump_get_attribute`.
+    Do not invent Engine `--mem-coredump-get-attribute`. Do not invent
+    occupancy SM counts this slice. Do not reverse MemCoredumpGetAttribute identity with coredump_get_attribute.
+    Do not invent `coredump_set_attribute` as `mem_coredump_get_attribute`.
+    Do not invent `cuCoredumpSetAttribute` as `mem_coredump_get_attribute`.
     Do not invent a second `cudaStreamAddCallback`.
     Do not invent Engine `--stream-callback` (same wall as second live
     `cudaLaunchHostFunc` after miss DMA).
@@ -14817,6 +14827,11 @@ model, do not celebrate the sim.
     this slice. Do not reverse MemGetExportTable identity with get_export_table.
     Do not wrap `get_export_table` as `mem_get_export_table`.
     Do not wrap `coredump_get_attribute` as `mem_get_export_table`.
+    Do not invent a second `mem_coredump_get_attribute` API. Do not invent
+    Engine `--mem-coredump-get-attribute-identity`. Do not invent a coredump-set-attribute
+    this slice. Do not reverse MemCoredumpGetAttribute identity with coredump_get_attribute.
+    Do not wrap `coredump_get_attribute` as `mem_coredump_get_attribute`.
+    Do not wrap `coredump_set_attribute` as `mem_coredump_get_attribute`.
     Do not invent a second DeviceLaunch in-flight destroy-complete check or Engine
     `--device-launch-destroy`. Do not abort an in-flight DeviceLaunch when
     `destroy_graph` succeeds. Do not delay destroy of an idle exec. Do not invent
@@ -17158,6 +17173,10 @@ model, do not celebrate the sim.
     invent Engine `--cu-mem-get-export-table`. Do not reverse wrapping
     cuGetExportTable identity. Do not wrap `get_proc_address` as `mem_get_export_table`.
     Do not wrap `coredump_get_attribute` as `mem_get_export_table`.
+    Do not invent a second `mem_coredump_get_attribute` method. Do not
+    invent Engine `--cu-mem-coredump-get-attribute`. Do not reverse wrapping
+    cuCoredumpGetAttribute identity. Do not wrap `get_export_table` as `mem_coredump_get_attribute`.
+    Do not wrap `coredump_set_attribute` as `mem_coredump_get_attribute`.
     Do not
     spend the next item on an OpenAI-compatible HTTP veneer.
 
