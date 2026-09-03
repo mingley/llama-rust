@@ -10649,7 +10649,12 @@ model, do not celebrate the sim.
       `mem_kernel_set_attribute`. This VM does not invent occupancy SM counts, Engine `--mem-kernel-set-cache-config`,
       or `cudaChooseDevice`. `gpu-profile capture` is still refused. Dual
       score still has no `$/M tokens`.
-1278. [ ] Next numbered PLAN item after 1277 is the next `gpu-sim` / Engine /
+1278. [x] `gpu-sim` `Sim::mem_link_create` is
+      `cuLinkCreate`. Identity with `link_create`. Query; legal during capture. Distinct from
+      `mem_kernel_set_cache_config`. This VM does not invent occupancy SM counts, Engine `--mem-link-create`,
+      or `cudaChooseDevice`. `gpu-profile capture` is still refused. Dual
+      score still has no `$/M tokens`.
+1279. [ ] Next numbered PLAN item after 1278 is the next `gpu-sim` / Engine /
     serve / expertvm mechanical API that is still missing, or the next official
     decode family. Prefer remaining CUDA-shaped twins over more
     OpenAI HTTP veneer. Do not invent F32 `output.scale`. Do not invent a
@@ -13390,6 +13395,11 @@ model, do not celebrate the sim.
     occupancy SM counts this slice. Do not reverse MemKernelSetCacheConfig identity with kernel_set_cache_config.
     Do not invent `link_create` as `mem_kernel_set_cache_config`.
     Do not invent `cuLinkCreate` as `mem_kernel_set_cache_config`.
+    Do not invent a second `cuLinkCreate` / `mem_link_create`.
+    Do not invent Engine `--mem-link-create`. Do not invent
+    occupancy SM counts this slice. Do not reverse MemLinkCreate identity with link_create.
+    Do not invent `link_add_data` as `mem_link_create`.
+    Do not invent `cuLinkAddData` as `mem_link_create`.
     Do not invent a second `cudaStreamAddCallback`.
     Do not invent Engine `--stream-callback` (same wall as second live
     `cudaLaunchHostFunc` after miss DMA).
@@ -16167,6 +16177,11 @@ model, do not celebrate the sim.
     this slice. Do not reverse MemKernelSetCacheConfig identity with kernel_set_cache_config.
     Do not wrap `kernel_set_cache_config` as `mem_kernel_set_cache_config`.
     Do not wrap `link_create` as `mem_kernel_set_cache_config`.
+    Do not invent a second `mem_link_create` API. Do not invent
+    Engine `--mem-link-create-identity`. Do not invent a link-add-data
+    this slice. Do not reverse MemLinkCreate identity with link_create.
+    Do not wrap `link_create` as `mem_link_create`.
+    Do not wrap `link_add_data` as `mem_link_create`.
     Do not invent a second DeviceLaunch in-flight destroy-complete check or Engine
     `--device-launch-destroy`. Do not abort an in-flight DeviceLaunch when
     `destroy_graph` succeeds. Do not delay destroy of an idle exec. Do not invent
@@ -18868,6 +18883,10 @@ model, do not celebrate the sim.
     invent Engine `--cu-mem-kernel-set-cache-config`. Do not reverse wrapping
     cuKernelSetCacheConfig identity. Do not wrap `kernel_set_attribute` as `mem_kernel_set_cache_config`.
     Do not wrap `link_create` as `mem_kernel_set_cache_config`.
+    Do not invent a second `mem_link_create` method. Do not
+    invent Engine `--cu-mem-link-create`. Do not reverse wrapping
+    cuLinkCreate identity. Do not wrap `kernel_set_cache_config` as `mem_link_create`.
+    Do not wrap `link_add_data` as `mem_link_create`.
     Do not
     spend the next item on an OpenAI-compatible HTTP veneer.
 
