@@ -2157,7 +2157,6 @@ impl Sim {
 
     /// `cudaExecutionCtxSynchronize`. Identity with [`Self::green_ctx_synchronize`].
     /// Host-sync; capture refused when a bound stream is capturing. Distinct from [`Self::mem_green_ctx_stream_create`].
-    /// This VM does not invent occupancy SM counts this slice.
     pub fn mem_green_ctx_synchronize(&mut self, ctx: GreenCtxId) -> Result<(), SimError> {
         self.green_ctx_synchronize(ctx)
     }
@@ -13509,6 +13508,8 @@ impl Sim {
     /// [`Self::graph_get_id`] (graph id, not node local id). Live exec
     /// GetLocalId stays. Definition GetLocalId of the live graph while that
     /// exec is parked stays. Live in-flight GetLocalId stays.
+    /// Driver wrap: [`Self::mem_graph_node_get_local_id`].
+    /// Identity: [`Self::mem_graph_node_get_local_id`].
     pub fn graph_node_get_local_id(&self, graph: GraphId, node: usize) -> Result<u32, SimError> {
         let g = self.live_graph(graph)?;
         let _live = live_ok(g.steps.get(node).ok_or(SimError::Invalid {
@@ -13517,6 +13518,17 @@ impl Sim {
         u32::try_from(node).map_err(|_| SimError::Invalid {
             why: "unknown graph node",
         })
+    }
+
+    /// `cuGraphNodeGetLocalId`. Identity with [`Self::graph_node_get_local_id`].
+    /// Query; legal during capture. Distinct from [`Self::mem_green_ctx_synchronize`].
+    /// This VM does not invent occupancy SM counts this slice.
+    pub fn mem_graph_node_get_local_id(
+        &self,
+        graph: GraphId,
+        node: usize,
+    ) -> Result<u32, SimError> {
+        self.graph_node_get_local_id(graph, node)
     }
 
     /// `cuGraphNodeGetToolsId`. Query; legal during capture.
