@@ -82,6 +82,13 @@ Identity with `checkpoint_process_unlock`. Query; legal during capture. Distinct
 This VM does not invent occupancy SM counts or Engine `--mem-checkpoint-process-unlock`.
 `gpu-profile capture` is still refused. Dual score still has no `$/M tokens`.
 
+## Shipped 2026-09-03 — CUDA `cuDestroyExternalMemory`
+
+`gpu-sim` `Sim::mem_destroy_external_memory` is `cuDestroyExternalMemory`.
+Identity with `destroy_external_memory`. Query; legal during capture. Distinct from `mem_import_external_memory`.
+This VM does not invent occupancy SM counts or Engine `--mem-destroy-external-memory`.
+`gpu-profile capture` is still refused. Dual score still has no `$/M tokens`.
+
 ## Shipped 2026-09-03 — CUDA `cuImportExternalMemory`
 
 `gpu-sim` `Sim::mem_import_external_memory` is `cuImportExternalMemory`.
