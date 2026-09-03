@@ -993,6 +993,7 @@ compiled kernel exists; no Engine flag).
 `gpu-sim` `mem_green_ctx_synchronize` is `cudaExecutionCtxSynchronize` (identity with `green_ctx_synchronize`; no Engine flag).
 `gpu-sim` `mem_graph_node_get_local_id` is `cuGraphNodeGetLocalId` (identity with `graph_node_get_local_id`; no Engine flag).
 `gpu-sim` `mem_graph_node_get_tools_id` is `cuGraphNodeGetToolsId` (identity with `graph_node_get_tools_id`; no Engine flag).
+`gpu-sim` `mem_graph_node_get_containing_graph` is `cuGraphNodeGetContainingGraph` (identity with `graph_node_get_containing_graph`; no Engine flag).
 `gpu-sim` `mem_alloc` is `cuMemAlloc` (identity with `malloc`; no Engine flag).
 `gpu-sim` `mem_free` is `cuMemFree` (identity with `free_sync`; no Engine flag).
 `gpu-sim` `mem_free_host` is `cuMemFreeHost` (identity with `free_host_pinned`; no Engine flag).
@@ -1510,6 +1511,7 @@ compiled kernel exists; no Engine flag).
 `gpu-sim` `mem_green_ctx_synchronize` is `cudaExecutionCtxSynchronize` (identity with `green_ctx_synchronize`; no Engine flag).
 `gpu-sim` `mem_graph_node_get_local_id` is `cuGraphNodeGetLocalId` (identity with `graph_node_get_local_id`; no Engine flag).
 `gpu-sim` `mem_graph_node_get_tools_id` is `cuGraphNodeGetToolsId` (identity with `graph_node_get_tools_id`; no Engine flag).
+`gpu-sim` `mem_graph_node_get_containing_graph` is `cuGraphNodeGetContainingGraph` (identity with `graph_node_get_containing_graph`; no Engine flag).
 `gpu-sim` `func_is_loaded` is `cuFuncIsLoaded` (`false` until a compiled
 kernel exists; no Engine flag).
 `gpu-sim` `func_load` is `cuFuncLoad` (Invalid; no compiled kernel; no

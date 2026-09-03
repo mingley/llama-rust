@@ -13549,7 +13549,6 @@ impl Sim {
 
     /// `cuGraphNodeGetToolsId`. Identity with [`Self::graph_node_get_tools_id`].
     /// Query; legal during capture. Distinct from [`Self::mem_graph_node_get_local_id`].
-    /// This VM does not invent occupancy SM counts this slice.
     pub fn mem_graph_node_get_tools_id(
         &self,
         graph: GraphId,
@@ -13567,6 +13566,8 @@ impl Sim {
     /// exec is Invalid `"unknown graph"`. Live exec GetContainingGraph stays.
     /// Definition GetContainingGraph of the live graph while that exec is
     /// parked stays. Live in-flight GetContainingGraph stays.
+    /// Driver wrap: [`Self::mem_graph_node_get_containing_graph`].
+    /// Identity: [`Self::mem_graph_node_get_containing_graph`].
     pub fn graph_node_get_containing_graph(
         &self,
         graph: GraphId,
@@ -13577,6 +13578,17 @@ impl Sim {
             why: "unknown graph node",
         })?)?;
         Ok(graph)
+    }
+
+    /// `cuGraphNodeGetContainingGraph`. Identity with [`Self::graph_node_get_containing_graph`].
+    /// Query; legal during capture. Distinct from [`Self::mem_graph_node_get_tools_id`].
+    /// This VM does not invent occupancy SM counts this slice.
+    pub fn mem_graph_node_get_containing_graph(
+        &self,
+        graph: GraphId,
+        node: usize,
+    ) -> Result<GraphId, SimError> {
+        self.graph_node_get_containing_graph(graph, node)
     }
 
     /// `cudaGraphNodeGetType` for node `i`. Driver
