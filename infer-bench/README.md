@@ -9,6 +9,9 @@ Serving-shaped measurement over MoE traces. Dual scores:
    `rent_usd_micros_per_hour` (example list price × wall / tokens). Example
    profiles leave rent at `0`.
 
+Live agent plan: [CIVILIZATION.md](../CIVILIZATION.md) (items 7–9). Do not
+invent `$ / M tokens` on example profiles.
+
 ```
 infer-bench adversarial --capacity 2 --tokens 64 --experts 16 --profile cheap
 infer-bench trace tests/traces/cycling.jsonl --capacity 2 --profile h100

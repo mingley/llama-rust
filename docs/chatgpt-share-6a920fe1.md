@@ -8,7 +8,7 @@ The complete share-API extract (search batches, thought summaries, cited
 URLs, raw JSON) is in [`chatgpt-share-6a920fe1/`](chatgpt-share-6a920fe1/).
 Plugin/tool result bodies are redacted in ChatGPT’s share payload.
 
-The executable plan derived from this transcript is [`PLAN.md`](../PLAN.md).
+The historical research plan derived from this transcript is [`PLAN.md`](../PLAN.md). Live agent execution is [`CIVILIZATION.md`](../CIVILIZATION.md).
 
 ---
 

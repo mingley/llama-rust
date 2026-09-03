@@ -9,6 +9,9 @@ It is the wedge from the research plan: make a 300B–1T sparse MoE behave
 as if its experts live in one address space, while a policy keeps the
 right ones in a bounded fast tier (HBM, or a simulated HBM).
 
+Live agent plan: [CIVILIZATION.md](../CIVILIZATION.md) (this crate is items
+3, 4, and 10). [PLAN.md](../PLAN.md) is the historical catalog.
+
 ## What this is not
 
 - Not DeepEP (token → resident expert all-to-all)

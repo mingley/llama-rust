@@ -11,6 +11,10 @@ This is **not** Accel-Sim / GPGPU-Sim. It does not model warps, register
 banks, or Tensor Core circuitry. Those effects enter only as empirical
 kernel curves in a profile.
 
+Live agent plan: [CIVILIZATION.md](../CIVILIZATION.md) (CUDA catalog is
+frozen; item 5). Do not add `mem_*` identity wraps unless a decode /
+expertvm / sim_replay path needs a missing mechanical invariant.
+
 ```text
 inference system
         │

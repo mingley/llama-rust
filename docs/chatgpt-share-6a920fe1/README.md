@@ -29,4 +29,4 @@ Limitations of the share payload:
 | [sources.json](sources.json) | URLs plus titles/snippets where present |
 | [share-api.json](share-api.json) | Raw share API payload |
 
-The working plan derived from this extract lives at [/PLAN.md](../../PLAN.md).
+The historical research plan derived from this extract lives at [/PLAN.md](../../PLAN.md). Live agent execution is [/CIVILIZATION.md](../../CIVILIZATION.md).

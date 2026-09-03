@@ -1,9 +1,19 @@
 # STATUS
 
-Live research plan: [PLAN.md](PLAN.md).
+Live execution plan: [CIVILIZATION.md](CIVILIZATION.md).
+Historical research plan / CUDA catalog: [PLAN.md](PLAN.md).
 Visible five-turn extract: [docs/chatgpt-share-6a920fe1.md](docs/chatgpt-share-6a920fe1.md).
 Complete share-API extract: [docs/chatgpt-share-6a920fe1/](docs/chatgpt-share-6a920fe1/).
 Work lands on `main`. No PRs.
+
+## 2026-09-03 — Civilization plan (CUDA catalog freeze)
+
+Subsequent agents execute [CIVILIZATION.md](CIVILIZATION.md) in order,
+starting at item 1 (researcher one-afternoon path). PLAN.md item 1334
+records the freeze: do not wrap `surf_object_create` as
+`mem_surf_object_create` unless CIVILIZATION item 5’s consumer-path rule
+is met (it is not). Occupancy SM counts still walled. `gpu-profile capture`
+is still refused. Dual score still has no `$/M tokens`.
 
 ## Shipped 2026-09-03 — CUDA `cuDriverGetVersion`
 

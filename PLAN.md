@@ -11,6 +11,10 @@ Plugin result bodies are redacted in the share; custom instructions were not inc
 
 Work lands on `main`. No open PRs.
 
+**Live agent plan:** [CIVILIZATION.md](CIVILIZATION.md). This file is the
+historical research plan and CUDA catalog. Do not treat the next `mem_*`
+identity wrap as default next work.
+
 ---
 
 ## Thesis
@@ -10929,10 +10933,14 @@ model, do not celebrate the sim.
       `mem_signal_external_semaphores_async`. This VM does not invent occupancy SM counts, Engine `--mem-wait-external-semaphores-async`,
       or `cudaChooseDevice`. `gpu-profile capture` is still refused. Dual
       score still has no `$/M tokens`.
-1334. [ ] Next numbered PLAN item after 1333 is the next `gpu-sim` / Engine /
-    serve / expertvm mechanical API that is still missing, or the next official
-    decode family. Prefer remaining CUDA-shaped twins over more
-    OpenAI HTTP veneer. Do not invent F32 `output.scale`. Do not invent a
+1334. [x] CUDA identity catalog freeze. Live execution plan is
+      [CIVILIZATION.md](CIVILIZATION.md). Subsequent agents do item 1 there
+      (researcher one-afternoon path), not the next `gpu-sim` / Engine /
+      serve / expertvm mechanical API or official decode family. Do not wrap
+      `surf_object_create` as `mem_surf_object_create` unless CIVILIZATION
+      item 5 cites a decode / expertvm / sim_replay consumer path. Prefer
+      CIVILIZATION.md over remaining CUDA-shaped twins or more
+      OpenAI HTTP veneer. Do not invent F32 `output.scale`. Do not invent a
     second NVFP4 `output.scale` as a new family. Do not invent
     `output.input_scale` / `*.input_scale` this slice. Do not invent a second
     fused `attn_qkv.scale` as a new family. Do not invent a second
@@ -13950,6 +13958,8 @@ model, do not celebrate the sim.
     occupancy SM counts this slice. Do not reverse MemWaitExternalSemaphoresAsync identity with wait_external_semaphores_async.
     Do not invent `surf_object_create` as `mem_wait_external_semaphores_async`.
     Do not invent `cuSurfObjectCreate` as `mem_wait_external_semaphores_async`.
+    Do not spend the next item on another CUDA identity wrap. Execute
+    [CIVILIZATION.md](CIVILIZATION.md).
     Do not invent a second `cudaStreamAddCallback`.
     Do not invent Engine `--stream-callback` (same wall as second live
     `cudaLaunchHostFunc` after miss DMA).
@@ -17007,6 +17017,8 @@ model, do not celebrate the sim.
     this slice. Do not reverse MemWaitExternalSemaphoresAsync identity with wait_external_semaphores_async.
     Do not wrap `wait_external_semaphores_async` as `mem_wait_external_semaphores_async`.
     Do not wrap `surf_object_create` as `mem_wait_external_semaphores_async`.
+    Do not spend the next item on another CUDA identity wrap. Execute
+    [CIVILIZATION.md](CIVILIZATION.md).
     Do not invent a second DeviceLaunch in-flight destroy-complete check or Engine
     `--device-launch-destroy`. Do not abort an in-flight DeviceLaunch when
     `destroy_graph` succeeds. Do not delay destroy of an idle exec. Do not invent
@@ -19932,6 +19944,8 @@ model, do not celebrate the sim.
     invent Engine `--cu-mem-wait-external-semaphores-async`. Do not reverse wrapping
     cuWaitExternalSemaphoresAsync identity. Do not wrap `signal_external_semaphores_async` as `mem_wait_external_semaphores_async`.
     Do not wrap `surf_object_create` as `mem_wait_external_semaphores_async`.
+    Do not spend the next item on another CUDA identity wrap. Execute
+    [CIVILIZATION.md](CIVILIZATION.md).
     Do not
     spend the next item on an OpenAI-compatible HTTP veneer.
 
@@ -19955,6 +19969,9 @@ Researchers can:
 That is the company-shaped outcome. `llama-rust` remains the
 verifiable, hackable reference engine. `expertvm` is the OSS primitive.
 `gpu-sim-rs` is how fleets of agents work on it anyway.
+
+Agents get there via [CIVILIZATION.md](CIVILIZATION.md), not more CUDA
+identity wraps.
 
 ---
 
