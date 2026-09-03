@@ -25971,7 +25971,6 @@ impl Sim {
 
     /// `cuCheckpointProcessGetState`. Identity with [`Self::checkpoint_process_get_state`].
     /// Query; legal during capture. Distinct from [`Self::mem_checkpoint_process_get_restore_thread_id`].
-    /// This VM does not invent occupancy SM counts this slice.
     pub fn mem_checkpoint_process_get_state(&self, device: DeviceId) -> Result<(), SimError> {
         self.checkpoint_process_get_state(device)
     }
@@ -25985,11 +25984,20 @@ impl Sim {
     /// devices are Invalid `"device not in profile"`. Query; legal during
     /// capture. This VM does not invent
     /// `cuDeviceUnregisterAsyncNotification` this slice.
+    /// Driver wrap: [`Self::mem_device_register_async_notification`].
+    /// Identity: [`Self::mem_device_register_async_notification`].
     pub fn device_register_async_notification(&self, device: DeviceId) -> Result<(), SimError> {
         let _gpu = self.profile.gpu(device)?;
         Err(SimError::Invalid {
             why: "async notify",
         })
+    }
+
+    /// `cuDeviceRegisterAsyncNotification`. Identity with [`Self::device_register_async_notification`].
+    /// Query; legal during capture. Distinct from [`Self::mem_checkpoint_process_get_state`].
+    /// This VM does not invent occupancy SM counts this slice.
+    pub fn mem_device_register_async_notification(&self, device: DeviceId) -> Result<(), SimError> {
+        self.device_register_async_notification(device)
     }
 
     /// `cuDeviceUnregisterAsyncNotification` /

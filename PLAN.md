@@ -10249,7 +10249,12 @@ model, do not celebrate the sim.
       `mem_checkpoint_process_get_restore_thread_id`. This VM does not invent occupancy SM counts, Engine `--mem-checkpoint-process-get-state`,
       or `cudaChooseDevice`. `gpu-profile capture` is still refused. Dual
       score still has no `$/M tokens`.
-1198. [ ] Next numbered PLAN item after 1197 is the next `gpu-sim` / Engine /
+1198. [x] `gpu-sim` `Sim::mem_device_register_async_notification` is
+      `cuDeviceRegisterAsyncNotification`. Identity with `device_register_async_notification`. Query; legal during capture. Distinct from
+      `mem_checkpoint_process_get_state`. This VM does not invent occupancy SM counts, Engine `--mem-device-register-async-notification`,
+      or `cudaChooseDevice`. `gpu-profile capture` is still refused. Dual
+      score still has no `$/M tokens`.
+1199. [ ] Next numbered PLAN item after 1198 is the next `gpu-sim` / Engine /
     serve / expertvm mechanical API that is still missing, or the next official
     decode family. Prefer remaining CUDA-shaped twins over more
     OpenAI HTTP veneer. Do not invent F32 `output.scale`. Do not invent a
@@ -12590,6 +12595,11 @@ model, do not celebrate the sim.
     occupancy SM counts this slice. Do not reverse MemCheckpointProcessGetState identity with checkpoint_process_get_state.
     Do not invent `device_register_async_notification` as `mem_checkpoint_process_get_state`.
     Do not invent `cuDeviceRegisterAsyncNotification` as `mem_checkpoint_process_get_state`.
+    Do not invent a second `cuDeviceRegisterAsyncNotification` / `mem_device_register_async_notification`.
+    Do not invent Engine `--mem-device-register-async-notification`. Do not invent
+    occupancy SM counts this slice. Do not reverse MemDeviceRegisterAsyncNotification identity with device_register_async_notification.
+    Do not invent `device_unregister_async_notification` as `mem_device_register_async_notification`.
+    Do not invent `cuDeviceUnregisterAsyncNotification` as `mem_device_register_async_notification`.
     Do not invent a second `cudaStreamAddCallback`.
     Do not invent Engine `--stream-callback` (same wall as second live
     `cudaLaunchHostFunc` after miss DMA).
@@ -14967,6 +14977,11 @@ model, do not celebrate the sim.
     this slice. Do not reverse MemCheckpointProcessGetState identity with checkpoint_process_get_state.
     Do not wrap `checkpoint_process_get_state` as `mem_checkpoint_process_get_state`.
     Do not wrap `device_register_async_notification` as `mem_checkpoint_process_get_state`.
+    Do not invent a second `mem_device_register_async_notification` API. Do not invent
+    Engine `--mem-device-register-async-notification-identity`. Do not invent a device-unregister-async-notification
+    this slice. Do not reverse MemDeviceRegisterAsyncNotification identity with device_register_async_notification.
+    Do not wrap `device_register_async_notification` as `mem_device_register_async_notification`.
+    Do not wrap `device_unregister_async_notification` as `mem_device_register_async_notification`.
     Do not invent a second DeviceLaunch in-flight destroy-complete check or Engine
     `--device-launch-destroy`. Do not abort an in-flight DeviceLaunch when
     `destroy_graph` succeeds. Do not delay destroy of an idle exec. Do not invent
@@ -17348,6 +17363,10 @@ model, do not celebrate the sim.
     invent Engine `--cu-mem-checkpoint-process-get-state`. Do not reverse wrapping
     cuCheckpointProcessGetState identity. Do not wrap `checkpoint_process_get_restore_thread_id` as `mem_checkpoint_process_get_state`.
     Do not wrap `device_register_async_notification` as `mem_checkpoint_process_get_state`.
+    Do not invent a second `mem_device_register_async_notification` method. Do not
+    invent Engine `--cu-mem-device-register-async-notification`. Do not reverse wrapping
+    cuDeviceRegisterAsyncNotification identity. Do not wrap `checkpoint_process_get_state` as `mem_device_register_async_notification`.
+    Do not wrap `device_unregister_async_notification` as `mem_device_register_async_notification`.
     Do not
     spend the next item on an OpenAI-compatible HTTP veneer.
 
