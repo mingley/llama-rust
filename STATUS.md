@@ -82,6 +82,13 @@ Identity with `checkpoint_process_unlock`. Query; legal during capture. Distinct
 This VM does not invent occupancy SM counts or Engine `--mem-checkpoint-process-unlock`.
 `gpu-profile capture` is still refused. Dual score still has no `$/M tokens`.
 
+## Shipped 2026-09-03 — CUDA `cuWaitExternalSemaphoresAsync`
+
+`gpu-sim` `Sim::mem_wait_external_semaphores_async` is `cuWaitExternalSemaphoresAsync`.
+Identity with `wait_external_semaphores_async`. Query; legal during capture. Distinct from `mem_signal_external_semaphores_async`.
+This VM does not invent occupancy SM counts or Engine `--mem-wait-external-semaphores-async`.
+`gpu-profile capture` is still refused. Dual score still has no `$/M tokens`.
+
 ## Shipped 2026-09-03 — CUDA `cuSignalExternalSemaphoresAsync`
 
 `gpu-sim` `Sim::mem_signal_external_semaphores_async` is `cuSignalExternalSemaphoresAsync`.
