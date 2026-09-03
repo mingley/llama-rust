@@ -26890,7 +26890,6 @@ impl Sim {
 
     /// `cuTexRefGetMipmapLevelBias`. Identity with [`Self::tex_ref_get_mipmap_level_bias`].
     /// Query; legal during capture. Distinct from [`Self::mem_tex_ref_get_mipmap_filter_mode`].
-    /// This VM does not invent occupancy SM counts this slice.
     pub fn mem_tex_ref_get_mipmap_level_bias(&self, device: DeviceId) -> Result<(), SimError> {
         self.tex_ref_get_mipmap_level_bias(device)
     }
@@ -26904,11 +26903,20 @@ impl Sim {
     /// Unknown devices are Invalid `"device not in profile"`. Query; legal
     /// during capture. This VM does not invent `cuTexRefGetMaxAnisotropy`
     /// this slice.
+    /// Driver wrap: [`Self::mem_tex_ref_get_mipmap_level_clamp`].
+    /// Identity: [`Self::mem_tex_ref_get_mipmap_level_clamp`].
     pub fn tex_ref_get_mipmap_level_clamp(&self, device: DeviceId) -> Result<(), SimError> {
         let _gpu = self.profile.gpu(device)?;
         Err(SimError::Invalid {
             why: "texref getclamp",
         })
+    }
+
+    /// `cuTexRefGetMipmapLevelClamp`. Identity with [`Self::tex_ref_get_mipmap_level_clamp`].
+    /// Query; legal during capture. Distinct from [`Self::mem_tex_ref_get_mipmap_level_bias`].
+    /// This VM does not invent occupancy SM counts this slice.
+    pub fn mem_tex_ref_get_mipmap_level_clamp(&self, device: DeviceId) -> Result<(), SimError> {
+        self.tex_ref_get_mipmap_level_clamp(device)
     }
 
     /// `cuTexRefGetMaxAnisotropy`. CUDA texture references are not modeled.
