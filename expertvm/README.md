@@ -990,6 +990,7 @@ compiled kernel exists; no Engine flag).
 `gpu-sim` `mem_green_ctx_create` is `cuGreenCtxCreate` (identity with `green_ctx_create`; no Engine flag).
 `gpu-sim` `mem_green_ctx_destroy` is `cuGreenCtxDestroy` (identity with `green_ctx_destroy`; no Engine flag).
 `gpu-sim` `mem_green_ctx_stream_create` is `cuGreenCtxStreamCreate` (identity with `green_ctx_stream_create`; no Engine flag).
+`gpu-sim` `mem_green_ctx_synchronize` is `cudaExecutionCtxSynchronize` (identity with `green_ctx_synchronize`; no Engine flag).
 `gpu-sim` `mem_alloc` is `cuMemAlloc` (identity with `malloc`; no Engine flag).
 `gpu-sim` `mem_free` is `cuMemFree` (identity with `free_sync`; no Engine flag).
 `gpu-sim` `mem_free_host` is `cuMemFreeHost` (identity with `free_host_pinned`; no Engine flag).
@@ -1504,6 +1505,7 @@ compiled kernel exists; no Engine flag).
 `gpu-sim` `mem_green_ctx_create` is `cuGreenCtxCreate` (identity with `green_ctx_create`; no Engine flag).
 `gpu-sim` `mem_green_ctx_destroy` is `cuGreenCtxDestroy` (identity with `green_ctx_destroy`; no Engine flag).
 `gpu-sim` `mem_green_ctx_stream_create` is `cuGreenCtxStreamCreate` (identity with `green_ctx_stream_create`; no Engine flag).
+`gpu-sim` `mem_green_ctx_synchronize` is `cudaExecutionCtxSynchronize` (identity with `green_ctx_synchronize`; no Engine flag).
 `gpu-sim` `func_is_loaded` is `cuFuncIsLoaded` (`false` until a compiled
 kernel exists; no Engine flag).
 `gpu-sim` `func_load` is `cuFuncLoad` (Invalid; no compiled kernel; no

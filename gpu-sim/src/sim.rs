@@ -1965,7 +1965,6 @@ impl Sim {
 
     /// `cuGreenCtxStreamCreate`. Identity with [`Self::green_ctx_stream_create`].
     /// Host-sync; capture refused. Distinct from [`Self::mem_green_ctx_destroy`].
-    /// This VM does not invent occupancy SM counts this slice.
     pub fn mem_green_ctx_stream_create(
         &mut self,
         ctx: GreenCtxId,
@@ -2131,6 +2130,8 @@ impl Sim {
     /// [`Self::synchronize_device`] (whole GPU). Capture is refused when any
     /// bound stream is capturing. An already-idle ctx returns without starting
     /// leftover kernels on other streams.
+    /// Driver wrap: [`Self::mem_green_ctx_synchronize`].
+    /// Identity: [`Self::mem_green_ctx_synchronize`].
     pub fn green_ctx_synchronize(&mut self, ctx: GreenCtxId) -> Result<(), SimError> {
         let device = self
             .green_ctxs
@@ -2152,6 +2153,13 @@ impl Sim {
             });
         }
         Ok(())
+    }
+
+    /// `cudaExecutionCtxSynchronize`. Identity with [`Self::green_ctx_synchronize`].
+    /// Host-sync; capture refused when a bound stream is capturing. Distinct from [`Self::mem_green_ctx_stream_create`].
+    /// This VM does not invent occupancy SM counts this slice.
+    pub fn mem_green_ctx_synchronize(&mut self, ctx: GreenCtxId) -> Result<(), SimError> {
+        self.green_ctx_synchronize(ctx)
     }
 
     fn green_ctx_idle(&self, ctx: GreenCtxId) -> bool {

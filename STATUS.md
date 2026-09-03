@@ -82,6 +82,13 @@ Identity with `checkpoint_process_unlock`. Query; legal during capture. Distinct
 This VM does not invent occupancy SM counts or Engine `--mem-checkpoint-process-unlock`.
 `gpu-profile capture` is still refused. Dual score still has no `$/M tokens`.
 
+## Shipped 2026-09-03 — CUDA `cudaExecutionCtxSynchronize`
+
+`gpu-sim` `Sim::mem_green_ctx_synchronize` is `cudaExecutionCtxSynchronize`.
+Identity with `green_ctx_synchronize`. Host-sync; capture refused when a bound stream is capturing. Distinct from `mem_green_ctx_stream_create`.
+This VM does not invent occupancy SM counts or Engine `--mem-green-ctx-synchronize`.
+`gpu-profile capture` is still refused. Dual score still has no `$/M tokens`.
+
 ## Shipped 2026-09-03 — CUDA `cuGreenCtxStreamCreate`
 
 `gpu-sim` `Sim::mem_green_ctx_stream_create` is `cuGreenCtxStreamCreate`.
