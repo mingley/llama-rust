@@ -10874,7 +10874,12 @@ model, do not celebrate the sim.
       `mem_mipmapped_array_get_memory_requirements`. This VM does not invent occupancy SM counts, Engine `--mem-mipmapped-array-get-sparse-properties`,
       or `cudaChooseDevice`. `gpu-profile capture` is still refused. Dual
       score still has no `$/M tokens`.
-1323. [ ] Next numbered PLAN item after 1322 is the next `gpu-sim` / Engine /
+1323. [x] `gpu-sim` `Sim::mem_mipmapped_array_create` is
+      `cuMipmappedArrayCreate`. Identity with `mipmapped_array_create`. Query; legal during capture. Distinct from
+      `mem_mipmapped_array_get_sparse_properties`. This VM does not invent occupancy SM counts, Engine `--mem-mipmapped-array-create`,
+      or `cudaChooseDevice`. `gpu-profile capture` is still refused. Dual
+      score still has no `$/M tokens`.
+1324. [ ] Next numbered PLAN item after 1323 is the next `gpu-sim` / Engine /
     serve / expertvm mechanical API that is still missing, or the next official
     decode family. Prefer remaining CUDA-shaped twins over more
     OpenAI HTTP veneer. Do not invent F32 `output.scale`. Do not invent a
@@ -13840,6 +13845,11 @@ model, do not celebrate the sim.
     occupancy SM counts this slice. Do not reverse MemMipmappedArrayGetSparseProperties identity with mipmapped_array_get_sparse_properties.
     Do not invent `mipmapped_array_create` as `mem_mipmapped_array_get_sparse_properties`.
     Do not invent `cuMipmappedArrayCreate` as `mem_mipmapped_array_get_sparse_properties`.
+    Do not invent a second `cuMipmappedArrayCreate` / `mem_mipmapped_array_create`.
+    Do not invent Engine `--mem-mipmapped-array-create`. Do not invent
+    occupancy SM counts this slice. Do not reverse MemMipmappedArrayCreate identity with mipmapped_array_create.
+    Do not invent `mipmapped_array_get_level` as `mem_mipmapped_array_create`.
+    Do not invent `cuMipmappedArrayGetLevel` as `mem_mipmapped_array_create`.
     Do not invent a second `cudaStreamAddCallback`.
     Do not invent Engine `--stream-callback` (same wall as second live
     `cudaLaunchHostFunc` after miss DMA).
@@ -16842,6 +16852,11 @@ model, do not celebrate the sim.
     this slice. Do not reverse MemMipmappedArrayGetSparseProperties identity with mipmapped_array_get_sparse_properties.
     Do not wrap `mipmapped_array_get_sparse_properties` as `mem_mipmapped_array_get_sparse_properties`.
     Do not wrap `mipmapped_array_create` as `mem_mipmapped_array_get_sparse_properties`.
+    Do not invent a second `mem_mipmapped_array_create` API. Do not invent
+    Engine `--mem-mipmapped-array-create-identity`. Do not invent a cu-mipmapped-array-get-level
+    this slice. Do not reverse MemMipmappedArrayCreate identity with mipmapped_array_create.
+    Do not wrap `mipmapped_array_create` as `mem_mipmapped_array_create`.
+    Do not wrap `mipmapped_array_get_level` as `mem_mipmapped_array_create`.
     Do not invent a second DeviceLaunch in-flight destroy-complete check or Engine
     `--device-launch-destroy`. Do not abort an in-flight DeviceLaunch when
     `destroy_graph` succeeds. Do not delay destroy of an idle exec. Do not invent
@@ -19723,6 +19738,10 @@ model, do not celebrate the sim.
     invent Engine `--cu-mem-mipmapped-array-get-sparse-properties`. Do not reverse wrapping
     cuMipmappedArrayGetSparseProperties identity. Do not wrap `mipmapped_array_get_memory_requirements` as `mem_mipmapped_array_get_sparse_properties`.
     Do not wrap `mipmapped_array_create` as `mem_mipmapped_array_get_sparse_properties`.
+    Do not invent a second `mem_mipmapped_array_create` method. Do not
+    invent Engine `--cu-mem-mipmapped-array-create`. Do not reverse wrapping
+    cuMipmappedArrayCreate identity. Do not wrap `mipmapped_array_get_sparse_properties` as `mem_mipmapped_array_create`.
+    Do not wrap `mipmapped_array_get_level` as `mem_mipmapped_array_create`.
     Do not
     spend the next item on an OpenAI-compatible HTTP veneer.
 
