@@ -26017,7 +26017,6 @@ impl Sim {
 
     /// `cuDeviceUnregisterAsyncNotification`. Identity with [`Self::device_unregister_async_notification`].
     /// Query; legal during capture. Distinct from [`Self::mem_device_register_async_notification`].
-    /// This VM does not invent occupancy SM counts this slice.
     pub fn mem_device_unregister_async_notification(
         &self,
         device: DeviceId,
@@ -26031,6 +26030,8 @@ impl Sim {
     /// [`Sim::new`]; further calls are 1 ns no-ops. Distinct from
     /// [`Self::init_device`] (`cudaInitDevice`, per GPU) and from
     /// [`Self::driver_get_version`]. Unknown flags Invalid `"init flags"`.
+    /// Driver wrap: [`Self::mem_driver_init`].
+    /// Identity: [`Self::mem_driver_init`].
     pub fn driver_init(&mut self, flags: u32) -> Result<(), SimError> {
         self.fail_if_capturing("cannot capture driver init")?;
         if flags != 0 {
@@ -26038,6 +26039,13 @@ impl Sim {
         }
         self.clock = self.clock.saturating_add(1);
         Ok(())
+    }
+
+    /// `cuInit`. Identity with [`Self::driver_init`].
+    /// Host-synchronous. Capture refused. Distinct from [`Self::mem_device_unregister_async_notification`].
+    /// This VM does not invent occupancy SM counts this slice.
+    pub fn mem_driver_init(&mut self, flags: u32) -> Result<(), SimError> {
+        self.driver_init(flags)
     }
 
     /// `cuProfilerStart` / `cudaProfilerStart`. Host-synchronous. Capture

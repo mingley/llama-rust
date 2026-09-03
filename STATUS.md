@@ -82,6 +82,13 @@ Identity with `checkpoint_process_unlock`. Query; legal during capture. Distinct
 This VM does not invent occupancy SM counts or Engine `--mem-checkpoint-process-unlock`.
 `gpu-profile capture` is still refused. Dual score still has no `$/M tokens`.
 
+## Shipped 2026-09-03 — CUDA `cuInit`
+
+`gpu-sim` `Sim::mem_driver_init` is `cuInit`.
+Identity with `driver_init`. Host-sync; capture refused. Distinct from `mem_device_unregister_async_notification`.
+This VM does not invent occupancy SM counts or Engine `--mem-driver-init`.
+`gpu-profile capture` is still refused. Dual score still has no `$/M tokens`.
+
 ## Shipped 2026-09-03 — CUDA `cuDeviceUnregisterAsyncNotification`
 
 `gpu-sim` `Sim::mem_device_unregister_async_notification` is `cuDeviceUnregisterAsyncNotification`.

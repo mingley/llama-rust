@@ -888,6 +888,7 @@ compiled kernel exists; no Engine flag).
 `gpu-sim` `mem_checkpoint_process_get_state` is `cuCheckpointProcessGetState` (identity with `checkpoint_process_get_state`; no Engine flag).
 `gpu-sim` `mem_device_register_async_notification` is `cuDeviceRegisterAsyncNotification` (identity with `device_register_async_notification`; no Engine flag).
 `gpu-sim` `mem_device_unregister_async_notification` is `cuDeviceUnregisterAsyncNotification` (identity with `device_unregister_async_notification`; no Engine flag).
+`gpu-sim` `mem_driver_init` is `cuInit` (identity with `driver_init`; no Engine flag).
 `gpu-sim` `mem_alloc` is `cuMemAlloc` (identity with `malloc`; no Engine flag).
 `gpu-sim` `mem_free` is `cuMemFree` (identity with `free_sync`; no Engine flag).
 `gpu-sim` `mem_free_host` is `cuMemFreeHost` (identity with `free_host_pinned`; no Engine flag).
@@ -1300,6 +1301,7 @@ compiled kernel exists; no Engine flag).
 `gpu-sim` `mem_checkpoint_process_get_state` is `cuCheckpointProcessGetState` (identity with `checkpoint_process_get_state`; no Engine flag).
 `gpu-sim` `mem_device_register_async_notification` is `cuDeviceRegisterAsyncNotification` (identity with `device_register_async_notification`; no Engine flag).
 `gpu-sim` `mem_device_unregister_async_notification` is `cuDeviceUnregisterAsyncNotification` (identity with `device_unregister_async_notification`; no Engine flag).
+`gpu-sim` `mem_driver_init` is `cuInit` (identity with `driver_init`; no Engine flag).
 `gpu-sim` `func_is_loaded` is `cuFuncIsLoaded` (`false` until a compiled
 kernel exists; no Engine flag).
 `gpu-sim` `func_load` is `cuFuncLoad` (Invalid; no compiled kernel; no

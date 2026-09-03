@@ -10259,7 +10259,12 @@ model, do not celebrate the sim.
       `mem_device_register_async_notification`. This VM does not invent occupancy SM counts, Engine `--mem-device-unregister-async-notification`,
       or `cudaChooseDevice`. `gpu-profile capture` is still refused. Dual
       score still has no `$/M tokens`.
-1200. [ ] Next numbered PLAN item after 1199 is the next `gpu-sim` / Engine /
+1200. [x] `gpu-sim` `Sim::mem_driver_init` is
+      `cuInit`. Identity with `driver_init`. Host-sync; capture refused. Distinct from
+      `mem_device_unregister_async_notification`. This VM does not invent occupancy SM counts, Engine `--mem-driver-init`,
+      or `cudaChooseDevice`. `gpu-profile capture` is still refused. Dual
+      score still has no `$/M tokens`.
+1201. [ ] Next numbered PLAN item after 1200 is the next `gpu-sim` / Engine /
     serve / expertvm mechanical API that is still missing, or the next official
     decode family. Prefer remaining CUDA-shaped twins over more
     OpenAI HTTP veneer. Do not invent F32 `output.scale`. Do not invent a
@@ -12610,6 +12615,11 @@ model, do not celebrate the sim.
     occupancy SM counts this slice. Do not reverse MemDeviceUnregisterAsyncNotification identity with device_unregister_async_notification.
     Do not invent `driver_init` as `mem_device_unregister_async_notification`.
     Do not invent `cuInit` as `mem_device_unregister_async_notification`.
+    Do not invent a second `cuInit` / `mem_driver_init`.
+    Do not invent Engine `--mem-driver-init`. Do not invent
+    occupancy SM counts this slice. Do not reverse MemDriverInit identity with driver_init.
+    Do not invent `profiler_start` as `mem_driver_init`.
+    Do not invent `cuProfilerStart` as `mem_driver_init`.
     Do not invent a second `cudaStreamAddCallback`.
     Do not invent Engine `--stream-callback` (same wall as second live
     `cudaLaunchHostFunc` after miss DMA).
@@ -14997,6 +15007,11 @@ model, do not celebrate the sim.
     this slice. Do not reverse MemDeviceUnregisterAsyncNotification identity with device_unregister_async_notification.
     Do not wrap `device_unregister_async_notification` as `mem_device_unregister_async_notification`.
     Do not wrap `driver_init` as `mem_device_unregister_async_notification`.
+    Do not invent a second `mem_driver_init` API. Do not invent
+    Engine `--mem-driver-init-identity`. Do not invent a profiler-start
+    this slice. Do not reverse MemDriverInit identity with driver_init.
+    Do not wrap `driver_init` as `mem_driver_init`.
+    Do not wrap `profiler_start` as `mem_driver_init`.
     Do not invent a second DeviceLaunch in-flight destroy-complete check or Engine
     `--device-launch-destroy`. Do not abort an in-flight DeviceLaunch when
     `destroy_graph` succeeds. Do not delay destroy of an idle exec. Do not invent
@@ -17386,6 +17401,10 @@ model, do not celebrate the sim.
     invent Engine `--cu-mem-device-unregister-async-notification`. Do not reverse wrapping
     cuDeviceUnregisterAsyncNotification identity. Do not wrap `device_register_async_notification` as `mem_device_unregister_async_notification`.
     Do not wrap `driver_init` as `mem_device_unregister_async_notification`.
+    Do not invent a second `mem_driver_init` method. Do not
+    invent Engine `--cu-mem-driver-init`. Do not reverse wrapping
+    cuInit identity. Do not wrap `device_unregister_async_notification` as `mem_driver_init`.
+    Do not wrap `profiler_start` as `mem_driver_init`.
     Do not
     spend the next item on an OpenAI-compatible HTTP veneer.
 
