@@ -82,6 +82,13 @@ Identity with `checkpoint_process_unlock`. Query; legal during capture. Distinct
 This VM does not invent occupancy SM counts or Engine `--mem-checkpoint-process-unlock`.
 `gpu-profile capture` is still refused. Dual score still has no `$/M tokens`.
 
+## Shipped 2026-09-03 — CUDA `cuMemcpyHtoA`
+
+`gpu-sim` `Sim::mem_memcpy_hto_a` is `cuMemcpyHtoA`.
+Identity with `memcpy_hto_a`. Query; legal during capture. Distinct from `mem_memcpy_ato_d`.
+This VM does not invent occupancy SM counts or Engine `--mem-memcpy-hto-a`.
+`gpu-profile capture` is still refused. Dual score still has no `$/M tokens`.
+
 ## Shipped 2026-09-03 — CUDA `cuMemcpyAtoD`
 
 `gpu-sim` `Sim::mem_memcpy_ato_d` is `cuMemcpyAtoD`.

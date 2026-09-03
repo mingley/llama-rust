@@ -10494,7 +10494,12 @@ model, do not celebrate the sim.
       `mem_memcpy_dto_a`. This VM does not invent occupancy SM counts, Engine `--mem-memcpy-ato-d`,
       or `cudaChooseDevice`. `gpu-profile capture` is still refused. Dual
       score still has no `$/M tokens`.
-1247. [ ] Next numbered PLAN item after 1246 is the next `gpu-sim` / Engine /
+1247. [x] `gpu-sim` `Sim::mem_memcpy_hto_a` is
+      `cuMemcpyHtoA`. Identity with `memcpy_hto_a`. Query; legal during capture. Distinct from
+      `mem_memcpy_ato_d`. This VM does not invent occupancy SM counts, Engine `--mem-memcpy-hto-a`,
+      or `cudaChooseDevice`. `gpu-profile capture` is still refused. Dual
+      score still has no `$/M tokens`.
+1248. [ ] Next numbered PLAN item after 1247 is the next `gpu-sim` / Engine /
     serve / expertvm mechanical API that is still missing, or the next official
     decode family. Prefer remaining CUDA-shaped twins over more
     OpenAI HTTP veneer. Do not invent F32 `output.scale`. Do not invent a
@@ -13080,6 +13085,11 @@ model, do not celebrate the sim.
     occupancy SM counts this slice. Do not reverse MemMemcpyAtoD identity with memcpy_ato_d.
     Do not invent `memcpy_hto_a` as `mem_memcpy_ato_d`.
     Do not invent `cuMemcpyHtoA` as `mem_memcpy_ato_d`.
+    Do not invent a second `cuMemcpyHtoA` / `mem_memcpy_hto_a`.
+    Do not invent Engine `--mem-memcpy-hto-a`. Do not invent
+    occupancy SM counts this slice. Do not reverse MemMemcpyHtoA identity with memcpy_hto_a.
+    Do not invent `memcpy_ato_h` as `mem_memcpy_hto_a`.
+    Do not invent `cuMemcpyAtoH` as `mem_memcpy_hto_a`.
     Do not invent a second `cudaStreamAddCallback`.
     Do not invent Engine `--stream-callback` (same wall as second live
     `cudaLaunchHostFunc` after miss DMA).
@@ -15702,6 +15712,11 @@ model, do not celebrate the sim.
     this slice. Do not reverse MemMemcpyAtoD identity with memcpy_ato_d.
     Do not wrap `memcpy_ato_d` as `mem_memcpy_ato_d`.
     Do not wrap `memcpy_hto_a` as `mem_memcpy_ato_d`.
+    Do not invent a second `mem_memcpy_hto_a` API. Do not invent
+    Engine `--mem-memcpy-hto-a-identity`. Do not invent a memcpy-ato-h
+    this slice. Do not reverse MemMemcpyHtoA identity with memcpy_hto_a.
+    Do not wrap `memcpy_hto_a` as `mem_memcpy_hto_a`.
+    Do not wrap `memcpy_ato_h` as `mem_memcpy_hto_a`.
     Do not invent a second DeviceLaunch in-flight destroy-complete check or Engine
     `--device-launch-destroy`. Do not abort an in-flight DeviceLaunch when
     `destroy_graph` succeeds. Do not delay destroy of an idle exec. Do not invent
@@ -18279,6 +18294,10 @@ model, do not celebrate the sim.
     invent Engine `--cu-mem-memcpy-ato-d`. Do not reverse wrapping
     cuMemcpyAtoD identity. Do not wrap `memcpy_dto_a` as `mem_memcpy_ato_d`.
     Do not wrap `memcpy_hto_a` as `mem_memcpy_ato_d`.
+    Do not invent a second `mem_memcpy_hto_a` method. Do not
+    invent Engine `--cu-mem-memcpy-hto-a`. Do not reverse wrapping
+    cuMemcpyHtoA identity. Do not wrap `memcpy_ato_d` as `mem_memcpy_hto_a`.
+    Do not wrap `memcpy_ato_h` as `mem_memcpy_hto_a`.
     Do not
     spend the next item on an OpenAI-compatible HTTP veneer.
 

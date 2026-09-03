@@ -935,6 +935,7 @@ compiled kernel exists; no Engine flag).
 `gpu-sim` `mem_surf_ref_get_array` is `cuSurfRefGetArray` (identity with `surf_ref_get_array`; no Engine flag).
 `gpu-sim` `mem_memcpy_dto_a` is `cuMemcpyDtoA` (identity with `memcpy_dto_a`; no Engine flag).
 `gpu-sim` `mem_memcpy_ato_d` is `cuMemcpyAtoD` (identity with `memcpy_ato_d`; no Engine flag).
+`gpu-sim` `mem_memcpy_hto_a` is `cuMemcpyHtoA` (identity with `memcpy_hto_a`; no Engine flag).
 `gpu-sim` `mem_alloc` is `cuMemAlloc` (identity with `malloc`; no Engine flag).
 `gpu-sim` `mem_free` is `cuMemFree` (identity with `free_sync`; no Engine flag).
 `gpu-sim` `mem_free_host` is `cuMemFreeHost` (identity with `free_host_pinned`; no Engine flag).
@@ -1394,6 +1395,7 @@ compiled kernel exists; no Engine flag).
 `gpu-sim` `mem_surf_ref_get_array` is `cuSurfRefGetArray` (identity with `surf_ref_get_array`; no Engine flag).
 `gpu-sim` `mem_memcpy_dto_a` is `cuMemcpyDtoA` (identity with `memcpy_dto_a`; no Engine flag).
 `gpu-sim` `mem_memcpy_ato_d` is `cuMemcpyAtoD` (identity with `memcpy_ato_d`; no Engine flag).
+`gpu-sim` `mem_memcpy_hto_a` is `cuMemcpyHtoA` (identity with `memcpy_hto_a`; no Engine flag).
 `gpu-sim` `func_is_loaded` is `cuFuncIsLoaded` (`false` until a compiled
 kernel exists; no Engine flag).
 `gpu-sim` `func_load` is `cuFuncLoad` (Invalid; no compiled kernel; no
