@@ -10409,7 +10409,12 @@ model, do not celebrate the sim.
       `mem_tex_ref_set_border_color`. This VM does not invent occupancy SM counts, Engine `--mem-tex-ref-set-flags`,
       or `cudaChooseDevice`. `gpu-profile capture` is still refused. Dual
       score still has no `$/M tokens`.
-1230. [ ] Next numbered PLAN item after 1229 is the next `gpu-sim` / Engine /
+1230. [x] `gpu-sim` `Sim::mem_tex_ref_get_array` is
+      `cuTexRefGetArray`. Identity with `tex_ref_get_array`. Query; legal during capture. Distinct from
+      `mem_tex_ref_set_flags`. This VM does not invent occupancy SM counts, Engine `--mem-tex-ref-get-array`,
+      or `cudaChooseDevice`. `gpu-profile capture` is still refused. Dual
+      score still has no `$/M tokens`.
+1231. [ ] Next numbered PLAN item after 1230 is the next `gpu-sim` / Engine /
     serve / expertvm mechanical API that is still missing, or the next official
     decode family. Prefer remaining CUDA-shaped twins over more
     OpenAI HTTP veneer. Do not invent F32 `output.scale`. Do not invent a
@@ -12910,6 +12915,11 @@ model, do not celebrate the sim.
     occupancy SM counts this slice. Do not reverse MemTexRefSetFlags identity with tex_ref_set_flags.
     Do not invent `tex_ref_get_array` as `mem_tex_ref_set_flags`.
     Do not invent `cuTexRefGetArray` as `mem_tex_ref_set_flags`.
+    Do not invent a second `cuTexRefGetArray` / `mem_tex_ref_get_array`.
+    Do not invent Engine `--mem-tex-ref-get-array`. Do not invent
+    occupancy SM counts this slice. Do not reverse MemTexRefGetArray identity with tex_ref_get_array.
+    Do not invent `tex_ref_get_mipmapped_array` as `mem_tex_ref_get_array`.
+    Do not invent `cuTexRefGetMipmappedArray` as `mem_tex_ref_get_array`.
     Do not invent a second `cudaStreamAddCallback`.
     Do not invent Engine `--stream-callback` (same wall as second live
     `cudaLaunchHostFunc` after miss DMA).
@@ -15447,6 +15457,11 @@ model, do not celebrate the sim.
     this slice. Do not reverse MemTexRefSetFlags identity with tex_ref_set_flags.
     Do not wrap `tex_ref_set_flags` as `mem_tex_ref_set_flags`.
     Do not wrap `tex_ref_get_array` as `mem_tex_ref_set_flags`.
+    Do not invent a second `mem_tex_ref_get_array` API. Do not invent
+    Engine `--mem-tex-ref-get-array-identity`. Do not invent a tex-ref-get-mipmapped-array
+    this slice. Do not reverse MemTexRefGetArray identity with tex_ref_get_array.
+    Do not wrap `tex_ref_get_array` as `mem_tex_ref_get_array`.
+    Do not wrap `tex_ref_get_mipmapped_array` as `mem_tex_ref_get_array`.
     Do not invent a second DeviceLaunch in-flight destroy-complete check or Engine
     `--device-launch-destroy`. Do not abort an in-flight DeviceLaunch when
     `destroy_graph` succeeds. Do not delay destroy of an idle exec. Do not invent
@@ -17956,6 +17971,10 @@ model, do not celebrate the sim.
     invent Engine `--cu-mem-tex-ref-set-flags`. Do not reverse wrapping
     cuTexRefSetFlags identity. Do not wrap `tex_ref_set_border_color` as `mem_tex_ref_set_flags`.
     Do not wrap `tex_ref_get_array` as `mem_tex_ref_set_flags`.
+    Do not invent a second `mem_tex_ref_get_array` method. Do not
+    invent Engine `--cu-mem-tex-ref-get-array`. Do not reverse wrapping
+    cuTexRefGetArray identity. Do not wrap `tex_ref_set_flags` as `mem_tex_ref_get_array`.
+    Do not wrap `tex_ref_get_mipmapped_array` as `mem_tex_ref_get_array`.
     Do not
     spend the next item on an OpenAI-compatible HTTP veneer.
 
