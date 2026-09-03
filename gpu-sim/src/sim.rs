@@ -22470,7 +22470,6 @@ impl Sim {
 
     /// `cuDestroyExternalSemaphore`. Identity with [`Self::destroy_external_semaphore`].
     /// Query; legal during capture. Distinct from [`Self::mem_import_external_semaphore`].
-    /// This VM does not invent occupancy SM counts this slice.
     pub fn mem_destroy_external_semaphore(&self, device: DeviceId) -> Result<(), SimError> {
         self.destroy_external_semaphore(device)
     }
@@ -22485,6 +22484,8 @@ impl Sim {
     /// [`Self::import_external_semaphore`], and from
     /// [`Self::wait_external_semaphores_async`]. Unknown devices are Invalid
     /// `"device not in profile"`. Query; legal during capture.
+    /// Driver wrap: [`Self::mem_signal_external_semaphores_async`].
+    /// Identity: [`Self::mem_signal_external_semaphores_async`].
     pub fn signal_external_semaphores_async(
         &self,
         device: DeviceId,
@@ -22495,6 +22496,17 @@ impl Sim {
         Err(SimError::Invalid {
             why: "semaphore signal",
         })
+    }
+
+    /// `cuSignalExternalSemaphoresAsync`. Identity with [`Self::signal_external_semaphores_async`].
+    /// Query; legal during capture. Distinct from [`Self::mem_destroy_external_semaphore`].
+    /// This VM does not invent occupancy SM counts this slice.
+    pub fn mem_signal_external_semaphores_async(
+        &self,
+        device: DeviceId,
+        stream: StreamId,
+    ) -> Result<(), SimError> {
+        self.signal_external_semaphores_async(device, stream)
     }
 
     /// `cuWaitExternalSemaphoresAsync` plus
