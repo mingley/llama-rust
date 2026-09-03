@@ -10219,7 +10219,12 @@ model, do not celebrate the sim.
       `mem_coredump_get_attribute_global`. This VM does not invent occupancy SM counts, Engine `--mem-coredump-set-attribute-global`,
       or `cudaChooseDevice`. `gpu-profile capture` is still refused. Dual
       score still has no `$/M tokens`.
-1192. [ ] Next numbered PLAN item after 1191 is the next `gpu-sim` / Engine /
+1192. [x] `gpu-sim` `Sim::mem_checkpoint_process_lock` is
+      `cuCheckpointProcessLock`. Identity with `checkpoint_process_lock`. Query; legal during capture. Distinct from
+      `mem_coredump_set_attribute_global`. This VM does not invent occupancy SM counts, Engine `--mem-checkpoint-process-lock`,
+      or `cudaChooseDevice`. `gpu-profile capture` is still refused. Dual
+      score still has no `$/M tokens`.
+1193. [ ] Next numbered PLAN item after 1192 is the next `gpu-sim` / Engine /
     serve / expertvm mechanical API that is still missing, or the next official
     decode family. Prefer remaining CUDA-shaped twins over more
     OpenAI HTTP veneer. Do not invent F32 `output.scale`. Do not invent a
@@ -12530,6 +12535,11 @@ model, do not celebrate the sim.
     occupancy SM counts this slice. Do not reverse MemCoredumpSetAttributeGlobal identity with coredump_set_attribute_global.
     Do not invent `checkpoint_process_lock` as `mem_coredump_set_attribute_global`.
     Do not invent `cuCheckpointProcessLock` as `mem_coredump_set_attribute_global`.
+    Do not invent a second `cuCheckpointProcessLock` / `mem_checkpoint_process_lock`.
+    Do not invent Engine `--mem-checkpoint-process-lock`. Do not invent
+    occupancy SM counts this slice. Do not reverse MemCheckpointProcessLock identity with checkpoint_process_lock.
+    Do not invent `checkpoint_process_checkpoint` as `mem_checkpoint_process_lock`.
+    Do not invent `cuCheckpointProcessCheckpoint` as `mem_checkpoint_process_lock`.
     Do not invent a second `cudaStreamAddCallback`.
     Do not invent Engine `--stream-callback` (same wall as second live
     `cudaLaunchHostFunc` after miss DMA).
@@ -14877,6 +14887,11 @@ model, do not celebrate the sim.
     this slice. Do not reverse MemCoredumpSetAttributeGlobal identity with coredump_set_attribute_global.
     Do not wrap `coredump_set_attribute_global` as `mem_coredump_set_attribute_global`.
     Do not wrap `checkpoint_process_lock` as `mem_coredump_set_attribute_global`.
+    Do not invent a second `mem_checkpoint_process_lock` API. Do not invent
+    Engine `--mem-checkpoint-process-lock-identity`. Do not invent a checkpoint-process-checkpoint
+    this slice. Do not reverse MemCheckpointProcessLock identity with checkpoint_process_lock.
+    Do not wrap `checkpoint_process_lock` as `mem_checkpoint_process_lock`.
+    Do not wrap `checkpoint_process_checkpoint` as `mem_checkpoint_process_lock`.
     Do not invent a second DeviceLaunch in-flight destroy-complete check or Engine
     `--device-launch-destroy`. Do not abort an in-flight DeviceLaunch when
     `destroy_graph` succeeds. Do not delay destroy of an idle exec. Do not invent
@@ -17234,6 +17249,10 @@ model, do not celebrate the sim.
     invent Engine `--cu-mem-coredump-set-attribute-global`. Do not reverse wrapping
     cuCoredumpSetAttributeGlobal identity. Do not wrap `coredump_get_attribute_global` as `mem_coredump_set_attribute_global`.
     Do not wrap `checkpoint_process_lock` as `mem_coredump_set_attribute_global`.
+    Do not invent a second `mem_checkpoint_process_lock` method. Do not
+    invent Engine `--cu-mem-checkpoint-process-lock`. Do not reverse wrapping
+    cuCheckpointProcessLock identity. Do not wrap `coredump_set_attribute_global` as `mem_checkpoint_process_lock`.
+    Do not wrap `checkpoint_process_checkpoint` as `mem_checkpoint_process_lock`.
     Do not
     spend the next item on an OpenAI-compatible HTTP veneer.
 

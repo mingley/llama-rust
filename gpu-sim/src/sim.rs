@@ -25837,7 +25837,6 @@ impl Sim {
 
     /// `cuCoredumpSetAttributeGlobal`. Identity with [`Self::coredump_set_attribute_global`] (`cudaCoredumpSetAttributeGlobal`).
     /// Query; legal during capture. Distinct from [`Self::mem_coredump_get_attribute_global`].
-    /// This VM does not invent occupancy SM counts this slice.
     pub fn mem_coredump_set_attribute_global(&self, device: DeviceId) -> Result<(), SimError> {
         self.coredump_set_attribute_global(device)
     }
@@ -25850,9 +25849,18 @@ impl Sim {
     /// [`Self::coredump_set_attribute_global`]. Unknown devices are
     /// Invalid `"device not in profile"`. Query; legal during capture. This
     /// VM does not invent `cuCheckpointProcessCheckpoint` this slice.
+    /// Driver wrap: [`Self::mem_checkpoint_process_lock`].
+    /// Identity: [`Self::mem_checkpoint_process_lock`].
     pub fn checkpoint_process_lock(&self, device: DeviceId) -> Result<(), SimError> {
         let _gpu = self.profile.gpu(device)?;
         Err(SimError::Invalid { why: "checkpoint" })
+    }
+
+    /// `cuCheckpointProcessLock`. Identity with [`Self::checkpoint_process_lock`].
+    /// Query; legal during capture. Distinct from [`Self::mem_coredump_set_attribute_global`].
+    /// This VM does not invent occupancy SM counts this slice.
+    pub fn mem_checkpoint_process_lock(&self, device: DeviceId) -> Result<(), SimError> {
+        self.checkpoint_process_lock(device)
     }
 
     /// `cuCheckpointProcessCheckpoint`. CUDA process checkpoint is not

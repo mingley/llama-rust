@@ -54,6 +54,13 @@ Identity with `coredump_set_attribute_global` (`cudaCoredumpSetAttributeGlobal`)
 This VM does not invent occupancy SM counts or Engine `--mem-coredump-set-attribute-global`.
 `gpu-profile capture` is still refused. Dual score still has no `$/M tokens`.
 
+## Shipped 2026-09-03 — CUDA `cuCheckpointProcessLock`
+
+`gpu-sim` `Sim::mem_checkpoint_process_lock` is `cuCheckpointProcessLock`.
+Identity with `checkpoint_process_lock`. Query; legal during capture. Distinct from `mem_coredump_set_attribute_global`.
+This VM does not invent occupancy SM counts or Engine `--mem-checkpoint-process-lock`.
+`gpu-profile capture` is still refused. Dual score still has no `$/M tokens`.
+
 ## Shipped 2026-09-03 — CUDA `cuDeviceTotalMem`
 
 `gpu-sim` `Sim::mem_device_total_mem` is `cuDeviceTotalMem`.
