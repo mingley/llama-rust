@@ -27765,7 +27765,6 @@ impl Sim {
 
     /// `cuKernelGetAttribute`. Identity with [`Self::kernel_get_attribute`].
     /// Query; legal during capture. Distinct from [`Self::mem_kernel_get_param_count`].
-    /// This VM does not invent occupancy SM counts this slice.
     pub fn mem_kernel_get_attribute(&self, device: DeviceId) -> Result<(), SimError> {
         self.kernel_get_attribute(device)
     }
@@ -27778,11 +27777,20 @@ impl Sim {
     /// [`Self::kernel_set_cache_config`].
     /// Unknown devices are Invalid `"device not in profile"`. Query; legal
     /// during capture.
+    /// Driver wrap: [`Self::mem_kernel_set_attribute`].
+    /// Identity: [`Self::mem_kernel_set_attribute`].
     pub fn kernel_set_attribute(&self, device: DeviceId) -> Result<(), SimError> {
         let _gpu = self.profile.gpu(device)?;
         Err(SimError::Invalid {
             why: "kernel setattr",
         })
+    }
+
+    /// `cuKernelSetAttribute`. Identity with [`Self::kernel_set_attribute`].
+    /// Query; legal during capture. Distinct from [`Self::mem_kernel_get_attribute`].
+    /// This VM does not invent occupancy SM counts this slice.
+    pub fn mem_kernel_set_attribute(&self, device: DeviceId) -> Result<(), SimError> {
+        self.kernel_set_attribute(device)
     }
 
     /// `cuKernelSetCacheConfig`. CUDA kernels are not modeled.

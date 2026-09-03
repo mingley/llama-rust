@@ -10639,7 +10639,12 @@ model, do not celebrate the sim.
       `mem_kernel_get_param_count`. This VM does not invent occupancy SM counts, Engine `--mem-kernel-get-attribute`,
       or `cudaChooseDevice`. `gpu-profile capture` is still refused. Dual
       score still has no `$/M tokens`.
-1276. [ ] Next numbered PLAN item after 1275 is the next `gpu-sim` / Engine /
+1276. [x] `gpu-sim` `Sim::mem_kernel_set_attribute` is
+      `cuKernelSetAttribute`. Identity with `kernel_set_attribute`. Query; legal during capture. Distinct from
+      `mem_kernel_get_attribute`. This VM does not invent occupancy SM counts, Engine `--mem-kernel-set-attribute`,
+      or `cudaChooseDevice`. `gpu-profile capture` is still refused. Dual
+      score still has no `$/M tokens`.
+1277. [ ] Next numbered PLAN item after 1276 is the next `gpu-sim` / Engine /
     serve / expertvm mechanical API that is still missing, or the next official
     decode family. Prefer remaining CUDA-shaped twins over more
     OpenAI HTTP veneer. Do not invent F32 `output.scale`. Do not invent a
@@ -13370,6 +13375,11 @@ model, do not celebrate the sim.
     occupancy SM counts this slice. Do not reverse MemKernelGetAttribute identity with kernel_get_attribute.
     Do not invent `kernel_set_attribute` as `mem_kernel_get_attribute`.
     Do not invent `cuKernelSetAttribute` as `mem_kernel_get_attribute`.
+    Do not invent a second `cuKernelSetAttribute` / `mem_kernel_set_attribute`.
+    Do not invent Engine `--mem-kernel-set-attribute`. Do not invent
+    occupancy SM counts this slice. Do not reverse MemKernelSetAttribute identity with kernel_set_attribute.
+    Do not invent `kernel_set_cache_config` as `mem_kernel_set_attribute`.
+    Do not invent `cuKernelSetCacheConfig` as `mem_kernel_set_attribute`.
     Do not invent a second `cudaStreamAddCallback`.
     Do not invent Engine `--stream-callback` (same wall as second live
     `cudaLaunchHostFunc` after miss DMA).
@@ -16137,6 +16147,11 @@ model, do not celebrate the sim.
     this slice. Do not reverse MemKernelGetAttribute identity with kernel_get_attribute.
     Do not wrap `kernel_get_attribute` as `mem_kernel_get_attribute`.
     Do not wrap `kernel_set_attribute` as `mem_kernel_get_attribute`.
+    Do not invent a second `mem_kernel_set_attribute` API. Do not invent
+    Engine `--mem-kernel-set-attribute-identity`. Do not invent a kernel-set-cache-config
+    this slice. Do not reverse MemKernelSetAttribute identity with kernel_set_attribute.
+    Do not wrap `kernel_set_attribute` as `mem_kernel_set_attribute`.
+    Do not wrap `kernel_set_cache_config` as `mem_kernel_set_attribute`.
     Do not invent a second DeviceLaunch in-flight destroy-complete check or Engine
     `--device-launch-destroy`. Do not abort an in-flight DeviceLaunch when
     `destroy_graph` succeeds. Do not delay destroy of an idle exec. Do not invent
@@ -18830,6 +18845,10 @@ model, do not celebrate the sim.
     invent Engine `--cu-mem-kernel-get-attribute`. Do not reverse wrapping
     cuKernelGetAttribute identity. Do not wrap `kernel_get_param_count` as `mem_kernel_get_attribute`.
     Do not wrap `kernel_set_attribute` as `mem_kernel_get_attribute`.
+    Do not invent a second `mem_kernel_set_attribute` method. Do not
+    invent Engine `--cu-mem-kernel-set-attribute`. Do not reverse wrapping
+    cuKernelSetAttribute identity. Do not wrap `kernel_get_attribute` as `mem_kernel_set_attribute`.
+    Do not wrap `kernel_set_cache_config` as `mem_kernel_set_attribute`.
     Do not
     spend the next item on an OpenAI-compatible HTTP veneer.
 
