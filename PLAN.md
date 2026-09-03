@@ -10834,7 +10834,12 @@ model, do not celebrate the sim.
       `mem_tensor_map_encode_im2col`. This VM does not invent occupancy SM counts, Engine `--mem-tensor-map-encode-im2col-wide`,
       or `cudaChooseDevice`. `gpu-profile capture` is still refused. Dual
       score still has no `$/M tokens`.
-1315. [ ] Next numbered PLAN item after 1314 is the next `gpu-sim` / Engine /
+1315. [x] `gpu-sim` `Sim::mem_tensor_map_replace_aligned_addr` is
+      `cuTensorMapReplaceAlignedAddr`. Identity with `tensor_map_replace_aligned_addr`. Query; legal during capture. Distinct from
+      `mem_tensor_map_encode_im2col_wide`. This VM does not invent occupancy SM counts, Engine `--mem-tensor-map-replace-aligned-addr`,
+      or `cudaChooseDevice`. `gpu-profile capture` is still refused. Dual
+      score still has no `$/M tokens`.
+1316. [ ] Next numbered PLAN item after 1315 is the next `gpu-sim` / Engine /
     serve / expertvm mechanical API that is still missing, or the next official
     decode family. Prefer remaining CUDA-shaped twins over more
     OpenAI HTTP veneer. Do not invent F32 `output.scale`. Do not invent a
@@ -13760,6 +13765,11 @@ model, do not celebrate the sim.
     occupancy SM counts this slice. Do not reverse MemTensorMapEncodeIm2colWide identity with tensor_map_encode_im2col_wide.
     Do not invent `tensor_map_replace_aligned_addr` as `mem_tensor_map_encode_im2col_wide`.
     Do not invent `cuTensorMapReplaceAlignedAddr` as `mem_tensor_map_encode_im2col_wide`.
+    Do not invent a second `cuTensorMapReplaceAlignedAddr` / `mem_tensor_map_replace_aligned_addr`.
+    Do not invent Engine `--mem-tensor-map-replace-aligned-addr`. Do not invent
+    occupancy SM counts this slice. Do not reverse MemTensorMapReplaceAlignedAddr identity with tensor_map_replace_aligned_addr.
+    Do not invent `array_get_descriptor` as `mem_tensor_map_replace_aligned_addr`.
+    Do not invent `cuArrayGetDescriptor` as `mem_tensor_map_replace_aligned_addr`.
     Do not invent a second `cudaStreamAddCallback`.
     Do not invent Engine `--stream-callback` (same wall as second live
     `cudaLaunchHostFunc` after miss DMA).
@@ -16722,6 +16732,11 @@ model, do not celebrate the sim.
     this slice. Do not reverse MemTensorMapEncodeIm2colWide identity with tensor_map_encode_im2col_wide.
     Do not wrap `tensor_map_encode_im2col_wide` as `mem_tensor_map_encode_im2col_wide`.
     Do not wrap `tensor_map_replace_aligned_addr` as `mem_tensor_map_encode_im2col_wide`.
+    Do not invent a second `mem_tensor_map_replace_aligned_addr` API. Do not invent
+    Engine `--mem-tensor-map-replace-aligned-addr-identity`. Do not invent a cu-array-get-descriptor
+    this slice. Do not reverse MemTensorMapReplaceAlignedAddr identity with tensor_map_replace_aligned_addr.
+    Do not wrap `tensor_map_replace_aligned_addr` as `mem_tensor_map_replace_aligned_addr`.
+    Do not wrap `array_get_descriptor` as `mem_tensor_map_replace_aligned_addr`.
     Do not invent a second DeviceLaunch in-flight destroy-complete check or Engine
     `--device-launch-destroy`. Do not abort an in-flight DeviceLaunch when
     `destroy_graph` succeeds. Do not delay destroy of an idle exec. Do not invent
@@ -19571,6 +19586,10 @@ model, do not celebrate the sim.
     invent Engine `--cu-mem-tensor-map-encode-im2col-wide`. Do not reverse wrapping
     cuTensorMapEncodeIm2colWide identity. Do not wrap `tensor_map_encode_im2col` as `mem_tensor_map_encode_im2col_wide`.
     Do not wrap `tensor_map_replace_aligned_addr` as `mem_tensor_map_encode_im2col_wide`.
+    Do not invent a second `mem_tensor_map_replace_aligned_addr` method. Do not
+    invent Engine `--cu-mem-tensor-map-replace-aligned-addr`. Do not reverse wrapping
+    cuTensorMapReplaceAlignedAddr identity. Do not wrap `tensor_map_encode_im2col_wide` as `mem_tensor_map_replace_aligned_addr`.
+    Do not wrap `array_get_descriptor` as `mem_tensor_map_replace_aligned_addr`.
     Do not
     spend the next item on an OpenAI-compatible HTTP veneer.
 

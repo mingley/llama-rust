@@ -82,6 +82,13 @@ Identity with `checkpoint_process_unlock`. Query; legal during capture. Distinct
 This VM does not invent occupancy SM counts or Engine `--mem-checkpoint-process-unlock`.
 `gpu-profile capture` is still refused. Dual score still has no `$/M tokens`.
 
+## Shipped 2026-09-03 — CUDA `cuTensorMapReplaceAlignedAddr`
+
+`gpu-sim` `Sim::mem_tensor_map_replace_aligned_addr` is `cuTensorMapReplaceAlignedAddr`.
+Identity with `tensor_map_replace_aligned_addr`. Query; legal during capture. Distinct from `mem_tensor_map_encode_im2col_wide`.
+This VM does not invent occupancy SM counts or Engine `--mem-tensor-map-replace-aligned-addr`.
+`gpu-profile capture` is still refused. Dual score still has no `$/M tokens`.
+
 ## Shipped 2026-09-03 — CUDA `cuTensorMapEncodeIm2colWide`
 
 `gpu-sim` `Sim::mem_tensor_map_encode_im2col_wide` is `cuTensorMapEncodeIm2colWide`.

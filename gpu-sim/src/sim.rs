@@ -22025,7 +22025,6 @@ impl Sim {
 
     /// `cuTensorMapEncodeIm2colWide`. Identity with [`Self::tensor_map_encode_im2col_wide`].
     /// Query; legal during capture. Distinct from [`Self::mem_tensor_map_encode_im2col`].
-    /// This VM does not invent occupancy SM counts this slice.
     pub fn mem_tensor_map_encode_im2col_wide(&self, device: DeviceId) -> Result<(), SimError> {
         self.tensor_map_encode_im2col_wide(device)
     }
@@ -22038,11 +22037,20 @@ impl Sim {
     /// is not `"tensor map"`).
     /// Unknown devices are Invalid `"device not in profile"`. Query; legal
     /// during capture.
+    /// Driver wrap: [`Self::mem_tensor_map_replace_aligned_addr`].
+    /// Identity: [`Self::mem_tensor_map_replace_aligned_addr`].
     pub fn tensor_map_replace_aligned_addr(&self, device: DeviceId) -> Result<(), SimError> {
         let _gpu = self.profile.gpu(device)?;
         Err(SimError::Invalid {
             why: "tensor replace",
         })
+    }
+
+    /// `cuTensorMapReplaceAlignedAddr`. Identity with [`Self::tensor_map_replace_aligned_addr`].
+    /// Query; legal during capture. Distinct from [`Self::mem_tensor_map_encode_im2col_wide`].
+    /// This VM does not invent occupancy SM counts this slice.
+    pub fn mem_tensor_map_replace_aligned_addr(&self, device: DeviceId) -> Result<(), SimError> {
+        self.tensor_map_replace_aligned_addr(device)
     }
 
     /// `cuArrayCreate` / `cuArray3DCreate`. CUDA arrays are not modeled.
