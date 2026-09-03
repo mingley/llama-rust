@@ -10389,7 +10389,12 @@ model, do not celebrate the sim.
       `mem_tex_ref_set_mipmap_filter_mode`. This VM does not invent occupancy SM counts, Engine `--mem-tex-ref-set-mipmap-level-bias`,
       or `cudaChooseDevice`. `gpu-profile capture` is still refused. Dual
       score still has no `$/M tokens`.
-1226. [ ] Next numbered PLAN item after 1225 is the next `gpu-sim` / Engine /
+1226. [x] `gpu-sim` `Sim::mem_tex_ref_set_mipmap_level_clamp` is
+      `cuTexRefSetMipmapLevelClamp`. Identity with `tex_ref_set_mipmap_level_clamp`. Query; legal during capture. Distinct from
+      `mem_tex_ref_set_mipmap_level_bias`. This VM does not invent occupancy SM counts, Engine `--mem-tex-ref-set-mipmap-level-clamp`,
+      or `cudaChooseDevice`. `gpu-profile capture` is still refused. Dual
+      score still has no `$/M tokens`.
+1227. [ ] Next numbered PLAN item after 1226 is the next `gpu-sim` / Engine /
     serve / expertvm mechanical API that is still missing, or the next official
     decode family. Prefer remaining CUDA-shaped twins over more
     OpenAI HTTP veneer. Do not invent F32 `output.scale`. Do not invent a
@@ -12870,6 +12875,11 @@ model, do not celebrate the sim.
     occupancy SM counts this slice. Do not reverse MemTexRefSetMipmapLevelBias identity with tex_ref_set_mipmap_level_bias.
     Do not invent `tex_ref_set_mipmap_level_clamp` as `mem_tex_ref_set_mipmap_level_bias`.
     Do not invent `cuTexRefSetMipmapLevelClamp` as `mem_tex_ref_set_mipmap_level_bias`.
+    Do not invent a second `cuTexRefSetMipmapLevelClamp` / `mem_tex_ref_set_mipmap_level_clamp`.
+    Do not invent Engine `--mem-tex-ref-set-mipmap-level-clamp`. Do not invent
+    occupancy SM counts this slice. Do not reverse MemTexRefSetMipmapLevelClamp identity with tex_ref_set_mipmap_level_clamp.
+    Do not invent `tex_ref_set_max_anisotropy` as `mem_tex_ref_set_mipmap_level_clamp`.
+    Do not invent `cuTexRefSetMaxAnisotropy` as `mem_tex_ref_set_mipmap_level_clamp`.
     Do not invent a second `cudaStreamAddCallback`.
     Do not invent Engine `--stream-callback` (same wall as second live
     `cudaLaunchHostFunc` after miss DMA).
@@ -15387,6 +15397,11 @@ model, do not celebrate the sim.
     this slice. Do not reverse MemTexRefSetMipmapLevelBias identity with tex_ref_set_mipmap_level_bias.
     Do not wrap `tex_ref_set_mipmap_level_bias` as `mem_tex_ref_set_mipmap_level_bias`.
     Do not wrap `tex_ref_set_mipmap_level_clamp` as `mem_tex_ref_set_mipmap_level_bias`.
+    Do not invent a second `mem_tex_ref_set_mipmap_level_clamp` API. Do not invent
+    Engine `--mem-tex-ref-set-mipmap-level-clamp-identity`. Do not invent a tex-ref-set-max-anisotropy
+    this slice. Do not reverse MemTexRefSetMipmapLevelClamp identity with tex_ref_set_mipmap_level_clamp.
+    Do not wrap `tex_ref_set_mipmap_level_clamp` as `mem_tex_ref_set_mipmap_level_clamp`.
+    Do not wrap `tex_ref_set_max_anisotropy` as `mem_tex_ref_set_mipmap_level_clamp`.
     Do not invent a second DeviceLaunch in-flight destroy-complete check or Engine
     `--device-launch-destroy`. Do not abort an in-flight DeviceLaunch when
     `destroy_graph` succeeds. Do not delay destroy of an idle exec. Do not invent
@@ -17880,6 +17895,10 @@ model, do not celebrate the sim.
     invent Engine `--cu-mem-tex-ref-set-mipmap-level-bias`. Do not reverse wrapping
     cuTexRefSetMipmapLevelBias identity. Do not wrap `tex_ref_set_mipmap_filter_mode` as `mem_tex_ref_set_mipmap_level_bias`.
     Do not wrap `tex_ref_set_mipmap_level_clamp` as `mem_tex_ref_set_mipmap_level_bias`.
+    Do not invent a second `mem_tex_ref_set_mipmap_level_clamp` method. Do not
+    invent Engine `--cu-mem-tex-ref-set-mipmap-level-clamp`. Do not reverse wrapping
+    cuTexRefSetMipmapLevelClamp identity. Do not wrap `tex_ref_set_mipmap_level_bias` as `mem_tex_ref_set_mipmap_level_clamp`.
+    Do not wrap `tex_ref_set_max_anisotropy` as `mem_tex_ref_set_mipmap_level_clamp`.
     Do not
     spend the next item on an OpenAI-compatible HTTP veneer.
 
