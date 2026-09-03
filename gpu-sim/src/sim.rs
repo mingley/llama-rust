@@ -20513,6 +20513,8 @@ impl Sim {
     /// access"`. Single [`Self::prefetch`] / [`prefetch_with_flags`](Self::prefetch_with_flags)
     /// stay (they do not have that CMA gate). Location hints / Host NUMA are
     /// not reached.
+    /// Driver wrap: [`Self::mem_prefetch_batch_async`].
+    /// Identity: [`Self::mem_prefetch_batch_async`].
     #[expect(
         clippy::too_many_arguments,
         reason = "cudaMemPrefetchBatchAsync argument list"
@@ -20529,6 +20531,26 @@ impl Sim {
     ) -> Result<Vec<OpId>, SimError> {
         let _gpu = self.profile.gpu(device)?;
         self.require_concurrent_managed_access()
+    }
+
+    /// `cudaMemPrefetchBatchAsync`. Identity with [`Self::prefetch_batch_async`].
+    /// Query; legal during capture. Distinct from [`Self::mem_memcpy_dtoh`].
+    /// This VM does not invent occupancy SM counts this slice.
+    #[expect(
+        clippy::too_many_arguments,
+        reason = "cudaMemPrefetchBatchAsync argument list"
+    )]
+    pub fn mem_prefetch_batch_async(
+        &mut self,
+        device: DeviceId,
+        allocs: &[AllocId],
+        sizes: &[u64],
+        dests: &[Place],
+        dest_idxs: &[usize],
+        flags: u64,
+        stream: StreamId,
+    ) -> Result<Vec<OpId>, SimError> {
+        self.prefetch_batch_async(device, allocs, sizes, dests, dest_idxs, flags, stream)
     }
 
     /// `cudaMemDiscardBatchAsync`.
@@ -21382,7 +21404,6 @@ impl Sim {
 
     /// `cuMemcpyDtoH`. Identity with [`Self::memcpy_dtoh`].
     /// Host-sync; capture refused. Distinct from [`Self::mem_memcpy_htod`].
-    /// This VM does not invent occupancy SM counts this slice.
     pub fn mem_memcpy_dtoh(
         &mut self,
         device: DeviceId,

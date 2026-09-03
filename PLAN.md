@@ -10804,7 +10804,12 @@ model, do not celebrate the sim.
       `mem_memcpy_htod`. This VM does not invent occupancy SM counts, Engine `--mem-memcpy-dtoh`,
       or `cudaChooseDevice`. `gpu-profile capture` is still refused. Dual
       score still has no `$/M tokens`.
-1309. [ ] Next numbered PLAN item after 1308 is the next `gpu-sim` / Engine /
+1309. [x] `gpu-sim` `Sim::mem_prefetch_batch_async` is
+      `cudaMemPrefetchBatchAsync`. Identity with `prefetch_batch_async`. Query; legal during capture. Distinct from
+      `mem_memcpy_dtoh`. This VM does not invent occupancy SM counts, Engine `--mem-prefetch-batch-async`,
+      or `cudaChooseDevice`. `gpu-profile capture` is still refused. Dual
+      score still has no `$/M tokens`.
+1310. [ ] Next numbered PLAN item after 1309 is the next `gpu-sim` / Engine /
     serve / expertvm mechanical API that is still missing, or the next official
     decode family. Prefer remaining CUDA-shaped twins over more
     OpenAI HTTP veneer. Do not invent F32 `output.scale`. Do not invent a
@@ -13700,6 +13705,11 @@ model, do not celebrate the sim.
     occupancy SM counts this slice. Do not reverse MemMemcpyDtoh identity with memcpy_dtoh.
     Do not invent `prefetch_batch_async` as `mem_memcpy_dtoh`.
     Do not invent `cudaMemPrefetchBatchAsync` as `mem_memcpy_dtoh`.
+    Do not invent a second `cudaMemPrefetchBatchAsync` / `mem_prefetch_batch_async`.
+    Do not invent Engine `--mem-prefetch-batch-async`. Do not invent
+    occupancy SM counts this slice. Do not reverse MemPrefetchBatchAsync identity with prefetch_batch_async.
+    Do not invent `discard_batch_async` as `mem_prefetch_batch_async`.
+    Do not invent `cudaMemDiscardBatchAsync` as `mem_prefetch_batch_async`.
     Do not invent a second `cudaStreamAddCallback`.
     Do not invent Engine `--stream-callback` (same wall as second live
     `cudaLaunchHostFunc` after miss DMA).
@@ -16632,6 +16642,11 @@ model, do not celebrate the sim.
     this slice. Do not reverse MemMemcpyDtoh identity with memcpy_dtoh.
     Do not wrap `memcpy_dtoh` as `mem_memcpy_dtoh`.
     Do not wrap `prefetch_batch_async` as `mem_memcpy_dtoh`.
+    Do not invent a second `mem_prefetch_batch_async` API. Do not invent
+    Engine `--mem-prefetch-batch-async-identity`. Do not invent a cu-discard-batch-async
+    this slice. Do not reverse MemPrefetchBatchAsync identity with prefetch_batch_async.
+    Do not wrap `prefetch_batch_async` as `mem_prefetch_batch_async`.
+    Do not wrap `discard_batch_async` as `mem_prefetch_batch_async`.
     Do not invent a second DeviceLaunch in-flight destroy-complete check or Engine
     `--device-launch-destroy`. Do not abort an in-flight DeviceLaunch when
     `destroy_graph` succeeds. Do not delay destroy of an idle exec. Do not invent
@@ -19457,6 +19472,10 @@ model, do not celebrate the sim.
     invent Engine `--cu-mem-memcpy-dtoh`. Do not reverse wrapping
     cuMemcpyDtoH identity. Do not wrap `memcpy_htod` as `mem_memcpy_dtoh`.
     Do not wrap `prefetch_batch_async` as `mem_memcpy_dtoh`.
+    Do not invent a second `mem_prefetch_batch_async` method. Do not
+    invent Engine `--cu-mem-prefetch-batch-async`. Do not reverse wrapping
+    cudaMemPrefetchBatchAsync identity. Do not wrap `memcpy_dtoh` as `mem_prefetch_batch_async`.
+    Do not wrap `discard_batch_async` as `mem_prefetch_batch_async`.
     Do not
     spend the next item on an OpenAI-compatible HTTP veneer.
 
