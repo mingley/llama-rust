@@ -10229,7 +10229,12 @@ model, do not celebrate the sim.
       `mem_checkpoint_process_lock`. This VM does not invent occupancy SM counts, Engine `--mem-checkpoint-process-checkpoint`,
       or `cudaChooseDevice`. `gpu-profile capture` is still refused. Dual
       score still has no `$/M tokens`.
-1194. [ ] Next numbered PLAN item after 1193 is the next `gpu-sim` / Engine /
+1194. [x] `gpu-sim` `Sim::mem_checkpoint_process_restore` is
+      `cuCheckpointProcessRestore`. Identity with `checkpoint_process_restore`. Query; legal during capture. Distinct from
+      `mem_checkpoint_process_checkpoint`. This VM does not invent occupancy SM counts, Engine `--mem-checkpoint-process-restore`,
+      or `cudaChooseDevice`. `gpu-profile capture` is still refused. Dual
+      score still has no `$/M tokens`.
+1195. [ ] Next numbered PLAN item after 1194 is the next `gpu-sim` / Engine /
     serve / expertvm mechanical API that is still missing, or the next official
     decode family. Prefer remaining CUDA-shaped twins over more
     OpenAI HTTP veneer. Do not invent F32 `output.scale`. Do not invent a
@@ -12550,6 +12555,11 @@ model, do not celebrate the sim.
     occupancy SM counts this slice. Do not reverse MemCheckpointProcessCheckpoint identity with checkpoint_process_checkpoint.
     Do not invent `checkpoint_process_restore` as `mem_checkpoint_process_checkpoint`.
     Do not invent `cuCheckpointProcessRestore` as `mem_checkpoint_process_checkpoint`.
+    Do not invent a second `cuCheckpointProcessRestore` / `mem_checkpoint_process_restore`.
+    Do not invent Engine `--mem-checkpoint-process-restore`. Do not invent
+    occupancy SM counts this slice. Do not reverse MemCheckpointProcessRestore identity with checkpoint_process_restore.
+    Do not invent `checkpoint_process_unlock` as `mem_checkpoint_process_restore`.
+    Do not invent `cuCheckpointProcessUnlock` as `mem_checkpoint_process_restore`.
     Do not invent a second `cudaStreamAddCallback`.
     Do not invent Engine `--stream-callback` (same wall as second live
     `cudaLaunchHostFunc` after miss DMA).
@@ -14907,6 +14917,11 @@ model, do not celebrate the sim.
     this slice. Do not reverse MemCheckpointProcessCheckpoint identity with checkpoint_process_checkpoint.
     Do not wrap `checkpoint_process_checkpoint` as `mem_checkpoint_process_checkpoint`.
     Do not wrap `checkpoint_process_restore` as `mem_checkpoint_process_checkpoint`.
+    Do not invent a second `mem_checkpoint_process_restore` API. Do not invent
+    Engine `--mem-checkpoint-process-restore-identity`. Do not invent a checkpoint-process-unlock
+    this slice. Do not reverse MemCheckpointProcessRestore identity with checkpoint_process_restore.
+    Do not wrap `checkpoint_process_restore` as `mem_checkpoint_process_restore`.
+    Do not wrap `checkpoint_process_unlock` as `mem_checkpoint_process_restore`.
     Do not invent a second DeviceLaunch in-flight destroy-complete check or Engine
     `--device-launch-destroy`. Do not abort an in-flight DeviceLaunch when
     `destroy_graph` succeeds. Do not delay destroy of an idle exec. Do not invent
@@ -17272,6 +17287,10 @@ model, do not celebrate the sim.
     invent Engine `--cu-mem-checkpoint-process-checkpoint`. Do not reverse wrapping
     cuCheckpointProcessCheckpoint identity. Do not wrap `checkpoint_process_lock` as `mem_checkpoint_process_checkpoint`.
     Do not wrap `checkpoint_process_restore` as `mem_checkpoint_process_checkpoint`.
+    Do not invent a second `mem_checkpoint_process_restore` method. Do not
+    invent Engine `--cu-mem-checkpoint-process-restore`. Do not reverse wrapping
+    cuCheckpointProcessRestore identity. Do not wrap `checkpoint_process_checkpoint` as `mem_checkpoint_process_restore`.
+    Do not wrap `checkpoint_process_unlock` as `mem_checkpoint_process_restore`.
     Do not
     spend the next item on an OpenAI-compatible HTTP veneer.
 

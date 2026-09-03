@@ -25878,7 +25878,6 @@ impl Sim {
 
     /// `cuCheckpointProcessCheckpoint`. Identity with [`Self::checkpoint_process_checkpoint`].
     /// Query; legal during capture. Distinct from [`Self::mem_checkpoint_process_lock`].
-    /// This VM does not invent occupancy SM counts this slice.
     pub fn mem_checkpoint_process_checkpoint(&self, device: DeviceId) -> Result<(), SimError> {
         self.checkpoint_process_checkpoint(device)
     }
@@ -25890,11 +25889,20 @@ impl Sim {
     /// [`Self::checkpoint_process_checkpoint`]. Unknown devices are Invalid
     /// `"device not in profile"`. Query; legal during capture. This VM does
     /// not invent `cuCheckpointProcessUnlock` this slice.
+    /// Driver wrap: [`Self::mem_checkpoint_process_restore`].
+    /// Identity: [`Self::mem_checkpoint_process_restore`].
     pub fn checkpoint_process_restore(&self, device: DeviceId) -> Result<(), SimError> {
         let _gpu = self.profile.gpu(device)?;
         Err(SimError::Invalid {
             why: "ckpt restore",
         })
+    }
+
+    /// `cuCheckpointProcessRestore`. Identity with [`Self::checkpoint_process_restore`].
+    /// Query; legal during capture. Distinct from [`Self::mem_checkpoint_process_checkpoint`].
+    /// This VM does not invent occupancy SM counts this slice.
+    pub fn mem_checkpoint_process_restore(&self, device: DeviceId) -> Result<(), SimError> {
+        self.checkpoint_process_restore(device)
     }
 
     /// `cuCheckpointProcessUnlock`. CUDA process checkpoint is not modeled.
