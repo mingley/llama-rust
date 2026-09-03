@@ -10264,7 +10264,12 @@ model, do not celebrate the sim.
       `mem_device_unregister_async_notification`. This VM does not invent occupancy SM counts, Engine `--mem-driver-init`,
       or `cudaChooseDevice`. `gpu-profile capture` is still refused. Dual
       score still has no `$/M tokens`.
-1201. [ ] Next numbered PLAN item after 1200 is the next `gpu-sim` / Engine /
+1201. [x] `gpu-sim` `Sim::mem_profiler_start` is
+      `cuProfilerStart`. Identity with `profiler_start`. Host-sync; capture refused. Distinct from
+      `mem_driver_init`. This VM does not invent occupancy SM counts, Engine `--mem-profiler-start`,
+      or `cudaChooseDevice`. `gpu-profile capture` is still refused. Dual
+      score still has no `$/M tokens`.
+1202. [ ] Next numbered PLAN item after 1201 is the next `gpu-sim` / Engine /
     serve / expertvm mechanical API that is still missing, or the next official
     decode family. Prefer remaining CUDA-shaped twins over more
     OpenAI HTTP veneer. Do not invent F32 `output.scale`. Do not invent a
@@ -12620,6 +12625,11 @@ model, do not celebrate the sim.
     occupancy SM counts this slice. Do not reverse MemDriverInit identity with driver_init.
     Do not invent `profiler_start` as `mem_driver_init`.
     Do not invent `cuProfilerStart` as `mem_driver_init`.
+    Do not invent a second `cuProfilerStart` / `mem_profiler_start`.
+    Do not invent Engine `--mem-profiler-start`. Do not invent
+    occupancy SM counts this slice. Do not reverse MemProfilerStart identity with profiler_start.
+    Do not invent `profiler_stop` as `mem_profiler_start`.
+    Do not invent `cuProfilerStop` as `mem_profiler_start`.
     Do not invent a second `cudaStreamAddCallback`.
     Do not invent Engine `--stream-callback` (same wall as second live
     `cudaLaunchHostFunc` after miss DMA).
@@ -15012,6 +15022,11 @@ model, do not celebrate the sim.
     this slice. Do not reverse MemDriverInit identity with driver_init.
     Do not wrap `driver_init` as `mem_driver_init`.
     Do not wrap `profiler_start` as `mem_driver_init`.
+    Do not invent a second `mem_profiler_start` API. Do not invent
+    Engine `--mem-profiler-start-identity`. Do not invent a profiler-stop
+    this slice. Do not reverse MemProfilerStart identity with profiler_start.
+    Do not wrap `profiler_start` as `mem_profiler_start`.
+    Do not wrap `profiler_stop` as `mem_profiler_start`.
     Do not invent a second DeviceLaunch in-flight destroy-complete check or Engine
     `--device-launch-destroy`. Do not abort an in-flight DeviceLaunch when
     `destroy_graph` succeeds. Do not delay destroy of an idle exec. Do not invent
@@ -17405,6 +17420,10 @@ model, do not celebrate the sim.
     invent Engine `--cu-mem-driver-init`. Do not reverse wrapping
     cuInit identity. Do not wrap `device_unregister_async_notification` as `mem_driver_init`.
     Do not wrap `profiler_start` as `mem_driver_init`.
+    Do not invent a second `mem_profiler_start` method. Do not
+    invent Engine `--cu-mem-profiler-start`. Do not reverse wrapping
+    cuProfilerStart identity. Do not wrap `driver_init` as `mem_profiler_start`.
+    Do not wrap `profiler_stop` as `mem_profiler_start`.
     Do not
     spend the next item on an OpenAI-compatible HTTP veneer.
 
