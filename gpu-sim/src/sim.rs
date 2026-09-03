@@ -26727,7 +26727,6 @@ impl Sim {
 
     /// `cuTexRefGetArray`. Identity with [`Self::tex_ref_get_array`].
     /// Query; legal during capture. Distinct from [`Self::mem_tex_ref_set_flags`].
-    /// This VM does not invent occupancy SM counts this slice.
     pub fn mem_tex_ref_get_array(&self, device: DeviceId) -> Result<(), SimError> {
         self.tex_ref_get_array(device)
     }
@@ -26741,11 +26740,20 @@ impl Sim {
     /// Unknown devices are Invalid `"device not in profile"`. Query; legal
     /// during capture. This VM does not invent `cuTexRefGetAddress` this
     /// slice.
+    /// Driver wrap: [`Self::mem_tex_ref_get_mipmapped_array`].
+    /// Identity: [`Self::mem_tex_ref_get_mipmapped_array`].
     pub fn tex_ref_get_mipmapped_array(&self, device: DeviceId) -> Result<(), SimError> {
         let _gpu = self.profile.gpu(device)?;
         Err(SimError::Invalid {
             why: "texref getmip",
         })
+    }
+
+    /// `cuTexRefGetMipmappedArray`. Identity with [`Self::tex_ref_get_mipmapped_array`].
+    /// Query; legal during capture. Distinct from [`Self::mem_tex_ref_get_array`].
+    /// This VM does not invent occupancy SM counts this slice.
+    pub fn mem_tex_ref_get_mipmapped_array(&self, device: DeviceId) -> Result<(), SimError> {
+        self.tex_ref_get_mipmapped_array(device)
     }
 
     /// `cuTexRefGetAddress`. CUDA texture references are not modeled.
