@@ -22193,7 +22193,6 @@ impl Sim {
 
     /// `cuArrayGetMemoryRequirements`. Identity with [`Self::array_get_memory_requirements`].
     /// Query; legal during capture. Distinct from [`Self::mem_array_get_plane`].
-    /// This VM does not invent occupancy SM counts this slice.
     pub fn mem_array_get_memory_requirements(&self, device: DeviceId) -> Result<(), SimError> {
         self.array_get_memory_requirements(device)
     }
@@ -22207,6 +22206,8 @@ impl Sim {
     /// [`Self::mipmapped_array_create`], and from
     /// [`Self::mipmapped_array_get_level`]. Unknown devices are Invalid
     /// `"device not in profile"`. Query; legal during capture.
+    /// Driver wrap: [`Self::mem_mipmapped_array_get_memory_requirements`].
+    /// Identity: [`Self::mem_mipmapped_array_get_memory_requirements`].
     pub fn mipmapped_array_get_memory_requirements(
         &self,
         device: DeviceId,
@@ -22215,6 +22216,16 @@ impl Sim {
         Err(SimError::Invalid {
             why: "mipmap memory",
         })
+    }
+
+    /// `cuMipmappedArrayGetMemoryRequirements`. Identity with [`Self::mipmapped_array_get_memory_requirements`].
+    /// Query; legal during capture. Distinct from [`Self::mem_array_get_memory_requirements`].
+    /// This VM does not invent occupancy SM counts this slice.
+    pub fn mem_mipmapped_array_get_memory_requirements(
+        &self,
+        device: DeviceId,
+    ) -> Result<(), SimError> {
+        self.mipmapped_array_get_memory_requirements(device)
     }
 
     /// `cuMipmappedArrayGetSparseProperties` plus
