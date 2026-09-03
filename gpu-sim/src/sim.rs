@@ -25771,7 +25771,6 @@ impl Sim {
 
     /// `cuCoredumpGetAttribute`. Identity with [`Self::coredump_get_attribute`] (`cudaCoredumpGetAttribute`).
     /// Query; legal during capture. Distinct from [`Self::mem_get_export_table`].
-    /// This VM does not invent occupancy SM counts this slice.
     pub fn mem_coredump_get_attribute(&self, device: DeviceId) -> Result<(), SimError> {
         self.coredump_get_attribute(device)
     }
@@ -25783,11 +25782,20 @@ impl Sim {
     /// `"coredump"`) and from [`Self::checkpoint_process_lock`].
     /// Unknown devices are Invalid `"device not in profile"`. Query; legal
     /// during capture.
+    /// Driver wrap: [`Self::mem_coredump_set_attribute`].
+    /// Identity: [`Self::mem_coredump_set_attribute`].
     pub fn coredump_set_attribute(&self, device: DeviceId) -> Result<(), SimError> {
         let _gpu = self.profile.gpu(device)?;
         Err(SimError::Invalid {
             why: "dump setattr",
         })
+    }
+
+    /// `cuCoredumpSetAttribute`. Identity with [`Self::coredump_set_attribute`] (`cudaCoredumpSetAttribute`).
+    /// Query; legal during capture. Distinct from [`Self::mem_coredump_get_attribute`].
+    /// This VM does not invent occupancy SM counts this slice.
+    pub fn mem_coredump_set_attribute(&self, device: DeviceId) -> Result<(), SimError> {
+        self.coredump_set_attribute(device)
     }
 
     /// `cuCoredumpGetAttributeGlobal` / `cudaCoredumpGetAttributeGlobal`.

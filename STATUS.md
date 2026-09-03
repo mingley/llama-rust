@@ -33,6 +33,13 @@ Identity with `coredump_get_attribute` (`cudaCoredumpGetAttribute`). Query; lega
 This VM does not invent occupancy SM counts or Engine `--mem-coredump-get-attribute`.
 `gpu-profile capture` is still refused. Dual score still has no `$/M tokens`.
 
+## Shipped 2026-09-03 — CUDA `cuCoredumpSetAttribute`
+
+`gpu-sim` `Sim::mem_coredump_set_attribute` is `cuCoredumpSetAttribute`.
+Identity with `coredump_set_attribute` (`cudaCoredumpSetAttribute`). Query; legal during capture. Distinct from `mem_coredump_get_attribute`.
+This VM does not invent occupancy SM counts or Engine `--mem-coredump-set-attribute`.
+`gpu-profile capture` is still refused. Dual score still has no `$/M tokens`.
+
 ## Shipped 2026-09-03 — CUDA `cuDeviceTotalMem`
 
 `gpu-sim` `Sim::mem_device_total_mem` is `cuDeviceTotalMem`.
