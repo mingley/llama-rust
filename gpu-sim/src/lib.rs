@@ -1432,6 +1432,9 @@
 //! [`mem_tex_ref_get_filter_mode`](Sim::mem_tex_ref_get_filter_mode) is `cuTexRefGetFilterMode` (identity with
 //! [`tex_ref_get_filter_mode`](Sim::tex_ref_get_filter_mode)). Query; legal during capture. Distinct from
 //! [`mem_tex_ref_get_address_mode`](Sim::mem_tex_ref_get_address_mode). No Engine `--mem-tex-ref-get-filter-mode`.
+//! [`mem_tex_ref_get_format`](Sim::mem_tex_ref_get_format) is `cuTexRefGetFormat` (identity with
+//! [`tex_ref_get_format`](Sim::tex_ref_get_format)). Query; legal during capture. Distinct from
+//! [`mem_tex_ref_get_filter_mode`](Sim::mem_tex_ref_get_filter_mode). No Engine `--mem-tex-ref-get-format`.
 //! [`Sim::ipc_get_event`] / [`ipc_open_event`](Sim::ipc_open_event) are
 //! `cudaIpcGetEventHandle` / `cudaIpcOpenEventHandle` (interprocess events).
 //! [`Sim::create_shareable_pool`] is `cudaMemPoolCreate` with a POSIX-FD handle
@@ -2888,6 +2891,9 @@
 //! [`mem_tex_ref_get_filter_mode`](Sim::mem_tex_ref_get_filter_mode) is `cuTexRefGetFilterMode` (identity with
 //! [`tex_ref_get_filter_mode`](Sim::tex_ref_get_filter_mode)). Query; legal during capture. Distinct from
 //! [`mem_tex_ref_get_address_mode`](Sim::mem_tex_ref_get_address_mode). No Engine `--mem-tex-ref-get-filter-mode`.
+//! [`mem_tex_ref_get_format`](Sim::mem_tex_ref_get_format) is `cuTexRefGetFormat` (identity with
+//! [`tex_ref_get_format`](Sim::tex_ref_get_format)). Query; legal during capture. Distinct from
+//! [`mem_tex_ref_get_filter_mode`](Sim::mem_tex_ref_get_filter_mode). No Engine `--mem-tex-ref-get-format`.
 //! [`HardwareProfile::host_pin_bytes`] caps `cudaMallocHost` / `cudaHostRegister`.
 //! [`Sim::idle_until`] drains, then jumps the virtual clock (open-loop arrivals).
 //! [`Sim::event_elapsed_ns`] is `cudaEventElapsedTime` in nanoseconds.
@@ -4212,6 +4218,9 @@
 //! [`mem_tex_ref_get_filter_mode`](Sim::mem_tex_ref_get_filter_mode) is `cuTexRefGetFilterMode` (identity with
 //! [`tex_ref_get_filter_mode`](Sim::tex_ref_get_filter_mode)). Query; legal during capture. Distinct from
 //! [`mem_tex_ref_get_address_mode`](Sim::mem_tex_ref_get_address_mode). No Engine `--mem-tex-ref-get-filter-mode`.
+//! [`mem_tex_ref_get_format`](Sim::mem_tex_ref_get_format) is `cuTexRefGetFormat` (identity with
+//! [`tex_ref_get_format`](Sim::tex_ref_get_format)). Query; legal during capture. Distinct from
+//! [`mem_tex_ref_get_filter_mode`](Sim::mem_tex_ref_get_filter_mode). No Engine `--mem-tex-ref-get-format`.
 //! [`mem_host_get_flags`](Sim::mem_host_get_flags) is `cuMemHostGetFlags` (identity with
 //! [`host_get_flags`](Sim::host_get_flags)). Query; legal during capture. No Engine `--mem-host-get-flags`.
 //! [`mem_host_get_device_pointer`](Sim::mem_host_get_device_pointer) is `cuMemHostGetDevicePointer` (identity with
@@ -5502,6 +5511,9 @@
 //! [`mem_tex_ref_get_filter_mode`](Sim::mem_tex_ref_get_filter_mode) is `cuTexRefGetFilterMode` (identity with
 //! [`tex_ref_get_filter_mode`](Sim::tex_ref_get_filter_mode)). Query; legal during capture. Distinct from
 //! [`mem_tex_ref_get_address_mode`](Sim::mem_tex_ref_get_address_mode). No Engine `--mem-tex-ref-get-filter-mode`.
+//! [`mem_tex_ref_get_format`](Sim::mem_tex_ref_get_format) is `cuTexRefGetFormat` (identity with
+//! [`tex_ref_get_format`](Sim::tex_ref_get_format)). Query; legal during capture. Distinct from
+//! [`mem_tex_ref_get_filter_mode`](Sim::mem_tex_ref_get_filter_mode). No Engine `--mem-tex-ref-get-format`.
 //! [`Sim::pointer_get_attributes`] is `cudaPointerGetAttributes`.
 //! [`pointer_set_attribute`](Sim::pointer_set_attribute) /
 //! [`pointer_get_attribute`](Sim::pointer_get_attribute) are
@@ -7199,6 +7211,9 @@
 //! [`mem_tex_ref_get_filter_mode`](Sim::mem_tex_ref_get_filter_mode) is `cuTexRefGetFilterMode` (identity with
 //! [`tex_ref_get_filter_mode`](Sim::tex_ref_get_filter_mode)). Query; legal during capture. Distinct from
 //! [`mem_tex_ref_get_address_mode`](Sim::mem_tex_ref_get_address_mode). No Engine `--mem-tex-ref-get-filter-mode`.
+//! [`mem_tex_ref_get_format`](Sim::mem_tex_ref_get_format) is `cuTexRefGetFormat` (identity with
+//! [`tex_ref_get_format`](Sim::tex_ref_get_format)). Query; legal during capture. Distinct from
+//! [`mem_tex_ref_get_filter_mode`](Sim::mem_tex_ref_get_filter_mode). No Engine `--mem-tex-ref-get-format`.
 //! [`Sim::stream_get_device`] is `cudaStreamGetDevice` / `cuStreamGetDevice`
 //! (the device of the stream; green-ctx streams return the ctx create
 //! device). Query; legal during capture. Distinct from
@@ -8325,6 +8340,9 @@
 //! [`mem_tex_ref_get_filter_mode`](Sim::mem_tex_ref_get_filter_mode) is `cuTexRefGetFilterMode` (identity with
 //! [`tex_ref_get_filter_mode`](Sim::tex_ref_get_filter_mode)). Query; legal during capture. Distinct from
 //! [`mem_tex_ref_get_address_mode`](Sim::mem_tex_ref_get_address_mode). No Engine `--mem-tex-ref-get-filter-mode`.
+//! [`mem_tex_ref_get_format`](Sim::mem_tex_ref_get_format) is `cuTexRefGetFormat` (identity with
+//! [`tex_ref_get_format`](Sim::tex_ref_get_format)). Query; legal during capture. Distinct from
+//! [`mem_tex_ref_get_filter_mode`](Sim::mem_tex_ref_get_filter_mode). No Engine `--mem-tex-ref-get-format`.
 //! [`set_stream_access_policy`](Sim::set_stream_access_policy) is
 //! `cudaStreamAttributeAccessPolicyWindow`: [`kernel`](Sim::kernel) /
 //! [`kernel_bufs`](Sim::kernel_bufs) inherit it; [`kernel_with`](Sim::kernel_with)
@@ -9936,6 +9954,9 @@
 //! [`mem_tex_ref_get_filter_mode`](Sim::mem_tex_ref_get_filter_mode) is `cuTexRefGetFilterMode` (identity with
 //! [`tex_ref_get_filter_mode`](Sim::tex_ref_get_filter_mode)). Query; legal during capture. Distinct from
 //! [`mem_tex_ref_get_address_mode`](Sim::mem_tex_ref_get_address_mode). No Engine `--mem-tex-ref-get-filter-mode`.
+//! [`mem_tex_ref_get_format`](Sim::mem_tex_ref_get_format) is `cuTexRefGetFormat` (identity with
+//! [`tex_ref_get_format`](Sim::tex_ref_get_format)). Query; legal during capture. Distinct from
+//! [`mem_tex_ref_get_filter_mode`](Sim::mem_tex_ref_get_filter_mode). No Engine `--mem-tex-ref-get-format`.
 //! [`Sim::set_stream_priority`] is the priority-only helper;
 //! [`stream_create_with_priority`](Sim::stream_create_with_priority) is
 //! `cudaStreamCreateWithPriority` (flags plus priority; clamped to
@@ -11080,6 +11101,9 @@
 //! [`mem_tex_ref_get_filter_mode`](Sim::mem_tex_ref_get_filter_mode) is `cuTexRefGetFilterMode` (identity with
 //! [`tex_ref_get_filter_mode`](Sim::tex_ref_get_filter_mode)). Query; legal during capture. Distinct from
 //! [`mem_tex_ref_get_address_mode`](Sim::mem_tex_ref_get_address_mode). No Engine `--mem-tex-ref-get-filter-mode`.
+//! [`mem_tex_ref_get_format`](Sim::mem_tex_ref_get_format) is `cuTexRefGetFormat` (identity with
+//! [`tex_ref_get_format`](Sim::tex_ref_get_format)). Query; legal during capture. Distinct from
+//! [`mem_tex_ref_get_filter_mode`](Sim::mem_tex_ref_get_filter_mode). No Engine `--mem-tex-ref-get-format`.
 //! [`destroy_stream`](Sim::destroy_stream) is `cudaStreamDestroy` (returns
 //! immediately; in-flight work still completes; NULL is Invalid; recreate
 //! while unfinished is `"stream in flight"`). Capture cannot include it.
@@ -12204,6 +12228,9 @@
 //! [`mem_tex_ref_get_filter_mode`](Sim::mem_tex_ref_get_filter_mode) is `cuTexRefGetFilterMode` (identity with
 //! [`tex_ref_get_filter_mode`](Sim::tex_ref_get_filter_mode)). Query; legal during capture. Distinct from
 //! [`mem_tex_ref_get_address_mode`](Sim::mem_tex_ref_get_address_mode). No Engine `--mem-tex-ref-get-filter-mode`.
+//! [`mem_tex_ref_get_format`](Sim::mem_tex_ref_get_format) is `cuTexRefGetFormat` (identity with
+//! [`tex_ref_get_format`](Sim::tex_ref_get_format)). Query; legal during capture. Distinct from
+//! [`mem_tex_ref_get_filter_mode`](Sim::mem_tex_ref_get_filter_mode). No Engine `--mem-tex-ref-get-format`.
 //! [`Sim::instantiate_graph`] is `cudaGraphInstantiate` (host-sync; returns a
 //! new exec id; first [`launch_graph`](Sim::launch_graph) of a definition
 //! creates a primary exec). Unused conditional handles are
@@ -13357,6 +13384,9 @@
 //! [`mem_tex_ref_get_filter_mode`](Sim::mem_tex_ref_get_filter_mode) is `cuTexRefGetFilterMode` (identity with
 //! [`tex_ref_get_filter_mode`](Sim::tex_ref_get_filter_mode)). Query; legal during capture. Distinct from
 //! [`mem_tex_ref_get_address_mode`](Sim::mem_tex_ref_get_address_mode). No Engine `--mem-tex-ref-get-filter-mode`.
+//! [`mem_tex_ref_get_format`](Sim::mem_tex_ref_get_format) is `cuTexRefGetFormat` (identity with
+//! [`tex_ref_get_format`](Sim::tex_ref_get_format)). Query; legal during capture. Distinct from
+//! [`mem_tex_ref_get_filter_mode`](Sim::mem_tex_ref_get_filter_mode). No Engine `--mem-tex-ref-get-format`.
 //! [`graph_kernel_node_get_priority`](Sim::graph_kernel_node_get_priority) /
 //! [`graph_kernel_node_set_priority`](Sim::graph_kernel_node_set_priority) /
 //! [`graph_kernel_node_copy_attributes`](Sim::graph_kernel_node_copy_attributes)
@@ -14469,6 +14499,9 @@
 //! [`mem_tex_ref_get_filter_mode`](Sim::mem_tex_ref_get_filter_mode) is `cuTexRefGetFilterMode` (identity with
 //! [`tex_ref_get_filter_mode`](Sim::tex_ref_get_filter_mode)). Query; legal during capture. Distinct from
 //! [`mem_tex_ref_get_address_mode`](Sim::mem_tex_ref_get_address_mode). No Engine `--mem-tex-ref-get-filter-mode`.
+//! [`mem_tex_ref_get_format`](Sim::mem_tex_ref_get_format) is `cuTexRefGetFormat` (identity with
+//! [`tex_ref_get_format`](Sim::tex_ref_get_format)). Query; legal during capture. Distinct from
+//! [`mem_tex_ref_get_filter_mode`](Sim::mem_tex_ref_get_filter_mode). No Engine `--mem-tex-ref-get-format`.
 //! [`graph_kernel_node_get_attribute`](Sim::graph_kernel_node_get_attribute) /
 //! [`graph_exec_kernel_node_get_attribute`](Sim::graph_exec_kernel_node_get_attribute) /
 //! [`graph_kernel_node_set_attribute`](Sim::graph_kernel_node_set_attribute) /
@@ -15587,6 +15620,9 @@
 //! [`mem_tex_ref_get_filter_mode`](Sim::mem_tex_ref_get_filter_mode) is `cuTexRefGetFilterMode` (identity with
 //! [`tex_ref_get_filter_mode`](Sim::tex_ref_get_filter_mode)). Query; legal during capture. Distinct from
 //! [`mem_tex_ref_get_address_mode`](Sim::mem_tex_ref_get_address_mode). No Engine `--mem-tex-ref-get-filter-mode`.
+//! [`mem_tex_ref_get_format`](Sim::mem_tex_ref_get_format) is `cuTexRefGetFormat` (identity with
+//! [`tex_ref_get_format`](Sim::tex_ref_get_format)). Query; legal during capture. Distinct from
+//! [`mem_tex_ref_get_filter_mode`](Sim::mem_tex_ref_get_filter_mode). No Engine `--mem-tex-ref-get-format`.
 //! Device-launch
 //! execs cannot attach programmatic or launch-completion events.
 //! [`kernel_pdl`](Sim::kernel_pdl) is `cudaLaunchKernelEx` PDL: a wait kernel
@@ -16833,6 +16869,9 @@
 //! [`mem_tex_ref_get_filter_mode`](Sim::mem_tex_ref_get_filter_mode) is `cuTexRefGetFilterMode` (identity with
 //! [`tex_ref_get_filter_mode`](Sim::tex_ref_get_filter_mode)). Query; legal during capture. Distinct from
 //! [`mem_tex_ref_get_address_mode`](Sim::mem_tex_ref_get_address_mode). No Engine `--mem-tex-ref-get-filter-mode`.
+//! [`mem_tex_ref_get_format`](Sim::mem_tex_ref_get_format) is `cuTexRefGetFormat` (identity with
+//! [`tex_ref_get_format`](Sim::tex_ref_get_format)). Query; legal during capture. Distinct from
+//! [`mem_tex_ref_get_filter_mode`](Sim::mem_tex_ref_get_filter_mode). No Engine `--mem-tex-ref-get-format`.
 //! [`graph_exec_memcpy_set_params`](Sim::graph_exec_memcpy_set_params) /
 //! [`graph_exec_memcpy_set_params_1d`](Sim::graph_exec_memcpy_set_params_1d) /
 //! [`graph_exec_memcpy_set_params_2d`](Sim::graph_exec_memcpy_set_params_2d) /
@@ -17943,6 +17982,9 @@
 //! [`mem_tex_ref_get_filter_mode`](Sim::mem_tex_ref_get_filter_mode) is `cuTexRefGetFilterMode` (identity with
 //! [`tex_ref_get_filter_mode`](Sim::tex_ref_get_filter_mode)). Query; legal during capture. Distinct from
 //! [`mem_tex_ref_get_address_mode`](Sim::mem_tex_ref_get_address_mode). No Engine `--mem-tex-ref-get-filter-mode`.
+//! [`mem_tex_ref_get_format`](Sim::mem_tex_ref_get_format) is `cuTexRefGetFormat` (identity with
+//! [`tex_ref_get_format`](Sim::tex_ref_get_format)). Query; legal during capture. Distinct from
+//! [`mem_tex_ref_get_filter_mode`](Sim::mem_tex_ref_get_filter_mode). No Engine `--mem-tex-ref-get-format`.
 //! [`get_graph_kernel_node_params`](Sim::get_graph_kernel_node_params) is `cuGraphKernelNodeGetParams` (identity with
 //! [`graph_kernel_get_params`](Sim::graph_kernel_get_params)). Query; legal during capture. Distinct from
 //! [`graph_exec_kernel_get_params`](Sim::graph_exec_kernel_get_params). No Engine `--graph-kernel-get-params`.
@@ -19032,6 +19074,9 @@
 //! [`mem_tex_ref_get_filter_mode`](Sim::mem_tex_ref_get_filter_mode) is `cuTexRefGetFilterMode` (identity with
 //! [`tex_ref_get_filter_mode`](Sim::tex_ref_get_filter_mode)). Query; legal during capture. Distinct from
 //! [`mem_tex_ref_get_address_mode`](Sim::mem_tex_ref_get_address_mode). No Engine `--mem-tex-ref-get-filter-mode`.
+//! [`mem_tex_ref_get_format`](Sim::mem_tex_ref_get_format) is `cuTexRefGetFormat` (identity with
+//! [`tex_ref_get_format`](Sim::tex_ref_get_format)). Query; legal during capture. Distinct from
+//! [`mem_tex_ref_get_filter_mode`](Sim::mem_tex_ref_get_filter_mode). No Engine `--mem-tex-ref-get-format`.
 //! [`graph_exec_kernel_get_params`](Sim::graph_exec_kernel_get_params) /
 //! [`graph_exec_memcpy_get_params`](Sim::graph_exec_memcpy_get_params) /
 //! [`graph_exec_memset_get_params`](Sim::graph_exec_memset_get_params) /
@@ -20112,6 +20157,9 @@
 //! [`mem_tex_ref_get_filter_mode`](Sim::mem_tex_ref_get_filter_mode) is `cuTexRefGetFilterMode` (identity with
 //! [`tex_ref_get_filter_mode`](Sim::tex_ref_get_filter_mode)). Query; legal during capture. Distinct from
 //! [`mem_tex_ref_get_address_mode`](Sim::mem_tex_ref_get_address_mode). No Engine `--mem-tex-ref-get-filter-mode`.
+//! [`mem_tex_ref_get_format`](Sim::mem_tex_ref_get_format) is `cuTexRefGetFormat` (identity with
+//! [`tex_ref_get_format`](Sim::tex_ref_get_format)). Query; legal during capture. Distinct from
+//! [`mem_tex_ref_get_filter_mode`](Sim::mem_tex_ref_get_filter_mode). No Engine `--mem-tex-ref-get-format`.
 //! [`get_graph_exec_kernel_node_params`](Sim::get_graph_exec_kernel_node_params) is `cuGraphExecKernelNodeGetParams` (identity with
 //! [`graph_exec_kernel_get_params`](Sim::graph_exec_kernel_get_params)). Query; legal during capture. Distinct from
 //! [`get_graph_kernel_node_params`](Sim::get_graph_kernel_node_params). No Engine `--graph-exec-kernel-get-params`.
@@ -21198,6 +21246,9 @@
 //! [`mem_tex_ref_get_filter_mode`](Sim::mem_tex_ref_get_filter_mode) is `cuTexRefGetFilterMode` (identity with
 //! [`tex_ref_get_filter_mode`](Sim::tex_ref_get_filter_mode)). Query; legal during capture. Distinct from
 //! [`mem_tex_ref_get_address_mode`](Sim::mem_tex_ref_get_address_mode). No Engine `--mem-tex-ref-get-filter-mode`.
+//! [`mem_tex_ref_get_format`](Sim::mem_tex_ref_get_format) is `cuTexRefGetFormat` (identity with
+//! [`tex_ref_get_format`](Sim::tex_ref_get_format)). Query; legal during capture. Distinct from
+//! [`mem_tex_ref_get_filter_mode`](Sim::mem_tex_ref_get_filter_mode). No Engine `--mem-tex-ref-get-format`.
 //! [`graph_exec_batch_mem_op_set_params`](Sim::graph_exec_batch_mem_op_set_params)
 //! is `cudaGraphExecBatchMemOpNodeSetParams` (id/offset/value; wait vs write,
 //! `bits32`, and compare stay on wait/write nodes;
@@ -58364,6 +58415,63 @@ mod tests {
         match eight.mem_tex_ref_get_filter_mode(d1) {
             Err(SimError::Invalid { why }) => {
                 assert!(why.contains("texref getfilt"), "{why}");
+            }
+            other => panic!("{other:?}"),
+        }
+        let g2 = eight.end_capture().unwrap();
+        assert_eq!(eight.graph_len(g2).unwrap(), 0);
+    }
+
+    #[test]
+    fn mem_tex_ref_get_format_is_cu_tex_ref_get_format() {
+        let mut sim = Sim::new(h100());
+        match sim.mem_tex_ref_get_format(DeviceId(9)) {
+            Err(SimError::Invalid { why }) => {
+                assert!(why.contains("device not in profile"), "{why}");
+            }
+            other => panic!("{other:?}"),
+        }
+        match sim.tex_ref_get_format(DeviceId(9)) {
+            Err(SimError::Invalid { why }) => {
+                assert!(why.contains("device not in profile"), "{why}");
+            }
+            other => panic!("{other:?}"),
+        }
+        match sim.mem_tex_ref_get_format(DeviceId(0)) {
+            Err(SimError::Invalid { why }) => {
+                assert!(why.contains("texref getfmt"), "{why}");
+            }
+            other => panic!("{other:?}"),
+        }
+        match sim.tex_ref_get_format(DeviceId(0)) {
+            Err(SimError::Invalid { why }) => {
+                assert!(why.contains("texref getfmt"), "{why}");
+            }
+            other => panic!("{other:?}"),
+        }
+        let d = DeviceId(0);
+        let s = StreamId(0);
+        sim.begin_capture(d, s).unwrap();
+        match sim.mem_tex_ref_get_format(d) {
+            Err(SimError::Invalid { why }) => {
+                assert!(why.contains("texref getfmt"), "{why}");
+            }
+            other => panic!("{other:?}"),
+        }
+        let g = sim.end_capture().unwrap();
+        assert_eq!(sim.graph_len(g).unwrap(), 0);
+        let mut eight = Sim::new(HardwareProfile::example_8xh100_nvlink());
+        let d1 = DeviceId(1);
+        match eight.mem_tex_ref_get_format(d1) {
+            Err(SimError::Invalid { why }) => {
+                assert!(why.contains("texref getfmt"), "{why}");
+            }
+            other => panic!("{other:?}"),
+        }
+        eight.begin_capture(d1, s).unwrap();
+        match eight.mem_tex_ref_get_format(d1) {
+            Err(SimError::Invalid { why }) => {
+                assert!(why.contains("texref getfmt"), "{why}");
             }
             other => panic!("{other:?}"),
         }
