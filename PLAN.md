@@ -10364,7 +10364,12 @@ model, do not celebrate the sim.
       `mem_tex_ref_set_address`. This VM does not invent occupancy SM counts, Engine `--mem-tex-ref-set-address-2d`,
       or `cudaChooseDevice`. `gpu-profile capture` is still refused. Dual
       score still has no `$/M tokens`.
-1221. [ ] Next numbered PLAN item after 1220 is the next `gpu-sim` / Engine /
+1221. [x] `gpu-sim` `Sim::mem_tex_ref_set_format` is
+      `cuTexRefSetFormat`. Identity with `tex_ref_set_format`. Query; legal during capture. Distinct from
+      `mem_tex_ref_set_address_2d`. This VM does not invent occupancy SM counts, Engine `--mem-tex-ref-set-format`,
+      or `cudaChooseDevice`. `gpu-profile capture` is still refused. Dual
+      score still has no `$/M tokens`.
+1222. [ ] Next numbered PLAN item after 1221 is the next `gpu-sim` / Engine /
     serve / expertvm mechanical API that is still missing, or the next official
     decode family. Prefer remaining CUDA-shaped twins over more
     OpenAI HTTP veneer. Do not invent F32 `output.scale`. Do not invent a
@@ -12820,6 +12825,11 @@ model, do not celebrate the sim.
     occupancy SM counts this slice. Do not reverse MemTexRefSetAddress2D identity with tex_ref_set_address_2d.
     Do not invent `tex_ref_set_format` as `mem_tex_ref_set_address_2d`.
     Do not invent `cuTexRefSetFormat` as `mem_tex_ref_set_address_2d`.
+    Do not invent a second `cuTexRefSetFormat` / `mem_tex_ref_set_format`.
+    Do not invent Engine `--mem-tex-ref-set-format`. Do not invent
+    occupancy SM counts this slice. Do not reverse MemTexRefSetFormat identity with tex_ref_set_format.
+    Do not invent `tex_ref_set_address_mode` as `mem_tex_ref_set_format`.
+    Do not invent `cuTexRefSetAddressMode` as `mem_tex_ref_set_format`.
     Do not invent a second `cudaStreamAddCallback`.
     Do not invent Engine `--stream-callback` (same wall as second live
     `cudaLaunchHostFunc` after miss DMA).
@@ -15312,6 +15322,11 @@ model, do not celebrate the sim.
     this slice. Do not reverse MemTexRefSetAddress2D identity with tex_ref_set_address_2d.
     Do not wrap `tex_ref_set_address_2d` as `mem_tex_ref_set_address_2d`.
     Do not wrap `tex_ref_set_format` as `mem_tex_ref_set_address_2d`.
+    Do not invent a second `mem_tex_ref_set_format` API. Do not invent
+    Engine `--mem-tex-ref-set-format-identity`. Do not invent a tex-ref-set-address-mode
+    this slice. Do not reverse MemTexRefSetFormat identity with tex_ref_set_format.
+    Do not wrap `tex_ref_set_format` as `mem_tex_ref_set_format`.
+    Do not wrap `tex_ref_set_address_mode` as `mem_tex_ref_set_format`.
     Do not invent a second DeviceLaunch in-flight destroy-complete check or Engine
     `--device-launch-destroy`. Do not abort an in-flight DeviceLaunch when
     `destroy_graph` succeeds. Do not delay destroy of an idle exec. Do not invent
@@ -17785,6 +17800,10 @@ model, do not celebrate the sim.
     invent Engine `--cu-mem-tex-ref-set-address-2d`. Do not reverse wrapping
     cuTexRefSetAddress2D identity. Do not wrap `tex_ref_set_address` as `mem_tex_ref_set_address_2d`.
     Do not wrap `tex_ref_set_format` as `mem_tex_ref_set_address_2d`.
+    Do not invent a second `mem_tex_ref_set_format` method. Do not
+    invent Engine `--cu-mem-tex-ref-set-format`. Do not reverse wrapping
+    cuTexRefSetFormat identity. Do not wrap `tex_ref_set_address_2d` as `mem_tex_ref_set_format`.
+    Do not wrap `tex_ref_set_address_mode` as `mem_tex_ref_set_format`.
     Do not
     spend the next item on an OpenAI-compatible HTTP veneer.
 
