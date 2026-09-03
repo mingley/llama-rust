@@ -10749,7 +10749,12 @@ model, do not celebrate the sim.
       `mem_green_ctx_get_id`. This VM does not invent occupancy SM counts, Engine `--mem-green-ctx-get-device`,
       or `cudaChooseDevice`. `gpu-profile capture` is still refused. Dual
       score still has no `$/M tokens`.
-1298. [ ] Next numbered PLAN item after 1297 is the next `gpu-sim` / Engine /
+1298. [x] `gpu-sim` `Sim::mem_stream_get_green_ctx` is
+      `cuStreamGetGreenCtx`. Identity with `stream_get_green_ctx`. Query; legal during capture. Distinct from
+      `mem_green_ctx_get_device`. This VM does not invent occupancy SM counts, Engine `--mem-stream-get-green-ctx`,
+      or `cudaChooseDevice`. `gpu-profile capture` is still refused. Dual
+      score still has no `$/M tokens`.
+1299. [ ] Next numbered PLAN item after 1298 is the next `gpu-sim` / Engine /
     serve / expertvm mechanical API that is still missing, or the next official
     decode family. Prefer remaining CUDA-shaped twins over more
     OpenAI HTTP veneer. Do not invent F32 `output.scale`. Do not invent a
@@ -13590,6 +13595,11 @@ model, do not celebrate the sim.
     occupancy SM counts this slice. Do not reverse MemGreenCtxGetDevice identity with green_ctx_get_device.
     Do not invent `stream_get_green_ctx` as `mem_green_ctx_get_device`.
     Do not invent `cuStreamGetGreenCtx` as `mem_green_ctx_get_device`.
+    Do not invent a second `cuStreamGetGreenCtx` / `mem_stream_get_green_ctx`.
+    Do not invent Engine `--mem-stream-get-green-ctx`. Do not invent
+    occupancy SM counts this slice. Do not reverse MemStreamGetGreenCtx identity with stream_get_green_ctx.
+    Do not invent `green_ctx_create` as `mem_stream_get_green_ctx`.
+    Do not invent `cuGreenCtxCreate` as `mem_stream_get_green_ctx`.
     Do not invent a second `cudaStreamAddCallback`.
     Do not invent Engine `--stream-callback` (same wall as second live
     `cudaLaunchHostFunc` after miss DMA).
@@ -16467,6 +16477,11 @@ model, do not celebrate the sim.
     this slice. Do not reverse MemGreenCtxGetDevice identity with green_ctx_get_device.
     Do not wrap `green_ctx_get_device` as `mem_green_ctx_get_device`.
     Do not wrap `stream_get_green_ctx` as `mem_green_ctx_get_device`.
+    Do not invent a second `mem_stream_get_green_ctx` API. Do not invent
+    Engine `--mem-stream-get-green-ctx-identity`. Do not invent a cu-green-ctx-create
+    this slice. Do not reverse MemStreamGetGreenCtx identity with stream_get_green_ctx.
+    Do not wrap `stream_get_green_ctx` as `mem_stream_get_green_ctx`.
+    Do not wrap `green_ctx_create` as `mem_stream_get_green_ctx`.
     Do not invent a second DeviceLaunch in-flight destroy-complete check or Engine
     `--device-launch-destroy`. Do not abort an in-flight DeviceLaunch when
     `destroy_graph` succeeds. Do not delay destroy of an idle exec. Do not invent
@@ -19248,6 +19263,10 @@ model, do not celebrate the sim.
     invent Engine `--cu-mem-green-ctx-get-device`. Do not reverse wrapping
     cudaExecutionCtxGetDevice identity. Do not wrap `green_ctx_get_id` as `mem_green_ctx_get_device`.
     Do not wrap `stream_get_green_ctx` as `mem_green_ctx_get_device`.
+    Do not invent a second `mem_stream_get_green_ctx` method. Do not
+    invent Engine `--cu-mem-stream-get-green-ctx`. Do not reverse wrapping
+    cuStreamGetGreenCtx identity. Do not wrap `green_ctx_get_device` as `mem_stream_get_green_ctx`.
+    Do not wrap `green_ctx_create` as `mem_stream_get_green_ctx`.
     Do not
     spend the next item on an OpenAI-compatible HTTP veneer.
 

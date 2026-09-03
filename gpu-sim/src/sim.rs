@@ -1884,7 +1884,6 @@ impl Sim {
 
     /// `cudaExecutionCtxGetDevice`. Identity with [`Self::green_ctx_get_device`].
     /// Query; legal during capture. Distinct from [`Self::mem_green_ctx_get_id`].
-    /// This VM does not invent occupancy SM counts this slice.
     pub fn mem_green_ctx_get_device(&self, ctx: GreenCtxId) -> Result<DeviceId, SimError> {
         self.green_ctx_get_device(ctx)
     }
@@ -1944,6 +1943,8 @@ impl Sim {
     /// `cuStreamGetGreenCtx`. Query; legal during capture.
     ///
     /// Unbound streams return [`None`]. Unknown devices are Invalid.
+    /// Driver wrap: [`Self::mem_stream_get_green_ctx`].
+    /// Identity: [`Self::mem_stream_get_green_ctx`].
     pub fn stream_get_green_ctx(
         &self,
         device: DeviceId,
@@ -1952,6 +1953,17 @@ impl Sim {
         let _gpu = self.profile.gpu(device)?;
         self.require_live_stream(device, stream)?;
         Ok(self.stream_green_ctx.get(&(device, stream)).copied())
+    }
+
+    /// `cuStreamGetGreenCtx`. Identity with [`Self::stream_get_green_ctx`].
+    /// Query; legal during capture. Distinct from [`Self::mem_green_ctx_get_device`].
+    /// This VM does not invent occupancy SM counts this slice.
+    pub fn mem_stream_get_green_ctx(
+        &self,
+        device: DeviceId,
+        stream: StreamId,
+    ) -> Result<Option<GreenCtxId>, SimError> {
+        self.stream_get_green_ctx(device, stream)
     }
 
     /// `cuStreamGetDevResource`. Query; legal during capture.
