@@ -952,6 +952,7 @@ compiled kernel exists; no Engine flag).
 `gpu-sim` `mem_library_load_data` is `cuLibraryLoadData` (identity with `library_load_data`; no Engine flag).
 `gpu-sim` `mem_library_load_from_file` is `cuLibraryLoadFromFile` (identity with `library_load_from_file`; no Engine flag).
 `gpu-sim` `mem_library_unload` is `cuLibraryUnload` (identity with `library_unload`; no Engine flag).
+`gpu-sim` `mem_library_get_kernel` is `cuLibraryGetKernel` (identity with `library_get_kernel`; no Engine flag).
 `gpu-sim` `mem_alloc` is `cuMemAlloc` (identity with `malloc`; no Engine flag).
 `gpu-sim` `mem_free` is `cuMemFree` (identity with `free_sync`; no Engine flag).
 `gpu-sim` `mem_free_host` is `cuMemFreeHost` (identity with `free_host_pinned`; no Engine flag).
@@ -1428,6 +1429,7 @@ compiled kernel exists; no Engine flag).
 `gpu-sim` `mem_library_load_data` is `cuLibraryLoadData` (identity with `library_load_data`; no Engine flag).
 `gpu-sim` `mem_library_load_from_file` is `cuLibraryLoadFromFile` (identity with `library_load_from_file`; no Engine flag).
 `gpu-sim` `mem_library_unload` is `cuLibraryUnload` (identity with `library_unload`; no Engine flag).
+`gpu-sim` `mem_library_get_kernel` is `cuLibraryGetKernel` (identity with `library_get_kernel`; no Engine flag).
 `gpu-sim` `func_is_loaded` is `cuFuncIsLoaded` (`false` until a compiled
 kernel exists; no Engine flag).
 `gpu-sim` `func_load` is `cuFuncLoad` (Invalid; no compiled kernel; no

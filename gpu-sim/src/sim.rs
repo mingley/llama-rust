@@ -27488,7 +27488,6 @@ impl Sim {
 
     /// `cuLibraryUnload`. Identity with [`Self::library_unload`].
     /// Query; legal during capture. Distinct from [`Self::mem_library_load_from_file`].
-    /// This VM does not invent occupancy SM counts this slice.
     pub fn mem_library_unload(&self, device: DeviceId) -> Result<(), SimError> {
         self.library_unload(device)
     }
@@ -27501,11 +27500,20 @@ impl Sim {
     /// [`Self::library_get_module`].
     /// Unknown devices are Invalid `"device not in profile"`. Query; legal
     /// during capture.
+    /// Driver wrap: [`Self::mem_library_get_kernel`].
+    /// Identity: [`Self::mem_library_get_kernel`].
     pub fn library_get_kernel(&self, device: DeviceId) -> Result<(), SimError> {
         let _gpu = self.profile.gpu(device)?;
         Err(SimError::Invalid {
             why: "library kernel",
         })
+    }
+
+    /// `cuLibraryGetKernel`. Identity with [`Self::library_get_kernel`].
+    /// Query; legal during capture. Distinct from [`Self::mem_library_unload`].
+    /// This VM does not invent occupancy SM counts this slice.
+    pub fn mem_library_get_kernel(&self, device: DeviceId) -> Result<(), SimError> {
+        self.library_get_kernel(device)
     }
 
     /// `cuLibraryGetModule`. CUDA libraries are not modeled.
