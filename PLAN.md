@@ -10239,7 +10239,12 @@ model, do not celebrate the sim.
       `mem_checkpoint_process_restore`. This VM does not invent occupancy SM counts, Engine `--mem-checkpoint-process-unlock`,
       or `cudaChooseDevice`. `gpu-profile capture` is still refused. Dual
       score still has no `$/M tokens`.
-1196. [ ] Next numbered PLAN item after 1195 is the next `gpu-sim` / Engine /
+1196. [x] `gpu-sim` `Sim::mem_checkpoint_process_get_restore_thread_id` is
+      `cuCheckpointProcessGetRestoreThreadId`. Identity with `checkpoint_process_get_restore_thread_id`. Query; legal during capture. Distinct from
+      `mem_checkpoint_process_unlock`. This VM does not invent occupancy SM counts, Engine `--mem-checkpoint-process-get-restore-thread-id`,
+      or `cudaChooseDevice`. `gpu-profile capture` is still refused. Dual
+      score still has no `$/M tokens`.
+1197. [ ] Next numbered PLAN item after 1196 is the next `gpu-sim` / Engine /
     serve / expertvm mechanical API that is still missing, or the next official
     decode family. Prefer remaining CUDA-shaped twins over more
     OpenAI HTTP veneer. Do not invent F32 `output.scale`. Do not invent a
@@ -12570,6 +12575,11 @@ model, do not celebrate the sim.
     occupancy SM counts this slice. Do not reverse MemCheckpointProcessUnlock identity with checkpoint_process_unlock.
     Do not invent `checkpoint_process_get_restore_thread_id` as `mem_checkpoint_process_unlock`.
     Do not invent `cuCheckpointProcessGetRestoreThreadId` as `mem_checkpoint_process_unlock`.
+    Do not invent a second `cuCheckpointProcessGetRestoreThreadId` / `mem_checkpoint_process_get_restore_thread_id`.
+    Do not invent Engine `--mem-checkpoint-process-get-restore-thread-id`. Do not invent
+    occupancy SM counts this slice. Do not reverse MemCheckpointProcessGetRestoreThreadId identity with checkpoint_process_get_restore_thread_id.
+    Do not invent `checkpoint_process_get_state` as `mem_checkpoint_process_get_restore_thread_id`.
+    Do not invent `cuCheckpointProcessGetState` as `mem_checkpoint_process_get_restore_thread_id`.
     Do not invent a second `cudaStreamAddCallback`.
     Do not invent Engine `--stream-callback` (same wall as second live
     `cudaLaunchHostFunc` after miss DMA).
@@ -14937,6 +14947,11 @@ model, do not celebrate the sim.
     this slice. Do not reverse MemCheckpointProcessUnlock identity with checkpoint_process_unlock.
     Do not wrap `checkpoint_process_unlock` as `mem_checkpoint_process_unlock`.
     Do not wrap `checkpoint_process_get_restore_thread_id` as `mem_checkpoint_process_unlock`.
+    Do not invent a second `mem_checkpoint_process_get_restore_thread_id` API. Do not invent
+    Engine `--mem-checkpoint-process-get-restore-thread-id-identity`. Do not invent a checkpoint-process-get-state
+    this slice. Do not reverse MemCheckpointProcessGetRestoreThreadId identity with checkpoint_process_get_restore_thread_id.
+    Do not wrap `checkpoint_process_get_restore_thread_id` as `mem_checkpoint_process_get_restore_thread_id`.
+    Do not wrap `checkpoint_process_get_state` as `mem_checkpoint_process_get_restore_thread_id`.
     Do not invent a second DeviceLaunch in-flight destroy-complete check or Engine
     `--device-launch-destroy`. Do not abort an in-flight DeviceLaunch when
     `destroy_graph` succeeds. Do not delay destroy of an idle exec. Do not invent
@@ -17310,6 +17325,10 @@ model, do not celebrate the sim.
     invent Engine `--cu-mem-checkpoint-process-unlock`. Do not reverse wrapping
     cuCheckpointProcessUnlock identity. Do not wrap `checkpoint_process_restore` as `mem_checkpoint_process_unlock`.
     Do not wrap `checkpoint_process_get_restore_thread_id` as `mem_checkpoint_process_unlock`.
+    Do not invent a second `mem_checkpoint_process_get_restore_thread_id` method. Do not
+    invent Engine `--cu-mem-checkpoint-process-get-restore-thread-id`. Do not reverse wrapping
+    cuCheckpointProcessGetRestoreThreadId identity. Do not wrap `checkpoint_process_unlock` as `mem_checkpoint_process_get_restore_thread_id`.
+    Do not wrap `checkpoint_process_get_state` as `mem_checkpoint_process_get_restore_thread_id`.
     Do not
     spend the next item on an OpenAI-compatible HTTP veneer.
 
