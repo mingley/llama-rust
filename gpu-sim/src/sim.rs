@@ -20611,7 +20611,6 @@ impl Sim {
 
     /// `cudaMemDiscardAndPrefetchBatchAsync`. Identity with [`Self::discard_and_prefetch_batch_async`].
     /// Query; legal during capture. Distinct from [`Self::mem_discard_batch_async`].
-    /// This VM does not invent occupancy SM counts this slice.
     #[expect(
         clippy::too_many_arguments,
         reason = "cudaMemDiscardAndPrefetchBatchAsync argument list"
@@ -21975,9 +21974,18 @@ impl Sim {
     /// is 0). Distinct from [`Self::mem_batch_decompress_async`]. Unknown
     /// devices are Invalid `"device not in profile"`. This VM does not invent
     /// `cuTensorMapEncodeIm2col` this slice.
+    /// Driver wrap: [`Self::mem_tensor_map_encode_tiled`].
+    /// Identity: [`Self::mem_tensor_map_encode_tiled`].
     pub fn tensor_map_encode_tiled(&self, device: DeviceId) -> Result<(), SimError> {
         let _gpu = self.profile.gpu(device)?;
         Err(SimError::Invalid { why: "tensor map" })
+    }
+
+    /// `cuTensorMapEncodeTiled`. Identity with [`Self::tensor_map_encode_tiled`].
+    /// Query; legal during capture. Distinct from [`Self::mem_discard_and_prefetch_batch_async`].
+    /// This VM does not invent occupancy SM counts this slice.
+    pub fn mem_tensor_map_encode_tiled(&self, device: DeviceId) -> Result<(), SimError> {
+        self.tensor_map_encode_tiled(device)
     }
 
     /// `cuTensorMapEncodeIm2col`. TMA is not modeled.

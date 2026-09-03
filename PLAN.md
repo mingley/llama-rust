@@ -10819,7 +10819,12 @@ model, do not celebrate the sim.
       `mem_discard_batch_async`. This VM does not invent occupancy SM counts, Engine `--mem-discard-and-prefetch-batch-async`,
       or `cudaChooseDevice`. `gpu-profile capture` is still refused. Dual
       score still has no `$/M tokens`.
-1312. [ ] Next numbered PLAN item after 1311 is the next `gpu-sim` / Engine /
+1312. [x] `gpu-sim` `Sim::mem_tensor_map_encode_tiled` is
+      `cuTensorMapEncodeTiled`. Identity with `tensor_map_encode_tiled`. Query; legal during capture. Distinct from
+      `mem_discard_and_prefetch_batch_async`. This VM does not invent occupancy SM counts, Engine `--mem-tensor-map-encode-tiled`,
+      or `cudaChooseDevice`. `gpu-profile capture` is still refused. Dual
+      score still has no `$/M tokens`.
+1313. [ ] Next numbered PLAN item after 1312 is the next `gpu-sim` / Engine /
     serve / expertvm mechanical API that is still missing, or the next official
     decode family. Prefer remaining CUDA-shaped twins over more
     OpenAI HTTP veneer. Do not invent F32 `output.scale`. Do not invent a
@@ -13730,6 +13735,11 @@ model, do not celebrate the sim.
     occupancy SM counts this slice. Do not reverse MemDiscardAndPrefetchBatchAsync identity with discard_and_prefetch_batch_async.
     Do not invent `tensor_map_encode_tiled` as `mem_discard_and_prefetch_batch_async`.
     Do not invent `cuTensorMapEncodeTiled` as `mem_discard_and_prefetch_batch_async`.
+    Do not invent a second `cuTensorMapEncodeTiled` / `mem_tensor_map_encode_tiled`.
+    Do not invent Engine `--mem-tensor-map-encode-tiled`. Do not invent
+    occupancy SM counts this slice. Do not reverse MemTensorMapEncodeTiled identity with tensor_map_encode_tiled.
+    Do not invent `tensor_map_encode_im2col` as `mem_tensor_map_encode_tiled`.
+    Do not invent `cuTensorMapEncodeIm2col` as `mem_tensor_map_encode_tiled`.
     Do not invent a second `cudaStreamAddCallback`.
     Do not invent Engine `--stream-callback` (same wall as second live
     `cudaLaunchHostFunc` after miss DMA).
@@ -16677,6 +16687,11 @@ model, do not celebrate the sim.
     this slice. Do not reverse MemDiscardAndPrefetchBatchAsync identity with discard_and_prefetch_batch_async.
     Do not wrap `discard_and_prefetch_batch_async` as `mem_discard_and_prefetch_batch_async`.
     Do not wrap `tensor_map_encode_tiled` as `mem_discard_and_prefetch_batch_async`.
+    Do not invent a second `mem_tensor_map_encode_tiled` API. Do not invent
+    Engine `--mem-tensor-map-encode-tiled-identity`. Do not invent a cu-tensor-map-encode-im2col
+    this slice. Do not reverse MemTensorMapEncodeTiled identity with tensor_map_encode_tiled.
+    Do not wrap `tensor_map_encode_tiled` as `mem_tensor_map_encode_tiled`.
+    Do not wrap `tensor_map_encode_im2col` as `mem_tensor_map_encode_tiled`.
     Do not invent a second DeviceLaunch in-flight destroy-complete check or Engine
     `--device-launch-destroy`. Do not abort an in-flight DeviceLaunch when
     `destroy_graph` succeeds. Do not delay destroy of an idle exec. Do not invent
@@ -19514,6 +19529,10 @@ model, do not celebrate the sim.
     invent Engine `--cu-mem-discard-and-prefetch-batch-async`. Do not reverse wrapping
     cudaMemDiscardAndPrefetchBatchAsync identity. Do not wrap `discard_batch_async` as `mem_discard_and_prefetch_batch_async`.
     Do not wrap `tensor_map_encode_tiled` as `mem_discard_and_prefetch_batch_async`.
+    Do not invent a second `mem_tensor_map_encode_tiled` method. Do not
+    invent Engine `--cu-mem-tensor-map-encode-tiled`. Do not reverse wrapping
+    cuTensorMapEncodeTiled identity. Do not wrap `discard_and_prefetch_batch_async` as `mem_tensor_map_encode_tiled`.
+    Do not wrap `tensor_map_encode_im2col` as `mem_tensor_map_encode_tiled`.
     Do not
     spend the next item on an OpenAI-compatible HTTP veneer.
 
