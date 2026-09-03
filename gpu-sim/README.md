@@ -548,6 +548,7 @@ warp scheduler, L1, …   ← do not model
 | `mem_memcpy_ato_h_async` is identity with `memcpy_ato_h_async` | `cuMemcpyAtoHAsync` |
 | `mem_memcpy_ato_a_async` is identity with `memcpy_ato_a_async` | `cuMemcpyAtoAAsync` |
 | `mem_memcpy_2d_to_array` is identity with `memcpy_2d_to_array` | `cuMemcpy2DToArray` |
+| `mem_memcpy_2d_from_array` is identity with `memcpy_2d_from_array` | `cuMemcpy2DFromArray` |
 | `mem_alloc` is identity with `malloc` | `cuMemAlloc` |
 | `mem_free` is identity with `free_sync` | `cuMemFree` |
 | `mem_free_host` is identity with `free_host_pinned` | `cuMemFreeHost` |
@@ -1697,6 +1698,7 @@ require matching topology. Event External flags stay topology.
 `mem_memcpy_ato_h_async` is `cuMemcpyAtoHAsync` (identity with `memcpy_ato_h_async`). Query; legal during capture. Distinct from `mem_memcpy_hto_a_async`. No Engine `--mem-memcpy-ato-h-async`.
 `mem_memcpy_ato_a_async` is `cuMemcpyAtoAAsync` (identity with `memcpy_ato_a_async`). Query; legal during capture. Distinct from `mem_memcpy_ato_h_async`. No Engine `--mem-memcpy-ato-a-async`.
 `mem_memcpy_2d_to_array` is `cuMemcpy2DToArray` (identity with `memcpy_2d_to_array`). Query; legal during capture. Distinct from `mem_memcpy_ato_a_async`. No Engine `--mem-memcpy-2d-to-array`.
+`mem_memcpy_2d_from_array` is `cuMemcpy2DFromArray` (identity with `memcpy_2d_from_array`). Query; legal during capture. Distinct from `mem_memcpy_2d_to_array`. No Engine `--mem-memcpy-2d-from-array`.
 `graph_*_get_params` / `graph_exec_*_get_params` are
 `cudaGraph*NodeGetParams` / `cudaGraphExec*NodeGetParams`
 (query; no clock tick; capture is legal). Graph GetParams reads the
@@ -2096,6 +2098,7 @@ the launched/primary snapshot.
 `mem_memcpy_ato_h_async` is `cuMemcpyAtoHAsync` (identity with `memcpy_ato_h_async`). Query; legal during capture. Distinct from `mem_memcpy_hto_a_async`. No Engine `--mem-memcpy-ato-h-async`.
 `mem_memcpy_ato_a_async` is `cuMemcpyAtoAAsync` (identity with `memcpy_ato_a_async`). Query; legal during capture. Distinct from `mem_memcpy_ato_h_async`. No Engine `--mem-memcpy-ato-a-async`.
 `mem_memcpy_2d_to_array` is `cuMemcpy2DToArray` (identity with `memcpy_2d_to_array`). Query; legal during capture. Distinct from `mem_memcpy_ato_a_async`. No Engine `--mem-memcpy-2d-to-array`.
+`mem_memcpy_2d_from_array` is `cuMemcpy2DFromArray` (identity with `memcpy_2d_from_array`). Query; legal during capture. Distinct from `mem_memcpy_2d_to_array`. No Engine `--mem-memcpy-2d-from-array`.
 `get_graph_kernel_node_params` is `cuGraphKernelNodeGetParams` (identity with `graph_kernel_get_params`). Query; legal during capture. Distinct from `graph_exec_kernel_get_params`. No Engine `--graph-kernel-get-params`.
 `get_graph_exec_kernel_node_params` is `cuGraphExecKernelNodeGetParams` (identity with `graph_exec_kernel_get_params`). Query; legal during capture. Distinct from `get_graph_kernel_node_params`. No Engine `--graph-exec-kernel-get-params`.
 `set_graph_kernel_node_params` is `cuGraphKernelNodeSetParams` (identity with `graph_kernel_set_params`). Capture refused. Distinct from `get_graph_kernel_node_params`. No Engine `--graph-kernel-set-params`.
@@ -2492,6 +2495,7 @@ the launched/primary snapshot.
 `mem_memcpy_ato_h_async` is `cuMemcpyAtoHAsync` (identity with `memcpy_ato_h_async`). Query; legal during capture. Distinct from `mem_memcpy_hto_a_async`. No Engine `--mem-memcpy-ato-h-async`.
 `mem_memcpy_ato_a_async` is `cuMemcpyAtoAAsync` (identity with `memcpy_ato_a_async`). Query; legal during capture. Distinct from `mem_memcpy_ato_h_async`. No Engine `--mem-memcpy-ato-a-async`.
 `mem_memcpy_2d_to_array` is `cuMemcpy2DToArray` (identity with `memcpy_2d_to_array`). Query; legal during capture. Distinct from `mem_memcpy_ato_a_async`. No Engine `--mem-memcpy-2d-to-array`.
+`mem_memcpy_2d_from_array` is `cuMemcpy2DFromArray` (identity with `memcpy_2d_from_array`). Query; legal during capture. Distinct from `mem_memcpy_2d_to_array`. No Engine `--mem-memcpy-2d-from-array`.
 `graph_exec_kernel_set_params` / `graph_exec_memcpy_set_params` /
 `graph_exec_memcpy_set_params_1d` / `graph_exec_memcpy_set_params_2d` / `graph_exec_memcpy_set_params_3d` / `graph_exec_memset_set_params` / `graph_exec_memset_set_params_2d` / `graph_exec_memset_set_params_3d` /
 `graph_exec_batch_mem_op_set_params` /
@@ -3887,6 +3891,7 @@ caller-chosen `StreamId`). `get_stream_id` is `cuStreamGetId` (identity with `st
 `mem_memcpy_ato_h_async` is `cuMemcpyAtoHAsync` (identity with `memcpy_ato_h_async`). Query; legal during capture. Distinct from `mem_memcpy_hto_a_async`. No Engine `--mem-memcpy-ato-h-async`.
 `mem_memcpy_ato_a_async` is `cuMemcpyAtoAAsync` (identity with `memcpy_ato_a_async`). Query; legal during capture. Distinct from `mem_memcpy_ato_h_async`. No Engine `--mem-memcpy-ato-a-async`.
 `mem_memcpy_2d_to_array` is `cuMemcpy2DToArray` (identity with `memcpy_2d_to_array`). Query; legal during capture. Distinct from `mem_memcpy_ato_a_async`. No Engine `--mem-memcpy-2d-to-array`.
+`mem_memcpy_2d_from_array` is `cuMemcpy2DFromArray` (identity with `memcpy_2d_from_array`). Query; legal during capture. Distinct from `mem_memcpy_2d_to_array`. No Engine `--mem-memcpy-2d-from-array`.
 `stream_get_device` is `cudaStreamGetDevice` /
 `cuStreamGetDevice` (the device of the stream; green-ctx streams return
 the ctx create device). Query; legal during capture. Distinct from
@@ -4335,6 +4340,7 @@ Invalid `"stream attr"`. Get is a query (capture-legal).
 `mem_memcpy_ato_h_async` is `cuMemcpyAtoHAsync` (identity with `memcpy_ato_h_async`). Query; legal during capture. Distinct from `mem_memcpy_hto_a_async`. No Engine `--mem-memcpy-ato-h-async`.
 `mem_memcpy_ato_a_async` is `cuMemcpyAtoAAsync` (identity with `memcpy_ato_a_async`). Query; legal during capture. Distinct from `mem_memcpy_ato_h_async`. No Engine `--mem-memcpy-ato-a-async`.
 `mem_memcpy_2d_to_array` is `cuMemcpy2DToArray` (identity with `memcpy_2d_to_array`). Query; legal during capture. Distinct from `mem_memcpy_ato_a_async`. No Engine `--mem-memcpy-2d-to-array`.
+`mem_memcpy_2d_from_array` is `cuMemcpy2DFromArray` (identity with `memcpy_2d_from_array`). Query; legal during capture. Distinct from `mem_memcpy_2d_to_array`. No Engine `--mem-memcpy-2d-from-array`.
 `set_stream_access_policy` is `cudaStreamAttributeAccessPolicyWindow`:
 `kernel` / `kernel_bufs` inherit it; `kernel_with` and graph replay use the
 launch / node window. Set `None` clears. This VM does not cap stream-priority
@@ -4796,6 +4802,7 @@ No Engine `--primary-ctx-flags`.
 `mem_memcpy_ato_h_async` is `cuMemcpyAtoHAsync` (identity with `memcpy_ato_h_async`). Query; legal during capture. Distinct from `mem_memcpy_hto_a_async`. No Engine `--mem-memcpy-ato-h-async`.
 `mem_memcpy_ato_a_async` is `cuMemcpyAtoAAsync` (identity with `memcpy_ato_a_async`). Query; legal during capture. Distinct from `mem_memcpy_ato_h_async`. No Engine `--mem-memcpy-ato-a-async`.
 `mem_memcpy_2d_to_array` is `cuMemcpy2DToArray` (identity with `memcpy_2d_to_array`). Query; legal during capture. Distinct from `mem_memcpy_ato_a_async`. No Engine `--mem-memcpy-2d-to-array`.
+`mem_memcpy_2d_from_array` is `cuMemcpy2DFromArray` (identity with `memcpy_2d_from_array`). Query; legal during capture. Distinct from `mem_memcpy_2d_to_array`. No Engine `--mem-memcpy-2d-from-array`.
 `ctx_get_id` is `cuCtxGetId` for the seeded primary context of an explicit
 device (no TLS current device). Distinct from `green_ctx_get_id`. Query;
 legal during capture. No Engine `--ctx-id`.
@@ -5264,6 +5271,7 @@ No Engine `--malloc-pitch-element`. `mem_alloc` is `cuMemAlloc` (identity with `
 `mem_memcpy_ato_h_async` is `cuMemcpyAtoHAsync` (identity with `memcpy_ato_h_async`). Query; legal during capture. Distinct from `mem_memcpy_hto_a_async`. No Engine `--mem-memcpy-ato-h-async`.
 `mem_memcpy_ato_a_async` is `cuMemcpyAtoAAsync` (identity with `memcpy_ato_a_async`). Query; legal during capture. Distinct from `mem_memcpy_ato_h_async`. No Engine `--mem-memcpy-ato-a-async`.
 `mem_memcpy_2d_to_array` is `cuMemcpy2DToArray` (identity with `memcpy_2d_to_array`). Query; legal during capture. Distinct from `mem_memcpy_ato_a_async`. No Engine `--mem-memcpy-2d-to-array`.
+`mem_memcpy_2d_from_array` is `cuMemcpy2DFromArray` (identity with `memcpy_2d_from_array`). Query; legal during capture. Distinct from `mem_memcpy_2d_to_array`. No Engine `--mem-memcpy-2d-from-array`.
 `mem_host_get_flags` is `cuMemHostGetFlags` (identity with `host_get_flags`). Query; legal during capture. No Engine `--mem-host-get-flags`.
 `mem_host_get_device_pointer` is `cuMemHostGetDevicePointer` (identity with `host_get_device_pointer_with_flags`). Query; legal during capture. No Engine `--mem-host-get-device-pointer`.
 `mem_host_register` is `cuMemHostRegister` (identity with `host_register_with_flags`). Capture refused. No Engine `--mem-host-register`.
@@ -5728,6 +5736,7 @@ No Engine `--malloc-pitch-element`. `mem_alloc` is `cuMemAlloc` (identity with `
 `mem_memcpy_ato_h_async` is `cuMemcpyAtoHAsync` (identity with `memcpy_ato_h_async`). Query; legal during capture. Distinct from `mem_memcpy_hto_a_async`. No Engine `--mem-memcpy-ato-h-async`.
 `mem_memcpy_ato_a_async` is `cuMemcpyAtoAAsync` (identity with `memcpy_ato_a_async`). Query; legal during capture. Distinct from `mem_memcpy_ato_h_async`. No Engine `--mem-memcpy-ato-a-async`.
 `mem_memcpy_2d_to_array` is `cuMemcpy2DToArray` (identity with `memcpy_2d_to_array`). Query; legal during capture. Distinct from `mem_memcpy_ato_a_async`. No Engine `--mem-memcpy-2d-to-array`.
+`mem_memcpy_2d_from_array` is `cuMemcpy2DFromArray` (identity with `memcpy_2d_from_array`). Query; legal during capture. Distinct from `mem_memcpy_2d_to_array`. No Engine `--mem-memcpy-2d-from-array`.
 `MemcpyOp` `height` / pitches are
 `cudaMemcpy2DAsync` (payload `width * height`). Origin fields are srcPos /
 dstPos (default 0). No Engine `--memcpy-origin`. `MemcpyOp` `src_lod` /
@@ -6154,6 +6163,7 @@ is `cuMemcpy3DUnaligned` (identity with `memcpy_3d`). No Engine
 `mem_memcpy_ato_h_async` is `cuMemcpyAtoHAsync` (identity with `memcpy_ato_h_async`). Query; legal during capture. Distinct from `mem_memcpy_hto_a_async`. No Engine `--mem-memcpy-ato-h-async`.
 `mem_memcpy_ato_a_async` is `cuMemcpyAtoAAsync` (identity with `memcpy_ato_a_async`). Query; legal during capture. Distinct from `mem_memcpy_ato_h_async`. No Engine `--mem-memcpy-ato-a-async`.
 `mem_memcpy_2d_to_array` is `cuMemcpy2DToArray` (identity with `memcpy_2d_to_array`). Query; legal during capture. Distinct from `mem_memcpy_ato_a_async`. No Engine `--mem-memcpy-2d-to-array`.
+`mem_memcpy_2d_from_array` is `cuMemcpy2DFromArray` (identity with `memcpy_2d_from_array`). Query; legal during capture. Distinct from `mem_memcpy_2d_to_array`. No Engine `--mem-memcpy-2d-from-array`.
 Default `cudaMallocAsync` uses the device mempool with release threshold
 `0` (unused bytes return to the OS when the stream-ordered free
 completes). `create_pool` / `create_pool_with_props` / `alloc_from_pool` /
@@ -6833,6 +6843,7 @@ first when compute contends). `stream_create_priority` is `cuStreamCreateWithPri
 `mem_memcpy_ato_h_async` is `cuMemcpyAtoHAsync` (identity with `memcpy_ato_h_async`). Query; legal during capture. Distinct from `mem_memcpy_hto_a_async`. No Engine `--mem-memcpy-ato-h-async`.
 `mem_memcpy_ato_a_async` is `cuMemcpyAtoAAsync` (identity with `memcpy_ato_a_async`). Query; legal during capture. Distinct from `mem_memcpy_ato_h_async`. No Engine `--mem-memcpy-ato-a-async`.
 `mem_memcpy_2d_to_array` is `cuMemcpy2DToArray` (identity with `memcpy_2d_to_array`). Query; legal during capture. Distinct from `mem_memcpy_ato_a_async`. No Engine `--mem-memcpy-2d-to-array`.
+`mem_memcpy_2d_from_array` is `cuMemcpy2DFromArray` (identity with `memcpy_2d_from_array`). Query; legal during capture. Distinct from `mem_memcpy_2d_to_array`. No Engine `--mem-memcpy-2d-from-array`.
 `destroy_stream` is `cudaStreamDestroy`
 (returns immediately; in-flight work still completes; NULL is Invalid).
 `device_get_stream_priority_range` is
@@ -7257,6 +7268,7 @@ NVLink-util-centric scheduling, and access-policy window).
 `mem_memcpy_ato_h_async` is `cuMemcpyAtoHAsync` (identity with `memcpy_ato_h_async`). Query; legal during capture. Distinct from `mem_memcpy_hto_a_async`. No Engine `--mem-memcpy-ato-h-async`.
 `mem_memcpy_ato_a_async` is `cuMemcpyAtoAAsync` (identity with `memcpy_ato_a_async`). Query; legal during capture. Distinct from `mem_memcpy_ato_h_async`. No Engine `--mem-memcpy-ato-a-async`.
 `mem_memcpy_2d_to_array` is `cuMemcpy2DToArray` (identity with `memcpy_2d_to_array`). Query; legal during capture. Distinct from `mem_memcpy_ato_a_async`. No Engine `--mem-memcpy-2d-to-array`.
+`mem_memcpy_2d_from_array` is `cuMemcpy2DFromArray` (identity with `memcpy_2d_from_array`). Query; legal during capture. Distinct from `mem_memcpy_2d_to_array`. No Engine `--mem-memcpy-2d-from-array`.
 `set_stream_sync_policy` is `cudaLaunchAttributeSynchronizationPolicy`
 on streams. `graph_kernel_node_set_sync_policy` is the CUDA 13 graph
 kernel-node twin (not `KernelAttrs`; not valid for host launches). Auto tax 0.
@@ -7676,6 +7688,7 @@ not `KernelAttrs`).
 `mem_memcpy_ato_h_async` is `cuMemcpyAtoHAsync` (identity with `memcpy_ato_h_async`). Query; legal during capture. Distinct from `mem_memcpy_hto_a_async`. No Engine `--mem-memcpy-ato-h-async`.
 `mem_memcpy_ato_a_async` is `cuMemcpyAtoAAsync` (identity with `memcpy_ato_a_async`). Query; legal during capture. Distinct from `mem_memcpy_ato_h_async`. No Engine `--mem-memcpy-ato-a-async`.
 `mem_memcpy_2d_to_array` is `cuMemcpy2DToArray` (identity with `memcpy_2d_to_array`). Query; legal during capture. Distinct from `mem_memcpy_ato_a_async`. No Engine `--mem-memcpy-2d-to-array`.
+`mem_memcpy_2d_from_array` is `cuMemcpy2DFromArray` (identity with `memcpy_2d_from_array`). Query; legal during capture. Distinct from `mem_memcpy_2d_to_array`. No Engine `--mem-memcpy-2d-from-array`.
 `graph_kernel_node_get_attribute` / `graph_exec_kernel_node_get_attribute` /
 `graph_kernel_node_set_attribute` / `graph_exec_kernel_node_set_attribute`
 are the generic `cudaGraphKernelNodeGetAttribute` / `SetAttribute`
@@ -8086,6 +8099,7 @@ GetAttribute; a live exec stays. Query; capture is legal.
 `mem_memcpy_ato_h_async` is `cuMemcpyAtoHAsync` (identity with `memcpy_ato_h_async`). Query; legal during capture. Distinct from `mem_memcpy_hto_a_async`. No Engine `--mem-memcpy-ato-h-async`.
 `mem_memcpy_ato_a_async` is `cuMemcpyAtoAAsync` (identity with `memcpy_ato_a_async`). Query; legal during capture. Distinct from `mem_memcpy_ato_h_async`. No Engine `--mem-memcpy-ato-a-async`.
 `mem_memcpy_2d_to_array` is `cuMemcpy2DToArray` (identity with `memcpy_2d_to_array`). Query; legal during capture. Distinct from `mem_memcpy_ato_a_async`. No Engine `--mem-memcpy-2d-to-array`.
+`mem_memcpy_2d_from_array` is `cuMemcpy2DFromArray` (identity with `memcpy_2d_from_array`). Query; legal during capture. Distinct from `mem_memcpy_2d_to_array`. No Engine `--mem-memcpy-2d-from-array`.
 `graph_exec_kernel_node_copy_attributes` is the exec-snapshot CopyAttributes
 twin (uninstantiated graphs are Invalid). A parked in-flight-destroyed exec
 used as CopyAttributes src or dst is `"unknown graph"`; a live exec as either
@@ -8487,6 +8501,7 @@ end stays.
 `mem_memcpy_ato_h_async` is `cuMemcpyAtoHAsync` (identity with `memcpy_ato_h_async`). Query; legal during capture. Distinct from `mem_memcpy_hto_a_async`. No Engine `--mem-memcpy-ato-h-async`.
 `mem_memcpy_ato_a_async` is `cuMemcpyAtoAAsync` (identity with `memcpy_ato_a_async`). Query; legal during capture. Distinct from `mem_memcpy_ato_h_async`. No Engine `--mem-memcpy-ato-a-async`.
 `mem_memcpy_2d_to_array` is `cuMemcpy2DToArray` (identity with `memcpy_2d_to_array`). Query; legal during capture. Distinct from `mem_memcpy_ato_a_async`. No Engine `--mem-memcpy-2d-to-array`.
+`mem_memcpy_2d_from_array` is `cuMemcpy2DFromArray` (identity with `memcpy_2d_from_array`). Query; legal during capture. Distinct from `mem_memcpy_2d_to_array`. No Engine `--mem-memcpy-2d-from-array`.
 `kernel_pdl` is `cudaLaunchKernelEx` PDL:
 a wait kernel may start after the previous same-stream kernel's trigger
 (`pdl_trigger_permille`) instead of its completion. Overlap needs

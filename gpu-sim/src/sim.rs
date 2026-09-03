@@ -27301,7 +27301,6 @@ impl Sim {
 
     /// `cuMemcpy2DToArray`. Identity with [`Self::memcpy_2d_to_array`].
     /// Query; legal during capture. Distinct from [`Self::mem_memcpy_ato_a_async`].
-    /// This VM does not invent occupancy SM counts this slice.
     pub fn mem_memcpy_2d_to_array(&self, device: DeviceId) -> Result<(), SimError> {
         self.memcpy_2d_to_array(device)
     }
@@ -27315,11 +27314,20 @@ impl Sim {
     /// Unknown devices are Invalid `"device not in profile"`. Query; legal
     /// during capture. This VM does not invent `cuMemcpy2DArrayToArray`
     /// this slice.
+    /// Driver wrap: [`Self::mem_memcpy_2d_from_array`].
+    /// Identity: [`Self::mem_memcpy_2d_from_array`].
     pub fn memcpy_2d_from_array(&self, device: DeviceId) -> Result<(), SimError> {
         let _gpu = self.profile.gpu(device)?;
         Err(SimError::Invalid {
             why: "memcpy2d fromarr",
         })
+    }
+
+    /// `cuMemcpy2DFromArray`. Identity with [`Self::memcpy_2d_from_array`].
+    /// Query; legal during capture. Distinct from [`Self::mem_memcpy_2d_to_array`].
+    /// This VM does not invent occupancy SM counts this slice.
+    pub fn mem_memcpy_2d_from_array(&self, device: DeviceId) -> Result<(), SimError> {
+        self.memcpy_2d_from_array(device)
     }
 
     /// `cuMemcpy2DArrayToArray`. CUDA arrays are not modeled.
