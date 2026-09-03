@@ -16198,7 +16198,6 @@ impl Sim {
 
     /// `cuMemPoolGetId`. Identity with [`Self::pool_get_id`].
     /// Query; legal during capture. Distinct from [`Self::mem_graph_node_get_containing_graph`].
-    /// This VM does not invent occupancy SM counts this slice.
     pub fn mem_pool_get_id(&self, pool: PoolId) -> Result<u64, SimError> {
         self.pool_get_id(pool)
     }
@@ -21278,6 +21277,8 @@ impl Sim {
     /// [`Self::memcpy_pinned_to_device`] is `cuMemcpyHtoDAsync`.
     /// [`Self::memcpy_host_to_device`] stays pageable.
     /// [`Self::memcpy_sync`] stays generic `cudaMemcpy`.
+    /// Driver wrap: [`Self::mem_memcpy_htod`].
+    /// Identity: [`Self::mem_memcpy_htod`].
     pub fn memcpy_htod(
         &mut self,
         device: DeviceId,
@@ -21293,6 +21294,19 @@ impl Sim {
         let id = self.memcpy_pinned_to_device(device, alloc, bytes, stream)?;
         self.synchronize_stream(device, stream)?;
         Ok(id)
+    }
+
+    /// `cuMemcpyHtoD`. Identity with [`Self::memcpy_htod`].
+    /// Host-sync; capture refused. Distinct from [`Self::mem_pool_get_id`].
+    /// This VM does not invent occupancy SM counts this slice.
+    pub fn mem_memcpy_htod(
+        &mut self,
+        device: DeviceId,
+        alloc: AllocId,
+        bytes: u64,
+        stream: StreamId,
+    ) -> Result<OpId, SimError> {
+        self.memcpy_htod(device, alloc, bytes, stream)
     }
 
     /// `device` → pageable host. Host-synchronous; source HBM residency is kept.
