@@ -1618,7 +1618,6 @@ impl Sim {
 
     /// `cudaDeviceGetStreamPriorityRange`. Identity with [`Self::device_get_stream_priority_range`].
     /// Query; legal during capture. Distinct from [`Self::mem_func_set_attribute`].
-    /// This VM does not invent occupancy SM counts this slice.
     pub fn mem_device_get_stream_priority_range(
         &self,
         device: DeviceId,
@@ -3448,11 +3447,20 @@ impl Sim {
     /// events are [`SimError::UnknownEvent`]. Recreating the same [`EventId`]
     /// after [`Self::destroy_event`] returns the same id (no generation
     /// counter). Distinct from [`Self::event_get_flags`].
+    /// Driver wrap: [`Self::mem_event_get_id`].
+    /// Identity: [`Self::mem_event_get_id`].
     pub fn event_get_id(&self, event: EventId) -> Result<u64, SimError> {
         if !self.events.contains_key(&event) {
             return Err(SimError::UnknownEvent { event: event.0 });
         }
         Ok(u64::from(event.0).saturating_add(1))
+    }
+
+    /// `cuEventGetId`. Identity with [`Self::event_get_id`].
+    /// Query; legal during capture. Distinct from [`Self::mem_device_get_stream_priority_range`].
+    /// This VM does not invent occupancy SM counts this slice.
+    pub fn mem_event_get_id(&self, event: EventId) -> Result<u64, SimError> {
+        self.event_get_id(event)
     }
 
     fn insert_event(

@@ -10734,7 +10734,12 @@ model, do not celebrate the sim.
       `mem_func_set_attribute`. This VM does not invent occupancy SM counts, Engine `--mem-device-get-stream-priority-range`,
       or `cudaChooseDevice`. `gpu-profile capture` is still refused. Dual
       score still has no `$/M tokens`.
-1295. [ ] Next numbered PLAN item after 1294 is the next `gpu-sim` / Engine /
+1295. [x] `gpu-sim` `Sim::mem_event_get_id` is
+      `cuEventGetId`. Identity with `event_get_id`. Query; legal during capture. Distinct from
+      `mem_device_get_stream_priority_range`. This VM does not invent occupancy SM counts, Engine `--mem-event-get-id`,
+      or `cudaChooseDevice`. `gpu-profile capture` is still refused. Dual
+      score still has no `$/M tokens`.
+1296. [ ] Next numbered PLAN item after 1295 is the next `gpu-sim` / Engine /
     serve / expertvm mechanical API that is still missing, or the next official
     decode family. Prefer remaining CUDA-shaped twins over more
     OpenAI HTTP veneer. Do not invent F32 `output.scale`. Do not invent a
@@ -13560,6 +13565,11 @@ model, do not celebrate the sim.
     occupancy SM counts this slice. Do not reverse MemDeviceGetStreamPriorityRange identity with device_get_stream_priority_range.
     Do not invent `ctx_get_stream_priority_range` as `mem_device_get_stream_priority_range`.
     Do not invent `cuCtxGetStreamPriorityRange` as `mem_device_get_stream_priority_range`.
+    Do not invent a second `cuEventGetId` / `mem_event_get_id`.
+    Do not invent Engine `--mem-event-get-id`. Do not invent
+    occupancy SM counts this slice. Do not reverse MemEventGetId identity with event_get_id.
+    Do not invent `event_create` as `mem_event_get_id`.
+    Do not invent `cuEventCreate` as `mem_event_get_id`.
     Do not invent a second `cudaStreamAddCallback`.
     Do not invent Engine `--stream-callback` (same wall as second live
     `cudaLaunchHostFunc` after miss DMA).
@@ -16422,6 +16432,11 @@ model, do not celebrate the sim.
     this slice. Do not reverse MemDeviceGetStreamPriorityRange identity with device_get_stream_priority_range.
     Do not wrap `device_get_stream_priority_range` as `mem_device_get_stream_priority_range`.
     Do not wrap `ctx_get_stream_priority_range` as `mem_device_get_stream_priority_range`.
+    Do not invent a second `mem_event_get_id` API. Do not invent
+    Engine `--mem-event-get-id-identity`. Do not invent a cu-event-create
+    this slice. Do not reverse MemEventGetId identity with event_get_id.
+    Do not wrap `event_get_id` as `mem_event_get_id`.
+    Do not wrap `event_create` as `mem_event_get_id`.
     Do not invent a second DeviceLaunch in-flight destroy-complete check or Engine
     `--device-launch-destroy`. Do not abort an in-flight DeviceLaunch when
     `destroy_graph` succeeds. Do not delay destroy of an idle exec. Do not invent
@@ -19191,6 +19206,10 @@ model, do not celebrate the sim.
     invent Engine `--cu-mem-device-get-stream-priority-range`. Do not reverse wrapping
     cudaDeviceGetStreamPriorityRange identity. Do not wrap `func_set_attribute` as `mem_device_get_stream_priority_range`.
     Do not wrap `ctx_get_stream_priority_range` as `mem_device_get_stream_priority_range`.
+    Do not invent a second `mem_event_get_id` method. Do not
+    invent Engine `--cu-mem-event-get-id`. Do not reverse wrapping
+    cuEventGetId identity. Do not wrap `device_get_stream_priority_range` as `mem_event_get_id`.
+    Do not wrap `event_create` as `mem_event_get_id`.
     Do not
     spend the next item on an OpenAI-compatible HTTP veneer.
 

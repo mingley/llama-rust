@@ -82,6 +82,13 @@ Identity with `checkpoint_process_unlock`. Query; legal during capture. Distinct
 This VM does not invent occupancy SM counts or Engine `--mem-checkpoint-process-unlock`.
 `gpu-profile capture` is still refused. Dual score still has no `$/M tokens`.
 
+## Shipped 2026-09-03 — CUDA `cuEventGetId`
+
+`gpu-sim` `Sim::mem_event_get_id` is `cuEventGetId`.
+Identity with `event_get_id`. Query; legal during capture. Distinct from `mem_device_get_stream_priority_range`.
+This VM does not invent occupancy SM counts or Engine `--mem-event-get-id`.
+`gpu-profile capture` is still refused. Dual score still has no `$/M tokens`.
+
 ## Shipped 2026-09-03 — CUDA `cudaDeviceGetStreamPriorityRange`
 
 `gpu-sim` `Sim::mem_device_get_stream_priority_range` is `cudaDeviceGetStreamPriorityRange`.
