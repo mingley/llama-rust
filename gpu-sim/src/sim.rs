@@ -33017,7 +33017,6 @@ impl Sim {
 
     /// `cuFuncGetName`. Identity with [`Self::func_get_name`].
     /// Query; legal during capture. Distinct from [`Self::mem_func_get_module`].
-    /// This VM does not invent occupancy SM counts this slice.
     pub fn mem_func_get_name(&self, device: DeviceId) -> Result<String, SimError> {
         self.func_get_name(device)
     }
@@ -33030,6 +33029,8 @@ impl Sim {
     /// [`Self::func_get_attributes`] (compiler fields 0). Unknown devices
     /// are Invalid `"device not in profile"`. This VM does not invent a
     /// compiled kernel this slice.
+    /// Driver wrap: [`Self::mem_func_get_param_info`].
+    /// Identity: [`Self::mem_func_get_param_info`].
     pub fn func_get_param_info(
         &self,
         device: DeviceId,
@@ -33040,6 +33041,17 @@ impl Sim {
         Err(SimError::Invalid {
             why: "unknown function",
         })
+    }
+
+    /// `cuFuncGetParamInfo`. Identity with [`Self::func_get_param_info`].
+    /// Query; legal during capture. Distinct from [`Self::mem_func_get_name`].
+    /// This VM does not invent occupancy SM counts this slice.
+    pub fn mem_func_get_param_info(
+        &self,
+        device: DeviceId,
+        param_index: u64,
+    ) -> Result<(u64, u64), SimError> {
+        self.func_get_param_info(device, param_index)
     }
 
     /// `cuFuncGetParamCount` for the per-device function.
