@@ -26062,7 +26062,6 @@ impl Sim {
 
     /// `cuProfilerStart`. Identity with [`Self::profiler_start`].
     /// Host-synchronous. Capture refused. Distinct from [`Self::mem_driver_init`].
-    /// This VM does not invent occupancy SM counts this slice.
     pub fn mem_profiler_start(&mut self) -> Result<(), SimError> {
         self.profiler_start()
     }
@@ -26072,10 +26071,19 @@ impl Sim {
     ///
     /// 1 ns no-op (CUPTI is not modeled). Distinct from [`Self::profiler_start`]
     /// and from [`Self::profiler_initialize`].
+    /// Driver wrap: [`Self::mem_profiler_stop`].
+    /// Identity: [`Self::mem_profiler_stop`].
     pub fn profiler_stop(&mut self) -> Result<(), SimError> {
         self.fail_if_capturing("cannot capture profiler stop")?;
         self.clock = self.clock.saturating_add(1);
         Ok(())
+    }
+
+    /// `cuProfilerStop`. Identity with [`Self::profiler_stop`].
+    /// Host-synchronous. Capture refused. Distinct from [`Self::mem_profiler_start`].
+    /// This VM does not invent occupancy SM counts this slice.
+    pub fn mem_profiler_stop(&mut self) -> Result<(), SimError> {
+        self.profiler_stop()
     }
 
     /// `cudaProfilerInitialize`. CUPTI config files are not modeled.
