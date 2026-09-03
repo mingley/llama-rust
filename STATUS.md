@@ -82,6 +82,13 @@ Identity with `checkpoint_process_unlock`. Query; legal during capture. Distinct
 This VM does not invent occupancy SM counts or Engine `--mem-checkpoint-process-unlock`.
 `gpu-profile capture` is still refused. Dual score still has no `$/M tokens`.
 
+## Shipped 2026-09-03 — CUDA `cuLibraryLoadData`
+
+`gpu-sim` `Sim::mem_library_load_data` is `cuLibraryLoadData`.
+Identity with `library_load_data`. Query; legal during capture. Distinct from `mem_memcpy_2d_array_to_array_async`.
+This VM does not invent occupancy SM counts or Engine `--mem-library-load-data`.
+`gpu-profile capture` is still refused. Dual score still has no `$/M tokens`.
+
 ## Shipped 2026-09-03 — CUDA `cuMemcpy2DArrayToArrayAsync`
 
 `gpu-sim` `Sim::mem_memcpy_2d_array_to_array_async` is `cuMemcpy2DArrayToArrayAsync`.

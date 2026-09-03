@@ -27419,7 +27419,6 @@ impl Sim {
 
     /// `cuMemcpy2DArrayToArrayAsync`. Identity with [`Self::memcpy_2d_array_to_array_async`].
     /// Query; legal during capture. Distinct from [`Self::mem_memcpy_2d_from_array_async`].
-    /// This VM does not invent occupancy SM counts this slice.
     pub fn mem_memcpy_2d_array_to_array_async(&self, device: DeviceId) -> Result<(), SimError> {
         self.memcpy_2d_array_to_array_async(device)
     }
@@ -27432,11 +27431,20 @@ impl Sim {
     /// and from [`Self::module_load`].
     /// Unknown devices are Invalid `"device not in profile"`. Query; legal
     /// during capture. Distinct from [`Self::library_load_from_file`].
+    /// Driver wrap: [`Self::mem_library_load_data`].
+    /// Identity: [`Self::mem_library_load_data`].
     pub fn library_load_data(&self, device: DeviceId) -> Result<(), SimError> {
         let _gpu = self.profile.gpu(device)?;
         Err(SimError::Invalid {
             why: "cuda library",
         })
+    }
+
+    /// `cuLibraryLoadData`. Identity with [`Self::library_load_data`].
+    /// Query; legal during capture. Distinct from [`Self::mem_memcpy_2d_array_to_array_async`].
+    /// This VM does not invent occupancy SM counts this slice.
+    pub fn mem_library_load_data(&self, device: DeviceId) -> Result<(), SimError> {
+        self.library_load_data(device)
     }
 
     /// `cuLibraryLoadFromFile`. CUDA libraries are not modeled.
