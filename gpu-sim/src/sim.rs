@@ -22048,7 +22048,6 @@ impl Sim {
 
     /// `cuTensorMapReplaceAlignedAddr`. Identity with [`Self::tensor_map_replace_aligned_addr`].
     /// Query; legal during capture. Distinct from [`Self::mem_tensor_map_encode_im2col_wide`].
-    /// This VM does not invent occupancy SM counts this slice.
     pub fn mem_tensor_map_replace_aligned_addr(&self, device: DeviceId) -> Result<(), SimError> {
         self.tensor_map_replace_aligned_addr(device)
     }
@@ -22084,11 +22083,20 @@ impl Sim {
     /// [`Self::array_create`], from [`Self::surf_object_get_resource_desc`],
     /// and from [`Self::array_3d_get_descriptor`]. Unknown devices are Invalid
     /// `"device not in profile"`. Query; legal during capture.
+    /// Driver wrap: [`Self::mem_array_get_descriptor`].
+    /// Identity: [`Self::mem_array_get_descriptor`].
     pub fn array_get_descriptor(&self, device: DeviceId) -> Result<(), SimError> {
         let _gpu = self.profile.gpu(device)?;
         Err(SimError::Invalid {
             why: "array descriptor",
         })
+    }
+
+    /// `cuArrayGetDescriptor`. Identity with [`Self::array_get_descriptor`].
+    /// Query; legal during capture. Distinct from [`Self::mem_tensor_map_replace_aligned_addr`].
+    /// This VM does not invent occupancy SM counts this slice.
+    pub fn mem_array_get_descriptor(&self, device: DeviceId) -> Result<(), SimError> {
+        self.array_get_descriptor(device)
     }
 
     /// `cuArray3DGetDescriptor`. CUDA arrays are not modeled.
