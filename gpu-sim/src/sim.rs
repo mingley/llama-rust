@@ -25656,7 +25656,6 @@ impl Sim {
 
     /// `cudaDeviceGetByPCIBusId`. Identity with [`Self::device_get_by_pci_bus_id`].
     /// Query; legal during capture. Distinct from [`Self::mem_device_get_pci_bus_id`].
-    /// This VM does not invent occupancy SM counts this slice.
     pub fn mem_device_get_by_pci_bus_id(&self, pci_bus_id: &str) -> Result<DeviceId, SimError> {
         self.device_get_by_pci_bus_id(pci_bus_id)
     }
@@ -25665,8 +25664,18 @@ impl Sim {
     ///
     /// [`crate::GpuProfile::hbm_bytes`] (same as [`DeviceAttr::TotalGlobalMem`] /
     /// [`DeviceProperties::total_global_mem`]). Unknown devices are Invalid.
+    ///
+    /// Driver wrap: [`Self::mem_device_total_mem`].
+    /// Identity: [`Self::mem_device_total_mem`].
     pub fn device_total_mem(&self, device: DeviceId) -> Result<u64, SimError> {
         Ok(self.profile.gpu(device)?.hbm_bytes)
+    }
+
+    /// `cuDeviceTotalMem`. Identity with [`Self::device_total_mem`].
+    /// Query; legal during capture. Distinct from [`Self::mem_device_get_by_pci_bus_id`].
+    /// This VM does not invent occupancy SM counts this slice.
+    pub fn mem_device_total_mem(&self, device: DeviceId) -> Result<u64, SimError> {
+        self.device_total_mem(device)
     }
 
     /// `cudaGetDeviceCount`. Query; legal during capture.
