@@ -21983,7 +21983,6 @@ impl Sim {
 
     /// `cuTensorMapEncodeTiled`. Identity with [`Self::tensor_map_encode_tiled`].
     /// Query; legal during capture. Distinct from [`Self::mem_discard_and_prefetch_batch_async`].
-    /// This VM does not invent occupancy SM counts this slice.
     pub fn mem_tensor_map_encode_tiled(&self, device: DeviceId) -> Result<(), SimError> {
         self.tensor_map_encode_tiled(device)
     }
@@ -21994,11 +21993,20 @@ impl Sim {
     /// is 0). Distinct from [`Self::tensor_map_encode_tiled`] (why is not
     /// `"tensor map"`) and from [`Self::tensor_map_encode_im2col_wide`].
     /// Query; legal during capture.
+    /// Driver wrap: [`Self::mem_tensor_map_encode_im2col`].
+    /// Identity: [`Self::mem_tensor_map_encode_im2col`].
     pub fn tensor_map_encode_im2col(&self, device: DeviceId) -> Result<(), SimError> {
         let _gpu = self.profile.gpu(device)?;
         Err(SimError::Invalid {
             why: "tensor im2col",
         })
+    }
+
+    /// `cuTensorMapEncodeIm2col`. Identity with [`Self::tensor_map_encode_im2col`].
+    /// Query; legal during capture. Distinct from [`Self::mem_tensor_map_encode_tiled`].
+    /// This VM does not invent occupancy SM counts this slice.
+    pub fn mem_tensor_map_encode_im2col(&self, device: DeviceId) -> Result<(), SimError> {
+        self.tensor_map_encode_im2col(device)
     }
 
     /// `cuTensorMapEncodeIm2colWide`. TMA is not modeled.
