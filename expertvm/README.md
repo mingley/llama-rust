@@ -899,6 +899,7 @@ compiled kernel exists; no Engine flag).
 `gpu-sim` `mem_module_load_data_ex` is `cuModuleLoadDataEx` (identity with `module_load_data_ex`; no Engine flag).
 `gpu-sim` `mem_module_get_function_count` is `cuModuleGetFunctionCount` (identity with `module_get_function_count`; no Engine flag).
 `gpu-sim` `mem_module_enumerate_functions` is `cuModuleEnumerateFunctions` (identity with `module_enumerate_functions`; no Engine flag).
+`gpu-sim` `mem_module_unload` is `cuModuleUnload` (identity with `module_unload`; no Engine flag).
 `gpu-sim` `mem_alloc` is `cuMemAlloc` (identity with `malloc`; no Engine flag).
 `gpu-sim` `mem_free` is `cuMemFree` (identity with `free_sync`; no Engine flag).
 `gpu-sim` `mem_free_host` is `cuMemFreeHost` (identity with `free_host_pinned`; no Engine flag).
@@ -1322,6 +1323,7 @@ compiled kernel exists; no Engine flag).
 `gpu-sim` `mem_module_load_data_ex` is `cuModuleLoadDataEx` (identity with `module_load_data_ex`; no Engine flag).
 `gpu-sim` `mem_module_get_function_count` is `cuModuleGetFunctionCount` (identity with `module_get_function_count`; no Engine flag).
 `gpu-sim` `mem_module_enumerate_functions` is `cuModuleEnumerateFunctions` (identity with `module_enumerate_functions`; no Engine flag).
+`gpu-sim` `mem_module_unload` is `cuModuleUnload` (identity with `module_unload`; no Engine flag).
 `gpu-sim` `func_is_loaded` is `cuFuncIsLoaded` (`false` until a compiled
 kernel exists; no Engine flag).
 `gpu-sim` `func_load` is `cuFuncLoad` (Invalid; no compiled kernel; no

@@ -10314,7 +10314,12 @@ model, do not celebrate the sim.
       `mem_module_get_function_count`. This VM does not invent occupancy SM counts, Engine `--mem-module-enumerate-functions`,
       or `cudaChooseDevice`. `gpu-profile capture` is still refused. Dual
       score still has no `$/M tokens`.
-1211. [ ] Next numbered PLAN item after 1210 is the next `gpu-sim` / Engine /
+1211. [x] `gpu-sim` `Sim::mem_module_unload` is
+      `cuModuleUnload`. Identity with `module_unload`. Query; legal during capture. Distinct from
+      `mem_module_enumerate_functions`. This VM does not invent occupancy SM counts, Engine `--mem-module-unload`,
+      or `cudaChooseDevice`. `gpu-profile capture` is still refused. Dual
+      score still has no `$/M tokens`.
+1212. [ ] Next numbered PLAN item after 1211 is the next `gpu-sim` / Engine /
     serve / expertvm mechanical API that is still missing, or the next official
     decode family. Prefer remaining CUDA-shaped twins over more
     OpenAI HTTP veneer. Do not invent F32 `output.scale`. Do not invent a
@@ -12720,6 +12725,11 @@ model, do not celebrate the sim.
     occupancy SM counts this slice. Do not reverse MemModuleEnumerateFunctions identity with module_enumerate_functions.
     Do not invent `module_unload` as `mem_module_enumerate_functions`.
     Do not invent `cuModuleUnload` as `mem_module_enumerate_functions`.
+    Do not invent a second `cuModuleUnload` / `mem_module_unload`.
+    Do not invent Engine `--mem-module-unload`. Do not invent
+    occupancy SM counts this slice. Do not reverse MemModuleUnload identity with module_unload.
+    Do not invent `module_get_function` as `mem_module_unload`.
+    Do not invent `cuModuleGetFunction` as `mem_module_unload`.
     Do not invent a second `cudaStreamAddCallback`.
     Do not invent Engine `--stream-callback` (same wall as second live
     `cudaLaunchHostFunc` after miss DMA).
@@ -15162,6 +15172,11 @@ model, do not celebrate the sim.
     this slice. Do not reverse MemModuleEnumerateFunctions identity with module_enumerate_functions.
     Do not wrap `module_enumerate_functions` as `mem_module_enumerate_functions`.
     Do not wrap `module_unload` as `mem_module_enumerate_functions`.
+    Do not invent a second `mem_module_unload` API. Do not invent
+    Engine `--mem-module-unload-identity`. Do not invent a module-get-function
+    this slice. Do not reverse MemModuleUnload identity with module_unload.
+    Do not wrap `module_unload` as `mem_module_unload`.
+    Do not wrap `module_get_function` as `mem_module_unload`.
     Do not invent a second DeviceLaunch in-flight destroy-complete check or Engine
     `--device-launch-destroy`. Do not abort an in-flight DeviceLaunch when
     `destroy_graph` succeeds. Do not delay destroy of an idle exec. Do not invent
@@ -17595,6 +17610,10 @@ model, do not celebrate the sim.
     invent Engine `--cu-mem-module-enumerate-functions`. Do not reverse wrapping
     cuModuleEnumerateFunctions identity. Do not wrap `module_get_function_count` as `mem_module_enumerate_functions`.
     Do not wrap `module_unload` as `mem_module_enumerate_functions`.
+    Do not invent a second `mem_module_unload` method. Do not
+    invent Engine `--cu-mem-module-unload`. Do not reverse wrapping
+    cuModuleUnload identity. Do not wrap `module_enumerate_functions` as `mem_module_unload`.
+    Do not wrap `module_get_function` as `mem_module_unload`.
     Do not
     spend the next item on an OpenAI-compatible HTTP veneer.
 
