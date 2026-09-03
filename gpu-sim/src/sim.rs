@@ -27861,7 +27861,6 @@ impl Sim {
 
     /// `cuLinkAddData`. Identity with [`Self::link_add_data`].
     /// Query; legal during capture. Distinct from [`Self::mem_link_create`].
-    /// This VM does not invent occupancy SM counts this slice.
     pub fn mem_link_add_data(&self, device: DeviceId) -> Result<(), SimError> {
         self.link_add_data(device)
     }
@@ -27874,11 +27873,20 @@ impl Sim {
     /// [`Self::link_destroy`].
     /// Unknown devices are Invalid `"device not in profile"`. Query; legal
     /// during capture.
+    /// Driver wrap: [`Self::mem_link_complete`].
+    /// Identity: [`Self::mem_link_complete`].
     pub fn link_complete(&self, device: DeviceId) -> Result<(), SimError> {
         let _gpu = self.profile.gpu(device)?;
         Err(SimError::Invalid {
             why: "link complete",
         })
+    }
+
+    /// `cuLinkComplete`. Identity with [`Self::link_complete`].
+    /// Query; legal during capture. Distinct from [`Self::mem_link_add_data`].
+    /// This VM does not invent occupancy SM counts this slice.
+    pub fn mem_link_complete(&self, device: DeviceId) -> Result<(), SimError> {
+        self.link_complete(device)
     }
 
     /// `cuLinkDestroy`. The CUDA driver JIT linker is not modeled.

@@ -10659,7 +10659,12 @@ model, do not celebrate the sim.
       `mem_link_create`. This VM does not invent occupancy SM counts, Engine `--mem-link-add-data`,
       or `cudaChooseDevice`. `gpu-profile capture` is still refused. Dual
       score still has no `$/M tokens`.
-1280. [ ] Next numbered PLAN item after 1279 is the next `gpu-sim` / Engine /
+1280. [x] `gpu-sim` `Sim::mem_link_complete` is
+      `cuLinkComplete`. Identity with `link_complete`. Query; legal during capture. Distinct from
+      `mem_link_add_data`. This VM does not invent occupancy SM counts, Engine `--mem-link-complete`,
+      or `cudaChooseDevice`. `gpu-profile capture` is still refused. Dual
+      score still has no `$/M tokens`.
+1281. [ ] Next numbered PLAN item after 1280 is the next `gpu-sim` / Engine /
     serve / expertvm mechanical API that is still missing, or the next official
     decode family. Prefer remaining CUDA-shaped twins over more
     OpenAI HTTP veneer. Do not invent F32 `output.scale`. Do not invent a
@@ -13410,6 +13415,11 @@ model, do not celebrate the sim.
     occupancy SM counts this slice. Do not reverse MemLinkAddData identity with link_add_data.
     Do not invent `link_complete` as `mem_link_add_data`.
     Do not invent `cuLinkComplete` as `mem_link_add_data`.
+    Do not invent a second `cuLinkComplete` / `mem_link_complete`.
+    Do not invent Engine `--mem-link-complete`. Do not invent
+    occupancy SM counts this slice. Do not reverse MemLinkComplete identity with link_complete.
+    Do not invent `link_destroy` as `mem_link_complete`.
+    Do not invent `cuLinkDestroy` as `mem_link_complete`.
     Do not invent a second `cudaStreamAddCallback`.
     Do not invent Engine `--stream-callback` (same wall as second live
     `cudaLaunchHostFunc` after miss DMA).
@@ -16197,6 +16207,11 @@ model, do not celebrate the sim.
     this slice. Do not reverse MemLinkAddData identity with link_add_data.
     Do not wrap `link_add_data` as `mem_link_add_data`.
     Do not wrap `link_complete` as `mem_link_add_data`.
+    Do not invent a second `mem_link_complete` API. Do not invent
+    Engine `--mem-link-complete-identity`. Do not invent a link-destroy
+    this slice. Do not reverse MemLinkComplete identity with link_complete.
+    Do not wrap `link_complete` as `mem_link_complete`.
+    Do not wrap `link_destroy` as `mem_link_complete`.
     Do not invent a second DeviceLaunch in-flight destroy-complete check or Engine
     `--device-launch-destroy`. Do not abort an in-flight DeviceLaunch when
     `destroy_graph` succeeds. Do not delay destroy of an idle exec. Do not invent
@@ -18906,6 +18921,10 @@ model, do not celebrate the sim.
     invent Engine `--cu-mem-link-add-data`. Do not reverse wrapping
     cuLinkAddData identity. Do not wrap `link_create` as `mem_link_add_data`.
     Do not wrap `link_complete` as `mem_link_add_data`.
+    Do not invent a second `mem_link_complete` method. Do not
+    invent Engine `--cu-mem-link-complete`. Do not reverse wrapping
+    cuLinkComplete identity. Do not wrap `link_add_data` as `mem_link_complete`.
+    Do not wrap `link_destroy` as `mem_link_complete`.
     Do not
     spend the next item on an OpenAI-compatible HTTP veneer.
 
