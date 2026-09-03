@@ -12,6 +12,13 @@ Identity with `driver_get_version` (`cudaDriverGetVersion`). Query; legal during
 This VM does not invent occupancy SM counts or Engine `--mem-driver-get-version`.
 `gpu-profile capture` is still refused. Dual score still has no `$/M tokens`.
 
+## Shipped 2026-09-03 — CUDA `cuGetProcAddress`
+
+`gpu-sim` `Sim::mem_get_proc_address` is `cuGetProcAddress`.
+Identity with `get_proc_address` (`cudaGetDriverEntryPoint`). Query; legal during capture. Distinct from `mem_driver_get_version`.
+This VM does not invent occupancy SM counts or Engine `--mem-get-proc-address`.
+`gpu-profile capture` is still refused. Dual score still has no `$/M tokens`.
+
 ## Shipped 2026-09-03 — CUDA `cuDeviceTotalMem`
 
 `gpu-sim` `Sim::mem_device_total_mem` is `cuDeviceTotalMem`.
