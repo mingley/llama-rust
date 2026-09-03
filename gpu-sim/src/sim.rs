@@ -27928,7 +27928,6 @@ impl Sim {
 
     /// `cuLinkAddFile`. Identity with [`Self::link_add_file`].
     /// Query; legal during capture. Distinct from [`Self::mem_link_destroy`].
-    /// This VM does not invent occupancy SM counts this slice.
     pub fn mem_link_add_file(&self, device: DeviceId) -> Result<(), SimError> {
         self.link_add_file(device)
     }
@@ -27938,9 +27937,19 @@ impl Sim {
     /// Same CUDA 13.0 value as [`Self::driver_get_version`] (this VM is one
     /// toolkit). Distinct from [`Self::device_count`]. This VM does not invent
     /// `cudaGetLastError`.
+    /// Driver wrap: [`Self::mem_runtime_get_version`].
+    /// Identity: [`Self::mem_runtime_get_version`].
     #[must_use]
     pub fn runtime_get_version(&self) -> i32 {
         13_000
+    }
+
+    /// `cudaRuntimeGetVersion`. Identity with [`Self::runtime_get_version`].
+    /// Query; legal during capture. Distinct from [`Self::mem_link_add_file`].
+    /// This VM does not invent occupancy SM counts this slice.
+    #[must_use]
+    pub fn mem_runtime_get_version(&self) -> i32 {
+        self.runtime_get_version()
     }
 
     /// `cuDeviceGet`. Query; legal during capture.

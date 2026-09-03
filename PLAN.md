@@ -10674,7 +10674,12 @@ model, do not celebrate the sim.
       `mem_link_destroy`. This VM does not invent occupancy SM counts, Engine `--mem-link-add-file`,
       or `cudaChooseDevice`. `gpu-profile capture` is still refused. Dual
       score still has no `$/M tokens`.
-1283. [ ] Next numbered PLAN item after 1282 is the next `gpu-sim` / Engine /
+1283. [x] `gpu-sim` `Sim::mem_runtime_get_version` is
+      `cudaRuntimeGetVersion`. Identity with `runtime_get_version`. Query; legal during capture. Distinct from
+      `mem_link_add_file`. This VM does not invent occupancy SM counts, Engine `--mem-runtime-get-version`,
+      or `cudaChooseDevice`. `gpu-profile capture` is still refused. Dual
+      score still has no `$/M tokens`.
+1284. [ ] Next numbered PLAN item after 1283 is the next `gpu-sim` / Engine /
     serve / expertvm mechanical API that is still missing, or the next official
     decode family. Prefer remaining CUDA-shaped twins over more
     OpenAI HTTP veneer. Do not invent F32 `output.scale`. Do not invent a
@@ -13440,6 +13445,11 @@ model, do not celebrate the sim.
     occupancy SM counts this slice. Do not reverse MemLinkAddFile identity with link_add_file.
     Do not invent `runtime_get_version` as `mem_link_add_file`.
     Do not invent `cudaRuntimeGetVersion` as `mem_link_add_file`.
+    Do not invent a second `cudaRuntimeGetVersion` / `mem_runtime_get_version`.
+    Do not invent Engine `--mem-runtime-get-version`. Do not invent
+    occupancy SM counts this slice. Do not reverse MemRuntimeGetVersion identity with runtime_get_version.
+    Do not invent `device_get` as `mem_runtime_get_version`.
+    Do not invent `cuDeviceGet` as `mem_runtime_get_version`.
     Do not invent a second `cudaStreamAddCallback`.
     Do not invent Engine `--stream-callback` (same wall as second live
     `cudaLaunchHostFunc` after miss DMA).
@@ -16242,6 +16252,11 @@ model, do not celebrate the sim.
     this slice. Do not reverse MemLinkAddFile identity with link_add_file.
     Do not wrap `link_add_file` as `mem_link_add_file`.
     Do not wrap `runtime_get_version` as `mem_link_add_file`.
+    Do not invent a second `mem_runtime_get_version` API. Do not invent
+    Engine `--mem-runtime-get-version-identity`. Do not invent a device-get
+    this slice. Do not reverse MemRuntimeGetVersion identity with runtime_get_version.
+    Do not wrap `runtime_get_version` as `mem_runtime_get_version`.
+    Do not wrap `device_get` as `mem_runtime_get_version`.
     Do not invent a second DeviceLaunch in-flight destroy-complete check or Engine
     `--device-launch-destroy`. Do not abort an in-flight DeviceLaunch when
     `destroy_graph` succeeds. Do not delay destroy of an idle exec. Do not invent
@@ -18963,6 +18978,10 @@ model, do not celebrate the sim.
     invent Engine `--cu-mem-link-add-file`. Do not reverse wrapping
     cuLinkAddFile identity. Do not wrap `link_destroy` as `mem_link_add_file`.
     Do not wrap `runtime_get_version` as `mem_link_add_file`.
+    Do not invent a second `mem_runtime_get_version` method. Do not
+    invent Engine `--cu-mem-runtime-get-version`. Do not reverse wrapping
+    cudaRuntimeGetVersion identity. Do not wrap `link_add_file` as `mem_runtime_get_version`.
+    Do not wrap `device_get` as `mem_runtime_get_version`.
     Do not
     spend the next item on an OpenAI-compatible HTTP veneer.
 

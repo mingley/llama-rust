@@ -82,6 +82,13 @@ Identity with `checkpoint_process_unlock`. Query; legal during capture. Distinct
 This VM does not invent occupancy SM counts or Engine `--mem-checkpoint-process-unlock`.
 `gpu-profile capture` is still refused. Dual score still has no `$/M tokens`.
 
+## Shipped 2026-09-03 — CUDA `cudaRuntimeGetVersion`
+
+`gpu-sim` `Sim::mem_runtime_get_version` is `cudaRuntimeGetVersion`.
+Identity with `runtime_get_version`. Query; legal during capture. Distinct from `mem_link_add_file`.
+This VM does not invent occupancy SM counts or Engine `--mem-runtime-get-version`.
+`gpu-profile capture` is still refused. Dual score still has no `$/M tokens`.
+
 ## Shipped 2026-09-03 — CUDA `cuLinkAddFile`
 
 `gpu-sim` `Sim::mem_link_add_file` is `cuLinkAddFile`.
