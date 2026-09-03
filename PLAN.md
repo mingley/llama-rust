@@ -10324,7 +10324,12 @@ model, do not celebrate the sim.
       `mem_module_unload`. This VM does not invent occupancy SM counts, Engine `--mem-module-get-function`,
       or `cudaChooseDevice`. `gpu-profile capture` is still refused. Dual
       score still has no `$/M tokens`.
-1213. [ ] Next numbered PLAN item after 1212 is the next `gpu-sim` / Engine /
+1213. [x] `gpu-sim` `Sim::mem_module_get_global` is
+      `cuModuleGetGlobal`. Identity with `module_get_global`. Query; legal during capture. Distinct from
+      `mem_module_get_function`. This VM does not invent occupancy SM counts, Engine `--mem-module-get-global`,
+      or `cudaChooseDevice`. `gpu-profile capture` is still refused. Dual
+      score still has no `$/M tokens`.
+1214. [ ] Next numbered PLAN item after 1213 is the next `gpu-sim` / Engine /
     serve / expertvm mechanical API that is still missing, or the next official
     decode family. Prefer remaining CUDA-shaped twins over more
     OpenAI HTTP veneer. Do not invent F32 `output.scale`. Do not invent a
@@ -12740,6 +12745,11 @@ model, do not celebrate the sim.
     occupancy SM counts this slice. Do not reverse MemModuleGetFunction identity with module_get_function.
     Do not invent `module_get_global` as `mem_module_get_function`.
     Do not invent `cuModuleGetGlobal` as `mem_module_get_function`.
+    Do not invent a second `cuModuleGetGlobal` / `mem_module_get_global`.
+    Do not invent Engine `--mem-module-get-global`. Do not invent
+    occupancy SM counts this slice. Do not reverse MemModuleGetGlobal identity with module_get_global.
+    Do not invent `module_get_tex_ref` as `mem_module_get_global`.
+    Do not invent `cuModuleGetTexRef` as `mem_module_get_global`.
     Do not invent a second `cudaStreamAddCallback`.
     Do not invent Engine `--stream-callback` (same wall as second live
     `cudaLaunchHostFunc` after miss DMA).
@@ -15192,6 +15202,11 @@ model, do not celebrate the sim.
     this slice. Do not reverse MemModuleGetFunction identity with module_get_function.
     Do not wrap `module_get_function` as `mem_module_get_function`.
     Do not wrap `module_get_global` as `mem_module_get_function`.
+    Do not invent a second `mem_module_get_global` API. Do not invent
+    Engine `--mem-module-get-global-identity`. Do not invent a module-get-tex-ref
+    this slice. Do not reverse MemModuleGetGlobal identity with module_get_global.
+    Do not wrap `module_get_global` as `mem_module_get_global`.
+    Do not wrap `module_get_tex_ref` as `mem_module_get_global`.
     Do not invent a second DeviceLaunch in-flight destroy-complete check or Engine
     `--device-launch-destroy`. Do not abort an in-flight DeviceLaunch when
     `destroy_graph` succeeds. Do not delay destroy of an idle exec. Do not invent
@@ -17633,6 +17648,10 @@ model, do not celebrate the sim.
     invent Engine `--cu-mem-module-get-function`. Do not reverse wrapping
     cuModuleGetFunction identity. Do not wrap `module_unload` as `mem_module_get_function`.
     Do not wrap `module_get_global` as `mem_module_get_function`.
+    Do not invent a second `mem_module_get_global` method. Do not
+    invent Engine `--cu-mem-module-get-global`. Do not reverse wrapping
+    cuModuleGetGlobal identity. Do not wrap `module_get_function` as `mem_module_get_global`.
+    Do not wrap `module_get_tex_ref` as `mem_module_get_global`.
     Do not
     spend the next item on an OpenAI-compatible HTTP veneer.
 

@@ -26308,7 +26308,6 @@ impl Sim {
 
     /// `cuModuleGetFunction`. Identity with [`Self::module_get_function`].
     /// Query; legal during capture. Distinct from [`Self::mem_module_unload`].
-    /// This VM does not invent occupancy SM counts this slice.
     pub fn mem_module_get_function(&self, device: DeviceId) -> Result<(), SimError> {
         self.module_get_function(device)
     }
@@ -26321,11 +26320,20 @@ impl Sim {
     /// is not `"library global"`) and from [`Self::module_get_tex_ref`].
     /// Unknown devices are Invalid `"device not in profile"`. Query; legal
     /// during capture.
+    /// Driver wrap: [`Self::mem_module_get_global`].
+    /// Identity: [`Self::mem_module_get_global`].
     pub fn module_get_global(&self, device: DeviceId) -> Result<(), SimError> {
         let _gpu = self.profile.gpu(device)?;
         Err(SimError::Invalid {
             why: "module global",
         })
+    }
+
+    /// `cuModuleGetGlobal`. Identity with [`Self::module_get_global`].
+    /// Query; legal during capture. Distinct from [`Self::mem_module_get_function`].
+    /// This VM does not invent occupancy SM counts this slice.
+    pub fn mem_module_get_global(&self, device: DeviceId) -> Result<(), SimError> {
+        self.module_get_global(device)
     }
 
     /// `cuModuleGetTexRef`. CUDA modules are not modeled.
