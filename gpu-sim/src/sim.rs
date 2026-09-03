@@ -26401,7 +26401,6 @@ impl Sim {
 
     /// `cuTexRefDestroy`. Identity with [`Self::tex_ref_destroy`].
     /// Query; legal during capture. Distinct from [`Self::mem_tex_ref_create`].
-    /// This VM does not invent occupancy SM counts this slice.
     pub fn mem_tex_ref_destroy(&self, device: DeviceId) -> Result<(), SimError> {
         self.tex_ref_destroy(device)
     }
@@ -26414,11 +26413,20 @@ impl Sim {
     /// `"cuda array"`). Unknown devices are Invalid `"device not in profile"`.
     /// Query; legal during capture. This VM does not invent
     /// `cuTexRefSetMipmappedArray` this slice.
+    /// Driver wrap: [`Self::mem_tex_ref_set_array`].
+    /// Identity: [`Self::mem_tex_ref_set_array`].
     pub fn tex_ref_set_array(&self, device: DeviceId) -> Result<(), SimError> {
         let _gpu = self.profile.gpu(device)?;
         Err(SimError::Invalid {
             why: "texref setarr",
         })
+    }
+
+    /// `cuTexRefSetArray`. Identity with [`Self::tex_ref_set_array`].
+    /// Query; legal during capture. Distinct from [`Self::mem_tex_ref_destroy`].
+    /// This VM does not invent occupancy SM counts this slice.
+    pub fn mem_tex_ref_set_array(&self, device: DeviceId) -> Result<(), SimError> {
+        self.tex_ref_set_array(device)
     }
 
     /// `cuTexRefSetMipmappedArray`. CUDA texture references are not modeled.
