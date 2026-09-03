@@ -1852,11 +1852,20 @@ impl Sim {
     /// [`Self::stream_get_id`]. Unknown or destroyed contexts are Invalid
     /// `"unknown green ctx"`. This VM does not invent an unset handle as the
     /// current context, and does not invent `cuCtxFromGreenCtx`.
+    /// Driver wrap: [`Self::mem_green_ctx_get_id`].
+    /// Identity: [`Self::mem_green_ctx_get_id`].
     pub fn green_ctx_get_id(&self, ctx: GreenCtxId) -> Result<u64, SimError> {
         let g = self.green_ctxs.get(&ctx).ok_or(SimError::Invalid {
             why: "unknown green ctx",
         })?;
         Ok(g.cuda_id)
+    }
+
+    /// `cuGreenCtxGetId`. Identity with [`Self::green_ctx_get_id`].
+    /// Query; legal during capture. Distinct from [`Self::mem_event_get_id`].
+    /// This VM does not invent occupancy SM counts this slice.
+    pub fn mem_green_ctx_get_id(&self, ctx: GreenCtxId) -> Result<u64, SimError> {
+        self.green_ctx_get_id(ctx)
     }
 
     /// `cudaExecutionCtxGetDevice`. Query; legal during capture.
@@ -3458,7 +3467,6 @@ impl Sim {
 
     /// `cuEventGetId`. Identity with [`Self::event_get_id`].
     /// Query; legal during capture. Distinct from [`Self::mem_device_get_stream_priority_range`].
-    /// This VM does not invent occupancy SM counts this slice.
     pub fn mem_event_get_id(&self, event: EventId) -> Result<u64, SimError> {
         self.event_get_id(event)
     }
