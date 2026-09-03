@@ -27079,7 +27079,6 @@ impl Sim {
 
     /// `cuMemcpyDtoA`. Identity with [`Self::memcpy_dto_a`].
     /// Query; legal during capture. Distinct from [`Self::mem_surf_ref_get_array`].
-    /// This VM does not invent occupancy SM counts this slice.
     pub fn mem_memcpy_dto_a(&self, device: DeviceId) -> Result<(), SimError> {
         self.memcpy_dto_a(device)
     }
@@ -27093,9 +27092,18 @@ impl Sim {
     /// Unknown devices are Invalid `"device not in profile"`. Query; legal
     /// during capture. This VM does not invent `cuMemcpyHtoA`
     /// this slice.
+    /// Driver wrap: [`Self::mem_memcpy_ato_d`].
+    /// Identity: [`Self::mem_memcpy_ato_d`].
     pub fn memcpy_ato_d(&self, device: DeviceId) -> Result<(), SimError> {
         let _gpu = self.profile.gpu(device)?;
         Err(SimError::Invalid { why: "memcpy atod" })
+    }
+
+    /// `cuMemcpyAtoD`. Identity with [`Self::memcpy_ato_d`].
+    /// Query; legal during capture. Distinct from [`Self::mem_memcpy_dto_a`].
+    /// This VM does not invent occupancy SM counts this slice.
+    pub fn mem_memcpy_ato_d(&self, device: DeviceId) -> Result<(), SimError> {
+        self.memcpy_ato_d(device)
     }
 
     /// `cuMemcpyHtoA`. CUDA arrays are not modeled.
