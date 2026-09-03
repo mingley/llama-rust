@@ -26471,7 +26471,6 @@ impl Sim {
 
     /// `cuTexRefSetAddress`. Identity with [`Self::tex_ref_set_address`].
     /// Query; legal during capture. Distinct from [`Self::mem_tex_ref_set_mipmapped_array`].
-    /// This VM does not invent occupancy SM counts this slice.
     pub fn mem_tex_ref_set_address(&self, device: DeviceId) -> Result<(), SimError> {
         self.tex_ref_set_address(device)
     }
@@ -26484,11 +26483,20 @@ impl Sim {
     /// `"texref setarr"`). Unknown devices are Invalid `"device not in profile"`.
     /// Query; legal during capture. This VM does not invent
     /// `cuTexRefSetFormat` this slice.
+    /// Driver wrap: [`Self::mem_tex_ref_set_address_2d`].
+    /// Identity: [`Self::mem_tex_ref_set_address_2d`].
     pub fn tex_ref_set_address_2d(&self, device: DeviceId) -> Result<(), SimError> {
         let _gpu = self.profile.gpu(device)?;
         Err(SimError::Invalid {
             why: "texref pitch2d",
         })
+    }
+
+    /// `cuTexRefSetAddress2D`. Identity with [`Self::tex_ref_set_address_2d`].
+    /// Query; legal during capture. Distinct from [`Self::mem_tex_ref_set_address`].
+    /// This VM does not invent occupancy SM counts this slice.
+    pub fn mem_tex_ref_set_address_2d(&self, device: DeviceId) -> Result<(), SimError> {
+        self.tex_ref_set_address_2d(device)
     }
 
     /// `cuTexRefSetFormat`. CUDA texture references are not modeled.
