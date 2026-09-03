@@ -82,6 +82,13 @@ Identity with `checkpoint_process_unlock`. Query; legal during capture. Distinct
 This VM does not invent occupancy SM counts or Engine `--mem-checkpoint-process-unlock`.
 `gpu-profile capture` is still refused. Dual score still has no `$/M tokens`.
 
+## Shipped 2026-09-03 — CUDA `cudaMemDiscardAndPrefetchBatchAsync`
+
+`gpu-sim` `Sim::mem_discard_and_prefetch_batch_async` is `cudaMemDiscardAndPrefetchBatchAsync`.
+Identity with `discard_and_prefetch_batch_async`. Query; legal during capture. Distinct from `mem_discard_batch_async`.
+This VM does not invent occupancy SM counts or Engine `--mem-discard-and-prefetch-batch-async`.
+`gpu-profile capture` is still refused. Dual score still has no `$/M tokens`.
+
 ## Shipped 2026-09-03 — CUDA `cudaMemDiscardBatchAsync`
 
 `gpu-sim` `Sim::mem_discard_batch_async` is `cudaMemDiscardBatchAsync`.

@@ -20573,7 +20573,6 @@ impl Sim {
 
     /// `cudaMemDiscardBatchAsync`. Identity with [`Self::discard_batch_async`].
     /// Query; legal during capture. Distinct from [`Self::mem_prefetch_batch_async`].
-    /// This VM does not invent occupancy SM counts this slice.
     pub fn mem_discard_batch_async(
         &mut self,
         device: DeviceId,
@@ -20590,6 +20589,8 @@ impl Sim {
     /// Requires [`DeviceAttr::ConcurrentManagedAccess`] on every GPU. This VM
     /// reports `0`, so the call is always Invalid `"concurrent managed
     /// access"`. Equivalent to discard-then-prefetch on hardware with CMA.
+    /// Driver wrap: [`Self::mem_discard_and_prefetch_batch_async`].
+    /// Identity: [`Self::mem_discard_and_prefetch_batch_async`].
     #[expect(
         clippy::too_many_arguments,
         reason = "cudaMemDiscardAndPrefetchBatchAsync argument list"
@@ -20606,6 +20607,28 @@ impl Sim {
     ) -> Result<Vec<OpId>, SimError> {
         let _gpu = self.profile.gpu(device)?;
         self.require_concurrent_managed_access()
+    }
+
+    /// `cudaMemDiscardAndPrefetchBatchAsync`. Identity with [`Self::discard_and_prefetch_batch_async`].
+    /// Query; legal during capture. Distinct from [`Self::mem_discard_batch_async`].
+    /// This VM does not invent occupancy SM counts this slice.
+    #[expect(
+        clippy::too_many_arguments,
+        reason = "cudaMemDiscardAndPrefetchBatchAsync argument list"
+    )]
+    pub fn mem_discard_and_prefetch_batch_async(
+        &mut self,
+        device: DeviceId,
+        allocs: &[AllocId],
+        sizes: &[u64],
+        dests: &[Place],
+        dest_idxs: &[usize],
+        flags: u64,
+        stream: StreamId,
+    ) -> Result<Vec<OpId>, SimError> {
+        self.discard_and_prefetch_batch_async(
+            device, allocs, sizes, dests, dest_idxs, flags, stream,
+        )
     }
 
     fn require_concurrent_managed_access(&self) -> Result<Vec<OpId>, SimError> {
