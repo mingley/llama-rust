@@ -10569,7 +10569,12 @@ model, do not celebrate the sim.
       `mem_memcpy_2d_array_to_array_async`. This VM does not invent occupancy SM counts, Engine `--mem-library-load-data`,
       or `cudaChooseDevice`. `gpu-profile capture` is still refused. Dual
       score still has no `$/M tokens`.
-1262. [ ] Next numbered PLAN item after 1261 is the next `gpu-sim` / Engine /
+1262. [x] `gpu-sim` `Sim::mem_library_load_from_file` is
+      `cuLibraryLoadFromFile`. Identity with `library_load_from_file`. Query; legal during capture. Distinct from
+      `mem_library_load_data`. This VM does not invent occupancy SM counts, Engine `--mem-library-load-from-file`,
+      or `cudaChooseDevice`. `gpu-profile capture` is still refused. Dual
+      score still has no `$/M tokens`.
+1263. [ ] Next numbered PLAN item after 1262 is the next `gpu-sim` / Engine /
     serve / expertvm mechanical API that is still missing, or the next official
     decode family. Prefer remaining CUDA-shaped twins over more
     OpenAI HTTP veneer. Do not invent F32 `output.scale`. Do not invent a
@@ -13230,6 +13235,11 @@ model, do not celebrate the sim.
     occupancy SM counts this slice. Do not reverse MemLibraryLoadData identity with library_load_data.
     Do not invent `library_load_from_file` as `mem_library_load_data`.
     Do not invent `cuLibraryLoadFromFile` as `mem_library_load_data`.
+    Do not invent a second `cuLibraryLoadFromFile` / `mem_library_load_from_file`.
+    Do not invent Engine `--mem-library-load-from-file`. Do not invent
+    occupancy SM counts this slice. Do not reverse MemLibraryLoadFromFile identity with library_load_from_file.
+    Do not invent `library_unload` as `mem_library_load_from_file`.
+    Do not invent `cuLibraryUnload` as `mem_library_load_from_file`.
     Do not invent a second `cudaStreamAddCallback`.
     Do not invent Engine `--stream-callback` (same wall as second live
     `cudaLaunchHostFunc` after miss DMA).
@@ -15927,6 +15937,11 @@ model, do not celebrate the sim.
     this slice. Do not reverse MemLibraryLoadData identity with library_load_data.
     Do not wrap `library_load_data` as `mem_library_load_data`.
     Do not wrap `library_load_from_file` as `mem_library_load_data`.
+    Do not invent a second `mem_library_load_from_file` API. Do not invent
+    Engine `--mem-library-load-from-file-identity`. Do not invent a library-unload
+    this slice. Do not reverse MemLibraryLoadFromFile identity with library_load_from_file.
+    Do not wrap `library_load_from_file` as `mem_library_load_from_file`.
+    Do not wrap `library_unload` as `mem_library_load_from_file`.
     Do not invent a second DeviceLaunch in-flight destroy-complete check or Engine
     `--device-launch-destroy`. Do not abort an in-flight DeviceLaunch when
     `destroy_graph` succeeds. Do not delay destroy of an idle exec. Do not invent
@@ -18564,6 +18579,10 @@ model, do not celebrate the sim.
     invent Engine `--cu-mem-library-load-data`. Do not reverse wrapping
     cuLibraryLoadData identity. Do not wrap `memcpy_2d_array_to_array_async` as `mem_library_load_data`.
     Do not wrap `library_load_from_file` as `mem_library_load_data`.
+    Do not invent a second `mem_library_load_from_file` method. Do not
+    invent Engine `--cu-mem-library-load-from-file`. Do not reverse wrapping
+    cuLibraryLoadFromFile identity. Do not wrap `library_load_data` as `mem_library_load_from_file`.
+    Do not wrap `library_unload` as `mem_library_load_from_file`.
     Do not
     spend the next item on an OpenAI-compatible HTTP veneer.
 
