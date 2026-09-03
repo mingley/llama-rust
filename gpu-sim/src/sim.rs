@@ -33117,7 +33117,6 @@ impl Sim {
 
     /// `cuFuncLoad`. Identity with [`Self::func_load`].
     /// Query; legal during capture. Distinct from [`Self::mem_func_is_loaded`].
-    /// This VM does not invent occupancy SM counts this slice.
     pub fn mem_func_load(&self, device: DeviceId) -> Result<(), SimError> {
         self.func_load(device)
     }
@@ -33131,11 +33130,20 @@ impl Sim {
     /// [`Self::func_load`]. Unknown devices are
     /// Invalid `"device not in profile"`. This VM does not invent
     /// `cuKernelGetModule` this slice.
+    /// Driver wrap: [`Self::mem_func_get_module`].
+    /// Identity: [`Self::mem_func_get_module`].
     pub fn func_get_module(&self, device: DeviceId) -> Result<(), SimError> {
         let _gpu = self.profile.gpu(device)?;
         Err(SimError::Invalid {
             why: "unknown function",
         })
+    }
+
+    /// `cuFuncGetModule`. Identity with [`Self::func_get_module`].
+    /// Query; legal during capture. Distinct from [`Self::mem_func_load`].
+    /// This VM does not invent occupancy SM counts this slice.
+    pub fn mem_func_get_module(&self, device: DeviceId) -> Result<(), SimError> {
+        self.func_get_module(device)
     }
 
     /// `cudaFuncSetAttribute`. Host-side; not a graph node.
