@@ -1816,7 +1816,6 @@ impl Sim {
 
     /// `cuGreenCtxCreate`. Identity with [`Self::green_ctx_create`].
     /// Host-sync; capture refused. Distinct from [`Self::mem_stream_get_green_ctx`].
-    /// This VM does not invent occupancy SM counts this slice.
     pub fn mem_green_ctx_create(
         &mut self,
         desc: DevResourceDescId,
@@ -1829,6 +1828,8 @@ impl Sim {
     /// `cuGreenCtxDestroy`. Capture cannot include it.
     ///
     /// Streams still bound to `ctx` are Invalid `"green ctx has streams"`.
+    /// Driver wrap: [`Self::mem_green_ctx_destroy`].
+    /// Identity: [`Self::mem_green_ctx_destroy`].
     pub fn green_ctx_destroy(&mut self, ctx: GreenCtxId) -> Result<(), SimError> {
         self.fail_if_capturing("cannot capture green ctx destroy")?;
         if !self.green_ctxs.contains_key(&ctx) {
@@ -1843,6 +1844,13 @@ impl Sim {
         }
         let _gone = self.green_ctxs.remove(&ctx);
         Ok(())
+    }
+
+    /// `cuGreenCtxDestroy`. Identity with [`Self::green_ctx_destroy`].
+    /// Host-sync; capture refused. Distinct from [`Self::mem_green_ctx_create`].
+    /// This VM does not invent occupancy SM counts this slice.
+    pub fn mem_green_ctx_destroy(&mut self, ctx: GreenCtxId) -> Result<(), SimError> {
+        self.green_ctx_destroy(ctx)
     }
 
     /// `cuGreenCtxGetDevResource`. Query; legal during capture.
