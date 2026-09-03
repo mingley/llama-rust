@@ -26331,7 +26331,6 @@ impl Sim {
 
     /// `cuModuleGetGlobal`. Identity with [`Self::module_get_global`].
     /// Query; legal during capture. Distinct from [`Self::mem_module_get_function`].
-    /// This VM does not invent occupancy SM counts this slice.
     pub fn mem_module_get_global(&self, device: DeviceId) -> Result<(), SimError> {
         self.module_get_global(device)
     }
@@ -26345,11 +26344,20 @@ impl Sim {
     /// and from [`Self::module_get_surf_ref`].
     /// Unknown devices are Invalid `"device not in profile"`. Query; legal
     /// during capture.
+    /// Driver wrap: [`Self::mem_module_get_tex_ref`].
+    /// Identity: [`Self::mem_module_get_tex_ref`].
     pub fn module_get_tex_ref(&self, device: DeviceId) -> Result<(), SimError> {
         let _gpu = self.profile.gpu(device)?;
         Err(SimError::Invalid {
             why: "module texref",
         })
+    }
+
+    /// `cuModuleGetTexRef`. Identity with [`Self::module_get_tex_ref`].
+    /// Query; legal during capture. Distinct from [`Self::mem_module_get_global`].
+    /// This VM does not invent occupancy SM counts this slice.
+    pub fn mem_module_get_tex_ref(&self, device: DeviceId) -> Result<(), SimError> {
+        self.module_get_tex_ref(device)
     }
 
     /// `cuTexRefCreate`. CUDA texture references are not modeled.
