@@ -27233,7 +27233,6 @@ impl Sim {
 
     /// `cuMemcpyHtoAAsync`. Identity with [`Self::memcpy_hto_a_async`].
     /// Query; legal during capture. Distinct from [`Self::mem_memcpy_ato_d_async`].
-    /// This VM does not invent occupancy SM counts this slice.
     pub fn mem_memcpy_hto_a_async(&self, device: DeviceId) -> Result<(), SimError> {
         self.memcpy_hto_a_async(device)
     }
@@ -27247,9 +27246,18 @@ impl Sim {
     /// Unknown devices are Invalid `"device not in profile"`. Query; legal
     /// during capture. This VM does not invent `cuMemcpyAtoAAsync`
     /// this slice.
+    /// Driver wrap: [`Self::mem_memcpy_ato_h_async`].
+    /// Identity: [`Self::mem_memcpy_ato_h_async`].
     pub fn memcpy_ato_h_async(&self, device: DeviceId) -> Result<(), SimError> {
         let _gpu = self.profile.gpu(device)?;
         Err(SimError::Invalid { why: "async atoh" })
+    }
+
+    /// `cuMemcpyAtoHAsync`. Identity with [`Self::memcpy_ato_h_async`].
+    /// Query; legal during capture. Distinct from [`Self::mem_memcpy_hto_a_async`].
+    /// This VM does not invent occupancy SM counts this slice.
+    pub fn mem_memcpy_ato_h_async(&self, device: DeviceId) -> Result<(), SimError> {
+        self.memcpy_ato_h_async(device)
     }
 
     /// `cuMemcpyAtoAAsync`. CUDA arrays are not modeled.
