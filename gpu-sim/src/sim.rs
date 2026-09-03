@@ -1606,12 +1606,24 @@ impl Sim {
     /// Returns `(leastPriority, greatestPriority)`. Example H100 is
     /// `(0, -5)`. Unknown devices are Invalid. Stream create / SetPriority
     /// clamp to this range. Graph kernel-node SetPriority stays unclamped.
+    /// Driver wrap: [`Self::mem_device_get_stream_priority_range`].
+    /// Identity: [`Self::mem_device_get_stream_priority_range`].
     pub fn device_get_stream_priority_range(
         &self,
         device: DeviceId,
     ) -> Result<(i32, i32), SimError> {
         let gpu = self.profile.gpu(device)?;
         Ok((gpu.stream_priority_least, gpu.stream_priority_greatest))
+    }
+
+    /// `cudaDeviceGetStreamPriorityRange`. Identity with [`Self::device_get_stream_priority_range`].
+    /// Query; legal during capture. Distinct from [`Self::mem_func_set_attribute`].
+    /// This VM does not invent occupancy SM counts this slice.
+    pub fn mem_device_get_stream_priority_range(
+        &self,
+        device: DeviceId,
+    ) -> Result<(i32, i32), SimError> {
+        self.device_get_stream_priority_range(device)
     }
 
     /// [`KernelAttrs::priority`] if set, else [`Self::stream_priority`].
@@ -33225,7 +33237,6 @@ impl Sim {
 
     /// `cudaFuncSetAttribute`. Identity with [`Self::func_set_attribute`].
     /// Host-side; legal during capture. Distinct from [`Self::mem_func_get_attribute`].
-    /// This VM does not invent occupancy SM counts this slice.
     pub fn mem_func_set_attribute(
         &mut self,
         device: DeviceId,
