@@ -27946,7 +27946,6 @@ impl Sim {
 
     /// `cudaRuntimeGetVersion`. Identity with [`Self::runtime_get_version`].
     /// Query; legal during capture. Distinct from [`Self::mem_link_add_file`].
-    /// This VM does not invent occupancy SM counts this slice.
     #[must_use]
     pub fn mem_runtime_get_version(&self) -> i32 {
         self.runtime_get_version()
@@ -27956,6 +27955,8 @@ impl Sim {
     ///
     /// Ordinal `0 .. device_count`. Other ordinals Invalid
     /// `"device not in profile"` (same as [`HardwareProfile::gpu`]).
+    /// Driver wrap: [`Self::mem_device_get`].
+    /// Identity: [`Self::mem_device_get`].
     pub fn device_get(&self, ordinal: u32) -> Result<DeviceId, SimError> {
         let id = u16::try_from(ordinal).map_err(|_| SimError::Invalid {
             why: "device not in profile",
@@ -27963,6 +27964,13 @@ impl Sim {
         let device = DeviceId(id);
         let _gpu = self.profile.gpu(device)?;
         Ok(device)
+    }
+
+    /// `cuDeviceGet`. Identity with [`Self::device_get`].
+    /// Query; legal during capture. Distinct from [`Self::mem_runtime_get_version`].
+    /// This VM does not invent occupancy SM counts this slice.
+    pub fn mem_device_get(&self, ordinal: u32) -> Result<DeviceId, SimError> {
+        self.device_get(ordinal)
     }
 
     /// `cudaDeviceCanAccessPeer`. Query; legal during capture.

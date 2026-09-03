@@ -972,6 +972,7 @@ compiled kernel exists; no Engine flag).
 `gpu-sim` `mem_link_destroy` is `cuLinkDestroy` (identity with `link_destroy`; no Engine flag).
 `gpu-sim` `mem_link_add_file` is `cuLinkAddFile` (identity with `link_add_file`; no Engine flag).
 `gpu-sim` `mem_runtime_get_version` is `cudaRuntimeGetVersion` (identity with `runtime_get_version`; no Engine flag).
+`gpu-sim` `mem_device_get` is `cuDeviceGet` (identity with `device_get`; no Engine flag).
 `gpu-sim` `mem_alloc` is `cuMemAlloc` (identity with `malloc`; no Engine flag).
 `gpu-sim` `mem_free` is `cuMemFree` (identity with `free_sync`; no Engine flag).
 `gpu-sim` `mem_free_host` is `cuMemFreeHost` (identity with `free_host_pinned`; no Engine flag).
@@ -1468,6 +1469,7 @@ compiled kernel exists; no Engine flag).
 `gpu-sim` `mem_link_destroy` is `cuLinkDestroy` (identity with `link_destroy`; no Engine flag).
 `gpu-sim` `mem_link_add_file` is `cuLinkAddFile` (identity with `link_add_file`; no Engine flag).
 `gpu-sim` `mem_runtime_get_version` is `cudaRuntimeGetVersion` (identity with `runtime_get_version`; no Engine flag).
+`gpu-sim` `mem_device_get` is `cuDeviceGet` (identity with `device_get`; no Engine flag).
 `gpu-sim` `func_is_loaded` is `cuFuncIsLoaded` (`false` until a compiled
 kernel exists; no Engine flag).
 `gpu-sim` `func_load` is `cuFuncLoad` (Invalid; no compiled kernel; no
