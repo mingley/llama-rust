@@ -22392,7 +22392,6 @@ impl Sim {
 
     /// `cuExternalMemoryGetMappedBuffer`. Identity with [`Self::external_memory_get_mapped_buffer`].
     /// Query; legal during capture. Distinct from [`Self::mem_destroy_external_memory`].
-    /// This VM does not invent occupancy SM counts this slice.
     pub fn mem_external_memory_get_mapped_buffer(&self, device: DeviceId) -> Result<(), SimError> {
         self.external_memory_get_mapped_buffer(device)
     }
@@ -22406,6 +22405,8 @@ impl Sim {
     /// [`Self::graphics_resource_get_mapped_mipmapped_array`] (why is not
     /// `"mapped mipmap"`). Unknown devices are Invalid
     /// `"device not in profile"`. Query; legal during capture.
+    /// Driver wrap: [`Self::mem_external_memory_get_mapped_mipmapped_array`].
+    /// Identity: [`Self::mem_external_memory_get_mapped_mipmapped_array`].
     pub fn external_memory_get_mapped_mipmapped_array(
         &self,
         device: DeviceId,
@@ -22414,6 +22415,16 @@ impl Sim {
         Err(SimError::Invalid {
             why: "external mipmap",
         })
+    }
+
+    /// `cuExternalMemoryGetMappedMipmappedArray`. Identity with [`Self::external_memory_get_mapped_mipmapped_array`].
+    /// Query; legal during capture. Distinct from [`Self::mem_external_memory_get_mapped_buffer`].
+    /// This VM does not invent occupancy SM counts this slice.
+    pub fn mem_external_memory_get_mapped_mipmapped_array(
+        &self,
+        device: DeviceId,
+    ) -> Result<(), SimError> {
+        self.external_memory_get_mapped_mipmapped_array(device)
     }
 
     /// `cuImportExternalSemaphore` plus `cudaImportExternalSemaphore`.

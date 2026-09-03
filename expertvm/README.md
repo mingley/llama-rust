@@ -1017,6 +1017,7 @@ compiled kernel exists; no Engine flag).
 `gpu-sim` `mem_import_external_memory` is `cuImportExternalMemory` (identity with `import_external_memory`; no Engine flag).
 `gpu-sim` `mem_destroy_external_memory` is `cuDestroyExternalMemory` (identity with `destroy_external_memory`; no Engine flag).
 `gpu-sim` `mem_external_memory_get_mapped_buffer` is `cuExternalMemoryGetMappedBuffer` (identity with `external_memory_get_mapped_buffer`; no Engine flag).
+`gpu-sim` `mem_external_memory_get_mapped_mipmapped_array` is `cuExternalMemoryGetMappedMipmappedArray` (identity with `external_memory_get_mapped_mipmapped_array`; no Engine flag).
 `gpu-sim` `mem_alloc` is `cuMemAlloc` (identity with `malloc`; no Engine flag).
 `gpu-sim` `mem_free` is `cuMemFree` (identity with `free_sync`; no Engine flag).
 `gpu-sim` `mem_free_host` is `cuMemFreeHost` (identity with `free_host_pinned`; no Engine flag).
@@ -1558,6 +1559,7 @@ compiled kernel exists; no Engine flag).
 `gpu-sim` `mem_import_external_memory` is `cuImportExternalMemory` (identity with `import_external_memory`; no Engine flag).
 `gpu-sim` `mem_destroy_external_memory` is `cuDestroyExternalMemory` (identity with `destroy_external_memory`; no Engine flag).
 `gpu-sim` `mem_external_memory_get_mapped_buffer` is `cuExternalMemoryGetMappedBuffer` (identity with `external_memory_get_mapped_buffer`; no Engine flag).
+`gpu-sim` `mem_external_memory_get_mapped_mipmapped_array` is `cuExternalMemoryGetMappedMipmappedArray` (identity with `external_memory_get_mapped_mipmapped_array`; no Engine flag).
 `gpu-sim` `func_is_loaded` is `cuFuncIsLoaded` (`false` until a compiled
 kernel exists; no Engine flag).
 `gpu-sim` `func_load` is `cuFuncLoad` (Invalid; no compiled kernel; no
