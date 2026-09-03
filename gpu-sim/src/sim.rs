@@ -22138,7 +22138,6 @@ impl Sim {
 
     /// `cuArrayGetSparseProperties`. Identity with [`Self::array_get_sparse_properties`].
     /// Query; legal during capture. Distinct from [`Self::mem_array_3d_get_descriptor`].
-    /// This VM does not invent occupancy SM counts this slice.
     pub fn mem_array_get_sparse_properties(&self, device: DeviceId) -> Result<(), SimError> {
         self.array_get_sparse_properties(device)
     }
@@ -22163,9 +22162,18 @@ impl Sim {
     /// [`Self::array_get_sparse_properties`] and from
     /// [`Self::array_get_memory_requirements`]. Unknown devices are Invalid
     /// `"device not in profile"`. Query; legal during capture.
+    /// Driver wrap: [`Self::mem_array_get_plane`].
+    /// Identity: [`Self::mem_array_get_plane`].
     pub fn array_get_plane(&self, device: DeviceId) -> Result<(), SimError> {
         let _gpu = self.profile.gpu(device)?;
         Err(SimError::Invalid { why: "array plane" })
+    }
+
+    /// `cuArrayGetPlane`. Identity with [`Self::array_get_plane`].
+    /// Query; legal during capture. Distinct from [`Self::mem_array_get_sparse_properties`].
+    /// This VM does not invent occupancy SM counts this slice.
+    pub fn mem_array_get_plane(&self, device: DeviceId) -> Result<(), SimError> {
+        self.array_get_plane(device)
     }
 
     /// `cuArrayGetMemoryRequirements` plus `cudaArrayGetMemoryRequirements`.

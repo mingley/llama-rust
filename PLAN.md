@@ -10854,7 +10854,12 @@ model, do not celebrate the sim.
       `mem_array_3d_get_descriptor`. This VM does not invent occupancy SM counts, Engine `--mem-array-get-sparse-properties`,
       or `cudaChooseDevice`. `gpu-profile capture` is still refused. Dual
       score still has no `$/M tokens`.
-1319. [ ] Next numbered PLAN item after 1318 is the next `gpu-sim` / Engine /
+1319. [x] `gpu-sim` `Sim::mem_array_get_plane` is
+      `cuArrayGetPlane`. Identity with `array_get_plane`. Query; legal during capture. Distinct from
+      `mem_array_get_sparse_properties`. This VM does not invent occupancy SM counts, Engine `--mem-array-get-plane`,
+      or `cudaChooseDevice`. `gpu-profile capture` is still refused. Dual
+      score still has no `$/M tokens`.
+1320. [ ] Next numbered PLAN item after 1319 is the next `gpu-sim` / Engine /
     serve / expertvm mechanical API that is still missing, or the next official
     decode family. Prefer remaining CUDA-shaped twins over more
     OpenAI HTTP veneer. Do not invent F32 `output.scale`. Do not invent a
@@ -13800,6 +13805,11 @@ model, do not celebrate the sim.
     occupancy SM counts this slice. Do not reverse MemArrayGetSparseProperties identity with array_get_sparse_properties.
     Do not invent `array_get_plane` as `mem_array_get_sparse_properties`.
     Do not invent `cuArrayGetPlane` as `mem_array_get_sparse_properties`.
+    Do not invent a second `cuArrayGetPlane` / `mem_array_get_plane`.
+    Do not invent Engine `--mem-array-get-plane`. Do not invent
+    occupancy SM counts this slice. Do not reverse MemArrayGetPlane identity with array_get_plane.
+    Do not invent `array_get_memory_requirements` as `mem_array_get_plane`.
+    Do not invent `cuArrayGetMemoryRequirements` as `mem_array_get_plane`.
     Do not invent a second `cudaStreamAddCallback`.
     Do not invent Engine `--stream-callback` (same wall as second live
     `cudaLaunchHostFunc` after miss DMA).
@@ -16782,6 +16792,11 @@ model, do not celebrate the sim.
     this slice. Do not reverse MemArrayGetSparseProperties identity with array_get_sparse_properties.
     Do not wrap `array_get_sparse_properties` as `mem_array_get_sparse_properties`.
     Do not wrap `array_get_plane` as `mem_array_get_sparse_properties`.
+    Do not invent a second `mem_array_get_plane` API. Do not invent
+    Engine `--mem-array-get-plane-identity`. Do not invent a cu-array-get-memory-requirements
+    this slice. Do not reverse MemArrayGetPlane identity with array_get_plane.
+    Do not wrap `array_get_plane` as `mem_array_get_plane`.
+    Do not wrap `array_get_memory_requirements` as `mem_array_get_plane`.
     Do not invent a second DeviceLaunch in-flight destroy-complete check or Engine
     `--device-launch-destroy`. Do not abort an in-flight DeviceLaunch when
     `destroy_graph` succeeds. Do not delay destroy of an idle exec. Do not invent
@@ -19647,6 +19662,10 @@ model, do not celebrate the sim.
     invent Engine `--cu-mem-array-get-sparse-properties`. Do not reverse wrapping
     cuArrayGetSparseProperties identity. Do not wrap `array_3d_get_descriptor` as `mem_array_get_sparse_properties`.
     Do not wrap `array_get_plane` as `mem_array_get_sparse_properties`.
+    Do not invent a second `mem_array_get_plane` method. Do not
+    invent Engine `--cu-mem-array-get-plane`. Do not reverse wrapping
+    cuArrayGetPlane identity. Do not wrap `array_get_sparse_properties` as `mem_array_get_plane`.
+    Do not wrap `array_get_memory_requirements` as `mem_array_get_plane`.
     Do not
     spend the next item on an OpenAI-compatible HTTP veneer.
 
