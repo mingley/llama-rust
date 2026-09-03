@@ -1645,6 +1645,9 @@
 //! [`mem_graph_node_get_containing_graph`](Sim::mem_graph_node_get_containing_graph) is `cuGraphNodeGetContainingGraph` (identity with
 //! [`graph_node_get_containing_graph`](Sim::graph_node_get_containing_graph)). Query; legal during capture. Distinct from
 //! [`mem_graph_node_get_tools_id`](Sim::mem_graph_node_get_tools_id). No Engine `--mem-graph-node-get-containing-graph`.
+//! [`mem_pool_get_id`](Sim::mem_pool_get_id) is `cuMemPoolGetId` (identity with
+//! [`pool_get_id`](Sim::pool_get_id)). Query; legal during capture. Distinct from
+//! [`mem_graph_node_get_containing_graph`](Sim::mem_graph_node_get_containing_graph). No Engine `--mem-pool-get-id`.
 //! [`Sim::ipc_get_event`] / [`ipc_open_event`](Sim::ipc_open_event) are
 //! `cudaIpcGetEventHandle` / `cudaIpcOpenEventHandle` (interprocess events).
 //! [`Sim::create_shareable_pool`] is `cudaMemPoolCreate` with a POSIX-FD handle
@@ -3314,6 +3317,9 @@
 //! [`mem_graph_node_get_containing_graph`](Sim::mem_graph_node_get_containing_graph) is `cuGraphNodeGetContainingGraph` (identity with
 //! [`graph_node_get_containing_graph`](Sim::graph_node_get_containing_graph)). Query; legal during capture. Distinct from
 //! [`mem_graph_node_get_tools_id`](Sim::mem_graph_node_get_tools_id). No Engine `--mem-graph-node-get-containing-graph`.
+//! [`mem_pool_get_id`](Sim::mem_pool_get_id) is `cuMemPoolGetId` (identity with
+//! [`pool_get_id`](Sim::pool_get_id)). Query; legal during capture. Distinct from
+//! [`mem_graph_node_get_containing_graph`](Sim::mem_graph_node_get_containing_graph). No Engine `--mem-pool-get-id`.
 //! [`HardwareProfile::host_pin_bytes`] caps `cudaMallocHost` / `cudaHostRegister`.
 //! [`Sim::idle_until`] drains, then jumps the virtual clock (open-loop arrivals).
 //! [`Sim::event_elapsed_ns`] is `cudaEventElapsedTime` in nanoseconds.
@@ -4851,6 +4857,9 @@
 //! [`mem_graph_node_get_containing_graph`](Sim::mem_graph_node_get_containing_graph) is `cuGraphNodeGetContainingGraph` (identity with
 //! [`graph_node_get_containing_graph`](Sim::graph_node_get_containing_graph)). Query; legal during capture. Distinct from
 //! [`mem_graph_node_get_tools_id`](Sim::mem_graph_node_get_tools_id). No Engine `--mem-graph-node-get-containing-graph`.
+//! [`mem_pool_get_id`](Sim::mem_pool_get_id) is `cuMemPoolGetId` (identity with
+//! [`pool_get_id`](Sim::pool_get_id)). Query; legal during capture. Distinct from
+//! [`mem_graph_node_get_containing_graph`](Sim::mem_graph_node_get_containing_graph). No Engine `--mem-pool-get-id`.
 //! [`mem_host_get_flags`](Sim::mem_host_get_flags) is `cuMemHostGetFlags` (identity with
 //! [`host_get_flags`](Sim::host_get_flags)). Query; legal during capture. No Engine `--mem-host-get-flags`.
 //! [`mem_host_get_device_pointer`](Sim::mem_host_get_device_pointer) is `cuMemHostGetDevicePointer` (identity with
@@ -6354,6 +6363,9 @@
 //! [`mem_graph_node_get_containing_graph`](Sim::mem_graph_node_get_containing_graph) is `cuGraphNodeGetContainingGraph` (identity with
 //! [`graph_node_get_containing_graph`](Sim::graph_node_get_containing_graph)). Query; legal during capture. Distinct from
 //! [`mem_graph_node_get_tools_id`](Sim::mem_graph_node_get_tools_id). No Engine `--mem-graph-node-get-containing-graph`.
+//! [`mem_pool_get_id`](Sim::mem_pool_get_id) is `cuMemPoolGetId` (identity with
+//! [`pool_get_id`](Sim::pool_get_id)). Query; legal during capture. Distinct from
+//! [`mem_graph_node_get_containing_graph`](Sim::mem_graph_node_get_containing_graph). No Engine `--mem-pool-get-id`.
 //! [`Sim::pointer_get_attributes`] is `cudaPointerGetAttributes`.
 //! [`pointer_set_attribute`](Sim::pointer_set_attribute) /
 //! [`pointer_get_attribute`](Sim::pointer_get_attribute) are
@@ -8264,6 +8276,9 @@
 //! [`mem_graph_node_get_containing_graph`](Sim::mem_graph_node_get_containing_graph) is `cuGraphNodeGetContainingGraph` (identity with
 //! [`graph_node_get_containing_graph`](Sim::graph_node_get_containing_graph)). Query; legal during capture. Distinct from
 //! [`mem_graph_node_get_tools_id`](Sim::mem_graph_node_get_tools_id). No Engine `--mem-graph-node-get-containing-graph`.
+//! [`mem_pool_get_id`](Sim::mem_pool_get_id) is `cuMemPoolGetId` (identity with
+//! [`pool_get_id`](Sim::pool_get_id)). Query; legal during capture. Distinct from
+//! [`mem_graph_node_get_containing_graph`](Sim::mem_graph_node_get_containing_graph). No Engine `--mem-pool-get-id`.
 //! [`Sim::stream_get_device`] is `cudaStreamGetDevice` / `cuStreamGetDevice`
 //! (the device of the stream; green-ctx streams return the ctx create
 //! device). Query; legal during capture. Distinct from
@@ -9603,6 +9618,9 @@
 //! [`mem_graph_node_get_containing_graph`](Sim::mem_graph_node_get_containing_graph) is `cuGraphNodeGetContainingGraph` (identity with
 //! [`graph_node_get_containing_graph`](Sim::graph_node_get_containing_graph)). Query; legal during capture. Distinct from
 //! [`mem_graph_node_get_tools_id`](Sim::mem_graph_node_get_tools_id). No Engine `--mem-graph-node-get-containing-graph`.
+//! [`mem_pool_get_id`](Sim::mem_pool_get_id) is `cuMemPoolGetId` (identity with
+//! [`pool_get_id`](Sim::pool_get_id)). Query; legal during capture. Distinct from
+//! [`mem_graph_node_get_containing_graph`](Sim::mem_graph_node_get_containing_graph). No Engine `--mem-pool-get-id`.
 //! [`set_stream_access_policy`](Sim::set_stream_access_policy) is
 //! `cudaStreamAttributeAccessPolicyWindow`: [`kernel`](Sim::kernel) /
 //! [`kernel_bufs`](Sim::kernel_bufs) inherit it; [`kernel_with`](Sim::kernel_with)
@@ -11427,6 +11445,9 @@
 //! [`mem_graph_node_get_containing_graph`](Sim::mem_graph_node_get_containing_graph) is `cuGraphNodeGetContainingGraph` (identity with
 //! [`graph_node_get_containing_graph`](Sim::graph_node_get_containing_graph)). Query; legal during capture. Distinct from
 //! [`mem_graph_node_get_tools_id`](Sim::mem_graph_node_get_tools_id). No Engine `--mem-graph-node-get-containing-graph`.
+//! [`mem_pool_get_id`](Sim::mem_pool_get_id) is `cuMemPoolGetId` (identity with
+//! [`pool_get_id`](Sim::pool_get_id)). Query; legal during capture. Distinct from
+//! [`mem_graph_node_get_containing_graph`](Sim::mem_graph_node_get_containing_graph). No Engine `--mem-pool-get-id`.
 //! [`Sim::set_stream_priority`] is the priority-only helper;
 //! [`stream_create_with_priority`](Sim::stream_create_with_priority) is
 //! `cudaStreamCreateWithPriority` (flags plus priority; clamped to
@@ -12784,6 +12805,9 @@
 //! [`mem_graph_node_get_containing_graph`](Sim::mem_graph_node_get_containing_graph) is `cuGraphNodeGetContainingGraph` (identity with
 //! [`graph_node_get_containing_graph`](Sim::graph_node_get_containing_graph)). Query; legal during capture. Distinct from
 //! [`mem_graph_node_get_tools_id`](Sim::mem_graph_node_get_tools_id). No Engine `--mem-graph-node-get-containing-graph`.
+//! [`mem_pool_get_id`](Sim::mem_pool_get_id) is `cuMemPoolGetId` (identity with
+//! [`pool_get_id`](Sim::pool_get_id)). Query; legal during capture. Distinct from
+//! [`mem_graph_node_get_containing_graph`](Sim::mem_graph_node_get_containing_graph). No Engine `--mem-pool-get-id`.
 //! [`destroy_stream`](Sim::destroy_stream) is `cudaStreamDestroy` (returns
 //! immediately; in-flight work still completes; NULL is Invalid; recreate
 //! while unfinished is `"stream in flight"`). Capture cannot include it.
@@ -14121,6 +14145,9 @@
 //! [`mem_graph_node_get_containing_graph`](Sim::mem_graph_node_get_containing_graph) is `cuGraphNodeGetContainingGraph` (identity with
 //! [`graph_node_get_containing_graph`](Sim::graph_node_get_containing_graph)). Query; legal during capture. Distinct from
 //! [`mem_graph_node_get_tools_id`](Sim::mem_graph_node_get_tools_id). No Engine `--mem-graph-node-get-containing-graph`.
+//! [`mem_pool_get_id`](Sim::mem_pool_get_id) is `cuMemPoolGetId` (identity with
+//! [`pool_get_id`](Sim::pool_get_id)). Query; legal during capture. Distinct from
+//! [`mem_graph_node_get_containing_graph`](Sim::mem_graph_node_get_containing_graph). No Engine `--mem-pool-get-id`.
 //! [`Sim::instantiate_graph`] is `cudaGraphInstantiate` (host-sync; returns a
 //! new exec id; first [`launch_graph`](Sim::launch_graph) of a definition
 //! creates a primary exec). Unused conditional handles are
@@ -15487,6 +15514,9 @@
 //! [`mem_graph_node_get_containing_graph`](Sim::mem_graph_node_get_containing_graph) is `cuGraphNodeGetContainingGraph` (identity with
 //! [`graph_node_get_containing_graph`](Sim::graph_node_get_containing_graph)). Query; legal during capture. Distinct from
 //! [`mem_graph_node_get_tools_id`](Sim::mem_graph_node_get_tools_id). No Engine `--mem-graph-node-get-containing-graph`.
+//! [`mem_pool_get_id`](Sim::mem_pool_get_id) is `cuMemPoolGetId` (identity with
+//! [`pool_get_id`](Sim::pool_get_id)). Query; legal during capture. Distinct from
+//! [`mem_graph_node_get_containing_graph`](Sim::mem_graph_node_get_containing_graph). No Engine `--mem-pool-get-id`.
 //! [`graph_kernel_node_get_priority`](Sim::graph_kernel_node_get_priority) /
 //! [`graph_kernel_node_set_priority`](Sim::graph_kernel_node_set_priority) /
 //! [`graph_kernel_node_copy_attributes`](Sim::graph_kernel_node_copy_attributes)
@@ -16812,6 +16842,9 @@
 //! [`mem_graph_node_get_containing_graph`](Sim::mem_graph_node_get_containing_graph) is `cuGraphNodeGetContainingGraph` (identity with
 //! [`graph_node_get_containing_graph`](Sim::graph_node_get_containing_graph)). Query; legal during capture. Distinct from
 //! [`mem_graph_node_get_tools_id`](Sim::mem_graph_node_get_tools_id). No Engine `--mem-graph-node-get-containing-graph`.
+//! [`mem_pool_get_id`](Sim::mem_pool_get_id) is `cuMemPoolGetId` (identity with
+//! [`pool_get_id`](Sim::pool_get_id)). Query; legal during capture. Distinct from
+//! [`mem_graph_node_get_containing_graph`](Sim::mem_graph_node_get_containing_graph). No Engine `--mem-pool-get-id`.
 //! [`graph_kernel_node_get_attribute`](Sim::graph_kernel_node_get_attribute) /
 //! [`graph_exec_kernel_node_get_attribute`](Sim::graph_exec_kernel_node_get_attribute) /
 //! [`graph_kernel_node_set_attribute`](Sim::graph_kernel_node_set_attribute) /
@@ -18143,6 +18176,9 @@
 //! [`mem_graph_node_get_containing_graph`](Sim::mem_graph_node_get_containing_graph) is `cuGraphNodeGetContainingGraph` (identity with
 //! [`graph_node_get_containing_graph`](Sim::graph_node_get_containing_graph)). Query; legal during capture. Distinct from
 //! [`mem_graph_node_get_tools_id`](Sim::mem_graph_node_get_tools_id). No Engine `--mem-graph-node-get-containing-graph`.
+//! [`mem_pool_get_id`](Sim::mem_pool_get_id) is `cuMemPoolGetId` (identity with
+//! [`pool_get_id`](Sim::pool_get_id)). Query; legal during capture. Distinct from
+//! [`mem_graph_node_get_containing_graph`](Sim::mem_graph_node_get_containing_graph). No Engine `--mem-pool-get-id`.
 //! Device-launch
 //! execs cannot attach programmatic or launch-completion events.
 //! [`kernel_pdl`](Sim::kernel_pdl) is `cudaLaunchKernelEx` PDL: a wait kernel
@@ -19602,6 +19638,9 @@
 //! [`mem_graph_node_get_containing_graph`](Sim::mem_graph_node_get_containing_graph) is `cuGraphNodeGetContainingGraph` (identity with
 //! [`graph_node_get_containing_graph`](Sim::graph_node_get_containing_graph)). Query; legal during capture. Distinct from
 //! [`mem_graph_node_get_tools_id`](Sim::mem_graph_node_get_tools_id). No Engine `--mem-graph-node-get-containing-graph`.
+//! [`mem_pool_get_id`](Sim::mem_pool_get_id) is `cuMemPoolGetId` (identity with
+//! [`pool_get_id`](Sim::pool_get_id)). Query; legal during capture. Distinct from
+//! [`mem_graph_node_get_containing_graph`](Sim::mem_graph_node_get_containing_graph). No Engine `--mem-pool-get-id`.
 //! [`graph_exec_memcpy_set_params`](Sim::graph_exec_memcpy_set_params) /
 //! [`graph_exec_memcpy_set_params_1d`](Sim::graph_exec_memcpy_set_params_1d) /
 //! [`graph_exec_memcpy_set_params_2d`](Sim::graph_exec_memcpy_set_params_2d) /
@@ -20925,6 +20964,9 @@
 //! [`mem_graph_node_get_containing_graph`](Sim::mem_graph_node_get_containing_graph) is `cuGraphNodeGetContainingGraph` (identity with
 //! [`graph_node_get_containing_graph`](Sim::graph_node_get_containing_graph)). Query; legal during capture. Distinct from
 //! [`mem_graph_node_get_tools_id`](Sim::mem_graph_node_get_tools_id). No Engine `--mem-graph-node-get-containing-graph`.
+//! [`mem_pool_get_id`](Sim::mem_pool_get_id) is `cuMemPoolGetId` (identity with
+//! [`pool_get_id`](Sim::pool_get_id)). Query; legal during capture. Distinct from
+//! [`mem_graph_node_get_containing_graph`](Sim::mem_graph_node_get_containing_graph). No Engine `--mem-pool-get-id`.
 //! [`get_graph_kernel_node_params`](Sim::get_graph_kernel_node_params) is `cuGraphKernelNodeGetParams` (identity with
 //! [`graph_kernel_get_params`](Sim::graph_kernel_get_params)). Query; legal during capture. Distinct from
 //! [`graph_exec_kernel_get_params`](Sim::graph_exec_kernel_get_params). No Engine `--graph-kernel-get-params`.
@@ -22227,6 +22269,9 @@
 //! [`mem_graph_node_get_containing_graph`](Sim::mem_graph_node_get_containing_graph) is `cuGraphNodeGetContainingGraph` (identity with
 //! [`graph_node_get_containing_graph`](Sim::graph_node_get_containing_graph)). Query; legal during capture. Distinct from
 //! [`mem_graph_node_get_tools_id`](Sim::mem_graph_node_get_tools_id). No Engine `--mem-graph-node-get-containing-graph`.
+//! [`mem_pool_get_id`](Sim::mem_pool_get_id) is `cuMemPoolGetId` (identity with
+//! [`pool_get_id`](Sim::pool_get_id)). Query; legal during capture. Distinct from
+//! [`mem_graph_node_get_containing_graph`](Sim::mem_graph_node_get_containing_graph). No Engine `--mem-pool-get-id`.
 //! [`graph_exec_kernel_get_params`](Sim::graph_exec_kernel_get_params) /
 //! [`graph_exec_memcpy_get_params`](Sim::graph_exec_memcpy_get_params) /
 //! [`graph_exec_memset_get_params`](Sim::graph_exec_memset_get_params) /
@@ -23520,6 +23565,9 @@
 //! [`mem_graph_node_get_containing_graph`](Sim::mem_graph_node_get_containing_graph) is `cuGraphNodeGetContainingGraph` (identity with
 //! [`graph_node_get_containing_graph`](Sim::graph_node_get_containing_graph)). Query; legal during capture. Distinct from
 //! [`mem_graph_node_get_tools_id`](Sim::mem_graph_node_get_tools_id). No Engine `--mem-graph-node-get-containing-graph`.
+//! [`mem_pool_get_id`](Sim::mem_pool_get_id) is `cuMemPoolGetId` (identity with
+//! [`pool_get_id`](Sim::pool_get_id)). Query; legal during capture. Distinct from
+//! [`mem_graph_node_get_containing_graph`](Sim::mem_graph_node_get_containing_graph). No Engine `--mem-pool-get-id`.
 //! [`get_graph_exec_kernel_node_params`](Sim::get_graph_exec_kernel_node_params) is `cuGraphExecKernelNodeGetParams` (identity with
 //! [`graph_exec_kernel_get_params`](Sim::graph_exec_kernel_get_params)). Query; legal during capture. Distinct from
 //! [`get_graph_kernel_node_params`](Sim::get_graph_kernel_node_params). No Engine `--graph-exec-kernel-get-params`.
@@ -24819,6 +24867,9 @@
 //! [`mem_graph_node_get_containing_graph`](Sim::mem_graph_node_get_containing_graph) is `cuGraphNodeGetContainingGraph` (identity with
 //! [`graph_node_get_containing_graph`](Sim::graph_node_get_containing_graph)). Query; legal during capture. Distinct from
 //! [`mem_graph_node_get_tools_id`](Sim::mem_graph_node_get_tools_id). No Engine `--mem-graph-node-get-containing-graph`.
+//! [`mem_pool_get_id`](Sim::mem_pool_get_id) is `cuMemPoolGetId` (identity with
+//! [`pool_get_id`](Sim::pool_get_id)). Query; legal during capture. Distinct from
+//! [`mem_graph_node_get_containing_graph`](Sim::mem_graph_node_get_containing_graph). No Engine `--mem-pool-get-id`.
 //! [`graph_exec_batch_mem_op_set_params`](Sim::graph_exec_batch_mem_op_set_params)
 //! is `cudaGraphExecBatchMemOpNodeSetParams` (id/offset/value; wait vs write,
 //! `bits32`, and compare stay on wait/write nodes;
@@ -66097,6 +66148,68 @@ mod tests {
         match eight.mem_graph_node_get_containing_graph(GraphId(99), 0) {
             Err(SimError::Invalid { why }) => {
                 assert!(why.contains("unknown graph"), "{why}");
+            }
+            other => panic!("{other:?}"),
+        }
+        let g2 = eight.end_capture().unwrap();
+        assert_eq!(eight.graph_len(g2).unwrap(), 0);
+    }
+
+    #[test]
+    fn mem_pool_get_id_is_cu_mem_pool_get_id() {
+        let mut sim = Sim::new(h100());
+        match sim.mem_pool_get_id(PoolId(9999)) {
+            Err(SimError::Invalid { why }) => {
+                assert!(why.contains("unknown pool"), "{why}");
+            }
+            other => panic!("{other:?}"),
+        }
+        match sim.pool_get_id(PoolId(9999)) {
+            Err(SimError::Invalid { why }) => {
+                assert!(why.contains("unknown pool"), "{why}");
+            }
+            other => panic!("{other:?}"),
+        }
+        let d = DeviceId(0);
+        let s = StreamId(0);
+        let p = sim.create_pool(d).unwrap();
+        assert_eq!(sim.mem_pool_get_id(p).unwrap(), sim.pool_get_id(p).unwrap());
+        assert_eq!(
+            sim.mem_pool_get_id(p).unwrap(),
+            u64::from(p.0).saturating_add(1)
+        );
+        sim.begin_capture(d, s).unwrap();
+        assert_eq!(sim.mem_pool_get_id(p).unwrap(), sim.pool_get_id(p).unwrap());
+        let g_cap = sim.end_capture().unwrap();
+        assert_eq!(sim.graph_len(g_cap).unwrap(), 0);
+        sim.destroy_pool(p).unwrap();
+        match sim.mem_pool_get_id(p) {
+            Err(SimError::Invalid { why }) => {
+                assert!(why.contains("destroyed pool"), "{why}");
+            }
+            other => panic!("{other:?}"),
+        }
+        match sim.pool_get_id(p) {
+            Err(SimError::Invalid { why }) => {
+                assert!(why.contains("destroyed pool"), "{why}");
+            }
+            other => panic!("{other:?}"),
+        }
+        let mut eight = Sim::new(HardwareProfile::example_8xh100_nvlink());
+        let d1 = DeviceId(1);
+        let p1 = eight.create_pool(d1).unwrap();
+        assert_eq!(
+            eight.mem_pool_get_id(p1).unwrap(),
+            eight.pool_get_id(p1).unwrap()
+        );
+        eight.begin_capture(d1, StreamId(1)).unwrap();
+        assert_eq!(
+            eight.mem_pool_get_id(p1).unwrap(),
+            eight.pool_get_id(p1).unwrap()
+        );
+        match eight.mem_pool_get_id(PoolId(9999)) {
+            Err(SimError::Invalid { why }) => {
+                assert!(why.contains("unknown pool"), "{why}");
             }
             other => panic!("{other:?}"),
         }

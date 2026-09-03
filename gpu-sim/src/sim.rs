@@ -13582,7 +13582,6 @@ impl Sim {
 
     /// `cuGraphNodeGetContainingGraph`. Identity with [`Self::graph_node_get_containing_graph`].
     /// Query; legal during capture. Distinct from [`Self::mem_graph_node_get_tools_id`].
-    /// This VM does not invent occupancy SM counts this slice.
     pub fn mem_graph_node_get_containing_graph(
         &self,
         graph: GraphId,
@@ -16190,9 +16189,18 @@ impl Sim {
     /// [`Self::pool_get_attribute`]). Recreating after [`Self::destroy_pool`]
     /// returns a new id. An imported shareable pool has a different id from
     /// the exporter.
+    /// Driver wrap: [`Self::mem_pool_get_id`].
+    /// Identity: [`Self::mem_pool_get_id`].
     pub fn pool_get_id(&self, pool: PoolId) -> Result<u64, SimError> {
         self.refuse_destroyed_pool(pool)?;
         Ok(u64::from(pool.0).saturating_add(1))
+    }
+
+    /// `cuMemPoolGetId`. Identity with [`Self::pool_get_id`].
+    /// Query; legal during capture. Distinct from [`Self::mem_graph_node_get_containing_graph`].
+    /// This VM does not invent occupancy SM counts this slice.
+    pub fn mem_pool_get_id(&self, pool: PoolId) -> Result<u64, SimError> {
+        self.pool_get_id(pool)
     }
 
     /// Device graph-memory pool (`cudaDeviceGetGraphMemAttribute` backing).
