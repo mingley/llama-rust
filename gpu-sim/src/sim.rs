@@ -25946,7 +25946,6 @@ impl Sim {
 
     /// `cuCheckpointProcessGetRestoreThreadId`. Identity with [`Self::checkpoint_process_get_restore_thread_id`].
     /// Query; legal during capture. Distinct from [`Self::mem_checkpoint_process_unlock`].
-    /// This VM does not invent occupancy SM counts this slice.
     pub fn mem_checkpoint_process_get_restore_thread_id(
         &self,
         device: DeviceId,
@@ -25963,9 +25962,18 @@ impl Sim {
     /// [`Self::checkpoint_process_get_restore_thread_id`]. Unknown devices
     /// are Invalid `"device not in profile"`. Query; legal during capture.
     /// This VM does not invent `cuLibraryGetKernelCount` this slice.
+    /// Driver wrap: [`Self::mem_checkpoint_process_get_state`].
+    /// Identity: [`Self::mem_checkpoint_process_get_state`].
     pub fn checkpoint_process_get_state(&self, device: DeviceId) -> Result<(), SimError> {
         let _gpu = self.profile.gpu(device)?;
         Err(SimError::Invalid { why: "ckpt state" })
+    }
+
+    /// `cuCheckpointProcessGetState`. Identity with [`Self::checkpoint_process_get_state`].
+    /// Query; legal during capture. Distinct from [`Self::mem_checkpoint_process_get_restore_thread_id`].
+    /// This VM does not invent occupancy SM counts this slice.
+    pub fn mem_checkpoint_process_get_state(&self, device: DeviceId) -> Result<(), SimError> {
+        self.checkpoint_process_get_state(device)
     }
 
     /// `cuDeviceRegisterAsyncNotification` /

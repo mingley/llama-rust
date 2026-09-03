@@ -10244,7 +10244,12 @@ model, do not celebrate the sim.
       `mem_checkpoint_process_unlock`. This VM does not invent occupancy SM counts, Engine `--mem-checkpoint-process-get-restore-thread-id`,
       or `cudaChooseDevice`. `gpu-profile capture` is still refused. Dual
       score still has no `$/M tokens`.
-1197. [ ] Next numbered PLAN item after 1196 is the next `gpu-sim` / Engine /
+1197. [x] `gpu-sim` `Sim::mem_checkpoint_process_get_state` is
+      `cuCheckpointProcessGetState`. Identity with `checkpoint_process_get_state`. Query; legal during capture. Distinct from
+      `mem_checkpoint_process_get_restore_thread_id`. This VM does not invent occupancy SM counts, Engine `--mem-checkpoint-process-get-state`,
+      or `cudaChooseDevice`. `gpu-profile capture` is still refused. Dual
+      score still has no `$/M tokens`.
+1198. [ ] Next numbered PLAN item after 1197 is the next `gpu-sim` / Engine /
     serve / expertvm mechanical API that is still missing, or the next official
     decode family. Prefer remaining CUDA-shaped twins over more
     OpenAI HTTP veneer. Do not invent F32 `output.scale`. Do not invent a
@@ -12580,6 +12585,11 @@ model, do not celebrate the sim.
     occupancy SM counts this slice. Do not reverse MemCheckpointProcessGetRestoreThreadId identity with checkpoint_process_get_restore_thread_id.
     Do not invent `checkpoint_process_get_state` as `mem_checkpoint_process_get_restore_thread_id`.
     Do not invent `cuCheckpointProcessGetState` as `mem_checkpoint_process_get_restore_thread_id`.
+    Do not invent a second `cuCheckpointProcessGetState` / `mem_checkpoint_process_get_state`.
+    Do not invent Engine `--mem-checkpoint-process-get-state`. Do not invent
+    occupancy SM counts this slice. Do not reverse MemCheckpointProcessGetState identity with checkpoint_process_get_state.
+    Do not invent `device_register_async_notification` as `mem_checkpoint_process_get_state`.
+    Do not invent `cuDeviceRegisterAsyncNotification` as `mem_checkpoint_process_get_state`.
     Do not invent a second `cudaStreamAddCallback`.
     Do not invent Engine `--stream-callback` (same wall as second live
     `cudaLaunchHostFunc` after miss DMA).
@@ -14952,6 +14962,11 @@ model, do not celebrate the sim.
     this slice. Do not reverse MemCheckpointProcessGetRestoreThreadId identity with checkpoint_process_get_restore_thread_id.
     Do not wrap `checkpoint_process_get_restore_thread_id` as `mem_checkpoint_process_get_restore_thread_id`.
     Do not wrap `checkpoint_process_get_state` as `mem_checkpoint_process_get_restore_thread_id`.
+    Do not invent a second `mem_checkpoint_process_get_state` API. Do not invent
+    Engine `--mem-checkpoint-process-get-state-identity`. Do not invent a device-register-async-notification
+    this slice. Do not reverse MemCheckpointProcessGetState identity with checkpoint_process_get_state.
+    Do not wrap `checkpoint_process_get_state` as `mem_checkpoint_process_get_state`.
+    Do not wrap `device_register_async_notification` as `mem_checkpoint_process_get_state`.
     Do not invent a second DeviceLaunch in-flight destroy-complete check or Engine
     `--device-launch-destroy`. Do not abort an in-flight DeviceLaunch when
     `destroy_graph` succeeds. Do not delay destroy of an idle exec. Do not invent
@@ -17329,6 +17344,10 @@ model, do not celebrate the sim.
     invent Engine `--cu-mem-checkpoint-process-get-restore-thread-id`. Do not reverse wrapping
     cuCheckpointProcessGetRestoreThreadId identity. Do not wrap `checkpoint_process_unlock` as `mem_checkpoint_process_get_restore_thread_id`.
     Do not wrap `checkpoint_process_get_state` as `mem_checkpoint_process_get_restore_thread_id`.
+    Do not invent a second `mem_checkpoint_process_get_state` method. Do not
+    invent Engine `--cu-mem-checkpoint-process-get-state`. Do not reverse wrapping
+    cuCheckpointProcessGetState identity. Do not wrap `checkpoint_process_get_restore_thread_id` as `mem_checkpoint_process_get_state`.
+    Do not wrap `device_register_async_notification` as `mem_checkpoint_process_get_state`.
     Do not
     spend the next item on an OpenAI-compatible HTTP veneer.
 
