@@ -26121,7 +26121,6 @@ impl Sim {
 
     /// `cuModuleGetLoadingMode`. Identity with [`Self::module_get_loading_mode`].
     /// Query; legal during capture. Distinct from [`Self::mem_profiler_initialize`].
-    /// This VM does not invent occupancy SM counts this slice.
     #[must_use]
     pub fn mem_module_get_loading_mode(&self) -> ModuleLoadingMode {
         self.module_get_loading_mode()
@@ -26136,9 +26135,18 @@ impl Sim {
     /// [`Self::module_load_data`].
     /// Unknown devices are Invalid `"device not in profile"`. Query; legal
     /// during capture.
+    /// Driver wrap: [`Self::mem_module_load`].
+    /// Identity: [`Self::mem_module_load`].
     pub fn module_load(&self, device: DeviceId) -> Result<(), SimError> {
         let _gpu = self.profile.gpu(device)?;
         Err(SimError::Invalid { why: "module load" })
+    }
+
+    /// `cuModuleLoad`. Identity with [`Self::module_load`].
+    /// Query; legal during capture. Distinct from [`Self::mem_module_get_loading_mode`].
+    /// This VM does not invent occupancy SM counts this slice.
+    pub fn mem_module_load(&self, device: DeviceId) -> Result<(), SimError> {
+        self.module_load(device)
     }
 
     /// `cuModuleLoadData`. CUDA modules are not modeled.
