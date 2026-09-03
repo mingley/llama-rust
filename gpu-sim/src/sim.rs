@@ -27719,7 +27719,6 @@ impl Sim {
 
     /// `cuKernelGetParamInfo`. Identity with [`Self::kernel_get_param_info`].
     /// Query; legal during capture. Distinct from [`Self::mem_kernel_get_function`].
-    /// This VM does not invent occupancy SM counts this slice.
     pub fn mem_kernel_get_param_info(&self, device: DeviceId) -> Result<(), SimError> {
         self.kernel_get_param_info(device)
     }
@@ -27732,11 +27731,20 @@ impl Sim {
     /// Unknown devices are Invalid `"device not in profile"`. Query; legal
     /// during capture. This VM does not invent `cuFuncGetParamCount` this
     /// slice.
+    /// Driver wrap: [`Self::mem_kernel_get_param_count`].
+    /// Identity: [`Self::mem_kernel_get_param_count`].
     pub fn kernel_get_param_count(&self, device: DeviceId) -> Result<(), SimError> {
         let _gpu = self.profile.gpu(device)?;
         Err(SimError::Invalid {
             why: "kernel pcount",
         })
+    }
+
+    /// `cuKernelGetParamCount`. Identity with [`Self::kernel_get_param_count`].
+    /// Query; legal during capture. Distinct from [`Self::mem_kernel_get_param_info`].
+    /// This VM does not invent occupancy SM counts this slice.
+    pub fn mem_kernel_get_param_count(&self, device: DeviceId) -> Result<(), SimError> {
+        self.kernel_get_param_count(device)
     }
 
     /// `cuKernelGetAttribute`. CUDA kernels are not modeled.
