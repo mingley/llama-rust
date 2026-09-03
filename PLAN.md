@@ -10684,7 +10684,12 @@ model, do not celebrate the sim.
       `mem_runtime_get_version`. This VM does not invent occupancy SM counts, Engine `--mem-device-get`,
       or `cudaChooseDevice`. `gpu-profile capture` is still refused. Dual
       score still has no `$/M tokens`.
-1285. [ ] Next numbered PLAN item after 1284 is the next `gpu-sim` / Engine /
+1285. [x] `gpu-sim` `Sim::mem_func_get_param_count` is
+      `cuFuncGetParamCount`. Identity with `func_get_param_count`. Query; legal during capture. Distinct from
+      `mem_device_get`. This VM does not invent occupancy SM counts, Engine `--mem-func-get-param-count`,
+      or `cudaChooseDevice`. `gpu-profile capture` is still refused. Dual
+      score still has no `$/M tokens`.
+1286. [ ] Next numbered PLAN item after 1285 is the next `gpu-sim` / Engine /
     serve / expertvm mechanical API that is still missing, or the next official
     decode family. Prefer remaining CUDA-shaped twins over more
     OpenAI HTTP veneer. Do not invent F32 `output.scale`. Do not invent a
@@ -13460,6 +13465,11 @@ model, do not celebrate the sim.
     occupancy SM counts this slice. Do not reverse MemDeviceGet identity with device_get.
     Do not invent `device_can_access_peer` as `mem_device_get`.
     Do not invent `cuDeviceCanAccessPeer` as `mem_device_get`.
+    Do not invent a second `cuFuncGetParamCount` / `mem_func_get_param_count`.
+    Do not invent Engine `--mem-func-get-param-count`. Do not invent
+    occupancy SM counts this slice. Do not reverse MemFuncGetParamCount identity with func_get_param_count.
+    Do not invent `func_get_cache_config` as `mem_func_get_param_count`.
+    Do not invent `cuFuncGetCacheConfig` as `mem_func_get_param_count`.
     Do not invent a second `cudaStreamAddCallback`.
     Do not invent Engine `--stream-callback` (same wall as second live
     `cudaLaunchHostFunc` after miss DMA).
@@ -16272,6 +16282,11 @@ model, do not celebrate the sim.
     this slice. Do not reverse MemDeviceGet identity with device_get.
     Do not wrap `device_get` as `mem_device_get`.
     Do not wrap `device_can_access_peer` as `mem_device_get`.
+    Do not invent a second `mem_func_get_param_count` API. Do not invent
+    Engine `--mem-func-get-param-count-identity`. Do not invent a cu-func-get-cache-config
+    this slice. Do not reverse MemFuncGetParamCount identity with func_get_param_count.
+    Do not wrap `func_get_param_count` as `mem_func_get_param_count`.
+    Do not wrap `func_get_cache_config` as `mem_func_get_param_count`.
     Do not invent a second DeviceLaunch in-flight destroy-complete check or Engine
     `--device-launch-destroy`. Do not abort an in-flight DeviceLaunch when
     `destroy_graph` succeeds. Do not delay destroy of an idle exec. Do not invent
@@ -19001,6 +19016,10 @@ model, do not celebrate the sim.
     invent Engine `--cu-mem-device-get`. Do not reverse wrapping
     cuDeviceGet identity. Do not wrap `runtime_get_version` as `mem_device_get`.
     Do not wrap `device_can_access_peer` as `mem_device_get`.
+    Do not invent a second `mem_func_get_param_count` method. Do not
+    invent Engine `--cu-mem-func-get-param-count`. Do not reverse wrapping
+    cuFuncGetParamCount identity. Do not wrap `device_get` as `mem_func_get_param_count`.
+    Do not wrap `func_get_cache_config` as `mem_func_get_param_count`.
     Do not
     spend the next item on an OpenAI-compatible HTTP veneer.
 
