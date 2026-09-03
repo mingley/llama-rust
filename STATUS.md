@@ -82,6 +82,13 @@ Identity with `checkpoint_process_unlock`. Query; legal during capture. Distinct
 This VM does not invent occupancy SM counts or Engine `--mem-checkpoint-process-unlock`.
 `gpu-profile capture` is still refused. Dual score still has no `$/M tokens`.
 
+## Shipped 2026-09-03 — CUDA `cuMipmappedArrayDestroy`
+
+`gpu-sim` `Sim::mem_mipmapped_array_destroy` is `cuMipmappedArrayDestroy`.
+Identity with `mipmapped_array_destroy`. Query; legal during capture. Distinct from `mem_mipmapped_array_get_level`.
+This VM does not invent occupancy SM counts or Engine `--mem-mipmapped-array-destroy`.
+`gpu-profile capture` is still refused. Dual score still has no `$/M tokens`.
+
 ## Shipped 2026-09-03 — CUDA `cuMipmappedArrayGetLevel`
 
 `gpu-sim` `Sim::mem_mipmapped_array_get_level` is `cuMipmappedArrayGetLevel`.

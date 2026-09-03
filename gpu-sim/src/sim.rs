@@ -22298,7 +22298,6 @@ impl Sim {
 
     /// `cuMipmappedArrayGetLevel`. Identity with [`Self::mipmapped_array_get_level`].
     /// Query; legal during capture. Distinct from [`Self::mem_mipmapped_array_create`].
-    /// This VM does not invent occupancy SM counts this slice.
     pub fn mem_mipmapped_array_get_level(&self, device: DeviceId) -> Result<(), SimError> {
         self.mipmapped_array_get_level(device)
     }
@@ -22311,11 +22310,20 @@ impl Sim {
     /// [`Self::mipmapped_array_get_level`], and from [`Self::array_destroy`].
     /// Unknown devices are Invalid `"device not in profile"`. Query; legal
     /// during capture.
+    /// Driver wrap: [`Self::mem_mipmapped_array_destroy`].
+    /// Identity: [`Self::mem_mipmapped_array_destroy`].
     pub fn mipmapped_array_destroy(&self, device: DeviceId) -> Result<(), SimError> {
         let _gpu = self.profile.gpu(device)?;
         Err(SimError::Invalid {
             why: "mipmap destroy",
         })
+    }
+
+    /// `cuMipmappedArrayDestroy`. Identity with [`Self::mipmapped_array_destroy`].
+    /// Query; legal during capture. Distinct from [`Self::mem_mipmapped_array_get_level`].
+    /// This VM does not invent occupancy SM counts this slice.
+    pub fn mem_mipmapped_array_destroy(&self, device: DeviceId) -> Result<(), SimError> {
+        self.mipmapped_array_destroy(device)
     }
 
     /// `cuImportExternalMemory`. External memory import is not modeled.
