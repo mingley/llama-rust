@@ -82,6 +82,13 @@ Identity with `checkpoint_process_unlock`. Query; legal during capture. Distinct
 This VM does not invent occupancy SM counts or Engine `--mem-checkpoint-process-unlock`.
 `gpu-profile capture` is still refused. Dual score still has no `$/M tokens`.
 
+## Shipped 2026-09-03 — CUDA `cuModuleGetLoadingMode`
+
+`gpu-sim` `Sim::mem_module_get_loading_mode` is `cuModuleGetLoadingMode`.
+Identity with `module_get_loading_mode`. Query; legal during capture. Distinct from `mem_profiler_initialize`.
+This VM does not invent occupancy SM counts or Engine `--mem-module-get-loading-mode`.
+`gpu-profile capture` is still refused. Dual score still has no `$/M tokens`.
+
 ## Shipped 2026-09-03 — CUDA `cudaProfilerInitialize`
 
 `gpu-sim` `Sim::mem_profiler_initialize` is `cudaProfilerInitialize`.

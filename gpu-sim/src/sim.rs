@@ -26101,7 +26101,6 @@ impl Sim {
 
     /// `cudaProfilerInitialize`. Identity with [`Self::profiler_initialize`].
     /// Query; legal during capture. Distinct from [`Self::mem_profiler_stop`].
-    /// This VM does not invent occupancy SM counts this slice.
     pub fn mem_profiler_initialize(&self) -> Result<(), SimError> {
         self.profiler_initialize()
     }
@@ -26113,9 +26112,19 @@ impl Sim {
     /// no `CUmodule`. Distinct from [`Self::driver_init`] and from
     /// [`Self::init_device`]. This VM does not invent an environment-variable
     /// loading override or `cuModuleLoad` this slice.
+    /// Driver wrap: [`Self::mem_module_get_loading_mode`].
+    /// Identity: [`Self::mem_module_get_loading_mode`].
     #[must_use]
     pub fn module_get_loading_mode(&self) -> ModuleLoadingMode {
         ModuleLoadingMode::Eager
+    }
+
+    /// `cuModuleGetLoadingMode`. Identity with [`Self::module_get_loading_mode`].
+    /// Query; legal during capture. Distinct from [`Self::mem_profiler_initialize`].
+    /// This VM does not invent occupancy SM counts this slice.
+    #[must_use]
+    pub fn mem_module_get_loading_mode(&self) -> ModuleLoadingMode {
+        self.module_get_loading_mode()
     }
 
     /// `cuModuleLoad`. CUDA modules are not modeled.
