@@ -82,6 +82,13 @@ Identity with `checkpoint_process_unlock`. Query; legal during capture. Distinct
 This VM does not invent occupancy SM counts or Engine `--mem-checkpoint-process-unlock`.
 `gpu-profile capture` is still refused. Dual score still has no `$/M tokens`.
 
+## Shipped 2026-09-03 — CUDA `cuTexRefSetMipmapLevelBias`
+
+`gpu-sim` `Sim::mem_tex_ref_set_mipmap_level_bias` is `cuTexRefSetMipmapLevelBias`.
+Identity with `tex_ref_set_mipmap_level_bias`. Query; legal during capture. Distinct from `mem_tex_ref_set_mipmap_filter_mode`.
+This VM does not invent occupancy SM counts or Engine `--mem-tex-ref-set-mipmap-level-bias`.
+`gpu-profile capture` is still refused. Dual score still has no `$/M tokens`.
+
 ## Shipped 2026-09-03 — CUDA `cuTexRefSetMipmapFilterMode`
 
 `gpu-sim` `Sim::mem_tex_ref_set_mipmap_filter_mode` is `cuTexRefSetMipmapFilterMode`.
