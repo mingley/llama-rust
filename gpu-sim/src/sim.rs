@@ -26237,7 +26237,6 @@ impl Sim {
 
     /// `cuModuleGetFunctionCount`. Identity with [`Self::module_get_function_count`].
     /// Query; legal during capture. Distinct from [`Self::mem_module_load_data_ex`].
-    /// This VM does not invent occupancy SM counts this slice.
     pub fn mem_module_get_function_count(&self, device: DeviceId) -> Result<(), SimError> {
         self.module_get_function_count(device)
     }
@@ -26250,11 +26249,20 @@ impl Sim {
     /// (why is not `"module function"`).
     /// Unknown devices are Invalid `"device not in profile"`. Query; legal
     /// during capture.
+    /// Driver wrap: [`Self::mem_module_enumerate_functions`].
+    /// Identity: [`Self::mem_module_enumerate_functions`].
     pub fn module_enumerate_functions(&self, device: DeviceId) -> Result<(), SimError> {
         let _gpu = self.profile.gpu(device)?;
         Err(SimError::Invalid {
             why: "module enumfn",
         })
+    }
+
+    /// `cuModuleEnumerateFunctions`. Identity with [`Self::module_enumerate_functions`].
+    /// Query; legal during capture. Distinct from [`Self::mem_module_get_function_count`].
+    /// This VM does not invent occupancy SM counts this slice.
+    pub fn mem_module_enumerate_functions(&self, device: DeviceId) -> Result<(), SimError> {
+        self.module_enumerate_functions(device)
     }
 
     /// `cuModuleUnload`. CUDA modules are not modeled.
