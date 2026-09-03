@@ -22004,7 +22004,6 @@ impl Sim {
 
     /// `cuTensorMapEncodeIm2col`. Identity with [`Self::tensor_map_encode_im2col`].
     /// Query; legal during capture. Distinct from [`Self::mem_tensor_map_encode_tiled`].
-    /// This VM does not invent occupancy SM counts this slice.
     pub fn mem_tensor_map_encode_im2col(&self, device: DeviceId) -> Result<(), SimError> {
         self.tensor_map_encode_im2col(device)
     }
@@ -22017,9 +22016,18 @@ impl Sim {
     /// [`Self::tensor_map_replace_aligned_addr`].
     /// Unknown devices are Invalid `"device not in profile"`. Query; legal
     /// during capture.
+    /// Driver wrap: [`Self::mem_tensor_map_encode_im2col_wide`].
+    /// Identity: [`Self::mem_tensor_map_encode_im2col_wide`].
     pub fn tensor_map_encode_im2col_wide(&self, device: DeviceId) -> Result<(), SimError> {
         let _gpu = self.profile.gpu(device)?;
         Err(SimError::Invalid { why: "im2col wide" })
+    }
+
+    /// `cuTensorMapEncodeIm2colWide`. Identity with [`Self::tensor_map_encode_im2col_wide`].
+    /// Query; legal during capture. Distinct from [`Self::mem_tensor_map_encode_im2col`].
+    /// This VM does not invent occupancy SM counts this slice.
+    pub fn mem_tensor_map_encode_im2col_wide(&self, device: DeviceId) -> Result<(), SimError> {
+        self.tensor_map_encode_im2col_wide(device)
     }
 
     /// `cuTensorMapReplaceAlignedAddr`. TMA is not modeled.

@@ -1002,6 +1002,7 @@ compiled kernel exists; no Engine flag).
 `gpu-sim` `mem_discard_and_prefetch_batch_async` is `cudaMemDiscardAndPrefetchBatchAsync` (identity with `discard_and_prefetch_batch_async`; no Engine flag).
 `gpu-sim` `mem_tensor_map_encode_tiled` is `cuTensorMapEncodeTiled` (identity with `tensor_map_encode_tiled`; no Engine flag).
 `gpu-sim` `mem_tensor_map_encode_im2col` is `cuTensorMapEncodeIm2col` (identity with `tensor_map_encode_im2col`; no Engine flag).
+`gpu-sim` `mem_tensor_map_encode_im2col_wide` is `cuTensorMapEncodeIm2colWide` (identity with `tensor_map_encode_im2col_wide`; no Engine flag).
 `gpu-sim` `mem_alloc` is `cuMemAlloc` (identity with `malloc`; no Engine flag).
 `gpu-sim` `mem_free` is `cuMemFree` (identity with `free_sync`; no Engine flag).
 `gpu-sim` `mem_free_host` is `cuMemFreeHost` (identity with `free_host_pinned`; no Engine flag).
@@ -1528,6 +1529,7 @@ compiled kernel exists; no Engine flag).
 `gpu-sim` `mem_discard_and_prefetch_batch_async` is `cudaMemDiscardAndPrefetchBatchAsync` (identity with `discard_and_prefetch_batch_async`; no Engine flag).
 `gpu-sim` `mem_tensor_map_encode_tiled` is `cuTensorMapEncodeTiled` (identity with `tensor_map_encode_tiled`; no Engine flag).
 `gpu-sim` `mem_tensor_map_encode_im2col` is `cuTensorMapEncodeIm2col` (identity with `tensor_map_encode_im2col`; no Engine flag).
+`gpu-sim` `mem_tensor_map_encode_im2col_wide` is `cuTensorMapEncodeIm2colWide` (identity with `tensor_map_encode_im2col_wide`; no Engine flag).
 `gpu-sim` `func_is_loaded` is `cuFuncIsLoaded` (`false` until a compiled
 kernel exists; no Engine flag).
 `gpu-sim` `func_load` is `cuFuncLoad` (Invalid; no compiled kernel; no
