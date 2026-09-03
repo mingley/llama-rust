@@ -22367,7 +22367,6 @@ impl Sim {
 
     /// `cuDestroyExternalMemory`. Identity with [`Self::destroy_external_memory`].
     /// Query; legal during capture. Distinct from [`Self::mem_import_external_memory`].
-    /// This VM does not invent occupancy SM counts this slice.
     pub fn mem_destroy_external_memory(&self, device: DeviceId) -> Result<(), SimError> {
         self.destroy_external_memory(device)
     }
@@ -22382,11 +22381,20 @@ impl Sim {
     /// [`Self::graphics_resource_get_mapped_pointer`], and from
     /// [`Self::external_memory_get_mapped_mipmapped_array`]. Unknown devices
     /// are Invalid `"device not in profile"`. Query; legal during capture.
+    /// Driver wrap: [`Self::mem_external_memory_get_mapped_buffer`].
+    /// Identity: [`Self::mem_external_memory_get_mapped_buffer`].
     pub fn external_memory_get_mapped_buffer(&self, device: DeviceId) -> Result<(), SimError> {
         let _gpu = self.profile.gpu(device)?;
         Err(SimError::Invalid {
             why: "mapped buffer",
         })
+    }
+
+    /// `cuExternalMemoryGetMappedBuffer`. Identity with [`Self::external_memory_get_mapped_buffer`].
+    /// Query; legal during capture. Distinct from [`Self::mem_destroy_external_memory`].
+    /// This VM does not invent occupancy SM counts this slice.
+    pub fn mem_external_memory_get_mapped_buffer(&self, device: DeviceId) -> Result<(), SimError> {
+        self.external_memory_get_mapped_buffer(device)
     }
 
     /// `cuExternalMemoryGetMappedMipmappedArray` plus

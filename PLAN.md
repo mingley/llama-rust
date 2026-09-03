@@ -10899,7 +10899,12 @@ model, do not celebrate the sim.
       `mem_import_external_memory`. This VM does not invent occupancy SM counts, Engine `--mem-destroy-external-memory`,
       or `cudaChooseDevice`. `gpu-profile capture` is still refused. Dual
       score still has no `$/M tokens`.
-1328. [ ] Next numbered PLAN item after 1327 is the next `gpu-sim` / Engine /
+1328. [x] `gpu-sim` `Sim::mem_external_memory_get_mapped_buffer` is
+      `cuExternalMemoryGetMappedBuffer`. Identity with `external_memory_get_mapped_buffer`. Query; legal during capture. Distinct from
+      `mem_destroy_external_memory`. This VM does not invent occupancy SM counts, Engine `--mem-external-memory-get-mapped-buffer`,
+      or `cudaChooseDevice`. `gpu-profile capture` is still refused. Dual
+      score still has no `$/M tokens`.
+1329. [ ] Next numbered PLAN item after 1328 is the next `gpu-sim` / Engine /
     serve / expertvm mechanical API that is still missing, or the next official
     decode family. Prefer remaining CUDA-shaped twins over more
     OpenAI HTTP veneer. Do not invent F32 `output.scale`. Do not invent a
@@ -13890,6 +13895,11 @@ model, do not celebrate the sim.
     occupancy SM counts this slice. Do not reverse MemDestroyExternalMemory identity with destroy_external_memory.
     Do not invent `external_memory_get_mapped_buffer` as `mem_destroy_external_memory`.
     Do not invent `cuExternalMemoryGetMappedBuffer` as `mem_destroy_external_memory`.
+    Do not invent a second `cuExternalMemoryGetMappedBuffer` / `mem_external_memory_get_mapped_buffer`.
+    Do not invent Engine `--mem-external-memory-get-mapped-buffer`. Do not invent
+    occupancy SM counts this slice. Do not reverse MemExternalMemoryGetMappedBuffer identity with external_memory_get_mapped_buffer.
+    Do not invent `external_memory_get_mapped_mipmapped_array` as `mem_external_memory_get_mapped_buffer`.
+    Do not invent `cuExternalMemoryGetMappedMipmappedArray` as `mem_external_memory_get_mapped_buffer`.
     Do not invent a second `cudaStreamAddCallback`.
     Do not invent Engine `--stream-callback` (same wall as second live
     `cudaLaunchHostFunc` after miss DMA).
@@ -16917,6 +16927,11 @@ model, do not celebrate the sim.
     this slice. Do not reverse MemDestroyExternalMemory identity with destroy_external_memory.
     Do not wrap `destroy_external_memory` as `mem_destroy_external_memory`.
     Do not wrap `external_memory_get_mapped_buffer` as `mem_destroy_external_memory`.
+    Do not invent a second `mem_external_memory_get_mapped_buffer` API. Do not invent
+    Engine `--mem-external-memory-get-mapped-buffer-identity`. Do not invent a cu-external-memory-get-mapped-mipmapped-array
+    this slice. Do not reverse MemExternalMemoryGetMappedBuffer identity with external_memory_get_mapped_buffer.
+    Do not wrap `external_memory_get_mapped_buffer` as `mem_external_memory_get_mapped_buffer`.
+    Do not wrap `external_memory_get_mapped_mipmapped_array` as `mem_external_memory_get_mapped_buffer`.
     Do not invent a second DeviceLaunch in-flight destroy-complete check or Engine
     `--device-launch-destroy`. Do not abort an in-flight DeviceLaunch when
     `destroy_graph` succeeds. Do not delay destroy of an idle exec. Do not invent
@@ -19818,6 +19833,10 @@ model, do not celebrate the sim.
     invent Engine `--cu-mem-destroy-external-memory`. Do not reverse wrapping
     cuDestroyExternalMemory identity. Do not wrap `import_external_memory` as `mem_destroy_external_memory`.
     Do not wrap `external_memory_get_mapped_buffer` as `mem_destroy_external_memory`.
+    Do not invent a second `mem_external_memory_get_mapped_buffer` method. Do not
+    invent Engine `--cu-mem-external-memory-get-mapped-buffer`. Do not reverse wrapping
+    cuExternalMemoryGetMappedBuffer identity. Do not wrap `destroy_external_memory` as `mem_external_memory_get_mapped_buffer`.
+    Do not wrap `external_memory_get_mapped_mipmapped_array` as `mem_external_memory_get_mapped_buffer`.
     Do not
     spend the next item on an OpenAI-compatible HTTP veneer.
 
