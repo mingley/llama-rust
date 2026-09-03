@@ -1777,6 +1777,8 @@ impl Sim {
     ///
     /// `flags` must be [`GreenCtxFlags::DEFAULT`]. The desc may be reused
     /// (same-span contexts share occupancy).
+    /// Driver wrap: [`Self::mem_green_ctx_create`].
+    /// Identity: [`Self::mem_green_ctx_create`].
     pub fn green_ctx_create(
         &mut self,
         desc: DevResourceDescId,
@@ -1810,6 +1812,18 @@ impl Sim {
             },
         );
         Ok(id)
+    }
+
+    /// `cuGreenCtxCreate`. Identity with [`Self::green_ctx_create`].
+    /// Host-sync; capture refused. Distinct from [`Self::mem_stream_get_green_ctx`].
+    /// This VM does not invent occupancy SM counts this slice.
+    pub fn mem_green_ctx_create(
+        &mut self,
+        desc: DevResourceDescId,
+        device: DeviceId,
+        flags: u32,
+    ) -> Result<GreenCtxId, SimError> {
+        self.green_ctx_create(desc, device, flags)
     }
 
     /// `cuGreenCtxDestroy`. Capture cannot include it.
@@ -1957,7 +1971,6 @@ impl Sim {
 
     /// `cuStreamGetGreenCtx`. Identity with [`Self::stream_get_green_ctx`].
     /// Query; legal during capture. Distinct from [`Self::mem_green_ctx_get_device`].
-    /// This VM does not invent occupancy SM counts this slice.
     pub fn mem_stream_get_green_ctx(
         &self,
         device: DeviceId,
