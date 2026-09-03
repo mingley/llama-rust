@@ -945,6 +945,7 @@ compiled kernel exists; no Engine flag).
 `gpu-sim` `mem_memcpy_ato_a_async` is `cuMemcpyAtoAAsync` (identity with `memcpy_ato_a_async`; no Engine flag).
 `gpu-sim` `mem_memcpy_2d_to_array` is `cuMemcpy2DToArray` (identity with `memcpy_2d_to_array`; no Engine flag).
 `gpu-sim` `mem_memcpy_2d_from_array` is `cuMemcpy2DFromArray` (identity with `memcpy_2d_from_array`; no Engine flag).
+`gpu-sim` `mem_memcpy_2d_array_to_array` is `cuMemcpy2DArrayToArray` (identity with `memcpy_2d_array_to_array`; no Engine flag).
 `gpu-sim` `mem_alloc` is `cuMemAlloc` (identity with `malloc`; no Engine flag).
 `gpu-sim` `mem_free` is `cuMemFree` (identity with `free_sync`; no Engine flag).
 `gpu-sim` `mem_free_host` is `cuMemFreeHost` (identity with `free_host_pinned`; no Engine flag).
@@ -1414,6 +1415,7 @@ compiled kernel exists; no Engine flag).
 `gpu-sim` `mem_memcpy_ato_a_async` is `cuMemcpyAtoAAsync` (identity with `memcpy_ato_a_async`; no Engine flag).
 `gpu-sim` `mem_memcpy_2d_to_array` is `cuMemcpy2DToArray` (identity with `memcpy_2d_to_array`; no Engine flag).
 `gpu-sim` `mem_memcpy_2d_from_array` is `cuMemcpy2DFromArray` (identity with `memcpy_2d_from_array`; no Engine flag).
+`gpu-sim` `mem_memcpy_2d_array_to_array` is `cuMemcpy2DArrayToArray` (identity with `memcpy_2d_array_to_array`; no Engine flag).
 `gpu-sim` `func_is_loaded` is `cuFuncIsLoaded` (`false` until a compiled
 kernel exists; no Engine flag).
 `gpu-sim` `func_load` is `cuFuncLoad` (Invalid; no compiled kernel; no
