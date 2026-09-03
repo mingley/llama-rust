@@ -33045,7 +33045,6 @@ impl Sim {
 
     /// `cuFuncGetParamInfo`. Identity with [`Self::func_get_param_info`].
     /// Query; legal during capture. Distinct from [`Self::mem_func_get_name`].
-    /// This VM does not invent occupancy SM counts this slice.
     pub fn mem_func_get_param_info(
         &self,
         device: DeviceId,
@@ -33226,6 +33225,8 @@ impl Sim {
     ///
     /// Unknown devices are Invalid. This VM has one function-attr set per
     /// device, not per kernel function.
+    /// Driver wrap: [`Self::mem_func_get_attribute`].
+    /// Identity: [`Self::mem_func_get_attribute`].
     pub fn func_get_attribute(&self, device: DeviceId, attr: FuncAttr) -> Result<i32, SimError> {
         let _gpu = self.profile.gpu(device)?;
         match attr {
@@ -33250,6 +33251,17 @@ impl Sim {
                 Ok(self.get_func_cluster_policy(device)?.to_cuda())
             }
         }
+    }
+
+    /// `cudaFuncGetAttribute`. Identity with [`Self::func_get_attribute`].
+    /// Query; legal during capture. Distinct from [`Self::mem_func_get_param_info`].
+    /// This VM does not invent occupancy SM counts this slice.
+    pub fn mem_func_get_attribute(
+        &self,
+        device: DeviceId,
+        attr: FuncAttr,
+    ) -> Result<i32, SimError> {
+        self.func_get_attribute(device, attr)
     }
 
     fn advance_to_next_completion(&mut self) -> Result<(), SimError> {
