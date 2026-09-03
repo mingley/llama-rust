@@ -10694,7 +10694,12 @@ model, do not celebrate the sim.
       `mem_func_get_param_count`. This VM does not invent occupancy SM counts, Engine `--mem-func-get-cache-config`,
       or `cudaChooseDevice`. `gpu-profile capture` is still refused. Dual
       score still has no `$/M tokens`.
-1287. [ ] Next numbered PLAN item after 1286 is the next `gpu-sim` / Engine /
+1287. [x] `gpu-sim` `Sim::mem_func_is_loaded` is
+      `cuFuncIsLoaded`. Identity with `func_is_loaded`. Query; legal during capture. Distinct from
+      `mem_func_get_cache_config`. This VM does not invent occupancy SM counts, Engine `--mem-func-is-loaded`,
+      or `cudaChooseDevice`. `gpu-profile capture` is still refused. Dual
+      score still has no `$/M tokens`.
+1288. [ ] Next numbered PLAN item after 1287 is the next `gpu-sim` / Engine /
     serve / expertvm mechanical API that is still missing, or the next official
     decode family. Prefer remaining CUDA-shaped twins over more
     OpenAI HTTP veneer. Do not invent F32 `output.scale`. Do not invent a
@@ -13480,6 +13485,11 @@ model, do not celebrate the sim.
     occupancy SM counts this slice. Do not reverse MemFuncGetCacheConfig identity with func_get_cache_config.
     Do not invent `func_is_loaded` as `mem_func_get_cache_config`.
     Do not invent `cuFuncIsLoaded` as `mem_func_get_cache_config`.
+    Do not invent a second `cuFuncIsLoaded` / `mem_func_is_loaded`.
+    Do not invent Engine `--mem-func-is-loaded`. Do not invent
+    occupancy SM counts this slice. Do not reverse MemFuncIsLoaded identity with func_is_loaded.
+    Do not invent `func_load` as `mem_func_is_loaded`.
+    Do not invent `cuFuncLoad` as `mem_func_is_loaded`.
     Do not invent a second `cudaStreamAddCallback`.
     Do not invent Engine `--stream-callback` (same wall as second live
     `cudaLaunchHostFunc` after miss DMA).
@@ -16302,6 +16312,11 @@ model, do not celebrate the sim.
     this slice. Do not reverse MemFuncGetCacheConfig identity with func_get_cache_config.
     Do not wrap `func_get_cache_config` as `mem_func_get_cache_config`.
     Do not wrap `func_is_loaded` as `mem_func_get_cache_config`.
+    Do not invent a second `mem_func_is_loaded` API. Do not invent
+    Engine `--mem-func-is-loaded-identity`. Do not invent a func-load
+    this slice. Do not reverse MemFuncIsLoaded identity with func_is_loaded.
+    Do not wrap `func_is_loaded` as `mem_func_is_loaded`.
+    Do not wrap `func_load` as `mem_func_is_loaded`.
     Do not invent a second DeviceLaunch in-flight destroy-complete check or Engine
     `--device-launch-destroy`. Do not abort an in-flight DeviceLaunch when
     `destroy_graph` succeeds. Do not delay destroy of an idle exec. Do not invent
@@ -19039,6 +19054,10 @@ model, do not celebrate the sim.
     invent Engine `--cu-mem-func-get-cache-config`. Do not reverse wrapping
     cuFuncGetCacheConfig identity. Do not wrap `func_get_param_count` as `mem_func_get_cache_config`.
     Do not wrap `func_is_loaded` as `mem_func_get_cache_config`.
+    Do not invent a second `mem_func_is_loaded` method. Do not
+    invent Engine `--cu-mem-func-is-loaded`. Do not reverse wrapping
+    cuFuncIsLoaded identity. Do not wrap `func_get_cache_config` as `mem_func_is_loaded`.
+    Do not wrap `func_load` as `mem_func_is_loaded`.
     Do not
     spend the next item on an OpenAI-compatible HTTP veneer.
 

@@ -33075,7 +33075,6 @@ impl Sim {
 
     /// `cuFuncGetCacheConfig`. Identity with [`Self::func_get_cache_config`].
     /// Query; legal during capture. Distinct from [`Self::mem_func_get_param_count`].
-    /// This VM does not invent occupancy SM counts this slice.
     pub fn mem_func_get_cache_config(&self, device: DeviceId) -> Result<(), SimError> {
         self.func_get_cache_config(device)
     }
@@ -33088,9 +33087,18 @@ impl Sim {
     /// [`Self::func_get_attributes`] (compiler fields 0). Unknown devices
     /// are Invalid `"device not in profile"`. This VM does not invent
     /// `cuFuncLoad` this slice.
+    /// Driver wrap: [`Self::mem_func_is_loaded`].
+    /// Identity: [`Self::mem_func_is_loaded`].
     pub fn func_is_loaded(&self, device: DeviceId) -> Result<bool, SimError> {
         let _gpu = self.profile.gpu(device)?;
         Ok(false)
+    }
+
+    /// `cuFuncIsLoaded`. Identity with [`Self::func_is_loaded`].
+    /// Query; legal during capture. Distinct from [`Self::mem_func_get_cache_config`].
+    /// This VM does not invent occupancy SM counts this slice.
+    pub fn mem_func_is_loaded(&self, device: DeviceId) -> Result<bool, SimError> {
+        self.func_is_loaded(device)
     }
 
     /// `cuFuncLoad`. CUDA functions are not modeled.
