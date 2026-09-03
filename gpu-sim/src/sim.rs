@@ -25814,7 +25814,6 @@ impl Sim {
 
     /// `cuCoredumpGetAttributeGlobal`. Identity with [`Self::coredump_get_attribute_global`] (`cudaCoredumpGetAttributeGlobal`).
     /// Query; legal during capture. Distinct from [`Self::mem_coredump_set_attribute`].
-    /// This VM does not invent occupancy SM counts this slice.
     pub fn mem_coredump_get_attribute_global(&self, device: DeviceId) -> Result<(), SimError> {
         self.coredump_get_attribute_global(device)
     }
@@ -25827,11 +25826,20 @@ impl Sim {
     /// (why is not `"dump global"`). Unknown devices are Invalid
     /// `"device not in profile"`. Query; legal during capture. This VM does
     /// not invent `cuCheckpointProcessCheckpoint` this slice.
+    /// Driver wrap: [`Self::mem_coredump_set_attribute_global`].
+    /// Identity: [`Self::mem_coredump_set_attribute_global`].
     pub fn coredump_set_attribute_global(&self, device: DeviceId) -> Result<(), SimError> {
         let _gpu = self.profile.gpu(device)?;
         Err(SimError::Invalid {
             why: "dump setglob",
         })
+    }
+
+    /// `cuCoredumpSetAttributeGlobal`. Identity with [`Self::coredump_set_attribute_global`] (`cudaCoredumpSetAttributeGlobal`).
+    /// Query; legal during capture. Distinct from [`Self::mem_coredump_get_attribute_global`].
+    /// This VM does not invent occupancy SM counts this slice.
+    pub fn mem_coredump_set_attribute_global(&self, device: DeviceId) -> Result<(), SimError> {
+        self.coredump_set_attribute_global(device)
     }
 
     /// `cuCheckpointProcessLock`. CUDA process checkpoint is not modeled.
