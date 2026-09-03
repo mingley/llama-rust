@@ -26938,7 +26938,6 @@ impl Sim {
 
     /// `cuTexRefGetMaxAnisotropy`. Identity with [`Self::tex_ref_get_max_anisotropy`].
     /// Query; legal during capture. Distinct from [`Self::mem_tex_ref_get_mipmap_level_clamp`].
-    /// This VM does not invent occupancy SM counts this slice.
     pub fn mem_tex_ref_get_max_anisotropy(&self, device: DeviceId) -> Result<(), SimError> {
         self.tex_ref_get_max_anisotropy(device)
     }
@@ -26952,11 +26951,20 @@ impl Sim {
     /// Unknown devices are Invalid `"device not in profile"`. Query; legal
     /// during capture. This VM does not invent `cuTexRefGetFlags`
     /// this slice.
+    /// Driver wrap: [`Self::mem_tex_ref_get_border_color`].
+    /// Identity: [`Self::mem_tex_ref_get_border_color`].
     pub fn tex_ref_get_border_color(&self, device: DeviceId) -> Result<(), SimError> {
         let _gpu = self.profile.gpu(device)?;
         Err(SimError::Invalid {
             why: "texref getborder",
         })
+    }
+
+    /// `cuTexRefGetBorderColor`. Identity with [`Self::tex_ref_get_border_color`].
+    /// Query; legal during capture. Distinct from [`Self::mem_tex_ref_get_max_anisotropy`].
+    /// This VM does not invent occupancy SM counts this slice.
+    pub fn mem_tex_ref_get_border_color(&self, device: DeviceId) -> Result<(), SimError> {
+        self.tex_ref_get_border_color(device)
     }
 
     /// `cuTexRefGetFlags`. CUDA texture references are not modeled.
