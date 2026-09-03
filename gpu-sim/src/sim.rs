@@ -1863,7 +1863,6 @@ impl Sim {
 
     /// `cuGreenCtxGetId`. Identity with [`Self::green_ctx_get_id`].
     /// Query; legal during capture. Distinct from [`Self::mem_event_get_id`].
-    /// This VM does not invent occupancy SM counts this slice.
     pub fn mem_green_ctx_get_id(&self, ctx: GreenCtxId) -> Result<u64, SimError> {
         self.green_ctx_get_id(ctx)
     }
@@ -1874,11 +1873,20 @@ impl Sim {
     /// destroyed contexts are Invalid `"unknown green ctx"`. Distinct from
     /// [`Self::stream_get_green_ctx`] (stream to ctx) and
     /// [`Self::green_ctx_get_id`]. This VM does not invent `cuCtxFromGreenCtx`.
+    /// Driver wrap: [`Self::mem_green_ctx_get_device`].
+    /// Identity: [`Self::mem_green_ctx_get_device`].
     pub fn green_ctx_get_device(&self, ctx: GreenCtxId) -> Result<DeviceId, SimError> {
         let g = self.green_ctxs.get(&ctx).ok_or(SimError::Invalid {
             why: "unknown green ctx",
         })?;
         Ok(g.device)
+    }
+
+    /// `cudaExecutionCtxGetDevice`. Identity with [`Self::green_ctx_get_device`].
+    /// Query; legal during capture. Distinct from [`Self::mem_green_ctx_get_id`].
+    /// This VM does not invent occupancy SM counts this slice.
+    pub fn mem_green_ctx_get_device(&self, ctx: GreenCtxId) -> Result<DeviceId, SimError> {
+        self.green_ctx_get_device(ctx)
     }
 
     /// Bind `stream` to `ctx` (`cuGreenCtxStreamCreate` without creating).

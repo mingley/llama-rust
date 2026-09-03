@@ -985,6 +985,7 @@ compiled kernel exists; no Engine flag).
 `gpu-sim` `mem_device_get_stream_priority_range` is `cudaDeviceGetStreamPriorityRange` (identity with `device_get_stream_priority_range`; no Engine flag).
 `gpu-sim` `mem_event_get_id` is `cuEventGetId` (identity with `event_get_id`; no Engine flag).
 `gpu-sim` `mem_green_ctx_get_id` is `cuGreenCtxGetId` (identity with `green_ctx_get_id`; no Engine flag).
+`gpu-sim` `mem_green_ctx_get_device` is `cudaExecutionCtxGetDevice` (identity with `green_ctx_get_device`; no Engine flag).
 `gpu-sim` `mem_alloc` is `cuMemAlloc` (identity with `malloc`; no Engine flag).
 `gpu-sim` `mem_free` is `cuMemFree` (identity with `free_sync`; no Engine flag).
 `gpu-sim` `mem_free_host` is `cuMemFreeHost` (identity with `free_host_pinned`; no Engine flag).
@@ -1494,6 +1495,7 @@ compiled kernel exists; no Engine flag).
 `gpu-sim` `mem_device_get_stream_priority_range` is `cudaDeviceGetStreamPriorityRange` (identity with `device_get_stream_priority_range`; no Engine flag).
 `gpu-sim` `mem_event_get_id` is `cuEventGetId` (identity with `event_get_id`; no Engine flag).
 `gpu-sim` `mem_green_ctx_get_id` is `cuGreenCtxGetId` (identity with `green_ctx_get_id`; no Engine flag).
+`gpu-sim` `mem_green_ctx_get_device` is `cudaExecutionCtxGetDevice` (identity with `green_ctx_get_device`; no Engine flag).
 `gpu-sim` `func_is_loaded` is `cuFuncIsLoaded` (`false` until a compiled
 kernel exists; no Engine flag).
 `gpu-sim` `func_load` is `cuFuncLoad` (Invalid; no compiled kernel; no
