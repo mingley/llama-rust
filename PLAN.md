@@ -10604,7 +10604,12 @@ model, do not celebrate the sim.
       `mem_library_get_managed`. This VM does not invent occupancy SM counts, Engine `--mem-library-get-unified-function`,
       or `cudaChooseDevice`. `gpu-profile capture` is still refused. Dual
       score still has no `$/M tokens`.
-1269. [ ] Next numbered PLAN item after 1268 is the next `gpu-sim` / Engine /
+1269. [x] `gpu-sim` `Sim::mem_library_get_kernel_count` is
+      `cuLibraryGetKernelCount`. Identity with `library_get_kernel_count`. Query; legal during capture. Distinct from
+      `mem_library_get_unified_function`. This VM does not invent occupancy SM counts, Engine `--mem-library-get-kernel-count`,
+      or `cudaChooseDevice`. `gpu-profile capture` is still refused. Dual
+      score still has no `$/M tokens`.
+1270. [ ] Next numbered PLAN item after 1269 is the next `gpu-sim` / Engine /
     serve / expertvm mechanical API that is still missing, or the next official
     decode family. Prefer remaining CUDA-shaped twins over more
     OpenAI HTTP veneer. Do not invent F32 `output.scale`. Do not invent a
@@ -13300,6 +13305,11 @@ model, do not celebrate the sim.
     occupancy SM counts this slice. Do not reverse MemLibraryGetUnifiedFunction identity with library_get_unified_function.
     Do not invent `library_get_kernel_count` as `mem_library_get_unified_function`.
     Do not invent `cuLibraryGetKernelCount` as `mem_library_get_unified_function`.
+    Do not invent a second `cuLibraryGetKernelCount` / `mem_library_get_kernel_count`.
+    Do not invent Engine `--mem-library-get-kernel-count`. Do not invent
+    occupancy SM counts this slice. Do not reverse MemLibraryGetKernelCount identity with library_get_kernel_count.
+    Do not invent `library_enumerate_kernels` as `mem_library_get_kernel_count`.
+    Do not invent `cuLibraryEnumerateKernels` as `mem_library_get_kernel_count`.
     Do not invent a second `cudaStreamAddCallback`.
     Do not invent Engine `--stream-callback` (same wall as second live
     `cudaLaunchHostFunc` after miss DMA).
@@ -16032,6 +16042,11 @@ model, do not celebrate the sim.
     this slice. Do not reverse MemLibraryGetUnifiedFunction identity with library_get_unified_function.
     Do not wrap `library_get_unified_function` as `mem_library_get_unified_function`.
     Do not wrap `library_get_kernel_count` as `mem_library_get_unified_function`.
+    Do not invent a second `mem_library_get_kernel_count` API. Do not invent
+    Engine `--mem-library-get-kernel-count-identity`. Do not invent a library-enumerate-kernels
+    this slice. Do not reverse MemLibraryGetKernelCount identity with library_get_kernel_count.
+    Do not wrap `library_get_kernel_count` as `mem_library_get_kernel_count`.
+    Do not wrap `library_enumerate_kernels` as `mem_library_get_kernel_count`.
     Do not invent a second DeviceLaunch in-flight destroy-complete check or Engine
     `--device-launch-destroy`. Do not abort an in-flight DeviceLaunch when
     `destroy_graph` succeeds. Do not delay destroy of an idle exec. Do not invent
@@ -18697,6 +18712,10 @@ model, do not celebrate the sim.
     invent Engine `--cu-mem-library-get-unified-function`. Do not reverse wrapping
     cuLibraryGetUnifiedFunction identity. Do not wrap `library_get_managed` as `mem_library_get_unified_function`.
     Do not wrap `library_get_kernel_count` as `mem_library_get_unified_function`.
+    Do not invent a second `mem_library_get_kernel_count` method. Do not
+    invent Engine `--cu-mem-library-get-kernel-count`. Do not reverse wrapping
+    cuLibraryGetKernelCount identity. Do not wrap `library_get_unified_function` as `mem_library_get_kernel_count`.
+    Do not wrap `library_enumerate_kernels` as `mem_library_get_kernel_count`.
     Do not
     spend the next item on an OpenAI-compatible HTTP veneer.
 

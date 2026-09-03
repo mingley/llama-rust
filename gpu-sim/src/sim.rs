@@ -27604,7 +27604,6 @@ impl Sim {
 
     /// `cuLibraryGetUnifiedFunction`. Identity with [`Self::library_get_unified_function`].
     /// Query; legal during capture. Distinct from [`Self::mem_library_get_managed`].
-    /// This VM does not invent occupancy SM counts this slice.
     pub fn mem_library_get_unified_function(&self, device: DeviceId) -> Result<(), SimError> {
         self.library_get_unified_function(device)
     }
@@ -27617,11 +27616,20 @@ impl Sim {
     /// (why is not `"module fncount"`). Unknown devices are Invalid
     /// `"device not in profile"`. Query; legal during capture. This VM does
     /// not invent `cuLibraryEnumerateKernels` this slice.
+    /// Driver wrap: [`Self::mem_library_get_kernel_count`].
+    /// Identity: [`Self::mem_library_get_kernel_count`].
     pub fn library_get_kernel_count(&self, device: DeviceId) -> Result<(), SimError> {
         let _gpu = self.profile.gpu(device)?;
         Err(SimError::Invalid {
             why: "library kcount",
         })
+    }
+
+    /// `cuLibraryGetKernelCount`. Identity with [`Self::library_get_kernel_count`].
+    /// Query; legal during capture. Distinct from [`Self::mem_library_get_unified_function`].
+    /// This VM does not invent occupancy SM counts this slice.
+    pub fn mem_library_get_kernel_count(&self, device: DeviceId) -> Result<(), SimError> {
+        self.library_get_kernel_count(device)
     }
 
     /// `cuLibraryEnumerateKernels`. CUDA libraries are not modeled.
