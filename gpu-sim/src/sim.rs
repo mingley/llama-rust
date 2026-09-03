@@ -33051,7 +33051,6 @@ impl Sim {
 
     /// `cuFuncGetParamCount`. Identity with [`Self::func_get_param_count`].
     /// Query; legal during capture. Distinct from [`Self::mem_device_get`].
-    /// This VM does not invent occupancy SM counts this slice.
     pub fn mem_func_get_param_count(&self, device: DeviceId) -> Result<(), SimError> {
         self.func_get_param_count(device)
     }
@@ -33067,9 +33066,18 @@ impl Sim {
     /// Unknown devices are Invalid `"device not in profile"`. Query; legal
     /// during capture. This VM does not invent `cuMemsetD8Async`
     /// this slice.
+    /// Driver wrap: [`Self::mem_func_get_cache_config`].
+    /// Identity: [`Self::mem_func_get_cache_config`].
     pub fn func_get_cache_config(&self, device: DeviceId) -> Result<(), SimError> {
         let _gpu = self.profile.gpu(device)?;
         Err(SimError::Invalid { why: "func gcache" })
+    }
+
+    /// `cuFuncGetCacheConfig`. Identity with [`Self::func_get_cache_config`].
+    /// Query; legal during capture. Distinct from [`Self::mem_func_get_param_count`].
+    /// This VM does not invent occupancy SM counts this slice.
+    pub fn mem_func_get_cache_config(&self, device: DeviceId) -> Result<(), SimError> {
+        self.func_get_cache_config(device)
     }
 
     /// `cuFuncIsLoaded` for the per-device function.
