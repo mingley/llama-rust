@@ -1848,7 +1848,6 @@ impl Sim {
 
     /// `cuGreenCtxDestroy`. Identity with [`Self::green_ctx_destroy`].
     /// Host-sync; capture refused. Distinct from [`Self::mem_green_ctx_create`].
-    /// This VM does not invent occupancy SM counts this slice.
     pub fn mem_green_ctx_destroy(&mut self, ctx: GreenCtxId) -> Result<(), SimError> {
         self.green_ctx_destroy(ctx)
     }
@@ -1944,6 +1943,8 @@ impl Sim {
 
     /// `cuGreenCtxStreamCreate`: flags plus priority, then
     /// [`Self::green_ctx_set_stream`].
+    /// Driver wrap: [`Self::mem_green_ctx_stream_create`].
+    /// Identity: [`Self::mem_green_ctx_stream_create`].
     pub fn green_ctx_stream_create(
         &mut self,
         ctx: GreenCtxId,
@@ -1960,6 +1961,19 @@ impl Sim {
             .device;
         self.stream_create_with_priority(device, stream, flags, priority)?;
         self.green_ctx_set_stream(ctx, stream)
+    }
+
+    /// `cuGreenCtxStreamCreate`. Identity with [`Self::green_ctx_stream_create`].
+    /// Host-sync; capture refused. Distinct from [`Self::mem_green_ctx_destroy`].
+    /// This VM does not invent occupancy SM counts this slice.
+    pub fn mem_green_ctx_stream_create(
+        &mut self,
+        ctx: GreenCtxId,
+        stream: StreamId,
+        flags: u32,
+        priority: i32,
+    ) -> Result<(), SimError> {
+        self.green_ctx_stream_create(ctx, stream, flags, priority)
     }
 
     /// `cuStreamGetGreenCtx`. Query; legal during capture.
