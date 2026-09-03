@@ -27033,7 +27033,6 @@ impl Sim {
 
     /// `cuSurfRefSetArray`. Identity with [`Self::surf_ref_set_array`].
     /// Query; legal during capture. Distinct from [`Self::mem_module_get_surf_ref`].
-    /// This VM does not invent occupancy SM counts this slice.
     pub fn mem_surf_ref_set_array(&self, device: DeviceId) -> Result<(), SimError> {
         self.surf_ref_set_array(device)
     }
@@ -27047,11 +27046,20 @@ impl Sim {
     /// Unknown devices are Invalid `"device not in profile"`. Query; legal
     /// during capture. This VM does not invent `cuMemcpyDtoA`
     /// this slice.
+    /// Driver wrap: [`Self::mem_surf_ref_get_array`].
+    /// Identity: [`Self::mem_surf_ref_get_array`].
     pub fn surf_ref_get_array(&self, device: DeviceId) -> Result<(), SimError> {
         let _gpu = self.profile.gpu(device)?;
         Err(SimError::Invalid {
             why: "surfref getarr",
         })
+    }
+
+    /// `cuSurfRefGetArray`. Identity with [`Self::surf_ref_get_array`].
+    /// Query; legal during capture. Distinct from [`Self::mem_surf_ref_set_array`].
+    /// This VM does not invent occupancy SM counts this slice.
+    pub fn mem_surf_ref_get_array(&self, device: DeviceId) -> Result<(), SimError> {
+        self.surf_ref_get_array(device)
     }
 
     /// `cuMemcpyDtoA`. CUDA arrays are not modeled.

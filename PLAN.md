@@ -10479,7 +10479,12 @@ model, do not celebrate the sim.
       `mem_module_get_surf_ref`. This VM does not invent occupancy SM counts, Engine `--mem-surf-ref-set-array`,
       or `cudaChooseDevice`. `gpu-profile capture` is still refused. Dual
       score still has no `$/M tokens`.
-1244. [ ] Next numbered PLAN item after 1243 is the next `gpu-sim` / Engine /
+1244. [x] `gpu-sim` `Sim::mem_surf_ref_get_array` is
+      `cuSurfRefGetArray`. Identity with `surf_ref_get_array`. Query; legal during capture. Distinct from
+      `mem_surf_ref_set_array`. This VM does not invent occupancy SM counts, Engine `--mem-surf-ref-get-array`,
+      or `cudaChooseDevice`. `gpu-profile capture` is still refused. Dual
+      score still has no `$/M tokens`.
+1245. [ ] Next numbered PLAN item after 1244 is the next `gpu-sim` / Engine /
     serve / expertvm mechanical API that is still missing, or the next official
     decode family. Prefer remaining CUDA-shaped twins over more
     OpenAI HTTP veneer. Do not invent F32 `output.scale`. Do not invent a
@@ -13050,6 +13055,11 @@ model, do not celebrate the sim.
     occupancy SM counts this slice. Do not reverse MemSurfRefSetArray identity with surf_ref_set_array.
     Do not invent `surf_ref_get_array` as `mem_surf_ref_set_array`.
     Do not invent `cuSurfRefGetArray` as `mem_surf_ref_set_array`.
+    Do not invent a second `cuSurfRefGetArray` / `mem_surf_ref_get_array`.
+    Do not invent Engine `--mem-surf-ref-get-array`. Do not invent
+    occupancy SM counts this slice. Do not reverse MemSurfRefGetArray identity with surf_ref_get_array.
+    Do not invent `memcpy_dto_a` as `mem_surf_ref_get_array`.
+    Do not invent `cuMemcpyDtoA` as `mem_surf_ref_get_array`.
     Do not invent a second `cudaStreamAddCallback`.
     Do not invent Engine `--stream-callback` (same wall as second live
     `cudaLaunchHostFunc` after miss DMA).
@@ -15657,6 +15667,11 @@ model, do not celebrate the sim.
     this slice. Do not reverse MemSurfRefSetArray identity with surf_ref_set_array.
     Do not wrap `surf_ref_set_array` as `mem_surf_ref_set_array`.
     Do not wrap `surf_ref_get_array` as `mem_surf_ref_set_array`.
+    Do not invent a second `mem_surf_ref_get_array` API. Do not invent
+    Engine `--mem-surf-ref-get-array-identity`. Do not invent a memcpy-dto-a
+    this slice. Do not reverse MemSurfRefGetArray identity with surf_ref_get_array.
+    Do not wrap `surf_ref_get_array` as `mem_surf_ref_get_array`.
+    Do not wrap `memcpy_dto_a` as `mem_surf_ref_get_array`.
     Do not invent a second DeviceLaunch in-flight destroy-complete check or Engine
     `--device-launch-destroy`. Do not abort an in-flight DeviceLaunch when
     `destroy_graph` succeeds. Do not delay destroy of an idle exec. Do not invent
@@ -18222,6 +18237,10 @@ model, do not celebrate the sim.
     invent Engine `--cu-mem-surf-ref-set-array`. Do not reverse wrapping
     cuSurfRefSetArray identity. Do not wrap `module_get_surf_ref` as `mem_surf_ref_set_array`.
     Do not wrap `surf_ref_get_array` as `mem_surf_ref_set_array`.
+    Do not invent a second `mem_surf_ref_get_array` method. Do not
+    invent Engine `--cu-mem-surf-ref-get-array`. Do not reverse wrapping
+    cuSurfRefGetArray identity. Do not wrap `surf_ref_set_array` as `mem_surf_ref_get_array`.
+    Do not wrap `memcpy_dto_a` as `mem_surf_ref_get_array`.
     Do not
     spend the next item on an OpenAI-compatible HTTP veneer.
 
