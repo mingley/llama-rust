@@ -25673,7 +25673,6 @@ impl Sim {
 
     /// `cuDeviceTotalMem`. Identity with [`Self::device_total_mem`].
     /// Query; legal during capture. Distinct from [`Self::mem_device_get_by_pci_bus_id`].
-    /// This VM does not invent occupancy SM counts this slice.
     pub fn mem_device_total_mem(&self, device: DeviceId) -> Result<u64, SimError> {
         self.device_total_mem(device)
     }
@@ -25699,9 +25698,20 @@ impl Sim {
     ///
     /// Reports CUDA 13.0 (`1000 * major` plus `10 * minor`). Distinct from
     /// [`Self::runtime_get_version`]. This VM does not invent `cudaGetLastError`.
+    ///
+    /// Driver wrap: [`Self::mem_driver_get_version`].
+    /// Identity: [`Self::mem_driver_get_version`].
     #[must_use]
     pub fn driver_get_version(&self) -> i32 {
         13_000
+    }
+
+    /// `cuDriverGetVersion`. Identity with [`Self::driver_get_version`] (`cudaDriverGetVersion`).
+    /// Query; legal during capture. Distinct from [`Self::mem_device_total_mem`].
+    /// This VM does not invent occupancy SM counts this slice.
+    #[must_use]
+    pub fn mem_driver_get_version(&self) -> i32 {
+        self.driver_get_version()
     }
 
     /// `cuGetProcAddress` / `cudaGetDriverEntryPoint`.

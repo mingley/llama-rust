@@ -5,6 +5,13 @@ Visible five-turn extract: [docs/chatgpt-share-6a920fe1.md](docs/chatgpt-share-6
 Complete share-API extract: [docs/chatgpt-share-6a920fe1/](docs/chatgpt-share-6a920fe1/).
 Work lands on `main`. No PRs.
 
+## Shipped 2026-09-03 — CUDA `cuDriverGetVersion`
+
+`gpu-sim` `Sim::mem_driver_get_version` is `cuDriverGetVersion`.
+Identity with `driver_get_version` (`cudaDriverGetVersion`). Query; legal during capture. Distinct from `mem_device_total_mem`.
+This VM does not invent occupancy SM counts or Engine `--mem-driver-get-version`.
+`gpu-profile capture` is still refused. Dual score still has no `$/M tokens`.
+
 ## Shipped 2026-09-03 — CUDA `cuDeviceTotalMem`
 
 `gpu-sim` `Sim::mem_device_total_mem` is `cuDeviceTotalMem`.

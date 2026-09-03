@@ -10184,7 +10184,12 @@ model, do not celebrate the sim.
       `mem_device_get_by_pci_bus_id`. This VM does not invent occupancy SM counts, Engine `--mem-device-total-mem`,
       or `cudaChooseDevice`. `gpu-profile capture` is still refused. Dual
       score still has no `$/M tokens`.
-1185. [ ] Next numbered PLAN item after 1184 is the next `gpu-sim` / Engine /
+1185. [x] `gpu-sim` `Sim::mem_driver_get_version` is
+      `cuDriverGetVersion`. Identity with `driver_get_version` (`cudaDriverGetVersion`). Query; legal during capture. Distinct from
+      `mem_device_total_mem`. This VM does not invent occupancy SM counts, Engine `--mem-driver-get-version`,
+      or `cudaChooseDevice`. `gpu-profile capture` is still refused. Dual
+      score still has no `$/M tokens`.
+1186. [ ] Next numbered PLAN item after 1185 is the next `gpu-sim` / Engine /
     serve / expertvm mechanical API that is still missing, or the next official
     decode family. Prefer remaining CUDA-shaped twins over more
     OpenAI HTTP veneer. Do not invent F32 `output.scale`. Do not invent a
@@ -12460,6 +12465,11 @@ model, do not celebrate the sim.
     occupancy SM counts this slice. Do not reverse MemDeviceTotalMem identity with device_total_mem.
     Do not invent `device_count` as `mem_device_total_mem`.
     Do not invent `cudaGetDeviceCount` as `mem_device_total_mem`.
+    Do not invent a second `cuDriverGetVersion` / `mem_driver_get_version`.
+    Do not invent Engine `--mem-driver-get-version`. Do not invent
+    occupancy SM counts this slice. Do not reverse MemDriverGetVersion identity with driver_get_version.
+    Do not invent `get_proc_address` as `mem_driver_get_version`.
+    Do not invent `cuGetProcAddress` as `mem_driver_get_version`.
     Do not invent a second `cudaStreamAddCallback`.
     Do not invent Engine `--stream-callback` (same wall as second live
     `cudaLaunchHostFunc` after miss DMA).
@@ -14772,6 +14782,11 @@ model, do not celebrate the sim.
     this slice. Do not reverse MemDeviceTotalMem identity with device_total_mem.
     Do not wrap `device_total_mem` as `mem_device_total_mem`.
     Do not wrap `device_count` as `mem_device_total_mem`.
+    Do not invent a second `mem_driver_get_version` API. Do not invent
+    Engine `--mem-driver-get-version-identity`. Do not invent a get-proc-address
+    this slice. Do not reverse MemDriverGetVersion identity with driver_get_version.
+    Do not wrap `driver_get_version` as `mem_driver_get_version`.
+    Do not wrap `get_proc_address` as `mem_driver_get_version`.
     Do not invent a second DeviceLaunch in-flight destroy-complete check or Engine
     `--device-launch-destroy`. Do not abort an in-flight DeviceLaunch when
     `destroy_graph` succeeds. Do not delay destroy of an idle exec. Do not invent
@@ -17101,6 +17116,10 @@ model, do not celebrate the sim.
     invent Engine `--cu-mem-device-total-mem`. Do not reverse wrapping
     cuDeviceTotalMem identity. Do not wrap `device_count` as `mem_device_total_mem`.
     Do not wrap `get_device_count` as `mem_device_total_mem`.
+    Do not invent a second `mem_driver_get_version` method. Do not
+    invent Engine `--cu-mem-driver-get-version`. Do not reverse wrapping
+    cuDriverGetVersion identity. Do not wrap `get_device_count` as `mem_driver_get_version`.
+    Do not wrap `get_proc_address` as `mem_driver_get_version`.
     Do not
     spend the next item on an OpenAI-compatible HTTP veneer.
 
