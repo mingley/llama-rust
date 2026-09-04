@@ -14989,8 +14989,9 @@ mod tests {
     }
 
     /// Text tokens feed `[t, h, w, e] = [p, p, p, 0]`, which collapses the m-RoPE
-    /// sector walk onto plain NEOX lane math. Distinct per-axis positions (what an
-    /// image token supplies) must diverge, otherwise m-RoPE is untested.
+    /// sector walk onto plain NEOX lane math for both `MROPE` and `IMROPE`.
+    /// Distinct per-axis positions (what an image token supplies) must diverge,
+    /// otherwise m-RoPE is untested.
     #[test]
     fn rope_multi_reduces_to_neox_on_text_and_differs_on_distinct_axes() {
         let n_rot = 8usize;
@@ -15001,21 +15002,25 @@ mod tests {
         let mut neox = src;
         rope_neox(&mut neox, 3, n_rot, base, None).expect("neox");
 
-        let mut text = src;
-        rope_multi(&mut text, [3, 3, 3, 0], n_rot, base, sections, false).expect("mrope text");
-        for (got, want) in text.iter().zip(neox.iter()) {
-            assert!(
-                (got - want).abs() < 1e-6,
-                "text m-RoPE {text:?} must equal NEOX {neox:?}"
+        for is_imrope in [false, true] {
+            let mut text = src;
+            rope_multi(&mut text, [3, 3, 3, 0], n_rot, base, sections, is_imrope)
+                .expect("mrope text");
+            for (got, want) in text.iter().zip(neox.iter()) {
+                assert!(
+                    (got - want).abs() < 1e-6,
+                    "text m-RoPE is_imrope={is_imrope} {text:?} must equal NEOX {neox:?}"
+                );
+            }
+
+            let mut axes = src;
+            rope_multi(&mut axes, [3, 7, 11, 0], n_rot, base, sections, is_imrope)
+                .expect("mrope axes");
+            assert_ne!(
+                axes, neox,
+                "distinct t/h/w is_imrope={is_imrope} must exercise the m-RoPE sector walk"
             );
         }
-
-        let mut axes = src;
-        rope_multi(&mut axes, [3, 7, 11, 0], n_rot, base, sections, false).expect("mrope axes");
-        assert_ne!(
-            axes, neox,
-            "distinct t/h/w positions must exercise the m-RoPE sector walk"
-        );
     }
 
     /// The writer-built gated-attention tinies saturate the attention gate, so
@@ -15032,6 +15037,23 @@ mod tests {
         assert!(sigmoid_f32(-44.839_5) < 1e-19);
         // A non-degenerate gate would actually scale attention.
         assert!((sigmoid_f32(0.0) - 0.5).abs() < 1e-6);
+    }
+
+    /// Writer-tiny Llama4 and Qwen2MoE share shexp packing seeds, so 6-logit
+    /// prefill can collide even though the MoE rules differ. SIMD GEMV rounding
+    /// used to make a model-level `assert_ne` pass. Pin the algorithm difference
+    /// on a non-degenerate FFN input instead.
+    #[test]
+    fn llama4_moe_oracle_differs_from_qwen2moe_on_pattern_input() {
+        let l4 = load_gguf(&tiny_llama4_gguf()).expect("llama4");
+        let q2 = load_gguf(&tiny_qwen2moe_gguf()).expect("qwen2moe");
+        let xn = pat_f32(TINY_N_EMBD, 0);
+        let a = oracle_llama4_moe(&l4, &xn, 0);
+        let b = oracle_qwen2moe(&q2, &xn, 0);
+        assert_ne!(
+            a, b,
+            "Llama4 sigmoid/weight-before + ungated shexp must not copy qwen2moe softmax/weight-after + gated shexp"
+        );
     }
 
     /// Differential check against llama.cpp on a real quantized checkpoint.
@@ -21253,10 +21275,13 @@ mod tests {
         };
         let mut qc = model.new_cache(8).expect("qc");
         let qwen3vl_pref = model.prefill(&mut qc, &tokens).expect("qwen3vl pref");
-        assert_ne!(
-            qwen3vl_pref, qwen3_pref,
-            "qwen3vl IMROPE must change multi-token logits vs qwen3 adjacent-pair RoPE"
-        );
+        // Official `ggml_mrope_cache_init` `is_imrope` on text `[p, p, p, 0]`
+        // assigns every rotated lane a theta equal to the position, so IMROPE
+        // matches qwen3 NEOX. Same collapse as qwen2vl vs qwen2. This previously
+        // asserted inequality, which only held under SIMD GEMV rounding. Real
+        // IMROPE lane math is
+        // `rope_multi_reduces_to_neox_on_text_and_differs_on_distinct_axes`.
+        assert_logits_match(&qwen3vl_pref, &qwen3_pref);
         assert_ne!(
             qwen3vl_pref, qwen2vl_pref,
             "qwen3vl must not copy qwen2vl MROPE / QKV bias"
@@ -21559,14 +21584,13 @@ mod tests {
         // IMROPE on text positions likewise reduces to NEOX (every sector maps to
         // theta_t / theta_h / theta_w, all equal to the position). The writer-built
         // tiny additionally saturates the attention gate, so gated-Q is a numerical
-        // no-op here — see `gated_attn_fixture_saturates_sigmoid`. Both effects mean
-        // qwen35 and dense qwen3 must agree on this fixture; the previous inequality
-        // assertion only held because `qwen3` was rotating NORM adjacent lanes.
+        // no-op here — see `gated_attn_fixture_saturates_sigmoid`. `post_attention_norm`
+        // is pre-FFN ones, the same role as qwen3 / qwen3vl `ffn_norm`. All three
+        // effects mean qwen35, dense qwen3, and qwen3vl must agree on this fixture.
+        // The previous qwen3 / qwen3vl inequalities only held because `qwen3` was
+        // rotating NORM adjacent lanes, or under SIMD GEMV rounding.
         assert_logits_match(&qwen35_pref, &qwen3_pref);
-        assert_ne!(
-            qwen35_pref, qwen3vl_pref,
-            "qwen35 must not copy qwen3vl (no gated Q / no post_attention_norm)"
-        );
+        assert_logits_match(&qwen35_pref, &qwen3vl_pref);
         assert_ne!(
             qwen35_pref, qwen3next_pref,
             "qwen35 must not copy qwen3next MoE / partial RoPE"
@@ -22161,16 +22185,9 @@ mod tests {
             qwen2moe_pref, llama_moe_pref,
             "qwen2moe must not copy llama-MoE norm_w / no-shexp"
         );
-        let llama4_pref = {
-            let l4 = load_gguf(&tiny_llama4_gguf()).expect("llama4");
-            let m4 = Llama::from_gguf(l4).expect("m4");
-            let mut c = m4.new_cache(8).expect("c4");
-            m4.prefill(&mut c, &tokens).expect("llama4 pref")
-        };
-        assert_ne!(
-            qwen2moe_pref, llama4_pref,
-            "qwen2moe must not copy Llama4 sigmoid / weight-before-FFN"
-        );
+        // Llama4 vs qwen2moe 6-logit prefill can collide (shared shexp seeds);
+        // SIMD GEMV rounding used to make `assert_ne` pass. Algorithm identity
+        // is `llama4_moe_oracle_differs_from_qwen2moe_on_pattern_input`.
     }
 
     #[test]

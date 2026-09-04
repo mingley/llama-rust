@@ -5,6 +5,17 @@ Visible five-turn extract: [docs/chatgpt-share-6a920fe1.md](docs/chatgpt-share-6
 Complete share-API extract: [docs/chatgpt-share-6a920fe1/](docs/chatgpt-share-6a920fe1/).
 Work lands on `main`. No PRs.
 
+## 2026-09-04 — no-unsafe decode inequalities
+
+`test (no-unsafe)` on main failed because three architecture `assert_ne`
+checks only held under SIMD GEMV rounding: qwen3vl IMROPE on text matches
+qwen3 NEOX; qwen35 gated-Q saturates and `post_attention_norm` is pre-FFN
+ones; 6-logit qwen2moe vs Llama4 prefill can collide (shared shexp seeds).
+Scalar path now matches the existing qwen2vl collapse comments. IMROPE is
+`rope_multi_reduces_to_neox_on_text_and_differs_on_distinct_axes`. Llama4 vs
+qwen2moe MoE identity is
+`llama4_moe_oracle_differs_from_qwen2moe_on_pattern_input`.
+
 ## Shipped 2026-09-03 — CUDA `cuDriverGetVersion`
 
 `gpu-sim` `Sim::mem_driver_get_version` is `cuDriverGetVersion`.
