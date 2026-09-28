@@ -9273,9 +9273,11 @@ fn vec_dot_q4_k_f32_row(row: &[u8], x: &[f32]) -> f32 {
             let b0 = dmin * f32::from(m0);
             let a1 = d * f32::from(sc1);
             let b1 = dmin * f32::from(m1);
-            // Keep row order: dequantization lays out all 32 low nibbles
-            // before the 32 high nibbles. Interleaving their products changes
-            // f32 accumulation enough to amplify through attention.
+            // ggml `dequantize_row_q4_K` then a sequential `y[i]*x[i]`
+            // fold: all 32 lo, then all 32 hi. Interleaving lo/hi per
+            // nibble-byte reassociates the f32 sum enough that bloom
+            // `attn_qkv.scale = 3.0` misses the 0.1% decode logit bound
+            // on the scalar path.
             for (p, xl) in packed.iter().zip(xlo.iter()) {
                 let q0 = f32::from(p & 0x0f);
                 sum += (a0 * q0 - b0) * *xl;
@@ -10189,24 +10191,30 @@ mod tests {
         );
     }
 
+    /// Sparse `x` hides summation order. A dense super-block must match
+    /// dequant-then-dot bit for bit on the scalar kernel (the decode
+    /// oracle's Q4_K path). `gemv_q4_k_f32` may dispatch SIMD.
     #[test]
-    fn q4_k_scalar_dot_accumulates_in_element_order() {
-        let qs = std::array::from_fn(|i| u8::try_from((i * 7 + 3) % 16).unwrap_or(0));
-        let scales = [3, 11, 19, 27, 35, 43, 51, 59];
-        let mins = [2, 7, 13, 17, 23, 29, 31, 37];
-        let packed = pack_q4_k_block(0.125, 0.0625, &scales, &mins, &qs);
-        let magnitudes = [0.0001f32, 0.01, 1.0, 100.0, 10_000.0];
-        let x: [f32; QK_K] = std::array::from_fn(|i| {
-            let magnitude = magnitudes[(i + 3) % magnitudes.len()];
-            let sign = if (i * 11 + 1) % 3 == 0 { -1.0 } else { 1.0 };
-            let fraction = f32::from(u16::try_from((i * 37 + 17) % 101).unwrap_or(0)) / 101.0;
-            sign * magnitude * fraction
-        });
-        let mut dequantized = [0.0f32; QK_K];
-        dequant_q4_k_row(QK_K, &packed, &mut dequantized).unwrap();
-        let expected: f32 = dequantized.iter().zip(x.iter()).map(|(w, v)| w * v).sum();
-        let got = vec_dot_q4_k_f32_row(&packed, &x);
-        assert_eq!(got.to_bits(), expected.to_bits(), "{got} vs {expected}");
+    fn dequant_q4_k_row_dot_matches_scalar_gemv_dense() {
+        let mut qs = [0u8; QK_K];
+        for (i, q) in qs.iter_mut().enumerate() {
+            *q = u8::try_from(i % 16).unwrap_or(0);
+        }
+        let sc = [2u8, 3, 4, 5, 1, 2, 3, 4];
+        let mn = [1u8, 0, 1, 0, 1, 0, 1, 0];
+        let w = pack_q4_k_block(25.0 / 100.0, 1.0 / 100.0, &sc, &mn, &qs);
+        let x: Vec<f32> = (0..QK_K)
+            .map(|i| f32::from(u16::try_from(i).unwrap_or(0)) * 0.01 - 0.5)
+            .collect();
+        let via_gemv = vec_dot_q4_k_f32_row(&w, &x);
+        let mut row = [0.0f32; QK_K];
+        dequant_q4_k_row(QK_K, &w, &mut row).unwrap();
+        let via_dequant: f32 = row.iter().zip(x.iter()).map(|(a, b)| a * b).sum();
+        assert_eq!(
+            via_dequant.to_bits(),
+            via_gemv.to_bits(),
+            "{via_dequant} vs {via_gemv}"
+        );
     }
 
     /// ggml `get_scale_min_k4` (oracle; not the GEMV loop).

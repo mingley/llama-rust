@@ -1,6 +1,5 @@
 //! Discrete-event GPU-systems simulator.
 
-use std::cmp::Reverse;
 use std::collections::btree_map::Entry;
 use std::collections::{BTreeMap, BTreeSet};
 
@@ -30,12 +29,13 @@ use crate::ops::{
     MemPoolExportFlags, MemPoolProps, MemRangeAttr, MemRangeAttrValue, MemRangeHandleFlags,
     MemRangeHandleType, MemReserveFlags, MemSyncDomain, MemSyncDomainMap, MemcpyAttributes,
     MemcpyFlags, MemcpyNodeParams, MemcpyOp, MemcpySrcAccessOrder, MemoryType, MemsetNodeParams,
-    MemsetOp, MulticastBindFlags, MulticastCreateFlags, MulticastGranularity, MulticastObjectProp,
-    NvSciSyncAttrFlags, Operation, PdlLaunch, PeerAccessFlags, Place, PointerAttr,
-    PointerAttributes, PortableClusterMode, PortableSharedMode, PrefetchFlags, ProgrammaticEvent,
-    ProgrammaticLaunch, SharedMemCarveout, SharedMemoryMode, SmResource, StreamAttr,
-    StreamAttrValue, StreamCallbackFlags, StreamCaptureInfo, StreamCaptureMode, StreamCreateFlags,
-    SynchronizationPolicy, UserObjectFlags, WaitValueCmp, WaitValueFlags, WriteValueFlags,
+    MemsetOp, ModuleLoadingMode, MulticastBindFlags, MulticastCreateFlags, MulticastGranularity,
+    MulticastObjectProp, NvSciSyncAttrFlags, Operation, PdlLaunch, PeerAccessFlags, Place,
+    PointerAttr, PointerAttributes, PortableClusterMode, PortableSharedMode, PrefetchFlags,
+    ProgrammaticEvent, ProgrammaticLaunch, SharedMemCarveout, SharedMemoryMode, SmResource,
+    StreamAttr, StreamAttrValue, StreamCallbackFlags, StreamCaptureInfo, StreamCaptureMode,
+    StreamCreateFlags, SynchronizationPolicy, UserObjectFlags, WaitValueCmp, WaitValueFlags,
+    WriteValueFlags,
 };
 use crate::profile::{align_up, ns_for_bytes, scale_ns_permille, HardwareProfile, LinkKind};
 
@@ -319,7 +319,8 @@ struct Op {
     skipped: bool,
     /// Scheduling priority (`cudaStreamCreateWithPriority`,
     /// `cudaLaunchAttributePriority`, or a kernel-node attribute when the exec
-    /// used `cudaGraphInstantiateFlagUseNodePriority`).
+    /// used `cudaGraphInstantiateFlagUseNodePriority`). Numerically lower
+    /// starts first (CUDA).
     priority: i32,
     /// Programmatic dependent launch flags for this op.
     pdl: ProgrammaticLaunch,
@@ -543,6 +544,8 @@ struct GraphStep {
     destroyed: bool,
     /// Stream or launch-attribute priority snapshotted at add/capture
     /// (`cudaKernelNodeAttributePriority` / `cudaLaunchAttributePriority`).
+    /// Unclamped storage (ExecUpdate compares this; PLAN 506). Numerically
+    /// lower starts first when the exec used UseNodePriority.
     priority: i32,
     /// Programmatic dependent launch (`cudaLaunchAttributeProgrammaticStreamSerialization`).
     pdl: ProgrammaticLaunch,
@@ -622,6 +625,14 @@ struct Graph {
     instantiate_flags: u32,
     /// Last op of an in-flight [`Sim::device_launch_graph`] (launcher or body tail).
     device_launch_tail: Option<OpId>,
+    /// Host stream that launched this device-graph instance (join target).
+    device_launch_stream: Option<StreamId>,
+    /// Host-issued device launch (not fire-and-forget).
+    device_launch_root: bool,
+    /// Fire-and-forget DeviceLaunch ops issued from this instance.
+    device_faf: Vec<OpId>,
+    /// At most one queued `cudaStreamGraphTailLaunch` child exec.
+    device_tail_child: Option<GraphId>,
     /// In-flight host [`Sim::launch_graph`] tails. Concurrent launches each pin
     /// a tail; destroy waits for all of them. Empty launches do not pin destroy
     /// to prior stream work.
@@ -705,6 +716,34 @@ impl Sim {
                 why: "unknown graph",
             }),
         }
+    }
+
+    fn require_live_stream(&self, device: DeviceId, stream: StreamId) -> Result<(), SimError> {
+        if stream.is_device_graph_stream() {
+            return Err(SimError::Invalid {
+                why: "device launch stream",
+            });
+        }
+        if self.gone_streams.contains(&(device, stream)) {
+            Err(SimError::Invalid {
+                why: "unknown stream",
+            })
+        } else {
+            Ok(())
+        }
+    }
+
+    fn drop_stream_state(&mut self, device: DeviceId, stream: StreamId) {
+        let key = (device, stream);
+        let _p = self.priority.remove(&key);
+        let _b = self.blocking.remove(&key);
+        let _sm = self.sm_permille.remove(&key);
+        let _g = self.stream_green_ctx.remove(&key);
+        let _d = self.stream_mem_sync_domain.remove(&key);
+        let _m = self.stream_mem_sync_map.remove(&key);
+        let _s = self.stream_sync_policy.remove(&key);
+        let _n = self.stream_nvlink_util_centric.remove(&key);
+        let _a = self.stream_access_policy.remove(&key);
     }
 
     /// Exec snapshot for SetAttribute / SetParams (`exec`), or a live definition handle.
@@ -979,6 +1018,8 @@ pub struct Sim {
     /// Independent graph nodes run on internal streams (Hyper-Q). The launch
     /// stream still waits for them (`cudaStreamSynchronize` / later submits).
     graph_joins: BTreeMap<(DeviceId, StreamId), Vec<OpId>>,
+    /// Internal streams for fire-and-forget device launches (`0x8000..0x9000`).
+    next_anon_stream: u16,
     running: Vec<Running>,
     gpus: BTreeMap<DeviceId, GpuRt>,
     bytes_moved: u64,
@@ -991,6 +1032,9 @@ pub struct Sim {
     priority: BTreeMap<(DeviceId, StreamId), i32>,
     /// `cudaStreamCreate` (blocking) streams. They serialize with [`StreamId::NULL`].
     blocking: BTreeSet<(DeviceId, StreamId)>,
+    /// `cudaStreamDestroy` handles. In-flight ops still run; new work and
+    /// queries are unknown until [`Self::stream_create_with_flags`].
+    gone_streams: BTreeSet<(DeviceId, StreamId)>,
     /// Duration-only SM fraction per stream (‰). Missing is full chip (`1000`).
     sm_permille: BTreeMap<(DeviceId, StreamId), u16>,
     /// `cuGreenCtxStreamCreate` binding. Missing is the primary context.
@@ -1160,6 +1204,7 @@ impl Sim {
             capture_buf: Vec::new(),
             graph_allocs: BTreeMap::new(),
             graph_joins: BTreeMap::new(),
+            next_anon_stream: 0x8000,
             running: Vec::new(),
             gpus,
             bytes_moved: 0,
@@ -1171,6 +1216,7 @@ impl Sim {
             legacy_null_stream: false,
             priority: BTreeMap::new(),
             blocking: BTreeSet::new(),
+            gone_streams: BTreeSet::new(),
             sm_permille: BTreeMap::new(),
             stream_green_ctx: BTreeMap::new(),
             next_green_ctx: 1,
@@ -1316,12 +1362,23 @@ impl Sim {
         Ok((total.saturating_sub(used), total))
     }
 
+    /// `cuMemGetInfo`. Identity with [`Self::mem_info`] (`cudaMemGetInfo`).
+    ///
+    /// `(free, total)` HBM bytes. Unknown devices are [`SimError::Invalid`].
+    /// Query; legal during capture. Distinct from [`Self::device_total_mem`].
+    /// This VM does not invent `cuStreamCreate` this slice
+    /// (`stream_create_with_flags` stays).
+    pub fn mem_get_info(&self, device: DeviceId) -> Result<(u64, u64), SimError> {
+        self.mem_info(device)
+    }
+
     /// `cudaDeviceGetGraphMemAttribute` for the device graph-memory pool.
     ///
     /// Counts [`Self::graph_add_alloc`] / captured `cudaMallocAsync` from that
     /// pool, not ordinary [`Self::malloc`] / live [`Self::alloc`]. Used is live
     /// graph allocs. Reserved is live plus unused cached bytes held until
-    /// [`Self::graph_mem_trim`]. Capture is allowed (query).
+    /// [`Self::graph_mem_trim`]. Capture is allowed (query). Driver
+    /// `cuDeviceGetGraphMemAttribute` is [`Self::device_graph_mem_get`].
     pub fn graph_mem_get(&self, device: DeviceId, attr: GraphMemAttr) -> Result<u64, SimError> {
         let (used, reserved) = self.graph_mem_used_reserved(device)?;
         let rt = self.gpu_rt(device)?;
@@ -1333,9 +1390,22 @@ impl Sim {
         })
     }
 
+    /// `cuDeviceGetGraphMemAttribute`. Identity with [`Self::graph_mem_get`]
+    /// (`cudaDeviceGetGraphMemAttribute`).
+    ///
+    /// Query; legal during capture. Distinct from [`Self::graph_mem_set`].
+    pub fn device_graph_mem_get(
+        &self,
+        device: DeviceId,
+        attr: GraphMemAttr,
+    ) -> Result<u64, SimError> {
+        self.graph_mem_get(device, attr)
+    }
+
     /// `cudaDeviceSetGraphMemAttribute`. Only the High attrs; `value` must be `0`
     /// (reset that high-water to the current used/reserved). Host-synchronous.
-    /// Capture cannot include it.
+    /// Capture cannot include it. Driver `cuDeviceSetGraphMemAttribute` is
+    /// [`Self::device_graph_mem_set`].
     pub fn graph_mem_set(
         &mut self,
         device: DeviceId,
@@ -1364,17 +1434,40 @@ impl Sim {
         Ok(())
     }
 
+    /// `cuDeviceSetGraphMemAttribute`. Identity with [`Self::graph_mem_set`]
+    /// (`cudaDeviceSetGraphMemAttribute`).
+    ///
+    /// Capture refused. Distinct from [`Self::device_graph_mem_get`].
+    pub fn device_graph_mem_set(
+        &mut self,
+        device: DeviceId,
+        attr: GraphMemAttr,
+        value: u64,
+    ) -> Result<(), SimError> {
+        self.graph_mem_set(device, attr, value)
+    }
+
     /// `cudaDeviceGraphMemTrim`. Host-synchronous. Capture cannot include it.
     ///
     /// Returns unused reserved graph-mem bytes (cached after a graph free or
     /// [`Self::destroy_graph`]) to the OS so [`Self::mem_info`] free grows.
-    /// Live graph allocs are not trimmed.
+    /// Live graph allocs are not trimmed. Driver `cuDeviceGraphMemTrim` is
+    /// [`Self::device_graph_mem_trim`].
     pub fn graph_mem_trim(&mut self, device: DeviceId) -> Result<(), SimError> {
         self.fail_if_capturing("cannot capture graph mem trim")?;
         let pool = self.graph_pool(device)?;
         let _dropped = self.pool_trim_to(pool, 0)?;
         self.clock = self.clock.saturating_add(1);
         Ok(())
+    }
+
+    /// `cuDeviceGraphMemTrim`. Identity with [`Self::graph_mem_trim`]
+    /// (`cudaDeviceGraphMemTrim`).
+    ///
+    /// Host-synchronous. Capture refused. Distinct from
+    /// [`Self::device_graph_mem_set`].
+    pub fn device_graph_mem_trim(&mut self, device: DeviceId) -> Result<(), SimError> {
+        self.graph_mem_trim(device)
     }
 
     fn graph_mem_used_reserved(&self, device: DeviceId) -> Result<(u64, u64), SimError> {
@@ -1461,23 +1554,75 @@ impl Sim {
         self.extra_transfer_ns = ns;
     }
 
-    /// CUDA stream priority (`cudaStreamCreateWithPriority`). Higher runs first
-    /// when multiple ops are ready for the same resource. Default `0`.
+    /// CUDA stream priority (`cudaStreamCreateWithPriority`). Numerically
+    /// lower runs first when multiple ops are ready for the same resource.
+    /// Out of range values are clamped to
+    /// [`Self::device_get_stream_priority_range`]. Default `0`.
+    /// Driver `cuStreamSetAttribute` priority is [`Self::stream_set_priority`].
+    /// Identity wrap [`Self::stream_set_priority`].
     pub fn set_stream_priority(
         &mut self,
         device: DeviceId,
         stream: StreamId,
         priority: i32,
     ) -> Result<(), SimError> {
-        let _gpu = self.profile.gpu(device)?;
+        let priority = self.clamp_stream_priority(device, priority)?;
+        self.require_live_stream(device, stream)?;
         let _prev = self.priority.insert((device, stream), priority);
         Ok(())
     }
 
+    /// `cuStreamSetAttribute` priority. Identity with
+    /// [`Self::set_stream_priority`] (`cudaStreamSetAttribute` Priority).
+    ///
+    /// Capture legal. Distinct from [`Self::stream_get_access_policy`].
+    pub fn stream_set_priority(
+        &mut self,
+        device: DeviceId,
+        stream: StreamId,
+        priority: i32,
+    ) -> Result<(), SimError> {
+        self.set_stream_priority(device, stream, priority)
+    }
+
     /// Current priority for `(device, stream)`, or `0` if unset.
+    ///
+    /// Stream SetPriority stores the clamped value. Graph kernel-node
+    /// priorities are a separate unclamped field.
     #[must_use]
     pub fn stream_priority(&self, device: DeviceId, stream: StreamId) -> i32 {
         self.priority.get(&(device, stream)).copied().unwrap_or(0)
+    }
+
+    fn clamp_stream_priority(&self, device: DeviceId, priority: i32) -> Result<i32, SimError> {
+        let gpu = self.profile.gpu(device)?;
+        let lo = gpu.stream_priority_greatest.min(gpu.stream_priority_least);
+        let hi = gpu.stream_priority_greatest.max(gpu.stream_priority_least);
+        Ok(priority.clamp(lo, hi))
+    }
+
+    /// `cudaDeviceGetStreamPriorityRange`. Query; legal during capture.
+    ///
+    /// Returns `(leastPriority, greatestPriority)`. Example H100 is
+    /// `(0, -5)`. Unknown devices are Invalid. Stream create / SetPriority
+    /// clamp to this range. Graph kernel-node SetPriority stays unclamped.
+    /// Driver wrap: [`Self::mem_device_get_stream_priority_range`].
+    /// Identity: [`Self::mem_device_get_stream_priority_range`].
+    pub fn device_get_stream_priority_range(
+        &self,
+        device: DeviceId,
+    ) -> Result<(i32, i32), SimError> {
+        let gpu = self.profile.gpu(device)?;
+        Ok((gpu.stream_priority_least, gpu.stream_priority_greatest))
+    }
+
+    /// `cudaDeviceGetStreamPriorityRange`. Identity with [`Self::device_get_stream_priority_range`].
+    /// Query; legal during capture. Distinct from [`Self::mem_func_set_attribute`].
+    pub fn mem_device_get_stream_priority_range(
+        &self,
+        device: DeviceId,
+    ) -> Result<(i32, i32), SimError> {
+        self.device_get_stream_priority_range(device)
     }
 
     /// [`KernelAttrs::priority`] if set, else [`Self::stream_priority`].
@@ -1500,6 +1645,7 @@ impl Sim {
         permille: u16,
     ) -> Result<(), SimError> {
         let _gpu = self.profile.gpu(device)?;
+        self.require_live_stream(device, stream)?;
         if self.stream_green_ctx.contains_key(&(device, stream)) {
             return Err(SimError::Invalid {
                 why: "green ctx stream",
@@ -1631,6 +1777,8 @@ impl Sim {
     ///
     /// `flags` must be [`GreenCtxFlags::DEFAULT`]. The desc may be reused
     /// (same-span contexts share occupancy).
+    /// Driver wrap: [`Self::mem_green_ctx_create`].
+    /// Identity: [`Self::mem_green_ctx_create`].
     pub fn green_ctx_create(
         &mut self,
         desc: DevResourceDescId,
@@ -1666,9 +1814,22 @@ impl Sim {
         Ok(id)
     }
 
+    /// `cuGreenCtxCreate`. Identity with [`Self::green_ctx_create`].
+    /// Host-sync; capture refused. Distinct from [`Self::mem_stream_get_green_ctx`].
+    pub fn mem_green_ctx_create(
+        &mut self,
+        desc: DevResourceDescId,
+        device: DeviceId,
+        flags: u32,
+    ) -> Result<GreenCtxId, SimError> {
+        self.green_ctx_create(desc, device, flags)
+    }
+
     /// `cuGreenCtxDestroy`. Capture cannot include it.
     ///
     /// Streams still bound to `ctx` are Invalid `"green ctx has streams"`.
+    /// Driver wrap: [`Self::mem_green_ctx_destroy`].
+    /// Identity: [`Self::mem_green_ctx_destroy`].
     pub fn green_ctx_destroy(&mut self, ctx: GreenCtxId) -> Result<(), SimError> {
         self.fail_if_capturing("cannot capture green ctx destroy")?;
         if !self.green_ctxs.contains_key(&ctx) {
@@ -1683,6 +1844,12 @@ impl Sim {
         }
         let _gone = self.green_ctxs.remove(&ctx);
         Ok(())
+    }
+
+    /// `cuGreenCtxDestroy`. Identity with [`Self::green_ctx_destroy`].
+    /// Host-sync; capture refused. Distinct from [`Self::mem_green_ctx_create`].
+    pub fn mem_green_ctx_destroy(&mut self, ctx: GreenCtxId) -> Result<(), SimError> {
+        self.green_ctx_destroy(ctx)
     }
 
     /// `cuGreenCtxGetDevResource`. Query; legal during capture.
@@ -1706,11 +1873,19 @@ impl Sim {
     /// [`Self::stream_get_id`]. Unknown or destroyed contexts are Invalid
     /// `"unknown green ctx"`. This VM does not invent an unset handle as the
     /// current context, and does not invent `cuCtxFromGreenCtx`.
+    /// Driver wrap: [`Self::mem_green_ctx_get_id`].
+    /// Identity: [`Self::mem_green_ctx_get_id`].
     pub fn green_ctx_get_id(&self, ctx: GreenCtxId) -> Result<u64, SimError> {
         let g = self.green_ctxs.get(&ctx).ok_or(SimError::Invalid {
             why: "unknown green ctx",
         })?;
         Ok(g.cuda_id)
+    }
+
+    /// `cuGreenCtxGetId`. Identity with [`Self::green_ctx_get_id`].
+    /// Query; legal during capture. Distinct from [`Self::mem_event_get_id`].
+    pub fn mem_green_ctx_get_id(&self, ctx: GreenCtxId) -> Result<u64, SimError> {
+        self.green_ctx_get_id(ctx)
     }
 
     /// `cudaExecutionCtxGetDevice`. Query; legal during capture.
@@ -1719,11 +1894,19 @@ impl Sim {
     /// destroyed contexts are Invalid `"unknown green ctx"`. Distinct from
     /// [`Self::stream_get_green_ctx`] (stream to ctx) and
     /// [`Self::green_ctx_get_id`]. This VM does not invent `cuCtxFromGreenCtx`.
+    /// Driver wrap: [`Self::mem_green_ctx_get_device`].
+    /// Identity: [`Self::mem_green_ctx_get_device`].
     pub fn green_ctx_get_device(&self, ctx: GreenCtxId) -> Result<DeviceId, SimError> {
         let g = self.green_ctxs.get(&ctx).ok_or(SimError::Invalid {
             why: "unknown green ctx",
         })?;
         Ok(g.device)
+    }
+
+    /// `cudaExecutionCtxGetDevice`. Identity with [`Self::green_ctx_get_device`].
+    /// Query; legal during capture. Distinct from [`Self::mem_green_ctx_get_id`].
+    pub fn mem_green_ctx_get_device(&self, ctx: GreenCtxId) -> Result<DeviceId, SimError> {
+        self.green_ctx_get_device(ctx)
     }
 
     /// Bind `stream` to `ctx` (`cuGreenCtxStreamCreate` without creating).
@@ -1747,6 +1930,7 @@ impl Sim {
         })?;
         let device = g.device;
         let width = g.sm.width.max(1);
+        self.require_live_stream(device, stream)?;
         if self.stream_green_ctx.contains_key(&(device, stream)) {
             return Err(SimError::Invalid {
                 why: "stream has green ctx",
@@ -1759,6 +1943,8 @@ impl Sim {
 
     /// `cuGreenCtxStreamCreate`: flags plus priority, then
     /// [`Self::green_ctx_set_stream`].
+    /// Driver wrap: [`Self::mem_green_ctx_stream_create`].
+    /// Identity: [`Self::mem_green_ctx_stream_create`].
     pub fn green_ctx_stream_create(
         &mut self,
         ctx: GreenCtxId,
@@ -1777,16 +1963,41 @@ impl Sim {
         self.green_ctx_set_stream(ctx, stream)
     }
 
+    /// `cuGreenCtxStreamCreate`. Identity with [`Self::green_ctx_stream_create`].
+    /// Host-sync; capture refused. Distinct from [`Self::mem_green_ctx_destroy`].
+    pub fn mem_green_ctx_stream_create(
+        &mut self,
+        ctx: GreenCtxId,
+        stream: StreamId,
+        flags: u32,
+        priority: i32,
+    ) -> Result<(), SimError> {
+        self.green_ctx_stream_create(ctx, stream, flags, priority)
+    }
+
     /// `cuStreamGetGreenCtx`. Query; legal during capture.
     ///
     /// Unbound streams return [`None`]. Unknown devices are Invalid.
+    /// Driver wrap: [`Self::mem_stream_get_green_ctx`].
+    /// Identity: [`Self::mem_stream_get_green_ctx`].
     pub fn stream_get_green_ctx(
         &self,
         device: DeviceId,
         stream: StreamId,
     ) -> Result<Option<GreenCtxId>, SimError> {
         let _gpu = self.profile.gpu(device)?;
+        self.require_live_stream(device, stream)?;
         Ok(self.stream_green_ctx.get(&(device, stream)).copied())
+    }
+
+    /// `cuStreamGetGreenCtx`. Identity with [`Self::stream_get_green_ctx`].
+    /// Query; legal during capture. Distinct from [`Self::mem_green_ctx_get_device`].
+    pub fn mem_stream_get_green_ctx(
+        &self,
+        device: DeviceId,
+        stream: StreamId,
+    ) -> Result<Option<GreenCtxId>, SimError> {
+        self.stream_get_green_ctx(device, stream)
     }
 
     /// `cuStreamGetDevResource`. Query; legal during capture.
@@ -1800,6 +2011,7 @@ impl Sim {
         kind: DevResourceType,
     ) -> Result<DevResource, SimError> {
         let _gpu = self.profile.gpu(device)?;
+        self.require_live_stream(device, stream)?;
         match self.stream_green_ctx.get(&(device, stream)) {
             Some(ctx) => self.green_ctx_get_dev_resource(*ctx, kind),
             None => match kind {
@@ -1918,6 +2130,8 @@ impl Sim {
     /// [`Self::synchronize_device`] (whole GPU). Capture is refused when any
     /// bound stream is capturing. An already-idle ctx returns without starting
     /// leftover kernels on other streams.
+    /// Driver wrap: [`Self::mem_green_ctx_synchronize`].
+    /// Identity: [`Self::mem_green_ctx_synchronize`].
     pub fn green_ctx_synchronize(&mut self, ctx: GreenCtxId) -> Result<(), SimError> {
         let device = self
             .green_ctxs
@@ -1939,6 +2153,12 @@ impl Sim {
             });
         }
         Ok(())
+    }
+
+    /// `cudaExecutionCtxSynchronize`. Identity with [`Self::green_ctx_synchronize`].
+    /// Host-sync; capture refused when a bound stream is capturing. Distinct from [`Self::mem_green_ctx_stream_create`].
+    pub fn mem_green_ctx_synchronize(&mut self, ctx: GreenCtxId) -> Result<(), SimError> {
+        self.green_ctx_synchronize(ctx)
     }
 
     fn green_ctx_idle(&self, ctx: GreenCtxId) -> bool {
@@ -1997,6 +2217,8 @@ impl Sim {
     }
 
     /// `cudaStreamSetAttribute` for `cudaLaunchAttributeMemSyncDomain`.
+    /// Driver `cuStreamSetAttribute` mem sync domain is [`Self::stream_set_mem_sync_domain`].
+    /// Identity wrap [`Self::stream_set_mem_sync_domain`].
     pub fn set_stream_mem_sync_domain(
         &mut self,
         device: DeviceId,
@@ -2004,11 +2226,27 @@ impl Sim {
         domain: MemSyncDomain,
     ) -> Result<(), SimError> {
         let _gpu = self.profile.gpu(device)?;
+        self.require_live_stream(device, stream)?;
         let _prev = self.stream_mem_sync_domain.insert((device, stream), domain);
         Ok(())
     }
 
+    /// `cuStreamSetAttribute` mem sync domain. Identity with
+    /// [`Self::set_stream_mem_sync_domain`] (`cudaStreamSetAttribute` MemSyncDomain).
+    ///
+    /// Capture legal. Distinct from [`Self::stream_wait_event_external`].
+    pub fn stream_set_mem_sync_domain(
+        &mut self,
+        device: DeviceId,
+        stream: StreamId,
+        domain: MemSyncDomain,
+    ) -> Result<(), SimError> {
+        self.set_stream_mem_sync_domain(device, stream, domain)
+    }
+
     /// Stream mem-sync domain, or [`MemSyncDomain::Default`] if unset.
+    /// Driver `cuStreamGetAttribute` mem sync domain is [`Self::stream_get_mem_sync_domain`].
+    /// Identity wrap [`Self::stream_get_mem_sync_domain`].
     #[must_use]
     pub fn stream_mem_sync_domain(&self, device: DeviceId, stream: StreamId) -> MemSyncDomain {
         self.stream_mem_sync_domain
@@ -2017,11 +2255,22 @@ impl Sim {
             .unwrap_or(MemSyncDomain::Default)
     }
 
+    /// `cuStreamGetAttribute` mem sync domain. Identity with
+    /// [`Self::stream_mem_sync_domain`] (`cudaStreamGetAttribute` MemSyncDomain).
+    ///
+    /// Query; legal during capture. Distinct from [`Self::stream_set_mem_sync_domain_map`].
+    #[must_use]
+    pub fn stream_get_mem_sync_domain(&self, device: DeviceId, stream: StreamId) -> MemSyncDomain {
+        self.stream_mem_sync_domain(device, stream)
+    }
+
     /// `cudaStreamSetAttribute` for `cudaLaunchAttributeMemSyncDomainMap`.
     ///
     /// Does not tick the clock. Hopper identity is default→0, remote→1.
     /// `expertvm sim --mem-sync-map collapse` sets `{default: 0, remote: 0}`
     /// on the decode stream (needs `--mem-sync-domain remote`).
+    /// Driver `cuStreamSetAttribute` mem sync domain map is [`Self::stream_set_mem_sync_domain_map`].
+    /// Identity wrap [`Self::stream_set_mem_sync_domain_map`].
     pub fn set_stream_mem_sync_domain_map(
         &mut self,
         device: DeviceId,
@@ -2029,11 +2278,27 @@ impl Sim {
         map: MemSyncDomainMap,
     ) -> Result<(), SimError> {
         self.validate_mem_sync_map(device, map)?;
+        self.require_live_stream(device, stream)?;
         let _prev = self.stream_mem_sync_map.insert((device, stream), map);
         Ok(())
     }
 
+    /// `cuStreamSetAttribute` mem sync domain map. Identity with
+    /// [`Self::set_stream_mem_sync_domain_map`] (`cudaStreamSetAttribute` MemSyncDomainMap).
+    ///
+    /// Capture legal. Distinct from [`Self::stream_set_mem_sync_domain`].
+    pub fn stream_set_mem_sync_domain_map(
+        &mut self,
+        device: DeviceId,
+        stream: StreamId,
+        map: MemSyncDomainMap,
+    ) -> Result<(), SimError> {
+        self.set_stream_mem_sync_domain_map(device, stream, map)
+    }
+
     /// Stream mem-sync map, or CUDA identity for this device's domain count.
+    /// Driver `cuStreamGetAttribute` mem sync domain map is [`Self::stream_get_mem_sync_domain_map`].
+    /// Identity wrap [`Self::stream_get_mem_sync_domain_map`].
     pub fn stream_mem_sync_domain_map(
         &self,
         device: DeviceId,
@@ -2047,11 +2312,25 @@ impl Sim {
         ))
     }
 
+    /// `cuStreamGetAttribute` mem sync domain map. Identity with
+    /// [`Self::stream_mem_sync_domain_map`] (`cudaStreamGetAttribute` MemSyncDomainMap).
+    ///
+    /// Query; legal during capture. Distinct from [`Self::stream_get_mem_sync_domain`].
+    pub fn stream_get_mem_sync_domain_map(
+        &self,
+        device: DeviceId,
+        stream: StreamId,
+    ) -> Result<MemSyncDomainMap, SimError> {
+        self.stream_mem_sync_domain_map(device, stream)
+    }
+
     /// `cudaStreamSetAttribute` for `cudaLaunchAttributeSynchronizationPolicy`.
     ///
     /// Host-wait tax for [`Self::synchronize_stream`] / [`Self::synchronize_event`].
     /// Missing is [`SynchronizationPolicy::Auto`], which inherits
     /// [`Self::set_device_flags`] (unset Auto tax 0).
+    /// Driver `cuStreamSetAttribute` sync policy is [`Self::stream_set_sync_policy`].
+    /// Identity wrap [`Self::stream_set_sync_policy`].
     pub fn set_stream_sync_policy(
         &mut self,
         device: DeviceId,
@@ -2059,11 +2338,27 @@ impl Sim {
         policy: SynchronizationPolicy,
     ) -> Result<(), SimError> {
         let _gpu = self.profile.gpu(device)?;
+        self.require_live_stream(device, stream)?;
         let _prev = self.stream_sync_policy.insert((device, stream), policy);
         Ok(())
     }
 
+    /// `cuStreamSetAttribute` sync policy. Identity with
+    /// [`Self::set_stream_sync_policy`] (`cudaStreamSetAttribute` SynchronizationPolicy).
+    ///
+    /// Capture legal. Distinct from [`Self::stream_get_mem_sync_domain_map`].
+    pub fn stream_set_sync_policy(
+        &mut self,
+        device: DeviceId,
+        stream: StreamId,
+        policy: SynchronizationPolicy,
+    ) -> Result<(), SimError> {
+        self.set_stream_sync_policy(device, stream, policy)
+    }
+
     /// Stream synchronization policy, or [`SynchronizationPolicy::Auto`] if unset.
+    /// Driver `cuStreamGetAttribute` sync policy is [`Self::stream_get_sync_policy`].
+    /// Identity wrap [`Self::stream_get_sync_policy`].
     #[must_use]
     pub fn stream_sync_policy(&self, device: DeviceId, stream: StreamId) -> SynchronizationPolicy {
         self.stream_sync_policy
@@ -2072,11 +2367,26 @@ impl Sim {
             .unwrap_or(SynchronizationPolicy::Auto)
     }
 
+    /// `cuStreamGetAttribute` sync policy. Identity with
+    /// [`Self::stream_sync_policy`] (`cudaStreamGetAttribute` SynchronizationPolicy).
+    ///
+    /// Query; legal during capture. Distinct from [`Self::stream_set_sync_policy`].
+    #[must_use]
+    pub fn stream_get_sync_policy(
+        &self,
+        device: DeviceId,
+        stream: StreamId,
+    ) -> SynchronizationPolicy {
+        self.stream_sync_policy(device, stream)
+    }
+
     /// `cudaStreamSetAttribute` for `cudaLaunchAttributeNvlinkUtilCentricScheduling`.
     ///
     /// Inherited by [`Self::kernel`] / [`Self::kernel_bufs`] on this stream.
     /// [`Self::kernel_with`] and graph replay use the launch / node value.
     /// Decode identity stays disabled.
+    /// Driver `cuStreamSetAttribute` nvlink util centric is [`Self::stream_set_nvlink_util_centric`].
+    /// Identity wrap [`Self::stream_set_nvlink_util_centric`].
     pub fn set_stream_nvlink_util_centric(
         &mut self,
         device: DeviceId,
@@ -2084,6 +2394,7 @@ impl Sim {
         enabled: bool,
     ) -> Result<(), SimError> {
         let _gpu = self.profile.gpu(device)?;
+        self.require_live_stream(device, stream)?;
         if enabled {
             let _ins = self.stream_nvlink_util_centric.insert((device, stream));
         } else {
@@ -2092,10 +2403,34 @@ impl Sim {
         Ok(())
     }
 
+    /// `cuStreamSetAttribute` nvlink util centric. Identity with
+    /// [`Self::set_stream_nvlink_util_centric`] (`cudaStreamSetAttribute` NvlinkUtilCentricScheduling).
+    ///
+    /// Capture legal. Distinct from [`Self::stream_get_sync_policy`].
+    pub fn stream_set_nvlink_util_centric(
+        &mut self,
+        device: DeviceId,
+        stream: StreamId,
+        enabled: bool,
+    ) -> Result<(), SimError> {
+        self.set_stream_nvlink_util_centric(device, stream, enabled)
+    }
+
     /// Stream NVLink-util-centric flag, or `false` if unset.
+    /// Driver `cuStreamGetAttribute` nvlink util centric is [`Self::stream_get_nvlink_util_centric`].
+    /// Identity wrap [`Self::stream_get_nvlink_util_centric`].
     #[must_use]
     pub fn stream_nvlink_util_centric(&self, device: DeviceId, stream: StreamId) -> bool {
         self.stream_nvlink_util_centric.contains(&(device, stream))
+    }
+
+    /// `cuStreamGetAttribute` nvlink util centric. Identity with
+    /// [`Self::stream_nvlink_util_centric`] (`cudaStreamGetAttribute` NvlinkUtilCentricScheduling).
+    ///
+    /// Query; legal during capture. Distinct from [`Self::stream_set_nvlink_util_centric`].
+    #[must_use]
+    pub fn stream_get_nvlink_util_centric(&self, device: DeviceId, stream: StreamId) -> bool {
+        self.stream_nvlink_util_centric(device, stream)
     }
 
     /// `cudaStreamSetAttribute` for `cudaStreamAttributeAccessPolicyWindow`.
@@ -2103,6 +2438,8 @@ impl Sim {
     /// Inherited by [`Self::kernel`] / [`Self::kernel_bufs`] on this stream.
     /// [`Self::kernel_with`] and graph replay use the launch / node window.
     /// [`None`] clears. Decode identity stays no window.
+    /// Driver `cuStreamSetAttribute` access policy is [`Self::stream_set_access_policy`].
+    /// Identity wrap [`Self::stream_set_access_policy`].
     pub fn set_stream_access_policy(
         &mut self,
         device: DeviceId,
@@ -2110,6 +2447,7 @@ impl Sim {
         window: Option<AccessPolicyWindow>,
     ) -> Result<(), SimError> {
         let _gpu = self.profile.gpu(device)?;
+        self.require_live_stream(device, stream)?;
         if let Some(w) = window {
             self.validate_access_policy_window(device, w)?;
             let _prev = self.stream_access_policy.insert((device, stream), w);
@@ -2119,7 +2457,22 @@ impl Sim {
         Ok(())
     }
 
+    /// `cuStreamSetAttribute` access policy. Identity with
+    /// [`Self::set_stream_access_policy`] (`cudaStreamSetAttribute` AccessPolicyWindow).
+    ///
+    /// Capture legal. Distinct from [`Self::stream_get_nvlink_util_centric`].
+    pub fn stream_set_access_policy(
+        &mut self,
+        device: DeviceId,
+        stream: StreamId,
+        window: Option<AccessPolicyWindow>,
+    ) -> Result<(), SimError> {
+        self.set_stream_access_policy(device, stream, window)
+    }
+
     /// Stream access-policy window, or [`None`] if unset.
+    /// Driver `cuStreamGetAttribute` access policy is [`Self::stream_get_access_policy`].
+    /// Identity wrap [`Self::stream_get_access_policy`].
     #[must_use]
     pub fn stream_access_policy(
         &self,
@@ -2129,11 +2482,25 @@ impl Sim {
         self.stream_access_policy.get(&(device, stream)).copied()
     }
 
+    /// `cuStreamGetAttribute` access policy. Identity with
+    /// [`Self::stream_access_policy`] (`cudaStreamGetAttribute` AccessPolicyWindow).
+    ///
+    /// Query; legal during capture. Distinct from [`Self::stream_set_access_policy`].
+    #[must_use]
+    pub fn stream_get_access_policy(
+        &self,
+        device: DeviceId,
+        stream: StreamId,
+    ) -> Option<AccessPolicyWindow> {
+        self.stream_access_policy(device, stream)
+    }
+
     /// `cudaStreamCopyAttributes`: copy priority, SM permille, mem-sync
     /// domain/map, synchronization policy, NVLink-util-centric scheduling,
     /// and access-policy window from `src` to `dst`.
     ///
     /// Same device required. Capture is allowed (host-side, not a graph node).
+    /// Driver `cuStreamCopyAttributes` is [`Self::copy_stream_attributes`].
     pub fn stream_copy_attributes(
         &mut self,
         dst_device: DeviceId,
@@ -2147,6 +2514,8 @@ impl Sim {
             });
         }
         let _gpu = self.profile.gpu(src_device)?;
+        self.require_live_stream(src_device, src)?;
+        self.require_live_stream(dst_device, dst)?;
         let pri = self.stream_priority(src_device, src);
         let sm = self.sm_permille.get(&(src_device, src)).copied();
         let domain = self.stream_mem_sync_domain.get(&(src_device, src)).copied();
@@ -2180,6 +2549,21 @@ impl Sim {
         Ok(())
     }
 
+    /// `cuStreamCopyAttributes`. Identity with [`Self::stream_copy_attributes`]
+    /// (`cudaStreamCopyAttributes`).
+    ///
+    /// Capture-legal (host-side, not a graph node). Distinct from
+    /// [`Self::stream_get_attribute`].
+    pub fn copy_stream_attributes(
+        &mut self,
+        dst_device: DeviceId,
+        dst: StreamId,
+        src_device: DeviceId,
+        src: StreamId,
+    ) -> Result<(), SimError> {
+        self.stream_copy_attributes(dst_device, dst, src_device, src)
+    }
+
     /// CUDA legacy null stream: [`StreamId::NULL`] serializes with every other stream
     /// on that device. Off by default (`cudaStreamNonBlocking` created streams).
     pub fn set_legacy_null_stream(&mut self, yes: bool) {
@@ -2197,6 +2581,8 @@ impl Sim {
     /// Blocking streams serialize with [`StreamId::NULL`] even when legacy null
     /// is off. Created streams default to non-blocking (vLLM-style). The null
     /// stream's flags are [`Self::set_legacy_null_stream`], not this call.
+    /// Driver `cuStreamCreate` blocking is [`Self::stream_set_blocking`].
+    /// Identity wrap [`Self::stream_set_blocking`].
     pub fn set_stream_blocking(
         &mut self,
         device: DeviceId,
@@ -2209,6 +2595,20 @@ impl Sim {
                 why: "null stream uses set_legacy_null_stream",
             });
         }
+        if stream.is_device_graph_stream() {
+            return Err(SimError::Invalid {
+                why: "device launch stream",
+            });
+        }
+        if self.gone_streams.contains(&(device, stream)) {
+            if !self.stream_idle(device, stream) {
+                return Err(SimError::Invalid {
+                    why: "stream in flight",
+                });
+            }
+            self.drop_stream_state(device, stream);
+            let _was = self.gone_streams.remove(&(device, stream));
+        }
         if yes {
             let _was = self.blocking.insert((device, stream));
         } else {
@@ -2217,13 +2617,27 @@ impl Sim {
         Ok(())
     }
 
+    /// `cuStreamCreate` blocking. Identity with
+    /// [`Self::set_stream_blocking`] (`cudaStreamCreate`).
+    ///
+    /// Capture legal. Distinct from [`Self::stream_set_priority`].
+    pub fn stream_set_blocking(
+        &mut self,
+        device: DeviceId,
+        stream: StreamId,
+        yes: bool,
+    ) -> Result<(), SimError> {
+        self.set_stream_blocking(device, stream, yes)
+    }
+
     /// `cudaStreamCreateWithFlags`. Capture cannot include it.
     ///
     /// Known bit: [`StreamCreateFlags::NON_BLOCKING`]. Other bits are Invalid
     /// `"stream create flags"`. [`StreamId::NULL`] is Invalid (use
     /// [`Self::set_legacy_null_stream`]). Typed [`Self::set_stream_blocking`]
     /// stays. Created streams still default to non-blocking until this is
-    /// called with [`StreamCreateFlags::DEFAULT`].
+    /// called with [`StreamCreateFlags::DEFAULT`]. Driver
+    /// `cuStreamCreateWithFlags` is [`Self::stream_create_flags`].
     pub fn stream_create_with_flags(
         &mut self,
         device: DeviceId,
@@ -2240,11 +2654,38 @@ impl Sim {
         self.set_stream_blocking(device, stream, flags & StreamCreateFlags::NON_BLOCKING == 0)
     }
 
+    /// `cuStreamCreateWithFlags`. Identity with [`Self::stream_create_with_flags`]
+    /// (`cudaStreamCreateWithFlags`).
+    ///
+    /// Capture refused. Distinct from [`Self::stream_create`] and
+    /// [`Self::stream_create_priority`].
+    pub fn stream_create_flags(
+        &mut self,
+        device: DeviceId,
+        stream: StreamId,
+        flags: u32,
+    ) -> Result<(), SimError> {
+        self.stream_create_with_flags(device, stream, flags)
+    }
+
+    /// `cudaStreamCreate` / `cuStreamCreate` default flags. Identity with
+    /// [`Self::stream_create_with_flags`] using [`StreamCreateFlags::DEFAULT`]
+    /// (blocking).
+    ///
+    /// Implicit streams stay non-blocking until this or
+    /// [`Self::stream_create_with_flags`] with DEFAULT. Capture refused.
+    /// Distinct from [`Self::stream_create_with_priority`]. Driver
+    /// `cuStreamCreateWithPriority` is [`Self::stream_create_priority`].
+    pub fn stream_create(&mut self, device: DeviceId, stream: StreamId) -> Result<(), SimError> {
+        self.stream_create_with_flags(device, stream, StreamCreateFlags::DEFAULT)
+    }
+
     /// `cudaStreamCreateWithPriority`. Capture cannot include it.
     ///
     /// Flags are [`Self::stream_create_with_flags`]. Priority is
-    /// [`Self::set_stream_priority`]. This VM does not cap the range
-    /// (`cudaDeviceGetStreamPriorityRange` is not modeled).
+    /// [`Self::set_stream_priority`] (clamped to
+    /// [`Self::device_get_stream_priority_range`]). Driver
+    /// `cuStreamCreateWithPriority` is [`Self::stream_create_priority`].
     pub fn stream_create_with_priority(
         &mut self,
         device: DeviceId,
@@ -2254,6 +2695,52 @@ impl Sim {
     ) -> Result<(), SimError> {
         self.stream_create_with_flags(device, stream, flags)?;
         self.set_stream_priority(device, stream, priority)
+    }
+
+    /// `cuStreamCreateWithPriority`. Identity with
+    /// [`Self::stream_create_with_priority`] (`cudaStreamCreateWithPriority`).
+    ///
+    /// Capture refused. Distinct from [`Self::stream_create`].
+    pub fn stream_create_priority(
+        &mut self,
+        device: DeviceId,
+        stream: StreamId,
+        flags: u32,
+        priority: i32,
+    ) -> Result<(), SimError> {
+        self.stream_create_with_priority(device, stream, flags, priority)
+    }
+
+    /// `cudaStreamDestroy`. Returns immediately; in-flight work still
+    /// completes. Capture cannot include it.
+    ///
+    /// [`StreamId::NULL`] is Invalid `"null stream"`. A destroyed handle is
+    /// Invalid `"unknown stream"` for new work and queries until
+    /// [`Self::stream_create_with_flags`] (or [`Self::set_stream_blocking`]).
+    /// Recreate while that stream still has unfinished ops is Invalid
+    /// `"stream in flight"` (this VM reuses caller-chosen ids).
+    /// [`StreamId::GREEN_CTX_SYNC`] is unknown. Unknown devices are Invalid.
+    /// Use of the handle after destroy is unknown, not a wait
+    /// ([`Self::destroy_event`] waits). Device [`Self::synchronize`] still
+    /// drains parked work.
+    pub fn destroy_stream(&mut self, device: DeviceId, stream: StreamId) -> Result<(), SimError> {
+        self.fail_if_capturing("cannot capture stream destroy")?;
+        let _gpu = self.profile.gpu(device)?;
+        if stream == StreamId::NULL {
+            return Err(SimError::Invalid { why: "null stream" });
+        }
+        if stream == StreamId::GREEN_CTX_SYNC || stream.is_device_graph_stream() {
+            return Err(SimError::Invalid {
+                why: "unknown stream",
+            });
+        }
+        if !self.gone_streams.insert((device, stream)) {
+            return Err(SimError::Invalid {
+                why: "unknown stream",
+            });
+        }
+        self.clock = self.clock.saturating_add(1);
+        Ok(())
     }
 
     /// Whether `stream` is a blocking `cudaStreamCreate` stream on `device`.
@@ -2267,9 +2754,11 @@ impl Sim {
     /// `0` is `cudaStreamDefault` (blocking). `1` is `cudaStreamNonBlocking`.
     /// [`StreamId::NULL`] uses [`Self::legacy_null_stream`] (off → NonBlocking).
     /// Unknown devices are Invalid. Any other stream id is legal (created
-    /// streams default to NonBlocking).
+    /// streams default to NonBlocking). Driver `cuStreamGetFlags` is
+    /// [`Self::stream_flags`].
     pub fn stream_get_flags(&self, device: DeviceId, stream: StreamId) -> Result<u32, SimError> {
         let _gpu = self.profile.gpu(device)?;
+        self.require_live_stream(device, stream)?;
         let blocking = if stream == StreamId::NULL {
             self.legacy_null_stream
         } else {
@@ -2278,26 +2767,55 @@ impl Sim {
         Ok(u32::from(!blocking))
     }
 
+    /// `cuStreamGetFlags`. Identity with [`Self::stream_get_flags`]
+    /// (`cudaStreamGetFlags`).
+    ///
+    /// Query; legal during capture. Distinct from [`Self::stream_get_priority`].
+    pub fn stream_flags(&self, device: DeviceId, stream: StreamId) -> Result<u32, SimError> {
+        self.stream_get_flags(device, stream)
+    }
+
     /// `cudaStreamGetPriority`. Query; legal during capture.
     ///
-    /// Unset streams are `0`. Unknown devices are Invalid. This VM does not
-    /// cap the range (`cudaDeviceGetStreamPriorityRange` is not modeled).
+    /// Unset streams are `0`. Unknown devices are Invalid. Out of range
+    /// SetPriority values are clamped to
+    /// [`Self::device_get_stream_priority_range`]. Driver
+    /// `cuStreamGetPriority` is [`Self::get_stream_priority`].
     pub fn stream_get_priority(&self, device: DeviceId, stream: StreamId) -> Result<i32, SimError> {
         let _gpu = self.profile.gpu(device)?;
+        self.require_live_stream(device, stream)?;
         Ok(self.stream_priority(device, stream))
+    }
+
+    /// `cuStreamGetPriority`. Identity with [`Self::stream_get_priority`]
+    /// (`cudaStreamGetPriority`).
+    ///
+    /// Query; legal during capture. Distinct from [`Self::stream_flags`] and
+    /// [`Self::set_stream_priority`].
+    pub fn get_stream_priority(&self, device: DeviceId, stream: StreamId) -> Result<i32, SimError> {
+        self.stream_get_priority(device, stream)
     }
 
     /// `cudaStreamGetId`. Query; legal during capture.
     ///
     /// Unique per `(device, stream)` for this VM. [`StreamId`] stays
     /// caller-chosen; this is not that handle and not a capture-sequence id.
-    /// Unknown devices are Invalid. This VM does not invent
-    /// `cudaStreamDestroy`.
+    /// Unknown devices are Invalid. A [`Self::destroy_stream`] handle is
+    /// Invalid `"unknown stream"` until create. Driver `cuStreamGetId` is
+    /// [`Self::get_stream_id`].
     pub fn stream_get_id(&self, device: DeviceId, stream: StreamId) -> Result<u64, SimError> {
         let _gpu = self.profile.gpu(device)?;
+        self.require_live_stream(device, stream)?;
         Ok((u64::from(device.0) << 16)
             .saturating_add(u64::from(stream.0))
             .saturating_add(1))
+    }
+
+    /// `cuStreamGetId`. Identity with [`Self::stream_get_id`] (`cudaStreamGetId`).
+    ///
+    /// Query; legal during capture. Distinct from [`Self::stream_get_device`].
+    pub fn get_stream_id(&self, device: DeviceId, stream: StreamId) -> Result<u64, SimError> {
+        self.stream_get_id(device, stream)
     }
 
     /// `cudaStreamGetDevice` / `cuStreamGetDevice`. Query; legal during capture.
@@ -2315,6 +2833,7 @@ impl Sim {
         stream: StreamId,
     ) -> Result<DeviceId, SimError> {
         let _gpu = self.profile.gpu(device)?;
+        self.require_live_stream(device, stream)?;
         if let Some(ctx) = self.stream_green_ctx.get(&(device, stream)).copied() {
             return self.green_ctx_get_device(ctx);
         }
@@ -2324,7 +2843,8 @@ impl Sim {
     /// `cudaStreamGetAttribute`. Query; legal during capture.
     ///
     /// Wraps existing stream state only. Green-context SM permille is not a
-    /// CUDA stream attribute.
+    /// CUDA stream attribute. Driver `cuStreamGetAttribute` is
+    /// [`Self::get_stream_attribute`].
     pub fn stream_get_attribute(
         &self,
         device: DeviceId,
@@ -2332,6 +2852,7 @@ impl Sim {
         attr: StreamAttr,
     ) -> Result<StreamAttrValue, SimError> {
         let _gpu = self.profile.gpu(device)?;
+        self.require_live_stream(device, stream)?;
         Ok(match attr {
             StreamAttr::Priority => StreamAttrValue::Priority(self.stream_priority(device, stream)),
             StreamAttr::SynchronizationPolicy => {
@@ -2352,10 +2873,24 @@ impl Sim {
         })
     }
 
+    /// `cuStreamGetAttribute`. Identity with [`Self::stream_get_attribute`]
+    /// (`cudaStreamGetAttribute`).
+    ///
+    /// Query; legal during capture. Distinct from [`Self::stream_set_attribute`].
+    pub fn get_stream_attribute(
+        &self,
+        device: DeviceId,
+        stream: StreamId,
+        attr: StreamAttr,
+    ) -> Result<StreamAttrValue, SimError> {
+        self.stream_get_attribute(device, stream, attr)
+    }
+
     /// `cudaStreamSetAttribute`. Host-side; not a graph node.
     ///
     /// Same capture rule as the dedicated setters (legal during capture).
-    /// Attr/value type mismatch is Invalid `"stream attr"`.
+    /// Attr/value type mismatch is Invalid `"stream attr"`. Driver
+    /// `cuStreamSetAttribute` is [`Self::set_stream_attribute`].
     pub fn stream_set_attribute(
         &mut self,
         device: DeviceId,
@@ -2386,6 +2921,21 @@ impl Sim {
         }
     }
 
+    /// `cuStreamSetAttribute`. Identity with [`Self::stream_set_attribute`]
+    /// (`cudaStreamSetAttribute`).
+    ///
+    /// Capture-legal (host-side, not a graph node). Distinct from
+    /// [`Self::get_stream_attribute`].
+    pub fn set_stream_attribute(
+        &mut self,
+        device: DeviceId,
+        stream: StreamId,
+        attr: StreamAttr,
+        value: StreamAttrValue,
+    ) -> Result<(), SimError> {
+        self.stream_set_attribute(device, stream, attr, value)
+    }
+
     /// Mark streams `1 .. n_streams` blocking on every GPU (`cudaStreamCreate`).
     ///
     /// [`StreamId::NULL`] stays the default stream. `n_streams <= 1` is a no-op.
@@ -2401,13 +2951,14 @@ impl Sim {
 
     /// `cudaStreamCreateWithPriority` for streams `1 .. n_streams` on every GPU.
     ///
-    /// Priority equals the stream id (higher id runs first when compute
-    /// contends). [`StreamId::NULL`] stays `0`. `n_streams <= 1` is a no-op.
+    /// Priority is `-stream_id` (numerically lower runs first), then clamped
+    /// to [`Self::device_get_stream_priority_range`]. [`StreamId::NULL`]
+    /// stays `0`. `n_streams <= 1` is a no-op.
     pub fn set_created_streams_priority(&mut self, n_streams: u8) -> Result<(), SimError> {
         let devices: Vec<DeviceId> = self.profile.gpus.iter().map(|g| g.id).collect();
         for d in devices {
             for s in 1..n_streams {
-                self.set_stream_priority(d, StreamId(u16::from(s)), i32::from(s))?;
+                self.set_stream_priority(d, StreamId(u16::from(s)), -i32::from(s))?;
             }
         }
         Ok(())
@@ -2567,6 +3118,8 @@ impl Sim {
     }
 
     /// `cudaDeviceEnablePeerAccess(dst)` from `src`. No-op if `src == dst`.
+    ///
+    /// Driver `cuCtxEnablePeerAccess` is [`Self::ctx_enable_peer_access`].
     pub fn enable_peer(&mut self, src: DeviceId, dst: DeviceId) -> Result<(), SimError> {
         if src == dst {
             return Ok(());
@@ -2576,7 +3129,19 @@ impl Sim {
         Ok(())
     }
 
+    /// `cuCtxEnablePeerAccess`. Identity with
+    /// [`Self::enable_peer`] (`cudaDeviceEnablePeerAccess`).
+    ///
+    /// Capture legal. Distinct from
+    /// [`Self::event_flags`].
+    pub fn ctx_enable_peer_access(&mut self, src: DeviceId, dst: DeviceId) -> Result<(), SimError> {
+        self.enable_peer(src, dst)
+    }
+
     /// `cudaDeviceEnablePeerAccess` with a flags word.
+    ///
+    /// Driver `cuCtxEnablePeerAccess` with flags is
+    /// [`Self::ctx_enable_peer_access_with_flags`].
     ///
     /// CUDA requires `flags == 0` ([`PeerAccessFlags::DEFAULT`]). Other bits
     /// are Invalid `"peer access flags"`. Typed [`Self::enable_peer`] stays.
@@ -2595,7 +3160,23 @@ impl Sim {
         self.enable_peer(src, dst)
     }
 
+    /// `cuCtxEnablePeerAccess` with flags. Identity with
+    /// [`Self::enable_peer_with_flags`] (`cudaDeviceEnablePeerAccess` with flags).
+    ///
+    /// Nonzero flags refused. Distinct from
+    /// [`Self::ctx_enable_peer_access`].
+    pub fn ctx_enable_peer_access_with_flags(
+        &mut self,
+        src: DeviceId,
+        dst: DeviceId,
+        flags: u32,
+    ) -> Result<(), SimError> {
+        self.enable_peer_with_flags(src, dst, flags)
+    }
+
     /// `cudaDeviceDisablePeerAccess(dst)` from `src`. Later D2D is [`SimError::PeerDisabled`].
+    ///
+    /// Driver `cuCtxDisablePeerAccess` is [`Self::ctx_disable_peer_access`].
     pub fn disable_peer(&mut self, src: DeviceId, dst: DeviceId) -> Result<(), SimError> {
         if src == dst {
             return Ok(());
@@ -2604,6 +3185,19 @@ impl Sim {
         let _gpu_d = self.profile.gpu(dst)?;
         let _was = self.peer_enabled.remove(&(src, dst));
         Ok(())
+    }
+
+    /// `cuCtxDisablePeerAccess`. Identity with
+    /// [`Self::disable_peer`] (`cudaDeviceDisablePeerAccess`).
+    ///
+    /// Unknown device refused. Distinct from
+    /// [`Self::ctx_enable_peer_access_with_flags`].
+    pub fn ctx_disable_peer_access(
+        &mut self,
+        src: DeviceId,
+        dst: DeviceId,
+    ) -> Result<(), SimError> {
+        self.disable_peer(src, dst)
     }
 
     /// Whether `src` may D2D-read `dst` (directed, like CUDA peer access).
@@ -2625,12 +3219,23 @@ impl Sim {
     /// A stream in an active graph capture is [`SimError::Invalid`].
     pub fn query_stream(&self, device: DeviceId, stream: StreamId) -> Result<bool, SimError> {
         let _gpu = self.profile.gpu(device)?;
+        self.require_live_stream(device, stream)?;
         if self.in_capture(device, stream) {
             return Err(SimError::Invalid {
                 why: "cannot query stream during capture",
             });
         }
         Ok(self.stream_idle(device, stream))
+    }
+
+    /// `cuStreamQuery`. Identity with [`Self::query_stream`] (`cudaStreamQuery`).
+    ///
+    /// Does not wait. Unknown devices are [`SimError::Invalid`]. A busy stream
+    /// is `Ok(false)`. A capturing stream is Invalid. Distinct from
+    /// [`Self::stream_is_idle`] (already wraps `query_stream`). This VM does
+    /// not invent `cuEventSynchronize` this slice (`synchronize_event` stays).
+    pub fn stream_query(&self, device: DeviceId, stream: StreamId) -> Result<bool, SimError> {
+        self.query_stream(device, stream)
     }
 
     /// Recorded event that has fired ([`Self::query_event`] / wait).
@@ -2654,6 +3259,15 @@ impl Sim {
             return Err(SimError::UnknownEvent { event: event.0 });
         }
         Ok(self.event_complete(event))
+    }
+
+    /// `cuEventQuery`. Identity with [`Self::query_event`] (`cudaEventQuery`).
+    ///
+    /// Does not wait. Unknown ids are [`SimError::UnknownEvent`]. Incomplete
+    /// records are `Ok(false)`. Query; legal during capture. This VM does
+    /// not invent `cuStreamQuery` this slice (`query_stream` stays).
+    pub fn event_query(&self, event: EventId) -> Result<bool, SimError> {
+        self.query_event(event)
     }
 
     fn event_root(&self, event: EventId) -> EventId {
@@ -2694,18 +3308,41 @@ impl Sim {
         self.create_event_with_flags(event, EventCreateFlags::DEFAULT)
     }
 
+    /// `cuEventCreate`. Identity with [`Self::create_event`] (`cudaEventCreate`).
+    ///
+    /// Timing enabled (default flags). Host-synchronous. Capture cannot include
+    /// it. Duplicate ids are Invalid. Distinct from
+    /// [`Self::create_event_with_flags`]. This VM does not invent
+    /// `cuEventCreateWithFlags` this slice (`create_event_with_flags` stays).
+    pub fn event_create(&mut self, event: EventId) -> Result<(), SimError> {
+        self.create_event(event)
+    }
+
     /// `cudaEventCreateWithFlags(..., cudaEventDisableTiming)`.
     ///
     /// Record / wait / query still work. [`Self::event_elapsed_ns`] is
     /// [`SimError::Invalid`].
+    /// Driver `cuEventCreateWithFlags` disable timing is [`Self::event_create_disable_timing`].
+    /// Identity wrap [`Self::event_create_disable_timing`].
     pub fn create_event_disable_timing(&mut self, event: EventId) -> Result<(), SimError> {
         self.create_event_with_flags(event, EventCreateFlags::DISABLE_TIMING)
+    }
+
+    /// `cuEventCreateWithFlags` disable timing. Identity with
+    /// [`Self::create_event_disable_timing`] (`cudaEventCreateWithFlags` DisableTiming).
+    ///
+    /// Host-synchronous. Capture cannot include it. Distinct from
+    /// [`Self::event_create_with_flags`] and [`Self::event_create`].
+    pub fn event_create_disable_timing(&mut self, event: EventId) -> Result<(), SimError> {
+        self.create_event_disable_timing(event)
     }
 
     /// `cudaEventCreateWithFlags(..., cudaEventInterprocess | cudaEventDisableTiming)`.
     ///
     /// Required for [`Self::ipc_get_event`]. Timing is disabled (CUDA: Interprocess
     /// requires DisableTiming).
+    /// Driver `cuEventCreateWithFlags` interprocess is [`Self::event_create_interprocess`].
+    /// Identity wrap [`Self::event_create_interprocess`].
     pub fn create_event_interprocess(&mut self, event: EventId) -> Result<(), SimError> {
         self.create_event_with_flags(
             event,
@@ -2713,12 +3350,32 @@ impl Sim {
         )
     }
 
+    /// `cuEventCreateWithFlags` interprocess. Identity with
+    /// [`Self::create_event_interprocess`] (`cudaEventCreateWithFlags` Interprocess|DisableTiming).
+    ///
+    /// Host-synchronous. Capture cannot include it. Distinct from
+    /// [`Self::event_create_disable_timing`].
+    pub fn event_create_interprocess(&mut self, event: EventId) -> Result<(), SimError> {
+        self.create_event_interprocess(event)
+    }
+
     /// `cudaEventCreateWithFlags(..., cudaEventBlockingSync)`.
     ///
     /// [`Self::synchronize_event`] pays [`crate::GpuProfile::host_sync_blocking_ns`].
     /// Timing stays enabled.
+    /// Driver `cuEventCreateWithFlags` blocking sync is [`Self::event_create_blocking_sync`].
+    /// Identity wrap [`Self::event_create_blocking_sync`].
     pub fn create_event_blocking_sync(&mut self, event: EventId) -> Result<(), SimError> {
         self.create_event_with_flags(event, EventCreateFlags::BLOCKING_SYNC)
+    }
+
+    /// `cuEventCreateWithFlags` blocking sync. Identity with
+    /// [`Self::create_event_blocking_sync`] (`cudaEventCreateWithFlags` BlockingSync).
+    ///
+    /// Host-synchronous. Capture cannot include it. Distinct from
+    /// [`Self::event_create_interprocess`].
+    pub fn event_create_blocking_sync(&mut self, event: EventId) -> Result<(), SimError> {
+        self.create_event_blocking_sync(event)
     }
 
     /// `cudaEventCreateWithFlags`. Capture cannot include it.
@@ -2746,6 +3403,17 @@ impl Sim {
             });
         }
         self.insert_event(event, !disable, interprocess, blocking)
+    }
+
+    /// `cuEventCreateWithFlags`. Identity with [`Self::create_event_with_flags`]
+    /// (`cudaEventCreateWithFlags`).
+    ///
+    /// Host-synchronous. Capture cannot include it. Unknown bits are Invalid
+    /// `"event create flags"`. Interprocess requires DisableTiming. Distinct
+    /// from [`Self::event_create`] (default flags). This VM does not invent
+    /// `cuEventRecord` this slice (`record_event` stays).
+    pub fn event_create_with_flags(&mut self, event: EventId, flags: u32) -> Result<(), SimError> {
+        self.create_event_with_flags(event, flags)
     }
 
     /// `cudaEventDestroy`. Host-synchronous. Capture cannot include it.
@@ -2782,6 +3450,16 @@ impl Sim {
         Ok(())
     }
 
+    /// `cuEventDestroy`. Identity with [`Self::destroy_event`]
+    /// (`cudaEventDestroy`).
+    ///
+    /// Host-synchronous. Capture cannot include it. Unknown ids are
+    /// [`SimError::UnknownEvent`]. This VM does not invent `cuEventCreate`
+    /// this slice (`create_event` stays).
+    pub fn event_destroy(&mut self, event: EventId) -> Result<(), SimError> {
+        self.destroy_event(event)
+    }
+
     /// Whether `event` was created with timing enabled (`cudaEventDefault`).
     pub fn event_timing(&self, event: EventId) -> Result<bool, SimError> {
         self.events
@@ -2799,6 +3477,8 @@ impl Sim {
     }
 
     /// `cudaEventGetFlags`. Query; legal during capture.
+    ///
+    /// Driver `cuEventGetFlags` is [`Self::event_flags`].
     ///
     /// Reconstructs the [`EventCreateFlags`] word stored at create. Unknown
     /// events are [`SimError::UnknownEvent`]. Distinct from
@@ -2822,6 +3502,15 @@ impl Sim {
         Ok(flags)
     }
 
+    /// `cuEventGetFlags`. Identity with
+    /// [`Self::event_get_flags`] (`cudaEventGetFlags`).
+    ///
+    /// Query; legal during capture. Distinct from
+    /// [`Self::get_stream_capture_mode`].
+    pub fn event_flags(&self, event: EventId) -> Result<u32, SimError> {
+        self.event_get_flags(event)
+    }
+
     /// `cuEventGetId` / `cudaEventGetId`. Query; legal during capture.
     ///
     /// Unique per [`EventId`] for this VM. [`EventId`] stays caller-chosen;
@@ -2829,11 +3518,19 @@ impl Sim {
     /// events are [`SimError::UnknownEvent`]. Recreating the same [`EventId`]
     /// after [`Self::destroy_event`] returns the same id (no generation
     /// counter). Distinct from [`Self::event_get_flags`].
+    /// Driver wrap: [`Self::mem_event_get_id`].
+    /// Identity: [`Self::mem_event_get_id`].
     pub fn event_get_id(&self, event: EventId) -> Result<u64, SimError> {
         if !self.events.contains_key(&event) {
             return Err(SimError::UnknownEvent { event: event.0 });
         }
         Ok(u64::from(event.0).saturating_add(1))
+    }
+
+    /// `cuEventGetId`. Identity with [`Self::event_get_id`].
+    /// Query; legal during capture. Distinct from [`Self::mem_device_get_stream_priority_range`].
+    pub fn mem_event_get_id(&self, event: EventId) -> Result<u64, SimError> {
+        self.event_get_id(event)
     }
 
     fn insert_event(
@@ -2920,6 +3617,8 @@ impl Sim {
         )
     }
 
+    /// `cudaStreamBeginCapture`.
+    ///
     /// Start recording later submits on `(device, stream)`. Recorded ops do not run.
     ///
     /// Default mode is [`StreamCaptureMode::Relaxed`] (or the last
@@ -2931,6 +3630,7 @@ impl Sim {
     /// clock tick); [`Self::end_capture`] appends recorded nodes and returns
     /// that id. For an existing graph see [`Self::begin_capture_to_graph`].
     /// [`Self::begin_capture_with_mode`] picks the mode for this capture only.
+    /// Driver `cuStreamBeginCapture` is [`Self::stream_begin_capture`].
     pub fn begin_capture(&mut self, device: DeviceId, stream: StreamId) -> Result<(), SimError> {
         if self.capturing.is_some() {
             return Err(SimError::Invalid {
@@ -2938,6 +3638,7 @@ impl Sim {
             });
         }
         let _gpu = self.profile.gpu(device)?;
+        self.require_live_stream(device, stream)?;
         if !self.stream_idle(device, stream) {
             return Err(SimError::Invalid {
                 why: "capture requires idle stream",
@@ -2947,9 +3648,23 @@ impl Sim {
         self.begin_capture_inner(device, stream, graph, &[], self.capture_mode)
     }
 
+    /// `cuStreamBeginCapture`. Identity with
+    /// [`Self::begin_capture`] (`cudaStreamBeginCapture`).
+    ///
+    /// Nested capture refused. Distinct from
+    /// [`Self::begin_capture_with_mode`].
+    pub fn stream_begin_capture(
+        &mut self,
+        device: DeviceId,
+        stream: StreamId,
+    ) -> Result<(), SimError> {
+        self.begin_capture(device, stream)
+    }
+
     /// `cudaStreamBeginCapture` with an explicit [`StreamCaptureMode`].
     ///
     /// Does not change the thread default ([`Self::thread_exchange_stream_capture_mode`]).
+    /// Driver `cuStreamBeginCapture` with mode is [`Self::stream_begin_capture_with_mode`].
     pub fn begin_capture_with_mode(
         &mut self,
         device: DeviceId,
@@ -2962,6 +3677,7 @@ impl Sim {
             });
         }
         let _gpu = self.profile.gpu(device)?;
+        self.require_live_stream(device, stream)?;
         if !self.stream_idle(device, stream) {
             return Err(SimError::Invalid {
                 why: "capture requires idle stream",
@@ -2969,6 +3685,20 @@ impl Sim {
         }
         let graph = self.insert_graph(device, stream);
         self.begin_capture_inner(device, stream, graph, &[], mode)
+    }
+
+    /// `cuStreamBeginCapture` with mode. Identity with
+    /// [`Self::begin_capture_with_mode`] (`cudaStreamBeginCapture` with mode).
+    ///
+    /// Nested capture refused. Distinct from
+    /// [`Self::stream_begin_capture`].
+    pub fn stream_begin_capture_with_mode(
+        &mut self,
+        device: DeviceId,
+        stream: StreamId,
+        mode: StreamCaptureMode,
+    ) -> Result<(), SimError> {
+        self.begin_capture_with_mode(device, stream, mode)
     }
 
     /// `cudaStreamBeginCaptureToGraph`: record later submits into `graph`.
@@ -2981,7 +3711,8 @@ impl Sim {
     /// recorded ops. [`Self::end_capture`] returns `graph`.
     /// A parked in-flight-destroyed exec is `"unknown graph"` first. Live
     /// exec still `"graph instantiated"`. Capture-to-graph of the definition
-    /// stays.
+    /// stays. Driver `cuStreamBeginCaptureToGraph` is
+    /// [`Self::stream_begin_capture_to_graph`].
     pub fn begin_capture_to_graph(
         &mut self,
         device: DeviceId,
@@ -2992,7 +3723,25 @@ impl Sim {
         self.begin_capture_inner(device, stream, graph, deps, self.capture_mode)
     }
 
+    /// `cuStreamBeginCaptureToGraph`. Identity with
+    /// [`Self::begin_capture_to_graph`] (`cudaStreamBeginCaptureToGraph`).
+    ///
+    /// Nested capture refused. Distinct from
+    /// [`Self::stream_begin_capture_with_mode`].
+    pub fn stream_begin_capture_to_graph(
+        &mut self,
+        device: DeviceId,
+        stream: StreamId,
+        graph: GraphId,
+        deps: &[usize],
+    ) -> Result<(), SimError> {
+        self.begin_capture_to_graph(device, stream, graph, deps)
+    }
+
     /// `cudaStreamBeginCaptureToGraph` with an explicit [`StreamCaptureMode`].
+    ///
+    /// Driver `cuStreamBeginCaptureToGraph` with mode is
+    /// [`Self::stream_begin_capture_to_graph_with_mode`].
     pub fn begin_capture_to_graph_with_mode(
         &mut self,
         device: DeviceId,
@@ -3002,6 +3751,22 @@ impl Sim {
         mode: StreamCaptureMode,
     ) -> Result<(), SimError> {
         self.begin_capture_inner(device, stream, graph, deps, mode)
+    }
+
+    /// `cuStreamBeginCaptureToGraph` with mode. Identity with
+    /// [`Self::begin_capture_to_graph_with_mode`] (`cudaStreamBeginCaptureToGraph` with mode).
+    ///
+    /// Nested capture refused. Distinct from
+    /// [`Self::stream_begin_capture_to_graph`].
+    pub fn stream_begin_capture_to_graph_with_mode(
+        &mut self,
+        device: DeviceId,
+        stream: StreamId,
+        graph: GraphId,
+        deps: &[usize],
+        mode: StreamCaptureMode,
+    ) -> Result<(), SimError> {
+        self.begin_capture_to_graph_with_mode(device, stream, graph, deps, mode)
     }
 
     /// `cudaStreamBeginRecaptureToGraph` plus `cuStreamBeginRecaptureToGraph`.
@@ -3019,7 +3784,9 @@ impl Sim {
     /// exec is `"graph instantiated"`. A parked in-flight-destroyed exec is
     /// `"unknown graph"`. Matching recapture `cudaMallocAsync` returns the
     /// existing graph-mem pointer. No extra-deps array (unlike
-    /// BeginCaptureToGraph). Capture-to-graph append stays.
+    /// BeginCaptureToGraph). Capture-to-graph append stays. Driver
+    /// `cuStreamBeginRecaptureToGraph` is
+    /// [`Self::stream_begin_recapture_to_graph`].
     pub fn begin_recapture_to_graph(
         &mut self,
         device: DeviceId,
@@ -3029,7 +3796,24 @@ impl Sim {
         self.begin_recapture_inner(device, stream, graph, self.capture_mode, None)
     }
 
+    /// `cuStreamBeginRecaptureToGraph`. Identity with
+    /// [`Self::begin_recapture_to_graph`] (`cudaStreamBeginRecaptureToGraph`).
+    ///
+    /// Nested capture refused. Distinct from
+    /// [`Self::stream_begin_capture_to_graph_with_mode`].
+    pub fn stream_begin_recapture_to_graph(
+        &mut self,
+        device: DeviceId,
+        stream: StreamId,
+        graph: GraphId,
+    ) -> Result<(), SimError> {
+        self.begin_recapture_to_graph(device, stream, graph)
+    }
+
     /// `cudaStreamBeginRecaptureToGraph` with an explicit [`StreamCaptureMode`].
+    ///
+    /// Driver `cuStreamBeginRecaptureToGraph` with mode is
+    /// [`Self::stream_begin_recapture_to_graph_with_mode`].
     pub fn begin_recapture_to_graph_with_mode(
         &mut self,
         device: DeviceId,
@@ -3040,10 +3824,27 @@ impl Sim {
         self.begin_recapture_inner(device, stream, graph, mode, None)
     }
 
+    /// `cuStreamBeginRecaptureToGraph` with mode. Identity with
+    /// [`Self::begin_recapture_to_graph_with_mode`] (`cudaStreamBeginRecaptureToGraph` with mode).
+    ///
+    /// Nested capture refused. Distinct from
+    /// [`Self::stream_begin_recapture_to_graph`].
+    pub fn stream_begin_recapture_to_graph_with_mode(
+        &mut self,
+        device: DeviceId,
+        stream: StreamId,
+        graph: GraphId,
+        mode: StreamCaptureMode,
+    ) -> Result<(), SimError> {
+        self.begin_recapture_to_graph_with_mode(device, stream, graph, mode)
+    }
+
     /// `cudaStreamBeginRecaptureToGraph` with [`GraphRecaptureCallback`].
     ///
     /// `None` is `callbackData == NULL` (still apply other-node parameter
     /// updates). [`GraphRecaptureCallback::fail`] is a non-success return.
+    /// Driver `cuStreamBeginRecaptureToGraph` with callback is
+    /// [`Self::stream_begin_recapture_to_graph_with_callback`].
     pub fn begin_recapture_to_graph_with_callback(
         &mut self,
         device: DeviceId,
@@ -3055,6 +3856,22 @@ impl Sim {
         self.begin_recapture_inner(device, stream, graph, mode, callback)
     }
 
+    /// `cuStreamBeginRecaptureToGraph` with callback. Identity with
+    /// [`Self::begin_recapture_to_graph_with_callback`] (`cudaStreamBeginRecaptureToGraph` with callback).
+    ///
+    /// Nested capture refused. Distinct from
+    /// [`Self::stream_begin_recapture_to_graph_with_mode`].
+    pub fn stream_begin_recapture_to_graph_with_callback(
+        &mut self,
+        device: DeviceId,
+        stream: StreamId,
+        graph: GraphId,
+        mode: StreamCaptureMode,
+        callback: Option<GraphRecaptureCallback>,
+    ) -> Result<(), SimError> {
+        self.begin_recapture_to_graph_with_callback(device, stream, graph, mode, callback)
+    }
+
     fn begin_recapture_inner(
         &mut self,
         device: DeviceId,
@@ -3064,6 +3881,7 @@ impl Sim {
         callback: Option<GraphRecaptureCallback>,
     ) -> Result<(), SimError> {
         let _gpu = self.profile.gpu(device)?;
+        self.require_live_stream(device, stream)?;
         if self.capturing.is_some() {
             return Err(SimError::Invalid {
                 why: "nested graph capture",
@@ -3237,6 +4055,7 @@ impl Sim {
         mode: StreamCaptureMode,
     ) -> Result<(), SimError> {
         let _gpu = self.profile.gpu(device)?;
+        self.require_live_stream(device, stream)?;
         if self.capturing.is_some() {
             return Err(SimError::Invalid {
                 why: "nested graph capture",
@@ -3303,11 +4122,14 @@ impl Sim {
         Ok(CaptureInto { graph, deps: extra })
     }
 
+    /// `cudaStreamEndCapture`.
+    ///
     /// Finish capture. The graph is empty of side effects until [`Self::launch_graph`].
     ///
     /// Appends recorded nodes onto the graph from [`Self::begin_capture`] /
     /// [`Self::begin_capture_to_graph`] and returns that id. Recapture updates
     /// existing nodes in place and does not append.
+    /// Driver `cuStreamEndCapture` is [`Self::stream_end_capture`].
     pub fn end_capture(&mut self) -> Result<GraphId, SimError> {
         let Some(cap) = self.capturing.take() else {
             return Err(SimError::Invalid {
@@ -3321,6 +4143,15 @@ impl Sim {
         self.append_captured(cap.into, steps, cap.mem_allocs, cap.extra_abs)
     }
 
+    /// `cuStreamEndCapture`. Identity with
+    /// [`Self::end_capture`] (`cudaStreamEndCapture`).
+    ///
+    /// Without begin refused. Distinct from
+    /// [`Self::stream_begin_recapture_to_graph_with_callback`].
+    pub fn stream_end_capture(&mut self) -> Result<GraphId, SimError> {
+        self.end_capture()
+    }
+
     /// `cudaStreamUpdateCaptureDependencies`: extra deps for the next captured
     /// node on this stream, **in addition to** stream-order (not instead of).
     ///
@@ -3330,7 +4161,9 @@ impl Sim {
     /// replaces the pending set; [`CaptureDepOp::Add`] unions. The pending set
     /// is consumed by the next captured submit on this stream. The stream must
     /// be in the capture set. Same-stream independent children still need
-    /// separate [`Self::begin_capture_to_graph`] sessions.
+    /// separate [`Self::begin_capture_to_graph`] sessions. Driver
+    /// `cuStreamUpdateCaptureDependencies` is
+    /// [`Self::update_stream_capture_dependencies`].
     pub fn stream_update_capture_dependencies(
         &mut self,
         device: DeviceId,
@@ -3382,13 +4215,56 @@ impl Sim {
         Ok(())
     }
 
+    /// `cuStreamUpdateCaptureDependencies`. Identity with
+    /// [`Self::stream_update_capture_dependencies`] (`cudaStreamUpdateCaptureDependencies`).
+    ///
+    /// Not capturing refused. Distinct from
+    /// [`Self::stream_end_capture`].
+    pub fn update_stream_capture_dependencies(
+        &mut self,
+        device: DeviceId,
+        stream: StreamId,
+        deps: &[usize],
+        mode: CaptureDepOp,
+    ) -> Result<(), SimError> {
+        self.stream_update_capture_dependencies(device, stream, deps, mode)
+    }
+
     /// `cudaStreamIsCapturing`.
+    ///
+    /// Driver `cuStreamIsCapturing` is [`Self::is_stream_capturing`].
     #[must_use]
     pub fn stream_is_capturing(&self, device: DeviceId, stream: StreamId) -> bool {
         self.in_capture(device, stream)
     }
 
+    /// `cuStreamIsCapturing`. Identity with
+    /// [`Self::stream_is_capturing`] (`cudaStreamIsCapturing`).
+    ///
+    /// Query; legal during capture. Distinct from
+    /// [`Self::update_stream_capture_dependencies`].
+    #[must_use]
+    pub fn is_stream_capturing(&self, device: DeviceId, stream: StreamId) -> bool {
+        self.stream_is_capturing(device, stream)
+    }
+
+    /// `cuStreamGetCaptureInfo`. Identity with
+    /// [`Self::stream_capture_info`] (`cudaStreamGetCaptureInfo`).
+    ///
+    /// Query; legal during capture. Distinct from
+    /// [`Self::is_stream_capturing`].
+    #[must_use]
+    pub fn get_stream_capture_info(
+        &self,
+        device: DeviceId,
+        stream: StreamId,
+    ) -> Option<StreamCaptureInfo> {
+        self.stream_capture_info(device, stream)
+    }
+
     /// `cudaStreamGetCaptureInfo`. `None` if this stream is not capturing.
+    ///
+    /// Driver `cuStreamGetCaptureInfo` is [`Self::get_stream_capture_info`].
     ///
     /// `pending_deps` are extra [`Self::stream_update_capture_dependencies`]
     /// indices not yet consumed (not stream-order predecessors).
@@ -3441,6 +4317,9 @@ impl Sim {
 
     /// `cudaThreadExchangeStreamCaptureMode`. Returns the previous default.
     ///
+    /// Driver `cuThreadExchangeStreamCaptureMode` is
+    /// [`Self::exchange_thread_stream_capture_mode`].
+    ///
     /// The next [`Self::begin_capture`] / [`Self::begin_capture_to_graph`] uses
     /// `mode`. An in-flight capture keeps the mode it started with.
     pub fn thread_exchange_stream_capture_mode(
@@ -3452,10 +4331,37 @@ impl Sim {
         prev
     }
 
-    /// Thread default [`StreamCaptureMode`] for [`Self::begin_capture`].
+    /// `cuThreadExchangeStreamCaptureMode`. Identity with
+    /// [`Self::thread_exchange_stream_capture_mode`] (`cudaThreadExchangeStreamCaptureMode`).
+    ///
+    /// Returns previous; legal during capture. Distinct from
+    /// [`Self::get_stream_capture_info`].
+    pub fn exchange_thread_stream_capture_mode(
+        &mut self,
+        mode: StreamCaptureMode,
+    ) -> StreamCaptureMode {
+        self.thread_exchange_stream_capture_mode(mode)
+    }
+
+    /// Thread default `cudaStreamCaptureMode` for [`Self::begin_capture`].
+    ///
+    /// Query identity is [`Self::get_stream_capture_mode`]. CUDA has no
+    /// `cuStreamGetCaptureMode`; exchanging is
+    /// [`Self::exchange_thread_stream_capture_mode`].
     #[must_use]
     pub fn stream_capture_mode(&self) -> StreamCaptureMode {
         self.capture_mode
+    }
+
+    /// Thread-default `cudaStreamCaptureMode` query. Identity with
+    /// [`Self::stream_capture_mode`].
+    ///
+    /// Query; legal during capture. Distinct from
+    /// [`Self::exchange_thread_stream_capture_mode`]. CUDA has no
+    /// `cuStreamGetCaptureMode`.
+    #[must_use]
+    pub fn get_stream_capture_mode(&self) -> StreamCaptureMode {
+        self.stream_capture_mode()
     }
 
     fn append_captured(
@@ -3544,7 +4450,9 @@ impl Sim {
     /// [`Self::upload_graph`] is skipped while any stream is capturing (host-sync
     /// upload cannot run during capture); the live launch still enqueues.
     /// Destroying an in-flight exec does not abort this launch
-    /// (`cudaGraphExecDestroy`). Host SetParams during this launch stay.
+    /// (`cudaGraphExecDestroy`). Host SetParams during this launch stay. Driver
+    /// `cuGraphLaunch` is
+    /// [`Self::graph_launch`].
     pub fn launch_graph(&mut self, graph: GraphId, stream: StreamId) -> Result<u32, SimError> {
         self.require_not_moved(graph)?;
         let (origin, ready) = {
@@ -3563,6 +4471,11 @@ impl Sim {
             }
             (g.origin, g.ready())
         };
+        if stream.is_device_graph_stream() {
+            return Err(SimError::Invalid {
+                why: "device launch stream",
+            });
+        }
         if self.in_capture(origin.0, stream) {
             return self.capture_child_graph(graph, origin.0, stream, ready);
         }
@@ -3592,6 +4505,15 @@ impl Sim {
         let n = self.enqueue_graph(exec, stream, true, &mut stack, extra)?;
         self.pin_host_launch_tail(exec, stream, n)?;
         Ok(n)
+    }
+
+    /// `cuGraphLaunch`. Identity with
+    /// [`Self::launch_graph`] (`cudaGraphLaunch`).
+    ///
+    /// Live host launch. Capture records a child graph. Distinct from
+    /// [`Self::device_launch_graph`].
+    pub fn graph_launch(&mut self, graph: GraphId, stream: StreamId) -> Result<u32, SimError> {
+        self.launch_graph(graph, stream)
     }
 
     /// Record launch-stream tails after a live host launch. Empty launches
@@ -3653,6 +4575,30 @@ impl Sim {
     /// while that work is in flight are Invalid `"device launch in flight"`.
     /// Capture cannot include it. [`Self::update_graph`] of a device-launch
     /// exec is Invalid.
+    ///
+    /// [`StreamId::GRAPH_FIRE_AND_FORGET`] and [`StreamId::GRAPH_TAIL_LAUNCH`]
+    /// are CUDA `cudaStreamGraphFireAndForget` and `cudaStreamGraphTailLaunch`.
+    /// They require a host-issued device launch in flight on the exec origin
+    /// device (`"no current graph exec"`). Fire-and-forget submits on an
+    /// internal stream so concurrent FAF launches do not serialize with each
+    /// other or the parent body. The parent host stream waits for those FAF
+    /// bodies ([`Self::synchronize_stream`]). Tail launch is queued until the
+    /// parent instance plus those FAF children complete, then submitted on
+    /// the parent host stream. The returned [`OpId`] for a tail launch is the
+    /// parent's in-flight tail (already submitted), not a new op. A second
+    /// tail on that instance is Invalid `"device launch tail"`. Self
+    /// tail-relaunch of the in-flight exec is legal. Host
+    /// [`Self::launch_graph`] of those ids is Invalid `"device launch stream"`.
+    /// [`StreamId::GRAPH_FIRE_AND_FORGET_AS_SIBLING`] is CUDA
+    /// `cudaStreamGraphFireAndForgetAsSibling`: same nested launch, but the
+    /// parent instance does not wait (no join on the parent host stream; tail
+    /// launch does not wait for the sibling).
+    /// [`Self::current_graph_exec`] still returns the lowest in-flight
+    /// DeviceLaunch id (including FAF children and siblings).
+    /// [`DeviceLimit::DevRuntimePendingLaunchCount`] caps how many of those
+    /// launches may be in flight (`"pending launch count"`). Driver
+    /// device-side `cuGraphLaunch` is
+    /// [`Self::launch_device_graph`].
     pub fn device_launch_graph(
         &mut self,
         graph: GraphId,
@@ -3681,19 +4627,319 @@ impl Sim {
                 why: "graph not uploaded",
             });
         }
-        if tail.is_some_and(|id| !self.op_done(id)) {
+        if stream == StreamId::GRAPH_FIRE_AND_FORGET {
+            return self.device_fire_and_forget(exec, device);
+        }
+        if stream == StreamId::GRAPH_FIRE_AND_FORGET_AS_SIBLING {
+            return self.device_fire_and_forget_as_sibling(exec, device);
+        }
+        if stream == StreamId::GRAPH_TAIL_LAUNCH {
+            return self.device_tail_launch(exec, device);
+        }
+        self.require_live_stream(device, stream)?;
+        if tail.is_some_and(|id| !self.op_done(id)) || self.device_tail_queued(exec) {
             return Err(SimError::Invalid {
                 why: "device launch in flight",
             });
         }
+        self.require_pending_launch_slot(device)?;
         let id = self.submit(device, stream, Kind::DeviceLaunch { graph: exec })?;
-        self.graphs
-            .get_mut(&exec)
-            .ok_or(SimError::Invalid {
-                why: "unknown graph",
-            })?
-            .device_launch_tail = Some(id);
+        let g = self.graphs.get_mut(&exec).ok_or(SimError::Invalid {
+            why: "unknown graph",
+        })?;
+        g.device_launch_tail = Some(id);
+        g.device_launch_stream = Some(stream);
+        g.device_launch_root = true;
+        g.device_faf.clear();
+        g.device_tail_child = None;
         Ok(id)
+    }
+
+    /// Device-side `cuGraphLaunch`. Identity with
+    /// [`Self::device_launch_graph`] (device-side `cudaGraphLaunch`).
+    ///
+    /// Capture refused. Distinct from
+    /// [`Self::graph_launch`].
+    pub fn launch_device_graph(
+        &mut self,
+        graph: GraphId,
+        stream: StreamId,
+    ) -> Result<OpId, SimError> {
+        self.device_launch_graph(graph, stream)
+    }
+
+    fn device_tail_queued(&self, exec: GraphId) -> bool {
+        self.graphs
+            .values()
+            .any(|p| p.device_tail_child == Some(exec))
+    }
+
+    fn current_host_device_exec(&self, device: DeviceId) -> Option<GraphId> {
+        self.graphs.iter().find_map(|(&id, g)| {
+            (g.origin.0 == device
+                && g.device_launch_root
+                && g.device_launch_tail.is_some_and(|tail| !self.op_done(tail)))
+            .then_some(id)
+        })
+    }
+
+    fn device_pending_launches(&self, device: DeviceId) -> u64 {
+        let n = self
+            .graphs
+            .values()
+            .filter(|g| {
+                g.origin.0 == device && g.device_launch_tail.is_some_and(|t| !self.op_done(t))
+            })
+            .count();
+        u64::try_from(n).unwrap_or(u64::MAX)
+    }
+
+    fn require_pending_launch_slot(&self, device: DeviceId) -> Result<(), SimError> {
+        let cap = self.gpu_rt(device)?.limits.pending_launch;
+        if self.device_pending_launches(device) >= cap {
+            Err(SimError::Invalid {
+                why: "pending launch count",
+            })
+        } else {
+            Ok(())
+        }
+    }
+
+    fn device_fire_and_forget(
+        &mut self,
+        exec: GraphId,
+        device: DeviceId,
+    ) -> Result<OpId, SimError> {
+        let parent = self
+            .current_host_device_exec(device)
+            .ok_or(SimError::Invalid {
+                why: "no current graph exec",
+            })?;
+        if parent == exec
+            || self
+                .graphs
+                .get(&exec)
+                .is_some_and(|g| g.device_launch_tail.is_some_and(|id| !self.op_done(id)))
+            || self.device_tail_queued(exec)
+        {
+            return Err(SimError::Invalid {
+                why: "device launch in flight",
+            });
+        }
+        self.require_pending_launch_slot(device)?;
+        let join = self
+            .graphs
+            .get(&parent)
+            .and_then(|g| g.device_launch_stream)
+            .ok_or(SimError::Invalid {
+                why: "no current graph exec",
+            })?;
+        let stream = self.alloc_anon_stream();
+        let id = self.submit_live_with_deps(
+            device,
+            stream,
+            Kind::DeviceLaunch { graph: exec },
+            LaunchCost::Kernel,
+            Vec::new(),
+        )?;
+        self.graph_joins.entry((device, join)).or_default().push(id);
+        if let Some(p) = self.graphs.get_mut(&parent) {
+            p.device_faf.push(id);
+        }
+        let g = self.graphs.get_mut(&exec).ok_or(SimError::Invalid {
+            why: "unknown graph",
+        })?;
+        g.device_launch_tail = Some(id);
+        g.device_launch_stream = Some(join);
+        g.device_launch_root = false;
+        g.device_faf.clear();
+        g.device_tail_child = None;
+        Ok(id)
+    }
+
+    fn device_fire_and_forget_as_sibling(
+        &mut self,
+        exec: GraphId,
+        device: DeviceId,
+    ) -> Result<OpId, SimError> {
+        let parent = self
+            .current_host_device_exec(device)
+            .ok_or(SimError::Invalid {
+                why: "no current graph exec",
+            })?;
+        if parent == exec
+            || self
+                .graphs
+                .get(&exec)
+                .is_some_and(|g| g.device_launch_tail.is_some_and(|id| !self.op_done(id)))
+            || self.device_tail_queued(exec)
+        {
+            return Err(SimError::Invalid {
+                why: "device launch in flight",
+            });
+        }
+        self.require_pending_launch_slot(device)?;
+        let stream = self.alloc_anon_stream();
+        let id = self.submit_live_with_deps(
+            device,
+            stream,
+            Kind::DeviceLaunch { graph: exec },
+            LaunchCost::Kernel,
+            Vec::new(),
+        )?;
+        let g = self.graphs.get_mut(&exec).ok_or(SimError::Invalid {
+            why: "unknown graph",
+        })?;
+        g.device_launch_tail = Some(id);
+        g.device_launch_stream = Some(stream);
+        g.device_launch_root = false;
+        g.device_faf.clear();
+        g.device_tail_child = None;
+        Ok(id)
+    }
+
+    fn device_tail_launch(&mut self, exec: GraphId, device: DeviceId) -> Result<OpId, SimError> {
+        let parent = self
+            .current_host_device_exec(device)
+            .ok_or(SimError::Invalid {
+                why: "no current graph exec",
+            })?;
+        if self
+            .graphs
+            .get(&parent)
+            .is_some_and(|g| g.device_tail_child.is_some())
+        {
+            return Err(SimError::Invalid {
+                why: "device launch tail",
+            });
+        }
+        if parent != exec
+            && (self
+                .graphs
+                .get(&exec)
+                .is_some_and(|g| g.device_launch_tail.is_some_and(|id| !self.op_done(id)))
+                || self.device_tail_queued(exec))
+        {
+            return Err(SimError::Invalid {
+                why: "device launch in flight",
+            });
+        }
+        let token = self
+            .graphs
+            .get(&parent)
+            .and_then(|g| g.device_launch_tail)
+            .ok_or(SimError::Invalid {
+                why: "no current graph exec",
+            })?;
+        if let Some(p) = self.graphs.get_mut(&parent) {
+            p.device_tail_child = Some(exec);
+        }
+        Ok(token)
+    }
+
+    fn alloc_anon_stream(&mut self) -> StreamId {
+        loop {
+            let s = StreamId(self.next_anon_stream);
+            self.next_anon_stream = self.next_anon_stream.saturating_add(1);
+            if self.next_anon_stream < 0x8000 || self.next_anon_stream >= 0x9000 {
+                self.next_anon_stream = 0x8000;
+            }
+            if !s.is_device_graph_stream() && s != StreamId::GREEN_CTX_SYNC && s != StreamId::NULL {
+                return s;
+            }
+        }
+    }
+
+    fn device_instance_complete(&self, exec: GraphId) -> bool {
+        let Some(g) = self.graphs.get(&exec) else {
+            return false;
+        };
+        let Some(tail) = g.device_launch_tail else {
+            return false;
+        };
+        if !self.op_done(tail) {
+            return false;
+        }
+        g.device_faf.iter().all(|id| {
+            if !self.op_done(*id) {
+                return false;
+            }
+            let Some(op) = self.ops.get(id) else {
+                return true;
+            };
+            let Kind::DeviceLaunch { graph } = &op.kind else {
+                return true;
+            };
+            self.graphs
+                .get(graph)
+                .is_none_or(|c| c.device_launch_tail.is_none_or(|t| self.op_done(t)))
+        })
+    }
+
+    fn flush_device_tail_launches(&mut self) -> Result<(), SimError> {
+        let ready: Vec<(GraphId, GraphId, DeviceId, StreamId)> = self
+            .graphs
+            .iter()
+            .filter_map(|(&parent, g)| {
+                if !self.device_instance_complete(parent) {
+                    return None;
+                }
+                let child = g.device_tail_child?;
+                let stream = g.device_launch_stream?;
+                Some((parent, child, g.origin.0, stream))
+            })
+            .collect();
+        for (parent, child, device, stream) in ready {
+            self.require_pending_launch_slot(device)?;
+            if let Some(g) = self.graphs.get_mut(&parent) {
+                g.device_tail_child = None;
+                g.device_faf.clear();
+            }
+            let deps = self.stream_order_deps(device, stream);
+            let id = self.submit_live_with_deps(
+                device,
+                stream,
+                Kind::DeviceLaunch { graph: child },
+                LaunchCost::Kernel,
+                deps,
+            )?;
+            let g = self.graphs.get_mut(&child).ok_or(SimError::Invalid {
+                why: "unknown graph",
+            })?;
+            g.device_launch_tail = Some(id);
+            g.device_launch_stream = Some(stream);
+            g.device_launch_root = true;
+            g.device_faf.clear();
+            g.device_tail_child = None;
+        }
+        Ok(())
+    }
+
+    /// `cudaGetCurrentGraphExec` analog: the DeviceLaunch executable in
+    /// flight on `device`, if any.
+    ///
+    /// Host [`Self::launch_graph`] does not count. Query; legal during
+    /// capture. Unknown devices are Invalid. Concurrent in-flight
+    /// DeviceLaunch execs on one GPU return the lowest [`GraphId`]. A
+    /// parked in-flight destroy still reports that exec until the launch
+    /// tail completes. Driver
+    /// `cuGetCurrentGraphExec` is
+    /// [`Self::get_current_graph_exec`].
+    pub fn current_graph_exec(&self, device: DeviceId) -> Result<Option<GraphId>, SimError> {
+        let _gpu = self.profile.gpu(device)?;
+        Ok(self.graphs.iter().find_map(|(&id, g)| {
+            (g.origin.0 == device && g.device_launch_tail.is_some_and(|tail| !self.op_done(tail)))
+                .then_some(id)
+        }))
+    }
+
+    /// `cuGetCurrentGraphExec`. Identity with
+    /// [`Self::current_graph_exec`] (`cudaGetCurrentGraphExec`).
+    ///
+    /// Query; legal during capture. Distinct from
+    /// [`Self::launch_device_graph`].
+    pub fn get_current_graph_exec(&self, device: DeviceId) -> Result<Option<GraphId>, SimError> {
+        self.current_graph_exec(device)
     }
 
     fn reset_graph_tree_conds(&mut self, root: GraphId) -> Result<(), SimError> {
@@ -4182,17 +5428,41 @@ impl Sim {
     /// Matches the id printed by [`Self::graph_debug_dot_with_flags`] with
     /// [`GraphDebugDotFlags::HANDLES`]. Distinct from node indices. A
     /// definition, its instantiate exec, and a clone each have their own id.
-    /// Unknown graphs are Invalid `"unknown graph"`.
+    /// Unknown graphs are Invalid `"unknown graph"`. Driver
+    /// `cuGraphGetId` is
+    /// [`Self::get_graph_id`]. Driver
+    /// `cuGraphExecGetId` is
+    /// [`Self::get_graph_exec_id`].
     pub fn graph_get_id(&self, graph: GraphId) -> Result<u32, SimError> {
         self.require_live_graph(graph)?;
         Ok(graph.0)
+    }
+
+    /// `cuGraphGetId`. Identity with
+    /// [`Self::graph_get_id`] (`cudaGraphGetId`).
+    ///
+    /// Query; legal during capture. Distinct from
+    /// [`Self::get_graph_exec_flags`].
+    pub fn get_graph_id(&self, graph: GraphId) -> Result<u32, SimError> {
+        self.graph_get_id(graph)
+    }
+
+    /// `cuGraphExecGetId`. Identity with
+    /// [`Self::graph_get_id`] (`cudaGraphExecGetId`).
+    ///
+    /// Query; legal during capture. Distinct from
+    /// [`Self::get_graph_id`].
+    pub fn get_graph_exec_id(&self, exec: GraphId) -> Result<u32, SimError> {
+        self.graph_get_id(exec)
     }
 
     /// `cudaGraphGetNodes` — live node indices in creation order.
     ///
     /// Query; legal during capture. During capture this is the destination
     /// graph only. [`Self::graph_destroy_node`] tombstones a slot, so this may
-    /// skip indices; [`Self::graph_len`] stays the add-order bound.
+    /// skip indices; [`Self::graph_len`] stays the add-order bound. Driver
+    /// `cuGraphGetNodes` is
+    /// [`Self::get_graph_nodes`].
     pub fn graph_nodes(&self, graph: GraphId) -> Result<Vec<usize>, SimError> {
         let g = self.live_graph(graph)?;
         Ok(g.steps
@@ -4201,6 +5471,15 @@ impl Sim {
             .filter(|(_, s)| !s.destroyed)
             .map(|(i, _)| i)
             .collect())
+    }
+
+    /// `cuGraphGetNodes`. Identity with
+    /// [`Self::graph_nodes`] (`cudaGraphGetNodes`).
+    ///
+    /// Query; legal during capture. Distinct from
+    /// [`Self::graph_root_nodes`].
+    pub fn get_graph_nodes(&self, graph: GraphId) -> Result<Vec<usize>, SimError> {
+        self.graph_nodes(graph)
     }
 
     /// Whether [`Self::instantiate_graph`] (or a first launch) has created an exec.
@@ -4248,9 +5527,20 @@ impl Sim {
     /// IF / WHILE / SWITCH node
     /// ([`GraphInstantiateResult::ConditionalHandleUnused`]).
     /// A parked in-flight-destroyed exec is `"unknown graph"`. Instantiating
-    /// the definition after that exec is parked creates a new exec.
+    /// the definition after that exec is parked creates a new exec. Driver
+    /// `cuGraphInstantiate` is
+    /// [`Self::graph_instantiate`].
     pub fn instantiate_graph(&mut self, graph: GraphId) -> Result<GraphId, SimError> {
         self.instantiate_graph_with_flags(graph, 0)
+    }
+
+    /// `cuGraphInstantiate`. Identity with
+    /// [`Self::instantiate_graph`] (`cudaGraphInstantiate`).
+    ///
+    /// Host-synchronous. Capture refused. Distinct from
+    /// [`Self::instantiate_graph_with_flags`].
+    pub fn graph_instantiate(&mut self, graph: GraphId) -> Result<GraphId, SimError> {
+        self.instantiate_graph(graph)
     }
 
     /// `cudaGraphInstantiate` with `cudaGraphInstantiateFlagAutoFreeOnLaunch`.
@@ -4288,7 +5578,9 @@ impl Sim {
     /// [`GraphInstantiateFlags::DEVICE_LAUNCH`] cannot combine
     /// with [`GraphInstantiateFlags::AUTO_FREE_ON_LAUNCH`] (Invalid
     /// `"device launch auto free"`). Instantiating an exec id is a no-op when
-    /// `flags` adds no new bits.
+    /// `flags` adds no new bits. Driver
+    /// `cuGraphInstantiateWithFlags` is
+    /// [`Self::graph_instantiate_with_flags`].
     pub fn instantiate_graph_with_flags(
         &mut self,
         graph: GraphId,
@@ -4299,6 +5591,19 @@ impl Sim {
             ..GraphInstantiateParams::default()
         };
         self.instantiate_graph_with_params(graph, &mut params)
+    }
+
+    /// `cuGraphInstantiateWithFlags`. Identity with
+    /// [`Self::instantiate_graph_with_flags`] (`cudaGraphInstantiateWithFlags`).
+    ///
+    /// Host-synchronous. Capture refused. Distinct from
+    /// [`Self::graph_instantiate`].
+    pub fn graph_instantiate_with_flags(
+        &mut self,
+        graph: GraphId,
+        flags: u32,
+    ) -> Result<GraphId, SimError> {
+        self.instantiate_graph_with_flags(graph, flags)
     }
 
     /// `cudaGraphInstantiateWithParams`. Instantiate is host-synchronous.
@@ -4313,6 +5618,8 @@ impl Sim {
     /// [`GraphInstantiateFlags::UPLOAD`], `Some` enqueues
     /// [`Self::upload_graph_async`] (uploaded when that op completes); `None`
     /// stays host-sync [`Self::upload_graph`]. Ignored when UPLOAD is unset.
+    /// Driver `cuGraphInstantiateWithParams` is
+    /// [`Self::graph_instantiate_with_params`].
     pub fn instantiate_graph_with_params(
         &mut self,
         graph: GraphId,
@@ -4337,17 +5644,41 @@ impl Sim {
         Ok(exec)
     }
 
+    /// `cuGraphInstantiateWithParams`. Identity with
+    /// [`Self::instantiate_graph_with_params`] (`cudaGraphInstantiateWithParams`).
+    ///
+    /// Host-synchronous. Capture refused. Distinct from
+    /// [`Self::graph_instantiate_with_flags`].
+    pub fn graph_instantiate_with_params(
+        &mut self,
+        graph: GraphId,
+        params: &mut GraphInstantiateParams,
+    ) -> Result<GraphId, SimError> {
+        self.instantiate_graph_with_params(graph, params)
+    }
+
     /// `cudaGraphExecGetFlags` on an instantiated exec (or a definition's primary).
     ///
     /// Capture is allowed. Uninstantiated graphs are Invalid.
     /// [`GraphInstantiateFlags::UPLOAD`] is omitted: it does not affect the
-    /// resulting executable graph.
+    /// resulting executable graph. Driver
+    /// `cuGraphExecGetFlags` is
+    /// [`Self::get_graph_exec_flags`].
     pub fn graph_exec_get_flags(&self, exec: GraphId) -> Result<u32, SimError> {
         let exec = self.as_exec(exec)?;
         let g = self.graphs.get(&exec).ok_or(SimError::Invalid {
             why: "unknown graph",
         })?;
         Ok(g.instantiate_flags & !GraphInstantiateFlags::UPLOAD)
+    }
+
+    /// `cuGraphExecGetFlags`. Identity with
+    /// [`Self::graph_exec_get_flags`] (`cudaGraphExecGetFlags`).
+    ///
+    /// Query; legal during capture. Distinct from
+    /// [`Self::instantiate_graph_with_flags`].
+    pub fn get_graph_exec_flags(&self, exec: GraphId) -> Result<u32, SimError> {
+        self.graph_exec_get_flags(exec)
     }
 
     fn check_instantiate_flags(flags: u32) -> Result<(), SimError> {
@@ -4536,6 +5867,10 @@ impl Sim {
                 auto_free_on_launch: auto_free,
                 instantiate_flags: flags,
                 device_launch_tail: None,
+                device_launch_stream: None,
+                device_launch_root: false,
+                device_faf: Vec::new(),
+                device_tail_child: None,
                 host_launch_tails: Vec::new(),
                 handle_gone: false,
                 primary_exec: None,
@@ -4657,7 +5992,9 @@ impl Sim {
     /// clears the flag so the next launch uploads again. Stream-ordered upload
     /// is [`Self::upload_graph_async`]. Host upload of a DeviceLaunch exec while
     /// [`Self::device_launch_graph`] is in flight is Invalid
-    /// `"device launch in flight"`.
+    /// `"device launch in flight"`. Driver
+    /// `cuGraphUpload` is
+    /// [`Self::graph_upload`].
     pub fn upload_graph(&mut self, graph: GraphId) -> Result<(), SimError> {
         self.fail_if_capturing("cannot capture graph upload")?;
         let exec = self.as_exec(graph)?;
@@ -4683,6 +6020,15 @@ impl Sim {
         Ok(())
     }
 
+    /// `cuGraphUpload`. Identity with
+    /// [`Self::upload_graph`] (`cudaGraphUpload`).
+    ///
+    /// Host-synchronous. Capture refused. Distinct from
+    /// [`Self::upload_graph_async`].
+    pub fn graph_upload(&mut self, graph: GraphId) -> Result<(), SimError> {
+        self.upload_graph(graph)
+    }
+
     /// `cudaGraphUpload` on `stream`. Stream-ordered; capture cannot include it.
     ///
     /// Completes after `graph_upload_ns` (Solo; does not occupy compute or copy
@@ -4693,7 +6039,9 @@ impl Sim {
     /// of an exec with this op still in flight does not abort the upload
     /// (`cudaGraphExecDestroy`). Host upload of a DeviceLaunch exec while
     /// [`Self::device_launch_graph`] is in flight is Invalid
-    /// `"device launch in flight"`. No Engine `--graph-upload-stream`.
+    /// `"device launch in flight"`. No Engine `--graph-upload-stream`. Driver
+    /// `cuGraphUpload` on a stream is
+    /// [`Self::graph_upload_async`].
     pub fn upload_graph_async(
         &mut self,
         device: DeviceId,
@@ -4717,6 +6065,20 @@ impl Sim {
             });
         }
         self.submit(device, stream, Kind::GraphUpload { exec })
+    }
+
+    /// `cuGraphUpload` on a stream. Identity with
+    /// [`Self::upload_graph_async`] (`cudaGraphUpload` on `stream`).
+    ///
+    /// Stream-ordered. Capture refused. Distinct from
+    /// [`Self::graph_upload`].
+    pub fn graph_upload_async(
+        &mut self,
+        device: DeviceId,
+        stream: StreamId,
+        graph: GraphId,
+    ) -> Result<OpId, SimError> {
+        self.upload_graph_async(device, stream, graph)
     }
 
     fn pending_graph_upload(&self, exec: GraphId) -> Option<OpId> {
@@ -4762,10 +6124,21 @@ impl Sim {
     /// Invalid `"exec in flight"`. Host SetParams of that exec stay.
     /// [`GraphInstantiateFlags::DEVICE_LAUNCH`] update stays NotSupported.
     /// A parked in-flight-destroyed exec used as `src` is `"unknown graph"`.
-    /// Live exec as `src` stays. Definition `src` stays.
+    /// Live exec as `src` stays. Definition `src` stays. Driver
+    /// `cuGraphExecUpdate` is
+    /// [`Self::graph_exec_update`].
     pub fn update_graph(&mut self, exec: GraphId, src: GraphId) -> Result<(), SimError> {
         let mut info = GraphExecUpdateResultInfo::default();
         self.update_graph_with_info(exec, src, &mut info)
+    }
+
+    /// `cuGraphExecUpdate`. Identity with
+    /// [`Self::update_graph`] (`cudaGraphExecUpdate`).
+    ///
+    /// Host-synchronous. Capture refused. Distinct from
+    /// [`Self::update_graph_with_info`].
+    pub fn graph_exec_update(&mut self, exec: GraphId, src: GraphId) -> Result<(), SimError> {
+        self.update_graph(exec, src)
     }
 
     /// `cudaGraphExecUpdate` with [`GraphExecUpdateResultInfo`].
@@ -4773,7 +6146,9 @@ impl Sim {
     /// Fills `info` even when this returns `Err`. Success is
     /// [`GraphExecUpdateResult::Success`] with both node fields `None`.
     /// [`Self::update_graph`] keeps the same `why` strings.
-    /// A parked in-flight-destroyed exec used as `src` is `"unknown graph"`.
+    /// A parked in-flight-destroyed exec used as `src` is `"unknown graph"`. Driver
+    /// `cuGraphExecUpdate` with info is
+    /// [`Self::graph_exec_update_with_info`].
     pub fn update_graph_with_info(
         &mut self,
         exec: GraphId,
@@ -4906,6 +6281,21 @@ impl Sim {
         Ok(())
     }
 
+    /// `cuGraphExecUpdate` with info. Identity with
+    /// [`Self::update_graph_with_info`] (`cudaGraphExecUpdate` with
+    /// [`GraphExecUpdateResultInfo`]).
+    ///
+    /// Host-synchronous. Capture refused. Distinct from
+    /// [`Self::graph_exec_update`].
+    pub fn graph_exec_update_with_info(
+        &mut self,
+        exec: GraphId,
+        src: GraphId,
+        info: &mut GraphExecUpdateResultInfo,
+    ) -> Result<(), SimError> {
+        self.update_graph_with_info(exec, src, info)
+    }
+
     fn update_graph_pair(
         &self,
         exec: GraphId,
@@ -4940,7 +6330,8 @@ impl Sim {
     /// execs re-apply instantiate mixed-ctx rules (Invalid `"graph multiple
     /// ctx"`) and kernel-buffer dest rules (Invalid `"device launch instantiate
     /// flag"`). Graphs with mem alloc/free nodes are legal (unlike
-    /// [`Self::update_graph`]).
+    /// [`Self::update_graph`]). Driver `cuGraphExecKernelNodeSetParams` is
+    /// [`Self::set_graph_exec_kernel_node_params`].
     pub fn graph_exec_kernel_set_params(
         &mut self,
         exec: GraphId,
@@ -5019,6 +6410,20 @@ impl Sim {
         Ok(())
     }
 
+    /// `cuGraphExecKernelNodeSetParams`. Identity with
+    /// [`Self::graph_exec_kernel_set_params`] (`cudaGraphExecKernelNodeSetParams`).
+    ///
+    /// Capture refused. Distinct from
+    /// [`Self::set_graph_kernel_node_params`].
+    pub fn set_graph_exec_kernel_node_params(
+        &mut self,
+        exec: GraphId,
+        node: usize,
+        params: &KernelNodeParams,
+    ) -> Result<(), SimError> {
+        self.graph_exec_kernel_set_params(exec, node, params)
+    }
+
     fn refuse_device_launch_exec_ctx(
         &self,
         target: GraphId,
@@ -5070,7 +6475,9 @@ impl Sim {
     /// must match (topology). [`KernelNodeParams::ctx`] and
     /// [`KernelNodeParams::shared_mem_bytes`] are parameters. Capture cannot
     /// include it. Host-sync 1 ns. A parked in-flight-destroyed exec is
-    /// `"unknown graph"`. Live exec SetParams stays.
+    /// `"unknown graph"`. Live exec SetParams stays. Driver
+    /// `cuGraphKernelNodeSetParams` is
+    /// [`Self::set_graph_kernel_node_params`].
     pub fn graph_kernel_set_params(
         &mut self,
         graph: GraphId,
@@ -5123,6 +6530,20 @@ impl Sim {
         Ok(())
     }
 
+    /// `cuGraphKernelNodeSetParams`. Identity with
+    /// [`Self::graph_kernel_set_params`] (`cudaGraphKernelNodeSetParams`).
+    ///
+    /// Capture refused. Distinct from
+    /// [`Self::get_graph_kernel_node_params`].
+    pub fn set_graph_kernel_node_params(
+        &mut self,
+        graph: GraphId,
+        node: usize,
+        params: &KernelNodeParams,
+    ) -> Result<(), SimError> {
+        self.graph_kernel_set_params(graph, node, params)
+    }
+
     /// `cudaGraphMemcpyNodeSetParams` on the graph definition.
     ///
     /// After instantiate this does not retarget the exec; use
@@ -5132,7 +6553,9 @@ impl Sim {
     /// 2D/3D node). [`Self::graph_memcpy_set_params_2d`] requires
     /// [`MemcpyOp::is_2d`]. [`Self::graph_memcpy_set_params_3d`] requires
     /// [`MemcpyOp::is_3d`]. A parked in-flight-destroyed exec is
-    /// `"unknown graph"`. Live exec SetParams stays.
+    /// `"unknown graph"`. Live exec SetParams stays. Driver
+    /// `cuGraphMemcpyNodeSetParams` is
+    /// [`Self::set_graph_memcpy_node_params`].
     pub fn graph_memcpy_set_params(
         &mut self,
         graph: GraphId,
@@ -5140,6 +6563,20 @@ impl Sim {
         op: &MemcpyOp,
     ) -> Result<(), SimError> {
         self.set_memcpy_op(graph, node, op, false, GreenCtxPatch::Keep, false)
+    }
+
+    /// `cuGraphMemcpyNodeSetParams`. Identity with
+    /// [`Self::graph_memcpy_set_params`] (`cudaGraphMemcpyNodeSetParams`).
+    ///
+    /// Capture refused. Distinct from
+    /// [`Self::get_graph_memcpy_node_params`].
+    pub fn set_graph_memcpy_node_params(
+        &mut self,
+        graph: GraphId,
+        node: usize,
+        op: &MemcpyOp,
+    ) -> Result<(), SimError> {
+        self.graph_memcpy_set_params(graph, node, op)
     }
 
     fn graph_memcpy_set_params_with_ctx(
@@ -5163,7 +6600,9 @@ impl Sim {
     /// Packs a 1D [`MemcpyOp`] ([`MemcpyOp::packed_1d`]). A 2D/3D node may
     /// become 1D. After instantiate this does not retarget the exec; use
     /// [`Self::graph_exec_memcpy_set_params_1d`]. Pageable copies stay illegal.
-    /// Capture cannot include it. Host-sync 1 ns.
+    /// Capture cannot include it. Host-sync 1 ns. Driver
+    /// graph `cudaGraphMemcpyNodeSetParams1D` is
+    /// [`Self::set_graph_memcpy_node_params_1d`].
     pub fn graph_memcpy_set_params_1d(
         &mut self,
         graph: GraphId,
@@ -5174,6 +6613,23 @@ impl Sim {
         bytes: u64,
     ) -> Result<(), SimError> {
         self.graph_memcpy_set_params(graph, node, &MemcpyOp::packed_1d(src, dst, alloc, bytes))
+    }
+
+    /// Graph `cudaGraphMemcpyNodeSetParams1D`. Identity with
+    /// [`Self::graph_memcpy_set_params_1d`] (`cudaGraphMemcpyNodeSetParams1D`).
+    ///
+    /// Capture refused. Distinct from
+    /// [`Self::set_graph_memcpy_node_params`].
+    pub fn set_graph_memcpy_node_params_1d(
+        &mut self,
+        graph: GraphId,
+        node: usize,
+        src: Place,
+        dst: Place,
+        alloc: AllocId,
+        bytes: u64,
+    ) -> Result<(), SimError> {
+        self.graph_memcpy_set_params_1d(graph, node, src, dst, alloc, bytes)
     }
 
     /// `cudaGraphMemcpyNodeSetParams` whose [`MemcpyOp`] is [`MemcpyOp::is_2d`]
@@ -5218,7 +6674,9 @@ impl Sim {
     /// packed 1D [`MemsetOp`]. [`Self::graph_memset_set_params_2d`] requires
     /// [`MemsetOp::is_2d`]. [`Self::graph_memset_set_params_3d`] requires
     /// [`MemsetOp::is_3d`]. A parked in-flight-destroyed exec is
-    /// `"unknown graph"`. Live exec SetParams stays.
+    /// `"unknown graph"`. Live exec SetParams stays. Driver
+    /// `cuGraphMemsetNodeSetParams` is
+    /// [`Self::set_graph_memset_node_params`].
     pub fn graph_memset_set_params(
         &mut self,
         graph: GraphId,
@@ -5226,6 +6684,20 @@ impl Sim {
         op: impl Into<MemsetOp>,
     ) -> Result<(), SimError> {
         self.set_memset_op(graph, node, op.into(), false, GreenCtxPatch::Keep, false)
+    }
+
+    /// `cuGraphMemsetNodeSetParams`. Identity with
+    /// [`Self::graph_memset_set_params`] (`cudaGraphMemsetNodeSetParams`).
+    ///
+    /// Capture refused. Distinct from
+    /// [`Self::get_graph_memset_node_params`].
+    pub fn set_graph_memset_node_params(
+        &mut self,
+        graph: GraphId,
+        node: usize,
+        op: &MemsetOp,
+    ) -> Result<(), SimError> {
+        self.graph_memset_set_params(graph, node, *op)
     }
 
     fn graph_memset_set_params_with_ctx(
@@ -5284,7 +6756,9 @@ impl Sim {
     /// [`Self::graph_exec_host_set_params`]. [`HostNodeParams::fn_id`] /
     /// [`HostNodeParams::user_data`] are parameters. Capture cannot include it.
     /// Host-sync 1 ns. A parked in-flight-destroyed exec is `"unknown graph"`.
-    /// Live exec SetParams stays.
+    /// Live exec SetParams stays. Driver
+    /// `cuGraphHostNodeSetParams` is
+    /// [`Self::set_graph_host_node_params`].
     pub fn graph_host_set_params(
         &mut self,
         graph: GraphId,
@@ -5322,6 +6796,20 @@ impl Sim {
         Ok(())
     }
 
+    /// `cuGraphHostNodeSetParams`. Identity with
+    /// [`Self::graph_host_set_params`] (`cudaGraphHostNodeSetParams`).
+    ///
+    /// Capture refused. Distinct from
+    /// [`Self::get_graph_host_node_params`].
+    pub fn set_graph_host_node_params(
+        &mut self,
+        graph: GraphId,
+        node: usize,
+        params: &HostNodeParams,
+    ) -> Result<(), SimError> {
+        self.graph_host_set_params(graph, node, *params)
+    }
+
     /// `cudaGraphMemFreeNodeSetParams` on the graph definition.
     ///
     /// After [`Self::instantiate_graph`], this does not retarget the exec
@@ -5329,6 +6817,8 @@ impl Sim {
     /// include it. Host-sync 1 ns. The node must already be a mem free node.
     /// [`Sim::graph_allocs`] stays the alloc-node ids. A parked
     /// in-flight-destroyed exec is `"unknown graph"` before unknown alloc.
+    /// Driver `cuGraphMemFreeNodeSetParams` is
+    /// [`Self::set_graph_free_node_params`].
     pub fn graph_free_set_params(
         &mut self,
         graph: GraphId,
@@ -5364,13 +6854,29 @@ impl Sim {
         Ok(())
     }
 
+    /// `cuGraphMemFreeNodeSetParams`. Identity with
+    /// [`Self::graph_free_set_params`] (`cudaGraphMemFreeNodeSetParams`).
+    ///
+    /// Host-synchronous. Capture refused. Distinct from
+    /// [`Self::graph_exec_free_set_params`].
+    pub fn set_graph_free_node_params(
+        &mut self,
+        graph: GraphId,
+        node: usize,
+        id: AllocId,
+    ) -> Result<(), SimError> {
+        self.graph_free_set_params(graph, node, id)
+    }
+
     /// `cudaGraphEventRecordNodeSetEvent` on the graph definition.
     ///
     /// After [`Self::instantiate_graph`], this does not retarget the exec
     /// snapshot; use [`Self::graph_exec_event_record_set_event`]. The External
     /// flag stays (topology). Capture cannot include it. Host-sync 1 ns.
     /// A parked in-flight-destroyed exec is `"unknown graph"` before
-    /// unknown event. Live exec SetParams stays.
+    /// unknown event. Live exec SetParams stays. Driver
+    /// `cuGraphEventRecordNodeSetEvent` is
+    /// [`Self::set_graph_event_record_node_event`].
     pub fn graph_event_record_set_event(
         &mut self,
         graph: GraphId,
@@ -5380,13 +6886,29 @@ impl Sim {
         self.graph_def_event_set(graph, node, event, EventSetKind::Record)
     }
 
+    /// `cuGraphEventRecordNodeSetEvent`. Identity with
+    /// [`Self::graph_event_record_set_event`] (`cudaGraphEventRecordNodeSetEvent`).
+    ///
+    /// Capture refused. Distinct from
+    /// [`Self::graph_event_record_get_event`].
+    pub fn set_graph_event_record_node_event(
+        &mut self,
+        graph: GraphId,
+        node: usize,
+        event: EventId,
+    ) -> Result<(), SimError> {
+        self.graph_event_record_set_event(graph, node, event)
+    }
+
     /// `cudaGraphEventWaitNodeSetEvent` on the graph definition.
     ///
     /// After instantiate this does not retarget the exec; use
     /// [`Self::graph_exec_event_wait_set_event`]. The External flag stays
     /// (topology). Capture cannot include it. Host-sync 1 ns. A parked
     /// in-flight-destroyed exec is `"unknown graph"` before unknown event.
-    /// Live exec SetParams stays.
+    /// Live exec SetParams stays. Driver
+    /// `cuGraphEventWaitNodeSetEvent` is
+    /// [`Self::set_graph_event_wait_node_event`].
     pub fn graph_event_wait_set_event(
         &mut self,
         graph: GraphId,
@@ -5394,6 +6916,20 @@ impl Sim {
         event: EventId,
     ) -> Result<(), SimError> {
         self.graph_def_event_set(graph, node, event, EventSetKind::Wait)
+    }
+
+    /// `cuGraphEventWaitNodeSetEvent`. Identity with
+    /// [`Self::graph_event_wait_set_event`] (`cudaGraphEventWaitNodeSetEvent`).
+    ///
+    /// Capture refused. Distinct from
+    /// [`Self::graph_event_wait_get_event`].
+    pub fn set_graph_event_wait_node_event(
+        &mut self,
+        graph: GraphId,
+        node: usize,
+        event: EventId,
+    ) -> Result<(), SimError> {
+        self.graph_event_wait_set_event(graph, node, event)
     }
 
     fn graph_def_event_set(
@@ -5457,7 +6993,9 @@ impl Sim {
     /// instantiated, on the same GPU. Nested topology may change (unlike
     /// ExecSetParams). Capture cannot include it. Host-sync 1 ns. A parked
     /// in-flight-destroyed exec is `"unknown graph"` as the parent or as
-    /// `child`. Live exec SetParams stays. Live exec as `child` stays.
+    /// `child`. Live exec SetParams stays. Live exec as `child` stays. Driver
+    /// `cuGraphChildGraphNodeSetParams` is
+    /// [`Self::set_graph_child_graph_node_params`].
     pub fn graph_child_set_params(
         &mut self,
         graph: GraphId,
@@ -5527,6 +7065,20 @@ impl Sim {
         Ok(())
     }
 
+    /// `cuGraphChildGraphNodeSetParams`. Identity with
+    /// [`Self::graph_child_set_params`] (`cudaGraphChildGraphNodeSetParams`).
+    ///
+    /// Capture refused. Distinct from
+    /// [`Self::get_graph_child_graph_node_graph`].
+    pub fn set_graph_child_graph_node_params(
+        &mut self,
+        graph: GraphId,
+        node: usize,
+        child: GraphId,
+    ) -> Result<(), SimError> {
+        self.graph_child_set_params(graph, node, child)
+    }
+
     /// `cudaGraphNodeSetParams` on the graph definition.
     ///
     /// Dispatches to the typed SetParams. [`GraphNodeParams::Alloc`] is Invalid
@@ -5536,7 +7088,9 @@ impl Sim {
     /// stay topology. After instantiate this does not retarget the exec; use
     /// [`Self::graph_exec_node_set_params`]. Capture cannot include it.
     /// A parked in-flight-destroyed exec is `"unknown graph"`. Live exec
-    /// SetParams stays.
+    /// SetParams stays. Driver
+    /// `cuGraphNodeSetParams` is
+    /// [`Self::set_graph_node_params`].
     pub fn graph_node_set_params(
         &mut self,
         graph: GraphId,
@@ -5544,6 +7098,20 @@ impl Sim {
         params: GraphNodeParams,
     ) -> Result<(), SimError> {
         self.set_node_params(graph, node, params, false)
+    }
+
+    /// `cuGraphNodeSetParams`. Identity with
+    /// [`Self::graph_node_set_params`] (`cudaGraphNodeSetParams`).
+    ///
+    /// Capture refused. Distinct from
+    /// [`Self::graph_exec_node_set_params`].
+    pub fn set_graph_node_params(
+        &mut self,
+        graph: GraphId,
+        node: usize,
+        params: &GraphNodeParams,
+    ) -> Result<(), SimError> {
+        self.graph_node_set_params(graph, node, params.clone())
     }
 
     /// `cudaGraphExecNodeSetParams` on an instantiated exec.
@@ -5554,7 +7122,9 @@ impl Sim {
     /// [`GraphNodeParams::Memcpy`] is 1-dimensional only (same as
     /// [`Self::graph_exec_memcpy_set_params`]). [`GraphNodeParams::Memset`] of
     /// a 2D/3D node may change address only (same as
-    /// [`Self::graph_exec_memset_set_params`]).
+    /// [`Self::graph_exec_memset_set_params`]). Driver
+    /// `cuGraphExecNodeSetParams` is
+    /// [`Self::set_graph_exec_node_params`].
     pub fn graph_exec_node_set_params(
         &mut self,
         exec: GraphId,
@@ -5562,6 +7132,20 @@ impl Sim {
         params: GraphNodeParams,
     ) -> Result<(), SimError> {
         self.set_node_params(exec, node, params, true)
+    }
+
+    /// `cuGraphExecNodeSetParams`. Identity with
+    /// [`Self::graph_exec_node_set_params`] (`cudaGraphExecNodeSetParams`).
+    ///
+    /// Capture refused. Distinct from
+    /// [`Self::set_graph_node_params`].
+    pub fn set_graph_exec_node_params(
+        &mut self,
+        exec: GraphId,
+        node: usize,
+        params: &GraphNodeParams,
+    ) -> Result<(), SimError> {
+        self.graph_exec_node_set_params(exec, node, params.clone())
     }
 
     fn set_node_params(
@@ -5730,7 +7314,9 @@ impl Sim {
     /// [`GraphNodeParams::Alloc`] is bytes plus accessDescs; the pointer is
     /// [`Self::graph_alloc_get_params`]. Empty returns [`GraphNodeParams::Empty`].
     /// A parked in-flight-destroyed exec is `"unknown graph"`. Live exec
-    /// GetParams stays. Query; capture is legal.
+    /// GetParams stays. Query; capture is legal. Driver
+    /// `cuGraphNodeGetParams` is
+    /// [`Self::get_graph_node_params`].
     pub fn graph_node_get_params(
         &self,
         graph: GraphId,
@@ -5739,16 +7325,46 @@ impl Sim {
         self.graph_node_params_of(self.graph_def_step(graph, node)?)
     }
 
+    /// `cuGraphNodeGetParams`. Identity with
+    /// [`Self::graph_node_get_params`] (`cudaGraphNodeGetParams`).
+    ///
+    /// Query; legal during capture. Distinct from
+    /// [`Self::graph_exec_node_get_params`].
+    pub fn get_graph_node_params(
+        &self,
+        graph: GraphId,
+        node: usize,
+    ) -> Result<GraphNodeParams, SimError> {
+        self.graph_node_get_params(graph, node)
+    }
+
     /// Exec-snapshot [`Self::graph_node_get_params`].
     ///
     /// Uninstantiated graphs are Invalid. After instantiate this is the
     /// launched node; [`Self::graph_node_get_params`] stays on the definition.
+    /// Driver
+    /// `cuGraphExecNodeGetParams` is
+    /// [`Self::get_graph_exec_node_params`].
     pub fn graph_exec_node_get_params(
         &self,
         exec: GraphId,
         node: usize,
     ) -> Result<GraphNodeParams, SimError> {
         self.graph_node_params_of(self.graph_exec_step(exec, node)?)
+    }
+
+    /// `cuGraphExecNodeGetParams`. Identity with
+    /// [`Self::graph_exec_node_get_params`] (`cudaGraphExecNodeGetParams`
+    /// of the exec snapshot).
+    ///
+    /// Query; legal during capture. Distinct from
+    /// [`Self::get_graph_node_params`].
+    pub fn get_graph_exec_node_params(
+        &self,
+        exec: GraphId,
+        node: usize,
+    ) -> Result<GraphNodeParams, SimError> {
+        self.graph_exec_node_get_params(exec, node)
     }
 
     fn graph_node_params_of(&self, step: &GraphStep) -> Result<GraphNodeParams, SimError> {
@@ -5803,7 +7419,9 @@ impl Sim {
     /// [`crate::GpuOp::BatchMem`] node treats the item list as parameters
     /// (length may change). Capture cannot include it. Host-sync 1 ns.
     /// A parked in-flight-destroyed exec is `"unknown graph"`. Live exec
-    /// SetParams stays.
+    /// SetParams stays. Driver
+    /// `cuGraphBatchMemOpNodeSetParams` is
+    /// [`Self::set_graph_batch_mem_op_node_params`].
     pub fn graph_batch_mem_op_set_params(
         &mut self,
         graph: GraphId,
@@ -5811,6 +7429,20 @@ impl Sim {
         op: BatchMemOp,
     ) -> Result<(), SimError> {
         self.set_batch_mem_ops(graph, node, &[op], false, GreenCtxPatch::Keep)
+    }
+
+    /// `cuGraphBatchMemOpNodeSetParams`. Identity with
+    /// [`Self::graph_batch_mem_op_set_params`] (`cudaGraphBatchMemOpNodeSetParams`).
+    ///
+    /// Capture refused. Distinct from
+    /// [`Self::get_graph_batch_mem_op_node_params`].
+    pub fn set_graph_batch_mem_op_node_params(
+        &mut self,
+        graph: GraphId,
+        node: usize,
+        op: &BatchMemOp,
+    ) -> Result<(), SimError> {
+        self.graph_batch_mem_op_set_params(graph, node, *op)
     }
 
     /// Replace the item list of a [`crate::GpuOp::BatchMem`] graph node.
@@ -5840,7 +7472,9 @@ impl Sim {
     /// [`Self::graph_exec_memcpy_set_params_1d`] is
     /// `cudaGraphExecMemcpyNodeSetParams1D` and may convert a 2D/3D node.
     /// Extra [`Self::graph_exec_memcpy_set_params_2d`] plus
-    /// [`Self::graph_exec_memcpy_set_params_3d`] stay (not CUDA names).
+    /// [`Self::graph_exec_memcpy_set_params_3d`] stay (not CUDA names). Driver
+    /// `cuGraphExecMemcpyNodeSetParams` is
+    /// [`Self::set_graph_exec_memcpy_node_params`].
     pub fn graph_exec_memcpy_set_params(
         &mut self,
         exec: GraphId,
@@ -5848,6 +7482,20 @@ impl Sim {
         op: &MemcpyOp,
     ) -> Result<(), SimError> {
         self.set_memcpy_op(exec, node, op, true, GreenCtxPatch::Keep, true)
+    }
+
+    /// `cuGraphExecMemcpyNodeSetParams`. Identity with
+    /// [`Self::graph_exec_memcpy_set_params`] (`cudaGraphExecMemcpyNodeSetParams`).
+    ///
+    /// Capture refused. Distinct from
+    /// [`Self::set_graph_memcpy_node_params`].
+    pub fn set_graph_exec_memcpy_node_params(
+        &mut self,
+        exec: GraphId,
+        node: usize,
+        op: &MemcpyOp,
+    ) -> Result<(), SimError> {
+        self.graph_exec_memcpy_set_params(exec, node, op)
     }
 
     fn graph_exec_memcpy_set_params_with_ctx(
@@ -5966,7 +7614,9 @@ impl Sim {
     /// Packs a 1D [`MemcpyOp`]. A 2D/3D node may become 1D (PLAN 190). Pageable
     /// copies stay illegal. Pays `graph_set_params_ns`. Capture cannot include
     /// it. Bypasses CUDA-named [`Self::graph_exec_memcpy_set_params`] 1D-only
-    /// original-node check.
+    /// original-node check. Driver
+    /// graph `cudaGraphExecMemcpyNodeSetParams1D` is
+    /// [`Self::set_graph_exec_memcpy_node_params_1d`].
     pub fn graph_exec_memcpy_set_params_1d(
         &mut self,
         exec: GraphId,
@@ -5984,6 +7634,24 @@ impl Sim {
             GreenCtxPatch::Keep,
             false,
         )
+    }
+
+    /// Graph `cudaGraphExecMemcpyNodeSetParams1D`. Identity with
+    /// [`Self::graph_exec_memcpy_set_params_1d`]
+    /// (`cudaGraphExecMemcpyNodeSetParams1D`).
+    ///
+    /// Capture refused. Distinct from
+    /// [`Self::set_graph_exec_memcpy_node_params`].
+    pub fn set_graph_exec_memcpy_node_params_1d(
+        &mut self,
+        exec: GraphId,
+        node: usize,
+        src: Place,
+        dst: Place,
+        alloc: AllocId,
+        bytes: u64,
+    ) -> Result<(), SimError> {
+        self.graph_exec_memcpy_set_params_1d(exec, node, src, dst, alloc, bytes)
     }
 
     /// Extra helper whose [`MemcpyOp`] is [`MemcpyOp::is_2d`] (`height > 1`,
@@ -6032,7 +7700,9 @@ impl Sim {
     /// flag. Capture cannot include it. Graphs with mem alloc/free nodes are
     /// legal (unlike [`Self::update_graph`]). [`KernelBuf`] converts to a
     /// packed 1D [`MemsetOp`]. Extra [`Self::graph_exec_memset_set_params_2d`]
-    /// plus [`Self::graph_exec_memset_set_params_3d`] stay legal.
+    /// plus [`Self::graph_exec_memset_set_params_3d`] stay legal. Driver
+    /// `cuGraphExecMemsetNodeSetParams` is
+    /// [`Self::set_graph_exec_memset_node_params`].
     pub fn graph_exec_memset_set_params(
         &mut self,
         exec: GraphId,
@@ -6040,6 +7710,20 @@ impl Sim {
         op: impl Into<MemsetOp>,
     ) -> Result<(), SimError> {
         self.set_memset_op(exec, node, op.into(), true, GreenCtxPatch::Keep, true)
+    }
+
+    /// `cuGraphExecMemsetNodeSetParams`. Identity with
+    /// [`Self::graph_exec_memset_set_params`] (`cudaGraphExecMemsetNodeSetParams`).
+    ///
+    /// Capture refused. Distinct from
+    /// [`Self::set_graph_memset_node_params`].
+    pub fn set_graph_exec_memset_node_params(
+        &mut self,
+        exec: GraphId,
+        node: usize,
+        op: &MemsetOp,
+    ) -> Result<(), SimError> {
+        self.graph_exec_memset_set_params(exec, node, *op)
     }
 
     fn graph_exec_memset_set_params_with_ctx(
@@ -6185,7 +7869,9 @@ impl Sim {
     /// Node `node` must already be a host node. [`HostNodeParams::fn_id`] /
     /// [`HostNodeParams::user_data`] may change. Pays `graph_set_params_ns` and
     /// clears the upload flag. Capture cannot include it. Graphs with mem
-    /// alloc/free nodes are legal (unlike [`Self::update_graph`]).
+    /// alloc/free nodes are legal (unlike [`Self::update_graph`]). Driver
+    /// `cuGraphExecHostNodeSetParams` is
+    /// [`Self::set_graph_exec_host_node_params`].
     pub fn graph_exec_host_set_params(
         &mut self,
         exec: GraphId,
@@ -6224,12 +7910,28 @@ impl Sim {
         Ok(())
     }
 
+    /// `cuGraphExecHostNodeSetParams`. Identity with
+    /// [`Self::graph_exec_host_set_params`] (`cudaGraphExecHostNodeSetParams`).
+    ///
+    /// Capture refused. Distinct from
+    /// [`Self::set_graph_host_node_params`].
+    pub fn set_graph_exec_host_node_params(
+        &mut self,
+        exec: GraphId,
+        node: usize,
+        params: &HostNodeParams,
+    ) -> Result<(), SimError> {
+        self.graph_exec_host_set_params(exec, node, *params)
+    }
+
     /// `cudaGraphExecBatchMemOpNodeSetParams` on an instantiated exec.
     ///
     /// A wait-value / write-value node may change id / offset / value; wait vs
     /// write, `bits32`, and compare stay. A [`crate::GpuOp::BatchMem`] node
     /// replaces the item list (length may change). Pays `graph_set_params_ns`
-    /// and clears the upload flag. Capture cannot include it.
+    /// and clears the upload flag. Capture cannot include it. Driver
+    /// `cuGraphExecBatchMemOpNodeSetParams` is
+    /// [`Self::set_graph_exec_batch_mem_op_node_params`].
     pub fn graph_exec_batch_mem_op_set_params(
         &mut self,
         exec: GraphId,
@@ -6237,6 +7939,20 @@ impl Sim {
         op: BatchMemOp,
     ) -> Result<(), SimError> {
         self.set_batch_mem_ops(exec, node, &[op], true, GreenCtxPatch::Keep)
+    }
+
+    /// `cuGraphExecBatchMemOpNodeSetParams`. Identity with
+    /// [`Self::graph_exec_batch_mem_op_set_params`] (`cudaGraphExecBatchMemOpNodeSetParams`).
+    ///
+    /// Capture refused. Distinct from
+    /// [`Self::set_graph_batch_mem_op_node_params`].
+    pub fn set_graph_exec_batch_mem_op_node_params(
+        &mut self,
+        exec: GraphId,
+        node: usize,
+        op: &BatchMemOp,
+    ) -> Result<(), SimError> {
+        self.graph_exec_batch_mem_op_set_params(exec, node, *op)
     }
 
     /// Exec-side item-list SetParams for a [`crate::GpuOp::BatchMem`] node.
@@ -6326,7 +8042,9 @@ impl Sim {
     /// (unlike [`Self::update_graph`], which treats child ids as topology).
     /// Nesting `exec` under itself, or a child whose tree already names `exec`,
     /// is Invalid. A parked in-flight-destroyed exec used as `child` is
-    /// `"unknown graph"`. Live exec as `child` stays.
+    /// `"unknown graph"`. Live exec as `child` stays. Driver
+    /// `cuGraphExecChildGraphNodeSetParams` is
+    /// [`Self::set_graph_exec_child_graph_node_params`].
     pub fn graph_exec_child_set_params(
         &mut self,
         exec: GraphId,
@@ -6419,12 +8137,28 @@ impl Sim {
         Ok(())
     }
 
+    /// `cuGraphExecChildGraphNodeSetParams`. Identity with
+    /// [`Self::graph_exec_child_set_params`] (`cudaGraphExecChildGraphNodeSetParams`).
+    ///
+    /// Capture refused. Distinct from
+    /// [`Self::set_graph_child_graph_node_params`].
+    pub fn set_graph_exec_child_graph_node_params(
+        &mut self,
+        exec: GraphId,
+        node: usize,
+        child: GraphId,
+    ) -> Result<(), SimError> {
+        self.graph_exec_child_set_params(exec, node, child)
+    }
+
     /// `cudaGraphExecEventRecordNodeSetEvent` on an instantiated exec.
     ///
     /// Node `node` must already be an event-record node. The event id may
     /// change; the External flag stays (topology). Pays `graph_set_params_ns`
     /// and clears the upload flag. Capture cannot include it. Graphs with mem
-    /// alloc/free nodes are legal.
+    /// alloc/free nodes are legal. Driver
+    /// `cuGraphExecEventRecordNodeSetEvent` is
+    /// [`Self::set_graph_exec_event_record_node_event`].
     pub fn graph_exec_event_record_set_event(
         &mut self,
         exec: GraphId,
@@ -6434,11 +8168,27 @@ impl Sim {
         self.graph_exec_event_set(exec, node, event, EventSetKind::Record)
     }
 
+    /// `cuGraphExecEventRecordNodeSetEvent`. Identity with
+    /// [`Self::graph_exec_event_record_set_event`] (`cudaGraphExecEventRecordNodeSetEvent`).
+    ///
+    /// Capture refused. Distinct from
+    /// [`Self::set_graph_event_record_node_event`].
+    pub fn set_graph_exec_event_record_node_event(
+        &mut self,
+        exec: GraphId,
+        node: usize,
+        event: EventId,
+    ) -> Result<(), SimError> {
+        self.graph_exec_event_record_set_event(exec, node, event)
+    }
+
     /// `cudaGraphExecEventWaitNodeSetEvent` on an instantiated exec.
     ///
     /// Node `node` must already be an event-wait node. The event id may change;
     /// the External flag stays (topology). Pays `graph_set_params_ns` and
-    /// clears the upload flag. Capture cannot include it.
+    /// clears the upload flag. Capture cannot include it. Driver
+    /// `cuGraphExecEventWaitNodeSetEvent` is
+    /// [`Self::set_graph_exec_event_wait_node_event`].
     pub fn graph_exec_event_wait_set_event(
         &mut self,
         exec: GraphId,
@@ -6446,6 +8196,20 @@ impl Sim {
         event: EventId,
     ) -> Result<(), SimError> {
         self.graph_exec_event_set(exec, node, event, EventSetKind::Wait)
+    }
+
+    /// `cuGraphExecEventWaitNodeSetEvent`. Identity with
+    /// [`Self::graph_exec_event_wait_set_event`] (`cudaGraphExecEventWaitNodeSetEvent`).
+    ///
+    /// Capture refused. Distinct from
+    /// [`Self::set_graph_event_wait_node_event`].
+    pub fn set_graph_exec_event_wait_node_event(
+        &mut self,
+        exec: GraphId,
+        node: usize,
+        event: EventId,
+    ) -> Result<(), SimError> {
+        self.graph_exec_event_wait_set_event(exec, node, event)
     }
 
     fn graph_exec_event_set(
@@ -6509,6 +8273,8 @@ impl Sim {
     /// Pays `graph_set_params_ns` and clears the upload flag. Capture cannot
     /// include it. Graphs with mem alloc/free nodes are legal (unlike
     /// [`Self::update_graph`]). [`Sim::graph_allocs`] stays the alloc-node ids.
+    /// Driver `cuGraphExecMemFreeNodeSetParams` is
+    /// [`Self::set_graph_exec_free_node_params`].
     pub fn graph_exec_free_set_params(
         &mut self,
         exec: GraphId,
@@ -6545,12 +8311,28 @@ impl Sim {
         Ok(())
     }
 
+    /// `cuGraphExecMemFreeNodeSetParams`. Identity with
+    /// [`Self::graph_exec_free_set_params`] (`cudaGraphExecMemFreeNodeSetParams`).
+    ///
+    /// Capture refused. Distinct from
+    /// [`Self::set_graph_free_node_params`].
+    pub fn set_graph_exec_free_node_params(
+        &mut self,
+        exec: GraphId,
+        node: usize,
+        id: AllocId,
+    ) -> Result<(), SimError> {
+        self.graph_exec_free_set_params(exec, node, id)
+    }
+
     /// `cudaGraphNodeSetParams` for a set-conditional node on the definition.
     ///
     /// After instantiate this does not retarget the exec; use
     /// [`Self::graph_exec_set_conditional_params`]. [`CondId`] must match
     /// (topology). Capture cannot include it. Host-sync 1 ns. A parked
     /// in-flight-destroyed exec is `"unknown graph"`. Live exec SetParams stays.
+    /// Driver `cuGraphNodeSetParams` for a set-conditional node is
+    /// [`Self::set_graph_conditional_params`].
     pub fn graph_set_conditional_params(
         &mut self,
         graph: GraphId,
@@ -6561,11 +8343,27 @@ impl Sim {
         self.set_conditional_node_params(graph, node, handle, value, false)
     }
 
+    /// `cuGraphNodeSetParams` for a set-conditional node. Identity with
+    /// [`Self::graph_set_conditional_params`] (`cudaGraphNodeSetParams`).
+    ///
+    /// Capture refused. Distinct from
+    /// [`Self::graph_exec_set_conditional_params`].
+    pub fn set_graph_conditional_params(
+        &mut self,
+        graph: GraphId,
+        node: usize,
+        value: u32,
+    ) -> Result<(), SimError> {
+        self.graph_set_conditional_params(graph, node, value)
+    }
+
     /// `cudaGraphExecNodeSetParams` for a set-conditional node on an exec.
     ///
     /// [`CondId`] must match (topology). `value` may change. Pays
     /// `graph_set_params_ns` and clears the upload flag. Capture cannot
     /// include it. Graphs with mem alloc/free nodes are legal.
+    /// Driver `cuGraphExecNodeSetParams` for a set-conditional node is
+    /// [`Self::set_graph_exec_conditional_params`].
     pub fn graph_exec_set_conditional_params(
         &mut self,
         exec: GraphId,
@@ -6574,6 +8372,20 @@ impl Sim {
     ) -> Result<(), SimError> {
         let handle = self.set_conditional_handle(exec, node, true)?;
         self.set_conditional_node_params(exec, node, handle, value, true)
+    }
+
+    /// `cuGraphExecNodeSetParams` for a set-conditional node. Identity with
+    /// [`Self::graph_exec_set_conditional_params`] (`cudaGraphExecNodeSetParams`).
+    ///
+    /// Capture refused. Distinct from
+    /// [`Self::set_graph_conditional_params`].
+    pub fn set_graph_exec_conditional_params(
+        &mut self,
+        exec: GraphId,
+        node: usize,
+        value: u32,
+    ) -> Result<(), SimError> {
+        self.graph_exec_set_conditional_params(exec, node, value)
     }
 
     fn set_conditional_handle(
@@ -6925,7 +8737,9 @@ impl Sim {
     ///
     /// Includes [`KernelNodeParams::ctx`] (CUDA 13 `CUDA_KERNEL_NODE_PARAMS.ctx`).
     /// A parked in-flight-destroyed exec is `"unknown graph"`. Live exec
-    /// GetParams stays. Query; capture is legal.
+    /// GetParams stays. Query; capture is legal. Driver
+    /// `cuGraphKernelNodeGetParams` is
+    /// [`Self::get_graph_kernel_node_params`].
     pub fn graph_kernel_get_params(
         &self,
         graph: GraphId,
@@ -6934,11 +8748,25 @@ impl Sim {
         kernel_params_from_step(self.graph_def_step(graph, node)?)
     }
 
+    /// `cuGraphKernelNodeGetParams`. Identity with
+    /// [`Self::graph_kernel_get_params`] (`cudaGraphKernelNodeGetParams`).
+    ///
+    /// Query; legal during capture. Distinct from
+    /// [`Self::graph_exec_kernel_get_params`].
+    pub fn get_graph_kernel_node_params(
+        &self,
+        graph: GraphId,
+        node: usize,
+    ) -> Result<KernelNodeParams, SimError> {
+        self.graph_kernel_get_params(graph, node)
+    }
+
     /// `cudaGraphKernelNodeGetParams` of the exec snapshot.
     ///
     /// Uninstantiated graphs are Invalid. After instantiate this is the
     /// launched kernel; [`Self::graph_kernel_get_params`] stays on the
-    /// definition.
+    /// definition. Driver `cuGraphExecKernelNodeGetParams` is
+    /// [`Self::get_graph_exec_kernel_node_params`].
     pub fn graph_exec_kernel_get_params(
         &self,
         exec: GraphId,
@@ -6947,9 +8775,24 @@ impl Sim {
         kernel_params_from_step(self.graph_exec_step(exec, node)?)
     }
 
+    /// `cuGraphExecKernelNodeGetParams`. Identity with
+    /// [`Self::graph_exec_kernel_get_params`] (`cudaGraphExecKernelNodeGetParams`).
+    ///
+    /// Query; legal during capture. Distinct from
+    /// [`Self::get_graph_kernel_node_params`].
+    pub fn get_graph_exec_kernel_node_params(
+        &self,
+        exec: GraphId,
+        node: usize,
+    ) -> Result<KernelNodeParams, SimError> {
+        self.graph_exec_kernel_get_params(exec, node)
+    }
+
     /// `cudaGraphMemcpyNodeGetParams` on the graph definition.
     ///
     /// `CUDA_MEMCPY3D` copyParams only. Ctx is [`Self::graph_node_get_params`].
+    /// Query; capture is legal. Driver `cuGraphMemcpyNodeGetParams` is
+    /// [`Self::get_graph_memcpy_node_params`].
     pub fn graph_memcpy_get_params(
         &self,
         graph: GraphId,
@@ -6958,7 +8801,22 @@ impl Sim {
         memcpy_params_of(&self.graph_def_step(graph, node)?.kind)
     }
 
+    /// `cuGraphMemcpyNodeGetParams`. Identity with
+    /// [`Self::graph_memcpy_get_params`] (`cudaGraphMemcpyNodeGetParams`).
+    ///
+    /// Query; legal during capture. Distinct from
+    /// [`Self::graph_exec_memcpy_get_params`].
+    pub fn get_graph_memcpy_node_params(
+        &self,
+        graph: GraphId,
+        node: usize,
+    ) -> Result<MemcpyOp, SimError> {
+        self.graph_memcpy_get_params(graph, node)
+    }
+
     /// Exec-snapshot memcpy params. Uninstantiated graphs are Invalid.
+    /// Query; capture is legal. Driver `cuGraphExecMemcpyNodeGetParams` is
+    /// [`Self::get_graph_exec_memcpy_node_params`].
     pub fn graph_exec_memcpy_get_params(
         &self,
         exec: GraphId,
@@ -6967,7 +8825,24 @@ impl Sim {
         memcpy_params_of(&self.graph_exec_step(exec, node)?.kind)
     }
 
+    /// `cuGraphExecMemcpyNodeGetParams`. Identity with
+    /// [`Self::graph_exec_memcpy_get_params`] (`cudaGraphMemcpyNodeGetParams`
+    /// of the exec snapshot).
+    ///
+    /// Query; legal during capture. Distinct from
+    /// [`Self::get_graph_memcpy_node_params`].
+    pub fn get_graph_exec_memcpy_node_params(
+        &self,
+        exec: GraphId,
+        node: usize,
+    ) -> Result<MemcpyOp, SimError> {
+        self.graph_exec_memcpy_get_params(exec, node)
+    }
+
     /// `cudaGraphMemsetNodeGetParams` on the graph definition.
+    ///
+    /// Query; capture is legal. Driver `cuGraphMemsetNodeGetParams` is
+    /// [`Self::get_graph_memset_node_params`].
     pub fn graph_memset_get_params(
         &self,
         graph: GraphId,
@@ -6976,7 +8851,22 @@ impl Sim {
         memset_params_of(&self.graph_def_step(graph, node)?.kind)
     }
 
+    /// `cuGraphMemsetNodeGetParams`. Identity with
+    /// [`Self::graph_memset_get_params`] (`cudaGraphMemsetNodeGetParams`).
+    ///
+    /// Query; legal during capture. Distinct from
+    /// [`Self::graph_exec_memset_get_params`].
+    pub fn get_graph_memset_node_params(
+        &self,
+        graph: GraphId,
+        node: usize,
+    ) -> Result<MemsetOp, SimError> {
+        self.graph_memset_get_params(graph, node)
+    }
+
     /// Exec-snapshot memset params. Uninstantiated graphs are Invalid.
+    /// Query; capture is legal. Driver `cuGraphExecMemsetNodeGetParams` is
+    /// [`Self::get_graph_exec_memset_node_params`].
     pub fn graph_exec_memset_get_params(
         &self,
         exec: GraphId,
@@ -6985,7 +8875,24 @@ impl Sim {
         memset_params_of(&self.graph_exec_step(exec, node)?.kind)
     }
 
+    /// `cuGraphExecMemsetNodeGetParams`. Identity with
+    /// [`Self::graph_exec_memset_get_params`] (`cudaGraphMemsetNodeGetParams`
+    /// of the exec snapshot).
+    ///
+    /// Query; legal during capture. Distinct from
+    /// [`Self::get_graph_memset_node_params`].
+    pub fn get_graph_exec_memset_node_params(
+        &self,
+        exec: GraphId,
+        node: usize,
+    ) -> Result<MemsetOp, SimError> {
+        self.graph_exec_memset_get_params(exec, node)
+    }
+
     /// `cudaGraphHostNodeGetParams` on the graph definition.
+    ///
+    /// Query; capture is legal. Driver `cuGraphHostNodeGetParams` is
+    /// [`Self::get_graph_host_node_params`].
     pub fn graph_host_get_params(
         &self,
         graph: GraphId,
@@ -6994,7 +8901,22 @@ impl Sim {
         host_params_of(&self.graph_def_step(graph, node)?.kind)
     }
 
+    /// `cuGraphHostNodeGetParams`. Identity with
+    /// [`Self::graph_host_get_params`] (`cudaGraphHostNodeGetParams`).
+    ///
+    /// Query; legal during capture. Distinct from
+    /// [`Self::graph_exec_host_get_params`].
+    pub fn get_graph_host_node_params(
+        &self,
+        graph: GraphId,
+        node: usize,
+    ) -> Result<HostNodeParams, SimError> {
+        self.graph_host_get_params(graph, node)
+    }
+
     /// Exec-snapshot host params. Uninstantiated graphs are Invalid.
+    /// Query; capture is legal. Driver `cuGraphExecHostNodeGetParams` is
+    /// [`Self::get_graph_exec_host_node_params`].
     pub fn graph_exec_host_get_params(
         &self,
         exec: GraphId,
@@ -7003,9 +8925,25 @@ impl Sim {
         host_params_of(&self.graph_exec_step(exec, node)?.kind)
     }
 
+    /// `cuGraphExecHostNodeGetParams`. Identity with
+    /// [`Self::graph_exec_host_get_params`] (`cudaGraphHostNodeGetParams`
+    /// of the exec snapshot).
+    ///
+    /// Query; legal during capture. Distinct from
+    /// [`Self::get_graph_host_node_params`].
+    pub fn get_graph_exec_host_node_params(
+        &self,
+        exec: GraphId,
+        node: usize,
+    ) -> Result<HostNodeParams, SimError> {
+        self.graph_exec_host_get_params(exec, node)
+    }
+
     /// `cudaGraphBatchMemOpNodeGetParams` on the graph definition.
     ///
-    /// Wait-value / write-value nodes are a one-item list.
+    /// Wait-value / write-value nodes are a one-item list. Driver
+    /// `cuGraphBatchMemOpNodeGetParams` is
+    /// [`Self::get_graph_batch_mem_op_node_params`].
     pub fn graph_batch_mem_ops_get_params(
         &self,
         graph: GraphId,
@@ -7016,7 +8954,22 @@ impl Sim {
         })
     }
 
+    /// `cuGraphBatchMemOpNodeGetParams`. Identity with
+    /// [`Self::graph_batch_mem_ops_get_params`] (`cudaGraphBatchMemOpNodeGetParams`).
+    ///
+    /// Query; legal during capture. Distinct from
+    /// [`Self::graph_exec_batch_mem_ops_get_params`].
+    pub fn get_graph_batch_mem_op_node_params(
+        &self,
+        graph: GraphId,
+        node: usize,
+    ) -> Result<Vec<BatchMemOp>, SimError> {
+        self.graph_batch_mem_ops_get_params(graph, node)
+    }
+
     /// Exec-snapshot batch-mem-op items. Uninstantiated graphs are Invalid.
+    /// Query; capture is legal. Driver `cuGraphExecBatchMemOpNodeGetParams` is
+    /// [`Self::get_graph_exec_batch_mem_op_node_params`].
     pub fn graph_exec_batch_mem_ops_get_params(
         &self,
         exec: GraphId,
@@ -7025,6 +8978,20 @@ impl Sim {
         batch_items(&self.graph_exec_step(exec, node)?.kind).ok_or(SimError::Invalid {
             why: "not a batch mem op node",
         })
+    }
+
+    /// `cuGraphExecBatchMemOpNodeGetParams`. Identity with
+    /// [`Self::graph_exec_batch_mem_ops_get_params`] (`cudaGraphBatchMemOpNodeGetParams`
+    /// of the exec snapshot).
+    ///
+    /// Query; legal during capture. Distinct from
+    /// [`Self::get_graph_batch_mem_op_node_params`].
+    pub fn get_graph_exec_batch_mem_op_node_params(
+        &self,
+        exec: GraphId,
+        node: usize,
+    ) -> Result<Vec<BatchMemOp>, SimError> {
+        self.graph_exec_batch_mem_ops_get_params(exec, node)
     }
 
     /// Child-graph nodes on `graph` as `(index, nested GraphId)` in add order.
@@ -7049,6 +9016,8 @@ impl Sim {
     ///
     /// Instantiated ids use the exec snapshot (same as [`Self::graph_child_nodes`]).
     /// [`Self::graph_exec_child_get_graph`] refuses uninstantiated graphs.
+    /// Driver `cuGraphChildGraphNodeGetGraph` is
+    /// [`Self::get_graph_child_graph_node_graph`].
     pub fn graph_child_get_graph(&self, graph: GraphId, node: usize) -> Result<GraphId, SimError> {
         match &self.graph_view_step(graph, node)?.kind {
             Kind::ChildGraph { graph: child, .. } => Ok(*child),
@@ -7058,11 +9027,26 @@ impl Sim {
         }
     }
 
+    /// `cuGraphChildGraphNodeGetGraph`. Identity with
+    /// [`Self::graph_child_get_graph`] (`cudaGraphChildGraphNodeGetGraph`).
+    ///
+    /// Query; legal during capture. Distinct from
+    /// [`Self::graph_exec_child_get_graph`].
+    pub fn get_graph_child_graph_node_graph(
+        &self,
+        graph: GraphId,
+        node: usize,
+    ) -> Result<GraphId, SimError> {
+        self.graph_child_get_graph(graph, node)
+    }
+
     /// Exec-snapshot [`Self::graph_child_get_graph`].
     ///
     /// Uninstantiated graphs are Invalid. After instantiate this is the
     /// launched child. [`Self::graph_child_get_graph`] stays a view. Query;
-    /// legal during capture.
+    /// legal during capture. Driver
+    /// `cuGraphExecChildGraphNodeGetGraph` is
+    /// [`Self::get_graph_exec_child_graph_node_graph`].
     pub fn graph_exec_child_get_graph(
         &self,
         exec: GraphId,
@@ -7076,10 +9060,26 @@ impl Sim {
         }
     }
 
+    /// `cuGraphExecChildGraphNodeGetGraph`. Identity with
+    /// [`Self::graph_exec_child_get_graph`] (`cudaGraphChildGraphNodeGetGraph`
+    /// of the exec snapshot).
+    ///
+    /// Query; legal during capture. Distinct from
+    /// [`Self::get_graph_child_graph_node_graph`].
+    pub fn get_graph_exec_child_graph_node_graph(
+        &self,
+        exec: GraphId,
+        node: usize,
+    ) -> Result<GraphId, SimError> {
+        self.graph_exec_child_get_graph(exec, node)
+    }
+
     /// `cudaGraphEventRecordNodeGetEvent`. Query; legal during capture.
     ///
     /// Instantiated ids use the exec snapshot.
     /// [`Self::graph_exec_event_record_get_event`] refuses uninstantiated graphs.
+    /// Driver `cuGraphEventRecordNodeGetEvent` is
+    /// [`Self::get_graph_event_record_node_event`].
     pub fn graph_event_record_get_event(
         &self,
         graph: GraphId,
@@ -7093,11 +9093,26 @@ impl Sim {
         }
     }
 
+    /// `cuGraphEventRecordNodeGetEvent`. Identity with
+    /// [`Self::graph_event_record_get_event`] (`cudaGraphEventRecordNodeGetEvent`).
+    ///
+    /// Query; legal during capture. Distinct from
+    /// [`Self::graph_exec_event_record_get_event`].
+    pub fn get_graph_event_record_node_event(
+        &self,
+        graph: GraphId,
+        node: usize,
+    ) -> Result<EventId, SimError> {
+        self.graph_event_record_get_event(graph, node)
+    }
+
     /// Exec-snapshot [`Self::graph_event_record_get_event`].
     ///
     /// Uninstantiated graphs are Invalid. After instantiate this is the
     /// launched event. [`Self::graph_event_record_get_event`] stays a view.
-    /// Query; legal during capture.
+    /// Query; legal during capture. Driver
+    /// `cuGraphExecEventRecordNodeGetEvent` is
+    /// [`Self::get_graph_exec_event_record_node_event`].
     pub fn graph_exec_event_record_get_event(
         &self,
         exec: GraphId,
@@ -7106,10 +9121,26 @@ impl Sim {
         self.graph_exec_event_get(exec, node, EventSetKind::Record)
     }
 
+    /// `cuGraphExecEventRecordNodeGetEvent`. Identity with
+    /// [`Self::graph_exec_event_record_get_event`] (`cudaGraphEventRecordNodeGetEvent`
+    /// of the exec snapshot).
+    ///
+    /// Query; legal during capture. Distinct from
+    /// [`Self::get_graph_event_record_node_event`].
+    pub fn get_graph_exec_event_record_node_event(
+        &self,
+        exec: GraphId,
+        node: usize,
+    ) -> Result<EventId, SimError> {
+        self.graph_exec_event_record_get_event(exec, node)
+    }
+
     /// `cudaGraphEventWaitNodeGetEvent`. Query; legal during capture.
     ///
     /// Instantiated ids use the exec snapshot.
     /// [`Self::graph_exec_event_wait_get_event`] refuses uninstantiated graphs.
+    /// Driver `cuGraphEventWaitNodeGetEvent` is
+    /// [`Self::get_graph_event_wait_node_event`].
     pub fn graph_event_wait_get_event(
         &self,
         graph: GraphId,
@@ -7123,17 +9154,46 @@ impl Sim {
         }
     }
 
+    /// `cuGraphEventWaitNodeGetEvent`. Identity with
+    /// [`Self::graph_event_wait_get_event`] (`cudaGraphEventWaitNodeGetEvent`).
+    ///
+    /// Query; legal during capture. Distinct from
+    /// [`Self::graph_exec_event_wait_get_event`].
+    pub fn get_graph_event_wait_node_event(
+        &self,
+        graph: GraphId,
+        node: usize,
+    ) -> Result<EventId, SimError> {
+        self.graph_event_wait_get_event(graph, node)
+    }
+
     /// Exec-snapshot [`Self::graph_event_wait_get_event`].
     ///
     /// Uninstantiated graphs are Invalid. After instantiate this is the
     /// launched event. [`Self::graph_event_wait_get_event`] stays a view.
-    /// Query; legal during capture.
+    /// Query; legal during capture. Driver
+    /// `cuGraphExecEventWaitNodeGetEvent` is
+    /// [`Self::get_graph_exec_event_wait_node_event`].
     pub fn graph_exec_event_wait_get_event(
         &self,
         exec: GraphId,
         node: usize,
     ) -> Result<EventId, SimError> {
         self.graph_exec_event_get(exec, node, EventSetKind::Wait)
+    }
+
+    /// `cuGraphExecEventWaitNodeGetEvent`. Identity with
+    /// [`Self::graph_exec_event_wait_get_event`] (`cudaGraphEventWaitNodeGetEvent`
+    /// of the exec snapshot).
+    ///
+    /// Query; legal during capture. Distinct from
+    /// [`Self::get_graph_event_wait_node_event`].
+    pub fn get_graph_exec_event_wait_node_event(
+        &self,
+        exec: GraphId,
+        node: usize,
+    ) -> Result<EventId, SimError> {
+        self.graph_exec_event_wait_get_event(exec, node)
     }
 
     fn graph_exec_event_get(
@@ -7159,7 +9219,9 @@ impl Sim {
     /// Query; legal during capture. Pool identity stays the graph-memory pool.
     /// Instantiated ids use the exec snapshot.
     /// [`Self::graph_exec_alloc_get_params`] refuses uninstantiated graphs.
-    /// `accessDescs` are [`Self::graph_alloc_get_access`].
+    /// `accessDescs` are [`Self::graph_alloc_get_access`]. Driver
+    /// `cuGraphMemAllocNodeGetParams` is
+    /// [`Self::get_graph_alloc_node_params`].
     pub fn graph_alloc_get_params(
         &self,
         graph: GraphId,
@@ -7171,6 +9233,19 @@ impl Sim {
                 why: "not a mem alloc node",
             }),
         }
+    }
+
+    /// `cuGraphMemAllocNodeGetParams`. Identity with
+    /// [`Self::graph_alloc_get_params`] (`cudaGraphMemAllocNodeGetParams`).
+    ///
+    /// Query; legal during capture. Distinct from
+    /// [`Self::graph_exec_alloc_get_params`].
+    pub fn get_graph_alloc_node_params(
+        &self,
+        graph: GraphId,
+        node: usize,
+    ) -> Result<(AllocId, u64), SimError> {
+        self.graph_alloc_get_params(graph, node)
     }
 
     /// `cudaMemAllocNodeParams::accessDescs` on a mem-alloc node.
@@ -7195,7 +9270,8 @@ impl Sim {
     ///
     /// Uninstantiated graphs are Invalid. After instantiate this is the
     /// launched alloc. [`Self::graph_alloc_get_params`] stays a view. Query;
-    /// legal during capture.
+    /// legal during capture. Driver `cuGraphExecMemAllocNodeGetParams` is
+    /// [`Self::get_graph_exec_alloc_node_params`].
     pub fn graph_exec_alloc_get_params(
         &self,
         exec: GraphId,
@@ -7207,6 +9283,19 @@ impl Sim {
                 why: "not a mem alloc node",
             }),
         }
+    }
+
+    /// `cuGraphExecMemAllocNodeGetParams`. Identity with
+    /// [`Self::graph_exec_alloc_get_params`] (`cudaGraphExecMemAllocNodeGetParams`).
+    ///
+    /// Query; legal during capture. Distinct from
+    /// [`Self::get_graph_alloc_node_params`].
+    pub fn get_graph_exec_alloc_node_params(
+        &self,
+        exec: GraphId,
+        node: usize,
+    ) -> Result<(AllocId, u64), SimError> {
+        self.graph_exec_alloc_get_params(exec, node)
     }
 
     /// Exec-snapshot [`Self::graph_alloc_get_access`].
@@ -7233,6 +9322,8 @@ impl Sim {
     /// (same as [`Self::graph_alloc_get_params`]). [`Sim::graph_allocs`] is
     /// alloc-node ids for AutoFree / destroy refund, not this free target.
     /// [`Self::graph_exec_free_get_params`] refuses uninstantiated graphs.
+    /// Driver `cuGraphMemFreeNodeGetParams` is
+    /// [`Self::get_graph_free_node_params`].
     pub fn graph_free_get_params(&self, graph: GraphId, node: usize) -> Result<AllocId, SimError> {
         match &self.graph_view_step(graph, node)?.kind {
             Kind::Free { id } => Ok(*id),
@@ -7242,11 +9333,25 @@ impl Sim {
         }
     }
 
+    /// `cuGraphMemFreeNodeGetParams`. Identity with
+    /// [`Self::graph_free_get_params`] (`cudaGraphMemFreeNodeGetParams`).
+    ///
+    /// Query; legal during capture. Distinct from
+    /// [`Self::graph_exec_free_get_params`].
+    pub fn get_graph_free_node_params(
+        &self,
+        graph: GraphId,
+        node: usize,
+    ) -> Result<AllocId, SimError> {
+        self.graph_free_get_params(graph, node)
+    }
+
     /// Exec-snapshot [`Self::graph_free_get_params`].
     ///
     /// Uninstantiated graphs are Invalid. After instantiate this is the
     /// launched free. [`Self::graph_free_get_params`] stays a view. Query;
-    /// legal during capture.
+    /// legal during capture. Driver `cuGraphExecMemFreeNodeGetParams` is
+    /// [`Self::get_graph_exec_free_node_params`].
     pub fn graph_exec_free_get_params(
         &self,
         exec: GraphId,
@@ -7258,6 +9363,19 @@ impl Sim {
                 why: "not a mem free node",
             }),
         }
+    }
+
+    /// `cuGraphExecMemFreeNodeGetParams`. Identity with
+    /// [`Self::graph_exec_free_get_params`] (`cudaGraphExecMemFreeNodeGetParams`).
+    ///
+    /// Query; legal during capture. Distinct from
+    /// [`Self::get_graph_free_node_params`].
+    pub fn get_graph_exec_free_node_params(
+        &self,
+        exec: GraphId,
+        node: usize,
+    ) -> Result<AllocId, SimError> {
+        self.graph_exec_free_get_params(exec, node)
     }
 
     /// Unique child-graph node on `graph`.
@@ -7471,7 +9589,9 @@ impl Sim {
     /// include it. Does not clear the upload flag (topology unchanged).
     /// [`Self::update_graph`] and typed ExecSetParams leave enable unchanged.
     /// Device-launch execs refuse this while [`Self::device_launch_graph`] is
-    /// in flight (Invalid `"device launch in flight"`). Getters stay.
+    /// in flight (Invalid `"device launch in flight"`). Getters stay. Driver
+    /// `cuGraphNodeSetEnabled` is
+    /// [`Self::set_graph_node_enabled`].
     pub fn graph_node_set_enabled(
         &mut self,
         exec: GraphId,
@@ -7507,7 +9627,25 @@ impl Sim {
         Ok(())
     }
 
+    /// `cuGraphNodeSetEnabled`. Identity with
+    /// [`Self::graph_node_set_enabled`] (`cudaGraphNodeSetEnabled`).
+    ///
+    /// Capture refused. Distinct from
+    /// [`Self::graph_node_get_enabled`].
+    pub fn set_graph_node_enabled(
+        &mut self,
+        exec: GraphId,
+        node: usize,
+        enabled: bool,
+    ) -> Result<(), SimError> {
+        self.graph_node_set_enabled(exec, node, enabled)
+    }
+
     /// `cudaGraphNodeGetEnabled` on an instantiated exec.
+    ///
+    /// Query; legal during capture. Driver
+    /// `cuGraphNodeGetEnabled` is
+    /// [`Self::get_graph_node_enabled`].
     pub fn graph_node_get_enabled(&self, exec: GraphId, node: usize) -> Result<bool, SimError> {
         let exec = self.as_exec(exec)?;
         let g = self.graphs.get(&exec).ok_or(SimError::Invalid {
@@ -7517,6 +9655,15 @@ impl Sim {
             why: "unknown graph node",
         })?)?;
         Ok(step.enabled)
+    }
+
+    /// `cuGraphNodeGetEnabled`. Identity with
+    /// [`Self::graph_node_get_enabled`] (`cudaGraphNodeGetEnabled`).
+    ///
+    /// Query; legal during capture. Distinct from
+    /// [`Self::set_graph_node_enabled`].
+    pub fn get_graph_node_enabled(&self, exec: GraphId, node: usize) -> Result<bool, SimError> {
+        self.graph_node_get_enabled(exec, node)
     }
 
     /// Graph mem alloc node ids (`cudaMallocAsync` / `cudaGraphAddMemAllocNode`).
@@ -7538,7 +9685,9 @@ impl Sim {
     /// instantiated exec (fork the definition's ids). Instantiating or
     /// updating one id does not change the other. Cycles among child ids fail.
     /// A parked in-flight-destroyed exec is `"unknown graph"`. Clone of the
-    /// definition stays.
+    /// definition stays. Driver
+    /// `cuGraphClone` is
+    /// [`Self::graph_clone`].
     pub fn clone_graph(&mut self, graph: GraphId) -> Result<GraphId, SimError> {
         self.require_not_moved(graph)?;
         self.fail_if_capturing("cannot capture graph clone")?;
@@ -7579,6 +9728,10 @@ impl Sim {
                     auto_free_on_launch: false,
                     instantiate_flags: 0,
                     device_launch_tail: None,
+                    device_launch_stream: None,
+                    device_launch_root: false,
+                    device_faf: Vec::new(),
+                    device_tail_child: None,
                     host_launch_tails: Vec::new(),
                     handle_gone: false,
                     primary_exec: None,
@@ -7601,6 +9754,15 @@ impl Sim {
         remap.get(&graph).copied().ok_or(SimError::Invalid {
             why: "unknown graph",
         })
+    }
+
+    /// `cuGraphClone`. Identity with
+    /// [`Self::clone_graph`] (`cudaGraphClone`).
+    ///
+    /// Host-synchronous. Capture refused. Distinct from
+    /// [`Self::find_graph_node_in_clone`].
+    pub fn graph_clone(&mut self, graph: GraphId) -> Result<GraphId, SimError> {
+        self.clone_graph(graph)
     }
 
     fn clone_conditionals(&mut self, remap: &BTreeMap<GraphId, GraphId>) -> Result<(), SimError> {
@@ -7832,7 +9994,11 @@ impl Sim {
     /// still drop immediately. An empty host launch does not pin destroy to
     /// unrelated prior stream work. Concurrent host launches each pin a tail;
     /// destroy waits for all of them. An in-flight [`Self::upload_graph_async`]
-    /// is the same park (the upload still completes).
+    /// is the same park (the upload still completes). Driver
+    /// `cuGraphDestroy` is
+    /// [`Self::graph_destroy`]. Driver
+    /// `cuGraphExecDestroy` is
+    /// [`Self::graph_exec_destroy`].
     pub fn destroy_graph(&mut self, graph: GraphId) -> Result<(), SimError> {
         self.fail_if_capturing("cannot capture graph destroy")?;
         self.require_not_moved(graph)?;
@@ -7852,10 +10018,32 @@ impl Sim {
         self.drop_graph(graph)
     }
 
+    /// `cuGraphDestroy`. Identity with
+    /// [`Self::destroy_graph`] (`cudaGraphDestroy`).
+    ///
+    /// Host-synchronous. Capture refused. Distinct from
+    /// [`Self::graph_destroy_node`].
+    pub fn graph_destroy(&mut self, graph: GraphId) -> Result<(), SimError> {
+        self.destroy_graph(graph)
+    }
+
+    /// `cuGraphExecDestroy`. Identity with
+    /// [`Self::destroy_graph`] (`cudaGraphExecDestroy`).
+    ///
+    /// Host-synchronous. Capture refused. Distinct from
+    /// [`Self::graph_destroy`].
+    pub fn graph_exec_destroy(&mut self, exec: GraphId) -> Result<(), SimError> {
+        self.destroy_graph(exec)
+    }
+
     fn graph_exec_in_flight(&self, id: GraphId, g: &Graph) -> bool {
         g.device_launch_tail.is_some_and(|op| !self.op_done(op))
             || g.host_launch_tails.iter().any(|op| !self.op_done(*op))
             || self.pending_graph_upload(id).is_some()
+            || self
+                .graphs
+                .values()
+                .any(|p| p.device_tail_child == Some(id))
     }
 
     fn park_in_flight_exec(&mut self, graph: GraphId) -> Result<(), SimError> {
@@ -7970,7 +10158,9 @@ impl Sim {
     /// Capture cannot include it. The origin `(device, stream)` is the capture
     /// analog: [`Self::launch_graph`] remaps those nodes onto the launch stream.
     /// Add nodes with [`Self::graph_add_kernel`] and friends, then instantiate.
-    /// Flags-word form is [`Self::create_graph_with_flags`].
+    /// Flags-word form is [`Self::create_graph_with_flags`]. Driver
+    /// `cuGraphCreate` is
+    /// [`Self::graph_create`].
     pub fn create_graph(
         &mut self,
         device: DeviceId,
@@ -7979,11 +10169,26 @@ impl Sim {
         self.create_graph_with_flags(device, stream, GraphCreateFlags::DEFAULT)
     }
 
+    /// `cuGraphCreate`. Identity with
+    /// [`Self::create_graph`] (`cudaGraphCreate`).
+    ///
+    /// Host-synchronous. Capture refused. Distinct from
+    /// [`Self::create_graph_with_flags`].
+    pub fn graph_create(
+        &mut self,
+        device: DeviceId,
+        stream: StreamId,
+    ) -> Result<GraphId, SimError> {
+        self.create_graph(device, stream)
+    }
+
     /// `cudaGraphCreate` with a flags word.
     ///
     /// CUDA requires `flags == 0` ([`GraphCreateFlags::DEFAULT`]). Other bits
     /// are Invalid `"graph create flags"`. Typed [`Self::create_graph`] stays.
-    /// Capture cannot include it. Distinct from [`GraphInstantiateFlags`].
+    /// Capture cannot include it. Distinct from [`GraphInstantiateFlags`]. Driver
+    /// `cuGraphCreate` flags is
+    /// [`Self::graph_create_with_flags`].
     pub fn create_graph_with_flags(
         &mut self,
         device: DeviceId,
@@ -7995,11 +10200,30 @@ impl Sim {
                 why: "graph create flags",
             });
         }
+        if stream.is_device_graph_stream() {
+            return Err(SimError::Invalid {
+                why: "device launch stream",
+            });
+        }
         self.fail_if_capturing("cannot create graph during capture")?;
         let _gpu = self.profile.gpu(device)?;
         let id = self.insert_graph(device, stream);
         self.clock = self.clock.saturating_add(1);
         Ok(id)
+    }
+
+    /// `cuGraphCreate` flags. Identity with
+    /// [`Self::create_graph_with_flags`] (`cudaGraphCreate` flags).
+    ///
+    /// Host-synchronous. Capture refused. Distinct from
+    /// [`Self::graph_create`].
+    pub fn graph_create_with_flags(
+        &mut self,
+        device: DeviceId,
+        stream: StreamId,
+        flags: u32,
+    ) -> Result<GraphId, SimError> {
+        self.create_graph_with_flags(device, stream, flags)
     }
 
     /// `cudaUserObjectCreate`. Host-synchronous. Capture cannot include it.
@@ -8008,7 +10232,9 @@ impl Sim {
     /// `initial_refcount` must be in `1..=i32::MAX` (CUDA `INT_MAX`).
     /// `destroy_fn` is the host callback id recorded when the
     /// last reference is released (no Rust callback). Decode identity does not
-    /// create user objects.
+    /// create user objects. Driver
+    /// `cuUserObjectCreate` is
+    /// [`Self::create_user_object`].
     pub fn user_object_create(
         &mut self,
         destroy_fn: u64,
@@ -8036,9 +10262,25 @@ impl Sim {
         Ok(id)
     }
 
+    /// `cuUserObjectCreate`. Identity with
+    /// [`Self::user_object_create`] (`cudaUserObjectCreate`).
+    ///
+    /// Host-synchronous. Capture refused. Distinct from
+    /// [`Self::graph_create_with_flags`].
+    pub fn create_user_object(
+        &mut self,
+        destroy_fn: u64,
+        initial_refcount: u32,
+        flags: u32,
+    ) -> Result<UserObjectId, SimError> {
+        self.user_object_create(destroy_fn, initial_refcount, flags)
+    }
+
     /// `cudaUserObjectRetain`. Host-synchronous. Capture cannot include it.
     ///
-    /// `count` must be in `1..=i32::MAX` (CUDA `INT_MAX`).
+    /// `count` must be in `1..=i32::MAX` (CUDA `INT_MAX`). Driver
+    /// `cuUserObjectRetain` is
+    /// [`Self::retain_user_object`].
     pub fn user_object_retain(&mut self, object: UserObjectId, count: u32) -> Result<(), SimError> {
         self.fail_if_capturing("cannot capture user object")?;
         Self::reject_user_object_count(count, "user object count")?;
@@ -8050,10 +10292,21 @@ impl Sim {
         Ok(())
     }
 
+    /// `cuUserObjectRetain`. Identity with
+    /// [`Self::user_object_retain`] (`cudaUserObjectRetain`).
+    ///
+    /// Host-synchronous. Capture refused. Distinct from
+    /// [`Self::create_user_object`].
+    pub fn retain_user_object(&mut self, object: UserObjectId, count: u32) -> Result<(), SimError> {
+        self.user_object_retain(object, count)
+    }
+
     /// `cudaUserObjectRelease`. Host-synchronous. Capture cannot include it.
     ///
     /// Releasing the last reference records [`Self::user_object_destructors`].
-    /// `count` must be in `1..=i32::MAX` (CUDA `INT_MAX`).
+    /// `count` must be in `1..=i32::MAX` (CUDA `INT_MAX`). Driver
+    /// `cuUserObjectRelease` is
+    /// [`Self::release_user_object`].
     pub fn user_object_release(
         &mut self,
         object: UserObjectId,
@@ -8075,6 +10328,19 @@ impl Sim {
         Ok(())
     }
 
+    /// `cuUserObjectRelease`. Identity with
+    /// [`Self::user_object_release`] (`cudaUserObjectRelease`).
+    ///
+    /// Host-synchronous. Capture refused. Distinct from
+    /// [`Self::retain_user_object`].
+    pub fn release_user_object(
+        &mut self,
+        object: UserObjectId,
+        count: u32,
+    ) -> Result<(), SimError> {
+        self.user_object_release(object, count)
+    }
+
     /// `cudaGraphRetainUserObject` on a definition. Host-synchronous.
     ///
     /// Capture cannot include it. Illegal on an instantiated exec. A parked
@@ -8083,7 +10349,9 @@ impl Sim {
     /// the new exec (CUDA exec retains a copy). Retains added after instantiate
     /// stay on the definition. [`GraphUserObjectFlags::MOVE`] transfers one caller
     /// reference (`count` ignored, including above `INT_MAX`); otherwise the
-    /// graph takes `count` extra refs (`1..=i32::MAX`).
+    /// graph takes `count` extra refs (`1..=i32::MAX`). Driver
+    /// `cuGraphRetainUserObject` is
+    /// [`Self::retain_graph_user_object`].
     pub fn graph_retain_user_object(
         &mut self,
         graph: GraphId,
@@ -8121,10 +10389,27 @@ impl Sim {
         Ok(())
     }
 
+    /// `cuGraphRetainUserObject`. Identity with
+    /// [`Self::graph_retain_user_object`] (`cudaGraphRetainUserObject`).
+    ///
+    /// Host-synchronous. Capture refused. Distinct from
+    /// [`Self::release_user_object`].
+    pub fn retain_graph_user_object(
+        &mut self,
+        graph: GraphId,
+        object: UserObjectId,
+        count: u32,
+        flags: u32,
+    ) -> Result<(), SimError> {
+        self.graph_retain_user_object(graph, object, count, flags)
+    }
+
     /// `cudaGraphReleaseUserObject` on a definition. Host-synchronous.
     ///
     /// Capture cannot include it. Illegal on an instantiated exec.
-    /// `count` must be in `1..=i32::MAX` (CUDA `INT_MAX`).
+    /// `count` must be in `1..=i32::MAX` (CUDA `INT_MAX`). Driver
+    /// `cuGraphReleaseUserObject` is
+    /// [`Self::release_graph_user_object`].
     pub fn graph_release_user_object(
         &mut self,
         graph: GraphId,
@@ -8137,6 +10422,20 @@ impl Sim {
         self.graph_release_user_object_inner(graph, object, count)?;
         self.clock = self.clock.saturating_add(1);
         Ok(())
+    }
+
+    /// `cuGraphReleaseUserObject`. Identity with
+    /// [`Self::graph_release_user_object`] (`cudaGraphReleaseUserObject`).
+    ///
+    /// Host-synchronous. Capture refused. Distinct from
+    /// [`Self::retain_graph_user_object`].
+    pub fn release_graph_user_object(
+        &mut self,
+        graph: GraphId,
+        object: UserObjectId,
+        count: u32,
+    ) -> Result<(), SimError> {
+        self.graph_release_user_object(graph, object, count)
     }
 
     /// Total remaining references (caller plus graphs).
@@ -8277,6 +10576,10 @@ impl Sim {
                 auto_free_on_launch: false,
                 instantiate_flags: 0,
                 device_launch_tail: None,
+                device_launch_stream: None,
+                device_launch_root: false,
+                device_faf: Vec::new(),
+                device_tail_child: None,
                 host_launch_tails: Vec::new(),
                 handle_gone: false,
                 primary_exec: None,
@@ -8306,7 +10609,9 @@ impl Sim {
     /// [`GraphNodeParams::Alloc`] fills [`GraphAddNode::alloc`]. Empty
     /// `access` is [`Self::graph_add_alloc`]; peer `accessDescs` match
     /// [`Self::graph_add_alloc_with_access`].
-    /// Flags-word `dependencyData` is [`Self::graph_add_node_with_data`].
+    /// Flags-word `dependencyData` is [`Self::graph_add_node_with_data`]. Driver
+    /// `cuGraphAddNode` is
+    /// [`Self::add_graph_node`].
     pub fn graph_add_node(
         &mut self,
         graph: GraphId,
@@ -8329,6 +10634,20 @@ impl Sim {
         Ok(added)
     }
 
+    /// `cuGraphAddNode`. Identity with
+    /// [`Self::graph_add_node`] (`cudaGraphAddNode`).
+    ///
+    /// Capture refused. Distinct from
+    /// [`Self::add_graph_free`].
+    pub fn add_graph_node(
+        &mut self,
+        graph: GraphId,
+        deps: &[usize],
+        params: GraphNodeParams,
+    ) -> Result<GraphAddNode, SimError> {
+        self.graph_add_node(graph, deps, params)
+    }
+
     /// `cuGraphAddNode_v2` (`cudaGraphAddNode` with `dependencyData`).
     ///
     /// `deps` and `data` must be the same length (`"graph add node data"`).
@@ -8340,7 +10659,9 @@ impl Sim {
     /// `"graph edge port"`. Edge
     /// checks run before the node is created (all-or-nothing). Capture cannot
     /// include it. Illegal on an instantiated exec. Typed
-    /// [`Self::graph_add_node`] stays (NULL `dependencyData`).
+    /// [`Self::graph_add_node`] stays (NULL `dependencyData`). Driver
+    /// `cuGraphAddNode_v2` is
+    /// [`Self::add_graph_node_with_data`].
     pub fn graph_add_node_with_data(
         &mut self,
         graph: GraphId,
@@ -8362,6 +10683,22 @@ impl Sim {
         let added = self.graph_add_node(graph, deps, params)?;
         self.store_graph_edge_data(graph, added.node, deps, data)?;
         Ok(added)
+    }
+
+    /// `cuGraphAddNode_v2`. Identity with
+    /// [`Self::graph_add_node_with_data`] (`cudaGraphAddNode` with
+    /// `dependencyData`).
+    ///
+    /// Capture refused. Distinct from
+    /// [`Self::add_graph_node`].
+    pub fn add_graph_node_with_data(
+        &mut self,
+        graph: GraphId,
+        deps: &[usize],
+        data: &[GraphEdgeData],
+        params: GraphNodeParams,
+    ) -> Result<GraphAddNode, SimError> {
+        self.graph_add_node_with_data(graph, deps, data, params)
     }
 
     fn reject_duplicate_graph_deps(deps: &[usize]) -> Result<(), SimError> {
@@ -8546,7 +10883,9 @@ impl Sim {
     /// kernel; [`Self::launch_graph`] does. [`KernelNodeParams::ctx`] is
     /// [`None`] (inherit the launch stream). [`KernelNodeParams::shared_mem_bytes`]
     /// stays `0`. Pin a green context or dynamic shared through
-    /// [`Self::graph_add_node`] with [`GraphNodeParams::Kernel`].
+    /// [`Self::graph_add_node`] with [`GraphNodeParams::Kernel`]. Driver
+    /// `cuGraphAddKernelNode` is
+    /// [`Self::add_graph_kernel`].
     pub fn graph_add_kernel(
         &mut self,
         graph: GraphId,
@@ -8557,11 +10896,28 @@ impl Sim {
         self.graph_add_kernel_node(graph, kind, reads, writes, false)
     }
 
+    /// `cuGraphAddKernelNode`. Identity with
+    /// [`Self::graph_add_kernel`] (`cudaGraphAddKernelNode`).
+    ///
+    /// Capture refused. Distinct from
+    /// [`Self::add_graph_event_wait`].
+    pub fn add_graph_kernel(
+        &mut self,
+        graph: GraphId,
+        kind: KernelKind,
+        reads: &[AllocId],
+        writes: &[AllocId],
+    ) -> Result<(), SimError> {
+        self.graph_add_kernel(graph, kind, reads, writes)
+    }
+
     /// `cudaGraphAddKernelNode` for a [`Self::cooperative_kernel`] launch.
     ///
     /// Occupies every Hyper-Q slot at launch. Capture cannot include it.
     /// Illegal on an instantiated exec. Device must advertise
-    /// [`crate::GpuProfile::cooperative_launch`].
+    /// [`crate::GpuProfile::cooperative_launch`]. Driver
+    /// graph cooperative `cudaGraphAddKernelNode` is
+    /// [`Self::add_graph_cooperative_kernel`].
     pub fn graph_add_cooperative_kernel(
         &mut self,
         graph: GraphId,
@@ -8570,6 +10926,22 @@ impl Sim {
         writes: &[AllocId],
     ) -> Result<(), SimError> {
         self.graph_add_kernel_node(graph, kind, reads, writes, true)
+    }
+
+    /// Graph cooperative `cudaGraphAddKernelNode`. Identity with
+    /// [`Self::graph_add_cooperative_kernel`] (`cudaGraphAddKernelNode` for a
+    /// [`Self::cooperative_kernel`] launch).
+    ///
+    /// Capture refused. Distinct from
+    /// [`Self::add_graph_kernel`].
+    pub fn add_graph_cooperative_kernel(
+        &mut self,
+        graph: GraphId,
+        kind: KernelKind,
+        reads: &[AllocId],
+        writes: &[AllocId],
+    ) -> Result<(), SimError> {
+        self.graph_add_cooperative_kernel(graph, kind, reads, writes)
     }
 
     fn graph_add_kernel_node(
@@ -8606,9 +10978,20 @@ impl Sim {
     /// [`Self::graph_add_memcpy_2d`] requires [`MemcpyOp::is_2d`].
     /// [`Self::graph_add_memcpy_3d`] requires [`MemcpyOp::is_3d`].
     /// [`MemcpyNodeParams::ctx`] stays [`None`]. Pin a green context through
-    /// [`Self::graph_add_node`] with [`GraphNodeParams::Memcpy`].
+    /// [`Self::graph_add_node`] with [`GraphNodeParams::Memcpy`]. Driver
+    /// `cuGraphAddMemcpyNode` is
+    /// [`Self::add_graph_memcpy`].
     pub fn graph_add_memcpy(&mut self, graph: GraphId, op: MemcpyOp) -> Result<(), SimError> {
         self.graph_add_memcpy_params(graph, MemcpyNodeParams { op, ctx: None })
+    }
+
+    /// `cuGraphAddMemcpyNode`. Identity with
+    /// [`Self::graph_add_memcpy`] (`cudaGraphAddMemcpyNode`).
+    ///
+    /// Capture refused. Distinct from
+    /// [`Self::add_graph_kernel`].
+    pub fn add_graph_memcpy(&mut self, graph: GraphId, op: MemcpyOp) -> Result<(), SimError> {
+        self.graph_add_memcpy(graph, op)
     }
 
     fn graph_add_memcpy_params(
@@ -8635,7 +11018,9 @@ impl Sim {
         r
     }
 
-    /// `cudaGraphAddMemcpyNode1D`. Pageable copies cannot be graph nodes.
+    /// `cudaGraphAddMemcpyNode1D`. Pageable copies cannot be graph nodes. Driver
+    /// `cuGraphAddMemcpyNode1D` is
+    /// [`Self::add_graph_memcpy_1d`].
     pub fn graph_add_memcpy_1d(
         &mut self,
         graph: GraphId,
@@ -8647,9 +11032,27 @@ impl Sim {
         self.graph_add_memcpy(graph, MemcpyOp::packed_1d(src, dst, alloc, bytes))
     }
 
+    /// `cuGraphAddMemcpyNode1D`. Identity with
+    /// [`Self::graph_add_memcpy_1d`] (`cudaGraphAddMemcpyNode1D`).
+    ///
+    /// Capture refused. Distinct from
+    /// [`Self::add_graph_memcpy`].
+    pub fn add_graph_memcpy_1d(
+        &mut self,
+        graph: GraphId,
+        src: Place,
+        dst: Place,
+        alloc: AllocId,
+        bytes: u64,
+    ) -> Result<(), SimError> {
+        self.graph_add_memcpy_1d(graph, src, dst, alloc, bytes)
+    }
+
     /// `cudaGraphAddMemcpyNode` whose [`MemcpyOp`] is [`MemcpyOp::is_2d`]
     /// (`height > 1`, not 3D). Other extents Invalid `"memcpy2d height"`.
-    /// Typed [`Self::graph_add_memcpy`] stays.
+    /// Typed [`Self::graph_add_memcpy`] stays. Driver
+    /// 2D `cuGraphAddMemcpyNode` is
+    /// [`Self::add_graph_memcpy_2d`].
     pub fn graph_add_memcpy_2d(&mut self, graph: GraphId, op: MemcpyOp) -> Result<(), SimError> {
         if !op.is_2d() {
             return Err(SimError::Invalid {
@@ -8659,9 +11062,20 @@ impl Sim {
         self.graph_add_memcpy(graph, op)
     }
 
+    /// 2D `cuGraphAddMemcpyNode`. Identity with
+    /// [`Self::graph_add_memcpy_2d`] (`cudaGraphAddMemcpyNode` 2D).
+    ///
+    /// Capture refused. Distinct from
+    /// [`Self::add_graph_memcpy_1d`].
+    pub fn add_graph_memcpy_2d(&mut self, graph: GraphId, op: MemcpyOp) -> Result<(), SimError> {
+        self.graph_add_memcpy_2d(graph, op)
+    }
+
     /// `cudaGraphAddMemcpyNode` whose [`MemcpyOp`] is [`MemcpyOp::is_3d`]
     /// (`depth > 1`). Other extents Invalid `"memcpy3d depth"`. Typed
-    /// [`Self::graph_add_memcpy`] stays.
+    /// [`Self::graph_add_memcpy`] stays. Driver
+    /// 3D `cuGraphAddMemcpyNode` is
+    /// [`Self::add_graph_memcpy_3d`].
     pub fn graph_add_memcpy_3d(&mut self, graph: GraphId, op: MemcpyOp) -> Result<(), SimError> {
         if !op.is_3d() {
             return Err(SimError::Invalid {
@@ -8671,19 +11085,51 @@ impl Sim {
         self.graph_add_memcpy(graph, op)
     }
 
+    /// 3D `cuGraphAddMemcpyNode`. Identity with
+    /// [`Self::graph_add_memcpy_3d`] (`cudaGraphAddMemcpyNode` 3D).
+    ///
+    /// Capture refused. Distinct from
+    /// [`Self::add_graph_memcpy_2d`].
+    pub fn add_graph_memcpy_3d(&mut self, graph: GraphId, op: MemcpyOp) -> Result<(), SimError> {
+        self.graph_add_memcpy_3d(graph, op)
+    }
+
     /// `cudaGraphAddMemsetNode` of a [`KernelBuf`] span (packed 1D).
-    /// [`MemsetNodeParams::ctx`] stays [`None`].
+    /// [`MemsetNodeParams::ctx`] stays [`None`]. Driver
+    /// `cuGraphAddMemsetNode` is
+    /// [`Self::add_graph_memset`].
     pub fn graph_add_memset(&mut self, graph: GraphId, buf: KernelBuf) -> Result<(), SimError> {
         self.graph_add_memset_op(graph, MemsetOp::from(buf))
+    }
+
+    /// Packed 1D `cuGraphAddMemsetNode`. Identity with
+    /// [`Self::graph_add_memset`] (`cudaGraphAddMemsetNode` packed 1D).
+    ///
+    /// Capture refused. Distinct from
+    /// [`Self::add_graph_memcpy_3d`].
+    pub fn add_graph_memset(&mut self, graph: GraphId, buf: KernelBuf) -> Result<(), SimError> {
+        self.graph_add_memset(graph, buf)
     }
 
     /// `cudaGraphAddMemsetNode` / `cudaMemset2D` params ([`MemsetOp`]).
     /// [`Self::graph_add_memset_2d`] requires [`MemsetOp::is_2d`].
     /// [`Self::graph_add_memset_3d`] requires [`MemsetOp::is_3d`].
     /// [`MemsetNodeParams::ctx`] stays [`None`]. Pin a green context through
-    /// [`Self::graph_add_node`] with [`GraphNodeParams::Memset`].
+    /// [`Self::graph_add_node`] with [`GraphNodeParams::Memset`]. Driver
+    /// `cuGraphAddMemsetNode` params is
+    /// [`Self::add_graph_memset_op`].
     pub fn graph_add_memset_op(&mut self, graph: GraphId, op: MemsetOp) -> Result<(), SimError> {
         self.graph_add_memset_params(graph, MemsetNodeParams { op, ctx: None })
+    }
+
+    /// `cuGraphAddMemsetNode` params. Identity with
+    /// [`Self::graph_add_memset_op`] (`cudaGraphAddMemsetNode` with
+    /// [`MemsetOp`]).
+    ///
+    /// Capture refused. Distinct from
+    /// [`Self::add_graph_memset`].
+    pub fn add_graph_memset_op(&mut self, graph: GraphId, op: MemsetOp) -> Result<(), SimError> {
+        self.graph_add_memset_op(graph, op)
     }
 
     fn graph_add_memset_params(
@@ -8705,7 +11151,9 @@ impl Sim {
 
     /// `cudaGraphAddMemsetNode` whose [`MemsetOp`] is [`MemsetOp::is_2d`]
     /// (`height > 1`, not 3D). Other extents Invalid `"memset2d height"`.
-    /// Typed [`Self::graph_add_memset_op`] stays.
+    /// Typed [`Self::graph_add_memset_op`] stays. Driver
+    /// 2D `cuGraphAddMemsetNode` is
+    /// [`Self::add_graph_memset_2d`].
     pub fn graph_add_memset_2d(&mut self, graph: GraphId, op: MemsetOp) -> Result<(), SimError> {
         if !op.is_2d() {
             return Err(SimError::Invalid {
@@ -8715,9 +11163,20 @@ impl Sim {
         self.graph_add_memset_op(graph, op)
     }
 
+    /// 2D `cuGraphAddMemsetNode`. Identity with
+    /// [`Self::graph_add_memset_2d`] (`cudaGraphAddMemsetNode` 2D).
+    ///
+    /// Capture refused. Distinct from
+    /// [`Self::add_graph_memset_op`].
+    pub fn add_graph_memset_2d(&mut self, graph: GraphId, op: MemsetOp) -> Result<(), SimError> {
+        self.graph_add_memset_2d(graph, op)
+    }
+
     /// `cudaGraphAddMemsetNode` whose [`MemsetOp`] is [`MemsetOp::is_3d`]
     /// (`depth > 1`). Other extents Invalid `"memset3d depth"`. Typed
-    /// [`Self::graph_add_memset_op`] stays.
+    /// [`Self::graph_add_memset_op`] stays. Driver
+    /// 3D `cuGraphAddMemsetNode` is
+    /// [`Self::add_graph_memset_3d`].
     pub fn graph_add_memset_3d(&mut self, graph: GraphId, op: MemsetOp) -> Result<(), SimError> {
         if !op.is_3d() {
             return Err(SimError::Invalid {
@@ -8727,12 +11186,35 @@ impl Sim {
         self.graph_add_memset_op(graph, op)
     }
 
-    /// `cudaGraphAddHostNode` (`cudaLaunchHostFunc`) with the unnamed callback.
+    /// 3D `cuGraphAddMemsetNode`. Identity with
+    /// [`Self::graph_add_memset_3d`] (`cudaGraphAddMemsetNode` 3D).
+    ///
+    /// Capture refused. Distinct from
+    /// [`Self::add_graph_memset_2d`].
+    pub fn add_graph_memset_3d(&mut self, graph: GraphId, op: MemsetOp) -> Result<(), SimError> {
+        self.graph_add_memset_3d(graph, op)
+    }
+
+    /// `cudaGraphAddHostNode` (`cudaLaunchHostFunc`) with the unnamed callback. Driver
+    /// graph unnamed `cudaGraphAddHostNode` is
+    /// [`Self::add_graph_host_func`].
     pub fn graph_add_host_func(&mut self, graph: GraphId) -> Result<(), SimError> {
         self.graph_add_host_func_params(graph, HostNodeParams::default())
     }
 
-    /// `cudaGraphAddHostNode` with [`HostNodeParams`] (`cudaHostFn_t` / `userData`).
+    /// Graph unnamed `cudaGraphAddHostNode`. Identity with
+    /// [`Self::graph_add_host_func`] (`cudaGraphAddHostNode` with the unnamed
+    /// callback).
+    ///
+    /// Capture refused. Distinct from
+    /// [`Self::add_graph_host`].
+    pub fn add_graph_host_func(&mut self, graph: GraphId) -> Result<(), SimError> {
+        self.graph_add_host_func(graph)
+    }
+
+    /// `cudaGraphAddHostNode` with [`HostNodeParams`] (`cudaHostFn_t` / `userData`). Driver
+    /// `cuGraphAddHostNode` is
+    /// [`Self::add_graph_host`].
     pub fn graph_add_host_func_params(
         &mut self,
         graph: GraphId,
@@ -8750,14 +11232,38 @@ impl Sim {
         )
     }
 
+    /// `cuGraphAddHostNode`. Identity with
+    /// [`Self::graph_add_host_func_params`] (`cudaGraphAddHostNode`).
+    ///
+    /// Capture refused. Distinct from
+    /// [`Self::add_graph_child`].
+    pub fn add_graph_host(
+        &mut self,
+        graph: GraphId,
+        params: HostNodeParams,
+    ) -> Result<(), SimError> {
+        self.graph_add_host_func_params(graph, params)
+    }
+
     /// `cudaGraphAddEmptyNode`: join/fork with no work.
     ///
     /// Completes in 1 ns and does not occupy compute or copy engines, so
     /// leftover kernels may Hyper-Q overlap it. Capture cannot include it.
-    /// Illegal on an instantiated exec.
+    /// Illegal on an instantiated exec. Driver
+    /// `cuGraphAddEmptyNode` is
+    /// [`Self::add_graph_empty`].
     pub fn graph_add_empty(&mut self, graph: GraphId) -> Result<(), SimError> {
         let (device, stream) = self.graph_origin_for_add(graph)?;
         self.graph_push(graph, device, stream, Kind::Empty)
+    }
+
+    /// `cuGraphAddEmptyNode`. Identity with
+    /// [`Self::graph_add_empty`] (`cudaGraphAddEmptyNode`).
+    ///
+    /// Capture refused. Distinct from
+    /// [`Self::graph_add_child`].
+    pub fn add_graph_empty(&mut self, graph: GraphId) -> Result<(), SimError> {
+        self.graph_add_empty(graph)
     }
 
     /// `cudaGraphConditionalHandleCreate` on an uninstantiated graph.
@@ -8768,13 +11274,28 @@ impl Sim {
     /// it. Illegal on an instantiated exec. Node ctx stays [`None`] unless
     /// [`Self::graph_conditional_create_with_ctx`] pins a green context.
     /// Instantiate requires the handle on a live IF / WHILE / SWITCH node
-    /// ([`GraphInstantiateResult::ConditionalHandleUnused`]).
+    /// ([`GraphInstantiateResult::ConditionalHandleUnused`]). Driver
+    /// `cuGraphConditionalHandleCreate` is
+    /// [`Self::create_graph_conditional_handle`].
     pub fn graph_conditional_create(
         &mut self,
         graph: GraphId,
         default: u32,
     ) -> Result<CondId, SimError> {
         self.graph_conditional_create_with_flags(graph, default, GraphCondFlags::ASSIGN_DEFAULT)
+    }
+
+    /// `cuGraphConditionalHandleCreate`. Identity with
+    /// [`Self::graph_conditional_create`] (`cudaGraphConditionalHandleCreate`).
+    ///
+    /// Capture refused. Distinct from
+    /// [`Self::set_graph_exec_conditional_params`].
+    pub fn create_graph_conditional_handle(
+        &mut self,
+        graph: GraphId,
+        default: u32,
+    ) -> Result<CondId, SimError> {
+        self.graph_conditional_create(graph, default)
     }
 
     /// `cudaGraphConditionalHandleCreate` with a flags word.
@@ -8786,7 +11307,9 @@ impl Sim {
     /// value). Unknown bits are Invalid `"graph cond flags"`. Capture cannot
     /// include it. Illegal on an instantiated exec. Typed
     /// [`Self::graph_conditional_create`] stays. Ctx is [`None`]; pin a green
-    /// context with [`Self::graph_conditional_create_with_ctx`].
+    /// context with [`Self::graph_conditional_create_with_ctx`]. Driver
+    /// `cuGraphConditionalHandleCreate` flags is
+    /// [`Self::create_graph_conditional_handle_with_flags`].
     pub fn graph_conditional_create_with_flags(
         &mut self,
         graph: GraphId,
@@ -8794,6 +11317,20 @@ impl Sim {
         flags: u32,
     ) -> Result<CondId, SimError> {
         self.graph_conditional_create_with_ctx(graph, default, flags, None)
+    }
+
+    /// `cuGraphConditionalHandleCreate` flags. Identity with
+    /// [`Self::graph_conditional_create_with_flags`] (`cudaGraphConditionalHandleCreate` flags).
+    ///
+    /// Capture refused. Distinct from
+    /// [`Self::create_graph_conditional_handle`].
+    pub fn create_graph_conditional_handle_with_flags(
+        &mut self,
+        graph: GraphId,
+        default: u32,
+        flags: u32,
+    ) -> Result<CondId, SimError> {
+        self.graph_conditional_create_with_flags(graph, default, flags)
     }
 
     /// `cuGraphConditionalHandleCreate` with a ctx argument.
@@ -8807,7 +11344,9 @@ impl Sim {
     /// Typed [`Self::graph_add_if`] copies this ctx onto the node. Conditionals
     /// do not occupy SMs, so duration is unchanged. Capture cannot include it.
     /// Illegal on an instantiated exec. This VM does not invent an Engine flag
-    /// for conditional ctx.
+    /// for conditional ctx. Driver
+    /// `cuGraphConditionalHandleCreate` with ctx is
+    /// [`Self::create_graph_conditional_handle_with_ctx`].
     pub fn graph_conditional_create_with_ctx(
         &mut self,
         graph: GraphId,
@@ -8850,12 +11389,29 @@ impl Sim {
         Ok(id)
     }
 
+    /// `cuGraphConditionalHandleCreate` with a ctx argument. Identity with
+    /// [`Self::graph_conditional_create_with_ctx`] (`cudaGraphConditionalHandleCreate` with ctx).
+    ///
+    /// Capture refused. Distinct from
+    /// [`Self::create_graph_conditional_handle_with_flags`].
+    pub fn create_graph_conditional_handle_with_ctx(
+        &mut self,
+        graph: GraphId,
+        default: u32,
+        flags: u32,
+        ctx: Option<GreenCtxId>,
+    ) -> Result<CondId, SimError> {
+        self.graph_conditional_create_with_ctx(graph, default, flags, ctx)
+    }
+
     /// `cudaGraphAddNode` IF (`cudaGraphCondTypeIf`, size 1). Returns the then-body.
     ///
     /// Add nodes to the body, then instantiate the parent. Then-body ops skip at
     /// start when `handle` is `0`. Size 2 (if/else) is [`Self::graph_add_if_else`].
     /// `handle` must have been created on `graph`. Capture cannot include it.
-    /// Illegal on an instantiated exec. Copies the handle ctx onto the node.
+    /// Illegal on an instantiated exec. Copies the handle ctx onto the node. Driver
+    /// `cuGraphAddNode` IF is
+    /// [`Self::add_graph_if`].
     pub fn graph_add_if(&mut self, graph: GraphId, handle: CondId) -> Result<GraphId, SimError> {
         let (device, stream) = self.graph_origin_for_add(graph)?;
         self.require_cond_on_graph(handle, graph)?;
@@ -8874,11 +11430,22 @@ impl Sim {
         Ok(body)
     }
 
+    /// `cuGraphAddNode` IF (`cudaGraphCondTypeIf`, size 1). Identity with
+    /// [`Self::graph_add_if`] (`cudaGraphAddNode` IF).
+    ///
+    /// Capture refused. Distinct from
+    /// [`Self::add_graph_node_with_data`].
+    pub fn add_graph_if(&mut self, graph: GraphId, handle: CondId) -> Result<GraphId, SimError> {
+        self.graph_add_if(graph, handle)
+    }
+
     /// `cudaGraphAddNode` IF (`cudaGraphCondTypeIf`, size 2). Returns then, else.
     ///
     /// Then-body ops skip at start when `handle` is `0`; the else-body runs
     /// instead. `handle` must have been created on `graph`. Capture cannot
-    /// include it. Illegal on an instantiated exec. No Engine `--graph-if-else`.
+    /// include it. Illegal on an instantiated exec. No Engine `--graph-if-else`. Driver
+    /// `cuGraphAddNode` IF size 2 is
+    /// [`Self::add_graph_if_else`].
     pub fn graph_add_if_else(
         &mut self,
         graph: GraphId,
@@ -8902,11 +11469,26 @@ impl Sim {
         Ok((body, else_body))
     }
 
+    /// `cuGraphAddNode` IF (`cudaGraphCondTypeIf`, size 2). Identity with
+    /// [`Self::graph_add_if_else`] (`cudaGraphAddNode` IF size 2).
+    ///
+    /// Capture refused. Distinct from
+    /// [`Self::add_graph_if`].
+    pub fn add_graph_if_else(
+        &mut self,
+        graph: GraphId,
+        handle: CondId,
+    ) -> Result<(GraphId, GraphId), SimError> {
+        self.graph_add_if_else(graph, handle)
+    }
+
     /// `cudaGraphAddNode` WHILE (`cudaGraphCondTypeWhile`). Returns the body.
     ///
     /// Each iteration skips at start when `handle` is `0`. A body that leaves
     /// the handle non-zero is Invalid after 64 iterations. Capture cannot
-    /// include it. Illegal on an instantiated exec.
+    /// include it. Illegal on an instantiated exec. Driver
+    /// `cuGraphAddNode` WHILE is
+    /// [`Self::add_graph_while`].
     pub fn graph_add_while(&mut self, graph: GraphId, handle: CondId) -> Result<GraphId, SimError> {
         let (device, stream) = self.graph_origin_for_add(graph)?;
         self.require_cond_on_graph(handle, graph)?;
@@ -8915,12 +11497,23 @@ impl Sim {
         Ok(body)
     }
 
+    /// `cuGraphAddNode` WHILE (`cudaGraphCondTypeWhile`). Identity with
+    /// [`Self::graph_add_while`] (`cudaGraphAddNode` WHILE).
+    ///
+    /// Capture refused. Distinct from
+    /// [`Self::add_graph_if_else`].
+    pub fn add_graph_while(&mut self, graph: GraphId, handle: CondId) -> Result<GraphId, SimError> {
+        self.graph_add_while(graph, handle)
+    }
+
     /// `cudaGraphAddNode` SWITCH (`cudaGraphCondTypeSwitch`). Returns `n` bodies.
     ///
     /// Branch `i` runs when the handle equals `i`. Out of range skips every
     /// body. `n` must be `1..=64`. [`GraphNodeParams::Switch`] fills
     /// [`GraphAddNode::switch_bodies`]. Capture cannot include it. Illegal on
-    /// an instantiated exec.
+    /// an instantiated exec. Driver
+    /// `cuGraphAddNode` SWITCH is
+    /// [`Self::add_graph_switch`].
     pub fn graph_add_switch(
         &mut self,
         graph: GraphId,
@@ -8949,6 +11542,20 @@ impl Sim {
             },
         )?;
         Ok(bodies)
+    }
+
+    /// `cuGraphAddNode` SWITCH (`cudaGraphCondTypeSwitch`). Identity with
+    /// [`Self::graph_add_switch`] (`cudaGraphAddNode` SWITCH).
+    ///
+    /// Capture refused. Distinct from
+    /// [`Self::add_graph_while`].
+    pub fn add_graph_switch(
+        &mut self,
+        graph: GraphId,
+        handle: CondId,
+        n: u32,
+    ) -> Result<Vec<GraphId>, SimError> {
+        self.graph_add_switch(graph, handle, n)
     }
 
     fn require_cond_on_graph(&self, handle: CondId, graph: GraphId) -> Result<(), SimError> {
@@ -9059,7 +11666,9 @@ impl Sim {
     ///
     /// `handle` must have been created on `graph`. Capture cannot include it.
     /// Illegal on an instantiated exec. Device-launch instantiate refuses this
-    /// node (conditionals). Decode identity does not add set-conditional nodes.
+    /// node (conditionals). Decode identity does not add set-conditional nodes. Driver
+    /// graph-build `cuGraphSetConditional` is
+    /// [`Self::add_graph_set_conditional`].
     pub fn graph_add_set_conditional(
         &mut self,
         graph: GraphId,
@@ -9074,6 +11683,20 @@ impl Sim {
             stream,
             Kind::SetConditional { handle, value },
         )
+    }
+
+    /// Graph-build `cuGraphSetConditional`. Identity with
+    /// [`Self::graph_add_set_conditional`] (graph-build `cudaGraphSetConditional`).
+    ///
+    /// Capture refused. Distinct from
+    /// [`Self::add_graph_switch`].
+    pub fn add_graph_set_conditional(
+        &mut self,
+        graph: GraphId,
+        handle: CondId,
+        value: u32,
+    ) -> Result<(), SimError> {
+        self.graph_add_set_conditional(graph, handle, value)
     }
 
     /// IF nodes on `graph` as `(index, handle, body)` in add order.
@@ -9189,7 +11812,9 @@ impl Sim {
             .view())
     }
 
-    /// `cudaGraphAddEventRecordNode`. `external` is `cudaEventRecordExternal`.
+    /// `cudaGraphAddEventRecordNode`. `external` is `cudaEventRecordExternal`. Driver
+    /// `cuGraphAddEventRecordNode` is
+    /// [`Self::add_graph_event_record`].
     pub fn graph_add_event_record(
         &mut self,
         graph: GraphId,
@@ -9203,7 +11828,23 @@ impl Sim {
         self.graph_push(graph, device, stream, Kind::EventRecord { event, external })
     }
 
-    /// `cudaGraphAddEventWaitNode`. `external` is `cudaEventWaitExternal`.
+    /// `cuGraphAddEventRecordNode`. Identity with
+    /// [`Self::graph_add_event_record`] (`cudaGraphAddEventRecordNode`).
+    ///
+    /// Capture refused. Distinct from
+    /// [`Self::add_graph_host`].
+    pub fn add_graph_event_record(
+        &mut self,
+        graph: GraphId,
+        event: EventId,
+        external: bool,
+    ) -> Result<(), SimError> {
+        self.graph_add_event_record(graph, event, external)
+    }
+
+    /// `cudaGraphAddEventWaitNode`. `external` is `cudaEventWaitExternal`. Driver
+    /// `cuGraphAddEventWaitNode` is
+    /// [`Self::add_graph_event_wait`].
     pub fn graph_add_event_wait(
         &mut self,
         graph: GraphId,
@@ -9217,10 +11858,26 @@ impl Sim {
         self.graph_push(graph, device, stream, Kind::EventWait { event, external })
     }
 
+    /// `cuGraphAddEventWaitNode`. Identity with
+    /// [`Self::graph_add_event_wait`] (`cudaGraphAddEventWaitNode`).
+    ///
+    /// Capture refused. Distinct from
+    /// [`Self::add_graph_event_record`].
+    pub fn add_graph_event_wait(
+        &mut self,
+        graph: GraphId,
+        event: EventId,
+        external: bool,
+    ) -> Result<(), SimError> {
+        self.graph_add_event_wait(graph, event, external)
+    }
+
     /// `cuStreamWriteValue64` as a `cudaGraphAddBatchMemOpNode`.
     ///
     /// Capture cannot include it (use [`Self::write_value64`] during capture).
-    /// Illegal on an instantiated exec.
+    /// Illegal on an instantiated exec. Driver
+    /// graph `cuStreamWriteValue64` is
+    /// [`Self::add_graph_write_value64`].
     pub fn graph_add_write_value64(
         &mut self,
         graph: GraphId,
@@ -9239,7 +11896,25 @@ impl Sim {
         )
     }
 
-    /// `cuStreamWriteValue32` as a `cudaGraphAddBatchMemOpNode`.
+    /// Graph `cuStreamWriteValue64`. Identity with
+    /// [`Self::graph_add_write_value64`] (`cuStreamWriteValue64` as
+    /// `cudaGraphAddBatchMemOpNode`).
+    ///
+    /// Capture refused. Distinct from
+    /// [`Self::add_graph_set_conditional`].
+    pub fn add_graph_write_value64(
+        &mut self,
+        graph: GraphId,
+        id: AllocId,
+        offset: u64,
+        value: u64,
+    ) -> Result<(), SimError> {
+        self.graph_add_write_value64(graph, id, offset, value)
+    }
+
+    /// `cuStreamWriteValue32` as a `cudaGraphAddBatchMemOpNode`. Driver
+    /// graph `cuStreamWriteValue32` is
+    /// [`Self::add_graph_write_value32`].
     pub fn graph_add_write_value32(
         &mut self,
         graph: GraphId,
@@ -9258,11 +11933,29 @@ impl Sim {
         )
     }
 
+    /// Graph `cuStreamWriteValue32`. Identity with
+    /// [`Self::graph_add_write_value32`] (`cuStreamWriteValue32` as
+    /// `cudaGraphAddBatchMemOpNode`).
+    ///
+    /// Capture refused. Distinct from
+    /// [`Self::add_graph_write_value64`].
+    pub fn add_graph_write_value32(
+        &mut self,
+        graph: GraphId,
+        id: AllocId,
+        offset: u64,
+        value: u64,
+    ) -> Result<(), SimError> {
+        self.graph_add_write_value32(graph, id, offset, value)
+    }
+
     /// [`Self::graph_add_write_value64`] with a [`WriteValueFlags`] word.
     ///
     /// Flags must be [`WriteValueFlags::DEFAULT`].
     /// [`WriteValueFlags::NO_MEMORY_BARRIER`] is Invalid `"write value flags"`.
-    /// Typed helper stays.
+    /// Typed helper stays. Driver
+    /// graph `cuStreamWriteValue64` flags is
+    /// [`Self::add_graph_write_value64_with_flags`].
     pub fn graph_add_write_value64_with_flags(
         &mut self,
         graph: GraphId,
@@ -9275,7 +11968,26 @@ impl Sim {
         self.graph_add_write_value64(graph, id, offset, value)
     }
 
-    /// [`Self::graph_add_write_value32`] with a [`WriteValueFlags`] word.
+    /// Graph `cuStreamWriteValue64` flags. Identity with
+    /// [`Self::graph_add_write_value64_with_flags`] (`cuStreamWriteValue64`
+    /// flags).
+    ///
+    /// Capture refused. Distinct from
+    /// [`Self::add_graph_write_value32`].
+    pub fn add_graph_write_value64_with_flags(
+        &mut self,
+        graph: GraphId,
+        id: AllocId,
+        offset: u64,
+        value: u64,
+        flags: u32,
+    ) -> Result<(), SimError> {
+        self.graph_add_write_value64_with_flags(graph, id, offset, value, flags)
+    }
+
+    /// [`Self::graph_add_write_value32`] with a [`WriteValueFlags`] word. Driver
+    /// graph `cuStreamWriteValue32` flags is
+    /// [`Self::add_graph_write_value32_with_flags`].
     pub fn graph_add_write_value32_with_flags(
         &mut self,
         graph: GraphId,
@@ -9288,7 +12000,26 @@ impl Sim {
         self.graph_add_write_value32(graph, id, offset, value)
     }
 
-    /// `cuStreamWaitValue64` as a `cudaGraphAddBatchMemOpNode`.
+    /// Graph `cuStreamWriteValue32` flags. Identity with
+    /// [`Self::graph_add_write_value32_with_flags`] (`cuStreamWriteValue32`
+    /// flags).
+    ///
+    /// Capture refused. Distinct from
+    /// [`Self::add_graph_write_value64_with_flags`].
+    pub fn add_graph_write_value32_with_flags(
+        &mut self,
+        graph: GraphId,
+        id: AllocId,
+        offset: u64,
+        value: u64,
+        flags: u32,
+    ) -> Result<(), SimError> {
+        self.graph_add_write_value32_with_flags(graph, id, offset, value, flags)
+    }
+
+    /// `cuStreamWaitValue64` as a `cudaGraphAddBatchMemOpNode`. Driver
+    /// graph `cuStreamWaitValue64` is
+    /// [`Self::add_graph_wait_value64`].
     pub fn graph_add_wait_value64(
         &mut self,
         graph: GraphId,
@@ -9310,7 +12041,26 @@ impl Sim {
         )
     }
 
-    /// `cuStreamWaitValue32` as a `cudaGraphAddBatchMemOpNode`.
+    /// Graph `cuStreamWaitValue64`. Identity with
+    /// [`Self::graph_add_wait_value64`] (`cuStreamWaitValue64` as
+    /// `cudaGraphAddBatchMemOpNode`).
+    ///
+    /// Capture refused. Distinct from
+    /// [`Self::add_graph_write_value32_with_flags`].
+    pub fn add_graph_wait_value64(
+        &mut self,
+        graph: GraphId,
+        id: AllocId,
+        offset: u64,
+        value: u64,
+        cmp: WaitValueCmp,
+    ) -> Result<(), SimError> {
+        self.graph_add_wait_value64(graph, id, offset, value, cmp)
+    }
+
+    /// `cuStreamWaitValue32` as a `cudaGraphAddBatchMemOpNode`. Driver
+    /// graph `cuStreamWaitValue32` is
+    /// [`Self::add_graph_wait_value32`].
     pub fn graph_add_wait_value32(
         &mut self,
         graph: GraphId,
@@ -9332,11 +12082,30 @@ impl Sim {
         )
     }
 
+    /// Graph `cuStreamWaitValue32`. Identity with
+    /// [`Self::graph_add_wait_value32`] (`cuStreamWaitValue32` as
+    /// `cudaGraphAddBatchMemOpNode`).
+    ///
+    /// Capture refused. Distinct from
+    /// [`Self::add_graph_wait_value64`].
+    pub fn add_graph_wait_value32(
+        &mut self,
+        graph: GraphId,
+        id: AllocId,
+        offset: u64,
+        value: u64,
+        cmp: WaitValueCmp,
+    ) -> Result<(), SimError> {
+        self.graph_add_wait_value32(graph, id, offset, value, cmp)
+    }
+
     /// [`Self::graph_add_wait_value64`] with a [`crate::WaitValueFlags`] word.
     ///
     /// [`crate::WaitValueFlags::FLUSH`] requires an RDMA SKU (same as
     /// [`BatchMemOp::FlushRemoteWrites`]). Unknown bits Invalid `"wait value flags"`.
-    /// Typed helper stays.
+    /// Typed helper stays. Driver
+    /// graph `cuStreamWaitValue64` flags is
+    /// [`Self::add_graph_wait_value64_with_flags`].
     pub fn graph_add_wait_value64_with_flags(
         &mut self,
         graph: GraphId,
@@ -9359,7 +12128,26 @@ impl Sim {
         )
     }
 
-    /// [`Self::graph_add_wait_value32`] with a [`crate::WaitValueFlags`] word.
+    /// Graph `cuStreamWaitValue64` flags. Identity with
+    /// [`Self::graph_add_wait_value64_with_flags`] (`cuStreamWaitValue64`
+    /// flags).
+    ///
+    /// Capture refused. Distinct from
+    /// [`Self::add_graph_wait_value32`].
+    pub fn add_graph_wait_value64_with_flags(
+        &mut self,
+        graph: GraphId,
+        id: AllocId,
+        offset: u64,
+        value: u64,
+        flags: u32,
+    ) -> Result<(), SimError> {
+        self.graph_add_wait_value64_with_flags(graph, id, offset, value, flags)
+    }
+
+    /// [`Self::graph_add_wait_value32`] with a [`crate::WaitValueFlags`] word. Driver
+    /// graph `cuStreamWaitValue32` flags is
+    /// [`Self::add_graph_wait_value32_with_flags`].
     pub fn graph_add_wait_value32_with_flags(
         &mut self,
         graph: GraphId,
@@ -9382,6 +12170,23 @@ impl Sim {
         )
     }
 
+    /// Graph `cuStreamWaitValue32` flags. Identity with
+    /// [`Self::graph_add_wait_value32_with_flags`] (`cuStreamWaitValue32`
+    /// flags).
+    ///
+    /// Capture refused. Distinct from
+    /// [`Self::add_graph_wait_value64_with_flags`].
+    pub fn add_graph_wait_value32_with_flags(
+        &mut self,
+        graph: GraphId,
+        id: AllocId,
+        offset: u64,
+        value: u64,
+        flags: u32,
+    ) -> Result<(), SimError> {
+        self.graph_add_wait_value32_with_flags(graph, id, offset, value, flags)
+    }
+
     /// `cudaGraphAddBatchMemOpNode`: one node holding the wait/write/flush
     /// vector.
     ///
@@ -9390,7 +12195,9 @@ impl Sim {
     /// cannot include it (use [`Self::batch_mem_op`] during capture). Illegal
     /// after instantiate. [`BatchMemOpNodeParams::ctx`] stays [`None`]. Pin a
     /// green context through [`Self::graph_add_node`] with
-    /// [`GraphNodeParams::BatchMemOp`].
+    /// [`GraphNodeParams::BatchMemOp`]. Driver
+    /// `cuGraphAddBatchMemOpNode` is
+    /// [`Self::add_graph_batch_mem_op`].
     pub fn graph_add_batch_mem_op(
         &mut self,
         graph: GraphId,
@@ -9400,6 +12207,19 @@ impl Sim {
         let (device, stream) = self.graph_origin_for_add(graph)?;
         self.check_batch_flush(device, ops)?;
         self.graph_push(graph, device, stream, Kind::BatchMem { ops: ops.to_vec() })
+    }
+
+    /// `cuGraphAddBatchMemOpNode`. Identity with
+    /// [`Self::graph_add_batch_mem_op`] (`cudaGraphAddBatchMemOpNode`).
+    ///
+    /// Capture refused. Distinct from
+    /// [`Self::add_graph_memset_3d`].
+    pub fn add_graph_batch_mem_op(
+        &mut self,
+        graph: GraphId,
+        ops: &[BatchMemOp],
+    ) -> Result<(), SimError> {
+        self.graph_add_batch_mem_op(graph, ops)
     }
 
     fn graph_add_batch_mem_op_params(
@@ -9423,7 +12243,9 @@ impl Sim {
     /// [`Self::graph_add_batch_mem_op`] with a [`BatchMemOpFlags`] word.
     ///
     /// Flags must be [`BatchMemOpFlags::DEFAULT`]. Unknown bits Invalid
-    /// `"batch mem op flags"`. Typed helper stays.
+    /// `"batch mem op flags"`. Typed helper stays. Driver
+    /// `cuGraphAddBatchMemOpNode` flags is
+    /// [`Self::add_graph_batch_mem_op_with_flags`].
     pub fn graph_add_batch_mem_op_with_flags(
         &mut self,
         graph: GraphId,
@@ -9432,6 +12254,21 @@ impl Sim {
     ) -> Result<(), SimError> {
         Self::check_batch_mem_op_flags(flags)?;
         self.graph_add_batch_mem_op(graph, ops)
+    }
+
+    /// `cuGraphAddBatchMemOpNode` flags. Identity with
+    /// [`Self::graph_add_batch_mem_op_with_flags`] (`cudaGraphAddBatchMemOpNode`
+    /// flags).
+    ///
+    /// Capture refused. Distinct from
+    /// [`Self::add_graph_batch_mem_op`].
+    pub fn add_graph_batch_mem_op_with_flags(
+        &mut self,
+        graph: GraphId,
+        ops: &[BatchMemOp],
+        flags: u32,
+    ) -> Result<(), SimError> {
+        self.graph_add_batch_mem_op_with_flags(graph, ops, flags)
     }
 
     fn graph_add_batch_item(&mut self, graph: GraphId, op: BatchMemOp) -> Result<(), SimError> {
@@ -9448,7 +12285,9 @@ impl Sim {
     /// Independent children may Hyper-Q overlap at parent launch.
     /// Pin move ownership through [`Self::graph_add_node`] with
     /// [`GraphNodeParams::ChildGraph`]. A parked in-flight-destroyed exec used
-    /// as `child` is `"unknown graph"`. Live exec as `child` stays.
+    /// as `child` is `"unknown graph"`. Live exec as `child` stays. Driver
+    /// `cuGraphAddChildGraphNode` is
+    /// [`Self::add_graph_child`].
     pub fn graph_add_child(&mut self, graph: GraphId, child: GraphId) -> Result<(), SimError> {
         self.graph_add_child_params(
             graph,
@@ -9457,6 +12296,15 @@ impl Sim {
                 ownership: GraphChildGraphOwnership::CLONE,
             },
         )
+    }
+
+    /// `cuGraphAddChildGraphNode`. Identity with
+    /// [`Self::graph_add_child`] (`cudaGraphAddChildGraphNode`).
+    ///
+    /// Capture refused. Distinct from
+    /// [`Self::add_graph_empty`].
+    pub fn add_graph_child(&mut self, graph: GraphId, child: GraphId) -> Result<(), SimError> {
+        self.graph_add_child(graph, child)
     }
 
     fn graph_add_child_params(
@@ -9588,9 +12436,20 @@ impl Sim {
     /// instantiated exec. [`Self::update_graph`] of mem nodes is Invalid.
     /// Empty `accessDescs` is this helper; peer access is
     /// [`Self::graph_add_alloc_with_access`]. [`GraphNodeParams::Alloc`]
-    /// is the `cudaGraphAddNode` entry (empty `access` is this helper).
+    /// is the `cudaGraphAddNode` entry (empty `access` is this helper). Driver
+    /// `cuGraphAddMemAllocNode` is
+    /// [`Self::add_graph_alloc`].
     pub fn graph_add_alloc(&mut self, graph: GraphId, bytes: u64) -> Result<AllocId, SimError> {
         self.graph_add_alloc_with_access(graph, bytes, &[])
+    }
+
+    /// `cuGraphAddMemAllocNode`. Identity with
+    /// [`Self::graph_add_alloc`] (`cudaGraphAddMemAllocNode`).
+    ///
+    /// Capture refused. Distinct from
+    /// [`Self::add_graph_batch_mem_op_with_flags`].
+    pub fn add_graph_alloc(&mut self, graph: GraphId, bytes: u64) -> Result<AllocId, SimError> {
+        self.graph_add_alloc(graph, bytes)
     }
 
     /// `cudaGraphAddMemAllocNode` with `accessDescs`.
@@ -9604,7 +12463,9 @@ impl Sim {
     /// Invalid `"access location"`; unknown flags `"alloc access flags"`.
     /// All-or-nothing before the node is created. Capture cannot include it.
     /// Illegal on an instantiated exec. SetParams of Alloc stays Invalid.
-    /// [`GraphNodeParams::Alloc`] is the unified `cudaGraphAddNode` entry.
+    /// [`GraphNodeParams::Alloc`] is the unified `cudaGraphAddNode` entry. Driver
+    /// `cuGraphAddMemAllocNode` access is
+    /// [`Self::add_graph_alloc_with_access`].
     pub fn graph_add_alloc_with_access(
         &mut self,
         graph: GraphId,
@@ -9624,6 +12485,21 @@ impl Sim {
         self.graph_push(graph, device, stream, Kind::Alloc { id, bytes })?;
         self.graph_allocs.entry(graph).or_default().push(id);
         Ok(id)
+    }
+
+    /// `cuGraphAddMemAllocNode` access. Identity with
+    /// [`Self::graph_add_alloc_with_access`] (`cudaGraphAddMemAllocNode`
+    /// accessDescs).
+    ///
+    /// Capture refused. Distinct from
+    /// [`Self::add_graph_alloc`].
+    pub fn add_graph_alloc_with_access(
+        &mut self,
+        graph: GraphId,
+        bytes: u64,
+        access: &[MemAccessDesc],
+    ) -> Result<AllocId, SimError> {
+        self.graph_add_alloc_with_access(graph, bytes, access)
     }
 
     fn check_graph_alloc_access(
@@ -9661,18 +12537,31 @@ impl Sim {
         Ok(())
     }
 
-    /// `cudaGraphAddMemFreeNode` of a pending or live allocation.
+    /// `cudaGraphAddMemFreeNode` of a pending or live allocation. Driver
+    /// `cuGraphAddMemFreeNode` is
+    /// [`Self::add_graph_free`].
     pub fn graph_add_free(&mut self, graph: GraphId, id: AllocId) -> Result<(), SimError> {
         let (device, stream) = self.graph_origin_for_add(graph)?;
         let _a = self.alloc_ref(id)?;
         self.graph_push(graph, device, stream, Kind::Free { id })
     }
 
+    /// `cuGraphAddMemFreeNode`. Identity with
+    /// [`Self::graph_add_free`] (`cudaGraphAddMemFreeNode`).
+    ///
+    /// Capture refused. Distinct from
+    /// [`Self::add_graph_alloc_with_access`].
+    pub fn add_graph_free(&mut self, graph: GraphId, id: AllocId) -> Result<(), SimError> {
+        self.graph_add_free(graph, id)
+    }
+
     /// `cudaGraphAddDependencies`: `from` must complete before `to` starts.
     ///
     /// Capture cannot include it. Illegal on an instantiated exec. Indices are
     /// 0-based in add order. A cycle is Invalid. Independent nodes (no edge)
-    /// may Hyper-Q overlap at [`Self::launch_graph`].
+    /// may Hyper-Q overlap at [`Self::launch_graph`]. Driver
+    /// `cuGraphAddDependencies` is
+    /// [`Self::add_graph_dependencies`].
     pub fn graph_add_dependencies(
         &mut self,
         graph: GraphId,
@@ -9682,11 +12571,27 @@ impl Sim {
         self.graph_add_dependencies_n(graph, &[(from, to)])
     }
 
+    /// `cuGraphAddDependencies`. Identity with
+    /// [`Self::graph_add_dependencies`] (`cudaGraphAddDependencies`).
+    ///
+    /// Capture refused. Distinct from
+    /// [`Self::graph_add_dependencies_n`].
+    pub fn add_graph_dependencies(
+        &mut self,
+        graph: GraphId,
+        from: usize,
+        to: usize,
+    ) -> Result<(), SimError> {
+        self.graph_add_dependencies(graph, from, to)
+    }
+
     /// `cudaGraphAddDependencies` of `numDependencies` from/to pairs.
     ///
     /// All-or-nothing: a cycle or out-of-range index adds nothing. Duplicate
     /// edges are a no-op. Empty `edges` is success. Capture cannot include it.
-    /// Illegal on an instantiated exec.
+    /// Illegal on an instantiated exec. Driver
+    /// `cuGraphAddDependencies` of pairs is
+    /// [`Self::add_graph_dependencies_n`].
     pub fn graph_add_dependencies_n(
         &mut self,
         graph: GraphId,
@@ -9733,6 +12638,20 @@ impl Sim {
         Ok(())
     }
 
+    /// `cuGraphAddDependencies` of pairs. Identity with
+    /// [`Self::graph_add_dependencies_n`] (`cudaGraphAddDependencies` of
+    /// `numDependencies` from/to pairs).
+    ///
+    /// Capture refused. Distinct from
+    /// [`Self::add_graph_dependencies`].
+    pub fn add_graph_dependencies_n(
+        &mut self,
+        graph: GraphId,
+        edges: &[(usize, usize)],
+    ) -> Result<(), SimError> {
+        self.graph_add_dependencies_n(graph, edges)
+    }
+
     /// `cudaGraphAddDependencies` with [`GraphEdgeData`] (`from`, `to`, data).
     ///
     /// [`GraphDependencyType::DEFAULT`] with ports 0 is
@@ -9742,7 +12661,9 @@ impl Sim {
     /// `"graph edge port"`. An existing `(from, to)` cannot change stored
     /// [`GraphEdgeData`] (Invalid `"graph edge data"`). Default incoming on an
     /// existing edge stays a no-op (PLAN 182). Capture cannot include it.
-    /// Illegal on an instantiated exec.
+    /// Illegal on an instantiated exec. Driver
+    /// `cuGraphAddDependencies` with data is
+    /// [`Self::add_graph_dependencies_with_data`].
     pub fn graph_add_dependencies_with_data(
         &mut self,
         graph: GraphId,
@@ -9751,6 +12672,22 @@ impl Sim {
         data: GraphEdgeData,
     ) -> Result<(), SimError> {
         self.graph_add_dependencies_n_with_data(graph, &[(from, to, data)])
+    }
+
+    /// `cuGraphAddDependencies` with [`GraphEdgeData`]. Identity with
+    /// [`Self::graph_add_dependencies_with_data`] (`cudaGraphAddDependencies`
+    /// with data).
+    ///
+    /// Capture refused. Distinct from
+    /// [`Self::add_graph_dependencies_n`].
+    pub fn add_graph_dependencies_with_data(
+        &mut self,
+        graph: GraphId,
+        from: usize,
+        to: usize,
+        data: GraphEdgeData,
+    ) -> Result<(), SimError> {
+        self.graph_add_dependencies_with_data(graph, from, to, data)
     }
 
     /// `cudaGraphAddDependencies` v2 of `numDependencies` from/to/data triples.
@@ -9762,7 +12699,9 @@ impl Sim {
     /// to start. An existing `(from, to)` cannot change stored
     /// [`GraphEdgeData`] (Invalid `"graph edge data"`). Default incoming on an
     /// existing edge stays a no-op. Capture cannot include it. Illegal on an
-    /// instantiated exec.
+    /// instantiated exec. Driver
+    /// `cuGraphAddDependencies` v2 is
+    /// [`Self::add_graph_dependencies_n_with_data`].
     pub fn graph_add_dependencies_n_with_data(
         &mut self,
         graph: GraphId,
@@ -9791,6 +12730,20 @@ impl Sim {
             let _prev = step.edge_data.insert(from, data);
         }
         Ok(())
+    }
+
+    /// `cuGraphAddDependencies` v2 of from/to/data triples. Identity with
+    /// [`Self::graph_add_dependencies_n_with_data`] (`cudaGraphAddDependencies`
+    /// v2).
+    ///
+    /// Capture refused. Distinct from
+    /// [`Self::add_graph_dependencies_with_data`].
+    pub fn add_graph_dependencies_n_with_data(
+        &mut self,
+        graph: GraphId,
+        edges: &[(usize, usize, GraphEdgeData)],
+    ) -> Result<(), SimError> {
+        self.graph_add_dependencies_n_with_data(graph, edges)
     }
 
     /// CUDA: AddDependencies cannot change [`GraphEdgeData`] of an existing
@@ -9891,7 +12844,9 @@ impl Sim {
     ///
     /// Capture cannot include it. Illegal on an instantiated exec. Missing edges are
     /// a no-op. Independent nodes (no remaining edge) may Hyper-Q overlap at
-    /// [`Self::launch_graph`].
+    /// [`Self::launch_graph`]. Driver
+    /// `cuGraphRemoveDependencies` is
+    /// [`Self::remove_graph_dependencies`].
     pub fn graph_remove_dependencies(
         &mut self,
         graph: GraphId,
@@ -9901,11 +12856,27 @@ impl Sim {
         self.graph_remove_dependencies_n(graph, &[(from, to)])
     }
 
+    /// `cuGraphRemoveDependencies`. Identity with
+    /// [`Self::graph_remove_dependencies`] (`cudaGraphRemoveDependencies`).
+    ///
+    /// Capture refused. Distinct from
+    /// [`Self::graph_remove_dependencies_n`].
+    pub fn remove_graph_dependencies(
+        &mut self,
+        graph: GraphId,
+        from: usize,
+        to: usize,
+    ) -> Result<(), SimError> {
+        self.graph_remove_dependencies(graph, from, to)
+    }
+
     /// `cudaGraphRemoveDependencies` of `numDependencies` from/to pairs.
     ///
     /// All-or-nothing on out-of-range indices (nothing is removed). Missing
     /// edges are a no-op. Empty `edges` is success. Capture cannot include it.
-    /// Illegal on an instantiated exec.
+    /// Illegal on an instantiated exec. Driver
+    /// `cuGraphRemoveDependencies` of pairs is
+    /// [`Self::remove_graph_dependencies_n`].
     pub fn graph_remove_dependencies_n(
         &mut self,
         graph: GraphId,
@@ -9944,6 +12915,20 @@ impl Sim {
         Ok(())
     }
 
+    /// `cuGraphRemoveDependencies` of pairs. Identity with
+    /// [`Self::graph_remove_dependencies_n`] (`cudaGraphRemoveDependencies` of
+    /// `numDependencies` from/to pairs).
+    ///
+    /// Capture refused. Distinct from
+    /// [`Self::remove_graph_dependencies`].
+    pub fn remove_graph_dependencies_n(
+        &mut self,
+        graph: GraphId,
+        edges: &[(usize, usize)],
+    ) -> Result<(), SimError> {
+        self.graph_remove_dependencies_n(graph, edges)
+    }
+
     /// `cudaGraphRemoveDependencies` v2 with [`GraphEdgeData`].
     ///
     /// Removes `from` → `to` only when stored data matches `data` (Default
@@ -9951,7 +12936,9 @@ impl Sim {
     /// `"graph dependency"`. Distinct from [`Self::graph_remove_dependencies`]
     /// (v1 missing is a no-op; PLAN 182). v1 still removes a launch-completion
     /// edge (it ignores stored data). Capture cannot include it. Illegal on an
-    /// instantiated exec.
+    /// instantiated exec. Driver
+    /// `cuGraphRemoveDependencies` with data is
+    /// [`Self::remove_graph_dependencies_with_data`].
     pub fn graph_remove_dependencies_with_data(
         &mut self,
         graph: GraphId,
@@ -9962,6 +12949,22 @@ impl Sim {
         self.graph_remove_dependencies_n_with_data(graph, &[(from, to, data)])
     }
 
+    /// `cuGraphRemoveDependencies` with [`GraphEdgeData`]. Identity with
+    /// [`Self::graph_remove_dependencies_with_data`] (`cudaGraphRemoveDependencies`
+    /// with data).
+    ///
+    /// Capture refused. Distinct from
+    /// [`Self::remove_graph_dependencies_n`].
+    pub fn remove_graph_dependencies_with_data(
+        &mut self,
+        graph: GraphId,
+        from: usize,
+        to: usize,
+        data: GraphEdgeData,
+    ) -> Result<(), SimError> {
+        self.graph_remove_dependencies_with_data(graph, from, to, data)
+    }
+
     /// `cudaGraphRemoveDependencies` v2 of `numDependencies` from/to/data
     /// triples.
     ///
@@ -9970,7 +12973,9 @@ impl Sim {
     /// stored Default edge. [`GraphKernelNodePort::LAUNCH_COMPLETION`] matches
     /// a launch-completion edge. v1 [`Self::graph_remove_dependencies_n`]
     /// missing stays a no-op. Capture cannot include it. Illegal on an
-    /// instantiated exec.
+    /// instantiated exec. Driver
+    /// `cuGraphRemoveDependencies` v2 is
+    /// [`Self::remove_graph_dependencies_n_with_data`].
     pub fn graph_remove_dependencies_n_with_data(
         &mut self,
         graph: GraphId,
@@ -10037,6 +13042,20 @@ impl Sim {
         Ok(())
     }
 
+    /// `cuGraphRemoveDependencies` v2 of from/to/data triples. Identity with
+    /// [`Self::graph_remove_dependencies_n_with_data`] (`cudaGraphRemoveDependencies`
+    /// v2).
+    ///
+    /// Capture refused. Distinct from
+    /// [`Self::remove_graph_dependencies_with_data`].
+    pub fn remove_graph_dependencies_n_with_data(
+        &mut self,
+        graph: GraphId,
+        edges: &[(usize, usize, GraphEdgeData)],
+    ) -> Result<(), SimError> {
+        self.graph_remove_dependencies_n_with_data(graph, edges)
+    }
+
     /// `cudaGraphDestroyNode` on a graph definition.
     ///
     /// Drops the node and incident edges. Remaining indices stay valid (CUDA
@@ -10044,7 +13063,9 @@ impl Sim {
     /// A device-updatable kernel node cannot be destroyed. Does not retarget
     /// an already-instantiated exec. Destroying a mem alloc node unlinks it
     /// from [`Self::graph_mem_allocs`]. Nested child-graph objects are not
-    /// destroyed.
+    /// destroyed. Driver
+    /// `cuGraphDestroyNode` is
+    /// [`Self::destroy_graph_node`].
     pub fn graph_destroy_node(&mut self, graph: GraphId, node: usize) -> Result<(), SimError> {
         self.fail_if_capturing("cannot destroy graph node during capture")?;
         self.require_live_definition(graph)?;
@@ -10084,13 +13105,24 @@ impl Sim {
         Ok(())
     }
 
+    /// `cuGraphDestroyNode`. Identity with
+    /// [`Self::graph_destroy_node`] (`cudaGraphDestroyNode`).
+    ///
+    /// Capture refused. Distinct from
+    /// [`Self::graph_destroy`].
+    pub fn destroy_graph_node(&mut self, graph: GraphId, node: usize) -> Result<(), SimError> {
+        self.graph_destroy_node(graph, node)
+    }
+
     /// Predecessor indices of node `i` (`cudaGraphNodeGetDependencies`).
     ///
     /// CUDA v1 (`edgeData == NULL`): non-default stored [`GraphEdgeData`] is
     /// Invalid `"lossy query"` (`cudaErrorLossyQuery`). Default-only predecessors
     /// stay. [`Self::graph_node_deps_with_data`] is lossless. Query; legal
     /// during capture. A parked in-flight-destroyed exec is `"unknown graph"`.
-    /// Live exec GetDependencies stays.
+    /// Live exec GetDependencies stays. Driver
+    /// `cuGraphNodeGetDependencies` is
+    /// [`Self::get_graph_node_dependencies`].
     pub fn graph_node_deps(&self, graph: GraphId, i: usize) -> Result<Vec<usize>, SimError> {
         let step = self.graph_node_dep_step(graph, i)?;
         if step
@@ -10103,12 +13135,27 @@ impl Sim {
         Ok(step.deps.clone())
     }
 
+    /// `cuGraphNodeGetDependencies`. Identity with
+    /// [`Self::graph_node_deps`] (`cudaGraphNodeGetDependencies`).
+    ///
+    /// Query; legal during capture. Distinct from
+    /// [`Self::graph_node_deps_with_data`].
+    pub fn get_graph_node_dependencies(
+        &self,
+        graph: GraphId,
+        node: usize,
+    ) -> Result<Vec<usize>, SimError> {
+        self.graph_node_deps(graph, node)
+    }
+
     /// `cudaGraphNodeGetDependencies` v2: `(from, data)` predecessors.
     ///
     /// Existing edges report stored [`GraphEdgeData`] (Default ports 0 when
     /// unset). Not [`Self::graph_node_deps`] LossyQuery. Query; legal during
     /// capture. A parked in-flight-destroyed exec is `"unknown graph"`.
-    /// Live exec GetDependencies stays.
+    /// Live exec GetDependencies stays. Driver
+    /// `cuGraphNodeGetDependencies` v2 is
+    /// [`Self::get_graph_node_dependencies_with_data`].
     pub fn graph_node_deps_with_data(
         &self,
         graph: GraphId,
@@ -10122,6 +13169,20 @@ impl Sim {
             .collect())
     }
 
+    /// `cuGraphNodeGetDependencies` v2. Identity with
+    /// [`Self::graph_node_deps_with_data`] (`cudaGraphNodeGetDependencies` with
+    /// edgeData).
+    ///
+    /// Query; legal during capture. Distinct from
+    /// [`Self::get_graph_node_dependencies`].
+    pub fn get_graph_node_dependencies_with_data(
+        &self,
+        graph: GraphId,
+        node: usize,
+    ) -> Result<Vec<(usize, GraphEdgeData)>, SimError> {
+        self.graph_node_deps_with_data(graph, node)
+    }
+
     fn graph_node_dep_step(&self, graph: GraphId, i: usize) -> Result<&GraphStep, SimError> {
         let g = self.live_graph(graph)?;
         live_ok(g.steps.get(i).ok_or(SimError::Invalid {
@@ -10130,6 +13191,10 @@ impl Sim {
     }
 
     /// Root node indices (`cudaGraphGetRootNodes`): nodes with no predecessors.
+    ///
+    /// Query; legal during capture. Driver
+    /// `cuGraphGetRootNodes` is
+    /// [`Self::get_graph_root_nodes`].
     pub fn graph_root_nodes(&self, graph: GraphId) -> Result<Vec<usize>, SimError> {
         let g = self.graphs.get(&graph).ok_or(SimError::Invalid {
             why: "unknown graph",
@@ -10142,12 +13207,23 @@ impl Sim {
             .collect())
     }
 
+    /// `cuGraphGetRootNodes`. Identity with
+    /// [`Self::graph_root_nodes`] (`cudaGraphGetRootNodes`).
+    ///
+    /// Query; legal during capture. Distinct from
+    /// [`Self::get_graph_nodes`].
+    pub fn get_graph_root_nodes(&self, graph: GraphId) -> Result<Vec<usize>, SimError> {
+        self.graph_root_nodes(graph)
+    }
+
     /// Edges (`cudaGraphGetEdges`): `(from, to)` in node-add order.
     ///
     /// CUDA v1 (`edgeData == NULL`): any non-default stored [`GraphEdgeData`]
     /// is Invalid `"lossy query"` (`cudaErrorLossyQuery`). Default-only graphs
     /// stay. [`Self::graph_edges_with_data`] is lossless. Query; legal during
-    /// capture.
+    /// capture. Driver
+    /// `cuGraphGetEdges` is
+    /// [`Self::get_graph_edges`].
     pub fn graph_edges(&self, graph: GraphId) -> Result<Vec<(usize, usize)>, SimError> {
         let g = self.graphs.get(&graph).ok_or(SimError::Invalid {
             why: "unknown graph",
@@ -10167,11 +13243,22 @@ impl Sim {
         Ok(edges)
     }
 
+    /// `cuGraphGetEdges`. Identity with
+    /// [`Self::graph_edges`] (`cudaGraphGetEdges`).
+    ///
+    /// Query; legal during capture. Distinct from
+    /// [`Self::graph_edges_with_data`].
+    pub fn get_graph_edges(&self, graph: GraphId) -> Result<Vec<(usize, usize)>, SimError> {
+        self.graph_edges(graph)
+    }
+
     /// `cudaGraphGetEdges` v2: `(from, to, data)` in node-add order.
     ///
     /// Existing edges report stored [`GraphEdgeData`] (Default ports 0 when
     /// unset; Programmatic type is not stored). Not [`Self::graph_edges`]
-    /// LossyQuery. Query; legal during capture.
+    /// LossyQuery. Query; legal during capture. Driver
+    /// `cuGraphGetEdges` v2 is
+    /// [`Self::get_graph_edges_with_data`].
     pub fn graph_edges_with_data(
         &self,
         graph: GraphId,
@@ -10191,12 +13278,35 @@ impl Sim {
         Ok(edges)
     }
 
+    /// `cuGraphGetEdges` v2. Identity with
+    /// [`Self::graph_edges_with_data`] (`cudaGraphGetEdges` with edgeData).
+    ///
+    /// Query; legal during capture. Distinct from
+    /// [`Self::get_graph_edges`].
+    pub fn get_graph_edges_with_data(
+        &self,
+        graph: GraphId,
+    ) -> Result<Vec<(usize, usize, GraphEdgeData)>, SimError> {
+        self.graph_edges_with_data(graph)
+    }
+
     /// `cudaGraphDebugDotPrint` of stored node kinds and edges.
     ///
     /// Query; legal during capture. Destination graph only during capture
     /// (same as [`Self::graph_len`]). Flags `0` prints kinds and edges only.
+    /// Driver `cuGraphDebugDotPrint` is
+    /// [`Self::graph_debug_dot_print`].
     pub fn graph_debug_dot(&self, graph: GraphId) -> Result<String, SimError> {
         self.graph_debug_dot_with_flags(graph, 0)
+    }
+
+    /// `cuGraphDebugDotPrint`. Identity with
+    /// [`Self::graph_debug_dot`] (`cudaGraphDebugDotPrint` flags 0).
+    ///
+    /// Query; legal during capture. Distinct from
+    /// [`Self::graph_debug_dot_with_flags`].
+    pub fn graph_debug_dot_print(&self, graph: GraphId) -> Result<String, SimError> {
+        self.graph_debug_dot(graph)
     }
 
     /// `cudaGraphDebugDotPrint` with [`GraphDebugDotFlags`].
@@ -10210,7 +13320,9 @@ impl Sim {
     /// numbers existing edges (`label="0"`); launch-completion edges also dump
     /// `from_port=2`. Extra conditional edges are not invented. Flags `0` keeps
     /// [`GraphNodeKind`] Debug names and unlabeled edges. VM-only kinds keep
-    /// Debug names under RuntimeTypes.
+    /// Debug names under RuntimeTypes. Driver
+    /// `cuGraphDebugDotPrint` with flags is
+    /// [`Self::graph_debug_dot_print_with_flags`].
     pub fn graph_debug_dot_with_flags(
         &self,
         graph: GraphId,
@@ -10280,13 +13392,28 @@ impl Sim {
         Ok(out)
     }
 
+    /// `cuGraphDebugDotPrint` with flags. Identity with
+    /// [`Self::graph_debug_dot_with_flags`] (`cudaGraphDebugDotPrint`).
+    ///
+    /// Query; legal during capture. Distinct from
+    /// [`Self::graph_debug_dot_print`].
+    pub fn graph_debug_dot_print_with_flags(
+        &self,
+        graph: GraphId,
+        flags: u32,
+    ) -> Result<String, SimError> {
+        self.graph_debug_dot_with_flags(graph, flags)
+    }
+
     /// Successors of node `i` (`cudaGraphNodeGetDependentNodes`).
     ///
     /// CUDA v1 (`edgeData == NULL`): non-default stored [`GraphEdgeData`] on
     /// any successor edge is Invalid `"lossy query"` (`cudaErrorLossyQuery`).
     /// Default-only successors stay. [`Self::graph_node_dependents_with_data`]
     /// is lossless. Query; legal during capture. A parked in-flight-destroyed
-    /// exec is `"unknown graph"`. Live exec GetDependentNodes stays.
+    /// exec is `"unknown graph"`. Live exec GetDependentNodes stays. Driver
+    /// `cuGraphNodeGetDependentNodes` is
+    /// [`Self::get_graph_node_dependent_nodes`].
     pub fn graph_node_dependents(&self, graph: GraphId, i: usize) -> Result<Vec<usize>, SimError> {
         let g = self.live_graph(graph)?;
         if i >= g.steps.len() {
@@ -10312,12 +13439,27 @@ impl Sim {
         Ok(out)
     }
 
+    /// `cuGraphNodeGetDependentNodes`. Identity with
+    /// [`Self::graph_node_dependents`] (`cudaGraphNodeGetDependentNodes`).
+    ///
+    /// Query; legal during capture. Distinct from
+    /// [`Self::graph_node_dependents_with_data`].
+    pub fn get_graph_node_dependent_nodes(
+        &self,
+        graph: GraphId,
+        node: usize,
+    ) -> Result<Vec<usize>, SimError> {
+        self.graph_node_dependents(graph, node)
+    }
+
     /// `cudaGraphNodeGetDependentNodes` v2: `(to, data)` successors.
     ///
     /// Existing edges report stored [`GraphEdgeData`] (Default ports 0 when
     /// unset). Not [`Self::graph_node_dependents`] LossyQuery. Query; legal
     /// during capture. A parked in-flight-destroyed exec is `"unknown graph"`.
-    /// Live exec GetDependentNodes stays.
+    /// Live exec GetDependentNodes stays. Driver
+    /// `cuGraphNodeGetDependentNodes` v2 is
+    /// [`Self::get_graph_node_dependent_nodes_with_data`].
     pub fn graph_node_dependents_with_data(
         &self,
         graph: GraphId,
@@ -10342,6 +13484,20 @@ impl Sim {
             .collect())
     }
 
+    /// `cuGraphNodeGetDependentNodes` v2. Identity with
+    /// [`Self::graph_node_dependents_with_data`] (`cudaGraphNodeGetDependentNodes`
+    /// with edgeData).
+    ///
+    /// Query; legal during capture. Distinct from
+    /// [`Self::get_graph_node_dependent_nodes`].
+    pub fn get_graph_node_dependent_nodes_with_data(
+        &self,
+        graph: GraphId,
+        node: usize,
+    ) -> Result<Vec<(usize, GraphEdgeData)>, SimError> {
+        self.graph_node_dependents_with_data(graph, node)
+    }
+
     /// `cuGraphNodeGetLocalId`. Query; legal during capture.
     ///
     /// Matches the node id printed by [`Self::graph_debug_dot`] (`n0`, `n1`,
@@ -10352,6 +13508,8 @@ impl Sim {
     /// [`Self::graph_get_id`] (graph id, not node local id). Live exec
     /// GetLocalId stays. Definition GetLocalId of the live graph while that
     /// exec is parked stays. Live in-flight GetLocalId stays.
+    /// Driver wrap: [`Self::mem_graph_node_get_local_id`].
+    /// Identity: [`Self::mem_graph_node_get_local_id`].
     pub fn graph_node_get_local_id(&self, graph: GraphId, node: usize) -> Result<u32, SimError> {
         let g = self.live_graph(graph)?;
         let _live = live_ok(g.steps.get(node).ok_or(SimError::Invalid {
@@ -10360,6 +13518,16 @@ impl Sim {
         u32::try_from(node).map_err(|_| SimError::Invalid {
             why: "unknown graph node",
         })
+    }
+
+    /// `cuGraphNodeGetLocalId`. Identity with [`Self::graph_node_get_local_id`].
+    /// Query; legal during capture. Distinct from [`Self::mem_green_ctx_synchronize`].
+    pub fn mem_graph_node_get_local_id(
+        &self,
+        graph: GraphId,
+        node: usize,
+    ) -> Result<u32, SimError> {
+        self.graph_node_get_local_id(graph, node)
     }
 
     /// `cuGraphNodeGetToolsId`. Query; legal during capture.
@@ -10371,10 +13539,22 @@ impl Sim {
     /// `"unknown graph node"`. A parked in-flight-destroyed exec is Invalid
     /// `"unknown graph"` (CUDA `cuGraphNodeGetToolsId`). Query; capture is
     /// legal. Live exec GetToolsId stays. Definition GetToolsId stays.
+    /// Driver wrap: [`Self::mem_graph_node_get_tools_id`].
+    /// Identity: [`Self::mem_graph_node_get_tools_id`].
     pub fn graph_node_get_tools_id(&self, graph: GraphId, node: usize) -> Result<u64, SimError> {
         let local = self.graph_node_get_local_id(graph, node)?;
         let gid = self.graph_get_id(graph)?;
         Ok((u64::from(gid) << 32) | u64::from(local))
+    }
+
+    /// `cuGraphNodeGetToolsId`. Identity with [`Self::graph_node_get_tools_id`].
+    /// Query; legal during capture. Distinct from [`Self::mem_graph_node_get_local_id`].
+    pub fn mem_graph_node_get_tools_id(
+        &self,
+        graph: GraphId,
+        node: usize,
+    ) -> Result<u64, SimError> {
+        self.graph_node_get_tools_id(graph, node)
     }
 
     /// `cuGraphNodeGetContainingGraph`. Query; legal during capture.
@@ -10386,6 +13566,8 @@ impl Sim {
     /// exec is Invalid `"unknown graph"`. Live exec GetContainingGraph stays.
     /// Definition GetContainingGraph of the live graph while that exec is
     /// parked stays. Live in-flight GetContainingGraph stays.
+    /// Driver wrap: [`Self::mem_graph_node_get_containing_graph`].
+    /// Identity: [`Self::mem_graph_node_get_containing_graph`].
     pub fn graph_node_get_containing_graph(
         &self,
         graph: GraphId,
@@ -10398,7 +13580,19 @@ impl Sim {
         Ok(graph)
     }
 
-    /// `cudaGraphNodeGetType` for node `i`.
+    /// `cuGraphNodeGetContainingGraph`. Identity with [`Self::graph_node_get_containing_graph`].
+    /// Query; legal during capture. Distinct from [`Self::mem_graph_node_get_tools_id`].
+    pub fn mem_graph_node_get_containing_graph(
+        &self,
+        graph: GraphId,
+        node: usize,
+    ) -> Result<GraphId, SimError> {
+        self.graph_node_get_containing_graph(graph, node)
+    }
+
+    /// `cudaGraphNodeGetType` for node `i`. Driver
+    /// `cuGraphNodeGetType` is
+    /// [`Self::get_graph_node_type`].
     pub fn graph_node_kind(&self, graph: GraphId, i: usize) -> Result<GraphNodeKind, SimError> {
         let g = self.graphs.get(&graph).ok_or(SimError::Invalid {
             why: "unknown graph",
@@ -10407,6 +13601,19 @@ impl Sim {
             why: "graph dependency",
         })?)?;
         Ok(node_kind(&st.kind))
+    }
+
+    /// `cuGraphNodeGetType`. Identity with
+    /// [`Self::graph_node_kind`] (`cudaGraphNodeGetType`).
+    ///
+    /// Query; legal during capture. Distinct from
+    /// [`Self::graph_node_find_in_clone`].
+    pub fn get_graph_node_type(
+        &self,
+        graph: GraphId,
+        node: usize,
+    ) -> Result<GraphNodeKind, SimError> {
+        self.graph_node_kind(graph, node)
     }
 
     /// `cudaGraphKernelNodeGetAttribute` for priority on the graph definition.
@@ -10459,7 +13666,9 @@ impl Sim {
     /// After instantiate this does not retarget the exec; use
     /// [`Self::graph_exec_kernel_node_set_priority`]. Capture cannot include it.
     /// A parked in-flight-destroyed exec is `"unknown graph"`. Live exec
-    /// SetAttribute stays.
+    /// SetAttribute stays. Values are stored unclamped (PLAN 506 ExecUpdate);
+    /// stream Get/SetPriority clamp to
+    /// [`Self::device_get_stream_priority_range`].
     pub fn graph_kernel_node_set_priority(
         &mut self,
         graph: GraphId,
@@ -12308,7 +15517,9 @@ impl Sim {
     /// CopyAttributes). [`Self::graph_exec_kernel_node_copy_attributes`] is
     /// the exec-snapshot twin.
     /// A parked in-flight-destroyed exec used as `src` or `dst` is
-    /// `"unknown graph"`. Live exec as either end stays.
+    /// `"unknown graph"`. Live exec as either end stays. Driver
+    /// `cuGraphKernelNodeCopyAttributes` is
+    /// [`Self::copy_graph_kernel_node_attributes`].
     pub fn graph_kernel_node_copy_attributes(
         &mut self,
         dst_graph: GraphId,
@@ -12319,11 +15530,28 @@ impl Sim {
         self.copy_kernel_node_attributes(dst_graph, dst, src_graph, src, false)
     }
 
+    /// `cuGraphKernelNodeCopyAttributes`. Identity with
+    /// [`Self::graph_kernel_node_copy_attributes`] (`cudaGraphKernelNodeCopyAttributes`).
+    ///
+    /// Capture refused. Distinct from
+    /// [`Self::graph_exec_kernel_node_copy_attributes`].
+    pub fn copy_graph_kernel_node_attributes(
+        &mut self,
+        dst_graph: GraphId,
+        dst: usize,
+        src_graph: GraphId,
+        src: usize,
+    ) -> Result<(), SimError> {
+        self.graph_kernel_node_copy_attributes(dst_graph, dst, src_graph, src)
+    }
+
     /// Exec-snapshot [`Self::graph_kernel_node_copy_attributes`].
     ///
     /// Uninstantiated graphs are Invalid. After instantiate this copies the
     /// launched attributes. Definition CopyAttributes does not retarget the
-    /// exec. Capture cannot include it.
+    /// exec. Capture cannot include it. Driver
+    /// `cuGraphExecKernelNodeCopyAttributes` is
+    /// [`Self::copy_graph_exec_kernel_node_attributes`].
     pub fn graph_exec_kernel_node_copy_attributes(
         &mut self,
         dst_exec: GraphId,
@@ -12332,6 +15560,22 @@ impl Sim {
         src: usize,
     ) -> Result<(), SimError> {
         self.copy_kernel_node_attributes(dst_exec, dst, src_exec, src, true)
+    }
+
+    /// `cuGraphExecKernelNodeCopyAttributes`. Identity with
+    /// [`Self::graph_exec_kernel_node_copy_attributes`]
+    /// (`cudaGraphExecKernelNodeCopyAttributes`).
+    ///
+    /// Capture refused. Distinct from
+    /// [`Self::copy_graph_kernel_node_attributes`].
+    pub fn copy_graph_exec_kernel_node_attributes(
+        &mut self,
+        dst_exec: GraphId,
+        dst: usize,
+        src_exec: GraphId,
+        src: usize,
+    ) -> Result<(), SimError> {
+        self.graph_exec_kernel_node_copy_attributes(dst_exec, dst, src_exec, src)
     }
 
     fn copy_kernel_node_attributes(
@@ -12397,7 +15641,9 @@ impl Sim {
     /// mismatch is Invalid `"kernel node attr"`. A parked in-flight-destroyed
     /// exec is Invalid `"unknown graph"`. Live exec GetAttribute stays.
     /// Definition GetAttribute of the live graph while that exec is parked
-    /// stays. Live in-flight GetAttribute stays.
+    /// stays. Live in-flight GetAttribute stays. Driver
+    /// `cuGraphKernelNodeGetAttribute` is
+    /// [`Self::get_graph_kernel_node_attribute`].
     pub fn graph_kernel_node_get_attribute(
         &self,
         graph: GraphId,
@@ -12407,9 +15653,25 @@ impl Sim {
         self.kernel_node_attribute(graph, node, attr, false)
     }
 
+    /// `cuGraphKernelNodeGetAttribute`. Identity with
+    /// [`Self::graph_kernel_node_get_attribute`] (`cudaGraphKernelNodeGetAttribute`).
+    ///
+    /// Query; legal during capture. Distinct from
+    /// [`Self::graph_kernel_node_set_attribute`].
+    pub fn get_graph_kernel_node_attribute(
+        &self,
+        graph: GraphId,
+        node: usize,
+        attr: KernelNodeAttr,
+    ) -> Result<KernelNodeAttrValue, SimError> {
+        self.graph_kernel_node_get_attribute(graph, node, attr)
+    }
+
     /// `cudaGraphExecKernelNodeGetAttribute` on the exec snapshot.
     ///
-    /// Query; legal during capture. Uninstantiated exec is Invalid.
+    /// Query; legal during capture. Uninstantiated exec is Invalid. Driver
+    /// `cuGraphExecKernelNodeGetAttribute` is
+    /// [`Self::get_graph_exec_kernel_node_attribute`].
     pub fn graph_exec_kernel_node_get_attribute(
         &self,
         exec: GraphId,
@@ -12417,6 +15679,21 @@ impl Sim {
         attr: KernelNodeAttr,
     ) -> Result<KernelNodeAttrValue, SimError> {
         self.kernel_node_attribute(exec, node, attr, true)
+    }
+
+    /// `cuGraphExecKernelNodeGetAttribute`. Identity with
+    /// [`Self::graph_exec_kernel_node_get_attribute`]
+    /// (`cudaGraphExecKernelNodeGetAttribute`).
+    ///
+    /// Query; legal during capture. Distinct from
+    /// [`Self::get_graph_kernel_node_attribute`].
+    pub fn get_graph_exec_kernel_node_attribute(
+        &self,
+        exec: GraphId,
+        node: usize,
+        attr: KernelNodeAttr,
+    ) -> Result<KernelNodeAttrValue, SimError> {
+        self.graph_exec_kernel_node_get_attribute(exec, node, attr)
     }
 
     fn kernel_node_attribute(
@@ -12493,7 +15770,9 @@ impl Sim {
     /// retarget the exec; use [`Self::graph_exec_kernel_node_set_attribute`].
     /// Capture cannot include it. Attr/value type mismatch is Invalid
     /// `"kernel node attr"`. A parked in-flight-destroyed exec is
-    /// `"unknown graph"`. Live exec SetAttribute stays.
+    /// `"unknown graph"`. Live exec SetAttribute stays. Driver
+    /// `cuGraphKernelNodeSetAttribute` is
+    /// [`Self::set_graph_kernel_node_attribute`].
     pub fn graph_kernel_node_set_attribute(
         &mut self,
         graph: GraphId,
@@ -12504,7 +15783,24 @@ impl Sim {
         self.set_kernel_node_attribute(graph, node, attr, value, false)
     }
 
+    /// `cuGraphKernelNodeSetAttribute`. Identity with
+    /// [`Self::graph_kernel_node_set_attribute`] (`cudaGraphKernelNodeSetAttribute`).
+    ///
+    /// Capture refused. Distinct from [`Self::get_graph_kernel_node_attribute`].
+    pub fn set_graph_kernel_node_attribute(
+        &mut self,
+        graph: GraphId,
+        node: usize,
+        attr: KernelNodeAttr,
+        value: KernelNodeAttrValue,
+    ) -> Result<(), SimError> {
+        self.graph_kernel_node_set_attribute(graph, node, attr, value)
+    }
+
     /// `cudaGraphExecKernelNodeSetAttribute` on the exec snapshot.
+    ///
+    /// Driver `cuGraphExecKernelNodeSetAttribute` is
+    /// [`Self::set_graph_exec_kernel_node_attribute`].
     pub fn graph_exec_kernel_node_set_attribute(
         &mut self,
         exec: GraphId,
@@ -12513,6 +15809,21 @@ impl Sim {
         value: KernelNodeAttrValue,
     ) -> Result<(), SimError> {
         self.set_kernel_node_attribute(exec, node, attr, value, true)
+    }
+
+    /// `cuGraphExecKernelNodeSetAttribute`. Identity with
+    /// [`Self::graph_exec_kernel_node_set_attribute`]
+    /// (`cudaGraphExecKernelNodeSetAttribute`).
+    ///
+    /// Capture refused. Distinct from [`Self::get_graph_exec_kernel_node_attribute`].
+    pub fn set_graph_exec_kernel_node_attribute(
+        &mut self,
+        exec: GraphId,
+        node: usize,
+        attr: KernelNodeAttr,
+        value: KernelNodeAttrValue,
+    ) -> Result<(), SimError> {
+        self.graph_exec_kernel_node_set_attribute(exec, node, attr, value)
     }
 
     fn set_kernel_node_attribute(
@@ -12672,7 +15983,9 @@ impl Sim {
     /// `cloned` must have been produced by [`Self::clone_graph`] of `original`
     /// (a nested graph cloned in that same call counts). Capture is allowed.
     /// Add order is preserved, so the index is unchanged. A second clone of the
-    /// clone does not map nodes from the first original.
+    /// clone does not map nodes from the first original. Driver
+    /// `cuGraphNodeFindInClone` is
+    /// [`Self::find_graph_node_in_clone`].
     pub fn graph_node_find_in_clone(
         &self,
         original: GraphId,
@@ -12709,6 +16022,20 @@ impl Sim {
             });
         }
         Ok(node)
+    }
+
+    /// `cuGraphNodeFindInClone`. Identity with
+    /// [`Self::graph_node_find_in_clone`] (`cudaGraphNodeFindInClone`).
+    ///
+    /// Query; legal during capture. Distinct from
+    /// [`Self::clone_graph`].
+    pub fn find_graph_node_in_clone(
+        &self,
+        original: GraphId,
+        node: usize,
+        cloned: GraphId,
+    ) -> Result<usize, SimError> {
+        self.graph_node_find_in_clone(original, node, cloned)
     }
 
     fn graph_origin_for_add(&self, graph: GraphId) -> Result<(DeviceId, StreamId), SimError> {
@@ -12793,9 +16120,24 @@ impl Sim {
         self.alloc_from_pool_inner(device, pool, bytes, stream)
     }
 
+    /// `cuMemAllocAsync`. Identity with [`Self::alloc`] (`cudaMallocAsync`).
+    ///
+    /// Capture-legal (graph mempool). Distinct from [`Self::mem_alloc`]
+    /// (`cuMemAlloc` host-sync).
+    pub fn mem_alloc_async(
+        &mut self,
+        device: DeviceId,
+        bytes: u64,
+        stream: StreamId,
+    ) -> Result<AllocId, SimError> {
+        self.alloc(device, bytes, stream)
+    }
+
     /// `cudaDeviceGetDefaultMemPool`. Query; legal during capture.
     ///
     /// Seeded at construct. [`Self::set_device_mempool`] does not replace it.
+    /// Driver `cuDeviceGetDefaultMemPool` is [`Self::device_get_default_mempool`].
+    /// Identity wrap [`Self::device_get_default_mempool`].
     pub fn default_pool(&self, device: DeviceId) -> Result<PoolId, SimError> {
         let _gpu = self.profile.gpu(device)?;
         self.default_pools
@@ -12806,10 +16148,20 @@ impl Sim {
             })
     }
 
+    /// `cuDeviceGetDefaultMemPool`. Identity with
+    /// [`Self::default_pool`] (`cudaDeviceGetDefaultMemPool`).
+    ///
+    /// Query; legal during capture. Distinct from [`Self::get_device_count`].
+    pub fn device_get_default_mempool(&self, device: DeviceId) -> Result<PoolId, SimError> {
+        self.default_pool(device)
+    }
+
     /// `cudaDeviceGetMemPool`. Query; legal during capture.
     ///
     /// [`Self::alloc`] (`cudaMallocAsync`) draws from this. Starts as
     /// [`Self::default_pool`]; [`Self::set_device_mempool`] rebinds it.
+    /// Driver `cuDeviceGetMemPool` is [`Self::device_get_mempool`].
+    /// Identity wrap [`Self::device_get_mempool`].
     pub fn device_mempool(&self, device: DeviceId) -> Result<PoolId, SimError> {
         let _gpu = self.profile.gpu(device)?;
         self.current_pools
@@ -12818,6 +16170,14 @@ impl Sim {
             .ok_or(SimError::Invalid {
                 why: "device mempool missing",
             })
+    }
+
+    /// `cuDeviceGetMemPool`. Identity with
+    /// [`Self::device_mempool`] (`cudaDeviceGetMemPool`).
+    ///
+    /// Query; legal during capture. Distinct from [`Self::device_get_default_mempool`].
+    pub fn device_get_mempool(&self, device: DeviceId) -> Result<PoolId, SimError> {
+        self.device_mempool(device)
     }
 
     /// `cuMemPoolGetId`. Query; legal during capture.
@@ -12829,9 +16189,17 @@ impl Sim {
     /// [`Self::pool_get_attribute`]). Recreating after [`Self::destroy_pool`]
     /// returns a new id. An imported shareable pool has a different id from
     /// the exporter.
+    /// Driver wrap: [`Self::mem_pool_get_id`].
+    /// Identity: [`Self::mem_pool_get_id`].
     pub fn pool_get_id(&self, pool: PoolId) -> Result<u64, SimError> {
         self.refuse_destroyed_pool(pool)?;
         Ok(u64::from(pool.0).saturating_add(1))
+    }
+
+    /// `cuMemPoolGetId`. Identity with [`Self::pool_get_id`].
+    /// Query; legal during capture. Distinct from [`Self::mem_graph_node_get_containing_graph`].
+    pub fn mem_pool_get_id(&self, pool: PoolId) -> Result<u64, SimError> {
+        self.pool_get_id(pool)
     }
 
     /// Device graph-memory pool (`cudaDeviceGetGraphMemAttribute` backing).
@@ -12890,6 +16258,8 @@ impl Sim {
     /// sibling is legal). Does not change live/cached bytes. The graph-memory
     /// pool is not a valid device mempool. [`Self::default_pool`] stays the
     /// seeded default.
+    /// Driver `cuDeviceSetMemPool` is [`Self::device_set_mempool`].
+    /// Identity wrap [`Self::device_set_mempool`].
     pub fn set_device_mempool(&mut self, device: DeviceId, pool: PoolId) -> Result<(), SimError> {
         self.fail_if_capturing("cannot capture mempool")?;
         self.refuse_graph_pool(pool)?;
@@ -12905,17 +16275,45 @@ impl Sim {
         Ok(())
     }
 
+    /// `cuDeviceSetMemPool`. Identity with
+    /// [`Self::set_device_mempool`] (`cudaDeviceSetMemPool`).
+    ///
+    /// Capture refused. Distinct from [`Self::device_get_mempool`].
+    pub fn device_set_mempool(&mut self, device: DeviceId, pool: PoolId) -> Result<(), SimError> {
+        self.set_device_mempool(device, pool)
+    }
+
     /// `cudaMemPoolCreate` for `device`. Release threshold starts at 0.
     ///
     /// Not shareable (`cudaMemHandleTypeNone`). Use
     /// [`Self::create_shareable_pool`] for POSIX-FD export.
+    /// Driver `cuMemPoolCreate` is [`Self::mem_pool_create`].
+    /// Identity wrap [`Self::mem_pool_create`].
     pub fn create_pool(&mut self, device: DeviceId) -> Result<PoolId, SimError> {
         self.insert_pool(device, false)
     }
 
+    /// `cuMemPoolCreate`. Identity with
+    /// [`Self::create_pool`] (`cudaMemPoolCreate`).
+    ///
+    /// Capture refused. Distinct from [`Self::device_set_mempool`].
+    pub fn mem_pool_create(&mut self, device: DeviceId) -> Result<PoolId, SimError> {
+        self.create_pool(device)
+    }
+
     /// `cudaMemPoolCreate` with `cudaMemAllocationHandleTypePosixFileDescriptor`.
+    /// Driver `cuMemPoolCreate` POSIX is [`Self::mem_pool_create_shareable`].
+    /// Identity wrap [`Self::mem_pool_create_shareable`].
     pub fn create_shareable_pool(&mut self, device: DeviceId) -> Result<PoolId, SimError> {
         self.insert_pool(device, true)
+    }
+
+    /// `cuMemPoolCreate` POSIX. Identity with
+    /// [`Self::create_shareable_pool`] (`cudaMemPoolCreate` POSIX-FD).
+    ///
+    /// Capture refused. Distinct from [`Self::mem_pool_create`].
+    pub fn mem_pool_create_shareable(&mut self, device: DeviceId) -> Result<PoolId, SimError> {
+        self.create_shareable_pool(device)
     }
 
     /// `cudaMemPoolCreate` with [`MemPoolProps`].
@@ -12929,6 +16327,8 @@ impl Sim {
     /// [`MemPoolProps::usage`] must be [`MemHandleUsage::NONE`] (`"pool usage"`;
     /// hardware decompress is not modeled). Typed
     /// helpers stay. Capture cannot include it.
+    /// Driver `cuMemPoolCreate` with props is [`Self::mem_pool_create_with_props`].
+    /// Identity wrap [`Self::mem_pool_create_with_props`].
     pub fn create_pool_with_props(&mut self, props: MemPoolProps) -> Result<PoolId, SimError> {
         if props.alloc_type != MemAllocationType::PINNED {
             return Err(SimError::Invalid {
@@ -12960,6 +16360,14 @@ impl Sim {
         Ok(id)
     }
 
+    /// `cuMemPoolCreate` with props. Identity with
+    /// [`Self::create_pool_with_props`] (`cudaMemPoolCreate` with [`MemPoolProps`]).
+    ///
+    /// Capture refused. Distinct from [`Self::mem_pool_create_shareable`].
+    pub fn mem_pool_create_with_props(&mut self, props: MemPoolProps) -> Result<PoolId, SimError> {
+        self.create_pool_with_props(props)
+    }
+
     fn insert_pool(&mut self, device: DeviceId, shareable: bool) -> Result<PoolId, SimError> {
         self.fail_if_capturing("cannot capture mempool")?;
         let _gpu = self.profile.gpu(device)?;
@@ -12979,6 +16387,8 @@ impl Sim {
     /// to [`Self::default_pool`]. The default and graph-memory pools cannot be
     /// destroyed. A destroyed handle is Invalid for alloc/export/get/set and
     /// [`Self::pool_get_id`].
+    /// Driver `cuMemPoolDestroy` is [`Self::mem_pool_destroy`].
+    /// Identity wrap [`Self::mem_pool_destroy`].
     pub fn destroy_pool(&mut self, pool: PoolId) -> Result<(), SimError> {
         self.fail_if_capturing("cannot capture mempool")?;
         self.refuse_graph_pool(pool)?;
@@ -13009,10 +16419,20 @@ impl Sim {
         Ok(())
     }
 
+    /// `cuMemPoolDestroy`. Identity with
+    /// [`Self::destroy_pool`] (`cudaMemPoolDestroy`).
+    ///
+    /// Capture refused. Distinct from [`Self::mem_pool_create_with_props`].
+    pub fn mem_pool_destroy(&mut self, pool: PoolId) -> Result<(), SimError> {
+        self.destroy_pool(pool)
+    }
+
     /// `cudaMallocFromPoolAsync`. `pool` must belong to `device`.
     ///
     /// The graph-memory pool is not a user mempool; use [`Self::alloc`] during
     /// capture or [`Self::graph_add_alloc`].
+    /// Driver `cuMemAllocFromPoolAsync` is [`Self::mem_alloc_from_pool`].
+    /// Identity wrap [`Self::mem_alloc_from_pool`].
     pub fn alloc_from_pool(
         &mut self,
         device: DeviceId,
@@ -13023,6 +16443,20 @@ impl Sim {
         self.refuse_graph_pool(pool)?;
         self.refuse_destroyed_pool(pool)?;
         self.alloc_from_pool_inner(device, pool, bytes, stream)
+    }
+
+    /// `cuMemAllocFromPoolAsync`. Identity with
+    /// [`Self::alloc_from_pool`] (`cudaMallocFromPoolAsync`).
+    ///
+    /// Capture legal. Distinct from [`Self::mem_pool_destroy`].
+    pub fn mem_alloc_from_pool(
+        &mut self,
+        device: DeviceId,
+        pool: PoolId,
+        bytes: u64,
+        stream: StreamId,
+    ) -> Result<AllocId, SimError> {
+        self.alloc_from_pool(device, pool, bytes, stream)
     }
 
     fn alloc_from_pool_inner(
@@ -13107,6 +16541,8 @@ impl Sim {
     /// free completes. `u64::MAX` holds them so [`Self::mem_info`] still counts
     /// them used until [`Self::pool_trim_to`]. Also
     /// [`Self::pool_set_attribute`] [`MemPoolAttr::ReleaseThreshold`].
+    /// Driver `cuMemPoolSetAttribute` ReleaseThreshold is [`Self::mem_pool_set_release_threshold`].
+    /// Identity wrap [`Self::mem_pool_set_release_threshold`].
     pub fn set_pool_release_threshold(&mut self, pool: PoolId, bytes: u64) -> Result<(), SimError> {
         self.fail_if_capturing("cannot capture mempool")?;
         let root = self.pool_root(pool)?;
@@ -13116,11 +16552,25 @@ impl Sim {
         Ok(())
     }
 
+    /// `cuMemPoolSetAttribute` ReleaseThreshold. Identity with
+    /// [`Self::set_pool_release_threshold`] (`cudaMemPoolAttrReleaseThreshold`).
+    ///
+    /// Capture refused. Distinct from [`Self::mem_pool_trim_to`].
+    pub fn mem_pool_set_release_threshold(
+        &mut self,
+        pool: PoolId,
+        bytes: u64,
+    ) -> Result<(), SimError> {
+        self.set_pool_release_threshold(pool, bytes)
+    }
+
     /// `cudaMemPoolAttrMaxPoolSize`. Later [`Self::alloc_from_pool`] OOMs when
     /// reserved would exceed `bytes`. `0` is unlimited. Does not free live
     /// allocs if the new cap is below current reserved. Also
     /// [`Self::pool_set_attribute`] [`MemPoolAttr::MaxPoolSize`]. Capture
     /// cannot include it. The graph-memory pool is Invalid.
+    /// Driver `cuMemPoolSetAttribute` MaxPoolSize is [`Self::mem_pool_set_max_size`].
+    /// Identity wrap [`Self::mem_pool_set_max_size`].
     pub fn set_pool_max_size(&mut self, pool: PoolId, bytes: u64) -> Result<(), SimError> {
         self.fail_if_capturing("cannot capture mempool")?;
         let root = self.pool_root(pool)?;
@@ -13128,6 +16578,14 @@ impl Sim {
         self.refuse_destroyed_pool(root)?;
         self.pool_mut(root)?.max_size = bytes;
         Ok(())
+    }
+
+    /// `cuMemPoolSetAttribute` MaxPoolSize. Identity with
+    /// [`Self::set_pool_max_size`] (`cudaMemPoolAttrMaxPoolSize`).
+    ///
+    /// Capture refused. Distinct from [`Self::mem_pool_set_release_threshold`].
+    pub fn mem_pool_set_max_size(&mut self, pool: PoolId, bytes: u64) -> Result<(), SimError> {
+        self.set_pool_max_size(pool, bytes)
     }
 
     /// `cudaMemPoolGetAttribute`. Query; legal during capture.
@@ -13143,6 +16601,8 @@ impl Sim {
     /// An imported pool reports the exporter except ExportHandleTypes (imported
     /// cannot be re-exported). The graph-memory pool is Invalid (use
     /// [`Self::graph_mem_get`]).
+    /// Driver `cuMemPoolGetAttribute` is [`Self::mem_pool_get_attribute`].
+    /// Identity wrap [`Self::mem_pool_get_attribute`].
     pub fn pool_get_attribute(&self, pool: PoolId, attr: MemPoolAttr) -> Result<u64, SimError> {
         self.refuse_graph_pool(pool)?;
         self.refuse_destroyed_pool(pool)?;
@@ -13169,6 +16629,14 @@ impl Sim {
         }
     }
 
+    /// `cuMemPoolGetAttribute`. Identity with
+    /// [`Self::pool_get_attribute`] (`cudaMemPoolGetAttribute`).
+    ///
+    /// Query; legal during capture. Distinct from [`Self::mem_pool_unset_access`].
+    pub fn mem_pool_get_attribute(&self, pool: PoolId, attr: MemPoolAttr) -> Result<u64, SimError> {
+        self.pool_get_attribute(pool, attr)
+    }
+
     /// `cudaMemPoolSetAttribute`. Host-synchronous. Capture cannot include it.
     ///
     /// [`MemPoolAttr::ReleaseThreshold`] is [`Self::set_pool_release_threshold`].
@@ -13179,6 +16647,8 @@ impl Sim {
     /// [`MemPoolAttr::ExportHandleTypes`] are read-only. High-water Set `0`
     /// resets to current (other values Invalid `"pool high attr"`). The
     /// graph-memory pool is Invalid (use [`Self::graph_mem_set`]).
+    /// Driver `cuMemPoolSetAttribute` is [`Self::mem_pool_set_attribute`].
+    /// Identity wrap [`Self::mem_pool_set_attribute`].
     pub fn pool_set_attribute(
         &mut self,
         pool: PoolId,
@@ -13208,6 +16678,19 @@ impl Sim {
                 self.set_pool_reuse_attr(pool, attr, value)
             }
         }
+    }
+
+    /// `cuMemPoolSetAttribute`. Identity with
+    /// [`Self::pool_set_attribute`] (`cudaMemPoolSetAttribute`).
+    ///
+    /// Capture refused. Distinct from [`Self::mem_pool_get_attribute`].
+    pub fn mem_pool_set_attribute(
+        &mut self,
+        pool: PoolId,
+        attr: MemPoolAttr,
+        value: u64,
+    ) -> Result<(), SimError> {
+        self.pool_set_attribute(pool, attr, value)
     }
 
     fn set_pool_high_attr(
@@ -13299,6 +16782,8 @@ impl Sim {
     /// `expertvm sim --mempool-trim` / `GpuStoreCfg::mempool_trim` is
     /// [`Self::pool_trim_to`] `(device_mempool, 0)` after score (idle), not
     /// token ITL.
+    /// Driver `cuMemPoolTrimTo` is [`Self::mem_pool_trim_to`].
+    /// Identity wrap [`Self::mem_pool_trim_to`].
     pub fn pool_trim_to(&mut self, pool: PoolId, min_bytes: u64) -> Result<u64, SimError> {
         self.fail_if_capturing("cannot capture mempool")?;
         let root = self.pool_root(pool)?;
@@ -13319,6 +16804,14 @@ impl Sim {
         let used = self.gpu_rt(device)?.used;
         self.gpu_rt_mut(device)?.used = used.saturating_sub(drop);
         Ok(drop)
+    }
+
+    /// `cuMemPoolTrimTo`. Identity with
+    /// [`Self::pool_trim_to`] (`cudaMemPoolTrimTo`).
+    ///
+    /// Capture refused. Distinct from [`Self::mem_pool_set_attribute`].
+    pub fn mem_pool_trim_to(&mut self, pool: PoolId, min_bytes: u64) -> Result<u64, SimError> {
+        self.pool_trim_to(pool, min_bytes)
     }
 
     /// Unused bytes held by `pool` (`cudaMemGetInfo` still counts them used).
@@ -13343,6 +16836,8 @@ impl Sim {
     /// directed peer access from the pool GPU, same as D2D. Same-device is a
     /// no-op that still records access. Applies to existing and later allocs.
     /// Downgrades a prior [`Self::pool_set_access_read`] on `device`.
+    /// Driver `cuMemPoolSetAccess` is [`Self::mem_pool_set_access`].
+    /// Identity wrap [`Self::mem_pool_set_access`].
     pub fn pool_set_access(&mut self, pool: PoolId, device: DeviceId) -> Result<(), SimError> {
         self.pool_prepare_set_access(pool, device)?;
         {
@@ -13352,6 +16847,14 @@ impl Sim {
         }
         self.clock = self.clock.saturating_add(self.first_alloc_ns().max(1));
         Ok(())
+    }
+
+    /// `cuMemPoolSetAccess`. Identity with
+    /// [`Self::pool_set_access`] (`cudaMemPoolSetAccess` ReadWrite).
+    ///
+    /// Capture refused. Distinct from [`Self::mem_pool_get_access`].
+    pub fn mem_pool_set_access(&mut self, pool: PoolId, device: DeviceId) -> Result<(), SimError> {
+        self.pool_set_access(pool, device)
     }
 
     /// `cudaMemPoolSetAccess` ProtRead on `device` for allocations from `pool`.
@@ -13364,6 +16867,8 @@ impl Sim {
     /// Same-device still records; [`Self::pool_get_access`] on the owner stays
     /// ReadWrite. Applies to existing and later allocs. Downgrades a prior
     /// [`Self::pool_set_access`] on `device`.
+    /// Driver `cuMemPoolSetAccess` ProtRead is [`Self::mem_pool_set_access_read`].
+    /// Identity wrap [`Self::mem_pool_set_access_read`].
     pub fn pool_set_access_read(&mut self, pool: PoolId, device: DeviceId) -> Result<(), SimError> {
         self.pool_prepare_set_access(pool, device)?;
         {
@@ -13373,6 +16878,18 @@ impl Sim {
         }
         self.clock = self.clock.saturating_add(self.first_alloc_ns().max(1));
         Ok(())
+    }
+
+    /// `cuMemPoolSetAccess` ProtRead. Identity with
+    /// [`Self::pool_set_access_read`] (`cudaMemPoolSetAccess` ProtRead).
+    ///
+    /// Capture refused. Distinct from [`Self::mem_pool_set_access`].
+    pub fn mem_pool_set_access_read(
+        &mut self,
+        pool: PoolId,
+        device: DeviceId,
+    ) -> Result<(), SimError> {
+        self.pool_set_access_read(pool, device)
     }
 
     fn pool_prepare_set_access(&self, pool: PoolId, device: DeviceId) -> Result<(), SimError> {
@@ -13400,6 +16917,8 @@ impl Sim {
     /// [`MemAccessFlags::PROT_READ`] is [`Self::pool_set_access_read`].
     /// Other bits are Invalid `"pool access flags"`. Typed helpers stay.
     /// Capture is refused by those helpers.
+    /// Driver `cuMemPoolSetAccess` flags is [`Self::mem_pool_set_access_with_flags`].
+    /// Identity wrap [`Self::mem_pool_set_access_with_flags`].
     pub fn pool_set_access_with_flags(
         &mut self,
         pool: PoolId,
@@ -13416,12 +16935,27 @@ impl Sim {
         }
     }
 
+    /// `cuMemPoolSetAccess` flags. Identity with
+    /// [`Self::pool_set_access_with_flags`] (`cudaMemPoolSetAccess` flags).
+    ///
+    /// Capture refused. Distinct from [`Self::mem_pool_set_access_read`].
+    pub fn mem_pool_set_access_with_flags(
+        &mut self,
+        pool: PoolId,
+        device: DeviceId,
+        flags: u32,
+    ) -> Result<(), SimError> {
+        self.pool_set_access_with_flags(pool, device, flags)
+    }
+
     /// `cudaMemPoolSetAccess` with a descriptor array (`descList`, `count`).
     ///
     /// Host location Invalid `"access location"`. Flags match
     /// [`Self::pool_set_access_with_flags`]. All-or-nothing: a later Invalid
     /// leaves earlier descriptors unapplied. Empty `descs` is a no-op after
     /// pool checks. Host-synchronous; capture refused. Typed helpers stay.
+    /// Driver `cuMemPoolSetAccess` n is [`Self::mem_pool_set_access_n`].
+    /// Identity wrap [`Self::mem_pool_set_access_n`].
     pub fn pool_set_access_n(
         &mut self,
         pool: PoolId,
@@ -13466,8 +17000,22 @@ impl Sim {
         Ok(())
     }
 
+    /// `cuMemPoolSetAccess` n. Identity with
+    /// [`Self::pool_set_access_n`] (`cudaMemPoolSetAccess` desc array).
+    ///
+    /// Capture refused. Distinct from [`Self::mem_pool_set_access_with_flags`].
+    pub fn mem_pool_set_access_n(
+        &mut self,
+        pool: PoolId,
+        descs: &[MemAccessDesc],
+    ) -> Result<(), SimError> {
+        self.pool_set_access_n(pool, descs)
+    }
+
     /// Drop [`Self::pool_set_access`] / [`Self::pool_set_access_read`] for
     /// `device` (`cudaMemAccessFlagsProtNone`).
+    /// Driver `cuMemPoolSetAccess` ProtNone is [`Self::mem_pool_unset_access`].
+    /// Identity wrap [`Self::mem_pool_unset_access`].
     pub fn pool_unset_access(&mut self, pool: PoolId, device: DeviceId) -> Result<(), SimError> {
         self.fail_if_capturing("cannot capture mempool")?;
         self.refuse_destroyed_pool(pool)?;
@@ -13480,6 +17028,18 @@ impl Sim {
         }
         self.clock = self.clock.saturating_add(self.first_alloc_ns().max(1));
         Ok(())
+    }
+
+    /// `cuMemPoolSetAccess` ProtNone. Identity with
+    /// [`Self::pool_unset_access`] (`cudaMemPoolSetAccess` ProtNone).
+    ///
+    /// Capture refused. Distinct from [`Self::mem_pool_set_access_n`].
+    pub fn mem_pool_unset_access(
+        &mut self,
+        pool: PoolId,
+        device: DeviceId,
+    ) -> Result<(), SimError> {
+        self.pool_unset_access(pool, device)
     }
 
     /// Whether `device` has [`Self::pool_set_access`] or
@@ -13496,6 +17056,8 @@ impl Sim {
     /// [`MemAccessFlags::PROT_READ`] (`1`) after [`Self::pool_set_access_read`].
     /// Otherwise [`MemAccessFlags::PROT_NONE`] (`0`). The graph-memory pool is
     /// Invalid.
+    /// Driver `cuMemPoolGetAccess` is [`Self::mem_pool_get_access`].
+    /// Identity wrap [`Self::mem_pool_get_access`].
     pub fn pool_get_access(&self, pool: PoolId, device: DeviceId) -> Result<u32, SimError> {
         let _gpu = self.profile.gpu(device)?;
         self.refuse_graph_pool(pool)?;
@@ -13508,6 +17070,14 @@ impl Sim {
         } else {
             Ok(MemAccessFlags::PROT_NONE)
         }
+    }
+
+    /// `cuMemPoolGetAccess`. Identity with
+    /// [`Self::pool_get_access`] (`cudaMemPoolGetAccess`).
+    ///
+    /// Query; legal during capture. Distinct from [`Self::mem_pool_import_ptr`].
+    pub fn mem_pool_get_access(&self, pool: PoolId, device: DeviceId) -> Result<u32, SimError> {
+        self.pool_get_access(pool, device)
     }
 
     /// Whether `pool` was created with a POSIX-FD shareable handle type.
@@ -13525,6 +17095,8 @@ impl Sim {
     /// Only [`Self::create_shareable_pool`] pools export. Default and
     /// [`Self::create_pool`] pools are `not shareable`. The same pool returns
     /// the same handle. Capture cannot include it.
+    /// Driver `cuMemPoolExportToShareableHandle` is [`Self::mem_pool_export`].
+    /// Identity wrap [`Self::mem_pool_export`].
     pub fn pool_export(&mut self, pool: PoolId) -> Result<ShareableHandleId, SimError> {
         self.fail_if_capturing("cannot capture mempool")?;
         self.refuse_destroyed_pool(pool)?;
@@ -13552,11 +17124,21 @@ impl Sim {
         Ok(h)
     }
 
+    /// `cuMemPoolExportToShareableHandle`. Identity with
+    /// [`Self::pool_export`] (`cudaMemPoolExportToShareableHandle`).
+    ///
+    /// Capture refused. Distinct from [`Self::mem_alloc_from_pool`].
+    pub fn mem_pool_export(&mut self, pool: PoolId) -> Result<ShareableHandleId, SimError> {
+        self.pool_export(pool)
+    }
+
     /// `cudaMemPoolImportFromShareableHandle` on `device`.
     ///
     /// Returns a new [`PoolId`] that shares live/cached/threshold with the
     /// exporter (no extra HBM). `device` must match the exporter. Capture
     /// cannot include it.
+    /// Driver `cuMemPoolImportFromShareableHandle` is [`Self::mem_pool_import`].
+    /// Identity wrap [`Self::mem_pool_import`].
     pub fn pool_import(
         &mut self,
         device: DeviceId,
@@ -13583,6 +17165,18 @@ impl Sim {
         Ok(id)
     }
 
+    /// `cuMemPoolImportFromShareableHandle`. Identity with
+    /// [`Self::pool_import`] (`cudaMemPoolImportFromShareableHandle`).
+    ///
+    /// Capture refused. Distinct from [`Self::mem_pool_export`].
+    pub fn mem_pool_import(
+        &mut self,
+        device: DeviceId,
+        handle: ShareableHandleId,
+    ) -> Result<PoolId, SimError> {
+        self.pool_import(device, handle)
+    }
+
     fn check_pool_export_type(
         handle_type: u64,
         flags: u32,
@@ -13604,6 +17198,8 @@ impl Sim {
     /// [`MemHandleType::POSIX_FILE_DESCRIPTOR`] only. Flags must be
     /// [`MemPoolExportFlags::DEFAULT`]. Typed [`Self::pool_export`] stays.
     /// Host-synchronous; capture refused.
+    /// Driver `cuMemPoolExportToShareableHandle` type is [`Self::mem_pool_export_with_type`].
+    /// Identity wrap [`Self::mem_pool_export_with_type`].
     pub fn pool_export_with_type(
         &mut self,
         pool: PoolId,
@@ -13615,11 +17211,26 @@ impl Sim {
         self.pool_export(pool)
     }
 
+    /// `cuMemPoolExportToShareableHandle` type. Identity with
+    /// [`Self::pool_export_with_type`] (`cudaMemPoolExportToShareableHandle` type).
+    ///
+    /// Capture refused. Distinct from [`Self::mem_pool_import`].
+    pub fn mem_pool_export_with_type(
+        &mut self,
+        pool: PoolId,
+        handle_type: u64,
+        flags: u32,
+    ) -> Result<ShareableHandleId, SimError> {
+        self.pool_export_with_type(pool, handle_type, flags)
+    }
+
     /// `cudaMemPoolImportFromShareableHandle` with handle type and flags.
     ///
     /// [`MemHandleType::POSIX_FILE_DESCRIPTOR`] only. Flags must be
     /// [`MemPoolExportFlags::DEFAULT`]. Typed [`Self::pool_import`] stays.
     /// Host-synchronous; capture refused.
+    /// Driver `cuMemPoolImportFromShareableHandle` type is [`Self::mem_pool_import_with_type`].
+    /// Identity wrap [`Self::mem_pool_import_with_type`].
     pub fn pool_import_with_type(
         &mut self,
         device: DeviceId,
@@ -13632,10 +17243,26 @@ impl Sim {
         self.pool_import(device, handle)
     }
 
+    /// `cuMemPoolImportFromShareableHandle` type. Identity with
+    /// [`Self::pool_import_with_type`] (`cudaMemPoolImportFromShareableHandle` type).
+    ///
+    /// Capture refused. Distinct from [`Self::mem_pool_export_with_type`].
+    pub fn mem_pool_import_with_type(
+        &mut self,
+        device: DeviceId,
+        handle: ShareableHandleId,
+        handle_type: u64,
+        flags: u32,
+    ) -> Result<PoolId, SimError> {
+        self.pool_import_with_type(device, handle, handle_type, flags)
+    }
+
     /// `cudaMemPoolExportPointer` of a live allocation from a shareable pool.
     ///
     /// The same alloc returns the same handle. [`Self::ipc_get`] of a pool
     /// alloc is Invalid. Capture cannot include it.
+    /// Driver `cuMemPoolExportPointer` is [`Self::mem_pool_export_ptr`].
+    /// Identity wrap [`Self::mem_pool_export_ptr`].
     pub fn pool_export_ptr(&mut self, id: AllocId) -> Result<PtrExportId, SimError> {
         self.fail_if_capturing("cannot capture mempool")?;
         let (pool, device) = {
@@ -13681,8 +17308,18 @@ impl Sim {
         Ok(h)
     }
 
+    /// `cuMemPoolExportPointer`. Identity with
+    /// [`Self::pool_export_ptr`] (`cudaMemPoolExportPointer`).
+    ///
+    /// Capture refused. Distinct from [`Self::mem_pool_import_with_type`].
+    pub fn mem_pool_export_ptr(&mut self, id: AllocId) -> Result<PtrExportId, SimError> {
+        self.pool_export_ptr(id)
+    }
+
     /// `cudaMemPoolImportPointer` into an imported pool. Alias shares the
     /// source physicals (no extra HBM). Capture cannot include it.
+    /// Driver `cuMemPoolImportPointer` is [`Self::mem_pool_import_ptr`].
+    /// Identity wrap [`Self::mem_pool_import_ptr`].
     pub fn pool_import_ptr(
         &mut self,
         pool: PoolId,
@@ -13755,6 +17392,18 @@ impl Sim {
         Ok(id)
     }
 
+    /// `cuMemPoolImportPointer`. Identity with
+    /// [`Self::pool_import_ptr`] (`cudaMemPoolImportPointer`).
+    ///
+    /// Capture refused. Distinct from [`Self::mem_pool_export_ptr`].
+    pub fn mem_pool_import_ptr(
+        &mut self,
+        pool: PoolId,
+        export: PtrExportId,
+    ) -> Result<AllocId, SimError> {
+        self.pool_import_ptr(pool, export)
+    }
+
     /// Whether `id` is a live [`Self::pool_import_ptr`] alias.
     pub fn is_share_import(&self, id: AllocId) -> Result<bool, SimError> {
         let a = self.alloc_ref(id)?;
@@ -13781,6 +17430,15 @@ impl Sim {
         self.reserve_now(device, bytes)
     }
 
+    /// `cuMemAlloc`. Identity with [`Self::malloc`] (`cudaMalloc`).
+    ///
+    /// Device-sync then the pointer is usable. Capture refused. Distinct from
+    /// [`Self::alloc`] (`cudaMallocAsync`). This VM does not invent `cuMemFree`
+    /// this slice (`free_sync` stays).
+    pub fn mem_alloc(&mut self, device: DeviceId, bytes: u64) -> Result<AllocId, SimError> {
+        self.malloc(device, bytes)
+    }
+
     /// Immediate page-locked host allocation. Does not charge HBM.
     ///
     /// A kernel may not read this object until a copy has placed it on a
@@ -13788,6 +17446,14 @@ impl Sim {
     /// Capture cannot include host alloc.
     pub fn alloc_host_pinned(&mut self, bytes: u64) -> Result<AllocId, SimError> {
         self.alloc_host_with_flags(bytes, HostAllocFlags::DEFAULT)
+    }
+
+    /// `cuMemAllocHost`. Identity with [`Self::alloc_host_pinned`]
+    /// (`cudaMallocHost`).
+    ///
+    /// Capture refused. Distinct from [`Self::mem_host_alloc`] (`cuMemHostAlloc`).
+    pub fn mem_alloc_host(&mut self, bytes: u64) -> Result<AllocId, SimError> {
+        self.alloc_host_pinned(bytes)
     }
 
     /// Pageable host allocation (`malloc`). Pin it with [`Self::host_register`].
@@ -13818,6 +17484,16 @@ impl Sim {
         }
         let mapped = flags & HostAllocFlags::MAPPED != 0;
         self.insert_host(bytes, false, true, mapped, false, flags)
+    }
+
+    /// `cuMemHostAlloc`. Identity with [`Self::alloc_host_with_flags`]
+    /// (`cudaHostAlloc`).
+    ///
+    /// Capture refused. Distinct from [`Self::alloc_host_pinned`]
+    /// (`cudaMallocHost` DEFAULT). This VM does not invent `cuMemHostGetFlags`
+    /// this slice (`host_get_flags` stays).
+    pub fn mem_host_alloc(&mut self, bytes: u64, flags: u32) -> Result<AllocId, SimError> {
+        self.alloc_host_with_flags(bytes, flags)
     }
 
     /// `cudaMallocManaged`: pointer is live immediately, no HBM until a
@@ -13897,6 +17573,14 @@ impl Sim {
         }
     }
 
+    /// `cuMemAllocManaged`. Identity with [`Self::alloc_managed_with_flags`]
+    /// (`cudaMallocManaged` flags).
+    ///
+    /// Capture refused. Distinct from [`Self::alloc_managed`].
+    pub fn mem_alloc_managed(&mut self, bytes: u64, flags: u32) -> Result<AllocId, SimError> {
+        self.alloc_managed_with_flags(bytes, flags)
+    }
+
     /// Current `cudaMemAttach*` visibility of a live managed allocation.
     pub fn mem_attach(&self, id: AllocId) -> Result<MemAttach, SimError> {
         let a = self.alloc_ref(id)?;
@@ -13948,6 +17632,7 @@ impl Sim {
     /// `size` must equal the allocation bytes. Other sizes Invalid
     /// `"advise size"`. Partial advise is not modeled. Typed
     /// [`Self::mem_advise`] stays. Capture cannot include it.
+    /// Driver `cuMemAdvise` is [`Self::mem_advise_n`].
     pub fn mem_advise_with_size(
         &mut self,
         alloc: AllocId,
@@ -13993,6 +17678,20 @@ impl Sim {
         Ok(())
     }
 
+    /// `cuMemAdvise`. Identity with [`Self::mem_advise_with_size`]
+    /// (`cudaMemAdvise` count).
+    ///
+    /// Capture refused. Distinct from [`Self::mem_advise`].
+    pub fn mem_advise_n(
+        &mut self,
+        alloc: AllocId,
+        size: u64,
+        advice: MemAdvise,
+        device: DeviceId,
+    ) -> Result<(), SimError> {
+        self.mem_advise_with_size(alloc, size, advice, device)
+    }
+
     /// `cudaMemAdvise` / `cudaMemAdvise_v2` with a [`Place`] location.
     ///
     /// [`MemAdvise::SetReadMostly`] / [`UnsetReadMostly`](MemAdvise::UnsetReadMostly) /
@@ -14001,6 +17700,7 @@ impl Sim {
     /// [`MemAdvise::SetPreferredLocationHost`]. AccessedBy requires
     /// [`Place::Device`] (host is Invalid `"advise location"`). Typed
     /// [`Self::mem_advise`] stays. Capture refused by that helper.
+    /// Driver `cuMemAdvise_v2` is [`Self::mem_advise_v2`].
     pub fn mem_advise_with_location(
         &mut self,
         alloc: AllocId,
@@ -14033,11 +17733,25 @@ impl Sim {
         }
     }
 
+    /// `cuMemAdvise_v2`. Identity with [`Self::mem_advise_with_location`]
+    /// (`cudaMemAdvise_v2` location).
+    ///
+    /// Capture refused. Distinct from [`Self::mem_advise_n`].
+    pub fn mem_advise_v2(
+        &mut self,
+        alloc: AllocId,
+        advice: MemAdvise,
+        location: Place,
+    ) -> Result<(), SimError> {
+        self.mem_advise_with_location(alloc, advice, location)
+    }
+
     /// `cudaMemRangeGetAttribute`. Query; legal during capture.
     ///
     /// This VM tracks advice per live managed allocation, not per byte range.
     /// Non-managed pointers are Invalid `"not managed"`. The CUDA `count` is
     /// [`Self::mem_range_get_attribute_with_size`].
+    /// Driver `cuMemRangeGetAttribute` is [`Self::mem_range_get`].
     pub fn mem_range_get_attribute(
         &self,
         alloc: AllocId,
@@ -14047,11 +17761,25 @@ impl Sim {
         self.mem_range_get_attribute_with_size(alloc, size, attr)
     }
 
+    /// `cuMemRangeGetAttribute`. Identity with [`Self::mem_range_get_attribute`]
+    /// (`cudaMemRangeGetAttribute`).
+    ///
+    /// Query; legal during capture. Distinct from
+    /// [`Self::mem_range_get_attributes`].
+    pub fn mem_range_get(
+        &self,
+        alloc: AllocId,
+        attr: MemRangeAttr,
+    ) -> Result<MemRangeAttrValue, SimError> {
+        self.mem_range_get_attribute(alloc, attr)
+    }
+
     /// [`Self::mem_range_get_attribute`] with the CUDA `count` argument.
     ///
     /// `size` must equal the allocation bytes. Other sizes Invalid
     /// `"range size"`. Partial range queries are not modeled. Typed
     /// [`Self::mem_range_get_attribute`] stays. Query; legal during capture.
+    /// Driver `cuMemRangeGetAttribute` count is [`Self::mem_range_get_n`].
     pub fn mem_range_get_attribute_with_size(
         &self,
         alloc: AllocId,
@@ -14091,12 +17819,27 @@ impl Sim {
         })
     }
 
+    /// `cuMemRangeGetAttribute` count. Identity with
+    /// [`Self::mem_range_get_attribute_with_size`]
+    /// (`cudaMemRangeGetAttribute` count).
+    ///
+    /// Query; legal during capture. Distinct from [`Self::mem_range_get`].
+    pub fn mem_range_get_n(
+        &self,
+        alloc: AllocId,
+        size: u64,
+        attr: MemRangeAttr,
+    ) -> Result<MemRangeAttrValue, SimError> {
+        self.mem_range_get_attribute_with_size(alloc, size, attr)
+    }
+
     /// `cudaMemRangeGetAttributes`. Query; legal during capture.
     ///
     /// Same per-alloc rules as [`Self::mem_range_get_attribute`]. Empty
     /// `attrs` is an empty vec. All-or-nothing: a non-managed pointer fails
     /// the whole call. The CUDA `count` is
     /// [`Self::mem_range_get_attributes_with_size`].
+    /// Driver `cuMemRangeGetAttributes` is [`Self::mem_range_gets`].
     pub fn mem_range_get_attributes(
         &self,
         alloc: AllocId,
@@ -14106,6 +17849,18 @@ impl Sim {
         self.mem_range_get_attributes_with_size(alloc, size, attrs)
     }
 
+    /// `cuMemRangeGetAttributes`. Identity with [`Self::mem_range_get_attributes`]
+    /// (`cudaMemRangeGetAttributes`).
+    ///
+    /// Query; legal during capture. Distinct from [`Self::mem_range_get`].
+    pub fn mem_range_gets(
+        &self,
+        alloc: AllocId,
+        attrs: &[MemRangeAttr],
+    ) -> Result<Vec<MemRangeAttrValue>, SimError> {
+        self.mem_range_get_attributes(alloc, attrs)
+    }
+
     /// [`Self::mem_range_get_attributes`] with the CUDA `count` argument.
     ///
     /// `size` must equal the allocation bytes. Other sizes Invalid
@@ -14113,6 +17868,7 @@ impl Sim {
     /// is `Ok([])` after the pointer is a live managed alloc of that size.
     /// Typed [`Self::mem_range_get_attributes`] stays. Query; legal during
     /// capture.
+    /// Driver `cuMemRangeGetAttributes` count is [`Self::mem_range_gets_n`].
     pub fn mem_range_get_attributes_with_size(
         &self,
         alloc: AllocId,
@@ -14131,6 +17887,20 @@ impl Sim {
             .copied()
             .map(|attr| self.mem_range_get_attribute_with_size(alloc, size, attr))
             .collect()
+    }
+
+    /// `cuMemRangeGetAttributes` count. Identity with
+    /// [`Self::mem_range_get_attributes_with_size`]
+    /// (`cudaMemRangeGetAttributes` count).
+    ///
+    /// Query; legal during capture. Distinct from [`Self::mem_range_gets`].
+    pub fn mem_range_gets_n(
+        &self,
+        alloc: AllocId,
+        size: u64,
+        attrs: &[MemRangeAttr],
+    ) -> Result<Vec<MemRangeAttrValue>, SimError> {
+        self.mem_range_get_attributes_with_size(alloc, size, attrs)
     }
 
     /// CUDA `dataSize` for one [`MemRangeAttr`]: 4 bytes (`sizeof(int)`) for
@@ -14160,6 +17930,7 @@ impl Sim {
     /// sufficient `dataSize`). Count is the allocation
     /// ([`Self::mem_range_get_attribute_with_size`]). Query; legal during
     /// capture.
+    /// Driver `cuMemRangeGetAttribute` dataSize is [`Self::mem_range_get_data`].
     pub fn mem_range_get_attribute_with_data_size(
         &self,
         alloc: AllocId,
@@ -14178,12 +17949,27 @@ impl Sim {
         self.mem_range_get_attribute_with_size(alloc, a.bytes, attr)
     }
 
+    /// `cuMemRangeGetAttribute` dataSize. Identity with
+    /// [`Self::mem_range_get_attribute_with_data_size`]
+    /// (`cudaMemRangeGetAttribute` dataSize).
+    ///
+    /// Query; legal during capture. Distinct from [`Self::mem_range_get_n`].
+    pub fn mem_range_get_data(
+        &self,
+        alloc: AllocId,
+        data_size: u64,
+        attr: MemRangeAttr,
+    ) -> Result<MemRangeAttrValue, SimError> {
+        self.mem_range_get_attribute_with_data_size(alloc, data_size, attr)
+    }
+
     /// [`Self::mem_range_get_attributes`] with the CUDA `dataSizes` array.
     ///
     /// `attrs` and `data_sizes` must be the same length (else Invalid
     /// `"range data sizes"`). Each entry follows
     /// [`Self::mem_range_get_attribute_with_data_size`]. Typed
     /// [`Self::mem_range_get_attributes`] stays. Query; legal during capture.
+    /// Driver `cuMemRangeGetAttributes` dataSizes is [`Self::mem_range_gets_data`].
     pub fn mem_range_get_attributes_with_data_sizes(
         &self,
         alloc: AllocId,
@@ -14209,6 +17995,20 @@ impl Sim {
             }
         }
         self.mem_range_get_attributes_with_size(alloc, bytes, attrs)
+    }
+
+    /// `cuMemRangeGetAttributes` dataSizes. Identity with
+    /// [`Self::mem_range_get_attributes_with_data_sizes`]
+    /// (`cudaMemRangeGetAttributes` dataSizes).
+    ///
+    /// Query; legal during capture. Distinct from [`Self::mem_range_get_data`].
+    pub fn mem_range_gets_data(
+        &self,
+        alloc: AllocId,
+        attrs: &[MemRangeAttr],
+        data_sizes: &[u64],
+    ) -> Result<Vec<MemRangeAttrValue>, SimError> {
+        self.mem_range_get_attributes_with_data_sizes(alloc, attrs, data_sizes)
     }
 
     /// Whether [`MemAdvise::SetReadMostly`] is set.
@@ -14390,6 +18190,8 @@ impl Sim {
     /// `cuMemRelease` (allowed while mapped). HBM refunds when refs and maps are
     /// both 0. Typed helper; [`Self::va_create_with_prop`] takes the CUDA prop
     /// and flags word.
+    /// Driver `cuMemCreate` is [`Self::mem_create`].
+    /// Identity wrap [`Self::mem_create`].
     pub fn va_create(&mut self, device: DeviceId, bytes: u64) -> Result<MemHandleId, SimError> {
         self.va_create_with_prop(
             bytes,
@@ -14399,6 +18201,27 @@ impl Sim {
             },
             MemCreateFlags::DEFAULT,
         )
+    }
+
+    /// `cuMemCreate`. Identity with
+    /// [`Self::va_create`] (`cuMemCreate` default prop).
+    ///
+    /// Capture refused. Distinct from [`Self::mem_get_allocation_granularity`].
+    pub fn mem_create(&mut self, device: DeviceId, bytes: u64) -> Result<MemHandleId, SimError> {
+        self.va_create(device, bytes)
+    }
+
+    /// `cuMemCreate` props. Identity with
+    /// [`Self::va_create_with_prop`] (`cuMemCreate` props).
+    ///
+    /// Capture refused. Distinct from [`Self::mem_create`].
+    pub fn mem_create_with_prop(
+        &mut self,
+        bytes: u64,
+        prop: MemAllocationProp,
+        flags: u32,
+    ) -> Result<MemHandleId, SimError> {
+        self.va_create_with_prop(bytes, prop, flags)
     }
 
     /// [`Self::va_create`] with `CUmemAllocationProp` and flags.
@@ -14411,6 +18234,8 @@ impl Sim {
     /// [`MemAllocationProp::gpu_direct_rdma_capable`] is ignored (Get reports
     /// the SKU). [`MemAllocationProp::compression`] must be 0 (`"mem compression"`).
     /// [`MemAllocationProp::usage`] must be [`MemHandleUsage::NONE`] (`"mem usage"`).
+    /// Driver `cuMemCreate` props is [`Self::mem_create_with_prop`].
+    /// Identity wrap [`Self::mem_create_with_prop`].
     pub fn va_create_with_prop(
         &mut self,
         bytes: u64,
@@ -14479,6 +18304,8 @@ impl Sim {
     /// have a ref ([`Self::va_release_handle`] while mapped forbids further
     /// maps). Capture cannot include it. Typed helper;
     /// [`Self::va_map_handle_with_flags`] takes the CUDA flags word.
+    /// Driver `cuMemMap` is [`Self::mem_map_handle`].
+    /// Identity wrap [`Self::mem_map_handle`].
     pub fn va_map_handle(
         &mut self,
         id: AllocId,
@@ -14489,9 +18316,25 @@ impl Sim {
         self.va_map_handle_with_flags(id, device, offset, handle, MemMapFlags::DEFAULT)
     }
 
+    /// `cuMemMap`. Identity with
+    /// [`Self::va_map_handle`] (`cuMemMap` default flags).
+    ///
+    /// Capture refused. Distinct from [`Self::mem_create_with_prop`].
+    pub fn mem_map_handle(
+        &mut self,
+        id: AllocId,
+        device: DeviceId,
+        offset: u64,
+        handle: MemHandleId,
+    ) -> Result<(), SimError> {
+        self.va_map_handle(id, device, offset, handle)
+    }
+
     /// [`Self::va_map_handle`] with a flags word.
     ///
     /// CUDA requires 0. Unknown bits Invalid `"mem map flags"`.
+    /// Driver `cuMemMap` flags is [`Self::mem_map_handle_with_flags`].
+    /// Identity wrap [`Self::mem_map_handle_with_flags`].
     pub fn va_map_handle_with_flags(
         &mut self,
         id: AllocId,
@@ -14510,10 +18353,27 @@ impl Sim {
         self.va_map_handle_with_size(id, device, offset, handle, bytes, flags)
     }
 
+    /// `cuMemMap` flags. Identity with
+    /// [`Self::va_map_handle_with_flags`] (`cuMemMap` flags).
+    ///
+    /// Capture refused. Distinct from [`Self::mem_map_handle`].
+    pub fn mem_map_handle_with_flags(
+        &mut self,
+        id: AllocId,
+        device: DeviceId,
+        offset: u64,
+        handle: MemHandleId,
+        flags: u32,
+    ) -> Result<(), SimError> {
+        self.va_map_handle_with_flags(id, device, offset, handle, flags)
+    }
+
     /// [`Self::va_map_handle`] with the CUDA size and flags.
     ///
     /// `size` must equal the handle bytes. Other sizes Invalid `"mem map size"`.
     /// Flags must be [`MemMapFlags::DEFAULT`].
+    /// Driver `cuMemMap` size is [`Self::mem_map_handle_with_size`].
+    /// Identity wrap [`Self::mem_map_handle_with_size`].
     pub fn va_map_handle_with_size(
         &mut self,
         id: AllocId,
@@ -14583,11 +18443,29 @@ impl Sim {
         Ok(())
     }
 
+    /// `cuMemMap` size. Identity with
+    /// [`Self::va_map_handle_with_size`] (`cuMemMap` size).
+    ///
+    /// Capture refused. Distinct from [`Self::mem_map_handle_with_flags`].
+    pub fn mem_map_handle_with_size(
+        &mut self,
+        id: AllocId,
+        device: DeviceId,
+        offset: u64,
+        handle: MemHandleId,
+        size: u64,
+        flags: u32,
+    ) -> Result<(), SimError> {
+        self.va_map_handle_with_size(id, device, offset, handle, size, flags)
+    }
+
     /// `cuMemRelease`. Allowed while the physical is still mapped.
     ///
     /// Drops one handle ref. HBM refunds when refs and maps are both 0.
     /// Capture cannot include it. A released handle cannot be mapped again;
     /// [`Self::va_retain_handle`] on a still-mapped VA restores a ref.
+    /// Driver `cuMemRelease` is [`Self::mem_release_handle`].
+    /// Identity wrap [`Self::mem_release_handle`].
     pub fn va_release_handle(&mut self, handle: MemHandleId) -> Result<(), SimError> {
         self.fail_if_capturing("cannot capture alloc/free")?;
         let refs = self.handle_ref(handle)?.refs;
@@ -14601,12 +18479,22 @@ impl Sim {
         self.maybe_refund_handle(handle)
     }
 
+    /// `cuMemRelease`. Identity with
+    /// [`Self::va_release_handle`] (`cuMemRelease`).
+    ///
+    /// Capture refused. Distinct from [`Self::mem_map_handle_with_size`].
+    pub fn mem_release_handle(&mut self, handle: MemHandleId) -> Result<(), SimError> {
+        self.va_release_handle(handle)
+    }
+
     /// `cuMemRetainAllocationHandle` at a mapped `(device, offset)` span.
     ///
     /// Host-synchronous. Capture cannot include it. An explicit handle's ref
     /// count increments (a released-but-mapped handle is restored to one ref).
     /// A combined [`Self::va_map`] / [`Self::va_map_range`] span is promoted
     /// so later unmaps do not refund until [`Self::va_release_handle`].
+    /// Driver `cuMemRetainAllocationHandle` is [`Self::mem_retain_handle`].
+    /// Identity wrap [`Self::mem_retain_handle`].
     pub fn va_retain_handle(
         &mut self,
         id: AllocId,
@@ -14651,6 +18539,19 @@ impl Sim {
         Ok(h)
     }
 
+    /// `cuMemRetainAllocationHandle`. Identity with
+    /// [`Self::va_retain_handle`] (`cuMemRetainAllocationHandle`).
+    ///
+    /// Capture refused. Distinct from [`Self::mem_release_handle`].
+    pub fn mem_retain_handle(
+        &mut self,
+        id: AllocId,
+        device: DeviceId,
+        offset: u64,
+    ) -> Result<MemHandleId, SimError> {
+        self.va_retain_handle(id, device, offset)
+    }
+
     /// Whether `handle` still has a `cuMemCreate` / retain ref.
     pub fn is_handle_live(&self, handle: MemHandleId) -> Result<bool, SimError> {
         Ok(self.handle_ref(handle)?.refs > 0)
@@ -14674,6 +18575,8 @@ impl Sim {
     /// is an RDMA link on that GPU. [`MemAllocationProp::compression`] /
     /// [`MemAllocationProp::usage`] are always none.
     /// Unknown ids are Invalid `"unknown handle"`.
+    /// Driver `cuMemGetAllocationPropertiesFromHandle` is [`Self::mem_get_allocation_properties`].
+    /// Identity wrap [`Self::mem_get_allocation_properties`].
     pub fn va_get_allocation_properties(
         &self,
         handle: MemHandleId,
@@ -14687,6 +18590,17 @@ impl Sim {
             compression: 0,
             usage: MemHandleUsage::NONE,
         })
+    }
+
+    /// `cuMemGetAllocationPropertiesFromHandle`. Identity with
+    /// [`Self::va_get_allocation_properties`] (`cuMemGetAllocationPropertiesFromHandle`).
+    ///
+    /// Query; legal during capture. Distinct from [`Self::mem_map_range`].
+    pub fn mem_get_allocation_properties(
+        &self,
+        handle: MemHandleId,
+    ) -> Result<MemAllocationProp, SimError> {
+        self.va_get_allocation_properties(handle)
     }
 
     /// `cuMemGetHandleForAddressRange`. Query; legal during capture.
@@ -14775,6 +18689,8 @@ impl Sim {
     /// [`MemAllocationProp::alloc_type`] must be pinned;
     /// [`MemAllocationProp::location`] must be a device in the profile.
     /// Handle types / RDMA on `prop` are ignored.
+    /// Driver `cuMemGetAllocationGranularity` is [`Self::mem_get_allocation_granularity`].
+    /// Identity wrap [`Self::mem_get_allocation_granularity`].
     pub fn va_get_allocation_granularity(
         &self,
         prop: MemAllocationProp,
@@ -14803,6 +18719,18 @@ impl Sim {
         Ok(if g <= 1 { 1 } else { g })
     }
 
+    /// `cuMemGetAllocationGranularity`. Identity with
+    /// [`Self::va_get_allocation_granularity`] (`cuMemGetAllocationGranularity`).
+    ///
+    /// Query; legal during capture. Distinct from [`Self::mem_pool_set_max_size`].
+    pub fn mem_get_allocation_granularity(
+        &self,
+        prop: MemAllocationProp,
+        flags: u32,
+    ) -> Result<u64, SimError> {
+        self.va_get_allocation_granularity(prop, flags)
+    }
+
     /// `cuMulticastGetGranularity`. Query; legal during capture.
     ///
     /// [`MulticastGranularity::MINIMUM`] and [`RECOMMENDED`](MulticastGranularity::RECOMMENDED)
@@ -14811,8 +18739,18 @@ impl Sim {
     /// `"multicast granularity flags"`. Typed helper;
     /// [`Self::multicast_get_granularity_with_prop`] takes
     /// [`MulticastObjectProp`].
+    /// Driver `cuMulticastGetGranularity` is [`Self::mem_multicast_get_granularity`].
+    /// Identity wrap [`Self::mem_multicast_get_granularity`].
     pub fn multicast_get_granularity(&self, flags: u32) -> Result<u64, SimError> {
         self.multicast_get_granularity_with_prop(MulticastObjectProp::default(), flags)
+    }
+
+    /// `cuMulticastGetGranularity`. Identity with
+    /// [`Self::multicast_get_granularity`] (`cuMulticastGetGranularity`).
+    ///
+    /// Query; legal during capture. Distinct from [`Self::mem_map_multicast_with_size`].
+    pub fn mem_multicast_get_granularity(&self, flags: u32) -> Result<u64, SimError> {
+        self.multicast_get_granularity(flags)
     }
 
     /// [`Self::multicast_get_granularity`] with `CUmulticastObjectProp`.
@@ -14822,6 +18760,8 @@ impl Sim {
     /// `"multicast create flags"`). Size and team size are not validated
     /// (CUDA queries granularity before create). Granularity flags match
     /// [`Self::multicast_get_granularity`].
+    /// Driver `cuMulticastGetGranularity` prop is [`Self::mem_multicast_get_granularity_with_prop`].
+    /// Identity wrap [`Self::mem_multicast_get_granularity_with_prop`].
     pub fn multicast_get_granularity_with_prop(
         &self,
         prop: MulticastObjectProp,
@@ -14846,6 +18786,18 @@ impl Sim {
         Ok(if g <= 1 { 1 } else { g })
     }
 
+    /// `cuMulticastGetGranularity` prop. Identity with
+    /// [`Self::multicast_get_granularity_with_prop`] (`cuMulticastGetGranularity` prop).
+    ///
+    /// Query; legal during capture. Distinct from [`Self::mem_multicast_get_granularity`].
+    pub fn mem_multicast_get_granularity_with_prop(
+        &self,
+        prop: MulticastObjectProp,
+        flags: u32,
+    ) -> Result<u64, SimError> {
+        self.multicast_get_granularity_with_prop(prop, flags)
+    }
+
     /// `cuMulticastCreate`: an NVLS multicast object. Does not charge HBM.
     ///
     /// Host-synchronous. Capture cannot include it. `bytes` must be
@@ -14854,6 +18806,8 @@ impl Sim {
     /// 1-GPU profiles still create; bind/map fail without an NVLink clique.
     /// Typed helper; [`Self::multicast_create_with_prop`] takes
     /// [`MulticastObjectProp`].
+    /// Driver `cuMulticastCreate` is [`Self::mem_multicast_create`].
+    /// Identity wrap [`Self::mem_multicast_create`].
     pub fn multicast_create(
         &mut self,
         bytes: u64,
@@ -14866,12 +18820,26 @@ impl Sim {
         })
     }
 
+    /// `cuMulticastCreate`. Identity with
+    /// [`Self::multicast_create`] (`cuMulticastCreate`).
+    ///
+    /// Capture refused. Distinct from [`Self::mem_multicast_get_granularity_with_prop`].
+    pub fn mem_multicast_create(
+        &mut self,
+        bytes: u64,
+        num_devices: u32,
+    ) -> Result<MulticastId, SimError> {
+        self.multicast_create(bytes, num_devices)
+    }
+
     /// [`Self::multicast_create`] with `CUmulticastObjectProp`.
     ///
     /// Handle types other than none Invalid `"multicast handle types"`.
     /// Flags must be 0 ([`MulticastCreateFlags::DEFAULT`]; unknown bits Invalid
     /// `"multicast create flags"`). Size and team rules match
     /// [`Self::multicast_create`].
+    /// Driver `cuMulticastCreate` prop is [`Self::mem_multicast_create_with_prop`].
+    /// Identity wrap [`Self::mem_multicast_create_with_prop`].
     pub fn multicast_create_with_prop(
         &mut self,
         prop: MulticastObjectProp,
@@ -14916,10 +18884,23 @@ impl Sim {
         Ok(id)
     }
 
+    /// `cuMulticastCreate` prop. Identity with
+    /// [`Self::multicast_create_with_prop`] (`cuMulticastCreate` prop).
+    ///
+    /// Capture refused. Distinct from [`Self::mem_multicast_create`].
+    pub fn mem_multicast_create_with_prop(
+        &mut self,
+        prop: MulticastObjectProp,
+    ) -> Result<MulticastId, SimError> {
+        self.multicast_create_with_prop(prop)
+    }
+
     /// `cuMulticastAddDevice`. Host-synchronous. Capture cannot include it.
     ///
     /// Must run before bind/map. Duplicate add is Invalid. The completed team
     /// must be an NVLink clique.
+    /// Driver `cuMulticastAddDevice` is [`Self::mem_multicast_add_device`].
+    /// Identity wrap [`Self::mem_multicast_add_device`].
     pub fn multicast_add_device(
         &mut self,
         mc: MulticastId,
@@ -14953,12 +18934,26 @@ impl Sim {
         Ok(())
     }
 
+    /// `cuMulticastAddDevice`. Identity with
+    /// [`Self::multicast_add_device`] (`cuMulticastAddDevice`).
+    ///
+    /// Capture refused. Distinct from [`Self::mem_multicast_create_with_prop`].
+    pub fn mem_multicast_add_device(
+        &mut self,
+        mc: MulticastId,
+        device: DeviceId,
+    ) -> Result<(), SimError> {
+        self.multicast_add_device(mc, device)
+    }
+
     /// `cuMulticastBindMem` of a [`Self::va_create`] handle on `device`.
     ///
     /// Host-synchronous. Capture cannot include it. The handle's device and
     /// size must match. All devices must already be added. Dest HBM is the
     /// handle (already charged); bind does not charge again. Typed helper;
     /// flags must be [`MulticastBindFlags::DEFAULT`].
+    /// Driver `cuMulticastBindMem` is [`Self::mem_multicast_bind_mem`].
+    /// Identity wrap [`Self::mem_multicast_bind_mem`].
     pub fn multicast_bind_mem(
         &mut self,
         mc: MulticastId,
@@ -14968,9 +18963,24 @@ impl Sim {
         self.multicast_bind_mem_with_flags(mc, device, handle, MulticastBindFlags::DEFAULT)
     }
 
+    /// `cuMulticastBindMem`. Identity with
+    /// [`Self::multicast_bind_mem`] (`cuMulticastBindMem`).
+    ///
+    /// Capture refused. Distinct from [`Self::mem_multicast_add_device`].
+    pub fn mem_multicast_bind_mem(
+        &mut self,
+        mc: MulticastId,
+        device: DeviceId,
+        handle: MemHandleId,
+    ) -> Result<(), SimError> {
+        self.multicast_bind_mem(mc, device, handle)
+    }
+
     /// [`Self::multicast_bind_mem`] with a flags word.
     ///
     /// CUDA requires 0. Unknown bits are Invalid `"multicast bind flags"`.
+    /// Driver `cuMulticastBindMem` flags is [`Self::mem_multicast_bind_mem_with_flags`].
+    /// Identity wrap [`Self::mem_multicast_bind_mem_with_flags`].
     pub fn multicast_bind_mem_with_flags(
         &mut self,
         mc: MulticastId,
@@ -14988,12 +18998,28 @@ impl Sim {
         self.multicast_bind_mem_with_size(mc, device, handle, bytes, flags)
     }
 
+    /// `cuMulticastBindMem` flags. Identity with
+    /// [`Self::multicast_bind_mem_with_flags`] (`cuMulticastBindMem` flags).
+    ///
+    /// Capture refused. Distinct from [`Self::mem_multicast_bind_mem`].
+    pub fn mem_multicast_bind_mem_with_flags(
+        &mut self,
+        mc: MulticastId,
+        device: DeviceId,
+        handle: MemHandleId,
+        flags: u32,
+    ) -> Result<(), SimError> {
+        self.multicast_bind_mem_with_flags(mc, device, handle, flags)
+    }
+
     /// [`Self::multicast_bind_mem`] with the CUDA size and flags.
     ///
     /// `size` must equal the handle bytes. Other sizes Invalid `"bind size"`.
     /// CUDA `mcOffset` / `memOffset` are 0 (partial bind is not modeled).
     /// Flags must be [`MulticastBindFlags::DEFAULT`]. Handle vs multicast
     /// object size mismatch stays `"handle size mismatch"`.
+    /// Driver `cuMulticastBindMem` size is [`Self::mem_multicast_bind_mem_with_size`].
+    /// Identity wrap [`Self::mem_multicast_bind_mem_with_size`].
     pub fn multicast_bind_mem_with_size(
         &mut self,
         mc: MulticastId,
@@ -15060,11 +19086,28 @@ impl Sim {
         Ok(())
     }
 
+    /// `cuMulticastBindMem` size. Identity with
+    /// [`Self::multicast_bind_mem_with_size`] (`cuMulticastBindMem` size).
+    ///
+    /// Capture refused. Distinct from [`Self::mem_multicast_bind_mem_with_flags`].
+    pub fn mem_multicast_bind_mem_with_size(
+        &mut self,
+        mc: MulticastId,
+        device: DeviceId,
+        handle: MemHandleId,
+        size: u64,
+        flags: u32,
+    ) -> Result<(), SimError> {
+        self.multicast_bind_mem_with_size(mc, device, handle, size, flags)
+    }
+
     /// `cuMulticastBindAddr` of a mapped VMM VA on `device`.
     ///
     /// Retains a [`MemHandleId`] for the map at offset 0, then
     /// [`Self::multicast_bind_mem`]. Partial offset/size bind is not modeled.
     /// Typed helper; flags must be [`MulticastBindFlags::DEFAULT`].
+    /// Driver `cuMulticastBindAddr` is [`Self::mem_multicast_bind_addr`].
+    /// Identity wrap [`Self::mem_multicast_bind_addr`].
     pub fn multicast_bind_addr(
         &mut self,
         mc: MulticastId,
@@ -15074,9 +19117,24 @@ impl Sim {
         self.multicast_bind_addr_with_flags(mc, device, id, MulticastBindFlags::DEFAULT)
     }
 
+    /// `cuMulticastBindAddr`. Identity with
+    /// [`Self::multicast_bind_addr`] (`cuMulticastBindAddr`).
+    ///
+    /// Capture refused. Distinct from [`Self::mem_multicast_bind_mem_with_size`].
+    pub fn mem_multicast_bind_addr(
+        &mut self,
+        mc: MulticastId,
+        device: DeviceId,
+        id: AllocId,
+    ) -> Result<(), SimError> {
+        self.multicast_bind_addr(mc, device, id)
+    }
+
     /// [`Self::multicast_bind_addr`] with a flags word.
     ///
     /// CUDA requires 0. Unknown bits are Invalid `"multicast bind flags"`.
+    /// Driver `cuMulticastBindAddr` flags is [`Self::mem_multicast_bind_addr_with_flags`].
+    /// Identity wrap [`Self::mem_multicast_bind_addr_with_flags`].
     pub fn multicast_bind_addr_with_flags(
         &mut self,
         mc: MulticastId,
@@ -15089,11 +19147,27 @@ impl Sim {
         self.multicast_bind_addr_with_size(mc, device, id, bytes, flags)
     }
 
+    /// `cuMulticastBindAddr` flags. Identity with
+    /// [`Self::multicast_bind_addr_with_flags`] (`cuMulticastBindAddr` flags).
+    ///
+    /// Capture refused. Distinct from [`Self::mem_multicast_bind_addr`].
+    pub fn mem_multicast_bind_addr_with_flags(
+        &mut self,
+        mc: MulticastId,
+        device: DeviceId,
+        id: AllocId,
+        flags: u32,
+    ) -> Result<(), SimError> {
+        self.multicast_bind_addr_with_flags(mc, device, id, flags)
+    }
+
     /// [`Self::multicast_bind_addr`] with the CUDA size and flags.
     ///
     /// `size` must equal the reserved VA. Other sizes Invalid `"bind size"`.
     /// CUDA `mcOffset` is 0 (partial bind is not modeled). Flags must be
     /// [`MulticastBindFlags::DEFAULT`].
+    /// Driver `cuMulticastBindAddr` size is [`Self::mem_multicast_bind_addr_with_size`].
+    /// Identity wrap [`Self::mem_multicast_bind_addr_with_size`].
     pub fn multicast_bind_addr_with_size(
         &mut self,
         mc: MulticastId,
@@ -15116,6 +19190,21 @@ impl Sim {
         self.multicast_bind_mem(mc, device, h)
     }
 
+    /// `cuMulticastBindAddr` size. Identity with
+    /// [`Self::multicast_bind_addr_with_size`] (`cuMulticastBindAddr` size).
+    ///
+    /// Capture refused. Distinct from [`Self::mem_multicast_bind_addr_with_flags`].
+    pub fn mem_multicast_bind_addr_with_size(
+        &mut self,
+        mc: MulticastId,
+        device: DeviceId,
+        id: AllocId,
+        size: u64,
+        flags: u32,
+    ) -> Result<(), SimError> {
+        self.multicast_bind_addr_with_size(mc, device, id, size, flags)
+    }
+
     /// `cuMulticastUnbind` of a whole-handle bind on `device`.
     ///
     /// Host-synchronous. Capture cannot include it. Partial offset/size unbind
@@ -15123,10 +19212,24 @@ impl Sim {
     /// `"still mapped"`. A device that is not currently bound is Invalid
     /// `"not bound"`. Typed helper; [`Self::multicast_unbind_with_size`] is the
     /// CUDA size argument (must match the multicast object).
+    /// Driver `cuMulticastUnbind` is [`Self::mem_multicast_unbind`].
+    /// Identity wrap [`Self::mem_multicast_unbind`].
     pub fn multicast_unbind(&mut self, mc: MulticastId, device: DeviceId) -> Result<(), SimError> {
         self.fail_if_capturing("cannot capture alloc/free")?;
         let bytes = self.mc_ref(mc)?.bytes;
         self.multicast_unbind_with_size(mc, device, bytes)
+    }
+
+    /// `cuMulticastUnbind`. Identity with
+    /// [`Self::multicast_unbind`] (`cuMulticastUnbind`).
+    ///
+    /// Capture refused. Distinct from [`Self::mem_multicast_bind_addr_with_size`].
+    pub fn mem_multicast_unbind(
+        &mut self,
+        mc: MulticastId,
+        device: DeviceId,
+    ) -> Result<(), SimError> {
+        self.multicast_unbind(mc, device)
     }
 
     /// [`Self::multicast_unbind`] with the CUDA multicast size.
@@ -15134,6 +19237,8 @@ impl Sim {
     /// `size` must equal the object bytes. Other sizes Invalid `"unbind size"`.
     /// CUDA `mcOffset` is 0 (partial unbind is not modeled). Host-synchronous;
     /// capture refused.
+    /// Driver `cuMulticastUnbind` size is [`Self::mem_multicast_unbind_with_size`].
+    /// Identity wrap [`Self::mem_multicast_unbind_with_size`].
     pub fn multicast_unbind_with_size(
         &mut self,
         mc: MulticastId,
@@ -15162,12 +19267,27 @@ impl Sim {
         Ok(())
     }
 
+    /// `cuMulticastUnbind` size. Identity with
+    /// [`Self::multicast_unbind_with_size`] (`cuMulticastUnbind` size).
+    ///
+    /// Capture refused. Distinct from [`Self::mem_multicast_unbind`].
+    pub fn mem_multicast_unbind_with_size(
+        &mut self,
+        mc: MulticastId,
+        device: DeviceId,
+        size: u64,
+    ) -> Result<(), SimError> {
+        self.multicast_unbind_with_size(mc, device, size)
+    }
+
     /// `cuMemRelease` of a [`MulticastId`] (`cuMulticastCreate` handle).
     ///
     /// Host-synchronous. Capture cannot include it. Live
     /// [`Self::va_map_multicast`] maps are Invalid `"still mapped"`. Remaining
     /// binds are dropped (handles stay live). Unknown ids are Invalid
     /// `"unknown multicast"`.
+    /// Driver `cuMemRelease` multicast is [`Self::mem_multicast_destroy`].
+    /// Identity wrap [`Self::mem_multicast_destroy`].
     pub fn multicast_destroy(&mut self, mc: MulticastId) -> Result<(), SimError> {
         self.fail_if_capturing("cannot capture alloc/free")?;
         if self.mc_ref(mc)?.maps > 0 {
@@ -15180,12 +19300,22 @@ impl Sim {
         Ok(())
     }
 
+    /// `cuMemRelease` multicast. Identity with
+    /// [`Self::multicast_destroy`] (`cuMemRelease` of a multicast handle).
+    ///
+    /// Capture refused. Distinct from [`Self::mem_multicast_unbind_with_size`].
+    pub fn mem_multicast_destroy(&mut self, mc: MulticastId) -> Result<(), SimError> {
+        self.multicast_destroy(mc)
+    }
+
     /// `cuMemMap` of a multicast object into a reserved VA (no extra HBM).
     ///
     /// Host-synchronous. Capture cannot include it. Every team device must
     /// already be bound. Kernel writes to this VA are billed as one NVLS hop
     /// and occupy compute (not a copy engine). Typed helper; flags must be
     /// [`MemMapFlags::DEFAULT`].
+    /// Driver `cuMemMap` multicast is [`Self::mem_map_multicast`].
+    /// Identity wrap [`Self::mem_map_multicast`].
     pub fn va_map_multicast(
         &mut self,
         id: AllocId,
@@ -15196,9 +19326,25 @@ impl Sim {
         self.va_map_multicast_with_flags(id, device, offset, mc, MemMapFlags::DEFAULT)
     }
 
+    /// `cuMemMap` multicast. Identity with
+    /// [`Self::va_map_multicast`] (`cuMemMap` of a multicast handle).
+    ///
+    /// Capture refused. Distinct from [`Self::mem_get_allocation_properties`].
+    pub fn mem_map_multicast(
+        &mut self,
+        id: AllocId,
+        device: DeviceId,
+        offset: u64,
+        mc: MulticastId,
+    ) -> Result<(), SimError> {
+        self.va_map_multicast(id, device, offset, mc)
+    }
+
     /// [`Self::va_map_multicast`] with a flags word.
     ///
     /// CUDA requires 0. Unknown bits Invalid `"mem map flags"`.
+    /// Driver `cuMemMap` multicast flags is [`Self::mem_map_multicast_with_flags`].
+    /// Identity wrap [`Self::mem_map_multicast_with_flags`].
     pub fn va_map_multicast_with_flags(
         &mut self,
         id: AllocId,
@@ -15217,10 +19363,27 @@ impl Sim {
         self.va_map_multicast_with_size(id, device, offset, mc, bytes, flags)
     }
 
+    /// `cuMemMap` multicast flags. Identity with
+    /// [`Self::va_map_multicast_with_flags`] (`cuMemMap` multicast flags).
+    ///
+    /// Capture refused. Distinct from [`Self::mem_map_multicast`].
+    pub fn mem_map_multicast_with_flags(
+        &mut self,
+        id: AllocId,
+        device: DeviceId,
+        offset: u64,
+        mc: MulticastId,
+        flags: u32,
+    ) -> Result<(), SimError> {
+        self.va_map_multicast_with_flags(id, device, offset, mc, flags)
+    }
+
     /// [`Self::va_map_multicast`] with the CUDA size and flags.
     ///
     /// `size` must equal the multicast object bytes. Other sizes Invalid
     /// `"mem map size"`. Flags must be [`MemMapFlags::DEFAULT`].
+    /// Driver `cuMemMap` multicast size is [`Self::mem_map_multicast_with_size`].
+    /// Identity wrap [`Self::mem_map_multicast_with_size`].
     pub fn va_map_multicast_with_size(
         &mut self,
         id: AllocId,
@@ -15300,16 +19463,51 @@ impl Sim {
         Ok(())
     }
 
+    /// `cuMemMap` multicast size. Identity with
+    /// [`Self::va_map_multicast_with_size`] (`cuMemMap` multicast size).
+    ///
+    /// Capture refused. Distinct from [`Self::mem_map_multicast_with_flags`].
+    pub fn mem_map_multicast_with_size(
+        &mut self,
+        id: AllocId,
+        device: DeviceId,
+        offset: u64,
+        mc: MulticastId,
+        size: u64,
+        flags: u32,
+    ) -> Result<(), SimError> {
+        self.va_map_multicast_with_size(id, device, offset, mc, size, flags)
+    }
+
     /// Whether `id` is a reserved VA mapped with [`Self::va_map_multicast`].
+    /// Identity wrap [`Self::mem_is_multicast_va`].
     #[must_use]
     pub fn is_multicast_va(&self, id: AllocId) -> bool {
         self.mc_vas.contains_key(&id)
     }
 
+    /// Multicast VA query. Identity with
+    /// [`Self::is_multicast_va`].
+    ///
+    /// Query; legal during capture. Distinct from [`Self::mem_multicast_binds`].
+    #[must_use]
+    pub fn mem_is_multicast_va(&self, id: AllocId) -> bool {
+        self.is_multicast_va(id)
+    }
+
     /// How many devices currently have [`Self::multicast_bind_mem`] on `mc`.
+    /// Identity wrap [`Self::mem_multicast_binds`].
     pub fn multicast_binds(&self, mc: MulticastId) -> Result<u32, SimError> {
         let n = self.mc_ref(mc)?.binds.len();
         Ok(u32::try_from(n).unwrap_or(u32::MAX))
+    }
+
+    /// Multicast bind count. Identity with
+    /// [`Self::multicast_binds`].
+    ///
+    /// Query; legal during capture. Distinct from [`Self::mem_multicast_store`].
+    pub fn mem_multicast_binds(&self, mc: MulticastId) -> Result<u32, SimError> {
+        self.multicast_binds(mc)
     }
 
     /// NVLS kernel store: bind `id`'s VMM maps on `src` and `dests`, then write.
@@ -15319,6 +19517,7 @@ impl Sim {
     /// one NVLink hop of `id`'s bytes, not `dests.len()` sequential D2Ds.
     /// Capture cannot include the create/bind/map; the kernel may be captured
     /// later. `dests` must be nonempty and not include `src`.
+    /// Identity wrap [`Self::mem_multicast_store`].
     pub fn multicast_store(
         &mut self,
         src: DeviceId,
@@ -15342,6 +19541,20 @@ impl Sim {
         let va = self.va_reserve(bytes)?;
         self.va_map_multicast(va, src, 0, mc)?;
         self.kernel(src, KernelKind::other(0, bytes), &[id], &[va], stream)
+    }
+
+    /// NVLS kernel store. Identity with
+    /// [`Self::multicast_store`].
+    ///
+    /// Capture refused. Distinct from [`Self::mem_multicast_destroy`].
+    pub fn mem_multicast_store(
+        &mut self,
+        src: DeviceId,
+        id: AllocId,
+        dests: &[DeviceId],
+        stream: StreamId,
+    ) -> Result<OpId, SimError> {
+        self.multicast_store(src, id, dests, stream)
     }
 
     fn require_whole_maps(&self, id: AllocId, team: &[DeviceId]) -> Result<(), SimError> {
@@ -15387,6 +19600,8 @@ impl Sim {
     /// [`Self::kernel`] needs the full VA covered; [`Self::kernel_bufs`]
     /// may run on this span. A hole is [`SimError::NotResident`] for that API.
     /// Capture cannot include it.
+    /// Driver `cuMemMap` range is [`Self::mem_map_range`].
+    /// Identity wrap [`Self::mem_map_range`].
     pub fn va_map_range(
         &mut self,
         id: AllocId,
@@ -15433,15 +19648,39 @@ impl Sim {
         Ok(())
     }
 
+    /// `cuMemMap` range. Identity with
+    /// [`Self::va_map_range`] (`cuMemMap` range).
+    ///
+    /// Capture refused. Distinct from [`Self::mem_get_access`].
+    pub fn mem_map_range(
+        &mut self,
+        id: AllocId,
+        device: DeviceId,
+        offset: u64,
+        bytes: u64,
+    ) -> Result<(), SimError> {
+        self.va_map_range(id, device, offset, bytes)
+    }
+
     /// `cuMemUnmap` + `cuMemRelease` for every physical on this VA.
     ///
     /// Host-synchronous: in-flight kernels using this pointer complete first.
     /// Typed helper; [`Self::va_unmap_with_size`] is the CUDA size argument
     /// (must match the reservation).
+    /// Driver `cuMemUnmap` is [`Self::mem_unmap`].
+    /// Identity wrap [`Self::mem_unmap`].
     pub fn va_unmap(&mut self, id: AllocId) -> Result<(), SimError> {
         self.fail_if_capturing("cannot capture alloc/free")?;
         let bytes = self.alloc_ref(id)?.bytes;
         self.va_unmap_with_size(id, bytes)
+    }
+
+    /// `cuMemUnmap`. Identity with
+    /// [`Self::va_unmap`] (`cuMemUnmap` + `cuMemRelease` of every physical).
+    ///
+    /// Capture refused. Distinct from [`Self::mem_retain_handle`].
+    pub fn mem_unmap(&mut self, id: AllocId) -> Result<(), SimError> {
+        self.va_unmap(id)
     }
 
     /// [`Self::va_unmap`] with the CUDA reservation size.
@@ -15449,6 +19688,8 @@ impl Sim {
     /// `size` must equal the reserved bytes. Other sizes Invalid `"unmap size"`.
     /// Partial unmap is [`Self::va_unmap_range`]. Host-synchronous; capture
     /// refused.
+    /// Driver `cuMemUnmap` size is [`Self::mem_unmap_with_size`].
+    /// Identity wrap [`Self::mem_unmap_with_size`].
     pub fn va_unmap_with_size(&mut self, id: AllocId, size: u64) -> Result<(), SimError> {
         self.fail_if_capturing("cannot capture alloc/free")?;
         self.synchronize()?;
@@ -15478,7 +19719,17 @@ impl Sim {
         Ok(())
     }
 
+    /// `cuMemUnmap` size. Identity with
+    /// [`Self::va_unmap_with_size`] (`cuMemUnmap` size).
+    ///
+    /// Capture refused. Distinct from [`Self::mem_unmap`].
+    pub fn mem_unmap_with_size(&mut self, id: AllocId, size: u64) -> Result<(), SimError> {
+        self.va_unmap_with_size(id, size)
+    }
+
     /// Unmap one exact `(device, offset, bytes)` physical. The VA stays reserved.
+    /// Driver `cuMemUnmap` range is [`Self::mem_unmap_range`].
+    /// Identity wrap [`Self::mem_unmap_range`].
     pub fn va_unmap_range(
         &mut self,
         id: AllocId,
@@ -15516,6 +19767,20 @@ impl Sim {
         Ok(())
     }
 
+    /// `cuMemUnmap` range. Identity with
+    /// [`Self::va_unmap_range`] (`cuMemUnmap` range).
+    ///
+    /// Capture refused. Distinct from [`Self::mem_address_free_with_size`].
+    pub fn mem_unmap_range(
+        &mut self,
+        id: AllocId,
+        device: DeviceId,
+        offset: u64,
+        bytes: u64,
+    ) -> Result<(), SimError> {
+        self.va_unmap_range(id, device, offset, bytes)
+    }
+
     /// `cuMemSetAccess` PROT_READ on `device` for a mapped VMM VA.
     ///
     /// Host-synchronous. Does not charge dest HBM. A kernel on `device` may
@@ -15523,8 +19788,18 @@ impl Sim {
     /// need a local map unless [`Self::va_set_access_write`]. Capture cannot
     /// include it. Needs a topology link and directed peer access from the
     /// home GPU, same as D2D. Downgrades a prior PROT_READWRITE on `device`.
+    /// Driver `cuMemSetAccess` is [`Self::mem_set_access`].
+    /// Identity wrap [`Self::mem_set_access`].
     pub fn va_set_access(&mut self, id: AllocId, device: DeviceId) -> Result<(), SimError> {
         self.va_set_access_inner(id, device, false)
+    }
+
+    /// `cuMemSetAccess`. Identity with
+    /// [`Self::va_set_access`] (`cuMemSetAccess` PROT_READ).
+    ///
+    /// Capture refused. Distinct from [`Self::mem_unmap_range`].
+    pub fn mem_set_access(&mut self, id: AllocId, device: DeviceId) -> Result<(), SimError> {
+        self.va_set_access(id, device)
     }
 
     /// `cuMemSetAccess` PROT_READWRITE on `device` for a mapped VMM VA.
@@ -15532,8 +19807,18 @@ impl Sim {
     /// Host-synchronous. Does not charge dest HBM. A kernel on `device` may
     /// read **and write** home physicals (interconnect), same class as
     /// [`Self::pool_set_access`]. Capture cannot include it.
+    /// Driver `cuMemSetAccess` write is [`Self::mem_set_access_write`].
+    /// Identity wrap [`Self::mem_set_access_write`].
     pub fn va_set_access_write(&mut self, id: AllocId, device: DeviceId) -> Result<(), SimError> {
         self.va_set_access_inner(id, device, true)
+    }
+
+    /// `cuMemSetAccess` write. Identity with
+    /// [`Self::va_set_access_write`] (`cuMemSetAccess` PROT_READWRITE).
+    ///
+    /// Capture refused. Distinct from [`Self::mem_set_access`].
+    pub fn mem_set_access_write(&mut self, id: AllocId, device: DeviceId) -> Result<(), SimError> {
+        self.va_set_access_write(id, device)
     }
 
     /// `cuMemSetAccess` with a flags word.
@@ -15543,6 +19828,8 @@ impl Sim {
     /// [`MemAccessFlags::PROT_NONE`] is [`Self::va_unset_access`]. Other bits
     /// are Invalid `"va access flags"`. Typed helpers stay. Capture is refused
     /// by those helpers.
+    /// Driver `cuMemSetAccess` flags is [`Self::mem_set_access_with_flags`].
+    /// Identity wrap [`Self::mem_set_access_with_flags`].
     pub fn va_set_access_with_flags(
         &mut self,
         id: AllocId,
@@ -15554,10 +19841,25 @@ impl Sim {
         self.va_set_access_with_size(id, device, bytes, flags)
     }
 
+    /// `cuMemSetAccess` flags. Identity with
+    /// [`Self::va_set_access_with_flags`] (`cuMemSetAccess` flags).
+    ///
+    /// Capture refused. Distinct from [`Self::mem_set_access_write`].
+    pub fn mem_set_access_with_flags(
+        &mut self,
+        id: AllocId,
+        device: DeviceId,
+        flags: u32,
+    ) -> Result<(), SimError> {
+        self.va_set_access_with_flags(id, device, flags)
+    }
+
     /// [`Self::va_set_access_with_flags`] with the CUDA size argument.
     ///
     /// `size` must equal the reserved bytes. Other sizes Invalid `"access size"`.
     /// Partial SetAccess is not modeled. Flags are [`MemAccessFlags`].
+    /// Driver `cuMemSetAccess` size is [`Self::mem_set_access_with_size`].
+    /// Identity wrap [`Self::mem_set_access_with_size`].
     pub fn va_set_access_with_size(
         &mut self,
         id: AllocId,
@@ -15587,6 +19889,20 @@ impl Sim {
         self.va_unset_access(id, device)
     }
 
+    /// `cuMemSetAccess` size. Identity with
+    /// [`Self::va_set_access_with_size`] (`cuMemSetAccess` size).
+    ///
+    /// Capture refused. Distinct from [`Self::mem_set_access_with_flags`].
+    pub fn mem_set_access_with_size(
+        &mut self,
+        id: AllocId,
+        device: DeviceId,
+        size: u64,
+        flags: u32,
+    ) -> Result<(), SimError> {
+        self.va_set_access_with_size(id, device, size, flags)
+    }
+
     /// `cuMemSetAccess` with a descriptor array (`desc`, `count`).
     ///
     /// `size` must equal the reserved bytes. Host location Invalid
@@ -15594,6 +19910,8 @@ impl Sim {
     /// later Invalid leaves earlier descriptors unapplied. Empty `descs` is a
     /// no-op after the size check. Host-synchronous; capture refused. Typed
     /// helpers stay.
+    /// Driver `cuMemSetAccess` n is [`Self::mem_set_access_n`].
+    /// Identity wrap [`Self::mem_set_access_n`].
     pub fn va_set_access_n(
         &mut self,
         id: AllocId,
@@ -15643,6 +19961,19 @@ impl Sim {
         Ok(())
     }
 
+    /// `cuMemSetAccess` n. Identity with
+    /// [`Self::va_set_access_n`] (`cuMemSetAccess` n).
+    ///
+    /// Capture refused. Distinct from [`Self::mem_set_access_with_size`].
+    pub fn mem_set_access_n(
+        &mut self,
+        id: AllocId,
+        size: u64,
+        descs: &[MemAccessDesc],
+    ) -> Result<(), SimError> {
+        self.va_set_access_n(id, size, descs)
+    }
+
     fn va_set_access_inner(
         &mut self,
         id: AllocId,
@@ -15682,6 +20013,8 @@ impl Sim {
 
     /// Drop [`Self::va_set_access`] / [`Self::va_set_access_write`] for `device`.
     /// Host-synchronous.
+    /// Driver `cuMemSetAccess` ProtNone is [`Self::mem_unset_access`].
+    /// Identity wrap [`Self::mem_unset_access`].
     pub fn va_unset_access(&mut self, id: AllocId, device: DeviceId) -> Result<(), SimError> {
         self.fail_if_capturing("cannot capture alloc/free")?;
         let _gpu = self.profile.gpu(device)?;
@@ -15696,6 +20029,14 @@ impl Sim {
         }
         self.clock = self.clock.saturating_add(self.first_alloc_ns().max(1));
         Ok(())
+    }
+
+    /// `cuMemSetAccess` ProtNone. Identity with
+    /// [`Self::va_unset_access`] (`cuMemSetAccess` ProtNone).
+    ///
+    /// Capture refused. Distinct from [`Self::mem_set_access_n`].
+    pub fn mem_unset_access(&mut self, id: AllocId, device: DeviceId) -> Result<(), SimError> {
+        self.va_unset_access(id, device)
     }
 
     /// Whether `device` has [`Self::va_set_access_write`] on this VMM VA.
@@ -15715,6 +20056,8 @@ impl Sim {
     /// [`MemAccessFlags::PROT_READ`] after [`Self::va_set_access`]. Else
     /// [`MemAccessFlags::PROT_NONE`]. Unmapped `va_reserve` is Invalid
     /// `"not mapped"`. Non-VMM is Invalid `"not a VA"`.
+    /// Driver `cuMemGetAccess` is [`Self::mem_get_access`].
+    /// Identity wrap [`Self::mem_get_access`].
     pub fn va_get_access(&self, id: AllocId, device: DeviceId) -> Result<u32, SimError> {
         let _gpu = self.profile.gpu(device)?;
         let a = self.alloc_ref(id)?;
@@ -15733,6 +20076,14 @@ impl Sim {
         Ok(MemAccessFlags::PROT_NONE)
     }
 
+    /// `cuMemGetAccess`. Identity with
+    /// [`Self::va_get_access`] (`cuMemGetAccess`).
+    ///
+    /// Query; legal during capture. Distinct from [`Self::mem_unset_access`].
+    pub fn mem_get_access(&self, id: AllocId, device: DeviceId) -> Result<u32, SimError> {
+        self.va_get_access(id, device)
+    }
+
     /// Mapped bytes of `alloc` currently charged on `device`.
     pub fn vmm_mapped_bytes(&self, alloc: AllocId, device: DeviceId) -> Result<u64, SimError> {
         let a = self.alloc_ref(alloc)?;
@@ -15749,10 +20100,20 @@ impl Sim {
     ///
     /// Typed helper; [`Self::va_free_with_size`] is the CUDA size argument
     /// (must match the reservation).
+    /// Driver `cuMemAddressFree` is [`Self::mem_address_free`].
+    /// Identity wrap [`Self::mem_address_free`].
     pub fn va_free(&mut self, id: AllocId) -> Result<(), SimError> {
         self.fail_if_capturing("cannot capture alloc/free")?;
         let bytes = self.alloc_ref(id)?.bytes;
         self.va_free_with_size(id, bytes)
+    }
+
+    /// `cuMemAddressFree`. Identity with
+    /// [`Self::va_free`] (`cuMemAddressFree`).
+    ///
+    /// Capture refused. Distinct from [`Self::mem_unmap_with_size`].
+    pub fn mem_address_free(&mut self, id: AllocId) -> Result<(), SimError> {
+        self.va_free(id)
     }
 
     /// [`Self::va_free`] with the CUDA reservation size.
@@ -15761,6 +20122,8 @@ impl Sim {
     /// Partial free is not modeled. Still mapped is Invalid `"VA still mapped"`.
     /// Non-VMM / freed is [`SimError::UnknownAlloc`]. Host-synchronous;
     /// capture refused.
+    /// Driver `cuMemAddressFree` size is [`Self::mem_address_free_with_size`].
+    /// Identity wrap [`Self::mem_address_free_with_size`].
     pub fn va_free_with_size(&mut self, id: AllocId, size: u64) -> Result<(), SimError> {
         self.fail_if_capturing("cannot capture alloc/free")?;
         let a = self.alloc_ref(id)?;
@@ -15781,6 +20144,14 @@ impl Sim {
         self.vmm_idle.retain(|&x| x != id);
         self.alloc_mut(id)?.live = false;
         Ok(())
+    }
+
+    /// `cuMemAddressFree` size. Identity with
+    /// [`Self::va_free_with_size`] (`cuMemAddressFree` size).
+    ///
+    /// Capture refused. Distinct from [`Self::mem_address_free`].
+    pub fn mem_address_free_with_size(&mut self, id: AllocId, size: u64) -> Result<(), SimError> {
+        self.va_free_with_size(id, size)
     }
 
     fn take_idle_va(&mut self, bytes: u64) -> Option<AllocId> {
@@ -15939,6 +20310,7 @@ impl Sim {
     ///
     /// Capture may record it (it is a memcpy). A kernel that first-touches
     /// managed memory calls this on the same stream before the GEMM.
+    /// Driver `cuMemPrefetchAsync` is [`Self::mem_prefetch`].
     pub fn prefetch(
         &mut self,
         device: DeviceId,
@@ -15949,11 +20321,25 @@ impl Sim {
         self.prefetch_with_size(device, alloc, size, stream)
     }
 
+    /// `cuMemPrefetchAsync`. Identity with [`Self::prefetch`]
+    /// (`cudaMemPrefetchAsync`).
+    ///
+    /// Capture-legal (memcpy). Distinct from [`Self::prefetch_with_flags`].
+    pub fn mem_prefetch(
+        &mut self,
+        device: DeviceId,
+        alloc: AllocId,
+        stream: StreamId,
+    ) -> Result<OpId, SimError> {
+        self.prefetch(device, alloc, stream)
+    }
+
     /// [`Self::prefetch`] with the CUDA `count` argument.
     ///
     /// `size` must equal the allocation bytes. Other sizes Invalid
     /// `"prefetch size"`. Partial prefetch is not modeled. Typed
     /// [`Self::prefetch`] stays. Capture may record it.
+    /// Driver `cuMemPrefetchAsync` count is [`Self::mem_prefetch_n`].
     pub fn prefetch_with_size(
         &mut self,
         device: DeviceId,
@@ -15982,10 +20368,25 @@ impl Sim {
         )
     }
 
+    /// `cuMemPrefetchAsync` count. Identity with [`Self::prefetch_with_size`]
+    /// (`cudaMemPrefetchAsync` count).
+    ///
+    /// Capture-legal (memcpy). Distinct from [`Self::mem_prefetch`].
+    pub fn mem_prefetch_n(
+        &mut self,
+        device: DeviceId,
+        alloc: AllocId,
+        size: u64,
+        stream: StreamId,
+    ) -> Result<OpId, SimError> {
+        self.prefetch_with_size(device, alloc, size, stream)
+    }
+
     /// `cudaMemPrefetchAsync(..., cudaCpuDeviceId)`. Pages leave HBM.
     ///
     /// Submit on `device`'s `stream` (the stream that owns the work). Already
     /// on the host is a 1 ns no-op on that stream.
+    /// Driver host dest `cuMemPrefetchAsync` is [`Self::mem_prefetch_host`].
     pub fn prefetch_host(
         &mut self,
         device: DeviceId,
@@ -15996,11 +20397,25 @@ impl Sim {
         self.prefetch_host_with_size(device, alloc, size, stream)
     }
 
+    /// Host dest `cuMemPrefetchAsync`. Identity with [`Self::prefetch_host`]
+    /// (`cudaMemPrefetchAsync` cpu device).
+    ///
+    /// Capture-legal (memcpy). Distinct from [`Self::mem_prefetch`].
+    pub fn mem_prefetch_host(
+        &mut self,
+        device: DeviceId,
+        alloc: AllocId,
+        stream: StreamId,
+    ) -> Result<OpId, SimError> {
+        self.prefetch_host(device, alloc, stream)
+    }
+
     /// [`Self::prefetch_host`] with the CUDA `count` argument.
     ///
     /// `size` must equal the allocation bytes. Other sizes Invalid
     /// `"prefetch size"`. Partial prefetch is not modeled. Typed
     /// [`Self::prefetch_host`] stays. Capture may record it.
+    /// Driver host dest `cuMemPrefetchAsync` count is [`Self::mem_prefetch_host_n`].
     pub fn prefetch_host_with_size(
         &mut self,
         device: DeviceId,
@@ -16033,6 +20448,20 @@ impl Sim {
         )
     }
 
+    /// Host dest `cuMemPrefetchAsync` count. Identity with
+    /// [`Self::prefetch_host_with_size`] (`cudaMemPrefetchAsync` cpu count).
+    ///
+    /// Capture-legal (memcpy). Distinct from [`Self::mem_prefetch_host`].
+    pub fn mem_prefetch_host_n(
+        &mut self,
+        device: DeviceId,
+        alloc: AllocId,
+        size: u64,
+        stream: StreamId,
+    ) -> Result<OpId, SimError> {
+        self.prefetch_host_with_size(device, alloc, size, stream)
+    }
+
     /// `cudaMemPrefetchAsync` / `cuMemPrefetchAsync_v2` with a flags word.
     ///
     /// CUDA requires `flags == 0` ([`PrefetchFlags::DEFAULT`]). Other bits are
@@ -16042,6 +20471,7 @@ impl Sim {
     /// [`Self::prefetch_with_size`] / [`Self::prefetch_host_with_size`].
     /// Typed helpers stay.
     /// Capture may record the memcpy.
+    /// Driver `cuMemPrefetchAsync_v2` is [`Self::mem_prefetch_v2`].
     pub fn prefetch_with_flags(
         &mut self,
         device: DeviceId,
@@ -16061,6 +20491,21 @@ impl Sim {
         }
     }
 
+    /// `cuMemPrefetchAsync_v2`. Identity with [`Self::prefetch_with_flags`]
+    /// (`cudaMemPrefetchAsync` flags).
+    ///
+    /// Capture-legal (memcpy). Distinct from [`Self::mem_prefetch`].
+    pub fn mem_prefetch_v2(
+        &mut self,
+        device: DeviceId,
+        alloc: AllocId,
+        dest: Place,
+        flags: u32,
+        stream: StreamId,
+    ) -> Result<OpId, SimError> {
+        self.prefetch_with_flags(device, alloc, dest, flags, stream)
+    }
+
     /// `cudaMemPrefetchBatchAsync`.
     ///
     /// Requires [`DeviceAttr::ConcurrentManagedAccess`] on every GPU. This VM
@@ -16068,6 +20513,8 @@ impl Sim {
     /// access"`. Single [`Self::prefetch`] / [`prefetch_with_flags`](Self::prefetch_with_flags)
     /// stay (they do not have that CMA gate). Location hints / Host NUMA are
     /// not reached.
+    /// Driver wrap: [`Self::mem_prefetch_batch_async`].
+    /// Identity: [`Self::mem_prefetch_batch_async`].
     #[expect(
         clippy::too_many_arguments,
         reason = "cudaMemPrefetchBatchAsync argument list"
@@ -16086,11 +20533,32 @@ impl Sim {
         self.require_concurrent_managed_access()
     }
 
+    /// `cudaMemPrefetchBatchAsync`. Identity with [`Self::prefetch_batch_async`].
+    /// Query; legal during capture. Distinct from [`Self::mem_memcpy_dtoh`].
+    #[expect(
+        clippy::too_many_arguments,
+        reason = "cudaMemPrefetchBatchAsync argument list"
+    )]
+    pub fn mem_prefetch_batch_async(
+        &mut self,
+        device: DeviceId,
+        allocs: &[AllocId],
+        sizes: &[u64],
+        dests: &[Place],
+        dest_idxs: &[usize],
+        flags: u64,
+        stream: StreamId,
+    ) -> Result<Vec<OpId>, SimError> {
+        self.prefetch_batch_async(device, allocs, sizes, dests, dest_idxs, flags, stream)
+    }
+
     /// `cudaMemDiscardBatchAsync`.
     ///
     /// Requires [`DeviceAttr::ConcurrentManagedAccess`] on every GPU. This VM
     /// reports `0`, so the call is always Invalid `"concurrent managed
     /// access"`. Discard contents are not modeled.
+    /// Driver wrap: [`Self::mem_discard_batch_async`].
+    /// Identity: [`Self::mem_discard_batch_async`].
     pub fn discard_batch_async(
         &mut self,
         device: DeviceId,
@@ -16103,11 +20571,26 @@ impl Sim {
         self.require_concurrent_managed_access()
     }
 
+    /// `cudaMemDiscardBatchAsync`. Identity with [`Self::discard_batch_async`].
+    /// Query; legal during capture. Distinct from [`Self::mem_prefetch_batch_async`].
+    pub fn mem_discard_batch_async(
+        &mut self,
+        device: DeviceId,
+        allocs: &[AllocId],
+        sizes: &[u64],
+        flags: u64,
+        stream: StreamId,
+    ) -> Result<Vec<OpId>, SimError> {
+        self.discard_batch_async(device, allocs, sizes, flags, stream)
+    }
+
     /// `cudaMemDiscardAndPrefetchBatchAsync`.
     ///
     /// Requires [`DeviceAttr::ConcurrentManagedAccess`] on every GPU. This VM
     /// reports `0`, so the call is always Invalid `"concurrent managed
     /// access"`. Equivalent to discard-then-prefetch on hardware with CMA.
+    /// Driver wrap: [`Self::mem_discard_and_prefetch_batch_async`].
+    /// Identity: [`Self::mem_discard_and_prefetch_batch_async`].
     #[expect(
         clippy::too_many_arguments,
         reason = "cudaMemDiscardAndPrefetchBatchAsync argument list"
@@ -16124,6 +20607,27 @@ impl Sim {
     ) -> Result<Vec<OpId>, SimError> {
         let _gpu = self.profile.gpu(device)?;
         self.require_concurrent_managed_access()
+    }
+
+    /// `cudaMemDiscardAndPrefetchBatchAsync`. Identity with [`Self::discard_and_prefetch_batch_async`].
+    /// Query; legal during capture. Distinct from [`Self::mem_discard_batch_async`].
+    #[expect(
+        clippy::too_many_arguments,
+        reason = "cudaMemDiscardAndPrefetchBatchAsync argument list"
+    )]
+    pub fn mem_discard_and_prefetch_batch_async(
+        &mut self,
+        device: DeviceId,
+        allocs: &[AllocId],
+        sizes: &[u64],
+        dests: &[Place],
+        dest_idxs: &[usize],
+        flags: u64,
+        stream: StreamId,
+    ) -> Result<Vec<OpId>, SimError> {
+        self.discard_and_prefetch_batch_async(
+            device, allocs, sizes, dests, dest_idxs, flags, stream,
+        )
     }
 
     fn require_concurrent_managed_access(&self) -> Result<Vec<OpId>, SimError> {
@@ -16181,6 +20685,16 @@ impl Sim {
         self.host_register_flags(id, Some(size), HostAllocFlags::DEFAULT)
     }
 
+    /// `cuMemHostRegister` size argument. Identity with
+    /// [`Self::host_register_with_size`] (`cudaHostRegister` size).
+    ///
+    /// `size` must equal the allocation bytes. Capture refused. Distinct from
+    /// [`Self::mem_host_register`] (flags; full size). This VM does not invent
+    /// `cuIpcGetMemHandle` this slice (`ipc_get` stays).
+    pub fn mem_host_register_with_size(&mut self, id: AllocId, size: u64) -> Result<(), SimError> {
+        self.host_register_with_size(id, size)
+    }
+
     /// `cudaHostRegisterMapped`: pin and map pageable host. Kernels may read it
     /// over PCIe without a device copy.
     pub fn host_register_mapped(&mut self, id: AllocId) -> Result<(), SimError> {
@@ -16202,6 +20716,15 @@ impl Sim {
             });
         }
         self.host_register_flags(id, None, flags)
+    }
+
+    /// `cuMemHostRegister`. Identity with [`Self::host_register_with_flags`]
+    /// (`cudaHostRegister` flags).
+    ///
+    /// Capture refused. Distinct from [`Self::host_register`] (DEFAULT). This VM
+    /// does not invent `cuMemHostUnregister` this slice (`host_unregister` stays).
+    pub fn mem_host_register(&mut self, id: AllocId, flags: u32) -> Result<(), SimError> {
+        self.host_register_with_flags(id, flags)
     }
 
     /// `cudaHostUnregister`. Only ids from [`Self::host_register`]. Must not be leased
@@ -16232,6 +20755,16 @@ impl Sim {
         a.host_pageable = true;
         a.host_flags = HostAllocFlags::DEFAULT;
         Ok(())
+    }
+
+    /// `cuMemHostUnregister`. Identity with [`Self::host_unregister`]
+    /// (`cudaHostUnregister`).
+    ///
+    /// Capture refused. Distinct from [`Self::mem_host_register`]. This VM does
+    /// not invent a register-size identity this slice (`host_register_with_size`
+    /// stays).
+    pub fn mem_host_unregister(&mut self, id: AllocId) -> Result<(), SimError> {
+        self.host_unregister(id)
     }
 
     /// Drop pageable host memory from [`Self::alloc_host`]. Unregister first if pinned.
@@ -16295,6 +20828,15 @@ impl Sim {
         Ok(())
     }
 
+    /// `cuMemFreeHost`. Identity with [`Self::free_host_pinned`] (`cudaFreeHost`).
+    ///
+    /// Host-sync; capture refused. Distinct from [`Self::mem_free`] (`cuMemFree`).
+    /// Device ids are [`SimError::UnknownAlloc`]. This VM does not invent
+    /// `cuMemHostAlloc` this slice (`alloc_host_pinned` stays).
+    pub fn mem_free_host(&mut self, id: AllocId) -> Result<(), SimError> {
+        self.free_host_pinned(id)
+    }
+
     /// Stream-ordered free (`cudaFreeAsync`). Illegal while a kernel lease is held.
     ///
     /// Capture records a graph mem free node.
@@ -16306,6 +20848,19 @@ impl Sim {
     ) -> Result<(), SimError> {
         let _op = self.submit(device, stream, Kind::Free { id })?;
         Ok(())
+    }
+
+    /// `cuMemFreeAsync`. Identity with [`Self::free`] (`cudaFreeAsync`).
+    ///
+    /// Capture-legal (graph mem free node). Distinct from [`Self::mem_free`]
+    /// (`cuMemFree` host-sync).
+    pub fn mem_free_async(
+        &mut self,
+        device: DeviceId,
+        id: AllocId,
+        stream: StreamId,
+    ) -> Result<(), SimError> {
+        self.free(device, id, stream)
     }
 
     /// `cudaIpcGetMemHandle` of a live device allocation. Host-synchronous.
@@ -16331,6 +20886,13 @@ impl Sim {
         self.next_ipc = self.next_ipc.saturating_add(1);
         let _prev = self.ipc_handles.insert(h, id);
         Ok(h)
+    }
+
+    /// `cuIpcGetMemHandle`. Identity with [`Self::ipc_get`] (`cudaIpcGetMemHandle`).
+    ///
+    /// Host-sync; capture refused. Distinct from [`Self::ipc_get_event`].
+    pub fn ipc_get_mem_handle(&mut self, id: AllocId) -> Result<IpcHandleId, SimError> {
+        self.ipc_get(id)
     }
 
     /// `cudaIpcOpenMemHandle` on `device`. Alias shares the source physicals
@@ -16412,10 +20974,31 @@ impl Sim {
         self.ipc_open(device, handle)
     }
 
+    /// `cuIpcOpenMemHandle`. Identity with [`Self::ipc_open_with_flags`]
+    /// (`cudaIpcOpenMemHandle` flags).
+    ///
+    /// Capture refused. Distinct from [`Self::ipc_open`].
+    pub fn ipc_open_mem_handle(
+        &mut self,
+        device: DeviceId,
+        handle: IpcHandleId,
+        flags: u32,
+    ) -> Result<AllocId, SimError> {
+        self.ipc_open_with_flags(device, handle, flags)
+    }
+
     /// `cudaIpcCloseMemHandle`. Does not refund source HBM.
     pub fn ipc_close(&mut self, id: AllocId) -> Result<(), SimError> {
         self.fail_if_capturing("cannot capture ipc")?;
         self.drop_ipc_import(id)
+    }
+
+    /// `cuIpcCloseMemHandle`. Identity with [`Self::ipc_close`]
+    /// (`cudaIpcCloseMemHandle`).
+    ///
+    /// Capture refused. Distinct from [`Self::ipc_open_mem_handle`].
+    pub fn ipc_close_mem_handle(&mut self, id: AllocId) -> Result<(), SimError> {
+        self.ipc_close(id)
     }
 
     /// Whether `id` is a live [`Self::ipc_open`] alias.
@@ -16459,6 +21042,14 @@ impl Sim {
         Ok(h)
     }
 
+    /// `cuIpcGetEventHandle`. Identity with [`Self::ipc_get_event`]
+    /// (`cudaIpcGetEventHandle`).
+    ///
+    /// Host-sync; capture refused. Distinct from [`Self::ipc_get_mem_handle`].
+    pub fn ipc_get_event_handle(&mut self, event: EventId) -> Result<IpcEventHandleId, SimError> {
+        self.ipc_get_event(event)
+    }
+
     /// `cudaIpcOpenEventHandle`. Alias shares the source record (no extra event).
     /// Capture cannot include it. The returned id is simulator-chosen.
     pub fn ipc_open_event(&mut self, handle: IpcEventHandleId) -> Result<EventId, SimError> {
@@ -16495,6 +21086,14 @@ impl Sim {
         ev.ipc_src = Some(src);
         let _prev = self.events.insert(id, ev);
         Ok(id)
+    }
+
+    /// `cuIpcOpenEventHandle`. Identity with [`Self::ipc_open_event`]
+    /// (`cudaIpcOpenEventHandle`).
+    ///
+    /// Capture refused. Distinct from [`Self::ipc_get_event_handle`].
+    pub fn ipc_open_event_handle(&mut self, handle: IpcEventHandleId) -> Result<EventId, SimError> {
+        self.ipc_open_event(handle)
     }
 
     /// Whether `event` is a live [`Self::ipc_open_event`] alias.
@@ -16586,6 +21185,15 @@ impl Sim {
         Ok(())
     }
 
+    /// `cuMemFree`. Identity with [`Self::free_sync`] (`cudaFree`).
+    ///
+    /// Host-sync; capture refused. Distinct from [`Self::free`] (`cudaFreeAsync`).
+    /// Host-pinned ids are [`SimError::UnknownAlloc`]. This VM does not invent
+    /// `cuMemFreeHost` this slice (`free_host_pinned` stays).
+    pub fn mem_free(&mut self, id: AllocId) -> Result<(), SimError> {
+        self.free_sync(id)
+    }
+
     /// Asynchronous copy (`cudaMemcpyAsync`) when both ends are device or pinned.
     ///
     /// Pageable host (`Place::Host`) is host-synchronous: the driver bounces
@@ -16601,6 +21209,7 @@ impl Sim {
     /// `width * height`, not pitch padding. [`MemcpyOp::depth`] `> 1` is
     /// `cudaMemcpy3DAsync`: billed bytes are `width * height * depth`, not
     /// row or slice padding.
+    /// Driver `cuMemcpyAsync` is [`Self::memcpy_async`].
     pub fn memcpy(
         &mut self,
         device: DeviceId,
@@ -16627,9 +21236,22 @@ impl Sim {
         Ok(id)
     }
 
+    /// `cuMemcpyAsync`. Identity with [`Self::memcpy`] (`cudaMemcpyAsync`).
+    ///
+    /// Capture-legal (pinned/device). Distinct from [`Self::memcpy_sync`].
+    pub fn memcpy_async(
+        &mut self,
+        device: DeviceId,
+        op: MemcpyOp,
+        stream: StreamId,
+    ) -> Result<OpId, SimError> {
+        self.memcpy(device, op, stream)
+    }
+
     /// `cudaMemcpy`: enqueue then wait for that stream (host-synchronous).
     ///
     /// Capture cannot include it. [`Self::memcpy`] is `cudaMemcpyAsync`.
+    /// Driver `cuMemcpy` is [`Self::mem_cpy`].
     pub fn memcpy_sync(
         &mut self,
         device: DeviceId,
@@ -16644,6 +21266,18 @@ impl Sim {
         let id = self.memcpy(device, op, stream)?;
         self.synchronize_stream(device, stream)?;
         Ok(id)
+    }
+
+    /// `cuMemcpy`. Identity with [`Self::memcpy_sync`] (`cudaMemcpy`).
+    ///
+    /// Capture refused. Distinct from [`Self::memcpy_async`].
+    pub fn mem_cpy(
+        &mut self,
+        device: DeviceId,
+        op: MemcpyOp,
+        stream: StreamId,
+    ) -> Result<OpId, SimError> {
+        self.memcpy_sync(device, op, stream)
     }
 
     /// Pageable host → `device`. Host-synchronous and slower than pinned DMA.
@@ -16702,6 +21336,8 @@ impl Sim {
     /// [`Self::memcpy_pinned_to_device`] is `cuMemcpyHtoDAsync`.
     /// [`Self::memcpy_host_to_device`] stays pageable.
     /// [`Self::memcpy_sync`] stays generic `cudaMemcpy`.
+    /// Driver wrap: [`Self::mem_memcpy_htod`].
+    /// Identity: [`Self::mem_memcpy_htod`].
     pub fn memcpy_htod(
         &mut self,
         device: DeviceId,
@@ -16717,6 +21353,18 @@ impl Sim {
         let id = self.memcpy_pinned_to_device(device, alloc, bytes, stream)?;
         self.synchronize_stream(device, stream)?;
         Ok(id)
+    }
+
+    /// `cuMemcpyHtoD`. Identity with [`Self::memcpy_htod`].
+    /// Host-sync; capture refused. Distinct from [`Self::mem_pool_get_id`].
+    pub fn mem_memcpy_htod(
+        &mut self,
+        device: DeviceId,
+        alloc: AllocId,
+        bytes: u64,
+        stream: StreamId,
+    ) -> Result<OpId, SimError> {
+        self.memcpy_htod(device, alloc, bytes, stream)
     }
 
     /// `device` → pageable host. Host-synchronous; source HBM residency is kept.
@@ -16772,6 +21420,8 @@ impl Sim {
     /// [`Self::memcpy_device_to_pinned`] is `cuMemcpyDtoHAsync`.
     /// [`Self::memcpy_device_to_host`] stays pageable.
     /// [`Self::memcpy_sync`] stays generic `cudaMemcpy`.
+    /// Driver wrap: [`Self::mem_memcpy_dtoh`].
+    /// Identity: [`Self::mem_memcpy_dtoh`].
     pub fn memcpy_dtoh(
         &mut self,
         device: DeviceId,
@@ -16787,6 +21437,18 @@ impl Sim {
         let id = self.memcpy_device_to_pinned(device, alloc, bytes, stream)?;
         self.synchronize_stream(device, stream)?;
         Ok(id)
+    }
+
+    /// `cuMemcpyDtoH`. Identity with [`Self::memcpy_dtoh`].
+    /// Host-sync; capture refused. Distinct from [`Self::mem_memcpy_htod`].
+    pub fn mem_memcpy_dtoh(
+        &mut self,
+        device: DeviceId,
+        alloc: AllocId,
+        bytes: u64,
+        stream: StreamId,
+    ) -> Result<OpId, SimError> {
+        self.memcpy_dtoh(device, alloc, bytes, stream)
     }
 
     /// Peer copy `src` → `dst` of an existing allocation (hot replica).
@@ -16820,6 +21482,7 @@ impl Sim {
     ///
     /// Capture records a memcpy node. [`Self::memcpy_peer`] is the
     /// host-synchronous `cudaMemcpyPeer`.
+    /// Driver `cuMemcpyPeerAsync` is [`Self::mem_cpy_peer_async`].
     pub fn memcpy_peer_async(
         &mut self,
         src: DeviceId,
@@ -16831,7 +21494,23 @@ impl Sim {
         self.memcpy_device_to_device(src, dst, alloc, bytes, stream)
     }
 
+    /// `cuMemcpyPeerAsync`. Identity with [`Self::memcpy_peer_async`]
+    /// (`cudaMemcpyPeerAsync`).
+    ///
+    /// Capture-legal. Distinct from [`Self::mem_cpy_peer`].
+    pub fn mem_cpy_peer_async(
+        &mut self,
+        src: DeviceId,
+        dst: DeviceId,
+        alloc: AllocId,
+        bytes: u64,
+        stream: StreamId,
+    ) -> Result<OpId, SimError> {
+        self.memcpy_peer_async(src, dst, alloc, bytes, stream)
+    }
+
     /// `cudaMemcpyPeer`. Host-synchronous; capture cannot include it.
+    /// Driver `cuMemcpyPeer` is [`Self::mem_cpy_peer`].
     pub fn memcpy_peer(
         &mut self,
         src: DeviceId,
@@ -16850,6 +21529,20 @@ impl Sim {
         Ok(id)
     }
 
+    /// `cuMemcpyPeer`. Identity with [`Self::memcpy_peer`] (`cudaMemcpyPeer`).
+    ///
+    /// Capture refused. Distinct from [`Self::memcpy_peer_async`].
+    pub fn mem_cpy_peer(
+        &mut self,
+        src: DeviceId,
+        dst: DeviceId,
+        alloc: AllocId,
+        bytes: u64,
+        stream: StreamId,
+    ) -> Result<OpId, SimError> {
+        self.memcpy_peer(src, dst, alloc, bytes, stream)
+    }
+
     fn memcpy_peer_extent_async(
         &mut self,
         src: DeviceId,
@@ -16866,6 +21559,7 @@ impl Sim {
     /// [`MemcpyOp::is_3d`] (`depth > 1`). `op.src` / `op.dst` are forced to
     /// `src` / `dst`. Capture records a memcpy node. Typed [`Self::memcpy`]
     /// stays.
+    /// Driver `cuMemcpy3DPeerAsync` is [`Self::mem_cpy_peer_3d_async`].
     pub fn memcpy_peer_3d_async(
         &mut self,
         src: DeviceId,
@@ -16881,7 +21575,22 @@ impl Sim {
         self.memcpy_peer_extent_async(src, dst, op, stream)
     }
 
+    /// `cuMemcpy3DPeerAsync`. Identity with [`Self::memcpy_peer_3d_async`]
+    /// (`cudaMemcpy3DPeerAsync`).
+    ///
+    /// Capture-legal. Distinct from [`Self::mem_cpy_peer_3d`].
+    pub fn mem_cpy_peer_3d_async(
+        &mut self,
+        src: DeviceId,
+        dst: DeviceId,
+        op: MemcpyOp,
+        stream: StreamId,
+    ) -> Result<OpId, SimError> {
+        self.memcpy_peer_3d_async(src, dst, op, stream)
+    }
+
     /// `cudaMemcpy3DPeer`. Host-synchronous; capture cannot include it.
+    /// Driver `cuMemcpy3DPeer` is [`Self::mem_cpy_peer_3d`].
     pub fn memcpy_peer_3d(
         &mut self,
         src: DeviceId,
@@ -16899,10 +21608,25 @@ impl Sim {
         Ok(id)
     }
 
+    /// `cuMemcpy3DPeer`. Identity with [`Self::memcpy_peer_3d`]
+    /// (`cudaMemcpy3DPeer`).
+    ///
+    /// Capture refused. Distinct from [`Self::memcpy_peer_3d_async`].
+    pub fn mem_cpy_peer_3d(
+        &mut self,
+        src: DeviceId,
+        dst: DeviceId,
+        op: MemcpyOp,
+        stream: StreamId,
+    ) -> Result<OpId, SimError> {
+        self.memcpy_peer_3d(src, dst, op, stream)
+    }
+
     /// `cudaMemcpy2DPeerAsync`. Replica copy; [`MemcpyOp`] must be
     /// [`MemcpyOp::is_2d`] (`height > 1`, not 3D). `op.src` / `op.dst` are
     /// forced to `src` / `dst`. Capture records a memcpy node. Typed
     /// [`Self::memcpy`] stays.
+    /// Driver `cuMemcpy2DPeerAsync` is [`Self::mem_cpy_peer_2d_async`].
     pub fn memcpy_peer_2d_async(
         &mut self,
         src: DeviceId,
@@ -16918,7 +21642,22 @@ impl Sim {
         self.memcpy_peer_extent_async(src, dst, op, stream)
     }
 
+    /// `cuMemcpy2DPeerAsync`. Identity with [`Self::memcpy_peer_2d_async`]
+    /// (`cudaMemcpy2DPeerAsync`).
+    ///
+    /// Capture-legal. Distinct from [`Self::mem_cpy_peer_2d`].
+    pub fn mem_cpy_peer_2d_async(
+        &mut self,
+        src: DeviceId,
+        dst: DeviceId,
+        op: MemcpyOp,
+        stream: StreamId,
+    ) -> Result<OpId, SimError> {
+        self.memcpy_peer_2d_async(src, dst, op, stream)
+    }
+
     /// `cudaMemcpy2DPeer`. Host-synchronous; capture cannot include it.
+    /// Driver `cuMemcpy2DPeer` is [`Self::mem_cpy_peer_2d`].
     pub fn memcpy_peer_2d(
         &mut self,
         src: DeviceId,
@@ -16936,8 +21675,23 @@ impl Sim {
         Ok(id)
     }
 
+    /// `cuMemcpy2DPeer`. Identity with [`Self::memcpy_peer_2d`]
+    /// (`cudaMemcpy2DPeer`).
+    ///
+    /// Capture refused. Distinct from [`Self::memcpy_peer_2d_async`].
+    pub fn mem_cpy_peer_2d(
+        &mut self,
+        src: DeviceId,
+        dst: DeviceId,
+        op: MemcpyOp,
+        stream: StreamId,
+    ) -> Result<OpId, SimError> {
+        self.memcpy_peer_2d(src, dst, op, stream)
+    }
+
     /// `cudaMemcpy2DAsync`. [`MemcpyOp`] must be [`MemcpyOp::is_2d`] (`height > 1`,
     /// not 3D). Typed [`Self::memcpy`] stays.
+    /// Driver `cuMemcpy2DAsync` is [`Self::mem_cpy_2d_async`].
     pub fn memcpy_2d_async(
         &mut self,
         device: DeviceId,
@@ -16952,8 +21706,22 @@ impl Sim {
         self.memcpy(device, op, stream)
     }
 
+    /// `cuMemcpy2DAsync`. Identity with [`Self::memcpy_2d_async`]
+    /// (`cudaMemcpy2DAsync`).
+    ///
+    /// Capture-legal (pinned/device). Distinct from [`Self::mem_cpy_2d`].
+    pub fn mem_cpy_2d_async(
+        &mut self,
+        device: DeviceId,
+        op: MemcpyOp,
+        stream: StreamId,
+    ) -> Result<OpId, SimError> {
+        self.memcpy_2d_async(device, op, stream)
+    }
+
     /// `cudaMemcpy2D`. Host-synchronous; capture cannot include it.
     /// Unaligned pitches are [`Self::memcpy_2d_unaligned`] (identity here).
+    /// Driver `cuMemcpy2D` is [`Self::mem_cpy_2d`].
     pub fn memcpy_2d(
         &mut self,
         device: DeviceId,
@@ -16968,6 +21736,19 @@ impl Sim {
         let id = self.memcpy_2d_async(device, op, stream)?;
         self.synchronize_stream(device, stream)?;
         Ok(id)
+    }
+
+    /// `cuMemcpy2D`. Identity with [`Self::memcpy_2d`] (`cudaMemcpy2D`).
+    ///
+    /// Capture refused. Distinct from [`Self::memcpy_2d_unaligned`] and
+    /// [`Self::memcpy_2d_async`].
+    pub fn mem_cpy_2d(
+        &mut self,
+        device: DeviceId,
+        op: MemcpyOp,
+        stream: StreamId,
+    ) -> Result<OpId, SimError> {
+        self.memcpy_2d(device, op, stream)
     }
 
     /// `cuMemcpy2DUnaligned`. Identity with [`Self::memcpy_2d`]: this VM does
@@ -16985,6 +21766,7 @@ impl Sim {
 
     /// `cudaMemcpy3DAsync`. [`MemcpyOp`] must be [`MemcpyOp::is_3d`] (`depth > 1`).
     /// Typed [`Self::memcpy`] stays.
+    /// Driver `cuMemcpy3DAsync` is [`Self::mem_cpy_3d_async`].
     pub fn memcpy_3d_async(
         &mut self,
         device: DeviceId,
@@ -16999,8 +21781,22 @@ impl Sim {
         self.memcpy(device, op, stream)
     }
 
+    /// `cuMemcpy3DAsync`. Identity with [`Self::memcpy_3d_async`]
+    /// (`cudaMemcpy3DAsync`).
+    ///
+    /// Capture-legal (pinned/device). Distinct from [`Self::mem_cpy_3d`].
+    pub fn mem_cpy_3d_async(
+        &mut self,
+        device: DeviceId,
+        op: MemcpyOp,
+        stream: StreamId,
+    ) -> Result<OpId, SimError> {
+        self.memcpy_3d_async(device, op, stream)
+    }
+
     /// `cudaMemcpy3D`. Host-synchronous; capture cannot include it.
     /// Unaligned pitches are [`Self::memcpy_3d_unaligned`] (identity here).
+    /// Driver `cuMemcpy3D` is [`Self::mem_cpy_3d`].
     pub fn memcpy_3d(
         &mut self,
         device: DeviceId,
@@ -17015,6 +21811,19 @@ impl Sim {
         let id = self.memcpy_3d_async(device, op, stream)?;
         self.synchronize_stream(device, stream)?;
         Ok(id)
+    }
+
+    /// `cuMemcpy3D`. Identity with [`Self::memcpy_3d`] (`cudaMemcpy3D`).
+    ///
+    /// Capture refused. Distinct from [`Self::memcpy_3d_unaligned`] and
+    /// [`Self::memcpy_3d_async`].
+    pub fn mem_cpy_3d(
+        &mut self,
+        device: DeviceId,
+        op: MemcpyOp,
+        stream: StreamId,
+    ) -> Result<OpId, SimError> {
+        self.memcpy_3d(device, op, stream)
     }
 
     /// `cuMemcpy3DUnaligned`. Identity with [`Self::memcpy_3d`]: this VM does
@@ -17040,6 +21849,7 @@ impl Sim {
     /// [`DeviceAttr::PageableMemoryAccess`] are 0).
     /// [`MemcpyFlags::PREFER_OVERLAP_WITH_COMPUTE`] is accepted and ignored
     /// (discrete GPU). Unknown flags Invalid `"memcpy flags"`.
+    /// Driver `cuMemcpyWithAttributesAsync` is [`Self::mem_cpy_with_attributes`].
     pub fn memcpy_with_attributes(
         &mut self,
         device: DeviceId,
@@ -17058,6 +21868,22 @@ impl Sim {
                     why: "memcpy attributes empty",
                 }),
         }
+    }
+
+    /// `cuMemcpyWithAttributesAsync`. Identity with
+    /// [`Self::memcpy_with_attributes`] (`cudaMemcpyWithAttributesAsync`).
+    ///
+    /// Stream order is capture-legal (pinned/device). Distinct from
+    /// [`Self::mem_cpy_batch_async`].
+    /// This VM does not invent occupancy SM counts this slice.
+    pub fn mem_cpy_with_attributes(
+        &mut self,
+        device: DeviceId,
+        op: MemcpyOp,
+        attr: MemcpyAttributes,
+        stream: StreamId,
+    ) -> Result<OpId, SimError> {
+        self.memcpy_with_attributes(device, op, attr, stream)
     }
 
     /// `cudaMemcpyBatchAsync`. Pointer-to-pointer 1D copies only.
@@ -17080,6 +21906,7 @@ impl Sim {
     /// same stream without a host sync (the copy waits the alloc via stream
     /// order when it starts). A missing alloc id is still all-or-nothing
     /// [`SimError::UnknownAlloc`].
+    /// Driver `cuMemcpyBatchAsync` is [`Self::mem_cpy_batch_async`].
     pub fn memcpy_batch_async(
         &mut self,
         device: DeviceId,
@@ -17105,11 +21932,1492 @@ impl Sim {
         self.enqueue_memcpy_batch(device, stream, ops, &per, "cannot capture memcpy batch")
     }
 
+    /// `cuMemcpyBatchAsync`. Identity with [`Self::memcpy_batch_async`]
+    /// (`cudaMemcpyBatchAsync`).
+    ///
+    /// Capture refused. Distinct from [`Self::memcpy_3d_batch_async`].
+    pub fn mem_cpy_batch_async(
+        &mut self,
+        device: DeviceId,
+        ops: &[MemcpyOp],
+        attrs: &[MemcpyAttributes],
+        attrs_idxs: &[usize],
+        stream: StreamId,
+    ) -> Result<Vec<OpId>, SimError> {
+        self.memcpy_batch_async(device, ops, attrs, attrs_idxs, stream)
+    }
+
+    /// `cuMemBatchDecompressAsync`. Hardware decompress is not modeled.
+    ///
+    /// Always Invalid `"hw decompress"` ([`DeviceAttr::MemDecompressAlgorithmMask`]
+    /// is 0). Distinct from [`Self::memcpy_batch_async`]. `count` and `flags`
+    /// are ignored. Unknown devices are Invalid `"device not in profile"`.
+    /// This VM does not invent decompress succeeding.
+    pub fn mem_batch_decompress_async(
+        &self,
+        device: DeviceId,
+        stream: StreamId,
+        count: u64,
+        flags: u32,
+    ) -> Result<(), SimError> {
+        let _gpu = self.profile.gpu(device)?;
+        self.require_live_stream(device, stream)?;
+        let _ = (count, flags);
+        Err(SimError::Invalid {
+            why: "hw decompress",
+        })
+    }
+
+    /// `cuTensorMapEncodeTiled`. TMA is not modeled.
+    ///
+    /// Always Invalid `"tensor map"` ([`DeviceAttr::TensorMapAccessSupported`]
+    /// is 0). Distinct from [`Self::mem_batch_decompress_async`]. Unknown
+    /// devices are Invalid `"device not in profile"`. This VM does not invent
+    /// `cuTensorMapEncodeIm2col` this slice.
+    /// Driver wrap: [`Self::mem_tensor_map_encode_tiled`].
+    /// Identity: [`Self::mem_tensor_map_encode_tiled`].
+    pub fn tensor_map_encode_tiled(&self, device: DeviceId) -> Result<(), SimError> {
+        let _gpu = self.profile.gpu(device)?;
+        Err(SimError::Invalid { why: "tensor map" })
+    }
+
+    /// `cuTensorMapEncodeTiled`. Identity with [`Self::tensor_map_encode_tiled`].
+    /// Query; legal during capture. Distinct from [`Self::mem_discard_and_prefetch_batch_async`].
+    pub fn mem_tensor_map_encode_tiled(&self, device: DeviceId) -> Result<(), SimError> {
+        self.tensor_map_encode_tiled(device)
+    }
+
+    /// `cuTensorMapEncodeIm2col`. TMA is not modeled.
+    ///
+    /// Always Invalid `"tensor im2col"` ([`DeviceAttr::TensorMapAccessSupported`]
+    /// is 0). Distinct from [`Self::tensor_map_encode_tiled`] (why is not
+    /// `"tensor map"`) and from [`Self::tensor_map_encode_im2col_wide`].
+    /// Query; legal during capture.
+    /// Driver wrap: [`Self::mem_tensor_map_encode_im2col`].
+    /// Identity: [`Self::mem_tensor_map_encode_im2col`].
+    pub fn tensor_map_encode_im2col(&self, device: DeviceId) -> Result<(), SimError> {
+        let _gpu = self.profile.gpu(device)?;
+        Err(SimError::Invalid {
+            why: "tensor im2col",
+        })
+    }
+
+    /// `cuTensorMapEncodeIm2col`. Identity with [`Self::tensor_map_encode_im2col`].
+    /// Query; legal during capture. Distinct from [`Self::mem_tensor_map_encode_tiled`].
+    pub fn mem_tensor_map_encode_im2col(&self, device: DeviceId) -> Result<(), SimError> {
+        self.tensor_map_encode_im2col(device)
+    }
+
+    /// `cuTensorMapEncodeIm2colWide`. TMA is not modeled.
+    ///
+    /// Always Invalid `"im2col wide"` ([`DeviceAttr::TensorMapAccessSupported`]
+    /// is 0). Distinct from [`Self::tensor_map_encode_im2col`] (why is not
+    /// `"tensor im2col"`) and from [`Self::tensor_map_encode_tiled`] and from
+    /// [`Self::tensor_map_replace_aligned_addr`].
+    /// Unknown devices are Invalid `"device not in profile"`. Query; legal
+    /// during capture.
+    /// Driver wrap: [`Self::mem_tensor_map_encode_im2col_wide`].
+    /// Identity: [`Self::mem_tensor_map_encode_im2col_wide`].
+    pub fn tensor_map_encode_im2col_wide(&self, device: DeviceId) -> Result<(), SimError> {
+        let _gpu = self.profile.gpu(device)?;
+        Err(SimError::Invalid { why: "im2col wide" })
+    }
+
+    /// `cuTensorMapEncodeIm2colWide`. Identity with [`Self::tensor_map_encode_im2col_wide`].
+    /// Query; legal during capture. Distinct from [`Self::mem_tensor_map_encode_im2col`].
+    pub fn mem_tensor_map_encode_im2col_wide(&self, device: DeviceId) -> Result<(), SimError> {
+        self.tensor_map_encode_im2col_wide(device)
+    }
+
+    /// `cuTensorMapReplaceAlignedAddr`. TMA is not modeled.
+    ///
+    /// Always Invalid `"tensor replace"` ([`DeviceAttr::TensorMapAccessSupported`]
+    /// is 0). Distinct from [`Self::tensor_map_encode_im2col_wide`] (why is
+    /// not `"im2col wide"`) and from [`Self::tensor_map_encode_tiled`] (why
+    /// is not `"tensor map"`).
+    /// Unknown devices are Invalid `"device not in profile"`. Query; legal
+    /// during capture.
+    /// Driver wrap: [`Self::mem_tensor_map_replace_aligned_addr`].
+    /// Identity: [`Self::mem_tensor_map_replace_aligned_addr`].
+    pub fn tensor_map_replace_aligned_addr(&self, device: DeviceId) -> Result<(), SimError> {
+        let _gpu = self.profile.gpu(device)?;
+        Err(SimError::Invalid {
+            why: "tensor replace",
+        })
+    }
+
+    /// `cuTensorMapReplaceAlignedAddr`. Identity with [`Self::tensor_map_replace_aligned_addr`].
+    /// Query; legal during capture. Distinct from [`Self::mem_tensor_map_encode_im2col_wide`].
+    pub fn mem_tensor_map_replace_aligned_addr(&self, device: DeviceId) -> Result<(), SimError> {
+        self.tensor_map_replace_aligned_addr(device)
+    }
+
+    /// `cuArrayCreate` / `cuArray3DCreate`. CUDA arrays are not modeled.
+    ///
+    /// Always Invalid `"cuda array"` ([`DeviceAttr::SparseCudaArraySupported`]
+    /// is 0). Distinct from [`Self::tensor_map_encode_tiled`] and from
+    /// [`Self::array_destroy`]. Unknown devices
+    /// are Invalid `"device not in profile"`. This VM does not invent
+    /// `CUarray_format` this slice.
+    pub fn array_create(&self, device: DeviceId) -> Result<(), SimError> {
+        let _gpu = self.profile.gpu(device)?;
+        Err(SimError::Invalid { why: "cuda array" })
+    }
+
+    /// `cuArrayDestroy` plus `cudaFreeArray`. CUDA arrays are not modeled.
+    ///
+    /// Always Invalid `"array destroy"` (no array handles). Distinct from
+    /// [`Self::array_create`] and from [`Self::mipmapped_array_destroy`].
+    /// Unknown devices are Invalid `"device not in profile"`. Query; legal
+    /// during capture.
+    pub fn array_destroy(&self, device: DeviceId) -> Result<(), SimError> {
+        let _gpu = self.profile.gpu(device)?;
+        Err(SimError::Invalid {
+            why: "array destroy",
+        })
+    }
+
+    /// `cuArrayGetDescriptor`. CUDA arrays are not modeled.
+    ///
+    /// Always Invalid `"array descriptor"` (no array handles). Distinct from
+    /// [`Self::array_create`], from [`Self::surf_object_get_resource_desc`],
+    /// and from [`Self::array_3d_get_descriptor`]. Unknown devices are Invalid
+    /// `"device not in profile"`. Query; legal during capture.
+    /// Driver wrap: [`Self::mem_array_get_descriptor`].
+    /// Identity: [`Self::mem_array_get_descriptor`].
+    pub fn array_get_descriptor(&self, device: DeviceId) -> Result<(), SimError> {
+        let _gpu = self.profile.gpu(device)?;
+        Err(SimError::Invalid {
+            why: "array descriptor",
+        })
+    }
+
+    /// `cuArrayGetDescriptor`. Identity with [`Self::array_get_descriptor`].
+    /// Query; legal during capture. Distinct from [`Self::mem_tensor_map_replace_aligned_addr`].
+    pub fn mem_array_get_descriptor(&self, device: DeviceId) -> Result<(), SimError> {
+        self.array_get_descriptor(device)
+    }
+
+    /// `cuArray3DGetDescriptor`. CUDA arrays are not modeled.
+    ///
+    /// Always Invalid `"array 3d descriptor"` (no array handles). Distinct
+    /// from [`Self::array_get_descriptor`], from [`Self::array_create`], and
+    /// from [`Self::array_get_sparse_properties`]. Unknown devices are Invalid
+    /// `"device not in profile"`. Query; legal during capture.
+    /// Driver wrap: [`Self::mem_array_3d_get_descriptor`].
+    /// Identity: [`Self::mem_array_3d_get_descriptor`].
+    pub fn array_3d_get_descriptor(&self, device: DeviceId) -> Result<(), SimError> {
+        let _gpu = self.profile.gpu(device)?;
+        Err(SimError::Invalid {
+            why: "array 3d descriptor",
+        })
+    }
+
+    /// `cuArray3DGetDescriptor`. Identity with [`Self::array_3d_get_descriptor`].
+    /// Query; legal during capture. Distinct from [`Self::mem_array_get_descriptor`].
+    pub fn mem_array_3d_get_descriptor(&self, device: DeviceId) -> Result<(), SimError> {
+        self.array_3d_get_descriptor(device)
+    }
+
+    /// `cuArrayGetSparseProperties` plus `cudaArrayGetSparseProperties`.
+    /// CUDA arrays are not modeled.
+    ///
+    /// Always Invalid `"array sparse"` ([`DeviceAttr::SparseCudaArraySupported`]
+    /// is 0; no array handles). Distinct from [`Self::array_3d_get_descriptor`],
+    /// from [`Self::array_create`], and from [`Self::array_get_plane`]. Unknown
+    /// devices are Invalid `"device not in profile"`. Query; legal during
+    /// capture.
+    /// Driver wrap: [`Self::mem_array_get_sparse_properties`].
+    /// Identity: [`Self::mem_array_get_sparse_properties`].
+    pub fn array_get_sparse_properties(&self, device: DeviceId) -> Result<(), SimError> {
+        let _gpu = self.profile.gpu(device)?;
+        Err(SimError::Invalid {
+            why: "array sparse",
+        })
+    }
+
+    /// `cuArrayGetSparseProperties`. Identity with [`Self::array_get_sparse_properties`].
+    /// Query; legal during capture. Distinct from [`Self::mem_array_3d_get_descriptor`].
+    pub fn mem_array_get_sparse_properties(&self, device: DeviceId) -> Result<(), SimError> {
+        self.array_get_sparse_properties(device)
+    }
+
+    /// `cuMemMapArrayAsync`. Sparse CUDA array mapping is not modeled.
+    ///
+    /// Always Invalid `"sparse map"` (no `CUarrayMapInfo` / sparse array
+    /// tiles). Distinct from [`Self::array_get_sparse_properties`] (why is
+    /// not `"array sparse"`) and from [`Self::va_map`] (live VMM). Unknown
+    /// devices are Invalid `"device not in profile"`. Query; legal during
+    /// capture. This VM does not invent
+    /// `cuMipmappedArrayGetSparseProperties` this slice.
+    pub fn mem_map_array_async(&self, device: DeviceId) -> Result<(), SimError> {
+        let _gpu = self.profile.gpu(device)?;
+        Err(SimError::Invalid { why: "sparse map" })
+    }
+
+    /// `cuArrayGetPlane` plus `cudaArrayGetPlane`. CUDA arrays are not
+    /// modeled.
+    ///
+    /// Always Invalid `"array plane"` (no array handles). Distinct from
+    /// [`Self::array_get_sparse_properties`] and from
+    /// [`Self::array_get_memory_requirements`]. Unknown devices are Invalid
+    /// `"device not in profile"`. Query; legal during capture.
+    /// Driver wrap: [`Self::mem_array_get_plane`].
+    /// Identity: [`Self::mem_array_get_plane`].
+    pub fn array_get_plane(&self, device: DeviceId) -> Result<(), SimError> {
+        let _gpu = self.profile.gpu(device)?;
+        Err(SimError::Invalid { why: "array plane" })
+    }
+
+    /// `cuArrayGetPlane`. Identity with [`Self::array_get_plane`].
+    /// Query; legal during capture. Distinct from [`Self::mem_array_get_sparse_properties`].
+    pub fn mem_array_get_plane(&self, device: DeviceId) -> Result<(), SimError> {
+        self.array_get_plane(device)
+    }
+
+    /// `cuArrayGetMemoryRequirements` plus `cudaArrayGetMemoryRequirements`.
+    /// CUDA arrays are not modeled.
+    ///
+    /// Always Invalid `"array memory"` (no array handles). Distinct from
+    /// [`Self::array_get_plane`] and from
+    /// [`Self::mipmapped_array_get_memory_requirements`]. Unknown devices are
+    /// Invalid `"device not in profile"`. Query; legal during capture.
+    /// Driver wrap: [`Self::mem_array_get_memory_requirements`].
+    /// Identity: [`Self::mem_array_get_memory_requirements`].
+    pub fn array_get_memory_requirements(&self, device: DeviceId) -> Result<(), SimError> {
+        let _gpu = self.profile.gpu(device)?;
+        Err(SimError::Invalid {
+            why: "array memory",
+        })
+    }
+
+    /// `cuArrayGetMemoryRequirements`. Identity with [`Self::array_get_memory_requirements`].
+    /// Query; legal during capture. Distinct from [`Self::mem_array_get_plane`].
+    pub fn mem_array_get_memory_requirements(&self, device: DeviceId) -> Result<(), SimError> {
+        self.array_get_memory_requirements(device)
+    }
+
+    /// `cuMipmappedArrayGetMemoryRequirements` plus
+    /// `cudaMipmappedArrayGetMemoryRequirements`. CUDA mipmapped arrays are
+    /// not modeled.
+    ///
+    /// Always Invalid `"mipmap memory"` (no mipmapped-array handles). Distinct
+    /// from [`Self::array_get_memory_requirements`], from
+    /// [`Self::mipmapped_array_create`], and from
+    /// [`Self::mipmapped_array_get_level`]. Unknown devices are Invalid
+    /// `"device not in profile"`. Query; legal during capture.
+    /// Driver wrap: [`Self::mem_mipmapped_array_get_memory_requirements`].
+    /// Identity: [`Self::mem_mipmapped_array_get_memory_requirements`].
+    pub fn mipmapped_array_get_memory_requirements(
+        &self,
+        device: DeviceId,
+    ) -> Result<(), SimError> {
+        let _gpu = self.profile.gpu(device)?;
+        Err(SimError::Invalid {
+            why: "mipmap memory",
+        })
+    }
+
+    /// `cuMipmappedArrayGetMemoryRequirements`. Identity with [`Self::mipmapped_array_get_memory_requirements`].
+    /// Query; legal during capture. Distinct from [`Self::mem_array_get_memory_requirements`].
+    pub fn mem_mipmapped_array_get_memory_requirements(
+        &self,
+        device: DeviceId,
+    ) -> Result<(), SimError> {
+        self.mipmapped_array_get_memory_requirements(device)
+    }
+
+    /// `cuMipmappedArrayGetSparseProperties` plus
+    /// `cudaMipmappedArrayGetSparseProperties`. CUDA mipmapped arrays are
+    /// not modeled.
+    ///
+    /// Always Invalid `"mipmap sparse"` (no mipmapped-array handles).
+    /// Distinct from [`Self::array_get_sparse_properties`] (why is not
+    /// `"array sparse"`) and from [`Self::mem_map_array_async`] (why is not
+    /// `"sparse map"`). Unknown devices are Invalid `"device not in profile"`.
+    /// Query; legal during capture. This VM does not invent
+    /// `cuTexRefCreate` this slice.
+    /// Driver wrap: [`Self::mem_mipmapped_array_get_sparse_properties`].
+    /// Identity: [`Self::mem_mipmapped_array_get_sparse_properties`].
+    pub fn mipmapped_array_get_sparse_properties(&self, device: DeviceId) -> Result<(), SimError> {
+        let _gpu = self.profile.gpu(device)?;
+        Err(SimError::Invalid {
+            why: "mipmap sparse",
+        })
+    }
+
+    /// `cuMipmappedArrayGetSparseProperties`. Identity with [`Self::mipmapped_array_get_sparse_properties`].
+    /// Query; legal during capture. Distinct from [`Self::mem_mipmapped_array_get_memory_requirements`].
+    pub fn mem_mipmapped_array_get_sparse_properties(
+        &self,
+        device: DeviceId,
+    ) -> Result<(), SimError> {
+        self.mipmapped_array_get_sparse_properties(device)
+    }
+
+    /// `cuMipmappedArrayCreate`. CUDA mipmapped arrays are not modeled.
+    ///
+    /// Always Invalid `"mipmapped array"`
+    /// ([`DeviceAttr::MaxTexture1DMipmappedWidth`] is 0). Distinct from
+    /// [`Self::array_create`], from
+    /// [`Self::mipmapped_array_get_memory_requirements`], from
+    /// [`Self::mipmapped_array_get_level`], and from
+    /// [`Self::mipmapped_array_destroy`]. Unknown devices are
+    /// Invalid `"device not in profile"`. Query; legal during capture.
+    /// Driver wrap: [`Self::mem_mipmapped_array_create`].
+    /// Identity: [`Self::mem_mipmapped_array_create`].
+    pub fn mipmapped_array_create(&self, device: DeviceId) -> Result<(), SimError> {
+        let _gpu = self.profile.gpu(device)?;
+        Err(SimError::Invalid {
+            why: "mipmapped array",
+        })
+    }
+
+    /// `cuMipmappedArrayCreate`. Identity with [`Self::mipmapped_array_create`].
+    /// Query; legal during capture. Distinct from [`Self::mem_mipmapped_array_get_sparse_properties`].
+    pub fn mem_mipmapped_array_create(&self, device: DeviceId) -> Result<(), SimError> {
+        self.mipmapped_array_create(device)
+    }
+
+    /// `cuMipmappedArrayGetLevel` plus `cudaGetMipmappedArrayLevel`. CUDA
+    /// mipmapped arrays are not modeled.
+    ///
+    /// Always Invalid `"mipmap level"` (no mipmapped-array handles). Distinct
+    /// from [`Self::mipmapped_array_create`], from
+    /// [`Self::mipmapped_array_get_memory_requirements`], and from
+    /// [`Self::mipmapped_array_destroy`]. Unknown devices are
+    /// Invalid `"device not in profile"`. Query; legal during capture.
+    /// Driver wrap: [`Self::mem_mipmapped_array_get_level`].
+    /// Identity: [`Self::mem_mipmapped_array_get_level`].
+    pub fn mipmapped_array_get_level(&self, device: DeviceId) -> Result<(), SimError> {
+        let _gpu = self.profile.gpu(device)?;
+        Err(SimError::Invalid {
+            why: "mipmap level",
+        })
+    }
+
+    /// `cuMipmappedArrayGetLevel`. Identity with [`Self::mipmapped_array_get_level`].
+    /// Query; legal during capture. Distinct from [`Self::mem_mipmapped_array_create`].
+    pub fn mem_mipmapped_array_get_level(&self, device: DeviceId) -> Result<(), SimError> {
+        self.mipmapped_array_get_level(device)
+    }
+
+    /// `cuMipmappedArrayDestroy` plus `cudaFreeMipmappedArray`. CUDA
+    /// mipmapped arrays are not modeled.
+    ///
+    /// Always Invalid `"mipmap destroy"` (no mipmapped-array handles). Distinct
+    /// from [`Self::mipmapped_array_create`], from
+    /// [`Self::mipmapped_array_get_level`], and from [`Self::array_destroy`].
+    /// Unknown devices are Invalid `"device not in profile"`. Query; legal
+    /// during capture.
+    /// Driver wrap: [`Self::mem_mipmapped_array_destroy`].
+    /// Identity: [`Self::mem_mipmapped_array_destroy`].
+    pub fn mipmapped_array_destroy(&self, device: DeviceId) -> Result<(), SimError> {
+        let _gpu = self.profile.gpu(device)?;
+        Err(SimError::Invalid {
+            why: "mipmap destroy",
+        })
+    }
+
+    /// `cuMipmappedArrayDestroy`. Identity with [`Self::mipmapped_array_destroy`].
+    /// Query; legal during capture. Distinct from [`Self::mem_mipmapped_array_get_level`].
+    pub fn mem_mipmapped_array_destroy(&self, device: DeviceId) -> Result<(), SimError> {
+        self.mipmapped_array_destroy(device)
+    }
+
+    /// `cuImportExternalMemory`. External memory import is not modeled.
+    ///
+    /// Always Invalid `"external memory"` ([`DeviceAttr::DmaBufSupported`] is
+    /// 0; Win32 / fabric handles are 0). Distinct from
+    /// [`Self::va_get_handle_for_address_range`], from
+    /// [`Self::device_get_nvscisync_attributes`], from
+    /// [`Self::destroy_external_memory`], and from
+    /// [`Self::import_external_semaphore`]. Unknown devices are Invalid
+    /// `"device not in profile"`. Query; legal during capture.
+    /// Driver wrap: [`Self::mem_import_external_memory`].
+    /// Identity: [`Self::mem_import_external_memory`].
+    pub fn import_external_memory(&self, device: DeviceId) -> Result<(), SimError> {
+        let _gpu = self.profile.gpu(device)?;
+        Err(SimError::Invalid {
+            why: "external memory",
+        })
+    }
+
+    /// `cuImportExternalMemory`. Identity with [`Self::import_external_memory`].
+    /// Query; legal during capture. Distinct from [`Self::mem_mipmapped_array_destroy`].
+    pub fn mem_import_external_memory(&self, device: DeviceId) -> Result<(), SimError> {
+        self.import_external_memory(device)
+    }
+
+    /// `cuDestroyExternalMemory` plus `cudaDestroyExternalMemory`. External
+    /// memory import is not modeled.
+    ///
+    /// Always Invalid `"external destroy"` (no external-memory handles).
+    /// Distinct from [`Self::import_external_memory`] and from
+    /// [`Self::external_memory_get_mapped_buffer`]. Unknown devices are
+    /// Invalid `"device not in profile"`. Query; legal during capture.
+    /// Driver wrap: [`Self::mem_destroy_external_memory`].
+    /// Identity: [`Self::mem_destroy_external_memory`].
+    pub fn destroy_external_memory(&self, device: DeviceId) -> Result<(), SimError> {
+        let _gpu = self.profile.gpu(device)?;
+        Err(SimError::Invalid {
+            why: "external destroy",
+        })
+    }
+
+    /// `cuDestroyExternalMemory`. Identity with [`Self::destroy_external_memory`].
+    /// Query; legal during capture. Distinct from [`Self::mem_import_external_memory`].
+    pub fn mem_destroy_external_memory(&self, device: DeviceId) -> Result<(), SimError> {
+        self.destroy_external_memory(device)
+    }
+
+    /// `cuExternalMemoryGetMappedBuffer` plus
+    /// `cudaExternalMemoryGetMappedBuffer`. External memory import is not
+    /// modeled.
+    ///
+    /// Always Invalid `"mapped buffer"` (no external-memory handles). Distinct
+    /// from [`Self::destroy_external_memory`], from
+    /// [`Self::import_external_memory`], from
+    /// [`Self::graphics_resource_get_mapped_pointer`], and from
+    /// [`Self::external_memory_get_mapped_mipmapped_array`]. Unknown devices
+    /// are Invalid `"device not in profile"`. Query; legal during capture.
+    /// Driver wrap: [`Self::mem_external_memory_get_mapped_buffer`].
+    /// Identity: [`Self::mem_external_memory_get_mapped_buffer`].
+    pub fn external_memory_get_mapped_buffer(&self, device: DeviceId) -> Result<(), SimError> {
+        let _gpu = self.profile.gpu(device)?;
+        Err(SimError::Invalid {
+            why: "mapped buffer",
+        })
+    }
+
+    /// `cuExternalMemoryGetMappedBuffer`. Identity with [`Self::external_memory_get_mapped_buffer`].
+    /// Query; legal during capture. Distinct from [`Self::mem_destroy_external_memory`].
+    pub fn mem_external_memory_get_mapped_buffer(&self, device: DeviceId) -> Result<(), SimError> {
+        self.external_memory_get_mapped_buffer(device)
+    }
+
+    /// `cuExternalMemoryGetMappedMipmappedArray` plus
+    /// `cudaExternalMemoryGetMappedMipmappedArray`. External memory import
+    /// is not modeled.
+    ///
+    /// Always Invalid `"external mipmap"` (no external-memory handles). Distinct
+    /// from [`Self::external_memory_get_mapped_buffer`] and from
+    /// [`Self::graphics_resource_get_mapped_mipmapped_array`] (why is not
+    /// `"mapped mipmap"`). Unknown devices are Invalid
+    /// `"device not in profile"`. Query; legal during capture.
+    /// Driver wrap: [`Self::mem_external_memory_get_mapped_mipmapped_array`].
+    /// Identity: [`Self::mem_external_memory_get_mapped_mipmapped_array`].
+    pub fn external_memory_get_mapped_mipmapped_array(
+        &self,
+        device: DeviceId,
+    ) -> Result<(), SimError> {
+        let _gpu = self.profile.gpu(device)?;
+        Err(SimError::Invalid {
+            why: "external mipmap",
+        })
+    }
+
+    /// `cuExternalMemoryGetMappedMipmappedArray`. Identity with [`Self::external_memory_get_mapped_mipmapped_array`].
+    /// Query; legal during capture. Distinct from [`Self::mem_external_memory_get_mapped_buffer`].
+    pub fn mem_external_memory_get_mapped_mipmapped_array(
+        &self,
+        device: DeviceId,
+    ) -> Result<(), SimError> {
+        self.external_memory_get_mapped_mipmapped_array(device)
+    }
+
+    /// `cuImportExternalSemaphore` plus `cudaImportExternalSemaphore`.
+    /// External semaphore import is not modeled.
+    ///
+    /// Always Invalid `"external semaphore"` (no external-semaphore handles).
+    /// Distinct from [`Self::import_external_memory`] (why is not a
+    /// superstring of `"external memory"`), from
+    /// [`Self::device_get_nvscisync_attributes`], and from
+    /// [`Self::destroy_external_semaphore`]. Unknown devices are Invalid
+    /// `"device not in profile"`. Query; legal during capture.
+    /// Driver wrap: [`Self::mem_import_external_semaphore`].
+    /// Identity: [`Self::mem_import_external_semaphore`].
+    pub fn import_external_semaphore(&self, device: DeviceId) -> Result<(), SimError> {
+        let _gpu = self.profile.gpu(device)?;
+        Err(SimError::Invalid {
+            why: "external semaphore",
+        })
+    }
+
+    /// `cuImportExternalSemaphore`. Identity with [`Self::import_external_semaphore`].
+    /// Query; legal during capture. Distinct from [`Self::mem_external_memory_get_mapped_mipmapped_array`].
+    pub fn mem_import_external_semaphore(&self, device: DeviceId) -> Result<(), SimError> {
+        self.import_external_semaphore(device)
+    }
+
+    /// `cuDestroyExternalSemaphore` plus `cudaDestroyExternalSemaphore`.
+    /// External semaphore import is not modeled.
+    ///
+    /// Always Invalid `"semaphore destroy"` (no external-semaphore handles).
+    /// Distinct from [`Self::import_external_semaphore`] (why is not a
+    /// superstring of `"external semaphore"`), from
+    /// [`Self::destroy_external_memory`], and from
+    /// [`Self::signal_external_semaphores_async`]. Unknown devices are Invalid
+    /// `"device not in profile"`. Query; legal during capture.
+    /// Driver wrap: [`Self::mem_destroy_external_semaphore`].
+    /// Identity: [`Self::mem_destroy_external_semaphore`].
+    pub fn destroy_external_semaphore(&self, device: DeviceId) -> Result<(), SimError> {
+        let _gpu = self.profile.gpu(device)?;
+        Err(SimError::Invalid {
+            why: "semaphore destroy",
+        })
+    }
+
+    /// `cuDestroyExternalSemaphore`. Identity with [`Self::destroy_external_semaphore`].
+    /// Query; legal during capture. Distinct from [`Self::mem_import_external_semaphore`].
+    pub fn mem_destroy_external_semaphore(&self, device: DeviceId) -> Result<(), SimError> {
+        self.destroy_external_semaphore(device)
+    }
+
+    /// `cuSignalExternalSemaphoresAsync` plus
+    /// `cudaSignalExternalSemaphoresAsync`. External semaphore import is
+    /// not modeled.
+    ///
+    /// Always Invalid `"semaphore signal"` (no external-semaphore handles).
+    /// Distinct from [`Self::destroy_external_semaphore`] (why is not a
+    /// superstring of `"semaphore destroy"`), from
+    /// [`Self::import_external_semaphore`], and from
+    /// [`Self::wait_external_semaphores_async`]. Unknown devices are Invalid
+    /// `"device not in profile"`. Query; legal during capture.
+    /// Driver wrap: [`Self::mem_signal_external_semaphores_async`].
+    /// Identity: [`Self::mem_signal_external_semaphores_async`].
+    pub fn signal_external_semaphores_async(
+        &self,
+        device: DeviceId,
+        stream: StreamId,
+    ) -> Result<(), SimError> {
+        let _gpu = self.profile.gpu(device)?;
+        self.require_live_stream(device, stream)?;
+        Err(SimError::Invalid {
+            why: "semaphore signal",
+        })
+    }
+
+    /// `cuSignalExternalSemaphoresAsync`. Identity with [`Self::signal_external_semaphores_async`].
+    /// Query; legal during capture. Distinct from [`Self::mem_destroy_external_semaphore`].
+    pub fn mem_signal_external_semaphores_async(
+        &self,
+        device: DeviceId,
+        stream: StreamId,
+    ) -> Result<(), SimError> {
+        self.signal_external_semaphores_async(device, stream)
+    }
+
+    /// `cuWaitExternalSemaphoresAsync` plus
+    /// `cudaWaitExternalSemaphoresAsync`. External semaphore import is
+    /// not modeled.
+    ///
+    /// Always Invalid `"semaphore wait"` (no external-semaphore handles).
+    /// Distinct from [`Self::signal_external_semaphores_async`] (why is not
+    /// a superstring of `"semaphore signal"`) and from
+    /// [`Self::destroy_external_semaphore`]. Unknown devices are Invalid
+    /// `"device not in profile"`. Query; legal during capture.
+    /// Driver wrap: [`Self::mem_wait_external_semaphores_async`].
+    /// Identity: [`Self::mem_wait_external_semaphores_async`].
+    pub fn wait_external_semaphores_async(
+        &self,
+        device: DeviceId,
+        stream: StreamId,
+    ) -> Result<(), SimError> {
+        let _gpu = self.profile.gpu(device)?;
+        self.require_live_stream(device, stream)?;
+        Err(SimError::Invalid {
+            why: "semaphore wait",
+        })
+    }
+
+    /// `cuWaitExternalSemaphoresAsync`. Identity with [`Self::wait_external_semaphores_async`].
+    /// Query; legal during capture. Distinct from [`Self::mem_signal_external_semaphores_async`].
+    /// This VM does not invent occupancy SM counts this slice.
+    pub fn mem_wait_external_semaphores_async(
+        &self,
+        device: DeviceId,
+        stream: StreamId,
+    ) -> Result<(), SimError> {
+        self.wait_external_semaphores_async(device, stream)
+    }
+
+    /// `cuSurfObjectCreate`. CUDA surfaces are not modeled.
+    ///
+    /// Always Invalid `"cuda surface"` ([`DeviceAttr::MaxSurface1DWidth`] is
+    /// 0). Distinct from [`Self::array_create`], from
+    /// [`Self::tex_object_create`], and from [`Self::surf_object_destroy`].
+    /// Unknown devices are Invalid `"device not in profile"`. Query; legal
+    /// during capture.
+    pub fn surf_object_create(&self, device: DeviceId) -> Result<(), SimError> {
+        let _gpu = self.profile.gpu(device)?;
+        Err(SimError::Invalid {
+            why: "cuda surface",
+        })
+    }
+
+    /// `cuSurfObjectDestroy` plus `cudaDestroySurfaceObject`. CUDA surfaces
+    /// are not modeled.
+    ///
+    /// Always Invalid `"unknown surf object"` (no surface-object handles).
+    /// Distinct from [`Self::surf_object_create`], from
+    /// [`Self::tex_object_destroy`], and from
+    /// [`Self::surf_object_get_resource_desc`]. Unknown devices are Invalid
+    /// `"device not in profile"`. Query; legal during capture.
+    pub fn surf_object_destroy(&self, device: DeviceId) -> Result<(), SimError> {
+        let _gpu = self.profile.gpu(device)?;
+        Err(SimError::Invalid {
+            why: "unknown surf object",
+        })
+    }
+
+    /// `cuSurfObjectGetResourceDesc` plus `cudaGetSurfaceObjectResourceDesc`.
+    /// CUDA surfaces are not modeled.
+    ///
+    /// Always Invalid `"surf resource desc"` (no surface-object handles).
+    /// Distinct from [`Self::surf_object_destroy`] and from
+    /// [`Self::array_get_descriptor`]. Unknown devices are Invalid
+    /// `"device not in profile"`. Query; legal during capture.
+    pub fn surf_object_get_resource_desc(&self, device: DeviceId) -> Result<(), SimError> {
+        let _gpu = self.profile.gpu(device)?;
+        Err(SimError::Invalid {
+            why: "surf resource desc",
+        })
+    }
+
+    /// `cuTexObjectCreate` plus `cudaCreateTextureObject`. CUDA textures
+    /// are not modeled.
+    ///
+    /// Always Invalid `"cuda texture"` ([`DeviceAttr::MaxTexture1DWidth`] is
+    /// 0). Distinct from [`Self::surf_object_create`], from
+    /// [`Self::array_create`], and from [`Self::tex_object_destroy`].
+    /// Unknown devices are Invalid `"device not in profile"`. Query; legal
+    /// during capture.
+    pub fn tex_object_create(&self, device: DeviceId) -> Result<(), SimError> {
+        let _gpu = self.profile.gpu(device)?;
+        Err(SimError::Invalid {
+            why: "cuda texture",
+        })
+    }
+
+    /// `cuTexObjectDestroy` plus `cudaDestroyTextureObject`. CUDA textures
+    /// are not modeled.
+    ///
+    /// Always Invalid `"unknown tex object"` (no texture-object handles).
+    /// Distinct from [`Self::tex_object_create`], from
+    /// [`Self::tex_object_get_resource_desc`], and from
+    /// [`Self::tex_object_get_texture_desc`]. Unknown devices are Invalid
+    /// `"device not in profile"`. Query; legal during capture.
+    pub fn tex_object_destroy(&self, device: DeviceId) -> Result<(), SimError> {
+        let _gpu = self.profile.gpu(device)?;
+        Err(SimError::Invalid {
+            why: "unknown tex object",
+        })
+    }
+
+    /// `cuTexObjectGetResourceDesc` plus `cudaGetTextureObjectResourceDesc`.
+    /// CUDA textures are not modeled.
+    ///
+    /// Always Invalid `"tex resource desc"` (no texture-object handles).
+    /// Distinct from [`Self::tex_object_destroy`], from
+    /// [`Self::surf_object_get_resource_desc`], and from
+    /// [`Self::tex_object_get_resource_view_desc`]. Unknown devices are Invalid
+    /// `"device not in profile"`. Query; legal during capture.
+    pub fn tex_object_get_resource_desc(&self, device: DeviceId) -> Result<(), SimError> {
+        let _gpu = self.profile.gpu(device)?;
+        Err(SimError::Invalid {
+            why: "tex resource desc",
+        })
+    }
+
+    /// `cuTexObjectGetTextureDesc` plus `cudaGetTextureObjectTextureDesc`.
+    /// CUDA textures are not modeled.
+    ///
+    /// Always Invalid `"texture desc"` (no texture-object handles). Distinct
+    /// from [`Self::tex_object_get_resource_desc`]. Unknown devices are
+    /// Invalid `"device not in profile"`. Query; legal during capture. This
+    /// VM does not invent `CU_TR_FILTER_MODE` this slice.
+    pub fn tex_object_get_texture_desc(&self, device: DeviceId) -> Result<(), SimError> {
+        let _gpu = self.profile.gpu(device)?;
+        Err(SimError::Invalid {
+            why: "texture desc",
+        })
+    }
+
+    /// `cuTexObjectGetResourceViewDesc` plus
+    /// `cudaGetTextureObjectResourceViewDesc`. CUDA textures are not modeled.
+    ///
+    /// Always Invalid `"tex view desc"` (no texture-object handles). Distinct
+    /// from [`Self::tex_object_get_resource_desc`] and from
+    /// [`Self::tex_object_get_texture_desc`]. Unknown devices are Invalid
+    /// `"device not in profile"`. Query; legal during capture. This VM does
+    /// not invent `CU_RES_VIEW_FORMAT` this slice.
+    pub fn tex_object_get_resource_view_desc(&self, device: DeviceId) -> Result<(), SimError> {
+        let _gpu = self.profile.gpu(device)?;
+        Err(SimError::Invalid {
+            why: "tex view desc",
+        })
+    }
+
+    /// `cuGraphicsMapResources` / `cudaGraphicsMapResources`.
+    ///
+    /// Always Invalid `"graphics resource"` ([`DeviceAttr::D3D12CigSupported`]
+    /// and [`DeviceAttr::VulkanCigSupported`] are 0; OpenGL, Direct3D,
+    /// Vulkan, and EGL graphics resources are not modeled). Distinct from
+    /// [`Self::import_external_memory`], from
+    /// [`Self::graphics_gl_register_buffer`], and from
+    /// [`Self::graphics_unmap_resources`]. Unknown devices are Invalid
+    /// `"device not in profile"`. Query; legal during capture.
+    pub fn graphics_map_resources(
+        &self,
+        device: DeviceId,
+        stream: StreamId,
+    ) -> Result<(), SimError> {
+        let _gpu = self.profile.gpu(device)?;
+        self.require_live_stream(device, stream)?;
+        Err(SimError::Invalid {
+            why: "graphics resource",
+        })
+    }
+
+    /// `cuGraphicsUnmapResources` plus `cudaGraphicsUnmapResources`.
+    /// Graphics interop is not modeled.
+    ///
+    /// Always Invalid `"graphics unmap"` (no graphics-resource handles).
+    /// Distinct from [`Self::graphics_map_resources`], from
+    /// [`Self::graphics_unregister_resource`], from
+    /// [`Self::graphics_resource_get_mapped_pointer`], and from
+    /// [`Self::gl_unmap_buffer_object`]. Unknown devices are
+    /// Invalid `"device not in profile"`. Query; legal during capture.
+    pub fn graphics_unmap_resources(
+        &self,
+        device: DeviceId,
+        stream: StreamId,
+    ) -> Result<(), SimError> {
+        let _gpu = self.profile.gpu(device)?;
+        self.require_live_stream(device, stream)?;
+        Err(SimError::Invalid {
+            why: "graphics unmap",
+        })
+    }
+
+    /// `cuGraphicsResourceGetMappedPointer` plus
+    /// `cudaGraphicsResourceGetMappedPointer`. Graphics interop is not
+    /// modeled.
+    ///
+    /// Always Invalid `"mapped pointer"` (no graphics-resource handles).
+    /// Distinct from [`Self::graphics_map_resources`], from
+    /// [`Self::graphics_unmap_resources`], and from
+    /// [`Self::graphics_subresource_get_mapped_array`]. Unknown devices are
+    /// Invalid `"device not in profile"`. Query; legal during capture.
+    pub fn graphics_resource_get_mapped_pointer(&self, device: DeviceId) -> Result<(), SimError> {
+        let _gpu = self.profile.gpu(device)?;
+        Err(SimError::Invalid {
+            why: "mapped pointer",
+        })
+    }
+
+    /// `cuGraphicsSubResourceGetMappedArray` plus
+    /// `cudaGraphicsSubResourceGetMappedArray`. Graphics interop is not
+    /// modeled.
+    ///
+    /// Always Invalid `"mapped array"` (no graphics-resource handles). Distinct
+    /// from [`Self::graphics_resource_get_mapped_pointer`], from
+    /// [`Self::array_create`], and from
+    /// [`Self::graphics_resource_get_mapped_mipmapped_array`]. Unknown devices
+    /// are Invalid `"device not in profile"`. Query; legal during capture.
+    pub fn graphics_subresource_get_mapped_array(&self, device: DeviceId) -> Result<(), SimError> {
+        let _gpu = self.profile.gpu(device)?;
+        Err(SimError::Invalid {
+            why: "mapped array",
+        })
+    }
+
+    /// `cuGraphicsResourceGetMappedMipmappedArray` plus
+    /// `cudaGraphicsResourceGetMappedMipmappedArray`. Graphics interop is
+    /// not modeled.
+    ///
+    /// Always Invalid `"mapped mipmap"` (no graphics-resource handles). Distinct
+    /// from [`Self::graphics_subresource_get_mapped_array`] and from
+    /// [`Self::mipmapped_array_create`]. Unknown devices are Invalid
+    /// `"device not in profile"`. Query; legal during capture. This VM does
+    /// not invent a `CUmipmappedArray` handle this slice.
+    pub fn graphics_resource_get_mapped_mipmapped_array(
+        &self,
+        device: DeviceId,
+    ) -> Result<(), SimError> {
+        let _gpu = self.profile.gpu(device)?;
+        Err(SimError::Invalid {
+            why: "mapped mipmap",
+        })
+    }
+
+    /// `cuGraphicsUnregisterResource` plus `cudaGraphicsUnregisterResource`.
+    /// Graphics interop is not modeled.
+    ///
+    /// Always Invalid `"graphics unregister"` (no graphics-resource handles).
+    /// Distinct from [`Self::graphics_unmap_resources`], from
+    /// [`Self::graphics_map_resources`], and from
+    /// [`Self::graphics_resource_set_map_flags`]. Unknown devices are Invalid
+    /// `"device not in profile"`. Query; legal during capture.
+    pub fn graphics_unregister_resource(&self, device: DeviceId) -> Result<(), SimError> {
+        let _gpu = self.profile.gpu(device)?;
+        Err(SimError::Invalid {
+            why: "graphics unregister",
+        })
+    }
+
+    /// `cuGraphicsResourceSetMapFlags` plus `cudaGraphicsResourceSetMapFlags`.
+    /// Graphics interop is not modeled.
+    ///
+    /// Always Invalid `"map flags"` (no graphics-resource handles). Distinct
+    /// from [`Self::graphics_unregister_resource`], from
+    /// [`Self::graphics_map_resources`], and from VMM `"mem map flags"`.
+    /// Unknown devices are Invalid `"device not in profile"`. Query; legal
+    /// during capture.
+    pub fn graphics_resource_set_map_flags(&self, device: DeviceId) -> Result<(), SimError> {
+        let _gpu = self.profile.gpu(device)?;
+        Err(SimError::Invalid { why: "map flags" })
+    }
+
+    /// `cuGraphicsGLRegisterBuffer` plus `cudaGraphicsGLRegisterBuffer`.
+    /// OpenGL interop is not modeled.
+    ///
+    /// Always Invalid `"gl buffer"` (no graphics-resource handles). Distinct
+    /// from [`Self::graphics_map_resources`], from [`Self::gl_ctx_create`],
+    /// from [`Self::graphics_gl_register_image`], and from
+    /// [`Self::gl_register_buffer_object`]. Unknown devices are
+    /// Invalid `"device not in profile"`. Query; legal during capture.
+    pub fn graphics_gl_register_buffer(&self, device: DeviceId) -> Result<(), SimError> {
+        let _gpu = self.profile.gpu(device)?;
+        Err(SimError::Invalid { why: "gl buffer" })
+    }
+
+    /// `cuGraphicsGLRegisterImage` plus `cudaGraphicsGLRegisterImage`.
+    /// OpenGL interop is not modeled.
+    ///
+    /// Always Invalid `"gl image"` (no graphics-resource handles). Distinct
+    /// from [`Self::graphics_gl_register_buffer`], from
+    /// [`Self::graphics_map_resources`], and from
+    /// [`Self::graphics_egl_register_image`]. Unknown devices are Invalid
+    /// `"device not in profile"`. Query; legal during capture.
+    pub fn graphics_gl_register_image(&self, device: DeviceId) -> Result<(), SimError> {
+        let _gpu = self.profile.gpu(device)?;
+        Err(SimError::Invalid { why: "gl image" })
+    }
+
+    /// `cuGraphicsEGLRegisterImage` plus `cudaGraphicsEGLRegisterImage`.
+    /// EGL interop is not modeled.
+    ///
+    /// Always Invalid `"egl register"` (no graphics-resource handles). Distinct
+    /// from [`Self::graphics_gl_register_image`] (why is not a superstring of
+    /// `"gl image"`) and from [`Self::egl_stream_consumer_connect`]. Unknown
+    /// devices are Invalid `"device not in profile"`. Query; legal during
+    /// capture.
+    pub fn graphics_egl_register_image(&self, device: DeviceId) -> Result<(), SimError> {
+        let _gpu = self.profile.gpu(device)?;
+        Err(SimError::Invalid {
+            why: "egl register",
+        })
+    }
+
+    /// `cuEGLStreamConsumerConnect` plus `cudaEGLStreamConsumerConnect`.
+    ///
+    /// Always Invalid `"egl stream"` (EGL streams are not modeled). Distinct
+    /// from [`Self::graphics_map_resources`], from
+    /// [`Self::egl_stream_producer_connect`], and from
+    /// [`Self::egl_stream_consumer_disconnect`]. Unknown devices are Invalid
+    /// `"device not in profile"`. Query; legal during capture.
+    pub fn egl_stream_consumer_connect(&self, device: DeviceId) -> Result<(), SimError> {
+        let _gpu = self.profile.gpu(device)?;
+        Err(SimError::Invalid { why: "egl stream" })
+    }
+
+    /// `cuEGLStreamConsumerDisconnect` plus `cudaEGLStreamConsumerDisconnect`.
+    ///
+    /// Always Invalid `"consumer disconnect"` (EGL streams are not modeled).
+    /// Distinct from [`Self::egl_stream_consumer_connect`], from
+    /// [`Self::egl_stream_producer_disconnect`], from
+    /// [`Self::egl_stream_consumer_acquire_frame`], and from
+    /// [`Self::egl_stream_consumer_release_frame`]. Unknown devices are Invalid
+    /// `"device not in profile"`. Query; legal during capture.
+    pub fn egl_stream_consumer_disconnect(&self, device: DeviceId) -> Result<(), SimError> {
+        let _gpu = self.profile.gpu(device)?;
+        Err(SimError::Invalid {
+            why: "consumer disconnect",
+        })
+    }
+
+    /// `cuEGLStreamConsumerAcquireFrame` plus
+    /// `cudaEGLStreamConsumerAcquireFrame`.
+    ///
+    /// Always Invalid `"consumer acquire"` (EGL streams are not modeled).
+    /// Distinct from [`Self::egl_stream_consumer_disconnect`] and from
+    /// [`Self::egl_stream_consumer_release_frame`]. Unknown devices
+    /// are Invalid `"device not in profile"`. Query; legal during capture.
+    pub fn egl_stream_consumer_acquire_frame(&self, device: DeviceId) -> Result<(), SimError> {
+        let _gpu = self.profile.gpu(device)?;
+        Err(SimError::Invalid {
+            why: "consumer acquire",
+        })
+    }
+
+    /// `cuEGLStreamConsumerReleaseFrame` plus
+    /// `cudaEGLStreamConsumerReleaseFrame`.
+    ///
+    /// Always Invalid `"consumer release"` (EGL streams are not modeled).
+    /// Distinct from [`Self::egl_stream_consumer_acquire_frame`] and from
+    /// [`Self::egl_stream_consumer_disconnect`]. Unknown devices are Invalid
+    /// `"device not in profile"`. Query; legal during capture.
+    pub fn egl_stream_consumer_release_frame(&self, device: DeviceId) -> Result<(), SimError> {
+        let _gpu = self.profile.gpu(device)?;
+        Err(SimError::Invalid {
+            why: "consumer release",
+        })
+    }
+
+    /// `cuEGLStreamProducerConnect` plus `cudaEGLStreamProducerConnect`.
+    ///
+    /// Always Invalid `"egl producer"` (EGL streams are not modeled). Distinct
+    /// from [`Self::egl_stream_consumer_connect`] and from
+    /// [`Self::egl_stream_producer_disconnect`]. Unknown devices are Invalid
+    /// `"device not in profile"`. Query; legal during capture.
+    pub fn egl_stream_producer_connect(&self, device: DeviceId) -> Result<(), SimError> {
+        let _gpu = self.profile.gpu(device)?;
+        Err(SimError::Invalid {
+            why: "egl producer",
+        })
+    }
+
+    /// `cuEGLStreamProducerDisconnect` plus `cudaEGLStreamProducerDisconnect`.
+    ///
+    /// Always Invalid `"producer disconnect"` (EGL streams are not modeled).
+    /// Distinct from [`Self::egl_stream_producer_connect`] and from
+    /// [`Self::egl_stream_producer_present_frame`]. Unknown devices are Invalid
+    /// `"device not in profile"`. Query; legal during capture.
+    pub fn egl_stream_producer_disconnect(&self, device: DeviceId) -> Result<(), SimError> {
+        let _gpu = self.profile.gpu(device)?;
+        Err(SimError::Invalid {
+            why: "producer disconnect",
+        })
+    }
+
+    /// `cuEGLStreamProducerPresentFrame` plus
+    /// `cudaEGLStreamProducerPresentFrame`.
+    ///
+    /// Always Invalid `"producer present"` (EGL streams are not modeled).
+    /// Distinct from [`Self::egl_stream_producer_disconnect`] and from
+    /// [`Self::egl_stream_producer_return_frame`]. Unknown devices are Invalid
+    /// `"device not in profile"`. Query; legal during capture.
+    pub fn egl_stream_producer_present_frame(&self, device: DeviceId) -> Result<(), SimError> {
+        let _gpu = self.profile.gpu(device)?;
+        Err(SimError::Invalid {
+            why: "producer present",
+        })
+    }
+
+    /// `cuEGLStreamProducerReturnFrame` plus `cudaEGLStreamProducerReturnFrame`.
+    ///
+    /// Always Invalid `"producer return"` (EGL streams are not modeled).
+    /// Distinct from [`Self::egl_stream_producer_present_frame`]. Unknown
+    /// devices are Invalid `"device not in profile"`. Query; legal during
+    /// capture. This VM does not invent a `CUeglFrame` this slice.
+    pub fn egl_stream_producer_return_frame(&self, device: DeviceId) -> Result<(), SimError> {
+        let _gpu = self.profile.gpu(device)?;
+        Err(SimError::Invalid {
+            why: "producer return",
+        })
+    }
+
+    /// `cuGLGetDevices` / `cudaGLGetDevices`. OpenGL interop is not modeled.
+    ///
+    /// Always Invalid `"opengl"`. Distinct from
+    /// [`Self::graphics_map_resources`], from
+    /// [`Self::egl_stream_consumer_connect`], from [`Self::gl_ctx_create`],
+    /// and from [`Self::gl_set_gl_device`].
+    /// Unknown devices are Invalid `"device not in profile"`. Query; legal
+    /// during capture.
+    pub fn gl_get_devices(&self, device: DeviceId) -> Result<(), SimError> {
+        let _gpu = self.profile.gpu(device)?;
+        Err(SimError::Invalid { why: "opengl" })
+    }
+
+    /// `cuGLCtxCreate`. OpenGL interop is not modeled.
+    ///
+    /// Always Invalid `"gl context"`. Distinct from [`Self::gl_get_devices`],
+    /// from [`Self::gl_register_buffer_object`], and from
+    /// [`Self::gl_set_gl_device`].
+    /// Unknown devices are Invalid `"device not in profile"`. Query; legal
+    /// during capture.
+    pub fn gl_ctx_create(&self, device: DeviceId) -> Result<(), SimError> {
+        let _gpu = self.profile.gpu(device)?;
+        Err(SimError::Invalid { why: "gl context" })
+    }
+
+    /// `cuGLRegisterBufferObject` plus `cudaGLRegisterBufferObject`. Legacy
+    /// OpenGL interop is not modeled.
+    ///
+    /// Always Invalid `"buffer object"` (no GL buffer-object handles). Distinct
+    /// from [`Self::graphics_gl_register_buffer`] (why is not a superstring of
+    /// `"gl buffer"`), from [`Self::gl_ctx_create`], from
+    /// [`Self::gl_map_buffer_object`], and from
+    /// [`Self::gl_unregister_buffer_object`]. Unknown devices are
+    /// Invalid `"device not in profile"`. Query; legal during capture.
+    pub fn gl_register_buffer_object(&self, device: DeviceId) -> Result<(), SimError> {
+        let _gpu = self.profile.gpu(device)?;
+        Err(SimError::Invalid {
+            why: "buffer object",
+        })
+    }
+
+    /// `cuGLMapBufferObject` plus `cudaGLMapBufferObject`. Legacy OpenGL
+    /// interop is not modeled.
+    ///
+    /// Always Invalid `"gl map"` (no GL buffer-object handles). Distinct from
+    /// [`Self::gl_register_buffer_object`], from
+    /// [`Self::graphics_map_resources`], from
+    /// [`Self::gl_unmap_buffer_object`], from
+    /// [`Self::gl_unregister_buffer_object`], and from
+    /// [`Self::gl_map_buffer_object_async`]. Unknown devices are Invalid
+    /// `"device not in profile"`. Query; legal during capture.
+    pub fn gl_map_buffer_object(&self, device: DeviceId) -> Result<(), SimError> {
+        let _gpu = self.profile.gpu(device)?;
+        Err(SimError::Invalid { why: "gl map" })
+    }
+
+    /// `cuGLUnregisterBufferObject` plus `cudaGLUnregisterBufferObject`.
+    /// Legacy OpenGL interop is not modeled.
+    ///
+    /// Always Invalid `"unregister object"` (no GL buffer-object handles).
+    /// Distinct from [`Self::gl_register_buffer_object`] (why is not a
+    /// superstring of `"buffer object"`), from
+    /// [`Self::graphics_unregister_resource`], and from
+    /// [`Self::gl_unmap_buffer_object`]. Unknown devices are Invalid
+    /// `"device not in profile"`. Query; legal during capture.
+    pub fn gl_unregister_buffer_object(&self, device: DeviceId) -> Result<(), SimError> {
+        let _gpu = self.profile.gpu(device)?;
+        Err(SimError::Invalid {
+            why: "unregister object",
+        })
+    }
+
+    /// `cuGLUnmapBufferObject` plus `cudaGLUnmapBufferObject`. Legacy
+    /// OpenGL interop is not modeled.
+    ///
+    /// Always Invalid `"gl unmap"` (no GL buffer-object handles). Distinct
+    /// from [`Self::gl_map_buffer_object`] (why is not a superstring of
+    /// `"gl map"`), from [`Self::graphics_unmap_resources`], and from
+    /// [`Self::gl_unmap_buffer_object_async`]. Unknown devices are Invalid
+    /// `"device not in profile"`. Query; legal during capture.
+    pub fn gl_unmap_buffer_object(&self, device: DeviceId) -> Result<(), SimError> {
+        let _gpu = self.profile.gpu(device)?;
+        Err(SimError::Invalid { why: "gl unmap" })
+    }
+
+    /// `cuGLUnmapBufferObjectAsync` plus `cudaGLUnmapBufferObjectAsync`.
+    /// Legacy OpenGL interop is not modeled.
+    ///
+    /// Always Invalid `"unmap async"` (no GL buffer-object handles). Distinct
+    /// from [`Self::gl_unmap_buffer_object`] (why is not a superstring of
+    /// `"gl unmap"`), from [`Self::graphics_unmap_resources`], and from
+    /// [`Self::gl_map_buffer_object_async`]. Unknown devices are Invalid
+    /// `"device not in profile"`. Query; legal during capture.
+    pub fn gl_unmap_buffer_object_async(
+        &self,
+        device: DeviceId,
+        stream: StreamId,
+    ) -> Result<(), SimError> {
+        let _gpu = self.profile.gpu(device)?;
+        self.require_live_stream(device, stream)?;
+        Err(SimError::Invalid { why: "unmap async" })
+    }
+
+    /// `cuGLMapBufferObjectAsync` plus `cudaGLMapBufferObjectAsync`. Legacy
+    /// OpenGL interop is not modeled.
+    ///
+    /// Always Invalid `"async map"` (no GL buffer-object handles). Distinct
+    /// from [`Self::gl_map_buffer_object`] (why is not a superstring of
+    /// `"gl map"`) and from [`Self::gl_unmap_buffer_object_async`]. Unknown
+    /// devices are Invalid `"device not in profile"`. Query; legal during
+    /// capture.
+    pub fn gl_map_buffer_object_async(
+        &self,
+        device: DeviceId,
+        stream: StreamId,
+    ) -> Result<(), SimError> {
+        let _gpu = self.profile.gpu(device)?;
+        self.require_live_stream(device, stream)?;
+        Err(SimError::Invalid { why: "async map" })
+    }
+
+    /// `cudaGLSetGLDevice`. OpenGL interop is not modeled.
+    ///
+    /// Always Invalid `"gl device"`. Distinct from [`Self::gl_get_devices`]
+    /// (why is not `"opengl"`) and from [`Self::gl_ctx_create`]. Unknown
+    /// devices are Invalid `"device not in profile"`. Query; legal during
+    /// capture.
+    pub fn gl_set_gl_device(&self, device: DeviceId) -> Result<(), SimError> {
+        let _gpu = self.profile.gpu(device)?;
+        Err(SimError::Invalid { why: "gl device" })
+    }
+
+    /// `cuD3D11GetDevices` / `cudaD3D11GetDevices`. Direct3D 11 interop is
+    /// not modeled.
+    ///
+    /// Always Invalid `"d3d11"`. Distinct from [`Self::gl_get_devices`],
+    /// from [`Self::d3d11_ctx_create`], and from [`Self::d3d11_get_device`].
+    /// Unknown devices are Invalid `"device not in profile"`. Query; legal
+    /// during capture.
+    pub fn d3d11_get_devices(&self, device: DeviceId) -> Result<(), SimError> {
+        let _gpu = self.profile.gpu(device)?;
+        Err(SimError::Invalid { why: "d3d11" })
+    }
+
+    /// `cuD3D11GetDevice` plus `cudaD3D11GetDevice`. Direct3D 11 interop is
+    /// not modeled.
+    ///
+    /// Always Invalid `"d3d11 device"`. Distinct from
+    /// [`Self::d3d11_get_devices`] (why is not the bare `"d3d11"` string),
+    /// from [`Self::d3d11_ctx_create`], and from [`Self::gl_set_gl_device`].
+    /// Unknown devices are Invalid `"device not in profile"`. Query; legal
+    /// during capture.
+    pub fn d3d11_get_device(&self, device: DeviceId) -> Result<(), SimError> {
+        let _gpu = self.profile.gpu(device)?;
+        Err(SimError::Invalid {
+            why: "d3d11 device",
+        })
+    }
+
+    /// `cuD3D11CtxCreate`. Direct3D 11 interop is not modeled.
+    ///
+    /// Always Invalid `"d3d11 context"`. Distinct from
+    /// [`Self::d3d11_get_devices`], from [`Self::gl_ctx_create`], from
+    /// [`Self::graphics_d3d11_register_resource`], and from
+    /// [`Self::d3d11_ctx_create_on_device`]. Unknown
+    /// devices are Invalid `"device not in profile"`. Query; legal during
+    /// capture.
+    pub fn d3d11_ctx_create(&self, device: DeviceId) -> Result<(), SimError> {
+        let _gpu = self.profile.gpu(device)?;
+        Err(SimError::Invalid {
+            why: "d3d11 context",
+        })
+    }
+
+    /// `cuD3D11CtxCreateOnDevice`. Direct3D 11 interop is not modeled.
+    ///
+    /// Always Invalid `"d3d11 ondevice"`. Distinct from
+    /// [`Self::d3d11_ctx_create`] (why is not `"d3d11 context"`) and from
+    /// [`Self::d3d11_get_device`]. Unknown devices are Invalid
+    /// `"device not in profile"`. Query; legal during capture.
+    pub fn d3d11_ctx_create_on_device(&self, device: DeviceId) -> Result<(), SimError> {
+        let _gpu = self.profile.gpu(device)?;
+        Err(SimError::Invalid {
+            why: "d3d11 ondevice",
+        })
+    }
+
+    /// `cuGraphicsD3D11RegisterResource` plus
+    /// `cudaGraphicsD3D11RegisterResource`. Direct3D 11 interop is not
+    /// modeled.
+    ///
+    /// Always Invalid `"d3d11 register"` (no graphics-resource handles).
+    /// Distinct from [`Self::d3d11_ctx_create`], from
+    /// [`Self::graphics_map_resources`], and from
+    /// [`Self::graphics_d3d12_register_resource`]. Unknown devices are Invalid
+    /// `"device not in profile"`. Query; legal during capture.
+    pub fn graphics_d3d11_register_resource(&self, device: DeviceId) -> Result<(), SimError> {
+        let _gpu = self.profile.gpu(device)?;
+        Err(SimError::Invalid {
+            why: "d3d11 register",
+        })
+    }
+
+    /// `cuD3D12GetDevices` plus `cudaD3D12GetDevices`. Direct3D 12 interop
+    /// is not modeled.
+    ///
+    /// Always Invalid `"d3d12"`. Distinct from [`Self::d3d11_get_devices`],
+    /// from [`DeviceAttr::D3D12CigSupported`] (CIG is not GetDevices), from
+    /// [`Self::d3d12_ctx_create`], and from [`Self::d3d12_get_device`].
+    /// Unknown devices are Invalid `"device not in profile"`. Query; legal
+    /// during capture.
+    pub fn d3d12_get_devices(&self, device: DeviceId) -> Result<(), SimError> {
+        let _gpu = self.profile.gpu(device)?;
+        Err(SimError::Invalid { why: "d3d12" })
+    }
+
+    /// `cuD3D12GetDevice` plus `cudaD3D12GetDevice`. Direct3D 12 interop is
+    /// not modeled.
+    ///
+    /// Always Invalid `"d3d12 device"`. Distinct from
+    /// [`Self::d3d12_get_devices`] (why is not the bare `"d3d12"` string),
+    /// from [`Self::d3d11_get_device`], and from
+    /// [`DeviceAttr::D3D12CigSupported`]. Unknown devices are Invalid
+    /// `"device not in profile"`. Query; legal during capture.
+    pub fn d3d12_get_device(&self, device: DeviceId) -> Result<(), SimError> {
+        let _gpu = self.profile.gpu(device)?;
+        Err(SimError::Invalid {
+            why: "d3d12 device",
+        })
+    }
+
+    /// `cuD3D12CtxCreate`. Direct3D 12 interop is not modeled.
+    ///
+    /// Always Invalid `"d3d12 context"`. Distinct from
+    /// [`Self::d3d12_get_devices`], from [`Self::d3d11_ctx_create`], from
+    /// [`DeviceAttr::D3D12CigSupported`], from
+    /// [`Self::graphics_d3d12_register_resource`], and from
+    /// [`Self::d3d12_ctx_create_on_device`]. Unknown devices are Invalid
+    /// `"device not in profile"`. Query; legal during capture.
+    pub fn d3d12_ctx_create(&self, device: DeviceId) -> Result<(), SimError> {
+        let _gpu = self.profile.gpu(device)?;
+        Err(SimError::Invalid {
+            why: "d3d12 context",
+        })
+    }
+
+    /// `cuD3D12CtxCreateOnDevice`. Direct3D 12 interop is not modeled.
+    ///
+    /// Always Invalid `"d3d12 ondevice"`. Distinct from
+    /// [`Self::d3d12_ctx_create`] (why is not `"d3d12 context"`), from
+    /// [`Self::d3d11_ctx_create_on_device`], and from
+    /// [`DeviceAttr::D3D12CigSupported`]. Unknown devices are Invalid
+    /// `"device not in profile"`. Query; legal during capture.
+    pub fn d3d12_ctx_create_on_device(&self, device: DeviceId) -> Result<(), SimError> {
+        let _gpu = self.profile.gpu(device)?;
+        Err(SimError::Invalid {
+            why: "d3d12 ondevice",
+        })
+    }
+
+    /// `cuGraphicsD3D12RegisterResource` plus
+    /// `cudaGraphicsD3D12RegisterResource`. Direct3D 12 interop is not
+    /// modeled.
+    ///
+    /// Always Invalid `"d3d12 register"` (no graphics-resource handles).
+    /// Distinct from [`Self::d3d12_ctx_create`], from
+    /// [`Self::graphics_d3d11_register_resource`], and from
+    /// [`DeviceAttr::D3D12CigSupported`]. Unknown devices are Invalid
+    /// `"device not in profile"`. Query; legal during capture.
+    pub fn graphics_d3d12_register_resource(&self, device: DeviceId) -> Result<(), SimError> {
+        let _gpu = self.profile.gpu(device)?;
+        Err(SimError::Invalid {
+            why: "d3d12 register",
+        })
+    }
+
+    /// `cuVDPAUGetDevice` plus `cudaVDPAUGetDevice`. VDPAU interop is not
+    /// modeled.
+    ///
+    /// Always Invalid `"vdpau"`. Distinct from [`Self::gl_get_devices`], from
+    /// [`Self::d3d12_get_devices`], from [`Self::vdpau_ctx_create`], from
+    /// [`Self::graphics_vdpau_register_output_surface`], and from
+    /// [`Self::vdpau_set_vdpau_device`].
+    /// Unknown devices are Invalid `"device not in profile"`. Query; legal
+    /// during capture.
+    pub fn vdpau_get_device(&self, device: DeviceId) -> Result<(), SimError> {
+        let _gpu = self.profile.gpu(device)?;
+        Err(SimError::Invalid { why: "vdpau" })
+    }
+
+    /// `cudaVDPAUSetVDPAUDevice`. VDPAU interop is not modeled.
+    ///
+    /// Always Invalid `"vdpau set"`. Distinct from [`Self::vdpau_get_device`]
+    /// (why is not the bare `"vdpau"` string), from [`Self::vdpau_ctx_create`],
+    /// and from [`Self::gl_set_gl_device`]. Unknown devices are Invalid
+    /// `"device not in profile"`. Query; legal during capture.
+    pub fn vdpau_set_vdpau_device(&self, device: DeviceId) -> Result<(), SimError> {
+        let _gpu = self.profile.gpu(device)?;
+        Err(SimError::Invalid { why: "vdpau set" })
+    }
+
+    /// `cuVDPAUCtxCreate`. VDPAU interop is not modeled.
+    ///
+    /// Always Invalid `"vdpau context"`. Distinct from [`Self::vdpau_get_device`],
+    /// from [`Self::gl_ctx_create`], and from
+    /// [`Self::graphics_vdpau_register_output_surface`]. Unknown devices are
+    /// Invalid `"device not in profile"`. Query; legal during capture.
+    pub fn vdpau_ctx_create(&self, device: DeviceId) -> Result<(), SimError> {
+        let _gpu = self.profile.gpu(device)?;
+        Err(SimError::Invalid {
+            why: "vdpau context",
+        })
+    }
+
+    /// `cuGraphicsVDPAURegisterOutputSurface` plus
+    /// `cudaGraphicsVDPAURegisterOutputSurface`. VDPAU interop is not
+    /// modeled.
+    ///
+    /// Always Invalid `"vdpau output"` (no graphics-resource handles). Distinct
+    /// from [`Self::vdpau_ctx_create`], from [`Self::vdpau_get_device`], and
+    /// from [`Self::graphics_vdpau_register_video_surface`]. Unknown devices
+    /// are Invalid `"device not in profile"`. Query; legal during capture.
+    pub fn graphics_vdpau_register_output_surface(&self, device: DeviceId) -> Result<(), SimError> {
+        let _gpu = self.profile.gpu(device)?;
+        Err(SimError::Invalid {
+            why: "vdpau output",
+        })
+    }
+
+    /// `cuGraphicsVDPAURegisterVideoSurface` plus
+    /// `cudaGraphicsVDPAURegisterVideoSurface`. VDPAU interop is not
+    /// modeled.
+    ///
+    /// Always Invalid `"vdpau video"` (no graphics-resource handles). Distinct
+    /// from [`Self::graphics_vdpau_register_output_surface`] and from
+    /// [`Self::vdpau_ctx_create`]. Unknown devices are Invalid
+    /// `"device not in profile"`. Query; legal during capture.
+    pub fn graphics_vdpau_register_video_surface(&self, device: DeviceId) -> Result<(), SimError> {
+        let _gpu = self.profile.gpu(device)?;
+        Err(SimError::Invalid { why: "vdpau video" })
+    }
+
+    /// `cuD3D9GetDevices` plus `cudaD3D9GetDevices`. Direct3D 9 interop is
+    /// not modeled.
+    ///
+    /// Always Invalid `"d3d9"`. Distinct from [`Self::d3d11_get_devices`],
+    /// from [`Self::d3d12_get_devices`], from [`Self::d3d9_ctx_create`],
+    /// and from [`Self::d3d9_get_device`].
+    /// Unknown devices are Invalid `"device not in profile"`. Query; legal
+    /// during capture.
+    pub fn d3d9_get_devices(&self, device: DeviceId) -> Result<(), SimError> {
+        let _gpu = self.profile.gpu(device)?;
+        Err(SimError::Invalid { why: "d3d9" })
+    }
+
+    /// `cuD3D9GetDevice` plus `cudaD3D9GetDevice`. Direct3D 9 interop is
+    /// not modeled.
+    ///
+    /// Always Invalid `"d3d9 device"`. Distinct from
+    /// [`Self::d3d9_get_devices`] (why is not the bare `"d3d9"` string),
+    /// from [`Self::d3d11_get_device`], and from [`Self::d3d12_get_device`].
+    /// Unknown devices are Invalid `"device not in profile"`. Query; legal
+    /// during capture.
+    pub fn d3d9_get_device(&self, device: DeviceId) -> Result<(), SimError> {
+        let _gpu = self.profile.gpu(device)?;
+        Err(SimError::Invalid { why: "d3d9 device" })
+    }
+
+    /// `cuD3D9CtxCreate`. Direct3D 9 interop is not modeled.
+    ///
+    /// Always Invalid `"d3d9 context"`. Distinct from [`Self::d3d9_get_devices`],
+    /// from [`Self::d3d11_ctx_create`], from
+    /// [`Self::graphics_d3d9_register_resource`], and from
+    /// [`Self::d3d9_ctx_create_on_device`]. Unknown devices are Invalid
+    /// `"device not in profile"`. Query; legal during capture.
+    pub fn d3d9_ctx_create(&self, device: DeviceId) -> Result<(), SimError> {
+        let _gpu = self.profile.gpu(device)?;
+        Err(SimError::Invalid {
+            why: "d3d9 context",
+        })
+    }
+
+    /// `cuD3D9CtxCreateOnDevice`. Direct3D 9 interop is not modeled.
+    ///
+    /// Always Invalid `"d3d9 ondevice"`. Distinct from
+    /// [`Self::d3d9_ctx_create`] (why is not `"d3d9 context"`), from
+    /// [`Self::d3d12_ctx_create_on_device`], and from
+    /// [`Self::d3d11_ctx_create_on_device`]. Unknown devices are Invalid
+    /// `"device not in profile"`. Query; legal during capture.
+    pub fn d3d9_ctx_create_on_device(&self, device: DeviceId) -> Result<(), SimError> {
+        let _gpu = self.profile.gpu(device)?;
+        Err(SimError::Invalid {
+            why: "d3d9 ondevice",
+        })
+    }
+
+    /// `cuGraphicsD3D9RegisterResource` plus
+    /// `cudaGraphicsD3D9RegisterResource`. Direct3D 9 interop is not
+    /// modeled.
+    ///
+    /// Always Invalid `"d3d9 register"` (no graphics-resource handles).
+    /// Distinct from [`Self::d3d9_ctx_create`] and from
+    /// [`Self::graphics_d3d11_register_resource`]. Unknown devices are Invalid
+    /// `"device not in profile"`. Query; legal during capture.
+    pub fn graphics_d3d9_register_resource(&self, device: DeviceId) -> Result<(), SimError> {
+        let _gpu = self.profile.gpu(device)?;
+        Err(SimError::Invalid {
+            why: "d3d9 register",
+        })
+    }
+
+    /// `cuD3D10GetDevices` plus `cudaD3D10GetDevices`. Direct3D 10 interop
+    /// is not modeled.
+    ///
+    /// Always Invalid `"d3d10"`. Distinct from [`Self::d3d9_get_devices`],
+    /// from [`Self::d3d11_get_devices`], from [`Self::d3d10_ctx_create`],
+    /// and from [`Self::d3d10_get_device`].
+    /// Unknown devices are Invalid `"device not in profile"`. Query; legal
+    /// during capture.
+    pub fn d3d10_get_devices(&self, device: DeviceId) -> Result<(), SimError> {
+        let _gpu = self.profile.gpu(device)?;
+        Err(SimError::Invalid { why: "d3d10" })
+    }
+
+    /// `cuD3D10GetDevice` plus `cudaD3D10GetDevice`. Direct3D 10 interop is
+    /// not modeled.
+    ///
+    /// Always Invalid `"d3d10 device"`. Distinct from
+    /// [`Self::d3d10_get_devices`] (why is not the bare `"d3d10"` string),
+    /// from [`Self::d3d9_get_device`], and from [`Self::d3d11_get_device`].
+    /// Unknown devices are Invalid `"device not in profile"`. Query; legal
+    /// during capture.
+    pub fn d3d10_get_device(&self, device: DeviceId) -> Result<(), SimError> {
+        let _gpu = self.profile.gpu(device)?;
+        Err(SimError::Invalid {
+            why: "d3d10 device",
+        })
+    }
+
+    /// `cuD3D10CtxCreate`. Direct3D 10 interop is not modeled.
+    ///
+    /// Always Invalid `"d3d10 context"`. Distinct from
+    /// [`Self::d3d10_get_devices`], from [`Self::d3d9_ctx_create`], from
+    /// [`Self::graphics_d3d10_register_resource`], and from
+    /// [`Self::d3d10_ctx_create_on_device`]. Unknown
+    /// devices are Invalid `"device not in profile"`. Query; legal during
+    /// capture.
+    pub fn d3d10_ctx_create(&self, device: DeviceId) -> Result<(), SimError> {
+        let _gpu = self.profile.gpu(device)?;
+        Err(SimError::Invalid {
+            why: "d3d10 context",
+        })
+    }
+
+    /// `cuD3D10CtxCreateOnDevice`. Direct3D 10 interop is not modeled.
+    ///
+    /// Always Invalid `"d3d10 ondevice"`. Distinct from
+    /// [`Self::d3d10_ctx_create`] (why is not `"d3d10 context"`), from
+    /// [`Self::d3d9_ctx_create_on_device`], and from
+    /// [`Self::d3d11_ctx_create_on_device`]. Unknown devices are Invalid
+    /// `"device not in profile"`. Query; legal during capture.
+    pub fn d3d10_ctx_create_on_device(&self, device: DeviceId) -> Result<(), SimError> {
+        let _gpu = self.profile.gpu(device)?;
+        Err(SimError::Invalid {
+            why: "d3d10 ondevice",
+        })
+    }
+
+    /// `cuGraphicsD3D10RegisterResource` plus
+    /// `cudaGraphicsD3D10RegisterResource`. Direct3D 10 interop is not
+    /// modeled.
+    ///
+    /// Always Invalid `"d3d10 register"` (no graphics-resource handles).
+    /// Distinct from [`Self::d3d10_ctx_create`] and from
+    /// [`Self::graphics_d3d9_register_resource`]. Unknown devices are Invalid
+    /// `"device not in profile"`. Query; legal during capture.
+    pub fn graphics_d3d10_register_resource(&self, device: DeviceId) -> Result<(), SimError> {
+        let _gpu = self.profile.gpu(device)?;
+        Err(SimError::Invalid {
+            why: "d3d10 register",
+        })
+    }
+
     /// `cudaMemcpy3DWithAttributesAsync`.
     ///
     /// [`MemcpySrcAccessOrder::Stream`] is [`Self::memcpy_3d_async`].
     /// [`MemcpySrcAccessOrder::DuringApiCall`] / [`MemcpySrcAccessOrder::Any`]
     /// are a one-copy [`Self::memcpy_3d_batch_async`]. `flags` must be `0`.
+    /// Driver `cuMemcpy3DWithAttributesAsync` is [`Self::mem_cpy_3d_with_attributes`].
     pub fn memcpy_3d_with_attributes(
         &mut self,
         device: DeviceId,
@@ -17136,6 +23444,22 @@ impl Sim {
         }
     }
 
+    /// `cuMemcpy3DWithAttributesAsync`. Identity with
+    /// [`Self::memcpy_3d_with_attributes`] (`cudaMemcpy3DWithAttributesAsync`).
+    ///
+    /// Stream order is capture-legal (pinned/device). Distinct from
+    /// [`Self::mem_cpy_3d_batch_async`].
+    pub fn mem_cpy_3d_with_attributes(
+        &mut self,
+        device: DeviceId,
+        op: MemcpyOp,
+        attr: MemcpyAttributes,
+        flags: u64,
+        stream: StreamId,
+    ) -> Result<OpId, SimError> {
+        self.memcpy_3d_with_attributes(device, op, attr, flags, stream)
+    }
+
     /// `cudaMemcpy3DBatchAsync`. Pointer-to-pointer 3D copies only.
     ///
     /// Each op must be [`MemcpyOp::is_3d`]. CUDA arrays are not modeled.
@@ -17143,6 +23467,7 @@ impl Sim {
     /// cannot include it (`"cannot capture memcpy3d batch"`). Intra-batch
     /// copies share one stream-order snapshot or empty DuringApiCall/Any deps
     /// like [`Self::memcpy_batch_async`].
+    /// Driver `cuMemcpy3DBatchAsync` is [`Self::mem_cpy_3d_batch_async`].
     pub fn memcpy_3d_batch_async(
         &mut self,
         device: DeviceId,
@@ -17175,6 +23500,21 @@ impl Sim {
             self.memcpy_precheck_enqueue(op)?;
         }
         self.enqueue_memcpy_batch(device, stream, ops, attrs, "cannot capture memcpy3d batch")
+    }
+
+    /// `cuMemcpy3DBatchAsync`. Identity with [`Self::memcpy_3d_batch_async`]
+    /// (`cudaMemcpy3DBatchAsync`).
+    ///
+    /// Capture refused. Distinct from [`Self::mem_cpy_batch_async`].
+    pub fn mem_cpy_3d_batch_async(
+        &mut self,
+        device: DeviceId,
+        ops: &[MemcpyOp],
+        attrs: &[MemcpyAttributes],
+        flags: u64,
+        stream: StreamId,
+    ) -> Result<Vec<OpId>, SimError> {
+        self.memcpy_3d_batch_async(device, ops, attrs, flags, stream)
     }
 
     fn enqueue_memcpy_batch(
@@ -17254,6 +23594,9 @@ impl Sim {
     /// on another stream fail [`SimError::Invalid`] (`not attached`) instead
     /// of paging. Inherits [`Self::set_stream_nvlink_util_centric`] and
     /// [`Self::set_stream_access_policy`] on `stream` via [`Self::kernel_bufs`].
+    ///
+    /// Driver `cuLaunchKernel` is [`Self::launch_kernel`].
+    /// Identity wrap [`Self::launch_kernel`].
     pub fn kernel(
         &mut self,
         device: DeviceId,
@@ -17265,6 +23608,20 @@ impl Sim {
         let reads: Vec<KernelBuf> = reads.iter().copied().map(KernelBuf::whole).collect();
         let writes: Vec<KernelBuf> = writes.iter().copied().map(KernelBuf::whole).collect();
         self.kernel_bufs(device, kind, &reads, &writes, stream)
+    }
+
+    /// `cuLaunchKernel`. Identity with [`Self::kernel`] (`cudaLaunchKernel`).
+    ///
+    /// Capture legal. Distinct from [`Self::stream_batch_mem_op_with_flags`].
+    pub fn launch_kernel(
+        &mut self,
+        device: DeviceId,
+        kind: KernelKind,
+        reads: &[AllocId],
+        writes: &[AllocId],
+        stream: StreamId,
+    ) -> Result<OpId, SimError> {
+        self.kernel(device, kind, reads, writes, stream)
     }
 
     /// Enqueue a kernel on explicit buffer spans (vLLM paged-KV analog).
@@ -17281,6 +23638,9 @@ impl Sim {
     /// Host attach and Single attach on another stream fail `not attached`.
     /// Inherits [`Self::set_stream_nvlink_util_centric`] and
     /// [`Self::set_stream_access_policy`] on `stream`.
+    ///
+    /// Driver `cuLaunchKernel` spans is [`Self::launch_kernel_bufs`].
+    /// Identity wrap [`Self::launch_kernel_bufs`].
     pub fn kernel_bufs(
         &mut self,
         device: DeviceId,
@@ -17301,6 +23661,21 @@ impl Sim {
         self.enqueue_nvlink_util_centric = prev_nv;
         self.enqueue_access_policy = prev_win;
         out
+    }
+
+    /// `cuLaunchKernel` on explicit buffer spans. Identity with
+    /// [`Self::kernel_bufs`] (`cudaLaunchKernel` spans).
+    ///
+    /// Capture legal. Distinct from [`Self::launch_kernel`].
+    pub fn launch_kernel_bufs(
+        &mut self,
+        device: DeviceId,
+        kind: KernelKind,
+        reads: &[KernelBuf],
+        writes: &[KernelBuf],
+        stream: StreamId,
+    ) -> Result<OpId, SimError> {
+        self.kernel_bufs(device, kind, reads, writes, stream)
     }
 
     /// Same as [`Self::kernel`] with [`ProgrammaticLaunch`] (CUDA PDL).
@@ -17429,6 +23804,9 @@ impl Sim {
     /// programmatic event, and a launch-completion event on one submit. Does
     /// not inherit [`Self::set_stream_access_policy`]. Decode identity stays
     /// [`Self::kernel`] ([`KernelAttrs::default`]).
+    ///
+    /// Driver `cuLaunchKernelEx` is [`Self::launch_kernel_ex`].
+    /// Identity wrap [`Self::launch_kernel_ex`].
     pub fn kernel_with(
         &mut self,
         device: DeviceId,
@@ -17443,7 +23821,25 @@ impl Sim {
         self.kernel_bufs_with(device, kind, &reads, &writes, stream, attrs)
     }
 
+    /// `cuLaunchKernelEx`. Identity with [`Self::kernel_with`] (`cudaLaunchKernelEx`).
+    ///
+    /// Capture legal. Distinct from [`Self::launch_kernel_bufs`].
+    pub fn launch_kernel_ex(
+        &mut self,
+        device: DeviceId,
+        kind: KernelKind,
+        reads: &[AllocId],
+        writes: &[AllocId],
+        stream: StreamId,
+        attrs: KernelAttrs,
+    ) -> Result<OpId, SimError> {
+        self.kernel_with(device, kind, reads, writes, stream, attrs)
+    }
+
     /// [`Self::kernel_bufs`] plus packed [`KernelAttrs`].
+    ///
+    /// Driver `cuLaunchKernelEx` spans is [`Self::launch_kernel_ex_bufs`].
+    /// Identity wrap [`Self::launch_kernel_ex_bufs`].
     pub fn kernel_bufs_with(
         &mut self,
         device: DeviceId,
@@ -17527,6 +23923,22 @@ impl Sim {
         self.enqueue_programmatic_event = prev_pde;
         self.enqueue_launch_completion = prev_lce;
         out
+    }
+
+    /// `cuLaunchKernelEx` on explicit buffer spans. Identity with
+    /// [`Self::kernel_bufs_with`] (`cudaLaunchKernelEx` spans).
+    ///
+    /// Capture legal. Distinct from [`Self::launch_kernel_ex`].
+    pub fn launch_kernel_ex_bufs(
+        &mut self,
+        device: DeviceId,
+        kind: KernelKind,
+        reads: &[KernelBuf],
+        writes: &[KernelBuf],
+        stream: StreamId,
+        attrs: KernelAttrs,
+    ) -> Result<OpId, SimError> {
+        self.kernel_bufs_with(device, kind, reads, writes, stream, attrs)
     }
 
     /// [`Self::kernel`] plus [`AccessPolicyWindow`] (`cudaLaunchAttributeAccessPolicyWindow`).
@@ -17658,7 +24070,12 @@ impl Sim {
     /// [`DeviceLimit::PersistingL2CacheSize`] is [`Self::set_persisting_l2_cache_size`].
     /// [`DeviceLimit::MaxL2FetchGranularity`] must be 32, 64, or 128 (CUDA SM 8.0+
     /// default 128). Access-policy windows must align to the current value.
-    /// Heap / stack / printf / CDP limits are stored; heap does not charge HBM.
+    /// Heap / stack / printf / [`DeviceLimit::DevRuntimeSyncDepth`] are stored;
+    /// heap does not charge HBM. [`DeviceLimit::DevRuntimePendingLaunchCount`]
+    /// caps in-flight [`Self::device_launch_graph`] (host, fire-and-forget,
+    /// sibling, and flushed tail). A queued tail does not occupy a slot.
+    /// Exceeding is Invalid `"pending launch count"`. Default 2048.
+    /// Driver `cuCtxSetLimit` is [`Self::ctx_set_limit`].
     pub fn set_limit(
         &mut self,
         device: DeviceId,
@@ -17725,6 +24142,7 @@ impl Sim {
     /// [`SharedMemoryMode::Default`] (unscaled). Launch FourByte / EightByte
     /// still override. Decode identity stays unset.
     /// `expertvm sim --device-shared-mem eight` sets [`SharedMemoryMode::EightByte`].
+    /// Driver `cuCtxSetSharedMemConfig` is [`Self::ctx_set_shared_mem_config`].
     pub fn set_shared_mem_config(
         &mut self,
         device: DeviceId,
@@ -17748,6 +24166,9 @@ impl Sim {
     /// Per device (this VM is not per kernel-function object). Launch Default
     /// inherits this before the device config. Launch FourByte / EightByte
     /// still override. Decode identity stays unset.
+    ///
+    /// Driver `cuFuncSetSharedMemConfig` is [`Self::func_set_shared_mem_config`].
+    /// Identity wrap [`Self::func_set_shared_mem_config`].
     pub fn set_func_shared_mem_config(
         &mut self,
         device: DeviceId,
@@ -17760,13 +24181,38 @@ impl Sim {
         Ok(())
     }
 
+    /// `cuFuncSetSharedMemConfig`. Identity with
+    /// [`Self::set_func_shared_mem_config`] (`cudaFuncSetSharedMemConfig`).
+    ///
+    /// Capture refused. Distinct from [`Self::launch_kernel_ex_bufs`].
+    pub fn func_set_shared_mem_config(
+        &mut self,
+        device: DeviceId,
+        mode: SharedMemoryMode,
+    ) -> Result<(), SimError> {
+        self.set_func_shared_mem_config(device, mode)
+    }
+
     /// `cudaFuncGetSharedMemConfig`. Query; legal during capture.
+    /// Driver `cuFuncGetSharedMemConfig` is [`Self::func_get_shared_mem_config`].
+    /// Identity wrap [`Self::func_get_shared_mem_config`].
     pub fn get_func_shared_mem_config(
         &self,
         device: DeviceId,
     ) -> Result<SharedMemoryMode, SimError> {
         let _gpu = self.profile.gpu(device)?;
         Ok(self.gpu_rt(device)?.func_shared_mem_config)
+    }
+
+    /// `cuFuncGetSharedMemConfig`. Identity with
+    /// [`Self::get_func_shared_mem_config`] (`cudaFuncGetSharedMemConfig`).
+    ///
+    /// Query; legal during capture. Distinct from [`Self::func_set_shared_mem_config`].
+    pub fn func_get_shared_mem_config(
+        &self,
+        device: DeviceId,
+    ) -> Result<SharedMemoryMode, SimError> {
+        self.get_func_shared_mem_config(device)
     }
 
     /// `cudaDeviceSetCacheConfig`. Host-synchronous. Capture cannot include it.
@@ -17776,6 +24222,7 @@ impl Sim {
     /// config does not change kernel duration. Distinct from
     /// [`Self::set_shared_mem_config`] and [`Self::set_func_carveout`].
     /// Decode identity stays PreferNone.
+    /// Driver `cuCtxSetCacheConfig` is [`Self::ctx_set_cache_config`].
     pub fn set_cache_config(&mut self, device: DeviceId, cache: FuncCache) -> Result<(), SimError> {
         self.fail_if_capturing("cannot capture cache config")?;
         let _gpu = self.profile.gpu(device)?;
@@ -17794,6 +24241,8 @@ impl Sim {
     ///
     /// Per device (this VM is not per kernel-function object). Stored; L1 is
     /// not modeled. Decode identity stays PreferNone.
+    /// Driver `cuFuncSetCacheConfig` is [`Self::func_set_cache_config`].
+    /// Identity wrap [`Self::func_set_cache_config`].
     pub fn set_func_cache_config(
         &mut self,
         device: DeviceId,
@@ -17804,6 +24253,18 @@ impl Sim {
         self.gpu_rt_mut(device)?.func_cache_config = cache;
         self.clock = self.clock.saturating_add(1);
         Ok(())
+    }
+
+    /// `cuFuncSetCacheConfig`. Identity with
+    /// [`Self::set_func_cache_config`] (`cudaFuncSetCacheConfig`).
+    ///
+    /// Capture refused. Distinct from [`Self::func_get_shared_mem_config`].
+    pub fn func_set_cache_config(
+        &mut self,
+        device: DeviceId,
+        cache: FuncCache,
+    ) -> Result<(), SimError> {
+        self.set_func_cache_config(device, cache)
     }
 
     /// Current [`Self::set_func_cache_config`]. Query; legal during capture.
@@ -17821,6 +24282,8 @@ impl Sim {
     /// occupancy. Launch MaxL1 / MaxShared still override. Capture-legal like
     /// other function attributes. Decode identity stays Default.
     /// `expertvm sim --func-max-shared` sets [`SharedMemCarveout::MaxShared`].
+    /// Driver `cuFuncSetAttribute` carveout is [`Self::func_set_carveout`].
+    /// Identity wrap [`Self::func_set_carveout`].
     pub fn set_func_carveout(
         &mut self,
         device: DeviceId,
@@ -17832,10 +24295,32 @@ impl Sim {
         Ok(())
     }
 
+    /// `cuFuncSetAttribute` carveout. Identity with
+    /// [`Self::set_func_carveout`] (`cudaFuncSetAttribute` PreferredSharedMemoryCarveout).
+    ///
+    /// Capture legal. Distinct from [`Self::func_set_cache_config`].
+    pub fn func_set_carveout(
+        &mut self,
+        device: DeviceId,
+        carveout: SharedMemCarveout,
+    ) -> Result<(), SimError> {
+        self.set_func_carveout(device, carveout)
+    }
+
     /// Current [`Self::set_func_carveout`]. Query; legal during capture.
+    /// Driver `cuFuncGetAttribute` carveout is [`Self::func_get_carveout`].
+    /// Identity wrap [`Self::func_get_carveout`].
     pub fn get_func_carveout(&self, device: DeviceId) -> Result<SharedMemCarveout, SimError> {
         let _gpu = self.profile.gpu(device)?;
         Ok(self.gpu_rt(device)?.func_carveout)
+    }
+
+    /// `cuFuncGetAttribute` carveout. Identity with
+    /// [`Self::get_func_carveout`] (`cudaFuncGetAttribute` PreferredSharedMemoryCarveout).
+    ///
+    /// Query; legal during capture. Distinct from [`Self::func_set_carveout`].
+    pub fn func_get_carveout(&self, device: DeviceId) -> Result<SharedMemCarveout, SimError> {
+        self.get_func_carveout(device)
     }
 
     /// `cudaFuncSetAttribute(..., cudaFuncAttributeClusterSchedulingPolicyPreference)`.
@@ -17844,6 +24329,8 @@ impl Sim {
     /// occupancy. Launch Spread / LoadBalancing still override. Capture-legal
     /// like other function attributes. Decode identity stays Default.
     /// `expertvm sim --func-cluster-spread` sets [`ClusterSchedulingPolicy::Spread`].
+    /// Driver `cuFuncSetAttribute` cluster policy is [`Self::func_set_cluster_policy`].
+    /// Identity wrap [`Self::func_set_cluster_policy`].
     pub fn set_func_cluster_policy(
         &mut self,
         device: DeviceId,
@@ -17855,7 +24342,21 @@ impl Sim {
         Ok(())
     }
 
+    /// `cuFuncSetAttribute` cluster policy. Identity with
+    /// [`Self::set_func_cluster_policy`] (`cudaFuncSetAttribute` ClusterSchedulingPolicyPreference).
+    ///
+    /// Capture legal. Distinct from [`Self::func_get_carveout`].
+    pub fn func_set_cluster_policy(
+        &mut self,
+        device: DeviceId,
+        policy: ClusterSchedulingPolicy,
+    ) -> Result<(), SimError> {
+        self.set_func_cluster_policy(device, policy)
+    }
+
     /// Current [`Self::set_func_cluster_policy`]. Query; legal during capture.
+    /// Driver `cuFuncGetAttribute` cluster policy is [`Self::func_get_cluster_policy`].
+    /// Identity wrap [`Self::func_get_cluster_policy`].
     pub fn get_func_cluster_policy(
         &self,
         device: DeviceId,
@@ -17864,11 +24365,24 @@ impl Sim {
         Ok(self.gpu_rt(device)?.func_cluster_policy)
     }
 
+    /// `cuFuncGetAttribute` cluster policy. Identity with
+    /// [`Self::get_func_cluster_policy`] (`cudaFuncGetAttribute` ClusterSchedulingPolicyPreference).
+    ///
+    /// Query; legal during capture. Distinct from [`Self::func_set_cluster_policy`].
+    pub fn func_get_cluster_policy(
+        &self,
+        device: DeviceId,
+    ) -> Result<ClusterSchedulingPolicy, SimError> {
+        self.get_func_cluster_policy(device)
+    }
+
     /// `cudaFuncSetAttribute(..., cudaFuncAttributeClusterDimMustBeSet)`.
     ///
     /// Per device. When true, a kernel without
     /// [`KernelAttrs::cluster`] is Invalid `"cluster dim must be set"`.
     /// Capture-legal. Decode identity stays false.
+    /// Driver `cuFuncSetAttribute` cluster dim must be set is [`Self::func_set_cluster_dim_must_be_set`].
+    /// Identity wrap [`Self::func_set_cluster_dim_must_be_set`].
     pub fn set_cluster_dim_must_be_set(
         &mut self,
         device: DeviceId,
@@ -17880,10 +24394,32 @@ impl Sim {
         Ok(())
     }
 
+    /// `cuFuncSetAttribute` cluster dim must be set. Identity with
+    /// [`Self::set_cluster_dim_must_be_set`] (`cudaFuncSetAttribute` ClusterDimMustBeSet).
+    ///
+    /// Capture legal. Distinct from [`Self::func_get_cluster_policy`].
+    pub fn func_set_cluster_dim_must_be_set(
+        &mut self,
+        device: DeviceId,
+        required: bool,
+    ) -> Result<(), SimError> {
+        self.set_cluster_dim_must_be_set(device, required)
+    }
+
     /// Current [`Self::set_cluster_dim_must_be_set`]. Query; legal during capture.
+    /// Driver `cuFuncGetAttribute` cluster dim must be set is [`Self::func_get_cluster_dim_must_be_set`].
+    /// Identity wrap [`Self::func_get_cluster_dim_must_be_set`].
     pub fn cluster_dim_must_be_set(&self, device: DeviceId) -> Result<bool, SimError> {
         let _gpu = self.profile.gpu(device)?;
         Ok(self.gpu_rt(device)?.cluster_dim_must_be_set)
+    }
+
+    /// `cuFuncGetAttribute` cluster dim must be set. Identity with
+    /// [`Self::cluster_dim_must_be_set`] (`cudaFuncGetAttribute` ClusterDimMustBeSet).
+    ///
+    /// Query; legal during capture. Distinct from [`Self::func_set_cluster_dim_must_be_set`].
+    pub fn func_get_cluster_dim_must_be_set(&self, device: DeviceId) -> Result<bool, SimError> {
+        self.cluster_dim_must_be_set(device)
     }
 
     /// `cudaFuncSetAttribute(..., cudaFuncAttributeRequiredClusterWidth)`.
@@ -17892,6 +24428,8 @@ impl Sim {
     /// width. Capture-legal. Decode identity stays `0`.
     /// `expertvm sim --required-cluster N` sets this (needs `--cluster`;
     /// occupancy matches `--cluster`).
+    /// Driver `cuFuncSetAttribute` required cluster width is [`Self::func_set_required_cluster_width`].
+    /// Identity wrap [`Self::func_set_required_cluster_width`].
     pub fn set_required_cluster_width(
         &mut self,
         device: DeviceId,
@@ -17900,13 +24438,37 @@ impl Sim {
         self.set_required_cluster_axis(device, 0, width)
     }
 
+    /// `cuFuncSetAttribute` required cluster width. Identity with
+    /// [`Self::set_required_cluster_width`] (`cudaFuncSetAttribute` RequiredClusterWidth).
+    ///
+    /// Capture legal. Distinct from [`Self::func_get_cluster_dim_must_be_set`].
+    pub fn func_set_required_cluster_width(
+        &mut self,
+        device: DeviceId,
+        width: u32,
+    ) -> Result<(), SimError> {
+        self.set_required_cluster_width(device, width)
+    }
+
     /// Current [`Self::set_required_cluster_width`]. Query; legal during capture.
+    /// Driver `cuFuncGetAttribute` required cluster width is [`Self::func_get_required_cluster_width`].
+    /// Identity wrap [`Self::func_get_required_cluster_width`].
     pub fn required_cluster_width(&self, device: DeviceId) -> Result<u32, SimError> {
         let _gpu = self.profile.gpu(device)?;
         Ok(self.gpu_rt(device)?.required_cluster_x)
     }
 
+    /// `cuFuncGetAttribute` required cluster width. Identity with
+    /// [`Self::required_cluster_width`] (`cudaFuncGetAttribute` RequiredClusterWidth).
+    ///
+    /// Query; legal during capture. Distinct from [`Self::func_set_required_cluster_width`].
+    pub fn func_get_required_cluster_width(&self, device: DeviceId) -> Result<u32, SimError> {
+        self.required_cluster_width(device)
+    }
+
     /// `cudaFuncSetAttribute(..., cudaFuncAttributeRequiredClusterHeight)`.
+    /// Driver `cuFuncSetAttribute` required cluster height is [`Self::func_set_required_cluster_height`].
+    /// Identity wrap [`Self::func_set_required_cluster_height`].
     pub fn set_required_cluster_height(
         &mut self,
         device: DeviceId,
@@ -17915,13 +24477,37 @@ impl Sim {
         self.set_required_cluster_axis(device, 1, height)
     }
 
+    /// `cuFuncSetAttribute` required cluster height. Identity with
+    /// [`Self::set_required_cluster_height`] (`cudaFuncSetAttribute` RequiredClusterHeight).
+    ///
+    /// Capture legal. Distinct from [`Self::func_get_required_cluster_width`].
+    pub fn func_set_required_cluster_height(
+        &mut self,
+        device: DeviceId,
+        height: u32,
+    ) -> Result<(), SimError> {
+        self.set_required_cluster_height(device, height)
+    }
+
     /// Current [`Self::set_required_cluster_height`]. Query; legal during capture.
+    /// Driver `cuFuncGetAttribute` required cluster height is [`Self::func_get_required_cluster_height`].
+    /// Identity wrap [`Self::func_get_required_cluster_height`].
     pub fn required_cluster_height(&self, device: DeviceId) -> Result<u32, SimError> {
         let _gpu = self.profile.gpu(device)?;
         Ok(self.gpu_rt(device)?.required_cluster_y)
     }
 
+    /// `cuFuncGetAttribute` required cluster height. Identity with
+    /// [`Self::required_cluster_height`] (`cudaFuncGetAttribute` RequiredClusterHeight).
+    ///
+    /// Query; legal during capture. Distinct from [`Self::func_set_required_cluster_height`].
+    pub fn func_get_required_cluster_height(&self, device: DeviceId) -> Result<u32, SimError> {
+        self.required_cluster_height(device)
+    }
+
     /// `cudaFuncSetAttribute(..., cudaFuncAttributeRequiredClusterDepth)`.
+    /// Driver `cuFuncSetAttribute` required cluster depth is [`Self::func_set_required_cluster_depth`].
+    /// Identity wrap [`Self::func_set_required_cluster_depth`].
     pub fn set_required_cluster_depth(
         &mut self,
         device: DeviceId,
@@ -17930,10 +24516,32 @@ impl Sim {
         self.set_required_cluster_axis(device, 2, depth)
     }
 
+    /// `cuFuncSetAttribute` required cluster depth. Identity with
+    /// [`Self::set_required_cluster_depth`] (`cudaFuncSetAttribute` RequiredClusterDepth).
+    ///
+    /// Capture legal. Distinct from [`Self::func_get_required_cluster_height`].
+    pub fn func_set_required_cluster_depth(
+        &mut self,
+        device: DeviceId,
+        depth: u32,
+    ) -> Result<(), SimError> {
+        self.set_required_cluster_depth(device, depth)
+    }
+
     /// Current [`Self::set_required_cluster_depth`]. Query; legal during capture.
+    /// Driver `cuFuncGetAttribute` required cluster depth is [`Self::func_get_required_cluster_depth`].
+    /// Identity wrap [`Self::func_get_required_cluster_depth`].
     pub fn required_cluster_depth(&self, device: DeviceId) -> Result<u32, SimError> {
         let _gpu = self.profile.gpu(device)?;
         Ok(self.gpu_rt(device)?.required_cluster_z)
+    }
+
+    /// `cuFuncGetAttribute` required cluster depth. Identity with
+    /// [`Self::required_cluster_depth`] (`cudaFuncGetAttribute` RequiredClusterDepth).
+    ///
+    /// Query; legal during capture. Distinct from [`Self::func_set_required_cluster_depth`].
+    pub fn func_get_required_cluster_depth(&self, device: DeviceId) -> Result<u32, SimError> {
+        self.required_cluster_depth(device)
     }
 
     fn set_required_cluster_axis(
@@ -17976,6 +24584,7 @@ impl Sim {
     /// host-wait tax; explicit stream policy wins. Default `0` is identity.
     /// `expertvm sim --device-sync-policy blocking` sets
     /// [`DeviceFlags::SCHEDULE_BLOCKING_SYNC`].
+    /// Driver `cuCtxSetFlags` is [`Self::ctx_set_flags`].
     pub fn set_device_flags(&mut self, device: DeviceId, flags: u32) -> Result<(), SimError> {
         self.fail_if_capturing("cannot capture device flags")?;
         let _gpu = self.profile.gpu(device)?;
@@ -18020,17 +24629,233 @@ impl Sim {
         Ok((flags, true))
     }
 
+    /// `cuDevicePrimaryCtxSetFlags`. Host-synchronous. Capture cannot include
+    /// it.
+    ///
+    /// This VM seeds a primary context at construct, so the call is always
+    /// Invalid `"primary context active"` (CUDA
+    /// `CUDA_ERROR_PRIMARY_CONTEXT_ACTIVE` when the primary context is already
+    /// created). Flags are not applied. Distinct from
+    /// [`Self::set_device_flags`] (`cudaSetDeviceFlags`, which still applies)
+    /// and from [`Self::device_primary_ctx_get_state`] (active is always
+    /// true). Unknown devices are Invalid `"device not in profile"`. No
+    /// `cuDevicePrimaryCtxRetain` (no `CUcontext` object).
+    pub fn device_primary_ctx_set_flags(
+        &mut self,
+        device: DeviceId,
+        flags: u32,
+    ) -> Result<(), SimError> {
+        self.fail_if_capturing("cannot capture primary ctx flags")?;
+        let _gpu = self.profile.gpu(device)?;
+        let _ = flags;
+        Err(SimError::Invalid {
+            why: "primary context active",
+        })
+    }
+
     /// `cuCtxGetId` for the seeded primary context of `device`.
     ///
     /// Query; legal during capture. There is no TLS current device and no
     /// `CUcontext` object. The id is unique per device and stable for the
-    /// life of the `Sim` (primary-ctx Reset is not modeled). Distinct from
+    /// life of the `Sim` ([`Self::reset_device`] does not change it). Distinct from
     /// [`Self::green_ctx_get_id`], [`Self::stream_get_id`], and
     /// [`Self::event_get_id`]. Unknown devices are Invalid
     /// `"device not in profile"`.
     pub fn ctx_get_id(&self, device: DeviceId) -> Result<u64, SimError> {
         let _gpu = self.profile.gpu(device)?;
         Ok(PRIMARY_CTX_CUDA_ID_TAG | u64::from(device.0))
+    }
+
+    /// `cuCtxGetApiVersion` for the seeded primary context of `device`.
+    ///
+    /// Query; legal during capture. There is no TLS current device and no
+    /// `CUcontext` object. Reports CUDA 13.0 (`1000 * major` plus `10 * minor`),
+    /// same toolkit encoding as [`Self::driver_get_version`]. Distinct from
+    /// [`Self::driver_get_version`] (no device) and
+    /// [`Self::device_compute_capability`] (Hopper SM version, not API
+    /// version). Unknown devices are Invalid `"device not in profile"`.
+    pub fn ctx_get_api_version(&self, device: DeviceId) -> Result<u32, SimError> {
+        let _gpu = self.profile.gpu(device)?;
+        Ok(13_000)
+    }
+
+    /// `cuCtxGetDevice` for the seeded primary context of `device`.
+    ///
+    /// Query; legal during capture. There is no TLS current device and no
+    /// `CUcontext` object. Returns `device` after it is in the profile.
+    /// Distinct from [`Self::green_ctx_get_device`] and
+    /// [`Self::stream_get_device`]. Unknown devices are Invalid
+    /// `"device not in profile"`. This VM does not invent `cudaSetDevice`.
+    pub fn ctx_get_device(&self, device: DeviceId) -> Result<DeviceId, SimError> {
+        let _gpu = self.profile.gpu(device)?;
+        Ok(device)
+    }
+
+    /// `cuCtxGetFlags` for the seeded primary context of `device`.
+    ///
+    /// Query; legal during capture. There is no TLS current device and no
+    /// `CUcontext` object. Flags match [`Self::get_device_flags`]
+    /// (`cudaGetDeviceFlags`) and the flags half of
+    /// [`Self::device_primary_ctx_get_state`]. Distinct from
+    /// [`Self::get_device_flags`] (runtime) and from
+    /// [`Self::ctx_get_api_version`]. Unknown devices are Invalid
+    /// `"device not in profile"`. Driver `cuCtxSetFlags` is
+    /// [`Self::ctx_set_flags`].
+    pub fn ctx_get_flags(&self, device: DeviceId) -> Result<u32, SimError> {
+        self.get_device_flags(device)
+    }
+
+    /// `cuCtxSetFlags`. Identity with [`Self::set_device_flags`]
+    /// (`cudaSetDeviceFlags`).
+    ///
+    /// Capture refused. Distinct from [`Self::ctx_get_flags`] and
+    /// [`Self::device_primary_ctx_set_flags`] (always Invalid
+    /// `"primary context active"`).
+    pub fn ctx_set_flags(&mut self, device: DeviceId, flags: u32) -> Result<(), SimError> {
+        self.set_device_flags(device, flags)
+    }
+
+    /// `cuCtxGetCacheConfig` for the seeded primary context of `device`.
+    ///
+    /// Query; legal during capture. There is no TLS current device and no
+    /// `CUcontext` object. Matches [`Self::get_cache_config`]
+    /// (`cudaDeviceGetCacheConfig`). Distinct from
+    /// [`Self::get_func_cache_config`] (`cudaFuncSetCacheConfig` stored
+    /// value) and from [`Self::ctx_get_flags`]. Unknown devices are Invalid
+    /// `"device not in profile"`. Driver `cuCtxSetCacheConfig` is
+    /// [`Self::ctx_set_cache_config`]. Cache
+    /// config does not change kernel duration (L1 is not modeled).
+    pub fn ctx_get_cache_config(&self, device: DeviceId) -> Result<FuncCache, SimError> {
+        self.get_cache_config(device)
+    }
+
+    /// `cuCtxSetCacheConfig`. Identity with [`Self::set_cache_config`]
+    /// (`cudaDeviceSetCacheConfig`).
+    ///
+    /// Capture refused. Distinct from [`Self::ctx_get_cache_config`] and
+    /// [`Self::set_func_cache_config`].
+    pub fn ctx_set_cache_config(
+        &mut self,
+        device: DeviceId,
+        cache: FuncCache,
+    ) -> Result<(), SimError> {
+        self.set_cache_config(device, cache)
+    }
+
+    /// `cuCtxGetStreamPriorityRange` for the seeded primary context of
+    /// `device`.
+    ///
+    /// Query; legal during capture. There is no TLS current device and no
+    /// `CUcontext` object. Returns `(leastPriority, greatestPriority)` matching
+    /// [`Self::device_get_stream_priority_range`]
+    /// (`cudaDeviceGetStreamPriorityRange`). Example H100 is `(0, -5)`.
+    /// Distinct from [`Self::stream_get_priority`] (one stream) and from
+    /// [`Self::ctx_get_cache_config`]. Unknown devices are Invalid
+    /// `"device not in profile"`.
+    pub fn ctx_get_stream_priority_range(&self, device: DeviceId) -> Result<(i32, i32), SimError> {
+        self.device_get_stream_priority_range(device)
+    }
+
+    /// `cuCtxGetLimit` for the seeded primary context of `device`.
+    ///
+    /// Query; legal during capture. There is no TLS current device and no
+    /// `CUcontext` object. Matches [`Self::get_limit`] (`cudaDeviceGetLimit`)
+    /// for the same [`DeviceLimit`]. Distinct from
+    /// [`Self::ctx_get_stream_priority_range`] and from
+    /// [`Self::get_limit`] (runtime). Unknown devices are Invalid
+    /// `"device not in profile"`. Driver `cuCtxSetLimit` is
+    /// [`Self::ctx_set_limit`].
+    pub fn ctx_get_limit(&self, device: DeviceId, limit: DeviceLimit) -> Result<u64, SimError> {
+        let _gpu = self.profile.gpu(device)?;
+        self.get_limit(device, limit)
+    }
+
+    /// `cuCtxSetLimit`. Identity with [`Self::set_limit`]
+    /// (`cudaDeviceSetLimit`).
+    ///
+    /// Capture refused. Distinct from [`Self::ctx_get_limit`].
+    pub fn ctx_set_limit(
+        &mut self,
+        device: DeviceId,
+        limit: DeviceLimit,
+        value: u64,
+    ) -> Result<(), SimError> {
+        self.set_limit(device, limit, value)
+    }
+
+    /// `cuCtxSynchronize` for the seeded primary context of `device`.
+    ///
+    /// Host-synchronous. Capture cannot include it. There is no TLS current
+    /// device and no `CUcontext` object. Waits every stream on `device`
+    /// (same as [`Self::synchronize_device`] / `cudaDeviceSynchronize`).
+    /// Other GPUs keep running. Distinct from [`Self::synchronize_device`]
+    /// (runtime) and from [`Self::green_ctx_synchronize`]. Unknown devices
+    /// are Invalid `"device not in profile"`. This VM does not invent
+    /// `cuCtxSynchronize_v2`.
+    pub fn ctx_synchronize(&mut self, device: DeviceId) -> Result<(), SimError> {
+        self.synchronize_device(device)
+    }
+
+    /// `cuCtxGetSharedMemConfig` for the seeded primary context of `device`.
+    ///
+    /// Query; legal during capture. There is no TLS current device and no
+    /// `CUcontext` object. Matches [`Self::get_shared_mem_config`]
+    /// (`cudaDeviceGetSharedMemConfig`). Distinct from
+    /// [`Self::get_func_shared_mem_config`] and from
+    /// [`Self::ctx_get_cache_config`]. Unknown devices are Invalid
+    /// `"device not in profile"`. Driver `cuCtxSetSharedMemConfig` is
+    /// [`Self::ctx_set_shared_mem_config`].
+    pub fn ctx_get_shared_mem_config(
+        &self,
+        device: DeviceId,
+    ) -> Result<SharedMemoryMode, SimError> {
+        self.get_shared_mem_config(device)
+    }
+
+    /// `cuCtxSetSharedMemConfig`. Identity with [`Self::set_shared_mem_config`]
+    /// (`cudaDeviceSetSharedMemConfig`).
+    ///
+    /// Capture refused. Distinct from [`Self::ctx_get_shared_mem_config`] and
+    /// [`Self::set_func_shared_mem_config`].
+    pub fn ctx_set_shared_mem_config(
+        &mut self,
+        device: DeviceId,
+        mode: SharedMemoryMode,
+    ) -> Result<(), SimError> {
+        self.set_shared_mem_config(device, mode)
+    }
+
+    /// `cuCtxResetPersistingL2Cache` for the seeded primary context of `device`.
+    ///
+    /// Host-synchronous. Wraps [`Self::reset_persisting_l2_cache`]
+    /// (`cudaCtxResetPersistingL2Cache`). Capture cannot include it. Drops
+    /// filled persisting lines; the limit stays. Distinct from
+    /// [`Self::set_persisting_l2_cache_size`]. Unknown devices are Invalid
+    /// `"device not in profile"`. This VM does not invent a second
+    /// Engine `--l2-reset`.
+    pub fn ctx_reset_persisting_l2_cache(&mut self, device: DeviceId) -> Result<(), SimError> {
+        self.reset_persisting_l2_cache(device)
+    }
+
+    /// `cuCtxGetExecAffinity` for the seeded primary context of `device`.
+    ///
+    /// Query; legal during capture. [`ExecAffinityType::SM_COUNT`] is Invalid
+    /// `"unsupported exec affinity"` because
+    /// [`Self::device_get_exec_affinity_support`] is 0 (green contexts are
+    /// permille, not occupancy SM counts). Other type ids are Invalid
+    /// `"exec affinity type"`. Unknown devices are Invalid
+    /// `"device not in profile"`. This VM does not invent
+    /// `cuCtxSetExecAffinity`.
+    pub fn ctx_get_exec_affinity(&self, device: DeviceId, kind: u32) -> Result<(), SimError> {
+        let _gpu = self.profile.gpu(device)?;
+        if kind != ExecAffinityType::SM_COUNT {
+            return Err(SimError::Invalid {
+                why: "exec affinity type",
+            });
+        }
+        Err(SimError::Invalid {
+            why: "unsupported exec affinity",
+        })
     }
 
     /// `cudaInitDevice(device, 0, 0)`. Ensures the primary context (already
@@ -18069,10 +24894,198 @@ impl Sim {
         Ok(())
     }
 
+    /// `cudaDeviceReset`. Host-synchronous. Capture cannot include it.
+    ///
+    /// Waits outstanding work on `device` (unlike [`Self::destroy_stream`],
+    /// which returns immediately). Then frees `cudaMalloc` /
+    /// `cudaMallocPitch` / `cudaMalloc3D` on that GPU.
+    /// [`Self::alloc`] (`cudaMallocAsync`) stays, as in CUDA. User streams
+    /// except [`StreamId::NULL`] become `"unknown stream"` until
+    /// [`Self::stream_create_with_flags`]. Device flags and limits return to
+    /// CUDA defaults. Peer pairs involving this GPU return to the profile
+    /// seed. Host and managed allocs have no owning device in this VM and
+    /// stay. Events are process-global and stay. Graphs stay (host objects).
+    /// Green contexts on this device are destroyed. [`Self::ctx_get_id`]
+    /// stays (no `CUcontext` object; this is not `cuDevicePrimaryCtxReset`).
+    /// Unknown devices are Invalid `"device not in profile"`. Subsequent
+    /// [`Self::malloc`] on this GPU is legal. No Engine flag for device reset.
+    pub fn reset_device(&mut self, device: DeviceId) -> Result<(), SimError> {
+        self.fail_if_capturing("cannot capture device reset")?;
+        let _gpu = self.profile.gpu(device)?;
+        self.synchronize_device(device)?;
+        self.reset_device_mallocs(device)?;
+        self.reset_device_streams(device);
+        self.reset_device_green_ctxs(device);
+        self.reset_device_runtime(device)?;
+        self.reset_device_func_attrs(device);
+        self.reset_device_peers(device);
+        self.clock = self.clock.saturating_add(1);
+        Ok(())
+    }
+
+    fn reset_frees_alloc(a: &Alloc, device: DeviceId) -> bool {
+        a.live
+            && a.pool.is_none()
+            && !a.host_pinned
+            && !a.host_pageable
+            && !a.managed
+            && !a.vmm
+            && a.ipc_src.is_none()
+            && a.share_src.is_none()
+            && a.devices.contains(&device)
+    }
+
+    fn reset_device_mallocs(&mut self, device: DeviceId) -> Result<(), SimError> {
+        let ids: Vec<AllocId> = self
+            .allocs
+            .iter()
+            .filter(|(_, a)| Self::reset_frees_alloc(a, device))
+            .map(|(id, _)| *id)
+            .collect();
+        for id in ids {
+            let bytes = self.alloc_ref(id)?.bytes;
+            self.refund_device(device, id, bytes)?;
+            {
+                let a = self.alloc_mut(id)?;
+                a.devices.retain(|d| *d != device);
+                if a.devices.is_empty() {
+                    a.live = false;
+                }
+            }
+            self.clear_mailbox(id);
+        }
+        Ok(())
+    }
+
+    fn reset_device_streams(&mut self, device: DeviceId) {
+        let mut streams = BTreeSet::new();
+        for (d, s) in self.tail.keys() {
+            if *d == device {
+                let _ins = streams.insert(*s);
+            }
+        }
+        for (d, s) in self.blocking.iter() {
+            if *d == device {
+                let _ins = streams.insert(*s);
+            }
+        }
+        for (d, s) in self.priority.keys() {
+            if *d == device {
+                let _ins = streams.insert(*s);
+            }
+        }
+        for (d, s) in self.sm_permille.keys() {
+            if *d == device {
+                let _ins = streams.insert(*s);
+            }
+        }
+        for (d, s) in self.stream_green_ctx.keys() {
+            if *d == device {
+                let _ins = streams.insert(*s);
+            }
+        }
+        for (d, s) in self.stream_mem_sync_domain.keys() {
+            if *d == device {
+                let _ins = streams.insert(*s);
+            }
+        }
+        for (d, s) in self.stream_mem_sync_map.keys() {
+            if *d == device {
+                let _ins = streams.insert(*s);
+            }
+        }
+        for (d, s) in self.stream_sync_policy.keys() {
+            if *d == device {
+                let _ins = streams.insert(*s);
+            }
+        }
+        for (d, s) in &self.stream_nvlink_util_centric {
+            if *d == device {
+                let _ins = streams.insert(*s);
+            }
+        }
+        for (d, s) in self.stream_access_policy.keys() {
+            if *d == device {
+                let _ins = streams.insert(*s);
+            }
+        }
+        for (d, s) in self.graph_joins.keys() {
+            if *d == device {
+                let _ins = streams.insert(*s);
+            }
+        }
+        for op in self.ops.values() {
+            if op.device == device {
+                let _ins = streams.insert(op.stream);
+            }
+        }
+        for s in streams {
+            if s == StreamId::NULL || s == StreamId::GREEN_CTX_SYNC || s.is_device_graph_stream() {
+                continue;
+            }
+            self.drop_stream_state(device, s);
+            let _ins = self.gone_streams.insert((device, s));
+        }
+    }
+
+    fn reset_device_green_ctxs(&mut self, device: DeviceId) {
+        self.green_ctxs.retain(|_, g| g.device != device);
+    }
+
+    fn reset_device_runtime(&mut self, device: DeviceId) -> Result<(), SimError> {
+        let rt = self.gpu_rt_mut(device)?;
+        let used = rt.used;
+        let graph_used_high = rt.graph_used_high;
+        let graph_reserved_high = rt.graph_reserved_high;
+        *rt = GpuRt {
+            used,
+            compute: 0,
+            copies: 0,
+            graph_used_high,
+            graph_reserved_high,
+            persist_limit: 0,
+            persist_lines: Vec::new(),
+            limits: DeviceLimits::sm80(),
+            shared_mem_config: SharedMemoryMode::Default,
+            func_shared_mem_config: SharedMemoryMode::Default,
+            cache_config: FuncCache::PreferNone,
+            func_cache_config: FuncCache::PreferNone,
+            func_carveout: SharedMemCarveout::Default,
+            cluster_dim_must_be_set: false,
+            required_cluster_x: 0,
+            required_cluster_y: 0,
+            required_cluster_z: 0,
+            func_cluster_policy: ClusterSchedulingPolicy::Default,
+            device_flags: DeviceFlags::SCHEDULE_AUTO,
+        };
+        Ok(())
+    }
+
+    fn reset_device_func_attrs(&mut self, device: DeviceId) {
+        let _rm = self.non_portable_cluster.remove(&device);
+        let _prev = self.max_dynamic_shared.remove(&device);
+    }
+
+    fn reset_device_peers(&mut self, device: DeviceId) {
+        self.peer_enabled
+            .retain(|(a, b)| *a != device && *b != device);
+        for link in &self.profile.links {
+            let (Some(a), Some(b)) = (link.a, link.b) else {
+                continue;
+            };
+            if a == device || b == device {
+                let _ab = self.peer_enabled.insert((a, b));
+                let _ba = self.peer_enabled.insert((b, a));
+            }
+        }
+    }
+
     /// `cudaPointerGetAttributes`. Query; legal during capture.
     ///
     /// A never-created id is [`SimError::UnknownAlloc`]. A freed id is
     /// [`MemoryType::Unregistered`] (CUDA 11+).
+    /// Driver `cudaPointerGetAttributes` is [`Self::mem_pointer_get_attributes`].
+    /// Identity wrap [`Self::mem_pointer_get_attributes`].
     pub fn pointer_get_attributes(&self, id: AllocId) -> Result<PointerAttributes, SimError> {
         let a = self.alloc_ref(id)?;
         if !a.live {
@@ -18116,11 +25129,20 @@ impl Sim {
         })
     }
 
+    /// `cudaPointerGetAttributes`. Identity with
+    /// [`Self::pointer_get_attributes`] (`cudaPointerGetAttributes`).
+    ///
+    /// Query; legal during capture. Distinct from [`Self::mem_pointer_set_attribute`].
+    pub fn mem_pointer_get_attributes(&self, id: AllocId) -> Result<PointerAttributes, SimError> {
+        self.pointer_get_attributes(id)
+    }
+
     /// `cudaMemGetAddressRange`. Query; legal during capture.
     ///
     /// Interior offsets are not modeled: the base is `alloc` itself. A never-
     /// created id is [`SimError::UnknownAlloc`]. A freed id is Invalid
     /// `"address range"`.
+    /// Driver `cuMemGetAddressRange` is [`Self::mem_address_range`].
     pub fn mem_get_address_range(&self, alloc: AllocId) -> Result<(AllocId, u64), SimError> {
         let a = self.alloc_ref(alloc)?;
         if !a.live {
@@ -18131,11 +25153,21 @@ impl Sim {
         Ok((alloc, a.bytes))
     }
 
+    /// `cuMemGetAddressRange`. Identity with [`Self::mem_get_address_range`]
+    /// (`cudaMemGetAddressRange`).
+    ///
+    /// Query; legal during capture. Distinct from [`Self::mem_range_get`].
+    pub fn mem_address_range(&self, alloc: AllocId) -> Result<(AllocId, u64), SimError> {
+        self.mem_get_address_range(alloc)
+    }
+
     /// `cuPointerSetAttribute` / GetAttribute for modeled [`PointerAttr`].
     /// [`PointerAttr::SyncMemops`] is settable (`value` 0 or 1). Other attrs
     /// are query-only (Invalid `"pointer attr"`). Capture refused
     /// (`"cannot capture pointer attr"`). Unknown ids are
     /// [`SimError::UnknownAlloc`]; freed ids are Invalid `"pointer attr"`.
+    /// Driver `cuPointerSetAttribute` is [`Self::mem_pointer_set_attribute`].
+    /// Identity wrap [`Self::mem_pointer_set_attribute`].
     pub fn pointer_set_attribute(
         &mut self,
         alloc: AllocId,
@@ -18181,6 +25213,19 @@ impl Sim {
         }
     }
 
+    /// `cuPointerSetAttribute`. Identity with
+    /// [`Self::pointer_set_attribute`] (`cuPointerSetAttribute`).
+    ///
+    /// Capture refused. Distinct from [`Self::mem_pointer_get_access_flags`].
+    pub fn mem_pointer_set_attribute(
+        &mut self,
+        alloc: AllocId,
+        attr: PointerAttr,
+        value: u64,
+    ) -> Result<(), SimError> {
+        self.pointer_set_attribute(alloc, attr, value)
+    }
+
     /// `cuPointerGetAttribute` twin of [`Self::pointer_set_attribute`]. Query;
     /// capture-legal. Reports 0/1 for [`PointerAttr::SyncMemops`]. Other
     /// attrs wrap [`Self::pointer_get_attributes`], range size, mapped host,
@@ -18188,6 +25233,8 @@ impl Sim {
     /// GPUDirect RDMA capability, allowed handle types, VMM mapping
     /// base/size at offset 0, hardware decompress (always 0), and the VMM
     /// memory-block id (the [`MemHandleId`] covering offset 0).
+    /// Driver `cuPointerGetAttribute` is [`Self::mem_pointer_get_attribute`].
+    /// Identity wrap [`Self::mem_pointer_get_attribute`].
     pub fn pointer_get_attribute(
         &self,
         alloc: AllocId,
@@ -18271,6 +25318,18 @@ impl Sim {
         }
     }
 
+    /// `cuPointerGetAttribute`. Identity with
+    /// [`Self::pointer_get_attribute`] (`cuPointerGetAttribute`).
+    ///
+    /// Query; legal during capture. Distinct from [`Self::mem_is_multicast_va`].
+    pub fn mem_pointer_get_attribute(
+        &self,
+        alloc: AllocId,
+        attr: PointerAttr,
+    ) -> Result<u64, SimError> {
+        self.pointer_get_attribute(alloc, attr)
+    }
+
     /// `cuPointerGetAttributes`: batch [`Self::pointer_get_attribute`].
     ///
     /// Distinct from [`Self::pointer_get_attributes`] (`cudaPointerGetAttributes`
@@ -18279,6 +25338,8 @@ impl Sim {
     /// vector. `CU_POINTER_ATTRIBUTE_ACCESS_FLAGS` stays
     /// [`Self::pointer_get_access_flags`] (explicit device; not a
     /// [`PointerAttr`]). Query; legal during capture.
+    /// Driver `cuPointerGetAttributes` is [`Self::mem_pointer_get_attribute_n`].
+    /// Identity wrap [`Self::mem_pointer_get_attribute_n`].
     pub fn pointer_get_attribute_n(
         &self,
         alloc: AllocId,
@@ -18295,6 +25356,18 @@ impl Sim {
             .copied()
             .map(|attr| self.pointer_get_attribute(alloc, attr))
             .collect()
+    }
+
+    /// `cuPointerGetAttributes`. Identity with
+    /// [`Self::pointer_get_attribute_n`] (`cuPointerGetAttributes`).
+    ///
+    /// Query; legal during capture. Distinct from [`Self::mem_pointer_get_attribute`].
+    pub fn mem_pointer_get_attribute_n(
+        &self,
+        alloc: AllocId,
+        attrs: &[PointerAttr],
+    ) -> Result<Vec<u64>, SimError> {
+        self.pointer_get_attribute_n(alloc, attrs)
     }
 
     /// `CU_POINTER_ATTRIBUTE_ACCESS_FLAGS` for `device`.
@@ -18315,6 +25388,8 @@ impl Sim {
     /// ProtRead, VMM `va_set_access`, and managed SetAccessedBy are Read.
     /// Unknown device is Invalid `"device not in profile"`. Freed ids are
     /// Invalid `"pointer attr"`. Query; legal during capture.
+    /// Driver `CU_POINTER_ATTRIBUTE_ACCESS_FLAGS` is [`Self::mem_pointer_get_access_flags`].
+    /// Identity wrap [`Self::mem_pointer_get_access_flags`].
     pub fn pointer_get_access_flags(
         &self,
         device: DeviceId,
@@ -18335,6 +25410,18 @@ impl Sim {
             return Ok(MemAccessFlags::PROT_READ);
         }
         Ok(MemAccessFlags::PROT_NONE)
+    }
+
+    /// `CU_POINTER_ATTRIBUTE_ACCESS_FLAGS`. Identity with
+    /// [`Self::pointer_get_access_flags`] (`CU_POINTER_ATTRIBUTE_ACCESS_FLAGS`).
+    ///
+    /// Query; legal during capture. Distinct from [`Self::mem_pointer_get_attribute_n`].
+    pub fn mem_pointer_get_access_flags(
+        &self,
+        device: DeviceId,
+        alloc: AllocId,
+    ) -> Result<u32, SimError> {
+        self.pointer_get_access_flags(device, alloc)
     }
 
     /// `cudaHostGetDevicePointer`. Query; legal during capture.
@@ -18371,6 +25458,21 @@ impl Sim {
         self.host_get_device_pointer(id)
     }
 
+    /// `cuMemHostGetDevicePointer`. Identity with
+    /// [`Self::host_get_device_pointer_with_flags`] (`cudaHostGetDevicePointer`
+    /// flags).
+    ///
+    /// Query; legal during capture. Distinct from [`Self::host_get_device_pointer`].
+    /// This VM does not invent `cuMemHostRegister` this slice
+    /// (`host_register` stays).
+    pub fn mem_host_get_device_pointer(
+        &self,
+        id: AllocId,
+        flags: u32,
+    ) -> Result<AllocId, SimError> {
+        self.host_get_device_pointer_with_flags(id, flags)
+    }
+
     /// `cudaHostGetFlags`. Query; legal during capture.
     ///
     /// Returns the flag word passed to [`Self::alloc_host_with_flags`] /
@@ -18387,6 +25489,16 @@ impl Sim {
             });
         }
         Ok(a.host_flags)
+    }
+
+    /// `cuMemHostGetFlags`. Identity with [`Self::host_get_flags`]
+    /// (`cudaHostGetFlags`).
+    ///
+    /// Query; legal during capture. Distinct from [`Self::host_get_device_pointer`].
+    /// This VM does not invent `cuMemHostGetDevicePointer` this slice
+    /// (`host_get_device_pointer` stays).
+    pub fn mem_host_get_flags(&self, id: AllocId) -> Result<u32, SimError> {
+        self.host_get_flags(id)
     }
 
     /// `cuDeviceGetExecAffinitySupport`. Query; legal during capture.
@@ -18413,7 +25525,14 @@ impl Sim {
 
     /// `cudaDeviceGetAttribute`. Query; legal during capture.
     ///
-    /// Only attributes this VM already models ([`DeviceAttr`]).
+    /// Only attributes this VM already models ([`DeviceAttr`]). Compute
+    /// capability major/minor are Hopper 9.0 on example H100. Launch-geometry
+    /// caps are MaxThreadsPerBlock 1024 and the H100 block plus grid dims.
+    /// MaxRegistersPerBlock is 65536 on example H100. GlobalMemoryBusWidth
+    /// is 5120 bits on example H100. SingleToDoublePrecisionPerfRatio is
+    /// 1 on example H100.
+    /// Driver `cuDeviceGetAttribute` is [`Self::mem_device_get_attribute`].
+    /// Identity wrap [`Self::mem_device_get_attribute`].
     pub fn device_get_attribute(
         &self,
         device: DeviceId,
@@ -18425,6 +25544,9 @@ impl Sim {
             DeviceAttr::ConcurrentKernels => u64::from(gpu.compute_slots > 1),
             DeviceAttr::MaxSharedMemoryPerBlock => u64::from(gpu.max_shared_mem_per_block),
             DeviceAttr::MaxSharedMemoryPerBlockOptin => {
+                u64::from(gpu.max_shared_mem_per_block_optin)
+            }
+            DeviceAttr::MaxSharedMemoryPerMultiprocessor => {
                 u64::from(gpu.max_shared_mem_per_block_optin)
             }
             DeviceAttr::L2CacheSize
@@ -18478,13 +25600,55 @@ impl Sim {
             | DeviceAttr::SurfaceAlignment
             | DeviceAttr::TexturePitchAlignment
             | DeviceAttr::MaxTexture1DWidth
+            | DeviceAttr::MaxTexture2DWidth
+            | DeviceAttr::MaxTexture2DHeight
+            | DeviceAttr::MaxTexture3DWidth
+            | DeviceAttr::MaxTexture3DHeight
+            | DeviceAttr::MaxTexture3DDepth
+            | DeviceAttr::MaxTexture3DWidthAlt
+            | DeviceAttr::MaxTexture3DHeightAlt
+            | DeviceAttr::MaxTexture3DDepthAlt
+            | DeviceAttr::MaxTexture1DLinearWidth
+            | DeviceAttr::MaxTexture2DLinearWidth
+            | DeviceAttr::MaxTexture2DLinearHeight
+            | DeviceAttr::MaxTexture2DLinearPitch
+            | DeviceAttr::MaxTexture2DGatherWidth
+            | DeviceAttr::MaxTexture2DGatherHeight
+            | DeviceAttr::MaxTexture1DMipmappedWidth
+            | DeviceAttr::MaxTexture2DMipmappedWidth
+            | DeviceAttr::MaxTexture2DMipmappedHeight
+            | DeviceAttr::MaxTextureCubemapWidth
+            | DeviceAttr::MaxTexture1DLayeredWidth
+            | DeviceAttr::MaxTexture1DLayeredLayers
+            | DeviceAttr::MaxTexture2DLayeredWidth
+            | DeviceAttr::MaxTexture2DLayeredHeight
+            | DeviceAttr::MaxTexture2DLayeredLayers
+            | DeviceAttr::MaxTextureCubemapLayeredWidth
+            | DeviceAttr::MaxTextureCubemapLayeredLayers
+            | DeviceAttr::MaxSurface1DWidth
+            | DeviceAttr::MaxSurface2DWidth
+            | DeviceAttr::MaxSurface2DHeight
+            | DeviceAttr::MaxSurface3DWidth
+            | DeviceAttr::MaxSurface3DHeight
+            | DeviceAttr::MaxSurface3DDepth
+            | DeviceAttr::MaxSurface1DLayeredWidth
+            | DeviceAttr::MaxSurface1DLayeredLayers
+            | DeviceAttr::MaxSurface2DLayeredWidth
+            | DeviceAttr::MaxSurface2DLayeredHeight
+            | DeviceAttr::MaxSurface2DLayeredLayers
+            | DeviceAttr::MaxSurfaceCubemapWidth
+            | DeviceAttr::MaxSurfaceCubemapLayeredWidth
+            | DeviceAttr::MaxSurfaceCubemapLayeredLayers
             | DeviceAttr::HandleTypeWin32HandleSupported
             | DeviceAttr::HandleTypeWin32KmtHandleSupported
+            | DeviceAttr::D3D12CigSupported
+            | DeviceAttr::VulkanCigSupported
             | DeviceAttr::HandleTypeFabricSupported
             | DeviceAttr::HostMemoryPoolsSupported
             | DeviceAttr::IsMultiGpuBoard
             | DeviceAttr::MultiGpuBoardGroupID
             | DeviceAttr::ComputeMode
+            | DeviceAttr::MpsEnabled
             | DeviceAttr::TccDriver
             | DeviceAttr::KernelExecTimeout
             | DeviceAttr::TensorMapAccessSupported
@@ -18508,30 +25672,140 @@ impl Sim {
             DeviceAttr::PciDomainId => u64::from(synthetic_pci_ids(device).0),
             DeviceAttr::PciBusId => u64::from(synthetic_pci_ids(device).1),
             DeviceAttr::PciDeviceId => u64::from(synthetic_pci_ids(device).2),
+            DeviceAttr::GpuPciDeviceId => 0,
+            DeviceAttr::GpuPciSubsystemId => 0,
+            DeviceAttr::ComputeCapabilityMajor => u64::from(gpu.compute_capability_major),
+            DeviceAttr::ComputeCapabilityMinor => u64::from(gpu.compute_capability_minor),
+            DeviceAttr::MaxThreadsPerBlock => DeviceAttr::MAX_THREADS_PER_BLOCK,
+            DeviceAttr::MaxBlockDimX => DeviceAttr::MAX_BLOCK_DIM_X,
+            DeviceAttr::MaxBlockDimY => DeviceAttr::MAX_BLOCK_DIM_Y,
+            DeviceAttr::MaxBlockDimZ => DeviceAttr::MAX_BLOCK_DIM_Z,
+            DeviceAttr::MaxGridDimX => DeviceAttr::MAX_GRID_DIM_X,
+            DeviceAttr::MaxGridDimY => DeviceAttr::MAX_GRID_DIM_Y,
+            DeviceAttr::MaxGridDimZ => DeviceAttr::MAX_GRID_DIM_Z,
+            DeviceAttr::MaxRegistersPerBlock => DeviceAttr::MAX_REGISTERS_PER_BLOCK,
+            DeviceAttr::GlobalMemoryBusWidth => u64::from(gpu.global_memory_bus_width_bits),
+            DeviceAttr::SingleToDoublePrecisionPerfRatio => {
+                DeviceAttr::SINGLE_TO_DOUBLE_PRECISION_PERF_RATIO
+            }
         })
+    }
+
+    /// `cuDeviceGetAttribute`. Identity with
+    /// [`Self::device_get_attribute`] (`cudaDeviceGetAttribute`).
+    ///
+    /// Query; legal during capture. Distinct from [`Self::mem_alloc_pitch_with_element_size`].
+    pub fn mem_device_get_attribute(
+        &self,
+        device: DeviceId,
+        attr: DeviceAttr,
+    ) -> Result<u64, SimError> {
+        self.device_get_attribute(device, attr)
     }
 
     /// `cudaGetDeviceProperties`. Query; legal during capture.
     ///
-    /// Only fields this VM already models ([`DeviceProperties`]). Unknown
-    /// devices are Invalid.
+    /// Only fields this VM already models ([`DeviceProperties`]). Compute
+    /// capability major/minor are modeled (example H100 is Hopper 9.0).
+    /// Launch-geometry caps are MaxThreadsPerBlock 1024 and the H100 block
+    /// plus grid dims. MaxRegistersPerBlock is 65536. GlobalMemoryBusWidth
+    /// is 5120 bits on example H100. SingleToDoublePrecisionPerfRatio is
+    /// 1 on example H100. Linear texture 1D/2D dims are always 0.
+    /// Texture 2D gather dims are always 0.
+    /// Mipmapped texture 1D/2D dims are always 0.
+    /// Cubemap texture width is always 0.
+    /// Layered texture 1D/2D dims are always 0.
+    /// Cubemap layered texture dims are always 0.
+    /// Layered surface 1D/2D dims are always 0.
+    /// Cubemap surface dims are always 0.
+    /// Alternate texture 3D dims are always 0.
+    /// `MpsEnabled` is always 0.
+    /// `D3D12CigSupported` is always 0.
+    /// `VulkanCigSupported` is always 0.
+    /// MaxSharedMemoryPerMultiprocessor matches optin.
+    /// `GpuPciDeviceId` is always 0.
+    /// `GpuPciSubsystemId` is always 0.
+    /// `pciSubSystemID` is always 0.
+    /// `luid` and `luidDeviceNodeMask` are always 0.
+    /// Occupancy SM counts, clock rates, and warp size are not.
+    /// Unknown devices are Invalid.
+    ///
+    /// Driver wrap: [`Self::mem_device_get_properties`].
+    /// Identity: [`Self::mem_device_get_properties`].
     pub fn device_get_properties(&self, device: DeviceId) -> Result<DeviceProperties, SimError> {
         let gpu = self.profile.gpu(device)?;
         Ok(DeviceProperties {
             name: self.profile.name.clone(),
             uuid: synthetic_device_uuid(&self.profile.name, device),
+            luid: [0; 8],
+            luid_device_node_mask: 0,
             pci_domain_id: synthetic_pci_ids(device).0,
             pci_bus_id: synthetic_pci_ids(device).1,
             pci_device_id: synthetic_pci_ids(device).2,
+            pci_subsystem_id: 0,
+            gpu_pci_device_id: 0,
+            compute_capability_major: u32::from(gpu.compute_capability_major),
+            compute_capability_minor: u32::from(gpu.compute_capability_minor),
+            single_to_double_precision_perf_ratio:
+                DeviceAttr::SINGLE_TO_DOUBLE_PRECISION_PERF_RATIO,
+            max_threads_per_block: DeviceAttr::MAX_THREADS_PER_BLOCK,
+            max_block_dim_x: DeviceAttr::MAX_BLOCK_DIM_X,
+            max_block_dim_y: DeviceAttr::MAX_BLOCK_DIM_Y,
+            max_block_dim_z: DeviceAttr::MAX_BLOCK_DIM_Z,
+            max_grid_dim_x: DeviceAttr::MAX_GRID_DIM_X,
+            max_grid_dim_y: DeviceAttr::MAX_GRID_DIM_Y,
+            max_grid_dim_z: DeviceAttr::MAX_GRID_DIM_Z,
+            regs_per_block: DeviceAttr::MAX_REGISTERS_PER_BLOCK,
+            memory_bus_width: u64::from(gpu.global_memory_bus_width_bits),
             total_global_mem: gpu.hbm_bytes,
             total_constant_memory: 0,
             texture_alignment: 0,
             surface_alignment: 0,
             texture_pitch_alignment: 0,
             max_texture_1d_width: 0,
+            max_texture_2d_width: 0,
+            max_texture_2d_height: 0,
+            max_texture_3d_width: 0,
+            max_texture_3d_height: 0,
+            max_texture_3d_depth: 0,
+            max_texture_3d_width_alt: 0,
+            max_texture_3d_height_alt: 0,
+            max_texture_3d_depth_alt: 0,
+            max_texture_1d_linear_width: 0,
+            max_texture_2d_linear_width: 0,
+            max_texture_2d_linear_height: 0,
+            max_texture_2d_linear_pitch: 0,
+            max_texture_2d_gather_width: 0,
+            max_texture_2d_gather_height: 0,
+            max_texture_1d_mipmapped_width: 0,
+            max_texture_2d_mipmapped_width: 0,
+            max_texture_2d_mipmapped_height: 0,
+            max_texture_cubemap_width: 0,
+            max_texture_1d_layered_width: 0,
+            max_texture_1d_layered_layers: 0,
+            max_texture_2d_layered_width: 0,
+            max_texture_2d_layered_height: 0,
+            max_texture_2d_layered_layers: 0,
+            max_texture_cubemap_layered_width: 0,
+            max_texture_cubemap_layered_layers: 0,
+            max_surface_1d_width: 0,
+            max_surface_2d_width: 0,
+            max_surface_2d_height: 0,
+            max_surface_3d_width: 0,
+            max_surface_3d_height: 0,
+            max_surface_3d_depth: 0,
+            max_surface_1d_layered_width: 0,
+            max_surface_1d_layered_layers: 0,
+            max_surface_2d_layered_width: 0,
+            max_surface_2d_layered_height: 0,
+            max_surface_2d_layered_layers: 0,
+            max_surface_cubemap_width: 0,
+            max_surface_cubemap_layered_width: 0,
+            max_surface_cubemap_layered_layers: 0,
             mem_pitch: DeviceAttr::MAX_PITCH,
             shared_mem_per_block: gpu.max_shared_mem_per_block,
             shared_mem_per_block_optin: gpu.max_shared_mem_per_block_optin,
+            shared_mem_per_multiprocessor: gpu.max_shared_mem_per_block_optin,
             reserved_shared_mem_per_block: 0,
             l2_cache_size: gpu.l2_bytes,
             persisting_l2_cache_max_size: gpu.l2_bytes,
@@ -18584,11 +25858,14 @@ impl Sim {
             generic_compression_supported: false,
             handle_type_win32_handle_supported: false,
             handle_type_win32_kmt_handle_supported: false,
+            d3d12_cig_supported: false,
+            vulkan_cig_supported: false,
             handle_type_fabric_supported: false,
             host_memory_pools_supported: false,
             is_multi_gpu_board: false,
             multi_gpu_board_group_id: 0,
             compute_mode: ComputeMode::DEFAULT,
+            mps_enabled: false,
             tcc_driver: false,
             kernel_exec_timeout: false,
             can_use_64_bit_stream_mem_ops: true,
@@ -18607,13 +25884,56 @@ impl Sim {
         })
     }
 
+    /// `cuDeviceGetProperties`. Identity with [`Self::device_get_properties`] (`cudaGetDeviceProperties`).
+    /// Query; legal during capture. Distinct from [`Self::mem_device_get_attribute`].
+    pub fn mem_device_get_properties(
+        &self,
+        device: DeviceId,
+    ) -> Result<DeviceProperties, SimError> {
+        self.device_get_properties(device)
+    }
+
+    /// `cuDeviceComputeCapability`. Query; legal during capture.
+    ///
+    /// Example H100 is Hopper 9.0. Distinct from
+    /// [`Self::device_get_attribute`] of [`DeviceAttr::ComputeCapabilityMajor`]
+    /// and [`DeviceAttr::ComputeCapabilityMinor`] (same values) and from
+    /// [`Self::driver_get_version`]. Occupancy SM counts are not invented.
+    /// Unknown devices are Invalid.
+    ///
+    /// Driver wrap: [`Self::mem_device_compute_capability`].
+    /// Identity: [`Self::mem_device_compute_capability`].
+    pub fn device_compute_capability(&self, device: DeviceId) -> Result<(u32, u32), SimError> {
+        let gpu = self.profile.gpu(device)?;
+        Ok((
+            u32::from(gpu.compute_capability_major),
+            u32::from(gpu.compute_capability_minor),
+        ))
+    }
+
+    /// `cuDeviceComputeCapability`. Identity with [`Self::device_compute_capability`].
+    /// Query; legal during capture. Distinct from [`Self::mem_device_get_properties`].
+    pub fn mem_device_compute_capability(&self, device: DeviceId) -> Result<(u32, u32), SimError> {
+        self.device_compute_capability(device)
+    }
+
     /// `cudaDeviceGetName`. Query; legal during capture.
     ///
     /// The profile name ([`HardwareProfile::name`]; same as
     /// [`DeviceProperties::name`]). Unknown devices are Invalid.
+    /// Driver `cuDeviceGetName` is [`Self::get_device_name`].
+    /// Identity wrap [`Self::get_device_name`].
     pub fn device_get_name(&self, device: DeviceId) -> Result<String, SimError> {
         let _gpu = self.profile.gpu(device)?;
         Ok(self.profile.name.clone())
+    }
+
+    /// `cuDeviceGetName`. Identity with
+    /// [`Self::device_get_name`] (`cudaDeviceGetName`).
+    ///
+    /// Query; legal during capture. Distinct from [`Self::get_func_attributes`].
+    pub fn get_device_name(&self, device: DeviceId) -> Result<String, SimError> {
+        self.device_get_name(device)
     }
 
     /// `cuDeviceGetUuid` / `cudaDeviceGetUuid`. Query; legal during capture.
@@ -18622,15 +25942,74 @@ impl Sim {
     /// from [`Self::device_get_name`] and [`DeviceId`]. Two [`Sim`]s with the
     /// same profile agree. Also [`DeviceProperties::uuid`]. Unknown devices
     /// are Invalid. Inverse is [`Self::device_get_by_uuid`].
+    ///
+    /// Driver wrap: [`Self::mem_device_get_uuid`].
+    /// Identity: [`Self::mem_device_get_uuid`].
     pub fn device_get_uuid(&self, device: DeviceId) -> Result<[u8; 16], SimError> {
         let _gpu = self.profile.gpu(device)?;
         Ok(synthetic_device_uuid(&self.profile.name, device))
+    }
+
+    /// `cuDeviceGetUuid`. Identity with [`Self::device_get_uuid`] (`cudaDeviceGetUuid`).
+    /// Query; legal during capture. Distinct from [`Self::mem_device_compute_capability`].
+    pub fn mem_device_get_uuid(&self, device: DeviceId) -> Result<[u8; 16], SimError> {
+        self.device_get_uuid(device)
+    }
+
+    /// `cuDeviceGetLuid`. Query; legal during capture.
+    ///
+    /// Always-zero Windows LUID (eight bytes) and `deviceNodeMask` for this
+    /// [`DeviceId`]. Distinct from [`Self::device_get_uuid`]. Also
+    /// [`DeviceProperties::luid`] and
+    /// [`DeviceProperties::luid_device_node_mask`]. Unknown devices are
+    /// Invalid.
+    ///
+    /// Driver wrap: [`Self::mem_device_get_luid`].
+    /// Identity: [`Self::mem_device_get_luid`].
+    pub fn device_get_luid(&self, device: DeviceId) -> Result<([u8; 8], u32), SimError> {
+        let _gpu = self.profile.gpu(device)?;
+        Ok(([0; 8], 0))
+    }
+
+    /// `cuDeviceGetLuid`. Identity with [`Self::device_get_luid`].
+    /// Query; legal during capture. Distinct from [`Self::mem_device_get_uuid`].
+    pub fn mem_device_get_luid(&self, device: DeviceId) -> Result<([u8; 8], u32), SimError> {
+        self.device_get_luid(device)
+    }
+
+    /// `cuDeviceGetTexture1DLinearMaxWidth`. Query; legal during capture.
+    ///
+    /// Always 0; CUDA linear textures are not modeled. Format and channel
+    /// count are not arguments (always 0 regardless). Distinct from
+    /// [`DeviceAttr::MaxTexture1DLinearWidth`] (same 0 via
+    /// [`Self::device_get_attribute`]). Unknown devices are Invalid.
+    ///
+    /// Driver wrap: [`Self::mem_device_get_texture_1d_linear_max_width`].
+    /// Identity: [`Self::mem_device_get_texture_1d_linear_max_width`].
+    pub fn device_get_texture_1d_linear_max_width(
+        &self,
+        device: DeviceId,
+    ) -> Result<u64, SimError> {
+        let _gpu = self.profile.gpu(device)?;
+        Ok(0)
+    }
+
+    /// `cuDeviceGetTexture1DLinearMaxWidth`. Identity with [`Self::device_get_texture_1d_linear_max_width`].
+    /// Query; legal during capture. Distinct from [`Self::mem_device_get_luid`].
+    pub fn mem_device_get_texture_1d_linear_max_width(
+        &self,
+        device: DeviceId,
+    ) -> Result<u64, SimError> {
+        self.device_get_texture_1d_linear_max_width(device)
     }
 
     /// `cuDeviceGetByUuid`. Query; legal during capture.
     ///
     /// Inverse of [`Self::device_get_uuid`]. Unknown UUID is Invalid
     /// `"unknown device uuid"`. Distinct from [`Self::device_get`] (ordinal).
+    ///
+    /// Driver wrap: [`Self::mem_device_get_by_uuid`].
+    /// Identity: [`Self::mem_device_get_by_uuid`].
     pub fn device_get_by_uuid(&self, uuid: [u8; 16]) -> Result<DeviceId, SimError> {
         self.profile
             .gpus
@@ -18642,6 +26021,12 @@ impl Sim {
             })
     }
 
+    /// `cuDeviceGetByUuid`. Identity with [`Self::device_get_by_uuid`].
+    /// Query; legal during capture. Distinct from [`Self::mem_device_get_texture_1d_linear_max_width`].
+    pub fn mem_device_get_by_uuid(&self, uuid: [u8; 16]) -> Result<DeviceId, SimError> {
+        self.device_get_by_uuid(uuid)
+    }
+
     /// `cudaDeviceGetPciBusId` / `cuDeviceGetPCIBusId`. Query; legal during
     /// capture.
     ///
@@ -18651,9 +26036,18 @@ impl Sim {
     /// [`DeviceProperties::pci_domain_id`] / [`pci_bus_id`](DeviceProperties::pci_bus_id) /
     /// [`pci_device_id`](DeviceProperties::pci_device_id). Unknown devices are
     /// Invalid. Inverse is [`Self::device_get_by_pci_bus_id`].
+    ///
+    /// Driver wrap: [`Self::mem_device_get_pci_bus_id`].
+    /// Identity: [`Self::mem_device_get_pci_bus_id`].
     pub fn device_get_pci_bus_id(&self, device: DeviceId) -> Result<String, SimError> {
         let _gpu = self.profile.gpu(device)?;
         Ok(synthetic_pci_bus_id(device))
+    }
+
+    /// `cuDeviceGetPCIBusId`. Identity with [`Self::device_get_pci_bus_id`] (`cudaDeviceGetPciBusId`).
+    /// Query; legal during capture. Distinct from [`Self::mem_device_get_by_uuid`].
+    pub fn mem_device_get_pci_bus_id(&self, device: DeviceId) -> Result<String, SimError> {
+        self.device_get_pci_bus_id(device)
     }
 
     /// `cudaDeviceGetByPCIBusId`. Query; legal during capture.
@@ -18661,6 +26055,9 @@ impl Sim {
     /// Inverse of [`Self::device_get_pci_bus_id`]. Unknown or malformed bus id
     /// is Invalid `"unknown pci bus id"`. Distinct from
     /// [`Self::device_get_by_uuid`].
+    ///
+    /// Driver wrap: [`Self::mem_device_get_by_pci_bus_id`].
+    /// Identity: [`Self::mem_device_get_by_pci_bus_id`].
     pub fn device_get_by_pci_bus_id(&self, pci_bus_id: &str) -> Result<DeviceId, SimError> {
         self.profile
             .gpus
@@ -18672,27 +26069,2282 @@ impl Sim {
             })
     }
 
+    /// `cudaDeviceGetByPCIBusId`. Identity with [`Self::device_get_by_pci_bus_id`].
+    /// Query; legal during capture. Distinct from [`Self::mem_device_get_pci_bus_id`].
+    pub fn mem_device_get_by_pci_bus_id(&self, pci_bus_id: &str) -> Result<DeviceId, SimError> {
+        self.device_get_by_pci_bus_id(pci_bus_id)
+    }
+
     /// `cuDeviceTotalMem`. Query; legal during capture.
     ///
     /// [`crate::GpuProfile::hbm_bytes`] (same as [`DeviceAttr::TotalGlobalMem`] /
     /// [`DeviceProperties::total_global_mem`]). Unknown devices are Invalid.
+    ///
+    /// Driver wrap: [`Self::mem_device_total_mem`].
+    /// Identity: [`Self::mem_device_total_mem`].
     pub fn device_total_mem(&self, device: DeviceId) -> Result<u64, SimError> {
         Ok(self.profile.gpu(device)?.hbm_bytes)
     }
 
+    /// `cuDeviceTotalMem`. Identity with [`Self::device_total_mem`].
+    /// Query; legal during capture. Distinct from [`Self::mem_device_get_by_pci_bus_id`].
+    pub fn mem_device_total_mem(&self, device: DeviceId) -> Result<u64, SimError> {
+        self.device_total_mem(device)
+    }
+
     /// `cudaGetDeviceCount`. Query; legal during capture.
+    /// Driver `cuDeviceGetCount` is [`Self::get_device_count`].
+    /// Identity wrap [`Self::get_device_count`].
     #[must_use]
     pub fn device_count(&self) -> u32 {
         u32::try_from(self.profile.gpus.len()).unwrap_or(u32::MAX)
+    }
+
+    /// `cuDeviceGetCount`. Identity with
+    /// [`Self::device_count`] (`cudaGetDeviceCount`).
+    ///
+    /// Query; legal during capture. Distinct from [`Self::get_device_name`].
+    #[must_use]
+    pub fn get_device_count(&self) -> u32 {
+        self.device_count()
     }
 
     /// `cudaDriverGetVersion` / `cuDriverGetVersion`. Query; legal during capture.
     ///
     /// Reports CUDA 13.0 (`1000 * major` plus `10 * minor`). Distinct from
     /// [`Self::runtime_get_version`]. This VM does not invent `cudaGetLastError`.
+    ///
+    /// Driver wrap: [`Self::mem_driver_get_version`].
+    /// Identity: [`Self::mem_driver_get_version`].
     #[must_use]
     pub fn driver_get_version(&self) -> i32 {
         13_000
+    }
+
+    /// `cuDriverGetVersion`. Identity with [`Self::driver_get_version`] (`cudaDriverGetVersion`).
+    /// Query; legal during capture. Distinct from [`Self::mem_device_total_mem`].
+    #[must_use]
+    pub fn mem_driver_get_version(&self) -> i32 {
+        self.driver_get_version()
+    }
+
+    /// `cuGetProcAddress` / `cudaGetDriverEntryPoint`.
+    ///
+    /// Always Invalid `"proc address"` (this VM has no C ABI function
+    /// pointers). Distinct from [`Self::driver_get_version`] and from
+    /// [`Self::library_load_data`]. Unknown devices are Invalid
+    /// `"device not in profile"`. Query; legal during capture. This VM does
+    /// not invent `cudaGetDriverEntryPointByVersion` this slice.
+    /// Driver wrap: [`Self::mem_get_proc_address`].
+    /// Identity: [`Self::mem_get_proc_address`].
+    pub fn get_proc_address(&self, device: DeviceId) -> Result<(), SimError> {
+        let _gpu = self.profile.gpu(device)?;
+        Err(SimError::Invalid {
+            why: "proc address",
+        })
+    }
+
+    /// `cuGetProcAddress`. Identity with [`Self::get_proc_address`] (`cudaGetDriverEntryPoint`).
+    /// Query; legal during capture. Distinct from [`Self::mem_driver_get_version`].
+    pub fn mem_get_proc_address(&self, device: DeviceId) -> Result<(), SimError> {
+        self.get_proc_address(device)
+    }
+
+    /// `cuGetExportTable`. Internal driver export tables are not modeled.
+    ///
+    /// Always Invalid `"export table"` (this VM has no C ABI tables). Distinct
+    /// from [`Self::get_proc_address`]. Unknown devices are Invalid
+    /// `"device not in profile"`. Query; legal during capture. This VM does
+    /// not invent a succeeding `CUuuid` table lookup this slice.
+    /// Driver wrap: [`Self::mem_get_export_table`].
+    /// Identity: [`Self::mem_get_export_table`].
+    pub fn get_export_table(&self, device: DeviceId) -> Result<(), SimError> {
+        let _gpu = self.profile.gpu(device)?;
+        Err(SimError::Invalid {
+            why: "export table",
+        })
+    }
+
+    /// `cuGetExportTable`. Identity with [`Self::get_export_table`].
+    /// Query; legal during capture. Distinct from [`Self::mem_get_proc_address`].
+    pub fn mem_get_export_table(&self, device: DeviceId) -> Result<(), SimError> {
+        self.get_export_table(device)
+    }
+
+    /// `cuCoredumpGetAttribute` / `cudaCoredumpGetAttribute`.
+    ///
+    /// Always Invalid `"coredump"` (GPU coredumps are not modeled). Distinct
+    /// from [`Self::get_proc_address`]. Unknown devices are Invalid
+    /// `"device not in profile"`. Query; legal during capture. This VM does
+    /// not invent `cuCoredumpSetAttribute` this slice.
+    /// Driver wrap: [`Self::mem_coredump_get_attribute`].
+    /// Identity: [`Self::mem_coredump_get_attribute`].
+    pub fn coredump_get_attribute(&self, device: DeviceId) -> Result<(), SimError> {
+        let _gpu = self.profile.gpu(device)?;
+        Err(SimError::Invalid { why: "coredump" })
+    }
+
+    /// `cuCoredumpGetAttribute`. Identity with [`Self::coredump_get_attribute`] (`cudaCoredumpGetAttribute`).
+    /// Query; legal during capture. Distinct from [`Self::mem_get_export_table`].
+    pub fn mem_coredump_get_attribute(&self, device: DeviceId) -> Result<(), SimError> {
+        self.coredump_get_attribute(device)
+    }
+
+    /// `cuCoredumpSetAttribute` / `cudaCoredumpSetAttribute`.
+    ///
+    /// Always Invalid `"dump setattr"` (GPU coredumps are not modeled).
+    /// Distinct from [`Self::coredump_get_attribute`] (why is not
+    /// `"coredump"`) and from [`Self::checkpoint_process_lock`].
+    /// Unknown devices are Invalid `"device not in profile"`. Query; legal
+    /// during capture.
+    /// Driver wrap: [`Self::mem_coredump_set_attribute`].
+    /// Identity: [`Self::mem_coredump_set_attribute`].
+    pub fn coredump_set_attribute(&self, device: DeviceId) -> Result<(), SimError> {
+        let _gpu = self.profile.gpu(device)?;
+        Err(SimError::Invalid {
+            why: "dump setattr",
+        })
+    }
+
+    /// `cuCoredumpSetAttribute`. Identity with [`Self::coredump_set_attribute`] (`cudaCoredumpSetAttribute`).
+    /// Query; legal during capture. Distinct from [`Self::mem_coredump_get_attribute`].
+    pub fn mem_coredump_set_attribute(&self, device: DeviceId) -> Result<(), SimError> {
+        self.coredump_set_attribute(device)
+    }
+
+    /// `cuCoredumpGetAttributeGlobal` / `cudaCoredumpGetAttributeGlobal`.
+    ///
+    /// Always Invalid `"dump global"` (GPU coredumps are not modeled).
+    /// Distinct from [`Self::coredump_get_attribute`] (why is not
+    /// `"coredump"`) and from [`Self::coredump_set_attribute`] (why is not
+    /// `"dump setattr"`). Unknown devices are Invalid
+    /// `"device not in profile"`. Query; legal during capture. This VM does
+    /// not invent `cuCoredumpSetAttributeGlobal` this slice.
+    /// Driver wrap: [`Self::mem_coredump_get_attribute_global`].
+    /// Identity: [`Self::mem_coredump_get_attribute_global`].
+    pub fn coredump_get_attribute_global(&self, device: DeviceId) -> Result<(), SimError> {
+        let _gpu = self.profile.gpu(device)?;
+        Err(SimError::Invalid { why: "dump global" })
+    }
+
+    /// `cuCoredumpGetAttributeGlobal`. Identity with [`Self::coredump_get_attribute_global`] (`cudaCoredumpGetAttributeGlobal`).
+    /// Query; legal during capture. Distinct from [`Self::mem_coredump_set_attribute`].
+    pub fn mem_coredump_get_attribute_global(&self, device: DeviceId) -> Result<(), SimError> {
+        self.coredump_get_attribute_global(device)
+    }
+
+    /// `cuCoredumpSetAttributeGlobal` / `cudaCoredumpSetAttributeGlobal`.
+    ///
+    /// Always Invalid `"dump setglob"` (GPU coredumps are not modeled).
+    /// Distinct from [`Self::coredump_set_attribute`] (why is not
+    /// `"dump setattr"`) and from [`Self::coredump_get_attribute_global`]
+    /// (why is not `"dump global"`). Unknown devices are Invalid
+    /// `"device not in profile"`. Query; legal during capture. This VM does
+    /// not invent `cuCheckpointProcessCheckpoint` this slice.
+    /// Driver wrap: [`Self::mem_coredump_set_attribute_global`].
+    /// Identity: [`Self::mem_coredump_set_attribute_global`].
+    pub fn coredump_set_attribute_global(&self, device: DeviceId) -> Result<(), SimError> {
+        let _gpu = self.profile.gpu(device)?;
+        Err(SimError::Invalid {
+            why: "dump setglob",
+        })
+    }
+
+    /// `cuCoredumpSetAttributeGlobal`. Identity with [`Self::coredump_set_attribute_global`] (`cudaCoredumpSetAttributeGlobal`).
+    /// Query; legal during capture. Distinct from [`Self::mem_coredump_get_attribute_global`].
+    pub fn mem_coredump_set_attribute_global(&self, device: DeviceId) -> Result<(), SimError> {
+        self.coredump_set_attribute_global(device)
+    }
+
+    /// `cuCheckpointProcessLock`. CUDA process checkpoint is not modeled.
+    ///
+    /// Always Invalid `"checkpoint"`. Distinct from
+    /// [`Self::coredump_get_attribute`], [`Self::coredump_set_attribute`],
+    /// [`Self::coredump_get_attribute_global`], and
+    /// [`Self::coredump_set_attribute_global`]. Unknown devices are
+    /// Invalid `"device not in profile"`. Query; legal during capture. This
+    /// VM does not invent `cuCheckpointProcessCheckpoint` this slice.
+    /// Driver wrap: [`Self::mem_checkpoint_process_lock`].
+    /// Identity: [`Self::mem_checkpoint_process_lock`].
+    pub fn checkpoint_process_lock(&self, device: DeviceId) -> Result<(), SimError> {
+        let _gpu = self.profile.gpu(device)?;
+        Err(SimError::Invalid { why: "checkpoint" })
+    }
+
+    /// `cuCheckpointProcessLock`. Identity with [`Self::checkpoint_process_lock`].
+    /// Query; legal during capture. Distinct from [`Self::mem_coredump_set_attribute_global`].
+    pub fn mem_checkpoint_process_lock(&self, device: DeviceId) -> Result<(), SimError> {
+        self.checkpoint_process_lock(device)
+    }
+
+    /// `cuCheckpointProcessCheckpoint`. CUDA process checkpoint is not
+    /// modeled.
+    ///
+    /// Always Invalid `"ckpt exec"` (why is not `"checkpoint"`). Distinct
+    /// from [`Self::checkpoint_process_lock`]. Unknown devices are Invalid
+    /// `"device not in profile"`. Query; legal during capture. This VM does
+    /// not invent `cuCheckpointProcessRestore` this slice.
+    /// Driver wrap: [`Self::mem_checkpoint_process_checkpoint`].
+    /// Identity: [`Self::mem_checkpoint_process_checkpoint`].
+    pub fn checkpoint_process_checkpoint(&self, device: DeviceId) -> Result<(), SimError> {
+        let _gpu = self.profile.gpu(device)?;
+        Err(SimError::Invalid { why: "ckpt exec" })
+    }
+
+    /// `cuCheckpointProcessCheckpoint`. Identity with [`Self::checkpoint_process_checkpoint`].
+    /// Query; legal during capture. Distinct from [`Self::mem_checkpoint_process_lock`].
+    pub fn mem_checkpoint_process_checkpoint(&self, device: DeviceId) -> Result<(), SimError> {
+        self.checkpoint_process_checkpoint(device)
+    }
+
+    /// `cuCheckpointProcessRestore`. CUDA process checkpoint is not modeled.
+    ///
+    /// Always Invalid `"ckpt restore"` (why is not `"checkpoint"` or
+    /// `"ckpt exec"`). Distinct from [`Self::checkpoint_process_lock`] and
+    /// [`Self::checkpoint_process_checkpoint`]. Unknown devices are Invalid
+    /// `"device not in profile"`. Query; legal during capture. This VM does
+    /// not invent `cuCheckpointProcessUnlock` this slice.
+    /// Driver wrap: [`Self::mem_checkpoint_process_restore`].
+    /// Identity: [`Self::mem_checkpoint_process_restore`].
+    pub fn checkpoint_process_restore(&self, device: DeviceId) -> Result<(), SimError> {
+        let _gpu = self.profile.gpu(device)?;
+        Err(SimError::Invalid {
+            why: "ckpt restore",
+        })
+    }
+
+    /// `cuCheckpointProcessRestore`. Identity with [`Self::checkpoint_process_restore`].
+    /// Query; legal during capture. Distinct from [`Self::mem_checkpoint_process_checkpoint`].
+    pub fn mem_checkpoint_process_restore(&self, device: DeviceId) -> Result<(), SimError> {
+        self.checkpoint_process_restore(device)
+    }
+
+    /// `cuCheckpointProcessUnlock`. CUDA process checkpoint is not modeled.
+    ///
+    /// Always Invalid `"ckpt unlock"` (why is not `"checkpoint"`,
+    /// `"ckpt exec"`, or `"ckpt restore"`). Distinct from
+    /// [`Self::checkpoint_process_lock`],
+    /// [`Self::checkpoint_process_checkpoint`], and
+    /// [`Self::checkpoint_process_restore`]. Unknown devices are Invalid
+    /// `"device not in profile"`. Query; legal during capture. This VM does
+    /// not invent `cuCheckpointProcessGetRestoreThreadId` this slice.
+    /// Driver wrap: [`Self::mem_checkpoint_process_unlock`].
+    /// Identity: [`Self::mem_checkpoint_process_unlock`].
+    pub fn checkpoint_process_unlock(&self, device: DeviceId) -> Result<(), SimError> {
+        let _gpu = self.profile.gpu(device)?;
+        Err(SimError::Invalid { why: "ckpt unlock" })
+    }
+
+    /// `cuCheckpointProcessUnlock`. Identity with [`Self::checkpoint_process_unlock`].
+    /// Query; legal during capture. Distinct from [`Self::mem_checkpoint_process_restore`].
+    pub fn mem_checkpoint_process_unlock(&self, device: DeviceId) -> Result<(), SimError> {
+        self.checkpoint_process_unlock(device)
+    }
+
+    /// `cuCheckpointProcessGetRestoreThreadId`. CUDA process checkpoint is
+    /// not modeled.
+    ///
+    /// Always Invalid `"ckpt thread"` (why is not `"checkpoint"`,
+    /// `"ckpt exec"`, `"ckpt restore"`, or `"ckpt unlock"`). Distinct from
+    /// [`Self::checkpoint_process_unlock`]. Unknown devices are Invalid
+    /// `"device not in profile"`. Query; legal during capture. This VM does
+    /// not invent `cuCheckpointProcessGetState` this slice.
+    /// Driver wrap: [`Self::mem_checkpoint_process_get_restore_thread_id`].
+    /// Identity: [`Self::mem_checkpoint_process_get_restore_thread_id`].
+    pub fn checkpoint_process_get_restore_thread_id(
+        &self,
+        device: DeviceId,
+    ) -> Result<(), SimError> {
+        let _gpu = self.profile.gpu(device)?;
+        Err(SimError::Invalid { why: "ckpt thread" })
+    }
+
+    /// `cuCheckpointProcessGetRestoreThreadId`. Identity with [`Self::checkpoint_process_get_restore_thread_id`].
+    /// Query; legal during capture. Distinct from [`Self::mem_checkpoint_process_unlock`].
+    pub fn mem_checkpoint_process_get_restore_thread_id(
+        &self,
+        device: DeviceId,
+    ) -> Result<(), SimError> {
+        self.checkpoint_process_get_restore_thread_id(device)
+    }
+
+    /// `cuCheckpointProcessGetState`. CUDA process checkpoint is not
+    /// modeled.
+    ///
+    /// Always Invalid `"ckpt state"` (why is not `"checkpoint"`,
+    /// `"ckpt exec"`, `"ckpt restore"`, `"ckpt unlock"`, or
+    /// `"ckpt thread"`). Distinct from
+    /// [`Self::checkpoint_process_get_restore_thread_id`]. Unknown devices
+    /// are Invalid `"device not in profile"`. Query; legal during capture.
+    /// This VM does not invent `cuLibraryGetKernelCount` this slice.
+    /// Driver wrap: [`Self::mem_checkpoint_process_get_state`].
+    /// Identity: [`Self::mem_checkpoint_process_get_state`].
+    pub fn checkpoint_process_get_state(&self, device: DeviceId) -> Result<(), SimError> {
+        let _gpu = self.profile.gpu(device)?;
+        Err(SimError::Invalid { why: "ckpt state" })
+    }
+
+    /// `cuCheckpointProcessGetState`. Identity with [`Self::checkpoint_process_get_state`].
+    /// Query; legal during capture. Distinct from [`Self::mem_checkpoint_process_get_restore_thread_id`].
+    pub fn mem_checkpoint_process_get_state(&self, device: DeviceId) -> Result<(), SimError> {
+        self.checkpoint_process_get_state(device)
+    }
+
+    /// `cuDeviceRegisterAsyncNotification` /
+    /// `cudaDeviceRegisterAsyncNotification`.
+    ///
+    /// Always Invalid `"async notify"` (device async callbacks are not
+    /// modeled). Distinct from [`Self::stream_add_callback`] (live host
+    /// enqueue) and from [`Self::checkpoint_process_get_state`]. Unknown
+    /// devices are Invalid `"device not in profile"`. Query; legal during
+    /// capture. This VM does not invent
+    /// `cuDeviceUnregisterAsyncNotification` this slice.
+    /// Driver wrap: [`Self::mem_device_register_async_notification`].
+    /// Identity: [`Self::mem_device_register_async_notification`].
+    pub fn device_register_async_notification(&self, device: DeviceId) -> Result<(), SimError> {
+        let _gpu = self.profile.gpu(device)?;
+        Err(SimError::Invalid {
+            why: "async notify",
+        })
+    }
+
+    /// `cuDeviceRegisterAsyncNotification`. Identity with [`Self::device_register_async_notification`].
+    /// Query; legal during capture. Distinct from [`Self::mem_checkpoint_process_get_state`].
+    pub fn mem_device_register_async_notification(&self, device: DeviceId) -> Result<(), SimError> {
+        self.device_register_async_notification(device)
+    }
+
+    /// `cuDeviceUnregisterAsyncNotification` /
+    /// `cudaDeviceUnregisterAsyncNotification`.
+    ///
+    /// Always Invalid `"async unreg"` (device async callbacks are not
+    /// modeled). Distinct from [`Self::device_register_async_notification`]
+    /// (why is not `"async notify"`) and from [`Self::stream_add_callback`].
+    /// Unknown devices are Invalid `"device not in profile"`. Query; legal
+    /// during capture. This VM does not invent `cuMemMapArrayAsync` this
+    /// slice.
+    /// Driver wrap: [`Self::mem_device_unregister_async_notification`].
+    /// Identity: [`Self::mem_device_unregister_async_notification`].
+    pub fn device_unregister_async_notification(&self, device: DeviceId) -> Result<(), SimError> {
+        let _gpu = self.profile.gpu(device)?;
+        Err(SimError::Invalid { why: "async unreg" })
+    }
+
+    /// `cuDeviceUnregisterAsyncNotification`. Identity with [`Self::device_unregister_async_notification`].
+    /// Query; legal during capture. Distinct from [`Self::mem_device_register_async_notification`].
+    pub fn mem_device_unregister_async_notification(
+        &self,
+        device: DeviceId,
+    ) -> Result<(), SimError> {
+        self.device_unregister_async_notification(device)
+    }
+
+    /// `cuInit`. Host-synchronous. Capture cannot include it.
+    ///
+    /// Flags must be 0 (CUDA requires 0). This VM is already initialized at
+    /// [`Sim::new`]; further calls are 1 ns no-ops. Distinct from
+    /// [`Self::init_device`] (`cudaInitDevice`, per GPU) and from
+    /// [`Self::driver_get_version`]. Unknown flags Invalid `"init flags"`.
+    /// Driver wrap: [`Self::mem_driver_init`].
+    /// Identity: [`Self::mem_driver_init`].
+    pub fn driver_init(&mut self, flags: u32) -> Result<(), SimError> {
+        self.fail_if_capturing("cannot capture driver init")?;
+        if flags != 0 {
+            return Err(SimError::Invalid { why: "init flags" });
+        }
+        self.clock = self.clock.saturating_add(1);
+        Ok(())
+    }
+
+    /// `cuInit`. Identity with [`Self::driver_init`].
+    /// Host-synchronous. Capture refused. Distinct from [`Self::mem_device_unregister_async_notification`].
+    pub fn mem_driver_init(&mut self, flags: u32) -> Result<(), SimError> {
+        self.driver_init(flags)
+    }
+
+    /// `cuProfilerStart` / `cudaProfilerStart`. Host-synchronous. Capture
+    /// cannot include it.
+    ///
+    /// 1 ns no-op (CUPTI is not modeled). Distinct from [`Self::driver_init`]
+    /// and from [`Self::profiler_stop`].
+    /// Driver wrap: [`Self::mem_profiler_start`].
+    /// Identity: [`Self::mem_profiler_start`].
+    pub fn profiler_start(&mut self) -> Result<(), SimError> {
+        self.fail_if_capturing("cannot capture profiler start")?;
+        self.clock = self.clock.saturating_add(1);
+        Ok(())
+    }
+
+    /// `cuProfilerStart`. Identity with [`Self::profiler_start`].
+    /// Host-synchronous. Capture refused. Distinct from [`Self::mem_driver_init`].
+    pub fn mem_profiler_start(&mut self) -> Result<(), SimError> {
+        self.profiler_start()
+    }
+
+    /// `cuProfilerStop` plus `cudaProfilerStop`. Host-synchronous. Capture
+    /// cannot include it.
+    ///
+    /// 1 ns no-op (CUPTI is not modeled). Distinct from [`Self::profiler_start`]
+    /// and from [`Self::profiler_initialize`].
+    /// Driver wrap: [`Self::mem_profiler_stop`].
+    /// Identity: [`Self::mem_profiler_stop`].
+    pub fn profiler_stop(&mut self) -> Result<(), SimError> {
+        self.fail_if_capturing("cannot capture profiler stop")?;
+        self.clock = self.clock.saturating_add(1);
+        Ok(())
+    }
+
+    /// `cuProfilerStop`. Identity with [`Self::profiler_stop`].
+    /// Host-synchronous. Capture refused. Distinct from [`Self::mem_profiler_start`].
+    pub fn mem_profiler_stop(&mut self) -> Result<(), SimError> {
+        self.profiler_stop()
+    }
+
+    /// `cudaProfilerInitialize`. CUPTI config files are not modeled.
+    ///
+    /// Always Invalid `"profiler initialize"`. Distinct from
+    /// [`Self::profiler_start`] and from [`Self::profiler_stop`]. Query;
+    /// legal during capture. This VM does not invent a CUPTI activity
+    /// buffer this slice.
+    /// Driver wrap: [`Self::mem_profiler_initialize`].
+    /// Identity: [`Self::mem_profiler_initialize`].
+    pub fn profiler_initialize(&self) -> Result<(), SimError> {
+        Err(SimError::Invalid {
+            why: "profiler initialize",
+        })
+    }
+
+    /// `cudaProfilerInitialize`. Identity with [`Self::profiler_initialize`].
+    /// Query; legal during capture. Distinct from [`Self::mem_profiler_stop`].
+    pub fn mem_profiler_initialize(&self) -> Result<(), SimError> {
+        self.profiler_initialize()
+    }
+
+    /// `cuModuleGetLoadingMode`. Query; legal during capture.
+    ///
+    /// Process-wide. Always [`ModuleLoadingMode::Eager`] (CUDA 1).
+    /// [`ModuleLoadingMode::Lazy`] is 2 and is not selected. This VM has
+    /// no `CUmodule`. Distinct from [`Self::driver_init`] and from
+    /// [`Self::init_device`]. This VM does not invent an environment-variable
+    /// loading override or `cuModuleLoad` this slice.
+    /// Driver wrap: [`Self::mem_module_get_loading_mode`].
+    /// Identity: [`Self::mem_module_get_loading_mode`].
+    #[must_use]
+    pub fn module_get_loading_mode(&self) -> ModuleLoadingMode {
+        ModuleLoadingMode::Eager
+    }
+
+    /// `cuModuleGetLoadingMode`. Identity with [`Self::module_get_loading_mode`].
+    /// Query; legal during capture. Distinct from [`Self::mem_profiler_initialize`].
+    #[must_use]
+    pub fn mem_module_get_loading_mode(&self) -> ModuleLoadingMode {
+        self.module_get_loading_mode()
+    }
+
+    /// `cuModuleLoad`. CUDA modules are not modeled.
+    ///
+    /// Always Invalid `"module load"` (this VM has no cubin path and no
+    /// `CUmodule`). Distinct from [`Self::module_get_loading_mode`] (Eager
+    /// query) and from [`Self::library_load_data`] (why is not
+    /// `"cuda library"`) and from [`Self::func_load`] and from
+    /// [`Self::module_load_data`].
+    /// Unknown devices are Invalid `"device not in profile"`. Query; legal
+    /// during capture.
+    /// Driver wrap: [`Self::mem_module_load`].
+    /// Identity: [`Self::mem_module_load`].
+    pub fn module_load(&self, device: DeviceId) -> Result<(), SimError> {
+        let _gpu = self.profile.gpu(device)?;
+        Err(SimError::Invalid { why: "module load" })
+    }
+
+    /// `cuModuleLoad`. Identity with [`Self::module_load`].
+    /// Query; legal during capture. Distinct from [`Self::mem_module_get_loading_mode`].
+    pub fn mem_module_load(&self, device: DeviceId) -> Result<(), SimError> {
+        self.module_load(device)
+    }
+
+    /// `cuModuleLoadData`. CUDA modules are not modeled.
+    ///
+    /// Always Invalid `"module data"` (this VM has no cubin image and no
+    /// `CUmodule`). Distinct from [`Self::module_load`] (why is not
+    /// `"module load"`) and from [`Self::library_load_data`] (why is not
+    /// `"cuda library"`) and from [`Self::module_unload`] and from
+    /// [`Self::module_load_fat_binary`].
+    /// Unknown devices are Invalid `"device not in profile"`. Query; legal
+    /// during capture.
+    /// Driver wrap: [`Self::mem_module_load_data`].
+    /// Identity: [`Self::mem_module_load_data`].
+    pub fn module_load_data(&self, device: DeviceId) -> Result<(), SimError> {
+        let _gpu = self.profile.gpu(device)?;
+        Err(SimError::Invalid { why: "module data" })
+    }
+
+    /// `cuModuleLoadData`. Identity with [`Self::module_load_data`].
+    /// Query; legal during capture. Distinct from [`Self::mem_module_load`].
+    pub fn mem_module_load_data(&self, device: DeviceId) -> Result<(), SimError> {
+        self.module_load_data(device)
+    }
+
+    /// `cuModuleLoadFatBinary`. CUDA modules are not modeled.
+    ///
+    /// Always Invalid `"module fatbin"` (this VM has no fatbin image and
+    /// no `CUmodule`). Distinct from [`Self::module_load_data`] (why is not
+    /// `"module data"`) and from [`Self::module_load`] (why is not
+    /// `"module load"`) and from [`Self::library_load_data`] and from
+    /// [`Self::module_load_data_ex`].
+    /// Unknown devices are Invalid `"device not in profile"`. Query; legal
+    /// during capture.
+    /// Driver wrap: [`Self::mem_module_load_fat_binary`].
+    /// Identity: [`Self::mem_module_load_fat_binary`].
+    pub fn module_load_fat_binary(&self, device: DeviceId) -> Result<(), SimError> {
+        let _gpu = self.profile.gpu(device)?;
+        Err(SimError::Invalid {
+            why: "module fatbin",
+        })
+    }
+
+    /// `cuModuleLoadFatBinary`. Identity with [`Self::module_load_fat_binary`].
+    /// Query; legal during capture. Distinct from [`Self::mem_module_load_data`].
+    pub fn mem_module_load_fat_binary(&self, device: DeviceId) -> Result<(), SimError> {
+        self.module_load_fat_binary(device)
+    }
+
+    /// `cuModuleLoadDataEx`. CUDA modules are not modeled.
+    ///
+    /// Always Invalid `"module jitopt"` (this VM has no cubin image, no
+    /// JIT options, and no `CUmodule`). Distinct from
+    /// [`Self::module_load_fat_binary`] (why is not `"module fatbin"`) and
+    /// from [`Self::module_load_data`] (why is not `"module data"`) and
+    /// from [`Self::link_create`] and from [`Self::module_get_function_count`].
+    /// Unknown devices are Invalid `"device not in profile"`. Query; legal
+    /// during capture.
+    /// Driver wrap: [`Self::mem_module_load_data_ex`].
+    /// Identity: [`Self::mem_module_load_data_ex`].
+    pub fn module_load_data_ex(&self, device: DeviceId) -> Result<(), SimError> {
+        let _gpu = self.profile.gpu(device)?;
+        Err(SimError::Invalid {
+            why: "module jitopt",
+        })
+    }
+
+    /// `cuModuleLoadDataEx`. Identity with [`Self::module_load_data_ex`].
+    /// Query; legal during capture. Distinct from [`Self::mem_module_load_fat_binary`].
+    pub fn mem_module_load_data_ex(&self, device: DeviceId) -> Result<(), SimError> {
+        self.module_load_data_ex(device)
+    }
+
+    /// `cuModuleGetFunctionCount`. CUDA modules are not modeled.
+    ///
+    /// Always Invalid `"module fncount"` (this VM has no `CUmodule`
+    /// function list). Distinct from [`Self::module_load_data_ex`] (why is
+    /// not `"module jitopt"`) and from [`Self::module_get_function`] (why
+    /// is not `"module function"`) and from [`Self::module_enumerate_functions`].
+    /// Unknown devices are Invalid `"device not in profile"`. Query; legal
+    /// during capture.
+    /// Driver wrap: [`Self::mem_module_get_function_count`].
+    /// Identity: [`Self::mem_module_get_function_count`].
+    pub fn module_get_function_count(&self, device: DeviceId) -> Result<(), SimError> {
+        let _gpu = self.profile.gpu(device)?;
+        Err(SimError::Invalid {
+            why: "module fncount",
+        })
+    }
+
+    /// `cuModuleGetFunctionCount`. Identity with [`Self::module_get_function_count`].
+    /// Query; legal during capture. Distinct from [`Self::mem_module_load_data_ex`].
+    pub fn mem_module_get_function_count(&self, device: DeviceId) -> Result<(), SimError> {
+        self.module_get_function_count(device)
+    }
+
+    /// `cuModuleEnumerateFunctions`. CUDA modules are not modeled.
+    ///
+    /// Always Invalid `"module enumfn"` (this VM has no `CUmodule`
+    /// function list). Distinct from [`Self::module_get_function_count`]
+    /// (why is not `"module fncount"`) and from [`Self::module_get_function`]
+    /// (why is not `"module function"`).
+    /// Unknown devices are Invalid `"device not in profile"`. Query; legal
+    /// during capture.
+    /// Driver wrap: [`Self::mem_module_enumerate_functions`].
+    /// Identity: [`Self::mem_module_enumerate_functions`].
+    pub fn module_enumerate_functions(&self, device: DeviceId) -> Result<(), SimError> {
+        let _gpu = self.profile.gpu(device)?;
+        Err(SimError::Invalid {
+            why: "module enumfn",
+        })
+    }
+
+    /// `cuModuleEnumerateFunctions`. Identity with [`Self::module_enumerate_functions`].
+    /// Query; legal during capture. Distinct from [`Self::mem_module_get_function_count`].
+    pub fn mem_module_enumerate_functions(&self, device: DeviceId) -> Result<(), SimError> {
+        self.module_enumerate_functions(device)
+    }
+
+    /// `cuModuleUnload`. CUDA modules are not modeled.
+    ///
+    /// Always Invalid `"module unload"` (this VM has no `CUmodule`
+    /// handle). Distinct from [`Self::module_load_data`] (why is not
+    /// `"module data"`) and from [`Self::module_load`] (why is not
+    /// `"module load"`) and from [`Self::library_unload`] and from
+    /// [`Self::module_get_function`].
+    /// Unknown devices are Invalid `"device not in profile"`. Query; legal
+    /// during capture.
+    /// Driver wrap: [`Self::mem_module_unload`].
+    /// Identity: [`Self::mem_module_unload`].
+    pub fn module_unload(&self, device: DeviceId) -> Result<(), SimError> {
+        let _gpu = self.profile.gpu(device)?;
+        Err(SimError::Invalid {
+            why: "module unload",
+        })
+    }
+
+    /// `cuModuleUnload`. Identity with [`Self::module_unload`].
+    /// Query; legal during capture. Distinct from [`Self::mem_module_enumerate_functions`].
+    pub fn mem_module_unload(&self, device: DeviceId) -> Result<(), SimError> {
+        self.module_unload(device)
+    }
+
+    /// `cuModuleGetFunction`. CUDA modules are not modeled.
+    ///
+    /// Always Invalid `"module function"` (this VM has no `CUmodule` and
+    /// no `CUfunction`). Distinct from [`Self::module_unload`] (why is not
+    /// `"module unload"`) and from [`Self::kernel_get_function`] (why is
+    /// not `"kernel function"`) and from [`Self::func_get_module`] and from
+    /// [`Self::module_get_global`].
+    /// Unknown devices are Invalid `"device not in profile"`. Query; legal
+    /// during capture.
+    /// Driver wrap: [`Self::mem_module_get_function`].
+    /// Identity: [`Self::mem_module_get_function`].
+    pub fn module_get_function(&self, device: DeviceId) -> Result<(), SimError> {
+        let _gpu = self.profile.gpu(device)?;
+        Err(SimError::Invalid {
+            why: "module function",
+        })
+    }
+
+    /// `cuModuleGetFunction`. Identity with [`Self::module_get_function`].
+    /// Query; legal during capture. Distinct from [`Self::mem_module_unload`].
+    pub fn mem_module_get_function(&self, device: DeviceId) -> Result<(), SimError> {
+        self.module_get_function(device)
+    }
+
+    /// `cuModuleGetGlobal`. CUDA modules are not modeled.
+    ///
+    /// Always Invalid `"module global"` (this VM has no `CUmodule`
+    /// device symbol). Distinct from [`Self::module_get_function`] (why is
+    /// not `"module function"`) and from [`Self::library_get_global`] (why
+    /// is not `"library global"`) and from [`Self::module_get_tex_ref`].
+    /// Unknown devices are Invalid `"device not in profile"`. Query; legal
+    /// during capture.
+    /// Driver wrap: [`Self::mem_module_get_global`].
+    /// Identity: [`Self::mem_module_get_global`].
+    pub fn module_get_global(&self, device: DeviceId) -> Result<(), SimError> {
+        let _gpu = self.profile.gpu(device)?;
+        Err(SimError::Invalid {
+            why: "module global",
+        })
+    }
+
+    /// `cuModuleGetGlobal`. Identity with [`Self::module_get_global`].
+    /// Query; legal during capture. Distinct from [`Self::mem_module_get_function`].
+    pub fn mem_module_get_global(&self, device: DeviceId) -> Result<(), SimError> {
+        self.module_get_global(device)
+    }
+
+    /// `cuModuleGetTexRef`. CUDA modules are not modeled.
+    ///
+    /// Always Invalid `"module texref"` (this VM has no `CUmodule` and
+    /// no `CUtexref`). Distinct from [`Self::module_get_global`] (why is
+    /// not `"module global"`) and from [`Self::tex_object_create`] (why is
+    /// not `"cuda texture"`) and from [`Self::tex_object_get_texture_desc`]
+    /// and from [`Self::module_get_surf_ref`].
+    /// Unknown devices are Invalid `"device not in profile"`. Query; legal
+    /// during capture.
+    /// Driver wrap: [`Self::mem_module_get_tex_ref`].
+    /// Identity: [`Self::mem_module_get_tex_ref`].
+    pub fn module_get_tex_ref(&self, device: DeviceId) -> Result<(), SimError> {
+        let _gpu = self.profile.gpu(device)?;
+        Err(SimError::Invalid {
+            why: "module texref",
+        })
+    }
+
+    /// `cuModuleGetTexRef`. Identity with [`Self::module_get_tex_ref`].
+    /// Query; legal during capture. Distinct from [`Self::mem_module_get_global`].
+    pub fn mem_module_get_tex_ref(&self, device: DeviceId) -> Result<(), SimError> {
+        self.module_get_tex_ref(device)
+    }
+
+    /// `cuTexRefCreate`. CUDA texture references are not modeled.
+    ///
+    /// Always Invalid `"texref create"` (this VM has no `CUtexref`
+    /// handles). Distinct from [`Self::module_get_tex_ref`] (why is not
+    /// `"module texref"`) and from [`Self::tex_object_create`] (why is not
+    /// `"cuda texture"`). Unknown devices are Invalid `"device not in profile"`.
+    /// Query; legal during capture. This VM does not invent
+    /// `cuTexRefDestroy` this slice.
+    /// Driver wrap: [`Self::mem_tex_ref_create`].
+    /// Identity: [`Self::mem_tex_ref_create`].
+    pub fn tex_ref_create(&self, device: DeviceId) -> Result<(), SimError> {
+        let _gpu = self.profile.gpu(device)?;
+        Err(SimError::Invalid {
+            why: "texref create",
+        })
+    }
+
+    /// `cuTexRefCreate`. Identity with [`Self::tex_ref_create`].
+    /// Query; legal during capture. Distinct from [`Self::mem_module_get_tex_ref`].
+    pub fn mem_tex_ref_create(&self, device: DeviceId) -> Result<(), SimError> {
+        self.tex_ref_create(device)
+    }
+
+    /// `cuTexRefDestroy`. CUDA texture references are not modeled.
+    ///
+    /// Always Invalid `"texref destroy"` (this VM has no `CUtexref`
+    /// handles). Distinct from [`Self::tex_ref_create`] (why is not
+    /// `"texref create"`) and from [`Self::module_get_tex_ref`] (why is not
+    /// `"module texref"`). Unknown devices are Invalid `"device not in profile"`.
+    /// Query; legal during capture. This VM does not invent
+    /// `cuTexRefSetArray` this slice.
+    /// Driver wrap: [`Self::mem_tex_ref_destroy`].
+    /// Identity: [`Self::mem_tex_ref_destroy`].
+    pub fn tex_ref_destroy(&self, device: DeviceId) -> Result<(), SimError> {
+        let _gpu = self.profile.gpu(device)?;
+        Err(SimError::Invalid {
+            why: "texref destroy",
+        })
+    }
+
+    /// `cuTexRefDestroy`. Identity with [`Self::tex_ref_destroy`].
+    /// Query; legal during capture. Distinct from [`Self::mem_tex_ref_create`].
+    pub fn mem_tex_ref_destroy(&self, device: DeviceId) -> Result<(), SimError> {
+        self.tex_ref_destroy(device)
+    }
+
+    /// `cuTexRefSetArray`. CUDA texture references are not modeled.
+    ///
+    /// Always Invalid `"texref setarr"` (this VM has no `CUtexref` or
+    /// `CUarray` handles). Distinct from [`Self::tex_ref_destroy`] (why is
+    /// not `"texref destroy"`) and from [`Self::array_create`] (why is not
+    /// `"cuda array"`). Unknown devices are Invalid `"device not in profile"`.
+    /// Query; legal during capture. This VM does not invent
+    /// `cuTexRefSetMipmappedArray` this slice.
+    /// Driver wrap: [`Self::mem_tex_ref_set_array`].
+    /// Identity: [`Self::mem_tex_ref_set_array`].
+    pub fn tex_ref_set_array(&self, device: DeviceId) -> Result<(), SimError> {
+        let _gpu = self.profile.gpu(device)?;
+        Err(SimError::Invalid {
+            why: "texref setarr",
+        })
+    }
+
+    /// `cuTexRefSetArray`. Identity with [`Self::tex_ref_set_array`].
+    /// Query; legal during capture. Distinct from [`Self::mem_tex_ref_destroy`].
+    pub fn mem_tex_ref_set_array(&self, device: DeviceId) -> Result<(), SimError> {
+        self.tex_ref_set_array(device)
+    }
+
+    /// `cuTexRefSetMipmappedArray`. CUDA texture references are not modeled.
+    ///
+    /// Always Invalid `"texref setmip"` (this VM has no `CUtexref` or
+    /// mipmapped-array handles). Distinct from [`Self::tex_ref_set_array`]
+    /// (why is not `"texref setarr"`) and from
+    /// [`Self::mipmapped_array_create`] (why is not `"mipmapped array"`).
+    /// Unknown devices are Invalid `"device not in profile"`. Query; legal
+    /// during capture. This VM does not invent `cuTexRefSetAddress` this
+    /// slice.
+    /// Driver wrap: [`Self::mem_tex_ref_set_mipmapped_array`].
+    /// Identity: [`Self::mem_tex_ref_set_mipmapped_array`].
+    pub fn tex_ref_set_mipmapped_array(&self, device: DeviceId) -> Result<(), SimError> {
+        let _gpu = self.profile.gpu(device)?;
+        Err(SimError::Invalid {
+            why: "texref setmip",
+        })
+    }
+
+    /// `cuTexRefSetMipmappedArray`. Identity with [`Self::tex_ref_set_mipmapped_array`].
+    /// Query; legal during capture. Distinct from [`Self::mem_tex_ref_set_array`].
+    pub fn mem_tex_ref_set_mipmapped_array(&self, device: DeviceId) -> Result<(), SimError> {
+        self.tex_ref_set_mipmapped_array(device)
+    }
+
+    /// `cuTexRefSetAddress`. CUDA texture references are not modeled.
+    ///
+    /// Always Invalid `"texref linear"` (this VM has no `CUtexref` linear
+    /// bindings). Distinct from [`Self::tex_ref_set_mipmapped_array`] (why
+    /// is not `"texref setmip"`) and from [`Self::tex_ref_set_array`] (why
+    /// is not `"texref setarr"`). Unknown devices are Invalid `"device not in profile"`.
+    /// Query; legal during capture. This VM does not invent
+    /// `cuTexRefSetAddress2D` this slice.
+    /// Driver wrap: [`Self::mem_tex_ref_set_address`].
+    /// Identity: [`Self::mem_tex_ref_set_address`].
+    pub fn tex_ref_set_address(&self, device: DeviceId) -> Result<(), SimError> {
+        let _gpu = self.profile.gpu(device)?;
+        Err(SimError::Invalid {
+            why: "texref linear",
+        })
+    }
+
+    /// `cuTexRefSetAddress`. Identity with [`Self::tex_ref_set_address`].
+    /// Query; legal during capture. Distinct from [`Self::mem_tex_ref_set_mipmapped_array`].
+    pub fn mem_tex_ref_set_address(&self, device: DeviceId) -> Result<(), SimError> {
+        self.tex_ref_set_address(device)
+    }
+
+    /// `cuTexRefSetAddress2D`. CUDA texture references are not modeled.
+    ///
+    /// Always Invalid `"texref pitch2d"` (this VM has no `CUtexref` pitched
+    /// 2D bindings). Distinct from [`Self::tex_ref_set_address`] (why is not
+    /// `"texref linear"`) and from [`Self::tex_ref_set_array`] (why is not
+    /// `"texref setarr"`). Unknown devices are Invalid `"device not in profile"`.
+    /// Query; legal during capture. This VM does not invent
+    /// `cuTexRefSetFormat` this slice.
+    /// Driver wrap: [`Self::mem_tex_ref_set_address_2d`].
+    /// Identity: [`Self::mem_tex_ref_set_address_2d`].
+    pub fn tex_ref_set_address_2d(&self, device: DeviceId) -> Result<(), SimError> {
+        let _gpu = self.profile.gpu(device)?;
+        Err(SimError::Invalid {
+            why: "texref pitch2d",
+        })
+    }
+
+    /// `cuTexRefSetAddress2D`. Identity with [`Self::tex_ref_set_address_2d`].
+    /// Query; legal during capture. Distinct from [`Self::mem_tex_ref_set_address`].
+    pub fn mem_tex_ref_set_address_2d(&self, device: DeviceId) -> Result<(), SimError> {
+        self.tex_ref_set_address_2d(device)
+    }
+
+    /// `cuTexRefSetFormat`. CUDA texture references are not modeled.
+    ///
+    /// Always Invalid `"texref format"` (this VM has no `CUtexref` channel
+    /// format). Distinct from [`Self::tex_ref_set_address_2d`] (why is not
+    /// `"texref pitch2d"`) and from [`Self::tex_object_create`] (why is not
+    /// `"cuda texture"`). Unknown devices are Invalid `"device not in profile"`.
+    /// Query; legal during capture. This VM does not invent
+    /// `cuTexRefSetAddressMode` this slice.
+    /// Driver wrap: [`Self::mem_tex_ref_set_format`].
+    /// Identity: [`Self::mem_tex_ref_set_format`].
+    pub fn tex_ref_set_format(&self, device: DeviceId) -> Result<(), SimError> {
+        let _gpu = self.profile.gpu(device)?;
+        Err(SimError::Invalid {
+            why: "texref format",
+        })
+    }
+
+    /// `cuTexRefSetFormat`. Identity with [`Self::tex_ref_set_format`].
+    /// Query; legal during capture. Distinct from [`Self::mem_tex_ref_set_address_2d`].
+    pub fn mem_tex_ref_set_format(&self, device: DeviceId) -> Result<(), SimError> {
+        self.tex_ref_set_format(device)
+    }
+
+    /// `cuTexRefSetAddressMode`. CUDA texture references are not modeled.
+    ///
+    /// Always Invalid `"texref addrmode"` (this VM has no `CUtexref`
+    /// addressing). Distinct from [`Self::tex_ref_set_format`] (why is not
+    /// `"texref format"`) and from [`Self::tex_ref_set_address`] (why is not
+    /// `"texref linear"`). Unknown devices are Invalid `"device not in profile"`.
+    /// Query; legal during capture. This VM does not invent
+    /// `cuTexRefSetFilterMode` this slice.
+    /// Driver wrap: [`Self::mem_tex_ref_set_address_mode`].
+    /// Identity: [`Self::mem_tex_ref_set_address_mode`].
+    pub fn tex_ref_set_address_mode(&self, device: DeviceId) -> Result<(), SimError> {
+        let _gpu = self.profile.gpu(device)?;
+        Err(SimError::Invalid {
+            why: "texref addrmode",
+        })
+    }
+
+    /// `cuTexRefSetAddressMode`. Identity with [`Self::tex_ref_set_address_mode`].
+    /// Query; legal during capture. Distinct from [`Self::mem_tex_ref_set_format`].
+    pub fn mem_tex_ref_set_address_mode(&self, device: DeviceId) -> Result<(), SimError> {
+        self.tex_ref_set_address_mode(device)
+    }
+
+    /// `cuTexRefSetFilterMode`. CUDA texture references are not modeled.
+    ///
+    /// Always Invalid `"texref filter"` (this VM has no `CUtexref`
+    /// filtering). Distinct from [`Self::tex_ref_set_address_mode`] (why is
+    /// not `"texref addrmode"`) and from [`Self::tex_object_get_texture_desc`]
+    /// (why is not `"texture desc"`). Unknown devices are Invalid `"device not in profile"`.
+    /// Query; legal during capture. This VM does not invent
+    /// `cuTexRefSetMipmapFilterMode` this slice.
+    /// Driver wrap: [`Self::mem_tex_ref_set_filter_mode`].
+    /// Identity: [`Self::mem_tex_ref_set_filter_mode`].
+    pub fn tex_ref_set_filter_mode(&self, device: DeviceId) -> Result<(), SimError> {
+        let _gpu = self.profile.gpu(device)?;
+        Err(SimError::Invalid {
+            why: "texref filter",
+        })
+    }
+
+    /// `cuTexRefSetFilterMode`. Identity with [`Self::tex_ref_set_filter_mode`].
+    /// Query; legal during capture. Distinct from [`Self::mem_tex_ref_set_address_mode`].
+    pub fn mem_tex_ref_set_filter_mode(&self, device: DeviceId) -> Result<(), SimError> {
+        self.tex_ref_set_filter_mode(device)
+    }
+
+    /// `cuTexRefSetMipmapFilterMode`. CUDA texture references are not modeled.
+    ///
+    /// Always Invalid `"texref mipfilt"` (this VM has no `CUtexref` mipmap
+    /// filtering). Distinct from [`Self::tex_ref_set_filter_mode`] (why is
+    /// not `"texref filter"`) and from [`Self::tex_ref_set_mipmapped_array`]
+    /// (why is not `"texref setmip"`). Unknown devices are Invalid `"device not in profile"`.
+    /// Query; legal during capture. This VM does not invent
+    /// `cuTexRefSetMipmapLevelBias` this slice.
+    /// Driver wrap: [`Self::mem_tex_ref_set_mipmap_filter_mode`].
+    /// Identity: [`Self::mem_tex_ref_set_mipmap_filter_mode`].
+    pub fn tex_ref_set_mipmap_filter_mode(&self, device: DeviceId) -> Result<(), SimError> {
+        let _gpu = self.profile.gpu(device)?;
+        Err(SimError::Invalid {
+            why: "texref mipfilt",
+        })
+    }
+
+    /// `cuTexRefSetMipmapFilterMode`. Identity with [`Self::tex_ref_set_mipmap_filter_mode`].
+    /// Query; legal during capture. Distinct from [`Self::mem_tex_ref_set_filter_mode`].
+    pub fn mem_tex_ref_set_mipmap_filter_mode(&self, device: DeviceId) -> Result<(), SimError> {
+        self.tex_ref_set_mipmap_filter_mode(device)
+    }
+
+    /// `cuTexRefSetMipmapLevelBias`. CUDA texture references are not modeled.
+    ///
+    /// Always Invalid `"texref mipbias"` (this VM has no `CUtexref` mipmap
+    /// LOD bias). Distinct from [`Self::tex_ref_set_mipmap_filter_mode`]
+    /// (why is not `"texref mipfilt"`) and from
+    /// [`Self::tex_ref_set_filter_mode`] (why is not `"texref filter"`).
+    /// Unknown devices are Invalid `"device not in profile"`. Query; legal
+    /// during capture. This VM does not invent `cuTexRefSetMipmapLevelClamp`
+    /// this slice.
+    /// Driver wrap: [`Self::mem_tex_ref_set_mipmap_level_bias`].
+    /// Identity: [`Self::mem_tex_ref_set_mipmap_level_bias`].
+    pub fn tex_ref_set_mipmap_level_bias(&self, device: DeviceId) -> Result<(), SimError> {
+        let _gpu = self.profile.gpu(device)?;
+        Err(SimError::Invalid {
+            why: "texref mipbias",
+        })
+    }
+
+    /// `cuTexRefSetMipmapLevelBias`. Identity with [`Self::tex_ref_set_mipmap_level_bias`].
+    /// Query; legal during capture. Distinct from [`Self::mem_tex_ref_set_mipmap_filter_mode`].
+    pub fn mem_tex_ref_set_mipmap_level_bias(&self, device: DeviceId) -> Result<(), SimError> {
+        self.tex_ref_set_mipmap_level_bias(device)
+    }
+
+    /// `cuTexRefSetMipmapLevelClamp`. CUDA texture references are not modeled.
+    ///
+    /// Always Invalid `"texref mipclamp"` (this VM has no `CUtexref` mipmap
+    /// LOD clamp). Distinct from [`Self::tex_ref_set_mipmap_level_bias`]
+    /// (why is not `"texref mipbias"`) and from
+    /// [`Self::tex_ref_set_mipmap_filter_mode`] (why is not `"texref mipfilt"`).
+    /// Unknown devices are Invalid `"device not in profile"`. Query; legal
+    /// during capture. This VM does not invent `cuTexRefSetMaxAnisotropy`
+    /// this slice.
+    /// Driver wrap: [`Self::mem_tex_ref_set_mipmap_level_clamp`].
+    /// Identity: [`Self::mem_tex_ref_set_mipmap_level_clamp`].
+    pub fn tex_ref_set_mipmap_level_clamp(&self, device: DeviceId) -> Result<(), SimError> {
+        let _gpu = self.profile.gpu(device)?;
+        Err(SimError::Invalid {
+            why: "texref mipclamp",
+        })
+    }
+
+    /// `cuTexRefSetMipmapLevelClamp`. Identity with [`Self::tex_ref_set_mipmap_level_clamp`].
+    /// Query; legal during capture. Distinct from [`Self::mem_tex_ref_set_mipmap_level_bias`].
+    pub fn mem_tex_ref_set_mipmap_level_clamp(&self, device: DeviceId) -> Result<(), SimError> {
+        self.tex_ref_set_mipmap_level_clamp(device)
+    }
+
+    /// `cuTexRefSetMaxAnisotropy`. CUDA texture references are not modeled.
+    ///
+    /// Always Invalid `"texref aniso"` (this VM has no `CUtexref`
+    /// anisotropy). Distinct from [`Self::tex_ref_set_mipmap_level_clamp`]
+    /// (why is not `"texref mipclamp"`) and from
+    /// [`Self::tex_ref_set_filter_mode`] (why is not `"texref filter"`).
+    /// Unknown devices are Invalid `"device not in profile"`. Query; legal
+    /// during capture. This VM does not invent `cuTexRefSetBorderColor` this
+    /// slice.
+    /// Driver wrap: [`Self::mem_tex_ref_set_max_anisotropy`].
+    /// Identity: [`Self::mem_tex_ref_set_max_anisotropy`].
+    pub fn tex_ref_set_max_anisotropy(&self, device: DeviceId) -> Result<(), SimError> {
+        let _gpu = self.profile.gpu(device)?;
+        Err(SimError::Invalid {
+            why: "texref aniso",
+        })
+    }
+
+    /// `cuTexRefSetMaxAnisotropy`. Identity with [`Self::tex_ref_set_max_anisotropy`].
+    /// Query; legal during capture. Distinct from [`Self::mem_tex_ref_set_mipmap_level_clamp`].
+    pub fn mem_tex_ref_set_max_anisotropy(&self, device: DeviceId) -> Result<(), SimError> {
+        self.tex_ref_set_max_anisotropy(device)
+    }
+
+    /// `cuTexRefSetBorderColor`. CUDA texture references are not modeled.
+    ///
+    /// Always Invalid `"texref border"` (this VM has no `CUtexref` border
+    /// color). Distinct from [`Self::tex_ref_set_max_anisotropy`] (why is
+    /// not `"texref aniso"`) and from [`Self::tex_ref_set_address_mode`]
+    /// (why is not `"texref addrmode"`). Unknown devices are Invalid
+    /// `"device not in profile"`. Query; legal during capture. This VM does
+    /// not invent `cuTexRefSetFlags` this slice.
+    /// Driver wrap: [`Self::mem_tex_ref_set_border_color`].
+    /// Identity: [`Self::mem_tex_ref_set_border_color`].
+    pub fn tex_ref_set_border_color(&self, device: DeviceId) -> Result<(), SimError> {
+        let _gpu = self.profile.gpu(device)?;
+        Err(SimError::Invalid {
+            why: "texref border",
+        })
+    }
+
+    /// `cuTexRefSetBorderColor`. Identity with [`Self::tex_ref_set_border_color`].
+    /// Query; legal during capture. Distinct from [`Self::mem_tex_ref_set_max_anisotropy`].
+    pub fn mem_tex_ref_set_border_color(&self, device: DeviceId) -> Result<(), SimError> {
+        self.tex_ref_set_border_color(device)
+    }
+
+    /// `cuTexRefSetFlags`. CUDA texture references are not modeled.
+    ///
+    /// Always Invalid `"texref flags"` (this VM has no `CUtexref` flags
+    /// word). Distinct from [`Self::tex_ref_set_border_color`] (why is not
+    /// `"texref border"`) and from [`Self::tex_ref_create`] (why is not
+    /// `"texref create"`). Unknown devices are Invalid `"device not in profile"`.
+    /// Query; legal during capture. This VM does not invent
+    /// `cuTexRefGetArray` this slice.
+    /// Driver wrap: [`Self::mem_tex_ref_set_flags`].
+    /// Identity: [`Self::mem_tex_ref_set_flags`].
+    pub fn tex_ref_set_flags(&self, device: DeviceId) -> Result<(), SimError> {
+        let _gpu = self.profile.gpu(device)?;
+        Err(SimError::Invalid {
+            why: "texref flags",
+        })
+    }
+
+    /// `cuTexRefSetFlags`. Identity with [`Self::tex_ref_set_flags`].
+    /// Query; legal during capture. Distinct from [`Self::mem_tex_ref_set_border_color`].
+    pub fn mem_tex_ref_set_flags(&self, device: DeviceId) -> Result<(), SimError> {
+        self.tex_ref_set_flags(device)
+    }
+
+    /// `cuTexRefGetArray`. CUDA texture references are not modeled.
+    ///
+    /// Always Invalid `"texref getarr"` (this VM has no `CUtexref` or
+    /// `CUarray` handles). Distinct from [`Self::tex_ref_set_flags`] (why is
+    /// not `"texref flags"`) and from [`Self::tex_ref_set_array`] (why is
+    /// not `"texref setarr"`). Unknown devices are Invalid `"device not in profile"`.
+    /// Query; legal during capture. This VM does not invent
+    /// `cuTexRefGetMipmappedArray` this slice.
+    /// Driver wrap: [`Self::mem_tex_ref_get_array`].
+    /// Identity: [`Self::mem_tex_ref_get_array`].
+    pub fn tex_ref_get_array(&self, device: DeviceId) -> Result<(), SimError> {
+        let _gpu = self.profile.gpu(device)?;
+        Err(SimError::Invalid {
+            why: "texref getarr",
+        })
+    }
+
+    /// `cuTexRefGetArray`. Identity with [`Self::tex_ref_get_array`].
+    /// Query; legal during capture. Distinct from [`Self::mem_tex_ref_set_flags`].
+    pub fn mem_tex_ref_get_array(&self, device: DeviceId) -> Result<(), SimError> {
+        self.tex_ref_get_array(device)
+    }
+
+    /// `cuTexRefGetMipmappedArray`. CUDA texture references are not modeled.
+    ///
+    /// Always Invalid `"texref getmip"` (this VM has no `CUtexref` or
+    /// mipmapped-array handles). Distinct from [`Self::tex_ref_get_array`]
+    /// (why is not `"texref getarr"`) and from
+    /// [`Self::tex_ref_set_mipmapped_array`] (why is not `"texref setmip"`).
+    /// Unknown devices are Invalid `"device not in profile"`. Query; legal
+    /// during capture. This VM does not invent `cuTexRefGetAddress` this
+    /// slice.
+    /// Driver wrap: [`Self::mem_tex_ref_get_mipmapped_array`].
+    /// Identity: [`Self::mem_tex_ref_get_mipmapped_array`].
+    pub fn tex_ref_get_mipmapped_array(&self, device: DeviceId) -> Result<(), SimError> {
+        let _gpu = self.profile.gpu(device)?;
+        Err(SimError::Invalid {
+            why: "texref getmip",
+        })
+    }
+
+    /// `cuTexRefGetMipmappedArray`. Identity with [`Self::tex_ref_get_mipmapped_array`].
+    /// Query; legal during capture. Distinct from [`Self::mem_tex_ref_get_array`].
+    pub fn mem_tex_ref_get_mipmapped_array(&self, device: DeviceId) -> Result<(), SimError> {
+        self.tex_ref_get_mipmapped_array(device)
+    }
+
+    /// `cuTexRefGetAddress`. CUDA texture references are not modeled.
+    ///
+    /// Always Invalid `"texref getaddr"` (this VM has no `CUtexref` linear
+    /// bindings). Distinct from [`Self::tex_ref_get_mipmapped_array`] (why
+    /// is not `"texref getmip"`) and from [`Self::tex_ref_set_address`] (why
+    /// is not `"texref linear"`). Unknown devices are Invalid `"device not in profile"`.
+    /// Query; legal during capture. This VM does not invent
+    /// `cuTexRefGetAddressMode` this slice.
+    /// Driver wrap: [`Self::mem_tex_ref_get_address`].
+    /// Identity: [`Self::mem_tex_ref_get_address`].
+    pub fn tex_ref_get_address(&self, device: DeviceId) -> Result<(), SimError> {
+        let _gpu = self.profile.gpu(device)?;
+        Err(SimError::Invalid {
+            why: "texref getaddr",
+        })
+    }
+
+    /// `cuTexRefGetAddress`. Identity with [`Self::tex_ref_get_address`].
+    /// Query; legal during capture. Distinct from [`Self::mem_tex_ref_get_mipmapped_array`].
+    pub fn mem_tex_ref_get_address(&self, device: DeviceId) -> Result<(), SimError> {
+        self.tex_ref_get_address(device)
+    }
+
+    /// `cuTexRefGetAddressMode`. CUDA texture references are not modeled.
+    ///
+    /// Always Invalid `"texref getmode"` (this VM has no `CUtexref`
+    /// addressing). Distinct from [`Self::tex_ref_get_address`] (why is not
+    /// `"texref getaddr"`) and from [`Self::tex_ref_set_address_mode`] (why
+    /// is not `"texref addrmode"`). Unknown devices are Invalid `"device not in profile"`.
+    /// Query; legal during capture. This VM does not invent
+    /// `cuTexRefGetFilterMode` this slice.
+    /// Driver wrap: [`Self::mem_tex_ref_get_address_mode`].
+    /// Identity: [`Self::mem_tex_ref_get_address_mode`].
+    pub fn tex_ref_get_address_mode(&self, device: DeviceId) -> Result<(), SimError> {
+        let _gpu = self.profile.gpu(device)?;
+        Err(SimError::Invalid {
+            why: "texref getmode",
+        })
+    }
+
+    /// `cuTexRefGetAddressMode`. Identity with [`Self::tex_ref_get_address_mode`].
+    /// Query; legal during capture. Distinct from [`Self::mem_tex_ref_get_address`].
+    pub fn mem_tex_ref_get_address_mode(&self, device: DeviceId) -> Result<(), SimError> {
+        self.tex_ref_get_address_mode(device)
+    }
+
+    /// `cuTexRefGetFilterMode`. CUDA texture references are not modeled.
+    ///
+    /// Always Invalid `"texref getfilt"` (this VM has no `CUtexref`
+    /// filtering). Distinct from [`Self::tex_ref_get_address_mode`] (why is
+    /// not `"texref getmode"`) and from [`Self::tex_ref_set_filter_mode`]
+    /// (why is not `"texref filter"`). Unknown devices are Invalid `"device not in profile"`.
+    /// Query; legal during capture. This VM does not invent
+    /// `cuTexRefGetFormat` this slice.
+    /// Driver wrap: [`Self::mem_tex_ref_get_filter_mode`].
+    /// Identity: [`Self::mem_tex_ref_get_filter_mode`].
+    pub fn tex_ref_get_filter_mode(&self, device: DeviceId) -> Result<(), SimError> {
+        let _gpu = self.profile.gpu(device)?;
+        Err(SimError::Invalid {
+            why: "texref getfilt",
+        })
+    }
+
+    /// `cuTexRefGetFilterMode`. Identity with [`Self::tex_ref_get_filter_mode`].
+    /// Query; legal during capture. Distinct from [`Self::mem_tex_ref_get_address_mode`].
+    pub fn mem_tex_ref_get_filter_mode(&self, device: DeviceId) -> Result<(), SimError> {
+        self.tex_ref_get_filter_mode(device)
+    }
+
+    /// `cuTexRefGetFormat`. CUDA texture references are not modeled.
+    ///
+    /// Always Invalid `"texref getfmt"` (this VM has no `CUtexref` channel
+    /// format). Distinct from [`Self::tex_ref_get_filter_mode`] (why is not
+    /// `"texref getfilt"`) and from [`Self::tex_ref_set_format`] (why is not
+    /// `"texref format"`). Unknown devices are Invalid `"device not in profile"`.
+    /// Query; legal during capture. This VM does not invent
+    /// `cuTexRefGetMipmapFilterMode` this slice.
+    /// Driver wrap: [`Self::mem_tex_ref_get_format`].
+    /// Identity: [`Self::mem_tex_ref_get_format`].
+    pub fn tex_ref_get_format(&self, device: DeviceId) -> Result<(), SimError> {
+        let _gpu = self.profile.gpu(device)?;
+        Err(SimError::Invalid {
+            why: "texref getfmt",
+        })
+    }
+
+    /// `cuTexRefGetFormat`. Identity with [`Self::tex_ref_get_format`].
+    /// Query; legal during capture. Distinct from [`Self::mem_tex_ref_get_filter_mode`].
+    pub fn mem_tex_ref_get_format(&self, device: DeviceId) -> Result<(), SimError> {
+        self.tex_ref_get_format(device)
+    }
+
+    /// `cuTexRefGetMipmapFilterMode`. CUDA texture references are not modeled.
+    ///
+    /// Always Invalid `"texref gmipfilt"` (this VM has no `CUtexref` mipmap
+    /// filtering). Distinct from [`Self::tex_ref_get_format`] (why is not
+    /// `"texref getfmt"`) and from [`Self::tex_ref_set_mipmap_filter_mode`]
+    /// (why is not `"texref mipfilt"`). Unknown devices are Invalid `"device not in profile"`.
+    /// Query; legal during capture. This VM does not invent
+    /// `cuTexRefGetMipmapLevelBias` this slice.
+    /// Driver wrap: [`Self::mem_tex_ref_get_mipmap_filter_mode`].
+    /// Identity: [`Self::mem_tex_ref_get_mipmap_filter_mode`].
+    pub fn tex_ref_get_mipmap_filter_mode(&self, device: DeviceId) -> Result<(), SimError> {
+        let _gpu = self.profile.gpu(device)?;
+        Err(SimError::Invalid {
+            why: "texref gmipfilt",
+        })
+    }
+
+    /// `cuTexRefGetMipmapFilterMode`. Identity with [`Self::tex_ref_get_mipmap_filter_mode`].
+    /// Query; legal during capture. Distinct from [`Self::mem_tex_ref_get_format`].
+    pub fn mem_tex_ref_get_mipmap_filter_mode(&self, device: DeviceId) -> Result<(), SimError> {
+        self.tex_ref_get_mipmap_filter_mode(device)
+    }
+
+    /// `cuTexRefGetMipmapLevelBias`. CUDA texture references are not modeled.
+    ///
+    /// Always Invalid `"texref getbias"` (this VM has no `CUtexref` mipmap
+    /// LOD bias). Distinct from [`Self::tex_ref_get_mipmap_filter_mode`]
+    /// (why is not `"texref gmipfilt"`) and from
+    /// [`Self::tex_ref_set_mipmap_level_bias`] (why is not `"texref mipbias"`).
+    /// Unknown devices are Invalid `"device not in profile"`. Query; legal
+    /// during capture. This VM does not invent `cuTexRefGetMipmapLevelClamp`
+    /// this slice.
+    /// Driver wrap: [`Self::mem_tex_ref_get_mipmap_level_bias`].
+    /// Identity: [`Self::mem_tex_ref_get_mipmap_level_bias`].
+    pub fn tex_ref_get_mipmap_level_bias(&self, device: DeviceId) -> Result<(), SimError> {
+        let _gpu = self.profile.gpu(device)?;
+        Err(SimError::Invalid {
+            why: "texref getbias",
+        })
+    }
+
+    /// `cuTexRefGetMipmapLevelBias`. Identity with [`Self::tex_ref_get_mipmap_level_bias`].
+    /// Query; legal during capture. Distinct from [`Self::mem_tex_ref_get_mipmap_filter_mode`].
+    pub fn mem_tex_ref_get_mipmap_level_bias(&self, device: DeviceId) -> Result<(), SimError> {
+        self.tex_ref_get_mipmap_level_bias(device)
+    }
+
+    /// `cuTexRefGetMipmapLevelClamp`. CUDA texture references are not modeled.
+    ///
+    /// Always Invalid `"texref getclamp"` (this VM has no `CUtexref` mipmap
+    /// LOD clamp). Distinct from [`Self::tex_ref_get_mipmap_level_bias`]
+    /// (why is not `"texref getbias"`) and from
+    /// [`Self::tex_ref_set_mipmap_level_clamp`] (why is not `"texref mipclamp"`).
+    /// Unknown devices are Invalid `"device not in profile"`. Query; legal
+    /// during capture. This VM does not invent `cuTexRefGetMaxAnisotropy`
+    /// this slice.
+    /// Driver wrap: [`Self::mem_tex_ref_get_mipmap_level_clamp`].
+    /// Identity: [`Self::mem_tex_ref_get_mipmap_level_clamp`].
+    pub fn tex_ref_get_mipmap_level_clamp(&self, device: DeviceId) -> Result<(), SimError> {
+        let _gpu = self.profile.gpu(device)?;
+        Err(SimError::Invalid {
+            why: "texref getclamp",
+        })
+    }
+
+    /// `cuTexRefGetMipmapLevelClamp`. Identity with [`Self::tex_ref_get_mipmap_level_clamp`].
+    /// Query; legal during capture. Distinct from [`Self::mem_tex_ref_get_mipmap_level_bias`].
+    pub fn mem_tex_ref_get_mipmap_level_clamp(&self, device: DeviceId) -> Result<(), SimError> {
+        self.tex_ref_get_mipmap_level_clamp(device)
+    }
+
+    /// `cuTexRefGetMaxAnisotropy`. CUDA texture references are not modeled.
+    ///
+    /// Always Invalid `"texref getaniso"` (this VM has no `CUtexref`
+    /// anisotropy). Distinct from [`Self::tex_ref_get_mipmap_level_clamp`]
+    /// (why is not `"texref getclamp"`) and from
+    /// [`Self::tex_ref_set_max_anisotropy`] (why is not `"texref aniso"`).
+    /// Unknown devices are Invalid `"device not in profile"`. Query; legal
+    /// during capture. This VM does not invent `cuTexRefGetBorderColor`
+    /// this slice.
+    /// Driver wrap: [`Self::mem_tex_ref_get_max_anisotropy`].
+    /// Identity: [`Self::mem_tex_ref_get_max_anisotropy`].
+    pub fn tex_ref_get_max_anisotropy(&self, device: DeviceId) -> Result<(), SimError> {
+        let _gpu = self.profile.gpu(device)?;
+        Err(SimError::Invalid {
+            why: "texref getaniso",
+        })
+    }
+
+    /// `cuTexRefGetMaxAnisotropy`. Identity with [`Self::tex_ref_get_max_anisotropy`].
+    /// Query; legal during capture. Distinct from [`Self::mem_tex_ref_get_mipmap_level_clamp`].
+    pub fn mem_tex_ref_get_max_anisotropy(&self, device: DeviceId) -> Result<(), SimError> {
+        self.tex_ref_get_max_anisotropy(device)
+    }
+
+    /// `cuTexRefGetBorderColor`. CUDA texture references are not modeled.
+    ///
+    /// Always Invalid `"texref getborder"` (this VM has no `CUtexref`
+    /// border color). Distinct from [`Self::tex_ref_get_max_anisotropy`]
+    /// (why is not `"texref getaniso"`) and from
+    /// [`Self::tex_ref_set_border_color`] (why is not `"texref border"`).
+    /// Unknown devices are Invalid `"device not in profile"`. Query; legal
+    /// during capture. This VM does not invent `cuTexRefGetFlags`
+    /// this slice.
+    /// Driver wrap: [`Self::mem_tex_ref_get_border_color`].
+    /// Identity: [`Self::mem_tex_ref_get_border_color`].
+    pub fn tex_ref_get_border_color(&self, device: DeviceId) -> Result<(), SimError> {
+        let _gpu = self.profile.gpu(device)?;
+        Err(SimError::Invalid {
+            why: "texref getborder",
+        })
+    }
+
+    /// `cuTexRefGetBorderColor`. Identity with [`Self::tex_ref_get_border_color`].
+    /// Query; legal during capture. Distinct from [`Self::mem_tex_ref_get_max_anisotropy`].
+    pub fn mem_tex_ref_get_border_color(&self, device: DeviceId) -> Result<(), SimError> {
+        self.tex_ref_get_border_color(device)
+    }
+
+    /// `cuTexRefGetFlags`. CUDA texture references are not modeled.
+    ///
+    /// Always Invalid `"texref getflags"` (this VM has no `CUtexref`
+    /// flags word). Distinct from [`Self::tex_ref_get_border_color`]
+    /// (why is not `"texref getborder"`) and from
+    /// [`Self::tex_ref_set_flags`] (why is not `"texref flags"`).
+    /// Unknown devices are Invalid `"device not in profile"`. Query; legal
+    /// during capture. This VM does not invent `cuSurfRefSetArray`
+    /// this slice.
+    /// Driver wrap: [`Self::mem_tex_ref_get_flags`].
+    /// Identity: [`Self::mem_tex_ref_get_flags`].
+    pub fn tex_ref_get_flags(&self, device: DeviceId) -> Result<(), SimError> {
+        let _gpu = self.profile.gpu(device)?;
+        Err(SimError::Invalid {
+            why: "texref getflags",
+        })
+    }
+
+    /// `cuTexRefGetFlags`. Identity with [`Self::tex_ref_get_flags`].
+    /// Query; legal during capture. Distinct from [`Self::mem_tex_ref_get_border_color`].
+    pub fn mem_tex_ref_get_flags(&self, device: DeviceId) -> Result<(), SimError> {
+        self.tex_ref_get_flags(device)
+    }
+
+    /// `cuModuleGetSurfRef`. CUDA modules are not modeled.
+    ///
+    /// Always Invalid `"module surfref"` (this VM has no `CUmodule` and
+    /// no `CUsurfref`). Distinct from [`Self::module_get_tex_ref`] (why is
+    /// not `"module texref"`) and from [`Self::surf_object_create`] (why is
+    /// not `"cuda surface"`) and from [`Self::surf_object_get_resource_desc`].
+    /// Unknown devices are Invalid `"device not in profile"`. Query; legal
+    /// during capture.
+    /// Driver wrap: [`Self::mem_module_get_surf_ref`].
+    /// Identity: [`Self::mem_module_get_surf_ref`].
+    pub fn module_get_surf_ref(&self, device: DeviceId) -> Result<(), SimError> {
+        let _gpu = self.profile.gpu(device)?;
+        Err(SimError::Invalid {
+            why: "module surfref",
+        })
+    }
+
+    /// `cuModuleGetSurfRef`. Identity with [`Self::module_get_surf_ref`].
+    /// Query; legal during capture. Distinct from [`Self::mem_tex_ref_get_flags`].
+    pub fn mem_module_get_surf_ref(&self, device: DeviceId) -> Result<(), SimError> {
+        self.module_get_surf_ref(device)
+    }
+
+    /// `cuSurfRefSetArray`. CUDA surface references are not modeled.
+    ///
+    /// Always Invalid `"surfref setarr"` (this VM has no `CUsurfref`
+    /// array binding). Distinct from [`Self::module_get_surf_ref`]
+    /// (why is not `"module surfref"`) and from
+    /// [`Self::tex_ref_set_array`] (why is not `"texref setarr"`).
+    /// Unknown devices are Invalid `"device not in profile"`. Query; legal
+    /// during capture. This VM does not invent `cuSurfRefGetArray`
+    /// this slice.
+    /// Driver wrap: [`Self::mem_surf_ref_set_array`].
+    /// Identity: [`Self::mem_surf_ref_set_array`].
+    pub fn surf_ref_set_array(&self, device: DeviceId) -> Result<(), SimError> {
+        let _gpu = self.profile.gpu(device)?;
+        Err(SimError::Invalid {
+            why: "surfref setarr",
+        })
+    }
+
+    /// `cuSurfRefSetArray`. Identity with [`Self::surf_ref_set_array`].
+    /// Query; legal during capture. Distinct from [`Self::mem_module_get_surf_ref`].
+    pub fn mem_surf_ref_set_array(&self, device: DeviceId) -> Result<(), SimError> {
+        self.surf_ref_set_array(device)
+    }
+
+    /// `cuSurfRefGetArray`. CUDA surface references are not modeled.
+    ///
+    /// Always Invalid `"surfref getarr"` (this VM has no `CUsurfref`
+    /// array binding). Distinct from [`Self::surf_ref_set_array`]
+    /// (why is not `"surfref setarr"`) and from
+    /// [`Self::tex_ref_get_array`] (why is not `"texref getarr"`).
+    /// Unknown devices are Invalid `"device not in profile"`. Query; legal
+    /// during capture. This VM does not invent `cuMemcpyDtoA`
+    /// this slice.
+    /// Driver wrap: [`Self::mem_surf_ref_get_array`].
+    /// Identity: [`Self::mem_surf_ref_get_array`].
+    pub fn surf_ref_get_array(&self, device: DeviceId) -> Result<(), SimError> {
+        let _gpu = self.profile.gpu(device)?;
+        Err(SimError::Invalid {
+            why: "surfref getarr",
+        })
+    }
+
+    /// `cuSurfRefGetArray`. Identity with [`Self::surf_ref_get_array`].
+    /// Query; legal during capture. Distinct from [`Self::mem_surf_ref_set_array`].
+    pub fn mem_surf_ref_get_array(&self, device: DeviceId) -> Result<(), SimError> {
+        self.surf_ref_get_array(device)
+    }
+
+    /// `cuMemcpyDtoA`. CUDA arrays are not modeled.
+    ///
+    /// Always Invalid `"memcpy dtoa"` (this VM has no `CUarray`
+    /// device-to-array copy). Distinct from [`Self::surf_ref_get_array`]
+    /// (why is not `"surfref getarr"`) and from
+    /// [`Self::array_create`] (why is not `"cuda array"`).
+    /// Unknown devices are Invalid `"device not in profile"`. Query; legal
+    /// during capture. This VM does not invent `cuMemcpyAtoD`
+    /// this slice.
+    /// Driver wrap: [`Self::mem_memcpy_dto_a`].
+    /// Identity: [`Self::mem_memcpy_dto_a`].
+    pub fn memcpy_dto_a(&self, device: DeviceId) -> Result<(), SimError> {
+        let _gpu = self.profile.gpu(device)?;
+        Err(SimError::Invalid { why: "memcpy dtoa" })
+    }
+
+    /// `cuMemcpyDtoA`. Identity with [`Self::memcpy_dto_a`].
+    /// Query; legal during capture. Distinct from [`Self::mem_surf_ref_get_array`].
+    pub fn mem_memcpy_dto_a(&self, device: DeviceId) -> Result<(), SimError> {
+        self.memcpy_dto_a(device)
+    }
+
+    /// `cuMemcpyAtoD`. CUDA arrays are not modeled.
+    ///
+    /// Always Invalid `"memcpy atod"` (this VM has no `CUarray`
+    /// array-to-device copy). Distinct from [`Self::memcpy_dto_a`]
+    /// (why is not `"memcpy dtoa"`) and from
+    /// [`Self::array_create`] (why is not `"cuda array"`).
+    /// Unknown devices are Invalid `"device not in profile"`. Query; legal
+    /// during capture. This VM does not invent `cuMemcpyHtoA`
+    /// this slice.
+    /// Driver wrap: [`Self::mem_memcpy_ato_d`].
+    /// Identity: [`Self::mem_memcpy_ato_d`].
+    pub fn memcpy_ato_d(&self, device: DeviceId) -> Result<(), SimError> {
+        let _gpu = self.profile.gpu(device)?;
+        Err(SimError::Invalid { why: "memcpy atod" })
+    }
+
+    /// `cuMemcpyAtoD`. Identity with [`Self::memcpy_ato_d`].
+    /// Query; legal during capture. Distinct from [`Self::mem_memcpy_dto_a`].
+    pub fn mem_memcpy_ato_d(&self, device: DeviceId) -> Result<(), SimError> {
+        self.memcpy_ato_d(device)
+    }
+
+    /// `cuMemcpyHtoA`. CUDA arrays are not modeled.
+    ///
+    /// Always Invalid `"memcpy htoa"` (this VM has no `CUarray`
+    /// host-to-array copy). Distinct from [`Self::memcpy_ato_d`]
+    /// (why is not `"memcpy atod"`) and from
+    /// [`Self::array_create`] (why is not `"cuda array"`).
+    /// Unknown devices are Invalid `"device not in profile"`. Query; legal
+    /// during capture. This VM does not invent `cuMemcpyAtoH`
+    /// this slice.
+    /// Driver wrap: [`Self::mem_memcpy_hto_a`].
+    /// Identity: [`Self::mem_memcpy_hto_a`].
+    pub fn memcpy_hto_a(&self, device: DeviceId) -> Result<(), SimError> {
+        let _gpu = self.profile.gpu(device)?;
+        Err(SimError::Invalid { why: "memcpy htoa" })
+    }
+
+    /// `cuMemcpyHtoA`. Identity with [`Self::memcpy_hto_a`].
+    /// Query; legal during capture. Distinct from [`Self::mem_memcpy_ato_d`].
+    pub fn mem_memcpy_hto_a(&self, device: DeviceId) -> Result<(), SimError> {
+        self.memcpy_hto_a(device)
+    }
+
+    /// `cuMemcpyAtoH`. CUDA arrays are not modeled.
+    ///
+    /// Always Invalid `"memcpy atoh"` (this VM has no `CUarray`
+    /// array-to-host copy). Distinct from [`Self::memcpy_hto_a`]
+    /// (why is not `"memcpy htoa"`) and from
+    /// [`Self::array_create`] (why is not `"cuda array"`).
+    /// Unknown devices are Invalid `"device not in profile"`. Query; legal
+    /// during capture. This VM does not invent `cuMemcpyAtoA`
+    /// this slice.
+    /// Driver wrap: [`Self::mem_memcpy_ato_h`].
+    /// Identity: [`Self::mem_memcpy_ato_h`].
+    pub fn memcpy_ato_h(&self, device: DeviceId) -> Result<(), SimError> {
+        let _gpu = self.profile.gpu(device)?;
+        Err(SimError::Invalid { why: "memcpy atoh" })
+    }
+
+    /// `cuMemcpyAtoH`. Identity with [`Self::memcpy_ato_h`].
+    /// Query; legal during capture. Distinct from [`Self::mem_memcpy_hto_a`].
+    pub fn mem_memcpy_ato_h(&self, device: DeviceId) -> Result<(), SimError> {
+        self.memcpy_ato_h(device)
+    }
+
+    /// `cuMemcpyAtoA`. CUDA arrays are not modeled.
+    ///
+    /// Always Invalid `"memcpy atoa"` (this VM has no `CUarray`
+    /// array-to-array copy). Distinct from [`Self::memcpy_ato_h`]
+    /// (why is not `"memcpy atoh"`) and from
+    /// [`Self::array_create`] (why is not `"cuda array"`).
+    /// Unknown devices are Invalid `"device not in profile"`. Query; legal
+    /// during capture. This VM does not invent `cuMemcpyDtoAAsync`
+    /// this slice.
+    /// Driver wrap: [`Self::mem_memcpy_ato_a`].
+    /// Identity: [`Self::mem_memcpy_ato_a`].
+    pub fn memcpy_ato_a(&self, device: DeviceId) -> Result<(), SimError> {
+        let _gpu = self.profile.gpu(device)?;
+        Err(SimError::Invalid { why: "memcpy atoa" })
+    }
+
+    /// `cuMemcpyAtoA`. Identity with [`Self::memcpy_ato_a`].
+    /// Query; legal during capture. Distinct from [`Self::mem_memcpy_ato_h`].
+    pub fn mem_memcpy_ato_a(&self, device: DeviceId) -> Result<(), SimError> {
+        self.memcpy_ato_a(device)
+    }
+
+    /// `cuMemcpyDtoAAsync`. CUDA arrays are not modeled.
+    ///
+    /// Always Invalid `"async dtoa"` (this VM has no `CUarray`
+    /// device-to-array copy). Distinct from [`Self::memcpy_ato_a`]
+    /// (why is not `"memcpy atoa"`) and from
+    /// [`Self::memcpy_dto_a`] (why is not `"memcpy dtoa"`).
+    /// Unknown devices are Invalid `"device not in profile"`. Query; legal
+    /// during capture. This VM does not invent `cuMemcpyAtoDAsync`
+    /// this slice.
+    /// Driver wrap: [`Self::mem_memcpy_dto_a_async`].
+    /// Identity: [`Self::mem_memcpy_dto_a_async`].
+    pub fn memcpy_dto_a_async(&self, device: DeviceId) -> Result<(), SimError> {
+        let _gpu = self.profile.gpu(device)?;
+        Err(SimError::Invalid { why: "async dtoa" })
+    }
+
+    /// `cuMemcpyDtoAAsync`. Identity with [`Self::memcpy_dto_a_async`].
+    /// Query; legal during capture. Distinct from [`Self::mem_memcpy_ato_a`].
+    pub fn mem_memcpy_dto_a_async(&self, device: DeviceId) -> Result<(), SimError> {
+        self.memcpy_dto_a_async(device)
+    }
+
+    /// `cuMemcpyAtoDAsync`. CUDA arrays are not modeled.
+    ///
+    /// Always Invalid `"async atod"` (this VM has no `CUarray`
+    /// array-to-device copy). Distinct from [`Self::memcpy_dto_a_async`]
+    /// (why is not `"async dtoa"`) and from
+    /// [`Self::memcpy_ato_d`] (why is not `"memcpy atod"`).
+    /// Unknown devices are Invalid `"device not in profile"`. Query; legal
+    /// during capture. This VM does not invent `cuMemcpyHtoAAsync`
+    /// this slice.
+    /// Driver wrap: [`Self::mem_memcpy_ato_d_async`].
+    /// Identity: [`Self::mem_memcpy_ato_d_async`].
+    pub fn memcpy_ato_d_async(&self, device: DeviceId) -> Result<(), SimError> {
+        let _gpu = self.profile.gpu(device)?;
+        Err(SimError::Invalid { why: "async atod" })
+    }
+
+    /// `cuMemcpyAtoDAsync`. Identity with [`Self::memcpy_ato_d_async`].
+    /// Query; legal during capture. Distinct from [`Self::mem_memcpy_dto_a_async`].
+    pub fn mem_memcpy_ato_d_async(&self, device: DeviceId) -> Result<(), SimError> {
+        self.memcpy_ato_d_async(device)
+    }
+
+    /// `cuMemcpyHtoAAsync`. CUDA arrays are not modeled.
+    ///
+    /// Always Invalid `"async htoa"` (this VM has no `CUarray`
+    /// host-to-array copy). Distinct from [`Self::memcpy_ato_d_async`]
+    /// (why is not `"async atod"`) and from
+    /// [`Self::memcpy_hto_a`] (why is not `"memcpy htoa"`).
+    /// Unknown devices are Invalid `"device not in profile"`. Query; legal
+    /// during capture. This VM does not invent `cuMemcpyAtoHAsync`
+    /// this slice.
+    /// Driver wrap: [`Self::mem_memcpy_hto_a_async`].
+    /// Identity: [`Self::mem_memcpy_hto_a_async`].
+    pub fn memcpy_hto_a_async(&self, device: DeviceId) -> Result<(), SimError> {
+        let _gpu = self.profile.gpu(device)?;
+        Err(SimError::Invalid { why: "async htoa" })
+    }
+
+    /// `cuMemcpyHtoAAsync`. Identity with [`Self::memcpy_hto_a_async`].
+    /// Query; legal during capture. Distinct from [`Self::mem_memcpy_ato_d_async`].
+    pub fn mem_memcpy_hto_a_async(&self, device: DeviceId) -> Result<(), SimError> {
+        self.memcpy_hto_a_async(device)
+    }
+
+    /// `cuMemcpyAtoHAsync`. CUDA arrays are not modeled.
+    ///
+    /// Always Invalid `"async atoh"` (this VM has no `CUarray`
+    /// array-to-host copy). Distinct from [`Self::memcpy_hto_a_async`]
+    /// (why is not `"async htoa"`) and from
+    /// [`Self::memcpy_ato_h`] (why is not `"memcpy atoh"`).
+    /// Unknown devices are Invalid `"device not in profile"`. Query; legal
+    /// during capture. This VM does not invent `cuMemcpyAtoAAsync`
+    /// this slice.
+    /// Driver wrap: [`Self::mem_memcpy_ato_h_async`].
+    /// Identity: [`Self::mem_memcpy_ato_h_async`].
+    pub fn memcpy_ato_h_async(&self, device: DeviceId) -> Result<(), SimError> {
+        let _gpu = self.profile.gpu(device)?;
+        Err(SimError::Invalid { why: "async atoh" })
+    }
+
+    /// `cuMemcpyAtoHAsync`. Identity with [`Self::memcpy_ato_h_async`].
+    /// Query; legal during capture. Distinct from [`Self::mem_memcpy_hto_a_async`].
+    pub fn mem_memcpy_ato_h_async(&self, device: DeviceId) -> Result<(), SimError> {
+        self.memcpy_ato_h_async(device)
+    }
+
+    /// `cuMemcpyAtoAAsync`. CUDA arrays are not modeled.
+    ///
+    /// Always Invalid `"async atoa"` (this VM has no `CUarray`
+    /// array-to-array copy). Distinct from [`Self::memcpy_ato_h_async`]
+    /// (why is not `"async atoh"`) and from
+    /// [`Self::memcpy_ato_a`] (why is not `"memcpy atoa"`).
+    /// Unknown devices are Invalid `"device not in profile"`. Query; legal
+    /// during capture. This VM does not invent `cuMemcpy2DToArray`
+    /// this slice.
+    /// Driver wrap: [`Self::mem_memcpy_ato_a_async`].
+    /// Identity: [`Self::mem_memcpy_ato_a_async`].
+    pub fn memcpy_ato_a_async(&self, device: DeviceId) -> Result<(), SimError> {
+        let _gpu = self.profile.gpu(device)?;
+        Err(SimError::Invalid { why: "async atoa" })
+    }
+
+    /// `cuMemcpyAtoAAsync`. Identity with [`Self::memcpy_ato_a_async`].
+    /// Query; legal during capture. Distinct from [`Self::mem_memcpy_ato_h_async`].
+    pub fn mem_memcpy_ato_a_async(&self, device: DeviceId) -> Result<(), SimError> {
+        self.memcpy_ato_a_async(device)
+    }
+
+    /// `cuMemcpy2DToArray`. CUDA arrays are not modeled.
+    ///
+    /// Always Invalid `"memcpy2d toarr"` (this VM has no `CUarray`
+    /// 2D copy). Distinct from [`Self::memcpy_ato_a_async`]
+    /// (why is not `"async atoa"`) and from
+    /// [`Self::array_create`] (why is not `"cuda array"`).
+    /// Unknown devices are Invalid `"device not in profile"`. Query; legal
+    /// during capture. This VM does not invent `cuMemcpy2DFromArray`
+    /// this slice.
+    /// Driver wrap: [`Self::mem_memcpy_2d_to_array`].
+    /// Identity: [`Self::mem_memcpy_2d_to_array`].
+    pub fn memcpy_2d_to_array(&self, device: DeviceId) -> Result<(), SimError> {
+        let _gpu = self.profile.gpu(device)?;
+        Err(SimError::Invalid {
+            why: "memcpy2d toarr",
+        })
+    }
+
+    /// `cuMemcpy2DToArray`. Identity with [`Self::memcpy_2d_to_array`].
+    /// Query; legal during capture. Distinct from [`Self::mem_memcpy_ato_a_async`].
+    pub fn mem_memcpy_2d_to_array(&self, device: DeviceId) -> Result<(), SimError> {
+        self.memcpy_2d_to_array(device)
+    }
+
+    /// `cuMemcpy2DFromArray`. CUDA arrays are not modeled.
+    ///
+    /// Always Invalid `"memcpy2d fromarr"` (this VM has no `CUarray`
+    /// 2D copy). Distinct from [`Self::memcpy_2d_to_array`]
+    /// (why is not `"memcpy2d toarr"`) and from
+    /// [`Self::array_create`] (why is not `"cuda array"`).
+    /// Unknown devices are Invalid `"device not in profile"`. Query; legal
+    /// during capture. This VM does not invent `cuMemcpy2DArrayToArray`
+    /// this slice.
+    /// Driver wrap: [`Self::mem_memcpy_2d_from_array`].
+    /// Identity: [`Self::mem_memcpy_2d_from_array`].
+    pub fn memcpy_2d_from_array(&self, device: DeviceId) -> Result<(), SimError> {
+        let _gpu = self.profile.gpu(device)?;
+        Err(SimError::Invalid {
+            why: "memcpy2d fromarr",
+        })
+    }
+
+    /// `cuMemcpy2DFromArray`. Identity with [`Self::memcpy_2d_from_array`].
+    /// Query; legal during capture. Distinct from [`Self::mem_memcpy_2d_to_array`].
+    pub fn mem_memcpy_2d_from_array(&self, device: DeviceId) -> Result<(), SimError> {
+        self.memcpy_2d_from_array(device)
+    }
+
+    /// `cuMemcpy2DArrayToArray`. CUDA arrays are not modeled.
+    ///
+    /// Always Invalid `"memcpy2d a2a"` (this VM has no `CUarray`
+    /// 2D copy). Distinct from [`Self::memcpy_2d_from_array`]
+    /// (why is not `"memcpy2d fromarr"`) and from
+    /// [`Self::memcpy_2d_to_array`] (why is not `"memcpy2d toarr"`).
+    /// Unknown devices are Invalid `"device not in profile"`. Query; legal
+    /// during capture. This VM does not invent `cuMemcpy2DToArrayAsync`
+    /// this slice.
+    /// Driver wrap: [`Self::mem_memcpy_2d_array_to_array`].
+    /// Identity: [`Self::mem_memcpy_2d_array_to_array`].
+    pub fn memcpy_2d_array_to_array(&self, device: DeviceId) -> Result<(), SimError> {
+        let _gpu = self.profile.gpu(device)?;
+        Err(SimError::Invalid {
+            why: "memcpy2d a2a",
+        })
+    }
+
+    /// `cuMemcpy2DArrayToArray`. Identity with [`Self::memcpy_2d_array_to_array`].
+    /// Query; legal during capture. Distinct from [`Self::mem_memcpy_2d_from_array`].
+    pub fn mem_memcpy_2d_array_to_array(&self, device: DeviceId) -> Result<(), SimError> {
+        self.memcpy_2d_array_to_array(device)
+    }
+
+    /// `cuMemcpy2DToArrayAsync`. CUDA arrays are not modeled.
+    ///
+    /// Always Invalid `"async 2dtoarr"` (this VM has no `CUarray`
+    /// 2D copy). Distinct from [`Self::memcpy_2d_array_to_array`]
+    /// (why is not `"memcpy2d a2a"`) and from
+    /// [`Self::memcpy_2d_to_array`] (why is not `"memcpy2d toarr"`).
+    /// Unknown devices are Invalid `"device not in profile"`. Query; legal
+    /// during capture. This VM does not invent `cuMemcpy2DFromArrayAsync`
+    /// this slice.
+    /// Driver wrap: [`Self::mem_memcpy_2d_to_array_async`].
+    /// Identity: [`Self::mem_memcpy_2d_to_array_async`].
+    pub fn memcpy_2d_to_array_async(&self, device: DeviceId) -> Result<(), SimError> {
+        let _gpu = self.profile.gpu(device)?;
+        Err(SimError::Invalid {
+            why: "async 2dtoarr",
+        })
+    }
+
+    /// `cuMemcpy2DToArrayAsync`. Identity with [`Self::memcpy_2d_to_array_async`].
+    /// Query; legal during capture. Distinct from [`Self::mem_memcpy_2d_array_to_array`].
+    pub fn mem_memcpy_2d_to_array_async(&self, device: DeviceId) -> Result<(), SimError> {
+        self.memcpy_2d_to_array_async(device)
+    }
+
+    /// `cuMemcpy2DFromArrayAsync`. CUDA arrays are not modeled.
+    ///
+    /// Always Invalid `"async 2dfrom"` (this VM has no `CUarray`
+    /// 2D copy). Distinct from [`Self::memcpy_2d_to_array_async`]
+    /// (why is not `"async 2dtoarr"`) and from
+    /// [`Self::memcpy_2d_from_array`] (why is not `"memcpy2d fromarr"`).
+    /// Unknown devices are Invalid `"device not in profile"`. Query; legal
+    /// during capture. This VM does not invent `cuMemcpy2DArrayToArrayAsync`
+    /// this slice.
+    /// Driver wrap: [`Self::mem_memcpy_2d_from_array_async`].
+    /// Identity: [`Self::mem_memcpy_2d_from_array_async`].
+    pub fn memcpy_2d_from_array_async(&self, device: DeviceId) -> Result<(), SimError> {
+        let _gpu = self.profile.gpu(device)?;
+        Err(SimError::Invalid {
+            why: "async 2dfrom",
+        })
+    }
+
+    /// `cuMemcpy2DFromArrayAsync`. Identity with [`Self::memcpy_2d_from_array_async`].
+    /// Query; legal during capture. Distinct from [`Self::mem_memcpy_2d_to_array_async`].
+    pub fn mem_memcpy_2d_from_array_async(&self, device: DeviceId) -> Result<(), SimError> {
+        self.memcpy_2d_from_array_async(device)
+    }
+
+    /// `cuMemcpy2DArrayToArrayAsync`. CUDA arrays are not modeled.
+    ///
+    /// Always Invalid `"async 2da2a"` (this VM has no `CUarray`
+    /// 2D copy). Distinct from [`Self::memcpy_2d_from_array_async`]
+    /// (why is not `"async 2dfrom"`) and from
+    /// [`Self::memcpy_2d_array_to_array`] (why is not `"memcpy2d a2a"`).
+    /// Unknown devices are Invalid `"device not in profile"`. Query; legal
+    /// during capture. This VM does not invent `cuFuncGetCacheConfig`
+    /// this slice.
+    /// Driver wrap: [`Self::mem_memcpy_2d_array_to_array_async`].
+    /// Identity: [`Self::mem_memcpy_2d_array_to_array_async`].
+    pub fn memcpy_2d_array_to_array_async(&self, device: DeviceId) -> Result<(), SimError> {
+        let _gpu = self.profile.gpu(device)?;
+        Err(SimError::Invalid { why: "async 2da2a" })
+    }
+
+    /// `cuMemcpy2DArrayToArrayAsync`. Identity with [`Self::memcpy_2d_array_to_array_async`].
+    /// Query; legal during capture. Distinct from [`Self::mem_memcpy_2d_from_array_async`].
+    pub fn mem_memcpy_2d_array_to_array_async(&self, device: DeviceId) -> Result<(), SimError> {
+        self.memcpy_2d_array_to_array_async(device)
+    }
+
+    /// `cuLibraryLoadData`. CUDA libraries are not modeled.
+    ///
+    /// Always Invalid `"cuda library"` (this VM has no cubin or PTX and no
+    /// `CUlibrary`). Distinct from [`Self::module_get_loading_mode`] (Eager
+    /// query) and from [`Self::func_get_module`] (`"unknown function"`)
+    /// and from [`Self::module_load`].
+    /// Unknown devices are Invalid `"device not in profile"`. Query; legal
+    /// during capture. Distinct from [`Self::library_load_from_file`].
+    /// Driver wrap: [`Self::mem_library_load_data`].
+    /// Identity: [`Self::mem_library_load_data`].
+    pub fn library_load_data(&self, device: DeviceId) -> Result<(), SimError> {
+        let _gpu = self.profile.gpu(device)?;
+        Err(SimError::Invalid {
+            why: "cuda library",
+        })
+    }
+
+    /// `cuLibraryLoadData`. Identity with [`Self::library_load_data`].
+    /// Query; legal during capture. Distinct from [`Self::mem_memcpy_2d_array_to_array_async`].
+    pub fn mem_library_load_data(&self, device: DeviceId) -> Result<(), SimError> {
+        self.library_load_data(device)
+    }
+
+    /// `cuLibraryLoadFromFile`. CUDA libraries are not modeled.
+    ///
+    /// Always Invalid `"library file"` (this VM has no cubin or PTX path
+    /// and no `CUlibrary`). Distinct from [`Self::library_load_data`]
+    /// (why is not `"cuda library"`) and from [`Self::link_create`] and
+    /// from [`Self::library_unload`].
+    /// Unknown devices are Invalid `"device not in profile"`. Query; legal
+    /// during capture.
+    /// Driver wrap: [`Self::mem_library_load_from_file`].
+    /// Identity: [`Self::mem_library_load_from_file`].
+    pub fn library_load_from_file(&self, device: DeviceId) -> Result<(), SimError> {
+        let _gpu = self.profile.gpu(device)?;
+        Err(SimError::Invalid {
+            why: "library file",
+        })
+    }
+
+    /// `cuLibraryLoadFromFile`. Identity with [`Self::library_load_from_file`].
+    /// Query; legal during capture. Distinct from [`Self::mem_library_load_data`].
+    pub fn mem_library_load_from_file(&self, device: DeviceId) -> Result<(), SimError> {
+        self.library_load_from_file(device)
+    }
+
+    /// `cuLibraryUnload`. CUDA libraries are not modeled.
+    ///
+    /// Always Invalid `"library unload"` (this VM has no `CUlibrary`
+    /// handle). Distinct from [`Self::library_load_from_file`] (why is not
+    /// `"library file"`), from [`Self::library_load_data`], and from
+    /// [`Self::library_get_kernel`].
+    /// Unknown devices are Invalid `"device not in profile"`. Query; legal
+    /// during capture.
+    /// Driver wrap: [`Self::mem_library_unload`].
+    /// Identity: [`Self::mem_library_unload`].
+    pub fn library_unload(&self, device: DeviceId) -> Result<(), SimError> {
+        let _gpu = self.profile.gpu(device)?;
+        Err(SimError::Invalid {
+            why: "library unload",
+        })
+    }
+
+    /// `cuLibraryUnload`. Identity with [`Self::library_unload`].
+    /// Query; legal during capture. Distinct from [`Self::mem_library_load_from_file`].
+    pub fn mem_library_unload(&self, device: DeviceId) -> Result<(), SimError> {
+        self.library_unload(device)
+    }
+
+    /// `cuLibraryGetKernel`. CUDA libraries are not modeled.
+    ///
+    /// Always Invalid `"library kernel"` (this VM has no `CUlibrary` and
+    /// no `CUkernel`). Distinct from [`Self::library_unload`] (why is not
+    /// `"library unload"`) and from [`Self::func_get_module`] and from
+    /// [`Self::library_get_module`].
+    /// Unknown devices are Invalid `"device not in profile"`. Query; legal
+    /// during capture.
+    /// Driver wrap: [`Self::mem_library_get_kernel`].
+    /// Identity: [`Self::mem_library_get_kernel`].
+    pub fn library_get_kernel(&self, device: DeviceId) -> Result<(), SimError> {
+        let _gpu = self.profile.gpu(device)?;
+        Err(SimError::Invalid {
+            why: "library kernel",
+        })
+    }
+
+    /// `cuLibraryGetKernel`. Identity with [`Self::library_get_kernel`].
+    /// Query; legal during capture. Distinct from [`Self::mem_library_unload`].
+    pub fn mem_library_get_kernel(&self, device: DeviceId) -> Result<(), SimError> {
+        self.library_get_kernel(device)
+    }
+
+    /// `cuLibraryGetModule`. CUDA libraries are not modeled.
+    ///
+    /// Always Invalid `"library module"` (this VM has no `CUlibrary` and
+    /// no `CUmodule`). Distinct from [`Self::library_get_kernel`] (why is
+    /// not `"library kernel"`) and from [`Self::func_get_module`] and from
+    /// [`Self::library_get_global`].
+    /// Unknown devices are Invalid `"device not in profile"`. Query; legal
+    /// during capture.
+    /// Driver wrap: [`Self::mem_library_get_module`].
+    /// Identity: [`Self::mem_library_get_module`].
+    pub fn library_get_module(&self, device: DeviceId) -> Result<(), SimError> {
+        let _gpu = self.profile.gpu(device)?;
+        Err(SimError::Invalid {
+            why: "library module",
+        })
+    }
+
+    /// `cuLibraryGetModule`. Identity with [`Self::library_get_module`].
+    /// Query; legal during capture. Distinct from [`Self::mem_library_get_kernel`].
+    pub fn mem_library_get_module(&self, device: DeviceId) -> Result<(), SimError> {
+        self.library_get_module(device)
+    }
+
+    /// `cuLibraryGetGlobal`. CUDA libraries are not modeled.
+    ///
+    /// Always Invalid `"library global"` (this VM has no `CUlibrary`
+    /// device symbol). Distinct from [`Self::library_get_module`] (why is
+    /// not `"library module"`) and from [`Self::get_proc_address`] and from
+    /// [`Self::library_get_managed`].
+    /// Unknown devices are Invalid `"device not in profile"`. Query; legal
+    /// during capture.
+    /// Driver wrap: [`Self::mem_library_get_global`].
+    /// Identity: [`Self::mem_library_get_global`].
+    pub fn library_get_global(&self, device: DeviceId) -> Result<(), SimError> {
+        let _gpu = self.profile.gpu(device)?;
+        Err(SimError::Invalid {
+            why: "library global",
+        })
+    }
+
+    /// `cuLibraryGetGlobal`. Identity with [`Self::library_get_global`].
+    /// Query; legal during capture. Distinct from [`Self::mem_library_get_module`].
+    pub fn mem_library_get_global(&self, device: DeviceId) -> Result<(), SimError> {
+        self.library_get_global(device)
+    }
+
+    /// `cuLibraryGetManaged`. CUDA libraries are not modeled.
+    ///
+    /// Always Invalid `"library managed"` (this VM has no `CUlibrary`
+    /// managed symbol). Distinct from [`Self::library_get_global`] (why is
+    /// not `"library global"`) and from [`Self::alloc_managed`] and from
+    /// [`Self::library_get_unified_function`].
+    /// Unknown devices are Invalid `"device not in profile"`. Query; legal
+    /// during capture.
+    /// Driver wrap: [`Self::mem_library_get_managed`].
+    /// Identity: [`Self::mem_library_get_managed`].
+    pub fn library_get_managed(&self, device: DeviceId) -> Result<(), SimError> {
+        let _gpu = self.profile.gpu(device)?;
+        Err(SimError::Invalid {
+            why: "library managed",
+        })
+    }
+
+    /// `cuLibraryGetManaged`. Identity with [`Self::library_get_managed`].
+    /// Query; legal during capture. Distinct from [`Self::mem_library_get_global`].
+    pub fn mem_library_get_managed(&self, device: DeviceId) -> Result<(), SimError> {
+        self.library_get_managed(device)
+    }
+
+    /// `cuLibraryGetUnifiedFunction`. CUDA libraries are not modeled.
+    ///
+    /// Always Invalid `"library unified"` (this VM has no `CUlibrary`
+    /// device-side function pointer). Distinct from
+    /// [`Self::library_get_managed`] (why is not `"library managed"`) and
+    /// from [`DeviceAttr::UnifiedFunctionPointers`] (always 0) and from
+    /// [`Self::kernel_get_function`].
+    /// Unknown devices are Invalid `"device not in profile"`. Query; legal
+    /// during capture.
+    /// Driver wrap: [`Self::mem_library_get_unified_function`].
+    /// Identity: [`Self::mem_library_get_unified_function`].
+    pub fn library_get_unified_function(&self, device: DeviceId) -> Result<(), SimError> {
+        let _gpu = self.profile.gpu(device)?;
+        Err(SimError::Invalid {
+            why: "library unified",
+        })
+    }
+
+    /// `cuLibraryGetUnifiedFunction`. Identity with [`Self::library_get_unified_function`].
+    /// Query; legal during capture. Distinct from [`Self::mem_library_get_managed`].
+    pub fn mem_library_get_unified_function(&self, device: DeviceId) -> Result<(), SimError> {
+        self.library_get_unified_function(device)
+    }
+
+    /// `cuLibraryGetKernelCount`. CUDA libraries are not modeled.
+    ///
+    /// Always Invalid `"library kcount"` (this VM has no `CUlibrary`
+    /// kernel list). Distinct from [`Self::library_get_kernel`] (why is not
+    /// `"library kernel"`) and from [`Self::module_get_function_count`]
+    /// (why is not `"module fncount"`). Unknown devices are Invalid
+    /// `"device not in profile"`. Query; legal during capture. This VM does
+    /// not invent `cuLibraryEnumerateKernels` this slice.
+    /// Driver wrap: [`Self::mem_library_get_kernel_count`].
+    /// Identity: [`Self::mem_library_get_kernel_count`].
+    pub fn library_get_kernel_count(&self, device: DeviceId) -> Result<(), SimError> {
+        let _gpu = self.profile.gpu(device)?;
+        Err(SimError::Invalid {
+            why: "library kcount",
+        })
+    }
+
+    /// `cuLibraryGetKernelCount`. Identity with [`Self::library_get_kernel_count`].
+    /// Query; legal during capture. Distinct from [`Self::mem_library_get_unified_function`].
+    pub fn mem_library_get_kernel_count(&self, device: DeviceId) -> Result<(), SimError> {
+        self.library_get_kernel_count(device)
+    }
+
+    /// `cuLibraryEnumerateKernels`. CUDA libraries are not modeled.
+    ///
+    /// Always Invalid `"library enumk"` (this VM has no `CUlibrary`
+    /// kernel list). Distinct from [`Self::library_get_kernel_count`] (why
+    /// is not `"library kcount"`) and from [`Self::library_get_kernel`]
+    /// (why is not `"library kernel"`). Unknown devices are Invalid
+    /// `"device not in profile"`. Query; legal during capture. This VM does
+    /// not invent `cuKernelGetLibrary` this slice.
+    /// Driver wrap: [`Self::mem_library_enumerate_kernels`].
+    /// Identity: [`Self::mem_library_enumerate_kernels`].
+    pub fn library_enumerate_kernels(&self, device: DeviceId) -> Result<(), SimError> {
+        let _gpu = self.profile.gpu(device)?;
+        Err(SimError::Invalid {
+            why: "library enumk",
+        })
+    }
+
+    /// `cuLibraryEnumerateKernels`. Identity with [`Self::library_enumerate_kernels`].
+    /// Query; legal during capture. Distinct from [`Self::mem_library_get_kernel_count`].
+    pub fn mem_library_enumerate_kernels(&self, device: DeviceId) -> Result<(), SimError> {
+        self.library_enumerate_kernels(device)
+    }
+
+    /// `cuKernelGetLibrary`. CUDA kernels are not modeled.
+    ///
+    /// Always Invalid `"kernel library"` (this VM has no `CUkernel` and
+    /// no `CUlibrary`). Distinct from [`Self::library_get_kernel`] (why is
+    /// not `"library kernel"`) and from [`Self::library_enumerate_kernels`]
+    /// (why is not `"library enumk"`). Unknown devices are Invalid
+    /// `"device not in profile"`. Query; legal during capture. This VM does
+    /// not invent `cuKernelGetParamCount` this slice.
+    /// Driver wrap: [`Self::mem_kernel_get_library`].
+    /// Identity: [`Self::mem_kernel_get_library`].
+    pub fn kernel_get_library(&self, device: DeviceId) -> Result<(), SimError> {
+        let _gpu = self.profile.gpu(device)?;
+        Err(SimError::Invalid {
+            why: "kernel library",
+        })
+    }
+
+    /// `cuKernelGetLibrary`. Identity with [`Self::kernel_get_library`].
+    /// Query; legal during capture. Distinct from [`Self::mem_library_enumerate_kernels`].
+    pub fn mem_kernel_get_library(&self, device: DeviceId) -> Result<(), SimError> {
+        self.kernel_get_library(device)
+    }
+
+    /// `cuKernelGetFunction`. CUDA kernels are not modeled.
+    ///
+    /// Always Invalid `"kernel function"` (this VM has no `CUkernel` and
+    /// no `CUfunction`). Distinct from [`Self::library_get_kernel`] (why is
+    /// not `"library kernel"`) and from [`Self::func_get_module`] and from
+    /// [`Self::kernel_get_param_info`].
+    /// Unknown devices are Invalid `"device not in profile"`. Query; legal
+    /// during capture.
+    /// Driver wrap: [`Self::mem_kernel_get_function`].
+    /// Identity: [`Self::mem_kernel_get_function`].
+    pub fn kernel_get_function(&self, device: DeviceId) -> Result<(), SimError> {
+        let _gpu = self.profile.gpu(device)?;
+        Err(SimError::Invalid {
+            why: "kernel function",
+        })
+    }
+
+    /// `cuKernelGetFunction`. Identity with [`Self::kernel_get_function`].
+    /// Query; legal during capture. Distinct from [`Self::mem_kernel_get_library`].
+    pub fn mem_kernel_get_function(&self, device: DeviceId) -> Result<(), SimError> {
+        self.kernel_get_function(device)
+    }
+
+    /// `cuKernelGetParamInfo`. CUDA kernels are not modeled.
+    ///
+    /// Always Invalid `"kernel param"` (this VM has no `CUkernel`
+    /// parameter blob). Distinct from [`Self::kernel_get_function`] (why is
+    /// not `"kernel function"`) and from [`Self::func_get_param_info`] and
+    /// from [`Self::kernel_get_attribute`].
+    /// Unknown devices are Invalid `"device not in profile"`. Query; legal
+    /// during capture.
+    /// Driver wrap: [`Self::mem_kernel_get_param_info`].
+    /// Identity: [`Self::mem_kernel_get_param_info`].
+    pub fn kernel_get_param_info(&self, device: DeviceId) -> Result<(), SimError> {
+        let _gpu = self.profile.gpu(device)?;
+        Err(SimError::Invalid {
+            why: "kernel param",
+        })
+    }
+
+    /// `cuKernelGetParamInfo`. Identity with [`Self::kernel_get_param_info`].
+    /// Query; legal during capture. Distinct from [`Self::mem_kernel_get_function`].
+    pub fn mem_kernel_get_param_info(&self, device: DeviceId) -> Result<(), SimError> {
+        self.kernel_get_param_info(device)
+    }
+
+    /// `cuKernelGetParamCount`. CUDA kernels are not modeled.
+    ///
+    /// Always Invalid `"kernel pcount"` (this VM has no `CUkernel`
+    /// parameter list). Distinct from [`Self::kernel_get_param_info`] (why
+    /// is not `"kernel param"`) and from [`Self::func_get_param_info`].
+    /// Unknown devices are Invalid `"device not in profile"`. Query; legal
+    /// during capture. This VM does not invent `cuFuncGetParamCount` this
+    /// slice.
+    /// Driver wrap: [`Self::mem_kernel_get_param_count`].
+    /// Identity: [`Self::mem_kernel_get_param_count`].
+    pub fn kernel_get_param_count(&self, device: DeviceId) -> Result<(), SimError> {
+        let _gpu = self.profile.gpu(device)?;
+        Err(SimError::Invalid {
+            why: "kernel pcount",
+        })
+    }
+
+    /// `cuKernelGetParamCount`. Identity with [`Self::kernel_get_param_count`].
+    /// Query; legal during capture. Distinct from [`Self::mem_kernel_get_param_info`].
+    pub fn mem_kernel_get_param_count(&self, device: DeviceId) -> Result<(), SimError> {
+        self.kernel_get_param_count(device)
+    }
+
+    /// `cuKernelGetAttribute`. CUDA kernels are not modeled.
+    ///
+    /// Always Invalid `"kernel attribute"` (this VM has no `CUkernel`
+    /// attribute). Distinct from [`Self::kernel_get_param_info`] (why is
+    /// not `"kernel param"`) and from [`Self::func_get_attribute`] and from
+    /// [`Self::kernel_set_attribute`].
+    /// Unknown devices are Invalid `"device not in profile"`. Query; legal
+    /// during capture.
+    /// Driver wrap: [`Self::mem_kernel_get_attribute`].
+    /// Identity: [`Self::mem_kernel_get_attribute`].
+    pub fn kernel_get_attribute(&self, device: DeviceId) -> Result<(), SimError> {
+        let _gpu = self.profile.gpu(device)?;
+        Err(SimError::Invalid {
+            why: "kernel attribute",
+        })
+    }
+
+    /// `cuKernelGetAttribute`. Identity with [`Self::kernel_get_attribute`].
+    /// Query; legal during capture. Distinct from [`Self::mem_kernel_get_param_count`].
+    pub fn mem_kernel_get_attribute(&self, device: DeviceId) -> Result<(), SimError> {
+        self.kernel_get_attribute(device)
+    }
+
+    /// `cuKernelSetAttribute`. CUDA kernels are not modeled.
+    ///
+    /// Always Invalid `"kernel setattr"` (this VM has no `CUkernel`
+    /// attribute). Distinct from [`Self::kernel_get_attribute`] (why is not
+    /// `"kernel attribute"`) and from [`Self::func_set_attribute`] and from
+    /// [`Self::kernel_set_cache_config`].
+    /// Unknown devices are Invalid `"device not in profile"`. Query; legal
+    /// during capture.
+    /// Driver wrap: [`Self::mem_kernel_set_attribute`].
+    /// Identity: [`Self::mem_kernel_set_attribute`].
+    pub fn kernel_set_attribute(&self, device: DeviceId) -> Result<(), SimError> {
+        let _gpu = self.profile.gpu(device)?;
+        Err(SimError::Invalid {
+            why: "kernel setattr",
+        })
+    }
+
+    /// `cuKernelSetAttribute`. Identity with [`Self::kernel_set_attribute`].
+    /// Query; legal during capture. Distinct from [`Self::mem_kernel_get_attribute`].
+    pub fn mem_kernel_set_attribute(&self, device: DeviceId) -> Result<(), SimError> {
+        self.kernel_set_attribute(device)
+    }
+
+    /// `cuKernelSetCacheConfig`. CUDA kernels are not modeled.
+    ///
+    /// Always Invalid `"kernel cache"` (this VM has no `CUkernel` cache
+    /// config). Distinct from [`Self::kernel_set_attribute`] (why is not
+    /// `"kernel setattr"`) and from [`Self::set_func_cache_config`].
+    /// Unknown devices are Invalid `"device not in profile"`. Query; legal
+    /// during capture.
+    /// Driver wrap: [`Self::mem_kernel_set_cache_config`].
+    /// Identity: [`Self::mem_kernel_set_cache_config`].
+    pub fn kernel_set_cache_config(&self, device: DeviceId) -> Result<(), SimError> {
+        let _gpu = self.profile.gpu(device)?;
+        Err(SimError::Invalid {
+            why: "kernel cache",
+        })
+    }
+
+    /// `cuKernelSetCacheConfig`. Identity with [`Self::kernel_set_cache_config`].
+    /// Query; legal during capture. Distinct from [`Self::mem_kernel_set_attribute`].
+    pub fn mem_kernel_set_cache_config(&self, device: DeviceId) -> Result<(), SimError> {
+        self.kernel_set_cache_config(device)
+    }
+
+    /// `cuLinkCreate`. The CUDA driver JIT linker is not modeled.
+    ///
+    /// Always Invalid `"jit linker"` (this VM has no NVRTC and no cubin
+    /// linker). Distinct from [`Self::library_load_data`] and from
+    /// [`Self::library_load_from_file`] and from [`Self::library_unload`]
+    /// and from [`Self::library_get_kernel`] and from
+    /// [`Self::library_get_module`] and from [`Self::library_get_global`]
+    /// and from [`Self::library_get_managed`] and from
+    /// [`Self::library_get_unified_function`] and from
+    /// [`Self::kernel_get_function`] and from [`Self::kernel_get_param_info`]
+    /// and from [`Self::kernel_get_attribute`] and from
+    /// [`Self::kernel_set_attribute`] and from
+    /// [`Self::kernel_set_cache_config`] and from [`Self::link_add_data`]
+    /// and from [`Self::link_complete`] and from [`Self::link_destroy`]
+    /// and from [`Self::link_add_file`].
+    /// Unknown devices
+    /// are Invalid `"device not in profile"`. Query; legal during capture.
+    /// Driver wrap: [`Self::mem_link_create`].
+    /// Identity: [`Self::mem_link_create`].
+    pub fn link_create(&self, device: DeviceId) -> Result<(), SimError> {
+        let _gpu = self.profile.gpu(device)?;
+        Err(SimError::Invalid { why: "jit linker" })
+    }
+
+    /// `cuLinkCreate`. Identity with [`Self::link_create`].
+    /// Query; legal during capture. Distinct from [`Self::mem_kernel_set_cache_config`].
+    pub fn mem_link_create(&self, device: DeviceId) -> Result<(), SimError> {
+        self.link_create(device)
+    }
+
+    /// `cuLinkAddData`. The CUDA driver JIT linker is not modeled.
+    ///
+    /// Always Invalid `"link add"` (this VM has no NVRTC and no cubin
+    /// linker). Distinct from [`Self::link_create`] (why is not
+    /// `"jit linker"`) and from [`Self::library_load_data`] and from
+    /// [`Self::link_complete`] and from [`Self::link_add_file`].
+    /// Unknown devices are Invalid `"device not in profile"`. Query; legal
+    /// during capture.
+    /// Driver wrap: [`Self::mem_link_add_data`].
+    /// Identity: [`Self::mem_link_add_data`].
+    pub fn link_add_data(&self, device: DeviceId) -> Result<(), SimError> {
+        let _gpu = self.profile.gpu(device)?;
+        Err(SimError::Invalid { why: "link add" })
+    }
+
+    /// `cuLinkAddData`. Identity with [`Self::link_add_data`].
+    /// Query; legal during capture. Distinct from [`Self::mem_link_create`].
+    pub fn mem_link_add_data(&self, device: DeviceId) -> Result<(), SimError> {
+        self.link_add_data(device)
+    }
+
+    /// `cuLinkComplete`. The CUDA driver JIT linker is not modeled.
+    ///
+    /// Always Invalid `"link complete"` (this VM has no NVRTC and no cubin
+    /// linker). Distinct from [`Self::link_add_data`] (why is not
+    /// `"link add"`) and from [`Self::link_create`] and from
+    /// [`Self::link_destroy`].
+    /// Unknown devices are Invalid `"device not in profile"`. Query; legal
+    /// during capture.
+    /// Driver wrap: [`Self::mem_link_complete`].
+    /// Identity: [`Self::mem_link_complete`].
+    pub fn link_complete(&self, device: DeviceId) -> Result<(), SimError> {
+        let _gpu = self.profile.gpu(device)?;
+        Err(SimError::Invalid {
+            why: "link complete",
+        })
+    }
+
+    /// `cuLinkComplete`. Identity with [`Self::link_complete`].
+    /// Query; legal during capture. Distinct from [`Self::mem_link_add_data`].
+    pub fn mem_link_complete(&self, device: DeviceId) -> Result<(), SimError> {
+        self.link_complete(device)
+    }
+
+    /// `cuLinkDestroy`. The CUDA driver JIT linker is not modeled.
+    ///
+    /// Always Invalid `"link destroy"` (this VM has no NVRTC and no cubin
+    /// linker). Distinct from [`Self::link_complete`] (why is not
+    /// `"link complete"`) and from [`Self::link_add_data`] and from
+    /// [`Self::link_create`] and from [`Self::link_add_file`].
+    /// Unknown devices are Invalid `"device not in profile"`. Query; legal
+    /// during capture.
+    /// Driver wrap: [`Self::mem_link_destroy`].
+    /// Identity: [`Self::mem_link_destroy`].
+    pub fn link_destroy(&self, device: DeviceId) -> Result<(), SimError> {
+        let _gpu = self.profile.gpu(device)?;
+        Err(SimError::Invalid {
+            why: "link destroy",
+        })
+    }
+
+    /// `cuLinkDestroy`. Identity with [`Self::link_destroy`].
+    /// Query; legal during capture. Distinct from [`Self::mem_link_complete`].
+    pub fn mem_link_destroy(&self, device: DeviceId) -> Result<(), SimError> {
+        self.link_destroy(device)
+    }
+
+    /// `cuLinkAddFile`. The CUDA driver JIT linker is not modeled.
+    ///
+    /// Always Invalid `"link file"` (this VM has no NVRTC and no cubin
+    /// path). Distinct from [`Self::link_add_data`] (why is not
+    /// `"link add"`) and from [`Self::library_load_from_file`] (why is not
+    /// `"library file"`) and from [`Self::link_destroy`].
+    /// Unknown devices are Invalid `"device not in profile"`. Query; legal
+    /// during capture.
+    /// Driver wrap: [`Self::mem_link_add_file`].
+    /// Identity: [`Self::mem_link_add_file`].
+    pub fn link_add_file(&self, device: DeviceId) -> Result<(), SimError> {
+        let _gpu = self.profile.gpu(device)?;
+        Err(SimError::Invalid { why: "link file" })
+    }
+
+    /// `cuLinkAddFile`. Identity with [`Self::link_add_file`].
+    /// Query; legal during capture. Distinct from [`Self::mem_link_destroy`].
+    pub fn mem_link_add_file(&self, device: DeviceId) -> Result<(), SimError> {
+        self.link_add_file(device)
     }
 
     /// `cudaRuntimeGetVersion`. Query; legal during capture.
@@ -18700,15 +28352,26 @@ impl Sim {
     /// Same CUDA 13.0 value as [`Self::driver_get_version`] (this VM is one
     /// toolkit). Distinct from [`Self::device_count`]. This VM does not invent
     /// `cudaGetLastError`.
+    /// Driver wrap: [`Self::mem_runtime_get_version`].
+    /// Identity: [`Self::mem_runtime_get_version`].
     #[must_use]
     pub fn runtime_get_version(&self) -> i32 {
         13_000
+    }
+
+    /// `cudaRuntimeGetVersion`. Identity with [`Self::runtime_get_version`].
+    /// Query; legal during capture. Distinct from [`Self::mem_link_add_file`].
+    #[must_use]
+    pub fn mem_runtime_get_version(&self) -> i32 {
+        self.runtime_get_version()
     }
 
     /// `cuDeviceGet`. Query; legal during capture.
     ///
     /// Ordinal `0 .. device_count`. Other ordinals Invalid
     /// `"device not in profile"` (same as [`HardwareProfile::gpu`]).
+    /// Driver wrap: [`Self::mem_device_get`].
+    /// Identity: [`Self::mem_device_get`].
     pub fn device_get(&self, ordinal: u32) -> Result<DeviceId, SimError> {
         let id = u16::try_from(ordinal).map_err(|_| SimError::Invalid {
             why: "device not in profile",
@@ -18718,7 +28381,15 @@ impl Sim {
         Ok(device)
     }
 
+    /// `cuDeviceGet`. Identity with [`Self::device_get`].
+    /// Query; legal during capture. Distinct from [`Self::mem_runtime_get_version`].
+    pub fn mem_device_get(&self, ordinal: u32) -> Result<DeviceId, SimError> {
+        self.device_get(ordinal)
+    }
+
     /// `cudaDeviceCanAccessPeer`. Query; legal during capture.
+    ///
+    /// Driver `cuDeviceCanAccessPeer` is [`Self::can_device_access_peer`].
     ///
     /// Hardware topology only (a profile link). Same device is false.
     /// [`Self::enable_peer`] is still required before D2D.
@@ -18730,7 +28401,22 @@ impl Sim {
         Ok(self.device_get_p2p_attribute(device, peer, DeviceP2pAttr::AccessSupported)? != 0)
     }
 
+    /// `cuDeviceCanAccessPeer`. Identity with
+    /// [`Self::device_can_access_peer`] (`cudaDeviceCanAccessPeer`).
+    ///
+    /// Query; legal during capture. Distinct from
+    /// [`Self::ctx_disable_peer_access`].
+    pub fn can_device_access_peer(
+        &self,
+        device: DeviceId,
+        peer: DeviceId,
+    ) -> Result<bool, SimError> {
+        self.device_can_access_peer(device, peer)
+    }
+
     /// `cudaDeviceGetP2PAttribute`. Query; legal during capture.
+    ///
+    /// Driver `cuDeviceGetP2PAttribute` is [`Self::device_p2p_attribute`].
     ///
     /// [`DeviceP2pAttr::AccessSupported`] is a profile device–device link.
     /// [`DeviceP2pAttr::PerformanceRank`] is unique GPU↔GPU link `bps`
@@ -18763,7 +28449,23 @@ impl Sim {
         })
     }
 
+    /// `cuDeviceGetP2PAttribute`. Identity with
+    /// [`Self::device_get_p2p_attribute`] (`cudaDeviceGetP2PAttribute`).
+    ///
+    /// Query; legal during capture. Distinct from
+    /// [`Self::can_device_access_peer`].
+    pub fn device_p2p_attribute(
+        &self,
+        src: DeviceId,
+        dst: DeviceId,
+        attr: DeviceP2pAttr,
+    ) -> Result<u64, SimError> {
+        self.device_get_p2p_attribute(src, dst, attr)
+    }
+
     /// `cudaDeviceGetNvSciSyncAttributes`. Query; legal during capture.
+    ///
+    /// Driver `cuDeviceGetNvSciSyncAttributes` is [`Self::device_nvscisync_attributes`].
     ///
     /// Always Invalid `"nvscisync not modeled"`
     /// ([`DeviceAttr::TimelineSemaphoreInteropSupported`] is 0). Flags must
@@ -18788,7 +28490,22 @@ impl Sim {
         })
     }
 
+    /// `cuDeviceGetNvSciSyncAttributes`. Identity with
+    /// [`Self::device_get_nvscisync_attributes`] (`cudaDeviceGetNvSciSyncAttributes`).
+    ///
+    /// Query; legal during capture. Distinct from
+    /// [`Self::device_p2p_attribute`].
+    pub fn device_nvscisync_attributes(
+        &self,
+        device: DeviceId,
+        flags: u32,
+    ) -> Result<(), SimError> {
+        self.device_get_nvscisync_attributes(device, flags)
+    }
+
     /// `cudaDeviceFlushGPUDirectRDMAWrites`. Host-synchronous 1 ns barrier.
+    ///
+    /// Driver `cuFlushGPUDirectRDMAWrites` is [`Self::device_flush_gpu_direct_rdma_writes`].
     ///
     /// Capture cannot include it. Devices without a GPU↔GPU
     /// [`crate::LinkKind::Rdma`] link are Invalid `"gpu direct rdma"`. Target
@@ -18825,7 +28542,24 @@ impl Sim {
         Ok(())
     }
 
+    /// `cuFlushGPUDirectRDMAWrites`. Identity with
+    /// [`Self::flush_gpu_direct_rdma_writes`] (`cudaDeviceFlushGPUDirectRDMAWrites`).
+    ///
+    /// Capture refused. Distinct from
+    /// [`Self::device_nvscisync_attributes`].
+    pub fn device_flush_gpu_direct_rdma_writes(
+        &mut self,
+        device: DeviceId,
+        target: u32,
+        scope: u32,
+    ) -> Result<(), SimError> {
+        self.flush_gpu_direct_rdma_writes(device, target, scope)
+    }
+
     /// `cudaMallocPitch`: aligned 2D allocation. Returns `(ptr, pitch)`.
+    ///
+    /// Identity wrap [`Self::mem_alloc_pitch`]. Not
+    /// [`Self::malloc_pitch_with_element_size`] (`cuMemAllocPitch`).
     ///
     /// Pitch is `align_up(width, 512)`. Size charged is `pitch * height`.
     /// Host-synchronous like [`Self::malloc`]. Capture cannot include it.
@@ -18846,12 +28580,28 @@ impl Sim {
         Ok((id, pitch))
     }
 
+    /// `cudaMallocPitch`. Identity with [`Self::malloc_pitch`].
+    ///
+    /// Capture refused. Distinct from
+    /// [`Self::malloc_pitch_with_element_size`] (`cuMemAllocPitch`) and
+    /// [`Self::device_flush_gpu_direct_rdma_writes`].
+    pub fn mem_alloc_pitch(
+        &mut self,
+        device: DeviceId,
+        width: u64,
+        height: u64,
+    ) -> Result<(AllocId, u64), SimError> {
+        self.malloc_pitch(device, width, height)
+    }
+
     /// `cuMemAllocPitch`. [`Self::malloc_pitch`] is `cudaMallocPitch`.
     ///
     /// `element_size` is CUDA `ElementSizeBytes` and must be 4, 8, or 16.
     /// Other sizes Invalid `"malloc pitch element"`. Pitch is still
     /// `align_up(width, 512)` (this VM does not vary pitch by element size).
     /// Host-synchronous; capture cannot include it.
+    /// Driver `cuMemAllocPitch` is [`Self::mem_alloc_pitch_with_element_size`].
+    /// Identity wrap [`Self::mem_alloc_pitch_with_element_size`].
     pub fn malloc_pitch_with_element_size(
         &mut self,
         device: DeviceId,
@@ -18867,7 +28617,23 @@ impl Sim {
         self.malloc_pitch(device, width, height)
     }
 
+    /// `cuMemAllocPitch`. Identity with
+    /// [`Self::malloc_pitch_with_element_size`] (`cuMemAllocPitch`).
+    ///
+    /// Capture refused. Distinct from [`Self::mem_alloc_pitch`].
+    pub fn mem_alloc_pitch_with_element_size(
+        &mut self,
+        device: DeviceId,
+        width: u64,
+        height: u64,
+        element_size: u32,
+    ) -> Result<(AllocId, u64), SimError> {
+        self.malloc_pitch_with_element_size(device, width, height, element_size)
+    }
+
     /// `cudaMalloc3D`: aligned 3D allocation. Returns `(ptr, pitch)`.
+    ///
+    /// Identity wrap [`Self::mem_alloc_3d`]. Not `cuMemAlloc3D` / `cuMalloc3D`.
     ///
     /// Pitch is `align_up(width, 512)`. Size charged is `pitch * height * depth`.
     /// Host-synchronous like [`Self::malloc`]. Capture cannot include it.
@@ -18887,7 +28653,22 @@ impl Sim {
         Ok((id, pitch))
     }
 
+    /// `cudaMalloc3D`. Identity with [`Self::malloc_3d`].
+    ///
+    /// Capture refused. Distinct from [`Self::mem_alloc_pitch`].
+    pub fn mem_alloc_3d(
+        &mut self,
+        device: DeviceId,
+        width: u64,
+        height: u64,
+        depth: u64,
+    ) -> Result<(AllocId, u64), SimError> {
+        self.malloc_3d(device, width, height, depth)
+    }
+
     /// `cudaLaunchCooperativeKernel` on whole allocations.
+    ///
+    /// Driver `cuLaunchCooperativeKernel` is [`Self::launch_cooperative_kernel`].
     ///
     /// Same lease / residency rules as [`Self::kernel`]. The grid occupies
     /// every [`crate::GpuProfile::compute_slots`] so leftover kernels on other
@@ -18907,7 +28688,25 @@ impl Sim {
         self.cooperative_kernel_bufs(device, kind, &reads, &writes, stream)
     }
 
+    /// `cuLaunchCooperativeKernel`. Identity with
+    /// [`Self::cooperative_kernel`] (`cudaLaunchCooperativeKernel`).
+    ///
+    /// Capture legal. Distinct from
+    /// [`Self::mem_alloc_3d`].
+    pub fn launch_cooperative_kernel(
+        &mut self,
+        device: DeviceId,
+        kind: KernelKind,
+        reads: &[AllocId],
+        writes: &[AllocId],
+        stream: StreamId,
+    ) -> Result<OpId, SimError> {
+        self.cooperative_kernel(device, kind, reads, writes, stream)
+    }
+
     /// `cudaLaunchCooperativeKernel` on explicit buffer spans.
+    ///
+    /// Driver `cuLaunchCooperativeKernel` spans is [`Self::launch_cooperative_kernel_bufs`].
     pub fn cooperative_kernel_bufs(
         &mut self,
         device: DeviceId,
@@ -18918,6 +28717,48 @@ impl Sim {
     ) -> Result<OpId, SimError> {
         self.require_cooperative(device)?;
         self.submit_kernel(device, kind, reads, writes, stream, true)
+    }
+
+    /// `cuLaunchCooperativeKernel` on explicit buffer spans. Identity with
+    /// [`Self::cooperative_kernel_bufs`] (`cudaLaunchCooperativeKernel` spans).
+    ///
+    /// Capture legal. Distinct from
+    /// [`Self::launch_cooperative_kernel`].
+    pub fn launch_cooperative_kernel_bufs(
+        &mut self,
+        device: DeviceId,
+        kind: KernelKind,
+        reads: &[KernelBuf],
+        writes: &[KernelBuf],
+        stream: StreamId,
+    ) -> Result<OpId, SimError> {
+        self.cooperative_kernel_bufs(device, kind, reads, writes, stream)
+    }
+
+    /// `cudaLaunchCooperativeKernelMultiDevice`. Multi-device cooperative
+    /// launch is not modeled.
+    ///
+    /// Driver `cuLaunchCooperativeKernelMultiDevice` is [`Self::launch_cooperative_kernel_multi_device`].
+    ///
+    /// Always Invalid `"cooperative multi-device"`
+    /// ([`DeviceAttr::CooperativeMultiDeviceLaunch`] is 0). Distinct from
+    /// [`Self::cooperative_kernel`] (single device). Unknown devices are
+    /// Invalid `"device not in profile"`. This VM does not invent
+    /// `cudaLaunchParams` packing this slice.
+    pub fn cooperative_kernel_multi_device(&self, device: DeviceId) -> Result<(), SimError> {
+        let _gpu = self.profile.gpu(device)?;
+        Err(SimError::Invalid {
+            why: "cooperative multi-device",
+        })
+    }
+
+    /// `cuLaunchCooperativeKernelMultiDevice`. Identity with
+    /// [`Self::cooperative_kernel_multi_device`] (`cudaLaunchCooperativeKernelMultiDevice`).
+    ///
+    /// Query; legal during capture. Distinct from
+    /// [`Self::launch_cooperative_kernel_bufs`].
+    pub fn launch_cooperative_kernel_multi_device(&self, device: DeviceId) -> Result<(), SimError> {
+        self.cooperative_kernel_multi_device(device)
     }
 
     fn submit_kernel(
@@ -18945,6 +28786,8 @@ impl Sim {
 
     /// Device-side fill (`cudaMemsetAsync`) of `[0, bytes)`.
     ///
+    /// Identity wrap [`Self::mem_set`]. Not [`Self::memset_d8_async`] (`cuMemsetD8Async`).
+    ///
     /// A VMM destination must have that span mapped ([`Self::is_range_resident`]).
     /// [`Self::kernel`] still needs the whole VA. [`Self::memset_buf`] names an
     /// interior page. Capture is allowed. Host-sync `cudaMalloc` / VMM / mempool
@@ -18965,7 +28808,24 @@ impl Sim {
         self.memset_buf(device, KernelBuf::span(alloc, 0, bytes), stream)
     }
 
+    /// `cudaMemsetAsync`. Identity with [`Self::memset`].
+    ///
+    /// Capture legal. Distinct from
+    /// [`Self::memset_d8_async`] (`cuMemsetD8Async`) and
+    /// [`Self::launch_cooperative_kernel_multi_device`].
+    pub fn mem_set(
+        &mut self,
+        device: DeviceId,
+        alloc: AllocId,
+        bytes: u64,
+        stream: StreamId,
+    ) -> Result<OpId, SimError> {
+        self.memset(device, alloc, bytes, stream)
+    }
+
     /// `cudaMemsetAsync` of a [`KernelBuf`] span (vLLM new-KV-block analog).
+    ///
+    /// Identity wrap [`Self::mem_set_buf`]. Not [`Self::mem_set`] (whole-alloc `cudaMemsetAsync`).
     ///
     /// `bytes == 0` means from `offset` to the end of the allocation. A range
     /// past the reservation is `Invalid`. Mapped host is not a memset dest.
@@ -18978,7 +28838,22 @@ impl Sim {
         self.memset_op(device, MemsetOp::from(buf), stream)
     }
 
+    /// `cudaMemsetAsync` of a [`KernelBuf`] span. Identity with
+    /// [`Self::memset_buf`].
+    ///
+    /// Capture legal. Distinct from [`Self::mem_set`].
+    pub fn mem_set_buf(
+        &mut self,
+        device: DeviceId,
+        buf: KernelBuf,
+        stream: StreamId,
+    ) -> Result<OpId, SimError> {
+        self.memset_buf(device, buf, stream)
+    }
+
     /// `cudaMemsetAsync` / `cudaMemset2DAsync`.
+    ///
+    /// Identity wrap [`Self::mem_set_op`]. Not [`Self::memset_2d_async`] (`cudaMemset2DAsync`).
     ///
     /// [`MemsetOp::height`] `> 1` bills `width * height` as an HBM write (pitch
     /// padding is not written). [`MemsetOp::depth`] `> 1` is `cudaMemset3DAsync`
@@ -19011,7 +28886,22 @@ impl Sim {
         Ok(id)
     }
 
+    /// `cudaMemsetAsync` / `cudaMemset2DAsync`. Identity with [`Self::memset_op`].
+    ///
+    /// Capture legal. Distinct from [`Self::mem_set_buf`] and
+    /// [`Self::memset_2d_async`] (`cudaMemset2DAsync`).
+    pub fn mem_set_op(
+        &mut self,
+        device: DeviceId,
+        op: MemsetOp,
+        stream: StreamId,
+    ) -> Result<OpId, SimError> {
+        self.memset_op(device, op, stream)
+    }
+
     /// `cudaMemset`: enqueue then wait for that stream (host-synchronous).
+    ///
+    /// Identity wrap [`Self::mem_set_sync`]. Not [`Self::memset_d8`] (`cuMemsetD8`).
     ///
     /// Capture cannot include it. [`Self::memset`] is `cudaMemsetAsync`.
     pub fn memset_sync(
@@ -19029,6 +28919,52 @@ impl Sim {
         let id = self.memset(device, alloc, bytes, stream)?;
         self.synchronize_stream(device, stream)?;
         Ok(id)
+    }
+
+    /// `cudaMemset`. Identity with [`Self::memset_sync`].
+    ///
+    /// Capture refused. Distinct from [`Self::mem_set_op`] and
+    /// [`Self::memset_d8`] (`cuMemsetD8`).
+    pub fn mem_set_sync(
+        &mut self,
+        device: DeviceId,
+        alloc: AllocId,
+        bytes: u64,
+        stream: StreamId,
+    ) -> Result<OpId, SimError> {
+        self.memset_sync(device, alloc, bytes, stream)
+    }
+
+    /// `cuMemsetD8Async`. `count` is CUDA `N` (number of 8-bit values).
+    ///
+    /// Payload is `count` bytes at offset 0. [`Self::memset`] stays
+    /// byte-counted `element_size` 1 (same payload). `count == 0` is Invalid
+    /// `"zero-byte memset"`. Capture is allowed unless sync-memops. Fill
+    /// value is not modeled. This VM does not invent `cuMemsetD8`
+    /// this slice.
+    pub fn memset_d8_async(
+        &mut self,
+        device: DeviceId,
+        alloc: AllocId,
+        count: u64,
+        stream: StreamId,
+    ) -> Result<OpId, SimError> {
+        self.memset_elements_async(device, alloc, count, 1, stream)
+    }
+
+    /// `cuMemsetD8`. Host-synchronous; capture cannot include it.
+    ///
+    /// `count` is CUDA `N` (number of 8-bit values). Payload is `count`
+    /// bytes. Distinct from [`Self::memset_d8_async`] (capture-legal).
+    /// This VM does not invent `cuEventQuery` this slice.
+    pub fn memset_d8(
+        &mut self,
+        device: DeviceId,
+        alloc: AllocId,
+        count: u64,
+        stream: StreamId,
+    ) -> Result<OpId, SimError> {
+        self.memset_elements_sync(device, alloc, count, 1, stream)
     }
 
     /// `cuMemsetD16Async`. `count` is CUDA `N` (number of 16-bit values).
@@ -19261,6 +29197,8 @@ impl Sim {
 
     /// `cudaMemset` / `cudaMemset2D` / `cudaMemset3D` (host-synchronous).
     ///
+    /// Identity wrap [`Self::mem_set_op_sync`]. Not [`Self::memset_2d`] (`cudaMemset2D`).
+    ///
     /// Capture cannot include it. [`Self::memset_op`] is the Async twin.
     pub fn memset_op_sync(
         &mut self,
@@ -19278,8 +29216,24 @@ impl Sim {
         Ok(id)
     }
 
+    /// `cudaMemset` / `cudaMemset2D` / `cudaMemset3D`. Identity with
+    /// [`Self::memset_op_sync`].
+    ///
+    /// Capture refused. Distinct from [`Self::mem_set_sync`] and
+    /// [`Self::memset_2d`] (`cudaMemset2D`).
+    pub fn mem_set_op_sync(
+        &mut self,
+        device: DeviceId,
+        op: MemsetOp,
+        stream: StreamId,
+    ) -> Result<OpId, SimError> {
+        self.memset_op_sync(device, op, stream)
+    }
+
     /// `cudaMemset2DAsync`. [`MemsetOp`] must be [`MemsetOp::is_2d`] (`height > 1`,
     /// not 3D). Typed [`Self::memset_op`] stays.
+    ///
+    /// Identity wrap [`Self::mem_set_2d_async`]. Not [`Self::memset_d2d8_async`] (`cuMemsetD2D8Async`).
     pub fn memset_2d_async(
         &mut self,
         device: DeviceId,
@@ -19294,7 +29248,22 @@ impl Sim {
         self.memset_op(device, op, stream)
     }
 
+    /// `cudaMemset2DAsync`. Identity with [`Self::memset_2d_async`].
+    ///
+    /// Capture legal. Distinct from [`Self::mem_set_op_sync`] and
+    /// [`Self::memset_d2d8_async`] (`cuMemsetD2D8Async`).
+    pub fn mem_set_2d_async(
+        &mut self,
+        device: DeviceId,
+        op: MemsetOp,
+        stream: StreamId,
+    ) -> Result<OpId, SimError> {
+        self.memset_2d_async(device, op, stream)
+    }
+
     /// `cudaMemset2D`. Host-synchronous; capture cannot include it.
+    ///
+    /// Identity wrap [`Self::mem_set_2d`]. Not [`Self::memset_d2d8`] (`cuMemsetD2D8`).
     pub fn memset_2d(
         &mut self,
         device: DeviceId,
@@ -19311,8 +29280,23 @@ impl Sim {
         Ok(id)
     }
 
+    /// `cudaMemset2D`. Identity with [`Self::memset_2d`].
+    ///
+    /// Capture refused. Distinct from [`Self::mem_set_2d_async`] and
+    /// [`Self::memset_d2d8`] (`cuMemsetD2D8`).
+    pub fn mem_set_2d(
+        &mut self,
+        device: DeviceId,
+        op: MemsetOp,
+        stream: StreamId,
+    ) -> Result<OpId, SimError> {
+        self.memset_2d(device, op, stream)
+    }
+
     /// `cudaMemset3DAsync`. [`MemsetOp`] must be [`MemsetOp::is_3d`] (`depth > 1`).
     /// Typed [`Self::memset_op`] stays.
+    ///
+    /// Identity wrap [`Self::mem_set_3d_async`]. Not [`Self::memset_3d`] (`cudaMemset3D`).
     pub fn memset_3d_async(
         &mut self,
         device: DeviceId,
@@ -19327,7 +29311,22 @@ impl Sim {
         self.memset_op(device, op, stream)
     }
 
+    /// `cudaMemset3DAsync`. Identity with [`Self::memset_3d_async`].
+    ///
+    /// Capture legal. Distinct from [`Self::mem_set_2d`] and
+    /// [`Self::memset_3d`] (`cudaMemset3D`).
+    pub fn mem_set_3d_async(
+        &mut self,
+        device: DeviceId,
+        op: MemsetOp,
+        stream: StreamId,
+    ) -> Result<OpId, SimError> {
+        self.memset_3d_async(device, op, stream)
+    }
+
     /// `cudaMemset3D`. Host-synchronous; capture cannot include it.
+    ///
+    /// Identity wrap [`Self::mem_set_3d`]. Not a fake `cuMemset3D`.
     pub fn memset_3d(
         &mut self,
         device: DeviceId,
@@ -19342,6 +29341,167 @@ impl Sim {
         let id = self.memset_3d_async(device, op, stream)?;
         self.synchronize_stream(device, stream)?;
         Ok(id)
+    }
+
+    /// `cudaMemset3D`. Identity with [`Self::memset_3d`].
+    ///
+    /// Capture refused. Distinct from [`Self::mem_set_3d_async`].
+    pub fn mem_set_3d(
+        &mut self,
+        device: DeviceId,
+        op: MemsetOp,
+        stream: StreamId,
+    ) -> Result<OpId, SimError> {
+        self.memset_3d(device, op, stream)
+    }
+
+    /// `cuStreamWriteValue64`. Identity with [`Self::write_value64`].
+    ///
+    /// Capture legal. Distinct from [`Self::write_value32`] and
+    /// [`Self::add_graph_write_value64`].
+    pub fn stream_write_value64(
+        &mut self,
+        device: DeviceId,
+        id: AllocId,
+        offset: u64,
+        value: u64,
+        stream: StreamId,
+    ) -> Result<OpId, SimError> {
+        self.write_value64(device, id, offset, value, stream)
+    }
+
+    /// `cuStreamWriteValue32`. Identity with [`Self::write_value32`].
+    ///
+    /// Capture legal. Distinct from [`Self::stream_write_value64`].
+    pub fn stream_write_value32(
+        &mut self,
+        device: DeviceId,
+        id: AllocId,
+        offset: u64,
+        value: u64,
+        stream: StreamId,
+    ) -> Result<OpId, SimError> {
+        self.write_value32(device, id, offset, value, stream)
+    }
+
+    /// `cuStreamWriteValue64` flags. Identity with
+    /// [`Self::write_value64_with_flags`].
+    ///
+    /// Capture legal. Distinct from [`Self::stream_write_value32`].
+    pub fn stream_write_value64_with_flags(
+        &mut self,
+        device: DeviceId,
+        id: AllocId,
+        offset: u64,
+        value: u64,
+        flags: u32,
+        stream: StreamId,
+    ) -> Result<OpId, SimError> {
+        self.write_value64_with_flags(device, id, offset, value, flags, stream)
+    }
+
+    /// `cuStreamWriteValue32` flags. Identity with
+    /// [`Self::write_value32_with_flags`].
+    ///
+    /// Capture legal. Distinct from [`Self::stream_write_value64_with_flags`].
+    pub fn stream_write_value32_with_flags(
+        &mut self,
+        device: DeviceId,
+        id: AllocId,
+        offset: u64,
+        value: u64,
+        flags: u32,
+        stream: StreamId,
+    ) -> Result<OpId, SimError> {
+        self.write_value32_with_flags(device, id, offset, value, flags, stream)
+    }
+
+    /// `cuStreamWaitValue64`. Identity with [`Self::wait_value64`].
+    ///
+    /// Capture legal. Distinct from [`Self::stream_write_value32_with_flags`].
+    pub fn stream_wait_value64(
+        &mut self,
+        device: DeviceId,
+        id: AllocId,
+        offset: u64,
+        value: u64,
+        cmp: WaitValueCmp,
+        stream: StreamId,
+    ) -> Result<OpId, SimError> {
+        self.wait_value64(device, id, offset, value, cmp, stream)
+    }
+
+    /// `cuStreamWaitValue32`. Identity with [`Self::wait_value32`].
+    ///
+    /// Capture legal. Distinct from [`Self::stream_wait_value64`].
+    pub fn stream_wait_value32(
+        &mut self,
+        device: DeviceId,
+        id: AllocId,
+        offset: u64,
+        value: u64,
+        cmp: WaitValueCmp,
+        stream: StreamId,
+    ) -> Result<OpId, SimError> {
+        self.wait_value32(device, id, offset, value, cmp, stream)
+    }
+
+    /// `cuStreamWaitValue64` flags. Identity with
+    /// [`Self::wait_value64_with_flags`].
+    ///
+    /// Capture legal. Distinct from [`Self::stream_wait_value32`].
+    pub fn stream_wait_value64_with_flags(
+        &mut self,
+        device: DeviceId,
+        id: AllocId,
+        offset: u64,
+        value: u64,
+        flags: u32,
+        stream: StreamId,
+    ) -> Result<OpId, SimError> {
+        self.wait_value64_with_flags(device, id, offset, value, flags, stream)
+    }
+
+    /// `cuStreamWaitValue32` flags. Identity with
+    /// [`Self::wait_value32_with_flags`].
+    ///
+    /// Capture legal. Distinct from [`Self::stream_wait_value64_with_flags`].
+    pub fn stream_wait_value32_with_flags(
+        &mut self,
+        device: DeviceId,
+        id: AllocId,
+        offset: u64,
+        value: u64,
+        flags: u32,
+        stream: StreamId,
+    ) -> Result<OpId, SimError> {
+        self.wait_value32_with_flags(device, id, offset, value, flags, stream)
+    }
+
+    /// `cuStreamBatchMemOp`. Identity with [`Self::batch_mem_op`].
+    ///
+    /// Capture legal. Distinct from [`Self::stream_wait_value32_with_flags`].
+    pub fn stream_batch_mem_op(
+        &mut self,
+        device: DeviceId,
+        stream: StreamId,
+        ops: &[BatchMemOp],
+    ) -> Result<OpId, SimError> {
+        self.batch_mem_op(device, stream, ops)
+    }
+
+    /// `cuStreamBatchMemOp` flags. Identity with
+    /// [`Self::batch_mem_op_with_flags`].
+    ///
+    /// Capture legal. Distinct from [`Self::stream_batch_mem_op`].
+    pub fn stream_batch_mem_op_with_flags(
+        &mut self,
+        device: DeviceId,
+        stream: StreamId,
+        ops: &[BatchMemOp],
+        flags: u32,
+    ) -> Result<OpId, SimError> {
+        self.batch_mem_op_with_flags(device, stream, ops, flags)
     }
 
     /// `cudaLaunchHostFunc`. Stream-ordered host work; does not occupy compute
@@ -19435,6 +29595,8 @@ impl Sim {
     ///
     /// Does not occupy compute or copy engines. Capture records a batch-mem-op
     /// node. Alignment is 8 bytes; the span must fit the allocation.
+    ///
+    /// Identity wrap [`Self::stream_write_value64`].
     pub fn write_value64(
         &mut self,
         device: DeviceId,
@@ -19457,6 +29619,8 @@ impl Sim {
 
     /// `cuStreamWriteValue32`. Stores the low 32 bits; high bits of a prior
     /// 64-bit write at the same offset stay.
+    ///
+    /// Identity wrap [`Self::stream_write_value32`].
     pub fn write_value32(
         &mut self,
         device: DeviceId,
@@ -19491,6 +29655,8 @@ impl Sim {
     /// Flags must be [`WriteValueFlags::DEFAULT`].
     /// [`WriteValueFlags::NO_MEMORY_BARRIER`] is Invalid `"write value flags"`.
     /// Typed [`Self::write_value64`] stays.
+    ///
+    /// Identity wrap [`Self::stream_write_value64_with_flags`].
     pub fn write_value64_with_flags(
         &mut self,
         device: DeviceId,
@@ -19509,6 +29675,8 @@ impl Sim {
     /// Flags must be [`WriteValueFlags::DEFAULT`].
     /// [`WriteValueFlags::NO_MEMORY_BARRIER`] is Invalid `"write value flags"`.
     /// Typed [`Self::write_value32`] stays.
+    ///
+    /// Identity wrap [`Self::stream_write_value32_with_flags`].
     pub fn write_value32_with_flags(
         &mut self,
         device: DeviceId,
@@ -19527,6 +29695,8 @@ impl Sim {
     /// Unwritten locations read as 0. Does not occupy compute or copy engines.
     /// Capture records a batch-mem-op node. An unsatisfied wait plus
     /// [`Self::synchronize`] is deadlock if nothing else is running.
+    ///
+    /// Identity wrap [`Self::stream_wait_value64`].
     pub fn wait_value64(
         &mut self,
         device: DeviceId,
@@ -19551,6 +29721,8 @@ impl Sim {
     }
 
     /// `cuStreamWaitValue32`. Compares the low 32 bits of the mailbox word.
+    ///
+    /// Identity wrap [`Self::stream_wait_value32`].
     pub fn wait_value32(
         &mut self,
         device: DeviceId,
@@ -19579,6 +29751,8 @@ impl Sim {
     /// [`crate::WaitValueFlags::FLUSH`] requires an RDMA SKU (same as
     /// [`BatchMemOp::FlushRemoteWrites`]). Unknown bits Invalid `"wait value flags"`.
     /// Typed [`Self::wait_value64`] stays.
+    ///
+    /// Identity wrap [`Self::stream_wait_value64_with_flags`].
     pub fn wait_value64_with_flags(
         &mut self,
         device: DeviceId,
@@ -19606,6 +29780,8 @@ impl Sim {
     /// [`crate::WaitValueFlags::FLUSH`] requires an RDMA SKU (same as
     /// [`BatchMemOp::FlushRemoteWrites`]). Unknown bits Invalid `"wait value flags"`.
     /// Typed [`Self::wait_value32`] stays.
+    ///
+    /// Identity wrap [`Self::stream_wait_value32_with_flags`].
     pub fn wait_value32_with_flags(
         &mut self,
         device: DeviceId,
@@ -19638,6 +29814,8 @@ impl Sim {
     /// more items are [`crate::GpuOp::BatchMem`]. Capture records one graph
     /// node. Writes commit on complete. A wait sees earlier writes in this
     /// vector. Flush is 1 ns Solo on an RDMA GPU (not host-sync).
+    ///
+    /// Identity wrap [`Self::stream_batch_mem_op`].
     pub fn batch_mem_op(
         &mut self,
         device: DeviceId,
@@ -19665,6 +29843,8 @@ impl Sim {
     ///
     /// Flags must be [`BatchMemOpFlags::DEFAULT`]. Unknown bits Invalid
     /// `"batch mem op flags"`. Typed [`Self::batch_mem_op`] stays.
+    ///
+    /// Identity wrap [`Self::stream_batch_mem_op_with_flags`].
     pub fn batch_mem_op_with_flags(
         &mut self,
         device: DeviceId,
@@ -19743,6 +29923,7 @@ impl Sim {
     /// on `stream` see the new attach. Illegal under stream capture (CUDA
     /// `cudaErrorStreamCaptureUnsupported`). `MemAttach::Single` cannot use the
     /// NULL stream.
+    /// Driver `cuStreamAttachMemAsync` is [`Self::stream_attach_mem`].
     pub fn stream_attach(
         &mut self,
         device: DeviceId,
@@ -19753,12 +29934,27 @@ impl Sim {
         self.stream_attach_with_size(device, id, 0, stream, flags)
     }
 
+    /// `cuStreamAttachMemAsync`. Identity with [`Self::stream_attach`]
+    /// (`cudaStreamAttachMemAsync`).
+    ///
+    /// Capture refused. Distinct from [`Self::stream_attach_with_flags`].
+    pub fn stream_attach_mem(
+        &mut self,
+        device: DeviceId,
+        id: AllocId,
+        stream: StreamId,
+        flags: MemAttach,
+    ) -> Result<OpId, SimError> {
+        self.stream_attach(device, id, stream, flags)
+    }
+
     /// [`Self::stream_attach`] with the CUDA `length` argument.
     ///
     /// `size` `0` is the entire allocation (CUDA default). A nonzero `size`
     /// must equal the allocation bytes. Other sizes Invalid `"attach size"`.
     /// Partial attach is not modeled. Typed [`Self::stream_attach`] stays
     /// (`length` 0). Capture cannot include it.
+    /// Driver `cuStreamAttachMemAsync` length is [`Self::stream_attach_n`].
     pub fn stream_attach_with_size(
         &mut self,
         device: DeviceId,
@@ -19786,6 +29982,21 @@ impl Sim {
         self.submit(device, stream, Kind::Attach { id, flags })
     }
 
+    /// `cuStreamAttachMemAsync` length. Identity with
+    /// [`Self::stream_attach_with_size`] (`cudaStreamAttachMemAsync` length).
+    ///
+    /// Capture refused. Distinct from [`Self::stream_attach_mem`].
+    pub fn stream_attach_n(
+        &mut self,
+        device: DeviceId,
+        id: AllocId,
+        size: u64,
+        stream: StreamId,
+        flags: MemAttach,
+    ) -> Result<OpId, SimError> {
+        self.stream_attach_with_size(device, id, size, stream, flags)
+    }
+
     /// `cudaStreamAttachMemAsync` with a flags word.
     ///
     /// [`MemAttachFlags::GLOBAL`] / [`HOST`](MemAttachFlags::HOST) /
@@ -19793,6 +30004,7 @@ impl Sim {
     /// Invalid `"stream attach flags"`. Typed [`Self::stream_attach`] stays.
     /// The CUDA `length` is [`Self::stream_attach_with_size`]. Capture cannot
     /// include it.
+    /// Driver `cuStreamAttachMemAsync` flags is [`Self::stream_attach_flags`].
     pub fn stream_attach_with_flags(
         &mut self,
         device: DeviceId,
@@ -19813,6 +30025,20 @@ impl Sim {
         self.stream_attach(device, id, stream, attach)
     }
 
+    /// `cuStreamAttachMemAsync` flags. Identity with
+    /// [`Self::stream_attach_with_flags`] (`cudaStreamAttachMemAsync` flags).
+    ///
+    /// Capture refused. Distinct from [`Self::stream_attach_n`].
+    pub fn stream_attach_flags(
+        &mut self,
+        device: DeviceId,
+        id: AllocId,
+        stream: StreamId,
+        flags: u32,
+    ) -> Result<OpId, SimError> {
+        self.stream_attach_with_flags(device, id, stream, flags)
+    }
+
     /// Record `event` after prior ops on `stream` (`cudaEventRecord`).
     pub fn record_event(
         &mut self,
@@ -19823,11 +30049,27 @@ impl Sim {
         self.record_event_with_flags(device, event, stream, EventRecordFlags::DEFAULT)
     }
 
+    /// `cuEventRecord`. Identity with [`Self::record_event`] (`cudaEventRecord`).
+    ///
+    /// Records after prior ops on `stream`. Capture-legal (a record node).
+    /// Distinct from [`Self::record_event_with_flags`]. This VM does not invent
+    /// `cuEventRecordWithFlags` this slice (`record_event_with_flags` stays).
+    pub fn event_record(
+        &mut self,
+        device: DeviceId,
+        event: EventId,
+        stream: StreamId,
+    ) -> Result<OpId, SimError> {
+        self.record_event(device, event, stream)
+    }
+
     /// `cudaEventRecordWithFlags(..., cudaEventRecordExternal)`.
     ///
     /// During capture this is a record node that does **not** put `event` in the
     /// forked-capture join set. A later [`Self::wait_event`] on another stream
     /// stays live. Live (non-capturing) this matches [`Self::record_event`].
+    /// Driver `cuEventRecordWithFlags` external is [`Self::event_record_external`].
+    /// Identity wrap [`Self::event_record_external`].
     pub fn record_event_external(
         &mut self,
         device: DeviceId,
@@ -19835,6 +30077,19 @@ impl Sim {
         stream: StreamId,
     ) -> Result<OpId, SimError> {
         self.record_event_with_flags(device, event, stream, EventRecordFlags::EXTERNAL)
+    }
+
+    /// `cuEventRecordWithFlags` external. Identity with
+    /// [`Self::record_event_external`] (`cudaEventRecordWithFlags` External).
+    ///
+    /// Capture legal. Distinct from [`Self::event_record_with_flags`].
+    pub fn event_record_external(
+        &mut self,
+        device: DeviceId,
+        event: EventId,
+        stream: StreamId,
+    ) -> Result<OpId, SimError> {
+        self.record_event_external(device, event, stream)
     }
 
     /// `cudaEventRecordWithFlags`. Unknown bits are Invalid `"event record flags"`.
@@ -19859,6 +30114,23 @@ impl Sim {
         )
     }
 
+    /// `cuEventRecordWithFlags`. Identity with [`Self::record_event_with_flags`]
+    /// (`cudaEventRecordWithFlags`).
+    ///
+    /// Unknown bits are Invalid `"event record flags"`. Capture-legal.
+    /// Distinct from [`Self::event_record`] (default flags) and
+    /// [`Self::record_event_external`]. This VM does not invent
+    /// `cuStreamWaitEvent` this slice (`wait_event` stays).
+    pub fn event_record_with_flags(
+        &mut self,
+        device: DeviceId,
+        event: EventId,
+        stream: StreamId,
+        flags: u32,
+    ) -> Result<OpId, SimError> {
+        self.record_event_with_flags(device, event, stream, flags)
+    }
+
     fn record_event_flags(
         &mut self,
         device: DeviceId,
@@ -19880,12 +30152,31 @@ impl Sim {
         self.wait_event_with_flags(device, event, stream, EventWaitFlags::DEFAULT)
     }
 
+    /// `cuStreamWaitEvent`. Identity with [`Self::wait_event`]
+    /// (`cudaStreamWaitEvent`).
+    ///
+    /// Later ops on `stream` wait until `event` is recorded and complete.
+    /// Capture-legal. Distinct from [`Self::wait_event_with_flags`] and
+    /// [`Self::wait_event_external`]. This VM does not invent a
+    /// `wait_event_with_flags` identity this slice (`wait_event_with_flags`
+    /// stays).
+    pub fn stream_wait_event(
+        &mut self,
+        device: DeviceId,
+        event: EventId,
+        stream: StreamId,
+    ) -> Result<OpId, SimError> {
+        self.wait_event(device, event, stream)
+    }
+
     /// `cudaStreamWaitEvent(..., cudaEventWaitExternal)`.
     ///
     /// During capture this is a wait node that does **not** join the waiter into
     /// the graph. Graph replay waits for a live record of `event`, not a
     /// [`Self::record_event_external`] node in the same graph. Live this matches
     /// [`Self::wait_event`].
+    /// Driver `cuStreamWaitEvent` external is [`Self::stream_wait_event_external`].
+    /// Identity wrap [`Self::stream_wait_event_external`].
     pub fn wait_event_external(
         &mut self,
         device: DeviceId,
@@ -19893,6 +30184,19 @@ impl Sim {
         stream: StreamId,
     ) -> Result<OpId, SimError> {
         self.wait_event_with_flags(device, event, stream, EventWaitFlags::EXTERNAL)
+    }
+
+    /// `cuStreamWaitEvent` external. Identity with
+    /// [`Self::wait_event_external`] (`cudaStreamWaitEvent` WaitExternal).
+    ///
+    /// Capture legal. Distinct from [`Self::stream_wait_event_with_flags`].
+    pub fn stream_wait_event_external(
+        &mut self,
+        device: DeviceId,
+        event: EventId,
+        stream: StreamId,
+    ) -> Result<OpId, SimError> {
+        self.wait_event_external(device, event, stream)
     }
 
     /// `cudaStreamWaitEvent` with flags. Unknown bits are Invalid
@@ -19911,6 +30215,23 @@ impl Sim {
             });
         }
         self.wait_event_flags(device, event, stream, flags & EventWaitFlags::EXTERNAL != 0)
+    }
+
+    /// `cuStreamWaitEvent` with flags. Identity with [`Self::wait_event_with_flags`]
+    /// (`cudaStreamWaitEvent` flags).
+    ///
+    /// Unknown bits are Invalid `"event wait flags"`. Capture-legal. Distinct
+    /// from [`Self::stream_wait_event`] (default flags) and
+    /// [`Self::wait_event_external`]. This VM does not invent
+    /// `cuEventElapsedTime` this slice (`event_elapsed_ns` stays).
+    pub fn stream_wait_event_with_flags(
+        &mut self,
+        device: DeviceId,
+        event: EventId,
+        stream: StreamId,
+        flags: u32,
+    ) -> Result<OpId, SimError> {
+        self.wait_event_with_flags(device, event, stream, flags)
     }
 
     fn wait_event_flags(
@@ -19993,6 +30314,7 @@ impl Sim {
         stream: StreamId,
     ) -> Result<(), SimError> {
         let _gpu = self.profile.gpu(device)?;
+        self.require_live_stream(device, stream)?;
         if self.in_capture(device, stream) {
             return Err(SimError::Invalid {
                 why: "cannot synchronize stream during capture",
@@ -20007,6 +30329,21 @@ impl Sim {
         self.stream_sync_outcome(device, stream)?;
         self.apply_stream_sync_policy_tax(device, stream);
         Ok(())
+    }
+
+    /// `cuStreamSynchronize`. Identity with [`Self::synchronize_stream`]
+    /// (`cudaStreamSynchronize`).
+    ///
+    /// Other streams keep running. Unknown devices are [`SimError::Invalid`].
+    /// A capturing stream is Invalid. Distinct from [`Self::ctx_synchronize`].
+    /// This VM does not invent `cuEventDestroy` this slice
+    /// (`destroy_event` stays).
+    pub fn stream_synchronize(
+        &mut self,
+        device: DeviceId,
+        stream: StreamId,
+    ) -> Result<(), SimError> {
+        self.synchronize_stream(device, stream)
     }
 
     /// `cudaEventSynchronize`: wait until `event` is recorded and complete.
@@ -20038,6 +30375,16 @@ impl Sim {
         Ok(())
     }
 
+    /// `cuEventSynchronize`. Identity with [`Self::synchronize_event`]
+    /// (`cudaEventSynchronize`).
+    ///
+    /// Waits the record only. Unknown ids are [`SimError::UnknownEvent`]. This
+    /// VM does not invent `cuStreamSynchronize` this slice
+    /// (`synchronize_stream` stays).
+    pub fn event_synchronize(&mut self, event: EventId) -> Result<(), SimError> {
+        self.synchronize_event(event)
+    }
+
     /// `cudaEventElapsedTime` in nanoseconds (this crate is ns, not milliseconds).
     ///
     /// Both events must be recorded, complete, and created with timing enabled.
@@ -20052,6 +30399,16 @@ impl Sim {
         end_ns.checked_sub(start_ns).ok_or(SimError::Invalid {
             why: "event elapsed: end before start",
         })
+    }
+
+    /// `cuEventElapsedTime`. Identity with [`Self::event_elapsed_ns`]
+    /// (`cudaEventElapsedTime`).
+    ///
+    /// Nanoseconds (this crate is ns, not milliseconds). Query. Distinct from
+    /// a millisecond conversion. This VM does not invent a millisecond elapsed
+    /// this slice (`event_elapsed_ns` stays).
+    pub fn event_elapsed(&self, start: EventId, end: EventId) -> Result<u64, SimError> {
+        self.event_elapsed_ns(start, end)
     }
 
     fn require_event_timing(&self, event: EventId) -> Result<(), SimError> {
@@ -20245,6 +30602,7 @@ impl Sim {
         if self.unavailable.contains(&device) {
             return Err(SimError::Unavailable { device });
         }
+        self.require_live_stream(device, stream)?;
         if self.capturing.is_some() {
             return self.submit_captured(device, stream, kind);
         }
@@ -21667,7 +32025,7 @@ impl Sim {
                 let pri = o.priority;
                 candidates.push((pri, id.0, *id));
             }
-            candidates.sort_by_key(|&(pri, oid, _)| (Reverse(pri), oid));
+            candidates.sort_by_key(|&(pri, oid, _)| (pri, oid));
             for (_, _, id) in candidates {
                 if self.try_start(id)? {
                     if self.is_running(id) {
@@ -22884,6 +33242,8 @@ impl Sim {
     /// [`crate::GpuProfile::portable_cluster_size`] is Invalid until this is
     /// true, unless the launch uses [`PortableClusterMode::AllowNonPortable`].
     /// Decode identity stays disallowed.
+    /// Driver `cuFuncSetAttribute` non-portable cluster size is [`Self::func_set_non_portable_cluster_size_allowed`].
+    /// Identity wrap [`Self::func_set_non_portable_cluster_size_allowed`].
     pub fn set_non_portable_cluster_size_allowed(
         &mut self,
         device: DeviceId,
@@ -22899,10 +33259,33 @@ impl Sim {
         Ok(())
     }
 
+    /// `cuFuncSetAttribute` non-portable cluster size. Identity with
+    /// [`Self::set_non_portable_cluster_size_allowed`] (`cudaFuncSetAttribute` NonPortableClusterSizeAllowed).
+    ///
+    /// Capture legal. Distinct from [`Self::func_get_required_cluster_depth`].
+    pub fn func_set_non_portable_cluster_size_allowed(
+        &mut self,
+        device: DeviceId,
+        allowed: bool,
+    ) -> Result<(), SimError> {
+        self.set_non_portable_cluster_size_allowed(device, allowed)
+    }
+
     /// Current [`Self::set_non_portable_cluster_size_allowed`] for `device`.
+    /// Driver `cuFuncGetAttribute` non-portable cluster size is [`Self::func_get_non_portable_cluster_size_allowed`].
+    /// Identity wrap [`Self::func_get_non_portable_cluster_size_allowed`].
     #[must_use]
     pub fn non_portable_cluster_size_allowed(&self, device: DeviceId) -> bool {
         self.non_portable_cluster.contains(&device)
+    }
+
+    /// `cuFuncGetAttribute` non-portable cluster size. Identity with
+    /// [`Self::non_portable_cluster_size_allowed`] (`cudaFuncGetAttribute` NonPortableClusterSizeAllowed).
+    ///
+    /// Query; legal during capture. Distinct from [`Self::func_set_non_portable_cluster_size_allowed`].
+    #[must_use]
+    pub fn func_get_non_portable_cluster_size_allowed(&self, device: DeviceId) -> bool {
+        self.non_portable_cluster_size_allowed(device)
     }
 
     fn validate_dynamic_shared(
@@ -22936,6 +33319,8 @@ impl Sim {
     /// Default `0` allows only [`crate::GpuProfile::max_shared_mem_per_block`].
     /// `bytes` above [`crate::GpuProfile::max_shared_mem_per_block_optin`] is
     /// Invalid. Decode identity stays `0`.
+    /// Driver `cuFuncSetAttribute` max dynamic shared memory is [`Self::func_set_max_dynamic_shared_memory`].
+    /// Identity wrap [`Self::func_set_max_dynamic_shared_memory`].
     pub fn set_max_dynamic_shared_memory(
         &mut self,
         device: DeviceId,
@@ -22960,20 +33345,57 @@ impl Sim {
         Ok(())
     }
 
+    /// `cuFuncSetAttribute` max dynamic shared memory. Identity with
+    /// [`Self::set_max_dynamic_shared_memory`] (`cudaFuncSetAttribute` MaxDynamicSharedMemorySize).
+    ///
+    /// Capture legal. Distinct from [`Self::func_get_non_portable_cluster_size_allowed`].
+    pub fn func_set_max_dynamic_shared_memory(
+        &mut self,
+        device: DeviceId,
+        bytes: u32,
+    ) -> Result<(), SimError> {
+        self.set_max_dynamic_shared_memory(device, bytes)
+    }
+
     /// Current [`Self::set_max_dynamic_shared_memory`] for `device`.
+    /// Driver `cuFuncGetAttribute` max dynamic shared memory is [`Self::func_get_max_dynamic_shared_memory`].
+    /// Identity wrap [`Self::func_get_max_dynamic_shared_memory`].
     #[must_use]
     pub fn max_dynamic_shared_memory(&self, device: DeviceId) -> u32 {
         self.max_dynamic_shared.get(&device).copied().unwrap_or(0)
+    }
+
+    /// `cuFuncGetAttribute` max dynamic shared memory. Identity with
+    /// [`Self::max_dynamic_shared_memory`] (`cudaFuncGetAttribute` MaxDynamicSharedMemorySize).
+    ///
+    /// Query; legal during capture. Distinct from [`Self::func_set_max_dynamic_shared_memory`].
+    #[must_use]
+    pub fn func_get_max_dynamic_shared_memory(&self, device: DeviceId) -> u32 {
+        self.max_dynamic_shared_memory(device)
     }
 
     /// `cudaFuncGetAttributes` of modeled per-device function attrs.
     ///
     /// Query; legal during capture. Unknown devices are Invalid. This VM has
     /// one function-attr set per device, not per kernel function.
+    /// Compiler-emitted `sharedSizeBytes`, `constSizeBytes`,
+    /// `localSizeBytes`, `maxThreadsPerBlock`, `ptxVersion`,
+    /// `binaryVersion`, and `cacheModeCA` are always 0 until a compiled
+    /// kernel exists. Distinct from [`DeviceAttr::MaxThreadsPerBlock`].
+    /// `numRegs` is not modeled this slice.
+    /// Driver `cuFuncGetAttributes` is [`Self::get_func_attributes`].
+    /// Identity wrap [`Self::get_func_attributes`].
     pub fn func_get_attributes(&self, device: DeviceId) -> Result<FuncAttributes, SimError> {
         let _gpu = self.profile.gpu(device)?;
         let rt = self.gpu_rt(device)?;
         Ok(FuncAttributes {
+            shared_size_bytes: 0,
+            const_size_bytes: 0,
+            local_size_bytes: 0,
+            max_threads_per_block: 0,
+            ptx_version: 0,
+            binary_version: 0,
+            cache_mode_ca: 0,
             max_dynamic_shared_size_bytes: self.max_dynamic_shared_memory(device),
             non_portable_cluster_size_allowed: self.non_portable_cluster_size_allowed(device),
             preferred_shmem_carveout: rt.func_carveout,
@@ -22985,6 +33407,179 @@ impl Sim {
         })
     }
 
+    /// `cuFuncGetAttributes`. Identity with
+    /// [`Self::func_get_attributes`] (`cudaFuncGetAttributes`).
+    ///
+    /// Query; legal during capture. Distinct from [`Self::stream_set_blocking`].
+    pub fn get_func_attributes(&self, device: DeviceId) -> Result<FuncAttributes, SimError> {
+        self.func_get_attributes(device)
+    }
+
+    /// `cudaFuncGetName` / `cuFuncGetName` for the per-device function.
+    ///
+    /// Query; legal during capture. Empty until a compiled kernel exists
+    /// (same bar as compiler-emitted [`FuncAttributes`] fields staying 0).
+    /// Distinct from [`Self::device_get_name`] (profile name) and from
+    /// [`Self::func_get_attributes`]. Unknown devices are Invalid
+    /// `"device not in profile"`. This VM does not invent `cuKernelGetName`
+    /// this slice.
+    /// Driver wrap: [`Self::mem_func_get_name`].
+    /// Identity: [`Self::mem_func_get_name`].
+    pub fn func_get_name(&self, device: DeviceId) -> Result<String, SimError> {
+        let _gpu = self.profile.gpu(device)?;
+        Ok(String::new())
+    }
+
+    /// `cuFuncGetName`. Identity with [`Self::func_get_name`].
+    /// Query; legal during capture. Distinct from [`Self::mem_func_get_module`].
+    pub fn mem_func_get_name(&self, device: DeviceId) -> Result<String, SimError> {
+        self.func_get_name(device)
+    }
+
+    /// `cuFuncGetParamInfo` for the per-device function.
+    ///
+    /// Query; legal during capture. Always Invalid `"unknown function"`
+    /// until a compiled kernel exists (this VM has no `CUfunction` parameter
+    /// blob). Distinct from [`Self::func_get_name`] (empty string) and from
+    /// [`Self::func_get_attributes`] (compiler fields 0). Unknown devices
+    /// are Invalid `"device not in profile"`. This VM does not invent a
+    /// compiled kernel this slice.
+    /// Driver wrap: [`Self::mem_func_get_param_info`].
+    /// Identity: [`Self::mem_func_get_param_info`].
+    pub fn func_get_param_info(
+        &self,
+        device: DeviceId,
+        param_index: u64,
+    ) -> Result<(u64, u64), SimError> {
+        let _gpu = self.profile.gpu(device)?;
+        let _ = param_index;
+        Err(SimError::Invalid {
+            why: "unknown function",
+        })
+    }
+
+    /// `cuFuncGetParamInfo`. Identity with [`Self::func_get_param_info`].
+    /// Query; legal during capture. Distinct from [`Self::mem_func_get_name`].
+    pub fn mem_func_get_param_info(
+        &self,
+        device: DeviceId,
+        param_index: u64,
+    ) -> Result<(u64, u64), SimError> {
+        self.func_get_param_info(device, param_index)
+    }
+
+    /// `cuFuncGetParamCount` for the per-device function.
+    ///
+    /// Always Invalid `"func pcount"` until a compiled kernel exists (this
+    /// VM has no `CUfunction` parameter list). Distinct from
+    /// [`Self::func_get_param_info`] (why is not `"unknown function"`) and
+    /// from [`Self::kernel_get_param_count`] (why is not `"kernel pcount"`).
+    /// Unknown devices are Invalid `"device not in profile"`. Query; legal
+    /// during capture. This VM does not invent `cuLaunchKernelEx` this
+    /// slice.
+    /// Driver wrap: [`Self::mem_func_get_param_count`].
+    /// Identity: [`Self::mem_func_get_param_count`].
+    pub fn func_get_param_count(&self, device: DeviceId) -> Result<(), SimError> {
+        let _gpu = self.profile.gpu(device)?;
+        Err(SimError::Invalid { why: "func pcount" })
+    }
+
+    /// `cuFuncGetParamCount`. Identity with [`Self::func_get_param_count`].
+    /// Query; legal during capture. Distinct from [`Self::mem_device_get`].
+    pub fn mem_func_get_param_count(&self, device: DeviceId) -> Result<(), SimError> {
+        self.func_get_param_count(device)
+    }
+
+    /// `cuFuncGetCacheConfig`. CUDA functions are not modeled.
+    ///
+    /// Always Invalid `"func gcache"` until a compiled kernel exists (this
+    /// VM has no `CUfunction` cache config). Distinct from
+    /// [`Self::get_func_cache_config`] (per-device stored
+    /// `cudaFuncSetCacheConfig`) and from
+    /// [`Self::kernel_set_cache_config`] (why is not `"kernel cache"`) and
+    /// from [`Self::func_get_param_count`] (why is not `"func pcount"`).
+    /// Unknown devices are Invalid `"device not in profile"`. Query; legal
+    /// during capture. This VM does not invent `cuMemsetD8Async`
+    /// this slice.
+    /// Driver wrap: [`Self::mem_func_get_cache_config`].
+    /// Identity: [`Self::mem_func_get_cache_config`].
+    pub fn func_get_cache_config(&self, device: DeviceId) -> Result<(), SimError> {
+        let _gpu = self.profile.gpu(device)?;
+        Err(SimError::Invalid { why: "func gcache" })
+    }
+
+    /// `cuFuncGetCacheConfig`. Identity with [`Self::func_get_cache_config`].
+    /// Query; legal during capture. Distinct from [`Self::mem_func_get_param_count`].
+    pub fn mem_func_get_cache_config(&self, device: DeviceId) -> Result<(), SimError> {
+        self.func_get_cache_config(device)
+    }
+
+    /// `cuFuncIsLoaded` for the per-device function.
+    ///
+    /// Query; legal during capture. `false` until a compiled kernel exists
+    /// (same bar as empty [`Self::func_get_name`]). Distinct from
+    /// [`Self::func_get_param_info`] (unknown-function Invalid) and from
+    /// [`Self::func_get_attributes`] (compiler fields 0). Unknown devices
+    /// are Invalid `"device not in profile"`. This VM does not invent
+    /// `cuFuncLoad` this slice.
+    /// Driver wrap: [`Self::mem_func_is_loaded`].
+    /// Identity: [`Self::mem_func_is_loaded`].
+    pub fn func_is_loaded(&self, device: DeviceId) -> Result<bool, SimError> {
+        let _gpu = self.profile.gpu(device)?;
+        Ok(false)
+    }
+
+    /// `cuFuncIsLoaded`. Identity with [`Self::func_is_loaded`].
+    /// Query; legal during capture. Distinct from [`Self::mem_func_get_cache_config`].
+    pub fn mem_func_is_loaded(&self, device: DeviceId) -> Result<bool, SimError> {
+        self.func_is_loaded(device)
+    }
+
+    /// `cuFuncLoad`. CUDA functions are not modeled.
+    ///
+    /// Always Invalid `"func load"` (this VM has no cubin and no
+    /// `CUfunction` to load). Distinct from [`Self::func_is_loaded`]
+    /// (`false`; why is not used) and from [`Self::func_get_module`]
+    /// (`"unknown function"`) and from [`Self::kernel_get_function`].
+    /// Unknown devices are Invalid `"device not in profile"`. Query; legal
+    /// during capture.
+    /// Driver wrap: [`Self::mem_func_load`].
+    /// Identity: [`Self::mem_func_load`].
+    pub fn func_load(&self, device: DeviceId) -> Result<(), SimError> {
+        let _gpu = self.profile.gpu(device)?;
+        Err(SimError::Invalid { why: "func load" })
+    }
+
+    /// `cuFuncLoad`. Identity with [`Self::func_load`].
+    /// Query; legal during capture. Distinct from [`Self::mem_func_is_loaded`].
+    pub fn mem_func_load(&self, device: DeviceId) -> Result<(), SimError> {
+        self.func_load(device)
+    }
+
+    /// `cuFuncGetModule` for the per-device function.
+    ///
+    /// Query; legal during capture. Always Invalid `"unknown function"`
+    /// until a compiled kernel exists (this VM has no `CUmodule`). Distinct
+    /// from [`Self::func_is_loaded`] (`false`) and from
+    /// [`Self::func_get_param_info`] (parameter blob) and from
+    /// [`Self::func_load`]. Unknown devices are
+    /// Invalid `"device not in profile"`. This VM does not invent
+    /// `cuKernelGetModule` this slice.
+    /// Driver wrap: [`Self::mem_func_get_module`].
+    /// Identity: [`Self::mem_func_get_module`].
+    pub fn func_get_module(&self, device: DeviceId) -> Result<(), SimError> {
+        let _gpu = self.profile.gpu(device)?;
+        Err(SimError::Invalid {
+            why: "unknown function",
+        })
+    }
+
+    /// `cuFuncGetModule`. Identity with [`Self::func_get_module`].
+    /// Query; legal during capture. Distinct from [`Self::mem_func_load`].
+    pub fn mem_func_get_module(&self, device: DeviceId) -> Result<(), SimError> {
+        self.func_get_module(device)
+    }
+
     /// `cudaFuncSetAttribute`. Host-side; not a graph node.
     ///
     /// Dispatches [`FuncAttr`] onto the typed setters. Capture-legal like those
@@ -22994,6 +33589,8 @@ impl Sim {
     /// `"func attr"`. Cluster-dim-must-be-set is `0`/`1`. Required cluster
     /// axes are nonnegative (`0` unset). Typed helpers stay. Decode identity
     /// stays `0` / disallowed / Default / unset.
+    /// Driver wrap: [`Self::mem_func_set_attribute`].
+    /// Identity: [`Self::mem_func_set_attribute`].
     pub fn func_set_attribute(
         &mut self,
         device: DeviceId,
@@ -23041,10 +33638,23 @@ impl Sim {
         }
     }
 
+    /// `cudaFuncSetAttribute`. Identity with [`Self::func_set_attribute`].
+    /// Host-side; legal during capture. Distinct from [`Self::mem_func_get_attribute`].
+    pub fn mem_func_set_attribute(
+        &mut self,
+        device: DeviceId,
+        attr: FuncAttr,
+        value: i32,
+    ) -> Result<(), SimError> {
+        self.func_set_attribute(device, attr, value)
+    }
+
     /// `cudaFuncGetAttribute`. Query; legal during capture.
     ///
     /// Unknown devices are Invalid. This VM has one function-attr set per
     /// device, not per kernel function.
+    /// Driver wrap: [`Self::mem_func_get_attribute`].
+    /// Identity: [`Self::mem_func_get_attribute`].
     pub fn func_get_attribute(&self, device: DeviceId, attr: FuncAttr) -> Result<i32, SimError> {
         let _gpu = self.profile.gpu(device)?;
         match attr {
@@ -23069,6 +33679,16 @@ impl Sim {
                 Ok(self.get_func_cluster_policy(device)?.to_cuda())
             }
         }
+    }
+
+    /// `cudaFuncGetAttribute`. Identity with [`Self::func_get_attribute`].
+    /// Query; legal during capture. Distinct from [`Self::mem_func_get_param_info`].
+    pub fn mem_func_get_attribute(
+        &self,
+        device: DeviceId,
+        attr: FuncAttr,
+    ) -> Result<i32, SimError> {
+        self.func_get_attribute(device, attr)
     }
 
     fn advance_to_next_completion(&mut self) -> Result<(), SimError> {
@@ -23224,20 +33844,22 @@ impl Sim {
         }
         self.bump_graph_mem_from_op(id)?;
         self.finish_device_launch(id)?;
+        self.flush_device_tail_launches()?;
         self.reap_gone_exec()?;
         self.continue_while(id)?;
         Ok(())
     }
 
     fn finish_device_launch(&mut self, id: OpId) -> Result<(), SimError> {
-        let (graph, stream) = {
+        let (graph, stream, device, join_stream) = {
             let Some(op) = self.ops.get(&id) else {
                 return Ok(());
             };
             let Kind::DeviceLaunch { graph } = &op.kind else {
                 return Ok(());
             };
-            (*graph, op.stream)
+            let join = self.graphs.get(graph).and_then(|g| g.device_launch_stream);
+            (*graph, op.stream, op.device, join)
         };
         self.reset_graph_tree_conds(graph)?;
         let mut stack = BTreeSet::new();
@@ -23246,11 +33868,6 @@ impl Sim {
         let tail = if n == 0 {
             id
         } else {
-            let device = self
-                .ops
-                .get(&id)
-                .ok_or(SimError::Invalid { why: "unknown op" })?
-                .device;
             self.tail.get(&(device, stream)).copied().unwrap_or(id)
         };
         self.graphs
@@ -23259,6 +33876,16 @@ impl Sim {
                 why: "unknown graph",
             })?
             .device_launch_tail = Some(tail);
+        if n > 0 {
+            if let Some(join) = join_stream {
+                if join != stream {
+                    self.graph_joins
+                        .entry((device, join))
+                        .or_default()
+                        .push(tail);
+                }
+            }
+        }
         Ok(())
     }
 
@@ -25399,7 +36026,8 @@ fn alloc_graph_worker(launch: StreamId, worker: &mut u16) -> StreamId {
     loop {
         let s = StreamId(u16::MAX.saturating_sub(*worker));
         *worker = worker.saturating_add(1);
-        if s != launch {
+        // Named device-graph streams are not Hyper-Q workers.
+        if s != launch && !s.is_device_graph_stream() {
             return s;
         }
     }

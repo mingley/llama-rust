@@ -157,7 +157,7 @@ every Hyper-Q slot when the profile has NVLink (`8xh100`); without NVLink
 occupancy is unchanged.
 `--device-launch` is `cudaGraphInstantiateFlagDeviceLaunch` plus
 `device_launch_graph` (illegal with `--graph-mem` / `--graph-auto-free` /
-`--graph-update`). `--device-updatable` is
+`--graph-update`; gpu-sim named device-graph streams have no Engine flag). `--device-updatable` is
 `cudaLaunchAttributeDeviceUpdatableKernelNode` so `--graph-set-params` keeps
 the exec uploaded (illegal with `--graph-update`). `--kernel-priority N` is
 `cudaLaunchAttributePriority` on grouped expert GEMMs (`None` inherits stream
@@ -463,6 +463,1559 @@ hold every stream bound to a ctx (not a second `--green-ctx`).
 ctxs keep running). `stream_get_dev_resource` is `cuStreamGetDevResource`.
 `green_ctx_get_id` is `cuGreenCtxGetId` (not a second `--green-ctx`).
 `green_ctx_get_device` is `cudaExecutionCtxGetDevice`.
+`gpu-sim` `reset_device` is `cudaDeviceReset` (no Engine flag).
+`gpu-sim` `device_primary_ctx_set_flags` is `cuDevicePrimaryCtxSetFlags`
+(always Invalid; primary context already seeded; no Engine flag).
+`SimError::error_name` / `error_string` are `cudaGetErrorName` /
+`cudaGetErrorString` (no Engine flag; no thread-local last error).
+`gpu-sim` compute capability is `cudaDevAttrComputeCapabilityMajor` and
+`Minor` (example H100 Hopper 9.0; `cuDeviceComputeCapability` is the same
+pair; no Engine flag).
+`gpu-sim` `ctx_get_api_version` is `cuCtxGetApiVersion` (CUDA 13.0 for the
+seeded primary context; no Engine flag).
+`gpu-sim` `ctx_get_flags` is `cuCtxGetFlags` (same flags as
+`get_device_flags`; no Engine flag).
+`gpu-sim` `ctx_set_flags` is `cuCtxSetFlags` (identity with
+`set_device_flags`; no Engine flag).
+`gpu-sim` `ctx_get_cache_config` is `cuCtxGetCacheConfig` (same as
+`get_cache_config`; no Engine flag).
+`gpu-sim` `ctx_set_cache_config` is `cuCtxSetCacheConfig` (identity with
+`set_cache_config`; no Engine flag).
+`gpu-sim` `ctx_get_stream_priority_range` is `cuCtxGetStreamPriorityRange`
+(example H100 `(0, -5)`; no Engine flag).
+`gpu-sim` `ctx_get_limit` is `cuCtxGetLimit` (same as `get_limit`; no
+Engine flag).
+`gpu-sim` `ctx_set_limit` is `cuCtxSetLimit` (identity with `set_limit`;
+no Engine flag).
+`gpu-sim` `ctx_synchronize` is `cuCtxSynchronize` (same wait as
+`synchronize_device`; no Engine flag).
+`gpu-sim` `ctx_get_shared_mem_config` is `cuCtxGetSharedMemConfig` (same
+as `get_shared_mem_config`; no Engine flag).
+`gpu-sim` `ctx_set_shared_mem_config` is `cuCtxSetSharedMemConfig` (identity with
+`set_shared_mem_config`; no Engine flag).
+`gpu-sim` launch-geometry caps are `cudaDevAttrMaxThreadsPerBlock` 1024
+and H100 block/grid dims (no Engine flag; not occupancy SM counts).
+`gpu-sim` `MaxRegistersPerBlock` is `cudaDevAttrMaxRegistersPerBlock` 65536
+(no Engine flag; not a register-file model).
+`gpu-sim` `GlobalMemoryBusWidth` is `cudaDevAttrGlobalMemoryBusWidth`
+(example H100 5120 bits, H200 6144; no Engine flag; not a memory clock).
+`gpu-sim` `SingleToDoublePrecisionPerfRatio` is
+`cudaDevAttrSingleToDoublePrecisionPerfRatio` 1 on example H100
+(no Engine flag; not an FP64 duration model).
+`gpu-sim` compiler-emitted `cudaFuncGetAttributes` fields
+(`sharedSizeBytes`, `constSizeBytes`, `localSizeBytes`, `maxThreadsPerBlock`,
+`ptxVersion`, `binaryVersion`, `cacheModeCA`) are always 0 (no Engine
+flag; not a compiled kernel).
+`gpu-sim` `func_get_name` is `cudaFuncGetName` (empty until a compiled
+kernel exists; no Engine flag).
+`gpu-sim` `func_get_param_info` is `cuFuncGetParamInfo` (Invalid until a
+compiled kernel exists; no Engine flag).
+`gpu-sim` `func_get_param_count` is `cuFuncGetParamCount` (Invalid until a
+compiled kernel exists; no Engine flag).
+`gpu-sim` `func_get_cache_config` is `cuFuncGetCacheConfig` (Invalid until a
+compiled kernel exists; no Engine flag).
+`gpu-sim` `memset_d8_async` is `cuMemsetD8Async`
+(count is CUDA `N` of 8-bit values; no Engine flag).
+`gpu-sim` `memset_d8` is `cuMemsetD8` (host-sync; capture refused; no Engine flag).
+`gpu-sim` `event_query` is `cuEventQuery` (identity with `query_event`; no Engine flag).
+`gpu-sim` `stream_query` is `cuStreamQuery` (identity with `query_stream`; no Engine flag).
+`gpu-sim` `event_synchronize` is `cuEventSynchronize` (identity with `synchronize_event`; no Engine flag).
+`gpu-sim` `stream_synchronize` is `cuStreamSynchronize` (identity with `synchronize_stream`; no Engine flag).
+`gpu-sim` `event_destroy` is `cuEventDestroy` (identity with `destroy_event`; no Engine flag).
+`gpu-sim` `event_create` is `cuEventCreate` (identity with `create_event`; no Engine flag).
+`gpu-sim` `event_create_with_flags` is `cuEventCreateWithFlags` (identity with `create_event_with_flags`; no Engine flag).
+`gpu-sim` `event_record` is `cuEventRecord` (identity with `record_event`; no Engine flag).
+`gpu-sim` `event_record_with_flags` is `cuEventRecordWithFlags` (identity with `record_event_with_flags`; no Engine flag).
+`gpu-sim` `stream_wait_event` is `cuStreamWaitEvent` (identity with `wait_event`; no Engine flag).
+`gpu-sim` `stream_wait_event_with_flags` is `cuStreamWaitEvent` with flags (identity with `wait_event_with_flags`; no Engine flag).
+`gpu-sim` `event_elapsed` is `cuEventElapsedTime` (identity with `event_elapsed_ns`; ns, not milliseconds; no Engine flag).
+`gpu-sim` `mem_get_info` is `cuMemGetInfo` (identity with `mem_info`; no Engine flag).
+`gpu-sim` `stream_create` is `cudaStreamCreate` / `cuStreamCreate` default flags (identity with `stream_create_with_flags` DEFAULT; blocking; no Engine flag).
+`gpu-sim` `stream_create_priority` is `cuStreamCreateWithPriority` (identity with `stream_create_with_priority`; no Engine flag).
+`gpu-sim` `stream_create_flags` is `cuStreamCreateWithFlags` (identity with `stream_create_with_flags`; no Engine flag).
+`gpu-sim` `stream_flags` is `cuStreamGetFlags` (identity with `stream_get_flags`; no Engine flag).
+`gpu-sim` `get_stream_priority` is `cuStreamGetPriority` (identity with `stream_get_priority`; no Engine flag).
+`gpu-sim` `device_graph_mem_get` is `cuDeviceGetGraphMemAttribute` (identity with `graph_mem_get`; no Engine flag).
+`gpu-sim` `device_graph_mem_set` is `cuDeviceSetGraphMemAttribute` (identity with `graph_mem_set`; no Engine flag).
+`gpu-sim` `device_graph_mem_trim` is `cuDeviceGraphMemTrim` (identity with `graph_mem_trim`; no Engine flag).
+`gpu-sim` `get_stream_id` is `cuStreamGetId` (identity with `stream_get_id`; no Engine flag).
+`gpu-sim` `copy_stream_attributes` is `cuStreamCopyAttributes` (identity with `stream_copy_attributes`; no Engine flag).
+`gpu-sim` `get_stream_attribute` is `cuStreamGetAttribute` (identity with `stream_get_attribute`; no Engine flag).
+`gpu-sim` `set_stream_attribute` is `cuStreamSetAttribute` (identity with `stream_set_attribute`; no Engine flag).
+`gpu-sim` `get_graph_kernel_node_attribute` is `cuGraphKernelNodeGetAttribute` (identity with `graph_kernel_node_get_attribute`; no Engine flag).
+`gpu-sim` `set_graph_kernel_node_attribute` is `cuGraphKernelNodeSetAttribute` (identity with `graph_kernel_node_set_attribute`; no Engine flag).
+`gpu-sim` `get_graph_exec_kernel_node_attribute` is `cuGraphExecKernelNodeGetAttribute` (identity with `graph_exec_kernel_node_get_attribute`; no Engine flag).
+`gpu-sim` `set_graph_exec_kernel_node_attribute` is `cuGraphExecKernelNodeSetAttribute` (identity with `graph_exec_kernel_node_set_attribute`; no Engine flag).
+`gpu-sim` `copy_graph_kernel_node_attributes` is `cuGraphKernelNodeCopyAttributes` (identity with `graph_kernel_node_copy_attributes`; no Engine flag).
+`gpu-sim` `copy_graph_exec_kernel_node_attributes` is `cuGraphExecKernelNodeCopyAttributes` (identity with `graph_exec_kernel_node_copy_attributes`; no Engine flag).
+`gpu-sim` `get_graph_kernel_node_params` is `cuGraphKernelNodeGetParams` (identity with `graph_kernel_get_params`; no Engine flag).
+`gpu-sim` `get_graph_exec_kernel_node_params` is `cuGraphExecKernelNodeGetParams` (identity with `graph_exec_kernel_get_params`; no Engine flag).
+`gpu-sim` `set_graph_kernel_node_params` is `cuGraphKernelNodeSetParams` (identity with `graph_kernel_set_params`; no Engine flag).
+`gpu-sim` `set_graph_exec_kernel_node_params` is `cuGraphExecKernelNodeSetParams` (identity with `graph_exec_kernel_set_params`; no Engine flag).
+`gpu-sim` `get_graph_memcpy_node_params` is `cuGraphMemcpyNodeGetParams` (identity with `graph_memcpy_get_params`; no Engine flag).
+`gpu-sim` `get_graph_exec_memcpy_node_params` is `cuGraphExecMemcpyNodeGetParams` (identity with `graph_exec_memcpy_get_params`; no Engine flag).
+`gpu-sim` `set_graph_memcpy_node_params` is `cuGraphMemcpyNodeSetParams` (identity with `graph_memcpy_set_params`; no Engine flag).
+`gpu-sim` `set_graph_exec_memcpy_node_params` is `cuGraphExecMemcpyNodeSetParams` (identity with `graph_exec_memcpy_set_params`; no Engine flag).
+`gpu-sim` `get_graph_memset_node_params` is `cuGraphMemsetNodeGetParams` (identity with `graph_memset_get_params`; no Engine flag).
+`gpu-sim` `get_graph_exec_memset_node_params` is `cuGraphExecMemsetNodeGetParams` (identity with `graph_exec_memset_get_params`; no Engine flag).
+`gpu-sim` `set_graph_memset_node_params` is `cuGraphMemsetNodeSetParams` (identity with `graph_memset_set_params`; no Engine flag).
+`gpu-sim` `set_graph_exec_memset_node_params` is `cuGraphExecMemsetNodeSetParams` (identity with `graph_exec_memset_set_params`; no Engine flag).
+`gpu-sim` `get_graph_host_node_params` is `cuGraphHostNodeGetParams` (identity with `graph_host_get_params`; no Engine flag).
+`gpu-sim` `get_graph_exec_host_node_params` is `cuGraphExecHostNodeGetParams` (identity with `graph_exec_host_get_params`; no Engine flag).
+`gpu-sim` `set_graph_host_node_params` is `cuGraphHostNodeSetParams` (identity with `graph_host_set_params`; no Engine flag).
+`gpu-sim` `set_graph_exec_host_node_params` is `cuGraphExecHostNodeSetParams` (identity with `graph_exec_host_set_params`; no Engine flag).
+`gpu-sim` `get_graph_batch_mem_op_node_params` is `cuGraphBatchMemOpNodeGetParams` (identity with `graph_batch_mem_ops_get_params`; no Engine flag).
+`gpu-sim` `get_graph_exec_batch_mem_op_node_params` is `cuGraphExecBatchMemOpNodeGetParams` (identity with `graph_exec_batch_mem_ops_get_params`; no Engine flag).
+`gpu-sim` `set_graph_batch_mem_op_node_params` is `cuGraphBatchMemOpNodeSetParams` (identity with `graph_batch_mem_op_set_params`; no Engine flag).
+`gpu-sim` `set_graph_exec_batch_mem_op_node_params` is `cuGraphExecBatchMemOpNodeSetParams` (identity with `graph_exec_batch_mem_op_set_params`; no Engine flag).
+`gpu-sim` `set_graph_event_record_node_event` is `cuGraphEventRecordNodeSetEvent` (identity with `graph_event_record_set_event`; no Engine flag).
+`gpu-sim` `set_graph_exec_event_record_node_event` is `cuGraphExecEventRecordNodeSetEvent` (identity with `graph_exec_event_record_set_event`; no Engine flag).
+`gpu-sim` `set_graph_event_wait_node_event` is `cuGraphEventWaitNodeSetEvent` (identity with `graph_event_wait_set_event`; no Engine flag).
+`gpu-sim` `set_graph_exec_event_wait_node_event` is `cuGraphExecEventWaitNodeSetEvent` (identity with `graph_exec_event_wait_set_event`; no Engine flag).
+`gpu-sim` `get_graph_event_record_node_event` is `cuGraphEventRecordNodeGetEvent` (identity with `graph_event_record_get_event`; no Engine flag).
+`gpu-sim` `get_graph_exec_event_record_node_event` is `cuGraphExecEventRecordNodeGetEvent` (identity with `graph_exec_event_record_get_event`; no Engine flag).
+`gpu-sim` `get_graph_event_wait_node_event` is `cuGraphEventWaitNodeGetEvent` (identity with `graph_event_wait_get_event`; no Engine flag).
+`gpu-sim` `get_graph_exec_event_wait_node_event` is `cuGraphExecEventWaitNodeGetEvent` (identity with `graph_exec_event_wait_get_event`; no Engine flag).
+`gpu-sim` `get_graph_child_graph_node_graph` is `cuGraphChildGraphNodeGetGraph` (identity with `graph_child_get_graph`; no Engine flag).
+`gpu-sim` `get_graph_exec_child_graph_node_graph` is `cuGraphExecChildGraphNodeGetGraph` (identity with `graph_exec_child_get_graph`; no Engine flag).
+`gpu-sim` `set_graph_child_graph_node_params` is `cuGraphChildGraphNodeSetParams` (identity with `graph_child_set_params`; no Engine flag).
+`gpu-sim` `set_graph_exec_child_graph_node_params` is `cuGraphExecChildGraphNodeSetParams` (identity with `graph_exec_child_set_params`; no Engine flag).
+`gpu-sim` `set_graph_node_params` is `cuGraphNodeSetParams` (identity with `graph_node_set_params`; no Engine flag).
+`gpu-sim` `set_graph_exec_node_params` is `cuGraphExecNodeSetParams` (identity with `graph_exec_node_set_params`; no Engine flag).
+`gpu-sim` `get_graph_node_params` is `cuGraphNodeGetParams` (identity with `graph_node_get_params`; no Engine flag).
+`gpu-sim` `get_graph_exec_node_params` is `cuGraphExecNodeGetParams` (identity with `graph_exec_node_get_params`; no Engine flag).
+`gpu-sim` `set_graph_node_enabled` is `cuGraphNodeSetEnabled` (identity with `graph_node_set_enabled`; no Engine flag).
+`gpu-sim` `get_graph_node_enabled` is `cuGraphNodeGetEnabled` (identity with `graph_node_get_enabled`; no Engine flag).
+`gpu-sim` `get_graph_exec_flags` is `cuGraphExecGetFlags` (identity with `graph_exec_get_flags`; no Engine flag).
+`gpu-sim` `get_graph_id` is `cuGraphGetId` (identity with `graph_get_id`; no Engine flag).
+`gpu-sim` `get_graph_exec_id` is `cuGraphExecGetId` (identity with `graph_get_id`; no Engine flag).
+`gpu-sim` `get_graph_nodes` is `cuGraphGetNodes` (identity with `graph_nodes`; no Engine flag).
+`gpu-sim` `get_graph_root_nodes` is `cuGraphGetRootNodes` (identity with `graph_root_nodes`; no Engine flag).
+`gpu-sim` `get_graph_edges` is `cuGraphGetEdges` (identity with `graph_edges`; no Engine flag).
+`gpu-sim` `get_graph_edges_with_data` is `cuGraphGetEdges` v2 (identity with `graph_edges_with_data`; no Engine flag).
+`gpu-sim` `get_graph_node_dependencies` is `cuGraphNodeGetDependencies` (identity with `graph_node_deps`; no Engine flag).
+`gpu-sim` `get_graph_node_dependencies_with_data` is `cuGraphNodeGetDependencies` v2 (identity with `graph_node_deps_with_data`; no Engine flag).
+`gpu-sim` `get_graph_node_dependent_nodes` is `cuGraphNodeGetDependentNodes` (identity with `graph_node_dependents`; no Engine flag).
+`gpu-sim` `get_graph_node_dependent_nodes_with_data` is `cuGraphNodeGetDependentNodes` v2 (identity with `graph_node_dependents_with_data`; no Engine flag).
+`gpu-sim` `get_graph_node_type` is `cuGraphNodeGetType` (identity with `graph_node_kind`; no Engine flag).
+`gpu-sim` `find_graph_node_in_clone` is `cuGraphNodeFindInClone` (identity with `graph_node_find_in_clone`; no Engine flag).
+`gpu-sim` `graph_clone` is `cuGraphClone` (identity with `clone_graph`; no Engine flag).
+`gpu-sim` `graph_debug_dot_print` is `cuGraphDebugDotPrint` (identity with `graph_debug_dot`; no Engine flag).
+`gpu-sim` `graph_debug_dot_print_with_flags` is `cuGraphDebugDotPrint` with flags (identity with `graph_debug_dot_with_flags`; no Engine flag).
+`gpu-sim` `graph_instantiate` is `cuGraphInstantiate` (identity with `instantiate_graph`; no Engine flag).
+`gpu-sim` `graph_instantiate_with_flags` is `cuGraphInstantiateWithFlags` (identity with `instantiate_graph_with_flags`; no Engine flag).
+`gpu-sim` `graph_instantiate_with_params` is `cuGraphInstantiateWithParams` (identity with `instantiate_graph_with_params`; no Engine flag).
+`gpu-sim` `graph_launch` is `cuGraphLaunch` (identity with `launch_graph`; no Engine flag).
+`gpu-sim` `graph_upload` is `cuGraphUpload` (identity with `upload_graph`; no Engine flag).
+`gpu-sim` `graph_upload_async` is `cuGraphUpload` on a stream (identity with `upload_graph_async`; no Engine flag).
+`gpu-sim` `graph_destroy` is `cuGraphDestroy` (identity with `destroy_graph`; no Engine flag).
+`gpu-sim` `graph_exec_destroy` is `cuGraphExecDestroy` (identity with `destroy_graph`; no Engine flag).
+`gpu-sim` `graph_exec_update` is `cuGraphExecUpdate` (identity with `update_graph`; no Engine flag).
+`gpu-sim` `graph_exec_update_with_info` is `cuGraphExecUpdate` with info (identity with `update_graph_with_info`; no Engine flag).
+`gpu-sim` `add_graph_dependencies` is `cuGraphAddDependencies` (identity with `graph_add_dependencies`; no Engine flag).
+`gpu-sim` `add_graph_dependencies_n` is `cuGraphAddDependencies` of pairs (identity with `graph_add_dependencies_n`; no Engine flag).
+`gpu-sim` `add_graph_dependencies_with_data` is `cuGraphAddDependencies` with data (identity with `graph_add_dependencies_with_data`; no Engine flag).
+`gpu-sim` `add_graph_dependencies_n_with_data` is `cuGraphAddDependencies` v2 (identity with `graph_add_dependencies_n_with_data`; no Engine flag).
+`gpu-sim` `remove_graph_dependencies` is `cuGraphRemoveDependencies` (identity with `graph_remove_dependencies`; no Engine flag).
+`gpu-sim` `remove_graph_dependencies_n` is `cuGraphRemoveDependencies` of pairs (identity with `graph_remove_dependencies_n`; no Engine flag).
+`gpu-sim` `remove_graph_dependencies_with_data` is `cuGraphRemoveDependencies` with data (identity with `graph_remove_dependencies_with_data`; no Engine flag).
+`gpu-sim` `remove_graph_dependencies_n_with_data` is `cuGraphRemoveDependencies` v2 (identity with `graph_remove_dependencies_n_with_data`; no Engine flag).
+`gpu-sim` `destroy_graph_node` is `cuGraphDestroyNode` (identity with `graph_destroy_node`; no Engine flag).
+`gpu-sim` `launch_device_graph` is device-side `cuGraphLaunch` (identity with `device_launch_graph`; no Engine flag).
+`gpu-sim` `get_current_graph_exec` is `cuGetCurrentGraphExec` (identity with `current_graph_exec`; no Engine flag).
+`gpu-sim` `add_graph_empty` is `cuGraphAddEmptyNode` (identity with `graph_add_empty`; no Engine flag).
+`gpu-sim` `add_graph_child` is `cuGraphAddChildGraphNode` (identity with `graph_add_child`; no Engine flag).
+`gpu-sim` `add_graph_host` is `cuGraphAddHostNode` (identity with `graph_add_host_func_params`; no Engine flag).
+`gpu-sim` `add_graph_event_record` is `cuGraphAddEventRecordNode` (identity with `graph_add_event_record`; no Engine flag).
+`gpu-sim` `add_graph_event_wait` is `cuGraphAddEventWaitNode` (identity with `graph_add_event_wait`; no Engine flag).
+`gpu-sim` `add_graph_kernel` is `cuGraphAddKernelNode` (identity with `graph_add_kernel`; no Engine flag).
+`gpu-sim` `add_graph_memcpy` is `cuGraphAddMemcpyNode` (identity with `graph_add_memcpy`; no Engine flag).
+`gpu-sim` `add_graph_memcpy_1d` is `cuGraphAddMemcpyNode1D` (identity with `graph_add_memcpy_1d`; no Engine flag).
+`gpu-sim` `add_graph_memcpy_2d` is 2D `cuGraphAddMemcpyNode` (identity with `graph_add_memcpy_2d`; no Engine flag).
+`gpu-sim` `add_graph_memcpy_3d` is 3D `cuGraphAddMemcpyNode` (identity with `graph_add_memcpy_3d`; no Engine flag).
+`gpu-sim` `add_graph_memset` is packed 1D `cuGraphAddMemsetNode` (identity with `graph_add_memset`; no Engine flag).
+`gpu-sim` `add_graph_memset_op` is `cuGraphAddMemsetNode` params (identity with `graph_add_memset_op`; no Engine flag).
+`gpu-sim` `add_graph_memset_2d` is 2D `cuGraphAddMemsetNode` (identity with `graph_add_memset_2d`; no Engine flag).
+`gpu-sim` `add_graph_memset_3d` is 3D `cuGraphAddMemsetNode` (identity with `graph_add_memset_3d`; no Engine flag).
+`gpu-sim` `add_graph_batch_mem_op` is `cuGraphAddBatchMemOpNode` (identity with `graph_add_batch_mem_op`; no Engine flag).
+`gpu-sim` `add_graph_batch_mem_op_with_flags` is `cuGraphAddBatchMemOpNode` flags (identity with `graph_add_batch_mem_op_with_flags`; no Engine flag).
+`gpu-sim` `add_graph_alloc` is `cuGraphAddMemAllocNode` (identity with `graph_add_alloc`; no Engine flag).
+`gpu-sim` `add_graph_alloc_with_access` is `cuGraphAddMemAllocNode` access (identity with `graph_add_alloc_with_access`; no Engine flag).
+`gpu-sim` `add_graph_free` is `cuGraphAddMemFreeNode` (identity with `graph_add_free`; no Engine flag).
+`gpu-sim` `add_graph_node` is `cuGraphAddNode` (identity with `graph_add_node`; no Engine flag).
+`gpu-sim` `add_graph_node_with_data` is `cuGraphAddNode_v2` (identity with `graph_add_node_with_data`; no Engine flag).
+`gpu-sim` `add_graph_if` is `cuGraphAddNode` IF (identity with `graph_add_if`; no Engine flag).
+`gpu-sim` `add_graph_if_else` is `cuGraphAddNode` IF size 2 (identity with `graph_add_if_else`; no Engine flag).
+`gpu-sim` `add_graph_while` is `cuGraphAddNode` WHILE (identity with `graph_add_while`; no Engine flag).
+`gpu-sim` `add_graph_switch` is `cuGraphAddNode` SWITCH (identity with `graph_add_switch`; no Engine flag).
+`gpu-sim` `add_graph_set_conditional` is graph-build `cuGraphSetConditional` (identity with `graph_add_set_conditional`; no Engine flag).
+`gpu-sim` `add_graph_write_value64` is graph `cuStreamWriteValue64` (identity with `graph_add_write_value64`; no Engine flag).
+`gpu-sim` `add_graph_write_value32` is graph `cuStreamWriteValue32` (identity with `graph_add_write_value32`; no Engine flag).
+`gpu-sim` `add_graph_write_value64_with_flags` is graph `cuStreamWriteValue64` flags (identity with `graph_add_write_value64_with_flags`; no Engine flag).
+`gpu-sim` `add_graph_write_value32_with_flags` is graph `cuStreamWriteValue32` flags (identity with `graph_add_write_value32_with_flags`; no Engine flag).
+`gpu-sim` `add_graph_wait_value64` is graph `cuStreamWaitValue64` (identity with `graph_add_wait_value64`; no Engine flag).
+`gpu-sim` `add_graph_wait_value32` is graph `cuStreamWaitValue32` (identity with `graph_add_wait_value32`; no Engine flag).
+`gpu-sim` `add_graph_wait_value64_with_flags` is graph `cuStreamWaitValue64` flags (identity with `graph_add_wait_value64_with_flags`; no Engine flag).
+`gpu-sim` `add_graph_wait_value32_with_flags` is graph `cuStreamWaitValue32` flags (identity with `graph_add_wait_value32_with_flags`; no Engine flag).
+`gpu-sim` `add_graph_cooperative_kernel` is graph cooperative `cudaGraphAddKernelNode` (identity with `graph_add_cooperative_kernel`; no Engine flag).
+`gpu-sim` `add_graph_host_func` is graph unnamed `cudaGraphAddHostNode` (identity with `graph_add_host_func`; no Engine flag).
+`gpu-sim` `set_graph_memcpy_node_params_1d` is graph `cudaGraphMemcpyNodeSetParams1D` (identity with `graph_memcpy_set_params_1d`; no Engine flag).
+`gpu-sim` `set_graph_exec_memcpy_node_params_1d` is graph `cudaGraphExecMemcpyNodeSetParams1D` (identity with `graph_exec_memcpy_set_params_1d`; no Engine flag).
+`gpu-sim` `graph_create` is `cuGraphCreate` (identity with `create_graph`; no Engine flag).
+`gpu-sim` `graph_create_with_flags` is `cuGraphCreate` flags (identity with `create_graph_with_flags`; no Engine flag).
+`gpu-sim` `create_user_object` is `cuUserObjectCreate` (identity with `user_object_create`; no Engine flag).
+`gpu-sim` `retain_user_object` is `cuUserObjectRetain` (identity with `user_object_retain`; no Engine flag).
+`gpu-sim` `release_user_object` is `cuUserObjectRelease` (identity with `user_object_release`; no Engine flag).
+`gpu-sim` `retain_graph_user_object` is `cuGraphRetainUserObject` (identity with `graph_retain_user_object`; no Engine flag).
+`gpu-sim` `release_graph_user_object` is `cuGraphReleaseUserObject` (identity with `graph_release_user_object`; no Engine flag).
+`gpu-sim` `get_graph_alloc_node_params` is `cuGraphMemAllocNodeGetParams` (identity with `graph_alloc_get_params`; no Engine flag).
+`gpu-sim` `get_graph_exec_alloc_node_params` is `cuGraphExecMemAllocNodeGetParams` (identity with `graph_exec_alloc_get_params`; no Engine flag).
+`gpu-sim` `get_graph_free_node_params` is `cuGraphMemFreeNodeGetParams` (identity with `graph_free_get_params`; no Engine flag).
+`gpu-sim` `get_graph_exec_free_node_params` is `cuGraphExecMemFreeNodeGetParams` (identity with `graph_exec_free_get_params`; no Engine flag).
+`gpu-sim` `set_graph_free_node_params` is `cuGraphMemFreeNodeSetParams` (identity with `graph_free_set_params`; no Engine flag).
+`gpu-sim` `set_graph_exec_free_node_params` is `cuGraphExecMemFreeNodeSetParams` (identity with `graph_exec_free_set_params`; no Engine flag).
+`gpu-sim` `set_graph_conditional_params` is `cuGraphNodeSetParams` for a set-conditional node (identity with `graph_set_conditional_params`; no Engine flag).
+`gpu-sim` `set_graph_exec_conditional_params` is `cuGraphExecNodeSetParams` for a set-conditional node (identity with `graph_exec_set_conditional_params`; no Engine flag).
+`gpu-sim` `create_graph_conditional_handle` is `cuGraphConditionalHandleCreate` (identity with `graph_conditional_create`; no Engine flag).
+`gpu-sim` `create_graph_conditional_handle_with_flags` is `cuGraphConditionalHandleCreate` flags (identity with `graph_conditional_create_with_flags`; no Engine flag).
+`gpu-sim` `create_graph_conditional_handle_with_ctx` is `cuGraphConditionalHandleCreate` with a ctx argument (identity with `graph_conditional_create_with_ctx`; no Engine flag).
+`gpu-sim` `stream_begin_capture` is `cuStreamBeginCapture` (identity with `begin_capture`; no Engine flag).
+`gpu-sim` `stream_begin_capture_with_mode` is `cuStreamBeginCapture` with mode (identity with `begin_capture_with_mode`; no Engine flag).
+`gpu-sim` `stream_begin_capture_to_graph` is `cuStreamBeginCaptureToGraph` (identity with `begin_capture_to_graph`; no Engine flag).
+`gpu-sim` `stream_begin_capture_to_graph_with_mode` is `cuStreamBeginCaptureToGraph` with mode (identity with `begin_capture_to_graph_with_mode`; no Engine flag).
+`gpu-sim` `stream_begin_recapture_to_graph` is `cuStreamBeginRecaptureToGraph` (identity with `begin_recapture_to_graph`; no Engine flag).
+`gpu-sim` `stream_begin_recapture_to_graph_with_mode` is `cuStreamBeginRecaptureToGraph` with mode (identity with `begin_recapture_to_graph_with_mode`; no Engine flag).
+`gpu-sim` `stream_begin_recapture_to_graph_with_callback` is `cuStreamBeginRecaptureToGraph` with callback (identity with `begin_recapture_to_graph_with_callback`; no Engine flag).
+`gpu-sim` `stream_end_capture` is `cuStreamEndCapture` (identity with `end_capture`; no Engine flag).
+`gpu-sim` `update_stream_capture_dependencies` is `cuStreamUpdateCaptureDependencies` (identity with `stream_update_capture_dependencies`; no Engine flag).
+`gpu-sim` `is_stream_capturing` is `cuStreamIsCapturing` (identity with `stream_is_capturing`; no Engine flag).
+`gpu-sim` `get_stream_capture_info` is `cuStreamGetCaptureInfo` (identity with `stream_capture_info`; no Engine flag).
+`gpu-sim` `exchange_thread_stream_capture_mode` is `cuThreadExchangeStreamCaptureMode` (identity with `thread_exchange_stream_capture_mode`; no Engine flag).
+`gpu-sim` `get_stream_capture_mode` is the thread-default `cudaStreamCaptureMode` query (identity with `stream_capture_mode`; no Engine flag).
+`gpu-sim` `event_flags` is `cuEventGetFlags` (identity with `event_get_flags`; no Engine flag).
+`gpu-sim` `ctx_enable_peer_access` is `cuCtxEnablePeerAccess` (identity with `enable_peer`; no Engine flag).
+`gpu-sim` `ctx_enable_peer_access_with_flags` is `cuCtxEnablePeerAccess` with flags (identity with `enable_peer_with_flags`; no Engine flag).
+`gpu-sim` `ctx_disable_peer_access` is `cuCtxDisablePeerAccess` (identity with `disable_peer`; no Engine flag).
+`gpu-sim` `can_device_access_peer` is `cuDeviceCanAccessPeer` (identity with `device_can_access_peer`; no Engine flag).
+`gpu-sim` `device_p2p_attribute` is `cuDeviceGetP2PAttribute` (identity with `device_get_p2p_attribute`; no Engine flag).
+`gpu-sim` `device_nvscisync_attributes` is `cuDeviceGetNvSciSyncAttributes` (identity with `device_get_nvscisync_attributes`; no Engine flag).
+`gpu-sim` `device_flush_gpu_direct_rdma_writes` is `cuFlushGPUDirectRDMAWrites` (identity with `flush_gpu_direct_rdma_writes`; no Engine flag).
+`gpu-sim` `mem_alloc_pitch` is `cudaMallocPitch` (identity with `malloc_pitch`; no Engine flag).
+`gpu-sim` `mem_alloc_3d` is `cudaMalloc3D` (identity with `malloc_3d`; no Engine flag).
+`gpu-sim` `launch_cooperative_kernel` is `cuLaunchCooperativeKernel` (identity with `cooperative_kernel`; no Engine flag).
+`gpu-sim` `launch_cooperative_kernel_bufs` is `cuLaunchCooperativeKernel` spans (identity with `cooperative_kernel_bufs`; no Engine flag).
+`gpu-sim` `launch_cooperative_kernel_multi_device` is `cuLaunchCooperativeKernelMultiDevice` (identity with `cooperative_kernel_multi_device`; no Engine flag).
+`gpu-sim` `mem_set` is `cudaMemsetAsync` (identity with `memset`; no Engine flag).
+`gpu-sim` `mem_set_buf` is `cudaMemsetAsync` spans (identity with `memset_buf`; no Engine flag).
+`gpu-sim` `mem_set_op` is `cudaMemsetAsync` / `cudaMemset2DAsync` (identity with `memset_op`; no Engine flag).
+`gpu-sim` `mem_set_sync` is `cudaMemset` (identity with `memset_sync`; no Engine flag).
+`gpu-sim` `mem_set_op_sync` is `cudaMemset` / `cudaMemset2D` / `cudaMemset3D` (identity with `memset_op_sync`; no Engine flag).
+`gpu-sim` `mem_set_2d_async` is `cudaMemset2DAsync` (identity with `memset_2d_async`; no Engine flag).
+`gpu-sim` `mem_set_2d` is `cudaMemset2D` (identity with `memset_2d`; no Engine flag).
+`gpu-sim` `mem_set_3d_async` is `cudaMemset3DAsync` (identity with `memset_3d_async`; no Engine flag).
+`gpu-sim` `mem_set_3d` is `cudaMemset3D` (identity with `memset_3d`; no Engine flag).
+`gpu-sim` `stream_write_value64` is `cuStreamWriteValue64` (identity with `write_value64`; no Engine flag).
+`gpu-sim` `stream_write_value32` is `cuStreamWriteValue32` (identity with `write_value32`; no Engine flag).
+`gpu-sim` `stream_write_value64_with_flags` is `cuStreamWriteValue64` flags (identity with `write_value64_with_flags`; no Engine flag).
+`gpu-sim` `stream_write_value32_with_flags` is `cuStreamWriteValue32` flags (identity with `write_value32_with_flags`; no Engine flag).
+`gpu-sim` `stream_wait_value64` is `cuStreamWaitValue64` (identity with `wait_value64`; no Engine flag).
+`gpu-sim` `stream_wait_value32` is `cuStreamWaitValue32` (identity with `wait_value32`; no Engine flag).
+`gpu-sim` `stream_wait_value64_with_flags` is `cuStreamWaitValue64` flags (identity with `wait_value64_with_flags`; no Engine flag).
+`gpu-sim` `stream_wait_value32_with_flags` is `cuStreamWaitValue32` flags (identity with `wait_value32_with_flags`; no Engine flag).
+`gpu-sim` `stream_batch_mem_op` is `cuStreamBatchMemOp` (identity with `batch_mem_op`; no Engine flag).
+`gpu-sim` `stream_batch_mem_op_with_flags` is `cuStreamBatchMemOp` flags (identity with `batch_mem_op_with_flags`; no Engine flag).
+`gpu-sim` `launch_kernel` is `cuLaunchKernel` (identity with `kernel`; no Engine flag).
+`gpu-sim` `launch_kernel_bufs` is `cuLaunchKernel` spans (identity with `kernel_bufs`; no Engine flag).
+`gpu-sim` `launch_kernel_ex` is `cuLaunchKernelEx` (identity with `kernel_with`; no Engine flag).
+`gpu-sim` `launch_kernel_ex_bufs` is `cuLaunchKernelEx` spans (identity with `kernel_bufs_with`; no Engine flag).
+`gpu-sim` `func_set_shared_mem_config` is `cuFuncSetSharedMemConfig` (identity with `set_func_shared_mem_config`; no Engine flag).
+
+`gpu-sim` `func_get_shared_mem_config` is `cuFuncGetSharedMemConfig` (identity with `get_func_shared_mem_config`; no Engine flag).
+
+`gpu-sim` `func_set_cache_config` is `cuFuncSetCacheConfig` (identity with `set_func_cache_config`; no Engine flag).
+
+`gpu-sim` `func_set_carveout` is `cuFuncSetAttribute` carveout (identity with `set_func_carveout`; no Engine flag).
+
+`gpu-sim` `func_get_carveout` is `cuFuncGetAttribute` carveout (identity with `get_func_carveout`; no Engine flag).
+
+`gpu-sim` `func_set_cluster_policy` is `cuFuncSetAttribute` cluster policy (identity with `set_func_cluster_policy`; no Engine flag).
+
+`gpu-sim` `func_get_cluster_policy` is `cuFuncGetAttribute` cluster policy (identity with `get_func_cluster_policy`; no Engine flag).
+
+`gpu-sim` `func_set_cluster_dim_must_be_set` is `cuFuncSetAttribute` cluster dim must be set (identity with `set_cluster_dim_must_be_set`; no Engine flag).
+
+`gpu-sim` `func_get_cluster_dim_must_be_set` is `cuFuncGetAttribute` cluster dim must be set (identity with `cluster_dim_must_be_set`; no Engine flag).
+
+`gpu-sim` `func_set_required_cluster_width` is `cuFuncSetAttribute` required cluster width (identity with `set_required_cluster_width`; no Engine flag).
+
+`gpu-sim` `func_get_required_cluster_width` is `cuFuncGetAttribute` required cluster width (identity with `required_cluster_width`; no Engine flag).
+
+`gpu-sim` `func_set_required_cluster_height` is `cuFuncSetAttribute` required cluster height (identity with `set_required_cluster_height`; no Engine flag).
+
+`gpu-sim` `func_get_required_cluster_height` is `cuFuncGetAttribute` required cluster height (identity with `required_cluster_height`; no Engine flag).
+
+`gpu-sim` `func_set_required_cluster_depth` is `cuFuncSetAttribute` required cluster depth (identity with `set_required_cluster_depth`; no Engine flag).
+
+`gpu-sim` `func_get_required_cluster_depth` is `cuFuncGetAttribute` required cluster depth (identity with `required_cluster_depth`; no Engine flag).
+
+`gpu-sim` `func_set_non_portable_cluster_size_allowed` is `cuFuncSetAttribute` non-portable cluster size (identity with `set_non_portable_cluster_size_allowed`; no Engine flag).
+
+`gpu-sim` `func_get_non_portable_cluster_size_allowed` is `cuFuncGetAttribute` non-portable cluster size (identity with `non_portable_cluster_size_allowed`; no Engine flag).
+
+`gpu-sim` `func_set_max_dynamic_shared_memory` is `cuFuncSetAttribute` max dynamic shared memory (identity with `set_max_dynamic_shared_memory`; no Engine flag).
+
+`gpu-sim` `func_get_max_dynamic_shared_memory` is `cuFuncGetAttribute` max dynamic shared memory (identity with `max_dynamic_shared_memory`; no Engine flag).
+
+`gpu-sim` `event_create_disable_timing` is `cuEventCreateWithFlags` disable timing (identity with `create_event_disable_timing`; no Engine flag).
+
+`gpu-sim` `event_create_interprocess` is `cuEventCreateWithFlags` interprocess (identity with `create_event_interprocess`; no Engine flag).
+
+`gpu-sim` `event_create_blocking_sync` is `cuEventCreateWithFlags` blocking sync (identity with `create_event_blocking_sync`; no Engine flag).
+
+`gpu-sim` `event_record_external` is `cuEventRecordWithFlags` external (identity with `record_event_external`; no Engine flag).
+
+`gpu-sim` `stream_wait_event_external` is `cuStreamWaitEvent` external (identity with `wait_event_external`; no Engine flag).
+`gpu-sim` `stream_set_mem_sync_domain` is `cuStreamSetAttribute` mem sync domain (identity with `set_stream_mem_sync_domain`; no Engine flag).
+`gpu-sim` `stream_set_mem_sync_domain_map` is `cuStreamSetAttribute` mem sync domain map (identity with `set_stream_mem_sync_domain_map`; no Engine flag).
+`gpu-sim` `stream_get_mem_sync_domain` is `cuStreamGetAttribute` mem sync domain (identity with `stream_mem_sync_domain`; no Engine flag).
+`gpu-sim` `stream_get_mem_sync_domain_map` is `cuStreamGetAttribute` mem sync domain map (identity with `stream_mem_sync_domain_map`; no Engine flag).
+`gpu-sim` `stream_set_sync_policy` is `cuStreamSetAttribute` sync policy (identity with `set_stream_sync_policy`; no Engine flag).
+`gpu-sim` `stream_get_sync_policy` is `cuStreamGetAttribute` sync policy (identity with `stream_sync_policy`; no Engine flag).
+`gpu-sim` `stream_set_nvlink_util_centric` is `cuStreamSetAttribute` nvlink util centric (identity with `set_stream_nvlink_util_centric`; no Engine flag).
+`gpu-sim` `stream_get_nvlink_util_centric` is `cuStreamGetAttribute` nvlink util centric (identity with `stream_nvlink_util_centric`; no Engine flag).
+`gpu-sim` `stream_set_access_policy` is `cuStreamSetAttribute` access policy (identity with `set_stream_access_policy`; no Engine flag).
+`gpu-sim` `stream_get_access_policy` is `cuStreamGetAttribute` access policy (identity with `stream_access_policy`; no Engine flag).
+`gpu-sim` `stream_set_priority` is `cuStreamSetAttribute` priority (identity with `set_stream_priority`; no Engine flag).
+`gpu-sim` `stream_set_blocking` is `cuStreamCreate` blocking (identity with `set_stream_blocking`; no Engine flag).
+`gpu-sim` `get_func_attributes` is `cuFuncGetAttributes` (identity with `func_get_attributes`; no Engine flag).
+`gpu-sim` `get_device_name` is `cuDeviceGetName` (identity with `device_get_name`; no Engine flag).
+`gpu-sim` `get_device_count` is `cuDeviceGetCount` (identity with `device_count`; no Engine flag).
+`gpu-sim` `device_get_default_mempool` is `cuDeviceGetDefaultMemPool` (identity with `default_pool`; no Engine flag).
+`gpu-sim` `device_get_mempool` is `cuDeviceGetMemPool` (identity with `device_mempool`; no Engine flag).
+`gpu-sim` `device_set_mempool` is `cuDeviceSetMemPool` (identity with `set_device_mempool`; no Engine flag).
+`gpu-sim` `mem_pool_create` is `cuMemPoolCreate` (identity with `create_pool`; no Engine flag).
+`gpu-sim` `mem_pool_create_shareable` is `cuMemPoolCreate` POSIX (identity with `create_shareable_pool`; no Engine flag).
+`gpu-sim` `mem_pool_create_with_props` is `cuMemPoolCreate` with props (identity with `create_pool_with_props`; no Engine flag).
+`gpu-sim` `mem_pool_destroy` is `cuMemPoolDestroy` (identity with `destroy_pool`; no Engine flag).
+`gpu-sim` `mem_alloc_from_pool` is `cuMemAllocFromPoolAsync` (identity with `alloc_from_pool`; no Engine flag).
+`gpu-sim` `mem_pool_export` is `cuMemPoolExportToShareableHandle` (identity with `pool_export`; no Engine flag).
+`gpu-sim` `mem_pool_import` is `cuMemPoolImportFromShareableHandle` (identity with `pool_import`; no Engine flag).
+`gpu-sim` `mem_pool_export_with_type` is `cuMemPoolExportToShareableHandle` type (identity with `pool_export_with_type`; no Engine flag).
+`gpu-sim` `mem_pool_import_with_type` is `cuMemPoolImportFromShareableHandle` type (identity with `pool_import_with_type`; no Engine flag).
+`gpu-sim` `mem_pool_export_ptr` is `cuMemPoolExportPointer` (identity with `pool_export_ptr`; no Engine flag).
+`gpu-sim` `mem_pool_import_ptr` is `cuMemPoolImportPointer` (identity with `pool_import_ptr`; no Engine flag).
+`gpu-sim` `mem_pool_get_access` is `cuMemPoolGetAccess` (identity with `pool_get_access`; no Engine flag).
+`gpu-sim` `mem_pool_set_access` is `cuMemPoolSetAccess` (identity with `pool_set_access`; no Engine flag).
+`gpu-sim` `mem_pool_set_access_read` is `cuMemPoolSetAccess` ProtRead (identity with `pool_set_access_read`; no Engine flag).
+`gpu-sim` `mem_pool_set_access_with_flags` is `cuMemPoolSetAccess` flags (identity with `pool_set_access_with_flags`; no Engine flag).
+`gpu-sim` `mem_pool_set_access_n` is `cuMemPoolSetAccess` n (identity with `pool_set_access_n`; no Engine flag).
+`gpu-sim` `mem_pool_unset_access` is `cuMemPoolSetAccess` ProtNone (identity with `pool_unset_access`; no Engine flag).
+`gpu-sim` `mem_pool_get_attribute` is `cuMemPoolGetAttribute` (identity with `pool_get_attribute`; no Engine flag).
+`gpu-sim` `mem_pool_set_attribute` is `cuMemPoolSetAttribute` (identity with `pool_set_attribute`; no Engine flag).
+`gpu-sim` `mem_pool_trim_to` is `cuMemPoolTrimTo` (identity with `pool_trim_to`; no Engine flag).
+`gpu-sim` `mem_pool_set_release_threshold` is `cuMemPoolSetAttribute` ReleaseThreshold (identity with `set_pool_release_threshold`; no Engine flag).
+`gpu-sim` `mem_pool_set_max_size` is `cuMemPoolSetAttribute` MaxPoolSize (identity with `set_pool_max_size`; no Engine flag).
+`gpu-sim` `mem_get_allocation_granularity` is `cuMemGetAllocationGranularity` (identity with `va_get_allocation_granularity`; no Engine flag).
+`gpu-sim` `mem_create` is `cuMemCreate` (identity with `va_create`; no Engine flag).
+`gpu-sim` `mem_create_with_prop` is `cuMemCreate` props (identity with `va_create_with_prop`; no Engine flag).
+`gpu-sim` `mem_map_handle` is `cuMemMap` (identity with `va_map_handle`; no Engine flag).
+`gpu-sim` `mem_map_handle_with_flags` is `cuMemMap` flags (identity with `va_map_handle_with_flags`; no Engine flag).
+`gpu-sim` `mem_map_handle_with_size` is `cuMemMap` size (identity with `va_map_handle_with_size`; no Engine flag).
+`gpu-sim` `mem_release_handle` is `cuMemRelease` (identity with `va_release_handle`; no Engine flag).
+`gpu-sim` `mem_retain_handle` is `cuMemRetainAllocationHandle` (identity with `va_retain_handle`; no Engine flag).
+`gpu-sim` `mem_unmap` is `cuMemUnmap` (identity with `va_unmap`; no Engine flag).
+`gpu-sim` `mem_unmap_with_size` is `cuMemUnmap` size (identity with `va_unmap_with_size`; no Engine flag).
+`gpu-sim` `mem_address_free` is `cuMemAddressFree` (identity with `va_free`; no Engine flag).
+`gpu-sim` `mem_address_free_with_size` is `cuMemAddressFree` size (identity with `va_free_with_size`; no Engine flag).
+`gpu-sim` `mem_unmap_range` is `cuMemUnmap` range (identity with `va_unmap_range`; no Engine flag).
+`gpu-sim` `mem_set_access` is `cuMemSetAccess` (identity with `va_set_access`; no Engine flag).
+`gpu-sim` `mem_set_access_write` is `cuMemSetAccess` write (identity with `va_set_access_write`; no Engine flag).
+`gpu-sim` `mem_set_access_with_flags` is `cuMemSetAccess` flags (identity with `va_set_access_with_flags`; no Engine flag).
+`gpu-sim` `mem_set_access_with_size` is `cuMemSetAccess` size (identity with `va_set_access_with_size`; no Engine flag).
+`gpu-sim` `mem_set_access_n` is `cuMemSetAccess` n (identity with `va_set_access_n`; no Engine flag).
+`gpu-sim` `mem_unset_access` is `cuMemSetAccess` ProtNone (identity with `va_unset_access`; no Engine flag).
+`gpu-sim` `mem_get_access` is `cuMemGetAccess` (identity with `va_get_access`; no Engine flag).
+`gpu-sim` `mem_map_range` is `cuMemMap` range (identity with `va_map_range`; no Engine flag).
+`gpu-sim` `mem_get_allocation_properties` is `cuMemGetAllocationPropertiesFromHandle` (identity with `va_get_allocation_properties`; no Engine flag).
+`gpu-sim` `mem_map_multicast` is `cuMemMap` multicast (identity with `va_map_multicast`; no Engine flag).
+`gpu-sim` `mem_map_multicast_with_flags` is `cuMemMap` multicast flags (identity with `va_map_multicast_with_flags`; no Engine flag).
+`gpu-sim` `mem_map_multicast_with_size` is `cuMemMap` multicast size (identity with `va_map_multicast_with_size`; no Engine flag).
+`gpu-sim` `mem_multicast_get_granularity` is `cuMulticastGetGranularity` (identity with `multicast_get_granularity`; no Engine flag).
+`gpu-sim` `mem_multicast_get_granularity_with_prop` is `cuMulticastGetGranularity` prop (identity with `multicast_get_granularity_with_prop`; no Engine flag).
+`gpu-sim` `mem_multicast_create` is `cuMulticastCreate` (identity with `multicast_create`; no Engine flag).
+`gpu-sim` `mem_multicast_create_with_prop` is `cuMulticastCreate` prop (identity with `multicast_create_with_prop`; no Engine flag).
+`gpu-sim` `mem_multicast_add_device` is `cuMulticastAddDevice` (identity with `multicast_add_device`; no Engine flag).
+`gpu-sim` `mem_multicast_bind_mem` is `cuMulticastBindMem` (identity with `multicast_bind_mem`; no Engine flag).
+`gpu-sim` `mem_multicast_bind_mem_with_flags` is `cuMulticastBindMem` flags (identity with `multicast_bind_mem_with_flags`; no Engine flag).
+`gpu-sim` `mem_multicast_bind_mem_with_size` is `cuMulticastBindMem` size (identity with `multicast_bind_mem_with_size`; no Engine flag).
+`gpu-sim` `mem_multicast_bind_addr` is `cuMulticastBindAddr` (identity with `multicast_bind_addr`; no Engine flag).
+`gpu-sim` `mem_multicast_bind_addr_with_flags` is `cuMulticastBindAddr` flags (identity with `multicast_bind_addr_with_flags`; no Engine flag).
+`gpu-sim` `mem_multicast_bind_addr_with_size` is `cuMulticastBindAddr` size (identity with `multicast_bind_addr_with_size`; no Engine flag).
+`gpu-sim` `mem_multicast_unbind` is `cuMulticastUnbind` (identity with `multicast_unbind`; no Engine flag).
+`gpu-sim` `mem_multicast_unbind_with_size` is `cuMulticastUnbind` size (identity with `multicast_unbind_with_size`; no Engine flag).
+`gpu-sim` `mem_multicast_destroy` is `cuMemRelease` multicast (identity with `multicast_destroy`; no Engine flag).
+`gpu-sim` `mem_multicast_store` is NVLS kernel store (identity with `multicast_store`; no Engine flag).
+`gpu-sim` `mem_multicast_binds` is multicast bind count (identity with `multicast_binds`; no Engine flag).
+`gpu-sim` `mem_is_multicast_va` is multicast VA query (identity with `is_multicast_va`; no Engine flag).
+`gpu-sim` `mem_pointer_get_attribute` is `cuPointerGetAttribute` (identity with `pointer_get_attribute`; no Engine flag).
+`gpu-sim` `mem_pointer_get_attribute_n` is `cuPointerGetAttributes` (identity with `pointer_get_attribute_n`; no Engine flag).
+`gpu-sim` `mem_pointer_get_access_flags` is `CU_POINTER_ATTRIBUTE_ACCESS_FLAGS` (identity with `pointer_get_access_flags`; no Engine flag).
+`gpu-sim` `mem_pointer_set_attribute` is `cuPointerSetAttribute` (identity with `pointer_set_attribute`; no Engine flag).
+`gpu-sim` `mem_pointer_get_attributes` is `cudaPointerGetAttributes` (identity with `pointer_get_attributes`; no Engine flag).
+`gpu-sim` `mem_alloc_pitch_with_element_size` is `cuMemAllocPitch` (identity with `malloc_pitch_with_element_size`; no Engine flag).
+`gpu-sim` `mem_device_get_attribute` is `cuDeviceGetAttribute` (identity with `device_get_attribute`; no Engine flag).
+`gpu-sim` `mem_device_get_properties` is `cuDeviceGetProperties` (identity with `device_get_properties`; no Engine flag).
+`gpu-sim` `mem_device_compute_capability` is `cuDeviceComputeCapability` (identity with `device_compute_capability`; no Engine flag).
+`gpu-sim` `mem_device_get_uuid` is `cuDeviceGetUuid` (identity with `device_get_uuid`; no Engine flag).
+`gpu-sim` `mem_device_get_luid` is `cuDeviceGetLuid` (identity with `device_get_luid`; no Engine flag).
+`gpu-sim` `mem_device_get_texture_1d_linear_max_width` is `cuDeviceGetTexture1DLinearMaxWidth` (identity with `device_get_texture_1d_linear_max_width`; no Engine flag).
+`gpu-sim` `mem_device_get_by_uuid` is `cuDeviceGetByUuid` (identity with `device_get_by_uuid`; no Engine flag).
+`gpu-sim` `mem_device_get_pci_bus_id` is `cuDeviceGetPCIBusId` (identity with `device_get_pci_bus_id`; no Engine flag).
+`gpu-sim` `mem_device_get_by_pci_bus_id` is `cudaDeviceGetByPCIBusId` (identity with `device_get_by_pci_bus_id`; no Engine flag).
+`gpu-sim` `mem_device_total_mem` is `cuDeviceTotalMem` (identity with `device_total_mem`; no Engine flag).
+`gpu-sim` `mem_driver_get_version` is `cuDriverGetVersion` (identity with `driver_get_version`; no Engine flag).
+`gpu-sim` `mem_get_proc_address` is `cuGetProcAddress` (identity with `get_proc_address`; no Engine flag).
+`gpu-sim` `mem_get_export_table` is `cuGetExportTable` (identity with `get_export_table`; no Engine flag).
+`gpu-sim` `mem_coredump_get_attribute` is `cuCoredumpGetAttribute` (identity with `coredump_get_attribute`; no Engine flag).
+`gpu-sim` `mem_coredump_set_attribute` is `cuCoredumpSetAttribute` (identity with `coredump_set_attribute`; no Engine flag).
+`gpu-sim` `mem_coredump_get_attribute_global` is `cuCoredumpGetAttributeGlobal` (identity with `coredump_get_attribute_global`; no Engine flag).
+`gpu-sim` `mem_coredump_set_attribute_global` is `cuCoredumpSetAttributeGlobal` (identity with `coredump_set_attribute_global`; no Engine flag).
+`gpu-sim` `mem_checkpoint_process_lock` is `cuCheckpointProcessLock` (identity with `checkpoint_process_lock`; no Engine flag).
+`gpu-sim` `mem_checkpoint_process_checkpoint` is `cuCheckpointProcessCheckpoint` (identity with `checkpoint_process_checkpoint`; no Engine flag).
+`gpu-sim` `mem_checkpoint_process_restore` is `cuCheckpointProcessRestore` (identity with `checkpoint_process_restore`; no Engine flag).
+`gpu-sim` `mem_checkpoint_process_unlock` is `cuCheckpointProcessUnlock` (identity with `checkpoint_process_unlock`; no Engine flag).
+`gpu-sim` `mem_checkpoint_process_get_restore_thread_id` is `cuCheckpointProcessGetRestoreThreadId` (identity with `checkpoint_process_get_restore_thread_id`; no Engine flag).
+`gpu-sim` `mem_checkpoint_process_get_state` is `cuCheckpointProcessGetState` (identity with `checkpoint_process_get_state`; no Engine flag).
+`gpu-sim` `mem_device_register_async_notification` is `cuDeviceRegisterAsyncNotification` (identity with `device_register_async_notification`; no Engine flag).
+`gpu-sim` `mem_device_unregister_async_notification` is `cuDeviceUnregisterAsyncNotification` (identity with `device_unregister_async_notification`; no Engine flag).
+`gpu-sim` `mem_driver_init` is `cuInit` (identity with `driver_init`; no Engine flag).
+`gpu-sim` `mem_profiler_start` is `cuProfilerStart` (identity with `profiler_start`; no Engine flag).
+`gpu-sim` `mem_profiler_stop` is `cuProfilerStop` (identity with `profiler_stop`; no Engine flag).
+`gpu-sim` `mem_profiler_initialize` is `cudaProfilerInitialize` (identity with `profiler_initialize`; no Engine flag).
+`gpu-sim` `mem_module_get_loading_mode` is `cuModuleGetLoadingMode` (identity with `module_get_loading_mode`; no Engine flag).
+`gpu-sim` `mem_module_load` is `cuModuleLoad` (identity with `module_load`; no Engine flag).
+`gpu-sim` `mem_module_load_data` is `cuModuleLoadData` (identity with `module_load_data`; no Engine flag).
+`gpu-sim` `mem_module_load_fat_binary` is `cuModuleLoadFatBinary` (identity with `module_load_fat_binary`; no Engine flag).
+`gpu-sim` `mem_module_load_data_ex` is `cuModuleLoadDataEx` (identity with `module_load_data_ex`; no Engine flag).
+`gpu-sim` `mem_module_get_function_count` is `cuModuleGetFunctionCount` (identity with `module_get_function_count`; no Engine flag).
+`gpu-sim` `mem_module_enumerate_functions` is `cuModuleEnumerateFunctions` (identity with `module_enumerate_functions`; no Engine flag).
+`gpu-sim` `mem_module_unload` is `cuModuleUnload` (identity with `module_unload`; no Engine flag).
+`gpu-sim` `mem_module_get_function` is `cuModuleGetFunction` (identity with `module_get_function`; no Engine flag).
+`gpu-sim` `mem_module_get_global` is `cuModuleGetGlobal` (identity with `module_get_global`; no Engine flag).
+`gpu-sim` `mem_module_get_tex_ref` is `cuModuleGetTexRef` (identity with `module_get_tex_ref`; no Engine flag).
+`gpu-sim` `mem_tex_ref_create` is `cuTexRefCreate` (identity with `tex_ref_create`; no Engine flag).
+`gpu-sim` `mem_tex_ref_destroy` is `cuTexRefDestroy` (identity with `tex_ref_destroy`; no Engine flag).
+`gpu-sim` `mem_tex_ref_set_array` is `cuTexRefSetArray` (identity with `tex_ref_set_array`; no Engine flag).
+`gpu-sim` `mem_tex_ref_set_mipmapped_array` is `cuTexRefSetMipmappedArray` (identity with `tex_ref_set_mipmapped_array`; no Engine flag).
+`gpu-sim` `mem_tex_ref_set_address` is `cuTexRefSetAddress` (identity with `tex_ref_set_address`; no Engine flag).
+`gpu-sim` `mem_tex_ref_set_address_2d` is `cuTexRefSetAddress2D` (identity with `tex_ref_set_address_2d`; no Engine flag).
+`gpu-sim` `mem_tex_ref_set_format` is `cuTexRefSetFormat` (identity with `tex_ref_set_format`; no Engine flag).
+`gpu-sim` `mem_tex_ref_set_address_mode` is `cuTexRefSetAddressMode` (identity with `tex_ref_set_address_mode`; no Engine flag).
+`gpu-sim` `mem_tex_ref_set_filter_mode` is `cuTexRefSetFilterMode` (identity with `tex_ref_set_filter_mode`; no Engine flag).
+`gpu-sim` `mem_tex_ref_set_mipmap_filter_mode` is `cuTexRefSetMipmapFilterMode` (identity with `tex_ref_set_mipmap_filter_mode`; no Engine flag).
+`gpu-sim` `mem_tex_ref_set_mipmap_level_bias` is `cuTexRefSetMipmapLevelBias` (identity with `tex_ref_set_mipmap_level_bias`; no Engine flag).
+`gpu-sim` `mem_tex_ref_set_mipmap_level_clamp` is `cuTexRefSetMipmapLevelClamp` (identity with `tex_ref_set_mipmap_level_clamp`; no Engine flag).
+`gpu-sim` `mem_tex_ref_set_max_anisotropy` is `cuTexRefSetMaxAnisotropy` (identity with `tex_ref_set_max_anisotropy`; no Engine flag).
+`gpu-sim` `mem_tex_ref_set_border_color` is `cuTexRefSetBorderColor` (identity with `tex_ref_set_border_color`; no Engine flag).
+`gpu-sim` `mem_tex_ref_set_flags` is `cuTexRefSetFlags` (identity with `tex_ref_set_flags`; no Engine flag).
+`gpu-sim` `mem_tex_ref_get_array` is `cuTexRefGetArray` (identity with `tex_ref_get_array`; no Engine flag).
+`gpu-sim` `mem_tex_ref_get_mipmapped_array` is `cuTexRefGetMipmappedArray` (identity with `tex_ref_get_mipmapped_array`; no Engine flag).
+`gpu-sim` `mem_tex_ref_get_address` is `cuTexRefGetAddress` (identity with `tex_ref_get_address`; no Engine flag).
+`gpu-sim` `mem_tex_ref_get_address_mode` is `cuTexRefGetAddressMode` (identity with `tex_ref_get_address_mode`; no Engine flag).
+`gpu-sim` `mem_tex_ref_get_filter_mode` is `cuTexRefGetFilterMode` (identity with `tex_ref_get_filter_mode`; no Engine flag).
+`gpu-sim` `mem_tex_ref_get_format` is `cuTexRefGetFormat` (identity with `tex_ref_get_format`; no Engine flag).
+`gpu-sim` `mem_tex_ref_get_mipmap_filter_mode` is `cuTexRefGetMipmapFilterMode` (identity with `tex_ref_get_mipmap_filter_mode`; no Engine flag).
+`gpu-sim` `mem_tex_ref_get_mipmap_level_bias` is `cuTexRefGetMipmapLevelBias` (identity with `tex_ref_get_mipmap_level_bias`; no Engine flag).
+`gpu-sim` `mem_tex_ref_get_mipmap_level_clamp` is `cuTexRefGetMipmapLevelClamp` (identity with `tex_ref_get_mipmap_level_clamp`; no Engine flag).
+`gpu-sim` `mem_tex_ref_get_max_anisotropy` is `cuTexRefGetMaxAnisotropy` (identity with `tex_ref_get_max_anisotropy`; no Engine flag).
+`gpu-sim` `mem_tex_ref_get_border_color` is `cuTexRefGetBorderColor` (identity with `tex_ref_get_border_color`; no Engine flag).
+`gpu-sim` `mem_tex_ref_get_flags` is `cuTexRefGetFlags` (identity with `tex_ref_get_flags`; no Engine flag).
+`gpu-sim` `mem_module_get_surf_ref` is `cuModuleGetSurfRef` (identity with `module_get_surf_ref`; no Engine flag).
+`gpu-sim` `mem_surf_ref_set_array` is `cuSurfRefSetArray` (identity with `surf_ref_set_array`; no Engine flag).
+`gpu-sim` `mem_surf_ref_get_array` is `cuSurfRefGetArray` (identity with `surf_ref_get_array`; no Engine flag).
+`gpu-sim` `mem_memcpy_dto_a` is `cuMemcpyDtoA` (identity with `memcpy_dto_a`; no Engine flag).
+`gpu-sim` `mem_memcpy_ato_d` is `cuMemcpyAtoD` (identity with `memcpy_ato_d`; no Engine flag).
+`gpu-sim` `mem_memcpy_hto_a` is `cuMemcpyHtoA` (identity with `memcpy_hto_a`; no Engine flag).
+`gpu-sim` `mem_memcpy_ato_h` is `cuMemcpyAtoH` (identity with `memcpy_ato_h`; no Engine flag).
+`gpu-sim` `mem_memcpy_ato_a` is `cuMemcpyAtoA` (identity with `memcpy_ato_a`; no Engine flag).
+`gpu-sim` `mem_memcpy_dto_a_async` is `cuMemcpyDtoAAsync` (identity with `memcpy_dto_a_async`; no Engine flag).
+`gpu-sim` `mem_memcpy_ato_d_async` is `cuMemcpyAtoDAsync` (identity with `memcpy_ato_d_async`; no Engine flag).
+`gpu-sim` `mem_memcpy_hto_a_async` is `cuMemcpyHtoAAsync` (identity with `memcpy_hto_a_async`; no Engine flag).
+`gpu-sim` `mem_memcpy_ato_h_async` is `cuMemcpyAtoHAsync` (identity with `memcpy_ato_h_async`; no Engine flag).
+`gpu-sim` `mem_memcpy_ato_a_async` is `cuMemcpyAtoAAsync` (identity with `memcpy_ato_a_async`; no Engine flag).
+`gpu-sim` `mem_memcpy_2d_to_array` is `cuMemcpy2DToArray` (identity with `memcpy_2d_to_array`; no Engine flag).
+`gpu-sim` `mem_memcpy_2d_from_array` is `cuMemcpy2DFromArray` (identity with `memcpy_2d_from_array`; no Engine flag).
+`gpu-sim` `mem_memcpy_2d_array_to_array` is `cuMemcpy2DArrayToArray` (identity with `memcpy_2d_array_to_array`; no Engine flag).
+`gpu-sim` `mem_memcpy_2d_to_array_async` is `cuMemcpy2DToArrayAsync` (identity with `memcpy_2d_to_array_async`; no Engine flag).
+`gpu-sim` `mem_memcpy_2d_from_array_async` is `cuMemcpy2DFromArrayAsync` (identity with `memcpy_2d_from_array_async`; no Engine flag).
+`gpu-sim` `mem_memcpy_2d_array_to_array_async` is `cuMemcpy2DArrayToArrayAsync` (identity with `memcpy_2d_array_to_array_async`; no Engine flag).
+`gpu-sim` `mem_library_load_data` is `cuLibraryLoadData` (identity with `library_load_data`; no Engine flag).
+`gpu-sim` `mem_library_load_from_file` is `cuLibraryLoadFromFile` (identity with `library_load_from_file`; no Engine flag).
+`gpu-sim` `mem_library_unload` is `cuLibraryUnload` (identity with `library_unload`; no Engine flag).
+`gpu-sim` `mem_library_get_kernel` is `cuLibraryGetKernel` (identity with `library_get_kernel`; no Engine flag).
+`gpu-sim` `mem_library_get_module` is `cuLibraryGetModule` (identity with `library_get_module`; no Engine flag).
+`gpu-sim` `mem_library_get_global` is `cuLibraryGetGlobal` (identity with `library_get_global`; no Engine flag).
+`gpu-sim` `mem_library_get_managed` is `cuLibraryGetManaged` (identity with `library_get_managed`; no Engine flag).
+`gpu-sim` `mem_library_get_unified_function` is `cuLibraryGetUnifiedFunction` (identity with `library_get_unified_function`; no Engine flag).
+`gpu-sim` `mem_library_get_kernel_count` is `cuLibraryGetKernelCount` (identity with `library_get_kernel_count`; no Engine flag).
+`gpu-sim` `mem_library_enumerate_kernels` is `cuLibraryEnumerateKernels` (identity with `library_enumerate_kernels`; no Engine flag).
+`gpu-sim` `mem_kernel_get_library` is `cuKernelGetLibrary` (identity with `kernel_get_library`; no Engine flag).
+`gpu-sim` `mem_kernel_get_function` is `cuKernelGetFunction` (identity with `kernel_get_function`; no Engine flag).
+`gpu-sim` `mem_kernel_get_param_info` is `cuKernelGetParamInfo` (identity with `kernel_get_param_info`; no Engine flag).
+`gpu-sim` `mem_kernel_get_param_count` is `cuKernelGetParamCount` (identity with `kernel_get_param_count`; no Engine flag).
+`gpu-sim` `mem_kernel_get_attribute` is `cuKernelGetAttribute` (identity with `kernel_get_attribute`; no Engine flag).
+`gpu-sim` `mem_kernel_set_attribute` is `cuKernelSetAttribute` (identity with `kernel_set_attribute`; no Engine flag).
+`gpu-sim` `mem_kernel_set_cache_config` is `cuKernelSetCacheConfig` (identity with `kernel_set_cache_config`; no Engine flag).
+`gpu-sim` `mem_link_create` is `cuLinkCreate` (identity with `link_create`; no Engine flag).
+`gpu-sim` `mem_link_add_data` is `cuLinkAddData` (identity with `link_add_data`; no Engine flag).
+`gpu-sim` `mem_link_complete` is `cuLinkComplete` (identity with `link_complete`; no Engine flag).
+`gpu-sim` `mem_link_destroy` is `cuLinkDestroy` (identity with `link_destroy`; no Engine flag).
+`gpu-sim` `mem_link_add_file` is `cuLinkAddFile` (identity with `link_add_file`; no Engine flag).
+`gpu-sim` `mem_runtime_get_version` is `cudaRuntimeGetVersion` (identity with `runtime_get_version`; no Engine flag).
+`gpu-sim` `mem_device_get` is `cuDeviceGet` (identity with `device_get`; no Engine flag).
+`gpu-sim` `mem_func_get_param_count` is `cuFuncGetParamCount` (identity with `func_get_param_count`; no Engine flag).
+`gpu-sim` `mem_func_get_cache_config` is `cuFuncGetCacheConfig` (identity with `func_get_cache_config`; no Engine flag).
+`gpu-sim` `mem_func_is_loaded` is `cuFuncIsLoaded` (identity with `func_is_loaded`; no Engine flag).
+`gpu-sim` `mem_func_load` is `cuFuncLoad` (identity with `func_load`; no Engine flag).
+`gpu-sim` `mem_func_get_module` is `cuFuncGetModule` (identity with `func_get_module`; no Engine flag).
+`gpu-sim` `mem_func_get_name` is `cuFuncGetName` (identity with `func_get_name`; no Engine flag).
+`gpu-sim` `mem_func_get_param_info` is `cuFuncGetParamInfo` (identity with `func_get_param_info`; no Engine flag).
+`gpu-sim` `mem_func_get_attribute` is `cudaFuncGetAttribute` (identity with `func_get_attribute`; no Engine flag).
+`gpu-sim` `mem_func_set_attribute` is `cudaFuncSetAttribute` (identity with `func_set_attribute`; no Engine flag).
+`gpu-sim` `mem_device_get_stream_priority_range` is `cudaDeviceGetStreamPriorityRange` (identity with `device_get_stream_priority_range`; no Engine flag).
+`gpu-sim` `mem_event_get_id` is `cuEventGetId` (identity with `event_get_id`; no Engine flag).
+`gpu-sim` `mem_green_ctx_get_id` is `cuGreenCtxGetId` (identity with `green_ctx_get_id`; no Engine flag).
+`gpu-sim` `mem_green_ctx_get_device` is `cudaExecutionCtxGetDevice` (identity with `green_ctx_get_device`; no Engine flag).
+`gpu-sim` `mem_stream_get_green_ctx` is `cuStreamGetGreenCtx` (identity with `stream_get_green_ctx`; no Engine flag).
+`gpu-sim` `mem_green_ctx_create` is `cuGreenCtxCreate` (identity with `green_ctx_create`; no Engine flag).
+`gpu-sim` `mem_green_ctx_destroy` is `cuGreenCtxDestroy` (identity with `green_ctx_destroy`; no Engine flag).
+`gpu-sim` `mem_green_ctx_stream_create` is `cuGreenCtxStreamCreate` (identity with `green_ctx_stream_create`; no Engine flag).
+`gpu-sim` `mem_green_ctx_synchronize` is `cudaExecutionCtxSynchronize` (identity with `green_ctx_synchronize`; no Engine flag).
+`gpu-sim` `mem_graph_node_get_local_id` is `cuGraphNodeGetLocalId` (identity with `graph_node_get_local_id`; no Engine flag).
+`gpu-sim` `mem_graph_node_get_tools_id` is `cuGraphNodeGetToolsId` (identity with `graph_node_get_tools_id`; no Engine flag).
+`gpu-sim` `mem_graph_node_get_containing_graph` is `cuGraphNodeGetContainingGraph` (identity with `graph_node_get_containing_graph`; no Engine flag).
+`gpu-sim` `mem_pool_get_id` is `cuMemPoolGetId` (identity with `pool_get_id`; no Engine flag).
+`gpu-sim` `mem_memcpy_htod` is `cuMemcpyHtoD` (identity with `memcpy_htod`; no Engine flag).
+`gpu-sim` `mem_memcpy_dtoh` is `cuMemcpyDtoH` (identity with `memcpy_dtoh`; no Engine flag).
+`gpu-sim` `mem_prefetch_batch_async` is `cudaMemPrefetchBatchAsync` (identity with `prefetch_batch_async`; no Engine flag).
+`gpu-sim` `mem_discard_batch_async` is `cudaMemDiscardBatchAsync` (identity with `discard_batch_async`; no Engine flag).
+`gpu-sim` `mem_discard_and_prefetch_batch_async` is `cudaMemDiscardAndPrefetchBatchAsync` (identity with `discard_and_prefetch_batch_async`; no Engine flag).
+`gpu-sim` `mem_tensor_map_encode_tiled` is `cuTensorMapEncodeTiled` (identity with `tensor_map_encode_tiled`; no Engine flag).
+`gpu-sim` `mem_tensor_map_encode_im2col` is `cuTensorMapEncodeIm2col` (identity with `tensor_map_encode_im2col`; no Engine flag).
+`gpu-sim` `mem_tensor_map_encode_im2col_wide` is `cuTensorMapEncodeIm2colWide` (identity with `tensor_map_encode_im2col_wide`; no Engine flag).
+`gpu-sim` `mem_tensor_map_replace_aligned_addr` is `cuTensorMapReplaceAlignedAddr` (identity with `tensor_map_replace_aligned_addr`; no Engine flag).
+`gpu-sim` `mem_array_get_descriptor` is `cuArrayGetDescriptor` (identity with `array_get_descriptor`; no Engine flag).
+`gpu-sim` `mem_array_3d_get_descriptor` is `cuArray3DGetDescriptor` (identity with `array_3d_get_descriptor`; no Engine flag).
+`gpu-sim` `mem_array_get_sparse_properties` is `cuArrayGetSparseProperties` (identity with `array_get_sparse_properties`; no Engine flag).
+`gpu-sim` `mem_array_get_plane` is `cuArrayGetPlane` (identity with `array_get_plane`; no Engine flag).
+`gpu-sim` `mem_array_get_memory_requirements` is `cuArrayGetMemoryRequirements` (identity with `array_get_memory_requirements`; no Engine flag).
+`gpu-sim` `mem_mipmapped_array_get_memory_requirements` is `cuMipmappedArrayGetMemoryRequirements` (identity with `mipmapped_array_get_memory_requirements`; no Engine flag).
+`gpu-sim` `mem_mipmapped_array_get_sparse_properties` is `cuMipmappedArrayGetSparseProperties` (identity with `mipmapped_array_get_sparse_properties`; no Engine flag).
+`gpu-sim` `mem_mipmapped_array_create` is `cuMipmappedArrayCreate` (identity with `mipmapped_array_create`; no Engine flag).
+`gpu-sim` `mem_mipmapped_array_get_level` is `cuMipmappedArrayGetLevel` (identity with `mipmapped_array_get_level`; no Engine flag).
+`gpu-sim` `mem_mipmapped_array_destroy` is `cuMipmappedArrayDestroy` (identity with `mipmapped_array_destroy`; no Engine flag).
+`gpu-sim` `mem_import_external_memory` is `cuImportExternalMemory` (identity with `import_external_memory`; no Engine flag).
+`gpu-sim` `mem_destroy_external_memory` is `cuDestroyExternalMemory` (identity with `destroy_external_memory`; no Engine flag).
+`gpu-sim` `mem_external_memory_get_mapped_buffer` is `cuExternalMemoryGetMappedBuffer` (identity with `external_memory_get_mapped_buffer`; no Engine flag).
+`gpu-sim` `mem_external_memory_get_mapped_mipmapped_array` is `cuExternalMemoryGetMappedMipmappedArray` (identity with `external_memory_get_mapped_mipmapped_array`; no Engine flag).
+`gpu-sim` `mem_import_external_semaphore` is `cuImportExternalSemaphore` (identity with `import_external_semaphore`; no Engine flag).
+`gpu-sim` `mem_destroy_external_semaphore` is `cuDestroyExternalSemaphore` (identity with `destroy_external_semaphore`; no Engine flag).
+`gpu-sim` `mem_signal_external_semaphores_async` is `cuSignalExternalSemaphoresAsync` (identity with `signal_external_semaphores_async`; no Engine flag).
+`gpu-sim` `mem_wait_external_semaphores_async` is `cuWaitExternalSemaphoresAsync` (identity with `wait_external_semaphores_async`; no Engine flag).
+`gpu-sim` `mem_alloc` is `cuMemAlloc` (identity with `malloc`; no Engine flag).
+`gpu-sim` `mem_free` is `cuMemFree` (identity with `free_sync`; no Engine flag).
+`gpu-sim` `mem_free_host` is `cuMemFreeHost` (identity with `free_host_pinned`; no Engine flag).
+`gpu-sim` `mem_host_alloc` is `cuMemHostAlloc` (identity with `alloc_host_with_flags`; no Engine flag).
+`gpu-sim` `mem_host_get_flags` is `cuMemHostGetFlags` (identity with `host_get_flags`; no Engine flag).
+`gpu-sim` `mem_host_get_device_pointer` is `cuMemHostGetDevicePointer` (identity with `host_get_device_pointer_with_flags`; no Engine flag).
+`gpu-sim` `mem_host_register` is `cuMemHostRegister` (identity with `host_register_with_flags`; no Engine flag).
+`gpu-sim` `mem_host_unregister` is `cuMemHostUnregister` (identity with `host_unregister`; no Engine flag).
+`gpu-sim` `mem_host_register_with_size` is `cuMemHostRegister` size (identity with `host_register_with_size`; no Engine flag).
+`gpu-sim` `ipc_get_mem_handle` is `cuIpcGetMemHandle` (identity with `ipc_get`; no Engine flag).
+`gpu-sim` `ipc_open_mem_handle` is `cuIpcOpenMemHandle` (identity with `ipc_open_with_flags`; no Engine flag).
+`gpu-sim` `ipc_close_mem_handle` is `cuIpcCloseMemHandle` (identity with `ipc_close`; no Engine flag).
+`gpu-sim` `ipc_get_event_handle` is `cuIpcGetEventHandle` (identity with `ipc_get_event`; no Engine flag).
+`gpu-sim` `ipc_open_event_handle` is `cuIpcOpenEventHandle` (identity with `ipc_open_event`; no Engine flag).
+`gpu-sim` `mem_alloc_host` is `cuMemAllocHost` (identity with `alloc_host_pinned`; no Engine flag).
+`gpu-sim` `mem_alloc_managed` is `cuMemAllocManaged` (identity with `alloc_managed_with_flags`; no Engine flag).
+`gpu-sim` `mem_alloc_async` is `cuMemAllocAsync` (identity with `alloc`; no Engine flag).
+`gpu-sim` `mem_free_async` is `cuMemFreeAsync` (identity with `free`; no Engine flag).
+`gpu-sim` `mem_advise_n` is `cuMemAdvise` (identity with `mem_advise_with_size`; no Engine flag).
+`gpu-sim` `mem_prefetch` is `cuMemPrefetchAsync` (identity with `prefetch`; no Engine flag).
+`gpu-sim` `mem_prefetch_v2` is `cuMemPrefetchAsync_v2` (identity with `prefetch_with_flags`; no Engine flag).
+`gpu-sim` `mem_prefetch_n` is `cuMemPrefetchAsync` count (identity with `prefetch_with_size`; no Engine flag).
+`gpu-sim` `mem_prefetch_host` is host dest `cuMemPrefetchAsync` (identity with `prefetch_host`; no Engine flag).
+`gpu-sim` `mem_prefetch_host_n` is host dest `cuMemPrefetchAsync` count (identity with `prefetch_host_with_size`; no Engine flag).
+`gpu-sim` `mem_advise_v2` is `cuMemAdvise_v2` (identity with `mem_advise_with_location`; no Engine flag).
+`gpu-sim` `mem_range_get` is `cuMemRangeGetAttribute` (identity with `mem_range_get_attribute`; no Engine flag).
+`gpu-sim` `mem_range_get_n` is `cuMemRangeGetAttribute` count (identity with `mem_range_get_attribute_with_size`; no Engine flag).
+`gpu-sim` `mem_range_gets` is `cuMemRangeGetAttributes` (identity with `mem_range_get_attributes`; no Engine flag).
+`gpu-sim` `mem_range_gets_n` is `cuMemRangeGetAttributes` count (identity with `mem_range_get_attributes_with_size`; no Engine flag).
+`gpu-sim` `mem_range_get_data` is `cuMemRangeGetAttribute` dataSize (identity with `mem_range_get_attribute_with_data_size`; no Engine flag).
+`gpu-sim` `mem_range_gets_data` is `cuMemRangeGetAttributes` dataSizes (identity with `mem_range_get_attributes_with_data_sizes`; no Engine flag).
+`gpu-sim` `stream_attach_mem` is `cuStreamAttachMemAsync` (identity with `stream_attach`; no Engine flag).
+`gpu-sim` `stream_attach_n` is `cuStreamAttachMemAsync` length (identity with `stream_attach_with_size`; no Engine flag).
+`gpu-sim` `stream_attach_flags` is `cuStreamAttachMemAsync` flags (identity with `stream_attach_with_flags`; no Engine flag).
+`gpu-sim` `memcpy_async` is `cuMemcpyAsync` (identity with `memcpy`; no Engine flag).
+`gpu-sim` `mem_cpy` is `cuMemcpy` (identity with `memcpy_sync`; no Engine flag).
+`gpu-sim` `mem_address_range` is `cuMemGetAddressRange` (identity with `mem_get_address_range`; no Engine flag).
+`gpu-sim` `mem_cpy_2d` is `cuMemcpy2D` (identity with `memcpy_2d`; no Engine flag).
+`gpu-sim` `mem_cpy_2d_async` is `cuMemcpy2DAsync` (identity with `memcpy_2d_async`; no Engine flag).
+`gpu-sim` `mem_cpy_3d` is `cuMemcpy3D` (identity with `memcpy_3d`; no Engine flag).
+`gpu-sim` `mem_cpy_3d_async` is `cuMemcpy3DAsync` (identity with `memcpy_3d_async`; no Engine flag).
+`gpu-sim` `mem_cpy_peer` is `cuMemcpyPeer` (identity with `memcpy_peer`; no Engine flag).
+`gpu-sim` `mem_cpy_peer_async` is `cuMemcpyPeerAsync` (identity with `memcpy_peer_async`; no Engine flag).
+`gpu-sim` `mem_cpy_peer_3d` is `cuMemcpy3DPeer` (identity with `memcpy_peer_3d`; no Engine flag).
+`gpu-sim` `mem_cpy_peer_3d_async` is `cuMemcpy3DPeerAsync` (identity with `memcpy_peer_3d_async`; no Engine flag).
+`gpu-sim` `mem_cpy_peer_2d` is `cuMemcpy2DPeer` (identity with `memcpy_peer_2d`; no Engine flag).
+`gpu-sim` `mem_cpy_peer_2d_async` is `cuMemcpy2DPeerAsync` (identity with `memcpy_peer_2d_async`; no Engine flag).
+`gpu-sim` `mem_cpy_batch_async` is `cuMemcpyBatchAsync` (identity with `memcpy_batch_async`; no Engine flag).
+`gpu-sim` `mem_cpy_3d_batch_async` is `cuMemcpy3DBatchAsync` (identity with `memcpy_3d_batch_async`; no Engine flag).
+`gpu-sim` `mem_cpy_3d_with_attributes` is `cuMemcpy3DWithAttributesAsync` (identity with `memcpy_3d_with_attributes`; no Engine flag).
+`gpu-sim` `mem_cpy_with_attributes` is `cuMemcpyWithAttributesAsync` (identity with `memcpy_with_attributes`; no Engine flag).
+`gpu-sim` `ctx_set_flags` is `cuCtxSetFlags` (identity with `set_device_flags`; no Engine flag).
+`gpu-sim` `ctx_set_cache_config` is `cuCtxSetCacheConfig` (identity with `set_cache_config`; no Engine flag).
+`gpu-sim` `ctx_set_limit` is `cuCtxSetLimit` (identity with `set_limit`; no Engine flag).
+`gpu-sim` `ctx_set_shared_mem_config` is `cuCtxSetSharedMemConfig` (identity with `set_shared_mem_config`; no Engine flag).
+`gpu-sim` `stream_create_priority` is `cuStreamCreateWithPriority` (identity with `stream_create_with_priority`; no Engine flag).
+`gpu-sim` `stream_create_flags` is `cuStreamCreateWithFlags` (identity with `stream_create_with_flags`; no Engine flag).
+`gpu-sim` `stream_flags` is `cuStreamGetFlags` (identity with `stream_get_flags`; no Engine flag).
+`gpu-sim` `get_stream_priority` is `cuStreamGetPriority` (identity with `stream_get_priority`; no Engine flag).
+`gpu-sim` `device_graph_mem_get` is `cuDeviceGetGraphMemAttribute` (identity with `graph_mem_get`; no Engine flag).
+`gpu-sim` `device_graph_mem_set` is `cuDeviceSetGraphMemAttribute` (identity with `graph_mem_set`; no Engine flag).
+`gpu-sim` `device_graph_mem_trim` is `cuDeviceGraphMemTrim` (identity with `graph_mem_trim`; no Engine flag).
+`gpu-sim` `get_stream_id` is `cuStreamGetId` (identity with `stream_get_id`; no Engine flag).
+`gpu-sim` `copy_stream_attributes` is `cuStreamCopyAttributes` (identity with `stream_copy_attributes`; no Engine flag).
+`gpu-sim` `get_stream_attribute` is `cuStreamGetAttribute` (identity with `stream_get_attribute`; no Engine flag).
+`gpu-sim` `set_stream_attribute` is `cuStreamSetAttribute` (identity with `stream_set_attribute`; no Engine flag).
+`gpu-sim` `get_graph_kernel_node_attribute` is `cuGraphKernelNodeGetAttribute` (identity with `graph_kernel_node_get_attribute`; no Engine flag).
+`gpu-sim` `set_graph_kernel_node_attribute` is `cuGraphKernelNodeSetAttribute` (identity with `graph_kernel_node_set_attribute`; no Engine flag).
+`gpu-sim` `get_graph_exec_kernel_node_attribute` is `cuGraphExecKernelNodeGetAttribute` (identity with `graph_exec_kernel_node_get_attribute`; no Engine flag).
+`gpu-sim` `set_graph_exec_kernel_node_attribute` is `cuGraphExecKernelNodeSetAttribute` (identity with `graph_exec_kernel_node_set_attribute`; no Engine flag).
+`gpu-sim` `copy_graph_kernel_node_attributes` is `cuGraphKernelNodeCopyAttributes` (identity with `graph_kernel_node_copy_attributes`; no Engine flag).
+`gpu-sim` `copy_graph_exec_kernel_node_attributes` is `cuGraphExecKernelNodeCopyAttributes` (identity with `graph_exec_kernel_node_copy_attributes`; no Engine flag).
+`gpu-sim` `get_graph_kernel_node_params` is `cuGraphKernelNodeGetParams` (identity with `graph_kernel_get_params`; no Engine flag).
+`gpu-sim` `get_graph_exec_kernel_node_params` is `cuGraphExecKernelNodeGetParams` (identity with `graph_exec_kernel_get_params`; no Engine flag).
+`gpu-sim` `set_graph_kernel_node_params` is `cuGraphKernelNodeSetParams` (identity with `graph_kernel_set_params`; no Engine flag).
+`gpu-sim` `set_graph_exec_kernel_node_params` is `cuGraphExecKernelNodeSetParams` (identity with `graph_exec_kernel_set_params`; no Engine flag).
+`gpu-sim` `get_graph_memcpy_node_params` is `cuGraphMemcpyNodeGetParams` (identity with `graph_memcpy_get_params`; no Engine flag).
+`gpu-sim` `get_graph_exec_memcpy_node_params` is `cuGraphExecMemcpyNodeGetParams` (identity with `graph_exec_memcpy_get_params`; no Engine flag).
+`gpu-sim` `set_graph_memcpy_node_params` is `cuGraphMemcpyNodeSetParams` (identity with `graph_memcpy_set_params`; no Engine flag).
+`gpu-sim` `set_graph_exec_memcpy_node_params` is `cuGraphExecMemcpyNodeSetParams` (identity with `graph_exec_memcpy_set_params`; no Engine flag).
+`gpu-sim` `get_graph_memset_node_params` is `cuGraphMemsetNodeGetParams` (identity with `graph_memset_get_params`; no Engine flag).
+`gpu-sim` `get_graph_exec_memset_node_params` is `cuGraphExecMemsetNodeGetParams` (identity with `graph_exec_memset_get_params`; no Engine flag).
+`gpu-sim` `set_graph_memset_node_params` is `cuGraphMemsetNodeSetParams` (identity with `graph_memset_set_params`; no Engine flag).
+`gpu-sim` `set_graph_exec_memset_node_params` is `cuGraphExecMemsetNodeSetParams` (identity with `graph_exec_memset_set_params`; no Engine flag).
+`gpu-sim` `get_graph_host_node_params` is `cuGraphHostNodeGetParams` (identity with `graph_host_get_params`; no Engine flag).
+`gpu-sim` `get_graph_exec_host_node_params` is `cuGraphExecHostNodeGetParams` (identity with `graph_exec_host_get_params`; no Engine flag).
+`gpu-sim` `set_graph_host_node_params` is `cuGraphHostNodeSetParams` (identity with `graph_host_set_params`; no Engine flag).
+`gpu-sim` `set_graph_exec_host_node_params` is `cuGraphExecHostNodeSetParams` (identity with `graph_exec_host_set_params`; no Engine flag).
+`gpu-sim` `get_graph_batch_mem_op_node_params` is `cuGraphBatchMemOpNodeGetParams` (identity with `graph_batch_mem_ops_get_params`; no Engine flag).
+`gpu-sim` `get_graph_exec_batch_mem_op_node_params` is `cuGraphExecBatchMemOpNodeGetParams` (identity with `graph_exec_batch_mem_ops_get_params`; no Engine flag).
+`gpu-sim` `set_graph_batch_mem_op_node_params` is `cuGraphBatchMemOpNodeSetParams` (identity with `graph_batch_mem_op_set_params`; no Engine flag).
+`gpu-sim` `set_graph_exec_batch_mem_op_node_params` is `cuGraphExecBatchMemOpNodeSetParams` (identity with `graph_exec_batch_mem_op_set_params`; no Engine flag).
+`gpu-sim` `set_graph_event_record_node_event` is `cuGraphEventRecordNodeSetEvent` (identity with `graph_event_record_set_event`; no Engine flag).
+`gpu-sim` `set_graph_exec_event_record_node_event` is `cuGraphExecEventRecordNodeSetEvent` (identity with `graph_exec_event_record_set_event`; no Engine flag).
+`gpu-sim` `set_graph_event_wait_node_event` is `cuGraphEventWaitNodeSetEvent` (identity with `graph_event_wait_set_event`; no Engine flag).
+`gpu-sim` `set_graph_exec_event_wait_node_event` is `cuGraphExecEventWaitNodeSetEvent` (identity with `graph_exec_event_wait_set_event`; no Engine flag).
+`gpu-sim` `get_graph_event_record_node_event` is `cuGraphEventRecordNodeGetEvent` (identity with `graph_event_record_get_event`; no Engine flag).
+`gpu-sim` `get_graph_exec_event_record_node_event` is `cuGraphExecEventRecordNodeGetEvent` (identity with `graph_exec_event_record_get_event`; no Engine flag).
+`gpu-sim` `get_graph_event_wait_node_event` is `cuGraphEventWaitNodeGetEvent` (identity with `graph_event_wait_get_event`; no Engine flag).
+`gpu-sim` `get_graph_exec_event_wait_node_event` is `cuGraphExecEventWaitNodeGetEvent` (identity with `graph_exec_event_wait_get_event`; no Engine flag).
+`gpu-sim` `get_graph_child_graph_node_graph` is `cuGraphChildGraphNodeGetGraph` (identity with `graph_child_get_graph`; no Engine flag).
+`gpu-sim` `get_graph_exec_child_graph_node_graph` is `cuGraphExecChildGraphNodeGetGraph` (identity with `graph_exec_child_get_graph`; no Engine flag).
+`gpu-sim` `set_graph_child_graph_node_params` is `cuGraphChildGraphNodeSetParams` (identity with `graph_child_set_params`; no Engine flag).
+`gpu-sim` `set_graph_exec_child_graph_node_params` is `cuGraphExecChildGraphNodeSetParams` (identity with `graph_exec_child_set_params`; no Engine flag).
+`gpu-sim` `set_graph_node_params` is `cuGraphNodeSetParams` (identity with `graph_node_set_params`; no Engine flag).
+`gpu-sim` `set_graph_exec_node_params` is `cuGraphExecNodeSetParams` (identity with `graph_exec_node_set_params`; no Engine flag).
+`gpu-sim` `get_graph_node_params` is `cuGraphNodeGetParams` (identity with `graph_node_get_params`; no Engine flag).
+`gpu-sim` `get_graph_exec_node_params` is `cuGraphExecNodeGetParams` (identity with `graph_exec_node_get_params`; no Engine flag).
+`gpu-sim` `set_graph_node_enabled` is `cuGraphNodeSetEnabled` (identity with `graph_node_set_enabled`; no Engine flag).
+`gpu-sim` `get_graph_node_enabled` is `cuGraphNodeGetEnabled` (identity with `graph_node_get_enabled`; no Engine flag).
+`gpu-sim` `get_graph_exec_flags` is `cuGraphExecGetFlags` (identity with `graph_exec_get_flags`; no Engine flag).
+`gpu-sim` `get_graph_id` is `cuGraphGetId` (identity with `graph_get_id`; no Engine flag).
+`gpu-sim` `get_graph_exec_id` is `cuGraphExecGetId` (identity with `graph_get_id`; no Engine flag).
+`gpu-sim` `get_graph_nodes` is `cuGraphGetNodes` (identity with `graph_nodes`; no Engine flag).
+`gpu-sim` `get_graph_root_nodes` is `cuGraphGetRootNodes` (identity with `graph_root_nodes`; no Engine flag).
+`gpu-sim` `get_graph_edges` is `cuGraphGetEdges` (identity with `graph_edges`; no Engine flag).
+`gpu-sim` `get_graph_edges_with_data` is `cuGraphGetEdges` v2 (identity with `graph_edges_with_data`; no Engine flag).
+`gpu-sim` `get_graph_node_dependencies` is `cuGraphNodeGetDependencies` (identity with `graph_node_deps`; no Engine flag).
+`gpu-sim` `get_graph_node_dependencies_with_data` is `cuGraphNodeGetDependencies` v2 (identity with `graph_node_deps_with_data`; no Engine flag).
+`gpu-sim` `get_graph_node_dependent_nodes` is `cuGraphNodeGetDependentNodes` (identity with `graph_node_dependents`; no Engine flag).
+`gpu-sim` `get_graph_node_dependent_nodes_with_data` is `cuGraphNodeGetDependentNodes` v2 (identity with `graph_node_dependents_with_data`; no Engine flag).
+`gpu-sim` `get_graph_node_type` is `cuGraphNodeGetType` (identity with `graph_node_kind`; no Engine flag).
+`gpu-sim` `find_graph_node_in_clone` is `cuGraphNodeFindInClone` (identity with `graph_node_find_in_clone`; no Engine flag).
+`gpu-sim` `graph_clone` is `cuGraphClone` (identity with `clone_graph`; no Engine flag).
+`gpu-sim` `graph_debug_dot_print` is `cuGraphDebugDotPrint` (identity with `graph_debug_dot`; no Engine flag).
+`gpu-sim` `graph_debug_dot_print_with_flags` is `cuGraphDebugDotPrint` with flags (identity with `graph_debug_dot_with_flags`; no Engine flag).
+`gpu-sim` `graph_instantiate` is `cuGraphInstantiate` (identity with `instantiate_graph`; no Engine flag).
+`gpu-sim` `graph_instantiate_with_flags` is `cuGraphInstantiateWithFlags` (identity with `instantiate_graph_with_flags`; no Engine flag).
+`gpu-sim` `graph_instantiate_with_params` is `cuGraphInstantiateWithParams` (identity with `instantiate_graph_with_params`; no Engine flag).
+`gpu-sim` `graph_launch` is `cuGraphLaunch` (identity with `launch_graph`; no Engine flag).
+`gpu-sim` `graph_upload` is `cuGraphUpload` (identity with `upload_graph`; no Engine flag).
+`gpu-sim` `graph_upload_async` is `cuGraphUpload` on a stream (identity with `upload_graph_async`; no Engine flag).
+`gpu-sim` `graph_destroy` is `cuGraphDestroy` (identity with `destroy_graph`; no Engine flag).
+`gpu-sim` `graph_exec_destroy` is `cuGraphExecDestroy` (identity with `destroy_graph`; no Engine flag).
+`gpu-sim` `graph_exec_update` is `cuGraphExecUpdate` (identity with `update_graph`; no Engine flag).
+`gpu-sim` `graph_exec_update_with_info` is `cuGraphExecUpdate` with info (identity with `update_graph_with_info`; no Engine flag).
+`gpu-sim` `add_graph_dependencies` is `cuGraphAddDependencies` (identity with `graph_add_dependencies`; no Engine flag).
+`gpu-sim` `add_graph_dependencies_n` is `cuGraphAddDependencies` of pairs (identity with `graph_add_dependencies_n`; no Engine flag).
+`gpu-sim` `add_graph_dependencies_with_data` is `cuGraphAddDependencies` with data (identity with `graph_add_dependencies_with_data`; no Engine flag).
+`gpu-sim` `add_graph_dependencies_n_with_data` is `cuGraphAddDependencies` v2 (identity with `graph_add_dependencies_n_with_data`; no Engine flag).
+`gpu-sim` `remove_graph_dependencies` is `cuGraphRemoveDependencies` (identity with `graph_remove_dependencies`; no Engine flag).
+`gpu-sim` `remove_graph_dependencies_n` is `cuGraphRemoveDependencies` of pairs (identity with `graph_remove_dependencies_n`; no Engine flag).
+`gpu-sim` `remove_graph_dependencies_with_data` is `cuGraphRemoveDependencies` with data (identity with `graph_remove_dependencies_with_data`; no Engine flag).
+`gpu-sim` `remove_graph_dependencies_n_with_data` is `cuGraphRemoveDependencies` v2 (identity with `graph_remove_dependencies_n_with_data`; no Engine flag).
+`gpu-sim` `destroy_graph_node` is `cuGraphDestroyNode` (identity with `graph_destroy_node`; no Engine flag).
+`gpu-sim` `launch_device_graph` is device-side `cuGraphLaunch` (identity with `device_launch_graph`; no Engine flag).
+`gpu-sim` `get_current_graph_exec` is `cuGetCurrentGraphExec` (identity with `current_graph_exec`; no Engine flag).
+`gpu-sim` `add_graph_empty` is `cuGraphAddEmptyNode` (identity with `graph_add_empty`; no Engine flag).
+`gpu-sim` `add_graph_child` is `cuGraphAddChildGraphNode` (identity with `graph_add_child`; no Engine flag).
+`gpu-sim` `add_graph_host` is `cuGraphAddHostNode` (identity with `graph_add_host_func_params`; no Engine flag).
+`gpu-sim` `add_graph_event_record` is `cuGraphAddEventRecordNode` (identity with `graph_add_event_record`; no Engine flag).
+`gpu-sim` `add_graph_event_wait` is `cuGraphAddEventWaitNode` (identity with `graph_add_event_wait`; no Engine flag).
+`gpu-sim` `add_graph_kernel` is `cuGraphAddKernelNode` (identity with `graph_add_kernel`; no Engine flag).
+`gpu-sim` `add_graph_memcpy` is `cuGraphAddMemcpyNode` (identity with `graph_add_memcpy`; no Engine flag).
+`gpu-sim` `add_graph_memcpy_1d` is `cuGraphAddMemcpyNode1D` (identity with `graph_add_memcpy_1d`; no Engine flag).
+`gpu-sim` `add_graph_memcpy_2d` is 2D `cuGraphAddMemcpyNode` (identity with `graph_add_memcpy_2d`; no Engine flag).
+`gpu-sim` `add_graph_memcpy_3d` is 3D `cuGraphAddMemcpyNode` (identity with `graph_add_memcpy_3d`; no Engine flag).
+`gpu-sim` `add_graph_memset` is packed 1D `cuGraphAddMemsetNode` (identity with `graph_add_memset`; no Engine flag).
+`gpu-sim` `add_graph_memset_op` is `cuGraphAddMemsetNode` params (identity with `graph_add_memset_op`; no Engine flag).
+`gpu-sim` `add_graph_memset_2d` is 2D `cuGraphAddMemsetNode` (identity with `graph_add_memset_2d`; no Engine flag).
+`gpu-sim` `add_graph_memset_3d` is 3D `cuGraphAddMemsetNode` (identity with `graph_add_memset_3d`; no Engine flag).
+`gpu-sim` `add_graph_batch_mem_op` is `cuGraphAddBatchMemOpNode` (identity with `graph_add_batch_mem_op`; no Engine flag).
+`gpu-sim` `add_graph_batch_mem_op_with_flags` is `cuGraphAddBatchMemOpNode` flags (identity with `graph_add_batch_mem_op_with_flags`; no Engine flag).
+`gpu-sim` `add_graph_alloc` is `cuGraphAddMemAllocNode` (identity with `graph_add_alloc`; no Engine flag).
+`gpu-sim` `add_graph_alloc_with_access` is `cuGraphAddMemAllocNode` access (identity with `graph_add_alloc_with_access`; no Engine flag).
+`gpu-sim` `add_graph_free` is `cuGraphAddMemFreeNode` (identity with `graph_add_free`; no Engine flag).
+`gpu-sim` `add_graph_node` is `cuGraphAddNode` (identity with `graph_add_node`; no Engine flag).
+`gpu-sim` `add_graph_node_with_data` is `cuGraphAddNode_v2` (identity with `graph_add_node_with_data`; no Engine flag).
+`gpu-sim` `add_graph_if` is `cuGraphAddNode` IF (identity with `graph_add_if`; no Engine flag).
+`gpu-sim` `add_graph_if_else` is `cuGraphAddNode` IF size 2 (identity with `graph_add_if_else`; no Engine flag).
+`gpu-sim` `add_graph_while` is `cuGraphAddNode` WHILE (identity with `graph_add_while`; no Engine flag).
+`gpu-sim` `add_graph_switch` is `cuGraphAddNode` SWITCH (identity with `graph_add_switch`; no Engine flag).
+`gpu-sim` `add_graph_set_conditional` is graph-build `cuGraphSetConditional` (identity with `graph_add_set_conditional`; no Engine flag).
+`gpu-sim` `add_graph_write_value64` is graph `cuStreamWriteValue64` (identity with `graph_add_write_value64`; no Engine flag).
+`gpu-sim` `add_graph_write_value32` is graph `cuStreamWriteValue32` (identity with `graph_add_write_value32`; no Engine flag).
+`gpu-sim` `add_graph_write_value64_with_flags` is graph `cuStreamWriteValue64` flags (identity with `graph_add_write_value64_with_flags`; no Engine flag).
+`gpu-sim` `add_graph_write_value32_with_flags` is graph `cuStreamWriteValue32` flags (identity with `graph_add_write_value32_with_flags`; no Engine flag).
+`gpu-sim` `add_graph_wait_value64` is graph `cuStreamWaitValue64` (identity with `graph_add_wait_value64`; no Engine flag).
+`gpu-sim` `add_graph_wait_value32` is graph `cuStreamWaitValue32` (identity with `graph_add_wait_value32`; no Engine flag).
+`gpu-sim` `add_graph_wait_value64_with_flags` is graph `cuStreamWaitValue64` flags (identity with `graph_add_wait_value64_with_flags`; no Engine flag).
+`gpu-sim` `add_graph_wait_value32_with_flags` is graph `cuStreamWaitValue32` flags (identity with `graph_add_wait_value32_with_flags`; no Engine flag).
+`gpu-sim` `add_graph_cooperative_kernel` is graph cooperative `cudaGraphAddKernelNode` (identity with `graph_add_cooperative_kernel`; no Engine flag).
+`gpu-sim` `add_graph_host_func` is graph unnamed `cudaGraphAddHostNode` (identity with `graph_add_host_func`; no Engine flag).
+`gpu-sim` `set_graph_memcpy_node_params_1d` is graph `cudaGraphMemcpyNodeSetParams1D` (identity with `graph_memcpy_set_params_1d`; no Engine flag).
+`gpu-sim` `set_graph_exec_memcpy_node_params_1d` is graph `cudaGraphExecMemcpyNodeSetParams1D` (identity with `graph_exec_memcpy_set_params_1d`; no Engine flag).
+`gpu-sim` `graph_create` is `cuGraphCreate` (identity with `create_graph`; no Engine flag).
+`gpu-sim` `graph_create_with_flags` is `cuGraphCreate` flags (identity with `create_graph_with_flags`; no Engine flag).
+`gpu-sim` `create_user_object` is `cuUserObjectCreate` (identity with `user_object_create`; no Engine flag).
+`gpu-sim` `retain_user_object` is `cuUserObjectRetain` (identity with `user_object_retain`; no Engine flag).
+`gpu-sim` `release_user_object` is `cuUserObjectRelease` (identity with `user_object_release`; no Engine flag).
+`gpu-sim` `retain_graph_user_object` is `cuGraphRetainUserObject` (identity with `graph_retain_user_object`; no Engine flag).
+`gpu-sim` `release_graph_user_object` is `cuGraphReleaseUserObject` (identity with `graph_release_user_object`; no Engine flag).
+`gpu-sim` `get_graph_alloc_node_params` is `cuGraphMemAllocNodeGetParams` (identity with `graph_alloc_get_params`; no Engine flag).
+`gpu-sim` `get_graph_exec_alloc_node_params` is `cuGraphExecMemAllocNodeGetParams` (identity with `graph_exec_alloc_get_params`; no Engine flag).
+`gpu-sim` `get_graph_free_node_params` is `cuGraphMemFreeNodeGetParams` (identity with `graph_free_get_params`; no Engine flag).
+`gpu-sim` `get_graph_exec_free_node_params` is `cuGraphExecMemFreeNodeGetParams` (identity with `graph_exec_free_get_params`; no Engine flag).
+`gpu-sim` `set_graph_free_node_params` is `cuGraphMemFreeNodeSetParams` (identity with `graph_free_set_params`; no Engine flag).
+`gpu-sim` `set_graph_exec_free_node_params` is `cuGraphExecMemFreeNodeSetParams` (identity with `graph_exec_free_set_params`; no Engine flag).
+`gpu-sim` `set_graph_conditional_params` is `cuGraphNodeSetParams` for a set-conditional node (identity with `graph_set_conditional_params`; no Engine flag).
+`gpu-sim` `set_graph_exec_conditional_params` is `cuGraphExecNodeSetParams` for a set-conditional node (identity with `graph_exec_set_conditional_params`; no Engine flag).
+`gpu-sim` `create_graph_conditional_handle` is `cuGraphConditionalHandleCreate` (identity with `graph_conditional_create`; no Engine flag).
+`gpu-sim` `create_graph_conditional_handle_with_flags` is `cuGraphConditionalHandleCreate` flags (identity with `graph_conditional_create_with_flags`; no Engine flag).
+`gpu-sim` `create_graph_conditional_handle_with_ctx` is `cuGraphConditionalHandleCreate` with a ctx argument (identity with `graph_conditional_create_with_ctx`; no Engine flag).
+`gpu-sim` `stream_begin_capture` is `cuStreamBeginCapture` (identity with `begin_capture`; no Engine flag).
+`gpu-sim` `stream_begin_capture_with_mode` is `cuStreamBeginCapture` with mode (identity with `begin_capture_with_mode`; no Engine flag).
+`gpu-sim` `stream_begin_capture_to_graph` is `cuStreamBeginCaptureToGraph` (identity with `begin_capture_to_graph`; no Engine flag).
+`gpu-sim` `stream_begin_capture_to_graph_with_mode` is `cuStreamBeginCaptureToGraph` with mode (identity with `begin_capture_to_graph_with_mode`; no Engine flag).
+`gpu-sim` `stream_begin_recapture_to_graph` is `cuStreamBeginRecaptureToGraph` (identity with `begin_recapture_to_graph`; no Engine flag).
+`gpu-sim` `stream_begin_recapture_to_graph_with_mode` is `cuStreamBeginRecaptureToGraph` with mode (identity with `begin_recapture_to_graph_with_mode`; no Engine flag).
+`gpu-sim` `stream_begin_recapture_to_graph_with_callback` is `cuStreamBeginRecaptureToGraph` with callback (identity with `begin_recapture_to_graph_with_callback`; no Engine flag).
+`gpu-sim` `stream_end_capture` is `cuStreamEndCapture` (identity with `end_capture`; no Engine flag).
+`gpu-sim` `update_stream_capture_dependencies` is `cuStreamUpdateCaptureDependencies` (identity with `stream_update_capture_dependencies`; no Engine flag).
+`gpu-sim` `is_stream_capturing` is `cuStreamIsCapturing` (identity with `stream_is_capturing`; no Engine flag).
+`gpu-sim` `get_stream_capture_info` is `cuStreamGetCaptureInfo` (identity with `stream_capture_info`; no Engine flag).
+`gpu-sim` `exchange_thread_stream_capture_mode` is `cuThreadExchangeStreamCaptureMode` (identity with `thread_exchange_stream_capture_mode`; no Engine flag).
+`gpu-sim` `get_stream_capture_mode` is the thread-default `cudaStreamCaptureMode` query (identity with `stream_capture_mode`; no Engine flag).
+`gpu-sim` `event_flags` is `cuEventGetFlags` (identity with `event_get_flags`; no Engine flag).
+`gpu-sim` `ctx_enable_peer_access` is `cuCtxEnablePeerAccess` (identity with `enable_peer`; no Engine flag).
+`gpu-sim` `ctx_enable_peer_access_with_flags` is `cuCtxEnablePeerAccess` with flags (identity with `enable_peer_with_flags`; no Engine flag).
+`gpu-sim` `ctx_disable_peer_access` is `cuCtxDisablePeerAccess` (identity with `disable_peer`; no Engine flag).
+`gpu-sim` `can_device_access_peer` is `cuDeviceCanAccessPeer` (identity with `device_can_access_peer`; no Engine flag).
+`gpu-sim` `device_p2p_attribute` is `cuDeviceGetP2PAttribute` (identity with `device_get_p2p_attribute`; no Engine flag).
+`gpu-sim` `device_nvscisync_attributes` is `cuDeviceGetNvSciSyncAttributes` (identity with `device_get_nvscisync_attributes`; no Engine flag).
+`gpu-sim` `device_flush_gpu_direct_rdma_writes` is `cuFlushGPUDirectRDMAWrites` (identity with `flush_gpu_direct_rdma_writes`; no Engine flag).
+`gpu-sim` `mem_alloc_pitch` is `cudaMallocPitch` (identity with `malloc_pitch`; no Engine flag).
+`gpu-sim` `mem_alloc_3d` is `cudaMalloc3D` (identity with `malloc_3d`; no Engine flag).
+`gpu-sim` `launch_cooperative_kernel` is `cuLaunchCooperativeKernel` (identity with `cooperative_kernel`; no Engine flag).
+`gpu-sim` `launch_cooperative_kernel_bufs` is `cuLaunchCooperativeKernel` spans (identity with `cooperative_kernel_bufs`; no Engine flag).
+`gpu-sim` `launch_cooperative_kernel_multi_device` is `cuLaunchCooperativeKernelMultiDevice` (identity with `cooperative_kernel_multi_device`; no Engine flag).
+`gpu-sim` `mem_set` is `cudaMemsetAsync` (identity with `memset`; no Engine flag).
+`gpu-sim` `mem_set_buf` is `cudaMemsetAsync` spans (identity with `memset_buf`; no Engine flag).
+`gpu-sim` `mem_set_op` is `cudaMemsetAsync` / `cudaMemset2DAsync` (identity with `memset_op`; no Engine flag).
+`gpu-sim` `mem_set_sync` is `cudaMemset` (identity with `memset_sync`; no Engine flag).
+`gpu-sim` `mem_set_op_sync` is `cudaMemset` / `cudaMemset2D` / `cudaMemset3D` (identity with `memset_op_sync`; no Engine flag).
+`gpu-sim` `mem_set_2d_async` is `cudaMemset2DAsync` (identity with `memset_2d_async`; no Engine flag).
+`gpu-sim` `mem_set_2d` is `cudaMemset2D` (identity with `memset_2d`; no Engine flag).
+`gpu-sim` `mem_set_3d_async` is `cudaMemset3DAsync` (identity with `memset_3d_async`; no Engine flag).
+`gpu-sim` `mem_set_3d` is `cudaMemset3D` (identity with `memset_3d`; no Engine flag).
+`gpu-sim` `stream_write_value64` is `cuStreamWriteValue64` (identity with `write_value64`; no Engine flag).
+`gpu-sim` `stream_write_value32` is `cuStreamWriteValue32` (identity with `write_value32`; no Engine flag).
+`gpu-sim` `stream_write_value64_with_flags` is `cuStreamWriteValue64` flags (identity with `write_value64_with_flags`; no Engine flag).
+`gpu-sim` `stream_write_value32_with_flags` is `cuStreamWriteValue32` flags (identity with `write_value32_with_flags`; no Engine flag).
+`gpu-sim` `stream_wait_value64` is `cuStreamWaitValue64` (identity with `wait_value64`; no Engine flag).
+`gpu-sim` `stream_wait_value32` is `cuStreamWaitValue32` (identity with `wait_value32`; no Engine flag).
+`gpu-sim` `stream_wait_value64_with_flags` is `cuStreamWaitValue64` flags (identity with `wait_value64_with_flags`; no Engine flag).
+`gpu-sim` `stream_wait_value32_with_flags` is `cuStreamWaitValue32` flags (identity with `wait_value32_with_flags`; no Engine flag).
+`gpu-sim` `stream_batch_mem_op` is `cuStreamBatchMemOp` (identity with `batch_mem_op`; no Engine flag).
+`gpu-sim` `stream_batch_mem_op_with_flags` is `cuStreamBatchMemOp` flags (identity with `batch_mem_op_with_flags`; no Engine flag).
+`gpu-sim` `launch_kernel` is `cuLaunchKernel` (identity with `kernel`; no Engine flag).
+`gpu-sim` `launch_kernel_bufs` is `cuLaunchKernel` spans (identity with `kernel_bufs`; no Engine flag).
+`gpu-sim` `launch_kernel_ex` is `cuLaunchKernelEx` (identity with `kernel_with`; no Engine flag).
+`gpu-sim` `launch_kernel_ex_bufs` is `cuLaunchKernelEx` spans (identity with `kernel_bufs_with`; no Engine flag).
+`gpu-sim` `func_set_shared_mem_config` is `cuFuncSetSharedMemConfig` (identity with `set_func_shared_mem_config`; no Engine flag).
+
+`gpu-sim` `func_get_shared_mem_config` is `cuFuncGetSharedMemConfig` (identity with `get_func_shared_mem_config`; no Engine flag).
+
+`gpu-sim` `func_set_cache_config` is `cuFuncSetCacheConfig` (identity with `set_func_cache_config`; no Engine flag).
+
+`gpu-sim` `func_set_carveout` is `cuFuncSetAttribute` carveout (identity with `set_func_carveout`; no Engine flag).
+
+`gpu-sim` `func_get_carveout` is `cuFuncGetAttribute` carveout (identity with `get_func_carveout`; no Engine flag).
+
+`gpu-sim` `func_set_cluster_policy` is `cuFuncSetAttribute` cluster policy (identity with `set_func_cluster_policy`; no Engine flag).
+
+`gpu-sim` `func_get_cluster_policy` is `cuFuncGetAttribute` cluster policy (identity with `get_func_cluster_policy`; no Engine flag).
+
+`gpu-sim` `func_set_cluster_dim_must_be_set` is `cuFuncSetAttribute` cluster dim must be set (identity with `set_cluster_dim_must_be_set`; no Engine flag).
+
+`gpu-sim` `func_get_cluster_dim_must_be_set` is `cuFuncGetAttribute` cluster dim must be set (identity with `cluster_dim_must_be_set`; no Engine flag).
+
+`gpu-sim` `func_set_required_cluster_width` is `cuFuncSetAttribute` required cluster width (identity with `set_required_cluster_width`; no Engine flag).
+
+`gpu-sim` `func_get_required_cluster_width` is `cuFuncGetAttribute` required cluster width (identity with `required_cluster_width`; no Engine flag).
+
+`gpu-sim` `func_set_required_cluster_height` is `cuFuncSetAttribute` required cluster height (identity with `set_required_cluster_height`; no Engine flag).
+
+`gpu-sim` `func_get_required_cluster_height` is `cuFuncGetAttribute` required cluster height (identity with `required_cluster_height`; no Engine flag).
+
+`gpu-sim` `func_set_required_cluster_depth` is `cuFuncSetAttribute` required cluster depth (identity with `set_required_cluster_depth`; no Engine flag).
+
+`gpu-sim` `func_get_required_cluster_depth` is `cuFuncGetAttribute` required cluster depth (identity with `required_cluster_depth`; no Engine flag).
+
+`gpu-sim` `func_set_non_portable_cluster_size_allowed` is `cuFuncSetAttribute` non-portable cluster size (identity with `set_non_portable_cluster_size_allowed`; no Engine flag).
+
+`gpu-sim` `func_get_non_portable_cluster_size_allowed` is `cuFuncGetAttribute` non-portable cluster size (identity with `non_portable_cluster_size_allowed`; no Engine flag).
+
+`gpu-sim` `func_set_max_dynamic_shared_memory` is `cuFuncSetAttribute` max dynamic shared memory (identity with `set_max_dynamic_shared_memory`; no Engine flag).
+
+`gpu-sim` `func_get_max_dynamic_shared_memory` is `cuFuncGetAttribute` max dynamic shared memory (identity with `max_dynamic_shared_memory`; no Engine flag).
+
+`gpu-sim` `event_create_disable_timing` is `cuEventCreateWithFlags` disable timing (identity with `create_event_disable_timing`; no Engine flag).
+
+`gpu-sim` `event_create_interprocess` is `cuEventCreateWithFlags` interprocess (identity with `create_event_interprocess`; no Engine flag).
+
+`gpu-sim` `event_create_blocking_sync` is `cuEventCreateWithFlags` blocking sync (identity with `create_event_blocking_sync`; no Engine flag).
+
+`gpu-sim` `event_record_external` is `cuEventRecordWithFlags` external (identity with `record_event_external`; no Engine flag).
+
+`gpu-sim` `stream_wait_event_external` is `cuStreamWaitEvent` external (identity with `wait_event_external`; no Engine flag).
+`gpu-sim` `stream_set_mem_sync_domain` is `cuStreamSetAttribute` mem sync domain (identity with `set_stream_mem_sync_domain`; no Engine flag).
+`gpu-sim` `stream_set_mem_sync_domain_map` is `cuStreamSetAttribute` mem sync domain map (identity with `set_stream_mem_sync_domain_map`; no Engine flag).
+`gpu-sim` `stream_get_mem_sync_domain` is `cuStreamGetAttribute` mem sync domain (identity with `stream_mem_sync_domain`; no Engine flag).
+`gpu-sim` `stream_get_mem_sync_domain_map` is `cuStreamGetAttribute` mem sync domain map (identity with `stream_mem_sync_domain_map`; no Engine flag).
+`gpu-sim` `stream_set_sync_policy` is `cuStreamSetAttribute` sync policy (identity with `set_stream_sync_policy`; no Engine flag).
+`gpu-sim` `stream_get_sync_policy` is `cuStreamGetAttribute` sync policy (identity with `stream_sync_policy`; no Engine flag).
+`gpu-sim` `stream_set_nvlink_util_centric` is `cuStreamSetAttribute` nvlink util centric (identity with `set_stream_nvlink_util_centric`; no Engine flag).
+`gpu-sim` `stream_get_nvlink_util_centric` is `cuStreamGetAttribute` nvlink util centric (identity with `stream_nvlink_util_centric`; no Engine flag).
+`gpu-sim` `stream_set_access_policy` is `cuStreamSetAttribute` access policy (identity with `set_stream_access_policy`; no Engine flag).
+`gpu-sim` `stream_get_access_policy` is `cuStreamGetAttribute` access policy (identity with `stream_access_policy`; no Engine flag).
+`gpu-sim` `stream_set_priority` is `cuStreamSetAttribute` priority (identity with `set_stream_priority`; no Engine flag).
+`gpu-sim` `stream_set_blocking` is `cuStreamCreate` blocking (identity with `set_stream_blocking`; no Engine flag).
+`gpu-sim` `get_func_attributes` is `cuFuncGetAttributes` (identity with `func_get_attributes`; no Engine flag).
+`gpu-sim` `get_device_name` is `cuDeviceGetName` (identity with `device_get_name`; no Engine flag).
+`gpu-sim` `get_device_count` is `cuDeviceGetCount` (identity with `device_count`; no Engine flag).
+`gpu-sim` `device_get_default_mempool` is `cuDeviceGetDefaultMemPool` (identity with `default_pool`; no Engine flag).
+`gpu-sim` `device_get_mempool` is `cuDeviceGetMemPool` (identity with `device_mempool`; no Engine flag).
+`gpu-sim` `device_set_mempool` is `cuDeviceSetMemPool` (identity with `set_device_mempool`; no Engine flag).
+`gpu-sim` `mem_pool_create` is `cuMemPoolCreate` (identity with `create_pool`; no Engine flag).
+`gpu-sim` `mem_pool_create_shareable` is `cuMemPoolCreate` POSIX (identity with `create_shareable_pool`; no Engine flag).
+`gpu-sim` `mem_pool_create_with_props` is `cuMemPoolCreate` with props (identity with `create_pool_with_props`; no Engine flag).
+`gpu-sim` `mem_pool_destroy` is `cuMemPoolDestroy` (identity with `destroy_pool`; no Engine flag).
+`gpu-sim` `mem_alloc_from_pool` is `cuMemAllocFromPoolAsync` (identity with `alloc_from_pool`; no Engine flag).
+`gpu-sim` `mem_pool_export` is `cuMemPoolExportToShareableHandle` (identity with `pool_export`; no Engine flag).
+`gpu-sim` `mem_pool_import` is `cuMemPoolImportFromShareableHandle` (identity with `pool_import`; no Engine flag).
+`gpu-sim` `mem_pool_export_with_type` is `cuMemPoolExportToShareableHandle` type (identity with `pool_export_with_type`; no Engine flag).
+`gpu-sim` `mem_pool_import_with_type` is `cuMemPoolImportFromShareableHandle` type (identity with `pool_import_with_type`; no Engine flag).
+`gpu-sim` `mem_pool_export_ptr` is `cuMemPoolExportPointer` (identity with `pool_export_ptr`; no Engine flag).
+`gpu-sim` `mem_pool_import_ptr` is `cuMemPoolImportPointer` (identity with `pool_import_ptr`; no Engine flag).
+`gpu-sim` `mem_pool_get_access` is `cuMemPoolGetAccess` (identity with `pool_get_access`; no Engine flag).
+`gpu-sim` `mem_pool_set_access` is `cuMemPoolSetAccess` (identity with `pool_set_access`; no Engine flag).
+`gpu-sim` `mem_pool_set_access_read` is `cuMemPoolSetAccess` ProtRead (identity with `pool_set_access_read`; no Engine flag).
+`gpu-sim` `mem_pool_set_access_with_flags` is `cuMemPoolSetAccess` flags (identity with `pool_set_access_with_flags`; no Engine flag).
+`gpu-sim` `mem_pool_set_access_n` is `cuMemPoolSetAccess` n (identity with `pool_set_access_n`; no Engine flag).
+`gpu-sim` `mem_pool_unset_access` is `cuMemPoolSetAccess` ProtNone (identity with `pool_unset_access`; no Engine flag).
+`gpu-sim` `mem_pool_get_attribute` is `cuMemPoolGetAttribute` (identity with `pool_get_attribute`; no Engine flag).
+`gpu-sim` `mem_pool_set_attribute` is `cuMemPoolSetAttribute` (identity with `pool_set_attribute`; no Engine flag).
+`gpu-sim` `mem_pool_trim_to` is `cuMemPoolTrimTo` (identity with `pool_trim_to`; no Engine flag).
+`gpu-sim` `mem_pool_set_release_threshold` is `cuMemPoolSetAttribute` ReleaseThreshold (identity with `set_pool_release_threshold`; no Engine flag).
+`gpu-sim` `mem_pool_set_max_size` is `cuMemPoolSetAttribute` MaxPoolSize (identity with `set_pool_max_size`; no Engine flag).
+`gpu-sim` `mem_get_allocation_granularity` is `cuMemGetAllocationGranularity` (identity with `va_get_allocation_granularity`; no Engine flag).
+`gpu-sim` `mem_create` is `cuMemCreate` (identity with `va_create`; no Engine flag).
+`gpu-sim` `mem_create_with_prop` is `cuMemCreate` props (identity with `va_create_with_prop`; no Engine flag).
+`gpu-sim` `mem_map_handle` is `cuMemMap` (identity with `va_map_handle`; no Engine flag).
+`gpu-sim` `mem_map_handle_with_flags` is `cuMemMap` flags (identity with `va_map_handle_with_flags`; no Engine flag).
+`gpu-sim` `mem_map_handle_with_size` is `cuMemMap` size (identity with `va_map_handle_with_size`; no Engine flag).
+`gpu-sim` `mem_release_handle` is `cuMemRelease` (identity with `va_release_handle`; no Engine flag).
+`gpu-sim` `mem_retain_handle` is `cuMemRetainAllocationHandle` (identity with `va_retain_handle`; no Engine flag).
+`gpu-sim` `mem_unmap` is `cuMemUnmap` (identity with `va_unmap`; no Engine flag).
+`gpu-sim` `mem_unmap_with_size` is `cuMemUnmap` size (identity with `va_unmap_with_size`; no Engine flag).
+`gpu-sim` `mem_address_free` is `cuMemAddressFree` (identity with `va_free`; no Engine flag).
+`gpu-sim` `mem_address_free_with_size` is `cuMemAddressFree` size (identity with `va_free_with_size`; no Engine flag).
+`gpu-sim` `mem_unmap_range` is `cuMemUnmap` range (identity with `va_unmap_range`; no Engine flag).
+`gpu-sim` `mem_set_access` is `cuMemSetAccess` (identity with `va_set_access`; no Engine flag).
+`gpu-sim` `mem_set_access_write` is `cuMemSetAccess` write (identity with `va_set_access_write`; no Engine flag).
+`gpu-sim` `mem_set_access_with_flags` is `cuMemSetAccess` flags (identity with `va_set_access_with_flags`; no Engine flag).
+`gpu-sim` `mem_set_access_with_size` is `cuMemSetAccess` size (identity with `va_set_access_with_size`; no Engine flag).
+`gpu-sim` `mem_set_access_n` is `cuMemSetAccess` n (identity with `va_set_access_n`; no Engine flag).
+`gpu-sim` `mem_unset_access` is `cuMemSetAccess` ProtNone (identity with `va_unset_access`; no Engine flag).
+`gpu-sim` `mem_get_access` is `cuMemGetAccess` (identity with `va_get_access`; no Engine flag).
+`gpu-sim` `mem_map_range` is `cuMemMap` range (identity with `va_map_range`; no Engine flag).
+`gpu-sim` `mem_get_allocation_properties` is `cuMemGetAllocationPropertiesFromHandle` (identity with `va_get_allocation_properties`; no Engine flag).
+`gpu-sim` `mem_map_multicast` is `cuMemMap` multicast (identity with `va_map_multicast`; no Engine flag).
+`gpu-sim` `mem_map_multicast_with_flags` is `cuMemMap` multicast flags (identity with `va_map_multicast_with_flags`; no Engine flag).
+`gpu-sim` `mem_map_multicast_with_size` is `cuMemMap` multicast size (identity with `va_map_multicast_with_size`; no Engine flag).
+`gpu-sim` `mem_multicast_get_granularity` is `cuMulticastGetGranularity` (identity with `multicast_get_granularity`; no Engine flag).
+`gpu-sim` `mem_multicast_get_granularity_with_prop` is `cuMulticastGetGranularity` prop (identity with `multicast_get_granularity_with_prop`; no Engine flag).
+`gpu-sim` `mem_multicast_create` is `cuMulticastCreate` (identity with `multicast_create`; no Engine flag).
+`gpu-sim` `mem_multicast_create_with_prop` is `cuMulticastCreate` prop (identity with `multicast_create_with_prop`; no Engine flag).
+`gpu-sim` `mem_multicast_add_device` is `cuMulticastAddDevice` (identity with `multicast_add_device`; no Engine flag).
+`gpu-sim` `mem_multicast_bind_mem` is `cuMulticastBindMem` (identity with `multicast_bind_mem`; no Engine flag).
+`gpu-sim` `mem_multicast_bind_mem_with_flags` is `cuMulticastBindMem` flags (identity with `multicast_bind_mem_with_flags`; no Engine flag).
+`gpu-sim` `mem_multicast_bind_mem_with_size` is `cuMulticastBindMem` size (identity with `multicast_bind_mem_with_size`; no Engine flag).
+`gpu-sim` `mem_multicast_bind_addr` is `cuMulticastBindAddr` (identity with `multicast_bind_addr`; no Engine flag).
+`gpu-sim` `mem_multicast_bind_addr_with_flags` is `cuMulticastBindAddr` flags (identity with `multicast_bind_addr_with_flags`; no Engine flag).
+`gpu-sim` `mem_multicast_bind_addr_with_size` is `cuMulticastBindAddr` size (identity with `multicast_bind_addr_with_size`; no Engine flag).
+`gpu-sim` `mem_multicast_unbind` is `cuMulticastUnbind` (identity with `multicast_unbind`; no Engine flag).
+`gpu-sim` `mem_multicast_unbind_with_size` is `cuMulticastUnbind` size (identity with `multicast_unbind_with_size`; no Engine flag).
+`gpu-sim` `mem_multicast_destroy` is `cuMemRelease` multicast (identity with `multicast_destroy`; no Engine flag).
+`gpu-sim` `mem_multicast_store` is NVLS kernel store (identity with `multicast_store`; no Engine flag).
+`gpu-sim` `mem_multicast_binds` is multicast bind count (identity with `multicast_binds`; no Engine flag).
+`gpu-sim` `mem_is_multicast_va` is multicast VA query (identity with `is_multicast_va`; no Engine flag).
+`gpu-sim` `mem_pointer_get_attribute` is `cuPointerGetAttribute` (identity with `pointer_get_attribute`; no Engine flag).
+`gpu-sim` `mem_pointer_get_attribute_n` is `cuPointerGetAttributes` (identity with `pointer_get_attribute_n`; no Engine flag).
+`gpu-sim` `mem_pointer_get_access_flags` is `CU_POINTER_ATTRIBUTE_ACCESS_FLAGS` (identity with `pointer_get_access_flags`; no Engine flag).
+`gpu-sim` `mem_pointer_set_attribute` is `cuPointerSetAttribute` (identity with `pointer_set_attribute`; no Engine flag).
+`gpu-sim` `mem_pointer_get_attributes` is `cudaPointerGetAttributes` (identity with `pointer_get_attributes`; no Engine flag).
+`gpu-sim` `mem_alloc_pitch_with_element_size` is `cuMemAllocPitch` (identity with `malloc_pitch_with_element_size`; no Engine flag).
+`gpu-sim` `mem_device_get_attribute` is `cuDeviceGetAttribute` (identity with `device_get_attribute`; no Engine flag).
+`gpu-sim` `mem_device_get_properties` is `cuDeviceGetProperties` (identity with `device_get_properties`; no Engine flag).
+`gpu-sim` `mem_device_compute_capability` is `cuDeviceComputeCapability` (identity with `device_compute_capability`; no Engine flag).
+`gpu-sim` `mem_device_get_uuid` is `cuDeviceGetUuid` (identity with `device_get_uuid`; no Engine flag).
+`gpu-sim` `mem_device_get_luid` is `cuDeviceGetLuid` (identity with `device_get_luid`; no Engine flag).
+`gpu-sim` `mem_device_get_texture_1d_linear_max_width` is `cuDeviceGetTexture1DLinearMaxWidth` (identity with `device_get_texture_1d_linear_max_width`; no Engine flag).
+`gpu-sim` `mem_device_get_by_uuid` is `cuDeviceGetByUuid` (identity with `device_get_by_uuid`; no Engine flag).
+`gpu-sim` `mem_device_get_pci_bus_id` is `cuDeviceGetPCIBusId` (identity with `device_get_pci_bus_id`; no Engine flag).
+`gpu-sim` `mem_device_get_by_pci_bus_id` is `cudaDeviceGetByPCIBusId` (identity with `device_get_by_pci_bus_id`; no Engine flag).
+`gpu-sim` `mem_device_total_mem` is `cuDeviceTotalMem` (identity with `device_total_mem`; no Engine flag).
+`gpu-sim` `mem_driver_get_version` is `cuDriverGetVersion` (identity with `driver_get_version`; no Engine flag).
+`gpu-sim` `mem_get_proc_address` is `cuGetProcAddress` (identity with `get_proc_address`; no Engine flag).
+`gpu-sim` `mem_get_export_table` is `cuGetExportTable` (identity with `get_export_table`; no Engine flag).
+`gpu-sim` `mem_coredump_get_attribute` is `cuCoredumpGetAttribute` (identity with `coredump_get_attribute`; no Engine flag).
+`gpu-sim` `mem_coredump_set_attribute` is `cuCoredumpSetAttribute` (identity with `coredump_set_attribute`; no Engine flag).
+`gpu-sim` `mem_coredump_get_attribute_global` is `cuCoredumpGetAttributeGlobal` (identity with `coredump_get_attribute_global`; no Engine flag).
+`gpu-sim` `mem_coredump_set_attribute_global` is `cuCoredumpSetAttributeGlobal` (identity with `coredump_set_attribute_global`; no Engine flag).
+`gpu-sim` `mem_checkpoint_process_lock` is `cuCheckpointProcessLock` (identity with `checkpoint_process_lock`; no Engine flag).
+`gpu-sim` `mem_checkpoint_process_checkpoint` is `cuCheckpointProcessCheckpoint` (identity with `checkpoint_process_checkpoint`; no Engine flag).
+`gpu-sim` `mem_checkpoint_process_restore` is `cuCheckpointProcessRestore` (identity with `checkpoint_process_restore`; no Engine flag).
+`gpu-sim` `mem_checkpoint_process_unlock` is `cuCheckpointProcessUnlock` (identity with `checkpoint_process_unlock`; no Engine flag).
+`gpu-sim` `mem_checkpoint_process_get_restore_thread_id` is `cuCheckpointProcessGetRestoreThreadId` (identity with `checkpoint_process_get_restore_thread_id`; no Engine flag).
+`gpu-sim` `mem_checkpoint_process_get_state` is `cuCheckpointProcessGetState` (identity with `checkpoint_process_get_state`; no Engine flag).
+`gpu-sim` `mem_device_register_async_notification` is `cuDeviceRegisterAsyncNotification` (identity with `device_register_async_notification`; no Engine flag).
+`gpu-sim` `mem_device_unregister_async_notification` is `cuDeviceUnregisterAsyncNotification` (identity with `device_unregister_async_notification`; no Engine flag).
+`gpu-sim` `mem_driver_init` is `cuInit` (identity with `driver_init`; no Engine flag).
+`gpu-sim` `mem_profiler_start` is `cuProfilerStart` (identity with `profiler_start`; no Engine flag).
+`gpu-sim` `mem_profiler_stop` is `cuProfilerStop` (identity with `profiler_stop`; no Engine flag).
+`gpu-sim` `mem_profiler_initialize` is `cudaProfilerInitialize` (identity with `profiler_initialize`; no Engine flag).
+`gpu-sim` `mem_module_get_loading_mode` is `cuModuleGetLoadingMode` (identity with `module_get_loading_mode`; no Engine flag).
+`gpu-sim` `mem_module_load` is `cuModuleLoad` (identity with `module_load`; no Engine flag).
+`gpu-sim` `mem_module_load_data` is `cuModuleLoadData` (identity with `module_load_data`; no Engine flag).
+`gpu-sim` `mem_module_load_fat_binary` is `cuModuleLoadFatBinary` (identity with `module_load_fat_binary`; no Engine flag).
+`gpu-sim` `mem_module_load_data_ex` is `cuModuleLoadDataEx` (identity with `module_load_data_ex`; no Engine flag).
+`gpu-sim` `mem_module_get_function_count` is `cuModuleGetFunctionCount` (identity with `module_get_function_count`; no Engine flag).
+`gpu-sim` `mem_module_enumerate_functions` is `cuModuleEnumerateFunctions` (identity with `module_enumerate_functions`; no Engine flag).
+`gpu-sim` `mem_module_unload` is `cuModuleUnload` (identity with `module_unload`; no Engine flag).
+`gpu-sim` `mem_module_get_function` is `cuModuleGetFunction` (identity with `module_get_function`; no Engine flag).
+`gpu-sim` `mem_module_get_global` is `cuModuleGetGlobal` (identity with `module_get_global`; no Engine flag).
+`gpu-sim` `mem_module_get_tex_ref` is `cuModuleGetTexRef` (identity with `module_get_tex_ref`; no Engine flag).
+`gpu-sim` `mem_tex_ref_create` is `cuTexRefCreate` (identity with `tex_ref_create`; no Engine flag).
+`gpu-sim` `mem_tex_ref_destroy` is `cuTexRefDestroy` (identity with `tex_ref_destroy`; no Engine flag).
+`gpu-sim` `mem_tex_ref_set_array` is `cuTexRefSetArray` (identity with `tex_ref_set_array`; no Engine flag).
+`gpu-sim` `mem_tex_ref_set_mipmapped_array` is `cuTexRefSetMipmappedArray` (identity with `tex_ref_set_mipmapped_array`; no Engine flag).
+`gpu-sim` `mem_tex_ref_set_address` is `cuTexRefSetAddress` (identity with `tex_ref_set_address`; no Engine flag).
+`gpu-sim` `mem_tex_ref_set_address_2d` is `cuTexRefSetAddress2D` (identity with `tex_ref_set_address_2d`; no Engine flag).
+`gpu-sim` `mem_tex_ref_set_format` is `cuTexRefSetFormat` (identity with `tex_ref_set_format`; no Engine flag).
+`gpu-sim` `mem_tex_ref_set_address_mode` is `cuTexRefSetAddressMode` (identity with `tex_ref_set_address_mode`; no Engine flag).
+`gpu-sim` `mem_tex_ref_set_filter_mode` is `cuTexRefSetFilterMode` (identity with `tex_ref_set_filter_mode`; no Engine flag).
+`gpu-sim` `mem_tex_ref_set_mipmap_filter_mode` is `cuTexRefSetMipmapFilterMode` (identity with `tex_ref_set_mipmap_filter_mode`; no Engine flag).
+`gpu-sim` `mem_tex_ref_set_mipmap_level_bias` is `cuTexRefSetMipmapLevelBias` (identity with `tex_ref_set_mipmap_level_bias`; no Engine flag).
+`gpu-sim` `mem_tex_ref_set_mipmap_level_clamp` is `cuTexRefSetMipmapLevelClamp` (identity with `tex_ref_set_mipmap_level_clamp`; no Engine flag).
+`gpu-sim` `mem_tex_ref_set_max_anisotropy` is `cuTexRefSetMaxAnisotropy` (identity with `tex_ref_set_max_anisotropy`; no Engine flag).
+`gpu-sim` `mem_tex_ref_set_border_color` is `cuTexRefSetBorderColor` (identity with `tex_ref_set_border_color`; no Engine flag).
+`gpu-sim` `mem_tex_ref_set_flags` is `cuTexRefSetFlags` (identity with `tex_ref_set_flags`; no Engine flag).
+`gpu-sim` `mem_tex_ref_get_array` is `cuTexRefGetArray` (identity with `tex_ref_get_array`; no Engine flag).
+`gpu-sim` `mem_tex_ref_get_mipmapped_array` is `cuTexRefGetMipmappedArray` (identity with `tex_ref_get_mipmapped_array`; no Engine flag).
+`gpu-sim` `mem_tex_ref_get_address` is `cuTexRefGetAddress` (identity with `tex_ref_get_address`; no Engine flag).
+`gpu-sim` `mem_tex_ref_get_address_mode` is `cuTexRefGetAddressMode` (identity with `tex_ref_get_address_mode`; no Engine flag).
+`gpu-sim` `mem_tex_ref_get_filter_mode` is `cuTexRefGetFilterMode` (identity with `tex_ref_get_filter_mode`; no Engine flag).
+`gpu-sim` `mem_tex_ref_get_format` is `cuTexRefGetFormat` (identity with `tex_ref_get_format`; no Engine flag).
+`gpu-sim` `mem_tex_ref_get_mipmap_filter_mode` is `cuTexRefGetMipmapFilterMode` (identity with `tex_ref_get_mipmap_filter_mode`; no Engine flag).
+`gpu-sim` `mem_tex_ref_get_mipmap_level_bias` is `cuTexRefGetMipmapLevelBias` (identity with `tex_ref_get_mipmap_level_bias`; no Engine flag).
+`gpu-sim` `mem_tex_ref_get_mipmap_level_clamp` is `cuTexRefGetMipmapLevelClamp` (identity with `tex_ref_get_mipmap_level_clamp`; no Engine flag).
+`gpu-sim` `mem_tex_ref_get_max_anisotropy` is `cuTexRefGetMaxAnisotropy` (identity with `tex_ref_get_max_anisotropy`; no Engine flag).
+`gpu-sim` `mem_tex_ref_get_border_color` is `cuTexRefGetBorderColor` (identity with `tex_ref_get_border_color`; no Engine flag).
+`gpu-sim` `mem_tex_ref_get_flags` is `cuTexRefGetFlags` (identity with `tex_ref_get_flags`; no Engine flag).
+`gpu-sim` `mem_module_get_surf_ref` is `cuModuleGetSurfRef` (identity with `module_get_surf_ref`; no Engine flag).
+`gpu-sim` `mem_surf_ref_set_array` is `cuSurfRefSetArray` (identity with `surf_ref_set_array`; no Engine flag).
+`gpu-sim` `mem_surf_ref_get_array` is `cuSurfRefGetArray` (identity with `surf_ref_get_array`; no Engine flag).
+`gpu-sim` `mem_memcpy_dto_a` is `cuMemcpyDtoA` (identity with `memcpy_dto_a`; no Engine flag).
+`gpu-sim` `mem_memcpy_ato_d` is `cuMemcpyAtoD` (identity with `memcpy_ato_d`; no Engine flag).
+`gpu-sim` `mem_memcpy_hto_a` is `cuMemcpyHtoA` (identity with `memcpy_hto_a`; no Engine flag).
+`gpu-sim` `mem_memcpy_ato_h` is `cuMemcpyAtoH` (identity with `memcpy_ato_h`; no Engine flag).
+`gpu-sim` `mem_memcpy_ato_a` is `cuMemcpyAtoA` (identity with `memcpy_ato_a`; no Engine flag).
+`gpu-sim` `mem_memcpy_dto_a_async` is `cuMemcpyDtoAAsync` (identity with `memcpy_dto_a_async`; no Engine flag).
+`gpu-sim` `mem_memcpy_ato_d_async` is `cuMemcpyAtoDAsync` (identity with `memcpy_ato_d_async`; no Engine flag).
+`gpu-sim` `mem_memcpy_hto_a_async` is `cuMemcpyHtoAAsync` (identity with `memcpy_hto_a_async`; no Engine flag).
+`gpu-sim` `mem_memcpy_ato_h_async` is `cuMemcpyAtoHAsync` (identity with `memcpy_ato_h_async`; no Engine flag).
+`gpu-sim` `mem_memcpy_ato_a_async` is `cuMemcpyAtoAAsync` (identity with `memcpy_ato_a_async`; no Engine flag).
+`gpu-sim` `mem_memcpy_2d_to_array` is `cuMemcpy2DToArray` (identity with `memcpy_2d_to_array`; no Engine flag).
+`gpu-sim` `mem_memcpy_2d_from_array` is `cuMemcpy2DFromArray` (identity with `memcpy_2d_from_array`; no Engine flag).
+`gpu-sim` `mem_memcpy_2d_array_to_array` is `cuMemcpy2DArrayToArray` (identity with `memcpy_2d_array_to_array`; no Engine flag).
+`gpu-sim` `mem_memcpy_2d_to_array_async` is `cuMemcpy2DToArrayAsync` (identity with `memcpy_2d_to_array_async`; no Engine flag).
+`gpu-sim` `mem_memcpy_2d_from_array_async` is `cuMemcpy2DFromArrayAsync` (identity with `memcpy_2d_from_array_async`; no Engine flag).
+`gpu-sim` `mem_memcpy_2d_array_to_array_async` is `cuMemcpy2DArrayToArrayAsync` (identity with `memcpy_2d_array_to_array_async`; no Engine flag).
+`gpu-sim` `mem_library_load_data` is `cuLibraryLoadData` (identity with `library_load_data`; no Engine flag).
+`gpu-sim` `mem_library_load_from_file` is `cuLibraryLoadFromFile` (identity with `library_load_from_file`; no Engine flag).
+`gpu-sim` `mem_library_unload` is `cuLibraryUnload` (identity with `library_unload`; no Engine flag).
+`gpu-sim` `mem_library_get_kernel` is `cuLibraryGetKernel` (identity with `library_get_kernel`; no Engine flag).
+`gpu-sim` `mem_library_get_module` is `cuLibraryGetModule` (identity with `library_get_module`; no Engine flag).
+`gpu-sim` `mem_library_get_global` is `cuLibraryGetGlobal` (identity with `library_get_global`; no Engine flag).
+`gpu-sim` `mem_library_get_managed` is `cuLibraryGetManaged` (identity with `library_get_managed`; no Engine flag).
+`gpu-sim` `mem_library_get_unified_function` is `cuLibraryGetUnifiedFunction` (identity with `library_get_unified_function`; no Engine flag).
+`gpu-sim` `mem_library_get_kernel_count` is `cuLibraryGetKernelCount` (identity with `library_get_kernel_count`; no Engine flag).
+`gpu-sim` `mem_library_enumerate_kernels` is `cuLibraryEnumerateKernels` (identity with `library_enumerate_kernels`; no Engine flag).
+`gpu-sim` `mem_kernel_get_library` is `cuKernelGetLibrary` (identity with `kernel_get_library`; no Engine flag).
+`gpu-sim` `mem_kernel_get_function` is `cuKernelGetFunction` (identity with `kernel_get_function`; no Engine flag).
+`gpu-sim` `mem_kernel_get_param_info` is `cuKernelGetParamInfo` (identity with `kernel_get_param_info`; no Engine flag).
+`gpu-sim` `mem_kernel_get_param_count` is `cuKernelGetParamCount` (identity with `kernel_get_param_count`; no Engine flag).
+`gpu-sim` `mem_kernel_get_attribute` is `cuKernelGetAttribute` (identity with `kernel_get_attribute`; no Engine flag).
+`gpu-sim` `mem_kernel_set_attribute` is `cuKernelSetAttribute` (identity with `kernel_set_attribute`; no Engine flag).
+`gpu-sim` `mem_kernel_set_cache_config` is `cuKernelSetCacheConfig` (identity with `kernel_set_cache_config`; no Engine flag).
+`gpu-sim` `mem_link_create` is `cuLinkCreate` (identity with `link_create`; no Engine flag).
+`gpu-sim` `mem_link_add_data` is `cuLinkAddData` (identity with `link_add_data`; no Engine flag).
+`gpu-sim` `mem_link_complete` is `cuLinkComplete` (identity with `link_complete`; no Engine flag).
+`gpu-sim` `mem_link_destroy` is `cuLinkDestroy` (identity with `link_destroy`; no Engine flag).
+`gpu-sim` `mem_link_add_file` is `cuLinkAddFile` (identity with `link_add_file`; no Engine flag).
+`gpu-sim` `mem_runtime_get_version` is `cudaRuntimeGetVersion` (identity with `runtime_get_version`; no Engine flag).
+`gpu-sim` `mem_device_get` is `cuDeviceGet` (identity with `device_get`; no Engine flag).
+`gpu-sim` `mem_func_get_param_count` is `cuFuncGetParamCount` (identity with `func_get_param_count`; no Engine flag).
+`gpu-sim` `mem_func_get_cache_config` is `cuFuncGetCacheConfig` (identity with `func_get_cache_config`; no Engine flag).
+`gpu-sim` `mem_func_is_loaded` is `cuFuncIsLoaded` (identity with `func_is_loaded`; no Engine flag).
+`gpu-sim` `mem_func_load` is `cuFuncLoad` (identity with `func_load`; no Engine flag).
+`gpu-sim` `mem_func_get_module` is `cuFuncGetModule` (identity with `func_get_module`; no Engine flag).
+`gpu-sim` `mem_func_get_name` is `cuFuncGetName` (identity with `func_get_name`; no Engine flag).
+`gpu-sim` `mem_func_get_param_info` is `cuFuncGetParamInfo` (identity with `func_get_param_info`; no Engine flag).
+`gpu-sim` `mem_func_get_attribute` is `cudaFuncGetAttribute` (identity with `func_get_attribute`; no Engine flag).
+`gpu-sim` `mem_func_set_attribute` is `cudaFuncSetAttribute` (identity with `func_set_attribute`; no Engine flag).
+`gpu-sim` `mem_device_get_stream_priority_range` is `cudaDeviceGetStreamPriorityRange` (identity with `device_get_stream_priority_range`; no Engine flag).
+`gpu-sim` `mem_event_get_id` is `cuEventGetId` (identity with `event_get_id`; no Engine flag).
+`gpu-sim` `mem_green_ctx_get_id` is `cuGreenCtxGetId` (identity with `green_ctx_get_id`; no Engine flag).
+`gpu-sim` `mem_green_ctx_get_device` is `cudaExecutionCtxGetDevice` (identity with `green_ctx_get_device`; no Engine flag).
+`gpu-sim` `mem_stream_get_green_ctx` is `cuStreamGetGreenCtx` (identity with `stream_get_green_ctx`; no Engine flag).
+`gpu-sim` `mem_green_ctx_create` is `cuGreenCtxCreate` (identity with `green_ctx_create`; no Engine flag).
+`gpu-sim` `mem_green_ctx_destroy` is `cuGreenCtxDestroy` (identity with `green_ctx_destroy`; no Engine flag).
+`gpu-sim` `mem_green_ctx_stream_create` is `cuGreenCtxStreamCreate` (identity with `green_ctx_stream_create`; no Engine flag).
+`gpu-sim` `mem_green_ctx_synchronize` is `cudaExecutionCtxSynchronize` (identity with `green_ctx_synchronize`; no Engine flag).
+`gpu-sim` `mem_graph_node_get_local_id` is `cuGraphNodeGetLocalId` (identity with `graph_node_get_local_id`; no Engine flag).
+`gpu-sim` `mem_graph_node_get_tools_id` is `cuGraphNodeGetToolsId` (identity with `graph_node_get_tools_id`; no Engine flag).
+`gpu-sim` `mem_graph_node_get_containing_graph` is `cuGraphNodeGetContainingGraph` (identity with `graph_node_get_containing_graph`; no Engine flag).
+`gpu-sim` `mem_pool_get_id` is `cuMemPoolGetId` (identity with `pool_get_id`; no Engine flag).
+`gpu-sim` `mem_memcpy_htod` is `cuMemcpyHtoD` (identity with `memcpy_htod`; no Engine flag).
+`gpu-sim` `mem_memcpy_dtoh` is `cuMemcpyDtoH` (identity with `memcpy_dtoh`; no Engine flag).
+`gpu-sim` `mem_prefetch_batch_async` is `cudaMemPrefetchBatchAsync` (identity with `prefetch_batch_async`; no Engine flag).
+`gpu-sim` `mem_discard_batch_async` is `cudaMemDiscardBatchAsync` (identity with `discard_batch_async`; no Engine flag).
+`gpu-sim` `mem_discard_and_prefetch_batch_async` is `cudaMemDiscardAndPrefetchBatchAsync` (identity with `discard_and_prefetch_batch_async`; no Engine flag).
+`gpu-sim` `mem_tensor_map_encode_tiled` is `cuTensorMapEncodeTiled` (identity with `tensor_map_encode_tiled`; no Engine flag).
+`gpu-sim` `mem_tensor_map_encode_im2col` is `cuTensorMapEncodeIm2col` (identity with `tensor_map_encode_im2col`; no Engine flag).
+`gpu-sim` `mem_tensor_map_encode_im2col_wide` is `cuTensorMapEncodeIm2colWide` (identity with `tensor_map_encode_im2col_wide`; no Engine flag).
+`gpu-sim` `mem_tensor_map_replace_aligned_addr` is `cuTensorMapReplaceAlignedAddr` (identity with `tensor_map_replace_aligned_addr`; no Engine flag).
+`gpu-sim` `mem_array_get_descriptor` is `cuArrayGetDescriptor` (identity with `array_get_descriptor`; no Engine flag).
+`gpu-sim` `mem_array_3d_get_descriptor` is `cuArray3DGetDescriptor` (identity with `array_3d_get_descriptor`; no Engine flag).
+`gpu-sim` `mem_array_get_sparse_properties` is `cuArrayGetSparseProperties` (identity with `array_get_sparse_properties`; no Engine flag).
+`gpu-sim` `mem_array_get_plane` is `cuArrayGetPlane` (identity with `array_get_plane`; no Engine flag).
+`gpu-sim` `mem_array_get_memory_requirements` is `cuArrayGetMemoryRequirements` (identity with `array_get_memory_requirements`; no Engine flag).
+`gpu-sim` `mem_mipmapped_array_get_memory_requirements` is `cuMipmappedArrayGetMemoryRequirements` (identity with `mipmapped_array_get_memory_requirements`; no Engine flag).
+`gpu-sim` `mem_mipmapped_array_get_sparse_properties` is `cuMipmappedArrayGetSparseProperties` (identity with `mipmapped_array_get_sparse_properties`; no Engine flag).
+`gpu-sim` `mem_mipmapped_array_create` is `cuMipmappedArrayCreate` (identity with `mipmapped_array_create`; no Engine flag).
+`gpu-sim` `mem_mipmapped_array_get_level` is `cuMipmappedArrayGetLevel` (identity with `mipmapped_array_get_level`; no Engine flag).
+`gpu-sim` `mem_mipmapped_array_destroy` is `cuMipmappedArrayDestroy` (identity with `mipmapped_array_destroy`; no Engine flag).
+`gpu-sim` `mem_import_external_memory` is `cuImportExternalMemory` (identity with `import_external_memory`; no Engine flag).
+`gpu-sim` `mem_destroy_external_memory` is `cuDestroyExternalMemory` (identity with `destroy_external_memory`; no Engine flag).
+`gpu-sim` `mem_external_memory_get_mapped_buffer` is `cuExternalMemoryGetMappedBuffer` (identity with `external_memory_get_mapped_buffer`; no Engine flag).
+`gpu-sim` `mem_external_memory_get_mapped_mipmapped_array` is `cuExternalMemoryGetMappedMipmappedArray` (identity with `external_memory_get_mapped_mipmapped_array`; no Engine flag).
+`gpu-sim` `mem_import_external_semaphore` is `cuImportExternalSemaphore` (identity with `import_external_semaphore`; no Engine flag).
+`gpu-sim` `mem_destroy_external_semaphore` is `cuDestroyExternalSemaphore` (identity with `destroy_external_semaphore`; no Engine flag).
+`gpu-sim` `mem_signal_external_semaphores_async` is `cuSignalExternalSemaphoresAsync` (identity with `signal_external_semaphores_async`; no Engine flag).
+`gpu-sim` `mem_wait_external_semaphores_async` is `cuWaitExternalSemaphoresAsync` (identity with `wait_external_semaphores_async`; no Engine flag).
+`gpu-sim` `func_is_loaded` is `cuFuncIsLoaded` (`false` until a compiled
+kernel exists; no Engine flag).
+`gpu-sim` `func_load` is `cuFuncLoad` (Invalid; no compiled kernel; no
+Engine flag).
+`gpu-sim` `func_get_module` is `cuFuncGetModule` (Invalid until a compiled
+kernel exists; no Engine flag).
+`gpu-sim` `driver_init` is `cuInit` (flags 0; already initialized; no
+Engine flag).
+`gpu-sim` `profiler_start` is `cuProfilerStart` (1 ns no-op; capture
+refused; no Engine flag).
+`gpu-sim` `profiler_stop` is `cuProfilerStop` (1 ns no-op; capture
+refused; no Engine flag).
+`gpu-sim` `profiler_initialize` is `cudaProfilerInitialize` (Invalid;
+CUPTI config is not modeled; no Engine flag).
+`gpu-sim` `module_get_loading_mode` is `cuModuleGetLoadingMode` (always
+Eager; no Engine flag).
+`gpu-sim` `module_load` is `cuModuleLoad` (Invalid; no cubin path; no
+Engine flag).
+`gpu-sim` `module_load_data` is `cuModuleLoadData` (Invalid; no cubin
+image; no Engine flag).
+`gpu-sim` `module_load_fat_binary` is `cuModuleLoadFatBinary` (Invalid;
+no fatbin image; no Engine flag).
+`gpu-sim` `module_load_data_ex` is `cuModuleLoadDataEx` (Invalid; no
+JIT options; no Engine flag).
+`gpu-sim` `module_get_function_count` is `cuModuleGetFunctionCount`
+(Invalid; no `CUmodule` function list; no Engine flag).
+`gpu-sim` `module_enumerate_functions` is `cuModuleEnumerateFunctions`
+(Invalid; no `CUmodule` function list; no Engine flag).
+`gpu-sim` `module_unload` is `cuModuleUnload` (Invalid; no `CUmodule`
+handle; no Engine flag).
+`gpu-sim` `module_get_function` is `cuModuleGetFunction` (Invalid; no
+`CUmodule` function; no Engine flag).
+`gpu-sim` `module_get_global` is `cuModuleGetGlobal` (Invalid; no
+`CUmodule` device symbol; no Engine flag).
+`gpu-sim` `module_get_tex_ref` is `cuModuleGetTexRef` (Invalid; no
+`CUmodule` texref; no Engine flag).
+`gpu-sim` `module_get_surf_ref` is `cuModuleGetSurfRef` (Invalid; no
+`CUmodule` surfref; no Engine flag).
+`gpu-sim` `library_load_data` is `cuLibraryLoadData` (Invalid; no cubin /
+`CUlibrary`; no Engine flag).
+`gpu-sim` `library_load_from_file` is `cuLibraryLoadFromFile` (Invalid;
+no cubin path / `CUlibrary`; no Engine flag).
+`gpu-sim` `library_unload` is `cuLibraryUnload` (Invalid; no `CUlibrary`
+handle; no Engine flag).
+`gpu-sim` `library_get_kernel` is `cuLibraryGetKernel` (Invalid; no
+`CUlibrary` / `CUkernel`; no Engine flag).
+`gpu-sim` `library_get_module` is `cuLibraryGetModule` (Invalid; no
+`CUlibrary` / `CUmodule`; no Engine flag).
+`gpu-sim` `library_get_global` is `cuLibraryGetGlobal` (Invalid; no
+`CUlibrary` device symbol; no Engine flag).
+`gpu-sim` `library_get_managed` is `cuLibraryGetManaged` (Invalid; no
+`CUlibrary` managed symbol; no Engine flag).
+`gpu-sim` `library_get_unified_function` is `cuLibraryGetUnifiedFunction`
+(Invalid; no `CUlibrary` device function pointer; no Engine flag).
+`gpu-sim` `library_get_kernel_count` is `cuLibraryGetKernelCount` (Invalid;
+no `CUlibrary` kernel list; no Engine flag).
+`gpu-sim` `library_enumerate_kernels` is `cuLibraryEnumerateKernels` (Invalid;
+no `CUlibrary` kernel list; no Engine flag).
+`gpu-sim` `kernel_get_library` is `cuKernelGetLibrary` (Invalid; no
+`CUkernel` / `CUlibrary`; no Engine flag).
+`gpu-sim` `kernel_get_function` is `cuKernelGetFunction` (Invalid; no
+`CUkernel` / `CUfunction`; no Engine flag).
+`gpu-sim` `kernel_get_param_info` is `cuKernelGetParamInfo` (Invalid; no
+`CUkernel` parameter blob; no Engine flag).
+`gpu-sim` `kernel_get_param_count` is `cuKernelGetParamCount` (Invalid; no
+`CUkernel` parameter list; no Engine flag).
+`gpu-sim` `kernel_get_attribute` is `cuKernelGetAttribute` (Invalid; no
+`CUkernel` attribute; no Engine flag).
+`gpu-sim` `kernel_set_attribute` is `cuKernelSetAttribute` (Invalid; no
+`CUkernel` attribute; no Engine flag).
+`gpu-sim` `kernel_set_cache_config` is `cuKernelSetCacheConfig` (Invalid;
+no `CUkernel` cache config; no Engine flag).
+`gpu-sim` `link_create` is `cuLinkCreate` (Invalid; no JIT linker; no
+Engine flag).
+`gpu-sim` `link_add_data` is `cuLinkAddData` (Invalid; no JIT linker; no
+Engine flag).
+`gpu-sim` `link_complete` is `cuLinkComplete` (Invalid; no JIT linker; no
+Engine flag).
+`gpu-sim` `link_destroy` is `cuLinkDestroy` (Invalid; no JIT linker; no
+Engine flag).
+`gpu-sim` `link_add_file` is `cuLinkAddFile` (Invalid; no JIT linker; no
+Engine flag).
+`gpu-sim` `get_proc_address` is `cuGetProcAddress` (Invalid; no C ABI
+function pointers; no Engine flag).
+`gpu-sim` `get_export_table` is `cuGetExportTable` (Invalid; no internal
+driver tables; no Engine flag).
+`gpu-sim` `coredump_get_attribute` is `cuCoredumpGetAttribute` (Invalid;
+GPU coredumps are not modeled; no Engine flag).
+`gpu-sim` `coredump_set_attribute` is `cuCoredumpSetAttribute` (Invalid;
+GPU coredumps are not modeled; no Engine flag).
+`gpu-sim` `coredump_get_attribute_global` is `cuCoredumpGetAttributeGlobal`
+(Invalid; GPU coredumps are not modeled; no Engine flag).
+`gpu-sim` `coredump_set_attribute_global` is `cuCoredumpSetAttributeGlobal`
+(Invalid; GPU coredumps are not modeled; no Engine flag).
+`gpu-sim` `checkpoint_process_lock` is `cuCheckpointProcessLock` (Invalid;
+CUDA process checkpoint is not modeled; no Engine flag).
+`gpu-sim` `checkpoint_process_checkpoint` is `cuCheckpointProcessCheckpoint`
+(Invalid; CUDA process checkpoint is not modeled; no Engine flag).
+`gpu-sim` `checkpoint_process_restore` is `cuCheckpointProcessRestore`
+(Invalid; CUDA process checkpoint is not modeled; no Engine flag).
+`gpu-sim` `checkpoint_process_unlock` is `cuCheckpointProcessUnlock`
+(Invalid; CUDA process checkpoint is not modeled; no Engine flag).
+`gpu-sim` `checkpoint_process_get_restore_thread_id` is
+`cuCheckpointProcessGetRestoreThreadId` (Invalid; CUDA process checkpoint
+is not modeled; no Engine flag).
+`gpu-sim` `checkpoint_process_get_state` is `cuCheckpointProcessGetState`
+(Invalid; CUDA process checkpoint is not modeled; no Engine flag).
+`gpu-sim` `device_register_async_notification` is
+`cuDeviceRegisterAsyncNotification` (Invalid; device async callbacks are
+not modeled; no Engine flag).
+`gpu-sim` `device_unregister_async_notification` is
+`cuDeviceUnregisterAsyncNotification` (Invalid; device async callbacks are
+not modeled; no Engine flag).
+`gpu-sim` `ctx_get_device` is `cuCtxGetDevice` (explicit device of the
+seeded primary context; no Engine flag).
+`gpu-sim` `ctx_reset_persisting_l2_cache` is `cuCtxResetPersistingL2Cache`
+(wraps `reset_persisting_l2_cache`; no Engine flag).
+`gpu-sim` `ctx_get_exec_affinity` is `cuCtxGetExecAffinity` (SM_COUNT
+unsupported; no Engine flag).
+`gpu-sim` `mem_batch_decompress_async` is `cuMemBatchDecompressAsync`
+(Invalid; hardware decompress is not modeled; no Engine flag).
+`gpu-sim` `tensor_map_encode_tiled` is `cuTensorMapEncodeTiled` (Invalid;
+TMA is not modeled; no Engine flag).
+`gpu-sim` `tensor_map_encode_im2col` is `cuTensorMapEncodeIm2col` (Invalid;
+TMA is not modeled; no Engine flag).
+`gpu-sim` `tensor_map_encode_im2col_wide` is `cuTensorMapEncodeIm2colWide`
+(Invalid; TMA is not modeled; no Engine flag).
+`gpu-sim` `tensor_map_replace_aligned_addr` is `cuTensorMapReplaceAlignedAddr`
+(Invalid; TMA is not modeled; no Engine flag).
+`gpu-sim` `cooperative_kernel_multi_device` is
+`cudaLaunchCooperativeKernelMultiDevice` (Invalid; no Engine flag).
+`gpu-sim` `array_create` is `cuArrayCreate` (Invalid; CUDA arrays are not
+modeled; no Engine flag).
+`gpu-sim` `array_destroy` is `cuArrayDestroy` (Invalid; no array handles;
+no Engine flag).
+`gpu-sim` `array_get_descriptor` is `cuArrayGetDescriptor` (Invalid; no
+array handles; no Engine flag).
+`gpu-sim` `array_3d_get_descriptor` is `cuArray3DGetDescriptor` (Invalid;
+no array handles; no Engine flag).
+`gpu-sim` `array_get_sparse_properties` is `cuArrayGetSparseProperties`
+(Invalid; sparse CUDA arrays are not modeled; no Engine flag).
+`gpu-sim` `mem_map_array_async` is `cuMemMapArrayAsync` (Invalid; sparse
+CUDA array mapping is not modeled; no Engine flag).
+`gpu-sim` `array_get_plane` is `cuArrayGetPlane` (Invalid; no array
+handles; no Engine flag).
+`gpu-sim` `array_get_memory_requirements` is
+`cuArrayGetMemoryRequirements` (Invalid; no array handles; no Engine flag).
+`gpu-sim` `mipmapped_array_get_memory_requirements` is
+`cuMipmappedArrayGetMemoryRequirements` (Invalid; no mipmapped-array
+handles; no Engine flag).
+`gpu-sim` `mipmapped_array_get_sparse_properties` is
+`cuMipmappedArrayGetSparseProperties` (Invalid; sparse CUDA mipmapped
+arrays are not modeled; no Engine flag).
+`gpu-sim` `tex_ref_create` is `cuTexRefCreate` (Invalid; no `CUtexref`
+handles; no Engine flag).
+`gpu-sim` `tex_ref_destroy` is `cuTexRefDestroy` (Invalid; no `CUtexref`
+handles; no Engine flag).
+`gpu-sim` `tex_ref_set_array` is `cuTexRefSetArray` (Invalid; no `CUtexref`
+or `CUarray` handles; no Engine flag).
+`gpu-sim` `tex_ref_set_mipmapped_array` is `cuTexRefSetMipmappedArray`
+(Invalid; no `CUtexref` or mipmapped-array handles; no Engine flag).
+`gpu-sim` `tex_ref_set_address` is `cuTexRefSetAddress` (Invalid; no
+`CUtexref` linear bindings; no Engine flag).
+`gpu-sim` `tex_ref_set_address_2d` is `cuTexRefSetAddress2D` (Invalid; no
+`CUtexref` pitched 2D bindings; no Engine flag).
+`gpu-sim` `tex_ref_set_format` is `cuTexRefSetFormat` (Invalid; no
+`CUtexref` channel format; no Engine flag).
+`gpu-sim` `tex_ref_set_address_mode` is `cuTexRefSetAddressMode` (Invalid;
+no `CUtexref` addressing; no Engine flag).
+`gpu-sim` `tex_ref_set_filter_mode` is `cuTexRefSetFilterMode` (Invalid;
+no `CUtexref` filtering; no Engine flag).
+`gpu-sim` `tex_ref_set_mipmap_filter_mode` is `cuTexRefSetMipmapFilterMode`
+(Invalid; no `CUtexref` mipmap filtering; no Engine flag).
+`gpu-sim` `tex_ref_set_mipmap_level_bias` is `cuTexRefSetMipmapLevelBias`
+(Invalid; no `CUtexref` mipmap LOD bias; no Engine flag).
+`gpu-sim` `tex_ref_set_mipmap_level_clamp` is `cuTexRefSetMipmapLevelClamp`
+(Invalid; no `CUtexref` mipmap LOD clamp; no Engine flag).
+`gpu-sim` `tex_ref_set_max_anisotropy` is `cuTexRefSetMaxAnisotropy`
+(Invalid; no `CUtexref` anisotropy; no Engine flag).
+`gpu-sim` `tex_ref_set_border_color` is `cuTexRefSetBorderColor` (Invalid;
+no `CUtexref` border color; no Engine flag).
+`gpu-sim` `tex_ref_set_flags` is `cuTexRefSetFlags` (Invalid; no
+`CUtexref` flags word; no Engine flag).
+`gpu-sim` `tex_ref_get_array` is `cuTexRefGetArray` (Invalid; no
+`CUtexref` or `CUarray` handles; no Engine flag).
+`gpu-sim` `tex_ref_get_mipmapped_array` is `cuTexRefGetMipmappedArray`
+(Invalid; no `CUtexref` or mipmapped-array handles; no Engine flag).
+`gpu-sim` `tex_ref_get_address` is `cuTexRefGetAddress` (Invalid; no
+`CUtexref` linear bindings; no Engine flag).
+`gpu-sim` `tex_ref_get_address_mode` is `cuTexRefGetAddressMode` (Invalid;
+no `CUtexref` addressing; no Engine flag).
+`gpu-sim` `tex_ref_get_filter_mode` is `cuTexRefGetFilterMode` (Invalid;
+no `CUtexref` filtering; no Engine flag).
+`gpu-sim` `tex_ref_get_format` is `cuTexRefGetFormat` (Invalid; no
+`CUtexref` channel format; no Engine flag).
+`gpu-sim` `tex_ref_get_mipmap_filter_mode` is `cuTexRefGetMipmapFilterMode`
+(Invalid; no `CUtexref` mipmap filtering; no Engine flag).
+`gpu-sim` `tex_ref_get_mipmap_level_bias` is `cuTexRefGetMipmapLevelBias`
+(Invalid; no `CUtexref` mipmap LOD bias; no Engine flag).
+`gpu-sim` `tex_ref_get_mipmap_level_clamp` is `cuTexRefGetMipmapLevelClamp`
+(Invalid; no `CUtexref` mipmap LOD clamp; no Engine flag).
+`gpu-sim` `tex_ref_get_max_anisotropy` is `cuTexRefGetMaxAnisotropy`
+(Invalid; no `CUtexref` anisotropy; no Engine flag).
+`gpu-sim` `tex_ref_get_border_color` is `cuTexRefGetBorderColor`
+(Invalid; no `CUtexref` border color; no Engine flag).
+`gpu-sim` `tex_ref_get_flags` is `cuTexRefGetFlags`
+(Invalid; no `CUtexref` flags word; no Engine flag).
+`gpu-sim` `surf_ref_set_array` is `cuSurfRefSetArray`
+(Invalid; no `CUsurfref` array binding; no Engine flag).
+`gpu-sim` `surf_ref_get_array` is `cuSurfRefGetArray`
+(Invalid; no `CUsurfref` array binding; no Engine flag).
+`gpu-sim` `memcpy_dto_a` is `cuMemcpyDtoA`
+(Invalid; no `CUarray` device-to-array copy; no Engine flag).
+`gpu-sim` `memcpy_ato_d` is `cuMemcpyAtoD`
+(Invalid; no `CUarray` array-to-device copy; no Engine flag).
+`gpu-sim` `memcpy_hto_a` is `cuMemcpyHtoA`
+(Invalid; no `CUarray` host-to-array copy; no Engine flag).
+`gpu-sim` `memcpy_ato_h` is `cuMemcpyAtoH`
+(Invalid; no `CUarray` array-to-host copy; no Engine flag).
+`gpu-sim` `memcpy_ato_a` is `cuMemcpyAtoA`
+(Invalid; no `CUarray` array-to-array copy; no Engine flag).
+`gpu-sim` `memcpy_dto_a_async` is `cuMemcpyDtoAAsync`
+(Invalid; no `CUarray` device-to-array copy; no Engine flag).
+`gpu-sim` `memcpy_ato_d_async` is `cuMemcpyAtoDAsync`
+(Invalid; no `CUarray` array-to-device copy; no Engine flag).
+`gpu-sim` `memcpy_hto_a_async` is `cuMemcpyHtoAAsync`
+(Invalid; no `CUarray` host-to-array copy; no Engine flag).
+`gpu-sim` `memcpy_ato_h_async` is `cuMemcpyAtoHAsync`
+(Invalid; no `CUarray` array-to-host copy; no Engine flag).
+`gpu-sim` `memcpy_ato_a_async` is `cuMemcpyAtoAAsync`
+(Invalid; no `CUarray` array-to-array copy; no Engine flag).
+`gpu-sim` `memcpy_2d_to_array` is `cuMemcpy2DToArray`
+(Invalid; no `CUarray` 2D copy; no Engine flag).
+`gpu-sim` `memcpy_2d_from_array` is `cuMemcpy2DFromArray`
+(Invalid; no `CUarray` 2D copy; no Engine flag).
+`gpu-sim` `memcpy_2d_array_to_array` is `cuMemcpy2DArrayToArray`
+(Invalid; no `CUarray` 2D copy; no Engine flag).
+`gpu-sim` `memcpy_2d_to_array_async` is `cuMemcpy2DToArrayAsync`
+(Invalid; no `CUarray` 2D copy; no Engine flag).
+`gpu-sim` `memcpy_2d_from_array_async` is `cuMemcpy2DFromArrayAsync`
+(Invalid; no `CUarray` 2D copy; no Engine flag).
+`gpu-sim` `memcpy_2d_array_to_array_async` is `cuMemcpy2DArrayToArrayAsync`
+(Invalid; no `CUarray` 2D copy; no Engine flag).
+`gpu-sim` `mipmapped_array_create` is `cuMipmappedArrayCreate` (Invalid;
+CUDA mipmapped arrays are not modeled; no Engine flag).
+`gpu-sim` `mipmapped_array_get_level` is `cuMipmappedArrayGetLevel`
+(Invalid; no mipmapped-array handles; no Engine flag).
+`gpu-sim` `mipmapped_array_destroy` is `cuMipmappedArrayDestroy`
+(Invalid; no mipmapped-array handles; no Engine flag).
+`gpu-sim` `import_external_memory` is `cuImportExternalMemory` (Invalid;
+no Engine flag).
+`gpu-sim` `destroy_external_memory` is `cuDestroyExternalMemory` (Invalid;
+no external-memory handles; no Engine flag).
+`gpu-sim` `external_memory_get_mapped_buffer` is
+`cuExternalMemoryGetMappedBuffer` (Invalid; no external-memory handles;
+no Engine flag).
+`gpu-sim` `external_memory_get_mapped_mipmapped_array` is
+`cuExternalMemoryGetMappedMipmappedArray` (Invalid; no external-memory
+handles; no Engine flag).
+`gpu-sim` `import_external_semaphore` is `cuImportExternalSemaphore`
+(Invalid; no external-semaphore handles; no Engine flag).
+`gpu-sim` `destroy_external_semaphore` is `cuDestroyExternalSemaphore`
+(Invalid; no external-semaphore handles; no Engine flag).
+`gpu-sim` `signal_external_semaphores_async` is
+`cuSignalExternalSemaphoresAsync` (Invalid; no external-semaphore handles;
+no Engine flag).
+`gpu-sim` `wait_external_semaphores_async` is
+`cuWaitExternalSemaphoresAsync` (Invalid; no external-semaphore handles;
+no Engine flag).
+`gpu-sim` `surf_object_create` is `cuSurfObjectCreate` (Invalid; CUDA
+surfaces are not modeled; no Engine flag).
+`gpu-sim` `surf_object_destroy` is `cuSurfObjectDestroy` (Invalid; no
+surface-object handles; no Engine flag).
+`gpu-sim` `surf_object_get_resource_desc` is `cuSurfObjectGetResourceDesc`
+(Invalid; no surface-object handles; no Engine flag).
+`gpu-sim` `tex_object_create` is `cuTexObjectCreate` (Invalid; CUDA
+textures are not modeled; no Engine flag).
+`gpu-sim` `tex_object_destroy` is `cuTexObjectDestroy` (Invalid; no
+texture-object handles; no Engine flag).
+`gpu-sim` `tex_object_get_resource_desc` is `cuTexObjectGetResourceDesc`
+(Invalid; no texture-object handles; no Engine flag).
+`gpu-sim` `tex_object_get_texture_desc` is `cuTexObjectGetTextureDesc`
+(Invalid; no texture-object handles; no Engine flag).
+`gpu-sim` `tex_object_get_resource_view_desc` is
+`cuTexObjectGetResourceViewDesc` (Invalid; no texture-object handles; no
+Engine flag).
+`gpu-sim` texture 2D/3D dim caps are always 0 (`cudaDevAttrMaxTexture2DWidth`
+and Height, `MaxTexture3DWidth` / Height / Depth; no Engine flag).
+`gpu-sim` alternate texture 3D dim caps are always 0
+(`cudaDevAttrMaxTexture3DWidthAlt`, HeightAlt, and DepthAlt; no Engine flag).
+`gpu-sim` `MpsEnabled` is always 0 (`cudaDevAttrMpsEnabled`; CUDA
+Multi-Process Service is not modeled; no Engine flag).
+`gpu-sim` `D3D12CigSupported` is always 0 (`cudaDevAttrD3D12CigSupported`;
+D3D12 CUDA-in-graphics is not modeled; no Engine flag).
+`gpu-sim` `graphics_map_resources` is `cuGraphicsMapResources` (Invalid;
+graphics resources are not modeled; no Engine flag).
+`gpu-sim` `graphics_unmap_resources` is `cuGraphicsUnmapResources`
+(Invalid; no graphics-resource handles; no Engine flag).
+`gpu-sim` `graphics_resource_get_mapped_pointer` is
+`cuGraphicsResourceGetMappedPointer` (Invalid; no graphics-resource
+handles; no Engine flag).
+`gpu-sim` `graphics_subresource_get_mapped_array` is
+`cuGraphicsSubResourceGetMappedArray` (Invalid; no graphics-resource
+handles; no Engine flag).
+`gpu-sim` `graphics_resource_get_mapped_mipmapped_array` is
+`cuGraphicsResourceGetMappedMipmappedArray` (Invalid; no graphics-resource
+handles; no Engine flag).
+`gpu-sim` `graphics_unregister_resource` is `cuGraphicsUnregisterResource`
+(Invalid; no graphics-resource handles; no Engine flag).
+`gpu-sim` `graphics_resource_set_map_flags` is `cuGraphicsResourceSetMapFlags`
+(Invalid; no graphics-resource handles; no Engine flag).
+`gpu-sim` `graphics_gl_register_buffer` is `cuGraphicsGLRegisterBuffer`
+(Invalid; OpenGL interop is not modeled; no Engine flag).
+`gpu-sim` `graphics_gl_register_image` is `cuGraphicsGLRegisterImage`
+(Invalid; OpenGL interop is not modeled; no Engine flag).
+`gpu-sim` `graphics_egl_register_image` is `cuGraphicsEGLRegisterImage`
+(Invalid; EGL interop is not modeled; no Engine flag).
+`gpu-sim` `egl_stream_consumer_connect` is `cuEGLStreamConsumerConnect`
+(Invalid; EGL streams are not modeled; no Engine flag).
+`gpu-sim` `egl_stream_consumer_disconnect` is
+`cuEGLStreamConsumerDisconnect` (Invalid; EGL streams are not modeled;
+no Engine flag).
+`gpu-sim` `egl_stream_consumer_acquire_frame` is
+`cuEGLStreamConsumerAcquireFrame` (Invalid; EGL streams are not modeled;
+no Engine flag).
+`gpu-sim` `egl_stream_consumer_release_frame` is
+`cuEGLStreamConsumerReleaseFrame` (Invalid; EGL streams are not modeled;
+no Engine flag).
+`gpu-sim` `egl_stream_producer_connect` is `cuEGLStreamProducerConnect`
+(Invalid; EGL streams are not modeled; no Engine flag).
+`gpu-sim` `egl_stream_producer_disconnect` is
+`cuEGLStreamProducerDisconnect` (Invalid; EGL streams are not modeled;
+no Engine flag).
+`gpu-sim` `egl_stream_producer_present_frame` is
+`cuEGLStreamProducerPresentFrame` (Invalid; EGL streams are not modeled;
+no Engine flag).
+`gpu-sim` `egl_stream_producer_return_frame` is
+`cuEGLStreamProducerReturnFrame` (Invalid; EGL streams are not modeled;
+no Engine flag).
+`gpu-sim` `gl_get_devices` is `cuGLGetDevices` (Invalid; OpenGL interop
+is not modeled; no Engine flag).
+`gpu-sim` `gl_ctx_create` is `cuGLCtxCreate` (Invalid; OpenGL interop is
+not modeled; no Engine flag).
+`gpu-sim` `gl_register_buffer_object` is `cuGLRegisterBufferObject`
+(Invalid; legacy OpenGL interop is not modeled; no Engine flag).
+`gpu-sim` `gl_map_buffer_object` is `cuGLMapBufferObject` (Invalid;
+legacy OpenGL interop is not modeled; no Engine flag).
+`gpu-sim` `gl_unregister_buffer_object` is `cuGLUnregisterBufferObject`
+(Invalid; legacy OpenGL interop is not modeled; no Engine flag).
+`gpu-sim` `gl_unmap_buffer_object` is `cuGLUnmapBufferObject`
+(Invalid; legacy OpenGL interop is not modeled; no Engine flag).
+`gpu-sim` `gl_unmap_buffer_object_async` is `cuGLUnmapBufferObjectAsync`
+(Invalid; legacy OpenGL interop is not modeled; no Engine flag).
+`gpu-sim` `gl_map_buffer_object_async` is `cuGLMapBufferObjectAsync`
+(Invalid; legacy OpenGL interop is not modeled; no Engine flag).
+`gpu-sim` `gl_set_gl_device` is `cudaGLSetGLDevice`
+(Invalid; OpenGL interop is not modeled; no Engine flag).
+`gpu-sim` `d3d11_get_devices` is `cuD3D11GetDevices` (Invalid; Direct3D 11
+interop is not modeled; no Engine flag).
+`gpu-sim` `d3d11_get_device` is `cuD3D11GetDevice` (Invalid; Direct3D 11
+interop is not modeled; no Engine flag).
+`gpu-sim` `d3d11_ctx_create` is `cuD3D11CtxCreate` (Invalid; Direct3D 11
+interop is not modeled; no Engine flag).
+`gpu-sim` `d3d11_ctx_create_on_device` is `cuD3D11CtxCreateOnDevice`
+(Invalid; Direct3D 11 interop is not modeled; no Engine flag).
+`gpu-sim` `graphics_d3d11_register_resource` is
+`cuGraphicsD3D11RegisterResource` (Invalid; Direct3D 11 interop is not
+modeled; no Engine flag).
+`gpu-sim` `d3d12_get_devices` is `cuD3D12GetDevices` (Invalid; Direct3D 12
+interop is not modeled; distinct from `D3D12CigSupported`; no Engine flag).
+`gpu-sim` `d3d12_get_device` is `cuD3D12GetDevice` (Invalid; Direct3D 12
+interop is not modeled; distinct from `D3D12CigSupported`; no Engine flag).
+`gpu-sim` `d3d12_ctx_create` is `cuD3D12CtxCreate` (Invalid; Direct3D 12
+interop is not modeled; distinct from `D3D12CigSupported`; no Engine flag).
+`gpu-sim` `d3d12_ctx_create_on_device` is `cuD3D12CtxCreateOnDevice`
+(Invalid; Direct3D 12 interop is not modeled; distinct from `D3D12CigSupported`;
+no Engine flag).
+`gpu-sim` `graphics_d3d12_register_resource` is
+`cuGraphicsD3D12RegisterResource` (Invalid; Direct3D 12 interop is not
+modeled; no Engine flag).
+`gpu-sim` `vdpau_get_device` is `cuVDPAUGetDevice` (Invalid; VDPAU interop
+is not modeled; no Engine flag).
+`gpu-sim` `vdpau_set_vdpau_device` is `cudaVDPAUSetVDPAUDevice` (Invalid;
+VDPAU interop is not modeled; no Engine flag).
+`gpu-sim` `vdpau_ctx_create` is `cuVDPAUCtxCreate` (Invalid; VDPAU interop
+is not modeled; no Engine flag).
+`gpu-sim` `graphics_vdpau_register_output_surface` is
+`cuGraphicsVDPAURegisterOutputSurface` (Invalid; VDPAU interop is not
+modeled; no Engine flag).
+`gpu-sim` `graphics_vdpau_register_video_surface` is
+`cuGraphicsVDPAURegisterVideoSurface` (Invalid; VDPAU interop is not
+modeled; no Engine flag).
+`gpu-sim` `d3d9_get_devices` is `cuD3D9GetDevices` (Invalid; Direct3D 9
+interop is not modeled; no Engine flag).
+`gpu-sim` `d3d9_get_device` is `cuD3D9GetDevice` (Invalid; Direct3D 9
+interop is not modeled; no Engine flag).
+`gpu-sim` `d3d9_ctx_create` is `cuD3D9CtxCreate` (Invalid; Direct3D 9
+interop is not modeled; no Engine flag).
+`gpu-sim` `d3d9_ctx_create_on_device` is `cuD3D9CtxCreateOnDevice`
+(Invalid; Direct3D 9 interop is not modeled; no Engine flag).
+`gpu-sim` `graphics_d3d9_register_resource` is
+`cuGraphicsD3D9RegisterResource` (Invalid; Direct3D 9 interop is not
+modeled; no Engine flag).
+`gpu-sim` `d3d10_get_devices` is `cuD3D10GetDevices` (Invalid; Direct3D 10
+interop is not modeled; no Engine flag).
+`gpu-sim` `d3d10_get_device` is `cuD3D10GetDevice` (Invalid; Direct3D 10
+interop is not modeled; no Engine flag).
+`gpu-sim` `d3d10_ctx_create` is `cuD3D10CtxCreate` (Invalid; Direct3D 10
+interop is not modeled; no Engine flag).
+`gpu-sim` `d3d10_ctx_create_on_device` is `cuD3D10CtxCreateOnDevice`
+(Invalid; Direct3D 10 interop is not modeled; no Engine flag).
+`gpu-sim` `graphics_d3d10_register_resource` is
+`cuGraphicsD3D10RegisterResource` (Invalid; Direct3D 10 interop is not
+modeled; no Engine flag).
+`gpu-sim` `MaxSharedMemoryPerMultiprocessor` matches
+`MaxSharedMemoryPerBlockOptin` (`cudaDevAttrMaxSharedMemoryPerMultiprocessor`;
+reserved shared memory is 0; no Engine flag; not occupancy SM counts).
+`gpu-sim` linear texture 1D/2D dim caps are always 0
+(`cudaDevAttrMaxTexture1DLinearWidth`, `MaxTexture2DLinearWidth`, Height,
+and Pitch; `cuDeviceGetTexture1DLinearMaxWidth` is the same 0; no Engine flag).
+`gpu-sim` texture 2D gather dim caps are always 0
+(`cudaDevAttrMaxTexture2DGatherWidth` and Height; no Engine flag).
+`gpu-sim` mipmapped texture 1D/2D dim caps are always 0
+(`cudaDevAttrMaxTexture1DMipmappedWidth`, `MaxTexture2DMipmappedWidth`
+and Height; no Engine flag).
+`gpu-sim` cubemap texture width is always 0
+(`cudaDevAttrMaxTextureCubemapWidth`; no Engine flag).
+`gpu-sim` layered texture 1D/2D dim caps are always 0
+(`cudaDevAttrMaxTexture1DLayeredWidth` and Layers, `MaxTexture2DLayeredWidth`,
+Height, and Layers; no Engine flag).
+`gpu-sim` cubemap layered texture dim caps are always 0
+(`cudaDevAttrMaxTextureCubemapLayeredWidth` and Layers; no Engine flag).
+`gpu-sim` surface 1D/2D/3D dim caps are always 0 (`cudaDevAttrMaxSurface1DWidth`,
+`MaxSurface2DWidth` and Height, `MaxSurface3DWidth` / Height / Depth;
+no Engine flag).
+`gpu-sim` layered surface 1D/2D dim caps are always 0
+(`cudaDevAttrMaxSurface1DLayeredWidth` and Layers, `MaxSurface2DLayeredWidth`,
+Height, and Layers; no Engine flag).
+`gpu-sim` cubemap surface dim caps are always 0
+(`cudaDevAttrMaxSurfaceCubemapWidth`, `MaxSurfaceCubemapLayeredWidth`
+and Layers; no Engine flag).
+`gpu-sim` `pciSubSystemID` is always 0 (synthetic PCI; no Engine flag).
+`gpu-sim` `GpuPciDeviceId` is always 0 (`cudaDevAttrGpuPciDeviceId`; no
+NVIDIA PCI vendor/device id; no Engine flag).
+`gpu-sim` `GpuPciSubsystemId` is always 0 (`cudaDevAttrGpuPciSubsystemId`;
+same 0 as `pciSubSystemID`; no Engine flag).
+`gpu-sim` `luid` and `luidDeviceNodeMask` are always 0 (`cuDeviceGetLuid`;
+no Engine flag).
 Default `--expert-sim` keeps
 one compute stream, exclusive compute (`compute_slots=1`), a full chip of
 SMs, and a full-device clock sample.

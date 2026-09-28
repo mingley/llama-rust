@@ -626,6 +626,7 @@ pub struct MemsetOp {
     /// `cudaMemsetNodeParams::elementSize` (`1` / `2` / `4`).
     ///
     /// Typed [`crate::Sim::memset`] stays `1` (`cudaMemset` / `cuMemsetD8`).
+    /// [`crate::Sim::memset_d8_async`] takes CUDA `N` and keeps `1`.
     /// [`crate::Sim::memset_d16_async`] / [`crate::Sim::memset_d32_async`]
     /// take CUDA `N` and set `2` / `4`. Offset, width, and nonzero pitch must
     /// divide this size. Fill value is not modeled.
@@ -751,8 +752,13 @@ pub enum DeviceLimit {
     /// Stored; this VM does not charge HBM (no device-side `malloc` yet).
     MallocHeapSize,
     /// `cudaLimitDevRuntimeSyncDepth`. CUDA default 2. Minimum 2.
+    ///
+    /// Stored; this VM has no device-side `cudaDeviceSynchronize`.
     DevRuntimeSyncDepth,
     /// `cudaLimitDevRuntimePendingLaunchCount`. CUDA default 2048.
+    ///
+    /// Caps in-flight [`crate::Sim::device_launch_graph`] (host, fire-and-forget,
+    /// sibling, and flushed tail). A queued tail does not occupy a slot.
     DevRuntimePendingLaunchCount,
     /// `cudaLimitMaxL2FetchGranularity`. Power of two in `[32, 128]`.
     ///
@@ -882,6 +888,12 @@ pub enum DeviceAttr {
     MaxSharedMemoryPerBlock,
     /// `cudaDevAttrMaxSharedMemoryPerBlockOptin`.
     MaxSharedMemoryPerBlockOptin,
+    /// `cudaDevAttrMaxSharedMemoryPerMultiprocessor`. Same bytes as
+    /// [`Self::MaxSharedMemoryPerBlockOptin`] because
+    /// [`Self::ReservedSharedMemoryPerBlock`] is 0. Distinct from
+    /// [`Self::MaxSharedMemoryPerBlock`]. This VM does not invent
+    /// `cudaDevAttrMaxRegistersPerMultiprocessor`.
+    MaxSharedMemoryPerMultiprocessor,
     /// `cudaDevAttrReservedSharedMemoryPerBlock` (always 0; driver-reserved
     /// shared memory is not modeled). Distinct from
     /// [`Self::MaxSharedMemoryPerBlock`].
@@ -933,6 +945,137 @@ pub enum DeviceAttr {
     /// `cudaDevAttrMaxTexture1DWidth` (always 0; CUDA arrays / textures are
     /// not modeled). Distinct from [`Self::TextureAlignment`].
     MaxTexture1DWidth,
+    /// `cudaDevAttrMaxTexture2DWidth` (always 0; CUDA arrays / textures are
+    /// not modeled). Distinct from [`Self::MaxTexture1DWidth`].
+    MaxTexture2DWidth,
+    /// `cudaDevAttrMaxTexture2DHeight` (always 0; CUDA arrays / textures are
+    /// not modeled). Distinct from [`Self::MaxTexture2DWidth`].
+    MaxTexture2DHeight,
+    /// `cudaDevAttrMaxTexture3DWidth` (always 0; CUDA arrays / textures are
+    /// not modeled). Distinct from [`Self::MaxTexture2DWidth`].
+    MaxTexture3DWidth,
+    /// `cudaDevAttrMaxTexture3DHeight` (always 0; CUDA arrays / textures are
+    /// not modeled). Distinct from [`Self::MaxTexture3DWidth`].
+    MaxTexture3DHeight,
+    /// `cudaDevAttrMaxTexture3DDepth` (always 0; CUDA arrays / textures are
+    /// not modeled). Distinct from [`Self::MaxTexture3DHeight`].
+    MaxTexture3DDepth,
+    /// `cudaDevAttrMaxTexture3DWidthAlt` (always 0; CUDA alternate 3D
+    /// texture dims are not modeled). Distinct from [`Self::MaxTexture3DWidth`].
+    MaxTexture3DWidthAlt,
+    /// `cudaDevAttrMaxTexture3DHeightAlt` (always 0; CUDA alternate 3D
+    /// texture dims are not modeled). Distinct from
+    /// [`Self::MaxTexture3DWidthAlt`].
+    MaxTexture3DHeightAlt,
+    /// `cudaDevAttrMaxTexture3DDepthAlt` (always 0; CUDA alternate 3D
+    /// texture dims are not modeled). Distinct from
+    /// [`Self::MaxTexture3DHeightAlt`].
+    MaxTexture3DDepthAlt,
+    /// `cudaDevAttrMaxTexture1DLinearWidth` (always 0; CUDA linear textures
+    /// are not modeled). Distinct from [`Self::MaxTexture1DWidth`]. Also
+    /// [`crate::Sim::device_get_texture_1d_linear_max_width`].
+    MaxTexture1DLinearWidth,
+    /// `cudaDevAttrMaxTexture2DLinearWidth` (always 0; CUDA linear textures
+    /// are not modeled). Distinct from [`Self::MaxTexture2DWidth`].
+    MaxTexture2DLinearWidth,
+    /// `cudaDevAttrMaxTexture2DLinearHeight` (always 0; CUDA linear textures
+    /// are not modeled). Distinct from [`Self::MaxTexture2DLinearWidth`].
+    MaxTexture2DLinearHeight,
+    /// `cudaDevAttrMaxTexture2DLinearPitch` (always 0; CUDA linear textures
+    /// are not modeled). Distinct from [`Self::TexturePitchAlignment`].
+    MaxTexture2DLinearPitch,
+    /// `cudaDevAttrMaxTexture2DGatherWidth` (always 0; CUDA texture gather
+    /// is not modeled). Distinct from [`Self::MaxTexture2DWidth`].
+    MaxTexture2DGatherWidth,
+    /// `cudaDevAttrMaxTexture2DGatherHeight` (always 0; CUDA texture gather
+    /// is not modeled). Distinct from [`Self::MaxTexture2DGatherWidth`].
+    MaxTexture2DGatherHeight,
+    /// `cudaDevAttrMaxTexture1DMipmappedWidth` (always 0; CUDA mipmapped
+    /// textures are not modeled). Distinct from [`Self::MaxTexture1DWidth`].
+    MaxTexture1DMipmappedWidth,
+    /// `cudaDevAttrMaxTexture2DMipmappedWidth` (always 0; CUDA mipmapped
+    /// textures are not modeled). Distinct from [`Self::MaxTexture2DWidth`].
+    MaxTexture2DMipmappedWidth,
+    /// `cudaDevAttrMaxTexture2DMipmappedHeight` (always 0; CUDA mipmapped
+    /// textures are not modeled). Distinct from
+    /// [`Self::MaxTexture2DMipmappedWidth`].
+    MaxTexture2DMipmappedHeight,
+    /// `cudaDevAttrMaxTextureCubemapWidth` (always 0; CUDA cubemap textures
+    /// are not modeled). Distinct from [`Self::MaxTexture2DWidth`].
+    MaxTextureCubemapWidth,
+    /// `cudaDevAttrMaxTexture1DLayeredWidth` (always 0; CUDA layered
+    /// textures are not modeled). Distinct from [`Self::MaxTexture1DWidth`].
+    MaxTexture1DLayeredWidth,
+    /// `cudaDevAttrMaxTexture1DLayeredLayers` (always 0; CUDA layered
+    /// textures are not modeled). Distinct from
+    /// [`Self::MaxTexture1DLayeredWidth`].
+    MaxTexture1DLayeredLayers,
+    /// `cudaDevAttrMaxTexture2DLayeredWidth` (always 0; CUDA layered
+    /// textures are not modeled). Distinct from [`Self::MaxTexture2DWidth`].
+    MaxTexture2DLayeredWidth,
+    /// `cudaDevAttrMaxTexture2DLayeredHeight` (always 0; CUDA layered
+    /// textures are not modeled). Distinct from
+    /// [`Self::MaxTexture2DLayeredWidth`].
+    MaxTexture2DLayeredHeight,
+    /// `cudaDevAttrMaxTexture2DLayeredLayers` (always 0; CUDA layered
+    /// textures are not modeled). Distinct from
+    /// [`Self::MaxTexture2DLayeredHeight`].
+    MaxTexture2DLayeredLayers,
+    /// `cudaDevAttrMaxTextureCubemapLayeredWidth` (always 0; CUDA cubemap
+    /// layered textures are not modeled). Distinct from
+    /// [`Self::MaxTextureCubemapWidth`].
+    MaxTextureCubemapLayeredWidth,
+    /// `cudaDevAttrMaxTextureCubemapLayeredLayers` (always 0; CUDA cubemap
+    /// layered textures are not modeled). Distinct from
+    /// [`Self::MaxTextureCubemapLayeredWidth`].
+    MaxTextureCubemapLayeredLayers,
+    /// `cudaDevAttrMaxSurface1DWidth` (always 0; CUDA surfaces are not
+    /// modeled). Distinct from [`Self::SurfaceAlignment`].
+    MaxSurface1DWidth,
+    /// `cudaDevAttrMaxSurface2DWidth` (always 0; CUDA surfaces are not
+    /// modeled). Distinct from [`Self::MaxSurface1DWidth`].
+    MaxSurface2DWidth,
+    /// `cudaDevAttrMaxSurface2DHeight` (always 0; CUDA surfaces are not
+    /// modeled). Distinct from [`Self::MaxSurface2DWidth`].
+    MaxSurface2DHeight,
+    /// `cudaDevAttrMaxSurface3DWidth` (always 0; CUDA surfaces are not
+    /// modeled). Distinct from [`Self::MaxSurface2DWidth`].
+    MaxSurface3DWidth,
+    /// `cudaDevAttrMaxSurface3DHeight` (always 0; CUDA surfaces are not
+    /// modeled). Distinct from [`Self::MaxSurface3DWidth`].
+    MaxSurface3DHeight,
+    /// `cudaDevAttrMaxSurface3DDepth` (always 0; CUDA surfaces are not
+    /// modeled). Distinct from [`Self::MaxSurface3DHeight`].
+    MaxSurface3DDepth,
+    /// `cudaDevAttrMaxSurface1DLayeredWidth` (always 0; CUDA layered
+    /// surfaces are not modeled). Distinct from [`Self::MaxSurface1DWidth`].
+    MaxSurface1DLayeredWidth,
+    /// `cudaDevAttrMaxSurface1DLayeredLayers` (always 0; CUDA layered
+    /// surfaces are not modeled). Distinct from
+    /// [`Self::MaxSurface1DLayeredWidth`].
+    MaxSurface1DLayeredLayers,
+    /// `cudaDevAttrMaxSurface2DLayeredWidth` (always 0; CUDA layered
+    /// surfaces are not modeled). Distinct from [`Self::MaxSurface2DWidth`].
+    MaxSurface2DLayeredWidth,
+    /// `cudaDevAttrMaxSurface2DLayeredHeight` (always 0; CUDA layered
+    /// surfaces are not modeled). Distinct from
+    /// [`Self::MaxSurface2DLayeredWidth`].
+    MaxSurface2DLayeredHeight,
+    /// `cudaDevAttrMaxSurface2DLayeredLayers` (always 0; CUDA layered
+    /// surfaces are not modeled). Distinct from
+    /// [`Self::MaxSurface2DLayeredHeight`].
+    MaxSurface2DLayeredLayers,
+    /// `cudaDevAttrMaxSurfaceCubemapWidth` (always 0; CUDA cubemap surfaces
+    /// are not modeled). Distinct from [`Self::MaxSurface2DWidth`].
+    MaxSurfaceCubemapWidth,
+    /// `cudaDevAttrMaxSurfaceCubemapLayeredWidth` (always 0; CUDA cubemap
+    /// layered surfaces are not modeled). Distinct from
+    /// [`Self::MaxSurfaceCubemapWidth`].
+    MaxSurfaceCubemapLayeredWidth,
+    /// `cudaDevAttrMaxSurfaceCubemapLayeredLayers` (always 0; CUDA cubemap
+    /// layered surfaces are not modeled). Distinct from
+    /// [`Self::MaxSurfaceCubemapLayeredWidth`].
+    MaxSurfaceCubemapLayeredLayers,
     /// `cudaDevAttrMaxPitch` ([`Self::MAX_PITCH`]; this VM does not cap 2D
     /// memcpy / `cudaMallocPitch` pitch). Distinct from
     /// [`Self::TexturePitchAlignment`] (always 0; textures are not modeled).
@@ -957,7 +1100,8 @@ pub enum DeviceAttr {
     /// `cudaDevAttrPageableMemoryAccess` (always 0; pageable is bounce-buffer).
     PageableMemoryAccess,
     /// `cudaDevAttrStreamPrioritiesSupported` (always 1; this VM has
-    /// [`crate::Sim::set_stream_priority`]).
+    /// [`crate::Sim::set_stream_priority`] and
+    /// [`crate::Sim::device_get_stream_priority_range`]).
     StreamPrioritiesSupported,
     /// `cudaDevAttrGpuOverlap` ([`crate::GpuProfile::copy_engines`] `> 0`).
     GpuOverlap,
@@ -1022,6 +1166,12 @@ pub enum DeviceAttr {
     /// `cudaDevAttrHandleTypeWin32KmtHandleSupported` (always 0; this VM has
     /// POSIX-FD shareable pools, not Win32 KMT handles).
     HandleTypeWin32KmtHandleSupported,
+    /// `cudaDevAttrD3D12CigSupported` (always 0; D3D12 CUDA-in-graphics is
+    /// not modeled). Distinct from [`Self::HandleTypeWin32HandleSupported`].
+    D3D12CigSupported,
+    /// `cudaDevAttrVulkanCigSupported` (always 0; Vulkan CUDA-in-graphics is
+    /// not modeled). Distinct from [`Self::D3D12CigSupported`].
+    VulkanCigSupported,
     /// `cudaDevAttrHandleTypeFabricSupported` (always 0; fabric handles are not
     /// modeled).
     HandleTypeFabricSupported,
@@ -1038,6 +1188,9 @@ pub enum DeviceAttr {
     /// `cudaDevAttrComputeMode` (always [`ComputeMode::DEFAULT`]; exclusive
     /// process / prohibited are not modeled).
     ComputeMode,
+    /// `cudaDevAttrMpsEnabled` (always 0; CUDA Multi-Process Service is not
+    /// modeled). Distinct from [`Self::ComputeMode`].
+    MpsEnabled,
     /// `cudaDevAttrTccDriver` (always 0; example SKUs are not Windows TCC).
     TccDriver,
     /// `cudaDevAttrKernelExecTimeout` (always 0; example SKUs have no display
@@ -1093,6 +1246,55 @@ pub enum DeviceAttr {
     PciBusId,
     /// `cudaDevAttrPciDeviceId` (synthetic PCI device number; always 0).
     PciDeviceId,
+    /// `cudaDevAttrGpuPciDeviceId` (always 0; this VM has no NVIDIA PCI
+    /// vendor/device id). Distinct from [`Self::PciDeviceId`] (BDF device
+    /// number) and from [`Self::GpuPciSubsystemId`]. This VM does not invent
+    /// `DeviceAttr::PciSubSystemId`.
+    GpuPciDeviceId,
+    /// `cudaDevAttrGpuPciSubsystemId` (always 0; this VM has no NVIDIA PCI
+    /// subsystem id). Distinct from [`Self::GpuPciDeviceId`]. Also
+    /// [`crate::DeviceProperties::pci_subsystem_id`]. This VM does not invent
+    /// `DeviceAttr::PciSubSystemId`.
+    GpuPciSubsystemId,
+    /// `cudaDevAttrComputeCapabilityMajor`
+    /// ([`crate::GpuProfile::compute_capability_major`]). Example H100 is 9
+    /// (Hopper sm_90). Distinct from occupancy SM counts.
+    ComputeCapabilityMajor,
+    /// `cudaDevAttrComputeCapabilityMinor`
+    /// ([`crate::GpuProfile::compute_capability_minor`]). Example H100 is 0.
+    ComputeCapabilityMinor,
+    /// `cudaDevAttrMaxThreadsPerBlock`. Example H100 is
+    /// [`Self::MAX_THREADS_PER_BLOCK`]. This VM does not model a thread-block
+    /// launch config. Distinct from occupancy SM counts.
+    MaxThreadsPerBlock,
+    /// `cudaDevAttrMaxBlockDimX`. Example H100 is [`Self::MAX_BLOCK_DIM_X`].
+    MaxBlockDimX,
+    /// `cudaDevAttrMaxBlockDimY`. Example H100 is [`Self::MAX_BLOCK_DIM_Y`].
+    MaxBlockDimY,
+    /// `cudaDevAttrMaxBlockDimZ`. Example H100 is [`Self::MAX_BLOCK_DIM_Z`].
+    MaxBlockDimZ,
+    /// `cudaDevAttrMaxGridDimX`. Example H100 is [`Self::MAX_GRID_DIM_X`].
+    MaxGridDimX,
+    /// `cudaDevAttrMaxGridDimY`. Example H100 is [`Self::MAX_GRID_DIM_Y`].
+    MaxGridDimY,
+    /// `cudaDevAttrMaxGridDimZ`. Example H100 is [`Self::MAX_GRID_DIM_Z`].
+    MaxGridDimZ,
+    /// `cudaDevAttrMaxRegistersPerBlock`. Example H100 is
+    /// [`Self::MAX_REGISTERS_PER_BLOCK`]. Distinct from occupancy SM
+    /// counts and from a thread-block launch config. This VM does not
+    /// model a register file.
+    MaxRegistersPerBlock,
+    /// `cudaDevAttrGlobalMemoryBusWidth`. Bits on the DRAM bus. Example
+    /// H100 is 5120 ([`crate::GpuProfile::global_memory_bus_width_bits`]).
+    /// Distinct from [`crate::GpuProfile::hbm_bps`] and from memory clock
+    /// rates.
+    GlobalMemoryBusWidth,
+    /// `cudaDevAttrSingleToDoublePrecisionPerfRatio`. Example H100 is
+    /// [`Self::SINGLE_TO_DOUBLE_PRECISION_PERF_RATIO`] (Hopper FP32 and
+    /// FP64 peaks match). Distinct from occupancy SM counts and from
+    /// clock rates. This VM does not scale kernel duration from this
+    /// ratio.
+    SingleToDoublePrecisionPerfRatio,
 }
 
 impl DeviceAttr {
@@ -1101,6 +1303,29 @@ impl DeviceAttr {
     /// CUDA device attributes are `int`; unlimited is `i32::MAX`. Distinct
     /// from [`DeviceAttr::TexturePitchAlignment`] (always 0).
     pub const MAX_PITCH: u64 = 2_147_483_647;
+    /// `cudaDevAttrMaxThreadsPerBlock` on example H100. Distinct from
+    /// occupancy SM counts. This VM does not model a thread-block launch.
+    pub const MAX_THREADS_PER_BLOCK: u64 = 1024;
+    /// `cudaDevAttrMaxBlockDimX` on example H100.
+    pub const MAX_BLOCK_DIM_X: u64 = 1024;
+    /// `cudaDevAttrMaxBlockDimY` on example H100.
+    pub const MAX_BLOCK_DIM_Y: u64 = 1024;
+    /// `cudaDevAttrMaxBlockDimZ` on example H100.
+    pub const MAX_BLOCK_DIM_Z: u64 = 64;
+    /// `cudaDevAttrMaxGridDimX` on example H100 (`i32::MAX`). Distinct from
+    /// [`Self::MAX_PITCH`] (same numeric value, different cap).
+    pub const MAX_GRID_DIM_X: u64 = 2_147_483_647;
+    /// `cudaDevAttrMaxGridDimY` on example H100.
+    pub const MAX_GRID_DIM_Y: u64 = 65_535;
+    /// `cudaDevAttrMaxGridDimZ` on example H100.
+    pub const MAX_GRID_DIM_Z: u64 = 65_535;
+    /// `cudaDevAttrMaxRegistersPerBlock` on example H100. Distinct from
+    /// occupancy SM counts. This VM does not model a register file.
+    pub const MAX_REGISTERS_PER_BLOCK: u64 = 65_536;
+    /// `cudaDevAttrSingleToDoublePrecisionPerfRatio` on example H100.
+    /// Hopper FP32 and FP64 peaks match. Distinct from occupancy SM
+    /// counts and from clock rates.
+    pub const SINGLE_TO_DOUBLE_PRECISION_PERF_RATIO: u64 = 1;
 }
 
 /// `cudaMemAllocationHandleType` bits for
@@ -1152,6 +1377,9 @@ impl MemExportFlags {
 /// (`cudaUuid_t`), not a real NVIDIA board UUID. [`Self::pci_domain_id`] /
 /// [`Self::pci_bus_id`] / [`Self::pci_device_id`] are the synthetic PCI
 /// identity from [`crate::Sim::device_get_pci_bus_id`].
+/// [`Self::pci_subsystem_id`] is always 0. [`Self::luid`] and
+/// [`Self::luid_device_node_mask`] are always 0
+/// ([`crate::Sim::device_get_luid`]).
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct DeviceProperties {
     /// Profile name (`example-h100-sxm`, a capture id, …).
@@ -1159,12 +1387,65 @@ pub struct DeviceProperties {
     /// Synthetic `cudaUuid_t` ([`crate::Sim::device_get_uuid`]). Not a real
     /// NVIDIA UUID and not parsed from a capture file.
     pub uuid: [u8; 16],
+    /// `cudaDeviceProp::luid`. Always 8 zero bytes (Windows LUID is not
+    /// modeled). Distinct from [`Self::uuid`]. Also
+    /// [`crate::Sim::device_get_luid`].
+    pub luid: [u8; 8],
+    /// `cudaDeviceProp::luidDeviceNodeMask`. Always 0 (Windows LUID is not
+    /// modeled). Distinct from [`Self::luid`]. Also
+    /// [`crate::Sim::device_get_luid`].
+    pub luid_device_node_mask: u32,
     /// Synthetic `pciDomainID` ([`DeviceAttr::PciDomainId`]).
     pub pci_domain_id: u32,
     /// Synthetic `pciBusID` ([`DeviceAttr::PciBusId`]).
     pub pci_bus_id: u32,
     /// Synthetic `pciDeviceID` ([`DeviceAttr::PciDeviceId`]). Always 0.
     pub pci_device_id: u32,
+    /// `cudaDeviceProp::pciSubSystemID`. Always 0 (synthetic PCI has no
+    /// subsystem id). Distinct from [`Self::pci_device_id`]. Also
+    /// [`DeviceAttr::GpuPciSubsystemId`]. This VM does not invent
+    /// `DeviceAttr::PciSubSystemId`.
+    pub pci_subsystem_id: u32,
+    /// `cudaDevAttrGpuPciDeviceId` ([`DeviceAttr::GpuPciDeviceId`]). Always
+    /// 0; this VM has no NVIDIA PCI vendor/device id. Distinct from
+    /// [`Self::pci_device_id`] and from [`Self::pci_subsystem_id`].
+    pub gpu_pci_device_id: u32,
+    /// `cudaDeviceProp::major` ([`DeviceAttr::ComputeCapabilityMajor`]).
+    /// Example H100 is 9 (Hopper sm_90). Distinct from occupancy SM counts.
+    pub compute_capability_major: u32,
+    /// `cudaDeviceProp::minor` ([`DeviceAttr::ComputeCapabilityMinor`]).
+    /// Example H100 is 0.
+    pub compute_capability_minor: u32,
+    /// `cudaDeviceProp::singleToDoublePrecisionPerfRatio`
+    /// ([`DeviceAttr::SingleToDoublePrecisionPerfRatio`]). Example H100 is
+    /// [`DeviceAttr::SINGLE_TO_DOUBLE_PRECISION_PERF_RATIO`]. Distinct
+    /// from occupancy SM counts and from clock rates.
+    pub single_to_double_precision_perf_ratio: u64,
+    /// `cudaDeviceProp::maxThreadsPerBlock`
+    /// ([`DeviceAttr::MaxThreadsPerBlock`]). Example H100 is
+    /// [`DeviceAttr::MAX_THREADS_PER_BLOCK`]. Distinct from occupancy SM
+    /// counts.
+    pub max_threads_per_block: u64,
+    /// `cudaDeviceProp::maxThreadsDim[0]` ([`DeviceAttr::MaxBlockDimX`]).
+    pub max_block_dim_x: u64,
+    /// `cudaDeviceProp::maxThreadsDim[1]` ([`DeviceAttr::MaxBlockDimY`]).
+    pub max_block_dim_y: u64,
+    /// `cudaDeviceProp::maxThreadsDim[2]` ([`DeviceAttr::MaxBlockDimZ`]).
+    pub max_block_dim_z: u64,
+    /// `cudaDeviceProp::maxGridSize[0]` ([`DeviceAttr::MaxGridDimX`]).
+    pub max_grid_dim_x: u64,
+    /// `cudaDeviceProp::maxGridSize[1]` ([`DeviceAttr::MaxGridDimY`]).
+    pub max_grid_dim_y: u64,
+    /// `cudaDeviceProp::maxGridSize[2]` ([`DeviceAttr::MaxGridDimZ`]).
+    pub max_grid_dim_z: u64,
+    /// `cudaDeviceProp::regsPerBlock` ([`DeviceAttr::MaxRegistersPerBlock`]).
+    /// Example H100 is [`DeviceAttr::MAX_REGISTERS_PER_BLOCK`]. Distinct
+    /// from occupancy SM counts.
+    pub regs_per_block: u64,
+    /// `cudaDeviceProp::memoryBusWidth` ([`DeviceAttr::GlobalMemoryBusWidth`]).
+    /// Example H100 is 5120 bits. Distinct from [`Self::total_global_mem`]
+    /// and from memory clock rates.
+    pub memory_bus_width: u64,
     /// [`crate::GpuProfile::hbm_bytes`] (`totalGlobalMem`).
     pub total_global_mem: u64,
     /// `cudaDevAttrTotalConstantMemory` ([`DeviceAttr::TotalConstantMemory`]).
@@ -1188,6 +1469,181 @@ pub struct DeviceProperties {
     /// Always 0; CUDA arrays / textures are not modeled. Distinct from
     /// [`Self::texture_alignment`].
     pub max_texture_1d_width: u32,
+    /// `cudaDeviceProp::maxTexture2D[0]` ([`DeviceAttr::MaxTexture2DWidth`]).
+    /// Always 0; CUDA arrays / textures are not modeled. Distinct from
+    /// [`Self::max_texture_1d_width`].
+    pub max_texture_2d_width: u32,
+    /// `cudaDeviceProp::maxTexture2D[1]` ([`DeviceAttr::MaxTexture2DHeight`]).
+    /// Always 0; CUDA arrays / textures are not modeled. Distinct from
+    /// [`Self::max_texture_2d_width`].
+    pub max_texture_2d_height: u32,
+    /// `cudaDeviceProp::maxTexture3D[0]` ([`DeviceAttr::MaxTexture3DWidth`]).
+    /// Always 0; CUDA arrays / textures are not modeled. Distinct from
+    /// [`Self::max_texture_2d_width`].
+    pub max_texture_3d_width: u32,
+    /// `cudaDeviceProp::maxTexture3D[1]` ([`DeviceAttr::MaxTexture3DHeight`]).
+    /// Always 0; CUDA arrays / textures are not modeled. Distinct from
+    /// [`Self::max_texture_3d_width`].
+    pub max_texture_3d_height: u32,
+    /// `cudaDeviceProp::maxTexture3D[2]` ([`DeviceAttr::MaxTexture3DDepth`]).
+    /// Always 0; CUDA arrays / textures are not modeled. Distinct from
+    /// [`Self::max_texture_3d_height`].
+    pub max_texture_3d_depth: u32,
+    /// `cudaDeviceProp::maxTexture3DAlt[0]`
+    /// ([`DeviceAttr::MaxTexture3DWidthAlt`]). Always 0; CUDA alternate 3D
+    /// texture dims are not modeled. Distinct from
+    /// [`Self::max_texture_3d_width`].
+    pub max_texture_3d_width_alt: u32,
+    /// `cudaDeviceProp::maxTexture3DAlt[1]`
+    /// ([`DeviceAttr::MaxTexture3DHeightAlt`]). Always 0; CUDA alternate 3D
+    /// texture dims are not modeled. Distinct from
+    /// [`Self::max_texture_3d_width_alt`].
+    pub max_texture_3d_height_alt: u32,
+    /// `cudaDeviceProp::maxTexture3DAlt[2]`
+    /// ([`DeviceAttr::MaxTexture3DDepthAlt`]). Always 0; CUDA alternate 3D
+    /// texture dims are not modeled. Distinct from
+    /// [`Self::max_texture_3d_height_alt`].
+    pub max_texture_3d_depth_alt: u32,
+    /// `cudaDeviceProp::maxTexture1DLinear`
+    /// ([`DeviceAttr::MaxTexture1DLinearWidth`]). Always 0; CUDA linear
+    /// textures are not modeled. Distinct from [`Self::max_texture_1d_width`].
+    pub max_texture_1d_linear_width: u32,
+    /// `cudaDeviceProp::maxTexture2DLinear[0]`
+    /// ([`DeviceAttr::MaxTexture2DLinearWidth`]). Always 0; CUDA linear
+    /// textures are not modeled. Distinct from [`Self::max_texture_2d_width`].
+    pub max_texture_2d_linear_width: u32,
+    /// `cudaDeviceProp::maxTexture2DLinear[1]`
+    /// ([`DeviceAttr::MaxTexture2DLinearHeight`]). Always 0; CUDA linear
+    /// textures are not modeled. Distinct from
+    /// [`Self::max_texture_2d_linear_width`].
+    pub max_texture_2d_linear_height: u32,
+    /// `cudaDeviceProp::maxTexture2DLinear[2]`
+    /// ([`DeviceAttr::MaxTexture2DLinearPitch`]). Always 0; CUDA linear
+    /// textures are not modeled. Distinct from
+    /// [`Self::texture_pitch_alignment`].
+    pub max_texture_2d_linear_pitch: u32,
+    /// `cudaDeviceProp::maxTexture2DGather[0]`
+    /// ([`DeviceAttr::MaxTexture2DGatherWidth`]). Always 0; CUDA texture
+    /// gather is not modeled. Distinct from [`Self::max_texture_2d_width`].
+    pub max_texture_2d_gather_width: u32,
+    /// `cudaDeviceProp::maxTexture2DGather[1]`
+    /// ([`DeviceAttr::MaxTexture2DGatherHeight`]). Always 0; CUDA texture
+    /// gather is not modeled. Distinct from
+    /// [`Self::max_texture_2d_gather_width`].
+    pub max_texture_2d_gather_height: u32,
+    /// `cudaDeviceProp::maxTexture1DMipmap`
+    /// ([`DeviceAttr::MaxTexture1DMipmappedWidth`]). Always 0; CUDA
+    /// mipmapped textures are not modeled. Distinct from
+    /// [`Self::max_texture_1d_width`].
+    pub max_texture_1d_mipmapped_width: u32,
+    /// `cudaDeviceProp::maxTexture2DMipmap[0]`
+    /// ([`DeviceAttr::MaxTexture2DMipmappedWidth`]). Always 0; CUDA
+    /// mipmapped textures are not modeled. Distinct from
+    /// [`Self::max_texture_2d_width`].
+    pub max_texture_2d_mipmapped_width: u32,
+    /// `cudaDeviceProp::maxTexture2DMipmap[1]`
+    /// ([`DeviceAttr::MaxTexture2DMipmappedHeight`]). Always 0; CUDA
+    /// mipmapped textures are not modeled. Distinct from
+    /// [`Self::max_texture_2d_mipmapped_width`].
+    pub max_texture_2d_mipmapped_height: u32,
+    /// `cudaDeviceProp::maxTextureCubemap`
+    /// ([`DeviceAttr::MaxTextureCubemapWidth`]). Always 0; CUDA cubemap
+    /// textures are not modeled. Distinct from [`Self::max_texture_2d_width`].
+    pub max_texture_cubemap_width: u32,
+    /// `cudaDeviceProp::maxTexture1DLayered[0]`
+    /// ([`DeviceAttr::MaxTexture1DLayeredWidth`]). Always 0; CUDA layered
+    /// textures are not modeled. Distinct from [`Self::max_texture_1d_width`].
+    pub max_texture_1d_layered_width: u32,
+    /// `cudaDeviceProp::maxTexture1DLayered[1]`
+    /// ([`DeviceAttr::MaxTexture1DLayeredLayers`]). Always 0; CUDA layered
+    /// textures are not modeled. Distinct from
+    /// [`Self::max_texture_1d_layered_width`].
+    pub max_texture_1d_layered_layers: u32,
+    /// `cudaDeviceProp::maxTexture2DLayered[0]`
+    /// ([`DeviceAttr::MaxTexture2DLayeredWidth`]). Always 0; CUDA layered
+    /// textures are not modeled. Distinct from [`Self::max_texture_2d_width`].
+    pub max_texture_2d_layered_width: u32,
+    /// `cudaDeviceProp::maxTexture2DLayered[1]`
+    /// ([`DeviceAttr::MaxTexture2DLayeredHeight`]). Always 0; CUDA layered
+    /// textures are not modeled. Distinct from
+    /// [`Self::max_texture_2d_layered_width`].
+    pub max_texture_2d_layered_height: u32,
+    /// `cudaDeviceProp::maxTexture2DLayered[2]`
+    /// ([`DeviceAttr::MaxTexture2DLayeredLayers`]). Always 0; CUDA layered
+    /// textures are not modeled. Distinct from
+    /// [`Self::max_texture_2d_layered_height`].
+    pub max_texture_2d_layered_layers: u32,
+    /// `cudaDeviceProp::maxTextureCubemapLayered[0]`
+    /// ([`DeviceAttr::MaxTextureCubemapLayeredWidth`]). Always 0; CUDA
+    /// cubemap layered textures are not modeled. Distinct from
+    /// [`Self::max_texture_cubemap_width`].
+    pub max_texture_cubemap_layered_width: u32,
+    /// `cudaDeviceProp::maxTextureCubemapLayered[1]`
+    /// ([`DeviceAttr::MaxTextureCubemapLayeredLayers`]). Always 0; CUDA
+    /// cubemap layered textures are not modeled. Distinct from
+    /// [`Self::max_texture_cubemap_layered_width`].
+    pub max_texture_cubemap_layered_layers: u32,
+    /// `cudaDeviceProp::maxSurface1D` ([`DeviceAttr::MaxSurface1DWidth`]).
+    /// Always 0; CUDA surfaces are not modeled. Distinct from
+    /// [`Self::surface_alignment`].
+    pub max_surface_1d_width: u32,
+    /// `cudaDeviceProp::maxSurface2D[0]` ([`DeviceAttr::MaxSurface2DWidth`]).
+    /// Always 0; CUDA surfaces are not modeled. Distinct from
+    /// [`Self::max_surface_1d_width`].
+    pub max_surface_2d_width: u32,
+    /// `cudaDeviceProp::maxSurface2D[1]` ([`DeviceAttr::MaxSurface2DHeight`]).
+    /// Always 0; CUDA surfaces are not modeled. Distinct from
+    /// [`Self::max_surface_2d_width`].
+    pub max_surface_2d_height: u32,
+    /// `cudaDeviceProp::maxSurface3D[0]` ([`DeviceAttr::MaxSurface3DWidth`]).
+    /// Always 0; CUDA surfaces are not modeled. Distinct from
+    /// [`Self::max_surface_2d_width`].
+    pub max_surface_3d_width: u32,
+    /// `cudaDeviceProp::maxSurface3D[1]` ([`DeviceAttr::MaxSurface3DHeight`]).
+    /// Always 0; CUDA surfaces are not modeled. Distinct from
+    /// [`Self::max_surface_3d_width`].
+    pub max_surface_3d_height: u32,
+    /// `cudaDeviceProp::maxSurface3D[2]` ([`DeviceAttr::MaxSurface3DDepth`]).
+    /// Always 0; CUDA surfaces are not modeled. Distinct from
+    /// [`Self::max_surface_3d_height`].
+    pub max_surface_3d_depth: u32,
+    /// `cudaDeviceProp::maxSurface1DLayered[0]`
+    /// ([`DeviceAttr::MaxSurface1DLayeredWidth`]). Always 0; CUDA layered
+    /// surfaces are not modeled. Distinct from [`Self::max_surface_1d_width`].
+    pub max_surface_1d_layered_width: u32,
+    /// `cudaDeviceProp::maxSurface1DLayered[1]`
+    /// ([`DeviceAttr::MaxSurface1DLayeredLayers`]). Always 0; CUDA layered
+    /// surfaces are not modeled. Distinct from
+    /// [`Self::max_surface_1d_layered_width`].
+    pub max_surface_1d_layered_layers: u32,
+    /// `cudaDeviceProp::maxSurface2DLayered[0]`
+    /// ([`DeviceAttr::MaxSurface2DLayeredWidth`]). Always 0; CUDA layered
+    /// surfaces are not modeled. Distinct from [`Self::max_surface_2d_width`].
+    pub max_surface_2d_layered_width: u32,
+    /// `cudaDeviceProp::maxSurface2DLayered[1]`
+    /// ([`DeviceAttr::MaxSurface2DLayeredHeight`]). Always 0; CUDA layered
+    /// surfaces are not modeled. Distinct from
+    /// [`Self::max_surface_2d_layered_width`].
+    pub max_surface_2d_layered_height: u32,
+    /// `cudaDeviceProp::maxSurface2DLayered[2]`
+    /// ([`DeviceAttr::MaxSurface2DLayeredLayers`]). Always 0; CUDA layered
+    /// surfaces are not modeled. Distinct from
+    /// [`Self::max_surface_2d_layered_height`].
+    pub max_surface_2d_layered_layers: u32,
+    /// `cudaDeviceProp::maxSurfaceCubemap`
+    /// ([`DeviceAttr::MaxSurfaceCubemapWidth`]). Always 0; CUDA cubemap
+    /// surfaces are not modeled. Distinct from [`Self::max_surface_2d_width`].
+    pub max_surface_cubemap_width: u32,
+    /// `cudaDeviceProp::maxSurfaceCubemapLayered[0]`
+    /// ([`DeviceAttr::MaxSurfaceCubemapLayeredWidth`]). Always 0; CUDA
+    /// cubemap layered surfaces are not modeled. Distinct from
+    /// [`Self::max_surface_cubemap_width`].
+    pub max_surface_cubemap_layered_width: u32,
+    /// `cudaDeviceProp::maxSurfaceCubemapLayered[1]`
+    /// ([`DeviceAttr::MaxSurfaceCubemapLayeredLayers`]). Always 0; CUDA
+    /// cubemap layered surfaces are not modeled. Distinct from
+    /// [`Self::max_surface_cubemap_layered_width`].
+    pub max_surface_cubemap_layered_layers: u32,
     /// `cudaDevAttrMaxPitch` ([`DeviceAttr::MaxPitch`] / `memPitch`).
     /// [`DeviceAttr::MAX_PITCH`]: this VM does not cap 2D memcpy /
     /// `cudaMallocPitch` pitch. Distinct from [`Self::texture_pitch_alignment`].
@@ -1196,6 +1652,13 @@ pub struct DeviceProperties {
     pub shared_mem_per_block: u32,
     /// [`crate::GpuProfile::max_shared_mem_per_block_optin`].
     pub shared_mem_per_block_optin: u32,
+    /// `cudaDeviceProp::sharedMemPerMultiprocessor`
+    /// ([`DeviceAttr::MaxSharedMemoryPerMultiprocessor`]). Same bytes as
+    /// [`Self::shared_mem_per_block_optin`] because
+    /// [`Self::reserved_shared_mem_per_block`] is 0. Distinct from
+    /// [`Self::shared_mem_per_block`]. This VM does not invent
+    /// `cudaDevAttrMaxRegistersPerMultiprocessor`.
+    pub shared_mem_per_multiprocessor: u32,
     /// `cudaDevAttrReservedSharedMemoryPerBlock`
     /// ([`DeviceAttr::ReservedSharedMemoryPerBlock`]). Always 0; driver-reserved
     /// shared memory is not modeled. Distinct from [`Self::shared_mem_per_block`].
@@ -1308,6 +1771,14 @@ pub struct DeviceProperties {
     pub handle_type_win32_handle_supported: bool,
     /// `cudaDevAttrHandleTypeWin32KmtHandleSupported` (POSIX-FD only).
     pub handle_type_win32_kmt_handle_supported: bool,
+    /// `cudaDevAttrD3D12CigSupported` ([`DeviceAttr::D3D12CigSupported`]).
+    /// Always false; D3D12 CUDA-in-graphics is not modeled. Distinct from
+    /// [`Self::handle_type_win32_handle_supported`].
+    pub d3d12_cig_supported: bool,
+    /// `cudaDevAttrVulkanCigSupported` ([`DeviceAttr::VulkanCigSupported`]).
+    /// Always false; Vulkan CUDA-in-graphics is not modeled. Distinct from
+    /// [`Self::d3d12_cig_supported`].
+    pub vulkan_cig_supported: bool,
     /// `cudaDevAttrHandleTypeFabricSupported` (fabric handles are not modeled).
     pub handle_type_fabric_supported: bool,
     /// `cudaDevAttrHostMemoryPoolsSupported` (pools are device-only).
@@ -1320,6 +1791,10 @@ pub struct DeviceProperties {
     pub multi_gpu_board_group_id: u32,
     /// `cudaDevAttrComputeMode` (always [`ComputeMode::DEFAULT`]).
     pub compute_mode: u32,
+    /// `cudaDevAttrMpsEnabled` ([`DeviceAttr::MpsEnabled`]). Always false;
+    /// CUDA Multi-Process Service is not modeled. Distinct from
+    /// [`Self::compute_mode`].
+    pub mps_enabled: bool,
     /// `cudaDevAttrTccDriver` (example SKUs are not Windows TCC).
     pub tcc_driver: bool,
     /// `cudaDevAttrKernelExecTimeout` (example SKUs have no display watchdog).
@@ -1412,10 +1887,35 @@ pub enum FuncAttr {
 /// Modeled `cudaFuncGetAttributes` / `cudaFuncGetAttribute` fields.
 ///
 /// This VM has one function-attr set **per device**, not per kernel
-/// function. No `maxThreadsPerBlock`, register count, or binary version —
-/// those are not modeled.
+/// function. Compiler-emitted `sharedSizeBytes`, `constSizeBytes`,
+/// `localSizeBytes`, `maxThreadsPerBlock`, `ptxVersion`, `binaryVersion`,
+/// and `cacheModeCA` are always 0 until a compiled kernel exists.
+/// `numRegs` is not modeled this slice. Distinct from
+/// [`DeviceAttr::MaxThreadsPerBlock`] (device cap) and from
+/// [`DeviceAttr::TotalConstantMemory`].
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct FuncAttributes {
+    /// `cudaFuncAttributes.sharedSizeBytes`. Always 0 (no compiled
+    /// `__shared__` static size). Distinct from
+    /// [`Self::max_dynamic_shared_size_bytes`].
+    pub shared_size_bytes: u32,
+    /// `cudaFuncAttributes.constSizeBytes`. Always 0 (no compiled
+    /// `__constant__` use). Distinct from
+    /// [`DeviceAttr::TotalConstantMemory`].
+    pub const_size_bytes: u32,
+    /// `cudaFuncAttributes.localSizeBytes`. Always 0 (no compiled
+    /// per-thread local memory).
+    pub local_size_bytes: u32,
+    /// `cudaFuncAttributes.maxThreadsPerBlock`. Always 0 until a compiled
+    /// kernel exists. Distinct from [`DeviceAttr::MaxThreadsPerBlock`].
+    pub max_threads_per_block: u32,
+    /// `cudaFuncAttributes.ptxVersion`. Always 0 (no PTX).
+    pub ptx_version: u32,
+    /// `cudaFuncAttributes.binaryVersion`. Always 0 (no cubin).
+    pub binary_version: u32,
+    /// `cudaFuncAttributes.cacheModeCA`. Always 0 (not compiled with
+    /// nvcc `dlcm=ca`). Distinct from [`FuncCache`]. CUDA's field is `int`.
+    pub cache_mode_ca: u32,
     /// `cudaFuncAttributeMaxDynamicSharedMemorySize`.
     pub max_dynamic_shared_size_bytes: u32,
     /// `cudaFuncAttributeNonPortableClusterSizeAllowed`.
@@ -2146,8 +2646,11 @@ pub struct KernelAttrs {
     ///
     /// [`None`] inherits the stream (`cudaStreamCreateWithPriority`). [`Some`]
     /// overrides for this kernel only; memcpy and other stream work stay on the
-    /// stream priority. Higher values start first when compute contends.
-    /// Decode identity stays [`None`]. Capture snapshots the effective value
+    /// stream priority. Numerically lower values start first when compute
+    /// contends (CUDA). Launch-attribute and graph-node values are stored
+    /// unclamped; stream Get/SetPriority clamp to
+    /// [`crate::Sim::device_get_stream_priority_range`]. Decode identity stays
+    /// [`None`]. Capture snapshots the effective value
     /// (`cudaKernelNodeAttributePriority`). Default graph replay still uses the
     /// launch stream unless `cudaGraphInstantiateFlagUseNodePriority`.
     pub priority: Option<i32>,
@@ -2272,6 +2775,30 @@ pub enum FuncCache {
     PreferL1,
     /// `cudaFuncCachePreferEqual` (`3`). Stored; L1 is not modeled.
     PreferEqual,
+}
+
+/// `CUmoduleLoadingMode` for [`crate::Sim::module_get_loading_mode`].
+///
+/// Process-wide. This VM has no `CUmodule`; loading is always
+/// [`Self::Eager`]. Distinct from [`crate::Sim::driver_init`] and from
+/// per-device [`crate::Sim::init_device`]. This VM does not invent an
+/// environment-variable loading override.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash)]
+#[repr(u32)]
+pub enum ModuleLoadingMode {
+    /// `CU_MODULE_EAGER_LOADING` (CUDA 1). Default.
+    #[default]
+    Eager = 1,
+    /// `CU_MODULE_LAZY_LOADING` (CUDA 2). Not selected.
+    Lazy = 2,
+}
+
+impl ModuleLoadingMode {
+    /// CUDA `CUmoduleLoadingMode` integer.
+    #[must_use]
+    pub fn to_cuda(self) -> u32 {
+        self as u32
+    }
 }
 
 /// `cudaLaunchAttributePortableClusterSizeMode`.
@@ -3286,7 +3813,8 @@ impl GreenCtxFlags {
 ///
 /// [`Self::SM_COUNT`] is `CU_EXEC_AFFINITY_TYPE_SM_COUNT`. This VM uses
 /// permille green-context spans, not occupancy SM counts, so support is 0.
-/// Other type ids are Invalid `"exec affinity type"`.
+/// [`crate::Sim::ctx_get_exec_affinity`] of [`Self::SM_COUNT`] is Invalid
+/// `"unsupported exec affinity"`. Other type ids are Invalid `"exec affinity type"`.
 pub struct ExecAffinityType;
 
 impl ExecAffinityType {
@@ -3398,7 +3926,7 @@ impl PeerAccessFlags {
 }
 
 /// `cudaMemPrefetchAsync` / `cuMemPrefetchAsync_v2` flags for
-/// [`crate::Sim::prefetch_with_flags`].
+/// [`crate::Sim::prefetch_with_flags`] and [`crate::Sim::mem_prefetch_v2`].
 ///
 /// CUDA requires 0. Unknown bits are Invalid `"prefetch flags"`.
 pub struct PrefetchFlags;
@@ -3418,7 +3946,8 @@ impl HostGetDevicePointerFlags {
     pub const DEFAULT: u32 = 0;
 }
 
-/// `cudaIpcOpenMemHandle` flags for [`crate::Sim::ipc_open_with_flags`].
+/// `cudaIpcOpenMemHandle` flags for [`crate::Sim::ipc_open_with_flags`]
+/// and [`crate::Sim::ipc_open_mem_handle`].
 ///
 /// [`Self::LAZY_ENABLE_PEER_ACCESS`] is a no-op: the dest GPU must already hold the
 /// source. Cross-GPU lazy peer is not modeled. Unknown bits are Invalid

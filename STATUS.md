@@ -5,6 +5,6195 @@ Visible five-turn extract: [docs/chatgpt-share-6a920fe1.md](docs/chatgpt-share-6
 Complete share-API extract: [docs/chatgpt-share-6a920fe1/](docs/chatgpt-share-6a920fe1/).
 Work lands on `main`. No PRs.
 
+## Shipped 2026-09-03 — CUDA `cuDriverGetVersion`
+
+`gpu-sim` `Sim::mem_driver_get_version` is `cuDriverGetVersion`.
+Identity with `driver_get_version` (`cudaDriverGetVersion`). Query; legal during capture. Distinct from `mem_device_total_mem`.
+This VM does not invent occupancy SM counts or Engine `--mem-driver-get-version`.
+`gpu-profile capture` is still refused. Dual score still has no `$/M tokens`.
+
+## Shipped 2026-09-03 — CUDA `cuGetProcAddress`
+
+`gpu-sim` `Sim::mem_get_proc_address` is `cuGetProcAddress`.
+Identity with `get_proc_address` (`cudaGetDriverEntryPoint`). Query; legal during capture. Distinct from `mem_driver_get_version`.
+This VM does not invent occupancy SM counts or Engine `--mem-get-proc-address`.
+`gpu-profile capture` is still refused. Dual score still has no `$/M tokens`.
+
+## Shipped 2026-09-03 — CUDA `cuGetExportTable`
+
+`gpu-sim` `Sim::mem_get_export_table` is `cuGetExportTable`.
+Identity with `get_export_table`. Query; legal during capture. Distinct from `mem_get_proc_address`.
+This VM does not invent occupancy SM counts or Engine `--mem-get-export-table`.
+`gpu-profile capture` is still refused. Dual score still has no `$/M tokens`.
+
+## Shipped 2026-09-03 — CUDA `cuCoredumpGetAttribute`
+
+`gpu-sim` `Sim::mem_coredump_get_attribute` is `cuCoredumpGetAttribute`.
+Identity with `coredump_get_attribute` (`cudaCoredumpGetAttribute`). Query; legal during capture. Distinct from `mem_get_export_table`.
+This VM does not invent occupancy SM counts or Engine `--mem-coredump-get-attribute`.
+`gpu-profile capture` is still refused. Dual score still has no `$/M tokens`.
+
+## Shipped 2026-09-03 — CUDA `cuCoredumpSetAttribute`
+
+`gpu-sim` `Sim::mem_coredump_set_attribute` is `cuCoredumpSetAttribute`.
+Identity with `coredump_set_attribute` (`cudaCoredumpSetAttribute`). Query; legal during capture. Distinct from `mem_coredump_get_attribute`.
+This VM does not invent occupancy SM counts or Engine `--mem-coredump-set-attribute`.
+`gpu-profile capture` is still refused. Dual score still has no `$/M tokens`.
+
+## Shipped 2026-09-03 — CUDA `cuCoredumpGetAttributeGlobal`
+
+`gpu-sim` `Sim::mem_coredump_get_attribute_global` is `cuCoredumpGetAttributeGlobal`.
+Identity with `coredump_get_attribute_global` (`cudaCoredumpGetAttributeGlobal`). Query; legal during capture. Distinct from `mem_coredump_set_attribute`.
+This VM does not invent occupancy SM counts or Engine `--mem-coredump-get-attribute-global`.
+`gpu-profile capture` is still refused. Dual score still has no `$/M tokens`.
+
+## Shipped 2026-09-03 — CUDA `cuCoredumpSetAttributeGlobal`
+
+`gpu-sim` `Sim::mem_coredump_set_attribute_global` is `cuCoredumpSetAttributeGlobal`.
+Identity with `coredump_set_attribute_global` (`cudaCoredumpSetAttributeGlobal`). Query; legal during capture. Distinct from `mem_coredump_get_attribute_global`.
+This VM does not invent occupancy SM counts or Engine `--mem-coredump-set-attribute-global`.
+`gpu-profile capture` is still refused. Dual score still has no `$/M tokens`.
+
+## Shipped 2026-09-03 — CUDA `cuCheckpointProcessLock`
+
+`gpu-sim` `Sim::mem_checkpoint_process_lock` is `cuCheckpointProcessLock`.
+Identity with `checkpoint_process_lock`. Query; legal during capture. Distinct from `mem_coredump_set_attribute_global`.
+This VM does not invent occupancy SM counts or Engine `--mem-checkpoint-process-lock`.
+`gpu-profile capture` is still refused. Dual score still has no `$/M tokens`.
+
+## Shipped 2026-09-03 — CUDA `cuCheckpointProcessCheckpoint`
+
+`gpu-sim` `Sim::mem_checkpoint_process_checkpoint` is `cuCheckpointProcessCheckpoint`.
+Identity with `checkpoint_process_checkpoint`. Query; legal during capture. Distinct from `mem_checkpoint_process_lock`.
+This VM does not invent occupancy SM counts or Engine `--mem-checkpoint-process-checkpoint`.
+`gpu-profile capture` is still refused. Dual score still has no `$/M tokens`.
+
+## Shipped 2026-09-03 — CUDA `cuCheckpointProcessRestore`
+
+`gpu-sim` `Sim::mem_checkpoint_process_restore` is `cuCheckpointProcessRestore`.
+Identity with `checkpoint_process_restore`. Query; legal during capture. Distinct from `mem_checkpoint_process_checkpoint`.
+This VM does not invent occupancy SM counts or Engine `--mem-checkpoint-process-restore`.
+`gpu-profile capture` is still refused. Dual score still has no `$/M tokens`.
+
+## Shipped 2026-09-03 — CUDA `cuCheckpointProcessUnlock`
+
+`gpu-sim` `Sim::mem_checkpoint_process_unlock` is `cuCheckpointProcessUnlock`.
+Identity with `checkpoint_process_unlock`. Query; legal during capture. Distinct from `mem_checkpoint_process_restore`.
+This VM does not invent occupancy SM counts or Engine `--mem-checkpoint-process-unlock`.
+`gpu-profile capture` is still refused. Dual score still has no `$/M tokens`.
+
+## Shipped 2026-09-03 — CUDA `cuWaitExternalSemaphoresAsync`
+
+`gpu-sim` `Sim::mem_wait_external_semaphores_async` is `cuWaitExternalSemaphoresAsync`.
+Identity with `wait_external_semaphores_async`. Query; legal during capture. Distinct from `mem_signal_external_semaphores_async`.
+This VM does not invent occupancy SM counts or Engine `--mem-wait-external-semaphores-async`.
+`gpu-profile capture` is still refused. Dual score still has no `$/M tokens`.
+
+## Shipped 2026-09-03 — CUDA `cuSignalExternalSemaphoresAsync`
+
+`gpu-sim` `Sim::mem_signal_external_semaphores_async` is `cuSignalExternalSemaphoresAsync`.
+Identity with `signal_external_semaphores_async`. Query; legal during capture. Distinct from `mem_destroy_external_semaphore`.
+This VM does not invent occupancy SM counts or Engine `--mem-signal-external-semaphores-async`.
+`gpu-profile capture` is still refused. Dual score still has no `$/M tokens`.
+
+## Shipped 2026-09-03 — CUDA `cuDestroyExternalSemaphore`
+
+`gpu-sim` `Sim::mem_destroy_external_semaphore` is `cuDestroyExternalSemaphore`.
+Identity with `destroy_external_semaphore`. Query; legal during capture. Distinct from `mem_import_external_semaphore`.
+This VM does not invent occupancy SM counts or Engine `--mem-destroy-external-semaphore`.
+`gpu-profile capture` is still refused. Dual score still has no `$/M tokens`.
+
+## Shipped 2026-09-03 — CUDA `cuImportExternalSemaphore`
+
+`gpu-sim` `Sim::mem_import_external_semaphore` is `cuImportExternalSemaphore`.
+Identity with `import_external_semaphore`. Query; legal during capture. Distinct from `mem_external_memory_get_mapped_mipmapped_array`.
+This VM does not invent occupancy SM counts or Engine `--mem-import-external-semaphore`.
+`gpu-profile capture` is still refused. Dual score still has no `$/M tokens`.
+
+## Shipped 2026-09-03 — CUDA `cuExternalMemoryGetMappedMipmappedArray`
+
+`gpu-sim` `Sim::mem_external_memory_get_mapped_mipmapped_array` is `cuExternalMemoryGetMappedMipmappedArray`.
+Identity with `external_memory_get_mapped_mipmapped_array`. Query; legal during capture. Distinct from `mem_external_memory_get_mapped_buffer`.
+This VM does not invent occupancy SM counts or Engine `--mem-external-memory-get-mapped-mipmapped-array`.
+`gpu-profile capture` is still refused. Dual score still has no `$/M tokens`.
+
+## Shipped 2026-09-03 — CUDA `cuExternalMemoryGetMappedBuffer`
+
+`gpu-sim` `Sim::mem_external_memory_get_mapped_buffer` is `cuExternalMemoryGetMappedBuffer`.
+Identity with `external_memory_get_mapped_buffer`. Query; legal during capture. Distinct from `mem_destroy_external_memory`.
+This VM does not invent occupancy SM counts or Engine `--mem-external-memory-get-mapped-buffer`.
+`gpu-profile capture` is still refused. Dual score still has no `$/M tokens`.
+
+## Shipped 2026-09-03 — CUDA `cuDestroyExternalMemory`
+
+`gpu-sim` `Sim::mem_destroy_external_memory` is `cuDestroyExternalMemory`.
+Identity with `destroy_external_memory`. Query; legal during capture. Distinct from `mem_import_external_memory`.
+This VM does not invent occupancy SM counts or Engine `--mem-destroy-external-memory`.
+`gpu-profile capture` is still refused. Dual score still has no `$/M tokens`.
+
+## Shipped 2026-09-03 — CUDA `cuImportExternalMemory`
+
+`gpu-sim` `Sim::mem_import_external_memory` is `cuImportExternalMemory`.
+Identity with `import_external_memory`. Query; legal during capture. Distinct from `mem_mipmapped_array_destroy`.
+This VM does not invent occupancy SM counts or Engine `--mem-import-external-memory`.
+`gpu-profile capture` is still refused. Dual score still has no `$/M tokens`.
+
+## Shipped 2026-09-03 — CUDA `cuMipmappedArrayDestroy`
+
+`gpu-sim` `Sim::mem_mipmapped_array_destroy` is `cuMipmappedArrayDestroy`.
+Identity with `mipmapped_array_destroy`. Query; legal during capture. Distinct from `mem_mipmapped_array_get_level`.
+This VM does not invent occupancy SM counts or Engine `--mem-mipmapped-array-destroy`.
+`gpu-profile capture` is still refused. Dual score still has no `$/M tokens`.
+
+## Shipped 2026-09-03 — CUDA `cuMipmappedArrayGetLevel`
+
+`gpu-sim` `Sim::mem_mipmapped_array_get_level` is `cuMipmappedArrayGetLevel`.
+Identity with `mipmapped_array_get_level`. Query; legal during capture. Distinct from `mem_mipmapped_array_create`.
+This VM does not invent occupancy SM counts or Engine `--mem-mipmapped-array-get-level`.
+`gpu-profile capture` is still refused. Dual score still has no `$/M tokens`.
+
+## Shipped 2026-09-03 — CUDA `cuMipmappedArrayCreate`
+
+`gpu-sim` `Sim::mem_mipmapped_array_create` is `cuMipmappedArrayCreate`.
+Identity with `mipmapped_array_create`. Query; legal during capture. Distinct from `mem_mipmapped_array_get_sparse_properties`.
+This VM does not invent occupancy SM counts or Engine `--mem-mipmapped-array-create`.
+`gpu-profile capture` is still refused. Dual score still has no `$/M tokens`.
+
+## Shipped 2026-09-03 — CUDA `cuMipmappedArrayGetSparseProperties`
+
+`gpu-sim` `Sim::mem_mipmapped_array_get_sparse_properties` is `cuMipmappedArrayGetSparseProperties`.
+Identity with `mipmapped_array_get_sparse_properties`. Query; legal during capture. Distinct from `mem_mipmapped_array_get_memory_requirements`.
+This VM does not invent occupancy SM counts or Engine `--mem-mipmapped-array-get-sparse-properties`.
+`gpu-profile capture` is still refused. Dual score still has no `$/M tokens`.
+
+## Shipped 2026-09-03 — CUDA `cuMipmappedArrayGetMemoryRequirements`
+
+`gpu-sim` `Sim::mem_mipmapped_array_get_memory_requirements` is `cuMipmappedArrayGetMemoryRequirements`.
+Identity with `mipmapped_array_get_memory_requirements`. Query; legal during capture. Distinct from `mem_array_get_memory_requirements`.
+This VM does not invent occupancy SM counts or Engine `--mem-mipmapped-array-get-memory-requirements`.
+`gpu-profile capture` is still refused. Dual score still has no `$/M tokens`.
+
+## Shipped 2026-09-03 — CUDA `cuArrayGetMemoryRequirements`
+
+`gpu-sim` `Sim::mem_array_get_memory_requirements` is `cuArrayGetMemoryRequirements`.
+Identity with `array_get_memory_requirements`. Query; legal during capture. Distinct from `mem_array_get_plane`.
+This VM does not invent occupancy SM counts or Engine `--mem-array-get-memory-requirements`.
+`gpu-profile capture` is still refused. Dual score still has no `$/M tokens`.
+
+## Shipped 2026-09-03 — CUDA `cuArrayGetPlane`
+
+`gpu-sim` `Sim::mem_array_get_plane` is `cuArrayGetPlane`.
+Identity with `array_get_plane`. Query; legal during capture. Distinct from `mem_array_get_sparse_properties`.
+This VM does not invent occupancy SM counts or Engine `--mem-array-get-plane`.
+`gpu-profile capture` is still refused. Dual score still has no `$/M tokens`.
+
+## Shipped 2026-09-03 — CUDA `cuArrayGetSparseProperties`
+
+`gpu-sim` `Sim::mem_array_get_sparse_properties` is `cuArrayGetSparseProperties`.
+Identity with `array_get_sparse_properties`. Query; legal during capture. Distinct from `mem_array_3d_get_descriptor`.
+This VM does not invent occupancy SM counts or Engine `--mem-array-get-sparse-properties`.
+`gpu-profile capture` is still refused. Dual score still has no `$/M tokens`.
+
+## Shipped 2026-09-03 — CUDA `cuArray3DGetDescriptor`
+
+`gpu-sim` `Sim::mem_array_3d_get_descriptor` is `cuArray3DGetDescriptor`.
+Identity with `array_3d_get_descriptor`. Query; legal during capture. Distinct from `mem_array_get_descriptor`.
+This VM does not invent occupancy SM counts or Engine `--mem-array-3d-get-descriptor`.
+`gpu-profile capture` is still refused. Dual score still has no `$/M tokens`.
+
+## Shipped 2026-09-03 — CUDA `cuArrayGetDescriptor`
+
+`gpu-sim` `Sim::mem_array_get_descriptor` is `cuArrayGetDescriptor`.
+Identity with `array_get_descriptor`. Query; legal during capture. Distinct from `mem_tensor_map_replace_aligned_addr`.
+This VM does not invent occupancy SM counts or Engine `--mem-array-get-descriptor`.
+`gpu-profile capture` is still refused. Dual score still has no `$/M tokens`.
+
+## Shipped 2026-09-03 — CUDA `cuTensorMapReplaceAlignedAddr`
+
+`gpu-sim` `Sim::mem_tensor_map_replace_aligned_addr` is `cuTensorMapReplaceAlignedAddr`.
+Identity with `tensor_map_replace_aligned_addr`. Query; legal during capture. Distinct from `mem_tensor_map_encode_im2col_wide`.
+This VM does not invent occupancy SM counts or Engine `--mem-tensor-map-replace-aligned-addr`.
+`gpu-profile capture` is still refused. Dual score still has no `$/M tokens`.
+
+## Shipped 2026-09-03 — CUDA `cuTensorMapEncodeIm2colWide`
+
+`gpu-sim` `Sim::mem_tensor_map_encode_im2col_wide` is `cuTensorMapEncodeIm2colWide`.
+Identity with `tensor_map_encode_im2col_wide`. Query; legal during capture. Distinct from `mem_tensor_map_encode_im2col`.
+This VM does not invent occupancy SM counts or Engine `--mem-tensor-map-encode-im2col-wide`.
+`gpu-profile capture` is still refused. Dual score still has no `$/M tokens`.
+
+## Shipped 2026-09-03 — CUDA `cuTensorMapEncodeIm2col`
+
+`gpu-sim` `Sim::mem_tensor_map_encode_im2col` is `cuTensorMapEncodeIm2col`.
+Identity with `tensor_map_encode_im2col`. Query; legal during capture. Distinct from `mem_tensor_map_encode_tiled`.
+This VM does not invent occupancy SM counts or Engine `--mem-tensor-map-encode-im2col`.
+`gpu-profile capture` is still refused. Dual score still has no `$/M tokens`.
+
+## Shipped 2026-09-03 — CUDA `cuTensorMapEncodeTiled`
+
+`gpu-sim` `Sim::mem_tensor_map_encode_tiled` is `cuTensorMapEncodeTiled`.
+Identity with `tensor_map_encode_tiled`. Query; legal during capture. Distinct from `mem_discard_and_prefetch_batch_async`.
+This VM does not invent occupancy SM counts or Engine `--mem-tensor-map-encode-tiled`.
+`gpu-profile capture` is still refused. Dual score still has no `$/M tokens`.
+
+## Shipped 2026-09-03 — CUDA `cudaMemDiscardAndPrefetchBatchAsync`
+
+`gpu-sim` `Sim::mem_discard_and_prefetch_batch_async` is `cudaMemDiscardAndPrefetchBatchAsync`.
+Identity with `discard_and_prefetch_batch_async`. Query; legal during capture. Distinct from `mem_discard_batch_async`.
+This VM does not invent occupancy SM counts or Engine `--mem-discard-and-prefetch-batch-async`.
+`gpu-profile capture` is still refused. Dual score still has no `$/M tokens`.
+
+## Shipped 2026-09-03 — CUDA `cudaMemDiscardBatchAsync`
+
+`gpu-sim` `Sim::mem_discard_batch_async` is `cudaMemDiscardBatchAsync`.
+Identity with `discard_batch_async`. Query; legal during capture. Distinct from `mem_prefetch_batch_async`.
+This VM does not invent occupancy SM counts or Engine `--mem-discard-batch-async`.
+`gpu-profile capture` is still refused. Dual score still has no `$/M tokens`.
+
+## Shipped 2026-09-03 — CUDA `cudaMemPrefetchBatchAsync`
+
+`gpu-sim` `Sim::mem_prefetch_batch_async` is `cudaMemPrefetchBatchAsync`.
+Identity with `prefetch_batch_async`. Query; legal during capture. Distinct from `mem_memcpy_dtoh`.
+This VM does not invent occupancy SM counts or Engine `--mem-prefetch-batch-async`.
+`gpu-profile capture` is still refused. Dual score still has no `$/M tokens`.
+
+## Shipped 2026-09-03 — CUDA `cuMemcpyDtoH`
+
+`gpu-sim` `Sim::mem_memcpy_dtoh` is `cuMemcpyDtoH`.
+Identity with `memcpy_dtoh`. Host-sync; capture refused. Distinct from `mem_memcpy_htod`.
+This VM does not invent occupancy SM counts or Engine `--mem-memcpy-dtoh`.
+`gpu-profile capture` is still refused. Dual score still has no `$/M tokens`.
+
+## Shipped 2026-09-03 — CUDA `cuMemcpyHtoD`
+
+`gpu-sim` `Sim::mem_memcpy_htod` is `cuMemcpyHtoD`.
+Identity with `memcpy_htod`. Host-sync; capture refused. Distinct from `mem_pool_get_id`.
+This VM does not invent occupancy SM counts or Engine `--mem-memcpy-htod`.
+`gpu-profile capture` is still refused. Dual score still has no `$/M tokens`.
+
+## Shipped 2026-09-03 — CUDA `cuMemPoolGetId`
+
+`gpu-sim` `Sim::mem_pool_get_id` is `cuMemPoolGetId`.
+Identity with `pool_get_id`. Query; legal during capture. Distinct from `mem_graph_node_get_containing_graph`.
+This VM does not invent occupancy SM counts or Engine `--mem-pool-get-id`.
+`gpu-profile capture` is still refused. Dual score still has no `$/M tokens`.
+
+## Shipped 2026-09-03 — CUDA `cuGraphNodeGetContainingGraph`
+
+`gpu-sim` `Sim::mem_graph_node_get_containing_graph` is `cuGraphNodeGetContainingGraph`.
+Identity with `graph_node_get_containing_graph`. Query; legal during capture. Distinct from `mem_graph_node_get_tools_id`.
+This VM does not invent occupancy SM counts or Engine `--mem-graph-node-get-containing-graph`.
+`gpu-profile capture` is still refused. Dual score still has no `$/M tokens`.
+
+## Shipped 2026-09-03 — CUDA `cuGraphNodeGetToolsId`
+
+`gpu-sim` `Sim::mem_graph_node_get_tools_id` is `cuGraphNodeGetToolsId`.
+Identity with `graph_node_get_tools_id`. Query; legal during capture. Distinct from `mem_graph_node_get_local_id`.
+This VM does not invent occupancy SM counts or Engine `--mem-graph-node-get-tools-id`.
+`gpu-profile capture` is still refused. Dual score still has no `$/M tokens`.
+
+## Shipped 2026-09-03 — CUDA `cuGraphNodeGetLocalId`
+
+`gpu-sim` `Sim::mem_graph_node_get_local_id` is `cuGraphNodeGetLocalId`.
+Identity with `graph_node_get_local_id`. Query; legal during capture. Distinct from `mem_green_ctx_synchronize`.
+This VM does not invent occupancy SM counts or Engine `--mem-graph-node-get-local-id`.
+`gpu-profile capture` is still refused. Dual score still has no `$/M tokens`.
+
+## Shipped 2026-09-03 — CUDA `cudaExecutionCtxSynchronize`
+
+`gpu-sim` `Sim::mem_green_ctx_synchronize` is `cudaExecutionCtxSynchronize`.
+Identity with `green_ctx_synchronize`. Host-sync; capture refused when a bound stream is capturing. Distinct from `mem_green_ctx_stream_create`.
+This VM does not invent occupancy SM counts or Engine `--mem-green-ctx-synchronize`.
+`gpu-profile capture` is still refused. Dual score still has no `$/M tokens`.
+
+## Shipped 2026-09-03 — CUDA `cuGreenCtxStreamCreate`
+
+`gpu-sim` `Sim::mem_green_ctx_stream_create` is `cuGreenCtxStreamCreate`.
+Identity with `green_ctx_stream_create`. Host-sync; capture refused. Distinct from `mem_green_ctx_destroy`.
+This VM does not invent occupancy SM counts or Engine `--mem-green-ctx-stream-create`.
+`gpu-profile capture` is still refused. Dual score still has no `$/M tokens`.
+
+## Shipped 2026-09-03 — CUDA `cuGreenCtxDestroy`
+
+`gpu-sim` `Sim::mem_green_ctx_destroy` is `cuGreenCtxDestroy`.
+Identity with `green_ctx_destroy`. Host-sync; capture refused. Distinct from `mem_green_ctx_create`.
+This VM does not invent occupancy SM counts or Engine `--mem-green-ctx-destroy`.
+`gpu-profile capture` is still refused. Dual score still has no `$/M tokens`.
+
+## Shipped 2026-09-03 — CUDA `cuGreenCtxCreate`
+
+`gpu-sim` `Sim::mem_green_ctx_create` is `cuGreenCtxCreate`.
+Identity with `green_ctx_create`. Host-sync; capture refused. Distinct from `mem_stream_get_green_ctx`.
+This VM does not invent occupancy SM counts or Engine `--mem-green-ctx-create`.
+`gpu-profile capture` is still refused. Dual score still has no `$/M tokens`.
+
+## Shipped 2026-09-03 — CUDA `cuStreamGetGreenCtx`
+
+`gpu-sim` `Sim::mem_stream_get_green_ctx` is `cuStreamGetGreenCtx`.
+Identity with `stream_get_green_ctx`. Query; legal during capture. Distinct from `mem_green_ctx_get_device`.
+This VM does not invent occupancy SM counts or Engine `--mem-stream-get-green-ctx`.
+`gpu-profile capture` is still refused. Dual score still has no `$/M tokens`.
+
+## Shipped 2026-09-03 — CUDA `cudaExecutionCtxGetDevice`
+
+`gpu-sim` `Sim::mem_green_ctx_get_device` is `cudaExecutionCtxGetDevice`.
+Identity with `green_ctx_get_device`. Query; legal during capture. Distinct from `mem_green_ctx_get_id`.
+This VM does not invent occupancy SM counts or Engine `--mem-green-ctx-get-device`.
+`gpu-profile capture` is still refused. Dual score still has no `$/M tokens`.
+
+## Shipped 2026-09-03 — CUDA `cuGreenCtxGetId`
+
+`gpu-sim` `Sim::mem_green_ctx_get_id` is `cuGreenCtxGetId`.
+Identity with `green_ctx_get_id`. Query; legal during capture. Distinct from `mem_event_get_id`.
+This VM does not invent occupancy SM counts or Engine `--mem-green-ctx-get-id`.
+`gpu-profile capture` is still refused. Dual score still has no `$/M tokens`.
+
+## Shipped 2026-09-03 — CUDA `cuEventGetId`
+
+`gpu-sim` `Sim::mem_event_get_id` is `cuEventGetId`.
+Identity with `event_get_id`. Query; legal during capture. Distinct from `mem_device_get_stream_priority_range`.
+This VM does not invent occupancy SM counts or Engine `--mem-event-get-id`.
+`gpu-profile capture` is still refused. Dual score still has no `$/M tokens`.
+
+## Shipped 2026-09-03 — CUDA `cudaDeviceGetStreamPriorityRange`
+
+`gpu-sim` `Sim::mem_device_get_stream_priority_range` is `cudaDeviceGetStreamPriorityRange`.
+Identity with `device_get_stream_priority_range`. Query; legal during capture. Distinct from `mem_func_set_attribute`.
+This VM does not invent occupancy SM counts or Engine `--mem-device-get-stream-priority-range`.
+`gpu-profile capture` is still refused. Dual score still has no `$/M tokens`.
+
+## Shipped 2026-09-03 — CUDA `cudaFuncSetAttribute`
+
+`gpu-sim` `Sim::mem_func_set_attribute` is `cudaFuncSetAttribute`.
+Identity with `func_set_attribute`. Host-side; legal during capture. Distinct from `mem_func_get_attribute`.
+This VM does not invent occupancy SM counts or Engine `--mem-func-set-attribute`.
+`gpu-profile capture` is still refused. Dual score still has no `$/M tokens`.
+
+## Shipped 2026-09-03 — CUDA `cudaFuncGetAttribute`
+
+`gpu-sim` `Sim::mem_func_get_attribute` is `cudaFuncGetAttribute`.
+Identity with `func_get_attribute`. Query; legal during capture. Distinct from `mem_func_get_param_info`.
+This VM does not invent occupancy SM counts or Engine `--mem-func-get-attribute`.
+`gpu-profile capture` is still refused. Dual score still has no `$/M tokens`.
+
+## Shipped 2026-09-03 — CUDA `cuFuncGetParamInfo`
+
+`gpu-sim` `Sim::mem_func_get_param_info` is `cuFuncGetParamInfo`.
+Identity with `func_get_param_info`. Query; legal during capture. Distinct from `mem_func_get_name`.
+This VM does not invent occupancy SM counts or Engine `--mem-func-get-param-info`.
+`gpu-profile capture` is still refused. Dual score still has no `$/M tokens`.
+
+## Shipped 2026-09-03 — CUDA `cuFuncGetName`
+
+`gpu-sim` `Sim::mem_func_get_name` is `cuFuncGetName`.
+Identity with `func_get_name`. Query; legal during capture. Distinct from `mem_func_get_module`.
+This VM does not invent occupancy SM counts or Engine `--mem-func-get-name`.
+`gpu-profile capture` is still refused. Dual score still has no `$/M tokens`.
+
+## Shipped 2026-09-03 — CUDA `cuFuncGetModule`
+
+`gpu-sim` `Sim::mem_func_get_module` is `cuFuncGetModule`.
+Identity with `func_get_module`. Query; legal during capture. Distinct from `mem_func_load`.
+This VM does not invent occupancy SM counts or Engine `--mem-func-get-module`.
+`gpu-profile capture` is still refused. Dual score still has no `$/M tokens`.
+
+## Shipped 2026-09-03 — CUDA `cuFuncLoad`
+
+`gpu-sim` `Sim::mem_func_load` is `cuFuncLoad`.
+Identity with `func_load`. Query; legal during capture. Distinct from `mem_func_is_loaded`.
+This VM does not invent occupancy SM counts or Engine `--mem-func-load`.
+`gpu-profile capture` is still refused. Dual score still has no `$/M tokens`.
+
+## Shipped 2026-09-03 — CUDA `cuFuncIsLoaded`
+
+`gpu-sim` `Sim::mem_func_is_loaded` is `cuFuncIsLoaded`.
+Identity with `func_is_loaded`. Query; legal during capture. Distinct from `mem_func_get_cache_config`.
+This VM does not invent occupancy SM counts or Engine `--mem-func-is-loaded`.
+`gpu-profile capture` is still refused. Dual score still has no `$/M tokens`.
+
+## Shipped 2026-09-03 — CUDA `cuFuncGetCacheConfig`
+
+`gpu-sim` `Sim::mem_func_get_cache_config` is `cuFuncGetCacheConfig`.
+Identity with `func_get_cache_config`. Query; legal during capture. Distinct from `mem_func_get_param_count`.
+This VM does not invent occupancy SM counts or Engine `--mem-func-get-cache-config`.
+`gpu-profile capture` is still refused. Dual score still has no `$/M tokens`.
+
+## Shipped 2026-09-03 — CUDA `cuFuncGetParamCount`
+
+`gpu-sim` `Sim::mem_func_get_param_count` is `cuFuncGetParamCount`.
+Identity with `func_get_param_count`. Query; legal during capture. Distinct from `mem_device_get`.
+This VM does not invent occupancy SM counts or Engine `--mem-func-get-param-count`.
+`gpu-profile capture` is still refused. Dual score still has no `$/M tokens`.
+
+## Shipped 2026-09-03 — CUDA `cuDeviceGet`
+
+`gpu-sim` `Sim::mem_device_get` is `cuDeviceGet`.
+Identity with `device_get`. Query; legal during capture. Distinct from `mem_runtime_get_version`.
+This VM does not invent occupancy SM counts or Engine `--mem-device-get`.
+`gpu-profile capture` is still refused. Dual score still has no `$/M tokens`.
+
+## Shipped 2026-09-03 — CUDA `cudaRuntimeGetVersion`
+
+`gpu-sim` `Sim::mem_runtime_get_version` is `cudaRuntimeGetVersion`.
+Identity with `runtime_get_version`. Query; legal during capture. Distinct from `mem_link_add_file`.
+This VM does not invent occupancy SM counts or Engine `--mem-runtime-get-version`.
+`gpu-profile capture` is still refused. Dual score still has no `$/M tokens`.
+
+## Shipped 2026-09-03 — CUDA `cuLinkAddFile`
+
+`gpu-sim` `Sim::mem_link_add_file` is `cuLinkAddFile`.
+Identity with `link_add_file`. Query; legal during capture. Distinct from `mem_link_destroy`.
+This VM does not invent occupancy SM counts or Engine `--mem-link-add-file`.
+`gpu-profile capture` is still refused. Dual score still has no `$/M tokens`.
+
+## Shipped 2026-09-03 — CUDA `cuLinkDestroy`
+
+`gpu-sim` `Sim::mem_link_destroy` is `cuLinkDestroy`.
+Identity with `link_destroy`. Query; legal during capture. Distinct from `mem_link_complete`.
+This VM does not invent occupancy SM counts or Engine `--mem-link-destroy`.
+`gpu-profile capture` is still refused. Dual score still has no `$/M tokens`.
+
+## Shipped 2026-09-03 — CUDA `cuLinkComplete`
+
+`gpu-sim` `Sim::mem_link_complete` is `cuLinkComplete`.
+Identity with `link_complete`. Query; legal during capture. Distinct from `mem_link_add_data`.
+This VM does not invent occupancy SM counts or Engine `--mem-link-complete`.
+`gpu-profile capture` is still refused. Dual score still has no `$/M tokens`.
+
+## Shipped 2026-09-03 — CUDA `cuLinkAddData`
+
+`gpu-sim` `Sim::mem_link_add_data` is `cuLinkAddData`.
+Identity with `link_add_data`. Query; legal during capture. Distinct from `mem_link_create`.
+This VM does not invent occupancy SM counts or Engine `--mem-link-add-data`.
+`gpu-profile capture` is still refused. Dual score still has no `$/M tokens`.
+
+## Shipped 2026-09-03 — CUDA `cuLinkCreate`
+
+`gpu-sim` `Sim::mem_link_create` is `cuLinkCreate`.
+Identity with `link_create`. Query; legal during capture. Distinct from `mem_kernel_set_cache_config`.
+This VM does not invent occupancy SM counts or Engine `--mem-link-create`.
+`gpu-profile capture` is still refused. Dual score still has no `$/M tokens`.
+
+## Shipped 2026-09-03 — CUDA `cuKernelSetCacheConfig`
+
+`gpu-sim` `Sim::mem_kernel_set_cache_config` is `cuKernelSetCacheConfig`.
+Identity with `kernel_set_cache_config`. Query; legal during capture. Distinct from `mem_kernel_set_attribute`.
+This VM does not invent occupancy SM counts or Engine `--mem-kernel-set-cache-config`.
+`gpu-profile capture` is still refused. Dual score still has no `$/M tokens`.
+
+## Shipped 2026-09-03 — CUDA `cuKernelSetAttribute`
+
+`gpu-sim` `Sim::mem_kernel_set_attribute` is `cuKernelSetAttribute`.
+Identity with `kernel_set_attribute`. Query; legal during capture. Distinct from `mem_kernel_get_attribute`.
+This VM does not invent occupancy SM counts or Engine `--mem-kernel-set-attribute`.
+`gpu-profile capture` is still refused. Dual score still has no `$/M tokens`.
+
+## Shipped 2026-09-03 — CUDA `cuKernelGetAttribute`
+
+`gpu-sim` `Sim::mem_kernel_get_attribute` is `cuKernelGetAttribute`.
+Identity with `kernel_get_attribute`. Query; legal during capture. Distinct from `mem_kernel_get_param_count`.
+This VM does not invent occupancy SM counts or Engine `--mem-kernel-get-attribute`.
+`gpu-profile capture` is still refused. Dual score still has no `$/M tokens`.
+
+## Shipped 2026-09-03 — CUDA `cuKernelGetParamCount`
+
+`gpu-sim` `Sim::mem_kernel_get_param_count` is `cuKernelGetParamCount`.
+Identity with `kernel_get_param_count`. Query; legal during capture. Distinct from `mem_kernel_get_param_info`.
+This VM does not invent occupancy SM counts or Engine `--mem-kernel-get-param-count`.
+`gpu-profile capture` is still refused. Dual score still has no `$/M tokens`.
+
+## Shipped 2026-09-03 — CUDA `cuKernelGetParamInfo`
+
+`gpu-sim` `Sim::mem_kernel_get_param_info` is `cuKernelGetParamInfo`.
+Identity with `kernel_get_param_info`. Query; legal during capture. Distinct from `mem_kernel_get_function`.
+This VM does not invent occupancy SM counts or Engine `--mem-kernel-get-param-info`.
+`gpu-profile capture` is still refused. Dual score still has no `$/M tokens`.
+
+## Shipped 2026-09-03 — CUDA `cuKernelGetFunction`
+
+`gpu-sim` `Sim::mem_kernel_get_function` is `cuKernelGetFunction`.
+Identity with `kernel_get_function`. Query; legal during capture. Distinct from `mem_kernel_get_library`.
+This VM does not invent occupancy SM counts or Engine `--mem-kernel-get-function`.
+`gpu-profile capture` is still refused. Dual score still has no `$/M tokens`.
+
+## Shipped 2026-09-03 — CUDA `cuKernelGetLibrary`
+
+`gpu-sim` `Sim::mem_kernel_get_library` is `cuKernelGetLibrary`.
+Identity with `kernel_get_library`. Query; legal during capture. Distinct from `mem_library_enumerate_kernels`.
+This VM does not invent occupancy SM counts or Engine `--mem-kernel-get-library`.
+`gpu-profile capture` is still refused. Dual score still has no `$/M tokens`.
+
+## Shipped 2026-09-03 — CUDA `cuLibraryEnumerateKernels`
+
+`gpu-sim` `Sim::mem_library_enumerate_kernels` is `cuLibraryEnumerateKernels`.
+Identity with `library_enumerate_kernels`. Query; legal during capture. Distinct from `mem_library_get_kernel_count`.
+This VM does not invent occupancy SM counts or Engine `--mem-library-enumerate-kernels`.
+`gpu-profile capture` is still refused. Dual score still has no `$/M tokens`.
+
+## Shipped 2026-09-03 — CUDA `cuLibraryGetKernelCount`
+
+`gpu-sim` `Sim::mem_library_get_kernel_count` is `cuLibraryGetKernelCount`.
+Identity with `library_get_kernel_count`. Query; legal during capture. Distinct from `mem_library_get_unified_function`.
+This VM does not invent occupancy SM counts or Engine `--mem-library-get-kernel-count`.
+`gpu-profile capture` is still refused. Dual score still has no `$/M tokens`.
+
+## Shipped 2026-09-03 — CUDA `cuLibraryGetUnifiedFunction`
+
+`gpu-sim` `Sim::mem_library_get_unified_function` is `cuLibraryGetUnifiedFunction`.
+Identity with `library_get_unified_function`. Query; legal during capture. Distinct from `mem_library_get_managed`.
+This VM does not invent occupancy SM counts or Engine `--mem-library-get-unified-function`.
+`gpu-profile capture` is still refused. Dual score still has no `$/M tokens`.
+
+## Shipped 2026-09-03 — CUDA `cuLibraryGetManaged`
+
+`gpu-sim` `Sim::mem_library_get_managed` is `cuLibraryGetManaged`.
+Identity with `library_get_managed`. Query; legal during capture. Distinct from `mem_library_get_global`.
+This VM does not invent occupancy SM counts or Engine `--mem-library-get-managed`.
+`gpu-profile capture` is still refused. Dual score still has no `$/M tokens`.
+
+## Shipped 2026-09-03 — CUDA `cuLibraryGetGlobal`
+
+`gpu-sim` `Sim::mem_library_get_global` is `cuLibraryGetGlobal`.
+Identity with `library_get_global`. Query; legal during capture. Distinct from `mem_library_get_module`.
+This VM does not invent occupancy SM counts or Engine `--mem-library-get-global`.
+`gpu-profile capture` is still refused. Dual score still has no `$/M tokens`.
+
+## Shipped 2026-09-03 — CUDA `cuLibraryGetModule`
+
+`gpu-sim` `Sim::mem_library_get_module` is `cuLibraryGetModule`.
+Identity with `library_get_module`. Query; legal during capture. Distinct from `mem_library_get_kernel`.
+This VM does not invent occupancy SM counts or Engine `--mem-library-get-module`.
+`gpu-profile capture` is still refused. Dual score still has no `$/M tokens`.
+
+## Shipped 2026-09-03 — CUDA `cuLibraryGetKernel`
+
+`gpu-sim` `Sim::mem_library_get_kernel` is `cuLibraryGetKernel`.
+Identity with `library_get_kernel`. Query; legal during capture. Distinct from `mem_library_unload`.
+This VM does not invent occupancy SM counts or Engine `--mem-library-get-kernel`.
+`gpu-profile capture` is still refused. Dual score still has no `$/M tokens`.
+
+## Shipped 2026-09-03 — CUDA `cuLibraryUnload`
+
+`gpu-sim` `Sim::mem_library_unload` is `cuLibraryUnload`.
+Identity with `library_unload`. Query; legal during capture. Distinct from `mem_library_load_from_file`.
+This VM does not invent occupancy SM counts or Engine `--mem-library-unload`.
+`gpu-profile capture` is still refused. Dual score still has no `$/M tokens`.
+
+## Shipped 2026-09-03 — CUDA `cuLibraryLoadFromFile`
+
+`gpu-sim` `Sim::mem_library_load_from_file` is `cuLibraryLoadFromFile`.
+Identity with `library_load_from_file`. Query; legal during capture. Distinct from `mem_library_load_data`.
+This VM does not invent occupancy SM counts or Engine `--mem-library-load-from-file`.
+`gpu-profile capture` is still refused. Dual score still has no `$/M tokens`.
+
+## Shipped 2026-09-03 — CUDA `cuLibraryLoadData`
+
+`gpu-sim` `Sim::mem_library_load_data` is `cuLibraryLoadData`.
+Identity with `library_load_data`. Query; legal during capture. Distinct from `mem_memcpy_2d_array_to_array_async`.
+This VM does not invent occupancy SM counts or Engine `--mem-library-load-data`.
+`gpu-profile capture` is still refused. Dual score still has no `$/M tokens`.
+
+## Shipped 2026-09-03 — CUDA `cuMemcpy2DArrayToArrayAsync`
+
+`gpu-sim` `Sim::mem_memcpy_2d_array_to_array_async` is `cuMemcpy2DArrayToArrayAsync`.
+Identity with `memcpy_2d_array_to_array_async`. Query; legal during capture. Distinct from `mem_memcpy_2d_from_array_async`.
+This VM does not invent occupancy SM counts or Engine `--mem-memcpy-2d-array-to-array-async`.
+`gpu-profile capture` is still refused. Dual score still has no `$/M tokens`.
+
+## Shipped 2026-09-03 — CUDA `cuMemcpy2DFromArrayAsync`
+
+`gpu-sim` `Sim::mem_memcpy_2d_from_array_async` is `cuMemcpy2DFromArrayAsync`.
+Identity with `memcpy_2d_from_array_async`. Query; legal during capture. Distinct from `mem_memcpy_2d_to_array_async`.
+This VM does not invent occupancy SM counts or Engine `--mem-memcpy-2d-from-array-async`.
+`gpu-profile capture` is still refused. Dual score still has no `$/M tokens`.
+
+## Shipped 2026-09-03 — CUDA `cuMemcpy2DToArrayAsync`
+
+`gpu-sim` `Sim::mem_memcpy_2d_to_array_async` is `cuMemcpy2DToArrayAsync`.
+Identity with `memcpy_2d_to_array_async`. Query; legal during capture. Distinct from `mem_memcpy_2d_array_to_array`.
+This VM does not invent occupancy SM counts or Engine `--mem-memcpy-2d-to-array-async`.
+`gpu-profile capture` is still refused. Dual score still has no `$/M tokens`.
+
+## Shipped 2026-09-03 — CUDA `cuMemcpy2DArrayToArray`
+
+`gpu-sim` `Sim::mem_memcpy_2d_array_to_array` is `cuMemcpy2DArrayToArray`.
+Identity with `memcpy_2d_array_to_array`. Query; legal during capture. Distinct from `mem_memcpy_2d_from_array`.
+This VM does not invent occupancy SM counts or Engine `--mem-memcpy-2d-array-to-array`.
+`gpu-profile capture` is still refused. Dual score still has no `$/M tokens`.
+
+## Shipped 2026-09-03 — CUDA `cuMemcpy2DFromArray`
+
+`gpu-sim` `Sim::mem_memcpy_2d_from_array` is `cuMemcpy2DFromArray`.
+Identity with `memcpy_2d_from_array`. Query; legal during capture. Distinct from `mem_memcpy_2d_to_array`.
+This VM does not invent occupancy SM counts or Engine `--mem-memcpy-2d-from-array`.
+`gpu-profile capture` is still refused. Dual score still has no `$/M tokens`.
+
+## Shipped 2026-09-03 — CUDA `cuMemcpy2DToArray`
+
+`gpu-sim` `Sim::mem_memcpy_2d_to_array` is `cuMemcpy2DToArray`.
+Identity with `memcpy_2d_to_array`. Query; legal during capture. Distinct from `mem_memcpy_ato_a_async`.
+This VM does not invent occupancy SM counts or Engine `--mem-memcpy-2d-to-array`.
+`gpu-profile capture` is still refused. Dual score still has no `$/M tokens`.
+
+## Shipped 2026-09-03 — CUDA `cuMemcpyAtoAAsync`
+
+`gpu-sim` `Sim::mem_memcpy_ato_a_async` is `cuMemcpyAtoAAsync`.
+Identity with `memcpy_ato_a_async`. Query; legal during capture. Distinct from `mem_memcpy_ato_h_async`.
+This VM does not invent occupancy SM counts or Engine `--mem-memcpy-ato-a-async`.
+`gpu-profile capture` is still refused. Dual score still has no `$/M tokens`.
+
+## Shipped 2026-09-03 — CUDA `cuMemcpyAtoHAsync`
+
+`gpu-sim` `Sim::mem_memcpy_ato_h_async` is `cuMemcpyAtoHAsync`.
+Identity with `memcpy_ato_h_async`. Query; legal during capture. Distinct from `mem_memcpy_hto_a_async`.
+This VM does not invent occupancy SM counts or Engine `--mem-memcpy-ato-h-async`.
+`gpu-profile capture` is still refused. Dual score still has no `$/M tokens`.
+
+## Shipped 2026-09-03 — CUDA `cuMemcpyHtoAAsync`
+
+`gpu-sim` `Sim::mem_memcpy_hto_a_async` is `cuMemcpyHtoAAsync`.
+Identity with `memcpy_hto_a_async`. Query; legal during capture. Distinct from `mem_memcpy_ato_d_async`.
+This VM does not invent occupancy SM counts or Engine `--mem-memcpy-hto-a-async`.
+`gpu-profile capture` is still refused. Dual score still has no `$/M tokens`.
+
+## Shipped 2026-09-03 — CUDA `cuMemcpyAtoDAsync`
+
+`gpu-sim` `Sim::mem_memcpy_ato_d_async` is `cuMemcpyAtoDAsync`.
+Identity with `memcpy_ato_d_async`. Query; legal during capture. Distinct from `mem_memcpy_dto_a_async`.
+This VM does not invent occupancy SM counts or Engine `--mem-memcpy-ato-d-async`.
+`gpu-profile capture` is still refused. Dual score still has no `$/M tokens`.
+
+## Shipped 2026-09-03 — CUDA `cuMemcpyDtoAAsync`
+
+`gpu-sim` `Sim::mem_memcpy_dto_a_async` is `cuMemcpyDtoAAsync`.
+Identity with `memcpy_dto_a_async`. Query; legal during capture. Distinct from `mem_memcpy_ato_a`.
+This VM does not invent occupancy SM counts or Engine `--mem-memcpy-dto-a-async`.
+`gpu-profile capture` is still refused. Dual score still has no `$/M tokens`.
+
+## Shipped 2026-09-03 — CUDA `cuMemcpyAtoA`
+
+`gpu-sim` `Sim::mem_memcpy_ato_a` is `cuMemcpyAtoA`.
+Identity with `memcpy_ato_a`. Query; legal during capture. Distinct from `mem_memcpy_ato_h`.
+This VM does not invent occupancy SM counts or Engine `--mem-memcpy-ato-a`.
+`gpu-profile capture` is still refused. Dual score still has no `$/M tokens`.
+
+## Shipped 2026-09-03 — CUDA `cuMemcpyAtoH`
+
+`gpu-sim` `Sim::mem_memcpy_ato_h` is `cuMemcpyAtoH`.
+Identity with `memcpy_ato_h`. Query; legal during capture. Distinct from `mem_memcpy_hto_a`.
+This VM does not invent occupancy SM counts or Engine `--mem-memcpy-ato-h`.
+`gpu-profile capture` is still refused. Dual score still has no `$/M tokens`.
+
+## Shipped 2026-09-03 — CUDA `cuMemcpyHtoA`
+
+`gpu-sim` `Sim::mem_memcpy_hto_a` is `cuMemcpyHtoA`.
+Identity with `memcpy_hto_a`. Query; legal during capture. Distinct from `mem_memcpy_ato_d`.
+This VM does not invent occupancy SM counts or Engine `--mem-memcpy-hto-a`.
+`gpu-profile capture` is still refused. Dual score still has no `$/M tokens`.
+
+## Shipped 2026-09-03 — CUDA `cuMemcpyAtoD`
+
+`gpu-sim` `Sim::mem_memcpy_ato_d` is `cuMemcpyAtoD`.
+Identity with `memcpy_ato_d`. Query; legal during capture. Distinct from `mem_memcpy_dto_a`.
+This VM does not invent occupancy SM counts or Engine `--mem-memcpy-ato-d`.
+`gpu-profile capture` is still refused. Dual score still has no `$/M tokens`.
+
+## Shipped 2026-09-03 — CUDA `cuMemcpyDtoA`
+
+`gpu-sim` `Sim::mem_memcpy_dto_a` is `cuMemcpyDtoA`.
+Identity with `memcpy_dto_a`. Query; legal during capture. Distinct from `mem_surf_ref_get_array`.
+This VM does not invent occupancy SM counts or Engine `--mem-memcpy-dto-a`.
+`gpu-profile capture` is still refused. Dual score still has no `$/M tokens`.
+
+## Shipped 2026-09-03 — CUDA `cuSurfRefGetArray`
+
+`gpu-sim` `Sim::mem_surf_ref_get_array` is `cuSurfRefGetArray`.
+Identity with `surf_ref_get_array`. Query; legal during capture. Distinct from `mem_surf_ref_set_array`.
+This VM does not invent occupancy SM counts or Engine `--mem-surf-ref-get-array`.
+`gpu-profile capture` is still refused. Dual score still has no `$/M tokens`.
+
+## Shipped 2026-09-03 — CUDA `cuSurfRefSetArray`
+
+`gpu-sim` `Sim::mem_surf_ref_set_array` is `cuSurfRefSetArray`.
+Identity with `surf_ref_set_array`. Query; legal during capture. Distinct from `mem_module_get_surf_ref`.
+This VM does not invent occupancy SM counts or Engine `--mem-surf-ref-set-array`.
+`gpu-profile capture` is still refused. Dual score still has no `$/M tokens`.
+
+## Shipped 2026-09-03 — CUDA `cuModuleGetSurfRef`
+
+`gpu-sim` `Sim::mem_module_get_surf_ref` is `cuModuleGetSurfRef`.
+Identity with `module_get_surf_ref`. Query; legal during capture. Distinct from `mem_tex_ref_get_flags`.
+This VM does not invent occupancy SM counts or Engine `--mem-module-get-surf-ref`.
+`gpu-profile capture` is still refused. Dual score still has no `$/M tokens`.
+
+## Shipped 2026-09-03 — CUDA `cuTexRefGetFlags`
+
+`gpu-sim` `Sim::mem_tex_ref_get_flags` is `cuTexRefGetFlags`.
+Identity with `tex_ref_get_flags`. Query; legal during capture. Distinct from `mem_tex_ref_get_border_color`.
+This VM does not invent occupancy SM counts or Engine `--mem-tex-ref-get-flags`.
+`gpu-profile capture` is still refused. Dual score still has no `$/M tokens`.
+
+## Shipped 2026-09-03 — CUDA `cuTexRefGetBorderColor`
+
+`gpu-sim` `Sim::mem_tex_ref_get_border_color` is `cuTexRefGetBorderColor`.
+Identity with `tex_ref_get_border_color`. Query; legal during capture. Distinct from `mem_tex_ref_get_max_anisotropy`.
+This VM does not invent occupancy SM counts or Engine `--mem-tex-ref-get-border-color`.
+`gpu-profile capture` is still refused. Dual score still has no `$/M tokens`.
+
+## Shipped 2026-09-03 — CUDA `cuTexRefGetMaxAnisotropy`
+
+`gpu-sim` `Sim::mem_tex_ref_get_max_anisotropy` is `cuTexRefGetMaxAnisotropy`.
+Identity with `tex_ref_get_max_anisotropy`. Query; legal during capture. Distinct from `mem_tex_ref_get_mipmap_level_clamp`.
+This VM does not invent occupancy SM counts or Engine `--mem-tex-ref-get-max-anisotropy`.
+`gpu-profile capture` is still refused. Dual score still has no `$/M tokens`.
+
+## Shipped 2026-09-03 — CUDA `cuTexRefGetMipmapLevelClamp`
+
+`gpu-sim` `Sim::mem_tex_ref_get_mipmap_level_clamp` is `cuTexRefGetMipmapLevelClamp`.
+Identity with `tex_ref_get_mipmap_level_clamp`. Query; legal during capture. Distinct from `mem_tex_ref_get_mipmap_level_bias`.
+This VM does not invent occupancy SM counts or Engine `--mem-tex-ref-get-mipmap-level-clamp`.
+`gpu-profile capture` is still refused. Dual score still has no `$/M tokens`.
+
+## Shipped 2026-09-03 — CUDA `cuTexRefGetMipmapLevelBias`
+
+`gpu-sim` `Sim::mem_tex_ref_get_mipmap_level_bias` is `cuTexRefGetMipmapLevelBias`.
+Identity with `tex_ref_get_mipmap_level_bias`. Query; legal during capture. Distinct from `mem_tex_ref_get_mipmap_filter_mode`.
+This VM does not invent occupancy SM counts or Engine `--mem-tex-ref-get-mipmap-level-bias`.
+`gpu-profile capture` is still refused. Dual score still has no `$/M tokens`.
+
+## Shipped 2026-09-03 — CUDA `cuTexRefGetMipmapFilterMode`
+
+`gpu-sim` `Sim::mem_tex_ref_get_mipmap_filter_mode` is `cuTexRefGetMipmapFilterMode`.
+Identity with `tex_ref_get_mipmap_filter_mode`. Query; legal during capture. Distinct from `mem_tex_ref_get_format`.
+This VM does not invent occupancy SM counts or Engine `--mem-tex-ref-get-mipmap-filter-mode`.
+`gpu-profile capture` is still refused. Dual score still has no `$/M tokens`.
+
+## Shipped 2026-09-03 — CUDA `cuTexRefGetFormat`
+
+`gpu-sim` `Sim::mem_tex_ref_get_format` is `cuTexRefGetFormat`.
+Identity with `tex_ref_get_format`. Query; legal during capture. Distinct from `mem_tex_ref_get_filter_mode`.
+This VM does not invent occupancy SM counts or Engine `--mem-tex-ref-get-format`.
+`gpu-profile capture` is still refused. Dual score still has no `$/M tokens`.
+
+## Shipped 2026-09-03 — CUDA `cuTexRefGetFilterMode`
+
+`gpu-sim` `Sim::mem_tex_ref_get_filter_mode` is `cuTexRefGetFilterMode`.
+Identity with `tex_ref_get_filter_mode`. Query; legal during capture. Distinct from `mem_tex_ref_get_address_mode`.
+This VM does not invent occupancy SM counts or Engine `--mem-tex-ref-get-filter-mode`.
+`gpu-profile capture` is still refused. Dual score still has no `$/M tokens`.
+
+## Shipped 2026-09-03 — CUDA `cuTexRefGetAddressMode`
+
+`gpu-sim` `Sim::mem_tex_ref_get_address_mode` is `cuTexRefGetAddressMode`.
+Identity with `tex_ref_get_address_mode`. Query; legal during capture. Distinct from `mem_tex_ref_get_address`.
+This VM does not invent occupancy SM counts or Engine `--mem-tex-ref-get-address-mode`.
+`gpu-profile capture` is still refused. Dual score still has no `$/M tokens`.
+
+## Shipped 2026-09-03 — CUDA `cuTexRefGetAddress`
+
+`gpu-sim` `Sim::mem_tex_ref_get_address` is `cuTexRefGetAddress`.
+Identity with `tex_ref_get_address`. Query; legal during capture. Distinct from `mem_tex_ref_get_mipmapped_array`.
+This VM does not invent occupancy SM counts or Engine `--mem-tex-ref-get-address`.
+`gpu-profile capture` is still refused. Dual score still has no `$/M tokens`.
+
+## Shipped 2026-09-03 — CUDA `cuTexRefGetMipmappedArray`
+
+`gpu-sim` `Sim::mem_tex_ref_get_mipmapped_array` is `cuTexRefGetMipmappedArray`.
+Identity with `tex_ref_get_mipmapped_array`. Query; legal during capture. Distinct from `mem_tex_ref_get_array`.
+This VM does not invent occupancy SM counts or Engine `--mem-tex-ref-get-mipmapped-array`.
+`gpu-profile capture` is still refused. Dual score still has no `$/M tokens`.
+
+## Shipped 2026-09-03 — CUDA `cuTexRefGetArray`
+
+`gpu-sim` `Sim::mem_tex_ref_get_array` is `cuTexRefGetArray`.
+Identity with `tex_ref_get_array`. Query; legal during capture. Distinct from `mem_tex_ref_set_flags`.
+This VM does not invent occupancy SM counts or Engine `--mem-tex-ref-get-array`.
+`gpu-profile capture` is still refused. Dual score still has no `$/M tokens`.
+
+## Shipped 2026-09-03 — CUDA `cuTexRefSetFlags`
+
+`gpu-sim` `Sim::mem_tex_ref_set_flags` is `cuTexRefSetFlags`.
+Identity with `tex_ref_set_flags`. Query; legal during capture. Distinct from `mem_tex_ref_set_border_color`.
+This VM does not invent occupancy SM counts or Engine `--mem-tex-ref-set-flags`.
+`gpu-profile capture` is still refused. Dual score still has no `$/M tokens`.
+
+## Shipped 2026-09-03 — CUDA `cuTexRefSetBorderColor`
+
+`gpu-sim` `Sim::mem_tex_ref_set_border_color` is `cuTexRefSetBorderColor`.
+Identity with `tex_ref_set_border_color`. Query; legal during capture. Distinct from `mem_tex_ref_set_max_anisotropy`.
+This VM does not invent occupancy SM counts or Engine `--mem-tex-ref-set-border-color`.
+`gpu-profile capture` is still refused. Dual score still has no `$/M tokens`.
+
+## Shipped 2026-09-03 — CUDA `cuTexRefSetMaxAnisotropy`
+
+`gpu-sim` `Sim::mem_tex_ref_set_max_anisotropy` is `cuTexRefSetMaxAnisotropy`.
+Identity with `tex_ref_set_max_anisotropy`. Query; legal during capture. Distinct from `mem_tex_ref_set_mipmap_level_clamp`.
+This VM does not invent occupancy SM counts or Engine `--mem-tex-ref-set-max-anisotropy`.
+`gpu-profile capture` is still refused. Dual score still has no `$/M tokens`.
+
+## Shipped 2026-09-03 — CUDA `cuTexRefSetMipmapLevelClamp`
+
+`gpu-sim` `Sim::mem_tex_ref_set_mipmap_level_clamp` is `cuTexRefSetMipmapLevelClamp`.
+Identity with `tex_ref_set_mipmap_level_clamp`. Query; legal during capture. Distinct from `mem_tex_ref_set_mipmap_level_bias`.
+This VM does not invent occupancy SM counts or Engine `--mem-tex-ref-set-mipmap-level-clamp`.
+`gpu-profile capture` is still refused. Dual score still has no `$/M tokens`.
+
+## Shipped 2026-09-03 — CUDA `cuTexRefSetMipmapLevelBias`
+
+`gpu-sim` `Sim::mem_tex_ref_set_mipmap_level_bias` is `cuTexRefSetMipmapLevelBias`.
+Identity with `tex_ref_set_mipmap_level_bias`. Query; legal during capture. Distinct from `mem_tex_ref_set_mipmap_filter_mode`.
+This VM does not invent occupancy SM counts or Engine `--mem-tex-ref-set-mipmap-level-bias`.
+`gpu-profile capture` is still refused. Dual score still has no `$/M tokens`.
+
+## Shipped 2026-09-03 — CUDA `cuTexRefSetMipmapFilterMode`
+
+`gpu-sim` `Sim::mem_tex_ref_set_mipmap_filter_mode` is `cuTexRefSetMipmapFilterMode`.
+Identity with `tex_ref_set_mipmap_filter_mode`. Query; legal during capture. Distinct from `mem_tex_ref_set_filter_mode`.
+This VM does not invent occupancy SM counts or Engine `--mem-tex-ref-set-mipmap-filter-mode`.
+`gpu-profile capture` is still refused. Dual score still has no `$/M tokens`.
+
+## Shipped 2026-09-03 — CUDA `cuTexRefSetFilterMode`
+
+`gpu-sim` `Sim::mem_tex_ref_set_filter_mode` is `cuTexRefSetFilterMode`.
+Identity with `tex_ref_set_filter_mode`. Query; legal during capture. Distinct from `mem_tex_ref_set_address_mode`.
+This VM does not invent occupancy SM counts or Engine `--mem-tex-ref-set-filter-mode`.
+`gpu-profile capture` is still refused. Dual score still has no `$/M tokens`.
+
+## Shipped 2026-09-03 — CUDA `cuTexRefSetAddressMode`
+
+`gpu-sim` `Sim::mem_tex_ref_set_address_mode` is `cuTexRefSetAddressMode`.
+Identity with `tex_ref_set_address_mode`. Query; legal during capture. Distinct from `mem_tex_ref_set_format`.
+This VM does not invent occupancy SM counts or Engine `--mem-tex-ref-set-address-mode`.
+`gpu-profile capture` is still refused. Dual score still has no `$/M tokens`.
+
+## Shipped 2026-09-03 — CUDA `cuTexRefSetFormat`
+
+`gpu-sim` `Sim::mem_tex_ref_set_format` is `cuTexRefSetFormat`.
+Identity with `tex_ref_set_format`. Query; legal during capture. Distinct from `mem_tex_ref_set_address_2d`.
+This VM does not invent occupancy SM counts or Engine `--mem-tex-ref-set-format`.
+`gpu-profile capture` is still refused. Dual score still has no `$/M tokens`.
+
+## Shipped 2026-09-03 — CUDA `cuTexRefSetAddress2D`
+
+`gpu-sim` `Sim::mem_tex_ref_set_address_2d` is `cuTexRefSetAddress2D`.
+Identity with `tex_ref_set_address_2d`. Query; legal during capture. Distinct from `mem_tex_ref_set_address`.
+This VM does not invent occupancy SM counts or Engine `--mem-tex-ref-set-address-2d`.
+`gpu-profile capture` is still refused. Dual score still has no `$/M tokens`.
+
+## Shipped 2026-09-03 — CUDA `cuTexRefSetAddress`
+
+`gpu-sim` `Sim::mem_tex_ref_set_address` is `cuTexRefSetAddress`.
+Identity with `tex_ref_set_address`. Query; legal during capture. Distinct from `mem_tex_ref_set_mipmapped_array`.
+This VM does not invent occupancy SM counts or Engine `--mem-tex-ref-set-address`.
+`gpu-profile capture` is still refused. Dual score still has no `$/M tokens`.
+
+## Shipped 2026-09-03 — CUDA `cuTexRefSetMipmappedArray`
+
+`gpu-sim` `Sim::mem_tex_ref_set_mipmapped_array` is `cuTexRefSetMipmappedArray`.
+Identity with `tex_ref_set_mipmapped_array`. Query; legal during capture. Distinct from `mem_tex_ref_set_array`.
+This VM does not invent occupancy SM counts or Engine `--mem-tex-ref-set-mipmapped-array`.
+`gpu-profile capture` is still refused. Dual score still has no `$/M tokens`.
+
+## Shipped 2026-09-03 — CUDA `cuTexRefSetArray`
+
+`gpu-sim` `Sim::mem_tex_ref_set_array` is `cuTexRefSetArray`.
+Identity with `tex_ref_set_array`. Query; legal during capture. Distinct from `mem_tex_ref_destroy`.
+This VM does not invent occupancy SM counts or Engine `--mem-tex-ref-set-array`.
+`gpu-profile capture` is still refused. Dual score still has no `$/M tokens`.
+
+## Shipped 2026-09-03 — CUDA `cuTexRefDestroy`
+
+`gpu-sim` `Sim::mem_tex_ref_destroy` is `cuTexRefDestroy`.
+Identity with `tex_ref_destroy`. Query; legal during capture. Distinct from `mem_tex_ref_create`.
+This VM does not invent occupancy SM counts or Engine `--mem-tex-ref-destroy`.
+`gpu-profile capture` is still refused. Dual score still has no `$/M tokens`.
+
+## Shipped 2026-09-03 — CUDA `cuTexRefCreate`
+
+`gpu-sim` `Sim::mem_tex_ref_create` is `cuTexRefCreate`.
+Identity with `tex_ref_create`. Query; legal during capture. Distinct from `mem_module_get_tex_ref`.
+This VM does not invent occupancy SM counts or Engine `--mem-tex-ref-create`.
+`gpu-profile capture` is still refused. Dual score still has no `$/M tokens`.
+
+## Shipped 2026-09-03 — CUDA `cuModuleGetTexRef`
+
+`gpu-sim` `Sim::mem_module_get_tex_ref` is `cuModuleGetTexRef`.
+Identity with `module_get_tex_ref`. Query; legal during capture. Distinct from `mem_module_get_global`.
+This VM does not invent occupancy SM counts or Engine `--mem-module-get-tex-ref`.
+`gpu-profile capture` is still refused. Dual score still has no `$/M tokens`.
+
+## Shipped 2026-09-03 — CUDA `cuModuleGetGlobal`
+
+`gpu-sim` `Sim::mem_module_get_global` is `cuModuleGetGlobal`.
+Identity with `module_get_global`. Query; legal during capture. Distinct from `mem_module_get_function`.
+This VM does not invent occupancy SM counts or Engine `--mem-module-get-global`.
+`gpu-profile capture` is still refused. Dual score still has no `$/M tokens`.
+
+## Shipped 2026-09-03 — CUDA `cuModuleGetFunction`
+
+`gpu-sim` `Sim::mem_module_get_function` is `cuModuleGetFunction`.
+Identity with `module_get_function`. Query; legal during capture. Distinct from `mem_module_unload`.
+This VM does not invent occupancy SM counts or Engine `--mem-module-get-function`.
+`gpu-profile capture` is still refused. Dual score still has no `$/M tokens`.
+
+## Shipped 2026-09-03 — CUDA `cuModuleUnload`
+
+`gpu-sim` `Sim::mem_module_unload` is `cuModuleUnload`.
+Identity with `module_unload`. Query; legal during capture. Distinct from `mem_module_enumerate_functions`.
+This VM does not invent occupancy SM counts or Engine `--mem-module-unload`.
+`gpu-profile capture` is still refused. Dual score still has no `$/M tokens`.
+
+## Shipped 2026-09-03 — CUDA `cuModuleEnumerateFunctions`
+
+`gpu-sim` `Sim::mem_module_enumerate_functions` is `cuModuleEnumerateFunctions`.
+Identity with `module_enumerate_functions`. Query; legal during capture. Distinct from `mem_module_get_function_count`.
+This VM does not invent occupancy SM counts or Engine `--mem-module-enumerate-functions`.
+`gpu-profile capture` is still refused. Dual score still has no `$/M tokens`.
+
+## Shipped 2026-09-03 — CUDA `cuModuleGetFunctionCount`
+
+`gpu-sim` `Sim::mem_module_get_function_count` is `cuModuleGetFunctionCount`.
+Identity with `module_get_function_count`. Query; legal during capture. Distinct from `mem_module_load_data_ex`.
+This VM does not invent occupancy SM counts or Engine `--mem-module-get-function-count`.
+`gpu-profile capture` is still refused. Dual score still has no `$/M tokens`.
+
+## Shipped 2026-09-03 — CUDA `cuModuleLoadDataEx`
+
+`gpu-sim` `Sim::mem_module_load_data_ex` is `cuModuleLoadDataEx`.
+Identity with `module_load_data_ex`. Query; legal during capture. Distinct from `mem_module_load_fat_binary`.
+This VM does not invent occupancy SM counts or Engine `--mem-module-load-data-ex`.
+`gpu-profile capture` is still refused. Dual score still has no `$/M tokens`.
+
+## Shipped 2026-09-03 — CUDA `cuModuleLoadFatBinary`
+
+`gpu-sim` `Sim::mem_module_load_fat_binary` is `cuModuleLoadFatBinary`.
+Identity with `module_load_fat_binary`. Query; legal during capture. Distinct from `mem_module_load_data`.
+This VM does not invent occupancy SM counts or Engine `--mem-module-load-fat-binary`.
+`gpu-profile capture` is still refused. Dual score still has no `$/M tokens`.
+
+## Shipped 2026-09-03 — CUDA `cuModuleLoadData`
+
+`gpu-sim` `Sim::mem_module_load_data` is `cuModuleLoadData`.
+Identity with `module_load_data`. Query; legal during capture. Distinct from `mem_module_load`.
+This VM does not invent occupancy SM counts or Engine `--mem-module-load-data`.
+`gpu-profile capture` is still refused. Dual score still has no `$/M tokens`.
+
+## Shipped 2026-09-03 — CUDA `cuModuleLoad`
+
+`gpu-sim` `Sim::mem_module_load` is `cuModuleLoad`.
+Identity with `module_load`. Query; legal during capture. Distinct from `mem_module_get_loading_mode`.
+This VM does not invent occupancy SM counts or Engine `--mem-module-load`.
+`gpu-profile capture` is still refused. Dual score still has no `$/M tokens`.
+
+## Shipped 2026-09-03 — CUDA `cuModuleGetLoadingMode`
+
+`gpu-sim` `Sim::mem_module_get_loading_mode` is `cuModuleGetLoadingMode`.
+Identity with `module_get_loading_mode`. Query; legal during capture. Distinct from `mem_profiler_initialize`.
+This VM does not invent occupancy SM counts or Engine `--mem-module-get-loading-mode`.
+`gpu-profile capture` is still refused. Dual score still has no `$/M tokens`.
+
+## Shipped 2026-09-03 — CUDA `cudaProfilerInitialize`
+
+`gpu-sim` `Sim::mem_profiler_initialize` is `cudaProfilerInitialize`.
+Identity with `profiler_initialize`. Query; legal during capture. Distinct from `mem_profiler_stop`.
+This VM does not invent occupancy SM counts or Engine `--mem-profiler-initialize`.
+`gpu-profile capture` is still refused. Dual score still has no `$/M tokens`.
+
+## Shipped 2026-09-03 — CUDA `cuProfilerStop`
+
+`gpu-sim` `Sim::mem_profiler_stop` is `cuProfilerStop`.
+Identity with `profiler_stop`. Host-sync; capture refused. Distinct from `mem_profiler_start`.
+This VM does not invent occupancy SM counts or Engine `--mem-profiler-stop`.
+`gpu-profile capture` is still refused. Dual score still has no `$/M tokens`.
+
+## Shipped 2026-09-03 — CUDA `cuProfilerStart`
+
+`gpu-sim` `Sim::mem_profiler_start` is `cuProfilerStart`.
+Identity with `profiler_start`. Host-sync; capture refused. Distinct from `mem_driver_init`.
+This VM does not invent occupancy SM counts or Engine `--mem-profiler-start`.
+`gpu-profile capture` is still refused. Dual score still has no `$/M tokens`.
+
+## Shipped 2026-09-03 — CUDA `cuInit`
+
+`gpu-sim` `Sim::mem_driver_init` is `cuInit`.
+Identity with `driver_init`. Host-sync; capture refused. Distinct from `mem_device_unregister_async_notification`.
+This VM does not invent occupancy SM counts or Engine `--mem-driver-init`.
+`gpu-profile capture` is still refused. Dual score still has no `$/M tokens`.
+
+## Shipped 2026-09-03 — CUDA `cuDeviceUnregisterAsyncNotification`
+
+`gpu-sim` `Sim::mem_device_unregister_async_notification` is `cuDeviceUnregisterAsyncNotification`.
+Identity with `device_unregister_async_notification`. Query; legal during capture. Distinct from `mem_device_register_async_notification`.
+This VM does not invent occupancy SM counts or Engine `--mem-device-unregister-async-notification`.
+`gpu-profile capture` is still refused. Dual score still has no `$/M tokens`.
+
+## Shipped 2026-09-03 — CUDA `cuDeviceRegisterAsyncNotification`
+
+`gpu-sim` `Sim::mem_device_register_async_notification` is `cuDeviceRegisterAsyncNotification`.
+Identity with `device_register_async_notification`. Query; legal during capture. Distinct from `mem_checkpoint_process_get_state`.
+This VM does not invent occupancy SM counts or Engine `--mem-device-register-async-notification`.
+`gpu-profile capture` is still refused. Dual score still has no `$/M tokens`.
+
+## Shipped 2026-09-03 — CUDA `cuCheckpointProcessGetState`
+
+`gpu-sim` `Sim::mem_checkpoint_process_get_state` is `cuCheckpointProcessGetState`.
+Identity with `checkpoint_process_get_state`. Query; legal during capture. Distinct from `mem_checkpoint_process_get_restore_thread_id`.
+This VM does not invent occupancy SM counts or Engine `--mem-checkpoint-process-get-state`.
+`gpu-profile capture` is still refused. Dual score still has no `$/M tokens`.
+
+## Shipped 2026-09-03 — CUDA `cuCheckpointProcessGetRestoreThreadId`
+
+`gpu-sim` `Sim::mem_checkpoint_process_get_restore_thread_id` is `cuCheckpointProcessGetRestoreThreadId`.
+Identity with `checkpoint_process_get_restore_thread_id`. Query; legal during capture. Distinct from `mem_checkpoint_process_unlock`.
+This VM does not invent occupancy SM counts or Engine `--mem-checkpoint-process-get-restore-thread-id`.
+`gpu-profile capture` is still refused. Dual score still has no `$/M tokens`.
+
+## Shipped 2026-09-03 — CUDA `cuDeviceTotalMem`
+
+`gpu-sim` `Sim::mem_device_total_mem` is `cuDeviceTotalMem`.
+Identity with `device_total_mem`. Query; legal during capture. Distinct from `mem_device_get_by_pci_bus_id`.
+This VM does not invent occupancy SM counts or Engine `--mem-device-total-mem`.
+`gpu-profile capture` is still refused. Dual score still has no `$/M tokens`.
+
+## Shipped 2026-09-02 — CUDA `cudaDeviceGetByPCIBusId`
+
+`gpu-sim` `Sim::mem_device_get_by_pci_bus_id` is `cudaDeviceGetByPCIBusId`.
+Identity with `device_get_by_pci_bus_id`. Query; legal during capture. Distinct from `mem_device_get_pci_bus_id`.
+Unknown PCI bus id is Invalid `"unknown pci bus id"`. This VM does not invent occupancy SM counts or Engine `--mem-device-get-by-pci-bus-id`.
+`gpu-profile capture` is still refused. Dual score still has no `$/M tokens`.
+
+## Shipped 2026-09-02 — CUDA `cuDeviceGetPCIBusId`
+
+`gpu-sim` `Sim::mem_device_get_pci_bus_id` is `cuDeviceGetPCIBusId`.
+Identity with `device_get_pci_bus_id` (`cudaDeviceGetPciBusId`). Query; legal during capture. Distinct from `mem_device_get_by_uuid`.
+This VM does not invent occupancy SM counts or Engine `--mem-device-get-pci-bus-id`.
+`gpu-profile capture` is still refused. Dual score still has no `$/M tokens`.
+
+## Shipped 2026-09-02 — CUDA `cuDeviceGetByUuid`
+
+`gpu-sim` `Sim::mem_device_get_by_uuid` is `cuDeviceGetByUuid`.
+Identity with `device_get_by_uuid`. Query; legal during capture. Distinct from `mem_device_get_texture_1d_linear_max_width`.
+Unknown UUID is Invalid `"unknown device uuid"`. This VM does not invent occupancy SM counts or Engine `--mem-device-get-by-uuid`.
+`gpu-profile capture` is still refused. Dual score still has no `$/M tokens`.
+
+## Shipped 2026-09-02 — CUDA `cuDeviceGetTexture1DLinearMaxWidth`
+
+`gpu-sim` `Sim::mem_device_get_texture_1d_linear_max_width` is `cuDeviceGetTexture1DLinearMaxWidth`.
+Identity with `device_get_texture_1d_linear_max_width`. Query; legal during capture. Distinct from `mem_device_get_luid`.
+This VM does not invent occupancy SM counts or Engine `--mem-device-get-texture-1d-linear-max-width`.
+`gpu-profile capture` is still refused. Dual score still has no `$/M tokens`.
+
+## Shipped 2026-09-02 — CUDA `cuDeviceGetLuid`
+
+`gpu-sim` `Sim::mem_device_get_luid` is `cuDeviceGetLuid`.
+Identity with `device_get_luid`. Query; legal during capture. Distinct from `mem_device_get_uuid`.
+This VM does not invent occupancy SM counts or Engine `--mem-device-get-luid`.
+`gpu-profile capture` is still refused. Dual score still has no `$/M tokens`.
+
+## Shipped 2026-09-02 — CUDA `cuDeviceGetUuid`
+
+`gpu-sim` `Sim::mem_device_get_uuid` is `cuDeviceGetUuid`.
+Identity with `device_get_uuid` (`cudaDeviceGetUuid`). Query; legal during capture. Distinct from `mem_device_compute_capability`.
+This VM does not invent occupancy SM counts or Engine `--mem-device-get-uuid`.
+`gpu-profile capture` is still refused. Dual score still has no `$/M tokens`.
+
+## Shipped 2026-09-02 — CUDA `cuDeviceComputeCapability`
+
+`gpu-sim` `Sim::mem_device_compute_capability` is `cuDeviceComputeCapability`.
+Identity with `device_compute_capability`. Query; legal during capture. Distinct from `mem_device_get_properties`.
+This VM does not invent occupancy SM counts or Engine `--mem-device-compute-capability`.
+`gpu-profile capture` is still refused. Dual score still has no `$/M tokens`.
+
+## Shipped 2026-09-02 — CUDA `cuDeviceGetProperties`
+
+`gpu-sim` `Sim::mem_device_get_properties` is `cuDeviceGetProperties`.
+Identity with `device_get_properties` (`cudaGetDeviceProperties`). Query; legal during capture. Distinct from `mem_device_get_attribute`.
+This VM does not invent occupancy SM counts or Engine `--mem-device-get-properties`.
+`gpu-profile capture` is still refused. Dual score still has no `$/M tokens`.
+
+## Shipped 2026-09-02 — CUDA `cuDeviceGetAttribute`
+
+`gpu-sim` `Sim::mem_device_get_attribute` is `cuDeviceGetAttribute`.
+Identity with `device_get_attribute` (`cudaDeviceGetAttribute`). Query; legal during capture. Distinct from `mem_alloc_pitch_with_element_size`.
+This VM does not invent occupancy SM counts or Engine `--mem-device-get-attribute`.
+`gpu-profile capture` is still refused. Dual score still has no `$/M tokens`.
+
+## Shipped 2026-09-02 — CUDA `cuMemAllocPitch`
+
+`gpu-sim` `Sim::mem_alloc_pitch_with_element_size` is `cuMemAllocPitch`.
+Identity with `malloc_pitch_with_element_size` (`cuMemAllocPitch`). Capture refused. Distinct from `mem_alloc_pitch`.
+This VM does not invent occupancy SM counts or Engine `--mem-alloc-pitch-with-element-size`.
+`gpu-profile capture` is still refused. Dual score still has no `$/M tokens`.
+
+## Shipped 2026-09-02 — CUDA `cudaPointerGetAttributes`
+
+`gpu-sim` `Sim::mem_pointer_get_attributes` is `cudaPointerGetAttributes`.
+Identity with `pointer_get_attributes` (`cudaPointerGetAttributes`). Query; legal during capture. Distinct from `mem_pointer_set_attribute`.
+This VM does not invent occupancy SM counts or Engine `--mem-pointer-get-attributes`.
+`gpu-profile capture` is still refused. Dual score still has no `$/M tokens`.
+
+## Shipped 2026-09-02 — CUDA `cuPointerSetAttribute`
+
+`gpu-sim` `Sim::mem_pointer_set_attribute` is `cuPointerSetAttribute`.
+Identity with `pointer_set_attribute` (`cuPointerSetAttribute`). Capture refused. Distinct from `mem_pointer_get_access_flags`.
+This VM does not invent occupancy SM counts or Engine `--mem-pointer-set-attribute`.
+`gpu-profile capture` is still refused. Dual score still has no `$/M tokens`.
+
+## Shipped 2026-09-02 — CUDA `CU_POINTER_ATTRIBUTE_ACCESS_FLAGS`
+
+`gpu-sim` `Sim::mem_pointer_get_access_flags` is `CU_POINTER_ATTRIBUTE_ACCESS_FLAGS`.
+Identity with `pointer_get_access_flags` (`CU_POINTER_ATTRIBUTE_ACCESS_FLAGS`). Query; legal during capture. Distinct from `mem_pointer_get_attribute_n`.
+This VM does not invent occupancy SM counts or Engine `--mem-pointer-get-access-flags`.
+`gpu-profile capture` is still refused. Dual score still has no `$/M tokens`.
+
+## Shipped 2026-09-02 — CUDA `cuPointerGetAttributes`
+
+`gpu-sim` `Sim::mem_pointer_get_attribute_n` is `cuPointerGetAttributes`.
+Identity with `pointer_get_attribute_n` (`cuPointerGetAttributes`). Query; legal during capture. Distinct from `mem_pointer_get_attribute`.
+This VM does not invent occupancy SM counts or Engine `--mem-pointer-get-attribute-n`.
+`gpu-profile capture` is still refused. Dual score still has no `$/M tokens`.
+
+## Shipped 2026-09-02 — CUDA `cuPointerGetAttribute`
+
+`gpu-sim` `Sim::mem_pointer_get_attribute` is `cuPointerGetAttribute`.
+Identity with `pointer_get_attribute` (`cuPointerGetAttribute`). Query; legal during capture. Distinct from `mem_is_multicast_va`.
+This VM does not invent occupancy SM counts or Engine `--mem-pointer-get-attribute`.
+`gpu-profile capture` is still refused. Dual score still has no `$/M tokens`.
+
+## Shipped 2026-09-02 — multicast VA query
+
+`gpu-sim` `Sim::mem_is_multicast_va` is multicast VA query.
+Identity with `is_multicast_va`. Query; legal during capture. Distinct from `mem_multicast_binds`.
+This VM does not invent occupancy SM counts or Engine `--mem-is-multicast-va`.
+`gpu-profile capture` is still refused. Dual score still has no `$/M tokens`.
+
+## Shipped 2026-09-02 — multicast binds
+
+`gpu-sim` `Sim::mem_multicast_binds` is multicast bind count.
+Identity with `multicast_binds`. Query; legal during capture. Distinct from `mem_multicast_store`.
+This VM does not invent occupancy SM counts or Engine `--mem-multicast-binds`.
+`gpu-profile capture` is still refused. Dual score still has no `$/M tokens`.
+
+## Shipped 2026-09-02 — NVLS multicast store
+
+`gpu-sim` `Sim::mem_multicast_store` is NVLS kernel store.
+Identity with `multicast_store`. Capture refused. Distinct from `mem_multicast_destroy`.
+This VM does not invent occupancy SM counts or Engine `--mem-multicast-store`.
+`gpu-profile capture` is still refused. Dual score still has no `$/M tokens`.
+
+## Shipped 2026-09-02 — CUDA `cuMemRelease` multicast
+
+`gpu-sim` `Sim::mem_multicast_destroy` is `cuMemRelease` multicast.
+Identity with `multicast_destroy` (`cuMemRelease` of a multicast handle). Capture refused. Distinct from `mem_multicast_unbind_with_size`.
+This VM does not invent occupancy SM counts or Engine `--mem-multicast-destroy`.
+`gpu-profile capture` is still refused. Dual score still has no `$/M tokens`.
+
+## Shipped 2026-09-02 — CUDA `cuMulticastUnbind` size
+
+`gpu-sim` `Sim::mem_multicast_unbind_with_size` is `cuMulticastUnbind` size.
+Identity with `multicast_unbind_with_size` (`cuMulticastUnbind` size). Capture refused. Distinct from `mem_multicast_unbind`.
+This VM does not invent occupancy SM counts or Engine `--mem-multicast-unbind-with-size`.
+`gpu-profile capture` is still refused. Dual score still has no `$/M tokens`.
+
+## Shipped 2026-09-02 — CUDA `cuMulticastUnbind`
+
+`gpu-sim` `Sim::mem_multicast_unbind` is `cuMulticastUnbind`.
+Identity with `multicast_unbind` (`cuMulticastUnbind`). Capture refused. Distinct from `mem_multicast_bind_addr_with_size`.
+This VM does not invent occupancy SM counts or Engine `--mem-multicast-unbind`.
+`gpu-profile capture` is still refused. Dual score still has no `$/M tokens`.
+
+## Shipped 2026-09-02 — CUDA `cuMulticastBindAddr` size
+
+`gpu-sim` `Sim::mem_multicast_bind_addr_with_size` is `cuMulticastBindAddr` size.
+Identity with `multicast_bind_addr_with_size` (`cuMulticastBindAddr` size). Capture refused. Distinct from `mem_multicast_bind_addr_with_flags`.
+This VM does not invent occupancy SM counts or Engine `--mem-multicast-bind-addr-with-size`.
+`gpu-profile capture` is still refused. Dual score still has no `$/M tokens`.
+
+## Shipped 2026-09-02 — CUDA `cuMulticastBindAddr` flags
+
+`gpu-sim` `Sim::mem_multicast_bind_addr_with_flags` is `cuMulticastBindAddr` flags.
+Identity with `multicast_bind_addr_with_flags` (`cuMulticastBindAddr` flags). Capture refused. Distinct from `mem_multicast_bind_addr`.
+This VM does not invent occupancy SM counts or Engine `--mem-multicast-bind-addr-with-flags`.
+`gpu-profile capture` is still refused. Dual score still has no `$/M tokens`.
+
+## Shipped 2026-09-02 — CUDA `cuMulticastBindAddr`
+
+`gpu-sim` `Sim::mem_multicast_bind_addr` is `cuMulticastBindAddr`.
+Identity with `multicast_bind_addr` (`cuMulticastBindAddr`). Capture refused. Distinct from `mem_multicast_bind_mem_with_size`.
+This VM does not invent occupancy SM counts or Engine `--mem-multicast-bind-addr`.
+`gpu-profile capture` is still refused. Dual score still has no `$/M tokens`.
+
+## Shipped 2026-09-02 — CUDA `cuMulticastBindMem` size
+
+`gpu-sim` `Sim::mem_multicast_bind_mem_with_size` is `cuMulticastBindMem` size.
+Identity with `multicast_bind_mem_with_size` (`cuMulticastBindMem` size). Capture refused. Distinct from `mem_multicast_bind_mem_with_flags`.
+This VM does not invent occupancy SM counts or Engine `--mem-multicast-bind-mem-with-size`.
+`gpu-profile capture` is still refused. Dual score still has no `$/M tokens`.
+
+## Shipped 2026-09-02 — CUDA `cuMulticastBindMem` flags
+
+`gpu-sim` `Sim::mem_multicast_bind_mem_with_flags` is `cuMulticastBindMem` flags.
+Identity with `multicast_bind_mem_with_flags` (`cuMulticastBindMem` flags). Capture refused. Distinct from `mem_multicast_bind_mem`.
+This VM does not invent occupancy SM counts or Engine `--mem-multicast-bind-mem-with-flags`.
+`gpu-profile capture` is still refused. Dual score still has no `$/M tokens`.
+
+## Shipped 2026-09-02 — CUDA `cuMulticastBindMem`
+
+`gpu-sim` `Sim::mem_multicast_bind_mem` is `cuMulticastBindMem`.
+Identity with `multicast_bind_mem` (`cuMulticastBindMem`). Capture refused. Distinct from `mem_multicast_add_device`.
+This VM does not invent occupancy SM counts or Engine `--mem-multicast-bind-mem`.
+`gpu-profile capture` is still refused. Dual score still has no `$/M tokens`.
+
+## Shipped 2026-09-02 — CUDA `cuMulticastAddDevice`
+
+`gpu-sim` `Sim::mem_multicast_add_device` is `cuMulticastAddDevice`.
+Identity with `multicast_add_device` (`cuMulticastAddDevice`). Capture refused. Distinct from `mem_multicast_create_with_prop`.
+This VM does not invent occupancy SM counts or Engine `--mem-multicast-add-device`.
+`gpu-profile capture` is still refused. Dual score still has no `$/M tokens`.
+
+## Shipped 2026-09-02 — CUDA `cuMulticastCreate` prop
+
+`gpu-sim` `Sim::mem_multicast_create_with_prop` is `cuMulticastCreate` prop.
+Identity with `multicast_create_with_prop` (`cuMulticastCreate` prop). Capture refused. Distinct from `mem_multicast_create`.
+This VM does not invent occupancy SM counts or Engine `--mem-multicast-create-with-prop`.
+`gpu-profile capture` is still refused. Dual score still has no `$/M tokens`.
+
+## Shipped 2026-09-02 — CUDA `cuMulticastCreate`
+
+`gpu-sim` `Sim::mem_multicast_create` is `cuMulticastCreate`.
+Identity with `multicast_create` (`cuMulticastCreate`). Capture refused. Distinct from `mem_multicast_get_granularity_with_prop`.
+This VM does not invent occupancy SM counts or Engine `--mem-multicast-create`.
+`gpu-profile capture` is still refused. Dual score still has no `$/M tokens`.
+
+## Shipped 2026-09-02 — CUDA `cuMulticastGetGranularity` prop
+
+`gpu-sim` `Sim::mem_multicast_get_granularity_with_prop` is `cuMulticastGetGranularity` prop.
+Identity with `multicast_get_granularity_with_prop` (`cuMulticastGetGranularity` prop). Query; legal during capture. Distinct from `mem_multicast_get_granularity`.
+This VM does not invent occupancy SM counts or Engine `--mem-multicast-get-granularity-with-prop`.
+`gpu-profile capture` is still refused. Dual score still has no `$/M tokens`.
+
+## Shipped 2026-09-02 — CUDA `cuMulticastGetGranularity`
+
+`gpu-sim` `Sim::mem_multicast_get_granularity` is `cuMulticastGetGranularity`.
+Identity with `multicast_get_granularity` (`cuMulticastGetGranularity`). Query; legal during capture. Distinct from `mem_map_multicast_with_size`.
+This VM does not invent occupancy SM counts or Engine `--mem-multicast-get-granularity`.
+`gpu-profile capture` is still refused. Dual score still has no `$/M tokens`.
+
+## Shipped 2026-09-02 — CUDA `cuMemMap` multicast size
+
+`gpu-sim` `Sim::mem_map_multicast_with_size` is `cuMemMap` multicast size.
+Identity with `va_map_multicast_with_size` (`cuMemMap` multicast size). Capture refused. Distinct from `mem_map_multicast_with_flags`.
+This VM does not invent occupancy SM counts or Engine `--mem-map-multicast-with-size`.
+`gpu-profile capture` is still refused. Dual score still has no `$/M tokens`.
+
+## Shipped 2026-09-02 — CUDA `cuMemMap` multicast flags
+
+`gpu-sim` `Sim::mem_map_multicast_with_flags` is `cuMemMap` multicast flags.
+Identity with `va_map_multicast_with_flags` (`cuMemMap` multicast flags). Capture refused. Distinct from `mem_map_multicast`.
+This VM does not invent occupancy SM counts or Engine `--mem-map-multicast-with-flags`.
+`gpu-profile capture` is still refused. Dual score still has no `$/M tokens`.
+
+## Shipped 2026-09-02 — CUDA `cuMemMap` multicast
+
+`gpu-sim` `Sim::mem_map_multicast` is `cuMemMap` multicast.
+Identity with `va_map_multicast` (`cuMemMap` of a multicast handle). Capture refused. Distinct from `mem_get_allocation_properties`.
+This VM does not invent occupancy SM counts or Engine `--mem-map-multicast`.
+`gpu-profile capture` is still refused. Dual score still has no `$/M tokens`.
+
+## Shipped 2026-09-02 — CUDA `cuMemGetAllocationPropertiesFromHandle`
+
+`gpu-sim` `Sim::mem_get_allocation_properties` is `cuMemGetAllocationPropertiesFromHandle`.
+Identity with `va_get_allocation_properties` (`cuMemGetAllocationPropertiesFromHandle`). Query; legal during capture. Distinct from `mem_map_range`.
+This VM does not invent occupancy SM counts or Engine `--mem-get-allocation-properties`.
+`gpu-profile capture` is still refused. Dual score still has no `$/M tokens`.
+
+## Shipped 2026-09-02 — CUDA `cuMemMap` range
+
+`gpu-sim` `Sim::mem_map_range` is `cuMemMap` range.
+Identity with `va_map_range` (`cuMemMap` range). Capture refused. Distinct from `mem_get_access`.
+This VM does not invent occupancy SM counts or Engine `--mem-map-range`.
+`gpu-profile capture` is still refused. Dual score still has no `$/M tokens`.
+
+## Shipped 2026-09-02 — CUDA `cuMemGetAccess`
+
+`gpu-sim` `Sim::mem_get_access` is `cuMemGetAccess`.
+Identity with `va_get_access` (`cuMemGetAccess`). Query; legal during capture. Distinct from `mem_unset_access`.
+This VM does not invent occupancy SM counts or Engine `--mem-get-access`.
+`gpu-profile capture` is still refused. Dual score still has no `$/M tokens`.
+
+## Shipped 2026-09-02 — CUDA `cuMemSetAccess` ProtNone
+
+`gpu-sim` `Sim::mem_unset_access` is `cuMemSetAccess` ProtNone.
+Identity with `va_unset_access` (`cuMemSetAccess` ProtNone). Capture refused. Distinct from `mem_set_access_n`.
+This VM does not invent occupancy SM counts or Engine `--mem-unset-access`.
+`gpu-profile capture` is still refused. Dual score still has no `$/M tokens`.
+
+## Shipped 2026-09-02 — CUDA `cuMemSetAccess` n
+
+`gpu-sim` `Sim::mem_set_access_n` is `cuMemSetAccess` n.
+Identity with `va_set_access_n` (`cuMemSetAccess` n). Capture refused. Distinct from `mem_set_access_with_size`.
+This VM does not invent occupancy SM counts or Engine `--mem-set-access-n`.
+`gpu-profile capture` is still refused. Dual score still has no `$/M tokens`.
+
+## Shipped 2026-09-02 — CUDA `cuMemSetAccess` size
+
+`gpu-sim` `Sim::mem_set_access_with_size` is `cuMemSetAccess` size.
+Identity with `va_set_access_with_size` (`cuMemSetAccess` size). Capture refused. Distinct from `mem_set_access_with_flags`.
+This VM does not invent occupancy SM counts or Engine `--mem-set-access-with-size`.
+`gpu-profile capture` is still refused. Dual score still has no `$/M tokens`.
+
+## Shipped 2026-09-02 — CUDA `cuMemSetAccess` flags
+
+`gpu-sim` `Sim::mem_set_access_with_flags` is `cuMemSetAccess` flags.
+Identity with `va_set_access_with_flags` (`cuMemSetAccess` flags). Capture refused. Distinct from `mem_set_access_write`.
+This VM does not invent occupancy SM counts or Engine `--mem-set-access-with-flags`.
+`gpu-profile capture` is still refused. Dual score still has no `$/M tokens`.
+
+## Shipped 2026-09-02 — CUDA `cuMemSetAccess` write
+
+`gpu-sim` `Sim::mem_set_access_write` is `cuMemSetAccess` write.
+Identity with `va_set_access_write` (`cuMemSetAccess` PROT_READWRITE). Capture refused. Distinct from `mem_set_access`.
+This VM does not invent occupancy SM counts or Engine `--mem-set-access-write`.
+`gpu-profile capture` is still refused. Dual score still has no `$/M tokens`.
+
+## Shipped 2026-09-02 — CUDA `cuMemSetAccess`
+
+`gpu-sim` `Sim::mem_set_access` is `cuMemSetAccess`.
+Identity with `va_set_access` (`cuMemSetAccess` PROT_READ). Capture refused. Distinct from `mem_unmap_range`.
+This VM does not invent occupancy SM counts or Engine `--mem-set-access`.
+`gpu-profile capture` is still refused. Dual score still has no `$/M tokens`.
+
+## Shipped 2026-09-02 — CUDA `cuMemUnmap` range
+
+`gpu-sim` `Sim::mem_unmap_range` is `cuMemUnmap` range.
+Identity with `va_unmap_range` (`cuMemUnmap` range). Capture refused. Distinct from `mem_address_free_with_size`.
+This VM does not invent occupancy SM counts or Engine `--mem-unmap-range`.
+`gpu-profile capture` is still refused. Dual score still has no `$/M tokens`.
+
+## Shipped 2026-09-02 — CUDA `cuMemAddressFree` size
+
+`gpu-sim` `Sim::mem_address_free_with_size` is `cuMemAddressFree` size.
+Identity with `va_free_with_size` (`cuMemAddressFree` size). Capture refused. Distinct from `mem_address_free`.
+This VM does not invent occupancy SM counts or Engine `--mem-address-free-with-size`.
+`gpu-profile capture` is still refused. Dual score still has no `$/M tokens`.
+
+## Shipped 2026-09-02 — CUDA `cuMemAddressFree`
+
+`gpu-sim` `Sim::mem_address_free` is `cuMemAddressFree`.
+Identity with `va_free` (`cuMemAddressFree`). Capture refused. Distinct from `mem_unmap_with_size`.
+This VM does not invent occupancy SM counts or Engine `--mem-address-free`.
+`gpu-profile capture` is still refused. Dual score still has no `$/M tokens`.
+
+## Shipped 2026-09-02 — CUDA `cuMemUnmap` size
+
+`gpu-sim` `Sim::mem_unmap_with_size` is `cuMemUnmap` size.
+Identity with `va_unmap_with_size` (`cuMemUnmap` size). Capture refused. Distinct from `mem_unmap`.
+This VM does not invent occupancy SM counts or Engine `--mem-unmap-with-size`.
+`gpu-profile capture` is still refused. Dual score still has no `$/M tokens`.
+
+## Shipped 2026-09-02 — CUDA `cuMemUnmap`
+
+`gpu-sim` `Sim::mem_unmap` is `cuMemUnmap`.
+Identity with `va_unmap` (`cuMemUnmap` + `cuMemRelease` of every physical). Capture refused. Distinct from `mem_retain_handle`.
+This VM does not invent occupancy SM counts or Engine `--mem-unmap`.
+`gpu-profile capture` is still refused. Dual score still has no `$/M tokens`.
+
+## Shipped 2026-09-02 — CUDA `cuMemRetainAllocationHandle`
+
+`gpu-sim` `Sim::mem_retain_handle` is `cuMemRetainAllocationHandle`.
+Identity with `va_retain_handle` (`cuMemRetainAllocationHandle`). Capture refused. Distinct from `mem_release_handle`.
+This VM does not invent occupancy SM counts or Engine `--mem-retain-handle`.
+`gpu-profile capture` is still refused. Dual score still has no `$/M tokens`.
+
+## Shipped 2026-09-02 — CUDA `cuMemRelease`
+
+`gpu-sim` `Sim::mem_release_handle` is `cuMemRelease`.
+Identity with `va_release_handle` (`cuMemRelease`). Capture refused. Distinct from `mem_map_handle_with_size`.
+This VM does not invent occupancy SM counts or Engine `--mem-release-handle`.
+`gpu-profile capture` is still refused. Dual score still has no `$/M tokens`.
+
+## Shipped 2026-09-02 — CUDA `cuMemMap` size
+
+`gpu-sim` `Sim::mem_map_handle_with_size` is `cuMemMap` size.
+Identity with `va_map_handle_with_size` (`cuMemMap` size). Capture refused. Distinct from `mem_map_handle_with_flags`.
+This VM does not invent occupancy SM counts or Engine `--mem-map-handle-with-size`.
+`gpu-profile capture` is still refused. Dual score still has no `$/M tokens`.
+
+## Shipped 2026-09-02 — CUDA `cuMemMap` flags
+
+`gpu-sim` `Sim::mem_map_handle_with_flags` is `cuMemMap` flags.
+Identity with `va_map_handle_with_flags` (`cuMemMap` flags). Capture refused. Distinct from `mem_map_handle`.
+This VM does not invent occupancy SM counts or Engine `--mem-map-handle-with-flags`.
+`gpu-profile capture` is still refused. Dual score still has no `$/M tokens`.
+
+## Shipped 2026-09-02 — CUDA `cuMemMap`
+
+`gpu-sim` `Sim::mem_map_handle` is `cuMemMap`.
+Identity with `va_map_handle` (`cuMemMap` default flags). Capture refused. Distinct from `mem_create_with_prop`.
+This VM does not invent occupancy SM counts or Engine `--mem-map-handle`.
+`gpu-profile capture` is still refused. Dual score still has no `$/M tokens`.
+
+## Shipped 2026-09-02 — CUDA `cuMemCreate` props
+
+`gpu-sim` `Sim::mem_create_with_prop` is `cuMemCreate` props.
+Identity with `va_create_with_prop` (`cuMemCreate` props). Capture refused. Distinct from `mem_create`.
+This VM does not invent occupancy SM counts or Engine `--mem-create-with-prop`.
+`gpu-profile capture` is still refused. Dual score still has no `$/M tokens`.
+
+## Shipped 2026-09-02 — CUDA `cuMemCreate`
+
+`gpu-sim` `Sim::mem_create` is `cuMemCreate`.
+Identity with `va_create` (`cuMemCreate` default prop). Capture refused. Distinct from `mem_get_allocation_granularity`.
+This VM does not invent occupancy SM counts or Engine `--mem-create`.
+`gpu-profile capture` is still refused. Dual score still has no `$/M tokens`.
+
+## Shipped 2026-09-02 — CUDA `cuMemGetAllocationGranularity`
+
+`gpu-sim` `Sim::mem_get_allocation_granularity` is `cuMemGetAllocationGranularity`.
+Identity with `va_get_allocation_granularity` (`cuMemGetAllocationGranularity`). Query; legal during capture. Distinct from `mem_pool_set_max_size`.
+This VM does not invent occupancy SM counts or Engine `--mem-get-allocation-granularity`.
+`gpu-profile capture` is still refused. Dual score still has no `$/M tokens`.
+
+## Shipped 2026-09-02 — CUDA `cuMemPoolSetAttribute` MaxPoolSize
+
+`gpu-sim` `Sim::mem_pool_set_max_size` is `cuMemPoolSetAttribute` MaxPoolSize.
+Identity with `set_pool_max_size` (`cudaMemPoolAttrMaxPoolSize`). Capture refused. Distinct from `mem_pool_set_release_threshold`.
+This VM does not invent occupancy SM counts or Engine `--mem-pool-set-max-size`.
+`gpu-profile capture` is still refused. Dual score still has no `$/M tokens`.
+
+## Shipped 2026-09-02 — CUDA `cuMemPoolSetAttribute` ReleaseThreshold
+
+`gpu-sim` `Sim::mem_pool_set_release_threshold` is `cuMemPoolSetAttribute` ReleaseThreshold.
+Identity with `set_pool_release_threshold` (`cudaMemPoolAttrReleaseThreshold`). Capture refused. Distinct from `mem_pool_trim_to`.
+This VM does not invent occupancy SM counts or Engine `--mem-pool-set-release-threshold`.
+`gpu-profile capture` is still refused. Dual score still has no `$/M tokens`.
+
+## Shipped 2026-09-02 — CUDA `cuMemPoolTrimTo`
+
+`gpu-sim` `Sim::mem_pool_trim_to` is `cuMemPoolTrimTo`.
+Identity with `pool_trim_to` (`cudaMemPoolTrimTo`). Capture refused. Distinct from `mem_pool_set_attribute`.
+This VM does not invent occupancy SM counts or Engine `--mem-pool-trim-to`.
+`gpu-profile capture` is still refused. Dual score still has no `$/M tokens`.
+
+## Shipped 2026-09-02 — CUDA `cuMemPoolSetAttribute`
+
+`gpu-sim` `Sim::mem_pool_set_attribute` is `cuMemPoolSetAttribute`.
+Identity with `pool_set_attribute` (`cudaMemPoolSetAttribute`). Capture refused. Distinct from `mem_pool_get_attribute`.
+This VM does not invent occupancy SM counts or Engine `--mem-pool-set-attribute`.
+`gpu-profile capture` is still refused. Dual score still has no `$/M tokens`.
+
+## Shipped 2026-09-02 — CUDA `cuMemPoolGetAttribute`
+
+`gpu-sim` `Sim::mem_pool_get_attribute` is `cuMemPoolGetAttribute`.
+Identity with `pool_get_attribute` (`cudaMemPoolGetAttribute`). Query; legal during capture. Distinct from `mem_pool_unset_access`.
+This VM does not invent occupancy SM counts or Engine `--mem-pool-get-attribute`.
+`gpu-profile capture` is still refused. Dual score still has no `$/M tokens`.
+
+## Shipped 2026-09-02 — CUDA `cuMemPoolSetAccess` ProtNone
+
+`gpu-sim` `Sim::mem_pool_unset_access` is `cuMemPoolSetAccess` ProtNone.
+Identity with `pool_unset_access` (`cudaMemPoolSetAccess` ProtNone). Capture refused. Distinct from `mem_pool_set_access_n`.
+This VM does not invent occupancy SM counts or Engine `--mem-pool-unset-access`.
+`gpu-profile capture` is still refused. Dual score still has no `$/M tokens`.
+
+## Shipped 2026-09-02 — CUDA `cuMemPoolSetAccess` n
+
+`gpu-sim` `Sim::mem_pool_set_access_n` is `cuMemPoolSetAccess` n.
+Identity with `pool_set_access_n` (`cudaMemPoolSetAccess` desc array). Capture refused. Distinct from `mem_pool_set_access_with_flags`.
+This VM does not invent occupancy SM counts or Engine `--mem-pool-set-access-n`.
+`gpu-profile capture` is still refused. Dual score still has no `$/M tokens`.
+
+## Shipped 2026-09-02 — CUDA `cuMemPoolSetAccess` flags
+
+`gpu-sim` `Sim::mem_pool_set_access_with_flags` is `cuMemPoolSetAccess` flags.
+Identity with `pool_set_access_with_flags` (`cudaMemPoolSetAccess` flags). Capture refused. Distinct from `mem_pool_set_access_read`.
+This VM does not invent occupancy SM counts or Engine `--mem-pool-set-access-with-flags`.
+`gpu-profile capture` is still refused. Dual score still has no `$/M tokens`.
+
+## Shipped 2026-09-02 — CUDA `cuMemPoolSetAccess` ProtRead
+
+`gpu-sim` `Sim::mem_pool_set_access_read` is `cuMemPoolSetAccess` ProtRead.
+Identity with `pool_set_access_read` (`cudaMemPoolSetAccess` ProtRead). Capture refused. Distinct from `mem_pool_set_access`.
+This VM does not invent occupancy SM counts or Engine `--mem-pool-set-access-read`.
+`gpu-profile capture` is still refused. Dual score still has no `$/M tokens`.
+
+## Shipped 2026-09-02 — CUDA `cuMemPoolSetAccess`
+
+`gpu-sim` `Sim::mem_pool_set_access` is `cuMemPoolSetAccess`.
+Identity with `pool_set_access` (`cudaMemPoolSetAccess` ReadWrite). Capture refused. Distinct from `mem_pool_get_access`.
+This VM does not invent occupancy SM counts or Engine `--mem-pool-set-access`.
+`gpu-profile capture` is still refused. Dual score still has no `$/M tokens`.
+
+## Shipped 2026-09-02 — CUDA `cuMemPoolGetAccess`
+
+`gpu-sim` `Sim::mem_pool_get_access` is `cuMemPoolGetAccess`.
+Identity with `pool_get_access` (`cudaMemPoolGetAccess`). Query; legal during capture. Distinct from `mem_pool_import_ptr`.
+This VM does not invent occupancy SM counts or Engine `--mem-pool-get-access`.
+`gpu-profile capture` is still refused. Dual score still has no `$/M tokens`.
+
+## Shipped 2026-09-02 — CUDA `cuMemPoolImportPointer`
+
+`gpu-sim` `Sim::mem_pool_import_ptr` is `cuMemPoolImportPointer`.
+Identity with `pool_import_ptr` (`cudaMemPoolImportPointer`). Capture refused. Distinct from `mem_pool_export_ptr`.
+This VM does not invent occupancy SM counts or Engine `--mem-pool-import-ptr`.
+`gpu-profile capture` is still refused. Dual score still has no `$/M tokens`.
+
+## Shipped 2026-09-02 — CUDA `cuMemPoolExportPointer`
+
+`gpu-sim` `Sim::mem_pool_export_ptr` is `cuMemPoolExportPointer`.
+Identity with `pool_export_ptr` (`cudaMemPoolExportPointer`). Capture refused. Distinct from `mem_pool_import_with_type`.
+This VM does not invent occupancy SM counts or Engine `--mem-pool-export-ptr`.
+`gpu-profile capture` is still refused. Dual score still has no `$/M tokens`.
+
+## Shipped 2026-09-02 — CUDA `cuMemPoolImportFromShareableHandle` type
+
+`gpu-sim` `Sim::mem_pool_import_with_type` is `cuMemPoolImportFromShareableHandle` type.
+Identity with `pool_import_with_type` (`cudaMemPoolImportFromShareableHandle` type). Capture refused. Distinct from `mem_pool_export_with_type`.
+This VM does not invent occupancy SM counts or Engine `--mem-pool-import-with-type`.
+`gpu-profile capture` is still refused. Dual score still has no `$/M tokens`.
+
+## Shipped 2026-09-02 — CUDA `cuMemPoolExportToShareableHandle` type
+
+`gpu-sim` `Sim::mem_pool_export_with_type` is `cuMemPoolExportToShareableHandle` type.
+Identity with `pool_export_with_type` (`cudaMemPoolExportToShareableHandle` type). Capture refused. Distinct from `mem_pool_import`.
+This VM does not invent occupancy SM counts or Engine `--mem-pool-export-with-type`.
+`gpu-profile capture` is still refused. Dual score still has no `$/M tokens`.
+
+## Shipped 2026-09-02 — CUDA `cuMemPoolImportFromShareableHandle`
+
+`gpu-sim` `Sim::mem_pool_import` is `cuMemPoolImportFromShareableHandle`.
+Identity with `pool_import` (`cudaMemPoolImportFromShareableHandle`). Capture refused. Distinct from `mem_pool_export`.
+This VM does not invent occupancy SM counts or Engine `--mem-pool-import`.
+`gpu-profile capture` is still refused. Dual score still has no `$/M tokens`.
+
+## Shipped 2026-09-02 — CUDA `cuMemPoolExportToShareableHandle`
+
+`gpu-sim` `Sim::mem_pool_export` is `cuMemPoolExportToShareableHandle`.
+Identity with `pool_export` (`cudaMemPoolExportToShareableHandle`). Capture refused. Distinct from `mem_alloc_from_pool`.
+This VM does not invent occupancy SM counts or Engine `--mem-pool-export`.
+`gpu-profile capture` is still refused. Dual score still has no `$/M tokens`.
+
+## Shipped 2026-09-02 — CUDA `cuMemAllocFromPoolAsync`
+
+`gpu-sim` `Sim::mem_alloc_from_pool` is `cuMemAllocFromPoolAsync`.
+Identity with `alloc_from_pool` (`cudaMallocFromPoolAsync`). Capture legal. Distinct from `mem_pool_destroy`.
+This VM does not invent occupancy SM counts or Engine `--mem-alloc-from-pool`.
+`gpu-profile capture` is still refused. Dual score still has no `$/M tokens`.
+
+## Shipped 2026-09-02 — CUDA `cuMemPoolDestroy`
+
+`gpu-sim` `Sim::mem_pool_destroy` is `cuMemPoolDestroy`.
+Identity with `destroy_pool` (`cudaMemPoolDestroy`). Capture refused. Distinct from `mem_pool_create_with_props`.
+This VM does not invent occupancy SM counts or Engine `--mem-pool-destroy`.
+`gpu-profile capture` is still refused. Dual score still has no `$/M tokens`.
+
+## Shipped 2026-09-02 — CUDA `cuMemPoolCreate` props
+
+`gpu-sim` `Sim::mem_pool_create_with_props` is `cuMemPoolCreate` with props.
+Identity with `create_pool_with_props` (`cudaMemPoolCreate` with `MemPoolProps`). Capture refused. Distinct from `mem_pool_create_shareable`.
+This VM does not invent occupancy SM counts or Engine `--mem-pool-create-with-props`.
+`gpu-profile capture` is still refused. Dual score still has no `$/M tokens`.
+
+## Shipped 2026-09-02 — CUDA `cuMemPoolCreate` POSIX
+
+`gpu-sim` `Sim::mem_pool_create_shareable` is `cuMemPoolCreate` POSIX.
+Identity with `create_shareable_pool` (`cudaMemPoolCreate` POSIX-FD). Capture refused. Distinct from `mem_pool_create`.
+This VM does not invent occupancy SM counts or Engine `--mem-pool-create-shareable`.
+`gpu-profile capture` is still refused. Dual score still has no `$/M tokens`.
+
+## Shipped 2026-09-02 — CUDA `cuMemPoolCreate`
+
+`gpu-sim` `Sim::mem_pool_create` is `cuMemPoolCreate`.
+Identity with `create_pool` (`cudaMemPoolCreate`). Capture refused. Distinct from `device_set_mempool`.
+This VM does not invent occupancy SM counts or Engine `--mem-pool-create`.
+`gpu-profile capture` is still refused. Dual score still has no `$/M tokens`.
+
+## Shipped 2026-09-02 — CUDA `cuDeviceSetMemPool`
+
+`gpu-sim` `Sim::device_set_mempool` is `cuDeviceSetMemPool`.
+Identity with `set_device_mempool` (`cudaDeviceSetMemPool`). Capture refused. Distinct from `device_get_mempool`.
+This VM does not invent occupancy SM counts or Engine `--device-set-mempool`.
+`gpu-profile capture` is still refused. Dual score still has no `$/M tokens`.
+
+## Shipped 2026-09-02 — CUDA `cuDeviceGetMemPool`
+
+`gpu-sim` `Sim::device_get_mempool` is `cuDeviceGetMemPool`.
+Identity with `device_mempool` (`cudaDeviceGetMemPool`). Query; legal during capture. Distinct from `device_get_default_mempool`.
+This VM does not invent occupancy SM counts or Engine `--device-get-mempool`.
+`gpu-profile capture` is still refused. Dual score still has no `$/M tokens`.
+
+## Shipped 2026-09-02 — CUDA `cuDeviceGetDefaultMemPool`
+
+`gpu-sim` `Sim::device_get_default_mempool` is `cuDeviceGetDefaultMemPool`.
+Identity with `default_pool` (`cudaDeviceGetDefaultMemPool`). Query; legal during capture. Distinct from `get_device_count`.
+This VM does not invent occupancy SM counts or Engine `--device-get-default-mempool`.
+`gpu-profile capture` is still refused. Dual score still has no `$/M tokens`.
+
+## Shipped 2026-09-02 — CUDA `cuDeviceGetCount`
+
+`gpu-sim` `Sim::get_device_count` is `cuDeviceGetCount`.
+Identity with `device_count` (`cudaGetDeviceCount`). Query; legal during capture. Distinct from `get_device_name`.
+This VM does not invent occupancy SM counts or Engine `--get-device-count`.
+`gpu-profile capture` is still refused. Dual score still has no `$/M tokens`.
+
+## Shipped 2026-09-02 — CUDA `cuDeviceGetName`
+
+`gpu-sim` `Sim::get_device_name` is `cuDeviceGetName`.
+Identity with `device_get_name` (`cudaDeviceGetName`). Query; legal during capture. Distinct from `get_func_attributes`.
+This VM does not invent occupancy SM counts or Engine `--get-device-name`.
+`gpu-profile capture` is still refused. Dual score still has no `$/M tokens`.
+
+## Shipped 2026-09-02 — CUDA `cuFuncGetAttributes`
+
+`gpu-sim` `Sim::get_func_attributes` is `cuFuncGetAttributes`.
+Identity with `func_get_attributes` (`cudaFuncGetAttributes`). Query; legal during capture. Distinct from `stream_set_blocking`.
+This VM does not invent occupancy SM counts or Engine `--get-func-attributes`.
+`gpu-profile capture` is still refused. Dual score still has no `$/M tokens`.
+
+## Shipped 2026-09-02 — CUDA `cuStreamCreate` blocking
+
+`gpu-sim` `Sim::stream_set_blocking` is `cuStreamCreate` blocking.
+Identity with `set_stream_blocking` (`cudaStreamCreate`). Capture legal. Distinct from `stream_set_priority`.
+This VM does not invent occupancy SM counts or Engine `--stream-set-blocking`.
+`gpu-profile capture` is still refused. Dual score still has no `$/M tokens`.
+
+## Shipped 2026-09-02 — CUDA `cuStreamSetAttribute` priority
+
+`gpu-sim` `Sim::stream_set_priority` is `cuStreamSetAttribute` priority.
+Identity with `set_stream_priority` (`cudaStreamSetAttribute` Priority). Capture legal. Distinct from `stream_get_access_policy`.
+This VM does not invent occupancy SM counts or Engine `--stream-set-priority`.
+`gpu-profile capture` is still refused. Dual score still has no `$/M tokens`.
+
+## Shipped 2026-09-02 — CUDA `cuStreamGetAttribute` access policy
+
+`gpu-sim` `Sim::stream_get_access_policy` is `cuStreamGetAttribute` access policy.
+Identity with `stream_access_policy` (`cudaStreamGetAttribute` AccessPolicyWindow). Query; legal during capture. Distinct from `stream_set_access_policy`.
+This VM does not invent occupancy SM counts or Engine `--stream-get-access-policy`.
+`gpu-profile capture` is still refused. Dual score still has no `$/M tokens`.
+
+## Shipped 2026-09-02 — CUDA `cuStreamSetAttribute` access policy
+
+`gpu-sim` `Sim::stream_set_access_policy` is `cuStreamSetAttribute` access policy.
+Identity with `set_stream_access_policy` (`cudaStreamSetAttribute` AccessPolicyWindow). Capture legal. Distinct from `stream_get_nvlink_util_centric`.
+This VM does not invent occupancy SM counts or Engine `--stream-set-access-policy`.
+`gpu-profile capture` is still refused. Dual score still has no `$/M tokens`.
+
+## Shipped 2026-09-02 — CUDA `cuStreamGetAttribute` nvlink util centric
+
+`gpu-sim` `Sim::stream_get_nvlink_util_centric` is `cuStreamGetAttribute` nvlink util centric.
+Identity with `stream_nvlink_util_centric` (`cudaStreamGetAttribute` NvlinkUtilCentricScheduling). Query; legal during capture. Distinct from `stream_set_nvlink_util_centric`.
+This VM does not invent occupancy SM counts or Engine `--stream-get-nvlink-util-centric`.
+`gpu-profile capture` is still refused. Dual score still has no `$/M tokens`.
+
+## Shipped 2026-09-02 — CUDA `cuStreamSetAttribute` nvlink util centric
+
+`gpu-sim` `Sim::stream_set_nvlink_util_centric` is `cuStreamSetAttribute` nvlink util centric.
+Identity with `set_stream_nvlink_util_centric` (`cudaStreamSetAttribute` NvlinkUtilCentricScheduling). Capture legal. Distinct from `stream_get_sync_policy`.
+This VM does not invent occupancy SM counts or Engine `--stream-set-nvlink-util-centric`.
+`gpu-profile capture` is still refused. Dual score still has no `$/M tokens`.
+
+## Shipped 2026-09-02 — CUDA `cuStreamGetAttribute` sync policy
+
+`gpu-sim` `Sim::stream_get_sync_policy` is `cuStreamGetAttribute` sync policy.
+Identity with `stream_sync_policy` (`cudaStreamGetAttribute` SynchronizationPolicy). Query; legal during capture. Distinct from `stream_set_sync_policy`.
+This VM does not invent occupancy SM counts or Engine `--stream-get-sync-policy`.
+`gpu-profile capture` is still refused. Dual score still has no `$/M tokens`.
+
+## Shipped 2026-09-02 — CUDA `cuStreamSetAttribute` sync policy
+
+`gpu-sim` `Sim::stream_set_sync_policy` is `cuStreamSetAttribute` sync policy.
+Identity with `set_stream_sync_policy` (`cudaStreamSetAttribute` SynchronizationPolicy). Capture legal. Distinct from `stream_get_mem_sync_domain_map`.
+This VM does not invent occupancy SM counts or Engine `--stream-set-sync-policy`.
+`gpu-profile capture` is still refused. Dual score still has no `$/M tokens`.
+
+## Shipped 2026-09-02 — CUDA `cuStreamGetAttribute` mem sync domain map
+
+`gpu-sim` `Sim::stream_get_mem_sync_domain_map` is `cuStreamGetAttribute` mem sync domain map.
+Identity with `stream_mem_sync_domain_map` (`cudaStreamGetAttribute` MemSyncDomainMap). Query; legal during capture. Distinct from `stream_get_mem_sync_domain`.
+This VM does not invent occupancy SM counts or Engine `--stream-get-mem-sync-domain-map`.
+`gpu-profile capture` is still refused. Dual score still has no `$/M tokens`.
+
+## Shipped 2026-09-02 — CUDA `cuStreamGetAttribute` mem sync domain
+
+`gpu-sim` `Sim::stream_get_mem_sync_domain` is `cuStreamGetAttribute` mem sync domain.
+Identity with `stream_mem_sync_domain` (`cudaStreamGetAttribute` MemSyncDomain). Query; legal during capture. Distinct from `stream_set_mem_sync_domain_map`.
+This VM does not invent occupancy SM counts or Engine `--stream-get-mem-sync-domain`.
+`gpu-profile capture` is still refused. Dual score still has no `$/M tokens`.
+
+## Shipped 2026-09-02 — CUDA `cuStreamSetAttribute` mem sync domain map
+
+`gpu-sim` `Sim::stream_set_mem_sync_domain_map` is `cuStreamSetAttribute` mem sync domain map.
+Identity with `set_stream_mem_sync_domain_map` (`cudaStreamSetAttribute` MemSyncDomainMap). Capture legal. Distinct from `stream_set_mem_sync_domain`.
+This VM does not invent occupancy SM counts or Engine `--stream-set-mem-sync-domain-map`.
+`gpu-profile capture` is still refused. Dual score still has no `$/M tokens`.
+
+## Shipped 2026-09-02 — CUDA `cuStreamSetAttribute` mem sync domain
+
+`gpu-sim` `Sim::stream_set_mem_sync_domain` is `cuStreamSetAttribute` mem sync domain.
+Identity with `set_stream_mem_sync_domain` (`cudaStreamSetAttribute` MemSyncDomain). Capture legal. Distinct from `stream_wait_event_external`.
+This VM does not invent occupancy SM counts or Engine `--stream-set-mem-sync-domain`.
+`gpu-profile capture` is still refused. Dual score still has no `$/M tokens`.
+
+## Shipped 2026-09-02 — CUDA `cuStreamWaitEvent` external
+
+`gpu-sim` `Sim::stream_wait_event_external` is `cuStreamWaitEvent` external.
+Identity with `wait_event_external` (`cudaStreamWaitEvent` WaitExternal). Capture legal. Distinct from `stream_wait_event_with_flags`.
+This VM does not invent occupancy SM counts or Engine `--stream-wait-event-external`.
+`gpu-profile capture` is still refused. Dual score still has no `$/M tokens`.
+
+## Shipped 2026-09-02 — CUDA `cuEventRecordWithFlags` external
+
+`gpu-sim` `Sim::event_record_external` is `cuEventRecordWithFlags` external.
+Identity with `record_event_external` (`cudaEventRecordWithFlags` External). Capture legal. Distinct from `event_record_with_flags`.
+This VM does not invent occupancy SM counts or Engine `--event-record-external`.
+`gpu-profile capture` is still refused. Dual score still has no `$/M tokens`.
+
+## Shipped 2026-09-02 — CUDA `cuEventCreateWithFlags` blocking sync
+
+`gpu-sim` `Sim::event_create_blocking_sync` is `cuEventCreateWithFlags` blocking sync.
+Identity with `create_event_blocking_sync` (`cudaEventCreateWithFlags` BlockingSync). Capture refused. Distinct from `event_create_interprocess`.
+This VM does not invent occupancy SM counts or Engine `--event-create-blocking-sync`.
+`gpu-profile capture` is still refused. Dual score still has no `$/M tokens`.
+
+## Shipped 2026-09-02 — CUDA `cuEventCreateWithFlags` interprocess
+
+`gpu-sim` `Sim::event_create_interprocess` is `cuEventCreateWithFlags` interprocess.
+Identity with `create_event_interprocess` (`cudaEventCreateWithFlags` Interprocess|DisableTiming). Capture refused. Distinct from `event_create_disable_timing`.
+This VM does not invent occupancy SM counts or Engine `--event-create-interprocess`.
+`gpu-profile capture` is still refused. Dual score still has no `$/M tokens`.
+
+## Shipped 2026-09-02 — CUDA `cuEventCreateWithFlags` disable timing
+
+`gpu-sim` `Sim::event_create_disable_timing` is `cuEventCreateWithFlags` disable timing.
+Identity with `create_event_disable_timing` (`cudaEventCreateWithFlags` DisableTiming). Capture refused. Distinct from `event_create_with_flags`.
+This VM does not invent occupancy SM counts or Engine `--event-create-disable-timing`.
+`gpu-profile capture` is still refused. Dual score still has no `$/M tokens`.
+
+## Shipped 2026-09-02 — CUDA `cuFuncGetAttribute` max dynamic shared memory
+
+`gpu-sim` `Sim::func_get_max_dynamic_shared_memory` is `cuFuncGetAttribute` max dynamic shared memory.
+Identity with `max_dynamic_shared_memory` (`cudaFuncGetAttribute` MaxDynamicSharedMemorySize). Query; legal during capture. Distinct from `func_set_max_dynamic_shared_memory`.
+This VM does not invent occupancy SM counts or Engine `--func-get-max-dynamic-shared-memory`.
+`gpu-profile capture` is still refused. Dual score still has no `$/M tokens`.
+
+## Shipped 2026-09-02 — CUDA `cuFuncSetAttribute` max dynamic shared memory
+
+`gpu-sim` `Sim::func_set_max_dynamic_shared_memory` is `cuFuncSetAttribute` max dynamic shared memory.
+Identity with `set_max_dynamic_shared_memory` (`cudaFuncSetAttribute` MaxDynamicSharedMemorySize). Capture legal. Distinct from `func_get_non_portable_cluster_size_allowed`.
+This VM does not invent occupancy SM counts or Engine `--func-set-max-dynamic-shared-memory`.
+`gpu-profile capture` is still refused. Dual score still has no `$/M tokens`.
+
+## Shipped 2026-09-02 — CUDA `cuFuncGetAttribute` non-portable cluster size
+
+`gpu-sim` `Sim::func_get_non_portable_cluster_size_allowed` is `cuFuncGetAttribute` non-portable cluster size.
+Identity with `non_portable_cluster_size_allowed` (`cudaFuncGetAttribute` NonPortableClusterSizeAllowed). Query; legal during capture. Distinct from `func_set_non_portable_cluster_size_allowed`.
+This VM does not invent occupancy SM counts or Engine `--func-get-non-portable-cluster-size-allowed`.
+`gpu-profile capture` is still refused. Dual score still has no `$/M tokens`.
+
+## Shipped 2026-09-02 — CUDA `cuFuncSetAttribute` non-portable cluster size
+
+`gpu-sim` `Sim::func_set_non_portable_cluster_size_allowed` is `cuFuncSetAttribute` non-portable cluster size.
+Identity with `set_non_portable_cluster_size_allowed` (`cudaFuncSetAttribute` NonPortableClusterSizeAllowed). Capture legal. Distinct from `func_get_required_cluster_depth`.
+This VM does not invent occupancy SM counts or Engine `--func-set-non-portable-cluster-size-allowed`.
+`gpu-profile capture` is still refused. Dual score still has no `$/M tokens`.
+
+## Shipped 2026-09-02 — CUDA `cuFuncGetAttribute` required cluster depth
+
+`gpu-sim` `Sim::func_get_required_cluster_depth` is `cuFuncGetAttribute` required cluster depth.
+Identity with `required_cluster_depth` (`cudaFuncGetAttribute` RequiredClusterDepth). Query; legal during capture. Distinct from `func_set_required_cluster_depth`.
+This VM does not invent occupancy SM counts or Engine `--func-get-required-cluster-depth`.
+`gpu-profile capture` is still refused. Dual score still has no `$/M tokens`.
+
+## Shipped 2026-09-02 — CUDA `cuFuncSetAttribute` required cluster depth
+
+`gpu-sim` `Sim::func_set_required_cluster_depth` is `cuFuncSetAttribute` required cluster depth.
+Identity with `set_required_cluster_depth` (`cudaFuncSetAttribute` RequiredClusterDepth). Capture legal. Distinct from `func_get_required_cluster_height`.
+This VM does not invent occupancy SM counts or Engine `--func-set-required-cluster-depth`.
+`gpu-profile capture` is still refused. Dual score still has no `$/M tokens`.
+
+## Shipped 2026-09-02 — CUDA `cuFuncGetAttribute` required cluster height
+
+`gpu-sim` `Sim::func_get_required_cluster_height` is `cuFuncGetAttribute` required cluster height.
+Identity with `required_cluster_height` (`cudaFuncGetAttribute` RequiredClusterHeight). Query; legal during capture. Distinct from `func_set_required_cluster_height`.
+This VM does not invent occupancy SM counts or Engine `--func-get-required-cluster-height`.
+`gpu-profile capture` is still refused. Dual score still has no `$/M tokens`.
+
+## Shipped 2026-09-02 — CUDA `cuFuncSetAttribute` required cluster height
+
+`gpu-sim` `Sim::func_set_required_cluster_height` is `cuFuncSetAttribute` required cluster height.
+Identity with `set_required_cluster_height` (`cudaFuncSetAttribute` RequiredClusterHeight). Capture legal. Distinct from `func_get_required_cluster_width`.
+This VM does not invent occupancy SM counts or Engine `--func-set-required-cluster-height`.
+`gpu-profile capture` is still refused. Dual score still has no `$/M tokens`.
+
+## Shipped 2026-09-02 — CUDA `cuFuncGetAttribute` required cluster width
+
+`gpu-sim` `Sim::func_get_required_cluster_width` is `cuFuncGetAttribute` required cluster width.
+Identity with `required_cluster_width` (`cudaFuncGetAttribute` RequiredClusterWidth). Query; legal during capture. Distinct from `func_set_required_cluster_width`.
+This VM does not invent occupancy SM counts or Engine `--func-get-required-cluster-width`.
+`gpu-profile capture` is still refused. Dual score still has no `$/M tokens`.
+
+## Shipped 2026-09-02 — CUDA `cuFuncSetAttribute` required cluster width
+
+`gpu-sim` `Sim::func_set_required_cluster_width` is `cuFuncSetAttribute` required cluster width.
+Identity with `set_required_cluster_width` (`cudaFuncSetAttribute` RequiredClusterWidth). Capture legal. Distinct from `func_get_cluster_dim_must_be_set`.
+This VM does not invent occupancy SM counts or Engine `--func-set-required-cluster-width`.
+`gpu-profile capture` is still refused. Dual score still has no `$/M tokens`.
+
+## Shipped 2026-09-02 — CUDA `cuFuncGetAttribute` cluster dim must be set
+
+`gpu-sim` `Sim::func_get_cluster_dim_must_be_set` is `cuFuncGetAttribute` cluster dim must be set.
+Identity with `cluster_dim_must_be_set` (`cudaFuncGetAttribute` ClusterDimMustBeSet). Query; legal during capture. Distinct from `func_set_cluster_dim_must_be_set`.
+This VM does not invent occupancy SM counts or Engine `--func-get-cluster-dim-must-be-set`.
+`gpu-profile capture` is still refused. Dual score still has no `$/M tokens`.
+
+## Shipped 2026-09-02 — CUDA `cuFuncSetAttribute` cluster dim must be set
+
+`gpu-sim` `Sim::func_set_cluster_dim_must_be_set` is `cuFuncSetAttribute` cluster dim must be set.
+Identity with `set_cluster_dim_must_be_set` (`cudaFuncSetAttribute` ClusterDimMustBeSet). Capture legal. Distinct from `func_get_cluster_policy`.
+This VM does not invent occupancy SM counts or Engine `--func-set-cluster-dim-must-be-set`.
+`gpu-profile capture` is still refused. Dual score still has no `$/M tokens`.
+
+## Shipped 2026-09-02 — CUDA `cuFuncGetAttribute` cluster policy
+
+`gpu-sim` `Sim::func_get_cluster_policy` is `cuFuncGetAttribute` cluster policy.
+Identity with `get_func_cluster_policy` (`cudaFuncGetAttribute` ClusterSchedulingPolicyPreference). Query; legal during capture. Distinct from `func_set_cluster_policy`.
+This VM does not invent occupancy SM counts or Engine `--func-get-cluster-policy`.
+`gpu-profile capture` is still refused. Dual score still has no `$/M tokens`.
+
+## Shipped 2026-09-02 — CUDA `cuFuncSetAttribute` cluster policy
+
+`gpu-sim` `Sim::func_set_cluster_policy` is `cuFuncSetAttribute` cluster policy.
+Identity with `set_func_cluster_policy` (`cudaFuncSetAttribute` ClusterSchedulingPolicyPreference). Capture legal. Distinct from `func_get_carveout`.
+This VM does not invent occupancy SM counts or Engine `--func-set-cluster-policy`.
+`gpu-profile capture` is still refused. Dual score still has no `$/M tokens`.
+
+## Shipped 2026-09-02 — CUDA `cuFuncGetAttribute` carveout
+
+`gpu-sim` `Sim::func_get_carveout` is `cuFuncGetAttribute` carveout.
+Identity with `get_func_carveout` (`cudaFuncGetAttribute` PreferredSharedMemoryCarveout). Query; legal during capture. Distinct from `func_set_carveout`.
+This VM does not invent occupancy SM counts or Engine `--func-get-carveout`.
+`gpu-profile capture` is still refused. Dual score still has no `$/M tokens`.
+
+## Shipped 2026-09-02 — CUDA `cuFuncSetAttribute` carveout
+
+`gpu-sim` `Sim::func_set_carveout` is `cuFuncSetAttribute` carveout.
+Identity with `set_func_carveout` (`cudaFuncSetAttribute` PreferredSharedMemoryCarveout). Capture legal. Distinct from `func_set_cache_config`.
+This VM does not invent occupancy SM counts or Engine `--func-set-carveout`.
+`gpu-profile capture` is still refused. Dual score still has no `$/M tokens`.
+
+## Shipped 2026-09-02 — CUDA `cuFuncSetCacheConfig`
+
+`gpu-sim` `Sim::func_set_cache_config` is `cuFuncSetCacheConfig`.
+Identity with `set_func_cache_config` (`cudaFuncSetCacheConfig`). Capture refused. Distinct from `func_get_shared_mem_config`.
+This VM does not invent occupancy SM counts or Engine `--func-set-cache-config`.
+`gpu-profile capture` is still refused. Dual score still has no `$/M tokens`.
+
+## Shipped 2026-09-02 — CUDA `cuFuncGetSharedMemConfig`
+
+`gpu-sim` `Sim::func_get_shared_mem_config` is `cuFuncGetSharedMemConfig`.
+Identity with `get_func_shared_mem_config` (`cudaFuncGetSharedMemConfig`). Query; legal during capture. Distinct from `func_set_shared_mem_config`.
+This VM does not invent occupancy SM counts or Engine `--func-get-shared-mem-config`.
+`gpu-profile capture` is still refused. Dual score still has no `$/M tokens`.
+
+## Shipped 2026-09-02 — CUDA `cuFuncSetSharedMemConfig`
+
+`gpu-sim` `Sim::func_set_shared_mem_config` is `cuFuncSetSharedMemConfig`.
+Identity with `set_func_shared_mem_config` (`cudaFuncSetSharedMemConfig`). Capture refused. Distinct from `launch_kernel_ex_bufs`.
+This VM does not invent occupancy SM counts or Engine `--func-set-shared-mem-config`.
+`gpu-profile capture` is still refused. Dual score still has no `$/M tokens`.
+
+## Shipped 2026-09-02 — CUDA `cuLaunchKernelEx` spans
+
+`gpu-sim` `Sim::launch_kernel_ex_bufs` is `cuLaunchKernelEx` spans.
+Identity with `kernel_bufs_with` (`cudaLaunchKernelEx` spans). Capture legal. Distinct from `launch_kernel_ex`.
+This VM does not invent occupancy SM counts or Engine `--launch-kernel-ex-bufs`.
+`gpu-profile capture` is still refused. Dual score still has no `$/M tokens`.
+
+## Shipped 2026-09-02 — CUDA `cuLaunchKernelEx`
+
+`gpu-sim` `Sim::launch_kernel_ex` is `cuLaunchKernelEx`.
+Identity with `kernel_with` (`cudaLaunchKernelEx`). Capture legal. Distinct from `launch_kernel_bufs`.
+This VM does not invent occupancy SM counts or Engine `--launch-kernel-ex`.
+`gpu-profile capture` is still refused. Dual score still has no `$/M tokens`.
+
+## Shipped 2026-09-02 — CUDA `cuLaunchKernel` spans
+
+`gpu-sim` `Sim::launch_kernel_bufs` is `cuLaunchKernel` spans.
+Identity with `kernel_bufs` (`cudaLaunchKernel` spans). Capture legal. Distinct from `launch_kernel`.
+This VM does not invent occupancy SM counts or Engine `--launch-kernel-bufs`.
+`gpu-profile capture` is still refused. Dual score still has no `$/M tokens`.
+
+## Shipped 2026-09-02 — CUDA `cuLaunchKernel`
+
+`gpu-sim` `Sim::launch_kernel` is `cuLaunchKernel`.
+Identity with `kernel` (`cudaLaunchKernel`). Capture legal. Distinct from `stream_batch_mem_op_with_flags`.
+This VM does not invent occupancy SM counts or Engine `--launch-kernel`.
+`gpu-profile capture` is still refused. Dual score still has no `$/M tokens`.
+
+## Shipped 2026-09-02 — CUDA `cuStreamBatchMemOp` flags
+
+`gpu-sim` `Sim::stream_batch_mem_op_with_flags` is `cuStreamBatchMemOp` flags.
+Identity with `batch_mem_op_with_flags`. Capture legal. Distinct from `stream_batch_mem_op`.
+This VM does not invent occupancy SM counts or Engine `--stream-batch-mem-op-with-flags`.
+`gpu-profile capture` is still refused. Dual score still has no `$/M tokens`.
+
+## Shipped 2026-09-02 — CUDA `cuStreamBatchMemOp`
+
+`gpu-sim` `Sim::stream_batch_mem_op` is `cuStreamBatchMemOp`.
+Identity with `batch_mem_op`. Capture legal. Distinct from `stream_wait_value32_with_flags`.
+This VM does not invent occupancy SM counts or Engine `--stream-batch-mem-op`.
+`gpu-profile capture` is still refused. Dual score still has no `$/M tokens`.
+
+## Shipped 2026-09-02 — CUDA `cuStreamWaitValue32` flags
+
+`gpu-sim` `Sim::stream_wait_value32_with_flags` is `cuStreamWaitValue32` flags.
+Identity with `wait_value32_with_flags`. Capture legal. Distinct from `stream_wait_value64_with_flags`.
+This VM does not invent occupancy SM counts or Engine `--stream-wait-value32-with-flags`.
+`gpu-profile capture` is still refused. Dual score still has no `$/M tokens`.
+
+## Shipped 2026-09-02 — CUDA `cuStreamWaitValue64` flags
+
+`gpu-sim` `Sim::stream_wait_value64_with_flags` is `cuStreamWaitValue64` flags.
+Identity with `wait_value64_with_flags`. Capture legal. Distinct from `stream_wait_value32`.
+This VM does not invent occupancy SM counts or Engine `--stream-wait-value64-with-flags`.
+`gpu-profile capture` is still refused. Dual score still has no `$/M tokens`.
+
+## Shipped 2026-09-02 — CUDA `cuStreamWaitValue32`
+
+`gpu-sim` `Sim::stream_wait_value32` is `cuStreamWaitValue32`.
+Identity with `wait_value32`. Capture legal. Distinct from `stream_wait_value64`.
+This VM does not invent occupancy SM counts or Engine `--stream-wait-value32`.
+`gpu-profile capture` is still refused. Dual score still has no `$/M tokens`.
+
+## Shipped 2026-09-02 — CUDA `cuStreamWaitValue64`
+
+`gpu-sim` `Sim::stream_wait_value64` is `cuStreamWaitValue64`.
+Identity with `wait_value64`. Capture legal. Distinct from `stream_write_value32_with_flags`.
+This VM does not invent occupancy SM counts or Engine `--stream-wait-value64`.
+`gpu-profile capture` is still refused. Dual score still has no `$/M tokens`.
+
+## Shipped 2026-09-02 — CUDA `cuStreamWriteValue32` flags
+
+`gpu-sim` `Sim::stream_write_value32_with_flags` is `cuStreamWriteValue32` flags.
+Identity with `write_value32_with_flags`. Capture legal. Distinct from `stream_write_value64_with_flags`.
+This VM does not invent occupancy SM counts or Engine `--stream-write-value32-with-flags`.
+`gpu-profile capture` is still refused. Dual score still has no `$/M tokens`.
+
+## Shipped 2026-09-02 — CUDA `cuStreamWriteValue64` flags
+
+`gpu-sim` `Sim::stream_write_value64_with_flags` is `cuStreamWriteValue64` flags.
+Identity with `write_value64_with_flags`. Capture legal. Distinct from `stream_write_value32`.
+This VM does not invent occupancy SM counts or Engine `--stream-write-value64-with-flags`.
+`gpu-profile capture` is still refused. Dual score still has no `$/M tokens`.
+
+## Shipped 2026-09-02 — CUDA `cuStreamWriteValue32`
+
+`gpu-sim` `Sim::stream_write_value32` is `cuStreamWriteValue32`.
+Identity with `write_value32`. Capture legal. Distinct from `stream_write_value64`.
+This VM does not invent occupancy SM counts or Engine `--stream-write-value32`.
+`gpu-profile capture` is still refused. Dual score still has no `$/M tokens`.
+
+## Shipped 2026-09-02 — CUDA `cuStreamWriteValue64`
+
+`gpu-sim` `Sim::stream_write_value64` is `cuStreamWriteValue64`.
+Identity with `write_value64`. Capture legal. Distinct from `write_value32`.
+This VM does not invent occupancy SM counts or Engine `--stream-write-value64`.
+`gpu-profile capture` is still refused. Dual score still has no `$/M tokens`.
+
+## Shipped 2026-09-02 — CUDA `cudaMemset3D`
+
+`gpu-sim` `Sim::mem_set_3d` is `cudaMemset3D`.
+Identity with `memset_3d`. Capture refused. Distinct from `mem_set_3d_async`.
+This VM does not invent occupancy SM counts or Engine `--mem-set-3d`.
+`gpu-profile capture` is still refused. Dual score still has no `$/M tokens`.
+
+## Shipped 2026-09-02 — CUDA `cudaMemset3DAsync`
+
+`gpu-sim` `Sim::mem_set_3d_async` is `cudaMemset3DAsync`.
+Identity with `memset_3d_async`. Capture legal. Distinct from `mem_set_2d`.
+This VM does not invent occupancy SM counts or Engine `--mem-set-3d-async`.
+`gpu-profile capture` is still refused. Dual score still has no `$/M tokens`.
+
+## Shipped 2026-09-02 — CUDA `cudaMemset2D`
+
+`gpu-sim` `Sim::mem_set_2d` is `cudaMemset2D`.
+Identity with `memset_2d`. Capture refused. Distinct from `mem_set_2d_async`.
+This VM does not invent occupancy SM counts or Engine `--mem-set-2d`.
+`gpu-profile capture` is still refused. Dual score still has no `$/M tokens`.
+
+## Shipped 2026-09-02 — CUDA `cudaMemset2DAsync`
+
+`gpu-sim` `Sim::mem_set_2d_async` is `cudaMemset2DAsync`.
+Identity with `memset_2d_async`. Capture legal. Distinct from `mem_set_op_sync`.
+This VM does not invent occupancy SM counts or Engine `--mem-set-2d-async`.
+`gpu-profile capture` is still refused. Dual score still has no `$/M tokens`.
+
+## Shipped 2026-09-02 — CUDA `cudaMemset` / `cudaMemset2D` / `cudaMemset3D`
+
+`gpu-sim` `Sim::mem_set_op_sync` is `cudaMemset` / `cudaMemset2D` / `cudaMemset3D`.
+Identity with `memset_op_sync`. Capture refused. Distinct from `mem_set_sync`.
+This VM does not invent occupancy SM counts or Engine `--mem-set-op-sync`.
+`gpu-profile capture` is still refused. Dual score still has no `$/M tokens`.
+
+## Shipped 2026-09-02 — CUDA `cudaMemset`
+
+`gpu-sim` `Sim::mem_set_sync` is `cudaMemset`.
+Identity with `memset_sync`. Capture refused. Distinct from `mem_set_op`.
+This VM does not invent occupancy SM counts or Engine `--mem-set-sync`.
+`gpu-profile capture` is still refused. Dual score still has no `$/M tokens`.
+
+## Shipped 2026-09-02 — CUDA `cudaMemsetAsync` / `cudaMemset2DAsync`
+
+`gpu-sim` `Sim::mem_set_op` is `cudaMemsetAsync` / `cudaMemset2DAsync`.
+Identity with `memset_op`. Capture legal. Distinct from `mem_set_buf`.
+This VM does not invent occupancy SM counts or Engine `--mem-set-op`.
+`gpu-profile capture` is still refused. Dual score still has no `$/M tokens`.
+
+## Shipped 2026-09-02 — CUDA `cudaMemsetAsync` spans
+
+`gpu-sim` `Sim::mem_set_buf` is `cudaMemsetAsync` spans.
+Identity with `memset_buf`. Capture legal. Distinct from `mem_set`.
+This VM does not invent occupancy SM counts or Engine `--mem-set-buf`.
+`gpu-profile capture` is still refused. Dual score still has no `$/M tokens`.
+
+## Shipped 2026-09-02 — CUDA `cudaMemsetAsync`
+
+`gpu-sim` `Sim::mem_set` is `cudaMemsetAsync`.
+Identity with `memset`. Capture legal. Distinct from
+`memset_d8_async` (`cuMemsetD8Async`).
+This VM does not invent occupancy SM counts or Engine `--mem-set`.
+`gpu-profile capture` is still refused. Dual score still has no `$/M tokens`.
+
+## Shipped 2026-09-02 — CUDA `cuLaunchCooperativeKernelMultiDevice`
+
+`gpu-sim` `Sim::launch_cooperative_kernel_multi_device` is `cuLaunchCooperativeKernelMultiDevice`.
+Identity with `cooperative_kernel_multi_device` (`cudaLaunchCooperativeKernelMultiDevice`).
+Query; legal during capture. Distinct from `launch_cooperative_kernel_bufs`.
+This VM does not invent occupancy SM counts or Engine `--launch-cooperative-kernel-multi-device`.
+`gpu-profile capture` is still refused. Dual score still has no `$/M tokens`.
+
+## Shipped 2026-09-02 — CUDA `cuLaunchCooperativeKernel` spans
+
+`gpu-sim` `Sim::launch_cooperative_kernel_bufs` is `cuLaunchCooperativeKernel` spans.
+Identity with `cooperative_kernel_bufs` (`cudaLaunchCooperativeKernel` spans).
+Capture legal. Distinct from `launch_cooperative_kernel`.
+This VM does not invent occupancy SM counts or Engine `--launch-cooperative-kernel-bufs`.
+`gpu-profile capture` is still refused. Dual score still has no `$/M tokens`.
+
+## Shipped 2026-09-02 — CUDA `cuLaunchCooperativeKernel`
+
+`gpu-sim` `Sim::launch_cooperative_kernel` is `cuLaunchCooperativeKernel`.
+Identity with `cooperative_kernel` (`cudaLaunchCooperativeKernel`).
+Capture legal. Distinct from `mem_alloc_3d`.
+This VM does not invent occupancy SM counts or Engine `--launch-cooperative-kernel`.
+`gpu-profile capture` is still refused. Dual score still has no `$/M tokens`.
+
+## Shipped 2026-09-02 — CUDA `cudaMalloc3D`
+
+`gpu-sim` `Sim::mem_alloc_3d` is `cudaMalloc3D`.
+Identity with `malloc_3d`. Capture refused. Distinct from `mem_alloc_pitch`.
+This VM does not invent occupancy SM counts or Engine `--mem-alloc-3d`.
+`gpu-profile capture` is still refused. Dual score still has no `$/M tokens`.
+
+## Shipped 2026-09-02 — CUDA `cudaMallocPitch`
+
+`gpu-sim` `Sim::mem_alloc_pitch` is `cudaMallocPitch`.
+Identity with `malloc_pitch`. Capture refused. Distinct from
+`malloc_pitch_with_element_size` (`cuMemAllocPitch`).
+This VM does not invent occupancy SM counts or Engine `--mem-alloc-pitch`.
+`gpu-profile capture` is still refused. Dual score still has no `$/M tokens`.
+
+## Shipped 2026-09-02 — CUDA `cuFlushGPUDirectRDMAWrites`
+
+`gpu-sim` `Sim::device_flush_gpu_direct_rdma_writes` is `cuFlushGPUDirectRDMAWrites`.
+Identity with `flush_gpu_direct_rdma_writes` (`cudaDeviceFlushGPUDirectRDMAWrites`).
+Capture refused. Distinct from `device_nvscisync_attributes`.
+This VM does not invent occupancy SM counts or Engine `--device-flush-gpu-direct-rdma-writes`.
+`gpu-profile capture` is still refused. Dual score still has no `$/M tokens`.
+
+## Shipped 2026-09-02 — CUDA `cuDeviceGetNvSciSyncAttributes`
+
+`gpu-sim` `Sim::device_nvscisync_attributes` is `cuDeviceGetNvSciSyncAttributes`.
+Identity with `device_get_nvscisync_attributes` (`cudaDeviceGetNvSciSyncAttributes`).
+Query; legal during capture. Distinct from `device_p2p_attribute`.
+This VM does not invent occupancy SM counts or Engine `--device-nvscisync-attributes`.
+`gpu-profile capture` is still refused. Dual score still has no `$/M tokens`.
+
+## Shipped 2026-09-02 — CUDA `cuDeviceGetP2PAttribute`
+
+`gpu-sim` `Sim::device_p2p_attribute` is `cuDeviceGetP2PAttribute`.
+Identity with `device_get_p2p_attribute` (`cudaDeviceGetP2PAttribute`).
+Query; legal during capture. Distinct from `can_device_access_peer`.
+This VM does not invent occupancy SM counts or Engine `--device-p2p-attribute`.
+`gpu-profile capture` is still refused. Dual score still has no `$/M tokens`.
+
+## Shipped 2026-09-02 — CUDA `cuDeviceCanAccessPeer`
+
+`gpu-sim` `Sim::can_device_access_peer` is `cuDeviceCanAccessPeer`.
+Identity with `device_can_access_peer` (`cudaDeviceCanAccessPeer`).
+Query; legal during capture. Distinct from `ctx_disable_peer_access`.
+This VM does not invent occupancy SM counts or Engine `--can-device-access-peer`.
+`gpu-profile capture` is still refused. Dual score still has no `$/M tokens`.
+
+## Shipped 2026-09-02 — CUDA `cuCtxDisablePeerAccess`
+
+`gpu-sim` `Sim::ctx_disable_peer_access` is `cuCtxDisablePeerAccess`.
+Identity with `disable_peer` (`cudaDeviceDisablePeerAccess`).
+Unknown device refused. Distinct from `ctx_enable_peer_access_with_flags`.
+This VM does not invent occupancy SM counts or Engine `--ctx-disable-peer-access`.
+`gpu-profile capture` is still refused. Dual score still has no `$/M tokens`.
+
+## Shipped 2026-09-02 — CUDA `cuCtxEnablePeerAccess` flags
+
+`gpu-sim` `Sim::ctx_enable_peer_access_with_flags` is `cuCtxEnablePeerAccess` with flags.
+Identity with `enable_peer_with_flags` (`cudaDeviceEnablePeerAccess` with flags).
+Nonzero flags refused. Distinct from `ctx_enable_peer_access`.
+This VM does not invent occupancy SM counts or Engine `--ctx-enable-peer-access-with-flags`.
+`gpu-profile capture` is still refused. Dual score still has no `$/M tokens`.
+
+## Shipped 2026-09-02 — CUDA `cuCtxEnablePeerAccess`
+
+`gpu-sim` `Sim::ctx_enable_peer_access` is `cuCtxEnablePeerAccess`.
+Identity with `enable_peer` (`cudaDeviceEnablePeerAccess`).
+Capture legal. Distinct from `event_flags`.
+This VM does not invent occupancy SM counts or Engine `--ctx-enable-peer-access`.
+`gpu-profile capture` is still refused. Dual score still has no `$/M tokens`.
+
+## Shipped 2026-09-02 — CUDA `cuEventGetFlags`
+
+`gpu-sim` `Sim::event_flags` is `cuEventGetFlags`.
+Identity with `event_get_flags` (`cudaEventGetFlags`).
+Query; legal during capture. Distinct from `get_stream_capture_mode`.
+This VM does not invent occupancy SM counts or Engine `--event-flags`.
+`gpu-profile capture` is still refused. Dual score still has no `$/M tokens`.
+
+## Shipped 2026-09-02 — CUDA thread-default `cudaStreamCaptureMode`
+
+`gpu-sim` `Sim::get_stream_capture_mode` is the thread-default `cudaStreamCaptureMode` query.
+Identity with `stream_capture_mode`.
+Query; legal during capture. Distinct from `exchange_thread_stream_capture_mode`.
+This VM does not invent occupancy SM counts or Engine `--get-stream-capture-mode`.
+`gpu-profile capture` is still refused. Dual score still has no `$/M tokens`.
+
+## Shipped 2026-09-02 — CUDA `cuThreadExchangeStreamCaptureMode`
+
+`gpu-sim` `Sim::exchange_thread_stream_capture_mode` is `cuThreadExchangeStreamCaptureMode`.
+Identity with `thread_exchange_stream_capture_mode` (`cudaThreadExchangeStreamCaptureMode`).
+Returns previous; legal during capture. Distinct from `get_stream_capture_info`.
+This VM does not invent occupancy SM counts or Engine `--exchange-thread-stream-capture-mode`.
+`gpu-profile capture` is still refused. Dual score still has no `$/M tokens`.
+
+## Shipped 2026-09-02 — CUDA `cuStreamGetCaptureInfo`
+
+`gpu-sim` `Sim::get_stream_capture_info` is `cuStreamGetCaptureInfo`.
+Identity with `stream_capture_info` (`cudaStreamGetCaptureInfo`).
+Query; legal during capture. Distinct from `is_stream_capturing`.
+This VM does not invent occupancy SM counts or Engine `--get-stream-capture-info`.
+`gpu-profile capture` is still refused. Dual score still has no `$/M tokens`.
+
+## Shipped 2026-09-02 — CUDA `cuStreamIsCapturing`
+
+`gpu-sim` `Sim::is_stream_capturing` is `cuStreamIsCapturing`.
+Identity with `stream_is_capturing` (`cudaStreamIsCapturing`).
+Query; legal during capture. Distinct from `update_stream_capture_dependencies`.
+This VM does not invent occupancy SM counts or Engine `--is-stream-capturing`.
+`gpu-profile capture` is still refused. Dual score still has no `$/M tokens`.
+
+## Shipped 2026-09-02 — CUDA `cuStreamUpdateCaptureDependencies`
+
+`gpu-sim` `Sim::update_stream_capture_dependencies` is `cuStreamUpdateCaptureDependencies`.
+Identity with `stream_update_capture_dependencies` (`cudaStreamUpdateCaptureDependencies`).
+Not capturing refused. Distinct from `stream_end_capture`.
+This VM does not invent occupancy SM counts or Engine `--update-stream-capture-dependencies`.
+`gpu-profile capture` is still refused. Dual score still has no `$/M tokens`.
+
+## Shipped 2026-09-02 — CUDA `cuStreamEndCapture`
+
+`gpu-sim` `Sim::stream_end_capture` is `cuStreamEndCapture`.
+Identity with `end_capture` (`cudaStreamEndCapture`).
+Without begin refused. Distinct from `stream_begin_recapture_to_graph_with_callback`.
+This VM does not invent occupancy SM counts or Engine `--stream-end-capture`.
+`gpu-profile capture` is still refused. Dual score still has no `$/M tokens`.
+
+## Shipped 2026-09-02 — CUDA `cuStreamBeginRecaptureToGraph` callback
+
+`gpu-sim` `Sim::stream_begin_recapture_to_graph_with_callback` is `cuStreamBeginRecaptureToGraph` with callback.
+Identity with `begin_recapture_to_graph_with_callback` (`cudaStreamBeginRecaptureToGraph` with callback).
+Nested capture refused. Distinct from `stream_begin_recapture_to_graph_with_mode`.
+This VM does not invent occupancy SM counts or Engine `--stream-begin-recapture-to-graph-with-callback`.
+`gpu-profile capture` is still refused. Dual score still has no `$/M tokens`.
+
+## Shipped 2026-09-02 — CUDA `cuStreamBeginRecaptureToGraph` mode
+
+`gpu-sim` `Sim::stream_begin_recapture_to_graph_with_mode` is `cuStreamBeginRecaptureToGraph` with mode.
+Identity with `begin_recapture_to_graph_with_mode` (`cudaStreamBeginRecaptureToGraph` with mode).
+Nested capture refused. Distinct from `stream_begin_recapture_to_graph`.
+This VM does not invent occupancy SM counts or Engine `--stream-begin-recapture-to-graph-with-mode`.
+`gpu-profile capture` is still refused. Dual score still has no `$/M tokens`.
+
+## Shipped 2026-09-02 — CUDA `cuStreamBeginRecaptureToGraph`
+
+`gpu-sim` `Sim::stream_begin_recapture_to_graph` is `cuStreamBeginRecaptureToGraph`.
+Identity with `begin_recapture_to_graph` (`cudaStreamBeginRecaptureToGraph`).
+Nested capture refused. Distinct from `stream_begin_capture_to_graph_with_mode`.
+This VM does not invent occupancy SM counts or Engine `--stream-begin-recapture-to-graph`.
+`gpu-profile capture` is still refused. Dual score still has no `$/M tokens`.
+
+## Shipped 2026-09-02 — CUDA `cuStreamBeginCaptureToGraph` mode
+
+`gpu-sim` `Sim::stream_begin_capture_to_graph_with_mode` is `cuStreamBeginCaptureToGraph` with mode.
+Identity with `begin_capture_to_graph_with_mode` (`cudaStreamBeginCaptureToGraph` with mode).
+Nested capture refused. Distinct from `stream_begin_capture_to_graph`.
+This VM does not invent occupancy SM counts or Engine `--stream-begin-capture-to-graph-with-mode`.
+`gpu-profile capture` is still refused. Dual score still has no `$/M tokens`.
+
+## Shipped 2026-09-02 — CUDA `cuStreamBeginCaptureToGraph`
+
+`gpu-sim` `Sim::stream_begin_capture_to_graph` is `cuStreamBeginCaptureToGraph`.
+Identity with `begin_capture_to_graph` (`cudaStreamBeginCaptureToGraph`).
+Nested capture refused. Distinct from `stream_begin_capture_with_mode`.
+This VM does not invent occupancy SM counts or Engine `--stream-begin-capture-to-graph`.
+`gpu-profile capture` is still refused. Dual score still has no `$/M tokens`.
+
+## Shipped 2026-09-02 — CUDA `cuStreamBeginCapture` mode
+
+`gpu-sim` `Sim::stream_begin_capture_with_mode` is `cuStreamBeginCapture` with mode.
+Identity with `begin_capture_with_mode` (`cudaStreamBeginCapture` with mode).
+Nested capture refused. Distinct from `stream_begin_capture`.
+This VM does not invent occupancy SM counts or Engine `--stream-begin-capture-with-mode`.
+`gpu-profile capture` is still refused. Dual score still has no `$/M tokens`.
+
+## Shipped 2026-09-02 — CUDA `cuStreamBeginCapture`
+
+`gpu-sim` `Sim::stream_begin_capture` is `cuStreamBeginCapture`.
+Identity with `begin_capture` (`cudaStreamBeginCapture`).
+Nested capture refused. Distinct from `begin_capture_with_mode`.
+This VM does not invent occupancy SM counts or Engine `--stream-begin-capture`.
+`gpu-profile capture` is still refused. Dual score still has no `$/M tokens`.
+
+## Shipped 2026-09-02 — CUDA `cuGraphConditionalHandleCreate` ctx
+
+`gpu-sim` `Sim::create_graph_conditional_handle_with_ctx` is `cuGraphConditionalHandleCreate` with a ctx argument.
+Identity with `graph_conditional_create_with_ctx` (`cudaGraphConditionalHandleCreate` with ctx).
+Capture refused. Distinct from `create_graph_conditional_handle_with_flags`.
+This VM does not invent occupancy SM counts or Engine `--graph-conditional-create-with-ctx`.
+`gpu-profile capture` is still refused. Dual score still has no `$/M tokens`.
+
+## Shipped 2026-09-02 — CUDA `cuGraphConditionalHandleCreate` flags
+
+`gpu-sim` `Sim::create_graph_conditional_handle_with_flags` is `cuGraphConditionalHandleCreate` flags.
+Identity with `graph_conditional_create_with_flags` (`cudaGraphConditionalHandleCreate` flags).
+Capture refused. Distinct from `create_graph_conditional_handle`.
+This VM does not invent occupancy SM counts or Engine `--graph-conditional-create-with-flags`.
+`gpu-profile capture` is still refused. Dual score still has no `$/M tokens`.
+
+## Shipped 2026-09-02 — CUDA `cuGraphConditionalHandleCreate`
+
+`gpu-sim` `Sim::create_graph_conditional_handle` is `cuGraphConditionalHandleCreate`.
+Identity with `graph_conditional_create` (`cudaGraphConditionalHandleCreate`).
+Capture refused. Distinct from `set_graph_exec_conditional_params`.
+This VM does not invent occupancy SM counts or Engine `--graph-conditional-create`.
+`gpu-profile capture` is still refused. Dual score still has no `$/M tokens`.
+
+## Shipped 2026-09-02 — CUDA `cuGraphExecNodeSetParams` set-conditional
+
+`gpu-sim` `Sim::set_graph_exec_conditional_params` is `cuGraphExecNodeSetParams` for a set-conditional node.
+Identity with `graph_exec_set_conditional_params` (`cudaGraphExecNodeSetParams`).
+Capture refused. Distinct from `set_graph_conditional_params`.
+This VM does not invent occupancy SM counts or Engine `--graph-exec-set-conditional-params`.
+`gpu-profile capture` is still refused. Dual score still has no `$/M tokens`.
+
+## Shipped 2026-09-02 — CUDA `cuGraphNodeSetParams` set-conditional
+
+`gpu-sim` `Sim::set_graph_conditional_params` is `cuGraphNodeSetParams` for a set-conditional node.
+Identity with `graph_set_conditional_params` (`cudaGraphNodeSetParams`).
+Capture refused. Distinct from `graph_exec_set_conditional_params`.
+This VM does not invent occupancy SM counts or Engine `--graph-set-conditional-params`.
+`gpu-profile capture` is still refused. Dual score still has no `$/M tokens`.
+
+## Shipped 2026-09-02 — CUDA `cuGraphExecMemFreeNodeSetParams`
+
+`gpu-sim` `Sim::set_graph_exec_free_node_params` is `cuGraphExecMemFreeNodeSetParams`.
+Identity with `graph_exec_free_set_params` (`cudaGraphExecMemFreeNodeSetParams`).
+Capture refused. Distinct from `set_graph_free_node_params`.
+This VM does not invent occupancy SM counts or Engine `--graph-exec-free-set-params`.
+`gpu-profile capture` is still refused. Dual score still has no `$/M tokens`.
+
+## Shipped 2026-09-02 — CUDA `cuGraphMemFreeNodeSetParams`
+
+`gpu-sim` `Sim::set_graph_free_node_params` is `cuGraphMemFreeNodeSetParams`.
+Identity with `graph_free_set_params` (`cudaGraphMemFreeNodeSetParams`).
+Capture refused. Distinct from `graph_exec_free_set_params`.
+This VM does not invent occupancy SM counts or Engine `--graph-free-set-params`.
+`gpu-profile capture` is still refused. Dual score still has no `$/M tokens`.
+
+## Shipped 2026-09-02 — CUDA `cuGraphExecMemFreeNodeGetParams`
+
+`gpu-sim` `Sim::get_graph_exec_free_node_params` is `cuGraphExecMemFreeNodeGetParams`.
+Identity with `graph_exec_free_get_params` (`cudaGraphExecMemFreeNodeGetParams`).
+Query; legal during capture. Distinct from `get_graph_free_node_params`.
+This VM does not invent occupancy SM counts or Engine `--graph-exec-free-get-params`.
+`gpu-profile capture` is still refused. Dual score still has no `$/M tokens`.
+
+## Shipped 2026-09-02 — CUDA `cuGraphMemFreeNodeGetParams`
+
+`gpu-sim` `Sim::get_graph_free_node_params` is `cuGraphMemFreeNodeGetParams`.
+Identity with `graph_free_get_params` (`cudaGraphMemFreeNodeGetParams`).
+Query; legal during capture. Distinct from `graph_exec_free_get_params`.
+This VM does not invent occupancy SM counts or Engine `--graph-free-get-params`.
+`gpu-profile capture` is still refused. Dual score still has no `$/M tokens`.
+
+## Shipped 2026-09-02 — CUDA `cuGraphExecMemAllocNodeGetParams`
+
+`gpu-sim` `Sim::get_graph_exec_alloc_node_params` is `cuGraphExecMemAllocNodeGetParams`.
+Identity with `graph_exec_alloc_get_params` (`cudaGraphExecMemAllocNodeGetParams`).
+Query; legal during capture. Distinct from `get_graph_alloc_node_params`.
+This VM does not invent occupancy SM counts or Engine `--graph-exec-alloc-get-params`.
+`gpu-profile capture` is still refused. Dual score still has no `$/M tokens`.
+
+## Shipped 2026-09-02 — CUDA `cuGraphMemAllocNodeGetParams`
+
+`gpu-sim` `Sim::get_graph_alloc_node_params` is `cuGraphMemAllocNodeGetParams`.
+Identity with `graph_alloc_get_params` (`cudaGraphMemAllocNodeGetParams`).
+Query; legal during capture. Distinct from `graph_exec_alloc_get_params`.
+This VM does not invent occupancy SM counts or Engine `--graph-alloc-get-params`.
+`gpu-profile capture` is still refused. Dual score still has no `$/M tokens`.
+
+## Shipped 2026-09-02 — CUDA `cuGraphReleaseUserObject`
+
+`gpu-sim` `Sim::release_graph_user_object` is `cuGraphReleaseUserObject`.
+Identity with `graph_release_user_object` (`cudaGraphReleaseUserObject`).
+Capture refused. Distinct from `retain_graph_user_object`.
+This VM does not invent occupancy SM counts or Engine `--release-graph-user-object`.
+`gpu-profile capture` is still refused. Dual score still has no `$/M tokens`.
+
+## Shipped 2026-09-02 — CUDA `cuGraphRetainUserObject`
+
+`gpu-sim` `Sim::retain_graph_user_object` is `cuGraphRetainUserObject`.
+Identity with `graph_retain_user_object` (`cudaGraphRetainUserObject`).
+Capture refused. Distinct from `release_user_object`.
+This VM does not invent occupancy SM counts or Engine `--retain-graph-user-object`.
+`gpu-profile capture` is still refused. Dual score still has no `$/M tokens`.
+
+## Shipped 2026-09-02 — CUDA `cuUserObjectRelease`
+
+`gpu-sim` `Sim::release_user_object` is `cuUserObjectRelease`.
+Identity with `user_object_release` (`cudaUserObjectRelease`).
+Capture refused. Distinct from `retain_user_object`.
+This VM does not invent occupancy SM counts or Engine `--release-user-object`.
+`gpu-profile capture` is still refused. Dual score still has no `$/M tokens`.
+
+## Shipped 2026-09-02 — CUDA `cuUserObjectRetain`
+
+`gpu-sim` `Sim::retain_user_object` is `cuUserObjectRetain`.
+Identity with `user_object_retain` (`cudaUserObjectRetain`).
+Capture refused. Distinct from `create_user_object`.
+This VM does not invent occupancy SM counts or Engine `--retain-user-object`.
+`gpu-profile capture` is still refused. Dual score still has no `$/M tokens`.
+
+## Shipped 2026-09-02 — CUDA `cuUserObjectCreate`
+
+`gpu-sim` `Sim::create_user_object` is `cuUserObjectCreate`.
+Identity with `user_object_create` (`cudaUserObjectCreate`).
+Capture refused. Distinct from `graph_create_with_flags`.
+This VM does not invent occupancy SM counts or Engine `--create-user-object`.
+`gpu-profile capture` is still refused. Dual score still has no `$/M tokens`.
+
+## Shipped 2026-09-02 — CUDA `cuGraphCreate` flags
+
+`gpu-sim` `Sim::graph_create_with_flags` is `cuGraphCreate` flags.
+Identity with `create_graph_with_flags` (`cudaGraphCreate` flags).
+Capture refused. Distinct from `graph_create`.
+This VM does not invent occupancy SM counts or Engine `--graph-create-with-flags`.
+`gpu-profile capture` is still refused. Dual score still has no `$/M tokens`.
+
+## Shipped 2026-09-02 — CUDA `cuGraphCreate`
+
+`gpu-sim` `Sim::graph_create` is `cuGraphCreate`.
+Identity with `create_graph` (`cudaGraphCreate`).
+Capture refused. Distinct from `create_graph_with_flags`.
+This VM does not invent occupancy SM counts or Engine `--graph-create`.
+`gpu-profile capture` is still refused. Dual score still has no `$/M tokens`.
+
+## Shipped 2026-09-02 — CUDA graph `cudaGraphExecMemcpyNodeSetParams1D`
+
+`gpu-sim` `Sim::set_graph_exec_memcpy_node_params_1d` is graph `cudaGraphExecMemcpyNodeSetParams1D`.
+Identity with `graph_exec_memcpy_set_params_1d` (`cudaGraphExecMemcpyNodeSetParams1D`).
+Capture refused. Distinct from `set_graph_exec_memcpy_node_params`.
+This VM does not invent occupancy SM counts or Engine `--graph-exec-memcpy-set-params-1d`.
+`gpu-profile capture` is still refused. Dual score still has no `$/M tokens`.
+
+## Shipped 2026-09-02 — CUDA graph `cudaGraphMemcpyNodeSetParams1D`
+
+`gpu-sim` `Sim::set_graph_memcpy_node_params_1d` is graph `cudaGraphMemcpyNodeSetParams1D`.
+Identity with `graph_memcpy_set_params_1d` (`cudaGraphMemcpyNodeSetParams1D`).
+Capture refused. Distinct from `set_graph_memcpy_node_params`.
+This VM does not invent occupancy SM counts or Engine `--graph-memcpy-set-params-1d`.
+`gpu-profile capture` is still refused. Dual score still has no `$/M tokens`.
+
+## Shipped 2026-09-02 — CUDA graph unnamed `cudaGraphAddHostNode`
+
+`gpu-sim` `Sim::add_graph_host_func` is graph unnamed `cudaGraphAddHostNode`.
+Identity with `graph_add_host_func` (`cudaGraphAddHostNode` with the unnamed callback).
+Capture refused. Distinct from `add_graph_host`.
+This VM does not invent occupancy SM counts or Engine `--graph-add-host-func`.
+`gpu-profile capture` is still refused. Dual score still has no `$/M tokens`.
+
+## Shipped 2026-09-02 — CUDA graph cooperative `cudaGraphAddKernelNode`
+
+`gpu-sim` `Sim::add_graph_cooperative_kernel` is graph cooperative `cudaGraphAddKernelNode`.
+Identity with `graph_add_cooperative_kernel` (`cudaGraphAddKernelNode` for a cooperative launch).
+Capture refused. Distinct from `add_graph_kernel`.
+This VM does not invent occupancy SM counts or Engine `--graph-add-cooperative-kernel`.
+`gpu-profile capture` is still refused. Dual score still has no `$/M tokens`.
+
+## Shipped 2026-09-02 — CUDA graph `cuStreamWaitValue32` flags
+
+`gpu-sim` `Sim::add_graph_wait_value32_with_flags` is graph `cuStreamWaitValue32` flags.
+Identity with `graph_add_wait_value32_with_flags` (`cuStreamWaitValue32` flags).
+Capture refused. Distinct from `add_graph_wait_value64_with_flags`.
+This VM does not invent occupancy SM counts or Engine `--graph-add-wait-value32-with-flags`.
+`gpu-profile capture` is still refused. Dual score still has no `$/M tokens`.
+
+## Shipped 2026-09-02 — CUDA graph `cuStreamWaitValue64` flags
+
+`gpu-sim` `Sim::add_graph_wait_value64_with_flags` is graph `cuStreamWaitValue64` flags.
+Identity with `graph_add_wait_value64_with_flags` (`cuStreamWaitValue64` flags).
+Capture refused. Distinct from `add_graph_wait_value32`.
+This VM does not invent occupancy SM counts or Engine `--graph-add-wait-value64-with-flags`.
+`gpu-profile capture` is still refused. Dual score still has no `$/M tokens`.
+
+## Shipped 2026-09-02 — CUDA graph `cuStreamWaitValue32`
+
+`gpu-sim` `Sim::add_graph_wait_value32` is graph `cuStreamWaitValue32`.
+Identity with `graph_add_wait_value32` (`cuStreamWaitValue32` as `cudaGraphAddBatchMemOpNode`).
+Capture refused. Distinct from `add_graph_wait_value64`.
+This VM does not invent occupancy SM counts or Engine `--graph-add-wait-value32`.
+`gpu-profile capture` is still refused. Dual score still has no `$/M tokens`.
+
+## Shipped 2026-09-02 — CUDA graph `cuStreamWaitValue64`
+
+`gpu-sim` `Sim::add_graph_wait_value64` is graph `cuStreamWaitValue64`.
+Identity with `graph_add_wait_value64` (`cuStreamWaitValue64` as `cudaGraphAddBatchMemOpNode`).
+Capture refused. Distinct from `add_graph_write_value32_with_flags`.
+This VM does not invent occupancy SM counts or Engine `--graph-add-wait-value64`.
+`gpu-profile capture` is still refused. Dual score still has no `$/M tokens`.
+
+## Shipped 2026-09-02 — CUDA graph `cuStreamWriteValue32` flags
+
+`gpu-sim` `Sim::add_graph_write_value32_with_flags` is graph `cuStreamWriteValue32` flags.
+Identity with `graph_add_write_value32_with_flags` (`cuStreamWriteValue32` flags).
+Capture refused. Distinct from `add_graph_write_value64_with_flags`.
+This VM does not invent occupancy SM counts or Engine `--graph-add-write-value32-with-flags`.
+`gpu-profile capture` is still refused. Dual score still has no `$/M tokens`.
+
+## Shipped 2026-09-02 — CUDA graph `cuStreamWriteValue64` flags
+
+`gpu-sim` `Sim::add_graph_write_value64_with_flags` is graph `cuStreamWriteValue64` flags.
+Identity with `graph_add_write_value64_with_flags` (`cuStreamWriteValue64` flags).
+Capture refused. Distinct from `add_graph_write_value32`.
+This VM does not invent occupancy SM counts or Engine `--graph-add-write-value64-with-flags`.
+`gpu-profile capture` is still refused. Dual score still has no `$/M tokens`.
+
+## Shipped 2026-09-02 — CUDA graph `cuStreamWriteValue32`
+
+`gpu-sim` `Sim::add_graph_write_value32` is graph `cuStreamWriteValue32`.
+Identity with `graph_add_write_value32` (`cuStreamWriteValue32` as `cudaGraphAddBatchMemOpNode`).
+Capture refused. Distinct from `add_graph_write_value64`.
+This VM does not invent occupancy SM counts or Engine `--graph-add-write-value32`.
+`gpu-profile capture` is still refused. Dual score still has no `$/M tokens`.
+
+## Shipped 2026-09-02 — CUDA graph `cuStreamWriteValue64`
+
+`gpu-sim` `Sim::add_graph_write_value64` is graph `cuStreamWriteValue64`.
+Identity with `graph_add_write_value64` (`cuStreamWriteValue64` as `cudaGraphAddBatchMemOpNode`).
+Capture refused. Distinct from `add_graph_set_conditional`.
+This VM does not invent occupancy SM counts or Engine `--graph-add-write-value64`.
+`gpu-profile capture` is still refused. Dual score still has no `$/M tokens`.
+
+## Shipped 2026-09-02 — CUDA graph-build `cuGraphSetConditional`
+
+`gpu-sim` `Sim::add_graph_set_conditional` is graph-build `cuGraphSetConditional`.
+Identity with `graph_add_set_conditional` (graph-build `cudaGraphSetConditional`).
+Capture refused. Distinct from `add_graph_switch`.
+This VM does not invent occupancy SM counts or Engine `--graph-add-set-conditional`.
+`gpu-profile capture` is still refused. Dual score still has no `$/M tokens`.
+
+## Shipped 2026-09-02 — CUDA `cuGraphAddNode` SWITCH
+
+`gpu-sim` `Sim::add_graph_switch` is `cuGraphAddNode` SWITCH.
+Identity with `graph_add_switch` (`cudaGraphAddNode` SWITCH).
+Capture refused. Distinct from `add_graph_while`.
+This VM does not invent occupancy SM counts or Engine `--graph-add-switch`.
+`gpu-profile capture` is still refused. Dual score still has no `$/M tokens`.
+
+## Shipped 2026-09-02 — CUDA `cuGraphAddNode` WHILE
+
+`gpu-sim` `Sim::add_graph_while` is `cuGraphAddNode` WHILE.
+Identity with `graph_add_while` (`cudaGraphAddNode` WHILE).
+Capture refused. Distinct from `add_graph_if_else`.
+This VM does not invent occupancy SM counts or Engine `--graph-add-while`.
+`gpu-profile capture` is still refused. Dual score still has no `$/M tokens`.
+
+## Shipped 2026-09-02 — CUDA `cuGraphAddNode` IF size 2
+
+`gpu-sim` `Sim::add_graph_if_else` is `cuGraphAddNode` IF size 2.
+Identity with `graph_add_if_else` (`cudaGraphAddNode` IF size 2).
+Capture refused. Distinct from `add_graph_if`.
+This VM does not invent occupancy SM counts or Engine `--graph-add-if-else`.
+`gpu-profile capture` is still refused. Dual score still has no `$/M tokens`.
+
+## Shipped 2026-09-02 — CUDA `cuGraphAddNode` IF
+
+`gpu-sim` `Sim::add_graph_if` is `cuGraphAddNode` IF.
+Identity with `graph_add_if` (`cudaGraphAddNode` IF).
+Capture refused. Distinct from `add_graph_node_with_data`.
+This VM does not invent occupancy SM counts or Engine `--graph-add-if`.
+`gpu-profile capture` is still refused. Dual score still has no `$/M tokens`.
+
+## Shipped 2026-09-02 — CUDA `cuGraphAddNode_v2`
+
+`gpu-sim` `Sim::add_graph_node_with_data` is `cuGraphAddNode_v2`.
+Identity with `graph_add_node_with_data` (`cudaGraphAddNode` with `dependencyData`).
+Capture refused. Distinct from `add_graph_node`.
+This VM does not invent occupancy SM counts or Engine `--graph-add-node-with-data`.
+`gpu-profile capture` is still refused. Dual score still has no `$/M tokens`.
+
+## Shipped 2026-09-02 — CUDA `cuGraphAddNode`
+
+`gpu-sim` `Sim::add_graph_node` is `cuGraphAddNode`.
+Identity with `graph_add_node` (`cudaGraphAddNode`).
+Capture refused. Distinct from `add_graph_free`.
+This VM does not invent occupancy SM counts or Engine `--graph-add-node`.
+`gpu-profile capture` is still refused. Dual score still has no `$/M tokens`.
+
+## Shipped 2026-09-02 — CUDA `cuGraphAddMemFreeNode`
+
+`gpu-sim` `Sim::add_graph_free` is `cuGraphAddMemFreeNode`.
+Identity with `graph_add_free` (`cudaGraphAddMemFreeNode`).
+Capture refused. Distinct from `add_graph_alloc_with_access`.
+This VM does not invent occupancy SM counts or Engine `--graph-add-free`.
+`gpu-profile capture` is still refused. Dual score still has no `$/M tokens`.
+
+## Shipped 2026-09-02 — CUDA `cuGraphAddMemAllocNode` access
+
+`gpu-sim` `Sim::add_graph_alloc_with_access` is `cuGraphAddMemAllocNode` access.
+Identity with `graph_add_alloc_with_access` (`cudaGraphAddMemAllocNode` accessDescs).
+Capture refused. Distinct from `add_graph_alloc`.
+This VM does not invent occupancy SM counts or Engine `--graph-add-alloc-with-access`.
+`gpu-profile capture` is still refused. Dual score still has no `$/M tokens`.
+
+## Shipped 2026-09-02 — CUDA `cuGraphAddMemAllocNode`
+
+`gpu-sim` `Sim::add_graph_alloc` is `cuGraphAddMemAllocNode`.
+Identity with `graph_add_alloc` (`cudaGraphAddMemAllocNode`).
+Capture refused. Distinct from `add_graph_batch_mem_op_with_flags`.
+This VM does not invent occupancy SM counts or Engine `--graph-add-alloc`.
+`gpu-profile capture` is still refused. Dual score still has no `$/M tokens`.
+
+## Shipped 2026-09-02 — CUDA `cuGraphAddBatchMemOpNode` flags
+
+`gpu-sim` `Sim::add_graph_batch_mem_op_with_flags` is `cuGraphAddBatchMemOpNode` flags.
+Identity with `graph_add_batch_mem_op_with_flags` (`cudaGraphAddBatchMemOpNode` flags).
+Capture refused. Distinct from `add_graph_batch_mem_op`.
+This VM does not invent occupancy SM counts or Engine `--graph-add-batch-mem-op-with-flags`.
+`gpu-profile capture` is still refused. Dual score still has no `$/M tokens`.
+
+## Shipped 2026-09-02 — CUDA `cuGraphAddBatchMemOpNode`
+
+`gpu-sim` `Sim::add_graph_batch_mem_op` is `cuGraphAddBatchMemOpNode`.
+Identity with `graph_add_batch_mem_op` (`cudaGraphAddBatchMemOpNode`).
+Capture refused. Distinct from `add_graph_memset_3d`.
+This VM does not invent occupancy SM counts or Engine `--graph-add-batch-mem-op`.
+`gpu-profile capture` is still refused. Dual score still has no `$/M tokens`.
+
+## Shipped 2026-09-02 — CUDA 3D `cuGraphAddMemsetNode`
+
+`gpu-sim` `Sim::add_graph_memset_3d` is 3D `cuGraphAddMemsetNode`.
+Identity with `graph_add_memset_3d` (`cudaGraphAddMemsetNode` 3D).
+Capture refused. Distinct from `add_graph_memset_2d`.
+This VM does not invent occupancy SM counts or Engine `--graph-add-memset-3d`.
+`gpu-profile capture` is still refused. Dual score still has no `$/M tokens`.
+
+## Shipped 2026-09-02 — CUDA 2D `cuGraphAddMemsetNode`
+
+`gpu-sim` `Sim::add_graph_memset_2d` is 2D `cuGraphAddMemsetNode`.
+Identity with `graph_add_memset_2d` (`cudaGraphAddMemsetNode` 2D).
+Capture refused. Distinct from `add_graph_memset_op`.
+This VM does not invent occupancy SM counts or Engine `--graph-add-memset-2d`.
+`gpu-profile capture` is still refused. Dual score still has no `$/M tokens`.
+
+## Shipped 2026-09-02 — CUDA `cuGraphAddMemsetNode` params
+
+`gpu-sim` `Sim::add_graph_memset_op` is `cuGraphAddMemsetNode` params.
+Identity with `graph_add_memset_op` (`cudaGraphAddMemsetNode` with `MemsetOp`).
+Capture refused. Distinct from packed 1D `add_graph_memset`.
+This VM does not invent occupancy SM counts or Engine `--graph-add-memset-op`.
+`gpu-profile capture` is still refused. Dual score still has no `$/M tokens`.
+
+## Shipped 2026-09-02 — CUDA packed 1D `cuGraphAddMemsetNode`
+
+`gpu-sim` `Sim::add_graph_memset` is packed 1D `cuGraphAddMemsetNode`.
+Identity with `graph_add_memset` (`cudaGraphAddMemsetNode` packed 1D).
+Capture refused. Distinct from `add_graph_memcpy_3d`.
+This VM does not invent occupancy SM counts or Engine `--graph-add-memset`.
+`gpu-profile capture` is still refused. Dual score still has no `$/M tokens`.
+
+## Shipped 2026-09-02 — CUDA 3D `cuGraphAddMemcpyNode`
+
+`gpu-sim` `Sim::add_graph_memcpy_3d` is 3D `cuGraphAddMemcpyNode`.
+Identity with `graph_add_memcpy_3d` (`cudaGraphAddMemcpyNode` 3D).
+Capture refused. Distinct from `add_graph_memcpy_2d`.
+This VM does not invent occupancy SM counts or Engine `--graph-add-memcpy-3d`.
+`gpu-profile capture` is still refused. Dual score still has no `$/M tokens`.
+
+## Shipped 2026-09-02 — CUDA 2D `cuGraphAddMemcpyNode`
+
+`gpu-sim` `Sim::add_graph_memcpy_2d` is 2D `cuGraphAddMemcpyNode`.
+Identity with `graph_add_memcpy_2d` (`cudaGraphAddMemcpyNode` 2D).
+Capture refused. Distinct from `add_graph_memcpy_1d`.
+This VM does not invent occupancy SM counts or Engine `--graph-add-memcpy-2d`.
+`gpu-profile capture` is still refused. Dual score still has no `$/M tokens`.
+
+## Shipped 2026-09-02 — CUDA `cuGraphAddMemcpyNode1D`
+
+`gpu-sim` `Sim::add_graph_memcpy_1d` is `cuGraphAddMemcpyNode1D`.
+Identity with `graph_add_memcpy_1d` (`cudaGraphAddMemcpyNode1D`).
+Capture refused. Distinct from `add_graph_memcpy`.
+This VM does not invent occupancy SM counts or Engine `--graph-add-memcpy-1d`.
+`gpu-profile capture` is still refused. Dual score still has no `$/M tokens`.
+
+## Shipped 2026-09-02 — CUDA `cuGraphAddMemcpyNode`
+
+`gpu-sim` `Sim::add_graph_memcpy` is `cuGraphAddMemcpyNode`.
+Identity with `graph_add_memcpy` (`cudaGraphAddMemcpyNode`).
+Capture refused. Distinct from `add_graph_kernel`.
+This VM does not invent occupancy SM counts or Engine `--graph-add-memcpy`.
+`gpu-profile capture` is still refused. Dual score still has no `$/M tokens`.
+
+## Shipped 2026-09-02 — CUDA `cuGraphAddKernelNode`
+
+`gpu-sim` `Sim::add_graph_kernel` is `cuGraphAddKernelNode`.
+Identity with `graph_add_kernel` (`cudaGraphAddKernelNode`).
+Capture refused. Distinct from `add_graph_event_wait`.
+This VM does not invent occupancy SM counts or Engine `--graph-add-kernel`.
+`gpu-profile capture` is still refused. Dual score still has no `$/M tokens`.
+
+## Shipped 2026-09-02 — CUDA `cuGraphAddEventWaitNode`
+
+`gpu-sim` `Sim::add_graph_event_wait` is `cuGraphAddEventWaitNode`.
+Identity with `graph_add_event_wait` (`cudaGraphAddEventWaitNode`).
+Capture refused. Distinct from `add_graph_event_record`.
+This VM does not invent occupancy SM counts or Engine `--graph-add-event-wait`.
+`gpu-profile capture` is still refused. Dual score still has no `$/M tokens`.
+
+## Shipped 2026-09-02 — CUDA `cuGraphAddEventRecordNode`
+
+`gpu-sim` `Sim::add_graph_event_record` is `cuGraphAddEventRecordNode`.
+Identity with `graph_add_event_record` (`cudaGraphAddEventRecordNode`).
+Capture refused. Distinct from `add_graph_host`.
+This VM does not invent occupancy SM counts or Engine `--graph-add-event-record`.
+`gpu-profile capture` is still refused. Dual score still has no `$/M tokens`.
+
+## Shipped 2026-09-02 — CUDA `cuGraphAddHostNode`
+
+`gpu-sim` `Sim::add_graph_host` is `cuGraphAddHostNode`.
+Identity with `graph_add_host_func_params` (`cudaGraphAddHostNode`).
+Capture refused. Distinct from `add_graph_child`.
+This VM does not invent occupancy SM counts or Engine `--graph-add-host`.
+`gpu-profile capture` is still refused. Dual score still has no `$/M tokens`.
+
+## Shipped 2026-09-02 — CUDA `cuGraphAddChildGraphNode`
+
+`gpu-sim` `Sim::add_graph_child` is `cuGraphAddChildGraphNode`.
+Identity with `graph_add_child` (`cudaGraphAddChildGraphNode`).
+Capture refused. Distinct from `add_graph_empty`.
+This VM does not invent occupancy SM counts or Engine `--graph-add-child`.
+`gpu-profile capture` is still refused. Dual score still has no `$/M tokens`.
+
+## Shipped 2026-09-02 — CUDA `cuGraphAddEmptyNode`
+
+`gpu-sim` `Sim::add_graph_empty` is `cuGraphAddEmptyNode`.
+Identity with `graph_add_empty` (`cudaGraphAddEmptyNode`).
+Capture refused. Distinct from `graph_add_child`.
+This VM does not invent occupancy SM counts or Engine `--graph-add-empty`.
+`gpu-profile capture` is still refused. Dual score still has no `$/M tokens`.
+
+## Shipped 2026-09-02 — CUDA `cuGetCurrentGraphExec`
+
+`gpu-sim` `Sim::get_current_graph_exec` is `cuGetCurrentGraphExec`.
+Identity with `current_graph_exec` (`cudaGetCurrentGraphExec`).
+Query; legal during capture. Distinct from `launch_device_graph`.
+This VM does not invent occupancy SM counts or Engine `--get-current-graph-exec`.
+`gpu-profile capture` is still refused. Dual score still has no `$/M tokens`.
+
+## Shipped 2026-09-02 — CUDA device-side `cuGraphLaunch`
+
+`gpu-sim` `Sim::launch_device_graph` is device-side `cuGraphLaunch`.
+Identity with `device_launch_graph` (device-side `cudaGraphLaunch`).
+Capture refused. Distinct from `graph_launch`.
+This VM does not invent occupancy SM counts or Engine `--device-launch-graph`.
+`gpu-profile capture` is still refused. Dual score still has no `$/M tokens`.
+
+## Shipped 2026-09-02 — CUDA `cuGraphDestroyNode`
+
+`gpu-sim` `Sim::destroy_graph_node` is `cuGraphDestroyNode`.
+Identity with `graph_destroy_node` (`cudaGraphDestroyNode`).
+Capture refused. Distinct from `graph_destroy`.
+This VM does not invent occupancy SM counts or Engine `--graph-destroy-node`.
+`gpu-profile capture` is still refused. Dual score still has no `$/M tokens`.
+
+## Shipped 2026-09-02 — CUDA `cuGraphRemoveDependencies` v2
+
+`gpu-sim` `Sim::remove_graph_dependencies_n_with_data` is `cuGraphRemoveDependencies` v2.
+Identity with `graph_remove_dependencies_n_with_data` (`cudaGraphRemoveDependencies` v2).
+Capture refused. Distinct from `remove_graph_dependencies_with_data`.
+This VM does not invent occupancy SM counts or Engine `--graph-remove-dependencies-n-with-data`.
+`gpu-profile capture` is still refused. Dual score still has no `$/M tokens`.
+
+## Shipped 2026-09-02 — CUDA `cuGraphRemoveDependencies` with data
+
+`gpu-sim` `Sim::remove_graph_dependencies_with_data` is `cuGraphRemoveDependencies` with data.
+Identity with `graph_remove_dependencies_with_data` (`cudaGraphRemoveDependencies` with data).
+Capture refused. Distinct from `remove_graph_dependencies_n`.
+This VM does not invent occupancy SM counts or Engine `--graph-remove-dependencies-with-data`.
+`gpu-profile capture` is still refused. Dual score still has no `$/M tokens`.
+
+## Shipped 2026-09-02 — CUDA `cuGraphRemoveDependencies` of pairs
+
+`gpu-sim` `Sim::remove_graph_dependencies_n` is `cuGraphRemoveDependencies` of pairs.
+Identity with `graph_remove_dependencies_n` (`cudaGraphRemoveDependencies` of pairs).
+Capture refused. Distinct from `remove_graph_dependencies`.
+This VM does not invent occupancy SM counts or Engine `--graph-remove-dependencies-n`.
+`gpu-profile capture` is still refused. Dual score still has no `$/M tokens`.
+
+## Shipped 2026-09-02 — CUDA `cuGraphRemoveDependencies`
+
+`gpu-sim` `Sim::remove_graph_dependencies` is `cuGraphRemoveDependencies`.
+Identity with `graph_remove_dependencies` (`cudaGraphRemoveDependencies`).
+Capture refused. Distinct from `graph_remove_dependencies_n`.
+This VM does not invent occupancy SM counts or Engine `--graph-remove-dependencies`.
+`gpu-profile capture` is still refused. Dual score still has no `$/M tokens`.
+
+## Shipped 2026-09-02 — CUDA `cuGraphAddDependencies` v2
+
+`gpu-sim` `Sim::add_graph_dependencies_n_with_data` is `cuGraphAddDependencies` v2.
+Identity with `graph_add_dependencies_n_with_data` (`cudaGraphAddDependencies` v2).
+Capture refused. Distinct from `add_graph_dependencies_with_data`.
+This VM does not invent occupancy SM counts or Engine `--graph-add-dependencies-n-with-data`.
+`gpu-profile capture` is still refused. Dual score still has no `$/M tokens`.
+
+## Shipped 2026-09-02 — CUDA `cuGraphAddDependencies` with data
+
+`gpu-sim` `Sim::add_graph_dependencies_with_data` is `cuGraphAddDependencies` with data.
+Identity with `graph_add_dependencies_with_data` (`cudaGraphAddDependencies` with data).
+Capture refused. Distinct from `add_graph_dependencies_n`.
+This VM does not invent occupancy SM counts or Engine `--graph-add-dependencies-with-data`.
+`gpu-profile capture` is still refused. Dual score still has no `$/M tokens`.
+
+## Shipped 2026-09-02 — CUDA `cuGraphAddDependencies` of pairs
+
+`gpu-sim` `Sim::add_graph_dependencies_n` is `cuGraphAddDependencies` of pairs.
+Identity with `graph_add_dependencies_n` (`cudaGraphAddDependencies` of pairs).
+Capture refused. Distinct from `add_graph_dependencies`.
+This VM does not invent occupancy SM counts or Engine `--graph-add-dependencies-n`.
+`gpu-profile capture` is still refused. Dual score still has no `$/M tokens`.
+
+## Shipped 2026-09-02 — CUDA `cuGraphAddDependencies`
+
+`gpu-sim` `Sim::add_graph_dependencies` is `cuGraphAddDependencies`.
+Identity with `graph_add_dependencies` (`cudaGraphAddDependencies`).
+Capture refused. Distinct from `graph_add_dependencies_n`.
+This VM does not invent occupancy SM counts or Engine `--graph-add-dependencies`.
+`gpu-profile capture` is still refused. Dual score still has no `$/M tokens`.
+
+## Shipped 2026-09-02 — CUDA `cuGraphExecUpdate` with info
+
+`gpu-sim` `Sim::graph_exec_update_with_info` is `cuGraphExecUpdate` with info.
+Identity with `update_graph_with_info` (`cudaGraphExecUpdate` with info).
+Capture refused. Distinct from `graph_exec_update`.
+This VM does not invent occupancy SM counts or Engine `--graph-exec-update-with-info`.
+`gpu-profile capture` is still refused. Dual score still has no `$/M tokens`.
+
+## Shipped 2026-09-02 — CUDA `cuGraphExecUpdate`
+
+`gpu-sim` `Sim::graph_exec_update` is `cuGraphExecUpdate`.
+Identity with `update_graph` (`cudaGraphExecUpdate`).
+Capture refused. Distinct from `update_graph_with_info`.
+This VM does not invent occupancy SM counts or Engine `--graph-exec-update`.
+`gpu-profile capture` is still refused. Dual score still has no `$/M tokens`.
+
+## Shipped 2026-09-02 — CUDA `cuGraphExecDestroy`
+
+`gpu-sim` `Sim::graph_exec_destroy` is `cuGraphExecDestroy`.
+Identity with `destroy_graph` (`cudaGraphExecDestroy`).
+Capture refused. Distinct from `graph_destroy`.
+This VM does not invent occupancy SM counts or Engine `--graph-exec-destroy`.
+`gpu-profile capture` is still refused. Dual score still has no `$/M tokens`.
+
+## Shipped 2026-09-02 — CUDA `cuGraphDestroy`
+
+`gpu-sim` `Sim::graph_destroy` is `cuGraphDestroy`.
+Identity with `destroy_graph` (`cudaGraphDestroy`).
+Capture refused. Distinct from `graph_destroy_node`.
+This VM does not invent occupancy SM counts or Engine `--graph-destroy`.
+`gpu-profile capture` is still refused. Dual score still has no `$/M tokens`.
+
+## Shipped 2026-09-02 — CUDA `cuGraphUpload` on a stream
+
+`gpu-sim` `Sim::graph_upload_async` is `cuGraphUpload` on a stream.
+Identity with `upload_graph_async` (`cudaGraphUpload` on a stream).
+Capture refused. Distinct from `graph_upload`.
+This VM does not invent occupancy SM counts or Engine `--graph-upload-async`.
+`gpu-profile capture` is still refused. Dual score still has no `$/M tokens`.
+
+## Shipped 2026-09-02 — CUDA `cuGraphUpload`
+
+`gpu-sim` `Sim::graph_upload` is `cuGraphUpload`.
+Identity with `upload_graph` (`cudaGraphUpload`).
+Capture refused. Distinct from `upload_graph_async`.
+This VM does not invent occupancy SM counts or Engine `--graph-upload`.
+`gpu-profile capture` is still refused. Dual score still has no `$/M tokens`.
+
+## Shipped 2026-09-02 — CUDA `cuGraphLaunch`
+
+`gpu-sim` `Sim::graph_launch` is `cuGraphLaunch`.
+Identity with `launch_graph` (`cudaGraphLaunch`).
+Live host launch; capture records a child. Distinct from `device_launch_graph`.
+This VM does not invent occupancy SM counts or Engine `--graph-launch`.
+`gpu-profile capture` is still refused. Dual score still has no `$/M tokens`.
+
+## Shipped 2026-09-02 — CUDA `cuGraphInstantiateWithParams`
+
+`gpu-sim` `Sim::graph_instantiate_with_params` is `cuGraphInstantiateWithParams`.
+Identity with `instantiate_graph_with_params` (`cudaGraphInstantiateWithParams`).
+Capture refused. Distinct from `graph_instantiate_with_flags`.
+This VM does not invent occupancy SM counts or Engine `--graph-instantiate-with-params`.
+`gpu-profile capture` is still refused. Dual score still has no `$/M tokens`.
+
+## Shipped 2026-09-02 — CUDA `cuGraphInstantiateWithFlags`
+
+`gpu-sim` `Sim::graph_instantiate_with_flags` is `cuGraphInstantiateWithFlags`.
+Identity with `instantiate_graph_with_flags` (`cudaGraphInstantiateWithFlags`).
+Capture refused. Distinct from `graph_instantiate`.
+This VM does not invent occupancy SM counts or Engine `--graph-instantiate-with-flags`.
+`gpu-profile capture` is still refused. Dual score still has no `$/M tokens`.
+
+## Shipped 2026-09-02 — CUDA `cuGraphInstantiate`
+
+`gpu-sim` `Sim::graph_instantiate` is `cuGraphInstantiate`.
+Identity with `instantiate_graph` (`cudaGraphInstantiate`).
+Capture refused. Distinct from `instantiate_graph_with_flags`.
+This VM does not invent occupancy SM counts or Engine `--graph-instantiate`.
+`gpu-profile capture` is still refused. Dual score still has no `$/M tokens`.
+
+## Shipped 2026-09-02 — CUDA `cuGraphDebugDotPrint` with flags
+
+`gpu-sim` `Sim::graph_debug_dot_print_with_flags` is `cuGraphDebugDotPrint` with flags.
+Identity with `graph_debug_dot_with_flags` (`cudaGraphDebugDotPrint`).
+Query; legal during capture. Distinct from `graph_debug_dot_print`.
+This VM does not invent occupancy SM counts or Engine `--graph-debug-dot-print-with-flags`.
+`gpu-profile capture` is still refused. Dual score still has no `$/M tokens`.
+
+## Shipped 2026-09-02 — CUDA `cuGraphDebugDotPrint`
+
+`gpu-sim` `Sim::graph_debug_dot_print` is `cuGraphDebugDotPrint`.
+Identity with `graph_debug_dot` (`cudaGraphDebugDotPrint` flags 0).
+Query; legal during capture. Distinct from `graph_debug_dot_with_flags`.
+This VM does not invent occupancy SM counts or Engine `--graph-debug-dot-print`.
+`gpu-profile capture` is still refused. Dual score still has no `$/M tokens`.
+
+## Shipped 2026-09-02 — CUDA `cuGraphClone`
+
+`gpu-sim` `Sim::graph_clone` is `cuGraphClone`.
+Identity with `clone_graph` (`cudaGraphClone`).
+Capture refused. Distinct from `find_graph_node_in_clone`.
+This VM does not invent occupancy SM counts or Engine `--clone-graph`.
+`gpu-profile capture` is still refused. Dual score still has no `$/M tokens`.
+
+## Shipped 2026-09-02 — CUDA `cuGraphNodeFindInClone`
+
+`gpu-sim` `Sim::find_graph_node_in_clone` is `cuGraphNodeFindInClone`.
+Identity with `graph_node_find_in_clone` (`cudaGraphNodeFindInClone`).
+Query; legal during capture. Distinct from `clone_graph`.
+This VM does not invent occupancy SM counts or Engine `--graph-node-find-in-clone`.
+`gpu-profile capture` is still refused. Dual score still has no `$/M tokens`.
+
+## Shipped 2026-09-02 — CUDA `cuGraphNodeGetType`
+
+`gpu-sim` `Sim::get_graph_node_type` is `cuGraphNodeGetType`.
+Identity with `graph_node_kind` (`cudaGraphNodeGetType`).
+Query; legal during capture. Distinct from `graph_node_find_in_clone`.
+This VM does not invent occupancy SM counts or Engine `--graph-node-get-type`.
+`gpu-profile capture` is still refused. Dual score still has no `$/M tokens`.
+
+## Shipped 2026-09-02 — CUDA `cuGraphNodeGetDependentNodes` v2
+
+`gpu-sim` `Sim::get_graph_node_dependent_nodes_with_data` is `cuGraphNodeGetDependentNodes` v2.
+Identity with `graph_node_dependents_with_data` (`cudaGraphNodeGetDependentNodes` with edgeData).
+Query; legal during capture. Distinct from `get_graph_node_dependent_nodes`.
+This VM does not invent occupancy SM counts or Engine `--graph-node-get-dependent-nodes-with-data`.
+`gpu-profile capture` is still refused. Dual score still has no `$/M tokens`.
+
+## Shipped 2026-09-02 — CUDA `cuGraphNodeGetDependentNodes`
+
+`gpu-sim` `Sim::get_graph_node_dependent_nodes` is `cuGraphNodeGetDependentNodes`.
+Identity with `graph_node_dependents` (`cudaGraphNodeGetDependentNodes`).
+Query; legal during capture. Distinct from `graph_node_dependents_with_data`.
+This VM does not invent occupancy SM counts or Engine `--graph-node-get-dependent-nodes`.
+`gpu-profile capture` is still refused. Dual score still has no `$/M tokens`.
+
+## Shipped 2026-09-02 — CUDA `cuGraphNodeGetDependencies` v2
+
+`gpu-sim` `Sim::get_graph_node_dependencies_with_data` is `cuGraphNodeGetDependencies` v2.
+Identity with `graph_node_deps_with_data` (`cudaGraphNodeGetDependencies` with edgeData).
+Query; legal during capture. Distinct from `get_graph_node_dependencies`.
+This VM does not invent occupancy SM counts or Engine `--graph-node-get-dependencies-with-data`.
+`gpu-profile capture` is still refused. Dual score still has no `$/M tokens`.
+
+## Shipped 2026-09-02 — CUDA `cuGraphNodeGetDependencies`
+
+`gpu-sim` `Sim::get_graph_node_dependencies` is `cuGraphNodeGetDependencies`.
+Identity with `graph_node_deps` (`cudaGraphNodeGetDependencies`).
+Query; legal during capture. Distinct from `graph_node_deps_with_data`.
+This VM does not invent occupancy SM counts or Engine `--graph-node-get-dependencies`.
+`gpu-profile capture` is still refused. Dual score still has no `$/M tokens`.
+
+## Shipped 2026-09-02 — CUDA `cuGraphGetEdges` v2
+
+`gpu-sim` `Sim::get_graph_edges_with_data` is `cuGraphGetEdges` v2.
+Identity with `graph_edges_with_data` (`cudaGraphGetEdges` with edgeData).
+Query; legal during capture. Distinct from `get_graph_edges`.
+This VM does not invent occupancy SM counts or Engine `--graph-get-edges-with-data`.
+`gpu-profile capture` is still refused. Dual score still has no `$/M tokens`.
+
+## Shipped 2026-09-02 — CUDA `cuGraphGetEdges`
+
+`gpu-sim` `Sim::get_graph_edges` is `cuGraphGetEdges`.
+Identity with `graph_edges` (`cudaGraphGetEdges`).
+Query; legal during capture. Distinct from `graph_edges_with_data`.
+This VM does not invent occupancy SM counts or Engine `--graph-get-edges`.
+`gpu-profile capture` is still refused. Dual score still has no `$/M tokens`.
+
+## Shipped 2026-09-02 — CUDA `cuGraphGetRootNodes`
+
+`gpu-sim` `Sim::get_graph_root_nodes` is `cuGraphGetRootNodes`.
+Identity with `graph_root_nodes` (`cudaGraphGetRootNodes`).
+Query; legal during capture. Distinct from `get_graph_nodes`.
+This VM does not invent occupancy SM counts or Engine `--graph-get-root-nodes`.
+`gpu-profile capture` is still refused. Dual score still has no `$/M tokens`.
+
+## Shipped 2026-09-02 — CUDA `cuGraphGetNodes`
+
+`gpu-sim` `Sim::get_graph_nodes` is `cuGraphGetNodes`.
+Identity with `graph_nodes` (`cudaGraphGetNodes`).
+Query; legal during capture. Distinct from `graph_root_nodes`.
+This VM does not invent occupancy SM counts or Engine `--graph-get-nodes`.
+`gpu-profile capture` is still refused. Dual score still has no `$/M tokens`.
+
+## Shipped 2026-09-02 — CUDA `cuGraphExecGetId`
+
+`gpu-sim` `Sim::get_graph_exec_id` is `cuGraphExecGetId`.
+Identity with `graph_get_id` (`cudaGraphExecGetId`).
+Query; legal during capture. Distinct from `get_graph_id`.
+This VM does not invent occupancy SM counts or Engine `--graph-exec-get-id`.
+`gpu-profile capture` is still refused. Dual score still has no `$/M tokens`.
+
+## Shipped 2026-09-02 — CUDA `cuGraphGetId`
+
+`gpu-sim` `Sim::get_graph_id` is `cuGraphGetId`.
+Identity with `graph_get_id` (`cudaGraphGetId`).
+Query; legal during capture. Distinct from `get_graph_exec_flags`.
+This VM does not invent occupancy SM counts or Engine `--graph-get-id`.
+`gpu-profile capture` is still refused. Dual score still has no `$/M tokens`.
+
+## Shipped 2026-09-02 — CUDA `cuGraphExecGetFlags`
+
+`gpu-sim` `Sim::get_graph_exec_flags` is `cuGraphExecGetFlags`.
+Identity with `graph_exec_get_flags` (`cudaGraphExecGetFlags`).
+Query; legal during capture. Distinct from `instantiate_graph_with_flags`.
+This VM does not invent occupancy SM counts or Engine `--graph-exec-get-flags`.
+`gpu-profile capture` is still refused. Dual score still has no `$/M tokens`.
+
+## Shipped 2026-09-02 — CUDA `cuGraphNodeGetEnabled`
+
+`gpu-sim` `Sim::get_graph_node_enabled` is `cuGraphNodeGetEnabled`.
+Identity with `graph_node_get_enabled` (`cudaGraphNodeGetEnabled`).
+Query; legal during capture. Distinct from `set_graph_node_enabled`.
+This VM does not invent occupancy SM counts or Engine `--graph-node-get-enabled`.
+`gpu-profile capture` is still refused. Dual score still has no `$/M tokens`.
+
+## Shipped 2026-09-02 — CUDA `cuGraphNodeSetEnabled`
+
+`gpu-sim` `Sim::set_graph_node_enabled` is `cuGraphNodeSetEnabled`.
+Identity with `graph_node_set_enabled` (`cudaGraphNodeSetEnabled`).
+Capture refused. Distinct from `graph_node_get_enabled`.
+This VM does not invent occupancy SM counts or Engine `--graph-node-set-enabled`.
+`gpu-profile capture` is still refused. Dual score still has no `$/M tokens`.
+
+## Shipped 2026-09-02 — CUDA `cuGraphExecNodeGetParams`
+
+`gpu-sim` `Sim::get_graph_exec_node_params` is `cuGraphExecNodeGetParams`.
+Identity with `graph_exec_node_get_params` (`cudaGraphExecNodeGetParams`).
+Query; legal during capture. Distinct from `get_graph_node_params`.
+This VM does not invent occupancy SM counts or Engine `--graph-exec-node-get-params`.
+`gpu-profile capture` is still refused. Dual score still has no `$/M tokens`.
+
+## Shipped 2026-09-02 — CUDA `cuGraphNodeGetParams`
+
+`gpu-sim` `Sim::get_graph_node_params` is `cuGraphNodeGetParams`.
+Identity with `graph_node_get_params` (`cudaGraphNodeGetParams`).
+Query; legal during capture. Distinct from `graph_exec_node_get_params`.
+This VM does not invent occupancy SM counts or Engine `--graph-node-get-params`.
+`gpu-profile capture` is still refused. Dual score still has no `$/M tokens`.
+
+## Shipped 2026-09-02 — CUDA `cuGraphExecNodeSetParams`
+
+`gpu-sim` `Sim::set_graph_exec_node_params` is `cuGraphExecNodeSetParams`.
+Identity with `graph_exec_node_set_params` (`cudaGraphExecNodeSetParams`).
+Capture refused. Distinct from `set_graph_node_params`.
+This VM does not invent occupancy SM counts or Engine `--graph-exec-node-set-params`.
+`gpu-profile capture` is still refused. Dual score still has no `$/M tokens`.
+
+## Shipped 2026-09-02 — CUDA `cuGraphNodeSetParams`
+
+`gpu-sim` `Sim::set_graph_node_params` is `cuGraphNodeSetParams`.
+Identity with `graph_node_set_params` (`cudaGraphNodeSetParams`).
+Capture refused. Distinct from `graph_exec_node_set_params`.
+This VM does not invent occupancy SM counts or Engine `--graph-node-set-params`.
+`gpu-profile capture` is still refused. Dual score still has no `$/M tokens`.
+
+## Shipped 2026-09-02 — CUDA `cuGraphExecChildGraphNodeSetParams`
+
+`gpu-sim` `Sim::set_graph_exec_child_graph_node_params` is `cuGraphExecChildGraphNodeSetParams`.
+Identity with `graph_exec_child_set_params` (`cudaGraphExecChildGraphNodeSetParams`).
+Capture refused. Distinct from `set_graph_child_graph_node_params`.
+This VM does not invent occupancy SM counts or Engine `--graph-exec-child-set-params`.
+`gpu-profile capture` is still refused. Dual score still has no `$/M tokens`.
+
+## Shipped 2026-09-02 — CUDA `cuGraphChildGraphNodeSetParams`
+
+`gpu-sim` `Sim::set_graph_child_graph_node_params` is `cuGraphChildGraphNodeSetParams`.
+Identity with `graph_child_set_params` (`cudaGraphChildGraphNodeSetParams`).
+Capture refused. Distinct from `get_graph_child_graph_node_graph`.
+This VM does not invent occupancy SM counts or Engine `--graph-child-set-params`.
+`gpu-profile capture` is still refused. Dual score still has no `$/M tokens`.
+
+## Shipped 2026-09-02 — CUDA `cuGraphExecChildGraphNodeGetGraph`
+
+`gpu-sim` `Sim::get_graph_exec_child_graph_node_graph` is `cuGraphExecChildGraphNodeGetGraph`.
+Identity with `graph_exec_child_get_graph` (`cudaGraphChildGraphNodeGetGraph` of the exec snapshot).
+Query; legal during capture. Distinct from `get_graph_child_graph_node_graph`.
+This VM does not invent occupancy SM counts or Engine `--graph-exec-child-get-graph`.
+`gpu-profile capture` is still refused. Dual score still has no `$/M tokens`.
+
+## Shipped 2026-09-02 — CUDA `cuGraphChildGraphNodeGetGraph`
+
+`gpu-sim` `Sim::get_graph_child_graph_node_graph` is `cuGraphChildGraphNodeGetGraph`.
+Identity with `graph_child_get_graph` (`cudaGraphChildGraphNodeGetGraph`).
+Query; legal during capture. Distinct from `graph_exec_child_get_graph`.
+This VM does not invent occupancy SM counts or Engine `--graph-child-get-graph`.
+`gpu-profile capture` is still refused. Dual score still has no `$/M tokens`.
+
+## Shipped 2026-09-02 — CUDA `cuGraphExecEventWaitNodeGetEvent`
+
+`gpu-sim` `Sim::get_graph_exec_event_wait_node_event` is `cuGraphExecEventWaitNodeGetEvent`.
+Identity with `graph_exec_event_wait_get_event` (`cudaGraphEventWaitNodeGetEvent` of the exec snapshot).
+Query; legal during capture. Distinct from `get_graph_event_wait_node_event`.
+This VM does not invent occupancy SM counts or Engine `--graph-exec-event-wait-get-event`.
+`gpu-profile capture` is still refused. Dual score still has no `$/M tokens`.
+
+## Shipped 2026-09-02 — CUDA `cuGraphEventWaitNodeGetEvent`
+
+`gpu-sim` `Sim::get_graph_event_wait_node_event` is `cuGraphEventWaitNodeGetEvent`.
+Identity with `graph_event_wait_get_event` (`cudaGraphEventWaitNodeGetEvent`).
+Query; legal during capture. Distinct from `graph_exec_event_wait_get_event`.
+This VM does not invent occupancy SM counts or Engine `--graph-event-wait-get-event`.
+`gpu-profile capture` is still refused. Dual score still has no `$/M tokens`.
+
+## Shipped 2026-09-02 — CUDA `cuGraphExecEventRecordNodeGetEvent`
+
+`gpu-sim` `Sim::get_graph_exec_event_record_node_event` is `cuGraphExecEventRecordNodeGetEvent`.
+Identity with `graph_exec_event_record_get_event` (`cudaGraphEventRecordNodeGetEvent` of the exec snapshot).
+Query; legal during capture. Distinct from `get_graph_event_record_node_event`.
+This VM does not invent occupancy SM counts or Engine `--graph-exec-event-record-get-event`.
+`gpu-profile capture` is still refused. Dual score still has no `$/M tokens`.
+
+## Shipped 2026-09-02 — CUDA `cuGraphEventRecordNodeGetEvent`
+
+`gpu-sim` `Sim::get_graph_event_record_node_event` is `cuGraphEventRecordNodeGetEvent`.
+Identity with `graph_event_record_get_event` (`cudaGraphEventRecordNodeGetEvent`).
+Query; legal during capture. Distinct from `graph_exec_event_record_get_event`.
+This VM does not invent occupancy SM counts or Engine `--graph-event-record-get-event`.
+`gpu-profile capture` is still refused. Dual score still has no `$/M tokens`.
+
+## Shipped 2026-09-02 — CUDA `cuGraphExecEventWaitNodeSetEvent`
+
+`gpu-sim` `Sim::set_graph_exec_event_wait_node_event` is `cuGraphExecEventWaitNodeSetEvent`.
+Identity with `graph_exec_event_wait_set_event` (`cudaGraphExecEventWaitNodeSetEvent`).
+Capture refused. Distinct from `set_graph_event_wait_node_event`.
+This VM does not invent occupancy SM counts or Engine `--graph-exec-event-wait-set-event`.
+`gpu-profile capture` is still refused. Dual score still has no `$/M tokens`.
+
+## Shipped 2026-09-02 — CUDA `cuGraphEventWaitNodeSetEvent`
+
+`gpu-sim` `Sim::set_graph_event_wait_node_event` is `cuGraphEventWaitNodeSetEvent`.
+Identity with `graph_event_wait_set_event` (`cudaGraphEventWaitNodeSetEvent`).
+Capture refused. Distinct from `graph_event_wait_get_event`.
+This VM does not invent occupancy SM counts or Engine `--graph-event-wait-set-event`.
+`gpu-profile capture` is still refused. Dual score still has no `$/M tokens`.
+
+## Shipped 2026-09-02 — CUDA `cuGraphExecEventRecordNodeSetEvent`
+
+`gpu-sim` `Sim::set_graph_exec_event_record_node_event` is `cuGraphExecEventRecordNodeSetEvent`.
+Identity with `graph_exec_event_record_set_event` (`cudaGraphExecEventRecordNodeSetEvent`).
+Capture refused. Distinct from `set_graph_event_record_node_event`.
+This VM does not invent occupancy SM counts or Engine `--graph-exec-event-record-set-event`.
+`gpu-profile capture` is still refused. Dual score still has no `$/M tokens`.
+
+## Shipped 2026-09-02 — CUDA `cuGraphEventRecordNodeSetEvent`
+
+`gpu-sim` `Sim::set_graph_event_record_node_event` is `cuGraphEventRecordNodeSetEvent`.
+Identity with `graph_event_record_set_event` (`cudaGraphEventRecordNodeSetEvent`).
+Capture refused. Distinct from `graph_event_record_get_event`.
+This VM does not invent occupancy SM counts or Engine `--graph-event-record-set-event`.
+`gpu-profile capture` is still refused. Dual score still has no `$/M tokens`.
+
+## Shipped 2026-09-02 — CUDA `cuGraphExecBatchMemOpNodeSetParams`
+
+`gpu-sim` `Sim::set_graph_exec_batch_mem_op_node_params` is `cuGraphExecBatchMemOpNodeSetParams`.
+Identity with `graph_exec_batch_mem_op_set_params` (`cudaGraphExecBatchMemOpNodeSetParams`).
+Capture refused. Distinct from `set_graph_batch_mem_op_node_params`.
+This VM does not invent occupancy SM counts or Engine `--graph-exec-batch-mem-set-params`.
+`gpu-profile capture` is still refused. Dual score still has no `$/M tokens`.
+
+## Shipped 2026-09-02 — CUDA `cuGraphBatchMemOpNodeSetParams`
+
+`gpu-sim` `Sim::set_graph_batch_mem_op_node_params` is `cuGraphBatchMemOpNodeSetParams`.
+Identity with `graph_batch_mem_op_set_params` (`cudaGraphBatchMemOpNodeSetParams`).
+Capture refused. Distinct from `get_graph_batch_mem_op_node_params`.
+This VM does not invent occupancy SM counts or Engine `--graph-batch-mem-set-params`.
+`gpu-profile capture` is still refused. Dual score still has no `$/M tokens`.
+
+## Shipped 2026-09-02 — CUDA `cuGraphExecBatchMemOpNodeGetParams`
+
+`gpu-sim` `Sim::get_graph_exec_batch_mem_op_node_params` is `cuGraphExecBatchMemOpNodeGetParams`.
+Identity with `graph_exec_batch_mem_ops_get_params` (`cudaGraphBatchMemOpNodeGetParams` of the exec snapshot).
+Query; legal during capture. Distinct from `get_graph_batch_mem_op_node_params`.
+This VM does not invent occupancy SM counts or Engine `--graph-exec-batch-mem-get-params`.
+`gpu-profile capture` is still refused. Dual score still has no `$/M tokens`.
+
+## Shipped 2026-09-02 — CUDA `cuGraphBatchMemOpNodeGetParams`
+
+`gpu-sim` `Sim::get_graph_batch_mem_op_node_params` is `cuGraphBatchMemOpNodeGetParams`.
+Identity with `graph_batch_mem_ops_get_params` (`cudaGraphBatchMemOpNodeGetParams`).
+Query; legal during capture. Distinct from `graph_exec_batch_mem_ops_get_params`.
+This VM does not invent occupancy SM counts or Engine `--graph-batch-mem-get-params`.
+`gpu-profile capture` is still refused. Dual score still has no `$/M tokens`.
+
+## Shipped 2026-09-02 — CUDA `cuGraphExecHostNodeSetParams`
+
+`gpu-sim` `Sim::set_graph_exec_host_node_params` is `cuGraphExecHostNodeSetParams`.
+Identity with `graph_exec_host_set_params` (`cudaGraphExecHostNodeSetParams`).
+Capture refused. Distinct from `set_graph_host_node_params`.
+This VM does not invent occupancy SM counts or Engine `--graph-exec-host-set-params`.
+`gpu-profile capture` is still refused. Dual score still has no `$/M tokens`.
+
+## Shipped 2026-09-02 — CUDA `cuGraphHostNodeSetParams`
+
+`gpu-sim` `Sim::set_graph_host_node_params` is `cuGraphHostNodeSetParams`.
+Identity with `graph_host_set_params` (`cudaGraphHostNodeSetParams`).
+Capture refused. Distinct from `get_graph_host_node_params`.
+This VM does not invent occupancy SM counts or Engine `--graph-host-set-params`.
+`gpu-profile capture` is still refused. Dual score still has no `$/M tokens`.
+
+## Shipped 2026-09-02 — CUDA `cuGraphExecHostNodeGetParams`
+
+`gpu-sim` `Sim::get_graph_exec_host_node_params` is `cuGraphExecHostNodeGetParams`.
+Identity with `graph_exec_host_get_params` (`cudaGraphHostNodeGetParams` of the exec snapshot).
+Query; legal during capture. Distinct from `get_graph_host_node_params`.
+This VM does not invent occupancy SM counts or Engine `--graph-exec-host-get-params`.
+`gpu-profile capture` is still refused. Dual score still has no `$/M tokens`.
+
+## Shipped 2026-09-02 — CUDA `cuGraphHostNodeGetParams`
+
+`gpu-sim` `Sim::get_graph_host_node_params` is `cuGraphHostNodeGetParams`.
+Identity with `graph_host_get_params` (`cudaGraphHostNodeGetParams`).
+Query; legal during capture. Distinct from `graph_exec_host_get_params`.
+This VM does not invent occupancy SM counts or Engine `--graph-host-get-params`.
+`gpu-profile capture` is still refused. Dual score still has no `$/M tokens`.
+
+## Shipped 2026-09-02 — CUDA `cuGraphExecMemsetNodeSetParams`
+
+`gpu-sim` `Sim::set_graph_exec_memset_node_params` is `cuGraphExecMemsetNodeSetParams`.
+Identity with `graph_exec_memset_set_params` (`cudaGraphExecMemsetNodeSetParams`).
+Capture refused. Distinct from `set_graph_memset_node_params`.
+This VM does not invent occupancy SM counts or Engine `--graph-exec-memset-set-params`.
+`gpu-profile capture` is still refused. Dual score still has no `$/M tokens`.
+
+## Shipped 2026-09-02 — CUDA `cuGraphMemsetNodeSetParams`
+
+`gpu-sim` `Sim::set_graph_memset_node_params` is `cuGraphMemsetNodeSetParams`.
+Identity with `graph_memset_set_params` (`cudaGraphMemsetNodeSetParams`).
+Capture refused. Distinct from `get_graph_memset_node_params`.
+This VM does not invent occupancy SM counts or Engine `--graph-memset-set-params`.
+`gpu-profile capture` is still refused. Dual score still has no `$/M tokens`.
+
+## Shipped 2026-09-02 — CUDA `cuGraphExecMemsetNodeGetParams`
+
+`gpu-sim` `Sim::get_graph_exec_memset_node_params` is `cuGraphExecMemsetNodeGetParams`.
+Identity with `graph_exec_memset_get_params` (`cudaGraphMemsetNodeGetParams` of the exec snapshot).
+Query; legal during capture. Distinct from `get_graph_memset_node_params`.
+This VM does not invent occupancy SM counts or Engine `--graph-exec-memset-get-params`.
+`gpu-profile capture` is still refused. Dual score still has no `$/M tokens`.
+
+## Shipped 2026-09-02 — CUDA `cuGraphMemsetNodeGetParams`
+
+`gpu-sim` `Sim::get_graph_memset_node_params` is `cuGraphMemsetNodeGetParams`.
+Identity with `graph_memset_get_params` (`cudaGraphMemsetNodeGetParams`).
+Query; legal during capture. Distinct from `graph_exec_memset_get_params`.
+This VM does not invent occupancy SM counts or Engine `--graph-memset-get-params`.
+`gpu-profile capture` is still refused. Dual score still has no `$/M tokens`.
+
+## Shipped 2026-09-02 — CUDA `cuGraphExecMemcpyNodeSetParams`
+
+`gpu-sim` `Sim::set_graph_exec_memcpy_node_params` is `cuGraphExecMemcpyNodeSetParams`.
+Identity with `graph_exec_memcpy_set_params` (`cudaGraphExecMemcpyNodeSetParams`).
+Capture refused. Distinct from `set_graph_memcpy_node_params`.
+This VM does not invent occupancy SM counts or Engine `--graph-exec-memcpy-set-params`.
+`gpu-profile capture` is still refused. Dual score still has no `$/M tokens`.
+
+## Shipped 2026-09-02 — CUDA `cuGraphMemcpyNodeSetParams`
+
+`gpu-sim` `Sim::set_graph_memcpy_node_params` is `cuGraphMemcpyNodeSetParams`.
+Identity with `graph_memcpy_set_params` (`cudaGraphMemcpyNodeSetParams`).
+Capture refused. Distinct from `get_graph_memcpy_node_params`.
+This VM does not invent occupancy SM counts or Engine `--graph-memcpy-set-params`.
+`gpu-profile capture` is still refused. Dual score still has no `$/M tokens`.
+
+## Shipped 2026-09-02 — CUDA `cuGraphExecMemcpyNodeGetParams`
+
+`gpu-sim` `Sim::get_graph_exec_memcpy_node_params` is `cuGraphExecMemcpyNodeGetParams`.
+Identity with `graph_exec_memcpy_get_params` (`cudaGraphMemcpyNodeGetParams` of the exec snapshot).
+Query; legal during capture. Distinct from `get_graph_memcpy_node_params`.
+This VM does not invent occupancy SM counts or Engine `--graph-exec-memcpy-get-params`.
+`gpu-profile capture` is still refused. Dual score still has no `$/M tokens`.
+
+## Shipped 2026-09-02 — CUDA `cuGraphMemcpyNodeGetParams`
+
+`gpu-sim` `Sim::get_graph_memcpy_node_params` is `cuGraphMemcpyNodeGetParams`.
+Identity with `graph_memcpy_get_params` (`cudaGraphMemcpyNodeGetParams`).
+Query; legal during capture. Distinct from `graph_exec_memcpy_get_params`.
+This VM does not invent occupancy SM counts or Engine `--graph-memcpy-get-params`.
+`gpu-profile capture` is still refused. Dual score still has no `$/M tokens`.
+
+## Shipped 2026-09-02 — CUDA `cuGraphExecKernelNodeSetParams`
+
+`gpu-sim` `Sim::set_graph_exec_kernel_node_params` is `cuGraphExecKernelNodeSetParams`.
+Identity with `graph_exec_kernel_set_params` (`cudaGraphExecKernelNodeSetParams`).
+Capture refused. Distinct from `set_graph_kernel_node_params`.
+This VM does not invent occupancy SM counts or Engine `--graph-exec-kernel-set-params`.
+`gpu-profile capture` is still refused. Dual score still has no `$/M tokens`.
+
+## Shipped 2026-09-02 — CUDA `cuGraphKernelNodeSetParams`
+
+`gpu-sim` `Sim::set_graph_kernel_node_params` is `cuGraphKernelNodeSetParams`.
+Identity with `graph_kernel_set_params` (`cudaGraphKernelNodeSetParams`).
+Capture refused. Distinct from `get_graph_kernel_node_params`.
+This VM does not invent occupancy SM counts or Engine `--graph-kernel-set-params`.
+`gpu-profile capture` is still refused. Dual score still has no `$/M tokens`.
+
+## Shipped 2026-09-02 — CUDA `cuGraphExecKernelNodeGetParams`
+
+`gpu-sim` `Sim::get_graph_exec_kernel_node_params` is `cuGraphExecKernelNodeGetParams`.
+Identity with `graph_exec_kernel_get_params` (`cudaGraphExecKernelNodeGetParams`).
+Query; legal during capture. Distinct from `get_graph_kernel_node_params`.
+This VM does not invent occupancy SM counts or Engine `--graph-exec-kernel-get-params`.
+`gpu-profile capture` is still refused. Dual score still has no `$/M tokens`.
+
+## Shipped 2026-09-02 — CUDA `cuGraphKernelNodeGetParams`
+
+`gpu-sim` `Sim::get_graph_kernel_node_params` is `cuGraphKernelNodeGetParams`.
+Identity with `graph_kernel_get_params` (`cudaGraphKernelNodeGetParams`).
+Query; legal during capture. Distinct from `graph_exec_kernel_get_params`.
+This VM does not invent occupancy SM counts or Engine `--graph-kernel-get-params`.
+`gpu-profile capture` is still refused. Dual score still has no `$/M tokens`.
+
+## Shipped 2026-09-02 — CUDA `cuGraphExecKernelNodeCopyAttributes`
+
+`gpu-sim` `Sim::copy_graph_exec_kernel_node_attributes` is `cuGraphExecKernelNodeCopyAttributes`.
+Identity with `graph_exec_kernel_node_copy_attributes` (`cudaGraphExecKernelNodeCopyAttributes`).
+Capture refused. Distinct from `copy_graph_kernel_node_attributes`.
+This VM does not invent occupancy SM counts or Engine `--graph-exec-kernel-copy-attributes`.
+`gpu-profile capture` is still refused. Dual score still has no `$/M tokens`.
+
+## Shipped 2026-09-02 — CUDA `cuGraphKernelNodeCopyAttributes`
+
+`gpu-sim` `Sim::copy_graph_kernel_node_attributes` is `cuGraphKernelNodeCopyAttributes`.
+Identity with `graph_kernel_node_copy_attributes` (`cudaGraphKernelNodeCopyAttributes`).
+Capture refused. Distinct from `graph_exec_kernel_node_copy_attributes`.
+This VM does not invent occupancy SM counts or Engine `--graph-kernel-copy-attributes`.
+`gpu-profile capture` is still refused. Dual score still has no `$/M tokens`.
+
+## Shipped 2026-09-02 — CUDA `cuGraphExecKernelNodeSetAttribute`
+
+`gpu-sim` `Sim::set_graph_exec_kernel_node_attribute` is `cuGraphExecKernelNodeSetAttribute`.
+Identity with `graph_exec_kernel_node_set_attribute` (`cudaGraphExecKernelNodeSetAttribute`).
+Capture refused. Distinct from `get_graph_exec_kernel_node_attribute`.
+This VM does not invent occupancy SM counts or Engine `--graph-exec-kernel-set-attribute`.
+`gpu-profile capture` is still refused. Dual score still has no `$/M tokens`.
+
+## Shipped 2026-09-02 — CUDA `cuGraphExecKernelNodeGetAttribute`
+
+`gpu-sim` `Sim::get_graph_exec_kernel_node_attribute` is `cuGraphExecKernelNodeGetAttribute`.
+Identity with `graph_exec_kernel_node_get_attribute` (`cudaGraphExecKernelNodeGetAttribute`).
+Query; legal during capture. Distinct from `get_graph_kernel_node_attribute`.
+This VM does not invent occupancy SM counts or Engine `--graph-exec-kernel-get-attribute`.
+`gpu-profile capture` is still refused. Dual score still has no `$/M tokens`.
+
+## Shipped 2026-09-02 — CUDA `cuGraphKernelNodeSetAttribute`
+
+`gpu-sim` `Sim::set_graph_kernel_node_attribute` is `cuGraphKernelNodeSetAttribute`.
+Identity with `graph_kernel_node_set_attribute` (`cudaGraphKernelNodeSetAttribute`).
+Capture refused. Distinct from `get_graph_kernel_node_attribute`.
+This VM does not invent occupancy SM counts or Engine `--graph-kernel-set-attribute`.
+`gpu-profile capture` is still refused. Dual score still has no `$/M tokens`.
+
+## Shipped 2026-09-02 — CUDA `cuGraphKernelNodeGetAttribute`
+
+`gpu-sim` `Sim::get_graph_kernel_node_attribute` is `cuGraphKernelNodeGetAttribute`.
+Identity with `graph_kernel_node_get_attribute` (`cudaGraphKernelNodeGetAttribute`).
+Query; legal during capture. Distinct from `graph_kernel_node_set_attribute`.
+This VM does not invent occupancy SM counts or Engine `--graph-kernel-get-attribute`.
+`gpu-profile capture` is still refused. Dual score still has no `$/M tokens`.
+
+## Shipped 2026-09-02 — CUDA `cuStreamSetAttribute`
+
+`gpu-sim` `Sim::set_stream_attribute` is `cuStreamSetAttribute`.
+Identity with `stream_set_attribute` (`cudaStreamSetAttribute`).
+Capture-legal (host-side, not a graph node). Distinct from `get_stream_attribute`.
+This VM does not invent occupancy SM counts or Engine `--stream-set-attribute`.
+`gpu-profile capture` is still refused. Dual score still has no `$/M tokens`.
+
+## Shipped 2026-09-02 — CUDA `cuStreamGetAttribute`
+
+`gpu-sim` `Sim::get_stream_attribute` is `cuStreamGetAttribute`.
+Identity with `stream_get_attribute` (`cudaStreamGetAttribute`).
+Query; legal during capture. Distinct from `stream_set_attribute`.
+This VM does not invent occupancy SM counts or Engine `--stream-get-attribute`.
+`gpu-profile capture` is still refused. Dual score still has no `$/M tokens`.
+
+## Shipped 2026-09-02 — CUDA `cuStreamCopyAttributes`
+
+`gpu-sim` `Sim::copy_stream_attributes` is `cuStreamCopyAttributes`.
+Identity with `stream_copy_attributes` (`cudaStreamCopyAttributes`).
+Capture-legal (host-side, not a graph node). Distinct from `stream_get_attribute`.
+This VM does not invent occupancy SM counts or Engine `--stream-copy-attributes`.
+`gpu-profile capture` is still refused. Dual score still has no `$/M tokens`.
+
+## Shipped 2026-09-02 — CUDA `cuStreamGetId`
+
+`gpu-sim` `Sim::get_stream_id` is `cuStreamGetId`.
+Identity with `stream_get_id` (`cudaStreamGetId`).
+Query; legal during capture. Distinct from `stream_get_device`.
+This VM does not invent occupancy SM counts or Engine `--stream-get-id`.
+`gpu-profile capture` is still refused. Dual score still has no `$/M tokens`.
+
+## Shipped 2026-09-02 — CUDA `cuDeviceGraphMemTrim`
+
+`gpu-sim` `Sim::device_graph_mem_trim` is `cuDeviceGraphMemTrim`.
+Identity with `graph_mem_trim` (`cudaDeviceGraphMemTrim`).
+Capture refused. Distinct from `device_graph_mem_set`.
+This VM does not invent occupancy SM counts or Engine `--graph-mem-trim`.
+`gpu-profile capture` is still refused. Dual score still has no `$/M tokens`.
+
+## Shipped 2026-09-02 — CUDA `cuDeviceSetGraphMemAttribute`
+
+`gpu-sim` `Sim::device_graph_mem_set` is `cuDeviceSetGraphMemAttribute`.
+Identity with `graph_mem_set` (`cudaDeviceSetGraphMemAttribute`).
+Capture refused. Distinct from `device_graph_mem_get`.
+This VM does not invent occupancy SM counts or Engine `--graph-mem-set`.
+`gpu-profile capture` is still refused. Dual score still has no `$/M tokens`.
+
+## Shipped 2026-09-02 — CUDA `cuDeviceGetGraphMemAttribute`
+
+`gpu-sim` `Sim::device_graph_mem_get` is `cuDeviceGetGraphMemAttribute`.
+Identity with `graph_mem_get` (`cudaDeviceGetGraphMemAttribute`).
+Query; legal during capture. Distinct from `graph_mem_set`.
+This VM does not invent occupancy SM counts or Engine `--graph-mem-get`.
+`gpu-profile capture` is still refused. Dual score still has no `$/M tokens`.
+
+## Shipped 2026-09-02 — CUDA `cuStreamGetPriority`
+
+`gpu-sim` `Sim::get_stream_priority` is `cuStreamGetPriority`.
+Identity with `stream_get_priority` (`cudaStreamGetPriority`).
+Query; legal during capture. Distinct from `stream_flags` and `set_stream_priority`.
+This VM does not invent occupancy SM counts or Engine `--stream-get-priority`.
+`gpu-profile capture` is still refused. Dual score still has no `$/M tokens`.
+
+## Shipped 2026-09-02 — CUDA `cuStreamGetFlags`
+
+`gpu-sim` `Sim::stream_flags` is `cuStreamGetFlags`.
+Identity with `stream_get_flags` (`cudaStreamGetFlags`).
+Query; legal during capture. Distinct from `stream_get_priority`.
+This VM does not invent occupancy SM counts or Engine `--stream-flags`.
+`gpu-profile capture` is still refused. Dual score still has no `$/M tokens`.
+
+## Shipped 2026-09-02 — CUDA `cuStreamCreateWithFlags`
+
+`gpu-sim` `Sim::stream_create_flags` is `cuStreamCreateWithFlags`.
+Identity with `stream_create_with_flags` (`cudaStreamCreateWithFlags`).
+Capture refused. Distinct from `stream_create` and `stream_create_priority`.
+This VM does not invent occupancy SM counts or Engine `--stream-create-flags`.
+`gpu-profile capture` is still refused. Dual score still has no `$/M tokens`.
+
+## Shipped 2026-09-02 — CUDA `cuStreamCreateWithPriority`
+
+`gpu-sim` `Sim::stream_create_priority` is `cuStreamCreateWithPriority`.
+Identity with `stream_create_with_priority` (`cudaStreamCreateWithPriority`).
+Capture refused. Distinct from `stream_create`.
+This VM does not invent occupancy SM counts or Engine `--stream-create-priority`.
+`gpu-profile capture` is still refused. Dual score still has no `$/M tokens`.
+
+## Shipped 2026-09-02 — CUDA `cuCtxSetSharedMemConfig`
+
+`gpu-sim` `Sim::ctx_set_shared_mem_config` is `cuCtxSetSharedMemConfig`.
+Identity with `set_shared_mem_config` (`cudaDeviceSetSharedMemConfig`).
+Capture refused. Distinct from `ctx_get_shared_mem_config` and `set_func_shared_mem_config`.
+This VM does not invent occupancy SM counts or Engine `--ctx-set-shared-mem`.
+`gpu-profile capture` is still refused. Dual score still has no `$/M tokens`.
+
+## Shipped 2026-09-02 — CUDA `cuCtxSetLimit`
+
+`gpu-sim` `Sim::ctx_set_limit` is `cuCtxSetLimit`.
+Identity with `set_limit` (`cudaDeviceSetLimit`).
+Capture refused. Distinct from `ctx_get_limit`.
+This VM does not invent `cuCtxSetSharedMemConfig` or Engine `--ctx-set-limit`.
+`gpu-profile capture` is still refused. Dual score still has no `$/M tokens`.
+
+## Shipped 2026-09-02 — CUDA `cuCtxSetCacheConfig`
+
+`gpu-sim` `Sim::ctx_set_cache_config` is `cuCtxSetCacheConfig`.
+Identity with `set_cache_config` (`cudaDeviceSetCacheConfig`).
+Capture refused. Distinct from `ctx_get_cache_config` and `set_func_cache_config`.
+This VM does not invent `cuCtxSetLimit` or Engine `--ctx-set-cache-config`.
+`gpu-profile capture` is still refused. Dual score still has no `$/M tokens`.
+
+## Shipped 2026-09-02 — CUDA `cuCtxSetFlags`
+
+`gpu-sim` `Sim::ctx_set_flags` is `cuCtxSetFlags`.
+Identity with `set_device_flags` (`cudaSetDeviceFlags`).
+Capture refused. Distinct from `ctx_get_flags` and `device_primary_ctx_set_flags`.
+This VM does not invent `cuCtxSetCacheConfig` or Engine `--ctx-set-flags`.
+`gpu-profile capture` is still refused. Dual score still has no `$/M tokens`.
+
+## Shipped 2026-09-02 — CUDA `cuMemcpyWithAttributesAsync`
+
+`gpu-sim` `Sim::mem_cpy_with_attributes` is `cuMemcpyWithAttributesAsync`.
+Identity with `memcpy_with_attributes` (`cudaMemcpyWithAttributesAsync`).
+Stream order is capture-legal (pinned/device). Distinct from `mem_cpy_batch_async`.
+This VM does not invent occupancy SM counts or Engine `--mem-cpy-with-attributes`.
+`gpu-profile capture` is still refused. Dual score still has no `$/M tokens`.
+
+## Shipped 2026-09-02 — CUDA `cuMemcpy3DWithAttributesAsync`
+
+`gpu-sim` `Sim::mem_cpy_3d_with_attributes` is `cuMemcpy3DWithAttributesAsync`.
+Identity with `memcpy_3d_with_attributes` (`cudaMemcpy3DWithAttributesAsync`).
+Stream order is capture-legal (pinned/device). Distinct from `mem_cpy_3d_batch_async`.
+This VM does not invent `mem_cpy_with_attributes` or Engine `--mem-cpy-3d-with-attributes`.
+`gpu-profile capture` is still refused. Dual score still has no `$/M tokens`.
+
+## Shipped 2026-09-02 — CUDA `cuMemcpy3DBatchAsync`
+
+`gpu-sim` `Sim::mem_cpy_3d_batch_async` is `cuMemcpy3DBatchAsync`.
+Identity with `memcpy_3d_batch_async` (`cudaMemcpy3DBatchAsync`).
+Capture refused. Distinct from `mem_cpy_batch_async`.
+This VM does not invent `mem_cpy_3d_with_attributes` or Engine `--mem-cpy-3d-batch-async`.
+`gpu-profile capture` is still refused. Dual score still has no `$/M tokens`.
+
+## Shipped 2026-09-02 — CUDA `cuMemcpyBatchAsync`
+
+`gpu-sim` `Sim::mem_cpy_batch_async` is `cuMemcpyBatchAsync`.
+Identity with `memcpy_batch_async` (`cudaMemcpyBatchAsync`).
+Capture refused. Distinct from `memcpy_3d_batch_async`.
+This VM does not invent `mem_cpy_3d_batch_async` or Engine `--mem-cpy-batch-async`.
+`gpu-profile capture` is still refused. Dual score still has no `$/M tokens`.
+
+## Shipped 2026-09-02 — CUDA `cuMemcpy2DPeerAsync`
+
+`gpu-sim` `Sim::mem_cpy_peer_2d_async` is `cuMemcpy2DPeerAsync`.
+Identity with `memcpy_peer_2d_async` (`cudaMemcpy2DPeerAsync`).
+Capture-legal. Distinct from `mem_cpy_peer_2d`.
+This VM does not invent occupancy SM counts or Engine `--mem-cpy-peer-2d-async`.
+`gpu-profile capture` is still refused. Dual score still has no `$/M tokens`.
+
+## Shipped 2026-09-02 — CUDA `cuMemcpy2DPeer`
+
+`gpu-sim` `Sim::mem_cpy_peer_2d` is `cuMemcpy2DPeer`.
+Identity with `memcpy_peer_2d` (`cudaMemcpy2DPeer`).
+Capture refused. Distinct from `memcpy_peer_2d_async`.
+This VM does not invent `mem_cpy_peer_2d_async` or Engine `--mem-cpy-peer-2d`.
+`gpu-profile capture` is still refused. Dual score still has no `$/M tokens`.
+
+## Shipped 2026-09-02 — CUDA `cuMemcpy3DPeerAsync`
+
+`gpu-sim` `Sim::mem_cpy_peer_3d_async` is `cuMemcpy3DPeerAsync`.
+Identity with `memcpy_peer_3d_async` (`cudaMemcpy3DPeerAsync`).
+Capture-legal. Distinct from `mem_cpy_peer_3d`.
+This VM does not invent `mem_cpy_peer_2d` or Engine `--mem-cpy-peer-3d-async`.
+`gpu-profile capture` is still refused. Dual score still has no `$/M tokens`.
+
+## Shipped 2026-09-02 — CUDA `cuMemcpy3DPeer`
+
+`gpu-sim` `Sim::mem_cpy_peer_3d` is `cuMemcpy3DPeer`.
+Identity with `memcpy_peer_3d` (`cudaMemcpy3DPeer`).
+Capture refused. Distinct from `memcpy_peer_3d_async`.
+This VM does not invent `mem_cpy_peer_3d_async` or Engine `--mem-cpy-peer-3d`.
+`gpu-profile capture` is still refused. Dual score still has no `$/M tokens`.
+
+## Shipped 2026-09-02 — CUDA `cuMemcpyPeerAsync`
+
+`gpu-sim` `Sim::mem_cpy_peer_async` is `cuMemcpyPeerAsync`.
+Identity with `memcpy_peer_async` (`cudaMemcpyPeerAsync`).
+Capture-legal. Distinct from `mem_cpy_peer`.
+This VM does not invent `mem_cpy_peer_3d` or Engine `--mem-cpy-peer-async`.
+`gpu-profile capture` is still refused. Dual score still has no `$/M tokens`.
+
+## Shipped 2026-09-02 — CUDA `cuMemcpyPeer`
+
+`gpu-sim` `Sim::mem_cpy_peer` is `cuMemcpyPeer`.
+Identity with `memcpy_peer` (`cudaMemcpyPeer`).
+Capture refused. Distinct from `memcpy_peer_async`.
+This VM does not invent `mem_cpy_peer_async` or Engine `--mem-cpy-peer`.
+`gpu-profile capture` is still refused. Dual score still has no `$/M tokens`.
+
+## Shipped 2026-09-02 — CUDA `cuMemcpy3DAsync`
+
+`gpu-sim` `Sim::mem_cpy_3d_async` is `cuMemcpy3DAsync`.
+Identity with `memcpy_3d_async` (`cudaMemcpy3DAsync`).
+Capture-legal (pinned/device). Distinct from `mem_cpy_3d`.
+This VM does not invent `mem_cpy_peer` or Engine `--mem-cpy-3d-async`.
+`gpu-profile capture` is still refused. Dual score still has no `$/M tokens`.
+
+## Shipped 2026-09-02 — CUDA `cuMemcpy3D`
+
+`gpu-sim` `Sim::mem_cpy_3d` is `cuMemcpy3D`.
+Identity with `memcpy_3d` (`cudaMemcpy3D`).
+Capture refused. Distinct from `memcpy_3d_unaligned`.
+This VM does not invent `mem_cpy_3d_async` or Engine `--mem-cpy-3d`.
+`gpu-profile capture` is still refused. Dual score still has no `$/M tokens`.
+
+## Shipped 2026-09-02 — CUDA `cuMemcpy2DAsync`
+
+`gpu-sim` `Sim::mem_cpy_2d_async` is `cuMemcpy2DAsync`.
+Identity with `memcpy_2d_async` (`cudaMemcpy2DAsync`).
+Capture-legal (pinned/device). Distinct from `mem_cpy_2d`.
+This VM does not invent `mem_cpy_3d` or Engine `--mem-cpy-2d-async`.
+`gpu-profile capture` is still refused. Dual score still has no `$/M tokens`.
+
+## Shipped 2026-09-02 — CUDA `cuMemcpy2D`
+
+`gpu-sim` `Sim::mem_cpy_2d` is `cuMemcpy2D`.
+Identity with `memcpy_2d` (`cudaMemcpy2D`).
+Capture refused. Distinct from `memcpy_2d_unaligned`.
+This VM does not invent `mem_cpy_2d_async` or Engine `--mem-cpy-2d`.
+`gpu-profile capture` is still refused. Dual score still has no `$/M tokens`.
+
+## Shipped 2026-09-02 — CUDA `cuMemGetAddressRange`
+
+`gpu-sim` `Sim::mem_address_range` is `cuMemGetAddressRange`.
+Identity with `mem_get_address_range` (`cudaMemGetAddressRange`).
+Query; legal during capture. Distinct from `mem_range_get`.
+This VM does not invent occupancy MaxActiveBlocks or Engine `--mem-address-range`.
+`gpu-profile capture` is still refused. Dual score still has no `$/M tokens`.
+
+## Shipped 2026-09-02 — CUDA `cuMemcpy`
+
+`gpu-sim` `Sim::mem_cpy` is `cuMemcpy`.
+Identity with `memcpy_sync` (`cudaMemcpy`).
+Capture refused. Distinct from `memcpy_async`.
+This VM does not invent `mem_address_range` or Engine `--mem-cpy`.
+`gpu-profile capture` is still refused. Dual score still has no `$/M tokens`.
+
+## Shipped 2026-09-02 — CUDA `cuMemcpyAsync`
+
+`gpu-sim` `Sim::memcpy_async` is `cuMemcpyAsync`.
+Identity with `memcpy` (`cudaMemcpyAsync`).
+Capture-legal (pinned/device). Distinct from `memcpy_sync`.
+This VM does not invent `mem_cpy` or Engine `--memcpy-async`.
+`gpu-profile capture` is still refused. Dual score still has no `$/M tokens`.
+
+## Shipped 2026-09-02 — CUDA `cuStreamAttachMemAsync` flags
+
+`gpu-sim` `Sim::stream_attach_flags` is `cuStreamAttachMemAsync` flags.
+Identity with `stream_attach_with_flags` (`cudaStreamAttachMemAsync` flags).
+Capture refused. Distinct from `stream_attach_n`.
+This VM does not invent `memcpy_async` or Engine `--stream-attach-flags`.
+`gpu-profile capture` is still refused. Dual score still has no `$/M tokens`.
+
+## Shipped 2026-09-02 — CUDA `cuStreamAttachMemAsync` length
+
+`gpu-sim` `Sim::stream_attach_n` is `cuStreamAttachMemAsync` length.
+Identity with `stream_attach_with_size` (`cudaStreamAttachMemAsync` length).
+Capture refused. Distinct from `stream_attach_mem`.
+This VM does not invent `stream_attach_flags` or Engine `--stream-attach-n`.
+`gpu-profile capture` is still refused. Dual score still has no `$/M tokens`.
+
+## Shipped 2026-09-02 — CUDA `cuStreamAttachMemAsync`
+
+`gpu-sim` `Sim::stream_attach_mem` is `cuStreamAttachMemAsync`.
+Identity with `stream_attach` (`cudaStreamAttachMemAsync`).
+Capture refused. Distinct from `stream_attach_with_flags`.
+This VM does not invent `stream_attach_n` or Engine `--stream-attach-mem`.
+`gpu-profile capture` is still refused. Dual score still has no `$/M tokens`.
+
+## Shipped 2026-09-02 — CUDA `cuMemRangeGetAttributes` dataSizes
+
+`gpu-sim` `Sim::mem_range_gets_data` is `cuMemRangeGetAttributes` dataSizes.
+Identity with `mem_range_get_attributes_with_data_sizes` (`cudaMemRangeGetAttributes` dataSizes).
+Query; legal during capture. Distinct from `mem_range_get_data`.
+This VM does not invent occupancy SM counts or Engine `--mem-range-gets-data`.
+`gpu-profile capture` is still refused. Dual score still has no `$/M tokens`.
+
+## Shipped 2026-09-02 — CUDA `cuMemRangeGetAttribute` dataSize
+
+`gpu-sim` `Sim::mem_range_get_data` is `cuMemRangeGetAttribute` dataSize.
+Identity with `mem_range_get_attribute_with_data_size` (`cudaMemRangeGetAttribute` dataSize).
+Query; legal during capture. Distinct from `mem_range_get_n`.
+This VM does not invent a `cuMemRangeGetAttributes` dataSizes or Engine `--mem-range-get-data`.
+`gpu-profile capture` is still refused. Dual score still has no `$/M tokens`.
+
+## Shipped 2026-09-02 — CUDA `cuMemRangeGetAttributes` count
+
+`gpu-sim` `Sim::mem_range_gets_n` is `cuMemRangeGetAttributes` count.
+Identity with `mem_range_get_attributes_with_size` (`cudaMemRangeGetAttributes` count).
+Query; legal during capture. Distinct from `mem_range_gets`.
+This VM does not invent a `cuMemRangeGetAttribute` dataSize or Engine `--mem-range-gets-n`.
+`gpu-profile capture` is still refused. Dual score still has no `$/M tokens`.
+
+## Shipped 2026-09-02 — CUDA `cuMemRangeGetAttributes`
+
+`gpu-sim` `Sim::mem_range_gets` is `cuMemRangeGetAttributes`.
+Identity with `mem_range_get_attributes` (`cudaMemRangeGetAttributes`).
+Query; legal during capture. Distinct from `mem_range_get`.
+This VM does not invent a `cuMemRangeGetAttributes` count or Engine `--mem-range-gets`.
+`gpu-profile capture` is still refused. Dual score still has no `$/M tokens`.
+
+## Shipped 2026-09-02 — CUDA `cuMemRangeGetAttribute` count
+
+`gpu-sim` `Sim::mem_range_get_n` is `cuMemRangeGetAttribute` count.
+Identity with `mem_range_get_attribute_with_size` (`cudaMemRangeGetAttribute` count).
+Query; legal during capture. Distinct from `mem_range_get`.
+This VM does not invent `cuMemRangeGetAttributes` or Engine `--mem-range-get-n`.
+`gpu-profile capture` is still refused. Dual score still has no `$/M tokens`.
+
+## Shipped 2026-09-02 — CUDA `cuMemRangeGetAttribute`
+
+`gpu-sim` `Sim::mem_range_get` is `cuMemRangeGetAttribute`.
+Identity with `mem_range_get_attribute` (`cudaMemRangeGetAttribute`).
+Query; legal during capture. Distinct from `mem_range_get_attributes`.
+This VM does not invent a `cuMemRangeGetAttribute` count or Engine `--mem-range-get`.
+`gpu-profile capture` is still refused. Dual score still has no `$/M tokens`.
+
+## Shipped 2026-09-02 — CUDA `cuMemAdvise_v2`
+
+`gpu-sim` `Sim::mem_advise_v2` is `cuMemAdvise_v2`.
+Identity with `mem_advise_with_location` (`cudaMemAdvise_v2` location).
+Capture refused. Distinct from `mem_advise_n`.
+This VM does not invent `cuMemRangeGetAttribute` or Engine `--mem-advise-v2`.
+`gpu-profile capture` is still refused. Dual score still has no `$/M tokens`.
+
+## Shipped 2026-09-02 — CUDA host dest `cuMemPrefetchAsync` count
+
+`gpu-sim` `Sim::mem_prefetch_host_n` is host dest `cuMemPrefetchAsync` count.
+Identity with `prefetch_host_with_size` (`cudaMemPrefetchAsync` cpu count).
+Capture-legal (memcpy). Distinct from `mem_prefetch_host`.
+This VM does not invent `mem_advise_v2` or Engine `--mem-prefetch-host-n`.
+`gpu-profile capture` is still refused. Dual score still has no `$/M tokens`.
+
+## Shipped 2026-09-02 — CUDA host dest `cuMemPrefetchAsync`
+
+`gpu-sim` `Sim::mem_prefetch_host` is host dest `cuMemPrefetchAsync`.
+Identity with `prefetch_host` (`cudaMemPrefetchAsync` cpu device).
+Capture-legal (memcpy). Distinct from `mem_prefetch`.
+This VM does not invent `mem_prefetch_host_n` or Engine `--mem-prefetch-host`.
+`gpu-profile capture` is still refused. Dual score still has no `$/M tokens`.
+
+## Shipped 2026-09-02 — CUDA `cuMemPrefetchAsync` count
+
+`gpu-sim` `Sim::mem_prefetch_n` is `cuMemPrefetchAsync` count.
+Identity with `prefetch_with_size` (`cudaMemPrefetchAsync` count).
+Capture-legal (memcpy). Distinct from `mem_prefetch`.
+This VM does not invent `mem_prefetch_host` or Engine `--mem-prefetch-n`.
+`gpu-profile capture` is still refused. Dual score still has no `$/M tokens`.
+
+## Shipped 2026-09-02 — CUDA `cuMemPrefetchAsync_v2`
+
+`gpu-sim` `Sim::mem_prefetch_v2` is `cuMemPrefetchAsync_v2`.
+Identity with `prefetch_with_flags` (`cudaMemPrefetchAsync` flags).
+Capture-legal (memcpy). Distinct from `mem_prefetch`.
+This VM does not invent a `cuMemPrefetchAsync` count or Engine `--mem-prefetch-v2`.
+`gpu-profile capture` is still refused. Dual score still has no `$/M tokens`.
+
+## Shipped 2026-09-02 — CUDA `cuMemPrefetchAsync`
+
+`gpu-sim` `Sim::mem_prefetch` is `cuMemPrefetchAsync`.
+Identity with `prefetch` (`cudaMemPrefetchAsync`). Capture-legal (memcpy).
+Distinct from `prefetch_with_flags`.
+This VM does not invent `cuMemPrefetchAsync_v2` or Engine `--mem-prefetch`.
+`gpu-profile capture` is still refused. Dual score still has no `$/M tokens`.
+
+## Shipped 2026-09-02 — CUDA `cuMemAdvise`
+
+`gpu-sim` `Sim::mem_advise_n` is `cuMemAdvise`.
+Identity with `mem_advise_with_size` (`cudaMemAdvise` count).
+Capture refused. Distinct from `mem_advise`.
+This VM does not invent `cuMemPrefetchAsync` or Engine `--mem-advise-n`.
+`gpu-profile capture` is still refused. Dual score still has no `$/M tokens`.
+
+## Shipped 2026-09-02 — CUDA `cuMemFreeAsync`
+
+`gpu-sim` `Sim::mem_free_async` is `cuMemFreeAsync`.
+Identity with `free` (`cudaFreeAsync`). Capture-legal (graph mem free).
+Distinct from `mem_free`.
+This VM does not invent `cuMemAdvise` or Engine `--mem-free-async`.
+`gpu-profile capture` is still refused. Dual score still has no `$/M tokens`.
+
+## Shipped 2026-09-02 — CUDA `cuMemAllocAsync`
+
+`gpu-sim` `Sim::mem_alloc_async` is `cuMemAllocAsync`.
+Identity with `alloc` (`cudaMallocAsync`). Capture-legal (graph mempool).
+Distinct from `mem_alloc`.
+This VM does not invent `cuMemFreeAsync` or Engine `--mem-alloc-async`.
+`gpu-profile capture` is still refused. Dual score still has no `$/M tokens`.
+
+## Shipped 2026-09-02 — CUDA `cuMemAllocManaged`
+
+`gpu-sim` `Sim::mem_alloc_managed` is `cuMemAllocManaged`.
+Identity with `alloc_managed_with_flags` (`cudaMallocManaged` flags).
+Capture refused. Distinct from `alloc_managed`.
+This VM does not invent `cuMemAllocAsync` or Engine `--mem-alloc-managed`.
+`gpu-profile capture` is still refused. Dual score still has no `$/M tokens`.
+
+## Shipped 2026-09-02 — CUDA `cuMemAllocHost`
+
+`gpu-sim` `Sim::mem_alloc_host` is `cuMemAllocHost`.
+Identity with `alloc_host_pinned` (`cudaMallocHost`). Capture refused.
+Distinct from `mem_host_alloc`.
+This VM does not invent `cuMemAllocManaged` or Engine `--mem-alloc-host`.
+`gpu-profile capture` is still refused. Dual score still has no `$/M tokens`.
+
+## Shipped 2026-09-02 — CUDA `cuIpcOpenEventHandle`
+
+`gpu-sim` `Sim::ipc_open_event_handle` is `cuIpcOpenEventHandle`.
+Identity with `ipc_open_event` (`cudaIpcOpenEventHandle`). Capture refused.
+Distinct from `ipc_get_event_handle`.
+This VM does not invent `cuMemAllocHost` or Engine `--ipc-open-event-handle`.
+`gpu-profile capture` is still refused. Dual score still has no `$/M tokens`.
+
+## Shipped 2026-09-02 — CUDA `cuIpcGetEventHandle`
+
+`gpu-sim` `Sim::ipc_get_event_handle` is `cuIpcGetEventHandle`.
+Identity with `ipc_get_event` (`cudaIpcGetEventHandle`). Host-sync; capture refused.
+Distinct from `ipc_get_mem_handle`.
+This VM does not invent `cuIpcOpenEventHandle` or Engine `--ipc-get-event-handle`.
+`gpu-profile capture` is still refused. Dual score still has no `$/M tokens`.
+
+## Shipped 2026-09-02 — CUDA `cuIpcCloseMemHandle`
+
+`gpu-sim` `Sim::ipc_close_mem_handle` is `cuIpcCloseMemHandle`.
+Identity with `ipc_close` (`cudaIpcCloseMemHandle`). Capture refused.
+Distinct from `ipc_open_mem_handle`.
+This VM does not invent `cuIpcGetEventHandle` or Engine `--ipc-close-mem-handle`.
+`gpu-profile capture` is still refused. Dual score still has no `$/M tokens`.
+
+## Shipped 2026-09-02 — CUDA `cuIpcOpenMemHandle`
+
+`gpu-sim` `Sim::ipc_open_mem_handle` is `cuIpcOpenMemHandle`.
+Identity with `ipc_open_with_flags` (`cudaIpcOpenMemHandle` flags).
+Capture refused. Distinct from `ipc_open`.
+This VM does not invent `cuIpcCloseMemHandle` or Engine `--ipc-open-mem-handle`.
+`gpu-profile capture` is still refused. Dual score still has no `$/M tokens`.
+
+## Shipped 2026-09-02 — CUDA `cuIpcGetMemHandle`
+
+`gpu-sim` `Sim::ipc_get_mem_handle` is `cuIpcGetMemHandle`.
+Identity with `ipc_get` (`cudaIpcGetMemHandle`). Host-sync; capture refused.
+Distinct from `ipc_get_event`.
+This VM does not invent `cuIpcOpenMemHandle` or Engine `--ipc-get-mem-handle`.
+`gpu-profile capture` is still refused. Dual score still has no `$/M tokens`.
+
+## Shipped 2026-09-02 — CUDA `cuMemHostRegister` size
+
+`gpu-sim` `Sim::mem_host_register_with_size` is `cuMemHostRegister` size.
+Identity with `host_register_with_size` (`cudaHostRegister` size).
+Capture refused. Distinct from `mem_host_register`.
+This VM does not invent `cuIpcGetMemHandle` or Engine `--mem-host-register-size`.
+`gpu-profile capture` is still refused. Dual score still has no `$/M tokens`.
+
+## Shipped 2026-09-02 — CUDA `cuMemHostUnregister`
+
+`gpu-sim` `Sim::mem_host_unregister` is `cuMemHostUnregister`.
+Identity with `host_unregister` (`cudaHostUnregister`). Capture refused.
+Distinct from `mem_host_register`.
+This VM does not invent a register-size identity or Engine `--mem-host-unregister`.
+`gpu-profile capture` is still refused. Dual score still has no `$/M tokens`.
+
+## Shipped 2026-09-02 — CUDA `cuMemHostRegister`
+
+`gpu-sim` `Sim::mem_host_register` is `cuMemHostRegister`.
+Identity with `host_register_with_flags` (`cudaHostRegister` flags).
+Capture refused. Distinct from `host_register`.
+This VM does not invent `cuMemHostUnregister` or Engine `--mem-host-register`.
+`gpu-profile capture` is still refused. Dual score still has no `$/M tokens`.
+
+## Shipped 2026-09-02 — CUDA `cuMemHostGetDevicePointer`
+
+`gpu-sim` `Sim::mem_host_get_device_pointer` is `cuMemHostGetDevicePointer`.
+Identity with `host_get_device_pointer_with_flags` (`cudaHostGetDevicePointer`
+flags). Query. Distinct from `host_get_device_pointer`.
+This VM does not invent `cuMemHostRegister` or Engine `--mem-host-get-device-pointer`.
+`gpu-profile capture` is still refused. Dual score still has no `$/M tokens`.
+
+## Shipped 2026-09-02 — CUDA `cuMemHostGetFlags`
+
+`gpu-sim` `Sim::mem_host_get_flags` is `cuMemHostGetFlags`.
+Identity with `host_get_flags` (`cudaHostGetFlags`). Query. Distinct from
+`host_get_device_pointer`.
+This VM does not invent `cuMemHostGetDevicePointer` or Engine `--mem-host-get-flags`.
+`gpu-profile capture` is still refused. Dual score still has no `$/M tokens`.
+
+## Shipped 2026-09-02 — CUDA `cuMemHostAlloc`
+
+`gpu-sim` `Sim::mem_host_alloc` is `cuMemHostAlloc`.
+Identity with `alloc_host_with_flags` (`cudaHostAlloc`). Capture refused.
+Distinct from `alloc_host_pinned`.
+This VM does not invent `cuMemHostGetFlags` or Engine `--mem-host-alloc`.
+`gpu-profile capture` is still refused. Dual score still has no `$/M tokens`.
+
+## Shipped 2026-09-02 — CUDA `cuMemFreeHost`
+
+`gpu-sim` `Sim::mem_free_host` is `cuMemFreeHost`.
+Identity with `free_host_pinned` (`cudaFreeHost`). Host-sync; capture refused.
+Distinct from `mem_free`.
+This VM does not invent `cuMemHostAlloc` or Engine `--mem-free-host`.
+`gpu-profile capture` is still refused. Dual score still has no `$/M tokens`.
+
+## Shipped 2026-09-02 — CUDA `cuMemFree`
+
+`gpu-sim` `Sim::mem_free` is `cuMemFree`.
+Identity with `free_sync` (`cudaFree`). Host-sync; capture refused.
+Distinct from `free` (`cudaFreeAsync`).
+This VM does not invent `cuMemFreeHost` or Engine `--mem-free`.
+`gpu-profile capture` is still refused. Dual score still has no `$/M tokens`.
+
+## Shipped 2026-09-02 — CUDA `cuMemAlloc`
+
+`gpu-sim` `Sim::mem_alloc` is `cuMemAlloc`.
+Identity with `malloc` (`cudaMalloc`). Host-sync; capture refused.
+Distinct from `alloc` (`cudaMallocAsync`).
+This VM does not invent `cuMemFree` or Engine `--mem-alloc`.
+`gpu-profile capture` is still refused. Dual score still has no `$/M tokens`.
+
+## Shipped 2026-09-02 — CUDA `cudaStreamCreate`
+
+`gpu-sim` `Sim::stream_create` is `cudaStreamCreate` / `cuStreamCreate`
+default flags. Identity with `stream_create_with_flags` DEFAULT (blocking).
+Capture refused. Distinct from `stream_create_with_priority`.
+This VM does not invent `cuStreamCreateWithPriority` or Engine `--stream-create`.
+`gpu-profile capture` is still refused. Dual score still has no `$/M tokens`.
+
+## Shipped 2026-09-02 — CUDA `cuMemGetInfo`
+
+`gpu-sim` `Sim::mem_get_info` is `cuMemGetInfo`.
+Identity with `mem_info` (`cudaMemGetInfo`). `(free, total)` HBM
+bytes. Query. Distinct from `device_total_mem`.
+This VM does not invent `cuStreamCreate` or Engine `--mem-get-info`.
+`gpu-profile capture` is still refused. Dual score still has no `$/M tokens`.
+
+## Shipped 2026-09-02 — CUDA `cuEventElapsedTime`
+
+`gpu-sim` `Sim::event_elapsed` is `cuEventElapsedTime`.
+Identity with `event_elapsed_ns` (`cudaEventElapsedTime`). Nanoseconds
+(this crate is ns, not milliseconds). Query. Distinct from a millisecond
+conversion.
+This VM does not invent a millisecond elapsed or Engine `--event-elapsed`.
+`gpu-profile capture` is still refused. Dual score still has no `$/M tokens`.
+
+## Shipped 2026-09-02 — CUDA `cuStreamWaitEvent` flags
+
+`gpu-sim` `Sim::stream_wait_event_with_flags` is `cuStreamWaitEvent` with
+flags. Identity with `wait_event_with_flags` (`cudaStreamWaitEvent`
+flags). Unknown bits are Invalid. Capture-legal. Distinct from
+`stream_wait_event` and `wait_event_external`.
+This VM does not invent `cuEventElapsedTime` or Engine `--stream-wait-event-flags`.
+`gpu-profile capture` is still refused. Dual score still has no `$/M tokens`.
+
+## Shipped 2026-09-02 — CUDA `cuStreamWaitEvent`
+
+`gpu-sim` `Sim::stream_wait_event` is `cuStreamWaitEvent`.
+Identity with `wait_event` (`cudaStreamWaitEvent`). Later ops on the
+waiter wait the record. Capture-legal. Distinct from
+`wait_event_with_flags`.
+This VM does not invent a `wait_event_with_flags` identity or Engine `--stream-wait-event`.
+`gpu-profile capture` is still refused. Dual score still has no `$/M tokens`.
+
+## Shipped 2026-09-02 — CUDA `cuEventRecordWithFlags`
+
+`gpu-sim` `Sim::event_record_with_flags` is `cuEventRecordWithFlags`.
+Identity with `record_event_with_flags` (`cudaEventRecordWithFlags`).
+Unknown bits are Invalid. Capture-legal. Distinct from `event_record`
+and `record_event_external`.
+This VM does not invent `cuStreamWaitEvent` or Engine `--event-record-with-flags`.
+`gpu-profile capture` is still refused. Dual score still has no `$/M tokens`.
+
+## Shipped 2026-09-02 — CUDA `cuEventRecord`
+
+`gpu-sim` `Sim::event_record` is `cuEventRecord`.
+Identity with `record_event` (`cudaEventRecord`). Records after prior
+ops on the stream. Capture-legal. Distinct from `record_event_with_flags`.
+This VM does not invent `cuEventRecordWithFlags` or Engine `--event-record`.
+`gpu-profile capture` is still refused. Dual score still has no `$/M tokens`.
+
+## Shipped 2026-09-02 — CUDA `cuEventCreateWithFlags`
+
+`gpu-sim` `Sim::event_create_with_flags` is `cuEventCreateWithFlags`.
+Identity with `create_event_with_flags` (`cudaEventCreateWithFlags`).
+Host-synchronous; capture cannot include it. Unknown bits are Invalid.
+Interprocess requires DisableTiming. Distinct from `event_create`.
+This VM does not invent `cuEventRecord` or Engine `--event-create-with-flags`.
+`gpu-profile capture` is still refused. Dual score still has no `$/M tokens`.
+
+## Shipped 2026-09-02 — CUDA `cuEventCreate`
+
+`gpu-sim` `Sim::event_create` is `cuEventCreate`.
+Identity with `create_event` (`cudaEventCreate`). Timing enabled
+(default flags). Host-synchronous; capture cannot include it.
+Duplicate ids are Invalid. Distinct from `create_event_with_flags`.
+This VM does not invent `cuEventCreateWithFlags` or Engine `--event-create`.
+`gpu-profile capture` is still refused. Dual score still has no `$/M tokens`.
+
+## Shipped 2026-09-02 — CUDA `cuEventDestroy`
+
+`gpu-sim` `Sim::event_destroy` is `cuEventDestroy`.
+Identity with `destroy_event` (`cudaEventDestroy`). Host-synchronous;
+capture cannot include it. Waits a recorded incomplete event.
+Never-recorded returns immediately. Unknown ids are UnknownEvent.
+This VM does not invent `cuEventCreate` or Engine `--event-destroy`.
+`gpu-profile capture` is still refused. Dual score still has no `$/M tokens`.
+
+## Shipped 2026-09-02 — CUDA `cuStreamSynchronize`
+
+`gpu-sim` `Sim::stream_synchronize` is `cuStreamSynchronize`.
+Identity with `synchronize_stream` (`cudaStreamSynchronize`). Other
+streams keep running. Unknown devices are Invalid. A capturing stream
+is Invalid. Distinct from `ctx_synchronize`.
+This VM does not invent `cuEventDestroy` or Engine `--stream-synchronize`.
+`gpu-profile capture` is still refused. Dual score still has no `$/M tokens`.
+
+## Shipped 2026-09-02 — CUDA `cuEventSynchronize`
+
+`gpu-sim` `Sim::event_synchronize` is `cuEventSynchronize`.
+Identity with `synchronize_event` (`cudaEventSynchronize`). Waits the
+record only. Unknown ids are UnknownEvent. Distinct from
+`synchronize_stream`.
+This VM does not invent `cuStreamSynchronize` or Engine `--event-synchronize`.
+`gpu-profile capture` is still refused. Dual score still has no `$/M tokens`.
+
+## Shipped 2026-09-02 — CUDA `cuStreamQuery`
+
+`gpu-sim` `Sim::stream_query` is `cuStreamQuery`.
+Identity with `query_stream` (`cudaStreamQuery`). Does not wait.
+Unknown devices are Invalid. A busy stream is `Ok(false)`.
+A capturing stream is Invalid. Distinct from `stream_is_idle`.
+This VM does not invent `cuEventSynchronize` or Engine `--stream-query`.
+`gpu-profile capture` is still refused. Dual score still has no `$/M tokens`.
+
+## Shipped 2026-09-02 — CUDA `cuEventQuery`
+
+`gpu-sim` `Sim::event_query` is `cuEventQuery`.
+Identity with `query_event` (`cudaEventQuery`). Does not wait.
+Unknown ids are UnknownEvent. Incomplete records are `Ok(false)`.
+Query; legal during capture. Distinct from `query_stream`.
+This VM does not invent `cuStreamQuery` or Engine `--event-query`.
+`gpu-profile capture` is still refused. Dual score still has no `$/M tokens`.
+
+## Shipped 2026-09-02 — CUDA `cuMemsetD8`
+
+`gpu-sim` `Sim::memset_d8` is `cuMemsetD8`.
+Host-synchronous; capture cannot include it. `count` is CUDA `N` of
+8-bit values; payload is `count` bytes. Distinct from `memset_d8_async`.
+This VM does not invent `cuEventQuery` or Engine `--memset-d8-sync`.
+`gpu-profile capture` is still refused. Dual score still has no `$/M tokens`.
+
+## Shipped 2026-09-02 — CUDA `cuMemsetD8Async`
+
+`gpu-sim` `Sim::memset_d8_async` is `cuMemsetD8Async`.
+`count` is CUDA `N` of 8-bit values; payload is `count` bytes.
+Typed `memset` stays byte-counted `element_size` 1. Capture of Async is
+legal. Fill value is not modeled. Distinct from `memset_d16_async`.
+This VM does not invent `cuMemsetD8` or Engine `--memset-d8`.
+`gpu-profile capture` is still refused. Dual score still has no `$/M tokens`.
+
+## Shipped 2026-09-02 — CUDA `cuFuncGetCacheConfig`
+
+`gpu-sim` `Sim::func_get_cache_config` is `cuFuncGetCacheConfig`.
+Always Invalid `"func gcache"` until a compiled kernel exists.
+Query; legal during capture. Distinct from
+`get_func_cache_config` (per-device stored `cudaFuncSetCacheConfig`) and
+`kernel_set_cache_config` (why is not `"kernel cache"`).
+This VM does not invent `cuMemsetD8Async` or Engine `--func-gcache`.
+`gpu-profile capture` is still refused. Dual score still has no `$/M tokens`.
+
+## Shipped 2026-09-02 — CUDA `cuMemcpy2DArrayToArrayAsync`
+
+`gpu-sim` `Sim::memcpy_2d_array_to_array_async` is `cuMemcpy2DArrayToArrayAsync`.
+Always Invalid `"async 2da2a"` because CUDA arrays are not modeled.
+Query; legal during capture. Distinct from
+`memcpy_2d_from_array_async` (why is not `"async 2dfrom"`) and
+`memcpy_2d_array_to_array` (why is not `"memcpy2d a2a"`).
+This VM does not invent `cuFuncGetCacheConfig` or Engine `--async-2da2a`.
+`gpu-profile capture` is still refused. Dual score still has no `$/M tokens`.
+
+## Shipped 2026-09-02 — CUDA `cuMemcpy2DFromArrayAsync`
+
+`gpu-sim` `Sim::memcpy_2d_from_array_async` is `cuMemcpy2DFromArrayAsync`.
+Always Invalid `"async 2dfrom"` because CUDA arrays are not modeled.
+Query; legal during capture. Distinct from
+`memcpy_2d_to_array_async` (why is not `"async 2dtoarr"`) and
+`memcpy_2d_from_array` (why is not `"memcpy2d fromarr"`).
+This VM does not invent `cuMemcpy2DArrayToArrayAsync` or Engine `--async-2dfrom`.
+`gpu-profile capture` is still refused. Dual score still has no `$/M tokens`.
+
+## Shipped 2026-09-02 — CUDA `cuMemcpy2DToArrayAsync`
+
+`gpu-sim` `Sim::memcpy_2d_to_array_async` is `cuMemcpy2DToArrayAsync`.
+Always Invalid `"async 2dtoarr"` because CUDA arrays are not modeled.
+Query; legal during capture. Distinct from
+`memcpy_2d_array_to_array` (why is not `"memcpy2d a2a"`) and
+`memcpy_2d_to_array` (why is not `"memcpy2d toarr"`).
+This VM does not invent `cuMemcpy2DFromArrayAsync` or Engine `--async-2dtoarr`.
+`gpu-profile capture` is still refused. Dual score still has no `$/M tokens`.
+
+## Shipped 2026-09-02 — CUDA `cuMemcpy2DArrayToArray`
+
+`gpu-sim` `Sim::memcpy_2d_array_to_array` is `cuMemcpy2DArrayToArray`.
+Always Invalid `"memcpy2d a2a"` because CUDA arrays are not modeled.
+Query; legal during capture. Distinct from
+`memcpy_2d_from_array` (why is not `"memcpy2d fromarr"`) and
+`memcpy_2d_to_array` (why is not `"memcpy2d toarr"`).
+This VM does not invent `cuMemcpy2DToArrayAsync` or Engine `--memcpy2d-a2a`.
+`gpu-profile capture` is still refused. Dual score still has no `$/M tokens`.
+
+## Shipped 2026-09-02 — CUDA `cuMemcpy2DFromArray`
+
+`gpu-sim` `Sim::memcpy_2d_from_array` is `cuMemcpy2DFromArray`.
+Always Invalid `"memcpy2d fromarr"` because CUDA arrays are not modeled.
+Query; legal during capture. Distinct from
+`memcpy_2d_to_array` (why is not `"memcpy2d toarr"`) and
+`array_create` (why is not `"cuda array"`).
+This VM does not invent `cuMemcpy2DArrayToArray` or Engine `--memcpy2d-fromarr`.
+`gpu-profile capture` is still refused. Dual score still has no `$/M tokens`.
+
+## Shipped 2026-09-02 — CUDA `cuMemcpy2DToArray`
+
+`gpu-sim` `Sim::memcpy_2d_to_array` is `cuMemcpy2DToArray`.
+Always Invalid `"memcpy2d toarr"` because CUDA arrays are not modeled.
+Query; legal during capture. Distinct from
+`memcpy_ato_a_async` (why is not `"async atoa"`) and
+`array_create` (why is not `"cuda array"`).
+This VM does not invent `cuMemcpy2DFromArray` or Engine `--memcpy2d-toarr`.
+`gpu-profile capture` is still refused. Dual score still has no `$/M tokens`.
+
+## Shipped 2026-09-02 — CUDA `cuMemcpyAtoAAsync`
+
+`gpu-sim` `Sim::memcpy_ato_a_async` is `cuMemcpyAtoAAsync`.
+Always Invalid `"async atoa"` because CUDA arrays are not modeled.
+Query; legal during capture. Distinct from
+`memcpy_ato_h_async` (why is not `"async atoh"`) and
+`memcpy_ato_a` (why is not `"memcpy atoa"`).
+This VM does not invent `cuMemcpy2DToArray` or Engine `--async-atoa`.
+`gpu-profile capture` is still refused. Dual score still has no `$/M tokens`.
+
+## Shipped 2026-09-02 — CUDA `cuMemcpyAtoHAsync`
+
+`gpu-sim` `Sim::memcpy_ato_h_async` is `cuMemcpyAtoHAsync`.
+Always Invalid `"async atoh"` because CUDA arrays are not modeled.
+Query; legal during capture. Distinct from
+`memcpy_hto_a_async` (why is not `"async htoa"`) and
+`memcpy_ato_h` (why is not `"memcpy atoh"`).
+This VM does not invent `cuMemcpyAtoAAsync` or Engine `--async-atoh`.
+`gpu-profile capture` is still refused. Dual score still has no `$/M tokens`.
+
+## Shipped 2026-09-02 — CUDA `cuMemcpyHtoAAsync`
+
+`gpu-sim` `Sim::memcpy_hto_a_async` is `cuMemcpyHtoAAsync`.
+Always Invalid `"async htoa"` because CUDA arrays are not modeled.
+Query; legal during capture. Distinct from
+`memcpy_ato_d_async` (why is not `"async atod"`) and
+`memcpy_hto_a` (why is not `"memcpy htoa"`).
+This VM does not invent `cuMemcpyAtoHAsync` or Engine `--async-htoa`.
+`gpu-profile capture` is still refused. Dual score still has no `$/M tokens`.
+
+## Shipped 2026-09-02 — CUDA `cuMemcpyAtoDAsync`
+
+`gpu-sim` `Sim::memcpy_ato_d_async` is `cuMemcpyAtoDAsync`.
+Always Invalid `"async atod"` because CUDA arrays are not modeled.
+Query; legal during capture. Distinct from
+`memcpy_dto_a_async` (why is not `"async dtoa"`) and
+`memcpy_ato_d` (why is not `"memcpy atod"`).
+This VM does not invent `cuMemcpyHtoAAsync` or Engine `--async-atod`.
+`gpu-profile capture` is still refused. Dual score still has no `$/M tokens`.
+
+## Shipped 2026-09-02 — CUDA `cuMemcpyDtoAAsync`
+
+`gpu-sim` `Sim::memcpy_dto_a_async` is `cuMemcpyDtoAAsync`.
+Always Invalid `"async dtoa"` because CUDA arrays are not modeled.
+Query; legal during capture. Distinct from
+`memcpy_ato_a` (why is not `"memcpy atoa"`) and
+`memcpy_dto_a` (why is not `"memcpy dtoa"`).
+This VM does not invent `cuMemcpyAtoDAsync` or Engine `--async-dtoa`.
+`gpu-profile capture` is still refused. Dual score still has no `$/M tokens`.
+
+## Shipped 2026-09-02 — CUDA `cuMemcpyAtoA`
+
+`gpu-sim` `Sim::memcpy_ato_a` is `cuMemcpyAtoA`.
+Always Invalid `"memcpy atoa"` because CUDA arrays are not modeled.
+Query; legal during capture. Distinct from
+`memcpy_ato_h` (why is not `"memcpy atoh"`) and
+`array_create` (why is not `"cuda array"`).
+This VM does not invent `cuMemcpyDtoAAsync` or Engine `--memcpy-atoa`.
+`gpu-profile capture` is still refused. Dual score still has no `$/M tokens`.
+
+## Shipped 2026-09-02 — CUDA `cuMemcpyAtoH`
+
+`gpu-sim` `Sim::memcpy_ato_h` is `cuMemcpyAtoH`.
+Always Invalid `"memcpy atoh"` because CUDA arrays are not modeled.
+Query; legal during capture. Distinct from
+`memcpy_hto_a` (why is not `"memcpy htoa"`) and
+`array_create` (why is not `"cuda array"`).
+This VM does not invent `cuMemcpyAtoA` or Engine `--memcpy-atoh`.
+`gpu-profile capture` is still refused. Dual score still has no `$/M tokens`.
+
+## Shipped 2026-09-02 — CUDA `cuMemcpyHtoA`
+
+`gpu-sim` `Sim::memcpy_hto_a` is `cuMemcpyHtoA`.
+Always Invalid `"memcpy htoa"` because CUDA arrays are not modeled.
+Query; legal during capture. Distinct from
+`memcpy_ato_d` (why is not `"memcpy atod"`) and
+`array_create` (why is not `"cuda array"`).
+This VM does not invent `cuMemcpyAtoH` or Engine `--memcpy-htoa`.
+`gpu-profile capture` is still refused. Dual score still has no `$/M tokens`.
+
+## Shipped 2026-09-02 — CUDA `cuMemcpyAtoD`
+
+`gpu-sim` `Sim::memcpy_ato_d` is `cuMemcpyAtoD`.
+Always Invalid `"memcpy atod"` because CUDA arrays are not modeled.
+Query; legal during capture. Distinct from
+`memcpy_dto_a` (why is not `"memcpy dtoa"`) and
+`array_create` (why is not `"cuda array"`).
+This VM does not invent `cuMemcpyHtoA` or Engine `--memcpy-atod`.
+`gpu-profile capture` is still refused. Dual score still has no `$/M tokens`.
+
+## Shipped 2026-09-02 — CUDA `cuMemcpyDtoA`
+
+`gpu-sim` `Sim::memcpy_dto_a` is `cuMemcpyDtoA`.
+Always Invalid `"memcpy dtoa"` because CUDA arrays are not modeled.
+Query; legal during capture. Distinct from
+`surf_ref_get_array` (why is not `"surfref getarr"`) and
+`array_create` (why is not `"cuda array"`).
+This VM does not invent `cuMemcpyAtoD` or Engine `--memcpy-dtoa`.
+`gpu-profile capture` is still refused. Dual score still has no `$/M tokens`.
+
+## Shipped 2026-09-02 — CUDA `cuSurfRefGetArray`
+
+`gpu-sim` `Sim::surf_ref_get_array` is `cuSurfRefGetArray`.
+Always Invalid `"surfref getarr"` because CUDA surface references are not
+modeled. Query; legal during capture. Distinct from
+`surf_ref_set_array` (why is not `"surfref setarr"`) and
+`tex_ref_get_array` (why is not `"texref getarr"`).
+This VM does not invent `cuMemcpyDtoA` or Engine `--surfref-getarr`.
+`gpu-profile capture` is still refused. Dual score still has no `$/M tokens`.
+
+## Shipped 2026-09-02 — CUDA `cuSurfRefSetArray`
+
+`gpu-sim` `Sim::surf_ref_set_array` is `cuSurfRefSetArray`.
+Always Invalid `"surfref setarr"` because CUDA surface references are not
+modeled. Query; legal during capture. Distinct from
+`module_get_surf_ref` (why is not `"module surfref"`) and
+`tex_ref_set_array` (why is not `"texref setarr"`).
+This VM does not invent `cuSurfRefGetArray` or Engine `--surfref-setarr`.
+`gpu-profile capture` is still refused. Dual score still has no `$/M tokens`.
+
+## Shipped 2026-09-02 — CUDA `cuTexRefGetFlags`
+
+`gpu-sim` `Sim::tex_ref_get_flags` is `cuTexRefGetFlags`.
+Always Invalid `"texref getflags"` because CUDA texture references are not
+modeled. Query; legal during capture. Distinct from
+`tex_ref_get_border_color` (why is not `"texref getborder"`) and
+`tex_ref_set_flags` (why is not `"texref flags"`).
+This VM does not invent `cuSurfRefSetArray` or Engine `--texref-getflags`.
+`gpu-profile capture` is still refused. Dual score still has no `$/M tokens`.
+
+## Shipped 2026-09-02 — CUDA `cuTexRefGetBorderColor`
+
+`gpu-sim` `Sim::tex_ref_get_border_color` is `cuTexRefGetBorderColor`.
+Always Invalid `"texref getborder"` because CUDA texture references are not
+modeled. Query; legal during capture. Distinct from
+`tex_ref_get_max_anisotropy` (why is not `"texref getaniso"`) and
+`tex_ref_set_border_color` (why is not `"texref border"`).
+This VM does not invent `cuTexRefGetFlags` or Engine `--texref-getborder`.
+`gpu-profile capture` is still refused. Dual score still has no `$/M tokens`.
+
+## Shipped 2026-09-02 — CUDA `cuTexRefGetMaxAnisotropy`
+
+`gpu-sim` `Sim::tex_ref_get_max_anisotropy` is `cuTexRefGetMaxAnisotropy`.
+Always Invalid `"texref getaniso"` because CUDA texture references are not
+modeled. Query; legal during capture. Distinct from
+`tex_ref_get_mipmap_level_clamp` (why is not `"texref getclamp"`) and
+`tex_ref_set_max_anisotropy` (why is not `"texref aniso"`).
+This VM does not invent `cuTexRefGetBorderColor` or Engine `--texref-getaniso`.
+`gpu-profile capture` is still refused. Dual score still has no `$/M tokens`.
+
+## Shipped 2026-09-02 — CUDA `cuTexRefGetMipmapLevelClamp`
+
+`gpu-sim` `Sim::tex_ref_get_mipmap_level_clamp` is `cuTexRefGetMipmapLevelClamp`.
+Always Invalid `"texref getclamp"` because CUDA texture references are not
+modeled. Query; legal during capture. Distinct from
+`tex_ref_get_mipmap_level_bias` (why is not `"texref getbias"`) and
+`tex_ref_set_mipmap_level_clamp` (why is not `"texref mipclamp"`).
+This VM does not invent `cuTexRefGetMaxAnisotropy` or Engine `--texref-getclamp`.
+`gpu-profile capture` is still refused. Dual score still has no `$/M tokens`.
+
+## Shipped 2026-09-02 — CUDA `cuTexRefGetMipmapLevelBias`
+
+`gpu-sim` `Sim::tex_ref_get_mipmap_level_bias` is `cuTexRefGetMipmapLevelBias`.
+Always Invalid `"texref getbias"` because CUDA texture references are not
+modeled. Query; legal during capture. Distinct from
+`tex_ref_get_mipmap_filter_mode` (why is not `"texref gmipfilt"`) and
+`tex_ref_set_mipmap_level_bias` (why is not `"texref mipbias"`).
+This VM does not invent `cuTexRefGetMipmapLevelClamp` or Engine `--texref-getbias`.
+`gpu-profile capture` is still refused. Dual score still has no `$/M tokens`.
+
+## Shipped 2026-09-02 — CUDA `cuTexRefGetMipmapFilterMode`
+
+`gpu-sim` `Sim::tex_ref_get_mipmap_filter_mode` is `cuTexRefGetMipmapFilterMode`.
+Always Invalid `"texref gmipfilt"` because CUDA texture references are not
+modeled. Query; legal during capture. Distinct from
+`tex_ref_get_format` (why is not `"texref getfmt"`) and
+`tex_ref_set_mipmap_filter_mode` (why is not `"texref mipfilt"`).
+This VM does not invent `cuTexRefGetMipmapLevelBias` or Engine `--texref-gmipfilt`.
+`gpu-profile capture` is still refused. Dual score still has no `$/M tokens`.
+
+## Shipped 2026-09-02 — CUDA `cuTexRefGetFormat`
+
+`gpu-sim` `Sim::tex_ref_get_format` is `cuTexRefGetFormat`.
+Always Invalid `"texref getfmt"` because CUDA texture references are not
+modeled. Query; legal during capture. Distinct from
+`tex_ref_get_filter_mode` (why is not `"texref getfilt"`) and
+`tex_ref_set_format` (why is not `"texref format"`).
+This VM does not invent `cuTexRefGetMipmapFilterMode` or Engine `--texref-getfmt`.
+`gpu-profile capture` is still refused. Dual score still has no `$/M tokens`.
+
+## Shipped 2026-09-02 — CUDA `cuTexRefGetFilterMode`
+
+`gpu-sim` `Sim::tex_ref_get_filter_mode` is `cuTexRefGetFilterMode`.
+Always Invalid `"texref getfilt"` because CUDA texture references are not
+modeled. Query; legal during capture. Distinct from
+`tex_ref_get_address_mode` (why is not `"texref getmode"`) and
+`tex_ref_set_filter_mode` (why is not `"texref filter"`).
+This VM does not invent `cuTexRefGetFormat` or Engine `--texref-getfilt`.
+`gpu-profile capture` is still refused. Dual score still has no `$/M tokens`.
+
+## Shipped 2026-09-02 — CUDA `cuTexRefGetAddressMode`
+
+`gpu-sim` `Sim::tex_ref_get_address_mode` is `cuTexRefGetAddressMode`.
+Always Invalid `"texref getmode"` because CUDA texture references are not
+modeled. Query; legal during capture. Distinct from
+`tex_ref_get_address` (why is not `"texref getaddr"`) and
+`tex_ref_set_address_mode` (why is not `"texref addrmode"`).
+This VM does not invent `cuTexRefGetFilterMode` or Engine `--texref-getmode`.
+`gpu-profile capture` is still refused. Dual score still has no `$/M tokens`.
+
+## Shipped 2026-09-02 — CUDA `cuTexRefGetAddress`
+
+`gpu-sim` `Sim::tex_ref_get_address` is `cuTexRefGetAddress`.
+Always Invalid `"texref getaddr"` because CUDA texture references are not
+modeled. Query; legal during capture. Distinct from
+`tex_ref_get_mipmapped_array` (why is not `"texref getmip"`) and
+`tex_ref_set_address` (why is not `"texref linear"`).
+This VM does not invent `cuTexRefGetAddressMode` or Engine `--texref-getaddr`.
+`gpu-profile capture` is still refused. Dual score still has no `$/M tokens`.
+
+## Shipped 2026-09-02 — CUDA `cuTexRefGetMipmappedArray`
+
+`gpu-sim` `Sim::tex_ref_get_mipmapped_array` is `cuTexRefGetMipmappedArray`.
+Always Invalid `"texref getmip"` because CUDA texture references are not
+modeled. Query; legal during capture. Distinct from
+`tex_ref_get_array` (why is not `"texref getarr"`) and
+`tex_ref_set_mipmapped_array` (why is not `"texref setmip"`).
+This VM does not invent `cuTexRefGetAddress` or Engine `--texref-getmip`.
+`gpu-profile capture` is still refused. Dual score still has no `$/M tokens`.
+
+## Shipped 2026-09-02 — CUDA `cuTexRefGetArray`
+
+`gpu-sim` `Sim::tex_ref_get_array` is `cuTexRefGetArray`.
+Always Invalid `"texref getarr"` because CUDA texture references are not
+modeled. Query; legal during capture. Distinct from
+`tex_ref_set_flags` (why is not `"texref flags"`) and
+`tex_ref_set_array` (why is not `"texref setarr"`).
+This VM does not invent `cuTexRefGetMipmappedArray` or Engine `--texref-getarr`.
+`gpu-profile capture` is still refused. Dual score still has no `$/M tokens`.
+
+## Shipped 2026-09-02 — CUDA `cuTexRefSetFlags`
+
+`gpu-sim` `Sim::tex_ref_set_flags` is `cuTexRefSetFlags`.
+Always Invalid `"texref flags"` because CUDA texture references are not
+modeled. Query; legal during capture. Distinct from
+`tex_ref_set_border_color` (why is not `"texref border"`) and
+`tex_ref_create` (why is not `"texref create"`).
+This VM does not invent `cuTexRefGetArray` or Engine `--texref-flags`.
+`gpu-profile capture` is still refused. Dual score still has no `$/M tokens`.
+
+## Shipped 2026-09-02 — CUDA `cuTexRefSetBorderColor`
+
+`gpu-sim` `Sim::tex_ref_set_border_color` is `cuTexRefSetBorderColor`.
+Always Invalid `"texref border"` because CUDA texture references are not
+modeled. Query; legal during capture. Distinct from
+`tex_ref_set_max_anisotropy` (why is not `"texref aniso"`) and
+`tex_ref_set_address_mode` (why is not `"texref addrmode"`).
+This VM does not invent `cuTexRefSetFlags` or Engine `--texref-border`.
+`gpu-profile capture` is still refused. Dual score still has no `$/M tokens`.
+
+## Shipped 2026-09-02 — CUDA `cuTexRefSetMaxAnisotropy`
+
+`gpu-sim` `Sim::tex_ref_set_max_anisotropy` is `cuTexRefSetMaxAnisotropy`.
+Always Invalid `"texref aniso"` because CUDA texture references are not
+modeled. Query; legal during capture. Distinct from
+`tex_ref_set_mipmap_level_clamp` (why is not `"texref mipclamp"`) and
+`tex_ref_set_filter_mode` (why is not `"texref filter"`).
+This VM does not invent `cuTexRefSetBorderColor` or Engine `--texref-aniso`.
+`gpu-profile capture` is still refused. Dual score still has no `$/M tokens`.
+
+## Shipped 2026-09-02 — CUDA `cuTexRefSetMipmapLevelClamp`
+
+`gpu-sim` `Sim::tex_ref_set_mipmap_level_clamp` is `cuTexRefSetMipmapLevelClamp`.
+Always Invalid `"texref mipclamp"` because CUDA texture references are not
+modeled. Query; legal during capture. Distinct from
+`tex_ref_set_mipmap_level_bias` (why is not `"texref mipbias"`) and
+`tex_ref_set_mipmap_filter_mode` (why is not `"texref mipfilt"`).
+This VM does not invent `cuTexRefSetMaxAnisotropy` or Engine `--texref-mipclamp`.
+`gpu-profile capture` is still refused. Dual score still has no `$/M tokens`.
+
+## Shipped 2026-09-02 — CUDA `cuTexRefSetMipmapLevelBias`
+
+`gpu-sim` `Sim::tex_ref_set_mipmap_level_bias` is `cuTexRefSetMipmapLevelBias`.
+Always Invalid `"texref mipbias"` because CUDA texture references are not
+modeled. Query; legal during capture. Distinct from
+`tex_ref_set_mipmap_filter_mode` (why is not `"texref mipfilt"`) and
+`tex_ref_set_filter_mode` (why is not `"texref filter"`).
+This VM does not invent `cuTexRefSetMipmapLevelClamp` or Engine `--texref-mipbias`.
+`gpu-profile capture` is still refused. Dual score still has no `$/M tokens`.
+
+## Shipped 2026-09-02 — CUDA `cuTexRefSetMipmapFilterMode`
+
+`gpu-sim` `Sim::tex_ref_set_mipmap_filter_mode` is `cuTexRefSetMipmapFilterMode`.
+Always Invalid `"texref mipfilt"` because CUDA texture references are not
+modeled. Query; legal during capture. Distinct from
+`tex_ref_set_filter_mode` (why is not `"texref filter"`) and
+`tex_ref_set_mipmapped_array` (why is not `"texref setmip"`).
+This VM does not invent `cuTexRefSetMipmapLevelBias` or Engine `--texref-mipfilt`.
+`gpu-profile capture` is still refused. Dual score still has no `$/M tokens`.
+
+## Shipped 2026-09-02 — CUDA `cuTexRefSetFilterMode`
+
+`gpu-sim` `Sim::tex_ref_set_filter_mode` is `cuTexRefSetFilterMode`.
+Always Invalid `"texref filter"` because CUDA texture references are not
+modeled. Query; legal during capture. Distinct from
+`tex_ref_set_address_mode` (why is not `"texref addrmode"`) and
+`tex_object_get_texture_desc` (why is not `"texture desc"`).
+This VM does not invent `cuTexRefSetMipmapFilterMode` or Engine `--texref-filter`.
+`gpu-profile capture` is still refused. Dual score still has no `$/M tokens`.
+
+## Shipped 2026-09-02 — CUDA `cuTexRefSetAddressMode`
+
+`gpu-sim` `Sim::tex_ref_set_address_mode` is `cuTexRefSetAddressMode`.
+Always Invalid `"texref addrmode"` because CUDA texture references are not
+modeled. Query; legal during capture. Distinct from
+`tex_ref_set_format` (why is not `"texref format"`) and
+`tex_ref_set_address` (why is not `"texref linear"`).
+This VM does not invent `cuTexRefSetFilterMode` or Engine `--texref-addrmode`.
+`gpu-profile capture` is still refused. Dual score still has no `$/M tokens`.
+
+## Shipped 2026-09-02 — CUDA `cuTexRefSetFormat`
+
+`gpu-sim` `Sim::tex_ref_set_format` is `cuTexRefSetFormat`.
+Always Invalid `"texref format"` because CUDA texture references are not
+modeled. Query; legal during capture. Distinct from
+`tex_ref_set_address_2d` (why is not `"texref pitch2d"`) and
+`tex_object_create` (why is not `"cuda texture"`).
+This VM does not invent `cuTexRefSetAddressMode` or Engine `--texref-format`.
+`gpu-profile capture` is still refused. Dual score still has no `$/M tokens`.
+
+## Shipped 2026-09-02 — CUDA `cuTexRefSetAddress2D`
+
+`gpu-sim` `Sim::tex_ref_set_address_2d` is `cuTexRefSetAddress2D`.
+Always Invalid `"texref pitch2d"` because CUDA texture references are not
+modeled. Query; legal during capture. Distinct from
+`tex_ref_set_address` (why is not `"texref linear"`) and
+`tex_ref_set_array` (why is not `"texref setarr"`).
+This VM does not invent `cuTexRefSetFormat` or Engine `--texref-pitch2d`.
+`gpu-profile capture` is still refused. Dual score still has no `$/M tokens`.
+
+## Shipped 2026-09-02 — CUDA `cuTexRefSetAddress`
+
+`gpu-sim` `Sim::tex_ref_set_address` is `cuTexRefSetAddress`.
+Always Invalid `"texref linear"` because CUDA texture references are not
+modeled. Query; legal during capture. Distinct from
+`tex_ref_set_mipmapped_array` (why is not `"texref setmip"`) and
+`tex_ref_set_array` (why is not `"texref setarr"`).
+This VM does not invent `cuTexRefSetAddress2D` or Engine `--texref-linear`.
+`gpu-profile capture` is still refused. Dual score still has no `$/M tokens`.
+
+## Shipped 2026-09-02 — CUDA `cuTexRefSetMipmappedArray`
+
+`gpu-sim` `Sim::tex_ref_set_mipmapped_array` is `cuTexRefSetMipmappedArray`.
+Always Invalid `"texref setmip"` because CUDA texture references are not
+modeled. Query; legal during capture. Distinct from
+`tex_ref_set_array` (why is not `"texref setarr"`) and
+`mipmapped_array_create` (why is not `"mipmapped array"`).
+This VM does not invent `cuTexRefSetAddress` or Engine `--texref-setmip`.
+`gpu-profile capture` is still refused. Dual score still has no `$/M tokens`.
+
+## Shipped 2026-09-02 — CUDA `cuTexRefSetArray`
+
+`gpu-sim` `Sim::tex_ref_set_array` is `cuTexRefSetArray`.
+Always Invalid `"texref setarr"` because CUDA texture references are not
+modeled. Query; legal during capture. Distinct from
+`tex_ref_destroy` (why is not `"texref destroy"`) and
+`array_create` (why is not `"cuda array"`).
+This VM does not invent `cuTexRefSetMipmappedArray` or Engine `--texref-setarr`.
+`gpu-profile capture` is still refused. Dual score still has no `$/M tokens`.
+
+## Shipped 2026-09-02 — CUDA `cuTexRefDestroy`
+
+`gpu-sim` `Sim::tex_ref_destroy` is `cuTexRefDestroy`.
+Always Invalid `"texref destroy"` because CUDA texture references are not
+modeled. Query; legal during capture. Distinct from
+`tex_ref_create` (why is not `"texref create"`) and
+`module_get_tex_ref` (why is not `"module texref"`).
+This VM does not invent `cuTexRefSetArray` or Engine `--texref-destroy`.
+`gpu-profile capture` is still refused. Dual score still has no `$/M tokens`.
+
+## Shipped 2026-09-02 — CUDA `cuTexRefCreate`
+
+`gpu-sim` `Sim::tex_ref_create` is `cuTexRefCreate`.
+Always Invalid `"texref create"` because CUDA texture references are not
+modeled. Query; legal during capture. Distinct from
+`module_get_tex_ref` (why is not `"module texref"`) and
+`tex_object_create` (why is not `"cuda texture"`).
+This VM does not invent `cuTexRefDestroy` or Engine `--texref-create`.
+`gpu-profile capture` is still refused. Dual score still has no `$/M tokens`.
+
+## Shipped 2026-09-02 — CUDA `cuMipmappedArrayGetSparseProperties`
+
+`gpu-sim` `Sim::mipmapped_array_get_sparse_properties` is `cuMipmappedArrayGetSparseProperties`.
+Always Invalid `"mipmap sparse"` because sparse CUDA mipmapped arrays are not
+modeled. Query; legal during capture. Distinct from
+`array_get_sparse_properties` (why is not `"array sparse"`) and
+`mem_map_array_async` (why is not `"sparse map"`).
+This VM does not invent `cuTexRefCreate` or Engine `--mipmap-sparse`.
+`gpu-profile capture` is still refused. Dual score still has no `$/M tokens`.
+
+## Shipped 2026-09-02 — CUDA `cuMemMapArrayAsync`
+
+`gpu-sim` `Sim::mem_map_array_async` is `cuMemMapArrayAsync`.
+Always Invalid `"sparse map"` because sparse CUDA array mapping is not
+modeled. Query; legal during capture. Distinct from
+`array_get_sparse_properties` (why is not `"array sparse"`).
+This VM does not invent `cuMipmappedArrayGetSparseProperties` or Engine `--sparse-map`.
+`gpu-profile capture` is still refused. Dual score still has no `$/M tokens`.
+
+## Shipped 2026-09-02 — CUDA `cuDeviceUnregisterAsyncNotification`
+
+`gpu-sim` `Sim::device_unregister_async_notification` is `cuDeviceUnregisterAsyncNotification`.
+Always Invalid `"async unreg"` because device async callbacks are not
+modeled. Query; legal during capture. Distinct from
+`device_register_async_notification` (why is not `"async notify"`).
+This VM does not invent `cuMemMapArrayAsync` or Engine `--async-unreg`.
+`gpu-profile capture` is still refused. Dual score still has no `$/M tokens`.
+
+## Shipped 2026-09-02 — CUDA `cuDeviceRegisterAsyncNotification`
+
+`gpu-sim` `Sim::device_register_async_notification` is `cuDeviceRegisterAsyncNotification`.
+Always Invalid `"async notify"` because device async callbacks are not
+modeled. Query; legal during capture. Distinct from
+`stream_add_callback` (live host enqueue).
+This VM does not invent `cuDeviceUnregisterAsyncNotification` or Engine `--async-notify`.
+`gpu-profile capture` is still refused. Dual score still has no `$/M tokens`.
+
+## Shipped 2026-09-02 — CUDA `cuFuncGetParamCount`
+
+`gpu-sim` `Sim::func_get_param_count` is `cuFuncGetParamCount`.
+Always Invalid `"func pcount"` because no compiled kernel exists.
+Query; legal during capture. Distinct from
+`func_get_param_info` (why is not `"unknown function"`) and
+`kernel_get_param_count` (why is not `"kernel pcount"`).
+This VM does not invent `cuLaunchKernelEx` or Engine `--func-pcount`.
+`gpu-profile capture` is still refused. Dual score still has no `$/M tokens`.
+
+## Shipped 2026-09-02 — CUDA `cuKernelGetParamCount`
+
+`gpu-sim` `Sim::kernel_get_param_count` is `cuKernelGetParamCount`.
+Always Invalid `"kernel pcount"` because CUDA kernels are not
+modeled. Query; legal during capture. Distinct from
+`kernel_get_param_info` (why is not `"kernel param"`).
+This VM does not invent `cuFuncGetParamCount` or Engine `--kernel-pcount`.
+`gpu-profile capture` is still refused. Dual score still has no `$/M tokens`.
+
+## Shipped 2026-09-02 — CUDA `cuKernelGetLibrary`
+
+`gpu-sim` `Sim::kernel_get_library` is `cuKernelGetLibrary`.
+Always Invalid `"kernel library"` because CUDA kernels are not
+modeled. Query; legal during capture. Distinct from
+`library_get_kernel` (why is not `"library kernel"`).
+This VM does not invent `cuKernelGetParamCount` or Engine `--kernel-library`.
+`gpu-profile capture` is still refused. Dual score still has no `$/M tokens`.
+
+## Shipped 2026-09-02 — CUDA `cuLibraryEnumerateKernels`
+
+`gpu-sim` `Sim::library_enumerate_kernels` is `cuLibraryEnumerateKernels`.
+Always Invalid `"library enumk"` because CUDA libraries are not
+modeled. Query; legal during capture. Distinct from
+`library_get_kernel_count` (why is not `"library kcount"`).
+This VM does not invent `cuKernelGetLibrary` or Engine `--library-enumk`.
+`gpu-profile capture` is still refused. Dual score still has no `$/M tokens`.
+
+## Shipped 2026-09-02 — CUDA `cuLibraryGetKernelCount`
+
+`gpu-sim` `Sim::library_get_kernel_count` is `cuLibraryGetKernelCount`.
+Always Invalid `"library kcount"` because CUDA libraries are not
+modeled. Query; legal during capture. Distinct from
+`library_get_kernel` (why is not `"library kernel"`).
+This VM does not invent `cuLibraryEnumerateKernels` or Engine `--library-kcount`.
+`gpu-profile capture` is still refused. Dual score still has no `$/M tokens`.
+
+## Shipped 2026-09-02 — CUDA `cuCheckpointProcessGetState`
+
+`gpu-sim` `Sim::checkpoint_process_get_state` is `cuCheckpointProcessGetState`.
+Always Invalid `"ckpt state"` because CUDA process checkpoint is not
+modeled. Query; legal during capture. Distinct from
+`checkpoint_process_get_restore_thread_id` (why is not `"ckpt thread"`).
+This VM does not invent `cuLibraryGetKernelCount` or Engine `--ckpt-state`.
+`gpu-profile capture` is still refused. Dual score still has no `$/M tokens`.
+
+## Shipped 2026-09-02 — CUDA `cuCheckpointProcessGetRestoreThreadId`
+
+`gpu-sim` `Sim::checkpoint_process_get_restore_thread_id` is `cuCheckpointProcessGetRestoreThreadId`.
+Always Invalid `"ckpt thread"` because CUDA process checkpoint is not
+modeled. Query; legal during capture. Distinct from
+`checkpoint_process_unlock` (why is not `"ckpt unlock"`).
+This VM does not invent `cuCheckpointProcessGetState` or Engine `--ckpt-thread`.
+`gpu-profile capture` is still refused. Dual score still has no `$/M tokens`.
+
+## Shipped 2026-09-02 — CUDA `cuCheckpointProcessUnlock`
+
+`gpu-sim` `Sim::checkpoint_process_unlock` is `cuCheckpointProcessUnlock`.
+Always Invalid `"ckpt unlock"` because CUDA process checkpoint is not
+modeled. Query; legal during capture. Distinct from
+`checkpoint_process_lock` (why is not `"checkpoint"`) and
+`checkpoint_process_restore` (why is not `"ckpt restore"`).
+This VM does not invent `cuCheckpointProcessGetRestoreThreadId` or Engine `--ckpt-unlock`.
+`gpu-profile capture` is still refused. Dual score still has no `$/M tokens`.
+
+## Shipped 2026-09-02 — CUDA `cuCheckpointProcessRestore`
+
+`gpu-sim` `Sim::checkpoint_process_restore` is `cuCheckpointProcessRestore`.
+Always Invalid `"ckpt restore"` because CUDA process checkpoint is not
+modeled. Query; legal during capture. Distinct from
+`checkpoint_process_lock` (why is not `"checkpoint"`) and
+`checkpoint_process_checkpoint` (why is not `"ckpt exec"`).
+This VM does not invent `cuCheckpointProcessUnlock` or Engine `--ckpt-restore`.
+`gpu-profile capture` is still refused. Dual score still has no `$/M tokens`.
+
+## Shipped 2026-09-02 — CUDA `cuCheckpointProcessCheckpoint`
+
+`gpu-sim` `Sim::checkpoint_process_checkpoint` is `cuCheckpointProcessCheckpoint`.
+Always Invalid `"ckpt exec"` because CUDA process checkpoint is not
+modeled. Query; legal during capture. Distinct from
+`checkpoint_process_lock` (why is not `"checkpoint"`).
+This VM does not invent `cuCheckpointProcessRestore` or Engine `--ckpt-exec`.
+`gpu-profile capture` is still refused. Dual score still has no `$/M tokens`.
+
+## Shipped 2026-09-02 — CUDA `cuCoredumpSetAttributeGlobal`
+
+`gpu-sim` `Sim::coredump_set_attribute_global` is `cuCoredumpSetAttributeGlobal`.
+Always Invalid `"dump setglob"` because GPU coredumps are not
+modeled. Query; legal during capture. Distinct from
+`coredump_set_attribute` (why is not `"dump setattr"`) and
+`coredump_get_attribute_global` (why is not `"dump global"`).
+This VM does not invent `cuCheckpointProcessCheckpoint` or Engine `--dump-setglob`.
+`gpu-profile capture` is still refused. Dual score still has no `$/M tokens`.
+
+## Shipped 2026-09-02 — CUDA `cuCoredumpGetAttributeGlobal`
+
+`gpu-sim` `Sim::coredump_get_attribute_global` is `cuCoredumpGetAttributeGlobal`.
+Always Invalid `"dump global"` because GPU coredumps are not
+modeled. Query; legal during capture. Distinct from
+`coredump_get_attribute` (why is not `"coredump"`) and
+`coredump_set_attribute` (why is not `"dump setattr"`).
+This VM does not invent `cuCoredumpSetAttributeGlobal` or Engine `--dump-global`.
+`gpu-profile capture` is still refused. Dual score still has no `$/M tokens`.
+
+## Shipped 2026-09-02 — CUDA `cuCoredumpSetAttribute`
+
+`gpu-sim` `Sim::coredump_set_attribute` is `cuCoredumpSetAttribute`.
+Always Invalid `"dump setattr"` because GPU coredumps are not
+modeled. Query; legal during capture. Distinct from
+`coredump_get_attribute` (why is not `"coredump"`).
+This VM does not invent `cuCoredumpGetAttributeGlobal` or Engine `--dump-setattr`.
+`gpu-profile capture` is still refused. Dual score still has no `$/M tokens`.
+
+## Shipped 2026-09-02 — CUDA `cuTensorMapReplaceAlignedAddr`
+
+`gpu-sim` `Sim::tensor_map_replace_aligned_addr` is `cuTensorMapReplaceAlignedAddr`.
+Always Invalid `"tensor replace"` because TMA is not
+modeled. Query; legal during capture. Distinct from
+`tensor_map_encode_tiled` (why is not `"tensor map"`).
+This VM does not invent `cuCoredumpSetAttribute` or Engine `--tensor-replace`.
+`gpu-profile capture` is still refused. Dual score still has no `$/M tokens`.
+
+## Shipped 2026-09-02 — CUDA `cuTensorMapEncodeIm2colWide`
+
+`gpu-sim` `Sim::tensor_map_encode_im2col_wide` is `cuTensorMapEncodeIm2colWide`.
+Always Invalid `"im2col wide"` because TMA is not
+modeled. Query; legal during capture. Distinct from
+`tensor_map_encode_im2col` (why is not `"tensor im2col"`).
+This VM does not invent `cuTensorMapReplaceAlignedAddr` or Engine `--tensor-im2col-wide`.
+`gpu-profile capture` is still refused. Dual score still has no `$/M tokens`.
+
+## Shipped 2026-09-02 — CUDA `cuTensorMapEncodeIm2col`
+
+`gpu-sim` `Sim::tensor_map_encode_im2col` is `cuTensorMapEncodeIm2col`.
+Always Invalid `"tensor im2col"` because TMA is not
+modeled. Query; legal during capture. Distinct from
+`tensor_map_encode_tiled` (why is not `"tensor map"`).
+This VM does not invent `cuTensorMapEncodeIm2colWide` or Engine `--tensor-im2col`.
+`gpu-profile capture` is still refused. Dual score still has no `$/M tokens`.
+
+## Shipped 2026-09-02 — CUDA `cuModuleEnumerateFunctions`
+
+`gpu-sim` `Sim::module_enumerate_functions` is `cuModuleEnumerateFunctions`.
+Always Invalid `"module enumfn"` because CUDA modules are not
+modeled. Query; legal during capture. Distinct from
+`module_get_function_count` (why is not `"module fncount"`) and from
+`module_get_function`. This VM does not invent `cuTensorMapEncodeIm2col` or Engine `--module-enumfn`.
+`gpu-profile capture` is still refused. Dual score still has no `$/M tokens`.
+
+## Shipped 2026-09-02 — CUDA `cuModuleGetFunctionCount`
+
+`gpu-sim` `Sim::module_get_function_count` is `cuModuleGetFunctionCount`.
+Always Invalid `"module fncount"` because CUDA modules are not
+modeled. Query; legal during capture. Distinct from
+`module_get_function` (why is not `"module function"`) and from
+`module_load_data_ex`. This VM does not invent `cuModuleEnumerateFunctions` or Engine `--module-fncount`.
+`gpu-profile capture` is still refused. Dual score still has no `$/M tokens`.
+
+## Shipped 2026-09-02 — CUDA `cuModuleLoadDataEx`
+
+`gpu-sim` `Sim::module_load_data_ex` is `cuModuleLoadDataEx`.
+Always Invalid `"module jitopt"` because CUDA modules are not
+modeled. Query; legal during capture. Distinct from
+`module_load_data` (why is not `"module data"`) and from
+`link_create`. This VM does not invent `cuModuleGetFunctionCount` or Engine `--module-jitopt`.
+`gpu-profile capture` is still refused. Dual score still has no `$/M tokens`.
+
+## Shipped 2026-09-02 — CUDA `cuModuleLoadFatBinary`
+
+`gpu-sim` `Sim::module_load_fat_binary` is `cuModuleLoadFatBinary`.
+Always Invalid `"module fatbin"` because CUDA modules are not
+modeled. Query; legal during capture. Distinct from
+`module_load` (why is not `"module load"`) and from
+`module_load_data`. This VM does not invent `cuModuleLoadDataEx` or Engine `--module-fatbin`.
+`gpu-profile capture` is still refused. Dual score still has no `$/M tokens`.
+
+## Shipped 2026-09-02 — CUDA `cuModuleGetSurfRef`
+
+`gpu-sim` `Sim::module_get_surf_ref` is `cuModuleGetSurfRef`.
+Always Invalid `"module surfref"` because CUDA modules are not
+modeled. Query; legal during capture. Distinct from
+`module_get_tex_ref` (why is not `"module texref"`) and from
+`surf_object_create`. This VM does not invent `cuModuleLoadFatBinary` or Engine `--module-surfref`.
+`gpu-profile capture` is still refused. Dual score still has no `$/M tokens`.
+
+## Shipped 2026-09-02 — CUDA `cuModuleGetTexRef`
+
+`gpu-sim` `Sim::module_get_tex_ref` is `cuModuleGetTexRef`.
+Always Invalid `"module texref"` because CUDA modules are not
+modeled. Query; legal during capture. Distinct from
+`module_get_global` (why is not `"module global"`) and from
+`tex_object_create`. This VM does not invent `cuModuleGetSurfRef` or Engine `--module-texref`.
+`gpu-profile capture` is still refused. Dual score still has no `$/M tokens`.
+
+## Shipped 2026-09-01 — CUDA `cuModuleGetGlobal`
+
+`gpu-sim` `Sim::module_get_global` is `cuModuleGetGlobal`.
+Always Invalid `"module global"` because CUDA modules are not
+modeled. Query; legal during capture. Distinct from
+`library_get_global` (why is not `"library global"`) and from
+`module_get_function`. This VM does not invent `cuModuleGetTexRef` or Engine `--module-global`.
+`gpu-profile capture` is still refused. Dual score still has no `$/M tokens`.
+
+## Shipped 2026-09-01 — CUDA `cuModuleGetFunction`
+
+`gpu-sim` `Sim::module_get_function` is `cuModuleGetFunction`.
+Always Invalid `"module function"` because CUDA modules are not
+modeled. Query; legal during capture. Distinct from
+`kernel_get_function` (why is not `"kernel function"`) and from
+`func_get_module`. This VM does not invent `cuModuleGetGlobal` or Engine `--module-function`.
+`gpu-profile capture` is still refused. Dual score still has no `$/M tokens`.
+
+## Shipped 2026-09-01 — CUDA `cuModuleUnload`
+
+`gpu-sim` `Sim::module_unload` is `cuModuleUnload`.
+Always Invalid `"module unload"` because CUDA modules are not
+modeled. Query; legal during capture. Distinct from
+`module_load` (why is not `"module load"`) and from
+`library_unload`. This VM does not invent `cuModuleGetFunction` or Engine `--module-unload`.
+`gpu-profile capture` is still refused. Dual score still has no `$/M tokens`.
+
+## Shipped 2026-09-01 — CUDA `cuModuleLoadData`
+
+`gpu-sim` `Sim::module_load_data` is `cuModuleLoadData`.
+Always Invalid `"module data"` because CUDA modules are not
+modeled. Query; legal during capture. Distinct from
+`module_load` (why is not `"module load"`) and from
+`library_load_data`. This VM does not invent `cuModuleUnload` or Engine `--module-data`.
+`gpu-profile capture` is still refused. Dual score still has no `$/M tokens`.
+
+## Shipped 2026-09-01 — CUDA `cuModuleLoad`
+
+`gpu-sim` `Sim::module_load` is `cuModuleLoad`.
+Always Invalid `"module load"` because CUDA modules are not
+modeled. Query; legal during capture. Distinct from
+`module_get_loading_mode` (Eager) and from
+`library_load_data`. This VM does not invent `cuModuleLoadData` or Engine `--module-load`.
+`gpu-profile capture` is still refused. Dual score still has no `$/M tokens`.
+
+## Shipped 2026-09-01 — CUDA `cuFuncLoad`
+
+`gpu-sim` `Sim::func_load` is `cuFuncLoad`.
+Always Invalid `"func load"` because CUDA functions are not
+modeled. Query; legal during capture. Distinct from
+`func_is_loaded` (`false`) and from
+`func_get_module`. This VM does not invent `cuModuleLoad` or Engine `--func-load`.
+`gpu-profile capture` is still refused. Dual score still has no `$/M tokens`.
+
+## Shipped 2026-09-01 — CUDA `cuLinkAddFile`
+
+`gpu-sim` `Sim::link_add_file` is `cuLinkAddFile`.
+Always Invalid `"link file"` because the CUDA driver JIT linker is not
+modeled. Query; legal during capture. Distinct from
+`link_add_data` (why is not `"link add"`) and from
+`library_load_from_file`. This VM does not invent `cuFuncLoad` or Engine `--link-add-file`.
+`gpu-profile capture` is still refused. Dual score still has no `$/M tokens`.
+
+## Shipped 2026-09-01 — CUDA `cuLinkDestroy`
+
+`gpu-sim` `Sim::link_destroy` is `cuLinkDestroy`.
+Always Invalid `"link destroy"` because the CUDA driver JIT linker is not
+modeled. Query; legal during capture. Distinct from
+`link_complete` (why is not `"link complete"`) and from
+`link_create`. This VM does not invent `cuLinkAddFile` or Engine `--link-destroy`.
+`gpu-profile capture` is still refused. Dual score still has no `$/M tokens`.
+
+## Shipped 2026-09-01 — CUDA `cuLinkComplete`
+
+`gpu-sim` `Sim::link_complete` is `cuLinkComplete`.
+Always Invalid `"link complete"` because the CUDA driver JIT linker is not
+modeled. Query; legal during capture. Distinct from
+`link_add_data` (why is not `"link add"`) and from
+`link_create`. This VM does not invent `cuLinkDestroy` or Engine `--link-complete`.
+`gpu-profile capture` is still refused. Dual score still has no `$/M tokens`.
+
+## Shipped 2026-09-01 — CUDA `cuLinkAddData`
+
+`gpu-sim` `Sim::link_add_data` is `cuLinkAddData`.
+Always Invalid `"link add"` because the CUDA driver JIT linker is not
+modeled. Query; legal during capture. Distinct from
+`link_create` (why is not `"jit linker"`) and from
+`library_load_data`. This VM does not invent `cuLinkComplete` or Engine `--link-add`.
+`gpu-profile capture` is still refused. Dual score still has no `$/M tokens`.
+
+## Shipped 2026-09-01 — CUDA `cuKernelSetCacheConfig`
+
+`gpu-sim` `Sim::kernel_set_cache_config` is `cuKernelSetCacheConfig`.
+Always Invalid `"kernel cache"` because CUDA kernels are not
+modeled. Query; legal during capture. Distinct from
+`kernel_set_attribute` (why is not `"kernel setattr"`) and from
+`set_func_cache_config`. This VM does not invent `cuLinkAddData` or Engine `--kernel-cache`.
+`gpu-profile capture` is still refused. Dual score still has no `$/M tokens`.
+
+## Shipped 2026-09-01 — CUDA `cuKernelSetAttribute`
+
+`gpu-sim` `Sim::kernel_set_attribute` is `cuKernelSetAttribute`.
+Always Invalid `"kernel setattr"` because CUDA kernels are not
+modeled. Query; legal during capture. Distinct from
+`kernel_get_attribute` (why is not `"kernel attribute"`) and from
+`func_set_attribute`. This VM does not invent `cuKernelSetCacheConfig` or Engine `--kernel-setattr`.
+`gpu-profile capture` is still refused. Dual score still has no `$/M tokens`.
+
+## Shipped 2026-09-01 — CUDA `cuKernelGetAttribute`
+
+`gpu-sim` `Sim::kernel_get_attribute` is `cuKernelGetAttribute`.
+Always Invalid `"kernel attribute"` because CUDA kernels are not
+modeled. Query; legal during capture. Distinct from
+`kernel_get_param_info` (why is not `"kernel param"`) and from
+`func_get_attribute`. This VM does not invent `cuKernelSetAttribute` or Engine `--kernel-attribute`.
+`gpu-profile capture` is still refused. Dual score still has no `$/M tokens`.
+
+## Shipped 2026-09-01 — CUDA `cuKernelGetParamInfo`
+
+`gpu-sim` `Sim::kernel_get_param_info` is `cuKernelGetParamInfo`.
+Always Invalid `"kernel param"` because CUDA kernels are not
+modeled. Query; legal during capture. Distinct from
+`kernel_get_function` (why is not `"kernel function"`) and from
+`func_get_param_info`. This VM does not invent `cuKernelGetAttribute` or Engine `--kernel-param`.
+`gpu-profile capture` is still refused. Dual score still has no `$/M tokens`.
+
+## Shipped 2026-09-01 — CUDA `cuKernelGetFunction`
+
+`gpu-sim` `Sim::kernel_get_function` is `cuKernelGetFunction`.
+Always Invalid `"kernel function"` because CUDA kernels are not
+modeled. Query; legal during capture. Distinct from
+`library_get_kernel` (why is not `"library kernel"`) and from
+`func_get_module`. This VM does not invent `cuKernelGetParamInfo` or Engine `--kernel-function`.
+`gpu-profile capture` is still refused. Dual score still has no `$/M tokens`.
+
+## Shipped 2026-09-01 — CUDA `cuLibraryGetUnifiedFunction`
+
+`gpu-sim` `Sim::library_get_unified_function` is `cuLibraryGetUnifiedFunction`.
+Always Invalid `"library unified"` because CUDA libraries are not
+modeled. Query; legal during capture. Distinct from
+`library_get_managed` (why is not `"library managed"`) and from
+`UnifiedFunctionPointers`. This VM does not invent `cuKernelGetFunction` or Engine `--library-unified`.
+`gpu-profile capture` is still refused. Dual score still has no `$/M tokens`.
+
+## Shipped 2026-09-01 — CUDA `cuLibraryGetManaged`
+
+`gpu-sim` `Sim::library_get_managed` is `cuLibraryGetManaged`.
+Always Invalid `"library managed"` because CUDA libraries are not
+modeled. Query; legal during capture. Distinct from
+`library_get_global` (why is not `"library global"`) and from
+`alloc_managed`. This VM does not invent `cuLibraryGetUnifiedFunction` or Engine `--library-managed`.
+`gpu-profile capture` is still refused. Dual score still has no `$/M tokens`.
+
+## Shipped 2026-09-01 — CUDA `cuLibraryGetGlobal`
+
+`gpu-sim` `Sim::library_get_global` is `cuLibraryGetGlobal`.
+Always Invalid `"library global"` because CUDA libraries are not
+modeled. Query; legal during capture. Distinct from
+`library_get_module` (why is not `"library module"`) and from
+`get_proc_address`. This VM does not invent `cuLibraryGetManaged` or Engine `--library-global`.
+`gpu-profile capture` is still refused. Dual score still has no `$/M tokens`.
+
+## Shipped 2026-09-01 — CUDA `cuLibraryGetModule`
+
+`gpu-sim` `Sim::library_get_module` is `cuLibraryGetModule`.
+Always Invalid `"library module"` because CUDA libraries are not
+modeled. Query; legal during capture. Distinct from
+`library_get_kernel` (why is not `"library kernel"`) and from
+`func_get_module`. This VM does not invent `cuLibraryGetGlobal` or Engine `--library-module`.
+`gpu-profile capture` is still refused. Dual score still has no `$/M tokens`.
+
+## Shipped 2026-09-01 — CUDA `cuLibraryGetKernel`
+
+`gpu-sim` `Sim::library_get_kernel` is `cuLibraryGetKernel`.
+Always Invalid `"library kernel"` because CUDA libraries are not
+modeled. Query; legal during capture. Distinct from
+`library_unload` (why is not `"library unload"`) and from
+`func_get_module`. This VM does not invent `cuLibraryGetModule` or Engine `--library-kernel`.
+`gpu-profile capture` is still refused. Dual score still has no `$/M tokens`.
+
+## Shipped 2026-09-01 — CUDA `cuLibraryUnload`
+
+`gpu-sim` `Sim::library_unload` is `cuLibraryUnload`.
+Always Invalid `"library unload"` because CUDA libraries are not
+modeled. Query; legal during capture. Distinct from
+`library_load_from_file` (why is not `"library file"`) and from
+`library_load_data`. This VM does not invent `cuLibraryGetKernel` or Engine `--library-unload`.
+`gpu-profile capture` is still refused. Dual score still has no `$/M tokens`.
+
+## Shipped 2026-09-01 — CUDA `cuLibraryLoadFromFile`
+
+`gpu-sim` `Sim::library_load_from_file` is `cuLibraryLoadFromFile`.
+Always Invalid `"library file"` because CUDA libraries are not
+modeled. Query; legal during capture. Distinct from
+`library_load_data` (why is not `"cuda library"`) and from
+`link_create`. This VM does not invent `cuLibraryUnload` or Engine `--library-from-file`.
+`gpu-profile capture` is still refused. Dual score still has no `$/M tokens`.
+
+## Shipped 2026-09-01 — CUDA `cuD3D10CtxCreateOnDevice`
+
+`gpu-sim` `Sim::d3d10_ctx_create_on_device` is `cuD3D10CtxCreateOnDevice`.
+Always Invalid `"d3d10 ondevice"` because Direct3D 10 interop is not
+modeled. Query; legal during capture. Distinct from
+`d3d10_ctx_create` (why is not `"d3d10 context"`) and from
+`d3d9_ctx_create_on_device`. This VM does not invent `cuLibraryLoadFromFile` or Engine `--d3d10-on-device`.
+`gpu-profile capture` is still refused. Dual score still has no `$/M tokens`.
+
+## Shipped 2026-09-01 — CUDA `cuD3D9CtxCreateOnDevice`
+
+`gpu-sim` `Sim::d3d9_ctx_create_on_device` is `cuD3D9CtxCreateOnDevice`.
+Always Invalid `"d3d9 ondevice"` because Direct3D 9 interop is not
+modeled. Query; legal during capture. Distinct from
+`d3d9_ctx_create` (why is not `"d3d9 context"`) and from
+`d3d12_ctx_create_on_device`. This VM does not invent `cuD3D10CtxCreateOnDevice` or Engine `--d3d9-on-device`.
+`gpu-profile capture` is still refused. Dual score still has no `$/M tokens`.
+
+## Shipped 2026-09-01 — CUDA `cuD3D12CtxCreateOnDevice`
+
+`gpu-sim` `Sim::d3d12_ctx_create_on_device` is `cuD3D12CtxCreateOnDevice`.
+Always Invalid `"d3d12 ondevice"` because Direct3D 12 interop is not
+modeled. Query; legal during capture. Distinct from
+`d3d12_ctx_create` (why is not `"d3d12 context"`) and from
+`d3d11_ctx_create_on_device`. This VM does not invent `cuD3D9CtxCreateOnDevice` or Engine `--d3d12-on-device`.
+`gpu-profile capture` is still refused. Dual score still has no `$/M tokens`.
+
+## Shipped 2026-09-01 — CUDA `cuD3D11CtxCreateOnDevice`
+
+`gpu-sim` `Sim::d3d11_ctx_create_on_device` is `cuD3D11CtxCreateOnDevice`.
+Always Invalid `"d3d11 ondevice"` because Direct3D 11 interop is not
+modeled. Query; legal during capture. Distinct from
+`d3d11_ctx_create` (why is not `"d3d11 context"`) and from
+`d3d11_get_device`. This VM does not invent `cuD3D12CtxCreateOnDevice` or Engine `--d3d11-on-device`.
+`gpu-profile capture` is still refused. Dual score still has no `$/M tokens`.
+
+## Shipped 2026-09-01 — CUDA `cudaVDPAUSetVDPAUDevice`
+
+`gpu-sim` `Sim::vdpau_set_vdpau_device` is `cudaVDPAUSetVDPAUDevice`.
+Always Invalid `"vdpau set"` because VDPAU interop is not
+modeled. Query; legal during capture. Distinct from
+`vdpau_get_device` (why is not the bare `"vdpau"` string) and from
+`gl_set_gl_device`. This VM does not invent `cuD3D11CtxCreateOnDevice` or Engine `--vdpau-set-device`.
+`gpu-profile capture` is still refused. Dual score still has no `$/M tokens`.
+
+## Shipped 2026-09-01 — CUDA `cuD3D10GetDevice`
+
+`gpu-sim` `Sim::d3d10_get_device` is `cuD3D10GetDevice`.
+Always Invalid `"d3d10 device"` because Direct3D 10 interop is not
+modeled. Query; legal during capture. Distinct from
+`d3d10_get_devices` (why is not the bare `"d3d10"` string) and from
+`d3d9_get_device`. This VM does not invent `cudaVDPAUSetVDPAUDevice` or Engine `--d3d10-device`.
+`gpu-profile capture` is still refused. Dual score still has no `$/M tokens`.
+
+## Shipped 2026-09-01 — CUDA `cuD3D9GetDevice`
+
+`gpu-sim` `Sim::d3d9_get_device` is `cuD3D9GetDevice`.
+Always Invalid `"d3d9 device"` because Direct3D 9 interop is not
+modeled. Query; legal during capture. Distinct from
+`d3d9_get_devices` (why is not the bare `"d3d9"` string) and from
+`d3d11_get_device`. This VM does not invent `cuD3D10GetDevice` or Engine `--d3d9-device`.
+`gpu-profile capture` is still refused. Dual score still has no `$/M tokens`.
+
+## Shipped 2026-09-01 — CUDA `cuD3D12GetDevice`
+
+`gpu-sim` `Sim::d3d12_get_device` is `cuD3D12GetDevice`.
+Always Invalid `"d3d12 device"` because Direct3D 12 interop is not
+modeled. Query; legal during capture. Distinct from
+`d3d12_get_devices` (why is not the bare `"d3d12"` string) and from
+`d3d11_get_device`. This VM does not invent `cuD3D9GetDevice` or Engine `--d3d12-device`.
+`gpu-profile capture` is still refused. Dual score still has no `$/M tokens`.
+
+## Shipped 2026-09-01 — CUDA `cuD3D11GetDevice`
+
+`gpu-sim` `Sim::d3d11_get_device` is `cuD3D11GetDevice`.
+Always Invalid `"d3d11 device"` because Direct3D 11 interop is not
+modeled. Query; legal during capture. Distinct from
+`d3d11_get_devices` (why is not the bare `"d3d11"` string).
+This VM does not invent `cuD3D12GetDevice` or Engine `--d3d11-device`.
+`gpu-profile capture` is still refused. Dual score still has no `$/M tokens`.
+
+## Shipped 2026-09-01 — CUDA `cuGLMapBufferObjectAsync`
+
+`gpu-sim` `Sim::gl_map_buffer_object_async` is `cuGLMapBufferObjectAsync`.
+Always Invalid `"async map"` because legacy OpenGL interop is not
+modeled. Query; legal during capture. Distinct from
+`gl_map_buffer_object` (why is not a superstring of `"gl map"`) and from
+`gl_unmap_buffer_object_async`. This VM does not invent `cuD3D11GetDevice` or Engine `--gl-map-async`.
+`gpu-profile capture` is still refused. Dual score still has no `$/M tokens`.
+
+## Shipped 2026-09-01 — CUDA `cuGLUnmapBufferObjectAsync`
+
+`gpu-sim` `Sim::gl_unmap_buffer_object_async` is `cuGLUnmapBufferObjectAsync`.
+Always Invalid `"unmap async"` because legacy OpenGL interop is not
+modeled. Query; legal during capture. Distinct from
+`gl_unmap_buffer_object` (why is not a superstring of `"gl unmap"`).
+This VM does not invent `cuGLMapBufferObjectAsync` or Engine `--gl-unmap-async`.
+`gpu-profile capture` is still refused. Dual score still has no `$/M tokens`.
+
+## Shipped 2026-09-01 — CUDA `cuWaitExternalSemaphoresAsync`
+
+`gpu-sim` `Sim::wait_external_semaphores_async` is
+`cuWaitExternalSemaphoresAsync`. Always Invalid `"semaphore wait"`
+because external semaphore import is not modeled. Query; legal during
+capture. Distinct from `signal_external_semaphores_async` (why is not a
+superstring of `"semaphore signal"`). This VM does not invent `cuGLUnmapBufferObjectAsync` or Engine `--semaphore-wait`.
+`gpu-profile capture` is still refused. Dual score still has no `$/M tokens`.
+
+## Shipped 2026-09-01 — CUDA `cuSignalExternalSemaphoresAsync`
+
+`gpu-sim` `Sim::signal_external_semaphores_async` is
+`cuSignalExternalSemaphoresAsync`. Always Invalid `"semaphore signal"`
+because external semaphore import is not modeled. Query; legal during
+capture. Distinct from `destroy_external_semaphore` (why is not a
+superstring of `"semaphore destroy"`). This VM does not invent `cuWaitExternalSemaphoresAsync` or Engine `--semaphore-signal`.
+`gpu-profile capture` is still refused. Dual score still has no `$/M tokens`.
+
+## Shipped 2026-09-01 — CUDA `cuDestroyExternalSemaphore`
+
+`gpu-sim` `Sim::destroy_external_semaphore` is `cuDestroyExternalSemaphore`.
+Always Invalid `"semaphore destroy"` because external semaphore import
+is not modeled. Query; legal during capture. Distinct from
+`import_external_semaphore` (why is not a superstring of `"external semaphore"`)
+and from `destroy_external_memory`. This VM does not invent `cuSignalExternalSemaphoresAsync` or Engine `--semaphore-destroy`.
+`gpu-profile capture` is still refused. Dual score still has no `$/M tokens`.
+
+## Shipped 2026-09-01 — CUDA `cuImportExternalSemaphore`
+
+`gpu-sim` `Sim::import_external_semaphore` is `cuImportExternalSemaphore`.
+Always Invalid `"external semaphore"` because external semaphore import
+is not modeled. Query; legal during capture. Distinct from
+`import_external_memory` (why is not a superstring of `"external memory"`).
+This VM does not invent `cuDestroyExternalSemaphore` or Engine `--external-semaphore`.
+`gpu-profile capture` is still refused. Dual score still has no `$/M tokens`.
+
+## Shipped 2026-09-01 — CUDA `cudaGLSetGLDevice`
+
+`gpu-sim` `Sim::gl_set_gl_device` is `cudaGLSetGLDevice`.
+Always Invalid `"gl device"` because OpenGL interop is not
+modeled. Query; legal during capture. Distinct from
+`gl_get_devices` (why is not `"opengl"`) and from `gl_ctx_create`.
+This VM does not invent `cuImportExternalSemaphore` or Engine `--gl-set-device`.
+`gpu-profile capture` is still refused. Dual score still has no `$/M tokens`.
+
+## Shipped 2026-09-01 — CUDA `cuGLUnmapBufferObject`
+
+`gpu-sim` `Sim::gl_unmap_buffer_object` is `cuGLUnmapBufferObject`.
+Always Invalid `"gl unmap"` because legacy OpenGL interop is not
+modeled. Query; legal during capture. Distinct from
+`gl_map_buffer_object` (why is not a superstring of `"gl map"`) and from
+`graphics_unmap_resources`. This VM does not invent `cuGLUnmapBufferObjectAsync` or Engine `--gl-unmap`.
+`gpu-profile capture` is still refused. Dual score still has no `$/M tokens`.
+
+## Shipped 2026-09-01 — CUDA `cuGLUnregisterBufferObject`
+
+`gpu-sim` `Sim::gl_unregister_buffer_object` is `cuGLUnregisterBufferObject`.
+Always Invalid `"unregister object"` because legacy OpenGL interop is not
+modeled. Query; legal during capture. Distinct from
+`gl_register_buffer_object` (why is not a superstring of `"buffer object"`).
+This VM does not invent `cuGLUnmapBufferObject` or Engine `--gl-unregister-object`.
+`gpu-profile capture` is still refused. Dual score still has no `$/M tokens`.
+
+## Shipped 2026-09-01 — CUDA `cuExternalMemoryGetMappedMipmappedArray`
+
+`gpu-sim` `Sim::external_memory_get_mapped_mipmapped_array` is
+`cuExternalMemoryGetMappedMipmappedArray`. Always Invalid `"external mipmap"`
+because external memory import is not modeled. Query; legal during capture.
+Distinct from `external_memory_get_mapped_buffer` and
+`graphics_resource_get_mapped_mipmapped_array`. This VM does not invent `cuGLUnregisterBufferObject` or Engine `--external-mipmap`.
+`gpu-profile capture` is still refused. Dual score still has no `$/M tokens`.
+
+## Shipped 2026-09-01 — CUDA `cuExternalMemoryGetMappedBuffer`
+
+`gpu-sim` `Sim::external_memory_get_mapped_buffer` is
+`cuExternalMemoryGetMappedBuffer`. Always Invalid `"mapped buffer"` because
+external memory import is not modeled. Query; legal during capture. Distinct
+from `destroy_external_memory` and `graphics_resource_get_mapped_pointer`.
+This VM does not invent `cuExternalMemoryGetMappedMipmappedArray` or Engine `--mapped-buffer`.
+`gpu-profile capture` is still refused. Dual score still has no `$/M tokens`.
+
+## Shipped 2026-09-01 — CUDA `cuDestroyExternalMemory`
+
+`gpu-sim` `Sim::destroy_external_memory` is `cuDestroyExternalMemory`.
+Always Invalid `"external destroy"` because external memory import is not
+modeled. Query; legal during capture. Distinct from `import_external_memory`.
+This VM does not invent `cuExternalMemoryGetMappedBuffer` or Engine `--external-destroy`.
+`gpu-profile capture` is still refused. Dual score still has no `$/M tokens`.
+
+## Shipped 2026-09-01 — CUDA `cuGraphicsVDPAURegisterVideoSurface`
+
+`gpu-sim` `Sim::graphics_vdpau_register_video_surface` is
+`cuGraphicsVDPAURegisterVideoSurface`. Always Invalid `"vdpau video"`
+because VDPAU interop is not modeled. Query; legal during capture. Distinct
+from `graphics_vdpau_register_output_surface`. This VM does not invent a `VdpVideoSurface` or Engine `--vdpau-video`.
+`gpu-profile capture` is still refused. Dual score still has no `$/M tokens`.
+
+## Shipped 2026-09-01 — CUDA `cuGraphicsVDPAURegisterOutputSurface`
+
+`gpu-sim` `Sim::graphics_vdpau_register_output_surface` is
+`cuGraphicsVDPAURegisterOutputSurface`. Always Invalid `"vdpau output"`
+because VDPAU interop is not modeled. Query; legal during capture. Distinct
+from `vdpau_ctx_create` and `vdpau_get_device`. This VM does not invent `cuGraphicsVDPAURegisterVideoSurface` or Engine `--vdpau-output`.
+`gpu-profile capture` is still refused. Dual score still has no `$/M tokens`.
+
+## Shipped 2026-09-01 — CUDA `cuGraphicsD3D10RegisterResource`
+
+`gpu-sim` `Sim::graphics_d3d10_register_resource` is
+`cuGraphicsD3D10RegisterResource`. Always Invalid `"d3d10 register"`
+because Direct3D 10 interop is not modeled. Query; legal during capture.
+Distinct from `d3d10_ctx_create` and `graphics_d3d9_register_resource`.
+This VM does not invent a D3D10 `ID3D10Resource` or Engine `--d3d10-register`.
+`gpu-profile capture` is still refused. Dual score still has no `$/M tokens`.
+
+## Shipped 2026-09-01 — CUDA `cuGraphicsD3D9RegisterResource`
+
+`gpu-sim` `Sim::graphics_d3d9_register_resource` is
+`cuGraphicsD3D9RegisterResource`. Always Invalid `"d3d9 register"` because
+Direct3D 9 interop is not modeled. Query; legal during capture. Distinct
+from `d3d9_ctx_create` and `graphics_d3d11_register_resource`. This VM does not invent a D3D9 `IDirect3DResource9` or Engine `--d3d9-register`.
+`gpu-profile capture` is still refused. Dual score still has no `$/M tokens`.
+
+## Shipped 2026-09-01 — CUDA `cuGraphicsD3D12RegisterResource`
+
+`gpu-sim` `Sim::graphics_d3d12_register_resource` is
+`cuGraphicsD3D12RegisterResource`. Always Invalid `"d3d12 register"`
+because Direct3D 12 interop is not modeled. Query; legal during capture.
+Distinct from `d3d12_ctx_create` and `graphics_d3d11_register_resource`.
+This VM does not invent a D3D12 `ID3D12Resource` or Engine `--d3d12-register`.
+`gpu-profile capture` is still refused. Dual score still has no `$/M tokens`.
+
+## Shipped 2026-09-01 — CUDA `cuGraphicsD3D11RegisterResource`
+
+`gpu-sim` `Sim::graphics_d3d11_register_resource` is
+`cuGraphicsD3D11RegisterResource`. Always Invalid `"d3d11 register"`
+because Direct3D 11 interop is not modeled. Query; legal during capture.
+Distinct from `d3d11_ctx_create` and `graphics_map_resources`. This VM does not invent a D3D11 `ID3D11Resource` or Engine `--d3d11-register`.
+`gpu-profile capture` is still refused. Dual score still has no `$/M tokens`.
+
+## Shipped 2026-09-01 — CUDA `cuGLMapBufferObject`
+
+`gpu-sim` `Sim::gl_map_buffer_object` is `cuGLMapBufferObject`. Always
+Invalid `"gl map"` because legacy OpenGL interop is not modeled. Query;
+legal during capture. Distinct from `gl_register_buffer_object` and
+`graphics_map_resources`. This VM does not invent `cuGLMapBufferObjectAsync` or Engine `--gl-map`.
+`gpu-profile capture` is still refused. Dual score still has no `$/M tokens`.
+
+## Shipped 2026-09-01 — CUDA `cuGLRegisterBufferObject`
+
+`gpu-sim` `Sim::gl_register_buffer_object` is `cuGLRegisterBufferObject`.
+Always Invalid `"buffer object"` because legacy OpenGL interop is not
+modeled. Query; legal during capture. Distinct from
+`graphics_gl_register_buffer` (why is not a superstring of `"gl buffer"`).
+This VM does not invent `cuGLUnregisterBufferObject` or Engine `--gl-buffer-object`.
+`gpu-profile capture` is still refused. Dual score still has no `$/M tokens`.
+
+## Shipped 2026-09-01 — CUDA `cuArrayDestroy`
+
+`gpu-sim` `Sim::array_destroy` is `cuArrayDestroy`. Always Invalid
+`"array destroy"` because CUDA arrays are not modeled. Query; legal during
+capture. Distinct from `array_create` and `mipmapped_array_destroy`. This VM does not invent a pitched array alloc or Engine `--array-destroy`.
+`gpu-profile capture` is still refused. Dual score still has no `$/M tokens`.
+
+## Shipped 2026-09-01 — CUDA `cuMipmappedArrayDestroy`
+
+`gpu-sim` `Sim::mipmapped_array_destroy` is `cuMipmappedArrayDestroy`.
+Always Invalid `"mipmap destroy"` because CUDA mipmapped arrays are not
+modeled. Query; legal during capture. Distinct from `mipmapped_array_create`
+and `mipmapped_array_get_level`. This VM does not invent `cuArrayDestroy` or Engine `--mipmap-destroy`.
+`gpu-profile capture` is still refused. Dual score still has no `$/M tokens`.
+
+## Shipped 2026-09-01 — CUDA `cuMipmappedArrayGetLevel`
+
+`gpu-sim` `Sim::mipmapped_array_get_level` is `cuMipmappedArrayGetLevel`.
+Always Invalid `"mipmap level"` because CUDA mipmapped arrays are not
+modeled. Query; legal during capture. Distinct from `mipmapped_array_create`
+and `mipmapped_array_get_memory_requirements`. This VM does not invent a `CUarray` level handle or Engine `--mipmap-level`.
+`gpu-profile capture` is still refused. Dual score still has no `$/M tokens`.
+
+## Shipped 2026-09-01 — CUDA `cuGraphicsEGLRegisterImage`
+
+`gpu-sim` `Sim::graphics_egl_register_image` is
+`cuGraphicsEGLRegisterImage`. Always Invalid `"egl register"` because EGL
+interop is not modeled. Query; legal during capture. Distinct from
+`graphics_gl_register_image` (why is not a superstring of `"gl image"`).
+This VM does not invent an EGL `CUarray` or Engine `--egl-register`.
+`gpu-profile capture` is still refused. Dual score still has no `$/M tokens`.
+
+## Shipped 2026-09-01 — CUDA `cuMipmappedArrayGetMemoryRequirements`
+
+`gpu-sim` `Sim::mipmapped_array_get_memory_requirements` is
+`cuMipmappedArrayGetMemoryRequirements`. Always Invalid `"mipmap memory"`
+because CUDA mipmapped arrays are not modeled. Query; legal during capture.
+Distinct from `array_get_memory_requirements` and `mipmapped_array_create`.
+This VM does not invent `cuMipmappedArrayDestroy` or Engine `--mipmap-memory`.
+`gpu-profile capture` is still refused. Dual score still has no `$/M tokens`.
+
+## Shipped 2026-09-01 — CUDA `cuEGLStreamConsumerReleaseFrame`
+
+`gpu-sim` `Sim::egl_stream_consumer_release_frame` is
+`cuEGLStreamConsumerReleaseFrame`. Always Invalid `"consumer release"`
+because EGL streams are not modeled. Query; legal during capture. Distinct
+from `egl_stream_consumer_acquire_frame`. This VM does not invent an EGL consumer release timeout or Engine `--egl-consumer-release`.
+`gpu-profile capture` is still refused. Dual score still has no `$/M tokens`.
+
+## Shipped 2026-09-01 — CUDA `cuGraphicsResourceSetMapFlags`
+
+`gpu-sim` `Sim::graphics_resource_set_map_flags` is
+`cuGraphicsResourceSetMapFlags`. Always Invalid `"map flags"` because
+graphics resources are not modeled. Query; legal during capture. Distinct
+from `graphics_unregister_resource` and VMM `"mem map flags"`. This VM does not invent a populated `CU_GRAPHICS_MAP_RESOURCE_FLAGS` enum or Engine `--map-flags`.
+`gpu-profile capture` is still refused. Dual score still has no `$/M tokens`.
+
+## Shipped 2026-09-01 — CUDA `cuEGLStreamConsumerAcquireFrame`
+
+`gpu-sim` `Sim::egl_stream_consumer_acquire_frame` is
+`cuEGLStreamConsumerAcquireFrame`. Always Invalid `"consumer acquire"`
+because EGL streams are not modeled. Query; legal during capture. Distinct
+from `egl_stream_consumer_disconnect`. This VM does not invent `cuEGLStreamConsumerReleaseFrame` or Engine `--egl-consumer-acquire`.
+`gpu-profile capture` is still refused. Dual score still has no `$/M tokens`.
+
+## Shipped 2026-09-01 — CUDA `cuEGLStreamProducerReturnFrame`
+
+`gpu-sim` `Sim::egl_stream_producer_return_frame` is
+`cuEGLStreamProducerReturnFrame`. Always Invalid `"producer return"`
+because EGL streams are not modeled. Query; legal during capture. Distinct
+from `egl_stream_producer_present_frame`. This VM does not invent a `CUeglFrame` or Engine `--egl-producer-return`.
+`gpu-profile capture` is still refused. Dual score still has no `$/M tokens`.
+
+## Shipped 2026-09-01 — CUDA `cuGraphicsResourceGetMappedMipmappedArray`
+
+`gpu-sim` `Sim::graphics_resource_get_mapped_mipmapped_array` is
+`cuGraphicsResourceGetMappedMipmappedArray`. Always Invalid `"mapped mipmap"`
+because graphics resources are not modeled. Query; legal during capture.
+Distinct from `graphics_subresource_get_mapped_array` and
+`mipmapped_array_create`. This VM does not invent a `CUmipmappedArray` handle or Engine `--mapped-mipmap`.
+`gpu-profile capture` is still refused. Dual score still has no `$/M tokens`.
+
+## Shipped 2026-09-01 — CUDA `cuGraphicsSubResourceGetMappedArray`
+
+`gpu-sim` `Sim::graphics_subresource_get_mapped_array` is
+`cuGraphicsSubResourceGetMappedArray`. Always Invalid `"mapped array"`
+because graphics resources are not modeled. Query; legal during capture.
+Distinct from `graphics_resource_get_mapped_pointer` and `array_create`.
+This VM does not invent `cuGraphicsResourceGetMappedMipmappedArray` or Engine `--mapped-array`.
+`gpu-profile capture` is still refused. Dual score still has no `$/M tokens`.
+
+## Shipped 2026-09-01 — CUDA `cuEGLStreamProducerPresentFrame`
+
+`gpu-sim` `Sim::egl_stream_producer_present_frame` is
+`cuEGLStreamProducerPresentFrame`. Always Invalid `"producer present"`
+because EGL streams are not modeled. Query; legal during capture. Distinct
+from `egl_stream_producer_disconnect`. This VM does not invent `cuEGLStreamProducerReturnFrame` or Engine `--egl-producer-present`.
+`gpu-profile capture` is still refused. Dual score still has no `$/M tokens`.
+
+## Shipped 2026-09-01 — CUDA `cuGraphicsResourceGetMappedPointer`
+
+`gpu-sim` `Sim::graphics_resource_get_mapped_pointer` is
+`cuGraphicsResourceGetMappedPointer`. Always Invalid `"mapped pointer"`
+because graphics resources are not modeled. Query; legal during capture.
+Distinct from `graphics_map_resources` and `graphics_unmap_resources`.
+This VM does not invent `cuGraphicsSubResourceGetMappedArray` or Engine `--mapped-pointer`.
+`gpu-profile capture` is still refused. Dual score still has no `$/M tokens`.
+
+## Shipped 2026-09-01 — CUDA `cuEGLStreamConsumerDisconnect`
+
+`gpu-sim` `Sim::egl_stream_consumer_disconnect` is
+`cuEGLStreamConsumerDisconnect`. Always Invalid `"consumer disconnect"`
+because EGL streams are not modeled. Query; legal during capture. Distinct
+from `egl_stream_consumer_connect` and `egl_stream_producer_disconnect`.
+This VM does not invent `cuEGLStreamConsumerAcquireFrame` or Engine `--egl-consumer-disconnect`.
+`gpu-profile capture` is still refused. Dual score still has no `$/M tokens`.
+
+## Shipped 2026-09-01 — CUDA `cuArrayGetMemoryRequirements`
+
+`gpu-sim` `Sim::array_get_memory_requirements` is
+`cuArrayGetMemoryRequirements`. Always Invalid `"array memory"` because
+CUDA arrays are not modeled. Query; legal during capture. Distinct from
+`array_get_plane`. This VM does not invent `cuMipmappedArrayGetMemoryRequirements` or Engine `--array-memory`.
+`gpu-profile capture` is still refused. Dual score still has no `$/M tokens`.
+
+## Shipped 2026-09-01 — CUDA `cuArrayGetPlane`
+
+`gpu-sim` `Sim::array_get_plane` is `cuArrayGetPlane`. Always Invalid
+`"array plane"` because CUDA arrays are not modeled. Query; legal during
+capture. Distinct from `array_get_sparse_properties`. This VM does not invent `cuArrayGetMemoryRequirements` or Engine `--array-plane`.
+`gpu-profile capture` is still refused. Dual score still has no `$/M tokens`.
+
+## Shipped 2026-09-01 — CUDA `cuEGLStreamProducerDisconnect`
+
+`gpu-sim` `Sim::egl_stream_producer_disconnect` is
+`cuEGLStreamProducerDisconnect`. Always Invalid `"producer disconnect"`
+because EGL streams are not modeled. Query; legal during capture. Distinct
+from `egl_stream_producer_connect`. This VM does not invent `cuEGLStreamProducerPresentFrame` or Engine `--egl-producer-disconnect`.
+`gpu-profile capture` is still refused. Dual score still has no `$/M tokens`.
+
+## Shipped 2026-09-01 — CUDA `cuGraphicsUnregisterResource`
+
+`gpu-sim` `Sim::graphics_unregister_resource` is
+`cuGraphicsUnregisterResource`. Always Invalid `"graphics unregister"`
+because graphics resources are not modeled. Query; legal during capture.
+Distinct from `graphics_unmap_resources`. This VM does not invent `cuGraphicsResourceSetMapFlags` or Engine `--graphics-unregister`.
+`gpu-profile capture` is still refused. Dual score still has no `$/M tokens`.
+
+## Shipped 2026-09-01 — CUDA `cuArrayGetSparseProperties`
+
+`gpu-sim` `Sim::array_get_sparse_properties` is
+`cuArrayGetSparseProperties`. Always Invalid `"array sparse"` because
+sparse CUDA arrays are not modeled. Query; legal during capture. Distinct
+from `array_3d_get_descriptor`. This VM does not invent `cuArrayGetPlane` or Engine `--array-sparse`.
+`gpu-profile capture` is still refused. Dual score still has no `$/M tokens`.
+
+## Shipped 2026-09-01 — CUDA `cuGraphicsUnmapResources`
+
+`gpu-sim` `Sim::graphics_unmap_resources` is `cuGraphicsUnmapResources`.
+Always Invalid `"graphics unmap"` because graphics resources are not
+modeled. Query; legal during capture. Distinct from `graphics_map_resources`.
+This VM does not invent `cuGraphicsResourceGetMappedPointer` or Engine `--graphics-unmap`.
+`gpu-profile capture` is still refused. Dual score still has no `$/M tokens`.
+
+## Shipped 2026-09-01 — CUDA `cuGraphicsGLRegisterImage`
+
+`gpu-sim` `Sim::graphics_gl_register_image` is
+`cuGraphicsGLRegisterImage`. Always Invalid `"gl image"` because OpenGL
+interop is not modeled. Query; legal during capture. Distinct from
+`graphics_gl_register_buffer`. This VM does not invent `cuGraphicsEGLRegisterImage` or Engine `--gl-register-image`.
+`gpu-profile capture` is still refused. Dual score still has no `$/M tokens`.
+
+## Shipped 2026-09-01 — CUDA `cuArray3DGetDescriptor`
+
+`gpu-sim` `Sim::array_3d_get_descriptor` is `cuArray3DGetDescriptor`.
+Always Invalid `"array 3d descriptor"` because CUDA arrays are not
+modeled. Query; legal during capture. Distinct from `array_get_descriptor`.
+This VM does not invent `cuArrayGetSparseProperties` or Engine `--array-3d-desc`.
+`gpu-profile capture` is still refused. Dual score still has no `$/M tokens`.
+
+## Shipped 2026-09-01 — CUDA `cuGraphicsGLRegisterBuffer`
+
+`gpu-sim` `Sim::graphics_gl_register_buffer` is
+`cuGraphicsGLRegisterBuffer`. Always Invalid `"gl buffer"` because
+OpenGL interop is not modeled. Query; legal during capture. Distinct from
+`graphics_map_resources` and `gl_ctx_create`. This VM does not invent `cuGraphicsGLRegisterImage` or Engine `--gl-register-buffer`.
+`gpu-profile capture` is still refused. Dual score still has no `$/M tokens`.
+
+## Shipped 2026-09-01 — CUDA `cuArrayGetDescriptor`
+
+`gpu-sim` `Sim::array_get_descriptor` is `cuArrayGetDescriptor`. Always
+Invalid `"array descriptor"` because CUDA arrays are not modeled. Query;
+legal during capture. Distinct from `array_create` and
+`surf_object_get_resource_desc`. This VM does not invent `cuArray3DGetDescriptor` or Engine `--array-desc`.
+`gpu-profile capture` is still refused. Dual score still has no `$/M tokens`.
+
+## Shipped 2026-09-01 — CUDA `cuEGLStreamProducerConnect`
+
+`gpu-sim` `Sim::egl_stream_producer_connect` is
+`cuEGLStreamProducerConnect`. Always Invalid `"egl producer"` because
+EGL streams are not modeled. Query; legal during capture. Distinct from
+`egl_stream_consumer_connect`. This VM does not invent `cuEGLStreamProducerDisconnect` or Engine `--egl-producer`.
+`gpu-profile capture` is still refused. Dual score still has no `$/M tokens`.
+
+## Shipped 2026-09-01 — CUDA `cuVDPAUCtxCreate`
+
+`gpu-sim` `Sim::vdpau_ctx_create` is `cuVDPAUCtxCreate`. Always Invalid
+`"vdpau context"` because VDPAU interop is not modeled. Query; legal
+during capture. Distinct from `vdpau_get_device` and `gl_ctx_create`.
+This VM does not invent `cuGraphicsVDPAURegisterOutputSurface` or Engine `--vdpau-ctx`.
+`gpu-profile capture` is still refused. Dual score still has no `$/M tokens`.
+
+## Shipped 2026-09-01 — CUDA `cuD3D10CtxCreate`
+
+`gpu-sim` `Sim::d3d10_ctx_create` is `cuD3D10CtxCreate`. Always Invalid
+`"d3d10 context"` because Direct3D 10 interop is not modeled. Query; legal
+during capture. Distinct from `d3d10_get_devices` and `d3d9_ctx_create`.
+This VM does not invent `cuGraphicsD3D10RegisterResource` or Engine `--d3d10-ctx`.
+`gpu-profile capture` is still refused. Dual score still has no `$/M tokens`.
+
+## Shipped 2026-09-01 — CUDA `cuD3D9CtxCreate`
+
+`gpu-sim` `Sim::d3d9_ctx_create` is `cuD3D9CtxCreate`. Always Invalid
+`"d3d9 context"` because Direct3D 9 interop is not modeled. Query; legal
+during capture. Distinct from `d3d9_get_devices` and `d3d11_ctx_create`.
+This VM does not invent `cuGraphicsD3D9RegisterResource` or Engine `--d3d9-ctx`.
+`gpu-profile capture` is still refused. Dual score still has no `$/M tokens`.
+
+## Shipped 2026-09-01 — CUDA `cuD3D12CtxCreate`
+
+`gpu-sim` `Sim::d3d12_ctx_create` is `cuD3D12CtxCreate`. Always Invalid
+`"d3d12 context"` because Direct3D 12 interop is not modeled. Query; legal
+during capture. Distinct from `d3d12_get_devices`, `d3d11_ctx_create`, and
+`DeviceAttr::D3D12CigSupported`. This VM does not invent `cuGraphicsD3D12RegisterResource` or Engine `--d3d12-ctx`.
+`gpu-profile capture` is still refused. Dual score still has no `$/M tokens`.
+
+## Shipped 2026-09-01 — CUDA `cuD3D11CtxCreate`
+
+`gpu-sim` `Sim::d3d11_ctx_create` is `cuD3D11CtxCreate`. Always Invalid
+`"d3d11 context"` because Direct3D 11 interop is not modeled. Query; legal
+during capture. Distinct from `d3d11_get_devices` and `gl_ctx_create`.
+This VM does not invent `cuGraphicsD3D11RegisterResource` or Engine `--d3d11-ctx`.
+`gpu-profile capture` is still refused. Dual score still has no `$/M tokens`.
+
+## Shipped 2026-09-01 — CUDA `cuGLCtxCreate`
+
+`gpu-sim` `Sim::gl_ctx_create` is `cuGLCtxCreate`. Always Invalid
+`"gl context"` because OpenGL interop is not modeled. Query; legal during
+capture. Distinct from `gl_get_devices`. This VM does not invent `cuGLMapBufferObject` or Engine `--gl-ctx`.
+`gpu-profile capture` is still refused. Dual score still has no `$/M tokens`.
+
+## Shipped 2026-09-01 — CUDA `cuTexObjectGetResourceViewDesc`
+
+`gpu-sim` `Sim::tex_object_get_resource_view_desc` is
+`cuTexObjectGetResourceViewDesc` /
+`cudaGetTextureObjectResourceViewDesc`. Always Invalid `"tex view desc"`
+because CUDA textures are not modeled. Query; legal during capture.
+Distinct from `tex_object_get_resource_desc` and
+`tex_object_get_texture_desc`. This VM does not invent `CU_RES_VIEW_FORMAT` or Engine `--tex-view-desc`.
+`gpu-profile capture` is still refused. Dual score still has no `$/M tokens`.
+
+## Shipped 2026-09-01 — CUDA `cuTexObjectGetTextureDesc`
+
+`gpu-sim` `Sim::tex_object_get_texture_desc` is
+`cuTexObjectGetTextureDesc` / `cudaGetTextureObjectTextureDesc`.
+Always Invalid `"texture desc"` because CUDA textures are not modeled.
+Query; legal during capture. Distinct from `tex_object_get_resource_desc`.
+This VM does not invent `CU_TR_FILTER_MODE` or Engine `--tex-desc`.
+`gpu-profile capture` is still refused. Dual score still has no `$/M tokens`.
+
+## Shipped 2026-09-01 — CUDA `cuTexObjectGetResourceDesc`
+
+`gpu-sim` `Sim::tex_object_get_resource_desc` is
+`cuTexObjectGetResourceDesc` / `cudaGetTextureObjectResourceDesc`.
+Always Invalid `"tex resource desc"` because CUDA textures are not
+modeled. Query; legal during capture. Distinct from `tex_object_destroy`
+and `surf_object_get_resource_desc`. This VM does not invent `cuTexObjectGetResourceViewDesc` or Engine `--tex-resource-desc`.
+`gpu-profile capture` is still refused. Dual score still has no `$/M tokens`.
+
+## Shipped 2026-09-01 — CUDA `cuSurfObjectGetResourceDesc`
+
+`gpu-sim` `Sim::surf_object_get_resource_desc` is
+`cuSurfObjectGetResourceDesc` / `cudaGetSurfaceObjectResourceDesc`.
+Always Invalid `"surf resource desc"` because CUDA surfaces are not
+modeled. Query; legal during capture. Distinct from `surf_object_destroy`.
+This VM does not invent `cuArrayGetDescriptor` or Engine `--surf-resource-desc`.
+`gpu-profile capture` is still refused. Dual score still has no `$/M tokens`.
+
+## Shipped 2026-09-01 — CUDA `cuSurfObjectDestroy`
+
+`gpu-sim` `Sim::surf_object_destroy` is `cuSurfObjectDestroy` /
+`cudaDestroySurfaceObject`. Always Invalid `"unknown surf object"`
+because surface-object handles are not modeled. Query; legal during
+capture. Distinct from `surf_object_create` and `tex_object_destroy`.
+This VM does not invent `cuSurfObjectGetResourceDesc` or Engine `--surf-destroy`.
+`gpu-profile capture` is still refused. Dual score still has no `$/M tokens`.
+
+## Shipped 2026-09-01 — CUDA `cuTexObjectDestroy`
+
+`gpu-sim` `Sim::tex_object_destroy` is `cuTexObjectDestroy` /
+`cudaDestroyTextureObject`. Always Invalid `"unknown tex object"`
+because texture-object handles are not modeled. Query; legal during
+capture. Distinct from `tex_object_create`. This VM does not invent `cuTexObjectGetTextureDesc` or Engine `--tex-destroy`.
+`gpu-profile capture` is still refused. Dual score still has no `$/M tokens`.
+
+## Shipped 2026-09-01 — CUDA `cuTexObjectCreate`
+
+`gpu-sim` `Sim::tex_object_create` is `cuTexObjectCreate` /
+`cudaCreateTextureObject`. Always Invalid `"cuda texture"` because CUDA
+textures are not modeled. Query; legal during capture. Distinct from
+`surf_object_create` and `array_create`. This VM does not invent `cuTexObjectDestroy` or Engine `--tex-object`.
+`gpu-profile capture` is still refused. Dual score still has no `$/M tokens`.
+
+## Shipped 2026-09-01 — CUDA `cudaProfilerInitialize`
+
+`gpu-sim` `Sim::profiler_initialize` is `cudaProfilerInitialize`.
+Always Invalid `"profiler initialize"` because CUPTI config files are
+not modeled. Query; legal during capture. Distinct from `profiler_start`
+and `profiler_stop`. This VM does not invent a CUPTI activity buffer or Engine `--profiler-init`.
+`gpu-profile capture` is still refused. Dual score still has no `$/M tokens`.
+
+## Shipped 2026-09-01 — CUDA `cuProfilerStop`
+
+`gpu-sim` `Sim::profiler_stop` is `cuProfilerStop` /
+`cudaProfilerStop`. 1 ns no-op because CUPTI is not modeled.
+Host-synchronous. Capture cannot include it. Distinct from `profiler_start`.
+This VM does not invent `cudaProfilerInitialize` or Engine `--profiler-stop`.
+`gpu-profile capture` is still refused. Dual score still has no `$/M tokens`.
+
+## Shipped 2026-09-01 — CUDA `cuD3D10GetDevices`
+
+`gpu-sim` `Sim::d3d10_get_devices` is `cuD3D10GetDevices` /
+`cudaD3D10GetDevices`. Always Invalid `"d3d10"` because Direct3D 10
+interop is not modeled. Query; legal during capture. Distinct from
+`d3d9_get_devices` and `d3d11_get_devices`. This VM does not invent `cuD3D10CtxCreate` or Engine `--d3d10-devices`.
+`gpu-profile capture` is still refused. Dual score still has no `$/M tokens`.
+
+## Shipped 2026-09-01 — CUDA `cuD3D9GetDevices`
+
+`gpu-sim` `Sim::d3d9_get_devices` is `cuD3D9GetDevices` /
+`cudaD3D9GetDevices`. Always Invalid `"d3d9"` because Direct3D 9
+interop is not modeled. Query; legal during capture. Distinct from
+`d3d11_get_devices` and `d3d12_get_devices`. This VM does not invent `cuD3D9CtxCreate` or Engine `--d3d9-devices`.
+`gpu-profile capture` is still refused. Dual score still has no `$/M tokens`.
+
+## Shipped 2026-09-01 — CUDA `cuVDPAUGetDevice`
+
+`gpu-sim` `Sim::vdpau_get_device` is `cuVDPAUGetDevice` /
+`cudaVDPAUGetDevice`. Always Invalid `"vdpau"` because VDPAU interop
+is not modeled. Query; legal during capture. Distinct from
+`gl_get_devices` and `d3d12_get_devices`. This VM does not invent `cuVDPAUCtxCreate` or Engine `--vdpau-device`.
+`gpu-profile capture` is still refused. Dual score still has no `$/M tokens`.
+
+## Shipped 2026-09-01 — CUDA `cuD3D12GetDevices`
+
+`gpu-sim` `Sim::d3d12_get_devices` is `cuD3D12GetDevices` /
+`cudaD3D12GetDevices`. Always Invalid `"d3d12"` because Direct3D 12
+interop is not modeled. Query; legal during capture. Distinct from
+`d3d11_get_devices` and from `DeviceAttr::D3D12CigSupported` (always 0;
+CIG is not GetDevices). This VM does not invent `cuD3D12CtxCreate` or Engine `--d3d12-devices`.
+`gpu-profile capture` is still refused. Dual score still has no `$/M tokens`.
+
+## Shipped 2026-09-01 — CUDA `cuD3D11GetDevices`
+
+`gpu-sim` `Sim::d3d11_get_devices` is `cuD3D11GetDevices` /
+`cudaD3D11GetDevices`. Always Invalid `"d3d11"` because Direct3D 11
+interop is not modeled. Query; legal during capture. Distinct from
+`gl_get_devices`. This VM does not invent `cuD3D11CtxCreate` or Engine `--d3d11-devices`.
+`gpu-profile capture` is still refused. Dual score still has no `$/M tokens`.
+
+## Shipped 2026-09-01 — CUDA `cuGLGetDevices`
+
+`gpu-sim` `Sim::gl_get_devices` is `cuGLGetDevices` / `cudaGLGetDevices`.
+Always Invalid `"opengl"` because OpenGL interop is not modeled. Query;
+legal during capture. Distinct from `graphics_map_resources` and
+`egl_stream_consumer_connect`. This VM does not invent `cuGLCtxCreate`
+or Engine `--gl-devices`.
+`gpu-profile capture` is still refused. Dual score still has no `$/M tokens`.
+
+## Shipped 2026-09-01 — CUDA `cuEGLStreamConsumerConnect`
+
+`gpu-sim` `Sim::egl_stream_consumer_connect` is
+`cuEGLStreamConsumerConnect` / `cudaEGLStreamConsumerConnect`. Always
+Invalid `"egl stream"` because EGL streams are not modeled. Query; legal
+during capture. Distinct from `graphics_map_resources`. This VM does not
+invent `cuEGLStreamProducerConnect` or Engine `--egl-stream`.
+`gpu-profile capture` is still refused. Dual score still has no `$/M tokens`.
+
+## Shipped 2026-09-01 — CUDA `cuProfilerStart`
+
+`gpu-sim` `Sim::profiler_start` is `cuProfilerStart` /
+`cudaProfilerStart`. 1 ns no-op because CUPTI is not modeled.
+Host-synchronous. Capture cannot include it. Distinct from `driver_init`.
+This VM does not invent `cuProfilerStop` or Engine `--profiler-start`.
+`gpu-profile capture` is still refused. Dual score still has no `$/M tokens`.
+
+## Shipped 2026-09-01 — CUDA `cuGetExportTable`
+
+`gpu-sim` `Sim::get_export_table` is `cuGetExportTable`. Always Invalid
+`"export table"` because this VM has no C ABI driver tables. Query;
+legal during capture. Distinct from `get_proc_address`. This VM does not
+invent a succeeding `CUuuid` table lookup or Engine `--export-table`.
+`gpu-profile capture` is still refused. Dual score still has no `$/M tokens`.
+
+## Shipped 2026-09-01 — CUDA `cuLinkCreate`
+
+`gpu-sim` `Sim::link_create` is `cuLinkCreate`. Always Invalid
+`"jit linker"` because this VM has no NVRTC and no cubin linker. Query;
+legal during capture. Distinct from `library_load_data`. This VM does
+not invent `cuLinkAddData` or Engine `--jit-link`.
+`gpu-profile capture` is still refused. Dual score still has no `$/M tokens`.
+
+## Shipped 2026-09-01 — CUDA `cuMipmappedArrayCreate`
+
+`gpu-sim` `Sim::mipmapped_array_create` is `cuMipmappedArrayCreate`.
+Always Invalid `"mipmapped array"` because CUDA mipmapped arrays are not
+modeled. Query; legal during capture. Distinct from `array_create`. This
+VM does not invent `cuMipmappedArrayGetLevel` or Engine `--mipmap-array`.
+`gpu-profile capture` is still refused. Dual score still has no `$/M tokens`.
+
+## Shipped 2026-09-01 — CUDA `cuCheckpointProcessLock`
+
+`gpu-sim` `Sim::checkpoint_process_lock` is `cuCheckpointProcessLock`.
+Always Invalid `"checkpoint"` because CUDA process checkpoint is not
+modeled. Query; legal during capture. Distinct from
+`coredump_get_attribute`. This VM does not invent
+`cuCheckpointProcessCheckpoint` or Engine `--checkpoint`.
+`gpu-profile capture` is still refused. Dual score still has no `$/M tokens`.
+
+## Shipped 2026-09-01 — CUDA `cuCoredumpGetAttribute`
+
+`gpu-sim` `Sim::coredump_get_attribute` is `cuCoredumpGetAttribute` /
+`cudaCoredumpGetAttribute`. Always Invalid `"coredump"` because GPU
+coredumps are not modeled. Query; legal during capture. Distinct from
+`get_proc_address`. This VM does not invent `cuCoredumpSetAttribute` or
+Engine `--coredump`.
+`gpu-profile capture` is still refused. Dual score still has no `$/M tokens`.
+
+## Shipped 2026-09-01 — CUDA `cuGraphicsMapResources`
+
+`gpu-sim` `Sim::graphics_map_resources` is `cuGraphicsMapResources` /
+`cudaGraphicsMapResources`. Always Invalid `"graphics resource"` because
+OpenGL, Direct3D, Vulkan, and EGL graphics resources are not modeled.
+Query; legal during capture. Distinct from `import_external_memory`.
+This VM does not invent `cuGraphicsGLRegisterBuffer` or Engine `--graphics-map`.
+`gpu-profile capture` is still refused. Dual score still has no `$/M tokens`.
+
+## Shipped 2026-09-01 — CUDA `cuGetProcAddress`
+
+`gpu-sim` `Sim::get_proc_address` is `cuGetProcAddress` /
+`cudaGetDriverEntryPoint`. Always Invalid `"proc address"` because this
+VM has no C ABI function pointers. Query; legal during capture. Distinct
+from `driver_get_version` and `library_load_data`. This VM does not invent
+`cudaGetDriverEntryPointByVersion` or Engine `--proc-address`.
+`gpu-profile capture` is still refused. Dual score still has no `$/M tokens`.
+
+## Shipped 2026-09-01 — CUDA `cuLibraryLoadData`
+
+`gpu-sim` `Sim::library_load_data` is `cuLibraryLoadData`. Always Invalid
+`"cuda library"` because this VM has no cubin or PTX and no `CUlibrary`.
+Query; legal during capture. Distinct from `module_get_loading_mode` and
+`func_get_module`. This VM does not invent `cuLibraryLoadFromFile` or
+Engine `--library-load`.
+`gpu-profile capture` is still refused. Dual score still has no `$/M tokens`.
+
+## Shipped 2026-09-01 — CUDA `cuSurfObjectCreate`
+
+`gpu-sim` `Sim::surf_object_create` is `cuSurfObjectCreate`. Always
+Invalid `"cuda surface"` because CUDA surfaces are not modeled. Query;
+legal during capture. Distinct from `array_create`. This VM does not
+invent `cuTexObjectCreate` or Engine `--surf-object`.
+`gpu-profile capture` is still refused. Dual score still has no `$/M tokens`.
+
+## Shipped 2026-09-01 — CUDA `cuImportExternalMemory`
+
+`gpu-sim` `Sim::import_external_memory` is `cuImportExternalMemory`.
+Always Invalid `"external memory"` because dma-buf / Win32 / fabric
+handles are 0. Query; legal during capture. Distinct from
+`va_get_handle_for_address_range` and `device_get_nvscisync_attributes`.
+This VM does not invent `cuDestroyExternalMemory` or Engine `--external-memory`.
+`gpu-profile capture` is still refused. Dual score still has no `$/M tokens`.
+
+## Shipped 2026-09-01 — CUDA `cuArrayCreate`
+
+`gpu-sim` `Sim::array_create` is `cuArrayCreate` / `cuArray3DCreate`.
+Always Invalid `"cuda array"` because CUDA arrays are not modeled.
+Query; legal during capture. Distinct from `tensor_map_encode_tiled`.
+This VM does not invent `CUarray_format` or Engine `--array-create`.
+`gpu-profile capture` is still refused. Dual score still has no `$/M tokens`.
+
+## Shipped 2026-09-01 — CUDA `cudaLaunchCooperativeKernelMultiDevice`
+
+`gpu-sim` `Sim::cooperative_kernel_multi_device` is
+`cudaLaunchCooperativeKernelMultiDevice`. Always Invalid
+`"cooperative multi-device"` because `CooperativeMultiDeviceLaunch` is 0.
+Query; legal during capture. Distinct from `cooperative_kernel`. This VM
+does not invent `cudaLaunchParams` packing or Engine `--coop-multi`.
+`gpu-profile capture` is still refused. Dual score still has no `$/M tokens`.
+
+## Shipped 2026-09-01 — CUDA `cuTensorMapEncodeTiled`
+
+`gpu-sim` `Sim::tensor_map_encode_tiled` is `cuTensorMapEncodeTiled`.
+Always Invalid `"tensor map"` because `TensorMapAccessSupported` is 0.
+Query; legal during capture. Distinct from `mem_batch_decompress_async`.
+This VM does not invent `cuTensorMapEncodeIm2col` or Engine `--tensor-map`.
+`gpu-profile capture` is still refused. Dual score still has no `$/M tokens`.
+
+## Shipped 2026-09-01 — CUDA `cuMemBatchDecompressAsync`
+
+`gpu-sim` `Sim::mem_batch_decompress_async` is `cuMemBatchDecompressAsync`.
+Always Invalid `"hw decompress"` because `MemDecompressAlgorithmMask` is
+0. Distinct from `memcpy_batch_async`. This VM does not invent decompress
+succeeding or Engine `--mem-decompress`.
+`gpu-profile capture` is still refused. Dual score still has no `$/M tokens`.
+
+## Shipped 2026-09-01 — CUDA `cuCtxGetExecAffinity`
+
+`gpu-sim` `Sim::ctx_get_exec_affinity` is `cuCtxGetExecAffinity`.
+`SM_COUNT` is Invalid `"unsupported exec affinity"` because
+`device_get_exec_affinity_support` is 0. Query; legal during capture.
+This VM does not invent occupancy SM counts, `cuCtxSetExecAffinity`, or
+Engine `--ctx-exec-affinity`.
+`gpu-profile capture` is still refused. Dual score still has no `$/M tokens`.
+
+## Shipped 2026-09-01 — CUDA `cuCtxResetPersistingL2Cache`
+
+`gpu-sim` `Sim::ctx_reset_persisting_l2_cache` is
+`cuCtxResetPersistingL2Cache`. Wraps `reset_persisting_l2_cache`.
+Host-synchronous. Capture cannot include it. The persist limit stays.
+Distinct from `set_persisting_l2_cache_size`. This VM does not invent
+Engine `--ctx-reset-l2`.
+`gpu-profile capture` is still refused. Dual score still has no `$/M tokens`.
+
+## Shipped 2026-09-01 — CUDA `cuFuncGetModule`
+
+`gpu-sim` `Sim::func_get_module` is `cuFuncGetModule`. Always Invalid
+`"unknown function"` until a compiled kernel exists. Query; legal during
+capture. This VM has no `CUmodule`. Distinct from `func_is_loaded`
+(`false`) and `func_get_param_info`. This VM does not invent
+`cuKernelGetModule` or Engine `--func-module`.
+`gpu-profile capture` is still refused. Dual score still has no `$/M tokens`.
+
+## Shipped 2026-09-01 — CUDA `cuFuncIsLoaded`
+
+`gpu-sim` `Sim::func_is_loaded` is `cuFuncIsLoaded`. `false` until a
+compiled kernel exists. Query; legal during capture. Distinct from
+empty `func_get_name` and unknown-function `func_get_param_info`. This
+VM does not invent `cuFuncLoad` or Engine `--func-loaded`.
+`gpu-profile capture` is still refused. Dual score still has no `$/M tokens`.
+
+## Shipped 2026-09-01 — CUDA `cuCtxGetDevice`
+
+`gpu-sim` `Sim::ctx_get_device` is `cuCtxGetDevice`. Returns the explicit
+device of the seeded primary context. Query; legal during capture.
+Distinct from `green_ctx_get_device` and `stream_get_device`. This VM
+does not invent `cudaSetDevice` or Engine `--ctx-device`.
+`gpu-profile capture` is still refused. Dual score still has no `$/M tokens`.
+
+## Shipped 2026-09-01 — CUDA `cuModuleGetLoadingMode`
+
+`gpu-sim` `Sim::module_get_loading_mode` is `cuModuleGetLoadingMode`.
+Always `ModuleLoadingMode::Eager` (CUDA 1). Query; legal during capture.
+Process-wide. This VM has no `CUmodule`. Distinct from `driver_init` and
+`init_device`. This VM does not invent an environment-variable loading
+override or Engine `--module-loading`.
+`gpu-profile capture` is still refused. Dual score still has no `$/M tokens`.
+
+## Shipped 2026-09-01 — CUDA `cuInit`
+
+`gpu-sim` `Sim::driver_init` is `cuInit`. Flags must be 0. Already
+initialized at `Sim::new`; further calls are 1 ns no-ops. Capture cannot
+include it. Distinct from `init_device` (`cudaInitDevice`). This VM does
+not invent `cuInit` flag bits or Engine `--cu-init`.
+`gpu-profile capture` is still refused. Dual score still has no `$/M tokens`.
+
+## Shipped 2026-09-01 — CUDA `cuFuncGetParamInfo`
+
+`gpu-sim` `Sim::func_get_param_info` is `cuFuncGetParamInfo`. Always
+Invalid `"unknown function"` until a compiled kernel exists. Query;
+legal during capture. Distinct from `func_get_name` (empty string) and
+from `func_get_attributes`. This VM does not invent a compiled kernel
+or Engine `--func-param-info`.
+`gpu-profile capture` is still refused. Dual score still has no `$/M tokens`.
+
+## Shipped 2026-09-01 — CUDA `cudaFuncGetName`
+
+`gpu-sim` `Sim::func_get_name` is `cudaFuncGetName` / `cuFuncGetName`.
+Empty until a compiled kernel exists. Query; legal during capture.
+Distinct from `device_get_name` and from `func_get_attributes`. This VM
+does not invent `cuKernelGetName` or Engine `--func-name`.
+`gpu-profile capture` is still refused. Dual score still has no `$/M tokens`.
+
+## Shipped 2026-09-01 — CUDA `cuDevicePrimaryCtxSetFlags`
+
+`gpu-sim` `Sim::device_primary_ctx_set_flags` is
+`cuDevicePrimaryCtxSetFlags`. Always Invalid `"primary context active"`
+because this VM seeds a primary context at construct. Flags are not
+applied. Distinct from `set_device_flags`. Capture cannot include it.
+This VM does not invent `cuDevicePrimaryCtxRetain` or Engine `--primary-ctx-flags`.
+`gpu-profile capture` is still refused. Dual score still has no `$/M tokens`.
+
+## Shipped 2026-09-01 — CUDA `cuCtxGetSharedMemConfig`
+
+`gpu-sim` `Sim::ctx_get_shared_mem_config` is `cuCtxGetSharedMemConfig`
+for the seeded primary context of an explicit device. Same as
+`get_shared_mem_config`. Query; legal during capture. Distinct from
+`get_shared_mem_config` (runtime) and from `get_func_shared_mem_config`.
+This VM does not invent `cuCtxSetSharedMemConfig` or Engine `--ctx-shared-mem`.
+`gpu-profile capture` is still refused. Dual score still has no `$/M tokens`.
+
+## Shipped 2026-09-01 — CUDA `cuCtxSynchronize`
+
+`gpu-sim` `Sim::ctx_synchronize` is `cuCtxSynchronize` for the seeded
+primary context of an explicit device. Same wait as `synchronize_device`.
+Capture cannot include it. Other GPUs keep running. Distinct from
+`synchronize_device` (runtime) and from `green_ctx_synchronize`. This VM
+does not invent `cuCtxSynchronize_v2` or Engine `--ctx-synchronize`.
+`gpu-profile capture` is still refused. Dual score still has no `$/M tokens`.
+
+## Shipped 2026-09-01 — CUDA `cuCtxGetLimit`
+
+`gpu-sim` `Sim::ctx_get_limit` is `cuCtxGetLimit` for the seeded
+primary context of an explicit device. Same as `get_limit` for a
+`DeviceLimit`. Query; legal during capture. Distinct from `get_limit`
+(runtime). This VM does not invent `cuCtxSetLimit` or Engine `--ctx-get-limit`.
+`gpu-profile capture` is still refused. Dual score still has no `$/M tokens`.
+
+## Shipped 2026-09-01 — CUDA `cuCtxGetStreamPriorityRange`
+
+`gpu-sim` `Sim::ctx_get_stream_priority_range` is
+`cuCtxGetStreamPriorityRange` for the seeded primary context of an
+explicit device. Same as `device_get_stream_priority_range`. Example
+H100 is `(0, -5)`. Query; legal during capture. Distinct from
+`device_get_stream_priority_range` (runtime) and from `stream_get_priority`.
+This VM does not invent Engine `--ctx-priority-range`.
+`gpu-profile capture` is still refused. Dual score still has no `$/M tokens`.
+
+## Shipped 2026-09-01 — CUDA `cuCtxGetCacheConfig`
+
+`gpu-sim` `Sim::ctx_get_cache_config` is `cuCtxGetCacheConfig` for the
+seeded primary context of an explicit device. Same as `get_cache_config`.
+Query; legal during capture. Distinct from `get_cache_config` (runtime)
+and from `get_func_cache_config`. This VM does not invent
+`cuCtxSetCacheConfig` or Engine `--ctx-cache-config`.
+`gpu-profile capture` is still refused. Dual score still has no `$/M tokens`.
+
+## Shipped 2026-09-01 — CUDA `cuCtxGetFlags`
+
+`gpu-sim` `Sim::ctx_get_flags` is `cuCtxGetFlags` for the seeded
+primary context of an explicit device. Same flags as `get_device_flags`.
+Query; legal during capture. Distinct from `get_device_flags` (runtime)
+and from `device_primary_ctx_get_state` (also reports active). This VM
+does not invent `cuCtxSetFlags` or Engine `--ctx-flags`.
+`gpu-profile capture` is still refused. Dual score still has no `$/M tokens`.
+
+## Shipped 2026-09-01 — CUDA `cuCtxGetApiVersion`
+
+`gpu-sim` `Sim::ctx_get_api_version` is `cuCtxGetApiVersion` for the
+seeded primary context of an explicit device. CUDA 13.0. Query; legal
+during capture. Distinct from `driver_get_version` (same encoding, no
+device) and from `device_compute_capability` (Hopper SM version). This
+VM does not invent occupancy SM counts or Engine `--ctx-api-version`.
+`gpu-profile capture` is still refused. Dual score still has no `$/M tokens`.
+
+## Shipped 2026-09-01 — CUDA `cuDeviceComputeCapability`
+
+`gpu-sim` `Sim::device_compute_capability` is `cuDeviceComputeCapability`.
+Example H100 is Hopper 9.0. Query; legal during capture. Distinct from
+`device_get_attribute` of `ComputeCapabilityMajor` / `Minor` (same
+values). This VM does not invent occupancy SM counts or Engine `--cu-compute-capability`.
+`gpu-profile capture` is still refused. Dual score still has no `$/M tokens`.
+
+## Shipped 2026-09-01 — CUDA `cudaDevAttrGpuPciSubsystemId`
+
+`gpu-sim` `DeviceAttr::GpuPciSubsystemId` is always 0. This VM has no
+NVIDIA PCI subsystem id. Query; legal during capture. Distinct from
+`GpuPciDeviceId`. Also `DeviceProperties::pci_subsystem_id`. This VM
+does not invent `DeviceAttr::PciSubSystemId` or Engine `--gpu-pci-subsystem`.
+`gpu-profile capture` is still refused. Dual score still has no `$/M tokens`.
+
+## Shipped 2026-09-01 — CUDA `cudaDevAttrGpuPciDeviceId`
+
+`gpu-sim` `DeviceAttr::GpuPciDeviceId` is always 0. This VM has no
+NVIDIA PCI vendor/device id. Query; legal during capture. Distinct from
+`PciDeviceId`. This VM does not invent `DeviceAttr::PciSubSystemId`,
+`cudaDevAttrGpuPciSubsystemId`, or Engine `--gpu-pci-device`.
+`gpu-profile capture` is still refused. Dual score still has no `$/M tokens`.
+
+## Shipped 2026-09-01 — CUDA `cudaDevAttrMaxSharedMemoryPerMultiprocessor`
+
+`gpu-sim` `DeviceAttr::MaxSharedMemoryPerMultiprocessor` is
+`cudaDevAttrMaxSharedMemoryPerMultiprocessor`. Same bytes as
+`MaxSharedMemoryPerBlockOptin` (`ReservedSharedMemoryPerBlock` is 0).
+Query; legal during capture. Distinct from `MaxSharedMemoryPerBlock`.
+This VM does not invent `MaxRegistersPerMultiprocessor` or Engine `--shared-per-mp`.
+`gpu-profile capture` is still refused. Dual score still has no `$/M tokens`.
+
+## Shipped 2026-09-01 — CUDA `cuDeviceGetTexture1DLinearMaxWidth`
+
+`gpu-sim` `Sim::device_get_texture_1d_linear_max_width` is
+`cuDeviceGetTexture1DLinearMaxWidth`. Always 0 (CUDA linear textures
+are not modeled). Query; legal during capture. Distinct from
+`MaxTexture1DLinearWidth`. This VM does not invent Engine `--texture-1d-linear-max`.
+`gpu-profile capture` is still refused. Dual score still has no `$/M tokens`.
+
+## Shipped 2026-09-01 — CUDA `cudaDevAttrVulkanCigSupported`
+
+`gpu-sim` `DeviceAttr::VulkanCigSupported` is always 0. Vulkan
+CUDA-in-graphics is not modeled. Query; legal during capture. Distinct
+from `D3D12CigSupported`. This VM does not invent Engine `--vulkan-cig`.
+`gpu-profile capture` is still refused. Dual score still has no `$/M tokens`.
+
+## Shipped 2026-09-01 — CUDA `cudaDevAttrD3D12CigSupported`
+
+`gpu-sim` `DeviceAttr::D3D12CigSupported` is always 0. D3D12
+CUDA-in-graphics is not modeled. Query; legal during capture. Distinct
+from `HandleTypeWin32HandleSupported`. This VM does not invent Engine `--d3d12-cig`.
+`gpu-profile capture` is still refused. Dual score still has no `$/M tokens`.
+
+## Shipped 2026-09-01 — CUDA `cudaDevAttrMpsEnabled`
+
+`gpu-sim` `DeviceAttr::MpsEnabled` is always 0. CUDA Multi-Process
+Service is not modeled. Query; legal during capture. Distinct from
+`ComputeMode`. This VM does not invent Engine `--mps-enabled`.
+`gpu-profile capture` is still refused. Dual score still has no `$/M tokens`.
+
+## Shipped 2026-09-01 — CUDA alternate texture 3D dimension DeviceAttr caps
+
+`gpu-sim` `DeviceAttr::MaxTexture3DWidthAlt` /
+`MaxTexture3DHeightAlt` / `MaxTexture3DDepthAlt` are always 0. CUDA
+alternate 3D texture dims are not modeled. Query; legal during capture.
+Distinct from `MaxTexture3DWidth`. This VM does not invent Engine `--texture-3d-alt`.
+`gpu-profile capture` is still refused. Dual score still has no `$/M tokens`.
+
+## Shipped 2026-09-01 — CUDA `cuDeviceGetLuid`
+
+`gpu-sim` `Sim::device_get_luid` is `cuDeviceGetLuid`. Always zeros
+(Windows LUID is not modeled). Query; legal during capture. Distinct
+from `device_get_uuid`. Also `DeviceProperties::luid` /
+`luid_device_node_mask`. This VM does not invent Engine `--get-luid`.
+`gpu-profile capture` is still refused. Dual score still has no `$/M tokens`.
+
+## Shipped 2026-09-01 — CUDA `cudaDeviceProp::luid`
+
+`gpu-sim` `DeviceProperties::luid` and `luid_device_node_mask` are
+`cudaDeviceProp::luid` and `luidDeviceNodeMask`. Always 0 (Windows LUID
+is not modeled). Query via `device_get_properties`; legal during capture.
+Distinct from `uuid`. This VM does not invent Engine `--luid`.
+`gpu-profile capture` is still refused. Dual score still has no `$/M tokens`.
+
+## Shipped 2026-09-01 — CUDA `cudaDeviceProp::pciSubSystemID`
+
+`gpu-sim` `DeviceProperties::pci_subsystem_id` is
+`cudaDeviceProp::pciSubSystemID`. Always 0 (synthetic PCI has no
+subsystem id). Query via `device_get_properties`; legal during capture.
+Distinct from `PciDeviceId`. This VM does not invent
+`DeviceAttr::PciSubSystemId` or Engine `--pci-subsystem`.
+`gpu-profile capture` is still refused. Dual score still has no `$/M tokens`.
+
+## Shipped 2026-09-01 — CUDA cubemap surface dimension DeviceAttr caps
+
+`gpu-sim` `DeviceAttr::MaxSurfaceCubemapWidth` /
+`MaxSurfaceCubemapLayeredWidth` / `MaxSurfaceCubemapLayeredLayers` are
+always 0. CUDA cubemap surfaces are not modeled. Query; legal during
+capture. Distinct from `MaxSurface2DWidth`. This VM does not invent
+Engine `--surface-cubemap`. `gpu-profile capture` is still refused. Dual
+score still has no `$/M tokens`.
+
+## Shipped 2026-09-01 — CUDA layered surface 1D/2D dimension DeviceAttr caps
+
+`gpu-sim` `DeviceAttr::MaxSurface1DLayeredWidth` /
+`MaxSurface1DLayeredLayers` / `MaxSurface2DLayeredWidth` /
+`MaxSurface2DLayeredHeight` / `MaxSurface2DLayeredLayers` are always 0.
+CUDA layered surfaces are not modeled. Query; legal during capture.
+Distinct from `MaxSurface1DWidth`. This VM does not invent Engine
+`--surface-layered` or cubemap surface attrs. `gpu-profile capture` is
+still refused. Dual score still has no `$/M tokens`.
+
+## Shipped 2026-09-01 — CUDA cubemap layered texture dimension DeviceAttr caps
+
+`gpu-sim` `DeviceAttr::MaxTextureCubemapLayeredWidth` /
+`MaxTextureCubemapLayeredLayers` are always 0. CUDA cubemap layered
+textures are not modeled. Query; legal during capture. Distinct from
+`MaxTextureCubemapWidth`. This VM does not invent Engine
+`--texture-cubemap-layered` or layered surface attrs.
+`gpu-profile capture` is still refused. Dual score still has no `$/M tokens`.
+
+## Shipped 2026-09-01 — CUDA layered texture 1D/2D dimension DeviceAttr caps
+
+`gpu-sim` `DeviceAttr::MaxTexture1DLayeredWidth` /
+`MaxTexture1DLayeredLayers` / `MaxTexture2DLayeredWidth` /
+`MaxTexture2DLayeredHeight` / `MaxTexture2DLayeredLayers` are always 0.
+CUDA layered textures are not modeled. Query; legal during capture.
+Distinct from `MaxTexture1DWidth` and from `MaxTextureCubemapWidth`.
+This VM does not invent Engine `--texture-layered` or cubemap-layered
+texture attrs. `gpu-profile capture` is still refused. Dual score still
+has no `$/M tokens`.
+
+## Shipped 2026-09-01 — CUDA cubemap texture dimension DeviceAttr cap
+
+`gpu-sim` `DeviceAttr::MaxTextureCubemapWidth` is always 0. CUDA cubemap
+textures are not modeled. Query; legal during capture. Distinct from
+`MaxTexture2DWidth`. This VM does not invent Engine `--texture-cubemap`
+or layered texture attrs. `gpu-profile capture` is still refused. Dual
+score still has no `$/M tokens`.
+
+## Shipped 2026-09-01 — CUDA mipmapped texture 1D/2D dimension DeviceAttr caps
+
+`gpu-sim` `DeviceAttr::MaxTexture1DMipmappedWidth` /
+`MaxTexture2DMipmappedWidth` / `MaxTexture2DMipmappedHeight` are always
+0. CUDA mipmapped textures are not modeled. Query; legal during capture.
+Distinct from `MaxTexture1DWidth` and from linear and gather dims. This
+VM does not invent Engine `--texture-mipmap` or layered/cubemap texture
+attrs. `gpu-profile capture` is still refused. Dual score still has no
+`$/M tokens`.
+
+## Shipped 2026-09-01 — CUDA texture 2D gather dimension DeviceAttr caps
+
+`gpu-sim` `DeviceAttr::MaxTexture2DGatherWidth` / `MaxTexture2DGatherHeight`
+are always 0. CUDA texture gather is not modeled. Query; legal during
+capture. Distinct from `MaxTexture2DWidth` and from linear texture dims.
+This VM does not invent Engine `--texture-gather` or layered/cubemap
+texture attrs. `gpu-profile capture` is still refused. Dual score still
+has no `$/M tokens`.
+
+## Shipped 2026-09-01 — CUDA linear texture 1D/2D dimension DeviceAttr caps
+
+`gpu-sim` `DeviceAttr::MaxTexture1DLinearWidth` / `MaxTexture2DLinearWidth` /
+`MaxTexture2DLinearHeight` / `MaxTexture2DLinearPitch` are always 0. CUDA
+linear textures are not modeled. Query; legal during capture. Distinct
+from `MaxTexture1DWidth`, `MaxTexture2DWidth`, and `TexturePitchAlignment`.
+This VM does not invent Engine `--texture-linear` or layered/cubemap
+texture attrs. `gpu-profile capture` is still refused. Dual score still
+has no `$/M tokens`.
+
+## Shipped 2026-09-01 — CUDA `cudaFuncGetAttributes` compiler fields
+
+`gpu-sim` `FuncAttributes` compiler-emitted `cudaFuncGetAttributes` fields
+`sharedSizeBytes`, `constSizeBytes`, `localSizeBytes`, `maxThreadsPerBlock`,
+`ptxVersion`, `binaryVersion`, and `cacheModeCA` are always 0 until a
+compiled kernel exists. Query; legal during capture. Distinct from
+`DeviceAttr::MaxThreadsPerBlock`, `TotalConstantMemory`, and `FuncCache`.
+`numRegs` stays unmodeled this slice. This VM does not invent Engine
+`--func-attrs` or a PTX compiler. `gpu-profile capture` is still refused.
+Dual score still has no `$/M tokens`.
+
+## Shipped 2026-09-01 — CUDA `cudaDevAttrSingleToDoublePrecisionPerfRatio`
+
+`gpu-sim` `DeviceAttr::SingleToDoublePrecisionPerfRatio` is
+`cudaDevAttrSingleToDoublePrecisionPerfRatio`
+(`cudaDeviceProp` singleToDoublePrecisionPerfRatio). Example H100 is 1
+(Hopper FP32 and FP64 peaks match). Query; legal during capture. This
+VM does not invent Engine `--fp64-ratio`, clock rates, or kernel
+duration from this ratio. `gpu-profile capture` is still refused. Dual
+score still has no `$/M tokens`.
+
+## Shipped 2026-09-01 — CUDA surface 1D/2D/3D dimension DeviceAttr caps
+
+`gpu-sim` `DeviceAttr::MaxSurface1DWidth` / `MaxSurface2DWidth` /
+`MaxSurface2DHeight` / `MaxSurface3DWidth` / `MaxSurface3DHeight` /
+`MaxSurface3DDepth` are always 0. CUDA surfaces are not modeled. Query;
+legal during capture. Distinct from `SurfaceAlignment` and from texture
+dim caps. This VM does not invent Engine `--max-surface` or
+layered/cubemap surface attrs.
+`gpu-profile capture` is still refused. Dual score still has no `$/M tokens`.
+
+## Shipped 2026-09-01 — CUDA texture 2D/3D dimension DeviceAttr caps
+
+`gpu-sim` `DeviceAttr::MaxTexture2DWidth` / `MaxTexture2DHeight` /
+`MaxTexture3DWidth` / `MaxTexture3DHeight` / `MaxTexture3DDepth` are
+always 0. CUDA arrays / textures are not modeled. Query; legal during
+capture. Distinct from `MaxTexture1DWidth`. This VM does not invent
+Engine `--max-texture` or layered/cubemap texture attrs.
+`gpu-profile capture` is still refused. Dual score still has no `$/M tokens`.
+
+## Shipped 2026-09-01 — CUDA `cudaDevAttrGlobalMemoryBusWidth`
+
+`gpu-sim` `DeviceAttr::GlobalMemoryBusWidth` is
+`cudaDevAttrGlobalMemoryBusWidth` (`cudaDeviceProp` memoryBusWidth).
+Example H100 is 5120 bits. Example H200 is 6144 bits. Query; legal
+during capture. Profile key `global_memory_bus_width_bits`. This VM
+does not invent Engine `--bus-width`, memory clock rates, or HBM
+duration from bus width. `gpu-profile capture` is still refused. Dual
+score still has no `$/M tokens`.
+
+## Shipped 2026-09-01 — CUDA `cudaDevAttrMaxRegistersPerBlock`
+
+`gpu-sim` `DeviceAttr::MaxRegistersPerBlock` is
+`cudaDevAttrMaxRegistersPerBlock` (`cudaDeviceProp` regsPerBlock).
+Example H100 is 65536. Query; legal during capture. This VM does not
+model a register file, invent occupancy SM counts, or invent Engine
+`--max-registers`. `gpu-profile capture` is still refused. Dual score
+still has no `$/M tokens`.
+
+## Shipped 2026-09-01 — CUDA launch-geometry DeviceAttr caps
+
+`gpu-sim` `DeviceAttr::MaxThreadsPerBlock` / `MaxBlockDimX` / `Y` / `Z` /
+`MaxGridDimX` / `Y` / `Z` are CUDA launch-geometry caps. Example H100 is
+1024 threads per block; block 1024, 1024, 64; grid `i32::MAX`, 65535,
+65535. Query; legal during capture. This VM does not model a thread-block
+launch, invent occupancy SM counts, or invent Engine `--max-threads`.
+`gpu-profile capture` is still refused. Dual score still has no `$/M tokens`.
+
+## Shipped 2026-09-01 — CUDA `cudaDevAttrComputeCapabilityMajor` / `Minor`
+
+`gpu-sim` `DeviceAttr::ComputeCapabilityMajor` / `ComputeCapabilityMinor`
+are `cudaDevAttrComputeCapabilityMajor` and `cudaDevAttrComputeCapabilityMinor`
+(`cudaDeviceProp` major and minor). Example H100 is Hopper 9.0. Query;
+legal during capture. Profile keys `compute_capability_major` /
+`compute_capability_minor`. This VM does not invent Engine
+`--compute-capability`, occupancy SM counts, clock rates, or
+`cudaChooseDevice`. `gpu-profile capture` is still refused. Dual score
+still has no `$/M tokens`.
+
+## Shipped 2026-09-01 — CUDA `cudaGetErrorName` / `cudaGetErrorString`
+
+`gpu-sim` `SimError::error_name` / `error_string` are `cudaGetErrorName` /
+`cudaGetErrorString`. Query on the error already returned (no thread-local
+last error). `Invalid` names `cudaErrorInvalidValue`; the modeled `why`
+stays on Display. This VM does not invent Engine `--error-name` or
+`cudaGetLastError` / `cudaPeekAtLastError`. `gpu-profile capture` is still
+refused. Dual score still has no `$/M tokens`.
+
+## Shipped 2026-09-01 — CUDA `cudaDeviceReset`
+
+`gpu-sim` `reset_device` is `cudaDeviceReset`. Waits outstanding work on that
+GPU (unlike `destroy_stream`), then frees `cudaMalloc` / `cudaMallocPitch` /
+`cudaMalloc3D`. `cudaMallocAsync` stays. User streams except NULL become
+unknown until create. Device flags and limits return to CUDA defaults. Peer
+pairs involving that GPU return to the profile seed. Host / managed allocs,
+events, and graphs stay. `ctx_get_id` stays. Capture cannot include it. This
+VM does not invent Engine `--device-reset` or a public `cuDevicePrimaryCtxReset`
+(no `CUcontext` object). `gpu-profile capture` is still refused. Dual score
+still has no `$/M tokens`.
+
+## Shipped 2026-09-01 — CUDA `cudaLimitDevRuntimePendingLaunchCount`
+
+`gpu-sim` `DeviceLimit::DevRuntimePendingLaunchCount` caps in-flight
+`device_launch_graph` (host, fire-and-forget, sibling, and flushed tail).
+A queued tail does not occupy a slot. Default 2048. Exceeding is Invalid
+`"pending launch count"`. Host `launch_graph` does not count. This VM does
+not invent Engine `--pending-launch` or make `DevRuntimeSyncDepth`
+mechanical (no device-side `cudaDeviceSynchronize`). Heap still does not
+charge HBM. `gpu-profile capture` is still refused. Dual score still has no
+`$/M tokens`.
+
+## Shipped 2026-09-01 — CUDA `cudaStreamGraphFireAndForgetAsSibling`
+
+`gpu-sim` `GRAPH_FIRE_AND_FORGET_AS_SIBLING` is `cudaStreamGraphFireAndForgetAsSibling`
+on `device_launch_graph`. Same nested DeviceLaunch as fire-and-forget, but the
+parent instance does not wait: no join on the parent host stream, and tail
+launch does not wait for the sibling. Requires a host-issued DeviceLaunch in
+flight. Host `launch_graph` of that id is Invalid `"device launch stream"`.
+This VM does not invent Engine `--graph-faf-sibling`. `current_graph_exec`
+still returns the lowest in-flight DeviceLaunch id. `gpu-profile capture` is
+still refused. Dual score still has no `$/M tokens`.
+
+## Shipped 2026-09-01 — CUDA `cudaStreamGraphFireAndForget` / `cudaStreamGraphTailLaunch`
+
+`gpu-sim` named device-graph streams are `cudaStreamGraphFireAndForget` /
+`cudaStreamGraphTailLaunch` (`StreamId::GRAPH_FIRE_AND_FORGET` /
+`GRAPH_TAIL_LAUNCH`) on `device_launch_graph`. They require a host-issued
+DeviceLaunch in flight (`"no current graph exec"`). Fire-and-forget runs on
+an internal stream; the parent host stream waits for the FAF body. Tail
+launch waits for the parent instance plus those FAF children (one tail per
+instance; `"device launch tail"`). Self tail-relaunch of the in-flight exec
+is legal. Host `launch_graph` / `kernel` of those ids is Invalid
+`"device launch stream"`. This VM does not invent
+`cudaStreamGraphFireAndForgetAsSibling` or Engine `--graph-tail-launch`.
+`current_graph_exec` still returns the lowest in-flight DeviceLaunch id.
+`gpu-profile capture` is still refused. Dual score still has no `$/M tokens`.
+
+## Shipped 2026-09-01 — CUDA `cudaStreamDestroy`
+
+`gpu-sim` `destroy_stream` is `cudaStreamDestroy`. Returns immediately;
+in-flight work still completes. Capture cannot include it. NULL is Invalid
+`"null stream"`. A destroyed handle is Invalid `"unknown stream"` for new
+work and queries until `stream_create_with_flags` / `set_stream_blocking`.
+Recreate while that stream still has unfinished ops is Invalid
+`"stream in flight"` (this VM reuses caller-chosen ids). Distinct from
+`destroy_event` (which waits). Device `synchronize` still drains parked
+work. This VM does not invent Engine `--stream-destroy`. `gpu-profile
+capture` is still refused. Dual score still has no `$/M tokens`.
+
+## Shipped 2026-09-01 — CUDA `cudaGetCurrentGraphExec`
+
+`gpu-sim` `current_graph_exec` is `cudaGetCurrentGraphExec`. Query; legal
+during capture. Returns the DeviceLaunch executable in flight on that
+device, if any. Host `launch_graph` does not count. Concurrent in-flight
+DeviceLaunch execs return the lowest `GraphId`. A parked in-flight destroy
+still reports that exec until the launch tail completes. This VM does not
+invent Engine `--current-graph-exec`, `CUgraphDeviceNode`, or public
+`Sim::advance`. `gpu-profile capture` is still refused. Dual score still
+has no `$/M tokens`.
+
+## Shipped 2026-09-01 — CUDA `cudaDeviceGetStreamPriorityRange`
+
+`gpu-sim` `device_get_stream_priority_range` is `cudaDeviceGetStreamPriorityRange`.
+Query; legal during capture. Example H100 is least `0`, greatest `-5`. Stream
+create / SetPriority / SetAttribute clamp out of range. GetPriority reports the
+clamped value. Numerically lower priorities start first under contention.
+Graph kernel-node SetPriority stays unclamped for ExecUpdate (PLAN 506).
+`set_created_streams_priority` assigns `-stream_id` then clamps. This VM does
+not invent Engine `--stream-priority-range` or `cudaStreamDestroy`. `gpu-profile
+capture` is still refused. Dual score still has no `$/M tokens`.
+
 ## Shipped 2026-09-01 — CUDA `cudaStreamBeginRecaptureToGraph`
 
 `gpu-sim` `begin_recapture_to_graph` is `cudaStreamBeginRecaptureToGraph` /

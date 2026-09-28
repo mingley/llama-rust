@@ -595,7 +595,8 @@ Transferring until the copy-stream event completes; `evict` leaves the
 key `Evicting` until the stream-ordered free completes. Lease of
 Transferring/Cold/Evicting is refused. `Operation` timestamps make
 `stream[i+1].start ≥ stream[i].finish` inspectable. `set_stream_priority`
-is CUDA stream priority (higher starts first when compute contends).
+is CUDA stream priority (numerically lower starts first when compute
+contends; clamped to `cudaDeviceGetStreamPriorityRange`).
 `sim_replay` `--max-batch N` is a trace-level admission cap (N sequences
 per engine iteration at a token; `0` admits the whole token).
 `expertvm schedule` is open-loop continuous batching: sequences arrive at
@@ -760,7 +761,7 @@ Agent loop: modify expertvm → `cargo test` (semantics) → simulator
   `cudaMemsetAsync` of pinned/VMM miss pages (HBM write, compute occupancy;
   not mapped/managed/pageable/memcpy-batch; distinct from `--graph-memset`
   scratch). `--stream-priority` is
-  `cudaStreamCreateWithPriority` on seq-streams (priority = stream id). `--graph-update`
+  `cudaStreamCreateWithPriority` on seq-streams (priority `-stream_id`). `--graph-update`
   is `cudaGraphExecUpdate` of a parked leaf (store and `--cuda-graphs`
   walker). `--graph-set-params` is `cudaGraphExecKernelNodeSetParams` of a
   parked leaf (no second capture; legal with mem nodes). `--graph-clone` is `cudaGraphClone` of a leaf capture before
@@ -5927,7 +5928,5008 @@ model, do not celebrate the sim.
     `--graph-recapture`. `gpu-profile capture` is still refused. Dual score
     still has no `$/M tokens`.
 
-557. [ ] Next numbered PLAN item after 556 is the next `gpu-sim` / Engine /
+557. [x] `gpu-sim` `device_get_stream_priority_range` is CUDA
+    `cudaDeviceGetStreamPriorityRange`. Query; legal during capture.
+    Returns `(least, greatest)` from the device profile (example H100 is
+    least `0`, greatest `-5`). Stream create / SetPriority / SetAttribute
+    clamp out of range. GetPriority reports the clamped value. Numerically
+    lower priorities start first under contention (CUDA). Graph kernel-node
+    SetPriority stays unclamped for ExecUpdate (PLAN 506).
+    `set_created_streams_priority` assigns `-stream_id` then clamps.
+    This VM does not invent Engine `--stream-priority-range` or
+    `cudaStreamDestroy`. `gpu-profile capture` is still refused. Dual score
+    still has no `$/M tokens`.
+
+558. [x] `gpu-sim` `current_graph_exec` is CUDA
+    `cudaGetCurrentGraphExec`. Query; legal during capture.
+    Returns the DeviceLaunch executable in flight on that device, if
+    any. Host `launch_graph` does not count. Concurrent in-flight
+    DeviceLaunch execs return the lowest `GraphId`. A parked in-flight
+    destroy still reports that exec until the launch tail completes.
+    This VM does not invent Engine `--current-graph-exec`,
+    `CUgraphDeviceNode`, or public `Sim::advance`. `gpu-profile capture`
+    is still refused. Dual score still has no `$/M tokens`.
+
+559. [x] `gpu-sim` `destroy_stream` is CUDA `cudaStreamDestroy`.
+    Returns immediately; in-flight work still completes. Capture cannot
+    include it. NULL is Invalid `"null stream"`. A destroyed handle is
+    Invalid `"unknown stream"` for new work and queries until
+    `stream_create_with_flags` / `set_stream_blocking`. Recreate while
+    that stream still has unfinished ops is Invalid `"stream in flight"`
+    (this VM reuses caller-chosen ids). Distinct from `destroy_event`
+    (which waits). Device `synchronize` still drains parked work.
+    This VM does not invent Engine `--stream-destroy`. `gpu-profile
+    capture` is still refused. Dual score still has no `$/M tokens`.
+
+560. [x] `gpu-sim` named device-graph streams are CUDA
+    `cudaStreamGraphFireAndForget` / `cudaStreamGraphTailLaunch`
+    (`StreamId::GRAPH_FIRE_AND_FORGET` / `GRAPH_TAIL_LAUNCH`) on
+    `device_launch_graph`. They require a host-issued DeviceLaunch in
+    flight (`"no current graph exec"`). Fire-and-forget runs on an
+    internal stream; the parent host stream waits for the FAF body.
+    Tail launch waits for the parent instance plus those FAF children
+    (one tail per instance; `"device launch tail"`). Self tail-relaunch
+    of the in-flight exec is legal. Host `launch_graph` / `kernel` of
+    those ids is Invalid `"device launch stream"`. This VM does not
+    invent `cudaStreamGraphFireAndForgetAsSibling` or Engine
+    `--graph-tail-launch`. `current_graph_exec` still returns the
+    lowest in-flight DeviceLaunch id. `gpu-profile capture` is still
+    refused. Dual score still has no `$/M tokens`.
+
+561. [x] `gpu-sim` `GRAPH_FIRE_AND_FORGET_AS_SIBLING` is CUDA
+    `cudaStreamGraphFireAndForgetAsSibling` on `device_launch_graph`.
+    Same nested DeviceLaunch as fire-and-forget, but the parent instance
+    does not wait: no join on the parent host stream, and tail launch
+    does not wait for the sibling. Requires a host-issued DeviceLaunch
+    in flight (`"no current graph exec"`). Host `launch_graph` of that
+    id is Invalid `"device launch stream"`. This VM does not invent
+    Engine `--graph-faf-sibling`. `current_graph_exec` still returns the
+    lowest in-flight DeviceLaunch id. `gpu-profile capture` is still
+    refused. Dual score still has no `$/M tokens`.
+
+562. [x] `gpu-sim` `DeviceLimit::DevRuntimePendingLaunchCount` caps in-flight
+    `device_launch_graph` (host, fire-and-forget, sibling, and flushed tail).
+    A queued tail does not occupy a slot. Default 2048. Exceeding is Invalid
+    `"pending launch count"`. Host `launch_graph` does not count. Same-exec
+    overlapping still `"device launch in flight"` first. This VM does not
+    invent Engine `--pending-launch` or make `DevRuntimeSyncDepth`
+    mechanical (no device-side `cudaDeviceSynchronize`). Heap still does
+    not charge HBM. `gpu-profile capture` is still refused. Dual score
+    still has no `$/M tokens`.
+
+563. [x] `gpu-sim` `reset_device` is `cudaDeviceReset`. Waits outstanding
+    work on that GPU (unlike `destroy_stream`), then frees `cudaMalloc` /
+    `cudaMallocPitch` / `cudaMalloc3D`. `cudaMallocAsync` stays. User
+    streams except NULL become unknown until create. Device flags and
+    limits return to CUDA defaults. Peer pairs involving that GPU return
+    to the profile seed. Host / managed allocs, events, and graphs stay.
+    `ctx_get_id` stays. Capture cannot include it. This VM does not invent
+    Engine `--device-reset` or a public `cuDevicePrimaryCtxReset` (no
+    `CUcontext` object). `gpu-profile capture` is still refused. Dual score
+    still has no `$/M tokens`.
+
+564. [x] `gpu-sim` `SimError::error_name` / `error_string` are
+    `cudaGetErrorName` / `cudaGetErrorString`. Query on the error already
+    returned (no thread-local last error). `Invalid` names
+    `cudaErrorInvalidValue`; the modeled `why` stays on Display. This VM
+    does not invent Engine `--error-name` or `cudaGetLastError` /
+    `cudaPeekAtLastError`. `gpu-profile capture` is still refused. Dual
+    score still has no `$/M tokens`.
+
+565. [x] `gpu-sim` `DeviceAttr::ComputeCapabilityMajor` /
+    `ComputeCapabilityMinor` are `cudaDevAttrComputeCapabilityMajor` and
+    `cudaDevAttrComputeCapabilityMinor` (`cudaDeviceProp` major and minor).
+    Example H100 is Hopper 9.0. Query; legal during capture. Profile keys
+    `compute_capability_major` / `compute_capability_minor`. This VM does
+    not invent Engine `--compute-capability`, occupancy SM counts, clock
+    rates, or `cudaChooseDevice`. `gpu-profile capture` is still refused.
+    Dual score still has no `$/M tokens`.
+
+566. [x] `gpu-sim` `DeviceAttr::MaxThreadsPerBlock` / `MaxBlockDimX` /
+    `MaxBlockDimY` / `MaxBlockDimZ` / `MaxGridDimX` / `MaxGridDimY` /
+    `MaxGridDimZ` are CUDA launch-geometry caps. Example H100 is 1024
+    threads per block; block 1024, 1024, 64; grid `i32::MAX`, 65535, 65535.
+    Query; legal during capture. This VM does not model a thread-block
+    launch. This VM does not invent Engine `--max-threads`, occupancy SM
+    counts, `cudaDevAttrWarpSize`, clock rates, or `cudaChooseDevice`.
+    `gpu-profile capture` is still refused. Dual score still has no
+    `$/M tokens`.
+
+567. [x] `gpu-sim` `DeviceAttr::MaxRegistersPerBlock` is
+    `cudaDevAttrMaxRegistersPerBlock` (`cudaDeviceProp` regsPerBlock).
+    Example H100 is 65536. Query; legal during capture. This VM does not
+    model a register file. This VM does not invent Engine `--max-registers`,
+    occupancy SM counts, `cudaDevAttrMaxRegistersPerMultiprocessor`,
+    `FuncAttributes` numRegs, `cudaDevAttrWarpSize`, clock rates, or
+    `cudaChooseDevice`. `gpu-profile capture` is still refused. Dual
+    score still has no `$/M tokens`.
+
+568. [x] `gpu-sim` `DeviceAttr::GlobalMemoryBusWidth` is
+    `cudaDevAttrGlobalMemoryBusWidth` (`cudaDeviceProp` memoryBusWidth).
+    Example H100 is 5120 bits. Example H200 is 6144 bits. Query; legal
+    during capture. Profile key `global_memory_bus_width_bits`. This VM
+    does not invent Engine `--bus-width`, memory clock rates,
+    occupancy SM counts, or `cudaChooseDevice`. This VM does not derive
+    HBM duration from bus width. `gpu-profile capture` is still refused.
+    Dual score still has no `$/M tokens`.
+
+569. [x] `gpu-sim` `DeviceAttr::MaxTexture2DWidth` / `MaxTexture2DHeight` /
+    `MaxTexture3DWidth` / `MaxTexture3DHeight` / `MaxTexture3DDepth` are
+    CUDA texture-dimension caps. Always 0 (CUDA arrays / textures are not
+    modeled). Query; legal during capture. Distinct from
+    `MaxTexture1DWidth`. This VM does not invent Engine `--max-texture`,
+    layered or cubemap texture attrs, occupancy SM counts, or
+    `cudaChooseDevice`. `gpu-profile capture` is still refused. Dual
+    score still has no `$/M tokens`.
+
+570. [x] `gpu-sim` `DeviceAttr::MaxSurface1DWidth` / `MaxSurface2DWidth` /
+    `MaxSurface2DHeight` / `MaxSurface3DWidth` / `MaxSurface3DHeight` /
+    `MaxSurface3DDepth` are CUDA surface-dimension caps. Always 0 (CUDA
+    surfaces are not modeled). Query; legal during capture. Distinct from
+    `SurfaceAlignment` and from texture dim caps. This VM does not invent
+    Engine `--max-surface`, layered or cubemap surface attrs, occupancy
+    SM counts, or `cudaChooseDevice`. `gpu-profile capture` is still
+    refused. Dual score still has no `$/M tokens`.
+
+571. [x] `gpu-sim` `DeviceAttr::SingleToDoublePrecisionPerfRatio` is
+    `cudaDevAttrSingleToDoublePrecisionPerfRatio`
+    (`cudaDeviceProp` singleToDoublePrecisionPerfRatio). Example H100 is
+    1 (Hopper FP32 and FP64 peaks match). Query; legal during capture.
+    This VM does not invent Engine `--fp64-ratio`, clock rates, occupancy
+    SM counts, or `cudaChooseDevice`. This VM does not scale kernel
+    duration from this ratio. `gpu-profile capture` is still refused.
+    Dual score still has no `$/M tokens`.
+
+572. [x] `gpu-sim` `FuncAttributes` compiler-emitted `cudaFuncGetAttributes`
+    fields `sharedSizeBytes`, `constSizeBytes`, `localSizeBytes`,
+    `maxThreadsPerBlock`, `ptxVersion`, `binaryVersion`, and `cacheModeCA`
+    are always 0 until a compiled kernel exists. Query; legal during
+    capture. Distinct from `DeviceAttr::MaxThreadsPerBlock`,
+    `TotalConstantMemory`, `MaxRegistersPerBlock`, and `FuncCache`.
+    `numRegs` stays unmodeled this slice. This VM does not invent Engine
+    `--func-attrs`, a PTX compiler, or `FuncAttr` setters for these
+    fields. `gpu-profile capture` is still refused. Dual score still has
+    no `$/M tokens`.
+
+573. [x] `gpu-sim` `DeviceAttr::MaxTexture1DLinearWidth` /
+    `MaxTexture2DLinearWidth` / `MaxTexture2DLinearHeight` /
+    `MaxTexture2DLinearPitch` are CUDA linear-texture dimension caps.
+    Always 0 (CUDA linear textures are not modeled). Query; legal during
+    capture. Distinct from `MaxTexture1DWidth`, `MaxTexture2DWidth`, and
+    `TexturePitchAlignment`. This VM does not invent Engine
+    `--texture-linear`, layered or cubemap texture attrs, occupancy SM
+    counts, or `cudaChooseDevice`. `gpu-profile capture` is still
+    refused. Dual score still has no `$/M tokens`.
+
+574. [x] `gpu-sim` `DeviceAttr::MaxTexture2DGatherWidth` /
+    `MaxTexture2DGatherHeight` are CUDA texture-gather dimension caps.
+    Always 0 (CUDA texture gather is not modeled). Query; legal during
+    capture. Distinct from `MaxTexture2DWidth` and from linear texture
+    dims. This VM does not invent Engine `--texture-gather`, layered or
+    cubemap texture attrs, occupancy SM counts, or `cudaChooseDevice`.
+    `gpu-profile capture` is still refused. Dual score still has no
+    `$/M tokens`.
+
+575. [x] `gpu-sim` `DeviceAttr::MaxTexture1DMipmappedWidth` /
+    `MaxTexture2DMipmappedWidth` / `MaxTexture2DMipmappedHeight` are CUDA
+    mipmapped-texture dimension caps. Always 0 (CUDA mipmapped textures
+    are not modeled). Query; legal during capture. Distinct from
+    `MaxTexture1DWidth` and from linear and gather dims. This VM does not
+    invent Engine `--texture-mipmap`, layered or cubemap texture attrs,
+    occupancy SM counts, or `cudaChooseDevice`. `gpu-profile capture` is
+    still refused. Dual score still has no `$/M tokens`.
+
+576. [x] `gpu-sim` `DeviceAttr::MaxTextureCubemapWidth` is the CUDA cubemap
+    texture dimension cap. Always 0 (CUDA cubemap textures are not
+    modeled). Query; legal during capture. Distinct from
+    `MaxTexture2DWidth`. This VM does not invent Engine
+    `--texture-cubemap`, layered texture attrs, occupancy SM counts, or
+    `cudaChooseDevice`. `gpu-profile capture` is still refused. Dual
+    score still has no `$/M tokens`.
+
+577. [x] `gpu-sim` `DeviceAttr::MaxTexture1DLayeredWidth` /
+    `MaxTexture1DLayeredLayers` / `MaxTexture2DLayeredWidth` /
+    `MaxTexture2DLayeredHeight` / `MaxTexture2DLayeredLayers` are CUDA
+    layered-texture dimension caps. Always 0 (CUDA layered textures are
+    not modeled). Query; legal during capture. Distinct from
+    `MaxTexture1DWidth` and from `MaxTextureCubemapWidth`. This VM does
+    not invent Engine `--texture-layered`, cubemap-layered texture attrs,
+    occupancy SM counts, or `cudaChooseDevice`. `gpu-profile capture` is
+    still refused. Dual score still has no `$/M tokens`.
+
+578. [x] `gpu-sim` `DeviceAttr::MaxTextureCubemapLayeredWidth` /
+    `MaxTextureCubemapLayeredLayers` are CUDA cubemap-layered texture
+    dimension caps. Always 0 (CUDA cubemap layered textures are not
+    modeled). Query; legal during capture. Distinct from
+    `MaxTextureCubemapWidth`. This VM does not invent Engine
+    `--texture-cubemap-layered`, layered surface attrs, occupancy SM
+    counts, or `cudaChooseDevice`. `gpu-profile capture` is still
+    refused. Dual score still has no `$/M tokens`.
+
+579. [x] `gpu-sim` `DeviceAttr::MaxSurface1DLayeredWidth` /
+    `MaxSurface1DLayeredLayers` / `MaxSurface2DLayeredWidth` /
+    `MaxSurface2DLayeredHeight` / `MaxSurface2DLayeredLayers` are CUDA
+    layered-surface dimension caps. Always 0 (CUDA layered surfaces are
+    not modeled). Query; legal during capture. Distinct from
+    `MaxSurface1DWidth`. This VM does not invent Engine
+    `--surface-layered`, cubemap surface attrs, occupancy SM counts, or
+    `cudaChooseDevice`. `gpu-profile capture` is still refused. Dual
+    score still has no `$/M tokens`.
+
+580. [x] `gpu-sim` `DeviceAttr::MaxSurfaceCubemapWidth` /
+    `MaxSurfaceCubemapLayeredWidth` / `MaxSurfaceCubemapLayeredLayers`
+    are CUDA cubemap-surface dimension caps. Always 0 (CUDA cubemap
+    surfaces are not modeled). Query; legal during capture. Distinct from
+    `MaxSurface2DWidth`. This VM does not invent Engine
+    `--surface-cubemap`, occupancy SM counts, or `cudaChooseDevice`.
+    `gpu-profile capture` is still refused. Dual score still has no
+    `$/M tokens`.
+
+581. [x] `gpu-sim` `DeviceProperties::pci_subsystem_id` is
+    `cudaDeviceProp::pciSubSystemID`. Always 0 (synthetic PCI has no
+    subsystem id). Query via `device_get_properties`; legal during
+    capture. Distinct from `PciDeviceId`. This VM does not invent
+    `DeviceAttr::PciSubSystemId`, Engine `--pci-subsystem`, occupancy SM
+    counts, or `cudaChooseDevice`. `gpu-profile capture` is still
+    refused. Dual score still has no `$/M tokens`.
+
+582. [x] `gpu-sim` `DeviceProperties::luid` / `luid_device_node_mask` are
+    `cudaDeviceProp::luid` and `luidDeviceNodeMask`. Always 0 (Windows
+    LUID is not modeled). Query via `device_get_properties`; legal during
+    capture. Distinct from `uuid`. This VM does not invent Engine
+    `--luid`, occupancy SM counts, or `cudaChooseDevice`.
+    `gpu-profile capture` is still refused. Dual score still has no
+    `$/M tokens`.
+
+583. [x] `gpu-sim` `Sim::device_get_luid` is `cuDeviceGetLuid`. Always
+    zeros (Windows LUID is not modeled). Query; legal during capture.
+    Distinct from `device_get_uuid`. Also `DeviceProperties::luid` /
+    `luid_device_node_mask`. This VM does not invent Engine `--get-luid`,
+    occupancy SM counts, or `cudaChooseDevice`. `gpu-profile capture` is
+    still refused. Dual score still has no `$/M tokens`.
+
+584. [x] `gpu-sim` `DeviceAttr::MaxTexture3DWidthAlt` /
+    `MaxTexture3DHeightAlt` / `MaxTexture3DDepthAlt` are always 0. CUDA
+    alternate 3D texture dims are not modeled. Query; legal during
+    capture. Distinct from `MaxTexture3DWidth`. This VM does not invent
+    Engine `--texture-3d-alt`, occupancy SM counts, or `cudaChooseDevice`.
+    `gpu-profile capture` is still refused. Dual score still has no
+    `$/M tokens`.
+
+585. [x] `gpu-sim` `DeviceAttr::MpsEnabled` is always 0. CUDA
+    Multi-Process Service is not modeled. Query; legal during capture.
+    Distinct from `ComputeMode`. This VM does not invent Engine `--mps-enabled`,
+    occupancy SM counts, or `cudaChooseDevice`.
+    `gpu-profile capture` is still refused. Dual score still has no
+    `$/M tokens`.
+
+586. [x] `gpu-sim` `DeviceAttr::D3D12CigSupported` is always 0. D3D12
+    CUDA-in-graphics is not modeled. Query; legal during capture.
+    Distinct from `HandleTypeWin32HandleSupported`. This VM does not invent
+    Engine `--d3d12-cig`, occupancy SM counts, or `cudaChooseDevice`.
+    `gpu-profile capture` is still refused. Dual score still has no
+    `$/M tokens`.
+
+587. [x] `gpu-sim` `DeviceAttr::VulkanCigSupported` is always 0. Vulkan
+    CUDA-in-graphics is not modeled. Query; legal during capture.
+    Distinct from `D3D12CigSupported`. This VM does not invent Engine `--vulkan-cig`,
+    occupancy SM counts, or `cudaChooseDevice`.
+    `gpu-profile capture` is still refused. Dual score still has no
+    `$/M tokens`.
+
+588. [x] `gpu-sim` `Sim::device_get_texture_1d_linear_max_width` is
+    `cuDeviceGetTexture1DLinearMaxWidth`. Always 0 (CUDA linear textures
+    are not modeled). Query; legal during capture. Distinct from
+    `MaxTexture1DLinearWidth`. This VM does not invent Engine `--texture-1d-linear-max`,
+    occupancy SM counts, or `cudaChooseDevice`. `gpu-profile capture` is
+    still refused. Dual score still has no `$/M tokens`.
+
+589. [x] `gpu-sim` `DeviceAttr::MaxSharedMemoryPerMultiprocessor` is
+    `cudaDevAttrMaxSharedMemoryPerMultiprocessor`. Same bytes as
+    `MaxSharedMemoryPerBlockOptin` (`ReservedSharedMemoryPerBlock` is 0).
+    Query; legal during capture. Distinct from `MaxSharedMemoryPerBlock`.
+    This VM does not invent `MaxRegistersPerMultiprocessor`, Engine `--shared-per-mp`,
+    occupancy SM counts, or `cudaChooseDevice`. `gpu-profile capture` is
+    still refused. Dual score still has no `$/M tokens`.
+
+590. [x] `gpu-sim` `DeviceAttr::GpuPciDeviceId` is always 0. This VM has
+    no NVIDIA PCI vendor/device id. Query; legal during capture.
+    Distinct from `PciDeviceId`. This VM does not invent
+    `DeviceAttr::PciSubSystemId`, `cudaDevAttrGpuPciSubsystemId`, Engine `--gpu-pci-device`,
+    occupancy SM counts, or `cudaChooseDevice`. `gpu-profile capture` is
+    still refused. Dual score still has no `$/M tokens`.
+
+591. [x] `gpu-sim` `DeviceAttr::GpuPciSubsystemId` is always 0. This VM
+    has no NVIDIA PCI subsystem id. Query; legal during capture.
+    Distinct from `GpuPciDeviceId`. Also `DeviceProperties::pci_subsystem_id`.
+    This VM does not invent `DeviceAttr::PciSubSystemId`, Engine `--gpu-pci-subsystem`,
+    occupancy SM counts, or `cudaChooseDevice`. `gpu-profile capture` is
+    still refused. Dual score still has no `$/M tokens`.
+
+592. [x] `gpu-sim` `Sim::device_compute_capability` is
+    `cuDeviceComputeCapability`. Example H100 is Hopper 9.0. Query; legal
+    during capture. Distinct from `device_get_attribute` of
+    `ComputeCapabilityMajor` / `Minor` (same values). This VM does not invent
+    occupancy SM counts, Engine `--cu-compute-capability`, or `cudaChooseDevice`.
+    `gpu-profile capture` is still refused. Dual score still has no
+    `$/M tokens`.
+
+593. [x] `gpu-sim` `Sim::ctx_get_api_version` is `cuCtxGetApiVersion`
+    for the seeded primary context of an explicit device. CUDA 13.0.
+    Query; legal during capture. Distinct from `driver_get_version`
+    (same encoding, no device) and from `device_compute_capability`
+    (Hopper SM version). This VM does not invent occupancy SM counts,
+    Engine `--ctx-api-version`, or `cudaChooseDevice`.
+    `gpu-profile capture` is still refused. Dual score still has no
+    `$/M tokens`.
+
+594. [x] `gpu-sim` `Sim::ctx_get_flags` is `cuCtxGetFlags` for the
+    seeded primary context of an explicit device. Same flags as
+    `get_device_flags`. Query; legal during capture. Distinct from
+    `get_device_flags` (runtime) and from `device_primary_ctx_get_state`
+    (also reports active). This VM does not invent `cuCtxSetFlags`,
+    Engine `--ctx-flags`, or `cudaChooseDevice`.
+    `gpu-profile capture` is still refused. Dual score still has no
+    `$/M tokens`.
+
+595. [x] `gpu-sim` `Sim::ctx_get_cache_config` is `cuCtxGetCacheConfig`
+    for the seeded primary context of an explicit device. Same as
+    `get_cache_config`. Query; legal during capture. Distinct from
+    `get_cache_config` (runtime) and from `get_func_cache_config`. This
+    VM does not invent `cuCtxSetCacheConfig`, Engine `--ctx-cache-config`,
+    or `cudaChooseDevice`. `gpu-profile capture` is still refused. Dual
+    score still has no `$/M tokens`.
+
+596. [x] `gpu-sim` `Sim::ctx_get_stream_priority_range` is
+    `cuCtxGetStreamPriorityRange` for the seeded primary context of an
+    explicit device. Same as `device_get_stream_priority_range`. Example
+    H100 is `(0, -5)`. Query; legal during capture. Distinct from
+    `device_get_stream_priority_range` (runtime) and from
+    `stream_get_priority`. This VM does not invent Engine `--ctx-priority-range`,
+    occupancy SM counts, or `cudaChooseDevice`. `gpu-profile capture` is
+    still refused. Dual score still has no `$/M tokens`.
+
+597. [x] `gpu-sim` `Sim::ctx_get_limit` is `cuCtxGetLimit` for the
+    seeded primary context of an explicit device. Same as `get_limit`
+    for a `DeviceLimit`. Query; legal during capture. Distinct from
+    `get_limit` (runtime). This VM does not invent `cuCtxSetLimit`,
+    Engine `--ctx-get-limit`, or `cudaChooseDevice`.
+    `gpu-profile capture` is still refused. Dual score still has no
+    `$/M tokens`.
+
+598. [x] `gpu-sim` `Sim::ctx_synchronize` is `cuCtxSynchronize` for the
+    seeded primary context of an explicit device. Same wait as
+    `synchronize_device`. Capture cannot include it. Other GPUs keep
+    running. Distinct from `synchronize_device` (runtime) and from
+    `green_ctx_synchronize`. This VM does not invent `cuCtxSynchronize_v2`,
+    Engine `--ctx-synchronize`, or `cudaChooseDevice`.
+    `gpu-profile capture` is still refused. Dual score still has no
+    `$/M tokens`.
+
+599. [x] `gpu-sim` `Sim::ctx_get_shared_mem_config` is
+    `cuCtxGetSharedMemConfig` for the seeded primary context of an
+    explicit device. Same as `get_shared_mem_config`. Query; legal
+    during capture. Distinct from `get_shared_mem_config` (runtime) and
+    from `get_func_shared_mem_config`. This VM does not invent
+    `cuCtxSetSharedMemConfig`, Engine `--ctx-shared-mem`, or
+    `cudaChooseDevice`. `gpu-profile capture` is still refused. Dual
+    score still has no `$/M tokens`.
+
+600. [x] `gpu-sim` `Sim::device_primary_ctx_set_flags` is
+    `cuDevicePrimaryCtxSetFlags`. Always Invalid `"primary context active"`
+    because this VM seeds a primary context at construct. Flags are not
+    applied. Distinct from `set_device_flags`. Capture cannot include it.
+    This VM does not invent `cuDevicePrimaryCtxRetain`, Engine `--primary-ctx-flags`,
+    or `cudaChooseDevice`. `gpu-profile capture` is still refused. Dual
+    score still has no `$/M tokens`.
+
+601. [x] `gpu-sim` `Sim::func_get_name` is `cudaFuncGetName` /
+    `cuFuncGetName`. Empty until a compiled kernel exists. Query; legal
+    during capture. Distinct from `device_get_name` and from
+    `func_get_attributes`. This VM does not invent `cuKernelGetName`,
+    Engine `--func-name`, or `cudaChooseDevice`. `gpu-profile capture` is
+    still refused. Dual score still has no `$/M tokens`.
+
+602. [x] `gpu-sim` `Sim::func_get_param_info` is `cuFuncGetParamInfo`.
+    Always Invalid `"unknown function"` until a compiled kernel exists.
+    Query; legal during capture. Distinct from `func_get_name` (empty
+    string) and from `func_get_attributes`. This VM does not invent a
+    compiled kernel, Engine `--func-param-info`, or `cudaChooseDevice`.
+    `gpu-profile capture` is still refused. Dual score still has no
+    `$/M tokens`.
+
+603. [x] `gpu-sim` `Sim::driver_init` is `cuInit`. Flags must be 0.
+    Already initialized at `Sim::new`; further calls are 1 ns no-ops.
+    Capture cannot include it. Distinct from `init_device`
+    (`cudaInitDevice`). This VM does not invent `cuInit` flag bits,
+    Engine `--cu-init`, or `cudaChooseDevice`. `gpu-profile capture` is
+    still refused. Dual score still has no `$/M tokens`.
+
+604. [x] `gpu-sim` `Sim::module_get_loading_mode` is
+    `cuModuleGetLoadingMode`. Always Eager (CUDA 1). Query; legal during
+    capture. Process-wide. Distinct from `driver_init` and `init_device`.
+    This VM does not invent an environment-variable loading override,
+    Engine `--module-loading`, or `cudaChooseDevice`. `gpu-profile capture` is
+    still refused. Dual score still has no `$/M tokens`.
+
+605. [x] `gpu-sim` `Sim::ctx_get_device` is `cuCtxGetDevice`. Returns
+    the explicit device of the seeded primary context. Query; legal
+    during capture. Distinct from `green_ctx_get_device` and
+    `stream_get_device`. This VM does not invent `cudaSetDevice`,
+    Engine `--ctx-device`, or `cudaChooseDevice`. `gpu-profile capture` is
+    still refused. Dual score still has no `$/M tokens`.
+
+606. [x] `gpu-sim` `Sim::func_is_loaded` is `cuFuncIsLoaded`. `false`
+    until a compiled kernel exists. Query; legal during capture.
+    Distinct from empty `func_get_name` and unknown-function
+    `func_get_param_info`. This VM does not invent `cuFuncLoad`,
+    Engine `--func-loaded`, or `cudaChooseDevice`. `gpu-profile capture` is
+    still refused. Dual score still has no `$/M tokens`.
+
+607. [x] `gpu-sim` `Sim::func_get_module` is `cuFuncGetModule`. Always
+    Invalid `"unknown function"` until a compiled kernel exists. Query;
+    legal during capture. This VM has no `CUmodule`. Distinct from
+    `func_is_loaded` (`false`) and `func_get_param_info`. This VM does
+    not invent `cuKernelGetModule`, Engine `--func-module`, or
+    `cudaChooseDevice`. `gpu-profile capture` is still refused. Dual
+    score still has no `$/M tokens`.
+
+608. [x] `gpu-sim` `Sim::ctx_reset_persisting_l2_cache` is
+    `cuCtxResetPersistingL2Cache`. Wraps `reset_persisting_l2_cache`.
+    Host-synchronous. Capture cannot include it. The persist limit stays.
+    Distinct from `set_persisting_l2_cache_size`. This VM does not invent
+    Engine `--ctx-reset-l2`, a second Engine `--l2-reset`, or
+    `cudaChooseDevice`. `gpu-profile capture` is still refused. Dual
+    score still has no `$/M tokens`.
+
+609. [x] `gpu-sim` `Sim::ctx_get_exec_affinity` is `cuCtxGetExecAffinity`.
+    `SM_COUNT` is Invalid `"unsupported exec affinity"` because
+    `device_get_exec_affinity_support` is 0. Query; legal during capture.
+    This VM does not invent occupancy SM counts, `cuCtxSetExecAffinity`,
+    Engine `--ctx-exec-affinity`, or `cudaChooseDevice`. `gpu-profile capture` is
+    still refused. Dual score still has no `$/M tokens`.
+
+610. [x] `gpu-sim` `Sim::mem_batch_decompress_async` is
+    `cuMemBatchDecompressAsync`. Always Invalid `"hw decompress"` because
+    `MemDecompressAlgorithmMask` is 0. Distinct from `memcpy_batch_async`.
+    This VM does not invent decompress succeeding, Engine `--mem-decompress`,
+    or `cudaChooseDevice`. `gpu-profile capture` is still refused. Dual
+    score still has no `$/M tokens`.
+
+611. [x] `gpu-sim` `Sim::tensor_map_encode_tiled` is
+    `cuTensorMapEncodeTiled`. Always Invalid `"tensor map"` because
+    `TensorMapAccessSupported` is 0. Query; legal during capture.
+    Distinct from `mem_batch_decompress_async`. This VM does not invent
+    `cuTensorMapEncodeIm2col`, Engine `--tensor-map`, or
+    `cudaChooseDevice`. `gpu-profile capture` is still refused. Dual
+    score still has no `$/M tokens`.
+
+612. [x] `gpu-sim` `Sim::cooperative_kernel_multi_device` is
+    `cudaLaunchCooperativeKernelMultiDevice`. Always Invalid
+    `"cooperative multi-device"` because `CooperativeMultiDeviceLaunch`
+    is 0. Query; legal during capture. Distinct from `cooperative_kernel`.
+    This VM does not invent `cudaLaunchParams` packing, Engine `--coop-multi`,
+    or `cudaChooseDevice`. `gpu-profile capture` is still refused. Dual
+    score still has no `$/M tokens`.
+
+613. [x] `gpu-sim` `Sim::array_create` is `cuArrayCreate` /
+    `cuArray3DCreate`. Always Invalid `"cuda array"` because CUDA arrays
+    are not modeled. Query; legal during capture. Distinct from
+    `tensor_map_encode_tiled`. This VM does not invent `CUarray_format`,
+    Engine `--array-create`, or `cudaChooseDevice`. `gpu-profile capture` is
+    still refused. Dual score still has no `$/M tokens`.
+
+614. [x] `gpu-sim` `Sim::import_external_memory` is
+    `cuImportExternalMemory`. Always Invalid `"external memory"` because
+    dma-buf / Win32 / fabric handles are 0. Query; legal during capture.
+    Distinct from `va_get_handle_for_address_range` and
+    `device_get_nvscisync_attributes`. This VM does not invent
+    `cuDestroyExternalMemory`, Engine `--external-memory`, or
+    `cudaChooseDevice`. `gpu-profile capture` is still refused. Dual
+    score still has no `$/M tokens`.
+
+615. [x] `gpu-sim` `Sim::surf_object_create` is `cuSurfObjectCreate`.
+    Always Invalid `"cuda surface"` because CUDA surfaces are not
+    modeled. Query; legal during capture. Distinct from `array_create`.
+    This VM does not invent `cuTexObjectCreate`, Engine `--surf-object`,
+    or `cudaChooseDevice`. `gpu-profile capture` is still refused. Dual
+    score still has no `$/M tokens`.
+
+616. [x] `gpu-sim` `Sim::library_load_data` is `cuLibraryLoadData`.
+    Always Invalid `"cuda library"` because this VM has no cubin or PTX
+    and no `CUlibrary`. Query; legal during capture. Distinct from
+    `module_get_loading_mode` and `func_get_module`. This VM does not
+    invent `cuLibraryLoadFromFile`, Engine `--library-load`, or
+    `cudaChooseDevice`. `gpu-profile capture` is still refused. Dual
+    score still has no `$/M tokens`.
+
+617. [x] `gpu-sim` `Sim::get_proc_address` is `cuGetProcAddress` /
+    `cudaGetDriverEntryPoint`. Always Invalid `"proc address"` because
+    this VM has no C ABI function pointers. Query; legal during capture.
+    Distinct from `driver_get_version` and `library_load_data`. This VM
+    does not invent `cudaGetDriverEntryPointByVersion`, Engine `--proc-address`,
+    or `cudaChooseDevice`. `gpu-profile capture` is still refused. Dual
+    score still has no `$/M tokens`.
+
+618. [x] `gpu-sim` `Sim::graphics_map_resources` is
+    `cuGraphicsMapResources` / `cudaGraphicsMapResources`. Always Invalid
+    `"graphics resource"` because OpenGL, Direct3D, Vulkan, and EGL
+    graphics resources are not modeled. Query; legal during capture.
+    Distinct from `import_external_memory`. This VM does not invent
+    `cuGraphicsGLRegisterBuffer`, Engine `--graphics-map`, or
+    `cudaChooseDevice`. `gpu-profile capture` is still refused. Dual
+    score still has no `$/M tokens`.
+
+619. [x] `gpu-sim` `Sim::coredump_get_attribute` is
+    `cuCoredumpGetAttribute` / `cudaCoredumpGetAttribute`. Always Invalid
+    `"coredump"` because GPU coredumps are not modeled. Query; legal
+    during capture. Distinct from `get_proc_address`. This VM does not
+    invent `cuCoredumpSetAttribute`, Engine `--coredump`, or
+    `cudaChooseDevice`. `gpu-profile capture` is still refused. Dual
+    score still has no `$/M tokens`.
+
+620. [x] `gpu-sim` `Sim::checkpoint_process_lock` is
+    `cuCheckpointProcessLock`. Always Invalid `"checkpoint"` because CUDA
+    process checkpoint is not modeled. Query; legal during capture.
+    Distinct from `coredump_get_attribute`. This VM does not invent
+    `cuCheckpointProcessCheckpoint`, Engine `--checkpoint`, or
+    `cudaChooseDevice`. `gpu-profile capture` is still refused. Dual
+    score still has no `$/M tokens`.
+
+621. [x] `gpu-sim` `Sim::mipmapped_array_create` is
+    `cuMipmappedArrayCreate`. Always Invalid `"mipmapped array"` because
+    CUDA mipmapped arrays are not modeled. Query; legal during capture.
+    Distinct from `array_create`. This VM does not invent
+    `cuMipmappedArrayGetLevel`, Engine `--mipmap-array`, or
+    `cudaChooseDevice`. `gpu-profile capture` is still refused. Dual
+    score still has no `$/M tokens`.
+
+622. [x] `gpu-sim` `Sim::link_create` is `cuLinkCreate`. Always Invalid
+    `"jit linker"` because this VM has no NVRTC and no cubin linker.
+    Query; legal during capture. Distinct from `library_load_data`. This
+    VM does not invent `cuLinkAddData`, Engine `--jit-link`, or
+    `cudaChooseDevice`. `gpu-profile capture` is still refused. Dual
+    score still has no `$/M tokens`.
+
+623. [x] `gpu-sim` `Sim::get_export_table` is `cuGetExportTable`. Always
+    Invalid `"export table"` because this VM has no C ABI driver tables.
+    Query; legal during capture. Distinct from `get_proc_address`. This
+    VM does not invent a succeeding `CUuuid` table lookup, Engine `--export-table`,
+    or `cudaChooseDevice`. `gpu-profile capture` is still refused. Dual
+    score still has no `$/M tokens`.
+
+624. [x] `gpu-sim` `Sim::profiler_start` is `cuProfilerStart` /
+    `cudaProfilerStart`. 1 ns no-op because CUPTI is not modeled.
+    Host-synchronous. Capture cannot include it. Distinct from
+    `driver_init`. This VM does not invent `cuProfilerStop`, Engine `--profiler-start`,
+    or `cudaChooseDevice`. `gpu-profile capture` is still refused. Dual
+    score still has no `$/M tokens`.
+
+625. [x] `gpu-sim` `Sim::egl_stream_consumer_connect` is
+    `cuEGLStreamConsumerConnect` / `cudaEGLStreamConsumerConnect`. Always
+    Invalid `"egl stream"` because EGL streams are not modeled. Query;
+    legal during capture. Distinct from `graphics_map_resources`. This VM
+    does not invent `cuEGLStreamProducerConnect`, Engine `--egl-stream`,
+    or `cudaChooseDevice`. `gpu-profile capture` is still refused. Dual
+    score still has no `$/M tokens`.
+
+626. [x] `gpu-sim` `Sim::gl_get_devices` is `cuGLGetDevices` /
+    `cudaGLGetDevices`. Always Invalid `"opengl"` because OpenGL interop
+    is not modeled. Query; legal during capture. Distinct from
+    `graphics_map_resources` and `egl_stream_consumer_connect`. This VM
+    does not invent `cuGLCtxCreate`, Engine `--gl-devices`, or
+    `cudaChooseDevice`. `gpu-profile capture` is still refused. Dual
+    score still has no `$/M tokens`.
+
+627. [x] `gpu-sim` `Sim::d3d11_get_devices` is `cuD3D11GetDevices` /
+    `cudaD3D11GetDevices`. Always Invalid `"d3d11"` because Direct3D 11
+    interop is not modeled. Query; legal during capture. Distinct from
+    `gl_get_devices`. This VM does not invent `cuD3D11CtxCreate`, Engine `--d3d11-devices`,
+    or `cudaChooseDevice`. `gpu-profile capture` is still refused. Dual
+    score still has no `$/M tokens`.
+
+628. [x] `gpu-sim` `Sim::d3d12_get_devices` is `cuD3D12GetDevices` /
+    `cudaD3D12GetDevices`. Always Invalid `"d3d12"` because Direct3D 12
+    interop is not modeled. Query; legal during capture. Distinct from
+    `d3d11_get_devices` and from `DeviceAttr::D3D12CigSupported` (always 0;
+    CIG is not GetDevices). This VM does not invent `cuD3D12CtxCreate`, Engine `--d3d12-devices`,
+    or `cudaChooseDevice`. `gpu-profile capture` is still refused. Dual
+    score still has no `$/M tokens`.
+
+629. [x] `gpu-sim` `Sim::vdpau_get_device` is `cuVDPAUGetDevice` /
+    `cudaVDPAUGetDevice`. Always Invalid `"vdpau"` because VDPAU
+    interop is not modeled. Query; legal during capture. Distinct from
+    `gl_get_devices` and `d3d12_get_devices`. This VM does not invent `cuVDPAUCtxCreate`, Engine `--vdpau-device`,
+    or `cudaChooseDevice`. `gpu-profile capture` is still refused. Dual
+    score still has no `$/M tokens`.
+
+630. [x] `gpu-sim` `Sim::d3d9_get_devices` is `cuD3D9GetDevices` /
+    `cudaD3D9GetDevices`. Always Invalid `"d3d9"` because Direct3D 9
+    interop is not modeled. Query; legal during capture. Distinct from
+    `d3d11_get_devices` and `d3d12_get_devices`. This VM does not invent `cuD3D9CtxCreate`, Engine `--d3d9-devices`,
+    or `cudaChooseDevice`. `gpu-profile capture` is still refused. Dual
+    score still has no `$/M tokens`.
+
+631. [x] `gpu-sim` `Sim::d3d10_get_devices` is `cuD3D10GetDevices` /
+    `cudaD3D10GetDevices`. Always Invalid `"d3d10"` because Direct3D 10
+    interop is not modeled. Query; legal during capture. Distinct from
+    `d3d9_get_devices` and `d3d11_get_devices`. This VM does not invent `cuD3D10CtxCreate`, Engine `--d3d10-devices`,
+    or `cudaChooseDevice`. `gpu-profile capture` is still refused. Dual
+    score still has no `$/M tokens`.
+
+632. [x] `gpu-sim` `Sim::profiler_stop` is `cuProfilerStop` /
+    `cudaProfilerStop`. 1 ns no-op because CUPTI is not modeled.
+    Host-synchronous. Capture cannot include it. Distinct from
+    `profiler_start`. This VM does not invent `cudaProfilerInitialize`, Engine `--profiler-stop`,
+    or `cudaChooseDevice`. `gpu-profile capture` is still refused. Dual
+    score still has no `$/M tokens`.
+
+633. [x] `gpu-sim` `Sim::profiler_initialize` is
+    `cudaProfilerInitialize`. Always Invalid `"profiler initialize"`
+    because CUPTI config files are not modeled. Query; legal during
+    capture. Distinct from `profiler_start` and `profiler_stop`. This VM does not invent a CUPTI activity buffer, Engine `--profiler-init`,
+    or `cudaChooseDevice`. `gpu-profile capture` is still refused. Dual
+    score still has no `$/M tokens`.
+
+634. [x] `gpu-sim` `Sim::tex_object_create` is `cuTexObjectCreate` /
+    `cudaCreateTextureObject`. Always Invalid `"cuda texture"` because
+    CUDA textures are not modeled. Query; legal during capture. Distinct
+    from `surf_object_create` and `array_create`. This VM does not invent `cuTexObjectDestroy`, Engine `--tex-object`,
+    or `cudaChooseDevice`. `gpu-profile capture` is still refused. Dual
+    score still has no `$/M tokens`.
+
+635. [x] `gpu-sim` `Sim::tex_object_destroy` is `cuTexObjectDestroy` /
+    `cudaDestroyTextureObject`. Always Invalid `"unknown tex object"`
+    because texture-object handles are not modeled. Query; legal during
+    capture. Distinct from `tex_object_create`. This VM does not invent `cuTexObjectGetTextureDesc`, Engine `--tex-destroy`,
+    or `cudaChooseDevice`. `gpu-profile capture` is still refused. Dual
+    score still has no `$/M tokens`.
+
+636. [x] `gpu-sim` `Sim::surf_object_destroy` is `cuSurfObjectDestroy` /
+    `cudaDestroySurfaceObject`. Always Invalid `"unknown surf object"`
+    because surface-object handles are not modeled. Query; legal during
+    capture. Distinct from `surf_object_create` and `tex_object_destroy`.
+    This VM does not invent `cuSurfObjectGetResourceDesc`, Engine `--surf-destroy`,
+    or `cudaChooseDevice`. `gpu-profile capture` is still refused. Dual
+    score still has no `$/M tokens`.
+
+637. [x] `gpu-sim` `Sim::surf_object_get_resource_desc` is
+    `cuSurfObjectGetResourceDesc` /
+    `cudaGetSurfaceObjectResourceDesc`. Always Invalid `"surf resource desc"`
+    because CUDA surfaces are not modeled. Query; legal during capture.
+    Distinct from `surf_object_destroy`. This VM does not invent `cuArrayGetDescriptor`, Engine `--surf-resource-desc`,
+    or `cudaChooseDevice`. `gpu-profile capture` is still refused. Dual
+    score still has no `$/M tokens`.
+
+638. [x] `gpu-sim` `Sim::tex_object_get_resource_desc` is
+    `cuTexObjectGetResourceDesc` /
+    `cudaGetTextureObjectResourceDesc`. Always Invalid `"tex resource desc"`
+    because CUDA textures are not modeled. Query; legal during capture.
+    Distinct from `tex_object_destroy` and `surf_object_get_resource_desc`.
+    This VM does not invent `cuTexObjectGetResourceViewDesc`, Engine `--tex-resource-desc`,
+    or `cudaChooseDevice`. `gpu-profile capture` is still refused. Dual
+    score still has no `$/M tokens`.
+
+639. [x] `gpu-sim` `Sim::tex_object_get_texture_desc` is
+    `cuTexObjectGetTextureDesc` /
+    `cudaGetTextureObjectTextureDesc`. Always Invalid `"texture desc"`
+    because CUDA textures are not modeled. Query; legal during capture.
+    Distinct from `tex_object_get_resource_desc`. This VM does not invent `CU_TR_FILTER_MODE`, Engine `--tex-desc`,
+    or `cudaChooseDevice`. `gpu-profile capture` is still refused. Dual
+    score still has no `$/M tokens`.
+
+640. [x] `gpu-sim` `Sim::tex_object_get_resource_view_desc` is
+    `cuTexObjectGetResourceViewDesc` /
+    `cudaGetTextureObjectResourceViewDesc`. Always Invalid `"tex view desc"`
+    because CUDA textures are not modeled. Query; legal during capture.
+    Distinct from `tex_object_get_resource_desc` and
+    `tex_object_get_texture_desc`. This VM does not invent `CU_RES_VIEW_FORMAT`, Engine `--tex-view-desc`,
+    or `cudaChooseDevice`. `gpu-profile capture` is still refused. Dual
+    score still has no `$/M tokens`.
+
+641. [x] `gpu-sim` `Sim::gl_ctx_create` is `cuGLCtxCreate`. Always
+    Invalid `"gl context"` because OpenGL interop is not modeled. Query;
+    legal during capture. Distinct from `gl_get_devices`. This VM does not invent `cuGLMapBufferObject`, Engine `--gl-ctx`,
+    or `cudaChooseDevice`. `gpu-profile capture` is still refused. Dual
+    score still has no `$/M tokens`.
+
+642. [x] `gpu-sim` `Sim::d3d11_ctx_create` is `cuD3D11CtxCreate`. Always
+    Invalid `"d3d11 context"` because Direct3D 11 interop is not modeled.
+    Query; legal during capture. Distinct from `d3d11_get_devices` and
+    `gl_ctx_create`. This VM does not invent `cuGraphicsD3D11RegisterResource`, Engine `--d3d11-ctx`,
+    or `cudaChooseDevice`. `gpu-profile capture` is still refused. Dual
+    score still has no `$/M tokens`.
+
+643. [x] `gpu-sim` `Sim::d3d12_ctx_create` is `cuD3D12CtxCreate`. Always
+    Invalid `"d3d12 context"` because Direct3D 12 interop is not modeled.
+    Query; legal during capture. Distinct from `d3d12_get_devices`,
+    `d3d11_ctx_create`, and `DeviceAttr::D3D12CigSupported`. This VM does not invent `cuGraphicsD3D12RegisterResource`, Engine `--d3d12-ctx`,
+    or `cudaChooseDevice`. `gpu-profile capture` is still refused. Dual
+    score still has no `$/M tokens`.
+
+644. [x] `gpu-sim` `Sim::d3d9_ctx_create` is `cuD3D9CtxCreate`. Always
+    Invalid `"d3d9 context"` because Direct3D 9 interop is not modeled.
+    Query; legal during capture. Distinct from `d3d9_get_devices` and
+    `d3d11_ctx_create`. This VM does not invent `cuGraphicsD3D9RegisterResource`, Engine `--d3d9-ctx`,
+    or `cudaChooseDevice`. `gpu-profile capture` is still refused. Dual
+    score still has no `$/M tokens`.
+
+645. [x] `gpu-sim` `Sim::d3d10_ctx_create` is `cuD3D10CtxCreate`. Always
+    Invalid `"d3d10 context"` because Direct3D 10 interop is not modeled.
+    Query; legal during capture. Distinct from `d3d10_get_devices` and
+    `d3d9_ctx_create`. This VM does not invent `cuGraphicsD3D10RegisterResource`, Engine `--d3d10-ctx`,
+    or `cudaChooseDevice`. `gpu-profile capture` is still refused. Dual
+    score still has no `$/M tokens`.
+
+646. [x] `gpu-sim` `Sim::vdpau_ctx_create` is `cuVDPAUCtxCreate`. Always
+    Invalid `"vdpau context"` because VDPAU interop is not modeled. Query;
+    legal during capture. Distinct from `vdpau_get_device` and
+    `gl_ctx_create`. This VM does not invent `cuGraphicsVDPAURegisterOutputSurface`, Engine `--vdpau-ctx`,
+    or `cudaChooseDevice`. `gpu-profile capture` is still refused. Dual
+    score still has no `$/M tokens`.
+
+647. [x] `gpu-sim` `Sim::egl_stream_producer_connect` is
+    `cuEGLStreamProducerConnect`. Always Invalid `"egl producer"` because
+    EGL streams are not modeled. Query; legal during capture. Distinct from
+    `egl_stream_consumer_connect`. This VM does not invent `cuEGLStreamProducerDisconnect`, Engine `--egl-producer`,
+    or `cudaChooseDevice`. `gpu-profile capture` is still refused. Dual
+    score still has no `$/M tokens`.
+
+648. [x] `gpu-sim` `Sim::array_get_descriptor` is `cuArrayGetDescriptor`.
+    Always Invalid `"array descriptor"` because CUDA arrays are not
+    modeled. Query; legal during capture. Distinct from `array_create` and
+    `surf_object_get_resource_desc`. This VM does not invent `cuArray3DGetDescriptor`, Engine `--array-desc`,
+    or `cudaChooseDevice`. `gpu-profile capture` is still refused. Dual
+    score still has no `$/M tokens`.
+
+649. [x] `gpu-sim` `Sim::graphics_gl_register_buffer` is
+    `cuGraphicsGLRegisterBuffer`. Always Invalid `"gl buffer"` because
+    OpenGL interop is not modeled. Query; legal during capture. Distinct from
+    `graphics_map_resources` and `gl_ctx_create`. This VM does not invent `cuGraphicsGLRegisterImage`, Engine `--gl-register-buffer`,
+    or `cudaChooseDevice`. `gpu-profile capture` is still refused. Dual
+    score still has no `$/M tokens`.
+
+650. [x] `gpu-sim` `Sim::array_3d_get_descriptor` is
+    `cuArray3DGetDescriptor`. Always Invalid `"array 3d descriptor"` because
+    CUDA arrays are not modeled. Query; legal during capture. Distinct from
+    `array_get_descriptor`. This VM does not invent `cuArrayGetSparseProperties`, Engine `--array-3d-desc`,
+    or `cudaChooseDevice`. `gpu-profile capture` is still refused. Dual
+    score still has no `$/M tokens`.
+
+651. [x] `gpu-sim` `Sim::graphics_gl_register_image` is
+    `cuGraphicsGLRegisterImage`. Always Invalid `"gl image"` because OpenGL
+    interop is not modeled. Query; legal during capture. Distinct from
+    `graphics_gl_register_buffer`. This VM does not invent `cuGraphicsEGLRegisterImage`, Engine `--gl-register-image`,
+    or `cudaChooseDevice`. `gpu-profile capture` is still refused. Dual
+    score still has no `$/M tokens`.
+
+652. [x] `gpu-sim` `Sim::graphics_unmap_resources` is
+    `cuGraphicsUnmapResources`. Always Invalid `"graphics unmap"` because
+    graphics resources are not modeled. Query; legal during capture. Distinct
+    from `graphics_map_resources`. This VM does not invent `cuGraphicsResourceGetMappedPointer`, Engine `--graphics-unmap`,
+    or `cudaChooseDevice`. `gpu-profile capture` is still refused. Dual
+    score still has no `$/M tokens`.
+
+653. [x] `gpu-sim` `Sim::array_get_sparse_properties` is
+    `cuArrayGetSparseProperties`. Always Invalid `"array sparse"` because
+    sparse CUDA arrays are not modeled. Query; legal during capture. Distinct
+    from `array_3d_get_descriptor`. This VM does not invent `cuArrayGetPlane`, Engine `--array-sparse`,
+    or `cudaChooseDevice`. `gpu-profile capture` is still refused. Dual
+    score still has no `$/M tokens`.
+
+654. [x] `gpu-sim` `Sim::graphics_unregister_resource` is
+    `cuGraphicsUnregisterResource`. Always Invalid `"graphics unregister"`
+    because graphics resources are not modeled. Query; legal during capture.
+    Distinct from `graphics_unmap_resources`. This VM does not invent `cuGraphicsResourceSetMapFlags`, Engine `--graphics-unregister`,
+    or `cudaChooseDevice`. `gpu-profile capture` is still refused. Dual
+    score still has no `$/M tokens`.
+
+655. [x] `gpu-sim` `Sim::egl_stream_producer_disconnect` is
+    `cuEGLStreamProducerDisconnect`. Always Invalid `"producer disconnect"`
+    because EGL streams are not modeled. Query; legal during capture. Distinct
+    from `egl_stream_producer_connect`. This VM does not invent `cuEGLStreamProducerPresentFrame`, Engine `--egl-producer-disconnect`,
+    or `cudaChooseDevice`. `gpu-profile capture` is still refused. Dual
+    score still has no `$/M tokens`.
+
+656. [x] `gpu-sim` `Sim::array_get_plane` is `cuArrayGetPlane`. Always
+    Invalid `"array plane"` because CUDA arrays are not modeled. Query;
+    legal during capture. Distinct from `array_get_sparse_properties`. This
+    VM does not invent `cuArrayGetMemoryRequirements`, Engine `--array-plane`,
+    or `cudaChooseDevice`. `gpu-profile capture` is still refused. Dual
+    score still has no `$/M tokens`.
+
+657. [x] `gpu-sim` `Sim::array_get_memory_requirements` is
+    `cuArrayGetMemoryRequirements`. Always Invalid `"array memory"` because
+    CUDA arrays are not modeled. Query; legal during capture. Distinct from
+    `array_get_plane`. This VM does not invent `cuMipmappedArrayGetMemoryRequirements`, Engine `--array-memory`,
+    or `cudaChooseDevice`. `gpu-profile capture` is still refused. Dual
+    score still has no `$/M tokens`.
+
+658. [x] `gpu-sim` `Sim::egl_stream_consumer_disconnect` is
+    `cuEGLStreamConsumerDisconnect`. Always Invalid `"consumer disconnect"`
+    because EGL streams are not modeled. Query; legal during capture. Distinct
+    from `egl_stream_consumer_connect` and `egl_stream_producer_disconnect`.
+    This VM does not invent `cuEGLStreamConsumerAcquireFrame`, Engine `--egl-consumer-disconnect`,
+    or `cudaChooseDevice`. `gpu-profile capture` is still refused. Dual
+    score still has no `$/M tokens`.
+
+659. [x] `gpu-sim` `Sim::graphics_resource_get_mapped_pointer` is
+    `cuGraphicsResourceGetMappedPointer`. Always Invalid `"mapped pointer"`
+    because graphics resources are not modeled. Query; legal during capture.
+    Distinct from `graphics_map_resources` and `graphics_unmap_resources`.
+    This VM does not invent `cuGraphicsSubResourceGetMappedArray`, Engine `--mapped-pointer`,
+    or `cudaChooseDevice`. `gpu-profile capture` is still refused. Dual
+    score still has no `$/M tokens`.
+
+660. [x] `gpu-sim` `Sim::egl_stream_producer_present_frame` is
+    `cuEGLStreamProducerPresentFrame`. Always Invalid `"producer present"`
+    because EGL streams are not modeled. Query; legal during capture. Distinct
+    from `egl_stream_producer_disconnect`. This VM does not invent `cuEGLStreamProducerReturnFrame`, Engine `--egl-producer-present`,
+    or `cudaChooseDevice`. `gpu-profile capture` is still refused. Dual
+    score still has no `$/M tokens`.
+
+661. [x] `gpu-sim` `Sim::graphics_subresource_get_mapped_array` is
+    `cuGraphicsSubResourceGetMappedArray`. Always Invalid `"mapped array"`
+    because graphics resources are not modeled. Query; legal during capture.
+    Distinct from `graphics_resource_get_mapped_pointer` and `array_create`.
+    This VM does not invent `cuGraphicsResourceGetMappedMipmappedArray`, Engine `--mapped-array`,
+    or `cudaChooseDevice`. `gpu-profile capture` is still refused. Dual
+    score still has no `$/M tokens`.
+
+662. [x] `gpu-sim` `Sim::graphics_resource_get_mapped_mipmapped_array` is
+    `cuGraphicsResourceGetMappedMipmappedArray`. Always Invalid `"mapped mipmap"`
+    because graphics resources are not modeled. Query; legal during capture.
+    Distinct from `graphics_subresource_get_mapped_array` and
+    `mipmapped_array_create`. This VM does not invent a `CUmipmappedArray` handle, Engine `--mapped-mipmap`,
+    or `cudaChooseDevice`. `gpu-profile capture` is still refused. Dual
+    score still has no `$/M tokens`.
+
+663. [x] `gpu-sim` `Sim::egl_stream_producer_return_frame` is
+    `cuEGLStreamProducerReturnFrame`. Always Invalid `"producer return"`
+    because EGL streams are not modeled. Query; legal during capture. Distinct
+    from `egl_stream_producer_present_frame`. This VM does not invent a `CUeglFrame`, Engine `--egl-producer-return`,
+    or `cudaChooseDevice`. `gpu-profile capture` is still refused. Dual
+    score still has no `$/M tokens`.
+
+664. [x] `gpu-sim` `Sim::egl_stream_consumer_acquire_frame` is
+    `cuEGLStreamConsumerAcquireFrame`. Always Invalid `"consumer acquire"`
+    because EGL streams are not modeled. Query; legal during capture. Distinct
+    from `egl_stream_consumer_disconnect`. This VM does not invent `cuEGLStreamConsumerReleaseFrame`, Engine `--egl-consumer-acquire`,
+    or `cudaChooseDevice`. `gpu-profile capture` is still refused. Dual
+    score still has no `$/M tokens`.
+
+665. [x] `gpu-sim` `Sim::graphics_resource_set_map_flags` is
+    `cuGraphicsResourceSetMapFlags`. Always Invalid `"map flags"`
+    because graphics resources are not modeled. Query; legal during capture.
+    Distinct from `graphics_unregister_resource` and `graphics_map_resources`.
+    This VM does not invent a populated `CU_GRAPHICS_MAP_RESOURCE_FLAGS` enum, Engine `--map-flags`,
+    or `cudaChooseDevice`. `gpu-profile capture` is still refused. Dual
+    score still has no `$/M tokens`.
+
+666. [x] `gpu-sim` `Sim::egl_stream_consumer_release_frame` is
+    `cuEGLStreamConsumerReleaseFrame`. Always Invalid `"consumer release"`
+    because EGL streams are not modeled. Query; legal during capture. Distinct
+    from `egl_stream_consumer_acquire_frame`. This VM does not invent an EGL consumer release timeout, Engine `--egl-consumer-release`,
+    or `cudaChooseDevice`. `gpu-profile capture` is still refused. Dual
+    score still has no `$/M tokens`.
+
+667. [x] `gpu-sim` `Sim::mipmapped_array_get_memory_requirements` is
+    `cuMipmappedArrayGetMemoryRequirements`. Always Invalid `"mipmap memory"`
+    because CUDA mipmapped arrays are not modeled. Query; legal during capture.
+    Distinct from `array_get_memory_requirements` and `mipmapped_array_create`.
+    This VM does not invent `cuMipmappedArrayDestroy`, Engine `--mipmap-memory`,
+    or `cudaChooseDevice`. `gpu-profile capture` is still refused. Dual
+    score still has no `$/M tokens`.
+
+668. [x] `gpu-sim` `Sim::graphics_egl_register_image` is
+    `cuGraphicsEGLRegisterImage`. Always Invalid `"egl register"`
+    because EGL interop is not modeled. Query; legal during capture. Distinct
+    from `graphics_gl_register_image`. This VM does not invent an EGL `CUarray`, Engine `--egl-register`,
+    or `cudaChooseDevice`. `gpu-profile capture` is still refused. Dual
+    score still has no `$/M tokens`.
+
+669. [x] `gpu-sim` `Sim::mipmapped_array_get_level` is
+    `cuMipmappedArrayGetLevel`. Always Invalid `"mipmap level"`
+    because CUDA mipmapped arrays are not modeled. Query; legal during capture.
+    Distinct from `mipmapped_array_create` and
+    `mipmapped_array_get_memory_requirements`. This VM does not invent a `CUarray` level handle, Engine `--mipmap-level`,
+    or `cudaChooseDevice`. `gpu-profile capture` is still refused. Dual
+    score still has no `$/M tokens`.
+
+670. [x] `gpu-sim` `Sim::mipmapped_array_destroy` is
+    `cuMipmappedArrayDestroy`. Always Invalid `"mipmap destroy"`
+    because CUDA mipmapped arrays are not modeled. Query; legal during capture.
+    Distinct from `mipmapped_array_create` and `mipmapped_array_get_level`.
+    This VM does not invent `cuArrayDestroy`, Engine `--mipmap-destroy`,
+    or `cudaChooseDevice`. `gpu-profile capture` is still refused. Dual
+    score still has no `$/M tokens`.
+
+671. [x] `gpu-sim` `Sim::array_destroy` is `cuArrayDestroy`. Always Invalid
+    `"array destroy"` because CUDA arrays are not modeled. Query; legal during
+    capture. Distinct from `array_create` and `mipmapped_array_destroy`.
+    This VM does not invent a pitched array alloc, Engine `--array-destroy`,
+    or `cudaChooseDevice`. `gpu-profile capture` is still refused. Dual
+    score still has no `$/M tokens`.
+
+672. [x] `gpu-sim` `Sim::gl_register_buffer_object` is
+    `cuGLRegisterBufferObject`. Always Invalid `"buffer object"`
+    because legacy OpenGL interop is not modeled. Query; legal during capture.
+    Distinct from `graphics_gl_register_buffer`. This VM does not invent `cuGLUnregisterBufferObject`, Engine `--gl-buffer-object`,
+    or `cudaChooseDevice`. `gpu-profile capture` is still refused. Dual
+    score still has no `$/M tokens`.
+
+673. [x] `gpu-sim` `Sim::gl_map_buffer_object` is `cuGLMapBufferObject`.
+    Always Invalid `"gl map"` because legacy OpenGL interop is not modeled.
+    Query; legal during capture. Distinct from `gl_register_buffer_object`
+    and `graphics_map_resources`. This VM does not invent `cuGLMapBufferObjectAsync`, Engine `--gl-map`,
+    or `cudaChooseDevice`. `gpu-profile capture` is still refused. Dual
+    score still has no `$/M tokens`.
+
+674. [x] `gpu-sim` `Sim::graphics_d3d11_register_resource` is
+    `cuGraphicsD3D11RegisterResource`. Always Invalid `"d3d11 register"`
+    because Direct3D 11 interop is not modeled. Query; legal during capture.
+    Distinct from `d3d11_ctx_create` and `graphics_map_resources`. This VM does not invent a D3D11 `ID3D11Resource`, Engine `--d3d11-register`,
+    or `cudaChooseDevice`. `gpu-profile capture` is still refused. Dual
+    score still has no `$/M tokens`.
+
+675. [x] `gpu-sim` `Sim::graphics_d3d12_register_resource` is
+    `cuGraphicsD3D12RegisterResource`. Always Invalid `"d3d12 register"`
+    because Direct3D 12 interop is not modeled. Query; legal during capture.
+    Distinct from `d3d12_ctx_create` and `graphics_d3d11_register_resource`.
+    This VM does not invent a D3D12 `ID3D12Resource`, Engine `--d3d12-register`,
+    or `cudaChooseDevice`. `gpu-profile capture` is still refused. Dual
+    score still has no `$/M tokens`.
+
+676. [x] `gpu-sim` `Sim::graphics_d3d9_register_resource` is
+    `cuGraphicsD3D9RegisterResource`. Always Invalid `"d3d9 register"`
+    because Direct3D 9 interop is not modeled. Query; legal during capture.
+    Distinct from `d3d9_ctx_create` and `graphics_d3d11_register_resource`.
+    This VM does not invent a D3D9 `IDirect3DResource9`, Engine `--d3d9-register`,
+    or `cudaChooseDevice`. `gpu-profile capture` is still refused. Dual
+    score still has no `$/M tokens`.
+
+677. [x] `gpu-sim` `Sim::graphics_d3d10_register_resource` is
+    `cuGraphicsD3D10RegisterResource`. Always Invalid `"d3d10 register"`
+    because Direct3D 10 interop is not modeled. Query; legal during capture.
+    Distinct from `d3d10_ctx_create` and `graphics_d3d9_register_resource`.
+    This VM does not invent a D3D10 `ID3D10Resource`, Engine `--d3d10-register`,
+    or `cudaChooseDevice`. `gpu-profile capture` is still refused. Dual
+    score still has no `$/M tokens`.
+
+678. [x] `gpu-sim` `Sim::graphics_vdpau_register_output_surface` is
+    `cuGraphicsVDPAURegisterOutputSurface`. Always Invalid `"vdpau output"`
+    because VDPAU interop is not modeled. Query; legal during capture. Distinct
+    from `vdpau_ctx_create` and `vdpau_get_device`. This VM does not invent `cuGraphicsVDPAURegisterVideoSurface`, Engine `--vdpau-output`,
+    or `cudaChooseDevice`. `gpu-profile capture` is still refused. Dual
+    score still has no `$/M tokens`.
+
+679. [x] `gpu-sim` `Sim::graphics_vdpau_register_video_surface` is
+    `cuGraphicsVDPAURegisterVideoSurface`. Always Invalid `"vdpau video"`
+    because VDPAU interop is not modeled. Query; legal during capture. Distinct
+    from `graphics_vdpau_register_output_surface`. This VM does not invent a `VdpVideoSurface`, Engine `--vdpau-video`,
+    or `cudaChooseDevice`. `gpu-profile capture` is still refused. Dual
+    score still has no `$/M tokens`.
+
+680. [x] `gpu-sim` `Sim::destroy_external_memory` is
+    `cuDestroyExternalMemory`. Always Invalid `"external destroy"`
+    because external memory import is not modeled. Query; legal during capture.
+    Distinct from `import_external_memory`. This VM does not invent `cuExternalMemoryGetMappedBuffer`, Engine `--external-destroy`,
+    or `cudaChooseDevice`. `gpu-profile capture` is still refused. Dual
+    score still has no `$/M tokens`.
+
+681. [x] `gpu-sim` `Sim::external_memory_get_mapped_buffer` is
+    `cuExternalMemoryGetMappedBuffer`. Always Invalid `"mapped buffer"`
+    because external memory import is not modeled. Query; legal during capture.
+    Distinct from `destroy_external_memory` and
+    `graphics_resource_get_mapped_pointer`. This VM does not invent `cuExternalMemoryGetMappedMipmappedArray`, Engine `--mapped-buffer`,
+    or `cudaChooseDevice`. `gpu-profile capture` is still refused. Dual
+    score still has no `$/M tokens`.
+
+682. [x] `gpu-sim` `Sim::external_memory_get_mapped_mipmapped_array` is
+    `cuExternalMemoryGetMappedMipmappedArray`. Always Invalid `"external mipmap"`
+    because external memory import is not modeled. Query; legal during capture.
+    Distinct from `external_memory_get_mapped_buffer` and
+    `graphics_resource_get_mapped_mipmapped_array`. This VM does not invent `cuGLUnregisterBufferObject`, Engine `--external-mipmap`,
+    or `cudaChooseDevice`. `gpu-profile capture` is still refused. Dual
+    score still has no `$/M tokens`.
+
+683. [x] `gpu-sim` `Sim::gl_unregister_buffer_object` is
+    `cuGLUnregisterBufferObject`. Always Invalid `"unregister object"`
+    because legacy OpenGL interop is not modeled. Query; legal during capture.
+    Distinct from `gl_register_buffer_object`. This VM does not invent `cuGLUnmapBufferObject`, Engine `--gl-unregister-object`,
+    or `cudaChooseDevice`. `gpu-profile capture` is still refused. Dual
+    score still has no `$/M tokens`.
+
+684. [x] `gpu-sim` `Sim::gl_unmap_buffer_object` is
+    `cuGLUnmapBufferObject`. Always Invalid `"gl unmap"`
+    because legacy OpenGL interop is not modeled. Query; legal during capture.
+    Distinct from `gl_map_buffer_object` and `graphics_unmap_resources`. This VM does not invent `cuGLUnmapBufferObjectAsync`, Engine `--gl-unmap`,
+    or `cudaChooseDevice`. `gpu-profile capture` is still refused. Dual
+    score still has no `$/M tokens`.
+
+685. [x] `gpu-sim` `Sim::gl_set_gl_device` is
+    `cudaGLSetGLDevice`. Always Invalid `"gl device"`
+    because OpenGL interop is not modeled. Query; legal during capture.
+    Distinct from `gl_get_devices` and `gl_ctx_create`. This VM does not invent `cuImportExternalSemaphore`, Engine `--gl-set-device`,
+    or `cudaChooseDevice`. `gpu-profile capture` is still refused. Dual
+    score still has no `$/M tokens`.
+
+686. [x] `gpu-sim` `Sim::import_external_semaphore` is
+    `cuImportExternalSemaphore`. Always Invalid `"external semaphore"`
+    because external semaphore import is not modeled. Query; legal during capture.
+    Distinct from `import_external_memory`. This VM does not invent `cuDestroyExternalSemaphore`, Engine `--external-semaphore`,
+    or `cudaChooseDevice`. `gpu-profile capture` is still refused. Dual
+    score still has no `$/M tokens`.
+
+687. [x] `gpu-sim` `Sim::destroy_external_semaphore` is
+    `cuDestroyExternalSemaphore`. Always Invalid `"semaphore destroy"`
+    because external semaphore import is not modeled. Query; legal during capture.
+    Distinct from `import_external_semaphore` and `destroy_external_memory`. This VM does not invent `cuSignalExternalSemaphoresAsync`, Engine `--semaphore-destroy`,
+    or `cudaChooseDevice`. `gpu-profile capture` is still refused. Dual
+    score still has no `$/M tokens`.
+
+688. [x] `gpu-sim` `Sim::signal_external_semaphores_async` is
+    `cuSignalExternalSemaphoresAsync`. Always Invalid `"semaphore signal"`
+    because external semaphore import is not modeled. Query; legal during capture.
+    Distinct from `destroy_external_semaphore`. This VM does not invent `cuWaitExternalSemaphoresAsync`, Engine `--semaphore-signal`,
+    or `cudaChooseDevice`. `gpu-profile capture` is still refused. Dual
+    score still has no `$/M tokens`.
+
+689. [x] `gpu-sim` `Sim::wait_external_semaphores_async` is
+    `cuWaitExternalSemaphoresAsync`. Always Invalid `"semaphore wait"`
+    because external semaphore import is not modeled. Query; legal during capture.
+    Distinct from `signal_external_semaphores_async`. This VM does not invent `cuGLUnmapBufferObjectAsync`, Engine `--semaphore-wait`,
+    or `cudaChooseDevice`. `gpu-profile capture` is still refused. Dual
+    score still has no `$/M tokens`.
+
+690. [x] `gpu-sim` `Sim::gl_unmap_buffer_object_async` is
+    `cuGLUnmapBufferObjectAsync`. Always Invalid `"unmap async"`
+    because legacy OpenGL interop is not modeled. Query; legal during capture.
+    Distinct from `gl_unmap_buffer_object`. This VM does not invent `cuGLMapBufferObjectAsync`, Engine `--gl-unmap-async`,
+    or `cudaChooseDevice`. `gpu-profile capture` is still refused. Dual
+    score still has no `$/M tokens`.
+
+691. [x] `gpu-sim` `Sim::gl_map_buffer_object_async` is
+    `cuGLMapBufferObjectAsync`. Always Invalid `"async map"`
+    because legacy OpenGL interop is not modeled. Query; legal during capture.
+    Distinct from `gl_map_buffer_object` and `gl_unmap_buffer_object_async`. This VM does not invent `cuD3D11GetDevice`, Engine `--gl-map-async`,
+    or `cudaChooseDevice`. `gpu-profile capture` is still refused. Dual
+    score still has no `$/M tokens`.
+
+692. [x] `gpu-sim` `Sim::d3d11_get_device` is
+    `cuD3D11GetDevice`. Always Invalid `"d3d11 device"`
+    because Direct3D 11 interop is not modeled. Query; legal during capture.
+    Distinct from `d3d11_get_devices`. This VM does not invent `cuD3D12GetDevice`, Engine `--d3d11-device`,
+    or `cudaChooseDevice`. `gpu-profile capture` is still refused. Dual
+    score still has no `$/M tokens`.
+
+693. [x] `gpu-sim` `Sim::d3d12_get_device` is
+    `cuD3D12GetDevice`. Always Invalid `"d3d12 device"`
+    because Direct3D 12 interop is not modeled. Query; legal during capture.
+    Distinct from `d3d12_get_devices` and `d3d11_get_device`. This VM does not invent `cuD3D9GetDevice`, Engine `--d3d12-device`,
+    or `cudaChooseDevice`. `gpu-profile capture` is still refused. Dual
+    score still has no `$/M tokens`.
+
+694. [x] `gpu-sim` `Sim::d3d9_get_device` is
+    `cuD3D9GetDevice`. Always Invalid `"d3d9 device"`
+    because Direct3D 9 interop is not modeled. Query; legal during capture.
+    Distinct from `d3d9_get_devices`. This VM does not invent `cuD3D10GetDevice`, Engine `--d3d9-device`,
+    or `cudaChooseDevice`. `gpu-profile capture` is still refused. Dual
+    score still has no `$/M tokens`.
+
+695. [x] `gpu-sim` `Sim::d3d10_get_device` is
+    `cuD3D10GetDevice`. Always Invalid `"d3d10 device"`
+    because Direct3D 10 interop is not modeled. Query; legal during capture.
+    Distinct from `d3d10_get_devices`. This VM does not invent `cudaVDPAUSetVDPAUDevice`, Engine `--d3d10-device`,
+    or `cudaChooseDevice`. `gpu-profile capture` is still refused. Dual
+    score still has no `$/M tokens`.
+
+696. [x] `gpu-sim` `Sim::vdpau_set_vdpau_device` is
+    `cudaVDPAUSetVDPAUDevice`. Always Invalid `"vdpau set"`
+    because VDPAU interop is not modeled. Query; legal during capture.
+    Distinct from `vdpau_get_device`. This VM does not invent `cuD3D11CtxCreateOnDevice`, Engine `--vdpau-set-device`,
+    or `cudaChooseDevice`. `gpu-profile capture` is still refused. Dual
+    score still has no `$/M tokens`.
+
+697. [x] `gpu-sim` `Sim::d3d11_ctx_create_on_device` is
+    `cuD3D11CtxCreateOnDevice`. Always Invalid `"d3d11 ondevice"`
+    because Direct3D 11 interop is not modeled. Query; legal during capture.
+    Distinct from `d3d11_ctx_create`. This VM does not invent `cuD3D12CtxCreateOnDevice`, Engine `--d3d11-on-device`,
+    or `cudaChooseDevice`. `gpu-profile capture` is still refused. Dual
+    score still has no `$/M tokens`.
+
+698. [x] `gpu-sim` `Sim::d3d12_ctx_create_on_device` is
+    `cuD3D12CtxCreateOnDevice`. Always Invalid `"d3d12 ondevice"`
+    because Direct3D 12 interop is not modeled. Query; legal during capture.
+    Distinct from `d3d12_ctx_create`. This VM does not invent `cuD3D9CtxCreateOnDevice`, Engine `--d3d12-on-device`,
+    or `cudaChooseDevice`. `gpu-profile capture` is still refused. Dual
+    score still has no `$/M tokens`.
+
+699. [x] `gpu-sim` `Sim::d3d9_ctx_create_on_device` is
+    `cuD3D9CtxCreateOnDevice`. Always Invalid `"d3d9 ondevice"`
+    because Direct3D 9 interop is not modeled. Query; legal during capture.
+    Distinct from `d3d9_ctx_create`. This VM does not invent `cuD3D10CtxCreateOnDevice`, Engine `--d3d9-on-device`,
+    or `cudaChooseDevice`. `gpu-profile capture` is still refused. Dual
+    score still has no `$/M tokens`.
+
+700. [x] `gpu-sim` `Sim::d3d10_ctx_create_on_device` is
+    `cuD3D10CtxCreateOnDevice`. Always Invalid `"d3d10 ondevice"`
+    because Direct3D 10 interop is not modeled. Query; legal during capture.
+    Distinct from `d3d10_ctx_create`. This VM does not invent `cuLibraryLoadFromFile`, Engine `--d3d10-on-device`,
+    or `cudaChooseDevice`. `gpu-profile capture` is still refused. Dual
+    score still has no `$/M tokens`.
+
+701. [x] `gpu-sim` `Sim::library_load_from_file` is
+    `cuLibraryLoadFromFile`. Always Invalid `"library file"`
+    because CUDA libraries are not modeled. Query; legal during capture.
+    Distinct from `library_load_data`. This VM does not invent `cuLibraryUnload`, Engine `--library-from-file`,
+    or `cudaChooseDevice`. `gpu-profile capture` is still refused. Dual
+    score still has no `$/M tokens`.
+
+702. [x] `gpu-sim` `Sim::library_unload` is
+    `cuLibraryUnload`. Always Invalid `"library unload"`
+    because CUDA libraries are not modeled. Query; legal during capture.
+    Distinct from `library_load_from_file`. This VM does not invent `cuLibraryGetKernel`, Engine `--library-unload`,
+    or `cudaChooseDevice`. `gpu-profile capture` is still refused. Dual
+    score still has no `$/M tokens`.
+
+703. [x] `gpu-sim` `Sim::library_get_kernel` is
+    `cuLibraryGetKernel`. Always Invalid `"library kernel"`
+    because CUDA libraries are not modeled. Query; legal during capture.
+    Distinct from `library_unload`. This VM does not invent `cuLibraryGetModule`, Engine `--library-kernel`,
+    or `cudaChooseDevice`. `gpu-profile capture` is still refused. Dual
+    score still has no `$/M tokens`.
+
+704. [x] `gpu-sim` `Sim::library_get_module` is
+    `cuLibraryGetModule`. Always Invalid `"library module"`
+    because CUDA libraries are not modeled. Query; legal during capture.
+    Distinct from `library_get_kernel`. This VM does not invent `cuLibraryGetGlobal`, Engine `--library-module`,
+    or `cudaChooseDevice`. `gpu-profile capture` is still refused. Dual
+    score still has no `$/M tokens`.
+
+705. [x] `gpu-sim` `Sim::library_get_global` is
+    `cuLibraryGetGlobal`. Always Invalid `"library global"`
+    because CUDA libraries are not modeled. Query; legal during capture.
+    Distinct from `library_get_module`. This VM does not invent `cuLibraryGetManaged`, Engine `--library-global`,
+    or `cudaChooseDevice`. `gpu-profile capture` is still refused. Dual
+    score still has no `$/M tokens`.
+
+706. [x] `gpu-sim` `Sim::library_get_managed` is
+    `cuLibraryGetManaged`. Always Invalid `"library managed"`
+    because CUDA libraries are not modeled. Query; legal during capture.
+    Distinct from `library_get_global`. This VM does not invent `cuLibraryGetUnifiedFunction`, Engine `--library-managed`,
+    or `cudaChooseDevice`. `gpu-profile capture` is still refused. Dual
+    score still has no `$/M tokens`.
+
+707. [x] `gpu-sim` `Sim::library_get_unified_function` is
+    `cuLibraryGetUnifiedFunction`. Always Invalid `"library unified"`
+    because CUDA libraries are not modeled. Query; legal during capture.
+    Distinct from `library_get_managed`. This VM does not invent `cuKernelGetFunction`, Engine `--library-unified`,
+    or `cudaChooseDevice`. `gpu-profile capture` is still refused. Dual
+    score still has no `$/M tokens`.
+
+708. [x] `gpu-sim` `Sim::kernel_get_function` is
+    `cuKernelGetFunction`. Always Invalid `"kernel function"`
+    because CUDA kernels are not modeled. Query; legal during capture.
+    Distinct from `library_get_kernel`. This VM does not invent `cuKernelGetParamInfo`, Engine `--kernel-function`,
+    or `cudaChooseDevice`. `gpu-profile capture` is still refused. Dual
+    score still has no `$/M tokens`.
+
+709. [x] `gpu-sim` `Sim::kernel_get_param_info` is
+    `cuKernelGetParamInfo`. Always Invalid `"kernel param"`
+    because CUDA kernels are not modeled. Query; legal during capture.
+    Distinct from `kernel_get_function`. This VM does not invent `cuKernelGetAttribute`, Engine `--kernel-param`,
+    or `cudaChooseDevice`. `gpu-profile capture` is still refused. Dual
+    score still has no `$/M tokens`.
+
+710. [x] `gpu-sim` `Sim::kernel_get_attribute` is
+    `cuKernelGetAttribute`. Always Invalid `"kernel attribute"`
+    because CUDA kernels are not modeled. Query; legal during capture.
+    Distinct from `kernel_get_param_info`. This VM does not invent `cuKernelSetAttribute`, Engine `--kernel-attribute`,
+    or `cudaChooseDevice`. `gpu-profile capture` is still refused. Dual
+    score still has no `$/M tokens`.
+
+711. [x] `gpu-sim` `Sim::kernel_set_attribute` is
+    `cuKernelSetAttribute`. Always Invalid `"kernel setattr"`
+    because CUDA kernels are not modeled. Query; legal during capture.
+    Distinct from `kernel_get_attribute`. This VM does not invent `cuKernelSetCacheConfig`, Engine `--kernel-setattr`,
+    or `cudaChooseDevice`. `gpu-profile capture` is still refused. Dual
+    score still has no `$/M tokens`.
+
+712. [x] `gpu-sim` `Sim::kernel_set_cache_config` is
+    `cuKernelSetCacheConfig`. Always Invalid `"kernel cache"`
+    because CUDA kernels are not modeled. Query; legal during capture.
+    Distinct from `kernel_set_attribute`. This VM does not invent `cuLinkAddData`, Engine `--kernel-cache`,
+    or `cudaChooseDevice`. `gpu-profile capture` is still refused. Dual
+    score still has no `$/M tokens`.
+
+713. [x] `gpu-sim` `Sim::link_add_data` is
+    `cuLinkAddData`. Always Invalid `"link add"`
+    because the CUDA driver JIT linker is not modeled. Query; legal during capture.
+    Distinct from `link_create`. This VM does not invent `cuLinkComplete`, Engine `--link-add`,
+    or `cudaChooseDevice`. `gpu-profile capture` is still refused. Dual
+    score still has no `$/M tokens`.
+
+714. [x] `gpu-sim` `Sim::link_complete` is
+    `cuLinkComplete`. Always Invalid `"link complete"`
+    because the CUDA driver JIT linker is not modeled. Query; legal during capture.
+    Distinct from `link_add_data`. This VM does not invent `cuLinkDestroy`, Engine `--link-complete`,
+    or `cudaChooseDevice`. `gpu-profile capture` is still refused. Dual
+    score still has no `$/M tokens`.
+
+715. [x] `gpu-sim` `Sim::link_destroy` is
+    `cuLinkDestroy`. Always Invalid `"link destroy"`
+    because the CUDA driver JIT linker is not modeled. Query; legal during capture.
+    Distinct from `link_complete`. This VM does not invent `cuLinkAddFile`, Engine `--link-destroy`,
+    or `cudaChooseDevice`. `gpu-profile capture` is still refused. Dual
+    score still has no `$/M tokens`.
+
+716. [x] `gpu-sim` `Sim::link_add_file` is
+    `cuLinkAddFile`. Always Invalid `"link file"`
+    because the CUDA driver JIT linker is not modeled. Query; legal during capture.
+    Distinct from `link_add_data`. This VM does not invent `cuFuncLoad`, Engine `--link-add-file`,
+    or `cudaChooseDevice`. `gpu-profile capture` is still refused. Dual
+    score still has no `$/M tokens`.
+
+717. [x] `gpu-sim` `Sim::func_load` is
+    `cuFuncLoad`. Always Invalid `"func load"`
+    because CUDA functions are not modeled. Query; legal during capture.
+    Distinct from `func_is_loaded`. This VM does not invent `cuModuleLoad`, Engine `--func-load`,
+    or `cudaChooseDevice`. `gpu-profile capture` is still refused. Dual
+    score still has no `$/M tokens`.
+
+718. [x] `gpu-sim` `Sim::module_load` is
+    `cuModuleLoad`. Always Invalid `"module load"`
+    because CUDA modules are not modeled. Query; legal during capture.
+    Distinct from `module_get_loading_mode`. This VM does not invent `cuModuleLoadData`, Engine `--module-load`,
+    or `cudaChooseDevice`. `gpu-profile capture` is still refused. Dual
+    score still has no `$/M tokens`.
+
+719. [x] `gpu-sim` `Sim::module_load_data` is
+    `cuModuleLoadData`. Always Invalid `"module data"`
+    because CUDA modules are not modeled. Query; legal during capture.
+    Distinct from `module_load`. This VM does not invent `cuModuleUnload`, Engine `--module-data`,
+    or `cudaChooseDevice`. `gpu-profile capture` is still refused. Dual
+    score still has no `$/M tokens`.
+
+720. [x] `gpu-sim` `Sim::module_unload` is
+    `cuModuleUnload`. Always Invalid `"module unload"`
+    because CUDA modules are not modeled. Query; legal during capture.
+    Distinct from `module_load`. This VM does not invent `cuModuleGetFunction`, Engine `--module-unload`,
+    or `cudaChooseDevice`. `gpu-profile capture` is still refused. Dual
+    score still has no `$/M tokens`.
+
+721. [x] `gpu-sim` `Sim::module_get_function` is
+    `cuModuleGetFunction`. Always Invalid `"module function"`
+    because CUDA modules are not modeled. Query; legal during capture.
+    Distinct from `kernel_get_function`. This VM does not invent `cuModuleGetGlobal`, Engine `--module-function`,
+    or `cudaChooseDevice`. `gpu-profile capture` is still refused. Dual
+    score still has no `$/M tokens`.
+
+722. [x] `gpu-sim` `Sim::module_get_global` is
+    `cuModuleGetGlobal`. Always Invalid `"module global"`
+    because CUDA modules are not modeled. Query; legal during capture.
+    Distinct from `library_get_global`. This VM does not invent `cuModuleGetTexRef`, Engine `--module-global`,
+    or `cudaChooseDevice`. `gpu-profile capture` is still refused. Dual
+    score still has no `$/M tokens`.
+
+723. [x] `gpu-sim` `Sim::module_get_tex_ref` is
+    `cuModuleGetTexRef`. Always Invalid `"module texref"`
+    because CUDA modules are not modeled. Query; legal during capture.
+    Distinct from `module_get_global`. This VM does not invent `cuModuleGetSurfRef`, Engine `--module-texref`,
+    or `cudaChooseDevice`. `gpu-profile capture` is still refused. Dual
+    score still has no `$/M tokens`.
+
+724. [x] `gpu-sim` `Sim::module_get_surf_ref` is
+    `cuModuleGetSurfRef`. Always Invalid `"module surfref"`
+    because CUDA modules are not modeled. Query; legal during capture.
+    Distinct from `module_get_tex_ref`. This VM does not invent `cuModuleLoadFatBinary`, Engine `--module-surfref`,
+    or `cudaChooseDevice`. `gpu-profile capture` is still refused. Dual
+    score still has no `$/M tokens`.
+
+725. [x] `gpu-sim` `Sim::module_load_fat_binary` is
+    `cuModuleLoadFatBinary`. Always Invalid `"module fatbin"`
+    because CUDA modules are not modeled. Query; legal during capture.
+    Distinct from `module_load`. This VM does not invent `cuModuleLoadDataEx`, Engine `--module-fatbin`,
+    or `cudaChooseDevice`. `gpu-profile capture` is still refused. Dual
+    score still has no `$/M tokens`.
+
+726. [x] `gpu-sim` `Sim::module_load_data_ex` is
+    `cuModuleLoadDataEx`. Always Invalid `"module jitopt"`
+    because CUDA modules are not modeled. Query; legal during capture.
+    Distinct from `module_load_data`. This VM does not invent `cuModuleGetFunctionCount`, Engine `--module-jitopt`,
+    or `cudaChooseDevice`. `gpu-profile capture` is still refused. Dual
+    score still has no `$/M tokens`.
+
+727. [x] `gpu-sim` `Sim::module_get_function_count` is
+    `cuModuleGetFunctionCount`. Always Invalid `"module fncount"`
+    because CUDA modules are not modeled. Query; legal during capture.
+    Distinct from `module_get_function`. This VM does not invent `cuModuleEnumerateFunctions`, Engine `--module-fncount`,
+    or `cudaChooseDevice`. `gpu-profile capture` is still refused. Dual
+    score still has no `$/M tokens`.
+
+728. [x] `gpu-sim` `Sim::module_enumerate_functions` is
+    `cuModuleEnumerateFunctions`. Always Invalid `"module enumfn"`
+    because CUDA modules are not modeled. Query; legal during capture.
+    Distinct from `module_get_function_count`. This VM does not invent `cuTensorMapEncodeIm2col`, Engine `--module-enumfn`,
+    or `cudaChooseDevice`. `gpu-profile capture` is still refused. Dual
+    score still has no `$/M tokens`.
+
+729. [x] `gpu-sim` `Sim::tensor_map_encode_im2col` is
+    `cuTensorMapEncodeIm2col`. Always Invalid `"tensor im2col"`
+    because TMA is not modeled. Query; legal during capture.
+    Distinct from `tensor_map_encode_tiled`. This VM does not invent `cuTensorMapEncodeIm2colWide`, Engine `--tensor-im2col`,
+    or `cudaChooseDevice`. `gpu-profile capture` is still refused. Dual
+    score still has no `$/M tokens`.
+
+730. [x] `gpu-sim` `Sim::tensor_map_encode_im2col_wide` is
+    `cuTensorMapEncodeIm2colWide`. Always Invalid `"im2col wide"`
+    because TMA is not modeled. Query; legal during capture.
+    Distinct from `tensor_map_encode_im2col`. This VM does not invent `cuTensorMapReplaceAlignedAddr`, Engine `--tensor-im2col-wide`,
+    or `cudaChooseDevice`. `gpu-profile capture` is still refused. Dual
+    score still has no `$/M tokens`.
+
+731. [x] `gpu-sim` `Sim::tensor_map_replace_aligned_addr` is
+    `cuTensorMapReplaceAlignedAddr`. Always Invalid `"tensor replace"`
+    because TMA is not modeled. Query; legal during capture.
+    Distinct from `tensor_map_encode_tiled`. This VM does not invent `cuCoredumpSetAttribute`, Engine `--tensor-replace`,
+    or `cudaChooseDevice`. `gpu-profile capture` is still refused. Dual
+    score still has no `$/M tokens`.
+
+732. [x] `gpu-sim` `Sim::coredump_set_attribute` is
+    `cuCoredumpSetAttribute`. Always Invalid `"dump setattr"`
+    because GPU coredumps are not modeled. Query; legal during capture.
+    Distinct from `coredump_get_attribute`. This VM does not invent `cuCoredumpGetAttributeGlobal`, Engine `--dump-setattr`,
+    or `cudaChooseDevice`. `gpu-profile capture` is still refused. Dual
+    score still has no `$/M tokens`.
+
+733. [x] `gpu-sim` `Sim::coredump_get_attribute_global` is
+    `cuCoredumpGetAttributeGlobal`. Always Invalid `"dump global"`
+    because GPU coredumps are not modeled. Query; legal during capture.
+    Distinct from `coredump_get_attribute` and `coredump_set_attribute`. This VM does not invent `cuCoredumpSetAttributeGlobal`, Engine `--dump-global`,
+    or `cudaChooseDevice`. `gpu-profile capture` is still refused. Dual
+    score still has no `$/M tokens`.
+
+734. [x] `gpu-sim` `Sim::coredump_set_attribute_global` is
+    `cuCoredumpSetAttributeGlobal`. Always Invalid `"dump setglob"`
+    because GPU coredumps are not modeled. Query; legal during capture.
+    Distinct from `coredump_set_attribute` and `coredump_get_attribute_global`. This VM does not invent `cuCheckpointProcessCheckpoint`, Engine `--dump-setglob`,
+    or `cudaChooseDevice`. `gpu-profile capture` is still refused. Dual
+    score still has no `$/M tokens`.
+
+735. [x] `gpu-sim` `Sim::checkpoint_process_checkpoint` is
+    `cuCheckpointProcessCheckpoint`. Always Invalid `"ckpt exec"`
+    because CUDA process checkpoint is not modeled. Query; legal during capture.
+    Distinct from `checkpoint_process_lock`. This VM does not invent `cuCheckpointProcessRestore`, Engine `--ckpt-exec`,
+    or `cudaChooseDevice`. `gpu-profile capture` is still refused. Dual
+    score still has no `$/M tokens`.
+
+736. [x] `gpu-sim` `Sim::checkpoint_process_restore` is
+    `cuCheckpointProcessRestore`. Always Invalid `"ckpt restore"`
+    because CUDA process checkpoint is not modeled. Query; legal during capture.
+    Distinct from `checkpoint_process_lock` and `checkpoint_process_checkpoint`. This VM does not invent `cuCheckpointProcessUnlock`, Engine `--ckpt-restore`,
+    or `cudaChooseDevice`. `gpu-profile capture` is still refused. Dual
+    score still has no `$/M tokens`.
+
+737. [x] `gpu-sim` `Sim::checkpoint_process_unlock` is
+    `cuCheckpointProcessUnlock`. Always Invalid `"ckpt unlock"`
+    because CUDA process checkpoint is not modeled. Query; legal during capture.
+    Distinct from `checkpoint_process_lock` and `checkpoint_process_restore`. This VM does not invent `cuCheckpointProcessGetRestoreThreadId`, Engine `--ckpt-unlock`,
+    or `cudaChooseDevice`. `gpu-profile capture` is still refused. Dual
+    score still has no `$/M tokens`.
+
+738. [x] `gpu-sim` `Sim::checkpoint_process_get_restore_thread_id` is
+    `cuCheckpointProcessGetRestoreThreadId`. Always Invalid `"ckpt thread"`
+    because CUDA process checkpoint is not modeled. Query; legal during capture.
+    Distinct from `checkpoint_process_unlock`. This VM does not invent `cuCheckpointProcessGetState`, Engine `--ckpt-thread`,
+    or `cudaChooseDevice`. `gpu-profile capture` is still refused. Dual
+    score still has no `$/M tokens`.
+
+739. [x] `gpu-sim` `Sim::checkpoint_process_get_state` is
+    `cuCheckpointProcessGetState`. Always Invalid `"ckpt state"`
+    because CUDA process checkpoint is not modeled. Query; legal during capture.
+    Distinct from `checkpoint_process_get_restore_thread_id`. This VM does not invent `cuLibraryGetKernelCount`, Engine `--ckpt-state`,
+    or `cudaChooseDevice`. `gpu-profile capture` is still refused. Dual
+    score still has no `$/M tokens`.
+
+740. [x] `gpu-sim` `Sim::library_get_kernel_count` is
+    `cuLibraryGetKernelCount`. Always Invalid `"library kcount"`
+    because CUDA libraries are not modeled. Query; legal during capture.
+    Distinct from `library_get_kernel`. This VM does not invent `cuLibraryEnumerateKernels`, Engine `--library-kcount`,
+    or `cudaChooseDevice`. `gpu-profile capture` is still refused. Dual
+    score still has no `$/M tokens`.
+
+741. [x] `gpu-sim` `Sim::library_enumerate_kernels` is
+    `cuLibraryEnumerateKernels`. Always Invalid `"library enumk"`
+    because CUDA libraries are not modeled. Query; legal during capture.
+    Distinct from `library_get_kernel_count`. This VM does not invent `cuKernelGetLibrary`, Engine `--library-enumk`,
+    or `cudaChooseDevice`. `gpu-profile capture` is still refused. Dual
+    score still has no `$/M tokens`.
+
+742. [x] `gpu-sim` `Sim::kernel_get_library` is
+    `cuKernelGetLibrary`. Always Invalid `"kernel library"`
+    because CUDA kernels are not modeled. Query; legal during capture.
+    Distinct from `library_get_kernel`. This VM does not invent `cuKernelGetParamCount`, Engine `--kernel-library`,
+    or `cudaChooseDevice`. `gpu-profile capture` is still refused. Dual
+    score still has no `$/M tokens`.
+
+743. [x] `gpu-sim` `Sim::kernel_get_param_count` is
+    `cuKernelGetParamCount`. Always Invalid `"kernel pcount"`
+    because CUDA kernels are not modeled. Query; legal during capture.
+    Distinct from `kernel_get_param_info`. This VM does not invent `cuFuncGetParamCount`, Engine `--kernel-pcount`,
+    or `cudaChooseDevice`. `gpu-profile capture` is still refused. Dual
+    score still has no `$/M tokens`.
+
+744. [x] `gpu-sim` `Sim::func_get_param_count` is
+    `cuFuncGetParamCount`. Always Invalid `"func pcount"`
+    because no compiled kernel exists. Query; legal during capture.
+    Distinct from `func_get_param_info` and `kernel_get_param_count`. This VM does not invent `cuLaunchKernelEx`, Engine `--func-pcount`,
+    or `cudaChooseDevice`. `gpu-profile capture` is still refused. Dual
+    score still has no `$/M tokens`.
+
+745. [x] `gpu-sim` `Sim::device_register_async_notification` is
+    `cuDeviceRegisterAsyncNotification`. Always Invalid `"async notify"`
+    because device async callbacks are not modeled. Query; legal during capture.
+    Distinct from `stream_add_callback`. This VM does not invent `cuDeviceUnregisterAsyncNotification`, Engine `--async-notify`,
+    or `cudaChooseDevice`. `gpu-profile capture` is still refused. Dual
+    score still has no `$/M tokens`.
+
+746. [x] `gpu-sim` `Sim::device_unregister_async_notification` is
+    `cuDeviceUnregisterAsyncNotification`. Always Invalid `"async unreg"`
+    because device async callbacks are not modeled. Query; legal during capture.
+    Distinct from `device_register_async_notification`. This VM does not invent `cuMemMapArrayAsync`, Engine `--async-unreg`,
+    or `cudaChooseDevice`. `gpu-profile capture` is still refused. Dual
+    score still has no `$/M tokens`.
+
+747. [x] `gpu-sim` `Sim::mem_map_array_async` is
+    `cuMemMapArrayAsync`. Always Invalid `"sparse map"`
+    because sparse CUDA array mapping is not modeled. Query; legal during capture.
+    Distinct from `array_get_sparse_properties`. This VM does not invent `cuMipmappedArrayGetSparseProperties`, Engine `--sparse-map`,
+    or `cudaChooseDevice`. `gpu-profile capture` is still refused. Dual
+    score still has no `$/M tokens`.
+
+748. [x] `gpu-sim` `Sim::mipmapped_array_get_sparse_properties` is
+    `cuMipmappedArrayGetSparseProperties`. Always Invalid `"mipmap sparse"`
+    because sparse CUDA mipmapped arrays are not modeled. Query; legal during capture.
+    Distinct from `array_get_sparse_properties` and `mem_map_array_async`. This VM does not invent `cuTexRefCreate`, Engine `--mipmap-sparse`,
+    or `cudaChooseDevice`. `gpu-profile capture` is still refused. Dual
+    score still has no `$/M tokens`.
+
+749. [x] `gpu-sim` `Sim::tex_ref_create` is
+    `cuTexRefCreate`. Always Invalid `"texref create"`
+    because CUDA texture references are not modeled. Query; legal during capture.
+    Distinct from `module_get_tex_ref` and `tex_object_create`. This VM does not invent `cuTexRefDestroy`, Engine `--texref-create`,
+    or `cudaChooseDevice`. `gpu-profile capture` is still refused. Dual
+    score still has no `$/M tokens`.
+
+750. [x] `gpu-sim` `Sim::tex_ref_destroy` is
+    `cuTexRefDestroy`. Always Invalid `"texref destroy"`
+    because CUDA texture references are not modeled. Query; legal during capture.
+    Distinct from `tex_ref_create` and `module_get_tex_ref`. This VM does not invent `cuTexRefSetArray`, Engine `--texref-destroy`,
+    or `cudaChooseDevice`. `gpu-profile capture` is still refused. Dual
+    score still has no `$/M tokens`.
+
+751. [x] `gpu-sim` `Sim::tex_ref_set_array` is
+    `cuTexRefSetArray`. Always Invalid `"texref setarr"`
+    because CUDA texture references are not modeled. Query; legal during capture.
+    Distinct from `tex_ref_destroy` and `array_create`. This VM does not invent `cuTexRefSetMipmappedArray`, Engine `--texref-setarr`,
+    or `cudaChooseDevice`. `gpu-profile capture` is still refused. Dual
+    score still has no `$/M tokens`.
+
+752. [x] `gpu-sim` `Sim::tex_ref_set_mipmapped_array` is
+    `cuTexRefSetMipmappedArray`. Always Invalid `"texref setmip"`
+    because CUDA texture references are not modeled. Query; legal during capture.
+    Distinct from `tex_ref_set_array` and `mipmapped_array_create`. This VM does not invent `cuTexRefSetAddress`, Engine `--texref-setmip`,
+    or `cudaChooseDevice`. `gpu-profile capture` is still refused. Dual
+    score still has no `$/M tokens`.
+
+753. [x] `gpu-sim` `Sim::tex_ref_set_address` is
+    `cuTexRefSetAddress`. Always Invalid `"texref linear"`
+    because CUDA texture references are not modeled. Query; legal during capture.
+    Distinct from `tex_ref_set_mipmapped_array` and `tex_ref_set_array`. This VM does not invent `cuTexRefSetAddress2D`, Engine `--texref-linear`,
+    or `cudaChooseDevice`. `gpu-profile capture` is still refused. Dual
+    score still has no `$/M tokens`.
+
+754. [x] `gpu-sim` `Sim::tex_ref_set_address_2d` is
+    `cuTexRefSetAddress2D`. Always Invalid `"texref pitch2d"`
+    because CUDA texture references are not modeled. Query; legal during capture.
+    Distinct from `tex_ref_set_address` and `tex_ref_set_array`. This VM does not invent `cuTexRefSetFormat`, Engine `--texref-pitch2d`,
+    or `cudaChooseDevice`. `gpu-profile capture` is still refused. Dual
+    score still has no `$/M tokens`.
+
+755. [x] `gpu-sim` `Sim::tex_ref_set_format` is
+    `cuTexRefSetFormat`. Always Invalid `"texref format"`
+    because CUDA texture references are not modeled. Query; legal during capture.
+    Distinct from `tex_ref_set_address_2d` and `tex_object_create`. This VM does not invent `cuTexRefSetAddressMode`, Engine `--texref-format`,
+    or `cudaChooseDevice`. `gpu-profile capture` is still refused. Dual
+    score still has no `$/M tokens`.
+
+756. [x] `gpu-sim` `Sim::tex_ref_set_address_mode` is
+    `cuTexRefSetAddressMode`. Always Invalid `"texref addrmode"`
+    because CUDA texture references are not modeled. Query; legal during capture.
+    Distinct from `tex_ref_set_format` and `tex_ref_set_address`. This VM does not invent `cuTexRefSetFilterMode`, Engine `--texref-addrmode`,
+    or `cudaChooseDevice`. `gpu-profile capture` is still refused. Dual
+    score still has no `$/M tokens`.
+
+757. [x] `gpu-sim` `Sim::tex_ref_set_filter_mode` is
+    `cuTexRefSetFilterMode`. Always Invalid `"texref filter"`
+    because CUDA texture references are not modeled. Query; legal during capture.
+    Distinct from `tex_ref_set_address_mode` and `tex_object_get_texture_desc`. This VM does not invent `cuTexRefSetMipmapFilterMode`, Engine `--texref-filter`,
+    or `cudaChooseDevice`. `gpu-profile capture` is still refused. Dual
+    score still has no `$/M tokens`.
+
+758. [x] `gpu-sim` `Sim::tex_ref_set_mipmap_filter_mode` is
+    `cuTexRefSetMipmapFilterMode`. Always Invalid `"texref mipfilt"`
+    because CUDA texture references are not modeled. Query; legal during capture.
+    Distinct from `tex_ref_set_filter_mode` and `tex_ref_set_mipmapped_array`. This VM does not invent `cuTexRefSetMipmapLevelBias`, Engine `--texref-mipfilt`,
+    or `cudaChooseDevice`. `gpu-profile capture` is still refused. Dual
+    score still has no `$/M tokens`.
+
+759. [x] `gpu-sim` `Sim::tex_ref_set_mipmap_level_bias` is
+    `cuTexRefSetMipmapLevelBias`. Always Invalid `"texref mipbias"`
+    because CUDA texture references are not modeled. Query; legal during capture.
+    Distinct from `tex_ref_set_mipmap_filter_mode` and `tex_ref_set_filter_mode`. This VM does not invent `cuTexRefSetMipmapLevelClamp`, Engine `--texref-mipbias`,
+    or `cudaChooseDevice`. `gpu-profile capture` is still refused. Dual
+    score still has no `$/M tokens`.
+
+760. [x] `gpu-sim` `Sim::tex_ref_set_mipmap_level_clamp` is
+    `cuTexRefSetMipmapLevelClamp`. Always Invalid `"texref mipclamp"`
+    because CUDA texture references are not modeled. Query; legal during capture.
+    Distinct from `tex_ref_set_mipmap_level_bias` and `tex_ref_set_mipmap_filter_mode`. This VM does not invent `cuTexRefSetMaxAnisotropy`, Engine `--texref-mipclamp`,
+    or `cudaChooseDevice`. `gpu-profile capture` is still refused. Dual
+    score still has no `$/M tokens`.
+
+761. [x] `gpu-sim` `Sim::tex_ref_set_max_anisotropy` is
+    `cuTexRefSetMaxAnisotropy`. Always Invalid `"texref aniso"`
+    because CUDA texture references are not modeled. Query; legal during capture.
+    Distinct from `tex_ref_set_mipmap_level_clamp` and `tex_ref_set_filter_mode`. This VM does not invent `cuTexRefSetBorderColor`, Engine `--texref-aniso`,
+    or `cudaChooseDevice`. `gpu-profile capture` is still refused. Dual
+    score still has no `$/M tokens`.
+
+762. [x] `gpu-sim` `Sim::tex_ref_set_border_color` is
+    `cuTexRefSetBorderColor`. Always Invalid `"texref border"`
+    because CUDA texture references are not modeled. Query; legal during capture.
+    Distinct from `tex_ref_set_max_anisotropy` and `tex_ref_set_address_mode`. This VM does not invent `cuTexRefSetFlags`, Engine `--texref-border`,
+    or `cudaChooseDevice`. `gpu-profile capture` is still refused. Dual
+    score still has no `$/M tokens`.
+
+763. [x] `gpu-sim` `Sim::tex_ref_set_flags` is
+    `cuTexRefSetFlags`. Always Invalid `"texref flags"`
+    because CUDA texture references are not modeled. Query; legal during capture.
+    Distinct from `tex_ref_set_border_color` and `tex_ref_create`. This VM does not invent `cuTexRefGetArray`, Engine `--texref-flags`,
+    or `cudaChooseDevice`. `gpu-profile capture` is still refused. Dual
+    score still has no `$/M tokens`.
+
+764. [x] `gpu-sim` `Sim::tex_ref_get_array` is
+    `cuTexRefGetArray`. Always Invalid `"texref getarr"`
+    because CUDA texture references are not modeled. Query; legal during capture.
+    Distinct from `tex_ref_set_flags` and `tex_ref_set_array`. This VM does not invent `cuTexRefGetMipmappedArray`, Engine `--texref-getarr`,
+    or `cudaChooseDevice`. `gpu-profile capture` is still refused. Dual
+    score still has no `$/M tokens`.
+
+765. [x] `gpu-sim` `Sim::tex_ref_get_mipmapped_array` is
+    `cuTexRefGetMipmappedArray`. Always Invalid `"texref getmip"`
+    because CUDA texture references are not modeled. Query; legal during capture.
+    Distinct from `tex_ref_get_array` and `tex_ref_set_mipmapped_array`. This VM does not invent `cuTexRefGetAddress`, Engine `--texref-getmip`,
+    or `cudaChooseDevice`. `gpu-profile capture` is still refused. Dual
+    score still has no `$/M tokens`.
+
+766. [x] `gpu-sim` `Sim::tex_ref_get_address` is
+    `cuTexRefGetAddress`. Always Invalid `"texref getaddr"`
+    because CUDA texture references are not modeled. Query; legal during capture.
+    Distinct from `tex_ref_get_mipmapped_array` and `tex_ref_set_address`. This VM does not invent `cuTexRefGetAddressMode`, Engine `--texref-getaddr`,
+    or `cudaChooseDevice`. `gpu-profile capture` is still refused. Dual
+    score still has no `$/M tokens`.
+
+767. [x] `gpu-sim` `Sim::tex_ref_get_address_mode` is
+    `cuTexRefGetAddressMode`. Always Invalid `"texref getmode"`
+    because CUDA texture references are not modeled. Query; legal during capture.
+    Distinct from `tex_ref_get_address` and `tex_ref_set_address_mode`. This VM does not invent `cuTexRefGetFilterMode`, Engine `--texref-getmode`,
+    or `cudaChooseDevice`. `gpu-profile capture` is still refused. Dual
+    score still has no `$/M tokens`.
+
+768. [x] `gpu-sim` `Sim::tex_ref_get_filter_mode` is
+    `cuTexRefGetFilterMode`. Always Invalid `"texref getfilt"`
+    because CUDA texture references are not modeled. Query; legal during capture.
+    Distinct from `tex_ref_get_address_mode` and `tex_ref_set_filter_mode`. This VM does not invent `cuTexRefGetFormat`, Engine `--texref-getfilt`,
+    or `cudaChooseDevice`. `gpu-profile capture` is still refused. Dual
+    score still has no `$/M tokens`.
+
+769. [x] `gpu-sim` `Sim::tex_ref_get_format` is
+    `cuTexRefGetFormat`. Always Invalid `"texref getfmt"`
+    because CUDA texture references are not modeled. Query; legal during capture.
+    Distinct from `tex_ref_get_filter_mode` and `tex_ref_set_format`. This VM does not invent `cuTexRefGetMipmapFilterMode`, Engine `--texref-getfmt`,
+    or `cudaChooseDevice`. `gpu-profile capture` is still refused. Dual
+    score still has no `$/M tokens`.
+
+770. [x] `gpu-sim` `Sim::tex_ref_get_mipmap_filter_mode` is
+    `cuTexRefGetMipmapFilterMode`. Always Invalid `"texref gmipfilt"`
+    because CUDA texture references are not modeled. Query; legal during capture.
+    Distinct from `tex_ref_get_format` and `tex_ref_set_mipmap_filter_mode`. This VM does not invent `cuTexRefGetMipmapLevelBias`, Engine `--texref-gmipfilt`,
+    or `cudaChooseDevice`. `gpu-profile capture` is still refused. Dual
+    score still has no `$/M tokens`.
+
+771. [x] `gpu-sim` `Sim::tex_ref_get_mipmap_level_bias` is
+    `cuTexRefGetMipmapLevelBias`. Always Invalid `"texref getbias"`
+    because CUDA texture references are not modeled. Query; legal during capture.
+    Distinct from `tex_ref_get_mipmap_filter_mode` and `tex_ref_set_mipmap_level_bias`. This VM does not invent `cuTexRefGetMipmapLevelClamp`, Engine `--texref-getbias`,
+    or `cudaChooseDevice`. `gpu-profile capture` is still refused. Dual
+    score still has no `$/M tokens`.
+
+772. [x] `gpu-sim` `Sim::tex_ref_get_mipmap_level_clamp` is
+    `cuTexRefGetMipmapLevelClamp`. Always Invalid `"texref getclamp"`
+    because CUDA texture references are not modeled. Query; legal during capture.
+    Distinct from `tex_ref_get_mipmap_level_bias` and `tex_ref_set_mipmap_level_clamp`. This VM does not invent `cuTexRefGetMaxAnisotropy`, Engine `--texref-getclamp`,
+    or `cudaChooseDevice`. `gpu-profile capture` is still refused. Dual
+    score still has no `$/M tokens`.
+
+773. [x] `gpu-sim` `Sim::tex_ref_get_max_anisotropy` is
+    `cuTexRefGetMaxAnisotropy`. Always Invalid `"texref getaniso"`
+    because CUDA texture references are not modeled. Query; legal during capture.
+    Distinct from `tex_ref_get_mipmap_level_clamp` and `tex_ref_set_max_anisotropy`. This VM does not invent `cuTexRefGetBorderColor`, Engine `--texref-getaniso`,
+    or `cudaChooseDevice`. `gpu-profile capture` is still refused. Dual
+    score still has no `$/M tokens`.
+
+774. [x] `gpu-sim` `Sim::tex_ref_get_border_color` is
+    `cuTexRefGetBorderColor`. Always Invalid `"texref getborder"`
+    because CUDA texture references are not modeled. Query; legal during capture.
+    Distinct from `tex_ref_get_max_anisotropy` and `tex_ref_set_border_color`. This VM does not invent `cuTexRefGetFlags`, Engine `--texref-getborder`,
+    or `cudaChooseDevice`. `gpu-profile capture` is still refused. Dual
+    score still has no `$/M tokens`.
+
+775. [x] `gpu-sim` `Sim::tex_ref_get_flags` is
+    `cuTexRefGetFlags`. Always Invalid `"texref getflags"`
+    because CUDA texture references are not modeled. Query; legal during capture.
+    Distinct from `tex_ref_get_border_color` and `tex_ref_set_flags`. This VM does not invent `cuSurfRefSetArray`, Engine `--texref-getflags`,
+    or `cudaChooseDevice`. `gpu-profile capture` is still refused. Dual
+    score still has no `$/M tokens`.
+
+776. [x] `gpu-sim` `Sim::surf_ref_set_array` is
+    `cuSurfRefSetArray`. Always Invalid `"surfref setarr"`
+    because CUDA surface references are not modeled. Query; legal during capture.
+    Distinct from `module_get_surf_ref` and `tex_ref_set_array`. This VM does not invent `cuSurfRefGetArray`, Engine `--surfref-setarr`,
+    or `cudaChooseDevice`. `gpu-profile capture` is still refused. Dual
+    score still has no `$/M tokens`.
+
+777. [x] `gpu-sim` `Sim::surf_ref_get_array` is
+    `cuSurfRefGetArray`. Always Invalid `"surfref getarr"`
+    because CUDA surface references are not modeled. Query; legal during capture.
+    Distinct from `surf_ref_set_array` and `tex_ref_get_array`. This VM does not invent `cuMemcpyDtoA`, Engine `--surfref-getarr`,
+    or `cudaChooseDevice`. `gpu-profile capture` is still refused. Dual
+    score still has no `$/M tokens`.
+
+778. [x] `gpu-sim` `Sim::memcpy_dto_a` is
+    `cuMemcpyDtoA`. Always Invalid `"memcpy dtoa"`
+    because CUDA arrays are not modeled. Query; legal during capture.
+    Distinct from `surf_ref_get_array` and `array_create`. This VM does not invent `cuMemcpyAtoD`, Engine `--memcpy-dtoa`,
+    or `cudaChooseDevice`. `gpu-profile capture` is still refused. Dual
+    score still has no `$/M tokens`.
+
+779. [x] `gpu-sim` `Sim::memcpy_ato_d` is
+    `cuMemcpyAtoD`. Always Invalid `"memcpy atod"`
+    because CUDA arrays are not modeled. Query; legal during capture.
+    Distinct from `memcpy_dto_a` and `array_create`. This VM does not invent `cuMemcpyHtoA`, Engine `--memcpy-atod`,
+    or `cudaChooseDevice`. `gpu-profile capture` is still refused. Dual
+    score still has no `$/M tokens`.
+
+780. [x] `gpu-sim` `Sim::memcpy_hto_a` is
+    `cuMemcpyHtoA`. Always Invalid `"memcpy htoa"`
+    because CUDA arrays are not modeled. Query; legal during capture.
+    Distinct from `memcpy_ato_d` and `array_create`. This VM does not invent `cuMemcpyAtoH`, Engine `--memcpy-htoa`,
+    or `cudaChooseDevice`. `gpu-profile capture` is still refused. Dual
+    score still has no `$/M tokens`.
+
+781. [x] `gpu-sim` `Sim::memcpy_ato_h` is
+    `cuMemcpyAtoH`. Always Invalid `"memcpy atoh"`
+    because CUDA arrays are not modeled. Query; legal during capture.
+    Distinct from `memcpy_hto_a` and `array_create`. This VM does not invent `cuMemcpyAtoA`, Engine `--memcpy-atoh`,
+    or `cudaChooseDevice`. `gpu-profile capture` is still refused. Dual
+    score still has no `$/M tokens`.
+
+782. [x] `gpu-sim` `Sim::memcpy_ato_a` is
+    `cuMemcpyAtoA`. Always Invalid `"memcpy atoa"`
+    because CUDA arrays are not modeled. Query; legal during capture.
+    Distinct from `memcpy_ato_h` and `array_create`. This VM does not invent `cuMemcpyDtoAAsync`, Engine `--memcpy-atoa`,
+    or `cudaChooseDevice`. `gpu-profile capture` is still refused. Dual
+    score still has no `$/M tokens`.
+
+783. [x] `gpu-sim` `Sim::memcpy_dto_a_async` is
+    `cuMemcpyDtoAAsync`. Always Invalid `"async dtoa"`
+    because CUDA arrays are not modeled. Query; legal during capture.
+    Distinct from `memcpy_ato_a` and `memcpy_dto_a`. This VM does not invent `cuMemcpyAtoDAsync`, Engine `--async-dtoa`,
+    or `cudaChooseDevice`. `gpu-profile capture` is still refused. Dual
+    score still has no `$/M tokens`.
+
+784. [x] `gpu-sim` `Sim::memcpy_ato_d_async` is
+    `cuMemcpyAtoDAsync`. Always Invalid `"async atod"`
+    because CUDA arrays are not modeled. Query; legal during capture.
+    Distinct from `memcpy_dto_a_async` and `memcpy_ato_d`. This VM does not invent `cuMemcpyHtoAAsync`, Engine `--async-atod`,
+    or `cudaChooseDevice`. `gpu-profile capture` is still refused. Dual
+    score still has no `$/M tokens`.
+
+785. [x] `gpu-sim` `Sim::memcpy_hto_a_async` is
+    `cuMemcpyHtoAAsync`. Always Invalid `"async htoa"`
+    because CUDA arrays are not modeled. Query; legal during capture.
+    Distinct from `memcpy_ato_d_async` and `memcpy_hto_a`. This VM does not invent `cuMemcpyAtoHAsync`, Engine `--async-htoa`,
+    or `cudaChooseDevice`. `gpu-profile capture` is still refused. Dual
+    score still has no `$/M tokens`.
+
+786. [x] `gpu-sim` `Sim::memcpy_ato_h_async` is
+    `cuMemcpyAtoHAsync`. Always Invalid `"async atoh"`
+    because CUDA arrays are not modeled. Query; legal during capture.
+    Distinct from `memcpy_hto_a_async` and `memcpy_ato_h`. This VM does not invent `cuMemcpyAtoAAsync`, Engine `--async-atoh`,
+    or `cudaChooseDevice`. `gpu-profile capture` is still refused. Dual
+    score still has no `$/M tokens`.
+
+787. [x] `gpu-sim` `Sim::memcpy_ato_a_async` is
+    `cuMemcpyAtoAAsync`. Always Invalid `"async atoa"`
+    because CUDA arrays are not modeled. Query; legal during capture.
+    Distinct from `memcpy_ato_h_async` and `memcpy_ato_a`. This VM does not invent `cuMemcpy2DToArray`, Engine `--async-atoa`,
+    or `cudaChooseDevice`. `gpu-profile capture` is still refused. Dual
+    score still has no `$/M tokens`.
+
+788. [x] `gpu-sim` `Sim::memcpy_2d_to_array` is
+    `cuMemcpy2DToArray`. Always Invalid `"memcpy2d toarr"`
+    because CUDA arrays are not modeled. Query; legal during capture.
+    Distinct from `memcpy_ato_a_async` and `array_create`. This VM does not invent `cuMemcpy2DFromArray`, Engine `--memcpy2d-toarr`,
+    or `cudaChooseDevice`. `gpu-profile capture` is still refused. Dual
+    score still has no `$/M tokens`.
+
+789. [x] `gpu-sim` `Sim::memcpy_2d_from_array` is
+    `cuMemcpy2DFromArray`. Always Invalid `"memcpy2d fromarr"`
+    because CUDA arrays are not modeled. Query; legal during capture.
+    Distinct from `memcpy_2d_to_array` and `array_create`. This VM does not invent `cuMemcpy2DArrayToArray`, Engine `--memcpy2d-fromarr`,
+    or `cudaChooseDevice`. `gpu-profile capture` is still refused. Dual
+    score still has no `$/M tokens`.
+
+790. [x] `gpu-sim` `Sim::memcpy_2d_array_to_array` is
+    `cuMemcpy2DArrayToArray`. Always Invalid `"memcpy2d a2a"`
+    because CUDA arrays are not modeled. Query; legal during capture.
+    Distinct from `memcpy_2d_from_array` and `memcpy_2d_to_array`. This VM does not invent `cuMemcpy2DToArrayAsync`, Engine `--memcpy2d-a2a`,
+    or `cudaChooseDevice`. `gpu-profile capture` is still refused. Dual
+    score still has no `$/M tokens`.
+
+791. [x] `gpu-sim` `Sim::memcpy_2d_to_array_async` is
+    `cuMemcpy2DToArrayAsync`. Always Invalid `"async 2dtoarr"`
+    because CUDA arrays are not modeled. Query; legal during capture.
+    Distinct from `memcpy_2d_array_to_array` and `memcpy_2d_to_array`. This VM does not invent `cuMemcpy2DFromArrayAsync`, Engine `--async-2dtoarr`,
+    or `cudaChooseDevice`. `gpu-profile capture` is still refused. Dual
+    score still has no `$/M tokens`.
+
+792. [x] `gpu-sim` `Sim::memcpy_2d_from_array_async` is
+    `cuMemcpy2DFromArrayAsync`. Always Invalid `"async 2dfrom"`
+    because CUDA arrays are not modeled. Query; legal during capture.
+    Distinct from `memcpy_2d_to_array_async` and `memcpy_2d_from_array`. This VM does not invent `cuMemcpy2DArrayToArrayAsync`, Engine `--async-2dfrom`,
+    or `cudaChooseDevice`. `gpu-profile capture` is still refused. Dual
+    score still has no `$/M tokens`.
+
+793. [x] `gpu-sim` `Sim::memcpy_2d_array_to_array_async` is
+    `cuMemcpy2DArrayToArrayAsync`. Always Invalid `"async 2da2a"`
+    because CUDA arrays are not modeled. Query; legal during capture.
+    Distinct from `memcpy_2d_from_array_async` and `memcpy_2d_array_to_array`. This VM does not invent `cuFuncGetCacheConfig`, Engine `--async-2da2a`,
+    or `cudaChooseDevice`. `gpu-profile capture` is still refused. Dual
+    score still has no `$/M tokens`.
+
+794. [x] `gpu-sim` `Sim::func_get_cache_config` is
+    `cuFuncGetCacheConfig`. Always Invalid `"func gcache"`
+    until a compiled kernel exists. Query; legal during capture.
+    Distinct from `get_func_cache_config` and `kernel_set_cache_config`. This VM does not invent `cuMemsetD8Async`, Engine `--func-gcache`,
+    or `cudaChooseDevice`. `gpu-profile capture` is still refused. Dual
+    score still has no `$/M tokens`.
+
+795. [x] `gpu-sim` `Sim::memset_d8_async` is
+    `cuMemsetD8Async`. `count` is CUDA `N` (8-bit values); payload is
+    `count` bytes. Typed `memset` stays byte-counted `element_size` 1.
+    Capture of Async is legal. Fill value is not modeled. Query of
+    `count == 0` is Invalid. Distinct from `memset_d16_async`. This VM does not invent `cuMemsetD8`, Engine `--memset-d8`,
+    or `cudaChooseDevice`. `gpu-profile capture` is still refused. Dual
+    score still has no `$/M tokens`.
+
+796. [x] `gpu-sim` `Sim::memset_d8` is
+    `cuMemsetD8`. Host-synchronous; capture cannot include it.
+    `count` is CUDA `N` (8-bit values); payload is `count` bytes.
+    Distinct from `memset_d8_async`. This VM does not invent `cuEventQuery`, Engine `--memset-d8-sync`,
+    or `cudaChooseDevice`. `gpu-profile capture` is still refused. Dual
+    score still has no `$/M tokens`.
+
+797. [x] `gpu-sim` `Sim::event_query` is
+    `cuEventQuery`. Identity with `query_event` (`cudaEventQuery`).
+    Does not wait. Unknown ids are UnknownEvent. Incomplete records are
+    `Ok(false)`. Query; legal during capture. Distinct from `query_stream`. This VM does not invent `cuStreamQuery`, Engine `--event-query`,
+    or `cudaChooseDevice`. `gpu-profile capture` is still refused. Dual
+    score still has no `$/M tokens`.
+
+798. [x] `gpu-sim` `Sim::stream_query` is
+    `cuStreamQuery`. Identity with `query_stream` (`cudaStreamQuery`).
+    Does not wait. Unknown devices are Invalid. A busy stream is
+    `Ok(false)`. Capturing stream is Invalid. Distinct from `stream_is_idle`. This VM does not invent `cuEventSynchronize`, Engine `--stream-query`,
+    or `cudaChooseDevice`. `gpu-profile capture` is still refused. Dual
+    score still has no `$/M tokens`.
+
+799. [x] `gpu-sim` `Sim::event_synchronize` is
+    `cuEventSynchronize`. Identity with `synchronize_event`
+    (`cudaEventSynchronize`). Waits the record only. Unknown ids are
+    UnknownEvent. Distinct from `synchronize_stream`. This VM does not invent `cuStreamSynchronize`, Engine `--event-synchronize`,
+    or `cudaChooseDevice`. `gpu-profile capture` is still refused. Dual
+    score still has no `$/M tokens`.
+
+800. [x] `gpu-sim` `Sim::stream_synchronize` is
+    `cuStreamSynchronize`. Identity with `synchronize_stream`
+    (`cudaStreamSynchronize`). Other streams keep running. Unknown devices
+    are Invalid. Capturing stream is Invalid. Distinct from `ctx_synchronize`. This VM does not invent `cuEventDestroy`, Engine `--stream-synchronize`,
+    or `cudaChooseDevice`. `gpu-profile capture` is still refused. Dual
+    score still has no `$/M tokens`.
+
+801. [x] `gpu-sim` `Sim::event_destroy` is
+    `cuEventDestroy`. Identity with `destroy_event` (`cudaEventDestroy`).
+    Host-synchronous; capture cannot include it. Waits a recorded
+    incomplete event. Never-recorded returns immediately. Unknown ids are
+    UnknownEvent. This VM does not invent `cuEventCreate`, Engine `--event-destroy`,
+    or `cudaChooseDevice`. `gpu-profile capture` is still refused. Dual
+    score still has no `$/M tokens`.
+
+802. [x] `gpu-sim` `Sim::event_create` is
+    `cuEventCreate`. Identity with `create_event` (`cudaEventCreate`).
+    Timing enabled (default flags). Host-synchronous; capture cannot
+    include it. Duplicate ids are Invalid. Distinct from
+    `create_event_with_flags`. This VM does not invent `cuEventCreateWithFlags`, Engine `--event-create`,
+    or `cudaChooseDevice`. `gpu-profile capture` is still refused. Dual
+    score still has no `$/M tokens`.
+
+803. [x] `gpu-sim` `Sim::event_create_with_flags` is
+    `cuEventCreateWithFlags`. Identity with `create_event_with_flags`
+    (`cudaEventCreateWithFlags`). Host-synchronous; capture cannot include
+    it. Unknown bits are Invalid. Interprocess requires DisableTiming.
+    Distinct from `event_create`. This VM does not invent `cuEventRecord`, Engine `--event-create-with-flags`,
+    or `cudaChooseDevice`. `gpu-profile capture` is still refused. Dual
+    score still has no `$/M tokens`.
+
+804. [x] `gpu-sim` `Sim::event_record` is
+    `cuEventRecord`. Identity with `record_event` (`cudaEventRecord`).
+    Records after prior ops on the stream. Capture-legal. Distinct from
+    `record_event_with_flags`. This VM does not invent `cuEventRecordWithFlags`, Engine `--event-record`,
+    or `cudaChooseDevice`. `gpu-profile capture` is still refused. Dual
+    score still has no `$/M tokens`.
+
+805. [x] `gpu-sim` `Sim::event_record_with_flags` is
+    `cuEventRecordWithFlags`. Identity with `record_event_with_flags`
+    (`cudaEventRecordWithFlags`). Unknown bits are Invalid. Capture-legal.
+    Distinct from `event_record` and `record_event_external`. This VM does not invent `cuStreamWaitEvent`, Engine `--event-record-with-flags`,
+    or `cudaChooseDevice`. `gpu-profile capture` is still refused. Dual
+    score still has no `$/M tokens`.
+
+806. [x] `gpu-sim` `Sim::stream_wait_event` is
+    `cuStreamWaitEvent`. Identity with `wait_event` (`cudaStreamWaitEvent`).
+    Later ops on the waiter wait the record. Capture-legal. Distinct from
+    `wait_event_with_flags`. This VM does not invent a `wait_event_with_flags` identity, Engine `--stream-wait-event`,
+    or `cudaChooseDevice`. `gpu-profile capture` is still refused. Dual
+    score still has no `$/M tokens`.
+
+807. [x] `gpu-sim` `Sim::stream_wait_event_with_flags` is
+    `cuStreamWaitEvent` with flags. Identity with `wait_event_with_flags`
+    (`cudaStreamWaitEvent` flags). Unknown bits are Invalid. Capture-legal.
+    Distinct from `stream_wait_event` and `wait_event_external`. This VM does not invent `cuEventElapsedTime`, Engine `--stream-wait-event-flags`,
+    or `cudaChooseDevice`. `gpu-profile capture` is still refused. Dual
+    score still has no `$/M tokens`.
+
+808. [x] `gpu-sim` `Sim::event_elapsed` is
+    `cuEventElapsedTime`. Identity with `event_elapsed_ns`
+    (`cudaEventElapsedTime`). Nanoseconds (this crate is ns, not
+    milliseconds). Query. Distinct from a millisecond conversion. This VM does not invent a millisecond elapsed, Engine `--event-elapsed`,
+    or `cudaChooseDevice`. `gpu-profile capture` is still refused. Dual
+    score still has no `$/M tokens`.
+
+809. [x] `gpu-sim` `Sim::mem_get_info` is
+    `cuMemGetInfo`. Identity with `mem_info`
+    (`cudaMemGetInfo`). `(free, total)` HBM bytes. Query. Distinct from
+    `device_total_mem`. This VM does not invent `cuStreamCreate`, Engine `--mem-get-info`,
+    or `cudaChooseDevice`. `gpu-profile capture` is still refused. Dual
+    score still has no `$/M tokens`.
+
+810. [x] `gpu-sim` `Sim::stream_create` is
+    `cudaStreamCreate` / `cuStreamCreate` default flags. Identity with
+    `stream_create_with_flags` DEFAULT (blocking). Capture refused.
+    Distinct from `stream_create_with_priority`. This VM does not invent `cuStreamCreateWithPriority`, Engine `--stream-create`,
+    or `cudaChooseDevice`. `gpu-profile capture` is still refused. Dual
+    score still has no `$/M tokens`.
+
+811. [x] `gpu-sim` `Sim::mem_alloc` is
+    `cuMemAlloc`. Identity with `malloc`
+    (`cudaMalloc`). Host-sync; capture refused. Distinct from
+    `alloc` (`cudaMallocAsync`). This VM does not invent `cuMemFree`, Engine `--mem-alloc`,
+    or `cudaChooseDevice`. `gpu-profile capture` is still refused. Dual
+    score still has no `$/M tokens`.
+
+812. [x] `gpu-sim` `Sim::mem_free` is
+    `cuMemFree`. Identity with `free_sync`
+    (`cudaFree`). Host-sync; capture refused. Distinct from
+    `free` (`cudaFreeAsync`). This VM does not invent `cuMemFreeHost`, Engine `--mem-free`,
+    or `cudaChooseDevice`. `gpu-profile capture` is still refused. Dual
+    score still has no `$/M tokens`.
+
+813. [x] `gpu-sim` `Sim::mem_free_host` is
+    `cuMemFreeHost`. Identity with `free_host_pinned`
+    (`cudaFreeHost`). Host-sync; capture refused. Distinct from
+    `mem_free`. This VM does not invent `cuMemHostAlloc`, Engine `--mem-free-host`,
+    or `cudaChooseDevice`. `gpu-profile capture` is still refused. Dual
+    score still has no `$/M tokens`.
+
+814. [x] `gpu-sim` `Sim::mem_host_alloc` is
+    `cuMemHostAlloc`. Identity with `alloc_host_with_flags`
+    (`cudaHostAlloc`). Capture refused. Distinct from
+    `alloc_host_pinned`. This VM does not invent `cuMemHostGetFlags`, Engine `--mem-host-alloc`,
+    or `cudaChooseDevice`. `gpu-profile capture` is still refused. Dual
+    score still has no `$/M tokens`.
+
+815. [x] `gpu-sim` `Sim::mem_host_get_flags` is
+    `cuMemHostGetFlags`. Identity with `host_get_flags`
+    (`cudaHostGetFlags`). Query. Distinct from
+    `host_get_device_pointer`. This VM does not invent `cuMemHostGetDevicePointer`, Engine `--mem-host-get-flags`,
+    or `cudaChooseDevice`. `gpu-profile capture` is still refused. Dual
+    score still has no `$/M tokens`.
+
+816. [x] `gpu-sim` `Sim::mem_host_get_device_pointer` is
+    `cuMemHostGetDevicePointer`. Identity with `host_get_device_pointer_with_flags`
+    (`cudaHostGetDevicePointer` flags). Query. Distinct from
+    `host_get_device_pointer`. This VM does not invent `cuMemHostRegister`, Engine `--mem-host-get-device-pointer`,
+    or `cudaChooseDevice`. `gpu-profile capture` is still refused. Dual
+    score still has no `$/M tokens`.
+
+817. [x] `gpu-sim` `Sim::mem_host_register` is
+    `cuMemHostRegister`. Identity with `host_register_with_flags`
+    (`cudaHostRegister` flags). Capture refused. Distinct from
+    `host_register`. This VM does not invent `cuMemHostUnregister`, Engine `--mem-host-register`,
+    or `cudaChooseDevice`. `gpu-profile capture` is still refused. Dual
+    score still has no `$/M tokens`.
+
+818. [x] `gpu-sim` `Sim::mem_host_unregister` is
+    `cuMemHostUnregister`. Identity with `host_unregister`
+    (`cudaHostUnregister`). Capture refused. Distinct from
+    `mem_host_register`. This VM does not invent a register-size identity, Engine `--mem-host-unregister`,
+    or `cudaChooseDevice`. `gpu-profile capture` is still refused. Dual
+    score still has no `$/M tokens`.
+
+819. [x] `gpu-sim` `Sim::mem_host_register_with_size` is
+    `cuMemHostRegister` size. Identity with `host_register_with_size`
+    (`cudaHostRegister` size). Capture refused. Distinct from
+    `mem_host_register`. This VM does not invent `cuIpcGetMemHandle`, Engine `--mem-host-register-size`,
+    or `cudaChooseDevice`. `gpu-profile capture` is still refused. Dual
+    score still has no `$/M tokens`.
+
+820. [x] `gpu-sim` `Sim::ipc_get_mem_handle` is
+    `cuIpcGetMemHandle`. Identity with `ipc_get`
+    (`cudaIpcGetMemHandle`). Host-sync; capture refused. Distinct from
+    `ipc_get_event`. This VM does not invent `cuIpcOpenMemHandle`, Engine `--ipc-get-mem-handle`,
+    or `cudaChooseDevice`. `gpu-profile capture` is still refused. Dual
+    score still has no `$/M tokens`.
+
+821. [x] `gpu-sim` `Sim::ipc_open_mem_handle` is
+    `cuIpcOpenMemHandle`. Identity with `ipc_open_with_flags`
+    (`cudaIpcOpenMemHandle` flags). Capture refused. Distinct from
+    `ipc_open`. This VM does not invent `cuIpcCloseMemHandle`, Engine `--ipc-open-mem-handle`,
+    or `cudaChooseDevice`. `gpu-profile capture` is still refused. Dual
+    score still has no `$/M tokens`.
+
+822. [x] `gpu-sim` `Sim::ipc_close_mem_handle` is
+    `cuIpcCloseMemHandle`. Identity with `ipc_close`
+    (`cudaIpcCloseMemHandle`). Capture refused. Distinct from
+    `ipc_open_mem_handle`. This VM does not invent `cuIpcGetEventHandle`, Engine `--ipc-close-mem-handle`,
+    or `cudaChooseDevice`. `gpu-profile capture` is still refused. Dual
+    score still has no `$/M tokens`.
+
+823. [x] `gpu-sim` `Sim::ipc_get_event_handle` is
+    `cuIpcGetEventHandle`. Identity with `ipc_get_event`
+    (`cudaIpcGetEventHandle`). Host-sync; capture refused. Distinct from
+    `ipc_get_mem_handle`. This VM does not invent `cuIpcOpenEventHandle`, Engine `--ipc-get-event-handle`,
+    or `cudaChooseDevice`. `gpu-profile capture` is still refused. Dual
+    score still has no `$/M tokens`.
+
+824. [x] `gpu-sim` `Sim::ipc_open_event_handle` is
+    `cuIpcOpenEventHandle`. Identity with `ipc_open_event`
+    (`cudaIpcOpenEventHandle`). Capture refused. Distinct from
+    `ipc_get_event_handle`. This VM does not invent `cuMemAllocHost`, Engine `--ipc-open-event-handle`,
+    or `cudaChooseDevice`. `gpu-profile capture` is still refused. Dual
+    score still has no `$/M tokens`.
+
+825. [x] `gpu-sim` `Sim::mem_alloc_host` is
+    `cuMemAllocHost`. Identity with `alloc_host_pinned`
+    (`cudaMallocHost`). Capture refused. Distinct from
+    `mem_host_alloc`. This VM does not invent `cuMemAllocManaged`, Engine `--mem-alloc-host`,
+    or `cudaChooseDevice`. `gpu-profile capture` is still refused. Dual
+    score still has no `$/M tokens`.
+
+826. [x] `gpu-sim` `Sim::mem_alloc_managed` is
+    `cuMemAllocManaged`. Identity with `alloc_managed_with_flags`
+    (`cudaMallocManaged` flags). Capture refused. Distinct from
+    `alloc_managed`. This VM does not invent `cuMemAllocAsync`, Engine `--mem-alloc-managed`,
+    or `cudaChooseDevice`. `gpu-profile capture` is still refused. Dual
+    score still has no `$/M tokens`.
+
+827. [x] `gpu-sim` `Sim::mem_alloc_async` is
+    `cuMemAllocAsync`. Identity with `alloc`
+    (`cudaMallocAsync`). Capture-legal (graph mempool). Distinct from
+    `mem_alloc`. This VM does not invent `cuMemFreeAsync`, Engine `--mem-alloc-async`,
+    or `cudaChooseDevice`. `gpu-profile capture` is still refused. Dual
+    score still has no `$/M tokens`.
+
+828. [x] `gpu-sim` `Sim::mem_free_async` is
+    `cuMemFreeAsync`. Identity with `free`
+    (`cudaFreeAsync`). Capture-legal (graph mem free). Distinct from
+    `mem_free`. This VM does not invent `cuMemAdvise`, Engine `--mem-free-async`,
+    or `cudaChooseDevice`. `gpu-profile capture` is still refused. Dual
+    score still has no `$/M tokens`.
+
+829. [x] `gpu-sim` `Sim::mem_advise_n` is
+    `cuMemAdvise`. Identity with `mem_advise_with_size`
+    (`cudaMemAdvise` count). Capture refused. Distinct from
+    `mem_advise`. This VM does not invent `cuMemPrefetchAsync`, Engine `--mem-advise-n`,
+    or `cudaChooseDevice`. `gpu-profile capture` is still refused. Dual
+    score still has no `$/M tokens`.
+
+830. [x] `gpu-sim` `Sim::mem_prefetch` is
+    `cuMemPrefetchAsync`. Identity with `prefetch`
+    (`cudaMemPrefetchAsync`). Capture-legal (memcpy). Distinct from
+    `prefetch_with_flags`. This VM does not invent `cuMemPrefetchAsync_v2`, Engine `--mem-prefetch`,
+    or `cudaChooseDevice`. `gpu-profile capture` is still refused. Dual
+    score still has no `$/M tokens`.
+
+831. [x] `gpu-sim` `Sim::mem_prefetch_v2` is
+    `cuMemPrefetchAsync_v2`. Identity with `prefetch_with_flags`
+    (`cudaMemPrefetchAsync` flags). Capture-legal (memcpy). Distinct from
+    `mem_prefetch`. This VM does not invent a `cuMemPrefetchAsync` count, Engine `--mem-prefetch-v2`,
+    or `cudaChooseDevice`. `gpu-profile capture` is still refused. Dual
+    score still has no `$/M tokens`.
+
+832. [x] `gpu-sim` `Sim::mem_prefetch_n` is
+    `cuMemPrefetchAsync` count. Identity with `prefetch_with_size`
+    (`cudaMemPrefetchAsync` count). Capture-legal (memcpy). Distinct from
+    `mem_prefetch`. This VM does not invent `mem_prefetch_host`, Engine `--mem-prefetch-n`,
+    or `cudaChooseDevice`. `gpu-profile capture` is still refused. Dual
+    score still has no `$/M tokens`.
+
+833. [x] `gpu-sim` `Sim::mem_prefetch_host` is
+    host dest `cuMemPrefetchAsync`. Identity with `prefetch_host`
+    (`cudaMemPrefetchAsync` cpu device). Capture-legal (memcpy). Distinct from
+    `mem_prefetch`. This VM does not invent `mem_prefetch_host_n`, Engine `--mem-prefetch-host`,
+    or `cudaChooseDevice`. `gpu-profile capture` is still refused. Dual
+    score still has no `$/M tokens`.
+
+834. [x] `gpu-sim` `Sim::mem_prefetch_host_n` is
+    host dest `cuMemPrefetchAsync` count. Identity with `prefetch_host_with_size`
+    (`cudaMemPrefetchAsync` cpu count). Capture-legal (memcpy). Distinct from
+    `mem_prefetch_host`. This VM does not invent `mem_advise_v2`, Engine `--mem-prefetch-host-n`,
+    or `cudaChooseDevice`. `gpu-profile capture` is still refused. Dual
+    score still has no `$/M tokens`.
+
+835. [x] `gpu-sim` `Sim::mem_advise_v2` is
+    `cuMemAdvise_v2`. Identity with `mem_advise_with_location`
+    (`cudaMemAdvise_v2` location). Capture refused. Distinct from
+    `mem_advise_n`. This VM does not invent `cuMemRangeGetAttribute`, Engine `--mem-advise-v2`,
+    or `cudaChooseDevice`. `gpu-profile capture` is still refused. Dual
+    score still has no `$/M tokens`.
+
+836. [x] `gpu-sim` `Sim::mem_range_get` is
+    `cuMemRangeGetAttribute`. Identity with `mem_range_get_attribute`
+    (`cudaMemRangeGetAttribute`). Query; legal during capture. Distinct from
+    `mem_range_get_attributes`. This VM does not invent a `cuMemRangeGetAttribute` count, Engine `--mem-range-get`,
+    or `cudaChooseDevice`. `gpu-profile capture` is still refused. Dual
+    score still has no `$/M tokens`.
+
+837. [x] `gpu-sim` `Sim::mem_range_get_n` is
+    `cuMemRangeGetAttribute` count. Identity with `mem_range_get_attribute_with_size`
+    (`cudaMemRangeGetAttribute` count). Query; legal during capture. Distinct from
+    `mem_range_get`. This VM does not invent `cuMemRangeGetAttributes`, Engine `--mem-range-get-n`,
+    or `cudaChooseDevice`. `gpu-profile capture` is still refused. Dual
+    score still has no `$/M tokens`.
+
+838. [x] `gpu-sim` `Sim::mem_range_gets` is
+    `cuMemRangeGetAttributes`. Identity with `mem_range_get_attributes`
+    (`cudaMemRangeGetAttributes`). Query; legal during capture. Distinct from
+    `mem_range_get`. This VM does not invent a `cuMemRangeGetAttributes` count, Engine `--mem-range-gets`,
+    or `cudaChooseDevice`. `gpu-profile capture` is still refused. Dual
+    score still has no `$/M tokens`.
+
+839. [x] `gpu-sim` `Sim::mem_range_gets_n` is
+    `cuMemRangeGetAttributes` count. Identity with `mem_range_get_attributes_with_size`
+    (`cudaMemRangeGetAttributes` count). Query; legal during capture. Distinct from
+    `mem_range_gets`. This VM does not invent a `cuMemRangeGetAttribute` dataSize, Engine `--mem-range-gets-n`,
+    or `cudaChooseDevice`. `gpu-profile capture` is still refused. Dual
+    score still has no `$/M tokens`.
+
+840. [x] `gpu-sim` `Sim::mem_range_get_data` is
+    `cuMemRangeGetAttribute` dataSize. Identity with `mem_range_get_attribute_with_data_size`
+    (`cudaMemRangeGetAttribute` dataSize). Query; legal during capture. Distinct from
+    `mem_range_get_n`. This VM does not invent a `cuMemRangeGetAttributes` dataSizes, Engine `--mem-range-get-data`,
+    or `cudaChooseDevice`. `gpu-profile capture` is still refused. Dual
+    score still has no `$/M tokens`.
+
+841. [x] `gpu-sim` `Sim::mem_range_gets_data` is
+    `cuMemRangeGetAttributes` dataSizes. Identity with `mem_range_get_attributes_with_data_sizes`
+    (`cudaMemRangeGetAttributes` dataSizes). Query; legal during capture. Distinct from
+    `mem_range_get_data`. This VM does not invent occupancy SM counts, Engine `--mem-range-gets-data`,
+    or `cudaChooseDevice`. `gpu-profile capture` is still refused. Dual
+    score still has no `$/M tokens`.
+
+842. [x] `gpu-sim` `Sim::stream_attach_mem` is
+    `cuStreamAttachMemAsync`. Identity with `stream_attach`
+    (`cudaStreamAttachMemAsync`). Capture refused. Distinct from
+    `stream_attach_with_flags`. This VM does not invent `stream_attach_n`, Engine `--stream-attach-mem`,
+    or `cudaChooseDevice`. `gpu-profile capture` is still refused. Dual
+    score still has no `$/M tokens`.
+
+843. [x] `gpu-sim` `Sim::stream_attach_n` is
+    `cuStreamAttachMemAsync` length. Identity with `stream_attach_with_size`
+    (`cudaStreamAttachMemAsync` length). Capture refused. Distinct from
+    `stream_attach_mem`. This VM does not invent `stream_attach_flags`, Engine `--stream-attach-n`,
+    or `cudaChooseDevice`. `gpu-profile capture` is still refused. Dual
+    score still has no `$/M tokens`.
+
+844. [x] `gpu-sim` `Sim::stream_attach_flags` is
+    `cuStreamAttachMemAsync` flags. Identity with `stream_attach_with_flags`
+    (`cudaStreamAttachMemAsync` flags). Capture refused. Distinct from
+    `stream_attach_n`. This VM does not invent `memcpy_async`, Engine `--stream-attach-flags`,
+    or `cudaChooseDevice`. `gpu-profile capture` is still refused. Dual
+    score still has no `$/M tokens`.
+
+845. [x] `gpu-sim` `Sim::memcpy_async` is
+    `cuMemcpyAsync`. Identity with `memcpy`
+    (`cudaMemcpyAsync`). Capture-legal (pinned/device). Distinct from
+    `memcpy_sync`. This VM does not invent `mem_cpy`, Engine `--memcpy-async`,
+    or `cudaChooseDevice`. `gpu-profile capture` is still refused. Dual
+    score still has no `$/M tokens`.
+
+846. [x] `gpu-sim` `Sim::mem_cpy` is
+    `cuMemcpy`. Identity with `memcpy_sync`
+    (`cudaMemcpy`). Capture refused. Distinct from
+    `memcpy_async`. This VM does not invent `mem_address_range`, Engine `--mem-cpy`,
+    or `cudaChooseDevice`. `gpu-profile capture` is still refused. Dual
+    score still has no `$/M tokens`.
+
+847. [x] `gpu-sim` `Sim::mem_address_range` is
+    `cuMemGetAddressRange`. Identity with `mem_get_address_range`
+    (`cudaMemGetAddressRange`). Query; legal during capture. Distinct from
+    `mem_range_get`. This VM does not invent occupancy MaxActiveBlocks, Engine `--mem-address-range`,
+    or `cudaChooseDevice`. `gpu-profile capture` is still refused. Dual
+    score still has no `$/M tokens`.
+
+848. [x] `gpu-sim` `Sim::mem_cpy_2d` is
+    `cuMemcpy2D`. Identity with `memcpy_2d`
+    (`cudaMemcpy2D`). Capture refused. Distinct from
+    `memcpy_2d_unaligned`. This VM does not invent `mem_cpy_2d_async`, Engine `--mem-cpy-2d`,
+    or `cudaChooseDevice`. `gpu-profile capture` is still refused. Dual
+    score still has no `$/M tokens`.
+
+849. [x] `gpu-sim` `Sim::mem_cpy_2d_async` is
+    `cuMemcpy2DAsync`. Identity with `memcpy_2d_async`
+    (`cudaMemcpy2DAsync`). Capture-legal (pinned/device). Distinct from
+    `mem_cpy_2d`. This VM does not invent `mem_cpy_3d`, Engine `--mem-cpy-2d-async`,
+    or `cudaChooseDevice`. `gpu-profile capture` is still refused. Dual
+    score still has no `$/M tokens`.
+
+850. [x] `gpu-sim` `Sim::mem_cpy_3d` is
+    `cuMemcpy3D`. Identity with `memcpy_3d`
+    (`cudaMemcpy3D`). Capture refused. Distinct from
+    `memcpy_3d_unaligned`. This VM does not invent `mem_cpy_3d_async`, Engine `--mem-cpy-3d`,
+    or `cudaChooseDevice`. `gpu-profile capture` is still refused. Dual
+    score still has no `$/M tokens`.
+
+851. [x] `gpu-sim` `Sim::mem_cpy_3d_async` is
+    `cuMemcpy3DAsync`. Identity with `memcpy_3d_async`
+    (`cudaMemcpy3DAsync`). Capture-legal (pinned/device). Distinct from
+    `mem_cpy_3d`. This VM does not invent `mem_cpy_peer`, Engine `--mem-cpy-3d-async`,
+    or `cudaChooseDevice`. `gpu-profile capture` is still refused. Dual
+    score still has no `$/M tokens`.
+
+852. [x] `gpu-sim` `Sim::mem_cpy_peer` is
+    `cuMemcpyPeer`. Identity with `memcpy_peer`
+    (`cudaMemcpyPeer`). Capture refused. Distinct from
+    `memcpy_peer_async`. This VM does not invent `mem_cpy_peer_async`, Engine `--mem-cpy-peer`,
+    or `cudaChooseDevice`. `gpu-profile capture` is still refused. Dual
+    score still has no `$/M tokens`.
+
+853. [x] `gpu-sim` `Sim::mem_cpy_peer_async` is
+    `cuMemcpyPeerAsync`. Identity with `memcpy_peer_async`
+    (`cudaMemcpyPeerAsync`). Capture-legal. Distinct from
+    `mem_cpy_peer`. This VM does not invent `mem_cpy_peer_3d`, Engine `--mem-cpy-peer-async`,
+    or `cudaChooseDevice`. `gpu-profile capture` is still refused. Dual
+    score still has no `$/M tokens`.
+
+854. [x] `gpu-sim` `Sim::mem_cpy_peer_3d` is
+    `cuMemcpy3DPeer`. Identity with `memcpy_peer_3d`
+    (`cudaMemcpy3DPeer`). Capture refused. Distinct from
+    `memcpy_peer_3d_async`. This VM does not invent `mem_cpy_peer_3d_async`, Engine `--mem-cpy-peer-3d`,
+    or `cudaChooseDevice`. `gpu-profile capture` is still refused. Dual
+    score still has no `$/M tokens`.
+
+855. [x] `gpu-sim` `Sim::mem_cpy_peer_3d_async` is
+    `cuMemcpy3DPeerAsync`. Identity with `memcpy_peer_3d_async`
+    (`cudaMemcpy3DPeerAsync`). Capture-legal. Distinct from
+    `mem_cpy_peer_3d`. This VM does not invent `mem_cpy_peer_2d`, Engine `--mem-cpy-peer-3d-async`,
+    or `cudaChooseDevice`. `gpu-profile capture` is still refused. Dual
+    score still has no `$/M tokens`.
+
+856. [x] `gpu-sim` `Sim::mem_cpy_peer_2d` is
+    `cuMemcpy2DPeer`. Identity with `memcpy_peer_2d`
+    (`cudaMemcpy2DPeer`). Capture refused. Distinct from
+    `memcpy_peer_2d_async`. This VM does not invent `mem_cpy_peer_2d_async`, Engine `--mem-cpy-peer-2d`,
+    or `cudaChooseDevice`. `gpu-profile capture` is still refused. Dual
+    score still has no `$/M tokens`.
+
+857. [x] `gpu-sim` `Sim::mem_cpy_peer_2d_async` is
+    `cuMemcpy2DPeerAsync`. Identity with `memcpy_peer_2d_async`
+    (`cudaMemcpy2DPeerAsync`). Capture-legal. Distinct from
+    `mem_cpy_peer_2d`. This VM does not invent occupancy SM counts, Engine `--mem-cpy-peer-2d-async`,
+    or `cudaChooseDevice`. `gpu-profile capture` is still refused. Dual
+    score still has no `$/M tokens`.
+
+858. [x] `gpu-sim` `Sim::mem_cpy_batch_async` is
+    `cuMemcpyBatchAsync`. Identity with `memcpy_batch_async`
+    (`cudaMemcpyBatchAsync`). Capture refused. Distinct from
+    `memcpy_3d_batch_async`. This VM does not invent `mem_cpy_3d_batch_async`, Engine `--mem-cpy-batch-async`,
+    or `cudaChooseDevice`. `gpu-profile capture` is still refused. Dual
+    score still has no `$/M tokens`.
+
+859. [x] `gpu-sim` `Sim::mem_cpy_3d_batch_async` is
+    `cuMemcpy3DBatchAsync`. Identity with `memcpy_3d_batch_async`
+    (`cudaMemcpy3DBatchAsync`). Capture refused. Distinct from
+    `mem_cpy_batch_async`. This VM does not invent `mem_cpy_3d_with_attributes`, Engine `--mem-cpy-3d-batch-async`,
+    or `cudaChooseDevice`. `gpu-profile capture` is still refused. Dual
+    score still has no `$/M tokens`.
+
+860. [x] `gpu-sim` `Sim::mem_cpy_3d_with_attributes` is
+    `cuMemcpy3DWithAttributesAsync`. Identity with `memcpy_3d_with_attributes`
+    (`cudaMemcpy3DWithAttributesAsync`). Stream order is capture-legal (pinned/device). Distinct from
+    `mem_cpy_3d_batch_async`. This VM does not invent `mem_cpy_with_attributes`, Engine `--mem-cpy-3d-with-attributes`,
+    or `cudaChooseDevice`. `gpu-profile capture` is still refused. Dual
+    score still has no `$/M tokens`.
+
+861. [x] `gpu-sim` `Sim::mem_cpy_with_attributes` is
+    `cuMemcpyWithAttributesAsync`. Identity with `memcpy_with_attributes`
+    (`cudaMemcpyWithAttributesAsync`). Stream order is capture-legal (pinned/device). Distinct from
+    `mem_cpy_batch_async`. This VM does not invent occupancy SM counts, Engine `--mem-cpy-with-attributes`,
+    or `cudaChooseDevice`. `gpu-profile capture` is still refused. Dual
+    score still has no `$/M tokens`.
+
+862. [x] `gpu-sim` `Sim::ctx_set_flags` is
+    `cuCtxSetFlags`. Identity with `set_device_flags`
+    (`cudaSetDeviceFlags`). Capture refused. Distinct from
+    `ctx_get_flags` and `device_primary_ctx_set_flags`. This VM does not invent `cuCtxSetCacheConfig`, Engine `--ctx-set-flags`,
+    or `cudaChooseDevice`. `gpu-profile capture` is still refused. Dual
+    score still has no `$/M tokens`.
+
+863. [x] `gpu-sim` `Sim::ctx_set_cache_config` is
+    `cuCtxSetCacheConfig`. Identity with `set_cache_config`
+    (`cudaDeviceSetCacheConfig`). Capture refused. Distinct from
+    `ctx_get_cache_config` and `set_func_cache_config`. This VM does not invent `cuCtxSetLimit`, Engine `--ctx-set-cache-config`,
+    or `cudaChooseDevice`. `gpu-profile capture` is still refused. Dual
+    score still has no `$/M tokens`.
+
+864. [x] `gpu-sim` `Sim::ctx_set_limit` is
+    `cuCtxSetLimit`. Identity with `set_limit`
+    (`cudaDeviceSetLimit`). Capture refused. Distinct from
+    `ctx_get_limit`. This VM does not invent `cuCtxSetSharedMemConfig`, Engine `--ctx-set-limit`,
+    or `cudaChooseDevice`. `gpu-profile capture` is still refused. Dual
+    score still has no `$/M tokens`.
+
+865. [x] `gpu-sim` `Sim::ctx_set_shared_mem_config` is
+    `cuCtxSetSharedMemConfig`. Identity with `set_shared_mem_config`
+    (`cudaDeviceSetSharedMemConfig`). Capture refused. Distinct from
+    `ctx_get_shared_mem_config` and `set_func_shared_mem_config`. This VM does not invent occupancy SM counts, Engine `--ctx-set-shared-mem`,
+    or `cudaChooseDevice`. `gpu-profile capture` is still refused. Dual
+    score still has no `$/M tokens`.
+
+866. [x] `gpu-sim` `Sim::stream_create_priority` is
+    `cuStreamCreateWithPriority`. Identity with `stream_create_with_priority`
+    (`cudaStreamCreateWithPriority`). Capture refused. Distinct from
+    `stream_create`. This VM does not invent occupancy SM counts, Engine `--stream-create-priority`,
+    or `cudaChooseDevice`. `gpu-profile capture` is still refused. Dual
+    score still has no `$/M tokens`.
+
+867. [x] `gpu-sim` `Sim::stream_create_flags` is
+    `cuStreamCreateWithFlags`. Identity with `stream_create_with_flags`
+    (`cudaStreamCreateWithFlags`). Capture refused. Distinct from
+    `stream_create` and `stream_create_priority`. This VM does not invent occupancy SM counts, Engine `--stream-create-flags`,
+    or `cudaChooseDevice`. `gpu-profile capture` is still refused. Dual
+    score still has no `$/M tokens`.
+
+868. [x] `gpu-sim` `Sim::stream_flags` is
+    `cuStreamGetFlags`. Identity with `stream_get_flags`
+    (`cudaStreamGetFlags`). Query; legal during capture. Distinct from
+    `stream_get_priority`. This VM does not invent occupancy SM counts, Engine `--stream-flags`,
+    or `cudaChooseDevice`. `gpu-profile capture` is still refused. Dual
+    score still has no `$/M tokens`.
+
+869. [x] `gpu-sim` `Sim::get_stream_priority` is
+    `cuStreamGetPriority`. Identity with `stream_get_priority`
+    (`cudaStreamGetPriority`). Query; legal during capture. Distinct from
+    `stream_flags` and `set_stream_priority`. This VM does not invent occupancy SM counts, Engine `--stream-get-priority`,
+    or `cudaChooseDevice`. `gpu-profile capture` is still refused. Dual
+    score still has no `$/M tokens`.
+
+870. [x] `gpu-sim` `Sim::device_graph_mem_get` is
+    `cuDeviceGetGraphMemAttribute`. Identity with `graph_mem_get`
+    (`cudaDeviceGetGraphMemAttribute`). Query; legal during capture. Distinct from
+    `graph_mem_set`. This VM does not invent occupancy SM counts, Engine `--graph-mem-get`,
+    or `cudaChooseDevice`. `gpu-profile capture` is still refused. Dual
+    score still has no `$/M tokens`.
+
+871. [x] `gpu-sim` `Sim::device_graph_mem_set` is
+    `cuDeviceSetGraphMemAttribute`. Identity with `graph_mem_set`
+    (`cudaDeviceSetGraphMemAttribute`). Capture refused. Distinct from
+    `device_graph_mem_get`. This VM does not invent occupancy SM counts, Engine `--graph-mem-set`,
+    or `cudaChooseDevice`. `gpu-profile capture` is still refused. Dual
+    score still has no `$/M tokens`.
+
+872. [x] `gpu-sim` `Sim::device_graph_mem_trim` is
+    `cuDeviceGraphMemTrim`. Identity with `graph_mem_trim`
+    (`cudaDeviceGraphMemTrim`). Capture refused. Distinct from
+    `device_graph_mem_set`. This VM does not invent occupancy SM counts, Engine `--graph-mem-trim`,
+    or `cudaChooseDevice`. `gpu-profile capture` is still refused. Dual
+    score still has no `$/M tokens`.
+
+873. [x] `gpu-sim` `Sim::get_stream_id` is
+    `cuStreamGetId`. Identity with `stream_get_id`
+    (`cudaStreamGetId`). Query; legal during capture. Distinct from
+    `stream_get_device`. This VM does not invent occupancy SM counts, Engine `--stream-get-id`,
+    or `cudaChooseDevice`. `gpu-profile capture` is still refused. Dual
+    score still has no `$/M tokens`.
+
+874. [x] `gpu-sim` `Sim::copy_stream_attributes` is
+    `cuStreamCopyAttributes`. Identity with `stream_copy_attributes`
+    (`cudaStreamCopyAttributes`). Capture-legal (host-side, not a graph node). Distinct from
+    `stream_get_attribute`. This VM does not invent occupancy SM counts, Engine `--stream-copy-attributes`,
+    or `cudaChooseDevice`. `gpu-profile capture` is still refused. Dual
+    score still has no `$/M tokens`.
+
+875. [x] `gpu-sim` `Sim::get_stream_attribute` is
+    `cuStreamGetAttribute`. Identity with `stream_get_attribute`
+    (`cudaStreamGetAttribute`). Query; legal during capture. Distinct from
+    `stream_set_attribute`. This VM does not invent occupancy SM counts, Engine `--stream-get-attribute`,
+    or `cudaChooseDevice`. `gpu-profile capture` is still refused. Dual
+    score still has no `$/M tokens`.
+
+876. [x] `gpu-sim` `Sim::set_stream_attribute` is
+    `cuStreamSetAttribute`. Identity with `stream_set_attribute`
+    (`cudaStreamSetAttribute`). Capture-legal (host-side, not a graph node). Distinct from
+    `get_stream_attribute`. This VM does not invent occupancy SM counts, Engine `--stream-set-attribute`,
+    or `cudaChooseDevice`. `gpu-profile capture` is still refused. Dual
+    score still has no `$/M tokens`.
+
+877. [x] `gpu-sim` `Sim::get_graph_kernel_node_attribute` is
+    `cuGraphKernelNodeGetAttribute`. Identity with `graph_kernel_node_get_attribute`
+    (`cudaGraphKernelNodeGetAttribute`). Query; legal during capture. Distinct from
+    `graph_kernel_node_set_attribute`. This VM does not invent occupancy SM counts, Engine `--graph-kernel-get-attribute`,
+    or `cudaChooseDevice`. `gpu-profile capture` is still refused. Dual
+    score still has no `$/M tokens`.
+
+878. [x] `gpu-sim` `Sim::set_graph_kernel_node_attribute` is
+    `cuGraphKernelNodeSetAttribute`. Identity with `graph_kernel_node_set_attribute`
+    (`cudaGraphKernelNodeSetAttribute`). Capture refused. Distinct from
+    `get_graph_kernel_node_attribute`. This VM does not invent occupancy SM counts, Engine `--graph-kernel-set-attribute`,
+    or `cudaChooseDevice`. `gpu-profile capture` is still refused. Dual
+    score still has no `$/M tokens`.
+
+879. [x] `gpu-sim` `Sim::get_graph_exec_kernel_node_attribute` is
+    `cuGraphExecKernelNodeGetAttribute`. Identity with `graph_exec_kernel_node_get_attribute`
+    (`cudaGraphExecKernelNodeGetAttribute`). Query; legal during capture. Distinct from
+    `get_graph_kernel_node_attribute`. This VM does not invent occupancy SM counts, Engine `--graph-exec-kernel-get-attribute`,
+    or `cudaChooseDevice`. `gpu-profile capture` is still refused. Dual
+    score still has no `$/M tokens`.
+
+880. [x] `gpu-sim` `Sim::set_graph_exec_kernel_node_attribute` is
+    `cuGraphExecKernelNodeSetAttribute`. Identity with `graph_exec_kernel_node_set_attribute`
+    (`cudaGraphExecKernelNodeSetAttribute`). Capture refused. Distinct from
+    `get_graph_exec_kernel_node_attribute`. This VM does not invent occupancy SM counts, Engine `--graph-exec-kernel-set-attribute`,
+    or `cudaChooseDevice`. `gpu-profile capture` is still refused. Dual
+    score still has no `$/M tokens`.
+
+881. [x] `gpu-sim` `Sim::copy_graph_kernel_node_attributes` is
+    `cuGraphKernelNodeCopyAttributes`. Identity with `graph_kernel_node_copy_attributes`
+    (`cudaGraphKernelNodeCopyAttributes`). Capture refused. Distinct from
+    `graph_exec_kernel_node_copy_attributes`. This VM does not invent occupancy SM counts, Engine `--graph-kernel-copy-attributes`,
+    or `cudaChooseDevice`. `gpu-profile capture` is still refused. Dual
+    score still has no `$/M tokens`.
+
+882. [x] `gpu-sim` `Sim::copy_graph_exec_kernel_node_attributes` is
+    `cuGraphExecKernelNodeCopyAttributes`. Identity with `graph_exec_kernel_node_copy_attributes`
+    (`cudaGraphExecKernelNodeCopyAttributes`). Capture refused. Distinct from
+    `copy_graph_kernel_node_attributes`. This VM does not invent occupancy SM counts, Engine `--graph-exec-kernel-copy-attributes`,
+    or `cudaChooseDevice`. `gpu-profile capture` is still refused. Dual
+    score still has no `$/M tokens`.
+
+883. [x] `gpu-sim` `Sim::get_graph_kernel_node_params` is
+    `cuGraphKernelNodeGetParams`. Identity with `graph_kernel_get_params`
+    (`cudaGraphKernelNodeGetParams`). Query; legal during capture. Distinct from
+    `graph_exec_kernel_get_params`. This VM does not invent occupancy SM counts, Engine `--graph-kernel-get-params`,
+    or `cudaChooseDevice`. `gpu-profile capture` is still refused. Dual
+    score still has no `$/M tokens`.
+
+884. [x] `gpu-sim` `Sim::get_graph_exec_kernel_node_params` is
+    `cuGraphExecKernelNodeGetParams`. Identity with `graph_exec_kernel_get_params`
+    (`cudaGraphExecKernelNodeGetParams`). Query; legal during capture. Distinct from
+    `get_graph_kernel_node_params`. This VM does not invent occupancy SM counts, Engine `--graph-exec-kernel-get-params`,
+    or `cudaChooseDevice`. `gpu-profile capture` is still refused. Dual
+    score still has no `$/M tokens`.
+
+885. [x] `gpu-sim` `Sim::set_graph_kernel_node_params` is
+    `cuGraphKernelNodeSetParams`. Identity with `graph_kernel_set_params`
+    (`cudaGraphKernelNodeSetParams`). Capture refused. Distinct from
+    `get_graph_kernel_node_params`. This VM does not invent occupancy SM counts, Engine `--graph-kernel-set-params`,
+    or `cudaChooseDevice`. `gpu-profile capture` is still refused. Dual
+    score still has no `$/M tokens`.
+
+886. [x] `gpu-sim` `Sim::set_graph_exec_kernel_node_params` is
+    `cuGraphExecKernelNodeSetParams`. Identity with `graph_exec_kernel_set_params`
+    (`cudaGraphExecKernelNodeSetParams`). Capture refused. Distinct from
+    `set_graph_kernel_node_params`. This VM does not invent occupancy SM counts, Engine `--graph-exec-kernel-set-params`,
+    or `cudaChooseDevice`. `gpu-profile capture` is still refused. Dual
+    score still has no `$/M tokens`.
+
+887. [x] `gpu-sim` `Sim::get_graph_memcpy_node_params` is
+    `cuGraphMemcpyNodeGetParams`. Identity with `graph_memcpy_get_params`
+    (`cudaGraphMemcpyNodeGetParams`). Query; legal during capture. Distinct from
+    `graph_exec_memcpy_get_params`. This VM does not invent occupancy SM counts, Engine `--graph-memcpy-get-params`,
+    or `cudaChooseDevice`. `gpu-profile capture` is still refused. Dual
+    score still has no `$/M tokens`.
+
+888. [x] `gpu-sim` `Sim::get_graph_exec_memcpy_node_params` is
+    `cuGraphExecMemcpyNodeGetParams`. Identity with `graph_exec_memcpy_get_params`
+    (`cudaGraphMemcpyNodeGetParams` of the exec snapshot). Query; legal during capture. Distinct from
+    `get_graph_memcpy_node_params`. This VM does not invent occupancy SM counts, Engine `--graph-exec-memcpy-get-params`,
+    or `cudaChooseDevice`. `gpu-profile capture` is still refused. Dual
+    score still has no `$/M tokens`.
+
+889. [x] `gpu-sim` `Sim::set_graph_memcpy_node_params` is
+    `cuGraphMemcpyNodeSetParams`. Identity with `graph_memcpy_set_params`
+    (`cudaGraphMemcpyNodeSetParams`). Capture refused. Distinct from
+    `get_graph_memcpy_node_params`. This VM does not invent occupancy SM counts, Engine `--graph-memcpy-set-params`,
+    or `cudaChooseDevice`. `gpu-profile capture` is still refused. Dual
+    score still has no `$/M tokens`.
+
+890. [x] `gpu-sim` `Sim::set_graph_exec_memcpy_node_params` is
+    `cuGraphExecMemcpyNodeSetParams`. Identity with `graph_exec_memcpy_set_params`
+    (`cudaGraphExecMemcpyNodeSetParams`). Capture refused. Distinct from
+    `set_graph_memcpy_node_params`. This VM does not invent occupancy SM counts, Engine `--graph-exec-memcpy-set-params`,
+    or `cudaChooseDevice`. `gpu-profile capture` is still refused. Dual
+    score still has no `$/M tokens`.
+
+891. [x] `gpu-sim` `Sim::get_graph_memset_node_params` is
+    `cuGraphMemsetNodeGetParams`. Identity with `graph_memset_get_params`
+    (`cudaGraphMemsetNodeGetParams`). Query; legal during capture. Distinct from
+    `graph_exec_memset_get_params`. This VM does not invent occupancy SM counts, Engine `--graph-memset-get-params`,
+    or `cudaChooseDevice`. `gpu-profile capture` is still refused. Dual
+    score still has no `$/M tokens`.
+
+892. [x] `gpu-sim` `Sim::get_graph_exec_memset_node_params` is
+    `cuGraphExecMemsetNodeGetParams`. Identity with `graph_exec_memset_get_params`
+    (`cudaGraphMemsetNodeGetParams` of the exec snapshot). Query; legal during capture. Distinct from
+    `get_graph_memset_node_params`. This VM does not invent occupancy SM counts, Engine `--graph-exec-memset-get-params`,
+    or `cudaChooseDevice`. `gpu-profile capture` is still refused. Dual
+    score still has no `$/M tokens`.
+
+893. [x] `gpu-sim` `Sim::set_graph_memset_node_params` is
+    `cuGraphMemsetNodeSetParams`. Identity with `graph_memset_set_params`
+    (`cudaGraphMemsetNodeSetParams`). Capture refused. Distinct from
+    `get_graph_memset_node_params`. This VM does not invent occupancy SM counts, Engine `--graph-memset-set-params`,
+    or `cudaChooseDevice`. `gpu-profile capture` is still refused. Dual
+    score still has no `$/M tokens`.
+
+894. [x] `gpu-sim` `Sim::set_graph_exec_memset_node_params` is
+    `cuGraphExecMemsetNodeSetParams`. Identity with `graph_exec_memset_set_params`
+    (`cudaGraphExecMemsetNodeSetParams`). Capture refused. Distinct from
+    `set_graph_memset_node_params`. This VM does not invent occupancy SM counts, Engine `--graph-exec-memset-set-params`,
+    or `cudaChooseDevice`. `gpu-profile capture` is still refused. Dual
+    score still has no `$/M tokens`.
+
+895. [x] `gpu-sim` `Sim::get_graph_host_node_params` is
+    `cuGraphHostNodeGetParams`. Identity with `graph_host_get_params`
+    (`cudaGraphHostNodeGetParams`). Query; legal during capture. Distinct from
+    `graph_exec_host_get_params`. This VM does not invent occupancy SM counts, Engine `--graph-host-get-params`,
+    or `cudaChooseDevice`. `gpu-profile capture` is still refused. Dual
+    score still has no `$/M tokens`.
+
+896. [x] `gpu-sim` `Sim::get_graph_exec_host_node_params` is
+    `cuGraphExecHostNodeGetParams`. Identity with `graph_exec_host_get_params`
+    (`cudaGraphHostNodeGetParams` of the exec snapshot). Query; legal during capture. Distinct from
+    `get_graph_host_node_params`. This VM does not invent occupancy SM counts, Engine `--graph-exec-host-get-params`,
+    or `cudaChooseDevice`. `gpu-profile capture` is still refused. Dual
+    score still has no `$/M tokens`.
+
+897. [x] `gpu-sim` `Sim::set_graph_host_node_params` is
+    `cuGraphHostNodeSetParams`. Identity with `graph_host_set_params`
+    (`cudaGraphHostNodeSetParams`). Capture refused. Distinct from
+    `get_graph_host_node_params`. This VM does not invent occupancy SM counts, Engine `--graph-host-set-params`,
+    or `cudaChooseDevice`. `gpu-profile capture` is still refused. Dual
+    score still has no `$/M tokens`.
+
+898. [x] `gpu-sim` `Sim::set_graph_exec_host_node_params` is
+    `cuGraphExecHostNodeSetParams`. Identity with `graph_exec_host_set_params`
+    (`cudaGraphExecHostNodeSetParams`). Capture refused. Distinct from
+    `set_graph_host_node_params`. This VM does not invent occupancy SM counts, Engine `--graph-exec-host-set-params`,
+    or `cudaChooseDevice`. `gpu-profile capture` is still refused. Dual
+    score still has no `$/M tokens`.
+
+899. [x] `gpu-sim` `Sim::get_graph_batch_mem_op_node_params` is
+    `cuGraphBatchMemOpNodeGetParams`. Identity with `graph_batch_mem_ops_get_params`
+    (`cudaGraphBatchMemOpNodeGetParams`). Query; legal during capture. Distinct from
+    `graph_exec_batch_mem_ops_get_params`. This VM does not invent occupancy SM counts, Engine `--graph-batch-mem-get-params`,
+    or `cudaChooseDevice`. `gpu-profile capture` is still refused. Dual
+    score still has no `$/M tokens`.
+
+900. [x] `gpu-sim` `Sim::get_graph_exec_batch_mem_op_node_params` is
+    `cuGraphExecBatchMemOpNodeGetParams`. Identity with `graph_exec_batch_mem_ops_get_params`
+    (`cudaGraphBatchMemOpNodeGetParams` of the exec snapshot). Query; legal during capture. Distinct from
+    `get_graph_batch_mem_op_node_params`. This VM does not invent occupancy SM counts, Engine `--graph-exec-batch-mem-get-params`,
+    or `cudaChooseDevice`. `gpu-profile capture` is still refused. Dual
+    score still has no `$/M tokens`.
+
+901. [x] `gpu-sim` `Sim::set_graph_batch_mem_op_node_params` is
+    `cuGraphBatchMemOpNodeSetParams`. Identity with `graph_batch_mem_op_set_params`
+    (`cudaGraphBatchMemOpNodeSetParams`). Capture refused. Distinct from
+    `get_graph_batch_mem_op_node_params`. This VM does not invent occupancy SM counts, Engine `--graph-batch-mem-set-params`,
+    or `cudaChooseDevice`. `gpu-profile capture` is still refused. Dual
+    score still has no `$/M tokens`.
+
+902. [x] `gpu-sim` `Sim::set_graph_exec_batch_mem_op_node_params` is
+    `cuGraphExecBatchMemOpNodeSetParams`. Identity with `graph_exec_batch_mem_op_set_params`
+    (`cudaGraphExecBatchMemOpNodeSetParams`). Capture refused. Distinct from
+    `set_graph_batch_mem_op_node_params`. This VM does not invent occupancy SM counts, Engine `--graph-exec-batch-mem-set-params`,
+    or `cudaChooseDevice`. `gpu-profile capture` is still refused. Dual
+    score still has no `$/M tokens`.
+
+903. [x] `gpu-sim` `Sim::set_graph_event_record_node_event` is
+    `cuGraphEventRecordNodeSetEvent`. Identity with `graph_event_record_set_event`
+    (`cudaGraphEventRecordNodeSetEvent`). Capture refused. Distinct from
+    `graph_event_record_get_event`. This VM does not invent occupancy SM counts, Engine `--graph-event-record-set-event`,
+    or `cudaChooseDevice`. `gpu-profile capture` is still refused. Dual
+    score still has no `$/M tokens`.
+
+904. [x] `gpu-sim` `Sim::set_graph_exec_event_record_node_event` is
+    `cuGraphExecEventRecordNodeSetEvent`. Identity with `graph_exec_event_record_set_event`
+    (`cudaGraphExecEventRecordNodeSetEvent`). Capture refused. Distinct from
+    `set_graph_event_record_node_event`. This VM does not invent occupancy SM counts, Engine `--graph-exec-event-record-set-event`,
+    or `cudaChooseDevice`. `gpu-profile capture` is still refused. Dual
+    score still has no `$/M tokens`.
+
+905. [x] `gpu-sim` `Sim::set_graph_event_wait_node_event` is
+    `cuGraphEventWaitNodeSetEvent`. Identity with `graph_event_wait_set_event`
+    (`cudaGraphEventWaitNodeSetEvent`). Capture refused. Distinct from
+    `graph_event_wait_get_event`. This VM does not invent occupancy SM counts, Engine `--graph-event-wait-set-event`,
+    or `cudaChooseDevice`. `gpu-profile capture` is still refused. Dual
+    score still has no `$/M tokens`.
+
+906. [x] `gpu-sim` `Sim::set_graph_exec_event_wait_node_event` is
+    `cuGraphExecEventWaitNodeSetEvent`. Identity with `graph_exec_event_wait_set_event`
+    (`cudaGraphExecEventWaitNodeSetEvent`). Capture refused. Distinct from
+    `set_graph_event_wait_node_event`. This VM does not invent occupancy SM counts, Engine `--graph-exec-event-wait-set-event`,
+    or `cudaChooseDevice`. `gpu-profile capture` is still refused. Dual
+    score still has no `$/M tokens`.
+
+907. [x] `gpu-sim` `Sim::get_graph_event_record_node_event` is
+    `cuGraphEventRecordNodeGetEvent`. Identity with `graph_event_record_get_event`
+    (`cudaGraphEventRecordNodeGetEvent`). Query; legal during capture. Distinct from
+    `graph_exec_event_record_get_event`. This VM does not invent occupancy SM counts, Engine `--graph-event-record-get-event`,
+    or `cudaChooseDevice`. `gpu-profile capture` is still refused. Dual
+    score still has no `$/M tokens`.
+
+908. [x] `gpu-sim` `Sim::get_graph_exec_event_record_node_event` is
+    `cuGraphExecEventRecordNodeGetEvent`. Identity with `graph_exec_event_record_get_event`
+    (`cudaGraphEventRecordNodeGetEvent` of the exec snapshot). Query; legal during capture. Distinct from
+    `get_graph_event_record_node_event`. This VM does not invent occupancy SM counts, Engine `--graph-exec-event-record-get-event`,
+    or `cudaChooseDevice`. `gpu-profile capture` is still refused. Dual
+    score still has no `$/M tokens`.
+
+909. [x] `gpu-sim` `Sim::get_graph_event_wait_node_event` is
+    `cuGraphEventWaitNodeGetEvent`. Identity with `graph_event_wait_get_event`
+    (`cudaGraphEventWaitNodeGetEvent`). Query; legal during capture. Distinct from
+    `graph_exec_event_wait_get_event`. This VM does not invent occupancy SM counts, Engine `--graph-event-wait-get-event`,
+    or `cudaChooseDevice`. `gpu-profile capture` is still refused. Dual
+    score still has no `$/M tokens`.
+
+910. [x] `gpu-sim` `Sim::get_graph_exec_event_wait_node_event` is
+    `cuGraphExecEventWaitNodeGetEvent`. Identity with `graph_exec_event_wait_get_event`
+    (`cudaGraphEventWaitNodeGetEvent` of the exec snapshot). Query; legal during capture. Distinct from
+    `get_graph_event_wait_node_event`. This VM does not invent occupancy SM counts, Engine `--graph-exec-event-wait-get-event`,
+    or `cudaChooseDevice`. `gpu-profile capture` is still refused. Dual
+    score still has no `$/M tokens`.
+
+911. [x] `gpu-sim` `Sim::get_graph_child_graph_node_graph` is
+    `cuGraphChildGraphNodeGetGraph`. Identity with `graph_child_get_graph`
+    (`cudaGraphChildGraphNodeGetGraph`). Query; legal during capture. Distinct from
+    `graph_exec_child_get_graph`. This VM does not invent occupancy SM counts, Engine `--graph-child-get-graph`,
+    or `cudaChooseDevice`. `gpu-profile capture` is still refused. Dual
+    score still has no `$/M tokens`.
+
+912. [x] `gpu-sim` `Sim::get_graph_exec_child_graph_node_graph` is
+    `cuGraphExecChildGraphNodeGetGraph`. Identity with `graph_exec_child_get_graph`
+    (`cudaGraphChildGraphNodeGetGraph` of the exec snapshot). Query; legal during capture. Distinct from
+    `get_graph_child_graph_node_graph`. This VM does not invent occupancy SM counts, Engine `--graph-exec-child-get-graph`,
+    or `cudaChooseDevice`. `gpu-profile capture` is still refused. Dual
+    score still has no `$/M tokens`.
+
+913. [x] `gpu-sim` `Sim::set_graph_child_graph_node_params` is
+    `cuGraphChildGraphNodeSetParams`. Identity with `graph_child_set_params`
+    (`cudaGraphChildGraphNodeSetParams`). Capture refused. Distinct from
+    `get_graph_child_graph_node_graph`. This VM does not invent occupancy SM counts, Engine `--graph-child-set-params`,
+    or `cudaChooseDevice`. `gpu-profile capture` is still refused. Dual
+    score still has no `$/M tokens`.
+
+914. [x] `gpu-sim` `Sim::set_graph_exec_child_graph_node_params` is
+    `cuGraphExecChildGraphNodeSetParams`. Identity with `graph_exec_child_set_params`
+    (`cudaGraphExecChildGraphNodeSetParams`). Capture refused. Distinct from
+    `set_graph_child_graph_node_params`. This VM does not invent occupancy SM counts, Engine `--graph-exec-child-set-params`,
+    or `cudaChooseDevice`. `gpu-profile capture` is still refused. Dual
+    score still has no `$/M tokens`.
+
+915. [x] `gpu-sim` `Sim::set_graph_node_params` is
+    `cuGraphNodeSetParams`. Identity with `graph_node_set_params`
+    (`cudaGraphNodeSetParams`). Capture refused. Distinct from
+    `graph_exec_node_set_params`. This VM does not invent occupancy SM counts, Engine `--graph-node-set-params`,
+    or `cudaChooseDevice`. `gpu-profile capture` is still refused. Dual
+    score still has no `$/M tokens`.
+
+916. [x] `gpu-sim` `Sim::set_graph_exec_node_params` is
+    `cuGraphExecNodeSetParams`. Identity with `graph_exec_node_set_params`
+    (`cudaGraphExecNodeSetParams`). Capture refused. Distinct from
+    `set_graph_node_params`. This VM does not invent occupancy SM counts, Engine `--graph-exec-node-set-params`,
+    or `cudaChooseDevice`. `gpu-profile capture` is still refused. Dual
+    score still has no `$/M tokens`.
+
+917. [x] `gpu-sim` `Sim::get_graph_node_params` is
+    `cuGraphNodeGetParams`. Identity with `graph_node_get_params`
+    (`cudaGraphNodeGetParams`). Query; legal during capture. Distinct from
+    `graph_exec_node_get_params`. This VM does not invent occupancy SM counts, Engine `--graph-node-get-params`,
+    or `cudaChooseDevice`. `gpu-profile capture` is still refused. Dual
+    score still has no `$/M tokens`.
+
+918. [x] `gpu-sim` `Sim::get_graph_exec_node_params` is
+    `cuGraphExecNodeGetParams`. Identity with `graph_exec_node_get_params`
+    (`cudaGraphExecNodeGetParams`). Query; legal during capture. Distinct from
+    `get_graph_node_params`. This VM does not invent occupancy SM counts, Engine `--graph-exec-node-get-params`,
+    or `cudaChooseDevice`. `gpu-profile capture` is still refused. Dual
+    score still has no `$/M tokens`.
+
+919. [x] `gpu-sim` `Sim::set_graph_node_enabled` is
+    `cuGraphNodeSetEnabled`. Identity with `graph_node_set_enabled`
+    (`cudaGraphNodeSetEnabled`). Capture refused. Distinct from
+    `graph_node_get_enabled`. This VM does not invent occupancy SM counts, Engine `--graph-node-set-enabled`,
+    or `cudaChooseDevice`. `gpu-profile capture` is still refused. Dual
+    score still has no `$/M tokens`.
+
+920. [x] `gpu-sim` `Sim::get_graph_node_enabled` is
+    `cuGraphNodeGetEnabled`. Identity with `graph_node_get_enabled`
+    (`cudaGraphNodeGetEnabled`). Query; legal during capture. Distinct from
+    `set_graph_node_enabled`. This VM does not invent occupancy SM counts, Engine `--graph-node-get-enabled`,
+    or `cudaChooseDevice`. `gpu-profile capture` is still refused. Dual
+    score still has no `$/M tokens`.
+
+921. [x] `gpu-sim` `Sim::get_graph_exec_flags` is
+    `cuGraphExecGetFlags`. Identity with `graph_exec_get_flags`
+    (`cudaGraphExecGetFlags`). Query; legal during capture. Distinct from
+    `instantiate_graph_with_flags`. This VM does not invent occupancy SM counts, Engine `--graph-exec-get-flags`,
+    or `cudaChooseDevice`. `gpu-profile capture` is still refused. Dual
+    score still has no `$/M tokens`.
+
+922. [x] `gpu-sim` `Sim::get_graph_id` is
+    `cuGraphGetId`. Identity with `graph_get_id`
+    (`cudaGraphGetId`). Query; legal during capture. Distinct from
+    `get_graph_exec_flags`. This VM does not invent occupancy SM counts, Engine `--graph-get-id`,
+    or `cudaChooseDevice`. `gpu-profile capture` is still refused. Dual
+    score still has no `$/M tokens`.
+
+923. [x] `gpu-sim` `Sim::get_graph_exec_id` is
+    `cuGraphExecGetId`. Identity with `graph_get_id`
+    (`cudaGraphExecGetId`). Query; legal during capture. Distinct from
+    `get_graph_id`. This VM does not invent occupancy SM counts, Engine `--graph-exec-get-id`,
+    or `cudaChooseDevice`. `gpu-profile capture` is still refused. Dual
+    score still has no `$/M tokens`.
+
+924. [x] `gpu-sim` `Sim::get_graph_nodes` is
+    `cuGraphGetNodes`. Identity with `graph_nodes`
+    (`cudaGraphGetNodes`). Query; legal during capture. Distinct from
+    `graph_root_nodes`. This VM does not invent occupancy SM counts, Engine `--graph-get-nodes`,
+    or `cudaChooseDevice`. `gpu-profile capture` is still refused. Dual
+    score still has no `$/M tokens`.
+
+925. [x] `gpu-sim` `Sim::get_graph_root_nodes` is
+    `cuGraphGetRootNodes`. Identity with `graph_root_nodes`
+    (`cudaGraphGetRootNodes`). Query; legal during capture. Distinct from
+    `get_graph_nodes`. This VM does not invent occupancy SM counts, Engine `--graph-get-root-nodes`,
+    or `cudaChooseDevice`. `gpu-profile capture` is still refused. Dual
+    score still has no `$/M tokens`.
+
+926. [x] `gpu-sim` `Sim::get_graph_edges` is
+    `cuGraphGetEdges`. Identity with `graph_edges`
+    (`cudaGraphGetEdges`). Query; legal during capture. Distinct from
+    `graph_edges_with_data`. This VM does not invent occupancy SM counts, Engine `--graph-get-edges`,
+    or `cudaChooseDevice`. `gpu-profile capture` is still refused. Dual
+    score still has no `$/M tokens`.
+
+927. [x] `gpu-sim` `Sim::get_graph_edges_with_data` is
+    `cuGraphGetEdges` v2. Identity with `graph_edges_with_data`
+    (`cudaGraphGetEdges` with edgeData). Query; legal during capture. Distinct from
+    `get_graph_edges`. This VM does not invent occupancy SM counts, Engine `--graph-get-edges-with-data`,
+    or `cudaChooseDevice`. `gpu-profile capture` is still refused. Dual
+    score still has no `$/M tokens`.
+
+928. [x] `gpu-sim` `Sim::get_graph_node_dependencies` is
+    `cuGraphNodeGetDependencies`. Identity with `graph_node_deps`
+    (`cudaGraphNodeGetDependencies`). Query; legal during capture. Distinct from
+    `graph_node_deps_with_data`. This VM does not invent occupancy SM counts, Engine `--graph-node-get-dependencies`,
+    or `cudaChooseDevice`. `gpu-profile capture` is still refused. Dual
+    score still has no `$/M tokens`.
+
+929. [x] `gpu-sim` `Sim::get_graph_node_dependencies_with_data` is
+    `cuGraphNodeGetDependencies` v2. Identity with `graph_node_deps_with_data`
+    (`cudaGraphNodeGetDependencies` with edgeData). Query; legal during capture. Distinct from
+    `get_graph_node_dependencies`. This VM does not invent occupancy SM counts, Engine `--graph-node-get-dependencies-with-data`,
+    or `cudaChooseDevice`. `gpu-profile capture` is still refused. Dual
+    score still has no `$/M tokens`.
+
+930. [x] `gpu-sim` `Sim::get_graph_node_dependent_nodes` is
+    `cuGraphNodeGetDependentNodes`. Identity with `graph_node_dependents`
+    (`cudaGraphNodeGetDependentNodes`). Query; legal during capture. Distinct from
+    `graph_node_dependents_with_data`. This VM does not invent occupancy SM counts, Engine `--graph-node-get-dependent-nodes`,
+    or `cudaChooseDevice`. `gpu-profile capture` is still refused. Dual
+    score still has no `$/M tokens`.
+
+931. [x] `gpu-sim` `Sim::get_graph_node_dependent_nodes_with_data` is
+    `cuGraphNodeGetDependentNodes` v2. Identity with `graph_node_dependents_with_data`
+    (`cudaGraphNodeGetDependentNodes` with edgeData). Query; legal during capture. Distinct from
+    `get_graph_node_dependent_nodes`. This VM does not invent occupancy SM counts, Engine `--graph-node-get-dependent-nodes-with-data`,
+    or `cudaChooseDevice`. `gpu-profile capture` is still refused. Dual
+    score still has no `$/M tokens`.
+
+932. [x] `gpu-sim` `Sim::get_graph_node_type` is
+    `cuGraphNodeGetType`. Identity with `graph_node_kind`
+    (`cudaGraphNodeGetType`). Query; legal during capture. Distinct from
+    `graph_node_find_in_clone`. This VM does not invent occupancy SM counts, Engine `--graph-node-get-type`,
+    or `cudaChooseDevice`. `gpu-profile capture` is still refused. Dual
+    score still has no `$/M tokens`.
+
+933. [x] `gpu-sim` `Sim::find_graph_node_in_clone` is
+    `cuGraphNodeFindInClone`. Identity with `graph_node_find_in_clone`
+    (`cudaGraphNodeFindInClone`). Query; legal during capture. Distinct from
+    `clone_graph`. This VM does not invent occupancy SM counts, Engine `--graph-node-find-in-clone`,
+    or `cudaChooseDevice`. `gpu-profile capture` is still refused. Dual
+    score still has no `$/M tokens`.
+
+934. [x] `gpu-sim` `Sim::graph_clone` is
+    `cuGraphClone`. Identity with `clone_graph`
+    (`cudaGraphClone`). Capture refused. Distinct from
+    `find_graph_node_in_clone`. This VM does not invent occupancy SM counts, Engine `--clone-graph`,
+    or `cudaChooseDevice`. `gpu-profile capture` is still refused. Dual
+    score still has no `$/M tokens`.
+
+935. [x] `gpu-sim` `Sim::graph_debug_dot_print` is
+    `cuGraphDebugDotPrint`. Identity with `graph_debug_dot`
+    (`cudaGraphDebugDotPrint` flags 0). Query; legal during capture. Distinct from
+    `graph_debug_dot_with_flags`. This VM does not invent occupancy SM counts, Engine `--graph-debug-dot-print`,
+    or `cudaChooseDevice`. `gpu-profile capture` is still refused. Dual
+    score still has no `$/M tokens`.
+
+936. [x] `gpu-sim` `Sim::graph_debug_dot_print_with_flags` is
+    `cuGraphDebugDotPrint` with flags. Identity with `graph_debug_dot_with_flags`
+    (`cudaGraphDebugDotPrint`). Query; legal during capture. Distinct from
+    `graph_debug_dot_print`. This VM does not invent occupancy SM counts, Engine `--graph-debug-dot-print-with-flags`,
+    or `cudaChooseDevice`. `gpu-profile capture` is still refused. Dual
+    score still has no `$/M tokens`.
+
+937. [x] `gpu-sim` `Sim::graph_instantiate` is
+    `cuGraphInstantiate`. Identity with `instantiate_graph`
+    (`cudaGraphInstantiate`). Capture refused. Distinct from
+    `instantiate_graph_with_flags`. This VM does not invent occupancy SM counts, Engine `--graph-instantiate`,
+    or `cudaChooseDevice`. `gpu-profile capture` is still refused. Dual
+    score still has no `$/M tokens`.
+
+938. [x] `gpu-sim` `Sim::graph_instantiate_with_flags` is
+    `cuGraphInstantiateWithFlags`. Identity with `instantiate_graph_with_flags`
+    (`cudaGraphInstantiateWithFlags`). Capture refused. Distinct from
+    `graph_instantiate`. This VM does not invent occupancy SM counts, Engine `--graph-instantiate-with-flags`,
+    or `cudaChooseDevice`. `gpu-profile capture` is still refused. Dual
+    score still has no `$/M tokens`.
+
+939. [x] `gpu-sim` `Sim::graph_instantiate_with_params` is
+    `cuGraphInstantiateWithParams`. Identity with `instantiate_graph_with_params`
+    (`cudaGraphInstantiateWithParams`). Capture refused. Distinct from
+    `graph_instantiate_with_flags`. This VM does not invent occupancy SM counts, Engine `--graph-instantiate-with-params`,
+    or `cudaChooseDevice`. `gpu-profile capture` is still refused. Dual
+    score still has no `$/M tokens`.
+
+940. [x] `gpu-sim` `Sim::graph_launch` is
+    `cuGraphLaunch`. Identity with `launch_graph`
+    (`cudaGraphLaunch`). Live host launch; capture records a child. Distinct from
+    `device_launch_graph`. This VM does not invent occupancy SM counts, Engine `--graph-launch`,
+    or `cudaChooseDevice`. `gpu-profile capture` is still refused. Dual
+    score still has no `$/M tokens`.
+
+941. [x] `gpu-sim` `Sim::graph_upload` is
+    `cuGraphUpload`. Identity with `upload_graph`
+    (`cudaGraphUpload`). Capture refused. Distinct from
+    `upload_graph_async`. This VM does not invent occupancy SM counts, Engine `--graph-upload`,
+    or `cudaChooseDevice`. `gpu-profile capture` is still refused. Dual
+    score still has no `$/M tokens`.
+
+942. [x] `gpu-sim` `Sim::graph_upload_async` is
+    `cuGraphUpload` on a stream. Identity with `upload_graph_async`
+    (`cudaGraphUpload` on a stream). Capture refused. Distinct from
+    `graph_upload`. This VM does not invent occupancy SM counts, Engine `--graph-upload-async`,
+    or `cudaChooseDevice`. `gpu-profile capture` is still refused. Dual
+    score still has no `$/M tokens`.
+
+943. [x] `gpu-sim` `Sim::graph_destroy` is
+    `cuGraphDestroy`. Identity with `destroy_graph`
+    (`cudaGraphDestroy`). Capture refused. Distinct from
+    `graph_destroy_node`. This VM does not invent occupancy SM counts, Engine `--graph-destroy`,
+    or `cudaChooseDevice`. `gpu-profile capture` is still refused. Dual
+    score still has no `$/M tokens`.
+
+944. [x] `gpu-sim` `Sim::graph_exec_destroy` is
+    `cuGraphExecDestroy`. Identity with `destroy_graph`
+    (`cudaGraphExecDestroy`). Capture refused. Distinct from
+    `graph_destroy`. This VM does not invent occupancy SM counts, Engine `--graph-exec-destroy`,
+    or `cudaChooseDevice`. `gpu-profile capture` is still refused. Dual
+    score still has no `$/M tokens`.
+
+945. [x] `gpu-sim` `Sim::graph_exec_update` is
+    `cuGraphExecUpdate`. Identity with `update_graph`
+    (`cudaGraphExecUpdate`). Capture refused. Distinct from
+    `update_graph_with_info`. This VM does not invent occupancy SM counts, Engine `--graph-exec-update`,
+    or `cudaChooseDevice`. `gpu-profile capture` is still refused. Dual
+    score still has no `$/M tokens`.
+
+946. [x] `gpu-sim` `Sim::graph_exec_update_with_info` is
+    `cuGraphExecUpdate` with info. Identity with `update_graph_with_info`
+    (`cudaGraphExecUpdate` with info). Capture refused. Distinct from
+    `graph_exec_update`. This VM does not invent occupancy SM counts, Engine `--graph-exec-update-with-info`,
+    or `cudaChooseDevice`. `gpu-profile capture` is still refused. Dual
+    score still has no `$/M tokens`.
+
+947. [x] `gpu-sim` `Sim::add_graph_dependencies` is
+    `cuGraphAddDependencies`. Identity with `graph_add_dependencies`
+    (`cudaGraphAddDependencies`). Capture refused. Distinct from
+    `graph_add_dependencies_n`. This VM does not invent occupancy SM counts, Engine `--graph-add-dependencies`,
+    or `cudaChooseDevice`. `gpu-profile capture` is still refused. Dual
+    score still has no `$/M tokens`.
+
+948. [x] `gpu-sim` `Sim::add_graph_dependencies_n` is
+    `cuGraphAddDependencies` of pairs. Identity with `graph_add_dependencies_n`
+    (`cudaGraphAddDependencies` of pairs). Capture refused. Distinct from
+    `add_graph_dependencies`. This VM does not invent occupancy SM counts, Engine `--graph-add-dependencies-n`,
+    or `cudaChooseDevice`. `gpu-profile capture` is still refused. Dual
+    score still has no `$/M tokens`.
+
+949. [x] `gpu-sim` `Sim::add_graph_dependencies_with_data` is
+    `cuGraphAddDependencies` with data. Identity with `graph_add_dependencies_with_data`
+    (`cudaGraphAddDependencies` with data). Capture refused. Distinct from
+    `add_graph_dependencies_n`. This VM does not invent occupancy SM counts, Engine `--graph-add-dependencies-with-data`,
+    or `cudaChooseDevice`. `gpu-profile capture` is still refused. Dual
+    score still has no `$/M tokens`.
+
+950. [x] `gpu-sim` `Sim::add_graph_dependencies_n_with_data` is
+    `cuGraphAddDependencies` v2. Identity with `graph_add_dependencies_n_with_data`
+    (`cudaGraphAddDependencies` v2). Capture refused. Distinct from
+    `add_graph_dependencies_with_data`. This VM does not invent occupancy SM counts, Engine `--graph-add-dependencies-n-with-data`,
+    or `cudaChooseDevice`. `gpu-profile capture` is still refused. Dual
+    score still has no `$/M tokens`.
+
+951. [x] `gpu-sim` `Sim::remove_graph_dependencies` is
+    `cuGraphRemoveDependencies`. Identity with `graph_remove_dependencies`
+    (`cudaGraphRemoveDependencies`). Capture refused. Distinct from
+    `graph_remove_dependencies_n`. This VM does not invent occupancy SM counts, Engine `--graph-remove-dependencies`,
+    or `cudaChooseDevice`. `gpu-profile capture` is still refused. Dual
+    score still has no `$/M tokens`.
+
+952. [x] `gpu-sim` `Sim::remove_graph_dependencies_n` is
+    `cuGraphRemoveDependencies` of pairs. Identity with `graph_remove_dependencies_n`
+    (`cudaGraphRemoveDependencies` of pairs). Capture refused. Distinct from
+    `remove_graph_dependencies`. This VM does not invent occupancy SM counts, Engine `--graph-remove-dependencies-n`,
+    or `cudaChooseDevice`. `gpu-profile capture` is still refused. Dual
+    score still has no `$/M tokens`.
+
+953. [x] `gpu-sim` `Sim::remove_graph_dependencies_with_data` is
+    `cuGraphRemoveDependencies` with data. Identity with `graph_remove_dependencies_with_data`
+    (`cudaGraphRemoveDependencies` with data). Capture refused. Distinct from
+    `remove_graph_dependencies_n`. This VM does not invent occupancy SM counts, Engine `--graph-remove-dependencies-with-data`,
+    or `cudaChooseDevice`. `gpu-profile capture` is still refused. Dual
+    score still has no `$/M tokens`.
+
+954. [x] `gpu-sim` `Sim::remove_graph_dependencies_n_with_data` is
+    `cuGraphRemoveDependencies` v2. Identity with `graph_remove_dependencies_n_with_data`
+    (`cudaGraphRemoveDependencies` v2). Capture refused. Distinct from
+    `remove_graph_dependencies_with_data`. This VM does not invent occupancy SM counts, Engine `--graph-remove-dependencies-n-with-data`,
+    or `cudaChooseDevice`. `gpu-profile capture` is still refused. Dual
+    score still has no `$/M tokens`.
+
+955. [x] `gpu-sim` `Sim::destroy_graph_node` is
+    `cuGraphDestroyNode`. Identity with `graph_destroy_node`
+    (`cudaGraphDestroyNode`). Capture refused. Distinct from
+    `graph_destroy`. This VM does not invent occupancy SM counts, Engine `--graph-destroy-node`,
+    or `cudaChooseDevice`. `gpu-profile capture` is still refused. Dual
+    score still has no `$/M tokens`.
+
+956. [x] `gpu-sim` `Sim::launch_device_graph` is
+    device-side `cuGraphLaunch`. Identity with `device_launch_graph`
+    (device-side `cudaGraphLaunch`). Capture refused. Distinct from
+    `graph_launch`. This VM does not invent occupancy SM counts, Engine `--device-launch-graph`,
+    or `cudaChooseDevice`. `gpu-profile capture` is still refused. Dual
+    score still has no `$/M tokens`.
+
+957. [x] `gpu-sim` `Sim::get_current_graph_exec` is
+    `cuGetCurrentGraphExec`. Identity with `current_graph_exec`
+    (`cudaGetCurrentGraphExec`). Query; legal during capture. Distinct from
+    `launch_device_graph`. This VM does not invent occupancy SM counts, Engine `--get-current-graph-exec`,
+    or `cudaChooseDevice`. `gpu-profile capture` is still refused. Dual
+    score still has no `$/M tokens`.
+
+958. [x] `gpu-sim` `Sim::add_graph_empty` is
+    `cuGraphAddEmptyNode`. Identity with `graph_add_empty`
+    (`cudaGraphAddEmptyNode`). Capture refused. Distinct from
+    `graph_add_child`. This VM does not invent occupancy SM counts, Engine `--graph-add-empty`,
+    or `cudaChooseDevice`. `gpu-profile capture` is still refused. Dual
+    score still has no `$/M tokens`.
+
+959. [x] `gpu-sim` `Sim::add_graph_child` is
+    `cuGraphAddChildGraphNode`. Identity with `graph_add_child`
+    (`cudaGraphAddChildGraphNode`). Capture refused. Distinct from
+    `add_graph_empty`. This VM does not invent occupancy SM counts, Engine `--graph-add-child`,
+    or `cudaChooseDevice`. `gpu-profile capture` is still refused. Dual
+    score still has no `$/M tokens`.
+
+960. [x] `gpu-sim` `Sim::add_graph_host` is
+    `cuGraphAddHostNode`. Identity with `graph_add_host_func_params`
+    (`cudaGraphAddHostNode`). Capture refused. Distinct from
+    `add_graph_child`. This VM does not invent occupancy SM counts, Engine `--graph-add-host`,
+    or `cudaChooseDevice`. `gpu-profile capture` is still refused. Dual
+    score still has no `$/M tokens`.
+
+961. [x] `gpu-sim` `Sim::add_graph_event_record` is
+    `cuGraphAddEventRecordNode`. Identity with `graph_add_event_record`
+    (`cudaGraphAddEventRecordNode`). Capture refused. Distinct from
+    `add_graph_host`. This VM does not invent occupancy SM counts, Engine `--graph-add-event-record`,
+    or `cudaChooseDevice`. `gpu-profile capture` is still refused. Dual
+    score still has no `$/M tokens`.
+
+962. [x] `gpu-sim` `Sim::add_graph_event_wait` is
+    `cuGraphAddEventWaitNode`. Identity with `graph_add_event_wait`
+    (`cudaGraphAddEventWaitNode`). Capture refused. Distinct from
+    `add_graph_event_record`. This VM does not invent occupancy SM counts, Engine `--graph-add-event-wait`,
+    or `cudaChooseDevice`. `gpu-profile capture` is still refused. Dual
+    score still has no `$/M tokens`.
+
+963. [x] `gpu-sim` `Sim::add_graph_kernel` is
+    `cuGraphAddKernelNode`. Identity with `graph_add_kernel`
+    (`cudaGraphAddKernelNode`). Capture refused. Distinct from
+    `add_graph_event_wait`. This VM does not invent occupancy SM counts, Engine `--graph-add-kernel`,
+    or `cudaChooseDevice`. `gpu-profile capture` is still refused. Dual
+    score still has no `$/M tokens`.
+
+964. [x] `gpu-sim` `Sim::add_graph_memcpy` is
+    `cuGraphAddMemcpyNode`. Identity with `graph_add_memcpy`
+    (`cudaGraphAddMemcpyNode`). Capture refused. Distinct from
+    `add_graph_kernel`. This VM does not invent occupancy SM counts, Engine `--graph-add-memcpy`,
+    or `cudaChooseDevice`. `gpu-profile capture` is still refused. Dual
+    score still has no `$/M tokens`.
+
+965. [x] `gpu-sim` `Sim::add_graph_memcpy_1d` is
+    `cuGraphAddMemcpyNode1D`. Identity with `graph_add_memcpy_1d`
+    (`cudaGraphAddMemcpyNode1D`). Capture refused. Distinct from
+    `add_graph_memcpy`. This VM does not invent occupancy SM counts, Engine `--graph-add-memcpy-1d`,
+    or `cudaChooseDevice`. `gpu-profile capture` is still refused. Dual
+    score still has no `$/M tokens`.
+
+966. [x] `gpu-sim` `Sim::add_graph_memcpy_2d` is
+    2D `cuGraphAddMemcpyNode`. Identity with `graph_add_memcpy_2d`
+    (`cudaGraphAddMemcpyNode` 2D). Capture refused. Distinct from
+    `add_graph_memcpy_1d`. This VM does not invent occupancy SM counts, Engine `--graph-add-memcpy-2d`,
+    or `cudaChooseDevice`. `gpu-profile capture` is still refused. Dual
+    score still has no `$/M tokens`.
+
+967. [x] `gpu-sim` `Sim::add_graph_memcpy_3d` is
+    3D `cuGraphAddMemcpyNode`. Identity with `graph_add_memcpy_3d`
+    (`cudaGraphAddMemcpyNode` 3D). Capture refused. Distinct from
+    `add_graph_memcpy_2d`. This VM does not invent occupancy SM counts, Engine `--graph-add-memcpy-3d`,
+    or `cudaChooseDevice`. `gpu-profile capture` is still refused. Dual
+    score still has no `$/M tokens`.
+
+968. [x] `gpu-sim` `Sim::add_graph_memset` is
+    packed 1D `cuGraphAddMemsetNode`. Identity with `graph_add_memset`
+    (`cudaGraphAddMemsetNode` packed 1D). Capture refused. Distinct from
+    `add_graph_memcpy_3d`. This VM does not invent occupancy SM counts, Engine `--graph-add-memset`,
+    or `cudaChooseDevice`. `gpu-profile capture` is still refused. Dual
+    score still has no `$/M tokens`.
+
+969. [x] `gpu-sim` `Sim::add_graph_memset_op` is
+    `cuGraphAddMemsetNode` params. Identity with `graph_add_memset_op`
+    (`cudaGraphAddMemsetNode` with `MemsetOp`). Capture refused. Distinct from
+    `add_graph_memset`. This VM does not invent occupancy SM counts, Engine `--graph-add-memset-op`,
+    or `cudaChooseDevice`. `gpu-profile capture` is still refused. Dual
+    score still has no `$/M tokens`.
+
+970. [x] `gpu-sim` `Sim::add_graph_memset_2d` is
+    2D `cuGraphAddMemsetNode`. Identity with `graph_add_memset_2d`
+    (`cudaGraphAddMemsetNode` 2D). Capture refused. Distinct from
+    `add_graph_memset_op`. This VM does not invent occupancy SM counts, Engine `--graph-add-memset-2d`,
+    or `cudaChooseDevice`. `gpu-profile capture` is still refused. Dual
+    score still has no `$/M tokens`.
+
+971. [x] `gpu-sim` `Sim::add_graph_memset_3d` is
+    3D `cuGraphAddMemsetNode`. Identity with `graph_add_memset_3d`
+    (`cudaGraphAddMemsetNode` 3D). Capture refused. Distinct from
+    `add_graph_memset_2d`. This VM does not invent occupancy SM counts, Engine `--graph-add-memset-3d`,
+    or `cudaChooseDevice`. `gpu-profile capture` is still refused. Dual
+    score still has no `$/M tokens`.
+
+972. [x] `gpu-sim` `Sim::add_graph_batch_mem_op` is
+    `cuGraphAddBatchMemOpNode`. Identity with `graph_add_batch_mem_op`
+    (`cudaGraphAddBatchMemOpNode`). Capture refused. Distinct from
+    `add_graph_memset_3d`. This VM does not invent occupancy SM counts, Engine `--graph-add-batch-mem-op`,
+    or `cudaChooseDevice`. `gpu-profile capture` is still refused. Dual
+    score still has no `$/M tokens`.
+
+973. [x] `gpu-sim` `Sim::add_graph_batch_mem_op_with_flags` is
+    `cuGraphAddBatchMemOpNode` flags. Identity with `graph_add_batch_mem_op_with_flags`
+    (`cudaGraphAddBatchMemOpNode` flags). Capture refused. Distinct from
+    `add_graph_batch_mem_op`. This VM does not invent occupancy SM counts, Engine `--graph-add-batch-mem-op-with-flags`,
+    or `cudaChooseDevice`. `gpu-profile capture` is still refused. Dual
+    score still has no `$/M tokens`.
+
+974. [x] `gpu-sim` `Sim::add_graph_alloc` is
+    `cuGraphAddMemAllocNode`. Identity with `graph_add_alloc`
+    (`cudaGraphAddMemAllocNode`). Capture refused. Distinct from
+    `add_graph_batch_mem_op_with_flags`. This VM does not invent occupancy SM counts, Engine `--graph-add-alloc`,
+    or `cudaChooseDevice`. `gpu-profile capture` is still refused. Dual
+    score still has no `$/M tokens`.
+
+975. [x] `gpu-sim` `Sim::add_graph_alloc_with_access` is
+    `cuGraphAddMemAllocNode` access. Identity with `graph_add_alloc_with_access`
+    (`cudaGraphAddMemAllocNode` accessDescs). Capture refused. Distinct from
+    `add_graph_alloc`. This VM does not invent occupancy SM counts, Engine `--graph-add-alloc-with-access`,
+    or `cudaChooseDevice`. `gpu-profile capture` is still refused. Dual
+    score still has no `$/M tokens`.
+
+976. [x] `gpu-sim` `Sim::add_graph_free` is
+    `cuGraphAddMemFreeNode`. Identity with `graph_add_free`
+    (`cudaGraphAddMemFreeNode`). Capture refused. Distinct from
+    `add_graph_alloc_with_access`. This VM does not invent occupancy SM counts, Engine `--graph-add-free`,
+    or `cudaChooseDevice`. `gpu-profile capture` is still refused. Dual
+    score still has no `$/M tokens`.
+
+977. [x] `gpu-sim` `Sim::add_graph_node` is
+    `cuGraphAddNode`. Identity with `graph_add_node`
+    (`cudaGraphAddNode`). Capture refused. Distinct from
+    `add_graph_free`. This VM does not invent occupancy SM counts, Engine `--graph-add-node`,
+    or `cudaChooseDevice`. `gpu-profile capture` is still refused. Dual
+    score still has no `$/M tokens`.
+
+978. [x] `gpu-sim` `Sim::add_graph_node_with_data` is
+    `cuGraphAddNode_v2`. Identity with `graph_add_node_with_data`
+    (`cudaGraphAddNode` with `dependencyData`). Capture refused. Distinct from
+    `add_graph_node`. This VM does not invent occupancy SM counts, Engine `--graph-add-node-with-data`,
+    or `cudaChooseDevice`. `gpu-profile capture` is still refused. Dual
+    score still has no `$/M tokens`.
+
+979. [x] `gpu-sim` `Sim::add_graph_if` is
+    `cuGraphAddNode` IF. Identity with `graph_add_if`
+    (`cudaGraphAddNode` IF). Capture refused. Distinct from
+    `add_graph_node_with_data`. This VM does not invent occupancy SM counts, Engine `--graph-add-if`,
+    or `cudaChooseDevice`. `gpu-profile capture` is still refused. Dual
+    score still has no `$/M tokens`.
+
+980. [x] `gpu-sim` `Sim::add_graph_if_else` is
+    `cuGraphAddNode` IF size 2. Identity with `graph_add_if_else`
+    (`cudaGraphAddNode` IF size 2). Capture refused. Distinct from
+    `add_graph_if`. This VM does not invent occupancy SM counts, Engine `--graph-add-if-else`,
+    or `cudaChooseDevice`. `gpu-profile capture` is still refused. Dual
+    score still has no `$/M tokens`.
+
+981. [x] `gpu-sim` `Sim::add_graph_while` is
+    `cuGraphAddNode` WHILE. Identity with `graph_add_while`
+    (`cudaGraphAddNode` WHILE). Capture refused. Distinct from
+    `add_graph_if_else`. This VM does not invent occupancy SM counts, Engine `--graph-add-while`,
+    or `cudaChooseDevice`. `gpu-profile capture` is still refused. Dual
+    score still has no `$/M tokens`.
+
+982. [x] `gpu-sim` `Sim::add_graph_switch` is
+    `cuGraphAddNode` SWITCH. Identity with `graph_add_switch`
+    (`cudaGraphAddNode` SWITCH). Capture refused. Distinct from
+    `add_graph_while`. This VM does not invent occupancy SM counts, Engine `--graph-add-switch`,
+    or `cudaChooseDevice`. `gpu-profile capture` is still refused. Dual
+    score still has no `$/M tokens`.
+
+983. [x] `gpu-sim` `Sim::add_graph_set_conditional` is
+    graph-build `cuGraphSetConditional`. Identity with `graph_add_set_conditional`
+    (graph-build `cudaGraphSetConditional`). Capture refused. Distinct from
+    `add_graph_switch`. This VM does not invent occupancy SM counts, Engine `--graph-add-set-conditional`,
+    or `cudaChooseDevice`. `gpu-profile capture` is still refused. Dual
+    score still has no `$/M tokens`.
+
+984. [x] `gpu-sim` `Sim::add_graph_write_value64` is
+    graph `cuStreamWriteValue64`. Identity with `graph_add_write_value64`
+    (`cuStreamWriteValue64` as `cudaGraphAddBatchMemOpNode`). Capture refused. Distinct from
+    `add_graph_set_conditional`. This VM does not invent occupancy SM counts, Engine `--graph-add-write-value64`,
+    or `cudaChooseDevice`. `gpu-profile capture` is still refused. Dual
+    score still has no `$/M tokens`.
+
+985. [x] `gpu-sim` `Sim::add_graph_write_value32` is
+    graph `cuStreamWriteValue32`. Identity with `graph_add_write_value32`
+    (`cuStreamWriteValue32` as `cudaGraphAddBatchMemOpNode`). Capture refused. Distinct from
+    `add_graph_write_value64`. This VM does not invent occupancy SM counts, Engine `--graph-add-write-value32`,
+    or `cudaChooseDevice`. `gpu-profile capture` is still refused. Dual
+    score still has no `$/M tokens`.
+
+986. [x] `gpu-sim` `Sim::add_graph_write_value64_with_flags` is
+    graph `cuStreamWriteValue64` flags. Identity with `graph_add_write_value64_with_flags`
+    (`cuStreamWriteValue64` flags). Capture refused. Distinct from
+    `add_graph_write_value32`. This VM does not invent occupancy SM counts, Engine `--graph-add-write-value64-with-flags`,
+    or `cudaChooseDevice`. `gpu-profile capture` is still refused. Dual
+    score still has no `$/M tokens`.
+
+987. [x] `gpu-sim` `Sim::add_graph_write_value32_with_flags` is
+    graph `cuStreamWriteValue32` flags. Identity with `graph_add_write_value32_with_flags`
+    (`cuStreamWriteValue32` flags). Capture refused. Distinct from
+    `add_graph_write_value64_with_flags`. This VM does not invent occupancy SM counts, Engine `--graph-add-write-value32-with-flags`,
+    or `cudaChooseDevice`. `gpu-profile capture` is still refused. Dual
+    score still has no `$/M tokens`.
+
+988. [x] `gpu-sim` `Sim::add_graph_wait_value64` is
+    graph `cuStreamWaitValue64`. Identity with `graph_add_wait_value64`
+    (`cuStreamWaitValue64` as `cudaGraphAddBatchMemOpNode`). Capture refused. Distinct from
+    `add_graph_write_value32_with_flags`. This VM does not invent occupancy SM counts, Engine `--graph-add-wait-value64`,
+    or `cudaChooseDevice`. `gpu-profile capture` is still refused. Dual
+    score still has no `$/M tokens`.
+
+989. [x] `gpu-sim` `Sim::add_graph_wait_value32` is
+    graph `cuStreamWaitValue32`. Identity with `graph_add_wait_value32`
+    (`cuStreamWaitValue32` as `cudaGraphAddBatchMemOpNode`). Capture refused. Distinct from
+    `add_graph_wait_value64`. This VM does not invent occupancy SM counts, Engine `--graph-add-wait-value32`,
+    or `cudaChooseDevice`. `gpu-profile capture` is still refused. Dual
+    score still has no `$/M tokens`.
+
+990. [x] `gpu-sim` `Sim::add_graph_wait_value64_with_flags` is
+    graph `cuStreamWaitValue64` flags. Identity with `graph_add_wait_value64_with_flags`
+    (`cuStreamWaitValue64` flags). Capture refused. Distinct from
+    `add_graph_wait_value32`. This VM does not invent occupancy SM counts, Engine `--graph-add-wait-value64-with-flags`,
+    or `cudaChooseDevice`. `gpu-profile capture` is still refused. Dual
+    score still has no `$/M tokens`.
+
+991. [x] `gpu-sim` `Sim::add_graph_wait_value32_with_flags` is
+    graph `cuStreamWaitValue32` flags. Identity with `graph_add_wait_value32_with_flags`
+    (`cuStreamWaitValue32` flags). Capture refused. Distinct from
+    `add_graph_wait_value64_with_flags`. This VM does not invent occupancy SM counts, Engine `--graph-add-wait-value32-with-flags`,
+    or `cudaChooseDevice`. `gpu-profile capture` is still refused. Dual
+    score still has no `$/M tokens`.
+
+992. [x] `gpu-sim` `Sim::add_graph_cooperative_kernel` is
+    graph cooperative `cudaGraphAddKernelNode`. Identity with `graph_add_cooperative_kernel`
+    (`cudaGraphAddKernelNode` for a cooperative launch). Capture refused. Distinct from
+    `add_graph_kernel`. This VM does not invent occupancy SM counts, Engine `--graph-add-cooperative-kernel`,
+    or `cudaChooseDevice`. `gpu-profile capture` is still refused. Dual
+    score still has no `$/M tokens`.
+
+993. [x] `gpu-sim` `Sim::add_graph_host_func` is
+    graph unnamed `cudaGraphAddHostNode`. Identity with `graph_add_host_func`
+    (`cudaGraphAddHostNode` with the unnamed callback). Capture refused. Distinct from
+    `add_graph_host`. This VM does not invent occupancy SM counts, Engine `--graph-add-host-func`,
+    or `cudaChooseDevice`. `gpu-profile capture` is still refused. Dual
+    score still has no `$/M tokens`.
+
+994. [x] `gpu-sim` `Sim::set_graph_memcpy_node_params_1d` is
+    graph `cudaGraphMemcpyNodeSetParams1D`. Identity with `graph_memcpy_set_params_1d`
+    (`cudaGraphMemcpyNodeSetParams1D`). Capture refused. Distinct from
+    `set_graph_memcpy_node_params`. This VM does not invent occupancy SM counts, Engine `--graph-memcpy-set-params-1d`,
+    or `cudaChooseDevice`. `gpu-profile capture` is still refused. Dual
+    score still has no `$/M tokens`.
+
+995. [x] `gpu-sim` `Sim::set_graph_exec_memcpy_node_params_1d` is
+    graph `cudaGraphExecMemcpyNodeSetParams1D`. Identity with `graph_exec_memcpy_set_params_1d`
+    (`cudaGraphExecMemcpyNodeSetParams1D`). Capture refused. Distinct from
+    `set_graph_exec_memcpy_node_params`. This VM does not invent occupancy SM counts, Engine `--graph-exec-memcpy-set-params-1d`,
+    or `cudaChooseDevice`. `gpu-profile capture` is still refused. Dual
+    score still has no `$/M tokens`.
+
+996. [x] `gpu-sim` `Sim::graph_create` is
+    `cuGraphCreate`. Identity with `create_graph`
+    (`cudaGraphCreate`). Capture refused. Distinct from
+    `create_graph_with_flags`. This VM does not invent occupancy SM counts, Engine `--graph-create`,
+    or `cudaChooseDevice`. `gpu-profile capture` is still refused. Dual
+    score still has no `$/M tokens`.
+
+997. [x] `gpu-sim` `Sim::graph_create_with_flags` is
+    `cuGraphCreate` flags. Identity with `create_graph_with_flags`
+    (`cudaGraphCreate` flags). Capture refused. Distinct from
+    `graph_create`. This VM does not invent occupancy SM counts, Engine `--graph-create-with-flags`,
+    or `cudaChooseDevice`. `gpu-profile capture` is still refused. Dual
+    score still has no `$/M tokens`.
+
+998. [x] `gpu-sim` `Sim::create_user_object` is
+    `cuUserObjectCreate`. Identity with `user_object_create`
+    (`cudaUserObjectCreate`). Capture refused. Distinct from
+    `graph_create_with_flags`. This VM does not invent occupancy SM counts, Engine `--create-user-object`,
+    or `cudaChooseDevice`. `gpu-profile capture` is still refused. Dual
+    score still has no `$/M tokens`.
+
+999. [x] `gpu-sim` `Sim::retain_user_object` is
+    `cuUserObjectRetain`. Identity with `user_object_retain`
+    (`cudaUserObjectRetain`). Capture refused. Distinct from
+    `create_user_object`. This VM does not invent occupancy SM counts, Engine `--retain-user-object`,
+    or `cudaChooseDevice`. `gpu-profile capture` is still refused. Dual
+    score still has no `$/M tokens`.
+
+1000. [x] `gpu-sim` `Sim::release_user_object` is
+    `cuUserObjectRelease`. Identity with `user_object_release`
+    (`cudaUserObjectRelease`). Capture refused. Distinct from
+    `retain_user_object`. This VM does not invent occupancy SM counts, Engine `--release-user-object`,
+    or `cudaChooseDevice`. `gpu-profile capture` is still refused. Dual
+    score still has no `$/M tokens`.
+
+1001. [x] `gpu-sim` `Sim::retain_graph_user_object` is
+    `cuGraphRetainUserObject`. Identity with `graph_retain_user_object`
+    (`cudaGraphRetainUserObject`). Capture refused. Distinct from
+    `release_user_object`. This VM does not invent occupancy SM counts, Engine `--retain-graph-user-object`,
+    or `cudaChooseDevice`. `gpu-profile capture` is still refused. Dual
+    score still has no `$/M tokens`.
+
+1002. [x] `gpu-sim` `Sim::release_graph_user_object` is
+    `cuGraphReleaseUserObject`. Identity with `graph_release_user_object`
+    (`cudaGraphReleaseUserObject`). Capture refused. Distinct from
+    `retain_graph_user_object`. This VM does not invent occupancy SM counts, Engine `--release-graph-user-object`,
+    or `cudaChooseDevice`. `gpu-profile capture` is still refused. Dual
+    score still has no `$/M tokens`.
+
+1003. [x] `gpu-sim` `Sim::get_graph_alloc_node_params` is
+    `cuGraphMemAllocNodeGetParams`. Identity with `graph_alloc_get_params`
+    (`cudaGraphMemAllocNodeGetParams`). Query; legal during capture. Distinct from
+    `graph_exec_alloc_get_params`. This VM does not invent occupancy SM counts, Engine `--graph-alloc-get-params`,
+    or `cudaChooseDevice`. `gpu-profile capture` is still refused. Dual
+    score still has no `$/M tokens`.
+
+1004. [x] `gpu-sim` `Sim::get_graph_exec_alloc_node_params` is
+    `cuGraphExecMemAllocNodeGetParams`. Identity with `graph_exec_alloc_get_params`
+    (`cudaGraphExecMemAllocNodeGetParams`). Query; legal during capture. Distinct from
+    `get_graph_alloc_node_params`. This VM does not invent occupancy SM counts, Engine `--graph-exec-alloc-get-params`,
+    or `cudaChooseDevice`. `gpu-profile capture` is still refused. Dual
+    score still has no `$/M tokens`.
+
+1005. [x] `gpu-sim` `Sim::get_graph_free_node_params` is
+    `cuGraphMemFreeNodeGetParams`. Identity with `graph_free_get_params`
+    (`cudaGraphMemFreeNodeGetParams`). Query; legal during capture. Distinct from
+    `graph_exec_free_get_params`. This VM does not invent occupancy SM counts, Engine `--graph-free-get-params`,
+    or `cudaChooseDevice`. `gpu-profile capture` is still refused. Dual
+    score still has no `$/M tokens`.
+
+1006. [x] `gpu-sim` `Sim::get_graph_exec_free_node_params` is
+    `cuGraphExecMemFreeNodeGetParams`. Identity with `graph_exec_free_get_params`
+    (`cudaGraphExecMemFreeNodeGetParams`). Query; legal during capture. Distinct from
+    `get_graph_free_node_params`. This VM does not invent occupancy SM counts, Engine `--graph-exec-free-get-params`,
+    or `cudaChooseDevice`. `gpu-profile capture` is still refused. Dual
+    score still has no `$/M tokens`.
+
+1007. [x] `gpu-sim` `Sim::set_graph_free_node_params` is
+    `cuGraphMemFreeNodeSetParams`. Identity with `graph_free_set_params`
+    (`cudaGraphMemFreeNodeSetParams`). Capture refused. Distinct from
+    `graph_exec_free_set_params`. This VM does not invent occupancy SM counts, Engine `--graph-free-set-params`,
+    or `cudaChooseDevice`. `gpu-profile capture` is still refused. Dual
+    score still has no `$/M tokens`.
+
+1008. [x] `gpu-sim` `Sim::set_graph_exec_free_node_params` is
+    `cuGraphExecMemFreeNodeSetParams`. Identity with `graph_exec_free_set_params`
+    (`cudaGraphExecMemFreeNodeSetParams`). Capture refused. Distinct from
+    `set_graph_free_node_params`. This VM does not invent occupancy SM counts, Engine `--graph-exec-free-set-params`,
+    or `cudaChooseDevice`. `gpu-profile capture` is still refused. Dual
+    score still has no `$/M tokens`.
+
+1009. [x] `gpu-sim` `Sim::set_graph_conditional_params` is
+    `cuGraphNodeSetParams` for a set-conditional node. Identity with `graph_set_conditional_params`
+    (`cudaGraphNodeSetParams`). Capture refused. Distinct from
+    `graph_exec_set_conditional_params`. This VM does not invent occupancy SM counts, Engine `--graph-set-conditional-params`,
+    or `cudaChooseDevice`. `gpu-profile capture` is still refused. Dual
+    score still has no `$/M tokens`.
+
+1010. [x] `gpu-sim` `Sim::set_graph_exec_conditional_params` is
+    `cuGraphExecNodeSetParams` for a set-conditional node. Identity with `graph_exec_set_conditional_params`
+    (`cudaGraphExecNodeSetParams`). Capture refused. Distinct from
+    `set_graph_conditional_params`. This VM does not invent occupancy SM counts, Engine `--graph-exec-set-conditional-params`,
+    or `cudaChooseDevice`. `gpu-profile capture` is still refused. Dual
+    score still has no `$/M tokens`.
+
+1011. [x] `gpu-sim` `Sim::create_graph_conditional_handle` is
+    `cuGraphConditionalHandleCreate`. Identity with `graph_conditional_create`
+    (`cudaGraphConditionalHandleCreate`). Capture refused. Distinct from
+    `set_graph_exec_conditional_params`. This VM does not invent occupancy SM counts, Engine `--graph-conditional-create`,
+    or `cudaChooseDevice`. `gpu-profile capture` is still refused. Dual
+    score still has no `$/M tokens`.
+
+1012. [x] `gpu-sim` `Sim::create_graph_conditional_handle_with_flags` is
+    `cuGraphConditionalHandleCreate` flags. Identity with `graph_conditional_create_with_flags`
+    (`cudaGraphConditionalHandleCreate` flags). Capture refused. Distinct from
+    `create_graph_conditional_handle`. This VM does not invent occupancy SM counts, Engine `--graph-conditional-create-with-flags`,
+    or `cudaChooseDevice`. `gpu-profile capture` is still refused. Dual
+    score still has no `$/M tokens`.
+
+1013. [x] `gpu-sim` `Sim::create_graph_conditional_handle_with_ctx` is
+    `cuGraphConditionalHandleCreate` with a ctx argument. Identity with `graph_conditional_create_with_ctx`
+    (`cudaGraphConditionalHandleCreate` with ctx). Capture refused. Distinct from
+    `create_graph_conditional_handle_with_flags`. This VM does not invent occupancy SM counts, Engine `--graph-conditional-create-with-ctx`,
+    or `cudaChooseDevice`. `gpu-profile capture` is still refused. Dual
+    score still has no `$/M tokens`.
+
+1014. [x] `gpu-sim` `Sim::stream_begin_capture` is
+    `cuStreamBeginCapture`. Identity with `begin_capture`
+    (`cudaStreamBeginCapture`). Nested capture refused. Distinct from
+    `begin_capture_with_mode`. This VM does not invent occupancy SM counts, Engine `--stream-begin-capture`,
+    or `cudaChooseDevice`. `gpu-profile capture` is still refused. Dual
+    score still has no `$/M tokens`.
+
+1015. [x] `gpu-sim` `Sim::stream_begin_capture_with_mode` is
+    `cuStreamBeginCapture` with mode. Identity with `begin_capture_with_mode`
+    (`cudaStreamBeginCapture` with mode). Nested capture refused. Distinct from
+    `stream_begin_capture`. This VM does not invent occupancy SM counts, Engine `--stream-begin-capture-with-mode`,
+    or `cudaChooseDevice`. `gpu-profile capture` is still refused. Dual
+    score still has no `$/M tokens`.
+
+1016. [x] `gpu-sim` `Sim::stream_begin_capture_to_graph` is
+    `cuStreamBeginCaptureToGraph`. Identity with `begin_capture_to_graph`
+    (`cudaStreamBeginCaptureToGraph`). Nested capture refused. Distinct from
+    `stream_begin_capture_with_mode`. This VM does not invent occupancy SM counts, Engine `--stream-begin-capture-to-graph`,
+    or `cudaChooseDevice`. `gpu-profile capture` is still refused. Dual
+    score still has no `$/M tokens`.
+
+1017. [x] `gpu-sim` `Sim::stream_begin_capture_to_graph_with_mode` is
+    `cuStreamBeginCaptureToGraph` with mode. Identity with `begin_capture_to_graph_with_mode`
+    (`cudaStreamBeginCaptureToGraph` with mode). Nested capture refused. Distinct from
+    `stream_begin_capture_to_graph`. This VM does not invent occupancy SM counts, Engine `--stream-begin-capture-to-graph-with-mode`,
+    or `cudaChooseDevice`. `gpu-profile capture` is still refused. Dual
+    score still has no `$/M tokens`.
+
+1018. [x] `gpu-sim` `Sim::stream_begin_recapture_to_graph` is
+    `cuStreamBeginRecaptureToGraph`. Identity with `begin_recapture_to_graph`
+    (`cudaStreamBeginRecaptureToGraph`). Nested capture refused. Distinct from
+    `stream_begin_capture_to_graph_with_mode`. This VM does not invent occupancy SM counts, Engine `--stream-begin-recapture-to-graph`,
+    or `cudaChooseDevice`. `gpu-profile capture` is still refused. Dual
+    score still has no `$/M tokens`.
+
+1019. [x] `gpu-sim` `Sim::stream_begin_recapture_to_graph_with_mode` is
+    `cuStreamBeginRecaptureToGraph` with mode. Identity with `begin_recapture_to_graph_with_mode`
+    (`cudaStreamBeginRecaptureToGraph` with mode). Nested capture refused. Distinct from
+    `stream_begin_recapture_to_graph`. This VM does not invent occupancy SM counts, Engine `--stream-begin-recapture-to-graph-with-mode`,
+    or `cudaChooseDevice`. `gpu-profile capture` is still refused. Dual
+    score still has no `$/M tokens`.
+
+1020. [x] `gpu-sim` `Sim::stream_begin_recapture_to_graph_with_callback` is
+    `cuStreamBeginRecaptureToGraph` with callback. Identity with `begin_recapture_to_graph_with_callback`
+    (`cudaStreamBeginRecaptureToGraph` with callback). Nested capture refused. Distinct from
+    `stream_begin_recapture_to_graph_with_mode`. This VM does not invent occupancy SM counts, Engine `--stream-begin-recapture-to-graph-with-callback`,
+    or `cudaChooseDevice`. `gpu-profile capture` is still refused. Dual
+    score still has no `$/M tokens`.
+
+1021. [x] `gpu-sim` `Sim::stream_end_capture` is
+    `cuStreamEndCapture`. Identity with `end_capture`
+    (`cudaStreamEndCapture`). Without begin refused. Distinct from
+    `stream_begin_recapture_to_graph_with_callback`. This VM does not invent occupancy SM counts, Engine `--stream-end-capture`,
+    or `cudaChooseDevice`. `gpu-profile capture` is still refused. Dual
+    score still has no `$/M tokens`.
+
+1022. [x] `gpu-sim` `Sim::update_stream_capture_dependencies` is
+    `cuStreamUpdateCaptureDependencies`. Identity with `stream_update_capture_dependencies`
+    (`cudaStreamUpdateCaptureDependencies`). Not capturing refused. Distinct from
+    `stream_end_capture`. This VM does not invent occupancy SM counts, Engine `--update-stream-capture-dependencies`,
+    or `cudaChooseDevice`. `gpu-profile capture` is still refused. Dual
+    score still has no `$/M tokens`.
+
+1023. [x] `gpu-sim` `Sim::is_stream_capturing` is
+    `cuStreamIsCapturing`. Identity with `stream_is_capturing`
+    (`cudaStreamIsCapturing`). Query; legal during capture. Distinct from
+    `update_stream_capture_dependencies`. This VM does not invent occupancy SM counts, Engine `--is-stream-capturing`,
+    or `cudaChooseDevice`. `gpu-profile capture` is still refused. Dual
+    score still has no `$/M tokens`.
+
+1024. [x] `gpu-sim` `Sim::get_stream_capture_info` is
+    `cuStreamGetCaptureInfo`. Identity with `stream_capture_info`
+    (`cudaStreamGetCaptureInfo`). Query; legal during capture. Distinct from
+    `is_stream_capturing`. This VM does not invent occupancy SM counts, Engine `--get-stream-capture-info`,
+    or `cudaChooseDevice`. `gpu-profile capture` is still refused. Dual
+    score still has no `$/M tokens`.
+
+1025. [x] `gpu-sim` `Sim::exchange_thread_stream_capture_mode` is
+    `cuThreadExchangeStreamCaptureMode`. Identity with `thread_exchange_stream_capture_mode`
+    (`cudaThreadExchangeStreamCaptureMode`). Returns previous; legal during capture. Distinct from
+    `get_stream_capture_info`. This VM does not invent occupancy SM counts, Engine `--exchange-thread-stream-capture-mode`,
+    or `cudaChooseDevice`. `gpu-profile capture` is still refused. Dual
+    score still has no `$/M tokens`.
+
+1026. [x] `gpu-sim` `Sim::get_stream_capture_mode` is
+    the thread-default `cudaStreamCaptureMode` query. Identity with `stream_capture_mode`.
+    Query; legal during capture. Distinct from
+    `exchange_thread_stream_capture_mode`. This VM does not invent occupancy SM counts, Engine `--get-stream-capture-mode`,
+    or `cudaChooseDevice`. `gpu-profile capture` is still refused. Dual
+    score still has no `$/M tokens`.
+
+1027. [x] `gpu-sim` `Sim::event_flags` is
+    `cuEventGetFlags`. Identity with `event_get_flags`
+    (`cudaEventGetFlags`). Query; legal during capture. Distinct from
+    `get_stream_capture_mode`. This VM does not invent occupancy SM counts, Engine `--event-flags`,
+    or `cudaChooseDevice`. `gpu-profile capture` is still refused. Dual
+    score still has no `$/M tokens`.
+
+1028. [x] `gpu-sim` `Sim::ctx_enable_peer_access` is
+    `cuCtxEnablePeerAccess`. Identity with `enable_peer`
+    (`cudaDeviceEnablePeerAccess`). Capture legal. Distinct from
+    `event_flags`. This VM does not invent occupancy SM counts, Engine `--ctx-enable-peer-access`,
+    or `cudaChooseDevice`. `gpu-profile capture` is still refused. Dual
+    score still has no `$/M tokens`.
+
+1029. [x] `gpu-sim` `Sim::ctx_enable_peer_access_with_flags` is
+    `cuCtxEnablePeerAccess` with flags. Identity with `enable_peer_with_flags`
+    (`cudaDeviceEnablePeerAccess` with flags). Nonzero flags refused. Distinct from
+    `ctx_enable_peer_access`. This VM does not invent occupancy SM counts, Engine `--ctx-enable-peer-access-with-flags`,
+    or `cudaChooseDevice`. `gpu-profile capture` is still refused. Dual
+    score still has no `$/M tokens`.
+
+1030. [x] `gpu-sim` `Sim::ctx_disable_peer_access` is
+    `cuCtxDisablePeerAccess`. Identity with `disable_peer`
+    (`cudaDeviceDisablePeerAccess`). Unknown device refused. Distinct from
+    `ctx_enable_peer_access_with_flags`. This VM does not invent occupancy SM counts, Engine `--ctx-disable-peer-access`,
+    or `cudaChooseDevice`. `gpu-profile capture` is still refused. Dual
+    score still has no `$/M tokens`.
+
+1031. [x] `gpu-sim` `Sim::can_device_access_peer` is
+    `cuDeviceCanAccessPeer`. Identity with `device_can_access_peer`
+    (`cudaDeviceCanAccessPeer`). Query; legal during capture. Distinct from
+    `ctx_disable_peer_access`. This VM does not invent occupancy SM counts, Engine `--can-device-access-peer`,
+    or `cudaChooseDevice`. `gpu-profile capture` is still refused. Dual
+    score still has no `$/M tokens`.
+
+1032. [x] `gpu-sim` `Sim::device_p2p_attribute` is
+    `cuDeviceGetP2PAttribute`. Identity with `device_get_p2p_attribute`
+    (`cudaDeviceGetP2PAttribute`). Query; legal during capture. Distinct from
+    `can_device_access_peer`. This VM does not invent occupancy SM counts, Engine `--device-p2p-attribute`,
+    or `cudaChooseDevice`. `gpu-profile capture` is still refused. Dual
+    score still has no `$/M tokens`.
+
+1033. [x] `gpu-sim` `Sim::device_nvscisync_attributes` is
+    `cuDeviceGetNvSciSyncAttributes`. Identity with `device_get_nvscisync_attributes`
+    (`cudaDeviceGetNvSciSyncAttributes`). Query; legal during capture. Distinct from
+    `device_p2p_attribute`. This VM does not invent occupancy SM counts, Engine `--device-nvscisync-attributes`,
+    or `cudaChooseDevice`. `gpu-profile capture` is still refused. Dual
+    score still has no `$/M tokens`.
+
+1034. [x] `gpu-sim` `Sim::device_flush_gpu_direct_rdma_writes` is
+    `cuFlushGPUDirectRDMAWrites`. Identity with `flush_gpu_direct_rdma_writes`
+    (`cudaDeviceFlushGPUDirectRDMAWrites`). Capture refused. Distinct from
+    `device_nvscisync_attributes`. This VM does not invent occupancy SM counts, Engine `--device-flush-gpu-direct-rdma-writes`,
+    or `cudaChooseDevice`. `gpu-profile capture` is still refused. Dual
+    score still has no `$/M tokens`.
+
+1035. [x] `gpu-sim` `Sim::mem_alloc_pitch` is
+    `cudaMallocPitch`. Identity with `malloc_pitch`. Capture refused. Distinct from
+    `malloc_pitch_with_element_size` (`cuMemAllocPitch`) and `device_flush_gpu_direct_rdma_writes`.
+    This VM does not invent occupancy SM counts, Engine `--mem-alloc-pitch`,
+    or `cudaChooseDevice`. `gpu-profile capture` is still refused. Dual
+    score still has no `$/M tokens`.
+
+1036. [x] `gpu-sim` `Sim::mem_alloc_3d` is
+    `cudaMalloc3D`. Identity with `malloc_3d`. Capture refused. Distinct from
+    `mem_alloc_pitch`. This VM does not invent occupancy SM counts, Engine `--mem-alloc-3d`,
+    or `cudaChooseDevice`. `gpu-profile capture` is still refused. Dual
+    score still has no `$/M tokens`.
+
+1037. [x] `gpu-sim` `Sim::launch_cooperative_kernel` is
+    `cuLaunchCooperativeKernel`. Identity with `cooperative_kernel`
+    (`cudaLaunchCooperativeKernel`). Capture legal. Distinct from
+    `mem_alloc_3d`. This VM does not invent occupancy SM counts, Engine `--launch-cooperative-kernel`,
+    or `cudaChooseDevice`. `gpu-profile capture` is still refused. Dual
+    score still has no `$/M tokens`.
+
+1038. [x] `gpu-sim` `Sim::launch_cooperative_kernel_bufs` is
+    `cuLaunchCooperativeKernel` spans. Identity with `cooperative_kernel_bufs`
+    (`cudaLaunchCooperativeKernel` spans). Capture legal. Distinct from
+    `launch_cooperative_kernel`. This VM does not invent occupancy SM counts, Engine `--launch-cooperative-kernel-bufs`,
+    or `cudaChooseDevice`. `gpu-profile capture` is still refused. Dual
+    score still has no `$/M tokens`.
+
+1039. [x] `gpu-sim` `Sim::launch_cooperative_kernel_multi_device` is
+    `cuLaunchCooperativeKernelMultiDevice`. Identity with `cooperative_kernel_multi_device`
+    (`cudaLaunchCooperativeKernelMultiDevice`). Query; legal during capture. Distinct from
+    `launch_cooperative_kernel_bufs`. This VM does not invent occupancy SM counts, Engine `--launch-cooperative-kernel-multi-device`,
+    or `cudaChooseDevice`. `gpu-profile capture` is still refused. Dual
+    score still has no `$/M tokens`.
+
+1040. [x] `gpu-sim` `Sim::mem_set` is
+    `cudaMemsetAsync`. Identity with `memset`. Capture legal. Distinct from
+    `memset_d8_async` (`cuMemsetD8Async`). This VM does not invent occupancy SM counts, Engine `--mem-set`,
+    or `cudaChooseDevice`. `gpu-profile capture` is still refused. Dual
+    score still has no `$/M tokens`.
+
+1041. [x] `gpu-sim` `Sim::mem_set_buf` is
+    `cudaMemsetAsync` spans. Identity with `memset_buf`. Capture legal. Distinct from
+    `mem_set`. This VM does not invent occupancy SM counts, Engine `--mem-set-buf`,
+    or `cudaChooseDevice`. `gpu-profile capture` is still refused. Dual
+    score still has no `$/M tokens`.
+
+1042. [x] `gpu-sim` `Sim::mem_set_op` is
+    `cudaMemsetAsync` / `cudaMemset2DAsync`. Identity with `memset_op`. Capture legal. Distinct from
+    `mem_set_buf`. This VM does not invent occupancy SM counts, Engine `--mem-set-op`,
+    or `cudaChooseDevice`. `gpu-profile capture` is still refused. Dual
+    score still has no `$/M tokens`.
+
+1043. [x] `gpu-sim` `Sim::mem_set_sync` is
+    `cudaMemset`. Identity with `memset_sync`. Capture refused. Distinct from
+    `mem_set_op`. This VM does not invent occupancy SM counts, Engine `--mem-set-sync`,
+    or `cudaChooseDevice`. `gpu-profile capture` is still refused. Dual
+    score still has no `$/M tokens`.
+
+1044. [x] `gpu-sim` `Sim::mem_set_op_sync` is
+    `cudaMemset` / `cudaMemset2D` / `cudaMemset3D`. Identity with `memset_op_sync`. Capture refused. Distinct from
+    `mem_set_sync`. This VM does not invent occupancy SM counts, Engine `--mem-set-op-sync`,
+    or `cudaChooseDevice`. `gpu-profile capture` is still refused. Dual
+    score still has no `$/M tokens`.
+
+1045. [x] `gpu-sim` `Sim::mem_set_2d_async` is
+    `cudaMemset2DAsync`. Identity with `memset_2d_async`. Capture legal. Distinct from
+    `mem_set_op_sync`. This VM does not invent occupancy SM counts, Engine `--mem-set-2d-async`,
+    or `cudaChooseDevice`. `gpu-profile capture` is still refused. Dual
+    score still has no `$/M tokens`.
+
+1046. [x] `gpu-sim` `Sim::mem_set_2d` is
+    `cudaMemset2D`. Identity with `memset_2d`. Capture refused. Distinct from
+    `mem_set_2d_async`. This VM does not invent occupancy SM counts, Engine `--mem-set-2d`,
+    or `cudaChooseDevice`. `gpu-profile capture` is still refused. Dual
+    score still has no `$/M tokens`.
+
+1047. [x] `gpu-sim` `Sim::mem_set_3d_async` is
+    `cudaMemset3DAsync`. Identity with `memset_3d_async`. Capture legal. Distinct from
+    `mem_set_2d`. This VM does not invent occupancy SM counts, Engine `--mem-set-3d-async`,
+    or `cudaChooseDevice`. `gpu-profile capture` is still refused. Dual
+    score still has no `$/M tokens`.
+
+1048. [x] `gpu-sim` `Sim::mem_set_3d` is
+    `cudaMemset3D`. Identity with `memset_3d`. Capture refused. Distinct from
+    `mem_set_3d_async`. This VM does not invent occupancy SM counts, Engine `--mem-set-3d`,
+    or `cudaChooseDevice`. `gpu-profile capture` is still refused. Dual
+    score still has no `$/M tokens`.
+
+1049. [x] `gpu-sim` `Sim::stream_write_value64` is
+    `cuStreamWriteValue64`. Identity with `write_value64`. Capture legal. Distinct from
+    `write_value32`. This VM does not invent occupancy SM counts, Engine `--stream-write-value64`,
+    or `cudaChooseDevice`. `gpu-profile capture` is still refused. Dual
+    score still has no `$/M tokens`.
+
+1050. [x] `gpu-sim` `Sim::stream_write_value32` is
+    `cuStreamWriteValue32`. Identity with `write_value32`. Capture legal. Distinct from
+    `stream_write_value64`. This VM does not invent occupancy SM counts, Engine `--stream-write-value32`,
+    or `cudaChooseDevice`. `gpu-profile capture` is still refused. Dual
+    score still has no `$/M tokens`.
+
+1051. [x] `gpu-sim` `Sim::stream_write_value64_with_flags` is
+    `cuStreamWriteValue64` flags. Identity with `write_value64_with_flags`. Capture legal. Distinct from
+    `stream_write_value32`. This VM does not invent occupancy SM counts, Engine `--stream-write-value64-with-flags`,
+    or `cudaChooseDevice`. `gpu-profile capture` is still refused. Dual
+    score still has no `$/M tokens`.
+
+1052. [x] `gpu-sim` `Sim::stream_write_value32_with_flags` is
+    `cuStreamWriteValue32` flags. Identity with `write_value32_with_flags`. Capture legal. Distinct from
+    `stream_write_value64_with_flags`. This VM does not invent occupancy SM counts, Engine `--stream-write-value32-with-flags`,
+    or `cudaChooseDevice`. `gpu-profile capture` is still refused. Dual
+    score still has no `$/M tokens`.
+
+1053. [x] `gpu-sim` `Sim::stream_wait_value64` is
+    `cuStreamWaitValue64`. Identity with `wait_value64`. Capture legal. Distinct from
+    `stream_write_value32_with_flags`. This VM does not invent occupancy SM counts, Engine `--stream-wait-value64`,
+    or `cudaChooseDevice`. `gpu-profile capture` is still refused. Dual
+    score still has no `$/M tokens`.
+
+1054. [x] `gpu-sim` `Sim::stream_wait_value32` is
+    `cuStreamWaitValue32`. Identity with `wait_value32`. Capture legal. Distinct from
+    `stream_wait_value64`. This VM does not invent occupancy SM counts, Engine `--stream-wait-value32`,
+    or `cudaChooseDevice`. `gpu-profile capture` is still refused. Dual
+    score still has no `$/M tokens`.
+
+1055. [x] `gpu-sim` `Sim::stream_wait_value64_with_flags` is
+    `cuStreamWaitValue64` flags. Identity with `wait_value64_with_flags`. Capture legal. Distinct from
+    `stream_wait_value32`. This VM does not invent occupancy SM counts, Engine `--stream-wait-value64-with-flags`,
+    or `cudaChooseDevice`. `gpu-profile capture` is still refused. Dual
+    score still has no `$/M tokens`.
+
+1056. [x] `gpu-sim` `Sim::stream_wait_value32_with_flags` is
+    `cuStreamWaitValue32` flags. Identity with `wait_value32_with_flags`. Capture legal. Distinct from
+    `stream_wait_value64_with_flags`. This VM does not invent occupancy SM counts, Engine `--stream-wait-value32-with-flags`,
+    or `cudaChooseDevice`. `gpu-profile capture` is still refused. Dual
+    score still has no `$/M tokens`.
+
+1057. [x] `gpu-sim` `Sim::stream_batch_mem_op` is
+    `cuStreamBatchMemOp`. Identity with `batch_mem_op`. Capture legal. Distinct from
+    `stream_wait_value32_with_flags`. This VM does not invent occupancy SM counts, Engine `--stream-batch-mem-op`,
+    or `cudaChooseDevice`. `gpu-profile capture` is still refused. Dual
+    score still has no `$/M tokens`.
+
+1058. [x] `gpu-sim` `Sim::stream_batch_mem_op_with_flags` is
+    `cuStreamBatchMemOp` flags. Identity with `batch_mem_op_with_flags`. Capture legal. Distinct from
+    `stream_batch_mem_op`. This VM does not invent occupancy SM counts, Engine `--stream-batch-mem-op-with-flags`,
+    or `cudaChooseDevice`. `gpu-profile capture` is still refused. Dual
+    score still has no `$/M tokens`.
+
+1059. [x] `gpu-sim` `Sim::launch_kernel` is
+    `cuLaunchKernel`. Identity with `kernel` (`cudaLaunchKernel`). Capture legal. Distinct from
+    `stream_batch_mem_op_with_flags`. This VM does not invent occupancy SM counts, Engine `--launch-kernel`,
+    or `cudaChooseDevice`. `gpu-profile capture` is still refused. Dual
+    score still has no `$/M tokens`.
+
+1060. [x] `gpu-sim` `Sim::launch_kernel_bufs` is
+    `cuLaunchKernel` spans. Identity with `kernel_bufs` (`cudaLaunchKernel` spans). Capture legal. Distinct from
+    `launch_kernel`. This VM does not invent occupancy SM counts, Engine `--launch-kernel-bufs`,
+    or `cudaChooseDevice`. `gpu-profile capture` is still refused. Dual
+    score still has no `$/M tokens`.
+
+1061. [x] `gpu-sim` `Sim::launch_kernel_ex` is
+    `cuLaunchKernelEx`. Identity with `kernel_with` (`cudaLaunchKernelEx`). Capture legal. Distinct from
+    `launch_kernel_bufs`. This VM does not invent occupancy SM counts, Engine `--launch-kernel-ex`,
+    or `cudaChooseDevice`. `gpu-profile capture` is still refused. Dual
+    score still has no `$/M tokens`.
+
+1062. [x] `gpu-sim` `Sim::launch_kernel_ex_bufs` is
+    `cuLaunchKernelEx` spans. Identity with `kernel_bufs_with` (`cudaLaunchKernelEx` spans). Capture legal. Distinct from
+    `launch_kernel_ex`. This VM does not invent occupancy SM counts, Engine `--launch-kernel-ex-bufs`,
+    or `cudaChooseDevice`. `gpu-profile capture` is still refused. Dual
+    score still has no `$/M tokens`.
+
+1063. [x] `gpu-sim` `Sim::func_set_shared_mem_config` is
+    `cuFuncSetSharedMemConfig`. Identity with `set_func_shared_mem_config` (`cudaFuncSetSharedMemConfig`). Capture refused. Distinct from
+    `launch_kernel_ex_bufs`. This VM does not invent occupancy SM counts, Engine `--func-set-shared-mem-config`,
+    or `cudaChooseDevice`. `gpu-profile capture` is still refused. Dual
+    score still has no `$/M tokens`.
+
+1064. [x] `gpu-sim` `Sim::func_get_shared_mem_config` is
+      `cuFuncGetSharedMemConfig`. Identity with `get_func_shared_mem_config` (`cudaFuncGetSharedMemConfig`). Query; legal during capture. Distinct from
+      `func_set_shared_mem_config`. This VM does not invent occupancy SM counts, Engine `--func-get-shared-mem-config`,
+      or `cudaChooseDevice`. `gpu-profile capture` is still refused. Dual
+      score still has no `$/M tokens`.
+1065. [x] `gpu-sim` `Sim::func_set_cache_config` is
+      `cuFuncSetCacheConfig`. Identity with `set_func_cache_config` (`cudaFuncSetCacheConfig`). Capture refused. Distinct from
+      `func_get_shared_mem_config`. This VM does not invent occupancy SM counts, Engine `--func-set-cache-config`,
+      or `cudaChooseDevice`. `gpu-profile capture` is still refused. Dual
+      score still has no `$/M tokens`.
+1066. [x] `gpu-sim` `Sim::func_set_carveout` is
+      `cuFuncSetAttribute` carveout. Identity with `set_func_carveout` (`cudaFuncSetAttribute` PreferredSharedMemoryCarveout). Capture legal. Distinct from
+      `func_set_cache_config`. This VM does not invent occupancy SM counts, Engine `--func-set-carveout`,
+      or `cudaChooseDevice`. `gpu-profile capture` is still refused. Dual
+      score still has no `$/M tokens`.
+1067. [x] `gpu-sim` `Sim::func_get_carveout` is
+      `cuFuncGetAttribute` carveout. Identity with `get_func_carveout` (`cudaFuncGetAttribute` PreferredSharedMemoryCarveout). Query; legal during capture. Distinct from
+      `func_set_carveout`. This VM does not invent occupancy SM counts, Engine `--func-get-carveout`,
+      or `cudaChooseDevice`. `gpu-profile capture` is still refused. Dual
+      score still has no `$/M tokens`.
+1068. [x] `gpu-sim` `Sim::func_set_cluster_policy` is
+      `cuFuncSetAttribute` cluster policy. Identity with `set_func_cluster_policy` (`cudaFuncSetAttribute` ClusterSchedulingPolicyPreference). Capture legal. Distinct from
+      `func_get_carveout`. This VM does not invent occupancy SM counts, Engine `--func-set-cluster-policy`,
+      or `cudaChooseDevice`. `gpu-profile capture` is still refused. Dual
+      score still has no `$/M tokens`.
+1069. [x] `gpu-sim` `Sim::func_get_cluster_policy` is
+      `cuFuncGetAttribute` cluster policy. Identity with `get_func_cluster_policy` (`cudaFuncGetAttribute` ClusterSchedulingPolicyPreference). Query; legal during capture. Distinct from
+      `func_set_cluster_policy`. This VM does not invent occupancy SM counts, Engine `--func-get-cluster-policy`,
+      or `cudaChooseDevice`. `gpu-profile capture` is still refused. Dual
+      score still has no `$/M tokens`.
+1070. [x] `gpu-sim` `Sim::func_set_cluster_dim_must_be_set` is
+      `cuFuncSetAttribute` cluster dim must be set. Identity with `set_cluster_dim_must_be_set` (`cudaFuncSetAttribute` ClusterDimMustBeSet). Capture legal. Distinct from
+      `func_get_cluster_policy`. This VM does not invent occupancy SM counts, Engine `--func-set-cluster-dim-must-be-set`,
+      or `cudaChooseDevice`. `gpu-profile capture` is still refused. Dual
+      score still has no `$/M tokens`.
+1071. [x] `gpu-sim` `Sim::func_get_cluster_dim_must_be_set` is
+      `cuFuncGetAttribute` cluster dim must be set. Identity with `cluster_dim_must_be_set` (`cudaFuncGetAttribute` ClusterDimMustBeSet). Query; legal during capture. Distinct from
+      `func_set_cluster_dim_must_be_set`. This VM does not invent occupancy SM counts, Engine `--func-get-cluster-dim-must-be-set`,
+      or `cudaChooseDevice`. `gpu-profile capture` is still refused. Dual
+      score still has no `$/M tokens`.
+1072. [x] `gpu-sim` `Sim::func_set_required_cluster_width` is
+      `cuFuncSetAttribute` required cluster width. Identity with `set_required_cluster_width` (`cudaFuncSetAttribute` RequiredClusterWidth). Capture legal. Distinct from
+      `func_get_cluster_dim_must_be_set`. This VM does not invent occupancy SM counts, Engine `--func-set-required-cluster-width`,
+      or `cudaChooseDevice`. `gpu-profile capture` is still refused. Dual
+      score still has no `$/M tokens`.
+1073. [x] `gpu-sim` `Sim::func_get_required_cluster_width` is
+      `cuFuncGetAttribute` required cluster width. Identity with `required_cluster_width` (`cudaFuncGetAttribute` RequiredClusterWidth). Query; legal during capture. Distinct from
+      `func_set_required_cluster_width`. This VM does not invent occupancy SM counts, Engine `--func-get-required-cluster-width`,
+      or `cudaChooseDevice`. `gpu-profile capture` is still refused. Dual
+      score still has no `$/M tokens`.
+1074. [x] `gpu-sim` `Sim::func_set_required_cluster_height` is
+      `cuFuncSetAttribute` required cluster height. Identity with `set_required_cluster_height` (`cudaFuncSetAttribute` RequiredClusterHeight). Capture legal. Distinct from
+      `func_get_required_cluster_width`. This VM does not invent occupancy SM counts, Engine `--func-set-required-cluster-height`,
+      or `cudaChooseDevice`. `gpu-profile capture` is still refused. Dual
+      score still has no `$/M tokens`.
+1075. [x] `gpu-sim` `Sim::func_get_required_cluster_height` is
+      `cuFuncGetAttribute` required cluster height. Identity with `required_cluster_height` (`cudaFuncGetAttribute` RequiredClusterHeight). Query; legal during capture. Distinct from
+      `func_set_required_cluster_height`. This VM does not invent occupancy SM counts, Engine `--func-get-required-cluster-height`,
+      or `cudaChooseDevice`. `gpu-profile capture` is still refused. Dual
+      score still has no `$/M tokens`.
+1076. [x] `gpu-sim` `Sim::func_set_required_cluster_depth` is
+      `cuFuncSetAttribute` required cluster depth. Identity with `set_required_cluster_depth` (`cudaFuncSetAttribute` RequiredClusterDepth). Capture legal. Distinct from
+      `func_get_required_cluster_height`. This VM does not invent occupancy SM counts, Engine `--func-set-required-cluster-depth`,
+      or `cudaChooseDevice`. `gpu-profile capture` is still refused. Dual
+      score still has no `$/M tokens`.
+1077. [x] `gpu-sim` `Sim::func_get_required_cluster_depth` is
+      `cuFuncGetAttribute` required cluster depth. Identity with `required_cluster_depth` (`cudaFuncGetAttribute` RequiredClusterDepth). Query; legal during capture. Distinct from
+      `func_set_required_cluster_depth`. This VM does not invent occupancy SM counts, Engine `--func-get-required-cluster-depth`,
+      or `cudaChooseDevice`. `gpu-profile capture` is still refused. Dual
+      score still has no `$/M tokens`.
+1078. [x] `gpu-sim` `Sim::func_set_non_portable_cluster_size_allowed` is
+      `cuFuncSetAttribute` non-portable cluster size. Identity with `set_non_portable_cluster_size_allowed` (`cudaFuncSetAttribute` NonPortableClusterSizeAllowed). Capture legal. Distinct from
+      `func_get_required_cluster_depth`. This VM does not invent occupancy SM counts, Engine `--func-set-non-portable-cluster-size-allowed`,
+      or `cudaChooseDevice`. `gpu-profile capture` is still refused. Dual
+      score still has no `$/M tokens`.
+1079. [x] `gpu-sim` `Sim::func_get_non_portable_cluster_size_allowed` is
+      `cuFuncGetAttribute` non-portable cluster size. Identity with `non_portable_cluster_size_allowed` (`cudaFuncGetAttribute` NonPortableClusterSizeAllowed). Query; legal during capture. Distinct from
+      `func_set_non_portable_cluster_size_allowed`. This VM does not invent occupancy SM counts, Engine `--func-get-non-portable-cluster-size-allowed`,
+      or `cudaChooseDevice`. `gpu-profile capture` is still refused. Dual
+      score still has no `$/M tokens`.
+1080. [x] `gpu-sim` `Sim::func_set_max_dynamic_shared_memory` is
+      `cuFuncSetAttribute` max dynamic shared memory. Identity with `set_max_dynamic_shared_memory` (`cudaFuncSetAttribute` MaxDynamicSharedMemorySize). Capture legal. Distinct from
+      `func_get_non_portable_cluster_size_allowed`. This VM does not invent occupancy SM counts, Engine `--func-set-max-dynamic-shared-memory`,
+      or `cudaChooseDevice`. `gpu-profile capture` is still refused. Dual
+      score still has no `$/M tokens`.
+1081. [x] `gpu-sim` `Sim::func_get_max_dynamic_shared_memory` is
+      `cuFuncGetAttribute` max dynamic shared memory. Identity with `max_dynamic_shared_memory` (`cudaFuncGetAttribute` MaxDynamicSharedMemorySize). Query; legal during capture. Distinct from
+      `func_set_max_dynamic_shared_memory`. This VM does not invent occupancy SM counts, Engine `--func-get-max-dynamic-shared-memory`,
+      or `cudaChooseDevice`. `gpu-profile capture` is still refused. Dual
+      score still has no `$/M tokens`.
+1082. [x] `gpu-sim` `Sim::event_create_disable_timing` is
+      `cuEventCreateWithFlags` disable timing. Identity with `create_event_disable_timing` (`cudaEventCreateWithFlags` DisableTiming). Capture refused. Distinct from
+      `event_create_with_flags`. This VM does not invent occupancy SM counts, Engine `--event-create-disable-timing`,
+      or `cudaChooseDevice`. `gpu-profile capture` is still refused. Dual
+      score still has no `$/M tokens`.
+1083. [x] `gpu-sim` `Sim::event_create_interprocess` is
+      `cuEventCreateWithFlags` interprocess. Identity with `create_event_interprocess` (`cudaEventCreateWithFlags` Interprocess|DisableTiming). Capture refused. Distinct from
+      `event_create_disable_timing`. This VM does not invent occupancy SM counts, Engine `--event-create-interprocess`,
+      or `cudaChooseDevice`. `gpu-profile capture` is still refused. Dual
+      score still has no `$/M tokens`.
+1084. [x] `gpu-sim` `Sim::event_create_blocking_sync` is
+      `cuEventCreateWithFlags` blocking sync. Identity with `create_event_blocking_sync` (`cudaEventCreateWithFlags` BlockingSync). Capture refused. Distinct from
+      `event_create_interprocess`. This VM does not invent occupancy SM counts, Engine `--event-create-blocking-sync`,
+      or `cudaChooseDevice`. `gpu-profile capture` is still refused. Dual
+      score still has no `$/M tokens`.
+1085. [x] `gpu-sim` `Sim::event_record_external` is
+      `cuEventRecordWithFlags` external. Identity with `record_event_external` (`cudaEventRecordWithFlags` External). Capture legal. Distinct from
+      `event_record_with_flags`. This VM does not invent occupancy SM counts, Engine `--event-record-external`,
+      or `cudaChooseDevice`. `gpu-profile capture` is still refused. Dual
+      score still has no `$/M tokens`.
+1086. [x] `gpu-sim` `Sim::stream_wait_event_external` is
+      `cuStreamWaitEvent` external. Identity with `wait_event_external` (`cudaStreamWaitEvent` WaitExternal). Capture legal. Distinct from
+      `stream_wait_event_with_flags`. This VM does not invent occupancy SM counts, Engine `--stream-wait-event-external`,
+      or `cudaChooseDevice`. `gpu-profile capture` is still refused. Dual
+      score still has no `$/M tokens`.
+1087. [x] `gpu-sim` `Sim::stream_set_mem_sync_domain` is
+      `cuStreamSetAttribute` mem sync domain. Identity with `set_stream_mem_sync_domain` (`cudaStreamSetAttribute` MemSyncDomain). Capture legal. Distinct from
+      `stream_wait_event_external`. This VM does not invent occupancy SM counts, Engine `--stream-set-mem-sync-domain`,
+      or `cudaChooseDevice`. `gpu-profile capture` is still refused. Dual
+      score still has no `$/M tokens`.
+1088. [x] `gpu-sim` `Sim::stream_set_mem_sync_domain_map` is
+      `cuStreamSetAttribute` mem sync domain map. Identity with `set_stream_mem_sync_domain_map` (`cudaStreamSetAttribute` MemSyncDomainMap). Capture legal. Distinct from
+      `stream_set_mem_sync_domain`. This VM does not invent occupancy SM counts, Engine `--stream-set-mem-sync-domain-map`,
+      or `cudaChooseDevice`. `gpu-profile capture` is still refused. Dual
+      score still has no `$/M tokens`.
+1089. [x] `gpu-sim` `Sim::stream_get_mem_sync_domain` is
+      `cuStreamGetAttribute` mem sync domain. Identity with `stream_mem_sync_domain` (`cudaStreamGetAttribute` MemSyncDomain). Query; legal during capture. Distinct from
+      `stream_set_mem_sync_domain_map`. This VM does not invent occupancy SM counts, Engine `--stream-get-mem-sync-domain`,
+      or `cudaChooseDevice`. `gpu-profile capture` is still refused. Dual
+      score still has no `$/M tokens`.
+1090. [x] `gpu-sim` `Sim::stream_get_mem_sync_domain_map` is
+      `cuStreamGetAttribute` mem sync domain map. Identity with `stream_mem_sync_domain_map` (`cudaStreamGetAttribute` MemSyncDomainMap). Query; legal during capture. Distinct from
+      `stream_get_mem_sync_domain`. This VM does not invent occupancy SM counts, Engine `--stream-get-mem-sync-domain-map`,
+      or `cudaChooseDevice`. `gpu-profile capture` is still refused. Dual
+      score still has no `$/M tokens`.
+1091. [x] `gpu-sim` `Sim::stream_set_sync_policy` is
+      `cuStreamSetAttribute` sync policy. Identity with `set_stream_sync_policy` (`cudaStreamSetAttribute` SynchronizationPolicy). Capture legal. Distinct from
+      `stream_get_mem_sync_domain_map`. This VM does not invent occupancy SM counts, Engine `--stream-set-sync-policy`,
+      or `cudaChooseDevice`. `gpu-profile capture` is still refused. Dual
+      score still has no `$/M tokens`.
+1092. [x] `gpu-sim` `Sim::stream_get_sync_policy` is
+      `cuStreamGetAttribute` sync policy. Identity with `stream_sync_policy` (`cudaStreamGetAttribute` SynchronizationPolicy). Query; legal during capture. Distinct from
+      `stream_set_sync_policy`. This VM does not invent occupancy SM counts, Engine `--stream-get-sync-policy`,
+      or `cudaChooseDevice`. `gpu-profile capture` is still refused. Dual
+      score still has no `$/M tokens`.
+1093. [x] `gpu-sim` `Sim::stream_set_nvlink_util_centric` is
+      `cuStreamSetAttribute` nvlink util centric. Identity with `set_stream_nvlink_util_centric` (`cudaStreamSetAttribute` NvlinkUtilCentricScheduling). Capture legal. Distinct from
+      `stream_get_sync_policy`. This VM does not invent occupancy SM counts, Engine `--stream-set-nvlink-util-centric`,
+      or `cudaChooseDevice`. `gpu-profile capture` is still refused. Dual
+      score still has no `$/M tokens`.
+1094. [x] `gpu-sim` `Sim::stream_get_nvlink_util_centric` is
+      `cuStreamGetAttribute` nvlink util centric. Identity with `stream_nvlink_util_centric` (`cudaStreamGetAttribute` NvlinkUtilCentricScheduling). Query; legal during capture. Distinct from
+      `stream_set_nvlink_util_centric`. This VM does not invent occupancy SM counts, Engine `--stream-get-nvlink-util-centric`,
+      or `cudaChooseDevice`. `gpu-profile capture` is still refused. Dual
+      score still has no `$/M tokens`.
+1095. [x] `gpu-sim` `Sim::stream_set_access_policy` is
+      `cuStreamSetAttribute` access policy. Identity with `set_stream_access_policy` (`cudaStreamSetAttribute` AccessPolicyWindow). Capture legal. Distinct from
+      `stream_get_nvlink_util_centric`. This VM does not invent occupancy SM counts, Engine `--stream-set-access-policy`,
+      or `cudaChooseDevice`. `gpu-profile capture` is still refused. Dual
+      score still has no `$/M tokens`.
+1096. [x] `gpu-sim` `Sim::stream_get_access_policy` is
+      `cuStreamGetAttribute` access policy. Identity with `stream_access_policy` (`cudaStreamGetAttribute` AccessPolicyWindow). Query; legal during capture. Distinct from
+      `stream_set_access_policy`. This VM does not invent occupancy SM counts, Engine `--stream-get-access-policy`,
+      or `cudaChooseDevice`. `gpu-profile capture` is still refused. Dual
+      score still has no `$/M tokens`.
+1097. [x] `gpu-sim` `Sim::stream_set_priority` is
+      `cuStreamSetAttribute` priority. Identity with `set_stream_priority` (`cudaStreamSetAttribute` Priority). Capture legal. Distinct from
+      `stream_get_access_policy`. This VM does not invent occupancy SM counts, Engine `--stream-set-priority`,
+      or `cudaChooseDevice`. `gpu-profile capture` is still refused. Dual
+      score still has no `$/M tokens`.
+1098. [x] `gpu-sim` `Sim::stream_set_blocking` is
+      `cuStreamCreate` blocking. Identity with `set_stream_blocking` (`cudaStreamCreate`). Capture legal. Distinct from
+      `stream_set_priority`. This VM does not invent occupancy SM counts, Engine `--stream-set-blocking`,
+      or `cudaChooseDevice`. `gpu-profile capture` is still refused. Dual
+      score still has no `$/M tokens`.
+1099. [x] `gpu-sim` `Sim::get_func_attributes` is
+      `cuFuncGetAttributes`. Identity with `func_get_attributes` (`cudaFuncGetAttributes`). Query; legal during capture. Distinct from
+      `stream_set_blocking`. This VM does not invent occupancy SM counts, Engine `--get-func-attributes`,
+      or `cudaChooseDevice`. `gpu-profile capture` is still refused. Dual
+      score still has no `$/M tokens`.
+1100. [x] `gpu-sim` `Sim::get_device_name` is
+      `cuDeviceGetName`. Identity with `device_get_name` (`cudaDeviceGetName`). Query; legal during capture. Distinct from
+      `get_func_attributes`. This VM does not invent occupancy SM counts, Engine `--get-device-name`,
+      or `cudaChooseDevice`. `gpu-profile capture` is still refused. Dual
+      score still has no `$/M tokens`.
+1101. [x] `gpu-sim` `Sim::get_device_count` is
+      `cuDeviceGetCount`. Identity with `device_count` (`cudaGetDeviceCount`). Query; legal during capture. Distinct from
+      `get_device_name`. This VM does not invent occupancy SM counts, Engine `--get-device-count`,
+      or `cudaChooseDevice`. `gpu-profile capture` is still refused. Dual
+      score still has no `$/M tokens`.
+1102. [x] `gpu-sim` `Sim::device_get_default_mempool` is
+      `cuDeviceGetDefaultMemPool`. Identity with `default_pool` (`cudaDeviceGetDefaultMemPool`). Query; legal during capture. Distinct from
+      `get_device_count`. This VM does not invent occupancy SM counts, Engine `--device-get-default-mempool`,
+      or `cudaChooseDevice`. `gpu-profile capture` is still refused. Dual
+      score still has no `$/M tokens`.
+1103. [x] `gpu-sim` `Sim::device_get_mempool` is
+      `cuDeviceGetMemPool`. Identity with `device_mempool` (`cudaDeviceGetMemPool`). Query; legal during capture. Distinct from
+      `device_get_default_mempool`. This VM does not invent occupancy SM counts, Engine `--device-get-mempool`,
+      or `cudaChooseDevice`. `gpu-profile capture` is still refused. Dual
+      score still has no `$/M tokens`.
+1104. [x] `gpu-sim` `Sim::device_set_mempool` is
+      `cuDeviceSetMemPool`. Identity with `set_device_mempool` (`cudaDeviceSetMemPool`). Capture refused. Distinct from
+      `device_get_mempool`. This VM does not invent occupancy SM counts, Engine `--device-set-mempool`,
+      or `cudaChooseDevice`. `gpu-profile capture` is still refused. Dual
+      score still has no `$/M tokens`.
+1105. [x] `gpu-sim` `Sim::mem_pool_create` is
+      `cuMemPoolCreate`. Identity with `create_pool` (`cudaMemPoolCreate`). Capture refused. Distinct from
+      `device_set_mempool`. This VM does not invent occupancy SM counts, Engine `--mem-pool-create`,
+      or `cudaChooseDevice`. `gpu-profile capture` is still refused. Dual
+      score still has no `$/M tokens`.
+1106. [x] `gpu-sim` `Sim::mem_pool_create_shareable` is
+      `cuMemPoolCreate` POSIX. Identity with `create_shareable_pool` (`cudaMemPoolCreate` POSIX-FD). Capture refused. Distinct from
+      `mem_pool_create`. This VM does not invent occupancy SM counts, Engine `--mem-pool-create-shareable`,
+      or `cudaChooseDevice`. `gpu-profile capture` is still refused. Dual
+      score still has no `$/M tokens`.
+1107. [x] `gpu-sim` `Sim::mem_pool_create_with_props` is
+      `cuMemPoolCreate` with props. Identity with `create_pool_with_props` (`cudaMemPoolCreate` with `MemPoolProps`). Capture refused. Distinct from
+      `mem_pool_create_shareable`. This VM does not invent occupancy SM counts, Engine `--mem-pool-create-with-props`,
+      or `cudaChooseDevice`. `gpu-profile capture` is still refused. Dual
+      score still has no `$/M tokens`.
+1108. [x] `gpu-sim` `Sim::mem_pool_destroy` is
+      `cuMemPoolDestroy`. Identity with `destroy_pool` (`cudaMemPoolDestroy`). Capture refused. Distinct from
+      `mem_pool_create_with_props`. This VM does not invent occupancy SM counts, Engine `--mem-pool-destroy`,
+      or `cudaChooseDevice`. `gpu-profile capture` is still refused. Dual
+      score still has no `$/M tokens`.
+1109. [x] `gpu-sim` `Sim::mem_alloc_from_pool` is
+      `cuMemAllocFromPoolAsync`. Identity with `alloc_from_pool` (`cudaMallocFromPoolAsync`). Capture legal. Distinct from
+      `mem_pool_destroy`. This VM does not invent occupancy SM counts, Engine `--mem-alloc-from-pool`,
+      or `cudaChooseDevice`. `gpu-profile capture` is still refused. Dual
+      score still has no `$/M tokens`.
+1110. [x] `gpu-sim` `Sim::mem_pool_export` is
+      `cuMemPoolExportToShareableHandle`. Identity with `pool_export` (`cudaMemPoolExportToShareableHandle`). Capture refused. Distinct from
+      `mem_alloc_from_pool`. This VM does not invent occupancy SM counts, Engine `--mem-pool-export`,
+      or `cudaChooseDevice`. `gpu-profile capture` is still refused. Dual
+      score still has no `$/M tokens`.
+1111. [x] `gpu-sim` `Sim::mem_pool_import` is
+      `cuMemPoolImportFromShareableHandle`. Identity with `pool_import` (`cudaMemPoolImportFromShareableHandle`). Capture refused. Distinct from
+      `mem_pool_export`. This VM does not invent occupancy SM counts, Engine `--mem-pool-import`,
+      or `cudaChooseDevice`. `gpu-profile capture` is still refused. Dual
+      score still has no `$/M tokens`.
+1112. [x] `gpu-sim` `Sim::mem_pool_export_with_type` is
+      `cuMemPoolExportToShareableHandle` type. Identity with `pool_export_with_type` (`cudaMemPoolExportToShareableHandle` type). Capture refused. Distinct from
+      `mem_pool_import`. This VM does not invent occupancy SM counts, Engine `--mem-pool-export-with-type`,
+      or `cudaChooseDevice`. `gpu-profile capture` is still refused. Dual
+      score still has no `$/M tokens`.
+1113. [x] `gpu-sim` `Sim::mem_pool_import_with_type` is
+      `cuMemPoolImportFromShareableHandle` type. Identity with `pool_import_with_type` (`cudaMemPoolImportFromShareableHandle` type). Capture refused. Distinct from
+      `mem_pool_export_with_type`. This VM does not invent occupancy SM counts, Engine `--mem-pool-import-with-type`,
+      or `cudaChooseDevice`. `gpu-profile capture` is still refused. Dual
+      score still has no `$/M tokens`.
+1114. [x] `gpu-sim` `Sim::mem_pool_export_ptr` is
+      `cuMemPoolExportPointer`. Identity with `pool_export_ptr` (`cudaMemPoolExportPointer`). Capture refused. Distinct from
+      `mem_pool_import_with_type`. This VM does not invent occupancy SM counts, Engine `--mem-pool-export-ptr`,
+      or `cudaChooseDevice`. `gpu-profile capture` is still refused. Dual
+      score still has no `$/M tokens`.
+1115. [x] `gpu-sim` `Sim::mem_pool_import_ptr` is
+      `cuMemPoolImportPointer`. Identity with `pool_import_ptr` (`cudaMemPoolImportPointer`). Capture refused. Distinct from
+      `mem_pool_export_ptr`. This VM does not invent occupancy SM counts, Engine `--mem-pool-import-ptr`,
+      or `cudaChooseDevice`. `gpu-profile capture` is still refused. Dual
+      score still has no `$/M tokens`.
+1116. [x] `gpu-sim` `Sim::mem_pool_get_access` is
+      `cuMemPoolGetAccess`. Identity with `pool_get_access` (`cudaMemPoolGetAccess`). Query; legal during capture. Distinct from
+      `mem_pool_import_ptr`. This VM does not invent occupancy SM counts, Engine `--mem-pool-get-access`,
+      or `cudaChooseDevice`. `gpu-profile capture` is still refused. Dual
+      score still has no `$/M tokens`.
+1117. [x] `gpu-sim` `Sim::mem_pool_set_access` is
+      `cuMemPoolSetAccess`. Identity with `pool_set_access` (`cudaMemPoolSetAccess` ReadWrite). Capture refused. Distinct from
+      `mem_pool_get_access`. This VM does not invent occupancy SM counts, Engine `--mem-pool-set-access`,
+      or `cudaChooseDevice`. `gpu-profile capture` is still refused. Dual
+      score still has no `$/M tokens`.
+1118. [x] `gpu-sim` `Sim::mem_pool_set_access_read` is
+      `cuMemPoolSetAccess` ProtRead. Identity with `pool_set_access_read` (`cudaMemPoolSetAccess` ProtRead). Capture refused. Distinct from
+      `mem_pool_set_access`. This VM does not invent occupancy SM counts, Engine `--mem-pool-set-access-read`,
+      or `cudaChooseDevice`. `gpu-profile capture` is still refused. Dual
+      score still has no `$/M tokens`.
+1119. [x] `gpu-sim` `Sim::mem_pool_set_access_with_flags` is
+      `cuMemPoolSetAccess` flags. Identity with `pool_set_access_with_flags` (`cudaMemPoolSetAccess` flags). Capture refused. Distinct from
+      `mem_pool_set_access_read`. This VM does not invent occupancy SM counts, Engine `--mem-pool-set-access-with-flags`,
+      or `cudaChooseDevice`. `gpu-profile capture` is still refused. Dual
+      score still has no `$/M tokens`.
+1120. [x] `gpu-sim` `Sim::mem_pool_set_access_n` is
+      `cuMemPoolSetAccess` n. Identity with `pool_set_access_n` (`cudaMemPoolSetAccess` desc array). Capture refused. Distinct from
+      `mem_pool_set_access_with_flags`. This VM does not invent occupancy SM counts, Engine `--mem-pool-set-access-n`,
+      or `cudaChooseDevice`. `gpu-profile capture` is still refused. Dual
+      score still has no `$/M tokens`.
+1121. [x] `gpu-sim` `Sim::mem_pool_unset_access` is
+      `cuMemPoolSetAccess` ProtNone. Identity with `pool_unset_access` (`cudaMemPoolSetAccess` ProtNone). Capture refused. Distinct from
+      `mem_pool_set_access_n`. This VM does not invent occupancy SM counts, Engine `--mem-pool-unset-access`,
+      or `cudaChooseDevice`. `gpu-profile capture` is still refused. Dual
+      score still has no `$/M tokens`.
+1122. [x] `gpu-sim` `Sim::mem_pool_get_attribute` is
+      `cuMemPoolGetAttribute`. Identity with `pool_get_attribute` (`cudaMemPoolGetAttribute`). Query; legal during capture. Distinct from
+      `mem_pool_unset_access`. This VM does not invent occupancy SM counts, Engine `--mem-pool-get-attribute`,
+      or `cudaChooseDevice`. `gpu-profile capture` is still refused. Dual
+      score still has no `$/M tokens`.
+1123. [x] `gpu-sim` `Sim::mem_pool_set_attribute` is
+      `cuMemPoolSetAttribute`. Identity with `pool_set_attribute` (`cudaMemPoolSetAttribute`). Capture refused. Distinct from
+      `mem_pool_get_attribute`. This VM does not invent occupancy SM counts, Engine `--mem-pool-set-attribute`,
+      or `cudaChooseDevice`. `gpu-profile capture` is still refused. Dual
+      score still has no `$/M tokens`.
+1124. [x] `gpu-sim` `Sim::mem_pool_trim_to` is
+      `cuMemPoolTrimTo`. Identity with `pool_trim_to` (`cudaMemPoolTrimTo`). Capture refused. Distinct from
+      `mem_pool_set_attribute`. This VM does not invent occupancy SM counts, Engine `--mem-pool-trim-to`,
+      or `cudaChooseDevice`. `gpu-profile capture` is still refused. Dual
+      score still has no `$/M tokens`.
+1125. [x] `gpu-sim` `Sim::mem_pool_set_release_threshold` is
+      `cuMemPoolSetAttribute` ReleaseThreshold. Identity with `set_pool_release_threshold` (`cudaMemPoolAttrReleaseThreshold`). Capture refused. Distinct from
+      `mem_pool_trim_to`. This VM does not invent occupancy SM counts, Engine `--mem-pool-set-release-threshold`,
+      or `cudaChooseDevice`. `gpu-profile capture` is still refused. Dual
+      score still has no `$/M tokens`.
+1126. [x] `gpu-sim` `Sim::mem_pool_set_max_size` is
+      `cuMemPoolSetAttribute` MaxPoolSize. Identity with `set_pool_max_size` (`cudaMemPoolAttrMaxPoolSize`). Capture refused. Distinct from
+      `mem_pool_set_release_threshold`. This VM does not invent occupancy SM counts, Engine `--mem-pool-set-max-size`,
+      or `cudaChooseDevice`. `gpu-profile capture` is still refused. Dual
+      score still has no `$/M tokens`.
+1127. [x] `gpu-sim` `Sim::mem_get_allocation_granularity` is
+      `cuMemGetAllocationGranularity`. Identity with `va_get_allocation_granularity` (`cuMemGetAllocationGranularity`). Query; legal during capture. Distinct from
+      `mem_pool_set_max_size`. This VM does not invent occupancy SM counts, Engine `--mem-get-allocation-granularity`,
+      or `cudaChooseDevice`. `gpu-profile capture` is still refused. Dual
+      score still has no `$/M tokens`.
+1128. [x] `gpu-sim` `Sim::mem_create` is
+      `cuMemCreate`. Identity with `va_create` (`cuMemCreate` default prop). Capture refused. Distinct from
+      `mem_get_allocation_granularity`. This VM does not invent occupancy SM counts, Engine `--mem-create`,
+      or `cudaChooseDevice`. `gpu-profile capture` is still refused. Dual
+      score still has no `$/M tokens`.
+1129. [x] `gpu-sim` `Sim::mem_create_with_prop` is
+      `cuMemCreate` props. Identity with `va_create_with_prop` (`cuMemCreate` props). Capture refused. Distinct from
+      `mem_create`. This VM does not invent occupancy SM counts, Engine `--mem-create-with-prop`,
+      or `cudaChooseDevice`. `gpu-profile capture` is still refused. Dual
+      score still has no `$/M tokens`.
+1130. [x] `gpu-sim` `Sim::mem_map_handle` is
+      `cuMemMap`. Identity with `va_map_handle` (`cuMemMap` default flags). Capture refused. Distinct from
+      `mem_create_with_prop`. This VM does not invent occupancy SM counts, Engine `--mem-map-handle`,
+      or `cudaChooseDevice`. `gpu-profile capture` is still refused. Dual
+      score still has no `$/M tokens`.
+1131. [x] `gpu-sim` `Sim::mem_map_handle_with_flags` is
+      `cuMemMap` flags. Identity with `va_map_handle_with_flags` (`cuMemMap` flags). Capture refused. Distinct from
+      `mem_map_handle`. This VM does not invent occupancy SM counts, Engine `--mem-map-handle-with-flags`,
+      or `cudaChooseDevice`. `gpu-profile capture` is still refused. Dual
+      score still has no `$/M tokens`.
+1132. [x] `gpu-sim` `Sim::mem_map_handle_with_size` is
+      `cuMemMap` size. Identity with `va_map_handle_with_size` (`cuMemMap` size). Capture refused. Distinct from
+      `mem_map_handle_with_flags`. This VM does not invent occupancy SM counts, Engine `--mem-map-handle-with-size`,
+      or `cudaChooseDevice`. `gpu-profile capture` is still refused. Dual
+      score still has no `$/M tokens`.
+1133. [x] `gpu-sim` `Sim::mem_release_handle` is
+      `cuMemRelease`. Identity with `va_release_handle` (`cuMemRelease`). Capture refused. Distinct from
+      `mem_map_handle_with_size`. This VM does not invent occupancy SM counts, Engine `--mem-release-handle`,
+      or `cudaChooseDevice`. `gpu-profile capture` is still refused. Dual
+      score still has no `$/M tokens`.
+1134. [x] `gpu-sim` `Sim::mem_retain_handle` is
+      `cuMemRetainAllocationHandle`. Identity with `va_retain_handle` (`cuMemRetainAllocationHandle`). Capture refused. Distinct from
+      `mem_release_handle`. This VM does not invent occupancy SM counts, Engine `--mem-retain-handle`,
+      or `cudaChooseDevice`. `gpu-profile capture` is still refused. Dual
+      score still has no `$/M tokens`.
+1135. [x] `gpu-sim` `Sim::mem_unmap` is
+      `cuMemUnmap`. Identity with `va_unmap` (`cuMemUnmap` + `cuMemRelease` of every physical). Capture refused. Distinct from
+      `mem_retain_handle`. This VM does not invent occupancy SM counts, Engine `--mem-unmap`,
+      or `cudaChooseDevice`. `gpu-profile capture` is still refused. Dual
+      score still has no `$/M tokens`.
+1136. [x] `gpu-sim` `Sim::mem_unmap_with_size` is
+      `cuMemUnmap` size. Identity with `va_unmap_with_size` (`cuMemUnmap` size). Capture refused. Distinct from
+      `mem_unmap`. This VM does not invent occupancy SM counts, Engine `--mem-unmap-with-size`,
+      or `cudaChooseDevice`. `gpu-profile capture` is still refused. Dual
+      score still has no `$/M tokens`.
+1137. [x] `gpu-sim` `Sim::mem_address_free` is
+      `cuMemAddressFree`. Identity with `va_free` (`cuMemAddressFree`). Capture refused. Distinct from
+      `mem_unmap_with_size`. This VM does not invent occupancy SM counts, Engine `--mem-address-free`,
+      or `cudaChooseDevice`. `gpu-profile capture` is still refused. Dual
+      score still has no `$/M tokens`.
+1138. [x] `gpu-sim` `Sim::mem_address_free_with_size` is
+      `cuMemAddressFree` size. Identity with `va_free_with_size` (`cuMemAddressFree` size). Capture refused. Distinct from
+      `mem_address_free`. This VM does not invent occupancy SM counts, Engine `--mem-address-free-with-size`,
+      or `cudaChooseDevice`. `gpu-profile capture` is still refused. Dual
+      score still has no `$/M tokens`.
+1139. [x] `gpu-sim` `Sim::mem_unmap_range` is
+      `cuMemUnmap` range. Identity with `va_unmap_range` (`cuMemUnmap` range). Capture refused. Distinct from
+      `mem_address_free_with_size`. This VM does not invent occupancy SM counts, Engine `--mem-unmap-range`,
+      or `cudaChooseDevice`. `gpu-profile capture` is still refused. Dual
+      score still has no `$/M tokens`.
+1140. [x] `gpu-sim` `Sim::mem_set_access` is
+      `cuMemSetAccess`. Identity with `va_set_access` (`cuMemSetAccess` PROT_READ). Capture refused. Distinct from
+      `mem_unmap_range`. This VM does not invent occupancy SM counts, Engine `--mem-set-access`,
+      or `cudaChooseDevice`. `gpu-profile capture` is still refused. Dual
+      score still has no `$/M tokens`.
+1141. [x] `gpu-sim` `Sim::mem_set_access_write` is
+      `cuMemSetAccess` write. Identity with `va_set_access_write` (`cuMemSetAccess` PROT_READWRITE). Capture refused. Distinct from
+      `mem_set_access`. This VM does not invent occupancy SM counts, Engine `--mem-set-access-write`,
+      or `cudaChooseDevice`. `gpu-profile capture` is still refused. Dual
+      score still has no `$/M tokens`.
+1142. [x] `gpu-sim` `Sim::mem_set_access_with_flags` is
+      `cuMemSetAccess` flags. Identity with `va_set_access_with_flags` (`cuMemSetAccess` flags). Capture refused. Distinct from
+      `mem_set_access_write`. This VM does not invent occupancy SM counts, Engine `--mem-set-access-with-flags`,
+      or `cudaChooseDevice`. `gpu-profile capture` is still refused. Dual
+      score still has no `$/M tokens`.
+1143. [x] `gpu-sim` `Sim::mem_set_access_with_size` is
+      `cuMemSetAccess` size. Identity with `va_set_access_with_size` (`cuMemSetAccess` size). Capture refused. Distinct from
+      `mem_set_access_with_flags`. This VM does not invent occupancy SM counts, Engine `--mem-set-access-with-size`,
+      or `cudaChooseDevice`. `gpu-profile capture` is still refused. Dual
+      score still has no `$/M tokens`.
+1144. [x] `gpu-sim` `Sim::mem_set_access_n` is
+      `cuMemSetAccess` n. Identity with `va_set_access_n` (`cuMemSetAccess` n). Capture refused. Distinct from
+      `mem_set_access_with_size`. This VM does not invent occupancy SM counts, Engine `--mem-set-access-n`,
+      or `cudaChooseDevice`. `gpu-profile capture` is still refused. Dual
+      score still has no `$/M tokens`.
+1145. [x] `gpu-sim` `Sim::mem_unset_access` is
+      `cuMemSetAccess` ProtNone. Identity with `va_unset_access` (`cuMemSetAccess` ProtNone). Capture refused. Distinct from
+      `mem_set_access_n`. This VM does not invent occupancy SM counts, Engine `--mem-unset-access`,
+      or `cudaChooseDevice`. `gpu-profile capture` is still refused. Dual
+      score still has no `$/M tokens`.
+1146. [x] `gpu-sim` `Sim::mem_get_access` is
+      `cuMemGetAccess`. Identity with `va_get_access` (`cuMemGetAccess`). Query; legal during capture. Distinct from
+      `mem_unset_access`. This VM does not invent occupancy SM counts, Engine `--mem-get-access`,
+      or `cudaChooseDevice`. `gpu-profile capture` is still refused. Dual
+      score still has no `$/M tokens`.
+1147. [x] `gpu-sim` `Sim::mem_map_range` is
+      `cuMemMap` range. Identity with `va_map_range` (`cuMemMap` range). Capture refused. Distinct from
+      `mem_get_access`. This VM does not invent occupancy SM counts, Engine `--mem-map-range`,
+      or `cudaChooseDevice`. `gpu-profile capture` is still refused. Dual
+      score still has no `$/M tokens`.
+1148. [x] `gpu-sim` `Sim::mem_get_allocation_properties` is
+      `cuMemGetAllocationPropertiesFromHandle`. Identity with `va_get_allocation_properties` (`cuMemGetAllocationPropertiesFromHandle`). Query; legal during capture. Distinct from
+      `mem_map_range`. This VM does not invent occupancy SM counts, Engine `--mem-get-allocation-properties`,
+      or `cudaChooseDevice`. `gpu-profile capture` is still refused. Dual
+      score still has no `$/M tokens`.
+1149. [x] `gpu-sim` `Sim::mem_map_multicast` is
+      `cuMemMap` multicast. Identity with `va_map_multicast` (`cuMemMap` of a multicast handle). Capture refused. Distinct from
+      `mem_get_allocation_properties`. This VM does not invent occupancy SM counts, Engine `--mem-map-multicast`,
+      or `cudaChooseDevice`. `gpu-profile capture` is still refused. Dual
+      score still has no `$/M tokens`.
+1150. [x] `gpu-sim` `Sim::mem_map_multicast_with_flags` is
+      `cuMemMap` multicast flags. Identity with `va_map_multicast_with_flags` (`cuMemMap` multicast flags). Capture refused. Distinct from
+      `mem_map_multicast`. This VM does not invent occupancy SM counts, Engine `--mem-map-multicast-with-flags`,
+      or `cudaChooseDevice`. `gpu-profile capture` is still refused. Dual
+      score still has no `$/M tokens`.
+1151. [x] `gpu-sim` `Sim::mem_map_multicast_with_size` is
+      `cuMemMap` multicast size. Identity with `va_map_multicast_with_size` (`cuMemMap` multicast size). Capture refused. Distinct from
+      `mem_map_multicast_with_flags`. This VM does not invent occupancy SM counts, Engine `--mem-map-multicast-with-size`,
+      or `cudaChooseDevice`. `gpu-profile capture` is still refused. Dual
+      score still has no `$/M tokens`.
+1152. [x] `gpu-sim` `Sim::mem_multicast_get_granularity` is
+      `cuMulticastGetGranularity`. Identity with `multicast_get_granularity` (`cuMulticastGetGranularity`). Query; legal during capture. Distinct from
+      `mem_map_multicast_with_size`. This VM does not invent occupancy SM counts, Engine `--mem-multicast-get-granularity`,
+      or `cudaChooseDevice`. `gpu-profile capture` is still refused. Dual
+      score still has no `$/M tokens`.
+1153. [x] `gpu-sim` `Sim::mem_multicast_get_granularity_with_prop` is
+      `cuMulticastGetGranularity` prop. Identity with `multicast_get_granularity_with_prop` (`cuMulticastGetGranularity` prop). Query; legal during capture. Distinct from
+      `mem_multicast_get_granularity`. This VM does not invent occupancy SM counts, Engine `--mem-multicast-get-granularity-with-prop`,
+      or `cudaChooseDevice`. `gpu-profile capture` is still refused. Dual
+      score still has no `$/M tokens`.
+1154. [x] `gpu-sim` `Sim::mem_multicast_create` is
+      `cuMulticastCreate`. Identity with `multicast_create` (`cuMulticastCreate`). Capture refused. Distinct from
+      `mem_multicast_get_granularity_with_prop`. This VM does not invent occupancy SM counts, Engine `--mem-multicast-create`,
+      or `cudaChooseDevice`. `gpu-profile capture` is still refused. Dual
+      score still has no `$/M tokens`.
+1155. [x] `gpu-sim` `Sim::mem_multicast_create_with_prop` is
+      `cuMulticastCreate` prop. Identity with `multicast_create_with_prop` (`cuMulticastCreate` prop). Capture refused. Distinct from
+      `mem_multicast_create`. This VM does not invent occupancy SM counts, Engine `--mem-multicast-create-with-prop`,
+      or `cudaChooseDevice`. `gpu-profile capture` is still refused. Dual
+      score still has no `$/M tokens`.
+1156. [x] `gpu-sim` `Sim::mem_multicast_add_device` is
+      `cuMulticastAddDevice`. Identity with `multicast_add_device` (`cuMulticastAddDevice`). Capture refused. Distinct from
+      `mem_multicast_create_with_prop`. This VM does not invent occupancy SM counts, Engine `--mem-multicast-add-device`,
+      or `cudaChooseDevice`. `gpu-profile capture` is still refused. Dual
+      score still has no `$/M tokens`.
+1157. [x] `gpu-sim` `Sim::mem_multicast_bind_mem` is
+      `cuMulticastBindMem`. Identity with `multicast_bind_mem` (`cuMulticastBindMem`). Capture refused. Distinct from
+      `mem_multicast_add_device`. This VM does not invent occupancy SM counts, Engine `--mem-multicast-bind-mem`,
+      or `cudaChooseDevice`. `gpu-profile capture` is still refused. Dual
+      score still has no `$/M tokens`.
+1158. [x] `gpu-sim` `Sim::mem_multicast_bind_mem_with_flags` is
+      `cuMulticastBindMem` flags. Identity with `multicast_bind_mem_with_flags` (`cuMulticastBindMem` flags). Capture refused. Distinct from
+      `mem_multicast_bind_mem`. This VM does not invent occupancy SM counts, Engine `--mem-multicast-bind-mem-with-flags`,
+      or `cudaChooseDevice`. `gpu-profile capture` is still refused. Dual
+      score still has no `$/M tokens`.
+1159. [x] `gpu-sim` `Sim::mem_multicast_bind_mem_with_size` is
+      `cuMulticastBindMem` size. Identity with `multicast_bind_mem_with_size` (`cuMulticastBindMem` size). Capture refused. Distinct from
+      `mem_multicast_bind_mem_with_flags`. This VM does not invent occupancy SM counts, Engine `--mem-multicast-bind-mem-with-size`,
+      or `cudaChooseDevice`. `gpu-profile capture` is still refused. Dual
+      score still has no `$/M tokens`.
+1160. [x] `gpu-sim` `Sim::mem_multicast_bind_addr` is
+      `cuMulticastBindAddr`. Identity with `multicast_bind_addr` (`cuMulticastBindAddr`). Capture refused. Distinct from
+      `mem_multicast_bind_mem_with_size`. This VM does not invent occupancy SM counts, Engine `--mem-multicast-bind-addr`,
+      or `cudaChooseDevice`. `gpu-profile capture` is still refused. Dual
+      score still has no `$/M tokens`.
+1161. [x] `gpu-sim` `Sim::mem_multicast_bind_addr_with_flags` is
+      `cuMulticastBindAddr` flags. Identity with `multicast_bind_addr_with_flags` (`cuMulticastBindAddr` flags). Capture refused. Distinct from
+      `mem_multicast_bind_addr`. This VM does not invent occupancy SM counts, Engine `--mem-multicast-bind-addr-with-flags`,
+      or `cudaChooseDevice`. `gpu-profile capture` is still refused. Dual
+      score still has no `$/M tokens`.
+1162. [x] `gpu-sim` `Sim::mem_multicast_bind_addr_with_size` is
+      `cuMulticastBindAddr` size. Identity with `multicast_bind_addr_with_size` (`cuMulticastBindAddr` size). Capture refused. Distinct from
+      `mem_multicast_bind_addr_with_flags`. This VM does not invent occupancy SM counts, Engine `--mem-multicast-bind-addr-with-size`,
+      or `cudaChooseDevice`. `gpu-profile capture` is still refused. Dual
+      score still has no `$/M tokens`.
+1163. [x] `gpu-sim` `Sim::mem_multicast_unbind` is
+      `cuMulticastUnbind`. Identity with `multicast_unbind` (`cuMulticastUnbind`). Capture refused. Distinct from
+      `mem_multicast_bind_addr_with_size`. This VM does not invent occupancy SM counts, Engine `--mem-multicast-unbind`,
+      or `cudaChooseDevice`. `gpu-profile capture` is still refused. Dual
+      score still has no `$/M tokens`.
+1164. [x] `gpu-sim` `Sim::mem_multicast_unbind_with_size` is
+      `cuMulticastUnbind` size. Identity with `multicast_unbind_with_size` (`cuMulticastUnbind` size). Capture refused. Distinct from
+      `mem_multicast_unbind`. This VM does not invent occupancy SM counts, Engine `--mem-multicast-unbind-with-size`,
+      or `cudaChooseDevice`. `gpu-profile capture` is still refused. Dual
+      score still has no `$/M tokens`.
+1165. [x] `gpu-sim` `Sim::mem_multicast_destroy` is
+      `cuMemRelease` multicast. Identity with `multicast_destroy` (`cuMemRelease` of a multicast handle). Capture refused. Distinct from
+      `mem_multicast_unbind_with_size`. This VM does not invent occupancy SM counts, Engine `--mem-multicast-destroy`,
+      or `cudaChooseDevice`. `gpu-profile capture` is still refused. Dual
+      score still has no `$/M tokens`.
+1166. [x] `gpu-sim` `Sim::mem_multicast_store` is
+      NVLS kernel store. Identity with `multicast_store`. Capture refused. Distinct from
+      `mem_multicast_destroy`. This VM does not invent occupancy SM counts, Engine `--mem-multicast-store`,
+      or `cudaChooseDevice`. `gpu-profile capture` is still refused. Dual
+      score still has no `$/M tokens`.
+1167. [x] `gpu-sim` `Sim::mem_multicast_binds` is
+      multicast bind count. Identity with `multicast_binds`. Query; legal during capture. Distinct from
+      `mem_multicast_store`. This VM does not invent occupancy SM counts, Engine `--mem-multicast-binds`,
+      or `cudaChooseDevice`. `gpu-profile capture` is still refused. Dual
+      score still has no `$/M tokens`.
+1168. [x] `gpu-sim` `Sim::mem_is_multicast_va` is
+      multicast VA query. Identity with `is_multicast_va`. Query; legal during capture. Distinct from
+      `mem_multicast_binds`. This VM does not invent occupancy SM counts, Engine `--mem-is-multicast-va`,
+      or `cudaChooseDevice`. `gpu-profile capture` is still refused. Dual
+      score still has no `$/M tokens`.
+1169. [x] `gpu-sim` `Sim::mem_pointer_get_attribute` is
+      `cuPointerGetAttribute`. Identity with `pointer_get_attribute` (`cuPointerGetAttribute`). Query; legal during capture. Distinct from
+      `mem_is_multicast_va`. This VM does not invent occupancy SM counts, Engine `--mem-pointer-get-attribute`,
+      or `cudaChooseDevice`. `gpu-profile capture` is still refused. Dual
+      score still has no `$/M tokens`.
+1170. [x] `gpu-sim` `Sim::mem_pointer_get_attribute_n` is
+      `cuPointerGetAttributes`. Identity with `pointer_get_attribute_n` (`cuPointerGetAttributes`). Query; legal during capture. Distinct from
+      `mem_pointer_get_attribute`. This VM does not invent occupancy SM counts, Engine `--mem-pointer-get-attribute-n`,
+      or `cudaChooseDevice`. `gpu-profile capture` is still refused. Dual
+      score still has no `$/M tokens`.
+1171. [x] `gpu-sim` `Sim::mem_pointer_get_access_flags` is
+      `CU_POINTER_ATTRIBUTE_ACCESS_FLAGS`. Identity with `pointer_get_access_flags` (`CU_POINTER_ATTRIBUTE_ACCESS_FLAGS`). Query; legal during capture. Distinct from
+      `mem_pointer_get_attribute_n`. This VM does not invent occupancy SM counts, Engine `--mem-pointer-get-access-flags`,
+      or `cudaChooseDevice`. `gpu-profile capture` is still refused. Dual
+      score still has no `$/M tokens`.
+1172. [x] `gpu-sim` `Sim::mem_pointer_set_attribute` is
+      `cuPointerSetAttribute`. Identity with `pointer_set_attribute` (`cuPointerSetAttribute`). Capture refused. Distinct from
+      `mem_pointer_get_access_flags`. This VM does not invent occupancy SM counts, Engine `--mem-pointer-set-attribute`,
+      or `cudaChooseDevice`. `gpu-profile capture` is still refused. Dual
+      score still has no `$/M tokens`.
+1173. [x] `gpu-sim` `Sim::mem_pointer_get_attributes` is
+      `cudaPointerGetAttributes`. Identity with `pointer_get_attributes` (`cudaPointerGetAttributes`). Query; legal during capture. Distinct from
+      `mem_pointer_set_attribute`. This VM does not invent occupancy SM counts, Engine `--mem-pointer-get-attributes`,
+      or `cudaChooseDevice`. `gpu-profile capture` is still refused. Dual
+      score still has no `$/M tokens`.
+1174. [x] `gpu-sim` `Sim::mem_alloc_pitch_with_element_size` is
+      `cuMemAllocPitch`. Identity with `malloc_pitch_with_element_size` (`cuMemAllocPitch`). Capture refused. Distinct from
+      `mem_alloc_pitch`. This VM does not invent occupancy SM counts, Engine `--mem-alloc-pitch-with-element-size`,
+      or `cudaChooseDevice`. `gpu-profile capture` is still refused. Dual
+      score still has no `$/M tokens`.
+1175. [x] `gpu-sim` `Sim::mem_device_get_attribute` is
+      `cuDeviceGetAttribute`. Identity with `device_get_attribute` (`cudaDeviceGetAttribute`). Query; legal during capture. Distinct from
+      `mem_alloc_pitch_with_element_size`. This VM does not invent occupancy SM counts, Engine `--mem-device-get-attribute`,
+      or `cudaChooseDevice`. `gpu-profile capture` is still refused. Dual
+      score still has no `$/M tokens`.
+1176. [x] `gpu-sim` `Sim::mem_device_get_properties` is
+      `cuDeviceGetProperties`. Identity with `device_get_properties` (`cudaGetDeviceProperties`). Query; legal during capture. Distinct from
+      `mem_device_get_attribute`. This VM does not invent occupancy SM counts, Engine `--mem-device-get-properties`,
+      or `cudaChooseDevice`. `gpu-profile capture` is still refused. Dual
+      score still has no `$/M tokens`.
+1177. [x] `gpu-sim` `Sim::mem_device_compute_capability` is
+      `cuDeviceComputeCapability`. Identity with `device_compute_capability`. Query; legal during capture. Distinct from
+      `mem_device_get_properties`. This VM does not invent occupancy SM counts, Engine `--mem-device-compute-capability`,
+      or `cudaChooseDevice`. `gpu-profile capture` is still refused. Dual
+      score still has no `$/M tokens`.
+1178. [x] `gpu-sim` `Sim::mem_device_get_uuid` is
+      `cuDeviceGetUuid`. Identity with `device_get_uuid` (`cudaDeviceGetUuid`). Query; legal during capture. Distinct from
+      `mem_device_compute_capability`. This VM does not invent occupancy SM counts, Engine `--mem-device-get-uuid`,
+      or `cudaChooseDevice`. `gpu-profile capture` is still refused. Dual
+      score still has no `$/M tokens`.
+1179. [x] `gpu-sim` `Sim::mem_device_get_luid` is
+      `cuDeviceGetLuid`. Identity with `device_get_luid`. Query; legal during capture. Distinct from
+      `mem_device_get_uuid`. This VM does not invent occupancy SM counts, Engine `--mem-device-get-luid`,
+      or `cudaChooseDevice`. `gpu-profile capture` is still refused. Dual
+      score still has no `$/M tokens`.
+1180. [x] `gpu-sim` `Sim::mem_device_get_texture_1d_linear_max_width` is
+      `cuDeviceGetTexture1DLinearMaxWidth`. Identity with `device_get_texture_1d_linear_max_width`. Query; legal during capture. Distinct from
+      `mem_device_get_luid`. This VM does not invent occupancy SM counts, Engine `--mem-device-get-texture-1d-linear-max-width`,
+      or `cudaChooseDevice`. `gpu-profile capture` is still refused. Dual
+      score still has no `$/M tokens`.
+1181. [x] `gpu-sim` `Sim::mem_device_get_by_uuid` is
+      `cuDeviceGetByUuid`. Identity with `device_get_by_uuid`. Query; legal during capture. Distinct from
+      `mem_device_get_texture_1d_linear_max_width`. Unknown UUID is Invalid `"unknown device uuid"`. This VM does not invent occupancy SM counts, Engine `--mem-device-get-by-uuid`,
+      or `cudaChooseDevice`. `gpu-profile capture` is still refused. Dual
+      score still has no `$/M tokens`.
+1182. [x] `gpu-sim` `Sim::mem_device_get_pci_bus_id` is
+      `cuDeviceGetPCIBusId`. Identity with `device_get_pci_bus_id` (`cudaDeviceGetPciBusId`). Query; legal during capture. Distinct from
+      `mem_device_get_by_uuid`. This VM does not invent occupancy SM counts, Engine `--mem-device-get-pci-bus-id`,
+      or `cudaChooseDevice`. `gpu-profile capture` is still refused. Dual
+      score still has no `$/M tokens`.
+1183. [x] `gpu-sim` `Sim::mem_device_get_by_pci_bus_id` is
+      `cudaDeviceGetByPCIBusId`. Identity with `device_get_by_pci_bus_id`. Query; legal during capture. Distinct from
+      `mem_device_get_pci_bus_id`. Unknown PCI bus id is Invalid `"unknown pci bus id"`. This VM does not invent occupancy SM counts, Engine `--mem-device-get-by-pci-bus-id`,
+      or `cudaChooseDevice`. `gpu-profile capture` is still refused. Dual
+      score still has no `$/M tokens`.
+1184. [x] `gpu-sim` `Sim::mem_device_total_mem` is
+      `cuDeviceTotalMem`. Identity with `device_total_mem`. Query; legal during capture. Distinct from
+      `mem_device_get_by_pci_bus_id`. This VM does not invent occupancy SM counts, Engine `--mem-device-total-mem`,
+      or `cudaChooseDevice`. `gpu-profile capture` is still refused. Dual
+      score still has no `$/M tokens`.
+1185. [x] `gpu-sim` `Sim::mem_driver_get_version` is
+      `cuDriverGetVersion`. Identity with `driver_get_version` (`cudaDriverGetVersion`). Query; legal during capture. Distinct from
+      `mem_device_total_mem`. This VM does not invent occupancy SM counts, Engine `--mem-driver-get-version`,
+      or `cudaChooseDevice`. `gpu-profile capture` is still refused. Dual
+      score still has no `$/M tokens`.
+1186. [x] `gpu-sim` `Sim::mem_get_proc_address` is
+      `cuGetProcAddress`. Identity with `get_proc_address` (`cudaGetDriverEntryPoint`). Query; legal during capture. Distinct from
+      `mem_driver_get_version`. This VM does not invent occupancy SM counts, Engine `--mem-get-proc-address`,
+      or `cudaChooseDevice`. `gpu-profile capture` is still refused. Dual
+      score still has no `$/M tokens`.
+1187. [x] `gpu-sim` `Sim::mem_get_export_table` is
+      `cuGetExportTable`. Identity with `get_export_table`. Query; legal during capture. Distinct from
+      `mem_get_proc_address`. This VM does not invent occupancy SM counts, Engine `--mem-get-export-table`,
+      or `cudaChooseDevice`. `gpu-profile capture` is still refused. Dual
+      score still has no `$/M tokens`.
+1188. [x] `gpu-sim` `Sim::mem_coredump_get_attribute` is
+      `cuCoredumpGetAttribute`. Identity with `coredump_get_attribute` (`cudaCoredumpGetAttribute`). Query; legal during capture. Distinct from
+      `mem_get_export_table`. This VM does not invent occupancy SM counts, Engine `--mem-coredump-get-attribute`,
+      or `cudaChooseDevice`. `gpu-profile capture` is still refused. Dual
+      score still has no `$/M tokens`.
+1189. [x] `gpu-sim` `Sim::mem_coredump_set_attribute` is
+      `cuCoredumpSetAttribute`. Identity with `coredump_set_attribute` (`cudaCoredumpSetAttribute`). Query; legal during capture. Distinct from
+      `mem_coredump_get_attribute`. This VM does not invent occupancy SM counts, Engine `--mem-coredump-set-attribute`,
+      or `cudaChooseDevice`. `gpu-profile capture` is still refused. Dual
+      score still has no `$/M tokens`.
+1190. [x] `gpu-sim` `Sim::mem_coredump_get_attribute_global` is
+      `cuCoredumpGetAttributeGlobal`. Identity with `coredump_get_attribute_global` (`cudaCoredumpGetAttributeGlobal`). Query; legal during capture. Distinct from
+      `mem_coredump_set_attribute`. This VM does not invent occupancy SM counts, Engine `--mem-coredump-get-attribute-global`,
+      or `cudaChooseDevice`. `gpu-profile capture` is still refused. Dual
+      score still has no `$/M tokens`.
+1191. [x] `gpu-sim` `Sim::mem_coredump_set_attribute_global` is
+      `cuCoredumpSetAttributeGlobal`. Identity with `coredump_set_attribute_global` (`cudaCoredumpSetAttributeGlobal`). Query; legal during capture. Distinct from
+      `mem_coredump_get_attribute_global`. This VM does not invent occupancy SM counts, Engine `--mem-coredump-set-attribute-global`,
+      or `cudaChooseDevice`. `gpu-profile capture` is still refused. Dual
+      score still has no `$/M tokens`.
+1192. [x] `gpu-sim` `Sim::mem_checkpoint_process_lock` is
+      `cuCheckpointProcessLock`. Identity with `checkpoint_process_lock`. Query; legal during capture. Distinct from
+      `mem_coredump_set_attribute_global`. This VM does not invent occupancy SM counts, Engine `--mem-checkpoint-process-lock`,
+      or `cudaChooseDevice`. `gpu-profile capture` is still refused. Dual
+      score still has no `$/M tokens`.
+1193. [x] `gpu-sim` `Sim::mem_checkpoint_process_checkpoint` is
+      `cuCheckpointProcessCheckpoint`. Identity with `checkpoint_process_checkpoint`. Query; legal during capture. Distinct from
+      `mem_checkpoint_process_lock`. This VM does not invent occupancy SM counts, Engine `--mem-checkpoint-process-checkpoint`,
+      or `cudaChooseDevice`. `gpu-profile capture` is still refused. Dual
+      score still has no `$/M tokens`.
+1194. [x] `gpu-sim` `Sim::mem_checkpoint_process_restore` is
+      `cuCheckpointProcessRestore`. Identity with `checkpoint_process_restore`. Query; legal during capture. Distinct from
+      `mem_checkpoint_process_checkpoint`. This VM does not invent occupancy SM counts, Engine `--mem-checkpoint-process-restore`,
+      or `cudaChooseDevice`. `gpu-profile capture` is still refused. Dual
+      score still has no `$/M tokens`.
+1195. [x] `gpu-sim` `Sim::mem_checkpoint_process_unlock` is
+      `cuCheckpointProcessUnlock`. Identity with `checkpoint_process_unlock`. Query; legal during capture. Distinct from
+      `mem_checkpoint_process_restore`. This VM does not invent occupancy SM counts, Engine `--mem-checkpoint-process-unlock`,
+      or `cudaChooseDevice`. `gpu-profile capture` is still refused. Dual
+      score still has no `$/M tokens`.
+1196. [x] `gpu-sim` `Sim::mem_checkpoint_process_get_restore_thread_id` is
+      `cuCheckpointProcessGetRestoreThreadId`. Identity with `checkpoint_process_get_restore_thread_id`. Query; legal during capture. Distinct from
+      `mem_checkpoint_process_unlock`. This VM does not invent occupancy SM counts, Engine `--mem-checkpoint-process-get-restore-thread-id`,
+      or `cudaChooseDevice`. `gpu-profile capture` is still refused. Dual
+      score still has no `$/M tokens`.
+1197. [x] `gpu-sim` `Sim::mem_checkpoint_process_get_state` is
+      `cuCheckpointProcessGetState`. Identity with `checkpoint_process_get_state`. Query; legal during capture. Distinct from
+      `mem_checkpoint_process_get_restore_thread_id`. This VM does not invent occupancy SM counts, Engine `--mem-checkpoint-process-get-state`,
+      or `cudaChooseDevice`. `gpu-profile capture` is still refused. Dual
+      score still has no `$/M tokens`.
+1198. [x] `gpu-sim` `Sim::mem_device_register_async_notification` is
+      `cuDeviceRegisterAsyncNotification`. Identity with `device_register_async_notification`. Query; legal during capture. Distinct from
+      `mem_checkpoint_process_get_state`. This VM does not invent occupancy SM counts, Engine `--mem-device-register-async-notification`,
+      or `cudaChooseDevice`. `gpu-profile capture` is still refused. Dual
+      score still has no `$/M tokens`.
+1199. [x] `gpu-sim` `Sim::mem_device_unregister_async_notification` is
+      `cuDeviceUnregisterAsyncNotification`. Identity with `device_unregister_async_notification`. Query; legal during capture. Distinct from
+      `mem_device_register_async_notification`. This VM does not invent occupancy SM counts, Engine `--mem-device-unregister-async-notification`,
+      or `cudaChooseDevice`. `gpu-profile capture` is still refused. Dual
+      score still has no `$/M tokens`.
+1200. [x] `gpu-sim` `Sim::mem_driver_init` is
+      `cuInit`. Identity with `driver_init`. Host-sync; capture refused. Distinct from
+      `mem_device_unregister_async_notification`. This VM does not invent occupancy SM counts, Engine `--mem-driver-init`,
+      or `cudaChooseDevice`. `gpu-profile capture` is still refused. Dual
+      score still has no `$/M tokens`.
+1201. [x] `gpu-sim` `Sim::mem_profiler_start` is
+      `cuProfilerStart`. Identity with `profiler_start`. Host-sync; capture refused. Distinct from
+      `mem_driver_init`. This VM does not invent occupancy SM counts, Engine `--mem-profiler-start`,
+      or `cudaChooseDevice`. `gpu-profile capture` is still refused. Dual
+      score still has no `$/M tokens`.
+1202. [x] `gpu-sim` `Sim::mem_profiler_stop` is
+      `cuProfilerStop`. Identity with `profiler_stop`. Host-sync; capture refused. Distinct from
+      `mem_profiler_start`. This VM does not invent occupancy SM counts, Engine `--mem-profiler-stop`,
+      or `cudaChooseDevice`. `gpu-profile capture` is still refused. Dual
+      score still has no `$/M tokens`.
+1203. [x] `gpu-sim` `Sim::mem_profiler_initialize` is
+      `cudaProfilerInitialize`. Identity with `profiler_initialize`. Query; legal during capture. Distinct from
+      `mem_profiler_stop`. This VM does not invent occupancy SM counts, Engine `--mem-profiler-initialize`,
+      or `cudaChooseDevice`. `gpu-profile capture` is still refused. Dual
+      score still has no `$/M tokens`.
+1204. [x] `gpu-sim` `Sim::mem_module_get_loading_mode` is
+      `cuModuleGetLoadingMode`. Identity with `module_get_loading_mode`. Query; legal during capture. Distinct from
+      `mem_profiler_initialize`. This VM does not invent occupancy SM counts, Engine `--mem-module-get-loading-mode`,
+      or `cudaChooseDevice`. `gpu-profile capture` is still refused. Dual
+      score still has no `$/M tokens`.
+1205. [x] `gpu-sim` `Sim::mem_module_load` is
+      `cuModuleLoad`. Identity with `module_load`. Query; legal during capture. Distinct from
+      `mem_module_get_loading_mode`. This VM does not invent occupancy SM counts, Engine `--mem-module-load`,
+      or `cudaChooseDevice`. `gpu-profile capture` is still refused. Dual
+      score still has no `$/M tokens`.
+1206. [x] `gpu-sim` `Sim::mem_module_load_data` is
+      `cuModuleLoadData`. Identity with `module_load_data`. Query; legal during capture. Distinct from
+      `mem_module_load`. This VM does not invent occupancy SM counts, Engine `--mem-module-load-data`,
+      or `cudaChooseDevice`. `gpu-profile capture` is still refused. Dual
+      score still has no `$/M tokens`.
+1207. [x] `gpu-sim` `Sim::mem_module_load_fat_binary` is
+      `cuModuleLoadFatBinary`. Identity with `module_load_fat_binary`. Query; legal during capture. Distinct from
+      `mem_module_load_data`. This VM does not invent occupancy SM counts, Engine `--mem-module-load-fat-binary`,
+      or `cudaChooseDevice`. `gpu-profile capture` is still refused. Dual
+      score still has no `$/M tokens`.
+1208. [x] `gpu-sim` `Sim::mem_module_load_data_ex` is
+      `cuModuleLoadDataEx`. Identity with `module_load_data_ex`. Query; legal during capture. Distinct from
+      `mem_module_load_fat_binary`. This VM does not invent occupancy SM counts, Engine `--mem-module-load-data-ex`,
+      or `cudaChooseDevice`. `gpu-profile capture` is still refused. Dual
+      score still has no `$/M tokens`.
+1209. [x] `gpu-sim` `Sim::mem_module_get_function_count` is
+      `cuModuleGetFunctionCount`. Identity with `module_get_function_count`. Query; legal during capture. Distinct from
+      `mem_module_load_data_ex`. This VM does not invent occupancy SM counts, Engine `--mem-module-get-function-count`,
+      or `cudaChooseDevice`. `gpu-profile capture` is still refused. Dual
+      score still has no `$/M tokens`.
+1210. [x] `gpu-sim` `Sim::mem_module_enumerate_functions` is
+      `cuModuleEnumerateFunctions`. Identity with `module_enumerate_functions`. Query; legal during capture. Distinct from
+      `mem_module_get_function_count`. This VM does not invent occupancy SM counts, Engine `--mem-module-enumerate-functions`,
+      or `cudaChooseDevice`. `gpu-profile capture` is still refused. Dual
+      score still has no `$/M tokens`.
+1211. [x] `gpu-sim` `Sim::mem_module_unload` is
+      `cuModuleUnload`. Identity with `module_unload`. Query; legal during capture. Distinct from
+      `mem_module_enumerate_functions`. This VM does not invent occupancy SM counts, Engine `--mem-module-unload`,
+      or `cudaChooseDevice`. `gpu-profile capture` is still refused. Dual
+      score still has no `$/M tokens`.
+1212. [x] `gpu-sim` `Sim::mem_module_get_function` is
+      `cuModuleGetFunction`. Identity with `module_get_function`. Query; legal during capture. Distinct from
+      `mem_module_unload`. This VM does not invent occupancy SM counts, Engine `--mem-module-get-function`,
+      or `cudaChooseDevice`. `gpu-profile capture` is still refused. Dual
+      score still has no `$/M tokens`.
+1213. [x] `gpu-sim` `Sim::mem_module_get_global` is
+      `cuModuleGetGlobal`. Identity with `module_get_global`. Query; legal during capture. Distinct from
+      `mem_module_get_function`. This VM does not invent occupancy SM counts, Engine `--mem-module-get-global`,
+      or `cudaChooseDevice`. `gpu-profile capture` is still refused. Dual
+      score still has no `$/M tokens`.
+1214. [x] `gpu-sim` `Sim::mem_module_get_tex_ref` is
+      `cuModuleGetTexRef`. Identity with `module_get_tex_ref`. Query; legal during capture. Distinct from
+      `mem_module_get_global`. This VM does not invent occupancy SM counts, Engine `--mem-module-get-tex-ref`,
+      or `cudaChooseDevice`. `gpu-profile capture` is still refused. Dual
+      score still has no `$/M tokens`.
+1215. [x] `gpu-sim` `Sim::mem_tex_ref_create` is
+      `cuTexRefCreate`. Identity with `tex_ref_create`. Query; legal during capture. Distinct from
+      `mem_module_get_tex_ref`. This VM does not invent occupancy SM counts, Engine `--mem-tex-ref-create`,
+      or `cudaChooseDevice`. `gpu-profile capture` is still refused. Dual
+      score still has no `$/M tokens`.
+1216. [x] `gpu-sim` `Sim::mem_tex_ref_destroy` is
+      `cuTexRefDestroy`. Identity with `tex_ref_destroy`. Query; legal during capture. Distinct from
+      `mem_tex_ref_create`. This VM does not invent occupancy SM counts, Engine `--mem-tex-ref-destroy`,
+      or `cudaChooseDevice`. `gpu-profile capture` is still refused. Dual
+      score still has no `$/M tokens`.
+1217. [x] `gpu-sim` `Sim::mem_tex_ref_set_array` is
+      `cuTexRefSetArray`. Identity with `tex_ref_set_array`. Query; legal during capture. Distinct from
+      `mem_tex_ref_destroy`. This VM does not invent occupancy SM counts, Engine `--mem-tex-ref-set-array`,
+      or `cudaChooseDevice`. `gpu-profile capture` is still refused. Dual
+      score still has no `$/M tokens`.
+1218. [x] `gpu-sim` `Sim::mem_tex_ref_set_mipmapped_array` is
+      `cuTexRefSetMipmappedArray`. Identity with `tex_ref_set_mipmapped_array`. Query; legal during capture. Distinct from
+      `mem_tex_ref_set_array`. This VM does not invent occupancy SM counts, Engine `--mem-tex-ref-set-mipmapped-array`,
+      or `cudaChooseDevice`. `gpu-profile capture` is still refused. Dual
+      score still has no `$/M tokens`.
+1219. [x] `gpu-sim` `Sim::mem_tex_ref_set_address` is
+      `cuTexRefSetAddress`. Identity with `tex_ref_set_address`. Query; legal during capture. Distinct from
+      `mem_tex_ref_set_mipmapped_array`. This VM does not invent occupancy SM counts, Engine `--mem-tex-ref-set-address`,
+      or `cudaChooseDevice`. `gpu-profile capture` is still refused. Dual
+      score still has no `$/M tokens`.
+1220. [x] `gpu-sim` `Sim::mem_tex_ref_set_address_2d` is
+      `cuTexRefSetAddress2D`. Identity with `tex_ref_set_address_2d`. Query; legal during capture. Distinct from
+      `mem_tex_ref_set_address`. This VM does not invent occupancy SM counts, Engine `--mem-tex-ref-set-address-2d`,
+      or `cudaChooseDevice`. `gpu-profile capture` is still refused. Dual
+      score still has no `$/M tokens`.
+1221. [x] `gpu-sim` `Sim::mem_tex_ref_set_format` is
+      `cuTexRefSetFormat`. Identity with `tex_ref_set_format`. Query; legal during capture. Distinct from
+      `mem_tex_ref_set_address_2d`. This VM does not invent occupancy SM counts, Engine `--mem-tex-ref-set-format`,
+      or `cudaChooseDevice`. `gpu-profile capture` is still refused. Dual
+      score still has no `$/M tokens`.
+1222. [x] `gpu-sim` `Sim::mem_tex_ref_set_address_mode` is
+      `cuTexRefSetAddressMode`. Identity with `tex_ref_set_address_mode`. Query; legal during capture. Distinct from
+      `mem_tex_ref_set_format`. This VM does not invent occupancy SM counts, Engine `--mem-tex-ref-set-address-mode`,
+      or `cudaChooseDevice`. `gpu-profile capture` is still refused. Dual
+      score still has no `$/M tokens`.
+1223. [x] `gpu-sim` `Sim::mem_tex_ref_set_filter_mode` is
+      `cuTexRefSetFilterMode`. Identity with `tex_ref_set_filter_mode`. Query; legal during capture. Distinct from
+      `mem_tex_ref_set_address_mode`. This VM does not invent occupancy SM counts, Engine `--mem-tex-ref-set-filter-mode`,
+      or `cudaChooseDevice`. `gpu-profile capture` is still refused. Dual
+      score still has no `$/M tokens`.
+1224. [x] `gpu-sim` `Sim::mem_tex_ref_set_mipmap_filter_mode` is
+      `cuTexRefSetMipmapFilterMode`. Identity with `tex_ref_set_mipmap_filter_mode`. Query; legal during capture. Distinct from
+      `mem_tex_ref_set_filter_mode`. This VM does not invent occupancy SM counts, Engine `--mem-tex-ref-set-mipmap-filter-mode`,
+      or `cudaChooseDevice`. `gpu-profile capture` is still refused. Dual
+      score still has no `$/M tokens`.
+1225. [x] `gpu-sim` `Sim::mem_tex_ref_set_mipmap_level_bias` is
+      `cuTexRefSetMipmapLevelBias`. Identity with `tex_ref_set_mipmap_level_bias`. Query; legal during capture. Distinct from
+      `mem_tex_ref_set_mipmap_filter_mode`. This VM does not invent occupancy SM counts, Engine `--mem-tex-ref-set-mipmap-level-bias`,
+      or `cudaChooseDevice`. `gpu-profile capture` is still refused. Dual
+      score still has no `$/M tokens`.
+1226. [x] `gpu-sim` `Sim::mem_tex_ref_set_mipmap_level_clamp` is
+      `cuTexRefSetMipmapLevelClamp`. Identity with `tex_ref_set_mipmap_level_clamp`. Query; legal during capture. Distinct from
+      `mem_tex_ref_set_mipmap_level_bias`. This VM does not invent occupancy SM counts, Engine `--mem-tex-ref-set-mipmap-level-clamp`,
+      or `cudaChooseDevice`. `gpu-profile capture` is still refused. Dual
+      score still has no `$/M tokens`.
+1227. [x] `gpu-sim` `Sim::mem_tex_ref_set_max_anisotropy` is
+      `cuTexRefSetMaxAnisotropy`. Identity with `tex_ref_set_max_anisotropy`. Query; legal during capture. Distinct from
+      `mem_tex_ref_set_mipmap_level_clamp`. This VM does not invent occupancy SM counts, Engine `--mem-tex-ref-set-max-anisotropy`,
+      or `cudaChooseDevice`. `gpu-profile capture` is still refused. Dual
+      score still has no `$/M tokens`.
+1228. [x] `gpu-sim` `Sim::mem_tex_ref_set_border_color` is
+      `cuTexRefSetBorderColor`. Identity with `tex_ref_set_border_color`. Query; legal during capture. Distinct from
+      `mem_tex_ref_set_max_anisotropy`. This VM does not invent occupancy SM counts, Engine `--mem-tex-ref-set-border-color`,
+      or `cudaChooseDevice`. `gpu-profile capture` is still refused. Dual
+      score still has no `$/M tokens`.
+1229. [x] `gpu-sim` `Sim::mem_tex_ref_set_flags` is
+      `cuTexRefSetFlags`. Identity with `tex_ref_set_flags`. Query; legal during capture. Distinct from
+      `mem_tex_ref_set_border_color`. This VM does not invent occupancy SM counts, Engine `--mem-tex-ref-set-flags`,
+      or `cudaChooseDevice`. `gpu-profile capture` is still refused. Dual
+      score still has no `$/M tokens`.
+1230. [x] `gpu-sim` `Sim::mem_tex_ref_get_array` is
+      `cuTexRefGetArray`. Identity with `tex_ref_get_array`. Query; legal during capture. Distinct from
+      `mem_tex_ref_set_flags`. This VM does not invent occupancy SM counts, Engine `--mem-tex-ref-get-array`,
+      or `cudaChooseDevice`. `gpu-profile capture` is still refused. Dual
+      score still has no `$/M tokens`.
+1231. [x] `gpu-sim` `Sim::mem_tex_ref_get_mipmapped_array` is
+      `cuTexRefGetMipmappedArray`. Identity with `tex_ref_get_mipmapped_array`. Query; legal during capture. Distinct from
+      `mem_tex_ref_get_array`. This VM does not invent occupancy SM counts, Engine `--mem-tex-ref-get-mipmapped-array`,
+      or `cudaChooseDevice`. `gpu-profile capture` is still refused. Dual
+      score still has no `$/M tokens`.
+1232. [x] `gpu-sim` `Sim::mem_tex_ref_get_address` is
+      `cuTexRefGetAddress`. Identity with `tex_ref_get_address`. Query; legal during capture. Distinct from
+      `mem_tex_ref_get_mipmapped_array`. This VM does not invent occupancy SM counts, Engine `--mem-tex-ref-get-address`,
+      or `cudaChooseDevice`. `gpu-profile capture` is still refused. Dual
+      score still has no `$/M tokens`.
+1233. [x] `gpu-sim` `Sim::mem_tex_ref_get_address_mode` is
+      `cuTexRefGetAddressMode`. Identity with `tex_ref_get_address_mode`. Query; legal during capture. Distinct from
+      `mem_tex_ref_get_address`. This VM does not invent occupancy SM counts, Engine `--mem-tex-ref-get-address-mode`,
+      or `cudaChooseDevice`. `gpu-profile capture` is still refused. Dual
+      score still has no `$/M tokens`.
+1234. [x] `gpu-sim` `Sim::mem_tex_ref_get_filter_mode` is
+      `cuTexRefGetFilterMode`. Identity with `tex_ref_get_filter_mode`. Query; legal during capture. Distinct from
+      `mem_tex_ref_get_address_mode`. This VM does not invent occupancy SM counts, Engine `--mem-tex-ref-get-filter-mode`,
+      or `cudaChooseDevice`. `gpu-profile capture` is still refused. Dual
+      score still has no `$/M tokens`.
+1235. [x] `gpu-sim` `Sim::mem_tex_ref_get_format` is
+      `cuTexRefGetFormat`. Identity with `tex_ref_get_format`. Query; legal during capture. Distinct from
+      `mem_tex_ref_get_filter_mode`. This VM does not invent occupancy SM counts, Engine `--mem-tex-ref-get-format`,
+      or `cudaChooseDevice`. `gpu-profile capture` is still refused. Dual
+      score still has no `$/M tokens`.
+1236. [x] `gpu-sim` `Sim::mem_tex_ref_get_mipmap_filter_mode` is
+      `cuTexRefGetMipmapFilterMode`. Identity with `tex_ref_get_mipmap_filter_mode`. Query; legal during capture. Distinct from
+      `mem_tex_ref_get_format`. This VM does not invent occupancy SM counts, Engine `--mem-tex-ref-get-mipmap-filter-mode`,
+      or `cudaChooseDevice`. `gpu-profile capture` is still refused. Dual
+      score still has no `$/M tokens`.
+1237. [x] `gpu-sim` `Sim::mem_tex_ref_get_mipmap_level_bias` is
+      `cuTexRefGetMipmapLevelBias`. Identity with `tex_ref_get_mipmap_level_bias`. Query; legal during capture. Distinct from
+      `mem_tex_ref_get_mipmap_filter_mode`. This VM does not invent occupancy SM counts, Engine `--mem-tex-ref-get-mipmap-level-bias`,
+      or `cudaChooseDevice`. `gpu-profile capture` is still refused. Dual
+      score still has no `$/M tokens`.
+1238. [x] `gpu-sim` `Sim::mem_tex_ref_get_mipmap_level_clamp` is
+      `cuTexRefGetMipmapLevelClamp`. Identity with `tex_ref_get_mipmap_level_clamp`. Query; legal during capture. Distinct from
+      `mem_tex_ref_get_mipmap_level_bias`. This VM does not invent occupancy SM counts, Engine `--mem-tex-ref-get-mipmap-level-clamp`,
+      or `cudaChooseDevice`. `gpu-profile capture` is still refused. Dual
+      score still has no `$/M tokens`.
+1239. [x] `gpu-sim` `Sim::mem_tex_ref_get_max_anisotropy` is
+      `cuTexRefGetMaxAnisotropy`. Identity with `tex_ref_get_max_anisotropy`. Query; legal during capture. Distinct from
+      `mem_tex_ref_get_mipmap_level_clamp`. This VM does not invent occupancy SM counts, Engine `--mem-tex-ref-get-max-anisotropy`,
+      or `cudaChooseDevice`. `gpu-profile capture` is still refused. Dual
+      score still has no `$/M tokens`.
+1240. [x] `gpu-sim` `Sim::mem_tex_ref_get_border_color` is
+      `cuTexRefGetBorderColor`. Identity with `tex_ref_get_border_color`. Query; legal during capture. Distinct from
+      `mem_tex_ref_get_max_anisotropy`. This VM does not invent occupancy SM counts, Engine `--mem-tex-ref-get-border-color`,
+      or `cudaChooseDevice`. `gpu-profile capture` is still refused. Dual
+      score still has no `$/M tokens`.
+1241. [x] `gpu-sim` `Sim::mem_tex_ref_get_flags` is
+      `cuTexRefGetFlags`. Identity with `tex_ref_get_flags`. Query; legal during capture. Distinct from
+      `mem_tex_ref_get_border_color`. This VM does not invent occupancy SM counts, Engine `--mem-tex-ref-get-flags`,
+      or `cudaChooseDevice`. `gpu-profile capture` is still refused. Dual
+      score still has no `$/M tokens`.
+1242. [x] `gpu-sim` `Sim::mem_module_get_surf_ref` is
+      `cuModuleGetSurfRef`. Identity with `module_get_surf_ref`. Query; legal during capture. Distinct from
+      `mem_tex_ref_get_flags`. This VM does not invent occupancy SM counts, Engine `--mem-module-get-surf-ref`,
+      or `cudaChooseDevice`. `gpu-profile capture` is still refused. Dual
+      score still has no `$/M tokens`.
+1243. [x] `gpu-sim` `Sim::mem_surf_ref_set_array` is
+      `cuSurfRefSetArray`. Identity with `surf_ref_set_array`. Query; legal during capture. Distinct from
+      `mem_module_get_surf_ref`. This VM does not invent occupancy SM counts, Engine `--mem-surf-ref-set-array`,
+      or `cudaChooseDevice`. `gpu-profile capture` is still refused. Dual
+      score still has no `$/M tokens`.
+1244. [x] `gpu-sim` `Sim::mem_surf_ref_get_array` is
+      `cuSurfRefGetArray`. Identity with `surf_ref_get_array`. Query; legal during capture. Distinct from
+      `mem_surf_ref_set_array`. This VM does not invent occupancy SM counts, Engine `--mem-surf-ref-get-array`,
+      or `cudaChooseDevice`. `gpu-profile capture` is still refused. Dual
+      score still has no `$/M tokens`.
+1245. [x] `gpu-sim` `Sim::mem_memcpy_dto_a` is
+      `cuMemcpyDtoA`. Identity with `memcpy_dto_a`. Query; legal during capture. Distinct from
+      `mem_surf_ref_get_array`. This VM does not invent occupancy SM counts, Engine `--mem-memcpy-dto-a`,
+      or `cudaChooseDevice`. `gpu-profile capture` is still refused. Dual
+      score still has no `$/M tokens`.
+1246. [x] `gpu-sim` `Sim::mem_memcpy_ato_d` is
+      `cuMemcpyAtoD`. Identity with `memcpy_ato_d`. Query; legal during capture. Distinct from
+      `mem_memcpy_dto_a`. This VM does not invent occupancy SM counts, Engine `--mem-memcpy-ato-d`,
+      or `cudaChooseDevice`. `gpu-profile capture` is still refused. Dual
+      score still has no `$/M tokens`.
+1247. [x] `gpu-sim` `Sim::mem_memcpy_hto_a` is
+      `cuMemcpyHtoA`. Identity with `memcpy_hto_a`. Query; legal during capture. Distinct from
+      `mem_memcpy_ato_d`. This VM does not invent occupancy SM counts, Engine `--mem-memcpy-hto-a`,
+      or `cudaChooseDevice`. `gpu-profile capture` is still refused. Dual
+      score still has no `$/M tokens`.
+1248. [x] `gpu-sim` `Sim::mem_memcpy_ato_h` is
+      `cuMemcpyAtoH`. Identity with `memcpy_ato_h`. Query; legal during capture. Distinct from
+      `mem_memcpy_hto_a`. This VM does not invent occupancy SM counts, Engine `--mem-memcpy-ato-h`,
+      or `cudaChooseDevice`. `gpu-profile capture` is still refused. Dual
+      score still has no `$/M tokens`.
+1249. [x] `gpu-sim` `Sim::mem_memcpy_ato_a` is
+      `cuMemcpyAtoA`. Identity with `memcpy_ato_a`. Query; legal during capture. Distinct from
+      `mem_memcpy_ato_h`. This VM does not invent occupancy SM counts, Engine `--mem-memcpy-ato-a`,
+      or `cudaChooseDevice`. `gpu-profile capture` is still refused. Dual
+      score still has no `$/M tokens`.
+1250. [x] `gpu-sim` `Sim::mem_memcpy_dto_a_async` is
+      `cuMemcpyDtoAAsync`. Identity with `memcpy_dto_a_async`. Query; legal during capture. Distinct from
+      `mem_memcpy_ato_a`. This VM does not invent occupancy SM counts, Engine `--mem-memcpy-dto-a-async`,
+      or `cudaChooseDevice`. `gpu-profile capture` is still refused. Dual
+      score still has no `$/M tokens`.
+1251. [x] `gpu-sim` `Sim::mem_memcpy_ato_d_async` is
+      `cuMemcpyAtoDAsync`. Identity with `memcpy_ato_d_async`. Query; legal during capture. Distinct from
+      `mem_memcpy_dto_a_async`. This VM does not invent occupancy SM counts, Engine `--mem-memcpy-ato-d-async`,
+      or `cudaChooseDevice`. `gpu-profile capture` is still refused. Dual
+      score still has no `$/M tokens`.
+1252. [x] `gpu-sim` `Sim::mem_memcpy_hto_a_async` is
+      `cuMemcpyHtoAAsync`. Identity with `memcpy_hto_a_async`. Query; legal during capture. Distinct from
+      `mem_memcpy_ato_d_async`. This VM does not invent occupancy SM counts, Engine `--mem-memcpy-hto-a-async`,
+      or `cudaChooseDevice`. `gpu-profile capture` is still refused. Dual
+      score still has no `$/M tokens`.
+1253. [x] `gpu-sim` `Sim::mem_memcpy_ato_h_async` is
+      `cuMemcpyAtoHAsync`. Identity with `memcpy_ato_h_async`. Query; legal during capture. Distinct from
+      `mem_memcpy_hto_a_async`. This VM does not invent occupancy SM counts, Engine `--mem-memcpy-ato-h-async`,
+      or `cudaChooseDevice`. `gpu-profile capture` is still refused. Dual
+      score still has no `$/M tokens`.
+1254. [x] `gpu-sim` `Sim::mem_memcpy_ato_a_async` is
+      `cuMemcpyAtoAAsync`. Identity with `memcpy_ato_a_async`. Query; legal during capture. Distinct from
+      `mem_memcpy_ato_h_async`. This VM does not invent occupancy SM counts, Engine `--mem-memcpy-ato-a-async`,
+      or `cudaChooseDevice`. `gpu-profile capture` is still refused. Dual
+      score still has no `$/M tokens`.
+1255. [x] `gpu-sim` `Sim::mem_memcpy_2d_to_array` is
+      `cuMemcpy2DToArray`. Identity with `memcpy_2d_to_array`. Query; legal during capture. Distinct from
+      `mem_memcpy_ato_a_async`. This VM does not invent occupancy SM counts, Engine `--mem-memcpy-2d-to-array`,
+      or `cudaChooseDevice`. `gpu-profile capture` is still refused. Dual
+      score still has no `$/M tokens`.
+1256. [x] `gpu-sim` `Sim::mem_memcpy_2d_from_array` is
+      `cuMemcpy2DFromArray`. Identity with `memcpy_2d_from_array`. Query; legal during capture. Distinct from
+      `mem_memcpy_2d_to_array`. This VM does not invent occupancy SM counts, Engine `--mem-memcpy-2d-from-array`,
+      or `cudaChooseDevice`. `gpu-profile capture` is still refused. Dual
+      score still has no `$/M tokens`.
+1257. [x] `gpu-sim` `Sim::mem_memcpy_2d_array_to_array` is
+      `cuMemcpy2DArrayToArray`. Identity with `memcpy_2d_array_to_array`. Query; legal during capture. Distinct from
+      `mem_memcpy_2d_from_array`. This VM does not invent occupancy SM counts, Engine `--mem-memcpy-2d-array-to-array`,
+      or `cudaChooseDevice`. `gpu-profile capture` is still refused. Dual
+      score still has no `$/M tokens`.
+1258. [x] `gpu-sim` `Sim::mem_memcpy_2d_to_array_async` is
+      `cuMemcpy2DToArrayAsync`. Identity with `memcpy_2d_to_array_async`. Query; legal during capture. Distinct from
+      `mem_memcpy_2d_array_to_array`. This VM does not invent occupancy SM counts, Engine `--mem-memcpy-2d-to-array-async`,
+      or `cudaChooseDevice`. `gpu-profile capture` is still refused. Dual
+      score still has no `$/M tokens`.
+1259. [x] `gpu-sim` `Sim::mem_memcpy_2d_from_array_async` is
+      `cuMemcpy2DFromArrayAsync`. Identity with `memcpy_2d_from_array_async`. Query; legal during capture. Distinct from
+      `mem_memcpy_2d_to_array_async`. This VM does not invent occupancy SM counts, Engine `--mem-memcpy-2d-from-array-async`,
+      or `cudaChooseDevice`. `gpu-profile capture` is still refused. Dual
+      score still has no `$/M tokens`.
+1260. [x] `gpu-sim` `Sim::mem_memcpy_2d_array_to_array_async` is
+      `cuMemcpy2DArrayToArrayAsync`. Identity with `memcpy_2d_array_to_array_async`. Query; legal during capture. Distinct from
+      `mem_memcpy_2d_from_array_async`. This VM does not invent occupancy SM counts, Engine `--mem-memcpy-2d-array-to-array-async`,
+      or `cudaChooseDevice`. `gpu-profile capture` is still refused. Dual
+      score still has no `$/M tokens`.
+1261. [x] `gpu-sim` `Sim::mem_library_load_data` is
+      `cuLibraryLoadData`. Identity with `library_load_data`. Query; legal during capture. Distinct from
+      `mem_memcpy_2d_array_to_array_async`. This VM does not invent occupancy SM counts, Engine `--mem-library-load-data`,
+      or `cudaChooseDevice`. `gpu-profile capture` is still refused. Dual
+      score still has no `$/M tokens`.
+1262. [x] `gpu-sim` `Sim::mem_library_load_from_file` is
+      `cuLibraryLoadFromFile`. Identity with `library_load_from_file`. Query; legal during capture. Distinct from
+      `mem_library_load_data`. This VM does not invent occupancy SM counts, Engine `--mem-library-load-from-file`,
+      or `cudaChooseDevice`. `gpu-profile capture` is still refused. Dual
+      score still has no `$/M tokens`.
+1263. [x] `gpu-sim` `Sim::mem_library_unload` is
+      `cuLibraryUnload`. Identity with `library_unload`. Query; legal during capture. Distinct from
+      `mem_library_load_from_file`. This VM does not invent occupancy SM counts, Engine `--mem-library-unload`,
+      or `cudaChooseDevice`. `gpu-profile capture` is still refused. Dual
+      score still has no `$/M tokens`.
+1264. [x] `gpu-sim` `Sim::mem_library_get_kernel` is
+      `cuLibraryGetKernel`. Identity with `library_get_kernel`. Query; legal during capture. Distinct from
+      `mem_library_unload`. This VM does not invent occupancy SM counts, Engine `--mem-library-get-kernel`,
+      or `cudaChooseDevice`. `gpu-profile capture` is still refused. Dual
+      score still has no `$/M tokens`.
+1265. [x] `gpu-sim` `Sim::mem_library_get_module` is
+      `cuLibraryGetModule`. Identity with `library_get_module`. Query; legal during capture. Distinct from
+      `mem_library_get_kernel`. This VM does not invent occupancy SM counts, Engine `--mem-library-get-module`,
+      or `cudaChooseDevice`. `gpu-profile capture` is still refused. Dual
+      score still has no `$/M tokens`.
+1266. [x] `gpu-sim` `Sim::mem_library_get_global` is
+      `cuLibraryGetGlobal`. Identity with `library_get_global`. Query; legal during capture. Distinct from
+      `mem_library_get_module`. This VM does not invent occupancy SM counts, Engine `--mem-library-get-global`,
+      or `cudaChooseDevice`. `gpu-profile capture` is still refused. Dual
+      score still has no `$/M tokens`.
+1267. [x] `gpu-sim` `Sim::mem_library_get_managed` is
+      `cuLibraryGetManaged`. Identity with `library_get_managed`. Query; legal during capture. Distinct from
+      `mem_library_get_global`. This VM does not invent occupancy SM counts, Engine `--mem-library-get-managed`,
+      or `cudaChooseDevice`. `gpu-profile capture` is still refused. Dual
+      score still has no `$/M tokens`.
+1268. [x] `gpu-sim` `Sim::mem_library_get_unified_function` is
+      `cuLibraryGetUnifiedFunction`. Identity with `library_get_unified_function`. Query; legal during capture. Distinct from
+      `mem_library_get_managed`. This VM does not invent occupancy SM counts, Engine `--mem-library-get-unified-function`,
+      or `cudaChooseDevice`. `gpu-profile capture` is still refused. Dual
+      score still has no `$/M tokens`.
+1269. [x] `gpu-sim` `Sim::mem_library_get_kernel_count` is
+      `cuLibraryGetKernelCount`. Identity with `library_get_kernel_count`. Query; legal during capture. Distinct from
+      `mem_library_get_unified_function`. This VM does not invent occupancy SM counts, Engine `--mem-library-get-kernel-count`,
+      or `cudaChooseDevice`. `gpu-profile capture` is still refused. Dual
+      score still has no `$/M tokens`.
+1270. [x] `gpu-sim` `Sim::mem_library_enumerate_kernels` is
+      `cuLibraryEnumerateKernels`. Identity with `library_enumerate_kernels`. Query; legal during capture. Distinct from
+      `mem_library_get_kernel_count`. This VM does not invent occupancy SM counts, Engine `--mem-library-enumerate-kernels`,
+      or `cudaChooseDevice`. `gpu-profile capture` is still refused. Dual
+      score still has no `$/M tokens`.
+1271. [x] `gpu-sim` `Sim::mem_kernel_get_library` is
+      `cuKernelGetLibrary`. Identity with `kernel_get_library`. Query; legal during capture. Distinct from
+      `mem_library_enumerate_kernels`. This VM does not invent occupancy SM counts, Engine `--mem-kernel-get-library`,
+      or `cudaChooseDevice`. `gpu-profile capture` is still refused. Dual
+      score still has no `$/M tokens`.
+1272. [x] `gpu-sim` `Sim::mem_kernel_get_function` is
+      `cuKernelGetFunction`. Identity with `kernel_get_function`. Query; legal during capture. Distinct from
+      `mem_kernel_get_library`. This VM does not invent occupancy SM counts, Engine `--mem-kernel-get-function`,
+      or `cudaChooseDevice`. `gpu-profile capture` is still refused. Dual
+      score still has no `$/M tokens`.
+1273. [x] `gpu-sim` `Sim::mem_kernel_get_param_info` is
+      `cuKernelGetParamInfo`. Identity with `kernel_get_param_info`. Query; legal during capture. Distinct from
+      `mem_kernel_get_function`. This VM does not invent occupancy SM counts, Engine `--mem-kernel-get-param-info`,
+      or `cudaChooseDevice`. `gpu-profile capture` is still refused. Dual
+      score still has no `$/M tokens`.
+1274. [x] `gpu-sim` `Sim::mem_kernel_get_param_count` is
+      `cuKernelGetParamCount`. Identity with `kernel_get_param_count`. Query; legal during capture. Distinct from
+      `mem_kernel_get_param_info`. This VM does not invent occupancy SM counts, Engine `--mem-kernel-get-param-count`,
+      or `cudaChooseDevice`. `gpu-profile capture` is still refused. Dual
+      score still has no `$/M tokens`.
+1275. [x] `gpu-sim` `Sim::mem_kernel_get_attribute` is
+      `cuKernelGetAttribute`. Identity with `kernel_get_attribute`. Query; legal during capture. Distinct from
+      `mem_kernel_get_param_count`. This VM does not invent occupancy SM counts, Engine `--mem-kernel-get-attribute`,
+      or `cudaChooseDevice`. `gpu-profile capture` is still refused. Dual
+      score still has no `$/M tokens`.
+1276. [x] `gpu-sim` `Sim::mem_kernel_set_attribute` is
+      `cuKernelSetAttribute`. Identity with `kernel_set_attribute`. Query; legal during capture. Distinct from
+      `mem_kernel_get_attribute`. This VM does not invent occupancy SM counts, Engine `--mem-kernel-set-attribute`,
+      or `cudaChooseDevice`. `gpu-profile capture` is still refused. Dual
+      score still has no `$/M tokens`.
+1277. [x] `gpu-sim` `Sim::mem_kernel_set_cache_config` is
+      `cuKernelSetCacheConfig`. Identity with `kernel_set_cache_config`. Query; legal during capture. Distinct from
+      `mem_kernel_set_attribute`. This VM does not invent occupancy SM counts, Engine `--mem-kernel-set-cache-config`,
+      or `cudaChooseDevice`. `gpu-profile capture` is still refused. Dual
+      score still has no `$/M tokens`.
+1278. [x] `gpu-sim` `Sim::mem_link_create` is
+      `cuLinkCreate`. Identity with `link_create`. Query; legal during capture. Distinct from
+      `mem_kernel_set_cache_config`. This VM does not invent occupancy SM counts, Engine `--mem-link-create`,
+      or `cudaChooseDevice`. `gpu-profile capture` is still refused. Dual
+      score still has no `$/M tokens`.
+1279. [x] `gpu-sim` `Sim::mem_link_add_data` is
+      `cuLinkAddData`. Identity with `link_add_data`. Query; legal during capture. Distinct from
+      `mem_link_create`. This VM does not invent occupancy SM counts, Engine `--mem-link-add-data`,
+      or `cudaChooseDevice`. `gpu-profile capture` is still refused. Dual
+      score still has no `$/M tokens`.
+1280. [x] `gpu-sim` `Sim::mem_link_complete` is
+      `cuLinkComplete`. Identity with `link_complete`. Query; legal during capture. Distinct from
+      `mem_link_add_data`. This VM does not invent occupancy SM counts, Engine `--mem-link-complete`,
+      or `cudaChooseDevice`. `gpu-profile capture` is still refused. Dual
+      score still has no `$/M tokens`.
+1281. [x] `gpu-sim` `Sim::mem_link_destroy` is
+      `cuLinkDestroy`. Identity with `link_destroy`. Query; legal during capture. Distinct from
+      `mem_link_complete`. This VM does not invent occupancy SM counts, Engine `--mem-link-destroy`,
+      or `cudaChooseDevice`. `gpu-profile capture` is still refused. Dual
+      score still has no `$/M tokens`.
+1282. [x] `gpu-sim` `Sim::mem_link_add_file` is
+      `cuLinkAddFile`. Identity with `link_add_file`. Query; legal during capture. Distinct from
+      `mem_link_destroy`. This VM does not invent occupancy SM counts, Engine `--mem-link-add-file`,
+      or `cudaChooseDevice`. `gpu-profile capture` is still refused. Dual
+      score still has no `$/M tokens`.
+1283. [x] `gpu-sim` `Sim::mem_runtime_get_version` is
+      `cudaRuntimeGetVersion`. Identity with `runtime_get_version`. Query; legal during capture. Distinct from
+      `mem_link_add_file`. This VM does not invent occupancy SM counts, Engine `--mem-runtime-get-version`,
+      or `cudaChooseDevice`. `gpu-profile capture` is still refused. Dual
+      score still has no `$/M tokens`.
+1284. [x] `gpu-sim` `Sim::mem_device_get` is
+      `cuDeviceGet`. Identity with `device_get`. Query; legal during capture. Distinct from
+      `mem_runtime_get_version`. This VM does not invent occupancy SM counts, Engine `--mem-device-get`,
+      or `cudaChooseDevice`. `gpu-profile capture` is still refused. Dual
+      score still has no `$/M tokens`.
+1285. [x] `gpu-sim` `Sim::mem_func_get_param_count` is
+      `cuFuncGetParamCount`. Identity with `func_get_param_count`. Query; legal during capture. Distinct from
+      `mem_device_get`. This VM does not invent occupancy SM counts, Engine `--mem-func-get-param-count`,
+      or `cudaChooseDevice`. `gpu-profile capture` is still refused. Dual
+      score still has no `$/M tokens`.
+1286. [x] `gpu-sim` `Sim::mem_func_get_cache_config` is
+      `cuFuncGetCacheConfig`. Identity with `func_get_cache_config`. Query; legal during capture. Distinct from
+      `mem_func_get_param_count`. This VM does not invent occupancy SM counts, Engine `--mem-func-get-cache-config`,
+      or `cudaChooseDevice`. `gpu-profile capture` is still refused. Dual
+      score still has no `$/M tokens`.
+1287. [x] `gpu-sim` `Sim::mem_func_is_loaded` is
+      `cuFuncIsLoaded`. Identity with `func_is_loaded`. Query; legal during capture. Distinct from
+      `mem_func_get_cache_config`. This VM does not invent occupancy SM counts, Engine `--mem-func-is-loaded`,
+      or `cudaChooseDevice`. `gpu-profile capture` is still refused. Dual
+      score still has no `$/M tokens`.
+1288. [x] `gpu-sim` `Sim::mem_func_load` is
+      `cuFuncLoad`. Identity with `func_load`. Query; legal during capture. Distinct from
+      `mem_func_is_loaded`. This VM does not invent occupancy SM counts, Engine `--mem-func-load`,
+      or `cudaChooseDevice`. `gpu-profile capture` is still refused. Dual
+      score still has no `$/M tokens`.
+1289. [x] `gpu-sim` `Sim::mem_func_get_module` is
+      `cuFuncGetModule`. Identity with `func_get_module`. Query; legal during capture. Distinct from
+      `mem_func_load`. This VM does not invent occupancy SM counts, Engine `--mem-func-get-module`,
+      or `cudaChooseDevice`. `gpu-profile capture` is still refused. Dual
+      score still has no `$/M tokens`.
+1290. [x] `gpu-sim` `Sim::mem_func_get_name` is
+      `cuFuncGetName`. Identity with `func_get_name`. Query; legal during capture. Distinct from
+      `mem_func_get_module`. This VM does not invent occupancy SM counts, Engine `--mem-func-get-name`,
+      or `cudaChooseDevice`. `gpu-profile capture` is still refused. Dual
+      score still has no `$/M tokens`.
+1291. [x] `gpu-sim` `Sim::mem_func_get_param_info` is
+      `cuFuncGetParamInfo`. Identity with `func_get_param_info`. Query; legal during capture. Distinct from
+      `mem_func_get_name`. This VM does not invent occupancy SM counts, Engine `--mem-func-get-param-info`,
+      or `cudaChooseDevice`. `gpu-profile capture` is still refused. Dual
+      score still has no `$/M tokens`.
+1292. [x] `gpu-sim` `Sim::mem_func_get_attribute` is
+      `cudaFuncGetAttribute`. Identity with `func_get_attribute`. Query; legal during capture. Distinct from
+      `mem_func_get_param_info`. This VM does not invent occupancy SM counts, Engine `--mem-func-get-attribute`,
+      or `cudaChooseDevice`. `gpu-profile capture` is still refused. Dual
+      score still has no `$/M tokens`.
+1293. [x] `gpu-sim` `Sim::mem_func_set_attribute` is
+      `cudaFuncSetAttribute`. Identity with `func_set_attribute`. Host-side; legal during capture. Distinct from
+      `mem_func_get_attribute`. This VM does not invent occupancy SM counts, Engine `--mem-func-set-attribute`,
+      or `cudaChooseDevice`. `gpu-profile capture` is still refused. Dual
+      score still has no `$/M tokens`.
+1294. [x] `gpu-sim` `Sim::mem_device_get_stream_priority_range` is
+      `cudaDeviceGetStreamPriorityRange`. Identity with `device_get_stream_priority_range`. Query; legal during capture. Distinct from
+      `mem_func_set_attribute`. This VM does not invent occupancy SM counts, Engine `--mem-device-get-stream-priority-range`,
+      or `cudaChooseDevice`. `gpu-profile capture` is still refused. Dual
+      score still has no `$/M tokens`.
+1295. [x] `gpu-sim` `Sim::mem_event_get_id` is
+      `cuEventGetId`. Identity with `event_get_id`. Query; legal during capture. Distinct from
+      `mem_device_get_stream_priority_range`. This VM does not invent occupancy SM counts, Engine `--mem-event-get-id`,
+      or `cudaChooseDevice`. `gpu-profile capture` is still refused. Dual
+      score still has no `$/M tokens`.
+1296. [x] `gpu-sim` `Sim::mem_green_ctx_get_id` is
+      `cuGreenCtxGetId`. Identity with `green_ctx_get_id`. Query; legal during capture. Distinct from
+      `mem_event_get_id`. This VM does not invent occupancy SM counts, Engine `--mem-green-ctx-get-id`,
+      or `cudaChooseDevice`. `gpu-profile capture` is still refused. Dual
+      score still has no `$/M tokens`.
+1297. [x] `gpu-sim` `Sim::mem_green_ctx_get_device` is
+      `cudaExecutionCtxGetDevice`. Identity with `green_ctx_get_device`. Query; legal during capture. Distinct from
+      `mem_green_ctx_get_id`. This VM does not invent occupancy SM counts, Engine `--mem-green-ctx-get-device`,
+      or `cudaChooseDevice`. `gpu-profile capture` is still refused. Dual
+      score still has no `$/M tokens`.
+1298. [x] `gpu-sim` `Sim::mem_stream_get_green_ctx` is
+      `cuStreamGetGreenCtx`. Identity with `stream_get_green_ctx`. Query; legal during capture. Distinct from
+      `mem_green_ctx_get_device`. This VM does not invent occupancy SM counts, Engine `--mem-stream-get-green-ctx`,
+      or `cudaChooseDevice`. `gpu-profile capture` is still refused. Dual
+      score still has no `$/M tokens`.
+1299. [x] `gpu-sim` `Sim::mem_green_ctx_create` is
+      `cuGreenCtxCreate`. Identity with `green_ctx_create`. Host-sync; capture refused. Distinct from
+      `mem_stream_get_green_ctx`. This VM does not invent occupancy SM counts, Engine `--mem-green-ctx-create`,
+      or `cudaChooseDevice`. `gpu-profile capture` is still refused. Dual
+      score still has no `$/M tokens`.
+1300. [x] `gpu-sim` `Sim::mem_green_ctx_destroy` is
+      `cuGreenCtxDestroy`. Identity with `green_ctx_destroy`. Host-sync; capture refused. Distinct from
+      `mem_green_ctx_create`. This VM does not invent occupancy SM counts, Engine `--mem-green-ctx-destroy`,
+      or `cudaChooseDevice`. `gpu-profile capture` is still refused. Dual
+      score still has no `$/M tokens`.
+1301. [x] `gpu-sim` `Sim::mem_green_ctx_stream_create` is
+      `cuGreenCtxStreamCreate`. Identity with `green_ctx_stream_create`. Host-sync; capture refused. Distinct from
+      `mem_green_ctx_destroy`. This VM does not invent occupancy SM counts, Engine `--mem-green-ctx-stream-create`,
+      or `cudaChooseDevice`. `gpu-profile capture` is still refused. Dual
+      score still has no `$/M tokens`.
+1302. [x] `gpu-sim` `Sim::mem_green_ctx_synchronize` is
+      `cudaExecutionCtxSynchronize`. Identity with `green_ctx_synchronize`. Host-sync; capture refused when a bound stream is capturing. Distinct from
+      `mem_green_ctx_stream_create`. This VM does not invent occupancy SM counts, Engine `--mem-green-ctx-synchronize`,
+      or `cudaChooseDevice`. `gpu-profile capture` is still refused. Dual
+      score still has no `$/M tokens`.
+1303. [x] `gpu-sim` `Sim::mem_graph_node_get_local_id` is
+      `cuGraphNodeGetLocalId`. Identity with `graph_node_get_local_id`. Query; legal during capture. Distinct from
+      `mem_green_ctx_synchronize`. This VM does not invent occupancy SM counts, Engine `--mem-graph-node-get-local-id`,
+      or `cudaChooseDevice`. `gpu-profile capture` is still refused. Dual
+      score still has no `$/M tokens`.
+1304. [x] `gpu-sim` `Sim::mem_graph_node_get_tools_id` is
+      `cuGraphNodeGetToolsId`. Identity with `graph_node_get_tools_id`. Query; legal during capture. Distinct from
+      `mem_graph_node_get_local_id`. This VM does not invent occupancy SM counts, Engine `--mem-graph-node-get-tools-id`,
+      or `cudaChooseDevice`. `gpu-profile capture` is still refused. Dual
+      score still has no `$/M tokens`.
+1305. [x] `gpu-sim` `Sim::mem_graph_node_get_containing_graph` is
+      `cuGraphNodeGetContainingGraph`. Identity with `graph_node_get_containing_graph`. Query; legal during capture. Distinct from
+      `mem_graph_node_get_tools_id`. This VM does not invent occupancy SM counts, Engine `--mem-graph-node-get-containing-graph`,
+      or `cudaChooseDevice`. `gpu-profile capture` is still refused. Dual
+      score still has no `$/M tokens`.
+1306. [x] `gpu-sim` `Sim::mem_pool_get_id` is
+      `cuMemPoolGetId`. Identity with `pool_get_id`. Query; legal during capture. Distinct from
+      `mem_graph_node_get_containing_graph`. This VM does not invent occupancy SM counts, Engine `--mem-pool-get-id`,
+      or `cudaChooseDevice`. `gpu-profile capture` is still refused. Dual
+      score still has no `$/M tokens`.
+1307. [x] `gpu-sim` `Sim::mem_memcpy_htod` is
+      `cuMemcpyHtoD`. Identity with `memcpy_htod`. Host-sync; capture refused. Distinct from
+      `mem_pool_get_id`. This VM does not invent occupancy SM counts, Engine `--mem-memcpy-htod`,
+      or `cudaChooseDevice`. `gpu-profile capture` is still refused. Dual
+      score still has no `$/M tokens`.
+1308. [x] `gpu-sim` `Sim::mem_memcpy_dtoh` is
+      `cuMemcpyDtoH`. Identity with `memcpy_dtoh`. Host-sync; capture refused. Distinct from
+      `mem_memcpy_htod`. This VM does not invent occupancy SM counts, Engine `--mem-memcpy-dtoh`,
+      or `cudaChooseDevice`. `gpu-profile capture` is still refused. Dual
+      score still has no `$/M tokens`.
+1309. [x] `gpu-sim` `Sim::mem_prefetch_batch_async` is
+      `cudaMemPrefetchBatchAsync`. Identity with `prefetch_batch_async`. Query; legal during capture. Distinct from
+      `mem_memcpy_dtoh`. This VM does not invent occupancy SM counts, Engine `--mem-prefetch-batch-async`,
+      or `cudaChooseDevice`. `gpu-profile capture` is still refused. Dual
+      score still has no `$/M tokens`.
+1310. [x] `gpu-sim` `Sim::mem_discard_batch_async` is
+      `cudaMemDiscardBatchAsync`. Identity with `discard_batch_async`. Query; legal during capture. Distinct from
+      `mem_prefetch_batch_async`. This VM does not invent occupancy SM counts, Engine `--mem-discard-batch-async`,
+      or `cudaChooseDevice`. `gpu-profile capture` is still refused. Dual
+      score still has no `$/M tokens`.
+1311. [x] `gpu-sim` `Sim::mem_discard_and_prefetch_batch_async` is
+      `cudaMemDiscardAndPrefetchBatchAsync`. Identity with `discard_and_prefetch_batch_async`. Query; legal during capture. Distinct from
+      `mem_discard_batch_async`. This VM does not invent occupancy SM counts, Engine `--mem-discard-and-prefetch-batch-async`,
+      or `cudaChooseDevice`. `gpu-profile capture` is still refused. Dual
+      score still has no `$/M tokens`.
+1312. [x] `gpu-sim` `Sim::mem_tensor_map_encode_tiled` is
+      `cuTensorMapEncodeTiled`. Identity with `tensor_map_encode_tiled`. Query; legal during capture. Distinct from
+      `mem_discard_and_prefetch_batch_async`. This VM does not invent occupancy SM counts, Engine `--mem-tensor-map-encode-tiled`,
+      or `cudaChooseDevice`. `gpu-profile capture` is still refused. Dual
+      score still has no `$/M tokens`.
+1313. [x] `gpu-sim` `Sim::mem_tensor_map_encode_im2col` is
+      `cuTensorMapEncodeIm2col`. Identity with `tensor_map_encode_im2col`. Query; legal during capture. Distinct from
+      `mem_tensor_map_encode_tiled`. This VM does not invent occupancy SM counts, Engine `--mem-tensor-map-encode-im2col`,
+      or `cudaChooseDevice`. `gpu-profile capture` is still refused. Dual
+      score still has no `$/M tokens`.
+1314. [x] `gpu-sim` `Sim::mem_tensor_map_encode_im2col_wide` is
+      `cuTensorMapEncodeIm2colWide`. Identity with `tensor_map_encode_im2col_wide`. Query; legal during capture. Distinct from
+      `mem_tensor_map_encode_im2col`. This VM does not invent occupancy SM counts, Engine `--mem-tensor-map-encode-im2col-wide`,
+      or `cudaChooseDevice`. `gpu-profile capture` is still refused. Dual
+      score still has no `$/M tokens`.
+1315. [x] `gpu-sim` `Sim::mem_tensor_map_replace_aligned_addr` is
+      `cuTensorMapReplaceAlignedAddr`. Identity with `tensor_map_replace_aligned_addr`. Query; legal during capture. Distinct from
+      `mem_tensor_map_encode_im2col_wide`. This VM does not invent occupancy SM counts, Engine `--mem-tensor-map-replace-aligned-addr`,
+      or `cudaChooseDevice`. `gpu-profile capture` is still refused. Dual
+      score still has no `$/M tokens`.
+1316. [x] `gpu-sim` `Sim::mem_array_get_descriptor` is
+      `cuArrayGetDescriptor`. Identity with `array_get_descriptor`. Query; legal during capture. Distinct from
+      `mem_tensor_map_replace_aligned_addr`. This VM does not invent occupancy SM counts, Engine `--mem-array-get-descriptor`,
+      or `cudaChooseDevice`. `gpu-profile capture` is still refused. Dual
+      score still has no `$/M tokens`.
+1317. [x] `gpu-sim` `Sim::mem_array_3d_get_descriptor` is
+      `cuArray3DGetDescriptor`. Identity with `array_3d_get_descriptor`. Query; legal during capture. Distinct from
+      `mem_array_get_descriptor`. This VM does not invent occupancy SM counts, Engine `--mem-array-3d-get-descriptor`,
+      or `cudaChooseDevice`. `gpu-profile capture` is still refused. Dual
+      score still has no `$/M tokens`.
+1318. [x] `gpu-sim` `Sim::mem_array_get_sparse_properties` is
+      `cuArrayGetSparseProperties`. Identity with `array_get_sparse_properties`. Query; legal during capture. Distinct from
+      `mem_array_3d_get_descriptor`. This VM does not invent occupancy SM counts, Engine `--mem-array-get-sparse-properties`,
+      or `cudaChooseDevice`. `gpu-profile capture` is still refused. Dual
+      score still has no `$/M tokens`.
+1319. [x] `gpu-sim` `Sim::mem_array_get_plane` is
+      `cuArrayGetPlane`. Identity with `array_get_plane`. Query; legal during capture. Distinct from
+      `mem_array_get_sparse_properties`. This VM does not invent occupancy SM counts, Engine `--mem-array-get-plane`,
+      or `cudaChooseDevice`. `gpu-profile capture` is still refused. Dual
+      score still has no `$/M tokens`.
+1320. [x] `gpu-sim` `Sim::mem_array_get_memory_requirements` is
+      `cuArrayGetMemoryRequirements`. Identity with `array_get_memory_requirements`. Query; legal during capture. Distinct from
+      `mem_array_get_plane`. This VM does not invent occupancy SM counts, Engine `--mem-array-get-memory-requirements`,
+      or `cudaChooseDevice`. `gpu-profile capture` is still refused. Dual
+      score still has no `$/M tokens`.
+1321. [x] `gpu-sim` `Sim::mem_mipmapped_array_get_memory_requirements` is
+      `cuMipmappedArrayGetMemoryRequirements`. Identity with `mipmapped_array_get_memory_requirements`. Query; legal during capture. Distinct from
+      `mem_array_get_memory_requirements`. This VM does not invent occupancy SM counts, Engine `--mem-mipmapped-array-get-memory-requirements`,
+      or `cudaChooseDevice`. `gpu-profile capture` is still refused. Dual
+      score still has no `$/M tokens`.
+1322. [x] `gpu-sim` `Sim::mem_mipmapped_array_get_sparse_properties` is
+      `cuMipmappedArrayGetSparseProperties`. Identity with `mipmapped_array_get_sparse_properties`. Query; legal during capture. Distinct from
+      `mem_mipmapped_array_get_memory_requirements`. This VM does not invent occupancy SM counts, Engine `--mem-mipmapped-array-get-sparse-properties`,
+      or `cudaChooseDevice`. `gpu-profile capture` is still refused. Dual
+      score still has no `$/M tokens`.
+1323. [x] `gpu-sim` `Sim::mem_mipmapped_array_create` is
+      `cuMipmappedArrayCreate`. Identity with `mipmapped_array_create`. Query; legal during capture. Distinct from
+      `mem_mipmapped_array_get_sparse_properties`. This VM does not invent occupancy SM counts, Engine `--mem-mipmapped-array-create`,
+      or `cudaChooseDevice`. `gpu-profile capture` is still refused. Dual
+      score still has no `$/M tokens`.
+1324. [x] `gpu-sim` `Sim::mem_mipmapped_array_get_level` is
+      `cuMipmappedArrayGetLevel`. Identity with `mipmapped_array_get_level`. Query; legal during capture. Distinct from
+      `mem_mipmapped_array_create`. This VM does not invent occupancy SM counts, Engine `--mem-mipmapped-array-get-level`,
+      or `cudaChooseDevice`. `gpu-profile capture` is still refused. Dual
+      score still has no `$/M tokens`.
+1325. [x] `gpu-sim` `Sim::mem_mipmapped_array_destroy` is
+      `cuMipmappedArrayDestroy`. Identity with `mipmapped_array_destroy`. Query; legal during capture. Distinct from
+      `mem_mipmapped_array_get_level`. This VM does not invent occupancy SM counts, Engine `--mem-mipmapped-array-destroy`,
+      or `cudaChooseDevice`. `gpu-profile capture` is still refused. Dual
+      score still has no `$/M tokens`.
+1326. [x] `gpu-sim` `Sim::mem_import_external_memory` is
+      `cuImportExternalMemory`. Identity with `import_external_memory`. Query; legal during capture. Distinct from
+      `mem_mipmapped_array_destroy`. This VM does not invent occupancy SM counts, Engine `--mem-import-external-memory`,
+      or `cudaChooseDevice`. `gpu-profile capture` is still refused. Dual
+      score still has no `$/M tokens`.
+1327. [x] `gpu-sim` `Sim::mem_destroy_external_memory` is
+      `cuDestroyExternalMemory`. Identity with `destroy_external_memory`. Query; legal during capture. Distinct from
+      `mem_import_external_memory`. This VM does not invent occupancy SM counts, Engine `--mem-destroy-external-memory`,
+      or `cudaChooseDevice`. `gpu-profile capture` is still refused. Dual
+      score still has no `$/M tokens`.
+1328. [x] `gpu-sim` `Sim::mem_external_memory_get_mapped_buffer` is
+      `cuExternalMemoryGetMappedBuffer`. Identity with `external_memory_get_mapped_buffer`. Query; legal during capture. Distinct from
+      `mem_destroy_external_memory`. This VM does not invent occupancy SM counts, Engine `--mem-external-memory-get-mapped-buffer`,
+      or `cudaChooseDevice`. `gpu-profile capture` is still refused. Dual
+      score still has no `$/M tokens`.
+1329. [x] `gpu-sim` `Sim::mem_external_memory_get_mapped_mipmapped_array` is
+      `cuExternalMemoryGetMappedMipmappedArray`. Identity with `external_memory_get_mapped_mipmapped_array`. Query; legal during capture. Distinct from
+      `mem_external_memory_get_mapped_buffer`. This VM does not invent occupancy SM counts, Engine `--mem-external-memory-get-mapped-mipmapped-array`,
+      or `cudaChooseDevice`. `gpu-profile capture` is still refused. Dual
+      score still has no `$/M tokens`.
+1330. [x] `gpu-sim` `Sim::mem_import_external_semaphore` is
+      `cuImportExternalSemaphore`. Identity with `import_external_semaphore`. Query; legal during capture. Distinct from
+      `mem_external_memory_get_mapped_mipmapped_array`. This VM does not invent occupancy SM counts, Engine `--mem-import-external-semaphore`,
+      or `cudaChooseDevice`. `gpu-profile capture` is still refused. Dual
+      score still has no `$/M tokens`.
+1331. [x] `gpu-sim` `Sim::mem_destroy_external_semaphore` is
+      `cuDestroyExternalSemaphore`. Identity with `destroy_external_semaphore`. Query; legal during capture. Distinct from
+      `mem_import_external_semaphore`. This VM does not invent occupancy SM counts, Engine `--mem-destroy-external-semaphore`,
+      or `cudaChooseDevice`. `gpu-profile capture` is still refused. Dual
+      score still has no `$/M tokens`.
+1332. [x] `gpu-sim` `Sim::mem_signal_external_semaphores_async` is
+      `cuSignalExternalSemaphoresAsync`. Identity with `signal_external_semaphores_async`. Query; legal during capture. Distinct from
+      `mem_destroy_external_semaphore`. This VM does not invent occupancy SM counts, Engine `--mem-signal-external-semaphores-async`,
+      or `cudaChooseDevice`. `gpu-profile capture` is still refused. Dual
+      score still has no `$/M tokens`.
+1333. [x] `gpu-sim` `Sim::mem_wait_external_semaphores_async` is
+      `cuWaitExternalSemaphoresAsync`. Identity with `wait_external_semaphores_async`. Query; legal during capture. Distinct from
+      `mem_signal_external_semaphores_async`. This VM does not invent occupancy SM counts, Engine `--mem-wait-external-semaphores-async`,
+      or `cudaChooseDevice`. `gpu-profile capture` is still refused. Dual
+      score still has no `$/M tokens`.
+1334. [ ] Next numbered PLAN item after 1333 is the next `gpu-sim` / Engine /
     serve / expertvm mechanical API that is still missing, or the next official
     decode family. Prefer remaining CUDA-shaped twins over more
     OpenAI HTTP veneer. Do not invent F32 `output.scale`. Do not invent a
@@ -5956,6 +10958,66 @@ model, do not celebrate the sim.
     `cudaDriverGetVersion` / `cuDriverGetVersion` / `cudaRuntimeGetVersion`.
     Do not invent Engine `--driver-version`. Do not invent `cudaGetLastError` /
     `cudaPeekAtLastError` (no thread-local last error). Do not invent a second
+    `cudaGetCurrentGraphExec` / `current_graph_exec`. Do not invent Engine
+    `--current-graph-exec`. Do not treat host `launch_graph` as current. Do
+    not invent public `Sim::advance` as GetCurrentGraphExec. Do not reverse
+    host `launch_graph` of a DEVICE_LAUNCH exec remaining legal. Do not
+    reverse DeviceLaunch in-flight SetParams / upload refuse. Do not invent
+    a second `cudaStreamDestroy` / `destroy_stream`. Do not invent Engine
+    `--stream-destroy`. Do not reverse NULL-stream destroy refuse. Do not
+    abort in-flight work on stream destroy. Do not wait like `destroy_event`.
+    Do not reverse implicit streams remaining legal until destroy. Do not
+    reverse recreate-while-unfinished `"stream in flight"`. Do not invent
+    a second `cudaStreamGraphFireAndForget` / `cudaStreamGraphTailLaunch` /
+    named device-launch streams. Do not invent Engine `--graph-tail-launch` /
+    `--device-launch-stream`. Do not invent a second
+    `cudaStreamGraphFireAndForgetAsSibling`. Do not invent Engine
+    `--graph-faf-sibling`. Do not reverse FAF parent-stream wait. Do not
+    reverse TailLaunch waiting for FAF children (not siblings). Do not treat host
+    `launch_graph` named streams as legal. Do not reverse 558
+    `current_graph_exec` lowest-id among all in-flight tails. Do not reverse
+    host user-stream `device_launch_graph`. Do not reverse self tail-relaunch.
+    Do not invent a second `cudaLimitDevRuntimePendingLaunchCount` cap. Do not
+    invent Engine `--pending-launch`. Do not make `DevRuntimeSyncDepth`
+    mechanical (no device-side `cudaDeviceSynchronize`). Do not charge HBM
+    for `MallocHeapSize`. Do not invent `cudaLaunchDevice` kernel CDP. Do
+    not count a queued tail against pending until flush. Do not reverse
+    default pending 2048. Do not reverse host concurrent `device_launch_graph`
+    at the default cap.
+    Do not invent a second `cudaDeviceReset` / `reset_device`. Do not invent
+    Engine `--device-reset`. Do not free `cudaMallocAsync` on device reset.
+    Do not destroy NULL stream on device reset. Do not reverse `ctx_get_id`
+    stability across reset. Do not reverse `destroy_stream` returning
+    immediately (reset waits). Do not free host or managed allocs on reset
+    (no owning device). Do not destroy events or graphs on reset.
+    Do not invent a second `cudaGetErrorName` / `cudaGetErrorString` /
+    `error_name` / `error_string`. Do not invent Engine `--error-name`.
+    Do not reverse `Display` of `SimError`. Do not put the modeled `why`
+    into `error_string` for `Invalid`.
+    Do not invent a second `cudaDevAttrComputeCapabilityMajor` /
+    `cudaDevAttrComputeCapabilityMinor` / `ComputeCapabilityMajor` /
+    `ComputeCapabilityMinor`. Do not invent Engine `--compute-capability`.
+    Do not invent occupancy SM counts from compute capability. Do not invent
+    `cudaChooseDevice`. Do not invent `cudaDevAttrWarpSize` or clock rates.
+    Do not reverse example H100 Hopper 9.0.
+    Do not invent a second `cudaDevAttrMaxThreadsPerBlock` /
+    `MaxBlockDimX` / `MaxBlockDimY` / `MaxBlockDimZ` / `MaxGridDimX` /
+    `MaxGridDimY` / `MaxGridDimZ`. Do not invent Engine `--max-threads`.
+    Do not model a thread-block launch config on `kernel`. Do not invent
+    `cudaDevAttrMaxThreadsPerMultiProcessor`. Do not reverse H100 1024
+    threads per block.
+    Do not invent a second `cudaDevAttrMaxRegistersPerBlock` /
+    `MaxRegistersPerBlock`. Do not invent Engine `--max-registers`.
+    Do not invent `cudaDevAttrMaxRegistersPerMultiprocessor`. Do not
+    invent `FuncAttributes` numRegs this slice. Do not reverse H100
+    65536 registers per block.
+    Do not invent a second `cudaDevAttrGlobalMemoryBusWidth` /
+    `GlobalMemoryBusWidth`. Do not invent Engine `--bus-width`.
+    Do not invent `cudaDevAttrMemoryClockRate`. Do not reverse example
+    H100 5120-bit bus. Do not reverse example H200 6144-bit bus. Do not
+    derive HBM duration from bus width (use `hbm_bps`).
+    Do not invent
+    a second
     `cuDeviceGetUuid` / `cudaDeviceGetUuid`. Do not invent a second
     `cuDeviceGetByUuid`. Do not invent a second `cudaDeviceGetPciBusId` /
     `cuDeviceGetPCIBusId`. Do not invent a second `cudaDeviceGetByPCIBusId`.
@@ -5978,6 +11040,2916 @@ model, do not celebrate the sim.
     Do not invent a second `cudaDevAttrSurfaceAlignment`.
     Do not invent a second `cudaDevAttrTexturePitchAlignment`.
     Do not invent a second `cudaDevAttrMaxTexture1DWidth`.
+    Do not invent a second `cudaDevAttrMaxTexture2DWidth`,
+    `MaxTexture2DHeight`, `MaxTexture3DWidth`, `MaxTexture3DHeight`, or
+    `MaxTexture3DDepth`. Do not invent Engine `--max-texture`. Do not
+    invent layered or cubemap texture attrs this slice. Do not reverse
+    texture 2D/3D dims staying 0.
+    Do not invent a second `cudaDevAttrMaxSurface1DWidth`,
+    `MaxSurface2DWidth`, `MaxSurface2DHeight`, `MaxSurface3DWidth`,
+    `MaxSurface3DHeight`, or `MaxSurface3DDepth`. Do not invent Engine
+    `--max-surface`. Do not invent layered or cubemap surface attrs
+    this slice. Do not reverse surface dims staying 0.
+    Do not invent a second `cudaDevAttrSingleToDoublePrecisionPerfRatio`.
+    Do not invent Engine `--fp64-ratio`. Do not scale kernel duration
+    from this ratio. Do not reverse example H100 ratio 1.
+    Do not invent a second classic `cudaFuncGetAttributes` compiler-field
+    family (`sharedSizeBytes`, `constSizeBytes`, `localSizeBytes`,
+    `maxThreadsPerBlock`, `ptxVersion`, `binaryVersion`, `cacheModeCA`).
+    Do not invent Engine `--func-attrs`. Do not invent `FuncAttributes`
+    numRegs this slice. Do not invent a compiled kernel or PTX compiler.
+    Do not reverse those compiler fields staying 0. Do not copy
+    `MaxThreadsPerBlock` 1024 onto function `maxThreadsPerBlock`.
+    Do not invent a second `cudaDevAttrMaxTexture1DLinearWidth`,
+    `MaxTexture2DLinearWidth`, `MaxTexture2DLinearHeight`, or
+    `MaxTexture2DLinearPitch`. Do not invent Engine `--texture-linear`.
+    Do not invent layered or cubemap texture attrs this slice. Do not
+    reverse linear texture dims staying 0.
+    Do not invent a second `cudaDevAttrMaxTexture2DGatherWidth` or
+    `MaxTexture2DGatherHeight`. Do not invent Engine `--texture-gather`.
+    Do not invent layered or cubemap texture attrs this slice. Do not
+    reverse gather texture dims staying 0.
+    Do not invent a second `cudaDevAttrMaxTexture1DMipmappedWidth`,
+    `MaxTexture2DMipmappedWidth`, or `MaxTexture2DMipmappedHeight`. Do
+    not invent Engine `--texture-mipmap`. Do not invent layered or
+    cubemap texture attrs this slice. Do not reverse mipmapped texture
+    dims staying 0.
+    Do not invent a second `cudaDevAttrMaxTextureCubemapWidth`. Do not
+    invent Engine `--texture-cubemap`. Do not invent layered texture
+    attrs this slice. Do not reverse cubemap texture width staying 0.
+    Do not invent a second `cudaDevAttrMaxTexture1DLayeredWidth`,
+    `MaxTexture1DLayeredLayers`, `MaxTexture2DLayeredWidth`,
+    `MaxTexture2DLayeredHeight`, or `MaxTexture2DLayeredLayers`. Do not
+    invent Engine `--texture-layered`. Do not invent cubemap-layered
+    texture attrs this slice. Do not reverse layered texture dims
+    staying 0.
+    Do not invent a second `cudaDevAttrMaxTextureCubemapLayeredWidth` or
+    `MaxTextureCubemapLayeredLayers`. Do not invent Engine
+    `--texture-cubemap-layered`. Do not invent layered surface attrs
+    this slice. Do not reverse cubemap layered texture dims staying 0.
+    Do not invent a second `cudaDevAttrMaxSurface1DLayeredWidth`,
+    `MaxSurface1DLayeredLayers`, `MaxSurface2DLayeredWidth`,
+    `MaxSurface2DLayeredHeight`, or `MaxSurface2DLayeredLayers`. Do not
+    invent Engine `--surface-layered`. Do not invent cubemap surface
+    attrs this slice. Do not reverse layered surface dims staying 0.
+    Do not invent a second `cudaDevAttrMaxSurfaceCubemapWidth`,
+    `MaxSurfaceCubemapLayeredWidth`, or `MaxSurfaceCubemapLayeredLayers`.
+    Do not invent Engine `--surface-cubemap`. Do not reverse cubemap
+    surface dims staying 0.
+    Do not invent a second `cudaDeviceProp::pciSubSystemID` /
+    `pci_subsystem_id`. Do not invent Engine `--pci-subsystem`. Do not
+    invent `DeviceAttr::PciSubSystemId`. Do not reverse pciSubSystemID
+    staying 0.
+    Do not invent a second `cudaDeviceProp::luid` / `luidDeviceNodeMask`.
+    Do not invent Engine `--luid`. Do not reverse luid staying 0.
+    Do not invent a second `cuDeviceGetLuid` / `device_get_luid`.
+    Do not invent Engine `--get-luid`. Do not invent
+    `cuDeviceGetLuidByUuid`. Do not reverse device_get_luid zeros.
+    Do not invent a second `cudaDevAttrMaxTexture3DWidthAlt`,
+    `MaxTexture3DHeightAlt`, or `MaxTexture3DDepthAlt`. Do not invent
+    Engine `--texture-3d-alt`. Do not invent CUDA tex3D alt bind this
+    slice. Do not reverse alternate 3D texture dims staying 0.
+    Do not invent a second `cudaDevAttrMpsEnabled`. Do not invent
+    Engine `--mps-enabled`. Do not invent a CUDA MPS server this
+    slice. Do not reverse MpsEnabled staying 0.
+    Do not invent a second `cudaDevAttrD3D12CigSupported`. Do not invent
+    Engine `--d3d12-cig`. Do not invent Vulkan CIG this slice.
+    Do not reverse D3D12CigSupported staying 0.
+    Do not invent a second `cudaDevAttrVulkanCigSupported`. Do not invent
+    Engine `--vulkan-cig`. Do not invent OpenGL CIG this slice.
+    Do not reverse VulkanCigSupported staying 0.
+    Do not invent a second `cuDeviceGetTexture1DLinearMaxWidth` /
+    `device_get_texture_1d_linear_max_width`. Do not invent Engine
+    `--texture-1d-linear-max`. Do not invent `CUarray_format` this
+    slice. Do not reverse texture 1D linear max width staying 0.
+    Do not invent a second `cudaDevAttrMaxSharedMemoryPerMultiprocessor`.
+    Do not invent Engine `--shared-per-mp`. Do not invent
+    `cudaDevAttrMaxRegistersPerMultiprocessor`. Do not reverse
+    MaxSharedMemoryPerMultiprocessor matching optin.
+    Do not invent a second `cudaDevAttrGpuPciDeviceId`. Do not invent
+    Engine `--gpu-pci-device`. Do not invent `cudaDevAttrGpuPciSubsystemId`
+    or `DeviceAttr::PciSubSystemId`. Do not reverse GpuPciDeviceId
+    staying 0.
+    Do not invent a second `cudaDevAttrGpuPciSubsystemId`. Do not invent
+    Engine `--gpu-pci-subsystem`. Do not invent `DeviceAttr::PciSubSystemId`.
+    Do not reverse GpuPciSubsystemId staying 0.
+    Do not invent a second `cuDeviceComputeCapability` /
+    `device_compute_capability`. Do not invent Engine `--cu-compute-capability`.
+    Do not invent occupancy SM counts from compute capability. Do not
+    reverse Hopper 9.0.
+    Do not invent a second `cuCtxGetApiVersion` /
+    `ctx_get_api_version`. Do not invent Engine `--ctx-api-version`.
+    Do not invent occupancy SM counts from API version. Do not
+    reverse CUDA 13.0.
+    Do not invent a second `cuCtxGetFlags` / `ctx_get_flags`. Do not
+    invent Engine `--ctx-flags`. Do not reverse wrapping `get_device_flags`.
+    Do not invent a second `cuCtxSetFlags` / `ctx_set_flags`. Do not reverse wrapping `set_device_flags`.
+    Do not invent a second `cuCtxGetCacheConfig` /
+    `ctx_get_cache_config`. Do not invent Engine `--ctx-cache-config`.
+    Do not invent a second `cuCtxSetCacheConfig` / `ctx_set_cache_config`. Do not reverse
+    wrapping `get_cache_config` / `set_cache_config`.
+    Do not invent a second `cuCtxGetStreamPriorityRange` /
+    `ctx_get_stream_priority_range`. Do not invent Engine `--ctx-priority-range`.
+    Do not invent occupancy SM counts from stream priority. Do not
+    reverse example H100 `(0, -5)`.
+    Do not invent a second `cuCtxGetLimit` / `ctx_get_limit`. Do not
+    invent Engine `--ctx-get-limit`. Do not reverse wrapping `get_limit`.
+    Do not invent a second `cuCtxSetLimit` / `ctx_set_limit`. Do not reverse wrapping `set_limit`.
+    Do not invent a second `cuCtxSynchronize` / `ctx_synchronize`. Do
+    not invent Engine `--ctx-synchronize`. Do not invent
+    `cuCtxSynchronize_v2`. Do not reverse capture refuse.
+    Do not invent a second `cuCtxGetSharedMemConfig` /
+    `ctx_get_shared_mem_config`. Do not invent Engine `--ctx-shared-mem`.
+    Do not invent a second `cuCtxSetSharedMemConfig` / `ctx_set_shared_mem_config`. Do not reverse
+    wrapping `get_shared_mem_config` / `set_shared_mem_config`.
+    Do not invent a second `cuDevicePrimaryCtxSetFlags` /
+    `device_primary_ctx_set_flags`. Do not invent Engine `--primary-ctx-flags`.
+    Do not invent `cuDevicePrimaryCtxRetain`. Do not reverse always-active
+    primary context. Do not reverse `set_device_flags` still applying.
+    Do not invent a second `cudaFuncGetName` / `cuFuncGetName` /
+    `func_get_name`. Do not invent Engine `--func-name`. Do not invent
+    `cuKernelGetName` this slice. Do not reverse the empty name.
+    Do not invent a second `cuFuncGetParamInfo` / `func_get_param_info`.
+    Do not invent Engine `--func-param-info`. Do not invent a compiled
+    kernel this slice. Do not reverse `"unknown function"`.
+    Do not invent a second `cuInit` / `driver_init`. Do not invent
+    Engine `--cu-init`. Do not invent `cuInit` flag bits. Do not reverse
+    flags 0 as a 1 ns no-op.
+    Do not invent a second `cuModuleGetLoadingMode` /
+    `module_get_loading_mode`. Do not invent Engine `--module-loading`.
+    Do not invent an environment-variable loading override. Do not reverse
+    always-Eager.
+    Do not invent a second `cuCtxGetDevice` / `ctx_get_device`. Do not
+    invent Engine `--ctx-device`. Do not invent `cudaSetDevice`. Do not
+    reverse wrapping the explicit device.
+    Do not invent a second `cuFuncIsLoaded` / `func_is_loaded`. Do not
+    invent Engine `--func-loaded`. Do not invent `cuFuncLoad`. Do not reverse
+    false until a compiled kernel exists.
+    Do not invent a second `cuFuncGetModule` / `func_get_module`. Do not
+    invent Engine `--func-module`. Do not invent `cuKernelGetModule`. Do not
+    reverse `"unknown function"`.
+    Do not invent a second `cuCtxResetPersistingL2Cache` /
+    `ctx_reset_persisting_l2_cache`. Do not invent Engine `--ctx-reset-l2`.
+    Do not reverse wrapping `reset_persisting_l2_cache`.
+    Do not invent a second `cuCtxGetExecAffinity` / `ctx_get_exec_affinity`.
+    Do not invent Engine `--ctx-exec-affinity`. Do not invent occupancy SM
+    counts. Do not invent `cuCtxSetExecAffinity`.
+    Do not invent a second `cuMemBatchDecompressAsync` /
+    `mem_batch_decompress_async`. Do not invent Engine `--mem-decompress`.
+    Do not invent decompress succeeding.
+    Do not invent a second `cuTensorMapEncodeTiled` /
+    `tensor_map_encode_tiled`. Do not invent Engine `--tensor-map`.
+    Do not invent `cuTensorMapEncodeIm2col` this slice. Do not reverse
+    `"tensor map"`.
+    Do not invent a second `cudaLaunchCooperativeKernelMultiDevice` /
+    `cooperative_kernel_multi_device`. Do not invent Engine `--coop-multi`.
+    Do not invent `cudaLaunchParams` packing. Do not reverse
+    `"cooperative multi-device"`.
+    Do not invent a second `cuArrayCreate` / `cuArray3DCreate` /
+    `array_create`. Do not invent Engine `--array-create`. Do not invent
+    `CUarray_format` this slice. Do not reverse `"cuda array"`.
+    Do not invent a second `cuImportExternalMemory` /
+    `import_external_memory`. Do not invent Engine `--external-memory`.
+    Do not invent `cuDestroyExternalMemory` this slice. Do not reverse
+    `"external memory"`.
+    Do not invent a second `cuSurfObjectCreate` /
+    `surf_object_create`. Do not invent Engine `--surf-object`.
+    Do not invent `cuSurfObjectDestroy` this slice. Do not reverse
+    `"cuda surface"`.
+    Do not invent a second `cuLibraryLoadData` /
+    `library_load_data`. Do not invent Engine `--library-load`.
+    Do not invent `cuLibraryLoadFromFile` this slice. Do not reverse
+    `"cuda library"`.
+    Do not invent a second `cuGetProcAddress` /
+    `get_proc_address`. Do not invent Engine `--proc-address`.
+    Do not invent `cudaGetDriverEntryPointByVersion` this slice. Do not
+    reverse `"proc address"`.
+    Do not invent a second `cuGraphicsMapResources` /
+    `graphics_map_resources`. Do not invent Engine `--graphics-map`.
+    Do not invent `cuGraphicsGLRegisterBuffer` this slice. Do not reverse
+    `"graphics resource"`.
+    Do not invent a second `cuCoredumpGetAttribute` /
+    `coredump_get_attribute`. Do not invent Engine `--coredump`.
+    Do not invent `cuCoredumpSetAttribute` this slice. Do not reverse
+    `"coredump"`.
+    Do not invent a second `cuCheckpointProcessLock` /
+    `checkpoint_process_lock`. Do not invent Engine `--checkpoint`.
+    Do not invent `cuCheckpointProcessCheckpoint` this slice. Do not
+    reverse `"checkpoint"`.
+    Do not invent a second `cuMipmappedArrayCreate` /
+    `mipmapped_array_create`. Do not invent Engine `--mipmap-array`.
+    Do not invent `cuMipmappedArrayGetLevel` this slice. Do not reverse
+    `"mipmapped array"`.
+    Do not invent a second `cuLinkCreate` / `link_create`. Do not invent
+    Engine `--jit-link`. Do not invent `cuLinkAddData` this slice. Do not
+    reverse `"jit linker"`.
+    Do not invent a second `cuGetExportTable` / `get_export_table`. Do
+    not invent Engine `--export-table`. Do not invent a succeeding
+    `CUuuid` table lookup this slice. Do not reverse `"export table"`.
+    Do not invent a second `cuProfilerStart` / `profiler_start`. Do not
+    invent Engine `--profiler-start`. Do not invent `cuProfilerStop` this
+    slice. Do not reverse the 1 ns no-op.
+    Do not invent a second `cuEGLStreamConsumerConnect` /
+    `egl_stream_consumer_connect`. Do not invent Engine `--egl-stream`.
+    Do not invent `cuEGLStreamProducerConnect` this slice. Do not reverse
+    `"egl stream"`.
+    Do not invent a second `cuGLGetDevices` / `gl_get_devices`. Do not
+    invent Engine `--gl-devices`. Do not invent `cuGLCtxCreate` this
+    slice. Do not reverse `"opengl"`.
+    Do not invent a second `cuD3D11GetDevices` / `d3d11_get_devices`. Do
+    not invent Engine `--d3d11-devices`. Do not invent `cuD3D11CtxCreate`
+    this slice. Do not reverse `"d3d11"`.
+    Do not invent a second `cuD3D12GetDevices` / `d3d12_get_devices`. Do
+    not invent Engine `--d3d12-devices`. Do not invent `cuD3D12CtxCreate`
+    this slice. Do not reverse `"d3d12"`.
+    Do not invent a second `cuVDPAUGetDevice` / `vdpau_get_device`. Do
+    not invent Engine `--vdpau-device`. Do not invent `cuVDPAUCtxCreate`
+    this slice. Do not reverse `"vdpau"`.
+    Do not invent a second `cuD3D9GetDevices` / `d3d9_get_devices`. Do
+    not invent Engine `--d3d9-devices`. Do not invent `cuD3D9CtxCreate`
+    this slice. Do not reverse `"d3d9"`.
+    Do not invent a second `cuD3D10GetDevices` / `d3d10_get_devices`. Do
+    not invent Engine `--d3d10-devices`. Do not invent `cuD3D10CtxCreate`
+    this slice. Do not reverse `"d3d10"`.
+    Do not invent a second `cuProfilerStop` / `profiler_stop`. Do
+    not invent Engine `--profiler-stop`. Do not invent
+    `cudaProfilerInitialize` this slice. Do not reverse the 1 ns no-op.
+    Do not invent a second `cudaProfilerInitialize` /
+    `profiler_initialize`. Do not invent Engine `--profiler-init`. Do not
+    invent a CUPTI config file this slice. Do not reverse `"profiler initialize"`.
+    Do not invent a second `cuTexObjectCreate` / `tex_object_create`. Do
+    not invent Engine `--tex-object`. Do not invent `cuTexObjectDestroy`
+    this slice. Do not reverse `"cuda texture"`.
+    Do not invent a second `cuTexObjectDestroy` / `tex_object_destroy`. Do
+    not invent Engine `--tex-destroy`. Do not invent
+    `cuTexObjectGetTextureDesc` this slice. Do not reverse `"unknown tex object"`.
+    Do not invent a second `cuSurfObjectDestroy` / `surf_object_destroy`.
+    Do not invent Engine `--surf-destroy`. Do not invent
+    `cuSurfObjectGetResourceDesc` this slice. Do not reverse `"unknown surf object"`.
+    Do not invent a second `cuSurfObjectGetResourceDesc` /
+    `surf_object_get_resource_desc`. Do not invent Engine `--surf-resource-desc`. Do not invent
+    `cuArrayGetDescriptor` this slice. Do not reverse `"surf resource desc"`.
+    Do not invent a second `cuTexObjectGetResourceDesc` /
+    `tex_object_get_resource_desc`. Do not invent Engine `--tex-resource-desc`. Do not invent
+    `cuTexObjectGetResourceViewDesc` this slice. Do not reverse `"tex resource desc"`.
+    Do not invent a second `cuTexObjectGetTextureDesc` /
+    `tex_object_get_texture_desc`. Do not invent Engine `--tex-desc`. Do not invent
+    `CU_TR_FILTER_MODE` this slice. Do not reverse `"texture desc"`.
+    Do not invent a second `cuTexObjectGetResourceViewDesc` /
+    `tex_object_get_resource_view_desc`. Do not invent Engine `--tex-view-desc`. Do not invent
+    `CU_RES_VIEW_FORMAT` this slice. Do not reverse `"tex view desc"`.
+    Do not invent a second `cuGLCtxCreate` / `gl_ctx_create`. Do not
+    invent Engine `--gl-ctx`. Do not invent `cuGLMapBufferObject` this
+    slice. Do not reverse `"gl context"`.
+    Do not invent a second `cuD3D11CtxCreate` / `d3d11_ctx_create`. Do
+    not invent Engine `--d3d11-ctx`. Do not invent
+    `cuGraphicsD3D11RegisterResource` this slice. Do not reverse `"d3d11 context"`.
+    Do not invent a second `cuD3D12CtxCreate` / `d3d12_ctx_create`. Do
+    not invent Engine `--d3d12-ctx`. Do not invent
+    `cuGraphicsD3D12RegisterResource` this slice. Do not reverse `"d3d12 context"`.
+    Do not invent a second `cuD3D9CtxCreate` / `d3d9_ctx_create`. Do not
+    invent Engine `--d3d9-ctx`. Do not invent
+    `cuGraphicsD3D9RegisterResource` this slice. Do not reverse `"d3d9 context"`.
+    Do not invent a second `cuD3D10CtxCreate` / `d3d10_ctx_create`. Do
+    not invent Engine `--d3d10-ctx`. Do not invent
+    `cuGraphicsD3D10RegisterResource` this slice. Do not reverse `"d3d10 context"`.
+    Do not invent a second `cuVDPAUCtxCreate` / `vdpau_ctx_create`. Do
+    not invent Engine `--vdpau-ctx`. Do not invent
+    `cuGraphicsVDPAURegisterOutputSurface` this slice. Do not reverse `"vdpau context"`.
+    Do not invent a second `cuEGLStreamProducerConnect` /
+    `egl_stream_producer_connect`. Do not invent Engine `--egl-producer`.
+    Do not invent `cuEGLStreamProducerDisconnect` this slice. Do not reverse
+    `"egl producer"`.
+    Do not invent a second `cuArrayGetDescriptor` / `array_get_descriptor`.
+    Do not invent Engine `--array-desc`. Do not invent `cuArray3DGetDescriptor`
+    this slice. Do not reverse `"array descriptor"`.
+    Do not invent a second `cuGraphicsGLRegisterBuffer` /
+    `graphics_gl_register_buffer`. Do not invent Engine `--gl-register-buffer`.
+    Do not invent `cuGraphicsGLRegisterImage` this slice. Do not reverse
+    `"gl buffer"`.
+    Do not invent a second `cuArray3DGetDescriptor` / `array_3d_get_descriptor`.
+    Do not invent Engine `--array-3d-desc`. Do not invent `cuArrayGetSparseProperties`
+    this slice. Do not reverse `"array 3d descriptor"`.
+    Do not invent a second `cuGraphicsGLRegisterImage` /
+    `graphics_gl_register_image`. Do not invent Engine `--gl-register-image`.
+    Do not invent `cuGraphicsEGLRegisterImage` this slice. Do not reverse
+    `"gl image"`.
+    Do not invent a second `cuGraphicsUnmapResources` /
+    `graphics_unmap_resources`. Do not invent Engine `--graphics-unmap`.
+    Do not invent `cuGraphicsResourceGetMappedPointer` this slice. Do not reverse
+    `"graphics unmap"`.
+    Do not invent a second `cuArrayGetSparseProperties` /
+    `array_get_sparse_properties`. Do not invent Engine `--array-sparse`.
+    Do not invent `cuArrayGetPlane` this slice. Do not reverse `"array sparse"`.
+    Do not invent a second `cuGraphicsUnregisterResource` /
+    `graphics_unregister_resource`. Do not invent Engine `--graphics-unregister`.
+    Do not invent `cuGraphicsResourceSetMapFlags` this slice. Do not reverse
+    `"graphics unregister"`.
+    Do not invent a second `cuEGLStreamProducerDisconnect` /
+    `egl_stream_producer_disconnect`. Do not invent Engine `--egl-producer-disconnect`.
+    Do not invent `cuEGLStreamProducerPresentFrame` this slice. Do not reverse
+    `"producer disconnect"`.
+    Do not invent a second `cuArrayGetPlane` / `array_get_plane`. Do not
+    invent Engine `--array-plane`. Do not invent `cuArrayGetMemoryRequirements`
+    this slice. Do not reverse `"array plane"`.
+    Do not invent a second `cuArrayGetMemoryRequirements` /
+    `array_get_memory_requirements`. Do not invent Engine `--array-memory`.
+    Do not invent `cuMipmappedArrayGetMemoryRequirements` this slice. Do not
+    reverse `"array memory"`.
+    Do not invent a second `cuEGLStreamConsumerDisconnect` /
+    `egl_stream_consumer_disconnect`. Do not invent Engine `--egl-consumer-disconnect`.
+    Do not invent `cuEGLStreamConsumerAcquireFrame` this slice. Do not reverse
+    `"consumer disconnect"`.
+    Do not invent a second `cuGraphicsResourceGetMappedPointer` /
+    `graphics_resource_get_mapped_pointer`. Do not invent Engine `--mapped-pointer`.
+    Do not invent `cuGraphicsSubResourceGetMappedArray` this slice. Do not reverse
+    `"mapped pointer"`.
+    Do not invent a second `cuEGLStreamProducerPresentFrame` /
+    `egl_stream_producer_present_frame`. Do not invent Engine `--egl-producer-present`.
+    Do not invent `cuEGLStreamProducerReturnFrame` this slice. Do not reverse
+    `"producer present"`.
+    Do not invent a second `cuGraphicsSubResourceGetMappedArray` /
+    `graphics_subresource_get_mapped_array`. Do not invent Engine `--mapped-array`.
+    Do not invent `cuGraphicsResourceGetMappedMipmappedArray` this slice. Do not reverse
+    `"mapped array"`.
+    Do not invent a second `cuGraphicsResourceGetMappedMipmappedArray` /
+    `graphics_resource_get_mapped_mipmapped_array`. Do not invent Engine `--mapped-mipmap`.
+    Do not invent a `CUmipmappedArray` handle this slice. Do not reverse
+    `"mapped mipmap"`.
+    Do not invent a second `cuEGLStreamProducerReturnFrame` /
+    `egl_stream_producer_return_frame`. Do not invent Engine `--egl-producer-return`.
+    Do not invent a `CUeglFrame` this slice. Do not reverse `"producer return"`.
+    Do not invent a second `cuEGLStreamConsumerAcquireFrame` /
+    `egl_stream_consumer_acquire_frame`. Do not invent Engine `--egl-consumer-acquire`.
+    Do not invent `cuEGLStreamConsumerReleaseFrame` this slice. Do not reverse
+    `"consumer acquire"`.
+    Do not invent a second `cuGraphicsResourceSetMapFlags` /
+    `graphics_resource_set_map_flags`. Do not invent Engine `--map-flags`.
+    Do not invent a populated `CU_GRAPHICS_MAP_RESOURCE_FLAGS` this slice. Do
+    not reverse `"map flags"`.
+    Do not invent a second `cuEGLStreamConsumerReleaseFrame` /
+    `egl_stream_consumer_release_frame`. Do not invent Engine `--egl-consumer-release`.
+    Do not invent an EGL consumer release timeout this slice. Do not reverse
+    `"consumer release"`.
+    Do not invent a second `cuMipmappedArrayGetMemoryRequirements` /
+    `mipmapped_array_get_memory_requirements`. Do not invent Engine `--mipmap-memory`.
+    Do not invent `cuMipmappedArrayDestroy` this slice. Do not reverse
+    `"mipmap memory"`.
+    Do not invent a second `cuGraphicsEGLRegisterImage` /
+    `graphics_egl_register_image`. Do not invent Engine `--egl-register`.
+    Do not invent an EGL `CUarray` this slice. Do not reverse `"egl register"`.
+    Do not invent a second `cuMipmappedArrayGetLevel` /
+    `mipmapped_array_get_level`. Do not invent Engine `--mipmap-level`.
+    Do not invent a `CUarray` level handle this slice. Do not reverse
+    `"mipmap level"`.
+    Do not invent a second `cuMipmappedArrayDestroy` /
+    `mipmapped_array_destroy`. Do not invent Engine `--mipmap-destroy`.
+    Do not invent `cuArrayDestroy` this slice. Do not reverse `"mipmap destroy"`.
+    Do not invent a second `cuArrayDestroy` / `array_destroy`. Do not invent
+    Engine `--array-destroy`. Do not invent a pitched array alloc this slice.
+    Do not reverse `"array destroy"`.
+    Do not invent a second `cuGLRegisterBufferObject` /
+    `gl_register_buffer_object`. Do not invent Engine `--gl-buffer-object`.
+    Do not invent `cuGLUnregisterBufferObject` this slice. Do not reverse
+    `"buffer object"`.
+    Do not invent a second `cuGLMapBufferObject` / `gl_map_buffer_object`.
+    Do not invent Engine `--gl-map`. Do not invent `cuGLMapBufferObjectAsync`
+    this slice. Do not reverse `"gl map"`.
+    Do not invent a second `cuGraphicsD3D11RegisterResource` /
+    `graphics_d3d11_register_resource`. Do not invent Engine `--d3d11-register`.
+    Do not invent a D3D11 `ID3D11Resource` this slice. Do not reverse
+    `"d3d11 register"`.
+    Do not invent a second `cuGraphicsD3D12RegisterResource` /
+    `graphics_d3d12_register_resource`. Do not invent Engine `--d3d12-register`.
+    Do not invent a D3D12 `ID3D12Resource` this slice. Do not reverse
+    `"d3d12 register"`.
+    Do not invent a second `cuGraphicsD3D9RegisterResource` /
+    `graphics_d3d9_register_resource`. Do not invent Engine `--d3d9-register`.
+    Do not invent a D3D9 `IDirect3DResource9` this slice. Do not reverse
+    `"d3d9 register"`.
+    Do not invent a second `cuGraphicsD3D10RegisterResource` /
+    `graphics_d3d10_register_resource`. Do not invent Engine `--d3d10-register`.
+    Do not invent a D3D10 `ID3D10Resource` this slice. Do not reverse
+    `"d3d10 register"`.
+    Do not invent a second `cuGraphicsVDPAURegisterOutputSurface` /
+    `graphics_vdpau_register_output_surface`. Do not invent Engine `--vdpau-output`.
+    Do not invent `cuGraphicsVDPAURegisterVideoSurface` this slice. Do not reverse
+    `"vdpau output"`.
+    Do not invent a second `cuGraphicsVDPAURegisterVideoSurface` /
+    `graphics_vdpau_register_video_surface`. Do not invent Engine `--vdpau-video`.
+    Do not invent a `VdpVideoSurface` this slice. Do not reverse `"vdpau video"`.
+    Do not invent a second `cuDestroyExternalMemory` / `destroy_external_memory`.
+    Do not invent Engine `--external-destroy`. Do not invent
+    `cuExternalMemoryGetMappedBuffer` this slice. Do not reverse `"external destroy"`.
+    Do not invent a second `cuExternalMemoryGetMappedBuffer` /
+    `external_memory_get_mapped_buffer`. Do not invent Engine `--mapped-buffer`.
+    Do not invent `cuExternalMemoryGetMappedMipmappedArray` this slice. Do not
+    reverse `"mapped buffer"`.
+    Do not invent a second `cuExternalMemoryGetMappedMipmappedArray` /
+    `external_memory_get_mapped_mipmapped_array`. Do not invent Engine `--external-mipmap`.
+    Do not invent `cuGLUnregisterBufferObject` this slice. Do not reverse
+    `"external mipmap"`.
+    Do not invent a second `cuGLUnregisterBufferObject` /
+    `gl_unregister_buffer_object`. Do not invent Engine `--gl-unregister-object`.
+    Do not invent `cuGLUnmapBufferObject` this slice. Do not reverse
+    `"unregister object"`.
+    Do not invent a second `cuGLUnmapBufferObject` /
+    `gl_unmap_buffer_object`. Do not invent Engine `--gl-unmap`.
+    Do not invent `cuGLUnmapBufferObjectAsync` this slice. Do not reverse
+    `"gl unmap"`.
+    Do not invent a second `cudaGLSetGLDevice` /
+    `gl_set_gl_device`. Do not invent Engine `--gl-set-device`.
+    Do not invent `cuImportExternalSemaphore` this slice. Do not reverse
+    `"gl device"`.
+    Do not invent a second `cuImportExternalSemaphore` /
+    `import_external_semaphore`. Do not invent Engine `--external-semaphore`.
+    Do not invent `cuDestroyExternalSemaphore` this slice. Do not reverse
+    `"external semaphore"`.
+    Do not invent a second `cuDestroyExternalSemaphore` /
+    `destroy_external_semaphore`. Do not invent Engine `--semaphore-destroy`.
+    Do not invent `cuSignalExternalSemaphoresAsync` this slice. Do not reverse
+    `"semaphore destroy"`.
+    Do not invent a second `cuSignalExternalSemaphoresAsync` /
+    `signal_external_semaphores_async`. Do not invent Engine `--semaphore-signal`.
+    Do not invent `cuWaitExternalSemaphoresAsync` this slice. Do not reverse
+    `"semaphore signal"`.
+    Do not invent a second `cuWaitExternalSemaphoresAsync` /
+    `wait_external_semaphores_async`. Do not invent Engine `--semaphore-wait`.
+    Do not invent `cuGLUnmapBufferObjectAsync` this slice. Do not reverse
+    `"semaphore wait"`.
+    Do not invent a second `cuGLUnmapBufferObjectAsync` /
+    `gl_unmap_buffer_object_async`. Do not invent Engine `--gl-unmap-async`.
+    Do not invent `cuGLMapBufferObjectAsync` this slice. Do not reverse
+    `"unmap async"`.
+    Do not invent a second `cuGLMapBufferObjectAsync` /
+    `gl_map_buffer_object_async`. Do not invent Engine `--gl-map-async`.
+    Do not invent `cuD3D11GetDevice` this slice. Do not reverse
+    `"async map"`.
+    Do not invent a second `cuD3D11GetDevice` /
+    `d3d11_get_device`. Do not invent Engine `--d3d11-device`.
+    Do not invent `cuD3D12GetDevice` this slice. Do not reverse
+    `"d3d11 device"`.
+    Do not invent a second `cuD3D12GetDevice` /
+    `d3d12_get_device`. Do not invent Engine `--d3d12-device`.
+    Do not invent `cuD3D9GetDevice` this slice. Do not reverse
+    `"d3d12 device"`.
+    Do not invent a second `cuD3D9GetDevice` /
+    `d3d9_get_device`. Do not invent Engine `--d3d9-device`.
+    Do not invent `cuD3D10GetDevice` this slice. Do not reverse
+    `"d3d9 device"`.
+    Do not invent a second `cuD3D10GetDevice` /
+    `d3d10_get_device`. Do not invent Engine `--d3d10-device`.
+    Do not invent `cudaVDPAUSetVDPAUDevice` this slice. Do not reverse
+    `"d3d10 device"`.
+    Do not invent a second `cudaVDPAUSetVDPAUDevice` /
+    `vdpau_set_vdpau_device`. Do not invent Engine `--vdpau-set-device`.
+    Do not invent `cuD3D11CtxCreateOnDevice` this slice. Do not reverse
+    `"vdpau set"`.
+    Do not invent a second `cuD3D11CtxCreateOnDevice` /
+    `d3d11_ctx_create_on_device`. Do not invent Engine `--d3d11-on-device`.
+    Do not invent `cuD3D12CtxCreateOnDevice` this slice. Do not reverse
+    `"d3d11 ondevice"`.
+    Do not invent a second `cuD3D12CtxCreateOnDevice` /
+    `d3d12_ctx_create_on_device`. Do not invent Engine `--d3d12-on-device`.
+    Do not invent `cuD3D9CtxCreateOnDevice` this slice. Do not reverse
+    `"d3d12 ondevice"`.
+    Do not invent a second `cuD3D9CtxCreateOnDevice` /
+    `d3d9_ctx_create_on_device`. Do not invent Engine `--d3d9-on-device`.
+    Do not invent `cuD3D10CtxCreateOnDevice` this slice. Do not reverse
+    `"d3d9 ondevice"`.
+    Do not invent a second `cuD3D10CtxCreateOnDevice` /
+    `d3d10_ctx_create_on_device`. Do not invent Engine `--d3d10-on-device`.
+    Do not invent `cuLibraryLoadFromFile` this slice. Do not reverse
+    `"d3d10 ondevice"`.
+    Do not invent a second `cuLibraryLoadFromFile` /
+    `library_load_from_file`. Do not invent Engine `--library-from-file`.
+    Do not invent `cuLibraryUnload` this slice. Do not reverse
+    `"library file"`.
+    Do not invent a second `cuLibraryUnload` / `library_unload`.
+    Do not invent Engine `--library-unload`. Do not invent
+    `cuLibraryGetKernel` this slice. Do not reverse `"library unload"`.
+    Do not invent a second `cuLibraryGetKernel` / `library_get_kernel`.
+    Do not invent Engine `--library-kernel`. Do not invent
+    `cuLibraryGetModule` this slice. Do not reverse `"library kernel"`.
+    Do not invent a second `cuLibraryGetModule` / `library_get_module`.
+    Do not invent Engine `--library-module`. Do not invent
+    `cuLibraryGetGlobal` this slice. Do not reverse `"library module"`.
+    Do not invent a second `cuLibraryGetGlobal` / `library_get_global`.
+    Do not invent Engine `--library-global`. Do not invent
+    `cuLibraryGetManaged` this slice. Do not reverse `"library global"`.
+    Do not invent a second `cuLibraryGetManaged` / `library_get_managed`.
+    Do not invent Engine `--library-managed`. Do not invent
+    `cuLibraryGetUnifiedFunction` this slice. Do not reverse `"library managed"`.
+    Do not invent a second `cuLibraryGetUnifiedFunction` /
+    `library_get_unified_function`. Do not invent Engine `--library-unified`.
+    Do not invent `cuKernelGetFunction` this slice. Do not reverse
+    `"library unified"`.
+    Do not invent a second `cuKernelGetFunction` / `kernel_get_function`.
+    Do not invent Engine `--kernel-function`. Do not invent
+    `cuKernelGetParamInfo` this slice. Do not reverse `"kernel function"`.
+    Do not invent a second `cuKernelGetParamInfo` / `kernel_get_param_info`.
+    Do not invent Engine `--kernel-param`. Do not invent
+    `cuKernelGetAttribute` this slice. Do not reverse `"kernel param"`.
+    Do not invent a second `cuKernelGetAttribute` / `kernel_get_attribute`.
+    Do not invent Engine `--kernel-attribute`. Do not invent
+    `cuKernelSetAttribute` this slice. Do not reverse `"kernel attribute"`.
+    Do not invent a second `cuKernelSetAttribute` / `kernel_set_attribute`.
+    Do not invent Engine `--kernel-setattr`. Do not invent
+    `cuKernelSetCacheConfig` this slice. Do not reverse `"kernel setattr"`.
+    Do not invent a second `cuKernelSetCacheConfig` /
+    `kernel_set_cache_config`. Do not invent Engine `--kernel-cache`.
+    Do not invent `cuLinkAddData` this slice. Do not reverse `"kernel cache"`.
+    Do not invent a second `cuLinkAddData` / `link_add_data`.
+    Do not invent Engine `--link-add`. Do not invent
+    `cuLinkComplete` this slice. Do not reverse `"link add"`.
+    Do not invent a second `cuLinkComplete` / `link_complete`.
+    Do not invent Engine `--link-complete`. Do not invent
+    `cuLinkDestroy` this slice. Do not reverse `"link complete"`.
+    Do not invent a second `cuLinkDestroy` / `link_destroy`.
+    Do not invent Engine `--link-destroy`. Do not invent
+    `cuLinkAddFile` this slice. Do not reverse `"link destroy"`.
+    Do not invent a second `cuLinkAddFile` / `link_add_file`.
+    Do not invent Engine `--link-add-file`. Do not invent
+    `cuFuncLoad` this slice. Do not reverse `"link file"`.
+    Do not invent a second `cuFuncLoad` / `func_load`.
+    Do not invent Engine `--func-load`. Do not invent
+    `cuModuleLoad` this slice. Do not reverse `"func load"`.
+    Do not invent a second `cuModuleLoad` / `module_load`.
+    Do not invent Engine `--module-load`. Do not invent
+    `cuModuleLoadData` this slice. Do not reverse `"module load"`.
+    Do not invent a second `cuModuleLoadData` / `module_load_data`.
+    Do not invent Engine `--module-data`. Do not invent
+    `cuModuleUnload` this slice. Do not reverse `"module data"`.
+    Do not invent a second `cuModuleUnload` / `module_unload`.
+    Do not invent Engine `--module-unload`. Do not invent
+    `cuModuleGetFunction` this slice. Do not reverse `"module unload"`.
+    Do not invent a second `cuModuleGetFunction` / `module_get_function`.
+    Do not invent Engine `--module-function`. Do not invent
+    `cuModuleGetGlobal` this slice. Do not reverse `"module function"`.
+    Do not invent a second `cuModuleGetGlobal` / `module_get_global`.
+    Do not invent Engine `--module-global`. Do not invent
+    `cuModuleGetTexRef` this slice. Do not reverse `"module global"`.
+    Do not invent a second `cuModuleGetTexRef` / `module_get_tex_ref`.
+    Do not invent Engine `--module-texref`. Do not invent
+    `cuModuleGetSurfRef` this slice. Do not reverse `"module texref"`.
+    Do not invent a second `cuModuleGetSurfRef` / `module_get_surf_ref`.
+    Do not invent Engine `--module-surfref`. Do not invent
+    `cuModuleLoadFatBinary` this slice. Do not reverse `"module surfref"`.
+    Do not invent a second `cuModuleLoadFatBinary` / `module_load_fat_binary`.
+    Do not invent Engine `--module-fatbin`. Do not invent
+    `cuModuleLoadDataEx` this slice. Do not reverse `"module fatbin"`.
+    Do not invent a second `cuModuleLoadDataEx` / `module_load_data_ex`.
+    Do not invent Engine `--module-jitopt`. Do not invent
+    `cuModuleGetFunctionCount` this slice. Do not reverse `"module jitopt"`.
+    Do not invent a second `cuModuleGetFunctionCount` / `module_get_function_count`.
+    Do not invent Engine `--module-fncount`. Do not invent
+    `cuModuleEnumerateFunctions` this slice. Do not reverse `"module fncount"`.
+    Do not invent a second `cuModuleEnumerateFunctions` / `module_enumerate_functions`.
+    Do not invent Engine `--module-enumfn`. Do not invent
+    `cuTensorMapEncodeIm2col` this slice. Do not reverse `"module enumfn"`.
+    Do not invent a second `cuTensorMapEncodeIm2col` / `tensor_map_encode_im2col`.
+    Do not invent Engine `--tensor-im2col`. Do not invent
+    `cuTensorMapEncodeIm2colWide` this slice. Do not reverse `"tensor im2col"`.
+    Do not invent a second `cuTensorMapEncodeIm2colWide` / `tensor_map_encode_im2col_wide`.
+    Do not invent Engine `--tensor-im2col-wide`. Do not invent
+    `cuTensorMapReplaceAlignedAddr` this slice. Do not reverse `"im2col wide"`.
+    Do not invent a second `cuTensorMapReplaceAlignedAddr` / `tensor_map_replace_aligned_addr`.
+    Do not invent Engine `--tensor-replace`. Do not invent
+    `cuCoredumpSetAttribute` this slice. Do not reverse `"tensor replace"`.
+    Do not invent a second `cuCoredumpSetAttribute` / `coredump_set_attribute`.
+    Do not invent Engine `--dump-setattr`. Do not invent
+    `cuCoredumpGetAttributeGlobal` this slice. Do not reverse `"dump setattr"`.
+    Do not invent a second `cuCoredumpGetAttributeGlobal` / `coredump_get_attribute_global`.
+    Do not invent Engine `--dump-global`. Do not invent
+    `cuCoredumpSetAttributeGlobal` this slice. Do not reverse `"dump global"`.
+    Do not invent a second `cuCoredumpSetAttributeGlobal` / `coredump_set_attribute_global`.
+    Do not invent Engine `--dump-setglob`. Do not invent
+    `cuCheckpointProcessCheckpoint` this slice. Do not reverse `"dump setglob"`.
+    Do not invent a second `cuCheckpointProcessCheckpoint` / `checkpoint_process_checkpoint`.
+    Do not invent Engine `--ckpt-exec`. Do not invent
+    `cuCheckpointProcessRestore` this slice. Do not reverse `"ckpt exec"`.
+    Do not invent a second `cuCheckpointProcessRestore` / `checkpoint_process_restore`.
+    Do not invent Engine `--ckpt-restore`. Do not invent
+    `cuCheckpointProcessUnlock` this slice. Do not reverse `"ckpt restore"`.
+    Do not invent a second `cuCheckpointProcessUnlock` / `checkpoint_process_unlock`.
+    Do not invent Engine `--ckpt-unlock`. Do not invent
+    `cuCheckpointProcessGetRestoreThreadId` this slice. Do not reverse `"ckpt unlock"`.
+    Do not invent a second `cuCheckpointProcessGetRestoreThreadId` / `checkpoint_process_get_restore_thread_id`.
+    Do not invent Engine `--ckpt-thread`. Do not invent
+    `cuCheckpointProcessGetState` this slice. Do not reverse `"ckpt thread"`.
+    Do not invent a second `cuCheckpointProcessGetState` / `checkpoint_process_get_state`.
+    Do not invent Engine `--ckpt-state`. Do not invent
+    `cuLibraryGetKernelCount` this slice. Do not reverse `"ckpt state"`.
+    Do not invent a second `cuLibraryGetKernelCount` / `library_get_kernel_count`.
+    Do not invent Engine `--library-kcount`. Do not invent
+    `cuLibraryEnumerateKernels` this slice. Do not reverse `"library kcount"`.
+    Do not invent a second `cuLibraryEnumerateKernels` / `library_enumerate_kernels`.
+    Do not invent Engine `--library-enumk`. Do not invent
+    `cuKernelGetLibrary` this slice. Do not reverse `"library enumk"`.
+    Do not invent a second `cuKernelGetLibrary` / `kernel_get_library`.
+    Do not invent Engine `--kernel-library`. Do not invent
+    `cuKernelGetParamCount` this slice. Do not reverse `"kernel library"`.
+    Do not invent a second `cuKernelGetParamCount` / `kernel_get_param_count`.
+    Do not invent Engine `--kernel-pcount`. Do not invent
+    `cuFuncGetParamCount` this slice. Do not reverse `"kernel pcount"`.
+    Do not invent a second `cuFuncGetParamCount` / `func_get_param_count`.
+    Do not invent Engine `--func-pcount`. Do not invent
+    `cuLaunchKernelEx` this slice. Do not reverse `"func pcount"`.
+    Do not invent a second `cuDeviceRegisterAsyncNotification` / `device_register_async_notification`.
+    Do not invent Engine `--async-notify`. Do not invent
+    `cuDeviceUnregisterAsyncNotification` this slice. Do not reverse `"async notify"`.
+    Do not invent a second `cuDeviceUnregisterAsyncNotification` / `device_unregister_async_notification`.
+    Do not invent Engine `--async-unreg`. Do not invent
+    `cuMemMapArrayAsync` this slice. Do not reverse `"async unreg"`.
+    Do not invent a second `cuMemMapArrayAsync` / `mem_map_array_async`.
+    Do not invent Engine `--sparse-map`. Do not invent
+    `cuMipmappedArrayGetSparseProperties` this slice. Do not reverse `"sparse map"`.
+    Do not invent a second `cuMipmappedArrayGetSparseProperties` / `mipmapped_array_get_sparse_properties`.
+    Do not invent Engine `--mipmap-sparse`. Do not invent
+    `cuTexRefCreate` this slice. Do not reverse `"mipmap sparse"`.
+    Do not invent a second `cuTexRefCreate` / `tex_ref_create`.
+    Do not invent Engine `--texref-create`. Do not invent
+    `cuTexRefDestroy` this slice. Do not reverse `"texref create"`.
+    Do not invent a second `cuTexRefDestroy` / `tex_ref_destroy`.
+    Do not invent Engine `--texref-destroy`. Do not invent
+    `cuTexRefSetArray` this slice. Do not reverse `"texref destroy"`.
+    Do not invent a second `cuTexRefSetArray` / `tex_ref_set_array`.
+    Do not invent Engine `--texref-setarr`. Do not invent
+    `cuTexRefSetMipmappedArray` this slice. Do not reverse `"texref setarr"`.
+    Do not invent a second `cuTexRefSetMipmappedArray` / `tex_ref_set_mipmapped_array`.
+    Do not invent Engine `--texref-setmip`. Do not invent
+    `cuTexRefSetAddress` this slice. Do not reverse `"texref setmip"`.
+    Do not invent a second `cuTexRefSetAddress` / `tex_ref_set_address`.
+    Do not invent Engine `--texref-linear`. Do not invent
+    `cuTexRefSetAddress2D` this slice. Do not reverse `"texref linear"`.
+    Do not invent a second `cuTexRefSetAddress2D` / `tex_ref_set_address_2d`.
+    Do not invent Engine `--texref-pitch2d`. Do not invent
+    `cuTexRefSetFormat` this slice. Do not reverse `"texref pitch2d"`.
+    Do not invent a second `cuTexRefSetFormat` / `tex_ref_set_format`.
+    Do not invent Engine `--texref-format`. Do not invent
+    `cuTexRefSetAddressMode` this slice. Do not reverse `"texref format"`.
+    Do not invent a second `cuTexRefSetAddressMode` / `tex_ref_set_address_mode`.
+    Do not invent Engine `--texref-addrmode`. Do not invent
+    `cuTexRefSetFilterMode` this slice. Do not reverse `"texref addrmode"`.
+    Do not invent a second `cuTexRefSetFilterMode` / `tex_ref_set_filter_mode`.
+    Do not invent Engine `--texref-filter`. Do not invent
+    `cuTexRefSetMipmapFilterMode` this slice. Do not reverse `"texref filter"`.
+    Do not invent a second `cuTexRefSetMipmapFilterMode` / `tex_ref_set_mipmap_filter_mode`.
+    Do not invent Engine `--texref-mipfilt`. Do not invent
+    `cuTexRefSetMipmapLevelBias` this slice. Do not reverse `"texref mipfilt"`.
+    Do not invent a second `cuTexRefSetMipmapLevelBias` / `tex_ref_set_mipmap_level_bias`.
+    Do not invent Engine `--texref-mipbias`. Do not invent
+    `cuTexRefSetMipmapLevelClamp` this slice. Do not reverse `"texref mipbias"`.
+    Do not invent a second `cuTexRefSetMipmapLevelClamp` / `tex_ref_set_mipmap_level_clamp`.
+    Do not invent Engine `--texref-mipclamp`. Do not invent
+    `cuTexRefSetMaxAnisotropy` this slice. Do not reverse `"texref mipclamp"`.
+    Do not invent a second `cuTexRefSetMaxAnisotropy` / `tex_ref_set_max_anisotropy`.
+    Do not invent Engine `--texref-aniso`. Do not invent
+    `cuTexRefSetBorderColor` this slice. Do not reverse `"texref aniso"`.
+    Do not invent a second `cuTexRefSetBorderColor` / `tex_ref_set_border_color`.
+    Do not invent Engine `--texref-border`. Do not invent
+    `cuTexRefSetFlags` this slice. Do not reverse `"texref border"`.
+    Do not invent a second `cuTexRefSetFlags` / `tex_ref_set_flags`.
+    Do not invent Engine `--texref-flags`. Do not invent
+    `cuTexRefGetArray` this slice. Do not reverse `"texref flags"`.
+    Do not invent a second `cuTexRefGetArray` / `tex_ref_get_array`.
+    Do not invent Engine `--texref-getarr`. Do not invent
+    `cuTexRefGetMipmappedArray` this slice. Do not reverse `"texref getarr"`.
+    Do not invent a second `cuTexRefGetMipmappedArray` / `tex_ref_get_mipmapped_array`.
+    Do not invent Engine `--texref-getmip`. Do not invent
+    `cuTexRefGetAddress` this slice. Do not reverse `"texref getmip"`.
+    Do not invent a second `cuTexRefGetAddress` / `tex_ref_get_address`.
+    Do not invent Engine `--texref-getaddr`. Do not invent
+    `cuTexRefGetAddressMode` this slice. Do not reverse `"texref getaddr"`.
+    Do not invent a second `cuTexRefGetAddressMode` / `tex_ref_get_address_mode`.
+    Do not invent Engine `--texref-getmode`. Do not invent
+    `cuTexRefGetFilterMode` this slice. Do not reverse `"texref getmode"`.
+    Do not invent a second `cuTexRefGetFilterMode` / `tex_ref_get_filter_mode`.
+    Do not invent Engine `--texref-getfilt`. Do not invent
+    `cuTexRefGetFormat` this slice. Do not reverse `"texref getfilt"`.
+    Do not invent a second `cuTexRefGetFormat` / `tex_ref_get_format`.
+    Do not invent Engine `--texref-getfmt`. Do not invent
+    `cuTexRefGetMipmapFilterMode` this slice. Do not reverse `"texref getfmt"`.
+    Do not invent a second `cuTexRefGetMipmapFilterMode` / `tex_ref_get_mipmap_filter_mode`.
+    Do not invent Engine `--texref-gmipfilt`. Do not invent
+    `cuTexRefGetMipmapLevelBias` this slice. Do not reverse `"texref gmipfilt"`.
+    Do not invent a second `cuTexRefGetMipmapLevelBias` / `tex_ref_get_mipmap_level_bias`.
+    Do not invent Engine `--texref-getbias`. Do not invent
+    `cuTexRefGetMipmapLevelClamp` this slice. Do not reverse `"texref getbias"`.
+    Do not invent a second `cuTexRefGetMipmapLevelClamp` / `tex_ref_get_mipmap_level_clamp`.
+    Do not invent Engine `--texref-getclamp`. Do not invent
+    `cuTexRefGetMaxAnisotropy` this slice. Do not reverse `"texref getclamp"`.
+    Do not invent a second `cuTexRefGetMaxAnisotropy` / `tex_ref_get_max_anisotropy`.
+    Do not invent Engine `--texref-getaniso`. Do not invent
+    `cuTexRefGetBorderColor` this slice. Do not reverse `"texref getaniso"`.
+    Do not invent a second `cuTexRefGetBorderColor` / `tex_ref_get_border_color`.
+    Do not invent Engine `--texref-getborder`. Do not invent
+    `cuTexRefGetFlags` this slice. Do not reverse `"texref getborder"`.
+    Do not invent a second `cuTexRefGetFlags` / `tex_ref_get_flags`.
+    Do not invent Engine `--texref-getflags`. Do not invent
+    `cuSurfRefSetArray` this slice. Do not reverse `"texref getflags"`.
+    Do not invent a second `cuSurfRefSetArray` / `surf_ref_set_array`.
+    Do not invent Engine `--surfref-setarr`. Do not invent
+    `cuSurfRefGetArray` this slice. Do not reverse `"surfref setarr"`.
+    Do not invent a second `cuSurfRefGetArray` / `surf_ref_get_array`.
+    Do not invent Engine `--surfref-getarr`. Do not invent
+    `cuMemcpyDtoA` this slice. Do not reverse `"surfref getarr"`.
+    Do not invent a second `cuMemcpyDtoA` / `memcpy_dto_a`.
+    Do not invent Engine `--memcpy-dtoa`. Do not invent
+    `cuMemcpyAtoD` this slice. Do not reverse `"memcpy dtoa"`.
+    Do not invent a second `cuMemcpyAtoD` / `memcpy_ato_d`.
+    Do not invent Engine `--memcpy-atod`. Do not invent
+    `cuMemcpyHtoA` this slice. Do not reverse `"memcpy atod"`.
+    Do not invent a second `cuMemcpyHtoA` / `memcpy_hto_a`.
+    Do not invent Engine `--memcpy-htoa`. Do not invent
+    `cuMemcpyAtoH` this slice. Do not reverse `"memcpy htoa"`.
+    Do not invent a second `cuMemcpyAtoH` / `memcpy_ato_h`.
+    Do not invent Engine `--memcpy-atoh`. Do not invent
+    `cuMemcpyAtoA` this slice. Do not reverse `"memcpy atoh"`.
+    Do not invent a second `cuMemcpyAtoA` / `memcpy_ato_a`.
+    Do not invent Engine `--memcpy-atoa`. Do not invent
+    `cuMemcpyDtoAAsync` this slice. Do not reverse `"memcpy atoa"`.
+    Do not invent a second `cuMemcpyDtoAAsync` / `memcpy_dto_a_async`.
+    Do not invent Engine `--async-dtoa`. Do not invent
+    `cuMemcpyAtoDAsync` this slice. Do not reverse `"async dtoa"`.
+    Do not invent a second `cuMemcpyAtoDAsync` / `memcpy_ato_d_async`.
+    Do not invent Engine `--async-atod`. Do not invent
+    `cuMemcpyHtoAAsync` this slice. Do not reverse `"async atod"`.
+    Do not invent a second `cuMemcpyHtoAAsync` / `memcpy_hto_a_async`.
+    Do not invent Engine `--async-htoa`. Do not invent
+    `cuMemcpyAtoHAsync` this slice. Do not reverse `"async htoa"`.
+    Do not invent a second `cuMemcpyAtoHAsync` / `memcpy_ato_h_async`.
+    Do not invent Engine `--async-atoh`. Do not invent
+    `cuMemcpyAtoAAsync` this slice. Do not reverse `"async atoh"`.
+    Do not invent a second `cuMemcpyAtoAAsync` / `memcpy_ato_a_async`.
+    Do not invent Engine `--async-atoa`. Do not invent
+    `cuMemcpy2DToArray` this slice. Do not reverse `"async atoa"`.
+    Do not invent a second `cuMemcpy2DToArray` / `memcpy_2d_to_array`.
+    Do not invent Engine `--memcpy2d-toarr`. Do not invent
+    `cuMemcpy2DFromArray` this slice. Do not reverse `"memcpy2d toarr"`.
+    Do not invent a second `cuMemcpy2DFromArray` / `memcpy_2d_from_array`.
+    Do not invent Engine `--memcpy2d-fromarr`. Do not invent
+    `cuMemcpy2DArrayToArray` this slice. Do not reverse `"memcpy2d fromarr"`.
+    Do not invent a second `cuMemcpy2DArrayToArray` / `memcpy_2d_array_to_array`.
+    Do not invent Engine `--memcpy2d-a2a`. Do not invent
+    `cuMemcpy2DToArrayAsync` this slice. Do not reverse `"memcpy2d a2a"`.
+    Do not invent a second `cuMemcpy2DToArrayAsync` / `memcpy_2d_to_array_async`.
+    Do not invent Engine `--async-2dtoarr`. Do not invent
+    `cuMemcpy2DFromArrayAsync` this slice. Do not reverse `"async 2dtoarr"`.
+    Do not invent a second `cuMemcpy2DFromArrayAsync` / `memcpy_2d_from_array_async`.
+    Do not invent Engine `--async-2dfrom`. Do not invent
+    `cuMemcpy2DArrayToArrayAsync` this slice. Do not reverse `"async 2dfrom"`.
+    Do not invent a second `cuMemcpy2DArrayToArrayAsync` / `memcpy_2d_array_to_array_async`.
+    Do not invent Engine `--async-2da2a`. Do not invent
+    `cuFuncGetCacheConfig` this slice. Do not reverse `"async 2da2a"`.
+    Do not invent a second `cuFuncGetCacheConfig` / `func_get_cache_config`.
+    Do not invent Engine `--func-gcache`. Do not invent
+    `cuMemsetD8Async` this slice. Do not reverse `"func gcache"`.
+    Do not invent a second `cuMemsetD8Async` / `memset_d8_async`.
+    Do not invent Engine `--memset-d8`. Do not invent
+    `cuMemsetD8` this slice. Do not reverse D8Async count-is-bytes identity.
+    Do not invent a second `cuMemsetD8` / `memset_d8`.
+    Do not invent Engine `--memset-d8-sync`. Do not invent
+    `cuEventQuery` this slice. Do not reverse D8 host-sync capture refuse.
+    Do not invent a second `cuEventQuery` / `event_query`.
+    Do not invent Engine `--event-query`. Do not invent
+    `cuStreamQuery` this slice. Do not reverse EventQuery identity with query_event.
+    Do not invent a second `cuStreamQuery` / `stream_query`.
+    Do not invent Engine `--stream-query`. Do not invent
+    `cuEventSynchronize` this slice. Do not reverse StreamQuery identity with query_stream.
+    Do not invent a second `cuEventSynchronize` / `event_synchronize`.
+    Do not invent Engine `--event-synchronize`. Do not invent
+    `cuStreamSynchronize` this slice. Do not reverse EventSynchronize identity with synchronize_event.
+    Do not invent a second `cuStreamSynchronize` / `stream_synchronize`.
+    Do not invent Engine `--stream-synchronize`. Do not invent
+    `cuEventDestroy` this slice. Do not reverse StreamSynchronize identity with synchronize_stream.
+    Do not invent a second `cuEventDestroy` / `event_destroy`.
+    Do not invent Engine `--event-destroy`. Do not invent
+    `cuEventCreate` this slice. Do not reverse EventDestroy identity with destroy_event.
+    Do not invent a second `cuEventCreate` / `event_create`.
+    Do not invent Engine `--event-create`. Do not invent
+    `cuEventCreateWithFlags` this slice. Do not reverse EventCreate identity with create_event.
+    Do not invent a second `cuEventCreateWithFlags` / `event_create_with_flags`.
+    Do not invent Engine `--event-create-with-flags`. Do not invent
+    `cuEventRecord` this slice. Do not reverse EventCreateWithFlags identity with create_event_with_flags.
+    Do not invent a second `cuEventRecord` / `event_record`.
+    Do not invent Engine `--event-record`. Do not invent
+    `cuEventRecordWithFlags` this slice. Do not reverse EventRecord identity with record_event.
+    Do not invent a second `cuEventRecordWithFlags` / `event_record_with_flags`.
+    Do not invent Engine `--event-record-with-flags`. Do not invent
+    `cuStreamWaitEvent` this slice. Do not reverse EventRecordWithFlags identity with record_event_with_flags.
+    Do not invent a second `cuStreamWaitEvent` / `stream_wait_event`.
+    Do not invent Engine `--stream-wait-event`. Do not invent
+    a wait-event-with-flags identity this slice. Do not reverse StreamWaitEvent identity with wait_event.
+    Do not invent a second wait-event-with-flags identity / `stream_wait_event_with_flags`.
+    Do not invent Engine `--stream-wait-event-flags`. Do not invent
+    `cuEventElapsedTime` this slice. Do not reverse StreamWaitEventWithFlags identity with wait_event_with_flags.
+    Do not invent a second `cuEventElapsedTime` / `event_elapsed`.
+    Do not invent Engine `--event-elapsed`. Do not invent
+    a millisecond elapsed this slice. Do not reverse EventElapsed ns identity with event_elapsed_ns.
+    Do not invent a second `cuMemGetInfo` / `mem_get_info`.
+    Do not invent Engine `--mem-get-info`. Do not invent
+    `cuStreamCreate` this slice. Do not reverse MemGetInfo identity with mem_info.
+    Do not invent a second `cuStreamCreate` / `stream_create`.
+    Do not invent Engine `--stream-create`. Do not invent a second
+    `cuStreamCreateWithPriority` / `stream_create_priority`. Do not reverse StreamCreate identity with stream_create_with_flags DEFAULT.
+    Do not invent a second `cuMemAlloc` / `mem_alloc`.
+    Do not invent Engine `--mem-alloc`. Do not invent
+    `cuMemFree` this slice. Do not reverse MemAlloc identity with malloc.
+    Do not invent a second `cuMemFree` / `mem_free`.
+    Do not invent Engine `--mem-free`. Do not invent
+    `cuMemFreeHost` this slice. Do not reverse MemFree identity with free_sync.
+    Do not invent a second `cuMemFreeHost` / `mem_free_host`.
+    Do not invent Engine `--mem-free-host`. Do not invent
+    `cuMemHostAlloc` this slice. Do not reverse MemFreeHost identity with free_host_pinned.
+    Do not invent a second `cuMemHostAlloc` / `mem_host_alloc`.
+    Do not invent Engine `--mem-host-alloc`. Do not invent
+    `cuMemHostGetFlags` this slice. Do not reverse MemHostAlloc identity with alloc_host_with_flags.
+    Do not invent a second `cuMemHostGetFlags` / `mem_host_get_flags`.
+    Do not invent Engine `--mem-host-get-flags`. Do not invent
+    `cuMemHostGetDevicePointer` this slice. Do not reverse MemHostGetFlags identity with host_get_flags.
+    Do not invent a second `cuMemHostGetDevicePointer` / `mem_host_get_device_pointer`.
+    Do not invent Engine `--mem-host-get-device-pointer`. Do not invent
+    `cuMemHostRegister` this slice. Do not reverse MemHostGetDevicePointer identity with host_get_device_pointer_with_flags.
+    Do not invent a second `cuMemHostRegister` / `mem_host_register`.
+    Do not invent Engine `--mem-host-register`. Do not invent
+    `cuMemHostUnregister` this slice. Do not reverse MemHostRegister identity with host_register_with_flags.
+    Do not invent a second `cuMemHostUnregister` / `mem_host_unregister`.
+    Do not invent Engine `--mem-host-unregister`. Do not invent
+    a register-size identity this slice. Do not reverse MemHostUnregister identity with host_unregister.
+    Do not invent a second `cuMemHostRegister` size / `mem_host_register_with_size`.
+    Do not invent Engine `--mem-host-register-size`. Do not invent
+    `cuIpcGetMemHandle` this slice. Do not reverse MemHostRegisterSize identity with host_register_with_size.
+    Do not invent a second `cuIpcGetMemHandle` / `ipc_get_mem_handle`.
+    Do not invent Engine `--ipc-get-mem-handle`. Do not invent
+    `cuIpcOpenMemHandle` this slice. Do not reverse IpcGetMemHandle identity with ipc_get.
+    Do not invent a second `cuIpcOpenMemHandle` / `ipc_open_mem_handle`.
+    Do not invent Engine `--ipc-open-mem-handle`. Do not invent
+    `cuIpcCloseMemHandle` this slice. Do not reverse IpcOpenMemHandle identity with ipc_open_with_flags.
+    Do not invent a second `cuIpcCloseMemHandle` / `ipc_close_mem_handle`.
+    Do not invent Engine `--ipc-close-mem-handle`. Do not invent
+    `cuIpcGetEventHandle` this slice. Do not reverse IpcCloseMemHandle identity with ipc_close.
+    Do not invent a second `cuIpcGetEventHandle` / `ipc_get_event_handle`.
+    Do not invent Engine `--ipc-get-event-handle`. Do not invent
+    `cuIpcOpenEventHandle` this slice. Do not reverse IpcGetEventHandle identity with ipc_get_event.
+    Do not invent a second `cuIpcOpenEventHandle` / `ipc_open_event_handle`.
+    Do not invent Engine `--ipc-open-event-handle`. Do not invent
+    `cuMemAllocHost` this slice. Do not reverse IpcOpenEventHandle identity with ipc_open_event.
+    Do not invent a second `cuMemAllocHost` / `mem_alloc_host`.
+    Do not invent Engine `--mem-alloc-host`. Do not invent
+    `cuMemAllocManaged` this slice. Do not reverse MemAllocHost identity with alloc_host_pinned.
+    Do not invent a second `cuMemAllocManaged` / `mem_alloc_managed`.
+    Do not invent Engine `--mem-alloc-managed`. Do not invent
+    `cuMemAllocAsync` this slice. Do not reverse MemAllocManaged identity with alloc_managed_with_flags.
+    Do not invent a second `cuMemAllocAsync` / `mem_alloc_async`.
+    Do not invent Engine `--mem-alloc-async`. Do not invent
+    `cuMemFreeAsync` this slice. Do not reverse MemAllocAsync identity with alloc.
+    Do not invent a second `cuMemFreeAsync` / `mem_free_async`.
+    Do not invent Engine `--mem-free-async`. Do not invent
+    `cuMemAdvise` this slice. Do not reverse MemFreeAsync identity with free.
+    Do not invent a second `cuMemAdvise` / `mem_advise_n`.
+    Do not invent Engine `--mem-advise-n`. Do not invent
+    `cuMemPrefetchAsync` this slice. Do not reverse MemAdvise identity with mem_advise_with_size.
+    Do not invent a second `cuMemPrefetchAsync` / `mem_prefetch`.
+    Do not invent Engine `--mem-prefetch`. Do not invent
+    `cuMemPrefetchAsync_v2` this slice. Do not reverse Prefetch identity with prefetch.
+    Do not invent a second `cuMemPrefetchAsync_v2` / `mem_prefetch_v2`.
+    Do not invent Engine `--mem-prefetch-v2`. Do not invent
+    a `cuMemPrefetchAsync` count this slice. Do not reverse PrefetchV2 identity with prefetch_with_flags.
+    Do not invent a second `cuMemPrefetchAsync` count / `mem_prefetch_n`.
+    Do not invent Engine `--mem-prefetch-n`. Do not invent
+    `mem_prefetch_host` this slice. Do not reverse PrefetchN identity with prefetch_with_size.
+    Do not invent a second host dest `cuMemPrefetchAsync` / `mem_prefetch_host`.
+    Do not invent Engine `--mem-prefetch-host`. Do not invent
+    `mem_prefetch_host_n` this slice. Do not reverse PrefetchHost identity with prefetch_host.
+    Do not invent a second host dest `cuMemPrefetchAsync` count / `mem_prefetch_host_n`.
+    Do not invent Engine `--mem-prefetch-host-n`. Do not invent
+    `mem_advise_v2` this slice. Do not reverse PrefetchHostN identity with prefetch_host_with_size.
+    Do not invent a second `cuMemAdvise_v2` / `mem_advise_v2`.
+    Do not invent Engine `--mem-advise-v2`. Do not invent
+    `cuMemRangeGetAttribute` this slice. Do not reverse AdviseV2 identity with mem_advise_with_location.
+    Do not invent a second `cuMemRangeGetAttribute` / `mem_range_get`.
+    Do not invent Engine `--mem-range-get`. Do not invent
+    a `cuMemRangeGetAttribute` count this slice. Do not reverse RangeGet identity with mem_range_get_attribute.
+    Do not invent a second `cuMemRangeGetAttribute` count / `mem_range_get_n`.
+    Do not invent Engine `--mem-range-get-n`. Do not invent
+    `cuMemRangeGetAttributes` this slice. Do not reverse RangeGetN identity with mem_range_get_attribute_with_size.
+    Do not invent a second `cuMemRangeGetAttributes` / `mem_range_gets`.
+    Do not invent Engine `--mem-range-gets`. Do not invent
+    a `cuMemRangeGetAttributes` count this slice. Do not reverse RangeGets identity with mem_range_get_attributes.
+    Do not invent a second `cuMemRangeGetAttributes` count / `mem_range_gets_n`.
+    Do not invent Engine `--mem-range-gets-n`. Do not invent
+    a `cuMemRangeGetAttribute` dataSize this slice. Do not reverse RangeGetsN identity with mem_range_get_attributes_with_size.
+    Do not invent a second `cuMemRangeGetAttribute` dataSize / `mem_range_get_data`.
+    Do not invent Engine `--mem-range-get-data`. Do not invent
+    a `cuMemRangeGetAttributes` dataSizes this slice. Do not reverse RangeGetData identity with mem_range_get_attribute_with_data_size.
+    Do not invent a second `cuMemRangeGetAttributes` dataSizes / `mem_range_gets_data`.
+    Do not invent Engine `--mem-range-gets-data`. Do not invent
+    occupancy SM counts this slice. Do not reverse RangeGetsData identity with mem_range_get_attributes_with_data_sizes.
+    Do not invent a second `cuStreamAttachMemAsync` / `stream_attach_mem`.
+    Do not invent Engine `--stream-attach-mem`. Do not invent
+    `stream_attach_n` this slice. Do not reverse AttachMem identity with stream_attach.
+    Do not invent a second `cuStreamAttachMemAsync` length / `stream_attach_n`.
+    Do not invent Engine `--stream-attach-n`. Do not invent
+    `stream_attach_flags` this slice. Do not reverse AttachN identity with stream_attach_with_size.
+    Do not invent a second `cuStreamAttachMemAsync` flags / `stream_attach_flags`.
+    Do not invent Engine `--stream-attach-flags`. Do not invent
+    `memcpy_async` this slice. Do not reverse AttachFlags identity with stream_attach_with_flags.
+    Do not invent a second `cuMemcpyAsync` / `memcpy_async`.
+    Do not invent Engine `--memcpy-async`. Do not invent
+    `mem_cpy` this slice. Do not reverse MemcpyAsync identity with memcpy.
+    Do not invent a second `cuMemcpy` / `mem_cpy`.
+    Do not invent Engine `--mem-cpy`. Do not invent
+    `mem_address_range` this slice. Do not reverse MemCpy identity with memcpy_sync.
+    Do not invent a second `cuMemGetAddressRange` / `mem_address_range`.
+    Do not invent Engine `--mem-address-range`. Do not invent
+    occupancy MaxActiveBlocks this slice. Do not reverse AddressRange identity with mem_get_address_range.
+    Do not invent a second `cuMemcpy2D` / `mem_cpy_2d`.
+    Do not invent Engine `--mem-cpy-2d`. Do not invent
+    `mem_cpy_2d_async` this slice. Do not reverse MemCpy2d identity with memcpy_2d.
+    Do not invent a second `cuMemcpy2DAsync` / `mem_cpy_2d_async`.
+    Do not invent Engine `--mem-cpy-2d-async`. Do not invent
+    `mem_cpy_3d` this slice. Do not reverse MemCpy2dAsync identity with memcpy_2d_async.
+    Do not invent a second `cuMemcpy3D` / `mem_cpy_3d`.
+    Do not invent Engine `--mem-cpy-3d`. Do not invent
+    `mem_cpy_3d_async` this slice. Do not reverse MemCpy3d identity with memcpy_3d.
+    Do not invent a second `cuMemcpy3DAsync` / `mem_cpy_3d_async`.
+    Do not invent Engine `--mem-cpy-3d-async`. Do not invent
+    `mem_cpy_peer` this slice. Do not reverse MemCpy3dAsync identity with memcpy_3d_async.
+    Do not invent a second `cuMemcpyPeer` / `mem_cpy_peer`.
+    Do not invent Engine `--mem-cpy-peer`. Do not invent
+    `mem_cpy_peer_async` this slice. Do not reverse MemCpyPeer identity with memcpy_peer.
+    Do not invent a second `cuMemcpyPeerAsync` / `mem_cpy_peer_async`.
+    Do not invent Engine `--mem-cpy-peer-async`. Do not invent
+    `mem_cpy_peer_3d` this slice. Do not reverse MemCpyPeerAsync identity with memcpy_peer_async.
+    Do not invent a second `cuMemcpy3DPeer` / `mem_cpy_peer_3d`.
+    Do not invent Engine `--mem-cpy-peer-3d`. Do not invent
+    `mem_cpy_peer_3d_async` this slice. Do not reverse MemCpyPeer3d identity with memcpy_peer_3d.
+    Do not invent a second `cuMemcpy3DPeerAsync` / `mem_cpy_peer_3d_async`.
+    Do not invent Engine `--mem-cpy-peer-3d-async`. Do not invent
+    `mem_cpy_peer_2d` this slice. Do not reverse MemCpyPeer3dAsync identity with memcpy_peer_3d_async.
+    Do not invent a second `cuMemcpy2DPeer` / `mem_cpy_peer_2d`.
+    Do not invent Engine `--mem-cpy-peer-2d`. Do not invent
+    `mem_cpy_peer_2d_async` this slice. Do not reverse MemCpyPeer2d identity with memcpy_peer_2d.
+    Do not invent a second `cuMemcpy2DPeerAsync` / `mem_cpy_peer_2d_async`.
+    Do not invent Engine `--mem-cpy-peer-2d-async`. Do not invent
+    occupancy SM counts this slice. Do not reverse MemCpyPeer2dAsync identity with memcpy_peer_2d_async.
+    Do not invent a second `cuMemcpyBatchAsync` / `mem_cpy_batch_async`.
+    Do not invent Engine `--mem-cpy-batch-async`. Do not invent
+    `mem_cpy_3d_batch_async` this slice. Do not reverse MemCpyBatchAsync identity with memcpy_batch_async.
+    Do not invent a second `cuMemcpy3DBatchAsync` / `mem_cpy_3d_batch_async`.
+    Do not invent Engine `--mem-cpy-3d-batch-async`. Do not invent
+    `mem_cpy_3d_with_attributes` this slice. Do not reverse MemCpy3dBatchAsync identity with memcpy_3d_batch_async.
+    Do not invent a second `cuMemcpy3DWithAttributesAsync` / `mem_cpy_3d_with_attributes`.
+    Do not invent Engine `--mem-cpy-3d-with-attributes`. Do not invent
+    `mem_cpy_with_attributes` this slice. Do not reverse MemCpy3dWithAttributes identity with memcpy_3d_with_attributes.
+    Do not invent a second `cuMemcpyWithAttributesAsync` / `mem_cpy_with_attributes`.
+    Do not invent Engine `--mem-cpy-with-attributes`. Do not invent
+    occupancy SM counts this slice. Do not reverse MemCpyWithAttributes identity with memcpy_with_attributes.
+    Do not invent a second `cuCtxSetFlags` / `ctx_set_flags`.
+    Do not invent Engine `--ctx-set-flags`. Do not invent
+    `cuCtxSetCacheConfig` this slice. Do not reverse CtxSetFlags identity with set_device_flags.
+    Do not invent a second `cuCtxSetCacheConfig` / `ctx_set_cache_config`.
+    Do not invent Engine `--ctx-set-cache-config`. Do not invent
+    `cuCtxSetLimit` this slice. Do not reverse CtxSetCacheConfig identity with set_cache_config.
+    Do not invent a second `cuCtxSetLimit` / `ctx_set_limit`.
+    Do not invent Engine `--ctx-set-limit`. Do not invent
+    `cuCtxSetSharedMemConfig` this slice. Do not reverse CtxSetLimit identity with set_limit.
+    Do not invent a second `cuCtxSetSharedMemConfig` / `ctx_set_shared_mem_config`.
+    Do not invent Engine `--ctx-set-shared-mem`. Do not invent
+    occupancy SM counts this slice. Do not reverse CtxSetSharedMemConfig identity with set_shared_mem_config.
+    Do not invent a second `cuStreamCreateWithPriority` / `stream_create_priority`.
+    Do not invent Engine `--stream-create-priority`. Do not invent
+    occupancy SM counts this slice. Do not reverse StreamCreatePriority identity with stream_create_with_priority.
+    Do not invent a second `cuStreamCreateWithFlags` / `stream_create_flags`.
+    Do not invent Engine `--stream-create-flags`. Do not invent
+    occupancy SM counts this slice. Do not reverse StreamCreateWithFlags identity with stream_create_with_flags.
+    Do not invent a second `cuStreamGetFlags` / `stream_flags`.
+    Do not invent Engine `--stream-flags`. Do not invent
+    occupancy SM counts this slice. Do not reverse StreamFlags identity with stream_get_flags.
+    Do not invent a second `cuStreamGetPriority` / `get_stream_priority`.
+    Do not invent Engine `--stream-get-priority`. Do not invent
+    occupancy SM counts this slice. Do not reverse GetStreamPriority identity with stream_get_priority.
+    Do not invent a second `cuDeviceGetGraphMemAttribute` / `device_graph_mem_get`.
+    Do not invent Engine `--graph-mem-get`. Do not invent
+    occupancy SM counts this slice. Do not reverse DeviceGraphMemGet identity with graph_mem_get.
+    Do not invent a second `cuDeviceSetGraphMemAttribute` / `device_graph_mem_set`.
+    Do not invent Engine `--graph-mem-set`. Do not invent
+    occupancy SM counts this slice. Do not reverse DeviceGraphMemSet identity with graph_mem_set.
+    Do not invent a second `cuDeviceGraphMemTrim` / `device_graph_mem_trim`.
+    Do not invent Engine `--graph-mem-trim`. Do not invent
+    occupancy SM counts this slice. Do not reverse DeviceGraphMemTrim identity with graph_mem_trim.
+    Do not invent a second `cuStreamGetId` / `get_stream_id`.
+    Do not invent Engine `--stream-get-id`. Do not invent
+    occupancy SM counts this slice. Do not reverse GetStreamId identity with stream_get_id.
+    Do not invent a second `cuStreamCopyAttributes` / `copy_stream_attributes`.
+    Do not invent Engine `--stream-copy-attributes`. Do not invent
+    occupancy SM counts this slice. Do not reverse CopyStreamAttributes identity with stream_copy_attributes.
+    Do not invent a second `cuStreamGetAttribute` / `get_stream_attribute`.
+    Do not invent Engine `--stream-get-attribute`. Do not invent
+    occupancy SM counts this slice. Do not reverse GetStreamAttribute identity with stream_get_attribute.
+    Do not invent a second `cuStreamSetAttribute` / `set_stream_attribute`.
+    Do not invent Engine `--stream-set-attribute`. Do not invent
+    occupancy SM counts this slice. Do not reverse SetStreamAttribute identity with stream_set_attribute.
+    Do not invent a second `cuGraphKernelNodeGetAttribute` / `get_graph_kernel_node_attribute`.
+    Do not invent Engine `--graph-kernel-get-attribute`. Do not invent
+    occupancy SM counts this slice. Do not reverse GetGraphKernelNodeAttribute identity with graph_kernel_node_get_attribute.
+    Do not invent a second `cuGraphKernelNodeSetAttribute` / `set_graph_kernel_node_attribute`.
+    Do not invent Engine `--graph-kernel-set-attribute`. Do not invent
+    occupancy SM counts this slice. Do not reverse SetGraphKernelNodeAttribute identity with graph_kernel_node_set_attribute.
+    Do not invent a second `cuGraphExecKernelNodeGetAttribute` / `get_graph_exec_kernel_node_attribute`.
+    Do not invent Engine `--graph-exec-kernel-get-attribute`. Do not invent
+    occupancy SM counts this slice. Do not reverse GetGraphExecKernelNodeAttribute identity with graph_exec_kernel_node_get_attribute.
+    Do not invent a second `cuGraphExecKernelNodeSetAttribute` / `set_graph_exec_kernel_node_attribute`.
+    Do not invent Engine `--graph-exec-kernel-set-attribute`. Do not invent
+    occupancy SM counts this slice. Do not reverse SetGraphExecKernelNodeAttribute identity with graph_exec_kernel_node_set_attribute.
+    Do not invent a second `cuGraphKernelNodeCopyAttributes` / `copy_graph_kernel_node_attributes`.
+    Do not invent Engine `--graph-kernel-copy-attributes`. Do not invent
+    occupancy SM counts this slice. Do not reverse CopyGraphKernelNodeAttributes identity with graph_kernel_node_copy_attributes.
+    Do not invent a second `cuGraphExecKernelNodeCopyAttributes` / `copy_graph_exec_kernel_node_attributes`.
+    Do not invent Engine `--graph-exec-kernel-copy-attributes`. Do not invent
+    occupancy SM counts this slice. Do not reverse CopyGraphExecKernelNodeAttributes identity with graph_exec_kernel_node_copy_attributes.
+    Do not invent a second `cuGraphKernelNodeGetParams` / `get_graph_kernel_node_params`.
+    Do not invent Engine `--graph-kernel-get-params`. Do not invent
+    occupancy SM counts this slice. Do not reverse GetGraphKernelNodeParams identity with graph_kernel_get_params.
+    Do not invent a second `cuGraphExecKernelNodeGetParams` / `get_graph_exec_kernel_node_params`.
+    Do not invent Engine `--graph-exec-kernel-get-params`. Do not invent
+    occupancy SM counts this slice. Do not reverse GetGraphExecKernelNodeParams identity with graph_exec_kernel_get_params.
+    Do not invent a second `cuGraphKernelNodeSetParams` / `set_graph_kernel_node_params`.
+    Do not invent Engine `--graph-kernel-set-params`. Do not invent
+    occupancy SM counts this slice. Do not reverse SetGraphKernelNodeParams identity with graph_kernel_set_params.
+    Do not invent a second `cuGraphExecKernelNodeSetParams` / `set_graph_exec_kernel_node_params`.
+    Do not invent Engine `--graph-exec-kernel-set-params`. Do not invent
+    occupancy SM counts this slice. Do not reverse SetGraphExecKernelNodeParams identity with graph_exec_kernel_set_params.
+    Do not invent a second `cuGraphMemcpyNodeGetParams` / `get_graph_memcpy_node_params`.
+    Do not invent Engine `--graph-memcpy-get-params`. Do not invent
+    occupancy SM counts this slice. Do not reverse GetGraphMemcpyNodeParams identity with graph_memcpy_get_params.
+    Do not invent a second `cuGraphExecMemcpyNodeGetParams` / `get_graph_exec_memcpy_node_params`.
+    Do not invent Engine `--graph-exec-memcpy-get-params`. Do not invent
+    occupancy SM counts this slice. Do not reverse GetGraphExecMemcpyNodeParams identity with graph_exec_memcpy_get_params.
+    Do not invent a second `cuGraphMemcpyNodeSetParams` / `set_graph_memcpy_node_params`.
+    Do not invent Engine `--graph-memcpy-set-params`. Do not invent
+    occupancy SM counts this slice. Do not reverse SetGraphMemcpyNodeParams identity with graph_memcpy_set_params.
+    Do not invent a second `cuGraphExecMemcpyNodeSetParams` / `set_graph_exec_memcpy_node_params`.
+    Do not invent Engine `--graph-exec-memcpy-set-params`. Do not invent
+    occupancy SM counts this slice. Do not reverse SetGraphExecMemcpyNodeParams identity with graph_exec_memcpy_set_params.
+    Do not invent a second `cuGraphMemsetNodeGetParams` / `get_graph_memset_node_params`.
+    Do not invent Engine `--graph-memset-get-params`. Do not invent
+    occupancy SM counts this slice. Do not reverse GetGraphMemsetNodeParams identity with graph_memset_get_params.
+    Do not invent a second `cuGraphExecMemsetNodeGetParams` / `get_graph_exec_memset_node_params`.
+    Do not invent Engine `--graph-exec-memset-get-params`. Do not invent
+    occupancy SM counts this slice. Do not reverse GetGraphExecMemsetNodeParams identity with graph_exec_memset_get_params.
+    Do not invent a second `cuGraphMemsetNodeSetParams` / `set_graph_memset_node_params`.
+    Do not invent Engine `--graph-memset-set-params`. Do not invent
+    occupancy SM counts this slice. Do not reverse SetGraphMemsetNodeParams identity with graph_memset_set_params.
+    Do not invent a second `cuGraphExecMemsetNodeSetParams` / `set_graph_exec_memset_node_params`.
+    Do not invent Engine `--graph-exec-memset-set-params`. Do not invent
+    occupancy SM counts this slice. Do not reverse SetGraphExecMemsetNodeParams identity with graph_exec_memset_set_params.
+    Do not invent a second `cuGraphHostNodeGetParams` / `get_graph_host_node_params`.
+    Do not invent Engine `--graph-host-get-params`. Do not invent
+    occupancy SM counts this slice. Do not reverse GetGraphHostNodeParams identity with graph_host_get_params.
+    Do not invent a second `cuGraphExecHostNodeGetParams` / `get_graph_exec_host_node_params`.
+    Do not invent Engine `--graph-exec-host-get-params`. Do not invent
+    occupancy SM counts this slice. Do not reverse GetGraphExecHostNodeParams identity with graph_exec_host_get_params.
+    Do not invent a second `cuGraphHostNodeSetParams` / `set_graph_host_node_params`.
+    Do not invent Engine `--graph-host-set-params`. Do not invent
+    occupancy SM counts this slice. Do not reverse SetGraphHostNodeParams identity with graph_host_set_params.
+    Do not invent a second `cuGraphExecHostNodeSetParams` / `set_graph_exec_host_node_params`.
+    Do not invent Engine `--graph-exec-host-set-params`. Do not invent
+    occupancy SM counts this slice. Do not reverse SetGraphExecHostNodeParams identity with graph_exec_host_set_params.
+    Do not invent a second `cuGraphBatchMemOpNodeGetParams` / `get_graph_batch_mem_op_node_params`.
+    Do not invent Engine `--graph-batch-mem-get-params`. Do not invent
+    occupancy SM counts this slice. Do not reverse GetGraphBatchMemOpNodeParams identity with graph_batch_mem_ops_get_params.
+    Do not invent a second `cuGraphExecBatchMemOpNodeGetParams` / `get_graph_exec_batch_mem_op_node_params`.
+    Do not invent Engine `--graph-exec-batch-mem-get-params`. Do not invent
+    occupancy SM counts this slice. Do not reverse GetGraphExecBatchMemOpNodeParams identity with graph_exec_batch_mem_ops_get_params.
+    Do not invent a second `cuGraphBatchMemOpNodeSetParams` / `set_graph_batch_mem_op_node_params`.
+    Do not invent Engine `--graph-batch-mem-set-params`. Do not invent
+    occupancy SM counts this slice. Do not reverse SetGraphBatchMemOpNodeParams identity with graph_batch_mem_op_set_params.
+    Do not invent a second `cuGraphExecBatchMemOpNodeSetParams` / `set_graph_exec_batch_mem_op_node_params`.
+    Do not invent Engine `--graph-exec-batch-mem-set-params`. Do not invent
+    occupancy SM counts this slice. Do not reverse SetGraphExecBatchMemOpNodeParams identity with graph_exec_batch_mem_op_set_params.
+    Do not invent a second `cuGraphEventRecordNodeSetEvent` / `set_graph_event_record_node_event`.
+    Do not invent Engine `--graph-event-record-set-event`. Do not invent
+    occupancy SM counts this slice. Do not reverse SetGraphEventRecordNodeEvent identity with graph_event_record_set_event.
+    Do not invent a second `cuGraphExecEventRecordNodeSetEvent` / `set_graph_exec_event_record_node_event`.
+    Do not invent Engine `--graph-exec-event-record-set-event`. Do not invent
+    occupancy SM counts this slice. Do not reverse SetGraphExecEventRecordNodeEvent identity with graph_exec_event_record_set_event.
+    Do not invent a second `cuGraphEventWaitNodeSetEvent` / `set_graph_event_wait_node_event`.
+    Do not invent Engine `--graph-event-wait-set-event`. Do not invent
+    occupancy SM counts this slice. Do not reverse SetGraphEventWaitNodeEvent identity with graph_event_wait_set_event.
+    Do not invent a second `cuGraphExecEventWaitNodeSetEvent` / `set_graph_exec_event_wait_node_event`.
+    Do not invent Engine `--graph-exec-event-wait-set-event`. Do not invent
+    occupancy SM counts this slice. Do not reverse SetGraphExecEventWaitNodeEvent identity with graph_exec_event_wait_set_event.
+    Do not invent a second `cuGraphEventRecordNodeGetEvent` / `get_graph_event_record_node_event`.
+    Do not invent Engine `--graph-event-record-get-event`. Do not invent
+    occupancy SM counts this slice. Do not reverse GetGraphEventRecordNodeEvent identity with graph_event_record_get_event.
+    Do not invent a second `cuGraphExecEventRecordNodeGetEvent` / `get_graph_exec_event_record_node_event`.
+    Do not invent Engine `--graph-exec-event-record-get-event`. Do not invent
+    occupancy SM counts this slice. Do not reverse GetGraphExecEventRecordNodeEvent identity with graph_exec_event_record_get_event.
+    Do not invent a second `cuGraphEventWaitNodeGetEvent` / `get_graph_event_wait_node_event`.
+    Do not invent Engine `--graph-event-wait-get-event`. Do not invent
+    occupancy SM counts this slice. Do not reverse GetGraphEventWaitNodeEvent identity with graph_event_wait_get_event.
+    Do not invent a second `cuGraphExecEventWaitNodeGetEvent` / `get_graph_exec_event_wait_node_event`.
+    Do not invent Engine `--graph-exec-event-wait-get-event`. Do not invent
+    occupancy SM counts this slice. Do not reverse GetGraphExecEventWaitNodeEvent identity with graph_exec_event_wait_get_event.
+    Do not invent a second `cuGraphChildGraphNodeGetGraph` / `get_graph_child_graph_node_graph`.
+    Do not invent Engine `--graph-child-get-graph`. Do not invent
+    occupancy SM counts this slice. Do not reverse GetGraphChildGraphNodeGraph identity with graph_child_get_graph.
+    Do not invent a second `cuGraphExecChildGraphNodeGetGraph` / `get_graph_exec_child_graph_node_graph`.
+    Do not invent Engine `--graph-exec-child-get-graph`. Do not invent
+    occupancy SM counts this slice. Do not reverse GetGraphExecChildGraphNodeGraph identity with graph_exec_child_get_graph.
+    Do not invent a second `cuGraphChildGraphNodeSetParams` / `set_graph_child_graph_node_params`.
+    Do not invent Engine `--graph-child-set-params`. Do not invent
+    occupancy SM counts this slice. Do not reverse SetGraphChildGraphNodeParams identity with graph_child_set_params.
+    Do not invent a second `cuGraphExecChildGraphNodeSetParams` / `set_graph_exec_child_graph_node_params`.
+    Do not invent Engine `--graph-exec-child-set-params`. Do not invent
+    occupancy SM counts this slice. Do not reverse SetGraphExecChildGraphNodeParams identity with graph_exec_child_set_params.
+    Do not invent a second `cuGraphNodeSetParams` / `set_graph_node_params`.
+    Do not invent Engine `--graph-node-set-params`. Do not invent
+    occupancy SM counts this slice. Do not reverse SetGraphNodeParams identity with graph_node_set_params.
+    Do not invent a second `cuGraphExecNodeSetParams` / `set_graph_exec_node_params`.
+    Do not invent Engine `--graph-exec-node-set-params`. Do not invent
+    occupancy SM counts this slice. Do not reverse SetGraphExecNodeParams identity with graph_exec_node_set_params.
+    Do not invent a second `cuGraphNodeGetParams` / `get_graph_node_params`.
+    Do not invent Engine `--graph-node-get-params`. Do not invent
+    occupancy SM counts this slice. Do not reverse GetGraphNodeParams identity with graph_node_get_params.
+    Do not invent a second `cuGraphExecNodeGetParams` / `get_graph_exec_node_params`.
+    Do not invent Engine `--graph-exec-node-get-params`. Do not invent
+    occupancy SM counts this slice. Do not reverse GetGraphExecNodeParams identity with graph_exec_node_get_params.
+    Do not invent a second `cuGraphNodeSetEnabled` / `set_graph_node_enabled`.
+    Do not invent Engine `--graph-node-set-enabled`. Do not invent
+    occupancy SM counts this slice. Do not reverse SetGraphNodeEnabled identity with graph_node_set_enabled.
+    Do not invent a second `cuGraphNodeGetEnabled` / `get_graph_node_enabled`.
+    Do not invent Engine `--graph-node-get-enabled`. Do not invent
+    occupancy SM counts this slice. Do not reverse GetGraphNodeEnabled identity with graph_node_get_enabled.
+    Do not invent a second `cuGraphExecGetFlags` / `get_graph_exec_flags`.
+    Do not invent Engine `--graph-exec-get-flags`. Do not invent
+    occupancy SM counts this slice. Do not reverse GetGraphExecFlags identity with graph_exec_get_flags.
+    Do not invent a second `cuGraphGetId` / `get_graph_id`.
+    Do not invent Engine `--graph-get-id`. Do not invent
+    occupancy SM counts this slice. Do not reverse GetGraphId identity with graph_get_id.
+    Do not invent a second `cuGraphExecGetId` / `get_graph_exec_id`.
+    Do not invent Engine `--graph-exec-get-id`. Do not invent
+    occupancy SM counts this slice. Do not reverse GetGraphExecId identity with graph_get_id.
+    Do not invent a second `cuGraphGetNodes` / `get_graph_nodes`.
+    Do not invent Engine `--graph-get-nodes`. Do not invent
+    occupancy SM counts this slice. Do not reverse GetGraphNodes identity with graph_nodes.
+    Do not invent a second `cuGraphGetRootNodes` / `get_graph_root_nodes`.
+    Do not invent Engine `--graph-get-root-nodes`. Do not invent
+    occupancy SM counts this slice. Do not reverse GetGraphRootNodes identity with graph_root_nodes.
+    Do not invent a second `cuGraphGetEdges` / `get_graph_edges`.
+    Do not invent Engine `--graph-get-edges`. Do not invent
+    occupancy SM counts this slice. Do not reverse GetGraphEdges identity with graph_edges.
+    Do not invent a second `cuGraphGetEdges` v2 / `get_graph_edges_with_data`.
+    Do not invent Engine `--graph-get-edges-with-data`. Do not invent
+    occupancy SM counts this slice. Do not reverse GetGraphEdgesWithData identity with graph_edges_with_data.
+    Do not invent a second `cuGraphNodeGetDependencies` / `get_graph_node_dependencies`.
+    Do not invent Engine `--graph-node-get-dependencies`. Do not invent
+    occupancy SM counts this slice. Do not reverse GetGraphNodeDependencies identity with graph_node_deps.
+    Do not invent a second `cuGraphNodeGetDependencies` v2 / `get_graph_node_dependencies_with_data`.
+    Do not invent Engine `--graph-node-get-dependencies-with-data`. Do not invent
+    occupancy SM counts this slice. Do not reverse GetGraphNodeDependenciesWithData identity with graph_node_deps_with_data.
+    Do not invent a second `cuGraphNodeGetDependentNodes` / `get_graph_node_dependent_nodes`.
+    Do not invent Engine `--graph-node-get-dependent-nodes`. Do not invent
+    occupancy SM counts this slice. Do not reverse GetGraphNodeDependentNodes identity with graph_node_dependents.
+    Do not invent a second `cuGraphNodeGetDependentNodes` v2 / `get_graph_node_dependent_nodes_with_data`.
+    Do not invent Engine `--graph-node-get-dependent-nodes-with-data`. Do not invent
+    occupancy SM counts this slice. Do not reverse GetGraphNodeDependentNodesWithData identity with graph_node_dependents_with_data.
+    Do not invent a second `cuGraphNodeGetType` / `get_graph_node_type`.
+    Do not invent Engine `--graph-node-get-type`. Do not invent
+    occupancy SM counts this slice. Do not reverse GetGraphNodeType identity with graph_node_kind.
+    Do not invent a second `cuGraphNodeFindInClone` / `find_graph_node_in_clone`.
+    Do not invent Engine `--graph-node-find-in-clone`. Do not invent
+    occupancy SM counts this slice. Do not reverse FindGraphNodeInClone identity with graph_node_find_in_clone.
+    Do not invent a second `cuGraphClone` / `graph_clone`.
+    Do not invent Engine `--clone-graph`. Do not invent
+    occupancy SM counts this slice. Do not reverse GraphClone identity with clone_graph.
+    Do not invent a second `cuGraphDebugDotPrint` / `graph_debug_dot_print`.
+    Do not invent Engine `--graph-debug-dot-print`. Do not invent
+    occupancy SM counts this slice. Do not reverse GraphDebugDotPrint identity with graph_debug_dot.
+    Do not invent a second `cuGraphDebugDotPrint` with flags / `graph_debug_dot_print_with_flags`.
+    Do not invent Engine `--graph-debug-dot-print-with-flags`. Do not invent
+    occupancy SM counts this slice. Do not reverse GraphDebugDotPrintWithFlags identity with graph_debug_dot_with_flags.
+    Do not invent a second `cuGraphInstantiate` / `graph_instantiate`.
+    Do not invent Engine `--graph-instantiate`. Do not invent
+    occupancy SM counts this slice. Do not reverse GraphInstantiate identity with instantiate_graph.
+    Do not invent a second `cuGraphInstantiateWithFlags` / `graph_instantiate_with_flags`.
+    Do not invent Engine `--graph-instantiate-with-flags`. Do not invent
+    occupancy SM counts this slice. Do not reverse GraphInstantiateWithFlags identity with instantiate_graph_with_flags.
+    Do not invent a second `cuGraphInstantiateWithParams` / `graph_instantiate_with_params`.
+    Do not invent Engine `--graph-instantiate-with-params`. Do not invent
+    occupancy SM counts this slice. Do not reverse GraphInstantiateWithParams identity with instantiate_graph_with_params.
+    Do not invent a second `cuGraphLaunch` / `graph_launch`.
+    Do not invent Engine `--graph-launch`. Do not invent
+    occupancy SM counts this slice. Do not reverse GraphLaunch identity with launch_graph.
+    Do not invent a second `cuGraphUpload` / `graph_upload`.
+    Do not invent Engine `--graph-upload`. Do not invent
+    occupancy SM counts this slice. Do not reverse GraphUpload identity with upload_graph.
+    Do not invent a second `cuGraphUpload` on a stream / `graph_upload_async`.
+    Do not invent Engine `--graph-upload-async`. Do not invent
+    occupancy SM counts this slice. Do not reverse GraphUploadAsync identity with upload_graph_async.
+    Do not invent a second `cuGraphDestroy` / `graph_destroy`.
+    Do not invent Engine `--graph-destroy`. Do not invent
+    occupancy SM counts this slice. Do not reverse GraphDestroy identity with destroy_graph.
+    Do not invent a second `cuGraphExecDestroy` / `graph_exec_destroy`.
+    Do not invent Engine `--graph-exec-destroy`. Do not invent
+    occupancy SM counts this slice. Do not reverse GraphExecDestroy identity with destroy_graph.
+    Do not invent a second `cuGraphExecUpdate` / `graph_exec_update`.
+    Do not invent Engine `--graph-exec-update`. Do not invent
+    occupancy SM counts this slice. Do not reverse GraphExecUpdate identity with update_graph.
+    Do not invent a second `cuGraphExecUpdate` with info / `graph_exec_update_with_info`.
+    Do not invent Engine `--graph-exec-update-with-info`. Do not invent
+    occupancy SM counts this slice. Do not reverse GraphExecUpdateWithInfo identity with update_graph_with_info.
+    Do not invent a second `cuGraphAddDependencies` / `add_graph_dependencies`.
+    Do not invent Engine `--graph-add-dependencies`. Do not invent
+    occupancy SM counts this slice. Do not reverse AddGraphDependencies identity with graph_add_dependencies.
+    Do not invent a second `cuGraphAddDependencies` of pairs / `add_graph_dependencies_n`.
+    Do not invent Engine `--graph-add-dependencies-n`. Do not invent
+    occupancy SM counts this slice. Do not reverse AddGraphDependenciesN identity with graph_add_dependencies_n.
+    Do not invent a second `cuGraphAddDependencies` with data / `add_graph_dependencies_with_data`.
+    Do not invent Engine `--graph-add-dependencies-with-data`. Do not invent
+    occupancy SM counts this slice. Do not reverse AddGraphDependenciesWithData identity with graph_add_dependencies_with_data.
+    Do not invent a second `cuGraphAddDependencies` v2 / `add_graph_dependencies_n_with_data`.
+    Do not invent Engine `--graph-add-dependencies-n-with-data`. Do not invent
+    occupancy SM counts this slice. Do not reverse AddGraphDependenciesNWithData identity with graph_add_dependencies_n_with_data.
+    Do not invent a second `cuGraphRemoveDependencies` / `remove_graph_dependencies`.
+    Do not invent Engine `--graph-remove-dependencies`. Do not invent
+    occupancy SM counts this slice. Do not reverse RemoveGraphDependencies identity with graph_remove_dependencies.
+    Do not invent a second `cuGraphRemoveDependencies` of pairs / `remove_graph_dependencies_n`.
+    Do not invent Engine `--graph-remove-dependencies-n`. Do not invent
+    occupancy SM counts this slice. Do not reverse RemoveGraphDependenciesN identity with graph_remove_dependencies_n.
+    Do not invent a second `cuGraphRemoveDependencies` with data / `remove_graph_dependencies_with_data`.
+    Do not invent Engine `--graph-remove-dependencies-with-data`. Do not invent
+    occupancy SM counts this slice. Do not reverse RemoveGraphDependenciesWithData identity with graph_remove_dependencies_with_data.
+    Do not invent a second `cuGraphRemoveDependencies` v2 / `remove_graph_dependencies_n_with_data`.
+    Do not invent Engine `--graph-remove-dependencies-n-with-data`. Do not invent
+    occupancy SM counts this slice. Do not reverse RemoveGraphDependenciesNWithData identity with graph_remove_dependencies_n_with_data.
+    Do not invent a second `cuGraphDestroyNode` / `destroy_graph_node`.
+    Do not invent Engine `--graph-destroy-node`. Do not invent
+    occupancy SM counts this slice. Do not reverse DestroyGraphNode identity with graph_destroy_node.
+    Do not invent a second device-side `cuGraphLaunch` / `launch_device_graph`.
+    Do not invent Engine `--device-launch-graph`. Do not invent
+    occupancy SM counts this slice. Do not reverse LaunchDeviceGraph identity with device_launch_graph.
+    Do not invent a second `cuGetCurrentGraphExec` / `get_current_graph_exec`.
+    Do not invent Engine `--get-current-graph-exec`. Do not invent
+    occupancy SM counts this slice. Do not reverse GetCurrentGraphExec identity with current_graph_exec.
+    Do not invent a second `cuGraphAddEmptyNode` / `add_graph_empty`.
+    Do not invent Engine `--graph-add-empty`. Do not invent
+    occupancy SM counts this slice. Do not reverse AddGraphEmpty identity with graph_add_empty.
+    Do not invent a second `cuGraphAddChildGraphNode` / `add_graph_child`.
+    Do not invent Engine `--graph-add-child`. Do not invent
+    occupancy SM counts this slice. Do not reverse AddGraphChild identity with graph_add_child.
+    Do not invent a second `cuGraphAddHostNode` / `add_graph_host`.
+    Do not invent Engine `--graph-add-host`. Do not invent
+    occupancy SM counts this slice. Do not reverse AddGraphHost identity with graph_add_host_func_params.
+    Do not invent a second `cuGraphAddEventRecordNode` / `add_graph_event_record`.
+    Do not invent Engine `--graph-add-event-record`. Do not invent
+    occupancy SM counts this slice. Do not reverse AddGraphEventRecord identity with graph_add_event_record.
+    Do not invent a second `cuGraphAddEventWaitNode` / `add_graph_event_wait`.
+    Do not invent Engine `--graph-add-event-wait`. Do not invent
+    occupancy SM counts this slice. Do not reverse AddGraphEventWait identity with graph_add_event_wait.
+    Do not invent a second `cuGraphAddKernelNode` / `add_graph_kernel`.
+    Do not invent Engine `--graph-add-kernel`. Do not invent
+    occupancy SM counts this slice. Do not reverse AddGraphKernel identity with graph_add_kernel.
+    Do not invent a second `cuGraphAddMemcpyNode` / `add_graph_memcpy`.
+    Do not invent Engine `--graph-add-memcpy`. Do not invent
+    occupancy SM counts this slice. Do not reverse AddGraphMemcpy identity with graph_add_memcpy.
+    Do not invent a second `cuGraphAddMemcpyNode1D` / `add_graph_memcpy_1d`.
+    Do not invent Engine `--graph-add-memcpy-1d`. Do not invent
+    occupancy SM counts this slice. Do not reverse AddGraphMemcpy1D identity with graph_add_memcpy_1d.
+    Do not invent a second 2D `cuGraphAddMemcpyNode` / `add_graph_memcpy_2d`.
+    Do not invent Engine `--graph-add-memcpy-2d`. Do not invent
+    occupancy SM counts this slice. Do not reverse AddGraphMemcpy2D identity with graph_add_memcpy_2d.
+    Do not invent a second 3D `cuGraphAddMemcpyNode` / `add_graph_memcpy_3d`.
+    Do not invent Engine `--graph-add-memcpy-3d`. Do not invent
+    occupancy SM counts this slice. Do not reverse AddGraphMemcpy3D identity with graph_add_memcpy_3d.
+    Do not invent a second packed 1D `cuGraphAddMemsetNode` / `add_graph_memset`.
+    Do not invent Engine `--graph-add-memset`. Do not invent
+    occupancy SM counts this slice. Do not reverse AddGraphMemset identity with graph_add_memset.
+    Do not invent a second `cuGraphAddMemsetNode` params / `add_graph_memset_op`.
+    Do not invent Engine `--graph-add-memset-op`. Do not invent
+    occupancy SM counts this slice. Do not reverse AddGraphMemsetOp identity with graph_add_memset_op.
+    Do not invent a second 2D `cuGraphAddMemsetNode` / `add_graph_memset_2d`.
+    Do not invent Engine `--graph-add-memset-2d`. Do not invent
+    occupancy SM counts this slice. Do not reverse AddGraphMemset2D identity with graph_add_memset_2d.
+    Do not invent a second 3D `cuGraphAddMemsetNode` / `add_graph_memset_3d`.
+    Do not invent Engine `--graph-add-memset-3d`. Do not invent
+    occupancy SM counts this slice. Do not reverse AddGraphMemset3D identity with graph_add_memset_3d.
+    Do not invent a second `cuGraphAddBatchMemOpNode` / `add_graph_batch_mem_op`.
+    Do not invent Engine `--graph-add-batch-mem-op`. Do not invent
+    occupancy SM counts this slice. Do not reverse AddGraphBatchMemOp identity with graph_add_batch_mem_op.
+    Do not invent a second `cuGraphAddBatchMemOpNode` flags / `add_graph_batch_mem_op_with_flags`.
+    Do not invent Engine `--graph-add-batch-mem-op-with-flags`. Do not invent
+    occupancy SM counts this slice. Do not reverse AddGraphBatchMemOpWithFlags identity with graph_add_batch_mem_op_with_flags.
+    Do not invent a second `cuGraphAddMemAllocNode` / `add_graph_alloc`.
+    Do not invent Engine `--graph-add-alloc`. Do not invent
+    occupancy SM counts this slice. Do not reverse AddGraphAlloc identity with graph_add_alloc.
+    Do not invent a second `cuGraphAddMemAllocNode` access / `add_graph_alloc_with_access`.
+    Do not invent Engine `--graph-add-alloc-with-access`. Do not invent
+    occupancy SM counts this slice. Do not reverse AddGraphAllocWithAccess identity with graph_add_alloc_with_access.
+    Do not invent a second `cuGraphAddMemFreeNode` / `add_graph_free`.
+    Do not invent Engine `--graph-add-free`. Do not invent
+    occupancy SM counts this slice. Do not reverse AddGraphFree identity with graph_add_free.
+    Do not invent a second `cuGraphAddNode` / `add_graph_node`.
+    Do not invent Engine `--graph-add-node`. Do not invent
+    occupancy SM counts this slice. Do not reverse AddGraphNode identity with graph_add_node.
+    Do not invent a second `cuGraphAddNode_v2` / `add_graph_node_with_data`.
+    Do not invent Engine `--graph-add-node-with-data`. Do not invent
+    occupancy SM counts this slice. Do not reverse AddGraphNodeWithData identity with graph_add_node_with_data.
+    Do not invent a second `cuGraphAddNode` IF / `add_graph_if`.
+    Do not invent Engine `--graph-add-if`. Do not invent
+    occupancy SM counts this slice. Do not reverse AddGraphIf identity with graph_add_if.
+    Do not invent a second `cuGraphAddNode` IF size 2 / `add_graph_if_else`.
+    Do not invent Engine `--graph-add-if-else`. Do not invent
+    occupancy SM counts this slice. Do not reverse AddGraphIfElse identity with graph_add_if_else.
+    Do not invent a second `cuGraphAddNode` WHILE / `add_graph_while`.
+    Do not invent Engine `--graph-add-while`. Do not invent
+    occupancy SM counts this slice. Do not reverse AddGraphWhile identity with graph_add_while.
+    Do not invent a second `cuGraphAddNode` SWITCH / `add_graph_switch`.
+    Do not invent Engine `--graph-add-switch`. Do not invent
+    occupancy SM counts this slice. Do not reverse AddGraphSwitch identity with graph_add_switch.
+    Do not invent a second graph-build `cuGraphSetConditional` / `add_graph_set_conditional`.
+    Do not invent Engine `--graph-add-set-conditional`. Do not invent
+    occupancy SM counts this slice. Do not reverse AddGraphSetConditional identity with graph_add_set_conditional.
+    Do not invent a second graph `cuStreamWriteValue64` / `add_graph_write_value64`.
+    Do not invent Engine `--graph-add-write-value64`. Do not invent
+    occupancy SM counts this slice. Do not reverse AddGraphWriteValue64 identity with graph_add_write_value64.
+    Do not invent a second graph `cuStreamWriteValue32` / `add_graph_write_value32`.
+    Do not invent Engine `--graph-add-write-value32`. Do not invent
+    occupancy SM counts this slice. Do not reverse AddGraphWriteValue32 identity with graph_add_write_value32.
+    Do not invent a second graph `cuStreamWriteValue64` flags / `add_graph_write_value64_with_flags`.
+    Do not invent Engine `--graph-add-write-value64-with-flags`. Do not invent
+    occupancy SM counts this slice. Do not reverse AddGraphWriteValue64WithFlags identity with graph_add_write_value64_with_flags.
+    Do not invent a second graph `cuStreamWriteValue32` flags / `add_graph_write_value32_with_flags`.
+    Do not invent Engine `--graph-add-write-value32-with-flags`. Do not invent
+    occupancy SM counts this slice. Do not reverse AddGraphWriteValue32WithFlags identity with graph_add_write_value32_with_flags.
+    Do not invent a second graph `cuStreamWaitValue64` / `add_graph_wait_value64`.
+    Do not invent Engine `--graph-add-wait-value64`. Do not invent
+    occupancy SM counts this slice. Do not reverse AddGraphWaitValue64 identity with graph_add_wait_value64.
+    Do not invent a second graph `cuStreamWaitValue32` / `add_graph_wait_value32`.
+    Do not invent Engine `--graph-add-wait-value32`. Do not invent
+    occupancy SM counts this slice. Do not reverse AddGraphWaitValue32 identity with graph_add_wait_value32.
+    Do not invent a second graph `cuStreamWaitValue64` flags / `add_graph_wait_value64_with_flags`.
+    Do not invent Engine `--graph-add-wait-value64-with-flags`. Do not invent
+    occupancy SM counts this slice. Do not reverse AddGraphWaitValue64WithFlags identity with graph_add_wait_value64_with_flags.
+    Do not invent a second graph `cuStreamWaitValue32` flags / `add_graph_wait_value32_with_flags`.
+    Do not invent Engine `--graph-add-wait-value32-with-flags`. Do not invent
+    occupancy SM counts this slice. Do not reverse AddGraphWaitValue32WithFlags identity with graph_add_wait_value32_with_flags.
+    Do not invent a second graph cooperative `cudaGraphAddKernelNode` / `add_graph_cooperative_kernel`.
+    Do not invent Engine `--graph-add-cooperative-kernel`. Do not invent
+    occupancy SM counts this slice. Do not reverse AddGraphCooperativeKernel identity with graph_add_cooperative_kernel.
+    Do not invent a second graph unnamed `cudaGraphAddHostNode` / `add_graph_host_func`.
+    Do not invent Engine `--graph-add-host-func`. Do not invent
+    occupancy SM counts this slice. Do not reverse AddGraphHostFunc identity with graph_add_host_func.
+    Do not invent a second graph `cudaGraphMemcpyNodeSetParams1D` / `set_graph_memcpy_node_params_1d`.
+    Do not invent Engine `--graph-memcpy-set-params-1d`. Do not invent
+    occupancy SM counts this slice. Do not reverse SetGraphMemcpyNodeParams1D identity with graph_memcpy_set_params_1d.
+    Do not invent a second graph `cudaGraphExecMemcpyNodeSetParams1D` / `set_graph_exec_memcpy_node_params_1d`.
+    Do not invent Engine `--graph-exec-memcpy-set-params-1d`. Do not invent
+    occupancy SM counts this slice. Do not reverse SetGraphExecMemcpyNodeParams1D identity with graph_exec_memcpy_set_params_1d.
+    Do not invent a second `cuGraphCreate` / `graph_create`.
+    Do not invent Engine `--graph-create`. Do not invent
+    occupancy SM counts this slice. Do not reverse GraphCreate identity with create_graph.
+    Do not invent a second `cuGraphCreate` flags / `graph_create_with_flags`.
+    Do not invent Engine `--graph-create-with-flags`. Do not invent
+    occupancy SM counts this slice. Do not reverse GraphCreateWithFlags identity with create_graph_with_flags.
+    Do not invent a second `cudaUserObjectCreate` / `create_user_object`.
+    Do not invent Engine `--create-user-object`. Do not invent
+    occupancy SM counts this slice. Do not reverse CreateUserObject identity with user_object_create.
+    Do not invent a second `cudaUserObjectRetain` / `retain_user_object`.
+    Do not invent Engine `--retain-user-object`. Do not invent
+    occupancy SM counts this slice. Do not reverse RetainUserObject identity with user_object_retain.
+    Do not invent a second `cudaUserObjectRelease` / `release_user_object`.
+    Do not invent Engine `--release-user-object`. Do not invent
+    occupancy SM counts this slice. Do not reverse ReleaseUserObject identity with user_object_release.
+    Do not invent a second `cudaGraphRetainUserObject` / `retain_graph_user_object`.
+    Do not invent Engine `--retain-graph-user-object`. Do not invent
+    occupancy SM counts this slice. Do not reverse RetainGraphUserObject identity with graph_retain_user_object.
+    Do not invent a second `cudaGraphReleaseUserObject` / `release_graph_user_object`.
+    Do not invent Engine `--release-graph-user-object`. Do not invent
+    occupancy SM counts this slice. Do not reverse ReleaseGraphUserObject identity with graph_release_user_object.
+    Do not invent a second `cudaGraphMemAllocNodeGetParams` / `get_graph_alloc_node_params`.
+    Do not invent Engine `--graph-alloc-get-params`. Do not invent
+    occupancy SM counts this slice. Do not reverse GetGraphAllocNodeParams identity with graph_alloc_get_params.
+    Do not invent a second `cudaGraphExecMemAllocNodeGetParams` / `get_graph_exec_alloc_node_params`.
+    Do not invent Engine `--graph-exec-alloc-get-params`. Do not invent
+    occupancy SM counts this slice. Do not reverse GetGraphExecAllocNodeParams identity with graph_exec_alloc_get_params.
+    Do not invent a second `cudaGraphMemFreeNodeGetParams` / `get_graph_free_node_params`.
+    Do not invent Engine `--graph-free-get-params`. Do not invent
+    occupancy SM counts this slice. Do not reverse GetGraphFreeNodeParams identity with graph_free_get_params.
+    Do not invent a second `cudaGraphExecMemFreeNodeGetParams` / `get_graph_exec_free_node_params`.
+    Do not invent Engine `--graph-exec-free-get-params`. Do not invent
+    occupancy SM counts this slice. Do not reverse GetGraphExecFreeNodeParams identity with graph_exec_free_get_params.
+    Do not invent a second `cudaGraphMemFreeNodeSetParams` / `set_graph_free_node_params`.
+    Do not invent Engine `--graph-free-set-params`. Do not invent
+    occupancy SM counts this slice. Do not reverse SetGraphFreeNodeParams identity with graph_free_set_params.
+    Do not invent a second `cudaGraphExecMemFreeNodeSetParams` / `set_graph_exec_free_node_params`.
+    Do not invent Engine `--graph-exec-free-set-params`. Do not invent
+    occupancy SM counts this slice. Do not reverse SetGraphExecFreeNodeParams identity with graph_exec_free_set_params.
+    Do not invent a second `cudaGraphNodeSetParams` for a set-conditional node / `set_graph_conditional_params`.
+    Do not invent Engine `--graph-set-conditional-params`. Do not invent
+    occupancy SM counts this slice. Do not reverse SetGraphConditionalParams identity with graph_set_conditional_params.
+    Do not invent a second `cudaGraphExecNodeSetParams` for a set-conditional node / `set_graph_exec_conditional_params`.
+    Do not invent Engine `--graph-exec-set-conditional-params`. Do not invent
+    occupancy SM counts this slice. Do not reverse SetGraphExecConditionalParams identity with graph_exec_set_conditional_params.
+    Do not invent a second `cudaGraphConditionalHandleCreate` / `create_graph_conditional_handle`.
+    Do not invent Engine `--graph-conditional-create`. Do not invent
+    occupancy SM counts this slice. Do not reverse CreateGraphConditionalHandle identity with graph_conditional_create.
+    Do not invent a second `cuGraphConditionalHandleCreate` flags / `create_graph_conditional_handle_with_flags`.
+    Do not invent Engine `--graph-conditional-create-with-flags`. Do not invent
+    occupancy SM counts this slice. Do not reverse CreateGraphConditionalHandleWithFlags identity with graph_conditional_create_with_flags.
+    Do not invent a second `cuGraphConditionalHandleCreate` with ctx / `create_graph_conditional_handle_with_ctx`.
+    Do not invent Engine `--graph-conditional-create-with-ctx`. Do not invent
+    occupancy SM counts this slice. Do not reverse CreateGraphConditionalHandleWithCtx identity with graph_conditional_create_with_ctx.
+    Do not invent a second `cuStreamBeginCapture` / `stream_begin_capture`.
+    Do not invent Engine `--stream-begin-capture`. Do not invent
+    occupancy SM counts this slice. Do not reverse StreamBeginCapture identity with begin_capture.
+    Do not invent a second `cuStreamBeginCapture` with mode / `stream_begin_capture_with_mode`.
+    Do not invent Engine `--stream-begin-capture-with-mode`. Do not invent
+    occupancy SM counts this slice. Do not reverse StreamBeginCaptureWithMode identity with begin_capture_with_mode.
+    Do not invent a second `cuStreamBeginCaptureToGraph` / `stream_begin_capture_to_graph`.
+    Do not invent Engine `--stream-begin-capture-to-graph`. Do not invent
+    occupancy SM counts this slice. Do not reverse StreamBeginCaptureToGraph identity with begin_capture_to_graph.
+    Do not invent a second `cuStreamBeginCaptureToGraph` with mode / `stream_begin_capture_to_graph_with_mode`.
+    Do not invent Engine `--stream-begin-capture-to-graph-with-mode`. Do not invent
+    occupancy SM counts this slice. Do not reverse StreamBeginCaptureToGraphWithMode identity with begin_capture_to_graph_with_mode.
+    Do not invent a second `cuStreamBeginRecaptureToGraph` / `stream_begin_recapture_to_graph`.
+    Do not invent Engine `--stream-begin-recapture-to-graph`. Do not invent
+    occupancy SM counts this slice. Do not reverse StreamBeginRecaptureToGraph identity with begin_recapture_to_graph.
+    Do not invent a second `cuStreamBeginRecaptureToGraph` with mode / `stream_begin_recapture_to_graph_with_mode`.
+    Do not invent Engine `--stream-begin-recapture-to-graph-with-mode`. Do not invent
+    occupancy SM counts this slice. Do not reverse StreamBeginRecaptureToGraphWithMode identity with begin_recapture_to_graph_with_mode.
+    Do not invent a second `cuStreamBeginRecaptureToGraph` with callback / `stream_begin_recapture_to_graph_with_callback`.
+    Do not invent Engine `--stream-begin-recapture-to-graph-with-callback`. Do not invent
+    occupancy SM counts this slice. Do not reverse StreamBeginRecaptureToGraphWithCallback identity with begin_recapture_to_graph_with_callback.
+    Do not invent a second `cuStreamEndCapture` / `stream_end_capture`.
+    Do not invent Engine `--stream-end-capture`. Do not invent
+    occupancy SM counts this slice. Do not reverse StreamEndCapture identity with end_capture.
+    Do not invent a second `cuStreamUpdateCaptureDependencies` / `update_stream_capture_dependencies`.
+    Do not invent Engine `--update-stream-capture-dependencies`. Do not invent
+    occupancy SM counts this slice. Do not reverse UpdateStreamCaptureDependencies identity with stream_update_capture_dependencies.
+    Do not invent a second `cuStreamIsCapturing` / `is_stream_capturing`.
+    Do not invent Engine `--is-stream-capturing`. Do not invent
+    occupancy SM counts this slice. Do not reverse StreamIsCapturing identity with stream_is_capturing.
+    Do not invent a second `cuStreamGetCaptureInfo` / `get_stream_capture_info`.
+    Do not invent Engine `--get-stream-capture-info`. Do not invent
+    occupancy SM counts this slice. Do not reverse StreamGetCaptureInfo identity with stream_capture_info.
+    Do not invent a second `cuThreadExchangeStreamCaptureMode` / `exchange_thread_stream_capture_mode`.
+    Do not invent Engine `--exchange-thread-stream-capture-mode`. Do not invent
+    occupancy SM counts this slice. Do not reverse ThreadExchangeStreamCaptureMode identity with thread_exchange_stream_capture_mode.
+    Do not invent a second thread-default `cudaStreamCaptureMode` query / `get_stream_capture_mode`.
+    Do not invent Engine `--get-stream-capture-mode`. Do not invent
+    occupancy SM counts this slice. Do not reverse StreamCaptureMode query identity with stream_capture_mode.
+    Do not invent `cuStreamGetCaptureMode`.
+    Do not invent a second `cuEventGetFlags` / `event_flags`.
+    Do not invent Engine `--event-flags`. Do not invent
+    occupancy SM counts this slice. Do not reverse EventGetFlags identity with event_get_flags.
+    Do not invent a second `cuCtxEnablePeerAccess` / `ctx_enable_peer_access`.
+    Do not invent Engine `--ctx-enable-peer-access`. Do not invent
+    occupancy SM counts this slice. Do not reverse CtxEnablePeerAccess identity with enable_peer.
+    Do not invent a second `cuCtxEnablePeerAccess` with flags / `ctx_enable_peer_access_with_flags`.
+    Do not invent Engine `--ctx-enable-peer-access-with-flags`. Do not invent
+    occupancy SM counts this slice. Do not reverse CtxEnablePeerAccessWithFlags identity with enable_peer_with_flags.
+    Do not invent a second `cuCtxDisablePeerAccess` / `ctx_disable_peer_access`.
+    Do not invent Engine `--ctx-disable-peer-access`. Do not invent
+    occupancy SM counts this slice. Do not reverse CtxDisablePeerAccess identity with disable_peer.
+    Do not invent a second `cuDeviceCanAccessPeer` / `can_device_access_peer`.
+    Do not invent Engine `--can-device-access-peer`. Do not invent
+    occupancy SM counts this slice. Do not reverse DeviceCanAccessPeer identity with device_can_access_peer.
+    Do not invent a second `cuDeviceGetP2PAttribute` / `device_p2p_attribute`.
+    Do not invent Engine `--device-p2p-attribute`. Do not invent
+    occupancy SM counts this slice. Do not reverse DeviceGetP2PAttribute identity with device_get_p2p_attribute.
+    Do not invent a second `cuDeviceGetNvSciSyncAttributes` / `device_nvscisync_attributes`.
+    Do not invent Engine `--device-nvscisync-attributes`. Do not invent
+    occupancy SM counts this slice. Do not reverse DeviceGetNvSciSyncAttributes identity with device_get_nvscisync_attributes.
+    Do not invent a second `cuFlushGPUDirectRDMAWrites` / `device_flush_gpu_direct_rdma_writes`.
+    Do not invent Engine `--device-flush-gpu-direct-rdma-writes`. Do not invent
+    occupancy SM counts this slice. Do not reverse FlushGPUDirectRDMAWrites identity with flush_gpu_direct_rdma_writes.
+    Do not invent a second `cudaMallocPitch` / `mem_alloc_pitch`.
+    Do not invent Engine `--mem-alloc-pitch`. Do not invent
+    occupancy SM counts this slice. Do not reverse MallocPitch identity with malloc_pitch.
+    Do not invent `cuMemAllocPitch` as `mem_alloc_pitch`.
+    Do not invent a second `cudaMalloc3D` / `mem_alloc_3d`.
+    Do not invent Engine `--mem-alloc-3d`. Do not invent
+    occupancy SM counts this slice. Do not reverse Malloc3D identity with malloc_3d.
+    Do not invent `cuMemAlloc3D` / `cuMalloc3D` as `mem_alloc_3d`.
+    Do not invent a second `cuLaunchCooperativeKernel` / `launch_cooperative_kernel`.
+    Do not invent Engine `--launch-cooperative-kernel`. Do not invent
+    occupancy SM counts this slice. Do not reverse LaunchCooperativeKernel identity with cooperative_kernel.
+    Do not invent a second `cuLaunchCooperativeKernel` spans / `launch_cooperative_kernel_bufs`.
+    Do not invent Engine `--launch-cooperative-kernel-bufs`. Do not invent
+    occupancy SM counts this slice. Do not reverse LaunchCooperativeKernelBufs identity with cooperative_kernel_bufs.
+    Do not invent a second `cuLaunchCooperativeKernelMultiDevice` / `launch_cooperative_kernel_multi_device`.
+    Do not invent Engine `--launch-cooperative-kernel-multi-device`. Do not invent
+    occupancy SM counts this slice. Do not reverse LaunchCooperativeKernelMultiDevice identity with cooperative_kernel_multi_device.
+    Do not invent a second `cudaMemsetAsync` / `mem_set`.
+    Do not invent Engine `--mem-set`. Do not invent
+    occupancy SM counts this slice. Do not reverse Memset identity with memset.
+    Do not invent `cuMemsetD8Async` as `mem_set`.
+    Do not invent a second `cudaMemsetAsync` spans / `mem_set_buf`.
+    Do not invent Engine `--mem-set-buf`. Do not invent
+    occupancy SM counts this slice. Do not reverse MemsetBuf identity with memset_buf.
+    Do not invent `cuMemsetD8Async` as `mem_set_buf`.
+    Do not invent a second `cudaMemsetAsync` / `cudaMemset2DAsync` / `mem_set_op`.
+    Do not invent Engine `--mem-set-op`. Do not invent
+    occupancy SM counts this slice. Do not reverse MemsetOp identity with memset_op.
+    Do not invent `cudaMemset2DAsync` as `mem_set_op`.
+    Do not invent a second `cudaMemset` / `mem_set_sync`.
+    Do not invent Engine `--mem-set-sync`. Do not invent
+    occupancy SM counts this slice. Do not reverse MemsetSync identity with memset_sync.
+    Do not invent `cuMemsetD8` as `mem_set_sync`.
+    Do not invent a second `cudaMemset` / `cudaMemset2D` / `mem_set_op_sync`.
+    Do not invent Engine `--mem-set-op-sync`. Do not invent
+    occupancy SM counts this slice. Do not reverse MemsetOpSync identity with memset_op_sync.
+    Do not invent `cudaMemset2D` as `mem_set_op_sync`.
+    Do not invent a second `cudaMemset2DAsync` / `mem_set_2d_async`.
+    Do not invent Engine `--mem-set-2d-async`. Do not invent
+    occupancy SM counts this slice. Do not reverse Memset2DAsync identity with memset_2d_async.
+    Do not invent `cuMemsetD2D8Async` as `mem_set_2d_async`.
+    Do not invent a second `cudaMemset2D` / `mem_set_2d`.
+    Do not invent Engine `--mem-set-2d`. Do not invent
+    occupancy SM counts this slice. Do not reverse Memset2D identity with memset_2d.
+    Do not invent `cuMemsetD2D8` as `mem_set_2d`.
+    Do not invent a second `cudaMemset3DAsync` / `mem_set_3d_async`.
+    Do not invent Engine `--mem-set-3d-async`. Do not invent
+    occupancy SM counts this slice. Do not reverse Memset3DAsync identity with memset_3d_async.
+    Do not invent `cudaMemset3D` as `mem_set_3d_async`.
+    Do not invent a second `cudaMemset3D` / `mem_set_3d`.
+    Do not invent Engine `--mem-set-3d`. Do not invent
+    occupancy SM counts this slice. Do not reverse Memset3D identity with memset_3d.
+    Do not invent `cuMemset3D` as `mem_set_3d`.
+    Do not invent a second `cuStreamWriteValue64` / `stream_write_value64`.
+    Do not invent Engine `--stream-write-value64`. Do not invent
+    occupancy SM counts this slice. Do not reverse WriteValue64 identity with write_value64.
+    Do not invent `cuStreamWriteValue32` as `stream_write_value64`.
+    Do not invent a second `cuStreamWriteValue32` / `stream_write_value32`.
+    Do not invent Engine `--stream-write-value32`. Do not invent
+    occupancy SM counts this slice. Do not reverse WriteValue32 identity with write_value32.
+    Do not invent `cuStreamWriteValue64` as `stream_write_value32`.
+    Do not invent a second `cuStreamWriteValue64` flags / `stream_write_value64_with_flags`.
+    Do not invent Engine `--stream-write-value64-with-flags`. Do not invent
+    occupancy SM counts this slice. Do not reverse WriteValue64WithFlags identity with write_value64_with_flags.
+    Do not invent `cuStreamWriteValue32` flags as `stream_write_value64_with_flags`.
+    Do not invent a second `cuStreamWriteValue32` flags / `stream_write_value32_with_flags`.
+    Do not invent Engine `--stream-write-value32-with-flags`. Do not invent
+    occupancy SM counts this slice. Do not reverse WriteValue32WithFlags identity with write_value32_with_flags.
+    Do not invent `cuStreamWriteValue64` flags as `stream_write_value32_with_flags`.
+    Do not invent a second `cuStreamWaitValue64` / `stream_wait_value64`.
+    Do not invent Engine `--stream-wait-value64`. Do not invent
+    occupancy SM counts this slice. Do not reverse WaitValue64 identity with wait_value64.
+    Do not invent `cuStreamWaitValue32` as `stream_wait_value64`.
+    Do not invent a second `cuStreamWaitValue32` / `stream_wait_value32`.
+    Do not invent Engine `--stream-wait-value32`. Do not invent
+    occupancy SM counts this slice. Do not reverse WaitValue32 identity with wait_value32.
+    Do not invent `cuStreamWaitValue64` as `stream_wait_value32`.
+    Do not invent a second `cuStreamWaitValue64` flags / `stream_wait_value64_with_flags`.
+    Do not invent Engine `--stream-wait-value64-with-flags`. Do not invent
+    occupancy SM counts this slice. Do not reverse WaitValue64WithFlags identity with wait_value64_with_flags.
+    Do not invent `cuStreamWaitValue32` flags as `stream_wait_value64_with_flags`.
+    Do not invent a second `cuStreamWaitValue32` flags / `stream_wait_value32_with_flags`.
+    Do not invent Engine `--stream-wait-value32-with-flags`. Do not invent
+    occupancy SM counts this slice. Do not reverse WaitValue32WithFlags identity with wait_value32_with_flags.
+    Do not invent `cuStreamWaitValue64` flags as `stream_wait_value32_with_flags`.
+    Do not invent a second `cuStreamBatchMemOp` / `stream_batch_mem_op`.
+    Do not invent Engine `--stream-batch-mem-op`. Do not invent
+    occupancy SM counts this slice. Do not reverse BatchMemOp identity with batch_mem_op.
+    Do not invent `cuGraphAddBatchMemOpNode` as `stream_batch_mem_op`.
+    Do not invent a second `cuStreamBatchMemOp` flags / `stream_batch_mem_op_with_flags`.
+    Do not invent Engine `--stream-batch-mem-op-with-flags`. Do not invent
+    occupancy SM counts this slice. Do not reverse BatchMemOpWithFlags identity with batch_mem_op_with_flags.
+    Do not invent `cuGraphAddBatchMemOpNode` flags as `stream_batch_mem_op_with_flags`.
+    Do not invent a second `cuLaunchKernel` / `launch_kernel`.
+    Do not invent Engine `--launch-kernel`. Do not invent
+    occupancy SM counts this slice. Do not reverse LaunchKernel identity with kernel.
+    Do not invent `cuLaunchCooperativeKernel` as `launch_kernel`.
+    Do not invent a second `cuLaunchKernel` spans / `launch_kernel_bufs`.
+    Do not invent Engine `--launch-kernel-bufs`. Do not invent
+    occupancy SM counts this slice. Do not reverse LaunchKernelBufs identity with kernel_bufs.
+    Do not invent `cuLaunchCooperativeKernel` spans as `launch_kernel_bufs`.
+    Do not invent a second `cuLaunchKernelEx` / `launch_kernel_ex`.
+    Do not invent Engine `--launch-kernel-ex`. Do not invent
+    occupancy SM counts this slice. Do not reverse LaunchKernelEx identity with kernel_with.
+    Do not invent `kernel_pdl` as `launch_kernel_ex`.
+    Do not invent a second `cuLaunchKernelEx` spans / `launch_kernel_ex_bufs`.
+    Do not invent Engine `--launch-kernel-ex-bufs`. Do not invent
+    occupancy SM counts this slice. Do not reverse LaunchKernelExBufs identity with kernel_bufs_with.
+    Do not invent `kernel_pdl_bufs` as `launch_kernel_ex_bufs`.
+    Do not invent a second `cuFuncSetSharedMemConfig` / `func_set_shared_mem_config`.
+    Do not invent Engine `--func-set-shared-mem-config`. Do not invent
+    occupancy SM counts this slice. Do not reverse FuncSetSharedMemConfig identity with set_func_shared_mem_config.
+    Do not invent `cuCtxSetSharedMemConfig` as `func_set_shared_mem_config`.
+    Do not invent a second `cuFuncGetSharedMemConfig` / `func_get_shared_mem_config`.
+    Do not invent Engine `--func-get-shared-mem-config`. Do not invent
+    occupancy SM counts this slice. Do not reverse FuncGetSharedMemConfig identity with get_func_shared_mem_config.
+    Do not invent `cuCtxGetSharedMemConfig` as `func_get_shared_mem_config`.
+    Do not invent a second `cuFuncSetCacheConfig` / `func_set_cache_config`.
+    Do not invent Engine `--func-set-cache-config`. Do not invent
+    occupancy SM counts this slice. Do not reverse FuncSetCacheConfig identity with set_func_cache_config.
+    Do not invent `cuCtxSetCacheConfig` as `func_set_cache_config`.
+    Do not invent a second `cuFuncSetAttribute` carveout / `func_set_carveout`.
+    Do not invent Engine `--func-set-carveout`. Do not invent
+    occupancy SM counts this slice. Do not reverse FuncSetCarveout identity with set_func_carveout.
+    Do not invent generic `cuFuncSetAttribute` as `func_set_carveout`.
+    Do not invent a second `cuFuncGetAttribute` carveout / `func_get_carveout`.
+    Do not invent Engine `--func-get-carveout`. Do not invent
+    occupancy SM counts this slice. Do not reverse FuncGetCarveout identity with get_func_carveout.
+    Do not invent generic `cuFuncGetAttribute` as `func_get_carveout`.
+    Do not invent a second `cuFuncSetAttribute` cluster policy / `func_set_cluster_policy`.
+    Do not invent Engine `--func-set-cluster-policy`. Do not invent
+    occupancy SM counts this slice. Do not reverse FuncSetClusterPolicy identity with set_func_cluster_policy.
+    Do not invent generic `cuFuncSetAttribute` as `func_set_cluster_policy`.
+    Do not invent a second `cuFuncGetAttribute` cluster policy / `func_get_cluster_policy`.
+    Do not invent Engine `--func-get-cluster-policy`. Do not invent
+    occupancy SM counts this slice. Do not reverse FuncGetClusterPolicy identity with get_func_cluster_policy.
+    Do not invent generic `cuFuncGetAttribute` as `func_get_cluster_policy`.
+    Do not invent a second `cuFuncSetAttribute` cluster dim must be set / `func_set_cluster_dim_must_be_set`.
+    Do not invent Engine `--func-set-cluster-dim-must-be-set`. Do not invent
+    occupancy SM counts this slice. Do not reverse FuncSetClusterDimMustBeSet identity with set_cluster_dim_must_be_set.
+    Do not invent generic `cuFuncSetAttribute` as `func_set_cluster_dim_must_be_set`.
+    Do not invent a second `cuFuncGetAttribute` cluster dim must be set / `func_get_cluster_dim_must_be_set`.
+    Do not invent Engine `--func-get-cluster-dim-must-be-set`. Do not invent
+    occupancy SM counts this slice. Do not reverse FuncGetClusterDimMustBeSet identity with cluster_dim_must_be_set.
+    Do not invent generic `cuFuncGetAttribute` as `func_get_cluster_dim_must_be_set`.
+    Do not invent a second `cuFuncSetAttribute` required cluster width / `func_set_required_cluster_width`.
+    Do not invent Engine `--func-set-required-cluster-width`. Do not invent
+    occupancy SM counts this slice. Do not reverse FuncSetRequiredClusterWidth identity with set_required_cluster_width.
+    Do not invent generic `cuFuncSetAttribute` as `func_set_required_cluster_width`.
+    Do not invent a second `cuFuncGetAttribute` required cluster width / `func_get_required_cluster_width`.
+    Do not invent Engine `--func-get-required-cluster-width`. Do not invent
+    occupancy SM counts this slice. Do not reverse FuncGetRequiredClusterWidth identity with required_cluster_width.
+    Do not invent generic `cuFuncGetAttribute` as `func_get_required_cluster_width`.
+    Do not invent a second `cuFuncSetAttribute` required cluster height / `func_set_required_cluster_height`.
+    Do not invent Engine `--func-set-required-cluster-height`. Do not invent
+    occupancy SM counts this slice. Do not reverse FuncSetRequiredClusterHeight identity with set_required_cluster_height.
+    Do not invent generic `cuFuncSetAttribute` as `func_set_required_cluster_height`.
+    Do not invent a second `cuFuncGetAttribute` required cluster height / `func_get_required_cluster_height`.
+    Do not invent Engine `--func-get-required-cluster-height`. Do not invent
+    occupancy SM counts this slice. Do not reverse FuncGetRequiredClusterHeight identity with required_cluster_height.
+    Do not invent generic `cuFuncGetAttribute` as `func_get_required_cluster_height`.
+    Do not invent a second `cuFuncSetAttribute` required cluster depth / `func_set_required_cluster_depth`.
+    Do not invent Engine `--func-set-required-cluster-depth`. Do not invent
+    occupancy SM counts this slice. Do not reverse FuncSetRequiredClusterDepth identity with set_required_cluster_depth.
+    Do not invent generic `cuFuncSetAttribute` as `func_set_required_cluster_depth`.
+    Do not invent a second `cuFuncGetAttribute` required cluster depth / `func_get_required_cluster_depth`.
+    Do not invent Engine `--func-get-required-cluster-depth`. Do not invent
+    occupancy SM counts this slice. Do not reverse FuncGetRequiredClusterDepth identity with required_cluster_depth.
+    Do not invent generic `cuFuncGetAttribute` as `func_get_required_cluster_depth`.
+    Do not invent a second `cuFuncSetAttribute` non-portable cluster size / `func_set_non_portable_cluster_size_allowed`.
+    Do not invent Engine `--func-set-non-portable-cluster-size-allowed`. Do not invent
+    occupancy SM counts this slice. Do not reverse FuncSetNonPortableClusterSizeAllowed identity with set_non_portable_cluster_size_allowed.
+    Do not invent generic `cuFuncSetAttribute` as `func_set_non_portable_cluster_size_allowed`.
+    Do not invent a second `cuFuncGetAttribute` non-portable cluster size / `func_get_non_portable_cluster_size_allowed`.
+    Do not invent Engine `--func-get-non-portable-cluster-size-allowed`. Do not invent
+    occupancy SM counts this slice. Do not reverse FuncGetNonPortableClusterSizeAllowed identity with non_portable_cluster_size_allowed.
+    Do not invent generic `cuFuncGetAttribute` as `func_get_non_portable_cluster_size_allowed`.
+    Do not invent a second `cuFuncSetAttribute` max dynamic shared memory / `func_set_max_dynamic_shared_memory`.
+    Do not invent Engine `--func-set-max-dynamic-shared-memory`. Do not invent
+    occupancy SM counts this slice. Do not reverse FuncSetMaxDynamicSharedMemory identity with set_max_dynamic_shared_memory.
+    Do not invent generic `cuFuncSetAttribute` as `func_set_max_dynamic_shared_memory`.
+    Do not invent a second `cuFuncGetAttribute` max dynamic shared memory / `func_get_max_dynamic_shared_memory`.
+    Do not invent Engine `--func-get-max-dynamic-shared-memory`. Do not invent
+    occupancy SM counts this slice. Do not reverse FuncGetMaxDynamicSharedMemory identity with max_dynamic_shared_memory.
+    Do not invent generic `cuFuncGetAttribute` as `func_get_max_dynamic_shared_memory`.
+    Do not invent a second `cuEventCreateWithFlags` disable timing / `event_create_disable_timing`.
+    Do not invent Engine `--event-create-disable-timing`. Do not invent
+    occupancy SM counts this slice. Do not reverse EventCreateDisableTiming identity with create_event_disable_timing.
+    Do not invent generic `cuEventCreateWithFlags` as `event_create_disable_timing`.
+    Do not invent a second `cuEventCreateWithFlags` interprocess / `event_create_interprocess`.
+    Do not invent Engine `--event-create-interprocess`. Do not invent
+    occupancy SM counts this slice. Do not reverse EventCreateInterprocess identity with create_event_interprocess.
+    Do not invent generic `cuEventCreateWithFlags` as `event_create_interprocess`.
+    Do not invent a second `cuEventCreateWithFlags` blocking sync / `event_create_blocking_sync`.
+    Do not invent Engine `--event-create-blocking-sync`. Do not invent
+    occupancy SM counts this slice. Do not reverse EventCreateBlockingSync identity with create_event_blocking_sync.
+    Do not invent generic `cuEventCreateWithFlags` as `event_create_blocking_sync`.
+    Do not invent a second `cuEventRecordWithFlags` external / `event_record_external`.
+    Do not invent Engine `--event-record-external`. Do not invent
+    occupancy SM counts this slice. Do not reverse EventRecordExternal identity with record_event_external.
+    Do not invent generic `cuEventRecordWithFlags` as `event_record_external`.
+    Do not invent a second `cuStreamWaitEvent` external / `stream_wait_event_external`.
+    Do not invent Engine `--stream-wait-event-external`. Do not invent
+    occupancy SM counts this slice. Do not reverse StreamWaitEventExternal identity with wait_event_external.
+    Do not invent generic `cuStreamWaitEvent` as `stream_wait_event_external`.
+    Do not invent a second `cuStreamSetAttribute` mem sync domain / `stream_set_mem_sync_domain`.
+    Do not invent Engine `--stream-set-mem-sync-domain`. Do not invent
+    occupancy SM counts this slice. Do not reverse StreamSetMemSyncDomain identity with set_stream_mem_sync_domain.
+    Do not invent generic `cuStreamSetAttribute` as `stream_set_mem_sync_domain`.
+    Do not invent a second `cuStreamSetAttribute` mem sync domain map / `stream_set_mem_sync_domain_map`.
+    Do not invent Engine `--stream-set-mem-sync-domain-map`. Do not invent
+    occupancy SM counts this slice. Do not reverse StreamSetMemSyncDomainMap identity with set_stream_mem_sync_domain_map.
+    Do not invent generic `cuStreamSetAttribute` as `stream_set_mem_sync_domain_map`.
+    Do not invent a second `cuStreamGetAttribute` mem sync domain / `stream_get_mem_sync_domain`.
+    Do not invent Engine `--stream-get-mem-sync-domain`. Do not invent
+    occupancy SM counts this slice. Do not reverse StreamGetMemSyncDomain identity with stream_mem_sync_domain.
+    Do not invent generic `cuStreamGetAttribute` as `stream_get_mem_sync_domain`.
+    Do not invent a second `cuStreamGetAttribute` mem sync domain map / `stream_get_mem_sync_domain_map`.
+    Do not invent Engine `--stream-get-mem-sync-domain-map`. Do not invent
+    occupancy SM counts this slice. Do not reverse StreamGetMemSyncDomainMap identity with stream_mem_sync_domain_map.
+    Do not invent generic `cuStreamGetAttribute` as `stream_get_mem_sync_domain_map`.
+    Do not invent a second `cuStreamSetAttribute` sync policy / `stream_set_sync_policy`.
+    Do not invent Engine `--stream-set-sync-policy`. Do not invent
+    occupancy SM counts this slice. Do not reverse StreamSetSyncPolicy identity with set_stream_sync_policy.
+    Do not invent generic `cuStreamSetAttribute` as `stream_set_sync_policy`.
+    Do not invent a second `cuStreamGetAttribute` sync policy / `stream_get_sync_policy`.
+    Do not invent Engine `--stream-get-sync-policy`. Do not invent
+    occupancy SM counts this slice. Do not reverse StreamGetSyncPolicy identity with stream_sync_policy.
+    Do not invent generic `cuStreamGetAttribute` as `stream_get_sync_policy`.
+    Do not invent a second `cuStreamSetAttribute` nvlink util centric / `stream_set_nvlink_util_centric`.
+    Do not invent Engine `--stream-set-nvlink-util-centric`. Do not invent
+    occupancy SM counts this slice. Do not reverse StreamSetNvlinkUtilCentric identity with set_stream_nvlink_util_centric.
+    Do not invent generic `cuStreamSetAttribute` as `stream_set_nvlink_util_centric`.
+    Do not invent a second `cuStreamGetAttribute` nvlink util centric / `stream_get_nvlink_util_centric`.
+    Do not invent Engine `--stream-get-nvlink-util-centric`. Do not invent
+    occupancy SM counts this slice. Do not reverse StreamGetNvlinkUtilCentric identity with stream_nvlink_util_centric.
+    Do not invent generic `cuStreamGetAttribute` as `stream_get_nvlink_util_centric`.
+    Do not invent a second `cuStreamSetAttribute` access policy / `stream_set_access_policy`.
+    Do not invent Engine `--stream-set-access-policy`. Do not invent
+    occupancy SM counts this slice. Do not reverse StreamSetAccessPolicy identity with set_stream_access_policy.
+    Do not invent generic `cuStreamSetAttribute` as `stream_set_access_policy`.
+    Do not invent a second `cuStreamGetAttribute` access policy / `stream_get_access_policy`.
+    Do not invent Engine `--stream-get-access-policy`. Do not invent
+    occupancy SM counts this slice. Do not reverse StreamGetAccessPolicy identity with stream_access_policy.
+    Do not invent generic `cuStreamGetAttribute` as `stream_get_access_policy`.
+    Do not invent a second `cuStreamSetAttribute` priority / `stream_set_priority`.
+    Do not invent Engine `--stream-set-priority`. Do not invent
+    occupancy SM counts this slice. Do not reverse StreamSetPriority identity with set_stream_priority.
+    Do not invent generic `cuStreamSetAttribute` as `stream_set_priority`.
+    Do not invent a second `cuStreamCreate` blocking / `stream_set_blocking`.
+    Do not invent Engine `--stream-set-blocking`. Do not invent
+    occupancy SM counts this slice. Do not reverse StreamSetBlocking identity with set_stream_blocking.
+    Do not invent generic `cuStreamCreateWithFlags` as `stream_set_blocking`.
+    Do not invent a second `cuFuncGetAttributes` / `get_func_attributes`.
+    Do not invent Engine `--get-func-attributes`. Do not invent
+    occupancy SM counts this slice. Do not reverse FuncGetAttributes identity with func_get_attributes.
+    Do not invent generic `cuFuncGetAttribute` as `get_func_attributes`.
+    Do not invent a second `cuDeviceGetName` / `get_device_name`.
+    Do not invent Engine `--get-device-name`. Do not invent
+    occupancy SM counts this slice. Do not reverse DeviceGetName identity with device_get_name.
+    Do not invent `cuDeviceGetUuid` as `get_device_name`.
+    Do not invent a second `cuDeviceGetCount` / `get_device_count`.
+    Do not invent Engine `--get-device-count`. Do not invent
+    occupancy SM counts this slice. Do not reverse DeviceGetCount identity with device_count.
+    Do not invent `cuDeviceGet` as `get_device_count`.
+    Do not invent a second `cuDeviceGetDefaultMemPool` / `device_get_default_mempool`.
+    Do not invent Engine `--device-get-default-mempool`. Do not invent
+    occupancy SM counts this slice. Do not reverse DeviceGetDefaultMemPool identity with default_pool.
+    Do not invent `cuDeviceGetMemPool` as `device_get_default_mempool`.
+    Do not invent a second `cuDeviceGetMemPool` / `device_get_mempool`.
+    Do not invent Engine `--device-get-mempool`. Do not invent
+    occupancy SM counts this slice. Do not reverse DeviceGetMemPool identity with device_mempool.
+    Do not invent `cuDeviceSetMemPool` as `device_get_mempool`.
+    Do not invent a second `cuDeviceSetMemPool` / `device_set_mempool`.
+    Do not invent Engine `--device-set-mempool`. Do not invent
+    occupancy SM counts this slice. Do not reverse DeviceSetMemPool identity with set_device_mempool.
+    Do not invent `cuMemPoolCreate` as `device_set_mempool`.
+    Do not invent a second `cuMemPoolCreate` / `mem_pool_create`.
+    Do not invent Engine `--mem-pool-create`. Do not invent
+    occupancy SM counts this slice. Do not reverse MemPoolCreate identity with create_pool.
+    Do not invent `create_shareable_pool` as `mem_pool_create`.
+    Do not invent `cuMemPoolCreateWithFlags` as `mem_pool_create`.
+    Do not invent a second `cuMemPoolCreate` POSIX / `mem_pool_create_shareable`.
+    Do not invent Engine `--mem-pool-create-shareable`. Do not invent
+    occupancy SM counts this slice. Do not reverse MemPoolCreate POSIX identity with create_shareable_pool.
+    Do not invent `create_pool_with_props` as `mem_pool_create_shareable`.
+    Do not invent `cuMemPoolDestroy` as `mem_pool_create_shareable`.
+    Do not invent a second `cuMemPoolCreate` with props / `mem_pool_create_with_props`.
+    Do not invent Engine `--mem-pool-create-with-props`. Do not invent
+    occupancy SM counts this slice. Do not reverse MemPoolCreate props identity with create_pool_with_props.
+    Do not invent `cuMemPoolDestroy` as `mem_pool_create_with_props`.
+    Do not invent `destroy_pool` as `mem_pool_create_with_props`.
+    Do not invent a second `cuMemPoolDestroy` / `mem_pool_destroy`.
+    Do not invent Engine `--mem-pool-destroy`. Do not invent
+    occupancy SM counts this slice. Do not reverse MemPoolDestroy identity with destroy_pool.
+    Do not invent `cuMemAllocFromPoolAsync` as `mem_pool_destroy`.
+    Do not invent `alloc_from_pool` as `mem_pool_destroy`.
+    Do not invent a second `cuMemAllocFromPoolAsync` / `mem_alloc_from_pool`.
+    Do not invent Engine `--mem-alloc-from-pool`. Do not invent
+    occupancy SM counts this slice. Do not reverse MemAllocFromPool identity with alloc_from_pool.
+    Do not invent `cuMemPoolExportToShareableHandle` as `mem_alloc_from_pool`.
+    Do not invent `pool_export` as `mem_alloc_from_pool`.
+    Do not invent a second `cuMemPoolExportToShareableHandle` / `mem_pool_export`.
+    Do not invent Engine `--mem-pool-export`. Do not invent
+    occupancy SM counts this slice. Do not reverse MemPoolExport identity with pool_export.
+    Do not invent `cuMemPoolImportFromShareableHandle` as `mem_pool_export`.
+    Do not invent `pool_import` as `mem_pool_export`.
+    Do not invent a second `cuMemPoolImportFromShareableHandle` / `mem_pool_import`.
+    Do not invent Engine `--mem-pool-import`. Do not invent
+    occupancy SM counts this slice. Do not reverse MemPoolImport identity with pool_import.
+    Do not invent `pool_export_with_type` as `mem_pool_import`.
+    Do not invent `cuMemPoolExportToShareableHandle` with type as `mem_pool_import`.
+    Do not invent a second `cuMemPoolExportToShareableHandle` type / `mem_pool_export_with_type`.
+    Do not invent Engine `--mem-pool-export-with-type`. Do not invent
+    occupancy SM counts this slice. Do not reverse MemPoolExport type identity with pool_export_with_type.
+    Do not invent `pool_import_with_type` as `mem_pool_export_with_type`.
+    Do not invent `cuMemPoolImportFromShareableHandle` with type as `mem_pool_export_with_type`.
+    Do not invent a second `cuMemPoolImportFromShareableHandle` type / `mem_pool_import_with_type`.
+    Do not invent Engine `--mem-pool-import-with-type`. Do not invent
+    occupancy SM counts this slice. Do not reverse MemPoolImport type identity with pool_import_with_type.
+    Do not invent `pool_export_ptr` as `mem_pool_import_with_type`.
+    Do not invent `cuMemPoolExportPointer` as `mem_pool_import_with_type`.
+    Do not invent a second `cuMemPoolExportPointer` / `mem_pool_export_ptr`.
+    Do not invent Engine `--mem-pool-export-ptr`. Do not invent
+    occupancy SM counts this slice. Do not reverse MemPoolExportPointer identity with pool_export_ptr.
+    Do not invent `pool_import_ptr` as `mem_pool_export_ptr`.
+    Do not invent `cuMemPoolImportPointer` as `mem_pool_export_ptr`.
+    Do not invent a second `cuMemPoolImportPointer` / `mem_pool_import_ptr`.
+    Do not invent Engine `--mem-pool-import-ptr`. Do not invent
+    occupancy SM counts this slice. Do not reverse MemPoolImportPointer identity with pool_import_ptr.
+    Do not invent `pool_get_access` as `mem_pool_import_ptr`.
+    Do not invent `cuMemPoolGetAccess` as `mem_pool_import_ptr`.
+    Do not invent a second `cuMemPoolGetAccess` / `mem_pool_get_access`.
+    Do not invent Engine `--mem-pool-get-access`. Do not invent
+    occupancy SM counts this slice. Do not reverse MemPoolGetAccess identity with pool_get_access.
+    Do not invent `pool_set_access` as `mem_pool_get_access`.
+    Do not invent `cuMemPoolSetAccess` as `mem_pool_get_access`.
+    Do not invent a second `cuMemPoolSetAccess` / `mem_pool_set_access`.
+    Do not invent Engine `--mem-pool-set-access`. Do not invent
+    occupancy SM counts this slice. Do not reverse MemPoolSetAccess identity with pool_set_access.
+    Do not invent `pool_set_access_read` as `mem_pool_set_access`.
+    Do not invent `cuMemPoolSetAccess` ProtRead as `mem_pool_set_access`.
+    Do not invent a second `cuMemPoolSetAccess` ProtRead / `mem_pool_set_access_read`.
+    Do not invent Engine `--mem-pool-set-access-read`. Do not invent
+    occupancy SM counts this slice. Do not reverse MemPoolSetAccess ProtRead identity with pool_set_access_read.
+    Do not invent `pool_set_access_with_flags` as `mem_pool_set_access_read`.
+    Do not invent `cuMemPoolSetAccess` with flags as `mem_pool_set_access_read`.
+    Do not invent a second `cuMemPoolSetAccess` flags / `mem_pool_set_access_with_flags`.
+    Do not invent Engine `--mem-pool-set-access-with-flags`. Do not invent
+    occupancy SM counts this slice. Do not reverse MemPoolSetAccess flags identity with pool_set_access_with_flags.
+    Do not invent `pool_set_access_n` as `mem_pool_set_access_with_flags`.
+    Do not invent `cuMemPoolSetAccess` desc array as `mem_pool_set_access_with_flags`.
+    Do not invent a second `cuMemPoolSetAccess` n / `mem_pool_set_access_n`.
+    Do not invent Engine `--mem-pool-set-access-n`. Do not invent
+    occupancy SM counts this slice. Do not reverse MemPoolSetAccess n identity with pool_set_access_n.
+    Do not invent `pool_unset_access` as `mem_pool_set_access_n`.
+    Do not invent `cuMemPoolSetAccess` ProtNone as `mem_pool_set_access_n`.
+    Do not invent a second `cuMemPoolSetAccess` ProtNone / `mem_pool_unset_access`.
+    Do not invent Engine `--mem-pool-unset-access`. Do not invent
+    occupancy SM counts this slice. Do not reverse MemPoolSetAccess ProtNone identity with pool_unset_access.
+    Do not invent `pool_get_attribute` as `mem_pool_unset_access`.
+    Do not invent `cuMemPoolGetAttribute` as `mem_pool_unset_access`.
+    Do not invent a second `cuMemPoolGetAttribute` / `mem_pool_get_attribute`.
+    Do not invent Engine `--mem-pool-get-attribute`. Do not invent
+    occupancy SM counts this slice. Do not reverse MemPoolGetAttribute identity with pool_get_attribute.
+    Do not invent `pool_set_attribute` as `mem_pool_get_attribute`.
+    Do not invent `cuMemPoolSetAttribute` as `mem_pool_get_attribute`.
+    Do not invent a second `cuMemPoolSetAttribute` / `mem_pool_set_attribute`.
+    Do not invent Engine `--mem-pool-set-attribute`. Do not invent
+    occupancy SM counts this slice. Do not reverse MemPoolSetAttribute identity with pool_set_attribute.
+    Do not invent `pool_trim_to` as `mem_pool_set_attribute`.
+    Do not invent `cuMemPoolTrimTo` as `mem_pool_set_attribute`.
+    Do not invent a second `cuMemPoolTrimTo` / `mem_pool_trim_to`.
+    Do not invent Engine `--mem-pool-trim-to`. Do not invent
+    occupancy SM counts this slice. Do not reverse MemPoolTrimTo identity with pool_trim_to.
+    Do not invent `set_pool_release_threshold` as `mem_pool_trim_to`.
+    Do not invent `cuMemPoolSetAttribute` ReleaseThreshold as `mem_pool_trim_to`.
+    Do not invent a second `cuMemPoolSetAttribute` ReleaseThreshold / `mem_pool_set_release_threshold`.
+    Do not invent Engine `--mem-pool-set-release-threshold`. Do not invent
+    occupancy SM counts this slice. Do not reverse MemPoolSetAttribute ReleaseThreshold identity with set_pool_release_threshold.
+    Do not invent `set_pool_max_size` as `mem_pool_set_release_threshold`.
+    Do not invent `cuMemPoolSetAttribute` MaxPoolSize as `mem_pool_set_release_threshold`.
+    Do not invent a second `cuMemPoolSetAttribute` MaxPoolSize / `mem_pool_set_max_size`.
+    Do not invent Engine `--mem-pool-set-max-size`. Do not invent
+    occupancy SM counts this slice. Do not reverse MemPoolSetAttribute MaxPoolSize identity with set_pool_max_size.
+    Do not invent `set_default_pool_release_threshold` as `mem_pool_set_max_size`.
+    Do not invent `pool_cached` as `mem_pool_set_max_size`.
+    Do not invent a second `cuMemGetAllocationGranularity` / `mem_get_allocation_granularity`.
+    Do not invent Engine `--mem-get-allocation-granularity`. Do not invent
+    occupancy SM counts this slice. Do not reverse MemGetAllocationGranularity identity with va_get_allocation_granularity.
+    Do not invent `va_create` as `mem_get_allocation_granularity`.
+    Do not invent `cuMemCreate` as `mem_get_allocation_granularity`.
+    Do not invent a second `cuMemCreate` / `mem_create`.
+    Do not invent Engine `--mem-create`. Do not invent
+    occupancy SM counts this slice. Do not reverse MemCreate identity with va_create.
+    Do not invent `va_create_with_prop` as `mem_create`.
+    Do not invent `cuMemCreate` props as `mem_create`.
+    Do not invent a second `cuMemCreate` props / `mem_create_with_prop`.
+    Do not invent Engine `--mem-create-with-prop`. Do not invent
+    occupancy SM counts this slice. Do not reverse MemCreate props identity with va_create_with_prop.
+    Do not invent `va_map_handle` as `mem_create_with_prop`.
+    Do not invent `cuMemMap` as `mem_create_with_prop`.
+    Do not invent a second `cuMemMap` / `mem_map_handle`.
+    Do not invent Engine `--mem-map-handle`. Do not invent
+    occupancy SM counts this slice. Do not reverse MemMap identity with va_map_handle.
+    Do not invent `va_map_handle_with_flags` as `mem_map_handle`.
+    Do not invent `cuMemMap` flags as `mem_map_handle`.
+    Do not invent a second `cuMemMap` flags / `mem_map_handle_with_flags`.
+    Do not invent Engine `--mem-map-handle-with-flags`. Do not invent
+    occupancy SM counts this slice. Do not reverse MemMap flags identity with va_map_handle_with_flags.
+    Do not invent `va_map_handle_with_size` as `mem_map_handle_with_flags`.
+    Do not invent `cuMemMap` size as `mem_map_handle_with_flags`.
+    Do not invent a second `cuMemMap` size / `mem_map_handle_with_size`.
+    Do not invent Engine `--mem-map-handle-with-size`. Do not invent
+    occupancy SM counts this slice. Do not reverse MemMap size identity with va_map_handle_with_size.
+    Do not invent `va_unmap` as `mem_map_handle_with_size`.
+    Do not invent `cuMemUnmap` as `mem_map_handle_with_size`.
+    Do not invent a second `cuMemRelease` / `mem_release_handle`.
+    Do not invent Engine `--mem-release-handle`. Do not invent
+    occupancy SM counts this slice. Do not reverse MemRelease identity with va_release_handle.
+    Do not invent `va_unmap` as `mem_release_handle`.
+    Do not invent `cuMemUnmap` as `mem_release_handle`.
+    Do not invent a second `cuMemRetainAllocationHandle` / `mem_retain_handle`.
+    Do not invent Engine `--mem-retain-handle`. Do not invent
+    occupancy SM counts this slice. Do not reverse MemRetain identity with va_retain_handle.
+    Do not invent `va_unmap` as `mem_retain_handle`.
+    Do not invent `cuMemUnmap` as `mem_retain_handle`.
+    Do not invent a second `cuMemUnmap` / `mem_unmap`.
+    Do not invent Engine `--mem-unmap`. Do not invent
+    occupancy SM counts this slice. Do not reverse MemUnmap identity with va_unmap.
+    Do not invent `va_unmap_with_size` as `mem_unmap`.
+    Do not invent `cuMemUnmap` size as `mem_unmap`.
+    Do not invent a second `cuMemUnmap` size / `mem_unmap_with_size`.
+    Do not invent Engine `--mem-unmap-with-size`. Do not invent
+    occupancy SM counts this slice. Do not reverse MemUnmap size identity with va_unmap_with_size.
+    Do not invent `va_free` as `mem_unmap_with_size`.
+    Do not invent `cuMemAddressFree` as `mem_unmap_with_size`.
+    Do not invent a second `cuMemAddressFree` / `mem_address_free`.
+    Do not invent Engine `--mem-address-free`. Do not invent
+    occupancy SM counts this slice. Do not reverse MemAddressFree identity with va_free.
+    Do not invent `va_free_with_size` as `mem_address_free`.
+    Do not invent `cuMemAddressFree` size as `mem_address_free`.
+    Do not invent a second `cuMemAddressFree` size / `mem_address_free_with_size`.
+    Do not invent Engine `--mem-address-free-with-size`. Do not invent
+    occupancy SM counts this slice. Do not reverse MemAddressFree size identity with va_free_with_size.
+    Do not invent `va_unmap_range` as `mem_address_free_with_size`.
+    Do not invent `cuMemUnmap` range as `mem_address_free_with_size`.
+    Do not invent a second `cuMemUnmap` range / `mem_unmap_range`.
+    Do not invent Engine `--mem-unmap-range`. Do not invent
+    occupancy SM counts this slice. Do not reverse MemUnmap range identity with va_unmap_range.
+    Do not invent `va_set_access` as `mem_unmap_range`.
+    Do not invent `cuMemSetAccess` as `mem_unmap_range`.
+    Do not invent a second `cuMemSetAccess` / `mem_set_access`.
+    Do not invent Engine `--mem-set-access`. Do not invent
+    occupancy SM counts this slice. Do not reverse MemSetAccess identity with va_set_access.
+    Do not invent `va_set_access_write` as `mem_set_access`.
+    Do not invent `cuMemSetAccess` write as `mem_set_access`.
+    Do not invent a second `cuMemSetAccess` write / `mem_set_access_write`.
+    Do not invent Engine `--mem-set-access-write`. Do not invent
+    occupancy SM counts this slice. Do not reverse MemSetAccess write identity with va_set_access_write.
+    Do not invent `va_set_access_with_flags` as `mem_set_access_write`.
+    Do not invent `cuMemSetAccess` flags as `mem_set_access_write`.
+    Do not invent a second `cuMemSetAccess` flags / `mem_set_access_with_flags`.
+    Do not invent Engine `--mem-set-access-with-flags`. Do not invent
+    occupancy SM counts this slice. Do not reverse MemSetAccess flags identity with va_set_access_with_flags.
+    Do not invent `va_set_access_with_size` as `mem_set_access_with_flags`.
+    Do not invent `cuMemSetAccess` size as `mem_set_access_with_flags`.
+    Do not invent a second `cuMemSetAccess` size / `mem_set_access_with_size`.
+    Do not invent Engine `--mem-set-access-with-size`. Do not invent
+    occupancy SM counts this slice. Do not reverse MemSetAccess size identity with va_set_access_with_size.
+    Do not invent `va_set_access_n` as `mem_set_access_with_size`.
+    Do not invent `cuMemSetAccess` n as `mem_set_access_with_size`.
+    Do not invent a second `cuMemSetAccess` n / `mem_set_access_n`.
+    Do not invent Engine `--mem-set-access-n`. Do not invent
+    occupancy SM counts this slice. Do not reverse MemSetAccess n identity with va_set_access_n.
+    Do not invent `va_unset_access` as `mem_set_access_n`.
+    Do not invent `cuMemSetAccess` ProtNone as `mem_set_access_n`.
+    Do not invent a second `cuMemSetAccess` ProtNone / `mem_unset_access`.
+    Do not invent Engine `--mem-unset-access`. Do not invent
+    occupancy SM counts this slice. Do not reverse MemUnsetAccess identity with va_unset_access.
+    Do not invent `va_get_access` as `mem_unset_access`.
+    Do not invent `cuMemGetAccess` as `mem_unset_access`.
+    Do not invent a second `cuMemGetAccess` / `mem_get_access`.
+    Do not invent Engine `--mem-get-access`. Do not invent
+    occupancy SM counts this slice. Do not reverse MemGetAccess identity with va_get_access.
+    Do not invent `va_map_range` as `mem_get_access`.
+    Do not invent `cuMemMap` range as `mem_get_access`.
+    Do not invent a second `cuMemMap` range / `mem_map_range`.
+    Do not invent Engine `--mem-map-range`. Do not invent
+    occupancy SM counts this slice. Do not reverse MemMapRange identity with va_map_range.
+    Do not invent `va_get_allocation_properties` as `mem_map_range`.
+    Do not invent `cuMemGetAllocationPropertiesFromHandle` as `mem_map_range`.
+    Do not invent a second `cuMemGetAllocationPropertiesFromHandle` / `mem_get_allocation_properties`.
+    Do not invent Engine `--mem-get-allocation-properties`. Do not invent
+    occupancy SM counts this slice. Do not reverse MemGetAllocationProperties identity with va_get_allocation_properties.
+    Do not invent `va_map_multicast` as `mem_get_allocation_properties`.
+    Do not invent `cuMemMap` multicast as `mem_get_allocation_properties`.
+    Do not invent a second `cuMemMap` multicast / `mem_map_multicast`.
+    Do not invent Engine `--mem-map-multicast`. Do not invent
+    occupancy SM counts this slice. Do not reverse MemMapMulticast identity with va_map_multicast.
+    Do not invent `va_map_multicast_with_flags` as `mem_map_multicast`.
+    Do not invent `cuMemMap` multicast flags as `mem_map_multicast`.
+    Do not invent a second `cuMemMap` multicast flags / `mem_map_multicast_with_flags`.
+    Do not invent Engine `--mem-map-multicast-with-flags`. Do not invent
+    occupancy SM counts this slice. Do not reverse MemMapMulticast flags identity with va_map_multicast_with_flags.
+    Do not invent `va_map_multicast_with_size` as `mem_map_multicast_with_flags`.
+    Do not invent `cuMemMap` multicast size as `mem_map_multicast_with_flags`.
+    Do not invent a second `cuMemMap` multicast size / `mem_map_multicast_with_size`.
+    Do not invent Engine `--mem-map-multicast-with-size`. Do not invent
+    occupancy SM counts this slice. Do not reverse MemMapMulticast size identity with va_map_multicast_with_size.
+    Do not invent `multicast_get_granularity` as `mem_map_multicast_with_size`.
+    Do not invent `cuMulticastGetGranularity` as `mem_map_multicast_with_size`.
+    Do not invent a second `cuMulticastGetGranularity` / `mem_multicast_get_granularity`.
+    Do not invent Engine `--mem-multicast-get-granularity`. Do not invent
+    occupancy SM counts this slice. Do not reverse MemMulticastGetGranularity identity with multicast_get_granularity.
+    Do not invent `multicast_get_granularity_with_prop` as `mem_multicast_get_granularity`.
+    Do not invent `cuMulticastGetGranularity` prop as `mem_multicast_get_granularity`.
+    Do not invent a second `cuMulticastGetGranularity` prop / `mem_multicast_get_granularity_with_prop`.
+    Do not invent Engine `--mem-multicast-get-granularity-with-prop`. Do not invent
+    occupancy SM counts this slice. Do not reverse MemMulticastGetGranularity prop identity with multicast_get_granularity_with_prop.
+    Do not invent `multicast_create` as `mem_multicast_get_granularity_with_prop`.
+    Do not invent `cuMulticastCreate` as `mem_multicast_get_granularity_with_prop`.
+    Do not invent a second `cuMulticastCreate` / `mem_multicast_create`.
+    Do not invent Engine `--mem-multicast-create`. Do not invent
+    occupancy SM counts this slice. Do not reverse MemMulticastCreate identity with multicast_create.
+    Do not invent `multicast_create_with_prop` as `mem_multicast_create`.
+    Do not invent `cuMulticastCreate` prop as `mem_multicast_create`.
+    Do not invent a second `cuMulticastCreate` prop / `mem_multicast_create_with_prop`.
+    Do not invent Engine `--mem-multicast-create-with-prop`. Do not invent
+    occupancy SM counts this slice. Do not reverse MemMulticastCreate prop identity with multicast_create_with_prop.
+    Do not invent `multicast_add_device` as `mem_multicast_create_with_prop`.
+    Do not invent `cuMulticastAddDevice` as `mem_multicast_create_with_prop`.
+    Do not invent a second `cuMulticastAddDevice` / `mem_multicast_add_device`.
+    Do not invent Engine `--mem-multicast-add-device`. Do not invent
+    occupancy SM counts this slice. Do not reverse MemMulticastAddDevice identity with multicast_add_device.
+    Do not invent `multicast_bind_mem` as `mem_multicast_add_device`.
+    Do not invent `cuMulticastBindMem` as `mem_multicast_add_device`.
+    Do not invent a second `cuMulticastBindMem` / `mem_multicast_bind_mem`.
+    Do not invent Engine `--mem-multicast-bind-mem`. Do not invent
+    occupancy SM counts this slice. Do not reverse MemMulticastBindMem identity with multicast_bind_mem.
+    Do not invent `multicast_bind_mem_with_flags` as `mem_multicast_bind_mem`.
+    Do not invent `cuMulticastBindMem` flags as `mem_multicast_bind_mem`.
+    Do not invent a second `cuMulticastBindMem` flags / `mem_multicast_bind_mem_with_flags`.
+    Do not invent Engine `--mem-multicast-bind-mem-with-flags`. Do not invent
+    occupancy SM counts this slice. Do not reverse MemMulticastBindMem flags identity with multicast_bind_mem_with_flags.
+    Do not invent `multicast_bind_mem_with_size` as `mem_multicast_bind_mem_with_flags`.
+    Do not invent `cuMulticastBindMem` size as `mem_multicast_bind_mem_with_flags`.
+    Do not invent a second `cuMulticastBindMem` size / `mem_multicast_bind_mem_with_size`.
+    Do not invent Engine `--mem-multicast-bind-mem-with-size`. Do not invent
+    occupancy SM counts this slice. Do not reverse MemMulticastBindMem size identity with multicast_bind_mem_with_size.
+    Do not invent `multicast_bind_addr` as `mem_multicast_bind_mem_with_size`.
+    Do not invent `cuMulticastBindAddr` as `mem_multicast_bind_mem_with_size`.
+    Do not invent a second `cuMulticastBindAddr` / `mem_multicast_bind_addr`.
+    Do not invent Engine `--mem-multicast-bind-addr`. Do not invent
+    occupancy SM counts this slice. Do not reverse MemMulticastBindAddr identity with multicast_bind_addr.
+    Do not invent `multicast_bind_addr_with_flags` as `mem_multicast_bind_addr`.
+    Do not invent `cuMulticastBindAddr` flags as `mem_multicast_bind_addr`.
+    Do not invent a second `cuMulticastBindAddr` flags / `mem_multicast_bind_addr_with_flags`.
+    Do not invent Engine `--mem-multicast-bind-addr-with-flags`. Do not invent
+    occupancy SM counts this slice. Do not reverse MemMulticastBindAddr flags identity with multicast_bind_addr_with_flags.
+    Do not invent `multicast_bind_addr_with_size` as `mem_multicast_bind_addr_with_flags`.
+    Do not invent `cuMulticastBindAddr` size as `mem_multicast_bind_addr_with_flags`.
+    Do not invent a second `cuMulticastBindAddr` size / `mem_multicast_bind_addr_with_size`.
+    Do not invent Engine `--mem-multicast-bind-addr-with-size`. Do not invent
+    occupancy SM counts this slice. Do not reverse MemMulticastBindAddr size identity with multicast_bind_addr_with_size.
+    Do not invent `multicast_unbind` as `mem_multicast_bind_addr_with_size`.
+    Do not invent `cuMulticastUnbind` as `mem_multicast_bind_addr_with_size`.
+    Do not invent a second `cuMulticastUnbind` / `mem_multicast_unbind`.
+    Do not invent Engine `--mem-multicast-unbind`. Do not invent
+    occupancy SM counts this slice. Do not reverse MemMulticastUnbind identity with multicast_unbind.
+    Do not invent `multicast_unbind_with_size` as `mem_multicast_unbind`.
+    Do not invent `cuMulticastUnbind` size as `mem_multicast_unbind`.
+    Do not invent a second `cuMulticastUnbind` size / `mem_multicast_unbind_with_size`.
+    Do not invent Engine `--mem-multicast-unbind-with-size`. Do not invent
+    occupancy SM counts this slice. Do not reverse MemMulticastUnbind size identity with multicast_unbind_with_size.
+    Do not invent `multicast_destroy` as `mem_multicast_unbind_with_size`.
+    Do not invent `cuMemRelease` multicast as `mem_multicast_unbind_with_size`.
+    Do not invent a second `cuMemRelease` multicast / `mem_multicast_destroy`.
+    Do not invent Engine `--mem-multicast-destroy`. Do not invent
+    occupancy SM counts this slice. Do not reverse MemMulticastDestroy identity with multicast_destroy.
+    Do not invent `mem_release_handle` as `mem_multicast_destroy`.
+    Do not invent `multicast_store` as `mem_multicast_destroy`.
+    Do not invent `multicast_binds` as `mem_multicast_destroy`.
+    Do not invent a second NVLS `mem_multicast_store`.
+    Do not invent Engine `--mem-multicast-store`. Do not invent
+    occupancy SM counts this slice. Do not reverse MemMulticastStore identity with multicast_store.
+    Do not invent `cuMulticastStore` as `mem_multicast_store`.
+    Do not invent `multicast_binds` as `mem_multicast_store`.
+    Do not invent `is_multicast_va` as `mem_multicast_store`.
+    Do not invent a second `mem_multicast_binds`.
+    Do not invent Engine `--mem-multicast-binds`. Do not invent
+    occupancy SM counts this slice. Do not reverse MemMulticastBinds identity with multicast_binds.
+    Do not invent `is_multicast_va` as `mem_multicast_binds`.
+    Do not invent `cuMulticastGetBindCount` as `mem_multicast_binds`.
+    Do not invent a second `mem_is_multicast_va`.
+    Do not invent Engine `--mem-is-multicast-va`. Do not invent
+    occupancy SM counts this slice. Do not reverse MemIsMulticastVa identity with is_multicast_va.
+    Do not invent `pointer_get_attribute` as `mem_is_multicast_va`.
+    Do not invent `cuPointerGetAttribute` as `mem_is_multicast_va`.
+    Do not invent a second `cuPointerGetAttribute` / `mem_pointer_get_attribute`.
+    Do not invent Engine `--mem-pointer-get-attribute`. Do not invent
+    occupancy SM counts this slice. Do not reverse MemPointerGetAttribute identity with pointer_get_attribute.
+    Do not invent `pointer_get_attribute_n` as `mem_pointer_get_attribute`.
+    Do not invent `cuPointerGetAttributes` as `mem_pointer_get_attribute`.
+    Do not invent a second `cuPointerGetAttributes` / `mem_pointer_get_attribute_n`.
+    Do not invent Engine `--mem-pointer-get-attribute-n`. Do not invent
+    occupancy SM counts this slice. Do not reverse MemPointerGetAttributeN identity with pointer_get_attribute_n.
+    Do not invent `pointer_get_access_flags` as `mem_pointer_get_attribute_n`.
+    Do not invent `CU_POINTER_ATTRIBUTE_ACCESS_FLAGS` as `mem_pointer_get_attribute_n`.
+    Do not invent a second `CU_POINTER_ATTRIBUTE_ACCESS_FLAGS` / `mem_pointer_get_access_flags`.
+    Do not invent Engine `--mem-pointer-get-access-flags`. Do not invent
+    occupancy SM counts this slice. Do not reverse MemPointerGetAccessFlags identity with pointer_get_access_flags.
+    Do not invent `pointer_set_attribute` as `mem_pointer_get_access_flags`.
+    Do not invent `cuPointerSetAttribute` as `mem_pointer_get_access_flags`.
+    Do not invent a second `cuPointerSetAttribute` / `mem_pointer_set_attribute`.
+    Do not invent Engine `--mem-pointer-set-attribute`. Do not invent
+    occupancy SM counts this slice. Do not reverse MemPointerSetAttribute identity with pointer_set_attribute.
+    Do not invent `pointer_get_attributes` as `mem_pointer_set_attribute`.
+    Do not invent `cudaPointerGetAttributes` as `mem_pointer_set_attribute`.
+    Do not invent a second `cudaPointerGetAttributes` / `mem_pointer_get_attributes`.
+    Do not invent Engine `--mem-pointer-get-attributes`. Do not invent
+    occupancy SM counts this slice. Do not reverse MemPointerGetAttributes identity with pointer_get_attributes.
+    Do not invent `host_get_device_pointer` as `mem_pointer_get_attributes`.
+    Do not invent `cudaHostGetDevicePointer` as `mem_pointer_get_attributes`.
+    Do not invent a second `cuMemAllocPitch` / `mem_alloc_pitch_with_element_size`.
+    Do not invent Engine `--mem-alloc-pitch-with-element-size`. Do not invent
+    occupancy SM counts this slice. Do not reverse MemAllocPitchWithElementSize identity with malloc_pitch_with_element_size.
+    Do not invent `malloc_3d` as `mem_alloc_pitch_with_element_size`.
+    Do not invent `cudaMalloc3D` as `mem_alloc_pitch_with_element_size`.
+    Do not invent a second `cuDeviceGetAttribute` / `mem_device_get_attribute`.
+    Do not invent Engine `--mem-device-get-attribute`. Do not invent
+    occupancy SM counts this slice. Do not reverse MemDeviceGetAttribute identity with device_get_attribute.
+    Do not invent `device_get_properties` as `mem_device_get_attribute`.
+    Do not invent `cudaGetDeviceProperties` as `mem_device_get_attribute`.
+    Do not invent a second `cuDeviceGetProperties` / `mem_device_get_properties`.
+    Do not invent Engine `--mem-device-get-properties`. Do not invent
+    occupancy SM counts this slice. Do not reverse MemDeviceGetProperties identity with device_get_properties.
+    Do not invent `device_compute_capability` as `mem_device_get_properties`.
+    Do not invent `cuDeviceComputeCapability` as `mem_device_get_properties`.
+    Do not invent a second `cuDeviceComputeCapability` / `mem_device_compute_capability`.
+    Do not invent Engine `--mem-device-compute-capability`. Do not invent
+    occupancy SM counts this slice. Do not reverse MemDeviceComputeCapability identity with device_compute_capability.
+    Do not invent `device_get_uuid` as `mem_device_compute_capability`.
+    Do not invent `cuDeviceGetUuid` as `mem_device_compute_capability`.
+    Do not invent a second `cuDeviceGetUuid` / `mem_device_get_uuid`.
+    Do not invent Engine `--mem-device-get-uuid`. Do not invent
+    occupancy SM counts this slice. Do not reverse MemDeviceGetUuid identity with device_get_uuid.
+    Do not invent `device_get_luid` as `mem_device_get_uuid`.
+    Do not invent `cuDeviceGetLuid` as `mem_device_get_uuid`.
+    Do not invent a second `cuDeviceGetLuid` / `mem_device_get_luid`.
+    Do not invent Engine `--mem-device-get-luid`. Do not invent
+    occupancy SM counts this slice. Do not reverse MemDeviceGetLuid identity with device_get_luid.
+    Do not invent `device_get_texture_1d_linear_max_width` as `mem_device_get_luid`.
+    Do not invent `cuDeviceGetTexture1DLinearMaxWidth` as `mem_device_get_luid`.
+    Do not invent a second `cuDeviceGetTexture1DLinearMaxWidth` / `mem_device_get_texture_1d_linear_max_width`.
+    Do not invent Engine `--mem-device-get-texture-1d-linear-max-width`. Do not invent
+    occupancy SM counts this slice. Do not reverse MemDeviceGetTexture1dLinearMaxWidth identity with device_get_texture_1d_linear_max_width.
+    Do not invent `device_get_by_uuid` as `mem_device_get_texture_1d_linear_max_width`.
+    Do not invent `cuDeviceGetByUuid` as `mem_device_get_texture_1d_linear_max_width`.
+    Do not invent a second `cuDeviceGetByUuid` / `mem_device_get_by_uuid`.
+    Do not invent Engine `--mem-device-get-by-uuid`. Do not invent
+    occupancy SM counts this slice. Do not reverse MemDeviceGetByUuid identity with device_get_by_uuid.
+    Do not invent `device_get_pci_bus_id` as `mem_device_get_by_uuid`.
+    Do not invent `cuDeviceGetPCIBusId` as `mem_device_get_by_uuid`.
+    Do not invent a second `cuDeviceGetPCIBusId` / `mem_device_get_pci_bus_id`.
+    Do not invent Engine `--mem-device-get-pci-bus-id`. Do not invent
+    occupancy SM counts this slice. Do not reverse MemDeviceGetPciBusId identity with device_get_pci_bus_id.
+    Do not invent `device_get_by_pci_bus_id` as `mem_device_get_pci_bus_id`.
+    Do not invent `cudaDeviceGetByPCIBusId` as `mem_device_get_pci_bus_id`.
+    Do not invent a second `cudaDeviceGetByPCIBusId` / `mem_device_get_by_pci_bus_id`.
+    Do not invent Engine `--mem-device-get-by-pci-bus-id`. Do not invent
+    occupancy SM counts this slice. Do not reverse MemDeviceGetByPciBusId identity with device_get_by_pci_bus_id.
+    Do not invent `device_total_mem` as `mem_device_get_by_pci_bus_id`.
+    Do not invent `cuDeviceTotalMem` as `mem_device_get_by_pci_bus_id`.
+    Do not invent a second `cuDeviceTotalMem` / `mem_device_total_mem`.
+    Do not invent Engine `--mem-device-total-mem`. Do not invent
+    occupancy SM counts this slice. Do not reverse MemDeviceTotalMem identity with device_total_mem.
+    Do not invent `device_count` as `mem_device_total_mem`.
+    Do not invent `cudaGetDeviceCount` as `mem_device_total_mem`.
+    Do not invent a second `cuDriverGetVersion` / `mem_driver_get_version`.
+    Do not invent Engine `--mem-driver-get-version`. Do not invent
+    occupancy SM counts this slice. Do not reverse MemDriverGetVersion identity with driver_get_version.
+    Do not invent `get_proc_address` as `mem_driver_get_version`.
+    Do not invent `cuGetProcAddress` as `mem_driver_get_version`.
+    Do not invent a second `cuGetProcAddress` / `mem_get_proc_address`.
+    Do not invent Engine `--mem-get-proc-address`. Do not invent
+    occupancy SM counts this slice. Do not reverse MemGetProcAddress identity with get_proc_address.
+    Do not invent `get_export_table` as `mem_get_proc_address`.
+    Do not invent `cuGetExportTable` as `mem_get_proc_address`.
+    Do not invent a second `cuGetExportTable` / `mem_get_export_table`.
+    Do not invent Engine `--mem-get-export-table`. Do not invent
+    occupancy SM counts this slice. Do not reverse MemGetExportTable identity with get_export_table.
+    Do not invent `coredump_get_attribute` as `mem_get_export_table`.
+    Do not invent `cuCoredumpGetAttribute` as `mem_get_export_table`.
+    Do not invent a second `cuCoredumpGetAttribute` / `mem_coredump_get_attribute`.
+    Do not invent Engine `--mem-coredump-get-attribute`. Do not invent
+    occupancy SM counts this slice. Do not reverse MemCoredumpGetAttribute identity with coredump_get_attribute.
+    Do not invent `coredump_set_attribute` as `mem_coredump_get_attribute`.
+    Do not invent `cuCoredumpSetAttribute` as `mem_coredump_get_attribute`.
+    Do not invent a second `cuCoredumpSetAttribute` / `mem_coredump_set_attribute`.
+    Do not invent Engine `--mem-coredump-set-attribute`. Do not invent
+    occupancy SM counts this slice. Do not reverse MemCoredumpSetAttribute identity with coredump_set_attribute.
+    Do not invent `coredump_get_attribute_global` as `mem_coredump_set_attribute`.
+    Do not invent `cuCoredumpGetAttributeGlobal` as `mem_coredump_set_attribute`.
+    Do not invent a second `cuCoredumpGetAttributeGlobal` / `mem_coredump_get_attribute_global`.
+    Do not invent Engine `--mem-coredump-get-attribute-global`. Do not invent
+    occupancy SM counts this slice. Do not reverse MemCoredumpGetAttributeGlobal identity with coredump_get_attribute_global.
+    Do not invent `coredump_set_attribute_global` as `mem_coredump_get_attribute_global`.
+    Do not invent `cuCoredumpSetAttributeGlobal` as `mem_coredump_get_attribute_global`.
+    Do not invent a second `cuCoredumpSetAttributeGlobal` / `mem_coredump_set_attribute_global`.
+    Do not invent Engine `--mem-coredump-set-attribute-global`. Do not invent
+    occupancy SM counts this slice. Do not reverse MemCoredumpSetAttributeGlobal identity with coredump_set_attribute_global.
+    Do not invent `checkpoint_process_lock` as `mem_coredump_set_attribute_global`.
+    Do not invent `cuCheckpointProcessLock` as `mem_coredump_set_attribute_global`.
+    Do not invent a second `cuCheckpointProcessLock` / `mem_checkpoint_process_lock`.
+    Do not invent Engine `--mem-checkpoint-process-lock`. Do not invent
+    occupancy SM counts this slice. Do not reverse MemCheckpointProcessLock identity with checkpoint_process_lock.
+    Do not invent `checkpoint_process_checkpoint` as `mem_checkpoint_process_lock`.
+    Do not invent `cuCheckpointProcessCheckpoint` as `mem_checkpoint_process_lock`.
+    Do not invent a second `cuCheckpointProcessCheckpoint` / `mem_checkpoint_process_checkpoint`.
+    Do not invent Engine `--mem-checkpoint-process-checkpoint`. Do not invent
+    occupancy SM counts this slice. Do not reverse MemCheckpointProcessCheckpoint identity with checkpoint_process_checkpoint.
+    Do not invent `checkpoint_process_restore` as `mem_checkpoint_process_checkpoint`.
+    Do not invent `cuCheckpointProcessRestore` as `mem_checkpoint_process_checkpoint`.
+    Do not invent a second `cuCheckpointProcessRestore` / `mem_checkpoint_process_restore`.
+    Do not invent Engine `--mem-checkpoint-process-restore`. Do not invent
+    occupancy SM counts this slice. Do not reverse MemCheckpointProcessRestore identity with checkpoint_process_restore.
+    Do not invent `checkpoint_process_unlock` as `mem_checkpoint_process_restore`.
+    Do not invent `cuCheckpointProcessUnlock` as `mem_checkpoint_process_restore`.
+    Do not invent a second `cuCheckpointProcessUnlock` / `mem_checkpoint_process_unlock`.
+    Do not invent Engine `--mem-checkpoint-process-unlock`. Do not invent
+    occupancy SM counts this slice. Do not reverse MemCheckpointProcessUnlock identity with checkpoint_process_unlock.
+    Do not invent `checkpoint_process_get_restore_thread_id` as `mem_checkpoint_process_unlock`.
+    Do not invent `cuCheckpointProcessGetRestoreThreadId` as `mem_checkpoint_process_unlock`.
+    Do not invent a second `cuCheckpointProcessGetRestoreThreadId` / `mem_checkpoint_process_get_restore_thread_id`.
+    Do not invent Engine `--mem-checkpoint-process-get-restore-thread-id`. Do not invent
+    occupancy SM counts this slice. Do not reverse MemCheckpointProcessGetRestoreThreadId identity with checkpoint_process_get_restore_thread_id.
+    Do not invent `checkpoint_process_get_state` as `mem_checkpoint_process_get_restore_thread_id`.
+    Do not invent `cuCheckpointProcessGetState` as `mem_checkpoint_process_get_restore_thread_id`.
+    Do not invent a second `cuCheckpointProcessGetState` / `mem_checkpoint_process_get_state`.
+    Do not invent Engine `--mem-checkpoint-process-get-state`. Do not invent
+    occupancy SM counts this slice. Do not reverse MemCheckpointProcessGetState identity with checkpoint_process_get_state.
+    Do not invent `device_register_async_notification` as `mem_checkpoint_process_get_state`.
+    Do not invent `cuDeviceRegisterAsyncNotification` as `mem_checkpoint_process_get_state`.
+    Do not invent a second `cuDeviceRegisterAsyncNotification` / `mem_device_register_async_notification`.
+    Do not invent Engine `--mem-device-register-async-notification`. Do not invent
+    occupancy SM counts this slice. Do not reverse MemDeviceRegisterAsyncNotification identity with device_register_async_notification.
+    Do not invent `device_unregister_async_notification` as `mem_device_register_async_notification`.
+    Do not invent `cuDeviceUnregisterAsyncNotification` as `mem_device_register_async_notification`.
+    Do not invent a second `cuDeviceUnregisterAsyncNotification` / `mem_device_unregister_async_notification`.
+    Do not invent Engine `--mem-device-unregister-async-notification`. Do not invent
+    occupancy SM counts this slice. Do not reverse MemDeviceUnregisterAsyncNotification identity with device_unregister_async_notification.
+    Do not invent `driver_init` as `mem_device_unregister_async_notification`.
+    Do not invent `cuInit` as `mem_device_unregister_async_notification`.
+    Do not invent a second `cuInit` / `mem_driver_init`.
+    Do not invent Engine `--mem-driver-init`. Do not invent
+    occupancy SM counts this slice. Do not reverse MemDriverInit identity with driver_init.
+    Do not invent `profiler_start` as `mem_driver_init`.
+    Do not invent `cuProfilerStart` as `mem_driver_init`.
+    Do not invent a second `cuProfilerStart` / `mem_profiler_start`.
+    Do not invent Engine `--mem-profiler-start`. Do not invent
+    occupancy SM counts this slice. Do not reverse MemProfilerStart identity with profiler_start.
+    Do not invent `profiler_stop` as `mem_profiler_start`.
+    Do not invent `cuProfilerStop` as `mem_profiler_start`.
+    Do not invent a second `cuProfilerStop` / `mem_profiler_stop`.
+    Do not invent Engine `--mem-profiler-stop`. Do not invent
+    occupancy SM counts this slice. Do not reverse MemProfilerStop identity with profiler_stop.
+    Do not invent `profiler_initialize` as `mem_profiler_stop`.
+    Do not invent `cudaProfilerInitialize` as `mem_profiler_stop`.
+    Do not invent a second `cudaProfilerInitialize` / `mem_profiler_initialize`.
+    Do not invent Engine `--mem-profiler-initialize`. Do not invent
+    occupancy SM counts this slice. Do not reverse MemProfilerInitialize identity with profiler_initialize.
+    Do not invent `module_get_loading_mode` as `mem_profiler_initialize`.
+    Do not invent `cuModuleGetLoadingMode` as `mem_profiler_initialize`.
+    Do not invent a second `cuModuleGetLoadingMode` / `mem_module_get_loading_mode`.
+    Do not invent Engine `--mem-module-get-loading-mode`. Do not invent
+    occupancy SM counts this slice. Do not reverse MemModuleGetLoadingMode identity with module_get_loading_mode.
+    Do not invent `module_load` as `mem_module_get_loading_mode`.
+    Do not invent `cuModuleLoad` as `mem_module_get_loading_mode`.
+    Do not invent a second `cuModuleLoad` / `mem_module_load`.
+    Do not invent Engine `--mem-module-load`. Do not invent
+    occupancy SM counts this slice. Do not reverse MemModuleLoad identity with module_load.
+    Do not invent `module_load_data` as `mem_module_load`.
+    Do not invent `cuModuleLoadData` as `mem_module_load`.
+    Do not invent a second `cuModuleLoadData` / `mem_module_load_data`.
+    Do not invent Engine `--mem-module-load-data`. Do not invent
+    occupancy SM counts this slice. Do not reverse MemModuleLoadData identity with module_load_data.
+    Do not invent `module_load_fat_binary` as `mem_module_load_data`.
+    Do not invent `cuModuleLoadFatBinary` as `mem_module_load_data`.
+    Do not invent a second `cuModuleLoadFatBinary` / `mem_module_load_fat_binary`.
+    Do not invent Engine `--mem-module-load-fat-binary`. Do not invent
+    occupancy SM counts this slice. Do not reverse MemModuleLoadFatBinary identity with module_load_fat_binary.
+    Do not invent `module_load_data_ex` as `mem_module_load_fat_binary`.
+    Do not invent `cuModuleLoadDataEx` as `mem_module_load_fat_binary`.
+    Do not invent a second `cuModuleLoadDataEx` / `mem_module_load_data_ex`.
+    Do not invent Engine `--mem-module-load-data-ex`. Do not invent
+    occupancy SM counts this slice. Do not reverse MemModuleLoadDataEx identity with module_load_data_ex.
+    Do not invent `module_get_function_count` as `mem_module_load_data_ex`.
+    Do not invent `cuModuleGetFunctionCount` as `mem_module_load_data_ex`.
+    Do not invent a second `cuModuleGetFunctionCount` / `mem_module_get_function_count`.
+    Do not invent Engine `--mem-module-get-function-count`. Do not invent
+    occupancy SM counts this slice. Do not reverse MemModuleGetFunctionCount identity with module_get_function_count.
+    Do not invent `module_enumerate_functions` as `mem_module_get_function_count`.
+    Do not invent `cuModuleEnumerateFunctions` as `mem_module_get_function_count`.
+    Do not invent a second `cuModuleEnumerateFunctions` / `mem_module_enumerate_functions`.
+    Do not invent Engine `--mem-module-enumerate-functions`. Do not invent
+    occupancy SM counts this slice. Do not reverse MemModuleEnumerateFunctions identity with module_enumerate_functions.
+    Do not invent `module_unload` as `mem_module_enumerate_functions`.
+    Do not invent `cuModuleUnload` as `mem_module_enumerate_functions`.
+    Do not invent a second `cuModuleUnload` / `mem_module_unload`.
+    Do not invent Engine `--mem-module-unload`. Do not invent
+    occupancy SM counts this slice. Do not reverse MemModuleUnload identity with module_unload.
+    Do not invent `module_get_function` as `mem_module_unload`.
+    Do not invent `cuModuleGetFunction` as `mem_module_unload`.
+    Do not invent a second `cuModuleGetFunction` / `mem_module_get_function`.
+    Do not invent Engine `--mem-module-get-function`. Do not invent
+    occupancy SM counts this slice. Do not reverse MemModuleGetFunction identity with module_get_function.
+    Do not invent `module_get_global` as `mem_module_get_function`.
+    Do not invent `cuModuleGetGlobal` as `mem_module_get_function`.
+    Do not invent a second `cuModuleGetGlobal` / `mem_module_get_global`.
+    Do not invent Engine `--mem-module-get-global`. Do not invent
+    occupancy SM counts this slice. Do not reverse MemModuleGetGlobal identity with module_get_global.
+    Do not invent `module_get_tex_ref` as `mem_module_get_global`.
+    Do not invent `cuModuleGetTexRef` as `mem_module_get_global`.
+    Do not invent a second `cuModuleGetTexRef` / `mem_module_get_tex_ref`.
+    Do not invent Engine `--mem-module-get-tex-ref`. Do not invent
+    occupancy SM counts this slice. Do not reverse MemModuleGetTexRef identity with module_get_tex_ref.
+    Do not invent `tex_ref_create` as `mem_module_get_tex_ref`.
+    Do not invent `cuTexRefCreate` as `mem_module_get_tex_ref`.
+    Do not invent a second `cuTexRefCreate` / `mem_tex_ref_create`.
+    Do not invent Engine `--mem-tex-ref-create`. Do not invent
+    occupancy SM counts this slice. Do not reverse MemTexRefCreate identity with tex_ref_create.
+    Do not invent `tex_ref_destroy` as `mem_tex_ref_create`.
+    Do not invent `cuTexRefDestroy` as `mem_tex_ref_create`.
+    Do not invent a second `cuTexRefDestroy` / `mem_tex_ref_destroy`.
+    Do not invent Engine `--mem-tex-ref-destroy`. Do not invent
+    occupancy SM counts this slice. Do not reverse MemTexRefDestroy identity with tex_ref_destroy.
+    Do not invent `tex_ref_set_array` as `mem_tex_ref_destroy`.
+    Do not invent `cuTexRefSetArray` as `mem_tex_ref_destroy`.
+    Do not invent a second `cuTexRefSetArray` / `mem_tex_ref_set_array`.
+    Do not invent Engine `--mem-tex-ref-set-array`. Do not invent
+    occupancy SM counts this slice. Do not reverse MemTexRefSetArray identity with tex_ref_set_array.
+    Do not invent `tex_ref_set_mipmapped_array` as `mem_tex_ref_set_array`.
+    Do not invent `cuTexRefSetMipmappedArray` as `mem_tex_ref_set_array`.
+    Do not invent a second `cuTexRefSetMipmappedArray` / `mem_tex_ref_set_mipmapped_array`.
+    Do not invent Engine `--mem-tex-ref-set-mipmapped-array`. Do not invent
+    occupancy SM counts this slice. Do not reverse MemTexRefSetMipmappedArray identity with tex_ref_set_mipmapped_array.
+    Do not invent `tex_ref_set_address` as `mem_tex_ref_set_mipmapped_array`.
+    Do not invent `cuTexRefSetAddress` as `mem_tex_ref_set_mipmapped_array`.
+    Do not invent a second `cuTexRefSetAddress` / `mem_tex_ref_set_address`.
+    Do not invent Engine `--mem-tex-ref-set-address`. Do not invent
+    occupancy SM counts this slice. Do not reverse MemTexRefSetAddress identity with tex_ref_set_address.
+    Do not invent `tex_ref_set_address_2d` as `mem_tex_ref_set_address`.
+    Do not invent `cuTexRefSetAddress2D` as `mem_tex_ref_set_address`.
+    Do not invent a second `cuTexRefSetAddress2D` / `mem_tex_ref_set_address_2d`.
+    Do not invent Engine `--mem-tex-ref-set-address-2d`. Do not invent
+    occupancy SM counts this slice. Do not reverse MemTexRefSetAddress2D identity with tex_ref_set_address_2d.
+    Do not invent `tex_ref_set_format` as `mem_tex_ref_set_address_2d`.
+    Do not invent `cuTexRefSetFormat` as `mem_tex_ref_set_address_2d`.
+    Do not invent a second `cuTexRefSetFormat` / `mem_tex_ref_set_format`.
+    Do not invent Engine `--mem-tex-ref-set-format`. Do not invent
+    occupancy SM counts this slice. Do not reverse MemTexRefSetFormat identity with tex_ref_set_format.
+    Do not invent `tex_ref_set_address_mode` as `mem_tex_ref_set_format`.
+    Do not invent `cuTexRefSetAddressMode` as `mem_tex_ref_set_format`.
+    Do not invent a second `cuTexRefSetAddressMode` / `mem_tex_ref_set_address_mode`.
+    Do not invent Engine `--mem-tex-ref-set-address-mode`. Do not invent
+    occupancy SM counts this slice. Do not reverse MemTexRefSetAddressMode identity with tex_ref_set_address_mode.
+    Do not invent `tex_ref_set_filter_mode` as `mem_tex_ref_set_address_mode`.
+    Do not invent `cuTexRefSetFilterMode` as `mem_tex_ref_set_address_mode`.
+    Do not invent a second `cuTexRefSetFilterMode` / `mem_tex_ref_set_filter_mode`.
+    Do not invent Engine `--mem-tex-ref-set-filter-mode`. Do not invent
+    occupancy SM counts this slice. Do not reverse MemTexRefSetFilterMode identity with tex_ref_set_filter_mode.
+    Do not invent `tex_ref_set_mipmap_filter_mode` as `mem_tex_ref_set_filter_mode`.
+    Do not invent `cuTexRefSetMipmapFilterMode` as `mem_tex_ref_set_filter_mode`.
+    Do not invent a second `cuTexRefSetMipmapFilterMode` / `mem_tex_ref_set_mipmap_filter_mode`.
+    Do not invent Engine `--mem-tex-ref-set-mipmap-filter-mode`. Do not invent
+    occupancy SM counts this slice. Do not reverse MemTexRefSetMipmapFilterMode identity with tex_ref_set_mipmap_filter_mode.
+    Do not invent `tex_ref_set_mipmap_level_bias` as `mem_tex_ref_set_mipmap_filter_mode`.
+    Do not invent `cuTexRefSetMipmapLevelBias` as `mem_tex_ref_set_mipmap_filter_mode`.
+    Do not invent a second `cuTexRefSetMipmapLevelBias` / `mem_tex_ref_set_mipmap_level_bias`.
+    Do not invent Engine `--mem-tex-ref-set-mipmap-level-bias`. Do not invent
+    occupancy SM counts this slice. Do not reverse MemTexRefSetMipmapLevelBias identity with tex_ref_set_mipmap_level_bias.
+    Do not invent `tex_ref_set_mipmap_level_clamp` as `mem_tex_ref_set_mipmap_level_bias`.
+    Do not invent `cuTexRefSetMipmapLevelClamp` as `mem_tex_ref_set_mipmap_level_bias`.
+    Do not invent a second `cuTexRefSetMipmapLevelClamp` / `mem_tex_ref_set_mipmap_level_clamp`.
+    Do not invent Engine `--mem-tex-ref-set-mipmap-level-clamp`. Do not invent
+    occupancy SM counts this slice. Do not reverse MemTexRefSetMipmapLevelClamp identity with tex_ref_set_mipmap_level_clamp.
+    Do not invent `tex_ref_set_max_anisotropy` as `mem_tex_ref_set_mipmap_level_clamp`.
+    Do not invent `cuTexRefSetMaxAnisotropy` as `mem_tex_ref_set_mipmap_level_clamp`.
+    Do not invent a second `cuTexRefSetMaxAnisotropy` / `mem_tex_ref_set_max_anisotropy`.
+    Do not invent Engine `--mem-tex-ref-set-max-anisotropy`. Do not invent
+    occupancy SM counts this slice. Do not reverse MemTexRefSetMaxAnisotropy identity with tex_ref_set_max_anisotropy.
+    Do not invent `tex_ref_set_border_color` as `mem_tex_ref_set_max_anisotropy`.
+    Do not invent `cuTexRefSetBorderColor` as `mem_tex_ref_set_max_anisotropy`.
+    Do not invent a second `cuTexRefSetBorderColor` / `mem_tex_ref_set_border_color`.
+    Do not invent Engine `--mem-tex-ref-set-border-color`. Do not invent
+    occupancy SM counts this slice. Do not reverse MemTexRefSetBorderColor identity with tex_ref_set_border_color.
+    Do not invent `tex_ref_set_flags` as `mem_tex_ref_set_border_color`.
+    Do not invent `cuTexRefSetFlags` as `mem_tex_ref_set_border_color`.
+    Do not invent a second `cuTexRefSetFlags` / `mem_tex_ref_set_flags`.
+    Do not invent Engine `--mem-tex-ref-set-flags`. Do not invent
+    occupancy SM counts this slice. Do not reverse MemTexRefSetFlags identity with tex_ref_set_flags.
+    Do not invent `tex_ref_get_array` as `mem_tex_ref_set_flags`.
+    Do not invent `cuTexRefGetArray` as `mem_tex_ref_set_flags`.
+    Do not invent a second `cuTexRefGetArray` / `mem_tex_ref_get_array`.
+    Do not invent Engine `--mem-tex-ref-get-array`. Do not invent
+    occupancy SM counts this slice. Do not reverse MemTexRefGetArray identity with tex_ref_get_array.
+    Do not invent `tex_ref_get_mipmapped_array` as `mem_tex_ref_get_array`.
+    Do not invent `cuTexRefGetMipmappedArray` as `mem_tex_ref_get_array`.
+    Do not invent a second `cuTexRefGetMipmappedArray` / `mem_tex_ref_get_mipmapped_array`.
+    Do not invent Engine `--mem-tex-ref-get-mipmapped-array`. Do not invent
+    occupancy SM counts this slice. Do not reverse MemTexRefGetMipmappedArray identity with tex_ref_get_mipmapped_array.
+    Do not invent `tex_ref_get_address` as `mem_tex_ref_get_mipmapped_array`.
+    Do not invent `cuTexRefGetAddress` as `mem_tex_ref_get_mipmapped_array`.
+    Do not invent a second `cuTexRefGetAddress` / `mem_tex_ref_get_address`.
+    Do not invent Engine `--mem-tex-ref-get-address`. Do not invent
+    occupancy SM counts this slice. Do not reverse MemTexRefGetAddress identity with tex_ref_get_address.
+    Do not invent `tex_ref_get_address_mode` as `mem_tex_ref_get_address`.
+    Do not invent `cuTexRefGetAddressMode` as `mem_tex_ref_get_address`.
+    Do not invent a second `cuTexRefGetAddressMode` / `mem_tex_ref_get_address_mode`.
+    Do not invent Engine `--mem-tex-ref-get-address-mode`. Do not invent
+    occupancy SM counts this slice. Do not reverse MemTexRefGetAddressMode identity with tex_ref_get_address_mode.
+    Do not invent `tex_ref_get_filter_mode` as `mem_tex_ref_get_address_mode`.
+    Do not invent `cuTexRefGetFilterMode` as `mem_tex_ref_get_address_mode`.
+    Do not invent a second `cuTexRefGetFilterMode` / `mem_tex_ref_get_filter_mode`.
+    Do not invent Engine `--mem-tex-ref-get-filter-mode`. Do not invent
+    occupancy SM counts this slice. Do not reverse MemTexRefGetFilterMode identity with tex_ref_get_filter_mode.
+    Do not invent `tex_ref_get_format` as `mem_tex_ref_get_filter_mode`.
+    Do not invent `cuTexRefGetFormat` as `mem_tex_ref_get_filter_mode`.
+    Do not invent a second `cuTexRefGetFormat` / `mem_tex_ref_get_format`.
+    Do not invent Engine `--mem-tex-ref-get-format`. Do not invent
+    occupancy SM counts this slice. Do not reverse MemTexRefGetFormat identity with tex_ref_get_format.
+    Do not invent `tex_ref_get_mipmap_filter_mode` as `mem_tex_ref_get_format`.
+    Do not invent `cuTexRefGetMipmapFilterMode` as `mem_tex_ref_get_format`.
+    Do not invent a second `cuTexRefGetMipmapFilterMode` / `mem_tex_ref_get_mipmap_filter_mode`.
+    Do not invent Engine `--mem-tex-ref-get-mipmap-filter-mode`. Do not invent
+    occupancy SM counts this slice. Do not reverse MemTexRefGetMipmapFilterMode identity with tex_ref_get_mipmap_filter_mode.
+    Do not invent `tex_ref_get_mipmap_level_bias` as `mem_tex_ref_get_mipmap_filter_mode`.
+    Do not invent `cuTexRefGetMipmapLevelBias` as `mem_tex_ref_get_mipmap_filter_mode`.
+    Do not invent a second `cuTexRefGetMipmapLevelBias` / `mem_tex_ref_get_mipmap_level_bias`.
+    Do not invent Engine `--mem-tex-ref-get-mipmap-level-bias`. Do not invent
+    occupancy SM counts this slice. Do not reverse MemTexRefGetMipmapLevelBias identity with tex_ref_get_mipmap_level_bias.
+    Do not invent `tex_ref_get_mipmap_level_clamp` as `mem_tex_ref_get_mipmap_level_bias`.
+    Do not invent `cuTexRefGetMipmapLevelClamp` as `mem_tex_ref_get_mipmap_level_bias`.
+    Do not invent a second `cuTexRefGetMipmapLevelClamp` / `mem_tex_ref_get_mipmap_level_clamp`.
+    Do not invent Engine `--mem-tex-ref-get-mipmap-level-clamp`. Do not invent
+    occupancy SM counts this slice. Do not reverse MemTexRefGetMipmapLevelClamp identity with tex_ref_get_mipmap_level_clamp.
+    Do not invent `tex_ref_get_max_anisotropy` as `mem_tex_ref_get_mipmap_level_clamp`.
+    Do not invent `cuTexRefGetMaxAnisotropy` as `mem_tex_ref_get_mipmap_level_clamp`.
+    Do not invent a second `cuTexRefGetMaxAnisotropy` / `mem_tex_ref_get_max_anisotropy`.
+    Do not invent Engine `--mem-tex-ref-get-max-anisotropy`. Do not invent
+    occupancy SM counts this slice. Do not reverse MemTexRefGetMaxAnisotropy identity with tex_ref_get_max_anisotropy.
+    Do not invent `tex_ref_get_border_color` as `mem_tex_ref_get_max_anisotropy`.
+    Do not invent `cuTexRefGetBorderColor` as `mem_tex_ref_get_max_anisotropy`.
+    Do not invent a second `cuTexRefGetBorderColor` / `mem_tex_ref_get_border_color`.
+    Do not invent Engine `--mem-tex-ref-get-border-color`. Do not invent
+    occupancy SM counts this slice. Do not reverse MemTexRefGetBorderColor identity with tex_ref_get_border_color.
+    Do not invent `tex_ref_get_flags` as `mem_tex_ref_get_border_color`.
+    Do not invent `cuTexRefGetFlags` as `mem_tex_ref_get_border_color`.
+    Do not invent a second `cuTexRefGetFlags` / `mem_tex_ref_get_flags`.
+    Do not invent Engine `--mem-tex-ref-get-flags`. Do not invent
+    occupancy SM counts this slice. Do not reverse MemTexRefGetFlags identity with tex_ref_get_flags.
+    Do not invent `module_get_surf_ref` as `mem_tex_ref_get_flags`.
+    Do not invent `cuModuleGetSurfRef` as `mem_tex_ref_get_flags`.
+    Do not invent a second `cuModuleGetSurfRef` / `mem_module_get_surf_ref`.
+    Do not invent Engine `--mem-module-get-surf-ref`. Do not invent
+    occupancy SM counts this slice. Do not reverse MemModuleGetSurfRef identity with module_get_surf_ref.
+    Do not invent `surf_ref_set_array` as `mem_module_get_surf_ref`.
+    Do not invent `cuSurfRefSetArray` as `mem_module_get_surf_ref`.
+    Do not invent a second `cuSurfRefSetArray` / `mem_surf_ref_set_array`.
+    Do not invent Engine `--mem-surf-ref-set-array`. Do not invent
+    occupancy SM counts this slice. Do not reverse MemSurfRefSetArray identity with surf_ref_set_array.
+    Do not invent `surf_ref_get_array` as `mem_surf_ref_set_array`.
+    Do not invent `cuSurfRefGetArray` as `mem_surf_ref_set_array`.
+    Do not invent a second `cuSurfRefGetArray` / `mem_surf_ref_get_array`.
+    Do not invent Engine `--mem-surf-ref-get-array`. Do not invent
+    occupancy SM counts this slice. Do not reverse MemSurfRefGetArray identity with surf_ref_get_array.
+    Do not invent `memcpy_dto_a` as `mem_surf_ref_get_array`.
+    Do not invent `cuMemcpyDtoA` as `mem_surf_ref_get_array`.
+    Do not invent a second `cuMemcpyDtoA` / `mem_memcpy_dto_a`.
+    Do not invent Engine `--mem-memcpy-dto-a`. Do not invent
+    occupancy SM counts this slice. Do not reverse MemMemcpyDtoA identity with memcpy_dto_a.
+    Do not invent `memcpy_ato_d` as `mem_memcpy_dto_a`.
+    Do not invent `cuMemcpyAtoD` as `mem_memcpy_dto_a`.
+    Do not invent a second `cuMemcpyAtoD` / `mem_memcpy_ato_d`.
+    Do not invent Engine `--mem-memcpy-ato-d`. Do not invent
+    occupancy SM counts this slice. Do not reverse MemMemcpyAtoD identity with memcpy_ato_d.
+    Do not invent `memcpy_hto_a` as `mem_memcpy_ato_d`.
+    Do not invent `cuMemcpyHtoA` as `mem_memcpy_ato_d`.
+    Do not invent a second `cuMemcpyHtoA` / `mem_memcpy_hto_a`.
+    Do not invent Engine `--mem-memcpy-hto-a`. Do not invent
+    occupancy SM counts this slice. Do not reverse MemMemcpyHtoA identity with memcpy_hto_a.
+    Do not invent `memcpy_ato_h` as `mem_memcpy_hto_a`.
+    Do not invent `cuMemcpyAtoH` as `mem_memcpy_hto_a`.
+    Do not invent a second `cuMemcpyAtoH` / `mem_memcpy_ato_h`.
+    Do not invent Engine `--mem-memcpy-ato-h`. Do not invent
+    occupancy SM counts this slice. Do not reverse MemMemcpyAtoH identity with memcpy_ato_h.
+    Do not invent `memcpy_ato_a` as `mem_memcpy_ato_h`.
+    Do not invent `cuMemcpyAtoA` as `mem_memcpy_ato_h`.
+    Do not invent a second `cuMemcpyAtoA` / `mem_memcpy_ato_a`.
+    Do not invent Engine `--mem-memcpy-ato-a`. Do not invent
+    occupancy SM counts this slice. Do not reverse MemMemcpyAtoA identity with memcpy_ato_a.
+    Do not invent `memcpy_dto_a_async` as `mem_memcpy_ato_a`.
+    Do not invent `cuMemcpyDtoAAsync` as `mem_memcpy_ato_a`.
+    Do not invent a second `cuMemcpyDtoAAsync` / `mem_memcpy_dto_a_async`.
+    Do not invent Engine `--mem-memcpy-dto-a-async`. Do not invent
+    occupancy SM counts this slice. Do not reverse MemMemcpyDtoAAsync identity with memcpy_dto_a_async.
+    Do not invent `memcpy_ato_d_async` as `mem_memcpy_dto_a_async`.
+    Do not invent `cuMemcpyAtoDAsync` as `mem_memcpy_dto_a_async`.
+    Do not invent a second `cuMemcpyAtoDAsync` / `mem_memcpy_ato_d_async`.
+    Do not invent Engine `--mem-memcpy-ato-d-async`. Do not invent
+    occupancy SM counts this slice. Do not reverse MemMemcpyAtoDAsync identity with memcpy_ato_d_async.
+    Do not invent `memcpy_hto_a_async` as `mem_memcpy_ato_d_async`.
+    Do not invent `cuMemcpyHtoAAsync` as `mem_memcpy_ato_d_async`.
+    Do not invent a second `cuMemcpyHtoAAsync` / `mem_memcpy_hto_a_async`.
+    Do not invent Engine `--mem-memcpy-hto-a-async`. Do not invent
+    occupancy SM counts this slice. Do not reverse MemMemcpyHtoAAsync identity with memcpy_hto_a_async.
+    Do not invent `memcpy_ato_h_async` as `mem_memcpy_hto_a_async`.
+    Do not invent `cuMemcpyAtoHAsync` as `mem_memcpy_hto_a_async`.
+    Do not invent a second `cuMemcpyAtoHAsync` / `mem_memcpy_ato_h_async`.
+    Do not invent Engine `--mem-memcpy-ato-h-async`. Do not invent
+    occupancy SM counts this slice. Do not reverse MemMemcpyAtoHAsync identity with memcpy_ato_h_async.
+    Do not invent `memcpy_ato_a_async` as `mem_memcpy_ato_h_async`.
+    Do not invent `cuMemcpyAtoAAsync` as `mem_memcpy_ato_h_async`.
+    Do not invent a second `cuMemcpyAtoAAsync` / `mem_memcpy_ato_a_async`.
+    Do not invent Engine `--mem-memcpy-ato-a-async`. Do not invent
+    occupancy SM counts this slice. Do not reverse MemMemcpyAtoAAsync identity with memcpy_ato_a_async.
+    Do not invent `memcpy_2d_to_array` as `mem_memcpy_ato_a_async`.
+    Do not invent `cuMemcpy2DToArray` as `mem_memcpy_ato_a_async`.
+    Do not invent a second `cuMemcpy2DToArray` / `mem_memcpy_2d_to_array`.
+    Do not invent Engine `--mem-memcpy-2d-to-array`. Do not invent
+    occupancy SM counts this slice. Do not reverse MemMemcpy2DToArray identity with memcpy_2d_to_array.
+    Do not invent `memcpy_2d_from_array` as `mem_memcpy_2d_to_array`.
+    Do not invent `cuMemcpy2DFromArray` as `mem_memcpy_2d_to_array`.
+    Do not invent a second `cuMemcpy2DFromArray` / `mem_memcpy_2d_from_array`.
+    Do not invent Engine `--mem-memcpy-2d-from-array`. Do not invent
+    occupancy SM counts this slice. Do not reverse MemMemcpy2DFromArray identity with memcpy_2d_from_array.
+    Do not invent `memcpy_2d_array_to_array` as `mem_memcpy_2d_from_array`.
+    Do not invent `cuMemcpy2DArrayToArray` as `mem_memcpy_2d_from_array`.
+    Do not invent a second `cuMemcpy2DArrayToArray` / `mem_memcpy_2d_array_to_array`.
+    Do not invent Engine `--mem-memcpy-2d-array-to-array`. Do not invent
+    occupancy SM counts this slice. Do not reverse MemMemcpy2DArrayToArray identity with memcpy_2d_array_to_array.
+    Do not invent `memcpy_2d_to_array_async` as `mem_memcpy_2d_array_to_array`.
+    Do not invent `cuMemcpy2DToArrayAsync` as `mem_memcpy_2d_array_to_array`.
+    Do not invent a second `cuMemcpy2DToArrayAsync` / `mem_memcpy_2d_to_array_async`.
+    Do not invent Engine `--mem-memcpy-2d-to-array-async`. Do not invent
+    occupancy SM counts this slice. Do not reverse MemMemcpy2DToArrayAsync identity with memcpy_2d_to_array_async.
+    Do not invent `memcpy_2d_from_array_async` as `mem_memcpy_2d_to_array_async`.
+    Do not invent `cuMemcpy2DFromArrayAsync` as `mem_memcpy_2d_to_array_async`.
+    Do not invent a second `cuMemcpy2DFromArrayAsync` / `mem_memcpy_2d_from_array_async`.
+    Do not invent Engine `--mem-memcpy-2d-from-array-async`. Do not invent
+    occupancy SM counts this slice. Do not reverse MemMemcpy2DFromArrayAsync identity with memcpy_2d_from_array_async.
+    Do not invent `memcpy_2d_array_to_array_async` as `mem_memcpy_2d_from_array_async`.
+    Do not invent `cuMemcpy2DArrayToArrayAsync` as `mem_memcpy_2d_from_array_async`.
+    Do not invent a second `cuMemcpy2DArrayToArrayAsync` / `mem_memcpy_2d_array_to_array_async`.
+    Do not invent Engine `--mem-memcpy-2d-array-to-array-async`. Do not invent
+    occupancy SM counts this slice. Do not reverse MemMemcpy2DArrayToArrayAsync identity with memcpy_2d_array_to_array_async.
+    Do not invent `library_load_data` as `mem_memcpy_2d_array_to_array_async`.
+    Do not invent `cuLibraryLoadData` as `mem_memcpy_2d_array_to_array_async`.
+    Do not invent a second `cuLibraryLoadData` / `mem_library_load_data`.
+    Do not invent Engine `--mem-library-load-data`. Do not invent
+    occupancy SM counts this slice. Do not reverse MemLibraryLoadData identity with library_load_data.
+    Do not invent `library_load_from_file` as `mem_library_load_data`.
+    Do not invent `cuLibraryLoadFromFile` as `mem_library_load_data`.
+    Do not invent a second `cuLibraryLoadFromFile` / `mem_library_load_from_file`.
+    Do not invent Engine `--mem-library-load-from-file`. Do not invent
+    occupancy SM counts this slice. Do not reverse MemLibraryLoadFromFile identity with library_load_from_file.
+    Do not invent `library_unload` as `mem_library_load_from_file`.
+    Do not invent `cuLibraryUnload` as `mem_library_load_from_file`.
+    Do not invent a second `cuLibraryUnload` / `mem_library_unload`.
+    Do not invent Engine `--mem-library-unload`. Do not invent
+    occupancy SM counts this slice. Do not reverse MemLibraryUnload identity with library_unload.
+    Do not invent `library_get_kernel` as `mem_library_unload`.
+    Do not invent `cuLibraryGetKernel` as `mem_library_unload`.
+    Do not invent a second `cuLibraryGetKernel` / `mem_library_get_kernel`.
+    Do not invent Engine `--mem-library-get-kernel`. Do not invent
+    occupancy SM counts this slice. Do not reverse MemLibraryGetKernel identity with library_get_kernel.
+    Do not invent `library_get_module` as `mem_library_get_kernel`.
+    Do not invent `cuLibraryGetModule` as `mem_library_get_kernel`.
+    Do not invent a second `cuLibraryGetModule` / `mem_library_get_module`.
+    Do not invent Engine `--mem-library-get-module`. Do not invent
+    occupancy SM counts this slice. Do not reverse MemLibraryGetModule identity with library_get_module.
+    Do not invent `library_get_global` as `mem_library_get_module`.
+    Do not invent `cuLibraryGetGlobal` as `mem_library_get_module`.
+    Do not invent a second `cuLibraryGetGlobal` / `mem_library_get_global`.
+    Do not invent Engine `--mem-library-get-global`. Do not invent
+    occupancy SM counts this slice. Do not reverse MemLibraryGetGlobal identity with library_get_global.
+    Do not invent `library_get_managed` as `mem_library_get_global`.
+    Do not invent `cuLibraryGetManaged` as `mem_library_get_global`.
+    Do not invent a second `cuLibraryGetManaged` / `mem_library_get_managed`.
+    Do not invent Engine `--mem-library-get-managed`. Do not invent
+    occupancy SM counts this slice. Do not reverse MemLibraryGetManaged identity with library_get_managed.
+    Do not invent `library_get_unified_function` as `mem_library_get_managed`.
+    Do not invent `cuLibraryGetUnifiedFunction` as `mem_library_get_managed`.
+    Do not invent a second `cuLibraryGetUnifiedFunction` / `mem_library_get_unified_function`.
+    Do not invent Engine `--mem-library-get-unified-function`. Do not invent
+    occupancy SM counts this slice. Do not reverse MemLibraryGetUnifiedFunction identity with library_get_unified_function.
+    Do not invent `library_get_kernel_count` as `mem_library_get_unified_function`.
+    Do not invent `cuLibraryGetKernelCount` as `mem_library_get_unified_function`.
+    Do not invent a second `cuLibraryGetKernelCount` / `mem_library_get_kernel_count`.
+    Do not invent Engine `--mem-library-get-kernel-count`. Do not invent
+    occupancy SM counts this slice. Do not reverse MemLibraryGetKernelCount identity with library_get_kernel_count.
+    Do not invent `library_enumerate_kernels` as `mem_library_get_kernel_count`.
+    Do not invent `cuLibraryEnumerateKernels` as `mem_library_get_kernel_count`.
+    Do not invent a second `cuLibraryEnumerateKernels` / `mem_library_enumerate_kernels`.
+    Do not invent Engine `--mem-library-enumerate-kernels`. Do not invent
+    occupancy SM counts this slice. Do not reverse MemLibraryEnumerateKernels identity with library_enumerate_kernels.
+    Do not invent `kernel_get_library` as `mem_library_enumerate_kernels`.
+    Do not invent `cuKernelGetLibrary` as `mem_library_enumerate_kernels`.
+    Do not invent a second `cuKernelGetLibrary` / `mem_kernel_get_library`.
+    Do not invent Engine `--mem-kernel-get-library`. Do not invent
+    occupancy SM counts this slice. Do not reverse MemKernelGetLibrary identity with kernel_get_library.
+    Do not invent `kernel_get_function` as `mem_kernel_get_library`.
+    Do not invent `cuKernelGetFunction` as `mem_kernel_get_library`.
+    Do not invent a second `cuKernelGetFunction` / `mem_kernel_get_function`.
+    Do not invent Engine `--mem-kernel-get-function`. Do not invent
+    occupancy SM counts this slice. Do not reverse MemKernelGetFunction identity with kernel_get_function.
+    Do not invent `kernel_get_param_info` as `mem_kernel_get_function`.
+    Do not invent `cuKernelGetParamInfo` as `mem_kernel_get_function`.
+    Do not invent a second `cuKernelGetParamInfo` / `mem_kernel_get_param_info`.
+    Do not invent Engine `--mem-kernel-get-param-info`. Do not invent
+    occupancy SM counts this slice. Do not reverse MemKernelGetParamInfo identity with kernel_get_param_info.
+    Do not invent `kernel_get_param_count` as `mem_kernel_get_param_info`.
+    Do not invent `cuKernelGetParamCount` as `mem_kernel_get_param_info`.
+    Do not invent a second `cuKernelGetParamCount` / `mem_kernel_get_param_count`.
+    Do not invent Engine `--mem-kernel-get-param-count`. Do not invent
+    occupancy SM counts this slice. Do not reverse MemKernelGetParamCount identity with kernel_get_param_count.
+    Do not invent `kernel_get_attribute` as `mem_kernel_get_param_count`.
+    Do not invent `cuKernelGetAttribute` as `mem_kernel_get_param_count`.
+    Do not invent a second `cuKernelGetAttribute` / `mem_kernel_get_attribute`.
+    Do not invent Engine `--mem-kernel-get-attribute`. Do not invent
+    occupancy SM counts this slice. Do not reverse MemKernelGetAttribute identity with kernel_get_attribute.
+    Do not invent `kernel_set_attribute` as `mem_kernel_get_attribute`.
+    Do not invent `cuKernelSetAttribute` as `mem_kernel_get_attribute`.
+    Do not invent a second `cuKernelSetAttribute` / `mem_kernel_set_attribute`.
+    Do not invent Engine `--mem-kernel-set-attribute`. Do not invent
+    occupancy SM counts this slice. Do not reverse MemKernelSetAttribute identity with kernel_set_attribute.
+    Do not invent `kernel_set_cache_config` as `mem_kernel_set_attribute`.
+    Do not invent `cuKernelSetCacheConfig` as `mem_kernel_set_attribute`.
+    Do not invent a second `cuKernelSetCacheConfig` / `mem_kernel_set_cache_config`.
+    Do not invent Engine `--mem-kernel-set-cache-config`. Do not invent
+    occupancy SM counts this slice. Do not reverse MemKernelSetCacheConfig identity with kernel_set_cache_config.
+    Do not invent `link_create` as `mem_kernel_set_cache_config`.
+    Do not invent `cuLinkCreate` as `mem_kernel_set_cache_config`.
+    Do not invent a second `cuLinkCreate` / `mem_link_create`.
+    Do not invent Engine `--mem-link-create`. Do not invent
+    occupancy SM counts this slice. Do not reverse MemLinkCreate identity with link_create.
+    Do not invent `link_add_data` as `mem_link_create`.
+    Do not invent `cuLinkAddData` as `mem_link_create`.
+    Do not invent a second `cuLinkAddData` / `mem_link_add_data`.
+    Do not invent Engine `--mem-link-add-data`. Do not invent
+    occupancy SM counts this slice. Do not reverse MemLinkAddData identity with link_add_data.
+    Do not invent `link_complete` as `mem_link_add_data`.
+    Do not invent `cuLinkComplete` as `mem_link_add_data`.
+    Do not invent a second `cuLinkComplete` / `mem_link_complete`.
+    Do not invent Engine `--mem-link-complete`. Do not invent
+    occupancy SM counts this slice. Do not reverse MemLinkComplete identity with link_complete.
+    Do not invent `link_destroy` as `mem_link_complete`.
+    Do not invent `cuLinkDestroy` as `mem_link_complete`.
+    Do not invent a second `cuLinkDestroy` / `mem_link_destroy`.
+    Do not invent Engine `--mem-link-destroy`. Do not invent
+    occupancy SM counts this slice. Do not reverse MemLinkDestroy identity with link_destroy.
+    Do not invent `link_add_file` as `mem_link_destroy`.
+    Do not invent `cuLinkAddFile` as `mem_link_destroy`.
+    Do not invent a second `cuLinkAddFile` / `mem_link_add_file`.
+    Do not invent Engine `--mem-link-add-file`. Do not invent
+    occupancy SM counts this slice. Do not reverse MemLinkAddFile identity with link_add_file.
+    Do not invent `runtime_get_version` as `mem_link_add_file`.
+    Do not invent `cudaRuntimeGetVersion` as `mem_link_add_file`.
+    Do not invent a second `cudaRuntimeGetVersion` / `mem_runtime_get_version`.
+    Do not invent Engine `--mem-runtime-get-version`. Do not invent
+    occupancy SM counts this slice. Do not reverse MemRuntimeGetVersion identity with runtime_get_version.
+    Do not invent `device_get` as `mem_runtime_get_version`.
+    Do not invent `cuDeviceGet` as `mem_runtime_get_version`.
+    Do not invent a second `cuDeviceGet` / `mem_device_get`.
+    Do not invent Engine `--mem-device-get`. Do not invent
+    occupancy SM counts this slice. Do not reverse MemDeviceGet identity with device_get.
+    Do not invent `device_can_access_peer` as `mem_device_get`.
+    Do not invent `cuDeviceCanAccessPeer` as `mem_device_get`.
+    Do not invent a second `cuFuncGetParamCount` / `mem_func_get_param_count`.
+    Do not invent Engine `--mem-func-get-param-count`. Do not invent
+    occupancy SM counts this slice. Do not reverse MemFuncGetParamCount identity with func_get_param_count.
+    Do not invent `func_get_cache_config` as `mem_func_get_param_count`.
+    Do not invent `cuFuncGetCacheConfig` as `mem_func_get_param_count`.
+    Do not invent a second `cuFuncGetCacheConfig` / `mem_func_get_cache_config`.
+    Do not invent Engine `--mem-func-get-cache-config`. Do not invent
+    occupancy SM counts this slice. Do not reverse MemFuncGetCacheConfig identity with func_get_cache_config.
+    Do not invent `func_is_loaded` as `mem_func_get_cache_config`.
+    Do not invent `cuFuncIsLoaded` as `mem_func_get_cache_config`.
+    Do not invent a second `cuFuncIsLoaded` / `mem_func_is_loaded`.
+    Do not invent Engine `--mem-func-is-loaded`. Do not invent
+    occupancy SM counts this slice. Do not reverse MemFuncIsLoaded identity with func_is_loaded.
+    Do not invent `func_load` as `mem_func_is_loaded`.
+    Do not invent `cuFuncLoad` as `mem_func_is_loaded`.
+    Do not invent a second `cuFuncLoad` / `mem_func_load`.
+    Do not invent Engine `--mem-func-load`. Do not invent
+    occupancy SM counts this slice. Do not reverse MemFuncLoad identity with func_load.
+    Do not invent `func_get_module` as `mem_func_load`.
+    Do not invent `cuFuncGetModule` as `mem_func_load`.
+    Do not invent a second `cuFuncGetModule` / `mem_func_get_module`.
+    Do not invent Engine `--mem-func-get-module`. Do not invent
+    occupancy SM counts this slice. Do not reverse MemFuncGetModule identity with func_get_module.
+    Do not invent `func_set_attribute` as `mem_func_get_module`.
+    Do not invent `cudaFuncSetAttribute` as `mem_func_get_module`.
+    Do not invent a second `cuFuncGetName` / `mem_func_get_name`.
+    Do not invent Engine `--mem-func-get-name`. Do not invent
+    occupancy SM counts this slice. Do not reverse MemFuncGetName identity with func_get_name.
+    Do not invent `func_get_param_info` as `mem_func_get_name`.
+    Do not invent `cuFuncGetParamInfo` as `mem_func_get_name`.
+    Do not invent a second `cuFuncGetParamInfo` / `mem_func_get_param_info`.
+    Do not invent Engine `--mem-func-get-param-info`. Do not invent
+    occupancy SM counts this slice. Do not reverse MemFuncGetParamInfo identity with func_get_param_info.
+    Do not invent `func_set_attribute` as `mem_func_get_param_info`.
+    Do not invent `cudaFuncSetAttribute` as `mem_func_get_param_info`.
+    Do not invent a second `cudaFuncGetAttribute` / `mem_func_get_attribute`.
+    Do not invent Engine `--mem-func-get-attribute`. Do not invent
+    occupancy SM counts this slice. Do not reverse MemFuncGetAttribute identity with func_get_attribute.
+    Do not invent `func_set_attribute` as `mem_func_get_attribute`.
+    Do not invent `cudaFuncSetAttribute` as `mem_func_get_attribute`.
+    Do not invent a second `cudaFuncSetAttribute` / `mem_func_set_attribute`.
+    Do not invent Engine `--mem-func-set-attribute`. Do not invent
+    occupancy SM counts this slice. Do not reverse MemFuncSetAttribute identity with func_set_attribute.
+    Do not invent `func_get_attributes` as `mem_func_set_attribute`.
+    Do not invent `cuFuncGetAttributes` as `mem_func_set_attribute`.
+    Do not invent a second `cudaDeviceGetStreamPriorityRange` / `mem_device_get_stream_priority_range`.
+    Do not invent Engine `--mem-device-get-stream-priority-range`. Do not invent
+    occupancy SM counts this slice. Do not reverse MemDeviceGetStreamPriorityRange identity with device_get_stream_priority_range.
+    Do not invent `ctx_get_stream_priority_range` as `mem_device_get_stream_priority_range`.
+    Do not invent `cuCtxGetStreamPriorityRange` as `mem_device_get_stream_priority_range`.
+    Do not invent a second `cuEventGetId` / `mem_event_get_id`.
+    Do not invent Engine `--mem-event-get-id`. Do not invent
+    occupancy SM counts this slice. Do not reverse MemEventGetId identity with event_get_id.
+    Do not invent `event_create` as `mem_event_get_id`.
+    Do not invent `cuEventCreate` as `mem_event_get_id`.
+    Do not invent a second `cuGreenCtxGetId` / `mem_green_ctx_get_id`.
+    Do not invent Engine `--mem-green-ctx-get-id`. Do not invent
+    occupancy SM counts this slice. Do not reverse MemGreenCtxGetId identity with green_ctx_get_id.
+    Do not invent `green_ctx_get_device` as `mem_green_ctx_get_id`.
+    Do not invent `cudaExecutionCtxGetDevice` as `mem_green_ctx_get_id`.
+    Do not invent a second `cudaExecutionCtxGetDevice` / `mem_green_ctx_get_device`.
+    Do not invent Engine `--mem-green-ctx-get-device`. Do not invent
+    occupancy SM counts this slice. Do not reverse MemGreenCtxGetDevice identity with green_ctx_get_device.
+    Do not invent `stream_get_green_ctx` as `mem_green_ctx_get_device`.
+    Do not invent `cuStreamGetGreenCtx` as `mem_green_ctx_get_device`.
+    Do not invent a second `cuStreamGetGreenCtx` / `mem_stream_get_green_ctx`.
+    Do not invent Engine `--mem-stream-get-green-ctx`. Do not invent
+    occupancy SM counts this slice. Do not reverse MemStreamGetGreenCtx identity with stream_get_green_ctx.
+    Do not invent `green_ctx_create` as `mem_stream_get_green_ctx`.
+    Do not invent `cuGreenCtxCreate` as `mem_stream_get_green_ctx`.
+    Do not invent a second `cuGreenCtxCreate` / `mem_green_ctx_create`.
+    Do not invent Engine `--mem-green-ctx-create`. Do not invent
+    occupancy SM counts this slice. Do not reverse MemGreenCtxCreate identity with green_ctx_create.
+    Do not invent `green_ctx_destroy` as `mem_green_ctx_create`.
+    Do not invent `cuGreenCtxDestroy` as `mem_green_ctx_create`.
+    Do not invent a second `cuGreenCtxDestroy` / `mem_green_ctx_destroy`.
+    Do not invent Engine `--mem-green-ctx-destroy`. Do not invent
+    occupancy SM counts this slice. Do not reverse MemGreenCtxDestroy identity with green_ctx_destroy.
+    Do not invent `green_ctx_set_stream` as `mem_green_ctx_destroy`.
+    Do not invent `cuGreenCtxStreamCreate` as `mem_green_ctx_destroy`.
+    Do not invent a second `cuGreenCtxStreamCreate` / `mem_green_ctx_stream_create`.
+    Do not invent Engine `--mem-green-ctx-stream-create`. Do not invent
+    occupancy SM counts this slice. Do not reverse MemGreenCtxStreamCreate identity with green_ctx_stream_create.
+    Do not invent `green_ctx_set_stream` as `mem_green_ctx_stream_create`.
+    Do not invent `cudaExecutionCtxSynchronize` as `mem_green_ctx_stream_create`.
+    Do not invent a second `cudaExecutionCtxSynchronize` / `mem_green_ctx_synchronize`.
+    Do not invent Engine `--mem-green-ctx-synchronize`. Do not invent
+    occupancy SM counts this slice. Do not reverse MemGreenCtxSynchronize identity with green_ctx_synchronize.
+    Do not invent `green_ctx_record_event` as `mem_green_ctx_synchronize`.
+    Do not invent `cuGreenCtxRecordEvent` as `mem_green_ctx_synchronize`.
+    Do not invent a second `cuGraphNodeGetLocalId` / `mem_graph_node_get_local_id`.
+    Do not invent Engine `--mem-graph-node-get-local-id`. Do not invent
+    occupancy SM counts this slice. Do not reverse MemGraphNodeGetLocalId identity with graph_node_get_local_id.
+    Do not invent `graph_node_get_tools_id` as `mem_graph_node_get_local_id`.
+    Do not invent `cuGraphNodeGetToolsId` as `mem_graph_node_get_local_id`.
+    Do not invent a second `cuGraphNodeGetToolsId` / `mem_graph_node_get_tools_id`.
+    Do not invent Engine `--mem-graph-node-get-tools-id`. Do not invent
+    occupancy SM counts this slice. Do not reverse MemGraphNodeGetToolsId identity with graph_node_get_tools_id.
+    Do not invent `graph_node_get_containing_graph` as `mem_graph_node_get_tools_id`.
+    Do not invent `cuGraphNodeGetContainingGraph` as `mem_graph_node_get_tools_id`.
+    Do not invent a second `cuGraphNodeGetContainingGraph` / `mem_graph_node_get_containing_graph`.
+    Do not invent Engine `--mem-graph-node-get-containing-graph`. Do not invent
+    occupancy SM counts this slice. Do not reverse MemGraphNodeGetContainingGraph identity with graph_node_get_containing_graph.
+    Do not invent `graph_kernel_node_get_priority` as `mem_graph_node_get_containing_graph`.
+    Do not invent `cudaGraphKernelNodeGetAttribute` as `mem_graph_node_get_containing_graph`.
+    Do not invent a second `cuMemPoolGetId` / `mem_pool_get_id`.
+    Do not invent Engine `--mem-pool-get-id`. Do not invent
+    occupancy SM counts this slice. Do not reverse MemPoolGetId identity with pool_get_id.
+    Do not invent `memcpy_htod` as `mem_pool_get_id`.
+    Do not invent `cuMemcpyHtoD` as `mem_pool_get_id`.
+    Do not invent a second `cuMemcpyHtoD` / `mem_memcpy_htod`.
+    Do not invent Engine `--mem-memcpy-htod`. Do not invent
+    occupancy SM counts this slice. Do not reverse MemMemcpyHtod identity with memcpy_htod.
+    Do not invent `memcpy_dtoh` as `mem_memcpy_htod`.
+    Do not invent `cuMemcpyDtoH` as `mem_memcpy_htod`.
+    Do not invent a second `cuMemcpyDtoH` / `mem_memcpy_dtoh`.
+    Do not invent Engine `--mem-memcpy-dtoh`. Do not invent
+    occupancy SM counts this slice. Do not reverse MemMemcpyDtoh identity with memcpy_dtoh.
+    Do not invent `prefetch_batch_async` as `mem_memcpy_dtoh`.
+    Do not invent `cudaMemPrefetchBatchAsync` as `mem_memcpy_dtoh`.
+    Do not invent a second `cudaMemPrefetchBatchAsync` / `mem_prefetch_batch_async`.
+    Do not invent Engine `--mem-prefetch-batch-async`. Do not invent
+    occupancy SM counts this slice. Do not reverse MemPrefetchBatchAsync identity with prefetch_batch_async.
+    Do not invent `discard_batch_async` as `mem_prefetch_batch_async`.
+    Do not invent `cudaMemDiscardBatchAsync` as `mem_prefetch_batch_async`.
+    Do not invent a second `cudaMemDiscardBatchAsync` / `mem_discard_batch_async`.
+    Do not invent Engine `--mem-discard-batch-async`. Do not invent
+    occupancy SM counts this slice. Do not reverse MemDiscardBatchAsync identity with discard_batch_async.
+    Do not invent `discard_and_prefetch_batch_async` as `mem_discard_batch_async`.
+    Do not invent `cudaMemDiscardAndPrefetchBatchAsync` as `mem_discard_batch_async`.
+    Do not invent a second `cudaMemDiscardAndPrefetchBatchAsync` / `mem_discard_and_prefetch_batch_async`.
+    Do not invent Engine `--mem-discard-and-prefetch-batch-async`. Do not invent
+    occupancy SM counts this slice. Do not reverse MemDiscardAndPrefetchBatchAsync identity with discard_and_prefetch_batch_async.
+    Do not invent `tensor_map_encode_tiled` as `mem_discard_and_prefetch_batch_async`.
+    Do not invent `cuTensorMapEncodeTiled` as `mem_discard_and_prefetch_batch_async`.
+    Do not invent a second `cuTensorMapEncodeTiled` / `mem_tensor_map_encode_tiled`.
+    Do not invent Engine `--mem-tensor-map-encode-tiled`. Do not invent
+    occupancy SM counts this slice. Do not reverse MemTensorMapEncodeTiled identity with tensor_map_encode_tiled.
+    Do not invent `tensor_map_encode_im2col` as `mem_tensor_map_encode_tiled`.
+    Do not invent `cuTensorMapEncodeIm2col` as `mem_tensor_map_encode_tiled`.
+    Do not invent a second `cuTensorMapEncodeIm2col` / `mem_tensor_map_encode_im2col`.
+    Do not invent Engine `--mem-tensor-map-encode-im2col`. Do not invent
+    occupancy SM counts this slice. Do not reverse MemTensorMapEncodeIm2col identity with tensor_map_encode_im2col.
+    Do not invent `tensor_map_encode_im2col_wide` as `mem_tensor_map_encode_im2col`.
+    Do not invent `cuTensorMapEncodeIm2colWide` as `mem_tensor_map_encode_im2col`.
+    Do not invent a second `cuTensorMapEncodeIm2colWide` / `mem_tensor_map_encode_im2col_wide`.
+    Do not invent Engine `--mem-tensor-map-encode-im2col-wide`. Do not invent
+    occupancy SM counts this slice. Do not reverse MemTensorMapEncodeIm2colWide identity with tensor_map_encode_im2col_wide.
+    Do not invent `tensor_map_replace_aligned_addr` as `mem_tensor_map_encode_im2col_wide`.
+    Do not invent `cuTensorMapReplaceAlignedAddr` as `mem_tensor_map_encode_im2col_wide`.
+    Do not invent a second `cuTensorMapReplaceAlignedAddr` / `mem_tensor_map_replace_aligned_addr`.
+    Do not invent Engine `--mem-tensor-map-replace-aligned-addr`. Do not invent
+    occupancy SM counts this slice. Do not reverse MemTensorMapReplaceAlignedAddr identity with tensor_map_replace_aligned_addr.
+    Do not invent `array_get_descriptor` as `mem_tensor_map_replace_aligned_addr`.
+    Do not invent `cuArrayGetDescriptor` as `mem_tensor_map_replace_aligned_addr`.
+    Do not invent a second `cuArrayGetDescriptor` / `mem_array_get_descriptor`.
+    Do not invent Engine `--mem-array-get-descriptor`. Do not invent
+    occupancy SM counts this slice. Do not reverse MemArrayGetDescriptor identity with array_get_descriptor.
+    Do not invent `array_3d_get_descriptor` as `mem_array_get_descriptor`.
+    Do not invent `cuArray3DGetDescriptor` as `mem_array_get_descriptor`.
+    Do not invent a second `cuArray3DGetDescriptor` / `mem_array_3d_get_descriptor`.
+    Do not invent Engine `--mem-array-3d-get-descriptor`. Do not invent
+    occupancy SM counts this slice. Do not reverse MemArray3dGetDescriptor identity with array_3d_get_descriptor.
+    Do not invent `array_get_sparse_properties` as `mem_array_3d_get_descriptor`.
+    Do not invent `cuArrayGetSparseProperties` as `mem_array_3d_get_descriptor`.
+    Do not invent a second `cuArrayGetSparseProperties` / `mem_array_get_sparse_properties`.
+    Do not invent Engine `--mem-array-get-sparse-properties`. Do not invent
+    occupancy SM counts this slice. Do not reverse MemArrayGetSparseProperties identity with array_get_sparse_properties.
+    Do not invent `array_get_plane` as `mem_array_get_sparse_properties`.
+    Do not invent `cuArrayGetPlane` as `mem_array_get_sparse_properties`.
+    Do not invent a second `cuArrayGetPlane` / `mem_array_get_plane`.
+    Do not invent Engine `--mem-array-get-plane`. Do not invent
+    occupancy SM counts this slice. Do not reverse MemArrayGetPlane identity with array_get_plane.
+    Do not invent `array_get_memory_requirements` as `mem_array_get_plane`.
+    Do not invent `cuArrayGetMemoryRequirements` as `mem_array_get_plane`.
+    Do not invent a second `cuArrayGetMemoryRequirements` / `mem_array_get_memory_requirements`.
+    Do not invent Engine `--mem-array-get-memory-requirements`. Do not invent
+    occupancy SM counts this slice. Do not reverse MemArrayGetMemoryRequirements identity with array_get_memory_requirements.
+    Do not invent `mipmapped_array_get_memory_requirements` as `mem_array_get_memory_requirements`.
+    Do not invent `cuMipmappedArrayGetMemoryRequirements` as `mem_array_get_memory_requirements`.
+    Do not invent a second `cuMipmappedArrayGetMemoryRequirements` / `mem_mipmapped_array_get_memory_requirements`.
+    Do not invent Engine `--mem-mipmapped-array-get-memory-requirements`. Do not invent
+    occupancy SM counts this slice. Do not reverse MemMipmappedArrayGetMemoryRequirements identity with mipmapped_array_get_memory_requirements.
+    Do not invent `mipmapped_array_get_sparse_properties` as `mem_mipmapped_array_get_memory_requirements`.
+    Do not invent `cuMipmappedArrayGetSparseProperties` as `mem_mipmapped_array_get_memory_requirements`.
+    Do not invent a second `cuMipmappedArrayGetSparseProperties` / `mem_mipmapped_array_get_sparse_properties`.
+    Do not invent Engine `--mem-mipmapped-array-get-sparse-properties`. Do not invent
+    occupancy SM counts this slice. Do not reverse MemMipmappedArrayGetSparseProperties identity with mipmapped_array_get_sparse_properties.
+    Do not invent `mipmapped_array_create` as `mem_mipmapped_array_get_sparse_properties`.
+    Do not invent `cuMipmappedArrayCreate` as `mem_mipmapped_array_get_sparse_properties`.
+    Do not invent a second `cuMipmappedArrayCreate` / `mem_mipmapped_array_create`.
+    Do not invent Engine `--mem-mipmapped-array-create`. Do not invent
+    occupancy SM counts this slice. Do not reverse MemMipmappedArrayCreate identity with mipmapped_array_create.
+    Do not invent `mipmapped_array_get_level` as `mem_mipmapped_array_create`.
+    Do not invent `cuMipmappedArrayGetLevel` as `mem_mipmapped_array_create`.
+    Do not invent a second `cuMipmappedArrayGetLevel` / `mem_mipmapped_array_get_level`.
+    Do not invent Engine `--mem-mipmapped-array-get-level`. Do not invent
+    occupancy SM counts this slice. Do not reverse MemMipmappedArrayGetLevel identity with mipmapped_array_get_level.
+    Do not invent `mipmapped_array_destroy` as `mem_mipmapped_array_get_level`.
+    Do not invent `cuMipmappedArrayDestroy` as `mem_mipmapped_array_get_level`.
+    Do not invent a second `cuMipmappedArrayDestroy` / `mem_mipmapped_array_destroy`.
+    Do not invent Engine `--mem-mipmapped-array-destroy`. Do not invent
+    occupancy SM counts this slice. Do not reverse MemMipmappedArrayDestroy identity with mipmapped_array_destroy.
+    Do not invent `import_external_memory` as `mem_mipmapped_array_destroy`.
+    Do not invent `cuImportExternalMemory` as `mem_mipmapped_array_destroy`.
+    Do not invent a second `cuImportExternalMemory` / `mem_import_external_memory`.
+    Do not invent Engine `--mem-import-external-memory`. Do not invent
+    occupancy SM counts this slice. Do not reverse MemImportExternalMemory identity with import_external_memory.
+    Do not invent `destroy_external_memory` as `mem_import_external_memory`.
+    Do not invent `cuDestroyExternalMemory` as `mem_import_external_memory`.
+    Do not invent a second `cuDestroyExternalMemory` / `mem_destroy_external_memory`.
+    Do not invent Engine `--mem-destroy-external-memory`. Do not invent
+    occupancy SM counts this slice. Do not reverse MemDestroyExternalMemory identity with destroy_external_memory.
+    Do not invent `external_memory_get_mapped_buffer` as `mem_destroy_external_memory`.
+    Do not invent `cuExternalMemoryGetMappedBuffer` as `mem_destroy_external_memory`.
+    Do not invent a second `cuExternalMemoryGetMappedBuffer` / `mem_external_memory_get_mapped_buffer`.
+    Do not invent Engine `--mem-external-memory-get-mapped-buffer`. Do not invent
+    occupancy SM counts this slice. Do not reverse MemExternalMemoryGetMappedBuffer identity with external_memory_get_mapped_buffer.
+    Do not invent `external_memory_get_mapped_mipmapped_array` as `mem_external_memory_get_mapped_buffer`.
+    Do not invent `cuExternalMemoryGetMappedMipmappedArray` as `mem_external_memory_get_mapped_buffer`.
+    Do not invent a second `cuExternalMemoryGetMappedMipmappedArray` / `mem_external_memory_get_mapped_mipmapped_array`.
+    Do not invent Engine `--mem-external-memory-get-mapped-mipmapped-array`. Do not invent
+    occupancy SM counts this slice. Do not reverse MemExternalMemoryGetMappedMipmappedArray identity with external_memory_get_mapped_mipmapped_array.
+    Do not invent `import_external_semaphore` as `mem_external_memory_get_mapped_mipmapped_array`.
+    Do not invent `cuImportExternalSemaphore` as `mem_external_memory_get_mapped_mipmapped_array`.
+    Do not invent a second `cuImportExternalSemaphore` / `mem_import_external_semaphore`.
+    Do not invent Engine `--mem-import-external-semaphore`. Do not invent
+    occupancy SM counts this slice. Do not reverse MemImportExternalSemaphore identity with import_external_semaphore.
+    Do not invent `destroy_external_semaphore` as `mem_import_external_semaphore`.
+    Do not invent `cuDestroyExternalSemaphore` as `mem_import_external_semaphore`.
+    Do not invent a second `cuDestroyExternalSemaphore` / `mem_destroy_external_semaphore`.
+    Do not invent Engine `--mem-destroy-external-semaphore`. Do not invent
+    occupancy SM counts this slice. Do not reverse MemDestroyExternalSemaphore identity with destroy_external_semaphore.
+    Do not invent `signal_external_semaphores_async` as `mem_destroy_external_semaphore`.
+    Do not invent `cuSignalExternalSemaphoresAsync` as `mem_destroy_external_semaphore`.
+    Do not invent a second `cuSignalExternalSemaphoresAsync` / `mem_signal_external_semaphores_async`.
+    Do not invent Engine `--mem-signal-external-semaphores-async`. Do not invent
+    occupancy SM counts this slice. Do not reverse MemSignalExternalSemaphoresAsync identity with signal_external_semaphores_async.
+    Do not invent `wait_external_semaphores_async` as `mem_signal_external_semaphores_async`.
+    Do not invent `cuWaitExternalSemaphoresAsync` as `mem_signal_external_semaphores_async`.
+    Do not invent a second `cuWaitExternalSemaphoresAsync` / `mem_wait_external_semaphores_async`.
+    Do not invent Engine `--mem-wait-external-semaphores-async`. Do not invent
+    occupancy SM counts this slice. Do not reverse MemWaitExternalSemaphoresAsync identity with wait_external_semaphores_async.
+    Do not invent `surf_object_create` as `mem_wait_external_semaphores_async`.
+    Do not invent `cuSurfObjectCreate` as `mem_wait_external_semaphores_async`.
     Do not invent a second `cudaStreamAddCallback`.
     Do not invent Engine `--stream-callback` (same wall as second live
     `cudaLaunchHostFunc` after miss DMA).
@@ -6177,6 +14149,2864 @@ model, do not celebrate the sim.
     topology or alloc/free mismatches. Do not refuse destroy of an undefined
     graph. Do not reverse matching recapture realloc returning the existing
     graph-mem pointer.
+    Do not invent a second `cudaDeviceGetStreamPriorityRange` /
+    `device_get_stream_priority_range`. Do not invent Engine
+    `--stream-priority-range`. Do not reverse CUDA stream-priority polarity
+    (numerically lower runs first). Do not reverse stream Get/SetPriority
+    clamping to the device range. Do not reverse PLAN 506 unclamped ExecUpdate
+    kernel-node priority comparison. Do not refuse
+    `graph_exec_kernel_node_set_priority` out of the stream range. Do not
+    clamp GraphStep.priority for ExecUpdate.
+    Do not invent a second `cudaGetCurrentGraphExec` /
+    `current_graph_exec`. Do not invent Engine `--current-graph-exec`.
+    Do not treat host `launch_graph` as current. Do not invent public
+    `Sim::advance` as GetCurrentGraphExec. Do not reverse host
+    `launch_graph` of a DEVICE_LAUNCH exec remaining legal. Do not
+    reverse DeviceLaunch in-flight SetParams / upload refuse.
+    Do not invent a second `cudaStreamDestroy` / `destroy_stream`. Do not
+    invent Engine `--stream-destroy`. Do not reverse NULL-stream destroy
+    refuse. Do not abort in-flight work on stream destroy. Do not wait like
+    `destroy_event`.     Do not reverse recreate-while-unfinished
+    `"stream in flight"`.
+    Do not invent a second `cudaStreamGraphFireAndForget` /
+    `cudaStreamGraphTailLaunch`. Do not invent Engine `--graph-tail-launch`.
+    Do not invent a second `cudaStreamGraphFireAndForgetAsSibling`. Do not
+    invent Engine `--graph-faf-sibling`. Do not reverse FAF parent-stream
+    wait. Do not reverse TailLaunch waiting for FAF children (not siblings).
+    Do not treat
+    host `launch_graph` of those ids as legal. Do not reverse lowest-id
+    `current_graph_exec` among all in-flight DeviceLaunch tails. Do not
+    reverse self tail-relaunch of the in-flight exec.
+    Do not invent a second `cudaLimitDevRuntimePendingLaunchCount` cap. Do
+    not invent Engine `--pending-launch`. Do not make `DevRuntimeSyncDepth`
+    mechanical. Do not count a queued tail against pending until flush.
+    Do not reverse default pending 2048.
+    Do not invent a second `cudaDeviceReset` / `reset_device`. Do not invent
+    Engine `--device-reset`. Do not free `cudaMallocAsync` on device reset.
+    Do not destroy NULL stream on device reset. Do not reverse `ctx_get_id`
+    stability across reset. Do not reverse `destroy_stream` returning
+    immediately (reset waits). Do not free host or managed allocs on reset
+    (no owning device). Do not destroy events or graphs on reset.
+    Do not invent a second `cudaGetErrorName` / `cudaGetErrorString` /
+    `error_name` / `error_string`. Do not invent Engine `--error-name`.
+    Do not reverse `Display` of `SimError`. Do not put the modeled `why`
+    into `error_string` for `Invalid`.
+    Do not invent a second compute-capability DeviceAttr pair. Do not invent
+    Engine `--compute-capability`. Do not reverse Hopper 9.0 on example H100
+    / H200. Do not rank devices by SM count (occupancy stays walled).
+    Do not invent a second launch-geometry DeviceAttr family. Do not invent
+    Engine `--max-threads`. Do not reverse MaxThreadsPerBlock 1024. Do not
+    invent `cudaDevAttrWarpSize` this slice.
+    Do not invent a second MaxRegistersPerBlock query. Do not invent
+    Engine `--max-registers`. Do not invent per-SM register occupancy
+    this slice.
+    Do not invent a second global-memory-bus-width DeviceAttr. Do not
+    invent Engine `--memory-bus`. Do not invent memory clock this slice.
+    Do not invent a second texture 2D/3D dim DeviceAttr family. Do not
+    invent Engine `--max-texture`. Do not invent CUDA arrays this slice.
+    Do not invent a second surface 1D/2D/3D dim DeviceAttr family. Do
+    not invent Engine `--max-surface`. Do not reverse SurfaceAlignment 0.
+    Do not invent a second single-to-double perf-ratio DeviceAttr. Do
+    not invent Engine `--dp-ratio`. Do not invent an FP64 dtype this
+    slice.
+    Do not invent a second compiler-emitted FuncAttributes family. Do
+    not invent Engine `--ptx-version`. Do not invent `FuncAttr` setters
+    for sharedSizeBytes this slice. Do not reverse function
+    maxThreadsPerBlock staying 0.
+    Do not invent a second linear-texture DeviceAttr family. Do not
+    invent Engine `--linear-texture`. Do not invent CUDA linear bind
+    this slice. Do not reverse linear texture dims staying 0.
+    Do not invent a second texture-gather DeviceAttr family. Do not
+    invent Engine `--gather-texture`. Do not invent CUDA tex2Dgather
+    this slice. Do not reverse gather texture dims staying 0.
+    Do not invent a second mipmapped-texture DeviceAttr family. Do not
+    invent Engine `--mipmap-texture`. Do not invent CUDA tex1DLod this
+    slice. Do not reverse mipmapped texture dims staying 0.
+    Do not invent a second cubemap-texture DeviceAttr. Do not invent
+    Engine `--cubemap-texture`. Do not invent CUDA texCubemap this
+    slice. Do not reverse cubemap texture width staying 0.
+    Do not invent a second layered-texture DeviceAttr family. Do not
+    invent Engine `--layered-texture`. Do not invent CUDA tex1DLayered
+    this slice. Do not reverse layered texture dims staying 0.
+    Do not invent a second cubemap-layered texture DeviceAttr family. Do
+    not invent Engine `--cubemap-layered`. Do not invent CUDA
+    texCubemapLayered this slice. Do not reverse cubemap layered texture
+    dims staying 0.
+    Do not invent a second layered-surface DeviceAttr family. Do not
+    invent Engine `--layered-surface`. Do not invent CUDA surf1DLayered
+    this slice. Do not reverse layered surface dims staying 0.
+    Do not invent a second cubemap-surface DeviceAttr family. Do not
+    invent Engine `--cubemap-surface`. Do not invent CUDA surfCubemap
+    this slice. Do not reverse cubemap     surface dims staying 0.
+    Do not invent a second pciSubSystemID DeviceProperties field. Do
+    not invent Engine `--pci-subsys`. Do not invent a PCI vendor id this
+    slice. Do not reverse pciSubSystemID staying 0.
+    Do not invent a second luid DeviceProperties field. Do not invent
+    Engine `--device-luid`. Do not invent a Windows LUID export this
+    slice. Do not reverse luid staying 0.
+    Do not invent a second `device_get_luid` API. Do not invent
+    Engine `--cu-luid`. Do not invent a LUID inverse lookup this
+    slice. Do not reverse device_get_luid zeros.
+    Do not invent a second texture-3d-alt DeviceAttr family. Do not
+    invent Engine `--tex3d-alt`. Do not invent CUDA maxTexture3DAlt
+    bind this slice. Do not reverse alternate 3D texture dims staying 0.
+    Do not invent a second MpsEnabled DeviceAttr. Do not invent
+    Engine `--mps`. Do not invent a CUDA MPS client this slice.
+    Do not reverse MpsEnabled staying 0.
+    Do not invent a second D3D12CigSupported DeviceAttr. Do not invent
+    Engine `--d3d12`. Do not invent D3D12 interop this slice.
+    Do not reverse D3D12CigSupported staying 0.
+    Do not invent a second VulkanCigSupported DeviceAttr. Do not invent
+    Engine `--vulkan`. Do not invent Vulkan interop this slice.
+    Do not reverse VulkanCigSupported staying 0.
+    Do not invent a second `device_get_texture_1d_linear_max_width` API.
+    Do not invent Engine `--tex1d-linear-max`. Do not invent format or
+    channel-count args this slice. Do not reverse texture 1D linear max
+    width staying 0.
+    Do not invent a second MaxSharedMemoryPerMultiprocessor DeviceAttr.
+    Do not invent Engine `--smem-mp`. Do not invent registers per
+    multiprocessor this slice. Do not reverse per-multiprocessor shared
+    matching optin.
+    Do not invent a second GpuPciDeviceId DeviceAttr. Do not invent
+    Engine `--gpu-pci-id`. Do not invent a NVIDIA PCI vendor id this
+    slice. Do not reverse GpuPciDeviceId staying 0.
+    Do not invent a second GpuPciSubsystemId DeviceAttr. Do not invent
+    Engine `--gpu-pci-subsys`. Do not invent a NVIDIA PCI subsystem
+    vendor this slice. Do not reverse GpuPciSubsystemId staying 0.
+    Do not invent a second `device_compute_capability` API. Do not invent
+    Engine `--device-cc`. Do not invent a second ComputeCapabilityMajor
+    DeviceAttr. Do not reverse Hopper 9.0.
+    Do not invent a second `ctx_get_api_version` API. Do not invent
+    Engine `--api-version`. Do not invent a second `driver_get_version`.
+    Do not reverse CUDA 13.0.
+    Do not invent a second `ctx_get_flags` API. Do not invent
+    Engine `--context-flags`. Do not invent a second `get_device_flags`.
+    Do not reverse wrapping device flags.
+    Do not invent a second `ctx_get_cache_config` API. Do not invent
+    Engine `--context-cache`. Do not invent a second `get_cache_config`.
+    Do not reverse wrapping device cache config.
+    Do not invent a second `ctx_get_stream_priority_range` API. Do not
+    invent Engine `--context-priority`. Do not invent a second
+    `device_get_stream_priority_range`. Do not reverse H100 `(0, -5)`.
+    Do not invent a second `ctx_get_limit` API. Do not invent
+    Engine `--context-limit`. Do not invent a second `get_limit`.
+    Do not reverse wrapping device limits.
+    Do not invent a second `ctx_synchronize` API. Do not invent
+    Engine `--context-sync`. Do not invent a second `synchronize_device`.
+    Do not reverse other GPUs keeping running.
+    Do not invent a second `ctx_get_shared_mem_config` API. Do not
+    invent Engine `--context-shared-mem`. Do not invent a second
+    `get_shared_mem_config`. Do not reverse wrapping device shared mem.
+    Do not invent a second `device_primary_ctx_set_flags` API. Do not
+    invent Engine `--primary-set-flags`. Do not invent PrimaryCtxRelease.
+    Do not reverse flags staying unapplied.
+    Do not invent a second `func_get_name` API. Do not invent
+    Engine `--function-name`. Do not invent a compiled kernel this
+    slice. Do not reverse empty `func_get_name`.
+    Do not invent a second `func_get_param_info` API. Do not invent
+    Engine `--function-param`. Do not invent parameter-blob layout this
+    slice. Do not reverse `"unknown function"`.
+    Do not invent a second `driver_init` API. Do not invent
+    Engine `--driver-init`. Do not invent a second `init_device`.
+    Do not reverse flags 0 remaining a no-op.
+    Do not invent a second `module_get_loading_mode` API. Do not invent
+    Engine `--loading-mode`. Do not invent `cuModuleLoad`. Do not reverse
+    Eager remaining 1.
+    Do not invent a second `ctx_get_device` API. Do not invent
+    Engine `--context-device`. Do not invent a second `green_ctx_get_device`.
+    Do not reverse returning the explicit device.
+    Do not invent a second `func_is_loaded` API. Do not invent
+    Engine `--function-loaded`. Do not invent a compiled kernel this
+    slice. Do not reverse `Ok(false)`.
+    Do not invent a second `func_get_module` API. Do not invent
+    Engine `--function-module`. Do not invent a `CUmodule` handle this
+    slice. Do not reverse `"unknown function"`.
+    Do not invent a second `ctx_reset_persisting_l2_cache` API. Do not invent
+    Engine `--context-reset-l2`. Do not invent a second
+    `reset_persisting_l2_cache`. Do not reverse capture refuse.
+    Do not invent a second `ctx_get_exec_affinity` API. Do not invent
+    Engine `--context-exec-affinity`. Do not invent a second
+    `device_get_exec_affinity_support`. Do not reverse unsupported SM_COUNT.
+    Do not invent a second `mem_batch_decompress_async` API. Do not invent
+    Engine `--batch-decompress`. Do not invent a second
+    `MemDecompressAlgorithmMask`. Do not reverse `"hw decompress"`.
+    Do not invent a second `tensor_map_encode_tiled` API. Do not invent
+    Engine `--tma-encode`. Do not invent a `CUtensorMap` object this
+    slice. Do not reverse TensorMapAccessSupported staying 0.
+    Do not invent a second `cooperative_kernel_multi_device` API. Do not invent
+    Engine `--multi-coop`. Do not invent a second `cooperative_kernel`.
+    Do not reverse CooperativeMultiDeviceLaunch staying 0.
+    Do not invent a second `array_create` API. Do not invent
+    Engine `--create-array`. Do not invent `cuTexObjectCreate` this
+    slice. Do not reverse SparseCudaArraySupported staying 0.
+    Do not invent a second `import_external_memory` API. Do not invent
+    Engine `--import-ext-mem`. Do not invent
+    `cuExternalMemoryGetMappedBuffer` this slice. Do not reverse
+    DmaBufSupported staying 0.
+    Do not invent a second `surf_object_create` API. Do not invent
+    Engine `--create-surf`. Do not invent `cuSurfObjectGetResourceDesc`
+    this slice. Do not reverse MaxSurface dims staying 0.
+    Do not invent a second `library_load_data` API. Do not invent
+    Engine `--load-library`. Do not invent a `CUlibrary` handle this
+    slice. Do not reverse no cubin.
+    Do not invent a second `get_proc_address` API. Do not invent
+    Engine `--get-proc`. Do not invent a C ABI function pointer this
+    slice. Do not reverse no driver entry.
+    Do not invent a second `graphics_map_resources` API. Do not invent
+    Engine `--map-graphics`. Do not invent `cuGraphicsUnmapResources`
+    this slice. Do not reverse D3D12CigSupported staying 0.
+    Do not invent a second `coredump_get_attribute` API. Do not invent
+    Engine `--get-coredump`. Do not invent a `CU_COREDUMP_FILE` path this
+    slice. Do not reverse coredump remaining unsupported.
+    Do not invent a second `checkpoint_process_lock` API. Do not invent
+    Engine `--lock-checkpoint`. Do not invent `cuCheckpointProcessRestore`
+    this slice. Do not reverse checkpoint remaining unsupported.
+    Do not invent a second `mipmapped_array_create` API. Do not invent
+    Engine `--create-mipmap`. Do not invent `cuArrayGetSparseProperties`
+    this slice. Do not reverse mipmapped texture dims staying 0.
+    Do not invent a second `link_create` API. Do not invent
+    Engine `--link-create`. Do not invent a `CUlinkState` this slice.
+    Do not reverse no JIT linker.
+    Do not invent a second `get_export_table` API. Do not invent
+    Engine `--get-export`. Do not invent an internal driver table this
+    slice. Do not reverse no C ABI tables.
+    Do not invent a second `profiler_start` API. Do not invent
+    Engine `--start-profiler`. Do not invent `cudaProfilerInitialize`
+    this slice. Do not reverse capture refuse.
+    Do not invent a second `egl_stream_consumer_connect` API. Do not invent
+    Engine `--egl-consumer`. Do not invent an `EGLStreamKHR` this slice.
+    Do not reverse EGL remaining unsupported.
+    Do not invent a second `gl_get_devices` API. Do not invent
+    Engine `--get-gl-devices`. Do not invent `cudaGLSetGLDevice` this
+    slice. Do not reverse OpenGL remaining unsupported.
+    Do not invent a second `d3d11_get_devices` API. Do not invent
+    Engine `--get-d3d11`. Do not invent `cuD3D11GetDevice` this slice.
+    Do not reverse Direct3D 11 remaining unsupported.
+    Do not invent a second `d3d12_get_devices` API. Do not invent
+    Engine `--get-d3d12`. Do not invent `cuD3D12GetDevice` this slice.
+    Do not reverse Direct3D 12 remaining unsupported.
+    Do not invent a second `vdpau_get_device` API. Do not invent
+    Engine `--get-vdpau`. Do not invent `cudaVDPAUSetVDPAUDevice` this
+    slice. Do not reverse VDPAU remaining unsupported.
+    Do not invent a second `d3d9_get_devices` API. Do not invent
+    Engine `--get-d3d9`. Do not invent `cuD3D9GetDevice` this slice.
+    Do not reverse Direct3D 9 remaining unsupported.
+    Do not invent a second `d3d10_get_devices` API. Do not invent
+    Engine `--get-d3d10`. Do not invent `cuD3D10GetDevice` this slice.
+    Do not reverse Direct3D 10 remaining unsupported.
+    Do not invent a second `profiler_stop` API. Do not invent
+    Engine `--stop-profiler`. Do not invent a CUPTI activity buffer this
+    slice. Do not reverse capture refuse for stop.
+    Do not invent a second `profiler_initialize` API. Do not invent
+    Engine `--init-profiler`. Do not invent `cudaOutputMode` this slice.
+    Do not reverse profiler config remaining unsupported.
+    Do not invent a second `tex_object_create` API. Do not invent
+    Engine `--create-tex`. Do not invent `cuTexObjectGetResourceDesc`
+    this slice. Do not reverse CUDA textures remaining unsupported.
+    Do not invent a second `tex_object_destroy` API. Do not invent
+    Engine `--destroy-tex`. Do not invent a `CUDA_TEXTURE_DESC` this
+    slice. Do not reverse no texture-object handles.
+    Do not invent a second `surf_object_destroy` API. Do not invent
+    Engine `--destroy-surf`. Do not invent a surface `CUDA_RESOURCE_DESC`
+    this slice. Do not reverse no surface-object handles.
+    Do not invent a second `surf_object_get_resource_desc` API. Do not
+    invent Engine `--get-surf-resource`. Do not invent a populated
+    resource-desc struct this slice. Do not reverse surf resource desc
+    remaining unsupported.
+    Do not invent a second `tex_object_get_resource_desc` API. Do not
+    invent Engine `--get-tex-resource`. Do not invent a
+    `CUDA_RESOURCE_VIEW_DESC` this slice. Do not reverse tex resource
+    desc remaining unsupported.
+    Do not invent a second `tex_object_get_texture_desc` API. Do not
+    invent Engine `--get-tex-desc`. Do not invent a filter-mode enum
+    this slice. Do not reverse texture desc remaining unsupported.
+    Do not invent a second `tex_object_get_resource_view_desc` API. Do
+    not invent Engine `--get-tex-view`. Do not invent a resource-view
+    format enum this slice. Do not reverse tex view desc remaining
+    unsupported.
+    Do not invent a second `gl_ctx_create` API. Do not invent
+    Engine `--create-gl-ctx`. Do not invent `cuGLRegisterBufferObject`
+    this slice. Do not reverse OpenGL context remaining unsupported.
+    Do not invent a second `d3d11_ctx_create` API. Do not invent
+    Engine `--create-d3d11-ctx`. Do not invent
+    `cuD3D11CtxCreateOnDevice` this slice. Do not reverse Direct3D 11
+    context remaining unsupported.
+    Do not invent a second `d3d12_ctx_create` API. Do not invent
+    Engine `--create-d3d12-ctx`. Do not invent
+    `cuD3D12CtxCreateOnDevice` this slice. Do not reverse Direct3D 12
+    context remaining unsupported.
+    Do not invent a second `d3d9_ctx_create` API. Do not invent
+    Engine `--create-d3d9-ctx`. Do not invent `cuD3D9CtxCreateOnDevice`
+    this slice. Do not reverse Direct3D 9 context remaining unsupported.
+    Do not invent a second `d3d10_ctx_create` API. Do not invent
+    Engine `--create-d3d10-ctx`. Do not invent `cuD3D10CtxCreateOnDevice`
+    this slice. Do not reverse Direct3D 10 context remaining unsupported.
+    Do not invent a second `vdpau_ctx_create` API. Do not invent
+    Engine `--create-vdpau-ctx`. Do not invent
+    `cuGraphicsVDPAURegisterVideoSurface` this slice. Do not reverse
+    VDPAU context remaining unsupported.
+    Do not invent a second `egl_stream_producer_connect` API. Do not invent
+    Engine `--create-egl-producer`. Do not invent
+    `cuEGLStreamConsumerDisconnect` this slice. Do not reverse
+    EGL producer remaining unsupported.
+    Do not invent a second `array_get_descriptor` API. Do not invent
+    Engine `--get-array-desc`. Do not invent a populated
+    `CUDA_ARRAY_DESCRIPTOR` this slice. Do not reverse
+    array descriptor remaining unsupported.
+    Do not invent a second `graphics_gl_register_buffer` API. Do not invent
+    Engine `--register-gl-buffer`. Do not invent
+    `CU_GRAPHICS_REGISTER_FLAGS` this slice. Do not reverse
+    GL buffer register remaining unsupported.
+    Do not invent a second `array_3d_get_descriptor` API. Do not invent
+    Engine `--get-array-3d-desc`. Do not invent a populated
+    `CUDA_ARRAY3D_DESCRIPTOR` this slice. Do not reverse
+    array 3D descriptor remaining unsupported.
+    Do not invent a second `graphics_gl_register_image` API. Do not invent
+    Engine `--register-gl-image`. Do not invent a GL texture target this
+    slice. Do not reverse GL image register remaining unsupported.
+    Do not invent a second `graphics_unmap_resources` API. Do not invent
+    Engine `--unmap-graphics`. Do not invent
+    `cuGraphicsUnregisterResource` this slice. Do not reverse
+    graphics unmap remaining unsupported.
+    Do not invent a second `array_get_sparse_properties` API. Do not invent
+    Engine `--get-array-sparse`. Do not invent a populated
+    `CUDA_ARRAY_SPARSE_PROPERTIES` this slice. Do not reverse
+    array sparse remaining unsupported.
+    Do not invent a second `graphics_unregister_resource` API. Do not invent
+    Engine `--unregister-graphics`. Do not invent a `CUgraphicsResource`
+    handle this slice. Do not reverse graphics unregister remaining
+    unsupported.
+    Do not invent a second `egl_stream_producer_disconnect` API. Do not invent
+    Engine `--disconnect-egl-producer`. Do not invent an EGL producer
+    frame this slice. Do not reverse EGL producer disconnect remaining
+    unsupported.
+    Do not invent a second `array_get_plane` API. Do not invent
+    Engine `--get-array-plane`. Do not invent a planar `CUarray` this
+    slice. Do not reverse array plane remaining unsupported.
+    Do not invent a second `array_get_memory_requirements` API. Do not invent
+    Engine `--get-array-memory`. Do not invent a populated
+    `cudaArrayMemoryRequirements` this slice. Do not reverse
+    array memory remaining unsupported.
+    Do not invent a second `egl_stream_consumer_disconnect` API. Do not invent
+    Engine `--disconnect-egl-consumer`. Do not invent an EGL consumer
+    frame this slice. Do not reverse EGL consumer disconnect remaining
+    unsupported.
+    Do not invent a second `graphics_resource_get_mapped_pointer` API. Do not invent
+    Engine `--get-mapped-pointer`. Do not invent a device pointer plus size
+    this slice. Do not reverse mapped pointer remaining unsupported.
+    Do not invent a second `egl_stream_producer_present_frame` API. Do not invent
+    Engine `--present-egl-producer`. Do not invent an EGL producer
+    present timestamp this slice. Do not reverse EGL producer present remaining
+    unsupported.
+    Do not invent a second `graphics_subresource_get_mapped_array` API. Do not invent
+    Engine `--get-mapped-array`. Do not invent a mapped `CUarray` this
+    slice. Do not reverse mapped array remaining unsupported.
+    Do not invent a second `graphics_resource_get_mapped_mipmapped_array` API. Do not invent
+    Engine `--get-mapped-mipmap`. Do not invent a mapped mipmapped array
+    object this slice. Do not reverse mapped mipmap remaining unsupported.
+    Do not invent a second `egl_stream_producer_return_frame` API. Do not invent
+    Engine `--return-egl-producer`. Do not invent an EGL producer
+    return timestamp this slice. Do not reverse EGL producer return remaining
+    unsupported.
+    Do not invent a second `egl_stream_consumer_acquire_frame` API. Do not invent
+    Engine `--acquire-egl-consumer`. Do not invent an EGL consumer
+    acquire timeout this slice. Do not reverse EGL consumer acquire remaining
+    unsupported.
+    Do not invent a second `graphics_resource_set_map_flags` API. Do not invent
+    Engine `--set-map-flags`. Do not invent a populated
+    `cudaGraphicsMapFlags` this slice. Do not reverse graphics map flags remaining
+    unsupported.
+    Do not invent a second `egl_stream_consumer_release_frame` API. Do not invent
+    Engine `--release-egl-consumer`. Do not invent an EGL consumer
+    release fence this slice. Do not reverse EGL consumer release remaining
+    unsupported.
+    Do not invent a second `mipmapped_array_get_memory_requirements` API. Do not invent
+    Engine `--get-mipmap-memory`. Do not invent a populated
+    `CUDA_ARRAY_MEMORY_REQUIREMENTS` this slice. Do not reverse
+    mipmap memory remaining unsupported.
+    Do not invent a second `graphics_egl_register_image` API. Do not invent
+    Engine `--register-egl-image`. Do not invent an EGL image frame
+    this slice. Do not reverse EGL image register remaining unsupported.
+    Do not invent a second `mipmapped_array_get_level` API. Do not invent
+    Engine `--get-mipmap-level`. Do not invent a mipmap level index
+    this slice. Do not reverse mipmap level remaining unsupported.
+    Do not invent a second `mipmapped_array_destroy` API. Do not invent
+    Engine `--destroy-mipmap`. Do not invent a mipmapped-array handle
+    free this slice. Do not reverse mipmap destroy remaining unsupported.
+    Do not invent a second `array_destroy` API. Do not invent
+    Engine `--destroy-array`. Do not invent a `cudaFreeArray` async
+    this slice. Do not reverse array destroy remaining unsupported.
+    Do not invent a second `gl_register_buffer_object` API. Do not invent
+    Engine `--register-gl-buffer-object`. Do not invent a GLUT context
+    this slice. Do not reverse legacy GL buffer object remaining unsupported.
+    Do not invent a second `gl_map_buffer_object` API. Do not invent
+    Engine `--map-gl-buffer-object`. Do not invent a GL map offset
+    this slice. Do not reverse legacy GL map remaining unsupported.
+    Do not invent a second `graphics_d3d11_register_resource` API. Do not invent
+    Engine `--register-d3d11`. Do not invent a D3D11 keyed mutex
+    this slice. Do not reverse D3D11 register remaining unsupported.
+    Do not invent a second `graphics_d3d12_register_resource` API. Do not invent
+    Engine `--register-d3d12`. Do not invent a D3D12 keyed mutex
+    this slice. Do not reverse D3D12 register remaining unsupported.
+    Do not invent a second `graphics_d3d9_register_resource` API. Do not invent
+    Engine `--register-d3d9`. Do not invent a D3D9 keyed mutex
+    this slice. Do not reverse D3D9 register remaining unsupported.
+    Do not invent a second `graphics_d3d10_register_resource` API. Do not invent
+    Engine `--register-d3d10`. Do not invent a D3D10 keyed mutex
+    this slice. Do not reverse D3D10 register remaining unsupported.
+    Do not invent a second `graphics_vdpau_register_output_surface` API. Do not invent
+    Engine `--register-vdpau-output`. Do not invent a `VdpOutputSurface`
+    this slice. Do not reverse VDPAU output register remaining unsupported.
+    Do not invent a second `graphics_vdpau_register_video_surface` API. Do not invent
+    Engine `--register-vdpau-video`. Do not invent a VDPAU video mixer
+    this slice. Do not reverse VDPAU video register remaining unsupported.
+    Do not invent a second `destroy_external_memory` API. Do not invent
+    Engine `--destroy-external-memory`. Do not invent a mapped external
+    buffer this slice. Do not reverse external destroy remaining unsupported.
+    Do not invent a second `external_memory_get_mapped_buffer` API. Do not invent
+    Engine `--get-mapped-buffer`. Do not invent a mapped external size
+    this slice. Do not reverse mapped buffer remaining unsupported.
+    Do not invent a second `external_memory_get_mapped_mipmapped_array` API. Do not invent
+    Engine `--get-external-mipmap`. Do not invent an external mipmap offset
+    this slice. Do not reverse external mipmap remaining unsupported.
+    Do not invent a second `gl_unregister_buffer_object` API. Do not invent
+    Engine `--unregister-gl-buffer-object`. Do not invent a GLUT unbind
+    this slice. Do not reverse legacy GL unregister remaining unsupported.
+    Do not invent a second `gl_unmap_buffer_object` API. Do not invent
+    Engine `--unmap-gl-buffer-object`. Do not invent a GLUT unmap
+    this slice. Do not reverse legacy GL unmap remaining unsupported.
+    Do not invent a second `gl_set_gl_device` API. Do not invent
+    Engine `--set-gl-device`. Do not invent a GLUT current-device
+    this slice. Do not reverse SetGLDevice remaining unsupported.
+    Do not invent a second `import_external_semaphore` API. Do not invent
+    Engine `--import-external-semaphore`. Do not invent a timeline semaphore
+    this slice. Do not reverse external semaphore remaining unsupported.
+    Do not invent a second `destroy_external_semaphore` API. Do not invent
+    Engine `--destroy-external-semaphore`. Do not invent a semaphore wait
+    this slice. Do not reverse semaphore destroy remaining unsupported.
+    Do not invent a second `signal_external_semaphores_async` API. Do not invent
+    Engine `--signal-external-semaphore`. Do not invent a graph semaphore node
+    this slice. Do not reverse semaphore signal remaining unsupported.
+    Do not invent a second `wait_external_semaphores_async` API. Do not invent
+    Engine `--wait-external-semaphore`. Do not invent a graph wait node
+    this slice. Do not reverse semaphore wait remaining unsupported.
+    Do not invent a second `gl_unmap_buffer_object_async` API. Do not invent
+    Engine `--unmap-gl-buffer-object-async`. Do not invent a GLUT async unmap
+    this slice. Do not reverse legacy GL unmap-async remaining unsupported.
+    Do not invent a second `gl_map_buffer_object_async` API. Do not invent
+    Engine `--map-gl-buffer-object-async`. Do not invent a GLUT async map
+    this slice. Do not reverse legacy GL map-async remaining unsupported.
+    Do not invent a second `d3d11_get_device` API. Do not invent
+    Engine `--get-d3d11-device`. Do not invent a DXGI adapter
+    this slice. Do not reverse Direct3D 11 GetDevice remaining unsupported.
+    Do not invent a second `d3d12_get_device` API. Do not invent
+    Engine `--get-d3d12-device`. Do not invent a D3D12 command queue
+    this slice. Do not reverse Direct3D 12 GetDevice remaining unsupported.
+    Do not invent a second `d3d9_get_device` API. Do not invent
+    Engine `--get-d3d9-device`. Do not invent an IDirect3DDevice9
+    this slice. Do not reverse Direct3D 9 GetDevice remaining unsupported.
+    Do not invent a second `d3d10_get_device` API. Do not invent
+    Engine `--get-d3d10-device`. Do not invent an ID3D10Device
+    this slice. Do not reverse Direct3D 10 GetDevice remaining unsupported.
+    Do not invent a second `vdpau_set_vdpau_device` API. Do not invent
+    Engine `--set-vdpau-device`. Do not invent a VdpDevice handle
+    this slice. Do not reverse SetVDPAUDevice remaining unsupported.
+    Do not invent a second `d3d11_ctx_create_on_device` API. Do not invent
+    Engine `--create-d3d11-on-device`. Do not invent a D3D11 OnDevice adapter
+    this slice. Do not reverse CtxCreateOnDevice remaining unsupported.
+    Do not invent a second `d3d12_ctx_create_on_device` API. Do not invent
+    Engine `--create-d3d12-on-device`. Do not invent a D3D12 OnDevice adapter
+    this slice. Do not reverse Direct3D 12 OnDevice remaining unsupported.
+    Do not invent a second `d3d9_ctx_create_on_device` API. Do not invent
+    Engine `--create-d3d9-on-device`. Do not invent a D3D9 OnDevice adapter
+    this slice. Do not reverse Direct3D 9 OnDevice remaining unsupported.
+    Do not invent a second `d3d10_ctx_create_on_device` API. Do not invent
+    Engine `--create-d3d10-on-device`. Do not invent a D3D10 OnDevice adapter
+    this slice. Do not reverse Direct3D 10 OnDevice remaining unsupported.
+    Do not invent a second `library_load_from_file` API. Do not invent
+    Engine `--load-library-file`. Do not invent a library file path
+    this slice. Do not reverse Library LoadFromFile remaining unsupported.
+    Do not invent a second `library_unload` API. Do not invent
+    Engine `--unload-library`. Do not invent a CUlibrary unload
+    this slice. Do not reverse Library Unload remaining unsupported.
+    Do not invent a second `library_get_kernel` API. Do not invent
+    Engine `--get-library-kernel`. Do not invent a CUkernel handle
+    this slice. Do not reverse Library GetKernel remaining unsupported.
+    Do not invent a second `library_get_module` API. Do not invent
+    Engine `--get-library-module`. Do not invent a CUmodule from library
+    this slice. Do not reverse Library GetModule remaining unsupported.
+    Do not invent a second `library_get_global` API. Do not invent
+    Engine `--get-library-global`. Do not invent a library device symbol
+    this slice. Do not reverse Library GetGlobal remaining unsupported.
+    Do not invent a second `library_get_managed` API. Do not invent
+    Engine `--get-library-managed`. Do not invent a library managed symbol
+    this slice. Do not reverse Library GetManaged remaining unsupported.
+    Do not invent a second `library_get_unified_function` API. Do not invent
+    Engine `--get-library-unified`. Do not invent a library device function
+    pointer this slice. Do not reverse Library GetUnifiedFunction remaining unsupported.
+    Do not invent a second `kernel_get_function` API. Do not invent
+    Engine `--get-kernel-function`. Do not invent a CUfunction from kernel
+    this slice. Do not reverse Kernel GetFunction remaining unsupported.
+    Do not invent a second `kernel_get_param_info` API. Do not invent
+    Engine `--get-kernel-param`. Do not invent a kernel parameter blob
+    this slice. Do not reverse Kernel GetParamInfo remaining unsupported.
+    Do not invent a second `kernel_get_attribute` API. Do not invent
+    Engine `--get-kernel-attribute`. Do not invent a CUkernel attribute
+    this slice. Do not reverse Kernel GetAttribute remaining unsupported.
+    Do not invent a second `kernel_set_attribute` API. Do not invent
+    Engine `--set-kernel-attribute`. Do not invent a CUkernel setattr
+    this slice. Do not reverse Kernel SetAttribute remaining unsupported.
+    Do not invent a second `kernel_set_cache_config` API. Do not invent
+    Engine `--set-kernel-cache`. Do not invent a CUkernel cache config
+    this slice. Do not reverse Kernel SetCacheConfig remaining unsupported.
+    Do not invent a second `link_add_data` API. Do not invent
+    Engine `--add-link-data`. Do not invent a JIT input blob
+    this slice. Do not reverse Link AddData remaining unsupported.
+    Do not invent a second `link_complete` API. Do not invent
+    Engine `--complete-link`. Do not invent a cubin output from link
+    this slice. Do not reverse Link Complete remaining unsupported.
+    Do not invent a second `link_destroy` API. Do not invent
+    Engine `--destroy-link`. Do not invent a CUlinkState destroy
+    this slice. Do not reverse Link Destroy remaining unsupported.
+    Do not invent a second `link_add_file` API. Do not invent
+    Engine `--add-link-file`. Do not invent a JIT input path
+    this slice. Do not reverse Link AddFile remaining unsupported.
+    Do not invent a second `func_load` API. Do not invent
+    Engine `--load-func`. Do not invent a CUfunction load
+    this slice. Do not reverse Func Load remaining unsupported.
+    Do not invent a second `module_load` API. Do not invent
+    Engine `--load-module`. Do not invent a CUmodule from file
+    this slice. Do not reverse Module Load remaining unsupported.
+    Do not invent a second `module_load_data` API. Do not invent
+    Engine `--load-module-data`. Do not invent a cubin image
+    this slice. Do not reverse Module LoadData remaining unsupported.
+    Do not invent a second `module_unload` API. Do not invent
+    Engine `--unload-module`. Do not invent a CUmodule handle destroy
+    this slice. Do not reverse Module Unload remaining unsupported.
+    Do not invent a second `module_get_function` API. Do not invent
+    Engine `--get-module-function`. Do not invent a CUfunction from module
+    this slice. Do not reverse Module GetFunction remaining unsupported.
+    Do not invent a second `module_get_global` API. Do not invent
+    Engine `--get-module-global`. Do not invent a module device symbol
+    this slice. Do not reverse Module GetGlobal remaining unsupported.
+    Do not invent a second `module_get_tex_ref` API. Do not invent
+    Engine `--get-module-texref`. Do not invent a CUtexref from module
+    this slice. Do not reverse Module GetTexRef remaining unsupported.
+    Do not invent a second `module_get_surf_ref` API. Do not invent
+    Engine `--get-module-surfref`. Do not invent a CUsurfref from module
+    this slice. Do not reverse Module GetSurfRef remaining unsupported.
+    Do not invent a second `module_load_fat_binary` API. Do not invent
+    Engine `--load-module-fatbin`. Do not invent a fatbin image
+    this slice. Do not reverse Module LoadFatBinary remaining unsupported.
+    Do not invent a second `module_load_data_ex` API. Do not invent
+    Engine `--load-module-data-ex`. Do not invent JIT linker options
+    this slice. Do not reverse Module LoadDataEx remaining unsupported.
+    Do not invent a second `module_get_function_count` API. Do not invent
+    Engine `--get-module-fncount`. Do not invent a module function list
+    this slice. Do not reverse Module GetFunctionCount remaining unsupported.
+    Do not invent a second `module_enumerate_functions` API. Do not invent
+    Engine `--enum-module-functions`. Do not invent a CUfunction array
+    this slice. Do not reverse Module EnumerateFunctions remaining unsupported.
+    Do not invent a second `tensor_map_encode_im2col` API. Do not invent
+    Engine `--tma-im2col`. Do not invent a CUtensorMap im2col object
+    this slice. Do not reverse Tensor Map EncodeIm2col remaining unsupported.
+    Do not invent a second `tensor_map_encode_im2col_wide` API. Do not invent
+    Engine `--tma-im2col-wide`. Do not invent a CUtensorMap wide im2col
+    this slice. Do not reverse Tensor Map EncodeIm2colWide remaining unsupported.
+    Do not invent a second `tensor_map_replace_aligned_addr` API. Do not invent
+    Engine `--tma-replace-addr`. Do not invent a CUtensorMap replace
+    this slice. Do not reverse Tensor Map ReplaceAlignedAddr remaining unsupported.
+    Do not invent a second `coredump_set_attribute` API. Do not invent
+    Engine `--set-dump-attr`. Do not invent a CU_COREDUMP_FILE write
+    this slice. Do not reverse Coredump SetAttribute remaining unsupported.
+    Do not invent a second `coredump_get_attribute_global` API. Do not invent
+    Engine `--get-dump-global`. Do not invent a CU_COREDUMP_ENABLE_ON_EXCEPTION
+    this slice. Do not reverse Coredump GetAttributeGlobal remaining unsupported.
+    Do not invent a second `coredump_set_attribute_global` API. Do not invent
+    Engine `--set-dump-global`. Do not invent a CU_COREDUMP_PIPE write
+    this slice. Do not reverse Coredump SetAttributeGlobal remaining unsupported.
+    Do not invent a second `checkpoint_process_checkpoint` API. Do not invent
+    Engine `--run-ckpt`. Do not invent a CUDA checkpoint image
+    this slice. Do not reverse Checkpoint ProcessCheckpoint remaining unsupported.
+    Do not invent a second `checkpoint_process_restore` API. Do not invent
+    Engine `--restore-ckpt`. Do not invent a CUDA checkpoint restore image
+    this slice. Do not reverse Checkpoint ProcessRestore remaining unsupported.
+    Do not invent a second `checkpoint_process_unlock` API. Do not invent
+    Engine `--unlock-ckpt`. Do not invent a CUDA checkpoint lock cookie
+    this slice. Do not reverse Checkpoint ProcessUnlock remaining unsupported.
+    Do not invent a second `checkpoint_process_get_restore_thread_id` API. Do not invent
+    Engine `--get-ckpt-tid`. Do not invent a CUDA restore TID
+    this slice. Do not reverse Checkpoint GetRestoreThreadId remaining unsupported.
+    Do not invent a second `checkpoint_process_get_state` API. Do not invent
+    Engine `--get-ckpt-state`. Do not invent a CUprocessState enum
+    this slice. Do not reverse Checkpoint GetState remaining unsupported.
+    Do not invent a second `library_get_kernel_count` API. Do not invent
+    Engine `--get-library-kcount`. Do not invent a CUkernel count
+    this slice. Do not reverse Library GetKernelCount remaining unsupported.
+    Do not invent a second `library_enumerate_kernels` API. Do not invent
+    Engine `--enum-library-kernels`. Do not invent a CUkernel array
+    this slice. Do not reverse Library EnumerateKernels remaining unsupported.
+    Do not invent a second `kernel_get_library` API. Do not invent
+    Engine `--get-kernel-library`. Do not invent a CUlibrary from kernel
+    this slice. Do not reverse Kernel GetLibrary remaining unsupported.
+    Do not invent a second `kernel_get_param_count` API. Do not invent
+    Engine `--get-kernel-pcount`. Do not invent a CUkernel param count
+    this slice. Do not reverse Kernel GetParamCount remaining unsupported.
+    Do not invent a second `func_get_param_count` API. Do not invent
+    Engine `--get-func-pcount`. Do not invent a CUfunction param count
+    this slice. Do not reverse Func GetParamCount remaining unsupported.
+    Do not invent a second `device_register_async_notification` API. Do not invent
+    Engine `--register-async-notify`. Do not invent a CUasyncCallbackHandle
+    this slice. Do not reverse Device RegisterAsyncNotification remaining unsupported.
+    Do not invent a second `device_unregister_async_notification` API. Do not invent
+    Engine `--unregister-async-notify`. Do not invent a CUarrayMapInfo list
+    this slice. Do not reverse Device UnregisterAsyncNotification remaining unsupported.
+    Do not invent a second `mem_map_array_async` API. Do not invent
+    Engine `--map-array-async`. Do not invent a sparse CUDA array tile
+    this slice. Do not reverse Mem MapArrayAsync remaining unsupported.
+    Do not invent a second `mipmapped_array_get_sparse_properties` API. Do not invent
+    Engine `--get-mipmap-sparse`. Do not invent a CUDA_ARRAY_SPARSE_PROPERTIES mipmap
+    this slice. Do not reverse MipmappedArray GetSparseProperties remaining unsupported.
+    Do not invent a second `tex_ref_create` API. Do not invent
+    Engine `--create-tex-ref`. Do not invent a CUtexref destroy
+    this slice. Do not reverse TexRef Create remaining unsupported.
+    Do not invent a second `tex_ref_destroy` API. Do not invent
+    Engine `--destroy-tex-ref`. Do not invent a CUtexref set-array
+    this slice. Do not reverse TexRef Destroy remaining unsupported.
+    Do not invent a second `tex_ref_set_array` API. Do not invent
+    Engine `--set-tex-ref-array`. Do not invent a CUtexref mipmapped-array
+    this slice. Do not reverse TexRef SetArray remaining unsupported.
+    Do not invent a second `tex_ref_set_mipmapped_array` API. Do not invent
+    Engine `--set-tex-ref-mip`. Do not invent a CUtexref linear address
+    this slice. Do not reverse TexRef SetMipmappedArray remaining unsupported.
+    Do not invent a second `tex_ref_set_address` API. Do not invent
+    Engine `--set-tex-ref-addr`. Do not invent a CUtexref pitch2D address
+    this slice. Do not reverse TexRef SetAddress remaining unsupported.
+    Do not invent a second `tex_ref_set_address_2d` API. Do not invent
+    Engine `--set-tex-ref-addr2d`. Do not invent a CUtexref channel format
+    this slice. Do not reverse TexRef SetAddress2D remaining unsupported.
+    Do not invent a second `tex_ref_set_format` API. Do not invent
+    Engine `--set-tex-ref-format`. Do not invent a CUtexref address mode
+    this slice. Do not reverse TexRef SetFormat remaining unsupported.
+    Do not invent a second `tex_ref_set_address_mode` API. Do not invent
+    Engine `--set-tex-ref-addr-mode`. Do not invent a CUtexref filter mode
+    this slice. Do not reverse TexRef SetAddressMode remaining unsupported.
+    Do not invent a second `tex_ref_set_filter_mode` API. Do not invent
+    Engine `--set-tex-ref-filter`. Do not invent a CUtexref mipmap filter
+    this slice. Do not reverse TexRef SetFilterMode remaining unsupported.
+    Do not invent a second `tex_ref_set_mipmap_filter_mode` API. Do not invent
+    Engine `--set-tex-ref-mip-filter`. Do not invent a CUtexref mipmap bias
+    this slice. Do not reverse TexRef SetMipmapFilterMode remaining unsupported.
+    Do not invent a second `tex_ref_set_mipmap_level_bias` API. Do not invent
+    Engine `--set-tex-ref-mip-bias`. Do not invent a CUtexref mipmap clamp
+    this slice. Do not reverse TexRef SetMipmapLevelBias remaining unsupported.
+    Do not invent a second `tex_ref_set_mipmap_level_clamp` API. Do not invent
+    Engine `--set-tex-ref-mip-clamp`. Do not invent a CUtexref max anisotropy
+    this slice. Do not reverse TexRef SetMipmapLevelClamp remaining unsupported.
+    Do not invent a second `tex_ref_set_max_anisotropy` API. Do not invent
+    Engine `--set-tex-ref-aniso`. Do not invent a CUtexref border color
+    this slice. Do not reverse TexRef SetMaxAnisotropy remaining unsupported.
+    Do not invent a second `tex_ref_set_border_color` API. Do not invent
+    Engine `--set-tex-ref-border`. Do not invent a CUtexref flags word
+    this slice. Do not reverse TexRef SetBorderColor remaining unsupported.
+    Do not invent a second `tex_ref_set_flags` API. Do not invent
+    Engine `--set-tex-ref-flags`. Do not invent a CUtexref get-array
+    this slice. Do not reverse TexRef SetFlags remaining unsupported.
+    Do not invent a second `tex_ref_get_array` API. Do not invent
+    Engine `--get-tex-ref-array`. Do not invent a CUtexref get-mipmapped-array
+    this slice. Do not reverse TexRef GetArray remaining unsupported.
+    Do not invent a second `tex_ref_get_mipmapped_array` API. Do not invent
+    Engine `--get-tex-ref-mip`. Do not invent a CUtexref get-address
+    this slice. Do not reverse TexRef GetMipmappedArray remaining unsupported.
+    Do not invent a second `tex_ref_get_address` API. Do not invent
+    Engine `--get-tex-ref-addr`. Do not invent a CUtexref get-address-mode
+    this slice. Do not reverse TexRef GetAddress remaining unsupported.
+    Do not invent a second `tex_ref_get_address_mode` API. Do not invent
+    Engine `--get-tex-ref-addr-mode`. Do not invent a CUtexref get-filter-mode
+    this slice. Do not reverse TexRef GetAddressMode remaining unsupported.
+    Do not invent a second `tex_ref_get_filter_mode` API. Do not invent
+    Engine `--get-tex-ref-filter`. Do not invent a CUtexref get-format
+    this slice. Do not reverse TexRef GetFilterMode remaining unsupported.
+    Do not invent a second `tex_ref_get_format` API. Do not invent
+    Engine `--get-tex-ref-format`. Do not invent a CUtexref get-mipmap-filter
+    this slice. Do not reverse TexRef GetFormat remaining unsupported.
+    Do not invent a second `tex_ref_get_mipmap_filter_mode` API. Do not invent
+    Engine `--get-tex-ref-mip-filter`. Do not invent a CUtexref get-mipmap-bias
+    this slice. Do not reverse TexRef GetMipmapFilterMode remaining unsupported.
+    Do not invent a second `tex_ref_get_mipmap_level_bias` API. Do not invent
+    Engine `--get-tex-ref-mip-bias`. Do not invent a CUtexref get-mipmap-clamp
+    this slice. Do not reverse TexRef GetMipmapLevelBias remaining unsupported.
+    Do not invent a second `tex_ref_get_mipmap_level_clamp` API. Do not invent
+    Engine `--get-tex-ref-mip-clamp`. Do not invent a CUtexref get-anisotropy
+    this slice. Do not reverse TexRef GetMipmapLevelClamp remaining unsupported.
+    Do not invent a second `tex_ref_get_max_anisotropy` API. Do not invent
+    Engine `--get-tex-ref-aniso`. Do not invent a CUtexref get-border-color
+    this slice. Do not reverse TexRef GetMaxAnisotropy remaining unsupported.
+    Do not invent a second `tex_ref_get_border_color` API. Do not invent
+    Engine `--get-tex-ref-border`. Do not invent a CUtexref get-flags
+    this slice. Do not reverse TexRef GetBorderColor remaining unsupported.
+    Do not invent a second `tex_ref_get_flags` API. Do not invent
+    Engine `--get-tex-ref-flags`. Do not invent a CUsurfref set-array
+    this slice. Do not reverse TexRef GetFlags remaining unsupported.
+    Do not invent a second `surf_ref_set_array` API. Do not invent
+    Engine `--set-surf-ref-array`. Do not invent a CUsurfref get-array
+    this slice. Do not reverse SurfRef SetArray remaining unsupported.
+    Do not invent a second `surf_ref_get_array` API. Do not invent
+    Engine `--get-surf-ref-array`. Do not invent a CUarray memcpy-dto-a
+    this slice. Do not reverse SurfRef GetArray remaining unsupported.
+    Do not invent a second `memcpy_dto_a` API. Do not invent
+    Engine `--memcpy-d-to-a`. Do not invent a CUarray memcpy-ato-d
+    this slice. Do not reverse Memcpy DtoA remaining unsupported.
+    Do not invent a second `memcpy_ato_d` API. Do not invent
+    Engine `--memcpy-a-to-d`. Do not invent a CUarray memcpy-hto-a
+    this slice. Do not reverse Memcpy AtoD remaining unsupported.
+    Do not invent a second `memcpy_hto_a` API. Do not invent
+    Engine `--memcpy-h-to-a`. Do not invent a CUarray memcpy-ato-h
+    this slice. Do not reverse Memcpy HtoA remaining unsupported.
+    Do not invent a second `memcpy_ato_h` API. Do not invent
+    Engine `--memcpy-a-to-h`. Do not invent a CUarray memcpy-ato-a
+    this slice. Do not reverse Memcpy AtoH remaining unsupported.
+    Do not invent a second `memcpy_ato_a` API. Do not invent
+    Engine `--memcpy-a-to-a`. Do not invent a CUarray memcpy-dtoa-async
+    this slice. Do not reverse Memcpy AtoA remaining unsupported.
+    Do not invent a second `memcpy_dto_a_async` API. Do not invent
+    Engine `--memcpy-dtoa-async`. Do not invent a CUarray memcpy-atod-async
+    this slice. Do not reverse Memcpy DtoAAsync remaining unsupported.
+    Do not invent a second `memcpy_ato_d_async` API. Do not invent
+    Engine `--memcpy-atod-async`. Do not invent a CUarray memcpy-htoa-async
+    this slice. Do not reverse Memcpy AtoDAsync remaining unsupported.
+    Do not invent a second `memcpy_hto_a_async` API. Do not invent
+    Engine `--memcpy-htoa-async`. Do not invent a CUarray memcpy-atoh-async
+    this slice. Do not reverse Memcpy HtoAAsync remaining unsupported.
+    Do not invent a second `memcpy_ato_h_async` API. Do not invent
+    Engine `--memcpy-atoh-async`. Do not invent a CUarray memcpy-atoa-async
+    this slice. Do not reverse Memcpy AtoHAsync remaining unsupported.
+    Do not invent a second `memcpy_ato_a_async` API. Do not invent
+    Engine `--memcpy-atoa-async`. Do not invent a CUarray memcpy-2d-to-array
+    this slice. Do not reverse Memcpy AtoAAsync remaining unsupported.
+    Do not invent a second `memcpy_2d_to_array` API. Do not invent
+    Engine `--memcpy-2d-to-array`. Do not invent a CUarray memcpy-2d-from-array
+    this slice. Do not reverse Memcpy 2DToArray remaining unsupported.
+    Do not invent a second `memcpy_2d_from_array` API. Do not invent
+    Engine `--memcpy-2d-from-array`. Do not invent a CUarray memcpy-2d-array-to-array
+    this slice. Do not reverse Memcpy 2DFromArray remaining unsupported.
+    Do not invent a second `memcpy_2d_array_to_array` API. Do not invent
+    Engine `--memcpy-2d-array-to-array`. Do not invent a CUarray memcpy-2d-to-array-async
+    this slice. Do not reverse Memcpy 2DArrayToArray remaining unsupported.
+    Do not invent a second `memcpy_2d_to_array_async` API. Do not invent
+    Engine `--memcpy-2d-to-array-async`. Do not invent a CUarray memcpy-2d-from-array-async
+    this slice. Do not reverse Memcpy 2DToArrayAsync remaining unsupported.
+    Do not invent a second `memcpy_2d_from_array_async` API. Do not invent
+    Engine `--memcpy-2d-from-array-async`. Do not invent a CUarray memcpy-2d-array-to-array-async
+    this slice. Do not reverse Memcpy 2DFromArrayAsync remaining unsupported.
+    Do not invent a second `memcpy_2d_array_to_array_async` API. Do not invent
+    Engine `--memcpy-2d-array-to-array-async`. Do not invent a CUfunction func-get-cache-config
+    this slice. Do not reverse Memcpy 2DArrayToArrayAsync remaining unsupported.
+    Do not invent a second `func_get_cache_config` API. Do not invent
+    Engine `--func-get-cache-config`. Do not invent a memset d8-async
+    this slice. Do not reverse Func GetCacheConfig remaining unsupported.
+    Do not invent a second `memset_d8_async` API. Do not invent
+    Engine `--memset-d8-async`. Do not invent a memset d8 host-sync
+    this slice. Do not reverse Memset D8Async identity with byte memset.
+    Do not invent a second `memset_d8` API. Do not invent
+    Engine `--memset-d8-host-sync`. Do not invent an event-query
+    this slice. Do not reverse Memset D8 host-sync capture refuse.
+    Do not invent a second `event_query` API. Do not invent
+    Engine `--event-query-identity`. Do not invent a stream-query
+    this slice. Do not reverse EventQuery identity with query_event.
+    Do not invent a second `stream_query` API. Do not invent
+    Engine `--stream-query-identity`. Do not invent an event-synchronize
+    this slice. Do not reverse StreamQuery identity with query_stream.
+    Do not invent a second `event_synchronize` API. Do not invent
+    Engine `--event-synchronize-identity`. Do not invent a stream-synchronize
+    this slice. Do not reverse EventSynchronize identity with synchronize_event.
+    Do not invent a second `stream_synchronize` API. Do not invent
+    Engine `--stream-synchronize-identity`. Do not invent an event-destroy
+    this slice. Do not reverse StreamSynchronize identity with synchronize_stream.
+    Do not invent a second `event_destroy` API. Do not invent
+    Engine `--event-destroy-identity`. Do not invent an event-create
+    this slice. Do not reverse EventDestroy identity with destroy_event.
+    Do not invent a second `event_create` API. Do not invent
+    Engine `--event-create-identity`. Do not invent an event-create-with-flags
+    this slice. Do not reverse EventCreate identity with create_event.
+    Do not invent a second `event_create_with_flags` API. Do not invent
+    Engine `--event-create-flags-identity`. Do not invent an event-record
+    this slice. Do not reverse EventCreateWithFlags identity with create_event_with_flags.
+    Do not invent a second `event_record` API. Do not invent
+    Engine `--event-record-identity`. Do not invent an event-record-with-flags
+    this slice. Do not reverse EventRecord identity with record_event.
+    Do not invent a second `event_record_with_flags` API. Do not invent
+    Engine `--event-record-flags-identity`. Do not invent a stream-wait-event
+    this slice. Do not reverse EventRecordWithFlags identity with record_event_with_flags.
+    Do not invent a second `stream_wait_event` API. Do not invent
+    Engine `--stream-wait-event-identity`. Do not invent a wait-event-flags
+    this slice. Do not reverse StreamWaitEvent identity with wait_event.
+    Do not invent a second `stream_wait_event_with_flags` API. Do not invent
+    Engine `--wait-event-flags-identity`. Do not invent an event-elapsed
+    this slice. Do not reverse StreamWaitEventWithFlags identity with wait_event_with_flags.
+    Do not invent a second `event_elapsed` API. Do not invent
+    Engine `--event-elapsed-identity`. Do not invent an elapsed-ms
+    this slice. Do not reverse EventElapsed ns identity with event_elapsed_ns.
+    Do not invent a second `mem_get_info` API. Do not invent
+    Engine `--mem-get-info-identity`. Do not invent a stream-create
+    this slice. Do not reverse MemGetInfo identity with mem_info.
+    Do not invent a second `stream_create` API. Do not invent
+    Engine `--stream-create-identity`. Do not invent a stream-create-priority
+    this slice. Do not reverse StreamCreate identity with stream_create_with_flags DEFAULT.
+    Do not invent a second `mem_alloc` API. Do not invent
+    Engine `--mem-alloc-identity`. Do not invent a mem-free
+    this slice. Do not reverse MemAlloc identity with malloc.
+    Do not invent a second `mem_free` API. Do not invent
+    Engine `--mem-free-identity`. Do not invent a mem-free-host
+    this slice. Do not reverse MemFree identity with free_sync.
+    Do not invent a second `mem_free_host` API. Do not invent
+    Engine `--mem-free-host-identity`. Do not invent a mem-host-alloc
+    this slice. Do not reverse MemFreeHost identity with free_host_pinned.
+    Do not invent a second `mem_host_alloc` API. Do not invent
+    Engine `--mem-host-alloc-identity`. Do not invent a mem-host-get-flags
+    this slice. Do not reverse MemHostAlloc identity with alloc_host_with_flags.
+    Do not invent a second `mem_host_get_flags` API. Do not invent
+    Engine `--mem-host-get-flags-identity`. Do not invent a mem-host-get-device-pointer
+    this slice. Do not reverse MemHostGetFlags identity with host_get_flags.
+    Do not invent a second `mem_host_get_device_pointer` API. Do not invent
+    Engine `--mem-host-get-dptr-identity`. Do not invent a mem-host-register
+    this slice. Do not reverse MemHostGetDevicePointer identity with host_get_device_pointer_with_flags.
+    Do not invent a second `mem_host_register` API. Do not invent
+    Engine `--mem-host-register-identity`. Do not invent a mem-host-unregister
+    this slice. Do not reverse MemHostRegister identity with host_register_with_flags.
+    Do not invent a second `mem_host_unregister` API. Do not invent
+    Engine `--mem-host-unregister-identity`. Do not invent a register-size
+    this slice. Do not reverse MemHostUnregister identity with host_unregister.
+    Do not invent a second `mem_host_register_with_size` API. Do not invent
+    Engine `--mem-host-register-size-identity`. Do not invent an ipc-get-mem
+    this slice. Do not reverse MemHostRegisterSize identity with host_register_with_size.
+    Do not invent a second `ipc_get_mem_handle` API. Do not invent
+    Engine `--ipc-get-mem-identity`. Do not invent an ipc-open-mem
+    this slice. Do not reverse IpcGetMemHandle identity with ipc_get.
+    Do not invent a second `ipc_open_mem_handle` API. Do not invent
+    Engine `--ipc-open-mem-identity`. Do not invent an ipc-close-mem
+    this slice. Do not reverse IpcOpenMemHandle identity with ipc_open_with_flags.
+    Do not invent a second `ipc_close_mem_handle` API. Do not invent
+    Engine `--ipc-close-mem-identity`. Do not invent an ipc-get-event-handle
+    this slice. Do not reverse IpcCloseMemHandle identity with ipc_close.
+    Do not invent a second `ipc_get_event_handle` API. Do not invent
+    Engine `--ipc-get-event-identity`. Do not invent an ipc-open-event-handle
+    this slice. Do not reverse IpcGetEventHandle identity with ipc_get_event.
+    Do not invent a second `ipc_open_event_handle` API. Do not invent
+    Engine `--ipc-open-event-identity`. Do not invent a mem-alloc-host
+    this slice. Do not reverse IpcOpenEventHandle identity with ipc_open_event.
+    Do not invent a second `mem_alloc_host` API. Do not invent
+    Engine `--mem-alloc-host-identity`. Do not invent a mem-alloc-managed
+    this slice. Do not reverse MemAllocHost identity with alloc_host_pinned.
+    Do not invent a second `mem_alloc_managed` API. Do not invent
+    Engine `--mem-alloc-managed-identity`. Do not invent a mem-alloc-async
+    this slice. Do not reverse MemAllocManaged identity with alloc_managed_with_flags.
+    Do not invent a second `mem_alloc_async` API. Do not invent
+    Engine `--mem-alloc-async-identity`. Do not invent a mem-free-async
+    this slice. Do not reverse MemAllocAsync identity with alloc.
+    Do not invent a second `mem_free_async` API. Do not invent
+    Engine `--mem-free-async-identity`. Do not invent a mem-advise
+    this slice. Do not reverse MemFreeAsync identity with free.
+    Do not invent a second `mem_advise_n` API. Do not invent
+    Engine `--mem-advise-n-identity`. Do not invent a mem-prefetch
+    this slice. Do not reverse MemAdvise identity with mem_advise_with_size.
+    Do not invent a second `mem_prefetch` API. Do not invent
+    Engine `--mem-prefetch-identity`. Do not invent a mem-prefetch-v2
+    this slice. Do not reverse Prefetch identity with prefetch.
+    Do not invent a second `mem_prefetch_v2` API. Do not invent
+    Engine `--mem-prefetch-v2-identity`. Do not invent a mem-prefetch-n
+    this slice. Do not reverse PrefetchV2 identity with prefetch_with_flags.
+    Do not invent a second `mem_prefetch_n` API. Do not invent
+    Engine `--mem-prefetch-n-identity`. Do not invent a mem-prefetch-host
+    this slice. Do not reverse PrefetchN identity with prefetch_with_size.
+    Do not invent a second `mem_prefetch_host` API. Do not invent
+    Engine `--mem-prefetch-host-identity`. Do not invent a mem-prefetch-host-n
+    this slice. Do not reverse PrefetchHost identity with prefetch_host.
+    Do not invent a second `mem_prefetch_host_n` API. Do not invent
+    Engine `--mem-prefetch-host-n-identity`. Do not invent a mem-advise-v2
+    this slice. Do not reverse PrefetchHostN identity with prefetch_host_with_size.
+    Do not invent a second `mem_advise_v2` API. Do not invent
+    Engine `--mem-advise-v2-identity`. Do not invent a mem-range-get
+    this slice. Do not reverse AdviseV2 identity with mem_advise_with_location.
+    Do not invent a second `mem_range_get` API. Do not invent
+    Engine `--mem-range-get-identity`. Do not invent a mem-range-get-n
+    this slice. Do not reverse RangeGet identity with mem_range_get_attribute.
+    Do not invent a second `mem_range_get_n` API. Do not invent
+    Engine `--mem-range-get-n-identity`. Do not invent a mem-range-gets
+    this slice. Do not reverse RangeGetN identity with mem_range_get_attribute_with_size.
+    Do not invent a second `mem_range_gets` API. Do not invent
+    Engine `--mem-range-gets-identity`. Do not invent a mem-range-gets-n
+    this slice. Do not reverse RangeGets identity with mem_range_get_attributes.
+    Do not invent a second `mem_range_gets_n` API. Do not invent
+    Engine `--mem-range-gets-n-identity`. Do not invent a mem-range-get-data
+    this slice. Do not reverse RangeGetsN identity with mem_range_get_attributes_with_size.
+    Do not invent a second `mem_range_get_data` API. Do not invent
+    Engine `--mem-range-get-data-identity`. Do not invent a mem-range-gets-data
+    this slice. Do not reverse RangeGetData identity with mem_range_get_attribute_with_data_size.
+    Do not invent a second `mem_range_gets_data` API. Do not invent
+    Engine `--mem-range-gets-data-identity`. Do not invent an occupancy
+    this slice. Do not reverse RangeGetsData identity with mem_range_get_attributes_with_data_sizes.
+    Do not invent a second `stream_attach_mem` API. Do not invent
+    Engine `--stream-attach-mem-identity`. Do not invent a stream-attach-n
+    this slice. Do not reverse AttachMem identity with stream_attach.
+    Do not invent a second `stream_attach_n` API. Do not invent
+    Engine `--stream-attach-n-identity`. Do not invent a stream-attach-flags
+    this slice. Do not reverse AttachN identity with stream_attach_with_size.
+    Do not invent a second `stream_attach_flags` API. Do not invent
+    Engine `--stream-attach-flags-identity`. Do not invent a memcpy-async
+    this slice. Do not reverse AttachFlags identity with stream_attach_with_flags.
+    Do not invent a second `memcpy_async` API. Do not invent
+    Engine `--memcpy-async-identity`. Do not invent a mem-cpy
+    this slice. Do not reverse MemcpyAsync identity with memcpy.
+    Do not invent a second `mem_cpy` API. Do not invent
+    Engine `--mem-cpy-identity`. Do not invent a mem-address-range
+    this slice. Do not reverse MemCpy identity with memcpy_sync.
+    Do not invent a second `mem_address_range` API. Do not invent
+    Engine `--mem-address-range-identity`. Do not invent a max-active-blocks
+    this slice. Do not reverse AddressRange identity with mem_get_address_range.
+    Do not invent a second `mem_cpy_2d` API. Do not invent
+    Engine `--mem-cpy-2d-identity`. Do not invent a mem-cpy-2d-async
+    this slice. Do not reverse MemCpy2d identity with memcpy_2d.
+    Do not invent a second `mem_cpy_2d_async` API. Do not invent
+    Engine `--mem-cpy-2d-async-identity`. Do not invent a mem-cpy-3d
+    this slice. Do not reverse MemCpy2dAsync identity with memcpy_2d_async.
+    Do not invent a second `mem_cpy_3d` API. Do not invent
+    Engine `--mem-cpy-3d-identity`. Do not invent a mem-cpy-3d-async
+    this slice. Do not reverse MemCpy3d identity with memcpy_3d.
+    Do not invent a second `mem_cpy_3d_async` API. Do not invent
+    Engine `--mem-cpy-3d-async-identity`. Do not invent a mem-cpy-peer
+    this slice. Do not reverse MemCpy3dAsync identity with memcpy_3d_async.
+    Do not invent a second `mem_cpy_peer` API. Do not invent
+    Engine `--mem-cpy-peer-identity`. Do not invent a mem-cpy-peer-async
+    this slice. Do not reverse MemCpyPeer identity with memcpy_peer.
+    Do not invent a second `mem_cpy_peer_async` API. Do not invent
+    Engine `--mem-cpy-peer-async-identity`. Do not invent a mem-cpy-peer-3d
+    this slice. Do not reverse MemCpyPeerAsync identity with memcpy_peer_async.
+    Do not invent a second `mem_cpy_peer_3d` API. Do not invent
+    Engine `--mem-cpy-peer-3d-identity`. Do not invent a mem-cpy-peer-3d-async
+    this slice. Do not reverse MemCpyPeer3d identity with memcpy_peer_3d.
+    Do not invent a second `mem_cpy_peer_3d_async` API. Do not invent
+    Engine `--mem-cpy-peer-3d-async-identity`. Do not invent a mem-cpy-peer-2d
+    this slice. Do not reverse MemCpyPeer3dAsync identity with memcpy_peer_3d_async.
+    Do not invent a second `mem_cpy_peer_2d` API. Do not invent
+    Engine `--mem-cpy-peer-2d-identity`. Do not invent a mem-cpy-peer-2d-async
+    this slice. Do not reverse MemCpyPeer2d identity with memcpy_peer_2d.
+    Do not invent a second `mem_cpy_peer_2d_async` API. Do not invent
+    Engine `--mem-cpy-peer-2d-async-identity`. Do not invent occupancy SM counts
+    this slice. Do not reverse MemCpyPeer2dAsync identity with memcpy_peer_2d_async.
+    Do not invent a second `mem_cpy_batch_async` API. Do not invent
+    Engine `--mem-cpy-batch-async-identity`. Do not invent a mem-cpy-3d-batch-async
+    this slice. Do not reverse MemCpyBatchAsync identity with memcpy_batch_async.
+    Do not invent a second `mem_cpy_3d_batch_async` API. Do not invent
+    Engine `--mem-cpy-3d-batch-async-identity`. Do not invent a mem-cpy-3d-with-attributes
+    this slice. Do not reverse MemCpy3dBatchAsync identity with memcpy_3d_batch_async.
+    Do not invent a second `mem_cpy_3d_with_attributes` API. Do not invent
+    Engine `--mem-cpy-3d-with-attributes-identity`. Do not invent a mem-cpy-with-attributes
+    this slice. Do not reverse MemCpy3dWithAttributes identity with memcpy_3d_with_attributes.
+    Do not invent a second `mem_cpy_with_attributes` API. Do not invent
+    Engine `--mem-cpy-with-attributes-identity`. Do not invent occupancy SM counts
+    this slice. Do not reverse MemCpyWithAttributes identity with memcpy_with_attributes.
+    Do not invent a second `ctx_set_flags` API. Do not invent
+    Engine `--ctx-set-flags-identity`. Do not invent a ctx-set-cache-config
+    this slice. Do not reverse CtxSetFlags identity with set_device_flags.
+    Do not invent a second `ctx_set_cache_config` API. Do not invent
+    Engine `--ctx-set-cache-config-identity`. Do not invent a ctx-set-limit
+    this slice. Do not reverse CtxSetCacheConfig identity with set_cache_config.
+    Do not invent a second `ctx_set_limit` API. Do not invent
+    Engine `--ctx-set-limit-identity`. Do not invent a ctx-set-shared-mem
+    this slice. Do not reverse CtxSetLimit identity with set_limit.
+    Do not invent a second `ctx_set_shared_mem_config` API. Do not invent
+    Engine `--ctx-set-shared-mem-identity`. Do not invent a stream-create-priority
+    this slice. Do not reverse CtxSetSharedMemConfig identity with set_shared_mem_config.
+    Do not invent a second `stream_create_priority` API. Do not invent
+    Engine `--stream-create-priority-identity`. Do not invent a stream-create-with-flags
+    this slice. Do not reverse StreamCreatePriority identity with stream_create_with_priority.
+    Do not invent a second `stream_create_flags` API. Do not invent
+    Engine `--stream-create-flags-identity`. Do not invent a stream-get-flags
+    this slice. Do not reverse StreamCreateWithFlags identity with stream_create_with_flags.
+    Do not invent a second `stream_flags` API. Do not invent
+    Engine `--stream-flags-identity`. Do not invent a stream-get-priority
+    this slice. Do not reverse StreamFlags identity with stream_get_flags.
+    Do not invent a second `get_stream_priority` API. Do not invent
+    Engine `--stream-get-priority-identity`. Do not invent a graph-mem-get
+    this slice. Do not reverse GetStreamPriority identity with stream_get_priority.
+    Do not invent a second `device_graph_mem_get` API. Do not invent
+    Engine `--graph-mem-get-identity`. Do not invent a graph-mem-set
+    this slice. Do not reverse DeviceGraphMemGet identity with graph_mem_get.
+    Do not invent a second `device_graph_mem_set` API. Do not invent
+    Engine `--graph-mem-set-identity`. Do not invent a graph-mem-trim
+    this slice. Do not reverse DeviceGraphMemSet identity with graph_mem_set.
+    Do not invent a second `device_graph_mem_trim` API. Do not invent
+    Engine `--graph-mem-trim-identity`. Do not invent a stream-get-id
+    this slice. Do not reverse DeviceGraphMemTrim identity with graph_mem_trim.
+    Do not invent a second `get_stream_id` API. Do not invent
+    Engine `--stream-get-id-identity`. Do not invent a stream-copy-attributes
+    this slice. Do not reverse GetStreamId identity with stream_get_id.
+    Do not invent a second `copy_stream_attributes` API. Do not invent
+    Engine `--stream-copy-attributes-identity`. Do not invent a stream-get-attribute
+    this slice. Do not reverse CopyStreamAttributes identity with stream_copy_attributes.
+    Do not invent a second `get_stream_attribute` API. Do not invent
+    Engine `--stream-get-attribute-identity`. Do not invent a stream-set-attribute
+    this slice. Do not reverse GetStreamAttribute identity with stream_get_attribute.
+    Do not invent a second `set_stream_attribute` API. Do not invent
+    Engine `--stream-set-attribute-identity`. Do not invent a graph-kernel-get-attribute
+    this slice. Do not reverse SetStreamAttribute identity with stream_set_attribute.
+    Do not invent a second `get_graph_kernel_node_attribute` API. Do not invent
+    Engine `--graph-kernel-get-attribute-identity`. Do not invent a graph-kernel-set-attribute
+    this slice. Do not reverse GetGraphKernelNodeAttribute identity with graph_kernel_node_get_attribute.
+    Do not invent a second `set_graph_kernel_node_attribute` API. Do not invent
+    Engine `--graph-kernel-set-attribute-identity`. Do not invent a graph-exec-kernel-get-attribute
+    this slice. Do not reverse SetGraphKernelNodeAttribute identity with graph_kernel_node_set_attribute.
+    Do not invent a second `get_graph_exec_kernel_node_attribute` API. Do not invent
+    Engine `--graph-exec-kernel-get-attribute-identity`. Do not invent a graph-exec-kernel-set-attribute
+    this slice. Do not reverse GetGraphExecKernelNodeAttribute identity with graph_exec_kernel_node_get_attribute.
+    Do not invent a second `set_graph_exec_kernel_node_attribute` API. Do not invent
+    Engine `--graph-exec-kernel-set-attribute-identity`. Do not invent a graph-kernel-copy-attributes
+    this slice. Do not reverse SetGraphExecKernelNodeAttribute identity with graph_exec_kernel_node_set_attribute.
+    Do not invent a second `copy_graph_kernel_node_attributes` API. Do not invent
+    Engine `--graph-kernel-copy-attributes-identity`. Do not invent a graph-exec-kernel-copy-attributes
+    this slice. Do not reverse CopyGraphKernelNodeAttributes identity with graph_kernel_node_copy_attributes.
+    Do not invent a second `copy_graph_exec_kernel_node_attributes` API. Do not invent
+    Engine `--graph-exec-kernel-copy-attributes-identity`. Do not invent a graph-kernel-get-params
+    this slice. Do not reverse CopyGraphExecKernelNodeAttributes identity with graph_exec_kernel_node_copy_attributes.
+    Do not invent a second `get_graph_kernel_node_params` API. Do not invent
+    Engine `--graph-kernel-get-params-identity`. Do not invent a graph-exec-kernel-get-params
+    this slice. Do not reverse GetGraphKernelNodeParams identity with graph_kernel_get_params.
+    Do not invent a second `get_graph_exec_kernel_node_params` API. Do not invent
+    Engine `--graph-exec-kernel-get-params-identity`. Do not invent a graph-kernel-set-params
+    this slice. Do not reverse GetGraphExecKernelNodeParams identity with graph_exec_kernel_get_params.
+    Do not invent a second `set_graph_kernel_node_params` API. Do not invent
+    Engine `--graph-kernel-set-params-identity`. Do not invent a graph-exec-kernel-set-params
+    this slice. Do not reverse SetGraphKernelNodeParams identity with graph_kernel_set_params.
+    Do not invent a second `set_graph_exec_kernel_node_params` API. Do not invent
+    Engine `--graph-exec-kernel-set-params-identity`. Do not invent a graph-memcpy-get-params
+    this slice. Do not reverse SetGraphExecKernelNodeParams identity with graph_exec_kernel_set_params.
+    Do not invent a second `get_graph_memcpy_node_params` API. Do not invent
+    Engine `--graph-memcpy-get-params-identity`. Do not invent a graph-exec-memcpy-get-params
+    this slice. Do not reverse GetGraphMemcpyNodeParams identity with graph_memcpy_get_params.
+    Do not invent a second `get_graph_exec_memcpy_node_params` API. Do not invent
+    Engine `--graph-exec-memcpy-get-params-identity`. Do not invent a graph-memcpy-set-params
+    this slice. Do not reverse GetGraphExecMemcpyNodeParams identity with graph_exec_memcpy_get_params.
+    Do not invent a second `set_graph_memcpy_node_params` API. Do not invent
+    Engine `--graph-memcpy-set-params-identity`. Do not invent a graph-exec-memcpy-set-params
+    this slice. Do not reverse SetGraphMemcpyNodeParams identity with graph_memcpy_set_params.
+    Do not invent a second `set_graph_exec_memcpy_node_params` API. Do not invent
+    Engine `--graph-exec-memcpy-set-params-identity`. Do not invent a graph-memset-get-params
+    this slice. Do not reverse SetGraphExecMemcpyNodeParams identity with graph_exec_memcpy_set_params.
+    Do not invent a second `get_graph_memset_node_params` API. Do not invent
+    Engine `--graph-memset-get-params-identity`. Do not invent a graph-exec-memset-get-params
+    this slice. Do not reverse GetGraphMemsetNodeParams identity with graph_memset_get_params.
+    Do not invent a second `get_graph_exec_memset_node_params` API. Do not invent
+    Engine `--graph-exec-memset-get-params-identity`. Do not invent a graph-memset-set-params
+    this slice. Do not reverse GetGraphExecMemsetNodeParams identity with graph_exec_memset_get_params.
+    Do not invent a second `set_graph_memset_node_params` API. Do not invent
+    Engine `--graph-memset-set-params-identity`. Do not invent a graph-exec-memset-set-params
+    this slice. Do not reverse SetGraphMemsetNodeParams identity with graph_memset_set_params.
+    Do not invent a second `set_graph_exec_memset_node_params` API. Do not invent
+    Engine `--graph-exec-memset-set-params-identity`. Do not invent a graph-host-get-params
+    this slice. Do not reverse SetGraphExecMemsetNodeParams identity with graph_exec_memset_set_params.
+    Do not invent a second `get_graph_host_node_params` API. Do not invent
+    Engine `--graph-host-get-params-identity`. Do not invent a graph-exec-host-get-params
+    this slice. Do not reverse GetGraphHostNodeParams identity with graph_host_get_params.
+    Do not invent a second `get_graph_exec_host_node_params` API. Do not invent
+    Engine `--graph-exec-host-get-params-identity`. Do not invent a graph-host-set-params
+    this slice. Do not reverse GetGraphExecHostNodeParams identity with graph_exec_host_get_params.
+    Do not invent a second `set_graph_host_node_params` API. Do not invent
+    Engine `--graph-host-set-params-identity`. Do not invent a graph-exec-host-set-params
+    this slice. Do not reverse SetGraphHostNodeParams identity with graph_host_set_params.
+    Do not invent a second `set_graph_exec_host_node_params` API. Do not invent
+    Engine `--graph-exec-host-set-params-identity`. Do not invent a graph-batch-mem-get-params
+    this slice. Do not reverse SetGraphExecHostNodeParams identity with graph_exec_host_set_params.
+    Do not invent a second `get_graph_batch_mem_op_node_params` API. Do not invent
+    Engine `--graph-batch-mem-get-params-identity`. Do not invent a graph-exec-batch-mem-get-params
+    this slice. Do not reverse GetGraphBatchMemOpNodeParams identity with graph_batch_mem_ops_get_params.
+    Do not invent a second `get_graph_exec_batch_mem_op_node_params` API. Do not invent
+    Engine `--graph-exec-batch-mem-get-params-identity`. Do not invent a graph-batch-mem-set-params
+    this slice. Do not reverse GetGraphExecBatchMemOpNodeParams identity with graph_exec_batch_mem_ops_get_params.
+    Do not invent a second `set_graph_batch_mem_op_node_params` API. Do not invent
+    Engine `--graph-batch-mem-set-params-identity`. Do not invent a graph-exec-batch-mem-set-params
+    this slice. Do not reverse SetGraphBatchMemOpNodeParams identity with graph_batch_mem_op_set_params.
+    Do not invent a second `set_graph_exec_batch_mem_op_node_params` API. Do not invent
+    Engine `--graph-exec-batch-mem-set-params-identity`. Do not invent a graph-event-record-set-event
+    this slice. Do not reverse SetGraphExecBatchMemOpNodeParams identity with graph_exec_batch_mem_op_set_params.
+    Do not invent a second `set_graph_event_record_node_event` API. Do not invent
+    Engine `--graph-event-record-set-event-identity`. Do not invent a graph-exec-event-record-set-event
+    this slice. Do not reverse SetGraphEventRecordNodeEvent identity with graph_event_record_set_event.
+    Do not invent a second `set_graph_exec_event_record_node_event` API. Do not invent
+    Engine `--graph-exec-event-record-set-event-identity`. Do not invent a graph-event-wait-set-event
+    this slice. Do not reverse SetGraphExecEventRecordNodeEvent identity with graph_exec_event_record_set_event.
+    Do not invent a second `set_graph_event_wait_node_event` API. Do not invent
+    Engine `--graph-event-wait-set-event-identity`. Do not invent a graph-exec-event-wait-set-event
+    this slice. Do not reverse SetGraphEventWaitNodeEvent identity with graph_event_wait_set_event.
+    Do not invent a second `set_graph_exec_event_wait_node_event` API. Do not invent
+    Engine `--graph-exec-event-wait-set-event-identity`. Do not invent a graph-event-record-get-event
+    this slice. Do not reverse SetGraphExecEventWaitNodeEvent identity with graph_exec_event_wait_set_event.
+    Do not invent a second `get_graph_event_record_node_event` API. Do not invent
+    Engine `--graph-event-record-get-event-identity`. Do not invent a graph-exec-event-record-get-event
+    this slice. Do not reverse GetGraphEventRecordNodeEvent identity with graph_event_record_get_event.
+    Do not invent a second `get_graph_exec_event_record_node_event` API. Do not invent
+    Engine `--graph-exec-event-record-get-event-identity`. Do not invent a graph-event-wait-get-event
+    this slice. Do not reverse GetGraphExecEventRecordNodeEvent identity with graph_exec_event_record_get_event.
+    Do not invent a second `get_graph_event_wait_node_event` API. Do not invent
+    Engine `--graph-event-wait-get-event-identity`. Do not invent a graph-exec-event-wait-get-event
+    this slice. Do not reverse GetGraphEventWaitNodeEvent identity with graph_event_wait_get_event.
+    Do not invent a second `get_graph_exec_event_wait_node_event` API. Do not invent
+    Engine `--graph-exec-event-wait-get-event-identity`. Do not invent a graph-child-get-graph
+    this slice. Do not reverse GetGraphExecEventWaitNodeEvent identity with graph_exec_event_wait_get_event.
+    Do not invent a second `get_graph_child_graph_node_graph` API. Do not invent
+    Engine `--graph-child-get-graph-identity`. Do not invent a graph-exec-child-get-graph
+    this slice. Do not reverse GetGraphChildGraphNodeGraph identity with graph_child_get_graph.
+    Do not invent a second `get_graph_exec_child_graph_node_graph` API. Do not invent
+    Engine `--graph-exec-child-get-graph-identity`. Do not invent a graph-child-set-params
+    this slice. Do not reverse GetGraphExecChildGraphNodeGraph identity with graph_exec_child_get_graph.
+    Do not invent a second `set_graph_child_graph_node_params` API. Do not invent
+    Engine `--graph-child-set-params-identity`. Do not invent a graph-exec-child-set-params
+    this slice. Do not reverse SetGraphChildGraphNodeParams identity with graph_child_set_params.
+    Do not invent a second `set_graph_exec_child_graph_node_params` API. Do not invent
+    Engine `--graph-exec-child-set-params-identity`. Do not invent a graph-node-set-params
+    this slice. Do not reverse SetGraphExecChildGraphNodeParams identity with graph_exec_child_set_params.
+    Do not invent a second `set_graph_node_params` API. Do not invent
+    Engine `--graph-node-set-params-identity`. Do not invent a graph-exec-node-set-params
+    this slice. Do not reverse SetGraphNodeParams identity with graph_node_set_params.
+    Do not invent a second `set_graph_exec_node_params` API. Do not invent
+    Engine `--graph-exec-node-set-params-identity`. Do not invent a graph-node-get-params
+    this slice. Do not reverse SetGraphExecNodeParams identity with graph_exec_node_set_params.
+    Do not invent a second `get_graph_node_params` API. Do not invent
+    Engine `--graph-node-get-params-identity`. Do not invent a graph-exec-node-get-params
+    this slice. Do not reverse GetGraphNodeParams identity with graph_node_get_params.
+    Do not invent a second `get_graph_exec_node_params` API. Do not invent
+    Engine `--graph-exec-node-get-params-identity`. Do not invent a graph-node-set-enabled
+    this slice. Do not reverse GetGraphExecNodeParams identity with graph_exec_node_get_params.
+    Do not invent a second `set_graph_node_enabled` API. Do not invent
+    Engine `--graph-node-set-enabled-identity`. Do not invent a graph-node-get-enabled
+    this slice. Do not reverse SetGraphNodeEnabled identity with graph_node_set_enabled.
+    Do not invent a second `get_graph_node_enabled` API. Do not invent
+    Engine `--graph-node-get-enabled-identity`. Do not invent a graph-exec-get-flags
+    this slice. Do not reverse GetGraphNodeEnabled identity with graph_node_get_enabled.
+    Do not invent a second `get_graph_exec_flags` API. Do not invent
+    Engine `--graph-exec-get-flags-identity`. Do not invent a graph-get-id
+    this slice. Do not reverse GetGraphExecFlags identity with graph_exec_get_flags.
+    Do not invent a second `get_graph_id` API. Do not invent
+    Engine `--graph-get-id-identity`. Do not invent a graph-exec-get-id
+    this slice. Do not reverse GetGraphId identity with graph_get_id.
+    Do not invent a second `get_graph_exec_id` API. Do not invent
+    Engine `--graph-exec-get-id-identity`. Do not invent a graph-get-nodes
+    this slice. Do not reverse GetGraphExecId identity with graph_get_id.
+    Do not invent a second `get_graph_nodes` API. Do not invent
+    Engine `--graph-get-nodes-identity`. Do not invent a graph-get-root-nodes
+    this slice. Do not reverse GetGraphNodes identity with graph_nodes.
+    Do not invent a second `get_graph_root_nodes` API. Do not invent
+    Engine `--graph-get-root-nodes-identity`. Do not invent a graph-get-edges
+    this slice. Do not reverse GetGraphRootNodes identity with graph_root_nodes.
+    Do not invent a second `get_graph_edges` API. Do not invent
+    Engine `--graph-get-edges-identity`. Do not invent a graph-edges-with-data
+    this slice. Do not reverse GetGraphEdges identity with graph_edges.
+    Do not invent a second `get_graph_edges_with_data` API. Do not invent
+    Engine `--graph-get-edges-with-data-identity`. Do not invent a graph-node-get-dependencies
+    this slice. Do not reverse GetGraphEdgesWithData identity with graph_edges_with_data.
+    Do not invent a second `get_graph_node_dependencies` API. Do not invent
+    Engine `--graph-node-get-dependencies-identity`. Do not invent a graph-node-get-dependencies-with-data
+    this slice. Do not reverse GetGraphNodeDependencies identity with graph_node_deps.
+    Do not invent a second `get_graph_node_dependencies_with_data` API. Do not invent
+    Engine `--graph-node-get-dependencies-with-data-identity`. Do not invent a graph-node-get-dependent-nodes
+    this slice. Do not reverse GetGraphNodeDependenciesWithData identity with graph_node_deps_with_data.
+    Do not invent a second `get_graph_node_dependent_nodes` API. Do not invent
+    Engine `--graph-node-get-dependent-nodes-identity`. Do not invent a graph-node-get-dependent-nodes-with-data
+    this slice. Do not reverse GetGraphNodeDependentNodes identity with graph_node_dependents.
+    Do not invent a second `get_graph_node_dependent_nodes_with_data` API. Do not invent
+    Engine `--graph-node-get-dependent-nodes-with-data-identity`. Do not invent a graph-node-get-type
+    this slice. Do not reverse GetGraphNodeDependentNodesWithData identity with graph_node_dependents_with_data.
+    Do not invent a second `get_graph_node_type` API. Do not invent
+    Engine `--graph-node-get-type-identity`. Do not invent a graph-node-find-in-clone
+    this slice. Do not reverse GetGraphNodeType identity with graph_node_kind.
+    Do not invent a second `find_graph_node_in_clone` API. Do not invent
+    Engine `--graph-node-find-in-clone-identity`. Do not invent a graph-clone
+    this slice. Do not reverse FindGraphNodeInClone identity with graph_node_find_in_clone.
+    Do not invent a second `graph_clone` API. Do not invent
+    Engine `--clone-graph-identity`. Do not invent a graph-debug-dot
+    this slice. Do not reverse GraphClone identity with clone_graph.
+    Do not invent a second `graph_debug_dot_print` API. Do not invent
+    Engine `--graph-debug-dot-print-identity`. Do not invent a graph-debug-dot-with-flags
+    this slice. Do not reverse GraphDebugDotPrint identity with graph_debug_dot.
+    Do not invent a second `graph_debug_dot_print_with_flags` API. Do not invent
+    Engine `--graph-debug-dot-print-with-flags-identity`. Do not invent a graph-instantiate
+    this slice. Do not reverse GraphDebugDotPrintWithFlags identity with graph_debug_dot_with_flags.
+    Do not invent a second `graph_instantiate` API. Do not invent
+    Engine `--graph-instantiate-identity`. Do not invent a graph-instantiate-with-flags
+    this slice. Do not reverse GraphInstantiate identity with instantiate_graph.
+    Do not invent a second `graph_instantiate_with_flags` API. Do not invent
+    Engine `--graph-instantiate-with-flags-identity`. Do not invent a graph-instantiate-with-params
+    this slice. Do not reverse GraphInstantiateWithFlags identity with instantiate_graph_with_flags.
+    Do not invent a second `graph_instantiate_with_params` API. Do not invent
+    Engine `--graph-instantiate-with-params-identity`. Do not invent a graph-launch
+    this slice. Do not reverse GraphInstantiateWithParams identity with instantiate_graph_with_params.
+    Do not invent a second `graph_launch` API. Do not invent
+    Engine `--graph-launch-identity`. Do not invent a graph-upload
+    this slice. Do not reverse GraphLaunch identity with launch_graph.
+    Do not invent a second `graph_upload` API. Do not invent
+    Engine `--graph-upload-identity`. Do not invent a graph-upload-async
+    this slice. Do not reverse GraphUpload identity with upload_graph.
+    Do not invent a second `graph_upload_async` API. Do not invent
+    Engine `--graph-upload-async-identity`. Do not invent a graph-destroy
+    this slice. Do not reverse GraphUploadAsync identity with upload_graph_async.
+    Do not invent a second `graph_destroy` API. Do not invent
+    Engine `--graph-destroy-identity`. Do not invent a graph-exec-destroy
+    this slice. Do not reverse GraphDestroy identity with destroy_graph.
+    Do not invent a second `graph_exec_destroy` API. Do not invent
+    Engine `--graph-exec-destroy-identity`. Do not invent a graph-exec-update
+    this slice. Do not reverse GraphExecDestroy identity with destroy_graph.
+    Do not invent a second `graph_exec_update` API. Do not invent
+    Engine `--graph-exec-update-identity`. Do not invent a graph-exec-update-with-info
+    this slice. Do not reverse GraphExecUpdate identity with update_graph.
+    Do not invent a second `graph_exec_update_with_info` API. Do not invent
+    Engine `--graph-exec-update-with-info-identity`. Do not invent a graph-add-dependencies
+    this slice. Do not reverse GraphExecUpdateWithInfo identity with update_graph_with_info.
+    Do not invent a second `add_graph_dependencies` API. Do not invent
+    Engine `--graph-add-dependencies-identity`. Do not invent a graph-add-dependencies-n
+    this slice. Do not reverse AddGraphDependencies identity with graph_add_dependencies.
+    Do not invent a second `add_graph_dependencies_n` API. Do not invent
+    Engine `--graph-add-dependencies-n-identity`. Do not invent a graph-add-dependencies-with-data
+    this slice. Do not reverse AddGraphDependenciesN identity with graph_add_dependencies_n.
+    Do not invent a second `add_graph_dependencies_with_data` API. Do not invent
+    Engine `--graph-add-dependencies-with-data-identity`. Do not invent a graph-add-dependencies-n-with-data
+    this slice. Do not reverse AddGraphDependenciesWithData identity with graph_add_dependencies_with_data.
+    Do not invent a second `add_graph_dependencies_n_with_data` API. Do not invent
+    Engine `--graph-add-dependencies-n-with-data-identity`. Do not invent a graph-remove-dependencies
+    this slice. Do not reverse AddGraphDependenciesNWithData identity with graph_add_dependencies_n_with_data.
+    Do not invent a second `remove_graph_dependencies` API. Do not invent
+    Engine `--graph-remove-dependencies-identity`. Do not invent a graph-remove-dependencies-n
+    this slice. Do not reverse RemoveGraphDependencies identity with graph_remove_dependencies.
+    Do not invent a second `remove_graph_dependencies_n` API. Do not invent
+    Engine `--graph-remove-dependencies-n-identity`. Do not invent a graph-remove-dependencies-with-data
+    this slice. Do not reverse RemoveGraphDependenciesN identity with graph_remove_dependencies_n.
+    Do not invent a second `remove_graph_dependencies_with_data` API. Do not invent
+    Engine `--graph-remove-dependencies-with-data-identity`. Do not invent a graph-remove-dependencies-n-with-data
+    this slice. Do not reverse RemoveGraphDependenciesWithData identity with graph_remove_dependencies_with_data.
+    Do not invent a second `remove_graph_dependencies_n_with_data` API. Do not invent
+    Engine `--graph-remove-dependencies-n-with-data-identity`. Do not invent a graph-destroy-node
+    this slice. Do not reverse RemoveGraphDependenciesNWithData identity with graph_remove_dependencies_n_with_data.
+    Do not invent a second `destroy_graph_node` API. Do not invent
+    Engine `--graph-destroy-node-identity`. Do not invent a device-launch-graph
+    this slice. Do not reverse DestroyGraphNode identity with graph_destroy_node.
+    Do not invent a second `launch_device_graph` API. Do not invent
+    Engine `--device-launch-graph-identity`. Do not invent a current-graph-exec
+    this slice. Do not reverse LaunchDeviceGraph identity with device_launch_graph.
+    Do not invent a second `get_current_graph_exec` API. Do not invent
+    Engine `--get-current-graph-exec-identity`. Do not invent a graph-add-empty
+    this slice. Do not reverse GetCurrentGraphExec identity with current_graph_exec.
+    Do not invent a second `add_graph_empty` API. Do not invent
+    Engine `--graph-add-empty-identity`. Do not invent a graph-add-child
+    this slice. Do not reverse AddGraphEmpty identity with graph_add_empty.
+    Do not invent a second `add_graph_child` API. Do not invent
+    Engine `--graph-add-child-identity`. Do not invent a graph-add-host
+    this slice. Do not reverse AddGraphChild identity with graph_add_child.
+    Do not invent a second `add_graph_host` API. Do not invent
+    Engine `--graph-add-host-identity`. Do not invent a graph-add-event-record
+    this slice. Do not reverse AddGraphHost identity with graph_add_host_func_params.
+    Do not invent a second `add_graph_event_record` API. Do not invent
+    Engine `--graph-add-event-record-identity`. Do not invent a graph-add-event-wait
+    this slice. Do not reverse AddGraphEventRecord identity with graph_add_event_record.
+    Do not invent a second `add_graph_event_wait` API. Do not invent
+    Engine `--graph-add-event-wait-identity`. Do not invent a graph-add-kernel
+    this slice. Do not reverse AddGraphEventWait identity with graph_add_event_wait.
+    Do not invent a second `add_graph_kernel` API. Do not invent
+    Engine `--graph-add-kernel-identity`. Do not invent a graph-add-memcpy
+    this slice. Do not reverse AddGraphKernel identity with graph_add_kernel.
+    Do not invent a second `add_graph_memcpy` API. Do not invent
+    Engine `--graph-add-memcpy-identity`. Do not invent a graph-add-memcpy-1d
+    this slice. Do not reverse AddGraphMemcpy identity with graph_add_memcpy.
+    Do not invent a second `add_graph_memcpy_1d` API. Do not invent
+    Engine `--graph-add-memcpy-1d-identity`. Do not invent a graph-add-memcpy-2d
+    this slice. Do not reverse AddGraphMemcpy1D identity with graph_add_memcpy_1d.
+    Do not invent a second `add_graph_memcpy_2d` API. Do not invent
+    Engine `--graph-add-memcpy-2d-identity`. Do not invent a graph-add-memcpy-3d
+    this slice. Do not reverse AddGraphMemcpy2D identity with graph_add_memcpy_2d.
+    Do not invent a second `add_graph_memcpy_3d` API. Do not invent
+    Engine `--graph-add-memcpy-3d-identity`. Do not invent a graph-add-memset
+    this slice. Do not reverse AddGraphMemcpy3D identity with graph_add_memcpy_3d.
+    Do not invent a second `add_graph_memset` API. Do not invent
+    Engine `--graph-add-memset-identity`. Do not invent a graph-add-memset-op
+    this slice. Do not reverse AddGraphMemset identity with graph_add_memset.
+    Do not invent a second `add_graph_memset_op` API. Do not invent
+    Engine `--graph-add-memset-op-identity`. Do not invent a graph-add-memset-2d
+    this slice. Do not reverse AddGraphMemsetOp identity with graph_add_memset_op.
+    Do not invent a second `add_graph_memset_2d` API. Do not invent
+    Engine `--graph-add-memset-2d-identity`. Do not invent a graph-add-memset-3d
+    this slice. Do not reverse AddGraphMemset2D identity with graph_add_memset_2d.
+    Do not invent a second `add_graph_memset_3d` API. Do not invent
+    Engine `--graph-add-memset-3d-identity`. Do not invent a graph-add-batch-mem-op
+    this slice. Do not reverse AddGraphMemset3D identity with graph_add_memset_3d.
+    Do not invent a second `add_graph_batch_mem_op` API. Do not invent
+    Engine `--graph-add-batch-mem-op-identity`. Do not invent a graph-add-batch-mem-op-with-flags
+    this slice. Do not reverse AddGraphBatchMemOp identity with graph_add_batch_mem_op.
+    Do not invent a second `add_graph_batch_mem_op_with_flags` API. Do not invent
+    Engine `--graph-add-batch-mem-op-with-flags-identity`. Do not invent a graph-add-alloc
+    this slice. Do not reverse AddGraphBatchMemOpWithFlags identity with graph_add_batch_mem_op_with_flags.
+    Do not invent a second `add_graph_alloc` API. Do not invent
+    Engine `--graph-add-alloc-identity`. Do not invent a graph-add-alloc-with-access
+    this slice. Do not reverse AddGraphAlloc identity with graph_add_alloc.
+    Do not invent a second `add_graph_alloc_with_access` API. Do not invent
+    Engine `--graph-add-alloc-with-access-identity`. Do not invent a graph-add-free
+    this slice. Do not reverse AddGraphAllocWithAccess identity with graph_add_alloc_with_access.
+    Do not invent a second `add_graph_free` API. Do not invent
+    Engine `--graph-add-free-identity`. Do not invent a graph-add-node
+    this slice. Do not reverse AddGraphFree identity with graph_add_free.
+    Do not invent a second `add_graph_node` API. Do not invent
+    Engine `--graph-add-node-identity`. Do not invent a graph-add-node-with-data
+    this slice. Do not reverse AddGraphNode identity with graph_add_node.
+    Do not invent a second `add_graph_node_with_data` API. Do not invent
+    Engine `--graph-add-node-with-data-identity`. Do not invent a graph-add-if
+    this slice. Do not reverse AddGraphNodeWithData identity with graph_add_node_with_data.
+    Do not invent a second `add_graph_if` API. Do not invent
+    Engine `--graph-add-if-identity`. Do not invent a graph-add-if-else
+    this slice. Do not reverse AddGraphIf identity with graph_add_if.
+    Do not invent a second `add_graph_if_else` API. Do not invent
+    Engine `--graph-add-if-else-identity`. Do not invent a graph-add-while
+    this slice. Do not reverse AddGraphIfElse identity with graph_add_if_else.
+    Do not invent a second `add_graph_while` API. Do not invent
+    Engine `--graph-add-while-identity`. Do not invent a graph-add-switch
+    this slice. Do not reverse AddGraphWhile identity with graph_add_while.
+    Do not invent a second `add_graph_switch` API. Do not invent
+    Engine `--graph-add-switch-identity`. Do not invent a graph-add-set-conditional
+    this slice. Do not reverse AddGraphSwitch identity with graph_add_switch.
+    Do not invent a second `add_graph_set_conditional` API. Do not invent
+    Engine `--graph-add-set-conditional-identity`. Do not invent a graph-add-write-value64
+    this slice. Do not reverse AddGraphSetConditional identity with graph_add_set_conditional.
+    Do not invent a second `add_graph_write_value64` API. Do not invent
+    Engine `--graph-add-write-value64-identity`. Do not invent a graph-add-write-value32
+    this slice. Do not reverse AddGraphWriteValue64 identity with graph_add_write_value64.
+    Do not invent a second `add_graph_write_value32` API. Do not invent
+    Engine `--graph-add-write-value32-identity`. Do not invent a graph-add-write-value64-with-flags
+    this slice. Do not reverse AddGraphWriteValue32 identity with graph_add_write_value32.
+    Do not invent a second `add_graph_write_value64_with_flags` API. Do not invent
+    Engine `--graph-add-write-value64-with-flags-identity`. Do not invent a graph-add-write-value32-with-flags
+    this slice. Do not reverse AddGraphWriteValue64WithFlags identity with graph_add_write_value64_with_flags.
+    Do not invent a second `add_graph_write_value32_with_flags` API. Do not invent
+    Engine `--graph-add-write-value32-with-flags-identity`. Do not invent a graph-add-wait-value64
+    this slice. Do not reverse AddGraphWriteValue32WithFlags identity with graph_add_write_value32_with_flags.
+    Do not invent a second `add_graph_wait_value64` API. Do not invent
+    Engine `--graph-add-wait-value64-identity`. Do not invent a graph-add-wait-value32
+    this slice. Do not reverse AddGraphWaitValue64 identity with graph_add_wait_value64.
+    Do not invent a second `add_graph_wait_value32` API. Do not invent
+    Engine `--graph-add-wait-value32-identity`. Do not invent a graph-add-wait-value64-with-flags
+    this slice. Do not reverse AddGraphWaitValue32 identity with graph_add_wait_value32.
+    Do not invent a second `add_graph_wait_value64_with_flags` API. Do not invent
+    Engine `--graph-add-wait-value64-with-flags-identity`. Do not invent a graph-add-wait-value32-with-flags
+    this slice. Do not reverse AddGraphWaitValue64WithFlags identity with graph_add_wait_value64_with_flags.
+    Do not invent a second `add_graph_wait_value32_with_flags` API. Do not invent
+    Engine `--graph-add-wait-value32-with-flags-identity`. Do not invent a graph-add-cooperative-kernel
+    this slice. Do not reverse AddGraphWaitValue32WithFlags identity with graph_add_wait_value32_with_flags.
+    Do not invent a second `add_graph_cooperative_kernel` API. Do not invent
+    Engine `--graph-add-cooperative-kernel-identity`. Do not invent a graph-add-host-func
+    this slice. Do not reverse AddGraphCooperativeKernel identity with graph_add_cooperative_kernel.
+    Do not invent a second `add_graph_host_func` API. Do not invent
+    Engine `--graph-add-host-func-identity`. Do not invent an occupancy-sm-count
+    this slice. Do not reverse AddGraphHostFunc identity with graph_add_host_func.
+    Do not invent a second `set_graph_memcpy_node_params_1d` API. Do not invent
+    Engine `--graph-memcpy-set-params-1d-identity`. Do not invent a graph-memcpy-set-params-2d
+    this slice. Do not reverse SetGraphMemcpyNodeParams1D identity with graph_memcpy_set_params_1d.
+    Do not invent a second `set_graph_exec_memcpy_node_params_1d` API. Do not invent
+    Engine `--graph-exec-memcpy-set-params-1d-identity`. Do not invent a graph-exec-memcpy-set-params-2d
+    this slice. Do not reverse SetGraphExecMemcpyNodeParams1D identity with graph_exec_memcpy_set_params_1d.
+    Do not invent a second `graph_create` API. Do not invent
+    Engine `--graph-create-identity`. Do not invent a graph-create-with-flags
+    this slice. Do not reverse GraphCreate identity with create_graph.
+    Do not invent a second `graph_create_with_flags` API. Do not invent
+    Engine `--graph-create-with-flags-identity`. Do not invent a user-object-create
+    this slice. Do not reverse GraphCreateWithFlags identity with create_graph_with_flags.
+    Do not invent a second `create_user_object` API. Do not invent
+    Engine `--create-user-object-identity`. Do not invent a user-object-retain
+    this slice. Do not reverse CreateUserObject identity with user_object_create.
+    Do not invent a second `retain_user_object` API. Do not invent
+    Engine `--retain-user-object-identity`. Do not invent a user-object-release
+    this slice. Do not reverse RetainUserObject identity with user_object_retain.
+    Do not invent a second `release_user_object` API. Do not invent
+    Engine `--release-user-object-identity`. Do not invent a graph-retain-user-object
+    this slice. Do not reverse ReleaseUserObject identity with user_object_release.
+    Do not invent a second `retain_graph_user_object` API. Do not invent
+    Engine `--retain-graph-user-object-identity`. Do not invent a graph-release-user-object
+    this slice. Do not reverse RetainGraphUserObject identity with graph_retain_user_object.
+    Do not invent a second `release_graph_user_object` API. Do not invent
+    Engine `--release-graph-user-object-identity`. Do not invent a graph-alloc-get-params
+    this slice. Do not reverse ReleaseGraphUserObject identity with graph_release_user_object.
+    Do not invent a second `get_graph_alloc_node_params` API. Do not invent
+    Engine `--graph-alloc-get-params-identity`. Do not invent a graph-exec-alloc-get-params
+    this slice. Do not reverse GetGraphAllocNodeParams identity with graph_alloc_get_params.
+    Do not invent a second `get_graph_exec_alloc_node_params` API. Do not invent
+    Engine `--graph-exec-alloc-get-params-identity`. Do not invent a graph-free-get-params
+    this slice. Do not reverse GetGraphExecAllocNodeParams identity with graph_exec_alloc_get_params.
+    Do not invent a second `get_graph_free_node_params` API. Do not invent
+    Engine `--graph-free-get-params-identity`. Do not invent a graph-exec-free-get-params
+    this slice. Do not reverse GetGraphFreeNodeParams identity with graph_free_get_params.
+    Do not invent a second `get_graph_exec_free_node_params` API. Do not invent
+    Engine `--graph-exec-free-get-params-identity`. Do not invent a graph-free-set-params
+    this slice. Do not reverse GetGraphExecFreeNodeParams identity with graph_exec_free_get_params.
+    Do not invent a second `set_graph_free_node_params` API. Do not invent
+    Engine `--graph-free-set-params-identity`. Do not invent a graph-exec-free-set-params
+    this slice. Do not reverse SetGraphFreeNodeParams identity with graph_free_set_params.
+    Do not invent a second `set_graph_exec_free_node_params` API. Do not invent
+    Engine `--graph-exec-free-set-params-identity`. Do not invent a graph-set-conditional-params
+    this slice. Do not reverse SetGraphExecFreeNodeParams identity with graph_exec_free_set_params.
+    Do not invent a second `set_graph_conditional_params` API. Do not invent
+    Engine `--graph-set-conditional-params-identity`. Do not invent a graph-exec-set-conditional-params
+    this slice. Do not reverse SetGraphConditionalParams identity with graph_set_conditional_params.
+    Do not invent a second `set_graph_exec_conditional_params` API. Do not invent
+    Engine `--graph-exec-set-conditional-params-identity`. Do not invent a graph-conditional-create
+    this slice. Do not reverse SetGraphExecConditionalParams identity with graph_exec_set_conditional_params.
+    Do not invent a second `create_graph_conditional_handle` API. Do not invent
+    Engine `--graph-conditional-create-identity`. Do not invent a graph-conditional-create-with-flags
+    this slice. Do not reverse CreateGraphConditionalHandle identity with graph_conditional_create.
+    Do not invent a second `create_graph_conditional_handle_with_flags` API. Do not invent
+    Engine `--graph-conditional-create-with-flags-identity`. Do not invent a graph-conditional-create-with-ctx
+    this slice. Do not reverse CreateGraphConditionalHandleWithFlags identity with graph_conditional_create_with_flags.
+    Do not invent a second `create_graph_conditional_handle_with_ctx` API. Do not invent
+    Engine `--graph-conditional-create-with-ctx-identity`. Do not invent a stream-begin-capture
+    this slice. Do not reverse CreateGraphConditionalHandleWithCtx identity with graph_conditional_create_with_ctx.
+    Do not invent a second `stream_begin_capture` API. Do not invent
+    Engine `--stream-begin-capture-identity`. Do not invent a begin-capture-with-mode
+    this slice. Do not reverse StreamBeginCapture identity with begin_capture.
+    Do not invent a second `stream_begin_capture_with_mode` API. Do not invent
+    Engine `--stream-begin-capture-with-mode-identity`. Do not invent a begin-capture-to-graph
+    this slice. Do not reverse StreamBeginCaptureWithMode identity with begin_capture_with_mode.
+    Do not invent a second `stream_begin_capture_to_graph` API. Do not invent
+    Engine `--stream-begin-capture-to-graph-identity`. Do not invent a begin-capture-to-graph-with-mode
+    this slice. Do not reverse StreamBeginCaptureToGraph identity with begin_capture_to_graph.
+    Do not invent a second `stream_begin_capture_to_graph_with_mode` API. Do not invent
+    Engine `--stream-begin-capture-to-graph-with-mode-identity`. Do not invent a begin-recapture-to-graph
+    this slice. Do not reverse StreamBeginCaptureToGraphWithMode identity with begin_capture_to_graph_with_mode.
+    Do not invent a second `stream_begin_recapture_to_graph` API. Do not invent
+    Engine `--stream-begin-recapture-to-graph-identity`. Do not invent a begin-recapture-to-graph-with-mode
+    this slice. Do not reverse StreamBeginRecaptureToGraph identity with begin_recapture_to_graph.
+    Do not invent a second `stream_begin_recapture_to_graph_with_mode` API. Do not invent
+    Engine `--stream-begin-recapture-to-graph-with-mode-identity`. Do not invent a begin-recapture-to-graph-with-callback
+    this slice. Do not reverse StreamBeginRecaptureToGraphWithMode identity with begin_recapture_to_graph_with_mode.
+    Do not invent a second `stream_begin_recapture_to_graph_with_callback` API. Do not invent
+    Engine `--stream-begin-recapture-to-graph-with-callback-identity`. Do not invent a end-capture
+    this slice. Do not reverse StreamBeginRecaptureToGraphWithCallback identity with begin_recapture_to_graph_with_callback.
+    Do not invent a second `stream_end_capture` API. Do not invent
+    Engine `--stream-end-capture-identity`. Do not invent a stream-update-capture-dependencies
+    this slice. Do not reverse StreamEndCapture identity with end_capture.
+    Do not invent a second `update_stream_capture_dependencies` API. Do not invent
+    Engine `--update-stream-capture-dependencies-identity`. Do not invent a stream-is-capturing
+    this slice. Do not reverse UpdateStreamCaptureDependencies identity with stream_update_capture_dependencies.
+    Do not invent a second `is_stream_capturing` API. Do not invent
+    Engine `--is-stream-capturing-identity`. Do not invent a stream-capture-info
+    this slice. Do not reverse StreamIsCapturing identity with stream_is_capturing.
+    Do not invent a second `get_stream_capture_info` API. Do not invent
+    Engine `--get-stream-capture-info-identity`. Do not invent a thread-exchange-stream-capture-mode
+    this slice. Do not reverse StreamGetCaptureInfo identity with stream_capture_info.
+    Do not invent a second `exchange_thread_stream_capture_mode` API. Do not invent
+    Engine `--exchange-thread-stream-capture-mode-identity`. Do not invent a stream-capture-mode
+    this slice. Do not reverse ThreadExchangeStreamCaptureMode identity with thread_exchange_stream_capture_mode.
+    Do not invent a second `get_stream_capture_mode` API. Do not invent
+    Engine `--get-stream-capture-mode-identity`. Do not invent a event-get-flags
+    this slice. Do not reverse StreamCaptureMode query identity with stream_capture_mode.
+    Do not invent a second `event_flags` API. Do not invent
+    Engine `--event-flags-identity`. Do not invent a event-timing
+    this slice. Do not reverse EventGetFlags identity with event_get_flags.
+    Do not invent a second `ctx_enable_peer_access` API. Do not invent
+    Engine `--ctx-enable-peer-access-identity`. Do not invent a enable-peer-with-flags
+    this slice. Do not reverse CtxEnablePeerAccess identity with enable_peer.
+    Do not invent a second `ctx_enable_peer_access_with_flags` API. Do not invent
+    Engine `--ctx-enable-peer-access-with-flags-identity`. Do not invent a disable-peer
+    this slice. Do not reverse CtxEnablePeerAccessWithFlags identity with enable_peer_with_flags.
+    Do not invent a second `ctx_disable_peer_access` API. Do not invent
+    Engine `--ctx-disable-peer-access-identity`. Do not invent a device-can-access-peer
+    this slice. Do not reverse CtxDisablePeerAccess identity with disable_peer.
+    Do not invent a second `can_device_access_peer` API. Do not invent
+    Engine `--can-device-access-peer-identity`. Do not invent a device-get-p2p-attribute
+    this slice. Do not reverse DeviceCanAccessPeer identity with device_can_access_peer.
+    Do not invent a second `device_p2p_attribute` API. Do not invent
+    Engine `--device-p2p-attribute-identity`. Do not invent a device-get-nvscisync-attributes
+    this slice. Do not reverse DeviceGetP2PAttribute identity with device_get_p2p_attribute.
+    Do not invent a second `device_nvscisync_attributes` API. Do not invent
+    Engine `--device-nvscisync-attributes-identity`. Do not invent a flush-gpu-direct-rdma-writes
+    this slice. Do not reverse DeviceGetNvSciSyncAttributes identity with device_get_nvscisync_attributes.
+    Do not invent a second `device_flush_gpu_direct_rdma_writes` API. Do not invent
+    Engine `--device-flush-gpu-direct-rdma-writes-identity`. Do not invent a malloc-pitch
+    this slice. Do not reverse FlushGPUDirectRDMAWrites identity with flush_gpu_direct_rdma_writes.
+    Do not invent a second `mem_alloc_pitch` API. Do not invent
+    Engine `--mem-alloc-pitch-identity`. Do not invent a malloc-3d
+    this slice. Do not reverse MallocPitch identity with malloc_pitch.
+    Do not invent a second `mem_alloc_3d` API. Do not invent
+    Engine `--mem-alloc-3d-identity`. Do not invent a cooperative-kernel
+    this slice. Do not reverse Malloc3D identity with malloc_3d.
+    Do not invent a second `launch_cooperative_kernel` API. Do not invent
+    Engine `--launch-cooperative-kernel-identity`. Do not invent a cooperative-kernel-bufs
+    this slice. Do not reverse LaunchCooperativeKernel identity with cooperative_kernel.
+    Do not invent a second `launch_cooperative_kernel_bufs` API. Do not invent
+    Engine `--launch-cooperative-kernel-bufs-identity`. Do not invent a cooperative-kernel-multi-device
+    this slice. Do not reverse LaunchCooperativeKernelBufs identity with cooperative_kernel_bufs.
+    Do not invent a second `launch_cooperative_kernel_multi_device` API. Do not invent
+    Engine `--launch-cooperative-kernel-multi-device-identity`. Do not invent a memset
+    this slice. Do not reverse LaunchCooperativeKernelMultiDevice identity with cooperative_kernel_multi_device.
+    Do not invent a second `mem_set` API. Do not invent
+    Engine `--mem-set-identity`. Do not invent a memset-buf
+    this slice. Do not reverse Memset identity with memset.
+    Do not invent a second `mem_set_buf` API. Do not invent
+    Engine `--mem-set-buf-identity`. Do not invent a memset-op
+    this slice. Do not reverse MemsetBuf identity with memset_buf.
+    Do not invent a second `mem_set_op` API. Do not invent
+    Engine `--mem-set-op-identity`. Do not invent a memset-sync
+    this slice. Do not reverse MemsetOp identity with memset_op.
+    Do not invent a second `mem_set_sync` API. Do not invent
+    Engine `--mem-set-sync-identity`. Do not invent a memset-d8-async
+    this slice. Do not reverse MemsetSync identity with memset_sync.
+    Do not invent a second `mem_set_op_sync` API. Do not invent
+    Engine `--mem-set-op-sync-identity`. Do not invent a memset-2d-async
+    this slice. Do not reverse MemsetOpSync identity with memset_op_sync.
+    Do not invent a second `mem_set_2d_async` API. Do not invent
+    Engine `--mem-set-2d-async-identity`. Do not invent a memset-2d
+    this slice. Do not reverse Memset2DAsync identity with memset_2d_async.
+    Do not invent a second `mem_set_2d` API. Do not invent
+    Engine `--mem-set-2d-identity`. Do not invent a memset-3d-async
+    this slice. Do not reverse Memset2D identity with memset_2d.
+    Do not invent a second `mem_set_3d_async` API. Do not invent
+    Engine `--mem-set-3d-async-identity`. Do not invent a memset-3d
+    this slice. Do not reverse Memset3DAsync identity with memset_3d_async.
+    Do not invent a second `mem_set_3d` API. Do not invent
+    Engine `--mem-set-3d-identity`. Do not invent a host-func
+    this slice. Do not reverse Memset3D identity with memset_3d.
+    Do not invent a second `stream_write_value64` API. Do not invent
+    Engine `--stream-write-value64-identity`. Do not invent a write-value32
+    this slice. Do not reverse WriteValue64 identity with write_value64.
+    Do not invent a second `stream_write_value32` API. Do not invent
+    Engine `--stream-write-value32-identity`. Do not invent a write-value64-with-flags
+    this slice. Do not reverse WriteValue32 identity with write_value32.
+    Do not invent a second `stream_write_value64_with_flags` API. Do not invent
+    Engine `--stream-write-value64-with-flags-identity`. Do not invent a write-value32-with-flags
+    this slice. Do not reverse WriteValue64WithFlags identity with write_value64_with_flags.
+    Do not invent a second `stream_write_value32_with_flags` API. Do not invent
+    Engine `--stream-write-value32-with-flags-identity`. Do not invent a wait-value64
+    this slice. Do not reverse WriteValue32WithFlags identity with write_value32_with_flags.
+    Do not invent a second `stream_wait_value64` API. Do not invent
+    Engine `--stream-wait-value64-identity`. Do not invent a wait-value32
+    this slice. Do not reverse WaitValue64 identity with wait_value64.
+    Do not invent a second `stream_wait_value32` API. Do not invent
+    Engine `--stream-wait-value32-identity`. Do not invent a wait-value64-with-flags
+    this slice. Do not reverse WaitValue32 identity with wait_value32.
+    Do not invent a second `stream_wait_value64_with_flags` API. Do not invent
+    Engine `--stream-wait-value64-with-flags-identity`. Do not invent a wait-value32-with-flags
+    this slice. Do not reverse WaitValue64WithFlags identity with wait_value64_with_flags.
+    Do not invent a second `stream_wait_value32_with_flags` API. Do not invent
+    Engine `--stream-wait-value32-with-flags-identity`. Do not invent a batch-mem-op
+    this slice. Do not reverse WaitValue32WithFlags identity with wait_value32_with_flags.
+    Do not invent a second `stream_batch_mem_op` API. Do not invent
+    Engine `--stream-batch-mem-op-identity`. Do not invent a batch-mem-op-with-flags
+    this slice. Do not reverse BatchMemOp identity with batch_mem_op.
+    Do not invent a second `stream_batch_mem_op_with_flags` API. Do not invent
+    Engine `--stream-batch-mem-op-with-flags-identity`. Do not invent a host-func-params
+    this slice. Do not reverse BatchMemOpWithFlags identity with batch_mem_op_with_flags.
+    Do not invent a second `launch_kernel` API. Do not invent
+    Engine `--launch-kernel-identity`. Do not invent a kernel-bufs
+    this slice. Do not reverse LaunchKernel identity with kernel.
+    Do not invent a second `launch_kernel_bufs` API. Do not invent
+    Engine `--launch-kernel-bufs-identity`. Do not invent a kernel-pdl
+    this slice. Do not reverse LaunchKernelBufs identity with kernel_bufs.
+    Do not invent a second `launch_kernel_ex` API. Do not invent
+    Engine `--launch-kernel-ex-identity`. Do not invent a kernel-bufs-with
+    this slice. Do not reverse LaunchKernelEx identity with kernel_with.
+    Do not invent a second `launch_kernel_ex_bufs` API. Do not invent
+    Engine `--launch-kernel-ex-bufs-identity`. Do not invent a kernel-access-policy
+    this slice. Do not reverse LaunchKernelExBufs identity with kernel_bufs_with.
+    Do not invent a second `func_set_shared_mem_config` API. Do not invent
+    Engine `--func-set-shared-mem-config-identity`. Do not invent a func-get-shared-mem-config
+    this slice. Do not reverse FuncSetSharedMemConfig identity with set_func_shared_mem_config.
+    Do not invent a second `func_get_shared_mem_config` API. Do not invent
+    Engine `--func-get-shared-mem-config-identity`. Do not invent a func-set-cache-config
+    this slice. Do not reverse FuncGetSharedMemConfig identity with get_func_shared_mem_config.
+    Do not invent a second `func_set_cache_config` API. Do not invent
+    Engine `--func-set-cache-config-identity`. Do not invent a func-get-cache-config
+    this slice. Do not reverse FuncSetCacheConfig identity with set_func_cache_config.
+    Do not invent a second `func_set_carveout` API. Do not invent
+    Engine `--func-set-carveout-identity`. Do not invent a func-get-carveout
+    this slice. Do not reverse FuncSetCarveout identity with set_func_carveout.
+    Do not invent a second `func_get_carveout` API. Do not invent
+    Engine `--func-get-carveout-identity`. Do not invent a func-set-cluster-policy
+    this slice. Do not reverse FuncGetCarveout identity with get_func_carveout.
+    Do not invent a second `func_set_cluster_policy` API. Do not invent
+    Engine `--func-set-cluster-policy-identity`. Do not invent a func-get-cluster-policy
+    this slice. Do not reverse FuncSetClusterPolicy identity with set_func_cluster_policy.
+    Do not invent a second `func_get_cluster_policy` API. Do not invent
+    Engine `--func-get-cluster-policy-identity`. Do not invent a cluster-dim-must-be-set
+    this slice. Do not reverse FuncGetClusterPolicy identity with get_func_cluster_policy.
+    Do not invent a second `func_set_cluster_dim_must_be_set` API. Do not invent
+    Engine `--func-set-cluster-dim-must-be-set-identity`. Do not invent a get-cluster-dim-must-be-set
+    this slice. Do not reverse FuncSetClusterDimMustBeSet identity with set_cluster_dim_must_be_set.
+    Do not invent a second `func_get_cluster_dim_must_be_set` API. Do not invent
+    Engine `--func-get-cluster-dim-must-be-set-identity`. Do not invent a required-cluster-width
+    this slice. Do not reverse FuncGetClusterDimMustBeSet identity with cluster_dim_must_be_set.
+    Do not invent a second `func_set_required_cluster_width` API. Do not invent
+    Engine `--func-set-required-cluster-width-identity`. Do not invent a get-required-cluster-width
+    this slice. Do not reverse FuncSetRequiredClusterWidth identity with set_required_cluster_width.
+    Do not invent a second `func_get_required_cluster_width` API. Do not invent
+    Engine `--func-get-required-cluster-width-identity`. Do not invent a required-cluster-height
+    this slice. Do not reverse FuncGetRequiredClusterWidth identity with required_cluster_width.
+    Do not invent a second `func_set_required_cluster_height` API. Do not invent
+    Engine `--func-set-required-cluster-height-identity`. Do not invent a get-required-cluster-height
+    this slice. Do not reverse FuncSetRequiredClusterHeight identity with set_required_cluster_height.
+    Do not invent a second `func_get_required_cluster_height` API. Do not invent
+    Engine `--func-get-required-cluster-height-identity`. Do not invent a required-cluster-depth
+    this slice. Do not reverse FuncGetRequiredClusterHeight identity with required_cluster_height.
+    Do not invent a second `func_set_required_cluster_depth` API. Do not invent
+    Engine `--func-set-required-cluster-depth-identity`. Do not invent a get-required-cluster-depth
+    this slice. Do not reverse FuncSetRequiredClusterDepth identity with set_required_cluster_depth.
+    Do not invent a second `func_get_required_cluster_depth` API. Do not invent
+    Engine `--func-get-required-cluster-depth-identity`. Do not invent a non-portable-cluster-size
+    this slice. Do not reverse FuncGetRequiredClusterDepth identity with required_cluster_depth.
+    Do not invent a second `func_set_non_portable_cluster_size_allowed` API. Do not invent
+    Engine `--func-set-non-portable-cluster-size-allowed-identity`. Do not invent a get-non-portable-cluster-size
+    this slice. Do not reverse FuncSetNonPortableClusterSizeAllowed identity with set_non_portable_cluster_size_allowed.
+    Do not invent a second `func_get_non_portable_cluster_size_allowed` API. Do not invent
+    Engine `--func-get-non-portable-cluster-size-allowed-identity`. Do not invent a max-dynamic-shared
+    this slice. Do not reverse FuncGetNonPortableClusterSizeAllowed identity with non_portable_cluster_size_allowed.
+    Do not invent a second `func_set_max_dynamic_shared_memory` API. Do not invent
+    Engine `--func-set-max-dynamic-shared-memory-identity`. Do not invent a get-max-dynamic-shared
+    this slice. Do not reverse FuncSetMaxDynamicSharedMemory identity with set_max_dynamic_shared_memory.
+    Do not invent a second `func_get_max_dynamic_shared_memory` API. Do not invent
+    Engine `--func-get-max-dynamic-shared-memory-identity`. Do not invent a event-create-disable-timing
+    this slice. Do not reverse FuncGetMaxDynamicSharedMemory identity with max_dynamic_shared_memory.
+    Do not invent a second `event_create_disable_timing` API. Do not invent
+    Engine `--event-create-disable-timing-identity`. Do not invent a event-create-interprocess
+    this slice. Do not reverse EventCreateDisableTiming identity with create_event_disable_timing.
+    Do not invent a second `event_create_interprocess` API. Do not invent
+    Engine `--event-create-interprocess-identity`. Do not invent a event-create-blocking-sync
+    this slice. Do not reverse EventCreateInterprocess identity with create_event_interprocess.
+    Do not invent a second `event_create_blocking_sync` API. Do not invent
+    Engine `--event-create-blocking-sync-identity`. Do not invent a event-record-external
+    this slice. Do not reverse EventCreateBlockingSync identity with create_event_blocking_sync.
+    Do not invent a second `event_record_external` API. Do not invent
+    Engine `--event-record-external-identity`. Do not invent a wait-event-external
+    this slice. Do not reverse EventRecordExternal identity with record_event_external.
+    Do not invent a second `stream_wait_event_external` API. Do not invent
+    Engine `--stream-wait-event-external-identity`. Do not invent a stream-mem-sync-domain
+    this slice. Do not reverse StreamWaitEventExternal identity with wait_event_external.
+    Do not invent a second `stream_set_mem_sync_domain` API. Do not invent
+    Engine `--stream-set-mem-sync-domain-identity`. Do not invent a stream-mem-sync-domain-map
+    this slice. Do not reverse StreamSetMemSyncDomain identity with set_stream_mem_sync_domain.
+    Do not wrap `set_stream_mem_sync_domain` as `stream_set_mem_sync_domain`.
+    Do not invent a second `stream_set_mem_sync_domain_map` API. Do not invent
+    Engine `--stream-set-mem-sync-domain-map-identity`. Do not invent a stream-get-mem-sync-domain
+    this slice. Do not reverse StreamSetMemSyncDomainMap identity with set_stream_mem_sync_domain_map.
+    Do not wrap `set_stream_mem_sync_domain_map` as `stream_set_mem_sync_domain_map`.
+    Do not invent a second `stream_get_mem_sync_domain` API. Do not invent
+    Engine `--stream-get-mem-sync-domain-identity`. Do not invent a stream-get-mem-sync-domain-map
+    this slice. Do not reverse StreamGetMemSyncDomain identity with stream_mem_sync_domain.
+    Do not wrap `stream_mem_sync_domain` as `stream_get_mem_sync_domain`.
+    Do not invent a second `stream_get_mem_sync_domain_map` API. Do not invent
+    Engine `--stream-get-mem-sync-domain-map-identity`. Do not invent a stream-set-sync-policy
+    this slice. Do not reverse StreamGetMemSyncDomainMap identity with stream_mem_sync_domain_map.
+    Do not wrap `stream_mem_sync_domain_map` as `stream_get_mem_sync_domain_map`.
+    Do not invent a second `stream_set_sync_policy` API. Do not invent
+    Engine `--stream-set-sync-policy-identity`. Do not invent a stream-get-sync-policy
+    this slice. Do not reverse StreamSetSyncPolicy identity with set_stream_sync_policy.
+    Do not wrap `set_stream_sync_policy` as `stream_set_sync_policy`.
+    Do not invent a second `stream_get_sync_policy` API. Do not invent
+    Engine `--stream-get-sync-policy-identity`. Do not invent a stream-set-nvlink-util-centric
+    this slice. Do not reverse StreamGetSyncPolicy identity with stream_sync_policy.
+    Do not wrap `stream_sync_policy` as `stream_get_sync_policy`.
+    Do not invent a second `stream_set_nvlink_util_centric` API. Do not invent
+    Engine `--stream-set-nvlink-util-centric-identity`. Do not invent a stream-get-nvlink-util-centric
+    this slice. Do not reverse StreamSetNvlinkUtilCentric identity with set_stream_nvlink_util_centric.
+    Do not wrap `set_stream_nvlink_util_centric` as `stream_set_nvlink_util_centric`.
+    Do not invent a second `stream_get_nvlink_util_centric` API. Do not invent
+    Engine `--stream-get-nvlink-util-centric-identity`. Do not invent a stream-set-access-policy
+    this slice. Do not reverse StreamGetNvlinkUtilCentric identity with stream_nvlink_util_centric.
+    Do not wrap `stream_nvlink_util_centric` as `stream_get_nvlink_util_centric`.
+    Do not invent a second `stream_set_access_policy` API. Do not invent
+    Engine `--stream-set-access-policy-identity`. Do not invent a stream-get-access-policy
+    this slice. Do not reverse StreamSetAccessPolicy identity with set_stream_access_policy.
+    Do not wrap `set_stream_access_policy` as `stream_set_access_policy`.
+    Do not invent a second `stream_get_access_policy` API. Do not invent
+    Engine `--stream-get-access-policy-identity`. Do not invent a stream-set-priority
+    this slice. Do not reverse StreamGetAccessPolicy identity with stream_access_policy.
+    Do not wrap `stream_access_policy` as `stream_get_access_policy`.
+    Do not invent a second `stream_set_priority` API. Do not invent
+    Engine `--stream-set-priority-identity`. Do not invent a stream-set-blocking
+    this slice. Do not reverse StreamSetPriority identity with set_stream_priority.
+    Do not wrap `set_stream_priority` as `stream_set_priority`.
+    Do not invent a second `stream_set_blocking` API. Do not invent
+    Engine `--stream-set-blocking-identity`. Do not invent a stream-is-blocking
+    this slice. Do not reverse StreamSetBlocking identity with set_stream_blocking.
+    Do not wrap `set_stream_blocking` as `stream_set_blocking`.
+    Do not invent a second `get_func_attributes` API. Do not invent
+    Engine `--get-func-attributes-identity`. Do not invent a stream-is-idle
+    this slice. Do not reverse FuncGetAttributes identity with func_get_attributes.
+    Do not wrap `func_get_attributes` as `get_func_attributes`.
+    Do not wrap `stream_is_blocking` as `stream_get_blocking`.
+    Do not invent a second `get_device_name` API. Do not invent
+    Engine `--get-device-name-identity`. Do not invent a stream-is-idle
+    this slice. Do not reverse DeviceGetName identity with device_get_name.
+    Do not wrap `device_get_name` as `get_device_name`.
+    Do not wrap `device_get_uuid` as `get_device_name`.
+    Do not invent a second `get_device_count` API. Do not invent
+    Engine `--get-device-count-identity`. Do not invent a stream-is-idle
+    this slice. Do not reverse DeviceGetCount identity with device_count.
+    Do not wrap `device_count` as `get_device_count`.
+    Do not wrap `driver_get_version` as `get_driver_version`.
+    Do not invent a second `device_get_default_mempool` API. Do not invent
+    Engine `--device-get-default-mempool-identity`. Do not invent a device-get-mempool
+    this slice. Do not reverse DeviceGetDefaultMemPool identity with default_pool.
+    Do not wrap `default_pool` as `device_get_default_mempool`.
+    Do not wrap `device_mempool` as `device_get_default_mempool`.
+    Do not invent a second `device_get_mempool` API. Do not invent
+    Engine `--device-get-mempool-identity`. Do not invent a device-set-mempool
+    this slice. Do not reverse DeviceGetMemPool identity with device_mempool.
+    Do not wrap `device_mempool` as `device_get_mempool`.
+    Do not wrap `set_device_mempool` as `device_get_mempool`.
+    Do not invent a second `device_set_mempool` API. Do not invent
+    Engine `--device-set-mempool-identity`. Do not invent a mem-pool-create
+    this slice. Do not reverse DeviceSetMemPool identity with set_device_mempool.
+    Do not wrap `set_device_mempool` as `device_set_mempool`.
+    Do not wrap `create_pool` as `device_set_mempool`.
+    Do not invent a second `mem_pool_create` API. Do not invent
+    Engine `--mem-pool-create-identity`. Do not invent a create-shareable-pool
+    this slice. Do not reverse MemPoolCreate identity with create_pool.
+    Do not wrap `create_pool` as `mem_pool_create`.
+    Do not wrap `create_shareable_pool` as `mem_pool_create`.
+    Do not invent a second `mem_pool_create_shareable` API. Do not invent
+    Engine `--mem-pool-create-shareable-identity`. Do not invent a create-pool-with-props
+    this slice. Do not reverse MemPoolCreate POSIX identity with create_shareable_pool.
+    Do not wrap `create_shareable_pool` as `mem_pool_create_shareable`.
+    Do not wrap `create_pool_with_props` as `mem_pool_create_shareable`.
+    Do not invent a second `mem_pool_create_with_props` API. Do not invent
+    Engine `--mem-pool-create-with-props-identity`. Do not invent a mem-pool-destroy
+    this slice. Do not reverse MemPoolCreate props identity with create_pool_with_props.
+    Do not wrap `create_pool_with_props` as `mem_pool_create_with_props`.
+    Do not wrap `destroy_pool` as `mem_pool_create_with_props`.
+    Do not invent a second `mem_pool_destroy` API. Do not invent
+    Engine `--mem-pool-destroy-identity`. Do not invent a alloc-from-pool
+    this slice. Do not reverse MemPoolDestroy identity with destroy_pool.
+    Do not wrap `destroy_pool` as `mem_pool_destroy`.
+    Do not wrap `alloc_from_pool` as `mem_pool_destroy`.
+    Do not invent a second `mem_alloc_from_pool` API. Do not invent
+    Engine `--mem-alloc-from-pool-identity`. Do not invent a pool-export
+    this slice. Do not reverse MemAllocFromPool identity with alloc_from_pool.
+    Do not wrap `alloc_from_pool` as `mem_alloc_from_pool`.
+    Do not wrap `pool_export` as `mem_alloc_from_pool`.
+    Do not invent a second `mem_pool_export` API. Do not invent
+    Engine `--mem-pool-export-identity`. Do not invent a pool-import
+    this slice. Do not reverse MemPoolExport identity with pool_export.
+    Do not wrap `pool_export` as `mem_pool_export`.
+    Do not wrap `pool_import` as `mem_pool_export`.
+    Do not invent a second `mem_pool_import` API. Do not invent
+    Engine `--mem-pool-import-identity`. Do not invent a pool-export-with-type
+    this slice. Do not reverse MemPoolImport identity with pool_import.
+    Do not wrap `pool_import` as `mem_pool_import`.
+    Do not wrap `pool_export_with_type` as `mem_pool_import`.
+    Do not invent a second `mem_pool_export_with_type` API. Do not invent
+    Engine `--mem-pool-export-with-type-identity`. Do not invent a pool-import-with-type
+    this slice. Do not reverse MemPoolExport type identity with pool_export_with_type.
+    Do not wrap `pool_export_with_type` as `mem_pool_export_with_type`.
+    Do not wrap `pool_import_with_type` as `mem_pool_export_with_type`.
+    Do not invent a second `mem_pool_import_with_type` API. Do not invent
+    Engine `--mem-pool-import-with-type-identity`. Do not invent a pool-export-ptr
+    this slice. Do not reverse MemPoolImport type identity with pool_import_with_type.
+    Do not wrap `pool_import_with_type` as `mem_pool_import_with_type`.
+    Do not wrap `pool_export_ptr` as `mem_pool_import_with_type`.
+    Do not invent a second `mem_pool_export_ptr` API. Do not invent
+    Engine `--mem-pool-export-ptr-identity`. Do not invent a pool-import-ptr
+    this slice. Do not reverse MemPoolExportPointer identity with pool_export_ptr.
+    Do not wrap `pool_export_ptr` as `mem_pool_export_ptr`.
+    Do not wrap `pool_import_ptr` as `mem_pool_export_ptr`.
+    Do not invent a second `mem_pool_import_ptr` API. Do not invent
+    Engine `--mem-pool-import-ptr-identity`. Do not invent a pool-get-access
+    this slice. Do not reverse MemPoolImportPointer identity with pool_import_ptr.
+    Do not wrap `pool_import_ptr` as `mem_pool_import_ptr`.
+    Do not wrap `pool_get_access` as `mem_pool_import_ptr`.
+    Do not invent a second `mem_pool_get_access` API. Do not invent
+    Engine `--mem-pool-get-access-identity`. Do not invent a pool-set-access
+    this slice. Do not reverse MemPoolGetAccess identity with pool_get_access.
+    Do not wrap `pool_get_access` as `mem_pool_get_access`.
+    Do not wrap `pool_set_access` as `mem_pool_get_access`.
+    Do not invent a second `mem_pool_set_access` API. Do not invent
+    Engine `--mem-pool-set-access-identity`. Do not invent a pool-set-access-read
+    this slice. Do not reverse MemPoolSetAccess identity with pool_set_access.
+    Do not wrap `pool_set_access` as `mem_pool_set_access`.
+    Do not wrap `pool_set_access_read` as `mem_pool_set_access`.
+    Do not invent a second `mem_pool_set_access_read` API. Do not invent
+    Engine `--mem-pool-set-access-read-identity`. Do not invent a pool-set-access-with-flags
+    this slice. Do not reverse MemPoolSetAccess ProtRead identity with pool_set_access_read.
+    Do not wrap `pool_set_access_read` as `mem_pool_set_access_read`.
+    Do not wrap `pool_set_access_with_flags` as `mem_pool_set_access_read`.
+    Do not invent a second `mem_pool_set_access_with_flags` API. Do not invent
+    Engine `--mem-pool-set-access-with-flags-identity`. Do not invent a pool-set-access-n
+    this slice. Do not reverse MemPoolSetAccess flags identity with pool_set_access_with_flags.
+    Do not wrap `pool_set_access_with_flags` as `mem_pool_set_access_with_flags`.
+    Do not wrap `pool_set_access_n` as `mem_pool_set_access_with_flags`.
+    Do not invent a second `mem_pool_set_access_n` API. Do not invent
+    Engine `--mem-pool-set-access-n-identity`. Do not invent a pool-unset-access
+    this slice. Do not reverse MemPoolSetAccess n identity with pool_set_access_n.
+    Do not wrap `pool_set_access_n` as `mem_pool_set_access_n`.
+    Do not wrap `pool_unset_access` as `mem_pool_set_access_n`.
+    Do not invent a second `mem_pool_unset_access` API. Do not invent
+    Engine `--mem-pool-unset-access-identity`. Do not invent a pool-get-attribute
+    this slice. Do not reverse MemPoolSetAccess ProtNone identity with pool_unset_access.
+    Do not wrap `pool_unset_access` as `mem_pool_unset_access`.
+    Do not wrap `pool_get_attribute` as `mem_pool_unset_access`.
+    Do not invent a second `mem_pool_get_attribute` API. Do not invent
+    Engine `--mem-pool-get-attribute-identity`. Do not invent a pool-set-attribute
+    this slice. Do not reverse MemPoolGetAttribute identity with pool_get_attribute.
+    Do not wrap `pool_get_attribute` as `mem_pool_get_attribute`.
+    Do not wrap `pool_set_attribute` as `mem_pool_get_attribute`.
+    Do not invent a second `mem_pool_set_attribute` API. Do not invent
+    Engine `--mem-pool-set-attribute-identity`. Do not invent a pool-trim-to
+    this slice. Do not reverse MemPoolSetAttribute identity with pool_set_attribute.
+    Do not wrap `pool_set_attribute` as `mem_pool_set_attribute`.
+    Do not wrap `pool_trim_to` as `mem_pool_set_attribute`.
+    Do not invent a second `mem_pool_trim_to` API. Do not invent
+    Engine `--mem-pool-trim-to-identity`. Do not invent a pool-release-threshold
+    this slice. Do not reverse MemPoolTrimTo identity with pool_trim_to.
+    Do not wrap `pool_trim_to` as `mem_pool_trim_to`.
+    Do not wrap `set_pool_release_threshold` as `mem_pool_trim_to`.
+    Do not invent a second `mem_pool_set_release_threshold` API. Do not invent
+    Engine `--mem-pool-set-release-threshold-identity`. Do not invent a pool-max-size
+    this slice. Do not reverse MemPoolSetAttribute ReleaseThreshold identity with set_pool_release_threshold.
+    Do not wrap `set_pool_release_threshold` as `mem_pool_set_release_threshold`.
+    Do not wrap `set_pool_max_size` as `mem_pool_set_release_threshold`.
+    Do not invent a second `mem_pool_set_max_size` API. Do not invent
+    Engine `--mem-pool-set-max-size-identity`. Do not invent a default-pool-release
+    this slice. Do not reverse MemPoolSetAttribute MaxPoolSize identity with set_pool_max_size.
+    Do not wrap `set_pool_max_size` as `mem_pool_set_max_size`.
+    Do not wrap `set_default_pool_release_threshold` as `mem_pool_set_max_size`.
+    Do not invent a second `mem_get_allocation_granularity` API. Do not invent
+    Engine `--mem-get-allocation-granularity-identity`. Do not invent a va-create
+    this slice. Do not reverse MemGetAllocationGranularity identity with va_get_allocation_granularity.
+    Do not wrap `va_get_allocation_granularity` as `mem_get_allocation_granularity`.
+    Do not wrap `va_create` as `mem_get_allocation_granularity`.
+    Do not invent a second `mem_create` API. Do not invent
+    Engine `--mem-create-identity`. Do not invent a va-map-handle
+    this slice. Do not reverse MemCreate identity with va_create.
+    Do not wrap `va_create` as `mem_create`.
+    Do not wrap `va_create_with_prop` as `mem_create`.
+    Do not invent a second `mem_create_with_prop` API. Do not invent
+    Engine `--mem-create-with-prop-identity`. Do not invent a va-map-handle-flags
+    this slice. Do not reverse MemCreate props identity with va_create_with_prop.
+    Do not wrap `va_create_with_prop` as `mem_create_with_prop`.
+    Do not wrap `va_map_handle` as `mem_create_with_prop`.
+    Do not invent a second `mem_map_handle` API. Do not invent
+    Engine `--mem-map-handle-identity`. Do not invent a va-map-handle-size
+    this slice. Do not reverse MemMap identity with va_map_handle.
+    Do not wrap `va_map_handle` as `mem_map_handle`.
+    Do not wrap `va_map_handle_with_flags` as `mem_map_handle`.
+    Do not invent a second `mem_map_handle_with_flags` API. Do not invent
+    Engine `--mem-map-handle-with-flags-identity`. Do not invent a va-unmap
+    this slice. Do not reverse MemMap flags identity with va_map_handle_with_flags.
+    Do not wrap `va_map_handle_with_flags` as `mem_map_handle_with_flags`.
+    Do not wrap `va_map_handle_with_size` as `mem_map_handle_with_flags`.
+    Do not invent a second `mem_map_handle_with_size` API. Do not invent
+    Engine `--mem-map-handle-with-size-identity`. Do not invent a va-release-handle
+    this slice. Do not reverse MemMap size identity with va_map_handle_with_size.
+    Do not wrap `va_map_handle_with_size` as `mem_map_handle_with_size`.
+    Do not wrap `va_unmap` as `mem_map_handle_with_size`.
+    Do not invent a second `mem_release_handle` API. Do not invent
+    Engine `--mem-release-handle-identity`. Do not invent a va-retain-handle
+    this slice. Do not reverse MemRelease identity with va_release_handle.
+    Do not wrap `va_release_handle` as `mem_release_handle`.
+    Do not wrap `va_unmap` as `mem_release_handle`.
+    Do not invent a second `mem_retain_handle` API. Do not invent
+    Engine `--mem-retain-handle-identity`. Do not invent a va-free
+    this slice. Do not reverse MemRetain identity with va_retain_handle.
+    Do not wrap `va_retain_handle` as `mem_retain_handle`.
+    Do not wrap `va_unmap` as `mem_retain_handle`.
+    Do not invent a second `mem_unmap` API. Do not invent
+    Engine `--mem-unmap-identity`. Do not invent a va-unmap-size
+    this slice. Do not reverse MemUnmap identity with va_unmap.
+    Do not wrap `va_unmap` as `mem_unmap`.
+    Do not wrap `va_unmap_with_size` as `mem_unmap`.
+    Do not invent a second `mem_unmap_with_size` API. Do not invent
+    Engine `--mem-unmap-with-size-identity`. Do not invent a va-address-free
+    this slice. Do not reverse MemUnmap size identity with va_unmap_with_size.
+    Do not wrap `va_unmap_with_size` as `mem_unmap_with_size`.
+    Do not wrap `va_free` as `mem_unmap_with_size`.
+    Do not invent a second `mem_address_free` API. Do not invent
+    Engine `--mem-address-free-identity`. Do not invent a va-free-size
+    this slice. Do not reverse MemAddressFree identity with va_free.
+    Do not wrap `va_free` as `mem_address_free`.
+    Do not wrap `va_free_with_size` as `mem_address_free`.
+    Do not invent a second `mem_address_free_with_size` API. Do not invent
+    Engine `--mem-address-free-with-size-identity`. Do not invent a va-unmap-range
+    this slice. Do not reverse MemAddressFree size identity with va_free_with_size.
+    Do not wrap `va_free_with_size` as `mem_address_free_with_size`.
+    Do not wrap `va_unmap_range` as `mem_address_free_with_size`.
+    Do not invent a second `mem_unmap_range` API. Do not invent
+    Engine `--mem-unmap-range-identity`. Do not invent a va-set-access
+    this slice. Do not reverse MemUnmap range identity with va_unmap_range.
+    Do not wrap `va_unmap_range` as `mem_unmap_range`.
+    Do not wrap `va_set_access` as `mem_unmap_range`.
+    Do not invent a second `mem_set_access` API. Do not invent
+    Engine `--mem-set-access-identity`. Do not invent a va-set-access-write
+    this slice. Do not reverse MemSetAccess identity with va_set_access.
+    Do not wrap `va_set_access` as `mem_set_access`.
+    Do not wrap `va_set_access_write` as `mem_set_access`.
+    Do not invent a second `mem_set_access_write` API. Do not invent
+    Engine `--mem-set-access-write-identity`. Do not invent a va-set-access-flags
+    this slice. Do not reverse MemSetAccess write identity with va_set_access_write.
+    Do not wrap `va_set_access_write` as `mem_set_access_write`.
+    Do not wrap `va_set_access_with_flags` as `mem_set_access_write`.
+    Do not invent a second `mem_set_access_with_flags` API. Do not invent
+    Engine `--mem-set-access-with-flags-identity`. Do not invent a va-set-access-size
+    this slice. Do not reverse MemSetAccess flags identity with va_set_access_with_flags.
+    Do not wrap `va_set_access_with_flags` as `mem_set_access_with_flags`.
+    Do not wrap `va_set_access_with_size` as `mem_set_access_with_flags`.
+    Do not invent a second `mem_set_access_with_size` API. Do not invent
+    Engine `--mem-set-access-with-size-identity`. Do not invent a va-set-access-n
+    this slice. Do not reverse MemSetAccess size identity with va_set_access_with_size.
+    Do not wrap `va_set_access_with_size` as `mem_set_access_with_size`.
+    Do not wrap `va_set_access_n` as `mem_set_access_with_size`.
+    Do not invent a second `mem_set_access_n` API. Do not invent
+    Engine `--mem-set-access-n-identity`. Do not invent a va-unset-access
+    this slice. Do not reverse MemSetAccess n identity with va_set_access_n.
+    Do not wrap `va_set_access_n` as `mem_set_access_n`.
+    Do not wrap `va_unset_access` as `mem_set_access_n`.
+    Do not invent a second `mem_unset_access` API. Do not invent
+    Engine `--mem-unset-access-identity`. Do not invent a va-get-access
+    this slice. Do not reverse MemUnsetAccess identity with va_unset_access.
+    Do not wrap `va_unset_access` as `mem_unset_access`.
+    Do not wrap `va_get_access` as `mem_unset_access`.
+    Do not invent a second `mem_get_access` API. Do not invent
+    Engine `--mem-get-access-identity`. Do not invent a va-map-range
+    this slice. Do not reverse MemGetAccess identity with va_get_access.
+    Do not wrap `va_get_access` as `mem_get_access`.
+    Do not wrap `va_map_range` as `mem_get_access`.
+    Do not invent a second `mem_map_range` API. Do not invent
+    Engine `--mem-map-range-identity`. Do not invent a va-get-allocation-properties
+    this slice. Do not reverse MemMapRange identity with va_map_range.
+    Do not wrap `va_map_range` as `mem_map_range`.
+    Do not wrap `va_get_allocation_properties` as `mem_map_range`.
+    Do not invent a second `mem_get_allocation_properties` API. Do not invent
+    Engine `--mem-get-allocation-properties-identity`. Do not invent a va-map-multicast
+    this slice. Do not reverse MemGetAllocationProperties identity with va_get_allocation_properties.
+    Do not wrap `va_get_allocation_properties` as `mem_get_allocation_properties`.
+    Do not wrap `va_map_multicast` as `mem_get_allocation_properties`.
+    Do not invent a second `mem_map_multicast` API. Do not invent
+    Engine `--mem-map-multicast-identity`. Do not invent a va-map-multicast-flags
+    this slice. Do not reverse MemMapMulticast identity with va_map_multicast.
+    Do not wrap `va_map_multicast` as `mem_map_multicast`.
+    Do not wrap `va_map_multicast_with_flags` as `mem_map_multicast`.
+    Do not invent a second `mem_map_multicast_with_flags` API. Do not invent
+    Engine `--mem-map-multicast-with-flags-identity`. Do not invent a va-map-multicast-size
+    this slice. Do not reverse MemMapMulticast flags identity with va_map_multicast_with_flags.
+    Do not wrap `va_map_multicast_with_flags` as `mem_map_multicast_with_flags`.
+    Do not wrap `va_map_multicast_with_size` as `mem_map_multicast_with_flags`.
+    Do not invent a second `mem_map_multicast_with_size` API. Do not invent
+    Engine `--mem-map-multicast-with-size-identity`. Do not invent a multicast-get-granularity
+    this slice. Do not reverse MemMapMulticast size identity with va_map_multicast_with_size.
+    Do not wrap `va_map_multicast_with_size` as `mem_map_multicast_with_size`.
+    Do not wrap `multicast_get_granularity` as `mem_map_multicast_with_size`.
+    Do not invent a second `mem_multicast_get_granularity` API. Do not invent
+    Engine `--mem-multicast-get-granularity-identity`. Do not invent a multicast-get-granularity-prop
+    this slice. Do not reverse MemMulticastGetGranularity identity with multicast_get_granularity.
+    Do not wrap `multicast_get_granularity` as `mem_multicast_get_granularity`.
+    Do not wrap `multicast_get_granularity_with_prop` as `mem_multicast_get_granularity`.
+    Do not invent a second `mem_multicast_get_granularity_with_prop` API. Do not invent
+    Engine `--mem-multicast-get-granularity-with-prop-identity`. Do not invent a multicast-create
+    this slice. Do not reverse MemMulticastGetGranularity prop identity with multicast_get_granularity_with_prop.
+    Do not wrap `multicast_get_granularity_with_prop` as `mem_multicast_get_granularity_with_prop`.
+    Do not wrap `multicast_create` as `mem_multicast_get_granularity_with_prop`.
+    Do not invent a second `mem_multicast_create` API. Do not invent
+    Engine `--mem-multicast-create-identity`. Do not invent a multicast-create-prop
+    this slice. Do not reverse MemMulticastCreate identity with multicast_create.
+    Do not wrap `multicast_create` as `mem_multicast_create`.
+    Do not wrap `multicast_create_with_prop` as `mem_multicast_create`.
+    Do not invent a second `mem_multicast_create_with_prop` API. Do not invent
+    Engine `--mem-multicast-create-with-prop-identity`. Do not invent a multicast-add-device
+    this slice. Do not reverse MemMulticastCreate prop identity with multicast_create_with_prop.
+    Do not wrap `multicast_create_with_prop` as `mem_multicast_create_with_prop`.
+    Do not wrap `multicast_add_device` as `mem_multicast_create_with_prop`.
+    Do not invent a second `mem_multicast_add_device` API. Do not invent
+    Engine `--mem-multicast-add-device-identity`. Do not invent a multicast-bind-mem
+    this slice. Do not reverse MemMulticastAddDevice identity with multicast_add_device.
+    Do not wrap `multicast_add_device` as `mem_multicast_add_device`.
+    Do not wrap `multicast_bind_mem` as `mem_multicast_add_device`.
+    Do not invent a second `mem_multicast_bind_mem` API. Do not invent
+    Engine `--mem-multicast-bind-mem-identity`. Do not invent a multicast-bind-mem-flags
+    this slice. Do not reverse MemMulticastBindMem identity with multicast_bind_mem.
+    Do not wrap `multicast_bind_mem` as `mem_multicast_bind_mem`.
+    Do not wrap `multicast_bind_mem_with_flags` as `mem_multicast_bind_mem`.
+    Do not invent a second `mem_multicast_bind_mem_with_flags` API. Do not invent
+    Engine `--mem-multicast-bind-mem-with-flags-identity`. Do not invent a multicast-bind-mem-size
+    this slice. Do not reverse MemMulticastBindMem flags identity with multicast_bind_mem_with_flags.
+    Do not wrap `multicast_bind_mem_with_flags` as `mem_multicast_bind_mem_with_flags`.
+    Do not wrap `multicast_bind_mem_with_size` as `mem_multicast_bind_mem_with_flags`.
+    Do not invent a second `mem_multicast_bind_mem_with_size` API. Do not invent
+    Engine `--mem-multicast-bind-mem-with-size-identity`. Do not invent a multicast-bind-addr
+    this slice. Do not reverse MemMulticastBindMem size identity with multicast_bind_mem_with_size.
+    Do not wrap `multicast_bind_mem_with_size` as `mem_multicast_bind_mem_with_size`.
+    Do not wrap `multicast_bind_addr` as `mem_multicast_bind_mem_with_size`.
+    Do not invent a second `mem_multicast_bind_addr` API. Do not invent
+    Engine `--mem-multicast-bind-addr-identity`. Do not invent a multicast-bind-addr-flags
+    this slice. Do not reverse MemMulticastBindAddr identity with multicast_bind_addr.
+    Do not wrap `multicast_bind_addr` as `mem_multicast_bind_addr`.
+    Do not wrap `multicast_bind_addr_with_flags` as `mem_multicast_bind_addr`.
+    Do not invent a second `mem_multicast_bind_addr_with_flags` API. Do not invent
+    Engine `--mem-multicast-bind-addr-with-flags-identity`. Do not invent a multicast-bind-addr-size
+    this slice. Do not reverse MemMulticastBindAddr flags identity with multicast_bind_addr_with_flags.
+    Do not wrap `multicast_bind_addr_with_flags` as `mem_multicast_bind_addr_with_flags`.
+    Do not wrap `multicast_bind_addr_with_size` as `mem_multicast_bind_addr_with_flags`.
+    Do not invent a second `mem_multicast_bind_addr_with_size` API. Do not invent
+    Engine `--mem-multicast-bind-addr-with-size-identity`. Do not invent a multicast-unbind
+    this slice. Do not reverse MemMulticastBindAddr size identity with multicast_bind_addr_with_size.
+    Do not wrap `multicast_bind_addr_with_size` as `mem_multicast_bind_addr_with_size`.
+    Do not wrap `multicast_unbind` as `mem_multicast_bind_addr_with_size`.
+    Do not invent a second `mem_multicast_unbind` API. Do not invent
+    Engine `--mem-multicast-unbind-identity`. Do not invent a multicast-unbind-size
+    this slice. Do not reverse MemMulticastUnbind identity with multicast_unbind.
+    Do not wrap `multicast_unbind` as `mem_multicast_unbind`.
+    Do not wrap `multicast_unbind_with_size` as `mem_multicast_unbind`.
+    Do not invent a second `mem_multicast_unbind_with_size` API. Do not invent
+    Engine `--mem-multicast-unbind-with-size-identity`. Do not invent a multicast-destroy
+    this slice. Do not reverse MemMulticastUnbind size identity with multicast_unbind_with_size.
+    Do not wrap `multicast_unbind_with_size` as `mem_multicast_unbind_with_size`.
+    Do not wrap `multicast_destroy` as `mem_multicast_unbind_with_size`.
+    Do not invent a second `mem_multicast_destroy` API. Do not invent
+    Engine `--mem-multicast-destroy-identity`. Do not invent a multicast-store
+    this slice. Do not reverse MemMulticastDestroy identity with multicast_destroy.
+    Do not wrap `multicast_destroy` as `mem_multicast_destroy`.
+    Do not wrap `multicast_destroy` as `mem_release_handle`.
+    Do not wrap `multicast_store` as `mem_multicast_destroy`.
+    Do not wrap `multicast_binds` as `mem_multicast_destroy`.
+    Do not invent a second `mem_multicast_store` API. Do not invent
+    Engine `--mem-multicast-store-identity`. Do not invent a multicast-binds
+    this slice. Do not reverse MemMulticastStore identity with multicast_store.
+    Do not wrap `multicast_store` as `mem_multicast_store`.
+    Do not wrap `multicast_binds` as `mem_multicast_store`.
+    Do not wrap `is_multicast_va` as `mem_multicast_store`.
+    Do not invent a second `mem_multicast_binds` API. Do not invent
+    Engine `--mem-multicast-binds-identity`. Do not invent a is-multicast-va
+    this slice. Do not reverse MemMulticastBinds identity with multicast_binds.
+    Do not wrap `multicast_binds` as `mem_multicast_binds`.
+    Do not wrap `is_multicast_va` as `mem_multicast_binds`.
+    Do not invent a second `mem_is_multicast_va` API. Do not invent
+    Engine `--mem-is-multicast-va-identity`. Do not invent a pointer-get-attribute
+    this slice. Do not reverse MemIsMulticastVa identity with is_multicast_va.
+    Do not wrap `is_multicast_va` as `mem_is_multicast_va`.
+    Do not wrap `pointer_get_attribute` as `mem_is_multicast_va`.
+    Do not invent a second `mem_pointer_get_attribute` API. Do not invent
+    Engine `--mem-pointer-get-attribute-identity`. Do not invent a pointer-get-attribute-n
+    this slice. Do not reverse MemPointerGetAttribute identity with pointer_get_attribute.
+    Do not wrap `pointer_get_attribute` as `mem_pointer_get_attribute`.
+    Do not wrap `pointer_get_attribute_n` as `mem_pointer_get_attribute`.
+    Do not invent a second `mem_pointer_get_attribute_n` API. Do not invent
+    Engine `--mem-pointer-get-attribute-n-identity`. Do not invent a pointer-get-access-flags
+    this slice. Do not reverse MemPointerGetAttributeN identity with pointer_get_attribute_n.
+    Do not wrap `pointer_get_attribute_n` as `mem_pointer_get_attribute_n`.
+    Do not wrap `pointer_get_access_flags` as `mem_pointer_get_attribute_n`.
+    Do not invent a second `mem_pointer_get_access_flags` API. Do not invent
+    Engine `--mem-pointer-get-access-flags-identity`. Do not invent a pointer-set-attribute
+    this slice. Do not reverse MemPointerGetAccessFlags identity with pointer_get_access_flags.
+    Do not wrap `pointer_get_access_flags` as `mem_pointer_get_access_flags`.
+    Do not wrap `pointer_set_attribute` as `mem_pointer_get_access_flags`.
+    Do not invent a second `mem_pointer_set_attribute` API. Do not invent
+    Engine `--mem-pointer-set-attribute-identity`. Do not invent a pointer-get-attributes
+    this slice. Do not reverse MemPointerSetAttribute identity with pointer_set_attribute.
+    Do not wrap `pointer_set_attribute` as `mem_pointer_set_attribute`.
+    Do not wrap `pointer_get_attributes` as `mem_pointer_set_attribute`.
+    Do not invent a second `mem_pointer_get_attributes` API. Do not invent
+    Engine `--mem-pointer-get-attributes-identity`. Do not invent a host-get-device-pointer
+    this slice. Do not reverse MemPointerGetAttributes identity with pointer_get_attributes.
+    Do not wrap `pointer_get_attributes` as `mem_pointer_get_attributes`.
+    Do not wrap `host_get_device_pointer` as `mem_pointer_get_attributes`.
+    Do not invent a second `mem_alloc_pitch_with_element_size` API. Do not invent
+    Engine `--mem-alloc-pitch-with-element-size-identity`. Do not invent a malloc-pitch-element
+    this slice. Do not reverse MemAllocPitchWithElementSize identity with malloc_pitch_with_element_size.
+    Do not wrap `malloc_pitch_with_element_size` as `mem_alloc_pitch_with_element_size`.
+    Do not wrap `malloc_3d` as `mem_alloc_pitch_with_element_size`.
+    Do not invent a second `mem_device_get_attribute` API. Do not invent
+    Engine `--mem-device-get-attribute-identity`. Do not invent a device-get-properties
+    this slice. Do not reverse MemDeviceGetAttribute identity with device_get_attribute.
+    Do not wrap `device_get_attribute` as `mem_device_get_attribute`.
+    Do not wrap `device_get_properties` as `mem_device_get_attribute`.
+    Do not invent a second `mem_device_get_properties` API. Do not invent
+    Engine `--mem-device-get-properties-identity`. Do not invent a device-compute-capability
+    this slice. Do not reverse MemDeviceGetProperties identity with device_get_properties.
+    Do not wrap `device_get_properties` as `mem_device_get_properties`.
+    Do not wrap `device_compute_capability` as `mem_device_get_properties`.
+    Do not invent a second `mem_device_compute_capability` API. Do not invent
+    Engine `--mem-device-compute-capability-identity`. Do not invent a device-get-uuid
+    this slice. Do not reverse MemDeviceComputeCapability identity with device_compute_capability.
+    Do not wrap `device_compute_capability` as `mem_device_compute_capability`.
+    Do not wrap `device_get_uuid` as `mem_device_compute_capability`.
+    Do not invent a second `mem_device_get_uuid` API. Do not invent
+    Engine `--mem-device-get-uuid-identity`. Do not invent a device-get-luid
+    this slice. Do not reverse MemDeviceGetUuid identity with device_get_uuid.
+    Do not wrap `device_get_uuid` as `mem_device_get_uuid`.
+    Do not wrap `device_get_luid` as `mem_device_get_uuid`.
+    Do not invent a second `mem_device_get_luid` API. Do not invent
+    Engine `--mem-device-get-luid-identity`. Do not invent a device-get-texture-1d
+    this slice. Do not reverse MemDeviceGetLuid identity with device_get_luid.
+    Do not wrap `device_get_luid` as `mem_device_get_luid`.
+    Do not wrap `device_get_texture_1d_linear_max_width` as `mem_device_get_luid`.
+    Do not invent a second `mem_device_get_texture_1d_linear_max_width` API. Do not invent
+    Engine `--mem-device-get-texture-1d-linear-max-width-identity`. Do not invent a device-get-by-uuid
+    this slice. Do not reverse MemDeviceGetTexture1dLinearMaxWidth identity with device_get_texture_1d_linear_max_width.
+    Do not wrap `device_get_texture_1d_linear_max_width` as `mem_device_get_texture_1d_linear_max_width`.
+    Do not wrap `device_get_by_uuid` as `mem_device_get_texture_1d_linear_max_width`.
+    Do not invent a second `mem_device_get_by_uuid` API. Do not invent
+    Engine `--mem-device-get-by-uuid-identity`. Do not invent a device-get-pci-bus-id
+    this slice. Do not reverse MemDeviceGetByUuid identity with device_get_by_uuid.
+    Do not wrap `device_get_by_uuid` as `mem_device_get_by_uuid`.
+    Do not wrap `device_get_pci_bus_id` as `mem_device_get_by_uuid`.
+    Do not invent a second `mem_device_get_pci_bus_id` API. Do not invent
+    Engine `--mem-device-get-pci-bus-id-identity`. Do not invent a device-get-by-pci-bus-id
+    this slice. Do not reverse MemDeviceGetPciBusId identity with device_get_pci_bus_id.
+    Do not wrap `device_get_pci_bus_id` as `mem_device_get_pci_bus_id`.
+    Do not wrap `device_get_by_pci_bus_id` as `mem_device_get_pci_bus_id`.
+    Do not invent a second `mem_device_get_by_pci_bus_id` API. Do not invent
+    Engine `--mem-device-get-by-pci-bus-id-identity`. Do not invent a device-total-mem
+    this slice. Do not reverse MemDeviceGetByPciBusId identity with device_get_by_pci_bus_id.
+    Do not wrap `device_get_by_pci_bus_id` as `mem_device_get_by_pci_bus_id`.
+    Do not wrap `device_total_mem` as `mem_device_get_by_pci_bus_id`.
+    Do not invent a second `mem_device_total_mem` API. Do not invent
+    Engine `--mem-device-total-mem-identity`. Do not invent a driver-get-version
+    this slice. Do not reverse MemDeviceTotalMem identity with device_total_mem.
+    Do not wrap `device_total_mem` as `mem_device_total_mem`.
+    Do not wrap `device_count` as `mem_device_total_mem`.
+    Do not invent a second `mem_driver_get_version` API. Do not invent
+    Engine `--mem-driver-get-version-identity`. Do not invent a get-proc-address
+    this slice. Do not reverse MemDriverGetVersion identity with driver_get_version.
+    Do not wrap `driver_get_version` as `mem_driver_get_version`.
+    Do not wrap `get_proc_address` as `mem_driver_get_version`.
+    Do not invent a second `mem_get_proc_address` API. Do not invent
+    Engine `--mem-get-proc-address-identity`. Do not invent a get-export-table
+    this slice. Do not reverse MemGetProcAddress identity with get_proc_address.
+    Do not wrap `get_proc_address` as `mem_get_proc_address`.
+    Do not wrap `get_export_table` as `mem_get_proc_address`.
+    Do not invent a second `mem_get_export_table` API. Do not invent
+    Engine `--mem-get-export-table-identity`. Do not invent a coredump-get-attribute
+    this slice. Do not reverse MemGetExportTable identity with get_export_table.
+    Do not wrap `get_export_table` as `mem_get_export_table`.
+    Do not wrap `coredump_get_attribute` as `mem_get_export_table`.
+    Do not invent a second `mem_coredump_get_attribute` API. Do not invent
+    Engine `--mem-coredump-get-attribute-identity`. Do not invent a coredump-set-attribute
+    this slice. Do not reverse MemCoredumpGetAttribute identity with coredump_get_attribute.
+    Do not wrap `coredump_get_attribute` as `mem_coredump_get_attribute`.
+    Do not wrap `coredump_set_attribute` as `mem_coredump_get_attribute`.
+    Do not invent a second `mem_coredump_set_attribute` API. Do not invent
+    Engine `--mem-coredump-set-attribute-identity`. Do not invent a coredump-get-attribute-global
+    this slice. Do not reverse MemCoredumpSetAttribute identity with coredump_set_attribute.
+    Do not wrap `coredump_set_attribute` as `mem_coredump_set_attribute`.
+    Do not wrap `coredump_get_attribute_global` as `mem_coredump_set_attribute`.
+    Do not invent a second `mem_coredump_get_attribute_global` API. Do not invent
+    Engine `--mem-coredump-get-attribute-global-identity`. Do not invent a coredump-set-attribute-global
+    this slice. Do not reverse MemCoredumpGetAttributeGlobal identity with coredump_get_attribute_global.
+    Do not wrap `coredump_get_attribute_global` as `mem_coredump_get_attribute_global`.
+    Do not wrap `coredump_set_attribute_global` as `mem_coredump_get_attribute_global`.
+    Do not invent a second `mem_coredump_set_attribute_global` API. Do not invent
+    Engine `--mem-coredump-set-attribute-global-identity`. Do not invent a checkpoint-process-lock
+    this slice. Do not reverse MemCoredumpSetAttributeGlobal identity with coredump_set_attribute_global.
+    Do not wrap `coredump_set_attribute_global` as `mem_coredump_set_attribute_global`.
+    Do not wrap `checkpoint_process_lock` as `mem_coredump_set_attribute_global`.
+    Do not invent a second `mem_checkpoint_process_lock` API. Do not invent
+    Engine `--mem-checkpoint-process-lock-identity`. Do not invent a checkpoint-process-checkpoint
+    this slice. Do not reverse MemCheckpointProcessLock identity with checkpoint_process_lock.
+    Do not wrap `checkpoint_process_lock` as `mem_checkpoint_process_lock`.
+    Do not wrap `checkpoint_process_checkpoint` as `mem_checkpoint_process_lock`.
+    Do not invent a second `mem_checkpoint_process_checkpoint` API. Do not invent
+    Engine `--mem-checkpoint-process-checkpoint-identity`. Do not invent a checkpoint-process-restore
+    this slice. Do not reverse MemCheckpointProcessCheckpoint identity with checkpoint_process_checkpoint.
+    Do not wrap `checkpoint_process_checkpoint` as `mem_checkpoint_process_checkpoint`.
+    Do not wrap `checkpoint_process_restore` as `mem_checkpoint_process_checkpoint`.
+    Do not invent a second `mem_checkpoint_process_restore` API. Do not invent
+    Engine `--mem-checkpoint-process-restore-identity`. Do not invent a checkpoint-process-unlock
+    this slice. Do not reverse MemCheckpointProcessRestore identity with checkpoint_process_restore.
+    Do not wrap `checkpoint_process_restore` as `mem_checkpoint_process_restore`.
+    Do not wrap `checkpoint_process_unlock` as `mem_checkpoint_process_restore`.
+    Do not invent a second `mem_checkpoint_process_unlock` API. Do not invent
+    Engine `--mem-checkpoint-process-unlock-identity`. Do not invent a checkpoint-process-get-restore-thread-id
+    this slice. Do not reverse MemCheckpointProcessUnlock identity with checkpoint_process_unlock.
+    Do not wrap `checkpoint_process_unlock` as `mem_checkpoint_process_unlock`.
+    Do not wrap `checkpoint_process_get_restore_thread_id` as `mem_checkpoint_process_unlock`.
+    Do not invent a second `mem_checkpoint_process_get_restore_thread_id` API. Do not invent
+    Engine `--mem-checkpoint-process-get-restore-thread-id-identity`. Do not invent a checkpoint-process-get-state
+    this slice. Do not reverse MemCheckpointProcessGetRestoreThreadId identity with checkpoint_process_get_restore_thread_id.
+    Do not wrap `checkpoint_process_get_restore_thread_id` as `mem_checkpoint_process_get_restore_thread_id`.
+    Do not wrap `checkpoint_process_get_state` as `mem_checkpoint_process_get_restore_thread_id`.
+    Do not invent a second `mem_checkpoint_process_get_state` API. Do not invent
+    Engine `--mem-checkpoint-process-get-state-identity`. Do not invent a device-register-async-notification
+    this slice. Do not reverse MemCheckpointProcessGetState identity with checkpoint_process_get_state.
+    Do not wrap `checkpoint_process_get_state` as `mem_checkpoint_process_get_state`.
+    Do not wrap `device_register_async_notification` as `mem_checkpoint_process_get_state`.
+    Do not invent a second `mem_device_register_async_notification` API. Do not invent
+    Engine `--mem-device-register-async-notification-identity`. Do not invent a device-unregister-async-notification
+    this slice. Do not reverse MemDeviceRegisterAsyncNotification identity with device_register_async_notification.
+    Do not wrap `device_register_async_notification` as `mem_device_register_async_notification`.
+    Do not wrap `device_unregister_async_notification` as `mem_device_register_async_notification`.
+    Do not invent a second `mem_device_unregister_async_notification` API. Do not invent
+    Engine `--mem-device-unregister-async-notification-identity`. Do not invent a driver-init
+    this slice. Do not reverse MemDeviceUnregisterAsyncNotification identity with device_unregister_async_notification.
+    Do not wrap `device_unregister_async_notification` as `mem_device_unregister_async_notification`.
+    Do not wrap `driver_init` as `mem_device_unregister_async_notification`.
+    Do not invent a second `mem_driver_init` API. Do not invent
+    Engine `--mem-driver-init-identity`. Do not invent a profiler-start
+    this slice. Do not reverse MemDriverInit identity with driver_init.
+    Do not wrap `driver_init` as `mem_driver_init`.
+    Do not wrap `profiler_start` as `mem_driver_init`.
+    Do not invent a second `mem_profiler_start` API. Do not invent
+    Engine `--mem-profiler-start-identity`. Do not invent a profiler-stop
+    this slice. Do not reverse MemProfilerStart identity with profiler_start.
+    Do not wrap `profiler_start` as `mem_profiler_start`.
+    Do not wrap `profiler_stop` as `mem_profiler_start`.
+    Do not invent a second `mem_profiler_stop` API. Do not invent
+    Engine `--mem-profiler-stop-identity`. Do not invent a profiler-initialize
+    this slice. Do not reverse MemProfilerStop identity with profiler_stop.
+    Do not wrap `profiler_stop` as `mem_profiler_stop`.
+    Do not wrap `profiler_initialize` as `mem_profiler_stop`.
+    Do not invent a second `mem_profiler_initialize` API. Do not invent
+    Engine `--mem-profiler-initialize-identity`. Do not invent a module-get-loading-mode
+    this slice. Do not reverse MemProfilerInitialize identity with profiler_initialize.
+    Do not wrap `profiler_initialize` as `mem_profiler_initialize`.
+    Do not wrap `module_get_loading_mode` as `mem_profiler_initialize`.
+    Do not invent a second `mem_module_get_loading_mode` API. Do not invent
+    Engine `--mem-module-get-loading-mode-identity`. Do not invent a module-load
+    this slice. Do not reverse MemModuleGetLoadingMode identity with module_get_loading_mode.
+    Do not wrap `module_get_loading_mode` as `mem_module_get_loading_mode`.
+    Do not wrap `module_load` as `mem_module_get_loading_mode`.
+    Do not invent a second `mem_module_load` API. Do not invent
+    Engine `--mem-module-load-identity`. Do not invent a module-load-data
+    this slice. Do not reverse MemModuleLoad identity with module_load.
+    Do not wrap `module_load` as `mem_module_load`.
+    Do not wrap `module_load_data` as `mem_module_load`.
+    Do not invent a second `mem_module_load_data` API. Do not invent
+    Engine `--mem-module-load-data-identity`. Do not invent a module-load-fat-binary
+    this slice. Do not reverse MemModuleLoadData identity with module_load_data.
+    Do not wrap `module_load_data` as `mem_module_load_data`.
+    Do not wrap `module_load_fat_binary` as `mem_module_load_data`.
+    Do not invent a second `mem_module_load_fat_binary` API. Do not invent
+    Engine `--mem-module-load-fat-binary-identity`. Do not invent a module-load-data-ex
+    this slice. Do not reverse MemModuleLoadFatBinary identity with module_load_fat_binary.
+    Do not wrap `module_load_fat_binary` as `mem_module_load_fat_binary`.
+    Do not wrap `module_load_data_ex` as `mem_module_load_fat_binary`.
+    Do not invent a second `mem_module_load_data_ex` API. Do not invent
+    Engine `--mem-module-load-data-ex-identity`. Do not invent a module-get-function-count
+    this slice. Do not reverse MemModuleLoadDataEx identity with module_load_data_ex.
+    Do not wrap `module_load_data_ex` as `mem_module_load_data_ex`.
+    Do not wrap `module_get_function_count` as `mem_module_load_data_ex`.
+    Do not invent a second `mem_module_get_function_count` API. Do not invent
+    Engine `--mem-module-get-function-count-identity`. Do not invent a module-enumerate-functions
+    this slice. Do not reverse MemModuleGetFunctionCount identity with module_get_function_count.
+    Do not wrap `module_get_function_count` as `mem_module_get_function_count`.
+    Do not wrap `module_enumerate_functions` as `mem_module_get_function_count`.
+    Do not invent a second `mem_module_enumerate_functions` API. Do not invent
+    Engine `--mem-module-enumerate-functions-identity`. Do not invent a module-unload
+    this slice. Do not reverse MemModuleEnumerateFunctions identity with module_enumerate_functions.
+    Do not wrap `module_enumerate_functions` as `mem_module_enumerate_functions`.
+    Do not wrap `module_unload` as `mem_module_enumerate_functions`.
+    Do not invent a second `mem_module_unload` API. Do not invent
+    Engine `--mem-module-unload-identity`. Do not invent a module-get-function
+    this slice. Do not reverse MemModuleUnload identity with module_unload.
+    Do not wrap `module_unload` as `mem_module_unload`.
+    Do not wrap `module_get_function` as `mem_module_unload`.
+    Do not invent a second `mem_module_get_function` API. Do not invent
+    Engine `--mem-module-get-function-identity`. Do not invent a module-get-global
+    this slice. Do not reverse MemModuleGetFunction identity with module_get_function.
+    Do not wrap `module_get_function` as `mem_module_get_function`.
+    Do not wrap `module_get_global` as `mem_module_get_function`.
+    Do not invent a second `mem_module_get_global` API. Do not invent
+    Engine `--mem-module-get-global-identity`. Do not invent a module-get-tex-ref
+    this slice. Do not reverse MemModuleGetGlobal identity with module_get_global.
+    Do not wrap `module_get_global` as `mem_module_get_global`.
+    Do not wrap `module_get_tex_ref` as `mem_module_get_global`.
+    Do not invent a second `mem_module_get_tex_ref` API. Do not invent
+    Engine `--mem-module-get-tex-ref-identity`. Do not invent a tex-ref-create
+    this slice. Do not reverse MemModuleGetTexRef identity with module_get_tex_ref.
+    Do not wrap `module_get_tex_ref` as `mem_module_get_tex_ref`.
+    Do not wrap `tex_ref_create` as `mem_module_get_tex_ref`.
+    Do not invent a second `mem_tex_ref_create` API. Do not invent
+    Engine `--mem-tex-ref-create-identity`. Do not invent a tex-ref-destroy
+    this slice. Do not reverse MemTexRefCreate identity with tex_ref_create.
+    Do not wrap `tex_ref_create` as `mem_tex_ref_create`.
+    Do not wrap `tex_ref_destroy` as `mem_tex_ref_create`.
+    Do not invent a second `mem_tex_ref_destroy` API. Do not invent
+    Engine `--mem-tex-ref-destroy-identity`. Do not invent a tex-ref-set-array
+    this slice. Do not reverse MemTexRefDestroy identity with tex_ref_destroy.
+    Do not wrap `tex_ref_destroy` as `mem_tex_ref_destroy`.
+    Do not wrap `tex_ref_set_array` as `mem_tex_ref_destroy`.
+    Do not invent a second `mem_tex_ref_set_array` API. Do not invent
+    Engine `--mem-tex-ref-set-array-identity`. Do not invent a tex-ref-set-mipmapped-array
+    this slice. Do not reverse MemTexRefSetArray identity with tex_ref_set_array.
+    Do not wrap `tex_ref_set_array` as `mem_tex_ref_set_array`.
+    Do not wrap `tex_ref_set_mipmapped_array` as `mem_tex_ref_set_array`.
+    Do not invent a second `mem_tex_ref_set_mipmapped_array` API. Do not invent
+    Engine `--mem-tex-ref-set-mipmapped-array-identity`. Do not invent a tex-ref-set-address
+    this slice. Do not reverse MemTexRefSetMipmappedArray identity with tex_ref_set_mipmapped_array.
+    Do not wrap `tex_ref_set_mipmapped_array` as `mem_tex_ref_set_mipmapped_array`.
+    Do not wrap `tex_ref_set_address` as `mem_tex_ref_set_mipmapped_array`.
+    Do not invent a second `mem_tex_ref_set_address` API. Do not invent
+    Engine `--mem-tex-ref-set-address-identity`. Do not invent a tex-ref-set-address-2d
+    this slice. Do not reverse MemTexRefSetAddress identity with tex_ref_set_address.
+    Do not wrap `tex_ref_set_address` as `mem_tex_ref_set_address`.
+    Do not wrap `tex_ref_set_address_2d` as `mem_tex_ref_set_address`.
+    Do not invent a second `mem_tex_ref_set_address_2d` API. Do not invent
+    Engine `--mem-tex-ref-set-address-2d-identity`. Do not invent a tex-ref-set-format
+    this slice. Do not reverse MemTexRefSetAddress2D identity with tex_ref_set_address_2d.
+    Do not wrap `tex_ref_set_address_2d` as `mem_tex_ref_set_address_2d`.
+    Do not wrap `tex_ref_set_format` as `mem_tex_ref_set_address_2d`.
+    Do not invent a second `mem_tex_ref_set_format` API. Do not invent
+    Engine `--mem-tex-ref-set-format-identity`. Do not invent a tex-ref-set-address-mode
+    this slice. Do not reverse MemTexRefSetFormat identity with tex_ref_set_format.
+    Do not wrap `tex_ref_set_format` as `mem_tex_ref_set_format`.
+    Do not wrap `tex_ref_set_address_mode` as `mem_tex_ref_set_format`.
+    Do not invent a second `mem_tex_ref_set_address_mode` API. Do not invent
+    Engine `--mem-tex-ref-set-address-mode-identity`. Do not invent a tex-ref-set-filter-mode
+    this slice. Do not reverse MemTexRefSetAddressMode identity with tex_ref_set_address_mode.
+    Do not wrap `tex_ref_set_address_mode` as `mem_tex_ref_set_address_mode`.
+    Do not wrap `tex_ref_set_filter_mode` as `mem_tex_ref_set_address_mode`.
+    Do not invent a second `mem_tex_ref_set_filter_mode` API. Do not invent
+    Engine `--mem-tex-ref-set-filter-mode-identity`. Do not invent a tex-ref-set-mipmap-filter-mode
+    this slice. Do not reverse MemTexRefSetFilterMode identity with tex_ref_set_filter_mode.
+    Do not wrap `tex_ref_set_filter_mode` as `mem_tex_ref_set_filter_mode`.
+    Do not wrap `tex_ref_set_mipmap_filter_mode` as `mem_tex_ref_set_filter_mode`.
+    Do not invent a second `mem_tex_ref_set_mipmap_filter_mode` API. Do not invent
+    Engine `--mem-tex-ref-set-mipmap-filter-mode-identity`. Do not invent a tex-ref-set-mipmap-level-bias
+    this slice. Do not reverse MemTexRefSetMipmapFilterMode identity with tex_ref_set_mipmap_filter_mode.
+    Do not wrap `tex_ref_set_mipmap_filter_mode` as `mem_tex_ref_set_mipmap_filter_mode`.
+    Do not wrap `tex_ref_set_mipmap_level_bias` as `mem_tex_ref_set_mipmap_filter_mode`.
+    Do not invent a second `mem_tex_ref_set_mipmap_level_bias` API. Do not invent
+    Engine `--mem-tex-ref-set-mipmap-level-bias-identity`. Do not invent a tex-ref-set-mipmap-level-clamp
+    this slice. Do not reverse MemTexRefSetMipmapLevelBias identity with tex_ref_set_mipmap_level_bias.
+    Do not wrap `tex_ref_set_mipmap_level_bias` as `mem_tex_ref_set_mipmap_level_bias`.
+    Do not wrap `tex_ref_set_mipmap_level_clamp` as `mem_tex_ref_set_mipmap_level_bias`.
+    Do not invent a second `mem_tex_ref_set_mipmap_level_clamp` API. Do not invent
+    Engine `--mem-tex-ref-set-mipmap-level-clamp-identity`. Do not invent a tex-ref-set-max-anisotropy
+    this slice. Do not reverse MemTexRefSetMipmapLevelClamp identity with tex_ref_set_mipmap_level_clamp.
+    Do not wrap `tex_ref_set_mipmap_level_clamp` as `mem_tex_ref_set_mipmap_level_clamp`.
+    Do not wrap `tex_ref_set_max_anisotropy` as `mem_tex_ref_set_mipmap_level_clamp`.
+    Do not invent a second `mem_tex_ref_set_max_anisotropy` API. Do not invent
+    Engine `--mem-tex-ref-set-max-anisotropy-identity`. Do not invent a tex-ref-set-border-color
+    this slice. Do not reverse MemTexRefSetMaxAnisotropy identity with tex_ref_set_max_anisotropy.
+    Do not wrap `tex_ref_set_max_anisotropy` as `mem_tex_ref_set_max_anisotropy`.
+    Do not wrap `tex_ref_set_border_color` as `mem_tex_ref_set_max_anisotropy`.
+    Do not invent a second `mem_tex_ref_set_border_color` API. Do not invent
+    Engine `--mem-tex-ref-set-border-color-identity`. Do not invent a tex-ref-set-flags
+    this slice. Do not reverse MemTexRefSetBorderColor identity with tex_ref_set_border_color.
+    Do not wrap `tex_ref_set_border_color` as `mem_tex_ref_set_border_color`.
+    Do not wrap `tex_ref_set_flags` as `mem_tex_ref_set_border_color`.
+    Do not invent a second `mem_tex_ref_set_flags` API. Do not invent
+    Engine `--mem-tex-ref-set-flags-identity`. Do not invent a tex-ref-get-array
+    this slice. Do not reverse MemTexRefSetFlags identity with tex_ref_set_flags.
+    Do not wrap `tex_ref_set_flags` as `mem_tex_ref_set_flags`.
+    Do not wrap `tex_ref_get_array` as `mem_tex_ref_set_flags`.
+    Do not invent a second `mem_tex_ref_get_array` API. Do not invent
+    Engine `--mem-tex-ref-get-array-identity`. Do not invent a tex-ref-get-mipmapped-array
+    this slice. Do not reverse MemTexRefGetArray identity with tex_ref_get_array.
+    Do not wrap `tex_ref_get_array` as `mem_tex_ref_get_array`.
+    Do not wrap `tex_ref_get_mipmapped_array` as `mem_tex_ref_get_array`.
+    Do not invent a second `mem_tex_ref_get_mipmapped_array` API. Do not invent
+    Engine `--mem-tex-ref-get-mipmapped-array-identity`. Do not invent a tex-ref-get-address
+    this slice. Do not reverse MemTexRefGetMipmappedArray identity with tex_ref_get_mipmapped_array.
+    Do not wrap `tex_ref_get_mipmapped_array` as `mem_tex_ref_get_mipmapped_array`.
+    Do not wrap `tex_ref_get_address` as `mem_tex_ref_get_mipmapped_array`.
+    Do not invent a second `mem_tex_ref_get_address` API. Do not invent
+    Engine `--mem-tex-ref-get-address-identity`. Do not invent a tex-ref-get-address-mode
+    this slice. Do not reverse MemTexRefGetAddress identity with tex_ref_get_address.
+    Do not wrap `tex_ref_get_address` as `mem_tex_ref_get_address`.
+    Do not wrap `tex_ref_get_address_mode` as `mem_tex_ref_get_address`.
+    Do not invent a second `mem_tex_ref_get_address_mode` API. Do not invent
+    Engine `--mem-tex-ref-get-address-mode-identity`. Do not invent a tex-ref-get-filter-mode
+    this slice. Do not reverse MemTexRefGetAddressMode identity with tex_ref_get_address_mode.
+    Do not wrap `tex_ref_get_address_mode` as `mem_tex_ref_get_address_mode`.
+    Do not wrap `tex_ref_get_filter_mode` as `mem_tex_ref_get_address_mode`.
+    Do not invent a second `mem_tex_ref_get_filter_mode` API. Do not invent
+    Engine `--mem-tex-ref-get-filter-mode-identity`. Do not invent a tex-ref-get-format
+    this slice. Do not reverse MemTexRefGetFilterMode identity with tex_ref_get_filter_mode.
+    Do not wrap `tex_ref_get_filter_mode` as `mem_tex_ref_get_filter_mode`.
+    Do not wrap `tex_ref_get_format` as `mem_tex_ref_get_filter_mode`.
+    Do not invent a second `mem_tex_ref_get_format` API. Do not invent
+    Engine `--mem-tex-ref-get-format-identity`. Do not invent a tex-ref-get-mipmap-filter-mode
+    this slice. Do not reverse MemTexRefGetFormat identity with tex_ref_get_format.
+    Do not wrap `tex_ref_get_format` as `mem_tex_ref_get_format`.
+    Do not wrap `tex_ref_get_mipmap_filter_mode` as `mem_tex_ref_get_format`.
+    Do not invent a second `mem_tex_ref_get_mipmap_filter_mode` API. Do not invent
+    Engine `--mem-tex-ref-get-mipmap-filter-mode-identity`. Do not invent a tex-ref-get-mipmap-level-bias
+    this slice. Do not reverse MemTexRefGetMipmapFilterMode identity with tex_ref_get_mipmap_filter_mode.
+    Do not wrap `tex_ref_get_mipmap_filter_mode` as `mem_tex_ref_get_mipmap_filter_mode`.
+    Do not wrap `tex_ref_get_mipmap_level_bias` as `mem_tex_ref_get_mipmap_filter_mode`.
+    Do not invent a second `mem_tex_ref_get_mipmap_level_bias` API. Do not invent
+    Engine `--mem-tex-ref-get-mipmap-level-bias-identity`. Do not invent a tex-ref-get-mipmap-level-clamp
+    this slice. Do not reverse MemTexRefGetMipmapLevelBias identity with tex_ref_get_mipmap_level_bias.
+    Do not wrap `tex_ref_get_mipmap_level_bias` as `mem_tex_ref_get_mipmap_level_bias`.
+    Do not wrap `tex_ref_get_mipmap_level_clamp` as `mem_tex_ref_get_mipmap_level_bias`.
+    Do not invent a second `mem_tex_ref_get_mipmap_level_clamp` API. Do not invent
+    Engine `--mem-tex-ref-get-mipmap-level-clamp-identity`. Do not invent a tex-ref-get-max-anisotropy
+    this slice. Do not reverse MemTexRefGetMipmapLevelClamp identity with tex_ref_get_mipmap_level_clamp.
+    Do not wrap `tex_ref_get_mipmap_level_clamp` as `mem_tex_ref_get_mipmap_level_clamp`.
+    Do not wrap `tex_ref_get_max_anisotropy` as `mem_tex_ref_get_mipmap_level_clamp`.
+    Do not invent a second `mem_tex_ref_get_max_anisotropy` API. Do not invent
+    Engine `--mem-tex-ref-get-max-anisotropy-identity`. Do not invent a tex-ref-get-border-color
+    this slice. Do not reverse MemTexRefGetMaxAnisotropy identity with tex_ref_get_max_anisotropy.
+    Do not wrap `tex_ref_get_max_anisotropy` as `mem_tex_ref_get_max_anisotropy`.
+    Do not wrap `tex_ref_get_border_color` as `mem_tex_ref_get_max_anisotropy`.
+    Do not invent a second `mem_tex_ref_get_border_color` API. Do not invent
+    Engine `--mem-tex-ref-get-border-color-identity`. Do not invent a tex-ref-get-flags
+    this slice. Do not reverse MemTexRefGetBorderColor identity with tex_ref_get_border_color.
+    Do not wrap `tex_ref_get_border_color` as `mem_tex_ref_get_border_color`.
+    Do not wrap `tex_ref_get_flags` as `mem_tex_ref_get_border_color`.
+    Do not invent a second `mem_tex_ref_get_flags` API. Do not invent
+    Engine `--mem-tex-ref-get-flags-identity`. Do not invent a module-get-surf-ref
+    this slice. Do not reverse MemTexRefGetFlags identity with tex_ref_get_flags.
+    Do not wrap `tex_ref_get_flags` as `mem_tex_ref_get_flags`.
+    Do not wrap `module_get_surf_ref` as `mem_tex_ref_get_flags`.
+    Do not invent a second `mem_module_get_surf_ref` API. Do not invent
+    Engine `--mem-module-get-surf-ref-identity`. Do not invent a surf-ref-set-array
+    this slice. Do not reverse MemModuleGetSurfRef identity with module_get_surf_ref.
+    Do not wrap `module_get_surf_ref` as `mem_module_get_surf_ref`.
+    Do not wrap `surf_ref_set_array` as `mem_module_get_surf_ref`.
+    Do not invent a second `mem_surf_ref_set_array` API. Do not invent
+    Engine `--mem-surf-ref-set-array-identity`. Do not invent a surf-ref-get-array
+    this slice. Do not reverse MemSurfRefSetArray identity with surf_ref_set_array.
+    Do not wrap `surf_ref_set_array` as `mem_surf_ref_set_array`.
+    Do not wrap `surf_ref_get_array` as `mem_surf_ref_set_array`.
+    Do not invent a second `mem_surf_ref_get_array` API. Do not invent
+    Engine `--mem-surf-ref-get-array-identity`. Do not invent a memcpy-dto-a
+    this slice. Do not reverse MemSurfRefGetArray identity with surf_ref_get_array.
+    Do not wrap `surf_ref_get_array` as `mem_surf_ref_get_array`.
+    Do not wrap `memcpy_dto_a` as `mem_surf_ref_get_array`.
+    Do not invent a second `mem_memcpy_dto_a` API. Do not invent
+    Engine `--mem-memcpy-dto-a-identity`. Do not invent a memcpy-ato-d
+    this slice. Do not reverse MemMemcpyDtoA identity with memcpy_dto_a.
+    Do not wrap `memcpy_dto_a` as `mem_memcpy_dto_a`.
+    Do not wrap `memcpy_ato_d` as `mem_memcpy_dto_a`.
+    Do not invent a second `mem_memcpy_ato_d` API. Do not invent
+    Engine `--mem-memcpy-ato-d-identity`. Do not invent a memcpy-hto-a
+    this slice. Do not reverse MemMemcpyAtoD identity with memcpy_ato_d.
+    Do not wrap `memcpy_ato_d` as `mem_memcpy_ato_d`.
+    Do not wrap `memcpy_hto_a` as `mem_memcpy_ato_d`.
+    Do not invent a second `mem_memcpy_hto_a` API. Do not invent
+    Engine `--mem-memcpy-hto-a-identity`. Do not invent a memcpy-ato-h
+    this slice. Do not reverse MemMemcpyHtoA identity with memcpy_hto_a.
+    Do not wrap `memcpy_hto_a` as `mem_memcpy_hto_a`.
+    Do not wrap `memcpy_ato_h` as `mem_memcpy_hto_a`.
+    Do not invent a second `mem_memcpy_ato_h` API. Do not invent
+    Engine `--mem-memcpy-ato-h-identity`. Do not invent a memcpy-ato-a
+    this slice. Do not reverse MemMemcpyAtoH identity with memcpy_ato_h.
+    Do not wrap `memcpy_ato_h` as `mem_memcpy_ato_h`.
+    Do not wrap `memcpy_ato_a` as `mem_memcpy_ato_h`.
+    Do not invent a second `mem_memcpy_ato_a` API. Do not invent
+    Engine `--mem-memcpy-ato-a-identity`. Do not invent a memcpy-dto-a-async
+    this slice. Do not reverse MemMemcpyAtoA identity with memcpy_ato_a.
+    Do not wrap `memcpy_ato_a` as `mem_memcpy_ato_a`.
+    Do not wrap `memcpy_dto_a_async` as `mem_memcpy_ato_a`.
+    Do not invent a second `mem_memcpy_dto_a_async` API. Do not invent
+    Engine `--mem-memcpy-dto-a-async-identity`. Do not invent a memcpy-ato-d-async
+    this slice. Do not reverse MemMemcpyDtoAAsync identity with memcpy_dto_a_async.
+    Do not wrap `memcpy_dto_a_async` as `mem_memcpy_dto_a_async`.
+    Do not wrap `memcpy_ato_d_async` as `mem_memcpy_dto_a_async`.
+    Do not invent a second `mem_memcpy_ato_d_async` API. Do not invent
+    Engine `--mem-memcpy-ato-d-async-identity`. Do not invent a memcpy-hto-a-async
+    this slice. Do not reverse MemMemcpyAtoDAsync identity with memcpy_ato_d_async.
+    Do not wrap `memcpy_ato_d_async` as `mem_memcpy_ato_d_async`.
+    Do not wrap `memcpy_hto_a_async` as `mem_memcpy_ato_d_async`.
+    Do not invent a second `mem_memcpy_hto_a_async` API. Do not invent
+    Engine `--mem-memcpy-hto-a-async-identity`. Do not invent a memcpy-ato-h-async
+    this slice. Do not reverse MemMemcpyHtoAAsync identity with memcpy_hto_a_async.
+    Do not wrap `memcpy_hto_a_async` as `mem_memcpy_hto_a_async`.
+    Do not wrap `memcpy_ato_h_async` as `mem_memcpy_hto_a_async`.
+    Do not invent a second `mem_memcpy_ato_h_async` API. Do not invent
+    Engine `--mem-memcpy-ato-h-async-identity`. Do not invent a memcpy-ato-a-async
+    this slice. Do not reverse MemMemcpyAtoHAsync identity with memcpy_ato_h_async.
+    Do not wrap `memcpy_ato_h_async` as `mem_memcpy_ato_h_async`.
+    Do not wrap `memcpy_ato_a_async` as `mem_memcpy_ato_h_async`.
+    Do not invent a second `mem_memcpy_ato_a_async` API. Do not invent
+    Engine `--mem-memcpy-ato-a-async-identity`. Do not invent a memcpy-2d-to-array
+    this slice. Do not reverse MemMemcpyAtoAAsync identity with memcpy_ato_a_async.
+    Do not wrap `memcpy_ato_a_async` as `mem_memcpy_ato_a_async`.
+    Do not wrap `memcpy_2d_to_array` as `mem_memcpy_ato_a_async`.
+    Do not invent a second `mem_memcpy_2d_to_array` API. Do not invent
+    Engine `--mem-memcpy-2d-to-array-identity`. Do not invent a memcpy-2d-from-array
+    this slice. Do not reverse MemMemcpy2DToArray identity with memcpy_2d_to_array.
+    Do not wrap `memcpy_2d_to_array` as `mem_memcpy_2d_to_array`.
+    Do not wrap `memcpy_2d_from_array` as `mem_memcpy_2d_to_array`.
+    Do not invent a second `mem_memcpy_2d_from_array` API. Do not invent
+    Engine `--mem-memcpy-2d-from-array-identity`. Do not invent a memcpy-2d-array-to-array
+    this slice. Do not reverse MemMemcpy2DFromArray identity with memcpy_2d_from_array.
+    Do not wrap `memcpy_2d_from_array` as `mem_memcpy_2d_from_array`.
+    Do not wrap `memcpy_2d_array_to_array` as `mem_memcpy_2d_from_array`.
+    Do not invent a second `mem_memcpy_2d_array_to_array` API. Do not invent
+    Engine `--mem-memcpy-2d-array-to-array-identity`. Do not invent a memcpy-2d-to-array-async
+    this slice. Do not reverse MemMemcpy2DArrayToArray identity with memcpy_2d_array_to_array.
+    Do not wrap `memcpy_2d_array_to_array` as `mem_memcpy_2d_array_to_array`.
+    Do not wrap `memcpy_2d_to_array_async` as `mem_memcpy_2d_array_to_array`.
+    Do not invent a second `mem_memcpy_2d_to_array_async` API. Do not invent
+    Engine `--mem-memcpy-2d-to-array-async-identity`. Do not invent a memcpy-2d-from-array-async
+    this slice. Do not reverse MemMemcpy2DToArrayAsync identity with memcpy_2d_to_array_async.
+    Do not wrap `memcpy_2d_to_array_async` as `mem_memcpy_2d_to_array_async`.
+    Do not wrap `memcpy_2d_from_array_async` as `mem_memcpy_2d_to_array_async`.
+    Do not invent a second `mem_memcpy_2d_from_array_async` API. Do not invent
+    Engine `--mem-memcpy-2d-from-array-async-identity`. Do not invent a memcpy-2d-array-to-array-async
+    this slice. Do not reverse MemMemcpy2DFromArrayAsync identity with memcpy_2d_from_array_async.
+    Do not wrap `memcpy_2d_from_array_async` as `mem_memcpy_2d_from_array_async`.
+    Do not wrap `memcpy_2d_array_to_array_async` as `mem_memcpy_2d_from_array_async`.
+    Do not invent a second `mem_memcpy_2d_array_to_array_async` API. Do not invent
+    Engine `--mem-memcpy-2d-array-to-array-async-identity`. Do not invent a library-load-data
+    this slice. Do not reverse MemMemcpy2DArrayToArrayAsync identity with memcpy_2d_array_to_array_async.
+    Do not wrap `memcpy_2d_array_to_array_async` as `mem_memcpy_2d_array_to_array_async`.
+    Do not wrap `library_load_data` as `mem_memcpy_2d_array_to_array_async`.
+    Do not invent a second `mem_library_load_data` API. Do not invent
+    Engine `--mem-library-load-data-identity`. Do not invent a library-load-from-file
+    this slice. Do not reverse MemLibraryLoadData identity with library_load_data.
+    Do not wrap `library_load_data` as `mem_library_load_data`.
+    Do not wrap `library_load_from_file` as `mem_library_load_data`.
+    Do not invent a second `mem_library_load_from_file` API. Do not invent
+    Engine `--mem-library-load-from-file-identity`. Do not invent a library-unload
+    this slice. Do not reverse MemLibraryLoadFromFile identity with library_load_from_file.
+    Do not wrap `library_load_from_file` as `mem_library_load_from_file`.
+    Do not wrap `library_unload` as `mem_library_load_from_file`.
+    Do not invent a second `mem_library_unload` API. Do not invent
+    Engine `--mem-library-unload-identity`. Do not invent a library-get-kernel
+    this slice. Do not reverse MemLibraryUnload identity with library_unload.
+    Do not wrap `library_unload` as `mem_library_unload`.
+    Do not wrap `library_get_kernel` as `mem_library_unload`.
+    Do not invent a second `mem_library_get_kernel` API. Do not invent
+    Engine `--mem-library-get-kernel-identity`. Do not invent a library-get-module
+    this slice. Do not reverse MemLibraryGetKernel identity with library_get_kernel.
+    Do not wrap `library_get_kernel` as `mem_library_get_kernel`.
+    Do not wrap `library_get_module` as `mem_library_get_kernel`.
+    Do not invent a second `mem_library_get_module` API. Do not invent
+    Engine `--mem-library-get-module-identity`. Do not invent a library-get-global
+    this slice. Do not reverse MemLibraryGetModule identity with library_get_module.
+    Do not wrap `library_get_module` as `mem_library_get_module`.
+    Do not wrap `library_get_global` as `mem_library_get_module`.
+    Do not invent a second `mem_library_get_global` API. Do not invent
+    Engine `--mem-library-get-global-identity`. Do not invent a library-get-managed
+    this slice. Do not reverse MemLibraryGetGlobal identity with library_get_global.
+    Do not wrap `library_get_global` as `mem_library_get_global`.
+    Do not wrap `library_get_managed` as `mem_library_get_global`.
+    Do not invent a second `mem_library_get_managed` API. Do not invent
+    Engine `--mem-library-get-managed-identity`. Do not invent a library-get-unified-function
+    this slice. Do not reverse MemLibraryGetManaged identity with library_get_managed.
+    Do not wrap `library_get_managed` as `mem_library_get_managed`.
+    Do not wrap `library_get_unified_function` as `mem_library_get_managed`.
+    Do not invent a second `mem_library_get_unified_function` API. Do not invent
+    Engine `--mem-library-get-unified-function-identity`. Do not invent a library-get-kernel-count
+    this slice. Do not reverse MemLibraryGetUnifiedFunction identity with library_get_unified_function.
+    Do not wrap `library_get_unified_function` as `mem_library_get_unified_function`.
+    Do not wrap `library_get_kernel_count` as `mem_library_get_unified_function`.
+    Do not invent a second `mem_library_get_kernel_count` API. Do not invent
+    Engine `--mem-library-get-kernel-count-identity`. Do not invent a library-enumerate-kernels
+    this slice. Do not reverse MemLibraryGetKernelCount identity with library_get_kernel_count.
+    Do not wrap `library_get_kernel_count` as `mem_library_get_kernel_count`.
+    Do not wrap `library_enumerate_kernels` as `mem_library_get_kernel_count`.
+    Do not invent a second `mem_library_enumerate_kernels` API. Do not invent
+    Engine `--mem-library-enumerate-kernels-identity`. Do not invent a kernel-get-library
+    this slice. Do not reverse MemLibraryEnumerateKernels identity with library_enumerate_kernels.
+    Do not wrap `library_enumerate_kernels` as `mem_library_enumerate_kernels`.
+    Do not wrap `kernel_get_library` as `mem_library_enumerate_kernels`.
+    Do not invent a second `mem_kernel_get_library` API. Do not invent
+    Engine `--mem-kernel-get-library-identity`. Do not invent a kernel-get-function
+    this slice. Do not reverse MemKernelGetLibrary identity with kernel_get_library.
+    Do not wrap `kernel_get_library` as `mem_kernel_get_library`.
+    Do not wrap `kernel_get_function` as `mem_kernel_get_library`.
+    Do not invent a second `mem_kernel_get_function` API. Do not invent
+    Engine `--mem-kernel-get-function-identity`. Do not invent a kernel-get-param-info
+    this slice. Do not reverse MemKernelGetFunction identity with kernel_get_function.
+    Do not wrap `kernel_get_function` as `mem_kernel_get_function`.
+    Do not wrap `kernel_get_param_info` as `mem_kernel_get_function`.
+    Do not invent a second `mem_kernel_get_param_info` API. Do not invent
+    Engine `--mem-kernel-get-param-info-identity`. Do not invent a kernel-get-param-count
+    this slice. Do not reverse MemKernelGetParamInfo identity with kernel_get_param_info.
+    Do not wrap `kernel_get_param_info` as `mem_kernel_get_param_info`.
+    Do not wrap `kernel_get_param_count` as `mem_kernel_get_param_info`.
+    Do not invent a second `mem_kernel_get_param_count` API. Do not invent
+    Engine `--mem-kernel-get-param-count-identity`. Do not invent a kernel-get-attribute
+    this slice. Do not reverse MemKernelGetParamCount identity with kernel_get_param_count.
+    Do not wrap `kernel_get_param_count` as `mem_kernel_get_param_count`.
+    Do not wrap `kernel_get_attribute` as `mem_kernel_get_param_count`.
+    Do not invent a second `mem_kernel_get_attribute` API. Do not invent
+    Engine `--mem-kernel-get-attribute-identity`. Do not invent a kernel-set-attribute
+    this slice. Do not reverse MemKernelGetAttribute identity with kernel_get_attribute.
+    Do not wrap `kernel_get_attribute` as `mem_kernel_get_attribute`.
+    Do not wrap `kernel_set_attribute` as `mem_kernel_get_attribute`.
+    Do not invent a second `mem_kernel_set_attribute` API. Do not invent
+    Engine `--mem-kernel-set-attribute-identity`. Do not invent a kernel-set-cache-config
+    this slice. Do not reverse MemKernelSetAttribute identity with kernel_set_attribute.
+    Do not wrap `kernel_set_attribute` as `mem_kernel_set_attribute`.
+    Do not wrap `kernel_set_cache_config` as `mem_kernel_set_attribute`.
+    Do not invent a second `mem_kernel_set_cache_config` API. Do not invent
+    Engine `--mem-kernel-set-cache-config-identity`. Do not invent a link-create
+    this slice. Do not reverse MemKernelSetCacheConfig identity with kernel_set_cache_config.
+    Do not wrap `kernel_set_cache_config` as `mem_kernel_set_cache_config`.
+    Do not wrap `link_create` as `mem_kernel_set_cache_config`.
+    Do not invent a second `mem_link_create` API. Do not invent
+    Engine `--mem-link-create-identity`. Do not invent a link-add-data
+    this slice. Do not reverse MemLinkCreate identity with link_create.
+    Do not wrap `link_create` as `mem_link_create`.
+    Do not wrap `link_add_data` as `mem_link_create`.
+    Do not invent a second `mem_link_add_data` API. Do not invent
+    Engine `--mem-link-add-data-identity`. Do not invent a link-complete
+    this slice. Do not reverse MemLinkAddData identity with link_add_data.
+    Do not wrap `link_add_data` as `mem_link_add_data`.
+    Do not wrap `link_complete` as `mem_link_add_data`.
+    Do not invent a second `mem_link_complete` API. Do not invent
+    Engine `--mem-link-complete-identity`. Do not invent a link-destroy
+    this slice. Do not reverse MemLinkComplete identity with link_complete.
+    Do not wrap `link_complete` as `mem_link_complete`.
+    Do not wrap `link_destroy` as `mem_link_complete`.
+    Do not invent a second `mem_link_destroy` API. Do not invent
+    Engine `--mem-link-destroy-identity`. Do not invent a link-add-file
+    this slice. Do not reverse MemLinkDestroy identity with link_destroy.
+    Do not wrap `link_destroy` as `mem_link_destroy`.
+    Do not wrap `link_add_file` as `mem_link_destroy`.
+    Do not invent a second `mem_link_add_file` API. Do not invent
+    Engine `--mem-link-add-file-identity`. Do not invent a runtime-get-version
+    this slice. Do not reverse MemLinkAddFile identity with link_add_file.
+    Do not wrap `link_add_file` as `mem_link_add_file`.
+    Do not wrap `runtime_get_version` as `mem_link_add_file`.
+    Do not invent a second `mem_runtime_get_version` API. Do not invent
+    Engine `--mem-runtime-get-version-identity`. Do not invent a device-get
+    this slice. Do not reverse MemRuntimeGetVersion identity with runtime_get_version.
+    Do not wrap `runtime_get_version` as `mem_runtime_get_version`.
+    Do not wrap `device_get` as `mem_runtime_get_version`.
+    Do not invent a second `mem_device_get` API. Do not invent
+    Engine `--mem-device-get-identity`. Do not invent a cu-device-can-access-peer
+    this slice. Do not reverse MemDeviceGet identity with device_get.
+    Do not wrap `device_get` as `mem_device_get`.
+    Do not wrap `device_can_access_peer` as `mem_device_get`.
+    Do not invent a second `mem_func_get_param_count` API. Do not invent
+    Engine `--mem-func-get-param-count-identity`. Do not invent a cu-func-get-cache-config
+    this slice. Do not reverse MemFuncGetParamCount identity with func_get_param_count.
+    Do not wrap `func_get_param_count` as `mem_func_get_param_count`.
+    Do not wrap `func_get_cache_config` as `mem_func_get_param_count`.
+    Do not invent a second `mem_func_get_cache_config` API. Do not invent
+    Engine `--mem-func-get-cache-config-identity`. Do not invent a func-is-loaded
+    this slice. Do not reverse MemFuncGetCacheConfig identity with func_get_cache_config.
+    Do not wrap `func_get_cache_config` as `mem_func_get_cache_config`.
+    Do not wrap `func_is_loaded` as `mem_func_get_cache_config`.
+    Do not invent a second `mem_func_is_loaded` API. Do not invent
+    Engine `--mem-func-is-loaded-identity`. Do not invent a func-load
+    this slice. Do not reverse MemFuncIsLoaded identity with func_is_loaded.
+    Do not wrap `func_is_loaded` as `mem_func_is_loaded`.
+    Do not wrap `func_load` as `mem_func_is_loaded`.
+    Do not invent a second `mem_func_load` API. Do not invent
+    Engine `--mem-func-load-identity`. Do not invent a func-get-module
+    this slice. Do not reverse MemFuncLoad identity with func_load.
+    Do not wrap `func_load` as `mem_func_load`.
+    Do not wrap `func_get_module` as `mem_func_load`.
+    Do not invent a second `mem_func_get_module` API. Do not invent
+    Engine `--mem-func-get-module-identity`. Do not invent a func-set-attribute
+    this slice. Do not reverse MemFuncGetModule identity with func_get_module.
+    Do not wrap `func_get_module` as `mem_func_get_module`.
+    Do not wrap `func_set_attribute` as `mem_func_get_module`.
+    Do not invent a second `mem_func_get_name` API. Do not invent
+    Engine `--mem-func-get-name-identity`. Do not invent a func-get-param-info
+    this slice. Do not reverse MemFuncGetName identity with func_get_name.
+    Do not wrap `func_get_name` as `mem_func_get_name`.
+    Do not wrap `func_get_param_info` as `mem_func_get_name`.
+    Do not invent a second `mem_func_get_param_info` API. Do not invent
+    Engine `--mem-func-get-param-info-identity`. Do not invent a func-get-attribute
+    this slice. Do not reverse MemFuncGetParamInfo identity with func_get_param_info.
+    Do not wrap `func_get_param_info` as `mem_func_get_param_info`.
+    Do not wrap `func_set_attribute` as `mem_func_get_param_info`.
+    Do not invent a second `mem_func_get_attribute` API. Do not invent
+    Engine `--mem-func-get-attribute-identity`. Do not invent a cu-func-set-attribute
+    this slice. Do not reverse MemFuncGetAttribute identity with func_get_attribute.
+    Do not wrap `func_get_attribute` as `mem_func_get_attribute`.
+    Do not wrap `func_set_attribute` as `mem_func_get_attribute`.
+    Do not invent a second `mem_func_set_attribute` API. Do not invent
+    Engine `--mem-func-set-attribute-identity`. Do not invent a cu-launch-kernel-ex
+    this slice. Do not reverse MemFuncSetAttribute identity with func_set_attribute.
+    Do not wrap `func_set_attribute` as `mem_func_set_attribute`.
+    Do not wrap `func_get_attributes` as `mem_func_set_attribute`.
+    Do not invent a second `mem_device_get_stream_priority_range` API. Do not invent
+    Engine `--mem-device-get-stream-priority-range-identity`. Do not invent a ctx-get-stream-priority-range
+    this slice. Do not reverse MemDeviceGetStreamPriorityRange identity with device_get_stream_priority_range.
+    Do not wrap `device_get_stream_priority_range` as `mem_device_get_stream_priority_range`.
+    Do not wrap `ctx_get_stream_priority_range` as `mem_device_get_stream_priority_range`.
+    Do not invent a second `mem_event_get_id` API. Do not invent
+    Engine `--mem-event-get-id-identity`. Do not invent a cu-event-create
+    this slice. Do not reverse MemEventGetId identity with event_get_id.
+    Do not wrap `event_get_id` as `mem_event_get_id`.
+    Do not wrap `event_create` as `mem_event_get_id`.
+    Do not invent a second `mem_green_ctx_get_id` API. Do not invent
+    Engine `--mem-green-ctx-get-id-identity`. Do not invent a cu-green-ctx-get-device
+    this slice. Do not reverse MemGreenCtxGetId identity with green_ctx_get_id.
+    Do not wrap `green_ctx_get_id` as `mem_green_ctx_get_id`.
+    Do not wrap `green_ctx_get_device` as `mem_green_ctx_get_id`.
+    Do not invent a second `mem_green_ctx_get_device` API. Do not invent
+    Engine `--mem-green-ctx-get-device-identity`. Do not invent a cu-stream-get-green-ctx
+    this slice. Do not reverse MemGreenCtxGetDevice identity with green_ctx_get_device.
+    Do not wrap `green_ctx_get_device` as `mem_green_ctx_get_device`.
+    Do not wrap `stream_get_green_ctx` as `mem_green_ctx_get_device`.
+    Do not invent a second `mem_stream_get_green_ctx` API. Do not invent
+    Engine `--mem-stream-get-green-ctx-identity`. Do not invent a cu-green-ctx-create
+    this slice. Do not reverse MemStreamGetGreenCtx identity with stream_get_green_ctx.
+    Do not wrap `stream_get_green_ctx` as `mem_stream_get_green_ctx`.
+    Do not wrap `green_ctx_create` as `mem_stream_get_green_ctx`.
+    Do not invent a second `mem_green_ctx_create` API. Do not invent
+    Engine `--mem-green-ctx-create-identity`. Do not invent a cu-green-ctx-destroy
+    this slice. Do not reverse MemGreenCtxCreate identity with green_ctx_create.
+    Do not wrap `green_ctx_create` as `mem_green_ctx_create`.
+    Do not wrap `green_ctx_destroy` as `mem_green_ctx_create`.
+    Do not invent a second `mem_green_ctx_destroy` API. Do not invent
+    Engine `--mem-green-ctx-destroy-identity`. Do not invent a cu-green-ctx-set-stream
+    this slice. Do not reverse MemGreenCtxDestroy identity with green_ctx_destroy.
+    Do not wrap `green_ctx_destroy` as `mem_green_ctx_destroy`.
+    Do not wrap `green_ctx_set_stream` as `mem_green_ctx_destroy`.
+    Do not invent a second `mem_green_ctx_stream_create` API. Do not invent
+    Engine `--mem-green-ctx-stream-create-identity`. Do not invent a cu-green-ctx-synchronize
+    this slice. Do not reverse MemGreenCtxStreamCreate identity with green_ctx_stream_create.
+    Do not wrap `green_ctx_stream_create` as `mem_green_ctx_stream_create`.
+    Do not wrap `green_ctx_synchronize` as `mem_green_ctx_stream_create`.
+    Do not invent a second `mem_green_ctx_synchronize` API. Do not invent
+    Engine `--mem-green-ctx-synchronize-identity`. Do not invent a cu-green-ctx-record-event
+    this slice. Do not reverse MemGreenCtxSynchronize identity with green_ctx_synchronize.
+    Do not wrap `green_ctx_synchronize` as `mem_green_ctx_synchronize`.
+    Do not wrap `green_ctx_record_event` as `mem_green_ctx_synchronize`.
+    Do not invent a second `mem_graph_node_get_local_id` API. Do not invent
+    Engine `--mem-graph-node-get-local-id-identity`. Do not invent a cu-graph-node-get-tools-id
+    this slice. Do not reverse MemGraphNodeGetLocalId identity with graph_node_get_local_id.
+    Do not wrap `graph_node_get_local_id` as `mem_graph_node_get_local_id`.
+    Do not wrap `graph_node_get_tools_id` as `mem_graph_node_get_local_id`.
+    Do not invent a second `mem_graph_node_get_tools_id` API. Do not invent
+    Engine `--mem-graph-node-get-tools-id-identity`. Do not invent a cu-graph-node-get-containing-graph
+    this slice. Do not reverse MemGraphNodeGetToolsId identity with graph_node_get_tools_id.
+    Do not wrap `graph_node_get_tools_id` as `mem_graph_node_get_tools_id`.
+    Do not wrap `graph_node_get_containing_graph` as `mem_graph_node_get_tools_id`.
+    Do not invent a second `mem_graph_node_get_containing_graph` API. Do not invent
+    Engine `--mem-graph-node-get-containing-graph-identity`. Do not invent a cu-graph-kernel-node-get-priority
+    this slice. Do not reverse MemGraphNodeGetContainingGraph identity with graph_node_get_containing_graph.
+    Do not wrap `graph_node_get_containing_graph` as `mem_graph_node_get_containing_graph`.
+    Do not wrap `graph_kernel_node_get_priority` as `mem_graph_node_get_containing_graph`.
+    Do not invent a second `mem_pool_get_id` API. Do not invent
+    Engine `--mem-pool-get-id-identity`. Do not invent a cu-memcpy-htod
+    this slice. Do not reverse MemPoolGetId identity with pool_get_id.
+    Do not wrap `pool_get_id` as `mem_pool_get_id`.
+    Do not wrap `memcpy_htod` as `mem_pool_get_id`.
+    Do not invent a second `mem_memcpy_htod` API. Do not invent
+    Engine `--mem-memcpy-htod-identity`. Do not invent a cu-memcpy-dtoh
+    this slice. Do not reverse MemMemcpyHtod identity with memcpy_htod.
+    Do not wrap `memcpy_htod` as `mem_memcpy_htod`.
+    Do not wrap `memcpy_dtoh` as `mem_memcpy_htod`.
+    Do not invent a second `mem_memcpy_dtoh` API. Do not invent
+    Engine `--mem-memcpy-dtoh-identity`. Do not invent a cu-prefetch-batch-async
+    this slice. Do not reverse MemMemcpyDtoh identity with memcpy_dtoh.
+    Do not wrap `memcpy_dtoh` as `mem_memcpy_dtoh`.
+    Do not wrap `prefetch_batch_async` as `mem_memcpy_dtoh`.
+    Do not invent a second `mem_prefetch_batch_async` API. Do not invent
+    Engine `--mem-prefetch-batch-async-identity`. Do not invent a cu-discard-batch-async
+    this slice. Do not reverse MemPrefetchBatchAsync identity with prefetch_batch_async.
+    Do not wrap `prefetch_batch_async` as `mem_prefetch_batch_async`.
+    Do not wrap `discard_batch_async` as `mem_prefetch_batch_async`.
+    Do not invent a second `mem_discard_batch_async` API. Do not invent
+    Engine `--mem-discard-batch-async-identity`. Do not invent a cu-discard-and-prefetch-batch-async
+    this slice. Do not reverse MemDiscardBatchAsync identity with discard_batch_async.
+    Do not wrap `discard_batch_async` as `mem_discard_batch_async`.
+    Do not wrap `discard_and_prefetch_batch_async` as `mem_discard_batch_async`.
+    Do not invent a second `mem_discard_and_prefetch_batch_async` API. Do not invent
+    Engine `--mem-discard-and-prefetch-batch-async-identity`. Do not invent a cu-tensor-map-encode-tiled
+    this slice. Do not reverse MemDiscardAndPrefetchBatchAsync identity with discard_and_prefetch_batch_async.
+    Do not wrap `discard_and_prefetch_batch_async` as `mem_discard_and_prefetch_batch_async`.
+    Do not wrap `tensor_map_encode_tiled` as `mem_discard_and_prefetch_batch_async`.
+    Do not invent a second `mem_tensor_map_encode_tiled` API. Do not invent
+    Engine `--mem-tensor-map-encode-tiled-identity`. Do not invent a cu-tensor-map-encode-im2col
+    this slice. Do not reverse MemTensorMapEncodeTiled identity with tensor_map_encode_tiled.
+    Do not wrap `tensor_map_encode_tiled` as `mem_tensor_map_encode_tiled`.
+    Do not wrap `tensor_map_encode_im2col` as `mem_tensor_map_encode_tiled`.
+    Do not invent a second `mem_tensor_map_encode_im2col` API. Do not invent
+    Engine `--mem-tensor-map-encode-im2col-identity`. Do not invent a cu-tensor-map-encode-im2col-wide
+    this slice. Do not reverse MemTensorMapEncodeIm2col identity with tensor_map_encode_im2col.
+    Do not wrap `tensor_map_encode_im2col` as `mem_tensor_map_encode_im2col`.
+    Do not wrap `tensor_map_encode_im2col_wide` as `mem_tensor_map_encode_im2col`.
+    Do not invent a second `mem_tensor_map_encode_im2col_wide` API. Do not invent
+    Engine `--mem-tensor-map-encode-im2col-wide-identity`. Do not invent a cu-tensor-map-replace-aligned-addr
+    this slice. Do not reverse MemTensorMapEncodeIm2colWide identity with tensor_map_encode_im2col_wide.
+    Do not wrap `tensor_map_encode_im2col_wide` as `mem_tensor_map_encode_im2col_wide`.
+    Do not wrap `tensor_map_replace_aligned_addr` as `mem_tensor_map_encode_im2col_wide`.
+    Do not invent a second `mem_tensor_map_replace_aligned_addr` API. Do not invent
+    Engine `--mem-tensor-map-replace-aligned-addr-identity`. Do not invent a cu-array-get-descriptor
+    this slice. Do not reverse MemTensorMapReplaceAlignedAddr identity with tensor_map_replace_aligned_addr.
+    Do not wrap `tensor_map_replace_aligned_addr` as `mem_tensor_map_replace_aligned_addr`.
+    Do not wrap `array_get_descriptor` as `mem_tensor_map_replace_aligned_addr`.
+    Do not invent a second `mem_array_get_descriptor` API. Do not invent
+    Engine `--mem-array-get-descriptor-identity`. Do not invent a cu-array-3d-get-descriptor
+    this slice. Do not reverse MemArrayGetDescriptor identity with array_get_descriptor.
+    Do not wrap `array_get_descriptor` as `mem_array_get_descriptor`.
+    Do not wrap `array_3d_get_descriptor` as `mem_array_get_descriptor`.
+    Do not invent a second `mem_array_3d_get_descriptor` API. Do not invent
+    Engine `--mem-array-3d-get-descriptor-identity`. Do not invent a cu-array-get-sparse-properties
+    this slice. Do not reverse MemArray3dGetDescriptor identity with array_3d_get_descriptor.
+    Do not wrap `array_3d_get_descriptor` as `mem_array_3d_get_descriptor`.
+    Do not wrap `array_get_sparse_properties` as `mem_array_3d_get_descriptor`.
+    Do not invent a second `mem_array_get_sparse_properties` API. Do not invent
+    Engine `--mem-array-get-sparse-properties-identity`. Do not invent a cu-array-get-plane
+    this slice. Do not reverse MemArrayGetSparseProperties identity with array_get_sparse_properties.
+    Do not wrap `array_get_sparse_properties` as `mem_array_get_sparse_properties`.
+    Do not wrap `array_get_plane` as `mem_array_get_sparse_properties`.
+    Do not invent a second `mem_array_get_plane` API. Do not invent
+    Engine `--mem-array-get-plane-identity`. Do not invent a cu-array-get-memory-requirements
+    this slice. Do not reverse MemArrayGetPlane identity with array_get_plane.
+    Do not wrap `array_get_plane` as `mem_array_get_plane`.
+    Do not wrap `array_get_memory_requirements` as `mem_array_get_plane`.
+    Do not invent a second `mem_array_get_memory_requirements` API. Do not invent
+    Engine `--mem-array-get-memory-requirements-identity`. Do not invent a cu-mipmapped-array-get-memory-requirements
+    this slice. Do not reverse MemArrayGetMemoryRequirements identity with array_get_memory_requirements.
+    Do not wrap `array_get_memory_requirements` as `mem_array_get_memory_requirements`.
+    Do not wrap `mipmapped_array_get_memory_requirements` as `mem_array_get_memory_requirements`.
+    Do not invent a second `mem_mipmapped_array_get_memory_requirements` API. Do not invent
+    Engine `--mem-mipmapped-array-get-memory-requirements-identity`. Do not invent a cu-mipmapped-array-get-sparse-properties
+    this slice. Do not reverse MemMipmappedArrayGetMemoryRequirements identity with mipmapped_array_get_memory_requirements.
+    Do not wrap `mipmapped_array_get_memory_requirements` as `mem_mipmapped_array_get_memory_requirements`.
+    Do not wrap `mipmapped_array_get_sparse_properties` as `mem_mipmapped_array_get_memory_requirements`.
+    Do not invent a second `mem_mipmapped_array_get_sparse_properties` API. Do not invent
+    Engine `--mem-mipmapped-array-get-sparse-properties-identity`. Do not invent a cu-mipmapped-array-create
+    this slice. Do not reverse MemMipmappedArrayGetSparseProperties identity with mipmapped_array_get_sparse_properties.
+    Do not wrap `mipmapped_array_get_sparse_properties` as `mem_mipmapped_array_get_sparse_properties`.
+    Do not wrap `mipmapped_array_create` as `mem_mipmapped_array_get_sparse_properties`.
+    Do not invent a second `mem_mipmapped_array_create` API. Do not invent
+    Engine `--mem-mipmapped-array-create-identity`. Do not invent a cu-mipmapped-array-get-level
+    this slice. Do not reverse MemMipmappedArrayCreate identity with mipmapped_array_create.
+    Do not wrap `mipmapped_array_create` as `mem_mipmapped_array_create`.
+    Do not wrap `mipmapped_array_get_level` as `mem_mipmapped_array_create`.
+    Do not invent a second `mem_mipmapped_array_get_level` API. Do not invent
+    Engine `--mem-mipmapped-array-get-level-identity`. Do not invent a cu-mipmapped-array-destroy
+    this slice. Do not reverse MemMipmappedArrayGetLevel identity with mipmapped_array_get_level.
+    Do not wrap `mipmapped_array_get_level` as `mem_mipmapped_array_get_level`.
+    Do not wrap `mipmapped_array_destroy` as `mem_mipmapped_array_get_level`.
+    Do not invent a second `mem_mipmapped_array_destroy` API. Do not invent
+    Engine `--mem-mipmapped-array-destroy-identity`. Do not invent a cu-import-external-memory
+    this slice. Do not reverse MemMipmappedArrayDestroy identity with mipmapped_array_destroy.
+    Do not wrap `mipmapped_array_destroy` as `mem_mipmapped_array_destroy`.
+    Do not wrap `import_external_memory` as `mem_mipmapped_array_destroy`.
+    Do not invent a second `mem_import_external_memory` API. Do not invent
+    Engine `--mem-import-external-memory-identity`. Do not invent a cu-destroy-external-memory
+    this slice. Do not reverse MemImportExternalMemory identity with import_external_memory.
+    Do not wrap `import_external_memory` as `mem_import_external_memory`.
+    Do not wrap `destroy_external_memory` as `mem_import_external_memory`.
+    Do not invent a second `mem_destroy_external_memory` API. Do not invent
+    Engine `--mem-destroy-external-memory-identity`. Do not invent a cu-external-memory-get-mapped-buffer
+    this slice. Do not reverse MemDestroyExternalMemory identity with destroy_external_memory.
+    Do not wrap `destroy_external_memory` as `mem_destroy_external_memory`.
+    Do not wrap `external_memory_get_mapped_buffer` as `mem_destroy_external_memory`.
+    Do not invent a second `mem_external_memory_get_mapped_buffer` API. Do not invent
+    Engine `--mem-external-memory-get-mapped-buffer-identity`. Do not invent a cu-external-memory-get-mapped-mipmapped-array
+    this slice. Do not reverse MemExternalMemoryGetMappedBuffer identity with external_memory_get_mapped_buffer.
+    Do not wrap `external_memory_get_mapped_buffer` as `mem_external_memory_get_mapped_buffer`.
+    Do not wrap `external_memory_get_mapped_mipmapped_array` as `mem_external_memory_get_mapped_buffer`.
+    Do not invent a second `mem_external_memory_get_mapped_mipmapped_array` API. Do not invent
+    Engine `--mem-external-memory-get-mapped-mipmapped-array-identity`. Do not invent a cu-import-external-semaphore
+    this slice. Do not reverse MemExternalMemoryGetMappedMipmappedArray identity with external_memory_get_mapped_mipmapped_array.
+    Do not wrap `external_memory_get_mapped_mipmapped_array` as `mem_external_memory_get_mapped_mipmapped_array`.
+    Do not wrap `import_external_semaphore` as `mem_external_memory_get_mapped_mipmapped_array`.
+    Do not invent a second `mem_import_external_semaphore` API. Do not invent
+    Engine `--mem-import-external-semaphore-identity`. Do not invent a cu-destroy-external-semaphore
+    this slice. Do not reverse MemImportExternalSemaphore identity with import_external_semaphore.
+    Do not wrap `import_external_semaphore` as `mem_import_external_semaphore`.
+    Do not wrap `destroy_external_semaphore` as `mem_import_external_semaphore`.
+    Do not invent a second `mem_destroy_external_semaphore` API. Do not invent
+    Engine `--mem-destroy-external-semaphore-identity`. Do not invent a cu-signal-external-semaphores-async
+    this slice. Do not reverse MemDestroyExternalSemaphore identity with destroy_external_semaphore.
+    Do not wrap `destroy_external_semaphore` as `mem_destroy_external_semaphore`.
+    Do not wrap `signal_external_semaphores_async` as `mem_destroy_external_semaphore`.
+    Do not invent a second `mem_signal_external_semaphores_async` API. Do not invent
+    Engine `--mem-signal-external-semaphores-async-identity`. Do not invent a cu-wait-external-semaphores-async
+    this slice. Do not reverse MemSignalExternalSemaphoresAsync identity with signal_external_semaphores_async.
+    Do not wrap `signal_external_semaphores_async` as `mem_signal_external_semaphores_async`.
+    Do not wrap `wait_external_semaphores_async` as `mem_signal_external_semaphores_async`.
+    Do not invent a second `mem_wait_external_semaphores_async` API. Do not invent
+    Engine `--mem-wait-external-semaphores-async-identity`. Do not invent a cu-surf-object-create
+    this slice. Do not reverse MemWaitExternalSemaphoresAsync identity with wait_external_semaphores_async.
+    Do not wrap `wait_external_semaphores_async` as `mem_wait_external_semaphores_async`.
+    Do not wrap `surf_object_create` as `mem_wait_external_semaphores_async`.
     Do not invent a second DeviceLaunch in-flight destroy-complete check or Engine
     `--device-launch-destroy`. Do not abort an in-flight DeviceLaunch when
     `destroy_graph` succeeds. Do not delay destroy of an idle exec. Do not invent
@@ -6305,8 +17135,8 @@ model, do not celebrate the sim.
     occupancy APIs). Do not invent
     `cudaGraphMemAllocNodeSetParams` (it would resize HBM),
     a second graph-alloc accessDescs / Engine `--graph-alloc-access`,
-    `cudaDeviceGetStreamPriorityRange`, CUDA version
-    numbers, example `$/M tokens` rents, or `cudaStreamDestroy`.
+    a second `cudaDeviceGetStreamPriorityRange`, CUDA version
+    numbers, example `$/M tokens` rents, or a second `cudaStreamDestroy`.
     **`best_of` / `use_beam_search` stay out of `parse_gen_req` until a
     real beam Engine exists.** Do not default `--engine`. Do not invent
     `max_model_len` or `/v1/tokenize`. Do not invent a second `gemma4`.
@@ -6618,6 +17448,2490 @@ model, do not celebrate the sim.
     topology or alloc/free mismatches. Do not refuse destroy of an undefined
     graph. Do not reverse matching recapture realloc returning the existing
     graph-mem pointer.
+    Do not invent a second `cudaDeviceGetStreamPriorityRange`. Do not invent
+    Engine `--stream-priority-range`. Do not reverse numerically-lower-first
+    stream scheduling. Do not skip clamping stream create to the profile
+    range. Graph kernel-node SetPriority stays unclamped for ExecUpdate.
+    Do not invent a second `cudaGetCurrentGraphExec`. Do not invent
+    Engine `--current-graph-exec`. Do not treat host `launch_graph` as
+    current. Do not invent public `Sim::advance`.
+    Do not invent a second `cudaStreamDestroy`. Do not invent Engine
+    `--stream-destroy`. Do not reverse NULL-stream destroy refuse.
+    Do not invent a second `cudaStreamGraphFireAndForget` /
+    `cudaStreamGraphTailLaunch` / `GRAPH_FIRE_AND_FORGET` /
+    `GRAPH_TAIL_LAUNCH`. Do not invent Engine `--device-launch-stream`.
+    Do not invent a second `cudaStreamGraphFireAndForgetAsSibling` /
+    `GRAPH_FIRE_AND_FORGET_AS_SIBLING`. Do not invent Engine
+    `--graph-faf-sibling`. Do not reverse FAF parent-stream wait.
+    Do not reverse host user-stream `device_launch_graph`.
+    Do not invent a second `cudaLimitDevRuntimePendingLaunchCount`. Do not
+    invent Engine `--pending-launch`. Do not make `DevRuntimeSyncDepth`
+    mechanical. Do not reverse default pending 2048.
+    Do not invent a second `cudaDeviceReset` / `reset_device`. Do not invent
+    Engine `--device-reset`. Do not free `cudaMallocAsync` on device reset.
+    Do not destroy NULL stream on device reset. Do not reverse `ctx_get_id`
+    stability across reset. Do not reverse `destroy_stream` returning
+    immediately (reset waits). Do not free host or managed allocs on reset
+    (no owning device). Do not destroy events or graphs on reset.
+    Do not invent a second `cudaGetErrorName` / `cudaGetErrorString` /
+    `error_name` / `error_string`. Do not invent Engine `--error-name`.
+    Do not reverse `Display` of `SimError`. Do not put the modeled `why`
+    into `error_string` for `Invalid`.
+    Do not invent a second `ComputeCapabilityMajor` query. Do not invent
+    Engine `--compute-capability`. Do not invent `cudaChooseDevice` this
+    slice. Do not invent occupancy SM counts.
+    Do not invent a second MaxThreadsPerBlock query. Do not invent Engine
+    `--max-threads`. Do not invent warp size this slice.
+    Do not invent a second `regsPerBlock` DeviceProperties field. Do not
+    invent Engine `--regs-per-block`. Do not reverse 65536.
+    Do not invent a second `global_memory_bus_width_bits` profile key.
+    Do not invent Engine `--bus-width`. Do not reverse H100 5120.
+    Do not invent a second maxTexture2D DeviceProperties field. Do not
+    invent Engine `--texture-2d`. Do not reverse those dims as 0.
+    Do not invent a second maxSurface1D DeviceProperties field. Do not
+    invent Engine `--surface-1d`. Do not reverse those surface dims as 0.
+    Do not invent a second single_to_double_precision_perf_ratio
+    DeviceProperties field. Do not invent Engine `--stodp`. Do not
+    reverse Hopper ratio 1.
+    Do not invent a second FuncAttributes `shared_size_bytes` field. Do
+    not invent Engine `--cache-mode-ca`. Do not reverse compiler
+    ptxVersion 0.
+    Do not invent a second maxTexture2DLinear DeviceProperties field. Do
+    not invent Engine `--texture-1d-linear`. Do not reverse those linear
+    dims as 0.
+    Do not invent a second maxTexture2DGather DeviceProperties field. Do
+    not invent Engine `--texture-2d-gather`. Do not reverse those gather
+    dims as 0.
+    Do not invent a second maxTexture1DMipmap DeviceProperties field. Do
+    not invent Engine `--texture-1d-mipmap`. Do not reverse those
+    mipmapped dims as 0.
+    Do not invent a second maxTextureCubemap DeviceProperties field. Do
+    not invent Engine `--texture-cube`. Do not reverse cubemap width 0.
+    Do not invent a second maxTexture1DLayered DeviceProperties field.
+    Do not invent Engine `--texture-1d-layered`. Do not reverse those
+    layered dims as 0.
+    Do not invent a second maxTextureCubemapLayered DeviceProperties
+    field. Do not invent Engine `--texture-cube-layer`. Do not reverse
+    those cubemap layered dims as 0.
+    Do not invent a second maxSurface1DLayered DeviceProperties field.
+    Do not invent Engine `--surface-1d-layered`. Do not reverse those
+    layered surface dims as 0.
+    Do not invent a second maxSurfaceCubemap DeviceProperties field. Do
+    not invent Engine `--surface-cube`. Do not reverse those cubemap
+    surface dims as 0.
+    Do not invent a second `pci_subsystem_id` DeviceProperties field. Do
+    not invent Engine `--subsystem-id`. Do not reverse pciSubSystemID 0.
+    Do not invent a second `luid_device_node_mask` DeviceProperties
+    field. Do not invent Engine `--luid-mask`. Do not reverse luid 0.
+    Do not invent a second `device_get_luid` method. Do not invent
+    Engine `--query-luid`. Do not reverse LUID query zeros.
+    Do not invent a second maxTexture3DAlt DeviceProperties field. Do
+    not invent Engine `--texture-alt-3d`. Do not reverse those alternate
+    3D texture dims as 0.
+    Do not invent a second `mps_enabled` DeviceProperties field. Do
+    not invent Engine `--cuda-mps`. Do not reverse MpsEnabled 0.
+    Do not invent a second `d3d12_cig_supported` DeviceProperties
+    field. Do not invent Engine `--cig-d3d12`. Do not reverse
+    D3D12CigSupported 0.
+    Do not invent a second `vulkan_cig_supported` DeviceProperties
+    field. Do not invent Engine `--cig-vulkan`. Do not reverse
+    VulkanCigSupported 0.
+    Do not invent a second `device_get_texture_1d_linear_max_width`
+    method. Do not invent Engine `--linear-max-width`. Do not reverse
+    texture 1D linear max width 0.
+    Do not invent a second `shared_mem_per_multiprocessor`
+    DeviceProperties field. Do not invent Engine `--shared-mp`. Do not
+    reverse MaxSharedMemoryPerMultiprocessor matching optin.
+    Do not invent a second `gpu_pci_device_id` DeviceProperties field.
+    Do not invent Engine `--nv-pci-id`. Do not reverse GpuPciDeviceId 0.
+    Do not invent a second `gpu_pci_subsystem_id` DeviceProperties
+    field. Do not invent Engine `--nv-pci-subsys`. Do not reverse
+    GpuPciSubsystemId 0.
+    Do not invent a second `device_compute_capability` method. Do not
+    invent Engine `--cc-pair`. Do not reverse Hopper major 9.
+    Do not invent a second `ctx_get_api_version` method. Do not
+    invent Engine `--ctx-version`. Do not reverse CUDA 13.0.
+    Do not invent a second `ctx_get_flags` method. Do not invent
+    Engine `--cu-ctx-flags`. Do not reverse wrapping GetDeviceFlags.
+    Do not invent a second `ctx_get_cache_config` method. Do not invent
+    Engine `--cu-ctx-cache`. Do not reverse wrapping GetCacheConfig.
+    Do not invent a second `ctx_get_stream_priority_range` method. Do
+    not invent Engine `--cu-ctx-priority`. Do not reverse least 0.
+    Do not invent a second `ctx_get_limit` method. Do not invent
+    Engine `--cu-ctx-limit`. Do not reverse wrapping GetLimit.
+    Do not invent a second `ctx_synchronize` method. Do not invent
+    Engine `--cu-ctx-sync`. Do not reverse wrapping DeviceSynchronize.
+    Do not invent a second `ctx_get_shared_mem_config` method. Do not
+    invent Engine `--cu-ctx-shared`. Do not reverse wrapping
+    GetSharedMemConfig.
+    Do not invent a second `device_primary_ctx_set_flags` method. Do
+    not invent Engine `--cu-primary-flags`. Do not reverse
+    `"primary context active"`.
+    Do not invent a second `func_get_name` method. Do not invent
+    Engine `--cu-func-name`. Do not reverse wrapping GetName empty.
+    Do not invent a second `func_get_param_info` method. Do not invent
+    Engine `--cu-func-param`. Do not reverse unknown-function Invalid.
+    Do not invent a second `driver_init` method. Do not invent
+    Engine `--cu-driver-init`. Do not reverse wrapping cuInit flags 0.
+    Do not invent a second `module_get_loading_mode` method. Do not invent
+    Engine `--cu-module-mode`. Do not reverse wrapping
+    cuModuleGetLoadingMode Eager.
+    Do not invent a second `ctx_get_device` method. Do not invent
+    Engine `--cu-ctx-device`. Do not reverse wrapping cuCtxGetDevice.
+    Do not invent a second `func_is_loaded` method. Do not invent
+    Engine `--cu-func-loaded`. Do not reverse wrapping cuFuncIsLoaded
+    false.
+    Do not invent a second `func_get_module` method. Do not invent
+    Engine `--cu-func-module`. Do not reverse wrapping cuFuncGetModule
+    unknown-function Invalid.
+    Do not invent a second `ctx_reset_persisting_l2_cache` method. Do not
+    invent Engine `--cu-ctx-reset-l2`. Do not reverse wrapping
+    cudaCtxResetPersistingL2Cache.
+    Do not invent a second `ctx_get_exec_affinity` method. Do not invent
+    Engine `--cu-ctx-exec-affinity`. Do not reverse wrapping
+    cuCtxGetExecAffinity unsupported.
+    Do not invent a second `mem_batch_decompress_async` method. Do not
+    invent Engine `--cu-mem-decompress`. Do not reverse wrapping
+    cuMemBatchDecompressAsync Invalid.
+    Do not invent a second `tensor_map_encode_tiled` method. Do not invent
+    Engine `--cu-tensor-map`. Do not reverse wrapping cuTensorMapEncodeTiled
+    Invalid.
+    Do not invent a second `cooperative_kernel_multi_device` method. Do not
+    invent Engine `--cu-coop-multi`. Do not reverse wrapping
+    cudaLaunchCooperativeKernelMultiDevice Invalid.
+    Do not invent a second `array_create` method. Do not invent
+    Engine `--cu-array-create`. Do not reverse wrapping cuArrayCreate
+    Invalid.
+    Do not invent a second `import_external_memory` method. Do not invent
+    Engine `--cu-import-ext-mem`. Do not reverse wrapping
+    cuImportExternalMemory Invalid.
+    Do not invent a second `surf_object_create` method. Do not invent
+    Engine `--cu-surf-object`. Do not reverse wrapping cuSurfObjectCreate
+    Invalid.
+    Do not invent a second `library_load_data` method. Do not invent
+    Engine `--cu-library-load`. Do not reverse wrapping cuLibraryLoadData
+    Invalid.
+    Do not invent a second `get_proc_address` method. Do not invent
+    Engine `--cu-get-proc`. Do not reverse wrapping cuGetProcAddress
+    Invalid.
+    Do not invent a second `graphics_map_resources` method. Do not invent
+    Engine `--cu-graphics-map`. Do not reverse wrapping
+    cuGraphicsMapResources Invalid.
+    Do not invent a second `coredump_get_attribute` method. Do not invent
+    Engine `--cu-coredump`. Do not reverse wrapping cuCoredumpGetAttribute
+    Invalid.
+    Do not invent a second `checkpoint_process_lock` method. Do not invent
+    Engine `--cu-checkpoint`. Do not reverse wrapping
+    cuCheckpointProcessLock Invalid.
+    Do not invent a second `mipmapped_array_create` method. Do not invent
+    Engine `--cu-mipmap-array`. Do not reverse wrapping
+    cuMipmappedArrayCreate Invalid.
+    Do not invent a second `link_create` method. Do not invent
+    Engine `--cu-link-create`. Do not reverse wrapping cuLinkCreate
+    Invalid.
+    Do not invent a second `get_export_table` method. Do not invent
+    Engine `--cu-export-table`. Do not reverse wrapping cuGetExportTable
+    Invalid.
+    Do not invent a second `profiler_start` method. Do not invent
+    Engine `--cu-profiler-start`. Do not reverse wrapping cuProfilerStart
+    as a 1 ns no-op.
+    Do not invent a second `egl_stream_consumer_connect` method. Do not
+    invent Engine `--cu-egl-stream`. Do not reverse wrapping
+    cuEGLStreamConsumerConnect Invalid.
+    Do not invent a second `gl_get_devices` method. Do not invent
+    Engine `--cu-gl-get-devices`. Do not reverse wrapping cuGLGetDevices
+    Invalid.
+    Do not invent a second `d3d11_get_devices` method. Do not invent
+    Engine `--cu-d3d11-get-devices`. Do not reverse wrapping
+    cuD3D11GetDevices Invalid.
+    Do not invent a second `d3d12_get_devices` method. Do not invent
+    Engine `--cu-d3d12-get-devices`. Do not reverse wrapping
+    cuD3D12GetDevices Invalid.
+    Do not invent a second `vdpau_get_device` method. Do not invent
+    Engine `--cu-vdpau-get-device`. Do not reverse wrapping
+    cuVDPAUGetDevice Invalid.
+    Do not invent a second `d3d9_get_devices` method. Do not invent
+    Engine `--cu-d3d9-get-devices`. Do not reverse wrapping
+    cuD3D9GetDevices Invalid.
+    Do not invent a second `d3d10_get_devices` method. Do not invent
+    Engine `--cu-d3d10-get-devices`. Do not reverse wrapping
+    cuD3D10GetDevices Invalid.
+    Do not invent a second `profiler_stop` method. Do not invent
+    Engine `--cu-profiler-stop`. Do not reverse wrapping cuProfilerStop
+    as a 1 ns no-op.
+    Do not invent a second `profiler_initialize` method. Do not invent
+    Engine `--cu-profiler-initialize`. Do not reverse wrapping
+    cudaProfilerInitialize Invalid.
+    Do not invent a second `tex_object_create` method. Do not invent
+    Engine `--cu-tex-object`. Do not reverse wrapping cuTexObjectCreate
+    Invalid.
+    Do not invent a second `tex_object_destroy` method. Do not invent
+    Engine `--cu-tex-object-destroy`. Do not reverse wrapping
+    cuTexObjectDestroy Invalid.
+    Do not invent a second `surf_object_destroy` method. Do not invent
+    Engine `--cu-surf-object-destroy`. Do not reverse wrapping
+    cuSurfObjectDestroy Invalid.
+    Do not invent a second `surf_object_get_resource_desc` method. Do
+    not invent Engine `--cu-surf-object-get-resource-desc`. Do not reverse wrapping
+    cuSurfObjectGetResourceDesc Invalid.
+    Do not invent a second `tex_object_get_resource_desc` method. Do
+    not invent Engine `--cu-tex-object-get-resource-desc`. Do not reverse wrapping
+    cuTexObjectGetResourceDesc Invalid.
+    Do not invent a second `tex_object_get_texture_desc` method. Do
+    not invent Engine `--cu-tex-object-get-texture-desc`. Do not reverse wrapping
+    cuTexObjectGetTextureDesc Invalid.
+    Do not invent a second `tex_object_get_resource_view_desc` method.
+    Do not invent Engine `--cu-tex-object-get-resource-view-desc`. Do not reverse wrapping
+    cuTexObjectGetResourceViewDesc Invalid.
+    Do not invent a second `gl_ctx_create` method. Do not invent
+    Engine `--cu-gl-ctx-create`. Do not reverse wrapping cuGLCtxCreate
+    Invalid.
+    Do not invent a second `d3d11_ctx_create` method. Do not invent
+    Engine `--cu-d3d11-ctx-create`. Do not reverse wrapping
+    cuD3D11CtxCreate Invalid.
+    Do not invent a second `d3d12_ctx_create` method. Do not invent
+    Engine `--cu-d3d12-ctx-create`. Do not reverse wrapping
+    cuD3D12CtxCreate Invalid.
+    Do not invent a second `d3d9_ctx_create` method. Do not invent
+    Engine `--cu-d3d9-ctx-create`. Do not reverse wrapping cuD3D9CtxCreate
+    Invalid.
+    Do not invent a second `d3d10_ctx_create` method. Do not invent
+    Engine `--cu-d3d10-ctx-create`. Do not reverse wrapping
+    cuD3D10CtxCreate Invalid.
+    Do not invent a second `vdpau_ctx_create` method. Do not invent
+    Engine `--cu-vdpau-ctx-create`. Do not reverse wrapping
+    cuVDPAUCtxCreate Invalid.
+    Do not invent a second `egl_stream_producer_connect` method. Do not
+    invent Engine `--cu-egl-producer-connect`. Do not reverse wrapping
+    cuEGLStreamProducerConnect Invalid.
+    Do not invent a second `array_get_descriptor` method. Do not invent
+    Engine `--cu-array-get-descriptor`. Do not reverse wrapping
+    cuArrayGetDescriptor Invalid.
+    Do not invent a second `graphics_gl_register_buffer` method. Do not
+    invent Engine `--cu-graphics-gl-register-buffer`. Do not reverse wrapping
+    cuGraphicsGLRegisterBuffer Invalid.
+    Do not invent a second `array_3d_get_descriptor` method. Do not invent
+    Engine `--cu-array-3d-get-descriptor`. Do not reverse wrapping
+    cuArray3DGetDescriptor Invalid.
+    Do not invent a second `graphics_gl_register_image` method. Do not
+    invent Engine `--cu-graphics-gl-register-image`. Do not reverse wrapping
+    cuGraphicsGLRegisterImage Invalid.
+    Do not invent a second `graphics_unmap_resources` method. Do not invent
+    Engine `--cu-graphics-unmap-resources`. Do not reverse wrapping
+    cuGraphicsUnmapResources Invalid.
+    Do not invent a second `array_get_sparse_properties` method. Do not
+    invent Engine `--cu-array-get-sparse-properties`. Do not reverse wrapping
+    cuArrayGetSparseProperties Invalid.
+    Do not invent a second `graphics_unregister_resource` method. Do not
+    invent Engine `--cu-graphics-unregister-resource`. Do not reverse wrapping
+    cuGraphicsUnregisterResource Invalid.
+    Do not invent a second `egl_stream_producer_disconnect` method. Do not
+    invent Engine `--cu-egl-producer-disconnect`. Do not reverse wrapping
+    cuEGLStreamProducerDisconnect Invalid.
+    Do not invent a second `array_get_plane` method. Do not invent
+    Engine `--cu-array-get-plane`. Do not reverse wrapping cuArrayGetPlane
+    Invalid.
+    Do not invent a second `array_get_memory_requirements` method. Do not
+    invent Engine `--cu-array-get-memory-requirements`. Do not reverse wrapping
+    cuArrayGetMemoryRequirements Invalid.
+    Do not invent a second `egl_stream_consumer_disconnect` method. Do not
+    invent Engine `--cu-egl-consumer-disconnect`. Do not reverse wrapping
+    cuEGLStreamConsumerDisconnect Invalid.
+    Do not invent a second `graphics_resource_get_mapped_pointer` method. Do not
+    invent Engine `--cu-graphics-resource-get-mapped-pointer`. Do not reverse wrapping
+    cuGraphicsResourceGetMappedPointer Invalid.
+    Do not invent a second `egl_stream_producer_present_frame` method. Do not
+    invent Engine `--cu-egl-producer-present-frame`. Do not reverse wrapping
+    cuEGLStreamProducerPresentFrame Invalid.
+    Do not invent a second `graphics_subresource_get_mapped_array` method. Do not
+    invent Engine `--cu-graphics-subresource-get-mapped-array`. Do not reverse wrapping
+    cuGraphicsSubResourceGetMappedArray Invalid.
+    Do not invent a second `graphics_resource_get_mapped_mipmapped_array` method. Do not
+    invent Engine `--cu-graphics-resource-get-mapped-mipmapped-array`. Do not reverse wrapping
+    cuGraphicsResourceGetMappedMipmappedArray Invalid.
+    Do not invent a second `egl_stream_producer_return_frame` method. Do not
+    invent Engine `--cu-egl-producer-return-frame`. Do not reverse wrapping
+    cuEGLStreamProducerReturnFrame Invalid.
+    Do not invent a second `egl_stream_consumer_acquire_frame` method. Do not
+    invent Engine `--cu-egl-consumer-acquire-frame`. Do not reverse wrapping
+    cuEGLStreamConsumerAcquireFrame Invalid.
+    Do not invent a second `graphics_resource_set_map_flags` method. Do not
+    invent Engine `--cu-graphics-resource-set-map-flags`. Do not reverse wrapping
+    cuGraphicsResourceSetMapFlags Invalid.
+    Do not invent a second `egl_stream_consumer_release_frame` method. Do not
+    invent Engine `--cu-egl-consumer-release-frame`. Do not reverse wrapping
+    cuEGLStreamConsumerReleaseFrame Invalid.
+    Do not invent a second `mipmapped_array_get_memory_requirements` method. Do not
+    invent Engine `--cu-mipmapped-array-get-memory-requirements`. Do not reverse wrapping
+    cuMipmappedArrayGetMemoryRequirements Invalid.
+    Do not invent a second `graphics_egl_register_image` method. Do not
+    invent Engine `--cu-graphics-egl-register-image`. Do not reverse wrapping
+    cuGraphicsEGLRegisterImage Invalid.
+    Do not invent a second `mipmapped_array_get_level` method. Do not
+    invent Engine `--cu-mipmapped-array-get-level`. Do not reverse wrapping
+    cuMipmappedArrayGetLevel Invalid.
+    Do not invent a second `mipmapped_array_destroy` method. Do not
+    invent Engine `--cu-mipmapped-array-destroy`. Do not reverse wrapping
+    cuMipmappedArrayDestroy Invalid.
+    Do not invent a second `array_destroy` method. Do not
+    invent Engine `--cu-array-destroy`. Do not reverse wrapping
+    cuArrayDestroy Invalid.
+    Do not invent a second `gl_register_buffer_object` method. Do not
+    invent Engine `--cu-gl-register-buffer-object`. Do not reverse wrapping
+    cuGLRegisterBufferObject Invalid.
+    Do not invent a second `gl_map_buffer_object` method. Do not
+    invent Engine `--cu-gl-map-buffer-object`. Do not reverse wrapping
+    cuGLMapBufferObject Invalid.
+    Do not invent a second `graphics_d3d11_register_resource` method. Do not
+    invent Engine `--cu-graphics-d3d11-register-resource`. Do not reverse wrapping
+    cuGraphicsD3D11RegisterResource Invalid.
+    Do not invent a second `graphics_d3d12_register_resource` method. Do not
+    invent Engine `--cu-graphics-d3d12-register-resource`. Do not reverse wrapping
+    cuGraphicsD3D12RegisterResource Invalid.
+    Do not invent a second `graphics_d3d9_register_resource` method. Do not
+    invent Engine `--cu-graphics-d3d9-register-resource`. Do not reverse wrapping
+    cuGraphicsD3D9RegisterResource Invalid.
+    Do not invent a second `graphics_d3d10_register_resource` method. Do not
+    invent Engine `--cu-graphics-d3d10-register-resource`. Do not reverse wrapping
+    cuGraphicsD3D10RegisterResource Invalid.
+    Do not invent a second `graphics_vdpau_register_output_surface` method. Do not
+    invent Engine `--cu-graphics-vdpau-register-output-surface`. Do not reverse wrapping
+    cuGraphicsVDPAURegisterOutputSurface Invalid.
+    Do not invent a second `graphics_vdpau_register_video_surface` method. Do not
+    invent Engine `--cu-graphics-vdpau-register-video-surface`. Do not reverse wrapping
+    cuGraphicsVDPAURegisterVideoSurface Invalid.
+    Do not invent a second `destroy_external_memory` method. Do not
+    invent Engine `--cu-destroy-external-memory`. Do not reverse wrapping
+    cuDestroyExternalMemory Invalid.
+    Do not invent a second `external_memory_get_mapped_buffer` method. Do not
+    invent Engine `--cu-external-memory-get-mapped-buffer`. Do not reverse wrapping
+    cuExternalMemoryGetMappedBuffer Invalid.
+    Do not invent a second `external_memory_get_mapped_mipmapped_array` method. Do not
+    invent Engine `--cu-external-memory-get-mapped-mipmapped-array`. Do not reverse wrapping
+    cuExternalMemoryGetMappedMipmappedArray Invalid.
+    Do not invent a second `gl_unregister_buffer_object` method. Do not
+    invent Engine `--cu-gl-unregister-buffer-object`. Do not reverse wrapping
+    cuGLUnregisterBufferObject Invalid.
+    Do not invent a second `gl_unmap_buffer_object` method. Do not
+    invent Engine `--cu-gl-unmap-buffer-object`. Do not reverse wrapping
+    cuGLUnmapBufferObject Invalid.
+    Do not invent a second `gl_set_gl_device` method. Do not
+    invent Engine `--cuda-gl-set-gl-device`. Do not reverse wrapping
+    cudaGLSetGLDevice Invalid.
+    Do not invent a second `import_external_semaphore` method. Do not
+    invent Engine `--cu-import-external-semaphore`. Do not reverse wrapping
+    cuImportExternalSemaphore Invalid.
+    Do not invent a second `destroy_external_semaphore` method. Do not
+    invent Engine `--cu-destroy-external-semaphore`. Do not reverse wrapping
+    cuDestroyExternalSemaphore Invalid.
+    Do not invent a second `signal_external_semaphores_async` method. Do not
+    invent Engine `--cu-signal-external-semaphores-async`. Do not reverse wrapping
+    cuSignalExternalSemaphoresAsync Invalid.
+    Do not invent a second `wait_external_semaphores_async` method. Do not
+    invent Engine `--cu-wait-external-semaphores-async`. Do not reverse wrapping
+    cuWaitExternalSemaphoresAsync Invalid.
+    Do not invent a second `gl_unmap_buffer_object_async` method. Do not
+    invent Engine `--cu-gl-unmap-buffer-object-async`. Do not reverse wrapping
+    cuGLUnmapBufferObjectAsync Invalid.
+    Do not invent a second `gl_map_buffer_object_async` method. Do not
+    invent Engine `--cu-gl-map-buffer-object-async`. Do not reverse wrapping
+    cuGLMapBufferObjectAsync Invalid.
+    Do not invent a second `d3d11_get_device` method. Do not
+    invent Engine `--cu-d3d11-get-device`. Do not reverse wrapping
+    cuD3D11GetDevice Invalid.
+    Do not invent a second `d3d12_get_device` method. Do not
+    invent Engine `--cu-d3d12-get-device`. Do not reverse wrapping
+    cuD3D12GetDevice Invalid.
+    Do not invent a second `d3d9_get_device` method. Do not
+    invent Engine `--cu-d3d9-get-device`. Do not reverse wrapping
+    cuD3D9GetDevice Invalid.
+    Do not invent a second `d3d10_get_device` method. Do not
+    invent Engine `--cu-d3d10-get-device`. Do not reverse wrapping
+    cuD3D10GetDevice Invalid.
+    Do not invent a second `vdpau_set_vdpau_device` method. Do not
+    invent Engine `--cuda-vdpau-set-vdpau-device`. Do not reverse wrapping
+    cudaVDPAUSetVDPAUDevice Invalid.
+    Do not invent a second `d3d11_ctx_create_on_device` method. Do not
+    invent Engine `--cu-d3d11-ctx-create-on-device`. Do not reverse wrapping
+    cuD3D11CtxCreateOnDevice Invalid.
+    Do not invent a second `d3d12_ctx_create_on_device` method. Do not
+    invent Engine `--cu-d3d12-ctx-create-on-device`. Do not reverse wrapping
+    cuD3D12CtxCreateOnDevice Invalid.
+    Do not invent a second `d3d9_ctx_create_on_device` method. Do not
+    invent Engine `--cu-d3d9-ctx-create-on-device`. Do not reverse wrapping
+    cuD3D9CtxCreateOnDevice Invalid.
+    Do not invent a second `d3d10_ctx_create_on_device` method. Do not
+    invent Engine `--cu-d3d10-ctx-create-on-device`. Do not reverse wrapping
+    cuD3D10CtxCreateOnDevice Invalid.
+    Do not invent a second `library_load_from_file` method. Do not
+    invent Engine `--cu-library-load-from-file`. Do not reverse wrapping
+    cuLibraryLoadFromFile Invalid.
+    Do not invent a second `library_unload` method. Do not
+    invent Engine `--cu-library-unload`. Do not reverse wrapping
+    cuLibraryUnload Invalid.
+    Do not invent a second `library_get_kernel` method. Do not
+    invent Engine `--cu-library-get-kernel`. Do not reverse wrapping
+    cuLibraryGetKernel Invalid.
+    Do not invent a second `library_get_module` method. Do not
+    invent Engine `--cu-library-get-module`. Do not reverse wrapping
+    cuLibraryGetModule Invalid.
+    Do not invent a second `library_get_global` method. Do not
+    invent Engine `--cu-library-get-global`. Do not reverse wrapping
+    cuLibraryGetGlobal Invalid.
+    Do not invent a second `library_get_managed` method. Do not
+    invent Engine `--cu-library-get-managed`. Do not reverse wrapping
+    cuLibraryGetManaged Invalid.
+    Do not invent a second `library_get_unified_function` method. Do not
+    invent Engine `--cu-library-get-unified-function`. Do not reverse wrapping
+    cuLibraryGetUnifiedFunction Invalid.
+    Do not invent a second `kernel_get_function` method. Do not
+    invent Engine `--cu-kernel-get-function`. Do not reverse wrapping
+    cuKernelGetFunction Invalid.
+    Do not invent a second `kernel_get_param_info` method. Do not
+    invent Engine `--cu-kernel-get-param-info`. Do not reverse wrapping
+    cuKernelGetParamInfo Invalid.
+    Do not invent a second `kernel_get_attribute` method. Do not
+    invent Engine `--cu-kernel-get-attribute`. Do not reverse wrapping
+    cuKernelGetAttribute Invalid.
+    Do not invent a second `kernel_set_attribute` method. Do not
+    invent Engine `--cu-kernel-set-attribute`. Do not reverse wrapping
+    cuKernelSetAttribute Invalid.
+    Do not invent a second `kernel_set_cache_config` method. Do not
+    invent Engine `--cu-kernel-set-cache-config`. Do not reverse wrapping
+    cuKernelSetCacheConfig Invalid.
+    Do not invent a second `link_add_data` method. Do not
+    invent Engine `--cu-link-add-data`. Do not reverse wrapping
+    cuLinkAddData Invalid.
+    Do not invent a second `link_complete` method. Do not
+    invent Engine `--cu-link-complete`. Do not reverse wrapping
+    cuLinkComplete Invalid.
+    Do not invent a second `link_destroy` method. Do not
+    invent Engine `--cu-link-destroy`. Do not reverse wrapping
+    cuLinkDestroy Invalid.
+    Do not invent a second `link_add_file` method. Do not
+    invent Engine `--cu-link-add-file`. Do not reverse wrapping
+    cuLinkAddFile Invalid.
+    Do not invent a second `func_load` method. Do not
+    invent Engine `--cu-func-load`. Do not reverse wrapping
+    cuFuncLoad Invalid.
+    Do not invent a second `module_load` method. Do not
+    invent Engine `--cu-module-load`. Do not reverse wrapping
+    cuModuleLoad Invalid.
+    Do not invent a second `module_load_data` method. Do not
+    invent Engine `--cu-module-load-data`. Do not reverse wrapping
+    cuModuleLoadData Invalid.
+    Do not invent a second `module_unload` method. Do not
+    invent Engine `--cu-module-unload`. Do not reverse wrapping
+    cuModuleUnload Invalid.
+    Do not invent a second `module_get_function` method. Do not
+    invent Engine `--cu-module-get-function`. Do not reverse wrapping
+    cuModuleGetFunction Invalid.
+    Do not invent a second `module_get_global` method. Do not
+    invent Engine `--cu-module-get-global`. Do not reverse wrapping
+    cuModuleGetGlobal Invalid.
+    Do not invent a second `module_get_tex_ref` method. Do not
+    invent Engine `--cu-module-get-texref`. Do not reverse wrapping
+    cuModuleGetTexRef Invalid.
+    Do not invent a second `module_get_surf_ref` method. Do not
+    invent Engine `--cu-module-get-surfref`. Do not reverse wrapping
+    cuModuleGetSurfRef Invalid.
+    Do not invent a second `module_load_fat_binary` method. Do not
+    invent Engine `--cu-module-load-fatbin`. Do not reverse wrapping
+    cuModuleLoadFatBinary Invalid.
+    Do not invent a second `module_load_data_ex` method. Do not
+    invent Engine `--cu-module-load-data-ex`. Do not reverse wrapping
+    cuModuleLoadDataEx Invalid.
+    Do not invent a second `module_get_function_count` method. Do not
+    invent Engine `--cu-module-get-function-count`. Do not reverse wrapping
+    cuModuleGetFunctionCount Invalid.
+    Do not invent a second `module_enumerate_functions` method. Do not
+    invent Engine `--cu-module-enumerate-functions`. Do not reverse wrapping
+    cuModuleEnumerateFunctions Invalid.
+    Do not invent a second `tensor_map_encode_im2col` method. Do not
+    invent Engine `--cu-tensor-map-im2col`. Do not reverse wrapping
+    cuTensorMapEncodeIm2col Invalid.
+    Do not invent a second `tensor_map_encode_im2col_wide` method. Do not
+    invent Engine `--cu-tensor-map-im2col-wide`. Do not reverse wrapping
+    cuTensorMapEncodeIm2colWide Invalid.
+    Do not invent a second `tensor_map_replace_aligned_addr` method. Do not
+    invent Engine `--cu-tensor-map-replace`. Do not reverse wrapping
+    cuTensorMapReplaceAlignedAddr Invalid.
+    Do not invent a second `coredump_set_attribute` method. Do not
+    invent Engine `--cu-coredump-set`. Do not reverse wrapping
+    cuCoredumpSetAttribute Invalid.
+    Do not invent a second `coredump_get_attribute_global` method. Do not
+    invent Engine `--cu-coredump-get-global`. Do not reverse wrapping
+    cuCoredumpGetAttributeGlobal Invalid.
+    Do not invent a second `coredump_set_attribute_global` method. Do not
+    invent Engine `--cu-coredump-set-global`. Do not reverse wrapping
+    cuCoredumpSetAttributeGlobal Invalid.
+    Do not invent a second `checkpoint_process_checkpoint` method. Do not
+    invent Engine `--cu-checkpoint-exec`. Do not reverse wrapping
+    cuCheckpointProcessCheckpoint Invalid.
+    Do not invent a second `checkpoint_process_restore` method. Do not
+    invent Engine `--cu-checkpoint-restore`. Do not reverse wrapping
+    cuCheckpointProcessRestore Invalid.
+    Do not invent a second `checkpoint_process_unlock` method. Do not
+    invent Engine `--cu-checkpoint-unlock`. Do not reverse wrapping
+    cuCheckpointProcessUnlock Invalid.
+    Do not invent a second `checkpoint_process_get_restore_thread_id` method. Do not
+    invent Engine `--cu-checkpoint-tid`. Do not reverse wrapping
+    cuCheckpointProcessGetRestoreThreadId Invalid.
+    Do not invent a second `checkpoint_process_get_state` method. Do not
+    invent Engine `--cu-checkpoint-state`. Do not reverse wrapping
+    cuCheckpointProcessGetState Invalid.
+    Do not invent a second `library_get_kernel_count` method. Do not
+    invent Engine `--cu-library-kcount`. Do not reverse wrapping
+    cuLibraryGetKernelCount Invalid.
+    Do not invent a second `library_enumerate_kernels` method. Do not
+    invent Engine `--cu-library-enumk`. Do not reverse wrapping
+    cuLibraryEnumerateKernels Invalid.
+    Do not invent a second `kernel_get_library` method. Do not
+    invent Engine `--cu-kernel-get-library`. Do not reverse wrapping
+    cuKernelGetLibrary Invalid.
+    Do not invent a second `kernel_get_param_count` method. Do not
+    invent Engine `--cu-kernel-get-param-count`. Do not reverse wrapping
+    cuKernelGetParamCount Invalid.
+    Do not invent a second `func_get_param_count` method. Do not
+    invent Engine `--cu-func-get-param-count`. Do not reverse wrapping
+    cuFuncGetParamCount Invalid.
+    Do not invent a second `device_register_async_notification` method. Do not
+    invent Engine `--cu-async-notify`. Do not reverse wrapping
+    cuDeviceRegisterAsyncNotification Invalid.
+    Do not invent a second `device_unregister_async_notification` method. Do not
+    invent Engine `--cu-async-unreg`. Do not reverse wrapping
+    cuDeviceUnregisterAsyncNotification Invalid.
+    Do not invent a second `mem_map_array_async` method. Do not
+    invent Engine `--cu-mem-map-array`. Do not reverse wrapping
+    cuMemMapArrayAsync Invalid.
+    Do not invent a second `mipmapped_array_get_sparse_properties` method. Do not
+    invent Engine `--cu-mipmap-sparse`. Do not reverse wrapping
+    cuMipmappedArrayGetSparseProperties Invalid.
+    Do not invent a second `tex_ref_create` method. Do not
+    invent Engine `--cu-tex-ref-create`. Do not reverse wrapping
+    cuTexRefCreate Invalid.
+    Do not invent a second `tex_ref_destroy` method. Do not
+    invent Engine `--cu-tex-ref-destroy`. Do not reverse wrapping
+    cuTexRefDestroy Invalid.
+    Do not invent a second `tex_ref_set_array` method. Do not
+    invent Engine `--cu-tex-ref-set-array`. Do not reverse wrapping
+    cuTexRefSetArray Invalid.
+    Do not invent a second `tex_ref_set_mipmapped_array` method. Do not
+    invent Engine `--cu-tex-ref-set-mip`. Do not reverse wrapping
+    cuTexRefSetMipmappedArray Invalid.
+    Do not invent a second `tex_ref_set_address` method. Do not
+    invent Engine `--cu-tex-ref-set-address`. Do not reverse wrapping
+    cuTexRefSetAddress Invalid.
+    Do not invent a second `tex_ref_set_address_2d` method. Do not
+    invent Engine `--cu-tex-ref-set-address-2d`. Do not reverse wrapping
+    cuTexRefSetAddress2D Invalid.
+    Do not invent a second `tex_ref_set_format` method. Do not
+    invent Engine `--cu-tex-ref-set-format`. Do not reverse wrapping
+    cuTexRefSetFormat Invalid.
+    Do not invent a second `tex_ref_set_address_mode` method. Do not
+    invent Engine `--cu-tex-ref-set-address-mode`. Do not reverse wrapping
+    cuTexRefSetAddressMode Invalid.
+    Do not invent a second `tex_ref_set_filter_mode` method. Do not
+    invent Engine `--cu-tex-ref-set-filter`. Do not reverse wrapping
+    cuTexRefSetFilterMode Invalid.
+    Do not invent a second `tex_ref_set_mipmap_filter_mode` method. Do not
+    invent Engine `--cu-tex-ref-set-mip-filter`. Do not reverse wrapping
+    cuTexRefSetMipmapFilterMode Invalid.
+    Do not invent a second `tex_ref_set_mipmap_level_bias` method. Do not
+    invent Engine `--cu-tex-ref-set-mip-bias`. Do not reverse wrapping
+    cuTexRefSetMipmapLevelBias Invalid.
+    Do not invent a second `tex_ref_set_mipmap_level_clamp` method. Do not
+    invent Engine `--cu-tex-ref-set-mip-clamp`. Do not reverse wrapping
+    cuTexRefSetMipmapLevelClamp Invalid.
+    Do not invent a second `tex_ref_set_max_anisotropy` method. Do not
+    invent Engine `--cu-tex-ref-set-aniso`. Do not reverse wrapping
+    cuTexRefSetMaxAnisotropy Invalid.
+    Do not invent a second `tex_ref_set_border_color` method. Do not
+    invent Engine `--cu-tex-ref-set-border`. Do not reverse wrapping
+    cuTexRefSetBorderColor Invalid.
+    Do not invent a second `tex_ref_set_flags` method. Do not
+    invent Engine `--cu-tex-ref-set-flags`. Do not reverse wrapping
+    cuTexRefSetFlags Invalid.
+    Do not invent a second `tex_ref_get_array` method. Do not
+    invent Engine `--cu-tex-ref-get-array`. Do not reverse wrapping
+    cuTexRefGetArray Invalid.
+    Do not invent a second `tex_ref_get_mipmapped_array` method. Do not
+    invent Engine `--cu-tex-ref-get-mip`. Do not reverse wrapping
+    cuTexRefGetMipmappedArray Invalid.
+    Do not invent a second `tex_ref_get_address` method. Do not
+    invent Engine `--cu-tex-ref-get-address`. Do not reverse wrapping
+    cuTexRefGetAddress Invalid.
+    Do not invent a second `tex_ref_get_address_mode` method. Do not
+    invent Engine `--cu-tex-ref-get-address-mode`. Do not reverse wrapping
+    cuTexRefGetAddressMode Invalid.
+    Do not invent a second `tex_ref_get_filter_mode` method. Do not
+    invent Engine `--cu-tex-ref-get-filter`. Do not reverse wrapping
+    cuTexRefGetFilterMode Invalid.
+    Do not invent a second `tex_ref_get_format` method. Do not
+    invent Engine `--cu-tex-ref-get-format`. Do not reverse wrapping
+    cuTexRefGetFormat Invalid.
+    Do not invent a second `tex_ref_get_mipmap_filter_mode` method. Do not
+    invent Engine `--cu-tex-ref-get-mip-filter`. Do not reverse wrapping
+    cuTexRefGetMipmapFilterMode Invalid.
+    Do not invent a second `tex_ref_get_mipmap_level_bias` method. Do not
+    invent Engine `--cu-tex-ref-get-mip-bias`. Do not reverse wrapping
+    cuTexRefGetMipmapLevelBias Invalid.
+    Do not invent a second `tex_ref_get_mipmap_level_clamp` method. Do not
+    invent Engine `--cu-tex-ref-get-mip-clamp`. Do not reverse wrapping
+    cuTexRefGetMipmapLevelClamp Invalid.
+    Do not invent a second `tex_ref_get_max_anisotropy` method. Do not
+    invent Engine `--cu-tex-ref-get-aniso`. Do not reverse wrapping
+    cuTexRefGetMaxAnisotropy Invalid.
+    Do not invent a second `tex_ref_get_border_color` method. Do not
+    invent Engine `--cu-tex-ref-get-border`. Do not reverse wrapping
+    cuTexRefGetBorderColor Invalid.
+    Do not invent a second `tex_ref_get_flags` method. Do not
+    invent Engine `--cu-tex-ref-get-flags`. Do not reverse wrapping
+    cuTexRefGetFlags Invalid.
+    Do not invent a second `surf_ref_set_array` method. Do not
+    invent Engine `--cu-surf-ref-set-array`. Do not reverse wrapping
+    cuSurfRefSetArray Invalid.
+    Do not invent a second `surf_ref_get_array` method. Do not
+    invent Engine `--cu-surf-ref-get-array`. Do not reverse wrapping
+    cuSurfRefGetArray Invalid.
+    Do not invent a second `memcpy_dto_a` method. Do not
+    invent Engine `--cu-memcpy-dto-a`. Do not reverse wrapping
+    cuMemcpyDtoA Invalid.
+    Do not invent a second `memcpy_ato_d` method. Do not
+    invent Engine `--cu-memcpy-ato-d`. Do not reverse wrapping
+    cuMemcpyAtoD Invalid.
+    Do not invent a second `memcpy_hto_a` method. Do not
+    invent Engine `--cu-memcpy-hto-a`. Do not reverse wrapping
+    cuMemcpyHtoA Invalid.
+    Do not invent a second `memcpy_ato_h` method. Do not
+    invent Engine `--cu-memcpy-ato-h`. Do not reverse wrapping
+    cuMemcpyAtoH Invalid.
+    Do not invent a second `memcpy_ato_a` method. Do not
+    invent Engine `--cu-memcpy-ato-a`. Do not reverse wrapping
+    cuMemcpyAtoA Invalid.
+    Do not invent a second `memcpy_dto_a_async` method. Do not
+    invent Engine `--cu-memcpy-dtoa-async`. Do not reverse wrapping
+    cuMemcpyDtoAAsync Invalid.
+    Do not invent a second `memcpy_ato_d_async` method. Do not
+    invent Engine `--cu-memcpy-atod-async`. Do not reverse wrapping
+    cuMemcpyAtoDAsync Invalid.
+    Do not invent a second `memcpy_hto_a_async` method. Do not
+    invent Engine `--cu-memcpy-htoa-async`. Do not reverse wrapping
+    cuMemcpyHtoAAsync Invalid.
+    Do not invent a second `memcpy_ato_h_async` method. Do not
+    invent Engine `--cu-memcpy-atoh-async`. Do not reverse wrapping
+    cuMemcpyAtoHAsync Invalid.
+    Do not invent a second `memcpy_ato_a_async` method. Do not
+    invent Engine `--cu-memcpy-atoa-async`. Do not reverse wrapping
+    cuMemcpyAtoAAsync Invalid.
+    Do not invent a second `memcpy_2d_to_array` method. Do not
+    invent Engine `--cu-memcpy-2d-to-array`. Do not reverse wrapping
+    cuMemcpy2DToArray Invalid.
+    Do not invent a second `memcpy_2d_from_array` method. Do not
+    invent Engine `--cu-memcpy-2d-from-array`. Do not reverse wrapping
+    cuMemcpy2DFromArray Invalid.
+    Do not invent a second `memcpy_2d_array_to_array` method. Do not
+    invent Engine `--cu-memcpy-2d-array-to-array`. Do not reverse wrapping
+    cuMemcpy2DArrayToArray Invalid.
+    Do not invent a second `memcpy_2d_to_array_async` method. Do not
+    invent Engine `--cu-memcpy-2d-to-array-async`. Do not reverse wrapping
+    cuMemcpy2DToArrayAsync Invalid.
+    Do not invent a second `memcpy_2d_from_array_async` method. Do not
+    invent Engine `--cu-memcpy-2d-from-array-async`. Do not reverse wrapping
+    cuMemcpy2DFromArrayAsync Invalid.
+    Do not invent a second `memcpy_2d_array_to_array_async` method. Do not
+    invent Engine `--cu-memcpy-2d-array-to-array-async`. Do not reverse wrapping
+    cuMemcpy2DArrayToArrayAsync Invalid.
+    Do not invent a second `func_get_cache_config` method. Do not
+    invent Engine `--cu-func-get-cache-config`. Do not reverse wrapping
+    cuFuncGetCacheConfig Invalid.
+    Do not invent a second `memset_d8_async` method. Do not
+    invent Engine `--cu-memset-d8-async`. Do not reverse wrapping
+    cuMemsetD8Async identity.
+    Do not invent a second `memset_d8` method. Do not
+    invent Engine `--cu-memset-d8`. Do not reverse wrapping
+    cuMemsetD8 host-sync.
+    Do not invent a second `event_query` method. Do not
+    invent Engine `--cu-event-query`. Do not reverse wrapping
+    cuEventQuery identity.
+    Do not invent a second `stream_query` method. Do not
+    invent Engine `--cu-stream-query`. Do not reverse wrapping
+    cuStreamQuery identity.
+    Do not invent a second `event_synchronize` method. Do not
+    invent Engine `--cu-event-synchronize`. Do not reverse wrapping
+    cuEventSynchronize identity.
+    Do not invent a second `stream_synchronize` method. Do not
+    invent Engine `--cu-stream-synchronize`. Do not reverse wrapping
+    cuStreamSynchronize identity.
+    Do not invent a second `event_destroy` method. Do not
+    invent Engine `--cu-event-destroy`. Do not reverse wrapping
+    cuEventDestroy identity.
+    Do not invent a second `event_create` method. Do not
+    invent Engine `--cu-event-create`. Do not reverse wrapping
+    cuEventCreate identity.
+    Do not invent a second `event_create_with_flags` method. Do not
+    invent Engine `--cu-event-create-with-flags`. Do not reverse wrapping
+    cuEventCreateWithFlags identity.
+    Do not invent a second `event_record` method. Do not
+    invent Engine `--cu-event-record`. Do not reverse wrapping
+    cuEventRecord identity.
+    Do not invent a second `event_record_with_flags` method. Do not
+    invent Engine `--cu-event-record-with-flags`. Do not reverse wrapping
+    cuEventRecordWithFlags identity.
+    Do not invent a second `stream_wait_event` method. Do not
+    invent Engine `--cu-stream-wait-event`. Do not reverse wrapping
+    cuStreamWaitEvent identity.
+    Do not invent a second `stream_wait_event_with_flags` method. Do not
+    invent Engine `--cu-stream-wait-event-flags`. Do not reverse wrapping
+    cuStreamWaitEvent flags identity.
+    Do not invent a second `event_elapsed` method. Do not
+    invent Engine `--cu-event-elapsed`. Do not reverse wrapping
+    cuEventElapsedTime ns identity.
+    Do not invent a second `mem_get_info` method. Do not
+    invent Engine `--cu-mem-get-info`. Do not reverse wrapping
+    cuMemGetInfo identity.
+    Do not invent a second `stream_create` method. Do not
+    invent Engine `--cu-stream-create`. Do not reverse wrapping
+    cuStreamCreate identity.
+    Do not invent a second `mem_alloc` method. Do not
+    invent Engine `--cu-mem-alloc`. Do not reverse wrapping
+    cuMemAlloc identity.
+    Do not invent a second `mem_free` method. Do not
+    invent Engine `--cu-mem-free`. Do not reverse wrapping
+    cuMemFree identity.
+    Do not invent a second `mem_free_host` method. Do not
+    invent Engine `--cu-mem-free-host`. Do not reverse wrapping
+    cuMemFreeHost identity.
+    Do not invent a second `mem_host_alloc` method. Do not
+    invent Engine `--cu-mem-host-alloc`. Do not reverse wrapping
+    cuMemHostAlloc identity.
+    Do not invent a second `mem_host_get_flags` method. Do not
+    invent Engine `--cu-mem-host-get-flags`. Do not reverse wrapping
+    cuMemHostGetFlags identity.
+    Do not invent a second `mem_host_get_device_pointer` method. Do not
+    invent Engine `--cu-mem-host-get-device-pointer`. Do not reverse wrapping
+    cuMemHostGetDevicePointer identity.
+    Do not invent a second `mem_host_register` method. Do not
+    invent Engine `--cu-mem-host-register`. Do not reverse wrapping
+    cuMemHostRegister identity.
+    Do not invent a second `mem_host_unregister` method. Do not
+    invent Engine `--cu-mem-host-unregister`. Do not reverse wrapping
+    cuMemHostUnregister identity.
+    Do not invent a second `mem_host_register_with_size` method. Do not
+    invent Engine `--cu-mem-host-register-size`. Do not reverse wrapping
+    cuMemHostRegister size identity.
+    Do not invent a second `ipc_get_mem_handle` method. Do not
+    invent Engine `--cu-ipc-get-mem-handle`. Do not reverse wrapping
+    cuIpcGetMemHandle identity.
+    Do not invent a second `ipc_open_mem_handle` method. Do not
+    invent Engine `--cu-ipc-open-mem-handle`. Do not reverse wrapping
+    cuIpcOpenMemHandle identity.
+    Do not invent a second `ipc_close_mem_handle` method. Do not
+    invent Engine `--cu-ipc-close-mem-handle`. Do not reverse wrapping
+    cuIpcCloseMemHandle identity.
+    Do not invent a second `ipc_get_event_handle` method. Do not
+    invent Engine `--cu-ipc-get-event-handle`. Do not reverse wrapping
+    cuIpcGetEventHandle identity.
+    Do not invent a second `ipc_open_event_handle` method. Do not
+    invent Engine `--cu-ipc-open-event-handle`. Do not reverse wrapping
+    cuIpcOpenEventHandle identity.
+    Do not invent a second `mem_alloc_host` method. Do not
+    invent Engine `--cu-mem-alloc-host`. Do not reverse wrapping
+    cuMemAllocHost identity.
+    Do not invent a second `mem_alloc_managed` method. Do not
+    invent Engine `--cu-mem-alloc-managed`. Do not reverse wrapping
+    cuMemAllocManaged identity.
+    Do not invent a second `mem_alloc_async` method. Do not
+    invent Engine `--cu-mem-alloc-async`. Do not reverse wrapping
+    cuMemAllocAsync identity.
+    Do not invent a second `mem_free_async` method. Do not
+    invent Engine `--cu-mem-free-async`. Do not reverse wrapping
+    cuMemFreeAsync identity.
+    Do not invent a second `mem_advise_n` method. Do not
+    invent Engine `--cu-mem-advise`. Do not reverse wrapping
+    cuMemAdvise identity.
+    Do not invent a second `mem_prefetch` method. Do not
+    invent Engine `--cu-mem-prefetch`. Do not reverse wrapping
+    cuMemPrefetchAsync identity.
+    Do not invent a second `mem_prefetch_v2` method. Do not
+    invent Engine `--cu-mem-prefetch-v2`. Do not reverse wrapping
+    cuMemPrefetchAsync_v2 identity.
+    Do not invent a second `mem_prefetch_n` method. Do not
+    invent Engine `--cu-mem-prefetch-n`. Do not reverse wrapping
+    cuMemPrefetchAsync count identity.
+    Do not invent a second `mem_prefetch_host` method. Do not
+    invent Engine `--cu-mem-prefetch-host`. Do not reverse wrapping
+    host dest cuMemPrefetchAsync identity.
+    Do not invent a second `mem_prefetch_host_n` method. Do not
+    invent Engine `--cu-mem-prefetch-host-n`. Do not reverse wrapping
+    host dest cuMemPrefetchAsync count identity.
+    Do not invent a second `mem_advise_v2` method. Do not
+    invent Engine `--cu-mem-advise-v2`. Do not reverse wrapping
+    cuMemAdvise_v2 identity.
+    Do not invent a second `mem_range_get` method. Do not
+    invent Engine `--cu-mem-range-get`. Do not reverse wrapping
+    cuMemRangeGetAttribute identity.
+    Do not invent a second `mem_range_get_n` method. Do not
+    invent Engine `--cu-mem-range-get-n`. Do not reverse wrapping
+    cuMemRangeGetAttribute count identity.
+    Do not invent a second `mem_range_gets` method. Do not
+    invent Engine `--cu-mem-range-gets`. Do not reverse wrapping
+    cuMemRangeGetAttributes identity.
+    Do not invent a second `mem_range_gets_n` method. Do not
+    invent Engine `--cu-mem-range-gets-n`. Do not reverse wrapping
+    cuMemRangeGetAttributes count identity.
+    Do not invent a second `mem_range_get_data` method. Do not
+    invent Engine `--cu-mem-range-get-data`. Do not reverse wrapping
+    cuMemRangeGetAttribute dataSize identity.
+    Do not invent a second `mem_range_gets_data` method. Do not
+    invent Engine `--cu-mem-range-gets-data`. Do not reverse wrapping
+    cuMemRangeGetAttributes dataSizes identity.
+    Do not invent a second `stream_attach_mem` method. Do not
+    invent Engine `--cu-stream-attach-mem`. Do not reverse wrapping
+    cuStreamAttachMemAsync identity.
+    Do not invent a second `stream_attach_n` method. Do not
+    invent Engine `--cu-stream-attach-n`. Do not reverse wrapping
+    cuStreamAttachMemAsync length identity.
+    Do not invent a second `stream_attach_flags` method. Do not
+    invent Engine `--cu-stream-attach-flags`. Do not reverse wrapping
+    cuStreamAttachMemAsync flags identity.
+    Do not invent a second `memcpy_async` method. Do not
+    invent Engine `--cu-memcpy-async`. Do not reverse wrapping
+    cuMemcpyAsync identity.
+    Do not invent a second `mem_cpy` method. Do not
+    invent Engine `--cu-mem-cpy`. Do not reverse wrapping
+    cuMemcpy identity.
+    Do not invent a second `mem_address_range` method. Do not
+    invent Engine `--cu-mem-address-range`. Do not reverse wrapping
+    cuMemGetAddressRange identity.
+    Do not invent a second `mem_cpy_2d` method. Do not
+    invent Engine `--cu-mem-cpy-2d`. Do not reverse wrapping
+    cuMemcpy2D identity.
+    Do not invent a second `mem_cpy_2d_async` method. Do not
+    invent Engine `--cu-mem-cpy-2d-async`. Do not reverse wrapping
+    cuMemcpy2DAsync identity.
+    Do not invent a second `mem_cpy_3d` method. Do not
+    invent Engine `--cu-mem-cpy-3d`. Do not reverse wrapping
+    cuMemcpy3D identity.
+    Do not invent a second `mem_cpy_3d_async` method. Do not
+    invent Engine `--cu-mem-cpy-3d-async`. Do not reverse wrapping
+    cuMemcpy3DAsync identity.
+    Do not invent a second `mem_cpy_peer` method. Do not
+    invent Engine `--cu-mem-cpy-peer`. Do not reverse wrapping
+    cuMemcpyPeer identity.
+    Do not invent a second `mem_cpy_peer_async` method. Do not
+    invent Engine `--cu-mem-cpy-peer-async`. Do not reverse wrapping
+    cuMemcpyPeerAsync identity.
+    Do not invent a second `mem_cpy_peer_3d` method. Do not
+    invent Engine `--cu-mem-cpy-peer-3d`. Do not reverse wrapping
+    cuMemcpy3DPeer identity.
+    Do not invent a second `mem_cpy_peer_3d_async` method. Do not
+    invent Engine `--cu-mem-cpy-peer-3d-async`. Do not reverse wrapping
+    cuMemcpy3DPeerAsync identity.
+    Do not invent a second `mem_cpy_peer_2d` method. Do not
+    invent Engine `--cu-mem-cpy-peer-2d`. Do not reverse wrapping
+    cuMemcpy2DPeer identity.
+    Do not invent a second `mem_cpy_peer_2d_async` method. Do not
+    invent Engine `--cu-mem-cpy-peer-2d-async`. Do not reverse wrapping
+    cuMemcpy2DPeerAsync identity.
+    Do not invent a second `mem_cpy_batch_async` method. Do not
+    invent Engine `--cu-mem-cpy-batch-async`. Do not reverse wrapping
+    cuMemcpyBatchAsync identity.
+    Do not invent a second `mem_cpy_3d_batch_async` method. Do not
+    invent Engine `--cu-mem-cpy-3d-batch-async`. Do not reverse wrapping
+    cuMemcpy3DBatchAsync identity.
+    Do not invent a second `mem_cpy_3d_with_attributes` method. Do not
+    invent Engine `--cu-mem-cpy-3d-with-attributes`. Do not reverse wrapping
+    cuMemcpy3DWithAttributesAsync identity.
+    Do not invent a second `mem_cpy_with_attributes` method. Do not
+    invent Engine `--cu-mem-cpy-with-attributes`. Do not reverse wrapping
+    cuMemcpyWithAttributesAsync identity.
+    Do not invent a second `ctx_set_flags` method. Do not
+    invent Engine `--cu-ctx-set-flags`. Do not reverse wrapping
+    cuCtxSetFlags identity.
+    Do not invent a second `ctx_set_cache_config` method. Do not
+    invent Engine `--cu-ctx-set-cache-config`. Do not reverse wrapping
+    cuCtxSetCacheConfig identity.
+    Do not invent a second `ctx_set_limit` method. Do not
+    invent Engine `--cu-ctx-set-limit`. Do not reverse wrapping
+    cuCtxSetLimit identity.
+    Do not invent a second `ctx_set_shared_mem_config` method. Do not
+    invent Engine `--cu-ctx-set-shared-mem`. Do not reverse wrapping
+    cuCtxSetSharedMemConfig identity.
+    Do not invent a second `stream_create_priority` method. Do not
+    invent Engine `--cu-stream-create-priority`. Do not reverse wrapping
+    cuStreamCreateWithPriority identity.
+    Do not invent a second `stream_create_flags` method. Do not
+    invent Engine `--cu-stream-create-flags`. Do not reverse wrapping
+    cuStreamCreateWithFlags identity.
+    Do not invent a second `stream_flags` method. Do not
+    invent Engine `--cu-stream-flags`. Do not reverse wrapping
+    cuStreamGetFlags identity.
+    Do not invent a second `get_stream_priority` method. Do not
+    invent Engine `--cu-stream-get-priority`. Do not reverse wrapping
+    cuStreamGetPriority identity.
+    Do not invent a second `device_graph_mem_get` method. Do not
+    invent Engine `--cu-graph-mem-get`. Do not reverse wrapping
+    cuDeviceGetGraphMemAttribute identity.
+    Do not invent a second `device_graph_mem_set` method. Do not
+    invent Engine `--cu-graph-mem-set`. Do not reverse wrapping
+    cuDeviceSetGraphMemAttribute identity.
+    Do not invent a second `device_graph_mem_trim` method. Do not
+    invent Engine `--cu-graph-mem-trim`. Do not reverse wrapping
+    cuDeviceGraphMemTrim identity.
+    Do not invent a second `get_stream_id` method. Do not
+    invent Engine `--cu-stream-get-id`. Do not reverse wrapping
+    cuStreamGetId identity.
+    Do not invent a second `copy_stream_attributes` method. Do not
+    invent Engine `--cu-stream-copy-attributes`. Do not reverse wrapping
+    cuStreamCopyAttributes identity.
+    Do not invent a second `get_stream_attribute` method. Do not
+    invent Engine `--cu-stream-get-attribute`. Do not reverse wrapping
+    cuStreamGetAttribute identity.
+    Do not invent a second `set_stream_attribute` method. Do not
+    invent Engine `--cu-stream-set-attribute`. Do not reverse wrapping
+    cuStreamSetAttribute identity.
+    Do not invent a second `get_graph_kernel_node_attribute` method. Do not
+    invent Engine `--cu-graph-kernel-get-attribute`. Do not reverse wrapping
+    cuGraphKernelNodeGetAttribute identity.
+    Do not invent a second `set_graph_kernel_node_attribute` method. Do not
+    invent Engine `--cu-graph-kernel-set-attribute`. Do not reverse wrapping
+    cuGraphKernelNodeSetAttribute identity.
+    Do not invent a second `get_graph_exec_kernel_node_attribute` method. Do not
+    invent Engine `--cu-graph-exec-kernel-get-attribute`. Do not reverse wrapping
+    cuGraphExecKernelNodeGetAttribute identity.
+    Do not invent a second `set_graph_exec_kernel_node_attribute` method. Do not
+    invent Engine `--cu-graph-exec-kernel-set-attribute`. Do not reverse wrapping
+    cuGraphExecKernelNodeSetAttribute identity.
+    Do not invent a second `copy_graph_kernel_node_attributes` method. Do not
+    invent Engine `--cu-graph-kernel-copy-attributes`. Do not reverse wrapping
+    cuGraphKernelNodeCopyAttributes identity.
+    Do not invent a second `copy_graph_exec_kernel_node_attributes` method. Do not
+    invent Engine `--cu-graph-exec-kernel-copy-attributes`. Do not reverse wrapping
+    cuGraphExecKernelNodeCopyAttributes identity.
+    Do not invent a second `get_graph_kernel_node_params` method. Do not
+    invent Engine `--cu-graph-kernel-get-params`. Do not reverse wrapping
+    cuGraphKernelNodeGetParams identity.
+    Do not invent a second `get_graph_exec_kernel_node_params` method. Do not
+    invent Engine `--cu-graph-exec-kernel-get-params`. Do not reverse wrapping
+    cuGraphExecKernelNodeGetParams identity.
+    Do not invent a second `set_graph_kernel_node_params` method. Do not
+    invent Engine `--cu-graph-kernel-set-params`. Do not reverse wrapping
+    cuGraphKernelNodeSetParams identity.
+    Do not invent a second `set_graph_exec_kernel_node_params` method. Do not
+    invent Engine `--cu-graph-exec-kernel-set-params`. Do not reverse wrapping
+    cuGraphExecKernelNodeSetParams identity.
+    Do not invent a second `get_graph_memcpy_node_params` method. Do not
+    invent Engine `--cu-graph-memcpy-get-params`. Do not reverse wrapping
+    cuGraphMemcpyNodeGetParams identity.
+    Do not invent a second `get_graph_exec_memcpy_node_params` method. Do not
+    invent Engine `--cu-graph-exec-memcpy-get-params`. Do not reverse wrapping
+    cuGraphExecMemcpyNodeGetParams identity.
+    Do not invent a second `set_graph_memcpy_node_params` method. Do not
+    invent Engine `--cu-graph-memcpy-set-params`. Do not reverse wrapping
+    cuGraphMemcpyNodeSetParams identity.
+    Do not invent a second `set_graph_exec_memcpy_node_params` method. Do not
+    invent Engine `--cu-graph-exec-memcpy-set-params`. Do not reverse wrapping
+    cuGraphExecMemcpyNodeSetParams identity.
+    Do not invent a second `get_graph_memset_node_params` method. Do not
+    invent Engine `--cu-graph-memset-get-params`. Do not reverse wrapping
+    cuGraphMemsetNodeGetParams identity.
+    Do not invent a second `get_graph_exec_memset_node_params` method. Do not
+    invent Engine `--cu-graph-exec-memset-get-params`. Do not reverse wrapping
+    cuGraphExecMemsetNodeGetParams identity.
+    Do not invent a second `set_graph_memset_node_params` method. Do not
+    invent Engine `--cu-graph-memset-set-params`. Do not reverse wrapping
+    cuGraphMemsetNodeSetParams identity.
+    Do not invent a second `set_graph_exec_memset_node_params` method. Do not
+    invent Engine `--cu-graph-exec-memset-set-params`. Do not reverse wrapping
+    cuGraphExecMemsetNodeSetParams identity.
+    Do not invent a second `get_graph_host_node_params` method. Do not
+    invent Engine `--cu-graph-host-get-params`. Do not reverse wrapping
+    cuGraphHostNodeGetParams identity.
+    Do not invent a second `get_graph_exec_host_node_params` method. Do not
+    invent Engine `--cu-graph-exec-host-get-params`. Do not reverse wrapping
+    cuGraphExecHostNodeGetParams identity.
+    Do not invent a second `set_graph_host_node_params` method. Do not
+    invent Engine `--cu-graph-host-set-params`. Do not reverse wrapping
+    cuGraphHostNodeSetParams identity.
+    Do not invent a second `set_graph_exec_host_node_params` method. Do not
+    invent Engine `--cu-graph-exec-host-set-params`. Do not reverse wrapping
+    cuGraphExecHostNodeSetParams identity.
+    Do not invent a second `get_graph_batch_mem_op_node_params` method. Do not
+    invent Engine `--cu-graph-batch-mem-get-params`. Do not reverse wrapping
+    cuGraphBatchMemOpNodeGetParams identity.
+    Do not invent a second `get_graph_exec_batch_mem_op_node_params` method. Do not
+    invent Engine `--cu-graph-exec-batch-mem-get-params`. Do not reverse wrapping
+    cuGraphExecBatchMemOpNodeGetParams identity.
+    Do not invent a second `set_graph_batch_mem_op_node_params` method. Do not
+    invent Engine `--cu-graph-batch-mem-set-params`. Do not reverse wrapping
+    cuGraphBatchMemOpNodeSetParams identity.
+    Do not invent a second `set_graph_exec_batch_mem_op_node_params` method. Do not
+    invent Engine `--cu-graph-exec-batch-mem-set-params`. Do not reverse wrapping
+    cuGraphExecBatchMemOpNodeSetParams identity.
+    Do not invent a second `set_graph_event_record_node_event` method. Do not
+    invent Engine `--cu-graph-event-record-set-event`. Do not reverse wrapping
+    cuGraphEventRecordNodeSetEvent identity.
+    Do not invent a second `set_graph_exec_event_record_node_event` method. Do not
+    invent Engine `--cu-graph-exec-event-record-set-event`. Do not reverse wrapping
+    cuGraphExecEventRecordNodeSetEvent identity.
+    Do not invent a second `set_graph_event_wait_node_event` method. Do not
+    invent Engine `--cu-graph-event-wait-set-event`. Do not reverse wrapping
+    cuGraphEventWaitNodeSetEvent identity.
+    Do not invent a second `set_graph_exec_event_wait_node_event` method. Do not
+    invent Engine `--cu-graph-exec-event-wait-set-event`. Do not reverse wrapping
+    cuGraphExecEventWaitNodeSetEvent identity.
+    Do not invent a second `get_graph_event_record_node_event` method. Do not
+    invent Engine `--cu-graph-event-record-get-event`. Do not reverse wrapping
+    cuGraphEventRecordNodeGetEvent identity.
+    Do not invent a second `get_graph_exec_event_record_node_event` method. Do not
+    invent Engine `--cu-graph-exec-event-record-get-event`. Do not reverse wrapping
+    cuGraphExecEventRecordNodeGetEvent identity.
+    Do not invent a second `get_graph_event_wait_node_event` method. Do not
+    invent Engine `--cu-graph-event-wait-get-event`. Do not reverse wrapping
+    cuGraphEventWaitNodeGetEvent identity.
+    Do not invent a second `get_graph_exec_event_wait_node_event` method. Do not
+    invent Engine `--cu-graph-exec-event-wait-get-event`. Do not reverse wrapping
+    cuGraphExecEventWaitNodeGetEvent identity.
+    Do not invent a second `get_graph_child_graph_node_graph` method. Do not
+    invent Engine `--cu-graph-child-get-graph`. Do not reverse wrapping
+    cuGraphChildGraphNodeGetGraph identity.
+    Do not invent a second `get_graph_exec_child_graph_node_graph` method. Do not
+    invent Engine `--cu-graph-exec-child-get-graph`. Do not reverse wrapping
+    cuGraphExecChildGraphNodeGetGraph identity.
+    Do not invent a second `set_graph_child_graph_node_params` method. Do not
+    invent Engine `--cu-graph-child-set-params`. Do not reverse wrapping
+    cuGraphChildGraphNodeSetParams identity.
+    Do not invent a second `set_graph_exec_child_graph_node_params` method. Do not
+    invent Engine `--cu-graph-exec-child-set-params`. Do not reverse wrapping
+    cuGraphExecChildGraphNodeSetParams identity.
+    Do not invent a second `set_graph_node_params` method. Do not
+    invent Engine `--cu-graph-node-set-params`. Do not reverse wrapping
+    cuGraphNodeSetParams identity.
+    Do not invent a second `set_graph_exec_node_params` method. Do not
+    invent Engine `--cu-graph-exec-node-set-params`. Do not reverse wrapping
+    cuGraphExecNodeSetParams identity.
+    Do not invent a second `get_graph_node_params` method. Do not
+    invent Engine `--cu-graph-node-get-params`. Do not reverse wrapping
+    cuGraphNodeGetParams identity.
+    Do not invent a second `get_graph_exec_node_params` method. Do not
+    invent Engine `--cu-graph-exec-node-get-params`. Do not reverse wrapping
+    cuGraphExecNodeGetParams identity.
+    Do not invent a second `set_graph_node_enabled` method. Do not
+    invent Engine `--cu-graph-node-set-enabled`. Do not reverse wrapping
+    cuGraphNodeSetEnabled identity.
+    Do not invent a second `get_graph_node_enabled` method. Do not
+    invent Engine `--cu-graph-node-get-enabled`. Do not reverse wrapping
+    cuGraphNodeGetEnabled identity.
+    Do not invent a second `get_graph_exec_flags` method. Do not
+    invent Engine `--cu-graph-exec-get-flags`. Do not reverse wrapping
+    cuGraphExecGetFlags identity.
+    Do not invent a second `get_graph_id` method. Do not
+    invent Engine `--cu-graph-get-id`. Do not reverse wrapping
+    cuGraphGetId identity.
+    Do not invent a second `get_graph_exec_id` method. Do not
+    invent Engine `--cu-graph-exec-get-id`. Do not reverse wrapping
+    cuGraphExecGetId identity.
+    Do not invent a second `get_graph_nodes` method. Do not
+    invent Engine `--cu-graph-get-nodes`. Do not reverse wrapping
+    cuGraphGetNodes identity.
+    Do not invent a second `get_graph_root_nodes` method. Do not
+    invent Engine `--cu-graph-get-root-nodes`. Do not reverse wrapping
+    cuGraphGetRootNodes identity.
+    Do not invent a second `get_graph_edges` method. Do not
+    invent Engine `--cu-graph-get-edges`. Do not reverse wrapping
+    cuGraphGetEdges identity.
+    Do not invent a second `get_graph_edges_with_data` method. Do not
+    invent Engine `--cu-graph-get-edges-with-data`. Do not reverse wrapping
+    cuGraphGetEdges v2 identity.
+    Do not invent a second `get_graph_node_dependencies` method. Do not
+    invent Engine `--cu-graph-node-get-dependencies`. Do not reverse wrapping
+    cuGraphNodeGetDependencies identity.
+    Do not invent a second `get_graph_node_dependencies_with_data` method. Do not
+    invent Engine `--cu-graph-node-get-dependencies-with-data`. Do not reverse wrapping
+    cuGraphNodeGetDependencies v2 identity.
+    Do not invent a second `get_graph_node_dependent_nodes` method. Do not
+    invent Engine `--cu-graph-node-get-dependent-nodes`. Do not reverse wrapping
+    cuGraphNodeGetDependentNodes identity.
+    Do not invent a second `get_graph_node_dependent_nodes_with_data` method. Do not
+    invent Engine `--cu-graph-node-get-dependent-nodes-with-data`. Do not reverse wrapping
+    cuGraphNodeGetDependentNodes v2 identity.
+    Do not invent a second `get_graph_node_type` method. Do not
+    invent Engine `--cu-graph-node-get-type`. Do not reverse wrapping
+    cuGraphNodeGetType identity.
+    Do not invent a second `find_graph_node_in_clone` method. Do not
+    invent Engine `--cu-graph-node-find-in-clone`. Do not reverse wrapping
+    cuGraphNodeFindInClone identity.
+    Do not invent a second `graph_clone` method. Do not
+    invent Engine `--cu-graph-clone`. Do not reverse wrapping
+    cuGraphClone identity.
+    Do not invent a second `graph_debug_dot_print` method. Do not
+    invent Engine `--cu-graph-debug-dot-print`. Do not reverse wrapping
+    cuGraphDebugDotPrint identity.
+    Do not invent a second `graph_debug_dot_print_with_flags` method. Do not
+    invent Engine `--cu-graph-debug-dot-print-with-flags`. Do not reverse wrapping
+    cuGraphDebugDotPrint with flags identity.
+    Do not invent a second `graph_instantiate` method. Do not
+    invent Engine `--cu-graph-instantiate`. Do not reverse wrapping
+    cuGraphInstantiate identity.
+    Do not invent a second `graph_instantiate_with_flags` method. Do not
+    invent Engine `--cu-graph-instantiate-with-flags`. Do not reverse wrapping
+    cuGraphInstantiateWithFlags identity.
+    Do not invent a second `graph_instantiate_with_params` method. Do not
+    invent Engine `--cu-graph-instantiate-with-params`. Do not reverse wrapping
+    cuGraphInstantiateWithParams identity.
+    Do not invent a second `graph_launch` method. Do not
+    invent Engine `--cu-graph-launch`. Do not reverse wrapping
+    cuGraphLaunch identity.
+    Do not invent a second `graph_upload` method. Do not
+    invent Engine `--cu-graph-upload`. Do not reverse wrapping
+    cuGraphUpload identity.
+    Do not invent a second `graph_upload_async` method. Do not
+    invent Engine `--cu-graph-upload-async`. Do not reverse wrapping
+    cuGraphUpload on a stream identity.
+    Do not invent a second `graph_destroy` method. Do not
+    invent Engine `--cu-graph-destroy`. Do not reverse wrapping
+    cuGraphDestroy identity.
+    Do not invent a second `graph_exec_destroy` method. Do not
+    invent Engine `--cu-graph-exec-destroy`. Do not reverse wrapping
+    cuGraphExecDestroy identity.
+    Do not invent a second `graph_exec_update` method. Do not
+    invent Engine `--cu-graph-exec-update`. Do not reverse wrapping
+    cuGraphExecUpdate identity.
+    Do not invent a second `graph_exec_update_with_info` method. Do not
+    invent Engine `--cu-graph-exec-update-with-info`. Do not reverse wrapping
+    cuGraphExecUpdate with info identity.
+    Do not invent a second `add_graph_dependencies` method. Do not
+    invent Engine `--cu-graph-add-dependencies`. Do not reverse wrapping
+    cuGraphAddDependencies identity.
+    Do not invent a second `add_graph_dependencies_n` method. Do not
+    invent Engine `--cu-graph-add-dependencies-n`. Do not reverse wrapping
+    cuGraphAddDependencies of pairs identity.
+    Do not invent a second `add_graph_dependencies_with_data` method. Do not
+    invent Engine `--cu-graph-add-dependencies-with-data`. Do not reverse wrapping
+    cuGraphAddDependencies with data identity.
+    Do not invent a second `add_graph_dependencies_n_with_data` method. Do not
+    invent Engine `--cu-graph-add-dependencies-n-with-data`. Do not reverse wrapping
+    cuGraphAddDependencies v2 identity.
+    Do not invent a second `remove_graph_dependencies` method. Do not
+    invent Engine `--cu-graph-remove-dependencies`. Do not reverse wrapping
+    cuGraphRemoveDependencies identity.
+    Do not invent a second `remove_graph_dependencies_n` method. Do not
+    invent Engine `--cu-graph-remove-dependencies-n`. Do not reverse wrapping
+    cuGraphRemoveDependencies of pairs identity.
+    Do not invent a second `remove_graph_dependencies_with_data` method. Do not
+    invent Engine `--cu-graph-remove-dependencies-with-data`. Do not reverse wrapping
+    cuGraphRemoveDependencies with data identity.
+    Do not invent a second `remove_graph_dependencies_n_with_data` method. Do not
+    invent Engine `--cu-graph-remove-dependencies-n-with-data`. Do not reverse wrapping
+    cuGraphRemoveDependencies v2 identity.
+    Do not invent a second `destroy_graph_node` method. Do not
+    invent Engine `--cu-graph-destroy-node`. Do not reverse wrapping
+    cuGraphDestroyNode identity.
+    Do not invent a second `launch_device_graph` method. Do not
+    invent Engine `--cu-device-launch-graph`. Do not reverse wrapping
+    device-side cuGraphLaunch identity.
+    Do not invent a second `get_current_graph_exec` method. Do not
+    invent Engine `--cu-get-current-graph-exec`. Do not reverse wrapping
+    cuGetCurrentGraphExec identity.
+    Do not invent a second `add_graph_empty` method. Do not
+    invent Engine `--cu-graph-add-empty`. Do not reverse wrapping
+    cuGraphAddEmptyNode identity.
+    Do not invent a second `add_graph_child` method. Do not
+    invent Engine `--cu-graph-add-child`. Do not reverse wrapping
+    cuGraphAddChildGraphNode identity.
+    Do not invent a second `add_graph_host` method. Do not
+    invent Engine `--cu-graph-add-host`. Do not reverse wrapping
+    cuGraphAddHostNode identity.
+    Do not invent a second `add_graph_event_record` method. Do not
+    invent Engine `--cu-graph-add-event-record`. Do not reverse wrapping
+    cuGraphAddEventRecordNode identity.
+    Do not invent a second `add_graph_event_wait` method. Do not
+    invent Engine `--cu-graph-add-event-wait`. Do not reverse wrapping
+    cuGraphAddEventWaitNode identity.
+    Do not invent a second `add_graph_kernel` method. Do not
+    invent Engine `--cu-graph-add-kernel`. Do not reverse wrapping
+    cuGraphAddKernelNode identity.
+    Do not invent a second `add_graph_memcpy` method. Do not
+    invent Engine `--cu-graph-add-memcpy`. Do not reverse wrapping
+    cuGraphAddMemcpyNode identity.
+    Do not invent a second `add_graph_memcpy_1d` method. Do not
+    invent Engine `--cu-graph-add-memcpy-1d`. Do not reverse wrapping
+    cuGraphAddMemcpyNode1D identity.
+    Do not invent a second `add_graph_memcpy_2d` method. Do not
+    invent Engine `--cu-graph-add-memcpy-2d`. Do not reverse wrapping
+    2D cuGraphAddMemcpyNode identity.
+    Do not invent a second `add_graph_memcpy_3d` method. Do not
+    invent Engine `--cu-graph-add-memcpy-3d`. Do not reverse wrapping
+    3D cuGraphAddMemcpyNode identity.
+    Do not invent a second `add_graph_memset` method. Do not
+    invent Engine `--cu-graph-add-memset`. Do not reverse wrapping
+    packed 1D cuGraphAddMemsetNode identity.
+    Do not invent a second `add_graph_memset_op` method. Do not
+    invent Engine `--cu-graph-add-memset-op`. Do not reverse wrapping
+    cuGraphAddMemsetNode params identity.
+    Do not invent a second `add_graph_memset_2d` method. Do not
+    invent Engine `--cu-graph-add-memset-2d`. Do not reverse wrapping
+    2D cuGraphAddMemsetNode identity.
+    Do not invent a second `add_graph_memset_3d` method. Do not
+    invent Engine `--cu-graph-add-memset-3d`. Do not reverse wrapping
+    3D cuGraphAddMemsetNode identity.
+    Do not invent a second `add_graph_batch_mem_op` method. Do not
+    invent Engine `--cu-graph-add-batch-mem-op`. Do not reverse wrapping
+    cuGraphAddBatchMemOpNode identity.
+    Do not invent a second `add_graph_batch_mem_op_with_flags` method. Do not
+    invent Engine `--cu-graph-add-batch-mem-op-with-flags`. Do not reverse wrapping
+    cuGraphAddBatchMemOpNode flags identity.
+    Do not invent a second `add_graph_alloc` method. Do not
+    invent Engine `--cu-graph-add-alloc`. Do not reverse wrapping
+    cuGraphAddMemAllocNode identity.
+    Do not invent a second `add_graph_alloc_with_access` method. Do not
+    invent Engine `--cu-graph-add-alloc-with-access`. Do not reverse wrapping
+    cuGraphAddMemAllocNode access identity.
+    Do not invent a second `add_graph_free` method. Do not
+    invent Engine `--cu-graph-add-free`. Do not reverse wrapping
+    cuGraphAddMemFreeNode identity.
+    Do not invent a second `add_graph_node` method. Do not
+    invent Engine `--cu-graph-add-node`. Do not reverse wrapping
+    cuGraphAddNode identity.
+    Do not invent a second `add_graph_node_with_data` method. Do not
+    invent Engine `--cu-graph-add-node-with-data`. Do not reverse wrapping
+    cuGraphAddNode_v2 identity.
+    Do not invent a second `add_graph_if` method. Do not
+    invent Engine `--cu-graph-add-if`. Do not reverse wrapping
+    cuGraphAddNode IF identity.
+    Do not invent a second `add_graph_if_else` method. Do not
+    invent Engine `--cu-graph-add-if-else`. Do not reverse wrapping
+    cuGraphAddNode IF size 2 identity.
+    Do not invent a second `add_graph_while` method. Do not
+    invent Engine `--cu-graph-add-while`. Do not reverse wrapping
+    cuGraphAddNode WHILE identity.
+    Do not invent a second `add_graph_switch` method. Do not
+    invent Engine `--cu-graph-add-switch`. Do not reverse wrapping
+    cuGraphAddNode SWITCH identity.
+    Do not invent a second `add_graph_set_conditional` method. Do not
+    invent Engine `--cu-graph-add-set-conditional`. Do not reverse wrapping
+    graph-build cuGraphSetConditional identity.
+    Do not invent a second `add_graph_write_value64` method. Do not
+    invent Engine `--cu-graph-add-write-value64`. Do not reverse wrapping
+    graph cuStreamWriteValue64 identity.
+    Do not invent a second `add_graph_write_value32` method. Do not
+    invent Engine `--cu-graph-add-write-value32`. Do not reverse wrapping
+    graph cuStreamWriteValue32 identity.
+    Do not invent a second `add_graph_write_value64_with_flags` method. Do not
+    invent Engine `--cu-graph-add-write-value64-with-flags`. Do not reverse wrapping
+    graph cuStreamWriteValue64 flags identity.
+    Do not invent a second `add_graph_write_value32_with_flags` method. Do not
+    invent Engine `--cu-graph-add-write-value32-with-flags`. Do not reverse wrapping
+    graph cuStreamWriteValue32 flags identity.
+    Do not invent a second `add_graph_wait_value64` method. Do not
+    invent Engine `--cu-graph-add-wait-value64`. Do not reverse wrapping
+    graph cuStreamWaitValue64 identity.
+    Do not invent a second `add_graph_wait_value32` method. Do not
+    invent Engine `--cu-graph-add-wait-value32`. Do not reverse wrapping
+    graph cuStreamWaitValue32 identity.
+    Do not invent a second `add_graph_wait_value64_with_flags` method. Do not
+    invent Engine `--cu-graph-add-wait-value64-with-flags`. Do not reverse wrapping
+    graph cuStreamWaitValue64 flags identity.
+    Do not invent a second `add_graph_wait_value32_with_flags` method. Do not
+    invent Engine `--cu-graph-add-wait-value32-with-flags`. Do not reverse wrapping
+    graph cuStreamWaitValue32 flags identity.
+    Do not invent a second `add_graph_cooperative_kernel` method. Do not
+    invent Engine `--cu-graph-add-cooperative-kernel`. Do not reverse wrapping
+    graph cooperative cudaGraphAddKernelNode identity.
+    Do not invent a second `add_graph_host_func` method. Do not
+    invent Engine `--cu-graph-add-host-func`. Do not reverse wrapping
+    graph unnamed cudaGraphAddHostNode identity.
+    Do not invent a second `set_graph_memcpy_node_params_1d` method. Do not
+    invent Engine `--cu-graph-memcpy-set-params-1d`. Do not reverse wrapping
+    graph cudaGraphMemcpyNodeSetParams1D identity.
+    Do not invent a second `set_graph_exec_memcpy_node_params_1d` method. Do not
+    invent Engine `--cu-graph-exec-memcpy-set-params-1d`. Do not reverse wrapping
+    graph cudaGraphExecMemcpyNodeSetParams1D identity.
+    Do not invent a second `graph_create` method. Do not
+    invent Engine `--cu-graph-create`. Do not reverse wrapping
+    cuGraphCreate identity.
+    Do not invent a second `graph_create_with_flags` method. Do not
+    invent Engine `--cu-graph-create-with-flags`. Do not reverse wrapping
+    cuGraphCreate flags identity.
+    Do not invent a second `create_user_object` method. Do not
+    invent Engine `--cu-create-user-object`. Do not reverse wrapping
+    cuUserObjectCreate identity.
+    Do not invent a second `retain_user_object` method. Do not
+    invent Engine `--cu-retain-user-object`. Do not reverse wrapping
+    cuUserObjectRetain identity.
+    Do not invent a second `release_user_object` method. Do not
+    invent Engine `--cu-release-user-object`. Do not reverse wrapping
+    cuUserObjectRelease identity.
+    Do not invent a second `retain_graph_user_object` method. Do not
+    invent Engine `--cu-retain-graph-user-object`. Do not reverse wrapping
+    cuGraphRetainUserObject identity.
+    Do not invent a second `release_graph_user_object` method. Do not
+    invent Engine `--cu-release-graph-user-object`. Do not reverse wrapping
+    cuGraphReleaseUserObject identity.
+    Do not invent a second `get_graph_alloc_node_params` method. Do not
+    invent Engine `--cu-graph-alloc-get-params`. Do not reverse wrapping
+    cuGraphMemAllocNodeGetParams identity.
+    Do not invent a second `get_graph_exec_alloc_node_params` method. Do not
+    invent Engine `--cu-graph-exec-alloc-get-params`. Do not reverse wrapping
+    cuGraphExecMemAllocNodeGetParams identity.
+    Do not invent a second `get_graph_free_node_params` method. Do not
+    invent Engine `--cu-graph-free-get-params`. Do not reverse wrapping
+    cuGraphMemFreeNodeGetParams identity.
+    Do not invent a second `get_graph_exec_free_node_params` method. Do not
+    invent Engine `--cu-graph-exec-free-get-params`. Do not reverse wrapping
+    cuGraphExecMemFreeNodeGetParams identity.
+    Do not invent a second `set_graph_free_node_params` method. Do not
+    invent Engine `--cu-graph-free-set-params`. Do not reverse wrapping
+    cuGraphMemFreeNodeSetParams identity.
+    Do not invent a second `set_graph_exec_free_node_params` method. Do not
+    invent Engine `--cu-graph-exec-free-set-params`. Do not reverse wrapping
+    cuGraphExecMemFreeNodeSetParams identity.
+    Do not invent a second `set_graph_conditional_params` method. Do not
+    invent Engine `--cu-graph-set-conditional-params`. Do not reverse wrapping
+    cuGraphNodeSetParams set-conditional identity.
+    Do not invent a second `set_graph_exec_conditional_params` method. Do not
+    invent Engine `--cu-graph-exec-set-conditional-params`. Do not reverse wrapping
+    cuGraphExecNodeSetParams set-conditional identity.
+    Do not invent a second `create_graph_conditional_handle` method. Do not
+    invent Engine `--cu-graph-conditional-create`. Do not reverse wrapping
+    cuGraphConditionalHandleCreate identity.
+    Do not invent a second `create_graph_conditional_handle_with_flags` method. Do not
+    invent Engine `--cu-graph-conditional-create-with-flags`. Do not reverse wrapping
+    cuGraphConditionalHandleCreate flags identity.
+    Do not invent a second `create_graph_conditional_handle_with_ctx` method. Do not
+    invent Engine `--cu-graph-conditional-create-with-ctx`. Do not reverse wrapping
+    cuGraphConditionalHandleCreate ctx identity.
+    Do not invent a second `stream_begin_capture` method. Do not
+    invent Engine `--cu-stream-begin-capture`. Do not reverse wrapping
+    cuStreamBeginCapture identity.
+    Do not invent a second `stream_begin_capture_with_mode` method. Do not
+    invent Engine `--cu-stream-begin-capture-with-mode`. Do not reverse wrapping
+    cuStreamBeginCapture mode identity.
+    Do not invent a second `stream_begin_capture_to_graph` method. Do not
+    invent Engine `--cu-stream-begin-capture-to-graph`. Do not reverse wrapping
+    cuStreamBeginCaptureToGraph identity.
+    Do not invent a second `stream_begin_capture_to_graph_with_mode` method. Do not
+    invent Engine `--cu-stream-begin-capture-to-graph-with-mode`. Do not reverse wrapping
+    cuStreamBeginCaptureToGraph mode identity.
+    Do not invent a second `stream_begin_recapture_to_graph` method. Do not
+    invent Engine `--cu-stream-begin-recapture-to-graph`. Do not reverse wrapping
+    cuStreamBeginRecaptureToGraph identity.
+    Do not invent a second `stream_begin_recapture_to_graph_with_mode` method. Do not
+    invent Engine `--cu-stream-begin-recapture-to-graph-with-mode`. Do not reverse wrapping
+    cuStreamBeginRecaptureToGraph mode identity.
+    Do not invent a second `stream_begin_recapture_to_graph_with_callback` method. Do not
+    invent Engine `--cu-stream-begin-recapture-to-graph-with-callback`. Do not reverse wrapping
+    cuStreamBeginRecaptureToGraph callback identity.
+    Do not invent a second `stream_end_capture` method. Do not
+    invent Engine `--cu-stream-end-capture`. Do not reverse wrapping
+    cuStreamEndCapture identity.
+    Do not invent a second `update_stream_capture_dependencies` method. Do not
+    invent Engine `--cu-update-stream-capture-dependencies`. Do not reverse wrapping
+    cuStreamUpdateCaptureDependencies identity.
+    Do not invent a second `is_stream_capturing` method. Do not
+    invent Engine `--cu-is-stream-capturing`. Do not reverse wrapping
+    cuStreamIsCapturing identity.
+    Do not invent a second `get_stream_capture_info` method. Do not
+    invent Engine `--cu-get-stream-capture-info`. Do not reverse wrapping
+    cuStreamGetCaptureInfo identity.
+    Do not invent a second `exchange_thread_stream_capture_mode` method. Do not
+    invent Engine `--cu-exchange-thread-stream-capture-mode`. Do not reverse wrapping
+    cuThreadExchangeStreamCaptureMode identity.
+    Do not invent a second `get_stream_capture_mode` method. Do not
+    invent Engine `--cu-get-stream-capture-mode`. Do not reverse wrapping
+    thread-default cudaStreamCaptureMode query identity.
+    Do not invent a second `event_flags` method. Do not
+    invent Engine `--cu-event-flags`. Do not reverse wrapping
+    cuEventGetFlags identity.
+    Do not invent a second `ctx_enable_peer_access` method. Do not
+    invent Engine `--cu-ctx-enable-peer-access`. Do not reverse wrapping
+    cuCtxEnablePeerAccess identity.
+    Do not invent a second `ctx_enable_peer_access_with_flags` method. Do not
+    invent Engine `--cu-ctx-enable-peer-access-with-flags`. Do not reverse wrapping
+    cuCtxEnablePeerAccess flags identity.
+    Do not invent a second `ctx_disable_peer_access` method. Do not
+    invent Engine `--cu-ctx-disable-peer-access`. Do not reverse wrapping
+    cuCtxDisablePeerAccess identity.
+    Do not invent a second `can_device_access_peer` method. Do not
+    invent Engine `--cu-can-device-access-peer`. Do not reverse wrapping
+    cuDeviceCanAccessPeer identity.
+    Do not invent a second `device_p2p_attribute` method. Do not
+    invent Engine `--cu-device-p2p-attribute`. Do not reverse wrapping
+    cuDeviceGetP2PAttribute identity.
+    Do not invent a second `device_nvscisync_attributes` method. Do not
+    invent Engine `--cu-device-nvscisync-attributes`. Do not reverse wrapping
+    cuDeviceGetNvSciSyncAttributes identity.
+    Do not invent a second `device_flush_gpu_direct_rdma_writes` method. Do not
+    invent Engine `--cu-device-flush-gpu-direct-rdma-writes`. Do not reverse wrapping
+    cuFlushGPUDirectRDMAWrites identity.
+    Do not invent a second `mem_alloc_pitch` method. Do not
+    invent Engine `--cu-mem-alloc-pitch`. Do not reverse wrapping
+    cudaMallocPitch identity. Do not wrap `cuMemAllocPitch` as `mem_alloc_pitch`.
+    Do not invent a second `mem_alloc_3d` method. Do not
+    invent Engine `--cu-mem-alloc-3d`. Do not reverse wrapping
+    cudaMalloc3D identity. Do not wrap `cuMemAlloc3D` as `mem_alloc_3d`.
+    Do not invent a second `launch_cooperative_kernel` method. Do not
+    invent Engine `--cu-launch-cooperative-kernel`. Do not reverse wrapping
+    cuLaunchCooperativeKernel identity.
+    Do not invent a second `launch_cooperative_kernel_bufs` method. Do not
+    invent Engine `--cu-launch-cooperative-kernel-bufs`. Do not reverse wrapping
+    cuLaunchCooperativeKernel spans identity.
+    Do not invent a second `launch_cooperative_kernel_multi_device` method. Do not
+    invent Engine `--cu-launch-cooperative-kernel-multi-device`. Do not reverse wrapping
+    cuLaunchCooperativeKernelMultiDevice identity.
+    Do not invent a second `mem_set` method. Do not
+    invent Engine `--cu-mem-set`. Do not reverse wrapping
+    cudaMemsetAsync identity. Do not wrap `cuMemsetD8Async` as `mem_set`.
+    Do not invent a second `mem_set_buf` method. Do not
+    invent Engine `--cu-mem-set-buf`. Do not reverse wrapping
+    cudaMemsetAsync spans identity. Do not wrap `cuMemsetD8Async` as `mem_set_buf`.
+    Do not invent a second `mem_set_op` method. Do not
+    invent Engine `--cu-mem-set-op`. Do not reverse wrapping
+    cudaMemsetAsync / cudaMemset2DAsync identity. Do not wrap `cudaMemset2DAsync` as `mem_set_op`.
+    Do not invent a second `mem_set_sync` method. Do not
+    invent Engine `--cu-mem-set-sync`. Do not reverse wrapping
+    cudaMemset identity. Do not wrap `cuMemsetD8` as `mem_set_sync`.
+    Do not invent a second `mem_set_op_sync` method. Do not
+    invent Engine `--cu-mem-set-op-sync`. Do not reverse wrapping
+    cudaMemset / cudaMemset2D identity. Do not wrap `cudaMemset2D` as `mem_set_op_sync`.
+    Do not invent a second `mem_set_2d_async` method. Do not
+    invent Engine `--cu-mem-set-2d-async`. Do not reverse wrapping
+    cudaMemset2DAsync identity. Do not wrap `cuMemsetD2D8Async` as `mem_set_2d_async`.
+    Do not invent a second `mem_set_2d` method. Do not
+    invent Engine `--cu-mem-set-2d`. Do not reverse wrapping
+    cudaMemset2D identity. Do not wrap `cuMemsetD2D8` as `mem_set_2d`.
+    Do not invent a second `mem_set_3d_async` method. Do not
+    invent Engine `--cu-mem-set-3d-async`. Do not reverse wrapping
+    cudaMemset3DAsync identity. Do not wrap `cudaMemset3D` as `mem_set_3d_async`.
+    Do not invent a second `mem_set_3d` method. Do not
+    invent Engine `--cu-mem-set-3d`. Do not reverse wrapping
+    cudaMemset3D identity. Do not wrap `cuMemset3D` as `mem_set_3d`.
+    Do not invent a second `stream_write_value64` method. Do not
+    invent Engine `--cu-stream-write-value64`. Do not reverse wrapping
+    cuStreamWriteValue64 identity. Do not wrap `cuStreamWriteValue32` as `stream_write_value64`.
+    Do not invent a second `stream_write_value32` method. Do not
+    invent Engine `--cu-stream-write-value32`. Do not reverse wrapping
+    cuStreamWriteValue32 identity. Do not wrap `cuStreamWriteValue64` as `stream_write_value32`.
+    Do not invent a second `stream_write_value64_with_flags` method. Do not
+    invent Engine `--cu-stream-write-value64-with-flags`. Do not reverse wrapping
+    cuStreamWriteValue64 flags identity. Do not wrap `cuStreamWriteValue32` flags as `stream_write_value64_with_flags`.
+    Do not invent a second `stream_write_value32_with_flags` method. Do not
+    invent Engine `--cu-stream-write-value32-with-flags`. Do not reverse wrapping
+    cuStreamWriteValue32 flags identity. Do not wrap `cuStreamWriteValue64` flags as `stream_write_value32_with_flags`.
+    Do not invent a second `stream_wait_value64` method. Do not
+    invent Engine `--cu-stream-wait-value64`. Do not reverse wrapping
+    cuStreamWaitValue64 identity. Do not wrap `cuStreamWaitValue32` as `stream_wait_value64`.
+    Do not invent a second `stream_wait_value32` method. Do not
+    invent Engine `--cu-stream-wait-value32`. Do not reverse wrapping
+    cuStreamWaitValue32 identity. Do not wrap `cuStreamWaitValue64` as `stream_wait_value32`.
+    Do not invent a second `stream_wait_value64_with_flags` method. Do not
+    invent Engine `--cu-stream-wait-value64-with-flags`. Do not reverse wrapping
+    cuStreamWaitValue64 flags identity. Do not wrap `cuStreamWaitValue32` flags as `stream_wait_value64_with_flags`.
+    Do not invent a second `stream_wait_value32_with_flags` method. Do not
+    invent Engine `--cu-stream-wait-value32-with-flags`. Do not reverse wrapping
+    cuStreamWaitValue32 flags identity. Do not wrap `cuStreamWaitValue64` flags as `stream_wait_value32_with_flags`.
+    Do not invent a second `stream_batch_mem_op` method. Do not
+    invent Engine `--cu-stream-batch-mem-op`. Do not reverse wrapping
+    cuStreamBatchMemOp identity. Do not wrap `cuGraphAddBatchMemOpNode` as `stream_batch_mem_op`.
+    Do not invent a second `stream_batch_mem_op_with_flags` method. Do not
+    invent Engine `--cu-stream-batch-mem-op-with-flags`. Do not reverse wrapping
+    cuStreamBatchMemOp flags identity. Do not wrap `cuGraphAddBatchMemOpNode` flags as `stream_batch_mem_op_with_flags`.
+    Do not invent a second `launch_kernel` method. Do not
+    invent Engine `--cu-launch-kernel`. Do not reverse wrapping
+    cuLaunchKernel identity. Do not wrap `cuLaunchCooperativeKernel` as `launch_kernel`.
+    Do not invent a second `launch_kernel_bufs` method. Do not
+    invent Engine `--cu-launch-kernel-bufs`. Do not reverse wrapping
+    cuLaunchKernel spans identity. Do not wrap `cuLaunchCooperativeKernel` spans as `launch_kernel_bufs`.
+    Do not invent a second `launch_kernel_ex` method. Do not
+    invent Engine `--cu-launch-kernel-ex`. Do not reverse wrapping
+    cuLaunchKernelEx identity. Do not wrap `kernel_pdl` as `launch_kernel_ex`.
+    Do not invent a second `launch_kernel_ex_bufs` method. Do not
+    invent Engine `--cu-launch-kernel-ex-bufs`. Do not reverse wrapping
+    cuLaunchKernelEx spans identity. Do not wrap `kernel_pdl_bufs` as `launch_kernel_ex_bufs`.
+    Do not invent a second `func_set_shared_mem_config` method. Do not
+    invent Engine `--cu-func-set-shared-mem-config`. Do not reverse wrapping
+    cuFuncSetSharedMemConfig identity. Do not wrap `cuCtxSetSharedMemConfig` as `func_set_shared_mem_config`.
+    Do not invent a second `func_get_shared_mem_config` method. Do not
+    invent Engine `--cu-func-get-shared-mem-config`. Do not reverse wrapping
+    cuFuncGetSharedMemConfig identity. Do not wrap `cuCtxGetSharedMemConfig` as `func_get_shared_mem_config`.
+    Do not invent a second `func_set_cache_config` method. Do not
+    invent Engine `--cu-func-set-cache-config`. Do not reverse wrapping
+    cuFuncSetCacheConfig identity. Do not wrap `cuCtxSetCacheConfig` as `func_set_cache_config`.
+    Do not invent a second `func_set_carveout` method. Do not
+    invent Engine `--cu-func-set-carveout`. Do not reverse wrapping
+    cuFuncSetAttribute carveout identity. Do not wrap generic `cuFuncSetAttribute` as `func_set_carveout`.
+    Do not invent a second `func_get_carveout` method. Do not
+    invent Engine `--cu-func-get-carveout`. Do not reverse wrapping
+    cuFuncGetAttribute carveout identity. Do not wrap generic `cuFuncGetAttribute` as `func_get_carveout`.
+    Do not invent a second `func_set_cluster_policy` method. Do not
+    invent Engine `--cu-func-set-cluster-policy`. Do not reverse wrapping
+    cuFuncSetAttribute cluster policy identity. Do not wrap generic `cuFuncSetAttribute` as `func_set_cluster_policy`.
+    Do not invent a second `func_get_cluster_policy` method. Do not
+    invent Engine `--cu-func-get-cluster-policy`. Do not reverse wrapping
+    cuFuncGetAttribute cluster policy identity. Do not wrap generic `cuFuncGetAttribute` as `func_get_cluster_policy`.
+    Do not invent a second `func_set_cluster_dim_must_be_set` method. Do not
+    invent Engine `--cu-func-set-cluster-dim-must-be-set`. Do not reverse wrapping
+    cuFuncSetAttribute cluster dim must be set identity. Do not wrap generic `cuFuncSetAttribute` as `func_set_cluster_dim_must_be_set`.
+    Do not invent a second `func_get_cluster_dim_must_be_set` method. Do not
+    invent Engine `--cu-func-get-cluster-dim-must-be-set`. Do not reverse wrapping
+    cuFuncGetAttribute cluster dim must be set identity. Do not wrap generic `cuFuncGetAttribute` as `func_get_cluster_dim_must_be_set`.
+    Do not invent a second `func_set_required_cluster_width` method. Do not
+    invent Engine `--cu-func-set-required-cluster-width`. Do not reverse wrapping
+    cuFuncSetAttribute required cluster width identity. Do not wrap generic `cuFuncSetAttribute` as `func_set_required_cluster_width`.
+    Do not invent a second `func_get_required_cluster_width` method. Do not
+    invent Engine `--cu-func-get-required-cluster-width`. Do not reverse wrapping
+    cuFuncGetAttribute required cluster width identity. Do not wrap generic `cuFuncGetAttribute` as `func_get_required_cluster_width`.
+    Do not invent a second `func_set_required_cluster_height` method. Do not
+    invent Engine `--cu-func-set-required-cluster-height`. Do not reverse wrapping
+    cuFuncSetAttribute required cluster height identity. Do not wrap generic `cuFuncSetAttribute` as `func_set_required_cluster_height`.
+    Do not invent a second `func_get_required_cluster_height` method. Do not
+    invent Engine `--cu-func-get-required-cluster-height`. Do not reverse wrapping
+    cuFuncGetAttribute required cluster height identity. Do not wrap generic `cuFuncGetAttribute` as `func_get_required_cluster_height`.
+    Do not invent a second `func_set_required_cluster_depth` method. Do not
+    invent Engine `--cu-func-set-required-cluster-depth`. Do not reverse wrapping
+    cuFuncSetAttribute required cluster depth identity. Do not wrap generic `cuFuncSetAttribute` as `func_set_required_cluster_depth`.
+    Do not invent a second `func_get_required_cluster_depth` method. Do not
+    invent Engine `--cu-func-get-required-cluster-depth`. Do not reverse wrapping
+    cuFuncGetAttribute required cluster depth identity. Do not wrap generic `cuFuncGetAttribute` as `func_get_required_cluster_depth`.
+    Do not invent a second `func_set_non_portable_cluster_size_allowed` method. Do not
+    invent Engine `--cu-func-set-non-portable-cluster-size-allowed`. Do not reverse wrapping
+    cuFuncSetAttribute non-portable cluster size identity. Do not wrap generic `cuFuncSetAttribute` as `func_set_non_portable_cluster_size_allowed`.
+    Do not invent a second `func_get_non_portable_cluster_size_allowed` method. Do not
+    invent Engine `--cu-func-get-non-portable-cluster-size-allowed`. Do not reverse wrapping
+    cuFuncGetAttribute non-portable cluster size identity. Do not wrap generic `cuFuncGetAttribute` as `func_get_non_portable_cluster_size_allowed`.
+    Do not invent a second `func_set_max_dynamic_shared_memory` method. Do not
+    invent Engine `--cu-func-set-max-dynamic-shared-memory`. Do not reverse wrapping
+    cuFuncSetAttribute max dynamic shared memory identity. Do not wrap generic `cuFuncSetAttribute` as `func_set_max_dynamic_shared_memory`.
+    Do not invent a second `func_get_max_dynamic_shared_memory` method. Do not
+    invent Engine `--cu-func-get-max-dynamic-shared-memory`. Do not reverse wrapping
+    cuFuncGetAttribute max dynamic shared memory identity. Do not wrap generic `cuFuncGetAttribute` as `func_get_max_dynamic_shared_memory`.
+    Do not invent a second `event_create_disable_timing` method. Do not
+    invent Engine `--cu-event-create-disable-timing`. Do not reverse wrapping
+    cuEventCreateWithFlags disable timing identity. Do not wrap generic `cuEventCreateWithFlags` as `event_create_disable_timing`.
+    Do not invent a second `event_create_interprocess` method. Do not
+    invent Engine `--cu-event-create-interprocess`. Do not reverse wrapping
+    cuEventCreateWithFlags interprocess identity. Do not wrap generic `cuEventCreateWithFlags` as `event_create_interprocess`.
+    Do not invent a second `event_create_blocking_sync` method. Do not
+    invent Engine `--cu-event-create-blocking-sync`. Do not reverse wrapping
+    cuEventCreateWithFlags blocking sync identity. Do not wrap generic `cuEventCreateWithFlags` as `event_create_blocking_sync`.
+    Do not invent a second `event_record_external` method. Do not
+    invent Engine `--cu-event-record-external`. Do not reverse wrapping
+    cuEventRecordWithFlags external identity. Do not wrap generic `cuEventRecordWithFlags` as `event_record_external`.
+    Do not invent a second `stream_wait_event_external` method. Do not
+    invent Engine `--cu-stream-wait-event-external`. Do not reverse wrapping
+    cuStreamWaitEvent external identity. Do not wrap generic `cuStreamWaitEvent` as `stream_wait_event_external`.
+    Do not invent a second `stream_set_mem_sync_domain` method. Do not
+    invent Engine `--cu-stream-set-mem-sync-domain`. Do not reverse wrapping
+    cuStreamSetAttribute mem sync domain identity. Do not wrap generic `cuStreamSetAttribute` as `stream_set_mem_sync_domain`.
+    Do not invent a second `stream_set_mem_sync_domain_map` method. Do not
+    invent Engine `--cu-stream-set-mem-sync-domain-map`. Do not reverse wrapping
+    cuStreamSetAttribute mem sync domain map identity. Do not wrap generic `cuStreamSetAttribute` as `stream_set_mem_sync_domain_map`.
+    Do not invent a second `stream_get_mem_sync_domain` method. Do not
+    invent Engine `--cu-stream-get-mem-sync-domain`. Do not reverse wrapping
+    cuStreamGetAttribute mem sync domain identity. Do not wrap generic `cuStreamGetAttribute` as `stream_get_mem_sync_domain`.
+    Do not invent a second `stream_get_mem_sync_domain_map` method. Do not
+    invent Engine `--cu-stream-get-mem-sync-domain-map`. Do not reverse wrapping
+    cuStreamGetAttribute mem sync domain map identity. Do not wrap generic `cuStreamGetAttribute` as `stream_get_mem_sync_domain_map`.
+    Do not invent a second `stream_set_sync_policy` method. Do not
+    invent Engine `--cu-stream-set-sync-policy`. Do not reverse wrapping
+    cuStreamSetAttribute sync policy identity. Do not wrap generic `cuStreamSetAttribute` as `stream_set_sync_policy`.
+    Do not invent a second `stream_get_sync_policy` method. Do not
+    invent Engine `--cu-stream-get-sync-policy`. Do not reverse wrapping
+    cuStreamGetAttribute sync policy identity. Do not wrap generic `cuStreamGetAttribute` as `stream_get_sync_policy`.
+    Do not invent a second `stream_set_nvlink_util_centric` method. Do not
+    invent Engine `--cu-stream-set-nvlink-util-centric`. Do not reverse wrapping
+    cuStreamSetAttribute nvlink util centric identity. Do not wrap generic `cuStreamSetAttribute` as `stream_set_nvlink_util_centric`.
+    Do not invent a second `stream_get_nvlink_util_centric` method. Do not
+    invent Engine `--cu-stream-get-nvlink-util-centric`. Do not reverse wrapping
+    cuStreamGetAttribute nvlink util centric identity. Do not wrap generic `cuStreamGetAttribute` as `stream_get_nvlink_util_centric`.
+    Do not invent a second `stream_set_access_policy` method. Do not
+    invent Engine `--cu-stream-set-access-policy`. Do not reverse wrapping
+    cuStreamSetAttribute access policy identity. Do not wrap generic `cuStreamSetAttribute` as `stream_set_access_policy`.
+    Do not invent a second `stream_get_access_policy` method. Do not
+    invent Engine `--cu-stream-get-access-policy`. Do not reverse wrapping
+    cuStreamGetAttribute access policy identity. Do not wrap generic `cuStreamGetAttribute` as `stream_get_access_policy`.
+    Do not invent a second `stream_set_priority` method. Do not
+    invent Engine `--cu-stream-set-priority`. Do not reverse wrapping
+    cuStreamSetAttribute priority identity. Do not wrap generic `cuStreamSetAttribute` as `stream_set_priority`.
+    Do not invent a second `stream_set_blocking` method. Do not
+    invent Engine `--cu-stream-set-blocking`. Do not reverse wrapping
+    cuStreamCreate blocking identity. Do not wrap generic `cuStreamCreateWithFlags` as `stream_set_blocking`.
+    Do not invent a second `get_func_attributes` method. Do not
+    invent Engine `--cu-get-func-attributes`. Do not reverse wrapping
+    cuFuncGetAttributes identity. Do not wrap generic `cuFuncGetAttribute` as `get_func_attributes`.
+    Do not invent a second `get_device_name` method. Do not
+    invent Engine `--cu-get-device-name`. Do not reverse wrapping
+    cuDeviceGetName identity. Do not wrap `cuDeviceGetUuid` as `get_device_name`.
+    Do not invent a second `get_device_count` method. Do not
+    invent Engine `--cu-get-device-count`. Do not reverse wrapping
+    cuDeviceGetCount identity. Do not wrap `cuDeviceGet` as `get_device_count`.
+    Do not invent a second `device_get_default_mempool` method. Do not
+    invent Engine `--cu-device-get-default-mempool`. Do not reverse wrapping
+    cuDeviceGetDefaultMemPool identity. Do not wrap `cuDeviceGetMemPool` as `device_get_default_mempool`.
+    Do not invent a second `device_get_mempool` method. Do not
+    invent Engine `--cu-device-get-mempool`. Do not reverse wrapping
+    cuDeviceGetMemPool identity. Do not wrap `cuDeviceSetMemPool` as `device_get_mempool`.
+    Do not invent a second `device_set_mempool` method. Do not
+    invent Engine `--cu-device-set-mempool`. Do not reverse wrapping
+    cuDeviceSetMemPool identity. Do not wrap `cuMemPoolCreate` as `device_set_mempool`.
+    Do not invent a second `mem_pool_create` method. Do not
+    invent Engine `--cu-mem-pool-create`. Do not reverse wrapping
+    cuMemPoolCreate identity. Do not wrap `create_shareable_pool` as `mem_pool_create`.
+    Do not invent a second `mem_pool_create_shareable` method. Do not
+    invent Engine `--cu-mem-pool-create-shareable`. Do not reverse wrapping
+    cuMemPoolCreate POSIX identity. Do not wrap `create_pool_with_props` as `mem_pool_create_shareable`.
+    Do not invent a second `mem_pool_create_with_props` method. Do not
+    invent Engine `--cu-mem-pool-create-with-props`. Do not reverse wrapping
+    cuMemPoolCreate props identity. Do not wrap `destroy_pool` as `mem_pool_create_with_props`.
+    Do not invent a second `mem_pool_destroy` method. Do not
+    invent Engine `--cu-mem-pool-destroy`. Do not reverse wrapping
+    cuMemPoolDestroy identity. Do not wrap `cuMemAllocFromPoolAsync` as `mem_pool_destroy`.
+    Do not invent a second `mem_alloc_from_pool` method. Do not
+    invent Engine `--cu-mem-alloc-from-pool`. Do not reverse wrapping
+    cuMemAllocFromPoolAsync identity. Do not wrap `cuMemPoolExportToShareableHandle` as `mem_alloc_from_pool`.
+    Do not invent a second `mem_pool_export` method. Do not
+    invent Engine `--cu-mem-pool-export`. Do not reverse wrapping
+    cuMemPoolExportToShareableHandle identity. Do not wrap `pool_import` as `mem_pool_export`.
+    Do not invent a second `mem_pool_import` method. Do not
+    invent Engine `--cu-mem-pool-import`. Do not reverse wrapping
+    cuMemPoolImportFromShareableHandle identity. Do not wrap `pool_export_with_type` as `mem_pool_import`.
+    Do not invent a second `mem_pool_export_with_type` method. Do not
+    invent Engine `--cu-mem-pool-export-with-type`. Do not reverse wrapping
+    cuMemPoolExportToShareableHandle type identity. Do not wrap `pool_import_with_type` as `mem_pool_export_with_type`.
+    Do not invent a second `mem_pool_import_with_type` method. Do not
+    invent Engine `--cu-mem-pool-import-with-type`. Do not reverse wrapping
+    cuMemPoolImportFromShareableHandle type identity. Do not wrap `pool_export_ptr` as `mem_pool_import_with_type`.
+    Do not invent a second `mem_pool_export_ptr` method. Do not
+    invent Engine `--cu-mem-pool-export-ptr`. Do not reverse wrapping
+    cuMemPoolExportPointer identity. Do not wrap `pool_import_ptr` as `mem_pool_export_ptr`.
+    Do not invent a second `mem_pool_import_ptr` method. Do not
+    invent Engine `--cu-mem-pool-import-ptr`. Do not reverse wrapping
+    cuMemPoolImportPointer identity. Do not wrap `pool_get_access` as `mem_pool_import_ptr`.
+    Do not invent a second `mem_pool_get_access` method. Do not
+    invent Engine `--cu-mem-pool-get-access`. Do not reverse wrapping
+    cuMemPoolGetAccess identity. Do not wrap `pool_set_access` as `mem_pool_get_access`.
+    Do not invent a second `mem_pool_set_access` method. Do not
+    invent Engine `--cu-mem-pool-set-access`. Do not reverse wrapping
+    cuMemPoolSetAccess identity. Do not wrap `pool_set_access_read` as `mem_pool_set_access`.
+    Do not invent a second `mem_pool_set_access_read` method. Do not
+    invent Engine `--cu-mem-pool-set-access-read`. Do not reverse wrapping
+    cuMemPoolSetAccess ProtRead identity. Do not wrap `pool_set_access_with_flags` as `mem_pool_set_access_read`.
+    Do not invent a second `mem_pool_set_access_with_flags` method. Do not
+    invent Engine `--cu-mem-pool-set-access-with-flags`. Do not reverse wrapping
+    cuMemPoolSetAccess flags identity. Do not wrap `pool_set_access_n` as `mem_pool_set_access_with_flags`.
+    Do not invent a second `mem_pool_set_access_n` method. Do not
+    invent Engine `--cu-mem-pool-set-access-n`. Do not reverse wrapping
+    cuMemPoolSetAccess n identity. Do not wrap `pool_unset_access` as `mem_pool_set_access_n`.
+    Do not invent a second `mem_pool_unset_access` method. Do not
+    invent Engine `--cu-mem-pool-unset-access`. Do not reverse wrapping
+    cuMemPoolSetAccess ProtNone identity. Do not wrap `pool_get_attribute` as `mem_pool_unset_access`.
+    Do not invent a second `mem_pool_get_attribute` method. Do not
+    invent Engine `--cu-mem-pool-get-attribute`. Do not reverse wrapping
+    cuMemPoolGetAttribute identity. Do not wrap `pool_set_attribute` as `mem_pool_get_attribute`.
+    Do not invent a second `mem_pool_set_attribute` method. Do not
+    invent Engine `--cu-mem-pool-set-attribute`. Do not reverse wrapping
+    cuMemPoolSetAttribute identity. Do not wrap `pool_trim_to` as `mem_pool_set_attribute`.
+    Do not invent a second `mem_pool_trim_to` method. Do not
+    invent Engine `--cu-mem-pool-trim-to`. Do not reverse wrapping
+    cuMemPoolTrimTo identity. Do not wrap `set_pool_release_threshold` as `mem_pool_trim_to`.
+    Do not invent a second `mem_pool_set_release_threshold` method. Do not
+    invent Engine `--cu-mem-pool-set-release-threshold`. Do not reverse wrapping
+    cuMemPoolSetAttribute ReleaseThreshold identity. Do not wrap `set_pool_max_size` as `mem_pool_set_release_threshold`.
+    Do not invent a second `mem_pool_set_max_size` method. Do not
+    invent Engine `--cu-mem-pool-set-max-size`. Do not reverse wrapping
+    cuMemPoolSetAttribute MaxPoolSize identity. Do not wrap `set_default_pool_release_threshold` as `mem_pool_set_max_size`.
+    Do not invent a second `mem_get_allocation_granularity` method. Do not
+    invent Engine `--cu-mem-get-allocation-granularity`. Do not reverse wrapping
+    cuMemGetAllocationGranularity identity. Do not wrap `va_create` as `mem_get_allocation_granularity`.
+    Do not invent a second `mem_create` method. Do not
+    invent Engine `--cu-mem-create`. Do not reverse wrapping
+    cuMemCreate identity. Do not wrap `va_create_with_prop` as `mem_create`.
+    Do not invent a second `mem_create_with_prop` method. Do not
+    invent Engine `--cu-mem-create-with-prop`. Do not reverse wrapping
+    cuMemCreate props identity. Do not wrap `va_map_handle` as `mem_create_with_prop`.
+    Do not invent a second `mem_map_handle` method. Do not
+    invent Engine `--cu-mem-map-handle`. Do not reverse wrapping
+    cuMemMap identity. Do not wrap `va_map_handle_with_flags` as `mem_map_handle`.
+    Do not invent a second `mem_map_handle_with_flags` method. Do not
+    invent Engine `--cu-mem-map-handle-with-flags`. Do not reverse wrapping
+    cuMemMap flags identity. Do not wrap `va_map_handle_with_size` as `mem_map_handle_with_flags`.
+    Do not invent a second `mem_map_handle_with_size` method. Do not
+    invent Engine `--cu-mem-map-handle-with-size`. Do not reverse wrapping
+    cuMemMap size identity. Do not wrap `va_unmap` as `mem_map_handle_with_size`.
+    Do not invent a second `mem_release_handle` method. Do not
+    invent Engine `--cu-mem-release-handle`. Do not reverse wrapping
+    cuMemRelease identity. Do not wrap `va_unmap` as `mem_release_handle`.
+    Do not invent a second `mem_retain_handle` method. Do not
+    invent Engine `--cu-mem-retain-handle`. Do not reverse wrapping
+    cuMemRetainAllocationHandle identity. Do not wrap `va_unmap` as `mem_retain_handle`.
+    Do not invent a second `mem_unmap` method. Do not
+    invent Engine `--cu-mem-unmap`. Do not reverse wrapping
+    cuMemUnmap identity. Do not wrap `va_unmap_with_size` as `mem_unmap`.
+    Do not invent a second `mem_unmap_with_size` method. Do not
+    invent Engine `--cu-mem-unmap-with-size`. Do not reverse wrapping
+    cuMemUnmap size identity. Do not wrap `va_free` as `mem_unmap_with_size`.
+    Do not invent a second `mem_address_free` method. Do not
+    invent Engine `--cu-mem-address-free`. Do not reverse wrapping
+    cuMemAddressFree identity. Do not wrap `va_free_with_size` as `mem_address_free`.
+    Do not invent a second `mem_address_free_with_size` method. Do not
+    invent Engine `--cu-mem-address-free-with-size`. Do not reverse wrapping
+    cuMemAddressFree size identity. Do not wrap `va_unmap_range` as `mem_address_free_with_size`.
+    Do not invent a second `mem_unmap_range` method. Do not
+    invent Engine `--cu-mem-unmap-range`. Do not reverse wrapping
+    cuMemUnmap range identity. Do not wrap `va_set_access` as `mem_unmap_range`.
+    Do not invent a second `mem_set_access` method. Do not
+    invent Engine `--cu-mem-set-access`. Do not reverse wrapping
+    cuMemSetAccess identity. Do not wrap `va_set_access_write` as `mem_set_access`.
+    Do not invent a second `mem_set_access_write` method. Do not
+    invent Engine `--cu-mem-set-access-write`. Do not reverse wrapping
+    cuMemSetAccess write identity. Do not wrap `va_set_access_with_flags` as `mem_set_access_write`.
+    Do not invent a second `mem_set_access_with_flags` method. Do not
+    invent Engine `--cu-mem-set-access-with-flags`. Do not reverse wrapping
+    cuMemSetAccess flags identity. Do not wrap `va_set_access_with_size` as `mem_set_access_with_flags`.
+    Do not invent a second `mem_set_access_with_size` method. Do not
+    invent Engine `--cu-mem-set-access-with-size`. Do not reverse wrapping
+    cuMemSetAccess size identity. Do not wrap `va_set_access_n` as `mem_set_access_with_size`.
+    Do not invent a second `mem_set_access_n` method. Do not
+    invent Engine `--cu-mem-set-access-n`. Do not reverse wrapping
+    cuMemSetAccess n identity. Do not wrap `va_unset_access` as `mem_set_access_n`.
+    Do not invent a second `mem_unset_access` method. Do not
+    invent Engine `--cu-mem-unset-access`. Do not reverse wrapping
+    cuMemSetAccess ProtNone identity. Do not wrap `va_get_access` as `mem_unset_access`.
+    Do not invent a second `mem_get_access` method. Do not
+    invent Engine `--cu-mem-get-access`. Do not reverse wrapping
+    cuMemGetAccess identity. Do not wrap `va_map_range` as `mem_get_access`.
+    Do not invent a second `mem_map_range` method. Do not
+    invent Engine `--cu-mem-map-range`. Do not reverse wrapping
+    cuMemMap range identity. Do not wrap `va_get_allocation_properties` as `mem_map_range`.
+    Do not invent a second `mem_get_allocation_properties` method. Do not
+    invent Engine `--cu-mem-get-allocation-properties`. Do not reverse wrapping
+    cuMemGetAllocationPropertiesFromHandle identity. Do not wrap `va_map_multicast` as `mem_get_allocation_properties`.
+    Do not invent a second `mem_map_multicast` method. Do not
+    invent Engine `--cu-mem-map-multicast`. Do not reverse wrapping
+    cuMemMap multicast identity. Do not wrap `va_map_multicast_with_flags` as `mem_map_multicast`.
+    Do not invent a second `mem_map_multicast_with_flags` method. Do not
+    invent Engine `--cu-mem-map-multicast-with-flags`. Do not reverse wrapping
+    cuMemMap multicast flags identity. Do not wrap `va_map_multicast_with_size` as `mem_map_multicast_with_flags`.
+    Do not invent a second `mem_map_multicast_with_size` method. Do not
+    invent Engine `--cu-mem-map-multicast-with-size`. Do not reverse wrapping
+    cuMemMap multicast size identity. Do not wrap `multicast_get_granularity` as `mem_map_multicast_with_size`.
+    Do not invent a second `mem_multicast_get_granularity` method. Do not
+    invent Engine `--cu-mem-multicast-get-granularity`. Do not reverse wrapping
+    cuMulticastGetGranularity identity. Do not wrap `multicast_get_granularity_with_prop` as `mem_multicast_get_granularity`.
+    Do not invent a second `mem_multicast_get_granularity_with_prop` method. Do not
+    invent Engine `--cu-mem-multicast-get-granularity-with-prop`. Do not reverse wrapping
+    cuMulticastGetGranularity prop identity. Do not wrap `multicast_create` as `mem_multicast_get_granularity_with_prop`.
+    Do not invent a second `mem_multicast_create` method. Do not
+    invent Engine `--cu-mem-multicast-create`. Do not reverse wrapping
+    cuMulticastCreate identity. Do not wrap `multicast_create_with_prop` as `mem_multicast_create`.
+    Do not invent a second `mem_multicast_create_with_prop` method. Do not
+    invent Engine `--cu-mem-multicast-create-with-prop`. Do not reverse wrapping
+    cuMulticastCreate prop identity. Do not wrap `multicast_add_device` as `mem_multicast_create_with_prop`.
+    Do not invent a second `mem_multicast_add_device` method. Do not
+    invent Engine `--cu-mem-multicast-add-device`. Do not reverse wrapping
+    cuMulticastAddDevice identity. Do not wrap `multicast_bind_mem` as `mem_multicast_add_device`.
+    Do not invent a second `mem_multicast_bind_mem` method. Do not
+    invent Engine `--cu-mem-multicast-bind-mem`. Do not reverse wrapping
+    cuMulticastBindMem identity. Do not wrap `multicast_bind_mem_with_flags` as `mem_multicast_bind_mem`.
+    Do not invent a second `mem_multicast_bind_mem_with_flags` method. Do not
+    invent Engine `--cu-mem-multicast-bind-mem-with-flags`. Do not reverse wrapping
+    cuMulticastBindMem flags identity. Do not wrap `multicast_bind_mem_with_size` as `mem_multicast_bind_mem_with_flags`.
+    Do not invent a second `mem_multicast_bind_mem_with_size` method. Do not
+    invent Engine `--cu-mem-multicast-bind-mem-with-size`. Do not reverse wrapping
+    cuMulticastBindMem size identity. Do not wrap `multicast_bind_addr` as `mem_multicast_bind_mem_with_size`.
+    Do not invent a second `mem_multicast_bind_addr` method. Do not
+    invent Engine `--cu-mem-multicast-bind-addr`. Do not reverse wrapping
+    cuMulticastBindAddr identity. Do not wrap `multicast_bind_addr_with_flags` as `mem_multicast_bind_addr`.
+    Do not invent a second `mem_multicast_bind_addr_with_flags` method. Do not
+    invent Engine `--cu-mem-multicast-bind-addr-with-flags`. Do not reverse wrapping
+    cuMulticastBindAddr flags identity. Do not wrap `multicast_bind_addr_with_size` as `mem_multicast_bind_addr_with_flags`.
+    Do not invent a second `mem_multicast_bind_addr_with_size` method. Do not
+    invent Engine `--cu-mem-multicast-bind-addr-with-size`. Do not reverse wrapping
+    cuMulticastBindAddr size identity. Do not wrap `multicast_unbind` as `mem_multicast_bind_addr_with_size`.
+    Do not invent a second `mem_multicast_unbind` method. Do not
+    invent Engine `--cu-mem-multicast-unbind`. Do not reverse wrapping
+    cuMulticastUnbind identity. Do not wrap `multicast_unbind_with_size` as `mem_multicast_unbind`.
+    Do not invent a second `mem_multicast_unbind_with_size` method. Do not
+    invent Engine `--cu-mem-multicast-unbind-with-size`. Do not reverse wrapping
+    cuMulticastUnbind size identity. Do not wrap `multicast_destroy` as `mem_multicast_unbind_with_size`.
+    Do not invent a second `mem_multicast_destroy` method. Do not
+    invent Engine `--cu-mem-multicast-destroy`. Do not reverse wrapping
+    cuMemRelease multicast identity. Do not wrap `multicast_destroy` as `mem_release_handle`.
+    Do not wrap `multicast_store` as `mem_multicast_destroy`.
+    Do not invent a second `mem_multicast_store` method. Do not
+    invent Engine `--cu-mem-multicast-store`. Do not reverse wrapping
+    NVLS multicast store identity. Do not wrap `multicast_binds` as `mem_multicast_store`.
+    Do not invent `cuMulticastStore` as `mem_multicast_store`.
+    Do not invent a second `mem_multicast_binds` method. Do not
+    invent Engine `--cu-mem-multicast-binds`. Do not reverse wrapping
+    multicast binds identity. Do not wrap `is_multicast_va` as `mem_multicast_binds`.
+    Do not invent `cuMulticastGetBindCount` as `mem_multicast_binds`.
+    Do not invent a second `mem_is_multicast_va` method. Do not
+    invent Engine `--cu-mem-is-multicast-va`. Do not reverse wrapping
+    multicast VA query identity. Do not wrap `pointer_get_attribute` as `mem_is_multicast_va`.
+    Do not invent `cuPointerGetAttribute` as `mem_is_multicast_va`.
+    Do not invent a second `mem_pointer_get_attribute` method. Do not
+    invent Engine `--cu-mem-pointer-get-attribute`. Do not reverse wrapping
+    cuPointerGetAttribute identity. Do not wrap `pointer_get_attribute_n` as `mem_pointer_get_attribute`.
+    Do not invent Engine `--pointer-attrs`.
+    Do not invent a second `mem_pointer_get_attribute_n` method. Do not
+    invent Engine `--cu-mem-pointer-get-attribute-n`. Do not reverse wrapping
+    cuPointerGetAttributes identity. Do not wrap `pointer_get_access_flags` as `mem_pointer_get_attribute_n`.
+    Do not wrap `pointer_get_attributes` as `mem_pointer_get_attribute_n`.
+    Do not invent a second `mem_pointer_get_access_flags` method. Do not
+    invent Engine `--cu-mem-pointer-get-access-flags`. Do not reverse wrapping
+    CU_POINTER_ATTRIBUTE_ACCESS_FLAGS identity. Do not wrap `pointer_set_attribute` as `mem_pointer_get_access_flags`.
+    Do not wrap `pointer_get_attributes` as `mem_pointer_get_access_flags`.
+    Do not invent Engine `--pointer-access`.
+    Do not invent a second `mem_pointer_set_attribute` method. Do not
+    invent Engine `--cu-mem-pointer-set-attribute`. Do not reverse wrapping
+    cuPointerSetAttribute identity. Do not wrap `pointer_get_attributes` as `mem_pointer_set_attribute`.
+    Do not invent `cudaPointerGetAttributes` as `mem_pointer_set_attribute`.
+    Do not invent a second `mem_pointer_get_attributes` method. Do not
+    invent Engine `--cu-mem-pointer-get-attributes`. Do not reverse wrapping
+    cudaPointerGetAttributes identity. Do not wrap `host_get_device_pointer` as `mem_pointer_get_attributes`.
+    Do not invent Engine `--pointer-attrs`.
+    Do not invent a second `mem_alloc_pitch_with_element_size` method. Do not
+    invent Engine `--cu-mem-alloc-pitch-with-element-size`. Do not reverse wrapping
+    cuMemAllocPitch identity. Do not wrap `malloc_3d` as `mem_alloc_pitch_with_element_size`.
+    Do not wrap `host_get_device_pointer` as `mem_alloc_pitch_with_element_size`.
+    Do not invent a second `mem_device_get_attribute` method. Do not
+    invent Engine `--cu-mem-device-get-attribute`. Do not reverse wrapping
+    cuDeviceGetAttribute identity. Do not wrap `device_get_properties` as `mem_device_get_attribute`.
+    Do not wrap `malloc_3d` as `mem_device_get_attribute`.
+    Do not invent a second `mem_device_get_properties` method. Do not
+    invent Engine `--cu-mem-device-get-properties`. Do not reverse wrapping
+    cuDeviceGetProperties identity. Do not wrap `device_compute_capability` as `mem_device_get_properties`.
+    Do not wrap `device_get_name` as `mem_device_get_properties`.
+    Do not invent a second `mem_device_compute_capability` method. Do not
+    invent Engine `--cu-mem-device-compute-capability`. Do not reverse wrapping
+    cuDeviceComputeCapability identity. Do not wrap `device_get_name` as `mem_device_compute_capability`.
+    Do not wrap `device_get_uuid` as `mem_device_compute_capability`.
+    Do not invent a second `mem_device_get_uuid` method. Do not
+    invent Engine `--cu-mem-device-get-uuid`. Do not reverse wrapping
+    cuDeviceGetUuid identity. Do not wrap `device_get_name` as `mem_device_get_uuid`.
+    Do not wrap `device_get_luid` as `mem_device_get_uuid`.
+    Do not invent a second `mem_device_get_luid` method. Do not
+    invent Engine `--cu-mem-device-get-luid`. Do not reverse wrapping
+    cuDeviceGetLuid identity. Do not wrap `device_get_uuid` as `mem_device_get_luid`.
+    Do not wrap `device_get_texture_1d_linear_max_width` as `mem_device_get_luid`.
+    Do not invent a second `mem_device_get_texture_1d_linear_max_width` method. Do not
+    invent Engine `--cu-mem-device-get-texture-1d-linear-max-width`. Do not reverse wrapping
+    cuDeviceGetTexture1DLinearMaxWidth identity. Do not wrap `device_get_luid` as `mem_device_get_texture_1d_linear_max_width`.
+    Do not wrap `device_get_by_uuid` as `mem_device_get_texture_1d_linear_max_width`.
+    Do not invent a second `mem_device_get_by_uuid` method. Do not
+    invent Engine `--cu-mem-device-get-by-uuid`. Do not reverse wrapping
+    cuDeviceGetByUuid identity. Do not wrap `device_get` as `mem_device_get_by_uuid`.
+    Do not wrap `device_get_pci_bus_id` as `mem_device_get_by_uuid`.
+    Do not invent a second `mem_device_get_pci_bus_id` method. Do not
+    invent Engine `--cu-mem-device-get-pci-bus-id`. Do not reverse wrapping
+    cuDeviceGetPCIBusId identity. Do not wrap `device_get_by_uuid` as `mem_device_get_pci_bus_id`.
+    Do not wrap `device_get_by_pci_bus_id` as `mem_device_get_pci_bus_id`.
+    Do not invent a second `mem_device_get_by_pci_bus_id` method. Do not
+    invent Engine `--cu-mem-device-get-by-pci-bus-id`. Do not reverse wrapping
+    cudaDeviceGetByPCIBusId identity. Do not wrap `device_get_pci_bus_id` as `mem_device_get_by_pci_bus_id`.
+    Do not wrap `device_total_mem` as `mem_device_get_by_pci_bus_id`.
+    Do not invent a second `mem_device_total_mem` method. Do not
+    invent Engine `--cu-mem-device-total-mem`. Do not reverse wrapping
+    cuDeviceTotalMem identity. Do not wrap `device_count` as `mem_device_total_mem`.
+    Do not wrap `get_device_count` as `mem_device_total_mem`.
+    Do not invent a second `mem_driver_get_version` method. Do not
+    invent Engine `--cu-mem-driver-get-version`. Do not reverse wrapping
+    cuDriverGetVersion identity. Do not wrap `get_device_count` as `mem_driver_get_version`.
+    Do not wrap `get_proc_address` as `mem_driver_get_version`.
+    Do not invent a second `mem_get_proc_address` method. Do not
+    invent Engine `--cu-mem-get-proc-address`. Do not reverse wrapping
+    cuGetProcAddress identity. Do not wrap `driver_get_version` as `mem_get_proc_address`.
+    Do not wrap `get_export_table` as `mem_get_proc_address`.
+    Do not invent a second `mem_get_export_table` method. Do not
+    invent Engine `--cu-mem-get-export-table`. Do not reverse wrapping
+    cuGetExportTable identity. Do not wrap `get_proc_address` as `mem_get_export_table`.
+    Do not wrap `coredump_get_attribute` as `mem_get_export_table`.
+    Do not invent a second `mem_coredump_get_attribute` method. Do not
+    invent Engine `--cu-mem-coredump-get-attribute`. Do not reverse wrapping
+    cuCoredumpGetAttribute identity. Do not wrap `get_export_table` as `mem_coredump_get_attribute`.
+    Do not wrap `coredump_set_attribute` as `mem_coredump_get_attribute`.
+    Do not invent a second `mem_coredump_set_attribute` method. Do not
+    invent Engine `--cu-mem-coredump-set-attribute`. Do not reverse wrapping
+    cuCoredumpSetAttribute identity. Do not wrap `coredump_get_attribute` as `mem_coredump_set_attribute`.
+    Do not wrap `coredump_get_attribute_global` as `mem_coredump_set_attribute`.
+    Do not invent a second `mem_coredump_get_attribute_global` method. Do not
+    invent Engine `--cu-mem-coredump-get-attribute-global`. Do not reverse wrapping
+    cuCoredumpGetAttributeGlobal identity. Do not wrap `coredump_set_attribute` as `mem_coredump_get_attribute_global`.
+    Do not wrap `coredump_set_attribute_global` as `mem_coredump_get_attribute_global`.
+    Do not invent a second `mem_coredump_set_attribute_global` method. Do not
+    invent Engine `--cu-mem-coredump-set-attribute-global`. Do not reverse wrapping
+    cuCoredumpSetAttributeGlobal identity. Do not wrap `coredump_get_attribute_global` as `mem_coredump_set_attribute_global`.
+    Do not wrap `checkpoint_process_lock` as `mem_coredump_set_attribute_global`.
+    Do not invent a second `mem_checkpoint_process_lock` method. Do not
+    invent Engine `--cu-mem-checkpoint-process-lock`. Do not reverse wrapping
+    cuCheckpointProcessLock identity. Do not wrap `coredump_set_attribute_global` as `mem_checkpoint_process_lock`.
+    Do not wrap `checkpoint_process_checkpoint` as `mem_checkpoint_process_lock`.
+    Do not invent a second `mem_checkpoint_process_checkpoint` method. Do not
+    invent Engine `--cu-mem-checkpoint-process-checkpoint`. Do not reverse wrapping
+    cuCheckpointProcessCheckpoint identity. Do not wrap `checkpoint_process_lock` as `mem_checkpoint_process_checkpoint`.
+    Do not wrap `checkpoint_process_restore` as `mem_checkpoint_process_checkpoint`.
+    Do not invent a second `mem_checkpoint_process_restore` method. Do not
+    invent Engine `--cu-mem-checkpoint-process-restore`. Do not reverse wrapping
+    cuCheckpointProcessRestore identity. Do not wrap `checkpoint_process_checkpoint` as `mem_checkpoint_process_restore`.
+    Do not wrap `checkpoint_process_unlock` as `mem_checkpoint_process_restore`.
+    Do not invent a second `mem_checkpoint_process_unlock` method. Do not
+    invent Engine `--cu-mem-checkpoint-process-unlock`. Do not reverse wrapping
+    cuCheckpointProcessUnlock identity. Do not wrap `checkpoint_process_restore` as `mem_checkpoint_process_unlock`.
+    Do not wrap `checkpoint_process_get_restore_thread_id` as `mem_checkpoint_process_unlock`.
+    Do not invent a second `mem_checkpoint_process_get_restore_thread_id` method. Do not
+    invent Engine `--cu-mem-checkpoint-process-get-restore-thread-id`. Do not reverse wrapping
+    cuCheckpointProcessGetRestoreThreadId identity. Do not wrap `checkpoint_process_unlock` as `mem_checkpoint_process_get_restore_thread_id`.
+    Do not wrap `checkpoint_process_get_state` as `mem_checkpoint_process_get_restore_thread_id`.
+    Do not invent a second `mem_checkpoint_process_get_state` method. Do not
+    invent Engine `--cu-mem-checkpoint-process-get-state`. Do not reverse wrapping
+    cuCheckpointProcessGetState identity. Do not wrap `checkpoint_process_get_restore_thread_id` as `mem_checkpoint_process_get_state`.
+    Do not wrap `device_register_async_notification` as `mem_checkpoint_process_get_state`.
+    Do not invent a second `mem_device_register_async_notification` method. Do not
+    invent Engine `--cu-mem-device-register-async-notification`. Do not reverse wrapping
+    cuDeviceRegisterAsyncNotification identity. Do not wrap `checkpoint_process_get_state` as `mem_device_register_async_notification`.
+    Do not wrap `device_unregister_async_notification` as `mem_device_register_async_notification`.
+    Do not invent a second `mem_device_unregister_async_notification` method. Do not
+    invent Engine `--cu-mem-device-unregister-async-notification`. Do not reverse wrapping
+    cuDeviceUnregisterAsyncNotification identity. Do not wrap `device_register_async_notification` as `mem_device_unregister_async_notification`.
+    Do not wrap `driver_init` as `mem_device_unregister_async_notification`.
+    Do not invent a second `mem_driver_init` method. Do not
+    invent Engine `--cu-mem-driver-init`. Do not reverse wrapping
+    cuInit identity. Do not wrap `device_unregister_async_notification` as `mem_driver_init`.
+    Do not wrap `profiler_start` as `mem_driver_init`.
+    Do not invent a second `mem_profiler_start` method. Do not
+    invent Engine `--cu-mem-profiler-start`. Do not reverse wrapping
+    cuProfilerStart identity. Do not wrap `driver_init` as `mem_profiler_start`.
+    Do not wrap `profiler_stop` as `mem_profiler_start`.
+    Do not invent a second `mem_profiler_stop` method. Do not
+    invent Engine `--cu-mem-profiler-stop`. Do not reverse wrapping
+    cuProfilerStop identity. Do not wrap `profiler_start` as `mem_profiler_stop`.
+    Do not wrap `profiler_initialize` as `mem_profiler_stop`.
+    Do not invent a second `mem_profiler_initialize` method. Do not
+    invent Engine `--cu-mem-profiler-initialize`. Do not reverse wrapping
+    cudaProfilerInitialize identity. Do not wrap `profiler_stop` as `mem_profiler_initialize`.
+    Do not wrap `module_get_loading_mode` as `mem_profiler_initialize`.
+    Do not invent a second `mem_module_get_loading_mode` method. Do not
+    invent Engine `--cu-mem-module-get-loading-mode`. Do not reverse wrapping
+    cuModuleGetLoadingMode identity. Do not wrap `profiler_initialize` as `mem_module_get_loading_mode`.
+    Do not wrap `module_load` as `mem_module_get_loading_mode`.
+    Do not invent a second `mem_module_load` method. Do not
+    invent Engine `--cu-mem-module-load`. Do not reverse wrapping
+    cuModuleLoad identity. Do not wrap `module_get_loading_mode` as `mem_module_load`.
+    Do not wrap `module_load_data` as `mem_module_load`.
+    Do not invent a second `mem_module_load_data` method. Do not
+    invent Engine `--cu-mem-module-load-data`. Do not reverse wrapping
+    cuModuleLoadData identity. Do not wrap `module_load` as `mem_module_load_data`.
+    Do not wrap `module_load_fat_binary` as `mem_module_load_data`.
+    Do not invent a second `mem_module_load_fat_binary` method. Do not
+    invent Engine `--cu-mem-module-load-fat-binary`. Do not reverse wrapping
+    cuModuleLoadFatBinary identity. Do not wrap `module_load_data` as `mem_module_load_fat_binary`.
+    Do not wrap `module_load_data_ex` as `mem_module_load_fat_binary`.
+    Do not invent a second `mem_module_load_data_ex` method. Do not
+    invent Engine `--cu-mem-module-load-data-ex`. Do not reverse wrapping
+    cuModuleLoadDataEx identity. Do not wrap `module_load_fat_binary` as `mem_module_load_data_ex`.
+    Do not wrap `module_get_function_count` as `mem_module_load_data_ex`.
+    Do not invent a second `mem_module_get_function_count` method. Do not
+    invent Engine `--cu-mem-module-get-function-count`. Do not reverse wrapping
+    cuModuleGetFunctionCount identity. Do not wrap `module_load_data_ex` as `mem_module_get_function_count`.
+    Do not wrap `module_enumerate_functions` as `mem_module_get_function_count`.
+    Do not invent a second `mem_module_enumerate_functions` method. Do not
+    invent Engine `--cu-mem-module-enumerate-functions`. Do not reverse wrapping
+    cuModuleEnumerateFunctions identity. Do not wrap `module_get_function_count` as `mem_module_enumerate_functions`.
+    Do not wrap `module_unload` as `mem_module_enumerate_functions`.
+    Do not invent a second `mem_module_unload` method. Do not
+    invent Engine `--cu-mem-module-unload`. Do not reverse wrapping
+    cuModuleUnload identity. Do not wrap `module_enumerate_functions` as `mem_module_unload`.
+    Do not wrap `module_get_function` as `mem_module_unload`.
+    Do not invent a second `mem_module_get_function` method. Do not
+    invent Engine `--cu-mem-module-get-function`. Do not reverse wrapping
+    cuModuleGetFunction identity. Do not wrap `module_unload` as `mem_module_get_function`.
+    Do not wrap `module_get_global` as `mem_module_get_function`.
+    Do not invent a second `mem_module_get_global` method. Do not
+    invent Engine `--cu-mem-module-get-global`. Do not reverse wrapping
+    cuModuleGetGlobal identity. Do not wrap `module_get_function` as `mem_module_get_global`.
+    Do not wrap `module_get_tex_ref` as `mem_module_get_global`.
+    Do not invent a second `mem_module_get_tex_ref` method. Do not
+    invent Engine `--cu-mem-module-get-tex-ref`. Do not reverse wrapping
+    cuModuleGetTexRef identity. Do not wrap `module_get_global` as `mem_module_get_tex_ref`.
+    Do not wrap `tex_ref_create` as `mem_module_get_tex_ref`.
+    Do not invent a second `mem_tex_ref_create` method. Do not
+    invent Engine `--cu-mem-tex-ref-create`. Do not reverse wrapping
+    cuTexRefCreate identity. Do not wrap `module_get_tex_ref` as `mem_tex_ref_create`.
+    Do not wrap `tex_ref_destroy` as `mem_tex_ref_create`.
+    Do not invent a second `mem_tex_ref_destroy` method. Do not
+    invent Engine `--cu-mem-tex-ref-destroy`. Do not reverse wrapping
+    cuTexRefDestroy identity. Do not wrap `tex_ref_create` as `mem_tex_ref_destroy`.
+    Do not wrap `tex_ref_set_array` as `mem_tex_ref_destroy`.
+    Do not invent a second `mem_tex_ref_set_array` method. Do not
+    invent Engine `--cu-mem-tex-ref-set-array`. Do not reverse wrapping
+    cuTexRefSetArray identity. Do not wrap `tex_ref_destroy` as `mem_tex_ref_set_array`.
+    Do not wrap `tex_ref_set_mipmapped_array` as `mem_tex_ref_set_array`.
+    Do not invent a second `mem_tex_ref_set_mipmapped_array` method. Do not
+    invent Engine `--cu-mem-tex-ref-set-mipmapped-array`. Do not reverse wrapping
+    cuTexRefSetMipmappedArray identity. Do not wrap `tex_ref_set_array` as `mem_tex_ref_set_mipmapped_array`.
+    Do not wrap `tex_ref_set_address` as `mem_tex_ref_set_mipmapped_array`.
+    Do not invent a second `mem_tex_ref_set_address` method. Do not
+    invent Engine `--cu-mem-tex-ref-set-address`. Do not reverse wrapping
+    cuTexRefSetAddress identity. Do not wrap `tex_ref_set_mipmapped_array` as `mem_tex_ref_set_address`.
+    Do not wrap `tex_ref_set_address_2d` as `mem_tex_ref_set_address`.
+    Do not invent a second `mem_tex_ref_set_address_2d` method. Do not
+    invent Engine `--cu-mem-tex-ref-set-address-2d`. Do not reverse wrapping
+    cuTexRefSetAddress2D identity. Do not wrap `tex_ref_set_address` as `mem_tex_ref_set_address_2d`.
+    Do not wrap `tex_ref_set_format` as `mem_tex_ref_set_address_2d`.
+    Do not invent a second `mem_tex_ref_set_format` method. Do not
+    invent Engine `--cu-mem-tex-ref-set-format`. Do not reverse wrapping
+    cuTexRefSetFormat identity. Do not wrap `tex_ref_set_address_2d` as `mem_tex_ref_set_format`.
+    Do not wrap `tex_ref_set_address_mode` as `mem_tex_ref_set_format`.
+    Do not invent a second `mem_tex_ref_set_address_mode` method. Do not
+    invent Engine `--cu-mem-tex-ref-set-address-mode`. Do not reverse wrapping
+    cuTexRefSetAddressMode identity. Do not wrap `tex_ref_set_format` as `mem_tex_ref_set_address_mode`.
+    Do not wrap `tex_ref_set_filter_mode` as `mem_tex_ref_set_address_mode`.
+    Do not invent a second `mem_tex_ref_set_filter_mode` method. Do not
+    invent Engine `--cu-mem-tex-ref-set-filter-mode`. Do not reverse wrapping
+    cuTexRefSetFilterMode identity. Do not wrap `tex_ref_set_address_mode` as `mem_tex_ref_set_filter_mode`.
+    Do not wrap `tex_ref_set_mipmap_filter_mode` as `mem_tex_ref_set_filter_mode`.
+    Do not invent a second `mem_tex_ref_set_mipmap_filter_mode` method. Do not
+    invent Engine `--cu-mem-tex-ref-set-mipmap-filter-mode`. Do not reverse wrapping
+    cuTexRefSetMipmapFilterMode identity. Do not wrap `tex_ref_set_filter_mode` as `mem_tex_ref_set_mipmap_filter_mode`.
+    Do not wrap `tex_ref_set_mipmap_level_bias` as `mem_tex_ref_set_mipmap_filter_mode`.
+    Do not invent a second `mem_tex_ref_set_mipmap_level_bias` method. Do not
+    invent Engine `--cu-mem-tex-ref-set-mipmap-level-bias`. Do not reverse wrapping
+    cuTexRefSetMipmapLevelBias identity. Do not wrap `tex_ref_set_mipmap_filter_mode` as `mem_tex_ref_set_mipmap_level_bias`.
+    Do not wrap `tex_ref_set_mipmap_level_clamp` as `mem_tex_ref_set_mipmap_level_bias`.
+    Do not invent a second `mem_tex_ref_set_mipmap_level_clamp` method. Do not
+    invent Engine `--cu-mem-tex-ref-set-mipmap-level-clamp`. Do not reverse wrapping
+    cuTexRefSetMipmapLevelClamp identity. Do not wrap `tex_ref_set_mipmap_level_bias` as `mem_tex_ref_set_mipmap_level_clamp`.
+    Do not wrap `tex_ref_set_max_anisotropy` as `mem_tex_ref_set_mipmap_level_clamp`.
+    Do not invent a second `mem_tex_ref_set_max_anisotropy` method. Do not
+    invent Engine `--cu-mem-tex-ref-set-max-anisotropy`. Do not reverse wrapping
+    cuTexRefSetMaxAnisotropy identity. Do not wrap `tex_ref_set_mipmap_level_clamp` as `mem_tex_ref_set_max_anisotropy`.
+    Do not wrap `tex_ref_set_border_color` as `mem_tex_ref_set_max_anisotropy`.
+    Do not invent a second `mem_tex_ref_set_border_color` method. Do not
+    invent Engine `--cu-mem-tex-ref-set-border-color`. Do not reverse wrapping
+    cuTexRefSetBorderColor identity. Do not wrap `tex_ref_set_max_anisotropy` as `mem_tex_ref_set_border_color`.
+    Do not wrap `tex_ref_set_flags` as `mem_tex_ref_set_border_color`.
+    Do not invent a second `mem_tex_ref_set_flags` method. Do not
+    invent Engine `--cu-mem-tex-ref-set-flags`. Do not reverse wrapping
+    cuTexRefSetFlags identity. Do not wrap `tex_ref_set_border_color` as `mem_tex_ref_set_flags`.
+    Do not wrap `tex_ref_get_array` as `mem_tex_ref_set_flags`.
+    Do not invent a second `mem_tex_ref_get_array` method. Do not
+    invent Engine `--cu-mem-tex-ref-get-array`. Do not reverse wrapping
+    cuTexRefGetArray identity. Do not wrap `tex_ref_set_flags` as `mem_tex_ref_get_array`.
+    Do not wrap `tex_ref_get_mipmapped_array` as `mem_tex_ref_get_array`.
+    Do not invent a second `mem_tex_ref_get_mipmapped_array` method. Do not
+    invent Engine `--cu-mem-tex-ref-get-mipmapped-array`. Do not reverse wrapping
+    cuTexRefGetMipmappedArray identity. Do not wrap `tex_ref_get_array` as `mem_tex_ref_get_mipmapped_array`.
+    Do not wrap `tex_ref_get_address` as `mem_tex_ref_get_mipmapped_array`.
+    Do not invent a second `mem_tex_ref_get_address` method. Do not
+    invent Engine `--cu-mem-tex-ref-get-address`. Do not reverse wrapping
+    cuTexRefGetAddress identity. Do not wrap `tex_ref_get_mipmapped_array` as `mem_tex_ref_get_address`.
+    Do not wrap `tex_ref_get_address_mode` as `mem_tex_ref_get_address`.
+    Do not invent a second `mem_tex_ref_get_address_mode` method. Do not
+    invent Engine `--cu-mem-tex-ref-get-address-mode`. Do not reverse wrapping
+    cuTexRefGetAddressMode identity. Do not wrap `tex_ref_get_address` as `mem_tex_ref_get_address_mode`.
+    Do not wrap `tex_ref_get_filter_mode` as `mem_tex_ref_get_address_mode`.
+    Do not invent a second `mem_tex_ref_get_filter_mode` method. Do not
+    invent Engine `--cu-mem-tex-ref-get-filter-mode`. Do not reverse wrapping
+    cuTexRefGetFilterMode identity. Do not wrap `tex_ref_get_address_mode` as `mem_tex_ref_get_filter_mode`.
+    Do not wrap `tex_ref_get_format` as `mem_tex_ref_get_filter_mode`.
+    Do not invent a second `mem_tex_ref_get_format` method. Do not
+    invent Engine `--cu-mem-tex-ref-get-format`. Do not reverse wrapping
+    cuTexRefGetFormat identity. Do not wrap `tex_ref_get_filter_mode` as `mem_tex_ref_get_format`.
+    Do not wrap `tex_ref_get_mipmap_filter_mode` as `mem_tex_ref_get_format`.
+    Do not invent a second `mem_tex_ref_get_mipmap_filter_mode` method. Do not
+    invent Engine `--cu-mem-tex-ref-get-mipmap-filter-mode`. Do not reverse wrapping
+    cuTexRefGetMipmapFilterMode identity. Do not wrap `tex_ref_get_format` as `mem_tex_ref_get_mipmap_filter_mode`.
+    Do not wrap `tex_ref_get_mipmap_level_bias` as `mem_tex_ref_get_mipmap_filter_mode`.
+    Do not invent a second `mem_tex_ref_get_mipmap_level_bias` method. Do not
+    invent Engine `--cu-mem-tex-ref-get-mipmap-level-bias`. Do not reverse wrapping
+    cuTexRefGetMipmapLevelBias identity. Do not wrap `tex_ref_get_mipmap_filter_mode` as `mem_tex_ref_get_mipmap_level_bias`.
+    Do not wrap `tex_ref_get_mipmap_level_clamp` as `mem_tex_ref_get_mipmap_level_bias`.
+    Do not invent a second `mem_tex_ref_get_mipmap_level_clamp` method. Do not
+    invent Engine `--cu-mem-tex-ref-get-mipmap-level-clamp`. Do not reverse wrapping
+    cuTexRefGetMipmapLevelClamp identity. Do not wrap `tex_ref_get_mipmap_level_bias` as `mem_tex_ref_get_mipmap_level_clamp`.
+    Do not wrap `tex_ref_get_max_anisotropy` as `mem_tex_ref_get_mipmap_level_clamp`.
+    Do not invent a second `mem_tex_ref_get_max_anisotropy` method. Do not
+    invent Engine `--cu-mem-tex-ref-get-max-anisotropy`. Do not reverse wrapping
+    cuTexRefGetMaxAnisotropy identity. Do not wrap `tex_ref_get_mipmap_level_clamp` as `mem_tex_ref_get_max_anisotropy`.
+    Do not wrap `tex_ref_get_border_color` as `mem_tex_ref_get_max_anisotropy`.
+    Do not invent a second `mem_tex_ref_get_border_color` method. Do not
+    invent Engine `--cu-mem-tex-ref-get-border-color`. Do not reverse wrapping
+    cuTexRefGetBorderColor identity. Do not wrap `tex_ref_get_max_anisotropy` as `mem_tex_ref_get_border_color`.
+    Do not wrap `tex_ref_get_flags` as `mem_tex_ref_get_border_color`.
+    Do not invent a second `mem_tex_ref_get_flags` method. Do not
+    invent Engine `--cu-mem-tex-ref-get-flags`. Do not reverse wrapping
+    cuTexRefGetFlags identity. Do not wrap `tex_ref_get_border_color` as `mem_tex_ref_get_flags`.
+    Do not wrap `module_get_surf_ref` as `mem_tex_ref_get_flags`.
+    Do not invent a second `mem_module_get_surf_ref` method. Do not
+    invent Engine `--cu-mem-module-get-surf-ref`. Do not reverse wrapping
+    cuModuleGetSurfRef identity. Do not wrap `tex_ref_get_flags` as `mem_module_get_surf_ref`.
+    Do not wrap `surf_ref_set_array` as `mem_module_get_surf_ref`.
+    Do not invent a second `mem_surf_ref_set_array` method. Do not
+    invent Engine `--cu-mem-surf-ref-set-array`. Do not reverse wrapping
+    cuSurfRefSetArray identity. Do not wrap `module_get_surf_ref` as `mem_surf_ref_set_array`.
+    Do not wrap `surf_ref_get_array` as `mem_surf_ref_set_array`.
+    Do not invent a second `mem_surf_ref_get_array` method. Do not
+    invent Engine `--cu-mem-surf-ref-get-array`. Do not reverse wrapping
+    cuSurfRefGetArray identity. Do not wrap `surf_ref_set_array` as `mem_surf_ref_get_array`.
+    Do not wrap `memcpy_dto_a` as `mem_surf_ref_get_array`.
+    Do not invent a second `mem_memcpy_dto_a` method. Do not
+    invent Engine `--cu-mem-memcpy-dto-a`. Do not reverse wrapping
+    cuMemcpyDtoA identity. Do not wrap `surf_ref_get_array` as `mem_memcpy_dto_a`.
+    Do not wrap `memcpy_ato_d` as `mem_memcpy_dto_a`.
+    Do not invent a second `mem_memcpy_ato_d` method. Do not
+    invent Engine `--cu-mem-memcpy-ato-d`. Do not reverse wrapping
+    cuMemcpyAtoD identity. Do not wrap `memcpy_dto_a` as `mem_memcpy_ato_d`.
+    Do not wrap `memcpy_hto_a` as `mem_memcpy_ato_d`.
+    Do not invent a second `mem_memcpy_hto_a` method. Do not
+    invent Engine `--cu-mem-memcpy-hto-a`. Do not reverse wrapping
+    cuMemcpyHtoA identity. Do not wrap `memcpy_ato_d` as `mem_memcpy_hto_a`.
+    Do not wrap `memcpy_ato_h` as `mem_memcpy_hto_a`.
+    Do not invent a second `mem_memcpy_ato_h` method. Do not
+    invent Engine `--cu-mem-memcpy-ato-h`. Do not reverse wrapping
+    cuMemcpyAtoH identity. Do not wrap `memcpy_hto_a` as `mem_memcpy_ato_h`.
+    Do not wrap `memcpy_ato_a` as `mem_memcpy_ato_h`.
+    Do not invent a second `mem_memcpy_ato_a` method. Do not
+    invent Engine `--cu-mem-memcpy-ato-a`. Do not reverse wrapping
+    cuMemcpyAtoA identity. Do not wrap `memcpy_ato_h` as `mem_memcpy_ato_a`.
+    Do not wrap `memcpy_dto_a_async` as `mem_memcpy_ato_a`.
+    Do not invent a second `mem_memcpy_dto_a_async` method. Do not
+    invent Engine `--cu-mem-memcpy-dto-a-async`. Do not reverse wrapping
+    cuMemcpyDtoAAsync identity. Do not wrap `memcpy_ato_a` as `mem_memcpy_dto_a_async`.
+    Do not wrap `memcpy_ato_d_async` as `mem_memcpy_dto_a_async`.
+    Do not invent a second `mem_memcpy_ato_d_async` method. Do not
+    invent Engine `--cu-mem-memcpy-ato-d-async`. Do not reverse wrapping
+    cuMemcpyAtoDAsync identity. Do not wrap `memcpy_dto_a_async` as `mem_memcpy_ato_d_async`.
+    Do not wrap `memcpy_hto_a_async` as `mem_memcpy_ato_d_async`.
+    Do not invent a second `mem_memcpy_hto_a_async` method. Do not
+    invent Engine `--cu-mem-memcpy-hto-a-async`. Do not reverse wrapping
+    cuMemcpyHtoAAsync identity. Do not wrap `memcpy_ato_d_async` as `mem_memcpy_hto_a_async`.
+    Do not wrap `memcpy_ato_h_async` as `mem_memcpy_hto_a_async`.
+    Do not invent a second `mem_memcpy_ato_h_async` method. Do not
+    invent Engine `--cu-mem-memcpy-ato-h-async`. Do not reverse wrapping
+    cuMemcpyAtoHAsync identity. Do not wrap `memcpy_hto_a_async` as `mem_memcpy_ato_h_async`.
+    Do not wrap `memcpy_ato_a_async` as `mem_memcpy_ato_h_async`.
+    Do not invent a second `mem_memcpy_ato_a_async` method. Do not
+    invent Engine `--cu-mem-memcpy-ato-a-async`. Do not reverse wrapping
+    cuMemcpyAtoAAsync identity. Do not wrap `memcpy_ato_h_async` as `mem_memcpy_ato_a_async`.
+    Do not wrap `memcpy_2d_to_array` as `mem_memcpy_ato_a_async`.
+    Do not invent a second `mem_memcpy_2d_to_array` method. Do not
+    invent Engine `--cu-mem-memcpy-2d-to-array`. Do not reverse wrapping
+    cuMemcpy2DToArray identity. Do not wrap `memcpy_ato_a_async` as `mem_memcpy_2d_to_array`.
+    Do not wrap `memcpy_2d_from_array` as `mem_memcpy_2d_to_array`.
+    Do not invent a second `mem_memcpy_2d_from_array` method. Do not
+    invent Engine `--cu-mem-memcpy-2d-from-array`. Do not reverse wrapping
+    cuMemcpy2DFromArray identity. Do not wrap `memcpy_2d_to_array` as `mem_memcpy_2d_from_array`.
+    Do not wrap `memcpy_2d_array_to_array` as `mem_memcpy_2d_from_array`.
+    Do not invent a second `mem_memcpy_2d_array_to_array` method. Do not
+    invent Engine `--cu-mem-memcpy-2d-array-to-array`. Do not reverse wrapping
+    cuMemcpy2DArrayToArray identity. Do not wrap `memcpy_2d_from_array` as `mem_memcpy_2d_array_to_array`.
+    Do not wrap `memcpy_2d_to_array_async` as `mem_memcpy_2d_array_to_array`.
+    Do not invent a second `mem_memcpy_2d_to_array_async` method. Do not
+    invent Engine `--cu-mem-memcpy-2d-to-array-async`. Do not reverse wrapping
+    cuMemcpy2DToArrayAsync identity. Do not wrap `memcpy_2d_array_to_array` as `mem_memcpy_2d_to_array_async`.
+    Do not wrap `memcpy_2d_from_array_async` as `mem_memcpy_2d_to_array_async`.
+    Do not invent a second `mem_memcpy_2d_from_array_async` method. Do not
+    invent Engine `--cu-mem-memcpy-2d-from-array-async`. Do not reverse wrapping
+    cuMemcpy2DFromArrayAsync identity. Do not wrap `memcpy_2d_to_array_async` as `mem_memcpy_2d_from_array_async`.
+    Do not wrap `memcpy_2d_array_to_array_async` as `mem_memcpy_2d_from_array_async`.
+    Do not invent a second `mem_memcpy_2d_array_to_array_async` method. Do not
+    invent Engine `--cu-mem-memcpy-2d-array-to-array-async`. Do not reverse wrapping
+    cuMemcpy2DArrayToArrayAsync identity. Do not wrap `memcpy_2d_from_array_async` as `mem_memcpy_2d_array_to_array_async`.
+    Do not wrap `library_load_data` as `mem_memcpy_2d_array_to_array_async`.
+    Do not invent a second `mem_library_load_data` method. Do not
+    invent Engine `--cu-mem-library-load-data`. Do not reverse wrapping
+    cuLibraryLoadData identity. Do not wrap `memcpy_2d_array_to_array_async` as `mem_library_load_data`.
+    Do not wrap `library_load_from_file` as `mem_library_load_data`.
+    Do not invent a second `mem_library_load_from_file` method. Do not
+    invent Engine `--cu-mem-library-load-from-file`. Do not reverse wrapping
+    cuLibraryLoadFromFile identity. Do not wrap `library_load_data` as `mem_library_load_from_file`.
+    Do not wrap `library_unload` as `mem_library_load_from_file`.
+    Do not invent a second `mem_library_unload` method. Do not
+    invent Engine `--cu-mem-library-unload`. Do not reverse wrapping
+    cuLibraryUnload identity. Do not wrap `library_load_from_file` as `mem_library_unload`.
+    Do not wrap `library_get_kernel` as `mem_library_unload`.
+    Do not invent a second `mem_library_get_kernel` method. Do not
+    invent Engine `--cu-mem-library-get-kernel`. Do not reverse wrapping
+    cuLibraryGetKernel identity. Do not wrap `library_unload` as `mem_library_get_kernel`.
+    Do not wrap `library_get_module` as `mem_library_get_kernel`.
+    Do not invent a second `mem_library_get_module` method. Do not
+    invent Engine `--cu-mem-library-get-module`. Do not reverse wrapping
+    cuLibraryGetModule identity. Do not wrap `library_get_kernel` as `mem_library_get_module`.
+    Do not wrap `library_get_global` as `mem_library_get_module`.
+    Do not invent a second `mem_library_get_global` method. Do not
+    invent Engine `--cu-mem-library-get-global`. Do not reverse wrapping
+    cuLibraryGetGlobal identity. Do not wrap `library_get_module` as `mem_library_get_global`.
+    Do not wrap `library_get_managed` as `mem_library_get_global`.
+    Do not invent a second `mem_library_get_managed` method. Do not
+    invent Engine `--cu-mem-library-get-managed`. Do not reverse wrapping
+    cuLibraryGetManaged identity. Do not wrap `library_get_global` as `mem_library_get_managed`.
+    Do not wrap `library_get_unified_function` as `mem_library_get_managed`.
+    Do not invent a second `mem_library_get_unified_function` method. Do not
+    invent Engine `--cu-mem-library-get-unified-function`. Do not reverse wrapping
+    cuLibraryGetUnifiedFunction identity. Do not wrap `library_get_managed` as `mem_library_get_unified_function`.
+    Do not wrap `library_get_kernel_count` as `mem_library_get_unified_function`.
+    Do not invent a second `mem_library_get_kernel_count` method. Do not
+    invent Engine `--cu-mem-library-get-kernel-count`. Do not reverse wrapping
+    cuLibraryGetKernelCount identity. Do not wrap `library_get_unified_function` as `mem_library_get_kernel_count`.
+    Do not wrap `library_enumerate_kernels` as `mem_library_get_kernel_count`.
+    Do not invent a second `mem_library_enumerate_kernels` method. Do not
+    invent Engine `--cu-mem-library-enumerate-kernels`. Do not reverse wrapping
+    cuLibraryEnumerateKernels identity. Do not wrap `library_get_kernel_count` as `mem_library_enumerate_kernels`.
+    Do not wrap `kernel_get_library` as `mem_library_enumerate_kernels`.
+    Do not invent a second `mem_kernel_get_library` method. Do not
+    invent Engine `--cu-mem-kernel-get-library`. Do not reverse wrapping
+    cuKernelGetLibrary identity. Do not wrap `library_enumerate_kernels` as `mem_kernel_get_library`.
+    Do not wrap `kernel_get_function` as `mem_kernel_get_library`.
+    Do not invent a second `mem_kernel_get_function` method. Do not
+    invent Engine `--cu-mem-kernel-get-function`. Do not reverse wrapping
+    cuKernelGetFunction identity. Do not wrap `kernel_get_library` as `mem_kernel_get_function`.
+    Do not wrap `kernel_get_param_info` as `mem_kernel_get_function`.
+    Do not invent a second `mem_kernel_get_param_info` method. Do not
+    invent Engine `--cu-mem-kernel-get-param-info`. Do not reverse wrapping
+    cuKernelGetParamInfo identity. Do not wrap `kernel_get_function` as `mem_kernel_get_param_info`.
+    Do not wrap `kernel_get_param_count` as `mem_kernel_get_param_info`.
+    Do not invent a second `mem_kernel_get_param_count` method. Do not
+    invent Engine `--cu-mem-kernel-get-param-count`. Do not reverse wrapping
+    cuKernelGetParamCount identity. Do not wrap `kernel_get_param_info` as `mem_kernel_get_param_count`.
+    Do not wrap `kernel_get_attribute` as `mem_kernel_get_param_count`.
+    Do not invent a second `mem_kernel_get_attribute` method. Do not
+    invent Engine `--cu-mem-kernel-get-attribute`. Do not reverse wrapping
+    cuKernelGetAttribute identity. Do not wrap `kernel_get_param_count` as `mem_kernel_get_attribute`.
+    Do not wrap `kernel_set_attribute` as `mem_kernel_get_attribute`.
+    Do not invent a second `mem_kernel_set_attribute` method. Do not
+    invent Engine `--cu-mem-kernel-set-attribute`. Do not reverse wrapping
+    cuKernelSetAttribute identity. Do not wrap `kernel_get_attribute` as `mem_kernel_set_attribute`.
+    Do not wrap `kernel_set_cache_config` as `mem_kernel_set_attribute`.
+    Do not invent a second `mem_kernel_set_cache_config` method. Do not
+    invent Engine `--cu-mem-kernel-set-cache-config`. Do not reverse wrapping
+    cuKernelSetCacheConfig identity. Do not wrap `kernel_set_attribute` as `mem_kernel_set_cache_config`.
+    Do not wrap `link_create` as `mem_kernel_set_cache_config`.
+    Do not invent a second `mem_link_create` method. Do not
+    invent Engine `--cu-mem-link-create`. Do not reverse wrapping
+    cuLinkCreate identity. Do not wrap `kernel_set_cache_config` as `mem_link_create`.
+    Do not wrap `link_add_data` as `mem_link_create`.
+    Do not invent a second `mem_link_add_data` method. Do not
+    invent Engine `--cu-mem-link-add-data`. Do not reverse wrapping
+    cuLinkAddData identity. Do not wrap `link_create` as `mem_link_add_data`.
+    Do not wrap `link_complete` as `mem_link_add_data`.
+    Do not invent a second `mem_link_complete` method. Do not
+    invent Engine `--cu-mem-link-complete`. Do not reverse wrapping
+    cuLinkComplete identity. Do not wrap `link_add_data` as `mem_link_complete`.
+    Do not wrap `link_destroy` as `mem_link_complete`.
+    Do not invent a second `mem_link_destroy` method. Do not
+    invent Engine `--cu-mem-link-destroy`. Do not reverse wrapping
+    cuLinkDestroy identity. Do not wrap `link_complete` as `mem_link_destroy`.
+    Do not wrap `link_add_file` as `mem_link_destroy`.
+    Do not invent a second `mem_link_add_file` method. Do not
+    invent Engine `--cu-mem-link-add-file`. Do not reverse wrapping
+    cuLinkAddFile identity. Do not wrap `link_destroy` as `mem_link_add_file`.
+    Do not wrap `runtime_get_version` as `mem_link_add_file`.
+    Do not invent a second `mem_runtime_get_version` method. Do not
+    invent Engine `--cu-mem-runtime-get-version`. Do not reverse wrapping
+    cudaRuntimeGetVersion identity. Do not wrap `link_add_file` as `mem_runtime_get_version`.
+    Do not wrap `device_get` as `mem_runtime_get_version`.
+    Do not invent a second `mem_device_get` method. Do not
+    invent Engine `--cu-mem-device-get`. Do not reverse wrapping
+    cuDeviceGet identity. Do not wrap `runtime_get_version` as `mem_device_get`.
+    Do not wrap `device_can_access_peer` as `mem_device_get`.
+    Do not invent a second `mem_func_get_param_count` method. Do not
+    invent Engine `--cu-mem-func-get-param-count`. Do not reverse wrapping
+    cuFuncGetParamCount identity. Do not wrap `device_get` as `mem_func_get_param_count`.
+    Do not wrap `func_get_cache_config` as `mem_func_get_param_count`.
+    Do not invent a second `mem_func_get_cache_config` method. Do not
+    invent Engine `--cu-mem-func-get-cache-config`. Do not reverse wrapping
+    cuFuncGetCacheConfig identity. Do not wrap `func_get_param_count` as `mem_func_get_cache_config`.
+    Do not wrap `func_is_loaded` as `mem_func_get_cache_config`.
+    Do not invent a second `mem_func_is_loaded` method. Do not
+    invent Engine `--cu-mem-func-is-loaded`. Do not reverse wrapping
+    cuFuncIsLoaded identity. Do not wrap `func_get_cache_config` as `mem_func_is_loaded`.
+    Do not wrap `func_load` as `mem_func_is_loaded`.
+    Do not invent a second `mem_func_load` method. Do not
+    invent Engine `--cu-mem-func-load`. Do not reverse wrapping
+    cuFuncLoad identity. Do not wrap `func_is_loaded` as `mem_func_load`.
+    Do not wrap `func_get_module` as `mem_func_load`.
+    Do not invent a second `mem_func_get_module` method. Do not
+    invent Engine `--cu-mem-func-get-module`. Do not reverse wrapping
+    cuFuncGetModule identity. Do not wrap `func_load` as `mem_func_get_module`.
+    Do not wrap `func_set_attribute` as `mem_func_get_module`.
+    Do not invent a second `mem_func_get_name` method. Do not
+    invent Engine `--cu-mem-func-get-name`. Do not reverse wrapping
+    cuFuncGetName identity. Do not wrap `func_get_module` as `mem_func_get_name`.
+    Do not wrap `func_get_param_info` as `mem_func_get_name`.
+    Do not invent a second `mem_func_get_param_info` method. Do not
+    invent Engine `--cu-mem-func-get-param-info`. Do not reverse wrapping
+    cuFuncGetParamInfo identity. Do not wrap `func_get_name` as `mem_func_get_param_info`.
+    Do not wrap `func_set_attribute` as `mem_func_get_param_info`.
+    Do not invent a second `mem_func_get_attribute` method. Do not
+    invent Engine `--cu-mem-func-get-attribute`. Do not reverse wrapping
+    cudaFuncGetAttribute identity. Do not wrap `func_get_param_info` as `mem_func_get_attribute`.
+    Do not wrap `func_set_attribute` as `mem_func_get_attribute`.
+    Do not invent a second `mem_func_set_attribute` method. Do not
+    invent Engine `--cu-mem-func-set-attribute`. Do not reverse wrapping
+    cudaFuncSetAttribute identity. Do not wrap `func_get_attribute` as `mem_func_set_attribute`.
+    Do not wrap `func_get_attributes` as `mem_func_set_attribute`.
+    Do not invent a second `mem_device_get_stream_priority_range` method. Do not
+    invent Engine `--cu-mem-device-get-stream-priority-range`. Do not reverse wrapping
+    cudaDeviceGetStreamPriorityRange identity. Do not wrap `func_set_attribute` as `mem_device_get_stream_priority_range`.
+    Do not wrap `ctx_get_stream_priority_range` as `mem_device_get_stream_priority_range`.
+    Do not invent a second `mem_event_get_id` method. Do not
+    invent Engine `--cu-mem-event-get-id`. Do not reverse wrapping
+    cuEventGetId identity. Do not wrap `device_get_stream_priority_range` as `mem_event_get_id`.
+    Do not wrap `event_create` as `mem_event_get_id`.
+    Do not invent a second `mem_green_ctx_get_id` method. Do not
+    invent Engine `--cu-mem-green-ctx-get-id`. Do not reverse wrapping
+    cuGreenCtxGetId identity. Do not wrap `event_get_id` as `mem_green_ctx_get_id`.
+    Do not wrap `green_ctx_get_device` as `mem_green_ctx_get_id`.
+    Do not invent a second `mem_green_ctx_get_device` method. Do not
+    invent Engine `--cu-mem-green-ctx-get-device`. Do not reverse wrapping
+    cudaExecutionCtxGetDevice identity. Do not wrap `green_ctx_get_id` as `mem_green_ctx_get_device`.
+    Do not wrap `stream_get_green_ctx` as `mem_green_ctx_get_device`.
+    Do not invent a second `mem_stream_get_green_ctx` method. Do not
+    invent Engine `--cu-mem-stream-get-green-ctx`. Do not reverse wrapping
+    cuStreamGetGreenCtx identity. Do not wrap `green_ctx_get_device` as `mem_stream_get_green_ctx`.
+    Do not wrap `green_ctx_create` as `mem_stream_get_green_ctx`.
+    Do not invent a second `mem_green_ctx_create` method. Do not
+    invent Engine `--cu-mem-green-ctx-create`. Do not reverse wrapping
+    cuGreenCtxCreate identity. Do not wrap `stream_get_green_ctx` as `mem_green_ctx_create`.
+    Do not wrap `green_ctx_destroy` as `mem_green_ctx_create`.
+    Do not invent a second `mem_green_ctx_destroy` method. Do not
+    invent Engine `--cu-mem-green-ctx-destroy`. Do not reverse wrapping
+    cuGreenCtxDestroy identity. Do not wrap `green_ctx_create` as `mem_green_ctx_destroy`.
+    Do not wrap `green_ctx_set_stream` as `mem_green_ctx_destroy`.
+    Do not invent a second `mem_green_ctx_stream_create` method. Do not
+    invent Engine `--cu-mem-green-ctx-stream-create`. Do not reverse wrapping
+    cuGreenCtxStreamCreate identity. Do not wrap `green_ctx_destroy` as `mem_green_ctx_stream_create`.
+    Do not wrap `green_ctx_synchronize` as `mem_green_ctx_stream_create`.
+    Do not invent a second `mem_green_ctx_synchronize` method. Do not
+    invent Engine `--cu-mem-green-ctx-synchronize`. Do not reverse wrapping
+    cudaExecutionCtxSynchronize identity. Do not wrap `green_ctx_stream_create` as `mem_green_ctx_synchronize`.
+    Do not wrap `green_ctx_record_event` as `mem_green_ctx_synchronize`.
+    Do not invent a second `mem_graph_node_get_local_id` method. Do not
+    invent Engine `--cu-mem-graph-node-get-local-id`. Do not reverse wrapping
+    cuGraphNodeGetLocalId identity. Do not wrap `green_ctx_synchronize` as `mem_graph_node_get_local_id`.
+    Do not wrap `graph_node_get_tools_id` as `mem_graph_node_get_local_id`.
+    Do not invent a second `mem_graph_node_get_tools_id` method. Do not
+    invent Engine `--cu-mem-graph-node-get-tools-id`. Do not reverse wrapping
+    cuGraphNodeGetToolsId identity. Do not wrap `graph_node_get_local_id` as `mem_graph_node_get_tools_id`.
+    Do not wrap `graph_node_get_containing_graph` as `mem_graph_node_get_tools_id`.
+    Do not invent a second `mem_graph_node_get_containing_graph` method. Do not
+    invent Engine `--cu-mem-graph-node-get-containing-graph`. Do not reverse wrapping
+    cuGraphNodeGetContainingGraph identity. Do not wrap `graph_node_get_tools_id` as `mem_graph_node_get_containing_graph`.
+    Do not wrap `graph_kernel_node_get_priority` as `mem_graph_node_get_containing_graph`.
+    Do not invent a second `mem_pool_get_id` method. Do not
+    invent Engine `--cu-mem-pool-get-id`. Do not reverse wrapping
+    cuMemPoolGetId identity. Do not wrap `graph_node_get_containing_graph` as `mem_pool_get_id`.
+    Do not wrap `memcpy_htod` as `mem_pool_get_id`.
+    Do not invent a second `mem_memcpy_htod` method. Do not
+    invent Engine `--cu-mem-memcpy-htod`. Do not reverse wrapping
+    cuMemcpyHtoD identity. Do not wrap `pool_get_id` as `mem_memcpy_htod`.
+    Do not wrap `memcpy_dtoh` as `mem_memcpy_htod`.
+    Do not invent a second `mem_memcpy_dtoh` method. Do not
+    invent Engine `--cu-mem-memcpy-dtoh`. Do not reverse wrapping
+    cuMemcpyDtoH identity. Do not wrap `memcpy_htod` as `mem_memcpy_dtoh`.
+    Do not wrap `prefetch_batch_async` as `mem_memcpy_dtoh`.
+    Do not invent a second `mem_prefetch_batch_async` method. Do not
+    invent Engine `--cu-mem-prefetch-batch-async`. Do not reverse wrapping
+    cudaMemPrefetchBatchAsync identity. Do not wrap `memcpy_dtoh` as `mem_prefetch_batch_async`.
+    Do not wrap `discard_batch_async` as `mem_prefetch_batch_async`.
+    Do not invent a second `mem_discard_batch_async` method. Do not
+    invent Engine `--cu-mem-discard-batch-async`. Do not reverse wrapping
+    cudaMemDiscardBatchAsync identity. Do not wrap `prefetch_batch_async` as `mem_discard_batch_async`.
+    Do not wrap `discard_and_prefetch_batch_async` as `mem_discard_batch_async`.
+    Do not invent a second `mem_discard_and_prefetch_batch_async` method. Do not
+    invent Engine `--cu-mem-discard-and-prefetch-batch-async`. Do not reverse wrapping
+    cudaMemDiscardAndPrefetchBatchAsync identity. Do not wrap `discard_batch_async` as `mem_discard_and_prefetch_batch_async`.
+    Do not wrap `tensor_map_encode_tiled` as `mem_discard_and_prefetch_batch_async`.
+    Do not invent a second `mem_tensor_map_encode_tiled` method. Do not
+    invent Engine `--cu-mem-tensor-map-encode-tiled`. Do not reverse wrapping
+    cuTensorMapEncodeTiled identity. Do not wrap `discard_and_prefetch_batch_async` as `mem_tensor_map_encode_tiled`.
+    Do not wrap `tensor_map_encode_im2col` as `mem_tensor_map_encode_tiled`.
+    Do not invent a second `mem_tensor_map_encode_im2col` method. Do not
+    invent Engine `--cu-mem-tensor-map-encode-im2col`. Do not reverse wrapping
+    cuTensorMapEncodeIm2col identity. Do not wrap `tensor_map_encode_tiled` as `mem_tensor_map_encode_im2col`.
+    Do not wrap `tensor_map_encode_im2col_wide` as `mem_tensor_map_encode_im2col`.
+    Do not invent a second `mem_tensor_map_encode_im2col_wide` method. Do not
+    invent Engine `--cu-mem-tensor-map-encode-im2col-wide`. Do not reverse wrapping
+    cuTensorMapEncodeIm2colWide identity. Do not wrap `tensor_map_encode_im2col` as `mem_tensor_map_encode_im2col_wide`.
+    Do not wrap `tensor_map_replace_aligned_addr` as `mem_tensor_map_encode_im2col_wide`.
+    Do not invent a second `mem_tensor_map_replace_aligned_addr` method. Do not
+    invent Engine `--cu-mem-tensor-map-replace-aligned-addr`. Do not reverse wrapping
+    cuTensorMapReplaceAlignedAddr identity. Do not wrap `tensor_map_encode_im2col_wide` as `mem_tensor_map_replace_aligned_addr`.
+    Do not wrap `array_get_descriptor` as `mem_tensor_map_replace_aligned_addr`.
+    Do not invent a second `mem_array_get_descriptor` method. Do not
+    invent Engine `--cu-mem-array-get-descriptor`. Do not reverse wrapping
+    cuArrayGetDescriptor identity. Do not wrap `tensor_map_replace_aligned_addr` as `mem_array_get_descriptor`.
+    Do not wrap `array_3d_get_descriptor` as `mem_array_get_descriptor`.
+    Do not invent a second `mem_array_3d_get_descriptor` method. Do not
+    invent Engine `--cu-mem-array-3d-get-descriptor`. Do not reverse wrapping
+    cuArray3DGetDescriptor identity. Do not wrap `array_get_descriptor` as `mem_array_3d_get_descriptor`.
+    Do not wrap `array_get_sparse_properties` as `mem_array_3d_get_descriptor`.
+    Do not invent a second `mem_array_get_sparse_properties` method. Do not
+    invent Engine `--cu-mem-array-get-sparse-properties`. Do not reverse wrapping
+    cuArrayGetSparseProperties identity. Do not wrap `array_3d_get_descriptor` as `mem_array_get_sparse_properties`.
+    Do not wrap `array_get_plane` as `mem_array_get_sparse_properties`.
+    Do not invent a second `mem_array_get_plane` method. Do not
+    invent Engine `--cu-mem-array-get-plane`. Do not reverse wrapping
+    cuArrayGetPlane identity. Do not wrap `array_get_sparse_properties` as `mem_array_get_plane`.
+    Do not wrap `array_get_memory_requirements` as `mem_array_get_plane`.
+    Do not invent a second `mem_array_get_memory_requirements` method. Do not
+    invent Engine `--cu-mem-array-get-memory-requirements`. Do not reverse wrapping
+    cuArrayGetMemoryRequirements identity. Do not wrap `array_get_plane` as `mem_array_get_memory_requirements`.
+    Do not wrap `mipmapped_array_get_memory_requirements` as `mem_array_get_memory_requirements`.
+    Do not invent a second `mem_mipmapped_array_get_memory_requirements` method. Do not
+    invent Engine `--cu-mem-mipmapped-array-get-memory-requirements`. Do not reverse wrapping
+    cuMipmappedArrayGetMemoryRequirements identity. Do not wrap `array_get_memory_requirements` as `mem_mipmapped_array_get_memory_requirements`.
+    Do not wrap `mipmapped_array_get_sparse_properties` as `mem_mipmapped_array_get_memory_requirements`.
+    Do not invent a second `mem_mipmapped_array_get_sparse_properties` method. Do not
+    invent Engine `--cu-mem-mipmapped-array-get-sparse-properties`. Do not reverse wrapping
+    cuMipmappedArrayGetSparseProperties identity. Do not wrap `mipmapped_array_get_memory_requirements` as `mem_mipmapped_array_get_sparse_properties`.
+    Do not wrap `mipmapped_array_create` as `mem_mipmapped_array_get_sparse_properties`.
+    Do not invent a second `mem_mipmapped_array_create` method. Do not
+    invent Engine `--cu-mem-mipmapped-array-create`. Do not reverse wrapping
+    cuMipmappedArrayCreate identity. Do not wrap `mipmapped_array_get_sparse_properties` as `mem_mipmapped_array_create`.
+    Do not wrap `mipmapped_array_get_level` as `mem_mipmapped_array_create`.
+    Do not invent a second `mem_mipmapped_array_get_level` method. Do not
+    invent Engine `--cu-mem-mipmapped-array-get-level`. Do not reverse wrapping
+    cuMipmappedArrayGetLevel identity. Do not wrap `mipmapped_array_create` as `mem_mipmapped_array_get_level`.
+    Do not wrap `mipmapped_array_destroy` as `mem_mipmapped_array_get_level`.
+    Do not invent a second `mem_mipmapped_array_destroy` method. Do not
+    invent Engine `--cu-mem-mipmapped-array-destroy`. Do not reverse wrapping
+    cuMipmappedArrayDestroy identity. Do not wrap `mipmapped_array_get_level` as `mem_mipmapped_array_destroy`.
+    Do not wrap `import_external_memory` as `mem_mipmapped_array_destroy`.
+    Do not invent a second `mem_import_external_memory` method. Do not
+    invent Engine `--cu-mem-import-external-memory`. Do not reverse wrapping
+    cuImportExternalMemory identity. Do not wrap `mipmapped_array_destroy` as `mem_import_external_memory`.
+    Do not wrap `destroy_external_memory` as `mem_import_external_memory`.
+    Do not invent a second `mem_destroy_external_memory` method. Do not
+    invent Engine `--cu-mem-destroy-external-memory`. Do not reverse wrapping
+    cuDestroyExternalMemory identity. Do not wrap `import_external_memory` as `mem_destroy_external_memory`.
+    Do not wrap `external_memory_get_mapped_buffer` as `mem_destroy_external_memory`.
+    Do not invent a second `mem_external_memory_get_mapped_buffer` method. Do not
+    invent Engine `--cu-mem-external-memory-get-mapped-buffer`. Do not reverse wrapping
+    cuExternalMemoryGetMappedBuffer identity. Do not wrap `destroy_external_memory` as `mem_external_memory_get_mapped_buffer`.
+    Do not wrap `external_memory_get_mapped_mipmapped_array` as `mem_external_memory_get_mapped_buffer`.
+    Do not invent a second `mem_external_memory_get_mapped_mipmapped_array` method. Do not
+    invent Engine `--cu-mem-external-memory-get-mapped-mipmapped-array`. Do not reverse wrapping
+    cuExternalMemoryGetMappedMipmappedArray identity. Do not wrap `external_memory_get_mapped_buffer` as `mem_external_memory_get_mapped_mipmapped_array`.
+    Do not wrap `import_external_semaphore` as `mem_external_memory_get_mapped_mipmapped_array`.
+    Do not invent a second `mem_import_external_semaphore` method. Do not
+    invent Engine `--cu-mem-import-external-semaphore`. Do not reverse wrapping
+    cuImportExternalSemaphore identity. Do not wrap `external_memory_get_mapped_mipmapped_array` as `mem_import_external_semaphore`.
+    Do not wrap `destroy_external_semaphore` as `mem_import_external_semaphore`.
+    Do not invent a second `mem_destroy_external_semaphore` method. Do not
+    invent Engine `--cu-mem-destroy-external-semaphore`. Do not reverse wrapping
+    cuDestroyExternalSemaphore identity. Do not wrap `import_external_semaphore` as `mem_destroy_external_semaphore`.
+    Do not wrap `signal_external_semaphores_async` as `mem_destroy_external_semaphore`.
+    Do not invent a second `mem_signal_external_semaphores_async` method. Do not
+    invent Engine `--cu-mem-signal-external-semaphores-async`. Do not reverse wrapping
+    cuSignalExternalSemaphoresAsync identity. Do not wrap `destroy_external_semaphore` as `mem_signal_external_semaphores_async`.
+    Do not wrap `wait_external_semaphores_async` as `mem_signal_external_semaphores_async`.
+    Do not invent a second `mem_wait_external_semaphores_async` method. Do not
+    invent Engine `--cu-mem-wait-external-semaphores-async`. Do not reverse wrapping
+    cuWaitExternalSemaphoresAsync identity. Do not wrap `signal_external_semaphores_async` as `mem_wait_external_semaphores_async`.
+    Do not wrap `surf_object_create` as `mem_wait_external_semaphores_async`.
     Do not
     spend the next item on an OpenAI-compatible HTTP veneer.
 

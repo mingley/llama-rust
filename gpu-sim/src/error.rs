@@ -5,6 +5,9 @@ use core::fmt;
 use crate::ids::{AllocId, DeviceId, StreamId};
 
 /// Why the simulator refused an operation or detected an illegal GPU state.
+///
+/// [`Self::error_name`] / [`Self::error_string`] are `cudaGetErrorName` /
+/// `cudaGetErrorString`.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum SimError {
     /// Device HBM cannot hold this allocation.
@@ -115,3 +118,47 @@ impl fmt::Display for SimError {
 }
 
 impl std::error::Error for SimError {}
+
+impl SimError {
+    /// `cudaGetErrorName`. Query. No device and no capture session.
+    ///
+    /// This VM has no thread-local last error (`cudaGetLastError` is not
+    /// modeled). Callers pass the [`SimError`] they already received.
+    /// The `Display` impl stays the detailed reason.
+    #[must_use]
+    pub fn error_name(&self) -> &'static str {
+        match self {
+            Self::Oom { .. } | Self::PinOom { .. } => "cudaErrorMemoryAllocation",
+            Self::UnknownAlloc { .. } => "cudaErrorInvalidDevicePointer",
+            Self::Leased { .. } | Self::Invalid { .. } => "cudaErrorInvalidValue",
+            Self::NotResident { .. } => "cudaErrorIllegalAddress",
+            Self::NoPeer { .. } => "cudaErrorPeerAccessUnsupported",
+            Self::PeerDisabled { .. } => "cudaErrorPeerAccessNotEnabled",
+            Self::UnknownEvent { .. } => "cudaErrorInvalidResourceHandle",
+            Self::Unavailable { .. } => "cudaErrorDevicesUnavailable",
+            Self::Cancelled { .. } | Self::TransferFailed { .. } => "cudaErrorLaunchFailure",
+        }
+    }
+
+    /// `cudaGetErrorString`. Query. No device and no capture session.
+    ///
+    /// CUDA generic sentences for named codes. [`Self::Invalid`] stays
+    /// `"invalid argument"`; the modeled reason remains the `why` field
+    /// and the `Display` impl.
+    #[must_use]
+    pub fn error_string(&self) -> &'static str {
+        match self {
+            Self::Oom { .. } | Self::PinOom { .. } => "out of memory",
+            Self::UnknownAlloc { .. } => "invalid device pointer",
+            Self::Leased { .. } | Self::Invalid { .. } => "invalid argument",
+            Self::NotResident { .. } => "an illegal memory access was encountered",
+            Self::NoPeer { .. } => "peer access is not supported between these two devices",
+            Self::PeerDisabled { .. } => {
+                "peer access has not been enabled between these two devices"
+            }
+            Self::UnknownEvent { .. } => "invalid resource handle",
+            Self::Unavailable { .. } => "all CUDA-capable devices are busy or unavailable",
+            Self::Cancelled { .. } | Self::TransferFailed { .. } => "unspecified launch failure",
+        }
+    }
+}

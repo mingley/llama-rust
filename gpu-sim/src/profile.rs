@@ -108,6 +108,15 @@ pub struct GpuProfile {
     /// Portable cluster size (`sm_90` is 8). A larger launch needs
     /// [`crate::Sim::set_non_portable_cluster_size_allowed`]. Not a capture.
     pub portable_cluster_size: u8,
+    /// `cudaDevAttrComputeCapabilityMajor`. Example H100 is 9 (Hopper sm_90).
+    /// Not a capture. Distinct from occupancy SM counts.
+    pub compute_capability_major: u8,
+    /// `cudaDevAttrComputeCapabilityMinor`. Example H100 is 0. Not a capture.
+    pub compute_capability_minor: u8,
+    /// `cudaDevAttrGlobalMemoryBusWidth`. Example H100 is 5120 bits. Example
+    /// H200 is 6144 bits. Not a capture. Distinct from [`Self::hbm_bps`]
+    /// and from memory clock rates.
+    pub global_memory_bus_width_bits: u16,
     /// Host-side wait tax for [`crate::ops::SynchronizationPolicy::Spin`] on
     /// `cudaStreamSynchronize` / `cudaEventSynchronize`, nanoseconds.
     ///
@@ -138,6 +147,16 @@ pub struct GpuProfile {
     /// decode identity stays portable. Tests open it (Hopper 227 KiB).
     /// Not a capture.
     pub max_shared_mem_per_block_optin: u32,
+    /// `cudaDeviceGetStreamPriorityRange` leastPriority (lowest).
+    ///
+    /// Example H100 is `0`. Numerically larger than
+    /// [`Self::stream_priority_greatest`]. Not a capture.
+    pub stream_priority_least: i32,
+    /// `cudaDeviceGetStreamPriorityRange` greatestPriority (highest).
+    ///
+    /// Example H100 is `-5`. Numerically smaller than
+    /// [`Self::stream_priority_least`]. Not a capture.
+    pub stream_priority_greatest: i32,
 }
 
 impl GpuProfile {
@@ -589,7 +608,7 @@ impl HardwareProfile {
             return String::from("gpus=0\n");
         };
         format!(
-            "name={}\ngpus={}\nhbm_bytes={}\nhbm_bps={}\nfp16_flops={}\npcie_bps={}\ncopy_engines={}\ncompute_slots={}\ncooperative_launch={}\ntdp_mw={}\nlaunch_overhead_ns={}\ngraph_launch_ns={}\ngraph_instantiate_ns={}\ngraph_update_ns={}\ngraph_set_params_ns={}\ngraph_clone_ns={}\ngraph_upload_ns={}\ngemm_util_permille={}\ngrouped_moe_permille={}\npdl_trigger_permille={}\nl2_bytes={}\nl2_persist_hit_permille={}\nmem_sync_domain_count={}\nsame_domain_fence_permille={}\nmax_blocks_per_cluster={}\nportable_cluster_size={}\nhost_sync_spin_ns={}\nhost_sync_yield_ns={}\nhost_sync_blocking_ns={}\nshared_mem_four_byte_permille={}\nshared_mem_eight_byte_permille={}\nmax_shared_mem_per_block={}\nmax_shared_mem_per_block_optin={}\npageable_permille={}\nalign_bytes={}\npool_reuse_ns={}\nhost_func_ns={}\nhost_pin_bytes={}\nva_granularity_bytes={}\nmulticast_granularity_bytes={}\nrent_usd_micros_per_hour={}\n",
+            "name={}\ngpus={}\nhbm_bytes={}\nhbm_bps={}\nfp16_flops={}\npcie_bps={}\ncopy_engines={}\ncompute_slots={}\ncooperative_launch={}\ntdp_mw={}\nlaunch_overhead_ns={}\ngraph_launch_ns={}\ngraph_instantiate_ns={}\ngraph_update_ns={}\ngraph_set_params_ns={}\ngraph_clone_ns={}\ngraph_upload_ns={}\ngemm_util_permille={}\ngrouped_moe_permille={}\npdl_trigger_permille={}\nl2_bytes={}\nl2_persist_hit_permille={}\nmem_sync_domain_count={}\nsame_domain_fence_permille={}\nmax_blocks_per_cluster={}\nportable_cluster_size={}\ncompute_capability_major={}\ncompute_capability_minor={}\nglobal_memory_bus_width_bits={}\nhost_sync_spin_ns={}\nhost_sync_yield_ns={}\nhost_sync_blocking_ns={}\nshared_mem_four_byte_permille={}\nshared_mem_eight_byte_permille={}\nmax_shared_mem_per_block={}\nmax_shared_mem_per_block_optin={}\nstream_priority_least={}\nstream_priority_greatest={}\npageable_permille={}\nalign_bytes={}\npool_reuse_ns={}\nhost_func_ns={}\nhost_pin_bytes={}\nva_granularity_bytes={}\nmulticast_granularity_bytes={}\nrent_usd_micros_per_hour={}\n",
             self.name,
             self.gpus.len(),
             g0.hbm_bytes,
@@ -616,6 +635,9 @@ impl HardwareProfile {
             g0.same_domain_fence_permille,
             g0.max_blocks_per_cluster,
             g0.portable_cluster_size,
+            g0.compute_capability_major,
+            g0.compute_capability_minor,
+            g0.global_memory_bus_width_bits,
             g0.host_sync_spin_ns,
             g0.host_sync_yield_ns,
             g0.host_sync_blocking_ns,
@@ -623,6 +645,8 @@ impl HardwareProfile {
             g0.shared_mem_eight_byte_permille,
             g0.max_shared_mem_per_block,
             g0.max_shared_mem_per_block_optin,
+            g0.stream_priority_least,
+            g0.stream_priority_greatest,
             self.host_pageable_permille(g0.id),
             self.host_align_bytes(g0.id),
             g0.pool_reuse_ns,
@@ -746,6 +770,9 @@ fn h100_gpu(id: DeviceId) -> GpuProfile {
         same_domain_fence_permille: 0,
         max_blocks_per_cluster: 8,
         portable_cluster_size: 8,
+        compute_capability_major: 9,
+        compute_capability_minor: 0,
+        global_memory_bus_width_bits: 5120,
         host_sync_spin_ns: 0,
         host_sync_yield_ns: 0,
         host_sync_blocking_ns: 0,
@@ -753,6 +780,8 @@ fn h100_gpu(id: DeviceId) -> GpuProfile {
         shared_mem_eight_byte_permille: 1000,
         max_shared_mem_per_block: 49_152,
         max_shared_mem_per_block_optin: 49_152,
+        stream_priority_least: 0,
+        stream_priority_greatest: -5,
     }
 }
 
@@ -760,6 +789,7 @@ fn h200_gpu(id: DeviceId) -> GpuProfile {
     let mut g = h100_gpu(id);
     g.hbm_bytes = 141u64.saturating_mul(1 << 30);
     g.hbm_bps = 4_800u64.saturating_mul(1_000_000_000);
+    g.global_memory_bus_width_bits = 6144;
     g
 }
 
@@ -889,6 +919,9 @@ fn parse_profile(text: &str) -> Result<HardwareProfile, SimError> {
     let mut same_domain_fence_permille: Option<u16> = None;
     let mut max_blocks_per_cluster: Option<u8> = None;
     let mut portable_cluster_size: Option<u8> = None;
+    let mut compute_capability_major: Option<u8> = None;
+    let mut compute_capability_minor: Option<u8> = None;
+    let mut global_memory_bus_width_bits: Option<u16> = None;
     let mut host_sync_spin_ns: Option<u64> = None;
     let mut host_sync_yield_ns: Option<u64> = None;
     let mut host_sync_blocking_ns: Option<u64> = None;
@@ -896,6 +929,8 @@ fn parse_profile(text: &str) -> Result<HardwareProfile, SimError> {
     let mut shared_mem_eight_byte_permille: Option<u16> = None;
     let mut max_shared_mem_per_block: Option<u32> = None;
     let mut max_shared_mem_per_block_optin: Option<u32> = None;
+    let mut stream_priority_least: Option<i32> = None;
+    let mut stream_priority_greatest: Option<i32> = None;
     let mut pageable_permille: u16 = 500;
     let mut align_bytes: u64 = 128;
     let mut pool_reuse_ns: Option<u64> = None;
@@ -994,6 +1029,17 @@ fn parse_profile(text: &str) -> Result<HardwareProfile, SimError> {
                 }
                 portable_cluster_size = Some(n);
             }
+            "compute_capability_major" => compute_capability_major = Some(parse_u8(v)?),
+            "compute_capability_minor" => compute_capability_minor = Some(parse_u8(v)?),
+            "global_memory_bus_width_bits" => {
+                let n = parse_u16(v)?;
+                if n == 0 {
+                    return Err(SimError::Invalid {
+                        why: "global_memory_bus_width_bits must be > 0",
+                    });
+                }
+                global_memory_bus_width_bits = Some(n);
+            }
             "host_sync_spin_ns" => host_sync_spin_ns = Some(parse_u64(v)?),
             "host_sync_yield_ns" => host_sync_yield_ns = Some(parse_u64(v)?),
             "host_sync_blocking_ns" => host_sync_blocking_ns = Some(parse_u64(v)?),
@@ -1033,6 +1079,8 @@ fn parse_profile(text: &str) -> Result<HardwareProfile, SimError> {
                 }
                 max_shared_mem_per_block_optin = Some(n);
             }
+            "stream_priority_least" => stream_priority_least = Some(parse_i32(v)?),
+            "stream_priority_greatest" => stream_priority_greatest = Some(parse_i32(v)?),
             "pageable_permille" => pageable_permille = parse_u16(v)?,
             "align_bytes" => align_bytes = parse_u64(v)?,
             "pool_reuse_ns" => pool_reuse_ns = Some(parse_u64(v)?),
@@ -1110,6 +1158,15 @@ fn parse_profile(text: &str) -> Result<HardwareProfile, SimError> {
         if let Some(n) = portable_cluster_size {
             g.portable_cluster_size = n;
         }
+        if let Some(n) = compute_capability_major {
+            g.compute_capability_major = n;
+        }
+        if let Some(n) = compute_capability_minor {
+            g.compute_capability_minor = n;
+        }
+        if let Some(n) = global_memory_bus_width_bits {
+            g.global_memory_bus_width_bits = n;
+        }
         if let Some(n) = host_sync_spin_ns {
             g.host_sync_spin_ns = n;
         }
@@ -1130,6 +1187,12 @@ fn parse_profile(text: &str) -> Result<HardwareProfile, SimError> {
         }
         if let Some(n) = max_shared_mem_per_block_optin {
             g.max_shared_mem_per_block_optin = n;
+        }
+        if let Some(n) = stream_priority_least {
+            g.stream_priority_least = n;
+        }
+        if let Some(n) = stream_priority_greatest {
+            g.stream_priority_greatest = n;
         }
         if g.max_shared_mem_per_block > g.max_shared_mem_per_block_optin {
             if max_shared_mem_per_block.is_some() && max_shared_mem_per_block_optin.is_some() {
@@ -1292,6 +1355,11 @@ fn parse_u16(s: &str) -> Result<u16, SimError> {
 fn parse_u8(s: &str) -> Result<u8, SimError> {
     s.parse::<u8>()
         .map_err(|_| SimError::Invalid { why: "not a u8" })
+}
+
+fn parse_i32(s: &str) -> Result<i32, SimError> {
+    s.parse::<i32>()
+        .map_err(|_| SimError::Invalid { why: "not an i32" })
 }
 
 #[cfg(test)]
@@ -1490,6 +1558,64 @@ mod tests {
     }
 
     #[test]
+    fn parse_compute_capability() {
+        let p = HardwareProfile::parse(
+            "gpus=1\ncompute_capability_major=8\ncompute_capability_minor=9\n",
+        )
+        .unwrap();
+        let g = p.gpu(DeviceId(0)).unwrap();
+        assert_eq!(g.compute_capability_major, 8);
+        assert_eq!(g.compute_capability_minor, 9);
+        let text = p.to_profile_text();
+        assert!(text.contains("compute_capability_major=8"), "{text}");
+        assert!(text.contains("compute_capability_minor=9"), "{text}");
+        let open = HardwareProfile::parse("gpus=1\n").unwrap();
+        assert_eq!(open.gpu(DeviceId(0)).unwrap().compute_capability_major, 9);
+        assert_eq!(open.gpu(DeviceId(0)).unwrap().compute_capability_minor, 0);
+        assert_eq!(
+            HardwareProfile::example_h100_sxm()
+                .gpu(DeviceId(0))
+                .unwrap()
+                .compute_capability_major,
+            9
+        );
+    }
+
+    #[test]
+    fn parse_global_memory_bus_width() {
+        let p = HardwareProfile::parse("gpus=1\nglobal_memory_bus_width_bits=4096\n").unwrap();
+        let g = p.gpu(DeviceId(0)).unwrap();
+        assert_eq!(g.global_memory_bus_width_bits, 4096);
+        let text = p.to_profile_text();
+        assert!(text.contains("global_memory_bus_width_bits=4096"), "{text}");
+        let open = HardwareProfile::parse("gpus=1\n").unwrap();
+        assert_eq!(
+            open.gpu(DeviceId(0)).unwrap().global_memory_bus_width_bits,
+            5120
+        );
+        assert_eq!(
+            HardwareProfile::example_h100_sxm()
+                .gpu(DeviceId(0))
+                .unwrap()
+                .global_memory_bus_width_bits,
+            5120
+        );
+        assert_eq!(
+            HardwareProfile::example_h200_sxm()
+                .gpu(DeviceId(0))
+                .unwrap()
+                .global_memory_bus_width_bits,
+            6144
+        );
+        match HardwareProfile::parse("gpus=1\nglobal_memory_bus_width_bits=0\n") {
+            Err(SimError::Invalid { why }) => {
+                assert!(why.contains("must be > 0"), "{why}");
+            }
+            other => panic!("{other:?}"),
+        }
+    }
+
+    #[test]
     fn parse_host_sync_ns() {
         let p = HardwareProfile::parse(
             "gpus=1\nhost_sync_spin_ns=100\nhost_sync_yield_ns=200\nhost_sync_blocking_ns=10000\n",
@@ -1681,6 +1807,23 @@ mod tests {
         let link = p.link(None, Some(DeviceId(0))).unwrap();
         assert_eq!(link.align_bytes, 256);
         assert!(p.to_profile_text().contains("align_bytes=256"));
+    }
+
+    #[test]
+    fn parse_stream_priority_range() {
+        let p = HardwareProfile::parse(
+            "gpus=1\nstream_priority_least=0\nstream_priority_greatest=-1\n",
+        )
+        .unwrap();
+        let g = p.gpu(DeviceId(0)).unwrap();
+        assert_eq!(g.stream_priority_least, 0);
+        assert_eq!(g.stream_priority_greatest, -1);
+        assert!(p.to_profile_text().contains("stream_priority_least=0"));
+        assert!(p.to_profile_text().contains("stream_priority_greatest=-1"));
+        let h100 = HardwareProfile::example_h100_sxm();
+        let g0 = h100.gpu(DeviceId(0)).unwrap();
+        assert_eq!(g0.stream_priority_least, 0);
+        assert_eq!(g0.stream_priority_greatest, -5);
     }
 
     #[test]
