@@ -8,12 +8,14 @@
 mod cli;
 mod decode;
 mod engine;
+pub mod fixtures;
 mod fp16;
-mod gguf;
+mod generation;
+pub mod gguf;
 mod kv_page;
 mod pool;
 mod pretok;
-mod quant;
+pub mod quant;
 mod sample;
 mod serve;
 mod serve_engine;
@@ -30,6 +32,7 @@ pub use cli::{
     ChatArgs, ChatCmd, EngineArgs, EngineCmd, InferArgs, InferCmd, TraceArgs, TraceCmd, BIN_USAGE,
     CHAT_USAGE, ENGINE_USAGE, INFER_USAGE, TRACE_USAGE,
 };
+pub use decode::LlamaError as Error;
 pub use decode::{
     generate, generate_ctx, greedy_generate, greedy_generate_cache, greedy_generate_ctx,
     greedy_generate_slot, greedy_generate_traced, tiny_bf16_gguf, tiny_bloom_attn_qkv_s_gguf,
@@ -60,6 +63,7 @@ pub use expertvm::{
     ExpertStore, GpuFill, GpuStoreCfg, HardwareProfile, LiveStore, Prefetch, Score,
     SimulatedGpuStore, StoreMetrics, StreamId, TieredStore, Trace, WeightStorage,
 };
+pub use generation::{GenerateOptions, Generated, Step, StepAction, StopReason};
 pub use gguf::{
     load_gguf, load_gguf_owned, write_gguf, write_gguf_with_kv, GgmlType, Gguf, GgufError, Kv,
     Tensor, TensorWrite, GGUF_DEFAULT_ALIGNMENT,
@@ -108,3 +112,8 @@ pub use template::{
     render_chat_template, ChatMessage, ChatOptions, Template, TemplateError, Value,
 };
 pub use tok::{TokError, Tokenizer};
+
+/// Quantized row kernels and packing helpers.
+pub mod kernels {
+    pub use crate::quant::*;
+}

@@ -1,13 +1,18 @@
 [package]
 name = "llama-rust"
-version = "0.1.0"
+version = "0.2.0"
 edition = "2021"
-description = "Verifiable GGUF v3 Llama-family reference engine: oracle decode, MoE traces, ExpertStore seam."
-license = "MIT"
-readme = "../README.md"
+# The default SIMD path uses AArch64 FP16 intrinsics stabilized in Rust 1.94.
+rust-version = "1.94"
+description = "Verifiable GGUF v3 Llama-family reference engine with oracle decode, MoE traces, and an ExpertStore seam"
+documentation = "https://docs.rs/llama-rust"
+homepage = "https://github.com/mingley/llama-rust"
 repository = "https://github.com/mingley/llama-rust"
-keywords = ["gguf", "llm", "llama", "moe", "inference"]
-categories = ["science"]
+license = "MIT"
+readme = "README.md"
+keywords = ["llama", "gguf", "llm", "inference", "quantization"]
+categories = ["science", "text-processing", "command-line-utilities"]
+exclude = ["*.c", "*.m", "*.metal"]
 
 [features]
 default = ["simd"]
@@ -16,7 +21,7 @@ default = ["simd"]
 simd = []
 
 [dependencies]
-expertvm = { path = "../expertvm" }
+expertvm = { path = "../expertvm", version = "0.1.0" }
 
 [lib]
 name = "llama_rust"
@@ -26,10 +31,5 @@ path = "src/lib.rs"
 name = "gguf_gemv"
 path = "src/main.rs"
 
-[[bin]]
-name = "extra"
-path = "src/extra.rs"
-
 [lints]
 workspace = true
-

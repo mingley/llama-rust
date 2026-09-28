@@ -319,7 +319,8 @@ fn u24_to_unit(bits24: u32) -> f32 {
 mod tests {
     use super::*;
     use crate::decode::{generate, greedy_generate, tiny_llama_gguf};
-    use crate::{load_gguf, Llama, Tokenizer};
+    use crate::gguf::load_gguf;
+    use crate::{Llama, Tokenizer};
 
     /// Independent sampler: candidate structs, unique-id list, same published math.
     struct Cand {

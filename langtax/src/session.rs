@@ -7,8 +7,8 @@ use expertvm::{LiveStore, StoreMetrics};
 
 /// Loaded GGUF weights and tokenizer.
 pub struct Model {
-    llama: Llama,
-    tok: Tokenizer,
+    pub(crate) llama: Llama,
+    pub(crate) tok: Tokenizer,
 }
 
 impl Model {
@@ -46,6 +46,7 @@ impl Model {
     pub fn session(&self, n_ctx: usize) -> Result<Session<'_>, LlamaError> {
         Ok(Session {
             llama: &self.llama,
+            tok: &self.tok,
             cache: self.llama.new_cache(n_ctx)?,
         })
     }
@@ -58,6 +59,7 @@ impl Model {
     ) -> Result<Session<'_>, LlamaError> {
         Ok(Session {
             llama: &self.llama,
+            tok: &self.tok,
             cache: self.llama.new_paged_cache(n_ctx, block_size)?,
         })
     }
@@ -76,6 +78,7 @@ impl Model {
     ) -> Result<Session<'_>, LlamaError> {
         Ok(Session {
             llama: &self.llama,
+            tok: &self.tok,
             cache: self.llama.new_paged_cache_on(pool, n_ctx)?,
         })
     }
@@ -83,8 +86,9 @@ impl Model {
 
 /// One sequence: KV cache plus optional expert store.
 pub struct Session<'a> {
-    llama: &'a Llama,
-    cache: KvCache,
+    pub(crate) llama: &'a Llama,
+    pub(crate) tok: &'a Tokenizer,
+    pub(crate) cache: KvCache,
 }
 
 impl Session<'_> {
