@@ -7,3 +7,8 @@ langtax/q8_gemv_c_nofast
 langtax/extra_c
 *.gguf
 .DS_Store
+# NVIDIA CUDA Rust device compiler artifacts emitted beside workspace root.
+/*.ptx
+/*.cubin
+/*.ll
+/*.bc

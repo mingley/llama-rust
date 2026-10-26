@@ -4072,9 +4072,11 @@ pub const F16_SIZE: usize = 2;
 /// ggml `GGML_TYPE_BF16` element size (`ggml_bf16_t` / IEEE binary16-adjacent).
 pub const BF16_SIZE: usize = 2;
 
-/// Size / alignment failure for a quantized GEMV.
+/// Shape, alignment, or native CUDA execution failure for a matrix product.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum QuantError {
+    /// NVIDIA CUDA initialization, transfer, or execution failure.
+    NativeCuda(String),
     /// `n_cols` is not a multiple of the block width.
     UnalignedCols {
         /// Requested column count.
@@ -4096,6 +4098,7 @@ pub enum QuantError {
 impl fmt::Display for QuantError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
+            Self::NativeCuda(message) => write!(f, "native CUDA: {message}"),
             Self::UnalignedCols { n_cols, block } => {
                 write!(f, "n_cols {n_cols} is not a multiple of {block}")
             }
@@ -6061,6 +6064,9 @@ pub fn gemv_q4_k(n_cols: usize, w: &[u8], x: &[u8], y: &mut [f32]) -> Result<(),
 
 /// `y[m] = W_f16[m, n_cols] x[n_cols]`. On-disk bytes stay IEEE binary16.
 pub fn gemv_f16(n_cols: usize, w: &[u8], x: &[f32], y: &mut [f32]) -> Result<(), QuantError> {
+    if native_matmul(GemmKind::F16, n_cols, 1, w, x, y)? {
+        return Ok(());
+    }
     let rb = f16_row_bytes(n_cols)?;
     require_len("x F32 elems", x.len(), n_cols)?;
     let expected_w = rb.checked_mul(y.len()).ok_or(QuantError::Size {
@@ -6081,6 +6087,9 @@ pub fn gemv_f16(n_cols: usize, w: &[u8], x: &[f32], y: &mut [f32]) -> Result<(),
 
 /// `y[m] = W_bf16[m, n_cols] x[n_cols]`. On-disk bytes stay ggml bfloat16.
 pub fn gemv_bf16(n_cols: usize, w: &[u8], x: &[f32], y: &mut [f32]) -> Result<(), QuantError> {
+    if native_matmul(GemmKind::BF16, n_cols, 1, w, x, y)? {
+        return Ok(());
+    }
     let rb = bf16_row_bytes(n_cols)?;
     require_len("x F32 elems", x.len(), n_cols)?;
     let expected_w = rb.checked_mul(y.len()).ok_or(QuantError::Size {
@@ -6102,6 +6111,9 @@ pub fn gemv_bf16(n_cols: usize, w: &[u8], x: &[f32], y: &mut [f32]) -> Result<()
 
 /// `y[m] = W_f32[m, n_cols] x[n_cols]`.
 pub fn gemv_f32(n_cols: usize, w: &[u8], x: &[f32], y: &mut [f32]) -> Result<(), QuantError> {
+    if native_matmul(GemmKind::F32, n_cols, 1, w, x, y)? {
+        return Ok(());
+    }
     let rb = f32_row_bytes(n_cols)?;
     require_len("x F32 elems", x.len(), n_cols)?;
     let expected_w = rb.checked_mul(y.len()).ok_or(QuantError::Size {
@@ -6122,6 +6134,9 @@ pub fn gemv_f32(n_cols: usize, w: &[u8], x: &[f32], y: &mut [f32]) -> Result<(),
 
 /// `y[m] = W_q4k[m, n_cols] x_f32[n_cols]`.
 pub fn gemv_q4_k_f32(n_cols: usize, w: &[u8], x: &[f32], y: &mut [f32]) -> Result<(), QuantError> {
+    if native_matmul(GemmKind::Q4K, n_cols, 1, w, x, y)? {
+        return Ok(());
+    }
     let w_rb = q4_k_row_bytes(n_cols)?;
     require_len("x F32 elems", x.len(), n_cols)?;
     let expected_w = w_rb.checked_mul(y.len()).ok_or(QuantError::Size {
@@ -6582,6 +6597,88 @@ enum GemmKind {
     IQ4XS,
 }
 
+#[cfg(feature = "native-cuda")]
+type NativeRowDequant = fn(usize, &[u8], &mut [f32]) -> Result<(), QuantError>;
+
+/// Shared shape validation and format conversion for NVIDIA matrix products.
+/// Returns false only in explicitly CPU-only builds.
+fn native_matmul(
+    kind: GemmKind,
+    n_cols: usize,
+    n_tokens: usize,
+    w: &[u8],
+    x: &[f32],
+    y: &mut [f32],
+) -> Result<bool, QuantError> {
+    #[cfg(not(feature = "native-cuda"))]
+    {
+        let _inputs = (kind, n_cols, n_tokens, w, x, y);
+        Ok(false)
+    }
+    #[cfg(feature = "native-cuda")]
+    {
+        if n_tokens == 0 || n_cols == 0 || !y.len().is_multiple_of(n_tokens) {
+            return Err(QuantError::NativeCuda(
+                "matrix dimensions must be positive and token-aligned".into(),
+            ));
+        }
+        let n_x = n_tokens
+            .checked_mul(n_cols)
+            .ok_or_else(|| QuantError::NativeCuda("input shape overflow".into()))?;
+        require_len("X F32 elems", x.len(), n_x)?;
+        let n_rows = y.len() / n_tokens;
+        let (rb, dequant): (usize, NativeRowDequant) = match kind {
+            GemmKind::F16 => (f16_row_bytes(n_cols)?, dequant_f16_row),
+            GemmKind::BF16 => (bf16_row_bytes(n_cols)?, dequant_bf16_row),
+            GemmKind::F32 => (f32_row_bytes(n_cols)?, dequant_f32_row),
+            GemmKind::Q2K => (q2_k_row_bytes(n_cols)?, dequant_q2_k_row),
+            GemmKind::Q3K => (q3_k_row_bytes(n_cols)?, dequant_q3_k_row),
+            GemmKind::Q41 => (q4_1_row_bytes(n_cols)?, dequant_q4_1_row),
+            GemmKind::Q50 => (q5_0_row_bytes(n_cols)?, dequant_q5_0_row),
+            GemmKind::Q51 => (q5_1_row_bytes(n_cols)?, dequant_q5_1_row),
+            GemmKind::MXFP4 => (mxfp4_row_bytes(n_cols)?, dequant_mxfp4_row),
+            GemmKind::NVFP4 => (nvfp4_row_bytes(n_cols)?, dequant_nvfp4_row),
+            GemmKind::Q10 => (q1_0_row_bytes(n_cols)?, dequant_q1_0_row),
+            GemmKind::Q20 => (q2_0_row_bytes(n_cols)?, dequant_q2_0_row),
+            GemmKind::Q40 => (q4_0_row_bytes(n_cols)?, dequant_q4_0_row),
+            GemmKind::Q80 => (q8_0_row_bytes(n_cols)?, dequant_q8_0_row),
+            GemmKind::Q81 => (q8_1_row_bytes(n_cols)?, dequant_q8_1_row),
+            GemmKind::TQ10 => (tq1_0_row_bytes(n_cols)?, dequant_tq1_0_row),
+            GemmKind::TQ20 => (tq2_0_row_bytes(n_cols)?, dequant_tq2_0_row),
+            GemmKind::Q4K => (q4_k_row_bytes(n_cols)?, dequant_q4_k_row),
+            GemmKind::Q5K => (q5_k_row_bytes(n_cols)?, dequant_q5_k_row),
+            GemmKind::Q6K => (q6_k_row_bytes(n_cols)?, dequant_q6_k_row),
+            GemmKind::IQ1S => (iq1_s_row_bytes(n_cols)?, dequant_iq1_s_row),
+            GemmKind::IQ1M => (iq1_m_row_bytes(n_cols)?, dequant_iq1_m_row),
+            GemmKind::IQ2S => (iq2_s_row_bytes(n_cols)?, dequant_iq2_s_row),
+            GemmKind::IQ2XXS => (iq2_xxs_row_bytes(n_cols)?, dequant_iq2_xxs_row),
+            GemmKind::IQ2XS => (iq2_xs_row_bytes(n_cols)?, dequant_iq2_xs_row),
+            GemmKind::IQ3S => (iq3_s_row_bytes(n_cols)?, dequant_iq3_s_row),
+            GemmKind::IQ3XXS => (iq3_xxs_row_bytes(n_cols)?, dequant_iq3_xxs_row),
+            GemmKind::IQ4NL => (iq4_nl_row_bytes(n_cols)?, dequant_iq4_nl_row),
+            GemmKind::IQ4XS => (iq4_xs_row_bytes(n_cols)?, dequant_iq4_xs_row),
+        };
+        let expected_w = rb
+            .checked_mul(n_rows)
+            .ok_or_else(|| QuantError::NativeCuda("weight shape overflow".into()))?;
+        require_len("W bytes", w.len(), expected_w)?;
+        if n_rows == 0 {
+            return Ok(true);
+        }
+        crate::native_gpu::matmul(kind as u8, n_rows, n_cols, n_tokens, w, x, y, || {
+            let n = n_rows
+                .checked_mul(n_cols)
+                .ok_or_else(|| QuantError::NativeCuda("expanded weight shape overflow".into()))?;
+            let mut weights = vec![0.0f32; n];
+            for (source, dest) in w.chunks_exact(rb).zip(weights.chunks_exact_mut(n_cols)) {
+                dequant(n_cols, source, dest)?;
+            }
+            Ok(weights)
+        })?;
+        Ok(true)
+    }
+}
+
 fn gemm_f32_x(
     kind: GemmKind,
     n_cols: usize,
@@ -6590,6 +6687,9 @@ fn gemm_f32_x(
     x: &[f32],
     y: &mut [f32],
 ) -> Result<(), QuantError> {
+    if native_matmul(kind, n_cols, n_tokens, w, x, y)? {
+        return Ok(());
+    }
     if n_tokens == 0 {
         return Err(QuantError::Size {
             what: "n_tokens",
@@ -6711,6 +6811,9 @@ fn gemm_f32_x(
 
 /// `y[m] = W_q6k[m, n_cols] x_f32[n_cols]`.
 pub fn gemv_q6_k_f32(n_cols: usize, w: &[u8], x: &[f32], y: &mut [f32]) -> Result<(), QuantError> {
+    if native_matmul(GemmKind::Q6K, n_cols, 1, w, x, y)? {
+        return Ok(());
+    }
     let w_rb = q6_k_row_bytes(n_cols)?;
     require_len("x F32 elems", x.len(), n_cols)?;
     let expected_w = w_rb.checked_mul(y.len()).ok_or(QuantError::Size {
@@ -6731,6 +6834,9 @@ pub fn gemv_q6_k_f32(n_cols: usize, w: &[u8], x: &[f32], y: &mut [f32]) -> Resul
 
 /// `y[m] = W_q5k[m, n_cols] x_f32[n_cols]`.
 pub fn gemv_q5_k_f32(n_cols: usize, w: &[u8], x: &[f32], y: &mut [f32]) -> Result<(), QuantError> {
+    if native_matmul(GemmKind::Q5K, n_cols, 1, w, x, y)? {
+        return Ok(());
+    }
     let w_rb = q5_k_row_bytes(n_cols)?;
     require_len("x F32 elems", x.len(), n_cols)?;
     let expected_w = w_rb.checked_mul(y.len()).ok_or(QuantError::Size {
@@ -6752,6 +6858,9 @@ pub fn gemv_q5_k_f32(n_cols: usize, w: &[u8], x: &[f32], y: &mut [f32]) -> Resul
 
 /// `y[m] = W_q2k[m, n_cols] x_f32[n_cols]`.
 pub fn gemv_q2_k_f32(n_cols: usize, w: &[u8], x: &[f32], y: &mut [f32]) -> Result<(), QuantError> {
+    if native_matmul(GemmKind::Q2K, n_cols, 1, w, x, y)? {
+        return Ok(());
+    }
     let w_rb = q2_k_row_bytes(n_cols)?;
     require_len("x F32 elems", x.len(), n_cols)?;
     let expected_w = w_rb.checked_mul(y.len()).ok_or(QuantError::Size {
@@ -6773,6 +6882,9 @@ pub fn gemv_q2_k_f32(n_cols: usize, w: &[u8], x: &[f32], y: &mut [f32]) -> Resul
 
 /// `y[m] = W_q3k[m, n_cols] x_f32[n_cols]`.
 pub fn gemv_q3_k_f32(n_cols: usize, w: &[u8], x: &[f32], y: &mut [f32]) -> Result<(), QuantError> {
+    if native_matmul(GemmKind::Q3K, n_cols, 1, w, x, y)? {
+        return Ok(());
+    }
     let w_rb = q3_k_row_bytes(n_cols)?;
     require_len("x F32 elems", x.len(), n_cols)?;
     let expected_w = w_rb.checked_mul(y.len()).ok_or(QuantError::Size {
@@ -6794,6 +6906,9 @@ pub fn gemv_q3_k_f32(n_cols: usize, w: &[u8], x: &[f32], y: &mut [f32]) -> Resul
 
 /// `y[m] = W_q41[m, n_cols] x_f32[n_cols]`.
 pub fn gemv_q4_1_f32(n_cols: usize, w: &[u8], x: &[f32], y: &mut [f32]) -> Result<(), QuantError> {
+    if native_matmul(GemmKind::Q41, n_cols, 1, w, x, y)? {
+        return Ok(());
+    }
     let w_rb = q4_1_row_bytes(n_cols)?;
     require_len("x F32 elems", x.len(), n_cols)?;
     let expected_w = w_rb.checked_mul(y.len()).ok_or(QuantError::Size {
@@ -6815,6 +6930,9 @@ pub fn gemv_q4_1_f32(n_cols: usize, w: &[u8], x: &[f32], y: &mut [f32]) -> Resul
 
 /// `y[m] = W_q50[m, n_cols] x_f32[n_cols]`.
 pub fn gemv_q5_0_f32(n_cols: usize, w: &[u8], x: &[f32], y: &mut [f32]) -> Result<(), QuantError> {
+    if native_matmul(GemmKind::Q50, n_cols, 1, w, x, y)? {
+        return Ok(());
+    }
     let w_rb = q5_0_row_bytes(n_cols)?;
     require_len("x F32 elems", x.len(), n_cols)?;
     let expected_w = w_rb.checked_mul(y.len()).ok_or(QuantError::Size {
@@ -6835,6 +6953,9 @@ pub fn gemv_q5_0_f32(n_cols: usize, w: &[u8], x: &[f32], y: &mut [f32]) -> Resul
 
 /// `y[m] = W_q51[m, n_cols] x_f32[n_cols]`.
 pub fn gemv_q5_1_f32(n_cols: usize, w: &[u8], x: &[f32], y: &mut [f32]) -> Result<(), QuantError> {
+    if native_matmul(GemmKind::Q51, n_cols, 1, w, x, y)? {
+        return Ok(());
+    }
     let w_rb = q5_1_row_bytes(n_cols)?;
     require_len("x F32 elems", x.len(), n_cols)?;
     let expected_w = w_rb.checked_mul(y.len()).ok_or(QuantError::Size {
@@ -6855,6 +6976,9 @@ pub fn gemv_q5_1_f32(n_cols: usize, w: &[u8], x: &[f32], y: &mut [f32]) -> Resul
 
 /// `y[m] = W_mxfp4[m, n_cols] x_f32[n_cols]`.
 pub fn gemv_mxfp4_f32(n_cols: usize, w: &[u8], x: &[f32], y: &mut [f32]) -> Result<(), QuantError> {
+    if native_matmul(GemmKind::MXFP4, n_cols, 1, w, x, y)? {
+        return Ok(());
+    }
     let w_rb = mxfp4_row_bytes(n_cols)?;
     require_len("x F32 elems", x.len(), n_cols)?;
     let expected_w = w_rb.checked_mul(y.len()).ok_or(QuantError::Size {
@@ -6876,6 +7000,9 @@ pub fn gemv_mxfp4_f32(n_cols: usize, w: &[u8], x: &[f32], y: &mut [f32]) -> Resu
 
 /// `y[m] = W_nvfp4[m, n_cols] x_f32[n_cols]`.
 pub fn gemv_nvfp4_f32(n_cols: usize, w: &[u8], x: &[f32], y: &mut [f32]) -> Result<(), QuantError> {
+    if native_matmul(GemmKind::NVFP4, n_cols, 1, w, x, y)? {
+        return Ok(());
+    }
     let w_rb = nvfp4_row_bytes(n_cols)?;
     require_len("x F32 elems", x.len(), n_cols)?;
     let expected_w = w_rb.checked_mul(y.len()).ok_or(QuantError::Size {
@@ -6897,6 +7024,9 @@ pub fn gemv_nvfp4_f32(n_cols: usize, w: &[u8], x: &[f32], y: &mut [f32]) -> Resu
 
 /// `y[m] = W_q10[m, n_cols] x_f32[n_cols]`.
 pub fn gemv_q1_0_f32(n_cols: usize, w: &[u8], x: &[f32], y: &mut [f32]) -> Result<(), QuantError> {
+    if native_matmul(GemmKind::Q10, n_cols, 1, w, x, y)? {
+        return Ok(());
+    }
     let w_rb = q1_0_row_bytes(n_cols)?;
     require_len("x F32 elems", x.len(), n_cols)?;
     let expected_w = w_rb.checked_mul(y.len()).ok_or(QuantError::Size {
@@ -6918,6 +7048,9 @@ pub fn gemv_q1_0_f32(n_cols: usize, w: &[u8], x: &[f32], y: &mut [f32]) -> Resul
 
 /// `y[m] = W_q20[m, n_cols] x_f32[n_cols]`.
 pub fn gemv_q2_0_f32(n_cols: usize, w: &[u8], x: &[f32], y: &mut [f32]) -> Result<(), QuantError> {
+    if native_matmul(GemmKind::Q20, n_cols, 1, w, x, y)? {
+        return Ok(());
+    }
     let w_rb = q2_0_row_bytes(n_cols)?;
     require_len("x F32 elems", x.len(), n_cols)?;
     let expected_w = w_rb.checked_mul(y.len()).ok_or(QuantError::Size {
@@ -6939,6 +7072,9 @@ pub fn gemv_q2_0_f32(n_cols: usize, w: &[u8], x: &[f32], y: &mut [f32]) -> Resul
 
 /// `y[m] = W_q81[m, n_cols] x_f32[n_cols]`.
 pub fn gemv_q8_1_f32(n_cols: usize, w: &[u8], x: &[f32], y: &mut [f32]) -> Result<(), QuantError> {
+    if native_matmul(GemmKind::Q81, n_cols, 1, w, x, y)? {
+        return Ok(());
+    }
     let w_rb = q8_1_row_bytes(n_cols)?;
     require_len("x F32 elems", x.len(), n_cols)?;
     let expected_w = w_rb.checked_mul(y.len()).ok_or(QuantError::Size {
@@ -6960,6 +7096,9 @@ pub fn gemv_q8_1_f32(n_cols: usize, w: &[u8], x: &[f32], y: &mut [f32]) -> Resul
 
 /// `y[m] = W_q4_0[m, n_cols] x_f32[n_cols]` on GGUF `block_q4_0` bytes.
 pub fn gemv_q4_0_f32(n_cols: usize, w: &[u8], x: &[f32], y: &mut [f32]) -> Result<(), QuantError> {
+    if native_matmul(GemmKind::Q40, n_cols, 1, w, x, y)? {
+        return Ok(());
+    }
     let w_rb = q4_0_row_bytes(n_cols)?;
     require_len("x F32 elems", x.len(), n_cols)?;
     let expected_w = w_rb.checked_mul(y.len()).ok_or(QuantError::Size {
@@ -6980,6 +7119,9 @@ pub fn gemv_q4_0_f32(n_cols: usize, w: &[u8], x: &[f32], y: &mut [f32]) -> Resul
 
 /// `y[m] = W_q8_0[m, n_cols] x_f32[n_cols]` on GGUF `block_q8_0` bytes.
 pub fn gemv_q8_0_f32(n_cols: usize, w: &[u8], x: &[f32], y: &mut [f32]) -> Result<(), QuantError> {
+    if native_matmul(GemmKind::Q80, n_cols, 1, w, x, y)? {
+        return Ok(());
+    }
     let w_rb = q8_0_row_bytes(n_cols)?;
     require_len("x F32 elems", x.len(), n_cols)?;
     let expected_w = w_rb.checked_mul(y.len()).ok_or(QuantError::Size {
@@ -7000,6 +7142,9 @@ pub fn gemv_q8_0_f32(n_cols: usize, w: &[u8], x: &[f32], y: &mut [f32]) -> Resul
 
 /// `y[m] = W_tq10[m, n_cols] x_f32[n_cols]`.
 pub fn gemv_tq1_0_f32(n_cols: usize, w: &[u8], x: &[f32], y: &mut [f32]) -> Result<(), QuantError> {
+    if native_matmul(GemmKind::TQ10, n_cols, 1, w, x, y)? {
+        return Ok(());
+    }
     let w_rb = tq1_0_row_bytes(n_cols)?;
     require_len("x F32 elems", x.len(), n_cols)?;
     let expected_w = w_rb.checked_mul(y.len()).ok_or(QuantError::Size {
@@ -7021,6 +7166,9 @@ pub fn gemv_tq1_0_f32(n_cols: usize, w: &[u8], x: &[f32], y: &mut [f32]) -> Resu
 
 /// `y[m] = W_tq20[m, n_cols] x_f32[n_cols]`.
 pub fn gemv_tq2_0_f32(n_cols: usize, w: &[u8], x: &[f32], y: &mut [f32]) -> Result<(), QuantError> {
+    if native_matmul(GemmKind::TQ20, n_cols, 1, w, x, y)? {
+        return Ok(());
+    }
     let w_rb = tq2_0_row_bytes(n_cols)?;
     require_len("x F32 elems", x.len(), n_cols)?;
     let expected_w = w_rb.checked_mul(y.len()).ok_or(QuantError::Size {
@@ -7047,6 +7195,9 @@ pub fn gemv_iq3_xxs_f32(
     x: &[f32],
     y: &mut [f32],
 ) -> Result<(), QuantError> {
+    if native_matmul(GemmKind::IQ3XXS, n_cols, 1, w, x, y)? {
+        return Ok(());
+    }
     let w_rb = iq3_xxs_row_bytes(n_cols)?;
     require_len("x F32 elems", x.len(), n_cols)?;
     let expected_w = w_rb.checked_mul(y.len()).ok_or(QuantError::Size {
@@ -7068,6 +7219,9 @@ pub fn gemv_iq3_xxs_f32(
 
 /// `y[m] = W_iq2s[m, n_cols] x_f32[n_cols]`.
 pub fn gemv_iq2_s_f32(n_cols: usize, w: &[u8], x: &[f32], y: &mut [f32]) -> Result<(), QuantError> {
+    if native_matmul(GemmKind::IQ2S, n_cols, 1, w, x, y)? {
+        return Ok(());
+    }
     let w_rb = iq2_s_row_bytes(n_cols)?;
     require_len("x F32 elems", x.len(), n_cols)?;
     let expected_w = w_rb.checked_mul(y.len()).ok_or(QuantError::Size {
@@ -7094,6 +7248,9 @@ pub fn gemv_iq2_xxs_f32(
     x: &[f32],
     y: &mut [f32],
 ) -> Result<(), QuantError> {
+    if native_matmul(GemmKind::IQ2XXS, n_cols, 1, w, x, y)? {
+        return Ok(());
+    }
     let w_rb = iq2_xxs_row_bytes(n_cols)?;
     require_len("x F32 elems", x.len(), n_cols)?;
     let expected_w = w_rb.checked_mul(y.len()).ok_or(QuantError::Size {
@@ -7120,6 +7277,9 @@ pub fn gemv_iq2_xs_f32(
     x: &[f32],
     y: &mut [f32],
 ) -> Result<(), QuantError> {
+    if native_matmul(GemmKind::IQ2XS, n_cols, 1, w, x, y)? {
+        return Ok(());
+    }
     let w_rb = iq2_xs_row_bytes(n_cols)?;
     require_len("x F32 elems", x.len(), n_cols)?;
     let expected_w = w_rb.checked_mul(y.len()).ok_or(QuantError::Size {
@@ -7141,6 +7301,9 @@ pub fn gemv_iq2_xs_f32(
 
 /// `y[m] = W_iq1s[m, n_cols] x_f32[n_cols]`.
 pub fn gemv_iq1_s_f32(n_cols: usize, w: &[u8], x: &[f32], y: &mut [f32]) -> Result<(), QuantError> {
+    if native_matmul(GemmKind::IQ1S, n_cols, 1, w, x, y)? {
+        return Ok(());
+    }
     let w_rb = iq1_s_row_bytes(n_cols)?;
     require_len("x F32 elems", x.len(), n_cols)?;
     let expected_w = w_rb.checked_mul(y.len()).ok_or(QuantError::Size {
@@ -7162,6 +7325,9 @@ pub fn gemv_iq1_s_f32(n_cols: usize, w: &[u8], x: &[f32], y: &mut [f32]) -> Resu
 
 /// `y[m] = W_iq1m[m, n_cols] x_f32[n_cols]`.
 pub fn gemv_iq1_m_f32(n_cols: usize, w: &[u8], x: &[f32], y: &mut [f32]) -> Result<(), QuantError> {
+    if native_matmul(GemmKind::IQ1M, n_cols, 1, w, x, y)? {
+        return Ok(());
+    }
     let w_rb = iq1_m_row_bytes(n_cols)?;
     require_len("x F32 elems", x.len(), n_cols)?;
     let expected_w = w_rb.checked_mul(y.len()).ok_or(QuantError::Size {
@@ -7183,6 +7349,9 @@ pub fn gemv_iq1_m_f32(n_cols: usize, w: &[u8], x: &[f32], y: &mut [f32]) -> Resu
 
 /// `y[m] = W_iq3s[m, n_cols] x_f32[n_cols]`.
 pub fn gemv_iq3_s_f32(n_cols: usize, w: &[u8], x: &[f32], y: &mut [f32]) -> Result<(), QuantError> {
+    if native_matmul(GemmKind::IQ3S, n_cols, 1, w, x, y)? {
+        return Ok(());
+    }
     let w_rb = iq3_s_row_bytes(n_cols)?;
     require_len("x F32 elems", x.len(), n_cols)?;
     let expected_w = w_rb.checked_mul(y.len()).ok_or(QuantError::Size {
@@ -7209,6 +7378,9 @@ pub fn gemv_iq4_nl_f32(
     x: &[f32],
     y: &mut [f32],
 ) -> Result<(), QuantError> {
+    if native_matmul(GemmKind::IQ4NL, n_cols, 1, w, x, y)? {
+        return Ok(());
+    }
     let w_rb = iq4_nl_row_bytes(n_cols)?;
     require_len("x F32 elems", x.len(), n_cols)?;
     let expected_w = w_rb.checked_mul(y.len()).ok_or(QuantError::Size {
@@ -7235,6 +7407,9 @@ pub fn gemv_iq4_xs_f32(
     x: &[f32],
     y: &mut [f32],
 ) -> Result<(), QuantError> {
+    if native_matmul(GemmKind::IQ4XS, n_cols, 1, w, x, y)? {
+        return Ok(());
+    }
     let w_rb = iq4_xs_row_bytes(n_cols)?;
     require_len("x F32 elems", x.len(), n_cols)?;
     let expected_w = w_rb.checked_mul(y.len()).ok_or(QuantError::Size {

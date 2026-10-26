@@ -10,12 +10,15 @@ keywords = ["gguf", "llm", "llama", "moe", "inference"]
 categories = ["science"]
 
 [features]
-default = ["simd"]
+default = ["native-cuda"]
+# Native NVIDIA kernels execute matrix products. CPU reference is explicit.
+native-cuda = ["dep:llama-native-cuda", "llama-native-cuda/cuda"]
 # Vendor SIMD fast path for the hot dtypes. Off means the crate compiles under a
 # crate-level `forbid(unsafe_code)`; see `src/lib.rs`.
 simd = []
 
 [dependencies]
+llama-native-cuda = { path = "../native-cuda", default-features = false, optional = true }
 expertvm = { path = "../expertvm" }
 
 [lib]

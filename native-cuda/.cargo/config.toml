@@ -1,4 +1,0 @@
-# Match NVIDIA's cargo-oxide standalone scaffold. Its proc macros use
-# compiler-internal APIs on the pinned stable toolchain.
-[env]
-RUSTC_BOOTSTRAP = "1"

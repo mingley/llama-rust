@@ -1,4 +1,9 @@
-//! Shape and result validation shared by the native CUDA GEMV smoke runner.
+//! Native NVIDIA CUDA Rust matrix execution and shape/result validation.
+
+#[cfg(feature = "cuda")]
+mod gpu;
+#[cfg(feature = "cuda")]
+pub use gpu::{CudaGemv, CudaMatrix};
 
 /// Checked row-major GEMV dimensions. Dimensions must fit the kernel's u32 ABI.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]

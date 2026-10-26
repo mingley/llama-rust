@@ -1,0 +1,25 @@
+name: native-cuda
+
+# This validates the actual default backend on a CUDA-equipped runner.
+# CPU oracle CI is separate and explicitly disables default features.
+on:
+  workflow_dispatch:
+
+jobs:
+  gpu:
+    runs-on: [self-hosted, linux, x64, cuda]
+    steps:
+      - uses: actions/checkout@v4
+      # Runner requirements: pinned cargo-oxide, CUDA >=13, NVIDIA driver,
+      # libclang, Rust 1.99.1 and its compiler development components.
+      - run: cargo +1.99.1 oxide doctor
+      - name: Validate Rust kernels against scalar oracle
+        run: |
+          cargo +1.99.1 oxide build -- --release -p llama-native-cuda --bin native-gemv
+          ./target/release/native-gemv
+      - name: Build default inference backend
+        run: cargo +1.99.1 oxide build -- --release -p llama-rust --bin gguf_gemv
+      - name: Run default backend inference
+        run: |
+          ./target/release/gguf_gemv write-tiny /tmp/native-tiny.gguf
+          ./target/release/gguf_gemv infer /tmp/native-tiny.gguf --prompt ab --n-predict 4

@@ -4,13 +4,10 @@ version = "0.1.0"
 edition = "2024"
 rust-version = "1.99.1"
 license = "MIT"
-description = "Experimental native Rust CUDA GEMV validation for llama-rust"
-
-# Isolated until hardware validation: no CUDA dependency in the CPU engine.
-[workspace]
+description = "NVIDIA native Rust CUDA matrix execution for llama-rust"
 
 [features]
-default = []
+default = ["cuda"]
 cuda = ["dep:cuda-core", "dep:cuda-device", "dep:cuda-host"]
 
 [dependencies]

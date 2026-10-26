@@ -1,65 +1,62 @@
-# Native CUDA Rust GEMV experiment
+# NVIDIA CUDA Rust matrix execution
 
-This standalone crate is the first hardware execution seam for evaluating
-[NVIDIA CUDA Rust](https://github.com/NVIDIA/cuda-rust). It uses NVIDIA's
-`cuda-oxide` Rust kernel compiler and `cuda-core` buffers/streams, pinned to
-upstream commit `9df9e7cef561e03a066230b3bb433b3d8285da81`.
+This crate supplies native Rust GPU GEMV and batched GEMM kernels for the default
+NVIDIA execution path. Kernels use NVIDIA's `cuda-oxide` compiler and
+`cuda-core` buffers/streams, pinned to upstream commit
+`9df9e7cef561e03a066230b3bb433b3d8285da81`.
 
-`native-gemv` allocates device weights/input/output, launches a row-major F32
-GEMV written in Rust, copies results back, and compares every output against
-an independent scalar f64 oracle. Three shapes cover a single element,
-non-warp-multiple dimensions, and multiple blocks. A failed initialization,
-launch, synchronization or numerical check exits nonzero; there is no CPU
-fallback and no simulated GPU timing.
+`CudaGemv` retains the device context, stream and compiled kernel module.
+`upload` creates an immutable `CudaMatrix` in device memory; `gemv_resident`
+and `gemm_resident` reuse that matrix without uploading its weights again.
+GEMM accepts token-major input and output and launches the batch together.
+The kernels are a simple correctness baseline, with one thread per output;
+there is no CPU fallback after GPU selection and no simulated timing.
 
-This kernel is a correctness baseline with one thread per output row. It is
-not tuned, is not wired into the serving engine, and does not establish a
-speed advantage over vLLM or llama.cpp. The CPU engine and its dependency
-policy remain unchanged.
+The `native-gemv` binary uploads three matrix shapes and compares device results
+against an independent scalar f64 oracle. The host API checks dimensions,
+vector lengths, indexing limits, and matrix/executor ownership before launch.
 
-## CPU-only checks
+## Build and run
 
-```bash
-cargo test --manifest-path native-cuda/Cargo.toml --lib
-cargo fmt --manifest-path native-cuda/Cargo.toml --check
-```
-
-The optional GPU dependencies are resolved into this crate's lockfile but
-are not compiled for these checks. The pure Rust checks verify buffer/shape
-validation and rejection of nonfinite or incorrect GPU results; they do not
-validate device compilation or execution.
-
-## Native GPU build and validation
-
-Follow the pinned upstream
+Native CUDA is enabled by default. Follow the pinned upstream
 [installation instructions](https://github.com/NVIDIA/cuda-rust/blob/9df9e7cef561e03a066230b3bb433b3d8285da81/cuda-oxide/cuda-oxide-book/getting-started/installation.md).
 Requirements include Rust **1.99.1**, its `rust-src`, `rustc-dev`, and
-`llvm-tools` components, CUDA Toolkit **13 or newer**, libclang with development
-headers, and an NVIDIA GPU/compatible driver. `cuda-oxide` also needs an
-NVPTX-capable LLVM as described upstream. Configure `CUDA_TOOLKIT_PATH` if the
-toolkit is outside the standard install location.
+`llvm-tools` components, CUDA Toolkit **13 or newer**, libclang development
+headers, an NVPTX-capable LLVM, and an NVIDIA GPU/compatible driver.
+Configure `CUDA_TOOLKIT_PATH` for a nonstandard toolkit installation.
 
 ```bash
 rustup toolchain install 1.99.1 --profile minimal
 rustup component add --toolchain 1.99.1 rust-src rustc-dev llvm-tools
 cargo +1.99.1 install --git https://github.com/NVIDIA/cuda-rust.git \
   --rev 9df9e7cef561e03a066230b3bb433b3d8285da81 cargo-oxide --locked
-cd native-cuda
 cargo +1.99.1 oxide doctor
-cargo +1.99.1 oxide run --features cuda
+cargo +1.99.1 oxide build -- --release -p llama-native-cuda --bin native-gemv
+./target/release/native-gemv
 ```
 
-The local `.cargo/config.toml` matches NVIDIA's standalone scaffold and enables
-`RUSTC_BOOTSTRAP` for its compiler-internal proc-macro APIs. Run native commands
-from this directory so Cargo reads that configuration. Use `cargo oxide`,
-rather than ordinary `cargo run`, to embed compiled device code. CUDA Rust is an early-stage project: keeping compiler, macro, device,
-and host dependencies at the same revision is intentional. On a GPU runner,
-run this program under Compute Sanitizer as well before integrating the
-kernel into a persistent device-weight store.
+Use `cargo oxide`, rather than ordinary `cargo run`, to embed device code.
+The repository root `.cargo/config.toml` mirrors upstream's scaffold and sets
+`RUSTC_BOOTSTRAP=1` because its macros use compiler internals on the pinned
+stable toolchain. Compiler, macro, device, and host dependencies
+must remain at the same revision.
+
+## CPU-only validation
+
+```bash
+cargo test -p llama-native-cuda --no-default-features --lib
+cargo clippy -p llama-native-cuda --no-default-features --lib -- -D warnings
+cargo fmt --all --check
+```
+
+These checks exercise shape validation and oracle result comparison without
+compiling GPU code. They do not validate GPU execution.
 
 ## Validation status
 
-The development environment has no CUDA Toolkit, libclang, NVIDIA driver/GPU,
-or `cargo-oxide`. CPU checks can run here. Native compilation and GPU execution
-remain pending on a configured GPU runner; this experiment must not be enabled
-as a production backend until those checks pass.
+The development environment has no NVIDIA GPU/driver. Host validation and
+device compilation status are reported separately from hardware execution;
+GPU execution remains pending on a configured GPU runner. Default selection is a product policy, not evidence
+of hardware validation or a speed advantage over vLLM or llama.cpp. Run
+`native-gemv` and model parity tests under Compute Sanitizer on GPU hardware
+before relying on numerical correctness or memory safety across real workloads.

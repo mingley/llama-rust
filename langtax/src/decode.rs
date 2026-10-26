@@ -982,6 +982,12 @@ fn pool_override() -> Option<bool> {
 
 /// Whether an `n_rows x n_cols` GEMV is big enough to hand to the pool.
 fn pooled_gemv(n_rows: usize, n_cols: usize) -> bool {
+    // A CPU row pool would create one CUDA context/cache per worker and
+    // fragment one matrix launch into many transfers. Native CUDA dispatch
+    // owns parallelism and propagates errors on the calling inference thread.
+    if cfg!(feature = "native-cuda") {
+        return false;
+    }
     match pool_override() {
         Some(forced) => forced && n_rows > 1,
         None => n_rows > 1 && n_rows.saturating_mul(n_cols) >= PAR_MIN_WORK,
