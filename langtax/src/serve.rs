@@ -1422,15 +1422,18 @@ pub(crate) fn try_parse_http_request(buf: &[u8]) -> Result<Option<HttpRequest>, 
     };
     let headers = std::str::from_utf8(header_bytes)
         .map_err(|_| ServeError::Http("headers must be utf-8".into()))?;
-    if let Some(te) = header_value(headers, "transfer-encoding") {
-        if !te.eq_ignore_ascii_case("identity") {
-            return Err(ServeError::Http("chunked transfer unsupported".into()));
-        }
+    // Reject ambiguous framing before waiting for a body. Both serving paths
+    // share this parser, including persistent and pipelined connections.
+    if framing_header(headers, "transfer-encoding")?.is_some() {
+        return Err(ServeError::Http(
+            "transfer-encoding (including chunked) unsupported".into(),
+        ));
     }
-    let cl = match header_value(headers, "content-length") {
-        Some(s) => s
+    let cl = match framing_header(headers, "content-length")? {
+        Some(s) if !s.is_empty() && s.bytes().all(|b| b.is_ascii_digit()) => s
             .parse::<u64>()
             .map_err(|_| ServeError::Http(format!("invalid content-length {s:?}")))?,
+        Some(s) => return Err(ServeError::Http(format!("invalid content-length {s:?}"))),
         None => 0,
     };
     if cl > MAX_REQ {
@@ -1445,7 +1448,8 @@ pub(crate) fn try_parse_http_request(buf: &[u8]) -> Result<Option<HttpRequest>, 
         .ok_or_else(|| ServeError::Http("body slice".into()))?
         .to_vec();
     let mut lines = headers.split('\n');
-    let req_line = lines.next().unwrap_or("").strip_suffix('\r').unwrap_or("");
+    let req_line = lines.next().unwrap_or("");
+    let req_line = req_line.strip_suffix('\r').unwrap_or(req_line);
     let mut parts = req_line.split_whitespace();
     let method = parts
         .next()
@@ -1469,6 +1473,30 @@ pub(crate) fn try_parse_http_request(buf: &[u8]) -> Result<Option<HttpRequest>, 
         keep_alive: http_keep_alive(version, connection.as_deref()),
         consumed,
     }))
+}
+
+fn framing_header<'a>(headers: &'a str, name: &str) -> Result<Option<&'a str>, ServeError> {
+    let mut value = None;
+    for line in headers.split('\n').skip(1) {
+        let line = line.strip_suffix('\r').unwrap_or(line);
+        let (key, raw) = line
+            .split_once(':')
+            .ok_or_else(|| ServeError::Http("malformed header".into()))?;
+        if key.is_empty()
+            || !key
+                .bytes()
+                .all(|b| b.is_ascii_alphanumeric() || b"!#$%&'*+-.^_`|~".contains(&b))
+        {
+            return Err(ServeError::Http("invalid header name".into()));
+        }
+        if key.eq_ignore_ascii_case(name) {
+            if value.is_some() {
+                return Err(ServeError::Http(format!("duplicate {name}")));
+            }
+            value = Some(raw.trim_matches([' ', '\t']));
+        }
+    }
+    Ok(value)
 }
 
 fn http_keep_alive(version: &str, connection: Option<&str>) -> bool {
@@ -4871,6 +4899,32 @@ mod tests {
                 .contains("no-such-llama-rust-serve-test.gguf"),
             "{err}"
         );
+    }
+
+    #[test]
+    fn http_rejects_ambiguous_framing_before_body() {
+        for headers in [
+            "Content-Length: 2\r\nContent-Length: 3",
+            "Content-Length: 2\r\ncOnTeNt-LeNgTh: 2",
+            "Content-Length: +2",
+            "Content-Length: 2, 2",
+            "Content-Length : 2",
+            " Content-Length: 2",
+            "Content-Length: 2\r\nTransfer-Encoding: identity",
+            "Transfer-Encoding: identity\r\nTransfer-Encoding: chunked",
+            "Transfer-Encoding: chunked\r\nTransfer-Encoding: identity",
+            "Broken-Header",
+        ] {
+            let raw = format!("POST /generate HTTP/1.1\r\n{headers}\r\n\r\n");
+            assert!(try_parse_http_request(raw.as_bytes()).is_err(), "{headers}");
+        }
+        let raw = b"POST /generate HTTP/1.1\r\nContent-Length:\t2 \t\r\n\r\n{}GET /health HTTP/1.1\r\n\r\n";
+        let first = try_parse_http_request(raw).unwrap().unwrap();
+        assert_eq!(first.body, b"{}");
+        let second = try_parse_http_request(raw.get(first.consumed..).unwrap())
+            .unwrap()
+            .unwrap();
+        assert_eq!(second.path, "/health");
     }
 
     #[test]
