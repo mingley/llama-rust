@@ -13,6 +13,24 @@ This is the **correctness laboratory** for the research stack in [PLAN.md](PLAN.
 
 See [STATUS.md](STATUS.md) for what shipped. Full ChatGPT share extract: [docs/chatgpt-share-6a920fe1/](docs/chatgpt-share-6a920fe1/).
 
+## Serving progress and native CUDA
+
+Disconnected Engine HTTP clients now cancel their active or queued sequences
+and release finished outputs and traces before the next scheduler step.
+The sampler's default greedy path avoids copying logits. Top-k uses selection
+rather than sorting the entire vocabulary, and nucleus sampling sorts only
+positive candidates remaining after top-k; deterministic tie handling is preserved.
+
+Run `cargo run -p llama-rust --release --example sample_bench` to measure sampler
+overhead. On the development host, 128,256 logits with top-k=40/top-p=0.95 took
+about 0.65 ms/draw versus 4.4 ms before this change (100 timed draws after warmup).
+This is a sampler microbenchmark, not model throughput or a vLLM comparison.
+
+[`native-cuda`](native-cuda/) is an isolated experimental NVIDIA CUDA Rust GEMV
+validation runner. It does not replace the CPU decoder or turn simulated GPU
+scores into measured GPU performance. Hardware validation is required before
+integrating its kernels into the model execution path.
+
 ## Model / Session
 
 ```rust

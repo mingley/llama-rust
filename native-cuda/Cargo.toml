@@ -1,0 +1,24 @@
+[package]
+name = "llama-native-cuda"
+version = "0.1.0"
+edition = "2024"
+rust-version = "1.99.1"
+license = "MIT"
+description = "Experimental native Rust CUDA GEMV validation for llama-rust"
+
+# Isolated until hardware validation: no CUDA dependency in the CPU engine.
+[workspace]
+
+[features]
+default = []
+cuda = ["dep:cuda-core", "dep:cuda-device", "dep:cuda-host"]
+
+[dependencies]
+cuda-core = { git = "https://github.com/NVIDIA/cuda-rust.git", rev = "9df9e7cef561e03a066230b3bb433b3d8285da81", optional = true }
+cuda-device = { git = "https://github.com/NVIDIA/cuda-rust.git", rev = "9df9e7cef561e03a066230b3bb433b3d8285da81", optional = true }
+cuda-host = { git = "https://github.com/NVIDIA/cuda-rust.git", rev = "9df9e7cef561e03a066230b3bb433b3d8285da81", optional = true }
+
+[[bin]]
+name = "native-gemv"
+path = "src/main.rs"
+required-features = ["cuda"]

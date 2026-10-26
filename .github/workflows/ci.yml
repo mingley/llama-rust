@@ -5,6 +5,19 @@ on:
   pull_request:
 
 jobs:
+  native-cuda-host:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: clippy, rustfmt
+      # Shape/oracle validation only. Actual GPU compilation and execution
+      # require CUDA 13 and cargo-oxide; see native-cuda/README.md.
+      - run: cargo fmt --manifest-path native-cuda/Cargo.toml --check
+      - run: cargo test --manifest-path native-cuda/Cargo.toml --locked --lib
+      - run: cargo clippy --manifest-path native-cuda/Cargo.toml --locked --lib -- -D warnings
+
   test:
     runs-on: ubuntu-latest
     strategy:
