@@ -380,6 +380,9 @@ impl<'a> EngineHttp<'a> {
     pub(crate) fn poll(&mut self) -> Result<(), ServeError> {
         self.accept_ready()?;
         self.read_ready();
+        // Cancel disconnected requests before spending another scheduler step
+        // on their prefill/decode or admitting their waiting sequences.
+        self.reap();
         self.admit_parsed();
         self.step_if_busy()?;
         self.stream_progress();
@@ -699,7 +702,19 @@ impl<'a> EngineHttp<'a> {
     }
 
     fn reap(&mut self) {
-        self.conns.retain(|c| !c.done);
+        let engine = &mut self.engine;
+        self.conns.retain(|c| {
+            if !c.done {
+                return true;
+            }
+            if let Some(id) = c.seq {
+                let _output = engine.take(id);
+                // Taking a live sequence banks its trace; discard it after
+                // cancellation as there is no client left to harvest it.
+                let _trace = engine.take_moe_trace(id);
+            }
+            false
+        });
     }
 }
 
@@ -767,6 +782,87 @@ mod tests {
         s.set_nodelay(true).expect("nodelay");
         s.set_nonblocking(true).expect("nb");
         s
+    }
+
+    #[test]
+    fn engine_http_disconnect_cancels_generation() {
+        let (model, tok) = tiny_model();
+        let mut args = engine_args();
+        args.prefill_chunk = 1;
+        let listener = bind_loopback("127.0.0.1:0").expect("bind");
+        listener.set_nonblocking(true).expect("nonblocking");
+        let addr = listener.local_addr().expect("addr");
+        let mut http = EngineHttp::new(&model, &tok, &args, listener).expect("http");
+        let mut client = connect_nb(addr);
+        write_all_nb(
+            &mut client,
+            &post_json(r#"{"prompt":"abab","n_predict":40}"#),
+        );
+        http.poll().expect("poll");
+        let id = http.conns.first().and_then(|c| c.seq).expect("sequence");
+        assert!(http.engine.generated(id).is_some());
+        client.shutdown(std::net::Shutdown::Both).expect("shutdown");
+        for _ in 0..100 {
+            http.poll().expect("poll");
+            if http.conns.is_empty() {
+                break;
+            }
+        }
+        assert!(http.conns.is_empty(), "disconnected socket retained");
+        assert!(
+            !http.engine.has_runnable(),
+            "disconnected request still running"
+        );
+        assert!(
+            http.engine.take(id).is_none(),
+            "disconnected output retained"
+        );
+    }
+
+    #[test]
+    fn disconnected_requests_release_active_waiting_and_finished_sequences() {
+        let (model, tok) = tiny_model();
+        let mut args = engine_args();
+        args.max_seqs = Some(1);
+        let listener = bind_loopback("127.0.0.1:0").expect("bind");
+        listener.set_nonblocking(true).expect("nonblocking");
+        let addr = listener.local_addr().expect("addr");
+        let mut http = EngineHttp::new(&model, &tok, &args, listener).expect("http");
+        http.engine.enable_moe_trace();
+        let ids = prompt_ids(&tok, "ab").expect("ids");
+        let active = http.engine.add(&ids, 8).expect("active");
+        let waiting = http.engine.add(&ids, 8).expect("waiting");
+        let _advanced = http.engine.step().expect("prefill");
+        assert_eq!(http.engine.active(), 1);
+        assert_eq!(http.engine.waiting(), 1);
+        let _clients = [connect_nb(addr), connect_nb(addr)];
+        http.accept_ready().expect("accept");
+        for (conn, id) in http.conns.iter_mut().zip([active, waiting]) {
+            conn.seq = Some(id);
+            conn.done = true;
+        }
+        let steps = http.stats().steps;
+        http.poll().expect("poll");
+        assert!(http.conns.is_empty());
+        assert_eq!(http.engine.active(), 0);
+        assert_eq!(http.engine.waiting(), 0);
+        assert_eq!(http.stats().steps, steps, "cancel before scheduler step");
+        for id in [active, waiting] {
+            assert!(http.engine.take(id).is_none(), "sequence retained");
+            assert!(http.engine.take_moe_trace(id).is_none(), "trace retained");
+        }
+
+        let finished = http.engine.add(&ids, 1).expect("finished");
+        http.engine.run().expect("run");
+        assert!(http.engine.is_finished(finished));
+        let _client = connect_nb(addr);
+        http.accept_ready().expect("accept");
+        let conn = http.conns.first_mut().expect("connection");
+        conn.seq = Some(finished);
+        conn.done = true;
+        http.reap();
+        assert!(http.engine.take(finished).is_none());
+        assert!(http.engine.take_moe_trace(finished).is_none());
     }
 
     fn write_all_nb(s: &mut TcpStream, bytes: &[u8]) {

@@ -125,6 +125,9 @@ pub fn sample_next(
     if logits.is_empty() {
         return Err(SampleError::Empty);
     }
+    if params.is_greedy() && params.repeat_penalty == 1.0 {
+        return Ok(argmax(logits));
+    }
     let mut work = logits.to_vec();
     apply_repeat_penalty(&mut work, prev, params.repeat_penalty);
     if params.is_greedy() {
@@ -196,7 +199,10 @@ fn keep_top_k(probs: &mut [f32], k: usize) {
     if k == 0 || k >= probs.len() {
         return;
     }
-    let order = sort_ids_desc(probs);
+    // Selection needs only the winning set, not a full vocabulary sort.
+    // The id tie-break preserves the exact set chosen by the sorted path.
+    let mut order: Vec<usize> = (0..probs.len()).collect();
+    let _partition = order.select_nth_unstable_by(k, |&a, &b| cmp_prob_desc(probs, a, b));
     let mut keep = vec![false; probs.len()];
     for idx in order.iter().take(k) {
         if let Some(slot) = keep.get_mut(*idx) {
@@ -210,7 +216,14 @@ fn keep_top_p(probs: &mut [f32], p: f32) {
     if p >= 1.0 {
         return;
     }
-    let order = sort_ids_desc(probs);
+    // Top-k already zeroed excluded candidates; nucleus sampling only needs
+    // to order the remaining positive mass.
+    let mut order: Vec<usize> = probs
+        .iter()
+        .enumerate()
+        .filter_map(|(id, pr)| (*pr > 0.0).then_some(id))
+        .collect();
+    order.sort_unstable_by(|&a, &b| cmp_prob_desc(probs, a, b));
     let mut keep = vec![false; probs.len()];
     let mut cum = 0.0f32;
     for idx in &order {
@@ -249,12 +262,6 @@ fn renormalize(probs: &mut [f32]) {
             *p /= s;
         }
     }
-}
-
-fn sort_ids_desc(probs: &[f32]) -> Vec<usize> {
-    let mut order: Vec<usize> = (0..probs.len()).collect();
-    order.sort_by(|&a, &b| cmp_prob_desc(probs, a, b));
-    order
 }
 
 fn cmp_prob_desc(probs: &[f32], a: usize, b: usize) -> Ordering {
@@ -587,6 +594,49 @@ mod tests {
             sample_next(&peak, Some(&mut rng), &[0.0, 0.0, 80.0], &[]).unwrap(),
             2
         );
+    }
+
+    #[test]
+    fn selected_filters_match_full_sort_bit_for_bit() {
+        let mut state = 7;
+        for n in [1, 2, 17, 257, 4096] {
+            let probs: Vec<f32> = (0..n)
+                .map(|_| f32::from(u8::try_from(splitmix64(&mut state) % 16).unwrap()) / 256.0)
+                .collect();
+            for k in [0, 1, 2, 16, n, n + 1] {
+                for p in [0.01, 0.5, 0.95, 1.0] {
+                    let mut expected = probs.clone();
+                    let mut order: Vec<usize> = (0..n).collect();
+                    order.sort_by(|&a, &b| cmp_prob_desc(&expected, a, b));
+                    if k > 0 && k < n {
+                        for id in order.iter().skip(k) {
+                            *expected.get_mut(*id).unwrap() = 0.0;
+                        }
+                    }
+                    if p < 1.0 {
+                        order.sort_by(|&a, &b| cmp_prob_desc(&expected, a, b));
+                        let mut keep = vec![false; n];
+                        let mut cum = 0.0;
+                        for id in order {
+                            let pr = *expected.get(id).unwrap();
+                            if pr <= 0.0 && cum > 0.0 {
+                                break;
+                            }
+                            *keep.get_mut(id).unwrap() = true;
+                            cum += pr;
+                            if cum >= p {
+                                break;
+                            }
+                        }
+                        zero_unkept(&mut expected, &keep);
+                    }
+                    let mut actual = probs.clone();
+                    keep_top_k(&mut actual, k);
+                    keep_top_p(&mut actual, p);
+                    assert_eq!(actual, expected, "n={n}, k={k}, p={p}");
+                }
+            }
+        }
     }
 
     #[test]
