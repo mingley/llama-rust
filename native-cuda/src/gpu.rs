@@ -64,6 +64,8 @@ pub struct CudaGemv {
     context: Arc<CudaContext>,
     stream: Arc<CudaStream>,
     module: kernels::LoadedModule,
+    input: Option<DeviceBuffer<f32>>,
+    output: Option<DeviceBuffer<f32>>,
 }
 
 impl CudaGemv {
@@ -76,7 +78,36 @@ impl CudaGemv {
             context,
             stream,
             module,
+            input: None,
+            output: None,
         })
+    }
+
+    // Reuse same-sized scratch buffers across model layers and tokens. Every
+    // launch overwrites the entire output, and copy_to_host synchronizes it
+    // before the next operation can reuse either buffer.
+    fn prepare_scratch(&mut self, input_len: usize, output_len: usize) -> Result<(), String> {
+        if self
+            .input
+            .as_ref()
+            .is_none_or(|buffer| buffer.len() != input_len)
+        {
+            // Drop the old allocation before growing; otherwise resize can
+            // fail when the old and new buffers do not fit simultaneously.
+            self.input = None;
+            self.input =
+                Some(DeviceBuffer::zeroed(&self.stream, input_len).map_err(|e| e.to_string())?);
+        }
+        if self
+            .output
+            .as_ref()
+            .is_none_or(|buffer| buffer.len() != output_len)
+        {
+            self.output = None;
+            self.output =
+                Some(DeviceBuffer::zeroed(&self.stream, output_len).map_err(|e| e.to_string())?);
+        }
+        Ok(())
     }
 
     /// Upload an immutable F32 matrix for reuse across generated tokens.
@@ -108,10 +139,18 @@ impl CudaGemv {
         if input.len() != matrix.shape.cols as usize || output.len() != matrix.shape.rows as usize {
             return Err("CUDA GEMV vector lengths do not match resident matrix".into());
         }
-        let device_input =
-            DeviceBuffer::from_host(&self.stream, input).map_err(|e| e.to_string())?;
-        let mut device_output =
-            DeviceBuffer::<f32>::zeroed(&self.stream, output.len()).map_err(|e| e.to_string())?;
+        self.prepare_scratch(input.len(), output.len())?;
+        let device_input = self
+            .input
+            .as_mut()
+            .ok_or("CUDA input scratch unavailable")?;
+        let device_output = self
+            .output
+            .as_mut()
+            .ok_or("CUDA output scratch unavailable")?;
+        device_input
+            .copy_from_host(&self.stream, input)
+            .map_err(|e| e.to_string())?;
         // SAFETY: upload validates flattened matrix indexing, this method
         // validates both vectors, and DisjointSlice assigns a unique output
         // element to each thread. All buffers outlive the synchronized copy.
@@ -120,17 +159,15 @@ impl CudaGemv {
                 &self.stream,
                 LaunchConfig::for_num_elems(matrix.shape.rows),
                 &matrix.weights,
-                &device_input,
-                &mut device_output,
+                device_input,
+                device_output,
                 matrix.shape.cols,
             )
         }
         .map_err(|e| e.to_string())?;
-        let actual = device_output
-            .to_host_vec(&self.stream)
-            .map_err(|e| e.to_string())?;
-        output.copy_from_slice(&actual);
-        Ok(())
+        device_output
+            .copy_to_host(&self.stream, output)
+            .map_err(|e| e.to_string())
     }
 
     /// Upload and multiply a host matrix. Prefer `upload` and `gemv_resident`
@@ -168,10 +205,18 @@ impl CudaGemv {
         }
         let launch_elements = u32::try_from(outputs).map_err(|_| "CUDA GEMM launch exceeds u32")?;
         let _input_bound = u32::try_from(inputs).map_err(|_| "CUDA GEMM input exceeds u32")?;
-        let device_input =
-            DeviceBuffer::from_host(&self.stream, input).map_err(|e| e.to_string())?;
-        let mut device_output =
-            DeviceBuffer::<f32>::zeroed(&self.stream, outputs).map_err(|e| e.to_string())?;
+        self.prepare_scratch(input.len(), outputs)?;
+        let device_input = self
+            .input
+            .as_mut()
+            .ok_or("CUDA input scratch unavailable")?;
+        let device_output = self
+            .output
+            .as_mut()
+            .ok_or("CUDA output scratch unavailable")?;
+        device_input
+            .copy_from_host(&self.stream, input)
+            .map_err(|e| e.to_string())?;
         // SAFETY: upload validated weights. Checked products and exact vector
         // lengths bound token/row indexing; each output is uniquely assigned.
         // All buffers remain alive through the synchronized host copy.
@@ -180,17 +225,15 @@ impl CudaGemv {
                 &self.stream,
                 LaunchConfig::for_num_elems(launch_elements),
                 &matrix.weights,
-                &device_input,
-                &mut device_output,
+                device_input,
+                device_output,
                 matrix.shape.rows,
                 matrix.shape.cols,
             )
         }
         .map_err(|e| e.to_string())?;
-        let actual = device_output
-            .to_host_vec(&self.stream)
-            .map_err(|e| e.to_string())?;
-        output.copy_from_slice(&actual);
-        Ok(())
+        device_output
+            .copy_to_host(&self.stream, output)
+            .map_err(|e| e.to_string())
     }
 }

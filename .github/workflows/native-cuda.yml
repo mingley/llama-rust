@@ -17,6 +17,10 @@ jobs:
         run: |
           cargo +1.99.1 oxide build -- --release -p llama-native-cuda --bin native-gemv
           ./target/release/native-gemv
+      - name: Check quantized model dispatch against CPU row oracle
+        run: cargo +1.99.1 oxide test -- --release -p llama-rust --test native_cuda_parity -- --test-threads=1
+      - name: Validate native cache configuration
+        run: cargo +1.99.1 oxide test -- --release -p llama-rust --lib native_gpu::tests
       - name: Build default inference backend
         run: cargo +1.99.1 oxide build -- --release -p llama-rust --bin gguf_gemv
       - name: Run default backend inference

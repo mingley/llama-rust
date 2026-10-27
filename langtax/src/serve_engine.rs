@@ -12,6 +12,9 @@
 //! CUDA knobs, `--prefetch` / `--plan-window` / `--plan-threshold`, `--seq-streams`, and
 //! `--trace-out` match `gguf_gemv engine`. No Tokio.
 //! HTTP/1.1 keep-alive is on unless the client sends `Connection: close`.
+//! Streaming connections exceeding 256 KiB of pending output are closed and
+//! their generation is canceled, so slow readers cannot grow the output queue
+//! without bound. Already-written bytes are discarded before appending output.
 
 use std::fs::OpenOptions;
 use std::io::{ErrorKind, Read, Write};
@@ -28,6 +31,10 @@ use crate::serve::{
 };
 use crate::store_attach::{attach_store, StoreAttach};
 use crate::tok::Tokenizer;
+
+// Stop slow readers from retaining unbounded streaming output. This covers
+// application buffering; the socket's own send buffer is bounded by the OS.
+const MAX_STREAM_PENDING: usize = 256 * 1024;
 
 /// Poll until the process exits. Listener must already be non-blocking.
 pub(crate) fn run_loop(
@@ -175,6 +182,30 @@ impl Conn {
     fn can_admit(&self) -> bool {
         self.req.is_some() && self.seq.is_none() && self.write.is_empty() && !self.done
     }
+
+    fn queue_stream(&mut self, bytes: &[u8]) {
+        if self.done {
+            return;
+        }
+        let pending = self.write.len().saturating_sub(self.write_at);
+        if bytes.len() > MAX_STREAM_PENDING.saturating_sub(pending) {
+            // Headers may already be on the wire, so sending a new HTTP error
+            // would corrupt the response. Close and cancel via reap instead.
+            self.done = true;
+            self.write.clear();
+            self.write_at = 0;
+            return;
+        }
+        if self.write_at > 0 {
+            let _sent = self.write.drain(..self.write_at);
+            self.write_at = 0;
+        }
+        self.write.extend_from_slice(bytes);
+    }
+
+    fn queue_stream_chunk(&mut self, bytes: &[u8]) {
+        self.queue_stream(&http_chunk(bytes));
+    }
 }
 
 fn try_take_request(c: &mut Conn) -> bool {
@@ -308,8 +339,8 @@ fn queue_missing(c: Option<&mut Conn>, ndjson: bool, api: ServeApi) {
         json_error("missing sequence")
     };
     if ndjson {
-        c.write.extend(http_chunk(err.as_bytes()));
-        c.write.extend(http_chunk_end());
+        c.queue_stream_chunk(err.as_bytes());
+        c.queue_stream(&http_chunk_end());
         c.finalized = true;
     } else {
         c.write = http_json_bytes(500, "Internal Server Error", &err, c.keep_alive);
@@ -384,6 +415,7 @@ impl<'a> EngineHttp<'a> {
         // on their prefill/decode or admitting their waiting sequences.
         self.reap();
         self.admit_parsed();
+        self.reap();
         self.step_if_busy()?;
         self.stream_progress();
         self.harvest()?;
@@ -449,11 +481,11 @@ impl<'a> EngineHttp<'a> {
                             } else {
                                 http_chunked_headers(req.keep_alive)
                             };
-                            c.write.extend(head);
+                            c.queue_stream(&head);
                             if let Some(prefix) = echo_prefix {
-                                c.write.extend(http_chunk(
+                                c.queue_stream_chunk(
                                     sse_completion_delta(&prefix, None, &model).as_bytes(),
-                                ));
+                                );
                             }
                         }
                     }
@@ -558,7 +590,7 @@ impl<'a> EngineHttp<'a> {
         let n = self.conns.len();
         for i in 0..n {
             let (id, streamed) = match self.conns.get(i) {
-                Some(c) if c.ndjson && !c.finalized => match c.seq {
+                Some(c) if !c.done && c.ndjson && !c.finalized => match c.seq {
                     Some(id) => (id, c.streamed),
                     None => continue,
                 },
@@ -583,7 +615,7 @@ impl<'a> EngineHttp<'a> {
                 ServeApi::Chat => sse_chat_delta(&piece, None, &model),
             };
             if let Some(c) = self.conns.get_mut(i) {
-                c.write.extend(http_chunk(payload.as_bytes()));
+                c.queue_stream_chunk(payload.as_bytes());
                 c.streamed = next;
             }
         }
@@ -666,22 +698,20 @@ impl<'a> EngineHttp<'a> {
                     ServeApi::Generate => {
                         let mut line = json;
                         line.push('\n');
-                        c.write.extend(http_chunk(line.as_bytes()));
+                        c.queue_stream_chunk(line.as_bytes());
                     }
                     ServeApi::Completions => {
-                        c.write.extend(http_chunk(
+                        c.queue_stream_chunk(
                             sse_completion_delta("", Some(reason), &model).as_bytes(),
-                        ));
-                        c.write.extend(http_chunk(sse_done().as_bytes()));
+                        );
+                        c.queue_stream_chunk(sse_done().as_bytes());
                     }
                     ServeApi::Chat => {
-                        c.write.extend(http_chunk(
-                            sse_chat_delta("", Some(reason), &model).as_bytes(),
-                        ));
-                        c.write.extend(http_chunk(sse_done().as_bytes()));
+                        c.queue_stream_chunk(sse_chat_delta("", Some(reason), &model).as_bytes());
+                        c.queue_stream_chunk(sse_done().as_bytes());
                     }
                 }
-                c.write.extend(http_chunk_end());
+                c.queue_stream(&http_chunk_end());
                 c.finalized = true;
             } else {
                 c.write = http_json_bytes(200, "OK", &json, c.keep_alive);
@@ -782,6 +812,61 @@ mod tests {
         s.set_nodelay(true).expect("nodelay");
         s.set_nonblocking(true).expect("nb");
         s
+    }
+
+    #[test]
+    fn streaming_buffer_compacts_sent_bytes_and_enforces_pending_limit() {
+        let listener = bind_loopback("127.0.0.1:0").expect("bind");
+        let _client = connect_nb(listener.local_addr().expect("addr"));
+        let (stream, _) = listener.accept().expect("accept");
+        let mut conn = Conn::new(stream);
+        conn.queue_stream(&vec![b'a'; MAX_STREAM_PENDING]);
+        assert!(!conn.done);
+        conn.write_at = MAX_STREAM_PENDING - 2;
+        conn.queue_stream(b"bc");
+        assert_eq!(conn.write, b"aabc");
+        assert_eq!(conn.write_at, 0);
+        for _ in 0..100 {
+            conn.write_at = conn.write.len();
+            conn.queue_stream(b"next");
+            assert_eq!(conn.write, b"next", "sent data retained");
+        }
+        conn.queue_stream(&vec![b'x'; MAX_STREAM_PENDING]);
+        assert!(conn.done, "slow reader must be disconnected");
+        assert!(conn.write.is_empty());
+        conn.queue_stream(b"must not append to canceled response");
+        assert!(conn.write.is_empty());
+    }
+
+    #[test]
+    fn slow_stream_readers_cancel_sequences_for_all_apis() {
+        for api in [ServeApi::Generate, ServeApi::Completions, ServeApi::Chat] {
+            let (model, tok) = tiny_model();
+            let args = engine_args();
+            let listener = bind_loopback("127.0.0.1:0").expect("bind");
+            listener.set_nonblocking(true).expect("nonblocking");
+            let addr = listener.local_addr().expect("addr");
+            let mut http = EngineHttp::new(&model, &tok, &args, listener).expect("http");
+            let _client = connect_nb(addr);
+            http.accept_ready().expect("accept");
+            let ids = prompt_ids(&tok, "ab").expect("ids");
+            let id = http.engine.add(&ids, 8).expect("sequence");
+            let _advanced = http.engine.step().expect("prefill");
+            assert!(!http.engine.generated(id).expect("generated").is_empty());
+            let conn = http.conns.first_mut().expect("connection");
+            conn.seq = Some(id);
+            conn.api = api;
+            conn.ndjson = true;
+            // Deterministically model a full output queue without relying on
+            // OS-specific socket buffer sizes or a timing-sensitive flood.
+            conn.queue_stream(&vec![b'x'; MAX_STREAM_PENDING]);
+            http.stream_progress();
+            assert!(http.conns.first().expect("connection").done);
+            http.reap();
+            assert!(http.conns.is_empty());
+            assert!(!http.engine.has_runnable());
+            assert!(http.engine.take(id).is_none(), "canceled output retained");
+        }
     }
 
     #[test]

@@ -45,6 +45,9 @@ validation requires a GPU runner (`native-cuda` workflow).
 Device-weight residency is currently bounded to 256 MiB per inference thread,
 including packed-byte identity copies. Quantized cache misses expand to F32;
 larger working sets can thrash this cache and increase memory traffic.
+Set `LLAMA_CUDA_CACHE_BYTES` to a nonnegative byte count to adjust that bound
+for available memory; `0` disables weight residency. Transient uploads and
+scratch buffers are additional to the configured cache budget.
 
 For machines without CUDA, explicitly select the CPU reference:
 
