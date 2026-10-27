@@ -1,7 +1,7 @@
 //! Native NVIDIA matrix dispatch and bounded device-weight residency.
 //!
 //! Cache identity includes the complete packed bytes, dtype and dimensions;
-//! pointer reuse or a hash collision cannot return another model's weights.
+//! pointer reuse or a shortlist-key collision cannot return another model's weights.
 //! `LLAMA_CUDA_CACHE_BYTES` sets the per-thread residency budget once at context
 //! initialization (default 256 MiB; zero disables caching). The budget counts
 //! device F32 weights and retained packed identity, not transient launch memory.
@@ -10,7 +10,6 @@ use crate::quant::QuantError;
 use llama_native_cuda::{CudaGemv, CudaMatrix};
 use std::cell::RefCell;
 use std::collections::VecDeque;
-use std::hash::{DefaultHasher, Hash, Hasher};
 
 const DEFAULT_CACHE_BYTES: usize = 256 * 1024 * 1024;
 const CACHE_BYTES_ENV: &str = "LLAMA_CUDA_CACHE_BYTES";
@@ -39,12 +38,53 @@ fn configured_cache_bytes() -> Result<usize, QuantError> {
     }
 }
 
-struct Entry {
+// A cheap shortlist only: these edge samples are never accepted as identity
+// without verifying all packed bytes. This avoids hashing an entire matrix
+// before scanning it a second time for exact equality on every cache hit.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+struct WeightKey {
     dtype: u8,
     rows: usize,
     cols: usize,
-    hash: u64,
+    len: usize,
+    first: [u8; 32],
+    last: [u8; 32],
+}
+
+impl WeightKey {
+    fn new(dtype: u8, rows: usize, cols: usize, packed: &[u8]) -> Self {
+        let mut first = [0; 32];
+        let mut last = [0; 32];
+        for (slot, byte) in first.iter_mut().zip(packed.iter()) {
+            *slot = *byte;
+        }
+        for (slot, byte) in last.iter_mut().zip(packed.iter().rev()) {
+            *slot = *byte;
+        }
+        Self {
+            dtype,
+            rows,
+            cols,
+            len: packed.len(),
+            first,
+            last,
+        }
+    }
+}
+
+struct WeightIdentity {
+    key: WeightKey,
     packed: Vec<u8>,
+}
+
+impl WeightIdentity {
+    fn matches(&self, key: WeightKey, packed: &[u8]) -> bool {
+        self.key == key && self.packed == packed
+    }
+}
+
+struct Entry {
+    identity: WeightIdentity,
     matrix: CudaMatrix,
     bytes: usize,
 }
@@ -95,16 +135,11 @@ pub(crate) fn matmul(
         let state = slot.as_mut().ok_or_else(|| {
             QuantError::NativeCuda("GPU initialization did not create a context".into())
         })?;
-        let mut hasher = DefaultHasher::new();
-        packed.hash(&mut hasher);
-        let hash = hasher.finish();
-        let hit = state.cache.iter().position(|entry| {
-            entry.hash == hash
-                && entry.dtype == dtype
-                && entry.rows == rows
-                && entry.cols == cols
-                && entry.packed == packed
-        });
+        let key = WeightKey::new(dtype, rows, cols, packed);
+        let hit = state
+            .cache
+            .iter()
+            .position(|entry| entry.identity.matches(key, packed));
         if let Some(index) = hit {
             let entry = state
                 .cache
@@ -141,11 +176,10 @@ pub(crate) fn matmul(
         if bytes <= state.limit {
             state.bytes += bytes;
             state.cache.push_back(Entry {
-                dtype,
-                rows,
-                cols,
-                hash,
-                packed: packed.to_vec(),
+                identity: WeightIdentity {
+                    key,
+                    packed: packed.to_vec(),
+                },
                 matrix,
                 bytes,
             });
@@ -157,6 +191,90 @@ pub(crate) fn matmul(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn shortlist_collision_never_accepts_different_middle_weights() {
+        let packed = vec![7; 128];
+        let key = WeightKey::new(1, 2, 64, &packed);
+        let identity = WeightIdentity {
+            key,
+            packed: packed.clone(),
+        };
+        assert!(identity.matches(key, &packed));
+
+        let mut changed = packed;
+        *changed.get_mut(64).expect("middle element") = 8;
+        let changed_key = WeightKey::new(1, 2, 64, &changed);
+        assert_eq!(key, changed_key, "deliberate edge-sample collision");
+        assert!(!identity.matches(changed_key, &changed));
+        // Reusing the same allocation after mutation cannot return stale data.
+        *changed.get_mut(64).expect("middle element") = 7;
+        assert!(identity.matches(key, &changed));
+    }
+
+    #[test]
+    fn shortlist_identity_checks_shape_dtype_length_and_short_buffers() {
+        for packed in [
+            vec![],
+            vec![1],
+            vec![1; 31],
+            vec![1; 32],
+            vec![1; 33],
+            vec![1; 65],
+        ] {
+            let key = WeightKey::new(1, 2, 3, &packed);
+            let identity = WeightIdentity {
+                key,
+                packed: packed.clone(),
+            };
+            assert!(identity.matches(key, &packed));
+            assert!(!identity.matches(WeightKey::new(2, 2, 3, &packed), &packed));
+            assert!(!identity.matches(WeightKey::new(1, 3, 2, &packed), &packed));
+            let mut longer = packed.clone();
+            longer.push(1);
+            assert!(!identity.matches(WeightKey::new(1, 2, 3, &longer), &longer));
+        }
+    }
+
+    #[test]
+    #[ignore = "manual CPU cache-lookup microbenchmark; no GPU timing"]
+    fn resident_weight_identity_benchmark() {
+        use std::hash::{DefaultHasher, Hash, Hasher};
+        use std::hint::black_box;
+        use std::time::Instant;
+
+        fn fingerprint(packed: &[u8]) -> u64 {
+            let mut hasher = DefaultHasher::new();
+            packed.hash(&mut hasher);
+            hasher.finish()
+        }
+
+        let packed = vec![7; 8 * 1024 * 1024];
+        let query = packed.clone();
+        let identity = WeightIdentity {
+            key: WeightKey::new(1, 1024, 2048, &packed),
+            packed,
+        };
+        let expected_hash = fingerprint(&query);
+        let repetitions = 64;
+        let start = Instant::now();
+        for _ in 0..repetitions {
+            let query = black_box(query.as_slice());
+            assert!(black_box(
+                fingerprint(query) == expected_hash && identity.packed == query
+            ));
+        }
+        let old = start.elapsed().as_nanos() / repetitions;
+        let start = Instant::now();
+        for _ in 0..repetitions {
+            let query = black_box(query.as_slice());
+            assert!(black_box(
+                identity.matches(WeightKey::new(1, 1024, 2048, query), query)
+            ));
+        }
+        let new = start.elapsed().as_nanos() / repetitions;
+        println!("8 MiB resident cache hit: hash+verify={old} ns, edge-key+verify={new} ns");
+    }
 
     #[test]
     fn cache_budget_is_explicit_and_strictly_parsed() {

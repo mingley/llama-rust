@@ -5,6 +5,17 @@ on:
   pull_request:
 
 jobs:
+  benchmark:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: clippy, rustfmt
+      - run: cargo fmt --manifest-path benchmarks/Cargo.toml --check
+      - run: cargo test --manifest-path benchmarks/Cargo.toml --locked
+      - run: cargo clippy --manifest-path benchmarks/Cargo.toml --locked --all-targets -- -D warnings
+
   native-cuda-host:
     runs-on: ubuntu-latest
     steps:

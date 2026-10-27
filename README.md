@@ -58,6 +58,11 @@ cargo build -p llama-rust --release --no-default-features --features simd --bin 
 The CPU commands below opt out of the default backend so the existing oracle
 and simulation examples continue to run without a GPU.
 
+The HTTP generation endpoints currently use greedy decoding. Requests that
+explicitly ask for unsupported sampling, stop sequences, or structured output
+return an error rather than silently ignoring those options. `max_tokens`,
+`max_completion_tokens`, and `n_predict` are accepted as equivalent limits.
+
 ## Model / Session
 
 ```rust

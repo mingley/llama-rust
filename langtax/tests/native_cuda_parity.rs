@@ -1,10 +1,12 @@
 //! Hardware parity for the actual quantized model dispatch, not just the kernel.
 //!
-//! GPU: `cargo oxide test -- --release -p llama-rust --test native_cuda_parity`.
-//! CPU oracle check: `cargo test --release -p llama-rust --no-default-features
-//! --test native_cuda_parity`. Default builds require a working CUDA device;
-//! absence of a driver fails these tests instead of skipping or using a fallback.
+//! Generate scalar logits with `LLAMA_CUDA_ORACLE_WRITE=/tmp/scalar-logits.txt
+//! cargo test --release -p llama-rust --no-default-features --test native_cuda_parity`.
+//! Then run `LLAMA_CUDA_ORACLE_READ=/tmp/scalar-logits.txt cargo oxide test --
+//! --release -p llama-rust --test native_cuda_parity` on a working CUDA device.
+//! Default builds fail without a driver; they never skip or use a CPU fallback.
 use llama_rust::*;
+use std::io::{Read, Write};
 
 // Numerical checks deliberately use f64 row dots, outside the dispatched
 // GEMV/GEMM path. Dequantization is shared because that is CPU-only in both
@@ -182,6 +184,152 @@ fn quantized_model_dispatch_matches_cpu_row_oracle() -> Result<(), QuantError> {
             let replacement = (format.pack_row)(rows + 5);
             if let Some(first) = packed.get_mut(..row_bytes) {
                 first.copy_from_slice(&replacement);
+            }
+        }
+    }
+    Ok(())
+}
+
+// End-to-end references are produced by a separate scalar build, so CUDA and
+// CPU cannot accidentally exercise the same compiled matrix backend. The
+// workflow preserves the snapshot across builds in RUNNER_TEMP.
+type ModelSnapshots = Vec<(String, Vec<f32>)>;
+
+fn model_logits() -> Result<ModelSnapshots, Box<dyn std::error::Error>> {
+    let mut snapshots = Vec::new();
+    for (name, bytes) in [
+        ("llama-f32", tiny_llama_gguf()),
+        ("llama-q4_0", tiny_q40_gguf()),
+        ("llama-q4_k", tiny_q4k_embd_gguf()),
+        ("qwen3-moe", tiny_qwen3moe_gguf()),
+    ] {
+        let model = Model::from_bytes(bytes)?;
+        let mut dense = model.session(32)?;
+        let mut paged = model.session_paged(32, 2)?;
+        let dense_prefill = dense.prefill(&[1, 2, 3])?.to_vec();
+        let paged_prefill = paged.prefill(&[1, 2, 3])?.to_vec();
+        check(
+            &paged_prefill,
+            &dense_prefill
+                .iter()
+                .copied()
+                .map(f64::from)
+                .collect::<Vec<_>>(),
+            name,
+        );
+        snapshots.push((format!("{name}/prefill"), dense_prefill));
+        for (step, token) in [4, 5, 1].into_iter().enumerate() {
+            let dense_logits = dense.decode(token)?.to_vec();
+            let paged_logits = paged.decode(token)?.to_vec();
+            check(
+                &paged_logits,
+                &dense_logits
+                    .iter()
+                    .copied()
+                    .map(f64::from)
+                    .collect::<Vec<_>>(),
+                name,
+            );
+            snapshots.push((format!("{name}/decode-{step}"), dense_logits));
+        }
+        // Divergent full prompt exercises prefix reuse and replacement of KV.
+        let dense_prompt = dense.prompt(&[1, 2, 4])?.to_vec();
+        let paged_prompt = paged.prompt(&[1, 2, 4])?.to_vec();
+        check(
+            &paged_prompt,
+            &dense_prompt
+                .iter()
+                .copied()
+                .map(f64::from)
+                .collect::<Vec<_>>(),
+            name,
+        );
+        snapshots.push((format!("{name}/reused-prompt"), dense_prompt));
+    }
+    Ok(snapshots)
+}
+
+#[test]
+fn end_to_end_models_match_scalar_snapshot() -> Result<(), Box<dyn std::error::Error>> {
+    let snapshots = model_logits()?;
+    if let Some(path) = std::env::var_os("LLAMA_CUDA_ORACLE_WRITE") {
+        if cfg!(feature = "native-cuda") {
+            return Err("CPU oracle must be generated with --no-default-features".into());
+        }
+        let mut text = String::new();
+        for (name, logits) in &snapshots {
+            text.push_str(name);
+            for value in logits {
+                if !value.is_finite() {
+                    return Err("nonfinite scalar oracle".into());
+                }
+                text.push(' ');
+                text.push_str(&value.to_string());
+            }
+            text.push('\n');
+        }
+        std::fs::File::create(path)?.write_all(text.as_bytes())?;
+    }
+    if let Some(path) = std::env::var_os("LLAMA_CUDA_ORACLE_READ") {
+        let mut text = String::new();
+        let _bytes = std::fs::File::open(path)?.read_to_string(&mut text)?;
+        let lines: Vec<_> = text.lines().collect();
+        assert_eq!(lines.len(), snapshots.len(), "oracle case count changed");
+        for ((name, logits), line) in snapshots.iter().zip(lines) {
+            let mut fields = line.split_whitespace();
+            assert_eq!(
+                fields.next(),
+                Some(name.as_str()),
+                "oracle case order changed"
+            );
+            let expected: Vec<f64> = fields.map(str::parse).collect::<Result<_, _>>()?;
+            check(logits, &expected, name);
+        }
+    } else if cfg!(feature = "native-cuda") {
+        return Err(
+            "set LLAMA_CUDA_ORACLE_READ to a scalar-build snapshot (see native-cuda workflow)"
+                .into(),
+        );
+    }
+    Ok(())
+}
+
+#[test]
+fn warp_boundary_shapes_match_independent_f64_dots() -> Result<(), QuantError> {
+    for rows in [1, 7, 9, 257] {
+        for cols in [63, 64, 65, 129, 1025] {
+            let weights: Vec<f32> = (0..rows)
+                .flat_map(|row| values(row, cols).into_iter().map(|value| value / 1.3))
+                .collect();
+            let packed = pack_f32(&weights);
+            for round in 0..2 {
+                for tokens in [1, 3] {
+                    let input: Vec<f32> = (0..tokens)
+                        .flat_map(|token| {
+                            values(token + round * 17, cols)
+                                .into_iter()
+                                .map(|value| value / 1.7)
+                        })
+                        .collect();
+                    let expected: Vec<f64> = input
+                        .chunks_exact(cols)
+                        .flat_map(|token| {
+                            weights.chunks_exact(cols).map(move |row| {
+                                row.iter()
+                                    .zip(token)
+                                    .map(|(&w, &x)| f64::from(w) * f64::from(x))
+                                    .sum()
+                            })
+                        })
+                        .collect();
+                    let mut actual = vec![f32::NAN; rows * tokens];
+                    if tokens == 1 {
+                        gemv_f32(cols, &packed, &input, &mut actual)?;
+                    } else {
+                        gemm_f32(cols, tokens, &packed, &input, &mut actual)?;
+                    }
+                    check(&actual, &expected, "warp-boundary");
+                }
             }
         }
     }

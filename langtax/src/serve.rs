@@ -1919,6 +1919,56 @@ impl Scan<'_> {
         }
     }
 
+    // Parse a JSON number for explicitly supported neutral sampling values.
+    fn parse_f64(&mut self) -> Result<f64, String> {
+        self.skip_ws();
+        let start = self.i;
+        if self.peek() == Some('-') {
+            let _c = self.bump();
+        }
+        match self.peek() {
+            Some('0') => {
+                let _c = self.bump();
+            }
+            Some('1'..='9') => {
+                while matches!(self.peek(), Some(c) if c.is_ascii_digit()) {
+                    let _c = self.bump();
+                }
+            }
+            _ => return Err("expected number".into()),
+        }
+        if self.peek() == Some('.') {
+            let _c = self.bump();
+            if !matches!(self.peek(), Some(c) if c.is_ascii_digit()) {
+                return Err("expected fractional digits".into());
+            }
+            while matches!(self.peek(), Some(c) if c.is_ascii_digit()) {
+                let _c = self.bump();
+            }
+        }
+        if matches!(self.peek(), Some('e' | 'E')) {
+            let _c = self.bump();
+            if matches!(self.peek(), Some('+' | '-')) {
+                let _c = self.bump();
+            }
+            if !matches!(self.peek(), Some(c) if c.is_ascii_digit()) {
+                return Err("expected exponent digits".into());
+            }
+            while matches!(self.peek(), Some(c) if c.is_ascii_digit()) {
+                let _c = self.bump();
+            }
+        }
+        let token = self.s.get(start..self.i).unwrap_or("");
+        let number = token.parse::<f64>().map_err(|_| "invalid number")?;
+        let mantissa = token.split(['e', 'E']).next().unwrap_or("");
+        if !number.is_finite()
+            || (number == 0.0 && mantissa.bytes().any(|b| (b'1'..=b'9').contains(&b)))
+        {
+            return Err("number out of range".into());
+        }
+        Ok(number)
+    }
+
     /// `[{"role": "...", "content": "..."}, ...]`, the OpenAI message shape.
     ///
     /// Unknown keys inside a message are skipped so a client can send the
@@ -2118,6 +2168,9 @@ pub(crate) fn parse_gen_req(s: &str) -> Result<GenReq, String> {
             "add_generation_prompt" => add_generation_prompt = Some(scan.parse_bool()?),
             "n_predict" => set_n_predict(&mut n_predict, scan.parse_usize()?, "n_predict")?,
             "max_tokens" => set_n_predict(&mut n_predict, scan.parse_usize()?, "max_tokens")?,
+            "max_completion_tokens" => {
+                set_n_predict(&mut n_predict, scan.parse_usize()?, "max_completion_tokens")?
+            }
             "stream" => stream = Some(scan.parse_bool()?),
             "echo" => echo = Some(scan.parse_bool()?),
             "add_special_tokens" => add_special_tokens = Some(scan.parse_bool()?),
@@ -2125,6 +2178,56 @@ pub(crate) fn parse_gen_req(s: &str) -> Result<GenReq, String> {
                 let v = scan.parse_usize()?;
                 if v != 1 {
                     return Err("n must be 1".into());
+                }
+            }
+            // Both serving modes currently generate greedily. Do not silently
+            // ignore options that would change the requested output.
+            "temperature" | "presence_penalty" | "frequency_penalty" => {
+                scan.skip_ws();
+                if scan.peek() == Some('n') {
+                    scan.expect_lit("null")?;
+                } else if scan.parse_f64()? != 0.0 {
+                    return Err(format!(
+                        "{key} is unsupported; this server uses greedy decoding"
+                    ));
+                }
+            }
+            "top_p" | "repetition_penalty" => {
+                scan.skip_ws();
+                if scan.peek() == Some('n') {
+                    scan.expect_lit("null")?;
+                } else if scan.parse_f64()? != 1.0 {
+                    return Err(format!(
+                        "{key} is unsupported; this server uses greedy decoding"
+                    ));
+                }
+            }
+            "top_k" => {
+                scan.skip_ws();
+                if scan.peek() == Some('n') {
+                    scan.expect_lit("null")?;
+                } else {
+                    let k = scan.parse_f64()?;
+                    if k != 0.0 && k != -1.0 {
+                        return Err("top_k is unsupported; this server uses greedy decoding".into());
+                    }
+                }
+            }
+            "logprobs" => {
+                scan.skip_ws();
+                match scan.peek() {
+                    Some('n') => scan.expect_lit("null")?,
+                    Some('f') => scan.expect_lit("false")?,
+                    _ => return Err("logprobs is not supported".into()),
+                }
+            }
+            "stop" | "logit_bias" | "guided_json" | "guided_regex" | "guided_grammar"
+            | "response_format" | "tools" | "tool_choice" | "top_logprobs" => {
+                scan.skip_ws();
+                if scan.peek() == Some('n') {
+                    scan.expect_lit("null")?;
+                } else {
+                    return Err(format!("{key} is not supported"));
                 }
             }
             _ => scan.skip_value()?,
@@ -5036,6 +5139,33 @@ mod tests {
         assert!(parse_detok_req(r#"{"tokens":[1,]}"#)
             .unwrap_err()
             .contains("trailing comma"));
+    }
+
+    #[test]
+    fn generation_options_are_not_silently_ignored() {
+        for (name, value) in [
+            ("temperature", "0.8"),
+            ("top_p", "0.9"),
+            ("top_k", "40"),
+            ("presence_penalty", "1"),
+            ("stop", "[\"END\"]"),
+            ("tools", "[]"),
+            ("logprobs", "true"),
+        ] {
+            let body = format!("{{\"prompt\":\"ab\",\"{name}\":{value}}}");
+            let error = parse_gen_req(&body).unwrap_err();
+            assert!(error.contains(name), "{error}");
+        }
+        let req = parse_gen_req(r#"{"prompt":"ab","temperature":0.0,"top_p":1e0,"top_k":-1,"frequency_penalty":0,"max_completion_tokens":4}"#).unwrap();
+        assert_eq!(req.n_predict, Some(4));
+        assert!(parse_gen_req(r#"{"prompt":"ab","temperature":0.}"#).is_err());
+        assert!(parse_gen_req(r#"{"prompt":"ab","temperature":0e}"#).is_err());
+        assert!(parse_gen_req(r#"{"prompt":"ab","temperature":1e-999}"#).is_err());
+        assert!(parse_gen_req(r#"{"prompt":"ab","temperature":1e999}"#).is_err());
+        assert!(parse_gen_req(r#"{"prompt":"ab","logprobs":false}"#).is_ok());
+        assert!(
+            parse_gen_req(r#"{"prompt":"ab","max_tokens":2,"max_completion_tokens":3}"#).is_err()
+        );
     }
 
     /// The tiny fixture has no `chat_template` of its own; give it one whose

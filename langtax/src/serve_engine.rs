@@ -15,10 +15,13 @@
 //! Streaming connections exceeding 256 KiB of pending output are closed and
 //! their generation is canceled, so slow readers cannot grow the output queue
 //! without bound. Already-written bytes are discarded before appending output.
+//! Idle/incomplete requests and stalled response writes time out after 30
+//! seconds. Active inference without pending socket output has no IO deadline.
 
 use std::fs::OpenOptions;
 use std::io::{ErrorKind, Read, Write};
 use std::net::{TcpListener, TcpStream};
+use std::time::{Duration, Instant};
 
 use crate::decode::{prompt_ids, Llama, LlamaError};
 use crate::engine::{Engine, EngineCfg, SeqId, SeqOutput};
@@ -35,6 +38,8 @@ use crate::tok::Tokenizer;
 // Stop slow readers from retaining unbounded streaming output. This covers
 // application buffering; the socket's own send buffer is bounded by the OS.
 const MAX_STREAM_PENDING: usize = 256 * 1024;
+const IO_TIMEOUT: Duration = Duration::from_secs(30);
+const MAX_ACCEPT_PER_POLL: usize = 64;
 
 /// Poll until the process exits. Listener must already be non-blocking.
 pub(crate) fn run_loop(
@@ -76,6 +81,8 @@ struct Conn {
     api: ServeApi,
     n_predict: usize,
     echo: bool,
+    read_started_at: Instant,
+    write_stalled_since: Option<Instant>,
 }
 
 enum AdmitOut {
@@ -176,11 +183,27 @@ impl Conn {
             api: ServeApi::Generate,
             n_predict: 0,
             echo: false,
+            read_started_at: Instant::now(),
+            write_stalled_since: None,
         }
     }
 
     fn can_admit(&self) -> bool {
         self.req.is_some() && self.seq.is_none() && self.write.is_empty() && !self.done
+    }
+
+    fn expire(&mut self, now: Instant) {
+        let read_timed_out = self.seq.is_none()
+            && self.req.is_none()
+            && self.write.is_empty()
+            && now.saturating_duration_since(self.read_started_at) >= IO_TIMEOUT;
+        let write_timed_out = !self.write.is_empty()
+            && self
+                .write_stalled_since
+                .is_some_and(|since| now.saturating_duration_since(since) >= IO_TIMEOUT);
+        if read_timed_out || write_timed_out {
+            self.done = true;
+        }
     }
 
     fn queue_stream(&mut self, bytes: &[u8]) {
@@ -209,6 +232,12 @@ impl Conn {
 }
 
 fn try_take_request(c: &mut Conn) -> bool {
+    // Keep pipelined bytes buffered until the current response completes.
+    // Parsing early would overwrite its keep-alive policy, and finish_write
+    // would clear the parsed next request before it could be admitted.
+    if c.seq.is_some() {
+        return false;
+    }
     match try_parse_http_request(&c.read) {
         Ok(Some(req)) => {
             let n = req.consumed.min(c.read.len());
@@ -273,7 +302,11 @@ fn queue_err(c: &mut Conn, e: &ServeError) {
 
 fn write_conn(c: &mut Conn) {
     if c.done || c.write.is_empty() {
+        c.write_stalled_since = None;
         return;
+    }
+    if c.write_stalled_since.is_none() {
+        c.write_stalled_since = Some(Instant::now());
     }
     loop {
         let Some(rest) = c.write.get(c.write_at..) else {
@@ -285,6 +318,7 @@ fn write_conn(c: &mut Conn) {
                 Ok(()) => {
                     c.write.clear();
                     c.write_at = 0;
+                    c.write_stalled_since = None;
                     if c.ndjson && !c.finalized {
                         return;
                     }
@@ -303,7 +337,10 @@ fn write_conn(c: &mut Conn) {
                 c.done = true;
                 return;
             }
-            Ok(n) => c.write_at = c.write_at.saturating_add(n),
+            Ok(n) => {
+                c.write_at = c.write_at.saturating_add(n);
+                c.write_stalled_since = Some(Instant::now());
+            }
             Err(e) if io_again(&e) => return,
             Err(_) => {
                 c.done = true;
@@ -326,6 +363,7 @@ fn finish_write(c: &mut Conn) {
     c.api = ServeApi::Generate;
     c.n_predict = 0;
     c.req = None;
+    c.read_started_at = Instant::now();
     let _ = try_take_request(c);
 }
 
@@ -409,6 +447,11 @@ impl<'a> EngineHttp<'a> {
 
     /// Accept, admit, step, harvest, write. Drain new requests before `step`.
     pub(crate) fn poll(&mut self) -> Result<(), ServeError> {
+        let now = Instant::now();
+        for conn in &mut self.conns {
+            conn.expire(now);
+        }
+        self.reap();
         self.accept_ready()?;
         self.read_ready();
         // Cancel disconnected requests before spending another scheduler step
@@ -425,7 +468,8 @@ impl<'a> EngineHttp<'a> {
     }
 
     fn accept_ready(&mut self) -> Result<(), ServeError> {
-        loop {
+        // A continuously replenished accept queue must not starve decode.
+        for _ in 0..MAX_ACCEPT_PER_POLL {
             match self.listener.accept() {
                 Ok((stream, _)) => {
                     stream.set_nonblocking(true)?;
@@ -436,6 +480,7 @@ impl<'a> EngineHttp<'a> {
                 Err(e) => return Err(e.into()),
             }
         }
+        Ok(())
     }
 
     fn read_ready(&mut self) {
@@ -815,6 +860,88 @@ mod tests {
     }
 
     #[test]
+    fn incomplete_requests_expire_even_when_more_bytes_arrive() {
+        let (model, tok) = tiny_model();
+        let args = engine_args();
+        let listener = bind_loopback("127.0.0.1:0").expect("bind");
+        listener.set_nonblocking(true).expect("nonblocking");
+        let addr = listener.local_addr().expect("addr");
+        let mut http = EngineHttp::new(&model, &tok, &args, listener).expect("http");
+        let mut client = connect_nb(addr);
+        write_all_nb(
+            &mut client,
+            b"POST /generate HTTP/1.1\r\nContent-Length: 50\r\n\r\n{",
+        );
+        http.poll().expect("read partial body");
+        let conn = http.conns.first_mut().expect("connection");
+        assert!(!conn.read.is_empty());
+        conn.read_started_at = Instant::now().checked_sub(IO_TIMEOUT).expect("past");
+        write_all_nb(&mut client, b" ");
+        http.poll().expect("expire");
+        assert!(http.conns.is_empty(), "trickled bytes extended deadline");
+        assert_eq!(http.stats().steps, 0);
+    }
+
+    #[test]
+    fn deadlines_exempt_inference_and_reset_for_keep_alive() {
+        let (model, tok) = tiny_model();
+        let args = engine_args();
+        let listener = bind_loopback("127.0.0.1:0").expect("bind");
+        listener.set_nonblocking(true).expect("nonblocking");
+        let addr = listener.local_addr().expect("addr");
+        let mut http = EngineHttp::new(&model, &tok, &args, listener).expect("http");
+        let _client = connect_nb(addr);
+        http.accept_ready().expect("accept");
+        let ids = prompt_ids(&tok, "ab").expect("ids");
+        let id = http.engine.add(&ids, 8).expect("sequence");
+        let conn = http.conns.first_mut().expect("connection");
+        conn.seq = Some(id);
+        let future = conn.read_started_at + IO_TIMEOUT;
+        conn.expire(future);
+        assert!(!conn.done, "inference time counted as idle socket time");
+        conn.write = b"pending".to_vec();
+        conn.write_stalled_since = Some(future);
+        conn.expire(future + IO_TIMEOUT - Duration::from_nanos(1));
+        assert!(!conn.done);
+        conn.expire(future + IO_TIMEOUT);
+        assert!(conn.done, "stalled output did not expire");
+        http.reap();
+        assert!(
+            http.engine.take(id).is_none(),
+            "timeout did not cancel sequence"
+        );
+
+        let _next_client = connect_nb(addr);
+        http.accept_ready().expect("accept");
+        let conn = http.conns.first_mut().expect("connection");
+        conn.keep_alive = true;
+        conn.read_started_at = Instant::now().checked_sub(IO_TIMEOUT).expect("past");
+        finish_write(conn);
+        conn.expire(Instant::now());
+        assert!(!conn.done, "keep-alive reused previous request deadline");
+    }
+
+    #[test]
+    fn accept_budget_keeps_connection_flood_from_starving_inference() {
+        let (model, tok) = tiny_model();
+        let args = engine_args();
+        let listener = bind_loopback("127.0.0.1:0").expect("bind");
+        listener.set_nonblocking(true).expect("nonblocking");
+        let addr = listener.local_addr().expect("addr");
+        let mut http = EngineHttp::new(&model, &tok, &args, listener).expect("http");
+        let _clients: Vec<_> = (0..=MAX_ACCEPT_PER_POLL)
+            .map(|_| connect_nb(addr))
+            .collect();
+        http.accept_ready().expect("accept budget");
+        assert_eq!(http.conns.len(), MAX_ACCEPT_PER_POLL);
+        let ids = prompt_ids(&tok, "ab").expect("ids");
+        let _id = http.engine.add(&ids, 8).expect("sequence");
+        http.poll().expect("poll");
+        assert_eq!(http.conns.len(), MAX_ACCEPT_PER_POLL + 1);
+        assert!(http.stats().steps > 0, "accept work starved the scheduler");
+    }
+
+    #[test]
     fn streaming_buffer_compacts_sent_bytes_and_enforces_pending_limit() {
         let listener = bind_loopback("127.0.0.1:0").expect("bind");
         let _client = connect_nb(listener.local_addr().expect("addr"));
@@ -1112,6 +1239,73 @@ mod tests {
             http.stats().gemm_peak >= 2,
             "two concurrent posts must GEMM together, peak={}",
             http.stats().gemm_peak
+        );
+    }
+
+    #[test]
+    fn pipelined_request_waits_for_active_generation_and_preserves_order() {
+        let (model, tok) = tiny_model();
+        let mut args = engine_args();
+        args.prefill_chunk = 1;
+        let listener = bind_loopback("127.0.0.1:0").expect("bind");
+        listener.set_nonblocking(true).expect("nonblocking");
+        let addr = listener.local_addr().expect("addr");
+        let mut http = EngineHttp::new(&model, &tok, &args, listener).expect("http");
+        let mut client = connect_nb(addr);
+        write_all_nb(
+            &mut client,
+            &post_json(r#"{"prompt":"abab","n_predict":4}"#),
+        );
+        http.poll().expect("start first request");
+        let conn = http.conns.first_mut().expect("connection");
+        assert!(conn.seq.is_some());
+        let second = String::from_utf8(post_json(r#"{"prompt":"ba","n_predict":2}"#))
+            .expect("request")
+            .replace("HTTP/1.1\r\n", "HTTP/1.1\r\nConnection: close\r\n");
+        // Model bytes arriving during generation without relying on TCP packet
+        // timing. The rest of the poll/write path uses the real connection.
+        conn.read.extend_from_slice(second.as_bytes());
+        http.poll().expect("buffer pipelined request");
+        let conn = http.conns.first().expect("connection");
+        assert!(
+            conn.req.is_none(),
+            "next request parsed before first response"
+        );
+        assert!(
+            conn.keep_alive,
+            "next request overwrote first connection policy"
+        );
+        let mut response = Vec::new();
+        let mut bodies = None;
+        for _ in 0..10_000 {
+            http.poll().expect("poll");
+            read_nb(&mut client, &mut response);
+            let Some((status1, body1)) = response_parts(&response) else {
+                continue;
+            };
+            let text = std::str::from_utf8(&response).expect("response utf-8");
+            let header_end = text.find("\r\n\r\n").expect("headers") + 4;
+            let Some(rest) = response.get(header_end + body1.len()..) else {
+                continue;
+            };
+            if let Some((status2, body2)) = response_parts(rest) {
+                assert_eq!((status1, status2), (200, 200));
+                bodies = Some((body1, body2));
+                break;
+            }
+        }
+        let (first, second) = bodies.expect("both pipelined responses");
+        assert_eq!(
+            generated_field(&first),
+            greedy_generate_ctx(&model, &tok, "abab", 4, Some(64)).expect("first oracle")
+        );
+        assert_eq!(
+            generated_field(&second),
+            greedy_generate_ctx(&model, &tok, "ba", 2, Some(64)).expect("second oracle")
+        );
+        assert!(
+            http.conns.is_empty(),
+            "second response must close connection"
         );
     }
 

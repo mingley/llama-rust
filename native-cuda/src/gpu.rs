@@ -1,7 +1,7 @@
 use crate::Shape;
 use cuda_core::simt::LaunchConfig;
 use cuda_core::{CudaContext, CudaStream, DeviceBuffer};
-use cuda_device::{DisjointSlice, cuda_module, kernel, thread};
+use cuda_device::{DisjointSlice, cuda_module, kernel, thread, warp};
 use std::sync::Arc;
 
 #[expect(
@@ -49,6 +49,75 @@ mod kernels {
             }
             *value = sum;
         }
+    }
+
+    // One full warp cooperates on each output. Adjacent lanes read adjacent
+    // columns of the same row, avoiding the strided loads of scalar-per-row
+    // execution. Padding warps still participate in every shuffle with zero
+    // contributions; no individual lane returns before the reduction.
+    #[kernel]
+    pub fn gemv_warp(
+        weights: &[f32],
+        input: &[f32],
+        mut output: DisjointSlice<f32, thread::WarpIndex>,
+        rows: u32,
+        cols: u32,
+    ) {
+        let index = thread::index_1d();
+        let row = index.get() / 32;
+        let mut sum = 0.0f32;
+        if row < rows as usize {
+            let mut col = warp::lane_id() as usize;
+            while col < cols as usize {
+                sum += weights[row * cols as usize + col] * input[col];
+                col += 32;
+            }
+        }
+        let total = warp::reduce_sum_f32(sum);
+        if let Some(owner) = thread::warp_index()
+            && let Some(value) = output.get_mut(owner)
+        {
+            *value = total;
+        }
+    }
+
+    #[kernel]
+    pub fn gemm_warp(
+        weights: &[f32],
+        input: &[f32],
+        mut output: DisjointSlice<f32, thread::WarpIndex>,
+        rows: u32,
+        cols: u32,
+        outputs: u32,
+    ) {
+        let index = thread::index_1d();
+        let output_index = index.get() / 32;
+        let mut sum = 0.0f32;
+        if output_index < outputs as usize {
+            let row = output_index % rows as usize;
+            let token = output_index / rows as usize;
+            let mut col = warp::lane_id() as usize;
+            while col < cols as usize {
+                sum += weights[row * cols as usize + col] * input[token * cols as usize + col];
+                col += 32;
+            }
+        }
+        let total = warp::reduce_sum_f32(sum);
+        if let Some(owner) = thread::warp_index()
+            && let Some(value) = output.get_mut(owner)
+        {
+            *value = total;
+        }
+    }
+}
+
+// Eight full warps per block, one output per warp. Construct geometry from
+// outputs directly so outputs*32 cannot overflow the u32 launch helper.
+fn warp_launch(outputs: u32) -> LaunchConfig {
+    LaunchConfig {
+        grid_dim: (outputs.div_ceil(8), 1, 1),
+        block_dim: (256, 1, 1),
+        shared_mem_bytes: 0,
     }
 }
 
@@ -153,16 +222,30 @@ impl CudaGemv {
             .map_err(|e| e.to_string())?;
         // SAFETY: upload validates flattened matrix indexing, this method
         // validates both vectors, and DisjointSlice assigns a unique output
-        // element to each thread. All buffers outlive the synchronized copy.
+        // element to each thread (or lane-zero WarpIndex). Warp launches use
+        // 1D full-warp blocks; every lane participates in each reduction.
+        // All buffers outlive the synchronized copy.
         unsafe {
-            self.module.gemv(
-                &self.stream,
-                LaunchConfig::for_num_elems(matrix.shape.rows),
-                &matrix.weights,
-                device_input,
-                device_output,
-                matrix.shape.cols,
-            )
+            if matrix.shape.cols >= 64 {
+                self.module.gemv_warp(
+                    &self.stream,
+                    warp_launch(matrix.shape.rows),
+                    &matrix.weights,
+                    device_input,
+                    device_output,
+                    matrix.shape.rows,
+                    matrix.shape.cols,
+                )
+            } else {
+                self.module.gemv(
+                    &self.stream,
+                    LaunchConfig::for_num_elems(matrix.shape.rows),
+                    &matrix.weights,
+                    device_input,
+                    device_output,
+                    matrix.shape.cols,
+                )
+            }
         }
         .map_err(|e| e.to_string())?;
         device_output
@@ -219,21 +302,89 @@ impl CudaGemv {
             .map_err(|e| e.to_string())?;
         // SAFETY: upload validated weights. Checked products and exact vector
         // lengths bound token/row indexing; each output is uniquely assigned.
+        // Warp geometry is 1D with full 32-lane warps; all lanes converge at
+        // each reduction and only lane zero owns an output WarpIndex.
         // All buffers remain alive through the synchronized host copy.
         unsafe {
-            self.module.gemm(
-                &self.stream,
-                LaunchConfig::for_num_elems(launch_elements),
-                &matrix.weights,
-                device_input,
-                device_output,
-                matrix.shape.rows,
-                matrix.shape.cols,
-            )
+            if matrix.shape.cols >= 64 {
+                self.module.gemm_warp(
+                    &self.stream,
+                    warp_launch(launch_elements),
+                    &matrix.weights,
+                    device_input,
+                    device_output,
+                    matrix.shape.rows,
+                    matrix.shape.cols,
+                    launch_elements,
+                )
+            } else {
+                self.module.gemm(
+                    &self.stream,
+                    LaunchConfig::for_num_elems(launch_elements),
+                    &matrix.weights,
+                    device_input,
+                    device_output,
+                    matrix.shape.rows,
+                    matrix.shape.cols,
+                )
+            }
         }
         .map_err(|e| e.to_string())?;
         device_output
             .copy_to_host(&self.stream, output)
             .map_err(|e| e.to_string())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::warp_launch;
+
+    #[test]
+    fn warp_geometry_covers_outputs_without_partial_warps_or_u32_overflow() {
+        for outputs in [1, 7, 8, 9, 257, u32::MAX] {
+            let launch = warp_launch(outputs);
+            assert_eq!(launch.block_dim, (256, 1, 1));
+            assert_eq!(launch.grid_dim.1, 1);
+            assert_eq!(launch.grid_dim.2, 1);
+            let warps = u64::from(launch.grid_dim.0) * 8;
+            assert!(warps >= u64::from(outputs));
+            assert!(warps - u64::from(outputs) < 8);
+            assert_eq!(launch.shared_mem_bytes, 0);
+        }
+    }
+
+    #[test]
+    fn lane_striding_and_butterfly_match_f64_oracle_for_column_tails() {
+        for cols in [1, 31, 32, 33, 63, 64, 65, 129, 1025, 4096] {
+            let weights: Vec<f32> = (0..cols).map(|i| ((i % 23) as f32 - 11.0) / 16.0).collect();
+            let input: Vec<f32> = (0..cols).map(|i| ((i % 13) as f32 - 6.0) / 8.0).collect();
+            let oracle: f64 = weights
+                .iter()
+                .zip(&input)
+                .map(|(&weight, &value)| f64::from(weight) * f64::from(value))
+                .sum();
+            let mut lanes = [0.0f32; 32];
+            for (lane, partial) in lanes.iter_mut().enumerate() {
+                *partial = weights
+                    .iter()
+                    .zip(&input)
+                    .skip(lane)
+                    .step_by(32)
+                    .map(|(&weight, &value)| weight * value)
+                    .sum();
+            }
+            for distance in [16, 8, 4, 2, 1] {
+                let previous = lanes;
+                for (lane, partial) in lanes.iter_mut().enumerate() {
+                    *partial += previous[lane ^ distance];
+                }
+            }
+            // Binary-fraction fixtures have exact sums; this checks every
+            // column is included once and every lane receives the same sum.
+            for value in lanes {
+                assert_eq!(f64::from(value), oracle, "cols={cols}");
+            }
+        }
     }
 }

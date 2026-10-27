@@ -448,7 +448,8 @@ impl<'a> Engine<'a> {
     /// Admit a prompt. Prefill starts on the next [`Engine::step`].
     ///
     /// When [`EngineCfg::max_seqs`] in-flight slots are occupied the sequence
-    /// waits and is installed after a finished slot is retired.
+    /// waits and is installed after a finished slot is retired. New arrivals
+    /// also queue behind existing waiters when cancellation frees a slot.
     pub fn add(&mut self, prompt: &[u32], n_predict: usize) -> Result<SeqId, LlamaError> {
         if prompt.is_empty() {
             return Err(LlamaError::EmptyPrompt);
@@ -458,7 +459,7 @@ impl<'a> Engine<'a> {
             return Err(LlamaError::Shape("n_ctx".into()));
         }
         let id = self.alloc_id()?;
-        if self.active() >= self.cfg.max_seqs {
+        if !self.wait.is_empty() || self.active() >= self.cfg.max_seqs {
             let arrival_ns = self.sample_sim_clock()?;
             self.wait.push_back(Waiter {
                 id,
@@ -1818,6 +1819,26 @@ mod tests {
         let mut eng = Engine::new(&model, cfg).expect("eng");
         let err = eng.add(&[], 1).unwrap_err();
         assert!(matches!(err, LlamaError::EmptyPrompt));
+    }
+
+    #[test]
+    fn engine_new_arrival_does_not_bypass_waiter_after_cancellation() {
+        let model = Llama::from_gguf(load_gguf_owned(tiny_llama_gguf()).expect("o")).expect("m");
+        let mut cfg = EngineCfg::tiny();
+        cfg.max_seqs = 1;
+        cfg.prefill_chunk = 1;
+        let mut eng = Engine::new(&model, cfg).expect("eng");
+        let active = eng.add(&[1, 2], 2).expect("active");
+        let older = eng.add(&[2, 3], 2).expect("older");
+        let _cancelled = eng.take(active).expect("cancel active");
+        let newer = eng.add(&[3, 4], 2).expect("newer");
+        let _progress = eng.step().expect("admit oldest");
+        assert_eq!(eng.n_past(older), Some(1));
+        assert_eq!(eng.n_past(newer), None);
+        assert_eq!(eng.waiting(), 1);
+        eng.run().expect("both complete");
+        assert!(eng.is_finished(older));
+        assert!(eng.is_finished(newer));
     }
 
     #[test]

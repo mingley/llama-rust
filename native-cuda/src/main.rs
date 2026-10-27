@@ -5,7 +5,15 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
     let mut gpu = CudaGemv::new(0)?;
     // Revisit shapes after resizing, and alternate vector/batch launches.
     // Every equal-sized reuse changes all inputs; every output is checked.
-    for (rows, cols) in [(1usize, 1usize), (17, 33), (257, 129), (17, 33), (1, 1)] {
+    let shapes = [1usize, 7, 9, 257]
+        .into_iter()
+        .flat_map(|rows| {
+            [63usize, 64, 65, 129, 1025]
+                .into_iter()
+                .map(move |cols| (rows, cols))
+        })
+        .chain([(17, 33), (1, 1), (257, 129), (17, 33)]);
+    for (rows, cols) in shapes {
         let weights: Vec<f32> = (0..rows * cols)
             .map(|i| ((i % 23) as f32 - 11.0) / 16.0)
             .collect();

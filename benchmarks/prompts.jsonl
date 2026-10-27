@@ -1,0 +1,4 @@
+{"prompt":"Explain why an inference server might reuse a shared prompt prefix. Give a concrete example."}
+{"prompt":"Write a short Python function that computes the moving average of a list. Explain its complexity."}
+{"prompt":"Compare continuous batching and static batching for language model serving. Discuss latency and throughput."}
+{"prompt":"A cache holds three entries and evicts the least recently used entry. Trace accesses A, B, C, A, D, B."}
