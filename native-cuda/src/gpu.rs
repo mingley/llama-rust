@@ -1,4 +1,5 @@
 use crate::Shape;
+use cuda_core::simt::IntoResult;
 use cuda_core::simt::LaunchConfig;
 use cuda_core::{CudaContext, CudaStream, DeviceBuffer};
 use cuda_device::{DisjointSlice, cuda_module, kernel, thread, warp};
@@ -135,7 +136,12 @@ pub struct CudaGemv {
     module: kernels::LoadedModule,
     input: Option<DeviceBuffer<f32>>,
     output: Option<DeviceBuffer<f32>>,
+    input_spares: Vec<DeviceBuffer<f32>>,
+    output_spares: Vec<DeviceBuffer<f32>>,
 }
+
+const SCRATCH_SPARE_BYTES: usize = 64 * 1024 * 1024;
+const SCRATCH_SPARES_PER_DIRECTION: usize = 4;
 
 impl CudaGemv {
     /// Initialize the selected CUDA device, stream, and compiled Rust kernel.
@@ -149,10 +155,61 @@ impl CudaGemv {
             module,
             input: None,
             output: None,
+            input_spares: Vec::new(),
+            output_spares: Vec::new(),
         })
     }
 
-    // Reuse same-sized scratch buffers across model layers and tokens. Every
+    /// Return `(free, total)` device-memory bytes for this executor's context.
+    pub fn memory_info(&self) -> Result<(usize, usize), String> {
+        self.context.bind_to_thread().map_err(|e| e.to_string())?;
+        let mut free = 0usize;
+        let mut total = 0usize;
+        // SAFETY: the executor's context is current, and both writable usize
+        // output locations remain valid through this synchronous driver call.
+        unsafe { cuda_core::sys::cuMemGetInfo_v2(&mut free, &mut total) }
+            .result()
+            .map_err(|e| e.to_string())?;
+        Ok((free, total))
+    }
+
+    fn spare_bytes(&self) -> usize {
+        self.input_spares
+            .iter()
+            .chain(&self.output_spares)
+            .map(|buffer| buffer.len() * std::mem::size_of::<f32>())
+            .sum()
+    }
+
+    fn trim_spares(&mut self) {
+        while self.spare_bytes() > SCRATCH_SPARE_BYTES {
+            // Evict the oldest retained shape. Active buffers are separate
+            // and cannot be invalidated while preparing their counterpart.
+            if !self.input_spares.is_empty() {
+                let _expired = self.input_spares.remove(0);
+            } else if !self.output_spares.is_empty() {
+                let _expired = self.output_spares.remove(0);
+            } else {
+                break;
+            }
+        }
+    }
+
+    fn allocate_scratch(&mut self, len: usize) -> Result<DeviceBuffer<f32>, String> {
+        match DeviceBuffer::zeroed(&self.stream, len) {
+            Ok(buffer) => Ok(buffer),
+            Err(error) if error.0 == cuda_core::sys::cudaError_enum_CUDA_ERROR_OUT_OF_MEMORY => {
+                // Spare shapes must never prevent an otherwise viable active
+                // shape from fitting. Retry once only for a typed CUDA OOM.
+                self.input_spares.clear();
+                self.output_spares.clear();
+                DeviceBuffer::zeroed(&self.stream, len).map_err(|e| e.to_string())
+            }
+            Err(error) => Err(error.to_string()),
+        }
+    }
+
+    // Reuse recurring scratch shapes across model layers and tokens. Every
     // launch overwrites the entire output, and copy_to_host synchronizes it
     // before the next operation can reuse either buffer.
     fn prepare_scratch(&mut self, input_len: usize, output_len: usize) -> Result<(), String> {
@@ -161,20 +218,44 @@ impl CudaGemv {
             .as_ref()
             .is_none_or(|buffer| buffer.len() != input_len)
         {
-            // Drop the old allocation before growing; otherwise resize can
-            // fail when the old and new buffers do not fit simultaneously.
-            self.input = None;
-            self.input =
-                Some(DeviceBuffer::zeroed(&self.stream, input_len).map_err(|e| e.to_string())?);
+            let next = self
+                .input_spares
+                .iter()
+                .position(|buffer| buffer.len() == input_len)
+                .map(|slot| self.input_spares.remove(slot));
+            if let Some(previous) = self.input.take() {
+                self.input_spares.push(previous);
+                if self.input_spares.len() > SCRATCH_SPARES_PER_DIRECTION {
+                    let _expired = self.input_spares.remove(0);
+                }
+            }
+            self.trim_spares();
+            self.input = Some(match next {
+                Some(buffer) => buffer,
+                None => self.allocate_scratch(input_len)?,
+            });
         }
         if self
             .output
             .as_ref()
             .is_none_or(|buffer| buffer.len() != output_len)
         {
-            self.output = None;
-            self.output =
-                Some(DeviceBuffer::zeroed(&self.stream, output_len).map_err(|e| e.to_string())?);
+            let next = self
+                .output_spares
+                .iter()
+                .position(|buffer| buffer.len() == output_len)
+                .map(|slot| self.output_spares.remove(slot));
+            if let Some(previous) = self.output.take() {
+                self.output_spares.push(previous);
+                if self.output_spares.len() > SCRATCH_SPARES_PER_DIRECTION {
+                    let _expired = self.output_spares.remove(0);
+                }
+            }
+            self.trim_spares();
+            self.output = Some(match next {
+                Some(buffer) => buffer,
+                None => self.allocate_scratch(output_len)?,
+            });
         }
         Ok(())
     }

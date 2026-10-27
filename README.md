@@ -42,12 +42,13 @@ tokenization, scheduling, and sampling remain host operations. Quantized
 matrix conversion and transfers add overhead; this backend change does not
 establish a throughput advantage over vLLM or llama.cpp. Device execution
 validation requires a GPU runner (`native-cuda` workflow).
-Device-weight residency is currently bounded to 256 MiB per inference thread,
-including packed-byte identity copies. Quantized cache misses expand to F32;
-larger working sets can thrash this cache and increase memory traffic.
-Set `LLAMA_CUDA_CACHE_BYTES` to a nonnegative byte count to adjust that bound
-for available memory; `0` disables weight residency. Transient uploads and
-scratch buffers are additional to the configured cache budget.
+Device-weight residency is bounded per inference thread, including packed-byte
+identity copies. By default the bound uses currently free GPU memory at context
+initialization, reserving 25% or 512 MiB, whichever is greater. Set
+`LLAMA_CUDA_CACHE_BYTES` to `auto` or a nonnegative byte count to choose a
+different bound; `0` disables weight residency. Transient uploads and scratch
+buffers are additional to the budget. Quantized cache misses expand to F32;
+large working sets can still thrash the cache and increase memory traffic.
 
 For machines without CUDA, explicitly select the CPU reference:
 

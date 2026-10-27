@@ -319,6 +319,9 @@ pub struct SeqOutput {
     pub prompt: Vec<u32>,
     /// Generated token ids (not including the prompt).
     pub generated: Vec<u32>,
+    /// Newly sampled tokens, including an EOS that ended generation.
+    /// Recomputed/replayed tokens do not increment this count.
+    pub completion_tokens: usize,
 }
 
 struct Slot {
@@ -327,6 +330,7 @@ struct Slot {
     prompt: Vec<u32>,
     n_predict: usize,
     generated: Vec<u32>,
+    completion_tokens: usize,
     last: Vec<f32>,
     replay: usize,
     done: bool,
@@ -533,6 +537,19 @@ impl<'a> Engine<'a> {
             return Some(out.generated.as_slice());
         }
         self.wait.iter().find(|w| w.id == id).map(|_| &[][..])
+    }
+
+    /// Newly sampled tokens for `id`, including EOS and excluding replay work.
+    /// Waiters return zero; unknown or removed ids return `None`.
+    #[must_use]
+    pub fn completion_tokens(&self, id: SeqId) -> Option<usize> {
+        if let Some(slot) = self.slot_by_id(id) {
+            return Some(slot.completion_tokens);
+        }
+        if let Some(output) = self.finished.get(&id) {
+            return Some(output.completion_tokens);
+        }
+        self.wait.iter().find(|w| w.id == id).map(|_| 0)
     }
 
     /// How many times a sequence was preempted to free pool blocks.
@@ -962,6 +979,7 @@ impl<'a> Engine<'a> {
             return Some(SeqOutput {
                 prompt: slot.prompt,
                 generated: slot.generated,
+                completion_tokens: slot.completion_tokens,
             });
         }
         if let Some(out) = self.finished.remove(&id) {
@@ -972,6 +990,7 @@ impl<'a> Engine<'a> {
         Some(SeqOutput {
             prompt: w.prompt,
             generated: Vec::new(),
+            completion_tokens: 0,
         })
     }
 
@@ -996,6 +1015,7 @@ impl<'a> Engine<'a> {
             prompt,
             n_predict,
             generated: Vec::new(),
+            completion_tokens: 0,
             last: Vec::new(),
             replay: 0,
             done: false,
@@ -1036,6 +1056,7 @@ impl<'a> Engine<'a> {
                 SeqOutput {
                     prompt: slot.prompt,
                     generated: slot.generated,
+                    completion_tokens: slot.completion_tokens,
                 },
             );
             n = n.saturating_add(1);
@@ -1064,6 +1085,7 @@ impl<'a> Engine<'a> {
                     SeqOutput {
                         prompt: w.prompt,
                         generated: Vec::new(),
+                        completion_tokens: 0,
                     },
                 );
                 self.rejected = self.rejected.saturating_add(1);
@@ -1315,6 +1337,12 @@ impl<'a> Engine<'a> {
         if !self.slot(i).is_some_and(Slot::is_decode) {
             return Ok(0);
         }
+        // Batched recompute advances at most one replay token per step.
+        // Its intermediate logits describe a prefix of the saved continuation,
+        // not the full sequence from which the next token must be sampled.
+        if self.slot(i).is_some_and(|s| s.replay < s.generated.len()) {
+            return Ok(0);
+        }
         let generated_len = self.slot(i).map_or(0, |s| s.generated.len());
         let n_predict = self.slot(i).map_or(0, |s| s.n_predict);
         if generated_len >= n_predict {
@@ -1333,6 +1361,7 @@ impl<'a> Engine<'a> {
         };
         let (id, finished) = {
             let slot = self.slot_mut(i)?;
+            slot.completion_tokens = slot.completion_tokens.saturating_add(1);
             if eos == Some(next) {
                 slot.done = true;
                 return Ok(1);
@@ -1819,6 +1848,70 @@ mod tests {
         let mut eng = Engine::new(&model, cfg).expect("eng");
         let err = eng.add(&[], 1).unwrap_err();
         assert!(matches!(err, LlamaError::EmptyPrompt));
+    }
+
+    #[test]
+    fn engine_completion_usage_counts_eos_but_not_replay_or_zero_budget() {
+        let model = Llama::from_gguf(load_gguf_owned(tiny_llama_gguf()).expect("o")).expect("m");
+        let mut probe = Engine::new(&model, EngineCfg::tiny()).expect("probe");
+        let probe_id = probe.add(&[1, 2], 1).expect("probe sequence");
+        probe.run().expect("probe run");
+        let eos = probe
+            .generated(probe_id)
+            .expect("generated")
+            .first()
+            .copied()
+            .expect("first");
+        let mut cfg = EngineCfg::tiny();
+        cfg.eos = Some(eos);
+        cfg.max_seqs = 1;
+        let mut eng = Engine::new(&model, cfg).expect("engine");
+        let id = eng.add(&[1, 2], 4).expect("eos sequence");
+        let zero = eng.add(&[1, 2], 0).expect("zero sequence");
+        assert_eq!(eng.completion_tokens(zero), Some(0));
+        eng.run().expect("run");
+        assert_eq!(eng.completion_tokens(id), Some(1));
+        let output = eng.take(id).expect("output");
+        assert!(output.generated.is_empty());
+        assert_eq!(output.completion_tokens, 1);
+        assert_eq!(eng.take(zero).expect("zero output").completion_tokens, 0);
+        assert_eq!(eng.completion_tokens(id), None);
+    }
+
+    #[test]
+    fn engine_recompute_replays_all_tokens_before_sampling_with_batched_prefill() {
+        let model = Llama::from_gguf(load_gguf_owned(tiny_llama_gguf()).expect("o")).expect("m");
+        let mut cfg = EngineCfg::tiny();
+        cfg.prefill_chunk = 2;
+        let mut reference = Engine::new(&model, cfg.clone()).expect("reference");
+        let reference_id = reference.add(&[1, 2], 8).expect("reference sequence");
+        reference.run().expect("reference run");
+        let expected = reference
+            .take(reference_id)
+            .expect("reference output")
+            .generated;
+
+        let mut eng = Engine::new(&model, cfg).expect("engine");
+        let a = eng.add(&[1, 2], 8).expect("decode sequence");
+        for _ in 0..3 {
+            let _progress = eng.step().expect("decode");
+        }
+        assert_eq!(eng.generated(a).expect("generated").len(), 3);
+        let b = eng.add(&[3, 4, 5, 0, 1, 2], 2).expect("prefill sequence");
+        let b_index = eng.slot_index(b).expect("b slot");
+        assert_eq!(eng.preempt_except(b_index), eng.slot_index(a));
+        // Both requests prefill together. A's prompt logits cannot be used to
+        // sample another token until its three generated tokens are replayed.
+        let _progress = eng.step().expect("recompute prompt");
+        assert_eq!(eng.generated(a).expect("generated").len(), 3);
+        assert_eq!(eng.completion_tokens(a), Some(3));
+        let _progress = eng.step().expect("first replay with b prefill");
+        assert_eq!(eng.generated(a).expect("generated").len(), 3);
+        assert_eq!(eng.completion_tokens(a), Some(3));
+        eng.run().expect("finish");
+        let output = eng.take(a).expect("output");
+        assert_eq!(output.completion_tokens, 8);
+        assert_eq!(output.generated, expected);
     }
 
     #[test]

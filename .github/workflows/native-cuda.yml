@@ -17,11 +17,11 @@ jobs:
         run: |
           cargo +1.99.1 oxide build -- --release -p llama-native-cuda --bin native-gemv
           ./target/release/native-gemv
-      - name: Generate independent scalar model logits
+      - name: Generate scalar logits and validate matrix reference cases
         env:
           LLAMA_CUDA_ORACLE_WRITE: ${{ runner.temp }}/llama-scalar-logits.txt
-        run: cargo +1.99.1 test --release -p llama-rust --no-default-features --test native_cuda_parity end_to_end_models_match_scalar_snapshot
-      - name: Check matrix and end-to-end model parity against CPU oracles
+        run: cargo +1.99.1 test --release -p llama-rust --no-default-features --test native_cuda_parity
+      - name: Check matrix, batching, and model parity against CPU oracles
         env:
           LLAMA_CUDA_ORACLE_READ: ${{ runner.temp }}/llama-scalar-logits.txt
         run: cargo +1.99.1 oxide test -- --release -p llama-rust --test native_cuda_parity -- --test-threads=1

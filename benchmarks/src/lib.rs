@@ -23,7 +23,12 @@ pub fn percentile(values: &[f64], fraction: f64) -> Option<f64> {
     sorted.get(index).copied()
 }
 
-fn parse_stream(reader: impl BufRead, started: Instant, result: &mut Value) -> Result<(), String> {
+fn parse_stream(
+    reader: impl BufRead,
+    started: Instant,
+    result: &mut Value,
+    max_tokens: Option<u64>,
+) -> Result<(), String> {
     let mut reader = reader;
     let mut data = Vec::new();
     let mut line = Vec::new();
@@ -71,25 +76,69 @@ fn parse_stream(reader: impl BufRead, started: Instant, result: &mut Value) -> R
         data.clear();
         let now = started.elapsed().as_secs_f64() * 1000.0;
         if payload == "[DONE]" {
+            if result["finish_reason"].is_null() {
+                return Err("[DONE] without a terminal completion finish_reason".into());
+            }
             result["output_sha256"] = json!(hash(output.as_bytes()));
             return Ok(());
         }
         let event: Value = serde_json::from_str(&payload).map_err(|e| e.to_string())?;
+        if !event.is_object() {
+            return Err("SSE completion event must be an object".into());
+        }
         if !event["error"].is_null() {
             return Err("server returned an SSE error".into());
         }
-        for name in ["completion_tokens", "prompt_tokens"] {
-            if let Some(count) = event["usage"][name].as_u64() {
-                result[name] = json!(count);
+        if let Some(usage) = event.get("usage").filter(|v| !v.is_null()) {
+            if !usage.is_object() {
+                return Err("usage must be an object".into());
+            }
+            for name in ["completion_tokens", "prompt_tokens"] {
+                if let Some(value) = usage.get(name) {
+                    let count = value
+                        .as_u64()
+                        .ok_or_else(|| format!("invalid usage.{name}"))?;
+                    if !result[name].is_null() && result[name] != json!(count) {
+                        return Err(format!("conflicting usage.{name}"));
+                    }
+                    if name == "completion_tokens" && max_tokens.is_some_and(|limit| count > limit)
+                    {
+                        return Err("completion token count exceeds requested max_tokens".into());
+                    }
+                    result[name] = json!(count);
+                }
             }
         }
-        if let Some(choices) = event["choices"].as_array() {
+        if let Some(choices) = event.get("choices") {
+            let choices = choices.as_array().ok_or("choices must be an array")?;
+            if choices.len() > 1 {
+                return Err("received multiple choices for n=1".into());
+            }
             for choice in choices {
-                let value = &choice["text"];
-                if value.is_null() {
-                    continue;
+                if choice["index"].as_u64() != Some(0) {
+                    return Err("expected completion choice index 0".into());
                 }
-                let text = value.as_str().ok_or("completion text is not a string")?;
+                if choice.get("delta").is_some() {
+                    return Err("chat deltas are not completion text".into());
+                }
+                let value = &choice["text"];
+                let text = if value.is_null() {
+                    ""
+                } else {
+                    value.as_str().ok_or("completion text is not a string")?
+                };
+                if !result["finish_reason"].is_null()
+                    && (!text.is_empty() || !choice["finish_reason"].is_null())
+                {
+                    return Err("completion data after terminal finish_reason".into());
+                }
+                if let Some(reason) = choice.get("finish_reason").filter(|v| !v.is_null()) {
+                    let reason = reason.as_str().ok_or("finish_reason must be a string")?;
+                    if !["stop", "length", "content_filter"].contains(&reason) {
+                        return Err(format!("unsupported completion finish_reason: {reason}"));
+                    }
+                    result["finish_reason"] = json!(reason);
+                }
                 if text.is_empty() {
                     continue;
                 }
@@ -106,6 +155,8 @@ fn parse_stream(reader: impl BufRead, started: Instant, result: &mut Value) -> R
                 result["content_events"] =
                     json!(result["content_events"].as_u64().unwrap_or(0) + 1);
             }
+        } else if event["usage"].is_null() {
+            return Err("SSE event contains neither choices nor usage".into());
         }
     }
 }
@@ -114,7 +165,7 @@ pub fn request_one(url: &str, payload: &Value, timeout: Duration, key: Option<&s
     let bytes = serde_json::to_vec(payload).unwrap_or_default();
     let mut result = json!({"ok":false,"request_sha256":hash(&bytes),"ttft_ms":null,
         "duration_ms":null,"completion_tokens":null,"prompt_tokens":null,
-        "content_events":0,"inter_event_ms":[]});
+        "content_events":0,"inter_event_ms":[],"finish_reason":null});
     let started = Instant::now();
     let outcome = (|| -> Result<(), String> {
         // Separate client per request avoids server-specific connection reuse effects.
@@ -143,7 +194,18 @@ pub fn request_one(url: &str, payload: &Value, timeout: Duration, key: Option<&s
         {
             return Err("response is not text/event-stream".into());
         }
-        parse_stream(BufReader::new(response), started, &mut result)
+        parse_stream(
+            BufReader::new(response),
+            started,
+            &mut result,
+            payload["max_tokens"].as_u64(),
+        )?;
+        if result["finish_reason"] == "content_filter" {
+            return Err(
+                "content-filtered completion excluded from successful inference metrics".into(),
+            );
+        }
+        Ok(())
     })();
     match outcome {
         Ok(()) => result["ok"] = json!(true),
@@ -186,13 +248,22 @@ pub fn summarize(results: &[Value], elapsed: f64) -> Value {
             })?
         })
         .collect();
+    let mut finishes = serde_json::Map::new();
+    for result in &good {
+        if let Some(reason) = result["finish_reason"].as_str() {
+            let count = finishes.get(reason).and_then(Value::as_u64).unwrap_or(0);
+            finishes.insert(reason.to_owned(), json!(count + 1));
+        }
+    }
     json!({"requests":results.len(),"successful":good.len(),"errors":results.len()-good.len(),
+        "content_filtered_requests":results.iter().filter(|r|r["finish_reason"]=="content_filter").count(),
         "elapsed_seconds":elapsed,"successful_requests_per_second":good.len() as f64 / elapsed,
         "completion_tokens":tokens,"completion_tokens_per_second":tokens.map(|n| n as f64 / elapsed),
         "ttft_ms_p50":percentile(&ttfts,0.5),"ttft_ms_p95":percentile(&ttfts,0.95),
         "request_latency_ms_p95":percentile(&latencies,0.95),
         "inter_content_event_ms_p95":percentile(&intervals,0.95),"tpot_ms_p95":percentile(&tpots,0.95),
-        "itl_ms_p95":null,"token_count_source":if tokens.is_some(){"server_usage"}else{"unavailable"}})
+        "itl_ms_p95":null,"finish_reasons":finishes,
+        "token_count_source":if tokens.is_some(){"server_usage"}else{"unavailable"}})
 }
 
 pub fn run(
@@ -270,7 +341,7 @@ mod tests {
     }
     #[test]
     fn concurrent_http_streams_have_usage_counts_and_hashes() {
-        let body = "data: {\"choices\":[{\"text\":\"hello\"}]}\n\ndata: {\"choices\":[{\"text\":\" world\"}]}\n\ndata: {\"usage\":{\"completion_tokens\":2}}\n\ndata: [DONE]\n\n";
+        let body = "data: {\"choices\":[{\"index\":0,\"text\":\"hello\"}]}\n\ndata: {\"choices\":[{\"index\":0,\"text\":\" world\",\"finish_reason\":\"stop\"}]}\n\ndata: {\"usage\":{\"completion_tokens\":2}}\n\ndata: [DONE]\n\n";
         let (url, server) = mock(8, body, 200);
         let (summary, results) = run(
             &url,
@@ -282,6 +353,7 @@ mod tests {
         server.join().unwrap();
         assert_eq!(summary["successful"], 8);
         assert_eq!(summary["completion_tokens"], 16);
+        assert_eq!(summary["finish_reasons"]["stop"], 8);
         assert!(summary["itl_ms_p95"].is_null());
         for result in &results {
             assert_eq!(result["content_events"], 2);
@@ -293,7 +365,7 @@ mod tests {
     fn missing_usage_is_not_estimated() {
         let (url, server) = mock(
             1,
-            "data: {\"choices\":[{\"text\":\"x\"}]}\n\ndata: [DONE]\n\n",
+            "data: {\"choices\":[{\"index\":0,\"text\":\"x\",\"finish_reason\":\"length\"}]}\n\ndata: [DONE]\n\n",
             200,
         );
         let (summary, _) = run(&url, vec![json!({})], 1, Duration::from_secs(5), None);
@@ -322,5 +394,73 @@ mod tests {
             Some(95.0)
         );
         assert_eq!(percentile(&[], 0.95), None);
+    }
+
+    fn parse_for_test(body: &str, max_tokens: Option<u64>) -> Result<Value, String> {
+        let mut result = json!({"finish_reason":null,"completion_tokens":null,"prompt_tokens":null,
+            "ttft_ms":null,"inter_event_ms":[],"content_events":0});
+        parse_stream(body.as_bytes(), Instant::now(), &mut result, max_tokens)?;
+        Ok(result)
+    }
+
+    #[test]
+    fn done_marker_does_not_make_invalid_completions_successful() {
+        for event in [
+            "{}",
+            "[]",
+            r#"{"choices":"wrong"}"#,
+            r#"{"choices":[{"index":1,"text":"wrong","finish_reason":"stop"}]}"#,
+            r#"{"choices":[{"index":0,"text":"unfinished"}]}"#,
+            r#"{"choices":[{"index":0,"text":"a"},{"index":1,"text":"b"}]}"#,
+            r#"{"choices":[{"index":0,"delta":{"content":"wrong protocol"},"finish_reason":"stop"}]}"#,
+            r#"{"choices":[{"index":0,"finish_reason":"error"}]}"#,
+        ] {
+            let body = format!("data: {event}\n\ndata: [DONE]\n\n");
+            assert!(parse_for_test(&body, None).is_err(), "{event}");
+        }
+        assert!(parse_for_test("data: [DONE]\n\n", None).is_err());
+    }
+
+    #[test]
+    fn terminal_stop_length_and_filter_are_valid_but_recorded_separately() {
+        for reason in ["stop", "length", "content_filter"] {
+            // Immediate EOS/filtering can legitimately produce zero visible text.
+            let body = format!("data: {{\"choices\":[{{\"index\":0,\"text\":\"\",\"finish_reason\":\"{reason}\"}}]}}\n\ndata: {{\"usage\":{{\"completion_tokens\":0}}}}\n\ndata: [DONE]\n\n");
+            let result = parse_for_test(&body, Some(4)).unwrap();
+            assert_eq!(result["finish_reason"], reason);
+            assert_eq!(result["completion_tokens"], 0);
+            assert!(result["ttft_ms"].is_null());
+        }
+    }
+
+    #[test]
+    fn post_terminal_data_and_invalid_usage_do_not_inflate_throughput() {
+        let terminal =
+            "data: {\"choices\":[{\"index\":0,\"text\":\"ok\",\"finish_reason\":\"stop\"}]}\n\n";
+        for event in [
+            r#"{"choices":[{"index":0,"text":"extra"}]}"#,
+            r#"{"usage":{"completion_tokens":99999}}"#,
+            r#"{"usage":{"completion_tokens":-1}}"#,
+            r#"{"usage":{"completion_tokens":1.5}}"#,
+            r#"{"usage":{"completion_tokens":"2"}}"#,
+            r#"{"usage":[]}"#,
+        ] {
+            let body = format!("{terminal}data: {event}\n\ndata: [DONE]\n\n");
+            assert!(parse_for_test(&body, Some(4)).is_err(), "{event}");
+        }
+        let body=format!("{terminal}data: {{\"usage\":{{\"completion_tokens\":2}}}}\n\ndata: {{\"usage\":{{\"completion_tokens\":3}}}}\n\ndata: [DONE]\n\n");
+        assert!(parse_for_test(&body, Some(4)).is_err());
+    }
+
+    #[test]
+    fn filtered_responses_are_not_successful_inference_throughput() {
+        let (url, server)=mock(1,"data: {\"choices\":[{\"index\":0,\"text\":\"\",\"finish_reason\":\"content_filter\"}]}\n\ndata: {\"usage\":{\"completion_tokens\":0}}\n\ndata: [DONE]\n\n",200);
+        let (summary, results) = run(&url, vec![json!({})], 1, Duration::from_secs(5), None);
+        server.join().unwrap();
+        assert_eq!(summary["successful"], 0);
+        assert_eq!(summary["errors"], 1);
+        assert_eq!(summary["content_filtered_requests"], 1);
+        assert_eq!(results[0]["finish_reason"], "content_filter");
+        assert!(summary["completion_tokens_per_second"].is_null());
     }
 }

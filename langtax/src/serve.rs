@@ -1024,6 +1024,8 @@ pub(crate) struct GenReq {
     add_generation_prompt: bool,
     pub(crate) n_predict: Option<usize>,
     pub(crate) stream: bool,
+    /// Emit OpenAI streaming usage before the final [DONE] event.
+    pub(crate) include_usage: bool,
     /// OpenAI `/v1/completions` only: include the prompt in `choices[].text`.
     pub(crate) echo: bool,
     /// Tokenize: insert BOS when the tokenizer's `add_bos` is set (default true).
@@ -1128,6 +1130,13 @@ fn dispatch(
         Ok(g) => g,
         Err(e) => return (400, "Bad Request", json_err(Some(api), &e)),
     };
+    if gen.include_usage {
+        return (
+            400,
+            "Bad Request",
+            json_err(Some(api), "stream_options.include_usage requires --engine"),
+        );
+    }
     let prompt = match gen.resolve(tok) {
         Ok(p) => p,
         Err(e) => return (400, "Bad Request", json_err(Some(api), &e)),
@@ -1792,6 +1801,18 @@ pub(crate) fn sse_done() -> String {
     String::from("data: [DONE]\n\n")
 }
 
+/// Final OpenAI stream usage event. Counts include all generated token IDs.
+pub(crate) fn sse_usage(api: ServeApi, model: &str, prompt: usize, completion: usize) -> String {
+    let (id, object) = match api {
+        ServeApi::Chat => ("chatcmpl-0", "chat.completion.chunk"),
+        _ => ("cmpl-0", "text_completion"),
+    };
+    let mut json = format!("{{\"id\":\"{id}\",\"object\":\"{object}\",\"model\":");
+    append_json_string(&mut json, model);
+    json.push_str(&format!(",\"choices\":[],\"usage\":{{\"prompt_tokens\":{prompt},\"completion_tokens\":{completion},\"total_tokens\":{}}}}}", prompt.saturating_add(completion)));
+    sse_data(&json)
+}
+
 fn sse_data(json: &str) -> String {
     let mut s = String::from("data: ");
     s.push_str(json);
@@ -1917,6 +1938,42 @@ impl Scan<'_> {
             Some('f') => self.expect_lit("false").map(|()| false),
             _ => Err("expected true or false".into()),
         }
+    }
+
+    fn parse_stream_options(&mut self) -> Result<bool, String> {
+        self.skip_ws();
+        if self.peek() == Some('n') {
+            self.expect_lit("null")?;
+            return Ok(false);
+        }
+        self.expect_char('{')?;
+        let mut include = None;
+        let mut need_comma = false;
+        loop {
+            self.skip_ws();
+            if self.peek() == Some('}') {
+                let _c = self.bump();
+                break;
+            }
+            if need_comma {
+                self.expect_char(',')?;
+                self.skip_ws();
+                if self.peek() == Some('}') {
+                    return Err("trailing comma in stream_options".into());
+                }
+            }
+            let key = self.parse_string()?;
+            self.expect_char(':')?;
+            if key != "include_usage" {
+                return Err(format!("unsupported stream option {key}"));
+            }
+            if include.is_some() {
+                return Err("duplicate include_usage".into());
+            }
+            include = Some(self.parse_bool()?);
+            need_comma = true;
+        }
+        Ok(include.unwrap_or(false))
     }
 
     // Parse a JSON number for explicitly supported neutral sampling values.
@@ -2144,6 +2201,7 @@ pub(crate) fn parse_gen_req(s: &str) -> Result<GenReq, String> {
     let mut add_generation_prompt = None;
     let mut n_predict = None;
     let mut stream = None;
+    let mut include_usage = None;
     let mut echo = None;
     let mut add_special_tokens = None;
     let mut need_comma = false;
@@ -2172,6 +2230,12 @@ pub(crate) fn parse_gen_req(s: &str) -> Result<GenReq, String> {
                 set_n_predict(&mut n_predict, scan.parse_usize()?, "max_completion_tokens")?
             }
             "stream" => stream = Some(scan.parse_bool()?),
+            "stream_options" => {
+                if include_usage.is_some() {
+                    return Err("duplicate stream_options".into());
+                }
+                include_usage = Some(scan.parse_stream_options()?);
+            }
             "echo" => echo = Some(scan.parse_bool()?),
             "add_special_tokens" => add_special_tokens = Some(scan.parse_bool()?),
             "n" => {
@@ -2238,6 +2302,9 @@ pub(crate) fn parse_gen_req(s: &str) -> Result<GenReq, String> {
     if scan.peek().is_some() {
         return Err("trailing junk after json".into());
     }
+    if include_usage == Some(true) && stream != Some(true) {
+        return Err("stream_options.include_usage requires stream=true".into());
+    }
     Ok(GenReq {
         prompt,
         messages,
@@ -2246,6 +2313,7 @@ pub(crate) fn parse_gen_req(s: &str) -> Result<GenReq, String> {
         add_generation_prompt: add_generation_prompt.unwrap_or(true),
         n_predict,
         stream: stream.unwrap_or(false),
+        include_usage: include_usage.unwrap_or(false),
         echo: echo.unwrap_or(false),
         add_special_tokens: add_special_tokens.unwrap_or(true),
     })
@@ -5166,6 +5234,37 @@ mod tests {
         assert!(
             parse_gen_req(r#"{"prompt":"ab","max_tokens":2,"max_completion_tokens":3}"#).is_err()
         );
+    }
+
+    #[test]
+    fn streaming_usage_options_require_stream_and_a_supported_shape() {
+        let valid = parse_gen_req(
+            r#"{"prompt":"ab","stream":true,"stream_options":{"include_usage":true}}"#,
+        )
+        .unwrap();
+        assert!(valid.include_usage);
+        let false_option = parse_gen_req(
+            r#"{"prompt":"ab","stream":true,"stream_options":{"include_usage":false}}"#,
+        )
+        .unwrap();
+        assert!(!false_option.include_usage);
+        for input in [
+            r#"{"prompt":"ab","stream_options":{"include_usage":true}}"#,
+            r#"{"prompt":"ab","stream":true,"stream_options":{"include_usage":true,"include_usage":false}}"#,
+            r#"{"prompt":"ab","stream":true,"stream_options":{"include_usage":true,}}"#,
+            r#"{"prompt":"ab","stream":true,"stream_options":{"other":true}}"#,
+        ] {
+            assert!(parse_gen_req(input).is_err(), "{input}");
+        }
+        let (model, tok) = tiny_model();
+        let (head, body) = exchange(
+            &post_json(r#"{"prompt":"ab","stream":true,"stream_options":{"include_usage":true}}"#),
+            &model,
+            &tok,
+            &defaults(),
+        );
+        assert!(head.starts_with("HTTP/1.1 400"), "{head}");
+        assert!(body.contains("requires --engine"), "{body}");
     }
 
     /// The tiny fixture has no `chat_template` of its own; give it one whose

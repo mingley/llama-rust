@@ -29,8 +29,8 @@ use crate::serve::{
     dispatch_get, dispatch_tok, finish_reason, http_chunk, http_chunk_end, http_chunked_headers,
     http_err_status, http_json_bytes, http_sse_headers, json_error, json_generated,
     json_openai_chat, json_openai_completion, json_openai_error, json_token, parse_gen_req,
-    path_only, sse_chat_delta, sse_completion_delta, sse_done, try_parse_http_request, HttpRequest,
-    ServeApi, ServeArgs, ServeError, MAX_REQ,
+    path_only, sse_chat_delta, sse_completion_delta, sse_done, sse_usage, try_parse_http_request,
+    HttpRequest, ServeApi, ServeArgs, ServeError, MAX_REQ,
 };
 use crate::store_attach::{attach_store, StoreAttach};
 use crate::tok::Tokenizer;
@@ -81,6 +81,7 @@ struct Conn {
     api: ServeApi,
     n_predict: usize,
     echo: bool,
+    include_usage: bool,
     read_started_at: Instant,
     write_stalled_since: Option<Instant>,
 }
@@ -92,6 +93,7 @@ enum AdmitOut {
         api: ServeApi,
         n_predict: usize,
         echo: bool,
+        include_usage: bool,
         echo_prefix: Option<String>,
     },
     Bytes(Vec<u8>),
@@ -183,6 +185,7 @@ impl Conn {
             api: ServeApi::Generate,
             n_predict: 0,
             echo: false,
+            include_usage: false,
             read_started_at: Instant::now(),
             write_stalled_since: None,
         }
@@ -362,6 +365,7 @@ fn finish_write(c: &mut Conn) {
     c.intern_hits_at_add = 0;
     c.api = ServeApi::Generate;
     c.n_predict = 0;
+    c.include_usage = false;
     c.req = None;
     c.read_started_at = Instant::now();
     let _ = try_take_request(c);
@@ -508,6 +512,7 @@ impl<'a> EngineHttp<'a> {
                     api,
                     n_predict,
                     echo,
+                    include_usage,
                     echo_prefix,
                 } => {
                     let hits = self.engine.pool().hits();
@@ -519,6 +524,7 @@ impl<'a> EngineHttp<'a> {
                         c.api = api;
                         c.n_predict = n_predict;
                         c.echo = echo;
+                        c.include_usage = include_usage;
                         c.keep_alive = req.keep_alive;
                         if ndjson {
                             let head = if api.is_openai() {
@@ -581,6 +587,15 @@ impl<'a> EngineHttp<'a> {
             Ok(g) => g,
             Err(e) => return AdmitOut::http(400, "Bad Request", &e, ka, Some(api)),
         };
+        if gen.include_usage && !api.is_openai() {
+            return AdmitOut::http(
+                400,
+                "Bad Request",
+                "stream usage requires an OpenAI endpoint",
+                ka,
+                Some(api),
+            );
+        }
         let prompt = match gen.resolve(self.tok) {
             Ok(p) => p,
             Err(e) => return AdmitOut::http(400, "Bad Request", &e, ka, Some(api)),
@@ -610,6 +625,7 @@ impl<'a> EngineHttp<'a> {
                     api,
                     n_predict,
                     echo,
+                    include_usage: gen.include_usage,
                     echo_prefix,
                 }
             }
@@ -727,12 +743,18 @@ impl<'a> EngineHttp<'a> {
                 } else {
                     self.tok.decode(&out.generated)
                 };
-                json_openai_completion(&text, out.prompt.len(), out.generated.len(), reason, &model)
+                json_openai_completion(
+                    &text,
+                    out.prompt.len(),
+                    out.completion_tokens,
+                    reason,
+                    &model,
+                )
             }
             ServeApi::Chat => json_openai_chat(
                 &self.tok.decode(&out.generated),
                 out.prompt.len(),
-                out.generated.len(),
+                out.completion_tokens,
                 reason,
                 &model,
             ),
@@ -749,12 +771,19 @@ impl<'a> EngineHttp<'a> {
                         c.queue_stream_chunk(
                             sse_completion_delta("", Some(reason), &model).as_bytes(),
                         );
-                        c.queue_stream_chunk(sse_done().as_bytes());
                     }
                     ServeApi::Chat => {
                         c.queue_stream_chunk(sse_chat_delta("", Some(reason), &model).as_bytes());
-                        c.queue_stream_chunk(sse_done().as_bytes());
                     }
+                }
+                if api.is_openai() {
+                    if c.include_usage {
+                        c.queue_stream_chunk(
+                            sse_usage(api, &model, out.prompt.len(), out.completion_tokens)
+                                .as_bytes(),
+                        );
+                    }
+                    c.queue_stream_chunk(sse_done().as_bytes());
                 }
                 c.queue_stream(&http_chunk_end());
                 c.finalized = true;
@@ -1603,6 +1632,113 @@ mod tests {
         let end = rest.find('"').expect("echo end");
         let got = rest.get(..end).expect("echo slice");
         assert_eq!(got, expect, "{body}");
+    }
+
+    #[test]
+    fn openai_stream_usage_counts_eos_and_resets_on_keep_alive() {
+        for path in ["/v1/completions", "/v1/chat/completions"] {
+            let (model, mut tok) = tiny_model();
+            tok.chat_template =
+                Some("{% for message in messages %}{{ message.content }}{% endfor %}".into());
+            let args = engine_args();
+            let ids = prompt_ids(&tok, "ab").expect("prompt ids");
+            let mut cfg = engine_cfg(&tok, &args);
+            cfg.eos = None;
+            let mut oracle = Engine::new(&model, cfg).expect("oracle");
+            let id = oracle.add(&ids, 1).expect("oracle sequence");
+            oracle.run().expect("oracle run");
+            let out = oracle.take(id).expect("oracle output");
+            tok.eos = out.generated.first().copied();
+            assert!(tok.eos.is_some());
+
+            let listener = bind_loopback("127.0.0.1:0").expect("bind");
+            listener.set_nonblocking(true).expect("nb");
+            let addr = listener.local_addr().expect("addr");
+            let mut http = EngineHttp::new(&model, &tok, &args, listener).expect("http");
+            let mut clients = [connect_nb(addr)];
+            let input = if path == "/v1/chat/completions" {
+                "\"messages\":[{\"role\":\"user\",\"content\":\"ab\"}]"
+            } else {
+                "\"prompt\":\"ab\""
+            };
+            let request = format!("{{{input},\"stream\":true,\"max_tokens\":4,\"stream_options\":{{\"include_usage\":true}}}}");
+            write_all_nb(&mut clients[0], &post_path(path, &request));
+            let mut buffers = [Vec::new()];
+            drive(&mut http, &mut clients, &mut buffers);
+            let (status, body) = response_done(&buffers[0]).expect("usage stream");
+            assert_eq!(status, 200, "{body}");
+            assert_eq!(body.matches("\"usage\":").count(), 1, "{body}");
+            assert_eq!(body.matches("\"choices\":[]").count(), 1, "{body}");
+            assert_eq!(body.matches("[DONE]").count(), 1, "{body}");
+            assert_eq!(
+                json_u64(&body, "prompt_tokens"),
+                u64::try_from(ids.len()).expect("count")
+            );
+            assert_eq!(
+                json_u64(&body, "completion_tokens"),
+                1,
+                "EOS must be counted"
+            );
+            assert_eq!(
+                json_u64(&body, "total_tokens"),
+                u64::try_from(ids.len() + 1).expect("count")
+            );
+            let stop = body.find("\"finish_reason\":\"stop\"").expect("finish");
+            let usage = body.find("\"choices\":[]").expect("usage");
+            let done = body.find("[DONE]").expect("done");
+            assert!(stop < usage && usage < done, "{body}");
+
+            // Reusing a socket without stream_options must not retain the
+            // previous request's opt-in usage flag.
+            buffers[0].clear();
+            let request = format!("{{{input},\"stream\":true,\"max_tokens\":4}}");
+            write_all_nb(&mut clients[0], &post_path(path, &request));
+            drive(&mut http, &mut clients, &mut buffers);
+            let (status, body) = response_done(&buffers[0]).expect("plain stream");
+            assert_eq!(status, 200);
+            assert!(!body.contains("\"usage\""), "{body}");
+            assert_eq!(body.matches("[DONE]").count(), 1);
+
+            buffers[0].clear();
+            let request = format!("{{{input},\"stream\":true,\"max_tokens\":0,\"stream_options\":{{\"include_usage\":true}}}}");
+            write_all_nb(&mut clients[0], &post_path(path, &request));
+            drive(&mut http, &mut clients, &mut buffers);
+            let (status, body) = response_done(&buffers[0]).expect("zero token stream");
+            assert_eq!(status, 200);
+            assert_eq!(json_u64(&body, "completion_tokens"), 0);
+
+            buffers[0].clear();
+            let request = format!("{{{input},\"max_tokens\":4}}");
+            write_all_nb(&mut clients[0], &post_path(path, &request));
+            drive(&mut http, &mut clients, &mut buffers);
+            let (status, body) = response_done(&buffers[0]).expect("nonstream response");
+            assert_eq!(status, 200);
+            assert_eq!(
+                json_u64(&body, "completion_tokens"),
+                1,
+                "nonstream EOS usage"
+            );
+        }
+    }
+
+    #[test]
+    fn generate_rejects_openai_stream_usage_without_admitting_sequence() {
+        let (model, tok) = tiny_model();
+        let args = engine_args();
+        let listener = bind_loopback("127.0.0.1:0").expect("bind");
+        listener.set_nonblocking(true).expect("nb");
+        let addr = listener.local_addr().expect("addr");
+        let mut http = EngineHttp::new(&model, &tok, &args, listener).expect("http");
+        let mut clients = [connect_nb(addr)];
+        write_all_nb(
+            &mut clients[0],
+            &post_json(r#"{"prompt":"ab","stream":true,"stream_options":{"include_usage":true}}"#),
+        );
+        let mut buffers = [Vec::new()];
+        drive(&mut http, &mut clients, &mut buffers);
+        let (status, _) = response_done(&buffers[0]).expect("response");
+        assert_eq!(status, 400);
+        assert_eq!(http.stats().steps, 0);
     }
 
     #[test]

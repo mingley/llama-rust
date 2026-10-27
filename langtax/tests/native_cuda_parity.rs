@@ -245,6 +245,44 @@ fn model_logits() -> Result<ModelSnapshots, Box<dyn std::error::Error>> {
             name,
         );
         snapshots.push((format!("{name}/reused-prompt"), dense_prompt));
+        // Scheduler jobs combine differently-sized prefill chunks and decode
+        // tokens. Compare every continuation to its independent session.
+        let prompts = [vec![1, 2, 3], vec![1, 2, 4, 5], vec![1, 2]];
+        let mut cfg = EngineCfg::tiny();
+        cfg.n_ctx = 32;
+        cfg.pool_blocks = 64;
+        cfg.max_seqs = 2;
+        cfg.prefill_chunk = 2;
+        let mut engine = Engine::new(model.llama(), cfg)?;
+        let [first_prompt, second_prompt, third_prompt] = &prompts;
+        let first = engine.add(first_prompt, 4)?;
+        let second = engine.add(second_prompt, 4)?;
+        let _progressed = engine.step()?;
+        let third = engine.add(third_prompt, 4)?;
+        engine.run()?;
+        assert!(engine.stats().gemm_peak > 1, "{name}: batched path unused");
+        for (index, (id, prompt)) in [first, second, third].into_iter().zip(&prompts).enumerate() {
+            let mut session = model.session(32)?;
+            let mut logits = session.prefill(prompt)?.to_vec();
+            let mut expected = Vec::new();
+            for _ in 0..4 {
+                let token = argmax(&logits);
+                expected.push(token);
+                logits = session.decode(token)?.to_vec();
+            }
+            let output = engine.take(id).ok_or("missing finished engine sequence")?;
+            assert_eq!(output.prompt, *prompt, "{name}: engine prompt changed");
+            assert_eq!(
+                output.generated, expected,
+                "{name}: engine/session continuation mismatch"
+            );
+            let tokens = output
+                .generated
+                .into_iter()
+                .map(|token| u16::try_from(token).map(f32::from))
+                .collect::<Result<Vec<_>, _>>()?;
+            snapshots.push((format!("{name}/batched-generated-{index}"), tokens));
+        }
     }
     Ok(snapshots)
 }
@@ -333,5 +371,61 @@ fn warp_boundary_shapes_match_independent_f64_dots() -> Result<(), QuantError> {
             }
         }
     }
+    Ok(())
+}
+
+#[test]
+fn multi_block_quantized_batches_match_cpu_oracle() -> Result<(), QuantError> {
+    for format in formats() {
+        for blocks in [2, 3] {
+            let expanded_format = Format {
+                cols: format.cols * blocks,
+                ..format
+            };
+            for rows in [1, 9] {
+                // Blocks have different bytes, detecting incorrect packed-row
+                // strides and accidental reuse of the first block in a row.
+                let mut packed = Vec::new();
+                for row in 0..rows {
+                    for block in 0..blocks {
+                        packed.extend((format.pack_row)(row + block * 5));
+                    }
+                }
+                for tokens in [1, 2, 7, 8, 9, 31, 32, 33] {
+                    let input: Vec<f32> = (0..tokens)
+                        .flat_map(|token| values(token * 3 + 1, expanded_format.cols))
+                        .collect();
+                    let expected = oracle(&expanded_format, rows, &packed, &input)?;
+                    let mut actual = vec![f32::NAN; rows * tokens];
+                    (format.gemm)(expanded_format.cols, tokens, &packed, &input, &mut actual)?;
+                    check(&actual, &expected, format.name);
+                }
+            }
+        }
+    }
+    Ok(())
+}
+
+#[test]
+fn invalid_matrix_operations_preserve_output_and_empty_rows_are_noop() -> Result<(), QuantError> {
+    for format in formats() {
+        let packed = (format.pack_row)(0);
+        let input = values(1, format.cols);
+        let mut output = vec![123.5];
+        assert!((format.gemv)(format.cols, &[], &input, &mut output).is_err());
+        assert_eq!(output, [123.5], "invalid weights changed output");
+        assert!((format.gemv)(format.cols, &packed, &[], &mut output).is_err());
+        assert_eq!(output, [123.5], "invalid input changed output");
+        assert!((format.gemm)(format.cols, 0, &packed, &input, &mut output).is_err());
+        assert_eq!(output, [123.5], "zero tokens changed output");
+        let doubled: Vec<f32> = input.iter().copied().chain(input.iter().copied()).collect();
+        assert!((format.gemm)(format.cols, 2, &packed, &doubled, &mut output).is_err());
+        assert_eq!(output, [123.5], "unaligned output changed contents");
+        (format.gemv)(format.cols, &[], &input, &mut [])?;
+        (format.gemm)(format.cols, 2, &[], &doubled, &mut [])?;
+    }
+    let mut output = [123.5];
+    assert!(gemm_f32(usize::MAX, 2, &[], &[], &mut output).is_err());
+    assert_eq!(output, [123.5], "overflow validation changed output");
     Ok(())
 }

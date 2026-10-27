@@ -3,37 +3,52 @@
 //! Cache identity includes the complete packed bytes, dtype and dimensions;
 //! pointer reuse or a shortlist-key collision cannot return another model's weights.
 //! `LLAMA_CUDA_CACHE_BYTES` sets the per-thread residency budget once at context
-//! initialization (default 256 MiB; zero disables caching). The budget counts
-//! device F32 weights and retained packed identity, not transient launch memory.
+//! initialization (automatic by default; zero disables caching). Automatic
+//! budgets leave at least 25% of currently free VRAM or 512 MiB as headroom.
+//! The budget counts device F32 weights and retained packed identity, not
+//! transient launch memory.
 
 use crate::quant::QuantError;
 use llama_native_cuda::{CudaGemv, CudaMatrix};
 use std::cell::RefCell;
 use std::collections::VecDeque;
 
-const DEFAULT_CACHE_BYTES: usize = 256 * 1024 * 1024;
+const MIN_HEADROOM_BYTES: usize = 512 * 1024 * 1024;
 const CACHE_BYTES_ENV: &str = "LLAMA_CUDA_CACHE_BYTES";
 
-fn parse_cache_bytes(value: Option<&str>) -> Result<usize, QuantError> {
-    let Some(value) = value else {
-        return Ok(DEFAULT_CACHE_BYTES);
+// None denotes automatic sizing; Some(0) explicitly disables residency.
+fn parse_cache_bytes(value: Option<&str>) -> Result<Option<usize>, QuantError> {
+    let Some(value) = value.filter(|value| *value != "auto") else {
+        return Ok(None);
     };
     if value.is_empty() || !value.bytes().all(|byte| byte.is_ascii_digit()) {
         return Err(QuantError::NativeCuda(format!(
-            "{CACHE_BYTES_ENV} must be a nonnegative decimal byte count"
+            "{CACHE_BYTES_ENV} must be auto or a nonnegative decimal byte count"
         )));
     }
-    value.parse().map_err(|_| {
+    value.parse().map(Some).map_err(|_| {
         QuantError::NativeCuda(format!("{CACHE_BYTES_ENV} exceeds addressable memory"))
     })
 }
 
-fn configured_cache_bytes() -> Result<usize, QuantError> {
+fn automatic_cache_bytes(free: usize, total: usize) -> usize {
+    // Clamp inconsistent reports conservatively and avoid multiplying byte
+    // counts, including when testing address-space-limit values.
+    let available = free.min(total);
+    let reserve = (available / 4).max(MIN_HEADROOM_BYTES);
+    available.saturating_sub(reserve)
+}
+
+fn admission_requires_eviction(used: usize, incoming: usize, limit: usize) -> bool {
+    incoming > limit || used > limit - incoming
+}
+
+fn configured_cache_bytes() -> Result<Option<usize>, QuantError> {
     match std::env::var(CACHE_BYTES_ENV) {
         Ok(value) => parse_cache_bytes(Some(&value)),
         Err(std::env::VarError::NotPresent) => parse_cache_bytes(None),
         Err(std::env::VarError::NotUnicode(_)) => Err(QuantError::NativeCuda(format!(
-            "{CACHE_BYTES_ENV} must be a nonnegative decimal byte count"
+            "{CACHE_BYTES_ENV} must be auto or a nonnegative decimal byte count"
         ))),
     }
 }
@@ -124,9 +139,17 @@ pub(crate) fn matmul(
             // Resolve once per inference thread before initializing CUDA. A
             // malformed configuration fails rather than silently changing its
             // memory policy. Zero opts out of residency, not GPU execution.
-            let limit = configured_cache_bytes()?;
+            let configured = configured_cache_bytes()?;
+            let gpu = CudaGemv::new(0).map_err(QuantError::NativeCuda)?;
+            let limit = match configured {
+                Some(bytes) => bytes,
+                None => {
+                    let (free, total) = gpu.memory_info().map_err(QuantError::NativeCuda)?;
+                    automatic_cache_bytes(free, total)
+                }
+            };
             *slot = Some(State {
-                gpu: CudaGemv::new(0).map_err(QuantError::NativeCuda)?,
+                gpu,
                 cache: VecDeque::new(),
                 bytes: 0,
                 limit,
@@ -157,7 +180,9 @@ pub(crate) fn matmul(
             .and_then(|n| n.checked_mul(std::mem::size_of::<f32>()))
             .and_then(|n| n.checked_add(packed.len()))
             .ok_or_else(|| QuantError::NativeCuda("resident matrix size overflow".into()))?;
-        while !state.cache.is_empty() && state.bytes.saturating_add(bytes) > state.limit {
+        while !state.cache.is_empty()
+            && admission_requires_eviction(state.bytes, bytes, state.limit)
+        {
             if let Some(entry) = state.cache.pop_front() {
                 state.bytes = state.bytes.saturating_sub(entry.bytes);
             }
@@ -277,12 +302,47 @@ mod tests {
     }
 
     #[test]
+    fn residency_admission_accounting_cannot_overflow_the_byte_override() {
+        assert!(!admission_requires_eviction(90, 10, 100));
+        assert!(admission_requires_eviction(90, 11, 100));
+        assert!(admission_requires_eviction(0, 101, 100));
+        assert!(admission_requires_eviction(0, 1, 0));
+        // A saturating used+incoming comparison incorrectly accepted this
+        // admission when limit was usize::MAX, then overflowed its counter.
+        assert!(admission_requires_eviction(usize::MAX - 10, 20, usize::MAX));
+        assert!(!admission_requires_eviction(
+            usize::MAX - 20,
+            20,
+            usize::MAX
+        ));
+    }
+
+    #[test]
+    fn automatic_residency_uses_available_vram_with_scratch_headroom() {
+        const GIB: usize = 1024 * 1024 * 1024;
+        assert_eq!(automatic_cache_bytes(8 * GIB, 16 * GIB), 6 * GIB);
+        assert_eq!(automatic_cache_bytes(2 * GIB, 16 * GIB), GIB + GIB / 2);
+        assert_eq!(automatic_cache_bytes(GIB, 16 * GIB), GIB / 2);
+        // Below the minimum headroom, execution can still use transient
+        // matrices but must not retain weights across operations.
+        assert_eq!(automatic_cache_bytes(256 * 1024 * 1024, GIB), 0);
+        assert_eq!(automatic_cache_bytes(0, GIB), 0);
+        assert_eq!(automatic_cache_bytes(GIB, 0), 0);
+        assert_eq!(automatic_cache_bytes(16 * GIB, 8 * GIB), 6 * GIB);
+        assert_eq!(
+            automatic_cache_bytes(usize::MAX, usize::MAX),
+            usize::MAX - usize::MAX / 4
+        );
+    }
+
+    #[test]
     fn cache_budget_is_explicit_and_strictly_parsed() {
-        assert_eq!(parse_cache_bytes(None), Ok(DEFAULT_CACHE_BYTES));
-        assert_eq!(parse_cache_bytes(Some("0")), Ok(0));
+        assert_eq!(parse_cache_bytes(None), Ok(None));
+        assert_eq!(parse_cache_bytes(Some("auto")), Ok(None));
+        assert_eq!(parse_cache_bytes(Some("0")), Ok(Some(0)));
         assert_eq!(
             parse_cache_bytes(Some("1073741824")),
-            Ok(1024 * 1024 * 1024)
+            Ok(Some(1024 * 1024 * 1024))
         );
         for value in [
             "",
@@ -291,6 +351,7 @@ mod tests {
             " 1",
             "1 ",
             "1GiB",
+            "AUTO",
             "999999999999999999999999999999999999",
         ] {
             assert!(parse_cache_bytes(Some(value)).is_err(), "{value}");

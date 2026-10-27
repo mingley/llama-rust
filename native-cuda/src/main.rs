@@ -45,6 +45,27 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
             );
         }
     }
+    // Validation errors must not corrupt existing buffers or poison the
+    // executor. A matrix cannot be launched from another CUDA context.
+    let matrix = gpu.upload(2, 3, &[1.0, -2.0, 3.0, 4.0, 5.0, -6.0])?;
+    let mut output = [123.5, -456.0];
+    if gpu.gemv_resident(&matrix, &[1.0, 2.0], &mut output).is_ok() || output != [123.5, -456.0] {
+        return Err("invalid GEMV input was accepted or changed output".into());
+    }
+    if gpu.gemm_resident(&matrix, 0, &[], &mut output).is_ok() || output != [123.5, -456.0] {
+        return Err("zero-token GEMM was accepted or changed output".into());
+    }
+    let mut other = CudaGemv::new(0)?;
+    if other
+        .gemv_resident(&matrix, &[1.0, 2.0, 3.0], &mut output)
+        .is_ok()
+        || output != [123.5, -456.0]
+    {
+        return Err("matrix from another executor was accepted or changed output".into());
+    }
+    gpu.gemv_resident(&matrix, &[1.0, 2.0, 3.0], &mut output)?;
+    validate(&output, &[6.0, -4.0])?;
+    println!("native CUDA error rejection and executor recovery validated");
     Ok(())
 }
 

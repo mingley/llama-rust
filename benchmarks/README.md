@@ -32,6 +32,19 @@ are a measurement limitation, not zero tokens. The harness exits nonzero
 when any measured request fails or a warmup fails; reports preserve each
 HTTP/SSE error and incomplete streams count as failures.
 
+Success requires a valid single completion (`index: 0`) ending with `stop`
+or `length`, followed by `[DONE]`. A bare `[DONE]`, a missing finish reason,
+unexpected/multiple choices, chat deltas, text after termination, malformed
+usage, conflicting token counters, or a completion count above the requested
+token limit counts as failure. Final usage-only chunks are accepted. This
+validates protocol completion, not factual or numerical model correctness.
+Content-filtered responses are recorded separately and excluded from successful
+inference metrics; they cause a nonzero benchmark exit. Legitimate immediate
+EOS is accepted even without visible output, so TTFT remains null in that case.
+Inspect `finish_reasons` (successful `stop` versus `length`) and
+`content_filtered_requests` when comparing runs: a faster server that truncates
+outputs earlier has not performed the same work.
+
 Metrics:
 
 - TTFT: request start through first nonempty completion text event. This
