@@ -1,0 +1,4 @@
+# NVIDIA CUDA Rust's proc macros use compiler APIs on the pinned stable
+# toolchain; this matches upstream's cargo-oxide scaffold.
+[env]
+RUSTC_BOOTSTRAP = "1"

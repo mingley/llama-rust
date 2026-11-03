@@ -2,8 +2,8 @@
 name = "llama-rust"
 version = "0.2.0"
 edition = "2021"
-# The default SIMD path uses AArch64 FP16 intrinsics stabilized in Rust 1.94.
-rust-version = "1.94"
+# The default CUDA backend requires Rust 1.99.1.
+rust-version = "1.99.1"
 description = "Verifiable GGUF v3 Llama-family reference engine with oracle decode, MoE traces, and an ExpertStore seam"
 documentation = "https://docs.rs/llama-rust"
 homepage = "https://github.com/mingley/llama-rust"
@@ -15,12 +15,15 @@ categories = ["science", "text-processing", "command-line-utilities"]
 exclude = ["*.c", "*.m", "*.metal"]
 
 [features]
-default = ["simd"]
+default = ["native-cuda"]
+# Native NVIDIA kernels execute matrix products. CPU reference is explicit.
+native-cuda = ["dep:llama-native-cuda", "llama-native-cuda/cuda"]
 # Vendor SIMD fast path for the hot dtypes. Off means the crate compiles under a
 # crate-level `forbid(unsafe_code)`; see `src/lib.rs`.
 simd = []
 
 [dependencies]
+llama-native-cuda = { path = "../native-cuda", version = "0.1.0", default-features = false, optional = true }
 expertvm = { path = "../expertvm", version = "0.1.0" }
 
 [lib]

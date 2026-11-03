@@ -12,10 +12,16 @@
 //! CUDA knobs, `--prefetch` / `--plan-window` / `--plan-threshold`, `--seq-streams`, and
 //! `--trace-out` match `gguf_gemv engine`. No Tokio.
 //! HTTP/1.1 keep-alive is on unless the client sends `Connection: close`.
+//! Streaming connections exceeding 256 KiB of pending output are closed and
+//! their generation is canceled, so slow readers cannot grow the output queue
+//! without bound. Already-written bytes are discarded before appending output.
+//! Idle/incomplete requests and stalled response writes time out after 30
+//! seconds. Active inference without pending socket output has no IO deadline.
 
 use std::fs::OpenOptions;
 use std::io::{ErrorKind, Read, Write};
 use std::net::{TcpListener, TcpStream};
+use std::time::{Duration, Instant};
 
 use crate::decode::{prompt_ids, Llama, LlamaError};
 use crate::engine::{Engine, EngineCfg, SeqId, SeqOutput};
@@ -23,11 +29,17 @@ use crate::serve::{
     dispatch_get, dispatch_tok, finish_reason, http_chunk, http_chunk_end, http_chunked_headers,
     http_err_status, http_json_bytes, http_sse_headers, json_error, json_generated,
     json_openai_chat, json_openai_completion, json_openai_error, json_token, parse_gen_req,
-    path_only, sse_chat_delta, sse_completion_delta, sse_done, try_parse_http_request, HttpRequest,
-    ServeApi, ServeArgs, ServeError, MAX_REQ,
+    path_only, sse_chat_delta, sse_completion_delta, sse_done, sse_usage, try_parse_http_request,
+    HttpRequest, ServeApi, ServeArgs, ServeError, MAX_REQ,
 };
 use crate::store_attach::{attach_store, StoreAttach};
 use crate::tok::Tokenizer;
+
+// Stop slow readers from retaining unbounded streaming output. This covers
+// application buffering; the socket's own send buffer is bounded by the OS.
+const MAX_STREAM_PENDING: usize = 256 * 1024;
+const IO_TIMEOUT: Duration = Duration::from_secs(30);
+const MAX_ACCEPT_PER_POLL: usize = 64;
 
 /// Poll until the process exits. Listener must already be non-blocking.
 pub(crate) fn run_loop(
@@ -69,6 +81,9 @@ struct Conn {
     api: ServeApi,
     n_predict: usize,
     echo: bool,
+    include_usage: bool,
+    read_started_at: Instant,
+    write_stalled_since: Option<Instant>,
 }
 
 enum AdmitOut {
@@ -78,6 +93,7 @@ enum AdmitOut {
         api: ServeApi,
         n_predict: usize,
         echo: bool,
+        include_usage: bool,
         echo_prefix: Option<String>,
     },
     Bytes(Vec<u8>),
@@ -169,15 +185,62 @@ impl Conn {
             api: ServeApi::Generate,
             n_predict: 0,
             echo: false,
+            include_usage: false,
+            read_started_at: Instant::now(),
+            write_stalled_since: None,
         }
     }
 
     fn can_admit(&self) -> bool {
         self.req.is_some() && self.seq.is_none() && self.write.is_empty() && !self.done
     }
+
+    fn expire(&mut self, now: Instant) {
+        let read_timed_out = self.seq.is_none()
+            && self.req.is_none()
+            && self.write.is_empty()
+            && now.saturating_duration_since(self.read_started_at) >= IO_TIMEOUT;
+        let write_timed_out = !self.write.is_empty()
+            && self
+                .write_stalled_since
+                .is_some_and(|since| now.saturating_duration_since(since) >= IO_TIMEOUT);
+        if read_timed_out || write_timed_out {
+            self.done = true;
+        }
+    }
+
+    fn queue_stream(&mut self, bytes: &[u8]) {
+        if self.done {
+            return;
+        }
+        let pending = self.write.len().saturating_sub(self.write_at);
+        if bytes.len() > MAX_STREAM_PENDING.saturating_sub(pending) {
+            // Headers may already be on the wire, so sending a new HTTP error
+            // would corrupt the response. Close and cancel via reap instead.
+            self.done = true;
+            self.write.clear();
+            self.write_at = 0;
+            return;
+        }
+        if self.write_at > 0 {
+            let _sent = self.write.drain(..self.write_at);
+            self.write_at = 0;
+        }
+        self.write.extend_from_slice(bytes);
+    }
+
+    fn queue_stream_chunk(&mut self, bytes: &[u8]) {
+        self.queue_stream(&http_chunk(bytes));
+    }
 }
 
 fn try_take_request(c: &mut Conn) -> bool {
+    // Keep pipelined bytes buffered until the current response completes.
+    // Parsing early would overwrite its keep-alive policy, and finish_write
+    // would clear the parsed next request before it could be admitted.
+    if c.seq.is_some() {
+        return false;
+    }
     match try_parse_http_request(&c.read) {
         Ok(Some(req)) => {
             let n = req.consumed.min(c.read.len());
@@ -242,7 +305,11 @@ fn queue_err(c: &mut Conn, e: &ServeError) {
 
 fn write_conn(c: &mut Conn) {
     if c.done || c.write.is_empty() {
+        c.write_stalled_since = None;
         return;
+    }
+    if c.write_stalled_since.is_none() {
+        c.write_stalled_since = Some(Instant::now());
     }
     loop {
         let Some(rest) = c.write.get(c.write_at..) else {
@@ -254,6 +321,7 @@ fn write_conn(c: &mut Conn) {
                 Ok(()) => {
                     c.write.clear();
                     c.write_at = 0;
+                    c.write_stalled_since = None;
                     if c.ndjson && !c.finalized {
                         return;
                     }
@@ -272,7 +340,10 @@ fn write_conn(c: &mut Conn) {
                 c.done = true;
                 return;
             }
-            Ok(n) => c.write_at = c.write_at.saturating_add(n),
+            Ok(n) => {
+                c.write_at = c.write_at.saturating_add(n);
+                c.write_stalled_since = Some(Instant::now());
+            }
             Err(e) if io_again(&e) => return,
             Err(_) => {
                 c.done = true;
@@ -294,7 +365,9 @@ fn finish_write(c: &mut Conn) {
     c.intern_hits_at_add = 0;
     c.api = ServeApi::Generate;
     c.n_predict = 0;
+    c.include_usage = false;
     c.req = None;
+    c.read_started_at = Instant::now();
     let _ = try_take_request(c);
 }
 
@@ -308,8 +381,8 @@ fn queue_missing(c: Option<&mut Conn>, ndjson: bool, api: ServeApi) {
         json_error("missing sequence")
     };
     if ndjson {
-        c.write.extend(http_chunk(err.as_bytes()));
-        c.write.extend(http_chunk_end());
+        c.queue_stream_chunk(err.as_bytes());
+        c.queue_stream(&http_chunk_end());
         c.finalized = true;
     } else {
         c.write = http_json_bytes(500, "Internal Server Error", &err, c.keep_alive);
@@ -378,9 +451,18 @@ impl<'a> EngineHttp<'a> {
 
     /// Accept, admit, step, harvest, write. Drain new requests before `step`.
     pub(crate) fn poll(&mut self) -> Result<(), ServeError> {
+        let now = Instant::now();
+        for conn in &mut self.conns {
+            conn.expire(now);
+        }
+        self.reap();
         self.accept_ready()?;
         self.read_ready();
+        // Cancel disconnected requests before spending another scheduler step
+        // on their prefill/decode or admitting their waiting sequences.
+        self.reap();
         self.admit_parsed();
+        self.reap();
         self.step_if_busy()?;
         self.stream_progress();
         self.harvest()?;
@@ -390,7 +472,8 @@ impl<'a> EngineHttp<'a> {
     }
 
     fn accept_ready(&mut self) -> Result<(), ServeError> {
-        loop {
+        // A continuously replenished accept queue must not starve decode.
+        for _ in 0..MAX_ACCEPT_PER_POLL {
             match self.listener.accept() {
                 Ok((stream, _)) => {
                     stream.set_nonblocking(true)?;
@@ -401,6 +484,7 @@ impl<'a> EngineHttp<'a> {
                 Err(e) => return Err(e.into()),
             }
         }
+        Ok(())
     }
 
     fn read_ready(&mut self) {
@@ -428,6 +512,7 @@ impl<'a> EngineHttp<'a> {
                     api,
                     n_predict,
                     echo,
+                    include_usage,
                     echo_prefix,
                 } => {
                     let hits = self.engine.pool().hits();
@@ -439,6 +524,7 @@ impl<'a> EngineHttp<'a> {
                         c.api = api;
                         c.n_predict = n_predict;
                         c.echo = echo;
+                        c.include_usage = include_usage;
                         c.keep_alive = req.keep_alive;
                         if ndjson {
                             let head = if api.is_openai() {
@@ -446,11 +532,11 @@ impl<'a> EngineHttp<'a> {
                             } else {
                                 http_chunked_headers(req.keep_alive)
                             };
-                            c.write.extend(head);
+                            c.queue_stream(&head);
                             if let Some(prefix) = echo_prefix {
-                                c.write.extend(http_chunk(
+                                c.queue_stream_chunk(
                                     sse_completion_delta(&prefix, None, &model).as_bytes(),
-                                ));
+                                );
                             }
                         }
                     }
@@ -501,6 +587,15 @@ impl<'a> EngineHttp<'a> {
             Ok(g) => g,
             Err(e) => return AdmitOut::http(400, "Bad Request", &e, ka, Some(api)),
         };
+        if gen.include_usage && !api.is_openai() {
+            return AdmitOut::http(
+                400,
+                "Bad Request",
+                "stream usage requires an OpenAI endpoint",
+                ka,
+                Some(api),
+            );
+        }
         let prompt = match gen.resolve(self.tok) {
             Ok(p) => p,
             Err(e) => return AdmitOut::http(400, "Bad Request", &e, ka, Some(api)),
@@ -530,6 +625,7 @@ impl<'a> EngineHttp<'a> {
                     api,
                     n_predict,
                     echo,
+                    include_usage: gen.include_usage,
                     echo_prefix,
                 }
             }
@@ -555,7 +651,7 @@ impl<'a> EngineHttp<'a> {
         let n = self.conns.len();
         for i in 0..n {
             let (id, streamed) = match self.conns.get(i) {
-                Some(c) if c.ndjson && !c.finalized => match c.seq {
+                Some(c) if !c.done && c.ndjson && !c.finalized => match c.seq {
                     Some(id) => (id, c.streamed),
                     None => continue,
                 },
@@ -580,7 +676,7 @@ impl<'a> EngineHttp<'a> {
                 ServeApi::Chat => sse_chat_delta(&piece, None, &model),
             };
             if let Some(c) = self.conns.get_mut(i) {
-                c.write.extend(http_chunk(payload.as_bytes()));
+                c.queue_stream_chunk(payload.as_bytes());
                 c.streamed = next;
             }
         }
@@ -647,12 +743,18 @@ impl<'a> EngineHttp<'a> {
                 } else {
                     self.tok.decode(&out.generated)
                 };
-                json_openai_completion(&text, out.prompt.len(), out.generated.len(), reason, &model)
+                json_openai_completion(
+                    &text,
+                    out.prompt.len(),
+                    out.completion_tokens,
+                    reason,
+                    &model,
+                )
             }
             ServeApi::Chat => json_openai_chat(
                 &self.tok.decode(&out.generated),
                 out.prompt.len(),
-                out.generated.len(),
+                out.completion_tokens,
                 reason,
                 &model,
             ),
@@ -663,22 +765,27 @@ impl<'a> EngineHttp<'a> {
                     ServeApi::Generate => {
                         let mut line = json;
                         line.push('\n');
-                        c.write.extend(http_chunk(line.as_bytes()));
+                        c.queue_stream_chunk(line.as_bytes());
                     }
                     ServeApi::Completions => {
-                        c.write.extend(http_chunk(
+                        c.queue_stream_chunk(
                             sse_completion_delta("", Some(reason), &model).as_bytes(),
-                        ));
-                        c.write.extend(http_chunk(sse_done().as_bytes()));
+                        );
                     }
                     ServeApi::Chat => {
-                        c.write.extend(http_chunk(
-                            sse_chat_delta("", Some(reason), &model).as_bytes(),
-                        ));
-                        c.write.extend(http_chunk(sse_done().as_bytes()));
+                        c.queue_stream_chunk(sse_chat_delta("", Some(reason), &model).as_bytes());
                     }
                 }
-                c.write.extend(http_chunk_end());
+                if api.is_openai() {
+                    if c.include_usage {
+                        c.queue_stream_chunk(
+                            sse_usage(api, &model, out.prompt.len(), out.completion_tokens)
+                                .as_bytes(),
+                        );
+                    }
+                    c.queue_stream_chunk(sse_done().as_bytes());
+                }
+                c.queue_stream(&http_chunk_end());
                 c.finalized = true;
             } else {
                 c.write = http_json_bytes(200, "OK", &json, c.keep_alive);
@@ -699,7 +806,19 @@ impl<'a> EngineHttp<'a> {
     }
 
     fn reap(&mut self) {
-        self.conns.retain(|c| !c.done);
+        let engine = &mut self.engine;
+        self.conns.retain(|c| {
+            if !c.done {
+                return true;
+            }
+            if let Some(id) = c.seq {
+                let _output = engine.take(id);
+                // Taking a live sequence banks its trace; discard it after
+                // cancellation as there is no client left to harvest it.
+                let _trace = engine.take_moe_trace(id);
+            }
+            false
+        });
     }
 }
 
@@ -767,6 +886,224 @@ mod tests {
         s.set_nodelay(true).expect("nodelay");
         s.set_nonblocking(true).expect("nb");
         s
+    }
+
+    #[test]
+    fn incomplete_requests_expire_even_when_more_bytes_arrive() {
+        let (model, tok) = tiny_model();
+        let args = engine_args();
+        let listener = bind_loopback("127.0.0.1:0").expect("bind");
+        listener.set_nonblocking(true).expect("nonblocking");
+        let addr = listener.local_addr().expect("addr");
+        let mut http = EngineHttp::new(&model, &tok, &args, listener).expect("http");
+        let mut client = connect_nb(addr);
+        write_all_nb(
+            &mut client,
+            b"POST /generate HTTP/1.1\r\nContent-Length: 50\r\n\r\n{",
+        );
+        http.poll().expect("read partial body");
+        let conn = http.conns.first_mut().expect("connection");
+        assert!(!conn.read.is_empty());
+        conn.read_started_at = Instant::now().checked_sub(IO_TIMEOUT).expect("past");
+        write_all_nb(&mut client, b" ");
+        http.poll().expect("expire");
+        assert!(http.conns.is_empty(), "trickled bytes extended deadline");
+        assert_eq!(http.stats().steps, 0);
+    }
+
+    #[test]
+    fn deadlines_exempt_inference_and_reset_for_keep_alive() {
+        let (model, tok) = tiny_model();
+        let args = engine_args();
+        let listener = bind_loopback("127.0.0.1:0").expect("bind");
+        listener.set_nonblocking(true).expect("nonblocking");
+        let addr = listener.local_addr().expect("addr");
+        let mut http = EngineHttp::new(&model, &tok, &args, listener).expect("http");
+        let _client = connect_nb(addr);
+        http.accept_ready().expect("accept");
+        let ids = prompt_ids(&tok, "ab").expect("ids");
+        let id = http.engine.add(&ids, 8).expect("sequence");
+        let conn = http.conns.first_mut().expect("connection");
+        conn.seq = Some(id);
+        let future = conn.read_started_at + IO_TIMEOUT;
+        conn.expire(future);
+        assert!(!conn.done, "inference time counted as idle socket time");
+        conn.write = b"pending".to_vec();
+        conn.write_stalled_since = Some(future);
+        conn.expire(future + IO_TIMEOUT - Duration::from_nanos(1));
+        assert!(!conn.done);
+        conn.expire(future + IO_TIMEOUT);
+        assert!(conn.done, "stalled output did not expire");
+        http.reap();
+        assert!(
+            http.engine.take(id).is_none(),
+            "timeout did not cancel sequence"
+        );
+
+        let _next_client = connect_nb(addr);
+        http.accept_ready().expect("accept");
+        let conn = http.conns.first_mut().expect("connection");
+        conn.keep_alive = true;
+        conn.read_started_at = Instant::now().checked_sub(IO_TIMEOUT).expect("past");
+        finish_write(conn);
+        conn.expire(Instant::now());
+        assert!(!conn.done, "keep-alive reused previous request deadline");
+    }
+
+    #[test]
+    fn accept_budget_keeps_connection_flood_from_starving_inference() {
+        let (model, tok) = tiny_model();
+        let args = engine_args();
+        let listener = bind_loopback("127.0.0.1:0").expect("bind");
+        listener.set_nonblocking(true).expect("nonblocking");
+        let addr = listener.local_addr().expect("addr");
+        let mut http = EngineHttp::new(&model, &tok, &args, listener).expect("http");
+        let _clients: Vec<_> = (0..=MAX_ACCEPT_PER_POLL)
+            .map(|_| connect_nb(addr))
+            .collect();
+        http.accept_ready().expect("accept budget");
+        assert_eq!(http.conns.len(), MAX_ACCEPT_PER_POLL);
+        let ids = prompt_ids(&tok, "ab").expect("ids");
+        let _id = http.engine.add(&ids, 8).expect("sequence");
+        http.poll().expect("poll");
+        assert_eq!(http.conns.len(), MAX_ACCEPT_PER_POLL + 1);
+        assert!(http.stats().steps > 0, "accept work starved the scheduler");
+    }
+
+    #[test]
+    fn streaming_buffer_compacts_sent_bytes_and_enforces_pending_limit() {
+        let listener = bind_loopback("127.0.0.1:0").expect("bind");
+        let _client = connect_nb(listener.local_addr().expect("addr"));
+        let (stream, _) = listener.accept().expect("accept");
+        let mut conn = Conn::new(stream);
+        conn.queue_stream(&vec![b'a'; MAX_STREAM_PENDING]);
+        assert!(!conn.done);
+        conn.write_at = MAX_STREAM_PENDING - 2;
+        conn.queue_stream(b"bc");
+        assert_eq!(conn.write, b"aabc");
+        assert_eq!(conn.write_at, 0);
+        for _ in 0..100 {
+            conn.write_at = conn.write.len();
+            conn.queue_stream(b"next");
+            assert_eq!(conn.write, b"next", "sent data retained");
+        }
+        conn.queue_stream(&vec![b'x'; MAX_STREAM_PENDING]);
+        assert!(conn.done, "slow reader must be disconnected");
+        assert!(conn.write.is_empty());
+        conn.queue_stream(b"must not append to canceled response");
+        assert!(conn.write.is_empty());
+    }
+
+    #[test]
+    fn slow_stream_readers_cancel_sequences_for_all_apis() {
+        for api in [ServeApi::Generate, ServeApi::Completions, ServeApi::Chat] {
+            let (model, tok) = tiny_model();
+            let args = engine_args();
+            let listener = bind_loopback("127.0.0.1:0").expect("bind");
+            listener.set_nonblocking(true).expect("nonblocking");
+            let addr = listener.local_addr().expect("addr");
+            let mut http = EngineHttp::new(&model, &tok, &args, listener).expect("http");
+            let _client = connect_nb(addr);
+            http.accept_ready().expect("accept");
+            let ids = prompt_ids(&tok, "ab").expect("ids");
+            let id = http.engine.add(&ids, 8).expect("sequence");
+            let _advanced = http.engine.step().expect("prefill");
+            assert!(!http.engine.generated(id).expect("generated").is_empty());
+            let conn = http.conns.first_mut().expect("connection");
+            conn.seq = Some(id);
+            conn.api = api;
+            conn.ndjson = true;
+            // Deterministically model a full output queue without relying on
+            // OS-specific socket buffer sizes or a timing-sensitive flood.
+            conn.queue_stream(&vec![b'x'; MAX_STREAM_PENDING]);
+            http.stream_progress();
+            assert!(http.conns.first().expect("connection").done);
+            http.reap();
+            assert!(http.conns.is_empty());
+            assert!(!http.engine.has_runnable());
+            assert!(http.engine.take(id).is_none(), "canceled output retained");
+        }
+    }
+
+    #[test]
+    fn engine_http_disconnect_cancels_generation() {
+        let (model, tok) = tiny_model();
+        let mut args = engine_args();
+        args.prefill_chunk = 1;
+        let listener = bind_loopback("127.0.0.1:0").expect("bind");
+        listener.set_nonblocking(true).expect("nonblocking");
+        let addr = listener.local_addr().expect("addr");
+        let mut http = EngineHttp::new(&model, &tok, &args, listener).expect("http");
+        let mut client = connect_nb(addr);
+        write_all_nb(
+            &mut client,
+            &post_json(r#"{"prompt":"abab","n_predict":40}"#),
+        );
+        http.poll().expect("poll");
+        let id = http.conns.first().and_then(|c| c.seq).expect("sequence");
+        assert!(http.engine.generated(id).is_some());
+        client.shutdown(std::net::Shutdown::Both).expect("shutdown");
+        for _ in 0..100 {
+            http.poll().expect("poll");
+            if http.conns.is_empty() {
+                break;
+            }
+        }
+        assert!(http.conns.is_empty(), "disconnected socket retained");
+        assert!(
+            !http.engine.has_runnable(),
+            "disconnected request still running"
+        );
+        assert!(
+            http.engine.take(id).is_none(),
+            "disconnected output retained"
+        );
+    }
+
+    #[test]
+    fn disconnected_requests_release_active_waiting_and_finished_sequences() {
+        let (model, tok) = tiny_model();
+        let mut args = engine_args();
+        args.max_seqs = Some(1);
+        let listener = bind_loopback("127.0.0.1:0").expect("bind");
+        listener.set_nonblocking(true).expect("nonblocking");
+        let addr = listener.local_addr().expect("addr");
+        let mut http = EngineHttp::new(&model, &tok, &args, listener).expect("http");
+        http.engine.enable_moe_trace();
+        let ids = prompt_ids(&tok, "ab").expect("ids");
+        let active = http.engine.add(&ids, 8).expect("active");
+        let waiting = http.engine.add(&ids, 8).expect("waiting");
+        let _advanced = http.engine.step().expect("prefill");
+        assert_eq!(http.engine.active(), 1);
+        assert_eq!(http.engine.waiting(), 1);
+        let _clients = [connect_nb(addr), connect_nb(addr)];
+        http.accept_ready().expect("accept");
+        for (conn, id) in http.conns.iter_mut().zip([active, waiting]) {
+            conn.seq = Some(id);
+            conn.done = true;
+        }
+        let steps = http.stats().steps;
+        http.poll().expect("poll");
+        assert!(http.conns.is_empty());
+        assert_eq!(http.engine.active(), 0);
+        assert_eq!(http.engine.waiting(), 0);
+        assert_eq!(http.stats().steps, steps, "cancel before scheduler step");
+        for id in [active, waiting] {
+            assert!(http.engine.take(id).is_none(), "sequence retained");
+            assert!(http.engine.take_moe_trace(id).is_none(), "trace retained");
+        }
+
+        let finished = http.engine.add(&ids, 1).expect("finished");
+        http.engine.run().expect("run");
+        assert!(http.engine.is_finished(finished));
+        let _client = connect_nb(addr);
+        http.accept_ready().expect("accept");
+        let conn = http.conns.first_mut().expect("connection");
+        conn.seq = Some(finished);
+        conn.done = true;
+        http.reap();
+        assert!(http.engine.take(finished).is_none());
+        assert!(http.engine.take_moe_trace(finished).is_none());
     }
 
     fn write_all_nb(s: &mut TcpStream, bytes: &[u8]) {
@@ -931,6 +1268,73 @@ mod tests {
             http.stats().gemm_peak >= 2,
             "two concurrent posts must GEMM together, peak={}",
             http.stats().gemm_peak
+        );
+    }
+
+    #[test]
+    fn pipelined_request_waits_for_active_generation_and_preserves_order() {
+        let (model, tok) = tiny_model();
+        let mut args = engine_args();
+        args.prefill_chunk = 1;
+        let listener = bind_loopback("127.0.0.1:0").expect("bind");
+        listener.set_nonblocking(true).expect("nonblocking");
+        let addr = listener.local_addr().expect("addr");
+        let mut http = EngineHttp::new(&model, &tok, &args, listener).expect("http");
+        let mut client = connect_nb(addr);
+        write_all_nb(
+            &mut client,
+            &post_json(r#"{"prompt":"abab","n_predict":4}"#),
+        );
+        http.poll().expect("start first request");
+        let conn = http.conns.first_mut().expect("connection");
+        assert!(conn.seq.is_some());
+        let second = String::from_utf8(post_json(r#"{"prompt":"ba","n_predict":2}"#))
+            .expect("request")
+            .replace("HTTP/1.1\r\n", "HTTP/1.1\r\nConnection: close\r\n");
+        // Model bytes arriving during generation without relying on TCP packet
+        // timing. The rest of the poll/write path uses the real connection.
+        conn.read.extend_from_slice(second.as_bytes());
+        http.poll().expect("buffer pipelined request");
+        let conn = http.conns.first().expect("connection");
+        assert!(
+            conn.req.is_none(),
+            "next request parsed before first response"
+        );
+        assert!(
+            conn.keep_alive,
+            "next request overwrote first connection policy"
+        );
+        let mut response = Vec::new();
+        let mut bodies = None;
+        for _ in 0..10_000 {
+            http.poll().expect("poll");
+            read_nb(&mut client, &mut response);
+            let Some((status1, body1)) = response_parts(&response) else {
+                continue;
+            };
+            let text = std::str::from_utf8(&response).expect("response utf-8");
+            let header_end = text.find("\r\n\r\n").expect("headers") + 4;
+            let Some(rest) = response.get(header_end + body1.len()..) else {
+                continue;
+            };
+            if let Some((status2, body2)) = response_parts(rest) {
+                assert_eq!((status1, status2), (200, 200));
+                bodies = Some((body1, body2));
+                break;
+            }
+        }
+        let (first, second) = bodies.expect("both pipelined responses");
+        assert_eq!(
+            generated_field(&first),
+            greedy_generate_ctx(&model, &tok, "abab", 4, Some(64)).expect("first oracle")
+        );
+        assert_eq!(
+            generated_field(&second),
+            greedy_generate_ctx(&model, &tok, "ba", 2, Some(64)).expect("second oracle")
+        );
+        assert!(
+            http.conns.is_empty(),
+            "second response must close connection"
         );
     }
 
@@ -1228,6 +1632,113 @@ mod tests {
         let end = rest.find('"').expect("echo end");
         let got = rest.get(..end).expect("echo slice");
         assert_eq!(got, expect, "{body}");
+    }
+
+    #[test]
+    fn openai_stream_usage_counts_eos_and_resets_on_keep_alive() {
+        for path in ["/v1/completions", "/v1/chat/completions"] {
+            let (model, mut tok) = tiny_model();
+            tok.chat_template =
+                Some("{% for message in messages %}{{ message.content }}{% endfor %}".into());
+            let args = engine_args();
+            let ids = prompt_ids(&tok, "ab").expect("prompt ids");
+            let mut cfg = engine_cfg(&tok, &args);
+            cfg.eos = None;
+            let mut oracle = Engine::new(&model, cfg).expect("oracle");
+            let id = oracle.add(&ids, 1).expect("oracle sequence");
+            oracle.run().expect("oracle run");
+            let out = oracle.take(id).expect("oracle output");
+            tok.eos = out.generated.first().copied();
+            assert!(tok.eos.is_some());
+
+            let listener = bind_loopback("127.0.0.1:0").expect("bind");
+            listener.set_nonblocking(true).expect("nb");
+            let addr = listener.local_addr().expect("addr");
+            let mut http = EngineHttp::new(&model, &tok, &args, listener).expect("http");
+            let mut clients = [connect_nb(addr)];
+            let input = if path == "/v1/chat/completions" {
+                "\"messages\":[{\"role\":\"user\",\"content\":\"ab\"}]"
+            } else {
+                "\"prompt\":\"ab\""
+            };
+            let request = format!("{{{input},\"stream\":true,\"max_tokens\":4,\"stream_options\":{{\"include_usage\":true}}}}");
+            write_all_nb(&mut clients[0], &post_path(path, &request));
+            let mut buffers = [Vec::new()];
+            drive(&mut http, &mut clients, &mut buffers);
+            let (status, body) = response_done(&buffers[0]).expect("usage stream");
+            assert_eq!(status, 200, "{body}");
+            assert_eq!(body.matches("\"usage\":").count(), 1, "{body}");
+            assert_eq!(body.matches("\"choices\":[]").count(), 1, "{body}");
+            assert_eq!(body.matches("[DONE]").count(), 1, "{body}");
+            assert_eq!(
+                json_u64(&body, "prompt_tokens"),
+                u64::try_from(ids.len()).expect("count")
+            );
+            assert_eq!(
+                json_u64(&body, "completion_tokens"),
+                1,
+                "EOS must be counted"
+            );
+            assert_eq!(
+                json_u64(&body, "total_tokens"),
+                u64::try_from(ids.len() + 1).expect("count")
+            );
+            let stop = body.find("\"finish_reason\":\"stop\"").expect("finish");
+            let usage = body.find("\"choices\":[]").expect("usage");
+            let done = body.find("[DONE]").expect("done");
+            assert!(stop < usage && usage < done, "{body}");
+
+            // Reusing a socket without stream_options must not retain the
+            // previous request's opt-in usage flag.
+            buffers[0].clear();
+            let request = format!("{{{input},\"stream\":true,\"max_tokens\":4}}");
+            write_all_nb(&mut clients[0], &post_path(path, &request));
+            drive(&mut http, &mut clients, &mut buffers);
+            let (status, body) = response_done(&buffers[0]).expect("plain stream");
+            assert_eq!(status, 200);
+            assert!(!body.contains("\"usage\""), "{body}");
+            assert_eq!(body.matches("[DONE]").count(), 1);
+
+            buffers[0].clear();
+            let request = format!("{{{input},\"stream\":true,\"max_tokens\":0,\"stream_options\":{{\"include_usage\":true}}}}");
+            write_all_nb(&mut clients[0], &post_path(path, &request));
+            drive(&mut http, &mut clients, &mut buffers);
+            let (status, body) = response_done(&buffers[0]).expect("zero token stream");
+            assert_eq!(status, 200);
+            assert_eq!(json_u64(&body, "completion_tokens"), 0);
+
+            buffers[0].clear();
+            let request = format!("{{{input},\"max_tokens\":4}}");
+            write_all_nb(&mut clients[0], &post_path(path, &request));
+            drive(&mut http, &mut clients, &mut buffers);
+            let (status, body) = response_done(&buffers[0]).expect("nonstream response");
+            assert_eq!(status, 200);
+            assert_eq!(
+                json_u64(&body, "completion_tokens"),
+                1,
+                "nonstream EOS usage"
+            );
+        }
+    }
+
+    #[test]
+    fn generate_rejects_openai_stream_usage_without_admitting_sequence() {
+        let (model, tok) = tiny_model();
+        let args = engine_args();
+        let listener = bind_loopback("127.0.0.1:0").expect("bind");
+        listener.set_nonblocking(true).expect("nb");
+        let addr = listener.local_addr().expect("addr");
+        let mut http = EngineHttp::new(&model, &tok, &args, listener).expect("http");
+        let mut clients = [connect_nb(addr)];
+        write_all_nb(
+            &mut clients[0],
+            &post_json(r#"{"prompt":"ab","stream":true,"stream_options":{"include_usage":true}}"#),
+        );
+        let mut buffers = [Vec::new()];
+        drive(&mut http, &mut clients, &mut buffers);
+        let (status, _) = response_done(&buffers[0]).expect("response");
+        assert_eq!(status, 400);
+        assert_eq!(http.stats().steps, 0);
     }
 
     #[test]

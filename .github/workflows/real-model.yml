@@ -63,4 +63,4 @@ jobs:
       - name: Differential test vs llama.cpp reference
         env:
           LLAMA_RUST_REAL_MODEL_DIR: ${{ github.workspace }}/models
-        run: cargo test --release --lib matches_llama_cpp_reference -- --nocapture
+        run: cargo test --release --no-default-features --features simd --lib matches_llama_cpp_reference -- --nocapture

@@ -1024,6 +1024,8 @@ pub(crate) struct GenReq {
     add_generation_prompt: bool,
     pub(crate) n_predict: Option<usize>,
     pub(crate) stream: bool,
+    /// Emit OpenAI streaming usage before the final [DONE] event.
+    pub(crate) include_usage: bool,
     /// OpenAI `/v1/completions` only: include the prompt in `choices[].text`.
     pub(crate) echo: bool,
     /// Tokenize: insert BOS when the tokenizer's `add_bos` is set (default true).
@@ -1128,6 +1130,13 @@ fn dispatch(
         Ok(g) => g,
         Err(e) => return (400, "Bad Request", json_err(Some(api), &e)),
     };
+    if gen.include_usage {
+        return (
+            400,
+            "Bad Request",
+            json_err(Some(api), "stream_options.include_usage requires --engine"),
+        );
+    }
     let prompt = match gen.resolve(tok) {
         Ok(p) => p,
         Err(e) => return (400, "Bad Request", json_err(Some(api), &e)),
@@ -1422,15 +1431,18 @@ pub(crate) fn try_parse_http_request(buf: &[u8]) -> Result<Option<HttpRequest>, 
     };
     let headers = std::str::from_utf8(header_bytes)
         .map_err(|_| ServeError::Http("headers must be utf-8".into()))?;
-    if let Some(te) = header_value(headers, "transfer-encoding") {
-        if !te.eq_ignore_ascii_case("identity") {
-            return Err(ServeError::Http("chunked transfer unsupported".into()));
-        }
+    // Reject ambiguous framing before waiting for a body. Both serving paths
+    // share this parser, including persistent and pipelined connections.
+    if framing_header(headers, "transfer-encoding")?.is_some() {
+        return Err(ServeError::Http(
+            "transfer-encoding (including chunked) unsupported".into(),
+        ));
     }
-    let cl = match header_value(headers, "content-length") {
-        Some(s) => s
+    let cl = match framing_header(headers, "content-length")? {
+        Some(s) if !s.is_empty() && s.bytes().all(|b| b.is_ascii_digit()) => s
             .parse::<u64>()
             .map_err(|_| ServeError::Http(format!("invalid content-length {s:?}")))?,
+        Some(s) => return Err(ServeError::Http(format!("invalid content-length {s:?}"))),
         None => 0,
     };
     if cl > MAX_REQ {
@@ -1445,7 +1457,8 @@ pub(crate) fn try_parse_http_request(buf: &[u8]) -> Result<Option<HttpRequest>, 
         .ok_or_else(|| ServeError::Http("body slice".into()))?
         .to_vec();
     let mut lines = headers.split('\n');
-    let req_line = lines.next().unwrap_or("").strip_suffix('\r').unwrap_or("");
+    let req_line = lines.next().unwrap_or("");
+    let req_line = req_line.strip_suffix('\r').unwrap_or(req_line);
     let mut parts = req_line.split_whitespace();
     let method = parts
         .next()
@@ -1469,6 +1482,30 @@ pub(crate) fn try_parse_http_request(buf: &[u8]) -> Result<Option<HttpRequest>, 
         keep_alive: http_keep_alive(version, connection.as_deref()),
         consumed,
     }))
+}
+
+fn framing_header<'a>(headers: &'a str, name: &str) -> Result<Option<&'a str>, ServeError> {
+    let mut value = None;
+    for line in headers.split('\n').skip(1) {
+        let line = line.strip_suffix('\r').unwrap_or(line);
+        let (key, raw) = line
+            .split_once(':')
+            .ok_or_else(|| ServeError::Http("malformed header".into()))?;
+        if key.is_empty()
+            || !key
+                .bytes()
+                .all(|b| b.is_ascii_alphanumeric() || b"!#$%&'*+-.^_`|~".contains(&b))
+        {
+            return Err(ServeError::Http("invalid header name".into()));
+        }
+        if key.eq_ignore_ascii_case(name) {
+            if value.is_some() {
+                return Err(ServeError::Http(format!("duplicate {name}")));
+            }
+            value = Some(raw.trim_matches([' ', '\t']));
+        }
+    }
+    Ok(value)
 }
 
 fn http_keep_alive(version: &str, connection: Option<&str>) -> bool {
@@ -1764,6 +1801,18 @@ pub(crate) fn sse_done() -> String {
     String::from("data: [DONE]\n\n")
 }
 
+/// Final OpenAI stream usage event. Counts include all generated token IDs.
+pub(crate) fn sse_usage(api: ServeApi, model: &str, prompt: usize, completion: usize) -> String {
+    let (id, object) = match api {
+        ServeApi::Chat => ("chatcmpl-0", "chat.completion.chunk"),
+        _ => ("cmpl-0", "text_completion"),
+    };
+    let mut json = format!("{{\"id\":\"{id}\",\"object\":\"{object}\",\"model\":");
+    append_json_string(&mut json, model);
+    json.push_str(&format!(",\"choices\":[],\"usage\":{{\"prompt_tokens\":{prompt},\"completion_tokens\":{completion},\"total_tokens\":{}}}}}", prompt.saturating_add(completion)));
+    sse_data(&json)
+}
+
 fn sse_data(json: &str) -> String {
     let mut s = String::from("data: ");
     s.push_str(json);
@@ -1889,6 +1938,92 @@ impl Scan<'_> {
             Some('f') => self.expect_lit("false").map(|()| false),
             _ => Err("expected true or false".into()),
         }
+    }
+
+    fn parse_stream_options(&mut self) -> Result<bool, String> {
+        self.skip_ws();
+        if self.peek() == Some('n') {
+            self.expect_lit("null")?;
+            return Ok(false);
+        }
+        self.expect_char('{')?;
+        let mut include = None;
+        let mut need_comma = false;
+        loop {
+            self.skip_ws();
+            if self.peek() == Some('}') {
+                let _c = self.bump();
+                break;
+            }
+            if need_comma {
+                self.expect_char(',')?;
+                self.skip_ws();
+                if self.peek() == Some('}') {
+                    return Err("trailing comma in stream_options".into());
+                }
+            }
+            let key = self.parse_string()?;
+            self.expect_char(':')?;
+            if key != "include_usage" {
+                return Err(format!("unsupported stream option {key}"));
+            }
+            if include.is_some() {
+                return Err("duplicate include_usage".into());
+            }
+            include = Some(self.parse_bool()?);
+            need_comma = true;
+        }
+        Ok(include.unwrap_or(false))
+    }
+
+    // Parse a JSON number for explicitly supported neutral sampling values.
+    fn parse_f64(&mut self) -> Result<f64, String> {
+        self.skip_ws();
+        let start = self.i;
+        if self.peek() == Some('-') {
+            let _c = self.bump();
+        }
+        match self.peek() {
+            Some('0') => {
+                let _c = self.bump();
+            }
+            Some('1'..='9') => {
+                while matches!(self.peek(), Some(c) if c.is_ascii_digit()) {
+                    let _c = self.bump();
+                }
+            }
+            _ => return Err("expected number".into()),
+        }
+        if self.peek() == Some('.') {
+            let _c = self.bump();
+            if !matches!(self.peek(), Some(c) if c.is_ascii_digit()) {
+                return Err("expected fractional digits".into());
+            }
+            while matches!(self.peek(), Some(c) if c.is_ascii_digit()) {
+                let _c = self.bump();
+            }
+        }
+        if matches!(self.peek(), Some('e' | 'E')) {
+            let _c = self.bump();
+            if matches!(self.peek(), Some('+' | '-')) {
+                let _c = self.bump();
+            }
+            if !matches!(self.peek(), Some(c) if c.is_ascii_digit()) {
+                return Err("expected exponent digits".into());
+            }
+            while matches!(self.peek(), Some(c) if c.is_ascii_digit()) {
+                let _c = self.bump();
+            }
+        }
+        let token = self.s.get(start..self.i).unwrap_or("");
+        let number = token.parse::<f64>().map_err(|_| "invalid number")?;
+        let mantissa = token.split(['e', 'E']).next().unwrap_or("");
+        if !number.is_finite()
+            || (number == 0.0 && mantissa.bytes().any(|b| (b'1'..=b'9').contains(&b)))
+        {
+            return Err("number out of range".into());
+        }
+        Ok(number)
     }
 
     /// `[{"role": "...", "content": "..."}, ...]`, the OpenAI message shape.
@@ -2066,6 +2201,7 @@ pub(crate) fn parse_gen_req(s: &str) -> Result<GenReq, String> {
     let mut add_generation_prompt = None;
     let mut n_predict = None;
     let mut stream = None;
+    let mut include_usage = None;
     let mut echo = None;
     let mut add_special_tokens = None;
     let mut need_comma = false;
@@ -2090,13 +2226,72 @@ pub(crate) fn parse_gen_req(s: &str) -> Result<GenReq, String> {
             "add_generation_prompt" => add_generation_prompt = Some(scan.parse_bool()?),
             "n_predict" => set_n_predict(&mut n_predict, scan.parse_usize()?, "n_predict")?,
             "max_tokens" => set_n_predict(&mut n_predict, scan.parse_usize()?, "max_tokens")?,
+            "max_completion_tokens" => {
+                set_n_predict(&mut n_predict, scan.parse_usize()?, "max_completion_tokens")?
+            }
             "stream" => stream = Some(scan.parse_bool()?),
+            "stream_options" => {
+                if include_usage.is_some() {
+                    return Err("duplicate stream_options".into());
+                }
+                include_usage = Some(scan.parse_stream_options()?);
+            }
             "echo" => echo = Some(scan.parse_bool()?),
             "add_special_tokens" => add_special_tokens = Some(scan.parse_bool()?),
             "n" => {
                 let v = scan.parse_usize()?;
                 if v != 1 {
                     return Err("n must be 1".into());
+                }
+            }
+            // Both serving modes currently generate greedily. Do not silently
+            // ignore options that would change the requested output.
+            "temperature" | "presence_penalty" | "frequency_penalty" => {
+                scan.skip_ws();
+                if scan.peek() == Some('n') {
+                    scan.expect_lit("null")?;
+                } else if scan.parse_f64()? != 0.0 {
+                    return Err(format!(
+                        "{key} is unsupported; this server uses greedy decoding"
+                    ));
+                }
+            }
+            "top_p" | "repetition_penalty" => {
+                scan.skip_ws();
+                if scan.peek() == Some('n') {
+                    scan.expect_lit("null")?;
+                } else if scan.parse_f64()? != 1.0 {
+                    return Err(format!(
+                        "{key} is unsupported; this server uses greedy decoding"
+                    ));
+                }
+            }
+            "top_k" => {
+                scan.skip_ws();
+                if scan.peek() == Some('n') {
+                    scan.expect_lit("null")?;
+                } else {
+                    let k = scan.parse_f64()?;
+                    if k != 0.0 && k != -1.0 {
+                        return Err("top_k is unsupported; this server uses greedy decoding".into());
+                    }
+                }
+            }
+            "logprobs" => {
+                scan.skip_ws();
+                match scan.peek() {
+                    Some('n') => scan.expect_lit("null")?,
+                    Some('f') => scan.expect_lit("false")?,
+                    _ => return Err("logprobs is not supported".into()),
+                }
+            }
+            "stop" | "logit_bias" | "guided_json" | "guided_regex" | "guided_grammar"
+            | "response_format" | "tools" | "tool_choice" | "top_logprobs" => {
+                scan.skip_ws();
+                if scan.peek() == Some('n') {
+                    scan.expect_lit("null")?;
+                } else {
+                    return Err(format!("{key} is not supported"));
                 }
             }
             _ => scan.skip_value()?,
@@ -2107,6 +2302,9 @@ pub(crate) fn parse_gen_req(s: &str) -> Result<GenReq, String> {
     if scan.peek().is_some() {
         return Err("trailing junk after json".into());
     }
+    if include_usage == Some(true) && stream != Some(true) {
+        return Err("stream_options.include_usage requires stream=true".into());
+    }
     Ok(GenReq {
         prompt,
         messages,
@@ -2115,6 +2313,7 @@ pub(crate) fn parse_gen_req(s: &str) -> Result<GenReq, String> {
         add_generation_prompt: add_generation_prompt.unwrap_or(true),
         n_predict,
         stream: stream.unwrap_or(false),
+        include_usage: include_usage.unwrap_or(false),
         echo: echo.unwrap_or(false),
         add_special_tokens: add_special_tokens.unwrap_or(true),
     })
@@ -4874,6 +5073,32 @@ mod tests {
     }
 
     #[test]
+    fn http_rejects_ambiguous_framing_before_body() {
+        for headers in [
+            "Content-Length: 2\r\nContent-Length: 3",
+            "Content-Length: 2\r\ncOnTeNt-LeNgTh: 2",
+            "Content-Length: +2",
+            "Content-Length: 2, 2",
+            "Content-Length : 2",
+            " Content-Length: 2",
+            "Content-Length: 2\r\nTransfer-Encoding: identity",
+            "Transfer-Encoding: identity\r\nTransfer-Encoding: chunked",
+            "Transfer-Encoding: chunked\r\nTransfer-Encoding: identity",
+            "Broken-Header",
+        ] {
+            let raw = format!("POST /generate HTTP/1.1\r\n{headers}\r\n\r\n");
+            assert!(try_parse_http_request(raw.as_bytes()).is_err(), "{headers}");
+        }
+        let raw = b"POST /generate HTTP/1.1\r\nContent-Length:\t2 \t\r\n\r\n{}GET /health HTTP/1.1\r\n\r\n";
+        let first = try_parse_http_request(raw).unwrap().unwrap();
+        assert_eq!(first.body, b"{}");
+        let second = try_parse_http_request(raw.get(first.consumed..).unwrap())
+            .unwrap()
+            .unwrap();
+        assert_eq!(second.path, "/health");
+    }
+
+    #[test]
     fn http_request_shape_content_length() {
         let raw = b"POST /generate HTTP/1.1\r\nContent-Length: 15\r\n\r\n{\"prompt\":\"ab\"}";
         let req = try_parse_http_request(raw).unwrap().unwrap();
@@ -4982,6 +5207,64 @@ mod tests {
         assert!(parse_detok_req(r#"{"tokens":[1,]}"#)
             .unwrap_err()
             .contains("trailing comma"));
+    }
+
+    #[test]
+    fn generation_options_are_not_silently_ignored() {
+        for (name, value) in [
+            ("temperature", "0.8"),
+            ("top_p", "0.9"),
+            ("top_k", "40"),
+            ("presence_penalty", "1"),
+            ("stop", "[\"END\"]"),
+            ("tools", "[]"),
+            ("logprobs", "true"),
+        ] {
+            let body = format!("{{\"prompt\":\"ab\",\"{name}\":{value}}}");
+            let error = parse_gen_req(&body).unwrap_err();
+            assert!(error.contains(name), "{error}");
+        }
+        let req = parse_gen_req(r#"{"prompt":"ab","temperature":0.0,"top_p":1e0,"top_k":-1,"frequency_penalty":0,"max_completion_tokens":4}"#).unwrap();
+        assert_eq!(req.n_predict, Some(4));
+        assert!(parse_gen_req(r#"{"prompt":"ab","temperature":0.}"#).is_err());
+        assert!(parse_gen_req(r#"{"prompt":"ab","temperature":0e}"#).is_err());
+        assert!(parse_gen_req(r#"{"prompt":"ab","temperature":1e-999}"#).is_err());
+        assert!(parse_gen_req(r#"{"prompt":"ab","temperature":1e999}"#).is_err());
+        assert!(parse_gen_req(r#"{"prompt":"ab","logprobs":false}"#).is_ok());
+        assert!(
+            parse_gen_req(r#"{"prompt":"ab","max_tokens":2,"max_completion_tokens":3}"#).is_err()
+        );
+    }
+
+    #[test]
+    fn streaming_usage_options_require_stream_and_a_supported_shape() {
+        let valid = parse_gen_req(
+            r#"{"prompt":"ab","stream":true,"stream_options":{"include_usage":true}}"#,
+        )
+        .unwrap();
+        assert!(valid.include_usage);
+        let false_option = parse_gen_req(
+            r#"{"prompt":"ab","stream":true,"stream_options":{"include_usage":false}}"#,
+        )
+        .unwrap();
+        assert!(!false_option.include_usage);
+        for input in [
+            r#"{"prompt":"ab","stream_options":{"include_usage":true}}"#,
+            r#"{"prompt":"ab","stream":true,"stream_options":{"include_usage":true,"include_usage":false}}"#,
+            r#"{"prompt":"ab","stream":true,"stream_options":{"include_usage":true,}}"#,
+            r#"{"prompt":"ab","stream":true,"stream_options":{"other":true}}"#,
+        ] {
+            assert!(parse_gen_req(input).is_err(), "{input}");
+        }
+        let (model, tok) = tiny_model();
+        let (head, body) = exchange(
+            &post_json(r#"{"prompt":"ab","stream":true,"stream_options":{"include_usage":true}}"#),
+            &model,
+            &tok,
+            &defaults(),
+        );
+        assert!(head.starts_with("HTTP/1.1 400"), "{head}");
+        assert!(body.contains("requires --engine"), "{body}");
     }
 
     /// The tiny fixture has no `chat_template` of its own; give it one whose
