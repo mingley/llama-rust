@@ -2,9 +2,10 @@
 
 use std::time::Instant;
 
-use llama_rust::{
-    gemv_q4_0, gemv_q4_k, gemv_q8_0, load_gguf, pack_q4_0_block, pack_q4_k_block, pack_q8_0_block,
-    pack_q8_k_block, write_gguf, GgmlType, TensorWrite, QK4_0, QK8_0, QK_K,
+use llama_rust::gguf::{load_gguf, write_gguf, GgmlType, TensorWrite};
+use llama_rust::kernels::{
+    gemv_q4_0, gemv_q4_k, gemv_q8_0, pack_q4_0_block, pack_q4_k_block, pack_q8_0_block,
+    pack_q8_k_block, QK4_0, QK8_0, QK_K,
 };
 
 fn rnd_u32(seed: &mut u64) -> u32 {
